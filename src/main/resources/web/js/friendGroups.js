@@ -256,10 +256,16 @@ export function groupAvatarGrid(cells, size, total) {
 // ── 好友多选器（建群 / owner 邀请 共用一份，禁两份选择面）───────────────
 // 拉黑好友不进候选（O⑩ 拉黑只断单聊的保守面：不主动把拉黑对象拉进群；已在同
 // 群的拉黑对象照常可见 —— 那是服务端成员闸 + 渲染面的事，与本选择器无关）。
-/** @param {{excludeIds?: Set<string>, selected?: Set<string>}} [opts] */
+/**
+ * @param {{excludeIds?: Set<string>, selected?: Set<string>, emptyKey?: string}} [opts]
+ *   `emptyKey` = 空态文案键（0 人可邀）。默认 `contacts.empty`（既有键 ⇒ 群设置
+ *   抽屉调用点零改动、零文案漂移）；建群面板传 `contacts.createGroupEmpty`
+ *   给**可操作引导**（作者 2026-09-16 令：空态要有引导文案）。
+ */
 function buildFriendPicker(opts) {
   const exclude = opts && opts.excludeIds;
   const selected = (opts && opts.selected) || new Set();
+  const emptyKey = (opts && opts.emptyKey) || 'contacts.empty';
   const wrap = el('div', 'fm-pick-list');
   wrap.setAttribute('role', 'listbox');
   wrap.setAttribute('aria-multiselectable', 'true');
@@ -268,7 +274,7 @@ function buildFriendPicker(opts) {
     const list = (data && data.friends || []).filter(f => f && f.userId && !f.blocked
       && !(exclude && exclude.has(String(f.userId))));
     if (list.length === 0) {
-      wrap.appendChild(el('div', 'fm-empty', t('contacts.empty')));
+      wrap.appendChild(el('div', 'fm-empty', t(emptyKey)));
       return;
     }
     for (const f of list) {
@@ -309,7 +315,21 @@ function buildFriendPicker(opts) {
  *  标题**必填**（trim 后非空）：服务端 valid_group_title 空串 ⇒ 422 invalid_title
  *  （groups.rs:96-106,161-162），客户端做同判据 UX 预检（权威闸仍在服务端）。
  *  成员上限 50 同样做 UX 预检（含本机 1 人）；权威闸在服务端（超限 422/403 走
- *  groupErrToast）。 */
+ *  groupErrToast）。
+ *
+ *  视觉骨架（2026-09-16 重做；作者 07:46 令「至少群聊面板很丑」）——四段：
+ *   ① 标题区 `.fm-modal-header`（既有骨架，几何零改动）
+ *   ② 输入区 / ③ 列表区（`.fm-pick-body` 内的两个 `.fm-gs-section`）
+ *   ④ 操作区 `.fm-pick-foot`（主键 `fm-create-submit` 右贴边）
+ *  ②③ 的章节标签与输入行类名取**群设置抽屉同族**（`.fm-gs-title` /
+ *  `.fm-gs-title-row` / `.fm-gs-rename` / `.fm-gs-rename-input`）⇒ 两面板层次同源，
+ *  禁另起一套间距/字号档。
+ *  🔴 创建键 = Glass 主键：材质与四态（rest 绿实心 / hover 深绿 / active 描边 /
+ *  disabled 灰）由 `sapphire.css` 的 Glass 主键 `:is()` 族**单源**承载
+ *  （与发送键族同一条规则 ⇒ 禁用语义零复制、零自创）。
+ *  🔴 启用闸（本函数单点 `refreshSubmit`）= **已选 ≥1 人 ∧ 群名 trim 非空**；
+ *  任一处就地改 `createBtn.disabled` 都会绕过该闸，禁写第二份判定。
+ */
 export function openCreateGroupDialog() {
   if (!getNeblinkState().loggedIn) return;
   const selected = new Set();
@@ -319,6 +339,7 @@ export function openCreateGroupDialog() {
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-label', t('contacts.createGroupTitle'));
 
+  // ── ① 标题区（fm-modal-header，既有骨架）
   const header = el('div', 'fm-modal-header');
   const title = el('div', 'fm-modal-title');
   title.appendChild(el('span', 'fm-modal-name', t('contacts.createGroupTitle')));
@@ -333,34 +354,60 @@ export function openCreateGroupDialog() {
   header.appendChild(closeBtn);
   modal.appendChild(header);
 
-  // 群名（**必填** —— 契约 GroupCreateBody.title 无缺省；O④ 同族最小面；
+  // 主体（②+③ 同处一个滚动容器；操作区固定在底 —— 单一滚动条）
+  const bodyBox = el('div', 'fm-pick-body');
+
+  // ── ② 输入区（群名**必填** —— 契约 GroupCreateBody.title 无缺省；O④ 同族最小面；
   // imeGuard 接入 = 新增输入面纪律）
+  const nameSec = el('div', 'fm-gs-section');
+  nameSec.appendChild(el('div', 'fm-gs-title', t('contacts.createGroupName')));
   const nameRow = el('div', 'fm-gs-rename');
   const nameInput = document.createElement('input');
   nameInput.className = 'cfg-input fm-gs-rename-input';
   nameInput.type = 'text';
   nameInput.maxLength = GROUP_TITLE_MAX;
-  nameInput.placeholder = t('contacts.createGroupName');
+  nameInput.placeholder = t('contacts.createGroupNameHint');
   nameInput.autocomplete = 'off';
   bindImeGuard(nameInput);
   nameInput.addEventListener('keydown', (e) => { if (isImeComposing(e, nameInput)) e.stopPropagation(); });
   nameRow.appendChild(nameInput);
-  modal.appendChild(nameRow);
+  nameSec.appendChild(nameRow);
+  bodyBox.appendChild(nameSec);
 
-  const counter = el('div', 'fm-pick-count', t('contacts.createGroupSelected', { n: 0 }));
-  modal.appendChild(counter);
-  const picker = buildFriendPicker({ selected });
-  picker.addEventListener('click', () => {
-    // 点击后同步计数（选择集在本闭包内，读 size 即可）
-    counter.textContent = t('contacts.createGroupSelected', { n: selected.size });
-  });
-  modal.appendChild(picker);
+  // ── ③ 列表区（章节标签 + 已选人数徽标 + 好友多选名册；空态给可操作引导）
+  const pickSec = el('div', 'fm-gs-section');
+  const pickHead = el('div', 'fm-gs-title-row');
+  pickHead.appendChild(el('div', 'fm-gs-title', t('contacts.createGroupMembers')));
+  const counter = el('span', 'fm-pick-count', t('contacts.createGroupSelected', { n: 0 }));
+  pickHead.appendChild(counter);
+  pickSec.appendChild(pickHead);
+  const picker = buildFriendPicker({ selected, emptyKey: 'contacts.createGroupEmpty' });
+  pickSec.appendChild(picker);
+  bodyBox.appendChild(pickSec);
+  modal.appendChild(bodyBox);
 
+  // ── ④ 操作区（主键 = 「创建」）
   const foot = el('div', 'fm-pick-foot');
-  const createBtn = el('button', 'glass-control fm-msg-btn', t('contacts.createGroupSubmit'));
+  // 类名：`fm-create-submit` = Glass 主键族成员（sapphire.css:`:is()` 列表，四态单源）；
+  // `cfg-btn-primary` 只为承接既有**主操作白墨**声明（族内既有约定，非新色值）。
+  const createBtn = el('button', 'glass-control cfg-btn-primary fm-create-submit',
+    t('contacts.createGroupSubmit'));
+  createBtn.type = 'button';
+
+  /** 启用闸 + 已选徽标的**单点刷新**：任何影响闸态的输入（群名 input / 名册点选）
+   *  都只经本函数 ⇒ 禁用语义只有一处判定（与发送键族同一套「空 ⇒ 不可用」判据
+   *  口径：`disabled` 属性 + not-allowed 视觉，禁元素级 opacity 表达）。 */
+  function refreshSubmit() {
+    const n = selected.size;
+    createBtn.disabled = !(n > 0 && nameInput.value.trim().length > 0);
+    counter.textContent = t('contacts.createGroupSelected', { n });
+    counter.classList.toggle('on', n > 0);
+  }
+
   createBtn.addEventListener('click', async () => {
     if (createBtn.disabled) return;
     // 群名必填（契约 GroupCreateBody.title 无缺省；空串 ⇒ 422 invalid_title）。
+    // 闸态下本分支不可达，保留为契约同判据的防御位（服务端仍为权威闸）。
     const groupName = nameInput.value.trim();
     if (!groupName) {
       toastGlobal(t('contacts.createGroupNameRequired'), 'error');
@@ -387,16 +434,24 @@ export function openCreateGroupDialog() {
       if (failed > 0) toastGlobal(t('messages.groupInviteFailed', { n: failed }), 'error');
       else toastGlobal(t('messages.groupCreated'));
     } catch (err) {
-      createBtn.disabled = false;
+      // 失败 ⇒ 回闸态（按当前输入重新判定，禁写死 `false`：写死会让「空名 + 已选」
+      // 这一态重新变绿，正是本批要消灭的禁用语义漂移）。
+      refreshSubmit();
       groupErrToast(err);
     }
   });
   foot.appendChild(createBtn);
   modal.appendChild(foot);
 
+  // 闸态刷新接入点：名册点选（选择集由本闭包持有；行点击先于容器冒泡到达 ⇒ 读到的是
+  // 翻转后的 size）+ 群名输入。
+  picker.addEventListener('click', refreshSubmit);
+  nameInput.addEventListener('input', refreshSubmit);
+
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+  refreshSubmit(); // 初值：未选人 / 未填名 ⇒ 灰（面板打开即正确态，禁「先绿后灰」）
   createIconsIn(modal);
 }
 
