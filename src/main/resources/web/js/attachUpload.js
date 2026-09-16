@@ -203,11 +203,25 @@ function uploadCardEl(item) {
  * [[retryAction]] → **同一** `sendFiles`（原上传/发送腿，非第二条链），且复用**同一**
  * 幂等键 ⇒ 服务端按同键回放原行（§8.6），同动作不会因重试多落一条。
  *
- * `data-*` 契约（供机械读数）：`data-upload-hint`/`data-hint-key`/`data-hint-count`/
- * `data-hint-retry`。
+ * `data-*` 契约（供机械读数）：`data-upload-hint`/`data-upload-state`/`data-hint-key`/
+ * `data-hint-count`/`data-hint-retry`。
+ *
+ * 🔴 类名纪律（R-1/R-2 整改，先复用后新建）：卡与按钮**一律复用既有类**，本文件**零新造
+ * 类名** ——
+ *   · 卡 = `fm-upload`＋`fm-upload-failed`（`css/friends.css:850-876`）：提示是**失败动作**
+ *     的延续，故直接承接**既有失败态类** ⇒ `border-color`/文案 = `var(--color-error)`，
+ *     与失败卡**逐字同一 token 解析值**（零新增 token）；
+ *   · 按钮 = `fm-upload-cancel`（`css/friends.css:889-899`）：与**同一张卡里**的上传件
+ *     「取消」按钮**同一规则族**（border 1px `var(--glass-control-border)` / radius 5px /
+ *     font-size 11px / padding 1px 8px / cursor pointer ＋ `:hover` ＋ `:focus-visible`）。
+ *     改前该按钮用的是**新造且无任何 CSS 规则**的类名（`retry` 后缀族）⇒ 真渲染成
+ *     **浏览器原生控件**（两次 FAIL 里的 verifier R-1 阻断项）；本批允许面**不含 `css/**`**
+ *     ⇒ 正解只能是复用既有类，🔴 禁新造。（本文件与 `web/css/**` 现对旧新造类名**零命中**，
+ *     机械读数见报告 §4/§9。）
+ * 识别钩子（两个 harness 都按它取件）＝ `[data-hint-retry]`（按钮）/ `.fm-upload[data-upload-hint]`（卡）。
  */
 function uploadRetryEl(hint) {
-  const card = el('div', 'fm-upload fm-upload-retry');
+  const card = el('div', 'fm-upload fm-upload-failed');
   card.dataset.uploadState = 'retry';
   card.dataset.uploadHint = '1';
   card.dataset.hintKey = hint.clientMsgId;
@@ -217,7 +231,7 @@ function uploadRetryEl(hint) {
   card.appendChild(el('span', 'fm-upload-note', hint.message));
   // 文案取**既有** key（本批允许面不含 locales 文件 ⇒ 零新增 i18n key；`contacts.retry`
   // 与另两处 `*.retry` 逐字同形 = 既有的通用「重试 / Retry」词条）。
-  const retry = el('button', 'fm-upload-retry-btn', t('contacts.retry'));
+  const retry = el('button', 'fm-upload-cancel', t('contacts.retry'));
   retry.type = 'button';
   retry.dataset.hintRetry = '1';
   retry.addEventListener('click', () => { void retryAction(hint.convId, hint.clientMsgId); });
