@@ -148,6 +148,18 @@ class ChainCascadeSpec extends CatsEffectSuite:
   private def framesFor(rig: Rig, id: String): IO[Int] =
     rig.frames.get.map(_.count(_.hcursor.get[String]("nodeId").toOption.contains(id)))
 
+  /** 源码判据的**代码行视图**：剥掉注释行（以 `//` 或 `*` 起首的整行）。
+    *
+    * 为什么必须剥（V7 实测，报告 ④）：本批新增的文档注释里**引用了**被判据约束的
+    * 代码原文（如 `l3CascadeAllowed(deferDetach)`、`cascade=false`）——不剥的话，
+    * 把代码改掉、留下注释，`contains` 断言照样绿 = 判据可被注释「背书」。
+    * 反向同理：注释里出现 `cascade` 会让「保留面不得含 cascade」的负断言**误红**。 */
+  private def codeOnly(src: String): String =
+    src.linesIterator.filterNot { l =>
+      val t = l.trim
+      t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
+    }.mkString("\n")
+
   private def audit(rig: Rig): IO[List[(String, String)]] =
     IO.blocking(os.read(rig.ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
@@ -403,7 +415,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
   // ── M8（L3 不变量：结构 + 语义等价）──────────────────────────────
 
   test("M8: the L3 hard-recovery intermediate state is hard-bound to cascade=false (structural assertion + semantic equivalence)") {
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala")
+    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
     // ① 判据函数本身：deferDetach=true ⇒ 级联权限 false
     assert(!NodeEngine.l3CascadeAllowed(deferDetach = true), "L3 intermediate state must forbid cascading (§6-M8)")
     assert(NodeEngine.l3CascadeAllowed(deferDetach = false), "non-L3 legs keep their own default")
@@ -439,7 +451,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
   // ── M11（取代面 / 保留面）─────────────────────────────────────────
 
   test("M11: the non-cancel-family pendingSuccession writers are structurally decoupled from the cascade flag") {
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala")
+    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
     // 源码窗口提取（**有界**：从签名行起取 N 行——本文件里方法之间相隔数百行，用
     // `substring(签名A, 签名B)` 会把无关方法与新取消族一起圈进来，判据随即失真）。
     def window(sig: String, n: Int): String =
@@ -477,10 +489,42 @@ class ChainCascadeSpec extends CatsEffectSuite:
     }
   }
 
+  // ── Z5（归档区零 diff）─────────────────────────────────────────────
+
+  test("Z5: the cancel legs never write the archive region (state equality + source-level archive-write ban)") {
+    withRig("z5") { rig =>
+      for
+        _ <- seed(rig, List(
+          n("n-a", NodeLifecycle.Pending, 1000L, out = List(OutEdge("n-b"))),
+          n("n-b", NodeLifecycle.Pending, 2000L, in = List("n-a"))))
+        archBefore <- rig.rt.store.archiveSnapshot
+        right <- rig.rt.engine.cancelChain("chain-n-a", CancelSource.User, "z5 archive check")
+        report = right.getOrElse(fail(s"chain cancel must succeed: $right"))
+        archAfter <- rig.rt.store.archiveSnapshot
+        archiveFileAfter <- IO.blocking(os.exists(rig.ws / ".nebflow" / "flow-map-archive.json"))
+      yield
+        assertEquals(report.cancelled.map(_.nodeId), List("n-a", "n-b"))
+        assertEquals(archAfter, archBefore, "archive region state identical (Z5)")
+        // 源码级：取消族四条腿**零** archive 写面（归档只由 sweep/TTL 与显式归档入口驱动）
+        val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
+        def window(sig: String, n: Int): String =
+          val lines = src.linesIterator.toList
+          val start = lines.indexWhere(_.contains(sig))
+          assert(start >= 0, s"anchor not found: $sig")
+          lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
+        val legs = window("private def cancelNodes(ids: List[String], chainId", 130) +
+          window("private def cancelNode(", 40) +
+          window("private def detachCancelledUpstream", 70)
+        assert(!legs.contains("mutateArchive") && !legs.contains("mutateArchiveWithResult"),
+          "no archive write API may appear on the cancel legs (Z5)")
+        assert(archiveFileAfter || true, "archive file presence is optional (only sweeps create it)")
+    }
+  }
+
   // ── V8 守卫（链解析单点；本批补的**结构判据**，设计 §6.4 V8）────────────
 
   test("V8-guard: the gateway chainCancel leg never re-derives chain membership — the single point stays FlowMapStore.chainMembersOf") {
-    val ws = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala")
+    val ws = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala"))
     val lines = ws.linesIterator.toList
     val start = lines.indexWhere(_.contains("case \"chainCancel\""))
     assert(start >= 0, "the panel entry leg must exist in WebSocketRoutes.scala")
