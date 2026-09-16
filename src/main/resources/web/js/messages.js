@@ -375,21 +375,58 @@ function isAgentSent(m) { return !!(m && (m.origin === 'agent' || m.agentSent ==
 const AGENT_BADGE_TEXT_KEY = 'messages.agentBadge';
 
 /** 会话行摘要（⑧，作者 2026-09-15：「就很奇怪，对一个设备说 KAI / Device /
- *  You are now friends」）。
+ *  You are now friends」；⑨，作者 2026-09-16 07:55：「入群提示还是：你们已成为
+ *  好友，这不对」）。
  *
- *  🔴 按**对端类型**分支（`systemNowFriends` 是**好友接受流程**的语义 —— 其唯一
- *  合法消费点见 `messages.js` 的 `friend_accepted` 分支注释「New friendship →
- *  empty conversation appears (summary: systemNowFriends)」）：
+ *  🔴 按**对端类型**分支 —— **三个语境三个键**（禁一个键服务两个面）：
  *   · 设备会话 ⇒ 中性空态（既有 `messages.noMessages`），**零好友关系文案**；
  *     🔴 不为设备**编造**事件文案（禁拿好友文案凑数、禁空壳占位冒充配对成功）。
- *   · 好友/群 ⇒ 逐字不变（不得误伤好友面）。
- *  改动前 = kind-blind（设备空窗无差别套上好友流程文案）。 */
+ *   · **群会话 ⇒ 群语境**（`messages.groupNoMessages*`，见 `groupSummaryEmpty`）。
+ *   · 好友 ⇒ `messages.systemNowFriends` —— 该键语义 = **好友接受流程**，其唯一
+ *     合法消费点见 `onFriendEvent` 的 `friend_accepted` 分支注释
+ *     「New friendship → empty conversation appears (summary: systemNowFriends)」。
+ *
+ *  🔴 改动史（本批根因）：本函数此前 **kind-blind**
+ *  （`conv.kind === 'device' ? … : systemNowFriends`）⇒ 非 device 的空会话
+ *  （好友**与群**）一律套好友接受流程文案，群行摘要渲染成「你们已成为好友」。
+ *  处置 = **拆键**：群面走新键；`systemNowFriends` 的**键值与消费点对好友面
+ *  **逐字不变**（🔴 禁只改共用键的值 —— 那会反噬好友场景）。
+ *  有 `lastMessage.body` 时三面**同走正文**（不改：正文是服务端载荷，不是语境文案）。 */
 function summaryOf(conv) {
   const m = conv.lastMessage;
   if (!m || !m.body) {
-    return conv && conv.kind === 'device' ? t('messages.noMessages') : t('messages.systemNowFriends');
+    if (conv && conv.kind === 'device') return t('messages.noMessages');
+    if (conv && conv.kind === 'group') return groupSummaryEmpty(conv);
+    return t('messages.systemNowFriends');
   }
   return (isAgentSent(m) ? `[${t(AGENT_BADGE_TEXT_KEY)}] ` : '') + m.body;
+}
+
+/** 群面空会话摘要（`summaryOf` 的群分支；2026-09-16 拆键产物）。
+ *
+ *  取名源 = 契约群行行内**唯一可达的名字字段** `GroupSummary.title`
+ *  （`friendsApi.normalizeGroupRow` ⇒ `conv.title`）。零新增请求。
+ *
+ *  🔴 **加入者/创建者的成员名在契约里不可达** ⇒ 本函数不写成员名、**不编造**：
+ *   · 契约群行只有 `groupId`/`title`/`role`/`memberCount`/`lastMessage`/
+ *     `unreadCount`/`lastMessageId`/`createdAt`（+ 加性 `selfUserId`/
+ *     `memberAvatars`）—— **无**「最近加入者 / 事件」类字段；
+ *   · `memberAvatars` 只有 `userId`/`avatar`、**无名字**（`friendsApi.js`
+ *     `normalizeAvatarPreview`），且其顺序语义被契约**显式禁止**做业务判定
+ *     （`friendsApi.js:766-767`「顺序 = 服务端加入序」＋「禁把索引 0 当群主」）；
+ *   · 服务端**不产生**群事件系统消息（群事件在客户端只落 toast / 列表刷新 /
+ *     本摘要，逐条见本批报告 §3 横扫表）；
+ *   ⇒「{成员名} 加入了群聊」形态**需服务端加性字段或系统消息**（本批按 open item
+ *     上报；禁客户端猜名 —— 猜名 = 造第二真相源）。
+ *
+ *  两态（禁造值）：群名非空 ⇒ `messages.groupNoMessagesNamed`（含群名占位）；
+ *  群名空白 ⇒ `messages.groupNoMessages`（禁与 `groupTitleOf` 的「群聊」占位
+ *  拼成重复）。 */
+function groupSummaryEmpty(conv) {
+  const title = conv && typeof conv.title === 'string' ? conv.title.trim() : '';
+  return title
+    ? t('messages.groupNoMessagesNamed', { name: title })
+    : t('messages.groupNoMessages');
 }
 
 function totalUnread() {

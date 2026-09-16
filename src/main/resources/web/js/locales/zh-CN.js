@@ -252,7 +252,15 @@ export default {
   'contacts.groupInvites': '群邀请',
   'contacts.groupInviteFrom': '{name} 邀请你加入群聊',
   'messages.empty': '暂无会话',
+  // 🔴 `systemNowFriends` = **好友接受流程**的语境（唯一合法消费点 =
+  // messages.js `onFriendEvent` 的 `friend_accepted` 分支）⇒ 下条群语境键是
+  // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：
+  // 原 `summaryOf` kind-blind，群行空态套上了上面这条好友文案）。
+  // 两键与 en **同批**落地（禁死键），消费点 = messages.js `groupSummaryEmpty`
+  // 单点，两态 = 群名在场 / 缺席（缺席不造值、不拼重复占位）。
   'messages.systemNowFriends': '你们已成为好友',
+  'messages.groupNoMessagesNamed': '群聊「{name}」暂无消息',
+  'messages.groupNoMessages': '群聊暂无消息',
   'messages.forwardToAgent': '转发给 agent',
   'messages.forwarded': '已转发给 agent',
   'messages.forwardToast': '已加入输入框，可附言后发送',
@@ -322,6 +330,11 @@ export default {
   'messages.groupAdminUnset': '已撤销管理员',
   'messages.groupKick': '移出群聊',
   'messages.groupKickedDone': '已移出群聊',
+  // 「被移出」事件文案（消费点 = `friendGroups.groupErrToast` 的 `not_member`
+  // 分支 `:73`）。2026-09-16 现读该键**在两侧缺席** ⇒ 该 toast 此前渲染裸键名
+  // `messages.groupKicked`（`i18n.js:28` 缺键回落 = 返回键名本身）。本批同族补齐，
+  // 中英同批（禁单语新增）。
+  'messages.groupKicked': '你已被移出群聊',
   // 移除成员的确认文案**补后果句**（决策卡 D：对齐退群 / 解散文案口径 ——
   // 原文案只说「将 X 移出群聊？」不含后果，是唯一没写后果的危险操作）。
   'messages.confirmKick': '将 {name} 移出群聊？移出后对方将不再收到该群消息，历史消息对其不可见，且需重新邀请才能加入。',
