@@ -52,12 +52,27 @@ Plan → author confirms → only then create implementation nodes. "Implementat
 Size the topology to the work. Every brief declares its tier + a one-line reason at create time.
 - **Tier 0 — read-only / analysis / report:** one node, zero merge; no implementation node, no sink.
 - **Tier 1 — micro-change:** small diff, single file, no behavior-contract change, criteria mechanically self-verifiable (prompt lines, copy, config values). ONE node carries implement + self-verify + merge, with the red/green nails and the landing criteria embedded in its brief. Merge still goes through the merge-window FIFO and the three landing criteria. Do NOT default to `impl → verify → sink`.
-- **Tier 2 — standard:** multi-file, cross-face, behavior-semantic change, or collision / regression risk. `impl → verify → sink` as before; tiering never weakens the verdict gate.
+- **Tier 2 — standard:** multi-file, cross-face, behavior-semantic change, or collision / regression risk. `impl → verify → sink` when an independent review slot is warranted (decree ④: only for a genuinely complex task, or when the author explicitly asks); tiering never weakens the verdict gate.
 - **Tier 1 is an explicit authorized exception to `## Verify before merge (hard order)`**, granted only when all five hold: small diff · single file · no behavior-contract change · mechanically self-verifiable criteria · self-verification includes mutation red-proof. All five are conjunctive — a near-miss is a Tier 2.
 - MUST NOT downgrade a Tier 2 to save nodes; MUST NOT treat a Tier 1 declaration as a verification bypass — Tier 1 self-verification criteria and mutation red-proof stay hard.
 
+## Dispatch economy (author decree 2026-09-16 · supersedes conflicting accumulated clauses)
+
+```text
+【派发经济性（作者 2026-09-16 令 · 逐字落实；与既有累积条文冲突处以本令为准）】
+① Card 工具 = 非文字可视化专用：积极用卡片做可视化输出；🔴 禁用卡片展示纯文本内容。
+② 需要绘制图片 ⇒ 走 Delegate（不得自行拼图/截图替代）。
+③ WT 仅在并行任务可能冲突时建（同文件/同目录的并发写者存在时）；否则直接在工作区做。
+④ verify 节点仅在任务非常复杂或作者明确要求时使用；默认 = 单节点「实施 + 自验（含变异红证）」。
+⑤ 尽量复用合并节点；🔴 一个合并节点最多接 4 个 WT。
+⑥ 不过度工程化：快速完成任务并汇报。
+⑦ 同类型任务补充 = 用 NodeMessage 复用既有节点（禁为同类补充新开链）。
+⑧ 积极并行：独立任务并行建节点。
+🔴 本令不放宽任何安全/纪律条文（长跑五条、改令即清场、前提与时效、零 push、禁 kill/禁重启、过程件落位、收口标准句、§7.1 嵌入段、熔断段）——只精简「过度工程化」条文。
+```
+
 ## Verify before merge (hard order)
-implement → independent review (never self-review) → merge sink → report; never reversed (a reversed batch is corrected with its brief). Merged-state integration verification ⇒ escalate for a waiver; a dirty main pollutes the accumulate-before-restart window.
+**Default = one node implements + self-verifies (mutation red-proof included), then lands**; **an independent review slot is set only for a complex task or on an explicit author request** (decree ④). When a review slot is set, still follow implement → independent review (never self-review) → merge sink → report; never reversed (a reversed batch is corrected with its brief). Merged-state integration verification ⇒ escalate for a waiver; a dirty main pollutes the accumulate-before-restart window.
 
 ## Task-brief rewrite channel
 `NodeEdit` cannot replace an existing node's `task` (write-back only on blocked/failed reactivation; not persisted otherwise). Rewrite via `Mail(address="node:<nodeId>", message=<new brief>)`: **running** ⇒ next turn boundary (`[NODE-MESSAGE]`); **wiring/pending** ⇒ appended to the task; **terminal** ⇒ REJECTED (`NODE_TERMINAL_NO_MESSAGE`).
