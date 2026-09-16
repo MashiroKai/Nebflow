@@ -234,7 +234,19 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
+      // 🔴 清理必须 best-effort：后台 fiber（sync loop / removePeer 宽限 / capture 清扫）
+      // 可能正往 `tmp/data` 里写 ⇒ `os.remove.all` 会抛 `DirectoryNotEmptyException`
+      // **顶掉真正的断言异常**（首轮变异验红即被顶掉，读数见
+      // `logs/07_mutation_M2_fc.log`：报的是清理异常而非断言）。清理失败只留 temp
+      // 目录，绝不得掩盖测试结论。
+      var attempts = 0
+      var removed  = false
+      while !removed && attempts < 3 do
+        attempts += 1
+        try
+          os.remove.all(tmp)
+          removed = true
+        catch case _: Exception => IO.sleep(200.millis).unsafeRunSync()
   }
 
 end DevicesDeltaBaselineSpec
