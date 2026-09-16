@@ -1002,7 +1002,47 @@ if [ "\$JAVA_MAJOR" -lt ${JDK_MAJOR_REQUIRED:-21} ]; then
     java_hint
     exit ${ERR_JAVA:-11}
 fi
-JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -n1)
+# >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
+# Name order != version order: the date scheme deliberately strips leading zeros
+# (Windows version fields reject them), so as plain strings "2026.10.5" sorts
+# BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple and take
+# the max. Version core = the SAME contract as packaging/app-version.sh:21
+#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+# The -beta.N tail is the same-day sequence (O-3), i.e. the tuple's 4th field.
+# Legacy semver shapes (1.4.1-beta.56) are ranked by the same 4-field tuple, so
+# the order is total and deterministic. A name that parses as neither is
+# EXCLUDED - deliberately NO silent fall back to name order: the caller's
+# existing "jar not found" error path then fires.
+_winsort_jar_key() { # <jar path> -> fixed-width numeric key (year,month,day,seq); rc=1 if unparseable
+  local _base="\${1:-}" _re
+  _base="\${_base##*/}"
+  _re='-assembly-([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.([0-9]+))?\.jar\$'
+  if [[ \$_base =~ \$_re ]]; then
+    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-0}))"
+    return 0
+  fi
+  _re='-assembly-([0-9]+)\.([0-9]+)\.([0-9]+)(-beta\.([0-9]+))?\.jar\$'
+  if [[ \$_base =~ \$_re ]]; then
+    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-0}))"
+    return 0
+  fi
+  return 1
+}
+_winsort_pick_newest() { # stdin: one candidate path per line -> prints the newest one
+  local _cand _key _best='' _best_key=''
+  while IFS= read -r _cand; do
+    [ -n "\$_cand" ] || continue
+    _key=\$(_winsort_jar_key "\$_cand") || continue
+    if [ -z "\$_best_key" ] || [ "\$_key" \> "\$_best_key" ]; then
+      _best="\$_cand"; _best_key="\$_key"
+    fi
+  done
+  [ -n "\$_best" ] && printf '%s\n' "\$_best"
+  return 0
+}
+# <<< WINSORT-END v1 <<<
+
+JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | _winsort_pick_newest)
 if [ -z "\$JAR" ]; then
     echo "ERROR: ${PRODUCT_NAME} JAR not found in \${SCRIPT_DIR}"
     exit 1
