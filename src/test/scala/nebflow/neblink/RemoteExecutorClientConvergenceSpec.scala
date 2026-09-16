@@ -107,10 +107,14 @@ class RemoteExecutorClientConvergenceSpec extends CatsEffectSuite:
                   .get
                   .execute("peer-one", "Bash", JsonObject("command" -> "echo hi".asJson))
                 calls <- IO(fix.relayExecCalls.asScala.toList)
-              yield (res, calls.map(_._1), calls.map(_._2), fix.logins.get(), tokenB)
+                // 批 2（2026-09-16 · C06）：**请求体级**锚 —— 把「2 次下发」拆成
+                // 「探针 1 + 业务 1」，而不是只对一个合计数「2」下判据。
+                probes <- IO(fix.relayExecProbeCount)
+                business <- IO(fix.relayExecBusinessCount)
+              yield (res, calls.map(_._1), calls.map(_._2), fix.logins.get(), tokenB, probes, business)
             ).guarantee(fiber.cancel *> tunnel.stop())
         yield
-          val (result, tokens, accepted, logins, tokenB) = out
+          val (result, tokens, accepted, logins, tokenB, probes, business) = out
           assertEquals(result, Right("remote-ok"), s"relay dispatch must succeed: $result")
           // xdev 批（2026-09-15）：`execute` 首触新增**只读画像探针**（`kind=probe`，
           // `RemoteExecutor.scala:308`）——探针同走 p2p→relay 链（本用例 peer 的
@@ -127,6 +131,11 @@ class RemoteExecutorClientConvergenceSpec extends CatsEffectSuite:
           )
           assertEquals(accepted, List(true, true), "and each must be accepted on the first try (no heal retry)")
           assertEquals(logins, 2, "no extra re-login: the stale session must never be used at all")
+          // 批 2（2026-09-16 · C06）**请求体级锚**（只增强，不改既有三条判据）：
+          // 夹具按请求体把 2 次下发分判（判别字面与 `StubPeerServer.probeHitCount`
+          // 逐字同源）⇒ 「2 次 = 探针 + 业务」不再只靠计数与兄弟 spec 口径支撑。
+          assertEquals(probes, 1, s"must be exactly ONE read-only profile probe on the relay path (bodies=${fix.relayExecBodies.asScala.toList})")
+          assertEquals(business, 1, s"and exactly ONE business dispatch (probe/business split read from the bodies, not from the count)")
       }.guarantee(IO.blocking(fix.close()))
     }
   }

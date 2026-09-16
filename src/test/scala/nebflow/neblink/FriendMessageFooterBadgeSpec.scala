@@ -170,13 +170,54 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
     assert(depth == 0, s"守卫括号不配平：$stmt")
     stmt.substring(m.end, i - 1)
 
+  /** 取**含徽标的 if 块**（守卫行 → 花括号配平收尾行），返回 (整块, 守卫行)。
+    *
+    * WHY（2026-09-16 specdrift 批 2 · C10）：JS 侧「守卫行 / 语句行 / 收尾行」是**三行**
+    * （`messages.js:1818 if (isAgentSent(m)) {` → `:1819 appendChild(badge)` → `:1820 }`），
+    * 单行定位器（`linesIterator.find`）只会捞到中间的 appendChild 行 ⇒ `guardOf` 报
+    * 「该语句缺 if 守卫」= **判据假红**（语义从未漂移）。
+    *
+    * 定位法**不依赖行号、也不依赖守卫与语句同行**：自徽标行向上找最近的 `if (` 开块行，
+    * 再向下配平花括号取整块 ⇒ 判据仍作用在**守卫表达式**上，语义与强度逐字不变。 */
+  private def guardedBadgeBlock(src: String): (String, String) =
+    val lines   = src.linesIterator.toIndexedSeq
+    val badgeAt = lines.indexWhere(_.contains("fm-msg-agent-badge"))
+    assert(badgeAt >= 0, "未找到徽标渲染语句（判据锚已漂移）")
+    val guardAt = (badgeAt to 0 by -1)
+      .find(i => """^\s*if\s*\(""".r.findFirstIn(lines(i)).isDefined)
+      .getOrElse(fail(s"徽标语句之上无 if 守卫行（判据锚已漂移）：${lines(badgeAt)}"))
+    var depth  = 0
+    var opened = false
+    var end    = -1
+    var i      = guardAt
+    while i < lines.length && end < 0 do
+      lines(i).foreach { c =>
+        c match
+          case '{' => depth += 1; opened = true
+          case '}' => depth -= 1
+          case _   => ()
+      }
+      if opened && depth == 0 then end = i
+      i += 1
+    assert(end > guardAt, s"守卫块花括号不配平（判据无法判读）：${lines(guardAt)}")
+    (lines.slice(guardAt, end + 1).mkString("\n"), lines(guardAt))
+
   test("D-B2 徽标可见性门 = isAgentSent(m)，`out` 不再是条件（作者裁「双方可见」）") {
-    val line = code.linesIterator.find(_.contains("fm-msg-agent-badge"))
-      .getOrElse(fail("未找到徽标渲染语句（判据锚已漂移）"))
-    // 语义谓词 = 该语句的**守卫表达式**（归一化空白后比对），而不是整句字面串。
-    val guard = guardOf(line).replaceAll("\\s+", "")
-    assertEquals(guard, "isAgentSent(m)", s"守卫应为 isAgentSent(m)：$line")
-    assert(!guard.contains("out"), s"守卫不得再含方向门 out（接收侧将永不显徽标）：$line")
+    // 锚点迁移（C10）：定位面由「含徽标的**单行**」改为「含徽标的 **if 块**」——
+    // 守卫与语句分行后语义未变，只有定位器需要跟随（见 `guardedBadgeBlock` 的 WHY）。
+    val (block, guardLine) = guardedBadgeBlock(code)
+    // 语义谓词 = 该块的**守卫表达式**（归一化空白后比对），而不是整句字面串。
+    val guard = guardOf(guardLine).replaceAll("\\s+", "")
+    assertEquals(guard, "isAgentSent(m)", s"守卫应为 isAgentSent(m)：$guardLine")
+    assert(!guard.contains("out"), s"守卫不得再含方向门 out（接收侧将永不显徽标）：$guardLine")
+    // 判据强度只增不减：徽标恰**一处**渲染，且该处就在 `isAgentSent(m)` 的守卫块内
+    // （新增「守卫外裸露渲染」= 无条件显徽标 ⇒ 本断言必红）。
+    assertEquals(
+      code.linesIterator.count(_.contains("fm-msg-agent-badge")),
+      1,
+      s"徽标必须恰一处渲染（守卫外裸露渲染即假绿）:\n$block"
+    )
+    assert(block.contains("fm-msg-agent-badge"), s"徽标必须落在该守卫块内：$block")
   }
 
   test("D-B3 resolveOut 兜底档不再恒 out：两源皆缺席走显式证据判据（P5）") {

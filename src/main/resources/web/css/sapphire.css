@@ -766,3 +766,384 @@
   background: var(--sapphire-tint-10);
   border-color: var(--sapphire-tint-15);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   按钮语义五类 — 方向 A「Glass Control standard 全面铺开」
+   （2026-09-16 第二段实施批；作者挑型 = 方案 A，依据 = 挑型卡 §三推荐 +
+   §四 判红终稿 R1′–R12′ / J1–J8）
+   ───────────────────────────────────────────────────────────────────────
+   四类角色 + 禁用档，逐面按**语义归属**重绘（含 4 条名实不符枚的改属）：
+     主操作 = 绿实心（`--color-primary` + 白墨）
+     次操作 = 描边（中性玻璃材质保留：既有 `--glass-send-stack`）
+     幽灵   = 无底 + 文字弱化
+     危险   = 红描边 + 红字（单源 = `--color-danger`）
+     禁用   = 灰材质 + `cursor:not-allowed`（R2′ 具名档）
+   材质 = 既有 `.glass-control`（本文件 :147-157）/ `--glass-send-*`（:336-384）
+   同一批 token ⇒ 零新增材质、零另创视觉语言（铁律 2 无需豁免）。
+   反馈分档（作者 2026-09-11 裁定 B）：亮档 = 边框 / 环 + 投影；暗档 = 填充递进。
+   🔴 字面量纪律（R4′）：本块**规则体**零字面量色值（只写 `var()` 与 `color-mix()`）；
+   唯一字面量 = 主操作白墨 token，值逐字取自既有 `sidebar.css:1166` 的
+   `.cfg-btn-primary` 墨色声明 ⇒ R4′ 唯一豁免项，逐行申报见交付 §R4′。
+   🔴 分类纪律（R2′/J1）：五类判定**只依赖 token 值**（读 `:root` 具名 token 与元素
+   computed style 比色，不读类名）—— 判据实现 =
+   `.nebflow/tools/20260916_btnsweep-analyze.cjs` 的 `resolveClass()`。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 五类具名 token（单源；值全部指向既有 token / 既有字面量）──────────── */
+:root {
+  /* 主操作 */
+  --btn-primary-bg: var(--color-primary);
+  --btn-primary-bg-hover: var(--color-primary-hover);
+  --btn-primary-ink: #fff; /* 值逐字取自既有 sidebar.css:1166 的 `.cfg-btn-primary` 墨色声明（R4′ 唯一豁免） */
+  --btn-primary-tint: rgb(var(--brand-green) / 0.35); /* 开关 ON 档（sidebar.css:2421 同源） */
+  /* 次操作（描边；fill 档 = 开关等非文本控件保留的既有中性玻璃填充） */
+  --btn-secondary-bg: transparent;
+  --btn-secondary-stroke: var(--glass-send-border-active);
+  --btn-secondary-stroke-hover: var(--color-frame-text-muted);
+  --btn-secondary-ink: var(--color-text);
+  --btn-secondary-fill: var(--glass-control-bg);
+  --btn-secondary-fill-hover: var(--glass-control-bg-hover);
+  --btn-secondary-fill-stroke: var(--glass-control-border); /* 填充档描边（开关等非文本控件既有档，仅具名化） */
+  /* 幽灵 */
+  --btn-ghost-bg: transparent;
+  --btn-ghost-ink: var(--color-frame-text);
+  --btn-ghost-ink-hover: var(--color-text);
+  /* 危险（红描边 + 红字；单源 = --color-danger，亮暗双档见 base.css） */
+  --btn-danger-bg: transparent;
+  --btn-danger-stroke: var(--color-danger);
+  --btn-danger-ink: var(--color-danger);
+  --btn-danger-tint: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  /* 禁用 / 掉线（两个既有灰档，均具名） */
+  --btn-disabled-bg: var(--glass-send-bg-disabled);
+  --btn-disabled-stroke: var(--glass-send-border-disabled);
+  --btn-disabled-ink: var(--color-text-muted);
+  --btn-unavailable-bg: var(--glass-send-bg-active);
+  --btn-unavailable-stroke: var(--glass-send-border-active);
+}
+
+/* 幽灵墨色暗档：亮档用 `--color-frame-text`（弱于次操作 `--color-text` 的一档），
+   暗档 `--color-frame-text`（c8cad0）在输入条一类偏亮底衬上只有 4.29:1（< 4.5 判红）
+   ⇒ 暗档改用 `--color-text`（e8eaed）⇒ 同一底衬 5.83:1 ✔。
+   梯子改由「描边有无」承担（次操作 = 描边 / 幽灵 = 无底）—— 与方向 A 的定义一致。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --btn-ghost-ink: var(--color-text);
+  }
+}
+
+/* ── 可点面 cursor 全覆盖（R7′/J4：default 计数 = 0）────────────────────
+   行级面（`.fm-row` / `.fm-nf-entry` / `.fm-pick-row` / 设备行）与抽屉动作键
+   （`.fm-gs-*`）/ 建群主键此前落到 UA 默认 cursor（= `default`）⇒ 本块统一
+   `pointer`；禁用档在下方覆盖为 `not-allowed`。 */
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row, .fm-device-row,
+    .fm-msg-act, .fm-msg-time.time-toggle, .fm-modal-title-btn, .fm-modal-close,
+    .fm-gs-open, .panel-btn, .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-gs-save, .fm-gs-role, .fm-gs-kick, .fm-gs-action, .fm-msg-btn,
+    .fm-search-btn, .fm-device-desc-btn, .fm-context-menu button) {
+  cursor: pointer;
+}
+
+/* ── 幽灵 — 无底 + 文字弱化（行级面 R12′：允许 rest 零区隔，但 hover ∧ active
+   双态必有实测反馈）────────────────────────────────────────────────────── */
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button:not(.danger)) {
+  background: var(--btn-ghost-bg);
+  border-color: transparent;
+  color: var(--btn-ghost-ink);
+  box-shadow: none;
+  cursor: pointer;
+}
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button:not(.danger)):hover {
+  color: var(--btn-ghost-ink-hover);
+}
+@media (prefers-color-scheme: light) {
+  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+      .settings-avatar-entry, .settings-collapse-toggle,
+      .fm-context-menu button:not(.danger)):hover {
+    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover),
+                0 2px 7px var(--glass-send-shadow-hover);
+  }
+  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+      .settings-avatar-entry, .settings-collapse-toggle,
+      .fm-context-menu button:not(.danger)):active {
+    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke),
+                var(--glass-send-shadow-active);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+      .settings-avatar-entry, .settings-collapse-toggle,
+      .fm-context-menu button:not(.danger)):hover {
+    background: var(--btn-secondary-fill-hover);
+  }
+  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+      .settings-avatar-entry, .settings-collapse-toggle,
+      .fm-context-menu button:not(.danger)):active {
+    background: var(--btn-unavailable-bg);
+  }
+}
+
+/* ── 图标幽灵面（附件小键等，与文字幽灵同档）──────────────────────────────
+   `.fm-attach-btn`（群/设备会话窗 + dropbox 输入条的附件键）此前墨色取
+   `--color-frame-text-muted`（暗档 = 81838a 落在输入条底衬上仅 4.29:1 ⇒ 判红）
+   ⇒ 并入幽灵档：无底 + `--btn-ghost-ink`（暗档 = --color-text）⇒ 同一底衬 13.5:1 ✔。 */
+.fm-attach-btn {
+  background: var(--btn-ghost-bg);
+  border-color: transparent;
+  color: var(--btn-ghost-ink);
+  box-shadow: none;
+  cursor: pointer;
+}
+.fm-attach-btn:hover { color: var(--btn-ghost-ink-hover); }
+@media (prefers-color-scheme: light) {
+  .fm-attach-btn:hover { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover), 0 2px 7px var(--glass-send-shadow-hover); }
+  .fm-attach-btn:active { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke), var(--glass-send-shadow-active); }
+}
+@media (prefers-color-scheme: dark) {
+  .fm-attach-btn:hover { background: var(--btn-secondary-fill-hover); }
+  .fm-attach-btn:active { background: var(--btn-unavailable-bg); }
+}
+.fm-attach-btn:disabled {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-stroke);
+  color: var(--btn-disabled-ink);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+/* ── 次操作 — 描边（中性玻璃材质保留；fill 档只留给非文本控件）────────── */
+button.glass-control,
+.cfg-btn:not(.cfg-btn-primary),
+.fm-msg-btn,
+.fm-search-btn,
+.fm-device-desc-btn,
+.neblink-switch-btn {
+  background: var(--btn-secondary-bg);
+  border-color: var(--btn-secondary-stroke);
+  color: var(--btn-secondary-ink);
+  box-shadow: var(--glass-send-stack);
+  cursor: pointer;
+}
+button.glass-control:hover,
+.cfg-btn:not(.cfg-btn-primary):hover,
+.fm-msg-btn:hover,
+.fm-search-btn:hover,
+.fm-device-desc-btn:hover,
+.neblink-switch-btn.neblink-switch-btn:hover {
+  border-color: var(--btn-secondary-stroke-hover);
+  color: var(--btn-secondary-ink);
+}
+button.glass-control:active,
+.cfg-btn:not(.cfg-btn-primary):active,
+.fm-msg-btn:active,
+.fm-search-btn:active,
+.fm-device-desc-btn:active,
+.neblink-switch-btn.neblink-switch-btn:active {
+  border-color: var(--btn-secondary-stroke-hover);
+  background: var(--btn-secondary-bg);
+}
+@media (prefers-color-scheme: light) {
+  button.glass-control:hover,
+  .cfg-btn:not(.cfg-btn-primary):hover,
+  .fm-msg-btn:hover,
+  .fm-search-btn:hover,
+  .fm-device-desc-btn:hover,
+  .neblink-switch-btn.neblink-switch-btn:hover {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
+  }
+  button.glass-control:active,
+  .cfg-btn:not(.cfg-btn-primary):active,
+  .fm-msg-btn:active,
+  .fm-search-btn:active,
+  .fm-device-desc-btn:active,
+  .neblink-switch-btn.neblink-switch-btn:active {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  button.glass-control:hover,
+  .cfg-btn:not(.cfg-btn-primary):hover,
+  .fm-msg-btn:hover,
+  .fm-search-btn:hover,
+  .fm-device-desc-btn:hover,
+  .neblink-switch-btn.neblink-switch-btn:hover {
+    background: var(--btn-secondary-fill-hover);
+  }
+  button.glass-control:active,
+  .cfg-btn:not(.cfg-btn-primary):active,
+  .fm-msg-btn:active,
+  .fm-search-btn:active,
+  .fm-device-desc-btn:active,
+  .neblink-switch-btn.neblink-switch-btn:active {
+    background: var(--btn-unavailable-bg);
+  }
+}
+
+/* ── 危险 — 红描边 + 红字（有 1px 边者走 border-color；无边者走 inset 环 ⇒
+   R11′ 几何零漂移）────────────────────────────────────────────────────── */
+button.glass-control.fm-gs-kick,
+button.glass-control.fm-gs-danger,
+button.glass-control.fm-gs-action.fm-gs-danger,
+button.fm-req-decline,
+.neblink-logout-btn {
+  background: var(--btn-danger-bg);
+  border-color: var(--btn-danger-stroke);
+  color: var(--btn-danger-ink);
+  box-shadow: var(--glass-send-stack);
+  cursor: pointer;
+}
+.fm-context-menu button.danger,
+.explorer-context-menu button.danger,
+.canvas-tab-context-menu button.danger {
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-ink);
+  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  cursor: pointer;
+}
+button.glass-control.fm-gs-kick:hover,
+button.glass-control.fm-gs-danger:hover,
+button.glass-control.fm-gs-action.fm-gs-danger:hover,
+button.fm-req-decline:hover,
+.neblink-logout-btn:hover,
+.fm-context-menu button.danger:hover,
+.explorer-context-menu button.danger:hover,
+.canvas-tab-context-menu button.danger:hover {
+  border-color: var(--btn-danger-ink);
+  color: var(--btn-danger-ink);
+  background: var(--btn-danger-tint);
+}
+button.glass-control.fm-gs-kick:active,
+button.glass-control.fm-gs-danger:active,
+button.glass-control.fm-gs-action.fm-gs-danger:active,
+button.fm-req-decline:active,
+.neblink-logout-btn:active,
+.fm-context-menu button.danger:active,
+.explorer-context-menu button.danger:active,
+.canvas-tab-context-menu button.danger:active {
+  border-color: var(--btn-danger-stroke);
+  background: var(--btn-danger-tint);
+  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+}
+
+/* ── 主操作 — 绿实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
+   `.glass-control.fm-gs-save` / `.glass-control.fm-req-accept` 的特异度
+   (0,2,1) 高于次操作档 (0,1,1)）──────────────────────────────────────── */
+#dropbox-send-btn,
+.cfg-btn.cfg-btn-primary,
+button.fm-send-btn,
+button.fm-verify-send,
+button.fm-send-chip,
+button.fm-create-submit,
+button.glass-control.fm-gs-save,
+button.glass-control.fm-req-accept {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg-hover);
+  color: var(--btn-primary-ink);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow: var(--glass-send-stack);
+  cursor: pointer;
+  opacity: 1;
+}
+#dropbox-send-btn:hover,
+.cfg-btn.cfg-btn-primary:hover,
+button.fm-send-btn:hover,
+button.fm-verify-send:hover,
+button.fm-send-chip:hover,
+button.fm-create-submit:hover,
+button.glass-control.fm-gs-save:hover,
+button.glass-control.fm-req-accept:hover {
+  background: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
+  color: var(--btn-primary-ink);
+  opacity: 1;
+}
+#dropbox-send-btn:active,
+.cfg-btn.cfg-btn-primary:active,
+button.fm-send-btn:active,
+button.fm-verify-send:active,
+button.fm-send-chip:active,
+button.fm-create-submit:active,
+button.glass-control.fm-gs-save:active,
+button.glass-control.fm-req-accept:active {
+  border-color: var(--glass-send-border-active);
+  box-shadow: var(--glass-send-stack),
+              inset 0 1px 3px var(--glass-control-underedge);
+}
+@media (prefers-color-scheme: light) {
+  #dropbox-send-btn:active,
+  .cfg-btn.cfg-btn-primary:active,
+  button.fm-send-btn:active,
+  button.fm-verify-send:active,
+  button.fm-send-chip:active,
+  button.fm-create-submit:active,
+  button.glass-control.fm-gs-save:active,
+  button.glass-control.fm-req-accept:active {
+    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+  }
+}
+
+/* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
+   · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
+     设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
+   · 只补两件：① 状态反馈（hover / active：亮档走投影、暗档走填充递进，与次操作同
+     一族语言）；② 显式墨色（`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件
+     仍按可读性口径给值，避免「读数为黑却是继承而来」的隐性缺陷）。
+   注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
+   `--btn-primary-tint`（既有 brand-green 35% 三元组）⇒ 分类仍只依赖 token。 */
+.nb-toggle {
+  color: var(--btn-secondary-ink);
+  border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.nb-toggle:hover { border-color: var(--btn-secondary-stroke-hover); }
+.nb-toggle.on { color: var(--btn-secondary-ink); }
+
+/* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
+   声明在最后 ⇒ 与 `:hover` 同档时以禁用胜出）────────────────────────── */
+:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
+    button.fm-verify-send, button.fm-send-chip, button.fm-create-submit,
+    button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
+    button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
+    button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
+    .neblink-logout-btn, button.glass-control, .cfg-btn:not(.cfg-btn-primary),
+    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
+    .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button):disabled,
+:is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
+    button.fm-verify-send, button.fm-send-chip, button.fm-create-submit,
+    button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
+    button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
+    button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
+    .neblink-logout-btn, button.glass-control, .cfg-btn:not(.cfg-btn-primary),
+    .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
+    .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button)[aria-disabled="true"] {
+  background: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-stroke);
+  color: var(--btn-disabled-ink);
+  box-shadow: var(--glass-send-stack);
+  cursor: not-allowed;
+  opacity: 1;
+}

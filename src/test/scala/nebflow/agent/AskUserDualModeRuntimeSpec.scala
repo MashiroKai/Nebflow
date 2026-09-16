@@ -261,7 +261,19 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       reqs1 <- f.requests.get
       toolResults <- IO(lastToolResults(reqs1))
       ack = toolResults.find(_.contains("non-blocking:")).getOrElse(fail(s"未拿到非阻塞 ack：$toolResults"))
-      requestId = """requestId=([0-9a-f]+)""".r.findFirstMatchIn(ack).map(_.group(1)).getOrElse(fail(s"ack 缺 requestId：$ack"))
+      // 🔴 锚点迁移（2026-09-16 specdrift 批 2 · C15）：`#250 第五项 requestId 熵强化`（单点
+      // 生成器，作用域前缀 `asknb-`）后，requestId = `asknb-` + 16 hex（调用点
+      // `AskUserQuestionTool.scala:409-411`，生成器 `InteractionRequestId.forAskUserNonBlocking`）。
+      // 旧正则 `requestId=([0-9a-f]+)` 只能从 `asknb-…` 里捞到首字符 `a` ⇒ 期望值随之错（假红）；
+      // 下一条断言（卡片 requestId == 本值）即「同步期望值」腿。
+      requestId = """requestId=(asknb-[0-9a-f]+)""".r.findFirstMatchIn(ack).map(_.group(1)).getOrElse(fail(s"ack 缺 requestId：$ack"))
+      // 判据强度只增不减：随机段长度逐字钉到契约常量 `InteractionRequestId.RandomHexChars`
+      //（熵强化正是本条契约的本体 —— 旧版只比对「正则捞到的串 == 卡片串」，熵退化不会被发现）。
+      _ = assertEquals(
+        requestId.length,
+        "asknb-".length + InteractionRequestId.RandomHexChars,
+        s"requestId 随机段必须 = InteractionRequestId.RandomHexChars（读数 $requestId）"
+      )
       // ② 卡片渲染（同一 requestId）+ 槽位 +1
       _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "无 askUser 帧")
       frames <- f.wsEvents.get

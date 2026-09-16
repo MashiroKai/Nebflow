@@ -166,7 +166,17 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
       "未 seed cursor 的首条推送必须让未读落账 —— 修前 unreadCounts 恒为空 map（静默丢失）"
     )
     assertEquals(pulled.map(_._1), List("c-boot"), "同一路径的 keyset 补拉不得被回落分支吞掉")
-    assertEquals(pulled.map(_._2), List(0L), "回落条目锚点 0 ⇒ 首次补拉覆盖全量（after=0）")
+    // 🔴 断言前提迁移（2026-09-16 specdrift 批 2 · C01）：冷锚腿的取数起点**不再是 0**。
+    // 现行契约（`FriendService.scala:646` 注文 + `:680-688` 实现）：冷锚（`pullAnchor == 0`）
+    // **带 `afterHint`** 时以 `afterHint - 1` 为起点取**恰好那一窗** —— 既拿到被吞的那条，
+    // 又不把一页最旧的历史当成新消息塞进已开着的最新窗口；**无提示**才走「不取数」的
+    // 零值对账行（`pulled=0`）。本用例事件 `messageId` = 7 ⇒ 起点 = 7 - 1 = **6**。
+    // 判据强度未减：仍逐字钉住「补拉确已发生」的**起点值**，只是锚到现行契约的那一窗。
+    assertEquals(
+      pulled.map(_._2),
+      List(6L),
+      "冷锚腿 = afterHint - 1 恰好那一窗（事件 messageId 7 ⇒ 6）：补被吞的那条，不是从 0 全量"
+    )
   }
 
   test("#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / readAnchor / unreadSnapshot 语义未破（setRead 判据按 §3.5 拆字段更新）") {
