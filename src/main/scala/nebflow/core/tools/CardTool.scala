@@ -79,8 +79,13 @@ object CardTool extends Tool:
    * candidate URL, a CSS `url(...)` token or a bare `@import`): embed it,
    * proxy it, ignore it, exempt it, or reject it with a reason.
    *
-   * Only `~`/`/` anchored references are ever proxied. Relative references stay
-   * unproxied and WARN instead of silently doing nothing — that also keeps
+   * Only ANCHORED references are ever proxied — `~`, a POSIX absolute path
+   * (`/…`) and a Windows drive-letter absolute path (`C:/…`, `C:\…`; winpath
+   * batch, 2026-09-17: the gate used to accept only the first two, so a
+   * drive-letter reference was reported as a relative mistake — see
+   * `FileRefs.WindowsDriveRoot` for why `PathUtil.isAbsolute` is not reused
+   * verbatim here). Relative references stay unproxied and WARN instead of
+   * silently doing nothing — that also keeps
    * `?path=images/logo.png` (resolved by the endpoint against the *server's*
    * working directory) out of the URL space, which the docs always promised.
    * A failing value that is simultaneously a gateway route (`/js/…`) is
@@ -101,10 +106,16 @@ object CardTool extends Tool:
     if !isLocalFilePath(value) || !looksLikeFilePath(value) then RefDecision.Ignore
     else
       val verdict =
-        if !value.startsWith("~") && !value.startsWith("/") then
+        if isUncPath(value) then
           unresolvable(
             value,
-            "relative references are never resolved — use an absolute path (`/Users/you/…`) or `~/…`"
+            "Windows UNC references (`\\\\server\\share\\…`) are not resolved — copy the file to a local " +
+              "absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or under `~/…` and reference that"
+          )
+        else if !isAnchoredRefPath(value) then
+          unresolvable(
+            value,
+            "relative references are never resolved — use an absolute path (`/Users/you/…`, `C:\\Users\\you\\…`) or `~/…`"
           )
         else if hasTemplatePlaceholder(value) then
           unresolvable(
@@ -369,7 +380,7 @@ dot -Tsvg -o /tmp/output.svg input.dot
 
 HTML must be self-contained (all styles/tags inline, no external CSS/JS).
 
-Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved.
+Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either.
 
 **Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `projects/**`, `uploads/**`, `plots/**`, `workspace-items/**`, `voice-models/**` (so `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served) and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown: copy it under `projects/**` (or shrink the image) instead.
 
@@ -472,7 +483,7 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
-Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request; every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `projects/ uploads/ plots/ workspace-items/ voice-models/`; project `.nebflow/`: `evidence*/` — `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served).
+Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request; every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `projects/ uploads/ plots/ workspace-items/ voice-models/`; project `.nebflow/`: `evidence*/` — `${nebflow.core.PathUtil.dataRootRenderValue}/docs/**` is NOT served).
 
 Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
 
