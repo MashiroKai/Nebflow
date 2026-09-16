@@ -58,6 +58,11 @@ import { sendFiles, attachAvailable, renderUploadCards, detachUploadCards, clear
 // 头像复用池 + 九宫格内容签名（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
 // 唯一入口 = avatarRender.js（判据与池都在那边，本模块只消费）。
 import { avatarImgNode, avatarCellsSignature } from './avatarRender.js';
+// 内联图片附件的取字节/票据面：好友·群面 = 既有鉴权路由（friendsApi），设备面 =
+// 既有本机落盘路径的 nf-ticket 链（`ticketUrl`）。两套都是**既有**取数面，
+// 本批禁新增第三条取字节路（并禁与另一套附件渲染面混淆）。
+import { ticketUrl } from './nfTicket.js';
+import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -696,7 +701,8 @@ function currentConv() {
  *  🔴 同一两级序也是**会话列表群行** `convRow` 群分支的优先序（`groupMemberAvatars`
  *  缓存 → `conv.memberAvatars` → 首字母）⇒ 两处**同源同序**（本批 ①的客户端兜底）。
  *  两级都空（名册未到 / 字段缺席 / 畸形 / 群 0 人）⇒ 回退标题首字母那一枚
- *  （现状形态 = 降级态）。逐格无 `avatarUrl` 由 groupAvatarGrid 内逐格首字母兜底。 */
+ *  （现状形态 = 降级态）。逐格无 `avatarUrl` 由 groupAvatarGrid 内逐格首字母兜底。
+ *
  *  🔴 2026-09-17 uifix 批（作者令「群头像没有被缓存，我每次点进群……都会闪一下」）：
  *  **重绘前先比内容签名**，签名相同 ⇒ **零 DOM 操作**直接返回。
  *  · 改前恒 `host.innerHTML = ''` + 重建 ⇒ 每次进群一次全量替换（实测
@@ -1616,6 +1622,8 @@ function attachmentCard(att) {
     // 无 `savedPath`（发出腿 / 未完成 / 失败）⇒ 本地没有可读件 ⇒ 保持不可点
     // （禁「可点但点了报错」，§B.7 ③；状态位文案即用户可见的说明）。
     const localPath = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
+    // ④ 图片直显（设备端）：本机落盘件在手 ⇒ 走既有 nf-ticket 链取字节。
+    attachInlineImage(card, att, kind);
     if (localPath && canPreviewLocalPath(localPath)) {
       makeCardPreviewable(card, att, () => previewLocalPath({ path: localPath, title: (att && att.name) || '' }) !== 'ok');
     }
@@ -1636,12 +1644,136 @@ function attachmentCard(att) {
     // 预览腿（作者令 2026-09-15）：**整卡可点 = 在 Canvas 里预览**；下载键是卡内
     // 嵌套键，其点击不得冒泡成预览（见 `makeCardPreviewable` 的事件路由）。
     // 只有 `ready` 态挂可点面：其余态无字节可取（§B.7 ③ 不造假按钮）。
+    // ④ 图片直显（好友端 / 群聊端 —— 两面共用本卡片单点渲染）。
+    attachInlineImage(card, att, kind);
     makeCardPreviewable(card, att, () => previewFriendAttachment(att, card));
   } else {
     card.appendChild(note);
     card.setAttribute('aria-disabled', 'true');
   }
   return card;
+}
+
+/** 图片附件 → **对话框内直显**（uifix 批 · 作者令 2026-09-17 逐字：
+ *  「另外，如果传的附件是图片的话，要支持直接在对话框显示，（好友、群聊、设备）。」）
+ *
+ *  ── 判据（**现读既有单源，禁第二张表**）──
+ *  类型判据 = `itemTypeForFileName`（`fileViewers.js`，仓内 ext→itemType 真源，
+ *  `attachmentPreview.js:14` 已 import 同一函数）⇒ 命中 `'image'` 才直显。
+ *  🔴 **非图片附件零行为变化**：本函数第一行即返回，卡片仍走原路径（名称/体积/
+ *  下载键/整卡预览）。
+ *  字节在手时再以真字节复核（`blob.type` 前缀 `image/`）——判据源仍是既有面
+ *  （`avatarCache.js:blobToDataUrl` 同款口径），不新增规格。
+ *
+ *  ── 取字节（🔴 两套**既有**面，禁第三条路）──
+ *  · 好友 / 群聊：`api.downloadAttachment(att.id)` = 应用内鉴权路由
+ *    `/api/friends/attachments/{id}`（与下载腿、Canvas 预览腿**同一个**取字节口）。
+ *  · 设备：本机落盘件 `att.deviceSavedPath` ⇒ `nfTicket.ticketUrl(path)` 取
+ *    `/api/nf-file?path=…&ticket=…`（**既有票据面**：per-path 票据、TTL 1800s、
+ *    票据内不限次读、三连失败熔断 15s —— 常量与语义见 `nfTicket.js:12-31`）。
+ *
+ *  ── 与 `imgticket` 口径的对齐（逐条，任务书要求）──
+ *  · **票据面只用于「本机路径」**：`nfTicket` 的键是 `path`（本机绝对路径），
+ *    好友/群附件的字节在**远端**、没有本机路径 ⇒ 它们**不得**走 nf-ticket，
+ *    仍走既有鉴权路由。两套面**不混淆**（本函数按会话类型分流，非按类型猜测）。
+ *  · **零新真源**：不新增端点、不新增票据类型、不新增 URL 拼接（nf-file 的 URL
+ *    拼法仍由 `nfTicket.ticketUrl` 单点产出）。
+ *  · **零新增内联预算**：字节上限复用 `attachmentPreview.js` 的
+ *    `MAX_INLINE_IMAGE_BYTES`（**同值同源于** `MAX_TEXT_BYTES` 的 10MB —— 同一份
+ *    字节从同一条鉴权路由取回，禁第二把尺）。超限 ⇒ 不直显（卡片原样，可见降级）。
+ *  · **失败失败静默、可行动**：取字节失败 ⇒ 摘掉直显槽、卡片原样（下载键/预览腿
+ *    仍在）⇒ 不造破图、不静默无反应。
+ *
+ *  ── 重绘零重拉（与 ② 同一纪律）──
+ *  好友/群面按 `att.id` 复用**同一枚 objectURL**（`inlineObjectUrls`，有界 LRU）：
+ *  气泡因增量刷新重建时，`<img>` 复用已解码 URL ⇒ 不重拉、不重解码。
+ *  设备面 `ticketUrl` 自带票据缓存 ⇒ 同样不重取。
+ *
+ *  @param {HTMLElement} card 附件卡
+ *  @param {any} att 已归一附件对象
+ *  @param {string} kind `attStateOf` 的结果（`ready` / `device` / …）
+ *  @returns {boolean} 是否挂了直显槽 */
+function attachInlineImage(card, att, kind) {
+  if (!card || !att) return false;
+  if (kind !== 'ready' && kind !== 'device') return false;
+  if (card.querySelector('.fm-att-inline')) return false; // 幂等（防同卡重入）
+  const name = (att && att.name) ? String(att.name) : '';
+  if (!isImageAttachmentName(name)) return false; // 非图片 ⇒ 零行为变化
+
+  const box = el('div', 'fm-att-inline');
+  box.dataset.attInline = '1';
+  /** @param {string} url */
+  const mount = (url) => {
+    const img = document.createElement('img');
+    img.alt = name;
+    img.src = url;
+    box.appendChild(img);
+    img.addEventListener('error', () => box.remove(), { once: true });
+  };
+  card.insertBefore(box, card.firstChild);
+
+  if (kind === 'device') {
+    // 设备面：字节 = 本机落盘件（只有 `deviceSavedPath` 在场才有本地可读件；
+    // 发出腿 / 未完成 / 失败 ⇒ 本机没有这件 ⇒ 不直显，状态位文案即说明面）。
+    const p = att.deviceSavedPath ? String(att.deviceSavedPath) : '';
+    if (!p) { box.remove(); return false; }
+    ticketUrl(p)
+      .then((url) => { if (url) mount(url); else box.remove(); })
+      .catch(() => box.remove());
+    return true;
+  }
+
+  // 好友 / 群聊：字节 = 既有鉴权下载路由。
+  const id = att.id ? String(att.id) : '';
+  if (!id) { box.remove(); return false; }
+  if (typeof att.size === 'number' && att.size > 0 && att.size > MAX_INLINE_IMAGE_BYTES) {
+    box.remove(); // 超内联预算 ⇒ 可见降级（卡片原样）
+    return false;
+  }
+  const cached = inlineObjectUrlOf(id);
+  if (cached) { mount(cached); return true; }
+  api.downloadAttachment(id)
+    .then(({ blob }) => {
+      if (!blob || !String(blob.type || '').startsWith('image/')
+        || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
+        box.remove();
+        return;
+      }
+      mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)));
+    })
+    .catch(() => box.remove()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
+  return true;
+}
+
+/** 好友/群图片附件的 objectURL 复用表（有界 LRU；淘汰即撤销，禁泄漏）。
+ *  🔴 键 = 附件 id（同一次取字节 = 同一份字节 ⇒ 同一枚 URL），重绘零重拉。
+ *  @type {Map<string, string>} */
+const inlineObjectUrls = new Map();
+/** 上限 = 同屏可见附件数的数倍；超出即撤销最久未用者（气泡滚动是 LRU 序）。 */
+const INLINE_URL_MAX = 64;
+
+/** @param {string} id */
+function inlineObjectUrlOf(id) {
+  const url = inlineObjectUrls.get(id);
+  if (!url) return '';
+  inlineObjectUrls.delete(id);
+  inlineObjectUrls.set(id, url); // LRU touch
+  return url;
+}
+
+/** @param {string} id @param {string} url */
+function rememberInlineObjectUrl(id, url) {
+  inlineObjectUrls.set(id, url);
+  while (inlineObjectUrls.size > INLINE_URL_MAX) {
+    const oldest = inlineObjectUrls.keys().next();
+    if (oldest.done) break;
+    const victim = inlineObjectUrls.get(oldest.value);
+    inlineObjectUrls.delete(oldest.value);
+    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
+    else { inlineObjectUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
+  }
+  return url;
 }
 
 /** 把整张附件卡变成「点一下 = 预览」的可点面（好友 ready 态 / 设备有本地件态共用）。

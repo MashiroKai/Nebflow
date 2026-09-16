@@ -43,6 +43,27 @@ const EXCLUDED_ITEM_TYPES = new Set(['html']);
 /** 文本预览上限：与 `pop.readFile` 的 10MB 闸**同值同源**（禁第二把尺）。 */
 const MAX_TEXT_BYTES = 10 * 1024 * 1024;
 
+/** 对话框内**直显**图片附件的字节上限（uifix 批 2026-09-17）。
+ *
+ *  刻意**同值同源**于本文件的 `MAX_TEXT_BYTES`：两者都是「一件附件可以进页面」
+ *  的同一把尺（同一份字节从同一条鉴权路由取回），分头写两个字面量迟早漂移。
+ *  超限 ⇒ 不直显（回落既有附件卡：名称/体积/下载键），**不**做部分渲染、
+ *  **不**报错——降级是可见的（卡片本身即说明面）。 */
+export const MAX_INLINE_IMAGE_BYTES = MAX_TEXT_BYTES;
+
+/** 「这件附件是不是图片」——**判据单源**（uifix 批 2026-09-17）。
+ *
+ *  消费方 = `messages.js::attachInlineImage`（图片附件对话框内直显）。走本函数
+ *  而不是在渲染面重写一张扩展名表：ext→itemType 的真源始终是
+ *  `fileViewers.js::itemTypeForFileName`（各 viewer 自报 `extensions`），本函数
+ *  只是「它 === 'image'」这一个谓词的**唯一**具名出口 ⇒ 渲染面零第二张表。
+ *  同时把 `fileViewers.js`（含 monaco 等重模块）的静态依赖留在本模块内，
+ *  `messages.js` 只依赖本模块（附件判据的属主）。
+ *  @param {string} fileName @returns {boolean} */
+export function isImageAttachmentName(fileName) {
+  return itemTypeForFileName(fileName) === 'image';
+}
+
 /** 内容嗅探窗口（首 4KB）。 */
 const SNIFF_BYTES = 4096;
 

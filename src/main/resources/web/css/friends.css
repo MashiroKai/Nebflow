@@ -825,6 +825,37 @@ button.fm-req-decline:focus-visible {
 
 .fm-att-expired .fm-att-name { text-decoration: line-through; }
 
+/* ── 图片附件对话框内直显（uifix 批 · 作者令 2026-09-17：「如果传的附件是图片的话，
+   要支持直接在对话框显示，（好友、群聊、设备）」）─────────────────────────────
+   落点 = 附件卡的**第一行**（`.fm-att-inline`，由 `messages.js::attachInlineImage`
+   插在卡首）⇒ 图片在上、名称/体积/下载键在下，与既有卡内 `flex-wrap` 布局同族。
+   尺寸纪律（零新色值、零内联像素算术）：
+     · 上限宽 `260px`（气泡宽 ≤ 560px 档，留出正文留白）——与既有 `.fm-att` 卡的
+       内容宽度同量级；`max-width:100%` 兜住窄窗/375px 档不溢出。
+     · 上限高 `200px` + `object-fit: cover` ⇒ 竖图/横图都出**等比缩略**而不是拉长
+       气泡；圆角随卡（6px = `.fm-att` 既有档），描边用既有 `--glass-etched-border`。
+     · 骨架屏不做（字节到达前的空白 = `.fm-att` 卡本身，无新增加载态面）。 */
+.fm-att-inline {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  margin-bottom: 2px;
+}
+.fm-att-inline img {
+  display: block;
+  max-width: 100%;
+  width: 260px;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+}
+/* 窄窗（手机档）与 375px 档：宽度随容器，不做固定 260px 溢出。 */
+@media (max-width: 420px) {
+  .fm-att-inline img { width: 100%; }
+}
+
 .fm-att-failed { border-color: var(--color-error); }
 .fm-att-failed .fm-att-note { color: var(--color-error); }
 
