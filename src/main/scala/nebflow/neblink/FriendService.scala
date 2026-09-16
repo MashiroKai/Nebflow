@@ -1118,62 +1118,101 @@ final class FriendService(
   /** E1 + E2×n 顺序上传（§B.1/B.6），返回 attachmentId 列表（顺序 = 入参顺序 =
     * `SendMessageBody.attachments` 的展示顺序）。
     *
+    * 🔴 **分块驱动不在本方法里**（attachcl 批，2026-09-16）：E1+E2×n 链已抽到
+    * [[AttachUpload]]，本方法只做「逐件顺序 + 盘上件校验」，网页腿走同一个
+    * [[AttachUpload.pushFile]] —— 这就是本批要求的**同源性**（禁第二套分块逻辑）。
+    *
     * 每块**单次重试**：E2 的 `offset < receivedBytes` 语义 = 截断重写 ⇒ 同 offset
-    * 重发幂等（§B.1 E2），故块级瞬时故障可安全重试一次；再失败就**显式失败**
-    * （不带半成品发送）。块级失败不会留下「已发送」的假象：消息在全部上传成功后才发。 */
+    * 重发幂等（§B.1 E2）——该语义连同重试都在 [[AttachUpload.pushChunks]] 内，两条腿
+    * 共用。再失败就**显式失败**（不带半成品发送）：块级失败不会留下「已发送」的假象，
+    * 消息在全部上传成功后才发。 */
   private def uploadAll(cli: NeblinkClient, friendUserId: String, files: List[os.Path]): IO[Either[String, List[String]]] =
-    def uploadOne(p: os.Path): IO[Either[String, List[String]]] =
-      for
-        size  <- IO.blocking(os.stat(p).size)
-        whole <- IO.blocking(NeblinkFiles.sha256OfFile(p))
-        created <- cli.createAttachment(friendUserId, p.last, size, whole)
-        out <- created match
-          case Left(err) => IO.pure(Left(s"attachment upload failed for '${p.last}' (create): $err"))
-          case Right(json) =>
-            json.hcursor.get[String]("attachmentId").toOption match
-              case None =>
-                IO.pure(Left(s"attachment upload failed for '${p.last}': server response has no attachmentId (${json.noSpaces})"))
-              case Some(id) => pushChunks(cli, id, p, size).map(_.map(_ => List(id)))
-      yield out
-
-    def pushChunks(cli: NeblinkClient, id: String, p: os.Path, size: Long): IO[Either[String, Unit]] =
-      val plan = nebflow.dropbox.AttachContract.plan(size)
-      def loop(rest: List[nebflow.dropbox.AttachContract.ChunkPlan]): IO[Either[String, Unit]] =
-        rest match
-          case Nil => IO.pure(Right(()))
-          case chunk :: tail =>
-            val sendOnce: IO[Either[String, Unit]] =
-              IO.blocking {
-                val bytes = NeblinkFiles.readRange(p, chunk.offset, chunk.bytes)
-                bytes -> nebflow.dropbox.ChunkedTransfer.sha256Hex(bytes)
-              }.flatMap { case (bytes, sha) => cli.uploadAttachmentChunk(id, chunk.offset, bytes, sha).map(_.map(_ => ())) }
-            sendOnce
-              .flatMap {
-                case Right(_)       => IO.pure[Either[String, Unit]](Right(()))
-                case Left(firstErr) => sendOnce.map(_.left.map(_ => firstErr)) // 单次重试（同 offset 幂等）
-              }
-              .flatMap {
-                case Left(err) => IO.pure(Left(s"attachment upload failed for '${p.last}' at offset ${chunk.offset}: $err"))
-                case Right(_)  => loop(tail)
-              }
-      loop(plan)
-
     // 逐件**顺序**上传（件数 ≤9，总字节 ≤9 GiB —— 单件上限 1024 MB = 1 GiB × 9，2026-09-14 r2 口径）。
     // 每件内部按 4 MiB 分块 ⇒ 单块在内存里的峰值 = 4 MiB（`readRange` 读一块，
     // 裸字节 `BodyPublishers.ofByteArray` 直发、**不经 base64**），与文件大小无关。
-    // （2026-09-14 编译教训：该形状下类型推断会塌成 Either[Any,Any]）。
     def loopFiles(rest: List[os.Path], acc: List[String]): IO[Either[String, List[String]]] =
       rest match
         case Nil => IO.pure(Right(acc))
         case p :: tail =>
           if !os.exists(p) || os.isDir(p) then IO.pure(Left(s"Attachment is not a file: $p"))
           else
-            uploadOne(p).flatMap {
-              case Left(err)  => IO.pure(Left(err))
-              case Right(ids) => loopFiles(tail, acc ++ ids)
+            AttachUpload.uploadFile(cli, friendUserId, p, p.last).flatMap {
+              case Left(fail)  => IO.pure(Left(fail.render))
+              case Right(up)   => loopFiles(tail, acc :+ up.attachmentId)
             }
 
     loopFiles(files, Nil)
+
+  // ===== 网页腿上传（attachcl 批，2026-09-16）=====
+
+  /** 网页腿的整件流式上传：浏览器**整件一次请求** → 网关把请求体流式落临时件 →
+  * **复用桌面腿同一分块驱动**（[[AttachUpload.pushFile]]）。
+  *
+   * 与 [[sendAsAgent]] 附件链的**唯一**差别 = 字节源（HTTP 请求体 vs 本机路径），
+   * 校验序/上传链/摘要口径/块大小逐字同源。能力探测（[[AttachmentCapability]]）与
+   * 桌面腿同点执行 —— 探测结论按**可区分文案**拒绝（§G.3：禁止在未探测的情况下
+   * 携带 `attachments` 发送）。
+   *
+   * `conversationId` = E1 路径段（好友 = 好友 userId；群 = 群会话 id `grp-…`；
+   * 服务端 E1 对这段的判据是 `is_member_gated` / `friendship_accepted`，两腿共用）。
+   *
+   * 临时件在**所有出口**（成功/失败/取消）删除；取消位由 [[AttachUploadRegistry]]
+   * 注入（见 [[AttachUpload.Hooks]]）。
+   */
+  def uploadStream(
+    conversationId: String,
+    displayName: String,
+    uploadId: String,
+    body: fs2.Stream[IO, Byte],
+    hooks: AttachUpload.Hooks = AttachUpload.Hooks.none
+  ): IO[Either[(String, String), AttachUpload.Uploaded]] =
+    currentClient.flatMap {
+      case None =>
+        IO.pure(Left(("not_logged_in", "Not logged in to the NebLink server — nothing was uploaded.")))
+      case Some(cli) =>
+        val tempPath = nebflow.core.PathUtil.dataRoot / "attach-uploads" / s"$uploadId.part"
+        val bounded  = nebflow.dropbox.AttachContract.MaxFileBytes
+        (for
+          _ <- IO.blocking(os.makeDir.all(tempPath / os.up))
+          staged <- nebflow.dropbox.DropboxUtil.streamToFileWithHashBounded(body, tempPath, bounded)
+          out <- staged match
+            // 流式落盘即带上限兜底：请求体超过 1 GiB 在**读的过程中**就被拦下（不是读完再判）。
+            case Left(err) => IO.pure(Left(("attach_too_large", err.render)))
+            case Right(whole) =>
+              IO.blocking(os.stat(tempPath).size).flatMap { size =>
+                if size <= 0L then
+                  // 空件本地先拒（同桌面腿 doSend 的闸，文案同源自服务端 E1 的 size <= 0 ⇒ 422）。
+                  IO.pure(
+                    Left(
+                      (
+                        "empty_file",
+                        "Attachment gate rejected: empty file (0 bytes) — nothing was uploaded and no message was sent."
+                      )
+                    )
+                  )
+                else
+                  cli.probeAttachmentCapability(conversationId).flatMap {
+                    case AttachmentCapability.Supported(ev) =>
+                      logger.info(s"attachment capability probe (web leg): supported ($ev)")
+                      AttachUpload
+                        .pushFile(cli, conversationId, displayName, size, whole, tempPath, hooks)
+                        .flatMap {
+                          case Right(up)  => IO.pure(Right(up))
+                          case Left(fail) => IO.pure(Left((AttachUpload.errorCode(fail), fail.render)))
+                        }
+                    case other =>
+                      logger.warn(
+                        s"attachment capability probe (web leg): ${other.getClass.getSimpleName} — attachments NOT sent"
+                      )
+                      IO.pure(Left(("attachment_unsupported", AttachmentCapability.refusal(other))))
+                  }
+              }
+          _ <- IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
+        yield out).handleErrorWith { e =>
+          IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ()) *>
+            IO.pure(Left(("upload_failed", s"attachment upload failed: ${Option(e.getMessage).getOrElse(e.toString)}")))
+        }
+    }
 
   // ===== 群路由代理腿（gwroutes 批，2026-09-15）=====
 
@@ -1380,8 +1419,17 @@ final class FriendService(
 
   /** 用户身份直接发送（前端 UI 输入框发送；与 agent 的 sendAsAgent 不同，无
     * 权限档位/限速——spec §7.2 限制的是 agent 代发）。发送成功后补拉会话增量。 */
-  def sendAsUser(friendUserId: String, body: String): IO[Either[String, Json]] =
-    withClient(_.sendFriendMessage(friendUserId, body)).flatMap {
+  /** UI 直发的**双面**入口（attachcl 批加性扩面）：`attachmentIds` 为**已上传**的
+    * 附件 id 列表（顺序 = 展示顺序），缺省空 ⇒ 请求体与今天**逐字节同形**（不发
+    * `attachments` 键）。正文可为空**仅当**附件非空（服务端 §B.4 生成占位正文）。
+    * 🔴 本方法**不做**任何上传：字节面在 [[uploadStream]]（同一分块驱动），本方法只
+    * 把已确认的 id 随消息送出 —— 上传没成功就绝不会有 id 可传。 */
+  def sendAsUser(
+    friendUserId: String,
+    body: String,
+    attachmentIds: List[String] = Nil
+  ): IO[Either[String, Json]] =
+    withClient(_.sendFriendMessage(friendUserId, body, attachmentIds = attachmentIds)).flatMap {
       case Right(json) =>
         json.hcursor.get[String]("conversationId").toOption match
           case Some(convId) =>
