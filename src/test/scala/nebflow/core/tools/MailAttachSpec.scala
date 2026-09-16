@@ -437,6 +437,16 @@ class MailAttachSpec extends FunSuite:
       }
       .mkString("\n")
 
+  /** 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
+    * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。 */
+  private def awaitRequests(llm: RecordingLlm, deadlineMs: Long): IO[List[LlmRequest]] =
+    IO.defer {
+      llm.requests.get.flatMap { rs =>
+        if rs.nonEmpty || System.currentTimeMillis() >= deadlineMs then IO.pure(rs)
+        else IO.sleep(150.millis) *> awaitRequests(llm, deadlineMs)
+      }
+    }
+
   test("⑤ A3 端到端：同机腿 `attachments` ⇒ 附注（绝对路径 + 字节数 + sha256）真实到达接受方会话；🔴 零搬字节"):
     val teamName = s"mailattach${java.util.UUID.randomUUID().toString.take(6)}"
     val system = ActorSystem(s"mailattach-e2e-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -461,14 +471,14 @@ class MailAttachSpec extends FunSuite:
         withArr(qIn("address" -> "member", "message" -> "MAILATTACH_NOTE_MARKER"), "attachments", file.toString),
         ctxFor(resources, system, bossMeta.id)
       )
-      _ <- IO.sleep(700.millis)
-      reqs <- llm.requests.get
+      reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)
       // 🔴 零搬字节：源件内容在投递后逐字节不变（附件只以「路径 + 读数」形式进文本）
       bytesAfter <- IO(os.read.bytes(file))
     yield (res, reqs, bytesAfter)
 
     val (res, reqs, bytesAfter) = io.unsafeRunSync()
     assert(res.isRight, s"同机腿带 attachments 必须成功（附注模式，零搬运）: $res")
+    assert(reqs.nonEmpty, "🔴 判据前提：接受方 turn 必须落定（空集即判据无效，禁假绿）")
     val all = reqs.map(reqText).mkString("\n")
     assert(all.contains("MAILATTACH_NOTE_MARKER"), s"邮件正文必须到达接受方会话: ${all.take(400)}")
     assert(all.contains(file.toString), "🔴 附注必须带**绝对路径**（接受方按路径 Read 取件）")
@@ -497,12 +507,13 @@ class MailAttachSpec extends FunSuite:
         qIn("address" -> "member", "message" -> "MAILATTACH_PLAIN_MARKER"),
         ctxFor(resources, system, bossMeta.id)
       )
-      _ <- IO.sleep(700.millis)
-      reqs <- llm.requests.get
+      reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)
     yield (res, reqs)
 
     val (res, reqs) = io.unsafeRunSync()
     assert(res.isRight, s"无附件时既有路径必须照常: $res")
+    // 🔴 负控必须有内容才判「不含附注」——空集下的 `!contains` 是假绿。
+    assert(reqs.nonEmpty, "🔴 判据前提：接受方 turn 必须落定（空集即负控无效，禁假绿）")
     val all = reqs.map(reqText).mkString("\n")
     assert(all.contains("MAILATTACH_PLAIN_MARKER"), s"正文必须到达: ${all.take(400)}")
     assert(!all.contains("[Mail 附件]"), "未请求附件时不得出现附注（字节级零改动）")
