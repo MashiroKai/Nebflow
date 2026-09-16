@@ -5402,7 +5402,8 @@ class NodeEngine(
     * 本批前的气泡 header 契约（`source="chain"` + `eventType` 三元 + `sender="<project>/<chainId>"`）
     * 与「不过 60s 同 (identity,status) 去重」纪律**一并失效**——`source="chain"` 词表项
     * 仍在（`InjectionAttribution.BackendNamedSources` + 前端表），仅服务**存量历史行**
-    * 的渲染（宿主 `.ui.json` 已有 52 行 `source="chain"`）。 */
+    * 的渲染（宿主 sessions 面**现取**：单文件 `5cc7590a-…ui.json` 内 49 处 `source="chain"`，
+    * 全部**无 `header` 键** ⇒ 逐行走前端回落渲染；条数随宿主 session 轮转漂移，禁当恒值）。 */
   private[project] def deliverChainSummary(text: String, chainId: String, eventType: String): IO[Unit] =
     logger.info(
       s"Project '$projectName' chain summary DOWNGRADED to list state (no root injection): chain=$chainId event=$eventType chars=${text.length}")

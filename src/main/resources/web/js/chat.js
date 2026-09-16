@@ -382,7 +382,7 @@ const INJECTED_SOURCE_LABELS = {
   // ── 全降级列表态批（2026-09-16，作者裁定「全部降级列表态」）后的**改接口径** ──
   // 引擎侧链腿**已停发**（零投主对话 ⇒ 无即时气泡、不进 LLM 上下文）：本表项不再有
   // live 帧来源。**保留登记（不删）**的两条硬理由：
-  //   ① **存量历史行仍在渲染**（非死码）：宿主 `.ui.json` 已有 52 行 `source:"chain"`，
+  //   ① **存量历史行仍在渲染**（非死码）：宿主 sessions 面现取 ≈49 处 `source:"chain"`（随轮转漂移），
   //      且不带 `header` 键（宿主建早于 header 批）⇒ 逐行都走本表项 → 标签 "Chain"；
   //   ② 契约门 `InjectionSourceContractSpec` ② 要求前端登记面 ⊇
   //      `InjectionAttribution.BackendNamedSources`（仍含 "chain"）；删表项须连带删

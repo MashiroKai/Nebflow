@@ -860,7 +860,7 @@ object FlowMapStore:
   /** 注入来源定名（R12/R16：前端 `INJECTED_SOURCE_LABELS` 显式登记）。
     *
     * **全降级列表态批（2026-09-16，作者裁定）后本常量不再被任何发射点使用**：链腿
-    * 零投根 ⇒ 词表项 `"chain"` 仅服务**存量历史行**的渲染（宿主 `.ui.json` 已有 52 行
+    * 零投根 ⇒ 词表项 `"chain"` 仅服务**存量历史行**的渲染（宿主 sessions 面现取 ≈49 处
     * `source="chain"` 落盘；前端 `INJECTED_SOURCE_LABELS.chain` 保留登记，与
     * `InjectionAttribution.BackendNamedSources` / `NotificationHeader.KindLabels` /
     * `InjectionSourceContractSpec` 的契约门一致——删源会连带改这三处与既有词表 pin，
