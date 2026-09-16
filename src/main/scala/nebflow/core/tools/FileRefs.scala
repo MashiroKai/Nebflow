@@ -176,13 +176,50 @@ private[tools] object FileRefs:
   private val FileExtensionSuffix = """\.[A-Za-z0-9]{1,6}$""".r
 
   /**
-   * A reference "looks like a local file" when it is `~`/`/` anchored or ends
-   * in a file extension — the shapes the docs tell agents to use. Bare
+   * A Windows drive-letter root with an EXPLICIT separator (`C:/…`, `C:\…`).
+   *
+   * winpath 批（2026-09-17）：KAI 的 Windows 实例把
+   * `<img src="C:/Users/Kai/Downloads/…svg">` 判成**相对引用**
+   * （`reason=unresolvable` + "relative references are never resolved"），同一文件
+   * 用 `~/Downloads/…` 引用却内联成功——盘符绝对路径从未进入 probe，用户看到的是
+   * 未解析的占位/告警文本。
+   *
+   * 为什么不直接复用 `nebflow.core.PathUtil.isAbsolute`（`core/paths.scala:21-24`，
+   * 面内既有的跨平台判定，`WebSocketRoutes.scala:2584` 为同族修复先例）：它把
+   * ① UNC（`\\server\share\…`，网络语义）与 ② 盘符相对形态（`C:x.png`）一并判为
+   * 绝对。① 本批明示不扩面；② 是「相对服务器 cwd 解析」——正是
+   * `CardTool.decideRef` 拒绝相对引用所要挡住的语义。本面因此只承认**带分隔符**的
+   * 盘符形式，UNC 单列一条明确拒绝（见 `CardTool.decideRef`）。
+   *
+   * 纯字符串判定、**无平台分支**（不读 `os.name`）——所以 macOS / Windows 上判读
+   * 一致，这也正是它能在 macOS 上被单测钉死的原因。
+   */
+  private val WindowsDriveRoot = """^[A-Za-z]:[\\/]""".r
+
+  /** Windows drive-letter absolute path (`C:/…`, `C:\…`). */
+  def isWindowsDriveAbsolute(s: String): Boolean = WindowsDriveRoot.findFirstIn(s).isDefined
+
+  /** The backslash UNC form (`\\server\share\…`). Recognized only in order to
+    * REFUSE it with an accurate reason — never resolved (network semantics are
+    * outside this leg's face). The forward-slash form `//host/path` is left
+    * alone: that is `NonFileRefPrefixes`' protocol-relative URL, not a share. */
+  def isUncPath(s: String): Boolean = s.startsWith("\\\\")
+
+  /** The anchors this leg resolves from: `~` (expanded to the user's home), a
+    * POSIX absolute path (`/…`) and a Windows drive-letter absolute path
+    * (`C:/…`, `C:\…`). Everything else is a relative reference and the caller
+    * refuses it. */
+  def isAnchoredRefPath(s: String): Boolean =
+    s.startsWith("~") || s.startsWith("/") || isWindowsDriveAbsolute(s)
+
+  /**
+   * A reference "looks like a local file" when it is anchored (`~`/`/`/drive) or
+   * ends in a file extension — the shapes the docs tell agents to use. Bare
    * extension-less strings are ignored: they are not path-shaped enough to
    * warn about (documented boundary, see the evidence file).
    */
   def looksLikeFilePath(s: String): Boolean =
-    s.startsWith("~") || s.startsWith("/") || FileExtensionSuffix.findFirstIn(s).isDefined
+    isAnchoredRefPath(s) || FileExtensionSuffix.findFirstIn(s).isDefined
 
   def fileExtension(path: String): String =
     path.lastIndexOf('.') match
