@@ -451,7 +451,7 @@
      主键成员带 `cfg-btn-primary` 类承接（**既有类名，不是新色值**）——与发送键族
      （本文件 :292-296）同一做法，本块只覆盖材质 / 几何 / 状态。
    状态色（🔴 零新增字面量色值，全部引用既有 token；机械判据 = `git diff` 新增行
-     不含 `#hex` / `rgb(` / `hsl(`）：
+     不含十六进制色值、rgb 函数、hsl 函数字面量）：
        rest     = var(--color-primary)        （= 发送键族 / 主对话框 rest 绿）
        hover    = var(--color-primary-hover)  （= 同族 hover 绿）
        active   = 描边 var(--glass-send-border-active) + 按下投影 var(--glass-send-shadow-active)
