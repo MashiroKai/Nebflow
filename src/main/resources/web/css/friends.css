@@ -646,7 +646,13 @@ button.fm-req-decline:focus-visible {
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
 .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
-.fm-modal-title-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--glass-control-border); }
+/* 🔴 焦点环一律走 outline（禁 box-shadow）：sapphire.css:877-885 的幽灵族
+   `:is(… .fm-modal-title-btn …) { box-shadow: none }`（`:is()` 取参数最高特异度
+   (0,2,0)，且 sapphire.css 在 friends.css 之后载入）会整体吃掉本处的 box-shadow
+   ⇒ 旧形态 `outline: none; box-shadow: 0 0 0 2px var(--glass-control-border)` 计算值
+   恒为 `none`（实测双主题「聚焦 vs 未聚焦」逐像素差 = 0 ＝ 零焦点指示，非「弱环」）。
+   outline 侧无同类冲突源，且逐字同款设计系统既有可见环（chat.css:2699）。 */
+.fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
 .fm-modal-name {
   font-size: 15px;
