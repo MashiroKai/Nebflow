@@ -646,13 +646,20 @@ button.fm-req-decline:focus-visible {
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
 .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
-/* 🔴 焦点环一律走 outline（禁 box-shadow）：sapphire.css:877-885 的幽灵族
-   `:is(… .fm-modal-title-btn …) { box-shadow: none }`（`:is()` 取参数最高特异度
-   (0,2,0)，且 sapphire.css 在 friends.css 之后载入）会整体吃掉本处的 box-shadow
-   ⇒ 旧形态 `outline: none; box-shadow: 0 0 0 2px var(--glass-control-border)` 计算值
-   恒为 `none`（实测双主题「聚焦 vs 未聚焦」逐像素差 = 0 ＝ 零焦点指示，非「弱环」）。
-   outline 侧无同类冲突源，且逐字同款设计系统既有可见环（chat.css:2699）。 */
-.fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+/* 🔴 焦点环一律走 outline（禁 box-shadow）：sapphire.css:872-882 的幽灵族
+   `:is(… .fm-modal-title-btn …) { box-shadow: none }`（该行 880）取参数**最高**特异度
+   = `.neblink-peer.fm-device-row` (0,2,0)，与本处 `.fm-modal-title-btn:focus-visible`
+   的 (0,2,0) 打平；sapphire.css 在 friends.css 之后载入（index.html:42 / :50）
+   ⇒ 后者整体吃掉本处的 box-shadow。故旧形态
+   `outline: none; box-shadow: 0 0 0 2px var(--glass-control-border)` 计算值恒为
+   `none`（实测双主题「聚焦 vs 未聚焦」逐像素差 = 0 ＝ 零焦点指示，**非**「弱环/低对比环」）。
+   outline 侧无同类冲突源；`outline-width/-style/-color` 与设计系统既有可见环
+   （chat.css:2699 `.ws-pick-target:focus-visible`）**逐字同款**。
+   `outline-offset: 0`（先例为 2px）＝ 有据偏离，非自由取值：本元素 `margin: -8px`
+   使 `.fm-modal-id`（成员数）起始 x == 本元素 border-right ⇒ offset 2px 时环最右
+   绘制像素（x=609）压过成员数首字 ink（x=607）**2px**（4x 对照图可见「3」被环切断）；
+   offset 0 ⇒ 环最右像素 == 标签 ink 左缘（gap 0px，零穿越），可见性读数不变。 */
+.fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
 
 .fm-modal-name {
   font-size: 15px;
