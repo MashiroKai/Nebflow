@@ -214,8 +214,8 @@ private[tools] object FileRefs:
   /**
    * A Windows drive-letter root with an EXPLICIT separator (`C:/…`, `C:\…`).
    *
-   * winpath 批（2026-09-17）：KAI 的 Windows 实例把
-   * `<img src="C:/Users/Kai/Downloads/…svg">` 判成**相对引用**
+   * winpath 批（2026-09-17）：Windows 实例把
+   * `<img src="C:/Users/<user>/Downloads/…svg">` 判成**相对引用**
    * （`reason=unresolvable` + "relative references are never resolved"），同一文件
    * 用 `~/Downloads/…` 引用却内联成功——盘符绝对路径从未进入 probe，用户看到的是
    * 未解析的占位/告警文本。
