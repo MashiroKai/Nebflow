@@ -169,6 +169,30 @@ class NodeEngine(
   private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] =
     Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
 
+  /** **取代面跨调用判据（R2/R3，chaincancel 批 2026-09-17）**：本进程内「由级联/链级
+    * 取消腿取消」的节点集。
+    *
+    * 为什么必须有它（而不是只靠 `suppressTargets` 形参）：级联腿对**有在飞 fiber** 的
+    * running 成员只发取消信号，其 `cancelled` 终态由**既有的桥/收殓腿**异步落盘，届时
+    * 走的是默认参数（`suppressTargets = ∅`）——没有本集，那条腿会给**已取消**的下游补打
+    * `pendingSuccession` 噪标（正是 `detachCancelledUpstream` 头注禁止的「打标 + 紧接
+    * 取消」自相矛盾态，判据 M3）。`detachCancelledUpstream` 对本集成员**不打标**。
+    *
+    * 生命周期/上界：进程内、只增不缩（无持久化、无需持久化——它只服务于同一进程内
+    * 秒级的异步终态腿）。FIFO 上界 [[NodeEngine.CascadeSuppressCap]]（超限丢最旧）：
+    * 正常情况下成员在写入后数秒内就完成摘除，上界只为防长跑进程无界增长；被逐出者
+    * 最坏后果 = 已取消下游被补一条噪标（零功能影响，非安全面）。
+    *
+    * 零回归：默认空集 ⇒ `cancelNode` / `reapStaleRunning` / `NodeCancel` 工具 / 面板
+    * 会话键等既有腿**逐字零改动**（Z4）。 */
+  private val cascadeCancelledIds: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
+  private def markCascadeCancelled(ids: Iterable[String]): IO[Unit] =
+    cascadeCancelledIds.update { cur =>
+      val merged = (cur ++ ids).distinct
+      if merged.size > NodeEngine.CascadeSuppressCap then merged.takeRight(NodeEngine.CascadeSuppressCap) else merged
+    }
+
   /** 节点是否正在运行（ProjectActor 状态查询用）。 */
   def isRunning(nodeId: String): IO[Boolean] = running.get.map(_.contains(nodeId))
 
@@ -186,7 +210,11 @@ class NodeEngine(
     * NodeCancel「cancel signal sent」但状态不落终态的假成功。
     * 误杀防护（硬约束）：有在飞 fiber = 活会话（取消信号可达）→ Left 拒绝，
     * 本方法绝不触碰活会话节点。幂等：非 running → Left（不重复终态化）。 */
-  def reapStaleRunning(nodeId: String): IO[Either[String, String]] =
+  def reapStaleRunning(nodeId: String,
+                       reason: String = "dead-session reap: status=running but no live execution fiber (dead session / instance restart)",
+                       source: CancelSource = CancelSource.Engine,
+                       emitNotify: Boolean = true,
+                       suppressTargets: Set[String] = Set.empty): IO[Either[String, String]] =
     store.getNode(nodeId).flatMap {
       case None => IO.pure(Left(s"Node '$nodeId' not found"))
       case Some(n) if n.status != NodeLifecycle.Running =>
@@ -202,12 +230,196 @@ class NodeEngine(
               // R2/R2-R7：reap 是**引擎发起**的收殓（无人主动取消）→ source=Engine，
               // reason 明确写出死会话判据（此前 cancelNode 无 reason 形参，此处文本
               // 只存在于 reaped 事件里，节点自身零原因）。
-              cancelNode(nodeId,
-                "dead-session reap: status=running but no live execution fiber (dead session / instance restart)",
-                CancelSource.Engine)
+              // chaincancel 批：`reason` / `source` / `emitNotify` / `suppressTargets`
+              // 三个新形参**全部有默认值 = 本方法改动前的逐字行为**（NodeCancel 工具
+              // 的单参调用零变化，Z4）；链级腿借此复用同一「stale running 收殓」
+              // 二分支，同时把链级来源文本/来源码/聚合通知/抑制面传下来。
+              cancelNode(nodeId, reason, source,
+                emitNotify = emitNotify, suppressTargets = suppressTargets)
                 .as(Right(s"Node '${n.name}' reaped — dead running session finalized as cancelled (retained on map, no TTL)"))
         }
     }
+
+  // ── R2/R3 链级取消族（chaincancel 批 2026-09-17，作者三答 + 设计报告 §2/§3）──
+  //
+  // 语义（方案 A「级联取代」，作者三答 1）：链级取消 = 该分量内**全部非终态成员**
+  // 翻 `cancelled`；上游取消 ⇒ 下游**一律连带** `cancelled`，**不再**留「待承接」
+  // 便签（取代面 = 本族的 `pendingSuccession` 写点，见 [[detachCancelledUpstream]]）。
+  // 非取消族的写点（`reversePruneReferences` / `detachAbandonedNode`）**零回归**。
+
+  /** **链级取消（R2 公开原语）**：`chainId` → 成员（[[FlowMapStore.chainMembersOf]]
+    * 单点现读派生，本节点**不**二次派生）→ 取消集 → 执行 → 聚合通知一次。
+    *
+    * 返回 `Left(可行动错误码)`：查无链 ⇒ `CHAIN_NOT_FOUND`；单成员链 / 孤立节点 ⇒
+    * `CHAIN_SINGLE_MEMBER`（🔴 **禁**静默退化为单节点取消——语义混淆，M12 判据）。
+    *
+    * @param cascade 引擎腿默认 false 的保守口径**不适用**于本原语：链级取消是用户
+    *                显式不可逆意图，默认 **true**（设计 §3.4 O3 表；V1 变异点）。 */
+  def cancelChain(chainId: String, source: CancelSource, reason: String, cascade: Boolean = true): IO[Either[String, ChainCancelReport]] =
+    store.chainMembersOf(chainId).flatMap {
+      case None => IO.pure(Left(ChainCancelErrors.notFound(chainId)))
+      case Some(cm) if cm.info.memberIds.size < 2 => IO.pure(Left(ChainCancelErrors.singleMember(chainId)))
+      case Some(cm) =>
+        cancelNodes(cm.info.memberIds, chainId, cm.title, source, reason, cascade).map(Right(_))
+    }
+
+  /** **节点级取消 + 级联（R3 公开原语）**：`ids` 显式种子集（节点级 = 单节点；
+    * 链级腿经 [[cancelChain]] 复用本方法，种子 = 链成员集）。
+    *
+    * 本方法即 R3 的落点：种子 ∪ 级联闭包（[[referencesOf]] BFS，**遇终态即停**、
+    * 环路由 visited 集天然收敛、`:loop` 回边不作传导边）→ 逐节点执行 → 聚合通知。
+    */
+  def cancelNodes(ids: List[String], source: CancelSource, reason: String, cascade: Boolean): IO[ChainCancelReport] =
+    cancelNodes(ids, "", "", source, reason, cascade)
+
+  private def cancelNodes(ids: List[String], chainId: String, chainTitle: String,
+                          source: CancelSource, reason: String, cascade: Boolean): IO[ChainCancelReport] =
+    // 链级来源文本（作者工程面自决：**不扩** `CancelSource` 值域，链级信息走 ① 节点
+    // result 文本 ② `chain-cancelled` 审计事件 ③ 通知文本头）。形如
+    // `chain-cancel chain=chain-n-x cascade=true: <reason>` ⇒ 节点 result =
+    // `cancelled[source=user]: reason=chain-cancel chain=chain-n-x cascade=true: …`
+    // （沿 `cancelNode` 的 `rendered` 形态，机械可判：result 含 `chain-cancel chain=<id>`）。
+    val origin = if chainId.nonEmpty then s"chain-cancel chain=$chainId cascade=$cascade: $reason" else reason
+    store.snapshot.flatMap { snap =>
+      val seeds = ids.distinct
+      // 取消集 = **显式枚举**的非终态集（🔴 不是 `Terminal` 取反——`Terminal` 含 blocked，
+      // 见 `NodeLifecycle.ChainCancelScope` 头注；作者三答 2）+ 级联闭包（R3）。
+      val seedSet = seeds.filter(id => snap.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status))).toSet
+      val cascadeSet = if cascade then cascadeClosure(snap, seedSet) else Set.empty[String]
+      val cancelIds: Set[String] = seedSet ++ cascadeSet
+      // 分区（C7）：`cancelled ⊎ preserved ⊎ skipped` == `seeds` 全集（链级入口下
+      // seeds = memberIds ⇒ C7 的机械判据即链级取消的成员覆盖不变量）。
+      // `cancelled` = **本次实际翻 cancelled 的全部节点**（含级联新增的非种子节点
+      // ——R3 的可观测面，设计 §2.1「实际翻 cancelled 的节点」）；`preserved` /
+      // `skipped` 只覆盖声明成员集里未被取消的那些。
+      val doomed = cancelIds.toList
+      val preserved = seeds.filterNot(cancelIds.contains).flatMap { id =>
+        snap.nodes.get(id).map { n =>
+          (id, n, if NodeLifecycle.Terminal.contains(n.status) then "terminal" else "terminal-boundary")
+        }
+      }
+      val skipped = seeds.filterNot(cancelIds.contains).filterNot(snap.nodes.contains)
+        .map(id => ChainCancelEntry(id, "", "", "not-in-active-region"))
+      if doomed.isEmpty then
+        // 幂等出口（C6：第二调用 == 0 帧 == 0 注入 == 0 审计）：零写、零信号、零通知。
+        IO.pure(ChainCancelReport(
+          chainId = chainId, chainTitle = chainTitle,
+          preserved = preserved.map { case (id, n, why) => ChainCancelEntry(id, n.name, n.status, why) }.sortBy(_.nodeId),
+          skipped = skipped.sortBy(_.nodeId)))
+      else
+        for
+          // ① 先写全成员 `notifySentAt`（设计 §2.3-1 / D1 单账本）：**必须在**任何取消
+          //    动作之前——有在飞 fiber 的成员只收到取消信号，其 `cancelled` 终态由既有
+          //    桥/收殓腿异步落盘，届时逐节点 `notifyTerminal` 的 `markerEmpty` 恒 false
+          //    ⇒ 结构性不发（C2：注入计数与 N 无关、与信号/结果竞态无关）。
+          _ <- dispatchNotify.markNotified((cancelIds ++ seeds).toList.sorted)
+          _ <- markCascadeCancelled(cancelIds)
+          signalledPairs <- doomed.traverse(id => isRunning(id).map(id -> _))
+          signalledSet = signalledPairs.filter(_._2).map(_._1).toSet
+          // ② 执行：按 `createdAt` **逆序**（sink 先，设计 §2.1-4）。顺序无关性由
+          //    `suppressTargets`（传取消全集）+ `cascadeCancelledIds` 双保险承担（M4）。
+          _ <- doomed.sortBy(id => (-snap.nodes(id).createdAt, id))
+            .traverse_(id => executeCancel(id, signalledSet.contains(id), origin, source, cancelIds))
+          waiters <- chainWaiters(cancelIds)
+          after <- store.snapshot
+          cancelledEntries = doomed.map { id =>
+            val n = snap.nodes(id)
+            ChainCancelEntry(id, n.name, n.status, "cancelled", signalledSet.contains(id))
+          }.sortBy(_.nodeId)
+          preservedEntries = preserved.map { case (id, n, why) =>
+            ChainCancelEntry(id, n.name, n.status, why)
+          }.sortBy(_.nodeId)
+          // ③ 聚合通知腿（唯一注入点）：一次 `trigger` + 一条 `chain-cancelled` 审计 +
+          //    1 个 `Cancelled` 预算单位；**不进** `cancelledAttempt`（窗口/cooldown 零触碰）。
+          injected <- dispatchNotify.notifyChainCancelled(
+            chainId = chainId, chainTitle = chainTitle, source = source, reason = reason,
+            memberIds = (cancelIds ++ seeds).toList.sorted,
+            cancelled = cancelledEntries, preserved = preservedEntries, skipped = skipped.sortBy(_.nodeId),
+            waiters = waiters)
+        yield ChainCancelReport(
+          chainId = chainId, chainTitle = chainTitle,
+          cancelled = cancelledEntries, preserved = preservedEntries, skipped = skipped.sortBy(_.nodeId),
+          prunedReferrers = NodeEngine.prunedReferrersBetween(snap, after, cancelIds),
+          injected = injected, notified = injected > 0)
+    }
+
+  /** 单节点执行（两分支与 `NodeCancel` 工具逐字同款）：
+    *   - 有在飞 fiber ⇒ 只发取消信号（终态由既有桥/收殓腿落盘；`signalled = true`）；
+    *   - 无在飞 fiber 的 stale running ⇒ [[reapStaleRunning]]（同步收殓，链级来源文本）；
+    *   - 其余非终态（pending/wiring/blocked/interrupted）⇒ **新增写路径**：直接
+    *     [[cancelNode]]（今日 `NodeCancel` 工具对非 running 是 no-op，链级腿必须补）。
+    * 三者一律 `emitNotify = false`（逐节点通知由聚合腿单次收口）+ `suppressTargets = 取消全集`。 */
+  private def executeCancel(nodeId: String, signalled: Boolean, reason: String,
+                            source: CancelSource, suppress: Set[String]): IO[Unit] =
+    if signalled then cancelNodeById(nodeId)
+    else
+      store.getNode(nodeId).flatMap {
+        case Some(n) if n.status == NodeLifecycle.Running =>
+          reapStaleRunning(nodeId, reason, source, emitNotify = false, suppressTargets = suppress).void
+        case Some(_) =>
+          cancelNode(nodeId, reason, source, emitNotify = false, suppressTargets = suppress)
+        case None => IO.unit
+      }
+
+  /** 级联腿的等待者清单（现读）：状态 ∈ {pending, wiring} 且仍以 in/deps/pendingSuccession
+    * 引用取消集的节点——通知文本「受影响下游等待者」栏的数据源。 */
+  private def chainWaiters(cancelIds: Set[String]): IO[List[String]] =
+    store.snapshot.map { s =>
+      s.nodes.values
+        .filter(n =>
+          (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) &&
+            (n.in.exists(cancelIds.contains) || n.deps.exists(cancelIds.contains) ||
+              n.pendingSuccession.exists(cancelIds.contains)))
+        .map(_.id)
+        .toList
+        .sorted
+    }
+
+  /** **级联闭包（R3 传递规则，单点）**：种子上做 [[referencesOf]] BFS 到收敛，**只把
+    * 非终态节点纳入传递**（`NodeLifecycle.ChainCancelScope`）——遇到 `completed` /
+    * `failed` / `cancelled` 即**停**（防过杀：completed 的结果已投递、其下游输入已到位，
+    * 与本次取消无因果依赖；failed/cancelled 的下游已由既有 D5 零结算/停等纪律持有）。
+    *
+    * 环路/自引用天然收敛：`visited`（含种子）+ `referencesOf` 过滤 `id != self`；弱连通
+    * 分量本身用无向 BFS（`FlowMapStore.topologicalChains`）⇒ 回边（含 `:loop`）不会死循环。
+    *
+    * **跨分量禁行（M6）**：并集只沿图引用（`in`/`out`/`deps`/`pendingSuccession`）走，
+    * 而四类引用都是**图的边**（`topologicalChains` 对任何边两侧都建邻接，`pendingSuccession`
+    * 亦只由既有摘除腿在这些边上写入）⇒ 「存在引用关系 ⇒ 必同分量」；故闭包**恒不跨链**。
+    * 例外声明（设计 §3.2）：日后若新增**非图引用类**（如 retry 可跨子图回跳）必须显式
+    * 加入 [[referencesOf]] 并重开本判定。 */
+  private def cascadeClosure(snapshot: FlowMapState, seed: Set[String]): Set[String] =
+    def go(frontier: Set[String], visited: Set[String]): Set[String] =
+      if frontier.isEmpty then visited
+      else
+        val next = frontier.flatMap(id => referencesOf(snapshot, id))
+          .filterNot(visited.contains)
+          .filter(id => snapshot.nodes.get(id).exists(n => NodeLifecycle.ChainCancelScope.contains(n.status)))
+        go(next, visited ++ next)
+    go(seed, seed)
+
+  /** **带级联权限守卫的终态写入口（判据 M8 的机械承担点，chaincancel 批 2026-09-17）**：
+    * 判据 = **「请求级联」∧「L3 硬恢复中间态」** ⇒ 抛（fail-closed）。
+    *
+    * 用途 = L3 硬恢复腿（作者三答 4 钉死的硬连接）：该腿以
+    * `val cascadeRequested = NodeEngine.l3CascadeAllowed(deferDetach)` 派生出声明的级联
+    * 旗标（L3 中间态 ⇒ false），使「deferDetach ⇒ 不级联」从注释里的隐式约定变成
+    * **会失败的守卫**——日后若有人把 L3 腿改接上链级/级联写路径（或把该绑定换成字面量
+    * true），本守卫立即抛出，而不是静默毁掉 resume 复活的拓扑。
+    *
+    * 🔴 **两条腿共用本调用点**（易错点，2026-09-17 实测踩到过一次）：桥的 Cancelled 出口
+    * 同时服务 L3 硬恢复（`deferDetach=true`）与 L3 之外的取消（`deferDetach=false`：watcher
+    * giveUp / AgentControl / 面板 NodeCancel / 父会话级联）⇒ 守卫**只能**在 `l3Intermediate`
+    * 为真时才有资格抛；把判据写成「cascadeAllowed 为真即抛」会让**全部非 L3 取消路径**
+    * 静默失败（节点滞留 running，零终态）。
+    * 其余语义与 [[cancelNode]] 逐字相同（本批不给 L3 腿接任何级联能力）。 */
+  private def cancelNodeGuarded(nodeId: String, reason: String, source: CancelSource,
+                                detach: Boolean, notify: Boolean,
+                                cascadeRequested: Boolean, l3Intermediate: Boolean): IO[Unit] =
+    if cascadeRequested && l3Intermediate then
+      IO.raiseError(new IllegalStateException(
+        "cascade is forbidden on this leg (L3 hard-recovery intermediate state, chaincancel §6-M8)"))
+    else cancelNode(nodeId, reason, source, detach = detach, notify = notify)
 
   /** bg-wait 标注写点（僵尸收敛批 2026-09-06，作者「首要缺口 = 补显示」）：节点完成
     * 闸（bgtask-completion-gate 批）在持留等待后台任务时把 node `bgWait` 置为在途
@@ -3115,7 +3327,20 @@ class NodeEngine(
             // R5 方案 4（2026-09-10 裁定）：同一条 L3 路径同样**推迟回流**——中间态
             // Cancelled 不是终局（5s 后 resume 定生死），故与 deferDetach 同参数
             // 联动（notify=false = 占位推迟，见 cancelNode 头注）。
-            cancelNode(nodeId, reason, CancelSource.classify(reason), detach = !deferDetach, notify = !deferDetach)
+            // 🔴 **硬不变量（判据 M8 / 作者三答 4）**：L3 硬恢复中间态
+            // （`deferDetach = true`）⇒ 级联**强制 false**——见
+            // [[NodeEngine.l3CascadeAllowed]]。本腿请求的级联旗标**由该函数显式驱动**
+            // （不是字面量，故「去掉这条绑定」= 可失败变异）：本腿唯一终态写路径是本
+            // 受守卫的单节点写入口（不经 `cancelNodes` 链级/级联腿），
+            // 「请求级联 ∧ L3 中间态」= 越权 ⇒ 守卫立即抛出：
+            // resume 复活时拓扑必须完整，提前连带取消下游 = 恢复路径被掐死。
+            // 注意**两条腿共用本调用点**：L3（deferDetach=true）与 L3 之外的
+            // watcher giveUp / AgentControl / 面板 NodeCancel / 父会话级联
+            // （deferDetach=false ⇒ 该腿允许级联 ⇒ 不抛、走既有单节点写路径）。
+            val cascadeRequested = NodeEngine.l3CascadeAllowed(deferDetach)
+            cancelNodeGuarded(nodeId, reason, CancelSource.classify(reason),
+              detach = !deferDetach, notify = !deferDetach,
+              cascadeRequested = cascadeRequested, l3Intermediate = deferDetach)
           else failNode(nodeId, fo.message)
       // ③ 终态对称收割（noderpt 批 B 段 2026-09-11 作者裁定：一律存活 30 分钟再销毁）：
       // 桥终态**四出口**（failed / cancelled / zombie(猝死) / completed）统一到这一个
@@ -4664,11 +4889,12 @@ class NodeEngine(
     *   ⇒ 对外可见面恰好一次、语义与终局一致（既不双份 cancelled+failed，也不零回流）。
     * 该参数**只**影响回流时点，不动 ①②③④ 任何行为，也不动 failed 侧（D5 零结算
     * 与 `deliverFailed` 本体逐字不变）。 */
-  private def cancelNode(nodeId: String, reason: String, source: CancelSource, detach: Boolean = true, notify: Boolean = true): IO[Unit] =
+  private def cancelNode(nodeId: String, reason: String, source: CancelSource, detach: Boolean = true, notify: Boolean = true,
+                         emitNotify: Boolean = true, suppressTargets: Set[String] = Set.empty): IO[Unit] =
     val rendered = s"cancelled[source=${CancelSource.code(source)}]: reason=$reason"
     for
       now <- IO(System.currentTimeMillis())
-      detached <- if detach then detachCancelledUpstream(nodeId) else IO.pure(Nil)
+      detached <- if detach then detachCancelledUpstream(nodeId, suppressTargets) else IO.pure(Nil)
       s <- store.mutate { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) =>
@@ -4696,8 +4922,13 @@ class NodeEngine(
       _ <-
         // R1 回流（notify=true）；L3 路径（notify=false）改以占位推迟——见方法头注
         // 「notify = false」段（中间态不是终局，终局腿负责真实回流）。
-        if notify then s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled))
-        else dispatchNotify.holdTerminalNotify(nodeId)
+        // chaincancel 批（R2 §2.3）：`emitNotify=false` = **聚合通知腿**的成员（链级 /
+        // 级联）——逐节点回流由链级腿单次收口（该腿先写全成员 `notifySentAt`，
+        // 故逐节点腿即使跑到也结构性不发）。**只影响本通知分支**：状态写、摘除、
+        // 审计事件、barrier 检查、L3 占位（notify=false 分支）全部逐字不变。
+        if !notify then dispatchNotify.holdTerminalNotify(nodeId)
+        else if emitNotify then s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled))
+        else IO.unit
     yield ()
 
   /** R4 自动摘除（取消静默死锁修复批）：被取消节点的 out 改接 Nebula + 受影响下游的
@@ -4728,35 +4959,95 @@ class NodeEngine(
     * `store.mutate` 同样查无该节点 ⇒ 整个取消是 no-op 且已有 `Node nodeId vanished
     * before cancel finalize` 响亮留痕（非静默）；离线节点的迟到摘除由 L3 失败腿的
     * [[lateDetachUnlocatableSession]]（含归档区解析）承担，不在本方法范围内。 */
-  private def detachCancelledUpstream(nodeId: String): IO[List[String]] =
-    store.mutateWithResult { s =>
-      s.nodes.get(nodeId) match
-        case Some(from) =>
-          val forward = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-            .flatMap(OutEdge.resolveTargetId(s.nodes, _)).distinct
-          // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
-          val reverseOnly =
-            s.nodes.values.filter(n => n.id != nodeId && n.in.contains(nodeId)).map(_.id).toList.sorted
-          val targets = (forward ++ reverseOnly).distinct
-          if targets.isEmpty then (s, Nil)
-          else
-            val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
-              acc.get(tid) match
-                case Some(tn) => acc.updated(tid, tn.copy(
-                  in = tn.in.filterNot(_ == nodeId),
-                  pendingSuccession = (tn.pendingSuccession :+ nodeId).distinct))
-                case None => acc
-            }
-            (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.nebula)))), targets)
-        case None => (s, Nil)
-    }.flatMap { case (_, pruned) =>
-      pruned.foldLeft(IO.unit) { (acc, tid) =>
-        acc >> store.getNode(tid).flatMap {
-          case Some(n) => emitUpdated(n)
-          case None    => IO.unit
-        }
-      }.as(pruned)
+  private def detachCancelledUpstream(nodeId: String, suppressTargets: Set[String] = Set.empty): IO[List[String]] =
+    // R2/R3（chaincancel 批 2026-09-17，**取代面**）：`suppressTargets` = 本次操作
+    // **即将取消**的成员集（作者三答 1「取消即级联，不再登记后继位」）——对它们**不**
+    // 追加 `pendingSuccession`（同一操作内「打标 + 紧接取消」自相矛盾，且会在终态节点
+    // 上留噪标；判据 M3）。`cascadeCancelledIds`（见其定义）是**跨调用**的同一判据：
+    // 级联腿发信号取消的 running 成员，其终态由**既有的桥腿**异步落盘，届时本方法
+    // 由默认参数（suppressTargets = ∅）进入——若无该集，已取消下游会被补打噪标。
+    // 🔴 默认值 ∅ 且该集为空时 ⇒ `NodeCancel` 工具 / 面板会话键等既有单节点腿
+    // **逐字零改动**（Z4；判据 M11「保留面」）。
+    cascadeCancelledIds.get.flatMap { suppressedByCascade =>
+      store.mutateWithResult { s =>
+        s.nodes.get(nodeId) match
+          case Some(from) =>
+            val forward = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+              .flatMap(OutEdge.resolveTargetId(s.nodes, _)).distinct
+            // U5/E：反向引用方（谁还在 in 里引用我）——不一致拓扑下前向遍历恒空，反向恒可算。
+            val reverseOnly =
+              s.nodes.values.filter(n => n.id != nodeId && n.in.contains(nodeId)).map(_.id).toList.sorted
+            val targets = (forward ++ reverseOnly).distinct
+            if targets.isEmpty then (s, Nil)
+            else
+              val pruned = targets.foldLeft(s.nodes) { (acc, tid) =>
+                acc.get(tid) match
+                  case Some(tn) =>
+                    val alreadySuppressed = suppressTargets.contains(tid) || suppressedByCascade.contains(tid)
+                    acc.updated(tid, tn.copy(
+                      in = tn.in.filterNot(_ == nodeId),
+                      pendingSuccession =
+                        if alreadySuppressed then tn.pendingSuccession
+                        else (tn.pendingSuccession :+ nodeId).distinct))
+                  case None => acc
+              }
+              (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.nebula)))), targets)
+          case None => (s, Nil)
+      }.flatMap { case (_, pruned) =>
+        pruned.foldLeft(IO.unit) { (acc, tid) =>
+          acc >> store.getNode(tid).flatMap {
+            case Some(n) => emitUpdated(n)
+            case None    => IO.unit
+          }
+        }.as(pruned)
+      }
     }
+
+  /** **级联传导引用并集单点**（R3，chaincancel 批 2026-09-17 —— 作者三答 3 逐字落地）。
+    *
+    * 判据 = **前向 ∪ 反向**（与 U5/E 修复逐字同源的口径）：
+    *   - 前向：`from.out` 逐边 `OutEdge.resolveTargetId`（跳 `Nebula`）；
+    *   - 反向：活动区里 `n.in ∋ id`（下游 in 镜像）/ `n.deps ∋ id`（依赖轨）/
+    *     `n.pendingSuccession ∋ id`（R-3 已登记的「待承接」槽位——否则该槽位永闸死）/
+    *     `n.out → id`（R-4「上游仍引用我」，含已 completed 上游的 pass 边粘住形态）。
+    *
+    * 🔴 **`:loop` 回边不作传导边**（作者三答 3，与设计 §3.1 R-4「含 `:loop`」不同）：
+    *   - 为何排除：verifier 的 `(fail)<worker>:loop` 只是**返工信号**，不是拓扑依赖——
+    *     取消 verify 时若不排除，级联会经回边**回烧 worker**（把独立的执行者一起判死）；
+    *   - 排除面 = **两条方向的 out 扫描**都跳过 `OutEdge.isLoopEdge` 的边；
+    *   - **不变的部分**：邻接/分量归属仍按 `FlowMapStore.topologicalChains:1069`
+    *     **含回边**（弱连通分量本就是无向的，回边不破坏链归属）⇒ 「同一条链」
+    *     的成员解析口径零变化，只有**传导方向**排除（判据 M9；变异 = 把 `:loop`
+    *     加回传导 ⇒ M9 必红）。
+    *
+    * 🔴 **`retry.upstream` 显式排除**（设计 §3.1 R-5 不变量）：`retry.upstream` 恒为
+    *   in/deps 邻居（`ProjectTypes` 的 `NODE_RETRY_NEIGHBOR` 创建期硬拒）⇒ 已被 R-1/R-2
+    *   覆盖；**日后若 retry 语义放宽到可跨子图回跳，必须显式加入本并集并重开
+    *   「跨分量禁行」判定**（设计 §3.2 的例外声明）。
+    *
+    * 纯函数（只读快照，无 IO、无写面）——调用方在同一事务/同一快照上取判据，
+    * 防「派生两次必然漂移」。 */
+  private def referencesOf(snapshot: FlowMapState, nodeId: String): Set[String] =
+    val nodes = snapshot.nodes
+    nodes.get(nodeId) match
+      case None => Set.empty
+      case Some(from) =>
+        val forward = from.out.iterator
+          .filterNot(OutEdge.isLoopEdge) // 三答 3：:loop 回边不作传导边
+          .filterNot(_.to == OutEdge.NebulaTarget)
+          .flatMap(e => OutEdge.resolveTargetId(nodes, e.to))
+          .filter(_ != nodeId)
+          .toSet
+        val reverse = nodes.values.iterator
+          .filter(_.id != nodeId)
+          .filter { n =>
+            n.in.contains(nodeId) || n.deps.contains(nodeId) || n.pendingSuccession.contains(nodeId) ||
+              n.out.exists(e =>
+                !OutEdge.isLoopEdge(e) && OutEdge.resolveTargetId(nodes, e.to).contains(nodeId))
+          }
+          .map(_.id)
+          .toSet
+        forward ++ reverse
 
   /** **摘边残留判据（纯函数单点）**：该节点在**活动区**里是否还有任何挂线需要摘——
     * 自家 `in`/`deps` 非空，或自家 `out` 里还有一条**能解析成活动节点**的边（纯
@@ -5579,6 +5870,37 @@ class NodeEngine(
   private case class FailOutcome(message: String)
 
 object NodeEngine:
+  /** `cascadeCancelledIds` 的 FIFO 上界（chaincancel 批 2026-09-17）：见该 Ref 头注——
+    * 只为防长跑进程无界增长；超限丢最旧，最坏后果 = 已取消下游被补一条 `pendingSuccession`
+    * 噪标（零功能影响）。 */
+  val CascadeSuppressCap: Int = 512
+
+  /** **L3 硬恢复的级联权限单点（判据 M8 的硬不变量，作者三答 4 参照的 §6-M8）**：
+    * `deferDetach = true`（L3 硬恢复**中间态**——bridge Cancelled → 5s → resume）⇒
+    * **级联强制 false**。
+    *
+    * 理由（与设计 §3.4 拒绝 O1 同源）：L3 中间态是**瞬时**终态，5s 后 resume 可能让节点
+    * **复活**；若此刻已把下游连带 `cancelled`（不可重激活），拓扑已毁、resume 成功也无
+    * 可续跑的接线 ⇒ 恢复路径被结构性掐死。
+    *
+    * 形态 = 恒 false 的级联旗标（本批**不**给 L3 腿接任何级联写路径，故它是「结构事实
+    * 的显式化 + 可失败的守卫」而不是一个可配开关）：L3 腿以本函数为准，日后若有人把
+    * L3 腿改接到 `cancelNodes`/链级写路径上，腿上的守卫行立即抛出。 */
+  def l3CascadeAllowed(deferDetach: Boolean): Boolean = !deferDetach
+
+  /** **`prunedReferrers` 派生（R2 报告字段，纯函数）**：一次取消操作前/后快照对比得出
+    * 「因摘除被改写 `in` 的引用方」= 原本 `in ∋ 某个取消成员`、操作后不再含该 id 的
+    * 节点（升序）。机械可核、与执行顺序无关（M4），也覆盖了 `reapStaleRunning`
+    * 内部 [[NodeEngine.cancelNode]] 路径的摘除（不依赖任何返回值透传）。 */
+  def prunedReferrersBetween(before: FlowMapState, after: FlowMapState, cancelIds: Set[String]): List[String] =
+    after.nodes.values
+      .filter { n =>
+        before.nodes.get(n.id).exists(b => cancelIds.exists(cid => b.in.contains(cid) && !n.in.contains(cid)))
+      }
+      .map(_.id)
+      .toList
+      .sorted
+
   /** completed 节点显示 TTL（24h——2026-09-02 作者裁定；测试档可缩短——ProjectActor
     * 注入）。2026-09-07 裁定收紧：仅 completed 带 TTL 到期自动归档；failed/cancelled
     * （与 blocked 同）ttlExpireAt=None 不过期——死亡现场保留主图待上层裁决。 */

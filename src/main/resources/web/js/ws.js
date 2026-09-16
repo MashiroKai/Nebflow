@@ -158,6 +158,11 @@ const GLOBAL_MSG_TYPES = new Set([
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。
   'wsBrowseList', 'wsBrowseMkdir',
+  // 链级取消回帧（chaincancel 批 2026-09-17，R2）：{type, ok, chainId, chainTitle?,
+  // cancelled[]/preserved[]/skipped[]/injected/notified, error?}——无 sessionId 的
+  // 弹窗私有请求-响应（与 cancelAgentResult 同族）；必须 GLOBAL：无 sessionId 时
+  // GLOBAL 保视图不换（flow-map 面板正在看的项目不该被取消动作切走视图）。
+  'chainCancelResult',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

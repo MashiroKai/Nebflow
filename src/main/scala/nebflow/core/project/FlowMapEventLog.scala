@@ -27,6 +27,9 @@ import nebflow.core.PathUtil
  *   `chain=<id> archivedAt=<ms> members=<n>`，顶层 chainId 同值；索引维护消费者
  *   DocIndexConsumer 据此翻 INDEX.md 条目 state）/ chain-restored（同批定义的对称
  *   事件类型——链抽象 P2 restoreChain 拉回时索引回翻；**接口点，本批无写入点**）/
+ *   chain-cancelled（**chaincancel 批 2026-09-17**：链级/级联取消的聚合留痕——
+ *   一次链级取消操作恰一条（成员清单/保留/跳过/注入次数），写点 =
+ *   `DispatchNotify.notifyChainCancelled`；见 [[ChainCancelledType]]）/
  *   hard-recovery（hard-recovery 批 2026-09-07 起由 NodeEngine.hardResumeNode 写
  *   「resumed from stuck」；取消静默死锁修复批 R5 补写 resume **失败**腿——
  *   `L3 resume FAILED … node left cancelled; dispatcher notified (R1) + out detached (R4)`）/
@@ -89,6 +92,34 @@ object FlowMapEventLog:
   /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
   val ChainRestoredType = "chain-restored"
+
+  /** **链级 / 级联取消事件类型**（chaincancel 批 2026-09-17，R2 §2.3-3）。
+    *
+    * 写点 = `DispatchNotify.notifyChainCancelled`（**唯一**写点）：一次链级取消操作
+    * 恰一条——`nodeId` 字段承载**本次首个被取消节点**（升序首项；链标识由顶层
+    * `chainId` 字段承载，与 [[ChainArchivedType]] 以「分量头节点」承载 nodeId 同族：
+    * 本字段承载代表节点标识），`chainId` = 该链 id。
+    *
+    * 与逐节点 `cancelled` 事件**留痕不合并**（设计 D3）：N 条 `cancelled` 各自回答
+    * 「哪个节点因何被取消」，本条回答「**一次**链级操作发生过、它的成员/保留/跳过
+    * 清单是什么、注入了几次」——即 C5 判据的观测面（`chain-cancelled` == 1 条）。
+    * 幂等：无被取消节点（重复调用 / 全终态链）⇒ 零写（C6/C5 的第二次调用读数 == 0）。 */
+  val ChainCancelledType = "chain-cancelled"
+
+  /** `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
+    * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。 */
+  def chainCancelledSummary(
+    chainId: String,
+    source: CancelSource,
+    reason: String,
+    cancelled: Int,
+    preserved: Int,
+    skipped: Int,
+    memberIds: List[String]
+  ): String =
+    s"chain=${if chainId.isEmpty then "-" else noWs(chainId)} source=${CancelSource.code(source)} " +
+      s"reason=${noWs(reason).take(80)} cancelled=$cancelled preserved=$preserved skipped=$skipped " +
+      s"members=${memberIds.mkString(",")}"
 
   /** **判词闸回退告警**事件类型（engine-defects 批 #238：2026-09-15 `8a3ac535e` 定义，
     * 同日泛化笔 `v238-impl` 语义反转为**回退检测器**——类型串保持不变，消费面零迁移）。

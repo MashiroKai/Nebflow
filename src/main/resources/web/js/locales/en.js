@@ -153,6 +153,24 @@ export default {
   'flowmap.detail.queueValue': 'Queued · {n} of {m} ({queue})',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
+  // Chain-level cancel (R2, chaincancel batch 2026-09-17): control label + the
+  // irreversible confirm card's four elements (① chain name + chainId ② doomed
+  // count + per-status breakdown ③ irreversibility ④ untouched declaration) plus
+  // the "recoverable interruptions abandoned" hint; two result toasts.
+  'flowmap.chain.cancel.label': 'Cancel the whole chain',
+  'flowmap.chain.cancel.title': 'Cancel the whole chain',
+  'flowmap.chain.cancel.chain': 'Chain "{chain}" ({id})',
+  'flowmap.chain.cancel.counts': '{n} node(s) will be cancelled ({breakdown})',
+  'flowmap.chain.cancel.irreversible': 'Irreversible: cancelled nodes cannot be reactivated — create a replacement node instead',
+  'flowmap.chain.cancel.untouched': 'Untouched: the {n} completed / failed / already-cancelled node(s) keep their results',
+  'flowmap.chain.cancel.interrupted': '{n} recoverable interruption(s) (interrupted) will be abandoned too',
+  'flowmap.chain.cancel.st.running': 'running',
+  'flowmap.chain.cancel.st.pending': 'pending',
+  'flowmap.chain.cancel.st.wiring': 'wiring',
+  'flowmap.chain.cancel.st.blocked': 'blocked',
+  'flowmap.chain.cancel.st.interrupted': 'interrupted',
+  'flowmap.chain.cancel.done': 'Chain cancel submitted ({n} node(s))',
+  'flowmap.chain.cancel.error': 'Chain cancel failed: {error}',
   // Chain fold (P1 · spec §3.3): main-graph collapsed-chain summary card; expand =
   // click the card body or its chevron.
   'flowmap.chain.nodes': '{n} nodes',
