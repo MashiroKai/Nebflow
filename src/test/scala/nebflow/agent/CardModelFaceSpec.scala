@@ -39,6 +39,13 @@ import scala.jdk.CollectionConverters.*
  *      —— 模型面改造后若不同步放宽，卡片头会静默丢掉「N file reference(s) NOT proxied」）。
  *   C7 非 Card 工具零影响（内容面恒等 —— `Read` 的 content 与 frontendContent 同值）。
  *
+ * 夹具口径（2026-09-17 `cardfacespecfix` 修复批，author #706 方案 A）：内联有**两道
+ * 闸** —— 单图 ≤5MB **且** 本次调用内联合计 ≤`FileRefs.MaxInlinePayloadChars`
+ * （40,000 字符）。故凡需要「载荷过 50,000 线」的夹具，一律由**大正文**给出（与 C2
+ * 同形），内联图一律取预算内的 `writePng(…, 64)`（`data:` URI = 16,582 字符）；
+ * 400² 噪点图（`data:` URI = 641,066 字符）会被累计预算挡下、回落 `/api/nf-file`
+ * 引用腿，载荷随之缩回线下 ⇒ 夹具静默失效（正是本批修复的红窗）。
+ *
  * 离线纪律：零实例、零网络、零 8080；`PathUtil.dataRoot` 与 `ToolsLogWriter` 目录
  * 全部重定向到临时目录（guard 的磁盘副本 / 工具日志**不落宿主数据根**），收尾复原。
  */
@@ -122,9 +129,13 @@ class CardModelFaceSpec extends FunSuite:
   // ── C1 / C2 模型面收敛（本批核心判据）────────────────────────────────────
 
   test("C1: model face carries no HTML body — no tag sequence, no data: URI, no body marker") {
-    val png = writePng("inline.png", 400) // ~480 KB ⇒ 可内联（≤5MB），data URI ≈ 640 K 字符
+    // 夹具口径（2026-09-17 cardfacespecfix 修复批）：内联有**两道闸**——单图 ≤5MB
+    // **且**本次调用内联合计 ≤40,000 字符。⇒「过线」不再靠超大图（400² 噪点图的
+    // data URI = 641,066 字符撞累计预算 ⇒ 回落引用腿 ⇒ 载荷缩回 50,000 线下），
+    // 改由**大正文**给出（与 C2 同形）；图取预算内的小图 ⇒ 仍真内联、`data:` 面非空。
+    val png = writePng("inline.png", 64) // data URI = 16,582 字符（≤40,000，稳过累计预算）
     val html =
-      s"""<div class="wrap"><h1>report</h1><img src="$png" style="width:100%"><p>$bodyMarker</p></div>"""
+      s"""<div class="wrap"><h1>report</h1><img src="$png" style="width:100%"><p>$bodyMarker${"x" * 120_000}</p></div>"""
     val input = card("html" -> html, "title" -> "Big Report")
     val (face, res) = runCard(input)
 
@@ -177,9 +188,13 @@ class CardModelFaceSpec extends FunSuite:
   // ── C3 guard 不再触发（改前：preview + 磁盘副本）──────────────────────────
 
   test("C3: guarded model face stays intact and persists no disk copy (pre-change: preview + file)") {
-    val png = writePng("guard.png", 400)
-    val input = card("html" -> s"""<div><img src="$png"><p>$bodyMarker</p></div>""", "title" -> "Guarded")
+    // 过线载荷同 C1 = **大正文**（小图仍在 40,000 累计预算内、真内联）：本用例的判据
+    // （guard 不再触发）只有载荷**真的过了 50,000 线**才非真空，故前提写成断言。
+    val png = writePng("guard.png", 64)
+    val input = card("html" -> s"""<div><img src="$png"><p>$bodyMarker${"x" * 120_000}</p></div>""", "title" -> "Guarded")
     val call = callOf(input, "call-guard")
+    val payload = rawPayload(input)
+    assert(payload.length > 50_000, s"fixture must exceed the guard threshold (was ${payload.length})")
     val res = CoreProbe.exec(call, ctx).unsafeRunSync()
     val guarded = ToolResultGuard.guardResult(call, res, "sess-cardface").unsafeRunSync()
 
@@ -194,11 +209,14 @@ class CardModelFaceSpec extends FunSuite:
   // ── C4 / C5 用户面逐字全文（硬）──────────────────────────────────────────
 
   test("C4: user face keeps the payload verbatim — both sides' sha256 equal, fixture hash stable") {
-    val png = writePng("verbatim.png", 400)
-    val html = s"""<div><img src="$png"><p>$bodyMarker</p></div>"""
+    // 逐字全文的「全文」同样由**大正文**给出（小图在 40,000 累计预算内 ⇒ 真内联），
+    // 于是本用例同时捏住「正文标记 + 内联图 data URI」两件（见下方两条断言）。
+    val png = writePng("verbatim.png", 64)
+    val html = s"""<div><img src="$png"><p>$bodyMarker${"x" * 120_000}</p></div>"""
     val input = card("html" -> html, "title" -> "Verbatim")
     val raw = rawPayload(input)
     val raw2 = rawPayload(input)
+    assert(raw.length > 50_000, s"fixture must really carry a large body (was ${raw.length})")
     assertEquals(sha256(raw), sha256(raw2), "payload construction is deterministic (no clock/random in the payload)")
 
     val (_, res) = runCard(input)
