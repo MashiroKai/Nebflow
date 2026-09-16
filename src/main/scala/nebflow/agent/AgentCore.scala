@@ -858,13 +858,42 @@ private[agent] trait AgentCore:
               stateForLlm.withMessages(SystemReminders.pruneTimeReminders(withPluginSurface ++ timeMsg))
           // Cache v2: persist the rebuilt systemStable + snapshot in state at
           // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
-          // existing cache untouched — except the plugin baseline, which advances
-          // only when the session was actually told about a plugin-surface change
-          // (otherwise the pending change stays pending).
+          // existing cache untouched — except the per-axis baselines that advance
+          // when (and only when) the session was actually told about a change
+          // (otherwise the pending change stays pending): plugin-surface, and
+          // devices (F-C, devoscfix 批 2026-09-17).
+          //
+          // F-C（诊断 §7 / 作者三答②）：**devices 轴基线真播报即推进**。
+          // 旧行为 = 基线只在 lifecycle 轮推进（原 `:865-870`）⇒ 一次真变更在其后
+          // **每一轮**被重新差量、逐轮复播同一条（诊断实测 28 行 / 23min 逐字相同，
+          // 把「变更次数」高估达一个数量级）。
+          // 判据 = **本轮真的把 devices 提示行注入了请求** —— 即 `contextMsg` 非空
+          // 的同一条件（非 compact / 非 ask 轮）**且** devices 类提醒在场。
+          // 与 plugin-surface 基线同一取舍（`:861-863` 注释自陈的语义）：
+          //   · system-event 轮 ⇒ `collectAllIO` 在 `!isUserTurn` 直接返回 `Nil`
+          //     ⇒ 无提醒对象 ⇒ **不**推进；
+          //   · compact / ask 轮 ⇒ `contextMsg` 为空 ⇒ 提醒未进请求 ⇒ **不**推进。
+          // ⇒ 未播报的真变更保持 pending，下个真用户轮照常提示
+          //   （🔴 不得为凑「复播归零」把真变化一并吞掉）。
+          // `systemStable` 字符串与其余快照轴（sessions/language/env/projects/plugin）
+          // **不动** —— provider 前缀缓存零影响。
+          devicesDeltaInjected =
+            contextMsg.nonEmpty && contextReminders.exists(_.category == "devices")
           stateWithCache =
             if isLifecycleRebuild then stateWithReminder.withSystemStableCache(systemStable, currentSnapshot)
-            else if pluginSurfaceMsg.nonEmpty then stateWithReminder.withPluginSurfaceBaseline(pluginSurfaceText)
-            else stateWithReminder
+            else
+              val withPluginBaseline =
+                if pluginSurfaceMsg.nonEmpty then stateWithReminder.withPluginSurfaceBaseline(pluginSurfaceText)
+                else stateWithReminder
+              // 两轴同一轮可各自推进（旧 `else if` 链在「双变更同一轮」时会漏推进 devices 轴）。
+              // 🔴 直接 `copy` 而不在 protocol.scala 加 `withDevicesBaseline` 助手：
+              // 本批实施面限定 `NeblinkClient.scala` + `AgentCore.scala`（P7 零越界），
+              // 语义与既有 `withPluginSurfaceBaseline` 逐字同构（无快照 ⇒ 空转不炸）。
+              if devicesDeltaInjected then
+                withPluginBaseline.copy(
+                  stableSnapshot = withPluginBaseline.stableSnapshot.map(_.copy(devices = devInfo))
+                )
+              else withPluginBaseline
           // Maintenance check: every N delegate/flow calls
           maintenanceMsg =
             if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then

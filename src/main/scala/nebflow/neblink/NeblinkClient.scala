@@ -450,7 +450,40 @@ class NeblinkClient(
 
   /**
    * Smart discovery: login if needed, otherwise heartbeat.
-   * If heartbeat fails (token expired), re-login automatically.
+   *
+   * 会话回收面**收窄**（devoscfix 批 2026-09-17，作者三答① / 诊断报告 §7 F-A）：
+   * 只有**认证类**失败才允许置空 token + 重做整会话交换；**传输类**失败保持
+   * token、原地等既有退避梯重试。
+   *
+   * 分类判据（🔴 实现处判据，防日后回归 —— 与 `withSession` 自愈链同源，
+   * 见 [[NeblinkClient.sessionRecoverable]]）：
+   *  - 落**认证类**（⇒ 置空 token + 重做会话交换）：
+   *      · `HTTP 401 …`（无条件：401 = 会话/令牌问题）；
+   *      · `HTTP 403 …` **且** 响应体含 `token` 字（服务端令牌拒收原文
+   *        `{"error":"Invalid or expired token"}`）。
+   *  - 落**传输类**（⇒ **保持 token**，仅返回 `Left`）：
+   *      · 无 `HTTP ` 前缀的传输异常（`request timed out` /
+   *        `HTTP connect timed out` / 连接复位 / 裸 `ConnectException` 等），
+   *        由 [[sendRequestTimed]] 的 catch 与 `handleErrorWith` 折成 `Left(e.getMessage)`；
+   *      · 非 2xx 且**非认证**者（如 `HTTP 404: {"error":"not found"}`、5xx）。
+   *  - 🔴 **业务 403**（`not_friend` / `not_blocker` 之类，体里无 `token`）**不算**
+   *    认证类 —— 既有注释（`sessionRecoverable`）已自陈：重登会以「同设备一活会话」
+   *    踢掉自己的旧会话，故只有真令牌拒收才准入。
+   *
+   * WHY（诊断 H-1 结构放大链）：服务端「同 (deviceId, network) 一活会话」策略下，
+   * 任何一次**网络抖动**触发的重登都会 kick 旧会话，并在该路由**显式拆隧道 + 广播
+   * offline**（neblink-server `routes.rs:1399-1406` / `store.rs:3165-3168`）⇒ 隧道
+   * 以新 token 重连注册 + 广播 online（`relay.rs:649/694`）⇒ **一次抖动 = 一对
+   * 「设备 removed/added」**（实测耦合 ≤2s）。传输失败**并不**意味着 token 失效，
+   * 重登既无必要、又制造可见振荡。
+   *
+   * 覆盖面无缺口：token 真失效时下一拍心跳会拿到 401 ⇒ 自然走回认证类分支；
+   * `withSession` 自愈链（401/403）与隧道 401 自愈（`NeblinkRelayTunnel`）是
+   * **独立**的两条腿，不受本次收窄影响。
+   *
+   * 🔴 传输类分支**只**返回 `Left`：不新增任何重试/并发腿 —— 节奏交给既有退避梯
+   * （[[NeblinkDiscovery.delayForFailures]]，cap 45s，`NeblinkDiscovery.scala:195-201`）
+   * 与隧道自身重连梯（`NeblinkRelayTunnel.scala:720-740`）。
    */
   def discover(
     deviceId: String,
@@ -463,10 +496,19 @@ class NeblinkClient(
       case Some(_) =>
         heartbeat.flatMap {
           case Right(peers) => IO.pure(Right(peers))
-          case Left(err) =>
+          // 认证类：既有行为逐字保留（置空 token + 重做整会话交换）
+          case Left(err) if NeblinkClient.sessionRecoverable(err) =>
             logger.info(s"Heartbeat failed ($err), re-logging in...") *>
               IO { sessionToken = None } *>
               login(deviceId, deviceName, platform, endpoints)
+          // 传输类：保持 token，原地重试（退避梯在调用方）
+          case Left(err) =>
+            logger
+              .info(
+                s"Heartbeat failed ($err); transport-class failure — keeping the session " +
+                  "token and retrying on the existing backoff"
+              )
+              .as(Left(err): Either[String, List[NeblinkPeerInfo]])
         }
 
   /** Logout from NebLink Server. */
