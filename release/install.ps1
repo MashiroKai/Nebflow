@@ -684,7 +684,7 @@ $wrapperContent = @"
 # (Windows version fields reject them), so as plain strings "2026.10.5" sorts
 # BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple (year,
 # month, day, same-day -beta.N sequence) and take the max.
-# Version core = the SAME contract as packaging/app-version.sh:21
+# Version core = the SAME contract as packaging/app-version.sh:36
 #   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
 # The optional 4th segment and the -beta.N tail are the SAME field (the same-day
 # sequence, i.e. the tuple's 4th field): four segments = date core + sequence
@@ -808,7 +808,7 @@ rem Name order != version order: the date scheme deliberately strips leading
 rem zeros (Windows version fields reject them), so as plain strings "2026.10.5"
 rem sorts BEFORE "2026.9.17". Rank the candidate (arg %~1) by the parsed numeric
 rem tuple and keep the max. Version core = the SAME contract as
-rem packaging/app-version.sh:21
+rem packaging/app-version.sh:36
 rem   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
 rem The optional 4th segment and the -beta.N tail are the SAME field (the
 rem same-day sequence, i.e. the tuple's 4th field): four segments = date core +
