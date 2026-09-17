@@ -15,12 +15,12 @@ description: 可视化汇报工具。用专业工具（matplotlib/graphviz/plotl
 
 **语言跟随用户。** 图表中的标题、轴标签、图例、注释等所有文字，必须使用用户当前对话使用的语言。用户用中文则全中文标注，用英文则全英文。不要混用。
 
-**样式嵌入和暗色模式适配参见 `design-cards` 插件的 `card-design`。** 本 skill 专注图表生成层的审美——配色、排版、标注、布局。
+**样式嵌入和暗色模式适配见 Plugin Catalog 的 `design-cards` 插件的 `card-design`（该插件不由本包携带，未列出则不适用）。** 本 skill 专注图表生成层的审美——配色、排版、标注、布局。
 
 ## 工作流
 
 1. 用 Bash 运行专业工具 → **输出 SVG 格式**
-2. 输出到文件（如 `/tmp/output.svg`）→ 把绝对路径写进交付文本
+2. 输出到文件（如 `<ws>/output.svg`）→ 把绝对路径写进交付文本
 3. 单文档 **≤3 图**（硬性）：命中类别 n ≤3 全画，n >3 只画权重前 3（结论依赖的数据关系 > 时间线 > 流程/调用链 > 三方对比 > 结构/分层），其余降级表格/文字并在首屏加一行「图预算超限」声明；被省略类别是结论唯一载体 ⇒ 拆文档
 
 ## 什么时候用可视化
@@ -136,7 +136,7 @@ SEQUENTIAL = ['#e8eaed', '#b8bfd4', '#8893b3', '#586792', '#3a4a75', '#1e2e58']
 - **标签**：edge label 简短（协议名、数据类型），不要放完整句子
 
 ```bash
-cat > /tmp/arch.dot << 'EOF'
+cat > <ws>/.nebflow/tmp/arch.dot << 'EOF'
 digraph {
   rankdir=LR
   node [shape=box, style="filled,rounded", fontname="-apple-system", fontsize=12]
@@ -150,7 +150,7 @@ digraph {
   Server -> DB     [label="SQL"]
 }
 EOF
-dot -Tsvg -o /tmp/arch.svg /tmp/arch.dot
+dot -Tsvg -o <ws>/arch.svg <ws>/.nebflow/tmp/arch.dot
 ```
 
 ## SVG 生成示例
@@ -182,7 +182,7 @@ ax.set_title('信号对比')
 ax.yaxis.grid(True, alpha=0.3)
 ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout(pad=1.5)
-plt.savefig('/tmp/chart.svg', format='svg')
+plt.savefig('<ws>/chart.svg', format='svg')
 ```
 
 ## 什么时候生成完整 HTML 报告
@@ -196,7 +196,7 @@ plt.savefig('/tmp/chart.svg', format='svg')
 
 ## SVG 的暗色模式适配
 
-生成的 SVG 文件本身要能在亮/暗主题下都可读（HTML 外壳的 CSS 变量规范见 `design-cards` 插件的 `card-design`，此处只管 SVG 内容层）：
+生成的 SVG 文件本身要能在亮/暗主题下都可读（HTML 外壳的 CSS 变量规范见 Plugin Catalog 的 `design-cards` 插件的 `card-design`，此处只管 SVG 内容层）：
 
 - **不在 SVG 里硬编码前景色**：线条/文字优先用 `currentColor`，或在 SVG 内嵌 `<style>` 用 CSS 变量引用；
 - **SVG 内嵌媒体查询**（独立 SVG 文件被 `<img>` 引用时也生效）：
@@ -213,14 +213,14 @@ plt.savefig('/tmp/chart.svg', format='svg')
 
 创建完整 HTML 报告时，将 SVG 图表 + HTML 布局 + CSS 写入一个 `.html` 文件，落盘后把**绝对路径**写进交付文本（人读件落 `~/.nebflow/docs/<域>/`；展示权归 Nebula，节点不调用 Pop）。
 
-**样式规范参见 `design-cards` 插件的 `card-design`** — CSS 变量、圆角、字体、暗色模式适配、SVG 嵌入策略。以下仅展示结构：
+**样式规范见 Plugin Catalog 的 `design-cards` 插件的 `card-design`** — CSS 变量、圆角、字体、暗色模式适配、SVG 嵌入策略。以下仅展示结构：
 
 ```bash
 # 1. 生成图表
-python3 /tmp/plot.py  # 输出 /tmp/chart.svg
+python3 <ws>/.nebflow/tmp/plot.py  # 输出 <ws>/chart.svg
 
 # 2. 创建 HTML 报告（样式用 CSS 变量，不要硬编码 hex）
-cat > /tmp/report.html << 'HTMLEOF'
+cat > ~/.nebflow/docs/<域>/report.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
@@ -243,7 +243,7 @@ h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
 HTMLEOF
 
 # 3. 交付：把绝对路径写进交付文本（展示权归 Nebula）
-echo /tmp/report.html
+echo ~/.nebflow/docs/<域>/report.html
 ```
 
 ---

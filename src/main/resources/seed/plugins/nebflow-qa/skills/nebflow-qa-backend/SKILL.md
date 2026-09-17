@@ -1,6 +1,6 @@
 ---
 name: nebflow-qa-backend
-description: Nebflow Scala 后端验证域知识——五维审核结构（sbt compile/sbt test/验收条件逐项/代码质量三维/回归）、sbt 锁冲突错峰重试、运行安全红线（8080 宿主保护/PID 验身）、✅/❌ 审核报告格式、只审不改纪律。Use when 验证 Nebflow Scala 后端交付物：编译测试、隔离实例冒烟、验收条件核对、Scala 代码质量审查。
+description: Nebflow Scala 后端验证域知识——五维审核结构（sbt compile/sbt test/验收条件逐项/代码质量三维/回归）、sbt 锁冲突错峰重试、运行安全红线（宿主 gateway 端口保护/PID 验身）、✅/❌ 审核报告格式、只审不改纪律。Use when 验证 Nebflow Scala 后端交付物：编译测试、隔离实例冒烟、验收条件核对、Scala 代码质量审查。
 when_to_use: 每轮后端交付后的验证关卡；verify 节点分配此 skill 做五维全覆盖审核。验证方法论深化（验红实证/变异安全/冒烟法证）见同插件 verification-rigor 与 isolated-smoke-verification。
 language: zh
 status: active
@@ -37,12 +37,12 @@ last_verified: 2026-09-03
 
 ## 运行安全（红线）
 
-- **环境表里的宿主 PID 绝对禁杀**（第一道防线，Process Safety 第 1 条）；**禁止 `sbt run` 裸跑**（默认端口 8080 抢宿主）；**8080 端口识别是第二道防线**——对 8080 监听进程绝对禁发任何信号——宿主是所有会话的运行载体。
-- 隔离实例（端口 ≠ 8080）/静态文件服务可按需管理，但 **kill 前 PID 验身**：`lsof -ti :<端口>` 定位 + `lsof -p <pid> | grep cwd` 确认工作目录（fork 的 sbt/java 子进程 cmdline 常不含项目路径）。
+- **环境表里的宿主 PID 绝对禁杀**（第一道防线）；**禁止 `sbt run` 裸跑**（默认 home + 默认端口会抢宿主）；**宿主 gateway 端口识别是第二道防线**——对宿主 gateway 端口监听进程绝对禁发任何信号——宿主是所有会话的运行载体。
+- 隔离实例（端口 ≠ 宿主 gateway 端口）/静态文件服务可按需管理，但 **kill 前 PID 验身**：`lsof -ti :<端口>` 定位 + `lsof -p <pid> | grep cwd` 确认工作目录（fork 的 sbt/java 子进程 cmdline 常不含项目路径）。
 - 隔离实例冒烟仅当任务明确提供隔离环境（独立 worktree + 独立端口）时执行；默认只做 compile/test 验证。
 - shutdown/Ctrl+C 行为验证必须用隔离进程，绝不动真实宿主。
 
-## 进程清理纪律（2026-09-05 裁定）
+## 进程清理纪律
 
 - 测试/冒烟/e2e 结束**必须清理自己 spawn 的进程**——隔离 sbt 实例、mock server、静态文件服务用完即杀，不留给宿主或下一个会话手清。
 - 脚本首选 `trap 'cleanup' EXIT INT TERM` 模式（后台 PID 登记 → EXIT 逐个 kill + wait + lsof 复查端口释放；裸 EXIT trap 信号退出不触发）；REPL/手跑用完显式 kill。
@@ -76,5 +76,5 @@ last_verified: 2026-09-03
 
 - 编译/测试结论必须附实际命令输出，不能凭空判断。
 - 代码质量审查必须引用具体文件路径和行号。
-- 报告写入任务指定位置；未指定则 `/tmp/qa-backend-reports/<branch>-backend.md`。
-- 工作目录以任务指定为准（主仓或 /tmp/nb-* worktree）；未指定时向触发方确认，不要猜。
+- 报告写入任务指定位置；未指定则 `<ws>/.nebflow/tmp/<branch>-backend.md`。
+- 工作目录以任务指定为准（主仓或任一 worktree）；未指定时向触发方确认，不要猜。

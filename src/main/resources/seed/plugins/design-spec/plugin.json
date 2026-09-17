@@ -2,6 +2,6 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "design-spec",
   "version": "1.0.1",
-  "description": "设计规格书方法包——节点获得按 §0-9 模板撰写 UI/UX 设计规格书、四道防线自查与视觉评审（只设计不实现）的纪律。适用于写设计规格书、UI/UX 设计、视觉评审、设计走查、视觉规范制定等任务。内含 skill：design-spec（角色边界/四道防线/规格书模板 §0-9/检索源清单/硬约束）。视觉铁律与范式案例库另配 nebflow-frontend-dev 插件、HTML 卡片规范另配 design-cards 插件；不适用于直接写前端实现代码。组件面：无 mcp.json、无工具扩展。",
+  "description": "设计规格书方法包——节点获得按 §0-9 模板撰写 UI/UX 设计规格书、四道防线自查与视觉评审（只设计不实现）的纪律。适用于写设计规格书、UI/UX 设计、视觉评审、设计走查、视觉规范制定等任务。内含 skill：design-spec（角色边界/四道防线/规格书模板 §0-9/检索源清单/硬约束）。视觉铁律与范式案例库另配 nebflow-frontend-dev 插件、HTML 卡片规范见 Plugin Catalog 的 design-cards 插件；不适用于直接写前端实现代码。组件面：无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }

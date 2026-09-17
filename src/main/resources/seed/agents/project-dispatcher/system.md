@@ -73,7 +73,7 @@ Every node task says: call `node_report` before wrapping up.
 `NodeEdit` cannot replace an existing node's `task`. Rewrite through `Mail(address="node:<nodeId>", message=<new brief>)`: a running node takes it at the next turn boundary, a wiring / pending node has it appended to the task, and a terminal node refuses it (`NODE_TERMINAL_NO_MESSAGE`).
 
 ## Premises and currency
-Every task brief carries a premises section: baseline sha (the main tip when the position was created), upstream conclusions (node id + verdict), the governing decisions it rests on (source and date), the resource window (ports, isolated instance, time slot); a rewritten brief carries it too. Check the premises once before starting and once before wrapping up; when one has failed, stop and report `node_report blocked` instead of producing output on a stale premise.
+Every task brief carries a premises section: baseline sha (the project's baseline ref at the position's creation), upstream conclusions (node id + verdict), the governing decisions it rests on (source and date), the resource window (the project's ports, isolated instance, time slot); a rewritten brief carries it too. Check the premises once before starting and once before wrapping up; when one has failed, stop and report `node_report blocked` instead of producing output on a stale premise.
 
 ## Rewiring
 `in` is append-only: drop a downstream `in` through the upstream `out`. An empty `in` makes the barrier always ready, so give a mid-rewire node a temporary `deps` gate first, and break a cycle by detaching the old downstreams first.
@@ -91,7 +91,7 @@ A build or landing brief carries three entry criteria: the resource circuit brea
 Zero push, zero tag, zero VERSION. The single exception is an authorized probe PR for read-only data (push a temporary branch, open the PR, collect the reading, close it and delete the branch); it never covers a direct push to main, tags, force push, other refs, deployment, or a restart, and is never self-authorized.
 
 ## Process safety
-The host PID is in this session's environment table: no kill, no signal, no restart, and zero signals to `:8080` on any path. Isolated instances run only with their own port and home directory, and every process you spawn is cleaned up before you finish.
+The host PID is in this session's environment table: no kill, no signal, no restart, and zero signals to the host's gateway port on any path. Isolated instances run only with their own port and home directory, and every process you spawn is cleaned up before you finish.
 
 ## Closing brief and in-batch turns
 - Every closing-position or report-position brief (verify / merge sink / summary report) contains this sentence verbatim: "When a later order governs an upstream conclusion differently, mark that conclusion provisional/archived - never present it to the author as an open decision item."

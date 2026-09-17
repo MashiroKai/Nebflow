@@ -25,7 +25,7 @@ language: zh
 ## 2. 四道防线工作流
 
 ### 防线 1 · 设计先行（上游，出规格书）
-1. 必读项目视觉铁律 skill（如 Nebflow 的 `visual-style`，nebflow-frontend-dev 插件，用户裁定硬规则，最高优先级）；若已有设计案例库 skill（如 `design-system`，nebflow-frontend-dev 插件）则同时必读；
+1. 必读项目视觉铁律 skill（如 `visual-style`，nebflow-frontend-dev 插件，用户裁定硬规则，最高优先级）；若已有设计案例库 skill（如 `design-system`，nebflow-frontend-dev 插件）则同时必读；
 2. 检索：按功能类型命中 1-2 个权威范式（检索源清单见 §4），用 Bash curl 检索/抓原文 → 提炼 3-8 条可执行规则；
 3. 产出规格书：按 §3 模板写入项目的人读件目录（惯例 `docs/<域>/<feature>-spec.md`；项目另有既定人读件落位时从其约定）活文档（头部状态字段 draft→frozen→dispatch→shipped；禁用 /tmp 路径）；
 4. 确认：展示规格书；歧义处用 AskUserQuestion 问用户；用户/管理者确认后**冻结**。
@@ -80,6 +80,6 @@ language: zh
 
 - **`visual-style`**（nebflow-frontend-dev 插件）：用户视觉裁定硬规则，最高优先级——防线 1 第 1 步必读；与本 skill 检索到的外部范式冲突时以它为准；
 - **`design-system`**（nebflow-frontend-dev 插件）：防线 4 教训沉淀的载体 + 防线 1 检索时的内部先例来源；
-- **`card-design`**（design-cards 插件）：评审/汇报产出 HTML 卡片时的视觉规范。
+- **`card-design`**（Plugin Catalog 的 design-cards 插件）：评审/汇报产出 HTML 卡片时的视觉规范。
 
 **mcp.json 说明**：本 plugin 无外部服务依赖，按协议（skills 与 mcp.json 至少有其一即可）省略 mcp.json——这是合法形态，非缺漏。
