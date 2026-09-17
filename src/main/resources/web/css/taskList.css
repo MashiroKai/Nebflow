@@ -97,9 +97,16 @@
 }
 
 /* 展开态唯一滚动容器：仅列表体滚，header 在滚动边界外钉顶。
-   折叠瞬间 .collapsed 生效 → 回到 overflow:hidden，动画期无滚动条残影。 */
+   折叠瞬间 .collapsed 生效 → 回到 overflow:hidden，动画期无滚动条残影。
+   可见滚动条隐藏（滚动能力保留：overflow-y:auto 不动）：写法照仓内既有惯用法
+   （nav.css #nav-agent-list / split.css .xlsx-sheet-bar / modal.css .search-tabs），
+   作用域限本容器，全局滚动条样式与折叠态语义均不动。 */
 .task-card:not(.collapsed) .task-body-inner {
   overflow-y: auto;
+  scrollbar-width: none;
+}
+.task-card:not(.collapsed) .task-body-inner::-webkit-scrollbar {
+  display: none;
 }
 
 .task-card.collapsed .task-body {
