@@ -17,7 +17,7 @@
 # segment (`(\.[0-9]+)?`, placed after the date core and before `-beta`), so the
 # four-segment release value 2026.9.17.1 is no longer silently truncated to
 # three fields. Mapping stays numeric-dotted, one rule per branch:
-#   date   YYYY[.MM[.DD]][.S][-beta.N]  -> Y.M.D[.S]   (M/D leading zeros
+#   date   YYYY.MM.DD[.S][-beta.N]  -> Y.M.D[.S]   (M/D leading zeros
 #          stripped; year = exactly 4 digits; month/day = 1-2 digits each;
 #          S = >=1 digit, emitted VERBATIM, no zero-stripping and no upper
 #          bound; `-beta.N` only decides the branch and is not emitted)
