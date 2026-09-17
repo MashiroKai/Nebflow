@@ -507,7 +507,8 @@ final class FriendService(
 
   /** 补拉帧构造（§3.2①「拉取即派发」）：与真 push **同形**，复用 `frontendFrame`
     * 单实现 + 构造期注入的 `onFriendEvent` 广播缝（生产 = `wsHub.broadcast`）。
-    * 仅两个**加性**字段（`senderId` / `backfill`），理由见 `pullConversation` scaladoc。 */
+    * 加性字段（`senderId` / `backfill` / 设备会话的 `senderDeviceId`），理由见
+    * `pullConversation` scaladoc。 */
   private def dispatchPulled(
       conversationId: String,
       m: MessageSummary,
@@ -526,7 +527,17 @@ final class FriendService(
           Some("createdAt" -> Json.fromLong(m.createdAt)),
           Some("backfill" -> true.asJson),
           m.attachments.filter(_.nonEmpty).map("attachments" -> _.asJson),
-          m.origin.filter(_.nonEmpty).map("origin" -> _.asJson)
+          m.origin.filter(_.nonEmpty).map("origin" -> _.asJson),
+          // MVP-2 设备会话（契约 §8.3）：**回放帧必须与主腿 push 同源携带**该键 ——
+          // 主腿由服务端**唯一** payload builder 条件携带（`sender_device_id` 非 NULL
+          // 才带），而回放腿的键集就是本列表 ⇒ 漏一行即静默丢字段，同一条消息经两条腿
+          // 在 UI 上呈现两种形态（前端做方向重算的唯一输入就是该键）。
+          // 在场口径照抄本字段**自己的手写编码器**（`NeblinkModel` 的
+          // `Encoder[MessageSummary]`：`None` ⇒ **省键**，不写 `null`）——与同级
+          // `origin` / `attachments` 的 `filter(_.nonEmpty)` **不是**同一条规则，故
+          // 此处**不**套用：套用会在上游给出空串时让回放帧丢键而主腿帧带键，
+          // 恰好破坏本批要立住的「同源」不变式。
+          m.senderDeviceId.map("senderDeviceId" -> _.asJson)
         ).flatten
       )
     )

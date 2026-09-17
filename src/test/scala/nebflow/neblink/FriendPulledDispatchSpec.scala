@@ -466,4 +466,80 @@ class FriendPulledDispatchSpec extends FunSuite:
     assertThreeFields(failed.head)
   }
 
+  // ══ A8 · 设备会话：补拉（回放）帧必须与主腿（真 push）**同源携带**
+  //        `senderDeviceId`；legacy 直聊/群聊行不得长出该键 ══════════════════
+  /** 病灶（P0，本用例的主靶）：主腿真 push 由服务端 `friends.rs` 的**唯一** payload
+    * builder 条件携带该键（非 NULL 才带），而补拉腿的帧装配是 `dispatchPulled` 里的
+    * **手写键白名单** ⇒ 漏一行即静默丢字段，回放帧与原帧在**同一字段**上形态不一致。
+    *
+    * 为什么这个键不能丢：设备会话两端是同一账号 ⇒ 方向（out/in）**不落库、不上线**，
+    * 前端唯一的重算输入就是 `senderDeviceId`（契约 §8.3 逐字「方向由
+    * `sender_device_id == 本机 id` 重算」）。回放帧缺键 ⇒ 该条回放只能落到
+    * 「不可判」分支（保守向：气泡方向错/未读不涨），而**同一实例的主腿帧**带键——
+    * 一枚消息经两条腿在 UI 上呈现两种形态。
+    *
+    * 断言面 = 本夹具既有缝（`mkService` 的 `onFriendEvent` 捕获 + `ScriptedClient`
+    * 脚本页），断言对象 = `FriendEvent.frontendFrame` 展平后的**帧**（与前端所见同一形态）。
+    *
+    * 双面（同一条「与主腿同源」纪律的两侧）：
+    *  · 设备消息（`senderDeviceId = Some(…)`）⇒ 帧**含**该键且值 == 上游给入的设备 id；
+    *  · legacy 消息（`None`）⇒ 帧**不含**该键（省键，不是 `null`）——防修复顺手
+    *    把 legacy 形态改成多一个 `null` 键。 */
+  test("A8 设备会话补拉帧携带 senderDeviceId（值 == 上游设备 id）；legacy 行不含该键") {
+    // 上游给入的设备 id：跨仓 §8.3 会话 id = `dev:<发送设备>`，两处必须同值。
+    val peerDevice = "dev-peer"
+    val deviceMsg = MessageSummary(
+      id = 113L,
+      senderId = "u-peer",
+      kind = "text",
+      body = "m113",
+      createdAt = 1700000000L,
+      attachments = None,
+      origin = None,
+      senderDeviceId = Some(peerDevice)
+    )
+    val prog = for
+      // 设备会话腿：冷锚 + 温锚都要能取数 ⇒ 用温锚（与 A1 同构，派发腿确定可达）。
+      devCalls <- Ref.of[IO, List[(String, Long, Int)]](Nil)
+      devFrames <- Ref.of[IO, List[Json]](Nil)
+      gDev = new FriendMessagingGuard()
+      _ <- gDev.advanceAnchor(s"dev:$peerDevice", 112L)
+      svcDev = mkService(devCalls, devFrames, gDev, _ => List(deviceMsg))
+      _ <- svcDev.pullConversation(s"dev:$peerDevice", FriendPullTrigger.RefreshAll)
+      dfs <- devFrames.get
+      // legacy 直聊腿：同一缝、同一断言，反向钉「不得长出该键」。
+      legCalls <- Ref.of[IO, List[(String, Long, Int)]](Nil)
+      legFrames <- Ref.of[IO, List[Json]](Nil)
+      gLeg = new FriendMessagingGuard()
+      _ <- gLeg.advanceAnchor("c", 112L)
+      svcLeg = mkService(legCalls, legFrames, gLeg, _ => List(msg(113L)))
+      _ <- svcLeg.pullConversation("c", FriendPullTrigger.RefreshAll)
+      lfs <- legFrames.get
+    yield (dfs, lfs)
+
+    val (deviceFrames, legacyFrames) = prog.unsafeRunSync()
+
+    assertEquals(deviceFrames.size, 1, s"前置：设备会话补拉必须派发 1 帧（修前该腿同样派发）：${deviceFrames.mkString}")
+    assertEquals(
+      deviceFrames.head.hcursor.get[String]("senderDeviceId").toOption,
+      Some(peerDevice),
+      s"🔴 P0 主靶：补拉（回放）帧必须携带 `senderDeviceId` == 上游给入的设备 id" +
+        s"（主腿 push 由服务端唯一 payload builder 条件携带该键 ⇒ 回放腿漏键 = 两腿同字段不同形态）；" +
+        s"实际帧=${deviceFrames.head.noSpaces}"
+    )
+    // 同帧的其余「与主腿同形」字段仍在位（防修复顺手 reshape）。
+    assertEquals(
+      deviceFrames.head.hcursor.get[Boolean]("backfill").toOption,
+      Some(true),
+      "补拉标记必须仍在位（前端据此不涨未读/不转发）"
+    )
+    assertEquals(deviceFrames.head.hcursor.get[String]("conversationId").toOption, Some(s"dev:$peerDevice"))
+
+    assertEquals(legacyFrames.size, 1, "前置：legacy 直聊腿同样派发 1 帧")
+    assert(
+      legacyFrames.head.asObject.forall(!_.contains("senderDeviceId")),
+      s"🔴 legacy 直聊消息**不得**长出 `senderDeviceId` 键（省键 = 与旧形态逐字节一致）：${legacyFrames.head.noSpaces}"
+    )
+  }
+
 end FriendPulledDispatchSpec
