@@ -27,8 +27,8 @@ import nebflow.core.tools.ToolRegistry
  *     available"。flows/skills 声明解析保留（决策 A①，legacy 授能活到阶段 3），
  *     但不再驱动任何工具注入。
  *   - Nebula's orchestration tools are mechanism-fixed (no declaration
- *     needed) — §C.1 静态矩阵当前 = 12（本批 −Delegate；此前 2026-09-16 18:41 作者令：
- *     root 面 −Glob −Grep 后为 13；2026-09-14「终态 = 15」已被该令取代 ⇒ provisional/存档）；史实 2026-09-06
+ *     needed) — §C.1 静态矩阵当前 = 12（本批 −Delegate 退役 −1；此前 root 面摘除
+ *     Glob/Grep −2 后为 13）；史实
  *     时点恰十四件（史实；00:48 作者裁定：NodeList
  *     摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠；dispatcher
  *     自身面不受影响。2026-09-06 TaskList 批：+TaskList——Nebula 专属持久
@@ -546,13 +546,13 @@ class AllowedToolSetSpec extends FunSuite:
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
     // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；
     // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图；
-    // 2026-09-06 TaskList 批：+TaskList——史实该时点恰十四件（当前 = 12，
+    // TaskList 批：+TaskList——史实该时点恰十四件（当前 = 12，
     // 本批 −Delegate 后）：
     // 编排触发/任务编排/通信/
     // 读一件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 2026-09-12：−Task +Mail 史实净 16，2026-09-16 18:41 令后再 −2 ⇒ 13，本批 −Delegate ⇒ 12；NodeList 00:48 裁定摘除）
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16，搜索件摘除后再 −2 ⇒ 13，本批 −Delegate ⇒ 12；NodeList 摘除）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage",                                       // 通信（好友功能非旧体系，保留）
       "Read",                                              // 读一件（2026-09-16 18:41 令：−Glob −Grep，仅 root 面；08:40 解禁四件；23:34 收走写手）
@@ -567,8 +567,8 @@ class AllowedToolSetSpec extends FunSuite:
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
     assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "零 Issue（2026-09-04 终裁：Issue/CheckIssues 退役；件数在飞 12 = 本批 −Delegate 后值）")
-    assert(!allowed.contains("NodeList"), "零 NodeList（2026-09-06 00:48 裁定摘除；件数在飞 12 = 本批 −Delegate 后值）")
+    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 12 = 本批 −Delegate 后值）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 12 = 本批 −Delegate 后值）")
     // 钉死断言（2026-09-16 18:41 作者令）：root 面零 Glob/Grep——取代 0913
     // 「Glob/Grep 永久保留」旧裁定（仅 root 面；分发器/节点面不变）
     Set("Glob", "Grep").foreach { t =>
@@ -590,7 +590,7 @@ class AllowedToolSetSpec extends FunSuite:
 
   // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
   // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1；当前 = 12，本批 −Delegate
-  // 后值；此前 18:41 作者令 −Glob −Grep 后为 13；史实 2026-09-06 时点恰十四件）；
+  // 后值；此前搜索件摘除后为 13）；
   // dispatcher（DispatcherFixedTools）/ general（BaseTools+AskUserQuestion）与一切非
   // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
 

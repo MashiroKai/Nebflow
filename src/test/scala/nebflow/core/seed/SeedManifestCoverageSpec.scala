@@ -44,7 +44,7 @@ class SeedManifestCoverageSpec extends FunSuite:
   private val PluginsPrefix = "plugins:"
   private val SeedPluginsResource = "seed/plugins"
 
-  /** 默认预装集（硬编码锚点，作者 2026-09-12 裁定；与此不符即红）。
+  /** 默认预装集（硬编码锚点；与此不符即红）。
     *
     * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
     * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home

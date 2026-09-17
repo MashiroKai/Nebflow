@@ -24,7 +24,7 @@ import scala.concurrent.duration.*
  *
  * 覆盖任务书验收「重启后 tasks.json 持久、open 摘要提醒出现、全 done 后提醒
  * 消失」——真 AgentActor（name=Nebula，12 件固定面含 TaskList——当前 = 12，
- * 本批 −Delegate 后值；此前 2026-09-16 18:41 作者令 root 面 −Glob −Grep 后为 13；史实：2026-09-06 本批落地时该面恰十四件）+ 真
+ * 本批 −Delegate 后值；此前 root 面摘除 Glob/Grep −2 后为 13；史实：该批落地时该面恰十四件）+ 真
  * refreshTurn/buildMemoryBlock 注入链 + 真 TaskListTool 执行 + 真
  * ~/.nebflow 层 tasks.json 落盘，仅 LLM 桩化（stub，任务书允许 stub/隔离实例
  * 二选一；禁碰宿主——全程 PathUtil.setDataRoot(临时目录)）：
@@ -202,7 +202,7 @@ class TaskListE2ESpec extends CatsEffectSuite:
         _ = assert(firstA.systemStable.exists(_.contains("#1[open] 写交付报告")),
           "摘要行须含遗留 open 任务")
         // 真工具执行：face 过滤（Nebula 12 件含 TaskList；当前 = 12，本批 −Delegate
-        // 后值；此前 2026-09-16 18:41 令后为 13；史实：2026-09-06 本批落地时恰十四件）→ 执行 → 落盘。
+        // 后值；此前搜索件摘除后为 13；史实：该批落地时恰十四件）→ 执行 → 落盘。
         // 证据链：① 第二轮请求携带 ToolResult 块（textContent 不含 ToolResult
         // 文本，按块类型断言——AgentControlE2ESpec 同款 content.fold 手法）；
         // ② stub toolcall 创建的任务落盘（最强执行证据）。

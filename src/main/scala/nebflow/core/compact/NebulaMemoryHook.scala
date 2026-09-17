@@ -28,11 +28,11 @@ import java.nio.charset.StandardCharsets
  *   - DreamMode 侧的合并核 / 渲染器 / 节名常量 / T3 生命周期核——已删，
  *     详见 [[DreamMode]] 的对象注释。
  *
- * **待裁定（如实登记，本批未自选一边）**：生产者（抽取轮）停止后，本文件的
+ * **待决（如实登记，本批未自选一边）**：生产者（抽取轮）停止后，本文件的
  * 入队辅助（`enqueueFacts`）与面余量分流（`decideRoute` / `faceRoom` /
  * `pendingBytesByFace`）在生产链路上**已无调用方**；它们连同其 spec
  * （[[nebflow.core.compact.NebulaMemoryHookRouteSpec]]）作为「队列写入面 + 面分流
- * 判据」的既有断言面保留，删除与否呈作者（禁删既有测试文件的批次纪律之下，
+ * 判据」的既有断言面保留，删除与否留待后续批（禁删既有测试文件的批次纪律之下，
  * 单方删除会把两枚 spec 一并架空）。
  *
  * ═══════════════════════════════════════════════════════════════════════
@@ -89,7 +89,7 @@ import java.nio.charset.StandardCharsets
  * `## Dream Extract` 节既不被创建也不被瞄准（常数已删）。`section=None` 的 `append`
  * 落在目标文件**文件尾**，节归属由整理 agent 按自己的方法论重排（提示词纪律，非机制闸）。
  * 理由：带**缺节**的 append 会被 plan 判 `locate-miss: section not found — retryable`
- * **永不能落**；而具名节已被作者口径退役（「系统默认创建文件时也不要有这个 section」）。
+ * **永不能落**；而具名节已随本批退役（「系统默认创建文件时也不要有这个 section」）。
  * **已知后果（如实登记）**：旧 `User.md` 的存量 `## Dream Extract` 节**不迁移**（无接收方），
  * 其内容按普通文件内容处理；T3 兜底淘汰（14 天 TTL / 60 条 FIFO）随机制停用而消失。
  *
@@ -216,7 +216,7 @@ object NebulaMemoryHook extends PreCompactionHook:
     *
     * ⚠️ **生产链路当前无调用方**（抽取轮停用后）：本方法与面余量分流
     * （`decideRoute`/`faceRoom`/`pendingBytesByFace`）作为「队列写入面 + 面分流判据」的
-    * 既有断言面保留，删除与否呈作者（见类头注「待裁定」段）。
+    * 既有断言面保留，删除与否留待后续批（见类头注「待决」段）。
     *
     * 记录面（🔴 禁静默丢）：改投 / fail-open / 停投 / 入队失败**逐条** `warnSync`；
     * 停投记录**带全文**（该条未入队 ⇒ 这行是它唯一的存在面 ⇒ 才能「逐条回答为什么没落」）；

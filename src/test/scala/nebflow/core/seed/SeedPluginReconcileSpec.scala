@@ -292,7 +292,7 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 种子树里但不在默认集的 5 包：零安装（作者 09-12 裁定：种子文件保留可手动装；
+    // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
     // 默认集本批 3 → 4 = +web-search-toolkit）
     for name <- List(
         "nebflow-qa",

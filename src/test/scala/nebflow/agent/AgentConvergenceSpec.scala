@@ -52,7 +52,7 @@ class AgentConvergenceSpec extends FunSuite:
       "MemoryEdit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 12 = 本批 −Delegate 后值；此前 2026-09-16 18:41 作者令 root 面摘除 Glob/Grep 后为 13；2026-09-14「终态 = 15」为该令取代 ⇒ provisional/存档）（2026-09-12 好友消息改造批 ⑩ +ListFriends；2026-09-06 TaskList 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板；00:48 作者裁定：NodeList 摘除；2026-09-05 23:34 作者裁定：Nebula 回归纯编排；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 12 = 本批 −Delegate 后值；此前 root 面摘除 Glob/Grep −2 后为 13）（沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；Nebula 回归纯编排；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-16 18:41 作者令）：Nebula（root）面不含 Glob、不含 Grep——
     // 取代 0913「Glob/Grep 永久保留」旧裁定（仅 root 面；分发器/节点面不变）

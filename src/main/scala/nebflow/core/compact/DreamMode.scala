@@ -8,7 +8,7 @@ import java.security.MessageDigest
  *
  * The Dream-mode mechanism is retired: the engine no longer creates, updates or
  * targets the stable `## Dream Extract` section. Removed with it: the section
- * header constant (`DreamSectionHeader`), the merge core
+ * header constant, the merge core
  * (`mergeFactsIntoSection` — whose no-section branch was the single place where
  * the engine created that section by itself), the T3 lifecycle core
  * (`t3Evolve` / `promotedTexts` / `TtlMs` / `MaxEntries` / the

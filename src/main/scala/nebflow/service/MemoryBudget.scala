@@ -69,7 +69,7 @@ object MemoryBudget:
   final case class Exceeded(override val bytes: Long, hardCap: Long) extends Verdict
 
   /** target 标识（MemoryEdit 的 "user"/"agent"/"project"）。project 维度
-    * （project-memory 批 2026-09-05）：单个项目的 `<workspace>/.nebflow/memory.md`，
+    * （project-memory 批）：单个项目的 `<workspace>/.nebflow/memory.md`，
     * 常量独立于全局两级。 */
   def verdict(target: String, newSizeBytes: Long): Verdict =
     target match

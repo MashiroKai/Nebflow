@@ -2509,7 +2509,7 @@ object AgentCore:
    * Nebula-exclusive tools: stripped from every identity except per
    * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
    * see DreamAdmittedTools below).
-   * - Delegate: 极简内核入口（2026-09-11 以新形态回归；**2026-09-17 本批已从
+   * - Delegate: 极简内核入口（曾以新形态回归 Nebula 面；**本批已从
    *   `NebulaOrchestrationTools` 摘除退役** ⇒ 本集条目保留为**防声明逃逸的惰性
    *   剥离项**：该名对一切身份都不授能，本集保证 agent.json/`"*"` 声明也授不了）。
    *   目标恒为内置 `kernel` def；Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
@@ -2657,7 +2657,7 @@ object AgentCore:
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
     * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十二件
     * （2026-09-16 18:41 作者令：−Glob −Grep，取代 0913「Glob/Grep 永久保留」
-    * 旧裁定——仅 root 面；2026-09-17 本批：−Delegate，该件退役）、零 Issue、零旧体系
+    * 口径仅 root 面；本批：−Delegate，该件退役）、零 Issue、零旧体系
     * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
     * Mail 从「旧体系退役件」成为唯一消息原语）。
     * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
@@ -2675,7 +2675,7 @@ object AgentCore:
     "Mail",
     "ProjectCreate",
     "AgentControl",
-    // Delegate（2026-09-11 恢复批引入；**本批已从本集摘除退役**）：极简内核入口——
+    // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
     // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
     // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
     // （`Mail(address="project:general", ...)`）；web 系能力改由插件面授予。
@@ -2733,8 +2733,8 @@ object AgentCore:
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
-    * **2026-09-16 18:41 作者令：root 面摘除 Glob/Grep −2 ⇒ 13**；
-    * **2026-09-17（本批）：`Delegate` 退役 −1 ⇒ 12**。
+    * 早前：root 面摘除 Glob/Grep −2 ⇒ 13；
+    * 本批：`Delegate` 退役 −1 ⇒ 12。
     *
     * **取代关系记录（逐字，跨面）**：**2026-09-16 18:41 作者令**（原话「去掉 nebula
     * 的 glob 和 grep 工具…」）**取代 0913「Glob/Grep 永久保留」旧裁定**——
@@ -2747,7 +2747,7 @@ object AgentCore:
     * 会话机制）本批未动，不得据此推断「Delegate 整机制已退役」。
     * 纪律不变：**不得**改本常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
     * 断言——该纪律禁的是**为过测而放宽断言**，**不是**禁止按作者令变更 root 面
-    * 本身（本次 13 → 12 即属后者，属「按令改面」，非「凑数字」）。⑩-9 的两项旧
+    * 本身（本次 13 → 12 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
   val NebulaOrchestrationToolsExpectedSize: Int = 12
@@ -2898,9 +2898,9 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口（史实 2026-09-06 时点：恰十四件；当前 = 12，2026-09-17 本批
-            // −Delegate 后值；此前 2026-09-16 18:41 令 root 面 −Glob −Grep 后为 13）：
-            // 零 Issue、零旧体系四件（2026-09-06 TaskList
+            // 静态集收口（史实时点：恰十四件；当前 = 12 = 本批 −Delegate 后值；
+            // 此前 root 面摘除 Glob/Grep −2 后为 13）：
+            // 零 Issue、零旧体系四件（TaskList
             // 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板）。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
