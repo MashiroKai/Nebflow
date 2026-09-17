@@ -53,13 +53,13 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 - **多题共用 class 定位**：按可见性过滤 `[...inputs].find(i => getComputedStyle(i).display !== 'none')`，不用 querySelector 首个（隐藏 Other 槽会误中前题、答案串题、症状延后两步才现）
 - **computed style 与关键字过滤矛盾**：按 `selectorText.includes('activity-btn')` 过滤 stylesheet 只看到 muted 规则，但 computed 颜色来自别处——停止 substring 过滤，枚举**每个匹配该元素的选择器**（正确拆逗号列表、按 cascade 顺序遍历 sheets），看哪个规则真正设置了属性；泛化选择器（`#activity-bar button`、`[data-lucide]`、`svg` 规则，ID 特异性压过 class）才是真实覆盖源。`i[data-lucide]` 替换后颜色规则可能针对 `i`/svg 而非按钮自身 class，更易漏
 - **去重断言 per-phase**：按用户动作边界分阶段断言重复请求=0；跨阶段合法重复（重新锚定=新用户意图）不算
-- **浮层挂进裁剪容器 = DOM 全绿、屏幕不见**（#392 popover 教训）：断言软浮层（menupop/dialog/toast）只查 `hidden===false` / `getComputedStyle(display)!=='none'` 会假绿——`#activity-bar` 是 `overflow:hidden` 的圆角玻璃卡且带 `backdrop-filter`，后者使该元素成为**所有 fixed 后代的包含块**，浮层会一起被裁掉（48px 一条）。硬断言三连：①`getBoundingClientRect()` 有宽高且 `right<=innerWidth && bottom<=innerHeight`（在视口内）②`elementFromPoint(中心)` 命中浮层自身（真渲染在顶层，不是被别的元素盖住）③若浮层应超出承载容器，其 `left >= 容器.right`（确认没被包含块夹住）。修法：浮层挂 **body** 级、JS 按钮锚定 + 视口夹取，别用承载容器的 absolute 定位。同类：任何「浮在滚动容器/圆角卡/带 blur 容器之上」的组件。
+- **浮层挂进裁剪容器 = DOM 全绿、屏幕不见**（popover 教训）：断言软浮层（menupop/dialog/toast）只查 `hidden===false` / `getComputedStyle(display)!=='none'` 会假绿——`#activity-bar` 是 `overflow:hidden` 的圆角玻璃卡且带 `backdrop-filter`，后者使该元素成为**所有 fixed 后代的包含块**，浮层会一起被裁掉（48px 一条）。硬断言三连：①`getBoundingClientRect()` 有宽高且 `right<=innerWidth && bottom<=innerHeight`（在视口内）②`elementFromPoint(中心)` 命中浮层自身（真渲染在顶层，不是被别的元素盖住）③若浮层应超出承载容器，其 `left >= 容器.right`（确认没被包含块夹住）。修法：浮层挂 **body** 级、JS 按钮锚定 + 视口夹取，别用承载容器的 absolute 定位。同类：任何「浮在滚动容器/圆角卡/带 blur 容器之上」的组件。
 - **元素替换保留 class**（lucide `<i class=foo>`→`<svg class=foo>`）：用元素限定 `svg.foo` 而非后代 `.foo svg`
 
 ## 6. 静态 serve 验收 / 资源路径
 
 - JVM 实例重启窗口不可得时：`python http.server` 指 worktree 的 `src/main/resources/web`，harness 用 `window.__api` stub 双向帧 + 计算样式断言替代视觉截图；curl 字节对比确认 serve 的是目标 commit 非旧缓存
-- **served-resource 验证**：curl 管道 `grep -c` 返回 0 **不是**修复缺失的证据（引号管道模式/缓存/boot 顺序都是 fluke 源）——用**字节数对比**（`wc -c` served 文件 == worktree 源文件）+ 一个唯一 marker token 的 grep 双重确认；且 health 200 ≠ 所有 web 路由已 warm，**应用完全 boot 后再重探**（#35 先例：grep -c=0 + 错误 class 查询均像「未部署」，字节对比 28662==源 + marker=1 证明修复已 serve，E2E 随即通过）
+- **served-resource 验证**：curl 管道 `grep -c` 返回 0 **不是**修复缺失的证据（引号管道模式/缓存/boot 顺序都是 fluke 源）——用**字节数对比**（`wc -c` served 文件 == worktree 源文件）+ 一个唯一 marker token 的 grep 双重确认；且 health 200 ≠ 所有 web 路由已 warm，**应用完全 boot 后再重探**（先例：grep -c=0 + 错误 class 查询均像「未部署」，字节对比 28662==源 + marker=1 证明修复已 serve，E2E 随即通过）
 - **静态资源嵌套路径**：http4s DSL `Root / "vendor" / file` 只匹配单段子文件，`/vendor/pdfjs/pdf.min.js`（两段）会 404——嵌套路径需 `startsWith("/vendor/monaco/")` 前缀 handler；代码审查阶段即可发现，省整轮 boot-test 循环
 - **产物二分法**（请求/写入绕过 patched API 时一步定位数据源）：string-replace 构建产物嫌疑字面值（如 './ice.webp'→'./BOGUS.webp'），看原始请求 URL 是否跟随；`getOwnPropertyDescriptor(CSSStyleDeclaration.prototype,'backgroundImage')===undefined` 证明命名属性 getter/setter 不在原型上——defineProperty 补丁必然静默空操作，运行时拦截不可行时改走构建期静态重写
 
@@ -81,13 +81,13 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 前端任务面对「后端契约未落地、但产品验收需要真实事件流渲染」：
 
 - 立即定位契约消费者的**骨架单点**（`grep` 消费者按 type/sessionId 分路的处理器），用 mock 帧从现有 onMessage 频道注入驱动 harness 自测
-- mock 只换生产不换消费路径——断言可复用到真实后端（#380 13/13：同一 renderAskUser 消费者，真假帧行为一致）
+- mock 只换生产不换消费路径——断言可复用到真实后端（13/13：同一 renderAskUser 消费者，真假帧行为一致）
 - 交验标注「消费路径已真实验证，producer 待后端合入后补跑 E2E」——QA 与触发方/分发器接受该口径
 - 开工前先 grep 冻结骨架 choke points 而非新造：`set` 权威状态 + 终态事件兜底清理路径 + 各事件处理器 + 驱动展示点——保留原路径只增修饰类，后端合入后仅换 mock producer 为真实帧、消费者断言零改动
 
 ## 10. 自适应布局三不变量
 
-验证 priority-based 自动隐藏的响应式 header/toolbar（#396 先例），在每个测试宽度断言三个派生不变量——截图与单宽度检查抓不到跨宽度回归（中间优先级按钮隐藏而低优先级仍在、子元素被父 overflow 不可见地裁剪）：
+验证 priority-based 自动隐藏的响应式 header/toolbar（先例），在每个测试宽度断言三个派生不变量——截图与单宽度检查抓不到跨宽度回归（中间优先级按钮隐藏而低优先级仍在、子元素被父 overflow 不可见地裁剪）：
 
 1. **数据驱动固定元素永不隐藏**（backing data 存在时）
 2. **可见元素两两不重叠**（getBoundingClientRect + display:none/offsetParent/零宽过滤）
@@ -97,7 +97,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 ## 11. 可测性架构：统一工厂 + 单一渲染器
 
-一个功能有 N 个入口且都要产出同一 UI artifact/同一 wire-format 载荷（#303 全局引用 6 入口先例）：
+一个功能有 N 个入口且都要产出同一 UI artifact/同一 wire-format 载荷（全局引用 6 入口先例）：
 
 - 统一工厂 `makeReference(rawInput)`（判别 refType、补全缺省）+ 单一渲染器 `renderRefBlock(ref, {mode})`（按 mode 分支渲染）+ 旧格式归一 shim——入口只产 raw input，绝不各自拼 DOM（各自拼会把同一 bug 复制 N 份且逐步漂移；单工厂收敛后只改一处）
 - 发新载荷字段前先查后端 parser 是否容忍未知字段（circe `downField(...).getOrElse(Nil)` 游标式解析 → 可直接发新字段，前端少一层序列化适配，零后端改动）
@@ -105,7 +105,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 ## 12. 后端批次合并后的真链补验
 
-前端功能依赖独立批次合并的后端 handler（#303 文件浏览器拖拽依赖 movePath 先例）：
+前端功能依赖独立批次合并的后端 handler（文件浏览器拖拽依赖 movePath 先例）：
 
 1. 前端 mock harness 先验全链（不阻塞、不依赖跨批）
 2. 后端合并后请求分发器 **rebase**（非 merge）特性分支到新主线——内容原样仅基线前移，避免 merge 历史噪音
@@ -128,6 +128,6 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 - image viewer "File may be corrupted"：catch-all `**/api/**` 后注册 shadow 了 `**/api/nf-file**`；catch-all 提前注册即修。
 - onboarding 自测：typeOther('sk-test123') 命中 C1 隐藏 textarea，answers[0] 被写成 API key——可见性过滤后链路恢复。
 - ice.webp 404：DOM 埋点+CDP initiator 全空，产物二分法一步锁定组件 JS 字面量为唯一数据源；descriptor=undefined 定案构建期静态重写。
-- #346 双轨：产出者 30/30 复跑全绿 + 独立 19/19 盲点（formatDuration="1m 33s" 字面量、10 工具归拢≤50ms、摘要条计算样式×5、E7/E8 排除）。
-- v5 阶段 0 旧面板 popover（#392）：初版浮层嵌 `#activity-bar` 内，DOM 断言全绿（`hidden===false`+blur(24px) 全过）但屏幕完全看不见——bar 是 `overflow:hidden`+`backdrop-filter` 的圆角卡，filter 使其成为 fixed 后代包含块，浮层被裁成 48px 一条（截图取证）。改挂 body + JS 锚定后，用「视口内有盒 + elementFromPoint 命中 + clearsBar」三连断言 48/48 全绿。
+- 双轨：产出者 30/30 复跑全绿 + 独立 19/19 盲点（formatDuration="1m 33s" 字面量、10 工具归拢≤50ms、摘要条计算样式×5、E7/E8 排除）。
+- v5 阶段 0 旧面板 popover：初版浮层嵌 `#activity-bar` 内，DOM 断言全绿（`hidden===false`+blur(24px) 全过）但屏幕完全看不见——bar 是 `overflow:hidden`+`backdrop-filter` 的圆角卡，filter 使其成为 fixed 后代包含块，浮层被裁成 48px 一条（截图取证）。改挂 body + JS 锚定后，用「视口内有盒 + elementFromPoint 命中 + clearsBar」三连断言 48/48 全绿。
 - usage-display 复验 27/27：bogus qadown 秒挂后 fallback <gateway-alias>/deepseek-v4-flash-ascend，modelChanged 帧全部真实 wire 数据。
