@@ -23,7 +23,8 @@ class DropboxLedgerDecodeSpec extends FunSuite:
        "batchId":"","attachmentIndex":0,"attachmentCount":1},
       {"msgId":"m-2","direction":"out","kind":"file","ts":1758000001000,"text":"","origin":"agent",
        "transferId":"t-9","fileName":"a.bin","fileSize":7,"mimeType":"application/octet-stream",
-       "status":"completed","savedPath":"/tmp/a.bin","batchId":"b-1","attachmentIndex":1,"attachmentCount":2}
+       "status":"completed","savedPath":"/tmp/a.bin","deviceOutPath":"/Users/kaiyu/send/a.bin",
+       "batchId":"b-1","attachmentIndex":1,"attachmentCount":2}
     ]}"""
 
   /** 只给必给键（= 最极端的「可缺键全缺席」形态）。 */
@@ -55,6 +56,8 @@ class DropboxLedgerDecodeSpec extends FunSuite:
     assertEquals(m.mimeType, "")
     assertEquals(m.status, "")
     assertEquals(m.savedPath, "")
+    // selfattach 批（B′ 腿）：发送端本机真实路径是**可缺键**，缺席 ⇒ 空串（= 无值，不猜）。
+    assertEquals(m.deviceOutPath, "")
     assertEquals(m.batchId, "")
     assertEquals(m.attachmentIndex, 0)
     assertEquals(m.attachmentCount, 1)
@@ -131,16 +134,20 @@ class DropboxLedgerDecodeSpec extends FunSuite:
     assertEquals(ms(1).fileSize, 7L)
     assertEquals(ms(1).status, "completed")
     assertEquals(ms(1).savedPath, "/tmp/a.bin")
+    // selfattach 批：键在场 ⇒ **逐字照读**（不夹带 basename / 不重算 / 不归一化）。
+    assertEquals(ms(1).deviceOutPath, "/Users/kaiyu/send/a.bin")
     assertEquals(ms(1).batchId, "b-1")
     assertEquals(ms(1).attachmentIndex, 1)
     assertEquals(ms(1).attachmentCount, 2)
   }
 
-  test("④ 编码器未动：解出后再编码 ⇒ 15 键齐备（persistMessages 形态不变）") {
+  test("④ 编码器未动：解出后再编码 ⇒ 16 键齐备（persistMessages 形态不变）") {
     val out = one(OnlyRequired).asJson.asObject.getOrElse(fail("encoded message is not an object"))
-    assertEquals(out.keys.toList.sorted.size, 15)
+    assertEquals(out.keys.toList.sorted.size, 16)
     assertEquals(out("msgId"), Some(io.circe.Json.fromString("r-1")))
     assertEquals(out("origin"), Some(io.circe.Json.fromString("user")))
+    // selfattach 批：新键在编码面**必在场**（值可为空串）——本机前端帧据此读路径。
+    assertEquals(out("deviceOutPath"), Some(io.circe.Json.fromString("")))
   }
 
   // ── 结构断言：两个键集互补且并集 = 全字段（防「加字段忘登记语义」漂移）──
@@ -151,5 +158,5 @@ class DropboxLedgerDecodeSpec extends FunSuite:
     assertEquals(declared, fields, "字段集与键集漂移 ⇒ 必须同批更新缺席语义（本 spec 即守卫）")
     assertEquals(DropboxMessage.RequiredKeys.toSet.intersect(DropboxMessage.OptionalKeys.toSet), Set.empty[String])
     assertEquals(DropboxMessage.RequiredKeys.size, 4)
-    assertEquals(DropboxMessage.OptionalKeys.size, 11)
+    assertEquals(DropboxMessage.OptionalKeys.size, 12)
   }

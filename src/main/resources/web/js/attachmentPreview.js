@@ -218,6 +218,25 @@ export function canPreviewLocalPath(path) {
   return !!itemType && !EXCLUDED_ITEM_TYPES.has(itemType);
 }
 
+/** **按文件名**判「这件能不能在 Canvas 里渲染」——与 [[canPreviewLocalPath]] **同判据、
+ *  同真源**（`itemTypeForFileName` + `EXCLUDED_ITEM_TYPES`），唯一差别是入参形态：
+ *  本出口收**文件名**而不收路径。
+ *
+ *  用途（selfattach 批 · 片 2，A 腿）：设备面**发送侧**的字节源是本机 `File` 句柄
+ *  （blob 腿）而不是路径 —— 那里没有 `absPath` 可判，但**名称**是真实名
+ *  （`att.name` ← 台账 `fileName`，显示名口径：显示名 = 真实名）。
+ *  调用方用它决定「值不值得挂可点面」：`false` ⇒ **不挂**（如 `.zip`：`previewBlob`
+ *  无 viewer 认领 ⇒ 必然 `unsupported`），避免造「可点但点了必报不支持」的假可点面（§B.7 ③）。
+ *
+ *  ⚠ 与 `previewBlob` 的**内容嗅探腿**的关系：`previewBlob` 对无扩展名认领的件在
+ *  「确证是文本」时仍能渲染，本出口**不**预判这一条（手上还没字节）⇒ 本出口是**保守**
+ *  判据（宁可少挂一个可点面，也不造假按钮）。
+ *  @param {string} name @returns {boolean} */
+export function canPreviewName(name) {
+  const itemType = itemTypeForFileName(name);
+  return !!itemType && !EXCLUDED_ITEM_TYPES.has(itemType);
+}
+
 /** 本机落盘件的字节能否由**票据路由**（`/api/nf-file?path=…&ticket=…`）整件取回
  *  （设备面 legacy 卡的两处判据源：① 挂下载键；② 预览腿选路）。
  *
@@ -229,10 +248,10 @@ export function canPreviewLocalPath(path) {
  *  设备面走 `pop.readFile` 的 WS 通道（前端无字节 API），票据路由按扩展名白名单拒绝
  *  ⇒ 这两种消费点都要据此改道：预览腿走 `previewLocalPath`（改前那条路，逐字一致）、
  *  下载腿**不挂键**（挂了就是「可点但点了必然报错」的假按钮，§B.7 ③ 明令禁止）。
- *  ⚠ 已登记残差（本判据为**超集**，服务端白名单才是终判）：`.doc` / `.ppt` / `.xls` 有
- *  viewer 认领（blob 腿）但**不在**白名单内 ⇒ 预览腿由 `savedPathBlob` 的失败回落兜住，
- *  下载键则为「点了报可重试的失败」（读数为本批证据件 `20260917_devattach/devattach.json`
- *  `asserts.h_docKeyBoundary`）。
+ *  ⚠ 登记项已闭环（selfattach 批复核）：`.doc` / `.ppt` / `.xls` 残差已由 **nfext 批
+ *  `0f64d8bc5`** 补进服务端白名单（`WebSocketRoutes.scala:5247-5290` 现含 doc/docx/xls/
+ *  xlsx/xlsm/ppt/pptx）⇒ 本判据（blob 腿 = viewer 认领面）与服务端白名单在**这三种**上
+ *  已同向；本函数仍按**超集**口径工作（服务端白名单才是终判）。
  *  与 `canPreviewLocalPath` **同族**（同一「本机落盘件 + 既有路」判据面），判据源仍是
  *  `itemTypeForFileName`（禁第二张扩展名表）。
  *  @param {string} path @returns {boolean} */

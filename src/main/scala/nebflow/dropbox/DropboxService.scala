@@ -438,7 +438,10 @@ final class DropboxService private (
               )
               val wireTargetDir = if peerConfirmed then requestedDir else None
               val deferred      = requestedDir.isDefined && !peerConfirmed
-              val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last)) }
+              // B′（selfattach 批）：把**本方法已校验过**的本机真实路径原样带入 offer 链
+              // ⇒ 出向台账行的 `deviceOutPath`（写点 = `offerOne` 的消息创建处，见那里的注释）。
+              // 路径值本身**零复制**：只传字符串，不建任何副本 / 暂存件。
+              val specs = sized.map { case (p, size) => DropboxService.FileSpec(p.last, size, guessMime(p.last), Some(p.toString)) }
               offerFiles(deviceId, specs, wireTargetDir, origin).flatMap {
                 case Left(err) => IO.pure(Left(err))
                 case Right(transferIds) =>
@@ -623,7 +626,22 @@ final class DropboxService private (
         }
     }
 
-  /** Offer 单件（`offerFiles` 已过闸）。 */
+  /** Offer 单件（`offerFiles` 已过闸）。
+    *
+    *  **B′ 写点（selfattach 批 · 唯一）**：出向行的**唯一创建点**就在这里 —— 因此「发送端
+    *  本机真实路径」（`spec.outPath`，由 [[sendLocalFiles]] 校验后带入）也只在这一处写：
+    *  `deviceOutPath`。三条理由（登记在报告里）：
+    *    ① **单一写点**：出向消息只此一处构造 ⇒ 无第二个判据、无第二次赋值；
+    *    ② **首帧即可用**：本消息经 `notifyFrontend("dropbox-message", …)`（见下方
+    *       `offerOne` 尾段）直达**本机**前端；完成帧（`completeTransfer` 的
+    *       `dropbox-file-complete`）按隐私约束**逐字不动** ⇒ 若改在完成时写，发送端 UI
+    *       得等下一次 `dropbox-get-history` 才看得到；
+    *    ③ **与传输成败正交**：路径记的是「发送动作那一刻的本机现实」，成败由 `status` 承载
+    *       （前端按 5 态门控可点面，失败行不挂键）。
+    *
+    *  🔴 该字段**不上对端帧**：下方 `payloadBase` 是手写 `Json.obj`（无该键），本字段只在
+    *  台账 + 本机前端帧里流动（运行期实测见 `SenderOutPathLedgerSpec` 的对端帧捕获断言）。
+    *  🔴 浏览器 user 腿：`spec.outPath = None` ⇒ 恒空串（禁 basename 拼接 / 禁预测名）。 */
   private def offerOne(
     id: nebflow.neblink.DeviceIdentity,
     peer: nebflow.neblink.PeerInfo,
@@ -647,6 +665,8 @@ final class DropboxService private (
       fileSize = spec.fileSize,
       mimeType = spec.mimeType,
       status = "pending",
+      // B′ 写点：发送端本机真实路径（浏览器腿 = 缺省 ""）。逐字见本方法上方注释。
+      deviceOutPath = spec.outPath.getOrElse(""),
       batchId = batchId,
       attachmentIndex = index,
       attachmentCount = count,
@@ -1518,8 +1538,14 @@ end DropboxService
 
 object DropboxService:
 
-  /** 单条消息里的一件附件（名字 / 字节数 / MIME）。 */
-  final case class FileSpec(fileName: String, fileSize: Long, mimeType: String)
+  /** 单条消息里的一件附件（名字 / 字节数 / MIME + **发送端本机真实路径**）。
+    *
+    *  `outPath`（selfattach 批 · B′ 腿）：**唯一**生产者 = [[DropboxService.sendLocalFiles]]
+    *  （工具 / agent 腿）——它把**已过绝对 / 存在 / 非目录三道校验**的 `p` 原样带进来；
+    *  其余构造点（`WebSocketRoutes` 的浏览器 `dropbox-file-offer`、`offerFile` 单件入口、
+    *  测试）一律取缺省 `None` ⇒ 浏览器 user 腿**不可能**经此写入路径
+    *  （缺省值 = 「无本机路径可记」，不是「记空串」）。 */
+  final case class FileSpec(fileName: String, fileSize: Long, mimeType: String, outPath: Option[String] = None)
 
   /** 工具附件腿（`sendLocalFiles`）的单件终局读数：`delivered=false` 时 `error`
     * 必带原因（禁静默）。 */
