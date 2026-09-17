@@ -125,6 +125,14 @@ object UsageAggBench:
       }
       val warmDiag = store.cacheDiagnostics.unsafeRunSync()
       println(s"[bench] $name: warm median=${f"${median(incTimes.toList)}%.3f"} ms p95=${f"${p95(incTimes.toList)}%.3f"} ms max=${f"${incTimes.max}%.3f"} ms consumedBytes=${incBytes.sum}")
+      // Per query shape: separates the shapes whose window cuts an hour (they pay an exact
+      // re-read of that hour's byte span, so their cost tracks the boundary hour's density)
+      // from the pure cache-hit shapes (cost flat in the ledger, which is the criterion).
+      println(
+        s"[bench] $name: per-shape " + perShape.toList
+          .map { case (k, v) => s"$k=${f"${median(v.toList)}%.3f"}ms" }
+          .mkString(" ")
+      )
 
       // ── delta: append new rows, then one request must cost only the delta ──
       val extra = (1 to appendRows).toList.map { i =>
