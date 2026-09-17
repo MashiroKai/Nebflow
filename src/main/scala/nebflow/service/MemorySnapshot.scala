@@ -10,11 +10,11 @@ import java.time.format.DateTimeFormatter
 /**
  * 记忆写前快照（snapshot-on-write，dream-agent 批 2026-09-05）。
  *
- * 快照先行=硬护栏：记忆白名单写路径（MemoryEditTool 四动作）在落盘前必须先经过本对象
+ * 快照先行=硬护栏：记忆白名单写路径（MemoryNoteTool 四动作）在落盘前必须先经过本对象
  * ——把【当前磁盘内容】备份到
  * `<dataRoot>/memory-backups/<时间戳>/`，备份失败则写入整体中止（fail-closed）。
  * 「绕不过去」的结构依据：两文件的全部写入面单点（MemoryStore.saveUserMemory /
- * saveAgentMemory 的调用方只有 MemoryEditTool 与 WS `saveMemory` 旁路；原
+ * saveAgentMemory 的调用方只有 MemoryNoteTool 与 WS `saveMemory` 旁路；原
  * DreamMode.updateMemory 直写路径已随其机制停用退役——git ls-files 实测
  * User.md 与 agents/Nebula/memory.md 均不在 ~/.nebflow 跟踪层且被 .gitignore
  * 显式排除（`/*` 白名单 + `**/memory.md`），git 留史不可依赖，快照是唯一回滚锚）。

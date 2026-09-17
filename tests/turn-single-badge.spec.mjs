@@ -2,7 +2,7 @@
 // 多轮 turn 出现两个 badge）, updated for the #346 v2 "decompression model"
 // (2026-09-05 23:44 ruling).
 //
-// A turn interleaving text with several tool rounds (MemoryEdit×5 → text →
+// A turn interleaving text with several tool rounds (MemoryNote×5 → text →
 // Task×4 → text → final) gets exactly ONE persistent stats header
 // (`.turn-header`) at the turn top, counting the WHOLE turn: ✻ 字句 ·
 // model · 思考 · 工具 9 次 · 读写 5 文件. v2: rows never move — the header
@@ -147,7 +147,7 @@ async function expectNoAnimations(page) {
 }
 
 test.describe('one header per turn — multi-round tool loop (author repro)', () => {
-  test('MemoryEdit×5 → text → Task×4 → text → final: exactly ONE header, count 9, files 5, at the turn top', async ({ browser }) => {
+  test('MemoryNote×5 → text → Task×4 → text → final: exactly ONE header, count 9, files 5, at the turn top', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__multiRoundTurn());
     expect(pageErrors).toEqual([]);
@@ -157,7 +157,7 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
     expect(c.groupCount).toBe(1);
     expect(c.bars.length).toBe(1);
     expect(c.bars[0].visible).toBe(true);
-    // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryEdit 的 5 个去重 file_path
+    // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryNote 的 5 个去重 file_path
     // （Task 载荷无文件字段）。✻ 设计字句为首段（2026-09-06 恢复）。
     expect(c.bars[0].toolCards).toBe(9);
     expect(c.bars[0].text).toBe(`✻ 买了张去星辰的车票，3m 25s 到站 · ${MODEL_1} · 工具 9 次 · 读写 5 文件`);
@@ -176,7 +176,7 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
         .map(r => ({ v: r.offsetHeight > 0, label: r.querySelector('.tool-card')?.textContent || '' })));
     expect(tools.length).toBe(9);
     expect(tools.every(t => t.v)).toBe(true);
-    expect(tools.filter(t => t.label.includes('MemoryEdit')).length).toBe(5);
+    expect(tools.filter(t => t.label.includes('MemoryNote')).length).toBe(5);
     expect(tools.filter(t => t.label.includes('Task')).length).toBe(4);
 
     // 真渲染取证截图（报告用）。
@@ -243,8 +243,8 @@ test.describe('one header per turn — history rebuild path', () => {
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: false }), [
       { type: 'user', text: '多轮回合（历史）', timestamp: T },
-      { type: 'tool', label: 'MemoryEdit("a.md")', summary: 'ok', content: 'p1', isError: false, input: '{"file_path":"a.md"}' },
-      { type: 'tool', label: 'MemoryEdit("b.md")', summary: 'ok', content: 'p2', isError: false, input: '{"file_path":"b.md"}' },
+      { type: 'tool', label: 'MemoryNote("a.md")', summary: 'ok', content: 'p1', isError: false, input: '{"file_path":"a.md"}' },
+      { type: 'tool', label: 'MemoryNote("b.md")', summary: 'ok', content: 'p2', isError: false, input: '{"file_path":"b.md"}' },
       { type: 'ai', text: '历史中间文字A。' },
       { type: 'tool', label: 'Task("w1")', summary: 'ok', content: 'd1', isError: false, input: '{"name":"w1"}' },
       { type: 'tool', label: 'Task("w2")', summary: 'ok', content: 'd2', isError: false, input: '{"name":"w2"}' },

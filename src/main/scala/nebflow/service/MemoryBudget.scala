@@ -5,10 +5,10 @@ package nebflow.service
  *
  * 预算现行裁定（50KB/30KB 硬顶）+ 80% 软触发（40KB/24KB）。执行位置在【写入侧】：
  * 注入侧不加截断（§3.3 裁定——截断=静默丢记忆，比超预算更危险且不可观测；该裁定
- * 随本对象固化进 MemoryEdit 工具 description）。
+ * 随本对象固化进 MemoryNote 工具 description）。
  *
  * 消费方（两处写面，同一判据防绕过）：
- *   - MemoryEditTool append/update：落盘前校验【新文件总字节】——超硬顶=结构化拒绝
+ *   - MemoryNoteTool append/update：落盘前校验【新文件总字节】——超硬顶=结构化拒绝
  *     （MEMORYEDIT_BUDGET，附 top-3 最大节+整理指引）；超 80%=放行+结果文本附 WARN。
  *     replace_section 不闸——它是超限后的整理通道，闸掉它就断了收缩路径。
  *   - ProjectMemory.injectionBlock（project-memory 批 2026-09-05）：项目记忆
@@ -68,7 +68,7 @@ object MemoryBudget:
   /** 超硬顶 —— 拒绝。 */
   final case class Exceeded(override val bytes: Long, hardCap: Long) extends Verdict
 
-  /** target 标识（MemoryEdit 的 "user"/"agent"/"project"）。project 维度
+  /** target 标识（MemoryNote 的 "user"/"agent"/"project"）。project 维度
     * （project-memory 批）：单个项目的 `<workspace>/.nebflow/memory.md`，
     * 常量独立于全局两级。 */
   def verdict(target: String, newSizeBytes: Long): Verdict =
@@ -125,7 +125,7 @@ object MemoryBudget:
   // 文案（调用方包装成 ToolError / 结果附录）
   // ---------------------------------------------------------------
 
-  /** 超限拒绝消息体（MemoryEdit 包装为 MEMORYEDIT_BUDGET）。
+  /** 超限拒绝消息体（MemoryNote 包装为 MEMORYEDIT_BUDGET）。
     * project 维度的真实路径由调用方经 targetPath 传入（各项目 workspace 不同，
     * 无法从 target 常量推出）。 */
   def exceededMessage(action: String, target: String, targetPath: String, newSizeBytes: Long, newContent: String): String =
@@ -135,7 +135,7 @@ object MemoryBudget:
       case "project" => (targetPath, ProjectHardBytes)
       case other     => (other, -1L)
     val pct = if hard > 0 then f"${newSizeBytes * 100.0 / hard}%.0f%%" else "?"
-    s"""MemoryEdit: $action rejected — $label would reach $newSizeBytes bytes ($pct of the $hard-byte hard budget).
+    s"""MemoryNote: $action rejected — $label would reach $newSizeBytes bytes ($pct of the $hard-byte hard budget).
        |Budget is enforced on the WRITE side (injection is never truncated — over-budget memory silently degrades every future session instead).
        |Consolidate first, then write. Largest sections:
        |${topSections(newContent)}

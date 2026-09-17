@@ -554,7 +554,7 @@ object SeedService:
 
   /** 启动期消费链校验（2026-09-13 缺失自愈批 / 方案 D「启动明确告警」）：播种 + reconcile
     * 跑完之后，默认集里**记忆队列的消费者**（[[MemoryConsumptionAgent]]）是否真的就位。
-    * 不就位 ⇒ 响亮 WARN（说明后果：队列只进不出、`MemoryEdit` 是纯记账、没有任何东西会
+    * 不就位 ⇒ 响亮 WARN（说明后果：队列只进不出、`MemoryNote` 是纯记账、没有任何东西会
     * 被应用）——这是把「静默 no-op」变成「启动即可见」的最后一道门。
     * 零副作用：只读文件系统，不建目录、不写 marker。`private[seed]`：spec 直测面。 */
   private[seed] def verifyMemoryConsumptionChain(root: os.Path): Unit =
@@ -564,7 +564,7 @@ object SeedService:
       logger.warnSync(
         s"Seed: MEMORY CONSUMPTION CHAIN MISSING — 'agents/$MemoryConsumptionAgent/{agent.json,system.md}' is not in this home " +
           s"(seed = src/main/resources/seed/agents/$MemoryConsumptionAgent/). The memory queue (${root.toString}/memory/queue.jsonl) " +
-          s"therefore has NO consumer: every recorded MemoryEdit note stays pending forever, nothing is ever applied to the " +
+          s"therefore has NO consumer: every recorded MemoryNote note stays pending forever, nothing is ever applied to the " +
           s"memory files, and the queue only accumulates. Fix = restore the seed resources and restart, or install that agent manually."
       )
     else logger.infoSync(s"Seed: memory consumption chain present (agents/$MemoryConsumptionAgent)")

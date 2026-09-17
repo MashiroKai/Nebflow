@@ -277,7 +277,7 @@ Example: {"filePath": "https://example.com"}"""
 
   /** 拒答文案（2026-09-10 作者裁定，作者原话逐字保留）：前置结构化前缀 + 错误码
     * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`，同 TaskBoardTool.forbidden /
-    * MemoryEditTool DREAM_APPEND_DENIED）。 */
+    * MemoryNoteTool DREAM_APPEND_DENIED）。 */
   private val NebulaOnlyError: ToolError = ToolError(
     "Pop: permission denied — Pop 已收归 Nebula 专属；交付物请沿 out 边交给链末端 / Nebula，由 Nebula 决定是否展示 (POP_NEBULA_ONLY)")
 
@@ -285,7 +285,7 @@ Example: {"filePath": "https://example.com"}"""
     *
     *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef
     *     （AgentCore toolCtx 构造处注入 effectiveDef）；
-    *     MemoryEditTool.scala:325-338 的 dream 闸先例同款，禁用全局状态猜身份。
+    *     MemoryNoteTool.scala:325-338 的 dream 闸先例同款，禁用全局状态猜身份。
     *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（depth==0 排除
     *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。子会话判定口径 =
     *     depth：Nebula 派生的 SubTask worker / 节点会话 / 子 agent 全部 depth≥1；

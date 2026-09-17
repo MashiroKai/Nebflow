@@ -3,7 +3,7 @@
 //
 // 验收链（真实全环）：隔离 NEBFLOW_HOME + 隔离实例（sbt run --home/--port，
 // 绝非 8080 宿主）+ OpenAI 兼容 stub LLM（内嵌，捕获全部请求）。fixture 双项目 A/B：
-//   1. Nebula 会话 turn① → stub 让 Nebula 调 MemoryEdit(target=project:e2e-a,
+//   1. Nebula 会话 turn① → stub 让 Nebula 调 MemoryNote(target=project:e2e-a,
 //      action=append) 经真实工具链+注册表解析写入 <ws-a>/.nebflow/memory.md
 //   2. Nebula turn② → stub 让 Nebula 调 Mail(→e2e-a) → 分发器 A spawn
 //      → newTaskPrompt 打到 stub，断言：含项目记忆条（marker-A）✓
@@ -12,7 +12,7 @@
 //      → 节点首条消息打到 stub，断言：含 marker-A ✓
 //   4. Nebula turn③ → Mail(→e2e-b) → 分发器 B spawn，断言：不含 marker-A ✓
 //   5. 瘦身断言：Nebula 全局注入（会话内全部请求）不含 marker-A ✓
-//   6. 初始化模板渲染：fixture 内 cp staging 模板 → MemoryEdit 可 append → 注入含模板头节
+//   6. 初始化模板渲染：fixture 内 cp staging 模板 → MemoryNote 可 append → 注入含模板头节
 //
 // Run（worktree 根）：
 //   node scripts/e2e-project-memory.mjs
@@ -79,7 +79,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection
 //   last=tool → 工具结果回填轮 → 终答（防死循环）
 //   分发器上下文（'你是项目'+任务分发器，last≠tool）→ A 分发器首次回 NodeEdit 建节点
 //   节点首条消息（含节点任务文本）→ 终答
-//   Nebula 用户轮（E2E turn1/2/3）→ 分别脚本化 MemoryEdit / Mail→A / Mail→B
+//   Nebula 用户轮（E2E turn1/2/3）→ 分别脚本化 MemoryNote / Mail→A / Mail→B
 const captured = []; // {messages, ts, tag}
 let nodeEditFired = false;
 function msgText(m) {
@@ -137,7 +137,7 @@ function streamFor(body) {
   if (turn.includes('E2E turn1')) {
     return done([
       chunk({ role: 'assistant', content: '' }),
-      chunk(toolCall('call_memedit', 'MemoryEdit', {
+      chunk(toolCall('call_memnote', 'MemoryNote', {
         target: 'project:e2e-a', action: 'append', content: `- ${MARKER_A}`,
       })),
       chunk({}, 'tool_calls'),
@@ -260,23 +260,23 @@ async function api(path, method = 'GET', body) {
   return { status: res.status, json: await res.json().catch(() => null), text: await res.text().catch(() => '') };
 }
 
-// turn①：MemoryEdit(target=project:e2e-a) 真实工具链写入
+// turn①：MemoryNote(target=project:e2e-a) 真实工具链写入
 const sess = await api('/sessions', 'POST', { name: 'e2e-pmem', agentName: 'Nebula' });
 check('create Nebula session', sess.status === 200 && !!(sess.json?.id ?? sess.json?.sessionId), JSON.stringify(sess.json || {}).slice(0, 120));
 const sid = sess.json?.id ?? sess.json?.sessionId;
 {
   const t1 = await api(`/sessions/${sid}/turn`, 'POST', {
-    content: 'E2E turn1：立即调用 MemoryEdit 工具，target=project:e2e-a，action=append，content 为一条单行条目（内容任意）。除此之外什么都不要做。',
+    content: 'E2E turn1：立即调用 MemoryNote 工具，target=project:e2e-a，action=append，content 为一条单行条目（内容任意）。除此之外什么都不要做。',
     timeoutSec: 150,
   });
-  check('Nebula turn1 completes (MemoryEdit fired inside)', t1.status === 200, `status=${t1.status}`);
+  check('Nebula turn1 completes (MemoryNote fired inside)', t1.status === 200, `status=${t1.status}`);
 }
 // 写入落盘断言（fixture 自含；注册表解析 + 写函数全链）
 const memA = join(HOME, 'ws-e2e-a', '.nebflow', 'memory.md');
 {
   let written = false;
   for (let i = 0; i < 15 && !written; i++) { await sleep(1000); written = existsSync(memA) && readFileSync(memA, 'utf8').includes(MARKER_A); }
-  check('MemoryEdit target=project:e2e-a wrote workspace memory.md', written, memA);
+  check('MemoryNote target=project:e2e-a wrote workspace memory.md', written, memA);
 }
 
 // turn②：Mail→e2e-a（分发器 A spawn，prompt 注入项目记忆）
@@ -336,7 +336,7 @@ if (dispatchB) {
   check('dispatcher-B captured (isolation assertions skipped)', false, 'no dispatcher-B request');
 }
 // 瘦身断言：注入面 = Nebula 请求的 system prompt（ContextRefresher 全局记忆块挂这里）。
-// 注意不能扫全消息体——turn2/3 历史里含 turn1 MemoryEdit 工具结果对条目文本的
+// 注意不能扫全消息体——turn2/3 历史里含 turn1 MemoryNote 工具结果对条目文本的
 // 回显（会话历史，非注入），扫全会误报。
 {
   const sysOf = (c) => { const s = c.messages.find((m) => m.role === 'system'); return s ? msgText(s) : ''; };

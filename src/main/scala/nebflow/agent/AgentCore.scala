@@ -188,7 +188,7 @@ private[agent] trait AgentCore:
   // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
 
   // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
-  // （2026-09-05 dream 准入例外：MemoryEdit 对 dream 放开，动作面仍限修订）。
+  // （2026-09-05 dream 准入例外：MemoryNote 对 dream 放开，动作面仍限修订）。
   // 消费点：buildAllowedToolSet 的 nebulaFiltered 与 AgentLibrary 保存侧 strip。
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
@@ -1924,8 +1924,8 @@ private[agent] trait AgentCore:
     // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
     val isNebula = agentDef.name == "Nebula"
     // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
-    // （空集）；dream 豁免 MemoryEdit（2026-09-05 作者签准——动作面仍受
-    // MemoryEditTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
+    // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面仍受
+    // MemoryNoteTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
     // 剥全集，行为零变化。
     val nebulaFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
@@ -2507,7 +2507,7 @@ object AgentCore:
 
   /**
    * Nebula-exclusive tools: stripped from every identity except per
-   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
+   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryNote only —
    * see DreamAdmittedTools below).
    * - Delegate: 极简内核入口（曾以新形态回归 Nebula 面；**本批已从
    *   `NebulaOrchestrationTools` 摘除退役** ⇒ 本集条目保留为**防声明逃逸的惰性
@@ -2524,10 +2524,10 @@ object AgentCore:
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
    *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
    *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
-   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
+   * - MemoryNote（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
    *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
    *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
-   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryEditTool 强制）。
+   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryNoteTool 强制）。
    *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
@@ -2535,9 +2535,9 @@ object AgentCore:
     "Schedule",
     "Delegate",
     "AgentControl",
-    "MemoryEdit",
+    "MemoryNote",
     // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
-    // 存储（~/.nebflow/tasks.json），与 MemoryEdit 同域隔离（非 Nebula 声明即剥）。
+    // 存储（~/.nebflow/tasks.json），与 MemoryNote 同域隔离（非 Nebula 声明即剥）。
     "TaskList",
     // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
     // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
@@ -2560,7 +2560,7 @@ object AgentCore:
     nebflow.core.tools.NodeReportToolDef.Name,
     // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
     // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
-    // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryEdit 同域隔离纪律一致；
+    // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryNote 同域隔离纪律一致；
     // 且本集同时是【防声明逃逸】通道：agent.json 声明（含 "*"）对一切非 Nebula
     // 身份不授能。本单点被两消费点共用（`buildAllowedToolSet` 的 runtime 剥离 +
     // `AgentLibrary` 面板/定义保存侧 strip —— 见 `exclusiveToolsFor` 注释）。
@@ -2569,18 +2569,18 @@ object AgentCore:
     "ListFriends"
   )
 
-  /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+  /** dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
     * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
     * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
-    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryEditTool（两道闸独立，
+    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryNoteTool（两道闸独立，
     * 摘任一道 spec 即红）。 */
-  val DreamAdmittedTools = Set("MemoryEdit")
+  val DreamAdmittedTools = Set("MemoryNote")
 
   /** 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
     * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
-    * MemoryEdit 准入）；其余身份 → 原集（行为零变化）。
+    * MemoryNote 准入）；其余身份 → 原集（行为零变化）。
     * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
-    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryEdit 保存时不再
+    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryNote 保存时不再
     * 被剥掉（否则准入形同虚设）。 */
   def exclusiveToolsFor(name: String): Set[String] =
     name match
@@ -2605,7 +2605,7 @@ object AgentCore:
     * 23:34 作者裁定
     * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
     * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
-    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryEdit，恰十四件——史实，时点 2026-09-05；
+    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryNote，恰十四件——史实，时点 2026-09-05；
     * 其中「读三件」= 当日形态，2026-09-16 18:41 令后为**读一件 Read**）。
     * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
     * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
@@ -2648,7 +2648,7 @@ object AgentCore:
     *     双保险——节点交付物沿 out 边交链末端/Nebula，由 Nebula 决定是否展示）；
     *     平台：Schedule（TransferFile 已退役 2026-09-14，能力并入 SendMessage 的
     *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
-    *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
+    *   - 记忆：MemoryNote（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
     * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
     * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
     * dispatcher 自身面 DispatcherFixedTools 不受影响）、
@@ -2705,8 +2705,8 @@ object AgentCore:
     "Pop",
     // 平台
     "Schedule",
-    // 记忆（§C.2 MemoryEdit）
-    "MemoryEdit"
+    // 记忆（§C.2 MemoryNote）
+    "MemoryNote"
   )
 
   /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
@@ -2828,7 +2828,7 @@ object AgentCore:
     *   来源标注 `subagent · <任务摘要>`（U3）。
     * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
     *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
-    *   node_report/Node 系工具/TaskList/MemoryEdit/Schedule（项目与编排面）、
+    *   node_report/Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
     *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
     *
     * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
@@ -2911,7 +2911,7 @@ object AgentCore:
             // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排）13:11 的
             // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集；
             // general/BaseTools 六件默认注入不变，Nebula 为唯一例外
-            // （编排件+读一件 Read+MemoryEdit）——本集即 Nebula 工具面唯一来源。
+            // （编排件+读一件 Read+MemoryNote）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools

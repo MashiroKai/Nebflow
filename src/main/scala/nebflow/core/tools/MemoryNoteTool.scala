@@ -11,16 +11,16 @@ import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.MemoryStore
 
 /**
- * MemoryEdit（**保名换语义**，记忆改造批 2026-09-12，spec §5 R2 O-A）——记忆变更的
- * **记账**工具：四 action 语义不变，落点从「记忆文件」改为 append-only 队列
- * `<dataRoot>/memory/queue.jsonl`（[[MemoryQueue]]）。写盘时机 = **下一次上下文压缩**
- * 的记忆整理轨（[[nebflow.agent.MemoryTrack]] 起的 `memory-consolidator` 会话），
- * 本工具**零落盘**。
+ * MemoryNote（2026-09-17 作者令更名：旧名尾缀 "Edit" 与本工具真实能力「纯记账、
+ * 零落盘」不符；旧名字面在本仓已零残留，更名史实见对应 commit 与批次报告）——
+ * 记忆变更的**记账**工具：四 action 语义不变，落点从「记忆文件」改为 append-only
+ * 队列 `<dataRoot>/memory/queue.jsonl`（[[MemoryQueue]]）。写盘时机 = **下一次上下文
+ * 压缩**的记忆整理轨（[[nebflow.agent.MemoryTrack]] 起的 `memory-consolidator` 会话），
+ * 本工具**零落盘**（2026-09-12 改造批「保名换语义」落地，spec §5 R2 O-A）。
  *
- * 为什么保名换语义（而不是改名 `MemoryQueue`）：改名牵动 ≥4 处符号 + 既有测试
- * （`AgentCore.NebulaExclusiveTools` / `DreamAdmittedTools` / `registry` 映射 /
- * 本工具内身份串）——「工具名即权限边界」的既有先例（TeamTaskTools）要求名字稳定；
- * 名字与语义的短期错位由 description + 返回值文本兜底（spec §5 R2 O-A 理由）。
+ * 2026-09-17 更名**只换字面**：四 action / 授权与剥离面 / 队列与预算语义零变化；
+ * 授能剥离集（`AgentCore.NebulaExclusiveTools` / `DreamAdmittedTools` / registry 映射 /
+ * 本工具内身份串）逐处同步改名，**集成员与语义逐字保留**；`MEMORYEDIT_*` 错误码域不随更名。
  *
  * 接口语义（四 action 沿用 §C.2 + project-memory 批 2026-09-05）：
  *   target : "user" | "agent" | "project:<name>"
@@ -52,9 +52,9 @@ import nebflow.service.MemoryStore
  * （`source.trigger="dream"`），不经本工具 ⇒ 动作面禁令在该链上不生效；执行者
  * （整理 agent）按三问准入自行裁量。这是 R7(4) 选定形态的直接推论，非本批新增口子。
  */
-object MemoryEditTool extends Tool:
+object MemoryNoteTool extends Tool:
 
-  val name = "MemoryEdit"
+  val name = "MemoryNote"
 
   /** 合法动作（唯一值域；schema enum 同源）。 */
   private val Actions = List("append", "update", "remove", "replace_section")
@@ -125,7 +125,7 @@ object MemoryEditTool extends Tool:
   def summarize(input: JsonObject): String =
     val t = input("target").flatMap(_.asString).getOrElse("?")
     val a = input("action").flatMap(_.asString).getOrElse("?")
-    s"MemoryEdit($t/$a)"
+    s"MemoryNote($t/$a)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 300 then result.take(297) + "..." else result
@@ -151,20 +151,20 @@ object MemoryEditTool extends Tool:
           projectName == "." || projectName == ".."
         then
           Left(ToolError(
-            s"MemoryEdit: invalid project name '$projectName' in target '$target'. (MEMORYEDIT_TARGET)"))
+            s"MemoryNote: invalid project name '$projectName' in target '$target'. (MEMORYEDIT_TARGET)"))
         else
           ProjectStore.load(projectName).unsafeRunSync() match
             case None =>
               Left(ToolError(
-                s"""MemoryEdit: unknown project '$projectName' — target=project:<name> resolves via the project registry (${PathUtil.dataRootRenderValue}/projects/<name>/project.json). Check the project name (list projects first). (MEMORYEDIT_TARGET)"""))
+                s"""MemoryNote: unknown project '$projectName' — target=project:<name> resolves via the project registry (${PathUtil.dataRootRenderValue}/projects/<name>/project.json). Check the project name (list projects first). (MEMORYEDIT_TARGET)"""))
             case Some(pd) =>
               Right(Target(p, ProjectMemory.path(pd.workspace)))
       case "" =>
         Left(ToolError(
-          s"""MemoryEdit: `target` is REQUIRED and is the only routing carrier — it is never defaulted to "user" (silently landing project state in the global layer is worse than losing a note). Legal forms: "user" (${PathUtil.dataRootRenderValue}/User.md), "agent" (${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md), "project:<name>" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"""))
+          s"""MemoryNote: `target` is REQUIRED and is the only routing carrier — it is never defaulted to "user" (silently landing project state in the global layer is worse than losing a note). Legal forms: "user" (${PathUtil.dataRootRenderValue}/User.md), "agent" (${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md), "project:<name>" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"""))
       case other =>
         Left(ToolError(
-          s"""MemoryEdit: unknown target '$other' — legal forms: "user" (${PathUtil.dataRootRenderValue}/User.md), "agent" (${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md), "project:<name>" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"""))
+          s"""MemoryNote: unknown target '$other' — legal forms: "user" (${PathUtil.dataRootRenderValue}/User.md), "agent" (${PathUtil.dataRootRenderValue}/agents/Nebula/memory.md), "project:<name>" (registered project's <workspace>/.nebflow/memory.md). (MEMORYEDIT_TARGET)"""))
 
   // ------------------------------------------------------------------
   // 条目模型（行模型函数保留：条目纪律与消费者侧同一套判据）
@@ -184,9 +184,9 @@ object MemoryEditTool extends Tool:
   private def singleEntryGuard(action: String, content: String): Option[ToolError] =
     val ls = normalizeContent(content)
     if ls.lengthIs > 1 then Some(ToolError(
-      s"""MemoryEdit: $action content must be ONE entry line, got ${ls.length} lines — multi-line content drifts out of the entry model (locate scans "- " lines only; extra lines would be invisible to update/remove). Use replace_section for a multi-line section body, or record each entry separately. (MEMORYEDIT_ENTRY_FORMAT)"""))
+      s"""MemoryNote: $action content must be ONE entry line, got ${ls.length} lines — multi-line content drifts out of the entry model (locate scans "- " lines only; extra lines would be invisible to update/remove). Use replace_section for a multi-line section body, or record each entry separately. (MEMORYEDIT_ENTRY_FORMAT)"""))
     else if !ls.headOption.exists(_.startsWith("- ")) then Some(ToolError(
-      s"""MemoryEdit: $action content must start with "- " (markdown list entry); got "${content.trim.take(60)}" — non-entry text is invisible to update/remove. (MEMORYEDIT_ENTRY_FORMAT)"""))
+      s"""MemoryNote: $action content must start with "- " (markdown list entry); got "${content.trim.take(60)}" — non-entry text is invisible to update/remove. (MEMORYEDIT_ENTRY_FORMAT)"""))
     else None
 
   // ------------------------------------------------------------------
@@ -206,19 +206,19 @@ object MemoryEditTool extends Tool:
       val actionError: Option[ToolError] =
         if !Actions.contains(action) then
           Some(ToolError(
-            s"MemoryEdit: unknown action '$action' — one of append/update/remove/replace_section. (MEMORYEDIT_ACTION)"))
+            s"MemoryNote: unknown action '$action' — one of append/update/remove/replace_section. (MEMORYEDIT_ACTION)"))
         else None
 
       val paramError: Option[ToolError] = actionError.orElse {
         (action, section, matchStr, content) match
           case ("append", _, _, None) =>
-            Some(ToolError("MemoryEdit: append requires `content` (the entry to add). (MEMORYEDIT_PARAM)"))
+            Some(ToolError("MemoryNote: append requires `content` (the entry to add). (MEMORYEDIT_PARAM)"))
           case ("update", _, None, _) | ("update", _, _, None) =>
-            Some(ToolError("MemoryEdit: update requires `match` (locator) and `content` (replacement). (MEMORYEDIT_PARAM)"))
+            Some(ToolError("MemoryNote: update requires `match` (locator) and `content` (replacement). (MEMORYEDIT_PARAM)"))
           case ("remove", _, None, _) =>
-            Some(ToolError("MemoryEdit: remove requires `match` (locator). (MEMORYEDIT_PARAM)"))
+            Some(ToolError("MemoryNote: remove requires `match` (locator). (MEMORYEDIT_PARAM)"))
           case ("replace_section", None, _, _) | ("replace_section", _, _, None) =>
-            Some(ToolError("MemoryEdit: replace_section requires `section` and `content` (full new body). (MEMORYEDIT_PARAM)"))
+            Some(ToolError("MemoryNote: replace_section requires `section` and `content` (full new body). (MEMORYEDIT_PARAM)"))
           case _ => None
       }
 
@@ -237,7 +237,7 @@ object MemoryEditTool extends Tool:
       val dreamDenied: Option[ToolError] = entryFormatError.orElse {
         if ctx.agentDef.exists(_.name == "dream") && action == "append" then
           Some(ToolError(
-            "MemoryEdit: dream is admitted for revision actions only (remove/update/replace_section) — " +
+            "MemoryNote: dream is admitted for revision actions only (remove/update/replace_section) — " +
               "append is denied: dream 禁写新记忆（2026-09-05 作者签准铁律，工具面强制）。" +
               "Revise existing entries via update/remove/replace_section; report new-memory candidates to Nebula instead. " +
               "(DREAM_APPEND_DENIED)"))
@@ -262,7 +262,7 @@ object MemoryEditTool extends Tool:
             ) match
               case Left(reason) =>
                 Left(ToolError(
-                  s"""MemoryEdit: nothing was recorded — the queue append failed ($reason). The request is unchanged and was NOT applied; fix the queue file (${PathUtil.dataRootRenderValue}/memory/queue.jsonl) permissions/space and retry. (MEMORYEDIT_QUEUE)"""))
+                  s"""MemoryNote: nothing was recorded — the queue append failed ($reason). The request is unchanged and was NOT applied; fix the queue file (${PathUtil.dataRootRenderValue}/memory/queue.jsonl) permissions/space and retry. (MEMORYEDIT_QUEUE)"""))
               case Right(res) => Right(queuedText(t, action, section, matchStr, content, res))
           }
       outcome
@@ -288,8 +288,8 @@ object MemoryEditTool extends Tool:
       case other             => other
     val head =
       if res.deduped then
-        s"""MemoryEdit queued ${res.id} (applied at next compaction) — identical request already pending; nothing new was recorded (deduped)."""
-      else s"""MemoryEdit queued ${res.id} (applied at next compaction)."""
+        s"""MemoryNote queued ${res.id} (applied at next compaction) — identical request already pending; nothing new was recorded (deduped)."""
+      else s"""MemoryNote queued ${res.id} (applied at next compaction)."""
     val lines = List(
       head,
       s"target=${t.id} action=$action → ${t.path} (NOT written yet)",
@@ -302,4 +302,4 @@ object MemoryEditTool extends Tool:
     val histNote = if res.historyNote.nonEmpty then s"\nNOTE: ${res.historyNote}." else ""
     lines.mkString("\n") + histNote
 
-end MemoryEditTool
+end MemoryNoteTool

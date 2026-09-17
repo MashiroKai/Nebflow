@@ -42,7 +42,7 @@ import nebflow.core.tools.ToolRegistry
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate,
- *     MemoryEdit, TaskList) — exception: dream is admitted for MemoryEdit (2026-09-05
+ *     MemoryNote, TaskList) — exception: dream is admitted for MemoryNote (2026-09-05
  *     author ruling, AgentCore.DreamAdmittedTools; append still denied at the
  *     tool's action layer, DREAM_APPEND_DENIED)
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
@@ -559,7 +559,7 @@ class AllowedToolSetSpec extends FunSuite:
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
       "Schedule",                                          // 平台（TransferFile 退役 2026-09-14 #145）
-      "MemoryEdit"                                         // 记忆（§C.2 新工具）
+      "MemoryNote"                                         // 记忆（§C.2 新工具）
     )
     val bare = mkDef("Nebula", Nil)
     val allowed = CoreProbe.allowed(bare)
@@ -619,7 +619,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!worker.contains("TaskList"), "SubTask worker 剥离")
     val flow = CoreProbe.allowed(mkDef("f", List("*")).copy(category = "flow"))
     assert(!flow.contains("TaskList"), "flow 节点剥离")
-    // dream 无豁免（豁免面恰为 MemoryEdit 一件，TaskList 对 dream 照剥）
+    // dream 无豁免（豁免面恰为 MemoryNote 一件，TaskList 对 dream 照剥）
     val dream = CoreProbe.allowed(mkDef("dream", List("TaskList")))
     assert(!dream.contains("TaskList"), "dream 声明 TaskList 无效（非 DreamAdmittedTools）")
 

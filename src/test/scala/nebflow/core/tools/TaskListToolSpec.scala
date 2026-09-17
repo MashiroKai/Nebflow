@@ -350,7 +350,7 @@ class TaskListToolSpec extends FunSuite:
     assert(props.contains("links"), "links 参数必须可见")
     assert(props.contains("parentId"), "parentId 参数必须可见")
     // id 在 update/close/log/show 的必填校验在工具层（schema required 仅 action——与
-    // MemoryEditTool 同款：参数组合校验在 call 内做结构化报错）
+    // MemoryNoteTool 同款：参数组合校验在 call 内做结构化报错）
 
   // ===== ⑧ 升级批新增 action（R1 log / R2 show / R3 提示更新）=====
 

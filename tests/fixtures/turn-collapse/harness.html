@@ -11,7 +11,7 @@
        window.__liveTurn()          → thinking → 文字A → 工具1 → 文字B → 注入
                                       → 工具2 → 最终回复, then collapseTurn()
                                       exactly like the main.js `done` handler.
-       window.__multiRoundTurn()    → MemoryEdit×5 → text → Task×4 → text →
+       window.__multiRoundTurn()    → MemoryNote×5 → text → Task×4 → text →
                                       final (one turn, two LLM tool rounds →
                                       ONE header, count 9).
        window.__postClosureTurn()   → an external injection arriving AFTER the
@@ -141,13 +141,13 @@
     };
 
     // 2026-09-05 多轮聚合场景（作者 08:48 截图复刻延续）：一个 turn 内两轮
-    // LLM 工具循环——MemoryEdit×5 → 中间文字A → Task×4 → 中间文字B → 最终
+    // LLM 工具循环——MemoryNote×5 → 中间文字A → Task×4 → 中间文字B → 最终
     // 回复。恰一个 header，计数=全轮合计 9。
     window.__multiRoundTurn = async () => {
       chatMod.renderUserBubble('把记忆里的项目进展全部更新一遍，然后派子任务收集数据', [], Date.now());
-      // 第一轮 LLM：MemoryEdit ×5
+      // 第一轮 LLM：MemoryNote ×5
       for (let i = 1; i <= 5; i++) {
-        chatMod.renderTool(`MemoryEdit\n  ("progress-${i}.md")`, 'updated', `patch body ${i}`, false, `{"file_path":"progress-${i}.md"}`, 'harness-session');
+        chatMod.renderTool(`MemoryNote\n  ("progress-${i}.md")`, 'updated', `patch body ${i}`, false, `{"file_path":"progress-${i}.md"}`, 'harness-session');
       }
       // 中间文字A（roundComplete finalize 形态：无 duration badge）
       chatMod.appendAiText('第一轮记忆更新完成，接着派 4 个子任务并行收集数据。');

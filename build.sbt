@@ -119,18 +119,18 @@ lazy val root = (project in file("."))
     // Tests share PathUtil global state — sequential execution prevents interference
     Test / parallelExecution := false,
 
-    // 阶段 2c（MemoryEditToolSpec 引入）：MemoryStore 的 MtimeCache val 在首次
+    // 阶段 2c（MemoryNoteToolSpec 引入）：MemoryStore 的 MtimeCache val 在首次
     // 触碰时把当时的 dataRoot 路径钉进缓存对象——串行化挡不住「先跑的 suite 已
-    // 在默认 dataRoot 下初始化 MemoryStore」的跨 suite 污染。MemoryEditToolSpec
+    // 在默认 dataRoot 下初始化 MemoryStore」的跨 suite 污染。MemoryNoteToolSpec
     // 全程依赖 dataRoot 重定向 → 独占 forked JVM（组内唯一 suite，初始化顺序
     // 可控）；其余 suite 维持原 in-process 单组不变。
     Test / testGrouping := {
       val tests = (Test / definedTests).value
-      val isolated = tests.filter(_.name == "nebflow.core.tools.MemoryEditToolSpec")
-      val rest = tests.filterNot(_.name == "nebflow.core.tools.MemoryEditToolSpec")
+      val isolated = tests.filter(_.name == "nebflow.core.tools.MemoryNoteToolSpec")
+      val rest = tests.filterNot(_.name == "nebflow.core.tools.MemoryNoteToolSpec")
       Seq(
         Tests.Group("in-process-suites", rest, Tests.InProcess),
-        Tests.Group("memoryedit-isolated", isolated, Tests.SubProcess(ForkOptions()))
+        Tests.Group("memorynote-isolated", isolated, Tests.SubProcess(ForkOptions()))
       )
     },
 

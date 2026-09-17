@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets
  * 记忆落盘单点闸（M4 —— 工具面收敛设计 §4 Q2-④ ④-b / M2 表 M4 行；作者 2026-09-13
  * 裁定「M4 闸下沉 = 独立小批立刻立项」）。
  *
- * 动机：预算闸与写前快照闸此前的**实现在调用方**（旧 MemoryEdit 路径内 / Dream hook 内），
+ * 动机：预算闸与写前快照闸此前的**实现在调用方**（更名前该工具的直写路径内 / Dream hook 内），
  * 而落盘单点 [[MemoryStore.saveUserMemory]] / [[MemoryStore.saveAgentMemory]] 与
  * `ProjectMemory.save` 自身**零闸** ⇒ 不经调用方闸的写入没有任何闸。今天生产面上唯一的
  * 这类写入 = WS `saveMemory` 旁路（`WebSocketRoutes:3265/3271`），它直调 `MemoryStore.save*`。
@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets
  * 边界（写死，越界即不合）：
  *   - **不覆盖** Write / Edit / Bash 直写路径（Bash 完备 ⇒ 无机械封堵；本对象**不声称**
  *     覆盖它们，也不为此加壳、不改工具面）；
- *   - **不退役** MemoryEdit（Q2 组已落「保留」）；
+ *   - **不退役** MemoryNote（Q2 组已落「保留」）；
  *   - **不动**授能面 / 静态集 / 注册表（非本项范围）。
  *
  * ## 闸序 = 预算 → 快照 → 落盘（作者 2026-09-14 两处裁定；**取代** 09-13 任务书旧序）
@@ -37,7 +37,7 @@ import java.nio.charset.StandardCharsets
  *
  *   - 豁免判据 = **字节比**（新内容字节 ≤ 现文件字节；逐文件 POST-WRITE vs PRE-WRITE），
  *     🔴 **不按动作名豁免**；适格面 = 收缩通道（`replace_section`，工具契约原文
- *     「`replace_section` stays exempt — it is the shrinking channel」，`MemoryEditTool:92`）
+ *     「`replace_section` stays exempt — it is the shrinking channel」，`MemoryNoteTool:92`）
  *     ⇒ 调用方以 `shrinkChannel = true` 声明**适格身份**，闸再用字节比拦「夹带净增」；
  *   - 适格 + 真收缩 ⇒ 只豁免**预算闸**：路径白名单 / 条目格式校验（工具层职责）、快照前置
  *     （按 ① 新序）、「闸不过 ⇒ 零写」不变式 **全部照旧**；
@@ -45,7 +45,7 @@ import java.nio.charset.StandardCharsets
  *   - `shrinkChannel = false`（缺省 = 现全部生产调用方）⇒ **永不豁免**（WS `saveMemory`
  *     的整文件覆盖不是收缩通道：超限文件的自救路径是 `replace_section`）。
  *   - 🔴 现场读数：本闸**自身**的落盘调用面（[[MemoryStore.saveFile]] / `ProjectMemory.save`）
- *     仍是**零 `true` 调用方**——`MemoryEdit` 已零落盘（只入队）；WS `saveMemory` 的整文件
+ *     仍是**零 `true` 调用方**——`MemoryNote` 已零落盘（只入队）；WS `saveMemory` 的整文件
  *     覆盖**不是**收缩通道（本文件 :45-46），超限文件的自救路径必须是 `replace_section`。
  *     **队列消费侧的适格声明（2026-09-15 memshrinkgate 批）落在这道闸之外**：消费落地由
  *     整理会话经通用 `Edit`/`Write` 完成（本对象**不覆盖**直写路径，见边界 :19-21），故
@@ -169,7 +169,7 @@ object MemoryWriteGate:
        |Consolidate first, then write. Largest sections:
        |${MemoryBudget.topSections(newContent)}
        |Trim stale/duplicate entries, or demote detail into ~/.nebflow/memory/<id>.md files.
-       |If this write only shrinks the file, use the shrinking channel (MemoryEdit replace_section) — it is exempt from the hard cap. (${Code.Budget})""".stripMargin
+       |If this write only shrinks the file, use the shrinking channel (MemoryNote replace_section) — it is exempt from the hard cap. (${Code.Budget})""".stripMargin
 
   private def warnDetail(target: String, path: os.Path, bytes: Long, soft: Long, hard: Long): String =
     s"$WarnMarker target='$target' $path is now $bytes bytes (over the 80% soft line of $soft bytes; hard budget $hard) — " +

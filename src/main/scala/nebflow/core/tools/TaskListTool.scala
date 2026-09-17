@@ -26,7 +26,7 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
  * 存储：`<dataRoot>/tasks.json`（~/.nebflow/tasks.json）——运行时数据层：
  * 不进 git、不进任何 system prompt 注入。落盘用 AtomicJson（tmp + ATOMIC_MOVE
  * rename，crash-safe）；进程内单锁串行化读-改-写；跨进程写入不在锁面内
- * （MemoryEditTool 同款取舍，description 已明示）。
+ * （MemoryNoteTool 同款取舍，description 已明示）。
  *
  * 无内存态：每次操作整读整写同一文件——重启后 tasks.json 自然持久（验收项）。
  *

@@ -47,7 +47,7 @@ class ProjectMemorySpec extends FunSuite:
     val block = ProjectMemory.injectionBlock(ws.toString, "proj-a").unsafeRunSync()
     assert(block.contains("# Project Memory — proj-a"), "header carries project name")
     assert(block.contains(memFile.toString), "header carries the file path")
-    assert(block.contains("MemoryEdit target=project:proj-a"), "header carries the maintenance entry point")
+    assert(block.contains("MemoryNote target=project:proj-a"), "header carries the maintenance entry point")
     assert(block.contains("- 口径：预算 10KB（2026-09-05）"), "full text inlined")
     assert(!block.contains("WARN"), "预算内无 WARN")
 
@@ -68,7 +68,7 @@ class ProjectMemorySpec extends FunSuite:
     assert(block.contains("bytes,"), "字节统计在场")
     assert(block.contains("2 entries"), "条目统计在场")
     assert(block.contains("## Bulk") || block.contains("Bulk"), "top 节定位在场")
-    assert(block.contains("MemoryEdit target=project:proj-a"), "整理指引带维护入口")
+    assert(block.contains("MemoryNote target=project:proj-a"), "整理指引带维护入口")
     assert(!block.contains("- 条目丁"), "正文不内联（超限文件全文是税）")
     assert(!block.contains("xxxxx"), "超限正文不内联")
 

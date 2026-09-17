@@ -93,7 +93,7 @@ class MemoryQueuePlanSpec extends FunSuite:
     val noUser    = MemoryQueue.plan(stateOf(userNotes), Map("user" -> tfMissing(userFile)))
     assertEquals(noUser.countOf(MemoryQueue.Bucket.WouldRetry), 1, "任一层文件缺失一律同办")
 
-  test("`## ` 前缀在 section/match 参数里可选（与 MemoryEditTool 归一化同规）"):
+  test("`## ` 前缀在 section/match 参数里可选（与 MemoryNoteTool 归一化同规）"):
     val content = "# U\n\n## 工具环境\n\n- 主仓路径含空格不必转义\n"
     val notes = Vector(
       note("q-1", 1L, "user", "update", Some("## 工具环境"), Some("空格不必转义"), Some("- 主仓路径含空格（不转义）")),
