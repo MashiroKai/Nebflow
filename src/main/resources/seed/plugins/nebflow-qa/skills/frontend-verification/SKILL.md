@@ -112,7 +112,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 3. 隔离实例（独立端口 + 预置磁盘夹具）起真后端跑真链 E2E——合成拖拽/保存事件驱动真实 UI，断言 = UI 状态 + 磁盘 ground truth（existsSync/readFileSync）
 4. 真链证据补进交付说明后才审合——mock 只能证前端契约链，真 movePath 到达/响应/刷新链必须真后端走一遍
 
-## 13. 进程清理纪律（2026-09-05 裁定）
+## 13. 进程清理纪律
 
 - harness/冒烟/e2e 结束**必须清理自己 spawn 的进程**：`python http.server` 静态服务、裸 playwright 的 chromium、隔离实例全部关掉——不留给宿主或下一个会话手清。
 - spawn 的 server 进程：收尾 `kill` + `lsof` 复查端口释放；脚本包 `trap 'cleanup' EXIT INT TERM`（裸 EXIT trap 信号退出不触发）。
