@@ -64,12 +64,12 @@ wire 字段改名有四个独立失败模式，各需专门检查，缺一即留
 
 ## Evidence
 
-- #341 qa FAIL：keepRecent 用 Set.takeRight 取哈希序非消息序，原 spec 的 tu-1..tu-4 id 哈希序恰=插入序而巧合绿；修复后注回 bug 形态跑新 UUID spec 得到确定性红（:118 最新 UUID 被归档），恢复后 13/13 绿。
+- qa FAIL：keepRecent 用 Set.takeRight 取哈希序非消息序，原 spec 的 tu-1..tu-4 id 哈希序恰=插入序而巧合绿；修复后注回 bug 形态跑新 UUID spec 得到确定性红（:118 最新 UUID 被归档），恢复后 13/13 绿。
 - Save-turn guard 批变异：首轮变异下全绿被当作防线失效信号，重注 + DIAG println 后同一用例 0.155s 确凿红——首轮是编译时序假象。
 - 变异验证连踩两次同坑：`git checkout -- UsageTracker.scala` 把未 commit 的死日志修复批次整体还原（第二次靠新守卫脚本当场红旗抓回）；改 python 定点替换后无复发。
-- #25 修复：完成通知条件化后暴露 single-immediate 分支丢 newOutstanding（counter 永卡 1）——pre-fix 完全不可见的第二个真断点，由 NestedDelegateNotifySpec 写作过程挖出。
+- 修复：完成通知条件化后暴露 single-immediate 分支丢 newOutstanding（counter 永卡 1）——pre-fix 完全不可见的第二个真断点，由 NestedDelegateNotifySpec 写作过程挖出。
 - StopHangTurnSpec 挂 cancel：CancelProbe2Spec（bare fiber）与 CancelProbe3Spec（real actor）通过，排除 forkTurn/cancel 机制，thread dump 全 parked 确认 async suspension。
 - 任务 1 sbt 挂 11+ 分钟 0.1% CPU：`grep -c OutOfMemoryError` 找到 2 hits，kill 后 `-Xmx3g` + 9 spec 子集通过。
 - SavePhaseZeroToolTurnSpec 三次红→绿：根因是 zio-logging deprecated `UserAgent` alias 重载解析改变；`messages.last` 改 `messages.exists` 后 0.65s 链路稳定。
 - fix/note-wire-field 验证：四面对齐（836/0/8 含 legacy compat），残留 grep 双跑零残留。
-- #341 复验：全量 sbt test exit 1 但 ToolResultTtlSpec 13/13 单独绿，重跑 grep `FAILED|Passed: Total` 归因为环境性。
+- 复验：全量 sbt test exit 1 但 ToolResultTtlSpec 13/13 单独绿，重跑 grep `FAILED|Passed: Total` 归因为环境性。
