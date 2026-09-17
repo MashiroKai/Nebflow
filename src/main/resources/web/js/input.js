@@ -74,8 +74,23 @@ function showAttachmentBanner(message) {
 /* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
    menu is sealed - '/' is treated as plain text (zero popup, no command
    interception). Code kept intact for future re-enable:
-     localStorage.setItem('nebflow_slash.enabled', '1')  // then reload */
+     localStorage.setItem('nebflow_slash.enabled', '1')  // then reload
+   WHITELIST SPLIT (author ruling 2026-09-17, D1-B): the master gate above stays
+   OFF and keeps its old all-or-nothing meaning; on top of it, only the two
+   commands in SLASH_ALLOWED are reachable while it is off. Everything else
+   (/ask, /onboarding, the dynamically registered skill/flow commands) stays
+   exactly as sealed as before - the '/' dropdown lists the whitelist only and
+   handleSlash returns false for every other name. */
 const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabled')) === '1'; } catch (e) { return false; } };
+// Per-command whitelist (D1-B). Deliberately a standalone literal set, NOT a
+// flag carried by the table entries: `registerSkillCommands` adds/deletes
+// entries carrying `_skill` on every skillList frame, and a whitelist living in
+// the table could be widened by such a re-registration. Keys = the command
+// names exactly as typed (and exactly as used as table keys).
+const SLASH_ALLOWED = new Set(['/clear', '/compact']);
+/** May `cmd` be listed/dispatched? Whichever is in the whitelist · always;
+ *  everything else only while the master gate is open. */
+const slashAllowed = (cmd) => SLASH_ALLOWED.has(cmd) || SLASH_ENABLED();
 const slashCommands = {
   '/ask': {
     desc: () => t('slash.ask'),
@@ -88,6 +103,41 @@ const slashCommands = {
     run: () => {
       // Replay the fixed chat-native onboarding greeting (same as first run).
       import('./onboarding.js').then(m => m.replayOnboarding()).catch(() => {});
+    }
+  },
+  // 回挂（作者令 2026-09-17：D1-B 白名单 + D2 历史语义 + D4 二段式）。表体逐字取自
+  // 摘除前形态 `71afa4a9b^:src/main/resources/web/js/input.js:33-44`（`/clear`）与
+  // `:45-50`（`/compact`），仅做两处机械适配：`/clear` 体内 `delete state.sessionTasks[...]`
+  // 与 `renderTaskList([])` 两行不再接回 —— 两者已随旧任务区退役（台账 `state.js:160`
+  // 与本文件 :12），`state.sessionTasks` 现已 undefined（保留 = 点按 `/clear` 抛 TypeError）。
+  // 位置：追加在内置表末位（保持既有条目次序不动 ⇒ 总闸放行面 matches[0] 仍是 `/ask`）；
+  // 默认（白名单）面列表按插入序 = `/clear` → `/compact`。
+  '/clear': {
+    desc: () => t('slash.clear'),
+    run: () => {
+      const v = activeView;
+      sendWs({type:'command', command:'clear', sessionId: v.sessionId});
+      // Clean up stream state — remove orphaned thinking placeholders and
+      // reset stream variables so the next message starts fresh.
+      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+      cancelToolStreamRAF();
+      v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+        const row = el.closest('.row');
+        if (row) row.remove();
+      });
+      v.stream.currentAiBubble = null;
+      v.stream.aiText = '';
+      v.stream.currentThinkingBubble = null;
+      v.stream.thinkingText = '';
+      v.stream.toolStreamText = '';
+      v.stream.toolStreamToolName = '';
+      renderSystemBubble(t('slash.clearDone'));
+    }
+  },
+  '/compact': {
+    desc: () => t('slash.compact'),
+    run: () => {
+      enterCompactMode();
     }
   }
 };
@@ -119,8 +169,8 @@ export function registerSkillCommands(skills) {
 
 // ---------- Slash Command Handler ----------
 export function handleSlash(text) {
-  if (!SLASH_ENABLED()) return false; // SEALED: '/' is plain text
-  const cmd = text.trim().split(/\s/)[0];
+  const cmd = text.trim().split(/\s/)[0]; // 解析**先于**判定（D1-B：白名单按命令名判）
+  if (!slashAllowed(cmd)) return false; // SEALED: '/' is plain text（白名单两条除外）
   if (slashCommands[cmd] && slashCommands[cmd].run) {
     slashCommands[cmd].run(text);
     return true;
@@ -132,14 +182,13 @@ export function handleSlash(text) {
 function updateSlashDropdown() {
   const input = activeView.dom.input;
   const text = input.value;
-  if (!SLASH_ENABLED()) { closeSlashDropdown(); return; } // SEALED
   if (!text.startsWith('/')) {
     closeSlashDropdown();
     return;
   }
   const query = text.slice(1).toLowerCase();
   activeView.slashMatches = Object.entries(slashCommands)
-    .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
+    .filter(([cmd]) => slashAllowed(cmd) && cmd.slice(1).toLowerCase().startsWith(query))
     .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill, source: info._source || '', skillName: info._skillName || '' }));
   if (activeView.slashMatches.length === 0) {
     closeSlashDropdown();

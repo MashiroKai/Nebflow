@@ -70,7 +70,13 @@ async function boot() {
     localStorage.setItem('neblink_locale', 'zh-CN');
     // key('slash.enabled') = `<lowerName>_<suffix>`（branding.js key()）——斜杠门是
     // 前缀下划线形态，不是点号形态（首版写成点号 ⇒ 下拉恒不开、A6 假红）。
-    localStorage.setItem('nebflow_slash.enabled', '1'); // 斜杠下拉可用（⑤A6 面）
+    // D1-B（2026-09-17 裁定）后该门是**两档语义**：置 '1' = 整张内置表放行（本行即
+    // 此档；A6 面 = 多条目下拉下的键盘抢占路径）；**不置 = 只放行白名单
+    // `/clear` + `/compact` 两条**（生产默认面）。两档走的是同一段
+    // `slashDropdown.classList.contains('on')` 抢占代码，判据与条目数无关；默认面的
+    // 列表/直发/IME 前置读数在 `tests/slash-clear-compact.spec.mjs`（S1/S2/S3/S4）
+    // 与 `scripts/verify-batch829.cjs` Group B 里另钉。
+    localStorage.setItem('nebflow_slash.enabled', '1'); // 斜杠下拉可用（⑤A6 面；全表放行档）
     localStorage.setItem('fm_api_mock', '1');
     localStorage.setItem('fm_api_mock_seed', seedJson);
     localStorage.setItem('fm_api_mock_delay', '20');
