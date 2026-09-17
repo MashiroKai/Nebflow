@@ -49,11 +49,12 @@ const EN_REF = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.j
 const ZH_REF = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 
 // ── 默认集条目：现取 seed 真值（禁凭记忆写文案）───────────────────────────
-// 2026-09-16 作者令「移除 general 这个内置项目」：默认集**不再含** `project:` 条目 ⇒
-// 干净 home 零项目脚手架。故本函数不再从 SeedService.scala grep `GeneralProjectName` /
-// `ProjectStore.create(...)`（两处已随摘除面删除）；两端都保留**宽容取值**（可选链），
-// 使同一支探针仍能在摘除前的基线树上跑（判红纪律：「改前不可满足」不被本次摘除破坏）。
-// `project:` 条目**出现即判红**（红锚 `E-no-project-item`，禁恒真：条目真回来必须红）。
+// 作者 2026-09-17 裁定①（撤销 2026-09-16「移除 general 这个内置项目」令）：默认集**恢复
+// 含** `project:general` ⇒ 干净 home 重新播种项目脚手架，故本函数重新从 SeedService.scala
+// grep `GeneralProjectName` / `ProjectStore.create(...)`（两端随 S1 面恢复在位）。
+// 两端保留**宽容取值**（可选链）：同一支探针仍能在 S1 前的树（默认集无 `project:` 条目、
+// 源码无 project 种子面）上跑 ⇒ 该树 projects 为空、两条项目面红锚逐条判红（判红纪律：
+// 「改前不可满足」不被本次反转破坏）。
 function loadDefaultSet() {
   const manifest = JSON.parse(readFileSync(join(SEED, 'manifest.json'), 'utf8'));
   const ss = readFileSync(SEED_SERVICE, 'utf8');
@@ -69,7 +70,8 @@ function loadDefaultSet() {
       const j = JSON.parse(readFileSync(join(SEED, 'agents', name, 'agent.json'), 'utf8'));
       out.agents.push({ id: name, name: j.name, desc: j.description });
     } else if (kind === 'project') {
-      // 摘除后源码面两端皆缺 ⇒ 不猜文案（禁凭记忆写）：留空，由红锚 `E-no-project-item` 判红
+      // S1 面在位 ⇒ 两端可解析，进红锚集（`E-project-desc-<id>`，随方言随动）；
+      // S1 前的树两端皆缺 ⇒ 不猜文案（禁凭记忆写）：留空，由红锚 `E-no-project-item` 判红
       if (projectName !== null && projectDesc !== null) out.projects.push({ id: name, name: projectName, desc: projectDesc });
     }
   }
@@ -84,8 +86,10 @@ const expName = (kind, id, src) => EN_REF[`content.${kind}.${id}.name`] ?? src;
 /** 红锚 = 「en 态文案必须随动」的断言；BEFORE 树逐条必须红。
  *  name 槽不入红锚集：默认集条目名是语言中立的 ASCII id（两方言同值），
  *  它作**护栏**（不得被污染），红/绿判别只在可翻译的描述槽上成立。
- *  2026-09-16 摘除面两条同挂红锚集（同一判红语义：改前树必须红、改后树必须绿）：
- *  `E-no-project-item` / `E-seed-service-no-general-project`。 */
+ *  项目面两条同挂红锚集（同一判红语义：S1 前的树必须红、S1 后的树必须绿）：
+ *  `E-no-project-item` / `E-seed-service-no-general-project`——锚 id 沿用 2026-09-16 摘除
+ *  批的**登记名**（禁改：下游判据逐字对照），判据方向随作者 2026-09-17 裁定①（撤销摘除令）
+ *  反转为「在位」。 */
 const RED_ANCHORS = new Set();
 for (const p of DS.plugins) RED_ANCHORS.add(`E-plugin-desc-${p.id}`);
 for (const a of DS.agents) RED_ANCHORS.add(`E-agent-desc-${a.id}`);
@@ -94,11 +98,13 @@ RED_ANCHORS.add(`E-detail-desc-${DS.agents[0].id}`);
 RED_ANCHORS.add(`E-no-project-item`);
 RED_ANCHORS.add(`E-seed-service-no-general-project`);
 
-/** 摘除面读数（真值读取，非恒真）：默认集 `project:*` 条目 + 被服务树 SeedService.scala
- *  的项目种子残留 token（`GeneralProjectName` / `seedProject` / `seed/projects/`）。 */
+/** 项目面读数（真值读取，非恒真）：默认集 `project:*` 条目 + 被服务树 SeedService.scala
+ *  的项目种子 token（`GeneralProjectName` / `seedProject` / `seed/projects/`）。
+ *  S1 判据 = **在位**（条目恰一条 `project:general`、三 token 齐备）⇒ S1 前的树这两条红。 */
 const PROJECT_ITEMS = DS.items.filter(i => i.startsWith('project:'));
 const SS_SRC = readFileSync(SEED_SERVICE, 'utf8');
-const SS_RESIDUE = ['GeneralProjectName', 'seedProject', 'seed/projects/'].filter(t => SS_SRC.includes(t));
+const SS_TOKENS = ['GeneralProjectName', 'seedProject', 'seed/projects/'];
+const SS_RESIDUE = SS_TOKENS.filter(t => SS_SRC.includes(t));
 
 let currentTheme = 'light';
 const results = [];
@@ -189,8 +195,9 @@ const waitProjectsRendered = (page) => page.waitForFunction(() => {
   const s = document.querySelector('.team-scroll');
   if (!s || !s.isConnected) return false;
   if (s.dataset.projectsState === 'ready') return !!s.querySelector('.project-card');
-  // 默认集零项目（2026-09-16 摘除面）⇒ 面板落空态（dataset.projectsState === 'empty'）
-  // 也是「渲染完成」的合法形态：空态由本探针的负向断言单独判别，不在此隐式放过。
+  // 面板落空态（dataset.projectsState === 'empty'）也是「渲染完成」的合法形态——出现在
+  // **默认集零项目**的树上（S1 前的树 / 逆向变异树）：空态由本探针的专门断言单独判别
+  // （见 ② 段的 G-projects-empty-*），不在此隐式放过。
   return s.dataset.projectsState === 'empty';
 }, null, { timeout: 15000 });
 
@@ -204,8 +211,8 @@ const readDom = (page) => page.evaluate(() => {
   };
   return {
     locale: localStorage.getItem('nebflow_locale'),
-    // 项目面板态（2026-09-16 摘除面新增读数）：state ∈ loading|empty|error|ready +
-    // 空态文案（空态 = 默认集零项目的期望形态，见 ② 段）。
+    // 项目面板态读数：state ∈ loading|empty|error|ready + 空态文案
+    // （state=empty = 默认集零项目的树的期望形态，见 ② 段的 else 分支）。
     projectsState: document.querySelector('.team-scroll')?.dataset.projectsState ?? null,
     projectsEmptyText: firstText(document.querySelector('.team-scroll .team-empty > div')),
     pluginCards: [...document.querySelectorAll('#plugins-content .plugins-card')].map(c => ({
@@ -217,7 +224,12 @@ const readDom = (page) => page.evaluate(() => {
       desc: txt(r.querySelector('.plugins-agent-desc')),
     })),
     projectCards: [...document.querySelectorAll('.team-scroll .project-card')].map(c => ({
-      name: firstText(c.querySelector('.team-card-title')),
+      // 名字槽读**专门的名字元素** `.project-card-name`（= `contentText('project', <id>, 'name', <id>)`
+      // 的渲染点，单源对齐）。旧读法 `firstText('.team-card-title')` 在标题行内新增
+      // `.project-empty-tag`（projtabrealtime 批 ed27e8328，2026-09-16 22:32，恒带文案
+      // `project.noNodes`）后会把标记文案粘进名字（实测 "generalNo nodes"）——那是探针与
+      // 被服务树的 **DOM 形态漂移**，不是产品缺陷；保留旧读法作回退（S1 前的树仍可跑）。
+      name: txt(c.querySelector('.project-card-name')) ?? firstText(c.querySelector('.team-card-title')),
       desc: txt(c.querySelector('.project-field-value.desc')),
     })),
     detail: {
@@ -248,16 +260,17 @@ try {
       await page.waitForSelector('#messages-btn', { state: 'attached', timeout: 20000 });
       await sleep(1500);
 
-      // ── ⓪ 摘除面（2026-09-16 作者令「移除 general 这个内置项目」）──────────
+      // ── ⓪ 项目面种子在位（作者 2026-09-17 裁定①，撤销 09-16「移除内置 general 项目」令）──
       // 两条红锚：读**被服务的树**的 seed 真值（manifest 条目 + SeedService.scala 原文）。
-      // 改前树（默认集含 `project:general`、源码含 GeneralProjectName/seedProject）逐条红；
-      // 改后树逐条绿。**禁恒真**：条目 / token 任一回来即红（判红纪律不被本次摘除破坏）。
-      ok('E-no-project-item', 'seed 默认集零 `project:` 条目（内置 general 项目已摘除）',
-        PROJECT_ITEMS.length === 0,
+      // S1 后的树（默认集含 `project:general`、源码含 GeneralProjectName/seedProject/
+      // seed/projects/）逐条绿；S1 前的树（09-16 摘除态）逐条红。**禁恒真**：条目/token
+      // 任一缺失即红。锚 id 沿用 09-16 批登记名（下游判据逐字对照），判据方向随 S1 反转。
+      ok('E-no-project-item', 'seed 默认集恰一条 `project:general` 条目（内置 general 项目恢复播种）',
+        PROJECT_ITEMS.length === 1 && PROJECT_ITEMS[0] === 'project:general',
         `project items=${JSON.stringify(PROJECT_ITEMS)} of ${DS.items.length} item(s)`);
-      ok('E-seed-service-no-general-project', 'SeedService.scala 零项目种子残留（GeneralProjectName / seedProject / seed/projects/）',
-        SS_RESIDUE.length === 0,
-        `residue=${JSON.stringify(SS_RESIDUE)}`);
+      ok('E-seed-service-no-general-project', 'SeedService.scala 三个项目种子 token 齐备（GeneralProjectName / seedProject / seed/projects/）',
+        SS_RESIDUE.length === SS_TOKENS.length,
+        `tokens=${JSON.stringify(SS_RESIDUE)} of ${JSON.stringify(SS_TOKENS)}`);
 
       const themeProbe = await page.evaluate(() => ({
         scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -328,9 +341,9 @@ try {
         restoreOk === DS.plugins.length);
 
       // ══ ② 项目页（三处之二）════════════════════════════════════════════
-      // 两形态（2026-09-16 摘除面）：默认集仍声明 `project:` 条目（摘除前基线树 / 若被加回）
-      // ⇒ 走原卡片随动断言（红锚 E-project-desc-*）；默认集**零项目**（改后树）⇒ 面板必须
-      // 落**空态**且空态文案随方言（`project.empty`）——负向形态，禁恒真：零项目时若面板
+      // 两形态（同一支探针跑两棵树）：默认集声明 `project:` 条目（S1 后的树 / 09-16 前的树）
+      // ⇒ 走卡片随动断言（红锚 E-project-desc-*）；默认集**零项目**（S1 前的 09-16 摘除态）
+      // ⇒ 面板必须落**空态**且空态文案随方言（`project.empty`）——禁恒真：零项目时若面板
       // 仍渲染出卡片 / 空态文案不随动或露出键名，本段即红。
       await openProjectsPanel(page);
       await waitProjectsRendered(page);
