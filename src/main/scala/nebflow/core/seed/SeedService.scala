@@ -36,8 +36,8 @@ import scala.jdk.CollectionConverters.*
  * agents/plugins 两面**同构**地补**缺失**的内置项目。守卫 = **目录级**
  * `!os.exists(root/projects/<name>/project.json)`（与 `ProjectStore` 同粒度）：缺 ⇒ 建、
  * 已存在 ⇒ 零动作零写盘；**已有内容零覆盖 / 零搬移 / 零删除**，既有 `general`（多为手工
- * 建成、内容可与种子不同）**绝不被本面改写** ⇒ 存量 `~/.nebflow/projects/general/**`
- * 逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime 内容仲裁（不触发 #304
+ * 建成、内容可与种子不同）**绝不被本面改写** ⇒ 存量 `~/.nebflow/projects/general/` 目录下
+ * 全部文件逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime 内容仲裁（不触发 #304
  * 零覆盖差集纪律）。
  * 前令（**已作废，不得再按此口径复述**）：`961e2cbd3` 提交记录所写「作者裁定否决既有 home
  * 补种」= 前令；后令（裁定②：两面都补、既有严格 add-only，作者对「波及所有缺它的 home
@@ -350,7 +350,7 @@ object SeedService:
     * 守卫粒度 = **目录级** `!os.exists(root / "projects" / <name> / "project.json")`
     * （与 `ProjectStore.create` 同粒度，设计件 §三(2) 明定）：缺 ⇒ 经 [[seedProject]] 建
     * 脚手架；**已在 ⇒ 零动作、零写盘**（幂等：连续两次 boot 第二次零写入、mtime 不变）。
-    * 既有内容**零覆盖、零搬移、零删除**——手工建的 `projects/<name>/**`（含其
+    * 既有内容**零覆盖、零搬移、零删除**——手工建的 `projects/<name>/` 目录（含其
     * project.json / AGENTS.md）逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime
     * 内容仲裁（作者 2026-09-17 裁定②：严格 add-only）；因此**不触发** #304 零覆盖差集纪律
     * （一旦将来引入镜像覆写，即刻触发，见设计件 §二发现①「对既有口径的冲击」末段）。
