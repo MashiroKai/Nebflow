@@ -86,8 +86,12 @@ class SeedAgentSelfHealSpec extends FunSuite:
     // 其余默认集 agent 同样补齐（缺失的补、在位的原样）
     for name <- manifestAgentNames do
       assert(os.exists(home / "agents" / name / "agent.json"), s"默认集 agent '$name' 就位")
-    // 守卫语义不变：不完整播种（不建 general 项目脚手架）
-    assert(!os.exists(home / "projects" / "general"), "守卫仍生效：既有 home 不建 general 项目")
+    // 守卫语义不变：不完整播种（既有 home 走 marker-only 分支、不重播默认集）。项目面自
+    // 作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由 `reconcileProjects` 补**缺失**
+    // 的内置项目 ⇒ 本条原负向断言「既有 home 不建 general 项目」已随前令作废，翻转为正向
+    // （同批三处同类 stale pin：SeedServiceSpec 守卫组 / 本行 / SeedPluginReconcileSpec）。
+    assert(os.exists(home / "projects" / "general" / "project.json"),
+      "存量 home 由 reconcileProjects 补出缺失的 general 项目（严格 add-only）")
 
   // ── ② 幂等 ├────────────────────────────────────────────────
   test("自愈幂等：第二次 ensure 对该目录零动作"):
