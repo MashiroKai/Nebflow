@@ -292,7 +292,8 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 种子树里但不在默认集的 5 包：零安装（作者 09-12 裁定：种子文件保留可手动装、默认集只三条）
+    // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
+    // 默认集本批 3 → 4 = +web-search-toolkit）
     for name <- List(
         "nebflow-qa",
         "nebflow-frontend-dev",
@@ -302,11 +303,11 @@ class SeedPluginReconcileSpec extends FunSuite:
     do
       assert(!os.exists(home / "plugins" / name),
         s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)")
-    // 落盘面积恰为默认集三条（枚举目录，防「遍历种子树全集」式实现）
+    // 落盘面积恰为默认集四条（枚举目录，防「遍历种子树全集」式实现）
     val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
     assert(
-      installed == List("nebflow-plugin-creator", "slideblocks", "visual-report"),
-      s"existing-home plugin area == default preinstall set (3), got: ${installed.mkString(", ")}"
+      installed == List("nebflow-plugin-creator", "slideblocks", "visual-report", "web-search-toolkit"),
+      s"existing-home plugin area == default preinstall set (4), got: ${installed.mkString(", ")}"
     )
 
   // ── ⑧ 已存在目录零覆盖（自愈不改既有目录）─────────────────

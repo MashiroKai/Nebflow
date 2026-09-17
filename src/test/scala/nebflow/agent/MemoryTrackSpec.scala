@@ -222,7 +222,7 @@ class MemoryTrackSpec extends FunSuite:
 
   // ===== W2 直写关闭（IMPL-4 / R7(4) O-A）=====
 
-  test("NebulaMemoryHook：facts 入队（trigger=dream），User.md 零直写"):
+  test("NebulaMemoryHook：facts 入队（trigger=dream）且无落点节，User.md 零直写"):
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n- 既有条目\n", createFolders = true)
     val before = os.read(MemoryStore.userMemoryPath)
@@ -235,7 +235,7 @@ class MemoryTrackSpec extends FunSuite:
     assertEquals(st.notes.map(_.trigger).distinct, Vector(MemoryQueue.TriggerDream))
     assertEquals(st.notes.map(_.target).distinct, Vector("user"))
     assertEquals(st.notes.map(_.action).distinct, Vector("append"))
-    assert(st.notes.forall(_.section.contains("## Dream Extract")), "落在稳定节（T3 区）")
+    assert(st.notes.forall(_.section.isEmpty), "无具名节（`## Dream Extract` 已随 DreamMode 停用退役 ⇒ 恒文件尾追加）")
     assert(st.notes.map(_.content.getOrElse("")).exists(_.contains("[PATTERN]")), "类别 in-band 保留")
     assertEquals(MemoryHistory.ofKind(MemoryHistory.KindQueue).head.actor, NebulaMemoryHook.Actor, "actor 引擎代写")
 

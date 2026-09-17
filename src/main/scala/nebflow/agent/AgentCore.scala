@@ -2509,9 +2509,10 @@ object AgentCore:
    * Nebula-exclusive tools: stripped from every identity except per
    * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
    * see DreamAdmittedTools below).
-   * - Delegate: Nebula 专属执行件（极简内核，2026-09-11 以新形态回归——旧
-   *   「指派 standalone agent」语义已退役，目标恒为内置 `kernel` def）。
-   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
+   * - Delegate: 极简内核入口（曾以新形态回归 Nebula 面；**本批已从
+   *   `NebulaOrchestrationTools` 摘除退役** ⇒ 本集条目保留为**防声明逃逸的惰性
+   *   剥离项**：该名对一切身份都不授能，本集保证 agent.json/`"*"` 声明也授不了）。
+   *   目标恒为内置 `kernel` def；Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
    *   2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面（旧 Team/Flow
    *   体系过渡件退出）；2026-09-10 作者指令 + 2026-09-11 R2-c 裁定使其以
@@ -2654,9 +2655,9 @@ object AgentCore:
     * Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十三件
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十二件
     * （2026-09-16 18:41 作者令：−Glob −Grep，取代 0913「Glob/Grep 永久保留」
-    * 旧裁定——仅 root 面）、零 Issue、零旧体系
+    * 口径仅 root 面；本批：−Delegate，该件退役）、零 Issue、零旧体系
     * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
     * Mail 从「旧体系退役件」成为唯一消息原语）。
     * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
@@ -2665,7 +2666,7 @@ object AgentCore:
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
-    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 13，见
+    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 12，见
     // NebulaOrchestrationToolsExpectedSize。本条覆盖此前「Task = 唯一项目触发入口」的
     // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
     // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
@@ -2674,11 +2675,13 @@ object AgentCore:
     "Mail",
     "ProjectCreate",
     "AgentControl",
-    // Delegate（2026-09-11 恢复批）：极简内核入口——无项目归属的单次执行任务。
-    // 是**编排件**不是能力件：执行能力 = 内核的 BaseTools 六件（早已存在于
-    // general/节点/legacy standalone），本件只新增一个入口。判据（哪些任务走
-    // Delegate）在工具 description 与本常量注释里钉死，不新增项目触发通道。
-    "Delegate",
+    // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
+    // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
+    // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
+    // （`Mail(address="project:general", ...)`）；web 系能力改由插件面授予。
+    // 本集件数 13 → 12（见 NebulaOrchestrationToolsExpectedSize）。
+    // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
+    // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
     // 通信（好友功能非旧体系）
@@ -2726,11 +2729,12 @@ object AgentCore:
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = **13** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+    * 值 = **12** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
-    * **2026-09-16 18:41 作者令：root 面摘除 Glob/Grep −2 ⇒ 13**。
+    * 早前：root 面摘除 Glob/Grep −2 ⇒ 13；
+    * 本批：`Delegate` 退役 −1 ⇒ 12。
     *
     * **取代关系记录（逐字，跨面）**：**2026-09-16 18:41 作者令**（原话「去掉 nebula
     * 的 glob 和 grep 工具…」）**取代 0913「Glob/Grep 永久保留」旧裁定**——
@@ -2739,12 +2743,14 @@ object AgentCore:
     * `DispatcherFixedTools`/`BaseTools` 常量与 `AgentConvergenceSpec`/`Phase2dToolRefactorSpec`
     * 的 dispatcher/general 断言。作者 2026-09-14「终态 = 15，已定」口径随之
     * **provisional/存档**（已被本令取代，不得作为待拍板项重提）。
+    * 本批的 `Delegate` 退役属**授权面**变更（授能集合成员 −1）：**发散面**（工具本体/
+    * 会话机制）本批未动，不得据此推断「Delegate 整机制已退役」。
     * 纪律不变：**不得**改本常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
     * 断言——该纪律禁的是**为过测而放宽断言**，**不是**禁止按作者令变更 root 面
-    * 本身（本次 15 → 13 即属后者，属「按令改面」，非「凑数字」）。⑩-9 的两项旧
+    * 本身（本次 13 → 12 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 13
+  val NebulaOrchestrationToolsExpectedSize: Int = 12
 
   /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
     *
@@ -2892,8 +2898,9 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口（史实 2026-09-06 时点：恰十四件；当前 = 13，2026-09-16
-            // 18:41 作者令：root 面 −Glob −Grep）：零 Issue、零旧体系四件（2026-09-06 TaskList
+            // 静态集收口（史实时点：恰十四件；当前 = 12 = 本批 −Delegate 后值；
+            // 此前 root 面摘除 Glob/Grep −2 后为 13）：
+            // 零 Issue、零旧体系四件（TaskList
             // 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板）。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
