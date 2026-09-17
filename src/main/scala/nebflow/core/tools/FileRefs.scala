@@ -38,6 +38,13 @@ private[tools] object FileRefs:
    * avi/eot/wasm/obj/stl/gltf/glb（避免生成必然 400 的死链），补齐端点已放行的
    * docx/xlsx/xlsm/pptx/epub（此前 src 引用不会被转成代理 URL）。若端点白名单
    * 再演进，本表须同步（端点是权威，本表是前置过滤）。
+   *
+   * 2026-09-17 nfext 批（作者净增面裁定 (i)，**取代**上段而非静默追加）：
+   * 端点侧补入 `doc` / `ppt` / `xls` 三型（理由与安全分层论证见端点侧
+   * `NfFileAllowedExt` 的注释块；触发点 = `devattach-verify` 开放项①：「设备面
+   * 下载键在、点了必然失败」），本表**同批同步**——否则 Card/Pop 侧对这三个后缀的
+   * `src`/`href` 引用不会被转成代理 URL，端点放行而工具面仍教模型一条死链。
+   * 两表相等由 `FileRefsWhitelistSpec` 的 A14 焊住，漂移必红。
    */
   val AllowedExtensions: Set[String] = Set(
     // images
@@ -72,9 +79,12 @@ private[tools] object FileRefs:
     "otf",
     // documents
     "pdf",
+    "doc",
     "docx",
+    "xls",
     "xlsx",
     "xlsm",
+    "ppt",
     "pptx",
     "epub",
     // web assets (scripts, styles, data)
