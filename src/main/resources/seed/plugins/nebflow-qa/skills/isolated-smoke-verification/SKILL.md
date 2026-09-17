@@ -24,7 +24,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 - `lsof -ti :<port>` 定位 + `cwd`（`lsof -p <pid> | grep cwd`）确认目录是目标实例
 - 双保险：`kill <pid>` 后 `lsof` 复查端口释放，必要时再清
-- 隔离 worktree + 端口隔离（如 8097）是防止误伤宿主（8080）的前提
+- 隔离 worktree + 端口隔离（独占端口，非宿主 gateway 端口）是防止误伤宿主的前提
 
 ## 3. 沙盒泄漏验证（三信号三角定位）
 
@@ -56,7 +56,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 4. **mock 序列必须符合产品工具校验语义**：状态机发出的调用若被产品校验拒绝（如 NodeEdit 新节点必须 task 和/或 in；out 数组被 schema 拒），序列断链。设计序列前先读工具校验代码（createNode/editNode/parseOut）。
 5. **决策状态机用 tool_result 内容驱动 + 状态标志，不用请求计数**：注入（ImmediateInput）与工具结果可能合并进同一请求、节点请求与 root 请求交错——计数会错位。内容匹配（如 `"Node 'A' completed" in text`）+ 标志推进（b_created→b_cycle→...）；节点 id 提取用**历史扫描**（创建结果可能与其他消息合并，不能假设独立请求）。
 
-## 7. 进程清理纪律（2026-09-05 裁定）
+## 7. 进程清理纪律
 
 - 冒烟结束**必须清理自己 spawn 的全部进程**：隔离实例、mock server（nohup 起的也要）、端口占用者一个不留——不留给宿主或下一个会话手清。
 - 收尾动作固定三步：① 杀（kill 注册的 PID + `pgrep -f <脚本路径>` 兜底，见 §6.3）② `wait` 收尸 ③ `lsof -ti :<port>` 复查端口释放。
@@ -67,8 +67,8 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 ## Evidence
 
 - issue #31 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
-- Nebflow cold-start 冒烟：`cmp /tmp/nb-s3-smoke/home/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
+- Nebflow cold-start 冒烟：`cmp <隔离 home>/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
 - qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条退役串验证。
 - #31 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
-- 大合并关卡：/tmp/nb-final-gate worktree + 8097 端口 + nohup + kill PID + lsof 双保险，全链路零冲突。
+- 大合并关卡：独立 worktree + 独占端口 + nohup + kill PID + lsof 双保险，全链路零冲突。
 - #28 0b node-runner 复验：mock LLM 状态机驱动 NodeEdit/NodeList/NodeCancel/ProjectCreate 全链路（隔离 8102 + mock 18493），五坑见 §6——修复 2 P1（ttlScanner SOE/双前缀）后 V2 五验收点全过；多轮失败全为 mock/环境问题，产品代码全程按契约工作。
