@@ -38,6 +38,18 @@ private[dropbox] enum TempPathDecision:
   case Refused(reason: String)
 
 /**
+ * 提交/删除 temp 的结果 —— **判据**与**落点名**分开两格。
+ *
+ *   - `decision`：谁能碰文件系统的唯一判据（P0 wtmove，语义逐字不变）；
+ *   - `landedPath`：**本次调用真的搬动过**时的实际目标（落地后回读；`None` = 没有任何 move）。
+ *
+ * WHY 分格（nfpath 批）：修复前「报道路径」由 `DropboxUtil.resolveFinalPath` 在**落地之后
+ * 重算**，与这里 move 到的实际目标**不同源** —— 重算时 `os.exists` 已被本次 move 改变
+ * （无冲突场景返回一个盘上不存在的 `_<ts>` 名），且时间戳取的是**报告时刻**而非落地时刻。
+ */
+private[dropbox] final case class CommitOutcome(decision: TempPathDecision, landedPath: Option[os.Path])
+
+/**
  * Cross-device Dropbox — text messages and file transfer over the neblink P2P network.
  *
  * Transport:
@@ -1181,20 +1193,18 @@ final class DropboxService private (
             // naming the exact operation is emitted once, by commit/delete
             // (see `warnTempPath`) — no second copy of the predicate, no
             // duplicate log line for the same event.
-            tempOutcome <-
+            outcome <-
               if success then commitTempFile(t) else deleteTempFile(t)
             savedPath <-
-              // Blast radius of the no-temp-file case: nothing was moved, so the
-              // file — if it exists at all — is exactly `downloadsDir/fileName`
-              // (that is where the relay path writes it). `resolveFinalPath` would
-              // append a `_<ts>` suffix whenever a same-named file is present and
-              // report a path that need not exist; point at the real target instead.
-              tempOutcome match
-                case TempPathDecision.Absent =>
-                  if success then IO.pure((DropboxService.landingDirFor(t) / t.fileName).toString) else IO.pure("")
-                case _ =>
-                  if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxService.landingDirFor(t), t.fileName).toString)
-                  else IO.pure("")
+              // 通报/引用面路径 = **已观测到的落地名**（nfpath 批口径：禁预计算名）。
+              //
+              // 修复前这里在落地之后**重算** `DropboxUtil.resolveFinalPath`，与 `commitTempFile`
+              // 里 move 到的实际目标不同源 ⇒ 报出一个盘上不存在的名，按通报路径读取必
+              // file-not-found（用户表现「文件不存在或被清理」）。实测对：
+              // 通报 `~/Downloads/call_00_…_20260916_182050.txt` vs 磁盘
+              // `~/Downloads/call_00_….txt`（120079 B，mtime 2026-09-16 18:20:50 —— 后缀
+              // 时间戳与落地 mtime **同一秒**：重算的 `os.exists` 被本次 move 自己改变）。
+              if success then landedPathFor(t, outcome) else IO.pure("")
             _ <- updateTransferStatus(transferId, if success then "completed" else "failed")
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if success then "completed" else "failed", savedPath)
             _ <- notifyFrontend(
@@ -1439,9 +1449,11 @@ final class DropboxService private (
    * Both sides are guarded: the temp path (source) and the resolved Downloads
    * target (destination — reachable when `user.home` is at or inside the working
    * directory). Returns the decision so the caller can branch explicitly instead
-   * of falling back to a path sentinel.
+   * of falling back to a path sentinel — **plus the actual landing target** when a
+   * move really happened (`CommitOutcome`)，so the reported `savedPath` never has
+   * to re-derive a name that the filesystem already decided.
    */
-  private def commitTempFile(t: FileTransfer): IO[TempPathDecision] =
+  private def commitTempFile(t: FileTransfer): IO[CommitOutcome] =
     val decision = guardedTempPath(t)
     warnTempPath("commitTempFile", t, decision) *> (decision match
       case TempPathDecision.Usable(tempPath) =>
@@ -1449,25 +1461,58 @@ final class DropboxService private (
         cwdRefusal(finalPath) match
           case Some(reason) =>
             val refused = TempPathDecision.Refused(s"destination: $reason")
-            warnTempPath("commitTempFile", t, refused).as(refused)
+            warnTempPath("commitTempFile", t, refused).as(CommitOutcome(refused, None))
           case None =>
             IO.blocking {
-              if os.exists(tempPath) then os.move(tempPath, finalPath, replaceExisting = true)
-              ()
-            }.handleErrorWith(e => logger.warn(s"Failed to commit temp file: ${e.getMessage}")).as(decision)
-      case refused @ TempPathDecision.Refused(_) => IO.pure(refused)
-      case TempPathDecision.Absent               => IO.pure(TempPathDecision.Absent))
+              if os.exists(tempPath) then
+                os.move(tempPath, finalPath, replaceExisting = true)
+                // 落地后**回读**：move 未留住目标（异常/竞态）时 `landedPath` 必须为 None，
+                // 禁把「以为搬过去了」当成「搬过去了」。
+                if os.exists(finalPath) then Some(finalPath) else None
+              else None
+            }.handleErrorWith { e =>
+              logger.warn(s"Failed to commit temp file: ${e.getMessage}").as(None)
+            }.map(lp => CommitOutcome(decision, lp))
+      case refused @ TempPathDecision.Refused(_) => IO.pure(CommitOutcome(refused, None))
+      case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
 
   /** Delete the temp file. Same guard as [[commitTempFile]] — a refused/blank path deletes nothing. */
-  private def deleteTempFile(t: FileTransfer): IO[TempPathDecision] =
+  private def deleteTempFile(t: FileTransfer): IO[CommitOutcome] =
     val decision = guardedTempPath(t)
     warnTempPath("deleteTempFile", t, decision) *> (decision match
       case TempPathDecision.Usable(tempPath) =>
         IO.blocking(if os.exists(tempPath) then os.remove(tempPath))
           .handleErrorWith(_ => IO.unit)
-          .as(decision)
-      case refused @ TempPathDecision.Refused(_) => IO.pure(refused)
-      case TempPathDecision.Absent               => IO.pure(TempPathDecision.Absent))
+          .as(CommitOutcome(decision, None))
+      case refused @ TempPathDecision.Refused(_) => IO.pure(CommitOutcome(refused, None))
+      case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
+
+  /**
+   * 通报/引用面路径 —— **已观测到的**落地名，禁预计算名（nfpath 批唯一口径）。
+   *
+   * 分支（按「本次是否真的落地」分，不按猜测分）：
+   *   1. 本次搬动过 temp ⇒ 用搬动的实际目标（存在性以回读为准）；
+   *   2. 本次没有任何 move（迟到/重放的完成帧、temp 已不在、目的地被拒）
+   *      ⇒ 先用**已经记录**的回读值（首次落地时观测到的那个），禁拿重算值去覆盖它；
+   *   3. 连记录都没有 ⇒ 只认盘上确实存在的同名直写件（relay 腿落点，P0 wtmove 口径）；
+   *      否则如实为空（`""` = 本机没有可读件，前端据此保持不可点，禁「可点但点了报错」）。
+   */
+  private def landedPathFor(t: FileTransfer, outcome: CommitOutcome): IO[String] =
+    outcome.landedPath match
+      case Some(p) => IO.blocking(if os.exists(p) then p.toString else "")
+      case None =>
+        recordedSavedPath(t).flatMap {
+          case existing if existing.nonEmpty => IO.pure(existing)
+          case _ =>
+            val direct = DropboxService.landingDirFor(t) / t.fileName
+            IO.blocking(if os.exists(direct) then direct.toString else "")
+        }
+
+  /** 该会话消息上**已经记录**的落地路径（空串 = 尚未观测到任何落点）。 */
+  private def recordedSavedPath(t: FileTransfer): IO[String] =
+    messagesRef.get.map { m =>
+      m.getOrElse(t.peerDeviceId, Nil).find(_.msgId == t.msgId).map(_.savedPath).getOrElse("")
+    }
 
 end DropboxService
 
