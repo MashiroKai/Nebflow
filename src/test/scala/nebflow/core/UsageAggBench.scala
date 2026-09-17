@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
+import io.circe.syntax.*
 
 import java.time.{LocalDateTime, ZoneId}
 import scala.collection.mutable.ListBuffer
@@ -40,7 +41,10 @@ object UsageAggBench:
       if s.size % 2 == 1 then s(s.size / 2) else (s(s.size / 2 - 1) + s(s.size / 2)) / 2.0
 
   private def p95(xs: List[Double]): Double =
-    if xs.isEmpty then 0.0 else xs.sorted(math.min(xs.size - 1, (xs.size * 0.95).toInt))
+    if xs.isEmpty then 0.0
+    else
+      val s = xs.sorted
+      s(math.min(s.size - 1, (s.size * 0.95).toInt))
 
   private def localStartOfDay(ts: Long): Long =
     LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ts), zone).toLocalDate.atStartOfDay(zone).toInstant.toEpochMilli

@@ -220,9 +220,15 @@ class UsageAggCacheSpec extends FunSuite:
     val before = (sha256(cacheFile(dir)), os.mtime(cacheFile(dir)))
     val hitsBefore = store.cacheDiagnostics.unsafeRunSync().hits
     val fullCallsBefore = store.cacheDiagnostics.unsafeRunSync().fullPathCalls
+    val bytesBefore = store.cacheDiagnostics.unsafeRunSync().totalSourceBytes
+    assert(bytesBefore > 0, "the cold request must have consumed the ledger once")
     (1 to 20).foreach { _ =>
       store.aggregate(Some("day"), None, None).unsafeRunSync()
-      assertEquals(store.cacheDiagnostics.unsafeRunSync().lastDeltaBytes, 0L, "a warm request must consume 0 source bytes")
+      assertEquals(
+        store.cacheDiagnostics.unsafeRunSync().totalSourceBytes,
+        bytesBefore,
+        "a warm request must consume 0 source bytes (J-P2)"
+      )
     }
     assertEquals(sha256(cacheFile(dir)), before._1, "the cache content must be unchanged")
     assertEquals(os.mtime(cacheFile(dir)), before._2, "the cache file must not be rewritten")

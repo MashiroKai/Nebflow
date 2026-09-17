@@ -40,6 +40,14 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
   private val MS_H = 3600_000L
   private val MS_D = 24 * MS_H
 
+  /**
+   * The live/gradient leg runs the whole query matrix against a 340k-row ledger, where
+   * every reference call re-reads ~72 MB (114 s measured); munit's 30 s default would
+   * abort it mid-flight.
+   */
+  override def munitTimeout: scala.concurrent.duration.Duration =
+    scala.concurrent.duration.Duration(20L, "minutes")
+
   private def local(y: Int, mo: Int, d: Int, h: Int, mi: Int): Long =
     LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant.toEpochMilli
 
@@ -265,6 +273,19 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
   test("equivalence: empty corpus") {
     runCorpus("empty", Nil, 1, matrix(Nil), bulk = false)
     assertNoFailures()
+  }
+
+  test("equivalence: an absent ledger is served by the cache path, never by a whole-ledger read") {
+    val dir = os.temp.dir()
+    val store = new UsageRecordStore(dir)
+    val agg = store.aggregate(Some("day"), None, None).unsafeRunSync()
+    val diag = store.cacheDiagnostics.unsafeRunSync()
+    assertEquals(agg.count, 0)
+    assertEquals(agg.buckets, Nil)
+    assertEquals(diag.totalSourceBytes, 0L, "an absent ledger has nothing to consume")
+    assertEquals(diag.fullPathCalls, 0L, "the request must not fall back to the whole-ledger read")
+    assertEquals(diag.rebuilds, 1L, "the cache is built once, from nothing")
+    assertEquals(agg, store.aggregateFull(Some("day"), None, None).unsafeRunSync())
   }
 
   test("equivalence: single record") {

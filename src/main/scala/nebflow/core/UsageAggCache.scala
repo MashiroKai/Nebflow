@@ -277,7 +277,12 @@ final case class UsageCacheDiagnostics(
   cellCount: Int,
   hourCount: Int,
   sourceSize: Long,
-  /** Source bytes consumed by the most recent `ensureCache` (0 = pure cache hit). */
+  /**
+   * Source bytes consumed by the most recent source-advancing `ensureCache` (a full
+   * rebuild or an R2 delta merge). A cache hit consumes nothing but does not clear this
+   * value, so the reading describes the last actual advance; use [[totalSourceBytes]]
+   * (which must not grow across warm requests) to judge J-P2.
+   */
   lastDeltaBytes: Long,
   /** Source bytes consumed by this store instance in total (the lock/single-flight reading). */
   totalSourceBytes: Long,

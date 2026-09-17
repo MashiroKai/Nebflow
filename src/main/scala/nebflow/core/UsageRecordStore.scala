@@ -1,7 +1,6 @@
 package nebflow.core
 
 import cats.effect.IO
-import cats.effect.std.Mutex
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
@@ -123,10 +122,10 @@ object UsageAggregate:
  * only. The read path does NOT use it: the old `loadAll` wrapped the *construction*
  * of an `IO` in `withLock` and then `.flatten`-ed it, so the actual read ran after
  * the lock was released — 8 concurrent aggregate requests each read the whole ledger
- * (~72 MB) in parallel. Reads now go through a cats-effect `Mutex`
- * ([[readMutex]]), which is held across the real work, and the cache recompute is
- * additionally single-flight (concurrent callers await the one recompute instead of
- * duplicating it).
+ * (~72 MB) in parallel. Reads now go through [[readGuard]] (a JVM `Semaphore(1)`
+ * acquired around the *executed* body), and the cache advance is additionally
+ * single-flight: it runs under that guard and re-checks the memo, so concurrent
+ * callers reuse the one advance instead of duplicating it.
  */
 class UsageRecordStore(baseDir: os.Path):
 
@@ -149,7 +148,7 @@ class UsageRecordStore(baseDir: os.Path):
    * Run a plain (non-IO) body under the append lock — the lock is held while the
    * body *runs*. Never pass an `IO` body here: that would only build the effect
    * under the lock and run it after release, which is exactly the read-path defect
-   * this batch fixed (reads use [[readMutex]] instead).
+   * this batch fixed (reads use [[readGuard]] instead).
    */
   private def withAppendLock[A](body: => A): IO[A] = IO.blocking {
     lock.lock()
@@ -166,35 +165,46 @@ class UsageRecordStore(baseDir: os.Path):
   /** Epoch millis of the agent's most recent record; 0 if never recorded. */
   def lastActivityMs(agent: String): Long = lastSeen.getOrDefault(agent, 0L)
 
-  // ── read-side mutual exclusion (cats-effect native) ─────────────────────────
+  // ── read-side mutual exclusion ──────────────────────────────────────────────
   /**
-   * Serializes read-side work (full reads, cache loads, cache rebuilds) across
-   * fibers. `Mutex[IO].memoize.flatten` is the single-instantiation idiom used
-   * elsewhere in this codebase (cf. NodeReportRegistry.appendLock).
+   * Serializes read-side work (whole-ledger reads, cache loads, cache rebuilds).
+   *
+   * Why a JVM semaphore and not `cats-effect Mutex`: this class is constructed
+   * eagerly with `new` (SharedResources.scala), so it has no `IO` context to build a
+   * `Mutex` in; the usual `Mutex[IO].memoize.flatten` shim was measured NOT to
+   * serialize concurrent `unsafeRunSync()` callers (8 concurrent cold requests
+   * produced 8 rebuilds in this batch's single-flight spec). A `Semaphore(1)`
+   * acquired and released around the *executed* body — the same shape as
+   * [[withAppendLock]], never around an `IO` value — is unambiguous: the body runs
+   * while the permit is held, and the permit cannot leak (the thunk inside
+   * `IO.blocking` always runs its `finally`, cancellation included).
    */
-  private val readMutex: IO[Mutex[IO]] = Mutex[IO].memoize.flatten
+  private val readSemaphore = new java.util.concurrent.Semaphore(1)
 
-  private def readGuard[A](body: IO[A]): IO[A] = readMutex.flatMap(_.lock.surround(body))
+  private def readGuard[A](body: => A): IO[A] = IO.blocking {
+    readSemaphore.acquire()
+    try body
+    finally readSemaphore.release()
+  }
 
   /**
    * Load all records in file order (oldest first).
    *
    * Reference/fallback path: the read runs *inside* the read guard (the defect
-   * fixed in this batch was that it ran outside the lock). Kept verbatim
-   * otherwise — it is the reference implementation the equivalence spec compares
-   * the incremental path against.
+   * fixed in this batch was that it ran outside the lock — the old `withLock`
+   * wrapped only the construction of an `IO` and `.flatten`-ed it, so the read
+   * happened after release). Kept verbatim otherwise — it is the reference
+   * implementation the equivalence spec compares the incremental path against.
    */
   def loadAll(): IO[List[LlmUsageRecord]] = readGuard {
-    IO.blocking {
-      if !os.exists(logPath) then Nil
-      else
-        fullPathCalls.incrementAndGet()
-        fullPathBytes.addAndGet(os.size(logPath))
-        os.read
-          .lines(logPath)
-          .flatMap(line => decode[LlmUsageRecord](line).toOption)
-          .toList
-    }
+    if !os.exists(logPath) then Nil
+    else
+      fullPathCalls.incrementAndGet()
+      fullPathBytes.addAndGet(os.size(logPath))
+      os.read
+        .lines(logPath)
+        .flatMap(line => decode[LlmUsageRecord](line).toOption)
+        .toList
   }
 
   /**
@@ -335,8 +345,22 @@ class UsageRecordStore(baseDir: os.Path):
   private val fullPathCalls = new AtomicLong(0L)
   private val fullPathBytes = new AtomicLong(0L)
 
-  /** Diagnostics of the cache (watermark, cell table size, J-P1/J-P2 counters). */
-  def cacheDiagnostics: IO[UsageCacheDiagnostics] = ensureCache.map { c =>
+  /**
+   * Diagnostics of the cache (watermark, cell table size, J-P1/J-P2 counters).
+   * Never throws: an unreadable cache reports the empty state instead, so callers
+   * (tests, operators) cannot be taken down by a diagnostics call.
+   */
+  def cacheDiagnostics: IO[UsageCacheDiagnostics] =
+    ensureCache
+      .map(Option(_))
+      .handleErrorWith { e =>
+        IO.delay(
+          logger.warnSync("usage aggregate cache diagnostics degraded", "error" -> s"${e.getClass.getSimpleName}: ${e.getMessage}")
+        ) *> IO.pure(None)
+      }
+      .map(c => diagnosticsOf(c.getOrElse(emptyCache(ZoneId.systemDefault().getId))))
+
+  private def diagnosticsOf(c: UsageAggCacheFile): UsageCacheDiagnostics =
     UsageCacheDiagnostics(
       cachePath = cachePath.toString,
       cacheFileExists = os.exists(cachePath),
@@ -358,7 +382,6 @@ class UsageRecordStore(baseDir: os.Path):
       increments = increments.get(),
       hits = hits.get()
     )
-  }
 
   // ── small IO helpers ────────────────────────────────────────────────────────
 
@@ -443,33 +466,35 @@ class UsageRecordStore(baseDir: os.Path):
 
   /** Consume `[start, EOF)` into additive cells + hour spans. */
   private def scanDelta(path: os.Path, start: Long, zone: ZoneId): Delta =
-    val cells = scala.collection.mutable.HashMap.empty[(String, String, String, String), UsageCounters]
-    val spans = scala.collection.mutable.HashMap.empty[String, HourSpan]
-    var dropped = 0L
-    var maxTs = Long.MinValue
-    val (lines, consumedEnd) = scanLines(path, start, -1L) { (ls, le, rec) =>
-      rec match
-        case None => dropped += 1
-        case Some(r) =>
-          val hk = UsageAggCache.hourKey(r.timestamp, zone)
-          val key = (hk, r.provider, r.model, r.agent)
-          cells.update(key, cells.getOrElse(key, UsageCounters.zero) + UsageAggCache.countersOf(r))
-          spans.update(
-            hk,
-            spans.get(hk) match
-              case Some(s) => HourSpan(math.min(s.start, ls), math.max(s.end, le))
-              case None => HourSpan(ls, le)
-          )
-          if r.timestamp > maxTs then maxTs = r.timestamp
-    }
-    Delta(
-      cells = cells.toList.map { case ((h, p, m, a), c) => UsageAggCell(h, p, m, a, c) },
-      spans = spans.toMap,
-      lines = lines,
-      dropped = dropped,
-      maxTimestamp = maxTs,
-      consumedEnd = consumedEnd
-    )
+    if !os.exists(path) then Delta(Nil, Map.empty, 0L, 0L, Long.MinValue, 0L)
+    else
+      val cells = scala.collection.mutable.HashMap.empty[(String, String, String, String), UsageCounters]
+      val spans = scala.collection.mutable.HashMap.empty[String, HourSpan]
+      var dropped = 0L
+      var maxTs = Long.MinValue
+      val (lines, consumedEnd) = scanLines(path, start, -1L) { (ls, le, rec) =>
+        rec match
+          case None => dropped += 1
+          case Some(r) =>
+            val hk = UsageAggCache.hourKey(r.timestamp, zone)
+            val key = (hk, r.provider, r.model, r.agent)
+            cells.update(key, cells.getOrElse(key, UsageCounters.zero) + UsageAggCache.countersOf(r))
+            spans.update(
+              hk,
+              spans.get(hk) match
+                case Some(s) => HourSpan(math.min(s.start, ls), math.max(s.end, le))
+                case None => HourSpan(ls, le)
+            )
+            if r.timestamp > maxTs then maxTs = r.timestamp
+      }
+      Delta(
+        cells = cells.toList.map { case ((h, p, m, a), c) => UsageAggCell(h, p, m, a, c) },
+        spans = spans.toMap,
+        lines = lines,
+        dropped = dropped,
+        maxTimestamp = maxTs,
+        consumedEnd = consumedEnd
+      )
 
   private def applyDelta(base: UsageAggCacheFile, d: Delta, zone: ZoneId): UsageAggCacheFile =
     val w = d.consumedEnd
@@ -596,14 +621,13 @@ class UsageRecordStore(baseDir: os.Path):
         case Some(_) => None
         case None =>
           hits.incrementAndGet()
-          lastDeltaBytes.set(0L)
           Some(m.cache)
   }
 
   private def ensureCache: IO[UsageAggCacheFile] =
     freshMemo.flatMap {
       case Some(c) => IO.pure(c)
-      case None => readGuard(IO.blocking(advanceLocked()))
+      case None => readGuard(advanceLocked())
     }
 
   /**
@@ -616,7 +640,6 @@ class UsageRecordStore(baseDir: os.Path):
     val m = memo.get
     if m != null && m.sourceSize == size && cacheFileUnchanged(m) && invalidReason(m.cache, size).isEmpty then
       hits.incrementAndGet()
-      lastDeltaBytes.set(0L)
       m.cache
     else loadOrRebuild(size)
 
@@ -634,7 +657,6 @@ class UsageRecordStore(baseDir: os.Path):
       case Some(c) if c.watermark.byteOffset == size =>
         // R1: no new data — zero source bytes consumed.
         hits.incrementAndGet()
-        lastDeltaBytes.set(0L)
         setMemo(size, c)
         c
       case Some(c) =>
