@@ -10,11 +10,12 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（四 keeper + 3 个默认预装插件；**零项目**——
- * 内置 general 项目 2026-09-16 作者令摘除）、② 幂等 / 不覆盖用户编辑、
+ * 覆盖定稿四项：① fresh home 完整播种（3 keeper agent + 4 默认预装插件 + projects/general，
+ * Nebula 由 seedDefaults 管、不在本 spec 断言面）、② 幂等 / 不覆盖用户编辑、
  * ③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）；
- * ⑤ 摘除面负向不变量（manifest 零 `project:` 条目 + 干净 home 零 `projects/general`）。
+ * ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①恢复内置 general 项目播种：
+ * manifest 恰一条 `project:general` + 种子资源树在位）。
  *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，`getResourceAsStream`
  * 直接命中——即「载体 A = 资源打包」在测试环境下被真实走通。
@@ -37,8 +38,8 @@ class SeedServiceSpec extends FunSuite:
 
   private def dataRoot: os.Path = PathUtil.dataRoot
 
-  // ── ① fresh home：完整播种（agent + plugin；项目面零播种）├────────
-  test("fresh home seeds four keepers + plugins, and zero project (built-in general removed)"):
+  // ── ① fresh home：完整播种（agent + plugin + project）├────────
+  test("fresh home seeds four keepers + plugins + project:general"):
     ensure()
 
     // 四 keeper：Nebula 由 seedDefaults 管（本测不触发）；补的两个在此断言
@@ -96,15 +97,20 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
       "slideblocks skill copied")
 
-    // ── 项目面：**零播种**（2026-09-16 作者令「移除 general 这个内置项目」）────────
-    // 负向断言（本批改写面）：干净 home 不再出现 projects/general 脚手架——原正向断言
-    // （project.json 存在 + name/workspace/AGENTS.md 内容）已随 `project:` 种子条目与
-    // `seed/projects/general/` 资源树摘除而失效。**禁恒真**：断言路径级不存在（若播种
-    // 面被重新加回，本行立即红）。
-    assert(!os.exists(home / "projects" / "general"),
-      "no built-in 'general' project scaffolded on a fresh home (project seed removed 2026-09-16)")
-    assert(!os.exists(home / "projects") || os.list(home / "projects").isEmpty,
-      "the seed pass writes zero project scaffolds (projects/ stays absent or empty)")
+    // ── 项目面：默认通用项目 general 恢复播种（作者 2026-09-17 裁定①，撤销 09-16 摘除令）──
+    // 正向断言（本批改写面）：干净 home 建 projects/general 脚手架——S1 前是同一位置的
+    // 路径级负向断言（`!os.exists(home / "projects" / "general")`）。**禁恒真**：逐级读
+    // 真值（文件存在 + project.json 的 name/workspace + AGENTS.md 占位已替换），播种面
+    // 被摘掉即红（S5① 变异红证已实测）。
+    val projectJson = home / "projects" / "general" / "project.json"
+    assert(os.exists(projectJson), "project:general scaffolded")
+    val proj = io.circe.parser.parse(os.read(projectJson)).toOption.get
+    assert(proj.hcursor.downField("name").as[String].toOption.contains("general"))
+    assert(proj.hcursor.downField("workspace").as[String].toOption.contains((home / "projects" / "general").toString),
+      "workspace points at projects/general")
+    assert(os.exists(home / "projects" / "general" / "AGENTS.md"), "AGENTS.md scaffolded")
+    assert(os.read(home / "projects" / "general" / "AGENTS.md").contains((home / "projects" / "general").toString),
+      "AGENTS.md references dataRoot path (placeholder substituted)")
 
     // marker
     val marker = home / ".seed-state.json"
@@ -112,12 +118,12 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // marker 记录 = 本轮实际写入 item 数：4 agents + 3 plugins = **7**（默认插件集全量）。
-    // 本批前 = 8（4 agents + 3 plugins + 1 project）；项目条目随 2026-09-16 摘除面
-    // 从 manifest 移除 ⇒ 计数同步收窄（`memory-consolidator` 由记忆队列批 2026-09-12
-    // 纳入种子 manifest；默认插件集由插件面修复批 2026-09-12 回退为三条）。
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
-      "marker records 7 items (4 agents + 3 plugins; project: item removed 2026-09-16)")
+    // marker 记录 = 本轮实际写入 item 数 = **8** = 现行 manifest items 全量：3 agents
+    // （project-dispatcher / general / memory-consolidator）+ 4 默认插件（visual-report /
+    // slideblocks / nebflow-plugin-creator / web-search-toolkit）+ 1 project（general，
+    // 作者 2026-09-17 裁定①恢复播种）。S1 前 = 7（同集去 project 条目）。
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
+      "marker records 8 items (3 agents + 4 plugins + 1 project:general)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -129,12 +135,20 @@ class SeedServiceSpec extends FunSuite:
     ensure()  // re-seed
     assert(os.read(agentPath).contains("customMarker"), "user edit preserved across re-seed")
 
-    // 项目面（本批改写）：默认集零项目 ⇒ 重复播种不建任何项目脚手架
-    // （原「general 项目原样保留（不重复 create）」断言随摘除面失效；幂等语义仍由
-    // 上面的「用户改写保留」断言承载）。
+    // 项目面（本批改写的第二处 + S5② 补钉）：重播既**不重复 create**也**不静默覆盖**
+    // 既有 project.json —— 用户改写的内容逐字存活。本行钉的是**项目面「无静默覆盖」不变量**
+    // （三重守卫：既有 home 门 + marker 门 + seedProject 的「已存在」分支；红证 = 三处全中和
+    // 的朴素播种面，见报告 S5② —— 单独变异 seedProject 分支不可达、恒绿，理由同报告）。
+    val projPath = home / "projects" / "general" / "project.json"
+    assert(os.exists(projPath), "project:general scaffolded on a fresh home")
+    os.write.over(
+      projPath,
+      io.circe.parser.parse(os.read(projPath)).toOption.get
+        .deepMerge(io.circe.Json.obj("customMarker" -> io.circe.Json.True)).noSpaces
+    )
     ensure()
-    assert(!os.exists(home / "projects" / "general"),
-      "no project scaffold across re-seed (project seed removed 2026-09-16)")
+    assert(os.read(projPath).contains("customMarker"),
+      "user-edited project.json kept across re-seed (no silent overwrite of an existing project definition)")
 
   // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent 自愈）──
   test("existing user data skips full seeding (no project scaffold), self-heals default-set agents"):
@@ -196,17 +210,17 @@ class SeedServiceSpec extends FunSuite:
     do
       assert(!os.exists(home / "plugins" / name / "plugin.json"),
         s"non-default seed plugin '$name' NOT replanted on upgrade run (out of default set)")
-    // 项目面（本批改写）：升级 run 也**不补任何项目**（原「missing project added」正向断言
-    // 随 `project:` 条目摘除失效 ⇒ 改为路径级负向断言，禁恒真）
-    assert(!os.exists(home / "projects" / "general"),
-      "no project scaffold added by the upgrade run (project seed removed 2026-09-16)")
+    // 项目面（本批改写）：升级 add-only run 同样补齐缺失的默认集项目——本用例在 run 前
+    // `os.remove.all(home / "projects")`，故此处是「缺失 ⇒ 补建」的正面断言
+    // （S1 前是路径级负向断言「no project scaffold added by the upgrade run」）
+    assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
     // marker 升级到当前版本
     val marker = io.circe.parser.parse(os.read(home / ".seed-state.json")).toOption.get
     assert(marker.hcursor.downField("version").as[String].toOption.contains("1.0.0"), "marker bumped to 1.0.0")
 
-  // ── ⑤ 摘除面负向不变量（2026-09-16 作者令）────────────────
-  test("removed project seed stays removed: manifest declares zero 'project:' items and carries no project seed tree"):
-    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：条目/资源树任一回来，本测红。
+  // ── ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①，撤销 09-16 摘除令）────
+  test("built-in project seed is in place: manifest declares exactly one 'project:general' item and the seed tree ships with it"):
+    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：条目/资源树任一消失，本测红。
     val manifestText = {
       val in = Option(getClass.getClassLoader.getResourceAsStream("seed/manifest.json")).getOrElse(
         fail("classpath resource 'seed/manifest.json' not found")
@@ -216,12 +230,14 @@ class SeedServiceSpec extends FunSuite:
     val items = io.circe.parser.parse(manifestText).toOption
       .flatMap(_.hcursor.downField("items").as[List[String]].toOption).getOrElse(fail("manifest.items unreadable"))
     val projectItems = items.filter(_.startsWith("project:"))
-    assert(projectItems.isEmpty,
-      s"seed manifest declares ${projectItems.size} 'project:' item(s) (${projectItems.mkString(", ")}) — " +
-        "the built-in project seed was removed by the author on 2026-09-16; re-adding one is a product decision")
-    // 种子资源树同批摘除（无 `seed/projects/` 树 = 无从播种项目脚手架）。
-    // 判据与兄弟 spec 同口径 = classpath（sbt test = target/classes 拷贝，assembly = jar）。
-    assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") == null,
-      "seed project resource tree (seed/projects/) is gone from the classpath")
+    assert(projectItems == List("project:general"),
+      s"seed manifest must declare exactly one 'project:general' item (got ${projectItems.mkString(", ")} of " +
+        s"${items.size} item(s)) — the built-in project seed was restored by the author on 2026-09-17 " +
+        "(reversing the 2026-09-16 removal); dropping it again is a product decision")
+    // 种子资源树在位（缺 `seed/projects/general/AGENTS.md` ⇒ seedProject 只剩 defaultAgentTemplate
+    // 短模板兜底，真实项目指令文本到不了新 home）。判据与兄弟 spec 同口径 = classpath
+    // （sbt test = target/classes 拷贝，assembly = jar）。
+    assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
+      "seed project resource tree (seed/projects/general/AGENTS.md) is on the classpath")
 
 end SeedServiceSpec
