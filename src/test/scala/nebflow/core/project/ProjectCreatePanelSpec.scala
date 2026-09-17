@@ -555,10 +555,17 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(beforeSha.size >= 2, s"workspace must carry the scaffold before the rejected call: $beforeSha")
       assert(second.isLeft, s"反守卫失效：异 name 指向已占用 workspace 竟被放行 ⇒ $second")
       val err = second.swap.toOption.get.message
-      assert(err.contains("occ-one"), s"报错必须点名占用者 name: $err")
-      assert(err.contains(ws.toString), s"报错必须含（归一化后的）workspace: $err")
-      assert(err.contains("Mail(address='project:occ-one'"), s"报错必须给出出路 a（复用既有项目）: $err")
-      assert(err.contains("different 'workspace'"), s"报错必须给出出路 b（换工作区目录）: $err")
+      // 可行动报错逐字钉住：点名占用者 name + 归一化 workspace + 归档态位 + 两条出路
+      // （a 复用既有项目 / b 换工作区目录）。逐字等值 ⇒ 内容要求不可被静默弱化。
+      val expectedErr =
+        s"Workspace '${ws.toString}' is already used by project 'occ-one' " +
+          s"(its project.json workspace = '${ws.toString}'). ProjectCreate default-denies creating 'occ-two' " +
+          "on an occupied workspace — a second project on the same workspace would silently share its " +
+          "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
+          "(a) reuse the existing project — ProjectCreate(name='occ-one') to re-mount it, or " +
+          "Mail(address='project:occ-one', message=...) to dispatch work; " +
+          "(b) pass a different 'workspace' directory for 'occ-two'."
+      assertEquals(err, expectedErr, "占用报错原文必须逐字稳定（可行动四点齐备）")
       assert(!newDir, "拒绝路径必须零写盘：projects/occ-two/ 不得出现")
       assertEquals(afterSha, beforeSha, "拒绝路径不得改动 workspace 任何件（逐件 sha256）")
       assertEquals(afterNb, beforeNb, "拒绝路径不得改动 .nebflow/ 内容集合")
@@ -666,17 +673,20 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(created.isRight, s"create must succeed: $created")
-      assertEquals(
-        meta.downField("workspace").as[String].toOption,
-        Some(ws.toString),
-        s"meta.workspace 必须携带权威工作区绝对路径；载荷原文=${payload.noSpaces.take(400)}"
+      // ④-11(b) 逐键钉住：meta 的键集/类型/值与期望 Json 等值（circe JsonObject 等值与键序无关）
+      // ⇒ 既有键名与类型不变 + 新增 workspace = 权威工作区绝对路径，一断言同时钉两面。
+      val metaRaw = meta.focus.getOrElse(fail("meta object missing")).noSpaces
+      val maskedRaw = metaRaw.replaceAll("\"updatedAt\":[0-9]+", "\"updatedAt\":0")
+      val expectedMeta = Json.obj(
+        "project" -> Json.fromString("nl-meta"),
+        "workspace" -> Json.fromString(ws.toString),
+        "updatedAt" -> Json.fromLong(0L),
+        "archived" -> Json.fromInt(0)
       )
-      assertEquals(meta.downField("project").as[String].toOption, Some("nl-meta"), "既有键 project 语义不变")
-      assert(meta.downField("updatedAt").as[Long].isRight, "既有键 updatedAt 语义不变（epoch ms 数字）")
       assertEquals(
-        meta.downField("archived").as[Int].toOption,
-        Some(0),
-        "既有键 archived 语义不变（归档节点计数）"
+        io.circe.parser.parse(maskedRaw).getOrElse(fail(s"meta is not json: $maskedRaw")),
+        expectedMeta,
+        s"meta 逐键读数（键名/类型/顺序无关；updatedAt 已 mask）；载荷 meta 原文=$metaRaw"
       )
       assert(payload.hcursor.downField("nodes").as[List[Json]].isRight, "载荷 nodes 骨架不变")
   }
