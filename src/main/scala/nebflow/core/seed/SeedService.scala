@@ -30,22 +30,31 @@ import scala.jdk.CollectionConverters.*
  *    （`project:` 条目 + `seed/projects/general/AGENTS.md` 模板，`<DATA_ROOT>` 占位
  *    替换为数据根）
  *
- * **项目面 = 仅新环境播种**（作者 2026-09-17 裁定①：撤销 2026-09-16「移除内置 general
- * 项目」令）——干净 home 恢复播种 `projects/general` 脚手架；**不补种**既有 home
- * （其 `general` 为手工建成、保持现状）：既有 home 走下面的守卫分支，只写 marker，
- * 项目面**零自愈**（无 `reconcileProjects`、门与分支一行未动）。存量
- * `~/.nebflow/projects/general/` 数据本批**零触碰**（零删除 / 零搬移 / 零 rename）。
- * 本批前（2026-09-16 ~ 2026-09-17）的口径为「项目面零播种」，已随撤销令作废。
+ * **项目面 = 新环境播种 + 既有 home 严格 add-only 补种**（作者 2026-09-17 裁定①②：撤销
+ * 2026-09-16「移除内置 general 项目」令，且既有 home 亦补种）——干净 home 播种
+ * `projects/general` 脚手架；既有 home（`projects/` 非空）由 [[reconcileProjects]] 与
+ * agents/plugins 两面**同构**地补**缺失**的内置项目。守卫 = **目录级**
+ * `!os.exists(root/projects/<name>/project.json)`（与 `ProjectStore` 同粒度）：缺 ⇒ 建、
+ * 已存在 ⇒ 零动作零写盘；**已有内容零覆盖 / 零搬移 / 零删除**，既有 `general`（多为手工
+ * 建成、内容可与种子不同）**绝不被本面改写** ⇒ 存量 `~/.nebflow/projects/general/**`
+ * 逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime 内容仲裁（不触发 #304
+ * 零覆盖差集纪律）。
+ * 前令（**已作废，不得再按此口径复述**）：`961e2cbd3` 提交记录所写「作者裁定否决既有 home
+ * 补种」= 前令；后令（裁定②：两面都补、既有严格 add-only，作者对「波及所有缺它的 home
+ * （含隔离 home）」明示知情接受）治前论。更早（2026-09-16 ~ 2026-09-17）的「项目面零播种」
+ * 口径已随撤销令作废。
  *
  * 触发（§4.2）：gateway boot 装配点调用 `ensureSeeded()`，位置 = 项目挂载前。
  * 判定顺序：
  *  1. `projects/` 非空（≥1 个 project.json）→ 判定「已有用户数据」：只写/更新
  *     marker（记录当前 SeedVersion），不完整播种（既有 home 不重播默认集）；
- *     **默认集内的缺失 agent 仍由 reconcile 自愈补装**（2026-09-13 批，见 reconcileAgents）。
+ *     **默认集内缺失的 agent / plugin / project 分别由三条 reconcile 自愈补装**
+ *     （agents 见 2026-09-13 批 reconcileAgents；project 见本批 reconcileProjects）。
  *  2. else（fresh home）：marker 缺失 → 完整冷启动播种；marker.version < seedVersion
  *     → 升级 add-only 补种（每条 `!os.exists` 守卫，只补缺失文件）；>= → no-op。
  *  3. 最后（所有分支、不受守卫/marker 门控）：插件一致性 reconcile（见下）
- *     + agents 一致性 reconcile（缺失自愈）+ 记忆消费链启动校验（消费链缺失 ⇒ 响亮 WARN）。
+ *     + agents 一致性 reconcile（缺失自愈）+ 项目一致性 reconcile（缺失补建）
+ *     + 记忆消费链启动校验（消费链缺失 ⇒ 响亮 WARN）。
  *
  * 插件一致性 reconcile（「始终保持一致」机制，2026-09-09 批）：完整播种只解决
  * fresh home；既有 home 的已装插件会因 add-only 语义永久冻结（2026-09-09 断点：
@@ -211,6 +220,10 @@ object SeedService:
       // 换成「三条硬条件」（见 reconcileAgents 文档）；digest 一致时同样无操作。
       // 缺失 → 自愈补装（2026-09-13 批，作者令「改成缺失自愈」）。
       reconcileAgents(root, manifest)
+      // 项目一致性 pass（作者 2026-09-17 裁定②「既有 home 亦 add-only 补种」）：与上面两条
+      // reconcile 同构，**与 `hasExistingProjects` 门无关**——既有 home 分支同样走到本行，
+      // 迭代面 = manifest items；缺 ⇒ 建、已在 ⇒ 零动作零写盘（见 reconcileProjects）。
+      reconcileProjects(root, manifest)
       // 启动期消费链校验（2026-09-13 批）：把「记忆队列没有消费者」变成启动即可见的告警
       verifyMemoryConsumptionChain(root)
     catch
@@ -303,11 +316,14 @@ object SeedService:
     * AGENTS.md + .gitignore；flow-map.json 由 FlowMapStore.open 首写）。模板里的
     * `DataRootPlaceholder` 替换为本 home 的数据根（模板随 home 走，禁写死路径）。
     *
-    * **仅新环境播种**（作者 2026-09-17 裁定①）：既有 home 由 [[ensureSeeded]] 的
-    * `hasExistingProjects` 守卫拦下（只写 marker），本方法在既有 home **永不被调用**
-    * ⇒ 既有 home 的项目面零自愈补种（无 reconcileProjects）。幂等：`project.json`
-    * 已在 ⇒ 跳过（`ProjectStore.create` 亦自带「已存在 ⇒ 拒绝」兜底，双保险，
-    * 用户编辑 > 种子）。 */
+    * **两条调用路径**（作者 2026-09-17 裁定①②）：① fresh home 的完整播种
+    * （[[runSeed]] → `seedItem` 的 `project:` 分派）；② 既有 home 的 add-only 补种
+    * （[[reconcileProjects]]）——后者与 `hasExistingProjects` 门**无关**，故既有 home 也会
+    * 走到本方法，但**只补缺失**：守卫 = **目录级**
+    * `!os.exists(root / "projects" / name / "project.json")`（与 `ProjectStore` 同粒度），
+    * 已在 ⇒ 零动作零写盘（既有 `general` 的 project.json / AGENTS.md 逐字节不变——
+    * 本方法**绝不**用种子文本覆写用户态）。幂等：`project.json` 已在 ⇒ 跳过
+    * （`ProjectStore.create` 亦自带「已存在 ⇒ 拒绝」兜底，双保险，用户编辑 > 种子）。 */
   private def seedProject(root: os.Path, id: String): Boolean =
     val name = GeneralProjectName
     if os.exists(root / "projects" / name / "project.json") then
@@ -325,6 +341,37 @@ object SeedService:
         case Left(err) =>
           logger.warnSync(s"Seed: project '$name' create failed: $err")
           false
+
+  // ── 项目一致性 reconcile（既有 home 的缺失内置项目 add-only 补种）──
+  /** 每次启动对 manifest 声明的项目做存在性检查 + 缺失补种（与 [[reconcilePlugins]] /
+    * [[reconcileAgents]] **同构**：迭代面 = manifest items、逐条 try/catch、失败仅 WARN、
+    * 绝不中断启动、digest/内容一致时无操作）。
+    *
+    * 守卫粒度 = **目录级** `!os.exists(root / "projects" / <name> / "project.json")`
+    * （与 `ProjectStore.create` 同粒度，设计件 §三(2) 明定）：缺 ⇒ 经 [[seedProject]] 建
+    * 脚手架；**已在 ⇒ 零动作、零写盘**（幂等：连续两次 boot 第二次零写入、mtime 不变）。
+    * 既有内容**零覆盖、零搬移、零删除**——手工建的 `projects/<name>/**`（含其
+    * project.json / AGENTS.md）逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime
+    * 内容仲裁（作者 2026-09-17 裁定②：严格 add-only）；因此**不触发** #304 零覆盖差集纪律
+    * （一旦将来引入镜像覆写，即刻触发，见设计件 §二发现①「对既有口径的冲击」末段）。
+    *
+    * 与前令的关系（不得再复述前令口径）：`961e2cbd3` 提交记录所写「作者裁定否决既有 home
+    * 补种」= **前令，已作废**；后令（2026-09-17 裁定②：两面都补、既有严格 add-only，作者对
+    * 波及隔离 home 亦明示知情接受）治前论 ⇒ 本面即先前缺口「缺失的一件」。缺口与
+    * [[reconcileAgents]] 同源：既有 home 受 `projects/` 非空守卫**永不完整播种**，缺失的
+    * 内置项目因此永久不愈（agents 面 2026-09-13 已自愈，项目面本批对齐）。
+    *
+    * 写入面 = 项目定义目录的**第二写点**（第一 = `runSeed` 的完整播种）；风险与回滚见设计件
+    * §六（代码回滚 = revert 本批提交；**数据不随回滚撤销**——add-only 建出的目录会留下）。 */
+  private def reconcileProjects(root: os.Path, manifest: SeedManifest): Unit =
+    manifest.items.collect {
+      case id if id.startsWith(ProjectPrefix) => id.stripPrefix(ProjectPrefix)
+    }.foreach { name =>
+      try seedProject(root, name)
+      catch
+        case e: Exception =>
+          logger.warnSync(s"Seed: project '$name' reconcile failed: ${e.getMessage}")
+    }
 
   // ── 插件一致性 reconcile（「始终保持一致」机制）──────────
   /** 每次启动对 manifest 声明的插件做 seed ↔ runtime 比对（digest 仲裁，见类注释）。
