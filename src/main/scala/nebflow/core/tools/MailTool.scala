@@ -23,15 +23,13 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 /**
  * Agent-to-agent communication tool.
  *
- * Delivery (via the `delivery` parameter) — **one mode only: immediate** (async send:
- * injected at the next turn boundary — an idle recipient starts a new turn, a busy
- * recipient gets it merged into the current turn).
+ * Delivery — **every Mail is immediate**: one mode, and no parameter to choose it
+ * (async send, injected at the next turn boundary — an idle recipient starts a new
+ * turn, a busy recipient gets it merged into the current turn).
  *
  * The former `queue` mode (serialized FIFO persisted to disk, one mail per turn —
  * for serial task chains: "do this, then that") was **retired** (delivery 退役批,
- * 2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」):
- * - the schema **keeps** the `delivery` key (compat: an old caller's key must not
- *   become an unknown property), but its `enum` is `["immediate"]` only;
+ * 2026-09-15 作者裁定 (b)):
  * - **every non-device leg** (team short name / `project:` / `node:` / Nebula) that
  *   still sends `delivery="queue"` is an **explicit error**
  *   (`MAIL_DELIVERY_QUEUE_RETIRED`) — **never** a silent downgrade to immediate
@@ -44,6 +42,17 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
  *   is **retained**: it has consumers on other faces (session queue drain, REST
  *   queue endpoints) and specs call it directly — it now has **zero production
  *   caller from this tool face**.
+ *
+ * mailparams 批 (2026-09-17 作者裁定 = 案 C「清死面」): the `delivery` **key has been
+ * removed from `inputSchema`** — parameter face **8 → 7**. Zero capability is lost
+ * (`immediate` was the only remaining `enum` value and it is also the default, so
+ * the key only ever asked the model to pick a one-option option).
+ * The removal is deliberately **not** a silent downgrade: `call()` keeps a
+ * **tombstone read** of the key whose only job is to still refuse `"queue"` with the
+ * same `MAIL_DELIVERY_QUEUE_RETIRED` error (see the tombstone comment in `call()`).
+ * This works because the engine performs **no JSON-Schema validation** — a stale
+ * caller's key still reaches the tool and is judged there, which is exactly why the
+ * tombstone is the fail-closed side of this change.
  *
  * The former `ask` mode (synchronous context fork) was removed entirely
  * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
@@ -101,13 +110,18 @@ object MailTool extends Tool:
     else None
 
   // ============================================================
-  // delivery 退役批（2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」）——
+  // delivery 退役批（2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」）
+  //   ＋ mailparams 批（2026-09-17 作者裁定 = 案 C「清死面」）——
   // **非设备腿** `delivery="queue"` 的统一显式拒绝文案（**唯一来源**；spec 与此处同源）。
-  //   · 语义 = `delivery` 字段**保留**（schema 键在、`enum` 只剩 `"immediate"`），queue
-  //     **模式**退役 ⇒ 一切非设备腿收到该值**立即显式拒绝**：零投递副作用、零队列落盘。
+  //   · 语义 = `delivery` 字段已**退役出 schema**（mailparams 批：参数面 8 → 7，该键
+  //     不再对模型可见），但 `call()` 内**保留一行墓碑读取**（`deliveryTombstone`）
+  //     —— 一切非设备腿收到 `"queue"` 仍**立即显式拒绝**：零投递副作用、零队列落盘。
   //   · 选「显式拒绝」而非「立即化」的理由：调用方声明的**串行链语义**无法被立即投递
   //     满足 —— 静默改投 = 静默丢语义（禁用面），且与既有 `node:` / 设备腿的
   //     「显式拒绝，禁静默降级」先例同向；调用方拿到可读错误即可自纠。
+  //   · 墓碑读取成立的判据（不是权宜）：引擎**零 JSON-Schema 校验**（`protocol.scala`
+  //     自陈「面外参数会被静默忽略」）⇒ 删 schema 键**不会**让旧键到不了 `call()`；
+  //     故「删键 + 墓碑判」= fail-closed，而「删键 + 删判」才是静默降级。
   //   · 设备腿**不走本文案**：其 v2.1 拒 queue 契约自有字面量、逐字不动（见
   //     [[deliverToDevice]]）——两处字面量不同是**有意**的（禁为退役而翻已落契约）。
   // ============================================================
@@ -217,7 +231,7 @@ is no silent fallback and no fuzzy matching.
 - Errors: `NODE_NOT_FOUND` / `NODE_MESSAGE_EMPTY` / `NODE_TERMINAL_NO_MESSAGE`.
 - Every message (injected / appended / not-delivered) is appended to the project's
   flow-map-events.jsonl audit log (type=node-message).
-- `node:` routing ignores `delivery` — the engine decides inject-at-turn-boundary
+- `node:` routing takes no delivery-mode choice — the engine decides inject-at-turn-boundary
   vs append-to-task.
 
 Images (optional `images` parameter — up to 5 absolute local image paths,
@@ -248,15 +262,16 @@ The device mail body (message + the attachment note appended to it) must stay wi
 `attachments` does NOT put bytes into the recipient's LLM context: for an image the
 model should see, use `images`.
 
-Delivery (the `delivery` parameter — kept for compatibility, one mode only):
-  Every Mail is immediate: async send, injected at the target's next turn
-  boundary (an idle target starts a new turn; a busy target has it merged into
-  the current turn). You don't wait for a response.
+Delivery — every Mail is immediate (there is no delivery parameter to set):
+  Async send, injected at the target's next turn boundary (an idle target starts
+  a new turn; a busy target has it merged into the current turn). You don't wait
+  for a response.
   There is no delivery mode to choose: the former `queue` mode (serialized FIFO,
   one Mail per turn — for "do this, then that" serial chains) was RETIRED on
-  2026-09-15. Passing `delivery="queue"` is an explicit error
-  (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target — it is NEVER
-  silently downgraded to immediate.
+  2026-09-15, and the `delivery` parameter itself was removed from this tool's
+  schema on 2026-09-17. A stale caller that still passes `delivery="queue"` is an
+  explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target — it is
+  NEVER silently downgraded to immediate.
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -346,12 +361,6 @@ Message type (optional, default "INFO"):
           "description" -> """Message type tag. "INFO" = supplementary context (default); "FOLLOW_UP" = new task after current finishes; "PARALLEL" = delegate independently; "INTERRUPT" = urgent, handle now; "RESULT" = work results from another agent.""".asJson,
           "default" -> "INFO".asJson
         ),
-        "delivery" -> Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> Json.arr("immediate".asJson),
-          "description" -> "Delivery mode — one mode only: 'immediate' = inject like user input (merged into the target's current turn at its next boundary; an idle target starts a new turn). The former 'queue' mode (serialized FIFO, one Mail per turn) was RETIRED on 2026-09-15: it is NOT available — passing \"queue\" is an explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target and is never silently downgraded. The key is kept for backward compatibility; the default is 'immediate'.".asJson,
-          "default" -> "immediate".asJson
-        ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's derived chain set — an unknown id is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
@@ -411,7 +420,16 @@ Message type (optional, default "INFO"):
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
-    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
+    // ------------------------------------------------------------
+    // 🔴 墓碑读取（mailparams 批，2026-09-17 案 C「清死面」）——**该键已退役出 schema**，
+    // 本行仅作**退役墓碑**，不是活参数：唯一用途 = 判旧调用方送来的 `"queue"` 并报
+    // `MAIL_DELIVERY_QUEUE_RETIRED`（非设备腿见下方单点闸，设备腿见 [[deliverToDevice]]
+    // 自有字面量）。其余值一律不再需要分支（投递形态只剩 immediate）。
+    // 为什么删了 schema 键还要读它：引擎**零 JSON-Schema 校验**（`protocol.scala:140`
+    // 自陈「面外参数会被静默忽略」）⇒ 旧键照样到达此处 ⇒ 读一行即可把 2026-09-15 刻意
+    // 建立的「显式拒绝、禁静默降级」口径原样维持（删净本行 = 静默立即化 = 判例反向）。
+    // ------------------------------------------------------------
+    val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
 
     // device-mail 批（2026-09-15）：目标面 = `address` XOR `device`（各自可空、禁双填）。
@@ -440,17 +458,19 @@ Message type (optional, default "INFO"):
                   attachmentsPlan(input, ctx).flatMap {
                     case Left(err) => IO.pure(Left(err))
                     case Right(attachmentPaths) =>
-                      deliverToDevice(deviceRaw, message, mailType, delivery, imagePaths, attachmentPaths, ctx)
+                      deliverToDevice(deviceRaw, message, mailType, deliveryTombstone, imagePaths, attachmentPaths, ctx)
                   }
               }
           }
     // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
     // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+    // mailparams 批（2026-09-17 案 C）后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
+    // 该键已不在 schema）——判据与文案**逐字不变**：这是「删 schema 键、不删拒绝」的落点。
     // 位置**必须在设备腿分支之后**：设备腿的 v2.1「显式拒 queue」契约自有字面量，
     // 逐字保持、不得被本文案顶替（[[deliverToDevice]]）；`address`≠设备腿在这里兜住
     // 其余全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——单点，
     // 结构性保证「本工具面零 queue 入口」。
-    else if delivery == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
+    else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
     else
       // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
       validateChainId(chainIdRaw, ctx).flatMap {
@@ -490,21 +510,14 @@ Message type (optional, default "INFO"):
                           layeredRoute(address, effectiveMessage, blocks, imagePaths, mailType, chainId, ctx, system) match
                             case Some(action) => action
                             case None =>
-                              // Observability (qa #8 note): unknown delivery values (e.g. an
-                              // old caller still sending "ask") silently converge to the
-                              // immediate path — warn so stale callers surface in logs.
-                              // 注：`"queue"` 不再进入本匹配（上层单点已显式拒绝，退役批
-                              // 2026-09-15）；故本层只剩「立即」与「陌生值收敛到立即」两支。
-                              delivery match
-                                case "immediate" =>
-                                  if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
-                                  else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system)
-                                case other =>
-                                  IO(logger.warnSync(
-                                    s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
-                                  )) *>
-                                    (if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
-                                     else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system))
+                              // mailparams 批（2026-09-17 案 C）：本层原有一个 `delivery match`
+                              // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
+                              // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
+                              // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
+                              // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
+                              // **逐字同一结果**（残差读数见交付报告）。
+                              if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
+                              else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system)
                   }
               }
       }
@@ -1179,9 +1192,10 @@ Message type (optional, default "INFO"):
   // Legacy queue layer: persisted FIFO, drained one-per-turn
   // ============================================================
   // 退役登记（delivery 退役批，2026-09-15 作者裁定 (b)；**未摘除面**）：
-  // `delivery` 字段保留、queue 模式退役 ⇒ 本层自本批起**在本工具面零生产调用方**
-  // （`call` 的单点前置闸已显式拒绝一切非设备腿的 `delivery="queue"`，`layeredRoute`
-  // 结构上不再持有 `delivery` 参数）。本层**保留不动**（禁摘除）：① spec 直调
+  // queue 模式退役、且 `delivery` 键已退役出 schema（mailparams 批，2026-09-17）⇒
+  // 本层自 2026-09-15 起**在本工具面零生产调用方**（`call` 的单点前置闸——喂给它的
+  // 正是墓碑读取 `deliveryTombstone`——已显式拒绝一切非设备腿的 `delivery="queue"`，
+  // `layeredRoute` 结构上不再持有 `delivery` 参数）。本层**保留不动**（禁摘除）：① spec 直调
   // （`MailToolRootSenderSpec` / `MailQueueNebulaSpec` / `ColdQueueActivationSpec` /
   // `MailIdleGateWiringSpec` —— 它们钉的是 idle-gate / 冷激活 / 根解析等**已落契约**，
   // 与本批退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、

@@ -18,26 +18,43 @@ import fs2.Stream
 import scala.concurrent.duration.*
 
 /**
- * delivery 退役批（**收窄版**，2026-09-15 作者裁定 (b)）· 落地断言。
+ * delivery 退役批（2026-09-15 作者裁定 (b)）· **mailparams 批（2026-09-17 作者裁定 = 案 C
+ * 「清死面」）re-pin** · 落地断言。
  *
- * 裁定 (b) 逐字口径：「**`delivery` 归属 = (b)：保留字段、退役 queue 模式语义**」——
- * 退役的是 queue **模式**，不是字段本身：
- *   1. **schema 面**：`delivery` 键**保留**（键在；旧 caller 的同名键不得变成未知属性），
- *      `enum` 只剩 `"immediate"`、`default = "immediate"`；工具件数与 `required` 不变；
- *      描述**不再宣称 queue 模式可用**（这是「能力写在 schema/描述层」的落面）；
- *   2. **行为面（非设备腿）**：`delivery="queue"` ⇒ **统一显式拒绝**
+ * 两条裁定合成后的**唯一**语义面（本文件钉的就是它）：
+ *   1. **schema 面（mailparams 批改口）**：`delivery` 键**已退役出 schema** —— 参数面
+ *      **8 → 7**，键集合恰为 `address` / `device` / `message` / `type` / `chainId` /
+ *      `images` / `attachments`；`required` 仍是 `message`。其余 7 参**一字不动**
+ *      （`images` / `attachments` / `device` = 当日刚落地的**活能力**，禁动）。
+ *   2. **墓碑面（本批核心）**：键不在 schema，但 `call()` **保留一行墓碑读取**
+ *      （`deliveryTombstone`）—— 一切**非设备腿**收到 `"queue"` 仍**统一显式拒绝**
  *      （`MAIL_DELIVERY_QUEUE_RETIRED`，零投递副作用、零队列落盘）。**禁静默立即化**
  *      （调用方声明的串行链语义无法被立即投递满足 ⇒ 静默改投 = 静默丢语义）；
  *      拒绝闸位置 = `call` 里**设备腿分支之后**、`layeredRoute` 之前 —— 单点兜住
- *      `node:` / `project:` / Nebula / team 短名 / 裸项目名**全部非设备腿**；
+ *      `node:` / `project:` / Nebula / team 短名 / 裸项目名**全部非设备腿**。
+ *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`protocol.scala`
+ *      自陈）⇒ 旧键照样到达 `call()`，故「删 schema 键 + 墓碑判」是 fail-closed 一侧，
+ *      而「删键 + 删判」才是静默降级。
  *   3. **设备腿零改动**：`deliverToDevice` 的 v2.1「显式拒 queue」契约**逐字保持**
- *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）；
- *   4. **对照腿**：`immediate` / 缺参 / 陌生值（如旧 `"ask"`）不受本闸影响。
+ *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）。
+ *   4. **残差面（本批如实登记）**：非 `queue` 的旧值（`"immediate"` / 陌生值如 `"ask"`）
+ *      与「键缺席」**逐字同一结果** —— 该键被静默忽略，且原「陌生值 ⇒ WARN 后收敛到
+ *      immediate」分支随 `delivery match` 一并删除（设计件 §4.4(a)「其余值不再需要分支」）。
+ *      本文件以**三值逐字相等**钉住该读数（原始读数见交付报告与
+ *      `.nebflow/evidence/20260917_mailparams/impl/`）。
  *
- * 双向钉（改前/改后，读数见交付报告与 `.nebflow/evidence/20260915_evfmt/b/`）：
- * 本文件在支基（改前）跑为**红**——team 腿 `delivery="queue"` 被接受并返回
- * `Right("Message queued to member. …")` 且落盘；改后跑为**绿**——同一调用
- * 返回退役拒绝、零落盘、零 turn。故本文件既是新语义的守卫，也是改前红侧的复现器。
+ * 双向钉（改前 / 改后）：
+ *   · **改前红侧** = mailparams 批落地**前**的树跑本文件 ⇒ 红（schema 里 `delivery` 键仍在、
+ *     参数集合是 8 件 —— 本体 schema 面的两条断言当场红）；
+ *   · **变异红侧** = 改后树把**墓碑读回删净**（等价变异：判据永假 ⇒ queue 静默走 immediate）
+ *     ⇒ 本体 ② 面（五腿统一拒绝 / 零副作用 e2e）**必红**。
+ * 两轮原始输出与红行逐字存证于 `.nebflow/evidence/20260917_mailparams/impl/`。
+ *
+ * 观测窗更正（本批，逐字登记）：端到端用例原先以**固定** `IO.sleep(500.millis)` 观测
+ * 「immediate 是否到达活目标」。在本宿主当前负载下（swap 85–93% + 3–5 条他批构建在飞）
+ * 实测该延迟 > 500ms ⇒ 固定窗偶发不足（两轮红读数：`run1-mail-surface.log` /
+ * `run2-isolation.log`）。已改用本仓既有 idiom（私有 `waitUntil` 有界等待 + 实测延迟
+ * println）；**断言实质不变**（immediate 仍必须到达，只是窗口有界且延迟被打印）。
  */
 class MailDeliveryRetireSpec extends FunSuite:
 
@@ -74,35 +91,37 @@ class MailDeliveryRetireSpec extends FunSuite:
       case Left(err) => err.message
       case Right(v)  => fail(s"$label: delivery=queue must be rejected, got: $v")
 
+  /** 残差读数的渲染器（`Either` 逐字可见，供 println 行） */
+  private def render(res: Either[ToolError, String]): String =
+    res match
+      case Left(err)  => s"Left(${err.message})"
+      case Right(msg) => s"Right($msg)"
+
   // ============================================================
-  // 1. schema 面：字段保留、enum 收成单一值
+  // 1. schema 面（mailparams 批 re-pin）：键已退役，参数面 8 → 7
   // ============================================================
 
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  private def deliveryProp: JsonObject =
-    propsOf("delivery").flatMap(_.asObject).getOrElse(
-      fail("ruling (b): the `delivery` key must be RETAINED in the schema (retired = the queue MODE, not the field)")
+  test("schema（mailparams 批 re-pin）：`delivery` 键已退役出 schema —— 参数集合恰为 7 件且不含该键"):
+    // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
+    assert(
+      !propsOf.keys.toSet.contains("delivery"),
+      s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams 批：参数面 8 → 7), got: ${propsOf.keys.toList.sorted}"
     )
-
-  test("schema：`delivery` 键保留（裁定 (b)）—— enum 只剩 \"immediate\"、default=immediate、件数/required 不变"):
-    assertEquals(
-      deliveryProp("enum").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil),
-      List("immediate"),
-      "enum must declare 'immediate' only — the retired 'queue' value must no longer be advertised as usable"
-    )
-    assertEquals(deliveryProp("default").flatMap(_.asString), Some("immediate"), "default stays 'immediate'")
-    assertEquals(deliveryProp("type").flatMap(_.asString), Some("string"), "'delivery' stays a string field")
-    // 件数不变：保留字段 ≠ 增删参数
-    // mailattach 批（2026-09-17 作者四答 = 路线 A）re-pin：schema 新增**已批准**的
-    // `attachments` 参数 ⇒ 本集合等值断言**逐字跟着新批准面走**。判据强度不变
-    // （仍是精确集合等值：任何与本批无关的增 / 删 / 改名一律红），仅基线前移。
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "delivery", "chainId", "images", "attachments"),
-      "the property set must be unchanged (the field is retained, not removed and not replaced)"
+      Set("address", "device", "message", "type", "chainId", "images", "attachments"),
+      "the property set must be exactly the 7 surviving parameters (the other 7 are untouched by this batch)"
     )
+    // 活能力面**必须在场**（禁顺带删活面：device / images / attachments 是当日刚落地的能力；
+    // 判据 = 仍是**对象形态**的已声明属性，不是仅名字在场）。
+    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments") do
+      assert(
+        propsOf(k).flatMap(_.asObject).nonEmpty,
+        s"`$k` must still be a declared object property with its own face (live capability, untouched)"
+      )
     assertEquals(
       MailTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil),
       List("message"),
@@ -110,26 +129,29 @@ class MailDeliveryRetireSpec extends FunSuite:
     )
     assertEquals(MailTool.name, "Mail")
 
-  test("描述面①：`delivery` 的 schema 描述不再宣称 queue 可用、且显式声明退役与拒绝码"):
-    val d = deliveryProp("description").flatMap(_.asString).getOrElse(fail("delivery.description missing"))
-    assert(!d.contains("'queue' = serialized FIFO"), s"the old queue-availability claim must be gone, got: $d")
-    assert(!d.contains("queue would delay it"), s"the old queue trade-off wording must be gone, got: $d")
-    assert(!d.contains("addresses are always immediate"), s"the per-leg queue note belongs to the routing face now, got: $d")
-    assert(d.contains("one mode only"), s"the single-mode fact must be stated, got: $d")
-    assert(d.contains("RETIRED"), s"the retirement must be stated, got: $d")
-    assert(
-      d.contains(MailTool.ErrDeliveryQueueRetired),
-      s"the description face must name the retirement error code (capability declared in the description layer), got: $d"
-    )
-    assert(d.contains("backward compatibility"), s"why the key is kept must be stated, got: $d")
-
-  test("描述面②：工具描述（base + 两个地址面变体）queue 可用措辞清零、退役语义显式声明"):
+  test("描述面（mailparams 批 re-pin）：三面描述不再宣称存在 `delivery` 参数，且墓碑拒绝面仍然可见"):
     val faces = List(
       "descriptionBase" -> MailTool.descriptionBase,
       "descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, face) <- faces do
+      // ① schema 键已删 ⇒ 描述面**不得**再让模型以为有个 `delivery` 参数可选
+      //    （「能力写在 schema/描述层」的落面：schema 侧删了，描述侧必须同步）。
+      assert(
+        !face.contains("Delivery (via the `delivery` parameter"),
+        s"$label: the scaladoc/description preamble still advertises a `delivery` parameter"
+      )
+      assert(
+        !face.contains("Delivery (the `delivery` parameter"),
+        s"$label: the description body still advertises a `delivery` parameter"
+      )
+      assert(!face.contains("kept for compatibility"), s"$label: 「为兼容保留该键」已随键删除作废")
+      assert(
+        face.contains("no delivery parameter"),
+        s"$label: the single-mode fact must state that there is no delivery parameter, got: $face"
+      )
+      // ② 墓碑面必须对模型可见（旧调用方拿到的错误码 + 单一形态的事实）
       assert(!face.contains("Two delivery modes"), s"$label: the two-modes preamble must be gone")
       assert(!face.contains("Delivery modes (via `delivery` parameter)"), s"$label: the delivery-modes block must be gone")
       assert(!face.contains("queue: serialized FIFO"), s"$label: the queue availability claim must be gone")
@@ -144,6 +166,8 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   // ============================================================
   // 2. 非设备腿：统一显式拒绝（单点闸，位置先于一切路由/资源闸）
+  //    本节的调用**逐字**保留 `delivery="queue"`（该键已不在 schema）——
+  //    它们正是**墓碑路径**的复现器：引擎无 schema 校验 ⇒ 键仍到达 `call()`。
   // ============================================================
 
   test("非设备腿 delivery=queue ⇒ 统一显式拒绝（五腿：team 短名 / project: / node: / Nebula / 裸项目名）"):
@@ -190,6 +214,7 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   // ============================================================
   // 3. 设备腿：v2.1 拒 queue 契约逐字保持（禁为退役而翻已落契约）
+  //    mailparams 批对该腿**零改动**：它收到的仍是同一个旧值（现由墓碑读取转交）。
   // ============================================================
 
   test("设备腿：v2.1「显式拒 queue」契约逐字保持 —— 自有字面量，不走退役文案"):
@@ -209,10 +234,10 @@ class MailDeliveryRetireSpec extends FunSuite:
     )
 
   // ============================================================
-  // 4. 对照腿：本闸只咬 queue 一个值
+  // 4. 对照腿 + 残差读数：本闸只咬 queue 一个值；其余旧值 = 键被静默忽略
   // ============================================================
 
-  test("对照腿：immediate / 缺参 / 陌生值（旧 \"ask\"）都不进退役闸"):
+  test("对照腿 / 残差读数：非 queue 的 delivery 值（immediate / 陌生值）与「键缺席」逐字同一结果"):
     val c = ctx(dispatcher = true)
     val withImmediate = MailTool
       .call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "immediate"), c)
@@ -224,8 +249,40 @@ class MailDeliveryRetireSpec extends FunSuite:
     assert(!isRetired(withImmediate), s"immediate must not hit the retirement guard, got: $withImmediate")
     assert(!isRetired(withoutDelivery), s"an absent delivery must not hit the retirement guard, got: $withoutDelivery")
     assert(!isRetired(withAsk), s"an unknown value must not hit the retirement guard, got: $withAsk")
-    // 陌生值仍收敛到立即路径（与缺参逐字同一结果）——本批未改动该既有观测面
-    assertEquals(withAsk, withoutDelivery, "unknown delivery values still converge to immediate (unchanged)")
+    // 残差面（mailparams 批）：三值**逐字同一结果** —— 非 `queue` 的键一律被静默忽略
+    // （`delivery match` 的「陌生值 ⇒ WARN 后收敛到 immediate」分支已随本批删除）。
+    assertEquals(
+      withImmediate,
+      withoutDelivery,
+      "delivery=\"immediate\" must be indistinguishable from the key being absent"
+    )
+    assertEquals(
+      withAsk,
+      withoutDelivery,
+      "an unknown delivery value must be indistinguishable from the key being absent (no branch left)"
+    )
+    // 原始读数（供 root 判是否升级为「任何 `delivery` 键一律报错」；`logBuffered=false` 下逐字可见）
+    println(
+      "[residual-mailparams] delivery=\"immediate\" -> " + render(withImmediate) +
+        " || delivery=\"ask\" -> " + render(withAsk) +
+        " || key-absent -> " + render(withoutDelivery)
+    )
+
+  /** 有界等待（本仓既有 idiom：10+ 个 spec 各自持有同款私有副本，如 `MailDedupWiringSpec:87`） */
+  private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
+      cond: IO[Boolean]
+  ): IO[Unit] =
+    def go(deadline: Long): IO[Unit] =
+      cond.flatMap {
+        case true => IO.unit
+        case false =>
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(
+              new AssertionError("waitUntil: immediate Mail never reached the live target in time")
+            )
+          else IO.sleep(every) >> go(deadline)
+      }
+    go(System.currentTimeMillis() + timeout.toMillis)
 
   // ============================================================
   // 5. 端到端（真 team fixture）：queue 被拒 + 零副作用；immediate 不受影响
@@ -323,17 +380,26 @@ class MailDeliveryRetireSpec extends FunSuite:
       queueFileExists <- IO(os.exists(PathUtil.dataRoot / "sessions" / memberMeta.id / "mail-queue.json"))
       reqsAfterQueue <- llm.requests.get
       // 对照腿：同 target、同发送者，仅把 delivery 换成 immediate
+      t0 <- IO(System.currentTimeMillis())
       resImmediate <- MailTool.call(
         qJson("address" -> "member", "message" -> "EVFMTB_IMMEDIATE_MARKER", "delivery" -> "immediate"),
         ctxFor(resources, system, bossMeta.id)
       )
-      _ <- IO.sleep(500.millis)
+      // 观测窗（本批更正，逐字登记）：原为固定 `IO.sleep(500.millis)`。本宿主当前负载下
+      // （swap 85–93% + 3–5 条他批构建在飞）实测「immediate 调用 → 首个 LLM 请求」延迟
+      // **> 500ms** ⇒ 该固定窗偶发不足（两轮红读数见交付报告）。改用本仓既有 idiom
+      // （同款私有 `waitUntil`，见 `MailDedupWiringSpec:87` 等 10+ 处）并**打印实测延迟**。
+      // 🔴 **断言实质零放宽**：immediate 仍必须到达活目标 —— 只是把「固定 500ms 窗内到没到」
+      // 换成「有界窗内必到 + 实测延迟读数」。
+      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
+      latencyMs <- IO(System.currentTimeMillis() - t0)
+      _ <- IO(println(s"[immediate-latency] first LLM request ${latencyMs}ms after the immediate Mail call"))
       reqsAfterImmediate <- llm.requests.get
     yield (resQueue, queuedItems, queueFileExists, reqsAfterQueue, resImmediate, reqsAfterImmediate)
 
     val (resQueue, queuedItems, queueFileExists, reqsAfterQueue, resImmediate, reqsAfterImmediate) =
       io.unsafeRunSync()
-    // ① queue 被显式拒绝（红侧 = 改前这里返回 Right("Message queued to member. …")）
+    // ① queue 被显式拒绝（墓碑面；红侧 = 墓碑删净后这里返回 Right("Message queued to member. …") 形态）
     val msg = rejectedMsg(resQueue, "team 腿")
     assert(clue(msg).contains(MailTool.ErrDeliveryQueueRetired), s"team leg must carry the retirement code, got: $msg")
     assert(msg.contains(s"Target: 'member'"), s"must echo the target, got: $msg")
