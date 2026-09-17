@@ -150,12 +150,14 @@ class SeedServiceSpec extends FunSuite:
     assert(os.read(projPath).contains("customMarker"),
       "user-edited project.json kept across re-seed (no silent overwrite of an existing project definition)")
 
-  // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent 自愈）──
-  test("existing user data skips full seeding (no project scaffold), self-heals default-set agents"):
+  // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent + 项目自愈）──
+  test("existing user data skips full seeding, add-only self-heals the default set (agents + project:general)"):
     // 模拟已有项目（非 fresh home）
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
-    os.write.over(myproj / "project.json", """{"name":"myproj"}""")
+    val myprojJson = myproj / "project.json"
+    os.write.over(myprojJson, """{"name":"myproj"}""")
+    val myprojBefore = os.read(myprojJson) // ③ 零覆盖断言的基准（逐字比对）
 
     // 清掉上一次的 marker 与一般项，让本次判定只由「已有项目」触发
     os.remove.all(home / ".seed-state.json")
@@ -164,8 +166,9 @@ class SeedServiceSpec extends FunSuite:
 
     ensure()
 
-    // 守卫语义（不变）：不完整播种 ⇒ 不建 general 项目脚手架、marker.items 为空
-    assert(!os.exists(home / "projects" / "general"), "no general project seeded when user data present")
+    // 守卫语义（不变）：不完整播种 ⇒ marker.items 为空表。**本行保持不动**：
+    // 既有 home 分支仍走 marker-only（`.seed-state.json` 的 items 恒空）——补种判据是
+    // 「manifest 声明 + 存在性守卫」，不是 marker 状态机。
     val marker = home / ".seed-state.json"
     assert(os.exists(marker), "marker recorded")
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
@@ -176,6 +179,45 @@ class SeedServiceSpec extends FunSuite:
     // 新口径改写（这是预期的判红样例：改测试，不改守卫）。
     for name <- List("project-dispatcher", "memory-consolidator")
     do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
+
+    // ── 项目面（本批新口径，作者 2026-09-17 裁定②：既有 home 亦 add-only 补种）──
+    // 改前口径为「不补种既有 home」（原断言 = 路径级负向 `!os.exists(home/projects/general)`
+    // + 同块注释「不建 general 项目脚手架」）；后令治前论 ⇒ 该负面陈述作废，随口径翻转为
+    // 正向。判据非恒真：**改前树跑本用例必红**（无 reconcileProjects ⇒ general 不被补出），
+    // 改后绿；且既有一切内容逐字节不变（下两条）。
+    val genDir = home / "projects" / "general"
+    assert(os.exists(genDir / "project.json"),
+      "missing default project 'general' is backfilled in an existing home (add-only reconcile)")
+    assert(os.exists(genDir / "AGENTS.md"), "general/AGENTS.md backfilled in an existing home")
+    val genAgentsText = os.read(genDir / "AGENTS.md")
+    assert(genAgentsText.contains(genDir.toString),
+      "AGENTS.md <DATA_ROOT> placeholder substituted with this workspace's absolute path")
+    assert(!genAgentsText.contains("<DATA_ROOT>"), "no unsubstituted <DATA_ROOT> placeholder left in AGENTS.md")
+    val genProj = io.circe.parser.parse(os.read(genDir / "project.json")).toOption.get
+    assert(genProj.hcursor.downField("workspace").as[String].toOption.contains(genDir.toString),
+      "backfilled project.json points its workspace at projects/general")
+
+    // ③ 零覆盖：既有 `projects/myproj/project.json` 内容逐字不变（既有内容零覆盖/零搬移/零删除）
+    val myprojAfter = os.read(myprojJson)
+    assert(myprojAfter == myprojBefore, "existing project file byte-identical after the add-only reconcile")
+    // ② `projects/` 除预期补种的 `general` 之外零新增目录
+    assert(os.list(home / "projects").map(_.last).sorted == List("general", "myproj"),
+      "no project directory beyond the expected backfilled 'general'")
+    println(s"[DIAG-ZERO-OVERWRITE] projects/myproj/project.json sha256 before=${sha256(myprojBefore)} " +
+      s"after=${sha256(myprojAfter)} byteIdentical=${myprojAfter == myprojBefore}")
+
+    // ② 幂等：第二次 boot 对该面零写盘（mtime 逐字不变 ⇒ 无写入）
+    val genProjJson = genDir / "project.json"
+    val genProjMtime = os.mtime(genProjJson)
+    val genAgentsMtime = os.mtime(genDir / "AGENTS.md")
+    ensure()
+    assert(os.mtime(genProjJson) == genProjMtime,
+      "second boot leaves projects/general/project.json untouched (mtime unchanged ⇒ zero writes)")
+    assert(os.mtime(genDir / "AGENTS.md") == genAgentsMtime,
+      "second boot leaves projects/general/AGENTS.md untouched (mtime unchanged ⇒ zero writes)")
+    assert(os.read(myprojJson) == myprojBefore, "existing project file still byte-identical after the second boot")
+    println(s"[DIAG-IDEMPOTENT] projects/general/project.json mtime before=$genProjMtime " +
+      s"after=${os.mtime(genProjJson)} unchanged=${os.mtime(genProjJson) == genProjMtime}")
 
   // ── ④ 升级 add-only：低版本 marker + 已有文件 → 只补缺失 ──
   test("upgrade run is add-only: fills missing files, does not rewrite existing"):
@@ -239,5 +281,47 @@ class SeedServiceSpec extends FunSuite:
     // （sbt test = target/classes 拷贝，assembly = jar）。
     assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
       "seed project resource tree (seed/projects/general/AGENTS.md) is on the classpath")
+
+  // ── ⑥ 零覆盖负控：既有（手工版）projects/general 逐字节不变 ──────────
+  test("a pre-existing hand-made projects/general survives boot byte-identical (add-only, zero overwrite)"):
+    // 本用例是「补种波及既有 home」这条新口径的**零覆盖负控**：手工建的 general 内容与
+    // 种子文本**故意不同**（project.json 的 workspace 指向别处 + customMarker；AGENTS.md
+    // 为用户自持文本；.gitignore 为用户自持内容）⇒ 覆盖面三文件（项目定义 / agent 指令 /
+    // .gitignore）逐字节钉住。判红面 = 任何「对齐种子 / 镜像覆盖 / 按 workspace 纠正既有定义 /
+    // 经 `ProjectStore.ensureScaffold` 打补丁（该路径会**追加** `.gitignore`）」的实现
+    // ——本批禁：不得 seed→runtime 覆写既有 general 的任何文件。
+    os.remove.all(home / "projects")
+    os.remove.all(home / ".seed-state.json")
+    val handGeneral = home / "projects" / "general"
+    os.makeDir.all(handGeneral)
+    val handJson = """{"name":"general","workspace":"/tmp/somewhere-else","customMarker":true}"""
+    val handAgents = "# general — 手工版 AGENTS.md（用户自持，非种子文本）\n"
+    val handGitignore = "# 手工版 .gitignore（用户自持）\nbuild/\n.local/\n"
+    val handFiles = List("project.json" -> handJson, "AGENTS.md" -> handAgents, ".gitignore" -> handGitignore)
+    handFiles.foreach { case (name, text) => os.write.over(handGeneral / name, text) }
+    // 另一个既有项目 ⇒ home 判定为「已有用户数据」（reconcileProjects 与门无关，此处仅为场景真实性）
+    os.makeDir.all(home / "projects" / "other")
+    os.write.over(home / "projects" / "other" / "project.json", """{"name":"other"}""")
+    val shasBefore = handFiles.map { case (name, text) => name -> sha256(text) }.toMap
+    val projectsBefore = os.list(home / "projects").map(_.last).sorted
+
+    ensure()
+    ensure() // 连续两次 boot（幂等面一并覆盖）
+
+    for case (name, text) <- handFiles do
+      assert(os.read(handGeneral / name) == text,
+        s"hand-made projects/general/$name byte-identical across boots (directory-level guard ⇒ zero action)")
+    assert(os.list(home / "projects").map(_.last).sorted == projectsBefore,
+      "add-only reconcile creates no extra project directory")
+    println("[DIAG-HANDMADE-GENERAL] " + handFiles.map { case (name, text) =>
+      val after = os.read(handGeneral / name)
+      s"$name sha256 before=${shasBefore(name)} after=${sha256(after)} identical=${sha256(after) == shasBefore(name)}"
+    }.mkString("; "))
+
+  private def sha256(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256")
+      .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      .map("%02x".format(_))
+      .mkString
 
 end SeedServiceSpec
