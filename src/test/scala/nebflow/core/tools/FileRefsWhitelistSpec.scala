@@ -28,6 +28,24 @@ class FileRefsWhitelistSpec extends FunSuite:
     assert(Set("js", "mjs", "css", "json").subsetOf(ext))
   }
 
+  // ── 2026-09-17 nfext batch: legacy binary Office types on the tool face ──
+  //
+  // A14 above already welds the two tables, so equality alone is covered. This
+  // assertion records WHY the mirrored side had to move in the same commit: the
+  // tool face decides which `src`/`href` references become `/api/nf-file` proxy
+  // URLs, so an endpoint-only widening would leave Card/Pop teaching the model
+  // that `x.doc` is unservable (the dead-link failure the 2026-09-05 comment
+  // block describes) while the endpoint happily serves it.
+
+  test("A14-batch: the mirrored table carries the legacy binary Office types the endpoint now serves") {
+    val ext = FileRefs.AllowedExtensions
+    assert(Set("doc", "ppt", "xls").subsetOf(ext), "the nfext widening must reach the proxy-rewrite face")
+    // The macro-enabled / executable near-misses stay out on this side too.
+    assert(!ext.contains("docm"))
+    assert(!ext.contains("exe"))
+    assert(!ext.contains("sh"))
+  }
+
   // ── A1 namespace mirror (img-ticket batch i, 2026-09-16 · #687-A/#687-B) ──
   //
   // The SAME cheap-invariant argument as A14, one level up (the judge's table

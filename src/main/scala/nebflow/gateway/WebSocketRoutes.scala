@@ -5199,6 +5199,50 @@ object WebSocketRoutes:
     * boundary — content source remains locally opened, user-initiated
     * deliverables.
     *
+    * 2026-09-17 nfext batch (author ruling, superseding the list above — not a
+    * silent override): `doc`, `ppt`, `xls` joined. The ruling's standard is
+    * "the device face behaves like the friend/group face": the friend/group
+    * attachment leg (`GET /api/friends/attachments/{id}`, RestApiRoutes.scala)
+    * carries NO extension gate and serves legacy Office files, while the device
+    * face routes its attachment bytes through THIS route's ticket leg — so the
+    * three legacy binary types were the one place the two faces disagreed.
+    * `devattach-verify` open item ① measured the resulting false affordance:
+    * a legacy `.doc` card binds its download key (the frontend criterion
+    * `canFetchLocalBytes` resolves `.doc`/`.ppt`/`.xls` to the docx/pptx/xlsx
+    * viewers, all of which are in `BLOB_ITEM_TYPES`) but the key's nf-file call
+    * is refused 400 once — "the key is there and must fail". Closing that gap
+    * means exactly these three entries here, on the endpoint that is allowed.
+    *
+    * Width of the change: the extension table is NOT a path constraint. It is
+    * evaluated LAST, after expandTilde → lexical normalize → exists/isRegularFile
+    * → toRealPath → the credential-namespace judge → the R2 hard-link inode
+    * guard (see `nfFileVerdict`), and it only decides whether an already-fully
+    * resolved real file's lowercased last-dot suffix is served. Adding a suffix
+    * therefore grants no reach to any path that the six upstream judgements
+    * refuse — it widens "which bytes an already-credentialed, already-path-
+    * authorized requester may fetch" by three suffixes and nothing else.
+    * Serving bytes executes nothing ON THIS ENDPOINT — the route transports bytes
+    * and never parses them — and what the EXISTING viewers then do with a legacy
+    * container was MEASURED rather than assumed (probe scripts + raw stdout under
+    * `.nebflow/evidence/20260917_nfext/`): `.ppt` parses nothing at all (info card
+    * + a click-time download link, `viewers/pptx.js`); `.doc` is refused by
+    * mammoth with a visible parse error (CFB/OLE2 header → "Can't find end of
+    * central directory : is this a zip file ?", caught at `viewers/docx.js:68` →
+    * error panel) instead of being rendered; `.xls` goes down the SAME SheetJS leg
+    * that already carried `.xlsx`/`.xlsm` before this batch. No preview leg
+    * evaluates VBA, so a macro inside a legacy container is inert on this face.
+    *
+    * ⚠ Open item registered in the batch report (deliberately NOT fixed here —
+    * the frontend tree is outside this batch's face): these two tables decide only
+    * what may be FETCHED, whereas the `.xls` leg inherits a pre-existing property
+    * of the vendored SheetJS 0.18.5 — `sheet_to_html` escapes a cell's TEXT but
+    * not its `data-v` attribute, and `viewers/xlsx.js:50` assigns that string to
+    * `pane.innerHTML` (a same-origin div, not a sandboxed iframe). It is reachable
+    * TODAY with `.xlsx` alone (already on this list before the batch) and through
+    * the friend/group attachment leg (which has no extension gate at all), so this
+    * batch neither creates nor widens it. `html` stays excluded from the
+    * attachment preview face.
+    *
     * Pure + testable on purpose (same pattern as uploadsRoutes). */
   val NfFileAllowedExt: Set[String] = Set(
     "png",
@@ -5228,9 +5272,12 @@ object WebSocketRoutes:
     "ttf",
     "otf",
     "pdf",
+    "doc",
     "docx",
+    "xls",
     "xlsx",
     "xlsm",
+    "ppt",
     "pptx",
     "epub",
     "js",

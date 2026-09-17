@@ -205,3 +205,87 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     val excluded = Set("sh", "bash", "exe", "bat", "py", "rb", "pl", "php", "html", "htm")
     assert(excluded.forall(ext => !WebSocketRoutes.NfFileAllowedExt.contains(ext)))
   }
+
+  // ── 2026-09-17 nfext batch: `.doc` / `.ppt` / `.xls` (legacy binary Office) ──
+  //
+  // Author ruling (2026-09-17, net-widening form (i)): the device face must
+  // behave like the friend/group face. The friend/group attachment leg carries
+  // no extension gate, so the three legacy types were the one place the device
+  // face refused bytes the friend face delivers; `devattach-verify` open item ①
+  // measured the false affordance that resulted (key bound, first click 400s).
+  //
+  // The assertions below are the pair the batch owes: the census (what changed
+  // is EXACTLY three additions) and the route legs (the three are actually
+  // servable through the ticket route, and a non-listed type still is not). The
+  // pure-set assertions are no substitute for the route legs — a table entry the
+  // verdict chain never consults would pass the set check and fail the route one.
+
+  test("whitelist: legacy binary Office types joined (nfext batch)") {
+    assert(WebSocketRoutes.NfFileAllowedExt.contains("doc"))
+    assert(WebSocketRoutes.NfFileAllowedExt.contains("ppt"))
+    assert(WebSocketRoutes.NfFileAllowedExt.contains("xls"))
+  }
+
+  test("whitelist: census — the batch adds exactly doc/ppt/xls, deletes and renames nothing") {
+    // The pre-change table, item for item (36 entries; captured from the branch
+    // base tree as `.nebflow/evidence/20260917_nfext/before_ws_whitelist.txt`).
+    // Equality in BOTH directions is the point: `++` alone would let a silent
+    // deletion through, and `subsetOf` would let an unnoticed extra in.
+    val atBranchBase = Set(
+      "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
+      "mp4", "webm", "ogg", "ogv", "mov", "mp3", "wav", "oga", "flac", "aac", "m4a",
+      "woff", "woff2", "ttf", "otf",
+      "pdf", "docx", "xlsx", "xlsm", "pptx", "epub",
+      "js", "mjs", "css", "json"
+    )
+    assertEquals(atBranchBase.size, 36, "the base census must stay the documented 36 entries")
+    assertEquals(
+      WebSocketRoutes.NfFileAllowedExt,
+      atBranchBase ++ Set("doc", "ppt", "xls"),
+      "the nfext batch changes this table by exactly three additions"
+    )
+  }
+
+  test("serves legacy binary Office types through the ticket route (.doc/.ppt/.xls)") {
+    // One seed per type; bytes are arbitrary but distinguishable, and the `.doc`
+    // one carries the real CFB/OLE2 signature so the fixture states what the
+    // batch is actually about (a legacy container, not an OOXML zip).
+    val seeds: List[(String, Array[Byte])] = List(
+      "old.doc" -> Array[Byte](0xd0.toByte, 0xcf.toByte, 0x11, 0xe0.toByte, 1),
+      "old.ppt" -> Array[Byte](2, 3, 4),
+      "old.xls" -> Array[Byte](5, 6, 7)
+    )
+    seeds.foreach { case (name, bytes) =>
+      withSeedFile(name, bytes) { p =>
+        IO {
+          val resp = get(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}").get
+          assertEquals(resp.status, Status.Ok, s"$name must be servable after the nfext batch")
+          val served = resp.body.compile.toVector.unsafeRunSync().toArray
+          assert(java.util.Arrays.equals(served, bytes), s"$name must be served byte-identically")
+          // Reading (not hypothesising) the media type the serving leg derives
+          // from the extension: `StaticFile.fromPath` is the same leg that serves
+          // every pre-existing entry, so whatever it reports here is parity with
+          // the rest of the table, not a new decision point.
+          val ct = resp.headers.get(org.typelevel.ci.CIString("Content-Type")).map(_.head.value)
+          println(s"[nfext-reading] $name Content-Type=$ct")
+        }
+      }
+    }
+  }
+
+  test("still refuses the near-miss macro-enabled / executable types (docm, exe) with the file-type 400") {
+    // `docm` is the deliberate near-miss: macro-enabled OOXML, same family as the
+    // `docx` already served and the same `word/` part layout — it proves the
+    // widening is by EXACT suffix, not by Office family.
+    List("macro.docm", "evil.exe").foreach { name =>
+      withSeedFile(name, Array[Byte](1, 2, 3)) { p =>
+        IO {
+          val resp = get(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}").get
+          assertEquals(resp.status, Status.BadRequest, s"$name must stay refused")
+          val body = bodyOf(resp)
+          assert(body.contains("File type not allowed"), s"$name: unexpected body: $body")
+          assert(body.startsWith("file-type:"), s"$name: the refusal must name the file-type reason: $body")
+        }
+      }
+    }
+  }
