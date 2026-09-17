@@ -60,7 +60,7 @@ wire 字段改名有四个独立失败模式，各需专门检查，缺一即留
 - 收尾三步：杀（kill + `pgrep -f` 兜底）→ `wait` 收尸 → `lsof` 复查端口释放；脚本包 `trap 'cleanup' EXIT INT TERM`。
 - 变异验红/对照实验中起的进程同样适用——实验结束时的进程表应与实验前一致（`ps` 快照对比是 cheapest 检查）。
 - spec 侧：测试自己 spawn 的 OS 进程要挂异常路径销毁守卫（`IO.guarantee`/bracket），尾部 destroy 只覆盖 happy path——断言失败/超时/取消路径都会跳过。
-- 环境表里的宿主 PID 绝对禁杀（第一道防线）；8080 端口识别是第二道防线；清理前照旧 PID 验身。
+- 环境表里的宿主 PID 绝对禁杀（第一道防线）；宿主 gateway 端口识别是第二道防线；清理前照旧 PID 验身。
 
 ## Evidence
 
