@@ -39,11 +39,26 @@ class MergeDesignGapSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
 
-  private val tempRoot: os.Path = os.pwd / "target" / "test-merge-gap"
+  /** 每跑唯一夹具根。
+    *
+    * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-merge-gap` + 类初始化器里
+    * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
+    * `PathUtil.dataRoot` 的异步写入者**竞态：前序 suite 的 `LlmLogWriter`
+    * （object 级有界队列 + 后台 fiber，写点 `logDir = dataRoot/logs/router`）在
+    * 本类初始化器改指 dataRoot 之后才落盘，`os.remove.all` 走查（walk）期间根目录
+    * 被写回 ⇒ `DirectoryNotEmptyException` ⇒ `initializationError`，整支用例组
+    * 不入计数。
+    *
+    * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失（不是把删除
+    * 做得更快，而是删除了「删除」这个动作）。夹具数据只被本 spec 读，路径变更对
+    * 断言零影响；`target/` 为构建产物目录（`sbt clean` 回收）。 */
+  private val tempRoot: os.Path =
+    val scratchBase = os.pwd / "target"
+    os.makeDir.all(scratchBase)
+    os.temp.dir(dir = scratchBase, prefix = "test-merge-gap-")
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
   os.write.over(tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"merge-gap spec agent","tools":[],"category":"standalone"}""")
