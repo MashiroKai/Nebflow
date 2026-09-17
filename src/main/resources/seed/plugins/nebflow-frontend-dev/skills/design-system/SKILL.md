@@ -65,6 +65,7 @@ last_verified: 2026-08-17
 1. **功能类型**：全屏图谱视图（DAG 执行拓扑可视化：层级布局 + 连线 + 节点卡 + 相机交互）
 2. **范式参考**：Obsidian 图谱/Canvas 交互壳 · CAD 式滚轮锚点缩放 · 苹果 HIG Direct Manipulation（https://developer.apple.com/design/human-interface-guidelines/direct-manipulation）；取舍：力导向布局否决（执行拓扑需要确定的方向语义与 WS 稳定性），层级分层 + 空间打包
 3. **Nebflow 适配规则**：节点卡逐字对齐产品 `.solar-node.fm-node`（零新样式）；相机数学 = canvas-zoom-follow-cursor-spec 方案 A；详情面板毛玻璃无遮罩（铁律 1）
+4. **可断言点**：该原型闭合时全量可断言验收点逐条在案，回归 **28/28** 全绿
 5. **踩坑记录**（v3.1 被打回「平的/禁 emoji/文字出卡」三点）
    - ① **实现走样 + 规格缺方向断言**：v3.1 布局 Kahn 分层 `(ups.get(id)||[]).size` —— 空数组无 `.size`（undefined 非 0）→ 入度 0 节点永不入队 → 全部 level=0 → 连线全水平成「平图」；**24/24 回归全绿却没拦住，因为没有任何「上游 y < 下游 y」方向性断言** → 教训：布局类规格书必须含**几何方向断言**（方向/层级/相邻性），不能只断言画幅比例与分布计数
    - ② **flex column + align-items:center 的 ellipsis 陷阱**：nowrap 文本子盒未设 `max-width:100%` 时按内容宽撑出容器，overflow:hidden 只裁显示——scrollWidth 仍计入溢出、且省略号永不触发（盒宽=内容宽）→ 教训：卡内每个文本行都要 `max-width:100%`，且「不溢出」断言落在卡盒级 scrollW/H≤clientW/H（截断行自身 scrollW>clientW 是 ellipsis 固有形态，不能拿来当断言）
