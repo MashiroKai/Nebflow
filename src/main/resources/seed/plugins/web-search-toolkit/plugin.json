@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "web-search-toolkit",
+  "version": "1.0.0",
+  "description": "网络搜索工具包——节点获得 WebSearch / WebFetch 两件联网工具（实时检索与网页正文抓取），用于查最新资料、核对外部事实、取指定 URL 正文。适用于联网检索、查官方文档、找最新版本号/发行说明、抓网页正文等任务。不适用于仓库内检索（用 Grep/Glob）、不适用于需要登录态或页面交互的取数。授权面 = 插件授予面（节点会话与 general 面）；Nebula root 固定面与分发器面不经此路径。内含 skill：web-search（何时该检索、查询式写法、抓取与引用纪律）。组件面：无 mcp.json；工具扩展 = org.nebflow/tools.json 授予 WebSearch / WebFetch 两件。",
+  "author": {"name": "Nebflow"}
+}

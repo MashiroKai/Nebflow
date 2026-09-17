@@ -11,11 +11,11 @@ package nebflow.service
  *   - MemoryEditTool append/update：落盘前校验【新文件总字节】——超硬顶=结构化拒绝
  *     （MEMORYEDIT_BUDGET，附 top-3 最大节+整理指引）；超 80%=放行+结果文本附 WARN。
  *     replace_section 不闸——它是超限后的整理通道，闸掉它就断了收缩路径。
- *   - DreamMode.updateMemory（hook 自动写入）：合并产物超硬顶 → 跳过合并+WARN，
- *     防 hook 侧绕过预算（§6.2-2.2）。
  *   - ProjectMemory.injectionBlock（project-memory 批 2026-09-05）：项目记忆
  *     注入渲染共用三态判据——预算内全文、软警区全文+WARN 脚注、超硬顶头部+统计。
  *     project 维度常量独立（10KB/8KB，见常量处定值依据）。
+ *     （第三处旧消费方 DreamMode.updateMemory 的 hook 自动写入合并已随 DreamMode
+ *     机制停用退役 ⇒ 现盘干消费方 = 下面两条写面。）
  *
  * 纯函数、零 IO、零 ToolError 依赖（service 不反向依赖 core.tools——错误包装由
  * 调用方完成），供两侧与 spec 共享同一判据。
@@ -68,9 +68,9 @@ object MemoryBudget:
   /** 超硬顶 —— 拒绝。 */
   final case class Exceeded(override val bytes: Long, hardCap: Long) extends Verdict
 
-  /** target 标识（MemoryEdit 的 "user"/"agent"/"project"；Dream 固定写
-    * User.md → "user"）。project 维度（project-memory 批 2026-09-05）：单个
-    * 项目的 `<workspace>/.nebflow/memory.md`，常量独立于全局两级。 */
+  /** target 标识（MemoryEdit 的 "user"/"agent"/"project"）。project 维度
+    * （project-memory 批 2026-09-05）：单个项目的 `<workspace>/.nebflow/memory.md`，
+    * 常量独立于全局两级。 */
   def verdict(target: String, newSizeBytes: Long): Verdict =
     target match
       case "user" =>
@@ -125,7 +125,7 @@ object MemoryBudget:
   // 文案（调用方包装成 ToolError / 结果附录）
   // ---------------------------------------------------------------
 
-  /** 超限拒绝消息体（MemoryEdit 包装为 MEMORYEDIT_BUDGET；Dream 侧写日志）。
+  /** 超限拒绝消息体（MemoryEdit 包装为 MEMORYEDIT_BUDGET）。
     * project 维度的真实路径由调用方经 targetPath 传入（各项目 workspace 不同，
     * 无法从 target 常量推出）。 */
   def exceededMessage(action: String, target: String, targetPath: String, newSizeBytes: Long, newContent: String): String =
@@ -143,7 +143,7 @@ object MemoryBudget:
        |(MEMORYEDIT_BUDGET)""".stripMargin
 
   /** 80% 软警文案（追加在成功结果之后，放行不拦截）。project 维度真实路径由
-    * targetPath 传入（缺省空串仅兼容旧调用方——Dream/全局侧不受影响）。 */
+    * targetPath 传入（缺省空串仅兼容旧调用方——全局侧不受影响）。 */
   def warnNotice(target: String, newSizeBytes: Long, targetPath: String = ""): String =
     val (label, soft, hard) = target match
       case "user"    => ("~/.nebflow/User.md", UserSoftBytes, UserHardBytes)

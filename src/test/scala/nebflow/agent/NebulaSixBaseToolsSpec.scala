@@ -11,7 +11,7 @@ import munit.FunSuite
  * 自身面不受影响）——本集彼时恰十三件。
  * 【2026-09-06 TaskList 批增补】+TaskList（作者 00:07 提议 + 00:11 首期无前端
  * 拍板：任务=快变状态出记忆、入 tasks.json 运行时数据层）——本集恰十四件（史实，
- * 时点 2026-09-06；当前 = 13，2026-09-16 18:41 作者令：root 面 −Glob −Grep）。
+ * 时点 2026-09-06；当前 = 12，本批 −Delegate 后值；此前 2026-09-16 18:41 作者令 root 面 −Glob −Grep 后为 13）。
  * 本文件原为 13:11「基础六件补齐」spec（nebula-toolface@21bc2e74 四件 → 13:11
  * 补齐六件），随 23:34 裁定同点改写断言语义。
  *
@@ -19,7 +19,7 @@ import munit.FunSuite
  *   交付面双层）∧ Glob/Grep ∉ Nebula 集（**2026-09-16 18:41 作者令：root 面摘除
  *   Glob/Grep；取代 0913「Glob/Grep 永久保留」旧裁定——仅 root 面，分发器/节点面
  *   不变**）∧ Bash/Write/Edit ∉ Nebula 集 + TaskList ∈ Nebula 集 +
- *   件数计数（史实 2026-09-06 时点恰十四件，当前 = 13）——本文件即变异验红锚
+ *   件数计数（史实 2026-09-06 时点恰十四件，当前 = 12）——本文件即变异验红锚
  *   点：机制集加回写手/NodeList/Glob/Grep 任一件
  *   （或摘掉 TaskList、或计数漂移）即红。
  * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools +
@@ -82,15 +82,16 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 13（2026-09-16 18:41 作者令：root 面 −Glob −Grep）；沿革（史实）：16 经
-    // #145 附件腿批 −TransferFile 退役（2026-09-14）⇒ 15，再经本令 −2 ⇒ 13。
-    // 2026-09-14「终态 = 15，已定」口径已被本令取代 ⇒ provisional/存档。
+    // 12（本批：−Delegate 退役；此前 2026-09-16 18:41 作者令 root 面 −Glob −Grep）；
+    // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役（2026-09-14）⇒ 15，
+    // 再经 18:41 令 −2 ⇒ 13，再经本批 −1 ⇒ 12。
+    // 2026-09-14「终态 = 15，已定」口径已被 18:41 令取代 ⇒ provisional/存档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 13 = 2026-09-16 18:41 令后实测值）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 12 = 本批 −Delegate 后实测值）")
     // 件数单点常量本身也对齐（防「常量漂移而集合未动」类假绿）
-    assertEquals(AgentCore.NebulaOrchestrationTools.size, 13,
-      "NebulaOrchestrationTools 实测恰 13 件（2026-09-16 18:41 作者令；变异验红锚：加回 Glob/Grep 即红）")
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, 12,
+      "NebulaOrchestrationTools 实测恰 12 件（本批 −Delegate；变异验红锚：加回 Delegate 即红）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

@@ -13,7 +13,8 @@ import scala.jdk.CollectionConverters.*
  * P0-c 分流 spec（2026-09-14 裁定 ③「收窄 dream 生产者 —— 按目标面 / 预算分流」）。
  *
  * 覆盖三支判词（纯函数直测）+ 三条 IO 正控：
- *   ① 首选面（user）有余量 ⇒ **仍投 user**、节不变 `## Dream Extract`（既有行为回归）；
+ *   ① 首选面（user）有余量 ⇒ **仍投 user**（既有行为回归；**无落点节**——`section`
+ *      恒 `None`，`## Dream Extract` 节已随 DreamMode 机制停用退役，引擎不再拥有具名节）；
  *   ② user 面无余量而 agent 面有余量 ⇒ **改投 agent 面**（`section=None` 文件尾追加）；
  *   ③ 两面皆无余量 ⇒ **停投**（零入队）+ **逐条 WARN 记录带条目全文** ——
  *      「禁静默丢」的运行时端断言（ListAppender 源级取证，先例见 DeadLoggingResurrectionSpec）。
@@ -55,24 +56,23 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
 
   // ===== ① 纯函数：三支 + fail-open =====
 
-  test("decideRoute：user 有余量 ⇒ 仍投 user（首选面，节不变）"):
+  test("decideRoute：user 有余量 ⇒ 仍投 user（首选面，无落点节）"):
     val d = NebulaMemoryHook.decideRoute(100L, _ => Some(1000L))
     assertEquals(
       d,
       NebulaMemoryHook.RouteDecision.Send(
         "user",
-        Some(DreamMode.DreamSectionHeader),
         NebulaMemoryHook.RouteCode.Preferred,
         true
       )
     )
 
-  test("decideRoute：user 无余量、agent 有余量 ⇒ 改投 agent 面（section=None）"):
+  test("decideRoute：user 无余量、agent 有余量 ⇒ 改投 agent 面"):
     val rooms = Map("user" -> -5L, "agent" -> 500L)
     val d = NebulaMemoryHook.decideRoute(100L, f => rooms.get(f))
     assertEquals(
       d,
-      NebulaMemoryHook.RouteDecision.Send("agent", None, NebulaMemoryHook.RouteCode.Reroute, false)
+      NebulaMemoryHook.RouteDecision.Send("agent", NebulaMemoryHook.RouteCode.Reroute, false)
     )
 
   test("decideRoute：两面皆无余量 ⇒ 停投（带两面余量读数）"):
@@ -86,7 +86,6 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
       d,
       NebulaMemoryHook.RouteDecision.Send(
         "user",
-        Some(DreamMode.DreamSectionHeader),
         NebulaMemoryHook.RouteCode.FailOpen,
         false
       )
@@ -94,7 +93,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
 
   // ===== ② IO 正控：三支各自的可观测后果 =====
 
-  test("正控-仍投 user：user 面有余量 ⇒ target/section 与既有行为逐字一致"):
+  test("正控-仍投 user：user 面有余量 ⇒ target 与既有行为逐字一致、无落点节"):
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n- 既有条目\n", createFolders = true)
     NebulaMemoryHook.enqueueFacts(List("FACT 1: [PATTERN] 正常事实"), Some("sess-1")).unsafeRunSync()
@@ -103,7 +102,8 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
     assertEquals(notes.map(_.target).distinct, Vector("user"))
     assertEquals(
       notes.map(_.section).distinct,
-      Vector[Option[String]](Some(DreamMode.DreamSectionHeader))
+      Vector[Option[String]](None),
+      "引擎不再拥有具名节（`## Dream Extract` 已随 DreamMode 停用退役）⇒ 恒文件尾追加"
     )
 
   test("正控-改投：User.md 顶格 ⇒ facts 改投 agent 面；User.md 零写"):
@@ -121,7 +121,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
     assertEquals(
       notes.map(_.section).distinct,
       Vector[Option[String]](None),
-      "agent 面无 ## Dream Extract 节 ⇒ 文件尾追加"
+      "无具名节 ⇒ 文件尾追加"
     )
 
   test("正控-停投：两面皆顶格 ⇒ 零入队，且逐条 WARN 记录带全文（禁静默丢）"):

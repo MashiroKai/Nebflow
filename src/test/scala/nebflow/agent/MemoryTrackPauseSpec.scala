@@ -107,7 +107,7 @@ class MemoryTrackPauseSpec extends FunSuite:
         ProjectStore.projectJsonPath("demo"),
         s"""{"name":"demo","workspace":"${ws.toString}","agentFile":"AGENTS.md","createdAt":0}""",
         createFolders = true)
-      os.write.over(MemoryStore.userMemoryPath, "# User\n\n## Dream Extract\n\n- existing user line\n", createFolders = true)
+      os.write.over(MemoryStore.userMemoryPath, "# User\n\n## Notes\n\n- existing user line\n", createFolders = true)
       os.write.over(MemoryStore.agentMemoryPath("Nebula"), "# Nebula memory\n\n- existing agent line\n", createFolders = true)
 
       val nUser = MemoryQueue
