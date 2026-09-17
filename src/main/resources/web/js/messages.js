@@ -47,10 +47,12 @@ import {
   deviceHasLocalTraffic, // ⑥：通信证据（本地半程）判据单点
   saveDeviceDescription, // ⑤c：设备描述写路径单点（旧设备窗与本窗共用同一函数）
 } from './dropbox.js';
-// 附件预览（作者令 2026-09-15「点击附件要能直接在 canvas 里预览」）：附件卡的**唯一**
-// 预览入口 = attachmentPreview.js（判据 + Canvas 渲染腿都在那边）；本模块只做接线 +
-// 降级文案（禁在此再写第二套类型判据 / 第二套取字节路）。
-import { previewBlob, previewLocalPath, canPreviewLocalPath, isPreviewOpen } from './attachmentPreview.js';
+// 附件预览（作者令 2026-09-15「点击附件要能直接在 canvas 里预览」；作者令 2026-09-17 12:31
+// 追加「设备面对齐好友/群」）：附件卡的**唯一**预览入口 = attachmentPreview.js（判据 +
+// Canvas 渲染腿都在那边）；本模块只做接线 + 降级文案 + 取字节（禁在此再写第二套类型判据 /
+// 第二套取字节路）。`previewLocalPath` 在设备面已降为**回落腿**（票据路由拒绝的类型），
+// 与 `previewBlob` 同属该模块的既有出口。
+import { previewBlob, previewLocalPath, canPreviewLocalPath, canFetchLocalBytes, isPreviewOpen } from './attachmentPreview.js';
 // 附件**上传**（attachcl 批，作者 2026-09-16 07:36）：好友窗与群窗的发送面**唯一**
 // 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
 // （设备腿仍走 dropbox.js 单点，零行为变化）。
@@ -1604,11 +1606,37 @@ function attachmentCard(att) {
   if (sizeText) card.appendChild(el('span', 'fm-att-size', sizeText));
 
   // ── 设备面文件卡（MVP-1 · 卡 D4「适配 attachmentCard + 气泡状态位保留传输态」）──
-  // 与好友面附件卡的**唯一**差异：设备面的落盘由接收端传输链负责（`savedPath` 回显），
-  // 没有应用内鉴权下载路由 ⇒ **不挂下载键**（禁「可点但点了报错」的假按钮，§B.7 ③）。
   // 状态判据 = 设备腿 5 态（pending/accepted/transferring/completed/failed）。
+  // 📌 devattach 批 · 作者令 2026-09-17 12:31（逐字）：「设备对话窗口的附件行为和群聊/
+  //    好友的行为不一致。首先 ui/动画的行为上要一致，操作逻辑也要一致，群聊和好友发送的
+  //    附件，是可以直接点击在 canvas 打开的，但是设备对话框的就不行。」
+  //    ⇒ 本分支的**判据 = 与好友/群分支对齐**：
+  //      · 点击 ⇒ `previewBlob`（与好友面**同一条** Canvas 渲染腿）；
+  //      · 下载键 ⇒ 既有 `.fm-att-dl` 键族（同款呈现/动效）。
+  //    🔴 **旧登记已被本令推翻**：此处原注「设备面的落盘由接收端传输链负责…没有应用内
+  //    鉴权下载路由 ⇒ **不挂下载键**（禁「可点但点了报错」的假按钮，§B.7 ③）」——
+  //    本机落盘件**有**既有字节路由（`nfTicket.ticketUrl` ⇒ `/api/nf-file?path=…&ticket=…`，
+  //    即设备内联图片腿同一个字节源），故「无下载面」的前提不成立；键现按
+  //    `canFetchLocalBytes` 判据挂（§B.7 ③ 本身仍成立：票据路由不服务的类型不挂键）。
   if (kind === 'device') {
     card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
+    // 预览/下载两腿的**共同前提** = 本机有可读件（发出腿 / 未完成 / 失败 ⇒ 无 `savedPath`
+    // ⇒ 本地没有这件 ⇒ 不挂可点面、不挂键；状态位文案即用户可见的说明，§B.7 ③）。
+    const localPath = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
+    // ③ 下载键（作者令 2026-09-17 12:31「操作逻辑也要一致」）：位次紧跟状态位（同一行），
+    //    路径位/进度条仍各占整行 ⇒ 几何与改前一致，只多一枚键（与好友卡同名同类同款）。
+    //    挂键判据 = 票据路由**能整件取回字节**（`canFetchLocalBytes`）——文本腿不挂键，
+    //    §B.7 ③「禁可点但点了报错」仍成立。
+    if (localPath && canFetchLocalBytes(localPath)) {
+      const note = el('span', 'fm-att-note', t('messages.attachDownload'));
+      note.classList.add('visually-hidden-note'); // 常态只显示键；失败/成功后就地显示文案
+      const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
+      btn.type = 'button';
+      btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
+      btn.addEventListener('click', () => downloadDeviceSavedAttachment(att, card, btn, note, localPath));
+      card.appendChild(btn);
+      card.appendChild(note);
+    }
     if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
     const pct = att && att.devicePct;
     if (typeof pct === 'number') {
@@ -1618,14 +1646,11 @@ function attachmentCard(att) {
       track.appendChild(bar2);
       card.appendChild(track);
     }
-    // 预览腿（作者令 2026-09-15）：**只在有本机落盘件且其类型可渲染时**才挂可点面。
-    // 无 `savedPath`（发出腿 / 未完成 / 失败）⇒ 本地没有可读件 ⇒ 保持不可点
-    // （禁「可点但点了报错」，§B.7 ③；状态位文案即用户可见的说明）。
-    const localPath = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
     // ④ 图片直显（设备端）：本机落盘件在手 ⇒ 走既有 nf-ticket 链取字节。
     attachInlineImage(card, att, kind);
+    // ① 点击 ⇒ Canvas 预览（与好友/群同路）。
     if (localPath && canPreviewLocalPath(localPath)) {
-      makeCardPreviewable(card, att, () => previewLocalPath({ path: localPath, title: (att && att.name) || '' }) !== 'ok');
+      makeCardPreviewable(card, att, () => previewDeviceSavedAttachment(att, card, localPath));
     }
     return card;
   }
@@ -1877,6 +1902,98 @@ async function downloadAttachment(att, card, btn, note) {
     card.dataset.attState = 'failed';
     note.textContent = t('messages.attachDownloadFailed');
     window.dispatchEvent(new CustomEvent('fm-attachment-failed'));
+  } finally {
+    card.dataset.busy = '0';
+    btn.disabled = false;
+  }
+}
+
+// ── 设备面（legacy 本机落盘件）预览 / 下载腿 ────────────────────────────────
+// 作者令 2026-09-17 12:31（本批判据）：设备面附件行为 = 好友/群面**对齐** ——
+//   · 点击 ⇒ `attachmentPreview.previewBlob`（与好友面**同一条**渲染腿）；
+//   · 下载 ⇒ 既有 `.fm-att-dl` 键族 + `saveBlob`（同款呈现/反馈）。
+// 🔴 字节只走**既有**路由，禁新造第三条：
+//   `nfTicket.ticketUrl(path)`（= `/api/nf-file?path=…&ticket=…`，与设备内联图片腿
+//   同一个字节源，见 `attachInlineImage` 设备支）——回落腿才是改前的 `previewLocalPath`。
+// 🔴 旧登记「legacy 卡无下载键属设备面设计」已被本令推翻（出处 = 作者 2026-09-17 12:31 令；
+//   原注见 `attachmentCard` 设备分支的推翻说明）。
+
+/** 本机落盘件的字节（票据路）。失败/拒绝 ⇒ `null`（**不抛**：两条腿各有自己的降级面）。
+ *
+ *  `nf-file` 是**扩展名白名单**端点（服务端 `NfFileAllowedExt`，
+ *  `WebSocketRoutes.scala:5203-5241`）⇒ 白名单外的类型（.md/.csv/.yaml/.txt…）会
+ *  400「File type not allowed」⇒ 返回 `null` ⇒ 预览腿回落 `previewLocalPath`、
+ *  下载腿**根本不挂键**（`canFetchLocalBytes`，见 attachmentPreview.js）。
+ *  同一惯例见 `input.js:1893-1907`（nf-file 先、readFile 后）。
+ *  @param {string} path @returns {Promise<Blob|null>} */
+async function savedPathBlob(path) {
+  try {
+    const resp = await fetch(await ticketUrl(path));
+    if (!resp.ok) return null;
+    return await resp.blob();
+  } catch { return null; }
+}
+
+/** 设备面（legacy）预览：**与好友/群同路**（`previewBlob`）。
+ *
+ *  两条字节腿（都是**既有**路，禁第三条）——分派判据 = 该件的票据路由可服务性
+ *  （`canFetchLocalBytes`，见 attachmentPreview.js）：
+ *   ① blob 腿（image/pdf/docx/xlsx/pptx/epub…）= **本批新主路**：票据路由字节
+ *      （`savedPathBlob`）⇒ `previewBlob`（判据/渲染腿与好友面同族，点开即 Canvas 预览）；
+ *   ② 文本腿（markdown/csv/yaml/json/code…）= **改前那条路逐字**（`previewLocalPath`
+ *      ⇒ `workspace-open-item` ⇒ Canvas `pop.readFile`）：它们的字节不经 nf-file 白名单，
+ *      故不在此发那次注定被拒的请求（零多余请求、零行为变化 = ④ 的要求）。
+ *   路由**运行期**失败（票据铸造故障 / 文件已被删除 / 白名单外的 blob 腿扩展名如 .doc）
+ *      ⇒ 仍回落 ② 这条既有路（保证「点得动」，同 `input.js:1893-1907` 的两段式惯例）。
+ *  @returns {Promise<boolean>} true = 需要**可见降级**文案（同 `previewFriendAttachment` 契约） */
+async function previewDeviceSavedAttachment(att, card, path) {
+  if (!path) return true;
+  const title = (att && att.name) || String(path).split('/').pop() || '';
+  if (!canFetchLocalBytes(path)) return previewLocalPath({ path, title }) !== 'ok'; // ② 文本腿
+  // tab id 分族：好友/群 = `attach:{附件 id}`；设备本机件 = `attach-local:{路径}`
+  // （legacy 行**没有附件 id**，路径是这件的唯一稳定键 ⇒ 重复点击才认得出「同一件」）。
+  const id = `attach-local:${path}`;
+  if (card.dataset.attPreviewBusy === '1') return false;
+  // 已在面板里预览这一件 ⇒ 只激活，**不取第二份字节**（同一次点击 = 同一次取数）。
+  if (isPreviewOpen(id)) return false;
+  card.dataset.attPreviewBusy = '1';
+  try {
+    const blob = await savedPathBlob(path);
+    if (!blob) return previewLocalPath({ path, title }) !== 'ok'; // 路由运行期失败 ⇒ 回落
+    const r = await previewBlob({ id, title, fileName: title, blob });
+    if (r === 'unsupported') {
+      modalToast(t('messages.attachPreviewUnsupported', { name: title }));
+      return false; // 文案已就位，不再叠一条通用失败提示
+    }
+    return r !== 'ok';
+  } finally {
+    card.dataset.attPreviewBusy = '0';
+  }
+}
+
+/** 设备面（legacy）下载键：与好友面同款键/同款就地反馈，字节 = 同一条票据路由。
+ *
+ *  与好友面 `downloadAttachment` 的**两处有意差异**（各有依据，非两套逻辑）：
+ *   · **无 410 分支**：410 = 服务端附件的「已过期」终态语义（好友面远端件）；本机落盘件
+ *     不存在「过期」，票据路由给的是 404/400/401 ⇒ 一律按**可重试**处置（同好友面
+ *     「传输/本地失败」那一格的处置面，不误标成「已过期」）。
+ *   · **无 `ackAttachmentLanded`**：E4 回执入参 = 附件 id + 服务端声明 digest（§F.1b），
+ *     legacy 行**两者皆无** ⇒ 不发回执（禁造无 id 的回执）。
+ *  @param {HTMLElement} card @param {HTMLButtonElement} btn @param {HTMLElement} note */
+async function downloadDeviceSavedAttachment(att, card, btn, note, path) {
+  if (card.dataset.busy === '1') return;
+  card.dataset.busy = '1';
+  btn.disabled = true;
+  note.classList.remove('visually-hidden-note');
+  note.textContent = t('messages.attachDownloading');
+  try {
+    const blob = await savedPathBlob(path);
+    if (!blob) throw new Error('nf-file refused');
+    saveBlob(blob, (att && att.name) || String(path).split('/').pop());
+    note.textContent = t('messages.attachDownloaded');
+  } catch {
+    // 可重试（就地文案，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
+    note.textContent = t('messages.attachDownloadFailed');
   } finally {
     card.dataset.busy = '0';
     btn.disabled = false;

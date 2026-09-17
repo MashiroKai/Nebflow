@@ -7,8 +7,12 @@
 //   ② 把「已判定的字节/路径」交给 Canvas 既有 tab + viewer 注册表渲染。
 // 🔴 本模块**不拼任何 URL、不 fetch、不碰文件系统**：
 //   · 好友面的字节由调用方经 `friendsApi.downloadAttachment`（应用内鉴权路由）取得；
-//   · 设备面的本机落盘件经 `workspace-open-item` ⇒ Canvas 既有 `pop.readFile` 链路取得。
-//   两条腿都是应用既有取数面，禁在此另写第三条（禁本地直链 / 禁代理 / 禁假绿）。
+//   · 设备面的本机落盘件由调用方经 `nfTicket.ticketUrl` ⇒ `/api/nf-file?path=…&ticket=…`
+//     取字节（**主路**，与好友面同走 `previewBlob`）；票据路由拒绝时回落
+//     `previewLocalPath` ⇒ `workspace-open-item` ⇒ Canvas 既有 `pop.readFile` 链路。
+//   三条腿都是应用既有取数面，禁在此另写第四条（禁本地直链 / 禁代理 / 禁假绿）。
+//   📌 判据变更出处 = 作者 2026-09-17 12:31 令（设备面附件行为对齐好友/群）：
+//   设备面**主路**由 `workspace-open-item` 改为 `previewBlob`（devattach 批）。
 
 import { openTab, hasTab, setActiveTab } from './canvas.js';
 import { itemTypeForFileName } from './fileViewers.js';
@@ -168,12 +172,16 @@ export async function previewBlob({ id, title, blob, fileName }) {
  * 预览一件**本机落盘件**（设备面完成态：`deviceSavedPath`，服务端 `DropboxService`
  * 记录的本机绝对路径）。
  *
+ *  📌 定位（devattach 批 · 作者令 2026-09-17 12:31）：本腿在设备面已**不是主路** ——
+ *  主路 = 票据路由取字节后走 `previewBlob`（与好友/群面同一条渲染腿），本腿是**回落**
+ *  （票据路由不服务文本腿，判据见 `canFetchLocalBytes` 的说明）。回落保留 = 改前行为**逐字**仍在，非死代码。
+ *
  * 取数 = 应用既有本机文件链：空内容 + `absPath` ⇒ Canvas `openWorkspaceItem` 发
  * `pop.readFile`（WS，带会话）⇒ 服务端 `FileTypeRegistry` 定 itemType；二进制再由
  * viewer 走 `/api/nf-file` 票据。本函数**不拼 URL、不 fetch**（同 `reference.js`/`chat.js`
  * 的既有开面 idiom，禁第二套开法）。
  *
- * 判据只用扩展名（设备面**手上没有字节**，不做额外取数往返）：无 viewer 认领 ⇒
+ * 判据只用扩展名（本腿**手上没有字节**，不做额外取数往返）：无 viewer 认领 ⇒
  * `unsupported`（fail-closed，落可见降级）；这与好友面「字节在手 ⇒ 可加内容嗅探」
  * 的差异是**有意的**，不是两套逻辑。
  *
@@ -208,4 +216,26 @@ export function previewLocalPath({ path, title }) {
 export function canPreviewLocalPath(path) {
   const itemType = itemTypeForFileName(path);
   return !!itemType && !EXCLUDED_ITEM_TYPES.has(itemType);
+}
+
+/** 本机落盘件的字节能否由**票据路由**（`/api/nf-file?path=…&ticket=…`）整件取回
+ *  （设备面 legacy 卡的两处判据源：① 挂下载键；② 预览腿选路）。
+ *
+ *  判据 = 该类型落在 **blob 腿**（`BLOB_ITEM_TYPES`）——即「这件本机落盘件的字节可由
+ *  `/api/nf-file` 整件取回」的那些类型（image/pdf/docx/xlsx/pptx/epub；服务端白名单
+ *  `NfFileAllowedExt` 覆盖其各族扩展名，见 `WebSocketRoutes.scala:5203-5241`）。
+ *
+ *  🔴 文本腿（`TEXT_ITEM_TYPES`：code/json/csv/yaml/markdown）**为 false**：它们的字节在
+ *  设备面走 `pop.readFile` 的 WS 通道（前端无字节 API），票据路由按扩展名白名单拒绝
+ *  ⇒ 这两种消费点都要据此改道：预览腿走 `previewLocalPath`（改前那条路，逐字一致）、
+ *  下载腿**不挂键**（挂了就是「可点但点了必然报错」的假按钮，§B.7 ③ 明令禁止）。
+ *  ⚠ 已登记残差（本判据为**超集**，服务端白名单才是终判）：`.doc` / `.ppt` / `.xls` 有
+ *  viewer 认领（blob 腿）但**不在**白名单内 ⇒ 预览腿由 `savedPathBlob` 的失败回落兜住，
+ *  下载键则为「点了报可重试的失败」（读数为本批证据件 `20260917_devattach/devattach.json`
+ *  `asserts.h_docKeyBoundary`）。
+ *  与 `canPreviewLocalPath` **同族**（同一「本机落盘件 + 既有路」判据面），判据源仍是
+ *  `itemTypeForFileName`（禁第二张扩展名表）。
+ *  @param {string} path @returns {boolean} */
+export function canFetchLocalBytes(path) {
+  return BLOB_ITEM_TYPES.has(itemTypeForFileName(path));
 }
