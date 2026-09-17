@@ -32,6 +32,28 @@ case class DropboxMessage(
   mimeType: String = "",
   status: String = "", // "pending" | "accepted" | "rejected" | "transferring" | "completed" | "failed"
   savedPath: String = "", // where the file was saved (receiver side, after completion)
+  // ===== 发送端本机真实路径（selfattach 批 · 作者 D-1 = A + B′ 混合裁定，2026-09-17）=====
+  /** **发送端**本机真实绝对路径（B′ 腿）。与 [[savedPath]] **不同轴**，禁互相借用：
+    *
+    *   - `savedPath` 逐字限**接收端落点**（作者 2026-09-17 裁定原文：`receiver side,
+    *     after completion`）——语义在**收**侧；
+    *   - 本键 = **发**侧自己的本地现实（「每侧记录自己的本地现实」的发送半边）。
+    *
+    *  唯一写者 = **工具 / agent 附件腿**（`DropboxService.sendLocalFiles` 的
+    *  `sendLocalOne(…, p, …)`：字节从本机磁盘直读，`p` 已过绝对 / 存在 / 非目录三道校验）。
+    *  浏览器 user 腿**没有**该值（`<input type=file>` 的 `File` 不暴露绝对路径；服务端
+    *  staging temp 在完成前已删）⇒ 那侧恒 `""`（缺省 = 无值，**不猜、不拼接**）。
+    *
+    *  🔴 隐私（作者约束「记录发送端本地真实路径、**零复制**、**禁随 WS 帧广播对端**」）：
+    *  本键**不上对端帧** —— 网关发往对端的载荷全部是手写 `Json.obj`
+    *  （`offerOne` 的 `file-offer` / `file-response` / `completeTransfer` 的 `file-complete`），
+    *  不含本键；它只随**本机**台账（`messages.json`）与**本机**前端帧
+    *  （`dropbox-message` / `dropbox-get-history`）流动。
+    *
+    *  🔴 零字节复制 / 零留存：只记字符串本身，不产生任何副本、暂存件或缓存件。
+    *
+    *  默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无值。 */
+  deviceOutPath: String = "",
   // ===== 单条消息多附件（附件腿批，2026-09-12）=====
   // 一条消息最多 9 件（AttachContract.MaxAttachmentsPerMessage）；N 件共用同一 batchId，
   // 各自一个 attachmentIndex。默认值保证旧 JSON 兼容（旧消息 = 单件）。
@@ -57,7 +79,7 @@ object DropboxMessage:
   // 缺一个可缺键 ⇒ 该 `Map` 整体解码失败 ⇒ `loadMessages` 静默留空表 ⇒
   // `dropbox-get-history` 回 `[]` ⇒ 客户端（以帧为真相源）开窗抹掉本地已知消息。
   //
-  // 两个键集**互相排斥且并集 = 本 case class 的全部 15 键**（`DropboxLedgerDecodeSpec` 断言）：
+  // 两个键集**互相排斥且并集 = 本 case class 的全部 16 键**（`DropboxLedgerDecodeSpec` 断言）：
   //
   //   ① 必给键（缺席 / 类型不符 ⇒ **条目级**失败，由 `DropboxLedger.decode` 跳过该条并计数登记）：
   //      `msgId` / `direction` / `kind` / `ts`
@@ -76,6 +98,7 @@ object DropboxMessage:
   //        | `mimeType`        | `""`     |
   //        | `status`          | `""`     |
   //        | `savedPath`       | `""`     |
+  //        | `deviceOutPath`   | `""`     |
   //        | `batchId`         | `""`     |
   //        | `attachmentIndex` | `0`      |
   //        | `attachmentCount` | `1`      |
@@ -87,10 +110,10 @@ object DropboxMessage:
   /** 必给键（缺席即**条目级**失败；顺序即报告里的列举顺序）。 */
   val RequiredKeys: List[String] = List("msgId", "direction", "kind", "ts")
 
-  /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 15 键）。 */
+  /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 16 键）。 */
   val OptionalKeys: List[String] = List(
     "text", "origin", "transferId", "fileName", "fileSize", "mimeType",
-    "status", "savedPath", "batchId", "attachmentIndex", "attachmentCount"
+    "status", "savedPath", "deviceOutPath", "batchId", "attachmentIndex", "attachmentCount"
   )
 
   given Encoder[DropboxMessage] = deriveEncoder
@@ -117,14 +140,15 @@ object DropboxMessage:
       mimeType        <- c.get[Option[String]]("mimeType").map(_.getOrElse(""))
       status          <- c.get[Option[String]]("status").map(_.getOrElse(""))
       savedPath       <- c.get[Option[String]]("savedPath").map(_.getOrElse(""))
+      deviceOutPath   <- c.get[Option[String]]("deviceOutPath").map(_.getOrElse(""))
       batchId         <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
       attachmentIndex <- c.get[Option[Int]]("attachmentIndex").map(_.getOrElse(0))
       attachmentCount <- c.get[Option[Int]]("attachmentCount").map(_.getOrElse(1))
     yield DropboxMessage(
       msgId = msgId, direction = direction, kind = kind, ts = ts, text = text,
       origin = origin, transferId = transferId, fileName = fileName, fileSize = fileSize,
-      mimeType = mimeType, status = status, savedPath = savedPath, batchId = batchId,
-      attachmentIndex = attachmentIndex, attachmentCount = attachmentCount
+      mimeType = mimeType, status = status, savedPath = savedPath, deviceOutPath = deviceOutPath,
+      batchId = batchId, attachmentIndex = attachmentIndex, attachmentCount = attachmentCount
     )
   }
 

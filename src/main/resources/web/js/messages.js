@@ -46,13 +46,14 @@ import {
   sendDeviceText, sendDeviceFiles, onDeviceMessageChange,
   deviceHasLocalTraffic, // ⑥：通信证据（本地半程）判据单点
   saveDeviceDescription, // ⑤c：设备描述写路径单点（旧设备窗与本窗共用同一函数）
+  outFileHandleOf, // selfattach 片 2（A 腿）：发送侧真句柄只读访问器（属主 = dropbox.js）
 } from './dropbox.js';
 // 附件预览（作者令 2026-09-15「点击附件要能直接在 canvas 里预览」；作者令 2026-09-17 12:31
 // 追加「设备面对齐好友/群」）：附件卡的**唯一**预览入口 = attachmentPreview.js（判据 +
 // Canvas 渲染腿都在那边）；本模块只做接线 + 降级文案 + 取字节（禁在此再写第二套类型判据 /
 // 第二套取字节路）。`previewLocalPath` 在设备面已降为**回落腿**（票据路由拒绝的类型），
 // 与 `previewBlob` 同属该模块的既有出口。
-import { previewBlob, previewLocalPath, canPreviewLocalPath, canFetchLocalBytes, isPreviewOpen } from './attachmentPreview.js';
+import { previewBlob, previewLocalPath, canPreviewLocalPath, canPreviewName, canFetchLocalBytes, isPreviewOpen } from './attachmentPreview.js';
 // 附件**上传**（attachcl 批，作者 2026-09-16 07:36）：好友窗与群窗的发送面**唯一**
 // 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
 // （设备腿仍走 dropbox.js 单点，零行为变化）。
@@ -1539,8 +1540,10 @@ function attSig(m) {
   const a = m && Array.isArray(m.attachments) ? m.attachments : [];
   // 设备面（MVP-1）：设备文件卡的**传输态**也是外观量（transferring→completed 必须
   // 就地重填，否则状态位永远停在旧态）⇒ 设备卡签名单列一支；好友面签名逐字不变。
+  // 📌 selfattach 批：**字节源**同样进签名（`deviceOutPath` 值 / 句柄在场与否）——
+  //    路径或句柄到达/退场即须重填卡片（否则「台账帧补上路径」永远画不出来）。
   return a.map(x => (x && x.state === 'device')
-    ? `dev:${(x.deviceStatus || '')}:${(x.deviceSavedPath || '')}:${(typeof x.devicePct === 'number' ? x.devicePct : '')}`
+    ? `dev:${(x.deviceStatus || '')}:${(x.deviceSavedPath || '')}:${(x.deviceOutPath || '')}:${x.deviceOutHandle ? 'h' : '-'}:${(typeof x.devicePct === 'number' ? x.devicePct : '')}`
     : `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
 }
 
@@ -1620,24 +1623,30 @@ function attachmentCard(att) {
   //    `canFetchLocalBytes` 判据挂（§B.7 ③ 本身仍成立：票据路由不服务的类型不挂键）。
   if (kind === 'device') {
     card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
-    // 预览/下载两腿的**共同前提** = 本机有可读件（发出腿 / 未完成 / 失败 ⇒ 无 `savedPath`
+    // 预览/下载两腿的**共同前提** = 本机有可读件（发出腿 user / 未完成 / 失败 ⇒ 无句柄无路径
     // ⇒ 本地没有这件 ⇒ 不挂可点面、不挂键；状态位文案即用户可见的说明，§B.7 ③）。
-    const localPath = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
+    // selfattach 批：判据收敛到**单点** `deviceByteSourceOf`（blob = 发送侧句柄 / path = 本机路径）。
+    const src = deviceByteSourceOf(att);
+    const srcPath = src.kind === 'path' ? src.path : '';
     // ③ 下载键（作者令 2026-09-17 12:31「操作逻辑也要一致」）：位次紧跟状态位（同一行），
     //    路径位/进度条仍各占整行 ⇒ 几何与改前一致，只多一枚键（与好友卡同名同类同款）。
-    //    挂键判据 = 票据路由**能整件取回字节**（`canFetchLocalBytes`）——文本腿不挂键，
-    //    §B.7 ③「禁可点但点了报错」仍成立。
-    if (localPath && canFetchLocalBytes(localPath)) {
+    //    挂键判据 = **能整件取回字节**：
+    //      · blob 腿（发送侧 `File` 在手）⇒ 恒可（`saveBlob` 只吃这枚 blob，无路由可拒）；
+    //      · path 腿 ⇒ 既有 `canFetchLocalBytes`（票据路由白名单；文本腿不挂键）逐字不变。
+    //    §B.7 ③「禁可点但点了报错」两条腿都成立。
+    if (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(srcPath))) {
       const note = el('span', 'fm-att-note', t('messages.attachDownload'));
       note.classList.add('visually-hidden-note'); // 常态只显示键；失败/成功后就地显示文案
       const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
       btn.type = 'button';
       btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
-      btn.addEventListener('click', () => downloadDeviceSavedAttachment(att, card, btn, note, localPath));
+      btn.addEventListener('click', () => downloadDeviceSavedAttachment(att, card, btn, note, src));
       card.appendChild(btn);
       card.appendChild(note);
     }
     if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
+    // B′ 腿（agent 发）：把发送端本机真实路径显示在同一路径位（同一既有类名，零新样式）。
+    else if (att && att.deviceOutPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceOutPath)));
     const pct = att && att.devicePct;
     if (typeof pct === 'number') {
       const track = el('div', 'fm-att-device-progress');
@@ -1646,11 +1655,16 @@ function attachmentCard(att) {
       track.appendChild(bar2);
       card.appendChild(track);
     }
-    // ④ 图片直显（设备端）：本机落盘件在手 ⇒ 走既有 nf-ticket 链取字节。
-    attachInlineImage(card, att, kind);
+    // ④ 图片直显（设备端）：按字节源分派（blob = 本机句柄 / path = 既有票据链）。
+    attachInlineImage(card, att, kind, src);
     // ① 点击 ⇒ Canvas 预览（与好友/群同路）。
-    if (localPath && canPreviewLocalPath(localPath)) {
-      makeCardPreviewable(card, att, () => previewDeviceSavedAttachment(att, card, localPath));
+    //    可点判据按字节源：path 腿 = 既有 `canPreviewLocalPath`（逐字）；blob 腿 = `canPreviewName`
+    //    （同一判据源，收**真实名**）⇒ `.zip` 之类不挂假可点面（§B.7 ③）。
+    const previewable = src.kind === 'blob'
+      ? canPreviewName(String((att && att.name) || ''))
+      : (src.kind === 'path' && canPreviewLocalPath(srcPath));
+    if (previewable) {
+      makeCardPreviewable(card, att, () => previewDeviceSavedAttachment(att, card, src));
     }
     return card;
   }
@@ -1717,8 +1731,10 @@ function attachmentCard(att) {
  *  @param {HTMLElement} card 附件卡
  *  @param {any} att 已归一附件对象
  *  @param {string} kind `attStateOf` 的结果（`ready` / `device` / …）
+ *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} [src] 设备面字节源
+ *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
  *  @returns {boolean} 是否挂了直显槽 */
-function attachInlineImage(card, att, kind) {
+function attachInlineImage(card, att, kind, src) {
   if (!card || !att) return false;
   if (kind !== 'ready' && kind !== 'device') return false;
   if (card.querySelector('.fm-att-inline')) return false; // 幂等（防同卡重入）
@@ -1738,11 +1754,20 @@ function attachInlineImage(card, att, kind) {
   card.insertBefore(box, card.firstChild);
 
   if (kind === 'device') {
-    // 设备面：字节 = 本机落盘件（只有 `deviceSavedPath` 在场才有本地可读件；
-    // 发出腿 / 未完成 / 失败 ⇒ 本机没有这件 ⇒ 不直显，状态位文案即说明面）。
-    const p = att.deviceSavedPath ? String(att.deviceSavedPath) : '';
-    if (!p) { box.remove(); return false; }
-    ticketUrl(p)
+    // 设备面：字节 = **按字节源分派**（selfattach 批单点）——
+    //   · blob 腿（A 腿 · 发送侧本机句柄）：`URL.createObjectURL(File)`，登记进有界 LRU
+    //     （键 = transferId；同件重绘复用**同一枚 URL** ⇒ 不重解码）；
+    //   · path 腿（收侧落点 / B′ 腿发送端路径）：既有 `nfTicket` ⇒ `/api/nf-file` 链**逐字保留**；
+    //   · none（未完成 / 失败 / 无本机件）：不挂槽（状态位文案即说明面）。
+    const s = src || deviceByteSourceOf(att);
+    if (s.kind === 'none') { box.remove(); return false; }
+    if (s.kind === 'blob') {
+      bindOutHandleEvicted();
+      const key = String((att && att.deviceTransferId) || (att && att.name) || '');
+      mount(outInlineUrlOf(key) || rememberOutInlineUrl(key, URL.createObjectURL(s.file)));
+      return true;
+    }
+    ticketUrl(s.path)
       .then((url) => { if (url) mount(url); else box.remove(); })
       .catch(() => box.remove());
     return true;
@@ -1797,6 +1822,58 @@ function rememberInlineObjectUrl(id, url) {
     const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
     else { inlineObjectUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
+  }
+  return url;
+}
+
+// ── 发送侧（A 腿）设备卡内联图的 objectURL 复用表（selfattach 批 · 片 2）────────────
+// 定位：与好友面 `inlineObjectUrls` **同款有界 LRU + 同款屏幕在用的例外规则**（禁破图），
+// 唯一差别是键 = `transferId`（发送侧句柄无附件 id、无路径可作稳定键）。
+// 🔴 退场即撤销（三条路径，逐条给读数，见报告 §2.4）：
+//   ① 本表溢出淘汰；② dropbox.js 句柄表淘汰（`dropbox-out-handle-evicted` 事件）；
+//   ③ 页面刷新/关窗（整页销毁，浏览器随对象回收）。
+/** @type {Map<string, string>} transferId → objectURL */
+const outInlineUrls = new Map();
+/** 上限 = 同屏可见附件数量级（与好友面同值口径）。 */
+const OUT_INLINE_URL_MAX = 32;
+let outEvictedBound = false;
+
+/** 句柄表淘汰 ⇒ 撤销由该句柄派生的 objectURL（**仍在屏上者不撤**，防破图；与好友面同规则）。 */
+function bindOutHandleEvicted() {
+  if (outEvictedBound) return;
+  outEvictedBound = true;
+  document.addEventListener('dropbox-out-handle-evicted', (/** @type {CustomEvent} */ e) => {
+    const key = e && e.detail ? String(e.detail.transferId || '') : '';
+    if (!key) return;
+    const url = outInlineUrls.get(key);
+    if (!url) return;
+    outInlineUrls.delete(key);
+    const stillUsed = document.querySelector(`.fm-att-inline img[src="${url}"]`);
+    if (!stillUsed) { try { URL.revokeObjectURL(url); } catch { /* non-critical */ } }
+  });
+}
+
+/** @param {string} key @returns {string} */
+function outInlineUrlOf(key) {
+  const url = key ? outInlineUrls.get(key) : '';
+  if (!url) return '';
+  outInlineUrls.delete(key);
+  outInlineUrls.set(key, url); // LRU touch
+  return url;
+}
+
+/** @param {string} key @param {string} url @returns {string} */
+function rememberOutInlineUrl(key, url) {
+  if (!key) return url;
+  outInlineUrls.set(key, url);
+  while (outInlineUrls.size > OUT_INLINE_URL_MAX) {
+    const oldest = outInlineUrls.keys().next();
+    if (oldest.done) break;
+    const victim = outInlineUrls.get(oldest.value);
+    outInlineUrls.delete(oldest.value);
+    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
+    else { outInlineUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
   return url;
 }
@@ -1943,23 +2020,38 @@ async function savedPathBlob(path) {
  *   ② 文本腿（markdown/csv/yaml/json/code…）= **改前那条路逐字**（`previewLocalPath`
  *      ⇒ `workspace-open-item` ⇒ Canvas `pop.readFile`）：它们的字节不经 nf-file 白名单，
  *      故不在此发那次注定被拒的请求（零多余请求、零行为变化 = ④ 的要求）。
- *   路由**运行期**失败（票据铸造故障 / 文件已被删除 / 白名单外的 blob 腿扩展名如 .doc）
+ *  路由**运行期**失败（票据铸造故障 / 文件已被删除 / 白名单外的 blob 腿扩展名如 .doc）
  *      ⇒ 仍回落 ② 这条既有路（保证「点得动」，同 `input.js:1893-1907` 的两段式惯例）。
+ *  📌 selfattach 批（片 2 · A 腿）：**新增 blob 支**（发送侧本机 `File` 句柄在手 ⇒ 字节已在手，
+ *     无需任何路由）——`previewBlob` 仍是**同一条**渲染腿（与好友面同族）；path 支
+ *     **逐字保留**（判据源 `canFetchLocalBytes` 与三条分支一字未改）。
+ *  @param {any} att @param {HTMLElement} card
+ *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} src 字节源（单点判定）
  *  @returns {Promise<boolean>} true = 需要**可见降级**文案（同 `previewFriendAttachment` 契约） */
-async function previewDeviceSavedAttachment(att, card, path) {
-  if (!path) return true;
-  const title = (att && att.name) || String(path).split('/').pop() || '';
-  if (!canFetchLocalBytes(path)) return previewLocalPath({ path, title }) !== 'ok'; // ② 文本腿
-  // tab id 分族：好友/群 = `attach:{附件 id}`；设备本机件 = `attach-local:{路径}`
-  // （legacy 行**没有附件 id**，路径是这件的唯一稳定键 ⇒ 重复点击才认得出「同一件」）。
-  const id = `attach-local:${path}`;
+async function previewDeviceSavedAttachment(att, card, src) {
+  const s = src || { kind: 'none' };
+  if (s.kind === 'none') return true;
+  const title = (att && att.name)
+    || (s.kind === 'path' ? String(s.path).split('/').pop() : '')
+    || '';
+  const id = devicePreviewIdOf(att, s);
   if (card.dataset.attPreviewBusy === '1') return false;
   // 已在面板里预览这一件 ⇒ 只激活，**不取第二份字节**（同一次点击 = 同一次取数）。
   if (isPreviewOpen(id)) return false;
   card.dataset.attPreviewBusy = '1';
   try {
-    const blob = await savedPathBlob(path);
-    if (!blob) return previewLocalPath({ path, title }) !== 'ok'; // 路由运行期失败 ⇒ 回落
+    // ① blob 腿（selfattach 片 2）：发送侧本机句柄 = 字节已在手，**零路由** ⇒ 直接进既有渲染腿。
+    if (s.kind === 'blob') {
+      const r = await previewBlob({ id, title, fileName: title, blob: s.file });
+      if (r === 'unsupported') {
+        modalToast(t('messages.attachPreviewUnsupported', { name: title }));
+        return false; // 文案已就位，不再叠一条通用失败提示
+      }
+      return r !== 'ok';
+    }
+    if (!canFetchLocalBytes(s.path)) return previewLocalPath({ path: s.path, title }) !== 'ok'; // ② 文本腿
+    const blob = await savedPathBlob(s.path);
+    if (!blob) return previewLocalPath({ path: s.path, title }) !== 'ok'; // 路由运行期失败 ⇒ 回落
     const r = await previewBlob({ id, title, fileName: title, blob });
     if (r === 'unsupported') {
       modalToast(t('messages.attachPreviewUnsupported', { name: title }));
@@ -1977,19 +2069,29 @@ async function previewDeviceSavedAttachment(att, card, path) {
  *   · **无 410 分支**：410 = 服务端附件的「已过期」终态语义（好友面远端件）；本机落盘件
  *     不存在「过期」，票据路由给的是 404/400/401 ⇒ 一律按**可重试**处置（同好友面
  *     「传输/本地失败」那一格的处置面，不误标成「已过期」）。
- *   · **无 `ackAttachmentLanded`**：E4 回执入参 = 附件 id + 服务端声明 digest（§F.1b），
- *     legacy 行**两者皆无** ⇒ 不发回执（禁造无 id 的回执）。
- *  @param {HTMLElement} card @param {HTMLButtonElement} btn @param {HTMLElement} note */
-async function downloadDeviceSavedAttachment(att, card, btn, note, path) {
+ *  · **无 `ackAttachmentLanded`**：E4 回执入参 = 附件 id + 服务端声明 digest（§F.1b），
+ *    legacy 行**两者皆无** ⇒ 不发回执（禁造无 id 的回执）。
+ *  📌 selfattach 批（片 2 · A 腿）：**新增 blob 支**（发送侧 `File` 直接交 `saveBlob`，
+ *    与好友面**同一条**保存腿）；path 支（票据路由）**逐字保留**。
+ *  @param {HTMLElement} card @param {HTMLButtonElement} btn @param {HTMLElement} note
+ *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} src */
+async function downloadDeviceSavedAttachment(att, card, btn, note, src) {
+  const s = src || { kind: 'none' };
+  if (s.kind === 'none') return;
   if (card.dataset.busy === '1') return;
   card.dataset.busy = '1';
   btn.disabled = true;
   note.classList.remove('visually-hidden-note');
   note.textContent = t('messages.attachDownloading');
   try {
-    const blob = await savedPathBlob(path);
+    if (s.kind === 'blob') {
+      saveBlob(s.file, (att && att.name) || '');
+      note.textContent = t('messages.attachDownloaded');
+      return;
+    }
+    const blob = await savedPathBlob(s.path);
     if (!blob) throw new Error('nf-file refused');
-    saveBlob(blob, (att && att.name) || String(path).split('/').pop());
+    saveBlob(blob, (att && att.name) || String(s.path).split('/').pop());
     note.textContent = t('messages.attachDownloaded');
   } catch {
     // 可重试（就地文案，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
@@ -3490,10 +3592,53 @@ function deviceFileAsAttachment(m, ours) {
     size: Number(m.fileSize) || 0,
     state: 'device',
     deviceStatus: m.status || '',
+    // 收侧语义（逐字不变）：接收端落点。
     deviceSavedPath: m.savedPath || '',
+    // selfattach 片 2（A 腿）：**发送侧**本机真字节句柄（`File`，只在本次页面会话内有效；
+    // 刷新即无 ⇒ 按作者 D-2 回落「名称 + 状态」形态）。🔴 另表另键，禁借用 `deviceSavedPath`。
+    deviceOutHandle: ours ? outFileHandleOf(m.transferId) : null,
+    // selfattach 片 1（B′ 腿）：**发送端本机真实路径**（后台台账字段，跨刷新存活，agent 腿专有）。
+    deviceOutPath: m.deviceOutPath || '',
+    // 传输 id：本机句柄表与预览 tab id 的稳定键（收/发两向都有，值来自台账/wire）。
+    deviceTransferId: m.transferId || '',
     deviceOut: ours,
     devicePct: pct,
   };
+}
+
+/** 设备分支**唯一**字节源判定点（selfattach 批；禁第二处判据、禁第二张表）。
+ *
+ *  优先级（逐条给理由，非随手排序）：
+ *    ① **`blob`** —— 发送侧本机 `File` 句柄（A 腿）。它在手 = 本机确有这件字节，
+ *       比任何路径都直接（`File` 是盘上惰性句柄，不是副本）；
+ *    ② **`path`** —— 本机绝对路径：收侧落点 `deviceSavedPath`（收腿）/ 发送端真路径
+ *       `deviceOutPath`（B′ 腿，agent 发）；两者都是「本机有可读件」的既证，走既有
+ *       `nfTicket` ⇒ `/api/nf-file` 链；
+ *    ③ **`none`** —— 无任何本机字节可读 ⇒ **不挂**可点面/下载键/直显槽（§B.7 ③
+ *       「禁可点但点了报错」），状态位文案即用户可见的说明面。
+ *
+ *  🔴 **未完成 / 失败 / 被拒态恒 `none`**：改前该门控是**隐式**的（发送侧压根没有路径，
+ *  接收侧 `savedPath` 只在完成时写）——本批把这条既有语义**显式化**，防「传输中就能点开」
+ *  的新面（任务书 N4：五态仍 `hasDlKey:false / previewable:false / inline:false`）。
+ *  @param {any} att 归一附件对象 @returns {{kind:'blob', file:File}|{kind:'path', path:string}|{kind:'none'}} */
+function deviceByteSourceOf(att) {
+  const status = (att && att.deviceStatus) ? String(att.deviceStatus) : '';
+  if (status !== 'completed') return { kind: 'none' };
+  const file = (att && att.deviceOutHandle) ? att.deviceOutHandle : null;
+  if (file) return { kind: 'blob', file };
+  const saved = (att && att.deviceSavedPath) ? String(att.deviceSavedPath) : '';
+  if (saved) return { kind: 'path', path: saved };
+  const out = (att && att.deviceOutPath) ? String(att.deviceOutPath) : '';
+  if (out) return { kind: 'path', path: out };
+  return { kind: 'none' };
+}
+
+/** 设备卡预览 tab id（**同件重复点击 = 同一 tab** 的稳定键）。
+ *  path 腿沿用改前的 `attach-local:<路径>`（逐字不变，收侧行为零回归）；
+ *  blob 腿用 `attach-out:<transferId>`（句柄无路径可作键；同一 transferId = 同一件）。 */
+function devicePreviewIdOf(att, src) {
+  if (src.kind === 'blob') return `attach-out:${(att && att.deviceTransferId) || (att && att.name) || ''}`;
+  return `attach-local:${src.path}`;
 }
 
 /** 两条消息里更新的那条（**窗内预览**取最新；判据 = 服务端行 id 单调，回落

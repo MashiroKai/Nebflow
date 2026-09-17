@@ -46,6 +46,49 @@ let pendingFileQueues = {};
 // transferId -> File
 let pendingUploads = {};
 
+// ===== 发送件真句柄表（selfattach 批 · 片 2「A 腿」，作者 D-1 = A + B′ 混合裁定）=====
+//
+// **发**侧本机字节句柄（浏览器 user 腿唯一可得的字节源）：`File` 是**盘上惰性句柄**，
+// 不是字节副本 ⇒ 零内存代价、零留存。用途 = 该次会话内让设备 legacy **出向行**的附件卡
+// 与好友/群面同款（直显 / 点击预览 / 保存键）——判据与消费全在 `messages.js`，本表只登记+只读。
+//
+// 🔴 与 `pendingUploads` **不同轴，禁合并**：后者是「待上传队列」的**一次性**交接（上传已发起 /
+//    完成即删，见 `:776`），本表是「发送侧本机现实」的**会话级**句柄（跨 `file-complete` 存活）。
+// 🔴 有界 LRU（上限 `OUT_HANDLE_MAX`）：超限淘汰最旧者，并广播
+//    `dropbox-out-handle-evicted`（消费侧据此撤销由该句柄派生的 objectURL，禁悬空 URL）。
+// 🔴 刷新/关窗即整体消失（页面级内存）⇒ 回落 = 台账帧的「名称 + 状态」形态（作者 D-2：
+//    该回落**可接受**，已登记，不是 bug）。
+const OUT_HANDLE_MAX = 32;
+/** transferId -> File（LRU 序：最近登记/读取者在末位）。 */
+const outFileHandles = new Map();
+
+/** 登记一枚发送侧句柄（^LRU 末尾；超限淘汰最旧者并广播退场事件）。
+ *  @param {string} transferId @param {File|null|undefined} file */
+function rememberOutFileHandle(transferId, file) {
+  if (!transferId || !file) return;
+  if (outFileHandles.has(transferId)) outFileHandles.delete(transferId);
+  outFileHandles.set(transferId, file);
+  while (outFileHandles.size > OUT_HANDLE_MAX) {
+    const oldest = outFileHandles.keys().next();
+    if (oldest.done) break;
+    outFileHandles.delete(oldest.value);
+    try {
+      document.dispatchEvent(new CustomEvent('dropbox-out-handle-evicted', { detail: { transferId: oldest.value } }));
+    } catch { /* 事件面失败不影响句柄表本身 */ }
+  }
+}
+
+/** 发送侧句柄只读访问器（消费面唯一入口；命中即 LRU touch）。
+ *  @param {string} transferId @returns {File|null} */
+export function outFileHandleOf(transferId) {
+  if (!transferId) return null;
+  const f = outFileHandles.get(transferId);
+  if (!f) return null;
+  outFileHandles.delete(transferId);
+  outFileHandles.set(transferId, f); // LRU touch（在看的行不被淘汰）
+  return f;
+}
+
 // ===== 附件闸位常量（必须与后端 AttachContract 逐字对齐）=====
 //
 // 🔴 量纲写死：**1024 MB = 1 GiB = 1,073,741,824 B**（作者 2026-09-14 09:14 原话
@@ -724,6 +767,9 @@ export function initDropbox() {
       const queue = pendingFileQueues[deviceId] || [];
       if (queue.length > 0) {
         pendingUploads[m.transferId] = queue.shift();
+        // selfattach 批 · 片 2（A 腿）：**同处**登记发送侧真句柄 —— 位置**先于**下方
+        // `afterDeviceMessageChange` ⇒ 本行**首帧渲染即带句柄**（作者令要求「首帧即带」）。
+        rememberOutFileHandle(m.transferId, pendingUploads[m.transferId]);
         if (queue.length === 0) delete pendingFileQueues[deviceId];
       }
     }
@@ -773,6 +819,8 @@ export function initDropbox() {
   onMessage('dropbox-file-complete', (msg) => {
     const inner = msg.msg || {};
     const { transferId, success, savedPath } = inner;
+    // 🔴 只删「待上传队列」那半（上传交接已完成）——发送侧**句柄表**（`outFileHandles`）
+    //    不在此删除：完成态的卡正是要用它取字节（selfattach 批 · 片 2）。
     delete pendingUploads[transferId];
     const msgs = dropboxMessages[msg.deviceId] || [];
     const m = msgs.find(x => x.transferId === transferId);
