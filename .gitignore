@@ -29,9 +29,12 @@ temp/
 tmp/
 docs/
 test-envs.sh
-# CHANGELOG.md was ignored here until 2026-09-14: the release contract
-# (`AGENTS.md` → Release 必须有 CHANGELOG.md) needs it as a normal tracked
-# file, and an ignored CHANGELOG meant every edit required `git add -f`.
+# CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
+# 2026-09-17 (they were tracked between 2026-09-14 and that ruling): their
+# content is archived at ~/.nebflow/docs/Nebflow/20260917_changelog-codebase-removal/,
+# and release notes are carried by the GitHub release body instead.
+/CHANGELOG.md
+/CODEBASE.md
 *demo*.html
 /nebflow
 nul
