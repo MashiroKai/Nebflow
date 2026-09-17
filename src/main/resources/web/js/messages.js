@@ -3513,6 +3513,123 @@ function compareDeviceMsg(a, b) {
   return (Number(a.createdAtMs) || 0) - (Number(b.createdAtMs) || 0);
 }
 
+// ── legacy 台账腿未读（作者令 2026-09-17 12:58，**翻转** 2026-09-16 的「不计数」）──
+// 设备会话里经 **legacy 台账腿**（`~/.nebflow/dropbox/messages.json`，带 `dir in/out`）
+// **到达**的入向消息计入未读/角标；打开会话 ⇒ 按**既有已读语义**清零（不改其语义）。
+//
+// 口径（逐条给理由，与好友/群面的「self 不计未读 / 回放不计未读」同族）：
+//  · **只计入向**：`direction === 'in'`（网关侧已按本机视角判定的方向）⇒ 计入；
+//    `dir=out`（我发出的）**恒不计**；方向键缺席 / 越界值 ⇒ 不计（**不猜**，保守向）。
+//    与 `adaptDeviceMessage` 的 legacy 支**同一条证据**（那里 `direction === 'out'` ⇒
+//    ours）—— 同一字段、同一语义，只是消费点不同（那里画面向，这里画未读）。
+//  · **只计「到达」，不计基线**：L2 缓存（`fmDropboxCache`）灌回的既有消息 = 上次会话
+//    已见过 ⇒ 作**基线**入 `seen` 集，**不涨角标**（与好友面「回放帧不计数」同一条纪律：
+//    否则冷启动/开窗回补就把历史刷成角标虚高）。此后工作集里**新出现**的入向 id
+//    才是「到达」。
+//  · **窗开着 ⇒ 即已读**（既有语义）：窗开时不涨（到达的 id 仍入 `seen`，否则关窗瞬间
+//    会**补涨** —— 阅读中到达的消息在关窗时变成「未读」是反语义）；开窗动作本身清零。
+//  · **服务端腿不介入**：有服务端行（`sourceServer`）的窗未读 = **服务端权威**（§8.1），
+//    本支恒不介入（`deviceConvs` 的 `if (w.serverRows.length)` 支照旧读服务端行）。
+//  · **零新取数通道**：只消费既有刷新链的两拍 —— `deviceConvs` 的 `hydrateDeviceCache`
+//    （基线）与 `onDeviceMessageChanged`（= dropbox.js `afterDeviceMessageChange` 单点，
+//    由 `dropbox-message` / `dropbox-history` 驱动）。**禁**在此另挂 WS 帧监听。
+//  · **禁新造已读状态机**：清零只落本地读数（`markDeviceConvRead` 对 legacy 腿首行即
+//    return —— 无服务端行 = 无可上报游标）；不清 L2、不写 cursor、不加 wire 字段。
+//  · **有界**：每设备 `seen` FIFO ≤512（与 `countedUnreadIds` 同族上限）；设备表 ≤256
+//    （FIFO 淘汰，淘汰即连同未读读数归零 —— 与「不在列表里就没有角标可显示」自洽）。
+const LEGACY_SEEN_MAX = 512;
+const LEGACY_DEV_MAX = 256;
+/** deviceId → {seen: Set<string>, order: string[]}（已入账的入向 id；基线亦入此集）。 */
+const legacyInboundSeen = new Map();
+/** deviceId → number（legacy 台账腿未读读数；开窗清零）。 */
+const legacyUnread = new Map();
+
+/** 取（惰性建）某设备的入向 id 台账，并按设备数上限淘汰。 */
+function legacySeenOf(deviceId) {
+  let e = legacyInboundSeen.get(deviceId);
+  if (!e) {
+    e = { seen: new Set(), order: [] };
+    legacyInboundSeen.set(deviceId, e);
+    if (legacyInboundSeen.size > LEGACY_DEV_MAX) {
+      const oldest = legacyInboundSeen.keys().next().value;
+      if (oldest !== undefined && oldest !== deviceId) {
+        legacyInboundSeen.delete(oldest);
+        legacyUnread.delete(oldest);
+      }
+    }
+  }
+  return e;
+}
+
+/** 入向 id 首次入账（有界 FIFO）。@returns {boolean} true = 首次见（= 「到达」）。 */
+function markLegacyInboundSeen(deviceId, id) {
+  if (id === undefined || id === null || id === '') return false; // 无稳定键 ⇒ 不判（不猜）
+  const e = legacySeenOf(deviceId);
+  const k = String(id);
+  if (e.seen.has(k)) return false;
+  e.seen.add(k);
+  e.order.push(k);
+  if (e.order.length > LEGACY_SEEN_MAX) {
+    const oldest = e.order.shift();
+    if (oldest !== undefined) e.seen.delete(oldest);
+  }
+  return true;
+}
+
+/** 入向判据单点（legacy 行 = `msgId`/`direction` 形态，见 `adaptDeviceMessage`）。 */
+function isLegacyInbound(m) {
+  return !!m && m.direction === 'in';
+}
+
+/** 基线灌入：L2 灌回的既有入向只入 `seen`，**不涨未读**（由 `deviceConvs` 与
+ *  `clearLegacyUnread` 两处调用 —— 两处都是「这些消息已被见过」的语义点）。 */
+function seedLegacyInboundBaseline(deviceId) {
+  for (const m of deviceMessagesOf(deviceId)) {
+    if (isLegacyInbound(m)) markLegacyInboundSeen(deviceId, m.msgId);
+  }
+}
+
+/** legacy 台账腿未读读数（`deviceConvs` 的 legacy 窗与到达拍共用，单一读数点）。 */
+function legacyUnreadOf(deviceId) {
+  return legacyUnread.get(deviceId) || 0;
+}
+
+/** 到达一拍：工作集里**新出现**的入向 id 计入未读（`onDeviceMessageChanged` 调用）。
+ *  @returns {number} 本拍新增条数（0 = 无变化）。 */
+function noteLegacyInboundArrivals(deviceId) {
+  const convId = DEVICE_CONV_PREFIX + deviceId;
+  const conv = conversations.find(c => c.conversationId === convId) || null;
+  if (conv && conv.sourceServer) return 0; // 服务端腿 = 服务端权威（本支不介入）
+  const reading = openConvId === convId; // 窗开着 ⇒ 即已读
+  let added = 0;
+  for (const m of deviceMessagesOf(deviceId)) {
+    if (!isLegacyInbound(m)) continue;
+    if (!markLegacyInboundSeen(deviceId, m.msgId)) continue;
+    if (!reading) added += 1;
+  }
+  if (added > 0) {
+    legacyUnread.set(deviceId, legacyUnreadOf(deviceId) + added);
+    if (conv) conv.unreadCount = legacyUnreadOf(deviceId);
+    updateBadge();
+  }
+  return added;
+}
+
+/** 开窗清零（**既有已读语义**：窗开着 ⇒ 即已读；对偶 = `markDeviceConvRead` 的服务端腿）。
+ *  legacy 腿无服务端游标可上报 ⇒ 只落本地读数 + 当前工作集入基线（关窗后**新到达**才再涨）。 */
+function clearLegacyUnread(conv) {
+  const did = conv && conv.device ? conv.device.deviceId : '';
+  if (!did) return;
+  legacyUnread.set(did, 0);
+  seedLegacyInboundBaseline(did);
+  conv.unreadCount = 0;
+  // 列表行对象可能不是同一个（`openDeviceChat` 的空缺支造的临时 conv 不入列表）⇒ 按 id 找行同步。
+  const row = conversations.find(c => c.conversationId === DEVICE_CONV_PREFIX + did);
+  if (row) row.unreadCount = 0;
+  updateBadge();
+  renderList();
+}
+
 /** 设备会话行（合并进 `conversations`；范本 = 群行 `convRow`）。
  *
  *  MVP-2（2026-09-15）：**服务端行优先 + 按 peer 归并两行**（契约 §9.3 + §8.1）。
@@ -3606,10 +3723,16 @@ function deviceConvs(serverRows) {
       w.unreadCount = sum;
       w.lastMessage = latest;
     } else {
-      // D5：无服务端行 ⇒ 无服务端未读可读 ⇒ 恒 0（不是假装算过）；预览取本地缓存
+      // D5（2026-09-17 12:58 卡**翻转** 09-16 采纳项）：无服务端行 ⇒ **服务端**无未读可读；
+      // 未读改由 **legacy 台账腿**读数承担（`legacyUnreadOf`，口径见本段上方块注释）——
+      // 改前此处恒 0（= 旧登记「legacy 不计数」，已 archived）。
       // ⑥：本地缓存的**唯一入口**是 `hydrateDeviceCache`（L2 → 内存工作集）——先灌
       // 再读，否则「上次会话聊过、本次未开窗」的设备行会显示空预览（看着像没聊过）。
+      // 🔴 灌回顺序即判据顺序：**先基线、后读数** —— L2 灌回的既有入向 = 已见过，
+      // 不得计入本次未读（与好友面「回放帧不计数」同一条纪律）。
       hydrateDeviceCache(did);
+      seedLegacyInboundBaseline(did);
+      w.unreadCount = legacyUnreadOf(did);
       const raw = deviceMessagesOf(did);
       const last = raw.length ? raw[raw.length - 1] : null;
       w.lastMessage = last ? adaptDeviceMessage(last) : null;
@@ -3855,6 +3978,11 @@ function onDeviceMessageChanged(deviceId) {
   if (!conversations.some(c => c && c.conversationId === convId)) {
     void refreshConversations();
   }
+  // 🔴 legacy 台账腿未读的**到达拍**（作者令 2026-09-17 12:58）：本函数 = dropbox.js
+  // `afterDeviceMessageChange` 单点 ⇒ `dropbox-message`（到达）/ 传输态 / 闸位提示 /
+  // `dropbox-history`（回包）四路都在此汇流（禁另行挂帧监听）。必须在 `renderList()`
+  // **之前** —— 本拍涨的未读随这一拍的行渲染出来（零额外重渲）。
+  noteLegacyInboundArrivals(deviceId);
   renderList(); // 设备行预览/时间（legacy 数据全在内存 ⇒ 零额外请求）
   const conv = currentConv();
   if (conv && conv.sourceServer) return; // 服务端腿：不在 dropbox 通知面上刷新
@@ -3890,6 +4018,12 @@ async function openDeviceConversation(conv, rowEl) {
   // 顺序即契约（与旧窗 `openDropbox` 同）：本地缓存渲染先于出帧（stale-while-revalidate）。
   const hydrated = hydrateDeviceCache(deviceId);
   syncDeviceMsgs(deviceId);
+  // 🔴 legacy 台账腿开窗清零（**既有已读语义**：窗开着 ⇒ 即已读；对偶 = 服务端腿
+  // `markDeviceConvRead`）。位置有两重判据：① 在 `hydrateDeviceCache` **之后** ——
+  // 基线要含 L2 灌回的既有入向（否则关窗后它们会被当成「到达」补涨）；② 在
+  // `openConvId` 置位**之后**（本函数首行已置）—— 随后到达的 `dropbox-history` 回包
+  // 按「窗开着」入账不涨。
+  clearLegacyUnread(conv);
   renderMessages(deviceMsgs);
   if (!hydrated && deviceHistoryPending(deviceId)) showFlowLoading(); // 无缓存 ⇒ 可见加载态
   requestDeviceHistory(deviceId);
