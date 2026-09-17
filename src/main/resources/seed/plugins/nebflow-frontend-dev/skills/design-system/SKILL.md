@@ -60,7 +60,7 @@ last_verified: 2026-08-17
 
 ---
 
-### 案例 002 · Flow Map 图谱视图原型（2026-09-03，v3.1 被作者打回 → v3.2 闭环）
+### 案例 002 · Flow Map 图谱视图原型（2026-09-03，v3.1 被用户打回 → v3.2 闭环）
 
 1. **功能类型**：全屏图谱视图（DAG 执行拓扑可视化：层级布局 + 连线 + 节点卡 + 相机交互）
 2. **范式参考**：Obsidian 图谱/Canvas 交互壳 · CAD 式滚轮锚点缩放 · 苹果 HIG Direct Manipulation（https://developer.apple.com/design/human-interface-guidelines/direct-manipulation）；取舍：力导向布局否决（执行拓扑需要确定的方向语义与 WS 稳定性），层级分层 + 空间打包
