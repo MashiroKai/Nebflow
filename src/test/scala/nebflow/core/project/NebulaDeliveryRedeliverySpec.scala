@@ -64,10 +64,15 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     val tmp = os.temp.dir(prefix = s"v8-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"v8-$name")
+    // workspace 必须是**真实路径**：`IO(os.makeDir.all(p))` 返回 Unit，旧写法把 Unit
+    // `toString` 成 "()" ⇒ store/事件审计/任务板全部落在 `os.Path("()", dataRoot)/.nebflow`
+    // （= `<dataRoot>/()`：dataRoot 为默认值时直写真实数据根，且是**跨 suite 共享**的同一
+    // 目录）——正是 teardown 删除的那个树，与晚解析 `dataRoot` 的写入者竞态。
+    val ws = tmp / "ws"
     try
       val io = for
-        workspace <- IO(os.makeDir.all(tmp / "ws"))
-        store <- FlowMapStore.open("v8proj", workspace.toString)
+        _ <- IO(os.makeDir.all(ws))
+        store <- FlowMapStore.open("v8proj", ws.toString)
         dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
         rateLimiter <- RateLimiter.create()
         tracker <- FileChangeTracker.create(os.pwd.toString)
@@ -109,11 +114,17 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
           system,
           resources,
           _ => IO.unit,
-          workspace.toString,
+          ws.toString,
           rootSid,
           "v8proj",
           FeedbackRouter.ModeAuto,
           (_, _, _) => IO.unit,
+          // 打包窗口在**源头**关闭：注入 trigger 接缝 ⇒ `DispatchNotify.forEngine` 令
+          // `windowMs = 0`（同步逐条 flush；不再派生 `IO.sleep(windowMs) *> flushBatch`
+          // 的脱离 fiber）。本 spec 判据 = 重投扫描 + 账本，与分发器触达文本无关——旧
+          // 形态下这条 5s 窗口 fiber 活过 teardown，成为删除之后仍向 fixture 树落盘
+          // （`markSent` → store mutate、事件审计 append）的晚解析写入者。
+          notifyTriggerOverride = Some(_ => IO.unit),
           // noderpt 批 A 段：本 fixture 主题 = 未消费结果重投 ⇒ 显式关腿 2（生产默认开）。
           reportGateHold = Some(false)
         )
@@ -123,7 +134,46 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
+      // 断言面之外的写入者终止闸（有界）：`system.stopAll` 只收演员，**不取消**引擎派生的
+      // 普通 fiber（节点启动/终态落盘、审计 append 仍可能在 teardown 瞬间落盘）。
+      // 被等对象 = 本 fixture 自己的异步写入者集合；终止条件 = fixture 树签名连续 3 轮
+      // （每轮 250ms）不变 ⇒ 视为已无写入者。超时（15s）⇒ 打印逐轮读数并**跳过删除**
+      // （宁留一个临时目录，也不删可能仍被写入的目录——删除与存活写入者并发正是
+      // `DirectoryNotEmptyException` 的唯一来源）。
+      if awaitFixtureQuiescent(tmp) then os.remove.all(tmp)
+      else System.err.println(
+        s"[v8-spec] fixture tree still changing after ${FixtureQuiesceDeadlineMs}ms — left in place (not deleted): $tmp")
+
+  /** fixture 树签名：路径 + 大小 + mtime（排序后拼接，稳定可比）。 */
+  private def fixtureSignature(root: os.Path): String =
+    try
+      if !os.exists(root) then "<absent>"
+      else
+        os.walk(root).toList
+          .map(p => s"$p:${os.size(p)}:${os.mtime(p)}")
+          .sorted
+          .mkString("|")
+    catch case _: Exception => "<unreadable>"
+
+  /** 有界静默等待（见 teardown 处头注）。逐轮读数写 stderr；终止条件 = 连续
+    * [[FixtureQuiesceRounds]] 轮签名不变。返回 true = 可安全删除。 */
+  private def awaitFixtureQuiescent(root: os.Path): Boolean =
+    var round = 0
+    var stable = 0
+    var last = fixtureSignature(root)
+    val deadline = System.currentTimeMillis() + FixtureQuiesceDeadlineMs
+    while stable < FixtureQuiesceRounds && System.currentTimeMillis() < deadline do
+      IO.sleep(FixtureQuiesceIntervalMs.millis).unsafeRunSync()
+      round += 1
+      val now = fixtureSignature(root)
+      stable = if now == last then stable + 1 else 0
+      last = now
+      System.err.println(s"[v8-spec] fixture-quiescence round=$round stable=$stable sigLen=${now.length} root=$root")
+    stable >= FixtureQuiesceRounds
+
+  private val FixtureQuiesceRounds = 3
+  private val FixtureQuiesceIntervalMs = 250L
+  private val FixtureQuiesceDeadlineMs = 15_000L
 
   private def registerRoot(resources: SharedResources, rootSid: String, rootRef: nebflow.actor.ActorRef[AgentCommand]): IO[Unit] =
     resources.agentRegistry.update(_ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid)))

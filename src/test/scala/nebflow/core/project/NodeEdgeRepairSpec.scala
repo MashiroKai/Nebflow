@@ -43,11 +43,22 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 180.seconds
 
-  private val tempRoot: os.Path = os.pwd / "target" / "test-node-edge-repair"
+  /** 每跑唯一夹具根（与 `MergeDesignGapSpec` 同模板同修法）。
+    *
+    * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-node-edge-repair` + 类初始化器里
+    * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
+    * `PathUtil.dataRoot` 的异步写入者**（`LlmLogWriter` 的队列 fiber，写点
+    * `dataRoot/logs/router`）竞态 ⇒ 走查期间根目录被写回 ⇒
+    * `DirectoryNotEmptyException` ⇒ `initializationError`。
+    *
+    * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失。 */
+  private val tempRoot: os.Path =
+    val scratchBase = os.pwd / "target"
+    os.makeDir.all(scratchBase)
+    os.temp.dir(dir = scratchBase, prefix = "test-node-edge-repair-")
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
