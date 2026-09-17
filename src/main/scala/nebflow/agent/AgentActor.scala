@@ -877,6 +877,10 @@ object AgentActor extends AgentCore with AgentSession:
       // dirPicker emitted only when true — pre-workspace-picker payloads stay byte-identical
       // (2026-09-05 作者裁定：工作区选择卡；前端据此渲染「选择工作区」应用内目录浏览器大目标)
       if item.dirPicker then base += "dirPicker" -> true.asJson
+      // freeInput emitted only when false — payloads that omit it (or carry the default
+      // true) stay byte-identical (2026-09-17 作者裁定 ②-7：dirPicker 卡显式置 false，
+      // 前端据此不渲染自由输入 textarea / 不恢复草稿)
+      if !item.freeInput then base += "freeInput" -> false.asJson
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)

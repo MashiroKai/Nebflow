@@ -2,13 +2,17 @@
 //
 // 覆盖面（前端卡片层与弹窗层；后端为 sbt 编译/资产契约覆盖）：
 //  - T1 卡片渲染：SVG 文件夹图标 + 「选择工作区」大目标；2026-09-09 作者裁定
-//    后端不下发候选——无候选 chips、无「其他…」，空 options = 自由输入 textarea
-//    直接可见（~ 手输兜底，确认门控随输入解锁）；点击（目标/卡片空白整体）→
-//    直接打开应用内目录浏览器（workspacePicker.js，2026-09-06 作者拍板：复用
+//    后端不下发候选——无候选 chips、无「其他…」（该条**未被** 09-17 裁定取代）；
+//    2026-09-17 作者裁定 ②-7 取代了「空 options = 自由输入 textarea 直接可见」一条
+//    ——本卡 freeInput=false ⇒ 正常路径 DOM 无 textarea（选择面不可用时的降级
+//    兜底面见 tests/project-create-panel.spec.mjs T3/T4）；点击（目标/卡片空白整体）
+//    → 直接打开应用内目录浏览器（workspacePicker.js，2026-09-06 作者拍板：复用
 //    文件浏览器「选择目录」设计 + 新建文件夹，不走系统对话框）
 //  - T2 应用内浏览器弹窗：fixture 目录树导航 / 新建文件夹 / 选中确认 →
 //    askUserAnswer 携带所选路径 + 卡片回显（选中即满足作答并自动确认）
-//  - T3 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
+//  - T3 弹窗取消 → 卡片回待选态（留再次选择余地）
+//
+// 运行需真实隔离实例（本 spec 走真实 ws 分发入口）：本批未跑（见报告 R7/开放项）。
 //
 // 入站帧注入方式：捕获真实 ws.js 分发入口（state.ws.onmessage 原闭包），
 // 之后以 FakeEvent 调用——走真实 GLOBAL/TERMINAL 路由 + onMessage 订阅链。
@@ -39,10 +43,12 @@ const TOKEN = process.env.NEBFLOW_TOKEN ?? defaultToken();
 const SID = 'e2e-ws-picker-session';
 const RID = 'req-wsp-1';
 
-// 2026-09-09 作者裁定后的真实面板载荷形态：后端不下发候选（options 空）+ dirPicker。
+// 2026-09-17 作者裁定后的真实面板载荷形态：后端不下发候选（options 空）+ dirPicker
+// + freeInput=false（②-7：前端不渲染自由输入 textarea、不恢复草稿）。
 const DIR_PICK_ITEM = {
-  question: 'ProjectCreate 需要项目工作区路径（E2E fixture 问题文案）— 点击上方「选择工作区」打开应用内目录浏览器；或在下方输入框手输绝对路径（支持 ~ 展开）。',
+  question: 'ProjectCreate 需要项目工作区路径（E2E fixture 问题文案）— 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。',
   dirPicker: true,
+  freeInput: false,
   options: [],
 };
 
@@ -116,15 +122,13 @@ test.describe('workspace-picker card', () => {
     await expect(target.locator('.ws-pick-title')).toHaveText(/选择工作区|Pick Workspace/);
     await expect(target.locator('.ws-pick-hint')).toContainText(/应用内目录浏览器|in-app folder browser/i);
 
-    // 2026-09-09 作者裁定：无候选 chips、无「其他…」按钮
+    // 2026-09-09 作者裁定：无候选 chips、无「其他…」按钮（该条未被 09-17 裁定取代）
     await expect(box.locator('.option-btn')).toHaveCount(0);
     await expect(box.locator('.ws-pick-candidate')).toHaveCount(0);
-    // 空 options = 自由输入 textarea 直接可见（~ 手输兜底）；未作答时确认禁用（门控）
-    const input = box.locator('.option-custom-input');
-    await expect(input).toBeVisible();
+    // 2026-09-17 作者裁定 ②-7：freeInput=false ⇒ 正常路径 DOM 无自由输入 textarea
+    // （改造前该读数 = 1）；未作答时确认仍禁用（门控由选择面写入解锁）
+    await expect(box.locator('.option-custom-input')).toHaveCount(0);
     await expect(box.locator('.option-confirm')).toBeDisabled();
-    await input.fill('/tmp/manual-path');
-    await expect(box.locator('.option-confirm')).toBeEnabled(); // 输入解锁确认门控
 
     // 点击大目标 → 直接打开应用内目录浏览器（workspacePicker.js），发 wsBrowse.list 出站帧
     await target.click();
@@ -135,14 +139,17 @@ test.describe('workspace-picker card', () => {
     ]);
     await expect(target).toHaveClass(/picking/); // 选择中态
 
-    // 关闭弹窗（取消）→ 回待选态；已输入的路径仍可独立确认作答（手输兜底链）
+    // 关闭弹窗（取消）→ 回待选态（②-7 后不再有手输兜底面，重选 = 再点大目标）
     await page.locator('.wsp-cancel').click();
     await expect(target).not.toHaveClass(/picking/);
-    await box.locator('.option-confirm').click();
+    await expect(box.locator('.option-custom-input')).toHaveCount(0);
+    // 再点大目标 → 选中此目录 → 点选即自动提交（②-5 保持现状），无需再点确认
+    await target.click();
+    await page.locator('.wsp-pick').click();
+    await expect.poll(() => page.evaluate(() => window.__captured.filter(m => m.type === 'askUserAnswer').length)).toBe(1);
     const after = await page.evaluate(() => window.__captured);
-    expect(after).toEqual([
-      { type: 'wsBrowse.list', path: '~', sessionId: SID },
-      { type: 'askUserAnswer', sessionId: SID, answers: ['/tmp/manual-path'], requestId: RID },
+    expect(after.filter(m => m.type === 'askUserAnswer')).toEqual([
+      { type: 'askUserAnswer', sessionId: SID, answers: ['~'], requestId: RID },
     ]);
   });
 
@@ -201,7 +208,7 @@ test.describe('workspace-picker card', () => {
     await expect(box.locator('.option-answer')).toContainText('/Users/e2e/fixture-root/ws-a/ws-new');
   });
 
-  // T3 — 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
+  // T3 — 弹窗取消 → 卡片回待选态（留再次选择余地）
   test('T3 弹窗取消 → 卡片回待选态', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);

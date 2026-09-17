@@ -3297,14 +3297,19 @@ object ProjectCreateTool extends Tool:
                 "pass 'workspace' (and optionally 'name') explicitly."
             )))
           case Some(agentRef) =>
-            // 2026-09-09 作者裁定：面板不再下发候选（无候选 chips、无「其他…」）。
+            // 2026-09-09 作者裁定原句保留可读：「面板不再下发候选（无候选 chips、无「其他…」）。
             // 选择面 = 应用内目录浏览器（dirPicker=true → 前端大目标 → workspacePicker.js，
             // 可逐级浏览/新建文件夹/显示隐藏目录）+ 空 options 使自由输入 textarea 直接
-            // 可见（~ 手输兜底，后端 expandTilde/parsePanelAnswer 负责展开与绝对化校验）。
+            // 可见（~ 手输兜底，后端 expandTilde/parsePanelAnswer 负责展开与绝对化校验）」。
+            // 其中**末一条已被 2026-09-17 作者裁定取代**（S3 ②-5/②-6/②-7）：本卡显式
+            // freeInput=false ⇒ 前端不渲染自由输入 textarea（选择面不可用时按需揭示降级
+            // 输入面兜底）；点选即自动提交保持不变；「不下发候选 options」一条继续成立、禁改。
+            // 后端 expandTilde / parsePanelAnswer 的绝对化校验保留（降级兜底 / legacy / CLI 面
+            // 仍喂自由文本；见 test ⑥）。
             val question =
               s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器" +
-                s"（可逐级浏览、新建文件夹，含隐藏目录）；或在下方输入框手输绝对路径（支持 ~ 展开）。"
-            val item = AskItem(question, List.empty, dirPicker = true)
+                s"（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。"
+            val item = AskItem(question, List.empty, dirPicker = true, freeInput = false)
             // #250 第⑤项：requestId 熵强化（单点生成器，作用域 panel-）
             val requestId = nebflow.agent.InteractionRequestId.forDirPanel()
             for

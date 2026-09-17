@@ -142,8 +142,15 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   /** 桩 agent actor：只复刻 AgentActor.AskUser handler 的转发职责——收到
-    * AgentCommand.AskUser → 记录 (requestId, items)（面板载荷断言面）→ 组
-    * items 载荷投真实 InteractionHub（pending 槽 + 根窗口渲染帧由此产生）。 */
+    * AgentCommand.AskUser → 记录 (requestId, items)（面板载荷断言面）→ 投真实
+    * InteractionHub（pending 槽 + 根窗口渲染帧由此产生）。
+    *
+    * 🔴 S3 批 r4 返工（作者 2026-09-17 裁定 R3 帧级红因 = (甲) 测试面缺陷）：载荷
+    * **不再由本桩自造**——改经 `AskUserFrameBridge` 走生产序列化单点
+    * `AgentActor.buildAskUserJson`（本桩自此只保留转发职责）。原桩硬写
+    * `question`/`options`/`allowOther` 三键 ⇒ 结构性不含 `dirPicker`/`freeInput`，
+    * 帧级断言实际所检 = 测试自造字面量（缺陷本体）。改后帧级断言所检 = 真 `AskItem`
+    * 序列化输出 ⇒ 生产发射面改动可使该断言转红（红锚可分离）。 */
   private def panelAgentActor(
       hub: ActorRef[InteractionHubCommand],
       rootSid: String,
@@ -156,16 +163,8 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
               InteractionRequest(
                 requestId = requestId,
                 kind = InteractionKind.AskUser,
-                payload = Json.obj(
-                  "items" -> Json.arr(items.map { it =>
-                    Json.obj(
-                      "question" -> Json.fromString(it.question),
-                      "options" -> Json.arr(it.options.map(o => Json.obj("label" -> Json.fromString(o.label)))*),
-                      "allowOther" -> Json.fromBoolean(it.allowOther)
-                    )
-                  }*),
-                  "agentName" -> Json.fromString("Nebula")
-                ),
+                // 帧载荷 = 生产序列化单点产出（本桩不自造 item 字面量）
+                payload = AskUserFrameBridge.payload(rootSid, items),
                 reply = InteractionReply.AskUserReply(replyToOpt),
                 rootSessionId = rootSid,
                 sourceAgent = "Nebula",
@@ -276,14 +275,23 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val (ridGot, items) = askOpt.getOrElse(fail("panel items must be dispatched"))
       assertEquals(ridGot, rid)
       assertEquals(items.length, 1, "exactly one question (path selection)")
-      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09)")
+      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09；该条未被 09-17 裁定取代)")
       assert(items.head.dirPicker, "workspace card must carry dirPicker=true (2026-09-05 作者裁定)")
       assert(items.head.question.contains("选择工作区"), "question must guide to the in-app browser")
-      assert(items.head.question.contains("~"), "question must keep the manual-input (~) fallback")
+      // 2026-09-17 作者裁定（S3 ②-5/②-7）：面板文案退役「~ 手输」叙述（改述「选择后即完成创建」），
+      // 且该卡显式 freeInput=false（前端不渲染自由输入 textarea；选择面不可用时才按需揭示兜底）。
+      assert(items.head.question.contains("选择后即完成创建"), "question must state that picking completes the creation")
+      assert(!items.head.question.contains("输入框"), "question must not advertise the retired free-input box")
+      assert(!items.head.question.contains("~"), "question must no longer advertise the retired ~ manual input")
+      assert(!items.head.freeInput, "workspace card must carry freeInput=false (2026-09-17 ②-7)")
       val askFrame = fs.find(_.hcursor.downField("type").as[String].toOption.contains("askUser")).get
-      val frameOptions = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
+      val frameItem0 = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
+      val frameOptions = frameItem0
         .hcursor.downField("options").as[List[Json]].toOption.get
       assertEquals(frameOptions, Nil, "rendered frame must carry empty options")
+      // 帧级断言（JSON 游标口径：不依赖模型新字段名 ⇒ 改前树同样可编译，红锚可分离）
+      assertEquals(frameItem0.hcursor.downField("dirPicker").as[Boolean], Right(true), "rendered frame must carry dirPicker=true")
+      assertEquals(frameItem0.hcursor.downField("freeInput").as[Boolean], Right(false), "rendered frame must carry freeInput=false (2026-09-17 ②-7)")
       assert(askFrame.hcursor.downField("requestId").as[String].isRight, "frame must carry requestId")
     end for
   }
