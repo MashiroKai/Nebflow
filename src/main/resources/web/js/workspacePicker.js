@@ -78,6 +78,9 @@ export function openPicker(opts = {}) {
     sessionId: opts.sessionId || (state.activeSessionId ?? undefined),
     onPick: opts.onPick || (() => {}),
     onCancel: opts.onCancel || (() => {}),
+    // 2026-09-17 作者裁定 ②-6：目录列表超时/error 必须如实上抛给调用方（禁静默吞），
+    // 由调用方决定降级（chat.js 的 dirPicker 卡据此揭示自由输入兜底面）。
+    onListUnavailable: opts.onListUnavailable || (() => {}),
     current: opts.startPath || '~',
     home: '',
   };
@@ -192,6 +195,8 @@ export function openPicker(opts = {}) {
     if (res && res.error) {
       listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.readFail')) + '</div>';
       curEl.textContent = t('workspacePicker.readFail') + ' (' + res.error + ')';
+      // 列表不可用 = 选择面不可用 ⇒ 如实上抛（禁静默吞）；调用方据此揭示降级输入面。
+      ctx.onListUnavailable(res.error);
       return;
     }
     if (res.home) ctx.home = res.home;

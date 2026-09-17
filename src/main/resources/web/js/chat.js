@@ -1880,9 +1880,13 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // 工作区选择卡（dirPicker=true）：问题下方渲染「选择工作区」大目标——内联 SVG
     // 描边文件夹图标（禁 emoji）。点击目标或卡片空白区整体 → 应用内目录浏览器
     // （workspacePicker.js，2026-09-06 作者拍板：复用文件浏览器「选择目录」设计 +
-    // 新建文件夹，不走系统对话框）。2026-09-09 作者裁定：后端不下发候选 options——
-    // 无候选 chips、无「其他…」按钮；空 options 使下方自由输入 textarea 直接可见
-    // （~ 手输兜底，展开由后端负责）。
+    // 新建文件夹，不走系统对话框）。2026-09-09 作者裁定原句保留可读：「后端不下发
+    // 候选 options——无候选 chips、无「其他…」按钮；空 options 使下方自由输入
+    // textarea 直接可见（~ 手输兜底，展开由后端负责）」——其中**末一条已被
+    // 2026-09-17 作者裁定取代**（S3 ②-5/②-6/②-7）：dirPicker 卡显式 freeInput=false
+    // ⇒ 不渲染 textarea、跳过草稿恢复（答案只由选择面写入）；点选即自动提交保持不变；
+    // 选择面不可用时按需揭示降级输入面并聚焦，禁死路。「不下发候选 options」一条
+    // 继续成立、禁改。
     let dirPick = null;
     if (item.dirPicker) {
       const target = document.createElement('button');
@@ -1927,13 +1931,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         // 2026-09-06 作者拍板：复用应用内目录浏览器（workspacePicker.js，含面包屑 /
         // 上级 / 新建文件夹 / 选中此目录），不走系统目录对话框。openPicker({sessionId,
         // onPick, onCancel})。
-        import('./workspacePicker.js').then(({ openPicker }) => {
+        import('./workspacePicker.js').then(({ openPicker, closePicker }) => {
           openPicker({
             sessionId: askSessionId,
             onPick: (p) => entry.complete(p),
             onCancel: () => entry.setIdle(),
+            // 目录列表超时/error（选择面不可用）⇒ 关掉浏览器 + 揭示降级输入面
+            // （2026-09-17 裁定 ②-6：按需揭示自由输入面并聚焦，禁死路）
+            onListUnavailable: () => { closePicker(); revealFallbackInput(); },
           });
-        }).catch(() => entry.setIdle()); // 模块加载失败也不悬挂卡片
+        }).catch(() => { entry.setIdle(); revealFallbackInput(); }); // 模块加载失败 ⇒ 降级，不悬挂卡片
       };
       target.addEventListener('click', (e) => { e.stopPropagation(); startPick(); });
       // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
@@ -2000,18 +2007,36 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     }
 
     const allowOther = item.allowOther !== false;
+    // 2026-09-17 作者裁定（S3 ②-7 协议收敛）：freeInput === false ⇒ 本卡不提供自由
+    // 输入面（不渲染 textarea、跳过草稿恢复）。字段缺失 / true（旧载荷）= 逐字节现状
+    // ——空 options 时 textarea 直接可见（2026-09-09 裁定，已由 09-17 裁定取代，
+    // 原句见上方工作区选择卡注释块）。
+    const freeInput = item.freeInput !== false;
     const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
     customInput.placeholder = t('chat.typeAnswer');
     customInput.rows = 2;
 
-    const savedVal = saved[qi];
+    // 降级兜底（2026-09-17 裁定 ②-6）：选择面不可用（动态 import 拒绝 / 目录列表
+    // 超时或 error）⇒ 按需把自由输入面挂进卡片并聚焦，答案仍能成功上送
+    // askUserAnswer——🔴 禁死路。常态卡（freeInput 缺省 / true）本就常驻 textarea，
+    // 此函数即时返回；revealFallbackInput 只在 dirPicker 块的失败支路被调用。
+    function revealFallbackInput() {
+      if (freeInput) return; // 常态：textarea 已在 DOM（2026-09-09 现状）
+      if (!customInput.isConnected) optsDiv.appendChild(customInput);
+      customInput.style.display = '';
+      customInput.focus();
+    }
+
+    // freeInput === false ⇒ 显式跳过 localStorage 草稿恢复：否则看不见的陈旧草稿会
+    // 直接写进 answers[qi]，配 1912 的点选即自动提交 = 假作答（新判红点）。
+    const savedVal = freeInput ? saved[qi] : undefined;
     if (savedVal && !isMulti) {
       customInput.value = savedVal;
       answers[qi] = savedVal;
     }
 
-    if (!hasOptions) customInput.style.display = '';
+    if (!hasOptions) customInput.style.display = freeInput ? '' : 'none';
 
     let otherBtn = null;
     if (hasOptions && allowOther) {
@@ -2087,7 +2112,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       updateVisibility();
       checkAllAnswered();
     };
-    optsDiv.appendChild(customInput);
+    // freeInput === false ⇒ 不渲染 textarea：正常路径 DOM 无 .option-custom-input
+    // （2026-09-17 裁定 ②-7 的目标读数，改造前为 1）。选择面不可用时由
+    // revealFallbackInput() 按需挂载（降级兜底，②-6）。
+    if (freeInput) optsDiv.appendChild(customInput);
     wrapper.appendChild(optsDiv);
     box.appendChild(wrapper);
     if (isMulti) syncMulti(qi); // pick up restored Other text, if any (needs the DOM in place)
