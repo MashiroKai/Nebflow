@@ -71,6 +71,19 @@ jobs:
         # Exit code != 0 = hit.
         # Same logic locally: node scripts/check-local-coupling.mjs
         run: node scripts/check-local-coupling.mjs
+      - name: Tag format (release tags carry no `v`)
+        # F3 mount (tagfix batch 2026-09-17): the anchor
+        # scripts/check-tag-format.mjs existed since tagfmt-sink but was not
+        # wired into any pipeline step (manual / review-face gate only). This
+        # step makes it an automatic gate. It scans the two CI release paths
+        # (.github/workflows/release.yml, auto-release.yml) plus the installer
+        # download path (release/install.sh, release/install.ps1): zero
+        # v-prefixed version forms on both faces, and the no-v form present
+        # exactly once at each of the three build points. Probe-before-trust:
+        # "zero hits" is only trusted after the synthetic v-form probes hit.
+        # Offline and hermetic: no network, no credentials.
+        # Same logic locally: node scripts/check-tag-format.mjs
+        run: node scripts/check-tag-format.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
