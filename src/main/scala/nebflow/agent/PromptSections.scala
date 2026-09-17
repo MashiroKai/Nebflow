@@ -24,6 +24,7 @@ import nebflow.core.PathUtil
  *
  *   100-199  — fixed foundational sections (env info)
  *   350      — 文档溯源规范（唯一权威面，always）
+ *   370      — 根代理路由纪律（Nebula 根会话 only，条件 isRootAgent）
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -259,6 +260,41 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       |- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header.""".stripMargin
 
   // ============================================================
+  // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
+  //
+  // 存在理由：Nebula 的提示词字面量（AgentLibrary.Seeds.Nebula）里作者六句
+  // spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有一句定义
+  // Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或由
+  // 设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
+  // 文件、按主机名猜出的用户名目录、Desktop/Downloads、数据根下的 tasks.json
+  // 等），0 次 Mail —— 见诊断件 .nebflow/reports/20260917_coldroute-diag.md。
+  //
+  // 落点理由：AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
+  // add-only（只在文件不存在时补写），既有 home 重启不刷新 ⇒ 改字面量对作者
+  // 现有实例无效（诊断件已用隔离实例实测：加标记后重启，标记存活）。本段由
+  // **引擎编译**注入、与盘面无关（先例 order 350 / order 360），重启同一 home
+  // 即生效。
+  //
+  // 文本纪律：纯静态、零用户数据、零绝对路径、零 hostname。本段进每次根会话
+  // LLM 调用，且**不得**把任何本机标识写回请求面（「设备名被当作用户名」正是
+  // 被修的缺陷，写进来等于复制引诱源）。反模式按**类别**指名（system account
+  // files / shell rc files / Desktop / Downloads），不写具体绝对路径 —— 示例
+  // 路径本身会变成新的猜测锚点。
+  // ============================================================
+
+  val rootRoutingDisciplineSection: String =
+    """## Routing discipline (root agent)
+      |
+      |Applies to every task that reaches you, before anything else:
+      |
+      |1. **Route first.** Your first tool call routes the task: `Mail(address="project:<name>", message=<task>)` when a matching project already exists, or `ProjectCreate` and then that Mail when none does. No filesystem tool may run before this first routing call.
+      |2. **`Read` reads back results only** — a result a project or node returned to you. It is not a reconnaissance tool: the "Recon: Read only" line elsewhere in your prompt is not a licence to read in order to look around, and this section governs over that reading.
+      |3. **No filesystem exploration.** Never use Read / Glob / Grep / Bash to hunt for a path, a username, a home directory or a workspace.
+      |4. **No path inference from identity.** Device names, hostnames and `# Devices` entries are never evidence of a host path: never derive a username or home directory from them, and never go looking through system account files, shell rc files, or the user's Desktop / Downloads folders.
+      |5. **Workspace paths are never guessed.** If a path is genuinely required, omit `workspace` and let auto-creation or the user's picker resolve it — never invent one.
+      |6. **Missing information goes to the project, not to your own shell.** Put it in the dispatch text as an open item for the project to perceive (the project can see its own filesystem), or ask the user through `AskUserQuestion`.""".stripMargin
+
+  // ============================================================
   // Dynamic section registry
   // ============================================================
 
@@ -295,6 +331,19 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       360,
       condition = ctx => ctx.availableTools.contains(nebflow.core.tools.NodeReportToolDef.Name),
       body = NodeSessionAlwaysOnSection
+    ),
+
+    // --- 根代理路由纪律（冷启动路由批 2026-09-17）：条件 isRootAgent ⇒ 唯一
+    // 注入面 = 根 Nebula 会话；项目分发器 / 节点会话（isRootAgent=false）收不到
+    // 本段，正合其义（分发器自己就是被路由到的落点，不需要「先路由」纪律）。
+    // 段序 370 = 落在 order-360 节点申报段之后、order-395 identity 段之前；本段
+    // 必须排在 system.md 之后（所有条件段的共同前提），故不追求更早槽位——与
+    // 字面量里 "Recon: Read only" 的冲突靠**文本内显式声明优先**消解（判据②），
+    // 不靠段序。
+    PromptSection(
+      370,
+      condition = ctx => ctx.isRootAgent,
+      body = rootRoutingDisciplineSection
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
