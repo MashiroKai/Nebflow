@@ -5,11 +5,14 @@
      前端实现 = 完整复用 AskUserQuestion 卡片（renderAskUser/showOptions），零新增
      组件与 i18n key —— 本 harness 以真实渲染模块（chatView.js / state.js / chat.js，
      无 stub 无打包）回放面板形态的 askUser 载荷，验证：
-       1. 面板卡片渲染（问题 + 「选择工作区」大目标 + 自由输入 textarea + 取消键；
-          2026-09-09 作者裁定：无候选、无「其他…」）；
-       2. 自由输入路径 → 确认 → askUserAnswer 帧载荷正确（answers=[路径], requestId）；
-       3. '~' 前缀原样上送（展开由后端负责）；
-       4. 取消 → answers=['__cancelled__'] 哨兵。
+       1. 面板卡片渲染（问题 + 「选择工作区」大目标 + 取消键；2026-09-09 作者裁定：
+          无候选、无「其他…」；2026-09-17 作者裁定 ②-7：dirPicker 卡 freeInput=false
+          ⇒ 不渲染自由输入 textarea、不恢复草稿）；
+       2. 点选即自动提交（②-5 保持现状）→ askUserAnswer 帧载荷正确；
+       3. 选择面不可用（import 拒绝 / wsBrowse.list 超时）⇒ 按需揭示降级输入面
+          （②-6 禁死路），答案仍成功上送；
+       4. 旧载荷（缺 freeInput）行为逐字节现状 + 其它 ask 卡存量对照；
+       5. 取消 → answers=['__cancelled__'] 哨兵。
 
      spec（tests/project-create-panel.spec.mjs）以临时静态服务驱动本页
      （随机高位端口，never the 8080 host）。 -->
@@ -73,6 +76,30 @@
     };
 
     window.__capturedFrames = () => window.__captured.slice();
+
+    // ── S3 批（2026-09-17 裁定）附加驱动 ─────────────────────────────────
+    // 任意载荷渲染：旧载荷对照（缺 freeInput）与其它 ask 卡对照（options 非空）。
+    window.__panelWith = async (items, requestId) => {
+      freshChat();
+      chat.renderAskUser(items, 'harness-session', 'Nebula', requestId);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    };
+
+    // 回放卡（历史重建）：走真实 renderAskUserHistory，bubble 挂进聊天列。
+    window.__history = async (items, answerText) => {
+      freshChat();
+      const bubble = document.createElement('div');
+      bubble.className = 'msg ai';
+      chatEl.appendChild(bubble);
+      chat.renderAskUserHistory(bubble, items, answerText);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    };
+
+    // 陈旧草稿预置（T2 判红：看不见的 draft 不得满足确认门控）。
+    window.__draft = (sid, qi, val) => {
+      localStorage.setItem('nebflow_askuser_drafts', JSON.stringify({ [sid]: { [qi]: val } }));
+    };
+
     window.__ready = true;
   </script>
 </body>

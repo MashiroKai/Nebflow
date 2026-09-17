@@ -276,14 +276,23 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val (ridGot, items) = askOpt.getOrElse(fail("panel items must be dispatched"))
       assertEquals(ridGot, rid)
       assertEquals(items.length, 1, "exactly one question (path selection)")
-      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09)")
+      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09；该条未被 09-17 裁定取代)")
       assert(items.head.dirPicker, "workspace card must carry dirPicker=true (2026-09-05 作者裁定)")
       assert(items.head.question.contains("选择工作区"), "question must guide to the in-app browser")
-      assert(items.head.question.contains("~"), "question must keep the manual-input (~) fallback")
+      // 2026-09-17 作者裁定（S3 ②-5/②-7）：面板文案退役「~ 手输」叙述（改述「选择后即完成创建」），
+      // 且该卡显式 freeInput=false（前端不渲染自由输入 textarea；选择面不可用时才按需揭示兜底）。
+      assert(items.head.question.contains("选择后即完成创建"), "question must state that picking completes the creation")
+      assert(!items.head.question.contains("输入框"), "question must not advertise the retired free-input box")
+      assert(!items.head.question.contains("~"), "question must no longer advertise the retired ~ manual input")
+      assert(!items.head.freeInput, "workspace card must carry freeInput=false (2026-09-17 ②-7)")
       val askFrame = fs.find(_.hcursor.downField("type").as[String].toOption.contains("askUser")).get
-      val frameOptions = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
+      val frameItem0 = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
+      val frameOptions = frameItem0
         .hcursor.downField("options").as[List[Json]].toOption.get
       assertEquals(frameOptions, Nil, "rendered frame must carry empty options")
+      // 帧级断言（JSON 游标口径：不依赖模型新字段名 ⇒ 改前树同样可编译，红锚可分离）
+      assertEquals(frameItem0.hcursor.downField("dirPicker").as[Boolean], Right(true), "rendered frame must carry dirPicker=true")
+      assertEquals(frameItem0.hcursor.downField("freeInput").as[Boolean], Right(false), "rendered frame must carry freeInput=false (2026-09-17 ②-7)")
       assert(askFrame.hcursor.downField("requestId").as[String].isRight, "frame must carry requestId")
     end for
   }
