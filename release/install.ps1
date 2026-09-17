@@ -618,7 +618,9 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     } catch {
         Write-Warn2 "rg download failed: $_"
         Write-Warn2 "Search will rely on PATH install."
-        Write-Warn2 "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/v$RgVersion"
+        # Upstream ripgrep tags are BARE ("14.1.1"), never "v14.1.1": the old
+        # `tag/v$RgVersion` form 404s (tagfix 2026-09-17, curl -I readings).
+        Write-Warn2 "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/$RgVersion"
         Write-Warn2 "Manual placement: extract rg.exe to $InstallDir\rg.exe"
         Write-ChecksumHint $rgName
     }
@@ -683,19 +685,24 @@ $wrapperContent = @"
 # BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple (year,
 # month, day, same-day -beta.N sequence) and take the max.
 # Version core = the SAME contract as packaging/app-version.sh:21
-#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
+# The optional 4th segment and the -beta.N tail are the SAME field (the same-day
+# sequence, i.e. the tuple's 4th field): four segments = date core + sequence
+# (tagfix 2026-09-17; still anchored, so a 5-field name stays unparseable and is
+# excluded like any other unknown shape - no new segment semantics).
 # Legacy semver shapes (1.4.1-beta.56) rank by the same 4-field tuple; a name
 # that parses as neither is EXCLUDED - deliberately NO silent fall back to name
 # order (the "JAR not found" branch below then fires).
 function Get-NebflowJarVersionKey {
     param([string]`$Name)
-    `$m = [regex]::Match(`$Name, '-assembly-(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-beta\.(\d+))?\.jar`$')
+    `$m = [regex]::Match(`$Name, '-assembly-(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.(\d+))?(?:-beta\.(\d+))?\.jar`$')
     if (-not `$m.Success) {
-        `$m = [regex]::Match(`$Name, '-assembly-(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?\.jar`$')
+        `$m = [regex]::Match(`$Name, '-assembly-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-beta\.(\d+))?\.jar`$')
     }
     if (-not `$m.Success) { return `$null }
     `$seq = 0
     if (`$m.Groups[4].Success) { `$seq = [int]`$m.Groups[4].Value }
+    elseif (`$m.Groups[5].Success) { `$seq = [int]`$m.Groups[5].Value }
     return [pscustomobject]@{
         Year  = [int]`$m.Groups[1].Value
         Month = [int]`$m.Groups[2].Value
@@ -802,7 +809,11 @@ rem zeros (Windows version fields reject them), so as plain strings "2026.10.5"
 rem sorts BEFORE "2026.9.17". Rank the candidate (arg %~1) by the parsed numeric
 rem tuple and keep the max. Version core = the SAME contract as
 rem packaging/app-version.sh:21
-rem   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+rem   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
+rem The optional 4th segment and the -beta.N tail are the SAME field (the
+rem same-day sequence, i.e. the tuple's 4th field): four segments = date core +
+rem sequence; still anchored, so a 5-field name stays unparseable (tagfix
+rem 2026-09-17, no new segment semantics).
 rem Legacy semver shapes (1.4.1-beta.56) rank by the same 4-field tuple; a name
 rem that parses as neither is EXCLUDED - deliberately NO silent fall back to
 rem name order (the "JAR not found" branch above then fires).
@@ -814,12 +825,16 @@ set "NB_VER="
 set "NB_CORE="
 set "NB_TAIL="
 set "NB_SEQ=0"
+set "NB_SEQ4="
 set "NB_Y="
 set "NB_M="
 set "NB_D="
 set "NB_KEY="
 set "NB_VER=%NB_NAME:*-assembly-=%"
 if "%NB_VER%"=="%NB_NAME%" exit /b 0
+rem %~nx1 keeps the extension: strip ".jar" first, else it is read as a bogus
+rem 4th dot-field ("2026.9.17.jar" -> 2026 / 9 / 17 / jar).
+set "NB_VER=%NB_VER:.jar=%"
 for /f "tokens=1,* delims=-" %%a in ("%NB_VER%") do (
   set "NB_CORE=%%a"
   set "NB_TAIL=%%b"
@@ -828,12 +843,20 @@ if defined NB_TAIL (
   if /i "%NB_TAIL:beta.=%"=="%NB_TAIL%" exit /b 0
   set "NB_SEQ=%NB_TAIL:beta.=%"
 )
-for /f "tokens=1,2,3,4 delims=." %%a in ("%NB_CORE%") do (
-  if not "%%~d"=="" exit /b 0
+rem Date core + optional same-day sequence: 3 or 4 numeric fields; 5+ = reject
+rem (the "*" token = "all remaining text", the early exit is on THAT, not on the
+rem 4th field any more).
+for /f "tokens=1,2,3,4,* delims=." %%a in ("%NB_CORE%") do (
+  if not "%%~e"=="" exit /b 0
   set "NB_Y=%%a"
   set "NB_M=%%b"
   set "NB_D=%%c"
+  set "NB_SEQ4=%%d"
 )
+rem 4th field = the same-day sequence (the slot the -beta.N tail fills); a
+rem missing or non-numeric 4th field leaves the tail's value untouched.
+if defined NB_SEQ4 if not "%NB_SEQ4%"=="" for /f "delims=0123456789" %%z in ("%NB_SEQ4%") do set "NB_SEQ4="
+if defined NB_SEQ4 if not "%NB_SEQ4%"=="" set "NB_SEQ=%NB_SEQ4%"
 if not defined NB_Y exit /b 0
 if not defined NB_M exit /b 0
 if not defined NB_D exit /b 0

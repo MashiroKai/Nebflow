@@ -38,13 +38,18 @@
 //                      T2 alone would also be satisfied by DELETING the tag
 //                      logic; T3 is what makes this a format gate.
 //   T4  Scoping      = the third-party ripgrep release URL
-//                      (`…/BurntSushi/ripgrep/releases/tag/v${RG_VERSION}`,
-//                      install.sh; `…/tag/v$RgVersion`, install.ps1) is NOT our
-//                      tag format — upstream really does tag `v14.x`, so
-//                      "un-prefixing" it would break a live URL. The
-//                      installer-side detector is scoped to OUR version variable
-//                      on purpose; T4 asserts that scoping rather than assuming
-//                      it.
+//                      (`…/BurntSushi/ripgrep/releases/tag/…`) is NOT our tag
+//                      format — it is an upstream line whose `v` prefix was a
+//                      FACT ERROR, not a live form: upstream ripgrep tags are
+//                      BARE (`14.1.1`) — the v-prefixed release-tag URL answers
+//                      404 while the bare one answers 200 (curl -I + GitHub ref
+//                      API readings; tagfix batch 2026-09-17 un-prefixed both
+//                      installer hints). T4 is unchanged in
+//                      judgement: the installer-side detector stays scoped to
+//                      OUR version variable (`${VERSION}` / `$Version`) on
+//                      purpose — it must never flag a third-party URL — and T4
+//                      asserts that scoping rather than assuming it (the probe
+//                      samples below are synthetic over-broadness controls).
 //   T5  Probe-before-trust = "zero hits" is only trusted after a positive probe
 //                      has hit (same discipline as check-local-coupling.mjs S2 —
 //                      a detector that hits nothing reports a clean tree

@@ -691,7 +691,9 @@ rg_soft_fail() {
         log_warn "Manual install: ${PKG_MGR:-apt-get} install ripgrep"
         tarball_name="ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz"
     fi
-    log_warn "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/v${RG_VERSION}"
+    # Upstream ripgrep tags are BARE ("14.1.1"), never "v14.1.1": the old
+    # `tag/v${RG_VERSION}` form 404s (tagfix 2026-09-17, curl -I readings).
+    log_warn "Manual download: https://github.com/BurntSushi/ripgrep/releases/tag/${RG_VERSION}"
     log_warn "Manual placement: extract 'rg' to ${INSTALL_DIR}/rg (chmod +x)"
     expected_checksum_hint "$tarball_name" || true
 }
@@ -1024,8 +1026,12 @@ fi
 # (Windows version fields reject them), so as plain strings "2026.10.5" sorts
 # BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple and take
 # the max. Version core = the SAME contract as packaging/app-version.sh:21
-#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
-# The -beta.N tail is the same-day sequence (O-3), i.e. the tuple's 4th field.
+#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
+# The optional 4th segment and the -beta.N tail carry the SAME meaning - the
+# same-day sequence (O-3), i.e. the tuple's single 4th field: four segments =
+# date core + sequence. (tagfix 2026-09-17: the segment is optional and still
+# anchored inside the core, so a 5-field name stays unparseable and is excluded
+# like any other unknown shape - no new segment semantics are introduced.)
 # Legacy semver shapes (1.4.1-beta.56) are ranked by the same 4-field tuple, so
 # the order is total and deterministic. A name that parses as neither is
 # EXCLUDED - deliberately NO silent fall back to name order: the caller's
@@ -1033,14 +1039,14 @@ fi
 _winsort_jar_key() { # <jar path> -> fixed-width numeric key (year,month,day,seq); rc=1 if unparseable
   local _base="\${1:-}" _re
   _base="\${_base##*/}"
-  _re='-assembly-([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.([0-9]+))?\.jar\$'
+  _re='-assembly-([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.([0-9]+))?(-beta\.([0-9]+))?\.jar\$'
   if [[ \$_base =~ \$_re ]]; then
-    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-0}))"
+    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-\${BASH_REMATCH[7]:-0}}))"
     return 0
   fi
-  _re='-assembly-([0-9]+)\.([0-9]+)\.([0-9]+)(-beta\.([0-9]+))?\.jar\$'
+  _re='-assembly-([0-9]+)\.([0-9]+)\.([0-9]+)(\.([0-9]+))?(-beta\.([0-9]+))?\.jar\$'
   if [[ \$_base =~ \$_re ]]; then
-    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-0}))"
+    printf '%04d%03d%03d%06d' "\$((10#\${BASH_REMATCH[1]}))" "\$((10#\${BASH_REMATCH[2]}))" "\$((10#\${BASH_REMATCH[3]}))" "\$((10#\${BASH_REMATCH[5]:-\${BASH_REMATCH[7]:-0}}))"
     return 0
   fi
   return 1
