@@ -31,9 +31,12 @@ import java.util.EnumSet
   *
   * Testability: macOS/Linux has no NTFS ACL view and no `icacls`, so the OS
   * enforcement sits behind [[Port]] and the branch is chosen from an
-  * injectable `osName` string — branch-selection tests run on any host. The
-  * Windows *mechanism* itself is NOT executed anywhere in this batch (Q7); the
-  * residual is recorded in
+  * injectable `osName` string — branch-selection tests run on any host.
+  *
+  * The Windows *mechanism* was NOT executed anywhere in the original batch
+  * (Q7), and that gap is exactly what shipped the missing-EA defect above;
+  * `DeviceCredentialAclSpec` T3-R6 now runs it for real on a Windows host.
+  * The residual is recorded in
   * sandbox-minimal-set 批 T3 证据集.
   */
 object CredentialFileAcl:
@@ -69,7 +72,27 @@ object CredentialFileAcl:
 
   /** Permissions of the single ACE the Windows branch installs: read/write data
     * + attributes + synchronise (the `(R,W)` icacls vocabulary). Fresh EnumSet
-    * per call — the ACL builders must not share mutable state. */
+    * per call — the ACL builders must not share mutable state.
+    *
+    * `READ_NAMED_ATTRS` / `WRITE_NAMED_ATTRS` are LOAD-BEARING (2026-09-16):
+    * a Windows open that asks for `GENERIC_READ` / `GENERIC_WRITE` — what
+    * `java.nio.file` asks for — also asks for `FILE_READ_EA` /
+    * `FILE_WRITE_EA`. An ACE carrying only the data/attribute bits above makes
+    * Windows deny that open outright, so the ACE locks the OWNER out of the
+    * very file it has just written: `~/.nebflow/neblink/device.json` became
+    * unreadable AND unwritable to the Nebflow process itself, which then broke
+    * every [[nebflow.neblink.DeviceCredential.load]] — enrollment persist,
+    * silent re-login, and `GET /api/neblink/status` (HTTP 500) all failed with
+    * `AccessDeniedException`. Measured on Windows 11 / JDK 21: the six rights
+    * alone ⇒ open denied; + the two EA bits ⇒ open allowed.
+    *
+    * `READ_ACL` / `WRITE_ACL` are the owner-side security-descriptor rights.
+    * Without `WRITE_ACL` a later [[restrict]] cannot rewrite the DACL, and
+    * without `READ_ACL` neither `icacls` nor `Get-Acl` can display it — the
+    * state in which this defect was not diagnosable in place. Neither bit
+    * grants any principal access to the credential's *contents*; the ACE stays
+    * a single non-inheriting ALLOW for the owner, so the Q2 goal (no
+    * `Everyone` / `BUILTIN\Users` / third-party ACE survives) is unchanged. */
   private[core] def ownerPermissions: EnumSet[AclEntryPermission] =
     EnumSet.of(
       AclEntryPermission.READ_DATA,
@@ -77,6 +100,10 @@ object CredentialFileAcl:
       AclEntryPermission.APPEND_DATA,
       AclEntryPermission.READ_ATTRIBUTES,
       AclEntryPermission.WRITE_ATTRIBUTES,
+      AclEntryPermission.READ_NAMED_ATTRS,
+      AclEntryPermission.WRITE_NAMED_ATTRS,
+      AclEntryPermission.READ_ACL,
+      AclEntryPermission.WRITE_ACL,
       AclEntryPermission.SYNCHRONIZE
     )
 

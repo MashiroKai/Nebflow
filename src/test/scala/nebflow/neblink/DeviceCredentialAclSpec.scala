@@ -141,3 +141,45 @@ class DeviceCredentialAclSpec extends FunSuite:
       "the retired deviceToken copy must not be written into neblink/device.json"
     )
   }
+
+  // T3-R6（适配 kaiauth② 停写语义，2026-09-17）—— 原探针钉「收窄后可读回 deviceToken」，
+  // kaiauth② 该字段已**停写** ⇒ 探针改钉**身份面**（serverUrl/networkId/deviceId），并补一条
+  // 「盘上不含该键」的机械判据；被验证的行为本身不变：**属主对已收窄文件仍可读回并重写**。
+  //
+  // 缺陷形态（missing-EA，2026-09-16 实测）：Windows 分支的 owner-only ACE 若只带数据/属性位、
+  // 缺 READ_NAMED_ATTRS/WRITE_NAMED_ATTRS（乃至 READ_ACL/WRITE_ACL），则 `java.nio.file` 的
+  // GENERIC_READ/GENERIC_WRITE 打开（连带请求 FILE_READ_EA/FILE_WRITE_EA）被 Windows 直接拒
+  // —— 属主被自己刚写的 ACE 锁在门外：device.json 既读不回也重写不了（AccessDeniedException）。
+  // 本钉在真实 Windows 主机上实跑 systemPort（Q7「Windows 机制面不实跑」正是本钉要合的残差），
+  // 故 host 非 Windows 时 assume 跳过。
+  test("T3-R6 Windows 实测：属主对已收窄 device.json 仍可读回并重写（EA 位回归钉）") {
+    assume(
+      CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName),
+      "Windows-only probe: the ACL branch (and the missing-EA defect) is Windows-specific"
+    )
+    // 第一跳：真 systemPort 收窄（Windows 分支 = 单条非继承 owner-only ACE）。
+    DeviceCredential.save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+      .unsafeRunSync()
+    // 🔴 核心验证点 1：收窄后属主仍可读回 —— 缺 READ_NAMED_ATTRS 时此处 AccessDeniedException。
+    val back1 = DeviceCredential.load.unsafeRunSync()
+    assertEquals(
+      back1.map(c => (c.serverUrl, c.networkId, c.deviceId)),
+      Some(("https://neblink.example", "net-1", "dev-1"))
+    )
+    // 第二跳：rotation 式写回 —— 轮换后的 credential 覆盖同一已收窄文件。
+    // 🔴 核心验证点 2：属主仍可重写 —— 缺 WRITE_NAMED_ATTRS/WRITE_ACL 时此处抛。
+    val rotated = cred.copy(deviceToken = "tok-rotated-2")
+    DeviceCredential.save(rotated, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+      .unsafeRunSync()
+    val back2 = DeviceCredential.load.unsafeRunSync()
+    // 第二次断言与「旋转后的 token」无关：token 已停写、不在盘上，身份面才是可比对的
+    // （刻意**不**用 `load.map(_.deviceToken) == Some(...)` 这一已停写字段的形态）。
+    assertEquals(
+      back2.map(c => (c.serverUrl, c.networkId, c.deviceId)),
+      Some(("https://neblink.example", "net-1", "dev-1"))
+    )
+    assertFalse(
+      Files.readString(credPath).contains("\"deviceToken\""),
+      "the retired deviceToken copy must not be written into neblink/device.json"
+    )
+  }
