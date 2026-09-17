@@ -909,8 +909,15 @@ object NodeTools:
         "nodes" -> nodes.asJson,
         "worktrees" -> worktrees.asJson,
         "chains" -> chainsJson.asJson,
+        // ④-11(b)（作者 2026-09-17 12:09 裁定单）：meta 增 `workspace` = 本项目**权威工作区
+        // 绝对路径**，供分发器/下游拿权威路径（根治「按项目名猜路径」——事故链：
+        // 分发器按 name 拼 `<dataRoot>/projects/<name>/AGENTS.md` 而真源 workspace 是别处，
+        // 见 .nebflow/reports/20260917_pcsys-mech-design.md 项2 基线 8）。
+        // 🔴 只**新增**键：既有键 `project` / `updatedAt` / `archived` 的键名与类型语义零改动
+        // （后端新增键对全部既有消费者是向后兼容新增，容忍读数见实施批报告 A5 节）。
         "meta" -> Json.obj(
           "project" -> rt.project.name.asJson,
+          "workspace" -> rt.project.workspace.asJson,
           "updatedAt" -> s.updatedAt.asJson,
           "archived" -> arch.nodes.size.asJson
         )
@@ -2946,17 +2953,27 @@ object NodeCancelTool extends Tool:
 object ProjectCreateTool extends Tool:
   val name = "ProjectCreate"
 
+  // 2026-09-17 作者 12:09 裁定单 ④-10（更新旧条目、取代而非静默覆盖）：本 description
+  // 的面板分支旧句逐字为「Clicking it opens the REAL OS folder browser (native directory
+  // dialog on macOS/Windows) where the user browses, can create folders, and confirms; …
+  // Candidate paths (first-level directories under ~/Claude code/ not already used as project
+  // workspaces) remain on the card as secondary one-click hints, and the built-in "Other…"
+  // free input accepts a custom absolute path.」——**该句已过时**：2026-09-09 裁定后实现
+  // 为零候选 options + 应用内目录浏览器（`NodeTools.scala` 面板段 `:3217-3224`，
+  // `ProjectCreatePanelSpec` 断言 `options == Nil`），OS 原生对话框/候选 chips/「Other…」
+  // 三者**均不存在**。旧句按「取代而非静默覆盖」保留于此注记中可读，正文改写为实现一致。
   val description =
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
-- **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready).
-- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target. Clicking it opens the REAL OS folder browser (native directory dialog on macOS/Windows) where the user browses, can create folders, and confirms; the chosen path flows back into the card and creation proceeds automatically. If the native dialog is unavailable (headless JVM) or fails, the card automatically falls back to an in-app folder browser. Candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces) remain on the card as secondary one-click hints, and the built-in "Other…" free input accepts a custom absolute path.
+- **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready). Existing workspace files are never overwritten; only missing pieces are backfilled, and the result lists what was created vs left alone.
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips — 2026-09-09 裁定). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend; retiring that free input is a separate S3 order that has not landed. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
 - Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
 ## Semantics
-- Same name + same workspace → idempotent (returns "already exists", re-mounts; safe to repeat).
+- Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
+- **Different name + workspace already used by another project → explicit error (default-deny, 2026-09-17 裁定 ④-4/④-12).** Workspace occupancy is compared with trailing slashes and case ignored; an archived project still counts as occupying its workspace. The error names the occupying project and gives two ways out: reuse that project, or pass a different workspace directory. Never let a second project silently share an occupied workspace — report the conflict to the user instead.
 - Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -3043,7 +3060,15 @@ object ProjectCreateTool extends Tool:
         * （created=false，:2997 分支）**不 emit**（无视觉变化）。挂载失败（IO 失败）
         * 直接抛出 ⇒ 不 emit；rootKey 缺席的显式拒绝（下 case None 分支）为 Left
         * ⇒ 亦不 emit（失败帧不报成功）——该边界由前端低频兜底重拉（方案 C）覆盖。 */
-      def mountProject(pd: ProjectDef, created: Boolean): IO[Either[ToolError, String]] =
+      def mountProject(
+          pd: ProjectDef,
+          created: Boolean,
+          scaffold: Option[ProjectStore.ScaffoldReport] = None
+      ): IO[Either[ToolError, String]] =
+        // ③-9 逐件报告（作者 2026-09-17 12:09 裁定单）：成功/幂等两态的结果句统一带
+        // 本次补缺读数（有 created 时含一行摘要）。既有 contains 子串（`Mail(address='project:`、
+        // `already exists`）保持不变，只在句尾追加。
+        val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
         (ctx.actorSystem, ctx.sharedResources) match
           case (Some(system), Some(res)) =>
             // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
@@ -3075,7 +3100,7 @@ object ProjectCreateTool extends Tool:
                     val verb = if created then "created" else "already exists"
                     Right(
                       s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                        s"Dispatch work with Mail(address='project:${pd.name}', message=...)."
+                        s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
                     )
                   }
                 // 新建成功 → 先发帧再返回结果（挂载成功 ⇒ mounted=true）。
@@ -3087,42 +3112,100 @@ object ProjectCreateTool extends Tool:
             // 事件才不陈旧 ⇒ mounted=false（§D-2 载荷语义）。幂等重挂（created=false）
             // 不 emit（无视觉变化）。
             val ready: Either[ToolError, String] =
-              Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.")
+              Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.$scaffoldSuffix")
             if created then emitProjectCreated(pd, mounted = false).as(ready) else IO.pure(ready)
 
-      ProjectStore.create(resolvedName, workspace, description, agentMdTemplate).flatMap {
-        case Right(pd) => mountProject(pd, created = true)
-        case Left(err) =>
-          // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
-          // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
-          // 同名异 workspace → 明确报错（不静默复用旧定义）。
-          // 归档项目例外（迁移方案 v2 §6.1 单程语义）：拒绝挂载——否则出现「已挂载
-          // 但面板不可见」（list 过滤）的僵尸态；恢复须先手工删 project.json 归档两键。
-          ProjectStore.load(resolvedName).flatMap {
-            case Some(pd) if pd.archived.contains(true) =>
-              IO.pure(Left(ToolError(
-                s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
-                  s"Remove the 'archived'/'archivedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
-              )))
-            case None => IO.pure(Left(ToolError(err)))
-            case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)
-            case Some(pd) =>
-              IO.pure(Left(ToolError(
-                s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
-                  "choose another name or reuse the existing workspace"
-              )))
-          }
+      // ============================================================
+      // ④ 反守卫（作者 2026-09-17 12:09 裁定单 ④-4 + ④-12：默认拒绝、宁误拒不误建）
+      // ============================================================
+      // 缺守卫的缺口（设计件项2 基线 3 现取）：创建链原有三类守卫只覆盖
+      // 「同 name 覆盖 / 同 name 同 workspace 幂等 / 同 name 异 workspace 报错」，
+      // **「新 name + 已被别的 name 占用的 workspace」零守卫** ⇒ 静默新建第二个项目
+      // 共享同一 workspace（flow-map / task-board / worktrees 全按 workspace 落位，
+      // 并列挂载必然互写；事故链见 .nebflow/reports/20260917_pcsys-mech-design.md 项2）。
+      //
+      // 判据纪律（逐条裁定）：
+      // - **前置于任何写盘**：占用检查在 ProjectStore.create 之前 ⇒ 拒绝路径零写盘
+      //   （projects/<newName>/ 不出现、workspace 逐件 sha 不变）。
+      // - **占用判据与幂等判据共用同一函数** `sameWorkspace`（禁两套判据）：同一归一
+      //   函数（绝对化 + 去尾斜杠 + **大小写不敏感**）。
+      // - 🔴 禁引入 realpath/symlink 解析（未被裁定；`/tmp`↔`/private/tmp` 会改变现有语义）。
+      // - 占用扫描源 = ProjectStore.listAll()（**含归档**定义，保守默认：宁误拒不误建；
+      //   该保守面是分发器定的默认、非作者逐字裁定，见报告「判据声明」节）。
+      // - 占用者 name 判等用 sameProjectName（与 ProjectRuntimeRegistry.get 的
+      //   equalsIgnoreCase 兜底同源）：同 name（含仅大小写差）= 同一项目 ⇒ 幂等重挂不被误拒。
+      ProjectStore.listAll().flatMap { defs =>
+        defs.find(d => !sameProjectName(d.name, resolvedName) && sameWorkspace(d.workspace, workspace)) match
+          case Some(occupant) =>
+            IO.pure(Left(ToolError(occupiedWorkspaceError(resolvedName, workspace, occupant))))
+          case None =>
+            ProjectStore.createWithScaffold(resolvedName, workspace, description, agentMdTemplate).flatMap {
+              case Right((pd, report)) => mountProject(pd, created = true, scaffold = Some(report))
+              case Left(err) =>
+                // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义；③-8 补缺脚手架
+                // （缺件即补、既有永不覆盖；作者 2026-09-17 12:09 裁定单 ③-8 取代了此处原先
+                // 「不动脚手架」的口径——它正是「删了 AGENTS.md 永不回、定义已存在的缺件态
+                // 永不修复」的成因）。幂等重挂本就返回成功语义，补缺必须同批，否则静默零写入。
+                // 同名异 workspace → 明确报错（不静默复用旧定义）。
+                // 归档项目例外（迁移方案 v2 §6.1 单程语义）：拒绝挂载——否则出现「已挂载
+                // 但面板不可见」（list 过滤）的僵尸态；恢复须先手工删 project.json 归档两键。
+                ProjectStore.load(resolvedName).flatMap {
+                  case Some(pd) if pd.archived.contains(true) =>
+                    IO.pure(Left(ToolError(
+                      s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
+                        s"Remove the 'archived'/'archivedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
+                    )))
+                  case None => IO.pure(Left(ToolError(err)))
+                  case Some(pd) if sameWorkspace(pd.workspace, workspace) =>
+                    // 🔴 补缺只挂本分支（成功幂等重挂）；归档分支与异 workspace 分支保持零写入。
+                    ProjectStore.ensureScaffold(os.Path(workspace, PathUtil.dataRoot), agentMdTemplate)
+                      .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
+                  case Some(pd) =>
+                    IO.pure(Left(ToolError(
+                      s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
+                        "choose another name or reuse the existing workspace"
+                    )))
+                }
+            }
       }
 
-  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定。
-    * 不可解析 → None（视为不同）。 */
+  /** workspace 归一化（绝对化 + 去尾斜杠）——**展示与判据共用的同一归一形态**。
+    * 不可解析 → None（视为不同）。
+    * 🔴 禁把 realpath/symlink 解析并入本函数（未被裁定；`/tmp`↔`/private/tmp` 会改变
+    * 现有语义）。 */
   private def normalizeWorkspace(p: String): Option[String] =
-    Try(os.Path(p, PathUtil.dataRoot).toString).toOption
+    Try(os.Path(p, PathUtil.dataRoot).toString).toOption.map(stripTrailingSlashes)
+
+  /** 同一归一函数的**比较键**（大小写不敏感）——占用判据与幂等判据共用 [[sameWorkspace]]
+    * 这**一条**判据（禁两套）。大小写不敏感归一由作者 2026-09-17 12:09 裁定单 ④-12 定
+    * （「路径语义 + 大小写不敏感归一」，「宁误拒不误建」：在大小写敏感的 FS 上该归一更严）。 */
+  private def workspaceKey(p: String): Option[String] =
+    normalizeWorkspace(p).map(_.toLowerCase(java.util.Locale.ROOT))
 
   private def sameWorkspace(a: String, b: String): Boolean =
-    (normalizeWorkspace(a), normalizeWorkspace(b)) match
-      case (Some(x), Some(y)) => stripTrailingSlashes(x) == stripTrailingSlashes(y)
+    (workspaceKey(a), workspaceKey(b)) match
+      case (Some(x), Some(y)) => x == y
       case _                  => false
+
+  /** 项目标识判等（与 `ProjectRuntimeRegistry.get` 的 equalsIgnoreCase 兜底同源：
+    * 项目标识天然大小写不敏感）。同 name（含仅大小写差）= **同一项目**，不是占用者
+    * ⇒ 保证「同 name 同 workspace 幂等重挂不被误拒」（存量先例：name `nebflow` 的
+    * workspace basename 为 `Nebflow`，仅大小写差，现役靠 registry 兜底解析）。 */
+  private def sameProjectName(a: String, b: String): Boolean =
+    a == b || a.equalsIgnoreCase(b)
+
+  /** 占用报错（可行动：点名占用者 name + 归档态 + 归一化 workspace + 两条出路）。 */
+  private def occupiedWorkspaceError(newName: String, workspace: String, occupant: ProjectDef): String =
+    val norm = normalizeWorkspace(workspace).getOrElse(workspace)
+    val occupantWs = normalizeWorkspace(occupant.workspace).getOrElse(occupant.workspace)
+    val arch = if occupant.archived.contains(true) then " (archived)" else ""
+    s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
+      s"(its project.json workspace = '$occupantWs'). ProjectCreate default-denies creating '$newName' " +
+      "on an occupied workspace — a second project on the same workspace would silently share its " +
+      "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
+      s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
+      s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
+      s"(b) pass a different 'workspace' directory for '$newName'."
 
   /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */
   private def baseName(workspace: String): String =
