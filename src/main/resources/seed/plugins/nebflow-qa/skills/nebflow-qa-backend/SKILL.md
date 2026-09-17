@@ -1,6 +1,6 @@
 ---
 name: nebflow-qa-backend
-description: Nebflow Scala 后端验证域知识——五维审核结构（sbt compile/sbt test/验收条件逐项/代码质量三维/回归）、sbt 锁冲突错峰重试、运行安全红线（8080 宿主保护/PID 验身）、✅/❌ 审核报告格式、只审不改纪律。Use when 验证 Nebflow Scala 后端交付物：编译测试、隔离实例冒烟、验收条件核对、Scala 代码质量审查。
+description: Nebflow Scala 后端验证域知识——五维审核结构（sbt compile/sbt test/验收条件逐项/代码质量三维/回归）、sbt 锁冲突错峰重试、运行安全红线（宿主 gateway 端口保护/PID 验身）、✅/❌ 审核报告格式、只审不改纪律。Use when 验证 Nebflow Scala 后端交付物：编译测试、隔离实例冒烟、验收条件核对、Scala 代码质量审查。
 when_to_use: 每轮后端交付后的验证关卡；verify 节点分配此 skill 做五维全覆盖审核。验证方法论深化（验红实证/变异安全/冒烟法证）见同插件 verification-rigor 与 isolated-smoke-verification。
 language: zh
 status: active
