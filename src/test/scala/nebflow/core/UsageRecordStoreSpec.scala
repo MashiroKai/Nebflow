@@ -259,4 +259,31 @@ class UsageRecordStoreSpec extends FunSuite:
     s.record(record(ts + 60_000L, input = 20, agent = "Backend")).unsafeRunSync()
     assertEquals(s.lastActivityMs("Backend"), ts + 60_000L)
 
+  // ── tokenpanel-incremental (2026-09-17): the cache path added by this batch ──
+
+  test("aggregate serves the cache it persists under baseDir, equal to the full recompute") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    (1 to 5).foreach(i => s.record(record(i * 1000L, input = i * 10, cacheRead = i * 3)).unsafeRunSync())
+    val inc = s.aggregate(Some("provider"), None, None).unsafeRunSync()
+    val full = s.aggregateFull(Some("provider"), None, None).unsafeRunSync()
+    assertEquals(inc, full)
+    assert(os.exists(dir / "usage-agg-v1.json"), s"cache must live beside the ledger, got ${os.list(dir).map(_.last)}")
+    assertEquals(s.cacheDiagnostics.unsafeRunSync().fallbacks, 0L)
+  }
+
+  test("records appended between requests are never missed by the cache") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, input = 100, cacheRead = 90)).unsafeRunSync()
+    val first = s.aggregate(None, None, None).unsafeRunSync()
+    assertEquals(first.count, 1)
+    s.record(record(2000L, provider = "kimi", agent = "Frontend", input = 200, cacheRead = 0)).unsafeRunSync()
+    s.record(record(3000L, provider = "zhipu", agent = "Coder", input = 300, cacheRead = 30)).unsafeRunSync()
+    val second = s.aggregate(None, None, None).unsafeRunSync()
+    assertEquals(second.count, 3, "an append must be picked up by the incremental merge")
+    assertEquals(second, s.aggregateFull(None, None, None).unsafeRunSync())
+    assertEquals(second.totalInput, 600L)
+  }
+
 end UsageRecordStoreSpec
