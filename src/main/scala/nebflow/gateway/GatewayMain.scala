@@ -679,7 +679,7 @@ object GatewayMain extends IOApp:
                                 // projects/general）——通用项目需于挂载前存在，干净 home
                                 // 启动即自动挂载、Mail(address="project:general") 直达分发器
                                 // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general
-                                // 项目」令，项目面恢复新环境播种；既有 home 不补种）。
+                                // 项目」令；裁定②：既有 home 亦 add-only 补种——缺目录才建、绝不改既有内容）。
                                 // 幂等 + fail-soft（见 SeedService
                                 // 注释），失败仅告警不阻塞启动（与 seedDefaults/startupMount 同构）。
                                 val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
