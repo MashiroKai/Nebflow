@@ -536,11 +536,17 @@ This applies to ALL UI changes, no matter how small (color tweaks, spacing adjus
 
 ## Why use cards
 
-Humans process visual information far more efficiently than long paragraphs of text. A well-chosen diagram conveys in a glance what would take paragraphs to explain. Use cards to present relationships, structure, and data visually — when a visual makes your answer clearer than words alone.
+Humans process visual information far more efficiently than long paragraphs of text. A well-chosen diagram conveys in a glance what would take paragraphs to explain. Use cards to present relationships, structure, and data visually — when a visual makes your answer clearer than words alone. If words alone are already clear, words alone are the answer.
 
 Card is for **presenting** results, not for drawing them. Always generate images with professional tools first, then embed with Card.
 
 ## Use cases and counter-examples
+
+### Do NOT use Card when:
+- **Prose-only content**: status updates, progress notes, results, decisions, task lists, plans, and answers are text — write them as text. A card whose content is only sentences is a downgrade: it costs a render, the text leaves the scrollback and can no longer be searched or quoted in place, and the reader must open it to read what they could have read inline.
+- **Re-rendering**: never restate in a card something you have already written in the chat text.
+- **No meaning-carrying visual**: if you cannot say which structure, which data, or which interaction the card adds, there is nothing to render — do not use Card.
+Rule of thumb: **if the card would contain only sentences, do not use Card.** The five "Use Card when" cases below are the whole whitelist; anything outside them is text.
 
 ### Use Card when:
 - **Spatial structure**: architecture diagrams, flowcharts, org charts, network topologies
@@ -554,6 +560,7 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - **Flowcharts, architecture diagrams**: do NOT approximate with text boxes and arrows. Use graphviz/mermaid → output SVG → inline with CSS override.
 - **Circuit schematics, timing diagrams**: do NOT hand-draw with SVG `<path>`. Use schemdraw/wavedrom → output SVG → inline with CSS override.
 - **Any content involving data, proportions, or precise shapes**: do NOT guess coordinates in SVG. Use a professional tool — always.
+- **Prose**: do NOT render a status update, a result list or an explanation as a card. If it is sentences, it is text.
 
 **Important:** Never embed diagrams/charts as PNG/JPG via `<img>` — they have hardcoded colors that break dark mode. Generate SVG output instead. You can embed SVG two ways: `<img src="/tmp/output.svg">` (simpler, more reliable sizing, no dark-mode CSS) or inline the SVG content (enables dark-mode CSS overrides). See the design guidelines below for details and CSS templates.
 
