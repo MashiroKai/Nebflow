@@ -110,4 +110,30 @@ class ProjectStoreSpec extends CatsEffectSuite:
       assertEquals(os.read(gi), ".nebflow/\n")
   }
 
+  // S2 2026-09-17 12:09 裁定单 ③-8：「缺件即补、既有永不覆盖」——既有件是**不可覆写**的
+  // （变异面：若把 ensureScaffold 改成无条件覆写，本条必红）。
+  test("③-8: pre-existing AGENTS.md is never overwritten (additive-only)") {
+    val ws5 = tempRoot / "ws-existing-agents"
+    os.makeDir.all(ws5)
+    val userMd = "# 用户自定 AGENTS.md\n别动我\n"
+    os.write.over(ws5 / "AGENTS.md", userMd)
+    for
+      created <- ProjectStore.create("agents-keep", ws5.toString, None, template)
+    yield
+      assert(created.isRight)
+      assertEquals(os.read(ws5 / "AGENTS.md"), userMd, "既有 AGENTS.md 必须逐字节不变")
+  }
+
+  test("③-8: pre-existing .nebflow/ directory content is never touched by create") {
+    val ws6 = tempRoot / "ws-existing-nebflow"
+    os.makeDir.all(ws6 / ".nebflow")
+    os.write.over(ws6 / ".nebflow" / "user-note.md", "keep\n")
+    for
+      created <- ProjectStore.create("nebflow-keep", ws6.toString, None, template)
+    yield
+      assert(created.isRight)
+      assertEquals(os.read(ws6 / ".nebflow" / "user-note.md"), "keep\n", "既有 .nebflow/ 内容必须不动")
+      assert(!os.exists(ws6 / ".nebflow" / "flow-map.json"), "创建面禁预写 flow-map.json（由挂载首写）")
+  }
+
 end ProjectStoreSpec

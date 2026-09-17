@@ -9,7 +9,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, ProjectCreateTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectCreateTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -27,6 +27,10 @@ import scala.concurrent.duration.*
  *  ⑤ 幂等 / 同名异 workspace 冲突语义（test ⑤）；
  *  ⑥ 取消哨兵 / 空答案 → 明确搁置不创建；非绝对路径 → 明确报错（test ⑥）；
  *     无 agent 会话时缺省 path → 立即报错不悬挂（test ⑦）。
+ *  ⑧–⑫ S2 作者 2026-09-17 12:09 裁定单（④ 反守卫 + ③ 补缺脚手架 + ④-11b：
+ *     异 name 指向已占用 workspace → 默认拒绝零写盘（⑧）、归一化变体同拒（⑨）、
+ *     归档占用者同拒（⑩）、幂等挂载路径补缺脚手架（⑪）、NodeList meta 增
+ *     workspace 权威键（⑫）。
  *
  * 面板复用 AskUser pending 机制（AgentCommand.AskUser → InteractionHub → 前端
  * AskUserQuestion 卡片）——spec 用真实 hub actor + 桩 agent actor（只复刻
@@ -214,6 +218,9 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val msg = result.toOption.get
       // R2（2026-09-12）：提示语由 Task(...) 改为 Mail(address="project:...")——旧工具已删净退役
       assert(msg.contains("Mail(address='project:ws-alpha'"), s"success message must carry the Mail usage hint: $msg")
+      // S2 2026-09-17 12:09 裁定单 ③-9：创建路径同样逐件报 created/skipped
+      assert(msg.contains("Scaffold:"), s"create-path message must carry the per-item scaffold report: $msg")
+      assert(msg.contains("AGENTS.md created"), s"create-path scaffold report must list 'AGENTS.md created': $msg")
       assert(pd.isDefined, "project.json must be persisted")
       val defn = pd.get
       assertEquals(defn.name, "ws-alpha", "name must derive from workspace basename when omitted")
@@ -499,6 +506,179 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(result.isLeft, "panel requires an agent session — must fail fast")
       assert(result.swap.toOption.get.message.contains("no interactive session"), result.swap.toOption.get.message)
     end for
+  }
+
+  // ============================================================
+  // ⑧–⑫ S2 2026-09-17 12:09 裁定单：④ 反守卫（默认拒绝）+ ③ 补缺脚手架 + ④-11b
+  // ============================================================
+
+  private def sha256Of(p: os.Path): String =
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    md.digest(os.read.bytes(p)).map(b => f"$b%02x").mkString
+
+  /** 工作区「逐件 sha256」读数（零写盘判据的机械面）。 */
+  private def wsSha(ws: os.Path): Map[String, String] =
+    List(
+      (ws / "AGENTS.md", "AGENTS.md"),
+      (ws / ".gitignore", ".gitignore"),
+      (ws / ".nebflow" / "flow-map.json", ".nebflow/flow-map.json"),
+      (ws / ".nebflow" / "task-board.json", ".nebflow/task-board.json")
+    ).flatMap { (p, label) =>
+      if os.exists(p) && os.isFile(p) then Some(label -> sha256Of(p)) else None
+    }.toMap
+
+  /** `.nebflow/` 内容集合（集合不变判据）。 */
+  private def nebflowEntries(ws: os.Path): List[String] =
+    val d = ws / ".nebflow"
+    if os.exists(d) then os.list(d).map(_.last).toList.sorted else Nil
+
+  private def mkInput(n: String, w: String): io.circe.JsonObject =
+    Json.obj("name" -> Json.fromString(n), "workspace" -> Json.fromString(w)).asObject.get
+
+  test("⑧ 新 name × workspace 已被别的 name 占用 → 默认拒绝（可行动报错 + 零写盘）") {
+    val ws = tempRoot / "ws-guard-occ"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"pcp-8-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      first <- ProjectCreateTool.call(mkInput("occ-one", ws.toString), toolCtx(ws, system, res))
+      beforeSha <- IO(wsSha(ws))
+      beforeNb <- IO(nebflowEntries(ws))
+      second <- ProjectCreateTool.call(mkInput("occ-two", ws.toString), toolCtx(ws, system, res))
+      afterSha <- IO(wsSha(ws))
+      afterNb <- IO(nebflowEntries(ws))
+      newDir <- IO(os.exists(ProjectStore.projectDir("occ-two")))
+      _ <- ProjectRuntimeRegistry.unregister("occ-one")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(first.isRight, s"first create must succeed: $first")
+      assert(beforeSha.size >= 2, s"workspace must carry the scaffold before the rejected call: $beforeSha")
+      assert(second.isLeft, s"反守卫失效：异 name 指向已占用 workspace 竟被放行 ⇒ $second")
+      val err = second.swap.toOption.get.message
+      assert(err.contains("occ-one"), s"报错必须点名占用者 name: $err")
+      assert(err.contains(ws.toString), s"报错必须含（归一化后的）workspace: $err")
+      assert(err.contains("Mail(address='project:occ-one'"), s"报错必须给出出路 a（复用既有项目）: $err")
+      assert(err.contains("different 'workspace'"), s"报错必须给出出路 b（换工作区目录）: $err")
+      assert(!newDir, "拒绝路径必须零写盘：projects/occ-two/ 不得出现")
+      assertEquals(afterSha, beforeSha, "拒绝路径不得改动 workspace 任何件（逐件 sha256）")
+      assertEquals(afterNb, beforeNb, "拒绝路径不得改动 .nebflow/ 内容集合")
+  }
+
+  test("⑨ 归一化变体（尾斜杠 / 大小写差异）→ 同样被拒（占用判据与幂等判据同一归一函数）") {
+    val ws = tempRoot / "ws-guard-norm"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"pcp-9-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    val trailing = ws.toString + "/"
+    val upper = ws.toString.toUpperCase
+    for
+      first <- ProjectCreateTool.call(mkInput("norm-one", ws.toString), toolCtx(ws, system, res))
+      rTrailing <- ProjectCreateTool.call(mkInput("norm-two", trailing), toolCtx(ws, system, res))
+      rUpper <- ProjectCreateTool.call(mkInput("norm-three", upper), toolCtx(ws, system, res))
+      d2 <- IO(os.exists(ProjectStore.projectDir("norm-two")))
+      d3 <- IO(os.exists(ProjectStore.projectDir("norm-three")))
+      _ <- ProjectRuntimeRegistry.unregister("norm-one")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(first.isRight, s"first create must succeed: $first")
+      assert(trailing != ws.toString, "变体 ① 必须是不同的字符串（尾斜杠）")
+      assert(upper != ws.toString, "变体 ② 必须是不同的字符串（仅大小写差）")
+      assert(rTrailing.isLeft, s"尾斜杠变体必须同拒（同一归一函数）⇒ $rTrailing")
+      assert(rUpper.isLeft, s"大小写变体必须同拒（大小写不敏感归一）⇒ $rUpper")
+      assert(rTrailing.swap.toOption.get.message.contains("norm-one"), "尾斜杠变体报错须点名占用者")
+      assert(rUpper.swap.toOption.get.message.contains("norm-one"), "大小写变体报错须点名占用者")
+      assert(!d2 && !d3, "两个变体都必须零写盘（projects/<name>/ 不得出现）")
+  }
+
+  test("⑩ 占用者含 archived 定义 → 同拒（保守默认「宁误拒不误建」；占用者本体零改动）") {
+    val ws = tempRoot / "ws-guard-arch"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"pcp-10-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      first <- ProjectCreateTool.call(mkInput("occ-arch", ws.toString), toolCtx(ws, system, res))
+      arch <- ProjectStore.archive("occ-arch")
+      beforeSha <- IO(wsSha(ws))
+      r <- ProjectCreateTool.call(mkInput("occ-new", ws.toString), toolCtx(ws, system, res))
+      afterSha <- IO(wsSha(ws))
+      newDir <- IO(os.exists(ProjectStore.projectDir("occ-new")))
+      occJson <- IO(os.read(ProjectStore.projectJsonPath("occ-arch")))
+      _ <- ProjectRuntimeRegistry.unregister("occ-arch")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(first.isRight, s"first create must succeed: $first")
+      assert(arch.isRight, s"archive must succeed: $arch")
+      assert(r.isLeft, s"归档占用者也必须被拒（保守默认）⇒ $r")
+      val err = r.swap.toOption.get.message
+      assert(err.contains("occ-arch"), s"报错须点名归档占用者: $err")
+      assert(err.contains("archived"), s"报错须标注占用者归档态: $err")
+      assert(!newDir, "拒绝路径零写盘")
+      assertEquals(afterSha, beforeSha, "workspace 逐件 sha256 不变")
+      assert(occJson.contains("\"archived\""), "占用者（归档）定义本体零改动")
+  }
+
+  test("⑪ 幂等挂载路径补缺脚手架：删 AGENTS.md → 重挂恢复 + 逐件文案；既有件字节不变") {
+    val ws = tempRoot / "ws-scaffold-mount"
+    os.makeDir.all(ws)
+    val gi = ws / ".gitignore"
+    os.write.over(gi, "# user rules\n.nebflow/\n") // 预置：已含 .nebflow/ 行（禁重复、禁覆写）
+    val system = ActorSystem(s"pcp-11-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      created <- ProjectCreateTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
+      _ <- IO(os.remove(ws / "AGENTS.md"))
+      giBefore <- IO(sha256Of(gi))
+      nbBefore <- IO(nebflowEntries(ws))
+      again <- ProjectCreateTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
+      giAfter <- IO(sha256Of(gi))
+      nbAfter <- IO(nebflowEntries(ws))
+      restored <- IO(os.exists(ws / "AGENTS.md") && os.read(ws / "AGENTS.md").nonEmpty)
+      _ <- ProjectRuntimeRegistry.unregister("scaf-one")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(created.isRight, s"first create must succeed: $created")
+      assert(again.isRight, s"幂等重挂必须成功: $again")
+      val msg = again.toOption.get
+      assert(msg.contains("already exists"), s"既有 contains 子串不得破: $msg")
+      assert(msg.contains("AGENTS.md created"), s"补缺必须逐件报 created（③-9）: $msg")
+      assert(restored, "被删的 AGENTS.md 必须由幂等挂载路径补回（③-8）")
+      assertEquals(giAfter, giBefore, ".gitignore 必须逐字节不变（已含 .nebflow/ 行）")
+      assertEquals(
+        os.read(gi).linesIterator.count(_.trim == ".nebflow/"),
+        1,
+        "不得重复追加 .nebflow/ 行"
+      )
+      assertEquals(nbAfter, nbBefore, ".nebflow/ 内容集合不变")
+  }
+
+  test("⑫ ④-11(b) NodeList 载荷 meta 增 workspace 权威键（既有键名/类型语义不变）") {
+    val ws = tempRoot / "ws-nodelist-meta"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"pcp-12-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      created <- ProjectCreateTool.call(mkInput("nl-meta", ws.toString), toolCtx(ws, system, res))
+      rtOpt <- ProjectRuntimeRegistry.get("nl-meta")
+      rt = rtOpt.getOrElse(fail("project must be mounted for the NodeList payload"))
+      payload <- NodeTools.buildNodeListPayload(rt, None)
+      meta = payload.hcursor.downField("meta")
+      _ <- ProjectRuntimeRegistry.unregister("nl-meta")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(created.isRight, s"create must succeed: $created")
+      assertEquals(
+        meta.downField("workspace").as[String].toOption,
+        Some(ws.toString),
+        s"meta.workspace 必须携带权威工作区绝对路径；载荷原文=${payload.noSpaces.take(400)}"
+      )
+      assertEquals(meta.downField("project").as[String].toOption, Some("nl-meta"), "既有键 project 语义不变")
+      assert(meta.downField("updatedAt").as[Long].isRight, "既有键 updatedAt 语义不变（epoch ms 数字）")
+      assertEquals(
+        meta.downField("archived").as[Int].toOption,
+        Some(0),
+        "既有键 archived 语义不变（归档节点计数）"
+      )
+      assert(payload.hcursor.downField("nodes").as[List[Json]].isRight, "载荷 nodes 骨架不变")
   }
 
 end ProjectCreatePanelSpec
