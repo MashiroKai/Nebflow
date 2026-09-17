@@ -36,11 +36,16 @@ $CosBucket = "nebflow-releases"
 $HomeDir = ".nebflow"
 $ConfigFile = "nebflow.json"
 $WrapperName = "nebflow"
-$CosBaseCn = "https://$CosBucket.cos.ap-nanjing.myqcloud.com"
-# Repo went private (#29, 2026-09-01): unauthenticated GitHub Releases
-# downloads 404 - Nebflow jar download and version resolution go through COS
-# (single source). Third-party deps (Temurin JDK / Git for Windows / ripgrep)
-# are unrelated to the private repo and keep their public sources.
+$CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"
+# Single-source conclusion unchanged: the Nebflow jar download and the version
+# resolution go through the mirror endpoint above (same value as the CI upload
+# tracks and the deployed online script). Stale reason corrected (2026-09-17):
+# this used to read "repo went private (#29, 2026-09-01) -> unauthenticated
+# GitHub Releases downloads 404" - the repo is public again, so that reason no
+# longer holds and no GitHub fallback path is kept; the single source stays for
+# reachability and bandwidth (direct GitHub downloads are not usable in
+# practice). Third-party deps (Temurin JDK / Git for Windows / ripgrep) are
+# unrelated to the repo visibility and keep their public sources.
 
 $ScriptVersion = "2.0.0"
 $RgVersion = "14.1.1"
@@ -178,7 +183,10 @@ if ($args -contains "-VerboseFlag") { $VerbosePref = $true }
 if ($args -contains "-Cn") { $Region = "cn" }
 if ($args -contains "-Global") { $Region = "global" }
 
-# Resolve version - COS version file (single source; GH API unusable since repo went private)
+# Resolve version - mirror version file (single source).
+# 2026-09-17 correction: this used to read "GH API unusable since repo went
+# private"; the repo is public again, so that reason is stale - the GH API
+# branch is retired by the single-source ruling itself, not by repo visibility.
 if ($Channel -eq "beta") {
     Write-Info "Resolving latest beta version..."
     if ($env:VERSION) {
@@ -209,6 +217,16 @@ if ($Channel -eq "beta") {
         }
         $Version = $LatestVersion
     }
+}
+# Version value normalization - dual form accepted (author ruling 2026-09-17):
+# the release tag format carries no `v` (e.g. 2026.9.17), but the legacy form
+# (pointer file or hand-set value such as v2026.9.17) must still be accepted.
+# Strip one leading `v` when a digit follows, so the jar name / URL / install
+# dir come out identical in both forms; a prefix-free value is byte-identical
+# (idempotent, pure string handling, no new branch beyond this guard).
+if ($Version -match '^v[0-9]') {
+    Write-V "VERSION carried the legacy 'v' prefix - normalized to $($Version.Substring(1))."
+    $Version = $Version.Substring(1)
 }
 Write-V "Resolved VERSION=$Version (channel=$Channel)"
 
@@ -284,7 +302,7 @@ for ($bi = 0; $bi -lt $BannerMask.Count; $bi++) {
         elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "  $LowerName" -ForegroundColor Green }
         else { Write-Host -NoNewline "  $LowerName" }
     } elseif ($bi -eq 2) {
-        $vline = "v$Version installer ($Channel)"
+        $vline = "$Version installer ($Channel)"
         if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[2m$vline$BannerEsc[0m" }
         else { Write-Host -NoNewline "  $vline" }
     }
@@ -510,13 +528,13 @@ if (Test-GitBash) {
 }
 
 # --- [3/7] Download $ProductName ---
-Write-Stage 3 7 "Downloading $ProductName v$Version..."
+Write-Stage 3 7 "Downloading $ProductName $Version..."
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
 
 if (Test-Path $jarPath) {
-    Write-Ok "Already up-to-date (v$Version)."
+    Write-Ok "Already up-to-date ($Version)."
 } else {
     # Clean up old versions (keep .nebflow user data untouched)
     $oldJars = @(Get-ChildItem (Join-Path $InstallDir "$LowerName-assembly-*.jar") -ErrorAction SilentlyContinue) + @(Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue)
@@ -555,7 +573,10 @@ if (Test-Path $jarPath) {
     }
     Write-Info "Region: $Region (use -Cn or -Global to override)"
 
-    # #29: repo went private - unauthenticated GitHub Releases 404; COS single source
+    # Single source (conclusion unchanged): the jar comes from the mirror
+    # endpoint only. 2026-09-17 correction: the "#29 repo went private ->
+    # unauthenticated GitHub Releases 404" reason is stale (the repo is public
+    # again) - see the brand-values comment block at the top of this script.
     try {
         Save-WithProgress -Url $CosUrl -Path $jarPath -Label $JarName
     } catch {
@@ -887,7 +908,7 @@ Write-V "Manifest written: $manifestPath"
 
 # --- Done ---
 Write-Host ""
-Write-Host "[ok] $ProductName v$Version installed!" -ForegroundColor Green
+Write-Host "[ok] $ProductName $Version installed!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    $WrapperName --help" -ForegroundColor Cyan
