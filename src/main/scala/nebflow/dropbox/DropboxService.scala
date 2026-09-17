@@ -110,12 +110,34 @@ final class DropboxService private (
 
   private def loadMessages: IO[Unit] =
     IO.blocking {
-      if os.exists(messagesPath) then decode[Map[String, List[DropboxMessage]]](os.read(messagesPath)).toOption
-      else None
+      if os.exists(messagesPath) then Some(os.read(messagesPath)) else None
     }.flatMap {
-      case Some(m) => messagesRef.set(m)
       case None => IO.unit
+      case Some(raw) =>
+        DropboxLedger.decode(raw) match
+          case Right(decoded) =>
+            // 逐条容错的结果：条目级失败**不**放大成整表失败（作者 2026-09-17 #785 裁定），
+            // 但**必须留痕**——跳过几条、为何跳过，逐条登记（禁静默吞）。
+            reportLedgerSkips(decoded) *> messagesRef.set(decoded.messages)
+          case Left(err) =>
+            // 表级不可解（非 JSON / 顶层非对象）：没有「其余条目」可救 ⇒ 按空表继续 +
+            // 明示 WARN（禁静默）。🔴 台账文件**只读不写、零迁移**（唯一写者仍是 persistMessages）。
+            logger.warn(
+              s"Dropbox: message ledger $messagesPath is undecodable at table level ($err); " +
+                s"starting with an empty message table — the file is left untouched"
+            )
     }
+
+  /** 台账里被跳过的条目 —— 汇总一行 + 明细（上限 10 条，防坏账本刷屏）。 */
+  private def reportLedgerSkips(decoded: DropboxLedgerDecode): IO[Unit] =
+    if decoded.skipped.isEmpty then IO.unit
+    else
+      val detail = decoded.skipped.take(10).map(s => s"device=${s.deviceId} index=${s.index} reason=${s.reason}")
+      logger.warn(
+        s"Dropbox: skipped ${decoded.skipped.size} undecodable message entr(ies) across " +
+          s"${decoded.messages.size} device(s); all other entries were loaded as-is. " +
+          s"First ${detail.size}: ${detail.mkString(" | ")}"
+      )
 
   private def persistMessages: IO[Unit] =
     messagesRef.get.flatMap { msgs =>

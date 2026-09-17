@@ -50,8 +50,83 @@ object DropboxMessage:
   def normalizeOrigin(raw: String): String =
     if raw == OriginAgent then OriginAgent else OriginUser
 
+  // ===== 台账键缺席语义（单一来源 · 显式表）=====
+  //
+  // 作者 2026-09-17 #785 裁定（解码健壮化）：逐键容错、**禁整表失败**、「键缺失语义」显式化。
+  // 原形态 `deriveDecoder`（半自动派生）**不套用** case class 默认值 ⇒ 台账里任一条目
+  // 缺一个可缺键 ⇒ 该 `Map` 整体解码失败 ⇒ `loadMessages` 静默留空表 ⇒
+  // `dropbox-get-history` 回 `[]` ⇒ 客户端（以帧为真相源）开窗抹掉本地已知消息。
+  //
+  // 两个键集**互相排斥且并集 = 本 case class 的全部 15 键**（`DropboxLedgerDecodeSpec` 断言）：
+  //
+  //   ① 必给键（缺席 / 类型不符 ⇒ **条目级**失败，由 `DropboxLedger.decode` 跳过该条并计数登记）：
+  //      `msgId` / `direction` / `kind` / `ts`
+  //      —— 判据：这四键承载**身份 / 排序 / 渲染分路**语义，缺了只能凭空构造
+  //         （造 msgId 会让客户端 `mergeDeviceMessages` 的键身份失真；猜 direction 会把入向读成出向），
+  //         故宁可**弃该条并留痕**，也不伪造。
+  //   ② 可缺键（缺席 / 值为 `null` ⇒ 以**下表缺省值**补齐，**保留该条目**）：
+  //
+  //        | 键                | 缺省值   |
+  //        |-------------------|----------|
+  //        | `text`            | `""`     |
+  //        | `origin`          | `"user"` |
+  //        | `transferId`      | `""`     |
+  //        | `fileName`        | `""`     |
+  //        | `fileSize`        | `0L`     |
+  //        | `mimeType`        | `""`     |
+  //        | `status`          | `""`     |
+  //        | `savedPath`       | `""`     |
+  //        | `batchId`         | `""`     |
+  //        | `attachmentIndex` | `0`      |
+  //        | `attachmentCount` | `1`      |
+  //
+  // 🔴 缺省值与本 case class 的默认值**逐字相同**（表 = 默认值的镜像），但语义**不依赖**
+  //    Scala 默认值机制——逐键语义显式落在下面的 `given Decoder` 里。
+  // 🔴 「键在场」的值一律**逐字照读**（不夹带归一化）：既有全键台账的解码结果与改前**逐格相同**。
+
+  /** 必给键（缺席即**条目级**失败；顺序即报告里的列举顺序）。 */
+  val RequiredKeys: List[String] = List("msgId", "direction", "kind", "ts")
+
+  /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 15 键）。 */
+  val OptionalKeys: List[String] = List(
+    "text", "origin", "transferId", "fileName", "fileSize", "mimeType",
+    "status", "savedPath", "batchId", "attachmentIndex", "attachmentCount"
+  )
+
   given Encoder[DropboxMessage] = deriveEncoder
-  given Decoder[DropboxMessage] = deriveDecoder
+
+  /** 显式 decoder（取代裸 `deriveDecoder`）——**逐键容错**，逐键语义如下：
+   *
+   *   - 必给键：`c.get[...]` ⇒ 缺席 / 类型不符 = `Left`（**该条目**失败；绝不放大成整表失败，
+   *     整表聚合由 [[DropboxLedger.decode]] 负责跳过 + 计数）；
+   *   - 可缺键：`c.get[Option[...]](key).map(_.getOrElse(default))` ⇒ 缺席 **或** `null` =
+   *     缺省值补齐并**保留条目**；键在场但类型不符（如 `text` 是数字）= `Left`（条目级失败，
+   *     不静默伪造）。这一区分正是「键缺失语义显式化」：**缺席 ≠ 类型错**。
+   */
+  given Decoder[DropboxMessage] = Decoder.instance { c =>
+    for
+      msgId           <- c.get[String]("msgId")
+      direction       <- c.get[String]("direction")
+      kind            <- c.get[String]("kind")
+      ts              <- c.get[Long]("ts")
+      text            <- c.get[Option[String]]("text").map(_.getOrElse(""))
+      origin          <- c.get[Option[String]]("origin").map(_.getOrElse(OriginUser))
+      transferId      <- c.get[Option[String]]("transferId").map(_.getOrElse(""))
+      fileName        <- c.get[Option[String]]("fileName").map(_.getOrElse(""))
+      fileSize        <- c.get[Option[Long]]("fileSize").map(_.getOrElse(0L))
+      mimeType        <- c.get[Option[String]]("mimeType").map(_.getOrElse(""))
+      status          <- c.get[Option[String]]("status").map(_.getOrElse(""))
+      savedPath       <- c.get[Option[String]]("savedPath").map(_.getOrElse(""))
+      batchId         <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
+      attachmentIndex <- c.get[Option[Int]]("attachmentIndex").map(_.getOrElse(0))
+      attachmentCount <- c.get[Option[Int]]("attachmentCount").map(_.getOrElse(1))
+    yield DropboxMessage(
+      msgId = msgId, direction = direction, kind = kind, ts = ts, text = text,
+      origin = origin, transferId = transferId, fileName = fileName, fileSize = fileSize,
+      mimeType = mimeType, status = status, savedPath = savedPath, batchId = batchId,
+      attachmentIndex = attachmentIndex, attachmentCount = attachmentCount
+    )
+  }
 
 // ===== File Transfer State (in-memory + throttled persistence) =====
 
@@ -108,3 +183,59 @@ object DropboxModels:
   /** Current epoch milliseconds. */
   def now: Long = System.currentTimeMillis()
 end DropboxModels
+
+// ===== 台账（messages.json）逐条容错解码（作者 2026-09-17 #785 裁定）=====
+
+/** 被跳过的一条台账条目 —— **有数、有声**（禁静默吞）。 */
+final case class DropboxLedgerSkip(
+  deviceId: String,
+  /** 该条目在设备数组里的下标；`-1` = 整个设备值不是数组（设备级跳过）。 */
+  index: Int,
+  reason: String
+)
+
+/** 台账解码结果：解出的消息表 + 被跳过的条目明细（跳过数为 0 时为空）。 */
+final case class DropboxLedgerDecode(
+  messages: Map[String, List[DropboxMessage]],
+  skipped: List[DropboxLedgerSkip]
+)
+
+object DropboxLedger:
+  /** 台账**逐条容错**解码（`~/.nebflow/dropbox/messages.json` 的唯一解码入口）。
+   *
+   *  分级失败语义（🔴 本批核心判据 = **禁整表失败**）：
+   *   - **表级 fail-closed**（唯一）：非 JSON / 顶层不是对象 ⇒ `Left`。这一级没有「其余条目」
+   *     可救，调用方按空表继续并 WARN；**文件本身零写回**。
+   *   - **设备级容错**：某设备的值不是数组 ⇒ 该设备跳过 + 登记，其余设备照常解出。
+   *   - **条目级容错**：条目缺可缺键 ⇒ 缺省补齐并保留；缺必给键 / 类型不符 / 元素非对象
+   *     ⇒ **跳过该条 + 计数登记**，同表**其余条目必须正常解出**。
+   *
+   *  顺序与键值一律**原样保留**（不做排序、不做归一化）⇒ 全键台账的解码结果与改前逐格相同。
+   */
+  def decode(raw: String): Either[String, DropboxLedgerDecode] =
+    io.circe.parser.parse(raw).left.map(e => s"invalid JSON: ${e.getMessage}").flatMap { json =>
+      json.asObject match
+        case None => Left("top-level JSON value is not an object")
+        case Some(obj) =>
+          val skipped = List.newBuilder[DropboxLedgerSkip]
+          val out = scala.collection.mutable.LinkedHashMap.empty[String, List[DropboxMessage]]
+          obj.toIterable.foreach { case (deviceId, value) =>
+            value.asArray match
+              case None =>
+                // 设备级跳过：台账里出现过的设备键**仍在表里**（值为空），只是零条目 —— 与
+                // 「数组里条目全被跳过」同形，调用方 `getHistory` 两条路径都回 `Nil`。
+                skipped += DropboxLedgerSkip(deviceId, -1, "device value is not an array")
+                out.update(deviceId, Nil)
+              case Some(entries) =>
+                val kept = List.newBuilder[DropboxMessage]
+                entries.zipWithIndex.foreach { case (entry, idx) =>
+                  entry.as[DropboxMessage] match
+                    case Right(m) => kept += m
+                    case Left(err) =>
+                      skipped += DropboxLedgerSkip(deviceId, idx, err.message)
+                }
+                out.update(deviceId, kept.result())
+          }
+          Right(DropboxLedgerDecode(out.toMap, skipped.result()))
+    }
+end DropboxLedger
