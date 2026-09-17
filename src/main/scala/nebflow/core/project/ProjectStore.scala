@@ -17,6 +17,29 @@ import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 object ProjectStore:
   private val logger = NebflowLogger.forName("nebflow.project.store")
 
+  /** 脚手架**逐件**读数（作者 2026-09-17 12:09 裁定单 ③-8/③-9）。
+    *
+    * `created` = 本次调用**写盘**了该件（缺失即补）；`skipped` = 既有件原样未动。
+    * `detail` 承载第三种实况的可读注记（`.gitignore` 追加到既有文件 / 既有文件已含条目），
+    * 不改变 created/skipped 两值语义。 */
+  final case class ScaffoldItem(item: String, created: Boolean, detail: String = "")
+
+  /** 一次补缺的逐件报告 + 一行摘要（③-9「有 created 时一行摘要」）。 */
+  final case class ScaffoldReport(items: List[ScaffoldItem]):
+    def createdCount: Int = items.count(_.created)
+    def skippedCount: Int = items.size - createdCount
+
+    /** 逐件列 created/skipped；有 created 时追加一行摘要，无 created 时明说无需补缺。 */
+    def render: String =
+      val perItem = items
+        .map(i =>
+          s"${i.item} ${if i.created then "created" else "skipped"}" +
+            (if i.detail.nonEmpty then s" (${i.detail})" else "")
+        )
+        .mkString(", ")
+      if createdCount > 0 then s"$perItem — $createdCount created, $skippedCount skipped"
+      else s"$perItem — nothing to do"
+
   def projectsDir: os.Path = PathUtil.dataRoot / "projects"
 
   def projectDir(name: String): os.Path = projectsDir / name
@@ -76,6 +99,15 @@ object ProjectStore:
     * 同源消费，源头过滤 → 归档即从面板消失 + 重启不自动挂载。
     * 恢复显示 = 手工删除 project.json 中 archived/archivedAt 两键（单程语义，无自动路径）。 */
   def list(): IO[List[ProjectDef]] =
+    listAll().map(_.filterNot(_.archived.contains(true)))
+
+  /** 全量定义（**含归档**）——同一读盘实现，list() 只在其上做归档过滤（语义零变化）。
+    *
+    * 唯一消费者 = ProjectCreate 创建面的 workspace 占用扫描：占用者**含归档定义**
+    * （保守默认「宁误拒不误建」；该保守面由实施批分发器定，非作者逐字裁定，
+    * 见报告「判据声明」节）。归档项若不参与占用扫描，就会出现「已占用 workspace
+    * 被第二个 name 静默复用」——正是本批要堵的缺口。 */
+  def listAll(): IO[List[ProjectDef]] =
     IO.blocking {
       if !os.exists(projectsDir) then Nil
       else
@@ -88,7 +120,7 @@ object ProjectStore:
           }
           .flatten
           .toList
-    }.map(_.filterNot(_.archived.contains(true)))
+    }
 
   /** 归档（迁移方案 v2 §6.1）：project.json 原位手术式插键——读原始 Json →
     * deepMerge 写入 archived=true + archivedAt → AtomicJson 原子写回。
@@ -131,13 +163,26 @@ object ProjectStore:
     * - `<workspace>/.gitignore`（内容含 `.nebflow/`，防项目 repo 污染，R6——写 workspace 根，
     *   git 语义：`.nebflow/` 不带前导斜杠匹配任意层级；根已有 .gitignore → 追加不覆盖）
     * 已存在 → 拒绝（防覆盖）。
-    */
+    *
+    * 脚手架写入单点 = [[ensureScaffold]]（作者 2026-09-17 12:09 裁定单 ③-8：「缺件即补、
+    * 既有永不覆盖」）。本函数对外语义**不变**：定义已存在仍返 Left（防覆盖 +
+    * `ProjectStoreSpec` 「duplicate create rejected」钉住），补缺只发生在缺件面，
+    * 既有件逐字节不变。需要逐件 created/skipped 报告的调用方用 [[createWithScaffold]]。 */
   def create(
     name: String,
     workspace: String,
     description: Option[String],
     agentMdTemplate: String
   ): IO[Either[String, ProjectDef]] =
+    createWithScaffold(name, workspace, description, agentMdTemplate).map(_.map(_._1))
+
+  /** [[create]] + 本次补缺的逐件报告（③-9 结果文案的数据源）。 */
+  def createWithScaffold(
+    name: String,
+    workspace: String,
+    description: Option[String],
+    agentMdTemplate: String
+  ): IO[Either[String, (ProjectDef, ScaffoldReport)]] =
     if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
       IO.pure(Left(s"Invalid project name: '$name'"))
     else
@@ -145,8 +190,6 @@ object ProjectStore:
         if os.exists(projectJsonPath(name)) then Left(s"Project '$name' already exists")
         else
           val ws = os.Path(workspace, PathUtil.dataRoot)
-          val nebflowDir = ws / ".nebflow"
-          os.makeDir.all(nebflowDir)
           val agentFile = (ws / "AGENTS.md").toString
           val now = System.currentTimeMillis()
           val pd = ProjectDef(
@@ -158,17 +201,52 @@ object ProjectStore:
           )
           os.makeDir.all(projectDir(name))
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)
-          // agent 指令模板写工作区根 AGENTS.md（仅缺省时写，不覆盖已有；旧位置 .nebflow/Agent.md 由读路径回落兼容）
-          if !os.exists(ws / "AGENTS.md") then os.write.over(ws / "AGENTS.md", agentMdTemplate)
-          // R6：.gitignore 写 workspace 根（防 .nebflow/ 落项目 repo；根 AGENTS.md 天然进 git）；根已有 → 追加 .nebflow/ 行
-          writeNebflowGitignore(ws)
-          Right(pd)
+          val report = ensureScaffoldSync(ws, agentMdTemplate)
+          Right((pd, report))
       }
+
+  /** ③-8 补缺脚手架单点（作者 2026-09-17 12:09 裁定单）：逐件「缺失即补、既有永不覆盖」，
+    * 返回逐件 created/skipped。
+    *
+    * **两条路径共用**（同批裁定）：① 新建（[[createWithScaffold]] 内部）；② 幂等挂载
+    * （`NodeTools.createChain` 的 sameWorkspace 分支——定义已存在但工作区后来丢了件，
+    * 现状无自愈路径，本函数补上）。归档分支与异 workspace 分支**不得调用**（保持零写入）。
+    *
+    * 🔴 不写 `.nebflow/flow-map.json`（由挂载首写，`FlowMapStore.scala:1243/1274`）；
+    * `.nebflow/` 只建空目录。 */
+  def ensureScaffold(ws: os.Path, agentMdTemplate: String): IO[ScaffoldReport] =
+    IO.blocking(ensureScaffoldSync(ws, agentMdTemplate))
+
+  private def ensureScaffoldSync(ws: os.Path, agentMdTemplate: String): ScaffoldReport =
+    os.makeDir.all(ws)
+    val nebflowDir = ws / ".nebflow"
+    val dirExisted = os.exists(nebflowDir)
+    os.makeDir.all(nebflowDir)
+    val agentsMd = ws / "AGENTS.md"
+    val agentsExisted = os.exists(agentsMd)
+    // agent 指令模板写工作区根 AGENTS.md（仅缺省时写，不覆盖已有；旧位置 .nebflow/Agent.md 由读路径回落兼容）
+    if !agentsExisted then os.write.over(agentsMd, agentMdTemplate)
+    ScaffoldReport(
+      List(
+        ScaffoldItem(
+          ".nebflow/",
+          created = !dirExisted,
+          detail = if dirExisted then "already present"
+          else "empty dir only (flow-map.json is written on mount)"
+        ),
+        ScaffoldItem(
+          "AGENTS.md",
+          created = !agentsExisted,
+          detail = if agentsExisted then "existing content kept" else ""
+        ),
+        writeNebflowGitignore(ws)
+      )
+    )
 
   /** R6：workspace 根 .gitignore 防项目 repo 污染（`.nebflow/` 不落 repo）。
     * 根已有 .gitignore → 若未含 `.nebflow/` 行则追加（不覆盖用户已有内容）。
     * 匹配 `.nebflow/` 与 `.nebflow` 两种写法（均忽略目录本身）。 */
-  private def writeNebflowGitignore(ws: os.Path): Unit =
+  private def writeNebflowGitignore(ws: os.Path): ScaffoldItem =
     val gi = ws / ".gitignore"
     if os.exists(gi) then
       val content = os.read(gi)
@@ -179,7 +257,11 @@ object ProjectStore:
       if !hasEntry then
         val sep = if content.endsWith("\n") then "" else "\n"
         os.write.append(gi, s"$sep.nebflow/\n")
-    else os.write.over(gi, ".nebflow/\n")
+        ScaffoldItem(".gitignore", created = true, detail = "appended to the existing file")
+      else ScaffoldItem(".gitignore", created = false, detail = "already lists .nebflow/")
+    else
+      os.write.over(gi, ".nebflow/\n")
+      ScaffoldItem(".gitignore", created = true, detail = "")
 
   def delete(name: String): IO[Unit] =
     IO.blocking {

@@ -324,7 +324,7 @@ private object Seeds:
 - Keep the text part of a report terse - facts and decisions only.
 
 ## Lifecycle
-1. Intent understood => an existing project (workspace path aligned with the intent) gets a Mail dispatch; none => ProjectCreate first.
+1. Intent understood => resolve the project by its **registry name** first: the registry is the authority on project identity, a workspace path is not (`Mail(address="project:<name>")`; `NodeList` reports each project's authoritative `meta.workspace`). A name miss with the workspace path already used by another project => report the conflict (naming the occupying project) and stop — never create a second project on an occupied workspace; ProjectCreate default-denies it. A name miss on a free path => ProjectCreate first.
 2. Deliverable-producing tasks (deck / video / image set / doc layout / finished report) MUST land in a project with the matching capability - never a one-off dispatch (no project face, no plugins, nowhere to archive). Name the required plugin capability in the dispatch text (e.g. deck / doc layout / video); the project side mounts it, you only declare the intent.
 3. Dispatch text = goal + constraints + acceptance - it is the dispatcher's entire context.
 4. Node results travel the `out` edges to you automatically - never poll, never refresh.
