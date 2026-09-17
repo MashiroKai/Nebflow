@@ -1,6 +1,8 @@
 /* Combined verification harness for the 08-29 batch:
    GROUP A: ② onboarding sealed (flag off -> zero UI; flag on -> greeting renders)
-   GROUP B: ③ slash sealed ('/' plain text: no dropdown, send goes out as user msg)
+   GROUP B: ③ slash sealed — D1-B 白名单形态（2026-09-17 裁定）: with the master gate
+            off, typing '/' lists the whitelist ONLY (/clear + /compact); every other
+            name (/ask, /onboarding, /plan, /fork, skill/flow commands) stays plain text
    GROUP C: ④ permission escalation buttons (conditional render + wire upgradeMode)
    Static server must serve the worktree web/ root. */
 const fs = require('fs');
@@ -103,20 +105,25 @@ ${extraBody || ''}
       cv.chatViews.primary = view;
       cv.setActiveView(view);
       try { initInput(view); } catch (e) { out.initErr = String(e); }
-      // type '/' -> dropdown must stay closed (sealed)
+      // type '/' -> dropdown lists the WHITELIST ONLY (D1-B 2026-09-17: the master gate
+      // is off, so /ask, /onboarding and all skill/flow commands must stay sealed)
       const input = view.dom.input;
       input.value = '/';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise(r => setTimeout(r, 120));
       out.dropdownOnAfterSlash = view.dom.slashDropdown.classList.contains('on');
       out.dropdownItems = view.dom.slashDropdown.querySelectorAll('.slash-item').length;
-      // '/onboarding' as message must NOT trigger command interception
+      out.dropdownNames = Array.from(view.dom.slashDropdown.querySelectorAll('.slash-item .slash-cmd')).map(el => el.textContent);
+      // sealed names must NOT trigger command interception (plain-text path)
       const inputMod = await import('/js/input.js');
       out.handleSlashResult = inputMod.handleSlash('/onboarding');
+      out.sealedResults = ['/ask', '/onboarding', '/plan', '/fork', '/web-search', '/'].map(n => inputMod.handleSlash(n));
       return out;
     });
-    ok('B1 slash sealed: typing / opens zero dropdown', r.dropdownOnAfterSlash === false && r.dropdownItems === 0, r);
-    ok('B2 slash sealed: handleSlash("/onboarding") returns false (plain text path)', r.handleSlashResult === false, r);
+    ok('B1 slash sealed (D1-B): typing / opens the whitelist dropdown only (= ["/clear","/compact"])',
+      r.dropdownOnAfterSlash === true && r.dropdownItems === 2 && JSON.stringify(r.dropdownNames) === JSON.stringify(['/clear', '/compact']), r);
+    ok('B2 slash sealed (D1-B): handleSlash returns false for every non-whitelisted name (plain text path)',
+      r.handleSlashResult === false && Array.isArray(r.sealedResults) && r.sealedResults.every(x => x === false), r);
     ok('B3 initInput ran clean', !r.initErr, r.initErr);
     ok('B0 no page errors', errs.length === 0, errs);
     await ctx.close();
