@@ -2966,7 +2966,7 @@ object ProjectCreateTool extends Tool:
     """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
 ## When to Use
 - **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready). Existing workspace files are never overwritten; only missing pieces are backfilled, and the result lists what was created vs left alone.
-- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips, no "Other…" free input — 2026-09-09 裁定). The chosen path flows back into the card and creation proceeds automatically.
+- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips — 2026-09-09 裁定). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend; retiring that free input is a separate S3 order that has not landed. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
 - Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
