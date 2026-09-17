@@ -6,6 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.core.plugin.PluginRegistry
+import nebflow.core.project.ProjectStore
 
 import java.net.JarURLConnection
 import java.security.MessageDigest
@@ -25,13 +26,16 @@ import scala.jdk.CollectionConverters.*
  *    字段合法入 seed——TB #20 基线对齐 2026-09-09）
  *  - 系统插件：收缩后默认集（visual-report / slideblocks，c7501470），
  *    预装 + trusted（复用 PluginRegistry.approve）
+ *  - 默认通用项目：id=general，workspace=`<root>/projects/general`，启动前挂载
+ *    （`project:` 条目 + `seed/projects/general/AGENTS.md` 模板，`<DATA_ROOT>` 占位
+ *    替换为数据根）
  *
- * **项目面：零播种**（2026-09-16 作者令「移除 general 这个内置项目」）——默认集不再含
- * `project:` 条目，fresh home 不建任何项目脚手架（`projects/` 留空，项目由用户 / Nebula 建）。
- * 存量 `~/.nebflow/projects/general/` 数据**原样保留**（零删除 / 零搬移 / 零 rename）：本批
- * 的语义是「不再内置、不再播种」，**不是清档**（是否清档 = 作者另裁）。`project:` 分派面
- * 与项目种子资源树（原 `seed/projects` 目录，同批删除）同批摘除（root 侧已自拆，
- * 实现侧零兼容残留）。
+ * **项目面 = 仅新环境播种**（作者 2026-09-17 裁定①：撤销 2026-09-16「移除内置 general
+ * 项目」令）——干净 home 恢复播种 `projects/general` 脚手架；**不补种**既有 home
+ * （其 `general` 为手工建成、保持现状）：既有 home 走下面的守卫分支，只写 marker，
+ * 项目面**零自愈**（无 `reconcileProjects`、门与分支一行未动）。存量
+ * `~/.nebflow/projects/general/` 数据本批**零触碰**（零删除 / 零搬移 / 零 rename）。
+ * 本批前（2026-09-16 ~ 2026-09-17）的口径为「项目面零播种」，已随撤销令作废。
  *
  * 触发（§4.2）：gateway boot 装配点调用 `ensureSeeded()`，位置 = 项目挂载前。
  * 判定顺序：
@@ -94,6 +98,9 @@ object SeedService:
 
   private val AgentsPrefix = "agents:"
   private val PluginsPrefix = "plugins:"
+  private val ProjectPrefix = "project:"
+  private val GeneralProjectName = "general"
+  private val DataRootPlaceholder = "<DATA_ROOT>"
 
   /** 插件存在台账文件名（home 数据根下、与 `.seed-state.json` 同级；随 home 走、不落 repo）。
     * 语义 / 生命周期见类注释「插件存在台账」段。 */
@@ -231,6 +238,7 @@ object SeedService:
     try
       if id.startsWith(AgentsPrefix) then seedAgent(root, id.stripPrefix(AgentsPrefix))
       else if id.startsWith(PluginsPrefix) then seedPlugin(root, id.stripPrefix(PluginsPrefix))
+      else if id.startsWith(ProjectPrefix) then seedProject(root, id.stripPrefix(ProjectPrefix))
       else
         logger.warnSync(s"Seed: unknown item id '$id' — skipping")
         false
@@ -290,6 +298,33 @@ object SeedService:
           // 装上了但记录写失败 → 该包照常可用（在位即信任），但缺仲裁基准 ⇒ 种子不会覆盖它
           logger.warnSync(s"Seed: plugin '$name' $outcome but the trust record write failed: $err")
           true
+
+  /** 项目条目：按 [[ProjectStore.create]] 现行产物搭 general 脚手架（project.json +
+    * AGENTS.md + .gitignore；flow-map.json 由 FlowMapStore.open 首写）。模板里的
+    * `DataRootPlaceholder` 替换为本 home 的数据根（模板随 home 走，禁写死路径）。
+    *
+    * **仅新环境播种**（作者 2026-09-17 裁定①）：既有 home 由 [[ensureSeeded]] 的
+    * `hasExistingProjects` 守卫拦下（只写 marker），本方法在既有 home **永不被调用**
+    * ⇒ 既有 home 的项目面零自愈补种（无 reconcileProjects）。幂等：`project.json`
+    * 已在 ⇒ 跳过（`ProjectStore.create` 亦自带「已存在 ⇒ 拒绝」兜底，双保险，
+    * 用户编辑 > 种子）。 */
+  private def seedProject(root: os.Path, id: String): Boolean =
+    val name = GeneralProjectName
+    if os.exists(root / "projects" / name / "project.json") then
+      logger.infoSync(s"Seed: project '$name' already exists — skipped")
+      false
+    else
+      val workspace = (root / "projects" / name).toString
+      val agentTemplate = readResource(os.SubPath("seed/projects/general/AGENTS.md"))
+        .map(_.replace(DataRootPlaceholder, root.toString))
+        .getOrElse(defaultAgentTemplate(name, root))
+      ProjectStore.create(name, workspace, Some("通用项目（默认工作区）"), agentTemplate).unsafeRunSync() match
+        case Right(_) =>
+          logger.infoSync(s"Seed: project '$name' scaffolded (workspace=$workspace)")
+          true
+        case Left(err) =>
+          logger.warnSync(s"Seed: project '$name' create failed: $err")
+          false
 
   // ── 插件一致性 reconcile（「始终保持一致」机制）──────────
   /** 每次启动对 manifest 声明的插件做 seed ↔ runtime 比对（digest 仲裁，见类注释）。
@@ -676,6 +711,19 @@ object SeedService:
             .toList
         case _ => Nil
     }.distinct
+
+  /** 项目 AGENTS.md 的兜底模板（种子资源缺失时用；短形态，不承载完整节点协议——
+    * 与 `seed/projects/general/AGENTS.md` 的完整模板非同一文本）。路径由数据根拼出，
+    * 禁写死绝对路径。 */
+  private def defaultAgentTemplate(name: String, root: os.Path): String =
+    s"""# $name — AGENTS.md
+
+项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
+
+- 工作区：${(root / "projects" / name).toString}
+- Flow Map：`${(root / "projects" / name).toString}/.nebflow/flow-map.json`
+- 节点规则：节点是 leaf（无记忆、无 Mail 身份、ephemeral）；结果沿 out 边投递。
+"""
 
   // ── manifest / marker ────────────────────────────────────
   private case class SeedManifest(seedVersion: String, items: List[String])
