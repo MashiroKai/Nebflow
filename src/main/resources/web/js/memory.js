@@ -30,7 +30,7 @@ export function clearMemoryCache() {
 }
 
 /** Open the memory modal, fetch active tab content. */
-export function openMemoryEditor(event) {
+export function openMemoryModal(event) {
   memorySessionId = state.activeSessionId;
   clearMemoryCache();
   document.getElementById('memory-modal').classList.add('show');
@@ -39,7 +39,7 @@ export function openMemoryEditor(event) {
 }
 
 /** Close the memory modal. */
-export function closeMemoryEditor() {
+export function closeMemoryModal() {
   document.getElementById('memory-modal').classList.remove('show');
   document.getElementById('memory-overlay').classList.remove('on');
 }
@@ -107,13 +107,13 @@ export function saveMemory() {
 
 /** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */
 export function initMemory() {
-  document.getElementById('memory-btn')?.addEventListener('click', openMemoryEditor);
+  document.getElementById('memory-btn')?.addEventListener('click', openMemoryModal);
   document.querySelectorAll('.memory-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.scope));
   });
-  document.getElementById('memory-modal-cancel')?.addEventListener('click', closeMemoryEditor);
+  document.getElementById('memory-modal-cancel')?.addEventListener('click', closeMemoryModal);
   document.getElementById('memory-modal-save')?.addEventListener('click', saveMemory);
   document.getElementById('memory-overlay')?.addEventListener('click', e => {
-    if (e.target.id === 'memory-overlay') closeMemoryEditor();
+    if (e.target.id === 'memory-overlay') closeMemoryModal();
   });
 }

@@ -12,11 +12,12 @@ import nebflow.service.{MemoryBudget, MemoryStore}
 import java.nio.file.Files
 
 /**
- * MemoryEditTool spec（**队列记账语义**，2026-09-12 记忆改造批 / spec §5 R2 O-A）。
+ * MemoryNoteTool spec（**队列记账语义**，2026-09-12 记忆改造批 / spec §5 R2 O-A；
+ * 2026-09-17 更名批随工具与文件同步改名——断言字面换名，**语义零变化**）。
  *
  * 本文件的前身断言的是直写语义（四动作落到记忆文件 + 快照 + 预算闸）；那套语义已被
- * `MemoryEdit` 保名换语义推翻 ⇒ 旧断言**整体作废**，此处按新语义重写（不是「改测试
- * 过门」：被断言的行为本身是本批的交付对象）。
+ * 记账化改造推翻（2026-09-12「保名换语义」；2026-09-17 更名批取代之）⇒ 旧断言
+ * **整体作废**，此处按新语义重写（不是「改测试过门」：被断言的行为本身是本批的交付对象）。
  *
  * 覆盖：
  *  - 四 action 一律**记账**：写队列 `note`（字段齐备）、记忆文件**零字节变化**、
@@ -30,14 +31,14 @@ import java.nio.file.Files
  *
  * dataRoot 经 PathUtil.setDataRoot 重定向到临时目录（DeviceIdentitySpec 先例）。
  */
-class MemoryEditToolSpec extends FunSuite:
+class MemoryNoteToolSpec extends FunSuite:
 
   private var prevRoot: os.Path = os.Path("/tmp")
   private var home: os.Path = os.Path("/tmp")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
-    home = os.Path(Files.createTempDirectory("nb-memq-memoryedit"))
+    home = os.Path(Files.createTempDirectory("nb-memq-memorynote"))
     PathUtil.setDataRoot(home)
 
   override def afterAll(): Unit =
@@ -54,11 +55,11 @@ class MemoryEditToolSpec extends FunSuite:
 
   private def call(params: (String, Json)*): Either[ToolError, String] =
     val input = JsonObject.fromIterable(params.map((k, v) => k -> v))
-    MemoryEditTool.call(input, ToolContext(projectRoot = home.toString)).unsafeRunSync()
+    MemoryNoteTool.call(input, ToolContext(projectRoot = home.toString)).unsafeRunSync()
 
   private def callAs(identity: String, params: (String, Json)*): Either[ToolError, String] =
     val input = JsonObject.fromIterable(params.map((k, v) => k -> v))
-    MemoryEditTool.call(input, ToolContext(
+    MemoryNoteTool.call(input, ToolContext(
       projectRoot = home.toString,
       agentDef = Some(AgentDef(name = identity, description = "")))).unsafeRunSync()
 
@@ -119,11 +120,11 @@ class MemoryEditToolSpec extends FunSuite:
     assert(res.contains("queued q-"), s"必须明示 queued q-id: $res")
     assert(res.contains("(applied at next compaction)"), "必须明示应用时机")
     assert(res.contains("NOT written yet"), "必须明示尚未落盘")
-    assert(!res.contains("MemoryEdit ok:"), "不得沿用旧「已写入」回显形态")
+    assert(!res.contains("MemoryNote ok:"), "不得沿用旧「已写入」回显形态")
     assert(!res.toLowerCase.contains("written to memory"), "不得回显已写入记忆")
 
   test("schema 无路径参数（白名单面 = 五个语义参数）"):
-    val props = MemoryEditTool.inputSchema("properties").flatMap(_.asObject).get
+    val props = MemoryNoteTool.inputSchema("properties").flatMap(_.asObject).get
     assertEquals(props.keys.toSet, Set("target", "action", "section", "match", "content"),
       "whitelist surface: exactly the five semantic params, no path/file parameter")
 

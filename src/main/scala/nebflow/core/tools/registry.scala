@@ -105,8 +105,8 @@ object ToolRegistry:
       // 授能面：Nebula 固定携带；dream 经 2026-09-05 作者签准备入
       // （AgentCore.DreamAdmittedTools + exclusiveToolsFor 单点剥离豁免），
       // 动作面限修订动作（remove/update/replace_section），append 由
-      // MemoryEditTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
-      "MemoryEdit" -> MemoryEditTool,
+      // MemoryNoteTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
+      "MemoryNote" -> MemoryNoteTool,
       // TaskList（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：Nebula
       // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
       // 授能面 = NebulaOrchestrationTools 单一来源（当前/终态 = 15，作者 2026-09-14

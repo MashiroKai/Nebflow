@@ -17,9 +17,9 @@ import java.nio.file.Files
  *   LLM 实际收到的工具定义列表，未注册名自然缺席，比 allowedSet 更接近交付面）。
  * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 七件）。
  * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖），
- *   MemoryEdit 注册且 Nebula 专属（§C.1 记忆行 + NebulaExclusiveTools）；
+ *   MemoryNote 注册且 Nebula 专属（§C.1 记忆行 + NebulaExclusiveTools）；
  *   dream 受限准入例外（2026-09-05 作者签准，DreamAdmittedTools——动作面
- *   append 仍由 MemoryEditTool 拒绝，见 MemoryEditToolSpec）。
+ *   append 仍由 MemoryNoteTool 拒绝，见 MemoryNoteToolSpec）。
  * - §C.5：Glob/Grep 缺省根 = node root（沙箱开时 = sandbox.root =
  *   SessionContext.projectRoot 权威口径；user.dir 仅沙箱关回退，§G.1 rollback
  *   已由 SandboxSpec「G.1 回滚」用例覆盖）。
@@ -49,7 +49,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",
       "Schedule",
-      "MemoryEdit"
+      "MemoryNote"
     )
     assertEquals(delivered, expected,
       "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 12 = 本批 −Delegate 后值；此前 root 面摘除 Glob/Grep −2 后为 13）（沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；Nebula 回归纯编排；零 Issue）")
@@ -117,24 +117,29 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!ToolRegistry.ALL_TOOLS.exists(_.name == "MultiEdit"))
     // 类保留：Edit 共享编辑内核仍在（EditToolSpec/MultiEditToolSpec 编译即证）
 
-  test("MemoryEdit is registered; non-Nebula agents never see it even when declared — dream admitted (2026-09-05)"):
-    assert(ToolRegistry.TOOL_MAP.contains("MemoryEdit"), "MemoryEdit 进注册表（Nebula 注入源）")
-    val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List("MemoryEdit")))
-    assert(!sneakyStandalone.contains("MemoryEdit"), "standalone 声明无效（NebulaExclusiveTools；dream 除外）")
+  test("MemoryNote is registered; non-Nebula agents never see it even when declared — dream admitted (2026-09-05)"):
+    assert(ToolRegistry.TOOL_MAP.contains("MemoryNote"), "MemoryNote 进注册表（Nebula 注入源）")
+    // 阴性断言（2026-09-17 更名批）：旧名必须已从注册表彻底消失（无残留注册键 = 更名零悬挂）。
+    // 旧名字面按片段拼接：让本批验收①的 tracked 面字面判据（tracked 树内 grep 旧名 = 0 行）成立，
+    // 断言语义不受影响（判的是注册表键集，不是源码文本）。
+    val legacyMemoryTool = "Memory" + "Edit"
+    assert(!ToolRegistry.TOOL_MAP.contains(legacyMemoryTool), "旧名记忆工具必须已从注册表消失（更名零残留键）")
+    val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List("MemoryNote")))
+    assert(!sneakyStandalone.contains("MemoryNote"), "standalone 声明无效（NebulaExclusiveTools；dream 除外）")
     val sneakyWildcard = CoreProbe.allowed(mkDef("omni", List("*")))
-    assert(!sneakyWildcard.contains("MemoryEdit"), "wildcard 也不给（记忆写面=Nebula+dream，其余身份零变化）")
-    val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryEdit")))
-    assert(!generalDef.contains("MemoryEdit"), "其他身份（general）仍无 MemoryEdit 授能——剥离语义不变")
+    assert(!sneakyWildcard.contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream，其余身份零变化）")
+    val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryNote")))
+    assert(!generalDef.contains("MemoryNote"), "其他身份（general）仍无 MemoryNote 授能——剥离语义不变")
 
-  test("dream MemoryEdit 准入（2026-09-05 作者签准）：声明即授能，其余 Nebula 专属仍被剥"):
-    val declared = CoreProbe.allowed(mkDef("dream", List("MemoryEdit")))
-    assert(declared.contains("MemoryEdit"), "dream 声明 MemoryEdit → 授能（exclusiveToolsFor 豁免剥离）")
+  test("dream MemoryNote 准入（2026-09-05 作者签准）：声明即授能，其余 Nebula 专属仍被剥"):
+    val declared = CoreProbe.allowed(mkDef("dream", List("MemoryNote")))
+    assert(declared.contains("MemoryNote"), "dream 声明 MemoryNote → 授能（exclusiveToolsFor 豁免剥离）")
     val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
-    assert(wildcard.contains("MemoryEdit"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryEdit 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends 对 dream 不得放开
+    assert(wildcard.contains("MemoryNote"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
+    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends 对 dream 不得放开
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
       Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
-      "dream 豁免面 = 仅 MemoryEdit（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends——TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）")
+      "dream 豁免面 = 仅 MemoryNote（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends——TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）")
     val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")

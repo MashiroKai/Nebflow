@@ -52,7 +52,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
         "Schedule",
-        "MemoryEdit")
+        "MemoryNote")
     assertEquals(fixed, expected,
       "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 12 = 本批 −Delegate 后值；沿革：root 面摘除 Glob/Grep −2 后为 13；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；Nebula 回归纯编排——Bash/Write/Edit 移除；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
@@ -117,9 +117,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
-    // 2026-09-06 00:48 作者裁定：NodeList 摘除——MemoryEdit 在、NodeList 不在
+    // 2026-09-06 00:48 作者裁定：NodeList 摘除——MemoryNote 在、NodeList 不在
     // 交付面（out 边自动投递取代主动查图）。
-    assert(nebulaDelivered.contains("MemoryEdit"))
+    assert(nebulaDelivered.contains("MemoryNote"))
     assert(!nebulaDelivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定）")
     // 2026-09-05 23:34 作者裁定：Nebula 回归纯编排——读件在、写手三件
     // （Bash/Write/Edit）不在交付面；general/BaseTools 六件默认注入不变。

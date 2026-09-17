@@ -83,7 +83,7 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
     val rendered = PathUtil.dataRootRenderValue
     val probes = List(
       "CardTool" -> nebflow.core.tools.CardTool.description,
-      "MemoryEditTool" -> nebflow.core.tools.MemoryEditTool.description,
+      "MemoryNoteTool" -> nebflow.core.tools.MemoryNoteTool.description,
       "TaskListTool" -> nebflow.core.tools.TaskListTool.description,
       "LoadTool" -> nebflow.core.tools.LoadTool.description
     )
@@ -98,8 +98,8 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
       "CardTool 必须教 workspace 路径形态（默认 home 下 = 旧字面 ~/.nebflow/projects/<name>/）"
     )
     assert(
-      nebflow.core.tools.MemoryEditTool.description.contains(s"$rendered/User.md"),
-      "MemoryEdit 必须教 user 目标文件（默认 home 下 = 旧字面 ~/.nebflow/User.md）"
+      nebflow.core.tools.MemoryNoteTool.description.contains(s"$rendered/User.md"),
+      "MemoryNote 必须教 user 目标文件（默认 home 下 = 旧字面 ~/.nebflow/User.md）"
     )
     assert(
       nebflow.core.tools.TaskListTool.description.contains(s"$rendered/tasks.json"),

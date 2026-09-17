@@ -15,7 +15,7 @@ import java.nio.file.Files
  *
  * 覆盖：触发谓词（R9 VC3：三支全否 ⇒ 零请求）、硬/软超时 prop、降级路径（逐条写
  * outcome + 置位重试引线）、变更史 change 行、整理 agent 身份与工具面（恰七件、
- * 零 MemoryEdit）、`NebulaMemoryHook` 入队（W2 直写关闭）、队列摘要行注入。
+ * 零 MemoryNote）、`NebulaMemoryHook` 入队（W2 直写关闭）、队列摘要行注入。
  *
  * dataRoot 经 PathUtil.setDataRoot 重定向（DeviceIdentitySpec 先例）。
  */
@@ -207,13 +207,13 @@ class MemoryTrackSpec extends FunSuite:
 
   // ===== 身份与工具面（R5）=====
 
-  test("整理 agent 身份：收敛名 ⇒ 工具面恰七件 = KernelFixedTools，零 MemoryEdit / 零编排件"):
+  test("整理 agent 身份：收敛名 ⇒ 工具面恰七件 = KernelFixedTools，零 MemoryNote / 零编排件"):
     val defn = AgentDef(name = MemoryTrack.AgentName, description = "", category = "standalone")
     val tools = AgentCore.fixedToolsFor(defn)
     assertEquals(tools, AgentCore.KernelFixedTools)
     assertEquals(tools.size, 7, "恰七件（作者第④条：与 Delegate 内核相同的工具面）")
     assertEquals(tools, Set("Read", "Write", "Edit", "Glob", "Grep", "Bash", "AskUserQuestion"))
-    assert(!tools.contains("MemoryEdit"), "队列化后它不需要 MemoryEdit")
+    assert(!tools.contains("MemoryNote"), "队列化后它不需要 MemoryNote")
     assert(AgentCore.ConvergedAgentNames.contains(MemoryTrack.AgentName), "收敛名 ⇒ tools/mcp 声明整体失效")
     assertEquals(
       AgentCore.fixedToolsFor(defn.copy(category = "team")),
