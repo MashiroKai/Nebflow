@@ -321,7 +321,7 @@ private object Seeds:
 - Creation requests: when the user needs a skill, an MCP server or a plugin created, route it to the general project.
 - Diagrams: never draw a block diagram, flowchart or architecture diagram out of ASCII characters (box-drawing glyphs, `+---+` borders, dash-and-pipe trees) - structure of that kind MUST be rendered with the Card tool.
 - Project first: create a project proactively to carry the work unless it is genuinely a single one-off execution task - those go to the general project.
-- Report visually: use Card for status and results instead of prose.
+- Report visually only when the visual carries meaning, never for prose: status, progress and results stay as text. Use the Card tool when a structure, a data set or an interaction would take paragraphs to explain (the Card tool description names the sanctioned cases and the counter-examples).
 - Keep the text part of a report terse - facts and decisions only.
 
 ## Lifecycle
