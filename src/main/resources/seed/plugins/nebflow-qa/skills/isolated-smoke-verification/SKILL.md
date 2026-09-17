@@ -1,6 +1,6 @@
 ---
 name: isolated-smoke-verification
-description: 隔离实例冒烟验证法——验证多 agent 交互修复/后端改动时，用临时 NEBFLOW_HOME+独占端口+mock 路由起隔离实例，断言锚定持久化产物而非易失 stdout；含沙盒泄漏三信号三角定位、kill 前 PID 验身、易失证据替代法证。Use when 验证 Delegate/SubTask 链、重启恢复、fallback 等跨 agent 行为，或怀疑冒烟测试污染真实数据根。Delegate 自 2026-09-11 恢复为内置极简内核（`delegate-kernel-<8hex>`，工具面七件），验证其链时 kernel def 需在隔离 home 内存在（种子首启自动补装；隔离实例用仓内 seed 播种）。
+description: 隔离实例冒烟验证法——验证多 agent 交互修复/后端改动时，用临时 NEBFLOW_HOME+独占端口+mock 路由起隔离实例，断言锚定持久化产物而非易失 stdout；含沙盒泄漏三信号三角定位、kill 前 PID 验身、易失证据替代法证。Use when 验证 Delegate/SubTask 链、重启恢复、fallback 等跨 agent 行为，或怀疑冒烟测试污染真实数据根。Delegate 为内置极简内核（`delegate-kernel-<8hex>`，工具面七件），验证其链时 kernel def 需在隔离 home 内存在（种子首启自动补装；隔离实例用仓内 seed 播种）。
 audience: nebflow-project
 language: zh
 status: active
@@ -15,7 +15,7 @@ last_verified: 2026-08-24
 
 - 临时 `NEBFLOW_HOME`（独立目录）+ 独占端口 + 会话路由 mock（按 session 前缀区分角色行为）
 - 断言锚定**持久化产物**：会话 JSONL 消息内容、taskStore 终态——而非 stdout 日志
-- nohup 块缓冲 + SIGKILL 会丢 stdout 法证（先例：issue #31 冒烟 smoke.log/mock.log 0 字节，靠根会话 msg[6] 注入内容 + 任务库终态独立核验兜回全链结论）
+- nohup 块缓冲 + SIGKILL 会丢 stdout 法证（先例：冒烟 smoke.log/mock.log 0 字节，靠根会话 msg[6] 注入内容 + 任务库终态独立核验兜回全链结论）
 - 实例参数坑：ModelConfig 必填 contextWindow；`/api/command` 用户输入形状 = `type:"userMessage"` + content；root sessionId=UUID 仅显示名
 
 ## 2. kill 前验明 PID 正身
@@ -46,7 +46,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 验证 fallback 路径的 QA 夹具：配置 bogus primary provider（如 `127.0.0.1:9` 必挂）→ fallback 到真实免费模型，每 turn 必走 modelChanged 切换路径。mock 路由无法覆盖真实 WS 帧时序与 fallback 后的 label 切换，只有端到端真实 LLM 调用才能验证 done/modelChanged/usageUpdate 帧完整链路。老后端兼容用 wire 级 strip 字段模拟；弱模型 agentic 失控场景用无工具 qa-mini agent。
 
-## 6. Mock LLM 驱动的工具链冒烟（#28 0b 实战沉淀，2026-09-01）
+## 6. Mock LLM 驱动的工具链冒烟（实战沉淀）
 
 工具层（无 REST 写端点，靠 agent 会话 WS 调用）的 E2E 冒烟用 mock LLM 状态机驱动。五条坑（全部实战踩过，每条约 1-2 轮排查）：
 
@@ -66,9 +66,9 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 ## Evidence
 
-- issue #31 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
+- 冒烟：smoke.log/mock.log 0 字节但验收不降级——msg[6] 双结果注入 + msg[7] 42ms 触发 + fast=completed/stall=failed(2 restarts=maxRestarts) 三重持久化证据链；qa 复核采用同一法证路径通过。
 - Nebflow cold-start 冒烟：`cmp <隔离 home>/auth.json ~/.nebflow/auth.json` → "differ: char 2"；实例日志 "Context window: 128000 tokens (from paid/paid-model)" 不可能来自真实 home（默认 <gateway-alias>/glm-5.2）；cwd 扫无 stray auth.json——三信号一致证明隔离。
 - qwen 碎片聚合修复交验：真实端点本轮只发 name 缺失形态，name:"" 延续帧未触发；以 sendMessageStream 生产帧序回放 spec + 变异验红×2 钉死聚合路径，负例以实例日志 0 条退役串验证。
-- #31 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
+- 对偶：stdout 因 SIGKILL 块缓冲全丢，改用持久化产物核验——两案共同模式：证据不依赖单一易失通道。
 - 大合并关卡：独立 worktree + 独占端口 + nohup + kill PID + lsof 双保险，全链路零冲突。
-- #28 0b node-runner 复验：mock LLM 状态机驱动 NodeEdit/NodeList/NodeCancel/ProjectCreate 全链路（隔离端口 + mock 端口），五坑见 §6——修复 2 P1（ttlScanner SOE/双前缀）后 V2 五验收点全过；多轮失败全为 mock/环境问题，产品代码全程按契约工作。
+- node-runner 复验：mock LLM 状态机驱动 NodeEdit/NodeList/NodeCancel/ProjectCreate 全链路（隔离端口 + mock 端口），五坑见 §6——修复 2 P1（ttlScanner SOE/双前缀）后 V2 五验收点全过；多轮失败全为 mock/环境问题，产品代码全程按契约工作。
