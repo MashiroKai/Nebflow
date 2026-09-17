@@ -178,8 +178,8 @@ class DeviceCredentialAclSpec extends FunSuite:
       back2.map(c => (c.serverUrl, c.networkId, c.deviceId)),
       Some(("https://neblink.example", "net-1", "dev-1"))
     )
-    assertFalse(
-      Files.readString(credPath).contains("\"deviceToken\""),
+    assert(
+      !Files.readString(credPath).contains("\"deviceToken\""),
       "the retired deviceToken copy must not be written into neblink/device.json"
     )
   }
