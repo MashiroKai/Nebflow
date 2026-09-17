@@ -234,7 +234,7 @@ object PopTool extends Tool:
 
 ## Nebula-only (2026-09-10 author ruling)
 
-Pop is Nebula-exclusive: only the Nebula root session may call it. Every other agent, node session, or sub-agent call is rejected with POP_NEBULA_ONLY. Nodes do not Pop — they hand the deliverable to the chain end / Nebula along the out edge, and Nebula decides whether it is shown. Plugins cannot grant Pop back (it left the builtin tool whitelist).
+Pop is Nebula-exclusive: only the Nebula root session may call it. Every other agent, node session, or sub-agent call is rejected with POP_NEBULA_ONLY. Nodes do not Pop — they hand the deliverable to the chain end / Nebula along the out edge, and Nebula decides whether it is shown. Pop cannot be granted back to any other identity (it left the builtin tool whitelist).
 
 ## When to use
 
