@@ -76,7 +76,7 @@ language: zh
 
 ## 6. 配合关系（跨插件按名引用）
 
-本 plugin 不含视觉规则与案例库本体——以下能力已随 2026-09-05 skills→plugins 迁移进入插件（原 user 层 skill 形态不复存在），本 skill 按名引用、注入后由 agent 自行 Read 配合（`${SKILL_DIR}` 不跨包，正文中不写跨包相对路径）：
+本 plugin 不含视觉规则与案例库本体——以下能力已随 skills→plugins 迁移进入插件（原 user 层 skill 形态不复存在），本 skill 按名引用、注入后由 agent 自行 Read 配合（`${SKILL_DIR}` 不跨包，正文中不写跨包相对路径）：
 
 - **`visual-style`**（nebflow-frontend-dev 插件）：用户视觉裁定硬规则，最高优先级——防线 1 第 1 步必读；与本 skill 检索到的外部范式冲突时以它为准；
 - **`design-system`**（nebflow-frontend-dev 插件）：防线 4 教训沉淀的载体 + 防线 1 检索时的内部先例来源；
