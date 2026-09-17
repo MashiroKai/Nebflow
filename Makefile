@@ -28,7 +28,7 @@ LOWER_NAME := $(shell sed -n 's/^lowerName[[:space:]]*=[[:space:]]*//p' brand.co
 PRODUCT_NAME := $(shell sed -n 's/^productName[[:space:]]*=[[:space:]]*//p' brand.conf | sed 's/[[:space:]]#.*$$//; s/[[:space:]]*$$//' | head -1)
 
 install: assembly
-	@echo "Installing $(PRODUCT_NAME) v$(VERSION)..."
+	@echo "Installing $(PRODUCT_NAME) $(VERSION)..."
 	@mkdir -p $(HOME)/.local/bin
 	@cp target/$(SCALA_DIR)/$(LOWER_NAME)-assembly-$(VERSION).jar $(HOME)/.local/bin/$(LOWER_NAME).jar
 	@echo '#!/bin/sh' > $(HOME)/.local/bin/$(LOWER_NAME)
