@@ -92,7 +92,11 @@ object PopTool extends Tool:
       inlined: Int,
       deferred: Int,
       exempt: Int,
-      rejects: List[RejectedRef]
+      rejects: List[RejectedRef],
+      /** Decoded-form disclosures (imgref batch 2026-09-18): a reference whose
+        *  path was spelled with URL escapes / a bare `+` was resolved as the
+        *  decoded form, and the user-facing result says so. */
+      notes: List[String] = Nil
   )
 
   /**
@@ -119,6 +123,7 @@ object PopTool extends Tool:
    */
   private def processLocalImages(html: String, htmlDir: Path): PopRefOutcome =
     val rejects = scala.collection.mutable.ListBuffer.empty[RejectedRef]
+    val notes = scala.collection.mutable.ListBuffer.empty[String]
     var inlined = 0
     var deferred = 0
     var exempt = 0
@@ -138,17 +143,22 @@ object PopTool extends Tool:
     def newValueFor(src: String): Option[String] =
       if isRemoteOrSpecialUrl(src) then None
       else
-        resolveImgSrc(src, htmlDir) match
+        // imgref batch (2026-09-18): a reference spelled with URL escapes
+        // (`%20`) or a bare `+` does not name anything on disk — resolve it
+        // through its candidate forms (raw first, then the decoded form,
+        // hit-and-use, and disclose which form was used).
+        val hit = FileRefs.resolveCandidates(
+          src,
+          v => resolveImgSrc(v, htmlDir),
+          v => unresolvable(v, "the reference could not be resolved to a filesystem path")
+        )
+        hit.note.foreach(n => if !notes.contains(n) then notes += n)
+        hit.path match
           case None =>
-            record(
-              applyAppRouteExemption(
-                src,
-                unresolvable(src, "the reference could not be resolved to a filesystem path")
-              )
-            )
+            record(applyAppRouteExemption(src, hit.decision))
             None
           case Some(p) =>
-            applyAppRouteExemption(src, probeFile(src, p)) match
+            applyAppRouteExemption(src, hit.decision) match
               case RefDecision.Proxy(_) =>
                 // Servable — inline it when the iframe can be spared the fetch
                 // AND this call's cumulative inline budget still covers the
@@ -188,7 +198,7 @@ object PopTool extends Tool:
       logger.debug(
         s"Pop: ${rejects.size} image reference(s) not inlined (deferred=$deferred exempt=$exempt)"
       )
-    PopRefOutcome(out, inlined, deferred, exempt, rejects.toList)
+    PopRefOutcome(out, inlined, deferred, exempt, rejects.toList, notes.toList.distinct)
   end processLocalImages
 
   /** The counters + warning list for one Pop pass — the same objects Card puts
@@ -216,6 +226,11 @@ object PopTool extends Tool:
         .append(warnings.noSpaces)
     if failed > 0 || o.deferred > 0 || o.exempt > 0 then
       sb.append("\n").append(CountsMarker).append(fileRefs.noSpaces)
+    // imgref batch: a decoded-form hit is DISCLOSED even on an otherwise clean
+    // pass — the author's order is explicit that the tool result must say which
+    // form of the path was used ("路径含空格，已自动改用解码形态").
+    if o.notes.nonEmpty then
+      sb.append("\nnotes: ").append(o.notes.mkString(" | "))
     sb.toString
 
   /** Extract hostname from a URL string. */
@@ -247,7 +262,7 @@ The Canvas tab supports the same file types as the file explorer. The tab title 
 
 ## Image references and inlining
 
-Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Inlining is additionally capped in TOTAL per call — at most 40,000 characters of `data:` URI (≈30 KB of source bytes, counted in the order the images appear) go inline, and anything past that total keeps its `/api/nf-file` reference instead. Images outside the 5MB rule, images past that total, and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**, uploads/**, plots/**, workspace-items/**, voice-models/**, docs/**` and the project `.nebflow/` serves `evidence*/**`. To show such a file, put it under one of the served locations above — `projects/**` is the usual route, but not the only one: a path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/output.svg` renders), as long as it is not credential-shaped. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / other) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing.
+Local `<img src>` values that exist, are embeddable image formats and are ≤5MB are inlined as base64 data URIs, so the Canvas iframe renders them with no extra request. The same rule applies to an image you open DIRECTLY (`filePath` = a `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` ≤5MB): its bytes ride in the pop payload and the image viewer renders them with no request. Inlining is additionally capped in TOTAL per call — at most 40,000 characters of `data:` URI (≈30 KB of source bytes, counted in the order the images appear) go inline, and anything past that total keeps its `/api/nf-file` reference instead. Images outside the 5MB rule, images past that total, and every non-image asset are fetched by the frontend through `/api/nf-file`, which needs a per-path ticket the gateway mints only for paths its credential-namespace policy serves — the data directory serves `projects/**, uploads/**, plots/**, workspace-items/**, voice-models/**, docs/**` and the project `.nebflow/` serves `evidence*/**`. To show such a file, put it under one of the served locations above — `projects/**` is the usual route, but not the only one: a path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/output.svg` renders), as long as it is not credential-shaped. Every local reference that could NOT be inlined is reported in this tool's result — `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other) plus a `fileRefs` counter line — and the same list is shown above the Canvas tab. References the Canvas can still serve through /api/nf-file (larger images, formats outside the inline set) are only counted (`fileRefs.deferred`); the app's own routes (`/js/…`, `/css/…`, `/assets/…`, `/logo.svg` …) are counted as `fileRefs.exempt`. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (a bare `+` in a URL's `path=` parameter is read as a space, and `%20` also works); a `notes:` line in this result reports any reference that was resolved in its decoded form.
 
 ## Parameters
 

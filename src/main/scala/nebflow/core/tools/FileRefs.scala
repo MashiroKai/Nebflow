@@ -172,6 +172,16 @@ private[tools] object FileRefs:
     case SizeExceeded extends FileRefFailure("size-exceeded", "the file is larger than the proxy size limit")
     /** 非常规文件 */
     case NotRegularFile extends FileRefFailure("not-regular-file", "the path is not a regular file")
+    /** imgref 批（2026-09-18）：文件在、但**取不到字节**（0 字节 / 读不动 / realpath
+      * 解不出）。浏览器同样渲染不出来，所以它跟「文件不存在」是两件事，得分开报。 */
+    case NotReadable
+        extends FileRefFailure("not-readable", "the file is present but its bytes cannot be read")
+    /** imgref 批（2026-09-18）：文件在、可读，但 `/api/nf-file` 的 credential
+      * namespace 判据不会为它铸票 ⇒ 引用腿必然 401/403，`proxied` 不该为它计数
+      * （作者失败②的「计数绿而取回红」）。判据由端点自己的纯判据给出，见
+      * [[servableByEndpoint]]。 */
+    case NotServable
+        extends FileRefFailure("not-servable", "the /api/nf-file endpoint cannot serve this location")
     /** 其它 */
     case Other extends FileRefFailure("other", "probing the file failed")
 
@@ -300,6 +310,161 @@ private[tools] object FileRefs:
   def unresolvable(value: String, detail: String): RefDecision.Reject =
     RefDecision.Reject(RejectedRef(value, None, FileRefFailure.Unresolvable, detail))
 
+  // ── path ↔ URL query-parameter form (imgref batch, 2026-09-18 作者令) ───────
+  //
+  // 作者实证（2026-09-18，同一改面的两起失败）：路径含空格时 ① `%20` 编码的引用
+  // 被按**字面**去找（`/Users/kaiyu/Claude%20code/…` ⇒ not-found），② 原样空格引用
+  // 的工具计数（`proxied`）是绿的、前端 `img` 却仍旧加载失败。
+  //
+  // 本组三个函数是本仓**唯一**的「路径 ⇄ URL 查询参数」真源，判据两条：
+  //   · 产 URL 一侧：空格一律出 `%20`（`URLEncoder` 的 form 口径会把空格写成 `+`，
+  //     而 `+` 只在 `application/x-www-form-urlencoded` 语境里才等于空格 —— 路径段
+  //     里它是**字面加号**。既有先例 = `RestApiRoutes.encSeg:2314-2317`，注释同法）；
+  //   · 解 URL 一侧：先折 **bare `+`**（旧载荷/replay 里 JVM form 编码留下的）再
+  //     percent-decode，`%2B`（真加号）不动 —— 与前端唯一的解码纪律
+  //     `nfTicket.js decodePathParam` 逐字同法（该件自称 “the ONE statement of this
+  //     discipline in the repo”，本组把它在服务端/工具侧补齐，两侧成对一致）。
+  //
+  // 🔴 解码不参与任何权限判定：解码只挑「去问哪个字符串」，判据始终由
+  // `probeFile`（扩展名/存在性/大小）与端点 `nfFileVerdict`（realpath + credential
+  // namespace + inode）施加 —— 见 [[servableByEndpoint]] 的复用声明。
+
+  /** The ONE path → URL query-parameter encoder (space → `%20`). Delegates to
+    *  [[nebflow.core.PathParamCodec]] — the shared single source the gateway legs
+    *  read too, so the two layers cannot drift. */
+  def encodePathParam(path: String): String = nebflow.core.PathParamCodec.encode(path)
+
+  /** The ONE URL query-parameter → path decoder (fold bare `+`, then
+    *  percent-decode). `%2B` survives as a literal plus. */
+  def decodePathParam(encoded: String): Option[String] = nebflow.core.PathParamCodec.decode(encoded)
+
+  /** Filesystem candidates named by ONE reference value, least-transformed first:
+    * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
+    *
+    * 作者失败①的修法即此：`<link href="/Users/kaiyu/Claude%20code/…/x.css">` 的
+    * **原样**串不是磁盘上的路径，解码形态才是。顺序是判据的一部分 —— 原样先试，
+    * 只有原样**没有命中**才会走到变形形态，因此一个真的含 `+` 或 `%` 的文件名
+    * 永远不会被变形形态顶掉。
+    *
+    * 变形只在串里**确实带** `%` 或 `+` 时产生（否则返回单元素表，零开销、零行为
+    * 变化）。 */
+  def pathFormCandidates(value: String): List[String] = nebflow.core.PathParamCodec.candidates(value)
+
+  /** One reference taken through its candidate forms (see [[pathFormCandidates]]). */
+  final case class CandidateHit(
+      /** the form that was actually probed (== the raw value when the raw form hit) */
+      form: String,
+      /** 0 = the raw value; >0 = a decoded form */
+      formIndex: Int,
+      /** the resolved path, when that form resolved to one */
+      path: Option[Path],
+      /** the verdict produced for `form` */
+      decision: RefDecision,
+      /** present only when a decoded form hit — the disclosure the author's order
+        * requires ("说明用了哪一形态") */
+      note: Option[String]
+  )
+
+  /** The note that must accompany a decoded-form hit. Empty when the raw form hit. */
+  def formNote(value: String, form: String): String = nebflow.core.PathParamCodec.formNote(value, form)
+
+  /** Resolve ONE reference through its candidate forms, least-transformed first,
+    * returning the first form that yields anything other than "not found".
+    *
+    * 判据（作者失败①的修法）：**先试原样**；原样没有命中（`resolve` 解不出路径，或
+    * `probeFile` 报 `not-found`）才试解码形态。命中即用，并把用了哪一形态写进
+    * [[CandidateHit.note]]（回包/告警面必须显式说明）。
+    *
+    * 安全面：本函数只挑「去问哪个字符串」，它自己**不做任何准入**——每个候选形态都
+    * 原样过 `probeFile`（扩展名/存在性/大小/真可读/可服务），真准入仍由端点
+    * `nfFileVerdict`（realpath + credential namespace + inode）施加。变形形态因此
+    * 不可能造出「原串判不住、变形后判得住」的穿透：判据作用在 realpath 上，与
+    * 字符串形态无关。 */
+  def resolveCandidates(
+      value: String,
+      resolve: String => Option[Path],
+      whenUnresolvable: String => RefDecision
+  ): CandidateHit =
+    val candidates = pathFormCandidates(value)
+    var index = 0
+    var hit: Option[CandidateHit] = None
+    while hit.isEmpty && index < candidates.length do
+      val form = candidates(index)
+      resolve(form) match
+        case None => index += 1
+        case Some(p) =>
+          val decision = probeFile(value, p)
+          val notFound = decision match
+            case RefDecision.Reject(rejected) => rejected.failure == FileRefFailure.NotFound
+            case _                            => false
+          if notFound && index < candidates.length - 1 then index += 1
+          else
+            hit = Some(
+              CandidateHit(
+                form,
+                index,
+                Some(p),
+                decision,
+                Option(formNote(value, form)).filter(_.nonEmpty)
+              )
+            )
+    hit.getOrElse(
+      // Nothing resolved at all: report the raw form's own verdict (byte-identical
+      // to the shipped behaviour for a value that never had a decodable sibling).
+      CandidateHit(value, 0, None, whenUnresolvable(value), None)
+    )
+
+  // ── the tool-side "can the endpoint actually serve this?" gate (②) ─────────
+  //
+  // 任务书 7(a)：`proxied` 不得再由「URL 字符串已发出」满足。判据四段：
+  //   ① 解析成功（`probeFile` 既有：存在 + regular + 扩展名 + ≤200MB）；
+  //   ② servability = **与端点同一份判据** —— 直接调端点的纯 credential 判据
+  //      `WebSocketRoutes.nfCredentialDeny` + 同一份 `NfPathPolicy.memoized()`（同一
+  //      JVM、同一 data root、同一 workspace），**零复制、零旁路**；判据抛异常时
+  //      fail-closed（当成不可服务），绝不 fail-open；
+  //   ③ 真可读（HEAD 等价）：`isRegularFile` + `size` + 实读首字节（0 字节文件
+  //      在浏览器里同样渲染不出来，与「文件在」是两件事）；
+  //   ④ URL 往返校验：发出去的 URL 按**同一解码纪律**解回 ⇒ 必须与已解析路径逐字
+  //      相等（形态漂移会让端点去找另一个路径 —— 这正是作者失败②）。
+  //
+  // 依赖方向说明：`core` 引用 `gateway` 在本树有先例（`core/processor/
+  // TaskStuckWatcher.scala:8` 引 `gateway.WsHub`；`core/scheduler/
+  // ScheduledTaskActor.scala:10` 引 `gateway.SessionStore`），且任务书 7(a) 明文要求
+  // 「与端点同一份判据（🔴 复用，禁复制）」。复制一份白名单/判据才是本批明令禁止
+  // 的旁路，所以这里调同一个函数而不镜像它。
+
+  /** `None` = the endpoint's own judge would serve this real path; `Some(reason)`
+    * = it would refuse (the reason is the endpoint's own prose). Fail-closed. */
+  def servableByEndpoint(real: Path): Option[String] =
+    try
+      nebflow.gateway.WebSocketRoutes
+        .nfCredentialDeny(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.memoized())
+    catch
+      case e: Throwable =>
+        Some(
+          s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
+            "the reference is treated as unservable rather than assumed servable"
+        )
+
+  /** HEAD-equivalent readability: regular file, non-zero size, first byte really
+    * readable. `None` = readable, `Some(reason)` = not. */
+  def readableFirstByte(path: Path): Option[String] =
+    try
+      if !Files.isRegularFile(path) then Some("the path is not a regular file")
+      else
+        val size = Files.size(path)
+        if size == 0 then Some("the file is 0 bytes — a browser cannot render it")
+        else
+          val in = Files.newInputStream(path)
+          try
+            val b = in.read()
+            if b < 0 then Some(s"the first byte of a ${size}-byte file could not be read")
+            else None
+          finally in.close()
+    catch
+      case e: Exception =>
+        Some(s"the file could not be read (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")})")
+
   // ── app-route exemption (item 3, 2026-09-11 toolfail batch) ────────────────
 
   /**
@@ -400,8 +565,66 @@ private[tools] object FileRefs:
               )
             )
           else
-            val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
-            RefDecision.Proxy(s"/api/nf-file?path=$encoded")
+            // ── the "is this actually retrievable?" gate (imgref batch ②) ────
+            // A URL string is not evidence that a browser can fetch the bytes.
+            // Each of the four checks below is a way the shipped code counted a
+            // reference as proxied while the render leg could not retrieve it.
+            val realTry =
+              try Some(path.toRealPath())
+              catch case e: Exception => None
+            realTry match
+              case None =>
+                RefDecision.Reject(
+                  RejectedRef(
+                    value,
+                    Some(describe(path)),
+                    FileRefFailure.NotReadable,
+                    s"${describe(path)} exists but its real path could not be resolved — " +
+                      "the endpoint resolves the real path before it serves anything, so the reference " +
+                      "would 404; re-create the file (a dangling symlink or a permission-denied parent " +
+                      "directory is the usual cause)"
+                  )
+                )
+              case Some(real) =>
+                servableByEndpoint(real) match
+                  case Some(reason) =>
+                    RefDecision.Reject(
+                      RejectedRef(
+                        value,
+                        Some(describe(path)),
+                        FileRefFailure.NotServable,
+                        s"$reason — move or copy the file into a location /api/nf-file serves " +
+                          s"(data root: ${DataRootServedNamespacesText}; project .nebflow: evidence*/**) " +
+                          "and reference it from there"
+                      )
+                    )
+                  case None =>
+                    readableFirstByte(path) match
+                      case Some(reason) =>
+                        RefDecision.Reject(
+                          RejectedRef(
+                            value,
+                            Some(describe(path)),
+                            FileRefFailure.NotReadable,
+                            s"$reason — the reference would render as a broken element; " +
+                              "write a file with real content (or drop the reference)"
+                          )
+                        )
+                      case None =>
+                        val url = s"/api/nf-file?path=${encodePathParam(path.toString)}"
+                        val param = url.substring(url.indexOf("path=") + "path=".length)
+                        decodePathParam(param) match
+                          case Some(back) if back == path.toString => RefDecision.Proxy(url)
+                          case _ =>
+                            RefDecision.Reject(
+                              RejectedRef(
+                                value,
+                                Some(describe(path)),
+                                FileRefFailure.Other,
+                                s"the proxied URL for ${describe(path)} does not decode back to the resolved " +
+                                  "path (encoder/decoder drift) — the endpoint would look for a different path"
+                              )
+                            )
       catch
         case e: Exception =>
           RefDecision.Reject(

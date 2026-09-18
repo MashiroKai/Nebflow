@@ -3,7 +3,7 @@
 
 import { key } from '../branding.js';
 import { t } from '../i18n.js';
-import { mintTickets, nfFilePathsIn, injectTickets } from '../nfTicket.js';
+import { mintTickets, nfFilePathsIn, injectTickets, decodePathParam } from '../nfTicket.js';
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -272,8 +272,14 @@ function routeLocalHref(href, baseDir) {
   // navigation: decode its path so the click stays on the local-file leg.
   const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
   if (proxied) {
-    try { return { kind: 'local', path: decodeURIComponent(proxied[1]) }; }
-    catch (_) { return { kind: 'none' }; }
+    // imgref batch (2026-09-18): ONE decoder, imported — this line used to call
+    // `decodeURIComponent` alone while `anchorPath` two functions above folded
+    // the bare `+` first (shared.js:185 vs :275: two policies in one file). A
+    // URL is a QUERY-STRING, so a bare `+` is a SPACE: the JVM form encoder
+    // writes a space as `+` and a literal plus as `%2B`. Importing the single
+    // definition removes the divergence instead of adding a third opinion.
+    const p = decodePathParam(proxied[1]);
+    return p === null ? { kind: 'none' } : { kind: 'local', path: p };
   }
   // A fragment addresses a section INSIDE the target file (the Canvas tab
   // opens the file, not a scroll offset) and a query is never part of a

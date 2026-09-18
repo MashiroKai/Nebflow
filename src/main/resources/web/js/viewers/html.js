@@ -72,7 +72,13 @@ const imgClickScript = `<script>
   function pathOf(u){
     var m=/[?&]path=([^&]*)/.exec(String(u||''));
     if(!m) return '';
-    try{ return decodeURIComponent(m[1]); }catch(e){ return ''; }
+    // Embedded by SOURCE (a frame script cannot import a module): fold the bare
+    // `+` first, then percent-decode — byte-for-byte the criterion of
+    // nfTicket.js decodePathParam, which is the ONE statement of this
+    // discipline. `decodeURIComponent` alone folded neither `+` nor `%20`, so a
+    // JVM-form-encoded space reached the parent as a literal `+` and the
+    // lightbox re-minted its ticket for a path that does not exist.
+    try{ return decodeURIComponent(m[1].replace(/\+/g,' ')); }catch(e){ return ''; }
   }
   document.addEventListener('click', function(e){
     var img = e.target.closest ? e.target.closest('img') : null;

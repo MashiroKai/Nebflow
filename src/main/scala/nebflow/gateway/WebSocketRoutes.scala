@@ -5546,6 +5546,46 @@ object WebSocketRoutes:
                     else NfVerdict.Allowed(real, ext)
       }
 
+  /** The URL-form-tolerant facade over [[nfFileVerdict]] (imgref batch,
+    * 2026-09-18 作者令).
+    *
+    * 作者实证：路径含空格时 ① `%20`/`+` 编码形态被按**字面**去找 ⇒ `not-found`；
+    * ② 工具回包计数绿而前端取回腿红 —— 因为工具发的是 `URLEncoder` 的 form 形态
+    * （空格 → `+`），而**取回腿**把 `+` 当成字面加号去找一个不存在的文件。
+    *
+    * 判据：候选形态按 [[nebflow.core.PathParamCodec.candidates]] 的次序（原样 →
+    * `%`-解码 → `+`-折成空格）逐个过**同一个** [[nfFileVerdict]]；只有 `not-found`
+    * 才落到下一个形态 —— 一个真的存在的文件（包括文件名里真带 `+` 的）永远在原样
+    * 形态就命中，所以既有全绿面逐字不动。
+    *
+    * 🔴 **权限面零让步**：每个候选形态过的是同一份 `nfFileVerdict`（词法归一 →
+    * exists/isRegularFile → toRealPath → R2 inode → credential namespace → realpath
+    * 上的扩展名），判据全作用在 **realpath** 上 ⇒ 变形形态与直接写入的形态得到同一个
+    * realpath、同一份判据，造不出「原串判不住、变形后判得住」的穿透。策略表
+    * （`NfDataRootAllowlist` / `NfWorkspaceAllowlistPrefix` / `NfExternalCredentialEntries`
+    * / `NfCredentialPathSegments` / `NfCredentialNamePattern`）**本批零改动**。
+    *
+    * 票据腿同用此函数（`POST /api/nf-ticket` 与 `GET /api/nf-file` 一条口径），所以
+    * 铸票用的 realpath 与取回时解出的 realpath 必然一致。 */
+  def nfFileVerdictTolerant(rawPath: String, policy: NfPathPolicy): IO[NfVerdict] =
+    def go(rest: List[String], firstNotFound: Option[NfVerdict]): IO[NfVerdict] =
+      rest match
+        case Nil =>
+          IO.pure(
+            firstNotFound
+              .getOrElse(NfVerdict.Denied(Status.BadRequest, "missing-path", "Missing 'path' parameter"))
+          )
+        case form :: tail =>
+          nfFileVerdict(form, policy).flatMap {
+            // Only "the path does not exist" falls through to the next form. A
+            // refusal (credential-path / credential-hardlink / file-type) is
+            // final — decoding must never shop for a form that gets past a
+            // judgement the raw form already failed.
+            case d @ NfVerdict.Denied(_, "not-found", _) if tail.nonEmpty => go(tail, firstNotFound.orElse(Some(d)))
+            case v                                                        => IO.pure(v)
+          }
+    go(nebflow.core.PathParamCodec.candidates(rawPath), None)
+
   /** Plain-text response builder.
     *
     * Deliberately NOT `Response.withEntity(String)` / the dsl generators:
@@ -5594,7 +5634,7 @@ object WebSocketRoutes:
         // advertise (the ticket is an opaque bearer value, not Basic/Digest).
         IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter"))
       else
-        nfFileVerdict(rawPath, policy).flatMap {
+        nfFileVerdictTolerant(rawPath, policy).flatMap {
           case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
           case NfVerdict.Allowed(real, _) =>
             store.verifyAndConsume(ticket, real.toString).flatMap {
@@ -5643,7 +5683,7 @@ object WebSocketRoutes:
             store.refreshTtlFromConfig() *>
               paths
                 .traverse { p =>
-                  nfFileVerdict(p, policy).flatMap {
+                  nfFileVerdictTolerant(p, policy).flatMap {
                     case NfVerdict.Allowed(real, _) =>
                       store.issue(sessionId, real.toString).map { issued =>
                         Right(
