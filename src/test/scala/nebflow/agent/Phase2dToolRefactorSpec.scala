@@ -40,44 +40,48 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 12 件 = 本批 −Delegate 后值）、零 Issue、零 Glob/Grep、零写手、零 NodeList（逐件不变）"):
+  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 17 件 = 2026-09-18 18:18 令 +5 后值）、零 Issue、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Mail", "ProjectCreate", "AgentControl",
-        // Delegate 本批退役（−1，13 → 12）：一次性执行任务改路由 general 项目
+        // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
         "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
         "SendMessage",
         "ListFriends",                                         // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
-        "Read",                                                // 读一件（2026-09-16 18:41 令：−Glob −Grep，仅 root 面）
+        "Read",                                                // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
         "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
         "Schedule",
-        "MemoryNote")
+        "MemoryNote",
+      // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
+      "Glob", "Grep", "Bash", "Write", "Edit")
     assertEquals(fixed, expected,
-      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 12 = 本批 −Delegate 后值；沿革：root 面摘除 Glob/Grep −2 后为 13；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；Nebula 回归纯编排——Bash/Write/Edit 移除；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）")
+      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
-    // 钉死断言（2026-09-16 18:41 作者令）：root 面摘除 Glob/Grep——取代 0913
-    // 「Glob/Grep 永久保留」旧裁定（仅 root 面；分发器/节点面逐字不变）
+    // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
+    // 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面逐字不变）。
+    // 🔴 依据只有 09-18 18:18 令本身（0913 旧裁定不因本批复活）。变异验红锚：摘掉即红。
     Set("Glob", "Grep").foreach { t =>
-      assert(!fixed.contains(t), s"Nebula fixedTools 零搜索件（2026-09-16 18:41 令——变异验红锚：加回即红）: $t")
+      assert(fixed.contains(t), s"Nebula fixedTools 含搜索件（2026-09-18 18:18 令——变异验红锚：摘掉即红）: $t")
     }
     // R2 反转（2026-09-12）：Mail **现在在** Nebula 面（唯一消息原语，−Task +Mail；
-    // 史实 16→16 净 0，当前 = 12（本批 −Delegate 后；此前搜索件摘除后为 13））；
+    // 史实 16→16 净 0；史实 13（搜索件摘除后）与 12（−Delegate 后）；当前 = 17）；
     // 旧「Mail 不在 Nebula 面」的反向断言就此反转——本集改为断言**已删净退役**件缺席。
     // #145 附件腿批（2026-09-14）：+ "TransferFile"（退役，能力并入 SendMessage 设备附件腿）。
     Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
       assert(!fixed.contains(t), s"已退役/维持退役件不得在 Nebula 面（R2 2026-09-12 / #145 2026-09-14）: $t")
     }
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "件数断言单点来源（同一常量）——在飞 12（本批 −Delegate；此前 −TransferFile #145、−Glob −Grep）")
+      "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）")
     assert(!fixed.contains("Delegate"),
       "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
-    // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
-    // Write、不含 Edit——变异验红锚
-    assert(!fixed.contains("Bash"), "Nebula 机制集不含 Bash（23:34 裁定：回归纯编排）")
-    assert(!fixed.contains("Write"), "Nebula 机制集不含 Write（23:34 裁定）")
-    assert(!fixed.contains("Edit"), "Nebula 机制集不含 Edit（23:34 裁定）")
+    // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
+    // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面；
+    // general/BaseTools 六件默认注入逐字不变）。变异验红锚。
+    assert(fixed.contains("Bash"), "Nebula 机制集含 Bash（2026-09-18 18:18 令恢复——变异验红锚：摘掉即红）")
+    assert(fixed.contains("Write"), "Nebula 机制集含 Write（2026-09-18 18:18 令恢复）")
+    assert(fixed.contains("Edit"), "Nebula 机制集含 Edit（2026-09-18 18:18 令恢复）")
 
   test("D.1-1（R2 后）: dispatcher fixed set == Node 三件 + Mail + 读四件 + TaskBoard（−NodeMessage +Mail，9→9）"):
     assertEquals(
@@ -121,18 +125,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // 交付面（out 边自动投递取代主动查图）。
     assert(nebulaDelivered.contains("MemoryNote"))
     assert(!nebulaDelivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定）")
-    // 2026-09-05 23:34 作者裁定：Nebula 回归纯编排——读件在、写手三件
-    // （Bash/Write/Edit）不在交付面；general/BaseTools 六件默认注入不变。
-    // 2026-09-16 18:41 作者令：root 面再 −Glob −Grep（仅 root 面，取代 0913
-    // 「永久保留」）——读面收窄到 Read 一件，搜索件不得经任何通道回流。
-    assert(nebulaDelivered.contains("Read") && !nebulaDelivered.contains("Glob") && !nebulaDelivered.contains("Grep"),
-      "Nebula 只携读一件 Read（2026-09-16 18:41 令：Glob/Grep 摘除）")
-    Set("Glob", "Grep").foreach { t =>
-      assert(!nebulaDelivered.contains(t), s"Nebula 交付面零搜索件（2026-09-16 18:41 令）: $t")
-    }
-    Set("Bash", "Write", "Edit").foreach { t =>
-      assert(!nebulaDelivered.contains(t), s"Nebula 交付面零写手（23:34 裁定）: $t")
-    }
+    // 2026-09-18 18:18 作者令：root 面恢复 Bash/Edit/Write/Glob/Grep（+既有 Read
+    // ⇒ 文件面六件在手）；取代 2026-09-16 18:41 与 2026-09-05 23:34 两笔摘除令之
+    // root 面部分（仅 root 面）；general/BaseTools 六件默认注入逐字不变。
+    assert(
+      Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").subsetOf(nebulaDelivered),
+      s"Nebula 交付面必须含文件面六件（2026-09-18 18:18 令）——实得: $nebulaDelivered")
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
       "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）")
@@ -175,7 +173,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
   test("A轨(批①): 改名后三条不变式齐——交付面件数 == 单点常量 ∧ 含 SendMessage ∧ 旧名零残留"):
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     assertEquals(delivered.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "交付面件数与机制集单点常量一致（在飞 12 = 本批 −Delegate 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、本批 −Delegate）")
+      "交付面件数与机制集单点常量一致（在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）")
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
     assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)),

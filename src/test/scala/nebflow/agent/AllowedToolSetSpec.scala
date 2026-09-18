@@ -12,11 +12,15 @@ import nebflow.core.tools.ToolRegistry
  *   - a concrete tools list → those tools + fixed tools (base + category-specific)
  *   - "*" → all registered tools
  *   - BaseTools (Read/Write/Edit/Glob/Grep/Bash) are mechanism-fixed for ALL
- *     agents EXCEPT Nebula (2026-09-05 23:34 作者裁定：Nebula 回归纯编排——
- *     Bash/Write/Edit 从 Nebula 集移除；2026-09-16 18:41 作者令再摘 Glob/Grep
- *     ⇒ Nebula 只携读一件 Read——取代 0913「Glob/Grep 永久保留」旧裁定，
- *     **仅 root 面**，分发器/节点面逐字不变；
- *     六件全体默认对 general/legacy 侧不变)；agent.json declarations coexist
+ *     agents — **including Nebula**（2026-09-18 18:18 作者令「恢复nebula的bash
+ *     edit write glob grep」：root 面恢复 5 件 ⇒ 六件不再是「Nebula 例外」。
+ *     该令**取代** 2026-09-05 23:34 裁定与 2026-09-16 18:41 摘除令之 **root 面
+ *     部分**——**仅 root 面**，分发器/节点面逐字不变；Nebula 面另有编排件，
+ *     见下条）。历史（归档）：23:34 裁定曾把 Bash/Write/Edit 移出 Nebula 集、
+ *     09-16 18:41 令再摘 Glob/Grep（彼时 Nebula 只携读一件 Read，取代 0913
+ *     「Glob/Grep 永久保留」旧裁定）——该两笔的 root 面部分已被 09-18 18:18 令
+ *     取代 ⇒ provisional/存档，不得作为待拍板项重提；
+ *     六件全体默认对 general/legacy 侧逐字不变；agent.json declarations coexist
  *     idempotently
  *   - Issue is retired (2026-09-04 终裁: Issue/CheckIssues 退役, issue reporting
  *     via gh cli by nodes) — unregistered everywhere: no fixed set carries it,
@@ -27,8 +31,8 @@ import nebflow.core.tools.ToolRegistry
  *     available"。flows/skills 声明解析保留（决策 A①，legacy 授能活到阶段 3），
  *     但不再驱动任何工具注入。
  *   - Nebula's orchestration tools are mechanism-fixed (no declaration
- *     needed) — §C.1 静态矩阵当前 = 12（本批 −Delegate 退役 −1；此前 root 面摘除
- *     Glob/Grep −2 后为 13）；史实
+ *     needed) — §C.1 静态矩阵当前 = 17（2026-09-18 18:18 令 +Bash/Edit/Write/
+ *     Glob/Grep ⇒ +5）；史实
  *     时点恰十四件（史实；00:48 作者裁定：NodeList
  *     摘除——节点结果沿 out 边自动投递，主动查图与裁定职责重叠；dispatcher
  *     自身面不受影响。2026-09-06 TaskList 批：+TaskList——Nebula 专属持久
@@ -226,7 +230,7 @@ class AllowedToolSetSpec extends FunSuite:
   test("Delegate is Nebula-exclusive; SubTask is the team-member delegation tool"):
     val nebula = mkDef("Nebula", List("Read", "Delegate"))
     val teamAgent = mkDef("backend", List("Read", "SubTask"))
-    // Delegate 本批已从 Nebula 固定面退役（授能集合 −1 ⇒ 12）：Nebula 不再携带它；
+    // Delegate 已从 Nebula 固定面退役（史实：授能集合 −1 ⇒ 12，该时点值）：Nebula 不再携带它；
     // agent.json 声明对 converged 面依旧失效（声明不授能）。该名对一切非 Nebula
     // 身份仍由 NebulaExclusiveTools 剥离（惰性剥离项，防声明逃逸语义不变）。
     assert(!CoreProbe.allowed(nebula).contains("Delegate"),
@@ -390,7 +394,7 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("FlowTrigger"), "Nebula no longer carries FlowTrigger (2026-09-05 旧体系退役)")
     // R2「一个 Mail 统一」（2026-09-12）：本条为**断言反转**——原口径
     // 「Nebula no longer carries Mail (2026-09-05 旧体系退役)」随 R2 作废：
-    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（史实 16→16 净 0：−Task +Mail；当前 = 12，本批 −Delegate 后）。
+    // Mail 成为全平台唯一消息原语，Nebula 面必须携带（史实 16→16 净 0：−Task +Mail；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 = 17）。
     assert(allowed.contains("Mail"), "R2: Nebula carries Mail — 平台唯一消息原语（2026-09-12）")
     assert(!allowed.contains("Task"), "R2: Task 退役，Nebula 面零 Task")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，Nebula 面零 NodeMessage")
@@ -546,16 +550,18 @@ class AllowedToolSetSpec extends FunSuite:
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
     // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；
     // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图；
-    // TaskList 批：+TaskList——史实该时点恰十四件（当前 = 12，
-    // 本批 −Delegate 后）：
+    // TaskList 批：+TaskList——史实该时点恰十四件（当前 = 17，
+    // 2026-09-18 18:18 令 +5 后值；史实 12 = −Delegate 后、13 = 搜索件摘除后）：
     // 编排触发/任务编排/通信/
-    // 读一件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
+    // 读三件+写手三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16，搜索件摘除后再 −2 ⇒ 13，本批 −Delegate ⇒ 12；NodeList 摘除）
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
       "SendMessage",                                       // 通信（好友功能非旧体系，保留）
-      "Read",                                              // 读一件（2026-09-16 18:41 令：−Glob −Grep，仅 root 面；08:40 解禁四件；23:34 收走写手）
+      "Read",                                              // 读件（08:40 解禁四件）
+      "Glob", "Grep",                                      // 搜索件（2026-09-18 18:18 令恢复：+2）
+      "Bash", "Write", "Edit",                             // 写手三件（2026-09-18 18:18 令恢复：+3）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
       "Schedule",                                          // 平台（TransferFile 退役 2026-09-14 #145）
@@ -567,12 +573,13 @@ class AllowedToolSetSpec extends FunSuite:
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
     assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 12 = 本批 −Delegate 后值）")
-    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 12 = 本批 −Delegate 后值）")
-    // 钉死断言（2026-09-16 18:41 作者令）：root 面零 Glob/Grep——取代 0913
-    // 「Glob/Grep 永久保留」旧裁定（仅 root 面；分发器/节点面不变）
+    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
+    // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
+    // 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面不变）。
+    // 🔴 依据只有 09-18 18:18 令本身（0913 旧裁定不因本批复活）。变异验红锚：摘掉即红。
     Set("Glob", "Grep").foreach { t =>
-      assert(!allowed.contains(t), s"Nebula 面零搜索件（2026-09-16 18:41 令——变异验红锚：加回即红）: $t")
+      assert(allowed.contains(t), s"Nebula 面含搜索件（2026-09-18 18:18 令——变异验红锚：摘掉即红）: $t")
     }
     // R2 断言反转（2026-09-12）：原「旧体系三件维持退役」含 Mail 已作废——
     // Mail 是 R2 唯一消息原语、必在 Nebula 面；退役件改判为 Task/NodeMessage。
@@ -582,15 +589,16 @@ class AllowedToolSetSpec extends FunSuite:
     // Delegate 本批已从 Nebula 固定面退役（退役件，与 Issue/NodeList 同型反向钉）
     assert(!allowed.contains("Delegate"),
       "Nebula 面零 Delegate（本批退役；变异验红锚：加回固定面即红）")
-    // 钉死断言（2026-09-05 23:34 作者裁定）：Nebula 机制集不含 Bash、不含
-    // Write、不含 Edit——变异验红锚
-    assert(!allowed.contains("Bash"), "Nebula 无写手：Bash 已移除（23:34 裁定）")
-    assert(!allowed.contains("Write"), "Nebula 无写手：Write 已移除（23:34 裁定）")
-    assert(!allowed.contains("Edit"), "Nebula 无写手：Edit 已移除（23:34 裁定）")
+    // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
+    // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面）。
+    // 变异验红锚：从机制集再摘任一件即红。
+    assert(allowed.contains("Bash"), "Nebula 含 Bash（2026-09-18 18:18 令恢复——变异验红锚：摘掉即红）")
+    assert(allowed.contains("Write"), "Nebula 含 Write（2026-09-18 18:18 令恢复）")
+    assert(allowed.contains("Edit"), "Nebula 含 Edit（2026-09-18 18:18 令恢复）")
 
   // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
-  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1；当前 = 12，本批 −Delegate
-  // 后值；此前搜索件摘除后为 13）；
+  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1；当前 = 17，
+  // 2026-09-18 18:18 令 +5 后值；史实 12 = −Delegate 后、13 = 搜索件摘除后）；
   // dispatcher（DispatcherFixedTools）/ general（BaseTools+AskUserQuestion）与一切非
   // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
 
@@ -623,21 +631,22 @@ class AllowedToolSetSpec extends FunSuite:
     val dream = CoreProbe.allowed(mkDef("dream", List("TaskList")))
     assert(!dream.contains("TaskList"), "dream 声明 TaskList 无效（非 DreamAdmittedTools）")
 
-  test("Nebula 文件工具面（2026-09-05 23:34 裁定 + 2026-09-16 18:41 令）：读一件机制固定、写手声明依然无效"):
-    // 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移出机制集；2026-09-16
-    // 18:41 作者令再摘 Glob/Grep ⇒ 文件面只余读一件 Read；general/BaseTools 六件
-    // 默认注入不变（Nebula 唯一例外）。converged 定义 tools 声明整体失效
-    // （base=∅）不变——声明 Read/Write/Edit/Glob/Grep/Bash 依旧 no-op（既不因声明
-    // 授能，机制集也不再携带 Glob/Grep）。
+  test("Nebula 文件工具面（2026-09-18 18:18 令）：converged 名声明整体失效——交付面 ≡ 机制集，文件面六件因机制集而在场"):
+    // 🔴 本用例的**目的** = 「converged 名的 tools 声明整体失效（base=∅）」——
+    // 不是「声明可授能」。2026-09-18 18:18 作者令恢复 Bash/Edit/Write/Glob/Grep
+    // （取代 2026-09-05 23:34 裁定与 2026-09-16 18:41 摘除令之 root 面部分，**仅
+    // root 面**），故声明件与机制集件的结论同向；断言仍必须落在「与声明无关」上。
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
-    Set("Read").foreach(t => assert(allowed.contains(t), s"Nebula must have read tool: $t"))
-    Set("Glob", "Grep").foreach { t =>
-      assert(!allowed.contains(t), s"Nebula: search tool must not be granted (2026-09-16 18:41 令，声明亦无效): $t")
+    // 声明整体失效的**结构证明**：交付面逐项 == 机制集（改写声明不改结果）
+    assertEquals(allowed, AgentCore.NebulaOrchestrationTools,
+      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量，与声明无关")
+    Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
+      assert(allowed.contains(t), s"Nebula 文件面六件因**机制集**而在场（2026-09-18 18:18 令；非因声明）: $t")
     }
-    Set("Bash", "Write", "Edit").foreach { t =>
-      assert(!allowed.contains(t), s"Nebula: writer tool not granted (23:34 裁定): $t")
-    }
+    // 反面对照：换成空声明，交付面不变 ⇒ 更直接地证明「与声明无关」
+    assertEquals(CoreProbe.allowed(mkDef("Nebula", Nil)), allowed,
+      "空声明与六件声明产出同一交付面 ⇒ 声明面 no-op")
     assert(!allowed.contains("MultiEdit"), "MultiEdit removed from ToolRegistry (阶段 2c)")
     // Web 系同样不在 §C.1 矩阵
     val webDeclared = mkDef("Nebula", List("WebSearch", "WebFetch", "Curl"))

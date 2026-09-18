@@ -2606,7 +2606,8 @@ object AgentCore:
     * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
     * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
     * 不变，Nebula 是唯一例外（编排件+读三件+MemoryNote，恰十四件——史实，时点 2026-09-05；
-    * 其中「读三件」= 当日形态，2026-09-16 18:41 令后为**读一件 Read**）。
+    * 其中「读三件」= 当日形态；2026-09-16 18:41 令后曾收窄为**读一件 Read**，
+    * 该形态已被 2026-09-18 18:18 令取代 ⇒ **读三件在场恢复，史实归档**）。
     * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
     * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
     * 职责重叠。2026-09-06 TaskList 批（作者 00:07 提议 + 00:11 首期无前端
@@ -2618,16 +2619,25 @@ object AgentCore:
     * KernelFixedTools 恰七件 = BaseTools 六件 + AskUserQuestion）。本件是**加法**
     * 而非翻案：08:40 裁定的理由（旧 Team/Flow 双轨过渡件退出）不变，回归的
     * Delegate 不携带任何 Team/Flow/Mail 语义；Mail/FlowTrigger/FlowExecute
-    * 维持退役。**在飞实测件数 = 13**（同一清单常量即单点来源，
+    * 维持退役。**在飞实测件数 = 17**（同一清单常量即单点来源，
     * NebulaOrchestrationToolsExpectedSize）。历史沿革（史实，非当前值）：
     * 2026-09-12 好友消息改造批 ⑩ +ListFriends → 16；2026-09-14 附件腿/退役批
-    * #145 −TransferFile → 15；**2026-09-16 18:41 作者令 −Glob −Grep → 13**。
-    * **终态 = 13**——**2026-09-16 18:41 作者令取代 0913「Glob/Grep 永久保留」旧
-    * 裁定（仅 root 面；分发器/节点面不变）**，故 2026-09-14「终态 = 15，已定」
-    * 口径转为 **provisional/存档**，不得作为待拍板项重提。纪律不变：**不得**改断言
-    * 常量去凑任何数字（该纪律禁的是**为过测而放宽断言**，**不禁**按作者令变更 root
-    * 面本身）；⑩-9 的「终态待定」悬置口径已被作者 2026-09-14 拍板取代，只归档、
-    * 不重提。
+    * #145 −TransferFile → 15；2026-09-16 18:41 作者令 −Glob −Grep → 13；
+    * **2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」+5
+    * （Bash/Edit/Write/Glob/Grep）⇒ 17（在飞值）**。
+    * **取代关系登记（2026-09-18 18:18 作者令，唯一依据）**：本令**取代** ① 2026-09-16
+    * 18:41 作者令（commit `f9451705ac32c678f517c073c922e17841abdf6b`「root 工具面收缩：
+    * Nebula(root) 面摘除 Glob/Grep（15→13）」）之 **root 面部分**、② 2026-09-05 23:34
+    * 作者裁定（「把你的 bash 和编辑工具收起来」）之 **root 面部分**——**仅 root 面**；
+    * **分发器面（DispatcherFixedTools）/ 节点·基础面（BaseTools / GeneralFixedTools /
+    * KernelFixedTools）逐字不变**。故 2026-09-16「终态 = 13」与 2026-09-14
+    * 「终态 = 15，已定」两笔口径转为 **provisional/存档**，不得作为待拍板项重提。
+    * 🔴 2026-09-13「Glob/Grep 永久保留」旧裁定**不因本批复活**：本次恢复的依据**只有**
+    * 09-18 18:18 令本身——不得援引旧裁定，也不得替旧裁定翻案。
+    * 纪律不变：**不得**改断言常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
+    * 断言（该纪律禁的是**为过测而放宽断言**，**不禁**按作者令变更 root 面本身——
+    * 本次 12 → 17 即属后者）；⑩-9 的「终态待定」悬置口径已被作者 2026-09-14 拍板
+    * 取代，只归档、不重提。
     * 分组与矩阵行一一对应：
     *   - 编排触发：Mail（R2「一个 Mail 统一」批：−Task +Mail，2026-09-12）/
     *     ProjectCreate / AgentControl（list/status/cancel/restart）
@@ -2637,11 +2647,17 @@ object AgentCore:
     *   - 通信：SendMessage（好友功能非旧体系，保留机制固定）
     *     / ListFriends（2026-09-12 好友消息改造批 ⑩：只读好友名册——SendMessage
     *     的寻址前置；同 NebulaExclusiveTools 防声明逃逸）
-    *   - 读一件：Read（读代码读现状；无写手——一切执行走 Project 派发）。
-    *     **Glob/Grep 已由 2026-09-16 18:41 作者令从 root 面摘除**——取代
-    *     0913「Glob/Grep 永久保留」旧裁定（**仅 root 面**；分发器面
+    *   - 读三件：Read / Glob / Grep（读代码读现状；一切执行走 Project 派发）。
+    *     **Glob/Grep 自 2026-09-18 18:18 作者令起在 root 面恢复在场**——取代
+    *     2026-09-16 18:41 摘除令之 root 面部分（**仅 root 面**；分发器面
     *     DispatcherFixedTools 与节点/基础面 BaseTools/GeneralFixedTools/
     *     KernelFixedTools 逐字不变）
+    *   - 搜索件：Glob / Grep（2026-09-18 18:18 作者令恢复；史实——09-16 18:41 令曾
+    *     从 root 面摘除，该摘除令之 root 面部分已被取代 ⇒ 归档）
+    *   - 写手三件：Bash / Write / Edit（**2026-09-18 18:18 作者令恢复**——取代
+    *     2026-09-05 23:34 裁定「把你的 bash 和编辑工具收起来」之 root 面部分；
+    *     **仅 root 面**，general/BaseTools 六件默认注入逐字不变。史实——23:34 裁定
+    *     曾把三件移出本集，该裁定之 root 面部分已被取代 ⇒ 归档）
     *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
     *   - 用户面：AskUserQuestion / Pop（Pop = Nebula 专属可视化出口，2026-09-10
     *     作者裁定；非 Nebula 身份经 NebulaExclusiveTools 剥 + PopTool 身份闸
@@ -2649,15 +2665,15 @@ object AgentCore:
     *     平台：Schedule（TransferFile 已退役 2026-09-14，能力并入 SendMessage 的
     *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
     *   - 记忆：MemoryNote（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
-    * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
-    * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
+    * 显式不含：NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
     * dispatcher 自身面 DispatcherFixedTools 不受影响）、
     * Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
     * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
     * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十二件
-    * （2026-09-16 18:41 作者令：−Glob −Grep，取代 0913「Glob/Grep 永久保留」
-    * 口径仅 root 面；本批：−Delegate，该件退役）、零 Issue、零旧体系
+    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十七件
+    * （2026-09-18 18:18 作者令：+Bash +Edit +Write +Glob +Grep ⇒ 17，取代两笔摘除令
+    * 之 root 面部分，**仅 root 面**；史实——本批前 12 = 09-16 18:41 令 −Glob −Grep
+    * 后再 −Delegate）、零 Issue、零旧体系
     * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
     * Mail 从「旧体系退役件」成为唯一消息原语）。
     * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
@@ -2666,7 +2682,7 @@ object AgentCore:
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
-    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 12，见
+    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
     // NebulaOrchestrationToolsExpectedSize。本条覆盖此前「Task = 唯一项目触发入口」的
     // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
     // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
@@ -2682,7 +2698,8 @@ object AgentCore:
     // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
     // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
     // 改由插件面授予。
-    // 本集件数 13 → 12（见 NebulaOrchestrationToolsExpectedSize）。
+    // 本集件数 13 → 12（史实，时点 = Delegate 退役批；见
+    // NebulaOrchestrationToolsExpectedSize——该常量现读值 = 17）。
     // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
@@ -2694,12 +2711,31 @@ object AgentCore:
     // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
     // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
     "ListFriends",
-    // 读一件（Read）——Glob/Grep 已由 2026-09-16 18:41 作者令从 root 面摘除
-    // （取代 0913「Glob/Grep 永久保留」旧裁定——仅 root 面；分发器/节点面不变）。
-    // 沿革：08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集。
-    // 🔴 禁以「不得改断言常量」为由保留 15/Glob/Grep 旧值：该纪律禁的是**为过测
-    // 而放宽断言**，**不是**禁止按作者令变更 root 面本身（本次 −2 即属后者）。
+    // 文件面——读件（Read）+ 搜索件（Glob/Grep）+ 写手三件（Bash/Write/Edit）。
+    // **2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」已在场
+    // 恢复 Glob/Grep/Bash/Write/Edit 五件**（取代 2026-09-16 18:41 摘除令与
+    // 2026-09-05 23:34 裁定之 root 面部分；**仅 root 面**；分发器面
+    // DispatcherFixedTools 与节点/基础面 BaseTools/GeneralFixedTools/
+    // KernelFixedTools 逐字不变）。
+    // 史实（保留为史实、标注被取代 ⇒ 归档）：0913「Glob/Grep 永久保留」裁定 →
+    // 08:40 解禁四件 → 09-16 18:41 令 −Glob −Grep（15 → 13）→ 23:34 裁定收走写手
+    // （Bash/Write/Edit 不在本集，彼时形态）。🔴 本批恢复的依据**只有** 09-18
+    // 18:18 令本身——不得援引 0913 旧裁定（该裁定不因本批复活），也不得替旧裁定翻案。
     "Read",
+    "Glob",
+    "Grep",
+    // 写手三件（Bash/Write/Edit）——**2026-09-18 18:18 作者令恢复**（取代
+    // 2026-09-05 23:34 裁定「把你的 bash 和编辑工具收起来」之 root 面部分；
+    // **仅 root 面**，general/BaseTools 六件默认注入逐字不变）。
+    // 史实（归档）：09-05 23:34 裁定曾把三件从本集移除、Nebula 回归纯编排
+    // （13 → 14 → 13 的当日形态见上）。🔴 本批恢复的依据**只有** 09-18 18:18 令，
+    // 不得援引更早的旧裁定。
+    // 🔴 纪律重申（本批正是其适用场景）：**不得**改断言常量去凑任何数字，也不得在
+    // 树内实测值 ≠ 本常量时放宽断言——该纪律禁的是**为过测而放宽断言**，**不是**
+    // 禁止按作者令变更 root 面本身（本次 12 → 17 即属后者）。
+    "Bash",
+    "Write",
+    "Edit",
     // 可视化（2026-09-05 解封恢复，前端消费面另批）
     "Card",
     // 用户面（Pop = Nebula 专属可视化出口，2026-09-10 作者裁定——Nebula 本体
@@ -2732,28 +2768,35 @@ object AgentCore:
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = **12** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+    * 值 = **17** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
-    * 早前：root 面摘除 Glob/Grep −2 ⇒ 13；
-    * 本批：`Delegate` 退役 −1 ⇒ 12。
+    * 2026-09-16 18:41 令 root 面摘除 Glob/Grep −2 ⇒ 13；
+    * Delegate 退役批 −1 ⇒ 12；
+    * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
+    * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17（在飞值）**。
     *
-    * **取代关系记录（逐字，跨面）**：**2026-09-16 18:41 作者令**（原话「去掉 nebula
-    * 的 glob 和 grep 工具…」）**取代 0913「Glob/Grep 永久保留」旧裁定**——
-    * **仅 root 面**。分发器面（`DispatcherFixedTools`）与节点/基础面（`BaseTools`、
-    * `GeneralFixedTools`、`KernelFixedTools`）**逐字不变**，两处反向钉见本文件
-    * `DispatcherFixedTools`/`BaseTools` 常量与 `AgentConvergenceSpec`/`Phase2dToolRefactorSpec`
-    * 的 dispatcher/general 断言。作者 2026-09-14「终态 = 15，已定」口径随之
-    * **provisional/存档**（已被本令取代，不得作为待拍板项重提）。
-    * 本批的 `Delegate` 退役属**授权面**变更（授能集合成员 −1）：**发散面**（工具本体/
-    * 会话机制）本批未动，不得据此推断「Delegate 整机制已退役」。
+    * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
+    * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话
+    * 「去掉 nebula 的 glob 和 grep 工具…」，commit
+    * `f9451705ac32c678f517c073c922e17841abdf6b`）之 **root 面部分**、② 2026-09-05
+    * 23:34 作者裁定（「把你的 bash 和编辑工具收起来」）之 **root 面部分**——**仅
+    * root 面**。分发器面（`DispatcherFixedTools`）与节点/基础面（`BaseTools`、
+    * `GeneralFixedTools`、`KernelFixedTools`）**逐字不变**，反向钉见本文件
+    * `DispatcherFixedTools`/`BaseTools` 常量与 `AgentConvergenceSpec`/
+    * `Phase2dToolRefactorSpec` 的 dispatcher/general 断言。作者 2026-09-14
+    * 「终态 = 15，已定」与 2026-09-16「终态 = 13」两笔口径随之 **provisional/存档**
+    * （均已被本令取代，不得作为待拍板项重提）。🔴 2026-09-13「Glob/Grep 永久保留」
+    * 旧裁定**不因本批复活**：本次恢复的依据**只有** 09-18 18:18 令本身。
+    * 前批的 `Delegate` 退役属**授权面**变更（授能集合成员 −1）：**发散面**（工具本体/
+    * 会话机制）未动，不得据此推断「Delegate 整机制已退役」。
     * 纪律不变：**不得**改本常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
     * 断言——该纪律禁的是**为过测而放宽断言**，**不是**禁止按作者令变更 root 面
-    * 本身（本次 13 → 12 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
+    * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 12
+  val NebulaOrchestrationToolsExpectedSize: Int = 17
 
   /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
     *
@@ -2901,8 +2944,9 @@ object AgentCore:
       case _ =>
         agentDef.name match
           case "Nebula" =>
-            // 静态集收口（史实时点：恰十四件；当前 = 12 = 本批 −Delegate 后值；
-            // 此前 root 面摘除 Glob/Grep −2 后为 13）：
+            // 静态集收口（史实时点：恰十四件；**当前 = 17** = 2026-09-18 18:18
+            // 作者令 +Bash/Edit/Write/Glob/Grep 后值；此前 12 = −Delegate 批、
+            // 13 = root 面 −Glob −Grep，均史实）：
             // 零 Issue、零旧体系四件（TaskList
             // 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板）。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
@@ -2912,9 +2956,11 @@ object AgentCore:
             // （2026-09-05 08:40 作者裁定）+基础四件 Bash/Read/Glob/Grep、+Card
             // 解封、−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役。
             // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排）13:11 的
-            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集；
-            // general/BaseTools 六件默认注入不变，Nebula 为唯一例外
-            // （编排件+读一件 Read+MemoryNote）——本集即 Nebula 工具面唯一来源。
+            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集（**该裁定之
+            // root 面部分已被 2026-09-18 18:18 令取代 ⇒ 三件在飞在场；史实归档**）；
+            // general/BaseTools 六件默认注入不变
+            // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit+MemoryNote，
+            // 在飞恰十七件）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
