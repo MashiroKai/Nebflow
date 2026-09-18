@@ -3174,7 +3174,7 @@ function exitSelection() {
 
 /** 选目标界面（**其他会话**：好友 / 群）。
  *  数据源 = 既有 `conversations`（本文件 `:70` / `refreshConversations`）——🔴 零新数据源、
- *  零新协议；UI = **既有菜单组件** `showPopupMenu`（`contextMenu.js:30-57`，第二消费者先例
+ *  零新协议；UI = **既有菜单组件** `showPopupMenu`（`contextMenu.js:38-65`，第二消费者先例
  *  = `contacts.js:455-476`）⇒ role=menu/menuitem、越界夹取、Esc/点外关闭、零新色值全现成。 */
 function openTargetPicker(conv, anchor) {
   const others = conversations.filter(c =>
