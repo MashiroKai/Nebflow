@@ -486,7 +486,7 @@ object GatewayMain extends IOApp:
                           // 非法或 container/auto 未实现 ⇒ 显式失败，不静默回落宿主）。
                           val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                           nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
-                      logger.info(s"nebflow v${nebflow.Version.string}") *>
+                      logger.info(s"nebflow ${nebflow.Version.string}") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
                            case Some((name, ref)) =>

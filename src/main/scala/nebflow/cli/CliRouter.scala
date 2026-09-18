@@ -207,7 +207,7 @@ object CliRouter:
       }
       IO.println(io.circe.Json.obj("commands" -> cmds.asJson).spaces2: String)
     else
-      IO.println(s"nebflow v${nebflow.Version.string}") *>
+      IO.println(s"nebflow ${nebflow.Version.string}") *>
         IO.println("") *>
         IO.println("Usage: nebflow <command> [subcommand] [options]") *>
         IO.println("") *>
