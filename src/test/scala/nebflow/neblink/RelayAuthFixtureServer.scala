@@ -239,6 +239,70 @@ final class RelayAuthFixtureServer extends AutoCloseable:
 
   def attemptCount(status: Int): Int = relayAttempts.stream().filter(_._1 == status).count().toInt
 
+  // ---- 本批（fragreasm，2026-09-19）新增：真分片 / 大载荷发送腿 ----------------
+  //
+  // 自陈边界：既有 `sendTextToRelay` 的**线格式**是「FIN=1 + 单字节长度」，只对
+  // ≤125 字节的载荷正确（>125 时 `bytes.length.toByte` 截断 ⇒ 帧长字段与实体不符）。
+  // 本批的判据面需要（a）大载荷、（b）真分片，故**并列新增**两条发送腿 +
+  // 一个正确的长度编码器；既有方法与既有默认读数**逐字不动**（其它 spec 零影响）。
+
+  /** 服务端→客户端**非掩码**帧，RFC 6455 §5.2 长度编码（7/16/64 位，支持 >125 字节）。 */
+  private def writeServerFrame(out: OutputStream, fin: Boolean, opcode: Int, payload: Array[Byte]): Unit =
+    try
+      out.write(((if fin then 0x80 else 0x00) | (opcode & 0x0f)).toByte)
+      val len = payload.length
+      if len <= 125 then out.write(len.toByte)
+      else if len <= 0xffff then
+        out.write(126.toByte)
+        out.write(((len >>> 8) & 0xff).toByte)
+        out.write((len & 0xff).toByte)
+      else
+        out.write(127.toByte)
+        var i = 7
+        while i >= 0 do
+          out.write(((len.toLong >>> (8 * i)) & 0xffL).toByte)
+          i -= 1
+      out.write(payload)
+      out.flush()
+    catch case _: Exception => ()
+
+  /** 单帧文本消息（长度编码正确，支持大载荷）——「一次性整帧投递」的对照组。
+    * 返回写入的连接数（0 ⇒ 当前无在连 relay socket ⇒ 用例无判别力）。 */
+  def sendTextToRelayBig(text: String): Int =
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        writeServerFrame(s.getOutputStream, fin = true, opcode = 0x1, text.getBytes(StandardCharsets.UTF_8))
+        n += 1
+      catch case _: Exception => ()
+    }
+    n
+
+  /** 把**一整条**文本消息按给定分片切成 RFC 6455 多帧（首片 FIN=0 + opcode=1，
+    * 续片 FIN=0 + opcode=0，末片 FIN=1 + opcode=0）发到每条在连 relay socket。
+    * 分片边界由调用方逐字给定（可落在 JSON 内部任意位置）。
+    * 返回写入的连接数（0 ⇒ 无在连 socket ⇒ 用例无判别力）。 */
+  def sendFragmentedTextToRelay(parts: List[String]): Int =
+    val nonEmpty = parts.filter(_.nonEmpty)
+    var n = 0
+    openRelaySockets.forEach { s =>
+      try
+        val out = s.getOutputStream
+        nonEmpty.zipWithIndex.foreach { (part, i) =>
+          val first = i == 0
+          val lastStep = i == nonEmpty.length - 1
+          writeServerFrame(
+            out,
+            fin = lastStep,
+            opcode = if first then 0x1 else 0x0,
+            part.getBytes(StandardCharsets.UTF_8)
+          )
+        }
+        n += 1
+      catch case _: Exception => ()
+    }
+    n
+
   // ---- device-registration leg (踢旧批 r2, 2026-09-14) ----
 
   /** Serve `POST /api/device/register`: mint a fresh device credential AND revoke
