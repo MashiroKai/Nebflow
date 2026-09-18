@@ -39,18 +39,36 @@ final class PkceLoginSession private (
       case Some(f) if f.state == state && !expired(f) =>
         IO.pure(Some(f.verifier))
       case Some(_) =>
-        status.set(Status.error("Login callback state mismatch")).as(None)
+        status.set(Status.of(CredentialFailure.CallbackStateInvalid)).as(None)
       case None =>
         // No pending attempt: browser replay / stray hit. Don't clobber a
         // sticky success — only surface an error while pending.
         status.get.flatMap {
-          case Status.Pending => status.set(Status.error("No login attempt in progress")).as(None)
+          case Status.Pending => status.set(Status.of(CredentialFailure.CallbackStateInvalid)).as(None)
           case _              => IO.pure(None)
         }
     }
 
-  /** Store the token-exchange / registration failure (callback renders it). */
-  def fail(message: String): IO[Unit] = status.set(Status.error(message))
+  /** Store the token-exchange / registration failure (callback renders it).
+    *
+    * 🔴 缺陷 A（上游 §8.2 第 5 项）：失败**必须**走分类 —— `fail(message)` 是兼容面
+    * （自由串经兜底分类进城，原文进**日志**留档、不进用户可见面）；新调用点用
+    * [[failClassified]] / [[failDiagnosed]]。 */
+  def fail(message: String): IO[Unit] =
+    val diagnostic = CredentialDiagnostics.diagnosticOf(CredentialFailure.Unclassified, message)
+    logger.warn(diagnostic.logLine("pkce login failure (unclassified caller)"), "code" -> diagnostic.code) *>
+      status.set(Status.Error(diagnostic))
+
+  /** Classified failure (缺陷 A): the sticky error now carries a stable code +
+    * human reason + next action, so `/auth/state` is machine-readable and the
+    * UI never has to print a raw backend string. */
+  def failClassified(failure: CredentialFailure, detail: String = ""): IO[Unit] =
+    status.set(Status.Error(CredentialDiagnostics.diagnosticOf(failure, detail)))
+
+  /** Sticky, structured failure (fulfilled form — the diagnostic is built by the
+    * caller, e.g. from a `Left` channel that already classified it). */
+  def failDiagnosed(diagnostic: CredentialDiagnostics.Diagnostic): IO[Unit] =
+    status.set(Status.Error(diagnostic))
 
   /** Enrollment complete — sticky until the next `start`. */
   def succeed: IO[Unit] = status.set(Status.Success)
@@ -58,13 +76,16 @@ final class PkceLoginSession private (
   /** Current status for the frontend poll. */
   def current: IO[Status] = status.get
 
-  /** Status as the wire JSON: `{status: idle|pending|success|error, error?}`. */
+  /** Status as the wire JSON: `{status: idle|pending|success|error, error?, code?,
+    * reason?, action?}` — the three error keys are **additive** (缺陷 A): old
+    * consumers ignore unknown fields and keep reading `error`, which now carries
+    * the three-part sentence instead of a raw backend string. */
   def statusJson: IO[Json] =
     current.map {
       case Status.Idle     => Json.obj("status" -> "idle".asJson)
       case Status.Pending  => Json.obj("status" -> "pending".asJson)
       case Status.Success  => Json.obj("status" -> "success".asJson)
-      case Status.Error(m) => Json.obj("status" -> "error".asJson, "error" -> m.asJson)
+      case Status.Error(d) => Json.obj("status" -> "error".asJson).deepMerge(d.toJson)
     }
 
   /** Drop a stale pending attempt. Logto authorization codes live ~10 min and
@@ -79,6 +100,8 @@ end PkceLoginSession
 
 object PkceLoginSession:
 
+  private val logger = nebflow.core.NebflowLogger.forName("nebflow.neblink.pkce")
+
   final case class InFlight(verifier: String, state: String, createdAt: Long)
 
   sealed trait Status:
@@ -90,10 +113,18 @@ object PkceLoginSession:
       val name = "pending"
     case object Success extends Status:
       val name = "success"
-    final case class Error(message: String) extends Status:
+    /** Structured error carrier (缺陷 A / 上游 §8.2 第 5 项)：**不再**是裸串 ——
+      * 分类码 + 人话原因 + 下一步动作由 `CredentialDiagnostics` 单点给出。 */
+    final case class Error(diagnostic: CredentialDiagnostics.Diagnostic) extends Status:
       val name = "error"
 
-    def error(message: String): Status = Error(message)
+    /** 分类形态的构造（唯一推荐入口）。 */
+    def of(failure: CredentialFailure, detail: String = ""): Status =
+      Error(CredentialDiagnostics.diagnosticOf(failure, detail))
+
+    /** 兼容面（老调用点/测试用自由串）：经兜底分类进城，串本身逐字保留为诊断细节。 */
+    def error(message: String): Status =
+      Error(CredentialDiagnostics.diagnosticOf(CredentialFailure.Unclassified, message))
   end Status
 
   /** Single-flight expiry: Logto's authorization code is valid for ~10 min;

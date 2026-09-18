@@ -427,6 +427,46 @@ export default {
   'login.deviceStartFailed': '启动设备流程失败',
   'login.deviceTimeout': '授权超时，请重试',
   'login.deviceFailed': '授权失败',
+  // 缺陷 A（2026-09-18 换号登录失败批）· 失败面**三段式**：
+  //   登录失败：<原因>。下一步：<动作>。诊断码：<code>
+  // `login.reason.*` / `login.action.*` 的 code 枚举与后端 `CredentialFailure`
+  // **逐字同源**（镜像漂移由 `CredentialDiagnosticsSpec` 钉住）；UI 只 `t()`，
+  // 后端串仅作老网关/未知码的兜底。文案纪律（判据 G2/G3）：**禁出现文件系统路径
+  // 或 Java 异常类名** —— 那些只进日志。
+  'login.failureLine': '登录失败：{reason}。下一步：{action}。',
+  'login.diagnosticCode': '诊断码：{code}',
+  // 本地凭据文件类（这六条才给「清理并重登」入口）
+  'login.reason.credential-missing': '本机还没有登录凭据',
+  'login.action.credential-missing': '点「登录」重新登录',
+  'login.reason.credential-unreadable': '本机凭据文件打不开（权限或占用）',
+  'login.action.credential-unreadable': '先退出其他 nebflow 实例再重试；仍失败则点「清理并重登」',
+  'login.reason.credential-undecodable': '本机凭据文件已损坏（已备份留档）',
+  'login.action.credential-undecodable': '点「登录」重建本机凭据（坏件已改名留档）',
+  'login.reason.credential-write-denied': '凭据写不进去（权限或占用）',
+  'login.action.credential-write-denied': '不要再反复点；先退出其他实例再重试，仍失败则点「清理并重登」',
+  'login.reason.credential-acl-not-applied': '凭据文件权限未收窄（安全隐患）',
+  'login.action.credential-acl-not-applied': '共享机器上请检查该文件权限；日志已记录',
+  'login.reason.credential-delete-denied': '本机凭据清理不掉（权限或占用）',
+  'login.action.credential-delete-denied': '先退出其他实例再试；仍失败请在停机后手工改名该文件留档',
+  // 其余登录腿（无本地文件可清 ⇒ 不给清理入口）
+  'login.reason.enroll-refused-isolated-home': '本机为隔离数据根，入网被本地隔离护栏拒绝（非网络故障）',
+  'login.action.enroll-refused-isolated-home': '用默认数据根启动后重试；确需放行时改环境开关（见日志）后重试',
+  'login.reason.server-no-device-token': '登录服务器没有发回设备凭据',
+  'login.action.server-no-device-token': '点「重试」；仍失败则「使用其他账号登录」',
+  'login.reason.token-exchange-failed': '与登录服务器交换令牌失败',
+  'login.action.token-exchange-failed': '点「重试」；仍失败则「使用其他账号登录」',
+  'login.reason.device-register-failed': '登录服务器设备注册失败',
+  'login.action.device-register-failed': '点「重试」；仍失败则「使用其他账号登录」',
+  'login.reason.callback-state-invalid': '登录回调校验失败（一次性校验码不匹配或已过期）',
+  'login.action.callback-state-invalid': '回到 nebflow 重新点「登录」',
+  'login.reason.provider-error': '登录被服务方拒绝或中断',
+  'login.action.provider-error': '重新点「登录」；必要时换一个账号',
+  'login.reason.service-unavailable': 'nebflow 服务未初始化',
+  'login.action.service-unavailable': '重启 nebflow 后重新登录',
+  'login.reason.logto-not-configured': '登录服务未配置（缺少应用标识）',
+  'login.action.logto-not-configured': '检查 nebflow 的登录配置后重试',
+  'login.reason.login-failed': '登录过程中出现未分类的错误',
+  'login.action.login-failed': '点「重试」；仍失败请附日志反馈',
   'messages.login': '登录',
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',
@@ -1116,6 +1156,10 @@ export default {
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
   'neblink.loggedOutHint': '未登录，设备互联不可用',
+  // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
+  // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
+  'neblink.cleanupRelogin': '清理并重登',
+  'neblink.statusDegraded': '状态读取失败（HTTP {status}），下面显示的可能不是最新状态',
   // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
   // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
   'neblink.signedOutElsewhere': '已在别处登录',

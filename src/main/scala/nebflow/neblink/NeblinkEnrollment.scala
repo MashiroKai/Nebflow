@@ -105,28 +105,41 @@ object NeblinkEnrollment:
       case Some(tok) =>
         for
           identity <- ms.identity
-          out <- NeblinkSingleFlight.serialize(
-            NeblinkSingleFlight.key("enroll", identity.deviceId, networkId)
-          ) {
-            persistCredential(
-              ms,
-              resolvedUrl,
-              networkId,
-              tok,
-              avatarUrl,
-              githubLogin,
-              logtoRefresh,
-              logtoIdToken,
-              discovery,
-              gatewayPort,
-              reloginHook,
-              explicitUserAction,
-              identity
-            )
-          }
+          out <- NeblinkSingleFlight
+            .serialize(
+              NeblinkSingleFlight.key("enroll", identity.deviceId, networkId)
+            ) {
+              persistCredential(
+                ms,
+                resolvedUrl,
+                networkId,
+                tok,
+                avatarUrl,
+                githubLogin,
+                logtoRefresh,
+                logtoIdToken,
+                discovery,
+                gatewayPort,
+                reloginHook,
+                explicitUserAction,
+                identity
+              )
+            }
+            // 🔴 凭据落盘失败（缺陷 A / 上游 §8.2 第 3 项）：收敛进 `Left` 通道，
+            // **不**抛裸异常 —— 与隔离护栏拒绝同通道、同文案层。原文（路径 / 异常类名）
+            // 已由 `DeviceCredentialStore` 写进 WARN（带分类码），`Left` 只承载三段式
+            // 用户可见文案（§8.3），因此登录框再也不会出现「只有路径」的字面。
+            .handleErrorWith {
+              case e: CredentialDiagnostics.CredentialStoreError => IO.pure(Left(e.diagnostic.message))
+              case other                                        => IO.raiseError(other)
+            }
         yield out
       case None =>
-        IO.pure(Left("Server did not return a device token"))
+        // 服务端没发回凭据：同样走分类文案（老串 `Server did not return a device token`
+        // 的语义由 `server-no-device-token` 这个稳定码承接，不再作为自由串流转）。
+        IO.pure(
+          Left(CredentialDiagnostics.diagnosticOf(CredentialFailure.ServerNoDeviceToken).message)
+        )
 
   /** 单飞临界区本体（`(deviceId, networkId)` 已被 [[persistImpl]] 的闸包住）。 */
   private def persistCredential(
@@ -161,6 +174,12 @@ object NeblinkEnrollment:
       // Merge rule: an incoming value always wins; an absent incoming value
       // KEEPS the stored one. Scoped to the same `serverUrl` — a credential
       // belonging to another server is not this device's identity.
+      //
+      // 🔴 缺陷 A（2026-09-18）：这一读**永不抛** —— 读不开/解码坏 ⇒
+      // `DeviceCredentialStore` 先把坏件改名留档 + 打一条带分类码的 WARN，再按
+      // 「无凭据」返回（自愈已定案：作者 2026-09-18 五条之①）。所以「换号时凭据件
+      // 坏掉」不再是一条不可完成的登录：本次登录按空盘重建，写不进去才失败（那时
+      // 由 `save` 的分类承载原因）。
       stored <- DeviceCredential.load
       storedBlock = stored.filter(_.serverUrl == resolvedUrl).flatMap(_.logto)
       logtoBlock = LogtoRefresh.of(

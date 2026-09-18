@@ -427,6 +427,47 @@ export default {
   'login.deviceStartFailed': 'Could not start the device flow',
   'login.deviceTimeout': 'Authorization timed out — please retry',
   'login.deviceFailed': 'Authorization failed',
+  // Defect A (2026-09-18 login-failure batch) — three-part failure face:
+  //   Login failed: <reason>. Next: <action>. Diagnostic code: <code>
+  // The `login.reason.*` / `login.action.*` codes mirror the backend
+  // `CredentialFailure` enum verbatim (mirror drift is pinned by
+  // `CredentialDiagnosticsSpec`); the UI only calls `t()`. Text discipline
+  // (judgements G2/G3): NO filesystem paths and NO Java exception class names —
+  // those go to the log only.
+  'login.failureLine': 'Login failed: {reason}. Next: {action}.',
+  'login.diagnosticCode': 'Diagnostic code: {code}',
+  // Local credential-file class (only these six offer the cleanup entry)
+  'login.reason.credential-missing': 'this device has no stored login credential yet',
+  'login.action.credential-missing': 'click "Sign in" to authenticate again',
+  'login.reason.credential-unreadable': 'the local credential file cannot be opened (permissions or in use)',
+  'login.action.credential-unreadable': 'quit other nebflow instances and retry; if it still fails, click "Clean up and sign in again"',
+  'login.reason.credential-undecodable': 'the local credential file is damaged (a copy was archived)',
+  'login.action.credential-undecodable': 'click "Sign in" to rebuild the local credential (the damaged file was renamed aside)',
+  'login.reason.credential-write-denied': 'the credential cannot be written (permissions or in use)',
+  'login.action.credential-write-denied': 'stop retrying for a moment; quit other instances and retry, then click "Clean up and sign in again" if it still fails',
+  'login.reason.credential-acl-not-applied': 'the credential file permissions could not be narrowed (security risk)',
+  'login.action.credential-acl-not-applied': 'check that file permissions on shared machines; this was recorded in the log',
+  'login.reason.credential-delete-denied': 'the local credential cannot be removed (permissions or in use)',
+  'login.action.credential-delete-denied': 'quit other instances and retry; otherwise rename that file aside after stopping nebflow',
+  // Other login legs (no local file to clean up — no cleanup entry offered)
+  'login.reason.enroll-refused-isolated-home': 'this instance runs on an isolated data root and the local isolation guard refused to join (not a network failure)',
+  'login.action.enroll-refused-isolated-home': 'restart with the default data root and retry; to allow it explicitly, change the env switch (see log) and retry',
+  'login.reason.server-no-device-token': 'the login server did not return a device credential',
+  'login.action.server-no-device-token': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  'login.reason.token-exchange-failed': 'exchanging tokens with the login server failed',
+  'login.action.token-exchange-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  'login.reason.device-register-failed': 'the login server rejected the device registration',
+  'login.action.device-register-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  'login.reason.callback-state-invalid': 'the login callback check failed (the one-time token did not match or expired)',
+  'login.action.callback-state-invalid': 'go back to nebflow and click "Sign in" again',
+  'login.reason.provider-error': 'the login was refused or interrupted by the identity provider',
+  'login.action.provider-error': 'click "Sign in" again; try another account if needed',
+  'login.reason.service-unavailable': 'the nebflow service is not initialised',
+  'login.action.service-unavailable': 'restart nebflow and sign in again',
+  'login.reason.logto-not-configured': 'the login service is not configured (application id missing)',
+  'login.action.logto-not-configured': 'check the nebflow login settings and retry',
+  'login.reason.login-failed': 'an unclassified error occurred during login',
+  'login.action.login-failed': 'click "Retry"; if it still fails, send us the log',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
@@ -1142,6 +1183,11 @@ export default {
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
   'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
+  // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
+  // "clean up and sign in again" entry (local credential-file class only);
+  // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
+  'neblink.cleanupRelogin': 'Clean up and sign in again',
+  'neblink.statusDegraded': 'Status read failed (HTTP {status}) — what you see below may be stale',
   // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
   // level only — no banner, no sound (一期口径, User.md:36).
   'neblink.signedOutElsewhere': 'Signed in elsewhere',

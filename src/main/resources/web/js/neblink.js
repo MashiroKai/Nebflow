@@ -48,8 +48,45 @@ let neblinkState = {
   // （`relay.available === true` 才算通道可用）。形状 = /api/neblink/status 的
   // `relay` 对象原文 {available, authRejected, lastRejectedStatusCode,
   // lastRejectedAt, selfHeal}（NeblinkRelayTunnel.statusJson）；未取到 = null。
-  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string}|null} */ (null)
+  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string}|null} */ (null),
+  // 缺陷 A（加法字段）：失败分类码（`/auth/state` 的 `code`）；'' = 无分类。
+  pairErrorCode: '',
+  // 缺陷 A（加法字段）：`/status` 的 `credentialIssue` 原文（{code, reason, action, error}）；
+  // null = 本机凭据面读干净（老网关缺该键也走这里 ⇒ 降级安全）。
+  credentialIssue: /** @type {{code?: string, reason?: string, action?: string, error?: string}|null} */ (null),
+  // 缺陷 A（判据 G6）：`/status` 非 2xx 的降级读数（{status}）；null = 状态面健康。
+  // 修前该端点 500 被 `if (!resp.ok) return;` 静默吞掉 ⇒ 假「已登录」中间态 + 零痕迹。
+  statusDegraded: /** @type {{status: number}|null} */ (null)
 };
+
+// ── 凭据面失败分类（缺陷 A）──────────────────────────────────────────────
+// 与后端 `nebflow.neblink.CredentialFailure` 的 code **逐字同源**（镜像漂移由
+// `CredentialDiagnosticsSpec` 的断言钉住）。只有**本地凭据文件类**故障才给「清理并重登」
+// 入口 —— 网络/服务端类故障点了也没用（§8.2 第 6 项的门控判据）。
+export const LOCAL_FILE_CODES = [
+  'credential-missing',
+  'credential-unreadable',
+  'credential-undecodable',
+  'credential-write-denied',
+  'credential-acl-not-applied',
+  'credential-delete-denied'
+];
+
+/** 失败面文案的**唯一前端组装点**（§8.3 三段式）。
+ *  文案来源优先级：i18n（`login.reason.<code>` / `login.action.<code>` —— UI 文案的
+ *  唯一来源，zh/en 成对）⇒ 后端 `reason`/`action`（老网关 / 未知码）⇒ 原始 `error`。
+ *  `code` 恒为后端给的稳定枚举，直接进「诊断码：」尾串（可让用户报给我们 grep 日志）。 */
+export function loginFailureText(payload = {}) {
+  const code = payload.code || '';
+  const rk = code ? `login.reason.${code}` : '';
+  const ak = code ? `login.action.${code}` : '';
+  const tr = rk ? t(rk) : '';
+  const ta = ak ? t(ak) : '';
+  const reason = (tr && tr !== rk) ? tr : (payload.reason || payload.error || t('login.failed'));
+  const action = (ta && ta !== ak) ? ta : (payload.action || '');
+  const body = action ? t('login.failureLine', { reason, action }) : reason;
+  return code ? `${body} ${t('login.diagnosticCode', { code })}` : body;
+}
 
 // ── NL 号（Username）入口说明 ────────────────────────────
 // 2026-09-05 10:54 裁定：NL 号 = 官网 Username，客户端不提供修改入口——
@@ -156,8 +193,21 @@ export async function fetchNeblinkStatus() {
     const resp = await fetch('/api/neblink/status', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      // 🔴 缺陷 A（上游 S4 / 判据 G6）：修前这里是 `if (!resp.ok) return;` —— 状态端点
+      // 500 被**完全静默吞掉**（用户看到停在旧值的假「已登录」中间态，控制台也零痕迹，
+      // 「坏」持续存在却不可见）。现在：留可见痕迹（降级读数进 state）+ 一条归因 console。
+      // 刻意**不**改写 `loggedIn`：拿不到权威读数时不猜，降级提示由渲染面承担。
+      neblinkState.statusDegraded = { status: resp.status };
+      console.warn('[neblink] status poll failed', { status: resp.status });
+      notifyStatusSubscribers();
+      return;
+    }
     const data = await resp.json();
+    neblinkState.statusDegraded = null;
+    // 凭据面读数（加法字段 `credentialIssue`；老网关缺该键 ⇒ null ⇒ 不渲染）。
+    neblinkState.credentialIssue =
+      (data.credentialIssue && typeof data.credentialIssue === 'object') ? data.credentialIssue : null;
     const wasLoggedIn = neblinkState.loggedIn;
     neblinkState.loggedIn = !!data.loggedIn;
     // Normalize local device fields to match peer field names.
@@ -334,11 +384,32 @@ export function neblinkSettingsHTML() {
   // there is intentionally no second logo, no login button and no device
   // section here.
   if (!neblinkState.loggedIn) {
+    // 失败面（缺陷 A）：文案已是**三段式**（原因 + 下一步 + 诊断码），由
+    // `loginFailureText` 单点组装（i18n 优先，后端分类串兜底）。
     const pairErr = neblinkState.pairError
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
+    // 「清理并重登」入口的**门控**：只有本地凭据文件类分类才显示（网络/服务端类故障
+    // 点了也没用）。修前本面板在未登录态**没有任何出口**（上游 §5.2）——登出键只在
+    // 已登录分支渲染 ⇒ 用户被卡在「登录失败 + 无法清理」。
+    const cleanupCode = neblinkState.pairErrorCode || neblinkState.credentialIssue?.code || '';
+    const cleanup = LOCAL_FILE_CODES.includes(cleanupCode)
+      ? `<div class="neblink-account-actions">
+        <button class="neblink-switch-btn" id="neblink-cleanup-btn" type="button">${t('neblink.cleanupRelogin')}</button>
+      </div>`
+      : '';
+    // 状态面降级（判据 G6）：非 2xx 的**可见**读数（修前 `if (!resp.ok) return;` 零痕迹）。
+    const degraded = neblinkState.statusDegraded
+      ? `<div class="neblink-error">${escapeHtml(t('neblink.statusDegraded', { status: String(neblinkState.statusDegraded.status) }))}</div>`
+      : '';
+    // 本机凭据面读数（被动来源：坏件在**下一次登录尝试之前**就已经可判读，上游 §4 S4）。
+    const issue = (!pairErr && neblinkState.credentialIssue)
+      ? `<div class="neblink-error">${escapeHtml(loginFailureText(neblinkState.credentialIssue))}</div>` : '';
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out-hint">${t('neblink.loggedOutHint')}</div>
+      ${degraded}
       ${pairErr}
+      ${issue}
+      ${cleanup}
     </div>`;
   }
 
@@ -445,13 +516,18 @@ export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess
   if (_flowPollTimer) clearTimeout(_flowPollTimer);
   const deadline = Date.now() + expiresInSeconds * 1000;
 
-  const fail = (errMsg) => {
+  const fail = (failure) => {
+    // 缺陷 A：载荷形态与 PKCE 面一致（对象 ⇒ 走 `loginFailureText`；字符串 ⇒ 兼容面）。
+    const payload = (failure && typeof failure === 'object')
+      ? failure
+      : { error: failure == null ? '' : String(failure) };
     neblinkState.flowState = 'idle';
-    neblinkState.pairError = errMsg;
+    neblinkState.pairError = loginFailureText(payload);
+    neblinkState.pairErrorCode = payload.code || '';
     neblinkState.userCode = '';
     neblinkState.deviceCode = '';
     if (_rerender) _rerender();
-    onError?.(errMsg);
+    onError?.(neblinkState.pairError, payload);
   };
 
   const poll = async () => {
@@ -483,8 +559,9 @@ export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess
         _flowPollTimer = setTimeout(poll, interval * 1000);
         return;
       }
-      // Other error (expired, denied, etc.)
-      fail(data.error || t('login.deviceFailed'));
+      // Other error (expired, denied, etc.) — 载荷原样下沉（后端分类文案若带
+      // `code` 则连诊断码一起渲染，缺 `code` 时与修前逐字同款）。
+      fail(data.error ? data : t('login.deviceFailed'));
     } catch (e) {
       fail(t('login.networkError', { msg: e.message }));
     }
@@ -553,11 +630,25 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
   if (_pkcePollTimer) clearTimeout(_pkcePollTimer);
   const deadline = Date.now() + timeoutMs;
 
-  const fail = (errMsg) => {
+  /**
+   * 失败落地面（缺陷 A / 上游 §8.2 第 6 项）：入参可以是**字符串**（本地客户端失败，
+   * 兼容面）或后端失败**载荷**（`{code, reason, action, error}`）。
+   * 落三个读数：① `pairError` = 渲染用三段式（`loginFailureText`）；② `pairErrorCode`
+   * = 稳定分类码（供「清理并重登」门控与 `data-*` 断言）；③ 回调第二参带上原始载荷
+   * （老调用方只读第一参 ⇒ 向后兼容）。
+   * @param {string|{code?: string, reason?: string, action?: string, error?: string}} failure
+   */
+  const fail = (failure) => {
+    const payload = (failure && typeof failure === 'object')
+      ? failure
+      : { error: failure == null ? '' : String(failure) };
+    const text = loginFailureText(payload);
     neblinkState.flowState = 'idle';
-    neblinkState.pairError = errMsg;
+    neblinkState.pairError = text;
+    neblinkState.pairErrorCode = payload.code || '';
+    neblinkState.credentialIssue = payload.code ? payload : neblinkState.credentialIssue;
     if (_rerender) _rerender();
-    onError?.(errMsg);
+    onError?.(text, payload);
   };
 
   const poll = async () => {
@@ -571,13 +662,14 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
       });
       const data = await resp.json();
       if (!resp.ok) {
-        fail(data.error || t('login.failed'));
+        fail(data);
         return;
       }
       if (data.status === 'success') {
         // Success - device registered, credential persisted.
         neblinkState.flowState = 'success';
         neblinkState.pairError = '';
+        neblinkState.pairErrorCode = '';
         if (_rerender) _rerender();
         // Refresh neblink status after a short delay so the profile shows up.
         setTimeout(() => fetchNeblinkStatus(), 1500);
@@ -585,7 +677,10 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
         return;
       }
       if (data.status === 'error') {
-        fail(data.error || t('login.failed'));
+        // 后端错误态现在恒带 `code`/`reason`/`action`（加法字段，缺陷 A）⇒ 前端按分类
+        // 渲染原因 + 动作 + 诊断码，不再原样打印后端串（修前 `fail(data.error …)` 直透，
+        // 上游 §4 的第 5 处丢失点）。
+        fail(data);
         return;
       }
       // idle | pending - keep polling (idle is possible right after start).
@@ -600,6 +695,42 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
 /** Cancel an in-progress PKCE state poll (e.g. the login modal was closed). */
 export function cancelPkceFlow() {
   if (_pkcePollTimer) { clearTimeout(_pkcePollTimer); _pkcePollTimer = null; }
+}
+
+/** RP-initiated logout hop — the **single** window-navigation point of the
+ *  logout / switch-account / cleanup-and-relogin chains.
+ *
+ *  `window.open('/api/neblink/auth/end-session…')` in the SAME gesture tick
+ *  (synchronous → popup-blocker safe): the endpoint performs the local
+ *  teardown (8 steps, defect-A fix: a credential **read** failure no longer
+ *  skips it — judgement G5) and 302s the new tab to the provider's
+ *  end_session_endpoint, killing the browser SSO session. Without that hop the
+ *  next login silently re-enters the original account.
+ *
+ *  `continueToLogin` = the one-window switch shape (`?scenario=switch`): the
+ *  landing page this hop ends on continues into the login in the SAME window;
+ *  the main window learns the outcome through [[watchSwitchHandoff]].
+ *
+ *  🔴 缺陷 A（上游 §8.2 第 6 项）：「清理并重登」入口走的就是本函数（`continueToLogin=true`）
+ *  —— 它是「本地凭据坏了、清理掉再登一次」这条自救路径的既有实现，本批零新增链路。
+ *
+ *  Extracted from the `bindNeblinkEvents` closure so the login modal
+ *  (activityBar.js) can share it verbatim instead of keeping a second copy.
+ * @param {boolean} continueToLogin */
+export function openEndSessionHandoff(continueToLogin = false) {
+  const handoff = continueToLogin
+    ? `?scenario=switch&ui_locales=${getLocale() === 'en' ? 'en' : 'zh'}`
+    : '';
+  window.open('/api/neblink/auth/end-session' + handoff, '_blank', 'noopener');
+  setTimeout(async () => {
+    forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
+    // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
+    // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
+    clearMessageCache();
+    clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
+    await fetchNeblinkStatus();
+    _rerender?.();
+  }, 1000);
 }
 
 // ---- Bind events after HTML insert ----
@@ -630,19 +761,9 @@ export function bindNeblinkEvents(rerender) {
   // `ui_locales` is carried through the hop because the landing page is a bare
   // navigation and cannot read this app's locale.
   function initiateLogout(opts = {}) {
-    const handoff = opts.continueToLogin === true
-      ? `?scenario=switch&ui_locales=${getLocale() === 'en' ? 'en' : 'zh'}`
-      : '';
-    window.open('/api/neblink/auth/end-session' + handoff, '_blank', 'noopener');
-    setTimeout(async () => {
-      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
-      // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
-      // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
-      clearMessageCache();
-      clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
-      await fetchNeblinkStatus();
-      _rerender?.();
-    }, 1000);
+    // 🔴 唯一窗口跳转点已抽到 [[openEndSessionHandoff]]（缺陷 A）：「清理并重登」入口
+    // 与「退出/换号」共用同一段 ⇒ 两条腿永不漂移（§13 禁造新轮子）。
+    openEndSessionHandoff(opts.continueToLogin === true);
   }
 
   // Logout button.
@@ -659,6 +780,19 @@ export function bindNeblinkEvents(rerender) {
   const switchBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-switch-btn'));
   if (switchBtn) {
     switchBtn.addEventListener('click', () => { openSwitchAccountModal(initiateLogout); });
+  }
+
+  // 「清理并重登」入口（缺陷 A / 上游 §8.2 第 6 项）：**复用既有链路**，零新轮子 ——
+  // 走的就是「切换账号」那条 `initiateLogout({continueToLogin:true})`（RP end-session →
+  // 本地拆除 → 落地页续登）。它之所以能真的「清理」，靠的是本批后端那笔修复：
+  // end-session 的凭据读点失败**不再跳过本地拆除**（判据 G5）⇒ 坏件即使读不开，拆除
+  // 仍执行（`DeviceCredential.clear` 删不掉时再走改名留档兜底）⇒ 下一次登录从干净盘重建。
+  const cleanupBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-cleanup-btn'));
+  if (cleanupBtn) {
+    cleanupBtn.addEventListener('click', () => {
+      cleanupBtn.disabled = true;
+      initiateLogout({ continueToLogin: true });
+    });
   }
 
   // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。

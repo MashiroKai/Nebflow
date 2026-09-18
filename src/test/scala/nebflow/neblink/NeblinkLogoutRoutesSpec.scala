@@ -513,4 +513,50 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  // ── 缺陷 A（2026-09-18）：坏凭据态下登出必须能自救（判据 G5）──────────────
+  //
+  // 修前形态：end-session 的凭据读点在删点**之前**且异常裸冒泡 ⇒ 整条路由 500、本地
+  // 拆除一步没跑（凭据没删、config 没关、client 没置空），续登标记 arm 过但永不被
+  // consume ⇒ 用户**无法通过「退出账号」自救**（上游 S3 / §6.1「登出也救不了」）。
+  test("G5 坏凭据（读不开）态下 end-session 仍 302 且本地拆除八步生效（非 500）") {
+    assume(
+      !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+      "POSIX chmod: 用真实不可读文件复现「读失败」腿（Windows 的 ACL 形态不在本机可造）"
+    )
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          val credPath = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            // 带 hint 的凭据先落盘，再把文件置为**属主自己都读不了**（= H1 形态的等价物）
+            _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
+              logto = Some(LogtoRefresh("rt-1", 1L, Some("tok.hint.sig")))))
+            _ <- IO.blocking(Files.setPosixFilePermissions(
+              credPath.toNIO,
+              java.nio.file.attribute.PosixFilePermissions.fromString("---------")
+            ))
+            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            peers <- st.ms.peers
+            cred <- DeviceCredential.load
+            cfg <- st.ms.neblinkConfig
+            clientAfter <- st.discovery.currentClient
+            // 拆除第④步的读数：文件必须真的不在了（删点跑到，且坏件不挡路）
+            gone <- IO.blocking(!os.exists(credPath))
+          yield
+            assertEquals(resp.status, Status.Found, "坏凭据下登出必须仍能跳转（302），不是 500")
+            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location missing"))
+            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+            assertEquals(q.contains("id_token_hint"), false, "读失败 ⇒ 跳过 hint（读不到就不编）")
+            assertEquals(cred, None, "本地凭据不在了")
+            assert(gone, "凭据文件必须被真删掉（坏件不挡拆除）")
+            assertEquals(peers, Nil, "第八步清 peers 生效")
+            assertEquals(clientAfter, None, "第六步置空 client 生效")
+            assertEquals(cfg.enabled, false, "第五步关 enabled 生效")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
 end NeblinkLogoutRoutesSpec

@@ -749,7 +749,14 @@ class RestApiRoutes(
         for
           id <- ms.identity
           peersList <- ms.peers
-          cred <- DeviceCredential.load
+          // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G4②）：本读点**永不抛** —— 坏凭据
+          // （读不开/解码坏）由 `DeviceCredentialStore.loadDiagnosed` 自愈（改名留档 +
+          // 当作无凭据），本端点因此稳定回答 200 + `loggedIn=false`，而不是 500
+          // （修前 500 被前端 `neblink.js:159` 静默吞掉 ⇒ 假「已登录」中间态，上游 S4）。
+          // 失败**不静默**：分类经下方**加法字段** `credentialIssue` 透出（老消费方忽略未知键）。
+          credentialRead <- DeviceCredential.loadDiagnosed
+          cred = credentialRead.getOrElse(None)
+          credentialIssue = credentialRead.left.toOption
           cfg <- ms.neblinkConfig
           // Logged in = device credential exists AND NebLink is enabled.
           loggedIn = cred.isDefined && cfg.enabled
@@ -806,6 +813,10 @@ class RestApiRoutes(
               "loggedIn" -> loggedIn.asJson,
               "relay" -> relayStatus,
               "friendPull" -> friendPull,
+              // 缺陷 A（加法字段，老消费方忽略未知键）：本机凭据面的可判读读数。
+              // `null` = 读干净（有/无凭据都是正常态）；非 null = 出过事，带
+              // `code`/`reason`/`action` 三段（**零路径、零异常类名**，判据 G2/G3）。
+              "credentialIssue" -> credentialIssue.fold(Json.Null)(_.toJson),
               "device" -> Json.obj(
                 "id" -> id.deviceId.asJson,
                 "name" -> id.deviceName.asJson,
@@ -932,30 +943,47 @@ class RestApiRoutes(
         case None =>
           armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
         case Some(ms) =>
-          for
-            _ <- armOrDisarm
-            logto <- ms.neblinkConfig.map(_.effectiveLogto)
-            // Read the hint BEFORE performLocalLogout deletes the file.
-            cred <- DeviceCredential.load
-            idToken = cred.flatMap(_.logto).flatMap(_.idToken)
-            resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
-              case Some(lc) =>
-                val target = LogtoAuthCode.endSessionUrl(
-                  lc.endpoint,
-                  idToken,
-                  Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
-                )
-                for
-                  _ <- performLocalLogout(ms)
-                  _ <- logger.info("RP-initiated logout: local teardown done, redirecting to provider end_session")
-                  r <- Found(Location(Uri.unsafeFromString(target)))
-                yield r
-              // Same surface as auth/start: unconfigured provider (or AC app
-              // id missing) — the caller falls back to the local-only logout,
-              // and no landing hop will ever come back to consume the marker.
-              case _ =>
-                switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
-          yield resp
+          val run =
+            for
+              _ <- armOrDisarm
+              logto <- ms.neblinkConfig.map(_.effectiveLogto)
+              // Read the hint BEFORE performLocalLogout deletes the file.
+              //
+              // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G5）：读失败**不得**跳过本地拆除。
+              // 修前这一读异常裸冒泡 ⇒ 整条路由 500、拆除一步没跑（凭据没删、config
+              // 没关、client 没置空），用户因此**无法通过「退出账号」自救**（上游 S3）。
+              // 现在：读失败 ⇒ 只跳过 `id_token_hint`（登录态可能不完整），拆除照跑；
+              // 分类读数由存储层的 WARN 留档（带分类码），无需在这里再判一次。
+              credentialRead <- DeviceCredential.loadDiagnosed
+              idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
+              resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
+                case Some(lc) =>
+                  val target = LogtoAuthCode.endSessionUrl(
+                    lc.endpoint,
+                    idToken,
+                    Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                  )
+                  for
+                    _ <- performLocalLogout(ms)
+                    _ <- logger.info("RP-initiated logout: local teardown done, redirecting to provider end_session")
+                    r <- Found(Location(Uri.unsafeFromString(target)))
+                  yield r
+                // Same surface as auth/start: unconfigured provider (or AC app
+                // id missing) — the caller falls back to the local-only logout,
+                // and no landing hop will ever come back to consume the marker.
+                case _ =>
+                  switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+            yield resp
+          // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
+          // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
+          run.handleErrorWith { e =>
+            val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+              e,
+              nebflow.neblink.CredentialFailure.Unclassified
+            )
+            logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
+              htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
+          }
 
     // Enroll device via pairing code — calls the NebLink Server's
     // /api/device/enroll, receives a long-lived device credential, persists it,
@@ -4272,10 +4300,19 @@ class RestApiRoutes(
   private def handleAuthCallback(query: Map[String, String]): IO[org.http4s.Response[IO]] =
     // Provider error redirect (?error=...&error_description=...) — user
     // denied / hosted-page failure.
+    //
+    // 🔴 缺陷 A：失败面一律走**分类三段式**（上游 §8.2 第 4 项：禁 `getMessage`/原文直出）。
+    // 原始串（服务方 error 码 + description，可能是任何文本）只进 WARN（带分类码 + 归因）。
     LogtoAuthCode.parseCallbackError(query) match
       case Some(cb) =>
-        val msg = s"${cb.error}${cb.description.fold("")(d => s": $d")}"
-        pkceLogin.fail(msg) *> htmlResponse(callbackPage(ok = false, msg), Status.BadRequest)
+        val raw = s"${cb.error}${cb.description.fold("")(d => s": $d")}"
+        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+          nebflow.neblink.CredentialFailure.ProviderError,
+          raw
+        )
+        logger.warn(diagnostic.logLine("provider error redirect"), "code" -> diagnostic.code) *>
+          pkceLogin.failDiagnosed(diagnostic) *>
+          htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
       case None =>
         val code = query.getOrElse("code", "")
         val state = query.getOrElse("state", "")
@@ -4284,14 +4321,23 @@ class RestApiRoutes(
           // error status for pending attempts).
           case None =>
             htmlResponse(
-              callbackPage(ok = false, "登录回调校验失败（state 不匹配或已过期）"),
+              callbackPage(
+                ok = false,
+                nebflow.neblink.CredentialDiagnostics
+                  .diagnosticOf(nebflow.neblink.CredentialFailure.CallbackStateInvalid)
+                  .message
+              ),
               Status.BadRequest
             )
           case Some(verifier) =>
             neblinkService match
               case None =>
-                pkceLogin.fail("NebLink service not initialized") *>
-                  htmlResponse(callbackPage(ok = false, "nebflow 服务未初始化"), Status.InternalServerError)
+                val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                  nebflow.neblink.CredentialFailure.ServiceUnavailable,
+                  "NebLink service not initialized"
+                )
+                pkceLogin.failDiagnosed(diagnostic) *>
+                  htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
               case Some(ms) =>
                 for
                   // Same resolution as /api/neblink/auth/start: explicit logto
@@ -4363,51 +4409,84 @@ class RestApiRoutes(
                                       .flatMap {
                                         case Right(Right(_)) =>
                                           pkceLogin.succeed *> htmlResponse(callbackPage(ok = true, ""), Status.Ok)
+                                        // 🔴 缺陷 A：`Right(Left(err))` 与 `Left(e)` 两支都改走
+                                        // **分类映射**（上游 §8.2 第 4 项），`getMessage` / 自由串
+                                        // 一律不进用户可见面。
+                                        //  · `err` 是左通道自由串 —— 逐字符反查分类（`persist` 出来的
+                                        //    凭据失败/服务端缺凭据都已是三段式文案），护栏拒绝则按
+                                        //    既有的逐字符相等判据给 `enroll-refused-isolated-home`
+                                        //    （案 C 语义：真因照实透出，护栏文本本身干净）。
                                         case Right(Left(err)) =>
-                                          val detail = enrollFailureDetail(serverUrl, err)
-                                          pkceLogin.fail(detail) *>
-                                            htmlResponse(callbackPage(ok = false, detail), Status.BadGateway)
+                                          val diagnostic = classifyEnrollFailure(serverUrl, err)
+                                          pkceLogin.failDiagnosed(diagnostic) *>
+                                            htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadGateway)
                                         case Left(e) =>
-                                          pkceLogin.fail(Option(e.getMessage).getOrElse("enrollment error")) *>
-                                            htmlResponse(
-                                              callbackPage(ok = false, Option(e.getMessage).getOrElse("登录处理失败")),
-                                              Status.InternalServerError
-                                            )
+                                          val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                                            e,
+                                            nebflow.neblink.CredentialFailure.Unclassified
+                                          )
+                                          logger.warn(
+                                            diagnostic.logLine("auth callback enrollment failed"),
+                                            "code" -> diagnostic.code
+                                          ) *>
+                                            pkceLogin.failDiagnosed(diagnostic) *>
+                                            htmlResponse(callbackPage(ok = false, diagnostic.message),
+                                              Status.InternalServerError)
                                       }
                                   case Left(err) =>
-                                    pkceLogin.fail(s"register: $err") *>
-                                      htmlResponse(callbackPage(ok = false, s"设备注册失败：$err"), Status.BadGateway)
+                                    val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                                      nebflow.neblink.CredentialFailure.DeviceRegisterFailed,
+                                      err
+                                    )
+                                    logger.warn(diagnostic.logLine("device register failed"),
+                                      "code" -> diagnostic.code) *>
+                                      pkceLogin.failDiagnosed(diagnostic) *>
+                                      htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadGateway)
                                 }
                             }
                           case Left(err) =>
-                            pkceLogin.fail(s"token: $err") *>
-                              htmlResponse(callbackPage(ok = false, s"登录令牌交换失败：$err"), Status.BadRequest)
+                            val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                              nebflow.neblink.CredentialFailure.TokenExchangeFailed,
+                              err
+                            )
+                            logger.warn(diagnostic.logLine("token exchange failed"), "code" -> diagnostic.code) *>
+                              pkceLogin.failDiagnosed(diagnostic) *>
+                              htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
                         }
                     case _ =>
                       // With effectiveLogto this only fires when an explicit
                       // logto block exists but lacks pkceClientId (the
                       // embedded default carries one; a missing block falls
                       // back to it). Name the actual misconfiguration.
-                      pkceLogin.fail("logto-pkce-client-not-configured") *>
-                        htmlResponse(
-                          callbackPage(ok = false, "Logto PKCE 未配置：logto 段缺少 pkceClientId"),
-                          Status.NotFound
-                        )
+                      val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                        nebflow.neblink.CredentialFailure.LogtoNotConfigured,
+                        "logto-pkce-client-not-configured"
+                      )
+                      pkceLogin.failDiagnosed(diagnostic) *>
+                        htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
                 yield resp
         }
 
-  /** 案 C ①(a)（2026-09-14）：回调页 / 面板的失败文案 = **失败原文照实透出**，不再压成
-    * 泛化的「设备注册未完成」（修前 `:3576` 把 Left 丢掉、`/auth/state` 只外泄固定串
-    * `"Enrollment failed"`，用户无法判读真因）。
+  /** 案 C ①(a)（2026-09-14）语义的**分类化**承接（缺陷 A / 上游 §8.2 第 4 项）：
+    * 回调页与 `/auth/state` 的失败文案不再直出自由串，而是走
+    * `CredentialDiagnostics` 的分类映射 —— 三段式（原因 + 动作 + 稳定诊断码）。
     *
-    * 当且仅当该原文**就是**当前隔离护栏的拒绝文本时前置一句说明——判据是逐字符相等
-    * （护栏 reason 是 `(serverUrl, 开关)` 的纯函数，同输入同输出），因此非护栏失败
-    * （网络 / 服务端 / 缺 deviceToken）绝不会被贴上护栏标签。 */
-  private def enrollFailureDetail(serverUrl: String, err: String): String =
+    * 两条判据逐字保留自修前实现：
+    *  - **隔离护栏拒绝**：`EnrollGuard.enrollRefusal(serverUrl)` 的 reason 是
+    *    `(serverUrl, 开关)` 的纯函数（同输入同输出）⇒ 与 `err` **逐字符相等**即判定为护栏
+    *    拒绝，翻译成 `enroll-refused-isolated-home`；护栏原文**照实透出**（案 C：失败透真因，
+    *    且该文本本身不含路径/异常类名）。
+    *  - **其余**：先按可见三段式**反查**（`persist` 出来的凭据失败/服务端缺凭据都已是分类
+    *    文案）⇒ 同一个稳定 code 回到结构化通道；反查不中 ⇒ 兜底分类 + 原文进**日志**。 */
+  private def classifyEnrollFailure(
+    serverUrl: String,
+    err: String
+  ): nebflow.neblink.CredentialDiagnostics.Diagnostic =
+    import nebflow.neblink.{CredentialDiagnostics as CD, CredentialFailure as CF}
     nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl) match
-      case Some(reason) if reason == err =>
-        s"本机为隔离数据根，入网被本地隔离护栏拒绝（非网络故障）：$err"
-      case _ => err
+      case Some(reason) if reason == err => CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, err)
+      case _ =>
+        CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)).getOrElse(CD.diagnosticOf(CF.Unclassified, err))
 
   /** Static loopback login result page (success + error variants). The
     * frontend learns the outcome by polling /api/neblink/auth/state. */
