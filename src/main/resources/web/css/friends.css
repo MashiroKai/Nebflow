@@ -1123,6 +1123,130 @@ button.fm-req-decline:focus-visible {
   flex-shrink: 0;
 }
 
+/* ══ msgmenu 一期（客户端，作者 2026-09-18 19:2x 四答）══════════════════════
+   引用 + 多选转发两个新面。🔴 零新色值 / 零新图标体系：全部取既有 token 与既有
+   lucide 图标；🔴 零删除/零撤回项（本段无任何 danger 档使用）。────────────────── */
+
+/* ── ④ 菜单层级修正（**既有缺陷修复**，msgmenu 批实测捕获）──────────────────
+   读数：共用件 `.fm-context-menu` 的 `z-index: 5000`（`split.css:86-99`，加载序
+   **在 friends.css 之后**），而聊天窗覆层 `.cfg-modal-overlay` 的 `z-index: 10000`
+   （`sidebar.css:1219`，`position: fixed; inset: 0`）⇒ 窗内右键出的菜单**画在覆层
+   之下**：覆层底色是 `--overlay-bg`（**全透明**）⇒ 肉眼看不出，但 `elementFromPoint`
+   与真指针点击都命中覆层 ⇒ ① 菜单项点不动；② 点击还会被覆层的 `e.target === overlay`
+   分支当成「点外」⇒ **把聊天窗关掉**。本批的验收判据（菜单项逐项点击得预期面）
+   要求修掉它。
+   口径：**只抬 fm 菜单**（消费侧覆盖，禁改共用件规则 ⇒ explorer/canvas 两个消费者
+   零影响）；选择器 `body > .fm-context-menu`（特异度 0,1,1 > 共用件 0,1,0）⇒ 不依赖
+   加载序（split.css 后加载也压不掉）。零新色值。 */
+body > .fm-context-menu { z-index: 10001; }
+
+/* ── ① 引用块（气泡内，被引消息摘要 + 可辨识样式）──────────────────────────
+   材质 = **既有** `.fm-msg-meta` 同款卡面（`--color-surface` + 发丝环 + 同款暗档
+   覆盖，值逐字沿用邻规则，不新造色值）。
+   🔴 不用左缘色条 / 高亮条（设计硬约束「无 accent bars」）⇒ 靠「卡面 + 发丝描边
+   + 降一档字号/对比」与正文分组，与气泡自身底色天然区分（in 气泡底 = `--glass-etched-bg`，
+   out 气泡底 = `--sapphire-tint-15`，卡面两者之上都可辨）。 */
+.fm-quote-block {
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-text-muted, #888);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+}
+@media (prefers-color-scheme: dark) {
+  .fm-quote-block {
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+/* 译文行（「原消息不可用」降级位）：与摘要同族、再降一档不透明度 —— 不用新色值。 */
+.fm-quote-note { opacity: 0.75; }
+.fm-quote-note:empty { display: none; }
+
+/* ── ② 引用态条（输入框面上方；宿主 = `.fm-quote-strip`）────────────────────
+   组件本体 = 既有输入框引用块（`renderRefBlock(mode:'input')` → `.att-ref-fm`），
+   本段只定**宿主盒**的落位与外边距。`[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
+.fm-quote-strip {
+  padding: 6px 16px 0;
+}
+.fm-quote-strip:not([hidden]) { display: block; }
+.fm-quote-strip .att-ref { max-width: 100%; }
+
+/* ── ③ 多选态：勾选面（气泡左侧）+ 工具条 ────────────────────────────────
+   🔴 **槽位几何 = 实测定的**（与 sendstate 的 -22/-26 不同）：`.fm-flow` 是
+   `overflow-y: auto`（⇒ `overflow-x` 按规范计算为 auto）⇒ 裁剪区 = **padding box**，
+   左内边距只有 16px ⇒ `left: -26px` 的 18px 圆会有 10px 落在裁剪区外：
+   ① Playwright/`elementFromPoint` 命中不到（实测「element is visible… but
+   `<div class="cfg-modal fm-modal">` intercepts pointer events」）；② 真指针也点不到。
+   ⇒ 勾选面取 `left: -16px`（左缘 = `.fm-flow` padding box 左缘 ⇒ **完全落在**裁剪区内）
+   + 16px 直径（右缘 = 气泡左缘 ⇒ 零重叠）。in/out 两向同一条规则（out 气泡右侧对齐、
+   左侧本就有余量）。勾选面是真实 `<button role="checkbox">`（键盘可达）。 */
+.fm-msg.fm-selecting { position: relative; }
+/* 🔴 「一次只留一个载面」在多选态的延伸：多选期间气泡左侧槽位归勾选面，
+   发送态环与失败重发键**不渲染**（不是透明度压制 ⇒ elementFromPoint 打不到）。 */
+.fm-msg.fm-selecting.fm-sending::before { display: none; }
+.fm-msg.fm-selecting.fm-failed .fm-retry { display: none; }
+.fm-msg-check {
+  position: absolute;
+  left: -16px;
+  top: 10px;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--glass-etched-border-focus);
+  background: var(--color-surface);
+  color: transparent;              /* 未选中：勾不可见（零新色值 —— 透明即「无」） */
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.fm-msg-check svg { width: 10px; height: 10px; display: block; }
+/* 选中档：既有 sapphire 15% 底 + 既有描边 token + 描边色作勾色（零新色值，
+   亮/暗两档都取自 token ⇒ 无需第二份暗档覆盖）。 */
+.fm-msg.fm-selected .fm-msg-check {
+  background: var(--sapphire-tint-15);
+  border-color: rgb(var(--sapphire));
+  color: rgb(var(--sapphire));
+}
+.fm-msg-check:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* 多选工具条（已选 N 条 / 转发 / 退出）：与输入条同族（发丝上边线 + 同一内边距节奏）。 */
+.fm-select-bar {
+  padding: 6px 16px;
+  border-top: 1px solid var(--glass-etched-border);
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+}
+.fm-select-bar:not([hidden]) { display: flex; align-items: center; gap: 8px; }
+.fm-select-count { flex: 1; font-variant-numeric: tabular-nums; }
+.fm-select-forward,
+.fm-select-exit {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-etched-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.fm-select-forward:hover:not(:disabled),
+.fm-select-exit:hover { background: var(--color-frame-hover); }
+.fm-select-forward:disabled { opacity: 0.4; cursor: default; }
+.fm-select-forward:focus-visible,
+.fm-select-exit:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+
 /* Input bar */
 .fm-input-bar {
   display: flex;

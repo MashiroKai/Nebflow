@@ -21,6 +21,14 @@ export function hidePopupMenu() {
   if (menuEl) { menuEl.remove(); menuEl = null; }
 }
 
+/** Is a menu currently open? (Additive read-only probe, 2026-09-18 msgmenu batch.)
+ *  Consumer = `messages.js::escClose`: the menu owns Escape while it is open
+ *  (it closes on Escape via the capture-phase listener below), so the chat
+ *  modal's own Escape handling must yield that first press instead of
+ *  acting on it (which would close the window / exit selection in the same
+ *  keystroke). Zero behaviour change for existing consumers. */
+export function isPopupMenuOpen() { return !!menuEl; }
+
 /**
  * Show a popup menu at (x, y).
  * @param {number} x clientX
@@ -63,6 +71,15 @@ document.addEventListener('contextmenu', (e) => {
   // A right-click outside the menu closes it; menu items handle themselves.
   if (menuEl && !(e.target instanceof Element && menuEl.contains(e.target))) hidePopupMenu();
 }, true);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hidePopupMenu(); }, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  // 2026-09-18 msgmenu 批（缺陷修复，零行为变化对外）：菜单**开着**时这一下 Esc
+  // 归菜单独占 —— 不 stopPropagation 的话，宿主弹窗自己的 Esc 处理器（bubble 阶段）
+  // 会在菜单已被本处理器关掉之后**同一击**再跑一次 ⇒ 聊天窗被一起关掉
+  // （实测：右键出菜单 → Esc → 菜单与窗同时消失）。既有唯一消费者（联系人行菜单）
+  // 不在任何弹窗里 ⇒ 该行对其零影响。
+  if (menuEl) e.stopPropagation();
+  hidePopupMenu();
+}, true);
 window.addEventListener('resize', hidePopupMenu);
 window.addEventListener('blur', hidePopupMenu);
