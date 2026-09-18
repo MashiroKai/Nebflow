@@ -4,6 +4,21 @@
 // 批：imgmsg-impl 2026-09-18（作者五项全裁：③ 预留 13:10 / ② 首帧纯前端先行 /
 // ① A1-full 乐观气泡 + 本机句柄直显 / ④ 无百分比进度条 / ⑤ 无过渡）。
 //
+// 🔴📌 **③ 的取代关系（2026-09-19 01:29 作者令 · visup-ratio 批，勿按旧口径读本文件）**
+//   作者 01:29 令逐字要义：「气泡预览图尺寸**按图片真实宽高比** —— 🔴 禁写死 13:10；
+//   微信做法 = 按**原图尺寸**决定预览框宽高比；实现侧自定 min/max 夹取防极端长宽比破版；
+//   参数按视觉定并在卡面申报。」
+//   ⇒ 2026-09-18 的「固定预留比 13:10 + 同一盒 cover 填满」**已被取代**（记 provisional/
+//     archived）。本 spec 中一切 ③ 断言已同批改写到新语义，**禁**再按 13:10 描述行为：
+//       · 场景 A/③ ：「占位→真帧 Δ=0」→「骨架期零抖动 + **单次**几何变更 = 预测值 +
+//         真帧后零重排」（真实比与 Δ=0 数学互斥：骨架期不能预知真实比 ⇒ 旧「零位移」
+//         由「帧后零位移 + 单次变更量 == 预测值」承接，见 css/friends.css 段注）；
+//       · 场景 B/③ ：「占位槽按 13:10 占住」→「按**真实比**（原图 1600×1200 ⇒ 4:3）占住」；
+//       · 场景 D/③ ：「aspect-ratio 读数 = 13/10」→「= **真实比** 4/3」；
+//       · 场景 F（**visup-ratio 批新增**）：三形态（横/竖/方）+ 两个越界样本（超扁条/超长条）
+//         × 亮/暗双主题 ⇒ 四列读数（原图 W×H / 原图比 / 计算后盒 WxH / 夹取后目标比）+
+//         实测渲染框 + 夹取边界 + 不溢出/不顶走下方消息。
+//
 // 运行（双向红绿钉 —— 同一 harness，两份被测树）：
 //   IM_MODE=after  node tests/imgmsg-send.spec.mjs                       # 改后（本批）
 //   IM_MODE=before IM_WEB_ROOT=<纯 main 的 web 树> node tests/imgmsg-send.spec.mjs  # 改前（撤修法）
@@ -11,6 +26,7 @@
 //   IM_WEB_ROOT  被测 web 树（缺省 = 本仓 src/main/resources/web）
 //   IM_MODE      `after`（缺省）｜`before`（改前基线：症状必须复现 = 红组）
 //   IM_OUT       全部读数落盘为 JSON（证据件）
+//   IM_SHOTS     非空 ⇒ 场景 F 逐形态×主题落盘截图到该目录（取证件；缺省不落盘）
 //
 // 🔴 服务端口径的诚实申报（与 attachkey-idem.spec.mjs 同款纪律）：本 spec 的「服务端」=
 //   页内 `page.route('**/api/**')` 的**契约镜像**（§8.6 幂等回放 / keyset 前进游标 /
@@ -24,7 +40,7 @@
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -34,6 +50,10 @@ const WEB = process.env.IM_WEB_ROOT || join(ROOT, 'src', 'main', 'resources', 'w
 const MODE = process.env.IM_MODE === 'before' ? 'before' : 'after';
 const AFTER = MODE === 'after';
 const IM_OUT = process.env.IM_OUT || '';
+const IM_SHOTS = process.env.IM_SHOTS || '';
+/** 只跑指定场景（逗号分隔；缺省 = 全跑）。用途：③ 的**前红**只需场景 F 对基线树跑一遍。 */
+const IM_ONLY = (process.env.IM_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
+const want = (n) => IM_ONLY.length === 0 || IM_ONLY.includes(n);
 
 let failures = 0;
 const R = { mode: MODE, web: WEB, readings: {} }; // 全部读数（证据件）
@@ -43,6 +63,16 @@ function ok(name, cond, extra = '') {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const put = (k, v) => { R.readings[k] = v; console.log(`READ  ${k} = ${JSON.stringify(v)}`); };
+/** CSS `<ratio>` 文案（`"1600 / 900"` 或 `"1.7778"`）→ 数值。
+ *  ⚠ Chromium 对 `aspect-ratio` 的**计算值不做约分**（`1600 / 900` 原样保留）
+ *    ⇒ 比的对齐一律走数值，token 的逐字对齐另做（`data-att-ar`）。 */
+const ratioVal = (s) => {
+  const m = String(s || '').match(/^\s*([\d.]+)\s*(?:\/\s*([\d.]+)\s*)?$/);
+  if (!m) return NaN;
+  const b = m[2] === undefined ? 1 : Number(m[2]);
+  return b ? Number(m[1]) / b : NaN;
+};
+const normRatio = (s) => String(s || '').replace(/\s/g, '');
 
 // ── 真实位图（本 spec 唯一的图片字节源）：手写 PNG 编码器（zlib + CRC32）——
 //    「真渲染」要求真位图：真分辨率、真解码、真内禀宽高比（禁 1×1 占位图，
@@ -88,6 +118,11 @@ function pngBytes(w, h) {
 // 4:3（1600×1200 · 主流照片）与 16:9（1600×900 · 宽幅）各一份真实位图。
 const PNG_4x3 = pngBytes(1600, 1200);
 const PNG_16x9 = pngBytes(1600, 900);
+// visup-ratio 批（2026-09-19）：③ 三形态 + **两个越界样本**（夹取边界取证）。
+const PNG_TALL = pngBytes(900, 1600);      // 竖图（9:16 ⇒ 比 0.5625，界内）
+const PNG_SQ = pngBytes(1200, 1200);       // 方图（1:1，界内）
+const PNG_STRIP = pngBytes(4000, 200);     // **超扁条**（20:1 ⇒ 夹取到 2:1）
+const PNG_COLUMN = pngBytes(200, 4000);    // **超长条**（1:20 ⇒ 夹取到 1:2）
 const PNG_TXT = Buffer.from('hello nebflow\n', 'utf8'); // 非图片件（范围闸反例）
 
 // ── REST 契约镜像（唯一「服务端」）─────────────────────────
@@ -95,6 +130,22 @@ const EPOCH = Math.floor(Date.now() / 1000);
 const iso = s => new Date(s * 1000).toISOString();
 const IN_ATT = { id: 'att-in-1', name: 'photo-4x3.png', size: PNG_4x3.length, mime: 'image/png', state: 'ready' };
 const IN_ATT_TXT = { id: 'att-in-2', name: 'notes.txt', size: PNG_TXT.length, mime: 'text/plain', state: 'ready' };
+
+/** visup-ratio 批 · 场景 F 的五个形态样本（③ 三形态 + 两个越界样本）。
+ *  `ar` = 夹取后**目标比**的期望 token（界内 = 原图比本身，越界 = 夹取界）；
+ *  上限盒 `260 × 200` 与夹取界 `[1:2, 2:1]` = `messages.js` 申报参数（本表是它的镜像判据）。 */
+const RATIO_CASES = [
+  { tag: 'landscape-16x9', conv: 'cR1', mid: 401, w: 1600, h: 900, attId: 'att-r-16x9', png: PNG_16x9, ar: '16 / 9', clamped: false, boxH: 146.25 },
+  { tag: 'portrait-9x16', conv: 'cR2', mid: 411, w: 900, h: 1600, attId: 'att-r-tall', png: PNG_TALL, ar: '9 / 16', clamped: false, boxH: 199.11 },
+  { tag: 'square-1x1', conv: 'cR3', mid: 421, w: 1200, h: 1200, attId: 'att-r-sq', png: PNG_SQ, ar: '1 / 1', clamped: false, boxH: 200 },
+  { tag: 'strip-20x1-clamped', conv: 'cR4', mid: 431, w: 4000, h: 200, attId: 'att-r-strip', png: PNG_STRIP, ar: '2 / 1', clamped: true, boxH: 130 },
+  { tag: 'column-1x20-clamped', conv: 'cR5', mid: 441, w: 200, h: 4000, attId: 'att-r-column', png: PNG_COLUMN, ar: '1 / 2', clamped: true, boxH: 200 },
+];
+/** attachmentId → 真实字节（**唯一**字节源；越界样本也走真位图，禁 mock 图）。 */
+const ATT_BYTES = new Map([
+  ['att-in-1', PNG_4x3], ['att-in-2', PNG_TXT], ['att-16x9', PNG_16x9],
+  ...RATIO_CASES.map(c => [c.attId, c.png]),
+]);
 
 const SRV = {
   msgs: {},                 // convId → rows（ASC）
@@ -149,11 +200,20 @@ function resetServer({ uploadDelay = 500, postDelay = 500, dlDelay = 1200, postF
     ],
     cC: [{ id: 301, senderId: 'u-p', kind: 'text', body: '纯文本会话', createdAt: iso(EPOCH - 60) }],
   };
+  // visup-ratio 批 · 场景 F 的会话（每形态一条图片消息 + **下方一条文本消息**
+  // ⇒「不顶走下方消息」可量：图盒永不大于上限盒 ⇒ 下一条的顶边位移 ≤ 0）。
+  for (const c of RATIO_CASES) {
+    SRV.msgs[c.conv] = [
+      { id: c.mid, senderId: 'u-p', kind: 'text', body: '', createdAt: iso(EPOCH - 120), attachments: [{ id: c.attId, name: `shot-${c.tag}.png`, size: c.png.length, mime: 'image/png', state: 'ready' }] },
+      { id: c.mid + 1, senderId: 'u-p', kind: 'text', body: '这条必须原样留在下面', createdAt: iso(EPOCH - 119) },
+    ];
+  }
   const last = (cid) => { const a = SRV.msgs[cid] || []; return a[a.length - 1] || null; };
   SRV.convs = [
     { conversationId: 'cA', friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', remark: null, since: iso(EPOCH - 86400) }, lastMessage: last('cA'), unreadCount: 0 },
     { conversationId: 'cB', friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', remark: null, since: iso(EPOCH - 86400) }, lastMessage: last('cB'), unreadCount: 0 },
     { conversationId: 'cC', friend: { userId: 'u-q', neblinkId: 'other', name: '另一好友', avatarUrl: '', remark: null, since: iso(EPOCH - 86400) }, lastMessage: last('cC'), unreadCount: 0 },
+    ...RATIO_CASES.map(c => ({ conversationId: c.conv, friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', remark: null, since: iso(EPOCH - 86400) }, lastMessage: last(c.conv), unreadCount: 0 })),
   ];
   SRV.friends = SRV.convs.map(c => c.friend);
 }
@@ -181,8 +241,8 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 /** 帧注入器（每个 page 一份）。 */
 let WS = null;
 
-async function bootPage() {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+async function bootPage({ colorScheme = null } = {}) {
+  const ctx = await browser.newContext(Object.assign({ viewport: { width: 1280, height: 900 } }, colorScheme ? { colorScheme } : {}));
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -205,7 +265,7 @@ async function bootPage() {
     // 附件字节路由（**真字节**；可选闸/延迟 = 确定性观测窗口）
     if (method === 'GET' && /^\/api\/friends\/attachments\//.test(p)) {
       const id = decodeURIComponent(p.split('/').pop());
-      const bytes = id === 'att-in-2' ? PNG_TXT : (id === 'att-16x9' ? PNG_16x9 : PNG_4x3);
+      const bytes = ATT_BYTES.get(id) || PNG_4x3;
       if (SRV.attLatch) await SRV.attLatch;
       else await sleep(SRV.dlDelay);
       return route.fulfill({ status: 200, contentType: id === 'att-in-2' ? 'text/plain' : 'image/png', body: bytes });
@@ -384,11 +444,54 @@ const waitImgLoaded = (page, id) => page.waitForFunction((mid) => {
   return !!(img && img.getAttribute('src') && img.complete && img.naturalWidth > 0);
 }, id, { timeout: 15000 });
 
+/** 逐帧几何轨迹（**visup-ratio 批**：③ 新占位语义的机械判据面）。
+ *  每个 rAF 记一次槽盒高 + 「是否已点 src」；Node 侧据此判：
+ *    · 骨架期（未点 src）盒高**唯一** ⇒ 零抖动；
+ *    · 全生命周期盒高**恰好两个取值** ⇒ 「骨架 ↔ 真帧」只发生**一次**几何变更；
+ *    · **凡已点 src 的帧，盒高即最终值** ⇒ 图片从不以错误比例被绘制、绘制后零重排。 */
+const startFrameTrace = (page, mid) => page.evaluate((id) => {
+  const w = /** @type {any} */ (window);
+  w.__RT = { all: [], done: false };
+  const rec = () => {
+    const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
+    const box = m ? m.querySelector('.fm-att-inline') : null;
+    const img = box ? box.querySelector('img') : null;
+    if (box) {
+      const r = box.getBoundingClientRect();
+      w.__RT.all.push({
+        h: +r.height.toFixed(2),
+        w: +r.width.toFixed(2),
+        src: !!(img && img.getAttribute('src')),
+      });
+    }
+    if (!w.__RT.done) requestAnimationFrame(rec);
+  };
+  requestAnimationFrame(rec);
+}, mid);
+const stopFrameTrace = (page) => page.evaluate(() => {
+  const w = /** @type {any} */ (window);
+  w.__RT.done = true;
+  const all = w.__RT.all;
+  const distinct = [...new Set(all.map(f => f.h))];
+  return {
+    n: all.length,
+    distinctH: distinct,
+    preH: [...new Set(all.filter(f => !f.src).map(f => f.h))],
+    postH: [...new Set(all.filter(f => f.src).map(f => f.h))],
+    firstSrcIdx: all.findIndex(f => f.src),
+    last: all[all.length - 1] || null,
+  };
+});
+
 // ══════════════════════════════════════════════════════════════════════
-// 场景 A · ③ 预留零位移（**接收侧**几何探针：图片出现在历史中段，下方还有一条消息）
+// 场景 A · ③ 占位语义（**接收侧**几何探针：图片出现在历史中段，下方还有一条消息）
+//   改前（无槽）⇒ 下方消息被顶走 w/h×260；
+//   2026-09-18 基线（固定 13:10）⇒ Δ=0（下方消息完全不动）；
+//   2026-09-19 visup-ratio（真实比 + 夹取）⇒ **新占位语义**：骨架期零抖动，
+//     骨架 ↔ 真帧**恰好一次**几何变更且量值 = 预测值，真帧后零重排。
 // ══════════════════════════════════════════════════════════════════════
 async function scenarioA() {
-  console.log(`\n── 场景 A · ③ 预留零位移（改前/改后同一探针）· MODE=${MODE}`);
+  console.log(`\n── 场景 A · ③ 占位语义（改前/改后同一探针）· MODE=${MODE}`);
   for (const [label, convId, mid, w, h] of [
     ['4:3', 'cA', 101, 1600, 1200],
     ['16:9', 'cB', 201, 1600, 900],
@@ -403,22 +506,47 @@ async function scenarioA() {
       // ⚠ 必须用 `attached`：改前树的空槽**零高度**（= 不可见）——「不可见」本身
       //   就是 ③ 的症状读数，故不能等 visible（实测踩到）。
       await page.waitForSelector(`.fm-flow .fm-msg[data-message-id="${mid}"] .fm-att-inline`, { state: 'attached', timeout: 15000 });
+      await startFrameTrace(page, mid);
       await sleep(120);
       const g1 = await geom(page, mid);
+      await sleep(120);
+      const g1b = await geom(page, mid); // 骨架期第二采样（零抖动的对照点）
       release();
       await waitImgLoaded(page, mid);
       await sleep(150);
       const g2 = await geom(page, mid);
+      await sleep(200);
+      const g3 = await geom(page, mid); // 真帧后第二采样（零重排的对照点）
+      const trace = await stopFrameTrace(page);
       const delta = (g1 && g1.gapToNext !== null && g2 && g2.gapToNext !== null)
         ? +(g2.gapToNext - g1.gapToNext).toFixed(2) : null;
+      const deltaPost = (g2 && g2.gapToNext !== null && g3 && g3.gapToNext !== null)
+        ? +(g3.gapToNext - g2.gapToNext).toFixed(2) : null;
       const expectBefore = Math.round(260 * h / w * 100) / 100;
-      put(`geom.recv.${label}`, { pre: g1, post: g2, deltaGap: delta, expectBeforeDelta: expectBefore, pageErrors });
+      // ③ 新语义预测值：真帧盒高 = floor(min(260, 200·r) …) —— 与 `messages.js::inlineBoxFor` 同式。
+      const r = w / h;
+      const rc = Math.min(2, Math.max(0.5, r));
+      const predW = Math.floor(rc >= 260 / 200 ? 260 : 200 * rc);
+      const predH = Math.round((predW / rc) * 100) / 100;
+      const predDelta = +(predH - 200).toFixed(2); // 骨架盒（上限盒）高 200 ⇒ 变更量
+      put(`geom.recv.${label}`, {
+        pre: g1, pre2: g1b, post: g2, post2: g3, deltaGap: delta, deltaPost, trace,
+        expectBeforeDelta: expectBefore, predict: { r: Math.round(rc * 1e4) / 1e4, w: predW, h: predH, delta: predDelta }, pageErrors,
+      });
       ok(`A/③ ${label} 字节到达前 = 预留槽已占位（改前 0 / 改后 200）`,
         AFTER ? (g1.boxH === 200) : (g1.boxH === 0),
         JSON.stringify({ boxH: g1.boxH, imgH: g1.imgH, natural: g1.natural }));
       if (AFTER) {
-        ok(`A/③ ${label} 零位移（占位→真帧 Δ=0）`, delta === 0,
-          JSON.stringify({ delta, pre: g1.gapToNext, post: g2.gapToNext }));
+        // ── ③ 新占位语义三条（取代旧「占位→真帧 Δ=0」；真实比与 Δ=0 数学互斥）──
+        ok(`A/③ ${label} 骨架期零抖动（未点 src 期间盒高唯一）`,
+          trace.preH.length === 1 && trace.preH[0] === 200,
+          JSON.stringify({ preH: trace.preH, deltaInSkeleton: g1b && g1 && +(g1b.boxH - g1.boxH).toFixed(2) }));
+        ok(`A/③ ${label} 单次几何变更 = 预测值（骨架 ${200} ⇒ 真帧 ${predH}，Δ=${predDelta}）`,
+          delta !== null && Math.abs(delta - predDelta) <= 0.6 && trace.distinctH.length === 2,
+          JSON.stringify({ delta, predDelta, distinctH: trace.distinctH, predict: { w: predW, h: predH } }));
+        ok(`A/③ ${label} 真帧后零重排（凡已点 src 的帧盒高即最终值 + 帧后 Δ=0）`,
+          trace.postH.length === 1 && trace.postH[0] === predH && deltaPost === 0,
+          JSON.stringify({ postH: trace.postH, predH, deltaPost, n: trace.n }));
       } else {
         ok(`A/③ ${label} 症状复现（改前）：下方消息被顶走 ≈${expectBefore}px`,
           delta !== null && Math.abs(delta - expectBefore) <= 3,
@@ -452,6 +580,23 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
     await page.evaluate(() => { window.__IM.clickAt = Date.now(); });
     const tClick = Date.now();
     await setFiles(page, [imgFile('harbor-4x3.png', PNG_4x3)]);
+    // ③ 首帧读数（**确定性采样点**：帧一落地即取，不靠 +250ms 竞速——「机会窗口」面
+    //    （进度条/条幅/环）仍固定 +250ms 采样；本探针先起跑、后取值，**不推迟**那次采样）。
+    const firstFrameP = page.waitForFunction(() => {
+      const m = document.querySelector('.fm-flow .fm-msg[data-send-phase]')
+        || document.querySelector('.fm-flow .fm-msg');
+      const img = m ? m.querySelector('.fm-att-inline img') : null;
+      if (!img || !img.getAttribute('src')) return null;
+      const r = img.getBoundingClientRect();
+      return {
+        src: img.dataset.attSrc || '',
+        url: img.src,   // 帧字节读数在**同一 URL** 上后置取（确定性采样点不变）
+        boxH: +r.height.toFixed(2), boxW: +r.width.toFixed(2),
+        boxAr: getComputedStyle(img).aspectRatio,
+        attNat: img.dataset.attNat || '', attAr: img.dataset.attAr || '', attBox: img.dataset.attBox || '',
+        frameNatural: img.naturalWidth ? `${img.naturalWidth}x${img.naturalHeight}` : null,
+      };
+    }, null, { timeout: 10000 }).catch(() => null);
     // 乐观面上屏的观测窗口（上传延迟 600ms + POST 延迟 600ms）
     await sleep(250);
     const early = await page.evaluate(async () => {
@@ -472,6 +617,11 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
         boxH: box ? +box.getBoundingClientRect().height.toFixed(2) : null,
         hasSrc: !!(img && img.getAttribute('src')),
         src: img ? (img.dataset.attSrc || '') : '',
+        // ③ 读数面（visup-ratio 批）：原图内禀尺寸 / 夹取后比率 token / 计算盒 / 计算样式比。
+        attNat: img ? (img.dataset.attNat || '') : '',
+        attAr: img ? (img.dataset.attAr || '') : '',
+        attBox: img ? (img.dataset.attBox || '') : '',
+        boxAr: img ? getComputedStyle(img).aspectRatio : '',
         bars,
         cards,
         frameNatural: img ? `${img.naturalWidth}x${img.naturalHeight}` : null,
@@ -510,6 +660,14 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       });
     }
     const postSentAll = callsOf(c => c.method === 'POST');
+    // ③ 首帧读数取值（探针在 `setFiles` 后即已起跑 ⇒ 值 = **帧落地那一刻**的形态）。
+    const firstFrame = firstFrameP ? await firstFrameP.then(h => h.jsonValue()).catch(() => null) : null;
+    // 帧字节体积：在同一枚 URL 上后置取（本机帧 ↔ 原图 的字节对比读数）。
+    if (firstFrame && firstFrame.url) {
+      firstFrame.frameBytes = await page.evaluate(async (u) => {
+        try { return (await (await fetch(u)).blob()).size; } catch { return null; }
+      }, firstFrame.url).catch(() => null);
+    }
     // 等确认面落定
     await page.waitForFunction(() => {
       const m = document.querySelector('.fm-flow .fm-msg');
@@ -529,6 +687,10 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
         phase: m.dataset.sendPhase || '',
         src: img ? (img.dataset.attSrc || '') : '',
         boxH: box ? +box.getBoundingClientRect().height.toFixed(2) : null,
+        // ③ 读数面（visup-ratio 批）：确认面接管后盒比**必须**与首帧一致（原地换键不改几何）。
+        attAr: img ? (img.dataset.attAr || '') : '',
+        attBox: img ? (img.dataset.attBox || '') : '',
+        boxAr: img ? getComputedStyle(img).aspectRatio : '',
         nodeCount: msgs.filter(x => x.dataset.messageId === m.dataset.messageId).length,
         msgCount: msgs.length,
         progressBars: document.querySelectorAll('.fm-upload-progress').length,
@@ -544,7 +706,7 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
     const wirePost = postSent().length ? postSent()[0].body : null;
     const rel = (t) => (t && S.clickAt) ? t - S.clickAt : null;
     put(`send.${tag}`, {
-      early, final, claimedBeforeResponse, sourceFileBytes: PNG_4x3.length, sourceFilePixels: '1600x1200',
+      early, firstFrame, final, claimedBeforeResponse, sourceFileBytes: PNG_4x3.length, sourceFilePixels: '1600x1200',
       timeline: { placeholder: rel(S.placeholder), frame: rel(S.frame), confirm: rel(S.confirm), bubble: rel(S.bubble) },
       postResponseAt: rel(postRespAt()), srcSeq: S.srcs, dupMax: S.dupMax, dupEvents: S.dup, idsFinal: ids,
       attachGets: attachGets.map(c => c.p), wirePost, postSent: postSent().map(c => ({ p: c.p, at: c.at, body: c.body })), postAll: postSentAll.map(c => c.p), pageErrors,
@@ -563,17 +725,24 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       ok('B/① 确认面字节 = 本机句柄（零服务端往返）',
         final.src === 'local-handle' && attachGets.length === 0,
         JSON.stringify({ src: final.src, attachGets: attachGets.map(c => c.p) }));
-      ok('B/② 首帧 = 本地小图（非服务端字节）', (early && early.src === 'local-thumb') && S.srcs[0] === 'local-thumb',
-        JSON.stringify({ earlySrc: early && early.src, srcSeq: S.srcs }));
+      ok('B/② 首帧 = 本地小图（非服务端字节）', (!!firstFrame && firstFrame.src === 'local-thumb') && S.srcs[0] === 'local-thumb',
+        JSON.stringify({ firstFrameSrc: firstFrame && firstFrame.src, srcSeq: S.srcs, earlySrc: early && early.src }));
       ok('B/② 占位出现时点 ≤ 首帧时点（骨架先行）',
         S.placeholder > 0 && S.frame > 0 && S.placeholder <= S.frame + 1,
         JSON.stringify({ placeholder: rel(S.placeholder), frame: rel(S.frame) }));
-      ok('B/② 乐观面在屏时占位槽已按 13:10 占住高度', early && early.boxH === 200,
-        JSON.stringify({ boxH: early && early.boxH }));
+      ok('B/② 首帧落地时占位槽已按**真实比**占住高度（③ 2026-09-19 令：原图 1600×1200 ⇒ 4:3 ⇒ 盒 260×195）',
+        !!firstFrame && firstFrame.boxH === 195 && firstFrame.attBox === '260x195' && firstFrame.attAr === '1600 / 1200'
+        && Math.abs(ratioVal(firstFrame.boxAr) - 4 / 3) <= 1e-4,
+        JSON.stringify({ boxH: firstFrame && firstFrame.boxH, boxW: firstFrame && firstFrame.boxW, attBox: firstFrame && firstFrame.attBox, attAr: firstFrame && firstFrame.attAr, boxAr: firstFrame && firstFrame.boxAr, attNat: firstFrame && firstFrame.attNat }));
       ok('B/② 首帧 = **本地生成的小图**（真字节读数：像素已降采样且字节远小于原图）',
-        !!early && early.frameNatural !== null && early.frameNatural !== '1600x1200'
-        && typeof early.frameBytes === 'number' && early.frameBytes > 0 && early.frameBytes < PNG_4x3.length,
-        JSON.stringify({ frameNatural: early && early.frameNatural, frameBytes: early && early.frameBytes, sourceBytes: PNG_4x3.length }));
+        !!firstFrame && firstFrame.frameNatural !== null && firstFrame.frameNatural !== '1600x1200'
+        && typeof firstFrame.frameBytes === 'number' && firstFrame.frameBytes > 0 && firstFrame.frameBytes < PNG_4x3.length,
+        JSON.stringify({ frameNatural: firstFrame && firstFrame.frameNatural, frameBytes: firstFrame && firstFrame.frameBytes, sourceBytes: PNG_4x3.length, earlyNatural: early && early.frameNatural }));
+      // ③ 确认面**原地接管**不得改变几何（字节源换成本机句柄 = 同一份图、同一比）。
+      ok('B/③ 确认面接管后盒比/盒尺寸与首帧一致（原地换键不改几何）',
+        !!final && final.boxH === 195 && final.attBox === '260x195'
+        && Math.abs(ratioVal(final.boxAr) - 4 / 3) <= 1e-4,
+        JSON.stringify({ boxH: final.boxH, attBox: final.attBox, boxAr: final.boxAr, attAr: final.attAr }));
       ok('B/④ 本路径上传期间**零百分比进度条**（反馈 = 乐观直显）', early && early.bars === 0 && final.progressBars === 0,
         JSON.stringify({ barsDuring: early && early.bars, barsFinal: final.progressBars }));
       // ── sendstate 批（2026-09-18 · 作者设计令）新增契约：发送态载面 = 气泡左侧环，
@@ -719,8 +888,8 @@ async function scenarioD() {
       && !!trans.img && trans.img.transitionDuration === '0s' && trans.img.animationName === 'none'
       && trans.msg.transitionDuration === '0s',
       JSON.stringify(trans));
-    ok('D ③ aspect-ratio 读数（改后 13/10 / 改前 auto）',
-      !!trans.img && (AFTER ? (trans.img.aspectRatio.replace(/\s/g, '') === '13/10') : (trans.img.aspectRatio === 'auto')),
+    ok('D ③ aspect-ratio 读数（**visup-ratio 批**：改后 = 真实比 4/3；改前基线 auto）',
+      !!trans.img && (AFTER ? Math.abs(ratioVal(trans.img.aspectRatio) - 4 / 3) <= 1e-4 : (trans.img.aspectRatio === 'auto')),
       JSON.stringify({ aspectRatio: trans.img && trans.img.aspectRatio }));
     ok('D 无 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
   } finally {
@@ -832,14 +1001,136 @@ async function scenarioE() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// 场景 F · ③ **真实宽高比 + min/max 夹取**（visup-ratio 批 · 作者 2026-09-19 01:29 令）
+//
+//   三形态（横 16:9 / 竖 9:16 / 方 1:1）+ **两个越界样本**（超扁条 20:1 / 超长条 1:20），
+//   亮 / 暗**双主题**逐形态同拍。逐形态给四列读数：
+//     原图 W×H · 原图比 · 计算后盒 WxH（JS 单点写入的 `data-att-box`）· 夹取后目标比，
+//   外加**实测渲染框**（`getBoundingClientRect`，与声明面交叉验证）。
+//   边界判据：盒 ≤ 上限盒 260×200（不溢出容器、不顶走下方消息）；越界样本必须被夹到
+//   界内（`2 / 1` / `1 / 2`）且**不破版**。
+//   改前（`IM_MODE=before`）= 症状组：盒比恒为固定 13:10，与图无关。
+//   ⚠ **已知伴随读数（本批显式申报，非静默）**：`.fm-msg` 是 flex 列里的 `fit-content`
+//     项，附件卡 max-content ≈ 「文件名行 + 图片盒宽 + 18px」且被上限盒档 384.27px 截顶
+//     ⇒ 盒宽 < ~150px 时气泡比改前**变窄**（实测竖图样本 −29.58px）。
+//     **不变量**：气泡**永不大于**改前（改前各形态恒 384.27）、卡内/流内零横向溢出、
+//     下方消息不被顶走（本场景逐形态断言）。是否把气泡宽钉死留待视觉向（B 段）裁定。
+// ══════════════════════════════════════════════════════════════════════
+const CEIL_W = 260, CEIL_H = 200, AR_MIN = 0.5, AR_MAX = 2;
+async function scenarioF(scheme) {
+  console.log(`\n── 场景 F · ③ 真实比 + 夹取（${scheme}）· MODE=${MODE}`);
+  if (IM_SHOTS) { try { mkdirSync(IM_SHOTS, { recursive: true }); } catch { /* non-critical */ } }
+  for (const c of RATIO_CASES) {
+    resetServer({ dlDelay: 200 });
+    const { ctx, page, pageErrors } = await bootPage({ colorScheme: scheme });
+    try {
+      await openPanel(page);
+      await openConv(page, c.conv);
+      await waitImgLoaded(page, c.mid).catch(() => {});
+      await sleep(200);
+      const r = await page.evaluate((mid) => {
+        const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${mid}"]`);
+        const box = m ? m.querySelector('.fm-att-inline') : null;
+        const img = box ? box.querySelector('img') : null;
+        const i = img ? img.getBoundingClientRect() : null;
+        const b = box ? box.getBoundingClientRect() : null;
+        const cm = m ? m.getBoundingClientRect() : null;
+        const nx = m && m.nextElementSibling ? m.nextElementSibling.getBoundingClientRect() : null;
+        const flow = document.querySelector('.fm-flow');
+        return {
+          natW: img ? img.naturalWidth : 0, natH: img ? img.naturalHeight : 0,
+          // **预览框** = `<img>` 自身（`.fm-att-inline` 是 `flex:1 1 100%` 的满宽容器 ⇒ 量它无意义）。
+          boxW: i ? +i.width.toFixed(2) : null, boxH: i ? +i.height.toFixed(2) : null,
+          slotW: b ? +b.width.toFixed(2) : null,
+          ar: img ? getComputedStyle(img).aspectRatio : '',
+          cssWidth: img ? getComputedStyle(img).width : '',
+          attNat: img ? (img.dataset.attNat || '') : '',
+          attAr: img ? (img.dataset.attAr || '') : '',
+          attBox: img ? (img.dataset.attBox || '') : '',
+          cardScrollW: m ? m.scrollWidth : null, cardClientW: m ? m.clientWidth : null,
+          msgW: cm ? +cm.width.toFixed(2) : null,
+          cardW: (() => { const c = m && m.querySelector('.fm-att'); return c ? +c.getBoundingClientRect().width.toFixed(2) : null; })(),
+          cardBoxW: (() => { const c = m && m.querySelector('.fm-att'); return c ? +c.scrollWidth.toFixed(2) : null; })(),
+          flowScrollW: flow ? flow.scrollWidth : null, flowClientW: flow ? flow.clientWidth : null,
+          flowOffsetW: flow ? flow.offsetWidth : null,
+          msgOffsetW: m ? m.offsetWidth : null,
+          bubbleW: (() => { const b = m && m.querySelector('.fm-bubble, .fm-msg-body'); return b ? +b.getBoundingClientRect().width.toFixed(2) : null; })(),
+          bubbleMaxW: (() => { const b = m && m.querySelector('.fm-bubble, .fm-msg-body'); return b ? getComputedStyle(b).maxWidth : ''; })(),
+          nameW: (() => { const n = m && m.querySelector('.fm-att-name'); return n ? +n.getBoundingClientRect().width.toFixed(2) : null; })(),
+          attMaxW: (() => { const c2 = m && m.querySelector('.fm-att'); return c2 ? getComputedStyle(c2).maxWidth : ''; })(),
+          nextTop: nx ? +nx.top.toFixed(2) : null,
+          msgBottom: cm ? +cm.bottom.toFixed(2) : null,
+        };
+      }, c.mid);
+      // 预测值（与 `messages.js::inlineBoxFor` **同式**，独立复算 ⇒ 禁「实现自证自己」）。
+      const raw = c.w / c.h;
+      const apx = Math.min(AR_MAX, Math.max(AR_MIN, raw));
+      const predW = Math.floor(apx >= CEIL_W / CEIL_H ? CEIL_W : CEIL_H * apx);
+      const predH = Math.round((predW / apx) * 100) / 100;
+      const measuredAr = r.boxW && r.boxH ? +(r.boxW / r.boxH).toFixed(4) : null;
+      const expectToken = c.clamped ? (apx === AR_MAX ? '2 / 1' : '1 / 2') : `${c.w} / ${c.h}`;
+      put(`ratio.${c.tag}.${scheme}`, {
+        nat: `${c.w}x${c.h}`, natRatio: +(raw.toFixed(4)), clamp: { min: AR_MIN, max: AR_MAX },
+        clamped: c.clamped, target: { ar: c.ar, apx: +(apx.toFixed(4)), token: expectToken },
+        calcBox: `${predW}x${predH}`, declared: r.attBox, measured: { w: r.boxW, h: r.boxH, ar: measuredAr },
+        cssWidth: r.cssWidth, computedAr: r.ar, attNat: r.attNat, attAr: r.attAr, slotW: r.slotW,
+        overflow: { card: (r.cardScrollW || 0) - (r.cardClientW || 0), flow: (r.flowScrollW || 0) - (r.flowClientW || 0) },
+        widths: { msg: r.msgW, msgOffset: r.msgOffsetW, card: r.cardW, cardScroll: r.cardBoxW, slot: r.slotW, bubbleW: r.bubbleW, bubbleMaxW: r.bubbleMaxW, nameW: r.nameW, attMaxW: r.attMaxW, flowClient: r.flowClientW, flowOffset: r.flowOffsetW },
+        gapToNext: (r.nextTop !== null && r.msgBottom !== null) ? +(r.nextTop - r.msgBottom).toFixed(2) : null,
+        pageErrors,
+      });
+      const norm = (s) => normRatio(s);
+      if (AFTER) {
+        ok(`F/③ [${scheme}] ${c.tag} 真图解码 = 原图内禀 ${c.w}×${c.h}`,
+          r.natW === c.w && r.natH === c.h, JSON.stringify({ nat: `${r.natW}x${r.natH}` }));
+        ok(`F/③ [${scheme}] ${c.tag} 盒比 == 原图比夹取后值（声明 ${c.ar} · 实测框 ${r.boxW}×${r.boxH}）`,
+          Math.abs(ratioVal(r.ar) - apx) <= 5e-4 && norm(r.attAr) === norm(expectToken)
+          && measuredAr !== null && Math.abs(measuredAr - apx) <= 5e-3,
+          JSON.stringify({ computedAr: r.ar, attAr: r.attAr, expectToken, measuredAr, target: apx }));
+        ok(`F/③ [${scheme}] ${c.tag} 计算盒 == 独立复算 ${predW}x${predH}（宽高均 ≤ 上限盒 260×200）`,
+          r.attBox === `${predW}x${predH}` && Math.abs(r.boxW - predW) <= 1 && Math.abs(r.boxH - predH) <= 1
+          && r.boxW <= CEIL_W + 0.01 && r.boxH <= CEIL_H + 0.01,
+          JSON.stringify({ declared: r.attBox, predict: `${predW}x${predH}`, measured: { w: r.boxW, h: r.boxH }, cssWidth: r.cssWidth }));
+        ok(`F/③ [${scheme}] ${c.tag} 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）`,
+          ((r.cardScrollW || 0) - (r.cardClientW || 0)) <= 0 && ((r.flowScrollW || 0) - (r.flowClientW || 0)) <= 0
+          && r.nextTop !== null && r.msgBottom !== null && r.nextTop >= r.msgBottom - 0.01,
+          JSON.stringify({ cardOverflow: (r.cardScrollW || 0) - (r.cardClientW || 0), flowOverflow: (r.flowScrollW || 0) - (r.flowClientW || 0), nextTop: r.nextTop, msgBottom: r.msgBottom }));
+        if (c.clamped) {
+          ok(`F/③ [${scheme}] ${c.tag} **越界样本被夹到界内**（原图比 ${raw.toFixed(2)} ⇒ ${c.ar}）且不破版`,
+            Math.abs(apx - (norm(c.ar) === '2/1' ? AR_MAX : AR_MIN)) <= 1e-9
+            && Math.abs(ratioVal(r.ar) - apx) <= 5e-4 && r.boxH <= CEIL_H + 0.01,
+            JSON.stringify({ rawRatio: raw, clampedTo: c.ar, attAr: r.attAr, box: r.attBox, boxH: r.boxH }));
+        }
+      } else {
+        // 红组（改前）**双基线**：本批的「改前」= 2026-09-18 imgmsg 基线（固定 13:10 盒，
+        // 与图无关）；更早基线（imgmsg 之前）= 槽根本没有比例（盒高 0 / `auto`）。
+        const prev13 = norm(r.ar) === '13/10';
+        ok(`F/③ [${scheme}] ${c.tag} 症状复现（改前）：盒比与图无关（13:10 固定盒 / 更早基线 = 槽未占位）`,
+          prev13 ? ((c.w / c.h) !== (13 / 10) ? r.boxH === 200 : true) : (norm(r.ar) === '' && (r.boxH || 0) === 0),
+          JSON.stringify({ computedAr: r.ar, boxH: r.boxH, natRatio: +raw.toFixed(4), baseline: prev13 ? 'imgmsg-13:10' : 'pre-imgmsg' }));
+      }
+      if (IM_SHOTS) {
+        const el = await page.$(`.fm-flow .fm-msg[data-message-id="${c.mid}"]`);
+        if (el) await el.screenshot({ path: join(IM_SHOTS, `f-${c.tag}-${scheme}.png`) }).catch(() => {});
+      }
+      ok(`F [${scheme}] ${c.tag} 无 pageerror`, pageErrors.length === 0, JSON.stringify(pageErrors));
+    } finally {
+      await ctx.close();
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
 try {
   console.log(`imgmsg-send spec · MODE=${MODE} · WEB=${WEB}`);
-  await scenarioA();
-  await scenarioB({ postFrame: false, tag: 'B' });
-  if (AFTER) await scenarioB({ postFrame: true, tag: 'B2' }); // 回显腿先到（强键认领）
-  await scenarioC();
-  await scenarioD();
-  await scenarioE();
+  if (want('A')) await scenarioA();
+  if (want('B')) await scenarioB({ postFrame: false, tag: 'B' });
+  if (AFTER && want('B')) await scenarioB({ postFrame: true, tag: 'B2' }); // 回显腿先到（强键认领）
+  if (want('C')) await scenarioC();
+  if (want('D')) await scenarioD();
+  if (want('E')) await scenarioE();
+  if (want('F')) await scenarioF('light');
+  if (want('F')) await scenarioF('dark');
 } catch (e) {
   failures++;
   console.error('HARNESS ERROR:', e && e.stack || e);
