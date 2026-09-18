@@ -7,6 +7,7 @@ import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.core.PathUtil
+import nebflow.core.SystemReminders
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, RemoteExecutor}
@@ -239,6 +240,140 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
       // **顶掉真正的断言异常**（首轮变异验红即被顶掉，读数见
       // `logs/07_mutation_M2_fc.log`：报的是清理异常而非断言）。清理失败只留 temp
       // 目录，绝不得掩盖测试结论。
+      var attempts = 0
+      var removed  = false
+      while !removed && attempts < 3 do
+        attempts += 1
+        try
+          os.remove.all(tmp)
+          removed = true
+        catch case _: Exception => IO.sleep(200.millis).unsafeRunSync()
+  }
+
+  // ==================================================================
+  // F-2（presdial 批 2026-09-19，`kaiflap-diag` §2.4 M1）——
+  // **同一设备变化跨会话只计一次**（计数面 = `[devices]` 日志行）。
+  //
+  // 缺陷形态：`stableSnapshot.devices` 是**每 session 各自一套**基线（进程内 state），
+  // 同一次 roster 变化会被「被真用户轮告知的 session 数」各计一遍（KAI 侧
+  // 「1.2 s 两条同内容」的最可能解释）。修法：计数键 = 设备**成员集合**（deviceId 面）
+  // + 进程内账本跨会话去重；**注入不受影响**（每会话仍各自收到差量）。
+  //
+  // 判据（双向）：
+  //  (a) 两个真会话、同一次 roster 变化 ⇒ `[devices]` 行计数 **1**（改前 = 2，必红）；
+  //  (b) 两个会话的请求里**都**含差量条目（注入是每会话的，不得被去重吞掉）。
+  // ==================================================================
+
+  private final class RemindersAppender
+      extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
+    val lines = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
+      lines.add(event.getFormattedMessage)
+
+  private def captureRemindersLog[A](body: java.util.concurrent.ConcurrentLinkedQueue[String] => IO[A]): IO[A] =
+    IO {
+      org.slf4j.LoggerFactory.getLogger("nebflow.reminders") match
+        case lb: ch.qos.logback.classic.Logger =>
+          val appender = new RemindersAppender
+          appender.setContext(lb.getLoggerContext)
+          appender.start()
+          lb.addAppender(appender)
+          (lb, appender)
+        case other => fail(s"expected a logback logger for the reminders channel, got $other")
+    }.flatMap { (lb, appender) =>
+      body(appender.lines).guarantee(IO(lb.detachAppender(appender)))
+    }
+
+  private val peerP1 =
+    PeerInfo(deviceId = "dev-m1-p1", deviceName = "PEERP1", platform = "linux", address = "http://127.0.0.1:6")
+  private val peerP2 =
+    PeerInfo(deviceId = "dev-m1-p2", deviceName = "PEERP2", platform = "linux", address = "http://127.0.0.1:5")
+
+  test("F-2 M1: 同一设备变化在 2 个会话只计一次（两侧仍各收到差量；改前 = 每会话各一行）") {
+    val system = ActorSystem("devices-delta-m1")
+    val tmp    = os.temp.dir()
+    seedNebula(tmp)
+    val prevRoot   = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    // 计数账本复位 ⇒ 本用例的读数不受同 JVM 内其他 suite/用例已计键影响（🔴 断言确定性）
+    SystemReminders.DeviceChangeCount.reset()
+    try
+      val sidA   = "devices-m1-a"
+      val sidB   = "devices-m1-b"
+      val program = for
+        requests  <- IO.ref(List.empty[LlmRequest])
+        resources <- mkResources(system, tmp, CaptureLlm(requests))
+        dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+        ms <- NeblinkService.create(0, dispatcher)
+        _ = ms.setRelayClient(None)
+        _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+        // 基线 roster：只有 P1（两个会话的 lifecycle 轮都以此建立基线）
+        _ <- ms.upsertPeer(peerP1)
+        nebulaDef = AgentDef(name = "Nebula", description = "root under test", tools = List("Read"), systemPrompt = "")
+        refA <- system.spawn(
+          AgentActor(
+            agentDef = nebulaDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sidA),
+            sessionName = Some("m1-a")
+          ),
+          sidA
+        )
+        refB <- system.spawn(
+          AgentActor(
+            agentDef = nebulaDef,
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sidB),
+            sessionName = Some("m1-b")
+          ),
+          sidB
+        )
+        _ <- resources.agentRegistry.update(_ + (sidA -> AgentRecord(sidA, refA, AgentKind.Root, sidA, None)))
+        _ <- resources.agentRegistry.update(_ + (sidB -> AgentRecord(sidB, refB, AgentKind.Root, sidB, None)))
+        // ── 两个会话各一轮 lifecycle（建立各自的基线；本段不注入差量）──
+        reqA1 <- userTurn(refA, requests, 1)
+        reqB1 <- userTurn(refB, requests, 2)
+        _ <- IO(assert(deviceDeltaLines(reqA1).isEmpty, s"A 的 lifecycle 轮不得注入差量: ${deviceDeltaLines(reqA1)}"))
+        _ <- IO(assert(deviceDeltaLines(reqB1).isEmpty, s"B 的 lifecycle 轮不得注入差量: ${deviceDeltaLines(reqB1)}"))
+        // ── 一次真实 roster 变化：新增成员 P2 ──
+        _ <- ms.upsertPeer(peerP2)
+        // 跨过两个 AgentCore 各自 `deviceInfoBlock` 的 30s memo 窗
+        _ <- IO.sleep(cacheWindow)
+        captured <- captureRemindersLog { lines =>
+          for
+            _ <- userTurn(refA, requests, 3)
+            _ <- userTurn(refB, requests, 4)
+            out <- IO(lines.toArray.toList.map(_.toString))
+          yield out
+        }
+        reqs <- requests.get
+        reqA2 = reqs(2)
+        reqB2 = reqs(3)
+      yield (reqA2, reqB2, captured)
+      program.unsafeRunSync() match
+        case (reqA2, reqB2, captured) =>
+          val linesA = deviceDeltaLines(reqA2)
+          val linesB = deviceDeltaLines(reqB2)
+          assert(linesA.nonEmpty, s"会话 A 必须被告知这次 roster 变化（注入是每会话的）: ${reqA2.messages.map(_.textContent).mkString("\n")}")
+          assert(linesB.nonEmpty, s"会话 B 必须被告知这次 roster 变化（注入是每会话的）: ${reqB2.messages.map(_.textContent).mkString("\n")}")
+          assert(linesA.exists(_.contains("PEERP2")) && linesB.exists(_.contains("PEERP2")), s"A/B 都必须看到 +PEERP2（A=$linesA B=$linesB）")
+          val deviceLines = captured.filter(_.contains("[devices]"))
+          assertEquals(
+            deviceLines.size,
+            1,
+            s"同一设备变化在 2 个会话只计一次（改前 = 每个会话各一行）:\n${deviceLines.mkString("\n")}"
+          )
+          assertEquals(SystemReminders.DeviceChangeCount.total, 1L, "进程内计数 = 1")
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
       var attempts = 0
       var removed  = false
       while !removed && attempts < 3 do

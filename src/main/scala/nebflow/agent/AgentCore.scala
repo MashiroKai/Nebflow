@@ -803,7 +803,14 @@ private[agent] trait AgentCore:
             isRootAgent = isRootAgent,
             injectTime = injectTime,
             mountedProjectsDelta = changeProjects,
-            pluginSurfaceChange = pluginSurfaceChange
+            pluginSurfaceChange = pluginSurfaceChange,
+            // F-2 M2（kaiflap-diag §2.4）：compact / ask 轮的请求级提醒在下面的
+            // `contextMsg` 闸处**一律为空** ⇒ 提示对象到不了模型。抑制位让这类轮
+            // **不产生提醒对象**（连带不打计数行）——「没交付就不记数」。真变化保持
+            // pending（基线不动），下个真用户轮照常提示。
+            suppressContextReminders = isCompactTurn || isAskTurn,
+            // F-2 M1/M3：计数键 = 设备**成员集合**（与 `devInfo` 同帧的读数）。
+            deviceMemberKey = deviceMemberKey
           )
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
@@ -2223,14 +2230,29 @@ private[agent] trait AgentCore:
     * ≤30s 陈旧块；**未收窄**的是「同一执行器内 roster 原地变更后的 ≤30s 陈旧窗」
     * （与改前一致，本次不动、也不属本批范围）。
     */
-  @volatile private var deviceInfoCache: (Option[RemoteExecutor], Long, String) = (None, 0L, "")
+  /** `# Devices` 段的一次读数：渲染文本 + 其**成员集合键**（deviceId 面，F-2）。
+    *
+    * 🔴 两者必须来自**同一次读**（同一个 memo 槽）：若成员键与渲染文本分两次读，
+    * 中途的 roster 变化会让「键」与「文本」错位——文本轴抖动就可能凭空造出一个新键
+    * （计数面 M3 的反面）。 */
+  private final case class DeviceInfoSnapshot(rendered: String, memberKey: String)
 
-  private def deviceInfoBlock: String =
+  private val EmptyDeviceInfo = DeviceInfoSnapshot("", "")
+
+  @volatile private var deviceInfoCache: (Option[RemoteExecutor], Long, DeviceInfoSnapshot) = (None, 0L, EmptyDeviceInfo)
+
+  /** Rendered `# Devices` block (unchanged). */
+  private def deviceInfoBlock: String = deviceInfoSnapshot.rendered
+
+  /** F-2 计数键：当前设备**成员集合**（deviceId 面）——与 [[deviceInfoBlock]] 同源同帧。 */
+  private def deviceMemberKey: String = deviceInfoSnapshot.memberKey
+
+  private def deviceInfoSnapshot: DeviceInfoSnapshot =
     val now = System.currentTimeMillis()
     // 源身份在**读 memo 之前**取（与失效判据同源）⇒ 键与值不可能错位（无 TOCTOU）。
     val src = RemoteExecutor.current
     val (cachedSrc, lastUpdate, cached) = deviceInfoCache
-    if cachedSrc == src && now - lastUpdate < 30000 && cached.nonEmpty then cached
+    if cachedSrc == src && now - lastUpdate < 30000 && cached.rendered.nonEmpty then cached
     else
       val refreshed = src
         .flatMap(_.neblinkServiceOpt)
@@ -2265,16 +2287,19 @@ private[agent] trait AgentCore:
                 // （旧文案逐字留档在过程件，不在源码内复述，免与其零命中判据互斥）。
                 "\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."
               else ""
-            Some(s"$allDevices$deviceHint")
+            // F-2：成员集合键（deviceId 面）与渲染文本同帧产出 ⇒ 文本轴抖动（画像 /
+            // ⚠stale）绝不换键（计数零增量），顺序抖动也被排序去重抹平。
+            val memberKey = SystemReminders.deviceMemberKey(id.deviceId :: peersList.map(_.deviceId))
+            Some(DeviceInfoSnapshot(s"$allDevices$deviceHint", memberKey))
           catch case _: Exception => None
         }
-        .getOrElse("")
+        .getOrElse(EmptyDeviceInfo)
       deviceInfoCache = (src, now, refreshed)
       refreshed
 
     end if
 
-  end deviceInfoBlock
+  end deviceInfoSnapshot
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
