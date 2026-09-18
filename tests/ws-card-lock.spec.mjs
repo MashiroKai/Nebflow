@@ -110,6 +110,8 @@ async function pointOf(page, sel) {
  * @returns {Promise<object>} 读数记录（同时 push 进 READINGS）
  */
 async function probeEntry(page, { card, entry, point, programmaticSel, styleSel }) {
+  // 探针隔离：收掉上一探针可能遗留的应用内浏览器弹窗（真实关闭入口；绿向为空操作）。
+  await page.evaluate(() => window.__closePickerNow());
   const rest = { x: 8, y: 8 };
   await page.mouse.move(rest.x, rest.y);
   const stylesRest = await page.evaluate((s) => window.__styles(s), styleSel);
@@ -154,15 +156,25 @@ function expectDefectAction(rec) {
   expect(rec.after.mutations.length, 'document mutations (defect)').toBeGreaterThan(0);
 }
 
+/** 已决标志类 `resolved` 的在场性（红向要求「不在场」= 现状）。 */
+function expectResolvedClass(cls, what) {
+  if (EXPECT_DEFECT) expect(cls, `${what} (pre-fix: no resolved class)`).not.toContain('resolved');
+  else expect(cls, what).toContain('resolved');
+}
+
 /** 已决卡的可交互件必须全部交出交互（判据①/②/⑤ 的机械读数）。 */
 function expectLockedInventory(rec) {
   const inv = rec.inventory ?? [];
   expect(inv.length, 'lockable inventory size').toBeGreaterThan(0);
   for (const el of inv) {
     if (EXPECT_DEFECT) {
-      // 红向（回退修法）只钉既有 disabled 面；aria-disabled / tabindex / cursor 是本批
-      // 新增面 —— 红向在场即是差异读数（下面 green 支才断言）。
-      expect(el.disabled, `${el.el} disabled (pre-fix)`).toBe(true);
+      // 红向（回退修法）：旧口径只覆盖三组选择器 —— 被覆盖者必须 disabled，
+      // 未被覆盖者（textarea / 目标件…）**如实记录为仍可交互**（= 差异读数）。
+      if (/option-btn|option-cancel|option-confirm/.test(el.el)) {
+        expect(el.disabled, `${el.el} disabled (pre-fix covered)`).toBe(true);
+      } else {
+        expect(el.disabled, `${el.el} still interactive (pre-fix uncovered)`).toBe(false);
+      }
     } else {
       expect(el.disabled || el.ariaDisabled === 'true', `${el.el} disabled/aria-disabled`).toBeTruthy();
       expect(el.ariaDisabled, `${el.el} aria-disabled`).toBe('true');
@@ -224,7 +236,7 @@ test('T2 已取消态：两入口零动作 + 置灰', async ({ browser }) => {
   const page = await newPage(browser);
   await page.evaluate(() => window.__renderDir());
   const resolved = await page.evaluate(() => window.__resolveCancel());
-  expect(resolved.className).toContain('resolved');
+  expectResolvedClass(resolved.className, 'cancel end-state');
   await page.screenshot({ path: path.join(SHOT_DIR, 't2-cancel-resolved.png'), clip: (await page.evaluate(() => window.__boxRect())).box });
 
   const target = await pointOf(page, TARGET);
@@ -254,7 +266,7 @@ test('T3 已完成选择态：两入口零动作 + 置灰', async ({ browser }) 
   await page.evaluate(() => window.__renderDir());
   const resolved = await page.evaluate(() => window.__resolvePickComplete());
   expect(resolved.ok, JSON.stringify(resolved)).toBe(true);
-  expect(resolved.className).toContain('resolved');
+  expectResolvedClass(resolved.className, 'pick-complete end-state');
   expect(resolved.overlaysLeft).toBe(0);
   await page.screenshot({ path: path.join(SHOT_DIR, 't3-pick-resolved.png'), clip: (await page.evaluate(() => window.__boxRect())).box });
 
@@ -282,7 +294,7 @@ test('T4 引擎关闭态：两入口零动作', async ({ browser }) => {
   await page.evaluate(() => window.__renderDir());
   const closed = await page.evaluate(() => window.__resolveEngineClose());
   expect(closed.ok).toBe(true);
-  expect(closed.className).toContain('resolved');
+  expectResolvedClass(closed.className, 'engine-closed end-state');
 
   const target = await pointOf(page, TARGET);
   const r1 = await probeEntry(page, { card: 'dirPicker', entry: 'engineClosed:target', point: target, programmaticSel: TARGET, styleSel: TARGET });
@@ -302,7 +314,7 @@ test('T5 历史回放孪生卡：两入口零动作 + 置灰（answered / cancel
     const page = await newPage(browser);
     await page.evaluate(({ at }) => window.__renderHistory(at), { at: answerText });
     const boxClass = await page.evaluate(() => document.querySelector('.option-box').className);
-    expect(boxClass, `${stateName} history twin resolved`).toContain('resolved');
+    expectResolvedClass(boxClass, `${stateName} history twin`);
     await page.screenshot({ path: path.join(SHOT_DIR, `t5-history-${stateName}.png`), clip: (await page.evaluate(() => window.__boxRect())).box });
 
     const target = await pointOf(page, TARGET);
@@ -340,7 +352,7 @@ test('T6 选项盒（.option-btn 族）已决后零动作', async ({ browser }) 
     }, mode);
     await page.waitForTimeout(150);
     const cls = await page.evaluate(() => document.querySelector('.option-box').className);
-    expect(cls, `${mode}: option box resolved`).toContain('resolved');
+    expectResolvedClass(cls, `${mode}: option box`);
 
     const btn = await pointOf(page, '.option-box .option-btn');
     const r = await probeEntry(page, { card: 'optionBox', entry: `optionBtn:${mode}`, point: btn, programmaticSel: '.option-box .option-btn', styleSel: '.option-box .option-btn' });
@@ -483,7 +495,7 @@ test('T11 画布答题通道已决后卡面锁定', async ({ browser }) => {
   });
   await page.waitForTimeout(250);
   const cls = await page.evaluate(() => document.querySelector('.option-box').className);
-  expect(cls, 'canvas answer path resolves the card').toContain('resolved');
+  expectResolvedClass(cls, 'canvas answer path');
   const btn = await pointOf(page, '.option-box .option-btn');
   const r = await probeEntry(page, { card: 'canvasChannel', entry: 'canvasAnswer:optionBtn', point: btn, programmaticSel: '.option-box .option-btn', styleSel: '.option-box .option-btn' });
   expectZeroAction(r);

@@ -190,6 +190,14 @@
       return { ok, className: document.querySelector('.option-box').className };
     };
 
+    /** 探针隔离：每个探针开始前走真实关闭入口收掉遗留弹窗（openCtx 单例态一并复位）。 */
+    window.__closePickerNow = async () => {
+      const m = await import(`${WEB}/workspacePicker.js`);
+      m.closePicker();
+      document.querySelectorAll('.wsp-overlay').forEach((o) => o.remove());
+      await raf();
+    };
+
     // ── 读数器 ───────────────────────────────────────────────────────────
     window.__styles = (sel) => {
       const el = document.querySelector(sel);
