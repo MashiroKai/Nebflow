@@ -228,7 +228,15 @@ function reconcileProjectCards(scroll, projects) {
   for (const card of projectCards(scroll)) {
     if (!wanted.has(card.dataset.project)) startCardExit(scroll, card);
   }
-  if (projectCards(scroll).length) clearPlaceholders(scroll);
+  // 🔴 占位件（loading / empty / error）**无条件**清掉：它们是「列表尚未就绪」的替身，
+  // 不是列表内容——权威名单一到就必须让位，无论此刻 DOM 里有没有卡。
+  // 旧写法 `if (projectCards(scroll).length)` 只在**已有卡**时清：本批出口从
+  // `innerHTML = projects.map(...)`（全量替换，天然吃掉占位件）改为定点增删后，
+  // **首渲**（DOM 里 0 张卡、只有 loading 占位）走 clearPlaceholders 被整个跳过 ⇒
+  // 卡片随后替前插入，loading 节点作为兄弟**残留**（冷启动「加载项目…」常驻的根因；
+  // 同理「空态 → 有项目」转换会残留 `.team-empty`）。clearPlaceholders 只摘非
+  // `.project-card` 子节点，对退场在途的卡零影响 ⇒ 无条件调用安全且幂等。
+  clearPlaceholders(scroll);
   let anchor = null;
   for (const p of projects) {
     let card = cardByName(scroll, p.name);
