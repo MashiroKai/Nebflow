@@ -1481,13 +1481,13 @@ export default {
   // rewrite); en values are translations. Keep en/zh key sets symmetric —
   // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
   'content.agent.project-dispatcher.name': 'project-dispatcher',
-  'content.agent.project-dispatcher.desc': '项目任务分发器（Project+Node 新架构）——每次由 Nebula 的 `Mail(address="project:<项目名>")` → ProjectActor 触发（旧 `Task` 工具已删净退役），跑单次会话：读 Flow Map 现状（NodeList）→ 用 NodeEdit 分解任务、建节点、接线 → 结束。批级回传由分发器**显式** `Mail(address="Nebula", chainId=<本批链 id>, …)` 承担（无自动投递，R7-b 2026-09-12）。取代旧 Manager 的编排职责：无持久上下文、无记忆（拓扑与状态已落 Flow Map，Nebula 用 NodeList 只读查看）。preset/skills 由 agent 面板配置，改后即时生效（每次触发新会话读最新定义）。',
+  'content.agent.project-dispatcher.desc': '项目任务分发器——负责把一批工作拆成若干可执行的节点、安排它们之间的先后与依赖，并在节点完成后汇总结果。',
   'content.agent.general.name': 'general',
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',
   'content.agent.kernel.desc': '极简内核（Delegate 内核）：Nebula 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
   'content.agent.memory-consolidator.name': 'memory-consolidator',
-  'content.agent.memory-consolidator.desc': '记忆整理 agent（压缩双轨第二轨）：每次上下文压缩时消费 ~/.nebflow/memory/queue.jsonl 的记账条目，把四动作落到三层记忆文件（user / agent / project），逐条回写 outcome 并产出结构化计数。工具面机制固定 = AgentCore.KernelFixedTools 恰七件（Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion，本文件 tools/skills 声明因 ConvergedAgentNames 含本名而整体失效）；机制层不设「唯一写入者」限制（作者 2026-09-12 裁定）。',
+  'content.agent.memory-consolidator.desc': '记忆整理智能体——负责把对话中值得长期保留的信息整理进记忆，供之后的会话继续使用。',
   'content.plugin.visual-report.name': 'visual-report',
   'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.slideblocks.name': 'slideblocks',
