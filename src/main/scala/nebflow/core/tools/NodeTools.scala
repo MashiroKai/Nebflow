@@ -3032,15 +3032,13 @@ object ProjectCreateTool extends Tool:
     if resolvedName.isEmpty then
       IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
     else
-      val agentMdTemplate =
-        s"""# ${resolvedName} — AGENTS.md
-
-项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
-
-- 工作区：$workspace
-- Flow Map：`$workspace/.nebflow/flow-map.json`
-- 节点规则：节点是 leaf（无记忆、无 Mail 身份、ephemeral）；结果沿 out 边投递。
-"""
+      /** L1 **默认空**（promptopt 落地批 W3 · 2026-09-18 作者令，工作单 §2.3）：
+        * `NodeEdit` 新建项目写出的工作区 `AGENTS.md` **不再预填任何内容** —— 模板 = 空
+        * （`ensureScaffoldSync` 落盘成 0 字节文件），项目指令由项目/作者自持。
+        * 语义边界零变化：`ProjectStore`「缺件即补、既有永不覆盖」照旧（本改动只影响
+        * 「缺件补什么」，不动任何写入路径与既有件）；种子项目 general 的文本面属 L2
+        * （`src/main/resources/seed/projects/general/AGENTS.md`），与本 val 不同源。 */
+      val agentMdTemplate: String = ""
       /** 项目级实时事件（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）。
         *
         * 走**既有推送面**（🔴 不自建第二套）：`ctx.wsSend` 在 WS 会话面的构造是
