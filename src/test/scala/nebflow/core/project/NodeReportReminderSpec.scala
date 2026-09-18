@@ -194,7 +194,12 @@ class NodeReportReminderSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         reportGateHold = Some(reportGateHold),
-        bgGateCompletionHold = Some(bgGateCompletionHold)
+        bgGateCompletionHold = Some(bgGateCompletionHold),
+        // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+        // 本 fixture 主题 = node_report 门释放后的下游投递（R4/R11），其断言要求
+        // `[Node '<n>' completed]` **即时**到达 root（窗语义下最多晚 `rootNotifyQuietMs`）。
+        // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
+        rootNotifyQuietMs = Some(0)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
         createdAt = System.currentTimeMillis())

@@ -5787,6 +5787,26 @@ class NodeEngine(
     * ⇒ 生产路径上本方法只被 [[flushRootNotify]] 与两条旁路（`windowMs<=0` / P0 INTERRUPT）
     * 调用；「一条 = 一个 turn」的消费侧观感由此在**生产者侧**归零。 */
   private[project] def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
+    offerRootNotify(text, nodeName, status, nodeId).void
+
+  /** **offer 结果（F-1 修复面 · 2026-09-18 作者裁定 (a)：记账必须反映交付事实）**——
+    * 三态穷尽 root 通道 offer 的全部出口；调用方据此决定**是否**逐件
+    * `markNebulaDelivered`（「先标已发、实际没发」是缺陷本体）。
+    *
+    *  - `Offered`：`ref ! ImmediateInput` **已发出** ⇒ 交付事实成立（记账依据）；
+    *  - `Suppressed`：60s 同 `(identity, status)` 窗抑制 ⇒ **未**发出。逐件腿按 V8 既有
+    *    语义**仍**记账（该键即件自身身份 ⇒ 同键前件已落地，账本与通知解耦）；
+    *    合并腿**不**据此记账——其键 = 首件 nodeName × 合并状态，**不代表**该批其余件已交付；
+    *  - `Parked`：根 ref 缺失 ⇒ **未**发出、**不**记账，件滞留 `nebulaDeliveredAt` 空态
+    *    ⇒ 30s 补投扫描重新入队（不丢件）。 */
+  private enum RootNotifyOffer:
+    case Offered
+    case Suppressed
+    case Parked
+
+  /** root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToNebula]]
+    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。 */
+  private def offerRootNotify(text: String, nodeName: String, status: String, nodeId: Option[String]): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         // 缺口4：同 (identity, status) 60s 窗口去重——抑制重复 offer（首投已入
@@ -5797,7 +5817,8 @@ class NodeEngine(
           case true =>
             logger.warn(
               s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.NebulaDedupWindowMs}ms, rootSession=$rootSessionId)") *>
-              nodeId.traverse_(id => markNebulaDelivered(id)).void
+              nodeId.traverse_(id => markNebulaDelivered(id)) *>
+              IO.pure(RootNotifyOffer.Suppressed)
           case false =>
             (ref ! AgentCommand.ImmediateInput(
               text,
@@ -5805,11 +5826,12 @@ class NodeEngine(
               eventType = Some(status),
               sender = Some(s"$projectName/$nodeName"),
               fromUser = false // ② 服务端注入（节点状态），不是真人输入
-            )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
+            )) *> nodeId.traverse_(id => markNebulaDelivered(id)) *>
+              IO.pure(RootNotifyOffer.Offered)
         }
       case None =>
-        logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)")
-        IO.unit
+        logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)") *>
+          IO.pure(RootNotifyOffer.Parked)
     }
 
   // ── root 通道通知打包窗（notifybatch 批 2026-09-18；作者 2026-09-18 三决策）────────
@@ -5923,10 +5945,17 @@ class NodeEngine(
   /** **窗口结束的唯一出口**（M-3）：按上限取队首 ≤N 件 → **一次** offer（N=1 ⇒ 文本
     * 逐字不变；N≥2 ⇒ 正文分节 + header 保守）→ 逐件记账。
     *
-    * 记账序（V8 tell-then-mark，逐字保留）：offer 成功后才逐件 `markNebulaDelivered`；
-    * 根 ref 缺失时 [[deliverToNebula]] 不记账 ⇒ 件留在 `nebulaDeliveredAt` 空态，下轮
-    * 30s 补投扫描重新入队（不丢）。
-    * `private[project]`：spec 可显式驱动（上限/保序用例无需等真实窗长）。 */
+    * **记账序（V8 tell-then-mark；F-1 修复面 · 2026-09-18 作者裁定 (a)：「记账必须反映
+    * 交付事实」）**：合并腿**只有 offer 真的落地**（`RootNotifyOffer.Offered`，即
+    * `ref ! ImmediateInput` 已发出）才 `traverse_(markNebulaDelivered)`。两条**未落地**
+    * 路径一律**不记账** ⇒ 件留在 `nebulaDeliveredAt` 空态、下轮 30s 补投扫描重新入队
+    * （不丢件；宁重复不丢失）：
+    *   ① 根 ref 缺失（`Parked`——`deliverToNebula` 只 WARN + 不记账，`:5789` 语义原样）；
+    *   ② 60s 同键窗抑制（`Suppressed`——**未**发出；合并腿的键 = 首件 nodeName × 合并
+    *      状态，不代表该批其余件已交付）。
+    * 单件腿（`case one :: Nil`）走 [[deliverToNebula]] 原路径**逐字保留**（抑制/落地两态
+    * 均记账，键 = 件自身身份）；`private[project]`：spec 可显式驱动（上限/保序用例无需等
+    * 真实窗长）。 */
   private[project] def flushRootNotify(): IO[Unit] =
     rootNotifyBatchState
       .modify { s =>
@@ -5942,14 +5971,20 @@ class NodeEngine(
             // 单件：文本 / header / 去重键 / 记账**逐字同今天**（A2 单件零漂移）
             case one :: Nil => deliverToNebula(one.text, one.nodeName, one.status, one.nodeId)
             // 多件：正文分节 + header 保守（T-6(a)：不新增 header 语义 ⇒ `NotificationHeader`
-            // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；offer 后逐件记账
+            // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；**落地才**逐件记账
             case many =>
-              deliverToNebula(
+              offerRootNotify(
                 mergedRootNotifyText(many),
                 many.head.nodeName,
                 mergedRootNotifyStatus(many),
                 nodeId = None
-              ) *> many.flatMap(_.nodeId).distinct.traverse_(markNebulaDelivered)
+              ).flatMap {
+                // F-1（作者裁定 (a)）：`Offered` = 交付事实成立 ⇒ 逐件记账；`Parked`/`Suppressed`
+                // = 本批**没发出去** ⇒ 一件都不记（否则件被标已发却未发、补投判据
+                // `n.nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久丢失，宁重复不丢失）。
+                case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markNebulaDelivered)
+                case _                       => IO.unit
+              }
           offer *>
             logger.info(
               "root-notify batch flushed",

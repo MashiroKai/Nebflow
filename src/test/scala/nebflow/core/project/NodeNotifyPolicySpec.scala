@@ -128,7 +128,12 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
   private def mkEngine(store: FlowMapStore, system: ActorSystem, res: SharedResources,
                        ws: os.Path, id: String): NodeEngine =
     new NodeEngine(store, system, res, (_: Json) => IO.unit, ws.toString, "nebula-root", id,
-      emitEvent = (_, _, _) => IO.unit, reportGateHold = Some(false))
+      emitEvent = (_, _, _) => IO.unit, reportGateHold = Some(false),
+      // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+      // 本 fixture 主题 = 通知策略/投根判据本身（③ 补投扫描腿三态），其断言直接数
+      // 注入条数 ⇒ 窗会改变「几件一起到」的读数。窗本体由 `RootNotifyBatchSpec` 专项覆盖；
+      // 🔴 原断言一字未改。
+      rootNotifyQuietMs = Some(0))
 
   /** 完整挂载（NodeEdit 的 ProjectRuntimeRegistry 前置；与 NotifyDispatcherSpec.mountReal 同款：
     * `reportGateHold=false` 仅测试面）。 */
@@ -149,7 +154,10 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         board = board,
         projectGoal = pd.description,
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        // notifybatch 返工（2026-09-18 · F-2 对齐）：同 `mkEngine`——root 打包窗显式关窗
+        // （本 fixture 主题 = 通知策略/投根判据；窗语义另由 `RootNotifyBatchSpec` 覆盖）。
+        rootNotifyQuietMs = Some(0)
       )
       ref <- system.spawn(
         ProjectActor(ProjectActor.ProjectConfig(pd, engine, system, res, "nebula-root", board = board)),

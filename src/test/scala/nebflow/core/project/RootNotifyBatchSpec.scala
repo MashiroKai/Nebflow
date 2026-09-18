@@ -45,8 +45,11 @@ import scala.concurrent.duration.*
  * 期望本 spec 的 A1/A3/A5/R3 转红（读数与还原见批报告 + 证据目录）。
  *
  * 接缝：`rootNotifyQuietMs` / `rootNotifyBatchMax`（构造入参，`notifyQuietMs` /
- * `destroyWindowMs` / `stallReNotifyMs` 同款——本工程测试 JVM 下 `sys.props` 写入同进程
- * 读回为空 ⇒ prop 注入口会静默失效，故走构造器）。`Some(0)` = 关窗 = 逐条旧行为。
+ * `destroyWindowMs` / `stallReNotifyMs` 同款）。走**构造器**而非全局 prop 的理由 =
+ * **跨 suite 隔离**（`sys.props` 是进程级全局态，一处写会污染同 JVM 内其它套件）；
+ * 复核位 2026-09-18 实测口径：同进程 `sys.props` **可读回**（读得 `777`，
+ * `-Dnebflow.notify.rootQuietMs=0` 关窗生效）⇒ 旧注「写入同进程读回为空」已按实测更正
+ * （见 `.nebflow/results/n-3b96af8b.md` O-3）。`Some(0)` = 关窗 = 逐条旧行为。
  */
 class RootNotifyBatchSpec extends FunSuite:
 
@@ -86,6 +89,18 @@ class RootNotifyBatchSpec extends FunSuite:
   private def withFixture(name: String, quietMs: Long, batchMax: Int)(
       body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String) => Unit
   ): Unit =
+    withFixtureCore(name, quietMs, batchMax, rootPresent = true)((store, engine, recorded, sid, _) =>
+      body(store, engine, recorded, sid))
+
+  /** [[withFixture]] 的两相变体：把「根 ref 是否**初始**已登记」与「事后补登记动作」
+    * 交给调用方（V9 用——需要「先缺根 ⇒ 后补根」两相；缺根相 = 复核位 V9a 探针的同型形态）。
+    * 其余装配逐字相同（只多这一个变量）。 */
+  private def withFixtureCore(
+      name: String,
+      quietMs: Long,
+      batchMax: Int,
+      rootPresent: Boolean
+  )(body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String, IO[Unit]) => Unit): Unit =
     val tmp = os.temp.dir(prefix = s"rootnotify-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"rootnotify-$name")
@@ -148,10 +163,11 @@ class RootNotifyBatchSpec extends FunSuite:
           rootNotifyQuietMs = Some(quietMs),
           rootNotifyBatchMax = Some(batchMax)
         )
-        _ <- resources.agentRegistry.update(_ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid)))
-      yield (store, engine, recorded, rootSid)
-      val (store, engine, recorded, rootSid) = io.unsafeRunSync()
-      body(store, engine, recorded, rootSid)
+        attachRoot = resources.agentRegistry.update(_ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid)))
+        _ <- if rootPresent then attachRoot else IO.unit
+      yield (store, engine, recorded, rootSid, attachRoot)
+      val (store, engine, recorded, rootSid, attachRoot) = io.unsafeRunSync()
+      body(store, engine, recorded, rootSid, attachRoot)
     finally
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
@@ -511,6 +527,63 @@ class RootNotifyBatchSpec extends FunSuite:
       assertEquals(clue(afterRescan.size), 1, "the follow-up scan must NOT re-inject (no duplicate)")
       assertEquals(clue(leftover), 0, "buffer empty")
       assertEquals(clue(mergedRatio(after)), 1.0)
+    }
+  }
+
+  // ── V9（F-1 修复面：复核位 V9a 探针纳入本批 spec 面）─────────────────────────────
+
+  test("V9 GREEN (F-1): root ref ABSENT + ≥2 items ⇒ NOTHING accounted, and the rescan re-enqueues ALL N") {
+    withFixtureCore("v9a", quietMs = 250L, batchMax = 10, rootPresent = false) { (store, engine, recorded, _, attachRoot) =>
+      val nodes = List(node("n-v9a-1", result = "V9A_BODY_ONE"), node("n-v9a-2", result = "V9A_BODY_TWO"))
+      val ids = nodes.map(_.id)
+      def marks: IO[Map[String, Boolean]] =
+        store.snapshot.map(_.nodes.values.filter(n => ids.contains(n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap)
+      val io = for
+        _ <- seed(store, nodes)
+        _ <- nodes.traverse_(n =>
+          engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id)))
+        // 相 1：窗口出口（≥2 件 ⇒ 合并腿），但根 ref 缺失 ⇒ offer 不落地
+        _ <- engine.flushRootNotify()
+        offeredAfterFlush <- imms(recorded)
+        markedAfterFlush <- marks
+        pendingAfterFlush <- engine.rootNotifyPendingCount
+        // 相 2：根 ref 回归 ⇒ 补投扫描（fresh 腿）重新入队 ⇒ 下一窗合并重投
+        _ <- attachRoot
+        rescan <- engine.redeliverUnconsumedNebulaResults()
+        requeued <- engine.rootNotifyPendingCount
+        _ <- awaitImms(recorded, min = 1)
+        _ <- IO.sleep(500.millis)
+        afterRedelivery <- imms(recorded)
+        markedAfterRedelivery <- marks
+        pendingAfterRedelivery <- engine.rootNotifyPendingCount
+      yield (offeredAfterFlush, markedAfterFlush, pendingAfterFlush, rescan, requeued, afterRedelivery, markedAfterRedelivery, pendingAfterRedelivery)
+      val (offeredAfterFlush, markedAfterFlush, pendingAfterFlush, rescan, requeued, afterRedelivery, markedAfterRedelivery, pendingAfterRedelivery) =
+        io.unsafeRunSync()
+      println(
+        s"[RootNotifyBatchSpec] V9 DIAG offered=${offeredAfterFlush.size} markedAfterFlush=${markedAfterFlush.values.count(identity)}/${ids.size} pendingAfterFlush=$pendingAfterFlush rescan=$rescan requeued=$requeued redelivered=${afterRedelivery.size} batchSizes=${afterRedelivery.map(m => batchSizeOf(m.text))} markedAfterRedelivery=${markedAfterRedelivery.values.count(identity)}/${ids.size}")
+      // ❶ 根 ref 缺失 ⇒ 交付事实 = 0 次 offer
+      assertEquals(clue(offeredAfterFlush.size), 0, "root ref absent ⇒ the flush must NOT offer anything (delivery fact = 0)")
+      // ❷ F-1 本体：offer 未落地 ⇒ **不得**记账（记账必须反映交付事实）
+      assertEquals(
+        clue(markedAfterFlush.values.count(identity)),
+        0,
+        s"🔴 nothing may be accounted as delivered when no offer landed: $markedAfterFlush"
+      )
+      // ❸ 窗口已排空（件不在缓冲里）⇒ 唯一补救面 = 补投扫描
+      assertEquals(clue(pendingAfterFlush), 0, "the window drained — the buffer is not the recovery face")
+      // ❹ 根回归 ⇒ 补投扫描把 N 件**全部**重新入队
+      assertEquals(clue(rescan), ids.size, "the rescan must re-queue every unaccounted item")
+      assertEquals(clue(requeued), ids.size, "N items re-entered the batch buffer")
+      // ❺ 窗到 ⇒ 合并重投：同批 N 件、身份序 == 到达序（不丢、保序）
+      assertEquals(clue(afterRedelivery.size), 1, "the re-queued items ride ONE window ⇒ one merged re-injection")
+      assertEquals(clue(idsOf(afterRedelivery.head.text)), ids, "no loss + order preserved on the redelivery leg")
+      // ❻ 这次 offer 落地 ⇒ 逐件记账
+      assertEquals(
+        clue(markedAfterRedelivery.values.count(identity)),
+        ids.size,
+        s"after a LANDED offer every item is accounted: $markedAfterRedelivery"
+      )
+      assertEquals(clue(pendingAfterRedelivery), 0)
     }
   }
 
