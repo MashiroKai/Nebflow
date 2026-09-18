@@ -61,9 +61,28 @@ class CardToolFileRefSpec extends FunSuite:
         .asScala
         .foreach(Files.deleteIfExists)
 
+  /** A REAL 8x6 RGB PNG (205 bytes, sha256
+    *  5ad35da434c4ea3e3a740b5c6d4493cf9b47b7f145df7a05c1507a74148d42b8), the same
+    *  bytes as `.nebflow/evidence/20260918_imgref/r1/space dir/fail space.png`.
+    *
+    *  imgref batch (2026-09-18): these two fixtures used to be `Files.createTempFile`
+    *  ZERO-BYTE files. The batch's retrievability gate (proxied must mean a browser
+    *  can actually fetch bytes) refuses a 0-byte file as `not-readable` — a fixture
+    *  that is 0 bytes tests the gate, not the feature it was written for — so the
+    *  fixtures now carry real content. No assertion was relaxed: `warnings == Nil`,
+    *  `inlined == 1` and the byte-identity claims are unchanged. */
+  private val PngBytes: Array[Byte] =
+    java.util.Base64.getDecoder.decode(
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAlElEQVR42gXBOQpCMRAA0Jwv" +
+        "ffr06adPn6lzgcFGBBFFdMQV/Squ44oLoogw2HgE3zMWSg4qHuoBGGAYYZZgk+FkLJYd1jy2" +
+        "AvYBi4irhIeMN2Op6qjpqRtoDLSItEt0yfQ0lhuOO55HgefA28jnxI/MH2Ol7WTgZRpkDXKM" +
+        "ck/yzvI1VntOJ16XQfeg16ivpJr19wc1zVwRaTbiFAAAAABJRU5ErkJggg=="
+    )
+
   /** Temp file with an allowed extension (`.png`) in the default temp dir. */
   private def withTempFile[A](f: Path => A): A =
     val file = Files.createTempFile("cardref-", ".png")
+    Files.write(file, PngBytes)
     try f(file)
     finally Files.deleteIfExists(file)
 
@@ -71,6 +90,7 @@ class CardToolFileRefSpec extends FunSuite:
   private def withHomeFile[A](f: (Path, String) => A): A =
     val home = Paths.get(sys.props("user.home"))
     val file = Files.createTempFile(home, "cardref-home-", ".png")
+    Files.write(file, PngBytes)
     try f(file, s"~/${file.getFileName.toString}")
     finally Files.deleteIfExists(file)
 

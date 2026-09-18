@@ -8,7 +8,7 @@
 // Close: ESC / backdrop click / close button.
 
 import { t } from './i18n.js';
-import { reMint } from './nfTicket.js';
+import { reMint, decodePathParam } from './nfTicket.js';
 
 let overlayEl = null;   // lazily-created singleton
 let imgEl = null;
@@ -24,7 +24,12 @@ function nfPathOf(src) {
   if (typeof src !== 'string' || src.indexOf('/api/nf-file?') === -1) return '';
   const m = /[?&]path=([^&]*)/.exec(src);
   if (!m) return '';
-  try { return decodeURIComponent(m[1]); } catch (e) { return ''; }
+  // imgref batch (2026-09-18): the ONE discipline, imported — a bare `+` in a
+  // query string means a space (the JVM form encoder's spelling of a space),
+  // so `decodeURIComponent` alone named a path that does not exist and the
+  // re-mint asked for the wrong file.
+  const p = decodePathParam(m[1]);
+  return p === null ? '' : p;
 }
 
 /** Drop the blob URL backing the current preview (it is ours to free). */

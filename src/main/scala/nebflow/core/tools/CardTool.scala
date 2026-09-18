@@ -80,7 +80,12 @@ object CardTool extends Tool:
       inlined: Int,
       deferred: Int,
       rejects: List[RejectedRef],
-      exempt: Int
+      exempt: Int,
+      /** Disclosure lines, one per DISTINCT decoded-form hit (imgref batch
+        *  2026-09-18): "this reference was spelled with URL escapes; it was
+        *  resolved as the decoded form …". Never silent — 作者令要求命中时
+        *  必须在回包/告警里说明用了哪一形态。 */
+      notes: List[String] = Nil
   )
 
   /**
@@ -151,17 +156,30 @@ object CardTool extends Tool:
             None
           )
         else
-          resolvePath(value) match
-            case None => RefVerdict(unresolvable(value, "the reference is not a usable filesystem path"), None)
-            case Some(p) =>
-              val decision = probeFile(value, p)
-              // The path travels with the verdict: the inline pass needs it for
-              // `FileRefs.embedImage` (extension + size + read) and re-resolving
-              // it there would probe the filesystem twice.
-              val candidate = decision match
-                case _: RefDecision.Proxy => Some(p)
-                case _                    => None
-              RefVerdict(decision, candidate)
+          // imgref batch (2026-09-18 作者令): a reference whose path is spelled
+          // with URL escapes (`%20`) or a bare `+` does not name anything on
+          // disk — the SHIPPED code looked for the literal string and reported
+          // `not-found` (author's failure ①, nearest parent stopping at
+          // `evidence`). Resolve through the candidate forms instead: raw first,
+          // then the decoded form, hit-and-use, and say which form was used.
+          val hit = FileRefs.resolveCandidates(
+            value,
+            FileRefs.resolvePath,
+            v => unresolvable(v, "the reference is not a usable filesystem path")
+          )
+          // The path travels with the verdict: the inline pass needs it for
+          // `FileRefs.embedImage` (extension + size + read) and re-resolving
+          // it there would probe the filesystem twice. 返工 r2: it now also
+          // travels for a refusal the INLINE leg may take over (an endpoint
+          // namespace refusal of a non-credential file — see
+          // `FileRefs.inlineMayTakeOver`), because that leg still has to embed
+          // the bytes of exactly this file.
+          val candidate = hit.decision match
+            case _: RefDecision.Proxy => hit.path
+            case RefDecision.Reject(rejected) =>
+              hit.path.filter(p => FileRefs.inlineMayTakeOver(p, rejected))
+            case _ => None
+          RefVerdict(hit.decision, candidate, hit.note)
       val decision = applyAppRouteExemption(value, verdict.decision)
       decision match
         case RefDecision.Exempt(route) => logger.debug(s"Card: exempted app-route reference '$value' (route $route)")
@@ -173,11 +191,16 @@ object CardTool extends Tool:
         case _                     => verdict
 
   /** A verdict plus the resolved file it was computed from (`None` whenever the
-    *  value did not resolve to an existing regular file). */
-  private case class RefVerdict(decision: RefDecision, path: Option[Path])
+    *  value did not resolve to an existing regular file, or the verdict is one the
+    *  inline leg will not act on) plus, when the raw reference did not name the
+    *  file but a decoded form did, the disclosure note (imgref batch 2026-09-18 —
+    *  作者失败①). */
+  private case class RefVerdict(decision: RefDecision, path: Option[Path], note: Option[String] = None)
 
   /** One scanned reference: where it sits in the document, the verdict, the
-    *  resolved file (if any) and whether its face may embed bytes.
+    *  resolved file (carried for a `Proxy` **and** for a refusal the inline leg
+    *  may take over — see [[embedLocalFiles]]) and whether its face may embed
+    *  bytes.
     *
     *  `resourceFace` is the only difference between the five scan patterns
     *  inside [[embedLocalFiles]]. */
@@ -186,7 +209,8 @@ object CardTool extends Tool:
       end: Int,
       decision: RefDecision,
       path: Option[Path],
-      resourceFace: Boolean
+      resourceFace: Boolean,
+      note: Option[String] = None
   )
 
   /**
@@ -219,7 +243,7 @@ object CardTool extends Tool:
             val scanned = decideRef(value)
             // Each srcset candidate is its own RESOURCE face (an image the
             // browser may pick), evaluated independently in the inline pass.
-            out += ScannedRef(start, start + urlLen, scanned.decision, scanned.path, resourceFace = true)
+            out += ScannedRef(start, start + urlLen, scanned.decision, scanned.path, resourceFace = true, scanned.note)
         cursor += candidate.length + 1
       }
       out.toList
@@ -265,34 +289,54 @@ object CardTool extends Tool:
     val matches: List[ScannedRef] =
       (SrcAttrRegex.findAllMatchIn(html).map(m => {
         val scanned = decideRef(m.group(1))
-        ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = true)
+        ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = true, scanned.note)
       }) ++
         HrefAttrRegex.findAllMatchIn(html).map(m => {
           val scanned = decideRef(m.group(1))
-          ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = false)
+          ScannedRef(m.start(1), m.end(1), scanned.decision, scanned.path, resourceFace = false, scanned.note)
         }) ++
         SrcsetAttrRegex.findAllMatchIn(html).flatMap(srcsetCandidates) ++
         CssUrlRegex.findAllMatchIn(html).map(m => {
           val scanned = decideRef(m.group(2))
-          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = true)
+          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = true, scanned.note)
         }) ++
         ImportBareRegex.findAllMatchIn(html).map(m => {
           val scanned = decideRef(m.group(2))
-          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = false)
+          ScannedRef(m.start(2), m.end(2), scanned.decision, scanned.path, resourceFace = false, scanned.note)
         })).toList
         .sortBy(_.start)
 
-    val rejects = matches.collect { case ScannedRef(_, _, RefDecision.Reject(rejected), _, _) => rejected }
-    val exempts = matches.count { case ScannedRef(_, _, RefDecision.Exempt(_), _, _) => true; case _ => false }
+    val exempts = matches.count { case ScannedRef(_, _, RefDecision.Exempt(_), _, _, _) => true; case _ => false }
+    // imgref batch: one disclosure line per DISTINCT decoded-form hit ("which
+    // form was used"), deduped — a document that repeats one space-bearing
+    // reference must not repeat the note N times.
+    val notes = matches.collect { case ScannedRef(_, _, _, _, _, Some(n)) => n }.distinct
 
-    // ── the proxy spans, in DOCUMENT ORDER, overlap-filtered ────────────────
+    // The refusals the scan produced. The FINAL `rejects` list is computed after
+    // the inline pass: a refusal the inline leg takes over did not fail
+    // (返工 r2 — see below).
+    val rejectsAtProbe: List[RejectedRef] =
+      matches.collect { case ScannedRef(_, _, RefDecision.Reject(rejected), _, _, _) => rejected }
+
     // The filter order is deliberate: `nonOverlapping` runs BEFORE the inline
     // pass, exactly as it used to run before the splice, so (a) the counters
     // keep their shipped meaning (they describe the spans that are actually
     // rewritten, not every candidate), and (b) a span the overlap guard drops
     // can no longer spend budget it does not use.
-    val proxySpans: List[(Int, Int, ScannedRef)] = nonOverlapping(
-      matches.collect { case ref @ ScannedRef(_, _, _: RefDecision.Proxy, _, _) => (ref.start, ref.end, ref) }
+    //
+    // 返工 r2 (2026-09-18, 复核位 F1): a span is a rewrite candidate when it got
+    // a URL **or** when it is a refusal the inline leg may take over (endpoint
+    // refusal on the namespace REACH layer of a non-credential file — the
+    // shipped code inlined such files; only their /api/nf-file URL was
+    // unretrievable). The second kind is embedded or nothing: it never gets a
+    // URL, so it can never reappear in `proxied`.
+    val rewriteSpans: List[(Int, Int, ScannedRef)] = nonOverlapping(
+      matches.collect {
+        case ref @ ScannedRef(_, _, _: RefDecision.Proxy, _, _, _) => (ref.start, ref.end, ref)
+        case ref @ ScannedRef(_, _, RefDecision.Reject(rejected), Some(p), _, _)
+            if ref.resourceFace && FileRefs.inlineMayTakeOver(p, rejected) =>
+          (ref.start, ref.end, ref)
+      }
     )
 
     // ── the inline pass (2026-09-16 img-ticket batch i, #687-C) ─────────────
@@ -305,25 +349,44 @@ object CardTool extends Tool:
     // renders), it only moves the reference from `inlined` to `deferred`.
     val budget = InlineBudget()
     var budgetDeferred = 0
-    val replacements: List[(Int, Int, String)] = proxySpans.map { (start, end, ref) =>
-      val url = ref.decision.asInstanceOf[RefDecision.Proxy].url
-      val embedded: Option[String] =
-        if !ref.resourceFace then None
+    var inlined = 0
+    var proxied = 0
+    // Refusals the inline leg actually took over — they must NOT be reported as
+    // failures (nothing failed: the bytes are in the payload).
+    val takenOver = scala.collection.mutable.ListBuffer.empty[RejectedRef]
+    val replacements: List[(Int, Int, String)] = rewriteSpans.flatMap { (start, end, ref) =>
+      val attempt: Either[InlineSkip, String] =
+        if !ref.resourceFace then Left(InlineSkip.NotEmbeddable)
         else
           ref.path match
-            case None => None
-            case Some(p) =>
-              embedImage(p, budget) match
-                case Right(dataUri)              => Some(dataUri)
-                case Left(InlineSkip.OverBudget) => budgetDeferred += 1; None
-                case Left(_)                     => None // not embeddable / unreadable: keep the shipped fallback
-      (start, end, embedded.getOrElse(url))
+            case None    => Left(InlineSkip.NotEmbeddable)
+            case Some(p) => embedImage(p, budget)
+      attempt match
+        case Right(dataUri) =>
+          inlined += 1
+          ref.decision match
+            case RefDecision.Reject(rejected) => takenOver += rejected
+            case _                            => ()
+          Some((start, end, dataUri))
+        case Left(skip) =>
+          ref.decision match
+            // A real URL was emitted for a reference the endpoint agrees it can
+            // serve (probeFile checked the whole ladder) — this is `proxied`.
+            // Missing the inline budget is not a defect: the URL still renders.
+            case RefDecision.Proxy(url) =>
+              if skip == InlineSkip.OverBudget then budgetDeferred += 1
+              proxied += 1
+              Some((start, end, url))
+            // Nothing was embedded and there is no URL to emit: the endpoint's
+            // refusal stands, so the raw value stays in the markup and the
+            // rejection is reported (`failed` + a `warnings` entry with a fix).
+            case _ => None
     }
-    // An embedded image is a `Proxy(data:…)` — split the counters so `proxied`
-    // keeps meaning "an /api/nf-file URL was emitted" and `inlined` reports the
-    // embedded ones (2026-09-16 imgfix batch; see FileRefs' inline policy).
-    val inlined = replacements.count { case (_, _, url) => url.startsWith("data:") }
-    val proxied = replacements.size - inlined
+    // One entry per distinct rejected reference, minus the ones the inline leg
+    // took over. (The counters keep their shipped split: `proxied` = "an
+    // /api/nf-file URL was emitted (and the endpoint would serve it)", `inlined`
+    // = "the bytes ride in the payload".)
+    val rejects: List[RejectedRef] = rejectsAtProbe.filterNot(takenOver.contains)
 
     val rewritten =
       if replacements.isEmpty then html
@@ -342,7 +405,7 @@ object CardTool extends Tool:
         s"Embedded ${proxied} local file(s) via /api/nf-file, ${inlined} image(s) inline" +
           (if budgetDeferred > 0 then s", $budgetDeferred deferred by the ${budget.maxChars}-char inline budget" else "")
       )
-    EmbedOutcome(rewritten, proxied, inlined, budgetDeferred, rejects, exempts)
+    EmbedOutcome(rewritten, proxied, inlined, budgetDeferred, rejects, exempts, notes)
   end embedLocalFiles
 
   /** The sentinel prefix the frontend splits the JSON payload on (cardRegistry.js
@@ -491,7 +554,7 @@ Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, s
 
 **Images are embedded, not referenced** (2026-09-16): a local `png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp` referenced by `src=`, a `srcset` candidate or a CSS `url(...)` is embedded in the card as a base64 `data:` URI when it is ≤5MB — it renders with no request at all, and keeps rendering on replay. Inline bytes are capped **per card in TOTAL**: at most 40,000 characters of `data:` URI (≈30 KB of source bytes) go inline in one card, counted in document order — once that budget is spent, further images of the same card keep the `/api/nf-file?path=…` reference instead (they still render, but need the ticket below). Everything else (larger images, video/audio/fonts/PDF/office/CSS/JS) is referenced as `/api/nf-file?path=…` and needs a per-path ticket the gateway mints at render time; the gateway serves the path only if its credential-namespace policy allows it — the data directory serves `${DataRootServedNamespacesText}` and the project `.nebflow/` serves `evidence*/**`. A >5MB image or a non-image asset in a location the gateway does not serve cannot be shown. To show such a file, put it under one of the served locations above — `projects/**` is the usual route, but not the only one: a path outside the data directory and the project `.nebflow/` stays servable where it is (an absolute `/tmp/output.svg` renders), as long as it is not credential-shaped. (Shrinking the image below 5MB also works.)
 
-Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing."""
+Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Scanned: `src=`, `href=`, every `srcset` candidate, every CSS `url(...)`, a bare `@import "..."`. The app's own routes (`/js/`, `/css/`, `/assets/`, `/vendor/`, `/uploads/`, `/agents/`, `/voice-models/`, plus `/style.css` `/app.js` `/logo.svg` `/favicon.*`) are exempt — the app serves them, not the disk — and are counted in `fileRefs.exempt` instead of being reported. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (the server reads a bare `+` in a URL's `path=` parameter as a space, and `%20` also works). If a reference you wrote used URL escapes or a `+` and the tool resolved it in the decoded form, `notes` in this result says so."""
 
   /**
    * Load user design prompt from disk (cached by mtime).
@@ -600,7 +663,7 @@ Rule of thumb: **if the card would contain only sentences, do not use Card.** Th
 
 Note: Local file paths in `src`/`href` are proxied by the backend to `/api/nf-file`, so **you MUST use absolute paths** — `/Users/you/project/plot.png`, `/tmp/output.svg`, `C:\\Users\\you\\project\\plot.png` (a Windows drive path; either separator works — `C:/Users/you/project/plot.png` too), or `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/reports/plot.svg`. `~` expands to the user's home directory, and project workspaces live under `${nebflow.core.PathUtil.dataRootRenderValue}/projects/<name>/` — write that full path, not `~/projects/<name>/…`. Relative paths are never resolved — that includes a drive-relative `C:plot.png`; Windows UNC references (`\\\\server\\share\\…`) are not resolved either. Local images ≤5MB (`png`/`jpg`/`jpeg`/`gif`/`webp`/`svg`/`bmp`) are embedded as base64 `data:` URIs, so they need no request — up to a TOTAL of 40,000 characters of `data:` URI per card, spent in document order (images past that total keep the `/api/nf-file?path=…` reference); every other reference needs a ticket the gateway mints only for paths its credential-namespace policy serves (data root: `${DataRootServedNamespacesText}`; project `.nebflow/`: `evidence*/`).
 
-Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / other, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing.
+Every reference that could not be proxied is reported in this tool's result under `warnings` (`ref` → `resolvedPath` → `reason`: not-found / unresolvable / extension-not-allowed / size-exceeded / not-regular-file / not-readable / not-servable / other, plus `fileRefs` counts) and renders as a visible placeholder in the card instead of a silent blank box. Read `warnings` and fix the references before finishing. A path containing spaces is fine and needs no special spelling: write it as it is on disk (the server reads a bare `+` in a URL's `path=` parameter as a space, and `%20` also works). If a reference you wrote used URL escapes or a `+` and the tool resolved it in the decoded form, `notes` in this result says so.
 
 Example (graphviz SVG via img — recommended default):
 {"html":"<img src=\"/tmp/output.svg\" style=\"width:100%;height:auto;display:block\" alt=\"Architecture\"/>","title":"Architecture"}
@@ -676,6 +739,7 @@ Example (interactive 3D with Three.js):
                 List("inlined" -> outcome.inlined, "deferred" -> outcome.deferred)
               ),
               "warnings" -> warningsJson(listed),
+              "notes" -> Json.arr(outcome.notes.map(_.asJson)*),
               "html" -> outcome.html.asJson,
               "title" -> title.asJson
             )
@@ -786,6 +850,10 @@ Example (interactive 3D with Three.js):
             "card" -> title.asJson,
             "fileRefs" -> payload.hcursor.downField("fileRefs").focus.getOrElse(Json.obj()),
             "warnings" -> payload.hcursor.downField("warnings").focus.getOrElse(Json.arr()),
+            // imgref batch: the decoded-form disclosures ride into the model
+            // face too — the model must be able to see that its escape-spelled
+            // path was accepted in a different form (作者令：命中即须说明形态）。
+            "notes" -> payload.hcursor.downField("notes").focus.getOrElse(Json.arr()),
             "htmlChars" -> htmlChars.getOrElse(0).asJson,
             "note" -> ("The card HTML (including any inlined images) is rendered to the user and is not returned as "
               + "text; `fileRefs` and `warnings` above are the facts to act on.").asJson

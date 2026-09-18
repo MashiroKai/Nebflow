@@ -85,7 +85,7 @@ export function nfFileUrlRe() {
  *  batch). Folding `+` first is correct for every producer here; `%2B` (a real
  *  plus in a filename) is untouched.
  *  @param {string} raw @returns {string|null} null when the escapes are malformed */
-function decodePathParam(raw) {
+export function decodePathParam(raw) {
   try {
     return decodeURIComponent(String(raw).replace(/\+/g, ' '));
   } catch (e) {
