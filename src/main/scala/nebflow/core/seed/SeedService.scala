@@ -334,7 +334,7 @@ object SeedService:
       val agentTemplate = readResource(os.SubPath("seed/projects/general/AGENTS.md"))
         .map(_.replace(DataRootPlaceholder, root.toString))
         .getOrElse(defaultAgentTemplate(name, root))
-      ProjectStore.create(name, workspace, Some("通用项目（默认工作区）"), agentTemplate).unsafeRunSync() match
+      ProjectStore.create(name, workspace, Some("General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute."), agentTemplate).unsafeRunSync() match
         case Right(_) =>
           logger.infoSync(s"Seed: project '$name' scaffolded (workspace=$workspace)")
           true
