@@ -1053,15 +1053,58 @@ button.fm-req-decline:focus-visible {
   outline-offset: 0;
 }
 
-/* sending → spinner pulse (§6.2); failed → red ! + click resend */
-.fm-sending .fm-msg-time {
-  animation: fm-pulse 1.2s ease-in-out infinite;
+/* ── 发送态 / 失败态载面 = **气泡左侧单一槽位**（sendstate 批，2026-09-18）──────
+   作者设计令（逐字）：「不要出现正在发送的条幅，改为在气泡左侧，用spinner来显示状态，
+   发送失败就是❌，类似于微信的做法。」
+   几何：环 14px / 2px 描边；红圈 18px（复用既有 `.fm-retry`）。两者**纵向同心**
+   （top 11px + 14/2 = 18px；top 9px + 18/2 = 18px = 气泡首行中心：padding-top 8px +
+   行高 13px×1.5/2 ≈ 17.75px），横向同在气泡左缘之外（-22px / -26px，环左留 8px 呼吸）。
+   取色**零新造**：`--glass-etched-border`（sapphire 10% 描边）/ `rgb(var(--sapphire))`
+   （弧顶）/ `--color-error`（既有失败色）/ `--color-frame-hover`（既有 hover 底）。
+   🔴 「一次只留一个载面」：旧条幅（quiet 上传卡）已按作者令**整条退场**
+   （装配点 `js/attachUpload.js::uploadCardEl`）；同一状态的旧第二载面（`.fm-msg-time`
+   的 `fm-pulse` 脉冲）在本批同时**退位**（下方该规则已删）。
+   🔴 reduced-motion：本段在文件内**早于** `@media (prefers-reduced-motion: reduce)`
+   块（`:1113` 起）⇒ 该块的停转覆盖照既有「后出现者胜出」语义生效，无需在此复述。 */
+.fm-msg.fm-sending { position: relative; }
+.fm-msg.fm-sending::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 11px;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--glass-etched-border);
+  border-top-color: rgb(var(--sapphire));
+  border-radius: 50%;
+  animation: fm-send-spin 0.8s linear infinite;
 }
 
+@keyframes fm-send-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ⚠ 本批后 `fm-pulse` 的**唯一消费者** = 搜索态三点（`.fm-searching i`，本文件 `:364`）。
+   原第二处消费者（`.fm-sending .fm-msg-time` 的时间戳脉冲）已随「一次只留一个载面」
+   退位 ⇒ keyframes 本身**不得删**（删了搜索态三点会静止）。 */
 @keyframes fm-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* 失败 = 同一槽位（气泡左侧 18px 红圈「!」）。字形与取色 = **既有** `.fm-retry`
+   （定义见下方），本批只改**落位**：从气泡**下方**（流内）移到气泡**左侧**（绝对定位）。
+   可点性照旧 = 既有唯一创建点 `messages.js` 的 handler（同键 `sendCurrent` 重发
+   ⇒ 服务端按同键回放 ⇒ 不多落一条）；hover 底 = 既有 `--color-frame-hover`。 */
+.fm-msg.fm-failed { position: relative; }
+.fm-msg.fm-failed .fm-retry {
+  position: absolute;
+  left: -26px;
+  top: 9px;
+  margin-top: 0;   /* 退掉 `.fm-retry` 的流内落位（原本落在气泡下方的 meta 之后） */
+}
+.fm-msg.fm-failed .fm-retry:hover { background: var(--color-frame-hover); }
 
 .fm-failed .fm-msg-bubble { opacity: 0.7; }
 
@@ -1110,8 +1153,12 @@ button.fm-req-decline:focus-visible {
   .activity-badge {
     transition-duration: 0.01s !important;
   }
-  .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
-  .fm-sending .fm-msg-time::after { content: '…'; }
+  /* 发送态（sendstate 批）：状态载面 = 气泡左侧环 ⇒ 偏好 reduce 时**停转但可见**
+     （「状态可辨」语义不降级，不是加速播）。旧载面（`.fm-msg-time` 的脉冲 +
+     `::after` 的「…」）已随「一次只留一个载面」整条退位 ⇒ 此处不再复述覆盖
+     （原 `animation:none; opacity:.6` 与 `::after{content:'…'}` 两行同时删除：
+     留任一行都会让 reduce 档比常态多出**第二个**发送态读面）。 */
+  .fm-msg.fm-sending::before { animation: none; }
   .fm-searching i { animation: none; opacity: 0.5; }
   /* ② 本批新增的三条入场动画：尊重偏好 ⇒ 直接不播（不是加速播，避免位移残影）。 */
   .fm-result-card,

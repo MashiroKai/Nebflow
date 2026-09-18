@@ -108,6 +108,11 @@ const SRV = {
   postFrame: null,          // 非空 ⇒ 发消息处先自播该帧（回显腿先到的形态）
   attLatch: null,           // 非空 Promise ⇒ 附件字节**闸住**（确定性采样点）
   attNames: {},             // attachmentId → 真实文件名（上传 query 记下）
+  // sendstate 批（2026-09-18）加性面：① 首投失败注入（失败红圈场景）；
+  // ② §8.6 幂等回放镜像（同键 ⇒ 回原行、**不新增行**）——两者缺席 ⇒ 逐字现状。
+  postFail: false,
+  keyed: new Map(),
+  replays: 0,
 };
 /** 会话 id ↔ 好友 id（发消息路由只带好友 id，落行要落到**正确**会话）。
  *  ⚠ 首版把新行一律写进 cA，而发送发生在 cC ⇒ 行腿永远补不到 ⇒ 改前树量不到
@@ -129,6 +134,10 @@ function resetServer({ uploadDelay = 500, postDelay = 500, dlDelay = 1200, postF
   SRV.postFrame = postFrame;
   SRV.attLatch = null;
   SRV.attNames = {};
+  // sendstate 批加性面：每场景复位（缺席 ⇒ 逐字现状）
+  SRV.postFail = false;
+  SRV.keyed = new Map();
+  SRV.replays = 0;
   SRV.msgs = {
     cA: [
       { id: 101, senderId: 'u-p', kind: 'text', body: '', createdAt: iso(EPOCH - 300), attachments: [{ ...IN_ATT }] },
@@ -216,8 +225,28 @@ async function bootPage() {
     if (method === 'POST' && /^\/api\/friends\/[^/]+\/messages$/.test(p)) {
       const uid = decodeURIComponent(p.split('/')[3]);
       const convId = FRIEND_CONV[uid] || 'cA';
+      const key = (body && body.clientMsgId) || null;
       const ids = Array.isArray(body.attachments) ? body.attachments.map(String) : [];
       const names = ids.map((id, i) => SRV.attNames[id] || (SRV.postFrame && SRV.postFrame.names[i]) || `up-${i}`);
+      // 🔴 §8.6 幂等回放（**服务端语义的镜像**，不是放水）：同键 ⇒ 回原行、**不新增行**。
+      //    键缺席（老服务端形态）⇒ 逐字走原路径。本分支只在「重发同一动作」时命中。
+      if (key && SRV.keyed.has(key)) {
+        SRV.replays += 1;
+        const row = SRV.keyed.get(key);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messageId: row.id, conversationId: convId, createdAt: row.createdAt }) });
+      }
+      // sendstate 批（场景 E）：首投**已落行但响应丢失**（超时/断连的真实形态）⇒ 500。
+      //   行与键都已登记 ⇒ 重发（同键）**必须**走上面的回放分支、**不得**再落一条。
+      if (SRV.postFail) {
+        const row = {
+          id: 501, senderId: 'me', kind: 'text', body: body.body || '',
+          createdAt: iso(EPOCH), attachments: ids.map((id, i) => ({ id, name: names[i], size: PNG_4x3.length, state: 'ready' })),
+        };
+        SRV.msgs[convId].push(row);
+        if (key) SRV.keyed.set(key, row);
+        await sleep(300);
+        return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'server_error' }) });
+      }
       if (SRV.postFrame) {
         const f = { ...SRV.postFrame, conversationId: convId, attachments: ids.map((id, i) => ({ id, name: names[i], size: PNG_4x3.length, state: 'ready' })) };
         delete f.names;
@@ -226,10 +255,12 @@ async function bootPage() {
       }
       await sleep(SRV.postDelay);
       const messageId = 501;
-      SRV.msgs[convId].push({
+      const row = {
         id: messageId, senderId: 'me', kind: 'text', body: body.body || '',
         createdAt: iso(EPOCH), attachments: ids.map((id, i) => ({ id, name: names[i], size: PNG_4x3.length, state: 'ready' })),
-      });
+      };
+      SRV.msgs[convId].push(row);
+      if (key) SRV.keyed.set(key, row);
       const ci = SRV.convs.findIndex(c => c.conversationId === convId);
       if (ci >= 0) SRV.convs[ci].lastMessage = SRV.msgs[convId][SRV.msgs[convId].length - 1];
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messageId, conversationId: convId, createdAt: iso(EPOCH) }) });
@@ -431,6 +462,10 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       m.dataset.probeToken = 'TOK-1'; // 节点身份标记（「原地接管」判据）
       const box = m.querySelector('.fm-att-inline');
       const img = box ? box.querySelector('img') : null;
+      // ── sendstate 批读数面（发送态载面 = 气泡左侧环 / 旧条幅退场）──────────────
+      const sending = document.querySelector('.fm-flow .fm-msg.fm-sending');
+      const ring = sending ? getComputedStyle(sending, '::before') : null;
+      const list = document.querySelector('.fm-flow .fm-upload-list');
       const out = {
         phase: m.dataset.sendPhase,
         id: m.dataset.messageId,
@@ -441,6 +476,21 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
         cards,
         frameNatural: img ? `${img.naturalWidth}x${img.naturalHeight}` : null,
         frameBytes: null,
+        // 旧「正在发送」条幅的机械判据：① 文本宿主普查 ② 卡数 ③ 卡容器矩形
+        bannerTextHosts: [...document.querySelectorAll('#fm-chat-overlay *')]
+          .filter(e => e.children.length === 0 && (e.textContent || '').trim() === '正在发送').length,
+        cardRects: [...document.querySelectorAll('.fm-flow .fm-upload')].map(c => {
+          const r = c.getBoundingClientRect();
+          return { w: +r.width.toFixed(1), h: +r.height.toFixed(1), display: getComputedStyle(c).display };
+        }),
+        listHidden: list ? list.hidden : null,
+        // 新发送态载面（气泡左侧环）的计算样式读数
+        sendingCount: document.querySelectorAll('.fm-flow .fm-msg.fm-sending').length,
+        ring: ring ? {
+          content: ring.content, animationName: ring.animationName, animationDuration: ring.animationDuration,
+          position: ring.position, left: ring.left, top: ring.top, width: ring.width, height: ring.height,
+          borderTopColor: ring.borderTopColor, borderRadius: ring.borderRadius,
+        } : null,
       };
       // ② 本地小图的**真字节读数**（把当前帧的 blob 拉出来量尺寸；不是断言文本）
       if (img && img.getAttribute('src')) {
@@ -483,6 +533,11 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
         msgCount: msgs.length,
         progressBars: document.querySelectorAll('.fm-upload-progress').length,
         uploadCards: document.querySelectorAll('.fm-upload').length,
+        // ── sendstate 批：成功态**无痕**的两条机械判据（spinner 载面 + 旧条幅）────
+        sendingCount: document.querySelectorAll('.fm-flow .fm-msg.fm-sending').length,
+        bannerTextHosts: [...document.querySelectorAll('#fm-chat-overlay *')]
+          .filter(e => e.children.length === 0 && (e.textContent || '').trim() === '正在发送').length,
+        listHidden: (() => { const l = document.querySelector('.fm-flow .fm-upload-list'); return l ? l.hidden : null; })(),
       };
     });
     const attachGets = callsOf(c => c.method === 'GET' && /^\/api\/friends\/attachments\//.test(c.p));
@@ -521,6 +576,37 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
         JSON.stringify({ frameNatural: early && early.frameNatural, frameBytes: early && early.frameBytes, sourceBytes: PNG_4x3.length }));
       ok('B/④ 本路径上传期间**零百分比进度条**（反馈 = 乐观直显）', early && early.bars === 0 && final.progressBars === 0,
         JSON.stringify({ barsDuring: early && early.bars, barsFinal: final.progressBars }));
+      // ── sendstate 批（2026-09-18 · 作者设计令）新增契约：发送态载面 = 气泡左侧环，
+      //    旧「正在发送」条幅**整条退场**；成功态**无痕**（`.fm-sending` 摘除）。────────
+      put(`banner.${tag}`, { early: { textHosts: early && early.bannerTextHosts, cards: early && early.cards, cardRects: early && early.cardRects, listHidden: early && early.listHidden, sendingCount: early && early.sendingCount, ring: early && early.ring }, final: { textHosts: final.bannerTextHosts, uploadCards: final.uploadCards, sendingCount: final.sendingCount, listHidden: final.listHidden } });
+      if (AFTER) {
+        ok('B/条幅 发送中：旧「正在发送」条幅**不存在**（文本宿主 0 + 卡 0 + 容器隐藏）',
+          !!early && early.bannerTextHosts === 0 && early.cards === 0 && early.listHidden !== false,
+          JSON.stringify({ textHosts: early && early.bannerTextHosts, cards: early && early.cards, listHidden: early && early.listHidden, cardRects: early && early.cardRects }));
+        ok('B/环 发送中：气泡左侧 14px 环在转（2px 描边 + sapphire 弧顶 + 0.8s/圈 + 绝对定位 -22px/11px）',
+          !!early && !!early.ring && early.ring.animationName === 'fm-send-spin'
+          && early.ring.animationDuration === '0.8s' && early.ring.position === 'absolute'
+          && early.ring.left === '-22px' && early.ring.top === '11px'
+          && early.ring.width === '14px' && early.ring.height === '14px'
+          && early.ring.borderTopColor === 'rgb(91, 127, 191)' && early.ring.borderRadius === '50%',
+          JSON.stringify(early && early.ring));
+        ok('B/环 发送中：时间戳脉冲**已退位**（一次只留一个载面）',
+          !!early && !!early.ring && early.ring.content === '""',
+          JSON.stringify({ ringContent: early && early.ring && early.ring.content }));
+        ok('B/无痕 成功：确认面接管后 `.fm-sending` **已摘**（无残留环）+ 无条幅残条',
+          final.sendingCount === 0 && final.bannerTextHosts === 0 && final.uploadCards === 0,
+          JSON.stringify({ sendingCount: final.sendingCount, textHosts: final.bannerTextHosts, uploadCards: final.uploadCards }));
+      } else {
+        ok('B/条幅 症状复现（改前）：发送中条幅在（文本宿主 1 + 上传卡 1 + 容器可见）',
+          !!early && early.bannerTextHosts === 1 && early.cards === 1 && early.listHidden === false,
+          JSON.stringify({ textHosts: early && early.bannerTextHosts, cards: early && early.cards, listHidden: early && early.listHidden, cardRects: early && early.cardRects }));
+        ok('B/环 症状复现（改前）：无气泡左侧环（`::before` 无内容）',
+          !!early && !!early.ring && early.ring.content === 'none',
+          JSON.stringify(early && early.ring));
+        ok('B/无痕 缺陷复现（改前）：确认后 `.fm-sending` **仍在**（状态载面不收口）',
+          final.sendingCount >= 1,
+          JSON.stringify({ sendingCount: final.sendingCount }));
+      }
       ok('B wire 面：请求体带 attachments = 本机上传回执 id', !!wirePost && Array.isArray(wirePost.attachments) && wirePost.attachments.length === 1 && /^att-up-/.test(wirePost.attachments[0]),
         JSON.stringify(wirePost));
       if (postFrame) {
@@ -643,6 +729,109 @@ async function scenarioD() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// 场景 E · sendstate 批：失败标识**气泡左侧** + **真指针点击**同键重发（不多落一条）
+// ══════════════════════════════════════════════════════════════════════
+async function scenarioE() {
+  console.log(`\n── 场景 E · 失败红圈左移 + 点击同键重发 · MODE=${MODE}`);
+  resetServer({ uploadDelay: 400, postDelay: 400, dlDelay: 300 });
+  SRV.postFail = true; // 首投必失败（失败面的确定性起点）
+  const { ctx, page, pageErrors } = await bootPage();
+  try {
+    await openPanel(page);
+    await openConv(page, 'cC');
+    await page.fill('.fm-input', '在吗');
+    await page.click('.fm-send-btn');
+    await page.waitForSelector('.fm-flow .fm-msg.fm-failed .fm-retry', { timeout: 10000 });
+    await sleep(300);
+    // ① 几何 + 命中 + 字形（**真指针悬停**后读数 = 真实交互态，不是画出来的差别）
+    const rr = await page.evaluate(() => {
+      const b = document.querySelector('.fm-flow .fm-msg.fm-failed .fm-retry');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    if (rr) { await page.mouse.move(rr.x, rr.y); await sleep(220); }
+    const marker = await page.evaluate(() => {
+      const wrap = document.querySelector('.fm-flow .fm-msg.fm-failed');
+      const b = wrap ? wrap.querySelector('.fm-retry') : null;
+      const bub = wrap ? wrap.querySelector('.fm-msg-bubble') : null;
+      if (!b) return null;
+      const br = b.getBoundingClientRect();
+      const ur = bub.getBoundingClientRect();
+      const cs = getComputedStyle(b);
+      const hit = document.elementFromPoint(br.x + br.width / 2, br.y + br.height / 2);
+      return {
+        glyph: b.textContent, tag: b.tagName,
+        position: cs.position, left: cs.left, top: cs.top, marginTop: cs.marginTop,
+        width: cs.width, height: cs.height, borderColor: cs.borderTopColor, radius: cs.borderRadius,
+        background: cs.backgroundColor, cursor: cs.cursor, pointerEvents: cs.pointerEvents,
+        rect: { x: +br.x.toFixed(1), y: +br.y.toFixed(1), w: +br.width.toFixed(1), h: +br.height.toFixed(1) },
+        bubbleRect: { x: +ur.x.toFixed(1), y: +ur.y.toFixed(1), w: +ur.width.toFixed(1), h: +ur.height.toFixed(1) },
+        leftOfBubble: br.x + br.width <= ur.x,
+        belowBubble: br.y >= ur.y + ur.height,
+        hit: hit ? (hit.className || hit.tagName) : null,
+        // 同心判据（与发送态环同槽位）：红圈中心 y − 气泡首行中心 y（气泡 padding-top 8 + 行高 19.5/2）
+        centerDeltaY: +((br.y + br.height / 2) - (ur.y + 8 + 19.5 / 2)).toFixed(2),
+      };
+    });
+    // ② 真指针点击 ⇒ 走既有同键重发通道（首投失败注入解除）
+    SRV.postFail = false;
+    if (rr) { await page.mouse.click(rr.x, rr.y); }
+    await page.waitForFunction(() => [...document.querySelectorAll('.fm-flow .fm-msg')]
+      .some(m => String(m.dataset.messageId) === '501'), null, { timeout: 15000 }).catch(() => {});
+    await sleep(900);
+    const after = await page.evaluate(() => {
+      const msgs = [...document.querySelectorAll('.fm-flow .fm-msg')];
+      const mid = msgs.length ? msgs[msgs.length - 1].dataset.messageId : null;
+      return {
+        mid,
+        nodeCount: msgs.filter(m => String(m.dataset.messageId) === String(mid)).length,
+        msgCount: msgs.length,
+        retryLeft: document.querySelectorAll('.fm-flow .fm-msg.fm-failed .fm-retry').length,
+        failedLeft: document.querySelectorAll('.fm-flow .fm-msg.fm-failed').length,
+      };
+    });
+    const posts = callsOf(c => c.method === 'POST' && /\/messages$/.test(c.p));
+    const rows = (SRV.msgs.cC || []).filter(r => r.body === '在吗');
+    const S = await page.evaluate(() => ({ dupMax: window.__IM.dupMax, dupEvents: window.__IM.dup.filter(e => e.dup.length) }));
+    put('fail.marker', { marker: marker, after: after, posts: posts.map(c => c.body && c.body.clientMsgId), replays: SRV.replays, rowsForAction: rows.map(r => r.id), dupMax: S.dupMax, dupEvents: S.dupEvents, pageErrors });
+    if (AFTER) {
+      ok('E/B② 失败标识在**气泡左侧**（绝对定位 -26px/9px，18px 红圈，与气泡首行同心）',
+        !!marker && marker.position === 'absolute' && marker.left === '-26px' && marker.top === '9px'
+        && marker.width === '18px' && marker.height === '18px' && marker.leftOfBubble === true && !marker.belowBubble
+        && Math.abs(marker.centerDeltaY) <= 1,
+        JSON.stringify(marker));
+      ok('E/B② 字形 = 既有红圈「!」（**非 emoji**）+ `--color-error` 描边',
+        !!marker && marker.glyph === '!' && marker.tag === 'BUTTON' && marker.borderColor === 'rgb(244, 67, 54)' && marker.radius === '50%',
+        JSON.stringify(marker && { glyph: marker.glyph, borderColor: marker.borderColor, radius: marker.radius }));
+      ok('E/B② 可点：`elementFromPoint` 命中按钮本体 + hover 出既有 `--color-frame-hover` 底',
+        !!marker && /fm-retry/.test(String(marker.hit)) && marker.pointerEvents === 'auto' && marker.cursor === 'pointer'
+        && marker.background === 'rgb(229, 230, 233)',
+        JSON.stringify(marker && { hit: marker.hit, cursor: marker.cursor, background: marker.background }));
+    } else {
+      ok('E 症状复现（改前）：失败标识在气泡**下方**（流内 static，非左侧）',
+        !!marker && marker.position === 'static' && marker.belowBubble === true && marker.leftOfBubble === false,
+        JSON.stringify(marker));
+      ok('E 症状复现（改前）：hover 无背景反馈（既有 `.fm-retry` 无 hover 规则）',
+        !!marker && marker.background === 'rgba(0, 0, 0, 0)',
+        JSON.stringify({ background: marker && marker.background }));
+    }
+    // ③ 重发幂等（两模式共同不变量）：同键 ⇒ 服务端回放 ⇒ **不多落一条**
+    ok('E/B② 点击重发走既有通道：2 次 POST **同一** `clientMsgId`（键复用）',
+      posts.length === 2 && posts[0].body.clientMsgId && posts[0].body.clientMsgId === posts[1].body.clientMsgId,
+      JSON.stringify(posts.map(c => c.body.clientMsgId)));
+    ok('E/B② 不多落一条：本动作落行 = 1（服务端按同键回放，replays ≥ 1）+ 气泡节点 = 1',
+      rows.length === 1 && SRV.replays >= 1 && after.nodeCount === 1 && S.dupMax === 1,
+      JSON.stringify({ rows: rows.map(r => r.id), replays: SRV.replays, nodeCount: after.nodeCount, dupMax: S.dupMax, dupEvents: S.dupEvents }));
+    ok('E 点击后失败面收口（红圈与失败气泡一并退场）', after.retryLeft === 0 && after.failedLeft === 0,
+      JSON.stringify(after));
+    ok('E 无 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+  } finally {
+    await ctx.close();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
 try {
   console.log(`imgmsg-send spec · MODE=${MODE} · WEB=${WEB}`);
   await scenarioA();
@@ -650,6 +839,7 @@ try {
   if (AFTER) await scenarioB({ postFrame: true, tag: 'B2' }); // 回显腿先到（强键认领）
   await scenarioC();
   await scenarioD();
+  await scenarioE();
 } catch (e) {
   failures++;
   console.error('HARNESS ERROR:', e && e.stack || e);

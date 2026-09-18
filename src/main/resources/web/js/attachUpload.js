@@ -158,13 +158,40 @@ function paint() {
   container.innerHTML = '';
   const items = convUploads(convId);
   const hints = convRetryHints(convId);
-  // 空判据 = 卡与提示**都**没有（有提示时容器必须可见，否则重试入口不可达）。
-  container.hidden = items.length === 0 && hints.length === 0;
-  for (const item of items) container.appendChild(uploadCardEl(item));
+  // 空判据 = **实际挂上的卡**与提示都没有（有提示时容器必须可见，否则重试入口不可达）。
+  // 🔴 按「挂上的卡数」而非 `items.length`：quiet 腿的发送中/成功态**不出卡**
+  //    （见 [[uploadCardEl]]）⇒ 若按条目数判空，容器会以**可见的空壳**留在消息流里
+  //    （`.fm-upload-list` 有 `margin: 0 16px 6px`、`.fm-flow` 有 `gap: 10px` ⇒ 凭空 16px）。
+  container.hidden = true;
+  let cards = 0;
+  for (const item of items) {
+    const card = uploadCardEl(item);
+    if (!card) continue;
+    container.appendChild(card);
+    cards += 1;
+  }
   for (const hint of hints) container.appendChild(uploadRetryEl(hint));
+  container.hidden = cards === 0 && hints.length === 0;
 }
 
 function uploadCardEl(item) {
+  // ── 「正在发送」条幅**整条退场**（sendstate 批 · 作者设计令 2026-09-18）──────────
+  // 作者设计令（逐字）：「不要出现正在发送的条幅，改为在气泡左侧，用spinner来显示
+  // 状态，发送失败就是❌，类似于微信的做法。」
+  // 本函数是那条条幅（quiet 上传卡）的**唯一装配点** ⇒ 退场在这里落地：
+  //   · `UPLOADING` ⇒ **不出卡**：状态改由**气泡左侧环**承载（`.fm-msg.fm-sending::before`，
+  //     随乐观气泡同一时点上屏）；旧卡上的「正在发送」文案与取消键**随之退场**；
+  //   · `SENT` ⇒ **同样不出卡**：成功态语义 = **无痕**（确认面接管后不留「已发送」残条，
+  //     与 `messages.js::settleOptimisticAttach` 摘 `fm-sending` 同属一件事）；
+  //   · **终态（FAILED / CANCELLED / SKIPPED）照旧出卡**（下方既有分支）—— fail-closed 的
+  //     「未发送 / 真原因」文案**一字不动**：🔴 图片上传失败时屏上的**流内失败卡就是它**，
+  //     本批对该面零触碰（干跑帧 09/10 逐字节相同即此意）。
+  // C 修正令（逐字）：「取消发送，使用右键取消。」⇒ 旧卡上的取消键随卡退场；🔴 本批
+  // **不新增任何取消 UI**（气泡 hover / 右键菜单 / composer 一律不加），撤销能力由
+  // **右键菜单批**承接（临时状态已在批次报告与人读件显式登记）。🔴 不得在此补位。
+  // `quiet` 的唯一来源 = 好友**图片乐观腿**（`messages.js::sendAttachCurrent` 的
+  // `quiet: true`）；其余腿（群窗 / 混批 / 非图片 / 设备面）逐字走下方既有分支 ⇒ 零行为变化。
+  if (item.quiet && (item.state === UPLOAD_STATE.UPLOADING || item.state === UPLOAD_STATE.SENT)) return null;
   const card = el('div', `fm-upload fm-upload-${item.state}`);
   card.dataset.uploadState = item.state;
   card.dataset.uploadId = item.uploadId;
@@ -176,19 +203,9 @@ function uploadCardEl(item) {
   card.appendChild(el('span', 'fm-upload-name', item.name));
   card.appendChild(el('span', 'fm-upload-size', fmtBytes(item.size)));
 
-  if (item.state === UPLOAD_STATE.UPLOADING && item.quiet) {
-    // ④ imgmsg 批（作者 2026-09-18 五项全裁 · 决策点 ④ = 「首字节即时反馈」并入 ①）：
-    //    本路径的**反馈面 = 乐观气泡**（气泡先出现 + 本机句柄直显）⇒ 本卡退居
-    //    **transfer 控制条**：只给「正在发送」+ 取消，**不给百分比进度条**
-    //    （裁定逐字：「不做百分比进度条」；XHR 连续进度同样不做）。
-    //    🔴 取消键**保留**（能力不缩水）；失败/终态文案走下方同一 else 分支（逐字不变）。
-    card.appendChild(el('span', 'fm-upload-note', t('messages.attachSending')));
-    const quietCancel = el('button', 'fm-upload-cancel', t('messages.attachCancel'));
-    quietCancel.type = 'button';
-    quietCancel.addEventListener('click', () => { void cancelUpload(item.uploadId, item.convId); });
-    card.appendChild(quietCancel);
-    return card;
-  }
+  // 🔴 此处原为 quiet 腿（图片乐观腿）的**发送中条幅**装配分支（「正在发送」文案 +
+  //    取消键）——已按作者设计令**整条删除**（含其 i18n 键 `messages.attachSending`）。
+  //    发送中/成功态在函数头 `return null`（不出卡），终态走下方既有分支。
 
   // 进度条**只在真实推进中出现**（宽度 = 服务端已确认的字节 / 总字节）。
   const total = item.totalBytes || item.size || 0;
