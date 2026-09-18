@@ -284,6 +284,11 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
       rid <- rt.store.snapshot.map(_.nodes.values.find(_.name == "v-routed").map(_.id).getOrElse(""))
       r2 <- nodeEdit(nodeInput("decl-v3c", "down-b", "description" -> Json.fromString("downstream"),
         "in" -> Json.fromString(rid)), ctx)
+      // down-b 的 id 只能取自**追加之后**的快照：afterReject 早于 down-b 建位，原断言从
+      // 该旧快照 find ⇒ 恒回落字面量 "down-b" ⇒ 与真实 id（n-xxxxxxxx）比对必假红。
+      // 判据未动（仍断言 pass 边被镜像到已路由 verifier），只修 id 取数面。
+      afterAppend <- rt.store.snapshot
+      downBId = afterAppend.nodes.values.find(_.name == "down-b").map(_.id)
       vRoutedOut <- rt.store.snapshot.map(_.nodes.values.find(_.name == "v-routed").map(_.out).getOrElse(Nil))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -292,8 +297,8 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
       assertEquals(afterReject.nodes(vid).out, Nil, "the pending verifier's out stays EMPTY (zero edge writes)")
       assert(!afterReject.nodes.values.exists(_.name == "down-a"), "the refused downstream must not persist")
       assert(r2.isRight, s"a routed verifier accepts the downstream pass append, got: $r2")
-      assert(vRoutedOut.exists(e => e.to == afterReject.nodes.values.find(_.name == "down-b").map(_.id).getOrElse("down-b")),
-        s"the pass edge was mirrored onto the routed verifier, got: $vRoutedOut")
+      assert(downBId.exists(id => vRoutedOut.exists(_.to == id)),
+        s"the pass edge was mirrored onto the routed verifier, got: $vRoutedOut (down-b id=$downBId)")
       assert(vRoutedOut.exists(e => e.on.contains(OutEdge.Fail) && e.mode == OutEdge.Loop),
         s"the fail route is intact, got: $vRoutedOut")
   }
@@ -355,27 +360,40 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
   test("④ P2a: a plugins declaration while the plugins flag is OFF must WARN in the receipt (never silently dropped)") {
     val flagFile = tempRoot / "nebflow.json"
     os.write.over(flagFile, """{"plugins":{"enabled":false}}""")
-    try
-      for
-        (_, system, _, rt, ctx) <- mkEnv("p4b")
-        r <- nodeEdit(nodeInput("decl-p4b", "flagged", "description" -> Json.fromString("declared while flag off"),
-          "task" -> Json.fromString("work"), "plugins" -> Json.arr(Json.fromString("some-plugin"))), ctx)
-        n <- rt.store.snapshot.map(_.nodes.values.find(_.name == "flagged"))
-        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield
-        assert(r.isRight, s"flag-off keeps today's ignore-don't-reject semantics, got: $r")
-        assert(r.exists(_.contains("flag off")) || r.exists(_.contains("enabled=false")),
-          s"the receipt must warn that the declaration was NOT applied, got: $r")
-        assert(n.exists(_.plugins.isEmpty), "flag-off still stores an empty capability face (unchanged)")
-    finally os.remove.all(flagFile)
+    // 🔴 夹具存续期必须覆盖**效果**存续期：try/finally 在 by-name body 求值（= 构建 IO）
+    // 时就执行 finally ⇒ 文件在 IO 真正跑之前已被删 ⇒ PluginsConfig.enabled 读不到 ⇒ 回落
+    // true ⇒ 校验照跑、本用例恒红。改用 guarantee 把删除挂在效果尾部（成败都删）。
+    // 判据未动（flag off 仍须「放行 + 回执警告 + 空能力面」）。
+    (for
+      (_, system, _, rt, ctx) <- mkEnv("p4b")
+      r <- nodeEdit(nodeInput("decl-p4b", "flagged", "description" -> Json.fromString("declared while flag off"),
+        "task" -> Json.fromString("work"), "plugins" -> Json.arr(Json.fromString("some-plugin"))), ctx)
+      n <- rt.store.snapshot.map(_.nodes.values.find(_.name == "flagged"))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(r.isRight, s"flag-off keeps today's ignore-don't-reject semantics, got: $r")
+      assert(r.exists(_.contains("flag off")) || r.exists(_.contains("enabled=false")),
+        s"the receipt must warn that the declaration was NOT applied, got: $r")
+      assert(n.exists(_.plugins.isEmpty), "flag-off still stores an empty capability face (unchanged)")
+    ).guarantee(IO(os.remove.all(flagFile)))
   }
 
   test("④ P3: task text naming a Catalog plugin with an empty plugins face warns (warning only, never a hard reject)") {
-    // Catalog 夹具：真实目录 + plugin.json（NodeSchemaSlimSpec 的 slim-e2e 同款最小形态）
+    // Catalog 夹具：真实目录 + plugin.json + skills 面。🔴 skills 面非可有可无：装载校验
+    // 「skills 与 mcp 至少其一」（PluginRegistry 裁定 12）⇒ 只有 plugin.json 的目录会被
+    // **装载期拒**、不进 Catalog（snapshot.plugins）⇒ 文本扫描无对象、本用例恒红。
+    // 形态对齐 NodeSchemaSlimSpec 的 slim-e2e 夹具（同为 plugin.json + skills/<n>/SKILL.md）。
     val p3dir = tempRoot / "plugins" / "decl-gate-p3"
-    os.makeDir.all(p3dir)
+    os.makeDir.all(p3dir / "skills" / "howto")
     os.write.over(p3dir / "plugin.json",
       """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"decl-gate-p3","version":"1.0.0","description":"P3 text-scan fixture"}""")
+    os.write.over(p3dir / "skills" / "howto" / "SKILL.md",
+      """---
+        |name: howto
+        |description: P3 text-scan fixture skill
+        |---
+        |## DeclGateP3 Marker
+        |Body.""".stripMargin)
     for
       (_, system, _, rt, ctx) <- mkEnv("p4c")
       r1 <- nodeEdit(nodeInput("decl-p4c", "mentions", "description" -> Json.fromString("mentions a catalog name"),
