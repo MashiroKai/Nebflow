@@ -238,7 +238,11 @@ final class RelayChunkTransport(
     client
       .relayTransferPutChunk(
         targetDeviceId = target.peerDeviceId,
-        path = s"~/Downloads/${target.fileName}",
+        // dropnam 批（真漏 B 根修）：写**同一 transfer 的确定性 temp 名**，不再写对端
+        // `~/Downloads/<裸名>`（旧形态下撞名会 append 到别人件上、整件摘要不符时还会
+        // 被接收端 `os.remove.all` **删掉**）。落点由 `DropboxUtil.relayLandingPath`
+        // 唯一一处算（目标目录已获接受时用接收端裁定的 `targetDir`）。
+        path = DropboxUtil.relayLandingPath(target),
         contentB64 = b64,
         chunkIndex = frame.chunkIndex,
         totalBytes = frame.totalBytes,
@@ -246,7 +250,11 @@ final class RelayChunkTransport(
         chunkSha256 = frame.chunkSha256,
         wholeSha256 = frame.wholeSha256,
         overwrite = true,
-        timeout = chunkTimeout
+        timeout = chunkTimeout,
+        // 归属 token（可选键）：路径里内嵌的 `<tid8>` 由接收端**自证** ⇒ 该路径上「本次的续传」
+        // 与「别人的件」可判，收端才敢 append/清理自己的 temp。🔴 门控与落点**同一判据**
+        // （`peerSupportsRelayTemp`）：旧接收端那一格不带上本键 ⇒ 该格 wire 形态逐字节同今天。
+        transferId = Option.when(DropboxUtil.peerSupportsRelayTemp(target))(target.transferId)
       )
       .map {
         case Right(json) =>
@@ -289,7 +297,8 @@ final class RelayChunkTransport(
 
   def probe(target: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
     client
-      .relayTransferProbe(target.peerDeviceId, s"~/Downloads/${target.fileName}", timeout = chunkTimeout)
+      // 探针必须与 `put` 同落点（同一 `relayLandingPath`）—— 否则续传 offset 取自**另一个文件**。
+      .relayTransferProbe(target.peerDeviceId, DropboxUtil.relayLandingPath(target), timeout = chunkTimeout)
       .map {
         case Right(json) =>
           val hc = json.hcursor

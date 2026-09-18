@@ -106,8 +106,9 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
               val c = r.hcursor
               assertEquals(c.downField("accepted").as[Boolean].toOption, Some(false))
               assertEquals(errCode(r), Some(AttachContract.Codes.TargetDirNotAllowed))
-              // 接收端等级自报（§1.4 等级自报通道）
-              assertEquals(c.downField("proto").as[Int].toOption, Some(AttachContract.ProtoAssignDir))
+              // 接收端等级自报（§1.4 等级自报通道）—— 钉的是「回执里带的等级 == **本端**等级」，
+              // 故随契约升版（dropnam 批：3 = 落点收口）取同一个符号，判据语义不变。
+              assertEquals(c.downField("proto").as[Int].toOption, Some(AttachContract.ProtoRelayTemp))
               // 拒体不得回带任何「已接受落点」
               assertEquals(c.downField("targetDir").as[String].toOption, None)
             }

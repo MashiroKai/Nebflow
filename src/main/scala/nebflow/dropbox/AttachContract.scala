@@ -79,6 +79,23 @@ object AttachContract:
    */
   val ProtoAssignDir: Int = 2
 
+  /**
+   * 等级 3 = 分块 + 接收端指定目录 + **relay 腿落点收口**（`dropnam` 批）。
+   *
+   * 语义：发送端 relay 腿不再写对端 `~/Downloads/<裸名>`，改写**同一 transfer 的确定性
+   * temp 名**（`DropboxUtil.relayLandingPath` ⇒ 接收端 `commitTempFile` 得名/占据/回读）。
+   *
+   * 🔴 **为什么必须是协议版本门、而不是无条件修死**（root 追认 2026-09-19）：
+   * 本级别是**协议版本门**（数值轴只走 JSON 面，`X-Dropbox-Proto` 头**恒 1**）——
+   * 与用户面开关无关。旧接收端没有 `Absent ⇒ 派生 temp` 的 commit 入口，若新发送端无条件
+   * 改写真 temp 名 ⇒ 字节留在隐藏 temp 而**永不现身**（可观测回归）。带门控后的矩阵：
+   *   - 新发送 × 新接收 ⇒ 落名收口（temp 名 + 唯一落盘点）；**新收端全面受保护**；
+   *   - 新发送 × 旧接收 ⇒ 逐字节保留今天的裸名形态（旧端组合保今日行为 = 无法远端修复的固有面）。
+   *
+   * 阶梯语义（3 ⊃ 2 ⊃ 1 ⊃ 0）成立 ⇒ `negotiate = min` 的等价性前提不破。
+   */
+  val ProtoRelayTemp: Int = 3
+
   /** 协商：双方取 min；min == 0 ⇒ 走整件 legacy 路径 + 大小闸。
     *
     * ⚠️ 本判据只在**单调阶梯**（每级含其下各级能力）上等价于能力交集；把两个能力塞进
@@ -101,6 +118,15 @@ object AttachContract:
     val InsufficientDisk: String = "INSUFFICIENT_DISK"
     val UnsupportedProtocol: String = "UNSUPPORTED_PROTOCOL"
     val InvalidArgument: String = "INVALID_ARGUMENT"
+
+    /** 收端**永不**覆盖/删除既有件（dropnam 批，作者 2026-09-19 裁定②「取接收侧全保护」）：
+      * 分块 put 的请求**没有**本文件所属 transfer 的 token，而目标路径上已存在非空文件
+      * ⇒ 那不是「本次的续传」，而是**别人的件**（append 会污染它、整件摘要不符时的
+      * `os.remove.all` 会**删掉它**）⇒ 显式拒绝：零写、零删、带结构化原因。
+      *
+      * 代价（已登记）：无 token 的旧发送端 × relay × 目标已存在 ⇒ 该腿续传**显式失败**
+      * （非静默）；目标不存在时行为与今天逐字一致。 */
+    val FileExistsRefusingAppend: String = "FILE_EXISTS_REFUSING_APPEND"
 
     // ===== targetDir 裁定码（契约升版批，2026-09-14）=====
     //

@@ -709,7 +709,7 @@ final class DropboxService private (
       status = "pending",
       totalBytes = spec.fileSize,
       chunkSize = AttachContract.ChunkSize,
-      proto = AttachContract.ProtoAssignDir,
+      proto = AttachContract.ProtoRelayTemp,
       targetDir = targetDir
     )
     val payloadBase = Json.obj(
@@ -723,7 +723,7 @@ final class DropboxService private (
       "mimeType" -> spec.mimeType.asJson,
       // 协议协商：缺失 = 0 = 整件 legacy。双方取 min。本键 = **JSON 面**的等级自报，
       // 与 P2P 头 `X-Dropbox-Proto`（**恒 1**，见 AttachContract.ProtoAssignDir 文档）**不同轴**。
-      "proto" -> AttachContract.ProtoAssignDir.asJson,
+      "proto" -> AttachContract.ProtoRelayTemp.asJson,
       "batchId" -> batchId.asJson,
       "attachmentIndex" -> index.asJson,
       "attachmentCount" -> count.asJson,
@@ -1087,7 +1087,7 @@ final class DropboxService private (
     // 收块/commit 阶段不得重新解释字符串。必须早于任何 `os.makeDir` —— 收块阶段
     // （`receiveChunkFromPeer`）在建 temp 目录前不做任何校验，判定放这里才能保证
     // 「拒绝 ⇒ 零副作用」（spec §3.4）。
-    val negotiated = AttachContract.negotiate(AttachContract.ProtoAssignDir, peerProto)
+    val negotiated = AttachContract.negotiate(AttachContract.ProtoRelayTemp, peerProto)
     val (landingDir, targetDirCode): (Option[String], Option[String]) =
       requestedTargetDir match
         case None => (None, None) // 缺省语义：与今天逐字节一致（不落任何新字段）
@@ -1138,7 +1138,7 @@ final class DropboxService private (
       "accepted" -> (!refused).asJson,
       // 接收端等级自报（§1.4「等级自报通道」）：旧发送端忽略未知键，新发送端据此
       // 决定是否可发 targetDir。
-      "proto" -> AttachContract.ProtoAssignDir.asJson,
+      "proto" -> AttachContract.ProtoRelayTemp.asJson,
       "targetDirAccepted" -> (!refused).asJson
     ).deepMerge(
       targetDirCode.fold(Json.obj())(c => Json.obj("targetDirCode" -> c.asJson))
@@ -1501,7 +1501,8 @@ final class DropboxService private (
    *     （硬链接路径上根本不出现）⇒ 既有件零覆盖、零删除；
    *   - 通报名 = 本次**占据**的名字（回读确认），禁第二处名字推断。
    *
-   * `Absent`（relay 腿：字节不经 `receiveChunkFromPeer`，故 tempPath 记录恒 `None`）⇒ 无事可做，非错误。
+   * `Absent`（relay 腿：字节不经 `receiveChunkFromPeer`，故 tempPath 记录恒 `None`）⇒ 回落
+   * [[relayTempPathOnReceiver]] 的确定性派生 temp，使 relay 字节**找得到** commit 入口。
    */
   private def commitTempFile(t: FileTransfer): IO[CommitOutcome] =
     val decision = guardedTempPath(t)
@@ -1510,7 +1511,14 @@ final class DropboxService private (
         // `Usable` 保持今天的守卫口径（只判存在）—— 0 字节整件传照旧可 commit。
         placeTemp(t, decision, tempPath, requireNonEmpty = false)
       case refused @ TempPathDecision.Refused(_) => IO.pure(CommitOutcome(refused, None))
-      case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
+      case absent @ TempPathDecision.Absent =>
+        relayTempPathOnReceiver(t).flatMap {
+          case None => IO.pure(CommitOutcome(absent, None))
+          case Some(derived) =>
+            // 只有派生 temp **确实存在且非空**时才回落 commit；否则与今天逐字节一致
+            // （迟到完成帧、旧发送端裸名直写两条路径都不受影响）。
+            placeTemp(t, absent, derived, requireNonEmpty = true)
+        })
 
   /** 「把 temp 落到唯一名字上」—— [[commitTempFile]] 的两个入口共用同一实现（单一落盘点）。 */
   private def placeTemp(
@@ -1540,6 +1548,25 @@ final class DropboxService private (
             }
     }
 
+  /**
+   * relay 腿（新协议）字节落点在本端的解释——与发送端 [[DropboxUtil.relayLandingPath]]
+   * 是**同一次观测的两侧**（名字只由 `DropboxUtil.receiverTempName` 一处生成）：
+   *
+   *   - `targetDir` 获接受 ⇒ 与 P2P 腿**同一派生**（[[derivedReceiverTempPath]]）；
+   *   - 缺省落点 ⇒ 发送端写的是 `~/Downloads/<temp>`（`RelayDefaultDirTilde` 字面形态），
+   *     在此**按本端 home 展开**。⚠️ `DropboxUtil.downloadsDir` 在 Linux `XDG_DOWNLOAD_DIR`
+   *     下可能 ≠ `$HOME/Downloads` ⇒ 两个候选都看（否则新×新格在该平台会静默停摆）。
+   */
+  private def relayTempPathOnReceiver(t: FileTransfer): IO[Option[os.Path]] =
+    val name = DropboxUtil.receiverTempName(t.fileName, t.transferId)
+    val assigned = derivedReceiverTempPath(t)
+    val defaultForm =
+      os.Path(PathUtil.expandTilde(s"${DropboxUtil.RelayDefaultDirTilde}/$name"), os.pwd)
+    val candidates =
+      if t.targetDir.exists(_.trim.nonEmpty) then List(assigned)
+      else List(assigned, defaultForm).distinct
+    IO.blocking(candidates.find(p => os.exists(p) && os.isFile(p) && os.size(p) > 0))
+
   /** Delete the temp file. Same guard as [[commitTempFile]] — a refused/blank path deletes nothing. */
   private def deleteTempFile(t: FileTransfer): IO[CommitOutcome] =
     val decision = guardedTempPath(t)
@@ -1562,8 +1589,9 @@ final class DropboxService private (
    *
    * 🔴 原分支 3（**按落点目录 + 裸名预测**一个「应该存在」的路径）已**删除**（作者 2026-09-19
    * 裁定③，判据 = **分支已删**）：它是**第二处算名点**（预测而非观测），与三契约「最终名字
-   * 只在一处算」冲突。**任何路径**都不得回退到预测裸名（legacy 裸名直写件不属本次落地
-   * ⇒ 如实为空，禁把「盘上恰好同名」当成本次落点）。
+   * 只在一处算」冲突。该分支存在的唯一理由是 relay 腿直写裸名 —— 那条腿已由 `relayLandingPath`
+   * （确定性 temp 名）+ `commitTempFile` 的 `Absent` 回落收口 ⇒ 每次落地都**必经**唯一落盘点
+   * ⇒ 预测不再需要。**任何路径**（含旧对端）都不得回退到预测裸名。
    */
   private def landedPathFor(t: FileTransfer, outcome: CommitOutcome): IO[String] =
     outcome.landedPath match

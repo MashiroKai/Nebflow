@@ -380,6 +380,52 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         assertEquals(lost, 0, s"④e 内容丢失计数必须为 0，实际 $lost（$reported）")
     }.flatMap(_ => IO(os.remove.all(parent)))
 
+  // ===== ⑥ relay 腿撞名：既有件零损 + 新件改名落盘 + 通报 == 新件名（判据⑤c）=====
+
+  test("⑥ relay 腿撞名：既有件逐字不变 + 新件改名落盘 + 通报 == 新件实际名 + temp 零残留"):
+    val parent = os.temp.dir(prefix = "nb-nfpath-relay-")
+    val dir    = parent / "landing"
+    os.makeDir.all(dir)
+    val tid   = "t-relay-collide"
+    val name  = "relay.bin"
+    val prior = payload(4096, seed = 77L)
+    val data  = payload(2048, seed = 78L)
+    IO.blocking(os.write(dir / name, prior)).flatMap { _ =>
+      withReceiver(dir, () => BurstClock) { (ms, svc, seen) =>
+        for
+          _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
+          // relay 腿：字节由对端按**同一 transfer 的确定性 temp 名**直写 —— 不经
+          // `receiveChunkFromPeer`（故收端会话 tempPath 记录为 None ⇒ 走 `Absent` 回落）。
+          // 被替换的只有 relay HTTP 层；命名 / 落名 / 占据 / 回读 / 通报全走生产代码。
+          _ <- IO.blocking(os.write(dir / DropboxUtil.receiverTempName(name, tid), data))
+          _ <- ms.handleDataMessage(completeFrame(tid))
+          frames <- seen.get
+          onDisk <- IO(landed(dir))
+          all    <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
+          hist   <- svc.getHistory("kai-peer")
+          reported = reportedPaths(frames)
+          priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
+        yield
+          // 既有件零损（sha 前后相同 + 仍在）
+          assert(os.exists(dir / name), "既有件必须仍存在（禁 os.remove.all / 禁覆盖）")
+          assertEquals(priorNow, ChunkedTransfer.sha256Hex(prior), "既有件必须逐字不变")
+          val fresh = onDisk.filterNot(_ == name)
+          assertEquals(onDisk.size, 2, s"落点非隐藏条目应为 2（既有 + 新落），实际 $onDisk")
+          assertEquals(fresh.size, 1, s"除既有件外应恰有一件新落盘：$onDisk")
+          assertEquals(fresh.head, "relay_20260919_001715.bin", "撞名后的新名（固定时钟 ⇒ 确定）")
+          assertEquals(reported.size, 1, s"必须有一条带 savedPath 的完成通报：$frames")
+          // 通报 == 新件实际名（同源同一次观测）；既不是既有名，也不是预测名
+          assertEquals(reported.head, canon(dir / fresh.head), "通报必须等于新落件实际名")
+          assertEquals(hist.find(_.transferId == tid).map(_.savedPath), Some(canon(dir / fresh.head)))
+          assertEquals(os.read.bytes(dir / fresh.head).toSeq, data.toSeq, "新落件必须是本次字节")
+          assert(
+            all.filter(n => n.startsWith(".") && n.contains(".dropbox-")).isEmpty,
+            s"commit 后不得残留 temp：$all"
+          )
+      }.flatMap(_ => IO(os.remove.all(parent)))
+    }
+
+
   // ===== ⑦ 预测名分支「删除」的绝对化读数（终裁③）：任何路径都不得回退到预测裸名 =====
 
   test("⑦ 预测名分支已删除（绝对化）：对端等级 3 与 2 同样**不得**把盘上同名件当成本次落点"):

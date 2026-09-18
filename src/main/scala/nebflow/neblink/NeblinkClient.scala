@@ -1309,7 +1309,12 @@ class NeblinkClient(
   // `/api/neblink/transfer` / `NeblinkService.receiveFile|sendFile` 一个不删，
   // 本组方法只是给同一条 relay 腿加上分块参数。
 
-  /** 推**一块**给远端（relay 腿）。返回远端自算的摘要回执。 */
+  /** 推**一块**给远端（relay 腿）。返回远端自算的摘要回执。
+    *
+    * `transferId`（dropnam 批，**可选键**）：本次块所属的 transfer —— 接收端据此判
+    * 「这条路径上已有字节是**本次的续传**还是**别人的件**」。旧接收端忽略未知键 ⇒ 向后兼容；
+    * 缺省 `None` = 不声明归属（接收端对已存在非空目标一律 fail-closed 拒绝，见
+    * `AttachContract.Codes.FileExistsRefusingAppend`）。 */
   def relayTransferPutChunk(
     targetDeviceId: String,
     path: String,
@@ -1320,9 +1325,10 @@ class NeblinkClient(
     chunkSha256: String,
     wholeSha256: String,
     overwrite: Boolean,
-    timeout: scala.concurrent.duration.FiniteDuration
+    timeout: scala.concurrent.duration.FiniteDuration,
+    transferId: Option[String] = None
   ): IO[Either[String, Json]] =
-    val params = JsonObject(
+    val baseParams = JsonObject(
       "direction" -> "put".asJson,
       "path" -> path.asJson,
       "content" -> contentB64.asJson,
@@ -1334,6 +1340,7 @@ class NeblinkClient(
       "chunkSha256" -> chunkSha256.asJson,
       "wholeSha256" -> wholeSha256.asJson
     )
+    val params = transferId.map(t => baseParams.add("transferId", t.asJson)).getOrElse(baseParams)
     relayExec(targetDeviceId, "FileTransfer", params, timeout).flatMap {
       case Right(output) =>
         decode[Json](output) match

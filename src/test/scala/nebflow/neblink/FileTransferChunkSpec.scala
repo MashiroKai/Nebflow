@@ -337,4 +337,92 @@ class FileTransferChunkSpec extends CatsEffectSuite:
     }
   }
 
+  // ===== 收端全保护（dropnam 批 · 判据⑤b/⑤d；作者 2026-09-19 裁定②「取接收侧全保护」）=====
+  //
+  // 改前形态（真漏 B 的破坏面，方案件 D3/D4）：
+  //   - 目标已有 `k × chunkSize` 字节且 < 来件 total ⇒ 发送端从该 offset 续传
+  //     ⇒ 接收端 `os.write.append` **污染别人的件** ⇒ 末块自算整件摘要不符 ⇒
+  //     `os.remove.all(path)` **删掉对端原件**（生产块长 4 MiB 下同样触发）；
+  //   - 目标字节数 ≥ 来件 total ⇒ 回**成功 ack**（零字节写入却报 100%，回执不诚实）。
+  // 本组钉「显式拒绝 + 零写零删」。
+
+  test("⑤d tokenless 撞已有件 ⇒ FILE_EXISTS_REFUSING_APPEND（显式 Left、零写、零删）"):
+    withTmp { dir =>
+      val p = dir / "pre.bin"
+      // 既有件 = 1 × Chunk（= D3 形态的触发前提：整数倍块长且 < 来件 total）
+      val prior    = Array.tabulate(Chunk)(i => (i * 3 + 1).toByte)
+      val incoming = Array.tabulate(Chunk * 2)(i => (i * 7 + 5).toByte)
+      val whole    = ChunkedTransfer.sha256Hex(incoming)
+      for
+        _          <- IO.blocking(os.write(p, prior))
+        before     <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(p)))
+        sizeBefore <- IO.blocking(os.size(p))
+        // 首块（index 0）撞已有件：改前 = 幂等 no-op 回**成功 ack**（进度面假 100%）
+        r0 <- FileTransferAction.handle(putParams(p.toString, incoming.slice(0, Chunk), 0, Chunk * 2L, whole))
+        // 续传起点（index 1 == expectedIndex）：改前 = 追加后整件不符 ⇒ os.remove.all **删掉对端原件**
+        r1 <- FileTransferAction.handle(
+                putParams(p.toString, incoming.slice(Chunk, Chunk * 2), 1, Chunk * 2L, whole)
+              )
+        // 既有件状态读数（禁「件已消失 ⇒ os.size 抛异常」把读数吃掉）：消失时给出哨兵，
+        // 并在下面的失败告警里**一并回带** ⇒ 变异验红时 ⑤b 的读数（件消失 / 字节被改）可读。
+        exists    <- IO.blocking(os.exists(p))
+        after     <- IO.blocking(if os.exists(p) then ChunkedTransfer.sha256Hex(os.read.bytes(p)) else "<file-gone>")
+        sizeAfter <- IO.blocking(if os.exists(p) then os.size(p) else -1L)
+      yield
+        val state = s"既有件状态：exists=$exists size=$sizeAfter sha=${if after == before then "unchanged" else after}"
+        List(r0, r1).foreach { r =>
+          assert(r.isLeft, s"tokenless 撞已有件必须显式失败（禁静默 append / 禁删件），实得 $r；$state")
+          assert(r.left.toOption.get.contains("FILE_EXISTS_REFUSING_APPEND"), r.left.toOption.get)
+        }
+        assert(exists, "⑤b 既有件必须仍在（禁 os.remove.all）")
+        assertEquals(after, before, "⑤b 既有件字节必须逐字不变")
+        assertEquals(sizeAfter, sizeBefore, "拒绝路径不得写入任何字节")
+    }
+
+  test("⑤d 归属明确（transferId token 与路径内嵌 <tid8> 相符）⇒ 同一路径可正常分块续传"):
+    withTmp { dir =>
+      val tid = "tid-abc-1234567890"
+      val p = dir / s".chunked.bin.dropbox-${tid.take(8)}"
+      val total = Chunk * 2L
+      val src = Array.tabulate(total.toInt)(i => (i * 9 + 2).toByte)
+      val whole = ChunkedTransfer.sha256Hex(src)
+      def withToken(index: Int, payload: Array[Byte]): JsonObject =
+        putParams(p.toString, payload, index, total, whole).add("transferId", tid.asJson)
+      for
+        a0 <- FileTransferAction.handle(withToken(0, src.slice(0, Chunk)))
+        a1 <- FileTransferAction.handle(withToken(1, src.slice(Chunk, Chunk * 2)))
+        size <- IO.blocking(os.size(p))
+      yield
+        assert(a0.isRight, a0.toString)
+        assert(a1.isRight, a1.toString)
+        assertEquals(a1.toOption.get.hcursor.downField("wholeSha256").as[String].toOption, Some(whole))
+        assertEquals(size, total, "归属明确 ⇒ 追加路径与今天一致")
+    }
+
+  test("裁定② legacy 整件（`overwrite=true`）撞已有件 ⇒ 改名保留新件、原件零损"):
+    withTmp { dir =>
+      val p = dir / "legacy-exists.txt"
+      val prior = "ORIGINAL-CONTENT-KEEP-ME".getBytes("UTF-8")
+      val fresh = "NEW-CONTENT-FROM-PEER".getBytes("UTF-8")
+      for
+        _ <- IO.blocking(os.write(p, prior))
+        res <- FileTransferAction.handle(
+                 JsonObject(
+                   "direction" -> "put".asJson,
+                   "path" -> p.toString.asJson,
+                   "content" -> b64(fresh).asJson,
+                   "overwrite" -> true.asJson
+                 )
+               )
+        names <- IO.blocking(os.list(dir).map(_.last).sorted.toList)
+        originalNow <- IO.blocking(new String(os.read.bytes(p), "UTF-8"))
+        freshName = names.find(_ != "legacy-exists.txt")
+        freshNow <- IO.blocking(freshName.map(n => new String(os.read.bytes(dir / n), "UTF-8")))
+      yield
+        assert(res.isRight, res.toString)
+        assertEquals(originalNow, "ORIGINAL-CONTENT-KEEP-ME", "既有件必须逐字不变（禁 truncate 覆盖）")
+        assertEquals(freshNow, Some("NEW-CONTENT-FROM-PEER"), s"新件必须以新名落盘并保留内容：$names")
+        assertEquals(names.size, 2, s"应恰有既有件 + 新件两名：$names")
+    }
+
 end FileTransferChunkSpec

@@ -140,6 +140,9 @@ object DropboxUtil:
   //   ③ 通报名与落盘名**同源同一次观测** ⇒ 调用方只能用 `reserveAndPlace` 返回的路径，
   //      禁任何第二处名字推断（`DropboxService.landedPathFor` 的预测分支已删除）。
 
+  /** 「缺省 Downloads」的**字面形态** —— 与历史 relay 腿写法逐字一致（`~` 由**接收端**展开）。 */
+  val RelayDefaultDirTilde: String = "~/Downloads"
+
   /**
    * 第 k 候选名（k=0 ⇒ 裸名；k=1 ⇒ 历史冲突口径；k≥2 ⇒ 序号后缀）。**纯函数，不触盘**。
    *
@@ -157,10 +160,38 @@ object DropboxUtil:
   /**
    * 接收端 temp 名（`.<名>.dropbox-<tid8>`）—— **唯一 temp 名生成器**：
    * P2P 腿的派生 temp（`DropboxService.derivedReceiverTempPath`）与 relay 腿的落点
-   * 共用本函数 ⇒ 两侧名字同源。
+   * （[[relayLandingPath]]）共用本函数 ⇒ 两侧名字同源。
    */
   def receiverTempName(fileName: String, transferId: String): String =
     s".$fileName.dropbox-${transferId.take(8)}"
+
+  /**
+   * relay 腿落点（**纯函数**，两侧同名同形）。
+   *
+   * 新形态（对端 = **新接收端**，等级 ≥ [[AttachContract.ProtoRelayTemp]]）= 同一 transfer 的
+   * **确定性 temp 名** ⇒ ① 不可能命中他人既有件；② 经接收端 `commitTempFile` 得到与 P2P 腿
+   * **同一套**落名/占据/回读（撞名 ⇒ 改名保留）；③ 顺带修掉「relay 腿无视 `targetDir`」。
+   *
+   * 🔴 `else` 分支是**旧接收端兼容回退，不是「关掉修复」的开关**（作者 2026-09-19 终裁①）：
+   * 旧接收端没有 `Absent ⇒ 派生 temp` 的 commit 入口，改写真 temp 名会让字节留在隐藏 temp
+   * 而**永不现身**。门只判**对端**等级 ⇒ 新接收端上的每条路径都走新形态（无例外）。
+   *
+   * 落点目录：接收端裁定的 `targetDir`（**已获接受**时才用；被拒 ⇒ `targetDirCode` 非空 ⇒ 回到缺省）
+   * 否则 `~/Downloads`（`~` 由**接收端** `expandTilde` 展开成接收端 home）。
+   */
+  def relayLandingPath(t: FileTransfer): String =
+    if !peerSupportsRelayTemp(t) then s"$RelayDefaultDirTilde/${t.fileName}" // 旧接收端：逐字节同今天
+    else
+      val name = receiverTempName(t.fileName, t.transferId)
+      val acceptedDir =
+        t.targetDir.map(_.trim).filter(_.nonEmpty).filter(d => t.targetDirCode.isEmpty && d.startsWith("/"))
+      acceptedDir match
+        case Some(dir) => s"$dir/$name"
+        case None      => s"$RelayDefaultDirTilde/$name"
+
+  /** 对端（**接收端**）是否支持 relay 落点收口 —— 唯一判据点（`put` / `probe` / 归属 token 共用）。 */
+  def peerSupportsRelayTemp(t: FileTransfer): Boolean =
+    t.peerProto.exists(_ >= AttachContract.ProtoRelayTemp)
 
   /** 一次「占据」尝试的四种结局（显式化；禁 null 哨兵）。 */
   private enum OccupyOutcome:
