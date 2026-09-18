@@ -830,7 +830,7 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
-        <div>${brand.productName} v${state.serverVersion || '...'}</div>
+        <div>${brand.productName} ${state.serverVersion || '...'}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
         <div style="margin-top:10px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
