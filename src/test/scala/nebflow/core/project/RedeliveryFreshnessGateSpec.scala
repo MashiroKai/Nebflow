@@ -91,7 +91,12 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
         engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
           rootSid, "freshproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题 = 重投新鲜度门 ⇒ 显式关腿 2（生产默认开）。
-          reportGateHold = Some(false))
+          reportGateHold = Some(false),
+          // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+          // 本 fixture 主题 = 补投扫描的**新鲜度门控**（F1/F3 直接数「新鲜逐条 + 历史合并
+          // 单条」的条数），打包窗会把新鲜腿攒成一条 ⇒ 与本题的条数判据正交但会改读数。
+          // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
+          rootNotifyQuietMs = Some(0))
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry

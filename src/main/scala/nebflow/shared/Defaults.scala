@@ -960,6 +960,48 @@ object Defaults:
    * 卡片持久化等待）。与 TaskStuckWatcher 卡死阈值同量级（用户有合理决策窗口）。
    */
   val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
+
+  // ── root 通道通知打包窗（notifybatch 批 2026-09-18，作者三决策）──────────────────
+  //
+  // 动因：同一族「节点终态事件」在**分发器通道**已有打包窗（`DispatchNotify` 的
+  // `NotifyBatch`，首件起算 5s 滚动窗 ⇒ N 件合并为一次注入），而**root 通道**
+  // （`NodeEngine.deliverToNebula`）逐件 offer、零缓冲 ⇒ 密集扇出在 root 侧退化为
+  // 「一条 = 一个 turn」（现网读数 `batch=1` 178/178）。本批在 root 通道补同款
+  // 生产者侧打包窗（消费侧 `AgentActor.drainHead` 与 2026-09-15 裁定**零改动**）。
+  //
+  // **只做「打包窗 + 合并注入」**：作者决策③ —— **不折叠**（无超龄阈值、无折叠摘要
+  // 行、**无 `RootNotifyFoldMs`**；既有 `deliverStaleSummary` 路径零行为改动）。
+
+  /**
+   * root 通道通知打包窗长度（`nebflow.notify.rootQuietMs`，默认 **5000 = 5s**）。
+   *
+   * 语义（照抄 `DispatchNotify.DefaultWindowMs` 滚动窗口口径）：**首件到达起算**、
+   * 不随新件延长 ⇒ 单件延迟上界 = 窗长；窗口结束时把本窗的件**合并为一次注入**
+   * （`NodeEngine.flushRootNotify`）。与 `NotifyPolicy.NotifyQuietMsDefaultMs`
+   * （`notify.quietMs`，同值 5s）**是两个通道各自的窗**，键名/语义互不隶属。
+   *
+   * **`≤ 0` = 关闭打包**（同步逐条 offer = 引入本窗之前的逐字行为）= 一个参数即回旧
+   * 行为：既是运维回滚面，也是既有 spec 的确定性接缝（spec 侧亦可用构造入参
+   * `rootNotifyQuietMs = Some(0)` 注入，避开全局 prop 的跨 suite 污染，
+   * `notifyQuietMs` / `destroyWindowMs` / `stallReNotifyMs` 同款纪律）。
+   *
+   * 每次调用现读（`sys.props.getOrElse`，`NodeDestroyWindowMs` 同款先例）。
+   */
+  def RootNotifyQuietMs: Long =
+    sys.props.getOrElse("nebflow.notify.rootQuietMs", "5000").trim.toLong
+
+  /**
+   * root 通道打包**条数上限**（`nebflow.notify.rootBatchMax`，默认 **10**）。
+   *
+   * 一次注入的上下文增量由此有界（实测单件 result 5–9 KB ⇒ 10 件 ≈ 50–90 KB，仍在
+   * 正常 turn 量级；与 `AgentActor` 的 token 纪律相容）。溢出形态 = **留队下一窗口**
+   * （作者决策③下唯一合法形态：不折叠、不降格摘要行）⇒ 批内 FIFO、批间拼接序 ==
+   * 到达顺序（对齐 2026-09-15 裁定「到达顺序不变」），**不丢件**。
+   *
+   * 每次调用现读；`< 1` 按 1 处理（防 0/负值把窗口变成死循环）。
+   */
+  def RootNotifyBatchMax: Int =
+    sys.props.getOrElse("nebflow.notify.rootBatchMax", "10").trim.toIntOption.getOrElse(10)
 end Defaults
 
 /** Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck

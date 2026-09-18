@@ -94,7 +94,16 @@ class NodeEngine(
     * `sys.props.update` 与 `System.setProperty` **写入后同进程读回均为空**（实测
     * `Obtained: None` / `Obtained: null`）⇒ 用 prop 做 spec 注入口会**静默失效**，
     * 断言只会看到默认值；故走构造器接缝）。 */
-  stallReNotifyMs: Option[Long] = None
+  stallReNotifyMs: Option[Long] = None,
+  /** root 通道通知打包窗生效值（notifybatch 批 2026-09-18）：None = 现读
+    * [[nebflow.shared.Defaults.RootNotifyQuietMs]]（生产默认 5s）；Some = spec 显式注入
+    * （`notifyQuietMs` / `destroyWindowMs` / `stallReNotifyMs` 同款接缝——本工程测试 JVM 下
+    * `sys.props`/`System.setProperty` **写入后同进程读回为空** ⇒ 用 prop 做 spec 注入口会
+    * 静默失效；`Some(0)` = 关窗，逐条等价旧行为）。 */
+  rootNotifyQuietMs: Option[Long] = None,
+  /** root 通道打包条数上限生效值（同上接缝形态）：None = 现读
+    * [[nebflow.shared.Defaults.RootNotifyBatchMax]]（生产默认 10）。 */
+  rootNotifyBatchMax: Option[Int] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
 
@@ -111,15 +120,18 @@ class NodeEngine(
     destroyWindowMs.getOrElse(nebflow.shared.Defaults.NodeDestroyWindowMs)
 
   /** blocked 反馈路由器（§2.2/§2.3）：档位决策 + 项目级频率保护 + 重入/升级执行。
-    * escalate 通道 = 本引擎的 deliverToNebula（eventType="blocked"，前端 label 自动 BLOCKED）；
-    * escalateFailed 通道 = 同型 deliverToNebula（eventType="failed"）——P2 RetryCap
-    * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。 */
+    * escalate 通道 = 本引擎的 [[enqueueRootNotify]]（eventType="blocked"，前端 label 自动 BLOCKED）；
+    * escalateFailed 通道 = 同型 [[enqueueRootNotify]]（eventType="failed"）——P2 RetryCap
+    * 升级专用（spec §2.3 G12：failed 终态真实显示，不冒充 BLOCKED）。
+    * ⚠ notifybatch 批（2026-09-18）：两条通道改走**打包入口**（决策②「异常类一并合并、
+    * 不单列」）——`nodeId=None`（fire-and-forget，不记账）语义逐字未变，只是投递节拍
+    * 由 root 通道打包窗统一（单件场景文本逐字不变）。 */
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
     feedbackMode = feedbackMode,
-    escalate = (text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Blocked),
-    escalateFailed = Some((text, nodeName) => deliverToNebula(text, nodeName, NodeLifecycle.Failed))
+    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
+    escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
   )
 
   /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed；
@@ -131,7 +143,8 @@ class NodeEngine(
   private[project] val dispatchNotify: DispatchNotify = DispatchNotify.forEngine(
     store, workspace, projectName, rootSessionId,
     // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
-    escalate = (text, nodeName) => deliverToNebula(text, nodeName, DispatchNotify.NoticeEventType),
+    // notifybatch 批（2026-09-18）：改走 root 打包入口（异常/监督通报同窗打包，决策②）。
+    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
     triggerOverride = notifyTriggerOverride,
     // M4（b64 批）：`notify.quietMs` → 打包/静默窗口（缺省 5s，上界 60s 由挂载面校验）。
@@ -2014,7 +2027,7 @@ class NodeEngine(
           //（上一分支）与**首次接线**（nebulaDeliveredAt 空）照常放行；零新字段。
           else if node.nebulaDeliveredAt.isDefined then
             logger.info(s"[dedup] redelivery '${node.name}' -> Nebula suppressed: nebulaDeliveredAt already set (persistent anchor; result already delivered)")
-          else deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+          else enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
         case t => settleTo(node, t)
 
   /** deps 满足判定（deps 设计 §1.3）：声明式状态查询（幂等、零记账），非 deliveredTo
@@ -5485,7 +5498,9 @@ class NodeEngine(
           "— completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.") *>
         markNebulaDelivered(node.id)
     else if nebulaEdges.exists(_.mode == OutEdge.Result) then
-      deliverToNebula(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+      // notifybatch 批（2026-09-18，M-2）：改走 root 打包入口（决策①生产者侧合并）；
+      // R5 抑制分支（上一支）与 `markNebulaDelivered` 记账口径**一字未动**。
+      enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
     else markNebulaDelivered(node.id)
 
   /** 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
@@ -5522,7 +5537,8 @@ class NodeEngine(
     val nebulaIO = failedEdges.filter(_.to == OutEdge.NebulaTarget) match
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
-        deliverToNebula(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
+        enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
       case _ => markNebulaDelivered(node.id)
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
@@ -5743,7 +5759,9 @@ class NodeEngine(
           emitWithChain("nodeUpdated", target.id, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' $summary") *>
             FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
-            deliverToNebula(
+            // notifybatch 批（2026-09-18）：走 root 打包入口（blocked 通报同窗打包，
+            // 决策②「异常类一并合并、不单列」）；`nodeId=None` fire-and-forget 口径不变。
+            enqueueRootNotify(
               s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
               bn.name, NodeLifecycle.Blocked)
         case _ => IO.unit
@@ -5761,8 +5779,34 @@ class NodeEngine(
     * 崩溃 → 重投扫描会再投一次，宁重复不丢失）。nodeId=None（FeedbackRouter
     * escalate 复用通道）保持 fire-and-forget——blocked 反馈本体已持久化在节点上，
     * 升级消息不进重投扫描（避免对已处置的 blocked 再升级）。根 ref 缺失时不丢弃：
-    * 不记账 → 周期重投扫描在根会话可用后补投。 */
+    * 不记账 → 周期重投扫描在根会话可用后补投。
+    *
+    * **notifybatch 批（2026-09-18）位置声明**：本方法是 root 通道**唯一 offer 单点**
+    * （`ref ! ImmediateInput` 一行**逐字未动**）＝打包窗的 **flush 出口**；所有生产调用点
+    * 改走其前置入口 [[enqueueRootNotify]]（缓冲入队 ⇒ 窗口结束合并一次 offer）。
+    * ⇒ 生产路径上本方法只被 [[flushRootNotify]] 与两条旁路（`windowMs<=0` / P0 INTERRUPT）
+    * 调用；「一条 = 一个 turn」的消费侧观感由此在**生产者侧**归零。 */
   private[project] def deliverToNebula(text: String, nodeName: String, status: String, nodeId: Option[String] = None): IO[Unit] =
+    offerRootNotify(text, nodeName, status, nodeId).void
+
+  /** **offer 结果（F-1 修复面 · 2026-09-18 作者裁定 (a)：记账必须反映交付事实）**——
+    * 三态穷尽 root 通道 offer 的全部出口；调用方据此决定**是否**逐件
+    * `markNebulaDelivered`（「先标已发、实际没发」是缺陷本体）。
+    *
+    *  - `Offered`：`ref ! ImmediateInput` **已发出** ⇒ 交付事实成立（记账依据）；
+    *  - `Suppressed`：60s 同 `(identity, status)` 窗抑制 ⇒ **未**发出。逐件腿按 V8 既有
+    *    语义**仍**记账（该键即件自身身份 ⇒ 同键前件已落地，账本与通知解耦）；
+    *    合并腿**不**据此记账——其键 = 首件 nodeName × 合并状态，**不代表**该批其余件已交付；
+    *  - `Parked`：根 ref 缺失 ⇒ **未**发出、**不**记账，件滞留 `nebulaDeliveredAt` 空态
+    *    ⇒ 30s 补投扫描重新入队（不丢件）。 */
+  private enum RootNotifyOffer:
+    case Offered
+    case Suppressed
+    case Parked
+
+  /** root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToNebula]]
+    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。 */
+  private def offerRootNotify(text: String, nodeName: String, status: String, nodeId: Option[String]): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         // 缺口4：同 (identity, status) 60s 窗口去重——抑制重复 offer（首投已入
@@ -5773,7 +5817,8 @@ class NodeEngine(
           case true =>
             logger.warn(
               s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.NebulaDedupWindowMs}ms, rootSession=$rootSessionId)") *>
-              nodeId.traverse_(id => markNebulaDelivered(id)).void
+              nodeId.traverse_(id => markNebulaDelivered(id)) *>
+              IO.pure(RootNotifyOffer.Suppressed)
           case false =>
             (ref ! AgentCommand.ImmediateInput(
               text,
@@ -5781,12 +5826,205 @@ class NodeEngine(
               eventType = Some(status),
               sender = Some(s"$projectName/$nodeName"),
               fromUser = false // ② 服务端注入（节点状态），不是真人输入
-            )) *> nodeId.traverse_(id => markNebulaDelivered(id)).void
+            )) *> nodeId.traverse_(id => markNebulaDelivered(id)) *>
+              IO.pure(RootNotifyOffer.Offered)
         }
       case None =>
-        logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)")
-        IO.unit
+        logger.warn(s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)") *>
+          IO.pure(RootNotifyOffer.Parked)
     }
+
+  // ── root 通道通知打包窗（notifybatch 批 2026-09-18；作者 2026-09-18 三决策）────────
+  //
+  // == 问题（诊断批 n-45385003 现读证据）==
+  // 同一族节点终态事件在**分发器通道**已有打包窗（`DispatchNotify.NotifyBatch`，首件
+  // 起算 5s 滚动窗 ⇒ N 件合并一次注入，现网 27 例 batch≥2），而 **root 通道**逐件
+  // offer、零缓冲 ⇒ 密集扇出在 root 侧退化为「一条 = 一个 turn」（`batch=1` 178/178）。
+  //
+  // == 方案（作者决策①：**生产者侧打包**；消费侧零改）==
+  // N 件在 producer 侧合成**一条** `ImmediateInput` ⇒ root 会话队列里恒只有一件 ⇒
+  // `AgentActor.TurnBoundaryDrains.drainHead`（2026-09-15 裁定「每条独立成 turn、
+  // 保序、禁合并语义」）**一字不改**且天然只得到一个 turn。形态**照抄**既有
+  // `DispatchNotify`：滚动窗 + 首件起算（不随新件延长）+ 窗口结束合并注入 +
+  // `windowMs<=0` 同步逐条（= 引入本窗之前的逐字行为，测试接缝/回滚面）。
+  //
+  // == 分层（作者决策②：**只保留一档**）==
+  // 仅 **INTERRUPT/P0 不合并**（[[isRootNotifyInterrupt]]，逐条即时、不进缓冲）；
+  // `completed` / `failed` / `blocked` / `cancelled` / `notice` **同窗打包、不单列**
+  // （异常类一并合并、统一密度——决策②明文）。
+  //
+  // == 不折叠（作者决策③）==
+  // **无超龄阈值、无折叠摘要行、无 `RootNotifyFoldMs`**：窗口内一律投**正文全文**
+  // （合并 ≠ 摘要 ≠ 丢弃）；既有 `deliverStaleSummary`（>24h 历史欠账，`redeliver`
+  // 扫描腿）**零行为改动**，只是与新窗并存。
+  //
+  // == 顺序 / 不丢不重 / at-least-once ==
+  // 批内 FIFO、批间按窗口先后 ⇒ 拼接读出的 nodeId 序列 == 到达序列（决策①不破
+  // 2026-09-15「到达顺序不变」）。上限 = [[rootNotifyBatchMaxValue]]，**溢出留队下一
+  // 窗口**（决策③下唯一合法形态：不降格摘要行），故不丢件。窗口是**进程内**状态
+  // （照抄 `DispatchNotify`）：崩溃即丢缓冲，但件**未** `markNebulaDelivered` ⇒ 仍在
+  // [[redeliverUnconsumedNebulaResults]] 候选集，重启后补投 ⇒ at-least-once 不破。
+  // **tell-then-mark 序不变**：flush 的 offer 成功后才逐件记账（`:5784` 语义原样）。
+  // 缓冲层按 `(identity, status)` 去重（与 `dedupeNebulaDelivery` 同键）：实时腿入队后、
+  // flush 记账前的 30s 补投扫描撞窗时，同一件不得重复注入。
+
+  /** root 打包条目（`nodeId=None` 的 escalate/notice 腿以 nodeName 作身份，
+    * 与 [[dedupeNebulaDelivery]] 的 identity 口径同源）。 */
+  private case class RootNotifyEntry(text: String, nodeName: String, status: String, nodeId: Option[String]):
+    def identity: String = nodeId.getOrElse(nodeName)
+
+  /** 缓冲状态：`entries` = 本窗（+溢出留队）尚未注入的件，FIFO；`windowArmed` = 本窗
+    * 计时是否已在走（防同窗第二件重复起算 ⇒ 保持「首件起算、不随新件延长」）。 */
+  private case class RootNotifyBatchState(
+      entries: Vector[RootNotifyEntry] = Vector.empty,
+      windowArmed: Boolean = false
+  )
+
+  private val rootNotifyBatchState: Ref[IO, RootNotifyBatchState] =
+    Ref.unsafe[IO, RootNotifyBatchState](RootNotifyBatchState())
+
+  /** 生效窗长（现读；spec 走构造入参接缝 `rootNotifyQuietMs`）。 */
+  private[project] def rootNotifyQuietMsValue: Long =
+    rootNotifyQuietMs.getOrElse(nebflow.shared.Defaults.RootNotifyQuietMs)
+
+  /** 生效条数上限（现读；`< 1` 归一到 1，防 0/负值把窗口变成永不排空）。 */
+  private[project] def rootNotifyBatchMaxValue: Int =
+    math.max(1, rootNotifyBatchMax.getOrElse(nebflow.shared.Defaults.RootNotifyBatchMax))
+
+  /** 只读读数（spec/验收机械核对「已入队未注入件数」，不写状态、不派发）。 */
+  private[project] def rootNotifyPendingCount: IO[Int] = rootNotifyBatchState.get.map(_.entries.size)
+
+  /** 只读读数（本窗计时是否在走）。 */
+  private[project] def rootNotifyWindowArmed: IO[Boolean] = rootNotifyBatchState.get.map(_.windowArmed)
+
+  /** **P0（不合并）判据单点**（作者决策②：分层只保留这一档）。
+    *
+    * 机械判据（零新字段、零 schema 变更）：`status ∈ {"interrupt", "immediate"}`
+    * （大小写不敏感）。本通道的 `status` 形参即 `ImmediateInput.eventType`
+    * （`deliverToNebula` 第 3 参）——`"interrupt"` 是 `NotificationHeader.StateLabels`
+    * 既有词表项（`NotificationHeader.scala:98`），`"immediate"` 是 `delivery=immediate`
+    * 在本通道的同义机械载体（本方法无 `delivery` 形参，而 `delivery` 只挂在
+    * `ImmediateInput`/`UserInput` 上、其生产者为 Mail/deviceMail 腿——**本批零触碰**）。
+    * 该档**不进任何缓冲**（不入队、不受窗长约束）⇒ 打事件序在前、单独成条（A3/R7）。
+    * 其余全部同窗打包（含 `failed`/`blocked`/`cancelled`——决策②「异常类一并合并」）。 */
+  private def isRootNotifyInterrupt(status: String): Boolean =
+    val s = status.trim.toLowerCase(java.util.Locale.ROOT)
+    s == "interrupt" || s == "immediate"
+
+  /** **root 通知打包入口（生产者侧合并，决策①）**：节点终态投根的**唯一入口**
+    * （`nebulaDelivery` / `deliverFailed` / `mergeBlockedByUpstreamFailure` /
+    * `deliverOutTo` 手动重投腿 / 补投扫描 fresh 腿 / FeedbackRouter·DispatchNotify
+    * escalate 腿**六路同入口**）——offer 单点 [[deliverToNebula]] 前插入本层。
+    *
+    * 三条旁路（不进缓冲、直接 offer = 逐字旧行为）：
+    *   ① `windowMs <= 0`（关窗 = 回滚面/测试接缝）；
+    *   ② P0 INTERRUPT 档（[[isRootNotifyInterrupt]]，决策②唯一豁免档）；
+    *   ③ 该件已在缓冲中（`(identity, status)` 同键，防补投扫描撞窗重复注入）。
+    * 其余：入队 + **首件**起算滚动窗；窗口结束时 [[flushRootNotify]] 合并注入一条。 */
+  private[project] def enqueueRootNotify(
+      text: String,
+      nodeName: String,
+      status: String,
+      nodeId: Option[String] = None
+  ): IO[Unit] =
+    val windowMs = rootNotifyQuietMsValue
+    if windowMs <= 0 || isRootNotifyInterrupt(status) then deliverToNebula(text, nodeName, status, nodeId)
+    else
+      val entry = RootNotifyEntry(text, nodeName, status, nodeId)
+      rootNotifyBatchState
+        .modify { s =>
+          if s.entries.exists(e => e.identity == entry.identity && e.status == entry.status) then (s, false)
+          else
+            val armWindow = !s.windowArmed
+            (RootNotifyBatchState(s.entries :+ entry, windowArmed = true), armWindow)
+        }
+        .flatMap { armWindow =>
+          if armWindow then (IO.sleep(windowMs.millis) *> flushRootNotify()).start.void else IO.unit
+        }
+
+  /** **窗口结束的唯一出口**（M-3）：按上限取队首 ≤N 件 → **一次** offer（N=1 ⇒ 文本
+    * 逐字不变；N≥2 ⇒ 正文分节 + header 保守）→ 逐件记账。
+    *
+    * **记账序（V8 tell-then-mark；F-1 修复面 · 2026-09-18 作者裁定 (a)：「记账必须反映
+    * 交付事实」）**：合并腿**只有 offer 真的落地**（`RootNotifyOffer.Offered`，即
+    * `ref ! ImmediateInput` 已发出）才 `traverse_(markNebulaDelivered)`。两条**未落地**
+    * 路径一律**不记账** ⇒ 件留在 `nebulaDeliveredAt` 空态、下轮 30s 补投扫描重新入队
+    * （不丢件；宁重复不丢失）：
+    *   ① 根 ref 缺失（`Parked`——`deliverToNebula` 只 WARN + 不记账，`:5789` 语义原样）；
+    *   ② 60s 同键窗抑制（`Suppressed`——**未**发出；合并腿的键 = 首件 nodeName × 合并
+    *      状态，不代表该批其余件已交付）。
+    * 单件腿（`case one :: Nil`）走 [[deliverToNebula]] 原路径**逐字保留**（抑制/落地两态
+    * 均记账，键 = 件自身身份）；`private[project]`：spec 可显式驱动（上限/保序用例无需等
+    * 真实窗长）。 */
+  private[project] def flushRootNotify(): IO[Unit] =
+    rootNotifyBatchState
+      .modify { s =>
+        val (drained, rest) = s.entries.splitAt(rootNotifyBatchMaxValue)
+        // 本窗排空：溢出件留队 ⇒ 计时随之下一次起算（不延续本窗残时）
+        (RootNotifyBatchState(rest, windowArmed = rest.nonEmpty), drained)
+      }
+      .flatMap { drained =>
+        if drained.isEmpty then IO.unit
+        else
+          val entries = drained.toList
+          val offer = entries match
+            // 单件：文本 / header / 去重键 / 记账**逐字同今天**（A2 单件零漂移）
+            case one :: Nil => deliverToNebula(one.text, one.nodeName, one.status, one.nodeId)
+            // 多件：正文分节 + header 保守（T-6(a)：不新增 header 语义 ⇒ `NotificationHeader`
+            // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；**落地才**逐件记账
+            case many =>
+              offerRootNotify(
+                mergedRootNotifyText(many),
+                many.head.nodeName,
+                mergedRootNotifyStatus(many),
+                nodeId = None
+              ).flatMap {
+                // F-1（作者裁定 (a)）：`Offered` = 交付事实成立 ⇒ 逐件记账；`Parked`/`Suppressed`
+                // = 本批**没发出去** ⇒ 一件都不记（否则件被标已发却未发、补投判据
+                // `n.nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久丢失，宁重复不丢失）。
+                case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markNebulaDelivered)
+                case _                       => IO.unit
+              }
+          offer *>
+            logger.info(
+              "root-notify batch flushed",
+              "event" -> "root-notify-batch-flushed",
+              "batch" -> entries.size.toString,
+              "windowMs" -> rootNotifyQuietMsValue.toString,
+              "nodes" -> entries.map(_.identity).mkString(",")
+            ) *>
+            rearmRootNotifyWindowIfPending
+      }
+
+  /** 溢出留队 ⇒ 下一窗口（决策③：不折叠、不降格摘要行 ⇒ 唯一合法形态 = 留队）。
+    * 只由 [[flushRootNotify]] 尾调：单点排空 ⇒ 无并发双排空（每次 flush 恒由上一窗
+    * 的出口链式驱动，或由 spec 显式调用）。 */
+  private def rearmRootNotifyWindowIfPending: IO[Unit] =
+    rootNotifyBatchState.get.flatMap { s =>
+      if s.entries.nonEmpty then (IO.sleep(rootNotifyQuietMsValue.millis) *> flushRootNotify()).start.void
+      else IO.unit
+    }
+
+  /** 合并正文（N≥2 才被调用）：批头一行 + 逐件分节，**每件正文全文**（决策③不折叠 ⇒
+    * 无摘要行、无截断）+ 每件带 `status` 与 `nodeId` ⇒ 机械可核（多重集/保序/不丢）。
+    * 分节行形如 `── [i/N] [status] <nodeName> (<nodeId>) ──`（nodeId 缺失时回落
+    * nodeName，与 [[RootNotifyEntry.identity]] 同口径）。 */
+  private def mergedRootNotifyText(entries: List[RootNotifyEntry]): String =
+    val head = s"[Node 本批 ${entries.size} 件终态通知（root 通道打包窗合并，项目 $projectName）]"
+    val body = entries.zipWithIndex
+      .map((e, i) => s"── [${i + 1}/${entries.size}] [${e.status}] ${e.nodeName} (${e.identity}) ──\n${e.text}")
+      .mkString("\n\n")
+    s"$head\n$body"
+
+  /** 合并件的 header `eventType`（保守：沿用既有字段与既有词表，不新增批级语义）。
+    * 强提醒优先（口径同既有 [[deliverStaleSummary]]：混含 failed ⇒ `failed`）：
+    * failed > blocked > cancelled > 首件 status（全 completed ⇒ `completed`）。
+    * ⚠ 逐件真实状态在**正文分节行**内（header 只表达本批的主状态）。 */
+  private def mergedRootNotifyStatus(entries: List[RootNotifyEntry]): String =
+    if entries.exists(_.status == NodeLifecycle.Failed) then NodeLifecycle.Failed
+    else if entries.exists(_.status == NodeLifecycle.Blocked) then NodeLifecycle.Blocked
+    else if entries.exists(_.status == NodeLifecycle.Cancelled) then NodeLifecycle.Cancelled
+    else entries.head.status
 
   /** 链级摘要**降级登记**（作者 2026-09-16 裁定「**全部降级列表态**」；本批前语义 = 投根）。
     *
@@ -5908,7 +6146,10 @@ class NodeEngine(
           // MUTATION-2 已恢复：新鲜度门控（缺口2）——completedAt 距今 ≤24h 逐条、>24h 合并
           (fresh, stale) = pending.partition(n => n.completedAt.forall(c => now - c <= NodeEngine.StaleRedeliveryMs))
           _ <- fresh.traverse_(n =>
-            deliverToNebula(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id)))
+            // notifybatch 批（2026-09-18，M-4）：fresh 腿改走**同一打包入口**（与实时腿
+            // 同窗同 digest 形态 ⇒ 补投扫描撞窗时合并而非逐件补投）；stale 腿
+            // [[deliverStaleSummary]]（>24h 合并摘要，唯一现存合并点）**零行为改动**。
+            enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id)))
           _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
           _ <- if pending.nonEmpty then
             logger.info(s"Node redelivery scan: re-delivered ${pending.size} unconsumed out=Nebula result(s) to root '$rootSessionId' (fresh=${fresh.size} stale-merged=${stale.size} fixture-excluded=${fixtures.size})")

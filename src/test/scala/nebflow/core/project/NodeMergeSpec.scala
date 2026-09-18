@@ -276,7 +276,12 @@ class NodeMergeSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+        // 本 fixture 主题 = merge 被上游 blocked/failed 时的 escalation 可见性（S2/S3），
+        // 其断言要求该通报**即时**到达 root（窗语义下最多晚 `rootNotifyQuietMs`）。
+        // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
+        rootNotifyQuietMs = Some(0)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)

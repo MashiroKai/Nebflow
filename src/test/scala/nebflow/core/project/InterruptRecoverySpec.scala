@@ -159,7 +159,12 @@ class InterruptRecoverySpec extends CatsEffectSuite:
         emitEvent = (t, id, payload) =>
           wsFrames.fold(IO.unit)(_.update(_ :+ io.circe.Json.obj(
             "type" -> t.asJson, "nodeId" -> id.asJson, "node" -> payload))),
-        reportGateHold = Some(false)
+        reportGateHold = Some(false),
+        // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+        // 本 fixture 主题 = 中断恢复的 failed 通报（R1a/R1b），其断言要求
+        // `[Node '<n>' failed]` **即时**到达 root（窗语义下最多晚 `rootNotifyQuietMs`）。
+        // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
+        rootNotifyQuietMs = Some(0)
       )
       pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
       rt = ProjectRuntime(pd, store, engine, system, res, None)

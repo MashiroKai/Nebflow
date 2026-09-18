@@ -89,7 +89,13 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
           rootSid, "dedupproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题 = 投递去重记账 ⇒ 显式关腿 2（生产默认开）。
-          reportGateHold = Some(false))
+          reportGateHold = Some(false),
+          // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
+          // 本 fixture 主题 = **60s 去重窗**下的投递条数（P1/P2 直接数注入件），打包窗
+          // 会把「窗口内几件」先攒起来，两个窗叠加使判据不可判 ⇒ 关掉**另一个**窗（root
+          // 打包窗），只留本 spec 要测的那一个。窗本体由 `RootNotifyBatchSpec` 专项覆盖；
+          // 🔴 原断言一字未改。
+          rootNotifyQuietMs = Some(0))
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry
