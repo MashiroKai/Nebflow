@@ -111,8 +111,12 @@ class DeferredWiringSpec extends CatsEffectSuite:
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
+  // 建位期声明闸（nodegate 批 0accce90e「四项④」NODE_PLUGINS_UNDECLARED，判据源
+  // NodeTools.scala:1424）：建位必须**显式声明**能力面——`plugins=[]` = 显式「无需
+  // 能力面」（本 spec 全域零插件）。同形先例：NodeEdgeRepairSpec.scala:146 /
+  // NodeBlockedToolSignalSpec.scala:174（同批注入的 `("plugins" -> Json.arr())`）。
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   /** verifier 创建/编辑输入（role create-only ⇒ 必须建点声明；fail 路由 = `:loop` 控制边）。 */
   private def verifierInput(project: String, nodename: String, out: String): Json =
