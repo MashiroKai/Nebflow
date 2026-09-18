@@ -4241,12 +4241,25 @@ class RestApiRoutes(
                     Status.Ok
                   )
               }
-              .handleErrorWith(e =>
-                htmlResponse(
-                  switchNoticePage("!", "#d1242f", "续登失败", s"发起登录失败：${e.getMessage}"),
-                  Status.Ok
+              // 🔴 缺陷 A 返工（round 1 / 判词 D1）：本页是**用户可见**的换号续登失败页。
+              // `e.getMessage` 直出会把整条 authorize URL、PKCE `state` 值与文件系统路径
+              // 一起送到用户眼前（判词探针 P7 原文：`发起登录失败：Invalid URI:
+              // C:\Users\…\bad endpoint/oidc/auth?…&state=…` ⇒ 判据正则命中 2）。
+              // 改走同文件既有的**分类通道**（与 `:981-990`（end-session 意外失败）/
+              // `:4423-4431`（回调 `Left(e)` 支）**同形**，零新轮子）：三段式
+              // （原因 + 动作 + 稳定诊断码）进页面，原始细节（异常类名 / 路径 / URL）
+              // **只**进 WARN。页面的其它语义（headline / 状态码 / 单窗口续登契约）零改动。
+              .handleErrorWith { e =>
+                val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                  e,
+                  nebflow.neblink.CredentialFailure.Unclassified
                 )
-              )
+                logger.warn(diagnostic.logLine("switch continue login failed"), "code" -> diagnostic.code) *>
+                  htmlResponse(
+                    switchNoticePage("!", "#d1242f", "续登失败", diagnostic.message),
+                    Status.Ok
+                  )
+              }
     }
 
   /** The 8-step local teardown shared by POST /neblink/logout and the

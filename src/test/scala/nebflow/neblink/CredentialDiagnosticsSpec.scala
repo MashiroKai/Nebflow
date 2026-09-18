@@ -8,6 +8,64 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
+/** 缺陷 A 测试面共用件（round 1 起）：**用户可见串三重判据** + **WARN 采集器**。
+  *
+  * 三重判据（round 1 / 判词 D4 的落地）—— 本 spec 与两个路由 spec 共用**一份**
+  * （禁各写一份，同「唯一文案源」纪律）。
+  * 为什么单靠判别正则不够：`CredentialDiagnostics.ForbiddenInVisibleText` 的 `[A-Za-z]:\\`
+  * 只覆盖 Windows 盘符 ⇒ **POSIX/macOS 绝对路径在当前正则下可静默通过**（判词实测：
+  * 变异 A 下探针 P1 原文含 `/var/folders/…/device.json`，而正则命中 = **0**）。故在正则
+  * 之外**追加**两条与平台无关的断言，并把三类读数逐条给出（[[violations]] 空 = 干净）：
+  *   ① 判据正则零命中（Windows 盘符 / `java.` / `Exception` / `.nebflow`）；
+  *   ② 不含**本次 data-root 路径**（调用点传入，不用硬编码常量）；
+  *   ③ 不含凭据文件名 `device.json`。
+  */
+private[neblink] object LogdevTestSupport:
+
+  private val Forbidden = CredentialDiagnostics.ForbiddenInVisibleText.r
+
+  /** 逐类违规读数（空列表 = 三重判据全过）。 */
+  def violations(s: String, dataRoot: os.Path): List[String] =
+    val hits = Forbidden.findAllMatchIn(s).map(_.matched).toList
+    List(
+      Option.when(hits.nonEmpty)(s"判据正则命中=$hits"),
+      Option.when(s.contains(dataRoot.toString))(s"data-root 路径泄漏=$dataRoot"),
+      Option.when(s.contains("device.json"))("凭据文件名泄漏=device.json")
+    ).flatten
+
+  def isClean(s: String, dataRoot: os.Path): Boolean = violations(s, dataRoot).isEmpty
+
+  /** 根 logger 上的 WARN 采集器：对「哪条腿打了哪条 WARN」做统一断言
+    * （存储层与诊断层用的是两个 logger 名 ⇒ 只有挂根 logger 才看得全）。 */
+  def withWarns[A](f: => A): (A, List[String]) =
+    val lb = org.slf4j.LoggerFactory
+      .getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME)
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val app = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    app.start()
+    lb.addAppender(app)
+    try
+      val out = f
+      (out, app.list.asScala.toList
+        .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+        .map(_.getFormattedMessage))
+    finally lb.detachAppender(app)
+
+  /** 同上，但采集**一段 IO 执行期间**的 WARN（路由腿用：读点在被测 IO 内部，
+    * 不能在 IO 外用同步 thunk 夹取）。 */
+  def withWarnsIO[A](io: cats.effect.IO[A]): cats.effect.IO[(A, List[String])] =
+    val lb = org.slf4j.LoggerFactory
+      .getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME)
+      .asInstanceOf[ch.qos.logback.classic.Logger]
+    val app = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+    for
+      out <- cats.effect.IO(app.start()) *> cats.effect.IO(lb.addAppender(app)) *> io
+        .guarantee(cats.effect.IO(lb.detachAppender(app)))
+      warns <- cats.effect.IO(app.list.asScala.toList
+        .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+        .map(_.getFormattedMessage))
+    yield (out, warns)
+
 /** 缺陷 A（2026-09-18 换号登录失败批）· **失败分类断言钉** + 文案负控
   * （上游 §8.2 第 9 项 / §10.2 判据 G2·G3·G4）。
   *
@@ -19,9 +77,15 @@ import scala.jdk.CollectionConverters.*
   *     （`credential-unreadable` / `credential-undecodable` / `credential-write-denied` /
   *     `credential-delete-denied`），且 `load` / `clear` **永不抛**（判据 G4①②：读失败与
   *     坏件都不许把 `/status` 打成 500）。
+  *     🔴 **round 1 补正（判词 D2）**：三条腿的夹具改为**平台中立**形态（[[occupyCredPathWithDir]]：
+  *     凭据落点放一个非空目录）⇒ 修前那 3 处 `assume(!CredentialFileAcl.isWindows(…))` 平台守卫
+  *     **结构性去除**，本 spec 现在**零 `assume`**；判据一字未放宽，且新增「兼容面 `load` 也走
+  *     真实读失败腿」与「删失败时第①级改名留档必成」两条读数。
   *  R2 **文案负控**（判据 G2/G3）：全分类表 × **最脏 detail**（Windows 路径 + `java.nio`
-  *     异常类名）⇒ 用户可见串对判据正则**零命中**；并带**正控**（脏串必须能命中 —— 否则
-  *     负控是空断言）。
+  *     异常类名）⇒ 用户可见串过**三重**判据（[[LogdevTestSupport]]：判据正则 + 不含 data-root
+  *     路径 + 不含 `device.json`；round 1 判词 D4 追加后两条 —— 判据正则的 `[A-Za-z]:\\` 只覆盖
+  *     Windows 盘符，POSIX 绝对路径在它下面会静默通过）；并带**正控**（脏串必须能命中、
+  *     POSIX 泄漏必须被追加的两条拦住 —— 否则负控是空断言）。
   *  R3 **坏件自愈**（判据 G4③④）：坏件 ⇒ 盘上出现**一次性**备份件 + 恰好**一条**带分类码的
   *     WARN；第二次读不再改名/不再刷日志，但分类读数仍在。
   *  R4 **镜像漂移**：`neblink.js` 的 `LOCAL_FILE_CODES` 与后端 `CredentialFailure` 的本地
@@ -66,49 +130,49 @@ class CredentialDiagnosticsSpec extends FunSuite:
     if !Files.exists(neblinkDir.toNIO) then Nil
     else os.list(neblinkDir).toList.map(_.last).filter(_.startsWith("device.json.corrupt-"))
 
-  /** 根 logger 上的 WARN 采集器（存储层与诊断层用的是两个 logger 名 ⇒ 挂根 logger
-    * 才能对「哪条腿打了哪条 WARN」做统一断言）。 */
-  private def withWarns[A](f: => A): (A, List[String]) =
-    val lb = org.slf4j.LoggerFactory
-      .getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME)
-      .asInstanceOf[ch.qos.logback.classic.Logger]
-    val app = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
-    app.start()
-    lb.addAppender(app)
-    try
-      val out = f
-      (out, app.list.asScala.toList
-        .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
-        .map(_.getFormattedMessage))
-    finally lb.detachAppender(app)
+  /** WARN 采集器（共用件，见 [[LogdevTestSupport.withWarns]]）。 */
+  private def withWarns[A](f: => A): (A, List[String]) = LogdevTestSupport.withWarns(f)
 
   private def writeCredentialJson(json: String): Unit =
     Files.createDirectories(neblinkDir.toNIO)
     Files.writeString(credFile.toNIO, json)
 
-  private def chmodDir(mode: String): Unit =
-    Files.setPosixFilePermissions(neblinkDir.toNIO, PosixFilePermissions.fromString(mode))
-
-  private val GoodJson =
-    """{"serverUrl":"https://neblink.example","networkId":"n-1","deviceId":"d-1"}"""
+  /** 平台中立的「本机凭据打不开 / 删不掉」夹具（round 1 / 判词 D2 的落地）。
+    *
+    * 形态：在 `device.json` 的**位置**上放一个**非空目录**。
+    *  - 读它会抛 `IOException`（POSIX `IsADirectoryException` / Windows `AccessDeniedException`）；
+    *  - 删它会失败（POSIX `DirectoryNotEmptyException` / Windows `AccessDeniedException`）；
+    *  - 两者都是 `IOException` ⇒ 与修前的 `chmod 000` 夹具走**同一条分类边**
+    *    （`CredentialDiagnostics.classify` 只看**操作面**，不看异常类型）。
+    *
+    * 为什么换掉 `chmod 000`（判词 D2）：`Files.setPosixFilePermissions` 只在 POSIX 上存在，
+    * 那三处夹具因此要靠 `assume(!isWindows)` 平台守卫，等于在 Windows 上**整条腿不判**。
+    * 本夹具在任何平台都能构造 ⇒ 三处平台守卫**结构性去除**（本 spec 现在零 `assume`），
+    * 而判据（读失败 ⇒ `credential-unreadable` / 写失败 ⇒ `credential-write-denied` /
+    * 删失败 ⇒ `credential-delete-denied`）一字未放宽。 */
+  private def occupyCredPathWithDir(): Unit =
+    Files.createDirectories(credFile.toNIO)
+    Files.writeString(credFile.toNIO.resolve("occupied-by-a-directory.txt"), "not a credential file")
 
   // ── R1 分类可二值判读 ───────────────────────────────────
 
-  test("R1a 读失败（文件打不开）⇒ LoadDiagnosed 分类 credential-unreadable；load 永不抛") {
-    assume(!nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName), "POSIX chmod")
-    writeCredentialJson(GoodJson)
-    Files.setPosixFilePermissions(credFile.toNIO, PosixFilePermissions.fromString("---------"))
-    val (both, warns) = withWarns {
-      val diagnosed = DeviceCredential.loadDiagnosed.unsafeRunSync()
-      val plain = DeviceCredential.load.unsafeRunSync()
-      (diagnosed, plain)
-    }
-    val (outcome, reads) = both
-    assertEquals(outcome.left.toOption.map(_.code), Some(CF.CredentialUnreadable.code))
-    assertEquals(reads, None, "load 是兼容面：读失败 ⇒ None（**不抛**：判据 G4①②）")
+  test("R1a 读失败（凭据落点不是可读文件）⇒ LoadDiagnosed 分类 credential-unreadable；load 永不抛") {
+    // 两条腿**各自**走一次真实读失败：第一次 `loadDiagnosed` 会顺手自愈（改名留档），
+    // 故复位闩 + 重布夹具，让兼容面 `load` 也真的落在「读失败」腿上（不是落在自愈后的空态）。
+    occupyCredPathWithDir()
+    val (diagnosed, warnsDiag) = withWarns(DeviceCredential.loadDiagnosed.unsafeRunSync())
+    DeviceCredential.resetSelfHealForTest()
+    occupyCredPathWithDir()
+    val (plain, warnsPlain) = withWarns(DeviceCredential.load.unsafeRunSync())
+    assertEquals(diagnosed.left.toOption.map(_.code), Some(CF.CredentialUnreadable.code))
+    assertEquals(plain, None, "load 是兼容面：读失败 ⇒ None（**不抛**：判据 G4①②）")
     assert(
-      warns.exists(_.contains(CF.CredentialUnreadable.code)),
-      s"读失败必须留一条带分类码的 WARN（判据 G4④），实际: $warns"
+      warnsDiag.exists(_.contains(CF.CredentialUnreadable.code)),
+      s"读失败必须留一条带分类码的 WARN（判据 G4④），实际: $warnsDiag"
+    )
+    assert(
+      warnsPlain.exists(_.contains(CF.CredentialUnreadable.code)),
+      s"兼容面 load 的读失败同样不得静默（判据 G4④），实际: $warnsPlain"
     )
   }
 
@@ -120,36 +184,33 @@ class CredentialDiagnosticsSpec extends FunSuite:
     assert(warns.exists(_.contains(CF.CredentialUndecodable.code)), s"缺带分类码的 WARN: $warns")
   }
 
-  test("R1c 写失败 ⇒ save 抛 CredentialStoreError（分类 credential-write-denied），WARN 带码") {
-    assume(!nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName), "POSIX chmod")
-    Files.createDirectories(neblinkDir.toNIO)
-    chmodDir("r-x------") // 目录不可写 ⇒ 原子写的 tmp 落不下去
+  test("R1c 写失败（落点被非空目录占用）⇒ save 抛 CredentialStoreError（分类 credential-write-denied），WARN 带码") {
+    occupyCredPathWithDir() // 原子写的 rename 落不到目标上（目标是非空目录）
     val cred = DeviceCredential("https://neblink.example", "n-1", "d-1", "tok")
-    try
-      val (result, warns) = withWarns(
-        DeviceCredential.save(cred, nebflow.core.CredentialFileAcl.systemPort,
-          nebflow.core.CredentialFileAcl.currentOsName).attempt.unsafeRunSync()
-      )
-      val failure = result.left.toOption.collect {
-        case e: CD.CredentialStoreError => e.diagnostic.code
-      }
-      assertEquals(failure, Some(CF.CredentialWriteDenied.code),
-        "写失败必须带上分类（不是裸 IOException —— 裸异常正是缺陷原形）")
-      assert(warns.exists(_.contains(CF.CredentialWriteDenied.code)), s"缺带分类码的 WARN: $warns")
-      // 分类 → 用户可见文案：走 Left 通道的那份文本必须干净且带码。
-      assert(!CD.classifyFailure(result.left.toOption.getOrElse(new Exception("x"))).message
-        .contains("java."), "用户可见文案不得含异常类名")
-    finally chmodDir("rwx------")
+    val (result, warns) = withWarns(
+      DeviceCredential.save(cred, nebflow.core.CredentialFileAcl.systemPort,
+        nebflow.core.CredentialFileAcl.currentOsName).attempt.unsafeRunSync()
+    )
+    val failure = result.left.toOption.collect {
+      case e: CD.CredentialStoreError => e.diagnostic.code
+    }
+    assertEquals(failure, Some(CF.CredentialWriteDenied.code),
+      "写失败必须带上分类（不是裸 IOException —— 裸异常正是缺陷原形）")
+    assert(warns.exists(_.contains(CF.CredentialWriteDenied.code)), s"缺带分类码的 WARN: $warns")
+    // 分类 → 用户可见文案：走 Left 通道的那份文本必须干净且带码。
+    assert(!CD.classifyFailure(result.left.toOption.getOrElse(new Exception("x"))).message
+      .contains("java."), "用户可见文案不得含异常类名")
   }
 
-  test("R1d 删失败 ⇒ clear 永不抛（登出腿必须完成本地拆除）+ 带码 WARN") {
-    assume(!nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName), "POSIX chmod")
-    writeCredentialJson(GoodJson)
-    chmodDir("r-x------") // 目录不可写 ⇒ 删不掉
-    try
-      val (_, warns) = withWarns(DeviceCredential.clear.unsafeRunSync())
-      assert(warns.exists(_.contains(CF.CredentialDeleteDenied.code)), s"缺带分类码的 WARN: $warns")
-    finally chmodDir("rwx------")
+  test("R1d 删失败（落点被非空目录占用）⇒ clear 永不抛（登出腿必须完成本地拆除）+ 带码 WARN") {
+    occupyCredPathWithDir() // 非空目录 ⇒ `os.remove` 失败（不是「文件不在了」的空态）
+    val (_, warns) = withWarns(DeviceCredential.clear.unsafeRunSync())
+    assert(warns.exists(_.contains(CF.CredentialDeleteDenied.code)), s"缺带分类码的 WARN: $warns")
+    // 两级处置的第①级：改名留档仍应成功（改名只需父目录权限）⇒ 坏件不挡「清理并重登」。
+    assert(
+      !os.exists(credFile) && backupNames.nonEmpty,
+      s"删不掉时必须尝试改名留档（第①级处置）: backups=$backupNames"
+    )
   }
 
   test("R1e 分类码 → 可见文案的反查是恒等映射（Left 通道的自由串靠它回到结构化）") {
@@ -177,18 +238,28 @@ class CredentialDiagnosticsSpec extends FunSuite:
 
   // ── R2 文案负控（判据 G2/G3）────────────────────────────
 
-  test("R2a 全表负控：最脏 detail 下，用户可见串对判据正则零命中") {
+  test("R2a 全表负控：最脏 detail 下，用户可见串对判据正则零命中（并追加 data-root / device.json 二重断言）") {
     // 正控（防空断言）：脏串必须真的能命中判据正则。
     assert(!CD.isCleanVisibleText("java.nio.file.AccessDeniedException: C:\\x\\.nebflow\\neblink\\device.json"))
     assert(!CD.isCleanVisibleText("Failed to read /.nebflow/neblink/device.json"))
     assert(CD.isCleanVisibleText("本机凭据文件打不开（权限或占用）"))
+    // D4 二重断言的正控：POSIX 绝对路径**不命中**判据正则（这正是要补这两条的理由）
+    // —— 故只靠正则时它是「干净」的，必须由 data-root / 文件名两条断言拦住。
+    val posixLeak = s"不能读取 $root/neblink/device.json"
+    assert(CD.isCleanVisibleText(posixLeak), "判据正则对 POSIX 绝对路径零命中（判词 D4 实测形态）")
+    assert(LogdevTestSupport.violations(posixLeak, root).length == 2,
+      s"data-root 与 device.json 两条断言必须各自命中: ${LogdevTestSupport.violations(posixLeak, root)}")
 
     val dirty = "java.nio.file.AccessDeniedException: C:\\Users\\kaiyu\\.nebflow\\neblink\\device.json"
     CD.all.foreach { f =>
       val d = CD.diagnosticOf(f, dirty)
-      assert(CD.isCleanVisibleText(d.message), s"$f 的 message 命中禁项: ${d.message}")
-      assert(CD.isCleanVisibleText(d.reason), s"$f 的 reason 命中禁项: ${d.reason}")
-      assert(CD.isCleanVisibleText(d.action), s"$f 的 action 命中禁项: ${d.action}")
+      List(
+        s"$f.message" -> d.message,
+        s"$f.reason" -> d.reason,
+        s"$f.action" -> d.action
+      ).foreach { case (tag, s) =>
+        assertEquals(LogdevTestSupport.violations(s, root), Nil, s"$tag 三条判据必须全过: $s")
+      }
       // 三段式形态 + 稳定码（判据 G2：错误面必须能机械判读）。
       assert(d.message.contains(s"诊断码：${f.code}"), s"$f 的 message 缺诊断码")
       assert(d.message.startsWith("登录失败："), s"$f 的 message 缺三段式首句")
@@ -206,11 +277,11 @@ class CredentialDiagnosticsSpec extends FunSuite:
         "it explicitly (same account as another instance ⇒ one live session, the older one is kicked)."
     val d = CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, guardReason)
     assert(d.reason.contains("isolated data root"), "案 C：护栏原文必须照实出现在可见原因里")
-    assert(CD.isCleanVisibleText(d.message), "护栏文案本身必须干净（判据 G3）")
+    assertEquals(LogdevTestSupport.violations(d.message, root), Nil, "护栏文案本身必须干净（判据 G3）")
     // 反控（可见面闸门）：脏 detail 不得借「案 C 例外」通道进可见面，但必须原样留在日志面。
     val dirty = "java.nio.file.AccessDeniedException: C:\\Users\\kaiyu\\.nebflow\\neblink\\device.json"
     val g = CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, dirty)
-    assert(CD.isCleanVisibleText(g.message), "例外分支也必须过可见面闸门（不变量无条件）")
+    assertEquals(LogdevTestSupport.violations(g.message, root), Nil, "例外分支也必须过可见面闸门（不变量无条件）")
     assert(g.detail == dirty, "原文仍须进日志面（可归因，不许连日志一起吞）")
   }
 
@@ -322,7 +393,7 @@ class CredentialDiagnosticsSpec extends FunSuite:
     assertEquals(json.hcursor.downField("code").as[String], Right(CF.CredentialWriteDenied.code))
     val err = json.hcursor.downField("error").as[String].toOption.getOrElse("")
     assert(err.contains(s"诊断码：${CF.CredentialWriteDenied.code}"), s"error 必须承载三段式: $err")
-    assert(CD.isCleanVisibleText(err), s"error 串必须零命中判据正则: $err")
+    assertEquals(LogdevTestSupport.violations(err, root), Nil, s"error 串三条判据必须全过: $err")
     assertEquals(
       json.hcursor.downField("reason").as[String],
       Right(CD.diagnosticOf(CF.CredentialWriteDenied).reason)

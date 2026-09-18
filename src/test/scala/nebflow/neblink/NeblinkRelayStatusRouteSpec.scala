@@ -198,7 +198,16 @@ class NeblinkRelayStatusRouteSpec extends CatsEffectSuite:
         assertEquals(issue.downField("code").as[String], Right("credential-undecodable"))
         val message = issue.downField("error").as[String].toOption.getOrElse("")
         assert(message.contains("诊断码：credential-undecodable"), s"状态面错误串必须三段式: $message")
-        assert(CredentialDiagnostics.isCleanVisibleText(message), s"状态面可见串零命中判据正则: $message")
+        // round 1 / 判词 D4：负控不止判据正则 —— 追加「不含 data-root 路径」「不含 device.json」
+        // 二重断言（正则的 `[A-Za-z]:\\` 覆盖不到 POSIX 绝对路径，单靠它会漏掉 `/var/folders/…` 形态）。
+        val dataRoot = os.Path(tmpDir, os.pwd)
+        List(
+          "G4②.credentialIssue.error" -> message,
+          "G4②.credentialIssue.reason" -> issue.downField("reason").as[String].toOption.getOrElse(""),
+          "G4②.credentialIssue.action" -> issue.downField("action").as[String].toOption.getOrElse("")
+        ).foreach { case (tag, s) =>
+          assertEquals(LogdevTestSupport.violations(s, dataRoot), Nil, s"$tag 三条判据必须全过: $s")
+        }
         assertEquals(backups.length, 1, "盘上必须出现一次性备份件（判据 G4③）")
     }
   }
