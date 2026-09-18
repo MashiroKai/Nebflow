@@ -131,7 +131,7 @@ object VersionCommand extends CliCommand:
 
     def run(ctx: CliContext): IO[CliResult] =
       if ctx.json then IO.pure(CliResult.Json(io.circe.Json.obj("version" -> nebflow.Version.string.asJson)))
-      else IO.pure(CliResult.text(s"nebflow v${nebflow.Version.string}"))
+      else IO.pure(CliResult.text(s"nebflow ${nebflow.Version.string}"))
 
 object StartCommand extends CliCommand:
   def name = "start"
@@ -460,7 +460,7 @@ object DoctorCommand extends CliCommand:
           )
         else
           val lines = scala.collection.mutable.ListBuffer.empty[String]
-          lines += s"nebflow v${nebflow.Version.string} — diagnostics"
+          lines += s"nebflow ${nebflow.Version.string} — diagnostics"
           lines += ""
           for d <- checks do
             val icon = if d.ok then "✓" else "✗"

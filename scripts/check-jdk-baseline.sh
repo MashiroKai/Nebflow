@@ -53,7 +53,7 @@
 #           等于放弃验收 ① —— 已收敛掉。
 #        §2 `version` / `help` / `doctor` / `update` 四条自修入口逐条跑：未超时、
 #           输出非空、输出里**零** `UnsupportedClassVersionError` /
-#           `class file version`、`version` 必须打出 `nebflow v…`。
+#           `class file version`、`version` 必须打出 `nebflow <版本号>`。
 #           （断网容器里 `update` 的判据 = 进入自身逻辑并给出它自己的错误，
 #           而非 class-load 失败。）
 #        §3 任一命令超时 = **红** ——「跑起来不结束」既不是拒绝也不是通过。
@@ -329,8 +329,8 @@ repro_on_java17() {
     elif grep -qE "$LINKAGE_ERE" "$log"; then
       fail "A-6 [$cmd] hit a class-load failure on Java 17 — self-repair path welded shut: $(grep -m1 -E "$LINKAGE_ERE" "$log" | tr -d '\r')"
       indent_log < "$log"
-    elif [ "$cmd" = "version" ] && ! grep -q 'nebflow v' "$log"; then
-      fail "A-6 [version] ran on Java 17 (exit=${RC}) but did not print 'nebflow v…' — first line: ${first}"
+    elif [ "$cmd" = "version" ] && ! grep -qE 'nebflow [0-9]' "$log"; then
+      fail "A-6 [version] ran on Java 17 (exit=${RC}) but did not print 'nebflow <version>' — first line: ${first}"
       indent_log < "$log"
     else
       pass "A-6 [$cmd] ran on Java 17 (exit=${RC}, no UnsupportedClassVersionError) — first line: ${first}"
