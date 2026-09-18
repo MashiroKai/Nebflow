@@ -1245,6 +1245,8 @@ export default {
   'search.retry': '重试',
   'search.jumpFailed': '未能在会话中定位该消息',
   'search.typeUser': '用户',
+  // 助手产出（注入蓝气泡）独立类别 —— 作者 2026-09-19 06:09 分类粒度裁定
+  'search.typeAgent': '助手',
   'search.typeAi': 'AI',
   'search.typeTool': '工具',
   // v3.1 tabs + date anchor (spec §6.2)

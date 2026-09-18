@@ -48,11 +48,28 @@ function authHeaders() {
 
 const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
 
-/** normalizeMessage's kind ← UiMessage.type mapping, inverted. */
-function typeMatches(rawType, kind) {
-  if (kind === 'user') return rawType === 'user';
-  if (kind === 'tool') return rawType === 'tool';
-  return rawType === 'ai' || rawType === 'agent' || rawType === 'ask';
+/**
+ * Does this raw message belong to the clicked result's `kind`?
+ *
+ * The kind←→UiMessage mapping has exactly ONE implementation
+ * (chatSearch.js#messageKind) and it arrives here INJECTED as `kindOf`
+ * (openSearchMessageFloat's opts) instead of being imported: chatSearch.js
+ * already imports this module, so a static import back would close a two-node
+ * SCC — the P2-4 static-cycle gate (scripts/check-circular.mjs) rejects that,
+ * and its remedy is exactly this injection. The single-point predicate is
+ * therefore shared, never re-derived.
+ *   - kind 'agent' ⇔ raw type 'user' ∧ injected === true (blue bubble)
+ *   - kind 'user'  ⇔ raw type 'user' ∧ injected !== true
+ * This is where a raw `agent` TYPE must NOT be mistaken for the `agent` KIND:
+ * a raw 'agent' message is an assistant message and stays kind 'ai'.
+ * Without the predicate nothing matches (findHitIndex → -1 ⇒ the window says
+ * "hit not found" instead of guessing a row).
+ * @param {any} msg raw UiMessage
+ * @param {string|undefined} kind the clicked result's kind
+ * @param {((m:any)=>string|null)|undefined} kindOf the injected single point
+ */
+function typeMatches(msg, kind, kindOf) {
+  return typeof kindOf === 'function' && msg != null && kindOf(msg) === kind;
 }
 
 /**
@@ -62,14 +79,14 @@ function typeMatches(rawType, kind) {
  * a history that changed between the search fetch and this one.
  * @returns {number} -1 when the message can no longer be found.
  */
-function findHitIndex(msgs, res) {
+function findHitIndex(msgs, res, kindOf) {
   const at = typeof res.ord === 'number' ? msgs[res.ord] : null;
-  if (at && typeMatches(at.type, res.kind)) return res.ord;
+  if (at && typeMatches(at, res.kind, kindOf)) return res.ord;
   const needle = stripForMatch(res.content || res.summary || res.text).slice(0, 40);
   if (needle.length < 4) return -1;
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
-    if (!typeMatches(m.type, res.kind)) continue;
+    if (!typeMatches(m, res.kind, kindOf)) continue;
     const hay = stripForMatch([m.text, m.summary, m.input, m.content].filter(Boolean).join('\n'));
     if (hay.includes(needle)) return i;
   }
@@ -80,6 +97,9 @@ function findHitIndex(msgs, res) {
  * The rendered row of the clicked message (same locale-independent candidates
  * the old in-session jump used: card content → raw summary → joined text, then
  * a timestamp fallback), falling back to the first row of the window.
+ * Only kind 'tool' (tool rows localize their summary/content) needs the extra
+ * candidates; 'user' and 'agent' rows are text rows and document order +
+ * timestamp pin them the same way (the kind split does not fork this path).
  * @returns {HTMLElement|null}
  */
 function findTargetRow(chatEl, res) {
@@ -266,7 +286,10 @@ function renderWindow(chatEl, slice, res, remaining, onError) {
  * @param {{sessionId:string, sessionName?:string, kind?:string, tool?:string,
  *          input?:any, text?:string, summary?:string, content?:string,
  *          ts?:number, ord?:number, key?:string}} res  a search result item
- * @param {{onError?:(msg:string)=>void}} [opts]
+ * @param {{kindOf?:(m:any)=>string|null, onError?:(msg:string)=>void}} [opts]
+ *        kindOf = the injected single-point kind predicate (chatSearch.js
+ *        exports messageKind and passes it at this module's only call site —
+ *        see typeMatches for why it is injected, not imported).
  * @returns {HTMLElement} the window element
  */
 export function openSearchMessageFloat(res, opts = {}) {
@@ -293,7 +316,7 @@ export function openSearchMessageFloat(res, opts = {}) {
       return;
     }
     if (!el.isConnected) return;   // window closed while the fetch was in flight
-    const start = findHitIndex(msgs, res);
+    const start = findHitIndex(msgs, res, opts.kindOf);
     if (start < 0) {
       showNotice(chatEl, t('search.floatHitNotFound'));
       opts.onError?.(t('search.floatHitNotFound'));

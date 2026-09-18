@@ -1271,6 +1271,9 @@ export default {
   'search.retry': 'Retry',
   'search.jumpFailed': 'Could not locate the message in the session',
   'search.typeUser': 'User',
+  // Agent-produced (injected blue bubble) is its own class — author ruling
+  // 2026-09-19 06:09 on search classification granularity.
+  'search.typeAgent': 'Agent',
   'search.typeAi': 'AI',
   'search.typeTool': 'Tool',
   // v3.1 tabs + date anchor (spec §6.2)

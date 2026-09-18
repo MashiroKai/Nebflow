@@ -782,11 +782,57 @@ async function mapLimit(items, limit, fn, onProgress) {
 }
 
 // ── Message normalization ──────────────────────────────────
+/**
+ * Message-source classification — THE single point (author ruling 2026-09-19,
+ * "检索分类粒度": 「用户消息」= the author's own input ONLY; the agent-produced
+ * blue bubble is its own class). Every consumer — the filters/badges/counts
+ * below AND chatSearchFloat.js's raw-message lookup — derives from this one
+ * function; never re-map UiMessage.type to a kind anywhere else.
+ *
+ *   - 'user'  ⇔ type === 'user' ∧ injected !== true
+ *               Real input by the author (also: the recorded answer on an
+ *               askUser card). UiMessage.User's encoder writes `injected` ONLY
+ *               when true (shared/protocol.scala) ⇒ a MISSING key means a real
+ *               user row, which is why pre-field legacy history rows stay
+ *               'user' as well.
+ *   - 'agent' ⇔ type === 'user' ∧ injected === true
+ *               Agent-produced injected row (node result / mail / deviceMail /
+ *               task / dispatch / background …) rendered as a blue bubble.
+ *               Same divider the history readers already use: persistence.js
+ *               skips `injected` rows when it scans for the author's real
+ *               answer, and turnGroup.js renders them as `.bubble.injected` —
+ *               an injected row is NOT a user message.
+ *   - 'ai'    ⇔ type ∈ {ai, agent, ask} — the raw `agent` TYPE is an assistant
+ *               message; it is NOT the `agent` KIND above.
+ *   - 'tool'  ⇔ type === 'tool'. Everything else (system / askUser /
+ *               askPermission …) is not searchable → null.
+ * @param {any} m raw UiMessage (see shared/protocol.scala UiMessage encoder)
+ * @returns {'user'|'agent'|'ai'|'tool'|null}
+ */
+export function messageKind(m) {
+  switch (m?.type) {
+    case 'user':
+      return m.injected === true ? 'agent' : 'user';
+    case 'ai':
+    case 'agent':
+    case 'ask':
+      return 'ai';
+    case 'tool':
+      return 'tool';
+    default:
+      return null;
+  }
+}
+
 // Extract searchable plain text per UiMessage type (see shared/protocol.scala
 // UiMessage encoder for the JSON shape). Attachment names are merged into the
 // searchable text so the Images/Files categories can be keyword-hit by
 // filename (spec §6.1); attachments render as text only, never inline images.
+// The row's `kind` always comes from messageKind() — the switch below only
+// picks the text/attachment shape per raw type.
 function normalizeMessage(m, ord) {
+  const kind = messageKind(m);
+  if (kind === null) return null; // system/askUser/askPermission etc. are not searchable
   switch (m.type) {
     case 'user': {
       const attachments = (Array.isArray(m.attachments) ? m.attachments : [])
@@ -794,16 +840,16 @@ function normalizeMessage(m, ord) {
         .filter(a => a.type || a.name);
       const attText = attachments.map(a => `📎 ${a.name}`).filter(s => s.trim().length > 2).join('\n');
       return {
-        kind: 'user', ord, attachments,
+        kind, ord, attachments,
         text: (m.text || '') + (attText ? `\n${attText}` : ''),
         ts: m.timestamp || 0,
       };
     }
     case 'ai':
-      return { kind: 'ai', ord, attachments: [], text: (m.text || '') + (m.thinking ? '\n' + m.thinking : ''), ts: m.timestamp || 0 };
+      return { kind, ord, attachments: [], text: (m.text || '') + (m.thinking ? '\n' + m.thinking : ''), ts: m.timestamp || 0 };
     case 'tool':
       return {
-        kind: 'tool', ord, attachments: [],
+        kind, ord, attachments: [],
         tool: m.label || '',
         input: m.input,   // raw tool input (JSON string) — Pop artifacts parse from it
         text: [m.summary, m.input, m.content].filter(Boolean).join('\n'),
@@ -815,11 +861,11 @@ function normalizeMessage(m, ord) {
         ts: 0,
       };
     case 'agent':
-      return { kind: 'ai', ord, attachments: [], text: m.text || '', ts: 0 };
+      return { kind, ord, attachments: [], text: m.text || '', ts: 0 };
     case 'ask':
-      return { kind: 'ai', ord, attachments: [], text: [m.question, m.answer].filter(Boolean).join('\n'), ts: 0 };
+      return { kind, ord, attachments: [], text: [m.question, m.answer].filter(Boolean).join('\n'), ts: 0 };
     default:
-      return null; // system/askUser/askPermission etc. are not searchable
+      return null; // unreachable — messageKind() already gated the raw type
   }
 }
 
@@ -1450,7 +1496,9 @@ function mountResultCard(host, payload, rowEl) {
 }
 
 /** One result row element. data-key is the stable identity (sessionId:ord);
- *  data-ts / data-kind / data-attachments are the QA assertion surface. */
+ *  data-ts / data-kind / data-attachments are the QA assertion surface.
+ *  data-kind carries the full kind vocabulary ('user' | 'agent' | 'ai' |
+ *  'tool') — 'agent' = the injected blue-bubble class, a class of its own. */
 function resultElement(r) {
   const kw = (inputById('search-keyword')?.value || '').trim();
   // Queue #2: Pop/Card artifact rows (Canvas-openable) get data-artifact="1" —
@@ -1460,7 +1508,9 @@ function resultElement(r) {
     ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
     : r.kind === 'user'
       ? escapeHtml(t('search.typeUser'))
-      : escapeHtml(t('search.typeAi'));
+      : r.kind === 'agent'
+        ? escapeHtml(t('search.typeAgent'))
+        : escapeHtml(t('search.typeAi'));
   const time = r.ts ? formatTime(r.ts) : '';
   const attTypes = (r.attachments || []).map(a => a.type).filter(Boolean).join(' ');
   const tpl = document.createElement('template');
@@ -1545,6 +1595,11 @@ function activateResult(res) {
   }
   const row = document.querySelector(`#search-results .search-result[data-key="${CSS.escape(res.key || '')}"]`);
   openSearchMessageFloat(res, {
+    // The raw-message lookup inside the window cannot import the predicate
+    // back (that would close a static cycle with this module — rejected by
+    // scripts/check-circular.mjs), so the single point is injected here: the
+    // window's kind↔UiMessage comparison runs THIS function, never a copy.
+    kindOf: messageKind,
     onError: (msg) => { if (row instanceof HTMLElement) mountRowNotice(row, msg); },
   });
 }
