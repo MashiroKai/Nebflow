@@ -13,7 +13,12 @@
   overflow-y: auto;
   /* margin-top ≈ header center (16px header-offset + ~29px half header height).
      margin-bottom is 0 — chat fills to #main bottom; spacing below the last
-     message is now controlled by JS (padding-bottom = #input-area height). */
+     message is now controlled by JS (padding-bottom = #input-area height).
+     padding-top is likewise JS-owned (main.js top-reserve block): the 8px here
+     is only the no-overlay baseline — the real inset is raised to the measured
+     #header+#top-overlays band so a first message is never born under the task
+     list at scrollTop 0 (and #header/#top-overlays stay out of #main's flow, so
+     scrolled content still passes under the glass header). */
   margin: 45px 0 0;
   padding: 8px 0 36px;
   display: flex;
