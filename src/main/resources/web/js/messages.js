@@ -1850,6 +1850,7 @@ function bindOutHandleEvicted() {
     outInlineUrls.delete(key);
     const stillUsed = document.querySelector(`.fm-att-inline img[src="${url}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(url); } catch { /* non-critical */ } }
+    else { outInlineUrls.set(key, url); } // 仍在屏上 ⇒ 不淘汰它
   });
 }
 
