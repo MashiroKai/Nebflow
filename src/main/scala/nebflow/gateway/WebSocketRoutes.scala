@@ -5517,34 +5517,54 @@ object WebSocketRoutes:
             case Left(e) =>
               NfVerdict.Denied(Status.NotFound, "not-found", s"path could not be resolved: ${e.getMessage}")
             case Right(real) =>
-              // Namespace judge first: a credential file named directly (or
-              // reached through a symlink) must report `credential-path`, not
-              // the alias-specific `credential-hardlink`. The inode guard is
-              // the fallback that catches aliases the namespace judge cannot
-              // see at all (a hard link at an unrelated path, R2).
-              val deny = nfCredentialDeny(real, policy) match
-                case Some(reason) => Some(NfVerdict.Denied(Status.Forbidden, "credential-path", reason))
-                case None =>
-                  if NfPathPolicy.inodeKey(real).exists(policy.credentialInodes.contains) then
-                    Some(
-                      NfVerdict.Denied(
-                        Status.Forbidden,
-                        "credential-hardlink",
-                        "this file is a hard link to a Nebflow credential file"
-                      )
-                    )
-                  else None
-              deny match
+              nfVerdictForReal(real, policy) match
                 case Some(d) => d
                 case None =>
-                    val name = real.toString
-                    val ext = name.lastIndexOf('.') match
-                      case -1 => ""
-                      case i  => name.substring(i + 1).toLowerCase
-                    if !NfFileAllowedExt.contains(ext) then
-                      NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed")
-                    else NfVerdict.Allowed(real, ext)
+                  val ext = nfRealExtension(real)
+                  NfVerdict.Allowed(real, ext)
       }
+
+  /** The extension a real path is served under — taken from the REAL path, never
+    * from the name the client wrote (C1-2: a client can no longer pick the
+    * served extension by naming a symlink). */
+  private def nfRealExtension(real: java.nio.file.Path): String =
+    val name = real.toString
+    name.lastIndexOf('.') match
+      case -1 => ""
+      case i  => name.substring(i + 1).toLowerCase
+
+  /** The post-`toRealPath` half of [[nfFileVerdict]] — every step that decides on
+    * the REAL path, in the shipped order: `nfCredentialDeny` (403 credential-path)
+    * → R2 hard-link inode (403 credential-hardlink) → extension from the realpath
+    * (400 file-type). `None` = the endpoint would SERVE this real path.
+    *
+    * Extracted verbatim (imgref rework r1, 2026-09-18) so that the tool-side
+    * pre-flight gate (`FileRefs.servableByEndpoint`) and the endpoint ask EXACTLY
+    * the same question by calling the same function. Before this extraction the
+    * gate reused only `nfCredentialDeny` and therefore went green on a hard link
+    * to a credential file and on a symlink whose realpath extension is not
+    * served — both of which the endpoint refuses (`proxied` green while the
+    * browser's fetch answered 401: the author's failure ② shape). One function,
+    * no copy, no parallel judge.
+    *
+    * Order is part of the contract: a credential file named directly (or reached
+    * through a symlink) must report `credential-path`, not the alias-specific
+    * `credential-hardlink`. */
+  def nfVerdictForReal(real: java.nio.file.Path, policy: NfPathPolicy): Option[NfVerdict.Denied] =
+    nfCredentialDeny(real, policy) match
+      case Some(reason) => Some(NfVerdict.Denied(Status.Forbidden, "credential-path", reason))
+      case None =>
+        if NfPathPolicy.inodeKey(real).exists(policy.credentialInodes.contains) then
+          Some(
+            NfVerdict.Denied(
+              Status.Forbidden,
+              "credential-hardlink",
+              "this file is a hard link to a Nebflow credential file"
+            )
+          )
+        else if !NfFileAllowedExt.contains(nfRealExtension(real)) then
+          Some(NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed"))
+        else None
 
   /** The URL-form-tolerant facade over [[nfFileVerdict]] (imgref batch,
     * 2026-09-18 作者令).

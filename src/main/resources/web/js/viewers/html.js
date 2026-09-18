@@ -72,13 +72,24 @@ const imgClickScript = `<script>
   function pathOf(u){
     var m=/[?&]path=([^&]*)/.exec(String(u||''));
     if(!m) return '';
-    // Embedded by SOURCE (a frame script cannot import a module): fold the bare
-    // `+` first, then percent-decode — byte-for-byte the criterion of
+    // Embedded by SOURCE (a frame script cannot import a module): fold a bare
+    // plus sign first, then percent-decode — byte-for-byte the criterion of
     // nfTicket.js decodePathParam, which is the ONE statement of this
-    // discipline. `decodeURIComponent` alone folded neither `+` nor `%20`, so a
-    // JVM-form-encoded space reached the parent as a literal `+` and the
-    // lightbox re-minted its ticket for a path that does not exist.
-    try{ return decodeURIComponent(m[1].replace(/\+/g,' ')); }catch(e){ return ''; }
+    // discipline. Calling decodeURIComponent alone folded neither a plus sign
+    // nor %20, so a JVM-form-encoded space reached the parent as a literal plus
+    // and the lightbox re-minted its ticket for a path that does not exist.
+    // NOTE: this comment is INSIDE a template literal — never write an
+    // unescaped backtick here, and never write the two-character interpolation
+    // opener (dollar + brace): either one ends/starts an interpolation and the
+    // module stops parsing, which no Scala test used to see — see
+    // WebJsModuleSyntaxSpec, the JS-face gate added for exactly that miss.
+    // The regex below is spelled with a DOUBLED backslash on purpose: a template
+    // literal drops a lone one, so the single-backslash spelling emitted a
+    // pattern of just a plus sign into this frame script and the browser threw
+    // "Invalid regular expression: /+/g: Nothing to repeat" — the whole handler
+    // died while the module itself still parsed fine. The gate's frame-script
+    // pass pins this class (see WebJsModuleSyntaxSpec).
+    try{ return decodeURIComponent(m[1].replace(/\\+/g,' ')); }catch(e){ return ''; }
   }
   document.addEventListener('click', function(e){
     var img = e.target.closest ? e.target.closest('img') : null;

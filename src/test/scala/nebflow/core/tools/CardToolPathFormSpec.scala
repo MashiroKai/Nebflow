@@ -207,9 +207,14 @@ class CardToolPathFormSpec extends FunSuite:
         s"the refusal must name the reason: ${warningsOf(p).map(_.noSpaces).mkString(",")}"
       )
     finally
+      // rework r1 (verifier C1): clean up ONLY the subtree this spec created —
+      // `dir.getParent` is the PRE-EXISTING `.nebflow/secrets` directory (it
+      // holds real files in a configured checkout), and deleting it made the
+      // suite fail with `DirectoryNotEmptyException` in any run that had
+      // anything else living there. A test must never remove a directory it did
+      // not create.
       Files.deleteIfExists(f)
       Files.deleteIfExists(dir)
-      Files.deleteIfExists(dir.getParent)
 
   // ── 负对照：0 字节文件（浏览器同样渲染不出来）⇒ 警告 + 不计 proxied ──────────
 
@@ -227,6 +232,6 @@ class CardToolPathFormSpec extends FunSuite:
         s"the refusal must name the reason: ${warningsOf(p).map(_.noSpaces).mkString(",")}"
       )
     finally
+      // rework r1 (verifier C1): self-created subtree only — see the note above.
       Files.deleteIfExists(f)
       Files.deleteIfExists(dir)
-      Files.deleteIfExists(dir.getParent)

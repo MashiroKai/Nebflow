@@ -182,7 +182,14 @@ export async function resolveLocalFiles(html, dir) {
     const h = href || '';
     const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
     if (proxied) {
-      try { return decodeURIComponent(proxied[1].replace(/\+/g, ' ')); } catch (_) { return ''; }
+      // imgref rework r1 (2026-09-18): the IMPORTED single source, not a third
+      // inline spelling of the same rule. `decodePathParam` is the ONE
+      // statement of this discipline in the repo (nfTicket.js); this line used
+      // to restate it, which left three spellings in one file (this one,
+      // `routeLocalHref` below, and the frame script embedded in html.js —
+      // which cannot import and therefore stays inline by construction).
+      const p = decodePathParam(proxied[1]);
+      return p === null ? '' : p;
     }
     return toPath(h) || '';
   };

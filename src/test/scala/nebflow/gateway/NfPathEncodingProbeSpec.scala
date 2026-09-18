@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import com.comcast.ip4s.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import org.http4s.HttpRoutes
 import org.http4s.dsl.io.*
@@ -45,9 +45,19 @@ import scala.jdk.CollectionConverters.*
  *   C. 命名空间：`plots` 与项目 `.nebflow/evidence*` 两个子树里的含空格路径各 200，
  *      再给一个「真文件但在不可服务命名空间内」的负对照 ⇒ 403 credential-path；
  *   D. 与工具侧同一份判据：Card 工具发出的 URL 打到真端点 ⇒ 200，且工具侧守门的
- *      `proxied` 计数与真取回结果**一致**（任务书 7(b) 的等价性用例）；
+ *      `proxied` 计数与真取回结果**一致**（任务书 7(b) 的等价性用例）。返工 r1 起
+ *      跑**两种拼写**（`%20` 形态 + **原样空格**形态——作者两起失败各自带来的形态），
+ *      并断言发出的 URL 逐字为 `%20` 规范形；
  *   E. 安全：`%2e%2e` 穿透进 credential 文件 ⇒ 仍 403 credential-path
- *      （解码不得制造「原串判不住、解码后判得住」）。
+ *      （解码不得制造「原串判不住、解码后判得住」）；
+ *   F. 顺序判据：真含加号的文件在原样形态命中 ⇒ 绝不被折成空格（不过度解码）；
+ *   G. 等价性（返工 r1，腿 1/2）：硬链接到 credential inode 的真件 ⇒ 工具侧
+ *      `proxied=0` + warnings（引端点原码 + 可执行修法），真取回腿同判红
+ *      （`mint rejected=credential-hardlink` / 无票 `GET` 401）；
+ *   H. 等价性（返工 r1，腿 2/2）：符号链接（词法 `.png` 允许、realpath `.xyz` 不被
+ *      服务）⇒ 工具侧同上判红，真取回腿 `rejected=file-type` / `get=401`。
+ *      G/H 的存在理由：守门此前只复用端点的 credential 判据，漏掉 R2 inode 与
+ *      realpath 扩展名两步 ⇒ 「计数绿而取回红」仍可复现（复核位缺陷 B）。
  */
 class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
@@ -165,7 +175,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   // ── B. 取回腿：四形态 ⇒ 状态码 + 字节 ──────────────────────────────────────
 
-  test("B. real GET /api/nf-file: %20 / + / mixed ⇒ 200 + fixture bytes; %2B ⇒ 404"):
+  test("B. real GET /api/nf-file: %20 / + / %2B / mixed ⇒ 200 + fixture bytes (raw form first)"):
     val root = Files.createTempDirectory("imgref-get-")
     withFixture(root, "plots", own = true) { (outer, file) =>
       val real = file.toRealPath().toString
@@ -231,41 +241,61 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // ── D. 与工具侧同一份判据（任务书 7(b) 的等价性用例） ────────────────────────
 
   test("D. equivalence: the tool-side gate and a real endpoint fetch agree"):
-    val root = Paths.get(nebflow.core.PathUtil.dataRoot.toString).resolve("plots/imgref-spec")
+    // The policy the TOOL itself reads (its pre-flight gate calls
+    // `NfPathPolicy.memoized()`), and the root is derived FROM that policy — never
+    // `PathUtil.dataRoot`. The memoized policy is a process-wide startup value, so
+    // a spec cannot assume which data root the process was launched with; deriving
+    // it keeps this spec correct under `NEBFLOW_HOME` / `setDataRoot` redirection
+    // too (rework r1, verifier item C4).
+    val policy = WebSocketRoutes.NfPathPolicy.memoized() // the tool reads the same value
+    val root = policy.dataRoot.resolve("plots/imgref-spec")
     val image = root.resolve("space dir/tool shot.png")
     Files.createDirectories(image.getParent)
     Files.write(image, PngBytes)
     val cleanup = IO { deleteTree(root); () }
-    val policy = WebSocketRoutes.NfPathPolicy.memoized() // the tool reads the same value
     server(policy).flatMap { (port, stop) =>
       IO {
         val ctx = nebflow.core.tools.ToolContext(projectRoot = os.pwd.toString)
-        val input = JsonObject(
-          "html" -> io.circe.Json.fromString(
-            s"""<link rel="stylesheet" href="${image.toString.replace(" ", "%20")}"/>"""
-          ),
-          "title" -> io.circe.Json.fromString("T")
+        // TWO spellings of the SAME reference, because the author's two reported
+        // failures differ exactly in the spelling they arrived with (① a `%20`
+        // form, ② the raw space form — verifier §49: the raw form is the one the
+        // baseline fetch leg was green on, so the equivalence must be pinned on
+        // it too, not only on the encoded form).
+        val spellings = List(
+          "pct20" -> image.toString.replace(" ", "%20"),
+          "raw" -> image.toString
         )
-        val result =
-          nebflow.core.tools.CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
-        val payload = io.circe.parser
-          .parse(result.stripPrefix("___CARD_HTML___"))
-          .getOrElse(fail("the card payload must be JSON"))
-        val proxied = payload.hcursor.downField("fileRefs").get[Int]("proxied").toOption.getOrElse(-1)
-        val html = payload.hcursor.get[String]("html").toOption.getOrElse("")
-        val url = raw"""/api/nf-file\?path=([^&"')]+)""".r
-          .findFirstMatchIn(html)
-          .map(_.group(1))
-          .getOrElse(fail(s"no proxied URL in: ${html.take(200)}"))
-        val real = image.toRealPath().toString
-        val ticket = store.issue("spec", real).unsafeRunSync().token
-        val (status, body) = httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$url&ticket=$ticket")
-        println(
-          s"PROBE[equivalence] proxied=$proxied endpointStatus=$status bytes=${body.length} sha256=${sha256(body)}"
-        )
-        assertEquals(proxied, 1, "the tool-side gate counted the reference")
-        assertEquals(status, 200, "the endpoint must serve exactly what the gate counted")
-        assertEquals(sha256(body), FixtureSha, "same bytes ⇒ the two judgments agree")
+        spellings.foreach { (label, ref) =>
+          val input = JsonObject(
+            "html" -> io.circe.Json.fromString(s"""<link rel="stylesheet" href="$ref"/>"""),
+            "title" -> io.circe.Json.fromString("T")
+          )
+          val result =
+            nebflow.core.tools.CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
+          val payload = io.circe.parser
+            .parse(result.stripPrefix("___CARD_HTML___"))
+            .getOrElse(fail("the card payload must be JSON"))
+          val proxied = payload.hcursor.downField("fileRefs").get[Int]("proxied").toOption.getOrElse(-1)
+          val html = payload.hcursor.get[String]("html").toOption.getOrElse("")
+          val url = raw"""/api/nf-file\?path=([^&"')]+)""".r
+            .findFirstMatchIn(html)
+            .map(_.group(1))
+            .getOrElse(fail(s"no proxied URL in: ${html.take(200)}"))
+          val real = image.toRealPath().toString
+          val ticket = store.issue("spec", real).unsafeRunSync().token
+          val (status, body) = httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$url&ticket=$ticket")
+          println(
+            s"PROBE[equivalence][$label] ref=${ref.take(90)} proxied=$proxied endpointStatus=$status " +
+              s"bytes=${body.length} sha256=${sha256(body)}"
+          )
+          assertEquals(proxied, 1, s"$label: the tool-side gate counted the reference")
+          assertEquals(status, 200, s"$label: the endpoint must serve exactly what the gate counted")
+          assertEquals(sha256(body), FixtureSha, s"$label: same bytes ⇒ the two judgments agree")
+          assert(
+            url.contains("%20") && !url.contains(" ") && !url.contains("+"),
+            s"$label: the emitted URL must be the canonical %20 form, got: ${url.take(120)}"
+          )
+        }
       }.guarantee(stop).guarantee(cleanup)
     }
 
@@ -334,6 +364,269 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         println(s"PROBE[order][bare-plus] status=$s2 sha256=${sha256(b2)}")
         assertEquals(s2, 200)
         assertEquals(sha256(b2), FixtureSha)
+      }.guarantee(stop).guarantee(cleanup)
+    }
+
+  // ── G/H. 返工 r1（复核位缺陷 B）：工具⇔端点等价性，覆盖端点阶梯的后两条腿 ─────
+  //
+  // 缺陷 B 的机理：工具侧守门此前只复用 `nfCredentialDeny`（纯 credential namespace
+  // 判据），漏掉 `nfFileVerdict` 在该步**之后**的两步 —— **R2 (dev,ino) 硬链接判据**
+  // 与**按 realpath 取扩展名** ⇒ 真件被计 `proxied` 而端点必然拒（真取回 401），
+  // 即「计数绿而取回红」在本批修好的树上仍可发生。修法 = 两侧调同一个
+  // `WebSocketRoutes.nfVerdictForReal`（端点阶梯 `toRealPath` 之后的全部步骤）。
+  //
+  // 🔴 **收编申报（返工令 B②）**：G/H 的判据与夹具形态**收编自复核位第 1 轮的判词
+  // spec**：`ImgrefVerifyR1Spec.scala` 的
+  //   · `T10 GAP PROBE: a hard link to a credential inode inside a served namespace`
+  //     （`.nebflow/evidence/20260918_imgref/verify-r1/ImgrefVerifyR1Spec.scala:360`）；
+  //   · `T11 GAP PROBE: a symlink whose lexical extension is allowed but whose realpath
+  //     is not`（同件 `:387`）。
+  // 收编侧的断言**逐条不低于**原判词：T10 原断言 `endpoint==403` + `proxied==0`，
+  // T11 原断言 `endpoint==400` + `proxied==0` —— 本件在此之上**加**了
+  // ① `inlined==0`（防「绿以 `data:` 内联形态泄漏」，本件 r7 变异确曾如此），
+  // ② warnings 必须**引端点原码**且**带可执行修法**，③ 真 `POST /api/nf-ticket` 的
+  // rejected reason 与工具警告**同码**，④ 无票取回必须 401，⑤ `proxied>0 ⇔ get==200`。
+  // 逐条只增不减，无一处放宽（`endpointWithTicket` 就是「端点确为 403/400」那条读数）。
+  //
+  // 两个用例各覆盖一条腿，判据是**等价性**：夹具上工具侧必须判红（`proxied=0` +
+  // warnings 带可执行修法提示），真取回腿必须同判红 —— 真 `POST /api/nf-ticket` 的
+  // rejected reason **与工具警告同码**，无票 `GET` ⇒ 401。阳性方向的同款等价性
+  // （工具判绿 ⇔ 真端点 200 + 字节 sha 相等）由 test D 承担。
+
+  /** 端点 R2 集是**进程启动时的一次扫描快照**：后造的 credential 文件不在里面，
+    * 所以硬链接腿必须用**既有 seed** 搭 —— data root 的 `auth.json` / `nebflow.json`、
+    * 数据根 `secrets/` 子树、`~/.ssh/` 子树中确实在快照里的那一件。
+    * （注意：Scala 块注释里不能出现「斜杠 + 双星号」的通配写法，那会开一个嵌套注释。） */
+  private def snapshotCredential(policy: WebSocketRoutes.NfPathPolicy): Path =
+    val home = Paths.get(sys.props.getOrElse("user.home", "/"))
+    def filesUnder(dir: Path): List[Path] =
+      if !Files.isDirectory(dir) then Nil
+      else
+        val s = Files.walk(dir, 8)
+        try s.iterator().asScala.filter(p => Files.isRegularFile(p)).toList
+        finally s.close()
+    val seeds =
+      List(policy.dataRoot.resolve("auth.json"), policy.dataRoot.resolve("nebflow.json")) ++
+        filesUnder(policy.dataRoot.resolve("secrets")) ++
+        filesUnder(home.resolve(".ssh"))
+    seeds
+      .filter(p => Files.isRegularFile(p))
+      .find(p => WebSocketRoutes.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
+      .getOrElse(
+        fail(
+          "no seeded credential file (data-root auth.json / nebflow.json, <dataRoot>/secrets/**, " +
+            s"~/.ssh/**) is present in the startup inode snapshot (size=${policy.credentialInodes.size}) — " +
+            "the hard-link leg needs one to exist"
+        )
+      )
+
+  /** Tool face of ONE reference: (`proxied`, `inlined`, warnings as (reason, detail)). */
+  private def toolFace(refValue: String): (Int, Int, List[(String, String)]) =
+    val ctx = nebflow.core.tools.ToolContext(projectRoot = os.pwd.toString)
+    val input = JsonObject(
+      "html" -> Json.fromString(s"""<img src="$refValue"/>"""),
+      "title" -> Json.fromString("T")
+    )
+    val result =
+      nebflow.core.tools.CardTool.call(input, ctx).unsafeRunSync().getOrElse(fail("expected Right"))
+    val payload = io.circe.parser
+      .parse(result.stripPrefix("___CARD_HTML___"))
+      .getOrElse(fail(s"the card payload must be JSON: ${result.take(200)}"))
+    val counts = payload.hcursor.downField("fileRefs")
+    val warnings = payload.hcursor
+      .downField("warnings")
+      .as[List[Json]]
+      .getOrElse(Nil)
+      .map { w =>
+        (
+          w.hcursor.get[String]("reason").getOrElse("-"),
+          w.hcursor.get[String]("detail").getOrElse("-")
+        )
+      }
+    (
+      counts.get[Int]("proxied").getOrElse(-1),
+      counts.get[Int]("inlined").getOrElse(-1),
+      warnings
+    )
+
+  /** The REAL frontend chain for ONE plain path: mint a real ticket over HTTP, then
+    * fetch with it (no ticket when the mint was rejected — that is what a browser
+    * gets). Returns `(mintStatus, rejectedReason | "-", getStatus, bytes)`. */
+  private def mintAndFetch(port: Int, plain: String): (Int, String, Int, Array[Byte]) =
+    val body =
+      Json
+        .obj(
+          "sessionId" -> Json.fromString("spec"),
+          "paths" -> Json.arr(Json.fromString(plain))
+        )
+        .noSpaces
+    val client = HttpClient.newHttpClient()
+    val mintResp = client.send(
+      HttpRequest
+        .newBuilder(URI.create(s"http://127.0.0.1:$port/api/nf-ticket?token=$gatewayToken"))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+        .build(),
+      HttpResponse.BodyHandlers.ofString()
+    )
+    val minted = io.circe.parser.parse(mintResp.body()).toOption
+    val reason = minted
+      .flatMap(_.hcursor.downField("rejected").as[List[Json]].toOption)
+      .flatMap(_.headOption)
+      .flatMap(_.hcursor.get[String]("reason").toOption)
+      .getOrElse("-")
+    val ticket = minted
+      .flatMap(_.hcursor.downField("tickets").downField(plain).get[String]("t").toOption)
+    val pathParam = plain.replace(" ", "%20")
+    val (getStatus, bytes) = ticket match
+      case Some(t) => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam&ticket=$t")
+      case None    => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam")
+    (mintResp.statusCode(), reason, getStatus, bytes)
+
+  private def endpointReason(path: String, policy: WebSocketRoutes.NfPathPolicy): String =
+    WebSocketRoutes.nfFileVerdict(path, policy).unsafeRunSync() match
+      case WebSocketRoutes.NfVerdict.Denied(_, r, _) => r
+      case _                                         => "allowed"
+
+  /** The endpoint's OWN verdict, over the wire, WITH A VALID TICKET — the reading
+    * the rework order asks for by name ("端点确为 403/400").
+    *
+    * A ticket is minted directly from the store for the fixture's **realpath**
+    * (`nfFileRoutes` short-circuits a missing ticket with 401 *before* the
+    * verdict, so a ticket-less GET could never show the verdict at all): with a
+    * valid ticket the route reaches `nfFileVerdictTolerant` and the status is
+    * the verdict's own — 403 for the R2 credential-inode leg, 400 for the
+    * realpath-extension leg. Reading the canonical path is required because the
+    * ticket is keyed on `real.toString` and `/tmp` is a symlink to `/private/tmp`
+    * on this host.
+    *
+    * 🔴 This is the SAME shape as the verifier's own T10/T11 assertions
+    * (`store.issue(... realOf(link))` then GET with that ticket ⇒ 403 / 400) —
+    * see the G/H header for the collection declaration. */
+  private def endpointWithTicket(port: Int, plain: String): (Int, String) =
+    val canonical = Paths.get(plain).toRealPath().toString
+    val ticket = store.issue("spec", canonical).unsafeRunSync().token
+    val (status, body) =
+      httpGet(s"http://127.0.0.1:$port/api/nf-file?path=${plain.replace(" ", "%20")}&ticket=$ticket")
+    (status, text(body))
+
+  /** ONE refused path taken through BOTH faces, for EVERY spelling of the fixture.
+    *
+    * Two spellings per leg, on purpose: the two ways this defect used to hide are
+    * "counted as proxied" (a reference left on the `/api/nf-file` leg) and
+    * "silently inlined" (the bytes embedded as a `data:` URI, bypassing the
+    * endpoint entirely). A `.json`-named link is never inlined (not an image), so
+    * a broken gate shows up as `proxied=1`; a `.png`-named one is inlinable, so a
+    * broken gate shows up as `inlined=1`. Both must be refused, and the real
+    * fetch leg must refuse the same path with the SAME reason — that equality is
+    * the whole point of the case (`计数绿 ⇔ 取回绿` may never diverge). */
+  private def assertLegRefused(
+      leg: String,
+      names: List[String],
+      dir: Path,
+      build: (Path, Path) => Unit,
+      port: Int,
+      policy: WebSocketRoutes.NfPathPolicy,
+      expectReason: String,
+      expectHint: String,
+      expectEndpointStatus: Int
+  ): Unit =
+    names.foreach { name =>
+      val link = dir.resolve(name)
+      Files.deleteIfExists(link)
+      build(link, dir)
+      val (proxied, inlined, warnings) = toolFace(link.toString)
+      val (mint, reason, get, bytes) = mintAndFetch(port, link.toString)
+      val (epStatus, epBody) = endpointWithTicket(port, link.toString)
+      println(
+        s"PROBE[$leg][$name] link=$link realpath=${link.toRealPath()} " +
+          s"toolProxied=$proxied toolInlined=$inlined " +
+          s"toolWarningReasons=${warnings.map(_._1).mkString(",")} " +
+          s"toolWarningDetail=${warnings.map(_._2).mkString(" | ")} " +
+          s"mint=$mint rejected=$reason get=$get bytes=${bytes.length} " +
+          s"endpointWithTicket=$epStatus endpointBody=${epBody.replace("\n", " | ")}"
+      )
+      // tool face: refused, quoting the endpoint's own reason, with an executable fix
+      assertEquals(proxied, 0, s"$name: must NOT be counted as proxied")
+      assertEquals(inlined, 0, s"$name: must NOT be inlined into the payload either")
+      assert(
+        warnings.exists(_._1 == "not-servable"),
+        s"$name: expected a not-servable warning, got: ${warnings.map(_._1).mkString(",")}"
+      )
+      assert(
+        warnings.exists(_._2.contains(expectReason)),
+        s"$name: the warning must quote the endpoint's reason, got: ${warnings.map(_._2).mkString(" | ")}"
+      )
+      assert(
+        warnings.exists(_._2.contains(expectHint)),
+        s"$name: the warning must carry an executable fix, got: ${warnings.map(_._2).mkString(" | ")}"
+      )
+      // fetch leg: the endpoint refuses the very same file, same reason, over the wire
+      assertEquals(mint, 200, s"$name: the mint answers a captured rejection")
+      assertEquals(reason, expectReason, s"$name: the mint's reason must match the tool's")
+      assertEquals(get, 401, s"$name: without a ticket the browser fetch cannot succeed")
+      // the endpoint's OWN verdict with a VALID ticket — the rework order's
+      // "端点确为 403/400" reading, same shape as the verifier's T10/T11
+      assertEquals(
+        epStatus,
+        expectEndpointStatus,
+        s"$name: the endpoint's own status with a valid ticket (body: $epBody)"
+      )
+      assert(epBody.contains(expectReason), s"$name: endpoint body must name the reason, got: $epBody")
+      assertEquals(endpointReason(link.toString, policy), expectReason, s"$name: endpoint verdict")
+      // the equivalence itself: "the tool counted it" ⇔ "the fetch leg served it"
+      assertEquals(proxied > 0, get == 200, s"$name: tool-side green and fetch-leg green must agree")
+    }
+
+  test("G. equivalence (leg 1/2): a HARD LINK to a credential inode — tool gate and endpoint agree"):
+    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val target = snapshotCredential(policy)
+    val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
+    val dir = subtree.resolve("space dir")
+    val cleanup = IO { deleteTree(subtree); () }
+    server(policy).flatMap { (port, stop) =>
+      IO {
+        Files.createDirectories(dir)
+        println(s"PROBE[leg-inode] target=$target size=${Files.size(target)} inode=" +
+          s"${WebSocketRoutes.NfPathPolicy.inodeKey(target)} snapshot=" +
+          s"${WebSocketRoutes.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}")
+        assertLegRefused(
+          leg = "leg-inode",
+          names = List("hard link big.png", "hard link big.json"),
+          dir = dir,
+          build = (link, _) => Files.createLink(link, target),
+          port = port,
+          policy = policy,
+          expectReason = "credential-hardlink",
+          expectHint = "copy the file's BYTES",
+          // the verifier's T10 reading, verbatim (verify-r1/ImgrefVerifyR1Spec.scala:380)
+          expectEndpointStatus = 403
+        )
+      }.guarantee(stop).guarantee(cleanup)
+    }
+
+  test("H. equivalence (leg 2/2): a symlink refused by its REAL extension — tool gate and endpoint agree"):
+    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-symlink")
+    val dir = subtree.resolve("space dir")
+    val cleanup = IO { deleteTree(subtree); () }
+    server(policy).flatMap { (port, stop) =>
+      IO {
+        Files.createDirectories(dir)
+        val realTarget = dir.resolve("target big.xyz")
+        Files.write(realTarget, PngBytes)
+        assertLegRefused(
+          leg = "leg-realpath-ext",
+          names = List("img link big.png", "img link big.json"),
+          dir = dir,
+          build = (link, d) => Files.createSymbolicLink(link, d.resolve("target big.xyz")),
+          port = port,
+          policy = policy,
+          expectReason = "file-type",
+          expectHint = "give the file a real extension",
+          // the verifier's T11 reading, verbatim (verify-r1/ImgrefVerifyR1Spec.scala:407)
+          expectEndpointStatus = 400
+        )
       }.guarantee(stop).guarantee(cleanup)
     }
 

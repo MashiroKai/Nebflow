@@ -97,7 +97,8 @@ private[tools] object FileRefs:
   /**
    * Tool-side MIRROR of the endpoint's data-root namespace allowlist
    * (`WebSocketRoutes.NfDataRootAllowlist`, consumed by the pure judge
-   * `nfCredentialDeny`).
+   * `nfCredentialDeny` — the namespace step of `nfVerdictForReal`; the tool's own
+   * pre-flight gate calls that same function, never this table).
    *
    * Same job as [[AllowedExtensions]] one level up: the endpoint is
    * authoritative, this table mirrors it so the tool face can tell the model
@@ -176,10 +177,10 @@ private[tools] object FileRefs:
       * 解不出）。浏览器同样渲染不出来，所以它跟「文件不存在」是两件事，得分开报。 */
     case NotReadable
         extends FileRefFailure("not-readable", "the file is present but its bytes cannot be read")
-    /** imgref 批（2026-09-18）：文件在、可读，但 `/api/nf-file` 的 credential
-      * namespace 判据不会为它铸票 ⇒ 引用腿必然 401/403，`proxied` 不该为它计数
-      * （作者失败②的「计数绿而取回红」）。判据由端点自己的纯判据给出，见
-      * [[servableByEndpoint]]。 */
+    /** imgref 批（2026-09-18）：文件在、可读，但 `/api/nf-file` 的**端点判据阶梯**
+      * 不会为它铸票（credential namespace / R2 硬链接 inode / realpath 上的扩展名）
+      * ⇒ 引用腿必然 401/403，`proxied` 不该为它计数（作者失败②的「计数绿而取回
+      * 红」）。判据由端点自己的**同一个**函数给出，见 [[servableByEndpoint]]。 */
     case NotServable
         extends FileRefFailure("not-servable", "the /api/nf-file endpoint cannot serve this location")
     /** 其它 */
@@ -418,14 +419,22 @@ private[tools] object FileRefs:
   //
   // 任务书 7(a)：`proxied` 不得再由「URL 字符串已发出」满足。判据四段：
   //   ① 解析成功（`probeFile` 既有：存在 + regular + 扩展名 + ≤200MB）；
-  //   ② servability = **与端点同一份判据** —— 直接调端点的纯 credential 判据
-  //      `WebSocketRoutes.nfCredentialDeny` + 同一份 `NfPathPolicy.memoized()`（同一
-  //      JVM、同一 data root、同一 workspace），**零复制、零旁路**；判据抛异常时
-  //      fail-closed（当成不可服务），绝不 fail-open；
+  //   ② servability = **与端点同一份判据** —— 直接调**端点完整阶梯**的同一函数
+  //      `WebSocketRoutes.nfVerdictForReal`（= `nfFileVerdict` 在 `toRealPath` 之后的
+  //      全部步骤：credential namespace → R2 (dev,ino) 硬链接 → realpath 上的扩展名）
+  //      + 同一份 `NfPathPolicy.memoized()`（同一 JVM、同一 data root、同一
+  //      workspace），**零复制、零旁路**；判据抛异常时 fail-closed（当成不可服务），
+  //      绝不 fail-open；
   //   ③ 真可读（HEAD 等价）：`isRegularFile` + `size` + 实读首字节（0 字节文件
   //      在浏览器里同样渲染不出来，与「文件在」是两件事）；
   //   ④ URL 往返校验：发出去的 URL 按**同一解码纪律**解回 ⇒ 必须与已解析路径逐字
   //      相等（形态漂移会让端点去找另一个路径 —— 这正是作者失败②）。
+  //
+  // 🔴 返工 r1（2026-09-18 复核位缺陷 B）：本闸此前只调端点的**纯 credential**
+  // 判据 `nfCredentialDeny`，漏掉阶梯后面两步（R2 inode 与 realpath 扩展名）⇒ 硬
+  // 链接到 credential 的真件、以及 realpath 扩展名不被服务的符号链接，都被计数成
+  // 「绿」而端点必然拒（真取回腿 401）——「计数绿而取回红」在本批修好的树上仍可
+  // 发生。现在两侧调同一个函数，缺一条腿都不可能：判据的形状只有一份。
   //
   // 依赖方向说明：`core` 引用 `gateway` 在本树有先例（`core/processor/
   // TaskStuckWatcher.scala:8` 引 `gateway.WsHub`；`core/scheduler/
@@ -433,18 +442,39 @@ private[tools] object FileRefs:
   // 「与端点同一份判据（🔴 复用，禁复制）」。复制一份白名单/判据才是本批明令禁止
   // 的旁路，所以这里调同一个函数而不镜像它。
 
-  /** `None` = the endpoint's own judge would serve this real path; `Some(reason)`
-    * = it would refuse (the reason is the endpoint's own prose). Fail-closed. */
-  def servableByEndpoint(real: Path): Option[String] =
+  /** `None` = the endpoint's own judge would serve this real path; `Some(reason,
+    * message)` = it would refuse, in the endpoint's own words. Fail-closed: a
+    * judge that cannot be consulted counts as a refusal, never as permission. */
+  def servableByEndpoint(real: Path): Option[(String, String)] =
     try
       nebflow.gateway.WebSocketRoutes
-        .nfCredentialDeny(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.memoized())
+        .nfVerdictForReal(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.memoized())
+        .map(denied => (denied.reason, denied.message))
     catch
       case e: Throwable =>
         Some(
-          s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
-            "the reference is treated as unservable rather than assumed servable"
+          (
+            "servability-judge-unavailable",
+            s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
+              "the reference is treated as unservable rather than assumed servable"
+          )
         )
+
+  /** The executable fix for one of the endpoint's own refusal reasons — a warning
+    * that only says "no" costs the agent a second round trip; one that says what
+    * to do instead does not. Keyed by the endpoint's `reason` (never by prose). */
+  def servabilityHint(reason: String): String =
+    reason match
+      case "credential-hardlink" =>
+        "copy the file's BYTES to a new file (a hard link shares the credential file's inode, " +
+          "so /api/nf-file refuses it however the link is named)"
+      case "file-type" =>
+        "give the file a real extension /api/nf-file serves — the extension is read from the " +
+          "REAL path, so a symlink cannot lend it its name"
+      case _ =>
+        "move or copy the file into a location /api/nf-file serves " +
+          s"(data root: ${DataRootServedNamespacesText}; project .nebflow: evidence*/**) " +
+          "and reference it from there"
 
   /** HEAD-equivalent readability: regular file, non-zero size, first byte really
     * readable. `None` = readable, `Some(reason)` = not. */
@@ -587,15 +617,13 @@ private[tools] object FileRefs:
                 )
               case Some(real) =>
                 servableByEndpoint(real) match
-                  case Some(reason) =>
+                  case Some((reason, message)) =>
                     RefDecision.Reject(
                       RejectedRef(
                         value,
                         Some(describe(path)),
                         FileRefFailure.NotServable,
-                        s"$reason — move or copy the file into a location /api/nf-file serves " +
-                          s"(data root: ${DataRootServedNamespacesText}; project .nebflow: evidence*/**) " +
-                          "and reference it from there"
+                        s"$reason: $message — ${servabilityHint(reason)}"
                       )
                     )
                   case None =>
