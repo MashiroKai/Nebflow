@@ -5858,7 +5858,7 @@ class NodeEngine(
       windowArmed: Boolean = false
   )
 
-  private[project] val rootNotifyBatchState: Ref[IO, RootNotifyBatchState] =
+  private val rootNotifyBatchState: Ref[IO, RootNotifyBatchState] =
     Ref.unsafe[IO, RootNotifyBatchState](RootNotifyBatchState())
 
   /** 生效窗长（现读；spec 走构造入参接缝 `rootNotifyQuietMs`）。 */
