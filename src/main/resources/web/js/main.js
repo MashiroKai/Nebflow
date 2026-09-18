@@ -3765,6 +3765,86 @@ initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
   ro.observe(inputArea);
   updateChatPadding();
 })();
+
+// Keep the FIRST chat message clear of the top overlays (the sibling of the
+// #input-area block above, at the other end of #chat).
+//
+// Why the first message is occluded (cold start, few messages — measured
+// 2026-09-18): #header (position:absolute; margin-top 16px) and #top-overlays
+// (#task-list / #ask-pending-bar / #notification-banner — position:absolute at
+// top:68px) are OUT of #main's flow, so #chat's in-flow box still starts at the
+// header's CENTER (margin-top 45px = 16px offset + half of the 50px header) and
+// its 8px padding-top is the only top inset. With few messages the content is
+// shorter than the viewport, so there is no scroll position that "naturally
+// avoids" the overlays: scrollTop is pinned to 0 and the content is top-aligned
+// → the first message's first line lands at y=69 while the task card's bottom
+// is at y=247.6 (expanded) / 106 (collapsed) → 22 of 22px of that line covered
+// (fully hidden); only with ≥1 screen of content does scrolling slide messages
+// out from under the band.
+//
+// Fix = reserve the band's MEASURED height as #chat padding-top:
+//   - padding-top, NOT margin-top: #chat's box top stays at the header center so
+//     scrolled content still slides under the glass header (the existing design
+//     intent); at scrollTop 0 the content starts below the band instead.
+//   - Re-measured whenever the band can change — one ResizeObserver on #header
+//     and on #top-overlays covers all three cases the band depends on: the
+//     initial render, the task list's expand/collapse (its max-height .3s
+//     transition resizes the observed container every frame), and the
+//     appearance/disappearance of #ask-pending-bar / #notification-banner items.
+//     There is no feedback loop: header/overlays are absolutely positioned, so
+//     #chat's padding cannot move them.
+//   - The band is the topmost overlay STACK's box — max(#header bottom,
+//     #top-overlays bottom) — not "painted pixels only": #notification-banner
+//     is an 8px padding box even with zero items, and that transparent strip
+//     still answers hit-tests over the top of a message (measured 2026-09-18:
+//     with no task list at all, 7 of the first line's 22px hit-tested to
+//     #notification-banner). The container box is also the stable invariant —
+//     #task-list clips itself (#task-list.has-tasks { max-height:50vh;
+//     overflow:hidden }), so the container never over-reserves for a clipped
+//     card.
+(() => {
+  const header = document.getElementById('header');
+  const overlays = document.getElementById('top-overlays');
+  const chat = document.getElementById('chat');
+  if (!header || !overlays || !chat || !window.ResizeObserver) return;
+  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
+  const BASE_TOP_PAD = 8;
+  const bandBottom = () => Math.max(
+    header.getBoundingClientRect().bottom,
+    overlays.getBoundingClientRect().bottom,
+  );
+  const syncTopReserve = () => {
+    const chatTop = chat.getBoundingClientRect().top;
+    // Not laid out yet (#chat always carries the 45px margin-top) — the
+    // observer fires again as soon as it is.
+    if (!chatTop) return;
+    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+    const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
+    if (Math.abs(prev - reserve) < 0.5) return;
+    const delta = reserve - prev;
+    // Read the scroll state BEFORE the write: the reserve moves the whole
+    // content down by `delta`, and which correction is right depends on where
+    // the user is (same units as the sibling block above).
+    const st = chat.scrollTop;
+    const nearBottom = isNearBottom(chat);
+    chat.style.setProperty('padding-top', `${reserve}px`, 'important');
+    if (st === 0) return;
+    // Bottom-following wins over position-keeping while at the bottom (shared
+    // NEAR_BOTTOM_PX intent) — re-pinned every observer tick, so a task list
+    // expand/collapse cannot drift the last message behind the input bar.
+    if (nearBottom) { chat.scrollTop = chat.scrollHeight; return; }
+    // Otherwise keep the reading position: compensate 1:1 (the browser clamps
+    // if the now-taller content cannot honor it). Deliberately NOT compensated
+    // when st === 0 (few messages: everything is in the viewport, top-aligned)
+    // — that downward shift is exactly what moves the first message out from
+    // under the band.
+    chat.scrollTop = st + delta;
+  };
+  const ro = new ResizeObserver(syncTopReserve);
+  ro.observe(header);
+  ro.observe(overlays);
+  syncTopReserve();
+})();
 initMemory();
 initExplorer();
 initCanvas();
