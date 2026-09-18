@@ -193,14 +193,28 @@ function idemKey(clientMsgId) {
  *
  *  `clientMsgId` 缺席（或空串/非字符串）⇒ 返回体与今天**逐字节同形**（不发该键）
  *  —— 这是本批的加性判据：旧客户端（无键）请求体零变化。
- *  带键 ⇒ 追加 `clientMsgId` 一个键（不重排、不改写既有键）。 */
-function sendPayload(body, attachments, clientMsgId) {
+ *  带键 ⇒ 追加 `clientMsgId` 一个键（不重排、不改写既有键）。
+ *
+ *  `replyToMessageId`（quotejump 批加性扩面）= 被引消息的 `messages.id`
+ *  （**整数**；键名逐字取自外仓请求侧实形 `neblink-server/src/model.rs` —
+ *  `#[serde(rename_all = "camelCase")] pub reply_to_message_id: Option<i64>`，
+ *  即 wire 键 = `replyToMessageId`）。
+ *  🔴 外仓**只**接受这一个键：会话坐标**不是**请求字段，由服务端在写事务内从被引行
+ *  解析（`store.rs` 的写入校验：异会话 / 无此行 ⇒ 400 `REPLY_TARGET_INVALID`）⇒
+ *  客户端**不得**自报会话 id（自报即与行不一致）。
+ *  🔴 **好友腿专有**（外仓 D-6）：群 / 设备腿刻意不带该键 ⇒ 本键**只**由
+ *  [[sendFriendMessage]] 传入；群腿（[[sendGroupMessage]]）调用本函数时该位恒缺席
+ *  （群腿网关是原文转发，硬塞该键会被服务端静默忽略 ⇒ 本批禁为群腿塞字段）。
+ *  缺省 / 非法（非正整数）⇒ 请求体与加键前**逐字节同形**。 */
+function sendPayload(body, attachments, clientMsgId, replyToMessageId) {
   const att = (Array.isArray(attachments) && attachments.length > 0) ? attachments : null;
   const key = idemKey(clientMsgId);
-  if (!att && !key) return { body };
-  if (att && !key) return { body, attachments: att };
-  if (!att && key) return { body, clientMsgId: key };
-  return { body, attachments: att, clientMsgId: key };
+  const ref = (Number.isInteger(replyToMessageId) && replyToMessageId > 0) ? replyToMessageId : null;
+  const out = { body };
+  if (att) out.attachments = att;
+  if (key) out.clientMsgId = key;
+  if (ref) out.replyToMessageId = ref; // 末位追加（既有键序不变）
+  return out;
 }
 
 /** mock 幂等回放（§8.6 服务端语义镜像）：同 scope 同键 ⇒ 返回**原行**（不新增行、
@@ -559,9 +573,15 @@ export async function getMessages(conversationId, { after = 0, limit = 50 } = {}
  * `clientMsgId`（P2-b 加性扩面）= **幂等键**，由**发送动作**侧（`messages.js`）
  * 生成：同一动作的重试/重复提交复用同键，不同动作各得新键。缺省 ⇒ 请求体逐字节
  * 同形（旧客户端零变化）。🔴 幂等语义**全在服务端**（§8.6：同键重复仍是 201，
- * `existing:true` 仅表示回放原行）——本层与网关层都不去重、不改状态码。 */
-export async function sendFriendMessage(friendUserId, body, attachments, clientMsgId) {
-  const payload = sendPayload(body, attachments, clientMsgId);
+ * `existing:true` 仅表示回放原行）——本层与网关层都不去重、不改状态码。
+ *
+ * `replyToMessageId`（quotejump 批加性扩面）= 被引消息 id（整数，wire 键逐字见
+ * [[sendPayload]]）。缺省 ⇒ 请求体**逐字节同形**。🔴 本参数**只在好友腿**给：
+ * 群腿（[[sendGroupMessage]]）不接该位（外仓 D-6 群/设备腿刻意不带该键）。
+ * 🔴 服务端以 **400 REPLY_TARGET_INVALID** 拒绝「异会话 / 不存在的被引行」（零副作用）;
+ * mock 分支镜像同一语义（不存在的行 ⇒ 400）。 */
+export async function sendFriendMessage(friendUserId, body, attachments, clientMsgId, replyToMessageId) {
+  const payload = sendPayload(body, attachments, clientMsgId, replyToMessageId);
   if (!MOCK) return req('POST', `/api/friends/${encodeURIComponent(friendUserId)}/messages`, payload);
   await delay();
   const m = mockStore();
@@ -573,14 +593,25 @@ export async function sendFriendMessage(friendUserId, body, attachments, clientM
     m.conversations.unshift(conv);
     m.messages[conv.conversationId] = [];
   }
+  // 引用坐标校验（镜像服务端写事务）：被引行必须**存在**且**在同会话**，
+  // 坐标**由行解析**（客户端不得自报会话 id），否则 400 REPLY_TARGET_INVALID 零副作用。
+  const refId = (Number.isInteger(replyToMessageId) && replyToMessageId > 0) ? replyToMessageId : null;
+  if (refId !== null) {
+    const rows = m.messages[conv.conversationId] || [];
+    if (!rows.some(x => Number(x.id) === refId)) throw mockError('REPLY_TARGET_INVALID', 400);
+  }
   const scope = 'friend:' + friendUserId;
   const replayed = mockIdemReplay(scope, clientMsgId);
   if (replayed) return replayed; // 同键 ⇒ 回放原行，**不新增行**
-  const msg = { id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString() };
+  const msg = {
+    id: 'm-' + (++m._msgSeq), senderId: m.self.userId, kind: 'text', body, createdAt: new Date().toISOString(),
+    ...(refId !== null ? { replyToMessageId: refId, replyToConversationId: conv.conversationId } : {}),
+  };
   m.messages[conv.conversationId].push(msg);
   conv.lastMessage = msg;
   return mockIdemRemember(scope, clientMsgId, {
     messageId: msg.id, conversationId: conv.conversationId, createdAt: msg.createdAt,
+    ...(refId !== null ? { replyToMessageId: refId, replyToConversationId: conv.conversationId } : {}),
   });
 }
 

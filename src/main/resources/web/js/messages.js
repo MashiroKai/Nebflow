@@ -2283,7 +2283,8 @@ function fillBubble(bubble, m, conv) {
   // 引用块（msgmenu 一期）：信封在正文**首行** ⇒ 块渲染在正文之前，正文只渲染**回复**
   // （信封不重复显示）。无信封 ⇒ 逐字走下方既有两行（零行为变化）。
   const quote = parseQuoteBody(raw);
-  if (quote) bubble.appendChild(quoteBlockEl(quote));
+  const quoteCoord = quote ? quoteCoordOf(m, conv) : null;
+  if (quote) bubble.appendChild(quoteBlockEl(quote, quoteCoord));
   const body = quote ? quote.reply : raw;
   // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
   // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
@@ -2419,7 +2420,7 @@ function bubbleEl(m, conv) {
 
   // msgmenu 一期：被引消息 id 挂**气泡节点** dataset（🔴「跳转」的**唯一**预留挂点；
   // 跳转逻辑本批不写）。同一函数也在 `keyedDiff` 复用分支调用（收敛点单一）。
-  syncQuoteDataset(wrap, m);
+  syncQuoteDataset(wrap, m, conv);
 
   // #290 addendum §3.3: bubble right-click = primary desktop entry for
   // 转发给 agent (same action as the hover/header buttons - one handler).
@@ -2549,8 +2550,8 @@ function keyedDiff(flow, msgs, conv) {
         if (m.body !== undefined) node.dataset.body = m.body || '';
       }
       // msgmenu 一期：复用节点的引用挂点与可用性一并收敛（不变量「新 UI 态必须挂
-      // dataset 并在此处收敛」——见 `keyedDiff` 头注 `:2444-2446`）。
-      syncQuoteDataset(node, m);
+      // dataset 并在此处收敛」——见 `keyedDiff` 头注）。
+      syncQuoteDataset(node, m, conv);
     }
     const after = cursor ? cursor.nextSibling : flow.firstChild;
     if (node !== after) flow.insertBefore(node, after);
@@ -2997,11 +2998,45 @@ function parseQuoteBody(body) {
   };
 }
 
+/** 外仓结构化引用键的**收侧**取值闸（`replyToMessageId`：i64；缺席 / null / 非法 ⇒ ''）。
+ *  与 `frameMessage` / REST 面同款加性纪律：键缺席 = 旧形态（无结构化坐标）⇒ 不猜值。 */
+function wireQuoteId(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const n = Number(v);
+  return (Number.isInteger(n) && n > 0) ? String(n) : '';
+}
+
+/** 🔴 引用**坐标**（`(messageId, conversationId)` 对）——跳转的**唯一**判据源。
+ *
+ *  来源优先级（双读：结构化字段优先、信封兜底）：
+ *   ① 外仓结构化字段对（wire `replyToMessageId` + `replyToConversationId`；帧面经
+ *      `frameMessage` 平铺透传）⇒ 坐标 = 写库当时解析出的目标会话；
+ *   ② 正文首行信封的 id（`parseQuoteBody`）+ **本消息所在会话**兜底 ⇒ 坐标会话退化为
+ *      本会话（旧服 / 旧网关 / 群腿：外仓 D-6 刻意不带该键 ⇒ 结构化坐标不可得）。
+ *  🔴 客户端**不猜**会话坐标：没有结构化字段时，兜底值 = 本消息所在会话（同会话引用的
+ *  恒真取值），绝不凭空造第三个会话 id。
+ *  @returns {{messageId: string, conversationId: string, source: 'wire'|'envelope'}|null}
+ */
+function quoteCoordOf(m, conv) {
+  const q = parseQuoteBody(m && m.body);
+  const wireId = wireQuoteId(m && m.replyToMessageId);
+  const id = wireId || (q ? String(q.messageId) : '');
+  if (!id) return null;
+  const wireConv = (m && typeof m.replyToConversationId === 'string' && m.replyToConversationId)
+    ? m.replyToConversationId
+    : '';
+  const own = wireConv || (conv && conv.conversationId) || openConvId || '';
+  return { messageId: id, conversationId: own, source: wireId ? 'wire' : 'envelope' };
+}
+
 /** 被引消息是否仍在**当前已载窗口**内（降级显示判据 · 单点）。
- *  窗口 = `chatMsgs`（本文件 `:305`；加载更早消息会扩充它 ⇒ 每次 keyed diff 后重判）。 */
-function quoteTargetExists(id) {
+ *  窗口 = `chatMsgs`（本文件 `:313`；加载更早消息会扩充它 ⇒ 每次 keyed diff 后重判）。
+ *  🔴 坐标会话 ≠ 当前会话 ⇒ 目标**必然**不在本窗已载窗口内（跨会话目标由跳转腿
+ *  按需回退/切会话取，不在本判据内）。 */
+function quoteTargetExists(id, conversationId) {
   const k = String(id || '');
   if (!k) return false;
+  if (conversationId && openConvId && conversationId !== openConvId) return false;
   return chatMsgs.some(m => String(m.id) === k);
 }
 
@@ -3014,41 +3049,203 @@ function paintQuoteState(box, available) {
   note.hidden = available;
 }
 
+/** 🔴 可点性落地（**单点** · 作者令「必须可跳」＋「禁点了没反应」）：
+ *  只有 `data-quote-jump="ready"`（坐标可解析且目标会话在本机可见集内）才给**按钮语义**
+ *  ＋键盘可达（role/tabindex）；不可得 ⇒ 撤除按钮语义（不留半成品入口）。
+ *  事件监听**不在此挂**（节点会被 keyed diff 复用 ⇒ 挂这里会累积多份）——
+ *  监听在 [[quoteBlockEl]] 一次性挂上，处理函数按 dataset 判活（幂等、可复用）。 */
+function paintJumpAffordance(box) {
+  const ready = box.dataset.quoteJump === 'ready';
+  if (ready) {
+    box.setAttribute('role', 'button');
+    box.setAttribute('tabindex', '0');
+    const txt = (box.querySelector('.fm-quote-text') || /** @type {any} */ ({})).textContent || '';
+    box.setAttribute('aria-label', t('messages.quoteJumpAria', { text: txt }));
+  } else {
+    box.removeAttribute('role');
+    box.removeAttribute('tabindex');
+    box.removeAttribute('aria-label');
+  }
+  return ready;
+}
+
+/** 引用跳转可用性判据（**单点**）：坐标可解析 ∧ 目标会话 ∈ {当前会话} ∪ 本机会话集。
+ *  不可得 ⇒ `none`（不给可点入口）。 */
+function quoteJumpState(coord) {
+  if (!coord || !coord.messageId) return 'none';
+  const cid = coord.conversationId;
+  if (!cid) return 'none';
+  if (cid === openConvId) return 'ready';
+  const known = conversations.some(c => c && c.conversationId === cid && c.kind !== 'device');
+  return known ? 'ready' : 'none';
+}
+
 /** 气泡内引用块（**单点渲染器**；零新色值 —— 材质取既有 token）。
  *  🔴 不用左缘色条（设计硬约束「无 accent bars」）⇒ 既有卡面 + 发丝描边分组。 */
-function quoteBlockEl(q) {
+function quoteBlockEl(q, coord) {
   const box = el('div', 'fm-quote-block');
-  box.dataset.refMessageId = q.messageId;
+  const c = coord || { messageId: q.messageId, conversationId: openConvId || '' };
+  box.dataset.refMessageId = c.messageId;
+  if (c.conversationId) box.dataset.refConversationId = c.conversationId;
+  box.dataset.quoteJump = quoteJumpState(c);
+  box.dataset.quoteJumpSource = c.source || '';
   box.appendChild(el('div', 'fm-quote-text', q.context || t('messages.quotePlaceholder')));
   box.appendChild(el('div', 'fm-quote-note', ''));
-  paintQuoteState(box, quoteTargetExists(q.messageId));
+  paintJumpAffordance(box);
+  // 一次性挂载（节点复用安全）：处理函数按当前 dataset 判活。
+  box.addEventListener('click', () => { void jumpToQuote(box); });
+  box.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    void jumpToQuote(box);
+  });
+  paintQuoteState(box, quoteTargetExists(box.dataset.refMessageId, box.dataset.refConversationId));
   return box;
 }
 
-/** keyed diff 之后统一重判引用可用性（加载更早 / 增量补齐 / 节点复用都会改变答案）。
- *  🔴 遵守既有不变量（`:2444-2446` / `:2469-2482`）：**新 UI 态必须挂 dataset 并在
- *  keyed diff 处一并收敛**，否则刷新/复用后丢态。 */
+/** keyed diff 之后统一重判引用可用性 + 可点性（加载更早 / 增量补齐 / 节点复用 /
+ *  切会话都会改变答案）。
+ *  🔴 遵守既有不变量（`keyedDiff` 头注的「新 UI 态必须挂 dataset 并在 keyed diff 处
+ *  一并收敛」/ 复用分支）：否则刷新/复用后丢态。 */
 function syncQuoteStates(flow) {
   for (const node of flow.querySelectorAll('.fm-msg[data-ref-message-id]')) {
     const id = node.dataset.refMessageId || '';
-    const available = quoteTargetExists(id);
+    const cid = node.dataset.refConversationId || '';
+    const available = quoteTargetExists(id, cid);
+    const jump = node.dataset.quoteJump === 'ready' ? 'ready' : 'none';
     node.dataset.quoteState = available ? 'available' : 'unavailable';
     const box = node.querySelector('.fm-quote-block');
-    if (box && box.dataset.quoteState !== (available ? 'available' : 'unavailable')) paintQuoteState(box, available);
+    if (!box) continue;
+    box.dataset.refMessageId = id;
+    if (cid) box.dataset.refConversationId = cid;
+    box.dataset.quoteJump = jump;
+    paintJumpAffordance(box);
+    if (box.dataset.quoteState !== (available ? 'available' : 'unavailable')) paintQuoteState(box, available);
   }
 }
 
-/** 引用挂点 + 可用性（气泡节点 `dataset`）——`bubbleEl` 与 `keyedDiff` 复用分支
- *  **共用同一函数**（禁两处各写一份解析/挂点，避免漂移）。 */
-function syncQuoteDataset(node, m) {
-  const q = parseQuoteBody(m && m.body);
-  if (!q) {
+/** 引用挂点 + 可用性 + 可点性（气泡节点 `dataset`）——`bubbleEl` 与 `keyedDiff`
+ *  复用分支**共用同一函数**（禁两处各写一份解析/挂点，避免漂移）。 */
+function syncQuoteDataset(node, m, conv) {
+  const coord = quoteCoordOf(m, conv);
+  if (!coord) {
     delete node.dataset.refMessageId;
+    delete node.dataset.refConversationId;
     delete node.dataset.quoteState;
+    delete node.dataset.quoteJump;
     return;
   }
-  node.dataset.refMessageId = q.messageId;
-  node.dataset.quoteState = quoteTargetExists(q.messageId) ? 'available' : 'unavailable';
+  node.dataset.refMessageId = coord.messageId;
+  node.dataset.refConversationId = coord.conversationId;
+  node.dataset.quoteJump = quoteJumpState(coord);
+  node.dataset.quoteState = quoteTargetExists(coord.messageId, coord.conversationId) ? 'available' : 'unavailable';
+  const box = node.querySelector('.fm-quote-block');
+  if (box) {
+    box.dataset.refMessageId = coord.messageId;
+    if (coord.conversationId) box.dataset.refConversationId = coord.conversationId;
+    box.dataset.quoteJump = node.dataset.quoteJump;
+    box.dataset.quoteJumpSource = coord.source;
+    paintJumpAffordance(box);
+  }
+}
+
+// ── 引用跳转（quotejump 批 · 作者令「必须可跳」）────────────────────────────
+/** 定向回退拉取的步数上限（与既有 `loadOlderMessages` / `probeOlderHistory` 同族上限）。 */
+const QUOTE_JUMP_MAX_STEPS = 20;
+let quoteFlashTimer = 0;
+
+/** 目标节点查表（当前窗内）。 */
+function quoteNodeById(id) {
+  if (!modalEls || !id) return null;
+  return /** @type {HTMLElement|null} */ (modalEls.flow.querySelector(`.fm-msg[data-message-id="${CSS.escape(String(id))}"]`));
+}
+
+/** 滚动到目标节点（**在 `.fm-flow` 内**滚动，非 window）+ 一次高亮。
+ *  🔴 不使用 `scrollIntoView`：它会把滚动写进**任一** overflow:hidden 祖先
+ *  （既有教训：相机型/含裁剪祖先的落点全错）⇒ 只改 flow.scrollTop 这一处。 */
+function revealQuoteTarget(node) {
+  const flow = modalEls && modalEls.flow;
+  if (!flow || !node) return false;
+  const fr = flow.getBoundingClientRect();
+  const nr = node.getBoundingClientRect();
+  const max = Math.max(0, flow.scrollHeight - flow.clientHeight);
+  const delta = (nr.top - fr.top) - Math.max(0, (flow.clientHeight - nr.height) / 2);
+  flow.scrollTop = Math.max(0, Math.min(max, flow.scrollTop + delta));
+  node.classList.remove('fm-quote-target');
+  void node.offsetWidth; // 重放动画（同一节点连点两次）
+  node.classList.add('fm-quote-target');
+  if (quoteFlashTimer) clearTimeout(quoteFlashTimer);
+  quoteFlashTimer = setTimeout(() => node.classList.remove('fm-quote-target'), 1800);
+  return true;
+}
+
+/** ② 不在已载窗口 ⇒ **按需回退拉取**（复用既有 keyset 向后走法，有界 ≤20 步 + 命中即停）。
+ *  🔴 每步复查会话未被切走；退到 `after<=0` 或服务端返回空页仍未见 ⇒ **确定态：不在了**。
+ *  @returns {Promise<boolean>} true = 目标已进入窗口并渲染 */
+async function fetchQuoteTarget(convId, targetId) {
+  let after = Math.max(0, oldestLoadedId - 1 - HISTORY_WINDOW);
+  let steps = 0;
+  while (steps < QUOTE_JUMP_MAX_STEPS) {
+    let batch = [];
+    try { batch = await api.getMessages(convId, { after, limit: HISTORY_WINDOW }); }
+    catch { return false; } // 取数失败 ⇒ 不假跳（降级由调用方给可见反馈）
+    if (openConvId !== convId || !modalEls) return false; // 会话已换/窗已关
+    const fresh = (batch || []).filter(m => !chatMsgs.some(x => String(x.id) === String(m.id)));
+    if (fresh.length) {
+      chatMsgs = fresh.concat(chatMsgs);
+      oldestLoadedId = Number(chatMsgs[0].id) || oldestLoadedId;
+      prependMessages(fresh);
+      if (chatMsgs.some(m => String(m.id) === String(targetId))) return true;
+    }
+    if (after <= 0) return false;                  // 退到表首仍未见 ⇒ 确定态
+    if ((batch || []).length === 0) return false;  // 服务端水位已到（空页）
+    after = Math.max(0, after - HISTORY_WINDOW);
+    steps++;
+  }
+  return chatMsgs.some(m => String(m.id) === String(targetId));
+}
+
+/** ③ 做不到 ⇒ **诚实降级**：块失去可点语义 + 「原消息不可用」+ 一次性**可见**反馈
+ *  （🔴 禁静默、禁「点了没反应」）。 */
+function degradeQuoteJump(box) {
+  box.dataset.quoteJump = 'none';
+  box.dataset.quoteJumpOutcome = 'unavailable';
+  paintJumpAffordance(box);
+  paintQuoteState(box, false);
+  modalToast(t('messages.quoteUnavailable'));
+  return false;
+}
+
+/** 🔴 引用跳转（**唯一**实现 · 作者令「必须可跳」）。三条路径：
+ *   ① 目标在本会话**已载窗口** ⇒ 滚动到它（+ 高亮）；
+ *   ② 不在已载窗口 ⇒ 定向回退拉取（[[fetchQuoteTarget]]）后真跳；
+ *   ③ 坐标会话 ≠ 当前会话 ⇒ 先切到目标会话（本机可见集内）再定位；
+ *   ④ 都到不了 ⇒ 诚实降级（[[degradeQuoteJump]]，不留可点入口）。
+ *  读数面：`data-quote-jump-outcome` = `hit` / `unavailable`（QA 二值判据）。
+ *  @returns {Promise<boolean>} true = 真跳（位移 + 高亮已发生） */
+async function jumpToQuote(box) {
+  if (!box || box.dataset.quoteJump !== 'ready') return false;
+  const id = box.dataset.refMessageId || '';
+  const cid = box.dataset.refConversationId || '';
+  if (!id || !cid) return false;
+  // ③ 跨会话：目标不在当前会话 ⇒ 切过去（会话集内）再定位；不在会话集 ⇒ 降级。
+  if (cid !== openConvId) {
+    const target = conversations.find(c => c && c.conversationId === cid && c.kind !== 'device');
+    if (!target) return degradeQuoteJump(box);
+    await openConversation(cid, null);
+    if (openConvId !== cid || !modalEls) return false; // 切会话失败/被抢 ⇒ 不假跳
+  }
+  let node = quoteNodeById(id);
+  if (!node) {
+    const found = await fetchQuoteTarget(cid, id);
+    if (openConvId !== cid || !modalEls) return false;
+    if (found) node = quoteNodeById(id);
+  }
+  if (!node) return degradeQuoteJump(box);
+  if (modalEls) syncQuoteStates(modalEls.flow); // 命中 ⇒ 相关块可用性一并收敛
+  revealQuoteTarget(node);
+  box.dataset.quoteJumpOutcome = 'hit';
+  return true;
 }
 
 // ── 引用态（输入框面：被引消息摘要 + 可取消）────────────────────────────
@@ -3059,12 +3256,20 @@ function startQuote(wrap, conv) {
   const rawBody = wrap.dataset.body || '';
   // 引用一条「本身就是引用的」消息 ⇒ 只取它的正文（信封不再嵌套：一层引用一个信封）。
   const inner = parseQuoteBody(rawBody);
+  // D-1（群面署名，作者已裁随批）：发送者 id 的**唯一**查询点 —— 群窗入站气泡挂
+  // `.fm-msg-sender[data-sender-id]`（既有渲染点，仅群 + 仅入站）；群内**自发言**
+  // 无该子节点 ⇒ 走既有 viewer 身份单点 `groupSelfUserId()`（零新增数据面）。
+  // 名册未命中 ⇒ `groupSenderNameOf` 返回 ''（维持现状空值，不造值）。
+  const senderEl = wrap.querySelector('.fm-msg-sender');
+  const senderId = (senderEl && senderEl.dataset ? senderEl.dataset.senderId : '') || groupSelfUserId();
   const ref = makeReference({
     refType: 'friend-message',
     source: {
       conversationId: conv.conversationId || '',
       messageId: wrap.dataset.messageId || '',
-      friendName: conv.kind === 'device' ? deviceLabel(conv.device) : (conv.friend?.name || ''),
+      friendName: conv.kind === 'device' ? deviceLabel(conv.device)
+        : conv.kind === 'group' ? groupSenderNameOf(conv, senderId)
+        : (conv.friend?.name || ''),
       friendNeblinkId: conv.friend?.neblinkId || '',
       direction: wrap.classList.contains('out') ? 'out' : 'in',
       date: refDate(wrap.dataset.createdAt),
@@ -3268,6 +3473,12 @@ async function sendCurrent(conv, opts) {
   // ⇒ 失败重试（同键重发）把**已含信封**的正文原样再发一次，不会二次包信封。
   const quote = pendingQuoteRef;
   const body = quote ? buildQuoteBody(quote, text) : text;
+  // 结构化坐标腿（quotejump 批 · 双写）：被引消息 id 以**整数**随请求体带出（好友腿）。
+  // 🔴 只在**好友腿**给（外仓 D-6：群 / 设备腿刻意不带该键；群腿网关又是原文转发
+  // ⇒ 硬塞只会被服务端静默忽略）。id 域非整数（mock 面字符串 id）⇒ 不发该键。
+  // 重试腿（`fm-retry`）正文已含信封、`pendingQuoteRef` 已收口 ⇒ 坐标由 opts 原样带回
+  // （同一动作 ⇒ 同一坐标，不因重试丢结构化腿）。
+  const quoteRefId = quote ? wireQuoteId(quote.source?.messageId) : wireQuoteId(opts && opts.replyToMessageId);
   if (quote) clearQuote();
   // 幂等键：缺省面 = **新的发送动作** ⇒ 新键；重试面由调用方传入**同一**键（见下
   // `fm-retry` 分支）。🔴 生成点在动作边界，不在 API 层——API 层分不清「重试」与
@@ -3299,7 +3510,7 @@ async function sendCurrent(conv, opts) {
     // 加键前逐字节同形 + `clientMsgId` 一个键；群腿网关是原文转发，键直达服务端）。
     const resp = conv.kind === 'group'
       ? await api.sendGroupMessage(conv.conversationId, body, undefined, clientMsgId)
-      : await api.sendFriendMessage(conv.friend.userId, body, undefined, clientMsgId);
+      : await api.sendFriendMessage(conv.friend.userId, body, undefined, clientMsgId, quoteRefId ? Number(quoteRefId) : undefined);
     const realId = resp.messageId || tempId;
     noteSentRealId(realId); // self 识别关联源（群方向判据的学习输入，见 §状态段）
     // 群发回执面 `selfUserId`（契约终版 §1.1 #8）= 发送者鉴权身份 ⇒ 最强证据，
@@ -3362,7 +3573,8 @@ async function sendCurrent(conv, opts) {
       syncComposerSend(); // 回填非空文本 ⇒ 发送键回可用态（重试路径不得留假禁用）
       // P2-b：重试 = **同一动作** ⇒ **复用同键**。上游若其实已落库（响应丢失/超时），
       // 服务端按同键回放原行 ⇒ 不再落第二条；若首投真的没到，键首见 ⇒ 正常落一行。
-      sendCurrent(conv, { clientMsgId });
+      // quotejump：结构化引用坐标同属该动作 ⇒ 一并带回（见 `quoteRefId`）。
+      sendCurrent(conv, { clientMsgId, replyToMessageId: quoteRefId });
     });
     wrap.appendChild(flag);
   }
@@ -3670,6 +3882,15 @@ function frameMessage(p) {
     // 🔴 不补这一键，浏览器侧**根本**拿不到「这条是哪台设备发的」（取证位 ②因③：本
     // 白名单是**唯一**帧→本地对象的映射点，丢字段 = 未读判据无据可判、全程静默）。
     senderDeviceId: p.senderDeviceId,
+    // msgquote 结构化引用坐标对（quotejump 批加性扩面，与本函数其它键**同款**纪律）：
+    // 外仓 `reply_to_message_id` / `reply_to_conversation_id` 两列在**下行帧**是
+    // **条件平键**（无引用 ⇒ 整键不出现；见 neblink-server `src/friends.rs` 的
+    // `message_new_payload`）。本函数是**唯一**的「帧 → 本地消息对象」映射点
+    // ⇒ 不在此透出，浏览器侧**根本**拿不到跨会话跳转所需的会话坐标（丢字段、不丢消息）。
+    // 🔴 键缺席 = `undefined` ⇒ `quoteCoordOf` 退回「信封 id + 本会话」兜底（旧服/
+    // 旧网关/群腿形态，逐字节现状）。
+    replyToMessageId: p.replyToMessageId,
+    replyToConversationId: p.replyToConversationId,
   };
 }
 

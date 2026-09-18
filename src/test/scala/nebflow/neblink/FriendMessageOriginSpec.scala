@@ -79,14 +79,16 @@ class FriendMessageOriginSpec extends FunSuite:
   test("service: sendAsAgent carries origin=Some(agent) — the #290 contract") {
     val seen = List.newBuilder[Option[String]]
     val c = new StubClient:
-      // 4b 腿 A：签名随 NeblinkClient 扩面（attachmentIds/clientMsgId）；本钉只看 origin，
+      // 4b 腿 A：签名随 NeblinkClient 扩面（attachmentIds/clientMsgId）；
+      // quotejump 批再扩第 6 参（replyToMessageId，引用坐标透传位）；本钉只看 origin，
       // 故新面显式忽略（**不**在 override 里写默认参数——会与基类默认参数冲突）。
       override def sendFriendMessage(
         friendUserId: String,
         body: String,
         origin: Option[String],
         attachmentIds: List[String],
-        clientMsgId: Option[String]
+        clientMsgId: Option[String],
+        replyToMessageId: Option[Long]
       ) =
         IO { seen += origin }.as(Right(io.circe.Json.obj("conversationId" -> "c1".asJson)))
     c.login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan"))).unsafeRunSync()
@@ -99,14 +101,16 @@ class FriendMessageOriginSpec extends FunSuite:
   test("service: sendAsUser stays origin=None (user semantics, no overreach)") {
     val seen = List.newBuilder[Option[String]]
     val c = new StubClient:
-      // 4b 腿 A：签名随 NeblinkClient 扩面（attachmentIds/clientMsgId）；本钉只看 origin，
+      // 4b 腿 A：签名随 NeblinkClient 扩面（attachmentIds/clientMsgId）；
+      // quotejump 批再扩第 6 参（replyToMessageId，引用坐标透传位）；本钉只看 origin，
       // 故新面显式忽略（**不**在 override 里写默认参数——会与基类默认参数冲突）。
       override def sendFriendMessage(
         friendUserId: String,
         body: String,
         origin: Option[String],
         attachmentIds: List[String],
-        clientMsgId: Option[String]
+        clientMsgId: Option[String],
+        replyToMessageId: Option[Long]
       ) =
         IO { seen += origin }.as(Right(io.circe.Json.obj("conversationId" -> "c1".asJson)))
     c.login("dev", "name", "platform", List(NeblinkEndpoint("10.0.0.5", 1, "lan"))).unsafeRunSync()

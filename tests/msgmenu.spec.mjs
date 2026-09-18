@@ -34,8 +34,16 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = process.env.MM_WEB_ROOT || join(ROOT, 'src', 'main', 'resources', 'web');
-const MODE = process.env.MM_MODE === 'before' ? 'before' : 'after';
+// ══════════════════════════════════════════════════════════════════════
+// 运行模式：
+//   after     （缺省）= 本批实施面（quotejump 已落地）
+//   before    = **msgmenu 一期**的改前基线（一期落地前的树；`MM_WEB_ROOT` 指旧树）
+//   qjbefore  = **quotejump 批**的改前基线（一期已落地的 main 树）⇒ 只跑 S5 红线面
+// ══════════════════════════════════════════════════════════════════════
+const MODE = process.env.MM_MODE === 'before' ? 'before'
+  : process.env.MM_MODE === 'qjbefore' ? 'qjbefore' : 'after';
 const AFTER = MODE === 'after';
+const QJBEFORE = MODE === 'qjbefore';
 const MM_OUT = process.env.MM_OUT || '';
 const MM_SHOTS = process.env.MM_SHOTS || '';
 
@@ -438,17 +446,41 @@ async function scenarioQuote(page, pageErrors) {
     && qStyle.quote.fontSize === '12px' && qStyle.bubble.fontSize === '13px'
     && qStyle.quote.background !== qStyle.bubble.background,
     JSON.stringify(qStyle));
-  ok('S2 🔴 无「点了跳不动」的半成品入口：引用块无指针/无跳转 handler（点击后零变化）',
-    !!read && read.cursor === 'auto' && (await page.evaluate(async (id) => {
-      const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
-      const q = m.querySelector('.fm-quote-block');
-      const r = q.getBoundingClientRect();
-      const before = document.querySelector('.fm-flow').scrollTop;
-      q.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + 2, clientY: r.y + 2 }));
-      await new Promise(res => setTimeout(res, 150));
-      return document.querySelector('.fm-flow').scrollTop === before;
-    }, sentId)) === true,
-    JSON.stringify(read && read.cursor));
+  // 🔴 旧断言改写（quotejump 批 · 新令取代旧验收面）：一期在本行断言「引用块**无**跳转
+  //    handler（点了零变化）」——那是「跳转不写」时期的判据；作者令「引用**必须可跳**」
+  //    到达后该判据与本批**直接冲突**，故改写为**正向面**：入口在场（按钮语义 + 指针）
+  //    且点击**真跳**（定位命中 + 高亮挂点）。改前树（`MM_MODE=before`）仍断言旧形态
+  //    （无 handler ⇒ 点击零变化）⇒ 同一 harness 双模红绿钉。
+  const jump = await page.evaluate(async (id) => {
+    const flow = document.querySelector('.fm-flow');
+    const m = flow.querySelector(`.fm-msg[data-message-id="${id}"]`);
+    const q = m.querySelector('.fm-quote-block');
+    const r = q.getBoundingClientRect();
+    const before = flow.scrollTop;
+    q.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + 2, clientY: r.y + 2 }));
+    await new Promise(res => setTimeout(res, 320));
+    const tgt = flow.querySelector('.fm-msg[data-message-id="102"]');
+    return {
+      role: q.getAttribute('role'), tabindex: q.getAttribute('tabindex'), cursor: getComputedStyle(q).cursor,
+      ariaLabel: q.getAttribute('aria-label'),
+      coord: q.dataset.refConversationId || null, jumpState: q.dataset.quoteJump || null,
+      outcome: q.dataset.quoteJumpOutcome || null,
+      scrolled: flow.scrollTop !== before,
+      flash: !!(tgt && tgt.classList.contains('fm-quote-target')),
+    };
+  }, sentId);
+  put('quote.jump', jump);
+  if (AFTER) {
+    ok('S2 🔴 引用块是**可点入口**（role=button + tabindex=0 + 指针 + 可访问名）且点击**真跳**（定位命中 + 高亮挂点）',
+      jump.role === 'button' && jump.tabindex === '0' && jump.cursor === 'pointer' && !!jump.ariaLabel
+      && jump.jumpState === 'ready' && jump.outcome === 'hit' && jump.flash === true,
+      JSON.stringify(jump));
+  } else {
+    ok('S2 改前基线：引用块**无**跳转 handler（无 role/tabindex、cursor:auto、点击零变化、无高亮）',
+      jump.role === null && jump.tabindex === null && jump.cursor === 'auto'
+      && jump.outcome === null && jump.flash === false && jump.scrolled === false,
+      JSON.stringify(jump));
+  }
   // 对端腿：从**既有** onMessage 频道（`friend_event` 帧）注入一条对端消息，
   // 正文 = 同一编码点产出的引用信封 ⇒ 消费路径真实（producer 待跨仓契约落地）。
   const peerBody = `> [引用 #101] 分页君 · 2026-09-18 10:00 · 早上好\n\n对端的回复`;
@@ -675,10 +707,314 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// 真渲染截图（4 态）+ 收尾
+// S5 · 引用跳转（quotejump 批）：双写载荷 / 坐标双读 / 真跳三路径 / 降级 / 跨会话 / D-1
+// ══════════════════════════════════════════════════════════════════════
+const JCONV = 'cJ';        // 跳转场：240 条消息（首窗只覆盖最近 200 条 ⇒ #5 在窗口外）
+const GCONV = 'gJ';        // 群场（D-1 署名）
+const J_TARGET = '5';      // 窗口外目标
+const J_QUOTER = '240';    // 引用者（正文信封 + 结构化坐标）
+
+function seedJump() {
+  resetServer();
+  const rows = [];
+  for (let i = 1; i <= 240; i++) {
+    rows.push({ id: i, senderId: i % 2 ? 'u-p' : 'me', kind: 'text', body: `历史消息 #${i} 正文`, createdAt: iso(EPOCH - (400 - i)) });
+  }
+  rows[4] = { ...rows[4], body: '被引的原始消息 #5（窗口外目标）' };
+  rows[239] = {
+    ...rows[239],
+    body: '> [引用 #5] 分页君 · 2026-09-18 09:00 · 被引的原始消息 #5（窗口外目标）\n\n引用者正文',
+    replyToMessageId: 5,
+    replyToConversationId: JCONV,
+  };
+  SRV.msgs[JCONV] = rows;
+  SRV.convs.push({
+    conversationId: JCONV,
+    friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', remark: null, since: iso(EPOCH - 86400) },
+    lastMessage: rows[239], unreadCount: 0,
+  });
+  SRV.msgs[GCONV] = [{ id: 601, senderId: 'u-aa', kind: 'text', body: '群里的通知：周五团建', createdAt: iso(EPOCH - 300) }];
+}
+
+/** 群腿契约镜像（S5 专有；后注册 ⇒ 优先于 bootPage 的 catch-all）。 */
+async function routeGroupLeg(page, onCall) {
+  await page.route(/\/api\/groups(\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    return route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify([{ groupId: GCONV, title: '项目组', lastMessage: SRV.msgs[GCONV][0], unreadCount: 0, memberCount: 2, role: 'member', selfUserId: 'me-1' }]),
+    });
+  });
+  await page.route(/\/api\/groups\/[^/]+\/members$/, (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ selfUserId: 'me-1', members: [{ userId: 'u-aa', name: '甲先生', role: 'owner' }, { userId: 'me-1', name: '我', role: 'member' }] }),
+  }));
+  await page.route(/\/api\/groups\/[^/]+\/messages$/, async (route) => {
+    let body = {}; try { body = JSON.parse(route.request().postData() || '{}'); } catch { /* ignore */ }
+    onCall({ p: new URL(route.request().url()).pathname, method: 'POST', body });
+    const row = { id: 9000 + (SRV.calls.length % 500), senderId: 'me-1', kind: 'text', body: body.body || '', createdAt: iso(EPOCH) };
+    SRV.msgs[GCONV].push(row);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messageId: row.id, conversationId: GCONV, createdAt: row.createdAt, selfUserId: 'me-1' }) });
+  });
+}
+
+const quotePayloads = () => callsOf(c => c.method === 'POST').map(c => ({ p: c.p, keys: Object.keys(c.body), refId: c.body.replyToMessageId, body: String(c.body.body || '') }));
+
+async function scenarioJump(page, pageErrors, baseline = false) {
+  console.log(`\n── S5 · 引用跳转 · MODE=${MODE}${baseline ? '（本批改前基线）' : ''}`);
+
+  // ── A. 双写载荷（好友腿：结构化坐标 + 信封**同时**在场）─────────────────
+  await openConv(page, 'cA');
+  await rightClickBubble(page, 102);
+  await clickMenuItem(page, '引用');
+  await page.fill('.fm-input', '双写载荷读数');
+  await page.click('.fm-send-btn');
+  await sleep(800);
+  const p1 = quotePayloads().pop();
+  put('jump.wire.friend', p1);
+  if (baseline) {
+    ok('S5 改前基线：好友腿出站载荷**无**结构化坐标键（只有信封承载）',
+      !!p1 && !p1.keys.includes('replyToMessageId') && /^> \[引用 #102\] /.test(p1.body),
+      JSON.stringify(p1 && { keys: p1.keys, first: p1.body.split('\n')[0] }));
+  } else {
+    ok('S5 双写：好友腿请求体**同时**带结构化坐标 `replyToMessageId`（整数 102）与正文首行信封',
+      !!p1 && p1.refId === 102 && typeof p1.refId === 'number' && /^> \[引用 #102\] /.test(p1.body),
+      JSON.stringify(p1 && { keys: p1.keys, refId: p1.refId, refType: typeof p1.refId, first: p1.body.split('\n')[0] }));
+  }
+  // 加性对照：无引用的消息 ⇒ 零新键（旧形态逐字节同形）
+  await page.fill('.fm-input', '不带引用的读数');
+  await page.click('.fm-send-btn');
+  await sleep(700);
+  const p2 = quotePayloads().pop();
+  put('jump.wire.plain', p2);
+  ok('S5 加性判据：无引用消息的请求体**零新键**（`replyToMessageId` 不出现）',
+    !!p2 && !p2.keys.includes('replyToMessageId') && !p2.body.startsWith('> [引用'), JSON.stringify(p2 && p2.keys));
+
+  // ── B. 群腿：**禁塞**结构化键 + D-1 署名（引用态条 / 出站信封）──────────
+  await page.click('#fm-chat-overlay .fm-modal-close');
+  await sleep(350);
+  await openConv(page, GCONV);
+  await rightClickBubble(page, 601);
+  await clickMenuItem(page, '引用');
+  await sleep(350);
+  const gstrip = await page.evaluate(() => {
+    const s = document.querySelector('.fm-quote-strip');
+    const chip = s ? s.querySelector('.att-ref') : null;
+    return { hidden: s ? s.hidden : null, refId: chip ? chip.dataset.refId : null, text: chip ? chip.textContent : null };
+  });
+  put('jump.group.strip', gstrip);
+  await page.fill('.fm-input', '群里回一句');
+  await page.click('.fm-send-btn');
+  await sleep(800);
+  const pg = quotePayloads().pop();
+  const gEnv = pg ? String(pg.body).split('\n')[0] : '';
+  put('jump.group.wire', { keys: pg && pg.keys, envelope: gEnv });
+  if (baseline) {
+    ok('S5 改前基线（D-1）：群会话引用态摘要**缺发送者名**（只有日期 · 预览）',
+      !!gstrip && gstrip.hidden === false && gstrip.refId === 'ref:fm:601' && !/甲先生/.test(String(gstrip.text)),
+      JSON.stringify(gstrip && gstrip.text));
+    ok('S5 改前基线（D-1）：群腿出站信封摘要同样缺发送者名',
+      !/甲先生/.test(gEnv) && /^> \[引用 #601\] /.test(gEnv), JSON.stringify(gEnv));
+    ok('S5 改前基线：引用块**无**跳转入口（无 role/tabindex、无 handler）',
+      await page.evaluate(async () => {
+        const q = document.querySelector('.fm-flow .fm-msg[data-message-id] .fm-quote-block');
+        if (!q) return false;
+        const r = q.getBoundingClientRect();
+        const st = document.querySelector('.fm-flow').scrollTop;
+        q.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + 2, clientY: r.y + 2 }));
+        await new Promise(res => setTimeout(res, 150));
+        return q.getAttribute('role') === null && q.getAttribute('tabindex') === null
+          && getComputedStyle(q).cursor === 'auto' && !q.dataset.quoteJumpOutcome
+          && document.querySelector('.fm-flow').scrollTop === st;
+      }));
+    return;
+  }
+  ok('S5 D-1（① 引用态条）：群会话引用摘要**含发送者名**（既有 `groupSenderNameOf` 名册解析）',
+    !!gstrip && /甲先生/.test(String(gstrip.text)) && gstrip.refId === 'ref:fm:601', JSON.stringify(gstrip && gstrip.text));
+  ok('S5 D-1（② 出站信封）：群腿信封摘要同样含发送者名',
+    /^> \[引用 #601\] 甲先生/.test(gEnv), JSON.stringify(gEnv));
+  ok('S5 🔴 群腿**禁塞**结构化引用键（出站键集逐字 = 既有两键 + 信封承载）',
+    !!pg && !pg.keys.includes('replyToMessageId') && !pg.keys.includes('replyToConversationId')
+    && pg.keys.includes('body') && pg.keys.includes('clientMsgId'), JSON.stringify(pg && pg.keys));
+  // D-1（③ 对端气泡块）：从既有 onMessage 频道注入一条群消息，正文 = **本应用自己刚产出的
+  // 信封**（`gEnv`，同一编码点）⇒ 该断言挂在**命名链**上（缺名即复红），不是挂在固定串上。
+  const gPeer = `${gEnv}\n\n对端的群里回复`;
+  if (WS) WS.send(JSON.stringify({ type: 'friend_event', event: 'message_new', conversationId: GCONV, messageId: 8601, senderId: 'u-aa', kind: 'text', body: gPeer, createdAt: new Date().toISOString() }));
+  await sleep(700);
+  const gBlock = await bubbleRead(page, 8601);
+  put('jump.group.bubble', gBlock);
+  ok('S5 D-1（③ 对端气泡块）：群消息引用块摘要含发送者名',
+    !!gBlock && gBlock.hasQuote && /甲先生/.test(String(gBlock.quoteText)), JSON.stringify(gBlock && gBlock.quoteText));
+
+  // ── C. 坐标双读（帧面结构化键在场 / 缺席两态）──────────────────────────
+  await page.click('#fm-chat-overlay .fm-modal-close');
+  await sleep(350);
+  await openConv(page, 'cA');
+  const sendFrameTo = (cid, payload) => {
+    if (WS) WS.send(JSON.stringify({ type: 'friend_event', event: 'message_new', conversationId: cid, ...payload }));
+  };
+  sendFrameTo('cA', { messageId: 751, senderId: 'u-p', kind: 'text', body: '> [引用 #102] 分页君 · 2026-09-18 10:00 · 明天九点开会\n\n带坐标的对端腿', replyToMessageId: 102, replyToConversationId: 'cA' });
+  sendFrameTo('cA', { messageId: 752, senderId: 'u-p', kind: 'text', body: '> [引用 #103] 分页君 · 2026-09-18 10:01 · 带上笔记本\n\n不带坐标的对端腿' });
+  await sleep(800);
+  const c1 = await bubbleRead(page, 751);
+  const c2 = await bubbleRead(page, 752);
+  put('jump.coord.wire', c1);
+  put('jump.coord.fallback', c2);
+  const coordRead = await page.evaluate(() => {
+    const g = (id) => {
+      const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
+      const q = m && m.querySelector('.fm-quote-block');
+      return q ? { id: q.dataset.refMessageId, conv: q.dataset.refConversationId || null, src: q.dataset.quoteJumpSource || null, jump: q.dataset.quoteJump || null } : null;
+    };
+    return { wire: g(751), envelope: g(752) };
+  });
+  put('jump.coord', coordRead);
+  ok('S5 坐标双读①：帧面带结构化键 ⇒ 坐标 = 结构化坐标（id + 会话）且可点',
+    !!coordRead.wire && coordRead.wire.id === '102' && coordRead.wire.conv === 'cA' && coordRead.wire.src === 'wire' && coordRead.wire.jump === 'ready',
+    JSON.stringify(coordRead.wire));
+  ok('S5 坐标双读②：帧面**无**结构化键（旧服/群腿形态）⇒ 退化 = 信封 id + 本会话兜底（不猜第三方会话）',
+    !!coordRead.envelope && coordRead.envelope.id === '103' && coordRead.envelope.conv === 'cA'
+    && coordRead.envelope.src === 'envelope' && coordRead.envelope.jump === 'ready',
+    JSON.stringify(coordRead.envelope));
+
+  // ── D. 真跳路径（窗户内滚动 + 高亮 / 键盘 / 回退拉取 / 降级 / 跨会话）──
+  await page.click('#fm-chat-overlay .fm-modal-close');
+  await sleep(350);
+  await openConv(page, JCONV);
+  await sleep(900);
+  const beforeJump = await page.evaluate(() => {
+    const flow = document.querySelector('.fm-flow');
+    const m = flow.querySelector('.fm-msg[data-message-id="240"]');
+    const q = m.querySelector('.fm-quote-block');
+    return {
+      flowScrollable: flow.scrollHeight > flow.clientHeight + 2,
+      scrollTop: flow.scrollTop, scrollHeight: flow.scrollHeight, clientHeight: flow.clientHeight,
+      jump: q.dataset.quoteJump, conv: q.dataset.refConversationId, targetLoaded: !!flow.querySelector('.fm-msg[data-message-id="5"]'),
+      cursor: getComputedStyle(q).cursor,
+    };
+  });
+  put('jump.outOfWindow.before', beforeJump);
+  ok('S5 场建：目标 #5 在**已载窗口之外**（首窗只覆盖最近 200 条）+ 坐标来自结构化键',
+    beforeJump.targetLoaded === false && beforeJump.conv === JCONV && beforeJump.jump === 'ready',
+    JSON.stringify(beforeJump));
+  // 键盘可达（Tab 顺序 + Enter 触发）
+  const kbd = await page.evaluate(async () => {
+    const box = document.querySelector('.fm-flow .fm-msg[data-message-id="240"] .fm-quote-block');
+    box.focus();
+    const focused = document.activeElement === box;
+    const ring = getComputedStyle(box).outlineStyle !== 'none' || getComputedStyle(box).outlineWidth !== '0px';
+    const before = document.querySelector('.fm-flow').scrollTop;
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(res => setTimeout(res, 900));
+    const tgt = document.querySelector('.fm-flow .fm-msg[data-message-id="5"]');
+    const fr = document.querySelector('.fm-flow').getBoundingClientRect();
+    const tr = tgt ? tgt.getBoundingClientRect() : null;
+    return {
+      focused, ring, role: box.getAttribute('role'), tabindex: box.getAttribute('tabindex'),
+      outcome: box.dataset.quoteJumpOutcome || null,
+      scrolled: document.querySelector('.fm-flow').scrollTop !== before,
+      targetLoaded: !!tgt, flash: !!(tgt && tgt.classList.contains('fm-quote-target')),
+      inViewport: !!tr && tr.top >= fr.top - 1 && tr.bottom <= fr.bottom + 1,
+    };
+  });
+  put('jump.kbd', kbd);
+  await shot(page, 'quote-jump-target');
+  ok('S5 键盘可达：块可聚焦（role=button + tabindex=0 + 焦点环）+ Enter 触发**真跳**',
+    kbd.focused === true && kbd.role === 'button' && kbd.tabindex === '0' && kbd.ring === true && kbd.outcome === 'hit',
+    JSON.stringify(kbd));
+  ok('S5 🔴 窗口外目标 ⇒ **按需回退拉取**后真跳（目标入场 + 位移 + 高亮 + 落在视口内）',
+    kbd.targetLoaded === true && kbd.scrolled === true && kbd.flash === true && kbd.inViewport === true,
+    JSON.stringify(kbd));
+  const backfillReqs = callsOf(c => c.method === 'GET' && c.p.includes(`/conversations/${JCONV}/messages`)).map(c => c.query);
+  put('jump.backfill.requests', backfillReqs);
+  ok('S5 回退拉取读数为**定向 keyset**（有界：不含无界扫描；命中即停 ≤20 步）',
+    backfillReqs.length > 0 && backfillReqs.length <= 21, JSON.stringify(backfillReqs));
+
+  // 不可达 ⇒ 诚实降级（禁「点了没反应」）
+  sendFrameTo(JCONV, { messageId: 753, senderId: 'u-p', kind: 'text', body: '> [引用 #999999] 分页君 · 2026-09-18 10:02 · 早已不存在\n\n降级腿', replyToMessageId: 999999, replyToConversationId: JCONV });
+  await sleep(700);
+  const degrade = await page.evaluate(async () => {
+    const m = document.querySelector('.fm-flow .fm-msg[data-message-id="753"]');
+    const q = m.querySelector('.fm-quote-block');
+    const before = document.querySelector('.fm-flow').scrollTop;
+    const r = q.getBoundingClientRect();
+    q.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + 2, clientY: r.y + 2 }));
+    await new Promise(res => setTimeout(res, 900));
+    const toast = document.querySelector('.fm-modal-toast');
+    return {
+      outcome: q.dataset.quoteJumpOutcome || null, jump: q.dataset.quoteJump || null,
+      role: q.getAttribute('role'), tabindex: q.getAttribute('tabindex'), cursor: getComputedStyle(q).cursor,
+      note: (m.querySelector('.fm-quote-note') || {}).textContent, noteHidden: (m.querySelector('.fm-quote-note') || {}).hidden,
+      toastVisible: !!(toast && !toast.hidden && toast.textContent), toastText: toast ? toast.textContent : null,
+      state: q.dataset.quoteState,
+      scrolled: document.querySelector('.fm-flow').scrollTop !== before,
+    };
+  });
+  put('jump.degrade', degrade);
+  ok('S5 🔴 不可达 ⇒ 诚实降级：块失去可点语义（role/tabindex 撤除 + 指针复位）+ 「原消息不可用」+ **可见**反馈（禁静默）',
+    degrade.outcome === 'unavailable' && degrade.jump === 'none' && degrade.role === null && degrade.tabindex === null
+    && degrade.cursor === 'auto' && degrade.noteHidden === false && /原消息不可用/.test(String(degrade.note))
+    && degrade.toastVisible === true, JSON.stringify(degrade));
+  const secondClick = await page.evaluate(async () => {
+    const q = document.querySelector('.fm-flow .fm-msg[data-message-id="753"] .fm-quote-block');
+    const before = document.querySelector('.fm-flow').scrollTop;
+    q.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(res => setTimeout(res, 300));
+    return document.querySelector('.fm-flow').scrollTop === before;
+  });
+  ok('S5 降级后**零假跳**：再点该块无任何位移（入口已撤除）', secondClick === true);
+
+  // 跨会话坐标 ⇒ 切到目标会话再定位
+  await page.click('#fm-chat-overlay .fm-modal-close');
+  await sleep(350);
+  await openConv(page, 'cC');
+  sendFrameTo('cC', { messageId: 754, senderId: 'u-q', kind: 'text', body: '> [引用 #102] 分页君 · 2026-09-18 10:03 · 明天九点开会\n\n跨会话引用腿', replyToMessageId: 102, replyToConversationId: 'cA' });
+  await sleep(800);
+  const crossBefore = await page.evaluate(() => {
+    const q = document.querySelector('.fm-flow .fm-msg[data-message-id="754"] .fm-quote-block');
+    return { conv: q.dataset.refConversationId, jump: q.dataset.quoteJump, open: document.querySelector('.fm-conv-row.active') ? document.querySelector('.fm-conv-row.active').dataset.conversationId : null };
+  });
+  const cross = await page.evaluate(async () => {
+    const q = document.querySelector('.fm-flow .fm-msg[data-message-id="754"] .fm-quote-block');
+    const r = q.getBoundingClientRect();
+    q.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + 2, clientY: r.y + 2 }));
+    await new Promise(res => setTimeout(res, 1400));
+    const tgt = document.querySelector('.fm-flow .fm-msg[data-message-id="102"]');
+    return {
+      switched: !!document.querySelector('.fm-flow .fm-msg[data-message-id="102"]'),
+      title: (document.querySelector('.fm-modal-title') || {}).textContent || null,
+      targetLoaded: !!tgt, flash: !!(tgt && tgt.classList.contains('fm-quote-target')),
+      footerRow: (document.querySelector('.fm-conv-row.active') || {}).dataset ? document.querySelector('.fm-conv-row.active').dataset.conversationId : null,
+    };
+  });
+  put('jump.cross', { before: crossBefore, after: cross });
+  ok('S5 🔴 跨会话坐标 ⇒ **先切到目标会话再定位**（目标会话被打开 + 目标节点在场 + 高亮）',
+    crossBefore.conv === 'cA' && crossBefore.jump === 'ready' && cross.targetLoaded === true && cross.flash === true,
+    JSON.stringify({ before: crossBefore, after: cross }));
+  put('pageErrors.s5', pageErrors);
+  ok('S5 跳转腿零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// 真渲染截图 + 收尾
 // ══════════════════════════════════════════════════════════════════════
 try {
   console.log(`msgmenu spec · MODE=${MODE} · WEB=${WEB}`);
+  if (QJBEFORE) {
+    // 本批（quotejump）改前基线：一期**已落地**的 main 树 ⇒ 只跑跳转/D-1 的红线面
+    //（msgmenu 一期的改前基线面在 `MM_MODE=before`，两者基线不同、禁混用）。
+    resetServer();
+    seedJump();
+    const { ctx, page, pageErrors } = await bootPage();
+    try {
+      await routeGroupLeg(page, (c) => SRV.calls.push(c));
+      await openPanel(page);
+      await scenarioJump(page, pageErrors, true);
+    } finally {
+      await ctx.close();
+    }
+  } else {
   {
     resetServer();
     const { ctx, page, pageErrors } = await bootPage();
@@ -725,6 +1061,22 @@ try {
     } finally {
       await ctx.close();
     }
+  }
+  // S5 单独一轮（quotejump 批：跳转场 + 群场，自有种子 ⇒ 不动 S1-S3 的判据面）
+  // 🔴 只在实施面跑（本批改前基线由 `MM_MODE=qjbefore` 的专用轮承担；`MM_MODE=before`
+  //    是 msgmenu 一期的基线，其树**没有**引用功能 ⇒ 该轮不适用）。
+  if (AFTER) {
+    resetServer();
+    seedJump();
+    const { ctx, page, pageErrors } = await bootPage();
+    try {
+      await routeGroupLeg(page, (c) => SRV.calls.push(c));
+      await openPanel(page);
+      await scenarioJump(page, pageErrors, false);
+    } finally {
+      await ctx.close();
+    }
+  }
   }
 } catch (e) {
   failures++;

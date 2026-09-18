@@ -645,7 +645,8 @@ class NeblinkClient(
     body: String,
     origin: Option[String] = None,
     attachmentIds: List[String] = Nil,
-    clientMsgId: Option[String] = None
+    clientMsgId: Option[String] = None,
+    replyToMessageId: Option[Long] = None
   ): IO[Either[String, Json]] =
     withSession { token =>
       val fields = List(
@@ -655,7 +656,18 @@ class NeblinkClient(
         // 键缺省 = 现状（旧服务端也据此走原校验 ⇒ 旧端容忍，§B.3）。空列表 ⇒ **省键**
         // （与 `None` 同形：不带附件的消息逐字节等于今天）。
         Option.when(attachmentIds.nonEmpty)("attachments" -> attachmentIds.asJson),
-        clientMsgId.map(id => "clientMsgId" -> id.asJson)
+        clientMsgId.map(id => "clientMsgId" -> id.asJson),
+        // quotejump 批（作者裁 (c) 双写双读）：**引用坐标**（被引消息 id）透传位。
+        // 🔴 本列表就是**出站字段白名单**（`Json.fromFields` 按表重建、未知键静默丢弃）
+        // ⇒ 不加这一行，客户端带来的 `replyToMessageId` 会在本层**静默消失**（表现 =
+        // 跨会话跳转不可达而同会话仍可跳，缺陷隐蔽）。键名逐字取自外仓请求侧实形
+        // （`neblink-server/src/model.rs`：`#[serde(rename_all = "camelCase")]` +
+        // `pub reply_to_message_id: Option<i64>`）⇒ 线上键 = `replyToMessageId`，值为
+        // **整数**；会话坐标**不是**请求字段（服务端写事务内自行解析被引行）。
+        // 🔴 `None` ⇒ **省键**（不是 `null`）⇒ 无引用消息的请求体与加键前**逐字节同形**
+        // （旧服务端 / 旧网关形态零变化）。追加在**末位**（既有键序不变）。
+        // 🔴 仅好友腿：群 / 设备腿走**原文转发**（[[sendGroupMessage]] 不发该键）。
+        replyToMessageId.map(id => "replyToMessageId" -> id.asJson)
       ).flatten
       sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", Json.fromFields(fields).noSpaces, Some(token))
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))

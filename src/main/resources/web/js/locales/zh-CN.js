@@ -316,6 +316,9 @@ export default {
   // 被引消息不在当前已载窗口（跳转未实现 ⇒ 只做降级显示）：摘要仍在信封里，此处只标缺失。
   'messages.quoteUnavailable': '原消息不可用',
   'messages.quotePlaceholder': '原始消息',
+  // quotejump 批（跳转「必须可跳」）：引用块的**按钮语义**可访问名（含被引摘要文本）。
+  // 无跳转实现/坐标不可得时该属性不挂（`paintJumpAffordance` 单点）。
+  'messages.quoteJumpAria': '跳转到被引消息：{text}',
   'messages.multiSelect': '多选转发',
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',

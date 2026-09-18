@@ -305,6 +305,9 @@ export default {
   'messages.quote': 'Quote',
   'messages.quoteUnavailable': 'Original message unavailable',
   'messages.quotePlaceholder': 'Original message',
+  // quotejump batch (jump = "must be jumpable"): accessible name for the quote
+  // block's button semantics (carries the quoted summary text).
+  'messages.quoteJumpAria': 'Jump to quoted message: {text}',
   'messages.multiSelect': 'Multi-select',
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',

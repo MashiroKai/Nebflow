@@ -103,7 +103,10 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
         body: String,
         origin: Option[String],
         attachmentIds: List[String],
-        clientMsgId: Option[String]
+        clientMsgId: Option[String],
+        // quotejump 批：出站白名单新增末位键（引用坐标）。本 StubClient 只做**遮蔽记账**
+        // （被触碰即写 `unexpected:sendFriendMessage`）⇒ 仅同步签名，零行为改动。
+        replyToMessageId: Option[Long]
       ): IO[Either[String, Json]] = unexpected("sendFriendMessage")
 
   private def withStub[A](reply: Either[String, FriendListResponse])(

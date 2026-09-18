@@ -1569,7 +1569,19 @@ class RestApiRoutes(
       *
       * 正文闸的加性放开：`body` 为空**仅当** `attachments` 非空时允许（服务端 §B.4
       * 有附件时生成占位正文）——这是**拓宽**而不是收紧：无附件时空正文仍逐字 400
-      * （旧行为不变，与群路由的服务端校验序同源）。 */
+      * （旧行为不变，与群路由的服务端校验序同源）。
+      *
+      * `replyToMessageId`（quotejump 批加性扩面 · 作者裁 (c) 双写双读）= 被引消息的
+      * `messages.id`（**整数**）。本路由**只做**「读出 + 透传」两件事，与上面三键同款：
+      * 不校验坐标、不解析会话归属、不改状态码 —— 🔴 坐标合法性与会话归属**全在服务端**
+      * 写事务内判定（异会话 / 无此行 ⇒ **400 `REPLY_TARGET_INVALID`**，零副作用），
+      * 本层自行「校验」即造出第二套真相。🔴 加性判据：键缺席 / `null` / 非正整数 ⇒
+      * `None` ⇒ 转发形态与今天**逐字节同形**（旧客户端零变化；`NeblinkClient` 只在
+      * `Some` 时发该键）。🔴 **本路由只读已列出的键、逐字取值，不重建请求体** ——
+      * 下游 `NeblinkClient` 的 `Json.fromFields(fields)` 才是事实上的出站白名单
+      * （新键若不在这三处显式出现就会在网关**静默消失**，表现 = 跨会话跳转不可达而
+      * 同会话仍可跳，缺陷隐蔽）。🔴 群腿不受影响：群发送是**原文转发**（见本文件
+      * `groupSendProxy`），外仓群/设备体刻意不收该键（D-6），本批禁为群腿硬塞字段。 */
     case req @ POST -> Root / "friends" / friendUserId / "messages" =>
       withAuth(req) {
         sharedResources.friendService match
@@ -1587,8 +1599,15 @@ class RestApiRoutes(
                 .as[String]
                 .toOption
                 .filter(_.nonEmpty)
+              val replyToMessageId = body.hcursor
+                .downField("replyToMessageId")
+                .as[Long]
+                .toOption
+                .filter(_ > 0)
               if text.isEmpty && attachmentIds.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
-              else fs.sendAsUser(friendUserId, text, attachmentIds, clientMsgId).flatMap(friendResult)
+              else
+                fs.sendAsUser(friendUserId, text, attachmentIds, clientMsgId, replyToMessageId)
+                  .flatMap(friendResult)
             }
       }
 
