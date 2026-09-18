@@ -132,7 +132,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   private def cancelInput(project: String, nodeId: String): Json =
     Json.obj("project" -> Json.fromString(project), "node-id" -> Json.fromString(nodeId))

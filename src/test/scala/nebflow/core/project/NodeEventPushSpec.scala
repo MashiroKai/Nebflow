@@ -122,7 +122,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   /** NodeList 载荷节点条目的字段集（事件 payload 必须同构——与 NodePayload.buildNodeJson
     * 单一序列化点对齐；skill/mcp/preset 为节点配置字段；description 恒带（存量无值 null）；

@@ -128,7 +128,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   /** 一次性挂载项目 runtime（NodeGhostRowSpec 模式 + ProjectRuntimeRegistry）。 */
   private def mountProject(

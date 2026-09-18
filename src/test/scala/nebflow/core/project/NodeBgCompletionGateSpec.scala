@@ -230,7 +230,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   private def createNode(project: String, ws: os.Path, name: String, task: String,
       extraOut: Option[String] = None, res: SharedResources = null, system: ActorSystem = null): IO[Unit] =

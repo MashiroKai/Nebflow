@@ -143,7 +143,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -173,7 +173,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤6050 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤6350 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
@@ -191,7 +191,11 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // 链级抽象 P2（spec 20260910_flowmap-chain-abstraction-spec §5）：「拉回」是新参数
     // 面（restoreChain 显式旗标）且打开归档节点编辑域——分发器不知道它有这条通道就
     // 只能建重复节点。参数行 + 归档编辑语义行两条（实测 5,991）→ 预算 5700→6050。
-    assert(d.length <= 6050, s"NodeEdit description must stay ≤6050 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款), got ${d.length}")
+    // nodegate 建位期声明闸批（判据真源 20260913_173919_nodegate-create-time-validation-plan
+    // §1 + §7 文档一致性联动）：out 行 dangling 标记 / role 行空 out 令牌指引 /
+    // plugins 行 NODE_PLUGINS_UNDECLARED 条款 / merge 行 NODE_MERGE_SINK_NEEDS_OUT
+    // 条款（两个新参数的完整描述进 schema properties，不占描述预算）→ 预算 6050→6350。
+    assert(d.length <= 6350, s"NodeEdit description must stay ≤6350 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
         "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain") do
