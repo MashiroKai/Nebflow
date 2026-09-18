@@ -131,18 +131,163 @@ object DropboxUtil:
   private def writtenBytesSafe(path: os.Path): IO[Long] =
     IO.blocking(if os.exists(path) then os.size(path) else 0L).handleErrorWith(_ => IO.pure(0L))
 
+  // ===== 落名收口（dropnam 批）—— **唯一算名点** =====
+  //
+  // 三契约（root）：
+  //   ① 最终名字**只在一处算**  ⇒ 本区块的 `finalNameCandidate`（候选序）+ `reserveAndPlace`（**占据**）；
+  //   ② 撞名**必改名且既有件零删除** ⇒ 唯一性判据 = 内核 `link(2)`（EEXIST ⇒ 换下一候选），
+  //      既不是 `os.exists` 预判、也不是时间戳推断 ⇒ 判定与占名是**同一个原子操作**（无 TOCTOU）；
+  //   ③ 通报名与落盘名**同源同一次观测** ⇒ 调用方只能用 `reserveAndPlace` 返回的路径，
+  //      禁任何第二处名字推断（`DropboxService.landedPathFor` 的预测分支已删除）。
+
   /**
-   * Resolve the final save path, appending a timestamp suffix if the name already exists.
-   * e.g. "report.pdf" → "report_20250115_143022.pdf"
+   * 第 k 候选名（k=0 ⇒ 裸名；k=1 ⇒ 历史冲突口径；k≥2 ⇒ 序号后缀）。**纯函数，不触盘**。
+   *
+   * k=1 与历史口径**逐字符一致** ⇒ 历史名形态、既有 spec 的形态断言全部不变；
+   * 新序号后缀（`_<k>`）只在**第二次以上**冲突时出现。
    */
-  def resolveFinalPath(dir: os.Path, fileName: String): os.Path =
-    val target = dir / fileName
-    if !os.exists(target) then target
+  def finalNameCandidate(fileName: String, k: Int, now: ZonedDateTime): String =
+    if k == 0 then fileName
     else
       val dot = fileName.lastIndexOf('.')
       val (base, ext) = if dot > 0 then (fileName.substring(0, dot), fileName.substring(dot)) else (fileName, "")
-      val ts = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(ZonedDateTime.now())
-      dir / s"${base}_$ts$ext"
+      val ts = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(now)
+      if k == 1 then s"${base}_$ts$ext" else s"${base}_${ts}_$k$ext"
+
+  /**
+   * 接收端 temp 名（`.<名>.dropbox-<tid8>`）—— **唯一 temp 名生成器**：
+   * P2P 腿的派生 temp（`DropboxService.derivedReceiverTempPath`）与 relay 腿的落点
+   * 共用本函数 ⇒ 两侧名字同源。
+   */
+  def receiverTempName(fileName: String, transferId: String): String =
+    s".$fileName.dropbox-${transferId.take(8)}"
+
+  /** 一次「占据」尝试的四种结局（显式化；禁 null 哨兵）。 */
+  private enum OccupyOutcome:
+    /** 硬链接已建立：`p` 与 temp 同一 inode，内容已完整、零占位残留。 */
+    case Occupied(path: os.Path)
+    /** 0 字节占位已用 `O_EXCL` 原子建立（硬链接不可用时的回退）⇒ 调用方须把 temp 搬上来。 */
+    case Placeholder(path: os.Path)
+    case Collision
+    case Failed(reason: String)
+
+  /**
+   * **唯一落名 + 原子占据**（唯一落盘点）—— 判定与占名同一步，禁时间戳推断。
+   *
+   * `Right(p)` = 本次已占据 `p`（内容已就位）；`Left(reason)` = 有界重试耗尽 / 占据失败
+   * （temp 缺失、名字空间耗尽…）⇒ **显式失败，禁覆盖**。
+   *
+   * 机制（两条，首选 = 方案件的 hardlink 推荐版）：
+   *   ① `Files.createLink(cand, temp)`（`link(2)`）：目标已存在 ⇒ `FileAlreadyExistsException`
+   *      ⇒ 换下一候选；成功即占据（内容已完整），随后撤掉 temp 名 ⇒ **零占位残留**；
+   *   ② 硬链接不可用（跨设备 `EXDEV` / 文件系统不支持）⇒ 回退方案件基线的 `O_EXCL` 0 字节占位
+   *      + `os.move(temp, cand, replaceExisting = true)`（只替换**本次刚占位**的名字）。
+   *      该回退路径在「占位与搬移之间崩溃」时会留 0 字节件（登记为已知窗口，见结果）。
+   * 两条都要求 temp 与落点同盘对①成立；同盘时**永远**走①（本仓正常路径：temp 与落点同目录，
+   * 见 `derivedReceiverTempPath`）。
+   */
+  def reserveAndPlace(
+    landDir: os.Path,
+    fileName: String,
+    tempPath: os.Path,
+    now: ZonedDateTime,
+    maxTries: Int = 64
+  ): IO[Either[String, os.Path]] =
+    def tryAt(k: Int): IO[Either[String, os.Path]] =
+      if k >= maxTries then
+        IO.pure(
+          Left(s"cannot reserve a unique name for '$fileName' in $landDir after $maxTries tries"): Either[String, os.Path]
+        )
+      else
+        val cand = landDir / finalNameCandidate(fileName, k, now)
+        val attempt: IO[OccupyOutcome] = IO.blocking {
+          try
+            java.nio.file.Files.createLink(cand.toNIO, tempPath.toNIO)
+            OccupyOutcome.Occupied(cand)
+          catch
+            case _: java.nio.file.FileAlreadyExistsException => OccupyOutcome.Collision
+            case _: java.nio.file.NoSuchFileException =>
+              OccupyOutcome.Failed(s"cannot place '$fileName': the temp file $tempPath does not exist")
+            case _: java.io.IOException =>
+              // 硬链接不可用 ⇒ 0 字节占位（O_EXCL，原子且不覆盖）。
+              try
+                java.nio.file.Files
+                  .newByteChannel(cand.toNIO, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)
+                  .close()
+                OccupyOutcome.Placeholder(cand)
+              catch
+                case _: java.nio.file.FileAlreadyExistsException => OccupyOutcome.Collision
+                case e2: java.io.IOException =>
+                  OccupyOutcome.Failed(
+                    s"cannot place '$fileName' as $cand: ${Option(e2.getMessage).getOrElse(e2.getClass.getSimpleName)}"
+                  )
+        }
+        attempt.flatMap {
+          case OccupyOutcome.Collision => tryAt(k + 1)
+          case OccupyOutcome.Failed(r) => IO.pure(Left(r): Either[String, os.Path])
+          case OccupyOutcome.Occupied(p) =>
+            // 占据成功 ⇒ 立即撤掉 temp 名（内容已由硬链接保住）⇒ 正常路径零 temp 残留。
+            IO.blocking(java.nio.file.Files.deleteIfExists(tempPath.toNIO))
+              .handleErrorWith(e => logger.warn(s"temp cleanup after occupying $p failed: ${e.getMessage}").as(false))
+              .as(Right(p): Either[String, os.Path])
+          case OccupyOutcome.Placeholder(p) =>
+            IO.blocking {
+              os.move(tempPath, p, replaceExisting = true)
+              if os.exists(p) then Right(p): Either[String, os.Path]
+              else Left(s"temp $tempPath did not land at $p after the move"): Either[String, os.Path]
+            }.handleErrorWith { e =>
+              // 失败时清掉**本次刚占位**的 0 字节件（best-effort），绝不触碰任何既有件。
+              IO.blocking {
+                if os.exists(p) && os.size(p) == 0L then java.nio.file.Files.deleteIfExists(p.toNIO)
+                ()
+              }.attempt.as(
+                Left(
+                  s"cannot place '$fileName' as $p: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                ): Either[String, os.Path]
+              )
+            }
+        }
+    tryAt(0)
+
+  /**
+   * 撞名时的**改名落点**（单次请求内可用的原子占据；调用方随后把内容写进去）。
+   * 名字仍由 [[finalNameCandidate]] 一处生成 ⇒ **不新增算名点**。
+   * 用于 legacy 整件 put 的「撞已有件 ⇒ 改名保留新件、原件零损」。
+   */
+  def occupyConflictFreeName(
+    dir: os.Path,
+    fileName: String,
+    now: ZonedDateTime,
+    maxTries: Int = 64
+  ): Either[String, os.Path] =
+    def tryAt(k: Int): Either[String, os.Path] =
+      if k >= maxTries then Left(s"cannot reserve a unique name for '$fileName' in $dir after $maxTries tries")
+      else
+        val cand = dir / finalNameCandidate(fileName, k, now)
+        try
+          java.nio.file.Files.newByteChannel(
+            cand.toNIO,
+            java.nio.file.StandardOpenOption.CREATE_NEW,
+            java.nio.file.StandardOpenOption.WRITE
+          ).close()
+          Right(cand)
+        catch
+          case _: java.nio.file.FileAlreadyExistsException => tryAt(k + 1)
+          case e: java.io.IOException =>
+            Left(s"cannot occupy a conflict-free name for '$fileName' in $dir: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")
+    tryAt(0)
+
+  /**
+   * Resolve the final save path, appending a timestamp suffix if the name already exists.
+   * e.g. "report.pdf" → "report_20250115_143022.pdf"
+   *
+   * ⚠️ **兼容别名（测试用；零生产调用点）**：落名决策的唯一生产入口 = [[reserveAndPlace]]
+   * （占据而非预判）。本函数保留的是**纯候选形态**（走 [[finalNameCandidate]] ⇒ 无第二份算名逻辑），
+   * `now` 可注入（判据④确定性）。落盘一律不得再用它。
+   */
+  def resolveFinalPath(dir: os.Path, fileName: String, now: ZonedDateTime = ZonedDateTime.now()): os.Path =
+    val target = dir / fileName
+    if !os.exists(target) then target else dir / finalNameCandidate(fileName, 1, now)
 
   /** Platform-aware Downloads directory. */
   def downloadsDir: os.Path =

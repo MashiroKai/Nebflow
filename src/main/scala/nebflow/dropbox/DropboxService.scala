@@ -13,6 +13,7 @@ import nebflow.neblink.{NeblinkClient, NeblinkService}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.time.ZonedDateTime
 
 import scala.concurrent.duration.*
 
@@ -71,6 +72,28 @@ final class DropboxService private (
   acceptedTimeout: FiniteDuration = 10.minutes, // accepted → waiting for the frontend upload
   transferTimeout: FiniteDuration = 31.minutes // transferring → waiting for upload completion (P2P HTTP caps at 30min)
 ):
+
+  /**
+   * 落名用的时钟（dropnam 批 A4）：**可注入**是判据④（同一秒连送 ≥6 份）**确定性**的前提 ——
+   * 否则该判据在慢机上是概率判据，变异验红里会假绿。缺省 = 真实时钟。
+   *
+   * ⚠️ 刻意**不做成主构造器的第 6 个形参**：`WtMoveGuardProbe` 按
+   * `getDeclaredConstructor(getParameterCount == 5)` 反射定位主构造器 ⇒ 加形参会把它打断。
+   * 注入走下面的 6 参 secondary ctor（同样是生产签名，但不动主构造器元数）。
+   */
+  private var landingClock: () => ZonedDateTime = () => ZonedDateTime.now()
+
+  /** 可注入落名时钟的构造器（测试面）：`createForTest` 走这条路。 */
+  private[nebflow] def this(
+    neblinkService: NeblinkService,
+    wsHub: WsHub,
+    offerTimeout: FiniteDuration,
+    acceptedTimeout: FiniteDuration,
+    transferTimeout: FiniteDuration,
+    clock: () => ZonedDateTime
+  ) =
+    this(neblinkService, wsHub, offerTimeout, acceptedTimeout, transferTimeout)
+    this.landingClock = clock
 
   private val logger = NebflowLogger.forName("nebflow.dropbox")
 
@@ -213,7 +236,9 @@ final class DropboxService private (
     * （[[DropboxService.landingDirFor]]）—— 判定通过时 = 接收端裁定的请求目录，
     * 其余情况 = `downloadsDir`（缺省语义与今天**逐字节一致**）。 */
   private def derivedReceiverTempPath(t: FileTransfer): os.Path =
-    DropboxService.landingDirFor(t) / s".${t.fileName}.dropbox-${t.transferId.take(8)}"
+    // 名字恒走**唯一生成器**（`DropboxUtil.receiverTempName`）——本文件内**不得**再出现
+    // 第二处 `.dropbox-` 拼串（dropnam 批 · 契约①「最终名字只在一处算」，机械可核）。
+    DropboxService.landingDirFor(t) / DropboxUtil.receiverTempName(t.fileName, t.transferId)
 
   /**
    * 接收端 temp 路径 —— **唯一解析入口是 `guardedTempPath`**（P0 wtmove 守卫；
@@ -999,7 +1024,8 @@ final class DropboxService private (
         IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, "Transfer not accepted", phase = "transfer")))
       case Some(t) =>
         val dlDir = DropboxUtil.downloadsDir
-        val tempName = s".${t.fileName}.dropbox-${transferId.take(8)}"
+        // 同上：temp 名 = 唯一生成器（禁本文件内第二处拼串）。
+        val tempName = DropboxUtil.receiverTempName(t.fileName, transferId)
         val tempPath = dlDir / tempName
         for
           _ <- IO.blocking(os.makeDir.all(dlDir))
@@ -1318,7 +1344,8 @@ final class DropboxService private (
    */
   private def findReceiverTempFile(fileName: String, transferId: String): Option[String] =
     try
-      val prefix = s".$fileName.dropbox-${transferId.take(8)}"
+      // 名字仍走**唯一生成器**（机械判据 G3：本文件内不得再有第三处 `.dropbox-` 拼接）。
+      val prefix = DropboxUtil.receiverTempName(fileName, transferId)
       val dlDir = DropboxUtil.downloadsDir
       if os.exists(dlDir) then os.list(dlDir).find(_.last.startsWith(prefix)).map(_.toString)
       else None
@@ -1464,37 +1491,54 @@ final class DropboxService private (
         )
 
   /**
-   * Rename the temp file to its final name in Downloads, handling name conflicts.
+   * Rename the temp file to its final name in the landing dir, handling name conflicts.
    *
-   * Both sides are guarded: the temp path (source) and the resolved Downloads
-   * target (destination — reachable when `user.home` is at or inside the working
-   * directory). Returns the decision so the caller can branch explicitly instead
-   * of falling back to a path sentinel — **plus the actual landing target** when a
-   * move really happened (`CommitOutcome`)，so the reported `savedPath` never has
-   * to re-derive a name that the filesystem already decided.
+   * dropnam 批：落名收口到 **唯一一处** —— [[DropboxUtil.reserveAndPlace]]。
+   *   - 判定与占名是**同一个内核原子操作**（`link(2)`，EEXIST ⇒ 换下一候选）⇒ 同秒多次同名
+   *     投递**在构造上**不可能折叠（改前：`os.exists` 预判 + 秒级时间戳 + 候选不复核 +
+   *     `os.move(..., replaceExisting = true)` ⇒ 同秒 6 份只剩 2 份）；
+   *   - `replaceExisting` 在任何落盘路径上都**只作用于本次刚占据/刚占位的那个名字**
+   *     （硬链接路径上根本不出现）⇒ 既有件零覆盖、零删除；
+   *   - 通报名 = 本次**占据**的名字（回读确认），禁第二处名字推断。
+   *
+   * `Absent`（relay 腿：字节不经 `receiveChunkFromPeer`，故 tempPath 记录恒 `None`）⇒ 无事可做，非错误。
    */
   private def commitTempFile(t: FileTransfer): IO[CommitOutcome] =
     val decision = guardedTempPath(t)
     warnTempPath("commitTempFile", t, decision) *> (decision match
       case TempPathDecision.Usable(tempPath) =>
-        val finalPath = DropboxUtil.resolveFinalPath(DropboxService.landingDirFor(t), t.fileName)
-        cwdRefusal(finalPath) match
+        // `Usable` 保持今天的守卫口径（只判存在）—— 0 字节整件传照旧可 commit。
+        placeTemp(t, decision, tempPath, requireNonEmpty = false)
+      case refused @ TempPathDecision.Refused(_) => IO.pure(CommitOutcome(refused, None))
+      case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
+
+  /** 「把 temp 落到唯一名字上」—— [[commitTempFile]] 的两个入口共用同一实现（单一落盘点）。 */
+  private def placeTemp(
+    t: FileTransfer,
+    decision: TempPathDecision,
+    tempPath: os.Path,
+    requireNonEmpty: Boolean
+  ): IO[CommitOutcome] =
+    IO.blocking(os.exists(tempPath) && (!requireNonEmpty || (os.isFile(tempPath) && os.size(tempPath) > 0))).flatMap {
+      case false => IO.pure(CommitOutcome(decision, None))
+      case true =>
+        val landDir = DropboxService.landingDirFor(t)
+        cwdRefusal(landDir) match
           case Some(reason) =>
             val refused = TempPathDecision.Refused(s"destination: $reason")
             warnTempPath("commitTempFile", t, refused).as(CommitOutcome(refused, None))
           case None =>
-            IO.blocking {
-              if os.exists(tempPath) then
-                os.move(tempPath, finalPath, replaceExisting = true)
-                // 落地后**回读**：move 未留住目标（异常/竞态）时 `landedPath` 必须为 None，
-                // 禁把「以为搬过去了」当成「搬过去了」。
-                if os.exists(finalPath) then Some(finalPath) else None
-              else None
-            }.handleErrorWith { e =>
-              logger.warn(s"Failed to commit temp file: ${e.getMessage}").as(None)
-            }.map(lp => CommitOutcome(decision, lp))
-      case refused @ TempPathDecision.Refused(_) => IO.pure(CommitOutcome(refused, None))
-      case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
+            DropboxUtil.reserveAndPlace(landDir, t.fileName, tempPath, landingClock()).flatMap {
+              case Left(reason) =>
+                logger.warn(s"commitTempFile: $reason — nothing moved, nothing overwritten") *>
+                  IO.pure(CommitOutcome(TempPathDecision.Refused(reason), None))
+              case Right(reserved) =>
+                // 落地后**回读**：占据未留住目标（异常/竞态）时 `landedPath` 必须为 None，
+                // 禁把「以为占据成功」当成「真落地」。
+                IO.blocking(if os.exists(reserved) then Some(reserved) else None)
+                  .map(lp => CommitOutcome(decision, lp))
+            }
+    }
 
   /** Delete the temp file. Same guard as [[commitTempFile]] — a refused/blank path deletes nothing. */
   private def deleteTempFile(t: FileTransfer): IO[CommitOutcome] =
@@ -1508,24 +1552,26 @@ final class DropboxService private (
       case absent @ TempPathDecision.Absent       => IO.pure(CommitOutcome(absent, None)))
 
   /**
-   * 通报/引用面路径 —— **已观测到的**落地名，禁预计算名（nfpath 批唯一口径）。
+   * 通报/引用面路径 —— **已观测到的**落地名，禁预计算名（nfpath 批口径，dropnam 批收口）。
    *
    * 分支（按「本次是否真的落地」分，不按猜测分）：
    *   1. 本次搬动过 temp ⇒ 用搬动的实际目标（存在性以回读为准）；
    *   2. 本次没有任何 move（迟到/重放的完成帧、temp 已不在、目的地被拒）
-   *      ⇒ 先用**已经记录**的回读值（首次落地时观测到的那个），禁拿重算值去覆盖它；
-   *   3. 连记录都没有 ⇒ 只认盘上确实存在的同名直写件（relay 腿落点，P0 wtmove 口径）；
-   *      否则如实为空（`""` = 本机没有可读件，前端据此保持不可点，禁「可点但点了报错」）。
+   *      ⇒ 用**已经记录**的回读值（首次落地时观测到的那个），禁拿重算值去覆盖它；
+   *   3. 连记录都没有 ⇒ 如实为空（`""` = 本机没有可读件，前端据此保持不可点）。
+   *
+   * 🔴 原分支 3（**按落点目录 + 裸名预测**一个「应该存在」的路径）已**删除**（作者 2026-09-19
+   * 裁定③，判据 = **分支已删**）：它是**第二处算名点**（预测而非观测），与三契约「最终名字
+   * 只在一处算」冲突。**任何路径**都不得回退到预测裸名（legacy 裸名直写件不属本次落地
+   * ⇒ 如实为空，禁把「盘上恰好同名」当成本次落点）。
    */
   private def landedPathFor(t: FileTransfer, outcome: CommitOutcome): IO[String] =
     outcome.landedPath match
       case Some(p) => IO.blocking(if os.exists(p) then p.toString else "")
       case None =>
-        recordedSavedPath(t).flatMap {
-          case existing if existing.nonEmpty => IO.pure(existing)
-          case _ =>
-            val direct = DropboxService.landingDirFor(t) / t.fileName
-            IO.blocking(if os.exists(direct) then direct.toString else "")
+        recordedSavedPath(t).map {
+          case existing if existing.nonEmpty => existing
+          case _                             => ""
         }
 
   /** 该会话消息上**已经记录**的落地路径（空串 = 尚未观测到任何落点）。 */
@@ -1598,13 +1644,14 @@ object DropboxService:
     val svc = new DropboxService(neblinkService, wsHub)
     svc.init.as(svc)
 
-  /** Test factory with injectable signaling timeouts. */
+  /** Test factory with injectable signaling timeouts (+ injectable landing clock, dropnam A4). */
   private[nebflow] def createForTest(
     neblinkService: NeblinkService,
     wsHub: WsHub,
     offerTimeout: FiniteDuration,
     acceptedTimeout: FiniteDuration,
-    transferTimeout: FiniteDuration
+    transferTimeout: FiniteDuration,
+    clock: () => ZonedDateTime = () => ZonedDateTime.now()
   ): IO[DropboxService] =
-    val svc = new DropboxService(neblinkService, wsHub, offerTimeout, acceptedTimeout, transferTimeout)
+    val svc = new DropboxService(neblinkService, wsHub, offerTimeout, acceptedTimeout, transferTimeout, clock)
     svc.init.as(svc)

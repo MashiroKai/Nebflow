@@ -2,10 +2,12 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 
 import java.security.MessageDigest
+import java.time.ZonedDateTime
 
 /**
  * Tests for Dropbox file handling utilities:
@@ -135,6 +137,50 @@ class DropboxUtilSpec extends CatsEffectSuite:
     assert(!resultName.contains('.'), s"Should have no extension, got: $resultName")
 
     os.remove(dir / "README")
+  }
+
+  // ===== 落名收口（dropnam 批）：唯一算名点 + 原子占据 =====
+
+  test("finalNameCandidate: 同一秒 k=0..5 ⇒ 6 个互异候选名（确定性；k=1 与历史口径逐字符一致）") {
+    val now = ZonedDateTime.parse("2026-09-19T00:17:15+08:00")
+    val names = (0 until 6).map(k => DropboxUtil.finalNameCandidate("burst.png", k, now)).toList
+    assertEquals(names.distinct.size, 6, s"同秒候选名必须两两互异：$names")
+    assertEquals(names.head, "burst.png")
+    assertEquals(names(1), "burst_20260919_001715.png", "k=1 = 历史冲突口径（逐字符）")
+    assertEquals(names(2), "burst_20260919_001715_2.png")
+    assertEquals(names(5), "burst_20260919_001715_5.png")
+    // 无扩展名形态
+    assertEquals(DropboxUtil.finalNameCandidate("README", 1, now), "README_20260919_001715")
+    assertEquals(DropboxUtil.finalNameCandidate("README", 2, now), "README_20260919_001715_2")
+  }
+
+  test("reserveAndPlace: 同一秒 6 次占据同名 ⇒ 6 个互异落点、内容各自保留、temp 零残留") {
+    val dir = os.pwd / "target" / "dropbox-test" / "reserve"
+    os.makeDir.all(dir)
+    val now = ZonedDateTime.parse("2026-09-19T00:17:15+08:00")
+    val expected = (0 until 6).map(k => DropboxUtil.finalNameCandidate("burst.png", k, now)).toList
+    (1 to 6).toList
+      .foldLeftM(List.empty[os.Path]) { (acc, k) =>
+        val temp = dir / s".burst.png.dropbox-0000000$k"
+        IO.blocking(os.write(temp, s"payload-$k".getBytes("UTF-8"))) *>
+          DropboxUtil.reserveAndPlace(dir, "burst.png", temp, now).flatMap {
+            case Left(reason) => IO.raiseError(new AssertionError(reason))
+            case Right(p)     => IO.pure(acc :+ p)
+          }
+      }
+      .map { placed =>
+        assertEquals(
+          placed.map(_.last).distinct.size,
+          6,
+          s"同秒 6 次占据必须 6 个互异落点：${placed.map(_.last)}"
+        )
+        assertEquals(placed.map(_.last).toSet, expected.toSet, "落点集合 == k=0..5 候选序")
+        placed.zipWithIndex.foreach { case (p, i) =>
+          assertEquals(new String(os.read.bytes(p), "UTF-8"), s"payload-${i + 1}", s"$p 内容=本次 temp")
+          assert(!os.exists(p / os.up / s".burst.png.dropbox-0000000${i + 1}"), "占据成功后 temp 名必须撤掉")
+        }
+        os.remove.all(dir)
+      }
   }
 
   // ===== Downloads directory =====
