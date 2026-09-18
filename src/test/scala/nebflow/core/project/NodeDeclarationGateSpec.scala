@@ -45,12 +45,17 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-decl-gate"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
-  os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
-  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+  // 2026-09-18 测试面成因级修复（候选①·治本）：夹具建立与**进程级** `PathUtil.setDataRoot`
+  // 一律**不在类体构造期**执行，收进 `beforeAll`；顺序 = 「先清树 / 建树，最后换根」
+  // （镜像 NodeSchemaSlimSpec 的同款修法 —— 两套件共用「组合跑 + 陈旧树在场」这一故障面，
+  // 双侧任一残留写入都能落进对方刚换上的树）。语义零变化：本套件仍独占自己的 dataRoot。
+  override def beforeAll(): Unit =
+    os.remove.all(tempRoot)
+    os.makeDir.all(tempRoot / "agents" / "general")
+    os.write.over(tempRoot / "agents" / "general" / "agent.json",
+      """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+    os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+    PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)

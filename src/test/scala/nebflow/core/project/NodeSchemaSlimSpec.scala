@@ -41,32 +41,42 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-schema-slim"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
-  os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
-  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
-  os.write.over(tempRoot / "nebflow.json", "{}")
-  // 20260907 修复（pre-existing 主干红，与本支裁定无关的夹具腐化）：E2E 用 preset
-  // "qa"，但夹具从未 seed model-presets.json——引擎 §E.3 preset 解析（须有非空
-  // model chain）失败 → 节点 failed → waitUntil 超时。seed 含 qa 链的 preset 表
-  // （RecordingLlm 为 stub，模型名不触真实调用）。
-  os.write.over(tempRoot / "model-presets.json",
-    """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}""")
-
   // skills-only plugin fixture（真实目录 + 审批走 PluginRegistry 单点，NodePluginChainSpec 同款）
   private val slimPluginDir = tempRoot / "plugins" / "slim-e2e"
-  os.makeDir.all(slimPluginDir / "skills" / "howto")
-  os.write.over(slimPluginDir / "plugin.json",
-    """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}""")
-  os.write.over(slimPluginDir / "skills" / "howto" / "SKILL.md",
-    """---
-      |name: howto
-      |description: slim e2e skill
-      |---
-      |## SlimE2E Marker
-      |Body.""".stripMargin)
+
+  // 2026-09-18 测试面成因级修复（候选①·治本）：夹具建立与**进程级** `PathUtil.setDataRoot`
+  // 一律**不在类体构造期**执行，收进 `beforeAll`；且顺序为「**先清树 / 建树，最后换根**」。
+  // 旧形态（类体里先 `setDataRoot(tempRoot)` 再 `os.remove.all(tempRoot)`）把「递归删树」
+  // 与「本树已是进程级全局根」压在同一个窗口里：同 JVM 内先跑的套件
+  // （NodeDeclarationGateSpec）收尾期仍在执行的异步写入按 `PathUtil.dataRoot` 落进
+  // **刚被换上的本树** ⇒ 删树遍历中途该目录重新非空 ⇒ 构造期
+  // `DirectoryNotEmptyException`（组合跑 + 陈旧测试树在场复现；单跑 / 预清该两树后
+  // 组合跑不复现 —— 清树窗口长度随树体量增长，正是「陈旧树在场」的放大作用）。
+  // 此处清树时全局根仍指向他处 ⇒ 零写入落进本树（窗口为零）；换根后置 ⇒ 删 / 写不再同树。
+  override def beforeAll(): Unit =
+    os.remove.all(tempRoot)
+    os.makeDir.all(tempRoot / "agents" / "general")
+    os.write.over(tempRoot / "agents" / "general" / "agent.json",
+      """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+    os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
+    os.write.over(tempRoot / "nebflow.json", "{}")
+    // 20260907 修复（pre-existing 主干红，与本支裁定无关的夹具腐化）：E2E 用 preset
+    // "qa"，但夹具从未 seed model-presets.json——引擎 §E.3 preset 解析（须有非空
+    // model chain）失败 → 节点 failed → waitUntil 超时。seed 含 qa 链的 preset 表
+    // （RecordingLlm 为 stub，模型名不触真实调用）。
+    os.write.over(tempRoot / "model-presets.json",
+      """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}""")
+    os.makeDir.all(slimPluginDir / "skills" / "howto")
+    os.write.over(slimPluginDir / "plugin.json",
+      """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}""")
+    os.write.over(slimPluginDir / "skills" / "howto" / "SKILL.md",
+      """---
+        |name: howto
+        |description: slim e2e skill
+        |---
+        |## SlimE2E Marker
+        |Body.""".stripMargin)
+    PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
