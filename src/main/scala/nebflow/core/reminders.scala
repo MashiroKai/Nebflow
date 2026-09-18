@@ -189,7 +189,7 @@ object SystemReminders:
    *
    * WHY 进程内账本：`stableSnapshot.devices` 是**每 session 各自一套**基线
    * （`AgentCore` 的进程内 state），所以同一次 roster 变化会被「被真用户轮告知的
-   * session 数」各计一遍（KAI 侧「1.2 s 两条同内容」的最可能解释）。计数键是
+   * session 数」各计一遍（跨设备/多设备同源场景下「同一变化在极短间隔内被两条 session 各记一次」的最可能解释）。计数键是
    * **成员集合**（跨会话同源）⇒ 「同一变化只计一次」在进程维度可判。
    * 语义 = 与**上一次**已计键比较（不是永久 seen 集）：设备离开后**再次回来**
    * （成员集合回到旧值、但中间经过了别的集合）仍会各计一次。
@@ -369,7 +369,7 @@ object SystemReminders:
     *
     * F-2（presdial 批 2026-09-19）：带 [[SystemReminder.countKey]] 的提醒（device
     * 通道）**按变化身份计数** —— 同一变化（成员集合键相同）已经在别的会话计过 ⇒
-    * **零增量**（不打第二行）。计数面 = 这一行日志本身（诊断里 KAI 侧 28 条的正身）。
+    * **零增量**（不打第二行）。计数面 = 这一行日志本身（「同一变化对应多条日志行」的源头即此处）。
     * 🔴 注入不受影响（每会话仍各自收到它自己的差量）；`time` 的降采样次序不变
     * （`countKey = None` ⇒ 无条件过闸）。 */
   def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =
