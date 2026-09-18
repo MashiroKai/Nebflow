@@ -6,7 +6,7 @@ package nebflow.core
  *
  * 作者实证（2026-09-18，同一改面的两起失败）：
  *   ① 路径含空格的引用被 `%20` 编码后交给 Card ⇒ 解析器按**字面**去找
- *      `/Users/kaiyu/Claude%20code/…` ⇒ `not-found`；
+ *      `/Users/you/My%20Project/…` ⇒ `not-found`；
  *   ② 原样空格路径 ⇒ 工具回包 `proxied=2 / failed=0`，前端 `img` 实际仍加载失败
  *      —— 「代理改写成功 ≠ 前端取回成功」。
  *

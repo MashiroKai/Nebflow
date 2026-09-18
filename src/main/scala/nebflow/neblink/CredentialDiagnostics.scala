@@ -217,7 +217,7 @@ object CredentialDiagnostics:
       "refused: this instance runs on an isolated data root, so it must not auto-register " +
         "with the production NebLink server (https://nebflow.space)."
     case _ =>
-      "java.nio.file.AccessDeniedException: C:\\Users\\kaiyu\\.nebflow\\neblink\\device.json"
+      "java.nio.file.AccessDeniedException: C:\\Users\\you\\.nebflow\\neblink\\device.json"
 
   /** 一条 WARN 的发射点（分类 + 归因 + detail），供各腿复用，防各写一份格式。 */
   def warn(where: String, diagnostic: Diagnostic): cats.effect.IO[Unit] =

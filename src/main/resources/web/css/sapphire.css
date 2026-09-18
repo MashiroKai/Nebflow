@@ -642,6 +642,12 @@ button.glass-control.fm-login-btn:disabled {
    ③A3 要挡的漂移形态）。值保持 78% —— 收归只改「值的家」，不改计算值。 */
 :root {
   --msg-bubble-max-w: 78%;
+  /* 消息面元信息卡阴影 —— pill（`.fm-msg-meta` / `.dropbox-msg-meta`）与引用块
+     （`.fm-quote-block`）共用的同一枚「发丝环 + 微落影」。值的家只有这一处：
+     两个消费面只消费 `var(--msg-meta-card-shadow)`，禁再就地复写（判据 ③A2/A4
+     元信息 pill ring 阴影单源；scripts/check-msgstyle-single-source.mjs 的
+     「A2/A4 元信息 pill 戒指阴影」规则逐字钉住 —— 复写即红）。 */
+  --msg-meta-card-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 /* wrapper — 同源结构与形态（③-E） */
@@ -690,7 +696,7 @@ button.glass-control.fm-login-btn:disabled {
   padding: 2px 8px 2px 6px;
   background: var(--color-surface);
   border-radius: 6px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--msg-meta-card-shadow);
   font-size: 11px;
   color: var(--color-text-muted, #888);
   user-select: none;

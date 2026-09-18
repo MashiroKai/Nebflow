@@ -1145,13 +1145,17 @@ body > .fm-context-menu { z-index: 10001; }
    覆盖，值逐字沿用邻规则，不新造色值）。
    🔴 不用左缘色条 / 高亮条（设计硬约束「无 accent bars」）⇒ 靠「卡面 + 发丝描边
    + 降一档字号/对比」与正文分组，与气泡自身底色天然区分（in 气泡底 = `--glass-etched-bg`，
-   out 气泡底 = `--sapphire-tint-15`，卡面两者之上都可辨）。 */
+   out 气泡底 = `--sapphire-tint-15`，卡面两者之上都可辨）。
+   🔴 卡面阴影**不在此处声明**：与 `.fm-msg-meta` pill 同值，值的家 = 共享层单源
+   token `--msg-meta-card-shadow`（`sapphire.css` 的 "Shared message surface" 段）。
+   原先本件就地复写该字面量 ⇒ msgstyle 判据 A2/A4 判红（复写即「改一处必然漏另一处」
+   的漂移入口）；现只消费 token ⇒ 改一处两侧同步，计算值不变（证据见 litclean 批）。 */
 .fm-quote-block {
   margin-bottom: 4px;
   padding: 4px 8px;
   border-radius: 6px;
   background: var(--color-surface);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--msg-meta-card-shadow);
   font-size: 12px;
   line-height: 1.4;
   color: var(--color-text-muted, #888);
