@@ -320,7 +320,7 @@ private[tools] object FileRefs:
   // ── path ↔ URL query-parameter form (imgref batch, 2026-09-18 作者令) ───────
   //
   // 作者实证（2026-09-18，同一改面的两起失败）：路径含空格时 ① `%20` 编码的引用
-  // 被按**字面**去找（`/Users/kaiyu/Claude%20code/…` ⇒ not-found），② 原样空格引用
+  // 被按**字面**去找（`/Users/you/My%20Project/…` ⇒ not-found），② 原样空格引用
   // 的工具计数（`proxied`）是绿的、前端 `img` 却仍旧加载失败。
   //
   // 本组三个函数是本仓**唯一**的「路径 ⇄ URL 查询参数」真源，判据两条：
@@ -348,7 +348,7 @@ private[tools] object FileRefs:
   /** Filesystem candidates named by ONE reference value, least-transformed first:
     * the raw value, then its percent-decoded form, then its bare-`+`-folded form.
     *
-    * 作者失败①的修法即此：`<link href="/Users/kaiyu/Claude%20code/…/x.css">` 的
+    * 作者失败①的修法即此：`<link href="/Users/you/My%20Project/…/x.css">` 的
     * **原样**串不是磁盘上的路径，解码形态才是。顺序是判据的一部分 —— 原样先试，
     * 只有原样**没有命中**才会走到变形形态，因此一个真的含 `+` 或 `%` 的文件名
     * 永远不会被变形形态顶掉。
