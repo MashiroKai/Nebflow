@@ -33,7 +33,7 @@ Size the topology to the work. Read-only / analysis / report: one node, no merge
 When the slot is set the order is implement -> independent review (never self-review) -> merge sink -> report, and the verdict position sits in the sink's `in` carrying `role=verifier` - that gate is what lets a batch land. Merged-state integration verification is escalated for a waiver.
 
 ## Dispatch economy
-1. Create a worktree only when parallel tasks may collide (concurrent writers to the same file or directory); otherwise work directly in the workspace.
+1. Create a worktree only when parallel tasks may collide (concurrent writers to the same file or directory); otherwise work directly in the workspace. An isolated worktree carries no node_modules; a frontend position that must run the repository-pinned type gate there injects a git-ignored node_modules symlink pointing at the workspace checkout's own node_modules, removes that link before finishing, and leaves the gate mechanism unchanged - never refreshed with --update.
 2. Reuse merge nodes; one merge node takes at most 4 worktrees.
 3. A same-kind supplement reuses the existing node through `Mail node:<id>`, never a new chain.
 4. Parallelize independent tasks actively.
