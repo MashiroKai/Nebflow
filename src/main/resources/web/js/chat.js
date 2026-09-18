@@ -1800,6 +1800,45 @@ function clearAskDrafts(sid) {
   } catch { /* ignore */ }
 }
 
+// ---------- 共用层：已决卡「禁互动」单一闸（2026-09-18 作者报单） ----------
+/** 已决卡内「可交互件」的机械选择器。`[tabindex]` / `[role=*]` 一并纳入：自绘控件
+ *  （div/span + role/tabindex）同样必须出 tab 序并交出点击。 */
+const LOCKABLE_SELECTOR =
+  'button, a, textarea, input, select, [role="button"], [role="checkbox"], [tabindex]';
+
+/** 卡级「已决 ⇒ 禁互动」单一闸（共用层）。
+ *  作者报单 2026-09-18：工作区选择卡在「已取消 / 已完成选择」后**仍可互动**（选项还
+ *  能点），预期已决后置灰、不可互动。根因 = 已决动作此前分散在三组选择器
+ *  （.option-btn / .option-confirm / .option-cancel）上逐件置 disabled，而卡内其它可
+ *  点件（dirPicker 卡的 `.ws-pick-target` 目标件与「卡片空白区」wrapper handler，
+ *  见本文件 dirPicker 块）不在任何一条选择器内 ⇒ 已决后仍能重开目录浏览器。
+ *  改为单一闸收敛（未来新增可点件自动纳入）：
+ *   ① 卡内全部可交互件 → disabled + aria-disabled + tabindex=-1（机械选择器）；
+ *   ② 卡上加 `resolved` 类 —— 置灰视觉由 chat.css 的 `.option-box.resolved` 块承载；
+ *   ③ capture 阶段点击哨兵：已决卡内任意点击 preventDefault + stopPropagation ⇒ 同时
+ *      覆盖「目标件」与「卡片空白区」两个入口，且卡内 listener 一个都不会跑到。
+ *  🔴 故意不用整卡 pointer-events:none：会连带杀死既有可复制面（R5「复制载荷」裁定，
+ *  复制钮挂行级 .duration-badge，在卡外）与卡内文本选中面 ⇒ 禁互动由 ①③ 承担，② 只管视觉。
+ *  🔴 pending 卡零变化：本函数只在已决动作处调用（cancel / confirm / closeAskUserCard /
+ *  renderAskUserHistory 四处）。幂等：已带 `resolved` 类直接返回。 */
+function lockOptionBox(box) {
+  if (!box || box.classList.contains('resolved')) return;
+  box.classList.add('resolved');
+  box.querySelectorAll(LOCKABLE_SELECTOR).forEach((el) => {
+    el.setAttribute('aria-disabled', 'true');
+    el.setAttribute('tabindex', '-1');
+    if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+      el.disabled = true;
+    }
+  });
+  // ③ 点击哨兵：capture 阶段在卡内任意入口的 listener 之前拦下（含程序化 .click()）。
+  box.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+}
+
 export function showOptions(container, questions, onConfirm, doneLabel, onCancel, askSessionId, requestId) {
   const box = document.createElement('div');
   box.className = 'option-box';
@@ -1923,6 +1962,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       };
       dirPickCards.set(requestId, entry); // 注册卡片 api（complete/setIdle），confirm/cancel 时清理
       const startPick = () => {
+        if (box.classList.contains('resolved')) return; // 已决卡哨兵（共用层单一闸 lockOptionBox）
         if (dirPick.busy) return;
         if (!askSessionId || !requestId) return; // 无 requestId 的残卡不可发起（事件无主）
         dirPick.busy = true;
@@ -1946,6 +1986,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       // 卡片整体可点击（作者原话「卡片整体可点击、醒目大目标」）：除按钮/输入框外的
       // 空白点击都触发选择。
       wrapper.addEventListener('click', (e) => {
+        if (box.classList.contains('resolved')) return; // 已决卡：卡片空白区入口一并失效
         if ((/** @type {Element} */ (e.target)).closest('button, textarea, input')) return;
         startPick();
       });
@@ -2133,10 +2174,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   cancelBtn.onclick = () => {
     if (askSessionId) dropAskCard(askSessionId, requestId); // #250 ④: 精确摘这一张
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
-    // option buttons are <button>/<a> form controls; narrow for .disabled.
-    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
-    cancelBtn.disabled = true;
-    confirmBtn.disabled = true;
+    // 2026-09-18 作者报单：已决 ⇒ 禁互动改走共用层单一闸（卡内**全部**可交互件 +
+    // capture 点击哨兵），取代原先的三组选择器逐件 disabled —— 旧口径在此处还漏了
+    // `.option-cancel`（cancel 自身只在下一行单独 disable）与 `.ws-pick-target`。
+    lockOptionBox(box);
     if (askSessionId) clearAskDrafts(askSessionId);
     if (onCancel) onCancel();
   };
@@ -2151,9 +2192,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // #250 ④: only THIS card's entry — sibling pending cards keep their channel.
     if (askSessionId) dropAskCard(askSessionId, requestId);
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
-    box.querySelectorAll('.option-btn').forEach(el => { (/** @type {HTMLButtonElement} */ (el)).disabled = true; });
-    cancelBtn.disabled = true;
-    confirmBtn.disabled = true;
+    // 已决 ⇒ 共用层单一闸（工作区选择卡的 `.ws-pick-target` / 卡片空白区在此一并失效）
+    lockOptionBox(box);
     confirmBtn.style.display = 'none';
     cancelBtn.style.display = 'none';
 
@@ -2354,7 +2394,7 @@ export function closeAskUserCard(sessionId, requestId, note) {
   const boxes = chat.querySelectorAll('.option-box[data-request-id="' + CSS.escape(requestId) + '"]');
   for (const box of boxes) {
     if (box.querySelector('.option-answer')) continue; // already answered/locked
-    box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+    lockOptionBox(box); // 已决 ⇒ 共用层单一闸（含 dirPicker 卡的目标件/空白区）
     dirPickCards.delete(requestId); // 工作区选择卡：卡片关闭后事件一并失主
     const confirmBtn = box.querySelector('.option-confirm');
     const cancelBtn = box.querySelector('.option-cancel');
@@ -2408,8 +2448,10 @@ export function renderAskUserHistory(bubble, items, answerText) {
   const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
   // Lock — same end-state as the live confirm path (confirmBtn.onclick) or
-  // cancel path (cancelBtn.onclick) depending on the recorded answer.
-  box.querySelectorAll('.option-btn, .option-confirm, .option-cancel').forEach(el => { el.disabled = true; });
+  // cancel path (cancelBtn.onclick) depending on the recorded answer. 2026-09-18
+  // 作者报单：改走共用层单一闸（回放孪生卡的内嵌 dirPicker 目标件此前同病：不在
+  // 三组选择器内 ⇒ 视觉仍可点）。
+  lockOptionBox(box);
   if (!cancelled) {
     const confirmBtn = box.querySelector('.option-confirm');
     const cancelBtn = box.querySelector('.option-cancel');

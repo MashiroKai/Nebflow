@@ -1706,6 +1706,44 @@
   font-weight: 400;
 }
 
+/* ---------- 已决卡置灰（共用层单一闸 `.option-box.resolved`，2026-09-18 作者报单） ---------- */
+/* 已决（作答 / 取消 / 引擎关闭 / 历史回放）⇒ 卡内可交互件置灰、光标中性、hover 与位移
+   反馈收敛。禁用档位沿用既有值域（opacity 0.5 = `.option-btn:disabled` 同档，组件内
+   统一「不可用」语言），零新增颜色 token。
+   🔴 故意**不**用整卡 pointer-events:none、也不整卡降 opacity：前者会连带杀死既有可
+   复制面（R5「复制载荷」裁定，复制钮挂行级 .duration-badge，在卡外）与卡内文本选中
+   面；后者的置灰语义应只落在可交互件上——`.option-answer`（答案行）与已恢复的答案文本
+   是结果读数，不是控件，保持原对比度。禁互动本身由 JS 侧 disabled + capture 点击哨兵
+   承担（chat.js `lockOptionBox`），本块只承载视觉读数。
+   `.option-box.resolved` 特异性 (0,2,0) 起，对本文件后方 `.ws-pick-target:hover`
+   (0,2,0，含 dark 块内的同款) 逐条压过，声明顺序不再决定胜负。 */
+.option-box.resolved { cursor: default; }
+.option-box.resolved .ws-pick-target {
+  opacity: 0.5;
+  cursor: default;
+  border-color: rgb(var(--sapphire) / 0.22);
+}
+.option-box.resolved .ws-pick-target:hover {
+  border-color: rgb(var(--sapphire) / 0.22);
+  box-shadow: none;
+  transform: none;
+}
+.option-box.resolved .ws-pick-target svg { color: rgb(var(--sapphire) / 0.55); }
+/* 自绘控件（a / [role=button] / [role=checkbox]）：当前卡族无实例，防未来新增件有 disabled
+   语义却没有视觉。 */
+.option-box.resolved a,
+.option-box.resolved [role="button"],
+.option-box.resolved [role="checkbox"] {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 自由输入面在已决卡里是「答案记录」而非控件（历史回放把 Other 原文恢复进 textarea）：
+   只锁交互，显式压回 UA 的 disabled 灰字色，保住可读性与可复制性。 */
+.option-box.resolved .option-custom-input {
+  color: var(--color-frame-input-text);
+  -webkit-text-fill-color: var(--color-frame-input-text);
+}
+
 /* ---------- AskUser preview thumbnails (direction C §7) ---------- */
 /* Only buttons carrying a preview get the inline-flex layout — buttons without
    a preview field render byte-for-byte like before (E1 zero regression). */

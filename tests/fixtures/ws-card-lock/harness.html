@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<!-- ws-card-lock/harness.html — 共用卡层「已决 ⇒ 禁互动」harness（2026-09-18 作者报单）。
+     前端实现 = 完整复用共用 option-box 组件族（chat.js renderAskUser / showOptions /
+     renderAskUserHistory / renderPermissionPrompt / closeAskUserCard），本 harness 以
+     真实渲染模块（chatView.js / state.js / chat.js，无 stub 无打包）+ 真实 CSS 回放各类
+     已决卡，供 spec 用真实鼠标点击逐入口读「零动作」读数。
+
+     被测面（两个可点入口，作者报单现象面）：
+       ① `.ws-pick-target` 目标件自身的 click（chat.js dirPicker 块）
+       ② 卡片空白区 wrapper click（`.option-q` 等非控件区点击，冒泡到 wrapper handler）
+
+     卡态（均已决 = 不得再有任何互动）：
+       - cancel       : 真实点 `.option-cancel`  → 已取消态
+       - confirmPick  : 真实点目标件 → 应用内浏览器 → 点「选中此目录」= 完成选择（自动确认）
+       - engineClosed : 真实调 closeAskUserCard(sid, rid)（askUserClosed 引擎关闭路径）
+       - historyReplay: 真实走 renderAskUserHistory(bubble, items, answerText) 回放孪生卡
+       - optionBox    : 普通 askUser 选项盒（.option-btn 族）确认/取消
+       - permission   : renderPermissionPrompt 权限卡（作答即整行移除）
+
+     spec（tests/ws-card-lock.spec.mjs）以临时静态服务驱动本页（随机高位端口，
+     never the 8080 host）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>ws-card-lock harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/modal.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <style>
+    html, body { margin: 0; min-height: 100%; background: var(--color-bg, #101418); }
+    #chat { width: 680px; max-width: 96vw; margin: 0 auto; padding: 16px 0 36px; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <!-- iframe 广播面（_nfAskState 消费面是画布内嵌页）：同源 about:blank，父页可挂 listener。 -->
+  <div class="canvas-tab-pane" style="height:0;overflow:hidden"><iframe id="nf-iframe"></iframe></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+    const chat = await import(`${WEB}/chat.js`);
+
+    const SID = 'harness-lock-session';
+    const RID = 'req-lock-1';
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    chatViews.primary.sessionId = SID;
+    setActiveView(chatViews.primary);
+    state.activeSessionId = SID;
+
+    // 出站帧捕获（askuser.spec.mjs 同款 harness）——真 socket 零流量。
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (d) => window.__captured.push(JSON.parse(d)) };
+
+    // 复制面读数：只替换浏览器 API（产品代码零改动），用于量「可复制」是否仍可达。
+    window.__clip = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (t) => { window.__clip.push(String(t)); } },
+    });
+
+    // _nfAskState 广播面读数（消费面 = 画布内嵌页）。
+    window.__nfAskState = [];
+    document.getElementById('nf-iframe').contentWindow.addEventListener('message', (e) => {
+      if (e.data && e.data._nfAskState) window.__nfAskState.push(e.data._nfAskState);
+    });
+
+    // 全域 DOM 变更观察器（「有无任何 DOM 变化」二值读数的机械载体）。
+    window.__mutations = [];
+    const mo = new MutationObserver((recs) => {
+      for (const r of recs) {
+        if (r.type === 'attributes') {
+          window.__mutations.push({ type: 'attributes', target: tag(r.target), attr: r.attributeName });
+        } else if (r.type === 'characterData') {
+          window.__mutations.push({ type: 'characterData', target: tag(r.target.parentNode) });
+        } else {
+          window.__mutations.push({
+            type: 'childList', target: tag(r.target),
+            added: Array.from(r.addedNodes).map(tag),
+            removed: Array.from(r.removedNodes).map(tag),
+          });
+        }
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+
+    function tag(n) {
+      if (!n) return String(n);
+      if (n.nodeType === 3) return '#text';
+      const cls = n.classList && n.classList.length ? '.' + Array.from(n.classList).join('.') : '';
+      return (n.tagName || '?') + cls;
+    }
+    const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__SID = SID;
+    window.__RID = RID;
+
+    // ── 载荷（与生产同形）────────────────────────────────────────────────
+    const DIR_ITEM = {
+      question: 'ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器。',
+      dirPicker: true, freeInput: false, options: [],
+    };
+    const OPT_ITEM = { question: '锁定面回归：选一个选项', options: ['A', 'B'], allowOther: true };
+
+    window.__reset = () => {
+      chatEl.innerHTML = '';
+      window.__captured.length = 0;
+      window.__clip.length = 0;
+      window.__nfAskState.length = 0;
+      window.__mutations.length = 0;
+      document.querySelectorAll('.wsp-overlay').forEach((o) => o.remove());
+    };
+
+    // ── 卡渲染驱动器（全部走真实生产入口）────────────────────────────────
+    window.__renderDir = async (sid = SID, rid = RID) => {
+      window.__reset();
+      chat.renderAskUser([DIR_ITEM], sid, 'E2E', rid);
+      await raf();
+      return { sessionId: sid, requestId: rid };
+    };
+    window.__renderOpt = async (sid = SID, rid = RID) => {
+      window.__reset();
+      chat.renderAskUser([OPT_ITEM], sid, 'E2E', rid);
+      await raf();
+    };
+    /** pending 形态 + 行级复制载荷面（与历史恢复行同形：R5 复制钮挂行级 .duration-badge）。 */
+    window.__renderHistoryPending = async (sid = SID, rid = RID) => {
+      window.__reset();
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+      chat.renderAskUser([OPT_ITEM], sid, 'E2E', rid);
+      row.appendChild(chat.createMsgFooterBadge(Date.now(), 'askuser-copy-payload'));
+      await raf();
+    };
+    /** 历史回放孪生卡 + 行级复制载荷面（R5 复制钮挂行级 .duration-badge）。 */
+    window.__renderHistory = async (answerText, sid = SID) => {
+      window.__reset();
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+      chat.renderAskUserHistory(bubble, [DIR_ITEM], answerText);
+      row.appendChild(chat.createMsgFooterBadge(Date.now(), 'askuser-copy-payload'));
+      await raf();
+    };
+    /** 权限卡（renderPermissionPrompt 真入口；作答后整行移除）。 */
+    window.__renderPerm = async (sid = SID, rid = 'req-perm-1') => {
+      window.__reset();
+      chat.renderPermissionPrompt('Bash', 'rm -rf /tmp/x', JSON.stringify({ command: 'rm -rf /tmp/x' }),
+        sid, 2, null, null, null, rid, 'confirm-edits');
+      await raf();
+    };
+
+    // ── 已决动作（真实点击驱动，非内部函数调用）──────────────────────────
+    window.__resolveCancel = async () => {
+      document.querySelector('.option-box .option-cancel').click();
+      await raf();
+      return { className: document.querySelector('.option-box').className };
+    };
+    /** 完成选择：目标件 → 应用内浏览器 → 「选中此目录」→ complete() 自动确认。 */
+    window.__resolvePickComplete = async () => {
+      document.querySelector('.option-box .ws-pick-target').click();
+      await raf();
+      const ov = document.querySelector('.wsp-overlay');
+      if (!ov) return { ok: false, reason: 'overlay not opened' };
+      ov.querySelector('.wsp-pick').click();
+      await raf();
+      const box = document.querySelector('.option-box');
+      return {
+        ok: true,
+        className: box.className,
+        echo: (box.querySelector('.ws-pick-echo') || {}).textContent,
+        answerLine: (box.querySelector('.option-answer') || {}).textContent,
+        overlaysLeft: document.querySelectorAll('.wsp-overlay').length,
+      };
+    };
+    /** 引擎关闭路径（askUserClosed → closeAskUserCard）。 */
+    window.__resolveEngineClose = async (sid = SID, rid = RID) => {
+      const ok = chat.closeAskUserCard(sid, rid, 'source closed');
+      await raf();
+      return { ok, className: document.querySelector('.option-box').className };
+    };
+
+    /** 探针隔离：每个探针开始前走真实关闭入口收掉遗留弹窗（openCtx 单例态一并复位）。 */
+    window.__closePickerNow = async () => {
+      const m = await import(`${WEB}/workspacePicker.js`);
+      m.closePicker();
+      document.querySelectorAll('.wsp-overlay').forEach((o) => o.remove());
+      await raf();
+    };
+
+    // ── 读数器 ───────────────────────────────────────────────────────────
+    window.__styles = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        opacity: cs.opacity, cursor: cs.cursor, pointerEvents: cs.pointerEvents,
+        borderColor: cs.borderColor, boxShadow: cs.boxShadow, transform: cs.transform,
+        color: cs.color, background: cs.backgroundColor,
+        disabled: el.disabled === true,
+        ariaDisabled: el.getAttribute('aria-disabled'),
+        tabIndex: el.tabIndex,
+        classList: Array.from(el.classList),
+      };
+    };
+    window.__arm = () => {
+      const box = document.querySelector('.option-box');
+      window.__probeBefore = {
+        frames: window.__captured.length,
+        overlays: document.querySelectorAll('.wsp-overlay').length,
+        cardHtml: box ? box.outerHTML : null,
+        children: box ? box.childElementCount : null,
+        nfAskState: window.__nfAskState.length,
+      };
+      window.__mutations.length = 0;
+      return window.__probeBefore;
+    };
+    window.__collect = () => {
+      const box = document.querySelector('.option-box');
+      const b = window.__probeBefore;
+      const overlays = document.querySelectorAll('.wsp-overlay').length;
+      return {
+        before: { frames: b.frames, overlays: b.overlays, children: b.children },
+        after: { frames: window.__captured.length, overlays, children: box ? box.childElementCount : null },
+        newFrames: window.__captured.slice(b.frames),
+        cardHtmlChanged: (box ? box.outerHTML : null) !== b.cardHtml,
+        overlayDelta: overlays - b.overlays,
+        mutations: window.__mutations.slice(),
+        nfAskStateDelta: window.__nfAskState.length - b.nfAskState,
+        selection: String(window.getSelection()),
+      };
+    };
+    /** 卡内可交互件清单 + 逐个「已决后是否仍可点」的机械读数（判据⑤ 枚举用）。 */
+    window.__inventory = (sel = '.option-box') => {
+      const box = document.querySelector(sel);
+      if (!box) return null;
+      const LOCKABLE = 'button, a, textarea, input, select, [role="button"], [role="checkbox"], [tabindex]';
+      return Array.from(box.querySelectorAll(LOCKABLE)).map((el) => ({
+        el: tag(el),
+        disabled: el.disabled === true,
+        ariaDisabled: el.getAttribute('aria-disabled'),
+        tabIndex: el.tabIndex,
+        cursor: getComputedStyle(el).cursor,
+        opacity: getComputedStyle(el).opacity,
+        pointerEvents: getComputedStyle(el).pointerEvents,
+      }));
+    };
+    window.__copyProbe = async () => {
+      const btn = document.querySelector('.msg-copy');
+      if (!btn) return { present: false };
+      window.__clip.length = 0;
+      btn.click();
+      await raf();
+      return { present: true, disabled: btn.disabled === true, clip: window.__clip.slice() };
+    };
+    window.__boxRect = () => {
+      const box = document.querySelector('.option-box');
+      const t = document.querySelector('.option-box .ws-pick-target');
+      const a = document.querySelector('.option-box .option-answer');
+      const r = (el) => (el ? {
+        x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y,
+        width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height,
+      } : null);
+      return { box: r(box), target: r(t), answer: r(a) };
+    };
+    window.__nfAskStateRaw = () => window.__nfAskState.slice();
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
