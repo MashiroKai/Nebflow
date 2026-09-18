@@ -57,7 +57,7 @@ final class NeblinkRelayTunnel(
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
   private[neblink] val friendService: Option[FriendService] = None
 )(dispatcher: Dispatcher[IO]):
-  import NeblinkRelayTunnel.{TunnelAuthStatus, shouldHealAuthFailure}
+  import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
@@ -580,18 +580,53 @@ final class NeblinkRelayTunnel(
    * 可见性 = **public**（与 `connect` / `ensure` / `statusJson` 同档）：唯一调用方是
    * `GatewayMain` 的 ack 装配缝（包 `nebflow.gateway`），`private[neblink]` 够不着；
    * 帧编码仍只此一处（不加第二实现）。
+   *
+   * 🔴 **F3（2026-09-18 回执诚实性批，作者裁示「回执诚实性修、单列小批」）**：返回值
+   * `IO[Unit]` → `IO[AckOutcome]`。修前「无 live socket」只落一行 DEBUG 后**返回成功**
+   * （既无异常、也无判别值），装配缝又把「隧道对象不在册」也吞成 `IO.unit` ⇒ 调用方
+   * （`DeviceMailInbox.sendReceipt`）照打 `ack sent to the server` + 审计 `ack-sent`
+   * ——**线上零帧却报已回执**（缺陷 B 的放大因，`mailreplay-recon` §1-④/§2-⑦ 逐字）。
+   * 现在三态可判别（[[AckOutcome]]），「没发出」**不可能**被读成「已发出」。
    */
-  def sendAck(eventId: String): IO[Unit] =
+  def sendAck(eventId: String): IO[AckOutcome] =
     val frame = NeblinkRelayTunnel.ackFrame(eventId)
     wsRef match
-      case None => logger.debug(s"ack skipped (no live relay socket): $eventId")
+      case None =>
+        logger
+          .debug(s"ack-not-sent reason=no_live_socket: no registered relay socket for $eventId")
+          .as(AckOutcome.NoLiveSocket)
+      case Some(w) if w.isOutputClosed() =>
+        // 同族第二种形态（同一判据的收窄）：socket 对象在册但**出向已关**（半关 /
+        // 正在关闭）⇒ 帧同样上不了线。必须自己判：JDK 的 `WebSocket.sendText` 把
+        // 写失败放进**返回的 future** 而不抛（修前那个 try/catch 因此是死代码，
+        // 连真写失败都吞成成功）。
+        logger
+          .debug(s"ack-not-sent reason=no_live_socket: relay socket output closed for $eventId")
+          .as(AckOutcome.NoLiveSocket)
       case Some(w) =>
         IO.blocking {
           try
-            w.sendText(frame.noSpaces, true)
-            ()
-          catch case e: Exception => logger.debugSync(s"ack send failed for $eventId: ${e.getMessage}")
-        }.handleErrorWith(e => logger.debug(s"ack send error for $eventId: ${e.getMessage}"))
+            val fut = w.sendText(frame.noSpaces, true)
+            // 异步失败面（写进 socket 缓冲后 TCP 中途断）：只能留痕，不改已返回的
+            // 结局——结局的语义边界 = 「帧交给了在册 socket 且其出向未关」（线上
+            // 有帧的实证见 `DeviceMailAckHonestySpec` 的真 RFC 6455 夹具直读）。
+            fut.whenComplete { (_, err) =>
+              if err != null then
+                logger.debugSync(
+                  s"ack frame write reported async failure for $eventId: ${NeblinkRelayTunnel.describeErr(err)}"
+                )
+            }
+            AckOutcome.Sent
+          catch
+            case e: Exception =>
+              val reason = NeblinkRelayTunnel.describeErr(e)
+              logger.debugSync(s"ack send failed for $eventId: $reason")
+              AckOutcome.SendFailed(reason)
+        }.handleErrorWith(e =>
+          logger
+            .debug(s"ack send error for $eventId: ${e.getMessage}")
+            .as(AckOutcome.SendFailed(NeblinkRelayTunnel.describeErr(e)))
+        )
 
   /**
    * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame.
@@ -718,6 +753,50 @@ object NeblinkRelayTunnel:
    */
   private[neblink] def ackFrame(eventId: String): Json =
     Json.obj("type" -> "ack".asJson, "eventId" -> eventId.asJson)
+
+  private val logger = NebflowLogger.forName("nebflow.neblink.relay")
+
+  /** 异常的可读原因（`getMessage` 可为 null：如 `WebSocketHandshakeException`——
+    * 同族口径见本仓 `RelayTunnelDiagnostics`）。禁把 null 写进日志/审计。 */
+  private[neblink] def describeErr(t: Throwable): String =
+    Option(t.getMessage).filter(_.nonEmpty).getOrElse(t.getClass.getSimpleName)
+
+  /**
+   * ack 发送**结局**（F3，2026-09-18 回执诚实性批，作者裁示「回执诚实性修、单列小批」）
+   * ——调用方据此**如实记账**：🔴 `NoLiveSocket` / `SendFailed` **不得**被读成
+   * 「已回执」（那正是本批修掉的假陈述：`DeviceMailInbox.sendReceipt` 的
+   * `ack sent to the server` + 审计 `ack-sent`）。
+   *
+   * 语义边界（须知）：`Sent` = 「帧已交给**在册的** relay socket、其出向未关、
+   * `sendText` 未同步抛」——**不等于**「服务端已收到/已脱账」（客户端不可观测，
+   * 属 neblink-server 面，见 `mailreplay-recon` §6 U-1）。线上「真有帧」的实证 =
+   * `DeviceMailAckHonestySpec` 的真 RFC 6455 夹具直读（非 mock）。
+   */
+  enum AckOutcome:
+    /** 帧已写进在册 socket（线上有帧——spec 级直读）。 */
+    case Sent
+
+    /** 无 live socket：隧道对象不在册 / socket 未注册 / 出向已关 ⇒ **零帧上线**。 */
+    case NoLiveSocket
+
+    /** socket 在册但写失败（同步抛出）⇒ **零帧上线**（带可读原因）。 */
+    case SendFailed(reason: String)
+
+  /**
+   * **唯一** ack 发送实现点（F4 单一实现点，2026-09-18 回执诚实性批）。
+   *
+   * 两个装配缝（`GatewayMain` 好友消息腿 `:900-905` / 设备邮件腿 `:1010-1015`）都
+   * **只**调本方法：「隧道对象 live 读 + 无对象时如实报 `NoLiveSocket`」这套判断
+   * 只此一份。修前两处各写一份 `case None => IO.unit`，把「压根没发出」吞成成功
+   * ——同族判断各写一份正是该缺陷能在两条腿上同时存活的原因。
+   */
+  def sendAckLive(tunnelOpt: Option[NeblinkRelayTunnel], eventId: String): IO[AckOutcome] =
+    tunnelOpt match
+      case Some(t) => t.sendAck(eventId)
+      case None =>
+        logger
+          .debug(s"ack-not-sent reason=no_live_socket: relay tunnel not registered for $eventId")
+          .as(AckOutcome.NoLiveSocket)
 
   /**
    * Liveness window (①-2 / ①opt-A1，波3 2026-09-12）：pong 超出此窗口 = 连接是

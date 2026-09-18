@@ -70,6 +70,31 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   /** How many client ping frames were answered with a pong (health knob readout). */
   val pongsSent = new AtomicInteger(0)
 
+  /** **线级回执读数**（回执诚实性批 F3/F5，2026-09-18）：把客户端→服务端的**文本
+    * 帧原文**记下来，供 spec 断言「`ack-sent` 必须对应线上真有帧」——走的是真
+    * RFC 6455 帧编解码（JDK 客户端掩码 + 本夹具解掩码），比任何 mock 回调硬。
+    *
+    * 默认 **false** ⇒ 既有 spec 的排空路径（只 read 不解析）**逐字不动**、读数面
+    * 零变化；本批新增 `DeviceMailAckHonestySpec` 才打开它。
+    * 打开时排空循环改为按帧解析（与 `pongReplies=true` 同一条解析路），文本帧原文
+    * 落进 [[clientTextFrames]]（按到达顺序）。 */
+  @volatile var recordClientFrames: Boolean = false
+
+  /** 收到的客户端文本帧原文（顺序 = 到达顺序；见 [[recordClientFrames]]）。 */
+  val clientTextFrames = new ConcurrentLinkedQueue[String]()
+
+  /** 已收到的客户端文本帧快照。 */
+  def clientFrames: List[String] =
+    val out = scala.collection.mutable.ListBuffer.empty[String]
+    clientTextFrames.forEach(f => out += f)
+    out.toList
+
+  /** 线上 ack 帧数（判别锚 = 帧原文同时含 `"ack"` 与目标 eventId）。 */
+  def ackFrameCount(eventId: String): Int =
+    var n = 0
+    clientTextFrames.forEach(f => if f.contains("\"ack\"") && f.contains(eventId) then n += 1)
+    n
+
   /** 踢旧批 r2（2026-09-14）设备注册腿：`POST /api/device/register` 的服务次数。
     * 判据面 = 「被踢后自动重注册腿是否还在跑」（复核位判 fail 的那条腿）。 */
   val registers = new AtomicInteger(0)
@@ -442,13 +467,16 @@ final class RelayAuthFixtureServer extends AutoCloseable:
     spawn {
       try
         val is = sock.getInputStream
-        if pongReplies then
+        if pongReplies || recordClientFrames then
           var frame = readFrame(is)
           while frame.isDefined do
             val (op, payload) = frame.get
-            if op == 0x1 && new String(payload, StandardCharsets.UTF_8).contains("\"ping\"") then
-              pongsSent.incrementAndGet()
-              writeTextFrame(sock.getOutputStream, """{"type":"pong"}""")
+            if op == 0x1 then
+              val text = new String(payload, StandardCharsets.UTF_8)
+              if recordClientFrames then clientTextFrames.add(text)
+              if pongReplies && text.contains("\"ping\"") then
+                pongsSent.incrementAndGet()
+                writeTextFrame(sock.getOutputStream, """{"type":"pong"}""")
             frame = readFrame(is)
         else
           val buf = new Array[Byte](4096)

@@ -123,12 +123,17 @@ object DeviceMailInbox:
     * 不经任何写面。
     *
     * `ackSender`（契约 v2 ④）：本机处理完一封设备邮件后向服务端回 ack 的**唯一**出
-    * 口（生产 = 既有 `NeblinkRelayTunnel.sendAck` 的 live 读取，与好友消息 ack 同缝、
-    * 同帧形状）。缺省 `None` = 未接线 ⇒ **不静默**：审计行写明 `ack-not-sent`。 */
+    * 口（生产 = 既有 `NeblinkRelayTunnel.sendAckLive` 的 live 读取，与好友消息 ack
+    * 同缝、**同一实现点**）。缺省 `None` = 未接线 ⇒ **不静默**：审计行写明
+    * `ack-not-sent`。
+    *
+    * 🔴 F4/F5（2026-09-18 回执诚实性批）：返回值 = 可判别的
+    * `NeblinkRelayTunnel.AckOutcome`（修前 `IO[Unit]` ⇒ 「没发出」与「已发出」
+    * 在类型上不可分，本腿因此照打 `ack sent to the server` = 假陈述）。 */
   final case class Wiring(
       resources: SharedResources,
       wsSend: Json => IO[Unit],
-      ackSender: Option[String => IO[Unit]] = None
+      ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   )
 
   @volatile private var wiring: Option[Wiring] = None
@@ -137,7 +142,7 @@ object DeviceMailInbox:
   def initialize(
       resources: SharedResources,
       wsSend: Json => IO[Unit],
-      ackSender: Option[String => IO[Unit]] = None
+      ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   ): Unit =
     wiring = Some(Wiring(resources, wsSend, ackSender))
 
@@ -303,15 +308,38 @@ object DeviceMailInbox:
     }
 
   /** 收件侧回执（契约 v2 ④；复用既有 ack 出口与帧形状，零新帧、零新字段）。
-    *  两个**非静默**分支：未接线 / 帧未带 eventId ⇒ INFO/WARN + 审计行 `ack-not-sent`。 */
+    *
+    * 🔴 **F5（2026-09-18 回执诚实性批，作者裁示「回执诚实性修、单列小批」）——按
+    * F3/F4 的可判别结局分支，**真发出才 `ack-sent`**：修前 `send(...)` 恒成功
+    * （`sendAck` 无 socket 也返回成功、装配缝把「隧道不在册」吞成 `IO.unit`）⇒ 本处
+    * 照打 `ack sent to the server` + 审计 `ack-sent`——**线上零帧却报已回执**
+    * （缺陷 B 的放大因：服务端不脱账 ⇒ 重放不退）。现在：
+    *   - `Sent`        ⇒ INFO `ack sent to the server` + 审计 `ack-sent`；
+    *   - `NoLiveSocket`⇒ WARN `ack-not-sent reason=no_live_socket` + 审计
+    *     `ack-not-sent`（**禁**假陈述）；
+    *   - `SendFailed`  ⇒ WARN `ack send FAILED` + 审计 `ack-send-failed`。
+    * 另两个既有**非静默**分支（未接线 / 帧未带 eventId）逐字不变。 */
   private def sendReceipt(incoming: DeviceMail.Incoming, receiptEventId: Option[String]): IO[Unit] =
     (wiring.flatMap(_.ackSender), receiptEventId) match
       case (Some(send), Some(eventId)) =>
         send(eventId)
-          .flatMap(_ =>
-            logger.info(s"[device-mail] ack sent to the server: eventId=$eventId (injection persisted)") *>
-              audit(incoming, "ack-sent", s"eventId=$eventId")
-          )
+          .flatMap {
+            case NeblinkRelayTunnel.AckOutcome.Sent =>
+              logger.info(s"[device-mail] ack sent to the server: eventId=$eventId (injection persisted)") *>
+                audit(incoming, "ack-sent", s"eventId=$eventId")
+            case NeblinkRelayTunnel.AckOutcome.NoLiveSocket =>
+              // 如实记账：注入**已落地**（本方法只在注入成功后调用），但回执**没有**
+              // 上线 ⇒ 服务端不会脱账 ⇒ 重放会再来（S1 去重闸保证它无害）。
+              logger.warn(
+                s"[device-mail] ack-not-sent reason=no_live_socket: eventId=$eventId " +
+                  "(no live relay socket / relay tunnel not registered — nothing reached the server: " +
+                  "the event stays un-dropped and will be replayed; injection IS persisted, " +
+                  "so the replay is absorbed by the event-id dedup gate)"
+              ) *> audit(incoming, "ack-not-sent", s"eventId=$eventId; reason=no_live_socket")
+            case NeblinkRelayTunnel.AckOutcome.SendFailed(reason) =>
+              logger.warn(s"[device-mail] ack send FAILED for eventId=$eventId: $reason") *>
+                audit(incoming, "ack-send-failed", s"eventId=$eventId; err=$reason")
+          }
           .handleErrorWith(e =>
             logger.warn(s"[device-mail] ack send FAILED for eventId=$eventId: ${e.getMessage}") *>
               audit(incoming, "ack-send-failed", s"eventId=$eventId; err=${e.getMessage}")

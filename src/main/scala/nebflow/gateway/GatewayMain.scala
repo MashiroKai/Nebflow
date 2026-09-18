@@ -893,15 +893,24 @@ object GatewayMain extends IOApp:
                                         // 反复重连），故此处按**每次调用 live 读**解析
                                         // （`neblinkService.relayTunnelOpt`），不捕获快照
                                         // —— 与 `setRelayTunnelStarter` / `ensureRelayTunnel`
-                                        // 的既有 live 读口径一致。未注册（boot 早期 / logout）
-                                        // ⇒ 显式 no-op（`sendAck` 亦自带「无 socket 即跳过」兜底）。
-                                        // 帧编码与语义边界见 `NeblinkRelayTunnel.sendAck`
-                                        // 与 `FriendService.ackProcessed`。
+                                        // 的既有 live 读口径一致。
+                                        //
+                                        // 🔴 F4（2026-09-18 回执诚实性批，作者裁示「回执诚实性
+                                        // 修、单列小批」）：修前这里是
+                                        // `case None => IO.unit` —— 把「隧道对象压根不在册」
+                                        // **吞成成功**（与 `sendAck` 的「无 socket 即成功」
+                                        // 同款假陈述，两条腿合起来使调用方无从判别）。现在
+                                        // 统一走 `NeblinkRelayTunnel.sendAckLive`（**唯一**
+                                        // 实现点，设备邮件腿同址复用），结局 = 可判别的
+                                        // `AckOutcome`（`NoLiveSocket` 如实上报、绝不读成
+                                        // 已发出）。帧编码与语义边界见
+                                        // `NeblinkRelayTunnel.sendAck` 与
+                                        // `FriendService.ackProcessed`。
                                         ackSender = Some { eventId =>
-                                          IO(neblinkService.relayTunnelOpt).flatMap {
-                                            case Some(t) => t.sendAck(eventId)
-                                            case None    => IO.unit
-                                          }
+                                          nebflow.neblink.NeblinkRelayTunnel.sendAckLive(
+                                            neblinkService.relayTunnelOpt,
+                                            eventId
+                                          )
                                         }
                                       )
                                       // A2A 一期（#290 域 A）：SendMessage 工具接线——
@@ -1005,13 +1014,19 @@ object GatewayMain extends IOApp:
                                               sharedResourcesFinal,
                                               (json: io.circe.Json) => wsHub.broadcast(json),
                                               // 收件回执出口（契约 v2 ④）：与好友消息 ack
-                                              // **同一缝、同一帧形状**（live 读隧道，见
-                                              // 上面的 friendService ackSender）。
+                                              // **同一缝、同一实现点**（`sendAckLive` 的
+                                              // live 读隧道，见上面的 friendService ackSender）。
+                                              // 🔴 F4（2026-09-18 回执诚实性批）：修前的
+                                              // `case None => IO.unit` 把「隧道对象不在册」
+                                              // 吞成成功 ⇒ `DeviceMailInbox` 照打
+                                              // `ack sent to the server`（假陈述，缺陷 B 的
+                                              // 放大因）。现在如实返回 `AckOutcome`
+                                              // （F5 据此分支记账）。
                                               Some { eventId =>
-                                                IO(neblinkService.relayTunnelOpt).flatMap {
-                                                  case Some(t) => t.sendAck(eventId)
-                                                  case None    => IO.unit
-                                                }
+                                                nebflow.neblink.NeblinkRelayTunnel.sendAckLive(
+                                                  neblinkService.relayTunnelOpt,
+                                                  eventId
+                                                )
                                               }
                                             )
 

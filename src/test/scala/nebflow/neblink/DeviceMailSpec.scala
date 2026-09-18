@@ -376,7 +376,11 @@ class DeviceMailSpec extends FunSuite:
       Map(meta.id -> AgentRecord(sessionId = meta.id, ref = recordingRef(msgs), kind = AgentKind.Root, rootSessionId = meta.id)),
       store
     )
-    DeviceMailInbox.initialize(res, (j: Json) => frames.update(_ :+ j), Some((e: String) => acks.update(_ :+ e)))
+    DeviceMailInbox.initialize(
+      res,
+      (j: Json) => frames.update(_ :+ j),
+      Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
+    )
     (res, msgs, frames, acks)
 
   /** v2.1 收件入场信封（**逐字**照服务端投递实证样例的键位/层级构造）：
