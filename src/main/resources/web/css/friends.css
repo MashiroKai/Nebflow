@@ -1173,6 +1173,26 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-quote-note { opacity: 0.75; }
 .fm-quote-note:empty { display: none; }
 
+/* ── ①-b 引用块**可点态**（quotejump 批 · 作者令「必须可跳」）──────────────────
+   🔴 判据单点 = `data-quote-jump="ready"`（坐标可解析）。不可得 ⇒ 无指针、无按钮
+   语义（禁「点了没反应」的半成品入口，见 `messages.js` 的 `paintJumpAffordance`）。
+   焦点环 / 高亮取**既有** sapphire 半透明档（`--sapphire-tint-15` / `rgb(var(--sapphire) / 0.5)`，
+   与 :184 `:focus-visible` 同款值）⇒ 零新色值；🔴 高亮**不是**左缘色条/高亮条
+   （设计硬约束「无 accent bars」）—— 是一次性整块 fade，与 `.search-hit-flash` 同族。 */
+.fm-quote-block[data-quote-jump="ready"] { cursor: pointer; }
+.fm-quote-block[data-quote-jump="ready"]:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: 12px; }
+@keyframes fmQuoteTargetFlash {
+  0% { background: var(--sapphire-tint-15); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fm-msg.fm-quote-target { animation-duration: 0.01s; }
+}
+
 /* ── ② 引用态条（输入框面上方；宿主 = `.fm-quote-strip`）────────────────────
    组件本体 = 既有输入框引用块（`renderRefBlock(mode:'input')` → `.att-ref-fm`），
    本段只定**宿主盒**的落位与外边距。`[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */

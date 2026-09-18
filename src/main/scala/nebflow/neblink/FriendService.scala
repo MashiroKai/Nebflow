@@ -1487,15 +1487,30 @@ final class FriendService(
     * （`NeblinkClient` 只在 `Some` 时发该键）。🔴 幂等判定**全在服务端**（§8.6：同键
     * 重复仍是 201、`existing:true` 仅表示回放原行）—— 本层与网关层都**不去重**、
     * **不改**状态码、**不做**本地去重缓存（那会造出第二套真相）。
+    *
+    * quotejump 批加性扩面（`replyToMessageId`）：**引用坐标**（被引消息 id，整数）。
+    * 本层**只搬不改**（不校验、不解析、不去重）：坐标的合法性与会话归属**全在服务端**
+    * 写事务内判定（异会话 / 无此行 ⇒ 400 `REPLY_TARGET_INVALID`，零副作用）⇒ 本层
+    * 若自行「校验」就会造出第二套真相。缺省 `None` ⇒ 请求体逐字节同形（本层不再
+    * 触碰既有键），`Some` ⇒ 由 [[NeblinkClient.sendFriendMessage]] 末位追加一个键。
+    * 🔴 仅好友腿：群 / 设备腿**不带**该键（外仓 D-6 群/设备体刻意不收；群腿网关是
+    * 原文转发，硬塞会被服务端静默忽略 —— 本批禁为群腿硬塞字段）。
     */
   def sendAsUser(
     friendUserId: String,
     body: String,
     attachmentIds: List[String] = Nil,
-    clientMsgId: Option[String] = None
+    clientMsgId: Option[String] = None,
+    replyToMessageId: Option[Long] = None
   ): IO[Either[String, Json]] =
     withClient(
-      _.sendFriendMessage(friendUserId, body, attachmentIds = attachmentIds, clientMsgId = clientMsgId)
+      _.sendFriendMessage(
+        friendUserId,
+        body,
+        attachmentIds = attachmentIds,
+        clientMsgId = clientMsgId,
+        replyToMessageId = replyToMessageId
+      )
     ).flatMap {
       case Right(json) =>
         json.hcursor.get[String]("conversationId").toOption match
