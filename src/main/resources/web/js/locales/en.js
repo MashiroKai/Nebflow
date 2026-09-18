@@ -318,6 +318,8 @@ export default {
   // `{pct}` is derived from real chunk confirmations only (no fake progress);
   // failure/cancel strings always say "not sent" (fail-closed and visible).
   'messages.attachProgress': 'Uploading {pct}%',
+  // imgmsg batch (2026-09-18, decision ④): the percentage-free "sending" state.
+  'messages.attachSending': 'Sending…',
   'messages.attachSent': 'Sent',
   'messages.attachFailed': 'Upload failed — not sent',
   'messages.attachCancel': 'Cancel',
