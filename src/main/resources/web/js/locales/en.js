@@ -299,6 +299,23 @@ export default {
   'messages.forwarded': 'Forwarded to agent',
   'messages.forwardToast': 'Added to input — add a note and send',
   'messages.forwardNoSession': 'Open a chat session in the main window first, then forward',
+  // ── msgmenu phase 1 (client, author 2026-09-18 four rulings) — new keys ────
+  // 🔴 This batch hard-forbids delete/recall ⇒ **no** `messages.delete*` /
+  //    `messages.recall*` keys may be added here (zh-CN.js carries the same note).
+  'messages.quote': 'Quote',
+  'messages.quoteUnavailable': 'Original message unavailable',
+  'messages.quotePlaceholder': 'Original message',
+  'messages.multiSelect': 'Multi-select',
+  'messages.selectedCount': '{n} selected',
+  'messages.forward': 'Forward',
+  'messages.selectExit': 'Exit',
+  'messages.copied': 'Copied',
+  'messages.copyFailed': 'Copy failed',
+  'messages.forwardNoTarget': 'No other conversation to forward to',
+  'messages.forwardNoneSelected': 'No forwardable message selected',
+  'messages.forwardedCount': 'Forwarded {n}',
+  'messages.forwardSkipped': 'Forwarded {n}, skipped {k} not forwardable',
+  'messages.forwardPartial': 'Forwarded {n}, {f} failed',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
   // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。

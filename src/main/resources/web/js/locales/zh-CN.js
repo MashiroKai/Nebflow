@@ -309,6 +309,24 @@ export default {
   'messages.forwarded': '已转发给 agent',
   'messages.forwardToast': '已加入输入框，可附言后发送',
   'messages.forwardNoSession': '请先在主界面打开一个会话，再转发消息',
+  // ── msgmenu 一期（客户端，作者 2026-09-18 19:2x 四答）新增键 ──────────────
+  // 🔴 本批硬禁删除/撤回 ⇒ **禁**在此新增 `messages.delete*` / `messages.recall*`
+  //    一类键（含「删除」「撤回」字样），一行都不写。
+  'messages.quote': '引用',
+  // 被引消息不在当前已载窗口（跳转未实现 ⇒ 只做降级显示）：摘要仍在信封里，此处只标缺失。
+  'messages.quoteUnavailable': '原消息不可用',
+  'messages.quotePlaceholder': '原始消息',
+  'messages.multiSelect': '多选转发',
+  'messages.selectedCount': '已选 {n} 条',
+  'messages.forward': '转发',
+  'messages.selectExit': '退出',
+  'messages.copied': '已复制',
+  'messages.copyFailed': '复制失败',
+  'messages.forwardNoTarget': '没有其他会话可以转发',
+  'messages.forwardNoneSelected': '没有可转发的消息',
+  'messages.forwardedCount': '已转发 {n} 条',
+  'messages.forwardSkipped': '已转发 {n} 条，跳过 {k} 条不可转发',
+  'messages.forwardPartial': '已转发 {n} 条，{f} 条失败',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
   'messages.trusted': '已信任',

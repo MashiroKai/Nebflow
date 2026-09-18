@@ -25,9 +25,9 @@ import {
   refreshGroups, groupsAvailable, groupTitleOf, buildGroupSettings, groupErrToast,
   groupAvatarGrid,
 } from './friendGroups.js';
-import { makeReference } from './reference.js';
+import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
-import { showPopupMenu } from './contextMenu.js';
+import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
@@ -76,6 +76,14 @@ let triggeringRow = null;       // for focus return (A18)
 let triggeringConvId = null;    // row may be re-rendered after open (unread clear) — refind by id
 const forwardedIds = new Set(); // session-persistent 「已转发」 chips (§3.3)
 let msgSeq = 0;
+// ── msgmenu 一期（作者 2026-09-18 19:2x 四答 = 唯一规格）· 客户端两个新态 ──────
+//  `pendingQuoteRef`：引用态（输入框面）当前待发送的引用对象（null = 无引用态）。
+//   `selectionMode` + `selectedIds`：多选态 + 已选 messageId（**字符串**归一，
+//   与 `keyedDiff` 的节点身份键同口径）。两个态都在 `closeChat()` 归零
+//   （「关窗重开选中归零」= 验收判据之一）。🔴 零删除/零撤回语义（本批硬禁）。
+let pendingQuoteRef = null;
+let selectionMode = false;
+const selectedIds = new Set();
 
 // ── 群组一期（friendgroups 客户端腿）：群会话状态 ─────────────────────
 // 群行与单聊行共用 conversations[]（合并后同键排序，主卡 C-3：排序键不变），
@@ -431,7 +439,10 @@ function summaryOf(conv) {
     if (conv && conv.kind === 'group') return groupSummaryEmpty(conv);
     return t('messages.systemNowFriends');
   }
-  return (isAgentSent(m) ? `[${t(AGENT_BADGE_TEXT_KEY)}] ` : '') + m.body;
+  // 引用信封（正文首行）不进会话列表摘要 —— 列表预览只显示**回复正文**
+  // （无信封 ⇒ 逐字现状）。解析走唯一解析点 `parseQuoteBody`。
+  const q = parseQuoteBody(m.body);
+  return (isAgentSent(m) ? `[${t(AGENT_BADGE_TEXT_KEY)}] ` : '') + (q ? q.reply : m.body);
 }
 
 /** 群面空会话摘要（`summaryOf` 的群分支；2026-09-16 拆键产物；本批接 `latestEvent`）。
@@ -688,6 +699,10 @@ function closeChat() {
   // detach the document listener centrally so open/close cycles stay
   // symmetric (D4, mem-diag 20260907). removeEventListener is idempotent.
   document.removeEventListener('keydown', escClose);
+  // msgmenu 一期：两态随窗归零（「关窗重开选中归零」= 验收判据；引用态同理
+  // —— 关窗即弃，禁跨窗残留）。注意：exitSelection 在 modalEls 被清前调用。
+  exitSelection();
+  clearQuote();
   if (modalEls) {
     modalEls.overlay.remove();
     modalEls = null;
@@ -1154,6 +1169,33 @@ function renderChatModal(conv) {
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
+  // ── msgmenu 一期：两个新 UI 面（**挂载点**在既有一列里，组件全部复用）────────
+  // ① 引用态条 = 既有输入框引用块渲染器（`renderRefBlock(mode:'input')`）的宿主；
+  // ② 多选工具条（已选 N 条 / 转发 / 退出）—— 转发键开既有菜单组件选目标。
+  const quoteStrip = el('div', 'fm-quote-strip');
+  quoteStrip.hidden = true;
+  modal.appendChild(quoteStrip);
+  const selectBar = el('div', 'fm-select-bar');
+  selectBar.hidden = true;
+  const selectCount = el('span', 'fm-select-count', '');
+  const selectForward = el('button', 'fm-select-forward', t('messages.forward'));
+  selectForward.type = 'button';
+  selectForward.disabled = true;
+  const selectExit = el('button', 'fm-select-exit', t('messages.selectExit'));
+  selectExit.type = 'button';
+  selectBar.append(selectCount, selectForward, selectExit);
+  modal.appendChild(selectBar);
+  selectForward.addEventListener('click', () => openTargetPicker(conv, selectForward));
+  selectExit.addEventListener('click', () => exitSelection());
+  // 「点外退出」：窗内空白处（不在气泡/工具条上的）点击 ⇒ 退多选。覆盖层点击仍是
+  // 既有「关窗」语义（`overlay.addEventListener` 的 `e.target === overlay` 分支）。
+  modal.addEventListener('click', (e) => {
+    if (!selectionMode) return;
+    const t0 = e.target;
+    if (t0 instanceof Element && (t0.closest('.fm-msg') || t0.closest('.fm-select-bar'))) return;
+    exitSelection();
+  });
+
   // input bar
   const bar = el('div', 'fm-input-bar');
   const input = document.createElement('input');
@@ -1221,10 +1263,14 @@ function renderChatModal(conv) {
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv };
+  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
+  // msgmenu 一期：两个新态同拍归零（关窗重开 ⇒ 选中归零、无跨窗引用态）。
+  selectionMode = false;
+  selectedIds.clear();
+  pendingQuoteRef = null;
   // U-b：旧窗口的乐观项登记随之作废（其节点已脱离文档）——登记表与 chatMsgs
   // 同拍，绝不跨窗残留。
   pendingSends = [];
@@ -1447,6 +1493,12 @@ function updateTrustBadge(conv) {
 
 function escClose(e) {
   if (e.key === 'Escape' && modalEls) {
+    // msgmenu 一期：① 浮层菜单开着 ⇒ 这一下 Esc 归菜单（`contextMenu.js` 的捕获期
+    // 监听已关它）⇒ 本处理器让位，禁同一击既关菜单又关窗/退多选；
+    // ② 多选态 ⇒ 先退多选（作者口径「Esc 退出选择态」），窗不关；
+    // ③ 其余 = 既有语义（关窗）。
+    if (isPopupMenuOpen()) return;
+    if (selectionMode) { e.stopPropagation(); exitSelection(); return; }
     e.stopPropagation();
     closeChat(); // also detaches this listener (D4)
   }
@@ -2224,10 +2276,15 @@ async function downloadDeviceSavedAttachment(att, card, btn, note, src) {
 }
 
 /** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。 */
-function fillBubble(bubble, m) {
+function fillBubble(bubble, m, conv) {
   bubble.innerHTML = '';
   const atts = m && Array.isArray(m.attachments) ? m.attachments : [];
-  const body = (m && m.body) || '';
+  const raw = (m && m.body) || '';
+  // 引用块（msgmenu 一期）：信封在正文**首行** ⇒ 块渲染在正文之前，正文只渲染**回复**
+  // （信封不重复显示）。无信封 ⇒ 逐字走下方既有两行（零行为变化）。
+  const quote = parseQuoteBody(raw);
+  if (quote) bubble.appendChild(quoteBlockEl(quote));
+  const body = quote ? quote.reply : raw;
   // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
   // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
   const hidePlaceholder = atts.length > 0 && body !== '' && body === attPlaceholderBody(atts);
@@ -2357,15 +2414,25 @@ function bubbleEl(m, conv) {
     sender.dataset.senderId = String(m.senderId);
     wrap.appendChild(sender);
   }
-  fillBubble(bubble, m);
+  fillBubble(bubble, m, conv);
   wrap.appendChild(bubble);
+
+  // msgmenu 一期：被引消息 id 挂**气泡节点** dataset（🔴「跳转」的**唯一**预留挂点；
+  // 跳转逻辑本批不写）。同一函数也在 `keyedDiff` 复用分支调用（收敛点单一）。
+  syncQuoteDataset(wrap, m);
 
   // #290 addendum §3.3: bubble right-click = primary desktop entry for
   // 转发给 agent (same action as the hover/header buttons - one handler).
+  // msgmenu 一期（作者 2026-09-18 四答）：菜单壳扩为 4 项 —— 复制 / 转发给智能助手
+  // （**既有项保留、行为一字不变**）/ 引用 / 多选转发。
+  // 🔴 零删除、零撤回项（含文案键）：本批硬禁，禁在此回填。
   wrap.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     showPopupMenu(e.clientX, e.clientY, [
+      { label: t('messages.copy'), onClick: () => { void copyBubbleText(wrap); } },
       { label: t('messages.forwardToAgent'), onClick: () => forwardBubble(wrap, conv) },
+      { label: t('messages.quote'), onClick: () => startQuote(wrap, conv) },
+      { label: t('messages.multiSelect'), onClick: () => enterSelection() },
     ]);
   });
 
@@ -2433,6 +2500,8 @@ function bubbleEl(m, conv) {
   meta.appendChild(actions);
 
   wrap.appendChild(meta);
+  // 多选态下新到/新渲染的消息也带勾选面（与既有节点同一条 `attachCheck`）。
+  if (selectionMode) attachCheck(wrap);
   return wrap;
 }
 
@@ -2476,9 +2545,12 @@ function keyedDiff(flow, msgs, conv) {
         node.dataset.attachments = attSig(m);
         node.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
         const b = node.querySelector('.fm-msg-bubble');
-        if (b) fillBubble(b, m);
+        if (b) fillBubble(b, m, conv);
         if (m.body !== undefined) node.dataset.body = m.body || '';
       }
+      // msgmenu 一期：复用节点的引用挂点与可用性一并收敛（不变量「新 UI 态必须挂
+      // dataset 并在此处收敛」——见 `keyedDiff` 头注 `:2444-2446`）。
+      syncQuoteDataset(node, m);
     }
     const after = cursor ? cursor.nextSibling : flow.firstChild;
     if (node !== after) flow.insertBefore(node, after);
@@ -2528,6 +2600,8 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     // ⇒ 两面共用同一渲染器（`attachUpload.renderUploadCards`），设备窗不经此
     // （设备面走自己的 dropbox 传输链与状态渲染，零行为变化）。
     if (attachAvailable(conv)) renderUploadCards(flow, conv.conversationId);
+    // msgmenu 一期：引用块可用性在**每次** diff 后重判（加载更早 / 增量补齐都会改变答案）。
+    syncQuoteStates(flow);
     createIconsIn(flow);
   };
   if (stickBottom) {
@@ -2855,6 +2929,308 @@ function modalToast(text) {
   toastTimer = setTimeout(() => { if (modalEls) modalEls.toast.hidden = true; }, 2000);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// msgmenu 一期（客户端）· 作者 2026-09-18 19:2x 四答（**唯一规格**）：
+//   「引用——必须可跳转」（跳转前置 = 外仓 `neblink-server` 加 1 个可选引用字段；
+//   字段落地前**跳转联调阻塞** ⇒ 🔴 本批**不写跳转**、禁猜外仓字段名/协议形态）；
+//   「多选转发——落点 = 其他会话」（含选目标界面）；
+//   🔴 删除（本地/双侧）与撤回**先不做** ⇒ 本段零删除/零撤回语义、零 tombstone、
+//   零本地名单（任何入口、任何文案、任何键）。
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── 引用 · 通道真实形态（开工现读，行号 = 现读；禁凭 recon 转述当读数）──────────
+//  · 统一工厂 `reference.js:97-177 makeReference()`；`friend-message` 分支 `:152-174`
+//    ⇒ `{ type:'ref', refType:'friend-message', id:'ref:fm:<messageId>',
+//         source:{conversationId,messageId,friendName,friendNeblinkId,direction},
+//         content:{preview,fullText}, meta:{icon,typeLabel,date},
+//         display:{label:'来自 {name}', preview, pageBadge:date} }`（**id 钉在被引消息上**）。
+//  · 输入框面渲染器 = `renderRefBlock(ref,{mode:'input'})` → `renderFriendInputRef`
+//    （`reference.js:293-383`）：类型图标 + 「来自 {name}」 + 日期角 + 正文 2 行截断
+//    + 「装不下才出现的」展开键 + **× 移除** ⇒ 「输入框面显示被引消息摘要 + 可取消」
+//    两件都已现成（零新渲染器）。
+//  · 消息内渲染器 = `renderRefBlock(ref,{mode:'message'})`（`reference.js:237-240` /
+//    `:560-607`；既有消费者 = 主对话气泡 `chat.js:322` 与重挂载 `persistence.js:282`）。
+//  · 🔴 既有 `appendRefToActiveView`（`input.js:1820-1828`）的落点 = **主对话（agent）
+//    输入框**的 `attPreview` 槽（线上序列化 = agent 帧 `refs:[…]`，`input.js:793-800`）；
+//    好友会话窗**没有**该槽，且好友消息 REST 载荷只有 `{body,attachments,clientMsgId}`
+//    （`friendsApi.js:197-204 sendPayload`）⇒ **好友消息无法经 agent 通道出站**。
+//  ⇒ **接法判定**（本批取 recon §3.3 路 (a)：纯客户端正文承载，服务端零改动）：
+//     ① 复用**同一个工厂** `makeReference`（禁第二套引用模型/第二份 pretty-print）；
+//     ② 复用**同一个输入框渲染器** `renderRefBlock(mode:'input')` 作「引用态」载面；
+//     ③ 出站 = 正文**首行信封**（id + 上下文摘要）⇒ 本侧与对端（同一客户端）都能渲染
+//        引用块、都能从 `dataset` 读出被引 id；**零 wire 字段、零外仓改动、零协议面改动**；
+//     ④ 🔴 跳转本批不写（外仓字段落地前联调阻塞）：信封里的 id 是**预留挂点**，
+//        不是跳转实现 —— 禁写「点了跳不动」的半成品入口。
+// ⚠ 已申报后果（报告「开放项」）：正文首行带信封 ⇒ ①「复制」复制到原始正文（含信封，
+//    既有行为不变）；② 老客户端（无引用渲染）把它当普通文本行显示（降级可见、不崩）。
+const QUOTE_LINE_RE = /^> \[引用 #([^\]\s]+)\](?:[ \t]+(.*))?$/;
+
+/** 单行化（信封只占**首行** ⇒ 摘要内的换行/连续空白折成一个空格）。 */
+function oneLine(s, max) {
+  const flat = String(s || '').replace(/\s+/g, ' ').trim();
+  const n = max || 80;
+  return flat.length > n ? flat.slice(0, n) + '…' : flat;
+}
+
+/** 引用态 → 出站正文（信封首行 + 空行 + 用户正文）。**唯一**编码点。 */
+function buildQuoteBody(ref, text) {
+  const src = ref.source || {};
+  const ctx = [
+    oneLine(src.friendName, 40),
+    ref.meta?.date || '',
+    oneLine(ref.content?.preview, 80),
+  ].filter(Boolean).join(' · ');
+  return `> [引用 #${src.messageId}]${ctx ? ' ' + ctx : ''}\n\n${text}`;
+}
+
+/** 出站正文 → 引用关系（无信封 ⇒ null）。本侧刷新后与**对端**的**唯一**解析点。 */
+function parseQuoteBody(body) {
+  const raw = String(body || '');
+  const nl = raw.indexOf('\n');
+  const first = nl >= 0 ? raw.slice(0, nl) : raw;
+  const m = QUOTE_LINE_RE.exec(first);
+  if (!m) return null;
+  return {
+    messageId: m[1],
+    context: (m[2] || '').trim(),
+    reply: nl >= 0 ? raw.slice(nl + 1).replace(/^\r?\n/, '') : '',
+  };
+}
+
+/** 被引消息是否仍在**当前已载窗口**内（降级显示判据 · 单点）。
+ *  窗口 = `chatMsgs`（本文件 `:305`；加载更早消息会扩充它 ⇒ 每次 keyed diff 后重判）。 */
+function quoteTargetExists(id) {
+  const k = String(id || '');
+  if (!k) return false;
+  return chatMsgs.some(m => String(m.id) === k);
+}
+
+/** 引用块可用性落地（**单点**）：dataset = QA/跳转挂点，class/文案只管视觉。 */
+function paintQuoteState(box, available) {
+  box.dataset.quoteState = available ? 'available' : 'unavailable';
+  const note = box.querySelector('.fm-quote-note');
+  if (!note) return;
+  note.textContent = available ? '' : t('messages.quoteUnavailable');
+  note.hidden = available;
+}
+
+/** 气泡内引用块（**单点渲染器**；零新色值 —— 材质取既有 token）。
+ *  🔴 不用左缘色条（设计硬约束「无 accent bars」）⇒ 既有卡面 + 发丝描边分组。 */
+function quoteBlockEl(q) {
+  const box = el('div', 'fm-quote-block');
+  box.dataset.refMessageId = q.messageId;
+  box.appendChild(el('div', 'fm-quote-text', q.context || t('messages.quotePlaceholder')));
+  box.appendChild(el('div', 'fm-quote-note', ''));
+  paintQuoteState(box, quoteTargetExists(q.messageId));
+  return box;
+}
+
+/** keyed diff 之后统一重判引用可用性（加载更早 / 增量补齐 / 节点复用都会改变答案）。
+ *  🔴 遵守既有不变量（`:2444-2446` / `:2469-2482`）：**新 UI 态必须挂 dataset 并在
+ *  keyed diff 处一并收敛**，否则刷新/复用后丢态。 */
+function syncQuoteStates(flow) {
+  for (const node of flow.querySelectorAll('.fm-msg[data-ref-message-id]')) {
+    const id = node.dataset.refMessageId || '';
+    const available = quoteTargetExists(id);
+    node.dataset.quoteState = available ? 'available' : 'unavailable';
+    const box = node.querySelector('.fm-quote-block');
+    if (box && box.dataset.quoteState !== (available ? 'available' : 'unavailable')) paintQuoteState(box, available);
+  }
+}
+
+/** 引用挂点 + 可用性（气泡节点 `dataset`）——`bubbleEl` 与 `keyedDiff` 复用分支
+ *  **共用同一函数**（禁两处各写一份解析/挂点，避免漂移）。 */
+function syncQuoteDataset(node, m) {
+  const q = parseQuoteBody(m && m.body);
+  if (!q) {
+    delete node.dataset.refMessageId;
+    delete node.dataset.quoteState;
+    return;
+  }
+  node.dataset.refMessageId = q.messageId;
+  node.dataset.quoteState = quoteTargetExists(q.messageId) ? 'available' : 'unavailable';
+}
+
+// ── 引用态（输入框面：被引消息摘要 + 可取消）────────────────────────────
+/** 进入引用态。只读气泡既有 `dataset`（`data-message-id`/`data-body`/`data-created-at`，
+ *  见 `bubbleEl`）⇒ **零新增数据面**。 */
+function startQuote(wrap, conv) {
+  if (!wrap || !conv) return;
+  const rawBody = wrap.dataset.body || '';
+  // 引用一条「本身就是引用的」消息 ⇒ 只取它的正文（信封不再嵌套：一层引用一个信封）。
+  const inner = parseQuoteBody(rawBody);
+  const ref = makeReference({
+    refType: 'friend-message',
+    source: {
+      conversationId: conv.conversationId || '',
+      messageId: wrap.dataset.messageId || '',
+      friendName: conv.kind === 'device' ? deviceLabel(conv.device) : (conv.friend?.name || ''),
+      friendNeblinkId: conv.friend?.neblinkId || '',
+      direction: wrap.classList.contains('out') ? 'out' : 'in',
+      date: refDate(wrap.dataset.createdAt),
+    },
+    content: { fullText: inner ? inner.reply : rawBody },
+  });
+  if (!ref) return;
+  pendingQuoteRef = ref;
+  renderQuoteStrip();
+}
+
+/** 取消/消费引用态（× 键、发送、关窗三条路径共用）。 */
+function clearQuote() {
+  pendingQuoteRef = null;
+  const strip = modalEls && modalEls.quoteStrip;
+  if (strip) { strip.innerHTML = ''; strip.hidden = true; }
+}
+
+/** 引用态落面：复用既有输入框渲染器（含 × 取消 ⇒ onRemove = clearQuote）。 */
+function renderQuoteStrip() {
+  const strip = modalEls && modalEls.quoteStrip;
+  if (!strip) return;
+  strip.innerHTML = '';
+  if (!pendingQuoteRef) { strip.hidden = true; return; }
+  strip.appendChild(renderRefBlock(pendingQuoteRef, { mode: 'input' }, clearQuote));
+  strip.hidden = false;
+  createIconsIn(strip);
+}
+
+// ── 多选转发（落点 = **其他会话**：好友 / 群）─────────────────────────────
+/** 逐条可转发性（**读码判据**，报告 §可转发性表逐条给 file:line）：
+ *  · 空正文 ⇒ 跳过（服务端占位/无正文）；
+ *  · 带附件 ⇒ 跳过（附件字节**不可**随转发复制，且禁新协议 ⇒ 转发它等于丢内容）；
+ *  · 设备会话来源 ⇒ 跳过（本批落点只含好友/群，设备腿语义不跨面）；
+ *  · 乐观项（`fm-tmp-*`，尚未落行）⇒ 跳过（避免把未确认内容转出去）。 */
+function forwardabilityOf(m, conv) {
+  const body = String((m && m.body) || '');
+  if (!body) return { ok: false, why: 'empty' };
+  if (Array.isArray(m.attachments) && m.attachments.length > 0) return { ok: false, why: 'attachment' };
+  if (conv && conv.kind === 'device') return { ok: false, why: 'device' };
+  if (String(m.id).startsWith('fm-tmp-')) return { ok: false, why: 'unsent' };
+  return { ok: true, why: '' };
+}
+
+/** 勾选面（真实可点控件，`role=checkbox`；挂 dataset + class 双面）。 */
+function attachCheck(node) {
+  const id = String(node.dataset.messageId || '');
+  node.classList.add('fm-selecting');
+  const on = selectedIds.has(id);
+  node.dataset.selected = on ? '1' : '0';
+  node.classList.toggle('fm-selected', on);
+  if (node.querySelector(':scope > .fm-msg-check')) return;
+  const btn = el('button', 'fm-msg-check');
+  btn.type = 'button';
+  btn.setAttribute('role', 'checkbox');
+  btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  btn.dataset.messageId = id;
+  btn.title = t('messages.multiSelect');
+  btn.setAttribute('aria-label', t('messages.multiSelect'));
+  btn.innerHTML = '<i data-lucide="check"></i>';
+  btn.addEventListener('click', (e) => { e.stopPropagation(); toggleSelected(node); });
+  node.appendChild(btn);
+}
+
+function toggleSelected(node) {
+  const id = String(node.dataset.messageId || '');
+  if (!id) return;
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  const on = selectedIds.has(id);
+  node.dataset.selected = on ? '1' : '0';
+  node.classList.toggle('fm-selected', on);
+  const btn = node.querySelector(':scope > .fm-msg-check');
+  if (btn) btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  syncSelectBar();
+}
+
+function syncSelectBar() {
+  if (!modalEls || !modalEls.selectBar) return;
+  if (modalEls.selectCount) modalEls.selectCount.textContent = t('messages.selectedCount', { n: selectedIds.size });
+  if (modalEls.selectForward) modalEls.selectForward.disabled = selectedIds.size === 0;
+}
+
+/** 进多选态（入口 = 右键「多选转发」）。 */
+function enterSelection() {
+  if (!modalEls) return;
+  selectionMode = true;
+  selectedIds.clear();
+  modalEls.selectBar.hidden = false;
+  for (const node of modalEls.flow.querySelectorAll('.fm-msg')) attachCheck(node);
+  syncSelectBar();
+  createIconsIn(modalEls.selectBar);
+}
+
+/** 出多选态（Esc / 点外 / 工具条退出 / 转发后 / 关窗 **共用**同一条收口）。 */
+function exitSelection() {
+  selectionMode = false;
+  selectedIds.clear();
+  if (!modalEls) return;
+  modalEls.selectBar.hidden = true;
+  for (const node of modalEls.flow.querySelectorAll('.fm-msg')) {
+    node.classList.remove('fm-selecting', 'fm-selected');
+    node.dataset.selected = '0';
+    node.querySelector(':scope > .fm-msg-check')?.remove();
+  }
+  syncSelectBar();
+}
+
+/** 选目标界面（**其他会话**：好友 / 群）。
+ *  数据源 = 既有 `conversations`（本文件 `:70` / `refreshConversations`）——🔴 零新数据源、
+ *  零新协议；UI = **既有菜单组件** `showPopupMenu`（`contextMenu.js:38-65`，第二消费者先例
+ *  = `contacts.js:455-476`）⇒ role=menu/menuitem、越界夹取、Esc/点外关闭、零新色值全现成。 */
+function openTargetPicker(conv, anchor) {
+  const others = conversations.filter(c =>
+    c.conversationId && c.conversationId !== conv.conversationId && c.kind !== 'device');
+  if (!others.length) { modalToast(t('messages.forwardNoTarget')); return; }
+  const items = others.slice(0, 12).map(c => ({
+    // 会话名 = 既有单点 `convTitleLabel`（群名 / 好友备注>显示名 / 设备名）——禁第二套取名法。
+    label: convTitleLabel(c),
+    onClick: () => { void forwardSelectedTo(c); },
+  }));
+  const r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+  showPopupMenu(r ? r.left : Math.round(window.innerWidth / 2), r ? r.top : Math.round(window.innerHeight / 2), items);
+}
+
+/** 逐条转发到目标会话（**每条选中消息 = 一条新消息、保持原顺序**）。
+ *  🔴 不引入服务端新协议（无声明的「合并成一张卡片」形态）；发送走**既有**两条 REST 腿
+ *  （好友 `api.sendFriendMessage` / 群 `api.sendGroupMessage`，与 `sendCurrent` 同两个函数）。 */
+async function forwardSelectedTo(target) {
+  const conv = currentConv();
+  if (!conv || !target) return;
+  // 顺序 = 窗口序（`chatMsgs`，ASC）= 对话原顺序；**禁**用 Set 插入序（点击序）当发送序。
+  const picked = chatMsgs.filter(m => selectedIds.has(String(m.id)));
+  const rows = [];
+  let skipped = 0;
+  for (const m of picked) {
+    const f = forwardabilityOf(m, conv);
+    if (!f.ok) { skipped += 1; continue; }
+    rows.push(String(m.body));
+  }
+  exitSelection();
+  if (!rows.length) { modalToast(t('messages.forwardNoneSelected')); return; }
+  let failed = 0;
+  for (const body of rows) {
+    try {
+      if (target.kind === 'group') await api.sendGroupMessage(target.conversationId, body, undefined, newClientMsgId());
+      else await api.sendFriendMessage(target.friend.userId, body, undefined, newClientMsgId());
+    } catch (err) { failed += 1; console.error('[messages] forward failed:', err); }
+  }
+  const sent = rows.length - failed;
+  if (failed > 0) modalToast(t('messages.forwardPartial', { n: sent, f: failed }));
+  else if (skipped > 0) modalToast(t('messages.forwardSkipped', { n: sent, k: skipped }));
+  else modalToast(t('messages.forwardedCount', { n: sent }));
+  void refreshConversations({ friends: 'reuse' });
+}
+
+/** 右键菜单「复制」项（既有复制键的同一动作；菜单项点击后菜单即关 ⇒ 反馈走 toast）。 */
+async function copyBubbleText(wrap) {
+  try {
+    await navigator.clipboard.writeText((wrap && wrap.dataset.body) || '');
+    modalToast(t('messages.copied'));
+  } catch (err) {
+    console.error('[messages] Copy failed:', err);
+    modalToast(t('messages.copyFailed'));
+  }
+}
+
 // ── 幂等键（P2-b）：**发送动作**粒度 ───────────────────────────────────
 /** 幂等键生成（`clientMsgId`）：一次**发送动作**一个键。
  *
@@ -2885,8 +3261,14 @@ let deviceRetry = null; // { convId, body, clientMsgId } | null
 // ── Send (§6.2 sending/delivered/failed) ─────────────────
 async function sendCurrent(conv, opts) {
   if (!modalEls) return;
-  const body = modalEls.input.value.trim();
-  if (!body || body.length > 2000) return;
+  const text = modalEls.input.value.trim();
+  // 长度闸只管**用户正文**（引用信封是加性前缀，~≤200 字符；见报告「开放项」）。
+  if (!text || text.length > 2000) return;
+  // 引用态消费（**动作边界**）：信封在出站正文首行承载引用关系；引用态随即收口
+  // ⇒ 失败重试（同键重发）把**已含信封**的正文原样再发一次，不会二次包信封。
+  const quote = pendingQuoteRef;
+  const body = quote ? buildQuoteBody(quote, text) : text;
+  if (quote) clearQuote();
   // 幂等键：缺省面 = **新的发送动作** ⇒ 新键；重试面由调用方传入**同一**键（见下
   // `fm-retry` 分支）。🔴 生成点在动作边界，不在 API 层——API 层分不清「重试」与
   // 「用户又想发一句一样的」。
