@@ -212,8 +212,12 @@ function anchorSendToRealId(p, realId) {
  * 只在**唯一可判**时认领（三条同时成立）：① 调用方已确证这条是本机所发
  * （WS 面判据 = 事件类型 `message_new_self`；REST 面判据 = 服务端记录里的
  * `senderId` **权威且非好友**）② 该 id 尚未归属任何已载入条目 ③ 本会话存在
- * 未锚定、正文逐字相同的乐观项。多条同正文未决（罕见）取**最老**一条 ——
- * 服务端 id 升序 = 发送序。
+ * 未锚定、**身份可判**的乐观项 —— 身份判据两条腿，**强键优先**：
+ *   · **附件 id 腿（imgmsg 批）**：入帧的 `attachments[].id` ∩ 未决项的本机上传
+ *     回执 id。图片乐观面的 `body` 常态为空串（服务端占位正文 ≠ 空串）⇒ 正文判据
+ *     在图片路径上结构性失配，必须由这一路兜住（否则回显腿另上一屏 = 重复面）。
+ *   · **正文腿（既有 · 逐字不变）**：正文逐字相同的最老者 —— 服务端 id 升序 = 发送序。
+ *     多条同正文未决（罕见）取**最老**一条。
  *
  * 已知边界（**登记为残余风险，不掩盖**）：同一账号**另一台设备**在同一会话、
  * 同一在飞窗口内发出**逐字相同**正文的消息时，该帧会与本机乐观项同判据 ⇒ 归错。
@@ -229,9 +233,24 @@ function claimPendingSend(m, convId, ours) {
   if (key === undefined || key === null || key === '') return false;
   if (!convId || String(convId) !== String(openConvId)) return false;
   if (chatMsgs.some(x => String(x.id) === String(key))) return false; // 已归属 ⇒ 无未决项
+  const live = (x) => !x.anchoredTo && x.node && x.node.isConnected
+    && (!x.convId || String(x.convId) === String(convId));
+  // ① 判据 A（imgmsg 批 · **强键优先**）：入帧带的附件 id ∩ 未决项的**本机上传回执 id**。
+  //    为什么必须有这一路：图片乐观面的 `body` 常态为**空串**（用户没打字 ⇒ 服务端
+  //    占位正文 `[附件] …` ≠ 空串），正文判据在图片路径上**结构性失配** ⇒ 回显腿会
+  //    新上一屏、与乐观节点同 id 两存 = 重复面。附件 id 是上传回执里铸的、逐件唯一，
+  //    是本路径**唯一可判**的身份键。（正文键仍供纯文本路径逐字使用，顺序在后。）
+  const attIds = (Array.isArray(m.attachments) ? m.attachments : [])
+    .map(a => (a && a.id !== undefined && a.id !== null) ? String(a.id) : '')
+    .filter(Boolean);
+  if (attIds.length > 0) {
+    const byAtt = pendingSends.find(x => live(x) && Array.isArray(x.attachIds)
+      && x.attachIds.some(id => attIds.includes(String(id))));
+    if (byAtt) return anchorSendToRealId(byAtt, key);
+  }
+  // ① 判据 B（既有 · 逐字不变）：正文逐字相同的最老者（服务端 id 升序 = 发送序）。
   const body = m.body || '';
-  const p = pendingSends.find(x => !x.anchoredTo && x.node && x.node.isConnected
-    && (!x.convId || String(x.convId) === String(convId)) && x.body === body);
+  const p = pendingSends.find(x => live(x) && x.body === body);
   return p ? anchorSendToRealId(p, key) : false;
 }
 
@@ -1689,6 +1708,10 @@ function attachmentCard(att) {
   } else {
     card.appendChild(note);
     card.setAttribute('aria-disabled', 'true');
+    // ① 发送侧乐观面（imgmsg 批）：本机件在上传在飞时的**唯一出帧腿** ——
+    //    `att.localFace` 在场才挂（发送侧）；接收侧的 uploading/unreadable/expired 卡
+    //    照旧**零直显槽**（`attachInlineImage` 首行即返回 ⇒ 逐字现状）。
+    attachInlineImage(card, att, kind);
   }
   return card;
 }
@@ -1733,24 +1756,42 @@ function attachmentCard(att) {
  *  @param {string} kind `attStateOf` 的结果（`ready` / `device` / …）
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} [src] 设备面字节源
  *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
- *  @returns {boolean} 是否挂了直显槽 */
+ *  @returns {boolean} 是否挂了直显槽
+ *
+ *  ── imgmsg 批（作者 2026-09-18 三项裁定）新增的两条腿内语义 ──
+ *  · ③ **预留**：`<img>` 元素在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染 CSS 盒 =
+ *    可见骨架），高度由 CSS `aspect-ratio: 13/10` 占住 ⇒ 字节到达前后**零位移**
+ *    （发送面与接收面走同一行代码，两侧同规则）。
+ *  · ① **发送侧本机句柄**：`att.localFace`（**非枚举**属性，只可能挂在发送侧乐观面上）
+ *    ⇒ 走本机 blob 腿（② 本地小图优先出帧）。无 `localFace` 的卡（= 接收侧全部、
+ *    群面、设备面、历史卡片）⇒ **逐字现状**。
+ *  `data-att-src` 是字节源的**读数面**（不参与任何行为分支）：
+ *  `local-thumb` / `local-file` / `local-handle` / `server` / `server-cached` / `server-ticket`。 */
 function attachInlineImage(card, att, kind, src) {
   if (!card || !att) return false;
-  if (kind !== 'ready' && kind !== 'device') return false;
+  /** 发送侧乐观面（本批唯一新腿）：本机字节句柄。 */
+  const localFace = att.localFace || null;
+  if (!localFace && kind !== 'ready' && kind !== 'device') return false;
   if (card.querySelector('.fm-att-inline')) return false; // 幂等（防同卡重入）
   const name = (att && att.name) ? String(att.name) : '';
   if (!isImageAttachmentName(name)) return false; // 非图片 ⇒ 零行为变化
 
   const box = el('div', 'fm-att-inline');
   box.dataset.attInline = '1';
-  /** @param {string} url */
-  const mount = (url) => {
-    const img = document.createElement('img');
+  // ③ 骨架 = 这个 `<img>` 自身（无 `src` ⇒ 无内容，只剩 CSS 盒的底色/描边 ⇒ 可见骨架）。
+  const img = document.createElement('img');
+  img.alt = ''; // 骨架期无内容 ⇒ 装饰性（真名在字节就位时补上）
+  box.appendChild(img);
+  let mounted = false;
+  /** @param {string} url @param {string} [tag] 字节源读数（`data-att-src`） */
+  const mount = (url, tag) => {
+    if (mounted || !url) return;
+    mounted = true;
     img.alt = name;
+    if (tag) img.dataset.attSrc = tag;
     img.src = url;
-    box.appendChild(img);
-    img.addEventListener('error', () => box.remove(), { once: true });
   };
+  img.addEventListener('error', () => box.remove(), { once: true });
   card.insertBefore(box, card.firstChild);
 
   if (kind === 'device') {
@@ -1764,12 +1805,23 @@ function attachInlineImage(card, att, kind, src) {
     if (s.kind === 'blob') {
       bindOutHandleEvicted();
       const key = String((att && att.deviceTransferId) || (att && att.name) || '');
-      mount(outInlineUrlOf(key) || rememberOutInlineUrl(key, URL.createObjectURL(s.file)));
+      mount(outInlineUrlOf(key) || rememberOutInlineUrl(key, URL.createObjectURL(s.file)), 'local-file');
       return true;
     }
     ticketUrl(s.path)
-      .then((url) => { if (url) mount(url); else box.remove(); })
+      .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
       .catch(() => box.remove());
+    return true;
+  }
+
+  // ① **发送侧乐观面**（imgmsg 批唯一新腿）：字节源 = 本机句柄（② 本地小图优先）。
+  //    句柄尚未生成 ⇒ **不摘槽**（骨架在位 = ③ 的预留高度已经成立），生成完成由
+  //    `fillLocalThumb` 在**同一枚 img 元素**上就地点 `src`（不重建、不重排）。
+  //    🔴 本支只在 `att.localFace` 在场时可达，而该属性是**非枚举**且只由发送侧乐观
+  //       面挂载 ⇒ 接收侧 / 群面 / 历史卡片**不可能**进入本支（逐字现状）。
+  if (localFace && kind !== 'ready' && kind !== 'device') {
+    localFace.img = img;
+    if (localFace.url) mount(localFace.url, localFace.isThumb ? 'local-thumb' : 'local-file');
     return true;
   }
 
@@ -1781,7 +1833,11 @@ function attachInlineImage(card, att, kind, src) {
     return false;
   }
   const cached = inlineObjectUrlOf(id);
-  if (cached) { mount(cached); return true; }
+  if (cached) {
+    // ① A1-min：命中本机句柄（本机刚发出的那件）⇒ **零服务端往返**。
+    mount(cached, localOutAttachmentIds.has(id) ? 'local-handle' : 'server-cached');
+    return true;
+  }
   api.downloadAttachment(id)
     .then(({ blob }) => {
       if (!blob || !String(blob.type || '').startsWith('image/')
@@ -1789,7 +1845,7 @@ function attachInlineImage(card, att, kind, src) {
         box.remove();
         return;
       }
-      mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)));
+      mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)), 'server');
     })
     .catch(() => box.remove()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
   return true;
@@ -1877,6 +1933,70 @@ function rememberOutInlineUrl(key, url) {
     else { outInlineUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
   return url;
+}
+
+// ── ① 好友图片**发送侧**本机字节（imgmsg 批 · 作者 2026-09-18 五项全裁）───────────
+// 决策点 ① A1-full (min)：本机刚发出的图片，字节来源 = **本机已有的那份**——
+//   · 乐观面（上传在飞）用 ② 的「本地小图」先出帧，字节不来自网络；
+//   · 确认面（服务端行已落）沿用**既有** `inlineObjectUrls`（键 = 附件 id）：
+//     出帧前把本机句柄登记进那张表 ⇒ `attachInlineImage` 命中缓存，
+//     **不再走 `api.downloadAttachment`**（= 作者症状①里「把自己刚传的图整件取回来」
+//     那一段往返消失）。
+// 本表只记「这条 id 的字节是本机的」——供 `data-att-src` 读数与语义自证用，
+// **不参与任何行为分支**（行为分支的唯一判据 = 字节表命中与否，与改前同一行）。
+// 🔴 有界（FIFO ≤ `INLINE_URL_MAX`，与字节表同上限；同族先例 = 去重表口径）。
+/** @type {Set<string>} 本机句柄登记的附件 id */
+const localOutAttachmentIds = new Set();
+/** @type {string[]} FIFO 序（淘汰最老者，防无界增长） */
+const localOutAttachmentOrder = [];
+
+/** ② 本地小图的生成参数：**同一份**（唯一常量点）。长边 640 覆盖 260px 槽的
+ *  2× 物理像素（260 × 2 = 520 ≤ 640），观感不糊而字节极小。 */
+const LOCAL_THUMB_EDGE = 640;
+const LOCAL_THUMB_QUALITY = 0.82;
+
+/** ② 发送端本地小图（**唯一生成点**）：`File` ⇒ 有界长边的 image Blob。
+ *
+ *  走 `createImageBitmap` 的解码线程（不阻塞主线程、不在 UI 帧里做像素搬运）；
+ *  WebP 优先（保 alpha；透明 PNG 不被 JPEG 压成黑底），JPEG 兜底。
+ *  🔴 能力缺失 / 解码失败 / 编码失败 ⇒ 返回 `null`（调用方回落**原文件句柄**：
+ *     首帧照样出，只是字节大一些）——**绝不为难用户**、绝不阻断发送链。
+ *  @param {File|Blob} file @returns {Promise<Blob|null>} */
+async function makeLocalThumbBlob(file) {
+  try {
+    if (!file || typeof createImageBitmap !== 'function') return null;
+    const bmp = await createImageBitmap(file);
+    const w = bmp.width || 0;
+    const h = bmp.height || 0;
+    if (!w || !h) { if (bmp.close) bmp.close(); return null; }
+    const scale = Math.min(1, LOCAL_THUMB_EDGE / Math.max(w, h));
+    const tw = Math.max(1, Math.round(w * scale));
+    const th = Math.max(1, Math.round(h * scale));
+    const cv = document.createElement('canvas');
+    cv.width = tw;
+    cv.height = th;
+    const ctx = cv.getContext('2d');
+    if (!ctx) { if (bmp.close) bmp.close(); return null; }
+    ctx.drawImage(bmp, 0, 0, tw, th);
+    if (bmp.close) bmp.close();
+    const encode = (type) => new Promise((res) => {
+      try { cv.toBlob((b) => res(b && b.size > 0 ? b : null), type, LOCAL_THUMB_QUALITY); }
+      catch { res(null); }
+    });
+    return (await encode('image/webp')) || (await encode('image/jpeg'));
+  } catch { return null; }
+}
+
+/** 登记「这条附件 id 的字节在本机」（LRU/字节表仍是唯一字节源，本表只做标记）。 */
+function markLocalOutAttachment(id) {
+  const k = String(id || '');
+  if (!k || localOutAttachmentIds.has(k)) return;
+  localOutAttachmentIds.add(k);
+  localOutAttachmentOrder.push(k);
+  while (localOutAttachmentOrder.length > INLINE_URL_MAX) {
+    const oldest = localOutAttachmentOrder.shift();
+    if (oldest !== undefined) localOutAttachmentIds.delete(oldest);
+  }
 }
 
 /** 把整张附件卡变成「点一下 = 预览」的可点面（好友 ready 态 / 设备有本地件态共用）。
@@ -2883,19 +3003,48 @@ function resortAndRender() {
  *  · **失败可见**：上传未成功 ⇒ **消息不发**、卡片就地显示可判读文案；正文**不丢**
  *    （仍在输入框里）；
  *  · **取消**：卡片上的取消键 ⇒ 停后续分块 + 终态「已取消」（禁报成完成）。
+ *
+ *  ── imgmsg 批（作者 2026-09-18 五项全裁）：**好友图片消息路径**的乐观面 ──
+ *  范围闸 = `scopedFriendImageSend`（好友窗 + 本批件**全部**是图片）。命中时：
+ *   ① 气泡在**上传开始前**上屏（A1-full）、占位与首帧见 ②③；
+ *   ④ 发送侧反馈 = 乐观直显（气泡先出现）⇒ 本路径的上传卡**不给百分比**
+ *      （`quiet`；既有实时 WS 进度条形式只在非本路径保留，逐字不变）；
+ *   ① 确认面**原地接管**乐观面（同一锚定点 `anchorSendToRealId` + `keyedDiff` 的
+ *      `data-message-id` 身份）⇒ **零重复面**；
+ *   ① 确认面字节 = **本机已有的那份**（登记进既有 `inlineObjectUrls`）⇒
+ *      不再把自己刚上传的原图整件取回来（`api.downloadAttachment` 零调用）。
+ *  🔴 未命中范围闸（群窗 / 混批 / 非图片 / 空批）⇒ **逐字走既有路径**（零行为变化）。
  * @returns {Promise<void>}
  */
 async function sendAttachCurrent(conv, fileList) {
   if (!modalEls || !conv) return;
   const text = modalEls.input.value.trim();
-  const res = await sendFiles(conv, fileList, text);
-  if (!res.ok) {
-    modalToast(res.reason || t('messages.attachFailed'));
-    return; // 正文留在输入框（与 sendCurrent 的失败面同语义）
+  // 件集在**第一个 await 之前**取定：调用方（纸夹 input）随后即清 `value`，
+  // 而 `File` 对象本身在本次任务内保持有效。
+  const files = Array.from(fileList || []);
+  // ①A1-full 范围闸（唯一判据点；见函数头）。
+  const optimistic = scopedFriendImageSend(conv, files);
+  let pending = null;
+  if (optimistic) {
+    // 乐观面上屏**先于**任何网络动作（上传尚未开始）—— 正文随气泡入屏 ⇒ 输入框此刻清空
+    // （与 `sendCurrent` 的文本乐观面同拍：正文在屏上只有一处）。
+    modalEls.input.value = '';
+    syncComposerSend();
+    pending = mountOptimisticAttachBubble(conv, files, text);
   }
-  // 发送成功 ⇒ 清输入框 + 走既有重取链（服务端行是唯一事实源，禁本地乐观气泡）。
+  const res = await sendFiles(conv, files, text, optimistic ? {
+    quiet: true, // ④：本路径不给百分比（反馈 = 乐观直显）
+    onUploaded: (attachmentId, file) => { if (pending) noteUploadedForPending(pending, attachmentId, file); },
+  } : undefined);
+  if (!res.ok) {
+    if (pending) rollbackOptimisticAttach(pending, text);
+    modalToast(res.reason || t('messages.attachFailed'));
+    return; // 正文回填见 rollbackOptimisticAttach（与 sendCurrent 的失败面同语义：正文不丢）
+  }
   modalEls.input.value = '';
   syncComposerSend();
+  // 确认面**原地接管**（锚定 + 权威附件元数据 + 同一条单点渲染）——不新增节点/条目。
+  if (pending) settleOptimisticAttach(conv, pending, res);
   await refreshAfterAttachSend(conv);
   // 让位（作者 2026-09-16 令「发送附件的感受还不够流畅」· 取证 P1）：服务端权威行
   // （含气泡内附件卡）已到屏 ⇒ 本地「已发送」上传卡退场 —— 同一次发送在屏上**只剩
@@ -2906,7 +3055,181 @@ async function sendAttachCurrent(conv, fileList) {
   // 回执（见 refreshAfterAttachSend 的落盘兜底注释），不让屏幕出现「零回执」窗口。
   // ⚠ 已知边角（如实登记，报告 §⑦）：该刷新链自身吞错 ⇒ 刷新真失败时上传卡同样退场，
   // 可见回执此时由后续 WS 帧 / 下次开窗补齐（不新增任何重试/轮询面）。
+  // 📌 imgmsg 批更新（旧语义**已被本批取代**，不得与本实现并存）：本批后**屏上的主面
+  // = 气泡本身**（上传开始即上屏 = 乐观面，确认时原地接管成确认面 ⇒ 逐帧恒**一个**气泡面）。
+  // 上传卡自本批起退居 **transfer 控制条**（取消键 + 失败文案，uid 不带图片面）——
+  // 「只剩一个附件面」在图片路径上的新读法 = **只剩一个持有图片字节的面**（= 气泡）；
+  // 气泡与上传卡的短暂并存是作者在卡片「冲突说明在场」下选 A1-full 时**已知并接受**的
+  // 那一项（卡件 §二 A1-full 行 + §附录 A），不再是违令面。
   clearSettledUploads(conv.conversationId);
+}
+
+/** ①A1-full **范围闸（唯一判据点）**：仅「好友窗 + 本批件全部是图片」走乐观面。
+ *  群窗（`kind === 'group'`）/ 设备窗（`conv.device`）/ 混批（含任一非图片件）/ 空批
+ *  ⇒ `false` ⇒ 调用方走既有路径（零行为变化）。判据源 = `isImageAttachmentName`
+ *  （与卡片直显腿**同一函数**，禁第二张类型表）。 */
+function scopedFriendImageSend(conv, files) {
+  if (!conv || conv.kind === 'group' || conv.device) return false;
+  if (!Array.isArray(files) || files.length === 0) return false;
+  return files.every(f => f && isImageAttachmentName(f.name || ''));
+}
+
+/** ① 乐观面上屏（**发送侧唯一新渲染腿**）：气泡 + 逐件本机句柄 + ③ 预留骨架。
+ *
+ *  与文本腿 `sendCurrent` 同款三件事，一个不少：
+ *   · 条目入窗（否则任何一次增量补齐的重排都会把它当差集删掉）；
+ *   · `bubbleEl`（**既有单点渲染器**）建节点 —— 附件卡由 `attachmentCard` 渲染，
+ *     其中 `att.localFace` 触发本机字节腿（见 `attachInlineImage`）；
+ *   · 登记进 `pendingSends`（U-b 登记表）⇒ 回显腿可**原地认领**（不新增气泡）。
+ *  ④ 上传期间本件的卡片状态 = 既有 `uploading` 态（无下载键、无假按钮），
+ *  不再有百分比进度面（`quiet`）。
+ *  @returns {any} pending 登记 */
+function mountOptimisticAttachBubble(conv, files, text) {
+  const tempId = 'fm-tmp-' + (++msgSeq);
+  const faces = [];
+  const atts = files.map((f) => {
+    const att = { id: '', name: f.name, size: f.size, state: 'uploading' };
+    /** 本机句柄台账（**非枚举** ⇒ 不进任何序列化 / 不污染 wire 形态与缓存比对）。 */
+    const face = { file: f, url: '', isThumb: false, img: null, settled: false, bytes: 0 };
+    faces.push(face);
+    try {
+      Object.defineProperty(att, 'localFace', { value: face, enumerable: false, configurable: true });
+    } catch { /* 冻结对象：退回无本机面（此时等于既有路径，不阻断发送） */ }
+    return att;
+  });
+  const entry = {
+    id: tempId,
+    senderId: 'me',
+    kind: 'text',
+    body: text,
+    createdAt: new Date().toISOString(),
+    attachments: atts,
+  };
+  chatMsgs.push(entry);
+  const wrap = bubbleEl(entry, conv);
+  wrap.classList.add('fm-sending');
+  wrap.dataset.sendPhase = 'local-pending'; // QA 读数面（发送阶段）
+  modalEls.flow.appendChild(wrap);
+  createIconsIn(modalEls.flow);
+  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  /** @type {any} */
+  const pending = {
+    tempId, convId: conv.conversationId || '', body: text, node: wrap, entry,
+    anchoredTo: null, attachIds: [], files, faces, kind: 'attach-image',
+  };
+  pendingSends.push(pending);
+  // ② 本地小图：生成完成即在同一枚 `<img>` 上出帧（不重建气泡、不重排）。
+  void fillLocalThumbs(pending);
+  return pending;
+}
+
+/** ② 逐件生成/挂载本地小图（**异步、无阻塞**：解码在浏览器解码线程）。
+ *  已确认（`settled`）或已就绪（`url` 非空）⇒ 丢弃本次产物（**不生成 URL ⇒ 无泄漏**）。 */
+async function fillLocalThumbs(pending) {
+  await Promise.all((pending.faces || []).map(async (face) => {
+    let blob = null;
+    try { blob = await makeLocalThumbBlob(face.file); } catch { blob = null; }
+    if (face.settled || face.url) return; // 确认面已定/已出帧 ⇒ 本次产物作废
+    // 内联预算（既有尺 `MAX_INLINE_IMAGE_BYTES`，本批**不放宽**）：超预算 ⇒ 不出本机帧
+    // （回落到确认面的服务端腿，与改前同一条降级面）。
+    const bytes = blob ? blob.size : (face.file && face.file.size) || 0;
+    if (bytes > MAX_INLINE_IMAGE_BYTES) return;
+    face.bytes = bytes;
+    face.isThumb = !!blob;
+    face.url = URL.createObjectURL(blob || face.file);
+    const img = (face.img && face.img.isConnected) ? face.img : null;
+    if (img && !img.getAttribute('src')) {
+      img.alt = (face.file && face.file.name) || '';
+      img.dataset.attSrc = face.isThumb ? 'local-thumb' : 'local-file';
+      img.src = face.url;
+    }
+  }));
+}
+
+/** ① 上传回执 → 未决项：记强键（附件 id）+ 本机件句柄（`face.file` 已按序在场）。 */
+function noteUploadedForPending(pending, attachmentId, file) {
+  const id = (attachmentId === undefined || attachmentId === null) ? '' : String(attachmentId);
+  if (!id) return;
+  if (!pending.attachIds.includes(id)) pending.attachIds.push(id);
+  const face = (pending.faces || []).find(f => !f.attachmentId && f.file === file);
+  if (face) face.attachmentId = id;
+}
+
+/** ① 确认面**原地接管**（唯一锚定点 + 既有单点渲染器，零新增节点/条目）：
+ *   ① 权威附件元数据（id = 上传回执；name/size = 本机件；state = `ready`——上传回执
+ *      已回 ⇒ 服务端可下载）；
+ *   ② 字节源登记 = **本机句柄**（键 = 附件 id，进既有 `inlineObjectUrls`）⇒ 确认面
+ *      渲染时命中缓存，`api.downloadAttachment` **零调用**（回环往返消失）；
+ *   ③ 锚定 → 条目/节点**原地换键**（不新增气泡），再走 `renderMessages`（= 既有唯一
+ *      渲染入口）→ `keyedDiff` 按附件签名**就地重填同一节点**。
+ *  @param {any} conv @param {any} pending @param {{ids?: string[], messageId?: string}} res */
+function settleOptimisticAttach(conv, pending, res) {
+  const ids = Array.isArray(res && res.ids) ? res.ids : [];
+  const atts = (pending.files || []).map((f, i) => ({
+    id: ids[i] !== undefined && ids[i] !== null ? String(ids[i]) : '',
+    name: f.name,
+    size: f.size,
+    state: 'ready',
+  }));
+  (pending.faces || []).forEach((face, i) => {
+    face.settled = true; // 之后到达的小图产物一律作废（防把确认面降级成小图）
+    const id = atts[i] ? atts[i].id : '';
+    if (!id) return;
+    if (!face.url) {
+      // 小图未及生成 ⇒ 回落**原文件句柄**（同一条本机字节腿；超预算则不出本机帧）。
+      const bytes = (face.file && face.file.size) || 0;
+      if (bytes > MAX_INLINE_IMAGE_BYTES) return;
+      face.bytes = bytes;
+      face.isThumb = false;
+      face.url = URL.createObjectURL(face.file);
+    }
+    rememberInlineObjectUrl(id, face.url);
+    markLocalOutAttachment(id);
+  });
+  const realId = (res && res.messageId !== undefined && res.messageId !== null && res.messageId !== '')
+    ? res.messageId : pending.tempId;
+  noteSentRealId(realId);
+  if (!anchorSendToRealId(pending, realId)) {
+    // 窗口已关/重开（乐观节点脱离文档）⇒ 退回最小改键（不触碰新窗口的状态），
+    // 与 `sendCurrent` 的同名回落**逐字同款**。
+    pending.node.dataset.messageId = String(realId);
+    const idx = chatMsgs.findIndex(x => x.id === pending.tempId);
+    if (idx >= 0) chatMsgs[idx] = { ...pending.entry, id: realId };
+    pending.entry = chatMsgs[idx] || pending.entry;
+  }
+  forgetPendingSend(pending);
+  pending.entry.attachments = atts;
+  if (pending.node && pending.node.isConnected) {
+    pending.node.dataset.sendPhase = 'confirmed';
+    // 既有唯一渲染入口（`renderMessages` → `keyedDiff`）：附件签名已变 ⇒ 该节点**就地
+    // 重填**（`fillBubble` 单点），节点身份（`data-message-id`）与位置都不动。
+    renderMessages(chatMsgs, { stickBottom: true });
+    persistConversation(conv);
+  }
+}
+
+/** ① 上传/发送失败 ⇒ 乐观面**回滚**（唯一失败面定义，卡件要求「失败怎么回滚要定义」）：
+ *   · 气泡与条目**同拍撤除**（不留悬空面，也不留幽灵条目）；
+ *   · 本机句柄撤销（未登记进字节表的 URL 由本函数回收；已登记者随字节表 LRU 生命周期）；
+ *   · 正文回填输入框（与既有失败面**同语义**：正文不丢）——仅当输入框仍空（用户没在
+ *     失败窗口里另起一句；另起的正文优先，禁被回填覆盖）；
+ *   · 失败线索**不静默**：`sendFiles` 已把失败/取消卡与原因留在原地（fail-closed
+ *     呈现逐字不变），调用方再叠一条 toast。 */
+function rollbackOptimisticAttach(pending, text) {
+  forgetPendingSend(pending);
+  const idx = chatMsgs.findIndex(x => x === pending.entry || String(x.id) === String(pending.tempId));
+  if (idx >= 0) chatMsgs.splice(idx, 1);
+  if (pending.node && pending.node.isConnected) pending.node.remove();
+  (pending.faces || []).forEach((face) => {
+    face.settled = true;
+    if (!face.url) return;
+    const stillUsed = document.querySelector(`.fm-att-inline img[src="${face.url}"]`);
+    if (!stillUsed) { try { URL.revokeObjectURL(face.url); } catch { /* non-critical */ } }
+  });
+  if (modalEls && text && !modalEls.input.value) {
+    modalEls.input.value = text;
+    syncComposerSend();
+  }
 }
 
 /** 附件消息发送后的可见刷新（复用既有增量补拉链 = 唯一取数实现，禁另写尾窗重取）。

@@ -176,6 +176,20 @@ function uploadCardEl(item) {
   card.appendChild(el('span', 'fm-upload-name', item.name));
   card.appendChild(el('span', 'fm-upload-size', fmtBytes(item.size)));
 
+  if (item.state === UPLOAD_STATE.UPLOADING && item.quiet) {
+    // ④ imgmsg 批（作者 2026-09-18 五项全裁 · 决策点 ④ = 「首字节即时反馈」并入 ①）：
+    //    本路径的**反馈面 = 乐观气泡**（气泡先出现 + 本机句柄直显）⇒ 本卡退居
+    //    **transfer 控制条**：只给「正在发送」+ 取消，**不给百分比进度条**
+    //    （裁定逐字：「不做百分比进度条」；XHR 连续进度同样不做）。
+    //    🔴 取消键**保留**（能力不缩水）；失败/终态文案走下方同一 else 分支（逐字不变）。
+    card.appendChild(el('span', 'fm-upload-note', t('messages.attachSending')));
+    const quietCancel = el('button', 'fm-upload-cancel', t('messages.attachCancel'));
+    quietCancel.type = 'button';
+    quietCancel.addEventListener('click', () => { void cancelUpload(item.uploadId, item.convId); });
+    card.appendChild(quietCancel);
+    return card;
+  }
+
   // 进度条**只在真实推进中出现**（宽度 = 服务端已确认的字节 / 总字节）。
   const total = item.totalBytes || item.size || 0;
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(((item.bytesSent || 0) / total) * 100))) : 0;
@@ -246,9 +260,13 @@ function uploadRetryEl(hint) {
 
 /** (c) 臂的重试入口：**真**重走原上传/发送腿，且**复用同一键**（重试 ≠ 新动作）。
  *
- *  成功后的可见收口 = **复用同一个**唯一清理点（与 `messages.js:2484` 发送成功后的
- *  收口同款语义：屏上只留服务端权威行一个附件面）；失败面照 `sendAttachCurrent` 的
- *  fail-closed 语义**不**清理（提示与卡都留在原地，供再试）。 */
+ *  成功后的可见收口 = **复用同一个**唯一清理点（与 `messages.js` 发送成功后的收口
+ *  同款语义：屏上只留服务端权威行一个附件面）；失败面照 `sendAttachCurrent` 的
+ *  fail-closed 语义**不**清理（提示与卡都留在原地，供再试）。
+ *  📌 imgmsg 批（2026-09-18）范围注记：好友**图片**路径自本批起「屏上的主面 = 气泡」
+ *  （上传开始即上屏的乐观面，确认时原地接管）⇒ 本条注释里的「只剩服务端权威行一个面」
+ *  在新语义下读作「只剩一个**持有图片字节**的面（= 气泡）」；本文件其余路径
+ *  （群窗 / 混批 / 设备面 / 重试提示）**逐字不变**。 */
 async function retryAction(convId, clientMsgId) {
   const hint = convRetryHints(convId).find(h => h.clientMsgId === clientMsgId);
   if (!hint) return;
@@ -300,7 +318,7 @@ export function detachUploadCards() {
 
 // ── 上传链 ────────────────────────────────────────────────
 
-function beginItem(convId, uploadId, file, action) {
+function beginItem(convId, uploadId, file, action, quiet) {
   const item = {
     uploadId,
     convId,
@@ -312,6 +330,9 @@ function beginItem(convId, uploadId, file, action) {
     code: '',
     error: '',
     attachmentId: '',
+    // ④ imgmsg 批：`quiet` = 本动作的反馈面由**乐观气泡**承担 ⇒ 本卡不给百分比
+    //（只影响 uploading 态的**呈现**，不影响任何传输/终态语义）。
+    quiet: !!quiet,
     // 动作身份（attachkey 批）：**失败卡存键** —— 动作对象（含 `clientMsgId` /
     // 原文件集 / 原正文）随件卡存活 ⇒ 「清理点」能把失败卡转成**可重试**提示，
     // 重试即以**同一键**重走原链（机制见 [[clearSettledUploads]] 的 (c) 段）。
@@ -401,8 +422,10 @@ export async function cancelUpload(uploadId, convId) {
  * @param {object} conv 会话（好友 / 群；设备面不经本模块）
  * @param {FileList|File[]} fileList 本动作的件集
  * @param {string} text 本动作的正文（重试时必须**同一**正文：同键 ⇒ 服务端回放原行）
- * @param {{clientMsgId?: string}} [opts] 仅重试面传（同动作复用键）
- * @returns {Promise<{ok: boolean, reason?: string, ids?: string[]}>}
+ * @param {{clientMsgId?: string, quiet?: boolean, onUploaded?: (attachmentId: string, file: File) => void}} [opts]
+ *   仅重试面传 `clientMsgId`（同动作复用键）；`quiet` / `onUploaded` = imgmsg 批加性面
+ *   （④ 无百分比呈现 / ① 上传回执回调）——缺席 ⇒ 逐字现状。
+ * @returns {Promise<{ok: boolean, reason?: string, ids?: string[], messageId?: string}>}
  */
 export async function sendFiles(conv, fileList, text, opts) {
   const convId = conv && conv.conversationId;
@@ -420,17 +443,25 @@ export async function sendFiles(conv, fileList, text, opts) {
   const clientMsgId = (opts && opts.clientMsgId)
     || (await import('./messages.js')).newClientMsgId();
   const action = { conv, files, text, clientMsgId };
+  const quiet = !!(opts && opts.quiet);
+  /** ① imgmsg 批：逐件上传回执的**加性回调**（缺席 ⇒ 逐字现状）。调用方据此把
+   *  「本机件 → 附件 id」的强键与句柄登记进未决乐观项（回显认领的身份判据）。 */
+  const onUploaded = opts && typeof opts.onUploaded === 'function' ? opts.onUploaded : null;
   const ids = [];
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
     const uploadId = `att-${Date.now()}-${(++seq)}-${Math.random().toString(36).slice(2, 8)}`;
-    const item = beginItem(convId, uploadId, file, action);
+    const item = beginItem(convId, uploadId, file, action, quiet);
     const res = await uploadOne(item, file, targetId);
     if (res.ok) {
       item.attachmentId = res.attachmentId;
       item.bytesSent = file.size;
       item.totalBytes = file.size;
       ids.push(res.attachmentId);
+      if (onUploaded) {
+        // 🔴 回调失败**绝不**影响发送链（与「回执面永不影响用户」同一条纪律）。
+        try { onUploaded(res.attachmentId, file); } catch { /* non-critical */ }
+      }
     } else {
       item.state = res.code === 'cancelled' ? UPLOAD_STATE.CANCELLED : UPLOAD_STATE.FAILED;
       item.code = res.code || 'upload_failed';
@@ -438,7 +469,7 @@ export async function sendFiles(conv, fileList, text, opts) {
       // 取消 ⇒ 用户主动停 ⇒ 剩余件不再上传（禁「偷偷继续传」）。
       const reasonKey = item.state === UPLOAD_STATE.CANCELLED ? 'messages.attachCancelledRest' : 'messages.attachNotSentRest';
       for (let j = i + 1; j < files.length; j += 1) {
-        const rest = beginItem(convId, `att-${Date.now()}-${(++seq)}-skip`, files[j], action);
+        const rest = beginItem(convId, `att-${Date.now()}-${(++seq)}-skip`, files[j], action, quiet);
         rest.state = UPLOAD_STATE.SKIPPED;
         rest.code = item.code;
         rest.error = t(reasonKey);
@@ -450,9 +481,14 @@ export async function sendFiles(conv, fileList, text, opts) {
 
   // 全部上传成功 ⇒ 发消息（正文可空：服务端 §B.4 生成占位正文）。
   // 幂等键 = 第 4 实参（P2-b 落地签名：`(…, attachments, clientMsgId)`，现读非猜形）。
+  // ① imgmsg 批：响应里的 `messageId` **加性回带**给调用方（乐观面锚定的唯一锚点
+  // 需要它；改前本层把它丢掉 ⇒ 调用方只能等回显腿，正是重复面的温床）。
+  let sentMessageId = '';
   try {
-    if (conv.kind === 'group') await api.sendGroupMessage(conv.conversationId, text, ids, clientMsgId);
-    else await api.sendFriendMessage(conv.friend.userId, text, ids, clientMsgId);
+    const resp = conv.kind === 'group'
+      ? await api.sendGroupMessage(conv.conversationId, text, ids, clientMsgId)
+      : await api.sendFriendMessage(conv.friend.userId, text, ids, clientMsgId);
+    if (resp && resp.messageId !== undefined && resp.messageId !== null) sentMessageId = String(resp.messageId);
   } catch (e) {
     const message = t('messages.attachSendFailed');
     for (const item of convUploads(convId)) {
@@ -474,7 +510,9 @@ export async function sendFiles(conv, fileList, text, opts) {
   // 动作已成功落地 ⇒ 该键生命周期收尾（过期失败卡 + 待重试提示一并退场）。
   settleActionOutcome(convId, clientMsgId);
   paint();
-  return { ok: true, ids };
+  // `messageId` = 加性回带键（① 乐观面锚定用；缺席/老服务端 ⇒ 空串 ⇒ 调用方走既有
+  // 「等回显」形态，不新造回落分支）。
+  return { ok: true, ids, messageId: sentMessageId };
 }
 
 /**
