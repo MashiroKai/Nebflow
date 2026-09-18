@@ -979,9 +979,44 @@ private final class RelayWsListener(
   override def onOpen(ws: WebSocket): Unit =
     ws.request(1)
 
+  /** 本连接的分片缓冲（fragreasm-impl，2026-09-19）：**一连接一实例** ⇒ 缓冲按连接
+    * 持有；有界性/生命周期口径见 [[RelayWsListener.FrameReassembler]]。 */
+  private val reassembler = new RelayWsListener.FrameReassembler()
+
+  /** WS 文本帧入口（**分片感知**）。
+    *
+    * 修前（本批缺陷）：`last` 收到但**从不使用** ⇒ 每次调用都把当前片段当整帧
+    * `decode[Json]`（首片残片解析失败 + 后继片各自成帧 ⇒ 大载荷必丢）。修后：分片交给
+    * [[RelayWsListener.FrameReassembler]]，**只有 `last == true` 的完整载荷**才进
+    * [[handleFrame]]（既有分支逻辑**逐字未改**）；单帧消息（缓冲为空 + `last == true`）
+    * 走直通分支 ⇒ 与修前逐字等价。
+    */
   override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
+    reassembler.accept(data, last) match
+      case RelayWsListener.FrameStep.Complete(payload) =>
+        handleFrame(ws, payload)
+      case RelayWsListener.FrameStep.Partial | RelayWsListener.FrameStep.Discarding =>
+        ()
+      case RelayWsListener.FrameStep.Dropped(reason, chars) =>
+        // W13（fragreasm-impl，2026-09-19）：分片消息被判废 = **一条整消息**丢失的信号。
+        // 修前这条消息只会以逐片 `undecodable_frame` 的形态出现 ⇒「一条大载荷没了」与
+        // 「一条小帧畸形了」不可分（归因不可跳过）。字段沿用既有判据口径
+        // （branch + reason + 规模 + 门槛）。
+        logger.warnSync(
+          "relay frame dropped: fragmented message abandoned " +
+            f"branch=W13 conversationId=<none> messageId=<none> reason=$reason " +
+            s"chars=$chars maxChars=${RelayWsListener.MaxAssembledFrameChars} " +
+            s"deadlineMs=${RelayWsListener.AssemblyDeadlineMs}"
+        )
+    ws.request(1)
+    null
+
+  /** 完整帧上送路径 —— 修前 `onText` 的既有分支逻辑（`type` 分派 + W9..W12 留痕）
+    * **逐字搬运**，唯一变化是载荷来源（`data.toString` → 完整消息字符串；单帧场景下二者
+    * 逐字相同）。🔴 **禁止在本方法内新增/改写分支语义**（本批改动面 = 重组层）。 */
+  private def handleFrame(ws: WebSocket, text: String): Unit =
     try
-      decode[Json](data.toString) match
+      decode[Json](text) match
         case Right(json) =>
           json.hcursor.downField("type").as[String].getOrElse("") match
             case "relay_request" =>
@@ -1051,7 +1086,7 @@ private final class RelayWsListener(
               logger.warnSync(
                 "relay frame dropped: unknown type " +
                   f"branch=W10 conversationId=${conversationIdOfFrame(json).getOrElse("<none>")} " +
-                  s"messageId=<none> reason=unknown_frame_type type=$other len=${data.length}"
+                  s"messageId=<none> reason=unknown_frame_type type=$other len=${text.length}"
               )
         case Left(err) =>
           // W11（§3.3）：修前 `case Left(_) => ()` 零日志。不可解析的帧 = 帧形状
@@ -1062,7 +1097,7 @@ private final class RelayWsListener(
             "relay frame dropped: undecodable json " +
               f"branch=W11 conversationId=<none> messageId=<none> reason=undecodable_frame " +
               s"err=${err.getClass.getSimpleName}: ${err.getMessage} " +
-              s"head=${RelayTunnelDiagnostics.redact(data.toString.take(200))}"
+              s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
           )
     catch
       case e: Exception =>
@@ -1072,18 +1107,20 @@ private final class RelayWsListener(
         logger.warnSync(
           "relay frame handler threw " +
             f"branch=W12 conversationId=<none> messageId=<none> reason=frame_handler_exception " +
-            s"err=${e.getClass.getSimpleName}: ${e.getMessage} head=${RelayTunnelDiagnostics.redact(data.toString.take(200))}"
+            s"err=${e.getClass.getSimpleName}: ${e.getMessage} head=${RelayTunnelDiagnostics.redact(text.take(200))}"
         )
-    end try
-    ws.request(1)
-    null
+  end handleFrame
 
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
+    // 有界性腿③（连接终结）：缓冲随连接消亡，不跨连接存活（半成品即弃并计数）。
+    reassembler.reset()
     dispatcher.unsafeRunAndForget(closed.complete(()).void)
     null
 
   override def onError(ws: WebSocket, error: Throwable): Unit =
     logger.debugSync(s"Relay WS error: ${error.getMessage}")
+    // 异常同义：残片即弃（否则断连抖动会把上一连接的残片带进下一连接）。
+    reassembler.reset()
     dispatcher.unsafeRunAndForget(closed.complete(()).void)
 end RelayWsListener
 
@@ -1094,3 +1131,123 @@ object RelayWsListener:
     * 噪声源，而**噪声化 = 真信号被淹 = 另一种静默**（与修 W10 的初衷相悖）。
     * 名单之外的未知类型一律 WARN（= 契约漂移信号）。 */
   private[neblink] val BenignUnknownFrameTypes: Set[String] = Set("ack", "relay_response")
+
+  // ===== 分片重组（fragreasm-impl，2026-09-19）===============================
+  //
+  // 缺陷（修前 `onText`，`NeblinkRelayTunnel.scala:982-984`）：`last` 参数**收到但
+  // 从不使用** —— 每次 WS 调用都直接把 `data.toString` 当整帧 `decode[Json]` ⇒
+  // **任何被 WS 分帧的大载荷必丢**：首片是残片（解析失败），后继片各自按整帧走同一
+  // 路径 ⇒ 零重组、零派发（2026-09-19 01:23 实测：3 片 4129 字符 ⇒ 0 派发 + 3 条
+  // `undecodable_frame`）。RFC 6455 §5.4 把分片重组定为**接收方**的责任，本对象即
+  // 该责任的最小实现（零 wire 变化、零服务端依赖）。
+
+  /** 重组缓冲的**字符**上限（🔴 显式设计选择，非推导量；有界性腿①）。
+    *
+    * 理由与边界（申报口径，可机械核）：
+    *   - `CharSequence` 的单位是 UTF-16 code unit（本实现按 `length` 计），最坏内存
+    *     ≈ 上限 × 2 B = **16 MiB**；本隧道同时至多一条在连 socket（`connectOnce`
+    *     单飞 + `wsRef` 单槽）⇒ 全进程最坏 ≈ 16 MiB，**有界**；
+    *   - 8 MiB 的量级取自本仓同一用途的既有常量（`NeblinkFiles.scala:23` 的 8 MiB
+    *     读缓冲），远高于任何实测 relay 帧（设备邮件/relay_request 均在 KB 级；大载荷
+    *     走 `FileTransferAction` 的 `chunkSize` 分块）；
+    *   - 🔴 上限**只约束「分片重组」**：单帧消息（`last == true` 且缓冲为空）走直通
+    *     分支、不经缓冲、不受本上限影响 ⇒ 修前能收的单帧大载荷修后照收（零行为漂移）；
+    *     被丢弃的只可能是「分片总长超过上限」的消息。 */
+  private[neblink] val MaxAssembledFrameChars: Int = 8 * 1024 * 1024
+
+  /** 半成品缓冲的存活上限（🔴 显式设计选择；有界性腿②，**惰性判定**）。
+    *
+    * 30 s 的锚 = 本隧道自己的存活窗（`NeblinkRelayTunnel.LivenessTimeoutMs`）：一个
+    * 对端在自身存活窗内都发不完的消息，本端不再为它继续占用缓冲。 */
+  private[neblink] val AssemblyDeadlineMs: Long = 30_000L
+
+  /** 一次 WS 调用的处置结果（`onText` 的唯一分支依据）。 */
+  private[neblink] enum FrameStep:
+    /** 完整消息（`last == true`）。载荷与修前同源：单帧直通时**逐字等于** `data.toString`。 */
+    case Complete(payload: String)
+
+    /** 已缓冲，等待后续分片（`last == false`）——**零派发**。 */
+    case Partial
+
+    /** 本条消息判废（超限 / 过期）⇒ **零派发** + 显式留痕（`reason` ∈ `frag_oversize` / `frag_stale`）。 */
+    case Dropped(reason: String, chars: Int)
+
+    /** 判废消息的剩余分片（消息终点未知）⇒ 静默丢弃到 `last == true`。 */
+    case Discarding
+
+  /** WS 文本帧**分片重组器**（RFC 6455 §5.4 接收方责任）。
+    *
+    * **生命周期（显式）**：每个 WS 连接一个实例（`RelayWsListener` 每连接新建）⇒ 缓冲
+    * 按连接持有；完成即清（`Complete` / `Dropped` 之后缓冲为空）；连接关闭/异常由
+    * `RelayWsListener.onClose` / `onError` 调 [[reset]] 清空 ⇒ **缓冲不跨连接存活**。
+    *
+    * **有界性（显式申报的两条腿）**：① 上限 [[maxChars]]；② 过期 [[deadlineMs]]（惰性）。
+    * 惰性 = 不引入定时线程（本类零 spawn、零额外生命周期），内存最坏保持到「下一帧到达」
+    * 或「连接关闭」，两者都有上界（心跳 10 s 一帧；隧道存活窗 30 s 判僵尸 ⇒ abort）。
+    *
+    * 🔴 **绝不派发非完整载荷**：判废只可能发生在「消息尚未结束」的中间态（`last == false`），
+    * 而按 WS 协议此时**下一条调用必然仍是同一条消息的续片**（消息终点 = `last == true`）
+    * ⇒ 判废后进入 `Discarding` 把剩余续片丢到消息终点为止，绝不把残尾当新消息上送
+    * （否则残尾若恰好可解析 = 派发一条被截断的语义帧）。 */
+  private[neblink] final class FrameReassembler(
+    val maxChars: Int = MaxAssembledFrameChars,
+    val deadlineMs: Long = AssemblyDeadlineMs,
+    nowMs: () => Long = () => System.currentTimeMillis()
+  ):
+    private var buf = new StringBuilder
+    private var chars = 0
+    private var startedAtMs = 0L
+    private var discarding = false
+    private var dropped = 0
+
+    /** 当前缓冲的字符数（判定面读数）。 */
+    def pendingChars: Int = chars
+    /** 是否处于「判废消息的续片静默丢弃」态。 */
+    def isDiscarding: Boolean = discarding
+    /** 累计判废（丢弃）的**消息**数（超限 + 过期 + 连接关闭时的半成品）。 */
+    def droppedMessages: Int = dropped
+
+    /** 收一次 WS 调用（`data` = 本片载荷，`last` = 是否消息终点）。 */
+    def accept(data: CharSequence, last: Boolean): FrameStep =
+      if discarding then
+        // 判废消息的续片：丢到消息终点为止（终点即清，下一条消息从零开始）。
+        if last then clear(discardingNext = false)
+        FrameStep.Discarding
+      else if chars > 0 && nowMs() - startedAtMs >= deadlineMs then
+        // 有界性腿②：半成品过期 ⇒ 判废（消息终点未知 ⇒ 续片继续丢）。
+        dropped += 1
+        val n = chars
+        clear(discardingNext = !last)
+        FrameStep.Dropped("frag_stale", n)
+      else if last && chars == 0 then
+        // 🔴 单帧直通（零行为漂移）：与修前逐字同源，不经缓冲、不受上限约束。
+        FrameStep.Complete(data.toString)
+      else
+        val part = data.toString
+        if chars == 0 then startedAtMs = nowMs()
+        buf.append(part)
+        chars += part.length
+        if chars > maxChars then
+          // 有界性腿①：超限 ⇒ 判废（消息终点未知 ⇒ 续片继续丢）。
+          dropped += 1
+          val n = chars
+          clear(discardingNext = !last)
+          FrameStep.Dropped("frag_oversize", n)
+        else if last then
+          val complete = buf.toString
+          clear(discardingNext = false)
+          FrameStep.Complete(complete)
+        else FrameStep.Partial
+
+    /** 连接关闭/异常：清空（未完成的半成品消息判定为丢弃并计数）。 */
+    def reset(): Unit =
+      if chars > 0 then dropped += 1
+      clear(discardingNext = false)
+
+    private def clear(discardingNext: Boolean): Unit =
+      buf = new StringBuilder
+      chars = 0
+      startedAtMs = 0L
+      discarding = discardingNext
+  end FrameReassembler
+end RelayWsListener
