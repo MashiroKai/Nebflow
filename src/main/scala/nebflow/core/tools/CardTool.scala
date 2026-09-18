@@ -587,8 +587,9 @@ Rule of thumb: **if the card would contain only sentences, do not use Card.** Th
 
 ## Workflow
 
-1. Use Bash to run a tool (matplotlib, graphviz, etc.) → **output as SVG format**
-2. Embed the SVG in Card — two options:
+1. Have the general project create the material you need — a one-off execution task like this is routed there with `Mail(address="project:general", message=...)`.
+2. Embed the material it returns into the Card you show the user.
+3. Embed the SVG in the Card — two options:
    - **Simple:** `<img src="/tmp/output.svg" style="width:100%;height:auto">` (recommended default)
    - **Dark-mode CSS:** Read the SVG file, strip `<?xml?>`/`<!DOCTYPE>`, replace `width` with `width="100%"`, inline the SVG content, add `<style>` CSS overrides (see templates below)
 

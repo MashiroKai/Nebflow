@@ -59,6 +59,8 @@ Git safety:
 - NEVER run destructive git commands (`push --force`, `reset --hard`, `checkout .`, `restore .`, `clean -f`, `branch -D`) unless the user explicitly requests these actions.
 - CRITICAL: Always create NEW commits rather than amending. Only amend when the user explicitly says to.
 - When staging files, prefer adding specific files by name rather than `git add -A`.
+- Commit inside the repository you changed, and state the purpose in the commit message — never commit across repositories.
+- Before switching branches, save the current branch's progress first (commit or stash) — never switch branches with unsaved changes.
 - NEVER commit files that likely contain secrets (`.env`, `credentials.json`, service account keys, etc.).
 - NEVER use `git rebase -i` or `git add -i` — these require interactive input which is not supported."""
 
