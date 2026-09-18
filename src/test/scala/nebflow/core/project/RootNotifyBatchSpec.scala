@@ -194,6 +194,28 @@ class RootNotifyBatchSpec extends FunSuite:
   /** 集合注入件的 nodeId 序（保序：批内 + 批间）。 */
   private def flatIds(ms: List[AgentCommand.ImmediateInput]): List[String] = ms.flatMap(m => idsOf(m.text))
 
+  /** **注入件身份序（跨两种文本形态）** —— A5b 口径：超限溢出后**尾窗只剩 1 件**时，
+    * `NodeEngine.flushRootNotify` 走 legacy 原样路径（`case one :: Nil`，`:5943`）⇒ 文本
+    * **无分节行**（A2「单件零漂移」的必然结果）⇒ [[flatIds]] 对该件读不到身份（第四轮
+    * 实证：5 件读到 4 件、缺 `n-a5b-5`）。故沿用 [[batchSizeOf]] 的同款约定
+    * （**无分节 = 单件**）分流取身份：多件批 = 分节行 `identity`；单件 = `sender`
+    * （`"<project>/<nodeName>"`，A2 已逐字钉住的既有字段，引擎 `:5806` 单点构造）。
+    * `nameToId` 由夹具 `name = s"node-$id"` 归一；缺映射时回落原名 ⇒ 身份对不上即转红
+    * （fail-loud，不静默放行）。判据强度与原 `flatIds` 一致：**全件数 + 严格到达序**。 */
+  private def flatIdentities(
+      ms: List[AgentCommand.ImmediateInput],
+      nameToId: Map[String, String]
+  ): List[String] =
+    ms.flatMap { m =>
+      val sec = idsOf(m.text)
+      if sec.nonEmpty then sec
+      else
+        m.sender.toList.map { s =>
+          val name = s.split('/').last
+          nameToId.getOrElse(name, name)
+        }
+    }
+
   /** 保序判据（单点；R5 反作弊用：逆序必须判假）。 */
   private def orderMatches(actual: List[String], expected: List[String]): Boolean = actual == expected
 
@@ -434,10 +456,19 @@ class RootNotifyBatchSpec extends FunSuite:
         pending <- engine.rootNotifyPendingCount
       yield (ms, after, pending)
       val (ms, after, pending) = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] A5b DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))}")
+      // A5b 身份序判据（第五轮 · 作者 A5b 裁定候选①-(ii)）：末窗溢出到 **1 件** ⇒ 走 legacy
+      // 原样路径、文本**无分节行**（A2 单件零漂移）⇒ 身份按 `batchSizeOf` 同款约定分流取
+      // （多件批 = 分节行 identity；单件 = `sender`）。判据仍是**全 5 件 + 严格到达序**，
+      // 零位置假设（不写死「尾窗必为单件」的窗口切分算术 ⇒ 切分变更不假红/不漏判）。
+      val nameToId = ids.map(id => s"node-$id" -> id).toMap
+      println(s"[RootNotifyBatchSpec] A5b DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} identities=${flatIdentities(after, nameToId)}")
       assertEquals(clue(after.size), 3, "cap=2 × 5 items ⇒ 3 window-driven injections")
       assertEquals(clue(after.map(m => batchSizeOf(m.text))), List(2, 2, 1))
-      assertEquals(clue(flatIds(after)), ids, "order preserved across windows")
+      assertEquals(
+        clue(flatIdentities(after, nameToId)),
+        ids,
+        "order preserved across windows (含末窗 legacy 单件：无分节行 ⇒ 身份走 sender)"
+      )
       assertEquals(clue(pending), 0)
       assertEquals(clue(ms.size), 3)
     }
