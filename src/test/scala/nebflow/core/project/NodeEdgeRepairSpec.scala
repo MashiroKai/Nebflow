@@ -145,6 +145,17 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
     Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
 
+  /** **编辑面**输入（不带 `plugins` 键）——键的语义面是分开的：
+    *  - 建位（create）：必须**显式声明**能力面，省略键 ⇒ `NODE_PLUGINS_UNDECLARED`
+    *    （NodeTools.scala:1424）；
+    *  - 编辑（edit）：`plugins` 是 replace-on-provide 的**可选**键，省略 = 不改动能力面
+    *    （NodeTools.scala:2596）；而**归档**节点编辑分支把「带 plugins 键」列入
+    *    forbidden（NodeTools.scala:1396 `pluginsProvided`），带键的归档 out 改接会落进
+    *    通用「只放行 out 改接」拒 ⇒ 只改 out 的归档编辑调用一律按编辑形态发。
+    */
+  private def editInput(project: String, nodename: String, extra: (String, Json)*): Json =
+    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+
   private def mountProject(
     name: String,
     ws: os.Path,
@@ -356,8 +367,9 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
       aId <- archiveDangling(rt, "done-a") // 悬空 + 归档
       // fix b：按名编辑归档节点设 out → 补投递（修复前：按名只在活动区找 → 落
-      // createNode 同名重复节点，结果永不补投）
-      edited <- nodeEdit(nodeInput("edge-arch-wire", "done-a", "out" -> Json.fromString(wId)), ctx)
+      // createNode 同名重复节点，结果永不补投）。**编辑形态**（无 plugins 键，见
+      // `editInput` 注释）——归档分支把「带 plugins 键」判为超域。
+      edited <- nodeEdit(editInput("edge-arch-wire", "done-a", "out" -> Json.fromString(wId)), ctx)
       _ <- waitStatus(rt, "w-w", Set(NodeLifecycle.Completed))
       w <- nodeById(rt, wId).map(_.getOrElse(fail("W must exist")))
       archA <- rt.store.findNode(aId)
@@ -436,8 +448,8 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
           case None        => s
       }.void
       before <- nodeById(rt, wId).map(_.getOrElse(fail("W must exist")))
-      // NodeEdit(归档 A, out=W) → 补投递（edge already exists 分支）
-      edited <- nodeEdit(nodeInput("edge-preedge", "done-a", "out" -> Json.fromString(wId)), ctx)
+      // NodeEdit(归档 A, out=W) → 补投递（edge already exists 分支）——编辑形态（见 `editInput`）
+      edited <- nodeEdit(editInput("edge-preedge", "done-a", "out" -> Json.fromString(wId)), ctx)
       _ <- waitStatus(rt, "w-w", Set(NodeLifecycle.Completed))
       w <- nodeById(rt, wId).map(_.getOrElse(fail("W must exist")))
       allInputs <- llm.inputs.get

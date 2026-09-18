@@ -107,6 +107,11 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                   toolCall("c2", "NodeEdit", JsonObject(
                     "project" -> Json.fromString("closed-loop"),
                     "nodename" -> Json.fromString("闭环-执行A"),
+                    // 建位期声明闸（nodegate 批 0accce90e 四项④，NodeTools.scala:1424）：
+                    // mock 发出的建位调用必须与真实调用方同形——省略 `plugins` 键一律拒
+                    // （§6.4「mock 序列必须符合产品工具校验语义」同款坑）。本夹具节点零插件
+                    // ⇒ `plugins=[]`（显式「无需能力面」）。
+                    "plugins" -> Json.arr(),
                     "description" -> Json.fromString("闭环冒烟入口节点"),
                     "task" -> Json.fromString("produce A"),
                     // 显式双通报门集（批 A 回改 B1）：迁移前 bare "Nebula" 经旧解析 = {pass,failed}/result
@@ -120,6 +125,8 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                   toolCall("c3", "NodeEdit", JsonObject(
                     "project" -> Json.fromString("closed-loop"),
                     "nodename" -> Json.fromString("闭环-下游B"),
+                    // 同上（:126 建位期声明闸，建位必须显式声明能力面）
+                    "plugins" -> Json.arr(),
                     "description" -> Json.fromString("闭环冒烟下游节点"),
                     "task" -> Json.fromString("assemble B"),
                     "in" -> Json.arr(Json.fromString(aId)),
