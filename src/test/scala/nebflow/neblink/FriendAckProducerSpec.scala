@@ -54,7 +54,7 @@ class FriendAckProducerSpec extends FunSuite:
   private def mkService(
     pulls: Ref[IO, List[String]],
     order: Ref[IO, List[String]],
-    ackSender: Option[String => IO[Unit]]
+    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]]
   ): FriendService =
     new FriendService(
       IO.pure(Some(new StubClient(pulls))),
@@ -88,7 +88,7 @@ class FriendAckProducerSpec extends FunSuite:
       order <- Ref.of[IO, List[String]](Nil)
       acks <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-ack")
-      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id)))
+      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id).as(NeblinkRelayTunnel.AckOutcome.Sent)))
       _ <- svc.onFriendEvent(envelope("message-41", serverEvent("c-ack", 41L)))
       a <- acks.get
       ord <- order.get
@@ -106,7 +106,7 @@ class FriendAckProducerSpec extends FunSuite:
       pulls <- Ref.of[IO, List[String]](Nil)
       order <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-ack2")
-      svc = mkService(pulls, order, Some(id => order.update(_ :+ s"ack:$id")))
+      svc = mkService(pulls, order, Some(id => order.update(_ :+ s"ack:$id").as(NeblinkRelayTunnel.AckOutcome.Sent)))
       _ <- svc.onFriendEvent(envelope("message-7", serverEvent("c-ack2", 7L)))
       ord2 <- order.get
     yield ord2
@@ -123,7 +123,7 @@ class FriendAckProducerSpec extends FunSuite:
       order <- Ref.of[IO, List[String]](Nil)
       acks <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-dup")
-      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id)))
+      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id).as(NeblinkRelayTunnel.AckOutcome.Sent)))
       _ <- svc.onFriendEvent(envelope("message-9", serverEvent("c-dup", 9L)))
       _ <- svc.onFriendEvent(envelope("message-9", serverEvent("c-dup", 9L)))
       a <- acks.get
@@ -140,7 +140,7 @@ class FriendAckProducerSpec extends FunSuite:
       order <- Ref.of[IO, List[String]](Nil)
       acks <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-nomessage")
-      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id)))
+      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id).as(NeblinkRelayTunnel.AckOutcome.Sent)))
       _ <- svc.onFriendEvent(envelope("friend-evt-12", Json.obj(
         "type" -> Json.fromString("friend_request"), "payload" -> Json.obj()
       )))
@@ -156,7 +156,7 @@ class FriendAckProducerSpec extends FunSuite:
       order <- Ref.of[IO, List[String]](Nil)
       acks <- Ref.of[IO, List[String]](Nil)
       g <- seed("c-self")
-      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id)))
+      svc = mkService(pulls, order, Some(id => acks.update(_ :+ id).as(NeblinkRelayTunnel.AckOutcome.Sent)))
       _ <- svc.onFriendEvent(envelope("message-77", serverEvent("c-self", 77L, "message_new_self")))
       a <- acks.get
     yield a

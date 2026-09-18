@@ -61,8 +61,11 @@ object NeblinkWiring:
     remarks: Map[String, String] = Map.empty,
     /** D-B（2026-09-13 好友推送修复批）：送达确证发送面（帧形状冻结见
       * `NeblinkRelayTunnel.sendAck`）。缺省 `None` = 未接线（既有调用点/测试零改动），
-      * 生产由 `GatewayMain` 接 `neblinkService.relayTunnelOpt` 的 **live** 读取。 */
-    ackSender: Option[String => IO[Unit]] = None
+      * 生产由 `GatewayMain` 接 `neblinkService.relayTunnelOpt` 的 **live** 读取。
+      *
+      * 🔴 F4（2026-09-18 回执诚实性批）：返回值 = 可判别的
+      * `NeblinkRelayTunnel.AckOutcome`（「无 live socket」不再被吞成成功）。 */
+    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   ): FriendService =
     new FriendService(
       clientProvider,

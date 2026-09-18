@@ -142,7 +142,11 @@ class DeviceMailDedupSpec extends FunSuite:
       ),
       store
     )
-    DeviceMailInbox.initialize(res, (j: Json) => frames.update(_ :+ j), Some((e: String) => acks.update(_ :+ e)))
+    DeviceMailInbox.initialize(
+      res,
+      (j: Json) => frames.update(_ :+ j),
+      Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
+    )
     Inbox(msgs, frames, acks)
 
   /** 接线（**无** live Nebula root ⇒ 注入必定失败：跑完 `InjectAttempts` 次重试）。 */
@@ -154,7 +158,7 @@ class DeviceMailDedupSpec extends FunSuite:
     DeviceMailInbox.initialize(
       resourcesWith(Map.empty, store),
       (j: Json) => frames.update(_ :+ j),
-      Some((e: String) => acks.update(_ :+ e))
+      Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )
     Inbox(msgs, frames, acks)
 

@@ -98,9 +98,15 @@ final class FriendService(
   askConfirm: Option[String => IO[Boolean]] = None,
   remarkRef: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
   /** D-B（2026-09-13）：送达确证发送面。`None` = 未接线（测试 / 旧装配）——显式
-    * no-op，不静默走「第二条实现」。生产由 `GatewayMain` 接到 `NeblinkRelayTunnel.sendAck`
-    * （帧编码只在那一边，本层只决定「什么时候 ack 哪个 eventId」）。 */
-  ackSender: Option[String => IO[Unit]] = None
+    * no-op，不静默走「第二条实现」。生产由 `GatewayMain` 接到
+    * `NeblinkRelayTunnel.sendAckLive`（帧编码只在那一边，本层只决定「什么时候 ack
+    * 哪个 eventId」）。
+    *
+    * 🔴 F4（2026-09-18 回执诚实性批、作者裁示「回执诚实性修、单列小批」）：返回值
+    * `IO[Unit]` → `IO[NeblinkRelayTunnel.AckOutcome]`——「没发出」不再被吞成成功
+    * （修前 `GatewayMain` 的 `case None => IO.unit` 与本层的 `IO[Unit]` 口径合起来
+    * 使「无 live socket」不可能被判别）。本层据此**如实留痕**（见 [[ackProcessed]]）。 */
+  ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
 
@@ -190,11 +196,26 @@ final class FriendService(
     * 的范畴（🔴 本批禁跨仓），本侧不越界。
     *
     * 失败口径：best-effort，绝不抛出 —— ack 挂在消费链尾部，任何异常都不得反过来
-    * 吃掉消费/广播（那才是会丢消息的方向）。ack 丢 = 服务端下次重放 = 无正确性代价。 */
+    * 吃掉消费/广播（那才是会丢消息的方向）。ack 丢 = 服务端下次重放 = 无正确性代价。
+    *
+    * 🔴 F4（2026-09-18 回执诚实性批）：结局按 `AckOutcome` **如实**分列——
+    * 「无 live socket」不再静默（修前它连判别值都拿不到，只能当成功）。本层仍然
+    * **绝不抛出**、绝不吃掉消费与广播（失败方向判词逐字不变），只加留痕。 */
   private def ackProcessed(eventId: String): IO[Unit] =
     ackSender match
       case Some(send) if eventId.startsWith(MessageEventIdPrefix) =>
-        send(eventId).handleErrorWith(e => logger.debug(s"ack send failed for $eventId: ${e.getMessage}"))
+        send(eventId)
+          .flatMap {
+            case NeblinkRelayTunnel.AckOutcome.Sent => IO.unit
+            case NeblinkRelayTunnel.AckOutcome.NoLiveSocket =>
+              logger.warn(
+                s"[friends] ack NOT sent reason=no_live_socket: eventId=$eventId — the server leg " +
+                  "sees no receipt (replayed on the next tunnel registration; no correctness cost)"
+              )
+            case NeblinkRelayTunnel.AckOutcome.SendFailed(reason) =>
+              logger.warn(s"[friends] ack send FAILED for eventId=$eventId: $reason")
+          }
+          .handleErrorWith(e => logger.debug(s"ack send failed for $eventId: ${e.getMessage}"))
       case _ => IO.unit
 
   /** 会话 id 取值的**单点**：规范路径 = `event.payload.conversationId`（服务端信封
