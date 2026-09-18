@@ -169,10 +169,16 @@ object CardTool extends Tool:
           )
           // The path travels with the verdict: the inline pass needs it for
           // `FileRefs.embedImage` (extension + size + read) and re-resolving
-          // it there would probe the filesystem twice.
+          // it there would probe the filesystem twice. 返工 r2: it now also
+          // travels for a refusal the INLINE leg may take over (an endpoint
+          // namespace refusal of a non-credential file — see
+          // `FileRefs.inlineMayTakeOver`), because that leg still has to embed
+          // the bytes of exactly this file.
           val candidate = hit.decision match
             case _: RefDecision.Proxy => hit.path
-            case _                    => None
+            case RefDecision.Reject(rejected) =>
+              hit.path.filter(p => FileRefs.inlineMayTakeOver(p, rejected))
+            case _ => None
           RefVerdict(hit.decision, candidate, hit.note)
       val decision = applyAppRouteExemption(value, verdict.decision)
       decision match
@@ -185,13 +191,16 @@ object CardTool extends Tool:
         case _                     => verdict
 
   /** A verdict plus the resolved file it was computed from (`None` whenever the
-    *  value did not resolve to an existing regular file) plus, when the raw
-    *  reference did not name the file but a decoded form did, the disclosure
-    *  note (imgref batch 2026-09-18 — 作者失败①). */
+    *  value did not resolve to an existing regular file, or the verdict is one the
+    *  inline leg will not act on) plus, when the raw reference did not name the
+    *  file but a decoded form did, the disclosure note (imgref batch 2026-09-18 —
+    *  作者失败①). */
   private case class RefVerdict(decision: RefDecision, path: Option[Path], note: Option[String] = None)
 
   /** One scanned reference: where it sits in the document, the verdict, the
-    *  resolved file (if any) and whether its face may embed bytes.
+    *  resolved file (carried for a `Proxy` **and** for a refusal the inline leg
+    *  may take over — see [[embedLocalFiles]]) and whether its face may embed
+    *  bytes.
     *
     *  `resourceFace` is the only difference between the five scan patterns
     *  inside [[embedLocalFiles]]. */
@@ -297,21 +306,37 @@ object CardTool extends Tool:
         })).toList
         .sortBy(_.start)
 
-    val rejects = matches.collect { case ScannedRef(_, _, RefDecision.Reject(rejected), _, _, _) => rejected }
     val exempts = matches.count { case ScannedRef(_, _, RefDecision.Exempt(_), _, _, _) => true; case _ => false }
     // imgref batch: one disclosure line per DISTINCT decoded-form hit ("which
     // form was used"), deduped — a document that repeats one space-bearing
     // reference must not repeat the note N times.
     val notes = matches.collect { case ScannedRef(_, _, _, _, _, Some(n)) => n }.distinct
 
-    // ── the proxy spans, in DOCUMENT ORDER, overlap-filtered ────────────────
+    // The refusals the scan produced. The FINAL `rejects` list is computed after
+    // the inline pass: a refusal the inline leg takes over did not fail
+    // (返工 r2 — see below).
+    val rejectsAtProbe: List[RejectedRef] =
+      matches.collect { case ScannedRef(_, _, RefDecision.Reject(rejected), _, _, _) => rejected }
+
     // The filter order is deliberate: `nonOverlapping` runs BEFORE the inline
     // pass, exactly as it used to run before the splice, so (a) the counters
     // keep their shipped meaning (they describe the spans that are actually
     // rewritten, not every candidate), and (b) a span the overlap guard drops
     // can no longer spend budget it does not use.
-    val proxySpans: List[(Int, Int, ScannedRef)] = nonOverlapping(
-      matches.collect { case ref @ ScannedRef(_, _, _: RefDecision.Proxy, _, _, _) => (ref.start, ref.end, ref) }
+    //
+    // 返工 r2 (2026-09-18, 复核位 F1): a span is a rewrite candidate when it got
+    // a URL **or** when it is a refusal the inline leg may take over (endpoint
+    // refusal on the namespace REACH layer of a non-credential file — the
+    // shipped code inlined such files; only their /api/nf-file URL was
+    // unretrievable). The second kind is embedded or nothing: it never gets a
+    // URL, so it can never reappear in `proxied`.
+    val rewriteSpans: List[(Int, Int, ScannedRef)] = nonOverlapping(
+      matches.collect {
+        case ref @ ScannedRef(_, _, _: RefDecision.Proxy, _, _, _) => (ref.start, ref.end, ref)
+        case ref @ ScannedRef(_, _, RefDecision.Reject(rejected), Some(p), _, _)
+            if ref.resourceFace && FileRefs.inlineMayTakeOver(p, rejected) =>
+          (ref.start, ref.end, ref)
+      }
     )
 
     // ── the inline pass (2026-09-16 img-ticket batch i, #687-C) ─────────────
@@ -324,25 +349,44 @@ object CardTool extends Tool:
     // renders), it only moves the reference from `inlined` to `deferred`.
     val budget = InlineBudget()
     var budgetDeferred = 0
-    val replacements: List[(Int, Int, String)] = proxySpans.map { (start, end, ref) =>
-      val url = ref.decision.asInstanceOf[RefDecision.Proxy].url
-      val embedded: Option[String] =
-        if !ref.resourceFace then None
+    var inlined = 0
+    var proxied = 0
+    // Refusals the inline leg actually took over — they must NOT be reported as
+    // failures (nothing failed: the bytes are in the payload).
+    val takenOver = scala.collection.mutable.ListBuffer.empty[RejectedRef]
+    val replacements: List[(Int, Int, String)] = rewriteSpans.flatMap { (start, end, ref) =>
+      val attempt: Either[InlineSkip, String] =
+        if !ref.resourceFace then Left(InlineSkip.NotEmbeddable)
         else
           ref.path match
-            case None => None
-            case Some(p) =>
-              embedImage(p, budget) match
-                case Right(dataUri)              => Some(dataUri)
-                case Left(InlineSkip.OverBudget) => budgetDeferred += 1; None
-                case Left(_)                     => None // not embeddable / unreadable: keep the shipped fallback
-      (start, end, embedded.getOrElse(url))
+            case None    => Left(InlineSkip.NotEmbeddable)
+            case Some(p) => embedImage(p, budget)
+      attempt match
+        case Right(dataUri) =>
+          inlined += 1
+          ref.decision match
+            case RefDecision.Reject(rejected) => takenOver += rejected
+            case _                            => ()
+          Some((start, end, dataUri))
+        case Left(skip) =>
+          ref.decision match
+            // A real URL was emitted for a reference the endpoint agrees it can
+            // serve (probeFile checked the whole ladder) — this is `proxied`.
+            // Missing the inline budget is not a defect: the URL still renders.
+            case RefDecision.Proxy(url) =>
+              if skip == InlineSkip.OverBudget then budgetDeferred += 1
+              proxied += 1
+              Some((start, end, url))
+            // Nothing was embedded and there is no URL to emit: the endpoint's
+            // refusal stands, so the raw value stays in the markup and the
+            // rejection is reported (`failed` + a `warnings` entry with a fix).
+            case _ => None
     }
-    // An embedded image is a `Proxy(data:…)` — split the counters so `proxied`
-    // keeps meaning "an /api/nf-file URL was emitted" and `inlined` reports the
-    // embedded ones (2026-09-16 imgfix batch; see FileRefs' inline policy).
-    val inlined = replacements.count { case (_, _, url) => url.startsWith("data:") }
-    val proxied = replacements.size - inlined
+    // One entry per distinct rejected reference, minus the ones the inline leg
+    // took over. (The counters keep their shipped split: `proxied` = "an
+    // /api/nf-file URL was emitted (and the endpoint would serve it)", `inlined`
+    // = "the bytes ride in the payload".)
+    val rejects: List[RejectedRef] = rejectsAtProbe.filterNot(takenOver.contains)
 
     val rewritten =
       if replacements.isEmpty then html

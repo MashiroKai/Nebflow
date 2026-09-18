@@ -191,7 +191,13 @@ private[tools] object FileRefs:
       value: String,
       resolved: Option[String],
       failure: FileRefFailure,
-      detail: String
+      detail: String,
+      /** For a [[FileRefFailure.NotServable]] refusal: which layer of the
+        * endpoint's ladder refused it (endpoint rework r2, 2026-09-18). Never
+        * serialised into `warnings` — it is the tool's own bookkeeping, read by
+        * [[inlineMayTakeOver]] so the inline leg can honour the identity layers
+        * while not honouring the endpoint's reach layer. */
+      layer: Option[nebflow.gateway.WebSocketRoutes.NfDenyLayer] = None
   )
 
   /** What to do with one reference value. */
@@ -442,23 +448,87 @@ private[tools] object FileRefs:
   // 「与端点同一份判据（🔴 复用，禁复制）」。复制一份白名单/判据才是本批明令禁止
   // 的旁路，所以这里调同一个函数而不镜像它。
 
+  // ── the two legs ask different questions (返工 r2, 2026-09-18 · 复核位 F1) ────
+  //
+  // 上闸原来坐落在 `probeFile`（**引用决策**）里，于是**内联腿**（把字节嵌成
+  // `data:` URI、根本不问端点要东西）也被它管住 —— 一道「端点不可达」的判据被当成
+  // 「不可内联」的判据用，把**基线本来能内联渲染**的本地件（数据根顶层的可读小图、
+  // 项目 `.nebflow` 非 `evidence*` 子树……）变成 `failed` + 告警。那是权限/能力面的
+  // 收紧，既非本批授权面，也与作者令「让本地件成功率高一点」反向。
+  //
+  // 现在：**URL 腿**（浏览器凭票据去 `/api/nf-file` 取）过端点**整条**阶梯；**内联腿**
+  // 只认「文件是不是凭据」那两层（判据与理由见 [[inlineMayTakeOver]]）。两腿的差异
+  // 是有意的，逐条落在 spec 里（`CardToolPathFormSpec` / `FileRefsServabilityScopeSpec`）。
+
   /** `None` = the endpoint's own judge would serve this real path; `Some(reason,
     * message)` = it would refuse, in the endpoint's own words. Fail-closed: a
-    * judge that cannot be consulted counts as a refusal, never as permission. */
+    * judge that cannot be consulted counts as a refusal, never as permission.
+    *
+    * Projection of [[servableByEndpointLayered]] (same call, same policy) — the
+    * full ladder, i.e. the question the **URL leg** must pass. The policy is
+    * `NfPathPolicy.current()`: the roots in force NOW, never a snapshot taken at
+    * the first call of this JVM (that snapshot made the verdict a function of
+    * process history — verifier F1 ②). */
   def servableByEndpoint(real: Path): Option[(String, String)] =
+    servableByEndpointLayered(real).map((_, reason, message) => (reason, message))
+
+  /** [[servableByEndpoint]] with the refusing layer — see
+    * [[nebflow.gateway.WebSocketRoutes.NfDenyLayer]]. The URL leg reads the
+    * two-tuple above; the one caller that must honour some layers and not others
+    * (the inline leg) reads this. */
+  def servableByEndpointLayered(
+      real: Path
+  ): Option[(nebflow.gateway.WebSocketRoutes.NfDenyLayer, String, String)] =
     try
       nebflow.gateway.WebSocketRoutes
-        .nfVerdictForReal(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.memoized())
-        .map(denied => (denied.reason, denied.message))
+        .nfVerdictForRealLayer(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.current())
+        .map((layer, denied) => (layer, denied.reason, denied.message))
     catch
       case e: Throwable =>
         Some(
           (
+            nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace,
             "servability-judge-unavailable",
             s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
               "the reference is treated as unservable rather than assumed servable"
           )
         )
+
+  /** May the INLINE leg (`data:` embed) take over a refusal the endpoint made?
+    *
+    * 判据（一句话）：**只接管「端点可达性」那一层，不接管「文件身份」那几层。**
+    *   · `Namespace` = 端点只从数据根 / 项目 `.nebflow` 的某些子树往外服务 —— 内联腿
+    *     从不问端点要字节（它自己在工具侧把字节读出来嵌进载荷），这一层对它不成立；
+    *   · `Credential` / `CredentialInode` = 这个文件**本身**是凭据（凭据形态 / 指向
+    *     凭据 inode 的硬链接）—— 内联恰恰在把字节复制进载荷，正是这几层要拦的事，
+    *     **一律不接管**；
+    *   · `FileType` = 端点按 **real path** 的扩展名服务（符号链接借不到名字）—— 内联腿
+    *     自己按图片扩展名判（`EmbeddableImageExtensions`），同样不接管。
+    *
+    * ⇒ `true` 当且仅当：拒绝来自 `Namespace` 层 **且** 该文件的 inode 不是凭据 inode。
+    *
+    * 🔴 为什么还要**独立复问 inode 层**：端点阶梯在 `Namespace` 层就短路，会掩盖后面
+    * 的 inode 层（放在数据根顶层的、指向 `auth.json` 的硬链接，第一层报的就是
+    * `Namespace`）。故接管前单独问一次 inode —— 读的是**端点策略自己的字段**
+    * （`credentialInodes` + 同一个 `inodeKey`），零白名单复制、零旁路；
+    * 数据根的 `secrets/` 子树下的每个文件都在该快照里，所以那条路同样进不来。
+    *
+    * 判据不可得（策略读不到 / realpath 解不出）⇒ `false`（fail-closed：宁可不接管）。 */
+  def inlineMayTakeOver(path: Path, rejected: RejectedRef): Boolean =
+    rejected.failure == FileRefFailure.NotServable &&
+      rejected.layer.contains(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace) &&
+      credentialInodeClean(path)
+
+  /** `true` = this file's inode is NOT one of the endpoint policy's credential
+    * inodes (R2). Fail-closed: anything that cannot be established answers `false`,
+    * i.e. "do not take the refusal over". Asks the endpoint's own helper
+    * (`WebSocketRoutes.nfCredentialInode`) with the endpoint's own policy — no
+    * second inode scan, no copied snapshot. */
+  def credentialInodeClean(path: Path): Boolean =
+    try
+      val policy = nebflow.gateway.WebSocketRoutes.NfPathPolicy.current()
+      !nebflow.gateway.WebSocketRoutes.nfCredentialInode(path.toRealPath(), policy)
+    catch case _: Throwable => false
 
   /** The executable fix for one of the endpoint's own refusal reasons — a warning
     * that only says "no" costs the agent a second round trip; one that says what
@@ -599,6 +669,10 @@ private[tools] object FileRefs:
             // A URL string is not evidence that a browser can fetch the bytes.
             // Each of the four checks below is a way the shipped code counted a
             // reference as proxied while the render leg could not retrieve it.
+            //
+            // 返工 r2：这四段判据是**URL 腿**的判据，所以拒的时候连**拒在哪一层**
+            // 一起记下来（[[RejectedRef.layer]]）—— 内联腿不在这一层让步，它按
+            // [[inlineMayTakeOver]] 自己决定接不接管这条拒绝。
             val realTry =
               try Some(path.toRealPath())
               catch case e: Exception => None
@@ -616,14 +690,15 @@ private[tools] object FileRefs:
                   )
                 )
               case Some(real) =>
-                servableByEndpoint(real) match
-                  case Some((reason, message)) =>
+                servableByEndpointLayered(real) match
+                  case Some((layer, reason, message)) =>
                     RefDecision.Reject(
                       RejectedRef(
                         value,
                         Some(describe(path)),
                         FileRefFailure.NotServable,
-                        s"$reason: $message — ${servabilityHint(reason)}"
+                        s"$reason: $message — ${servabilityHint(reason)}",
+                        layer = Some(layer)
                       )
                     )
                   case None =>
@@ -845,16 +920,25 @@ private[tools] object FileRefs:
   def embedImage(path: Path, budget: InlineBudget): Either[InlineSkip, String] =
     if !isInlineImage(path) then Left(InlineSkip.NotEmbeddable)
     else
-      val cost =
-        try dataUriChars(Files.size(path), fileExtension(path.toString))
-        catch case _: Exception => Int.MaxValue
-      if !budget.tryCharge(cost) then Left(InlineSkip.OverBudget)
-      else
-        readAsDataUri(path) match
-          case Right(uri) => Right(uri)
-          case Left(detail) =>
-            budget.release(cost)
-            Left(InlineSkip.Unreadable(detail))
+      val sizeTry = try Some(Files.size(path)) catch case _: Exception => None
+      sizeTry match
+        // A 0-byte file has an "empty" data URI, which the browser renders as a
+        // broken element — embedding it would make `inlined` count a reference
+        // that cannot render, i.e. the very "失败伪装成成功" shape this batch is
+        // about (返工 r2: the readable gate and the inline gate must agree).
+        case Some(0L) =>
+          Left(InlineSkip.Unreadable("the file is 0 bytes — a browser cannot render it"))
+        case other =>
+          val cost = other match
+            case Some(size) => dataUriChars(size, fileExtension(path.toString))
+            case None       => Int.MaxValue
+          if !budget.tryCharge(cost) then Left(InlineSkip.OverBudget)
+          else
+            readAsDataUri(path) match
+              case Right(uri) => Right(uri)
+              case Left(detail) =>
+                budget.release(cost)
+                Left(InlineSkip.Unreadable(detail))
 
   // ── warning + counter payload shapes (shared by Card and Pop) ─────────────
 

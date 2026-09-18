@@ -191,6 +191,46 @@ class CardToolPathFormSpec extends FunSuite:
 
   // ── 负对照：真文件但在不可服务命名空间内 ⇒ 警告 + 不计 proxied ─────────────────
 
+  test("leg scope: the same unservable location warns on the URL face and still embeds on the resource face"):
+    // 返工 r2（2026-09-18 复核位 F1）：「端点不可达」与「不可内联」是两件事。封面
+    // （`<link href>`）只能靠 /api/nf-file 取回 ⇒ 端点拒它就报它；图面（`<img src>`）
+    // 由工具自己把字节嵌进载荷、根本不问端点 ⇒ 端点那层可达性判据不适用（这正是
+    // 作者屏上 `evidence` 里的两起失败之外的常见形态，也是基线的行为）。
+    val dir = Paths.get(os.pwd.toString).toRealPath().resolve(".nebflow/secrets/imgref-spec")
+    Files.createDirectories(dir)
+    val real = writePng(dir.resolve("servable face space.png"), 24, 18, 5)
+    val link = dir.resolve("link face.png")
+    Files.write(link, Array[Byte](1, 2, 3))
+    try
+      val asImage = card(s"""<img src="$real"/>""")
+      println(
+        s"[PATH-FORM-READING] img-face fileRefs=${asImage.hcursor.downField("fileRefs").focus.map(_.noSpaces)} " +
+          s"warnings=${warningsOf(asImage).map(_.noSpaces).mkString(",")}"
+      )
+      assertEquals(refs(asImage, "inlined"), 1, "the bytes ride in the payload: no endpoint involved")
+      assertEquals(refs(asImage, "proxied"), 0, "an embedded image emits no /api/nf-file URL")
+      assertEquals(refs(asImage, "failed"), 0)
+      assertEquals(warningsOf(asImage), Nil)
+      assert(htmlOf(asImage).contains("data:image/png;base64,"), "the data: URI is in the markup")
+      assert(!htmlOf(asImage).contains("/api/nf-file"), "no URL was emitted for the embedded reference")
+
+      val asLink = card(s"""<link rel="stylesheet" href="$link"/>""")
+      println(
+        s"[PATH-FORM-READING] link-face fileRefs=${asLink.hcursor.downField("fileRefs").focus.map(_.noSpaces)} " +
+          s"warnings=${warningsOf(asLink).map(_.noSpaces).mkString(",")}"
+      )
+      assertEquals(refs(asLink, "proxied"), 0, "the URL leg cannot be counted when the endpoint refuses")
+      assertEquals(refs(asLink, "inlined"), 0, "a navigation reference is never embedded")
+      assertEquals(refs(asLink, "failed"), 1)
+      assert(
+        warningsOf(asLink).exists(_.noSpaces.contains("not-servable")),
+        s"the URL-face refusal is reported: ${warningsOf(asLink).map(_.noSpaces).mkString(",")}"
+      )
+    finally
+      Files.deleteIfExists(real)
+      Files.deleteIfExists(link)
+      Files.deleteIfExists(dir)
+
   test("negative control: a real file in an unservable namespace is warned, never counted"):
     val dir = Paths.get(os.pwd.toString).toRealPath().resolve(".nebflow/secrets/imgref-spec")
     Files.createDirectories(dir)

@@ -117,6 +117,11 @@ object PopTool extends Tool:
    *     HTML viewer's own rewrite serves it through /api/nf-file. Counted,
    *     never warned — a 5MB+ PNG that renders fine must not appear in an
    *     actionable defect list;
+   *   - `Reject` whose cause is the endpoint's REACH layer only, on a file that
+   *     is not a credential (`FileRefs.inlineMayTakeOver`, 返工 r2) → still
+   *     inlined when the bytes fit (the shipped behaviour: such a file never had
+   *     a working /api/nf-file leg, only working bytes); when they do not fit,
+   *     it is warned rather than counted `deferred` (there is no fetch to win);
    *   - `Exempt` (an app route such as `/js/…`) → counted only;
    *   - `Reject` → structured warning (原始串 → 解析后路径 → 原因): the Canvas
    *     fallback cannot serve it either, so nothing would render it.
@@ -178,6 +183,24 @@ object PopTool extends Tool:
                     None
                   case Left(_) =>
                     deferred += 1
+                    None
+              case RefDecision.Reject(rejected) if FileRefs.inlineMayTakeOver(p, rejected) =>
+                // 返工 r2 (2026-09-18, 复核位 F1): the endpoint refuses this
+                // reference for its REACH layer only, and the file's identity is
+                // not a credential — the shipped Canvas pass embedded such
+                // images (the /api/nf-file URL was the unretrievable part, not
+                // the bytes), and the author's order is "let local files
+                // succeed more often". Embed it, and never count it `deferred`:
+                // there is no fetch this reference could win.
+                embedImage(p, budget) match
+                  case Right(dataUri) =>
+                    inlined += 1
+                    Some(dataUri)
+                  case Left(_) =>
+                    // Not embeddable / past the budget / unreadable: nothing can
+                    // render it, so the endpoint's refusal stands and is
+                    // reported with its fix hint (never a silent `deferred`).
+                    rejects += rejected
                     None
               case other =>
                 record(other)

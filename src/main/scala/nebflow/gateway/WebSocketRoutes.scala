@@ -5433,6 +5433,31 @@ object WebSocketRoutes:
 
     def memoized(): NfPathPolicy = standardMemo
 
+    /** The policy for the roots that are in force **now**, memoized per root pair
+      * (imgref rework r2, 2026-09-18 — the verifier's F1 ②).
+      *
+      * [[memoized]] freezes the policy at the FIRST call in this JVM. That is the
+      * right shape for a process that has exactly one data root for its whole
+      * lifetime (production: the root is resolved from `--home` / the environment
+      * before the routes are built), but it makes the answer to "would the
+      * endpoint serve this path?" depend on **process history** rather than on the
+      * file and the roots: a JVM that changes its data root (`PathUtil.setDataRoot`
+      * — the test/`--home` redirection every other component follows by using a
+      * `def` instead of a `val`, e.g. `paths.scala:223`) would keep judging new
+      * files against the OLD root. That is exactly the drift that made
+      * `CardModelFaceSpec` green in one run order and red in another.
+      *
+      * Semantics: re-derive when (and only when) `PathUtil.dataRoot` / the process
+      * working directory differ from the pair the cached policy was derived from;
+      * the `(dev,ino)` scan therefore stays a once-per-root cost, never a
+      * per-call one. Two roots seen in one JVM yield two policies — never one
+      * policy wearing the other's roots. */
+    private val perRootMemo = new java.util.concurrent.ConcurrentHashMap[String, NfPathPolicy]()
+
+    def current(): NfPathPolicy =
+      val key = s"${PathUtil.dataRoot.toString}\u0000${os.pwd.toString}"
+      perRootMemo.computeIfAbsent(key, _ => standard())
+
   /** Verdict of the shared path judge (C1-5) — the read endpoint and the
     * signing endpoint ask the SAME question through this one function, so a
     * path that cannot be read can never be ticketed. */
@@ -5440,8 +5465,41 @@ object WebSocketRoutes:
     case Allowed(realPath: java.nio.file.Path, ext: String)
     case Denied(status: Status, reason: String, message: String)
 
-  /** C1-4: pure credential-namespace judge. `Some(reason)` = refuse with 403. */
+  /** Which layer of the C1 ladder refused a path (imgref rework r2, 2026-09-18).
+    *
+    * The layers answer DIFFERENT questions, and exactly one caller has to tell
+    * them apart (the tool-side inline leg — see `FileRefs.inlineMayTakeOver`):
+    *
+    *   - `Namespace` = "the endpoint only serves some subtrees of the data
+    *     directory / of the project `.nebflow`". A statement about the
+    *     ENDPOINT's REACH: meaningful only to a caller that asks `/api/nf-file`
+    *     for bytes.
+    *   - `Credential` = "this path's own IDENTITY is a credential" — a known
+    *     credential entry (`NfExternalCredentialEntries`), a credential-holding
+    *     directory (`NfCredentialPathSegments`) or a credential-shaped basename
+    *     (`NfCredentialNamePattern`). A statement about the FILE: meaningful to
+    *     any caller that would copy its bytes somewhere else.
+    *   - `CredentialInode` = R2: a hard link to a credential file's inode.
+    *   - `FileType` = the extension of the REAL path is not served.
+    *
+    * 🔴 This enum only NAMES a decision the shipped ladder already made: the
+    * tables, the branch order and every message are byte-identical to the
+    * pre-rework judge ([[nfCredentialDeny]] is this function's projection). */
+  enum NfDenyLayer:
+    case Namespace, Credential, CredentialInode, FileType
+
+  /** C1-4: pure credential-namespace judge. `Some(reason)` = refuse with 403.
+    *
+    * Projection of [[nfCredentialDenyLayer]] (same branches, same order, same
+    * messages) — the two can never disagree. */
   def nfCredentialDeny(realPath: java.nio.file.Path, policy: NfPathPolicy): Option[String] =
+    nfCredentialDenyLayer(realPath, policy).map(_._2)
+
+  /** [[nfCredentialDeny]] with the refusing layer named (see [[NfDenyLayer]]). */
+  def nfCredentialDenyLayer(
+      realPath: java.nio.file.Path,
+      policy: NfPathPolicy
+  ): Option[(NfDenyLayer, String)] =
     val rp = realPath.toAbsolutePath.normalize()
     val p1 = policy.dataRoot
     val p3 = policy.workspaceRoot
@@ -5456,6 +5514,7 @@ object WebSocketRoutes:
       if NfDataRootAllowlist.contains(head) then None
       else
         Some(
+          NfDenyLayer.Namespace,
           s"the Nebflow data directory is credential-bearing; only " +
             s"${NfDataRootAllowlist.mkString("/**, ", "/**, ", "/**")} may be served"
         )
@@ -5465,6 +5524,7 @@ object WebSocketRoutes:
       if head.startsWith(NfWorkspaceAllowlistPrefix) then None
       else
         Some(
+          NfDenyLayer.Namespace,
           s"the project .nebflow directory is credential-bearing; only " +
             s"${NfWorkspaceAllowlistPrefix}*/** may be served"
         )
@@ -5476,14 +5536,14 @@ object WebSocketRoutes:
         val norm = rel.stripPrefix("./")
         NfExternalCredentialEntries.exists(entry => norm == entry || norm.startsWith(entry + "/"))
       }
-      if externalHit then Some("this path is a known credential location")
+      if externalHit then Some((NfDenyLayer.Credential, "this path is a known credential location"))
       else
         val segments = (0 until rp.getNameCount).map(i => rp.getName(i).toString).toArray
         val basename = Option(rp.getFileName).map(_.toString).getOrElse("")
         if segments.exists(NfCredentialPathSegments.contains) then
-          Some("this path traverses a credential directory")
+          Some((NfDenyLayer.Credential, "this path traverses a credential directory"))
         else if NfCredentialNamePattern.matches(basename) then
-          Some("this filename is a known credential shape")
+          Some((NfDenyLayer.Credential, "this filename is a known credential shape"))
         else None
 
   /** C1-5: the single authority for "may this raw path be served?".
@@ -5533,6 +5593,16 @@ object WebSocketRoutes:
       case -1 => ""
       case i  => name.substring(i + 1).toLowerCase
 
+  /** R2 as a question a caller can ask on its own: `true` = this real path IS
+    * one of the policy's credential inodes (a credential file, or a hard link
+    * that shares its inode). Public (imgref rework r2) because the endpoint's
+    * ladder SHORT-CIRCUITS at the credential step — a namespace refusal can hide
+    * a credential inode — and a caller that honours only some layers must be able
+    * to ask the inode layer directly instead of re-implementing it. Same snapshot,
+    * same helper: one judgement, no copy. */
+  def nfCredentialInode(real: java.nio.file.Path, policy: NfPathPolicy): Boolean =
+    NfPathPolicy.inodeKey(real).exists(policy.credentialInodes.contains)
+
   /** The post-`toRealPath` half of [[nfFileVerdict]] — every step that decides on
     * the REAL path, in the shipped order: `nfCredentialDeny` (403 credential-path)
     * → R2 hard-link inode (403 credential-hardlink) → extension from the realpath
@@ -5549,21 +5619,43 @@ object WebSocketRoutes:
     *
     * Order is part of the contract: a credential file named directly (or reached
     * through a symlink) must report `credential-path`, not the alias-specific
-    * `credential-hardlink`. */
+    * `credential-hardlink`.
+    *
+    * 🔴 Short-circuit (read this before relying on the layer): the credential
+    * step runs FIRST, so a path that is refused for the namespace reason can also
+    * be a hard link to a credential file without the inode step ever being asked
+    * — a caller that honours only some layers must ask the inode layer itself
+    * (see `FileRefs.credentialInodeClean`). */
   def nfVerdictForReal(real: java.nio.file.Path, policy: NfPathPolicy): Option[NfVerdict.Denied] =
-    nfCredentialDeny(real, policy) match
-      case Some(reason) => Some(NfVerdict.Denied(Status.Forbidden, "credential-path", reason))
+    nfVerdictForRealLayer(real, policy).map(_._2)
+
+  /** [[nfVerdictForReal]] with the refusing layer named — same order, same
+    * reasons, same messages (the entry point above is this function's
+    * projection). Extracted in the imgref rework r2 so that a caller which must
+    * honour only SOME layers (the inline `data:` leg honours the identity layers
+    * and not the reach layer — see `FileRefs.inlineMayTakeOver`) reads the layer
+    * from the single source instead of re-implementing the ladder. */
+  def nfVerdictForRealLayer(
+      real: java.nio.file.Path,
+      policy: NfPathPolicy
+  ): Option[(NfDenyLayer, NfVerdict.Denied)] =
+    nfCredentialDenyLayer(real, policy) match
+      case Some((layer, reason)) =>
+        Some((layer, NfVerdict.Denied(Status.Forbidden, "credential-path", reason)))
       case None =>
-        if NfPathPolicy.inodeKey(real).exists(policy.credentialInodes.contains) then
+        if nfCredentialInode(real, policy) then
           Some(
-            NfVerdict.Denied(
-              Status.Forbidden,
-              "credential-hardlink",
-              "this file is a hard link to a Nebflow credential file"
+            (
+              NfDenyLayer.CredentialInode,
+              NfVerdict.Denied(
+                Status.Forbidden,
+                "credential-hardlink",
+                "this file is a hard link to a Nebflow credential file"
+              )
             )
           )
         else if !NfFileAllowedExt.contains(nfRealExtension(real)) then
-          Some(NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed"))
+          Some((NfDenyLayer.FileType, NfVerdict.Denied(Status.BadRequest, "file-type", "File type not allowed")))
         else None
 
   /** The URL-form-tolerant facade over [[nfFileVerdict]] (imgref batch,
