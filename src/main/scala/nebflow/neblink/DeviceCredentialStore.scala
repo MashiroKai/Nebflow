@@ -5,7 +5,8 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import nebflow.core.{CredentialFileAcl, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, CredentialFileAcl, NebflowLogger, PathUtil}
+import nebflow.neblink.CredentialDiagnostics.{CredentialStoreError, Diagnostic, Op}
 
 /**
  * Long-lived per-device NebLink credential, persisted to
@@ -199,15 +200,119 @@ object DeviceCredential:
   /** 读盘 + **只忽略**被停写的 `deviceToken`（值既不采用、也不清洗）。
     *
     * 旧文件（本批之前写入的形态）带该键 ⇒ 打一次 WARN（可 grep 归因），其余一切
-    * 照旧：返回值、`logto` 块、身份字段、ACL 均不变。 */
-  def load: IO[Option[DeviceCredential]] =
-    IO.blocking {
-      if os.exists(credPath) then decode[DeviceCredential](os.read(credPath)).toOption
-      else None
-    }.flatTap {
-      case Some(cred) if cred.deviceToken.nonEmpty => warnLegacyTokenOnce
-      case _                                       => IO.unit
+    * 照旧：返回值、`logto` 块、身份字段、ACL 均不变。
+    *
+    * 🔴 失败面（缺陷 A / 上游 §8.2 第 1 项）：本方法**永不抛**。
+    *  - 读不开（权限/占用）⇒ `Left(credential-unreadable)`；
+    *  - 解码坏 ⇒ `Left(credential-undecodable)`；
+    *  - 两者都先走**自愈**（[[selfHeal]]：备份改名 + 当作无凭据继续，形制对齐身份件
+    *    `NeblinkModel.backupCorruptFile`），并各打**一条**带分类码的 WARN。
+    * `[[load]]` 是「只要值」的兼容面（失败 ⇒ `None`）；需要分类的调用点用本方法。 */
+  def loadDiagnosed: IO[Either[Diagnostic, Option[DeviceCredential]]] =
+    IO.blocking(readClassified()).flatMap { outcome =>
+      outcome.warnings
+        .foldLeft(IO.unit)((acc, w) => acc *> log.warn(w, "code" -> outcome.code))
+        .as(outcome.result)
     }
+
+  /** 兼容面：读失败/解码坏 ⇒ `None`（永不抛）。语义 = 「本机此刻没有可用凭据」。 */
+  def load: IO[Option[DeviceCredential]] =
+    loadDiagnosed
+      .map(_.getOrElse(None))
+      .flatTap {
+        case Some(cred) if cred.deviceToken.nonEmpty => warnLegacyTokenOnce
+        case _                                       => IO.unit
+      }
+
+  /** 读盘的分类型结果（`warnings` = 本次要发的、**至多一条**的 WARN）。 */
+  private case class ReadOutcome(
+    result: Either[Diagnostic, Option[DeviceCredential]],
+    warnings: List[String],
+    code: String
+  )
+
+  /** 读盘本体（`IO.blocking` 内跑；只做文件系统 + 组装，不发射日志）。
+    *
+    * 分派顺序：文件缺席（正常空态）→ 读（分类：读不开）→ 解码（分类：解码坏）。
+    * 两种坏形态都**先自愈再返回**：坏件改名留档（不删，迁移式纪律），本次读按
+    * 「无凭据」继续 —— 这正是「一次坏了就永久坏」的出口（上游 §6.1）。 */
+  private def readClassified(): ReadOutcome =
+    val path = credPath
+    if !os.exists(path) then ReadOutcome(Right(None), Nil, "")
+    else
+      val raw =
+        try Right(os.read(path))
+        catch case e: Exception => Left(e)
+      raw match
+        case Left(e) =>
+          // 读不开（权限 / 占用）—— 上游 R1/R2/R3 三条入口共用的那一条腿。
+          finish(
+            CredentialFailure.CredentialUnreadable,
+            CredentialDiagnostics.describe(e, path.toString),
+            path,
+            "credential read failed"
+          )
+        case Right(content) =>
+          decode[DeviceCredential](content) match
+            case Right(cred) => ReadOutcome(Right(Some(cred)), Nil, "")
+            case Left(err) =>
+              // 解码坏（半截 JSON / schema 漂移）：修前**完全静默**（连日志都没有，上游 S2）。
+              finish(
+                CredentialFailure.CredentialUndecodable,
+                CredentialDiagnostics.describe(err, path.toString),
+                path,
+                "credential decode failed"
+              )
+
+  /** 坏件的**一次性**自愈 + 一条 WARN（同 `(path, code)` 只做一次：状态拍每 10s 一拍，
+    * 无闩会变成日志风暴 —— 与身份件的「一次 WARN」口径同源）。
+    *
+    * 返回形态：`Left(分类诊断)` —— 自愈**不**吞掉分类（状态面仍能看到「本机凭据出过事」），
+    * 只是让本次调用按「无凭据」继续。 */
+  private def finish(
+    failure: CredentialFailure,
+    detail: String,
+    path: os.Path,
+    why: String
+  ): ReadOutcome =
+    val diagnostic = CredentialDiagnostics.diagnosticOf(failure, detail)
+    if !markFirstAttempt(path, diagnostic.code) then
+      // 已自愈过（或已尝试过）：不再改名、不再刷日志；分类读数照旧返回。
+      ReadOutcome(Left(diagnostic), Nil, diagnostic.code)
+    else
+      val backup = selfHeal(path)
+      ReadOutcome(
+        Left(diagnostic),
+        List(diagnostic.logLine(s"$why at $path — self-heal: $backup")),
+        diagnostic.code
+      )
+
+  /** 自愈（作者 2026-09-18 已裁的既定修法）：把坏件**改名留档**（不删），下次读即
+    * 干净空态。形制对齐身份件 `NeblinkModel.backupCorruptFile`（同后缀 `corrupt-<ts>`，
+    * 落在同目录 ⇒ 不跨目录、不动别家文件）。失败**不致命**（改名只需父目录权限，
+    * 通常可成；失败时如实记入 WARN 的读数）。 */
+  private def selfHeal(path: os.Path): String =
+    val ts = java.time.format.DateTimeFormatter
+      .ofPattern("yyyyMMdd-HHmmss-SSS")
+      .withZone(java.time.ZoneId.systemDefault())
+      .format(java.time.Instant.now())
+    val backup = path / os.up / s"${path.last}.corrupt-$ts"
+    try
+      os.move(path, backup)
+      backup.toString
+    catch case e: Exception => s"(backup failed: ${CredentialDiagnostics.describe(e, path.toString)})"
+
+  /** 一次性闩：同 `(path, code)` 的自愈/告警只做一次（计数可读，测试面可复位）。 */
+  private val healAttempts = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
+
+  private def markFirstAttempt(path: os.Path, code: String): Boolean =
+    healAttempts.putIfAbsent(s"$path|$code", java.lang.Boolean.TRUE) == null
+
+  /** 观测面（测试用）：已做过的自愈尝试次数（设计上每个坏件 1 次）。 */
+  private[neblink] def selfHealAttemptsForTest: Int = healAttempts.size
+
+  /** 测试隔离（跨 suite 共享 JVM ⇒ 第二个 suite 观测不到 WARN/备份，除非复位）。 */
+  private[neblink] def resetSelfHealForTest(): Unit = healAttempts.clear()
 
   private def warnLegacyTokenOnce: IO[Unit] =
     // 计数 = **已发出的 WARN 次数**（0→1 只会成功一次），不是 load 次数。
@@ -229,11 +334,18 @@ object DeviceCredential:
     * Public [[save]] delegates with the production port and the live `os.name`,
     * so production behaviour is identical.
     *
-    * DESTRUCTIVE BY DESIGN: the whole file is replaced (`os.write.over`), so
+    * DESTRUCTIVE BY DESIGN: the whole file is replaced, so
     * fields absent from `cred` disappear. Callers that only know PART of the
     * credential (enrollment: it receives the login's refresh token / id_token
     * as two independent options) must merge with [[load]] first; the merge rule
     * lives in `NeblinkEnrollment.persist`.
+    *
+    * 🔴 写面（缺陷 A / 上游 §8.2 第 1 项）两笔：
+    *  - **原子写**（复用 `core/AtomicJson`：tmp + `ATOMIC_MOVE`）：断电/并发不再留半截
+    *    JSON（半截 JSON ⇒ 解码坏 ⇒ 旧代码静默 `None`，上游 S1）。形制对齐身份件。
+    *  - **失败必带分类**：写失败 ⇒ 打一条带分类码的 WARN + 抛 [[CredentialStoreError]]
+    *    （**不是**裸 `IOException`）⇒ `NeblinkEnrollment` 把它收敛进 `Left` 通道，
+    *    与隔离护栏拒绝同通道、同文案层（禁裸异常直透登录框）。
     *
     * The ACL failure path is deliberately non-fatal (the credential is already
     * on disk) but never silent: a warning is logged, because "could not narrow
@@ -244,24 +356,33 @@ object DeviceCredential:
     aclPort: CredentialFileAcl.Port,
     osName: String
   ): IO[Unit] =
-    IO.blocking {
-      os.write.over(credPath, cred.asJson.spaces2, createFolders = true)
-      // Owner-only access control: rw------- on POSIX, single-owner DACL on
-      // Windows (the platform where the old POSIX call was a silent no-op).
-      try
-        CredentialFileAcl.restrict(java.nio.file.Paths.get(credPath.toString), osName, aclPort)
-        None
-      catch
-        case e: Exception =>
-          Some(s"os=$osName ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
-    }.flatMap {
-      case None => IO.unit
-      case Some(msg) =>
-        log.warn(
-          s"device.json owner-only ACL not applied ($msg) — the credential file may be " +
-            "readable by principals other than the current user"
-        )
-    }
+    IO.blocking(AtomicJson.writeSync(credPath, cred.asJson.spaces2))
+      .handleErrorWith { e =>
+        val diag = CredentialDiagnostics
+          .diagnosticOf(CredentialDiagnostics.classify(Op.Write), CredentialDiagnostics.describe(e, credPath.toString))
+        log.warn(diag.logLine("device.json write failed"), "code" -> diag.code) *>
+          IO.raiseError(new CredentialStoreError(diag))
+      }
+      .flatMap { _ =>
+        IO.blocking {
+          // Owner-only access control: rw------- on POSIX, single-owner DACL on
+          // Windows (the platform where the old POSIX call was a silent no-op).
+          try
+            CredentialFileAcl.restrict(java.nio.file.Paths.get(credPath.toString), osName, aclPort)
+            None
+          catch
+            case e: Exception =>
+              Some(s"os=$osName ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+        }.flatMap {
+          case None => IO.unit
+          case Some(msg) =>
+            log.warn(
+              s"[${CredentialDiagnostics.classify(Op.Acl).code}] device.json owner-only ACL not applied ($msg) — " +
+                "the credential file may be readable by principals other than the current user",
+              "code" -> CredentialDiagnostics.classify(Op.Acl).code
+            )
+        }
+      }
 
   /** Write back the latest rotated refresh token (no-op when nothing is
     * persisted yet — enrollment owns the first write). `newIdToken` REPLACES
@@ -271,24 +392,53 @@ object DeviceCredential:
     * the only way such a block can gain a refresh credential.
     *
     * NOTE (2026-09-11): this write is a FULL-FILE rewrite
-    * ([[save]] → `os.write.over`), so any writer that rebuilds the credential
+    * ([[save]] → `AtomicJson`), so any writer that rebuilds the credential
     * from scratch must merge with the stored file instead of dropping what it
-    * was not given — see `NeblinkEnrollment.persist`. */
+    * was not given — see `NeblinkEnrollment.persist`.
+    *
+    * 🔴 失败面（缺陷 A / 上游 §8.2 第 1 项）：本腿**只进日志**（上游 R5：用户可见性 =
+    * 仅日志）⇒ 读失败/写失败都打一条**带分类码**的 WARN 后返回，**不再抛**。修前是
+    * 异常裸冒泡（调用点 `LogtoSilentRelogin.scala:150` 在 IO 链里）⇒ 该腿整条失败且
+    * 用户侧无因。 */
   def updateLogtoRefresh(refreshToken: String, newIdToken: Option[String] = None): IO[Unit] =
-    load.flatMap {
-      case Some(cred) =>
-        val next = cred.logto match
-          case Some(prev) =>
-            prev.copy(refreshToken = refreshToken, updatedAt = System.currentTimeMillis(),
-              idToken = newIdToken.orElse(prev.idToken))
-          case None => LogtoRefresh(refreshToken, System.currentTimeMillis(), newIdToken)
-        save(cred.copy(logto = Some(next)))
-      case None => IO.unit
+    val write =
+      load.flatMap {
+        case Some(cred) =>
+          val next = cred.logto match
+            case Some(prev) =>
+              prev.copy(refreshToken = refreshToken, updatedAt = System.currentTimeMillis(),
+                idToken = newIdToken.orElse(prev.idToken))
+            case None => LogtoRefresh(refreshToken, System.currentTimeMillis(), newIdToken)
+          save(cred.copy(logto = Some(next)))
+        case None => IO.unit
+      }
+    write.handleErrorWith { e =>
+      val diagnostic = CredentialDiagnostics.classifyFailure(e, CredentialFailure.CredentialWriteDenied)
+      log.warn(
+        diagnostic.logLine("refresh-token rotation write-back failed (silent re-login leg)"),
+        "code" -> diagnostic.code
+      )
     }
 
-  /** Clear the persisted credential (e.g. when unpairing). */
+  /** Clear the persisted credential (e.g. when unpairing).
+    *
+    * 🔴 删面（缺陷 A / 上游 §8.2 第 1 项 + 判据 G5）：**永不抛** —— 登出腿必须始终
+    * 完成本地拆除（`performLocalLogout` 的既有契约「Always completes locally」），修前
+    * 「删不掉 ⇒ 整条登出 500」正是用户无法自救的那条口子（上游 S3）。
+    *
+    * 失败时的两级处置：① 尝试**改名留档**（自愈，同 [[selfHeal]]：改名只需父目录权限，
+    * 文件被 ACL 锁死时仍常可成 ⇒「清理并重登」入口在锁定态下真的能清理）；
+    * ② 都不成 ⇒ 一条带分类码的 WARN（`credential-delete-denied`），拆除继续。 */
   def clear: IO[Unit] =
     IO.blocking {
       if os.exists(credPath) then os.remove(credPath)
+    }.handleErrorWith { e =>
+      val detail = CredentialDiagnostics.describe(e, credPath.toString)
+      val fallback = IO.blocking(selfHeal(credPath)).flatMap { moved =>
+        val diagnostic = CredentialDiagnostics.diagnosticOf(CredentialFailure.CredentialDeleteDenied, detail)
+        log.warn(diagnostic.logLine(s"credential delete failed — rename-aside fallback: $moved"),
+          "code" -> diagnostic.code)
+      }
+      fallback
     }.void
 end DeviceCredential

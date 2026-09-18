@@ -166,4 +166,50 @@ class NeblinkRelayStatusRouteSpec extends CatsEffectSuite:
     }
   }
 
+  // ── 缺陷 A（2026-09-18）：坏凭据不得把状态面打成 500（判据 G4②③）──────────
+  //
+  // 修前形态两半：① 读抛（权限/占用）⇒ 本端点 500；② 解码坏 ⇒ 静默 `None`
+  // （连日志都没有）⇒ 用户看到 `loggedIn=false` 但**没有任何原因**。本钉同时覆盖：
+  // 200 + `loggedIn=false` + 加法读数 `credentialIssue`（三段式、零路径）+ 盘上一次性备份件。
+  test("G4②③ 坏凭据 ⇒ /neblink/status 200 + loggedIn=false + credentialIssue 带分类码 + 备份件落地") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        ms <- NeblinkService.create(0, dispatcher)
+        client = new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = Net, secret = "s"), 0)
+        ps = new NeblinkPresenceService(ms, 0)(dispatcher)
+        discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
+        _ = ms.setRelayClient(Some(client))
+        _ = ms.setPresenceService(ps)
+        // enabled=true ⇒ 若凭据面正常，loggedIn 会是 true：本钉的 false 只可能来自坏凭据。
+        _ <- ms.updateConfig(_.copy(enabled = true))
+        dir = os.Path(tmpDir, os.pwd) / "neblink"
+        _ <- IO.blocking {
+          os.makeDir.all(dir)
+          os.write.over(dir / "device.json", "{ broken")
+        }
+        _ <- IO(DeviceCredential.resetSelfHealForTest())
+        resp <- mkRoutes(ms, discovery).routes(statusRequest).value.map(_.getOrElse(fail("route fell through")))
+        body <- resp.as[Json]
+        backups <- IO.blocking(os.list(dir).toList.map(_.last).filter(_.contains(".corrupt-")))
+      yield
+        assertEquals(resp.status, Status.Ok, "坏凭据不得把状态面打成 500（判据 G4②）")
+        assertEquals(body.hcursor.downField("loggedIn").as[Boolean], Right(false))
+        val issue = body.hcursor.downField("credentialIssue")
+        assertEquals(issue.downField("code").as[String], Right("credential-undecodable"))
+        val message = issue.downField("error").as[String].toOption.getOrElse("")
+        assert(message.contains("诊断码：credential-undecodable"), s"状态面错误串必须三段式: $message")
+        // round 1 / 判词 D4：负控不止判据正则 —— 追加「不含 data-root 路径」「不含 device.json」
+        // 二重断言（正则的 `[A-Za-z]:\\` 覆盖不到 POSIX 绝对路径，单靠它会漏掉 `/var/folders/…` 形态）。
+        val dataRoot = os.Path(tmpDir, os.pwd)
+        List(
+          "G4②.credentialIssue.error" -> message,
+          "G4②.credentialIssue.reason" -> issue.downField("reason").as[String].toOption.getOrElse(""),
+          "G4②.credentialIssue.action" -> issue.downField("action").as[String].toOption.getOrElse("")
+        ).foreach { case (tag, s) =>
+          assertEquals(LogdevTestSupport.violations(s, dataRoot), Nil, s"$tag 三条判据必须全过: $s")
+        }
+        assertEquals(backups.length, 1, "盘上必须出现一次性备份件（判据 G4③）")
+    }
+  }
+
 end NeblinkRelayStatusRouteSpec

@@ -513,4 +513,139 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  // ── 缺陷 A（2026-09-18）：坏凭据态下登出必须能自救（判据 G5）──────────────
+  //
+  // 修前形态：end-session 的凭据读点在删点**之前**且异常裸冒泡 ⇒ 整条路由 500、本地
+  // 拆除一步没跑（凭据没删、config 没关、client 没置空），续登标记 arm 过但永不被
+  // consume ⇒ 用户**无法通过「退出账号」自救**（上游 S3 / §6.1「登出也救不了」）。
+  //
+  // 🔴 round 1 补正（判词 D2）：夹具从 POSIX `chmod 000` 换成**平台中立**形态
+  // （凭据落点上放一个非空目录 ⇒ `os.read` 抛 IOException：POSIX `IsADirectoryException` /
+  // Windows `AccessDeniedException`，与 `chmod 000` 走**同一条分类边**）⇒ 本文件现在
+  // **零 `assume`**、任何平台都真跑。诚实申报本夹具的**两处不可避免的差别**：
+  //   · 目录夹具无法同时携带 id_token hint ⇒ 「读不开 ⇒ 不编造 hint」这条由
+  //     「可读且有 hint ⇒ hint 必现」（本文件另一用例）+「可读但无 id_token ⇒ 无 hint」两支合起来钉；
+  //   · 读失败会触发**自愈改名**（装置层既有行为）⇒ 路径在拆除第④步之前就已空出，
+  //     故第④步在这里是幂等空转；「第④步真删一个在场凭据」由本文件既有的登出用例
+  //     （`assertEquals(cred, None, "device credential file removed")`）钉住。
+  //   为补上这层信息损失，本用例新增「读失败**带分类码** WARN 实测」——否则「夹具坏了」
+  //   与「路由正确分类了」两种情形在断言上不可区分。
+  test("G5 坏凭据（读不开）态下 end-session 仍 302 且本地拆除八步生效（非 500）") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          val credPath = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
+          for
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
+            // 平台中立的「读不开」夹具：先清掉 mkStack 落盘的真凭据，再把落点占成非空目录
+            // （非空 ⇒ 删也删不掉；读抛 IOException）。
+            _ <- DeviceCredential.clear
+            _ <- IO.blocking {
+              os.makeDir.all(credPath)
+              os.write.over(credPath / "occupied-by-a-directory.txt", "not a credential file")
+            }
+            respAndWarns <- LogdevTestSupport.withWarnsIO(
+              st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            )
+            resp = respAndWarns._1
+            warns = respAndWarns._2
+            peers <- st.ms.peers
+            cred <- DeviceCredential.load
+            cfg <- st.ms.neblinkConfig
+            clientAfter <- st.discovery.currentClient
+            // 拆除第④步的读数：落点必须不再持有坏件（读失败的自愈改名 / 第④步删除皆算）
+            gone <- IO.blocking(!os.exists(credPath))
+          yield
+            assertEquals(resp.status, Status.Found, "坏凭据下登出必须仍能跳转（302），不是 500")
+            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location missing"))
+            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+            assertEquals(q.contains("id_token_hint"), false, "读失败 ⇒ 跳过 hint（读不到就不编）")
+            assert(
+              warns.exists(_.contains(CredentialFailure.CredentialUnreadable.code)),
+              s"读失败必须留一条带分类码的 WARN（否则「夹具坏了」与「正确分类」不可区分）: $warns"
+            )
+            assertEquals(cred, None, "本地凭据不在了")
+            assert(gone, "凭据落点必须不再持有坏件（坏件不挡拆除）")
+            assertEquals(peers, Nil, "第八步清 peers 生效")
+            assertEquals(clientAfter, None, "第六步置空 client 生效")
+            assertEquals(cfg.enabled, false, "第五步关 enabled 生效")
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  // ── 缺陷 A 返工 round 1 / 判词 D1：换号续登失败页（switchNoticePage）的文案负控 ──
+  //
+  // 判 fail 的主因：`RestApiRoutes.scala:4244-4249` 把 `e.getMessage` 原样送进这一页
+  // ⇒ 同一屏泄漏「文件系统路径 + 整条 authorize URL + PKCE state」（判词探针 P7 原文，
+  // 判据正则命中 2）。修法 = 走同文件既有的分类通道（三段式进页面、原文只进 WARN）。
+  // 本用例把**改后**读数钉在三支可达分支上：① 续登失败支（就是泄漏那一支）；
+  // ② 「登录服务未配置」静态支；③ 重放支（同一 landing URL 二次访问）。
+  // 不可达的三支（Expired / 服务未初始化）只传**字面量**文案，无插值点 —— 见报告登记。
+  test("D1 换号续登失败页：可见串过三重判据（正则 / data-root / device.json）且三段式带稳定码") {
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url, _) =>
+        mkStack(url, dispatcher).flatMap { st =>
+          val dataRoot = os.Path(tmpDir, os.pwd)
+          val goodLogto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy",
+            pkceClientId = Some("pkce-app")))
+          val badEndpointLogto = Some(LogtoConfig(endpoint = "C:\\Users\\kaiyu\\.nebflow\\bad endpoint",
+            clientId = "legacy", pkceClientId = Some("pkce-app")))
+          val unconfiguredLogto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy",
+            pkceClientId = None))
+          /** 一次 landing 访问的用户可见读数（`<p>` = 用户实际读到的那一行）。 */
+          case class Land(status: Status, text: String)
+          def landOnce: IO[Land] =
+            st.routes.authCallbackRoutes
+              .orNotFound
+              .run(Request[IO](Method.GET, Uri.unsafeFromString("/logged-out")))
+              .flatMap(r => r.body.through(fs2.text.utf8.decode).compile.string.map(b => Land(r.status, pTextOf(b))))
+          for
+            // ① 续登失败支：arm ⇒ 畸形 endpoint ⇒ landing 消费标记 ⇒ beginPkceLogin 抛
+            _ <- st.ms.updateConfig(cfg => cfg.copy(enabled = true, logto = goodLogto))
+            armed <- st.routes.routes(Request[IO](Method.GET,
+              Uri.unsafeFromString("/neblink/auth/end-session?scenario=switch")))
+              .value.map(_.getOrElse(fail("end-session route fell through")))
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = badEndpointLogto))
+            land1 <- landOnce
+            // ③ 重放支：标记已消费 ⇒ 同一 landing URL 二次访问（静态文案）
+            land2 <- landOnce
+            // ② 未配置支：重新 arm ⇒ 显式块无 pkceClientId ⇒ beginPkceLogin 返回 None
+            _ <- st.routes.routes(Request[IO](Method.GET,
+              Uri.unsafeFromString("/neblink/auth/end-session?scenario=switch")))
+              .value.map(_.getOrElse(fail("end-session route fell through")))
+            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = unconfiguredLogto))
+            land3 <- landOnce
+          yield
+            assertEquals(armed.status, Status.Found, "arm 腿必须 302")
+            assertEquals(land1.status, Status.Ok)
+            assertEquals(land2.status, Status.Ok)
+            assertEquals(land3.status, Status.Ok)
+            // 失败支：三段式（原因 + 动作 + 稳定诊断码），且**原文**（路径 / URL / state）不在页面上
+            assert(land1.text.startsWith("登录失败："), s"续登失败页必须承载三段式: ${land1.text}")
+            assert(land1.text.contains("下一步："), s"续登失败页缺动作句: ${land1.text}")
+            assert(land1.text.contains(s"诊断码：${CredentialFailure.Unclassified.code}"),
+              s"续登失败页必须带稳定诊断码: ${land1.text}")
+            assert(!land1.text.contains("Invalid URI"), s"裸异常原文不得进用户可见面: ${land1.text}")
+            assert(!land1.text.contains("state=") && !land1.text.contains("code_challenge"),
+              s"authorize URL / PKCE 参数不得进用户可见面: ${land1.text}")
+            List(
+              "D1.续登失败支" -> land1.text,
+              "D1.重放支" -> land2.text,
+              "D1.未配置支" -> land3.text
+            ).foreach { case (tag, text) =>
+              assertEquals(LogdevTestSupport.violations(text, dataRoot), Nil, s"$tag 三条判据必须全过: $text")
+            }
+        }.guarantee(IO.blocking(server.stop(0)))
+      }
+    }
+  }
+
+  /** `<p>` 文本抽取（判词探针同形：只判用户实际读到的那一行）。 */
+  private def pTextOf(html: String): String =
+    val i = html.indexOf("<p>")
+    val j = html.indexOf("</p>")
+    if i >= 0 && j > i then html.substring(i + 3, j) else s"(NO <p> FOUND) ${html.take(300)}"
+
 end NeblinkLogoutRoutesSpec

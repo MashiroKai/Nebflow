@@ -19,7 +19,7 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml } from './utils.js';
 import { getProfileUrl } from './brand.js';
@@ -682,11 +682,21 @@ function showLoginModal(opts = {}) {
       // Error state carries BOTH tiers on purpose: 重试 (primary, green) and
       // 使用其他账号登录 (secondary, glass) — the tier difference is what the
       // author's "主键 vs 次键档位要分明" reading can be checked against.
+      //
+      // 缺陷 A（上游 §8.2 第 7 项）：文案 = **三段式**（原因 + 下一步动作 + 诊断码），
+      // 由 `neblink.js` 的 `loginFailureText` 单点组装（i18n 优先，后端分类串兜底）；
+      // 本文件**不**再原样打印后端串。两键档位与主/次键视觉**逐字保留**（§13 禁造新轮子），
+      // 仅在**本地凭据文件类**分类下加一枚「清理并重登」键（门控判据同设置面板）。
+      const failureCode = data.code || '';
+      const cleanupKey = LOCAL_FILE_CODES.includes(failureCode)
+        ? `<button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-cleanup">${t('neblink.cleanupRelogin')}</button>`
+        : '';
       body = `
-        <div class="login-error-msg">${escapeHtml(data.message || t('login.failed'))}</div>
+        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${escapeHtml(data.message || t('login.failed'))}</div>
         <div class="login-actions">
           <button class="login-modal-btn glass-control cfg-btn-primary" id="login-retry">${t('login.retry')}</button>
           <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+          ${cleanupKey}
         </div>`;
     }
     modal.innerHTML = `
@@ -710,6 +720,13 @@ function showLoginModal(opts = {}) {
       reservePopup(); // synchronous gesture reservation for the retry
       startFlow();
     });
+    // 「清理并重登」（缺陷 A / 上游 §8.2 第 6+7 项）：只在**本地凭据文件类**分类下渲染，
+    // 点击 = 复用既有 RP end-session 链（本地拆除 + 续登同一窗），零新增链路。跳转必须在
+    // 手势栈里同步发生（popup-blocker），故直接调 `openEndSessionHandoff(true)`。
+    modal.querySelector('#login-cleanup')?.addEventListener('click', () => {
+      close();
+      openEndSessionHandoff(true);
+    });
   };
 
   const startFlow = async (forceLogin = false, deferPopup = false) => {
@@ -726,10 +743,12 @@ function showLoginModal(opts = {}) {
       loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
       setTimeout(() => { close(); refresh(); }, 1500);
     };
-    const onError = (errMsg) => {
+    const onError = (errMsg, payload = null) => {
       finished = true;
       setPairing(false);
-      render('error', { message: errMsg });
+      // 缺陷 A：把分类码一路带到 error 渲染面（「清理并重登」键的门控判据 +
+      // `data-code` 二值断言契约）。
+      render('error', { message: errMsg, code: payload?.code || '' });
     };
     try {
       // Primary path: Authorization Code + PKCE via the hosted Logto page.

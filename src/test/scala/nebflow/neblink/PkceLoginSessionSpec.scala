@@ -25,7 +25,17 @@ class PkceLoginSessionSpec extends FunSuite:
     val (pending, stolen, json) = program.unsafeRunSync()
     assertEquals(pending, "pending")
     assertEquals(stolen, None)
-    assertEquals(json, Json.obj("status" -> "error".asJson, "error" -> "Login callback state mismatch".asJson))
+    // 🔴 缺陷 A（2026-09-18）· **刻意改判**（加法字段 → 契约面变化，故旧的全等断言迁移）：
+    // `/auth/state` 的错误态不再只带自由串 `error` —— 它现在的形状是
+    // `{status, error(三段式), code, reason, action}`（老消费方忽略未知键、继续读 `error`，
+    // 而 `error` 也已经是「原因 + 下一步 + 诊断码」）。原判据（state 不匹配必须落到 error 态）
+    // 逐字保留在下面两行，新增的是**分类码可二值判读**这一层（判据 G2）。
+    assertEquals(json.hcursor.downField("status").as[String], Right("error"))
+    assertEquals(json.hcursor.downField("code").as[String], Right("callback-state-invalid"))
+    assert(
+      json.hcursor.downField("error").as[String].toOption.exists(_.contains("诊断码：callback-state-invalid")),
+      s"error 串必须承载三段式 + 稳定码: ${json.hcursor.downField("error").focus}"
+    )
   }
 
   test("take with the right state → verifier; then succeed → sticky success") {
@@ -56,7 +66,14 @@ class PkceLoginSessionSpec extends FunSuite:
       pending <- session.statusJson
     yield (err, pending)
     val (err, pending) = program.unsafeRunSync()
-    assertEquals(err, Json.obj("status" -> "error".asJson, "error" -> "token exchange failed: invalid_grant".asJson))
+    // 缺陷 A：`fail(message)` 兼容面 —— 该串进**日志**留档（不再上用户可见面），错误态
+    // 带兜底分类码 + 三段式文案。原判据（fail 粘性：下一次 start 前一直可读）逐字保留。
+    assertEquals(err.hcursor.downField("status").as[String], Right("error"))
+    assertEquals(err.hcursor.downField("code").as[String], Right("login-failed"))
+    assert(
+      err.hcursor.downField("error").as[String].toOption.exists(_.contains("诊断码：login-failed")),
+      s"error 串必须承载三段式: ${err.hcursor.downField("error").focus}"
+    )
     assertEquals(pending, Json.obj("status" -> "pending".asJson))
   }
 
