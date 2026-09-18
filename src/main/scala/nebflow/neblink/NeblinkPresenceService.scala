@@ -182,7 +182,9 @@ private[neblink] final case class DialFailure(reason: String, cls: DialFailureCl
  * Manages outgoing WebSocket presence connections to NebLink peers.
  *
  * When device A discovers device B via the NebLink Server, A opens a persistent
- * WebSocket to `ws://B:8080/api/neblink/presence`. As long as the WS is open, both
+ * WebSocket to `ws://B:<B's advertised port>/api/neblink/presence` (F-1: the
+ * candidate endpoint's own port — the local `serverPort` is only a fallback for
+ * candidates that carry none). As long as the WS is open, both
  * devices consider each other online.
  *
  * Heartbeat: ping every 10s; if no pong for 20s the connection is forcibly closed.
@@ -405,7 +407,7 @@ final class NeblinkPresenceService(
         if attemptedRev.nonEmpty && System.currentTimeMillis() - startedAtMs >= dialBudget.roundBudgetMs then
           IO.pure((attemptedRev.reverse, true, failuresRev.reverse))
         else
-          extractHost(endpoint) match
+          resolveDialTarget(endpoint) match
             case None =>
               recordDialOutcome(peer, endpoint, Some(s"unparseable endpoint: $endpoint")) *>
                 noteEndpointFailure(peer, endpoint, DialFailureClass.Other, probeOnly) *>
@@ -418,8 +420,8 @@ final class NeblinkPresenceService(
                   (endpoint, DialFailureClass.Other) :: failuresRev,
                   probeOnly
                 )
-            case Some(host) =>
-              IO.blocking(openConnection(peer, host, id, dialBudget.budgetMsFor(endpoint))).flatMap {
+            case Some((host, port)) =>
+              IO.blocking(openConnection(peer, host, port, id, dialBudget.budgetMsFor(endpoint))).flatMap {
                 case Right(_) =>
                   noteEndpointSuccess(peer, endpoint) *>
                     recordDialOutcome(peer, endpoint, None) *>
@@ -441,19 +443,24 @@ final class NeblinkPresenceService(
               }
 
   /**
-   * Blocking dial of a single host with the caller's per-candidate budget.
+   * Blocking dial of a single host+port with the caller's per-candidate budget.
    * Returns `Left(failure)` on failure — `reason` is what C3 §反控-3 needs to tell
    * "地址不可达 / 拨号超时" apart, `cls` is what F-D §剔除 needs to apply the
    * refusal-vs-timeout (strong-vs-ambiguous) judgement.
    * Registers the connection in `connections` on success.
+   *
+   * F-1 (presdial 批 2026-09-19): the port is now a **parameter** (the candidate's
+   * own port, see [[resolveDialTarget]]) instead of being read off `serverPort`
+   * inside [[buildWsUri]] — see that helper for why.
    */
   private def openConnection(
     peer: PeerInfo,
     host: String,
+    port: Int,
     id: DeviceIdentity,
     budgetMs: Long
   ): Either[DialFailure, Unit] =
-    val wsUri = buildWsUri(host, id)
+    val wsUri = buildWsUri(host, port, id)
     try
       val alive = new AtomicBoolean(true)
       val lastPong = new AtomicLong(System.currentTimeMillis())
@@ -586,6 +593,12 @@ final class NeblinkPresenceService(
    * stays unreachable is retried every sync cycle (~30s), so unconditional
    * logging would flood the file. Failures log at WARN (was `debug`, which
    * `root level=INFO` swallowed entirely — 方案 §1.1 环③ evidence E-5).
+   *
+   * F-4 (presdial 批 2026-09-19): the line names the **resolved dial target**
+   * (`host:port` actually opened) next to the candidate string. Before this批 the
+   * line only echoed the candidate, so 8097-instance readings like
+   * "via `http://100.91.165.120:8080`: timeout" were read as "it dialed :8080"
+   * while it had in fact dialed the dialer's own port (诊断 §2.3 ①).
    */
   private def recordDialOutcome(peer: PeerInfo, endpoint: String, error: Option[String]): IO[Unit] =
     val shown = if endpoint.nonEmpty then endpoint else if peer.address.nonEmpty then peer.address else "(no endpoint)"
@@ -598,10 +611,12 @@ final class NeblinkPresenceService(
         case Some(err) =>
           logger.warn(
             s"Presence dial failed for ${peer.deviceName} via $shown: $err " +
-              s"(tried ${candidatesOf(peer).size} candidate endpoint(s))"
+              s"(dial target ${dialTargetLabel(endpoint)}; tried ${candidatesOf(peer).size} candidate endpoint(s))"
           )
         case None =>
-          logger.info(s"Presence dial ok for ${peer.deviceName} via $shown")
+          logger.info(
+            s"Presence dial ok for ${peer.deviceName} via $shown (dial target ${dialTargetLabel(endpoint)})"
+          )
 
   // ===== F-D ②: 死端点剔除（账本 + 恢复语义） =====
 
@@ -841,17 +856,65 @@ final class NeblinkPresenceService(
 
   // ===== Helpers =====
 
-  /** Extract host from "http://100.x.y.z:8080" -> "100.x.y.z". */
-  private def extractHost(address: String): Option[String] =
+  /**
+   * F-1 (presdial 批 2026-09-19): resolve a candidate endpoint to the **dial target**
+   * `(host, port)` — the endpoint's OWN port when it carries one, falling back to
+   * this process's `serverPort` only when it carries none.
+   *
+   * WHY: the pre-F-1 code kept the host and **dropped the port**
+   * (`extractHost` → `buildWsUri(host, id)` read `serverPort`), so any instance
+   * whose gateway port is not the peer's port dialed the wrong endpoint — an
+   * isolated instance on `--port 8097` dialing a peer at `http://10.0.0.5:8097`
+   * actually opened `ws://10.0.0.5:<its own port>` (诊断 §2.3 ①②: "隔离实例永远
+   * 拨不到任何对端"), and the failure line printed the *candidate* string as
+   * "the port we dialed". Peers that carry no port (inbound presence / legacy
+   * `PeerInfo.address` without a port) keep the old behaviour exactly.
+   *
+   * The peer side is **not** touched: advertising the port we listen on (the WS
+   * query `port` param, still `serverPort`) is correct behaviour — only the
+   * dialing side was fixed.
+   */
+  private def resolveDialTarget(address: String): Option[(String, Int)] =
     try
-      val stripped = address.replaceFirst("https?://", "")
-      val colonIdx = stripped.indexOf(':')
-      val host = if colonIdx > 0 then stripped.substring(0, colonIdx) else stripped
-      Option(host.trim).filter(_.nonEmpty)
+      val host = EndpointPreference.hostOf(address)
+      Option(host).map(_.trim).filter(_.nonEmpty).map(h => (h, endpointPortOf(address).getOrElse(serverPort)))
     catch case _: Exception => None
 
-  /** Build the WS URI with our device info as query params. */
-  private def buildWsUri(host: String, id: DeviceIdentity): String =
+  /** Port written in the candidate endpoint's authority (`http://h:8097` → 8097);
+    * `None` when the candidate carries no (valid) port — [[resolveDialTarget]] then
+    * falls back to `serverPort`. IPv6 literals (`[::1]:8097`) are handled).
+    */
+  private def endpointPortOf(address: String): Option[Int] =
+    val stripped = address.replaceFirst("(?i)^https?://", "")
+    val slashIdx = stripped.indexOf('/')
+    val authority = if slashIdx >= 0 then stripped.substring(0, slashIdx) else stripped
+    val hostPort = authority.substring(authority.lastIndexOf('@') + 1)
+    if hostPort.startsWith("[") then
+      val close = hostPort.indexOf(']')
+      if close > 0 && hostPort.length > close + 1 && hostPort.charAt(close + 1) == ':' then
+        hostPort.substring(close + 2).trim.toIntOption.filter(isValidPort)
+      else None
+    else
+      val colonIdx = hostPort.indexOf(':')
+      if colonIdx > 0 then hostPort.substring(colonIdx + 1).trim.toIntOption.filter(isValidPort)
+      else None
+
+  private def isValidPort(p: Int): Boolean = p > 0 && p <= 65535
+
+  /** The `host:port` a dial attempt actually opened — the log-line read-out of
+    * [[resolveDialTarget]] (F-4: never present the candidate string as if it were
+    * the dial target). */
+  private def dialTargetLabel(endpoint: String): String =
+    resolveDialTarget(endpoint).map((h, p) => s"$h:$p").getOrElse("(unresolved)")
+
+  /**
+   * Build the WS URI with our device info as query params.
+   *
+   * F-1: `port` is the **dial target's** port (the peer's advertised port when the
+   * candidate carries one). The query param `port` is a different thing and stays
+   * `serverPort` — it tells the peer which port **we** listen on (正确行为, 零改动).
+   */
+  private def buildWsUri(host: String, port: Int, id: DeviceIdentity): String =
     val params = Map(
       "deviceId" -> id.deviceId,
       "deviceName" -> id.deviceName,
@@ -860,7 +923,7 @@ final class NeblinkPresenceService(
       "port" -> serverPort.toString
     )
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
-    s"ws://$host:$serverPort/api/neblink/presence?$query"
+    s"ws://$host:$port/api/neblink/presence?$query"
 
   private def enc(s: String): String =
     try java.net.URLEncoder.encode(s, "UTF-8")

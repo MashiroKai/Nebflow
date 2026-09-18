@@ -36,10 +36,10 @@ import scala.concurrent.duration.*
  *    且机器可判不变量 `单轮预算 12s < 45s 拍` ⇒ 不跨拍重叠。
  *
  * 🔴 本 spec **不引入真实拨号**：只打本机环回（127.0.0.1 上的夹具 / 127.0.0.2·3 的
- * 环回别名黑洞）。注意 presence 拨号的目标端口是**本服务的 serverPort**
- * （`buildWsUri`：`ws://<候选 host>:<serverPort>/api/neblink/presence`）——**候选串里
- * 自己的端口被忽略**，所以：夹具端口必须作为 `serverPort` 传给被测服务；而「两个独立
- * 候选」只能靠**不同的候选串**（账本键 = deviceId+端点串）造成。
+ * 环回别名黑洞）。拨号目标端口 = **候选串自带的端口**（F-1，presdial 批 2026-09-19；
+ * 改前是「丢端口 ⇒ 用本服务的 `serverPort`」）。本 spec 的夹具一律把候选端口与
+ * `serverPort` 取同一个值（`srv.port`）⇒ 两种形态下读数相同、断言不变；
+ * 「候选端口 ≠ serverPort」这条面由 `NeblinkPresenceServiceSpec` 钉住。
  *
  * 已实测的口径（本轮现读，非转述）：
  *  - 环回连通性探针：`127.0.0.1` 无监听 = **立刻拒绝**（`ECONNREFUSED`）；
