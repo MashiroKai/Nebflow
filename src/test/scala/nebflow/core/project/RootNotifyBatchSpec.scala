@@ -203,7 +203,7 @@ class RootNotifyBatchSpec extends FunSuite:
 
   /** 把 store 里的节点登记（记账面断言用）。 */
   private def seed(store: FlowMapStore, nodes: List[NodeDef]): IO[Unit] =
-    store.mutate(s => s.copy(nodes = s.nodes ++ nodes.map(n => n.id -> n).toMap))
+    store.mutate(s => s.copy(nodes = s.nodes ++ nodes.map(n => n.id -> n).toMap)).void
 
   // ── A1 ────────────────────────────────────────────────────────────────────────
 
