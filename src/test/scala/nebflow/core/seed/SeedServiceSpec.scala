@@ -100,7 +100,8 @@ class SeedServiceSpec extends FunSuite:
     // ── 项目面：默认通用项目 general 恢复播种（作者 2026-09-17 裁定①，撤销 09-16 摘除令）──
     // 正向断言（本批改写面）：干净 home 建 projects/general 脚手架——S1 前是同一位置的
     // 路径级负向断言（`!os.exists(home / "projects" / "general")`）。**禁恒真**：逐级读
-    // 真值（文件存在 + project.json 的 name/workspace + AGENTS.md 占位已替换），播种面
+    // 真值（文件存在 + project.json 的 name/workspace + AGENTS.md 存在且为 **0 字节**——
+    // 作者 2026-09-18 裁定 (A)：种子文本面置空，不再预填/不再带占位），播种面
     // 被摘掉即红（S5① 变异红证已实测）。
     val projectJson = home / "projects" / "general" / "project.json"
     assert(os.exists(projectJson), "project:general scaffolded")
@@ -109,8 +110,11 @@ class SeedServiceSpec extends FunSuite:
     assert(proj.hcursor.downField("workspace").as[String].toOption.contains((home / "projects" / "general").toString),
       "workspace points at projects/general")
     assert(os.exists(home / "projects" / "general" / "AGENTS.md"), "AGENTS.md scaffolded")
-    assert(os.read(home / "projects" / "general" / "AGENTS.md").contains((home / "projects" / "general").toString),
-      "AGENTS.md references dataRoot path (placeholder substituted)")
+    // 2026-09-18 作者裁定 (A)（promptopt W3 · L2 = 种子文本置空，取代原「含本工作区路径 /
+    // <DATA_ROOT> 已替换」口径）：种子面不再预填任何内容 ⇒ 判据 = 文件**存在且 0 字节**。
+    // **禁恒真**：把种子资源回填旧预填文本（非空）⇒ 本条必红（回填红轮已实测，报告 round-2 §3）。
+    assert(os.size(home / "projects" / "general" / "AGENTS.md") == 0,
+      "seed project AGENTS.md is empty (0 bytes = no pre-filled template content)")
 
     // marker
     val marker = home / ".seed-state.json"
@@ -190,9 +194,11 @@ class SeedServiceSpec extends FunSuite:
       "missing default project 'general' is backfilled in an existing home (add-only reconcile)")
     assert(os.exists(genDir / "AGENTS.md"), "general/AGENTS.md backfilled in an existing home")
     val genAgentsText = os.read(genDir / "AGENTS.md")
-    assert(genAgentsText.contains(genDir.toString),
-      "AGENTS.md <DATA_ROOT> placeholder substituted with this workspace's absolute path")
-    assert(!genAgentsText.contains("<DATA_ROOT>"), "no unsubstituted <DATA_ROOT> placeholder left in AGENTS.md")
+    // 同口径改写（2026-09-18 作者裁定 (A)）：原两条同源断言 = 「文本含本工作区绝对路径
+    // （<DATA_ROOT> 占位已替换）」+「无未替换 <DATA_ROOT> 残留」——种子文本置空后二者在空文本上
+    // **恒真**，按变异纪律（断言禁恒真）折入本条的 0 字节读数：回填旧预填文本（非空）⇒ 本条必红。
+    assert(genAgentsText.isEmpty && os.size(genDir / "AGENTS.md") == 0,
+      "seed project AGENTS.md is empty (0 bytes) after add-only backfill — no pre-filled template content")
     val genProj = io.circe.parser.parse(os.read(genDir / "project.json")).toOption.get
     assert(genProj.hcursor.downField("workspace").as[String].toOption.contains(genDir.toString),
       "backfilled project.json points its workspace at projects/general")

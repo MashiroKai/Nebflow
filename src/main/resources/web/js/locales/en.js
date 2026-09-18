@@ -1522,7 +1522,7 @@ export default {
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
   'content.plugin.nebflow-plugin-creator.desc': 'Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation → mechanical self-check → delivery self-check that takes effect once written to disk). Use for packaging an existing skill or capability into a plugin, building a new plugin that does Y, writing plugin.json and SKILL.md, running a quality review of a plugin description, or running the pack validation script. Bundles skills: plugin-packaging (the three-input → generate → self-check → deliver packaging pipeline, including the handling of six forks such as name collisions and digest drift, the pre-delivery self-check, and the origin/digest reporting convention) and description-quality (the five-part manifest description spec: templates, good and bad examples, the M1-M15 criteria, and how to bound the core vocabulary). Verification and quality-review tasks use the nebflow-qa plugin instead. No mcp.json, no tool extensions.',
   'content.project.general.name': 'general',
-  'content.project.general.desc': 'General project (default workspace)',
+  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
 
   // === Bundled-content localization — default-set SKILL descriptions
   // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
