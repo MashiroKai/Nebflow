@@ -318,8 +318,9 @@ export default {
   // `{pct}` is derived from real chunk confirmations only (no fake progress);
   // failure/cancel strings always say "not sent" (fail-closed and visible).
   'messages.attachProgress': 'Uploading {pct}%',
-  // imgmsg batch (2026-09-18, decision ④): the percentage-free "sending" state.
-  'messages.attachSending': 'Sending…',
+  // 🔴 `messages.attachSending` (the percentage-free "sending" state added by the imgmsg
+  //    batch) was REMOVED by the sendstate batch: its only consumer was the quiet upload
+  //    card's sending banner, and that banner is gone entirely (see zh-CN.js note).
   'messages.attachSent': 'Sent',
   'messages.attachFailed': 'Upload failed — not sent',
   'messages.attachCancel': 'Cancel',

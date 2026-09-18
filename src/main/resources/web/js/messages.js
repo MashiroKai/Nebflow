@@ -3198,6 +3198,13 @@ function settleOptimisticAttach(conv, pending, res) {
     pending.entry = chatMsgs[idx] || pending.entry;
   }
   forgetPendingSend(pending);
+  // ── E 项（作者设计令 · 成功态**无痕**）· 本批**唯一的行为面修复** ──────────────
+  // 摘掉 `fm-sending` = 「发送态载面」的收口条件。修前本函数**不摘**它：只改
+  // `data-send-phase` + 就地重填气泡，而 `keyedDiff` 复用节点、不重置 wrapper 的 class
+  // ⇒ 该类一直挂到该节点被换掉为止，表现为「时间戳**永久**脉冲」（改后 = 环**永久**转）。
+  // 🔴 只摘类：锚定 / 结算 / 附件元数据 / 清理时机**一行不动**（零语义改动）。
+  // 文本腿的同款收口在 `sendCurrent`（成功 `:2928` / 失败 `:2950` 各自摘除）——两腿同语义。
+  if (pending.node) pending.node.classList.remove('fm-sending');
   pending.entry.attachments = atts;
   if (pending.node && pending.node.isConnected) {
     pending.node.dataset.sendPhase = 'confirmed';

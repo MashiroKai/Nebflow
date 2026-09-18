@@ -324,9 +324,10 @@ export default {
   // 进度文案的 `{pct}` 由**真实分块确认**推导（禁假进度）；失败/取消文案一律写清
   // 「未发送」（fail-closed 可见，禁静默）。
   'messages.attachProgress': '上传中 {pct}%',
-  // imgmsg 批（2026-09-18 · 决策点 ④）：**不给百分比**的「正在发送」态（既有 `attachProgress`
-  // 带 `{pct}`，语义上不能拿来充当无百分比形态 ⇒ 独立键，不与进度文案混用）。
-  'messages.attachSending': '正在发送',
+  // 🔴 `messages.attachSending`（「正在发送」，imgmsg 批 2026-09-18 决策点 ④ 加性键）已按
+  //    sendstate 批作者设计令**删除**：其唯一消费者 = quiet 上传卡的发送中条幅，该条幅已
+  //    **整条退场**（装配点 `js/attachUpload.js::uploadCardEl` 不再出卡）⇒ 全仓零引用
+  //    （`grep -rn "messages\.attachSending'"` 于 js/ 与 tests/ 零命中）。禁回填死键。
   'messages.attachSent': '已发送',
   'messages.attachFailed': '上传失败，未发送',
   'messages.attachCancel': '取消',
