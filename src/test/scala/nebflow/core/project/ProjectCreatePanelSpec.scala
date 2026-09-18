@@ -228,6 +228,11 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assertEquals(defn.agentFile, (ws / "AGENTS.md").toString)
       assert(defn.createdAt > 0, "createdAt must be set")
       assert(os.exists(ws / "AGENTS.md"), "workspace AGENTS.md scaffold must exist")
+      assertEquals(
+        os.read(ws / "AGENTS.md"),
+        "",
+        "AGENTS.md 默认空模板（作者 2026-09-18 裁定）：创建路径落盘的也是 0 字节空文件，内容由用户自持"
+      )
       assert(os.isDir(ws / ".nebflow"), "workspace .nebflow/ scaffold must exist")
       assert(gitignore.contains(".nebflow/"), "workspace .gitignore must guard .nebflow/")
       assert(rt.isDefined, "project must be mounted (ProjectRuntimeRegistry)")
@@ -647,7 +652,11 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       again <- ProjectCreateTool.call(mkInput("scaf-one", ws.toString), toolCtx(ws, system, res))
       giAfter <- IO(sha256Of(gi))
       nbAfter <- IO(nebflowEntries(ws))
-      restored <- IO(os.exists(ws / "AGENTS.md") && os.read(ws / "AGENTS.md").nonEmpty)
+      // 新语义（作者 2026-09-18 令：「AGENTS.md 应该默认是空的，用户去写，我们只是创建」；
+      // popt W3 已把模板置空 = `NodeTools.scala:3200` `agentMdTemplate = ""`）。
+      // 判据随之改为：**文件本体仍被创建**（存在）+ **内容为空**（0 字节），两者缺一即红。
+      restoredExists <- IO(os.exists(ws / "AGENTS.md"))
+      restoredText <- IO(if os.exists(ws / "AGENTS.md") then os.read(ws / "AGENTS.md") else "<missing>")
       _ <- ProjectRuntimeRegistry.unregister("scaf-one")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -656,7 +665,16 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val msg = again.toOption.get
       assert(msg.contains("already exists"), s"既有 contains 子串不得破: $msg")
       assert(msg.contains("AGENTS.md created"), s"补缺必须逐件报 created（③-9）: $msg")
-      assert(restored, "被删的 AGENTS.md 必须由幂等挂载路径补回（③-8）")
+      // 🔴 断言不弱化（两类回归仍被抓住，且是「实质判据」而非恒真）：
+      //   ① 文件未被创建 ⇒ `restoredExists=false` 首条红，且 `restoredText="<missing>"` 次条亦红；
+      //   ② 模板被写回非空 ⇒ `restoredText` 非空，次条红（正是本批要抓的回归类）。
+      // 只断 exists 会漏 ②；旧写法 nonEmpty 与「默认空模板」裁定正面对撞（本条即为更新点）。
+      assert(restoredExists, s"被删的 AGENTS.md 必须由幂等挂载路径补回（③-8）：文件本体必须存在（exists=$restoredExists）")
+      assertEquals(
+        restoredText,
+        "",
+        s"AGENTS.md 默认空模板（作者 2026-09-18 裁定）：补回的文件内容必须为空，实测 ${restoredText.length} 字符"
+      )
       assertEquals(giAfter, giBefore, ".gitignore 必须逐字节不变（已含 .nebflow/ 行）")
       assertEquals(
         os.read(gi).linesIterator.count(_.trim == ".nebflow/"),
