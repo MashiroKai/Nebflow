@@ -356,7 +356,7 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
         "🔴 读数：已归档 ∧ refCount==0 ⇒ 退役 1 行（判据本体不变）")
       assertEquals(stCounted.entries(canon).refCount, 1, "外部面按账并入 ⇒ 该行引用数 1")
       assert(retiredCounted.isEmpty,
-        s"🔴 有活引用 ⇒ 退役 0 行（本批计数确实拦住早退役：轴 b 承重），got ${retiredCounted.entries.keySet}")
+        s"🔴 有活引用 ⇒ 退役 0 行（本批计数确实拦住早退役：轴 b 承重），got ${retiredCounted.entries.map(_.chainId)}")
       assert(before.entries.contains(canon), "起跑：归档零引用行仍在热面（未到拍）")
       assertEquals(obs.dissolved.map(_.chainId), List(canon), "无命中分量 ⇒ 离场 ⇒ 整行下沉（读数：1 行）")
       assert(!after.entries.contains(canon), "下沉后热面不再有该行（载荷整行在冷档）")
