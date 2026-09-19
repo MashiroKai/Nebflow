@@ -252,6 +252,19 @@ function renderWindow(chatEl, slice, res, remaining, onError) {
   // sessionId would hijack live WS routing) and the active view is restored in
   // finally — the assignment below only spans this synchronous call.
   const view = new ChatView('search-float', { chat: chatEl });
+  // Ownership (bginject-fix3 · 作者 2026-09-19 #895 裁定 B · 第三位点): the
+  // window renders a slice of `res.sessionId`'s own history, so this throwaway
+  // view declares THAT session as the owner of the message set it hands to the
+  // renderer — the same idiom the panel views use (bgAgentPopup.js /
+  // flowAgentPopup.js set view.sessionId = sessionId right after construction).
+  // Without it the view's sessionId stayed null and persistence.js's direction
+  // filter fell back to state.activeSessionId, i.e. the PARENT session: a slice
+  // of a sub-agent session (delegate- / subtask- / node- / dispatcher-) then had
+  // its received injected rows judged by the parent's rules and dropped, so the
+  // float drew a sub-agent session with every blue bubble missing.
+  // The judgment itself is NOT re-derived here: the single point stays
+  // persistence.js#isOutgoingInjection(m, sessionId) — this only names the owner.
+  view.sessionId = res.sessionId || null;
   try {
     setActiveView(view);
     restoreFromBackendHistory(slice, { scrollToBottom: false, busyTail: false });
