@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.PathUtil
-import nebflow.dropbox.{AttachContract, ChunkedTransfer}
+import nebflow.dropbox.{AttachContract, ChunkedTransfer, DropboxUtil}
 
 /**
  * Handler for the "FileTransfer" action — direct file IO that bypasses ToolRegistry.
@@ -84,17 +84,72 @@ object FileTransferAction:
                     else
                       val content = java.util.Base64.getDecoder.decode(contentB64)
                       if !overwrite && os.exists(path) then Left(s"File exists: $pathStr (use overwrite)")
-                      else
-                        os.write(path, content, createFolders = true)
-                        Right(Json.obj("size" -> content.length.asJson))
+                      else legacyPutPreservingExisting(path, content)
                   case other => Left(s"Unknown direction: $other")
               }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+
+  /**
+   * legacy 整件 put 的**撞名保护**（dropnam 批 · 作者 2026-09-19 裁定② 明确要求本分支也在保护面内）：
+   *   - 目标不存在（或不是普通文件）⇒ 与今天**逐字节一致**（原样写入 / 原样报错）；
+   *   - 目标**是已存在的普通文件** ⇒ **改名保留新件、原件零损** —— 既有的 `os.write` 会
+   *     truncate 覆盖它（分块腿的 `os.remove.all` 与它同族），本函数改为写入一个
+   *     **冲突无关的新名**（唯一算名点 `DropboxUtil.occupyConflictFreeName`，名字生成仍只在
+   *     `DropboxUtil.finalNameCandidate` 一处）。
+   *
+   * ⚠️ 已知面（登记，非静默）：改写后的落点**不是**调用方请求的那个名字（这正是「原件零损」的
+   * 代价）；收端台账/通报面因该腿不经 `commitTempFile` 而无从观测此新名 ⇒ 该兼容格的
+   * `savedPath` 为空串（前端保持不可点）。数据零损优先。
+   */
+  private def legacyPutPreservingExisting(path: os.Path, content: Array[Byte]): Either[String, Json] =
+    if !os.exists(path) || !os.isFile(path) then
+      os.write(path, content, createFolders = true)
+      Right(Json.obj("size" -> content.length.asJson))
+    else
+      DropboxUtil.occupyConflictFreeName(path / os.up, path.last, java.time.ZonedDateTime.now()) match
+        case Left(reason) => Left(reason)
+        case Right(fresh) =>
+          try
+            os.write.over(fresh, content)
+            Right(Json.obj("size" -> content.length.asJson))
+          catch
+            case e: Exception =>
+              // 刚占据的 0 字节新名 ⇒ 清掉（既有件自始至终未被触碰）。
+              try os.remove(fresh)
+              catch case _: Exception => ()
+              Left(msgOf(e))
 
   private def msgOf(e: Throwable): String =
     Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
 
   private def hasChunkParams(params: JsonObject): Boolean =
     params("chunkIndex").flatMap(_.asNumber).isDefined && params("chunkSize").flatMap(_.asNumber).isDefined
+
+  // ===== 归属判据（dropnam 批 · 收端全保护）=====
+  //
+  // 问题：分块 put 是「按 offset 追加」语义，而它的目标路径**由发送端指定**。无 token 时，
+  // 「目标上已有的字节」既可能是本次续传的前缀，也可能是**别人的件**：
+  //   - 追加到别人的件上 = 污染它；
+  //   - 末块整件摘要不符 ⇒ `os.remove.all(path)` 删掉的是**别人的件**（生产块长 4 MiB 下
+  //     「既有件 = k × 4 MiB 且 < 来件 total」即触发，见方案件 D3/D4）。
+  // 收端**永不**覆盖/删除既有件（作者 2026-09-19 裁定②）⇒ 只有**归属明确**的路径才可写/可清。
+
+  /** 进程内 claim 表：记录「本进程在某路径上**从零开始**写入过的那条流」。
+    * 跨重启失效（重启后旧流本就断了 ⇒ 保守方向 = 对已存在目标 fail-closed 拒绝）。
+    * 键 = 路径字符串；值 = 流标识（`totalBytes/chunkSize`）。完成/失败清理时移除。 */
+  private val streamClaims = new java.util.concurrent.ConcurrentHashMap[String, String]()
+
+  private def streamKey(totalBytes: Long, chunkSize: Int): String = s"$totalBytes/$chunkSize"
+
+  /** 请求自带的归属 token（可选键）。旧接收端忽略未知键 ⇒ 向后兼容。 */
+  private def transferIdToken(params: JsonObject): Option[String] =
+    params("transferId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+
+  /** 归属判据：① 请求自带 `transferId`，且**路径里内嵌的 `<tid8>` 与之相符**
+    * （路径自证 —— 落名本身由发送端从 transferId 生成，声明与路径同源）；
+    * ② 或本进程曾在该路径上从零写入过同一条流（无 token 的合法多块续传）。 */
+  private def pathOwnedBy(params: JsonObject, path: os.Path, totalBytes: Long, chunkSize: Int): Boolean =
+    val tokenOwns = transferIdToken(params).exists(tid => path.last.endsWith(s".dropbox-${tid.take(8)}"))
+    tokenOwns || Option(streamClaims.get(path.toString)).contains(streamKey(totalBytes, chunkSize))
 
   /**
    * 分块 put：**先校验、再落盘、后推进 offset**。
@@ -121,10 +176,30 @@ object FileTransferAction:
       val zeroChunks = totalBytes == 0L
       val existing = if os.exists(path) && os.isFile(path) then os.size(path) else 0L
       val alreadyAtOrPastTotal = totalBytes > 0L && existing >= totalBytes
+      val owned = pathOwnedBy(params, path, totalBytes, chunkSize)
+      // 本流**从零创建**该文件 ⇒ 本流拥有它（与 `owned` 合起来 = 「这个文件是我们的」）。
+      val ownsNow = owned || existing == 0L
       // 接收端**自算**的块摘要（禁自证，R4）：回执一律回传这个值，不回显 `chunkSha`
       // 请求参数 —— 回显会让发送端的 `ack.chunkSha256 == frame.chunkSha256` 比对恒真。
       val computedChunk = ChunkedTransfer.sha256Hex(java.util.Base64.getDecoder.decode(contentB64))
-      if zeroChunks then Right(chunkAckJson(0L, computedChunk, None, totalBytes))
+      if existing > 0L && !owned then
+        // 🔴 收端全保护（裁定②）：目标上已有非空文件，而本次请求**声明不了归属**
+        // ⇒ 那不是「本次的续传」，是**别人的件** ⇒ 显式拒绝：零写、零删、结构化原因。
+        // （改前：D1 形态回**成功 ack**（进度面 100%、零字节写入）；D3/D4 形态 append 污染后
+        //   `os.remove.all` **删掉对端原件** —— 两者都是本批要消灭的静默失败。）
+        Left(
+          AttachContract.AttachError(
+            AttachContract.Codes.FileExistsRefusingAppend,
+            s"Refusing to append to existing $path ($existing bytes): this request declares no ownership of it " +
+              "(no matching transferId token, and this process did not create that file) — the existing file is left untouched (zero write, zero delete)",
+            phase = "transfer",
+            chunkIndex = Some(chunkIndex),
+            bytesReceived = Some(existing),
+            expected = Some(totalBytes.toString),
+            path = Some(path.toString)
+          ).toJson.noSpaces
+        )
+      else if zeroChunks then Right(chunkAckJson(0L, computedChunk, None, totalBytes))
       else if alreadyAtOrPastTotal then
         // 幂等：整件已落盘 ⇒ 回当前 offset + 自算整件摘要（重放安全）。
         Right(chunkAckJson(existing, computedChunk, Some(ChunkedTransfer.hashFileStreaming(path)), totalBytes))
@@ -201,23 +276,42 @@ object FileTransferAction:
               )
             else
               os.write.append(path, payload)
+              // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
+              if existing == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
               val nowBytes = existing + payload.length
               if nowBytes >= totalBytes then
                 // 唯一比对点：自算整件摘要（流式），不符 ⇒ 删文件（绝不 commit）。
                 val computedWhole = ChunkedTransfer.hashFileStreaming(path)
                 if computedWhole != wholeSha then
-                  os.remove.all(path)
-                  Left(
-                    AttachContract.AttachError(
-                      AttachContract.Codes.WholeDigestMismatch,
-                      s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole",
-                      phase = "commit",
-                      expected = Some(wholeSha),
-                      actualHash = Some(computedWhole),
-                      bytesReceived = Some(nowBytes)
-                    ).toJson.noSpaces
-                  )
-                else Right(chunkAckJson(nowBytes, computedChunk, Some(computedWhole), totalBytes))
+                  if ownsNow then
+                    os.remove.all(path)
+                    streamClaims.remove(path.toString)
+                    Left(
+                      AttachContract.AttachError(
+                        AttachContract.Codes.WholeDigestMismatch,
+                        s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole",
+                        phase = "commit",
+                        expected = Some(wholeSha),
+                        actualHash = Some(computedWhole),
+                        bytesReceived = Some(nowBytes)
+                      ).toJson.noSpaces
+                    )
+                  else
+                    // 防御性分支（正常不可达：非归属目标已在入口被拒）—— 禁删别人的件。
+                    Left(
+                      AttachContract.AttachError(
+                        AttachContract.Codes.WholeDigestMismatch,
+                        s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole; " +
+                          "the pre-existing file was left untouched (not created by this transfer stream)",
+                        phase = "commit",
+                        expected = Some(wholeSha),
+                        actualHash = Some(computedWhole),
+                        bytesReceived = Some(nowBytes)
+                      ).toJson.noSpaces
+                    )
+                else
+                  streamClaims.remove(path.toString)
+                  Right(chunkAckJson(nowBytes, computedChunk, Some(computedWhole), totalBytes))
               else Right(chunkAckJson(nowBytes, computedChunk, None, totalBytes))
 
   private def chunkAckJson(

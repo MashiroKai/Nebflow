@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
@@ -10,6 +11,7 @@ import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
 import nebflow.neblink.NeblinkService
 
+import java.time.ZonedDateTime
 import scala.concurrent.duration.*
 
 /**
@@ -61,7 +63,8 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
   // ===== 隔离接收端（真实入向链；allowRoot 之外的落点一律被 TargetDirGuard 拒） =====
 
   private def withReceiver[A](
-    allowRoot: os.Path
+    allowRoot: os.Path,
+    clock: () => ZonedDateTime = () => ZonedDateTime.now()
   )(use: (NeblinkService, DropboxService, Ref[IO, List[Json]]) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -79,7 +82,7 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         // 送达腿判真（否则 offer 会被 markTransferFailed 打成 failed）
         _   <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
         // 信令窗口放大到 30s：本 spec 只判命名/通报，禁让超时看门狗在序列中途插手
-        svc <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds)
+        svc <- DropboxService.createForTest(ms, hub, 30.seconds, 30.seconds, 30.seconds, clock)
         out <- use(ms, svc, seen)
         _   <- hub.unregister(reg)
         _   <- IO(PathUtil.setDataRoot(prev))
@@ -87,7 +90,13 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
       yield out
     }
 
-  private def offerFrame(transferId: String, fileName: String, size: Long, targetDir: os.Path): Json =
+  private def offerFrame(
+    transferId: String,
+    fileName: String,
+    size: Long,
+    targetDir: os.Path,
+    proto: Int = AttachContract.ProtoAssignDir
+  ): Json =
     Json.obj(
       "kind"       -> "file-offer".asJson,
       "senderId"   -> "kai-peer".asJson,
@@ -96,7 +105,7 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
       "fileName"   -> fileName.asJson,
       "fileSize"   -> size.asJson,
       "mimeType"   -> "application/octet-stream".asJson,
-      "proto"      -> AttachContract.ProtoAssignDir.asJson,
+      "proto"      -> proto.asJson,
       "targetDir"  -> targetDir.toString.asJson
     )
 
@@ -319,5 +328,133 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
           List(true)
         )
     }.flatMap(_ => IO(os.remove.all(parent)))
+
+  // ===== ⑤ 同一秒内连续 6 份同名件（固定时钟）⇒ 零丢失（dropnam 判据④a..④e）=====
+
+  /** 固定时钟（A4 可注入 clock）：把 6 次落名钉进**同一秒** ⇒ 判据是**确定性**判据
+    * （🔴 不用 sleep 撞运气 —— 那在慢机与变异验红中会假绿）。 */
+  private val BurstClock: ZonedDateTime = ZonedDateTime.parse("2026-09-19T00:17:15+08:00")
+
+  test("⑤ 同一秒 6 份同名件（固定时钟）⇒ 零丢失：④a 盘点 6 / ④b 通报全可达 / ④c 6/6 同源 / ④d 通报互异 / ④e 丢失 0"):
+    val parent = os.temp.dir(prefix = "nb-nfpath-burst-")
+    val dir    = parent / "landing"
+    os.makeDir.all(dir)
+    val name  = "burst.png"
+    val sends = (1 to 6).map(k => payload(30000, seed = k.toLong)).toList
+    withReceiver(dir, () => BurstClock) { (ms, svc, seen) =>
+      for
+        _ <- sends.zipWithIndex.foldLeftM(()) { case (_, (data, i)) =>
+               val tid = s"t-burst-${i + 1}"
+               for
+                 _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
+                 _ <- pushWholeFile(svc, tid, data)
+                 _ <- ms.handleDataMessage(completeFrame(tid))
+               yield ()
+             }
+        frames <- seen.get
+        onDisk <- IO(landed(dir))
+        reported = reportedPaths(frames)
+        existsAll <- IO(reported.map(p => os.exists(os.Path(p, os.pwd))))
+        hashes <- reported.traverse { p =>
+                    IO.blocking {
+                      val f = os.Path(p, os.pwd)
+                      if os.exists(f) then ChunkedTransfer.sha256Hex(os.read.bytes(f)) else ""
+                    }
+                  }
+        expected = sends.map(ChunkedTransfer.sha256Hex)
+        lost     = expected.zip(hashes).count { case (e, a) => e != a }
+        sentSet  = expected.toSet
+      yield
+        assertEquals(reported.size, 6, s"6 次投递必须 6 条带 savedPath 的通报：$frames")
+        // ④a 落点非隐藏条目数 == 投递数（改前读数 = 2）
+        assertEquals(onDisk.size, 6, s"④a 同一秒 6 份必须零折叠，实际 $onDisk")
+        assert(onDisk.contains(name), s"首件应为裸名，实际 $onDisk")
+        // ④d 通报串两两互异（改前第 2..6 条逐字相同）
+        assertEquals(reported.distinct.size, 6, s"④d 通报名必须两两互异：$reported")
+        // ④b 6 条通报串在盘上都可达
+        assertEquals(existsAll, List.fill(6)(true), s"④b 通报串必须都可达：$reported")
+        // ④c 逐件字节 == 本次某一份源件；6/6 且**覆盖全部 6 份内容**（集合相等 ⇒ 无遗漏、无重复）
+        assert(hashes.forall(sentSet.contains), s"④c 通报路径必须指向本次源件字节：$hashes")
+        assertEquals(hashes.toSet, sentSet, "④c 6 条通报必须覆盖 6 份互异内容（集合相等）")
+        // ④e 内容丢失计数 == 0（改前 = 4）
+        assertEquals(lost, 0, s"④e 内容丢失计数必须为 0，实际 $lost（$reported）")
+    }.flatMap(_ => IO(os.remove.all(parent)))
+
+  // ===== ⑥ relay 腿撞名：既有件零损 + 新件改名落盘 + 通报 == 新件名（判据⑤c）=====
+
+  test("⑥ relay 腿撞名：既有件逐字不变 + 新件改名落盘 + 通报 == 新件实际名 + temp 零残留"):
+    val parent = os.temp.dir(prefix = "nb-nfpath-relay-")
+    val dir    = parent / "landing"
+    os.makeDir.all(dir)
+    val tid   = "t-relay-collide"
+    val name  = "relay.bin"
+    val prior = payload(4096, seed = 77L)
+    val data  = payload(2048, seed = 78L)
+    IO.blocking(os.write(dir / name, prior)).flatMap { _ =>
+      withReceiver(dir, () => BurstClock) { (ms, svc, seen) =>
+        for
+          _ <- ms.handleDataMessage(offerFrame(tid, name, data.length.toLong, dir))
+          // relay 腿：字节由对端按**同一 transfer 的确定性 temp 名**直写 —— 不经
+          // `receiveChunkFromPeer`（故收端会话 tempPath 记录为 None ⇒ 走 `Absent` 回落）。
+          // 被替换的只有 relay HTTP 层；命名 / 落名 / 占据 / 回读 / 通报全走生产代码。
+          _ <- IO.blocking(os.write(dir / DropboxUtil.receiverTempName(name, tid), data))
+          _ <- ms.handleDataMessage(completeFrame(tid))
+          frames <- seen.get
+          onDisk <- IO(landed(dir))
+          all    <- IO(if os.exists(dir) then os.list(dir).map(_.last).toList else Nil)
+          hist   <- svc.getHistory("kai-peer")
+          reported = reportedPaths(frames)
+          priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
+        yield
+          // 既有件零损（sha 前后相同 + 仍在）
+          assert(os.exists(dir / name), "既有件必须仍存在（禁 os.remove.all / 禁覆盖）")
+          assertEquals(priorNow, ChunkedTransfer.sha256Hex(prior), "既有件必须逐字不变")
+          val fresh = onDisk.filterNot(_ == name)
+          assertEquals(onDisk.size, 2, s"落点非隐藏条目应为 2（既有 + 新落），实际 $onDisk")
+          assertEquals(fresh.size, 1, s"除既有件外应恰有一件新落盘：$onDisk")
+          assertEquals(fresh.head, "relay_20260919_001715.bin", "撞名后的新名（固定时钟 ⇒ 确定）")
+          assertEquals(reported.size, 1, s"必须有一条带 savedPath 的完成通报：$frames")
+          // 通报 == 新件实际名（同源同一次观测）；既不是既有名，也不是预测名
+          assertEquals(reported.head, canon(dir / fresh.head), "通报必须等于新落件实际名")
+          assertEquals(hist.find(_.transferId == tid).map(_.savedPath), Some(canon(dir / fresh.head)))
+          assertEquals(os.read.bytes(dir / fresh.head).toSeq, data.toSeq, "新落件必须是本次字节")
+          assert(
+            all.filter(n => n.startsWith(".") && n.contains(".dropbox-")).isEmpty,
+            s"commit 后不得残留 temp：$all"
+          )
+      }.flatMap(_ => IO(os.remove.all(parent)))
+    }
+
+
+  // ===== ⑦ 预测名分支「删除」的绝对化读数（终裁③）：任何路径都不得回退到预测裸名 =====
+
+  test("⑦ 预测名分支已删除（绝对化）：对端等级 3 与 2 同样**不得**把盘上同名件当成本次落点"):
+    val levels = List(AttachContract.ProtoRelayTemp, AttachContract.ProtoAssignDir)
+    levels.traverse_ { level =>
+      val parent = os.temp.dir(prefix = "nb-nfpath-nopredict-")
+      val dir    = parent / "landing"
+      os.makeDir.all(dir)
+      val tid   = s"t-nopredict-$level"
+      val name  = "legacy-direct.bin"
+      val prior = payload(1024, seed = 91L)
+      IO.blocking(os.write(dir / name, prior)).flatMap { _ =>
+        withReceiver(dir) { (ms, svc, seen) =>
+          for
+            _ <- ms.handleDataMessage(offerFrame(tid, name, prior.length.toLong, dir, proto = level))
+            // 本会话**没有任何字节落盘**（既无 session temp，也没有本次 move）⇒ 唯一还可能给出
+            // 「落点」的来源只剩「按裸名预测」那条旧分支；该分支已删除 ⇒ 通报必须为空串。
+            _ <- ms.handleDataMessage(completeFrame(tid))
+            frames   <- seen.get
+            hist     <- svc.getHistory("kai-peer")
+            priorNow <- IO.blocking(ChunkedTransfer.sha256Hex(os.read.bytes(dir / name)))
+            saved = hist.find(_.transferId == tid)
+          yield
+            assertEquals(reportedPaths(frames), Nil, s"peerProto=$level 不得把盘上同名件预测成本次落点：$frames")
+            assertEquals(saved.map(_.savedPath), Some(""), s"peerProto=$level ledger 必须是空串（无本次观测）")
+            assert(os.exists(dir / name), s"peerProto=$level 既有件必须仍在")
+            assertEquals(priorNow, ChunkedTransfer.sha256Hex(prior), s"peerProto=$level 既有件必须逐字不变")
+        }
+      }.flatMap(_ => IO(os.remove.all(parent)))
+    }
 
 end SavedPathLandedReadbackSpec
