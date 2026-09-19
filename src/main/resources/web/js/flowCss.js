@@ -479,7 +479,20 @@ export const FLOW_CSS = `
 .ring-1 { width: 6px; height: 6px; }
 .ring-2 { width: 14px; height: 14px; }
 .ring-3 { width: 24px; height: 24px; }
-.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; will-change: transform; }
+/* 相位层（static phase layer）——外层只承载静止基相位（0/120/240），不参与动画。
+   两层分离是硬要求：CSS animation 的 transform 会整体顶掉同一元素的声明值，若把
+   keyframes 与基相位写在同一元素上，ring-2/3 的 120°/240° 基相位在动画期间丢失，
+   每圈只扫 360°-相位后跳回 —— 这正是旧 @keyframes solar-spin 的「循环缝」缺陷①。
+   opacity 过渡 = 完成收尾的淡出（见下方 fm-orbit-faded），0.45s 对齐旧 rAF 的
+   FADE_MS，且只在状态切换时触发（静止/运行时无过渡开销）。 */
+.solar-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; transition: opacity 0.45s ease; }
+/* 动画层（animation layer）——0x0 且与相位层同原点，故 transform-origin 0 0 时内层
+   rotate 与基相位严格共心：点仍沿环中线扫圆周（半径由下方 .ring-N .solar-dot left
+   决定，值域与 rAF 版逐值相同）。will-change 落在真正动的这一层。 */
+.solar-dot-spin {
+  position: absolute; top: 0; left: 0; width: 0; height: 0;
+  transform-origin: 0 0; will-change: transform;
+}
 .solar-dot {
   position: absolute; width: 3px; height: 3px;
   background: var(--color-text); border-radius: 50%; top: -1.5px;
@@ -492,20 +505,46 @@ export const FLOW_CSS = `
 .ring-2 .solar-dot { left: 5px; }  /* midline r = 14/2 − 0.5 = 6.5  = 5 + 1.5 */
 .ring-3 .solar-dot { left: 10px; } /* midline r = 24/2 − 0.5 = 11.5 = 10 + 1.5 */
 
-/* Initial angles — three dots spread around the orbit. These are BOTH the
-   resting positions (pending / completed / static) and the loop endpoints:
-   the rAF driver (flowAnim.js) rotates each dot exactly 360° per revolution,
-   so every loop ends where it began — no seam. */
+/* 静止基相位（= 运行时的循环端点，也是 pending/终态的静止角）。3 个点绕环均布；
+   rAF 版与 CSS 版共用同一组值（0/120/240），非 running 节点即落在此相位上。 */
 .ring-1 .solar-dot-wrap { transform: rotate(0deg); }
 .ring-2 .solar-dot-wrap { transform: rotate(120deg); }
 .ring-3 .solar-dot-wrap { transform: rotate(240deg); }
 
-/* Running rotation is owned by flowAnim.js (time-based rAF, inline
-   transforms). CSS keyframes could not (a) guarantee loop endpoints — an
-   implicit "from" of the base transform made ring-2/3 sweep only 120-240deg
-   per loop then snap back — nor (b) coast to the loop endpoint and fade when
-   a node completes. will-change on .solar-dot-wrap keeps the per-frame
-   transform on the compositor. */
+/* 运行旋转 = 纯 CSS keyframes（合成器线程执行 ⇒ 主线程零计算，且天然随
+   prefers-reduced-motion / 隐藏页节流）。显式声明 from 与 to（首尾同相、每圈正好
+   扫满 360°）⇒ 循环无缝（缺陷①）；跑/停由 .solar-node.running 类承载（类增删 =
+   动画起停，无逐帧 JS）。ring-2 反向 = animation-direction: reverse，逐字对齐
+   旧 RING_DIR=[1,-1,1]。周期经 --solar-period-* 走 :root（测试钩子可整体缩短）。 */
+@keyframes solar-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+/* 收尾用的同值副本：flowAnim.js 切换 animation-name 到本名 = 强制新建动画对象，
+   唯此负 animation-delay 才能落在「当前已扫过的角度」上（见 flowAnim.js 注释②）。 */
+@keyframes solar-spin-coast { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+:root { --solar-period-1: 3s; --solar-period-2: 4.5s; --solar-period-3: 6s; }
+/* .fm-orbit-coast = 收尾态（由 flowAnim.js 在 running→终态时挂上）：同一份
+   animation 声明的第二个匹配分支，使状态类被改写的那一刻动画**不被摘除**
+   （animation-name 不变 ⇒ 浏览器不重建动画，进度连续）——收尾补丁由此能读到
+   真实 currentTime（而不是从相位原点反推）。 */
+.solar-node.running .ring-1 .solar-dot-spin,
+.solar-node.fm-orbit-coast .ring-1 .solar-dot-spin { animation: solar-spin var(--solar-period-1, 3s) linear infinite; }
+.solar-node.running .ring-2 .solar-dot-spin,
+.solar-node.fm-orbit-coast .ring-2 .solar-dot-spin { animation: solar-spin var(--solar-period-2, 4.5s) linear infinite reverse; }
+.solar-node.running .ring-3 .solar-dot-spin,
+.solar-node.fm-orbit-coast .ring-3 .solar-dot-spin { animation: solar-spin var(--solar-period-3, 6s) linear infinite; }
+
+/* 完成收尾（running → 终态）：等价旧 rAF 语义「先滑行到本轮端点再淡出」，不是
+   硬切。收尾由 flowAnim.js 做**一次性**改写（同一个 keyframes 副本 + 1 次迭代 +
+   fill forwards ⇒ 从当前角继续跑到本轮端点并停住，端点 ≡ 基相位），动画自然结束
+   （animationend）后节点挂上本类让相位层淡出。零逐帧循环、零计时器。 */
+.solar-node.fm-orbit-faded .solar-dot-wrap { opacity: 0; }
+
+/* 减动效（S2）：轨道动画整体关闭 —— 点静止在基相位、环/状态色照旧（「节点在跑」
+   仍可由静态环与状态词判读），并由 flowAnim.js 的 matchMedia 判据同步短路收尾补丁
+   （不在 reduce 下写任何 inline animation）。 */
+@media (prefers-reduced-motion: reduce) {
+  .solar-dot-spin { animation: none !important; }
+  .solar-dot-wrap { transition: none; }
+}
 
 /* Status variants */
 .solar-node.pending .solar-ring { border-style: dashed; opacity: 0.4; }
