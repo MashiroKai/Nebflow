@@ -2283,9 +2283,11 @@ function renderBgAgentDropdown() {
 // passes a no-op wsSend — track events must not pollute the parent view), so a
 // run is invisible unless the browser happens to refresh inside its window.
 // Fetch on open instead: user-driven, reuses the existing getActiveAgents
-// request and the existing activeAgents full-rebuild consumer (zero backend
-// change, no new protocol). The 1s cooldown only debounces rapid open/close
-// taps — a normal open sends exactly one frame, closing sends none.
+// request and the existing activeAgents consumer (since 批 snapmerge-impl that
+// consumer MERGES the snapshot into the rendered row set instead of rebuilding
+// it, so a backfill arriving empty no longer wipes the open panel's rows)
+// (zero backend change, no new protocol). The 1s cooldown only debounces rapid
+// open/close taps — a normal open sends exactly one frame, closing sends none.
 let lastActiveAgentsFetchAt = 0;
 function fetchActiveAgentsOnOpen() {
   const now = Date.now();
@@ -2418,6 +2420,9 @@ onMessage('agentToolStart', (msg, view) => {
   const aid = msg.agentId || (view && view.stream.activeAgentId);
   if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
     state.sessionBgAgents[sid][aid].currentTool = msg.label;
+    // 实时活动 = 「本行仍在跑」的见证（合并规则 ③ 的陈旧判据）：工具活动关闭
+    // 陈旧窗 —— 只有「连续未命中且其间零活动」的行才可能被淘汰。
+    state.sessionBgAgents[sid][aid]._missSince = null;
     if (view) renderBgAgentDropdown();
   }
 });
@@ -4167,22 +4172,55 @@ onMessage('activeBgTasks', (msg) => {
 // ---------- Reconnect: sync background sub-agents ----------
 // Backend responds to getActiveAgents with currently-running sub-agents:
 //   { type: "activeAgents", agents: [{ sessionId, agentId, agentName, rootSessionId, kind }] }
-// Rebuild sessionBgAgents from backend truth — real-time agentStart events
-// are not replayed after a page refresh (F5), and anything not listed has
-// finished (the backend registry no longer tracks it).
+// MERGE sessionBgAgents with backend truth — real-time agentStart events are
+// not replayed after a page refresh (F5), so the getActiveAgents snapshot is
+// the restore path for rows that predate the reload. 批 snapmerge-impl（作者令
+// 2026-09-19 ①）: the snapshot is **merged into** the rendered row set instead
+// of rebuilding it (`state.sessionBgAgents = {}`, the old whole-bucket wipe).
+// The wipe emptied a panel the user had just opened whenever the backfill came
+// back empty/partial — a fresh or isolated instance, a registry race, a live
+// frame still in flight while the panel opened: the panel stayed open and lost
+// every row ("开而行内容消失"). Merge semantics (three classes, see below) +
+// the dropcol guard at `updateBgAgentIndicator` (per call site) together give:
+// open ⇒ rows kept, terminal ⇒ still collapses.
+/** 陈旧窗（毫秒）：被保留的行「连续未命中快照且其间零实时活动」持续超过此时长才
+ *  淘汰 —— 「保留」的机械上界，防永久幽灵行（旧 ghost-row 教训）。取值理由：
+ *  终态清理（agentDone 2s / 会话级 done 立即）是主路径，本窗只是**丢帧兜底**，
+ *  必须长于任何一次「快照请求在途 → 行刚落库」的竞态，短于一次会话的观感尺度。 */
+const BG_SNAPSHOT_STALE_MS = 30000;
 onMessage('activeAgents', (msg) => {
   const agents = msg.agents || [];
-  // Rebuild sessionBgAgents from backend truth
-  state.sessionBgAgents = {};
+  // ── 合并规则 ①: 快照列出的条目以**快照为准** ──────────────────────────
+  // 同 key ⇒ 按快照刷新（name/task/status/kind/project/startedAt/retryCount）。
+  // 快照不携带的字段（currentTool/stuck/frozen* —— 只由实时帧写入）保留本地值，
+  // 回填不得把实时帧已经写得更丰富的行降级。`done` 单调：本地已收到的终态优先于
+  // 快照行（其 2s 清理定时器随后自会移除）。
+  const seen = new Set();   // `${sid}\u0000${key}` —— 本次快照覆盖到的行
   const activeRootSessions = new Set();
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
-    // #28 可观测接线: 不再过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
-    // 同一快照重建路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
+    // #28 可观测接线: 不过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
+    // 同一快照路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
     // 终态由 done handler 清理, 快照只报运行中的 registry 条目）。
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
-    state.sessionBgAgents[sid][a.agentId] = {
+    const bucket = state.sessionBgAgents[sid];
+    // Cross-keyspace dedupe（与 agentStart 同规则, W1-d）: 快照行键 = 裸
+    // sessionId, 实时行键 = actor 路径 agentId（mail-*）。同属一个 agent 时实时行
+    // 更丰富 ⇒ 保留实时行、只登记「快照已佐证」（合并不得把同一 agent 渲染两行）。
+    const bare = (a.sessionId || '').replace(/^team-/, '');
+    const twinKey = bare
+      ? Object.keys(bucket).find(k => k !== a.agentId && (((bucket[k] || {}).sessionId || '').replace(/^team-/, '') === bare))
+      : undefined;
+    const twin = twinKey ? bucket[twinKey] : null;
+    if (twin && !twin.done && !isFailedSnapshotStatus(twin.status)) {
+      twin._missSince = null;
+      seen.add(sid + '\u0000' + twinKey);
+      activeRootSessions.add(sid);
+      continue;
+    }
+    const prev = bucket[a.agentId] || null;
+    bucket[a.agentId] = {
       name: a.agentName || a.agentId,
       task: a.task || '',
       sessionId: a.sessionId || '',
@@ -4190,19 +4228,57 @@ onMessage('activeAgents', (msg) => {
       // (Delegate/SubTask/Ephemeral operable, Team/Flow read-only); startedAt
       // powers uptime restore; status ("Error(msg)" form) powers the failed
       // state and retryCount the retries chip after a page refresh (backend
-      // fields landed @179a009e).
-      kind: a.kind || '',
+      // fields landed @179a009e). Snapshot-absent values fall back to the local
+      // entry (merge, not rebuild: an older snapshot must not blank a field the
+      // live frames already filled in).
+      kind: a.kind || (prev && prev.kind) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.
       project: a.project || '',
-      startedAt: a.startedAt || null,
+      startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
-      retryCount: typeof a.retryCount === 'number' ? a.retryCount : 0,
-      currentTool: null,
-      done: false,
+      retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),
+      // 只由实时帧写入的字段：快照不表态 ⇒ 保留本地值（不降级已渲染行）。
+      currentTool: (prev && prev.currentTool) || null,
+      stuck: (prev && prev.stuck) || null,
+      frozen: (prev && prev.frozen) || false,
+      freezeResumeAt: (prev && prev.freezeResumeAt) || null,
+      freezeReason: (prev && prev.freezeReason) || null,
+      // `done` 单调：本地已收到的终态事件优先于快照行（其 2s 清理随后自会移除）。
+      done: !!(prev && prev.done),
+      // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
+      _missSince: null,
     };
+    seen.add(sid + '\u0000' + a.agentId);
     activeRootSessions.add(sid);
+  }
+  // ── 合并规则 ②: 快照**未**列出的本地行逐类裁定（三类，逐条给判据）──────
+  // ① 终态/已结束 —— **可清**，且就地清：证据 = 本客户端**已收到**的终态事实
+  //    （agentDone 2s 路径 / 会话级 done 分支置的 `done`，或失败状态），
+  //    🔴 绝非「快照没列它」这一沉默本身。
+  // ② 快照未列但本地仍在跑 —— **保留**：判据 = `!done && !失败状态`（本行没有收到
+  //    任何终态事件）。空/部分回包（新实例·隔离实例·registry 竞态·开面板时实时帧
+  //    仍在途）因此不得清掉已渲染行集。
+  // ③ 过期/陈旧 —— **可清**：被保留的行自**首次**未命中起连续未命中已达
+  //    BG_SNAPSHOT_STALE_MS，且其间**零实时活动**（agentStart 重建条目、
+  //    agentToolStart 归零窗口）⇒ 淘汰。「保留」不会退化成永久幽灵行。
+  //    终态必清的机械读数 = ① + agentDone 2s 定时器 + 会话级 done 分支 + 本类。
+  const now = Date.now();
+  for (const [sid, bucket] of Object.entries(state.sessionBgAgents)) {
+    for (const [key, info] of Object.entries(bucket)) {
+      if (seen.has(sid + '\u0000' + key)) continue;
+      if (info && (info.done || isFailedSnapshotStatus(info.status))) {   // ①
+        delete bucket[key];
+        continue;
+      }
+      if (!info) continue;
+      if (info._missSince == null) info._missSince = now;                 // ②
+      else if (now - info._missSince >= BG_SNAPSHOT_STALE_MS) {           // ③
+        delete bucket[key];
+      }
+    }
+    if (Object.keys(bucket).length === 0) delete state.sessionBgAgents[sid];
   }
   // Sync busySessionIds: clear sessions that are no longer active on the backend.
   // A 'done' event missed during WS disconnect leaves the session stuck as busy
