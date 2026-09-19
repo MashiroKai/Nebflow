@@ -350,11 +350,19 @@ object DeviceCredential:
     * The ACL failure path is deliberately non-fatal (the credential is already
     * on disk) but never silent: a warning is logged, because "could not narrow
     * the ACL" is exactly the state in which the device token is readable by
-    * other principals (Q2 defect). */
+    * other principals (Q2 defect).
+    *
+    * `aclLadder` (2026-09-19, credaacl 批) is the Windows self-check/repair
+    * ladder — the seam that closes the residual "落盘即单向锁死" defect (see
+    * [[nebflow.core.CredentialFileAcl.WindowsLadder]]). The DEFAULT is the
+    * production ladder, so every existing caller is byte-for-byte unchanged; it
+    * is a parameter only so the call-face spec (T4-R7…R9b) can drive a
+    * locked-form ladder without a Windows host. No behaviour switches on it. */
   private[neblink] def save(
     cred: DeviceCredential,
     aclPort: CredentialFileAcl.Port,
-    osName: String
+    osName: String,
+    aclLadder: CredentialFileAcl.WindowsLadder = CredentialFileAcl.systemLadder
   ): IO[Unit] =
     IO.blocking(AtomicJson.writeSync(credPath, cred.asJson.spaces2))
       .handleErrorWith { e =>
@@ -368,7 +376,12 @@ object DeviceCredential:
           // Owner-only access control: rw------- on POSIX, single-owner DACL on
           // Windows (the platform where the old POSIX call was a silent no-op).
           try
-            CredentialFileAcl.restrict(java.nio.file.Paths.get(credPath.toString), osName, aclPort)
+            CredentialFileAcl.restrict(
+              java.nio.file.Paths.get(credPath.toString),
+              osName,
+              aclPort,
+              aclLadder
+            )
             None
           catch
             case e: Exception =>
