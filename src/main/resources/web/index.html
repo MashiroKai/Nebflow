@@ -44,6 +44,10 @@
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/lightbox.css">
   <link rel="stylesheet" href="css/usage.css">
+  <!-- Social interface cards (socpanel batch, 2026-09-19): all widths, tokens
+       and materials are reused from the design system — new values land here,
+       never in sapphire.css (off-limits for this batch). -->
+  <link rel="stylesheet" href="css/social.css">
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
@@ -74,6 +78,13 @@
     </button>
     <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
     <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
+    <!-- Social interface cards entry (socpanel batch, 2026-09-19; author ruling
+         2026-09-19 令③): smartphone icon, directly below the contacts entry,
+         before the spacer. No side panel — it opens the config dialog
+         (#social-overlay). Gated together with the contacts anchor: when the
+         friends feature gate detaches the contacts entry, activityBar.js
+         detaches this button on the same beat (no silent drift). -->
+    <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
@@ -419,6 +430,43 @@
       </div>
       <div id="search-status" aria-live="polite"></div>
       <div id="search-results" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Social interface cards dialog (socpanel batch, 2026-09-19).
+       Shell only — every caption is applied by js/socialPanel.js through the
+       locale table (js/i18n.js is not part of this batch's write face), and the
+       cards are rendered from the definition array in js/socialChannels.js.
+       No dimming backdrop (design §B/W3): the overlay is transparent and the
+       shell itself carries the blur.
+       #social-section-remote is the remote-access face (author ruling 令②): an
+       independent section, never a channel card. It stays deliberately
+       INERT in this batch — the switch semantics, the address export, the QR
+       code and the clipboard fallback are author-face items O1–O5 of the
+       redesign and are NOT decided yet. No link, no QR, no guessed address is
+       rendered here (see js/socialPanel.js header). -->
+  <div id="social-overlay">
+    <div id="social-modal" role="dialog" aria-modal="true" aria-labelledby="social-modal-title">
+      <div class="social-modal-header">
+        <span id="social-modal-title"></span>
+        <button id="social-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="social-modal-body">
+        <div id="social-section-remote" class="social-section">
+          <div id="social-remote-title" class="social-section-title"></div>
+          <div class="social-card social-remote-card">
+            <div id="social-remote-suspended" class="social-remote-note"></div>
+            <div class="social-remote-safety">
+              <div id="social-remote-safety-key" class="social-remote-safety-line"></div>
+              <div id="social-remote-safety-plain" class="social-remote-safety-line"></div>
+            </div>
+          </div>
+        </div>
+        <div id="social-section-channels" class="social-section">
+          <div id="social-channels-title" class="social-section-title"></div>
+          <div class="social-card-list"></div>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -102,6 +102,10 @@ import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
+// Social interface cards (socpanel batch, 2026-09-19): entry #social-btn +
+// config dialog. Wiring is document-level, so it survives the friends gate
+// detaching/re-attaching the entry (see socialPanel.js initSocialPanel).
+import { initSocialPanel } from './socialPanel.js';
 import { friendsEnabled } from './featureFlags.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
@@ -3916,6 +3920,7 @@ initDaemons();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
+initSocialPanel();
 initUpdateCheck();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
