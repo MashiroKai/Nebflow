@@ -259,7 +259,21 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "tool-blocked-a", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "tool-blocked-a")
       a <- nodeById(rt, aId)
+      // 同步点（S1 组负载敏红修复 · round 2 同族收口）：WS 事件与审计行都**晚于** store
+      // 终态落盘 —— 原形态是「先读一次、settle 落在读之后」，同步点为 0（负载下读到空集：
+      // 实测红 `blocked must emit nodeUpdated`，见 round 1 判词 D-2）。改为**有界等它到**；
+      // 下面三条断言本体逐字不变（等不到 ⇒ 仍然红，不掩盖）。
+      // 等待条件必须与断言**逐字同形**（含 status=blocked 判据）：节点生命周期会先后发多条
+      // nodeUpdated（Running → Blocked），只等「任一 nodeUpdated」会在 Running 那条上立即返回
+      // ⇒ 读到的快照仍缺 Blocked 那条（实测红：:293 断言）。等它到 ⇒ 断言本体逐字不变。
+      _ <- waitUntil(10.seconds)(
+        events.get.map(_.exists((t, id, p) => t == "nodeUpdated" && id == aId &&
+          p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)))
+      )
       evs <- events.get
+      _ <- waitUntil(10.seconds)(
+        readAuditTypes(ws).map(_.exists((t, id) => t == "blocked" && id == aId))
+      )
       audit <- readAuditTypes(ws)
       _ <- IO.sleep(300.millis)
       dAfter <- rt.store.snapshot.map(_.nodes.values.find(_.name == "down-d")).map(_.getOrElse(fail("D must exist")))
@@ -355,9 +369,14 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "tool-pass-a", Set(NodeLifecycle.Completed))
       pId <- idOf(rt, "tool-pass-a")
       p <- nodeById(rt, pId)
+      // 同步点（同上）：nodeCompleted 是**正**断言 ⇒ 有界等它到；零 blocked 审计行是
+      // **负**断言 ⇒ settle 必须落在**读之前**（原形态 sleep 在读之后 = 同步点 0）。
+      _ <- waitUntil(10.seconds)(
+        events.get.map(_.exists((t, id, _) => t == "nodeCompleted" && id == pId))
+      )
       evs <- events.get
-      audit <- readAuditTypes(ws)
       _ <- IO.sleep(300.millis)
+      audit <- readAuditTypes(ws)
       dAfter <- rt.store.snapshot.map(_.nodes.values.find(_.name == "down-p")).map(_.getOrElse(fail("D must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -398,8 +417,9 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "tool-vpass-a", Set(NodeLifecycle.Completed))
       vId <- idOf(rt, "tool-vpass-a")
       v <- nodeById(rt, vId)
-      audit <- readAuditTypes(ws)
+      // 负断言（零 loop-round 审计行，同文件同族第三处残件）：settle 移到读之前。
       _ <- IO.sleep(300.millis)
+      audit <- readAuditTypes(ws)
       land <- rt.store.snapshot.map(_.nodes.get("n-land-vp").getOrElse(fail("landing node must exist")))
       work <- rt.store.snapshot.map(_.nodes.get("n-work-vp").getOrElse(fail("worker node must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -439,6 +459,10 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       _ <- waitStatus(rt, "tool-fail-a", Set(NodeLifecycle.Completed))
       fId <- idOf(rt, "tool-fail-a")
       f <- nodeById(rt, fId)
+      // 同族第四处残件：`nodeCompleted`（:469 正断言）的读同样零同步点 ⇒ 有界等它到。
+      _ <- waitUntil(10.seconds)(
+        events.get.map(_.exists((t, id, _) => t == "nodeCompleted" && id == fId))
+      )
       evs <- events.get
       // 同步点（S1 组负载敏红修复）：节点终态先落 store，审计行到 flow-map-events.jsonl 更晚
       // ——原形态是「readAuditTypes **之后** IO.sleep(300ms)」，同步点为 0：负载下读到空表
