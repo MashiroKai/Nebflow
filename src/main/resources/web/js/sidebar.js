@@ -1493,7 +1493,11 @@ function bindSettingsEvents(content, cfg) {
     btn.textContent = t('settings.updating');
     btn.disabled = true;
     statusEl.textContent = '';
-    sendWs({type: 'doUpdate'});
+    // confirm:true = 强制确认位（hotupdate 批 1 · D3）：界面上的「立即更新」按钮点击
+    // 就是用户的确认动作，引擎侧沿用既有 restart 命令的 confirm 语义——缺该位一律
+    // 直接拒绝（可行动错误），不静默执行。相位进度由统一 updateProgress 帧下发
+    //（前端消费属批 3 · G6；本行只补确认位，不改既有帧处理）。
+    sendWs({type: 'doUpdate', confirm: true});
   });
 
   document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {

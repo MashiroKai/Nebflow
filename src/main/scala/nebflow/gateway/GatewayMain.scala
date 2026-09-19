@@ -692,8 +692,19 @@ object GatewayMain extends IOApp:
                                   cfg.host.toString,
                                   wsHub.broadcast
                                 )
+                                // 统一更新编排器（hotupdate 批 1，设计 §4 设计 A）：全部入口
+                                // 只发「更新请求」，由它独占执行；重启相位**一律委托**上面的
+                                // 热重启编排器（排空/翻态/派生/握手零复制）；统一进度帧经**同一
+                                // 广播通道** wsHub.broadcast（复用点 #11，构造点即本处）。
+                                val updateOrchestrator = new nebflow.core.hotupdate.UpdateOrchestrator(
+                                  Some(hotRestart),
+                                  wsHub.broadcast
+                                )
                                 val sharedResourcesWithRestart =
-                                  sharedResources.copy(hotRestart = Some(hotRestart))
+                                  sharedResources.copy(
+                                    hotRestart = Some(hotRestart),
+                                    updateOrchestrator = Some(updateOrchestrator)
+                                  )
                                 hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> succeedPortGate(cfg) *> {
                                   val sharedResourcesLive = sharedResourcesWithRestart
                                   // 2026-09-13（permshield S1）：`SessionService` 不再需要

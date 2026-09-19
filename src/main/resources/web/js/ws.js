@@ -146,6 +146,14 @@ const GLOBAL_MSG_TYPES = new Set([
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
   'updateCheckResult', 'updateStarted', 'updateCompleted',
+  // Unified update progress (hotupdate 批 1 契约 · 设计 §4/§7): the update
+  // orchestrator broadcasts {type:'updateProgress', phase, messageKey, ...} on
+  // the same channel (wsHub.broadcast → all connections) with NO sessionId.
+  // 🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被 :485-494 当会话内事件 ⇒
+  // setActiveView(primary)，把用户正在看的视图切走（每次相位推进都切一次）。
+  // 本批只钉**契约**（帧类型 + 文案键），前端**消费/渲染**属批 3（G6）——此处零消费。
+  // 'updateResult' = 受理/已在途/更新中/拒绝的即时应答（同为全局、无 sessionId）。
+  'updateProgress', 'updateResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',

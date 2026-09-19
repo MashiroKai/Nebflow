@@ -823,6 +823,23 @@ export default {
   'settings.updateLater': 'Later',
   'settings.updateError': 'Update check failed',
 
+  // Unified update phase text (hotupdate batch 1 · design §7 naming: `update.phase`
+  // plus the phase name). Phase frames carry a messageKey (e.g.
+  // 'update.phase.freezing') — display text is resolved from this table only;
+  // 🔴 frames carry no display text (ruling 10 / D6: failures and rollbacks use the
+  // status line only — no toasts, no modals, no red blocks). Frontend rendering is
+  // batch 3 (G6).
+  'update.phase.idle': 'Not updated yet',
+  'update.phase.checking': 'Checking for a new version',
+  'update.phase.preparing': 'Update request accepted',
+  'update.phase.freezing': 'Waiting for in-flight work to finish, then freezing',
+  'update.phase.updating': 'Installing the new version',
+  'update.phase.restarting': 'Restarting',
+  'update.phase.recovering': 'Recovering tasks',
+  'update.phase.completed': 'Updated to {version}',
+  'update.phase.aborted': 'Update aborted: {reason} — the current version keeps serving, unaffected',
+  'update.phase.rolled-back': 'The new version failed its health check; rolled back to {version}',
+
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': 'Models',

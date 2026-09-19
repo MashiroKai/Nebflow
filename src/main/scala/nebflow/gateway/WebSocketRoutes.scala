@@ -3621,33 +3621,25 @@ class WebSocketRoutes(
 
           case "checkUpdate" =>
             val currentVer = nebflow.Version.string
-            val result = IO
-              .blocking {
-                try
-                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
-                  // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
-                  // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
-                  // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
-                  val url = s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
-                  val conn = java.net.URI.create(url).toURL.openConnection()
-                  conn.setConnectTimeout(5000)
-                  conn.setReadTimeout(5000)
-                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim
-                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——OSS 镜像无 release 名，版本号兜底
-                  else None
-                catch case _: Exception => None
-              }
+            // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
+            // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
+            // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
+            // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
+            // hotupdate 批 1：读取与比对本体已抽到 VersionCheck（单一实现）——更新
+            // 编排器的「检查」相位与本分支同源，禁第二套比对。帧形状逐字段不变。
+            val result = nebflow.core.hotupdate.VersionCheck
+              .fetchRaw()
               .flatMap {
-                case Some((tag, releaseName)) =>
+                case Some(tag) =>
                   val latestVer = tag.stripPrefix("v")
-                  val hasUpdate = latestVer != currentVer
+                  val hasUpdate = nebflow.core.hotupdate.VersionCheck.hasUpdate(currentVer, latestVer)
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "updateCheckResult".asJson,
                       "currentVersion" -> currentVer.asJson,
                       "latestVersion" -> latestVer.asJson,
                       "hasUpdate" -> hasUpdate.asJson,
-                      "releaseName" -> releaseName.asJson
+                      "releaseName" -> tag.asJson
                     )
                   )
                 case None =>
@@ -3661,43 +3653,60 @@ class WebSocketRoutes(
               }
             result
 
+          // ── 一键更新（设置页）：接统一更新编排器（hotupdate 批 1 · D3 · 闭 G1）。
+          // 本批前：本段**只装不重启**（内联 curl|sh，整段零重启调用）⇒ 点完仍是旧版在跑。
+          // 本批后：发**更新请求**给编排器 ⇒ 检查 → 准备 → 冻结 → 更新（安装动作本体
+          // #26）→ 重启（**委托既有热重启编排器**）→ 恢复（后继进程自己走既有开机链）。
+          // 向后兼容：既有 updateStarted / updateCompleted 两帧保留不删（安装相位回执经
+          // onInstallOutcome 发出，形状与字段语义不变）；相位进度走统一 updateProgress 帧。
+          // 确认位：沿用既有 restart 命令的强制位语义——缺 confirm 直接拒绝 + 可行动错误。
           case "doUpdate" =>
-            val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
-            wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
-              IO.blocking {
-                import sys.process.*
-                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-                // String concat (not s"") — the powershell snippets contain
-                // $env: which an interpolator would try to resolve.
-                val script =
-                  if beta then
-                    if isWindows then
-                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + Branding.installPs1Url + """ | iex" """
-                    else "curl -fsSL " + Branding.installUrl + " | sh -s -- --beta"
-                  else if isWindows then """powershell -Command "& { iwr """ + Branding.installPs1Url + """ | iex }" """
-                  else "curl -fsSL " + Branding.installUrl + " | sh"
-                val exitCode = script.!
-                if exitCode == 0 then
-                  wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
-                else
-                  wsSend(
-                    io.circe.Json
-                      .obj(
+            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val beta = rc.downField("beta").as[Boolean].getOrElse(false)
+            val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
+            val idemKey = rc.downField("idempotencyKey").as[String].toOption
+            sharedResources.updateOrchestrator match
+              case None =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "updateCompleted".asJson,
+                    "success" -> false.asJson,
+                    "error" -> "update orchestrator is not available in this instance".asJson
+                  )
+                )
+              case Some(orchestrator) =>
+                val updateReq = nebflow.core.hotupdate.UpdateRequest(
+                  source = nebflow.core.hotupdate.UpdateSource.Settings,
+                  confirm = confirmed,
+                  channel =
+                    if beta then nebflow.core.hotupdate.UpdateChannel.Beta
+                    else nebflow.core.hotupdate.UpdateChannel.Stable,
+                  // 裁定 7：更新场景等待上限独立值 300s（界面重启命令那一处的 600s
+                  // 默认本批零改动——两值互不影响，见 UpdateDefaults 注释）。
+                  mode = nebflow.core.hotrestart.RestartMode.WaitIdle(
+                    nebflow.core.hotupdate.UpdateDefaults.awaitIdleMs),
+                  idempotencyKey = idemKey
+                )
+                // 安装相位回执 → 既有完成帧（向后兼容；失败分支的文案来自安装动作本体 #26）
+                val onInstallOutcome: Either[String, String] => IO[Unit] =
+                  case Right(_) =>
+                    wsSend(
+                      io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
+                  case Left(err) =>
+                    wsSend(
+                      io.circe.Json.obj(
                         "type" -> "updateCompleted".asJson,
                         "success" -> false.asJson,
-                        "error" -> s"Exit code: $exitCode".asJson
-                      )
-                  )
-              }.flatten
-                .handleErrorWith { e =>
-                  wsSend(
-                    io.circe.Json
-                      .obj(
-                        "type" -> "updateCompleted".asJson,
-                        "success" -> false.asJson,
-                        "error" -> e.getMessage.asJson
-                      )
-                  )
+                        "error" -> err.asJson
+                      ))
+                orchestrator.request(updateReq, onInstallOutcome).flatMap { admission =>
+                  nebflow.core.hotupdate.UpdateOrchestrator.admissionFrame(admission) match
+                    case None =>
+                      // 受理 → 既有开始帧（向后兼容）
+                      wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson))
+                    case Some(frame) =>
+                      // 已在途 / 更新中 / 拒绝 —— 立即回报（更新是排他动作、不排队）
+                      wsSend(frame)
                 }
 
           case "remoteUpdate" =>
