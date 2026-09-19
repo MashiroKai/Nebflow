@@ -1983,7 +1983,7 @@ onMessage('historyPage', (msg, view) => {
 // card (spinner → result) is the only chat-level feedback.
 // Click the indicator to see a dropdown with per-agent status.
 
-function updateBgAgentIndicator(targetSid) {
+function updateBgAgentIndicator(targetSid, opts) {
   // Update the indicator of the view that DISPLAYS the session owning these
   // sub-agents — not blindly activeView. Sub-agent events are routed through
   // the popup's ChatView (activeView temporarily points there; popup views
@@ -2009,7 +2009,18 @@ function updateBgAgentIndicator(targetSid) {
     el.classList.add('hidden');
     el.setAttribute('aria-expanded', 'false');
     const dropdown = view.dom.bgagentDropdownEl;
-    if (dropdown) dropdown.classList.add('hidden');
+    // Author ruling 2026-09-19 (批 dropcol-impl), 令①: only the SNAPSHOT-BACKFILL
+    // call site (onMessage('activeAgents') below) may not close the panel. The
+    // user just clicked the indicator — "open" outranks a backfill that arrives
+    // with an empty registry (isolated/test instance or a session whose
+    // sub-agents just went terminal), which used to snap the panel shut one
+    // frame after it opened. Every OTHER close source is deliberately untouched:
+    // the terminal paths (agentDone → 2s cleanup, session-level done for
+    // node-*/dispatcher-*) still collapse the panel through this same line, and
+    // so do the outside-click (:2319) and toggle (:2301) paths. Hence the guard
+    // is per CALL SITE, not global — a blanket "never close on count 0" would
+    // break 令②(子任务全部结束面板自动收起).
+    if (dropdown && !(opts && opts.keepDropdownOpen)) dropdown.classList.add('hidden');
   }
   if (view === activeView) renderBgAgentDropdown();
 }
@@ -4203,7 +4214,10 @@ onMessage('activeAgents', (msg) => {
       clearBusy(sid);
     }
   }
-  if (activeView) updateBgAgentIndicator();
+  // 批 dropcol-impl (作者令 2026-09-19 ①): 本处理器是「开面板回填」路径 —— 回包为空
+  // 也不得关闭用户刚打开的面板（keepDropdownOpen）。终态路径（agentDone/done）与
+  // 面板外点击/toggle 语义不传此选项 ⇒ 收起行为逐条不变（按调用点区分）。
+  if (activeView) updateBgAgentIndicator(null, { keepDropdownOpen: true });
   // Recompute agent nav states — the visual indicator depends on busySessionIds
   computeAgentStates();
 });
