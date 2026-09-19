@@ -12,7 +12,7 @@
 //   A4 几何首帧即终态：modal rect 首帧 == 末帧，且**无任何帧**超过终态（容差 1px）；
 //   A5 多轮（3 次点击）均成立，且终态几何跨轮一致；
 //   B1 静态规则锁：目标面板 POPUP_CSS 内 `animation: fa-fade-in` 零处、
-//      `@keyframes fa-fade-in` 仍在、fullscreen 卡片几何四则一字未动、
+//      `@keyframes fa-fade-in` 已清零（作者 2026-09-19 死定义清理令；原「保守保留」锁作废归档）、fullscreen 卡片几何四则一字未动、
 //      无 width/height transition；
 //   B2 静态规则锁：**其他面板**（.bgt-* 真源 bgTaskOutputPopup.js）自己的
 //      bgt-fade-in 与其 reduced-motion 降级仍在（未被牵连）。
@@ -266,13 +266,13 @@ test.describe('子智能体窗 · 开场即终态（无两段几何 / 无进场�
 });
 
 test.describe('子智能体窗 · 静态规则锁（改法面 + 其他面板未牵连）', () => {
-  test('目标面板 POPUP_CSS：无 animation: fa-fade-in 用法、keyframes 仍在、几何四则未动', () => {
+  test('目标面板 POPUP_CSS：无 animation: fa-fade-in 用法、keyframes 已清零、几何四则未动', () => {
     const src = readFileSync(join(WEB, 'js', 'flowAgentPopup.js'), 'utf8');
     const css = src.slice(src.indexOf('const POPUP_CSS'), src.indexOf('</style>`'));
     // 用法零处（规则文本口径，不依赖行号）
     expect(css).not.toMatch(/animation:\s*fa-fade-in/);
-    // 关键帧定义保留（保守：不删定义，避免任何外部引用破功）
-    expect(css).toMatch(/@keyframes fa-fade-in\s*\{/);
+    // 关键帧定义已由 2026-09-19 死定义清理令清零（原「保守保留」锁作废归档，非新增开放项）
+    expect(css).not.toMatch(/@keyframes fa-fade-in\s*\{/);
     // fullscreen 卡片几何四则一字未动
     expect(css).toMatch(/\.flow-agent-overlay\.fullscreen \.flow-agent-modal \{[\s\S]*?width: 90%; max-width: 720px;/);
     expect(css).toMatch(/\.flow-agent-overlay\.fullscreen \.flow-agent-modal \{[\s\S]*?height: 80vh; max-height: 85vh;/);

@@ -38,7 +38,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   z-index: 50;
   pointer-events: auto;
 }
-@keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Modal — fixed-position, always centered in the viewport. Not draggable. */
 .flow-agent-modal {
