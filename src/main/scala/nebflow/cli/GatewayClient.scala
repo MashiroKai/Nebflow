@@ -147,7 +147,7 @@ object GatewayClient:
     */
   @volatile private var portOverride: Option[Int] = None
 
-  private[cli] def setPort(port: Int): Unit = portOverride = Some(port)
+  private[nebflow] def setPort(port: Int): Unit = portOverride = Some(port)
   private[cli] def resetPort(): Unit = portOverride = None
 
   /** Single port resolver: explicit CLI override > `GATEWAY_PORT` env > 8080.

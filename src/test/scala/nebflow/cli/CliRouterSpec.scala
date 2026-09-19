@@ -200,6 +200,25 @@ class CliRouterSpec extends FunSuite:
 
   // ===== 4. help rendering (T1/T3/T4/T5/T6/T13, A9/T10) =====
 
+  test("A6/V6: `help <command>` reaches the command help (the argument list the entry point forwards)") {
+    val (out, code) = runCaptured("help", "session")
+    assertEquals(code, 0)
+    assert(out.contains("Parameters:"), out)
+    assert(out.contains("--agent, -a"), out)
+  }
+
+  test("A8/V8: `help --json` is JSON while plain `help` stays text (the flag must survive to the router)") {
+    val (textOut, textCode) = runCaptured("help")
+    val (jsonOut, jsonCode) = runCaptured("help", "--json")
+    assertEquals(textCode, 0)
+    assertEquals(jsonCode, 0)
+    assert(!textOut.contains("\"commands\""), textOut)
+    assert(
+      io.circe.parser.parse(jsonOut).exists(_.hcursor.downField("commands").succeeded),
+      jsonOut
+    )
+  }
+
   test("T1/T3/T4/T13: the top-level help carries every new line") {
     val (out, code) = runCaptured("help")
     assertEquals(code, 0)

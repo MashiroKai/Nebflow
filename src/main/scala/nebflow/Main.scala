@@ -37,6 +37,7 @@ object Main extends IOApp:
     portOpt.foreach { p =>
       GatewayConfig.setPort(p)
     }
+    portOpt.foreach(p => GatewayClient.setPort(p))
 
     // Phase 2: Command dispatching
     val startModes = Set("start", "-s", "--server")
@@ -55,7 +56,7 @@ object Main extends IOApp:
         // start command — launch Gateway
         startGateway(succeedOpt)
       case "help" :: _ =>
-        CliRouter.run(Nil)
+        CliRouter.run(remaining)
       case _ =>
         // All other commands go through CLI router
         CliRouter.run(remaining)
