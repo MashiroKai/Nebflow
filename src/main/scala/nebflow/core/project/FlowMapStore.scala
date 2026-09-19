@@ -37,7 +37,11 @@ class FlowMapStore private (
   private val archivePath: os.Path,
   private val state: Ref[IO, FlowMapState],
   private val archive: Ref[IO, FlowMapArchive],
-  private val batches: Ref[IO, Map[String, ArchiveBatchMeta]]
+  private val batches: Ref[IO, Map[String, ArchiveBatchMeta]],
+  /** **链号台账**（chainmodel 批二）：与 `flow-map.json` 同生命周期（同目录、同 open 期
+    * 载入、同进程存活期）。判据/算法在 `ChainLedger`（纯函数），本类只做两个写点接线
+    * —— 轴(a) 归档绑定（sweep / restore）与 reconcile 拍点。 */
+  private val ledger: ChainLedgerStore
 ):
   private val logger = NebflowLogger.forName("nebflow.flowmap")
 
@@ -137,6 +141,46 @@ class FlowMapStore private (
     * 派生），不新增第二套链推导逻辑（R3-a：不新增链级账本）。 */
   def allChainIds: IO[Set[String]] =
     combinedNodes.map(combined => FlowMapStore.topologicalChains(combined.values).map(_.id).toSet)
+
+  /** **链号台账**（chainmodel 批二）读写面单点：落盘 `<workspace>/.nebflow/chain-ledger.json`，
+    * 冷档 `<workspace>/.nebflow/chain-ledger-archive/`。**只读消费面**（`snapshot` /
+    * `resolve` / `resolveDeep` / `verify`）对本项目其余模块开放；写面只有本类的两个
+    * 写点（轴 a）与 [[reconcileChainLedger]]。 */
+  def chainLedgerStore: ChainLedgerStore = ledger
+
+  /** **链号台账 reconcile 腿**（chainmodel 批二；30s `TtlTick` 挂点，best-effort）。
+    *
+    * 一拍内完成四件事（判据全在 [[ChainLedger]] 纯函数面）：
+    *   ① 稳定化：派生原型链 → 出生 / 承继 / 合并（显式改号 + 别名）/ 拆分，产出**改号
+    *      留痕**（逐节点：旧号 / 新号 / 原因 `re-id`）；
+    *   ② 轴(b) 引用计数**覆盖式复算**（面枚举见 `ChainLedger.ReferenceFaces`；禁增量自减）；
+    *   ③ 轴(a)×(b) 退役（`已归档/已离场 ∧ 零引用` ⇒ 整行下沉冷档，**只归档不删除**）；
+    *   ④ 轴(c) 双阈值压缩（条数 ∨ 字节 ⇒ 压缩轮；阈值在册、留痕可复算）。
+    *
+    * 数据源全部**现读**：派生单点 `topologicalChains`（合并集）、活动区 `state.nodes`、
+    * 批次索引 `batches`、声明面 `NodeDef.chainId` —— 禁第二判据（spec §6.2 双端派生禁令）。
+    *
+    * 返回**改号留痕**（供调用方发射 `chain-membership-changed`；本类不写事件流 —— 与
+    * sweep 同款分工：派生只发生一次、事件记账归 `ProjectActor`）。失败 ⇒ 台账原地不动
+    * （下一拍重试），零图事实损失。 */
+  def reconcileChainLedger(now: Long): IO[List[ChainLedger.Change]] =
+    for
+      combined <- combinedNodes
+      s <- state.get
+      bt <- batches.get
+      // 声明面（批次一 ① 的 `NodeDef.chainId`）：链号 → 声明该链号的节点 id 集。
+      // 全部成员面**现读**（禁第二判据；spec §6.2 双端派生禁令）。
+      declarations = combined.toList
+        .flatMap { case (id, n) => FlowMapStore.declaredChainId(n).map(_ -> id) }
+        .groupBy(_._1).view.mapValues(_.map(_._2).toSet).toMap
+      chains = FlowMapStore.topologicalChains(combined.values)
+      obs <- ledger.reconcile(
+        chains = chains,
+        activeIds = s.nodes.keySet,
+        declarations = declarations,
+        batchIds = bt.keySet,
+        now = now)
+    yield obs.changes
 
   /** 事务变更：f 应用到当前状态 → Ref 更新 → 落盘。返回新活动区。 */
   def mutate(f: FlowMapState => FlowMapState): IO[FlowMapState] =
@@ -299,6 +343,18 @@ class FlowMapStore private (
           newArc <- archive.updateAndGet(a2 => a2.copy(nodes = a2.nodes ++ moved.map(n => n.id -> n).toMap))
           _ <- persistBatchFiles(metas.keySet, newArc, metas)
           _ <- mutate(st => st.copy(nodes = st.nodes -- ids))
+          // 轴(a) 生命周期绑定（chainmodel 批二）：**同刻**把本次出库链的台账条目翻
+          // `Archived` + 记 `archivedAt`（= 最早退役窗口；此后轴 b 的「零引用」行才会
+          // 退役）。命中判据（链号 / 别名 / 成员三面）在 `ChainLedgerStore.bindingTargets`
+          // —— 传链号 + 出库成员 id 两面，故不依赖「派生原型号恰好等于稳定链号」。
+          // best-effort：台账失败只 WARN —— 绝不回滚已完成的出库（图事实优先，
+          // 台账由下一拍 reconcile 自愈）。
+          _ <- ledger
+            .onChainsArchived(doneChains.map(_._1.id).toSet, doneChains.flatMap(_._2).map(_.id).toSet, now)
+            .handleErrorWith(e =>
+              IO(logger.warnSync(
+                s"chain-ledger[$project] archive binding failed (${doneChains.map(_._1.id).mkString(", ")}): " +
+                  s"${Option(e.getMessage).getOrElse(e.toString)}")))
           _ <- IO(logger.infoSync(s"FlowMap[$project] chain sweep: ${doneChains.map(_._1.id).mkString(", ")} (${ids.size} node(s)) → archive"))
         yield ()
     yield doneChains.map { case (c, members) =>
@@ -453,6 +509,16 @@ class FlowMapStore private (
               _ <- mutateArchive(arc => arc.copy(nodes = arc.nodes -- ids))
               // ③ 批次索引清除（必须在②之后，见方法头注）
               _ <- batches.update(_ -- bids)
+              // 轴(a) 反向（chainmodel 批二）：链拉回活动区 ⇒ 台账条目翻回 `Active`
+              // （归档绑定是**可逆**的绑定，不是单程删除 —— 与轴 c「只归档不删除」同向）。
+              // 命中判据与出库腿同源（`ChainLedgerStore.bindingTargets`）。best-effort
+              // 同款：失败只 WARN，不回滚已完成的拉回。
+              _ <- ledger
+                .onChainsRestored(bids, nodes.map(_.id).toSet, now)
+                .handleErrorWith(e =>
+                  IO(logger.warnSync(
+                    s"chain-ledger[$project] restore binding failed (${bids.toList.sorted.mkString(", ")}): " +
+                      s"${Option(e.getMessage).getOrElse(e.toString)}")))
               // ④ 重挂窗口记账（同时顺带清过期项，防无界增长）
               _ <- restoredRecently.update { m =>
                 (m.filter { case (_, t) => now - t < FlowMapStore.RestoreReattachWindowMs } ++
@@ -1371,9 +1437,13 @@ object FlowMapStore:
     val base = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"
     val statePath = base / "flow-map.json"
     val archivePath = base / "flow-map-archive.json"
+    // 链号台账（chainmodel 批二）与 flow-map.json 同目录、同生命周期：本方法内一并载入
+    val ledgerPath = base / ChainLedger.FileName
+    val ledgerArchivePath = base / ChainLedger.ArchiveDirName
     for
       s <- IO.blocking(os.makeDir.all(base))
-      store = new FlowMapStore(project, statePath, archivePath, Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)), Ref.unsafe[IO, FlowMapArchive](FlowMapArchive(project = project)), Ref.unsafe[IO, Map[String, ArchiveBatchMeta]](Map.empty))
+      ledgerStore <- ChainLedgerStore.open(project, ledgerPath, ledgerArchivePath)
+      store = new FlowMapStore(project, statePath, archivePath, Ref.unsafe[IO, FlowMapState](FlowMapState(project = project, updatedAt = 0L)), Ref.unsafe[IO, FlowMapArchive](FlowMapArchive(project = project)), Ref.unsafe[IO, Map[String, ArchiveBatchMeta]](Map.empty), ledgerStore)
       initial <- store.loadInitial()
       (arch, batchMetas, convergeBatches) <- store.loadArchive()
       _ <- store.state.set(initial)
