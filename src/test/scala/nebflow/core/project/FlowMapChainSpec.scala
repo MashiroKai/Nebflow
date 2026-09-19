@@ -74,25 +74,30 @@ class FlowMapChainSpec extends CatsEffectSuite:
     FlowMapStore.topologicalChains(nodes).find(_.id == id)
       .getOrElse(fail(s"chain $id not found in ${FlowMapStore.topologicalChains(nodes).map(_.id)}"))
 
-  // ── T① 弱连通分量：in/out/deps 全并 + 名字形态 out 边 ──────
+  // ── T① 弱连通分量：in/out 全并 + 名字形态 out 边（deps 自 chainmodel 批一起脱钩）──
 
-  test("T① 弱连通分量: in+out+deps 无向并集成一条链（D1），名字形态 out 边解析命中才连（D9 正路）") {
-    // a --out--> b --out=Nebula--> ×；c --deps--> b（deps 单侧持有）；d --out("name-b")--> b（名字形态）
+  test("T① 弱连通分量: in∪out 无向并集成一条链（D1；chainmodel 批一 ① 起 deps **不再是成员边**）+ 名字形态 out 边解析命中才连（D9 正路）") {
+    // a --out--> b --out=Nebula--> ×；c --deps--> b（纯调度闸，不再并链）；d --out("name-b")--> b（名字形态）
     val a = def0("a", t0, out = List(OutEdge("b")))
     val b = def0("b", t0 + 1000, in = List("a"), out = List(OutEdge.nebula))
     val c = def0("c", t0 + 2000, deps = List("b"))
     val d = def0("d", t0 + 3000, out = List(OutEdge("name-b"))) // "name-b" = b 的 name
-    val chains = FlowMapStore.topologicalChains(List(a, b, c, d))
-    assertEquals(chains.map(_.id), List("chain-a"), "all four nodes = one weakly connected component")
-    val chain = chainOf(List(a, b, c, d), "chain-a")
-    assertEquals(chain.memberIds, List("a", "b", "c", d.id))
+    val all = List(a, b, c, d)
+    val chains = FlowMapStore.topologicalChains(all)
+    assertEquals(chains.map(_.id), List("chain-a", "chain-c"),
+      "deps no longer decides membership: a/b/d keep one component, c stands alone")
+    val chain = chainOf(all, "chain-a")
+    assertEquals(chain.memberIds, List("a", "b", d.id), "in∪out component members only")
     assertEquals(chain.entries, List("a", "d"), "a and d have in=Nil ∧ deps=Nil (D2 — out 边不影响入口判定)")
-    assertEquals(chain.ends.toSet, Set("b", "c"), "b (Nebula-only out) and c (out=Nil) are ends (D7)")
+    assertEquals(chain.ends, List("b"), "b (Nebula-only out) is the sole end (D7)")
+    assertEquals(chainOf(all, "chain-c").memberIds, List("c"),
+      "a deps-only downstream is its own single-member component (③ 纯调度闸，零成员并合)")
     // 谱系边表：deps 弱关联以 via 标注保留（D3）；名字 out 边解析到 id
     assert(chain.edges.contains(ChainEdge("a", "b", "out")), s"edges=${chain.edges}")
     assert(chain.edges.contains(ChainEdge("a", "b", "in")), "in mirror edge kept with own via")
-    assert(chain.edges.contains(ChainEdge("b", "c", "deps")), "deps edge annotated via=deps")
     assert(chain.edges.contains(ChainEdge(d.id, "b", "out")), "name-form out edge resolved to node id")
+    assert(!chain.edges.exists(_.via == "deps"),
+      s"the deps edge crosses components now ⇒ it is not an edge of THIS chain: ${chain.edges}")
   }
 
   // ── T② 跨活动/归档区（D8）+ chainIdOf 判据 ──────────────

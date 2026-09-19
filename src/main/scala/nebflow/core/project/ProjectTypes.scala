@@ -759,7 +759,30 @@ case class NodeDef(
     * 失败通知；见 `NodeEngine.circuitBreakLoop`）。落盘理由同 `reportPendingSince`
     * （计时必须跨宿主重启存活；扫描腿挂在 `ProjectActor.TtlTick` 30s 节拍）。
     * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
-  loopStartedAt: Option[Long] = None
+  loopStartedAt: Option[Long] = None,
+  /** **显式链归属声明**（chainmodel 批一 ①「显式成员制」，设计件 §二(b)：`chainId` 成为
+    * 节点上的写入字段、建位时声明）。写法 = NodeEdit 的 `chainId` 参数（建位参数面），
+    * 持久面 = 本字段。语义 = **「声明即归属」**：声明者的链归属恒为该值，与它等谁、被谁
+    * 等、被谁汇聚无关（判据单点 = [[FlowMapStore.topologicalChains]] 的声明优先分组）。
+    *
+    * `None` = **未声明** ⇒ 归属走既有**派生兜底**轨（in ∪ out 弱连通分量；`deps` 自本批
+    * 起不再是成员边；「派生分量成员数 ≥2 才带 chainId」的载荷门槛对派生轨逐字保留——
+    * payload 零膨胀）。兜底轨**只对未声明节点生效**（声明者不入兜底分量、也不作兜底连通
+    * 的桥：声明边界 = 链边界）。存量数据全为 None ⇒ 零迁移，切换瞬间只有「deps 边脱钩」
+    * 一项行为变化（设计件 §二(b) 判红面：83 位链当场拆片，非回归）。
+    *
+    * 值域（写路径 fail-closed，判据单点 = [[FlowMapStore.isDeclarableChainId]]）：链号既是
+    * 载荷键又是归档批文件名 ⇒ 禁路径分隔符 / 空白 / `..`，首字符须字母或数字，≤120 字符；
+    * 非法值给可行动错误（`NODE_CHAIN_ID_INVALID`），**禁静默截断或静默忽略**。
+    *
+    * 归属变更留痕（取证 6 的「最硬未决项」）：声明写入 / 改号 / 兜底重归一律发射
+    * `chain-membership-changed`（[[FlowMapEventLog.ChainMembershipChangedType]]，写点 =
+    * NodeTools 的 create/edit 写路径）——含节点 id、旧链号、新链号、原因、时戳。
+    *
+    * 🔴 批界（第 14 条反过度设计）：**链号台账 / 永不改号保证 / 旧号别名表 / 退出机制三轴
+    * = 批二**，本批只落「声明 + 派生兜底收窄」定义层（届时台账挂在本字段之上）。
+    * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
+  chainId: Option[String] = None
 )
 
 object NodeDef:
@@ -1171,12 +1194,21 @@ case class ChainEdge(
   via: String
 )
 
-/** 拓扑链（链级抽象 P0 · spec §2.1）：活动∪归档合并节点集上的弱连通分量，派生单点
-  * FlowMapStore.topologicalChains 的返回载体。链 id = `chain-<分量内 createdAt 最早
-  * 节点 id>`（与旧时间批 id 规则同构）；entries = 分量内 in=Nil ∧ deps=Nil 双空（D2，
-  * 与创建期入口判据对齐）；ends = 分量内 out 无节点目标的成员（仅 Nebula/悬空/
-  * out=Nil 都算，D7）；memberIds 按 createdAt 升序（平局 id 兜底）。纯派生量——
-  * NodeDef 本体不加字段（C1）。 */
+/** 拓扑链（链级抽象 P0 · spec §2.1）：活动∪归档合并节点集上的链分组，派生单点
+  * FlowMapStore.topologicalChains 的返回载体。
+  *
+  * **分组口径（chainmodel 批一 ① 起，两轨）**：① **声明轨**——`NodeDef.chainId` 非空者
+  * 按声明值成组，链 id = 声明值逐字（「声明即归属」，**不受成员数门槛约束**：单成员声明链
+  * 照样下发）；② **兜底轨**——未声明节点按 **in ∪ out** 弱连通分量成组（`deps` 自本批起
+  * **不再是成员边**），链 id = `chain-<分量内 createdAt 最早节点 id>`（与旧时间批 id 规则
+  * 同构）。两轨同号即同链（合并，禁同号两组）。派生轨的孤立单节点链仍照旧返回（成员数
+  * 门槛是载荷层的判据，见 `FlowMapStore.chainVisible`）。
+  *
+  * entries = 组内 in=Nil ∧ deps=Nil 双空（D2，与创建期入口判据对齐）；ends = 组内 out 无
+  * 节点目标的成员（仅 Nebula/悬空/out=Nil 都算，D7）；memberIds 按 createdAt 升序（平局
+  * id 兜底）。edges = 谱系边表（**含** via=`deps` 的弱关联边，仅双端同组者入表——deps
+  * 不再是成员边但仍是可读的谱系事实，D3 口径不变）。纯派生量——NodeDef 的**声明字段**
+  * （`chainId`）是输入，`ChainInfo` 本体不落库。 */
 case class ChainInfo(
   id: String,
   entries: List[String] = Nil,

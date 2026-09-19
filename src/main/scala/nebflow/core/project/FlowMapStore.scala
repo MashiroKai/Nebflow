@@ -74,10 +74,11 @@ class FlowMapStore private (
       a <- archive.get
     yield s.nodes ++ a.nodes
 
-  /** 节点链归属判据单点（链级抽象 P0 + U1 多链归属批）：一次分量派生同时产出两个
-    * 值——`_1` = 主链 id（载荷 `chainId` 条件键；合并集分量成员数 ≥2 才 Some，孤立
-    * 单节点链不带 = payload 零膨胀）、`_2` = 多链归属集（载荷 `chainIds` 条件键 =
-    * **主链 id 首项 + 全量成员链**，[[mergeChainIds]]；**仅 merge 节点**且可达成员链数
+  /** 节点链归属判据单点（链级抽象 P0 + U1 多链归属批 + **chainmodel 批一 ① 声明优先**）：
+    * 一次分量派生同时产出两个值——`_1` = 主链 id（载荷 `chainId` 条件键；**声明面优先**：
+    * `NodeDef.chainId` 非空 ⇒ 恒为该值（含单成员声明链），未声明 ⇒ 派生分量成员数 ≥2 才
+    * Some，孤立单节点链不带 = payload 零膨胀）、`_2` = 多链归属集（载荷 `chainIds`
+    * 条件键 = **主链 id 首项 + 全量成员链**，[[mergeChainIds]]；**仅 merge 节点**且可达成员链数
     * ≥2 才 Some——普通节点恒 None，单值 `chainId` 语义不变）。节点已不在双区
     * （已被移除且查无归档）→ (None, None)。两值同出一次分量派生 ⇒ `chainIds.head`
     * 恒与 `_1` 逐字同值（主链恒首项）。
@@ -87,7 +88,10 @@ class FlowMapStore private (
   def chainAttrsOf(nodeId: String): IO[(Option[String], Option[List[String]])] =
     combinedNodes.map { combined =>
       val chains = FlowMapStore.topologicalChains(combined.values)
-      val cid = chains.find(_.memberIds.contains(nodeId)).filter(_.memberIds.size >= 2).map(_.id)
+      // 主链 id 判据（chainmodel 批一 ① 起）= [[FlowMapStore.chainIdIn]]：**声明恒带**
+      // （单成员声明链也带——「声明即归属恒为 X」），未声明者派生分量 ≥2 成员才带
+      // （payload 零膨胀口径逐字保留）。
+      val cid = FlowMapStore.chainIdIn(combined, chains, nodeId)
       (cid, FlowMapStore.mergeChainIds(combined, chains, nodeId))
     }
 
@@ -198,10 +202,14 @@ class FlowMapStore private (
     if to == "Nebula" || to.isEmpty then IO.pure(false)
     else
       state.get.map { s =>
-        // deps 反向索引：d → 依赖 d 的节点集（d 完成会触发它们 = 流向 d → m）
+        // deps 反向索引：d → 依赖 d 的节点集（d 完成会触发它们 = 流向 d → m）。
+        // ③（chainmodel 批一）：`chain:<id>` 引用展开为「依赖目标链全体成员」——逐成员
+        // 登记反向边（否则链引用在环检里静默无作用 = 漏一个真环面；展开单点 =
+        // resolveDepTargets，零链引用时逐字等于旧行为）。
         val depsReverse: Map[String, List[String]] =
           s.nodes.values.foldLeft(Map.empty[String, List[String]]) { (acc, n) =>
-            n.deps.foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
+            FlowMapStore.resolveDepTargets(n.deps, s.nodes).ids
+              .foldLeft(acc)((a, d) => a.updated(d, n.id :: a.getOrElse(d, Nil)))
           }
         def successors(id: String): List[String] =
           // P1 多边：全部 out 边目标（跳过 Nebula）；环检测目标仍是单 id（to 参数）。
@@ -1065,51 +1073,76 @@ object FlowMapStore:
 
   /** 拓扑链派生单点（链级抽象 P0 · spec §2.1；C4 起取代旧时间批聚簇 clusterBatches
     * ——该算法与 ChainBatchMs 常量已退役，全消费方 sweep/persistArchiveDiff/
-    * loadArchive 均走本单点，无双口径漂移面）：链 = 节点集上的**弱连通分量**——
-    * 无向边 = in ∪ out ∪ deps（C3/D1 deps 算链边，弱关联语义由谱系边表 via 标注）；
-    * out 边逐目标解析——"Nebula" 豁免（非图成员，环检同款）、名字形态过
-    * OutEdge.resolveTargetId 命中才连、悬空名跳过不产生链归属（D9，与 settleTo
-    * MISS 语义一致）；retry 回跳边不进任何邻接表 → 天然不进链拓扑（D4 既定事实）；
-    * merge/loop 节点 = 普通成员（D3/D4）。孤立节点 = 单成员链（D6）。
-    * chainId = `chain-<分量内 createdAt 最早节点 id>`（与旧时间批 id 规则同构）：
-    * 链尾追加成员 → 最早节点不变 → id 稳定；分量合并 → 归并为最早 createdAt 者
-    * 的 id。entries = 分量内 in=Nil ∧ deps=Nil 双空（D2，与创建期入口判据对齐）；
-    * ends = 分量内 out 无节点目标的成员（仅 Nebula 边/悬空名/out=Nil 都算，D7）。
-    * edges = 谱系边表（同双端不同 via 各自保留；方向恒上游→下游）——**via 按 mode
-    * 细化（nrloop 一期 2026-09-12）**：`:loop` 控制边标 `"loop"`、普通 out 边标
-    * `"out"`（`"in"`/`"deps"` 不变）；`loop` 边**仍连**（弱连通分量本就是无向的，
-    * 回边不破坏链归属，D3/D4 的「loop 节点 = 普通成员」口径沿用到「回边」上）。
-    * 确定性：分量列表按 id 排序、成员按 (createdAt, id) 升序、edges 全排序——同输入
-    * 恒同输出。纯函数（无 IO、不读 store），数据源由调用方给定（合并集 = 双区）。 */
+    * loadArchive 均走本单点，无双口径漂移面）。
+    *
+    * == 分组口径（**chainmodel 批一 ①「显式成员制」** 起；本节为两轨判据单点）==
+    * ① **声明轨**：`NodeDef.chainId`（声明面字段，建位时经 NodeEdit `chainId` 参数落盘）
+    *    非空者 ⇒ **声明即归属**，链 id = 声明值逐字；与它等谁 / 被谁等 / 被谁汇聚无关。
+    *    声明分组**不受成员数门槛约束**（单成员声明链照样成链；≥2 门槛是载荷下发判据，
+    *    见 [[chainVisible]]）。声明者**不入兜底轨、也不作兜底连通的桥**——兜底只在未声明
+    *    节点之间建图（声明边界 = 链边界；这是「兜底轨只对未声明者生效」的机械落点）。
+    * ② **兜底轨**：未声明节点按弱连通分量成组，链 id = `chain-<分量内 createdAt 最早节点
+    *    id>`（与旧时间批 id 规则同构）——「链尾追加成员 → 最早节点不变 → id 稳定；分量合并
+    *    → 归并为最早 createdAt 者的 id」逐字沿用。存量数据全为未声明 ⇒ 兜底轨是零迁移的
+    *    默认路径。
+    * ③ 两轨同号 ⇒ 合并为一条链（同一 id 即同一条链，禁同号两组——`chainMembersOf` /
+    *    载荷 `chainId → chains` 查找、Mail 校验集都按 id 单值索引）。
+    *
+    * == 成员边（**本批收窄**）== 无向邻接 = **in ∪ out**（out 逐目标解析——"Nebula" 豁免
+    * （非图成员，环检同款）、名字形态过 `OutEdge.resolveTargetId` 命中才连、悬空名跳过不
+    * 产生链归属（D9，与 settleTo MISS 语义一致）；retry 回跳边不进任何邻接表 → 天然不进链
+    * 拓扑（D4 既定事实）；merge/loop 节点 = 普通成员（D3/D4））。🔴 **`deps` 自本批起不再
+    * 是成员边**（旧口径「无向边 = in ∪ out ∪ deps（C3/D1 deps 算链边）」作废）：`deps` 永久
+    * 退化为**纯调度闸**（只等完成信号，与「归属」解耦）——现状病根即「归属」与「排队」共用
+    * 一个判据（实测最大链 83 位成员里 39 组连接来自 `deps`，撤掉后裂成 24 片）。`deps` 边
+    * **仍登记进谱系边表**（via=`deps`，仅双端同组者入表），弱关联事实不丢、只是不再决定归属。
+    *
+    * 孤立节点 = 单成员链（D6）。确定性：分组列表按 id 排序、成员按 (createdAt, id) 升序、
+    * edges 全排序——同输入恒同输出。纯函数（无 IO、不读 store），数据源由调用方给定
+    * （合并集 = 双区）。 */
   def topologicalChains(nodes: Iterable[NodeDef]): List[ChainInfo] =
     val nodeMap = nodes.map(n => n.id -> n).toMap
     val emptyAdj = scala.collection.mutable.LinkedHashSet.empty[String]
     val adj = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.LinkedHashSet[String]]
     val edges = scala.collection.mutable.LinkedHashSet.empty[ChainEdge]
-    def link(upstream: String, downstream: String, via: String): Unit =
+    /** 登记一条边。`memberEdge=false`（**deps**）只留谱系 via 标注、不进无向邻接——
+      * 「deps 是纯调度闸、不是成员边」的落点（见 §成员边）。 */
+    def link(upstream: String, downstream: String, via: String, memberEdge: Boolean): Unit =
       // 双端都必须在节点集内——悬空引用不产生链归属（也不进邻接表，防幽灵成员）
       if nodeMap.contains(upstream) && nodeMap.contains(downstream) then
-        adj.getOrElseUpdate(upstream, scala.collection.mutable.LinkedHashSet.empty) += downstream
-        adj.getOrElseUpdate(downstream, scala.collection.mutable.LinkedHashSet.empty) += upstream
+        if memberEdge then
+          adj.getOrElseUpdate(upstream, scala.collection.mutable.LinkedHashSet.empty) += downstream
+          adj.getOrElseUpdate(downstream, scala.collection.mutable.LinkedHashSet.empty) += upstream
         edges += ChainEdge(from = upstream, to = downstream, via = via)
     nodeMap.values.foreach { n =>
-      n.in.foreach(up => link(up, n.id, "in"))
+      n.in.foreach(up => link(up, n.id, "in", memberEdge = true))
       n.out.foreach { e =>
         if e.to != OutEdge.NebulaTarget then
           // via 按 mode 细化（nrloop 一期 2026-09-12，设计 §3.3 #16）：`:loop` 控制边
           // 标 "loop"，与普通 out 边区分——谱系/取证侧据此辨「这条边是回边，图上不连、
           // barrier 不认」；链口径不变（弱连通分量本来就是无向的，回边不破坏它）。
           OutEdge.resolveTargetId(nodeMap, e.to).foreach(t =>
-            link(n.id, t, if OutEdge.isLoopEdge(e) then "loop" else "out"))
+            link(n.id, t, if OutEdge.isLoopEdge(e) then "loop" else "out", memberEdge = true))
       }
-      n.deps.foreach(up => link(up, n.id, "deps"))
+      // 🔴 ①（chainmodel 批一）：deps 只记谱系边，**不进邻接表**。`chain:<id>` 形式的
+      // 跨链引用（③）更不是节点 id ⇒ 双端校验天然跳过（不产生幽灵成员）。
+      n.deps.foreach(up => link(up, n.id, "deps", memberEdge = false))
     }
     def hasNodeTarget(n: NodeDef): Boolean =
       n.out.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(nodeMap, e.to).isDefined)
-    // 弱连通分量（BFS；起点按 (createdAt, id) 排序保证确定性）
+    // ── ① 声明分组：声明值 → 成员（保持 (createdAt, id) 组内序）──────────────
+    val declaredGroups: List[(String, List[NodeDef])] =
+      nodeMap.values.toList
+        .flatMap(n => declaredChainId(n).map(cid => cid -> n))
+        .groupBy(_._1)
+        .toList
+        .map((cid, pairs) => cid -> pairs.map(_._2).sortBy(n => (n.createdAt, n.id)))
+        .sortBy(_._1)
+    // ── ② 兜底分组：**仅未声明节点**上的弱连通分量（BFS；起点按 (createdAt, id) 排序
+    //    保证确定性；已声明邻居不入队 ⇒ 声明者不作桥、不进兜底成员集）────────────
     val seen = scala.collection.mutable.HashSet.empty[String]
     val components = scala.collection.mutable.ListBuffer.empty[List[NodeDef]]
-    nodeMap.values.toList.sortBy(n => (n.createdAt, n.id)).foreach { start =>
+    nodeMap.values.toList.filter(n => declaredChainId(n).isEmpty).sortBy(n => (n.createdAt, n.id)).foreach { start =>
       if !seen.contains(start.id) then
         seen += start.id
         val queue = scala.collection.mutable.Queue.empty[String]
@@ -1119,18 +1152,27 @@ object FlowMapStore:
           val cur = queue.dequeue()
           nodeMap.get(cur).foreach(comp += _)
           adj.getOrElse(cur, emptyAdj).foreach { nxt =>
-            if !seen.contains(nxt) then
+            if !seen.contains(nxt) && nodeMap.get(nxt).exists(n => declaredChainId(n).isEmpty) then
               seen += nxt
               queue.enqueue(nxt)
           }
         components += comp.toList
     }
-    components.map { members =>
+    // ── ③ 两轨组装（同号合并；最终按 id 排序）────────────────────────────
+    val byId = scala.collection.mutable.LinkedHashMap.empty[String, List[NodeDef]]
+    declaredGroups.foreach { (cid, ms) => byId.update(cid, ms) }
+    components.foreach { members =>
       val sorted = members.sortBy(n => (n.createdAt, n.id))
+      val id = s"chain-${sorted.head.id}"
+      val merged = byId.getOrElse(id, Nil) ++ sorted
+      byId.update(id, merged.distinctBy(_.id).sortBy(n => (n.createdAt, n.id)))
+    }
+    byId.toList.map { (id, members) =>
+      val sorted = members
       val memberIds = sorted.map(_.id).toList
       val memberIdSet = memberIds.toSet
       ChainInfo(
-        id = s"chain-${sorted.head.id}",
+        id = id,
         entries = sorted.filter(n => n.in.isEmpty && n.deps.isEmpty).map(_.id).toList,
         ends = sorted.filterNot(hasNodeTarget).map(_.id).toList,
         memberIds = memberIds,
@@ -1139,6 +1181,96 @@ object FlowMapStore:
           .sortBy(e => (e.from, e.to, e.via))
       )
     }.sortBy(_.id).toList
+
+  /** **声明值判据单点**（chainmodel 批一 ①）：节点的显式链归属声明（trim 后非空才有效）。
+    * 空串 / 纯空白 = 未声明（写路径已拒；读路径此处防御，等价 `None`）。 */
+  def declaredChainId(n: NodeDef): Option[String] =
+    n.chainId.map(_.trim).filter(_.nonEmpty)
+
+  /** 链号**可声明**判据单点（写路径 fail-closed；错误码 `NODE_CHAIN_ID_INVALID`）。
+    *
+    * 链号既是载荷键（`chainId` / `chains[].id` / Mail 校验集）又是归档批文件名
+    * （`.nebflow/flow-map-archive/<chainId>.json` —— 批 id 直接拼进路径）⇒ 值域必须收窄：
+    * 非空、≤[[ChainIdMaxLength]] 字符、首字符字母或数字（禁 `.`/`-`/`_` 开头的隐蔽名）、
+    * 其余字符 ∈ [A-Za-z0-9._-]（禁路径分隔符 / 空白 / 引号 / `..` 序列 / `:`——`:` 已被
+    * `chain:<id>` 引用语法占用）。非法值 ⇒ 可行动错误，**禁静默截断/改写/忽略**。 */
+  val ChainIdMaxLength: Int = 120
+  def isDeclarableChainId(raw: String): Boolean =
+    val s = raw.trim
+    s.nonEmpty && s.length <= ChainIdMaxLength &&
+      s.head.isLetterOrDigit &&
+      s.forall(c => c.isLetterOrDigit || c == '-' || c == '_' || c == '.') &&
+      !s.contains("..")
+
+  /** 跨链依赖引用前缀（chainmodel 批一 ③「跨链依赖原语」）：`deps` 里写 `chain:<chainId>`
+    * = **纯调度闸**——目标链**全体成员终态**（且逐成员 completed，与 deps 同判据）才满足，
+    * **零成员并合**（不把本节点并入目标链、也不把目标链并入本链）。 */
+  val ChainRefPrefix: String = "chain:"
+
+  /** 是否跨链引用写法（`chain:<chainId>`）。节点 id 不含 `:` ⇒ 与字面节点引用无歧义。 */
+  def isChainRef(dep: String): Boolean = dep.trim.startsWith(ChainRefPrefix)
+
+  /** 跨链引用取目标链号（`chain:<chainId>` → `<chainId>`；无前缀时返回原文）。 */
+  def chainRefTarget(dep: String): String = dep.trim.stripPrefix(ChainRefPrefix).trim
+
+  /** deps 引用解析结果（③ 跨链依赖原语；[[resolveDepTargets]] 的返回载体）。
+    *
+    * @param ids              逐条解析出的**节点 id**（字面引用原样保留、`chain:<id>` 引用
+    *                         展开为目标链**成员集**；去重保序）
+    * @param unknownChainRefs 无法解析的链引用（空后缀 / `chain:<id>` 但该 id 在给定节点集上
+    *                         **不存在**）——调用方**必须**当「不可满足」处理（`depsSatisfied`
+    *                         = false + 停等原因点名 + 写路径 fail-closed），🔴 **禁**静默
+    *                         no-op（当成「零成员即满足」）与静默失败（无痕停等）。 */
+  final case class DepTargets(ids: List[String], unknownChainRefs: List[String])
+
+  /** **deps 引用解析单点**（③；与成员派生同源）：把 `deps` 声明解析成「本闸要等哪些节点」。
+    *
+    * 口径：字面引用原样（悬空字面名照旧不产生任何满足——与改造前逐字一致，红线）；`chain:<id>`
+    * 引用展开为目标链成员集（成员派生用**调用方给定的节点集** `all`，与调用点既有区口径一致：
+    * 启动闸/停滞面 = 双区合并集，互斥闸 = 活动区单区，见各调用点头注）。**零链引用时零派生
+    * 成本**（逐字短路返回入参，既有数据路径字节级零变化）。
+    *
+    * 🔴 本方法是全仓唯一的「`chain:` 引用 → 成员集」解析点；**禁**第二个解析器（先例：
+    * `DocIndexConsumer` 头注「同一条链在派生两次必然漂移」）。 */
+  def resolveDepTargets(deps: List[String], all: Map[String, NodeDef]): DepTargets =
+    if !deps.exists(isChainRef) then DepTargets(deps, Nil)
+    else
+      val byId = topologicalChains(all.values).map(c => c.id -> c).toMap
+      val ids = scala.collection.mutable.ListBuffer.empty[String]
+      val unknown = scala.collection.mutable.ListBuffer.empty[String]
+      deps.foreach { d =>
+        if !isChainRef(d) then ids += d
+        else
+          val target = chainRefTarget(d)
+          if target.isEmpty then unknown += d
+          else
+            byId.get(target) match
+              case Some(c) => ids ++= c.memberIds
+              case None    => unknown += target
+      }
+      DepTargets(ids.toList.distinct, unknown.toList.distinct)
+
+  /** 链条目是否**下发**（载荷 `chains[]` 旁挂与节点级 `chainId` 条件键的同一判据）：
+    * 派生链需成员数 ≥2（payload 零膨胀口径**逐字保留**）；**声明链不论成员数都下发**
+    * ——判据①「声明即归属恒为 X」不允许单成员声明链被门槛吞掉，且「载荷带 chainId 的
+    * 节点其链条目必在旁挂中（前端 chainId → 链查找恒命中）」的既有契约必须保持。 */
+  def chainVisible(combined: Map[String, NodeDef], c: ChainInfo): Boolean =
+    c.memberIds.size >= 2 || c.memberIds.exists(id => combined.get(id).flatMap(declaredChainId).isDefined)
+
+  /** **有效链归属视图**（nodeId → chainId；判据单点）：声明恒带（无成员数门槛）、未声明者
+    * 走派生分量且需 ≥2 成员。载荷 `chainId` 条件键、[[chainAttrsOf]] 与 `chain-membership-changed`
+    * 事件（⑤）三处同源——禁第二判据。 */
+  def chainIdView(combined: Map[String, NodeDef]): Map[String, String] =
+    topologicalChains(combined.values)
+      .filter(c => chainVisible(combined, c))
+      .flatMap(c => c.memberIds.map(_ -> c.id))
+      .toMap
+
+  /** 单节点有效链归属（已有 `chains` 派生结果时用——避免二次全量派生，`chainAttrsOf` /
+    * `chainContextOf` / 载荷组装共用判据）。`None` = 无链（未声明 ∧ 派生分量 <2 成员，
+    * 或节点已不在给定集合内）。 */
+  def chainIdIn(combined: Map[String, NodeDef], chains: List[ChainInfo], nodeId: String): Option[String] =
+    chains.find(_.memberIds.contains(nodeId)).filter(c => chainVisible(combined, c)).map(_.id)
 
   /** merge 节点多链归属派生（U1 批 · 2026-09-11 作者裁定①「多链归属只对合并节点做」）。
     *

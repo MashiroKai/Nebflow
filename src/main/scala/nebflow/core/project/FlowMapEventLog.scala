@@ -30,6 +30,9 @@ import nebflow.core.PathUtil
  *   chain-cancelled（**chaincancel 批 2026-09-17**：链级/级联取消的聚合留痕——
  *   一次链级取消操作恰一条（成员清单/保留/跳过/注入次数），写点 =
  *   `DispatchNotify.notifyChainCancelled`；见 [[ChainCancelledType]]）/
+ *   chain-membership-changed（**chainmodel 批一 2026-09-19**：节点链归属变更留痕——
+ *   声明 / 改号 / 兜底重归三类原因，字段 = 节点 id + 旧链号 + 新链号 + 原因 + 时戳，
+ *   写点 = `NodeTools.emitChainMembershipChanges`；见 [[ChainMembershipChangedType]]）/
  *   hard-recovery（hard-recovery 批 2026-09-07 起由 NodeEngine.hardResumeNode 写
  *   「resumed from stuck」；取消静默死锁修复批 R5 补写 resume **失败**腿——
  *   `L3 resume FAILED … node left cancelled; dispatcher notified (R1) + out detached (R4)`）/
@@ -120,6 +123,38 @@ object FlowMapEventLog:
     * 清单是什么、注入了几次」——即 C5 判据的观测面（`chain-cancelled` == 1 条）。
     * 幂等：无被取消节点（重复调用 / 全终态链）⇒ 零写（C6/C5 的第二次调用读数 == 0）。 */
   val ChainCancelledType = "chain-cancelled"
+
+  /** **链归属变更事件类型**（chainmodel 批一 ⑤；设计件取证 6 的「最硬未决项」：事件流
+    * 44 类里零该类型，重归只能靠人写的 `node-message` 正文回溯 ⇒ 跳号不可事后追）。
+    *
+    * 写点 = `NodeTools.emitChainMembershipChanges`（NodeEdit **create / edit 两条写路径**
+    * 的尾部各一处，是本类型的**唯一**生产写入点）：每次写操作前后各取一次「有效链归属
+    * 视图」（`FlowMapStore.chainIdView`，与载荷 `chainId` 判据同源），逐节点比对 ——
+    * 归属发生变化者逐条留痕。三项变更原因（`reason` 值域）：
+    *   - `declaration`：本节点首次声明链归属（旧值缺省 → 新值 = 声明值）；
+    *   - `re-id`：本节点声明值变更（改号；旧值 → 新值都是声明值）；
+    *   - `fallback`：其余（拓扑/归档等令**派生**分量重组 ⇒ 归属变化，旧口径下完全静默）。
+    *
+    * `nodeId` = 归属发生变化的节点；顶层 `chainId` = **新**链号（无归属时缺键，与
+    * [[ChainArchivedType]] 同款；**旧**链号在 summary 里）。summary 形态见
+    * [[chainMembershipChangedSummary]]（`k=v` 单空格）。
+    *
+    * 与链族既有三型的分工（同族不同事实，禁合并）：`chain-archived` = 整链出库、
+    * `chain-restored` = 整链拉回、`chain-cancelled` = 一次链级取消操作；本型回答的是
+    * 「**哪个节点的链号从 X 变成 Y、为什么**」——跨链并合/拆分的唯一机械观测面。 */
+  val ChainMembershipChangedType = "chain-membership-changed"
+
+  /** `chain-membership-changed` 结构化 summary（`k=v` 单空格分隔，值不含空白——
+    * 沿 [[noWs]] 纪律）：`from` = 旧链号（`-` = 无归属）、`to` = 新链号（`-` = 无归属）、
+    * `reason` ∈ declaration | re-id | fallback。时戳由 [[append]] 的顶层 `ts` 字段承载，
+    * 节点 id 由 `nodeId` 字段承载，新链号由顶层 `chainId` 字段承载（三字段分工既有先例）。 */
+  def chainMembershipChangedSummary(
+    from: Option[String],
+    to: Option[String],
+    reason: String
+  ): String =
+    s"from=${from.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} " +
+      s"to=${to.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} reason=${noWs(reason)}"
 
   /** `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
     * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。 */

@@ -210,9 +210,20 @@ object BootWakeInventory:
 
     if buckets.isEmpty then None
     else
-      val upIds = (n.in ++ n.deps ++ n.pendingSuccession).distinct
+      // ③（chainmodel 批一）：`chain:<id>` 引用展开为目标链成员集——否则链引用会被读成
+      // 「悬空引用」（缺链号上游明细与 upGap 判据都失准）。解析按本清单既有的**活动区**表做
+      // （与 `st.nodes` 同源；零链引用时逐字等于改造前行为）。
+      // 🔴 口径差登记（禁假阳）：本清单只读活动区落盘，解析不到的链引用**可能是成员已归档的
+      // 跨区链**（引擎按合并集解析则解析得到）⇒ 此处只如实登记「活动区视角未见该链引用」，
+      // 不据此做任何「永不满足」的判断（B3 同款保守口径见 [[stallReason]]）。
+      val targets = FlowMapStore.resolveDepTargets(n.deps, all)
+      val unresolvedRefs = targets.unknownChainRefs
+      val upIds = (n.in ++ targets.ids ++ n.pendingSuccession).distinct
+      val chainRefNote =
+        if unresolvedRefs.isEmpty then ""
+        else s" [chain ref(s) not resolvable from the active map: ${unresolvedRefs.map(c => s"chain:$c").mkString(",")}]"
       val upstreamDesc =
-        if upIds.isEmpty then "none (entry node)"
+        if upIds.isEmpty then "none (entry node)" + chainRefNote
         else
           upIds
             .map { id =>
@@ -220,7 +231,7 @@ object BootWakeInventory:
                 case Some(u) => s"'${u.name}'($id):${u.status}"
                 case None    => s"$id:missing(dangling)"
             }
-            .mkString(", ")
+            .mkString(", ") + chainRefNote
       val upGap = upIds.exists(id =>
         all.get(id).exists(u => NodeLifecycle.Terminal.contains(u.status) && u.status != NodeLifecycle.Completed))
       // cancelsem 批 1（R4 · agent 面抑制）：本条目引用的槽位（in / deps / pendingSuccession）
@@ -256,12 +267,21 @@ object BootWakeInventory:
   end itemFor
 
   /** B3 停滞判据（与 `NodeEngine.mountStallReason` 逐条同款，只读落盘字段）。
-    * 返回 None = 不判（非 pending/wiring / 有合法等待 / 悬空引用 / 未到 60 s 档）。 */
+    * 返回 None = 不判（非 pending/wiring / 有合法等待 / 悬空引用 / 未到 60 s 档）。
+    * ③（chainmodel 批一）：`deps` 的 `chain:<id>` 引用展开为目标链成员集（判据单点；
+    * 否则「等整链」的节点会被读成悬空 ⇒ B3 死 barrier 档漏报）。**解析不到的链引用保守
+    * 不判**（与「悬空引用不判」同族）：本清单只读活动区，跨区链（成员已归档）在此视角下
+    * 解析不到，据此判「死 barrier」即假阳。 */
   private[project] def stallReason(n: NodeDef, all: Map[String, NodeDef], nowMs: Long): Option[String] =
     if n.status != NodeLifecycle.Pending && n.status != NodeLifecycle.Wiring then None
     else
-      val ups = (n.in ++ n.deps ++ n.pendingSuccession).distinct.map(all.get)
-      if ups.exists(_.isEmpty) then None // 悬空引用：保守不判（引擎同款）
+      val targets = FlowMapStore.resolveDepTargets(n.deps, all)
+      val refs = (n.in ++ targets.ids ++ n.pendingSuccession).distinct
+      val ups = refs.map(all.get)
+      // 解析不到的链引用（活动区视角）⇒ 保守不判（见头注：跨区链的假阳面）
+      if targets.unknownChainRefs.nonEmpty then None
+      // 悬空引用：保守不判（引擎同款）
+      else if ups.exists(_.isEmpty) then None
       else
         val us = ups.flatten
         if !us.forall(u => NodeLifecycle.Terminal.contains(u.status)) then None // 合法等待（有 running/wiring 上游）

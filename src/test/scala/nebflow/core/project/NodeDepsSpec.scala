@@ -696,4 +696,172 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(w2Inputs.isEmpty, s"retired waiter must never run, got ${w2Inputs.map(_.take(120))}")
   }
 
+  private def readAuditLines(ws: os.Path): IO[List[String]] =
+    IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
+      .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
+      .handleError(_ => Nil)
+
+  // ── T9 跨链依赖原语（chainmodel 批一 ③ 2026-09-19）─────────────────────
+
+  test("T9 chain ref: deps=[chain:<id>] waits for EVERY member completed (pure scheduling gate, zero member merge); unknown chain id ⇒ fail-closed refusal (NODE_CHAIN_REF_UNKNOWN)") {
+    val ws = tempRoot / "ws-t9c"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t9c-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    def seed(id: String, status: String, chainId: Option[String] = None,
+             deps: List[String] = Nil, at: Long = 0L): NodeDef =
+      NodeDef(id = id, name = id, agent = "general", status = status, chainId = chainId,
+        deps = deps, createdAt = now + at)
+    for
+      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      rt <- mountProject("deps-t9c", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 声明面直种（链号声明 = NodeDef.chainId）：x-chain 两成员、y-chain 单成员，
+      // 两个链引用等待者（其一指向不存在的链号）——**直种绕过写闸**，故这一条检验的是
+      // **运行面** fail-closed（写闸本身由下方 rBad / rIn 覆盖：同一形态必须建不出来）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-x1" -> seed("n-x1", NodeLifecycle.Wiring, Some("x-chain"), at = 1),
+        "n-x2" -> seed("n-x2", NodeLifecycle.Wiring, Some("x-chain"), at = 2),
+        "n-y1" -> seed("n-y1", NodeLifecycle.Wiring, Some("y-chain"), at = 3),
+        "n-wr" -> seed("n-wr", NodeLifecycle.Wiring, deps = List("chain:x-chain"), at = 4),
+        "n-wbad" -> seed("n-wbad", NodeLifecycle.Wiring, deps = List("chain:no-such-chain"), at = 5))))
+      w <- rt.store.snapshot.map(_.nodes("n-wr"))
+      wbad <- rt.store.snapshot.map(_.nodes("n-wbad"))
+      sat0 <- rt.engine.depsSatisfied(w)
+      // 逐成员完成：一个完成还不够（全链门槛），两个都完成才满足
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-x1",
+        s.nodes("n-x1").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 10)))))
+      sat1 <- rt.engine.depsSatisfied(w)
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-x2",
+        s.nodes("n-x2").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 20)))))
+      sat2 <- rt.engine.depsSatisfied(w)
+      satBad <- rt.engine.depsSatisfied(wbad)
+      view <- rt.store.combinedNodes.map(FlowMapStore.chainIdView)
+      // 写路径：未知链号拒 / `in` 里的链引用拒 / 已存在链号放行
+      rBad <- nodeEdit(nodeInput("deps-t9c", "new-bad", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("never-runs-bad"), "deps" -> Json.fromString("chain:no-such-chain")), ctx)
+      rIn <- nodeEdit(nodeInput("deps-t9c", "new-in", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("never-runs-in"), "in" -> Json.fromString("chain:x-chain")), ctx)
+      rOk <- nodeEdit(nodeInput("deps-t9c", "new-ok", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("new-ok"), "deps" -> Json.fromString("chain:x-chain"),
+        "out" -> Json.fromString("Nebula")), ctx)
+      okId <- idOf(rt, "new-ok")
+      after <- rt.store.snapshot.map(_.nodes)
+      chains2 = FlowMapStore.topologicalChains(after.values)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(sat0, false, "chain ref is unsatisfied while any member is not completed")
+      assertEquals(sat1, false, "one member completed is NOT enough — the gate waits for the WHOLE chain")
+      assertEquals(sat2, true, "every member completed ⇒ satisfied")
+      assertEquals(satBad, false,
+        "an unresolvable chain ref is FAIL-CLOSED (never satisfied) — never a silent 'zero members ⇒ satisfied'")
+      // ③ 零成员并合：链引用只决定「等谁」，不改任何节点的归属
+      val xChain = chains2.find(_.id == "x-chain")
+      assertEquals(xChain.map(_.memberIds), Some(List("n-x1", "n-x2")),
+        "declared chain membership unchanged by the cross-chain reference")
+      assert(!chains2.exists(c => c.id == "x-chain" && c.memberIds.contains("n-wr")),
+        "the deps-only waiter must NOT be merged into the target chain (③ 零成员并合)")
+      assertEquals(view.get("n-x1"), Some("x-chain"), "declaration wins over the derived fallback")
+      assertEquals(view.get("n-y1"), Some("y-chain"), "single-member declared chain still carries its id")
+      // 写路径 fail-closed + 可行动错误码
+      assert(rBad.isLeft, s"unknown chain ref must be refused, got: $rBad")
+      assert(rBad.left.exists(_.contains("NODE_CHAIN_REF_UNKNOWN")), s"expected NODE_CHAIN_REF_UNKNOWN, got: $rBad")
+      assert(rIn.isLeft, s"a chain ref in 'in' must be refused (deps-only syntax), got: $rIn")
+      assert(rIn.left.exists(_.contains("NODE_CHAIN_REF_UNKNOWN")), s"expected NODE_CHAIN_REF_UNKNOWN, got: $rIn")
+      assert(rOk.isRight, s"a chain ref naming an EXISTING chain must be accepted, got: $rOk")
+      assertEquals(xChain.map(_.memberIds), Some(List("n-x1", "n-x2")),
+        "③ red face: deps=[chain:X] must not change X's member set (no merge in either direction)")
+      assert(!xChain.exists(_.memberIds.contains(okId)),
+        "the new waiter stays out of the target chain (zero member merge)")
+  }
+
+  // ── T10 显式成员制 + 归属变更留痕（chainmodel 批一 ①⑤ 2026-09-19）──────
+
+  test("T10 explicit membership: declared ⇒ belongs (single-member too, beats the derived fallback); deps never decides; membership changes are logged (from/to/reason); a chainId-only edit does not reactivate") {
+    val ws = tempRoot / "ws-t10c"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"deps-t10c-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      rt <- mountProject("deps-t10c", ws, system, res)
+      ctx = mkCtx(res, system, ws.toString)
+      // 派生兜底轨对照组（存量形态：未声明的 in/out 连线）——兜底判据逐字不变（零停机）
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
+        "n-d1" -> NodeDef(id = "n-d1", name = "d1", agent = "general", status = NodeLifecycle.Wiring,
+          out = List(OutEdge("n-d2")), createdAt = now),
+        "n-d2" -> NodeDef(id = "n-d2", name = "d2", agent = "general", status = NodeLifecycle.Wiring,
+          in = List("n-d1"), createdAt = now + 1),
+        // 声明 X 链后要加 deps=[Y 链成员] 的节点（① 判红面）——先直种为 declared
+        "n-w" -> NodeDef(id = "n-w", name = "w", agent = "general", status = NodeLifecycle.Wiring,
+          chainId = Some("mine-chain"), createdAt = now + 2),
+        // blocked 节点（检验 chainId 不进 actualChange ⇒ 不重激活）
+        "n-blk" -> NodeDef(id = "n-blk", name = "blk", agent = "general", status = NodeLifecycle.Blocked,
+          task = Some("blocked work"), createdAt = now + 3))))
+      derived <- rt.store.chainIdOf("n-d1")
+      // ① 判红：declared X 的节点加 deps=[Y 链某节点] ⇒ X 与 Y 的成员集都不得变化
+      rWDeps <- nodeEdit(nodeInput("deps-t10c", "w", "deps" -> Json.fromString("n-d2")), ctx)
+      wAfter <- rt.store.getNode("n-w")
+      all1 <- rt.store.snapshot.map(_.nodes)
+      chains1 = FlowMapStore.topologicalChains(all1.values)
+      // 声明即归属：单成员声明链照样成链（判据① 正）
+      rDecl <- nodeEdit(nodeInput("deps-t10c", "decl-a", "description" -> Json.fromString("test node purpose"),
+        "task" -> Json.fromString("decl-a"), "chainId" -> Json.fromString("demo-chain"),
+        "in" -> Json.fromString("n-d1")), ctx)
+      declId <- idOf(rt, "decl-a")
+      cidA <- rt.store.chainIdOf(declId)
+      payload <- NodeTools.buildNodeListPayload(rt)
+      // 改号（re-id）→ 留痕
+      rReId <- nodeEdit(nodeInput("deps-t10c", "decl-a", "chainId" -> Json.fromString("other-chain")), ctx)
+      cidB <- rt.store.chainIdOf(declId)
+      auditLines <- readAuditLines(ws)
+      // 撤销声明（null）⇒ 回落派生兜底
+      rNull <- nodeEdit(nodeInput("deps-t10c", "decl-a", "chainId" -> Json.null), ctx)
+      cidC <- rt.store.chainIdOf(declId)
+      // blocked + 仅 chainId 编辑 ⇒ 不得重激活（声明不进 actualChange）
+      rBlk <- nodeEdit(nodeInput("deps-t10c", "blk", "chainId" -> Json.fromString("blk-chain")), ctx)
+      blkAfter <- rt.store.getNode("n-blk")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      // ── 派生兜底轨（零停机判据：未声明节点仍拿到派生链号）──
+      assertEquals(derived, Some("chain-n-d1"), "undeclared in/out pair keeps the derived fallback chain id")
+      // ── ① 判红：deps 不再是成员边（两个方向的成员集都不动）──
+      assert(rWDeps.isRight, s"adding a literal deps ref must still be legal, got: $rWDeps")
+      assertEquals(chains1.find(_.id == "mine-chain").map(_.memberIds), Some(List("n-w")),
+        "① red face: X's member set unchanged after adding deps=[Y member]")
+      assertEquals(chains1.find(_.id == "chain-n-d1").map(_.memberIds), Some(List("n-d1", "n-d2")),
+        "① red face: Y's member set unchanged as well")
+      assertEquals(wAfter.map(_.deps), Some(List("n-d2")), "the deps edge itself is stored (pure scheduling gate)")
+      // ── ① 正：声明即归属（单成员声明链照样带号）──
+      assert(rDecl.isRight, s"declaring a chain id must succeed, got: $rDecl")
+      assertEquals(cidA, Some("demo-chain"), "declared ⇒ belongs to X verbatim (single-member declared chain carries its id)")
+      val nodesJson = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
+      val declJson = nodesJson.find(_.hcursor.get[String]("id").toOption.contains(declId))
+      assertEquals(declJson.flatMap(_.hcursor.get[String]("chainId").toOption), Some("demo-chain"),
+        "payload chainId follows the declaration (same judgement as the WS/event face)")
+      val chainsJson = payload.hcursor.downField("chains").as[List[Json]].toOption.getOrElse(Nil)
+      assert(chainsJson.exists(_.hcursor.get[String]("id").toOption.contains("demo-chain")),
+        "a declared single-member chain must appear in chains[] (payload chainId ⇔ chain entry contract)")
+      // ── ⑤ 归属变更留痕（from/to/reason + ts）──
+      assert(rReId.isRight, s"re-id must succeed, got: $rReId")
+      assertEquals(cidB, Some("other-chain"), "re-id takes effect verbatim")
+      val mc = auditLines.filter(_.contains("chain-membership-changed"))
+      assert(mc.nonEmpty, s"membership changes must be logged, got audit types: ${auditLines.map(_.take(80))}")
+      assert(mc.exists(l => l.contains(declId) && l.contains("from=demo-chain") && l.contains("to=other-chain")
+        && l.contains("reason=re-id") && l.contains("\"ts\":")),
+        s"the re-id event must carry nodeId + from + to + reason + ts, got: $mc")
+      // ── 撤销 ⇒ 回落派生 ──
+      assert(rNull.isRight, s"withdrawing the declaration must succeed, got: $rNull")
+      // decl-a was created with in=[n-d1] ⇒ once undeclared it is an ordinary node of the
+      // n-d1/n-d2 derived component, so the fallback hands back that component's id verbatim
+      // (chain-<最早成员> = chain-n-d1；不是 None —— None 只对「派生分量 <2 成员」成立)。
+      assertEquals(cidC, Some("chain-n-d1"),
+        "withdrawal falls back to the derived component (decl-a joins n-d1/n-d2 via its in edge)")
+      // ── chainId 不进 actualChange：blocked 节点只改链号不重激活 ──
+      assert(rBlk.isRight, s"a chainId-only edit on a blocked node must succeed, got: $rBlk")
+      assertEquals(blkAfter.map(_.status), Some(NodeLifecycle.Blocked),
+        "chainId is metadata: a chainId-only edit must NOT reactivate a blocked node")
+      assertEquals(blkAfter.flatMap(_.chainId), Some("blk-chain"), "and the declaration is still written")
+  }
+
 end NodeDepsSpec
