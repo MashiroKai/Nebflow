@@ -44,7 +44,7 @@ class NebflowLogger(private val logger: Logger):
   def debug(msg: String, kv: (String, String)*): IO[Unit] =
     IO.delay(logger.debug(s"DEBUG $name - ${withKv(msg, kv)}"))
 
-  // Sync variants — for use in Unit-returning contexts (e.g. Pekko actors, IO.blocking)
+  // Sync variants — for use in Unit-returning contexts (e.g. self-developed actors, IO.blocking)
   def debugSync(msg: String): Unit = logger.debug(s"DEBUG $name - $msg")
   def infoSync(msg: String): Unit = logger.info(fmt("INFO ", CYAN, msg))
   def warnSync(msg: String): Unit = logger.warn(fmt("WARN ", YELLOW, msg))
