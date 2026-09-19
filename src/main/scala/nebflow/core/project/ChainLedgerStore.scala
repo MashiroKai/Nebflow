@@ -330,7 +330,7 @@ class ChainLedgerStore private (
     for
       st <- state.get
       files <- readRounds
-      yield ChainLedger.verifyLedger(st, files, payloadIdsOf(files))
+    yield ChainLedger.verifyLedger(st, files, payloadIdsOf(files))
 
   /** 压缩镜像面（**取每个 id 的最晚一轮口径**）：某 id 的载荷此刻是否应在冷档 ——
     * 最晚提到它的那一轮是 compact ⇒ 热面应有 `compacted=true` 的条目（镜像成对）；

@@ -564,7 +564,7 @@ object ChainLedger:
   def planRetire(st: State, now: Long): RetirePlan =
     val goneEntries = st.entries.filter { case (_, e) =>
       e.status == StatusArchived && e.refCount <= 0
-    }.keys
+    }.keySet
     val retiredAliases = st.aliases.filter { case (_, a) =>
       val ownerGone = !st.entries.contains(a.canonical) || goneEntries.contains(a.canonical)
       ownerGone && a.refCount <= 0
