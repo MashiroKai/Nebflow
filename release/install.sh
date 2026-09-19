@@ -99,7 +99,7 @@ resolve_version() {
         fi
     fi
     # 版本值双形态解析（作者令 2026-09-17）：发布 tag 版式统一无 v（如
-    # 2026.9.17），但旧形态（指针文件或手工传入的 v2026.9.17）仍必须接受——
+    # 2026.9.19），但旧形态（指针文件或手工传入的 v2026.9.19）仍必须接受——
     # 解析后统一剥离前导 v，使 jar 名 / URL / 安装目录在两种形态下完全一致；
     # 本就无前缀的值逐字节不变（幂等，纯字符串处理，无网络/无分支扩张）。
     case "$VERSION" in
@@ -1024,7 +1024,7 @@ fi
 # >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
 # Name order != version order: the date scheme deliberately strips leading zeros
 # (Windows version fields reject them), so as plain strings "2026.10.5" sorts
-# BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple and take
+# BEFORE "2026.9.19". Rank the candidates by the parsed numeric tuple and take
 # the max. Version core = the SAME contract as packaging/app-version.sh:36
 #   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
 # The optional 4th segment and the -beta.N tail carry the SAME meaning - the

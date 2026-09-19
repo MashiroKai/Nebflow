@@ -47,7 +47,7 @@ NEBFLOW_UI_LEVEL=3 NEBFLOW_BANNER_THEME=dark COLUMNS=90 \
   bash -c '
     source "$1"; ui_detect
     _progress_line 13000000 26100000 "[2/6] encoder_model_quantized.onnx" 3300000 0; echo
-    _progress_line 47185920 -1 "nebflow-assembly-2026.9.17.jar" 5200000 2; echo
+    _progress_line 47185920 -1 "nebflow-assembly-2026.9.19.jar" 5200000 2; echo
     _progress_line 26100000 26100000 "[2/6] encoder_model_quantized.onnx" -1 0; echo
   ' _ "$BLOCK" > "$TMP/progress.txt"
 
