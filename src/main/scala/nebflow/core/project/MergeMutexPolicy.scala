@@ -95,9 +95,20 @@ object MergeMutexPolicy:
     try f.getCanonicalPath
     catch case _: Throwable => f.getAbsolutePath
 
-  /** 节点上游集（**in ∪ deps**，去重）：与 O-2 后的 verdict 闸上游集同源（单点）。 */
+  /** 节点上游集（**in ∪ deps**，去重）：与 O-2 后的 verdict 闸上游集同源（单点）。
+    *
+    * ③（chainmodel 批一 2026-09-19）：`deps` 里的 `chain:<id>` 跨链引用（**纯调度闸**）
+    * 展开为目标链**成员集**后再取 NodeDef —— 「整链完成才到达」因此进得了 `readyAt`
+    * （到达时刻 = 目标链最晚成员终态时刻）与 `holders`（挡住我的候选）。
+    *
+    * 口径（登记）：本闸是**活动区单区**判据（`all` = 活动区节点表，与既有口径逐字一致），
+    * 链引用也按该表解析 ⇒ 目标链的号在活动区视角下找不到时（该链最早成员已归档的
+    * 「跨区续做」形态）本闸取不到成员、`readyAt` 会偏小；**启动面不受影响**——权威闸是
+    * `NodeEngine.depsSatisfied`（`findNode` **双区**口径，链引用按合并集解析，未全终态恒
+    * false）。该跨区口径差 = 既有 `upsOf`（单区）与 `depsSatisfied`（双区）差异的同一族，
+    * 根治面 = 批二的链号台账（区无关的链号 → 成员表）。零链引用时逐字等于改造前行为。 */
   def upsOf(n: NodeDef, all: Map[String, NodeDef]): List[NodeDef] =
-    (n.in ++ n.deps).distinct.flatMap(all.get)
+    (n.in ++ FlowMapStore.resolveDepTargets(n.deps, all).ids).distinct.flatMap(all.get)
 
   /** 到达时刻（SEM-2）：上游全终态 ⇒ `max(completedAt)`；否则 `Long.MaxValue`
     * （= 未到达，排在所有已到达者之后——让位不是阻断）。入口节点（无上游）= `createdAt`。

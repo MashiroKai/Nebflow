@@ -375,13 +375,26 @@ class NodeEngine(
       }
 
   /** 级联腿的等待者清单（现读）：状态 ∈ {pending, wiring} 且仍以 in/deps/pendingSuccession
-    * 引用取消集的节点——通知文本「受影响下游等待者」栏的数据源。 */
+    * 引用取消集的节点——通知文本「受影响下游等待者」栏的数据源。
+    *
+    * ③（chainmodel 批一）：`chain:<id>` 引用展开为目标链成员集后判定（目标链里有被取消
+    * 成员 ⇒ 该下游的依赖永久不可满足 ⇒ 它就是受影响等待者）；解析按**活动区**表做
+    * （与通知面同区）。零链引用时逐字等于改造前行为。 */
   private def chainWaiters(cancelIds: Set[String]): IO[List[String]] =
     store.snapshot.map { s =>
+      val chainsById =
+        if !s.nodes.valuesIterator.exists(_.deps.exists(FlowMapStore.isChainRef)) then Map.empty[String, ChainInfo]
+        else FlowMapStore.topologicalChains(s.nodes.values).map(c => c.id -> c).toMap
+      def depsRefers(n: NodeDef): Boolean =
+        n.deps.exists { dep =>
+          if FlowMapStore.isChainRef(dep) then
+            chainsById.get(FlowMapStore.chainRefTarget(dep)).exists(_.memberIds.exists(cancelIds.contains))
+          else cancelIds.contains(dep)
+        }
       s.nodes.values
         .filter(n =>
           (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) &&
-            (n.in.exists(cancelIds.contains) || n.deps.exists(cancelIds.contains) ||
+            (n.in.exists(cancelIds.contains) || depsRefers(n) ||
               n.pendingSuccession.exists(cancelIds.contains)))
         .map(_.id)
         .toList
@@ -400,7 +413,15 @@ class NodeEngine(
     * 而四类引用都是**图的边**（`topologicalChains` 对任何边两侧都建邻接，`pendingSuccession`
     * 亦只由既有摘除腿在这些边上写入）⇒ 「存在引用关系 ⇒ 必同分量」；故闭包**恒不跨链**。
     * 例外声明（设计 §3.2）：日后若新增**非图引用类**（如 retry 可跨子图回跳）必须显式
-    * 加入 [[referencesOf]] 并重开本判定。 */
+    * 加入 [[referencesOf]] 并重开本判定。
+    *
+    * 🔴 **例外已发生（chainmodel 批一 2026-09-19 登记）**：`deps` 自本批起**不再是分量边**
+    * （`FlowMapStore.topologicalChains` 的成员边收窄为 in ∪ out），且新增了 `chain:<id>`
+    * **非节点引用**（跨链依赖原语）⇒ 上述「四类引用都是图的边 ⇒ 必同分量」的前提**已失效**：
+    * 闭包**可以跨分量**（经 `n.deps` / `chain:<id>` 引用）。处置 = [[referencesOf]] 显式承接
+    * （字面 deps 与链引用同判据入闭包）+ 本判定按「引用面（与分量解耦）」重开：
+    * **取消面只认引用，不认归属**——链归属重构不改取消语义（取消集与改造前逐字同构：
+    * 改造前 deps 引用者必同分量、本来就在闭包里；改造后仍经 [[referencesOf]] 入闭包）。 */
   private def cascadeClosure(snapshot: FlowMapState, seed: Set[String]): Set[String] =
     def go(frontier: Set[String], visited: Set[String]): Set[String] =
       if frontier.isEmpty then visited
@@ -2032,10 +2053,27 @@ class NodeEngine(
 
   /** deps 满足判定（deps 设计 §1.3）：声明式状态查询（幂等、零记账），非 deliveredTo
     * 式事件累计。findNode 归档兜底——TTL 归档不影响「完成」事实（归档上游可触发，
-    * 与 D1「归档 completed 上游是唯一投递入口」先例一致）。deps 为空 → 恒满足。 */
+    * 与 D1「归档 completed 上游是唯一投递入口」先例一致）。deps 为空 → 恒满足。
+    *
+    * ③（chainmodel 批一 2026-09-19）：`deps` 里的 `chain:<id>` 跨链引用展开为目标链
+    * **成员集**（判据单点 `FlowMapStore.resolveDepTargets`，数据源 = 合并集 ⇒ 与
+    * `findNode` 双区口径同源）——目标链**全体成员 completed** 才满足（成员未全终态 ⇒
+    * false ⇒ 本节点不启动，判据③）。🔴 **不可解析的链引用（链号不存在）= 恒不满足**
+    * （fail-closed，禁静默当「零成员即满足」通过）；该形态在 `mountStallReason` 里
+    * 会被点名（可行动），写路径另有 fail-closed 校验。零链引用时逐字等于改造前行为。 */
   def depsSatisfied(node: NodeDef): IO[Boolean] =
-    node.deps.traverse(store.findNode)
-      .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+    store.combinedNodes.flatMap { combined =>
+      val targets = FlowMapStore.resolveDepTargets(node.deps, combined)
+      if targets.unknownChainRefs.nonEmpty then
+        logger.warn(
+          s"[$projectName] node '${node.name}' (${node.id}) deps=[${node.deps.mkString(",")}] carries " +
+            s"unresolvable chain reference(s) [${targets.unknownChainRefs.mkString(",")}] — the dependency can never " +
+            "satisfy (fail-closed); fix the deps ref (chains come from the Flow Map `chains[]` payload)")
+        IO.pure(false)
+      else
+        targets.ids.traverse(store.findNode)
+          .map(_.forall(_.exists(_.status == NodeLifecycle.Completed)))
+    }
 
   // ── verdict 闸（merge-verdict-gate 批 2026-09-12 作者裁定；**engine-defects #238 泛化
   //    2026-09-15**：闸面从「仅 merge 节点」扩到**全部收口位**）────────────────────────
@@ -2088,9 +2126,13 @@ class NodeEngine(
     * **#238（2026-09-15）**：删去前置 `MergeNodePolicy.isMerge(n)` —— 闸对**全部节点**
     * 生效（收口位 = 全部 start 入口，见上方头注）。 */
   private def mergeVerdictHoldersOf(n: NodeDef): IO[List[NodeDef]] =
-    val ups = (n.in ++ n.deps).distinct
-    if ups.isEmpty then IO.pure(Nil)
-    else ups.traverse(store.findNode).map(l => mergeVerdictHolders(l.flatten))
+    // ③（chainmodel 批一）：`chain:<id>` 跨链引用展开为目标链成员集（判据单点，合并集口径
+    // ——与下方 findNode 双区兜底同源）；目标链里的 verifier 因此同样能挡住本节点。
+    store.combinedNodes.flatMap { combined =>
+      val ups = (n.in ++ FlowMapStore.resolveDepTargets(n.deps, combined).ids).distinct
+      if ups.isEmpty then IO.pure(Nil)
+      else ups.traverse(store.findNode).map(l => mergeVerdictHolders(l.flatten))
+    }
 
   /** 纯判据（IO 版与 mount-stalled 可见性文案共用单点）：上游中「让本节点卡住的 verifier」
     * 清单 —— **#238 泛化后 = [[staleVerdictUps]] 的直通单点**（旧前置
@@ -2122,7 +2164,11 @@ class NodeEngine(
     * 判据面证据：变异臂「把 [[mergeVerdictHoldersOf]] 置空」⇒ 本行出现，且
     * `MergeVerdictGateSpec.V6` 的「held + 不得发本事件」断言同时转红。 */
   private def logVerdictGateBreach(where: String, n: NodeDef): IO[Unit] =
-    (n.in ++ n.deps).distinct.traverse(store.findNode).flatMap { ups =>
+    // ③（chainmodel 批一）：上游集与闸共用同一解析单点（链引用 → 成员集），否则回退告警
+    // 会与闸的口径分叉（链引用上游被漏点名 = 假阴性）。
+    store.combinedNodes.flatMap { combined =>
+      (n.in ++ FlowMapStore.resolveDepTargets(n.deps, combined).ids).distinct.traverse(store.findNode)
+    }.flatMap { ups =>
       val held = staleVerdictUps(ups.flatten)
       if held.isEmpty then IO.unit
       else
@@ -2504,18 +2550,18 @@ class NodeEngine(
     * O(N·E)，§9.2 :571）。
     * 本方法 = `chainIdOf` 判据单点的手工展开（同一次分量重算里同时取得 chainId /
     * title / memberCount 三值——若调 chainIdOf 再算一次分量即双重全量重算），口径
-    * 与 chainIdOf 逐字同源：合并集（活动∪归档）上取含本节点的分量，成员数 ≥2 才
-    * 带值（孤立单节点链 = 无链，与载荷 chainId 条件键恒同）。 */
+    * 与 chainIdOf 逐字同源（**chainmodel 批一 ① 起 = `chainIdIn`**：声明恒带、未声明者
+    * 合并集派生分量成员数 ≥2 才带值，孤立单节点链 = 无链，与载荷 chainId 条件键恒同）。 */
   private[project] def chainContextOf(nodeId: String): IO[Option[NodeEngine.NodeChainContext]] =
     store.combinedNodes.map { combined =>
-      FlowMapStore.topologicalChains(combined.values)
-        .find(_.memberIds.contains(nodeId))
-        .filter(_.memberIds.size >= 2)
-        .map { ci =>
+      val chains = FlowMapStore.topologicalChains(combined.values)
+      FlowMapStore.chainIdIn(combined, chains, nodeId)
+        .map { cid =>
+          val members = chains.find(_.id == cid).map(_.memberIds).getOrElse(Nil)
           NodeEngine.NodeChainContext(
-            chainId = ci.id,
-            title = FlowMapStore.chainTitle(ci.memberIds.flatMap(combined.get), ci.id),
-            memberCount = ci.memberIds.size
+            chainId = cid,
+            title = FlowMapStore.chainTitle(members.flatMap(combined.get), cid),
+            memberCount = members.size
           )
         }
     }
@@ -4515,15 +4561,31 @@ class NodeEngine(
     * 「完成」事实（本函数由 completeNode 完成 fiber 调用时上游必在活动区；
     * 归档变体由 NodeEdit D1-deps 补触发路径覆盖，findNode 兜底）。 */
   private def settleDeps(completed: NodeDef): IO[Unit] =
-    store.snapshot.flatMap { s =>
-      s.nodes.values
-        .filter(d => d.deps.contains(completed.id)
-          && d.status != NodeLifecycle.Running
-          && !NodeLifecycle.Terminal.contains(d.status))
-        .toList
-        // fork 化（§6.1）：traverse_ 遍历体的 startNode 各自 fork——同上游 N 依赖
-        // 者同时获得会话（案例 A 串行链根除），遍历 fiber 不被任何一个下游会话质押。
-        .traverse_(d => forkStart(s"settle-deps -> ${d.name}(${d.id})")(startNode(d.id)))
+    // ③（chainmodel 批一）：`deps` 命中判据 = 字面 id 命中 **∪** `chain:<id>` 引用命中
+    // （本次完成者在目标链成员集内）。链表按**合并集**派生一次（仅当确有链引用时才派生；
+    // 零链引用 = 零派生成本，即时序与行为逐字等于改造前）。命中即触发，是否真起步仍由
+    // `startNode` 的 `depsSatisfied`（全成员 completed）把关 ⇒ 逐成员完成均可触发、
+    // 幂等无害。
+    store.combinedNodes.flatMap { combined =>
+      val chainsById =
+        if !combined.valuesIterator.exists(_.deps.exists(FlowMapStore.isChainRef)) then Map.empty[String, ChainInfo]
+        else FlowMapStore.topologicalChains(combined.values).map(c => c.id -> c).toMap
+      def depsHit(d: NodeDef): Boolean =
+        d.deps.exists { dep =>
+          if FlowMapStore.isChainRef(dep) then
+            chainsById.get(FlowMapStore.chainRefTarget(dep)).exists(_.memberIds.contains(completed.id))
+          else dep == completed.id
+        }
+      store.snapshot.flatMap { s =>
+        s.nodes.values
+          .filter(d => depsHit(d)
+            && d.status != NodeLifecycle.Running
+            && !NodeLifecycle.Terminal.contains(d.status))
+          .toList
+          // fork 化（§6.1）：traverse_ 遍历体的 startNode 各自 fork——同上游 N 依赖
+          // 者同时获得会话（案例 A 串行链根除），遍历 fiber 不被任何一个下游会话质押。
+          .traverse_(d => forkStart(s"settle-deps -> ${d.name}(${d.id})")(startNode(d.id)))
+      }
     }
 
   /** 依赖者触发饥饿记账（§6.3）：nodeId → 连续「资格满足却未获会话」的回扫轮数。
@@ -4732,7 +4794,25 @@ class NodeEngine(
     // R4：pendingSuccession（「待承接」槽位）并入上游集——被摘除的 cancelled 上游
     // 的 completedAt（= 取消时刻）因此参与可触发点 t0，使「承接等待」与其它停滞
     // 同源计时（60s 档），并让 barrier 残缺清单能点名它。
-    (n.in ++ n.deps ++ n.pendingSuccession).distinct.traverse(upId => store.findNode(upId)).flatMap { ups =>
+    //
+    // ③（chainmodel 批一 2026-09-19）：`deps` 的 `chain:<id>` 引用按**合并集**展开为
+    // 目标链成员集（判据单点；与下方 findNode 双区兜底同源）——链路满足时刻因此进入
+    // t0。🔴 不可解析的链引用 = 永久不可满足 ⇒ **显式点名**（旧口径会被下方「悬空引用
+    // 保守不判」吞掉 = 节点无声停等，正是「禁静默失败」要挡的形态）。
+    store.combinedNodes.flatMap { combined =>
+      val targets = FlowMapStore.resolveDepTargets(n.deps, combined)
+      if targets.unknownChainRefs.nonEmpty then
+        IO.pure(Some(
+          s"deps carries unresolvable chain reference(s) [${targets.unknownChainRefs.map(c => s"chain:$c").mkString(",")}] — " +
+            "a `chain:<id>` dependency is satisfied only by an EXISTING chain (ids come from the Flow Map `chains[]` " +
+            "payload / NodeList); until the deps ref is fixed this node can never start (fail-closed, no silent settle)"))
+      else mountStallReasonOf(n, now, (n.in ++ targets.ids ++ n.pendingSuccession).distinct)
+    }
+
+  /** 停滞判据体（上游 id 集已解析完毕；与 [[mountStallReason]] 同点拆出，仅为避免 ③ 的
+    * 链引用解析把整段判据再缩进一层）。 */
+  private def mountStallReasonOf(n: NodeDef, now: Long, refIds: List[String]): IO[Option[String]] =
+    refIds.traverse(upId => store.findNode(upId)).flatMap { ups =>
       if ups.exists(_.isEmpty) then IO.pure(None)
       else
         val us = ups.flatten
@@ -5132,10 +5212,27 @@ class NodeEngine(
           .flatMap(e => OutEdge.resolveTargetId(nodes, e.to))
           .filter(_ != nodeId)
           .toSet
+        // ③（chainmodel 批一 2026-09-19）：`chain:<id>` 引用的**反向传导**——目标链成员被
+        // 取消/退役时，引用整链的下游同款入闭包（与字面 deps 引用同判据；否则「等整链」的
+        // 下游在成员取消后只是静止停等，取消语义与字面引用不一致）。零链引用时零派生成本
+        // （短路返回空表，逐字等于改造前行为）。
+        // 🔴 **登记（口径变化，禁默认一致）**：链引用是**非图引用**——`deps` 自本批起不再是
+        // 分量边、`chain:<id>` 更不是节点 id ⇒ `cascadeClosure` 头注「存在引用关系 ⇒ 必同
+        // 分量」对链引用不成立（该头注已同步登记）。跨分量传导在此形态下是**有意保留**的：
+        // 判据面 = 「与我取消集有依赖引用」，与分量归属解耦（归属面重构不应连带改取消面）。
+        val chainsById =
+          if !nodes.valuesIterator.exists(_.deps.exists(FlowMapStore.isChainRef)) then Map.empty[String, ChainInfo]
+          else FlowMapStore.topologicalChains(nodes.values).map(c => c.id -> c).toMap
+        def depsRefers(n: NodeDef, target: String): Boolean =
+          n.deps.exists { dep =>
+            if FlowMapStore.isChainRef(dep) then
+              chainsById.get(FlowMapStore.chainRefTarget(dep)).exists(_.memberIds.contains(target))
+            else dep == target
+          }
         val reverse = nodes.values.iterator
           .filter(_.id != nodeId)
           .filter { n =>
-            n.in.contains(nodeId) || n.deps.contains(nodeId) || n.pendingSuccession.contains(nodeId) ||
+            n.in.contains(nodeId) || depsRefers(n, nodeId) || n.pendingSuccession.contains(nodeId) ||
               n.out.exists(e =>
                 !OutEdge.isLoopEdge(e) && OutEdge.resolveTargetId(nodes, e.to).contains(nodeId))
           }
@@ -5147,6 +5244,12 @@ class NodeEngine(
     * 自家 `in`/`deps` 非空，或自家 `out` 里还有一条**能解析成活动节点**的边（纯
     * `Nebula` 边与悬空名不算挂线，同 `topologicalChains` 的图成员判据），或活动区里
     * 任何别的节点还在 `in`/`out`/`deps` 里引用它。
+    *
+    * ③（chainmodel 批一 **登记**）：`chain:<id>` 引用**不**参与本判据的逐点匹配（它不是
+    * 节点引用：既不能作为「引用我」命中，也不会被摘边腿 prune 掉——摘边腿按节点 id 过滤，
+    * 链引用原样保留，语义 = 「该下游仍等这条链的其余成员」）。若某成员退役令目标链永不
+    * 全 completed，该下游呈现为**永久停等**并由 `barrierHeldReason`（已按链引用展开）点名。
+    * 零链引用时逐字等于改造前行为。
     *
     * 用途 = [[detachAbandonedNode]] 的**零写出口**（无残留 ⇒ 连一次 `mutateWithResult`
     * 都不进 ⇒ 真零写，不是「写了同样内容」）与 [[backfillAbandonedDetach]] 的候选集。
@@ -5183,9 +5286,14 @@ class NodeEngine(
     *    `{pass,failed}`/mode=result，NodeDef 字面构造先例）；退役节点永不投递（cancelled
     *    不可重激活），故收束不影响任何投递面。
     *    为什么要摘 `in`（`detachCancelledUpstream` 不摘）：`FlowMapStore.topologicalChains`
-    *    的邻接是**无向**边集 `in ∪ out ∪ deps`，且**两侧都建边**（上游 `out` 与下游 `in`
-    *    各自 `link` 一次）⇒ 只摘一侧摘不掉分量成员关系。要「自成全终态分量」必须把
-    *    该节点**入射边**也清掉。
+    *    的邻接是**无向**边集 `in ∪ out`（**chainmodel 批一 ① 2026-09-19 起 `deps` 不再是成员
+    *    边**——旧口径 `in ∪ out ∪ deps` 作废；`deps` 仍进谱系边表、不再决定分量成员关系），
+    *    且**两侧都建边**（上游 `out` 与下游 `in` 各自 `link` 一次）⇒ 只摘一侧摘不掉分量成员
+    *    关系。要「自成全终态分量」必须把该节点**入射边**也清掉。
+    *    🔴 口径变化登记：本条只改**理由**，不改**臂**——`R.deps ∋ id → prune` 臂仍保留（摘的
+    *    是「下游还在等我」的依赖事实与后续停止等待语义，与成员边判据解耦），且 `deps` 边
+    *    脱钩后「被 deps 粘住分量」的原始病根已由 ① 的定义层改动直接消除（本方法的摘边语义
+    *    因此更宽松地达成目标、无新增禁用面）。
     * ② **反向引用三面全摘**（活动区全扫，「谁还引用我」是唯一可靠方向——前向遍历在
     *    「out 已收束但下游 in 仍引用」的不一致拓扑下恒空，见 [[reversePruneReferences]]）：
     *      - `R.in ∋ id`（下游镜像）→ prune；**未消费的轨**（`R.deliveredTo` 不含 id）
@@ -5326,10 +5434,22 @@ class NodeEngine(
     * 仍有 running/wiring 上游 → 不告警；上游引用悬空 → 不告警。 */
   private def checkBarriersNow(terminalId: String, cause: String): IO[Unit] =
     store.snapshot.flatMap { snap =>
+      // ③（chainmodel 批一）：`chain:<id>` 引用展开为目标链成员集后判定（目标链里有终态
+      // 成员 ⇒ 该下游进入检查集；其依赖永不满足的事实由 barrierHeldReason 判断与点名）。
+      // 零链引用时逐字等于改造前行为。
+      val chainsById =
+        if !snap.nodes.valuesIterator.exists(_.deps.exists(FlowMapStore.isChainRef)) then Map.empty[String, ChainInfo]
+        else FlowMapStore.topologicalChains(snap.nodes.values).map(c => c.id -> c).toMap
+      def depsRefers(n: NodeDef): Boolean =
+        n.deps.exists { dep =>
+          if FlowMapStore.isChainRef(dep) then
+            chainsById.get(FlowMapStore.chainRefTarget(dep)).exists(_.memberIds.contains(terminalId))
+          else dep == terminalId
+        }
       snap.nodes.values.toList
         .filter(n =>
           (n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring) &&
-            (n.in.contains(terminalId) || n.deps.contains(terminalId) || n.pendingSuccession.contains(terminalId)))
+            (n.in.contains(terminalId) || depsRefers(n) || n.pendingSuccession.contains(terminalId)))
         .traverse_ { n =>
           barrierHeldReason(snap.nodes, n) match
             case None => IO.unit
@@ -5358,7 +5478,12 @@ class NodeEngine(
     *   - `completed 但未投递`的上游**不算 blocker**（那是投递丢失，settle 回扫的自愈
     *     对象，不是终态闸死）——避免重复告警噪音。 */
   private def barrierHeldReason(nodes: Map[String, NodeDef], n: NodeDef): Option[String] =
-    val refs = (n.in ++ n.deps).distinct
+    // ③（chainmodel 批一）：`chain:<id>` 引用展开为目标链成员集后再逐条解析——目标链里
+    // 出现「非 completed 的终态成员」时，本闸**永久不可满足**（链引用要求全体成员
+    // completed），旧口径会因引用解析不到而走「悬空 ⇒ 保守不判」= 静默放过真死锁。
+    // 解析按本判据既有的节点表口径（活动区）做；零链引用时逐字等于改造前行为。
+    val depsResolved = FlowMapStore.resolveDepTargets(n.deps, nodes).ids
+    val refs = (n.in ++ depsResolved).distinct
     val resolved = refs.flatMap(id => nodes.get(id).map(id -> _))
     if resolved.size != refs.size then None
     else
@@ -5366,14 +5491,14 @@ class NodeEngine(
       def permanentlyTerminal(id: String): Boolean =
         upstreamOf(id).exists(u => u.status != NodeLifecycle.Completed && NodeLifecycle.Terminal.contains(u.status))
       val inBlockers = refs.filter(id => n.in.contains(id) && !n.deliveredTo.contains(id) && permanentlyTerminal(id))
-      val depsBlockers = refs.filter(id => n.deps.contains(id) && upstreamOf(id).exists(_.status != NodeLifecycle.Completed))
+      val depsBlockers = refs.filter(id => depsResolved.contains(id) && upstreamOf(id).exists(_.status != NodeLifecycle.Completed))
       val blockers = (inBlockers ++ depsBlockers ++ n.pendingSuccession).distinct
       if blockers.isEmpty then None
       else
         val othersOk = refs.forall { id =>
           blockers.contains(id) ||
             ((!n.in.contains(id) || n.deliveredTo.contains(id)) &&
-              (!n.deps.contains(id) || upstreamOf(id).exists(_.status == NodeLifecycle.Completed)))
+              (!depsResolved.contains(id) || upstreamOf(id).exists(_.status == NodeLifecycle.Completed)))
         }
         if !othersOk then None
         else

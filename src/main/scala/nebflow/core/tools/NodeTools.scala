@@ -749,6 +749,99 @@ object NodeTools:
       }
     }
 
+  // ── 链成员制面（chainmodel 批一 ①③⑤；判据单点全部在 FlowMapStore）─────────
+
+  /** **链归属变更事件单点**（chainmodel 批一 ⑤；设计件取证 6 的「最硬未决项」：
+    * 事件流 44 类里零该类型，跨链并合/拆分只能靠人写的 `node-message` 正文回溯）。
+    *
+    * 判据（机械、零启发式）：写操作**前后各取一次**「有效链归属视图」
+    * （[[FlowMapStore.chainIdView]] = 与载荷 `chainId` 条件键、[[FlowMapStore.chainIdIn]]
+    * 同一判据，禁第二判据）并逐节点比对 —— 视图全集 = 两快照节点 id 并集（写后新增
+    * 的节点也在内）。**归属视图变化**或**本节点声明态变化**任一成立 ⇒ 一条
+    * [[FlowMapEventLog.ChainMembershipChangedType]]。
+    *
+    * 为什么按「全节点」而非调用点给的受影响集比对：链 id 是**分量级**派生量——新增一条
+    * 边可能把两个既有分量并成一条链（id 归并为最早 createdAt 者的 id），此时**每个**原
+    * 成员节点的链号都变了，而它们都不是本次写动作「点名」的节点。少比对 = 归属变更静默
+    * （正是本批要消灭的形态）。
+    *
+    * 三项原因（`reason`，与 [[FlowMapEventLog.chainMembershipChangedSummary]] 同值域）：
+    *   - `declaration`：本节点由未声明 → 声明（旧链号可能缺省也可能有派生值）；
+    *   - `re-id`：本节点声明值变更（改号）；
+    *   - `fallback`：其余（派生分量重组 / 撤销声明后回落 / 归档引起的派生变化）。
+    *
+    * best-effort 纪律与同族（`chain-restored` / `chain-archived`）一致：留痕失败**不得**
+    * 让已经落库的拓扑写动作失败；但**禁**整条静默吞掉——逐条 handleErrorWith 记 warn。
+    * `before` 由调用方在**任何写动作之前**取（`rt.store.combinedNodes`），本方法只读现状。 */
+  def emitChainMembershipChanges(rt: ProjectRuntime, before: Map[String, NodeDef]): IO[Unit] =
+    val beforeView = FlowMapStore.chainIdView(before)
+    val beforeDecl: Map[String, String] =
+      before.flatMap((id, n) => FlowMapStore.declaredChainId(n).map(id -> _))
+    rt.store.combinedNodes.flatMap { after =>
+      val afterView = FlowMapStore.chainIdView(after)
+      val afterDecl: Map[String, String] =
+        after.flatMap((id, n) => FlowMapStore.declaredChainId(n).map(id -> _))
+      (before.keySet ++ after.keySet).toList.sorted.flatMap { id =>
+        val oldV = beforeView.get(id)
+        val newV = afterView.get(id)
+        val oldD = beforeDecl.get(id)
+        val newD = afterDecl.get(id)
+        if oldV == newV && oldD == newD then Nil
+        else
+          val reason = (oldD, newD) match
+            case (None, Some(_))    => "declaration"
+            case (Some(a), Some(b)) => "re-id"
+            case _                  => "fallback"
+          List(
+            FlowMapEventLog
+              .append(rt.project.workspace, rt.project.name, id,
+                FlowMapEventLog.ChainMembershipChangedType,
+                FlowMapEventLog.chainMembershipChangedSummary(oldV, newV, reason),
+                chainId = newV)
+              .handleErrorWith(e =>
+                IO(logger.warnSync(
+                  s"[${rt.project.name}] chain-membership-changed append failed for $id " +
+                    s"(${oldV.getOrElse("-")}→${newV.getOrElse("-")} reason=$reason): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")))
+          )
+      }.sequence_.void
+    }
+
+  /** 链引用的 `<id>` 段展示形（空后缀时显示原文，避免报错文本出现空引号）。 */
+  private def chainRefShown(ref: String): String =
+    val t = FlowMapStore.chainRefTarget(ref)
+    if t.isEmpty then ref else t
+
+  /** **`in` 里出现链引用**的可行动报错（chainmodel 批一 ③；`NODE_CHAIN_REF_UNKNOWN`）。
+    * 静态判据（不需要看拓扑）：链引用是 deps 专属语法——它是「等」不是「取」，不注入任何
+    * 结果，故不可能充当 barrier 输入。禁静默按字面节点 id 解析（那会得到一个永远查无此点
+    * 的悬空引用，报错文案还指不到真正原因）。 */
+  def chainRefInInputError(ref: String): String =
+    s"'in' cannot carry a chain reference ('$ref') — \"chain:<chainId>\" is a deps-only scheduling gate: it waits for a " +
+      "whole chain's completion and never injects a result, so it cannot be a barrier input. Use deps for the chain, or " +
+      "name the member node ids you actually need as input. (NODE_CHAIN_REF_UNKNOWN)"
+
+  /** **链引用解析不可达**的可行动报错（③）：`chain:<id>` 的目标链在**给定节点集**上不存在
+    * （既不是任何节点的声明链号，也不是任何派生分量的 `chain-<最早成员 id>`）。此时闸
+    * **永不满足**（[[FlowMapStore.DepTargets.unknownChainRefs]] 由启动闸 fail-closed 处理），
+    * 故写路径必须当场拒（禁静默 no-op = 「零成员即满足」，也禁只挂一条无痕停等）。 */
+  def chainRefUnknownError(ref: String): String =
+    s"Unknown chain reference '${chainRefShown(ref)}' in deps: \"chain:<chainId>\" must name a chain that exists — a declared chain id, " +
+      "or a derived `chain-<earliest-member-id>` for an undeclared component. As written the gate can never be satisfied (the node " +
+      "would wait forever). Read the real ids from NodeList chains[].id. (NODE_CHAIN_REF_UNKNOWN)"
+
+  /** 单条链引用可达性（create/edit 两条写路径共用；判据单点，数据源 = 双区合并集
+    * ——与启动闸/停滞面同源；零链引用时零派生成本）。`in` 里的链引用由
+    * [[chainRefInInputError]] 静态拒（不经本闸）。 */
+  def chainRefExists(rt: ProjectRuntime, ref: String): IO[Either[String, Unit]] =
+    if !FlowMapStore.isChainRef(ref) then IO.pure(Right(()))
+    else
+      rt.store.combinedNodes.map { combined =>
+        val known = FlowMapStore.topologicalChains(combined.values).map(_.id).toSet
+        val t = FlowMapStore.chainRefTarget(ref)
+        if t.nonEmpty && known.contains(t) then Right(())
+        else Left(chainRefUnknownError(ref))
+      }
+
   /** 节点运行后台化（收口③：dispatcher 会话结束语义修复）。
     *
     * startNode/deliverOutTo 会同步等待节点终态（runWithAgent 的 resultDeferred
@@ -807,8 +900,12 @@ object NodeTools:
   ): IO[List[FlowMapStore.RestoredChain]] =
     if !flag then IO.pure(Nil)
     else
-      val refs = (NodeTools.parseIn(inJson).getOrElse(Nil)
-        ++ NodeTools.parseIn(depsJson).getOrElse(Nil)
+      // chainmodel 批一 ③：`deps` 里的 `chain:<id>` 是**跨链引用**（目标链成员集），不是
+      // 节点 id ——先滤掉，免得它进去被当「查无此节点」而让拉回的触发集多一个永远不命中
+      // 的项（现状是静默忽略，但「链引用被当节点名去归档区找同名」是误导面）。`nodename`
+      // 不滤（节点名恰为 `chain:...` 的形态照旧按其本名拉回）。
+      val refs = ((NodeTools.parseIn(inJson).getOrElse(Nil)
+        ++ NodeTools.parseIn(depsJson).getOrElse(Nil)).filterNot(FlowMapStore.isChainRef)
         ++ List(nodename)).map(_.trim).filter(_.nonEmpty).distinct
       for
         active <- rt.store.snapshot
@@ -863,8 +960,9 @@ object NodeTools:
     *
     * chains 顶层旁挂 + 节点级 chainId / chainIds（链级抽象 P0 · spec §6.2；U1 多链
     * 归属批）：派生单点 = FlowMapStore.topologicalChains（活动∪归档合并集，D8），
-    * 旁挂仅收「分量成员数 ≥2 且含活动成员」的链（与节点级 chainId 判据同口径——
-    * 凡载荷带 chainId 的节点其链条目必在旁挂中，前端 chainId → 链查找恒命中）；
+    * 旁挂判据 = FlowMapStore.chainVisible ∧ 含活动成员（**chainmodel 批一 ① 起：声明链
+    * 不论成员数都进旁挂**、派生分量仍需 ≥2 成员；与节点级 chainId 判据**同源**，禁第二
+    * 判据——凡载荷带 chainId 的节点其链条目必在旁挂中，前端 chainId → 链查找恒命中）；
     * 条目形状 {id,title,entries,ends,memberIds}，title 由 FlowMapStore.chainTitle
     * 三级推导下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，
     * spec §6.2「全成员」——主图渲染由前端按节点缓存过滤）。节点级 chainIds 条件键
@@ -905,8 +1003,14 @@ object NodeTools:
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
       val combined = s.nodes ++ arch.nodes
+      // chainmodel 批一 ①（判据同源收口）：旁挂判据由写死的「分量成员数 ≥2」改为判据单点
+      // [[FlowMapStore.chainVisible]]（**声明链不论成员数都可见**、派生分量仍需 ≥2 成员
+      // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。
+      // 为什么必须同源：节点级 `chainId` 条件键（本处 `chainIdByNode`）与 WS/事件面
+      // （`chainAttrsOf` → `chainIdIn`）是同一个载荷键的两条生产路径——不同源 = 同一节点
+      // 在工具面与事件面报出不同链号（本批 ① 的直接反例）。零新键、零形状变化。
       val chains = FlowMapStore.topologicalChains(combined.values)
-        .filter(c => c.memberIds.size >= 2 && c.memberIds.exists(s.nodes.contains))
+        .filter(c => FlowMapStore.chainVisible(combined, c) && c.memberIds.exists(s.nodes.contains))
       val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
       // U1 多链归属（作者裁定①）：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
       // 首项 + 全量成员链；普通节点恒缺席 = 单值 chainId 语义不变）；派生与 chainId
@@ -1016,6 +1120,22 @@ final case class NodeEditRetry(policy: Option[RetryPolicy], provided: Boolean)
   * 角色是拓扑身份，同 `merge` 先例，改动只能新建节点）。 */
 final case class NodeEditRole(role: Option[String], provided: Boolean)
 
+/** **链归属声明载体**（chainmodel 批一 ①「显式成员制」2026-09-19）：call() 解析的
+  * （decl, provided, invalid）经 implicit 自动填入 createNode/proceed/editNode（与
+  * notify/loop/retry/role 同机制——调用点零文本改动）。
+  *
+  * `provided=false`（未传）= 创建不声明 / 编辑零改动（现有归属轨：未声明 ⇒ 派生兜底，
+  * 存量数据逐字不变）；`provided=true` 且 `decl=Some(cid)` = 声明链归属（**声明即归属**，
+  * 与它等谁/被谁等/被谁汇聚无关）；`provided=true` 且 `decl=None` = **显式撤销声明**
+  * （回落派生兜底，replace-on-provide 与 notify 同款）。
+  *
+  * `invalid` = 值域校验失败的可行动报错（`NODE_CHAIN_ID_INVALID`）：非空 ⇒ 创建/编辑
+  * 路径**前置拒绝**（0 副作用，与 notify/retry 门同款短路）。 */
+final case class NodeEditChainDecl(
+    decl: Option[String],
+    provided: Boolean,
+    invalid: Option[String] = None)
+
 object NodeEditTool extends Tool:
   val name = "NodeEdit"
 
@@ -1050,7 +1170,7 @@ object NodeEditTool extends Tool:
 - description (required on create, ≤60 chars): one-line purpose (card/payload metadata). descriptionLong (optional, ≤200 chars): longer summary — detail channel only. Both replace on edit.
 - task (optional): node task; an entry node (task, no in) runs on create.
 - in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each gains a default pass edge here.
-- deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected.
+- deps (optional, replace-on-provide): upstream ids awaited for COMPLETION SIGNAL only (need the result? use in); []/null clears; failed/cancelled/blocked never trigger; deps edits on RUNNING nodes rejected. A ref may be "chain:<id>" = wait for that WHOLE chain (all members completed) — a pure scheduling gate, NEVER a membership edge, deps-only (not 'in'); unknown id ⇒ NODE_CHAIN_REF_UNKNOWN.
 - retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. FAIL + gen<N ⇒ that upstream re-runs (fresh result over the pass edge); gen≥N ⇒ failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); acyclic (NODE_RETRY_CYCLE).
 - out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
@@ -1058,6 +1178,7 @@ object NodeEditTool extends Tool:
 - preset: legacy (unused).
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
+- chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
 - notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
@@ -1088,7 +1209,12 @@ object NodeEditTool extends Tool:
         "deps" -> Json.obj("oneOf" -> Json.arr(
           Json.obj("type" -> "string".asJson),
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Upstream node id(s) this node waits on for completion signal only (no result injected). Replace-on-provide: [] / null clears. Needs the result? Use in".asJson),
+        ).asJson, "description" -> "Upstream node id(s) this node waits on for completion signal only (no result injected). Replace-on-provide: [] / null clears. Needs the result? Use in. A ref may also be \"chain:<chainId>\" = wait for that entire chain (all members completed) — a pure scheduling gate, never a membership edge; NODE_CHAIN_REF_UNKNOWN when the chain id does not exist, and chain refs are deps-only (rejected in 'in').".asJson),
+        "chainId" -> Json.obj("type" -> "string".asJson,
+          "description" -> ("EXPLICIT chain membership declaration (chainmodel batch 1 ①): the node belongs to this chain id verbatim — independent of what it waits on, who waits on it, or who merges it (\"declared ⇒ belongs\"). Undeclared nodes keep the derived fallback (the weak in/out component; ≥2 members to be reported); `deps` is a pure scheduling gate and NEVER a membership edge, so declaring/withdrawing changes NO start/merge/barrier behaviour — only which chain the node is reported under (payload chainId / NodeList chains[]). " +
+            "Value = chain id token: non-empty, first char alphanumeric, rest letters/digits/'.'/'-'/'_' , ≤120 chars (it becomes a payload key AND an archive batch file name ⇒ path separators, whitespace, ':' or '..' are refused with NODE_CHAIN_ID_INVALID, never silently truncated). " +
+            "null = withdraw the declaration (falls back to the derived component). " +
+            "Every membership change is audited as `chain-membership-changed` (summary `from=<old|-> to=<new|-> reason=declaration|re-id|fallback`, ts on the event line): the declared write, a re-id, and the derived re-grouping that used to happen silently all have a write point now (NodeEdit create + edit tails).").asJson),
         "out" -> Json.obj("type" -> "string".asJson,
           "description" -> "Out-edge spec (OPTIONAL on create — empty/null leaves the node dangling: no delivery, no root notify, the result is retained and auto-delivered once wired; on edit replaces the whole edge set): edge = target + gates + mode. Target = node id OR node name (the engine resolves names to nodes for validation, in-edge mirrors and delivery). \"B\" = pass edge with payload (legacy); \"Nebula\" = EXIT MARKER (pass gate, mode=signal ⇒ zero delivery); to notify the root write an EXPLICIT gate set — \"(pass)Nebula\" / \"(pass,failed)Nebula\"; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). Loop nodes must cover BOTH pass and failed (NODE_LOOP_GATE_INCOMPLETE). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
         "dangling" -> Json.obj("type" -> "boolean".asJson,
@@ -1279,6 +1405,30 @@ object NodeEditTool extends Tool:
             case None =>
               Left("'role' must be a string: \"task\" or \"verifier\" (NODE_ROLE_INVALID)")
     implicit val roleFlag: NodeEditRole = NodeEditRole(roleParsed.getOrElse(None), roleProvided)
+    // chainId 参数（**chainmodel 批一 ①「显式成员制」** 2026-09-19）：三形态
+    // （replace-on-provide，与 notify 同款）——
+    //   未传        → provided=false（创建不声明 / 编辑零改动：现有归属轨逐字不变）
+    //   传 null     → 显式**撤销**声明（回落派生兜底）
+    //   传 "<chain>"→ 声明链归属（值域校验失败 ⇒ 前置拒绝 NODE_CHAIN_ID_INVALID）
+    // 载体经 implicit 传入 createNode/proceed/editNode（与 notify/loop/retry/role 同机制，
+    // 调用点零文本改动）。🔴 声明**不改调度**（deps 才是闸）：只改「归属被报在哪条链上」。
+    val chainDeclJson = input("chainId")
+    val chainDeclProvided = chainDeclJson.isDefined
+    val chainDeclParsed: Either[String, Option[String]] =
+      chainDeclJson match
+        case None                => Right(None)
+        case Some(j) if j.isNull => Right(None)
+        case Some(j) =>
+          j.asString match
+            case Some(s) if FlowMapStore.isDeclarableChainId(s) => Right(Some(s.trim))
+            case Some(s) =>
+              Left(s"'chainId' must be a chain id token — non-empty, ≤${FlowMapStore.ChainIdMaxLength} chars, first char " +
+                "alphanumeric, then letters/digits/'.'/'-'/'_' only (no path separators, whitespace or '..'): the value is " +
+                s"used verbatim as the chain id in payloads (chainId / chains[].id) and as the archive batch file name. Got '$s'. (NODE_CHAIN_ID_INVALID)")
+            case None =>
+              Left("'chainId' must be a string (the chain id to declare) or null to withdraw the declaration. (NODE_CHAIN_ID_INVALID)")
+    implicit val chainDeclFlag: NodeEditChainDecl =
+      NodeEditChainDecl(chainDeclParsed.getOrElse(None), chainDeclProvided, chainDeclParsed.left.toOption)
     val inJson = input("in")
     val depsJson = input("deps")
     val outJson = input("out")
@@ -1322,6 +1472,10 @@ object NodeEditTool extends Tool:
     // role 值域错误前置拦截（nrloop 一期，0 spawn）：非法角色值在进 create/edit 之前拒。
     else if roleProvided && roleParsed.isLeft then
       IO.pure(Left(ToolError(roleParsed.swap.toOption.getOrElse("invalid role"))))
+    // chainId 值域错误前置拦截（chainmodel 批一 ①，0 spawn）：非法链号在进 create/edit 之前拒
+    //（fail-closed——链号进载荷键与归档批文件名，禁路径分隔符/空白/`..`）。
+    else if chainDeclProvided && chainDeclParsed.isLeft then
+      IO.pure(Left(ToolError(chainDeclParsed.swap.toOption.getOrElse("invalid chainId"))))
     // description 校验（创建必写 + 编辑可 update 共用）：trim 非空 + ≤60 字符
     // （裁定⑤c 双层化：短文进默认载荷；长文走 descriptionLong ≤200）。
     else if description.exists(d => d.trim.isEmpty) then
@@ -1395,6 +1549,9 @@ object NodeEditTool extends Tool:
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 pluginsProvided ||
                                 mergeProvided || notifyProvided.isDefined || retryProvided ||
+                                // chainmodel 批一 ①：链归属声明同 config 族——归档节点只放行
+                                // out 改接（归档是显示过期 + 结果可补投，不是改写归属的通道）。
+                                chainDeclFlag.provided ||
                                 // 显式授权入口对归档节点无意义（归档是显示过期 + 结果可补投，
                                 // 不是重激活通道——重激活只属于活动区节点）。
                                 reactivateCompleted
@@ -1546,7 +1703,7 @@ object NodeEditTool extends Tool:
     /** P1 已过闸的旁证（plugins 键在本次调用出现）——驱动 P2a flag-off 警告面。 */
     pluginsDeclared: Boolean = false
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
-      roleFlag: NodeEditRole): IO[Either[ToolError, String]] =
+      roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
     // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
     val agentName = "general"
@@ -1670,15 +1827,24 @@ object NodeEditTool extends Tool:
     verifierRoutePending: Boolean = false,
     pluginsDeclared: Boolean = false
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
-      roleFlag: NodeEditRole): IO[Either[ToolError, String]] =
+      roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
     val outTargets = out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
     for
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
       // wouldCreateCycle 已含 deps 反向边（deps 设计 §1.2 校验二：混合图单点覆盖）——
       // create 场景新节点无出边，环检天然为 false，保留调用与 in 对称（防御未来变化）。
-      inOk <- ins.traverse(id => NodeTools.ensureNodeExists(rt, id))
-      depsOk <- deps.traverse(id => NodeTools.ensureNodeExists(rt, id))
+      // chainmodel 批一 ③：deps 里的 `chain:<id>` 引用走**链可达性闸**（不是节点存在性
+      // ——按字面查节点必然「查无此点」，报错文案指不到真正原因）；`in` 里的链引用 = 语法
+      // 误用，静态可行动报错（链引用是 deps 专属语法）。
+      inOk <- ins.traverse { id =>
+        if FlowMapStore.isChainRef(id) then IO.pure(Left(NodeTools.chainRefInInputError(id)): Either[String, Unit])
+        else NodeTools.ensureNodeExists(rt, id)
+      }
+      depsOk <- deps.traverse { id =>
+        if FlowMapStore.isChainRef(id) then NodeTools.chainRefExists(rt, id)
+        else NodeTools.ensureNodeExists(rt, id)
+      }
       cycleIn <- ins.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
       cycleDeps <- deps.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
       // out 目标解析（20260909 in 丢失事故修复面）：接受节点 id 或节点名，校验/环检/
@@ -1834,7 +2000,13 @@ object NodeEditTool extends Tool:
             plugins = plugins,
             // 节点角色（nrloop 一期 2026-09-12，设计 §3.2）：create-only，未传 = task
             // （旧行为零变化——存量/既有调用方全落在 task 面）。
-            role = roleFlag.role.getOrElse(NodeRoles.Task)
+            role = roleFlag.role.getOrElse(NodeRoles.Task),
+            // 链归属声明（chainmodel 批一 ①，2026-09-19）：建位参数面 = NodeEdit 的
+            // `chainId`，持久面 = 本字段。**声明即归属**（恒为该值，与它等谁/被谁等/
+            // 被谁汇聚无关）；未传 = None = 未声明 ⇒ 归属走派生兜底轨（存量数据全走
+            // 此路 ⇒ 零迁移）。值域已在 call() 前置闸拒非法值（NODE_CHAIN_ID_INVALID）。
+            // 🔴 纯元数据：不参与任何调度判据（deps 才是闸），无「创建即运行」影响。
+            chainId = chainDecl.decl
           )
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
@@ -1869,6 +2041,10 @@ object NodeEditTool extends Tool:
           // （不可分离）；本断言是防回归哨兵——in 追加若被挪出 mutate（或未来重构
           // 引入后置写）即在此显式红，杜绝「回执成功但 in 空 → barrier 空真」的静默形态。
           val createIO: IO[Either[ToolError, String]] =
+            // 链归属变更留痕（chainmodel 批一 ⑤）需要**写前**归属视图：先取快照再执行
+            // mutate（IO 顺序保证快照早于任何写动作）。`chainIdView` 是纯派生（分量 +
+            // 声明），读快照即得写前归属；写后视图由 emit 内部现读 ⇒ 两次读数各有其时点。
+            rt.store.combinedNodes.flatMap { chainBefore =>
             mutateIO.flatMap { s =>
               val created = s.nodes(nodeId)
               val missingIn = ins.filterNot(created.in.contains)
@@ -1947,12 +2123,18 @@ object NodeEditTool extends Tool:
                 // 否则合并节点会在零上游时开跑（S1 E2E 实测捕获）。
                 (if task.isDefined && ins.isEmpty && !merge then
                    NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
-                 else IO.unit)
+                 else IO.unit) *>
+                // 链归属变更留痕（chainmodel 批一 ⑤）：create 也是归属变更的写点——
+                // ①显式声明（reason=declaration，单成员声明链照样成链）；②新节点把两个
+                // 既有分量桥接成一条链时，**原成员**的链号归并（reason=fallback）此前
+                // 完全静默（判据见 emitChainMembershipChanges：全节点前后视图比对）。
+                NodeTools.emitChainMembershipChanges(rt, chainBefore)
                 ).as(Right(
                   s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
                     (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
                     (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
                     (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
+                    (if chainDecl.decl.isDefined then s" chainId ← ${chainDecl.decl.get}" else "") +
                     (retryFlag.policy match
                       case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
                       case None => "") +
@@ -1970,6 +2152,7 @@ object NodeEditTool extends Tool:
                     (if pluginsFlagWarn.isDefined then "\n" + pluginsFlagWarn.get else "") +
                     (if pluginsTextWarn.nonEmpty then "\n" + pluginsTextWarn.mkString("\n") else "")
                 ))
+            }
             }
           createIO
     yield result
@@ -2158,7 +2341,7 @@ object NodeEditTool extends Tool:
       * ⇒ completed 节点的编辑行为逐字不变：改接只补投递既有结果，不重跑）。 */
     reactivateCompleted: Boolean = false
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
-      roleFlag: NodeEditRole): IO[Either[ToolError, String]] =
+      roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
     // ── 动作分支 ──
     // role create-only（nrloop 一期 2026-09-12，设计 §3.2）：角色 = 拓扑身份（决定
     // node_report 值域与 verdict 选通合法性），中途改会让已落盘的值域/路由语义与
@@ -2334,13 +2517,20 @@ object NodeEditTool extends Tool:
                           val depsChecks: IO[List[Either[String, Unit]]] =
                             if depsProvided then
                               newDeps.traverse { upId =>
-                                NodeTools.ensureNodeExists(rt, upId).flatMap {
-                                  case Left(e) => IO.pure(Left(e): Either[String, Unit])
-                                  case Right(_) =>
-                                    NodeTools.wouldCreateCycle(rt, upId, node.id).map {
-                                      case true => Left(s"Cycle detected: adding deps from '$upId' would create a loop — DAG must stay acyclic")
-                                      case false => Right(())
-                                    }
+                                // chainmodel 批一 ③：`chain:<id>` 引用走**链可达性闸**——
+                                // 它不是节点 id，走节点存在性必然「查无此点」（报错指不到真因），
+                                // 环检对它也无意义（引用边在环检图上经 resolveDepTargets 展开为
+                                // 目标链成员，见 FlowMapStore.wouldCreateCycle）。
+                                if FlowMapStore.isChainRef(upId) then
+                                  NodeTools.chainRefExists(rt, upId)
+                                else
+                                  NodeTools.ensureNodeExists(rt, upId).flatMap {
+                                    case Left(e) => IO.pure(Left(e): Either[String, Unit])
+                                    case Right(_) =>
+                                      NodeTools.wouldCreateCycle(rt, upId, node.id).map {
+                                        case true => Left(s"Cycle detected: adding deps from '$upId' would create a loop — DAG must stay acyclic")
+                                        case false => Right(())
+                                      }
                                   }
                               }
                             else IO.pure(Nil)
@@ -2467,6 +2657,11 @@ object NodeEditTool extends Tool:
                           // 激活，违背描述「No-op if nothing actually changed」。与
                           // 上方 setOutIO / finalOut 同款 outProvided 守卫（canonical
                           // 比较消歧段语法等价形态）。
+                          // chainmodel 批一 ①：**chainId 声明不进 actualChange**——归属是纯元数据
+                          // （声明不改任何调度判据），若纳入则「给 blocked/failed 节点声明链号」
+                          // 会被判成实际改动而**意外重激活**（清 result / 回 wiring 重跑）——
+                          // 与「声明不构成调度变更」直接冲突。故声明只写字段 + 留痕，零重激活。
+                          // 同理不进 `depsChanged`（deps 才是闸）。
                           val actualChange = taskChanged || descriptionChanged || outChanged || adds.nonEmpty || depsChanged || loopChanged
                           // 重激活判据（**2026-09-12 nrloop 一期**）：
                           //   · blocked / failed：**逐字不变**（既有两态的语义、FeedbackRouter
@@ -2509,11 +2704,19 @@ object NodeEditTool extends Tool:
                                   else Nil
                                 (node.id +: (adds ++ fromOut)).distinct
                               for
+                                // 链归属变更留痕（chainmodel 批一 ⑤）：**写前**归属视图快照
+                                // （第一个绑定 ⇒ 早于本 for 内全部写动作；`chainIdView` 是纯
+                                // 派生，快照即写前归属）。写后视图由 emit 内部现读。
+                                chainBefore <- rt.store.combinedNodes
                                 // in 追加校验先行（存在性 + 环检），全部通过才动 store——旧实现
                                 // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
                                 // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
                                 inChecks <- adds.traverse { upId =>
-                                  NodeTools.ensureNodeExists(rt, upId).flatMap {
+                                  // chainmodel 批一 ③：链引用是 deps 专属语法，`in` 里一律拒
+                                  //（静态可行动报错——按字面当节点查会得到「查无此点」的误导面）。
+                                  if FlowMapStore.isChainRef(upId) then
+                                    IO.pure(Left(NodeTools.chainRefInInputError(upId)): Either[String, Unit])
+                                  else NodeTools.ensureNodeExists(rt, upId).flatMap {
                                     case Left(e) => IO.pure(Left(e): Either[String, Unit])
                                     case Right(_) =>
                                       // loop 门集预检（2026-09-12 裁定 2/3，**镜像追加路径**——
@@ -2703,6 +2906,27 @@ object NodeEditTool extends Tool:
                                             s.nodes.get(node.id) match
                                               case Some(fresh) =>
                                                 s.copy(nodes = s.nodes.updated(node.id, fresh.copy(retry = retryFlag.policy)))
+                                              case None => s
+                                          }.void
+                                        else IO.unit
+                                      // chainId 声明写回（chainmodel 批一 ①，replace-on-provide
+                                      // 与 notify 同款）：传了即整体替换（`null` = **撤销**声明 ⇒
+                                      // 回落派生兜底）；未传 = 零改动。**无状态域闸**——归属是
+                                      // 纯元数据，不构成行为开关（声明不改任何调度判据，见
+                                      // NodeDef.chainId 头注），故中途可改（与 notify/loop 的
+                                      // 「行为开关域闸」是有意的口径差）；归档节点仍由上游
+                                      // forbidden 集拒（归档只放行 out 改接）。🔴 本项**不进
+                                      // `actualChange`**（见该判据处注释）：声明不得把 blocked/
+                                      // failed/interrupted 节点意外重激活（声明 ≠ 实际改动）。
+                                      // 事务内现读 fresh（R2 纪律），仅改本字段；不 gate 在
+                                      // `!reactivate` 上——重激活写回的是另一批字段，两者
+                                      // 各自现读、互补覆盖。
+                                      _ <-
+                                        if chainDecl.provided then
+                                          rt.store.mutate { s =>
+                                            s.nodes.get(node.id) match
+                                              case Some(fresh) =>
+                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(chainId = chainDecl.decl)))
                                               case None => s
                                           }.void
                                         else IO.unit
@@ -2906,6 +3130,12 @@ object NodeEditTool extends Tool:
                                       // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
                                       // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
                                       _ <- NodeTools.emitWiringUpdates(rt, affected)
+                                      // 链归属变更留痕（chainmodel 批一 ⑤，写点②）：声明写入 / 撤销 /
+                                      // 本节点被并入别的分量 / 本节点把两个分量桥接成一条链 ⇒ 逐节点
+                                      // 一条 `chain-membership-changed`。判据 = 写前快照 (`chainBefore`)
+                                      // 与写后现读的**有效链归属视图**比对（判据单点 =
+                                      // FlowMapStore.chainIdView，与载荷 chainId 同源）。
+                                      _ <- NodeTools.emitChainMembershipChanges(rt, chainBefore)
                                     yield Right(
                                       s"Node '${node.name}' updated" +
                                         (if didReactivate then
@@ -2914,6 +3144,9 @@ object NodeEditTool extends Tool:
                                             s" — reactivated from completed (NODE_COMPLETED_REACTIVATION; round ${node.blockCount} preserved)"
                                           else s" — reactivated from blocked (round ${node.blockCount} preserved)"
                                         else "") +
+                                        (if chainDecl.provided then
+                                           s" — chainId → ${chainDecl.decl.getOrElse("(withdrawn; back to the derived chain)")}"
+                                         else "") +
                                         (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
                                         (if retryFlag.provided then
                                            retryFlag.policy match

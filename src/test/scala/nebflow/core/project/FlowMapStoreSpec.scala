@@ -13,8 +13,10 @@ import scala.concurrent.duration.*
  * - 读写往返：mutate → snapshot；重新 open 从磁盘恢复
  * - 环检测：A→B→A 拒（DFS 沿 out 边）；Nebula 终止链不误报
  * - 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07；20:38「送达即移」；
- *   2026-09-08 P1「cancelled 判据放行」；链级抽象 P0 · C4：链=拓扑分量——in/out/
- *   deps 连通才算同链，互不连通的节点各自独立归档，取代旧 ≤120s 时间批同进退）：
+ *   2026-09-08 P1「cancelled 判据放行」；链级抽象 P0 · C4：链=拓扑分量——
+ *   **in/out 连通才算同链**（chainmodel 批一 ① 2026-09-19 起 `deps` **不再是成员边**：
+ *   它永久退化为纯调度闸，只登记进谱系边表；旧口径「in/out/deps 连通才算同链」作废）。
+ *   互不连通的节点各自独立归档，取代旧 ≤120s 时间批同进退）：
  *   链内无活跃 ∧ failed 成员已上报
  *   （notifySentAt.isDefined）∧ cancelled 放行（通知系统无 Cancelled reason、
  *   notifySentAt 对 cancelled 恒空，终态即移）→ 整链立即移归档（分文件落盘，

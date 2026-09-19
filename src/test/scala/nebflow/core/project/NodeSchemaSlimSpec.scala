@@ -183,7 +183,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤6350 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350)") {
+  test("A⓪ tool doc budget: NodeEdit description ≤7000 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350；chainmodel 批一 chainId 声明参数行 + deps 链引用条款→7000)") {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
@@ -205,10 +205,19 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // §1 + §7 文档一致性联动）：out 行 dangling 标记 / role 行空 out 令牌指引 /
     // plugins 行 NODE_PLUGINS_UNDECLARED 条款 / merge 行 NODE_MERGE_SINK_NEEDS_OUT
     // 条款（两个新参数的完整描述进 schema properties，不占描述预算）→ 预算 6050→6350。
-    assert(d.length <= 6350, s"NodeEdit description must stay ≤6350 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸), got ${d.length}")
+    // chainmodel 批一（定义层 2026-09-19，①显式成员制 + ③跨链依赖原语）：`chainId` 声明
+    // 参数行（声明即归属 / 纯元数据不改调度 / null 撤销 / chain-membership-changed 留痕）
+    // + `deps` 行尾 chain:<id> 链引用条款（纯调度闸、deps-only、NODE_CHAIN_REF_UNKNOWN）。
+    // 基座实测 6,345（距 6350 预算仅 5 字符余量，两条新语义行无处可压）⇒ 预算 6350→7000
+    //（本批实测 6,948；两数均为 `description` 字面量内容长度，静态读取，未编译验证）。
+    // chainId 的完整值域文本进 schema property（同 nodegate 批先例）。
+    assert(d.length <= 7000, s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
-        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain") do
+        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain",
+        // chainmodel 批一（定义层）：成员制声明面 + 跨链依赖原语 + 归属变更事件三条契约必须
+        // 常驻描述（分发器不读代码，只读描述——丢一条 = 声明面失联）
+        "chainId", "chain:<id>", "chain-membership-changed", "NODE_CHAIN_REF_UNKNOWN", "NODE_CHAIN_ID_INVALID") do
       assert(d.contains(anchor), s"compressed description must keep '$anchor'")
   }
 

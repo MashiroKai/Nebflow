@@ -698,7 +698,10 @@ final class DispatchNotify(
         .filter { n =>
           val waiting = n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending
           val inWait = n.in.contains(failedNodeId) && !n.deliveredTo.contains(failedNodeId)
-          val depsWait = n.deps.contains(failedNodeId)
+          // ③（chainmodel 批一）：`chain:<id>` 引用展开为目标链成员集——目标链里有本次 failed
+          // 成员 ⇒ 该下游的依赖永不满足 ⇒ 它是等待者（否则链引用下游在通知清单里静默缺席）。
+          // 零链引用时逐字等于改造前行为。
+          val depsWait = FlowMapStore.resolveDepTargets(n.deps, s.nodes).ids.contains(failedNodeId)
           val successionWait = n.pendingSuccession.contains(failedNodeId)
           waiting && (inWait || depsWait || successionWait)
         }

@@ -180,7 +180,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
 
   // ── 腿 1：摘边语义（改前/改后同测并列读数）──────────────────────
 
-  test("leg1 摘边: abandon severs BOTH sides of every incident edge (in/out/deps + upstream out-refs) so the retired node becomes its own terminal component and chainArchivable flips true; BEFORE: same graph, no detach ⇒ 4-member glue + archivable=false") {
+  test("leg1 摘边: abandon severs BOTH sides of every incident edge (in/out/deps + upstream out-refs) so the retired node becomes its own terminal component and chainArchivable flips true; BEFORE: same graph, no detach ⇒ 3-member glue + archivable=false") {
     val ws = tempRoot / "ws-leg1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-leg1-${scala.util.Random.nextInt(100000)}")
@@ -215,7 +215,10 @@ class AbandonDetachSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // ── 改前读数（同一 store、同一判据，未摘边）──
-      assertEquals(before._1, 4, "BEFORE: the retired node must be glued into a 4-member component")
+      // chainmodel 批一 ①（2026-09-19）：`deps` **不再是成员边** ⇒ A.deps=[n-live] 不再把
+      // LIVE 粘进本分量，BEFORE 分量 = U1 + A + D 三名成员（LIVE 自成单成员分量）。
+      // 「摘边令退役节点自成分量」的判据本体未变（口径变化，非回归）。
+      assertEquals(before._1, 3, "BEFORE: the retired node must be glued into a 3-member component (in/out only)")
       assertEquals(before._2, false, "BEFORE: chainArchivable must be false (a live member holds the chain)")
       // ── 改后读数 ──
       assert(r.isRight, s"abandon must succeed, got: $r")
@@ -274,7 +277,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
       after <- componentOf(rt, "n-c")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(before, (4, false), "BEFORE: C glued to the live node ⇒ U + C + D + LIVE share one non-archivable chain")
+      assertEquals(before, (3, false), "BEFORE: C glued to the live node by in/out ⇒ U + C + D share one non-archivable chain (chainmodel 批一 ①: deps is no longer a member edge)")
       assertEquals(run1, List("n-c"), "first backfill run must report the detached node")
       assertEquals(c.status, NodeLifecycle.Cancelled, "the backfill never touches a non-cancelled node's status")
       assertEquals(c.in, Nil)
@@ -303,8 +306,11 @@ class AbandonDetachSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-leg3", ws, system, res, frames)
+      // chainmodel 批一 ①（2026-09-19）：粘边由 `deps` 换成 `out`——deps 已不再是成员边
+      // （不再是「拖住分量」的边），本用例要的「取消节点被活跃成员拖住 ⇒ 不可归档」形态
+      // 只能由 in/out 成员边承载。摘边仍然把 C.out 收敛为 Nebula（out 臂，逐字同前）。
       _ <- seed(rt.store, NodeDef(id = "n-c", name = "C", agent = "general", task = Some("work-C"),
-        status = NodeLifecycle.Cancelled, deps = List("n-live"),
+        status = NodeLifecycle.Cancelled, out = List(OutEdge("n-live")),
         result = Some("cancelled[source=user]: reason=spec"), completedAt = Some(now - 60_000), createdAt = now - 60_000))
       _ <- seed(rt.store, NodeDef(id = "n-live", name = "LIVE", agent = "general", task = Some("work-L"),
         status = NodeLifecycle.Wiring, createdAt = now - 30_000))
