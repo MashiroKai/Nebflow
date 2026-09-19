@@ -519,8 +519,13 @@ class NodeMessageSpec extends CatsEffectSuite:
       entries = Map(canon -> ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L)),
       aliases = Map(legacy -> ChainLedger.AliasRow(alias = legacy, canonical = canon, createdAt = 1L))
     )
-    os.write.over(os.Path(ws.toString, PathUtil.dataRoot) / ".nebflow" / ChainLedger.FileName,
-      fx.asJson.noSpaces)
+    // 落盘路径与 FlowMapStore.open 的载入点（`:1585` `base / ChainLedger.FileName`，
+    // `base = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"`）逐字同源；
+    // 🔴 父目录须先建：fixture 早于 `mountProject`（= 早于 open 的 `makeDir.all(base)`）
+    // ⇒ 不建目录则 `os.write.over` 抛 NoSuchFileException（返工 r1 实测失败点）。
+    val ledgerPath = os.Path(ws.toString, PathUtil.dataRoot) / ".nebflow" / ChainLedger.FileName
+    os.makeDir.all(ledgerPath / os.up)
+    os.write.over(ledgerPath, fx.asJson.noSpaces)
     for
       res <- mkResources(system, tempRoot)
       rt <- mountProject("nmsg-s7c", ws, system, res)

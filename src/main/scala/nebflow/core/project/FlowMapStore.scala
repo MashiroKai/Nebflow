@@ -175,21 +175,6 @@ class FlowMapStore private (
       ledgerState <- ledger.snapshot
     yield FlowMapStore.mailChainIdSet(combined, FlowMapStore.topologicalChains(combined.values), ledgerState)
 
-  /** Mail 链号校验集合（纯函数面，可单测）：口径见 [[mailChainIds]] 四源。 */
-  def mailChainIdSet(
-      combined: Map[String, NodeDef],
-      chains: List[ChainInfo],
-      ledgerState: ChainLedger.State
-  ): Set[String] =
-    val derived = chains.map(_.id)
-    val chainRefTargets = combined.values
-      .flatMap(_.deps)
-      .filter(isChainRef)
-      .map(chainRefTarget)
-      .filter(isDeclarableChainId)
-    val registered = ledgerState.entries.keySet ++ ledgerState.aliases.keySet
-    (derived ++ chainRefTargets ++ registered).toSet
-
   /** **Mail 链号深解析（chainmodel 批三 ①）**：`Some` = 该号可达（派生链号 / 链级依赖目标 /
     * 台账条目标号 / 旧号别名——含已压缩下沉冷档的历史行，`ChainLedgerStore.resolveDeep`
     * 「旧号永久可达」的第二级）；`None` ⇒ 调用方报 `MAIL_CHAIN_NOT_FOUND`（负判据）。
@@ -1447,6 +1432,36 @@ object FlowMapStore:
   def payloadChains(combined: Map[String, NodeDef], activeIds: Set[String]): List[ChainInfo] =
     topologicalChains(combined.values)
       .filter(c => chainVisible(combined, c) && c.memberIds.exists(activeIds.contains))
+
+  /** **Mail 链号校验集合（chainmodel 批三 ①；纯函数面，可单测）**——口径（四源）见
+    * [[FlowMapStore.mailChainIds]]（本方法为其纯函数投影，IO 侧只多一次 `combinedNodes`
+    * 与 `ledger.snapshot` 现读）：声明链 ∪ 兜底派生链（调用方传入的 `chains` 全量）
+    * ∪ 链级依赖目标链（值域同判据 [[isDeclarableChainId]]）∪ 台账已登记面
+    * （`entries + aliases` 键集）。
+    *
+    * 🔴 **作用域**：本方法是**纯函数**且只依赖三类**伴生对象**判据（[[isChainRef]] /
+    * [[chainRefTarget]] / [[isDeclarableChainId]]）⇒ 定义在 `object FlowMapStore`
+    * （与 [[payloadChains]] / [[mergeChainAttrs]] / [[chainVisible]] 同址），
+    * **不**定义在 `class FlowMapStore` 体内：class 体内未限定引用伴生对象成员不成立
+    * （审计定位：class/object 作用域误用，`compile` E008/E006）。调用点一律对象限定
+    * （`FlowMapStore.mailChainIdSet(...)`，单测同款）。
+    *
+    * 🔴 **负判据保留（判红线）**：完全未登记号（含归档区封存链号）不因本方法进入集合
+    * ——只加「台账已登记」与「链级依赖目标」两源，禁放宽成「未知也放行」。
+    * 🔴 **零回填**：纯读，不写台账、不为悬空号伪造别名或条目。 */
+  def mailChainIdSet(
+      combined: Map[String, NodeDef],
+      chains: List[ChainInfo],
+      ledgerState: ChainLedger.State
+  ): Set[String] =
+    val derived = chains.map(_.id)
+    val chainRefTargets = combined.values
+      .flatMap(_.deps)
+      .filter(isChainRef)
+      .map(chainRefTarget)
+      .filter(isDeclarableChainId)
+    val registered = ledgerState.entries.keySet ++ ledgerState.aliases.keySet
+    (derived ++ chainRefTargets ++ registered).toSet
 
   /** **merge 节点链归属两值（chainmodel 批三 ② 判据单点）**：把 [[mergeChainIds]] 的
     * 「主链 + 入口可达成员链」拆成**两个值**——`ownChain`（所属声明链 = 分量 id）与
