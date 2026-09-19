@@ -11,7 +11,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -816,7 +816,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       cidB <- rt.store.chainIdOf(declId)
       auditLines <- readAuditLines(ws)
       // 撤销声明（null）⇒ 回落派生兜底
-      rNull <- nodeEdit(nodeInput("deps-t10c", "decl-a", "chainId" -> Json.null), ctx)
+      rNull <- nodeEdit(nodeInput("deps-t10c", "decl-a", "chainId" -> Json.Null), ctx)
       cidC <- rt.store.chainIdOf(declId)
       // blocked + 仅 chainId 编辑 ⇒ 不得重激活（声明不进 actualChange）
       rBlk <- nodeEdit(nodeInput("deps-t10c", "blk", "chainId" -> Json.fromString("blk-chain")), ctx)

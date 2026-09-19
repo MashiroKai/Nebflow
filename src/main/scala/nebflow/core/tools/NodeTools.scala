@@ -1551,7 +1551,7 @@ object NodeEditTool extends Tool:
                                 mergeProvided || notifyProvided.isDefined || retryProvided ||
                                 // chainmodel 批一 ①：链归属声明同 config 族——归档节点只放行
                                 // out 改接（归档是显示过期 + 结果可补投，不是改写归属的通道）。
-                                chainDecl.provided ||
+                                chainDeclFlag.provided ||
                                 // 显式授权入口对归档节点无意义（归档是显示过期 + 结果可补投，
                                 // 不是重激活通道——重激活只属于活动区节点）。
                                 reactivateCompleted
