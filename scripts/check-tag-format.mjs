@@ -8,7 +8,7 @@
 //
 // ── Why this gate exists (the defect it replaces) ───────────────────────────
 // The pre-change guard probed `^v${{ ...version... }}$`, while this repository's
-// date-scheme tag lineage is `2026.9.17` — NO v (evidence: worktree at
+// date-scheme tag lineage is `2026.9.19` — NO v (evidence: worktree at
 // eb58c010a, `git tag -l` = 47 tags, exactly two non-v names: the date-scheme
 // release tag and a backup/* ref). A v-probe therefore can never match a
 // published date-scheme tag: "Check if tag already exists" was dead code against

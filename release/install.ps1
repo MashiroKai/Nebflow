@@ -219,8 +219,8 @@ if ($Channel -eq "beta") {
     }
 }
 # Version value normalization - dual form accepted (author ruling 2026-09-17):
-# the release tag format carries no `v` (e.g. 2026.9.17), but the legacy form
-# (pointer file or hand-set value such as v2026.9.17) must still be accepted.
+# the release tag format carries no `v` (e.g. 2026.9.19), but the legacy form
+# (pointer file or hand-set value such as v2026.9.19) must still be accepted.
 # Strip one leading `v` when a digit follows, so the jar name / URL / install
 # dir come out identical in both forms; a prefix-free value is byte-identical
 # (idempotent, pure string handling, no new branch beyond this guard).
@@ -682,7 +682,7 @@ $wrapperContent = @"
 # >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
 # Name order != version order: the date scheme deliberately strips leading zeros
 # (Windows version fields reject them), so as plain strings "2026.10.5" sorts
-# BEFORE "2026.9.17". Rank the candidates by the parsed numeric tuple (year,
+# BEFORE "2026.9.19". Rank the candidates by the parsed numeric tuple (year,
 # month, day, same-day -beta.N sequence) and take the max.
 # Version core = the SAME contract as packaging/app-version.sh:36
 #   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
@@ -806,7 +806,7 @@ exit /b 11
 rem >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
 rem Name order != version order: the date scheme deliberately strips leading
 rem zeros (Windows version fields reject them), so as plain strings "2026.10.5"
-rem sorts BEFORE "2026.9.17". Rank the candidate (arg %~1) by the parsed numeric
+rem sorts BEFORE "2026.9.19". Rank the candidate (arg %~1) by the parsed numeric
 rem tuple and keep the max. Version core = the SAME contract as
 rem packaging/app-version.sh:36
 rem   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
@@ -833,7 +833,7 @@ set "NB_KEY="
 set "NB_VER=%NB_NAME:*-assembly-=%"
 if "%NB_VER%"=="%NB_NAME%" exit /b 0
 rem %~nx1 keeps the extension: strip ".jar" first, else it is read as a bogus
-rem 4th dot-field ("2026.9.17.jar" -> 2026 / 9 / 17 / jar).
+rem 4th dot-field ("2026.9.19.jar" -> 2026 / 9 / 19 / jar).
 set "NB_VER=%NB_VER:.jar=%"
 for /f "tokens=1,* delims=-" %%a in ("%NB_VER%") do (
   set "NB_CORE=%%a"
