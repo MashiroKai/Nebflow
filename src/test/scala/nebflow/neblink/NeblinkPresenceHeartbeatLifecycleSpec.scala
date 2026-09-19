@@ -358,8 +358,20 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
     i: Int
   ): IO[Sample] =
     IO {
-      val gens = ps.connectionGens.toList.sortBy(_._1).map((k, v) => s"$k=$v").mkString(",")
-      Sample(tag, i, System.currentTimeMillis(), hbThreads(Some(peerName)).size, hbThreads(None).size, ps.connectionCount, gens, tape(recs))
+      // 🔴 连接侧一次快照取齐（`conns` 与 `gens` 同源）——分两次读会在换连接的瞬间自相矛盾
+      // （先读到 gen 后读到 0 条 ⇒ 采样本给出幽灵「线程 > 连接」帧）
+      val gensMap = ps.connectionGens
+      val gens = gensMap.toList.sortBy(_._1).map((k, v) => s"$k=$v").mkString(",")
+      Sample(
+        tag,
+        i,
+        System.currentTimeMillis(),
+        hbThreads(Some(peerName)).size,
+        hbThreads(None).size,
+        gensMap.size,
+        gens,
+        tape(recs)
+      )
     }.flatTap(s => IO(println(s"[hb-sample] ${s.json}")))
 
   /**
@@ -440,6 +452,7 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
       yield out
     }.map { case (samples, stamps, finalTape, roster, gens, devIdA) =>
       val violations = samples.filter(s => s.hbPeer > s.conns)
+      val over = samples.filter(s => s.hbAll > 1)
       val iv = intervals(stamps)
       val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
       val rate = if WatchSec > 0 then stamps.size * 60.0 / WatchSec else -1.0
@@ -447,6 +460,11 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
         violations.isEmpty,
         s"🔴 判据①违反：出现 count(presence-hb-*) > count(connections) 的样本 ${violations.size}/${samples.size} 条" +
           s"（前 3 条：${violations.take(3).map(_.json).mkString(" | ")}）"
+      )
+      assert(
+        over.isEmpty,
+        s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧：" +
+          s"${over.take(3).map(_.json).mkString(" | ")}"
       )
       assert(
         samples.forall(s => s.hbPeer == 1 && s.conns == 1),
@@ -509,11 +527,25 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
       val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
       val offGrid = iv.filter(d => math.abs(d - beat * math.round(d.toDouble / beat.toDouble)) > 600L)
       val rate = if DeafSec > 0 then stamps.size * 60.0 / DeafSec else -1.0
-      val violations = samples.filter(s => s.hbPeer > s.conns)
-      assert(violations.isEmpty, s"🔴 判据①违反（聋对端窗）：${violations.take(3).map(_.json).mkString(" | ")}")
+      val over = samples.filter(s => s.hbAll > 1)
+      val sustained = samples.zipWithIndex.filter { (s, idx) =>
+        s.hbPeer > s.conns && idx + 1 < samples.size && samples(idx + 1).hbPeer > samples(idx + 1).conns
+      }
+      val eqSamples = samples.count(s => s.hbPeer == s.conns)
       assert(
-        samples.forall(s => s.hbPeer == 1 && s.conns == 1),
-        s"🔴 聋对端窗内必须恒为 1 线程 : 1 连接（样本集合 ${samples.map(s => s"${s.hbPeer}/${s.conns}").distinct.mkString(",")}）"
+        over.isEmpty,
+        s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧 —— 这就是积压签名：" +
+          s"${over.take(3).map(_.json).mkString(" | ")}"
+      )
+      assert(
+        sustained.isEmpty,
+        s"🔴 判据①违反：`线程数 > 连接数` 持续 ≥2 帧（≥1s，超出换连接过渡帧）${sustained.size} 处：" +
+          s"${sustained.take(3).map(_._1.json).mkString(" | ")}"
+      )
+      assert(
+        eqSamples * 100 / math.max(1, samples.size) >= 80,
+        s"🔴 稳态必须 `线程数 = 连接数`（聋对端窗允许换连接的过渡帧）：仅 $eqSamples/${samples.size} 帧相等" +
+          s"（分布 ${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap}）"
       )
       assert(finalTape.timeout >= 2, s"聋对端必须触发超时腿（现读 ${finalTape.timeout} 条，窗口 ${DeafSec}s）")
       assertEquals(fiveSec, 0, s"🔴 判据②违反：出现 5.000 s 整间隔 ${fiveSec} 次（自激节拍复现）；间隔=${iv.mkString(",")}")
@@ -530,7 +562,8 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
       println(
         s"[hb-evidence] t2 n=${stamps.size} rate_per_min=${"%.2f".format(rate)} p50=${pctl(iv, 0.5)} p90=${pctl(iv, 0.9)} " +
           s"min=${iv.minOption.getOrElse(-1L)} max=${iv.maxOption.getOrElse(-1L)} theory=${theory}ms fiveSecHits=$fiveSec " +
-          s"disc=${finalTape.disc} recon=${finalTape.recon} stale=${finalTape.stale} served=${deaf.served} roster=$roster"
+          s"disc=${finalTape.disc} recon=${finalTape.recon} stale=${finalTape.stale} served=${deaf.served} " +
+          s"eq_samples=$eqSamples/${samples.size} dist=${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap} roster=$roster"
       )
     }
   }
