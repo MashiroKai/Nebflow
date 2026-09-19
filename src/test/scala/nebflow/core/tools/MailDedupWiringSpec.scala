@@ -230,6 +230,15 @@ class MailDedupWiringSpec extends FunSuite:
       _ <- MailQueueStore.append(meta.id, resend)
       _ <- refOpt.traverse_(ref => ref ! AgentCommand.MailQueued(resend, "sender-dd"))
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
+      // 投递允许与「注入落盘」是**两条**异步写路（LLM 请求先起，会话消息写入随回合走）——
+      // W1/W2/W4 各自带一个 settle 步，本用例原先缺失：`waitUntil(requests nonEmpty)` 后
+      // **立刻**读 store，负载下读到空表 ⇒ 假红（改前实测：本文件 :241 obtained 0，而同一轮
+      // 日志无 dedup 抑制 WARN，证明投递已放行）。改为「有界等它到」；两条断言本体逐字不变。
+      _ <- waitUntil(20.seconds)(
+        sessionStore
+          .loadMessagesForSession(meta.id)
+          .map(_.exists(m => m.content.fold(identity, _.mkString).contains("RESEND_MARKER_W3")))
+      )
       persisted <- sessionStore.loadMessagesForSession(meta.id)
     yield persisted
 

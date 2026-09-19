@@ -51,8 +51,12 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-bg-gate"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
+  // 构造期换根纪律（2026-09-18 判例 6a68914c1 同款残件，S1 组负载敏红族）：**先清树，最后换根**
+  // —— 若先 setDataRoot 再 os.remove.all，此刻全局根已指向本树，前序套件收尾期仍在跑的
+  // 异步写入（按 PathUtil.dataRoot 落盘）会在删树遍历中途把目录重新建出来 ⇒ 构造期
+  // DirectoryNotEmptyException / 组合跑互踩（本 spec 与 NodeBlockedToolSignalSpec 是两个残件）。
   os.remove.all(tempRoot)
+  PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",

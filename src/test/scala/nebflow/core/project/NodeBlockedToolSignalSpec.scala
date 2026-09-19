@@ -39,8 +39,12 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-blocked-tool-signal"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
+  // 构造期换根纪律（2026-09-18 判例 6a68914c1 同款残件，S1 组负载敏红族）：**先清树，最后换根**
+  // —— 若先 setDataRoot 再 os.remove.all，此刻全局根已指向本树，前序套件收尾期仍在跑的
+  // 异步写入（按 PathUtil.dataRoot 落盘）会在删树遍历中途把目录重新建出来 ⇒ 构造期
+  // DirectoryNotEmptyException / 组合跑互踩（本 spec 与 NodeBgCompletionGateSpec 是两个残件）。
   os.remove.all(tempRoot)
+  PathUtil.setDataRoot(tempRoot)
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -436,6 +440,13 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       fId <- idOf(rt, "tool-fail-a")
       f <- nodeById(rt, fId)
       evs <- events.get
+      // 同步点（S1 组负载敏红修复）：节点终态先落 store，审计行到 flow-map-events.jsonl 更晚
+      // ——原形态是「readAuditTypes **之后** IO.sleep(300ms)」，同步点为 0：负载下读到空表
+      // （实测红：`a loop-round event must be logged, got: List()`）。改为**有界等它到**：
+      // 等 `loop-round/fId` 落盘再读；下面两条断言本体逐字不变。
+      _ <- waitUntil(10.seconds)(
+        readAuditTypes(ws).map(_.exists((t, id) => t == "loop-round" && id == fId))
+      )
       audit <- readAuditTypes(ws)
       _ <- IO.sleep(300.millis)
       land <- rt.store.snapshot.map(_.nodes.get("n-land-f").getOrElse(fail("landing node must exist")))
