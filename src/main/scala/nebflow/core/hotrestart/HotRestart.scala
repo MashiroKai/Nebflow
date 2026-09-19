@@ -147,6 +147,53 @@ class HotRestart(
       case _ => IO.sleep(timing.waitIdlePollMs.millis) *> pollIdle(deadline)
     }
 
+  // ===== 更新编排器（hotupdate 批 1）冻结相位入口——**复用本件既有机器，零复制** =====
+
+  /** 更新编排器的「冻结」相位入口：复用**同一道准入闸**（#3）与**同一个排空收敛环**
+    * （#4，含 15 秒稳定观察窗），等待期准入闸不置位（与 `WaitIdle` 同口径：工作照常
+    * 准入，每轮重判）。语义与热重启完全一致——失败/超时一律 **中止**（清闸、旧实例
+    * 继续服务、零停机；不强制、不翻态、无强制档）。
+    *
+    * 不新造第二道闸、第二套排空环、第二套等待轮询：本方法只是把既有
+    * [[pollIdle]]/[[drainLoop]]/`drainingRef` 组合成一个窄入口。
+    * 落盘核验（八步第 3 步）不在此重复——重启相位的 [[begin]] 原样执行它。
+    *
+    * 失败类别走 [[HotRestart.DrainFailure]]（**不靠字符串猜**）：更新编排器据此映射到
+    * 自己的冻结原因字面。
+    *
+    * 调用方：`nebflow.core.hotupdate.UpdateOrchestrator`（唯一调用点）。 */
+  def drainForUpdate(mode: RestartMode): IO[Either[HotRestart.DrainFailure, Unit]] =
+    def closeAndDrain: IO[Either[HotRestart.DrainFailure, Unit]] =
+      HotRestart.drainingRef.set(true) *> drainLoop.map {
+        // 分类在本件内完成（drainLoop 的唯一 Left 形态 = 「drain deadline (…」两条消息，
+        // 由本件产生）——调用方据类别映射到自己的冻结原因字面，不靠字符串猜。
+        case Left(err) => Left(HotRestart.DrainFailure.DeadlineExceeded(err))
+        case Right(()) => Right(())
+      }
+    quiesceReport.flatMap { q =>
+      if q.isIdle then closeAndDrain
+      else
+        mode match
+          case RestartMode.RejectIfBusy =>
+            IO.pure(Left(HotRestart.DrainFailure.Busy(q.detail)))
+          case RestartMode.WaitIdle(timeoutMs) =>
+            val deadline = System.currentTimeMillis() + timeoutMs
+            logger.info(
+              s"[hot-restart] update freeze: waiting for in-flight work (up to ${timeoutMs / 1000}s): ${q.detail}") *>
+              pollIdle(deadline).flatMap {
+                case Left(stillBusy) =>
+                  IO.pure(
+                    Left(HotRestart.DrainFailure.WaitLimitExceeded(stillBusy.detail, timeoutMs)))
+                case Right(()) => closeAndDrain
+              }
+    }
+
+  /** 更新编排器中止腿的准入恢复（与 [[abort]] 的第 1 步同语义、同一 Ref；幂等）。
+    * 不新造第二道闸——中止后新工作立即可准入。 */
+  def releaseDrain(): IO[Unit] =
+    logger.warn("[hot-restart] admission reopened (drain released for an aborted update)") *>
+      HotRestart.drainingRef.set(false)
+
   // ===== [2]-[8] 重启编排（begin 起在 fork fiber 上跑）=====
 
   private def begin(source: String): IO[Either[String, Unit]] =
@@ -355,9 +402,30 @@ object HotRestart:
   def archiveStaleIntentIfNeeded: IO[Unit] =
     SuccessorGate.archiveStaleIntent(PathUtil.dataRoot)
 
-  /** 测试/QA 复位全局编排状态（进程内 Ref——Spec 直接复位，替代重启进程）。 */
-  private[hotrestart] def resetForTest: IO[Unit] =
+  /** 测试/QA 复位全局编排状态（进程内 Ref——Spec 直接复位，替代重启进程）。
+    * 可见面 `private[core]`：hotupdate 批的定向 spec（`nebflow.core.hotupdate.*`）也要
+    * 复位同一批 Ref（测试串行、每例复位——否则上一个成功例的占位会合并下一例的请求）。 */
+  private[core] def resetForTest: IO[Unit] =
     drainingRef.set(false) *> inProgressRef.set(false) *> lastCompletedAtRef.set(0L)
+
+  // ===== 更新编排器冻结相位的失败类别（hotupdate 批 1 窄面）=====
+
+  /** 排空/等待失败的**类别**（不是自由文本）：使更新编排器能把失败映射到自己的
+    * 冻结原因字面，而不靠解析错误字符串。三类 = 裁定 4（中止不强制）口径下的全部
+    * 中止形态；**没有强制档**（禁新增强制类别）。 */
+  enum DrainFailure:
+    /** 忙且请求为「忙即拒绝」模式。 */
+    case Busy(detail: String)
+    /** 等待上限到达仍忙（更新场景默认 300s，裁定 7）。 */
+    case WaitLimitExceeded(detail: String, timeoutMs: Long)
+    /** 排空收敛期限到达仍忙（既有 `drainDeadlineMs`）。 */
+    case DeadlineExceeded(detail: String)
+
+    /** 诊断明细（人类可读；原因字面由调用方以自己的枚举承载）。 */
+    def detailText: String = this match
+      case Busy(d)                  => s"busy — $d"
+      case WaitLimitExceeded(d, ms) => s"wait limit (${ms / 1000}s) exceeded, still busy: $d"
+      case DeadlineExceeded(d)      => d
 
   // ===== 时序参数（测试/QA 可经 system prop 调；默认对齐设计 §3.3/§3.4/§6 R7）=====
 

@@ -797,6 +797,21 @@ export default {
   'settings.updateLater': '稍后',
   'settings.updateError': '检查更新失败',
 
+  // 统一更新相位文案（hotupdate 批 1 · 设计 §7 命名规范 `update.phase` 加相位名）。
+  // 相位帧携带 messageKey（如 'update.phase.freezing'）——展示文案一律由本表解析，
+  // 🔴 帧内不携带展示文案、禁字面硬编码（裁定 10 / D6：失败与回滚只走状态行，
+  // 不新增轻提示/弹窗/红色块）。前端渲染消费属批 3（G6）。
+  'update.phase.idle': '尚未更新',
+  'update.phase.checking': '正在检查新版本',
+  'update.phase.preparing': '已受理更新请求',
+  'update.phase.freezing': '等待在飞工作结束并冻结',
+  'update.phase.updating': '正在安装新版本',
+  'update.phase.restarting': '正在重启',
+  'update.phase.recovering': '正在恢复任务',
+  'update.phase.completed': '已更新到 {version}',
+  'update.phase.aborted': '更新中止：{reason}——当前版本继续服务，未受影响',
+  'update.phase.rolled-back': '新版本自检未通过，已回滚到 {version}',
+
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': '模型',

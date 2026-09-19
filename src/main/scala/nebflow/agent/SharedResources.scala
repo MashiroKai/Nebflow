@@ -129,6 +129,10 @@ case class SharedResources(
     * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
     * restartStatus 帧广播（wsHub）。 */
   hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None,
+  /** 统一更新编排器（hotupdate 批 1，设计 §4）：GatewayMain 装配后注入；None = 未装配
+    * （测试 / 极早期 boot）。设置页一键更新经它受理（`WebSocketRoutes` 的 `doUpdate`
+    * 分支）；其重启相位委托上面的 [[hotRestart]]；进度经统一进度帧广播（wsHub）。 */
+  updateOrchestrator: Option[nebflow.core.hotupdate.UpdateOrchestrator] = None,
   /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
     * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
     * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`

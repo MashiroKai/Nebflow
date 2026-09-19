@@ -20,9 +20,20 @@ import cats.effect.IO
  */
 object RemoteUpdateAction:
 
+  /** The exact install command this action would run for the given channel (single
+    * source: [[runInstallScript]] executes what this returns, the hot-update batch-1
+    * verification reads it without executing). */
+  def installCommand(beta: Boolean): String =
+    val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+    if beta then
+      if isWindows then
+        """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
+      else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
+    else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
+    else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
+
   /** Run the install script. Returns Right(msg) on success, Left(error) on failure. */
   def runInstallScript(beta: Boolean): IO[Either[String, String]] =
-    val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
     if nebflow.core.InstallLayout.isMsiInstall then
       IO.pure(
         Left(
@@ -32,17 +43,9 @@ object RemoteUpdateAction:
         )
       )
     else
-      val script =
-        if beta then
-          if isWindows then
-            """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
-          else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
-        else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
-        else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
-
       IO.blocking {
         import sys.process.*
-        script.!
+        installCommand(beta).!
       }.flatMap {
         case 0     => IO.pure(Right("Update installed, restarting..."))
         case code  => IO.pure(Left(s"Install script failed (exit code: $code)"))
