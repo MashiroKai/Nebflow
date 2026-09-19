@@ -46,6 +46,10 @@ const AFTER = MODE === 'after';
 const QJBEFORE = MODE === 'qjbefore';
 const MM_OUT = process.env.MM_OUT || '';
 const MM_SHOTS = process.env.MM_SHOTS || '';
+// 主题（visup-b 批验收第 1 条「亮/暗双主题」）：`MM_SCHEME=light|dark`（缺省 light —
+// 与 Playwright 的默认 colorScheme 一致 ⇒ 既有判据面对照值不变）。同一 harness 跑两遍
+// 即得双主题读数 + 双主题截图，**不复制**任何场景代码。
+const MM_SCHEME = process.env.MM_SCHEME === 'dark' ? 'dark' : 'light';
 
 let failures = 0;
 const R = { mode: MODE, web: WEB, readings: {} };
@@ -122,8 +126,33 @@ const BASE = `http://127.0.0.1:${server.address().port}`;
 
 let WS = null;   // 帧注入器（每个 page 一份）
 
-async function bootPage() {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+/** 云 STT 腿的最小夹具（S6 的麦克风反馈读数用）：假 `AudioContext` + 假
+ *  `getUserMedia` + 手摇音频泵。**只**在需要 mic 场景的那一轮注入（零波及其他轮）。 */
+const VOICE_HARNESS = () => {
+  class FakeAC {
+    constructor() { this.sampleRate = 48000; this.destination = {}; }
+    createMediaStreamSource() { return { connect() {} }; }
+    createScriptProcessor() { const p = { onaudioprocess: null, connect() {}, disconnect() {} }; FakeAC.processor = p; return p; }
+    createGain() { return { gain: { value: 1 }, connect() {} }; }
+    close() { return Promise.resolve(); }
+  }
+  window.AudioContext = FakeAC;
+  window.__mic = {
+    pump(seconds) {
+      const proc = FakeAC.processor;
+      if (!proc || !proc.onaudioprocess) throw new Error('no audio processor (dictation not started?)');
+      const chunkMs = (4096 / 48000) * 1000;
+      const n = Math.max(1, Math.ceil((seconds * 1000) / chunkMs));
+      for (let k = 0; k < n; k++) proc.onaudioprocess({ inputBuffer: { getChannelData: () => { const a = new Float32Array(4096); a.fill(0.3); return a; } } });
+    },
+  };
+  if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { value: {} });
+  navigator.mediaDevices.getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] });
+};
+
+async function bootPage(opts = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: MM_SCHEME });
+  if (opts.voice) await ctx.addInitScript(VOICE_HARNESS);
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
@@ -262,8 +291,15 @@ const bubbleRead = (page, mid) => page.evaluate((id) => {
 
 const barRead = (page) => page.evaluate(() => {
   const bar = document.querySelector('.fm-select-bar');
-  const cnt = document.querySelector('.fm-select-count');
+  // 🔴 **D5 读点迁移**（作者 2026-09-19 04:22 照案：「计数头部」）——计数宿主由底部
+  // 条迁到**窗头**（`.fm-modal-select-count`）。等价强度改写：原来只断言「底部条里
+  // 有计数且文案 X」；现在**两向都断言** —— ① 窗头计数文案 X 且多选期可见；
+  // ② 底部条内**零**计数件（旧宿主缺席）⇒ 把「计数在哪里」这条设计令钉成机械判据，
+  // 而不是把断言降级为「某处有计数」。
+  const cnt = document.querySelector('.fm-modal-select-count');
+  const legacyCnt = document.querySelector('.fm-select-bar .fm-select-count');
   const fw = document.querySelector('.fm-select-forward');
+  const acts = [...document.querySelectorAll('.fm-select-bar .fm-select-act, .fm-select-bar .fm-select-exit')];
   const checks = [...document.querySelectorAll('.fm-flow .fm-msg-check')];
   const wraps = [...document.querySelectorAll('.fm-flow .fm-msg')];
   return {
@@ -271,6 +307,11 @@ const barRead = (page) => page.evaluate(() => {
     barHidden: bar ? bar.hidden : null,
     barDisplay: bar ? getComputedStyle(bar).display : null,
     countText: cnt ? cnt.textContent : null,
+    countHidden: cnt ? cnt.hidden : null,
+    countDisplay: cnt ? getComputedStyle(cnt).display : null,
+    barCountPresent: !!legacyCnt,
+    actClasses: acts.map(a => a.className),
+    actWidths: acts.map(a => +a.getBoundingClientRect().width.toFixed(1)),
     forwardDisabled: fw ? fw.disabled : null,
     checkCount: checks.length,
     checkRoles: checks.map(c => `${c.getAttribute('role')}:${c.getAttribute('aria-checked')}`),
@@ -366,6 +407,28 @@ async function scenarioQuote(page, pageErrors) {
     if (!s) return null;
     const chip = s.querySelector('.att-ref');
     const rm = s.querySelector('.att-ref-remove');
+    const ib = document.querySelector('.fm-input-bar').getBoundingClientRect();
+    // 修正② 口径的**同一枚**读数（输入框面引用条的 ❌ = 主窗口同类件 `closeStyle:'disc'`
+    // ⇒ `.fm-quote-remove`，形态由 input.css 的 `.att-remove, .fm-quote-remove` 共享块
+    // 单一来源给定）：✕ 字形中心 vs 圆盘中心（`dx`/`dy` = 偏心量，px）。
+    const disc = s.querySelector('.fm-quote-remove');
+    let glyph = null;
+    if (disc) {
+      const dr = disc.getBoundingClientRect();
+      const svg = disc.querySelector('svg') || disc.querySelector('i');
+      const gr = svg ? svg.getBoundingClientRect() : null;
+      glyph = {
+        hasSvg: !!svg,
+        tag: svg ? svg.tagName : null,
+        disc: { w: +dr.width.toFixed(2), h: +dr.height.toFixed(2) },
+        svgBox: gr ? { w: +gr.width.toFixed(2), h: +gr.height.toFixed(2) } : null,
+        dx: gr ? +((gr.x + gr.width / 2) - (dr.x + dr.width / 2)).toFixed(2) : null,
+        dy: gr ? +((gr.y + gr.height / 2) - (dr.y + dr.height / 2)).toFixed(2) : null,
+        bg: getComputedStyle(disc).backgroundColor,
+        radius: getComputedStyle(disc).borderRadius,
+        pad: getComputedStyle(disc).padding,
+      };
+    }
     return {
       hidden: s.hidden,
       display: getComputedStyle(s).display,
@@ -374,10 +437,15 @@ async function scenarioQuote(page, pageErrors) {
       chipRefId: chip ? chip.dataset.refId : null,
       chipText: chip ? chip.textContent : null,
       hasRemove: !!rm,
+      removeCls: rm ? rm.className : null,
       removeLabel: rm ? rm.getAttribute('aria-label') : null,
       stripY: +s.getBoundingClientRect().y.toFixed(1),
-      inputY: +document.querySelector('.fm-input-bar').getBoundingClientRect().y.toFixed(1),
+      inputY: +ib.y.toFixed(1),
+      inputBarBottom: +(ib.y + ib.height).toFixed(1),
       chipVisible: chip ? chip.getBoundingClientRect().height > 0 : false,
+      disc: glyph,
+      padLeft: getComputedStyle(s).paddingLeft,
+      padBottom: getComputedStyle(s).paddingBottom,
     };
   });
   put('quote.strip', strip);
@@ -387,7 +455,26 @@ async function scenarioQuote(page, pageErrors) {
     && /分页君/.test(String(strip.chipText)) && new RegExp(QUOTE_SRC).test(String(strip.chipText)) && strip.chipVisible,
     JSON.stringify(strip));
   ok('S2 引用态：可取消（既有 × 移除键在册）', !!strip && strip.hasRemove === true, JSON.stringify(strip && strip.removeLabel));
-  ok('S2 引用态条落在消息流与输入条之间（真几何）', !!strip && strip.stripY < strip.inputY, JSON.stringify(strip && { stripY: strip.stripY, inputY: strip.inputY }));
+  // 🔴 **D2 落位改写（有据变更，非放宽）**：作者 2026-09-19 04:22 照案 ⇒ 引用条由
+  //    「输入条**上方**」改为「输入条**下方**」（参考图实测层序 = 输入字段在上 / 引用条在下）。
+  //    原断言 `stripY < inputY` 的**方向**随设计令反转；强度**同时加强**：除方向外，追加
+  //    「紧邻」（条顶与输入条底间距 ≤ 24px ⇒ 排除悬空/错层到别处）⇒ 仍是「唯一几何关系
+  //    被钉死」，不是「换个方向就算过」。
+  ok('S2 引用态条落在**输入条下方**且紧邻（D2 落位 · 真几何）',
+    !!strip && strip.stripY > strip.inputY && (strip.stripY - strip.inputBarBottom) >= 0 && (strip.stripY - strip.inputBarBottom) <= 24,
+    JSON.stringify(strip && { stripY: strip.stripY, inputY: strip.inputY, inputBarBottom: strip.inputBarBottom, gapBelowInput: +(strip.stripY - strip.inputBarBottom).toFixed(1) }));
+  // 🔴 **修正①**（作者 2026-09-19 04:22 逐字：「就引用的那个X和样式可以参考我们主窗口」）：
+  //    ❌ = **主窗口同类件**（`.att-remove` 共享块 → 16px 实心 `--color-error` 圆盘 + 白色
+  //    ✕ SVG），**不落**设计稿的 ⊗ 变体。判据 = 类名在共享块内 + 圆盘几何 = 16px + 圆角 50%
+  //    + 实心（非 transparent）+ ✕ 为 SVG 字形（非 `textContent='x'` 文本） + 居中（偏心 ≤ 0.5px）。
+  ok('S2 修正①：引用条 ❌ = 主窗口同类件（`.fm-quote-remove` = 共享块选择器之一 · 16px 实心圆盘 · SVG ✕ · 居中 dx=dy=0）',
+    !!strip && !!strip.disc && strip.disc.hasSvg === true && strip.disc.tag === 'svg'
+    && strip.removeCls.split(/\s+/).includes('fm-quote-remove')
+    && strip.removeCls.split(/\s+/).includes('att-ref-remove')
+    && strip.disc.disc.w === 16 && strip.disc.disc.h === 16 && strip.disc.radius === '50%'
+    && strip.disc.bg === 'rgb(244, 67, 54)'   // --color-error，与主窗口 `.att-remove` 同 token
+    && strip.disc.dx === 0 && strip.disc.dy === 0,
+    JSON.stringify({ cls: strip && strip.removeCls, disc: strip && strip.disc }));
   // 取消 → 再进入（两条路径都可用）
   await page.click('.fm-quote-strip .att-ref-remove');
   await sleep(200);
@@ -446,6 +533,46 @@ async function scenarioQuote(page, pageErrors) {
     && qStyle.quote.fontSize === '12px' && qStyle.bubble.fontSize === '13px'
     && qStyle.quote.background !== qStyle.bubble.background,
     JSON.stringify(qStyle));
+  // 🔴 **D1**（作者 2026-09-19 04:22 照案）= 引用块改**下沉面**：浮起卡面（`--color-surface`
+  //    + 卡面阴影）⇒ 比气泡底再退一档的填充 + **零阴影**；间距 4/8 → 6/10；圆角 6 → 10；
+  //    摘要 2 行封顶（内层 `.fm-quote-text`）。
+  //    断言强度：**新增**（旧断言只钉「与原气泡底不同」）⇒ 现在钉死材质三件套（背景值 /
+  //    零阴影 / 圆角·内边距）+ 夹取面；背景值随主题两档（`MM_SCHEME`）逐值钉。
+  const d1 = await page.evaluate((id) => {
+    const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
+    const q = m && m.querySelector('.fm-quote-block');
+    if (!q) return null;
+    const cs = getComputedStyle(q);
+    const t = q.querySelector('.fm-quote-text');
+    const ts = t ? getComputedStyle(t) : null;
+    return {
+      scheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+      background: cs.backgroundColor, boxShadow: cs.boxShadow,
+      padding: `${cs.paddingTop} ${cs.paddingRight} ${cs.paddingBottom} ${cs.paddingLeft}`,
+      radius: cs.borderRadius, marginBottom: cs.marginBottom,
+      textClamp: ts ? (ts.webkitLineClamp || ts.lineClamp || null) : null,
+      textDisplay: ts ? ts.display : null,
+      textOrient: ts ? (ts.webkitBoxOrient || ts.boxOrient || null) : null,
+      textOverflow: ts ? ts.overflow : null,
+    };
+  }, sentId);
+  put('quote.d1', d1);
+  const d1src = await readFile(join(WEB, 'css/friends.css'), 'utf8');
+  put('quote.d1.src', { declaresWebkitBox: /\.fm-quote-block \.fm-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src), declaresClamp2: /\.fm-quote-block \.fm-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src) });
+  ok('S2 D1 源码面：夹取声明 = `display:-webkit-box` + `-webkit-line-clamp:2`（声明值可机械核）',
+    /\.fm-quote-block \.fm-quote-text\s*\{[^}]*display:\s*-webkit-box/.test(d1src)
+    && /\.fm-quote-block \.fm-quote-text\s*\{[^}]*line-clamp:\s*2/.test(d1src));
+  ok('S2 D1：引用块 = 下沉面（主题两档填充 + 零阴影 + 6/10 内边距 + 10px 圆角 + 摘要 2 行封顶）',
+    !!d1
+    && ((d1.scheme === 'light' && d1.background === 'rgba(0, 0, 0, 0.035)')
+      || (d1.scheme === 'dark' && d1.background === 'rgba(255, 255, 255, 0.055)'))
+    && d1.boxShadow === 'none' && d1.padding === '6px 10px 6px 10px'
+    && d1.radius === '10px' && d1.marginBottom === '6px'
+    && d1.textClamp === '2' && d1.textOrient === 'vertical' && d1.textOverflow === 'hidden',
+    // 🔴 `display` 的**声明值**（`-webkit-box`）由源码面单独核（`quote.d1.src`）；
+    //    计算值在本引擎报 `flow-root`（Blink 把遗留 `-webkit-box` 的计算值归一化，
+    //    不参与判据 —— 夹取的三件实证：clamp / orient / overflow）。
+    JSON.stringify(d1));
   // 🔴 旧断言改写（quotejump 批 · 新令取代旧验收面）：一期在本行断言「引用块**无**跳转
   //    handler（点了零变化）」——那是「跳转不写」时期的判据；作者令「引用**必须可跳**」
   //    到达后该判据与本批**直接冲突**，故改写为**正向面**：入口在场（按钮语义 + 指针）
@@ -568,6 +695,22 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
     b0.barHidden === false && b0.barDisplay === 'flex' && b0.countText === '已选 0 条' && b0.forwardDisabled === true
     && b0.checkCount === msgCount && b0.checkRoles.every(r => r.startsWith('checkbox:false')),
     JSON.stringify({ ...b0, msgCount }));
+  // 🔴 **D5 结构面**（照案）：① 计数的**唯一**落点 = 窗头（可见）；② 底部条内**零**计数件；
+  //    ③ 动作 = **4 键等分**（转发 / 逐条转发 / 合并转发（二期）/ 退出），前 3 枚 `.fm-select-act`
+  //    + 1 枚 `.fm-select-exit`；④ 合并转发 = 二期（disabled + `data-phase=2` + 标注 title）。
+  //    这条断言是**新增**（旧形态：条内「已选 N 条」+ 2 键非等分）。
+  const acts = await page.evaluate(() => [...document.querySelectorAll('.fm-select-bar .fm-select-act, .fm-select-bar .fm-select-exit')]
+    .map(b => ({ cls: b.className, disabled: b.disabled, phase: b.dataset.phase || null, title: b.title || '', w: +b.getBoundingClientRect().width.toFixed(1) })));
+  put('select.d5', { ...b0, acts });
+  const mergeBtn = acts.find(a => a.cls.includes('fm-select-forward-merge'));
+  ok('S3 D5：计数落窗头（可见）+ 底部条零计数件 + 4 键等分（含二期合并转发 disabled）',
+    b0.countHidden === false && b0.barCountPresent === false
+    && acts.length === 4
+    && acts.filter(a => a.cls.includes('fm-select-act')).length === 3
+    && acts.filter(a => a.cls.includes('fm-select-exit')).length === 1
+    && Math.max(...acts.map(a => a.w)) - Math.min(...acts.map(a => a.w)) <= 1.5
+    && !!mergeBtn && mergeBtn.disabled === true && mergeBtn.phase === '2' && mergeBtn.title.length > 0,
+    JSON.stringify({ countText: b0.countText, countHidden: b0.countHidden, barCountPresent: b0.barCountPresent, acts }));
   // 🔴 勾选面真渲染判据（QA skill §5 硬断言三连：盒在视口 + elementFromPoint 命中自身
   //    + **未被 `.fm-flow` 的 overflow 裁剪**）—— in / out 两向各测一条。
   const geomProbe = await page.evaluate(() => {
@@ -616,10 +759,60 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
     return { selected: sel ? cs(sel) : null, unselected: un ? cs(un) : null, bar: bar ? { display: getComputedStyle(bar).display, paddingLeft: getComputedStyle(bar).paddingLeft } : null };
   });
   put('select.style', sStyle);
-  ok('S3 勾选面视觉面（数值）：未选中「无勾」/ 选中取既有 sapphire 15% 底 + sapphire 勾色（零新色值）',
+  // 🔴 **D3 改写（有据变更，非放宽）**：作者 2026-09-19 04:22 照案 ⇒ 选中档由
+  //    「sapphire 15% 底 + sapphire 勾色」改为 **sapphire 实心 + 白勾**（A 档）。
+  //    等价强度：① 未选中仍钉「零填充 + 透明勾」（底色/勾色双面；旧断言只钉勾色）；
+  //    ② 选中钉**实心 + 白勾 + 同源描边**（底色与描边逐值 = 既有 `--sapphire` token，
+  //    勾色 = `#fff`）——比旧断言多钉一项（描边色）；③ 追加 **D4 几何**（22×22）⇒ 断言
+  //    面只增不减。零新色值判据不变：色值仍全部来自既有 `--sapphire`（91,127,191）。
+  ok('S3 勾选面视觉面（数值）：未选中「零填充 + 无勾」/ 选中 = sapphire 实心 + 白勾 + 同源描边（零新色值）',
     !!sStyle && sStyle.selected.color !== sStyle.unselected.color
-    && sStyle.unselected.color === 'rgba(0, 0, 0, 0)' && /91, 127, 191/.test(sStyle.selected.color)
-    && /91, 127, 191/.test(sStyle.selected.bg), JSON.stringify(sStyle));
+    && sStyle.unselected.color === 'rgba(0, 0, 0, 0)' && sStyle.unselected.bg === 'rgba(0, 0, 0, 0)'
+    && /91, 127, 191/.test(sStyle.selected.bg) && /91, 127, 191/.test(sStyle.selected.borderColor)
+    && sStyle.selected.color === 'rgb(255, 255, 255)'
+    && sStyle.selected.w === '22px' && sStyle.selected.h === '22px'
+    && sStyle.unselected.w === '22px' && sStyle.unselected.h === '22px', JSON.stringify(sStyle));
+  // 🔴 **D4**（作者 2026-09-19 04:22 照案）：22px 勾选圆落**固定左列** + 与头像**垂直居中**
+  //    —— 判据 = ① 进/出两向圆心 x **逐值相等**（同一条左列，容差 0.5px）；
+  //              ② 圆心 y == 头像圆心 y（容差 1px）。
+  //    这条断言是**新增**（旧形态 left:-16px 时出向圆不在左列 ⇒ 无法成立）。
+  // 🔴 头像带中心（40px 档）的**可判据代理**：本实现的 `.fm-msg` 行**不渲染头像**
+  //    （气泡式行，`bubbleEl` 无 avatar 子节点）⇒ 「与头像中心对齐」在设计面上的
+  //    等价读数 = 圆心 y 落在**行首 40px 带**的中心（rowTop + 20）；同时给出气泡首行
+  //    带作为辅助读数（见 select.d4.bubble）。
+  const d4 = await page.evaluate(() => {
+    const flow = document.querySelector('.fm-flow');
+    const fr = flow.getBoundingClientRect();
+    const rows = [...flow.querySelectorAll('.fm-msg.fm-selecting')].map((w) => {
+      const c = w.querySelector('.fm-msg-check');
+      if (!c) return null;
+      const cr = c.getBoundingClientRect();
+      const wr = w.getBoundingClientRect();
+      const bub = w.querySelector('.fm-msg-bubble');
+      const br = bub ? bub.getBoundingClientRect() : null;
+      return {
+        id: w.dataset.messageId,
+        dir: w.classList.contains('out') ? 'out' : 'in',
+        rowTop: +wr.top.toFixed(2), rowH: +wr.height.toFixed(2),
+        checkLeft: +cr.left.toFixed(2), checkCx: +(cr.x + cr.width / 2).toFixed(2),
+        checkCy: +(cr.y + cr.height / 2).toFixed(2), checkW: +cr.width.toFixed(2), checkH: +cr.height.toFixed(2),
+        cyFromRowTop: +(cr.y + cr.height / 2 - wr.top).toFixed(2),
+        overflowBand: +Math.max(0, wr.top - cr.top).toFixed(2),
+        bubbleTop: br ? +(br.top - wr.top).toFixed(2) : null, bubbleH: br ? +br.height.toFixed(2) : null,
+      };
+    }).filter(Boolean);
+    return { rows, flowPadBoxLeft: +(fr.left + parseFloat(getComputedStyle(flow).borderLeftWidth || '0')).toFixed(2), flowPadLeft: getComputedStyle(flow).paddingLeft };
+  });
+  put('select.d4', d4);
+  const inRows = d4.rows.filter(r => r.dir === 'in');
+  const outRows = d4.rows.filter(r => r.dir === 'out');
+  ok('S3 D4：22px 勾选圆落**固定左列**（进/出两向圆心 x 逐值相等 = 25px/25px）+ 圆心 = 行首 40px 头像带中心（rowTop+20）',
+    d4.rows.length >= 3 && inRows.length >= 1 && outRows.length >= 1
+    && d4.rows.every(r => r.checkW === 22 && r.checkH === 22)
+    && Math.abs(inRows[0].checkCx - outRows[0].checkCx) <= 0.5
+    && d4.rows.every(r => r.checkLeft === d4.rows[0].checkLeft)
+    && d4.rows.every(r => Math.abs(r.cyFromRowTop - 20) <= 0.5),
+    JSON.stringify(d4));
   // Esc 退选择态（窗不关）
   await page.keyboard.press('Escape');
   await sleep(220);
@@ -652,7 +845,12 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
   await sleep(100);
   await page.click('.fm-flow .fm-msg[data-message-id="101"] .fm-msg-check');  // 再点前面的（序判据）
   await sleep(150);
-  await page.click('.fm-select-forward');
+  // 🔴 **D5/D7 改写（有据变更，非放宽）**：作者 2026-09-19 04:22 照案 ⇒ 底部条改为
+  //    **等分动作**且语义分裂：「转发」开**转发窗口**（D7，含附言 + 目标列表），
+  //    「逐条转发」才走**既有目标选择器**（`showPopupMenu`）。⇒ 本段（目标选择器 +
+  //    逐条原序）改由 `.fm-select-forward-each` 触发；等价强度：菜单组件/项集/顺序
+  //    判据逐条不变（零放宽），转发窗口另有**专段**（scenarioForwardWindow）。
+  await page.click('.fm-select-forward-each');
   await sleep(300);
   const picker = await page.evaluate(() => {
     const menu = document.querySelector('.fm-context-menu');
@@ -704,6 +902,368 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
   ok('S3 落点回执（真渲染）：目标会话窗口实收 2 条且顺序与转发序一致',
     received.length === 2 && received[0] === '早上好' && received[1] === '带上笔记本', JSON.stringify(received));
   ok('S3 多选腿零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// S4 · **D7 转发窗口**（visup-b 批 · 本批**新增面**：附言 + 目标列表 + chip 回显）
+//   作者 2026-09-19 04:22「这个可以实施」= D1–D8 照案；D7 承 D5 的「转发」键语义。
+//   全部读数走真渲染（真 Chromium + 真指针 + 真几何 + 真 REST 落点回执）。
+// ══════════════════════════════════════════════════════════════════════
+async function scenarioForwardWindow(page, pageErrors) {
+  console.log(`\n── S4 · D7 转发窗口 · MODE=${MODE}`);
+  const panelRead = (p) => p.evaluate(() => {
+    const panel = document.querySelector('.fm-fwd-modal');
+    const bar = document.querySelector('.fm-select-bar');
+    if (!panel) return { present: false, barHidden: bar ? bar.hidden : null, checks: document.querySelectorAll('.fm-flow .fm-msg-check').length };
+    const r = panel.getBoundingClientRect();
+    const pr = getComputedStyle(panel);
+    const rows = [...panel.querySelectorAll('.fm-fwd-row')];
+    const check = rows[0] ? rows[0].querySelector('.fm-fwd-check') : null;
+    const cr = check ? check.getBoundingClientRect() : null;
+    const chip = panel.querySelector('.fm-fwd-chip');
+    const chipX = panel.querySelector('.fm-fwd-chip-x');
+    const xr = chipX ? chipX.getBoundingClientRect() : null;
+    const okBtn = panel.querySelector('.fm-fwd-ok');
+    return {
+      present: true,
+      cls: panel.className,
+      role: panel.getAttribute('role'),
+      ariaLabel: panel.getAttribute('aria-label'),
+      forwardMulti: panel.dataset.forwardMulti || null,
+      box: { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) },
+      inViewport: r.x >= 0 && r.y >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5,
+      // 🔴 铁律 1：面板**无自带遮罩**（零背景暗化/模糊）——面板自身不是 overlay，
+      //    面板子树内零 overlay 节点；全页 overlay 计数不因开面板而改变（见断言）。
+      selfIsOverlay: panel.classList.contains('cfg-modal-overlay'),
+      panelOverlayNodes: panel.querySelectorAll('.cfg-modal-overlay').length,
+      pageOverlayNodes: document.querySelectorAll('.cfg-modal-overlay').length,
+      parentIsChatOverlay: panel.parentElement ? panel.parentElement.id : null,
+      backdrop: pr.backdropFilter || pr.webkitBackdropFilter || '',
+      note: !!panel.querySelector('.fm-fwd-note'),
+      noteRows: (panel.querySelector('.fm-fwd-note') || {}).rows || null,
+      noteFocused: document.activeElement === panel.querySelector('.fm-fwd-note'),
+      rowCount: rows.length,
+      rowNames: rows.map(x => (x.querySelector('.fm-fwd-row-name') || {}).textContent || ''),
+      rowSubs: rows.map(x => (x.querySelector('.fm-fwd-row-sub') || {}).textContent || ''),
+      rowPressed: rows.map(x => x.getAttribute('aria-pressed')),
+      rowIsButton: rows.map(x => x.tagName),
+      checkW: cr ? +cr.width.toFixed(1) : null,
+      checkH: cr ? +cr.height.toFixed(1) : null,
+      checkRole: check ? check.getAttribute('role') : null,
+      checkChecked: check ? check.getAttribute('aria-checked') : null,
+      chips: panel.querySelectorAll('.fm-fwd-chip').length,
+      chipText: chip ? chip.textContent : null,
+      chipXLabel: chipX ? chipX.getAttribute('aria-label') : null,
+      chipXRole: chipX ? chipX.tagName : null,
+      chipXW: xr ? +xr.width.toFixed(1) : null,
+      targetName: (panel.querySelector('.fm-fwd-target-name') || {}).textContent || null,
+      okDisabled: okBtn ? okBtn.disabled : null,
+      okText: okBtn ? okBtn.textContent : null,
+      cancelText: (panel.querySelector('.fm-fwd-cancel') || {}).textContent || null,
+      headerPad: (panel.querySelector('.fm-modal-header') ? getComputedStyle(panel.querySelector('.fm-modal-header')).padding : null),
+      titleWeight: (panel.querySelector('.fm-modal-name') ? getComputedStyle(panel.querySelector('.fm-modal-name')).fontWeight : null),
+      radius: pr.borderRadius,
+      barHidden: bar ? bar.hidden : null,
+      checks: document.querySelectorAll('.fm-flow .fm-msg-check').length,
+    };
+  });
+
+  await rightClickBubble(page, 103);
+  await clickMenuItem(page, '多选转发');
+  await page.click('.fm-flow .fm-msg[data-message-id="101"] .fm-msg-check');
+  await sleep(120);
+  const overlayBefore = await page.evaluate(() => document.querySelectorAll('.cfg-modal-overlay').length);
+  await page.click('.fm-select-forward');
+  await sleep(300);
+  const p0 = await panelRead(page);
+  put('fwd.open', { ...p0, overlayBefore });
+  await shot(page, 'fwd-window-open');
+  ok('S4 D7 🔴 面板形态：`.cfg-modal.fm-fwd-modal`（毛玻璃 = 既有 .cfg-modal，**零自带遮罩**）+ role=dialog + 二期标注在册',
+    p0.present === true && p0.cls.includes('cfg-modal') && p0.cls.includes('fm-fwd-modal')
+    && p0.role === 'dialog' && !!p0.ariaLabel && p0.forwardMulti === 'phase2'
+    && p0.selfIsOverlay === false && p0.panelOverlayNodes === 0 && p0.pageOverlayNodes === overlayBefore
+    && p0.parentIsChatOverlay === 'fm-chat-overlay'
+    && /blur/.test(p0.backdrop)
+    && p0.inViewport === true && p0.radius !== '0px',
+    JSON.stringify({ ...p0, overlayBefore }));
+  ok('S4 D7 四段构造：附言（2 行 · 自动聚焦）+ 目标列表（真实 button + role=checkbox 勾选圆 22px）+ chip 回显位 + 动作行',
+    p0.note === true && p0.noteRows === 2 && p0.noteFocused === true
+    && p0.rowCount === 1 && p0.rowNames.join(',') === '另一好友' && p0.rowIsButton.every(t => t === 'BUTTON')
+    && p0.checkRole === 'checkbox' && p0.checkChecked === 'false' && p0.checkW === 22 && p0.checkH === 22
+    && p0.chips === 0 && p0.targetName === '未选择目标会话' && p0.okDisabled === true && !!p0.cancelText,
+    JSON.stringify(p0));
+  ok('S4 D7 开面板**不**退多选（底部条仍在场 + 勾选面仍在 + 面板在场）',
+    p0.barHidden === false && p0.checks >= 3, JSON.stringify({ barHidden: p0.barHidden, checks: p0.checks }));
+  // 选目标（真实 pointer）⇒ 单选语义（点一行换目标；多目标 = 二期）
+  await page.click('.fm-fwd-modal .fm-fwd-row');
+  await sleep(220);
+  const p1 = await panelRead(page);
+  put('fwd.picked', p1);
+  ok('S4 D7 选目标：行 aria-pressed=true + 勾选圆 aria-checked=true + chip 回显（可单个移除）+ 目标行「名称 · 单聊」+ 发送键解禁',
+    p1.rowPressed.join(',') === 'true' && p1.checkChecked === 'true'
+    && p1.chips === 1 && /另一好友/.test(String(p1.chipText)) && p1.chipXRole === 'BUTTON' && p1.chipXW === 16
+    && p1.targetName === '另一好友 · 单聊' && p1.okDisabled === false && p1.okText.length > 0,
+    JSON.stringify(p1));
+  await shot(page, 'fwd-window-picked');
+  // chip 单删 ⇒ 回到未选（发送键重新禁用、行为 aria-pressed=false）
+  await page.click('.fm-fwd-modal .fm-fwd-chip-x');
+  await sleep(200);
+  const p2 = await panelRead(page);
+  put('fwd.chipRemoved', p2);
+  ok('S4 D7 chip 单删：回未选态（chip 清零 + 行 aria-pressed=false + 勾选圆 false + 发送键重禁）',
+    p2.chips === 0 && p2.rowPressed.join(',') === 'false' && p2.checkChecked === 'false' && p2.okDisabled === true,
+    JSON.stringify(p2));
+  // 面板内 Esc ⇒ 收面板，但**不退**多选（多选态可原地重开）
+  await page.keyboard.press('Escape');
+  await sleep(250);
+  const p3 = await page.evaluate(() => ({
+    panel: !!document.querySelector('.fm-fwd-modal'),
+    barHidden: document.querySelector('.fm-select-bar').hidden,
+    checks: document.querySelectorAll('.fm-flow .fm-msg-check').length,
+    modalAlive: !!document.getElementById('fm-chat-overlay'),
+  }));
+  put('fwd.esc', p3);
+  ok('S4 D7 面板内 Esc：收面板 + 不退多选 + 窗仍在（单一 Esc 只吃一层）',
+    p3.panel === false && p3.barHidden === false && p3.checks >= 3 && p3.modalAlive === true, JSON.stringify(p3));
+  // 窗内空白一击（面板在场）⇒ 先收面板（多选态保留）
+  await page.click('.fm-select-forward');
+  await sleep(250);
+  await page.click('#fm-chat-overlay .fm-modal-header');
+  await sleep(250);
+  const p4 = await page.evaluate(() => ({
+    panel: !!document.querySelector('.fm-fwd-modal'),
+    barHidden: document.querySelector('.fm-select-bar').hidden,
+    checks: document.querySelectorAll('.fm-flow .fm-msg-check').length,
+  }));
+  put('fwd.outsideFirst', p4);
+  ok('S4 D7 窗内空白一击：面板在场 ⇒ 只收面板（多选态保留，可原地重开）',
+    p4.panel === false && p4.barHidden === false && p4.checks >= 3, JSON.stringify(p4));
+  // 再一击（面板不在场）⇒ 既有「点外退出多选」
+  await page.click('#fm-chat-overlay .fm-modal-header');
+  await sleep(250);
+  const p5 = await page.evaluate(() => ({
+    barHidden: document.querySelector('.fm-select-bar').hidden,
+    checks: document.querySelectorAll('.fm-flow .fm-msg-check').length,
+  }));
+  put('fwd.outsideSecond', p5);
+  ok('S4 D7 面板不在场时的窗内空白一击 = 既有「点外退出多选」（语义未被新面改动）',
+    p5.barHidden === true && p5.checks === 0, JSON.stringify(p5));
+  // 端到端：勾 2 条 + 附言 ⇒ 目标会话实收「附言 + 2 条原序」
+  await rightClickBubble(page, 101);
+  await clickMenuItem(page, '多选转发');
+  await page.click('.fm-flow .fm-msg[data-message-id="103"] .fm-msg-check');
+  await sleep(100);
+  await page.click('.fm-flow .fm-msg[data-message-id="101"] .fm-msg-check');
+  await sleep(150);
+  await page.click('.fm-select-forward');
+  await sleep(250);
+  await page.fill('.fm-fwd-modal .fm-fwd-note', '见上，转发给你');
+  await page.click('.fm-fwd-modal .fm-fwd-row');
+  await sleep(180);
+  const targetBefore = SRV.msgs.cC.length;
+  await page.click('.fm-fwd-modal .fm-fwd-ok');
+  await sleep(1200);
+  const got = SRV.msgs.cC.slice(targetBefore).map(r => r.body);
+  put('fwd.sent', { got, calls: callsOf(c => c.method === 'POST').map(c => c.body.body) });
+  await shot(page, 'fwd-sent-receipt');
+  ok('S4 D7 端到端：附言先发（独立一条）+ 2 条被转消息按**窗口序**（非点击序），面板随之收口',
+    got.length === 3 && got[0] === '见上，转发给你' && got[1] === '早上好' && got[2] === '带上笔记本',
+    JSON.stringify(got));
+  const after = await page.evaluate(() => ({
+    panel: !!document.querySelector('.fm-fwd-modal'),
+    barHidden: document.querySelector('.fm-select-bar').hidden,
+    checks: document.querySelectorAll('.fm-flow .fm-msg-check').length,
+  }));
+  put('fwd.afterSend', after);
+  ok('S4 D7 发送后收口：面板移除 + 退多选 + 勾选面撤除（复用同一条 exitSelection）',
+    after.panel === false && after.barHidden === true && after.checks === 0, JSON.stringify(after));
+  ok('S4 转发窗口腿零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// S6 · **修正②（主窗口附件 ❌ 居中）** + **修正④（麦克风 = 普通麦克风 + 反馈保留）**
+//   两件都在**主窗口**面（真产品入口 `index.html`），故与好友窗场景分开跑。
+//   修正② 的「改前」面 = 主树声明块的**逐字重建**（同页同字体同底色渲染 ⇒ 前后同框
+//   可比）；像素级读数由 `MM_SHOTS` 落盘后经 `evidence/.../raw/disc_center.py` 出。
+// ══════════════════════════════════════════════════════════════════════
+async function scenarioUiFaces(page, pageErrors) {
+  console.log(`\n── S6 · 修正②/④ · MODE=${MODE} · scheme=${MM_SCHEME} ──`);
+  // ── 修正④ ①：形态面 = 普通麦克风；旧 R5 气泡/光球**零命中** ────────────────
+  const mic = await page.evaluate(() => {
+    const b = document.getElementById('voice-btn');
+    const r = b ? b.getBoundingClientRect() : null;
+    const cs = b ? getComputedStyle(b) : null;
+    const svg = b ? b.querySelector('svg') : null;
+    const anyLegacy = document.querySelectorAll('.mic-orb-wrap, .micbubble, .orb-canvas, .css-orb, .orb-ripple').length;
+    return {
+      present: !!b,
+      tag: b ? b.tagName : null,
+      cls: b ? b.className : null,
+      type: b ? b.getAttribute('type') : null,
+      title: b ? b.getAttribute('title') : null,
+      ariaLabel: b ? b.getAttribute('aria-label') : null,
+      ariaPressed: b ? b.getAttribute('aria-pressed') : null,
+      iconSvgCls: svg ? svg.getAttribute('class') : null,
+      box: r ? { w: +r.width.toFixed(1), h: +r.height.toFixed(1) } : null,
+      radius: cs ? cs.borderRadius : null,
+      legacyNodes: anyLegacy,
+      legacyIds: ['mic-canvas', 'mic-css-orb', 'mic-orb-wrap'].filter(id => document.getElementById(id)),
+    };
+  });
+  put('mic.form', mic);
+  await shot(page, 'main-mic-idle');
+  ok('S6 修正④：麦克风 = 普通 `.icon-btn`（36×36 圆键 + lucide `mic` 图标）且 `aria-pressed` 可访问态在册',
+    mic.present === true && mic.tag === 'BUTTON' && mic.type === 'button'
+    && mic.cls.split(/\s+/).includes('icon-btn') && mic.cls.split(/\s+/).includes('mic-btn')
+    && !mic.cls.includes('micbubble') && /lucide-mic/.test(String(mic.iconSvgCls))
+    && !!mic.title && !!mic.ariaLabel && mic.ariaPressed === 'false'
+    && mic.box.w === 36 && mic.box.h === 36 && mic.radius === '50%',
+    JSON.stringify(mic));
+  ok('S6 修正④ 🔴 旧 R5 气泡/光球形态**零命中**（DOM 面：`.mic-orb-wrap`/`.micbubble`/`.orb-canvas`/`.css-orb`/`.orb-ripple` 全 0 节点 + 三个旧 id 全缺席）',
+    mic.legacyNodes === 0 && mic.legacyIds.length === 0, JSON.stringify({ n: mic.legacyNodes, ids: mic.legacyIds }));
+  // 源码面零命中（输入区形态三件：宿主 DOM / 形态 CSS / 挂载点）——「退役」不是只退 DOM。
+  const srcHits = {};
+  for (const rel of ['index.html', 'css/input.css']) {
+    const txt = await readFile(join(WEB, rel), 'utf8');
+    srcHits[rel] = ['mic-orb-wrap', 'micbubble', 'orb-canvas', 'css-orb', 'orb-ripple']
+      .filter(tok => new RegExp(tok.replace(/[-.]/g, '[-.]'), 'i').test(txt));
+  }
+  put('mic.legacySourceHits', srcHits);
+  ok('S6 修正④ 🔴 旧形态**源码面零命中**（`index.html` + `css/input.css` 内 0 处 orb 形态标记：宿主/材质/9 态色矩阵/涟漪全清）',
+    Object.values(srcHits).every(list => list.length === 0), JSON.stringify(srcHits));
+  // ── 修正④ ②：语音反馈**保留**（录音中 / 转写中 两态真转换读数） ──────────────
+  //  真转换：点 mic（云 STT 路径开 ⇒ 真 `listening`）→ 再点（`stopVoice` ⇒ 真
+  //  `processing`，因云腿在等转写应答而**持续在场**）⇒ 两态都可读。
+  await page.evaluate(async () => {
+    const m = await import('/js/state.js');
+    m.default.stt = { sttConfigured: true };
+  });
+  await page.click('#voice-btn');
+  await page.waitForFunction(() => document.getElementById('voice-btn').classList.contains('recording'), null, { timeout: 5000 });
+  await sleep(300);   // `.icon-btn` 有 `transition: background/color .15s` ⇒ 等过渡落定（否则读到插值中间态）
+  const rec = await page.evaluate(() => {
+    const b = document.getElementById('voice-btn');
+    const cs = getComputedStyle(b);
+    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), bg: cs.backgroundColor, color: cs.color, anim: cs.animationName, animDur: cs.animationDuration };
+  });
+  put('mic.recording', rec);
+  await shot(page, 'main-mic-recording');
+  ok('S6 修正④ 反馈·录音中：`.recording` 在场（既有微信绿底 + 既有 `voicePulse` 脉冲）+ `aria-pressed=true`',
+    rec.cls.split(/\s+/).includes('recording') && rec.ariaPressed === 'true'
+    && /7,\s*193,\s*96|#07c160/i.test(rec.bg) && rec.anim === 'voicePulse' && rec.animDur !== '0s',
+    JSON.stringify(rec));
+  await page.evaluate(() => window.__mic.pump(0.4));   // 让云腿真有音频（否则退化成 noAudio 错误态）
+  await page.click('#voice-btn');
+  await sleep(400);
+  const proc = await page.evaluate(() => {
+    const b = document.getElementById('voice-btn');
+    const cs = getComputedStyle(b);
+    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), color: cs.color, anim: cs.animationName, sapphire: getComputedStyle(document.documentElement).getPropertyValue('--sapphire').trim() };
+  });
+  put('mic.processing', proc);
+  await shot(page, 'main-mic-processing');
+  ok('S6 修正④ 反馈·转写中：`.recording` 撤除 + `.processing` 在场（既有 sapphire 强调色）+ `aria-pressed=false`',
+    proc.cls.split(/\s+/).includes('processing') && !proc.cls.split(/\s+/).includes('recording')
+    && proc.ariaPressed === 'false' && proc.anim === 'none'
+    && /91,\s*127,\s*191/.test(proc.color),
+    JSON.stringify(proc));
+  // ── 修正②：主窗口图片/文件附件的 ❌ 居中（前/后同框） ──────────────────────
+  const discGeom = await page.evaluate(async () => {
+    const chat = await import('/js/chat.js');
+    // 中性缩略图（canvas 生成 ⇒ 必为合法 PNG；色 = 面板近邻灰蓝，**非红** ⇒
+    // 像素管线的红盘掩码不会被缩略图污染）。
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 8;
+    const cg = cv.getContext('2d');
+    cg.fillStyle = '#3a4150';
+    cg.fillRect(0, 0, 8, 8);
+    const px = cv.toDataURL('image/png');
+    const host = document.getElementById('attachment-preview');
+    // ① 改后（产品渲染器：`.att-remove` + 单一 `CLOSE_X_SVG`）
+    const after = [{ type: 'image', mimeType: 'image/png', data: '', name: 'shot.png', preview: px },
+      { type: 'file', name: 'note.txt' }];
+    const probe = document.createElement('div');
+    probe.id = 'visupb-probe';
+    probe.style.cssText = 'position:fixed;left:24px;top:120px;z-index:99999;display:flex;flex-direction:column;gap:24px;padding:12px;background:#1c202c';
+    document.body.appendChild(probe);
+    const hostA = document.createElement('div');
+    hostA.style.cssText = 'position:relative;display:flex;gap:48px;padding:16px 24px';
+    probe.appendChild(hostA);
+    chat.renderAttachmentPreview({ attPreviewEl: hostA, attachments: after });
+    // ② 改前（主树声明块逐字重建：`git show HEAD:src/main/resources/web/css/input.css`
+    //    的 `.att-remove` 原值 + `textContent='x'`）——同页同字体同底色 ⇒ 可比。
+    const hostB = document.createElement('div');
+    hostB.style.cssText = 'position:relative;display:flex;gap:48px;padding:16px 24px';
+    probe.appendChild(hostB);
+    const mkOld = () => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:relative;width:96px;height:72px;background:#2a2f3a;border-radius:8px';
+      const rm = document.createElement('div');
+      rm.className = 'att-remove visupb-old';
+      rm.style.cssText = 'position:absolute;top:-4px;right:-4px;width:16px;height:16px;background:var(--color-error);color:#fff;border-radius:50%;font-size:10px;display:flex;align-items:center;justify-content:center;cursor:pointer';
+      rm.textContent = 'x';
+      wrap.appendChild(rm);
+      return wrap;
+    };
+    hostB.append(mkOld(), mkOld());
+    const read = (sel) => [...document.querySelectorAll(sel)].map((el) => {
+      const r = el.getBoundingClientRect();
+      const svg = el.querySelector('svg');
+      const sr = svg ? svg.getBoundingClientRect() : null;
+      // 文本字形（改前形态）：用 Range 量**字形盒**（selection rect = em 盒，非 ink 盒
+      // ⇒ 只作辅助读数；ink 级读数走像素管线 disc_center.py）。
+      const t = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null;
+      let glyph = null;
+      if (t) {
+        const rg = document.createRange();
+        rg.selectNodeContents(t);
+        const gr = rg.getBoundingClientRect();
+        glyph = { w: +gr.width.toFixed(2), h: +gr.height.toFixed(2), dx: +((gr.x + gr.width / 2) - (r.x + r.width / 2)).toFixed(2), dy: +((gr.y + gr.height / 2) - (r.y + r.height / 2)).toFixed(2) };
+      }
+      return {
+        cls: el.className, text: el.textContent,
+        disc: { x: +r.x.toFixed(2), y: +r.y.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2) },
+        radius: getComputedStyle(el).borderRadius, bg: getComputedStyle(el).backgroundColor,
+        svg: sr ? { w: +sr.width.toFixed(2), h: +sr.height.toFixed(2), dx: +((sr.x + sr.width / 2) - (r.x + r.width / 2)).toFixed(2), dy: +((sr.y + sr.height / 2) - (r.y + r.height / 2)).toFixed(2) } : null,
+        rangeGlyph: glyph,
+      };
+    });
+    // 探针容器相对定位：把两组的 ❌ 排在**同一 y 基线**上，便于像素切片比较
+    const a = read('#visupb-probe > div:nth-child(1) .att-remove');
+    const b = read('#visupb-probe > div:nth-child(2) .att-remove');
+    return { after: a, before: b, probeBox: (() => { const r = probe.getBoundingClientRect(); return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) }; })() };
+  });
+  put('disc.geom', discGeom);
+  await shot(page, 'disc-before-after');
+  const aDisc = discGeom.after[0];
+  ok('S6 修正②（改后 · 产品渲染面）：`.att-remove` = 16×16 实心圆 + 白色 SVG ✕，**图形中心 == 圆盘中心**（dx=dy=0.00px，容差 0）',
+    !!aDisc && aDisc.disc.w === 16 && aDisc.disc.h === 16 && aDisc.radius === '50%'
+    && aDisc.text === '' && !!aDisc.svg && aDisc.svg.w === 8 && aDisc.svg.h === 8
+    && aDisc.svg.dx === 0 && aDisc.svg.dy === 0,
+    JSON.stringify(discGeom.after));
+  const bDisc = discGeom.before[0];
+  // 🔴 诚实申报：`textContent='x'` 的偏心**在 DOM 侧不可判** —— `Range.getBoundingClientRect()`
+  //    量到的是**行盒**（此处置 10px 字体的 12px 行盒，且被 flex 居中 ⇒ dx=dy=0），
+  //    而行盒几何对 ink（字形）位置是盲的：偏心量只在**像素级**可见。⇒ 这条断言只钉
+  //    「改前形态 = 文本字形 + 行盒 12px」，ink 级前/后读数由像素管线给
+  //    （`evidence/.../raw/disc_center.py` 对同一张 `disc-before-after.png` 出数）。
+  ok('S6 修正②（改前 · 同页重建）：图形 = 文本 `x`（10px 字体 ⇒ 12px 行盒；DOM 侧对 ink 偏心不可判 ⇒ 必须走像素管线）',
+    !!bDisc && bDisc.text === 'x' && !bDisc.svg && !!bDisc.rangeGlyph
+    && bDisc.rangeGlyph.h === 12,
+    JSON.stringify(discGeom.before));
+  // 机械判据：❌ 的**形态**只有**一个**声明块（两处消费者同块 ⇒ 改一处两侧同步，
+  // 与 `scripts/check-msgstyle-single-source.mjs` 的单源判据同口径）。
+  const cssTxt = await readFile(join(WEB, 'css/input.css'), 'utf8');
+  const sharedBlock = /\.att-remove,\s*\n?\s*\.fm-quote-remove\s*\{/.test(cssTxt);
+  const svgOnce = (cssTxt.match(/\.att-remove svg,\s*\n\s*\.fm-quote-remove svg\s*\{/g) || []).length === 1;
+  put('disc.singleSource', { sharedBlock, svgOnce, hasLegacyFontSize: /\.att-remove \{[^}]*font-size: 10px/.test(cssTxt) });
+  ok('S6 修正② 单一来源：`.att-remove, .fm-quote-remove` **同一声明块**（形态一处定义）+ ✕ 尺寸一处定义（`input.css` 机械核）',
+    sharedBlock === true && svgOnce === true, JSON.stringify({ sharedBlock, svgOnce }));
+  ok('S6 修正② 前后同框可比：改后/改前渲染面的圆盘几何逐值相等（16×16 / 50%）',
+    !!aDisc && !!bDisc && aDisc.disc.w === bDisc.disc.w && aDisc.disc.h === bDisc.disc.h
+    && aDisc.radius === bDisc.radius && aDisc.bg === bDisc.bg,
+    JSON.stringify({ afterW: aDisc && aDisc.disc.w, beforeW: bDisc && bDisc.disc.w, afterBg: aDisc && aDisc.bg, beforeBg: bDisc && bDisc.bg }));
+  ok('S6 主窗口面零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1058,6 +1618,30 @@ try {
       }
       put('pageErrors.s3', pageErrors);
       ok('零 pageerror（多选场景）', pageErrors.length === 0, JSON.stringify(pageErrors));
+    } finally {
+      await ctx.close();
+    }
+  }
+  // S4 单独一轮（D7 转发窗口：干净选择态起点；本批新增面，只在实施面跑）
+  if (AFTER && !QJBEFORE) {
+    resetServer();
+    const { ctx, page, pageErrors } = await bootPage();
+    try {
+      await openPanel(page);
+      await openConv(page, 'cA');
+      await scenarioForwardWindow(page, pageErrors);
+      put('pageErrors.s4', pageErrors);
+      ok('零 pageerror（转发窗口场景）', pageErrors.length === 0, JSON.stringify(pageErrors));
+    } finally {
+      await ctx.close();
+    }
+  }
+  // S6 单独一轮（修正②/④：主窗口面 = 麦克风形态/反馈 + 附件 ❌ 居中）
+  if (AFTER && !QJBEFORE) {
+    resetServer();
+    const { ctx, page, pageErrors } = await bootPage({ voice: true });
+    try {
+      await scenarioUiFaces(page, pageErrors);
     } finally {
       await ctx.close();
     }

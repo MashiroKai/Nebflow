@@ -618,11 +618,27 @@ button.fm-req-decline:focus-visible {
   position: relative;
 }
 
+/* ── 修正③（作者 2026-09-19 04:22）：「对话框样式参考主窗口（弹窗面板 = 毛玻璃
+   既定规矩不变；只对齐主窗口的标题 / 圆角 / 间距语言）」。逐条对齐面：
+     · 圆角 —— `.fm-modal` = 20px，与主窗口弹窗族（`.cfg-modal` / `#settings-modal` /
+       `#search-modal`，均 20px）**逐值相等**（既有，未改）。
+     · 标题区距 —— 由 `14px 16px 10px` 对齐到主窗口标题带
+       `padding: 14px 14px 12px 20px`（`.settings-modal-header` / `.search-modal-header`）。
+     · 标题字重/字号 —— 500 → **600**（主窗口 `#settings-modal-title` / `#search-modal-title`
+       = 15px/600；亦合设计系统「标题 600」铁律）。
+     · 标题色 —— `--color-text` → `--color-frame-text-bright`（主窗口弹窗标题同款 token；
+       两 token 在两主题下**取值逐字相同** ⇒ 视觉零变化，纯 token 级对齐）。
+     · 🔴 **有据偏离 1**：不加 `border-bottom` —— 分隔职责已由紧邻的 `.fm-flow`
+       `border-top: 1px solid var(--glass-etched-border)` 承担；再加一条即**双发丝线**。
+       token 差异（etched vs glass）为 fm 窗内既有统一口径（`.fm-flow` / `.fm-input-bar` /
+       `.fm-select-bar` 三处同族），本批不动（改它须同步 4 处断言，收益 ≠ 0 但风险无关本令）。
+     · 🔴 **有据偏离 2**：`.fm-modal` 宽度 560px / 高度 70vh 保持 —— 主窗口弹窗宽度
+       由内容定（400/640px 等），无「弹窗宽度」单一语言项。 */
 .fm-modal-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px 10px;
+  padding: 14px 14px 12px 20px;
 }
 
 /* 群窗头组合头像槽（40px 档；**窗头头像槽**。群窗 = 组合头像，好友（单聊）窗 =
@@ -663,12 +679,203 @@ button.fm-req-decline:focus-visible {
 
 .fm-modal-name {
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  color: var(--color-text, #000);
+  color: var(--color-frame-text-bright, #1b1e26);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 多选态头部（D5）：计数由底部条迁到**头部**，窗头右端出现「退出」键。
+   形态语言 = 主窗口弹窗标题带内的次级件（`.fm-modal-id` 同族字号 11-12px +
+   `--color-frame-text-muted`；按钮圆角 8px 与全站按钮档一致：主窗口
+   `.search-modal` 内的 8px 档）。🔴 计数文案沿用既有 i18n key（不改文案）。 */
+.fm-modal-select-count {
+  font-size: 12px;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.fm-fwd-cancel {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-etched-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.fm-fwd-cancel:hover { background: var(--color-frame-hover); }
+.fm-fwd-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+
+/* ── ④ 转发窗口（D7 · 本批**新增面**，照案形态）─────────────────────────────
+   形似「创建群聊」+ 作者令②「可输入附言 + 选择好友」。四段 = ① 附言（下沉面，
+   2 行）② 已选 chip 回显（可单个移除）③ 好友/会话多选列表（勾选圆 = 22px，与多选态
+   同一族 / 同一选中档）④ 目标会话行 + 动作行。
+   🔴 铁律 1：**无 overlay 遮罩**（面板直接浮在聊天窗上方，零背景暗化/模糊），面板
+   本体毛玻璃 —— 复用的正是既有 `.cfg-modal`（= `--glass-bg` + blur）⇒ 零新材质。
+   🔴 二期项（照案标注）：**多选转发到其他会话（多目标）**为既定二期 ⇒ 本批目标会话
+   行为「单一目标」完整形态（多目标只需把该行扩成可写多值，布局不变）。
+   宽度 420px（设计稿 §3③）。
+   🔴 零新色值：全部消费既有 token（`--glass-etched-*` / `--color-frame-*` /
+   `--sapphire` / `--color-text*`）。 */
+.fm-fwd-modal {
+  width: 420px;
+  max-width: 92vw;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.fm-fwd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 4px;
+  min-height: 0;
+}
+/* 附言 = 下沉面（比面板底更暗；亮/暗两档各一值，与引用块的 D1 同族口径）。 */
+.fm-fwd-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.03);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text);
+  resize: none;
+  min-height: 44px;
+  max-height: 72px;
+  outline: none;
+}
+.fm-fwd-note::placeholder { color: var(--color-text-muted, #888); }
+@media (prefers-color-scheme: dark) {
+  .fm-fwd-note { background: rgba(255, 255, 255, 0.05); }
+}
+/* 已选回显（chip 平铺，可单个移除） */
+.fm-fwd-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.fm-fwd-chips:empty { display: none; }
+.fm-fwd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 8px;
+  border-radius: 9999px;
+  background: var(--glass-etched-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-size: 12px;
+  color: var(--color-text);
+}
+.fm-fwd-chip-x {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  cursor: pointer;
+  border-radius: 50%;
+}
+.fm-fwd-chip-x:hover { color: var(--color-text); background: var(--color-frame-hover); }
+/* 多选列表（好友 / 会话） */
+.fm-fwd-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+}
+.fm-fwd-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  text-align: center;
+}
+.fm-fwd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.fm-fwd-row + .fm-fwd-row { border-top: 1px solid var(--glass-etched-border); }
+.fm-fwd-row:hover { background: var(--color-frame-hover); }
+.fm-fwd-row:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -2px; }
+/* 勾选圆 = 多选态同一族（22px / 1.5px 描边 / 选中 = sapphire 实心 + 白勾）。 */
+.fm-fwd-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--glass-etched-border-focus);
+  color: transparent;
+}
+.fm-fwd-check svg { width: 12px; height: 12px; display: block; }
+.fm-fwd-row.on .fm-fwd-check { background: rgb(var(--sapphire)); border-color: rgb(var(--sapphire)); color: #fff; }
+.fm-fwd-row-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fm-fwd-row-name {
+  font-size: 13px;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-fwd-row-sub {
+  font-size: 11px;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 目标会话行（单一目标；多目标 = 二期，见上） */
+.fm-fwd-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--glass-etched-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-size: 12px;
+}
+.fm-fwd-target-label { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
+.fm-fwd-target-name {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-fwd-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--glass-etched-border);
 }
 
 .fm-modal-id {
@@ -1161,32 +1368,39 @@ button.fm-req-decline:focus-visible {
 body > .fm-context-menu { z-index: 10001; }
 
 /* ── ① 引用块（气泡内，被引消息摘要 + 可辨识样式）──────────────────────────
-   材质 = **既有** `.fm-msg-meta` 同款卡面（`--color-surface` + 发丝环 + 同款暗档
-   覆盖，值逐字沿用邻规则，不新造色值）。
-   🔴 不用左缘色条 / 高亮条（设计硬约束「无 accent bars」）⇒ 靠「卡面 + 发丝描边
-   + 降一档字号/对比」与正文分组，与气泡自身底色天然区分（in 气泡底 = `--glass-etched-bg`，
-   out 气泡底 = `--sapphire-tint-15`，卡面两者之上都可辨）。
-   🔴 卡面阴影**不在此处声明**：与 `.fm-msg-meta` pill 同值，值的家 = 共享层单源
-   token `--msg-meta-card-shadow`（`sapphire.css` 的 "Shared message surface" 段）。
-   原先本件就地复写该字面量 ⇒ msgstyle 判据 A2/A4 判红（复写即「改一处必然漏另一处」
-   的漂移入口）；现只消费 token ⇒ 改一处两侧同步，计算值不变（证据见 litclean 批）。 */
+   🔴 **D1（作者 2026-09-19 04:22 照案）= 下沉面**：材质由「浮起卡面（`--color-surface`
+   + `--msg-meta-card-shadow`）」改为**比气泡底再退一档的填充 + 零阴影**（light
+   `rgba(0,0,0,.035)` / dark `rgba(255,255,255,.055)`，值 = 设计稿拟改稿实测值）。
+   依据 = 参考图实测「引用面是全场最暗的一层且无阴影」（设计稿 §2.2）。代价（稿面已列）：
+   与 `.fm-msg-meta` pill 共享的 `--msg-meta-card-shadow` 消费点少一处 —— 🔴 **token
+   本身不动、不删**（pill 仍是唯一消费者，`sapphire.css` 的 "Shared message surface"
+   段 + `scripts/check-msgstyle-single-source.mjs` 的 A2/A4 单源判据仍成立）。
+   间距 4/8 → **6/10**；圆角 6 → **10**（嵌套圆角：外 14 − 内缩 4，避免尖角贴圆角）。
+   🔴 仍不加左缘指示条 / 高亮条（设计硬约束「无 accent bars」）。
+   🔴 文本 2 行封顶落在内层 `.fm-quote-text`（块盒本身不夹取）。 */
 .fm-quote-block {
-  margin-bottom: 4px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--color-surface);
-  box-shadow: var(--msg-meta-card-shadow);
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.035);
+  box-shadow: none;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--color-text-muted, #888);
   white-space: pre-wrap;
   word-break: break-word;
   max-width: 100%;
 }
+.fm-quote-block .fm-quote-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
 @media (prefers-color-scheme: dark) {
   .fm-quote-block {
-    background: rgba(255, 255, 255, 0.04);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.055);
   }
 }
 /* 译文行（「原消息不可用」降级位）：与摘要同族、再降一档不透明度 —— 不用新色值。 */
@@ -1213,24 +1427,34 @@ body > .fm-context-menu { z-index: 10001; }
   .fm-msg.fm-quote-target { animation-duration: 0.01s; }
 }
 
-/* ── ② 引用态条（输入框面上方；宿主 = `.fm-quote-strip`）────────────────────
+/* ── ② 引用态条（**输入条下方**；宿主 = `.fm-quote-strip`）──────────────────
+   🔴 **D2（照案）**：落位由「输入条上方」改为**输入条下方**（参考图实测层序 =
+   输入字段在上 / 引用条在下；DOM 顺序亦随改，见 `messages.js` 的挂载序）。
    组件本体 = 既有输入框引用块（`renderRefBlock(mode:'input')` → `.att-ref-fm`），
-   本段只定**宿主盒**的落位与外边距。`[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
+   本段只定**宿主盒**的落位与外边距。
+   🔴 **修正①（2026-09-19 04:22）**：「引用条的 ❌ 与样式一律参考主窗口既有模式，
+   非稿面形态」⇒ ① ❌ 用主窗口同类件（实心圆白 ✕，`.fm-quote-remove`，见
+   `input.css` 的 `.att-remove` 共享块），**不落稿面的 ⊗ 变体**；② 条体材质/圆角/间距
+   **零新增** —— 就是主窗口输入框引用卡自身的 `.att-ref-fm`（etched 面 + 8px 圆角
+   + 5/8 内边距），不按稿面另造「下沉面 + 10px 圆角」第二套。
+   `[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
 .fm-quote-strip {
-  padding: 6px 16px 0;
+  padding: 0 16px 10px;
 }
 .fm-quote-strip:not([hidden]) { display: block; }
 .fm-quote-strip .att-ref { max-width: 100%; }
+/* ❌ 的落位（形态/材质在 input.css 的共享块；此处只定宿主内的排布）。 */
+.fm-quote-remove { align-self: center; margin-left: 8px; }
+.fm-quote-remove:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
-/* ── ③ 多选态：勾选面（气泡左侧）+ 工具条 ────────────────────────────────
-   🔴 **槽位几何 = 实测定的**（与 sendstate 的 -22/-26 不同）：`.fm-flow` 是
-   `overflow-y: auto`（⇒ `overflow-x` 按规范计算为 auto）⇒ 裁剪区 = **padding box**，
-   左内边距只有 16px ⇒ `left: -26px` 的 18px 圆会有 10px 落在裁剪区外：
-   ① Playwright/`elementFromPoint` 命中不到（实测「element is visible… but
-   `<div class="cfg-modal fm-modal">` intercepts pointer events」）；② 真指针也点不到。
-   ⇒ 勾选面取 `left: -16px`（左缘 = `.fm-flow` padding box 左缘 ⇒ **完全落在**裁剪区内）
-   + 16px 直径（右缘 = 气泡左缘 ⇒ 零重叠）。in/out 两向同一条规则（out 气泡右侧对齐、
-   左侧本就有余量）。勾选面是真实 `<button role="checkbox">`（键盘可达）。 */
+/* ── ③ 多选态：勾选面（固定左列）+ 头部计数 + 等分动作条 ──────────────────
+   🔴 **D4（照案）**：勾选圆 16px → **22px**、`left:-16px` → `left:0`（**通栏固定左列**）、
+   `top:10px` → `top:9px`（与 40px 头像**垂直居中**对齐）。
+   为什么必须是通栏：`.fm-msg` 出向是 `align-self:flex-end` + `max-width:78%` ⇒ 沿用
+   行内 `left` 时出向的圆会落到**行中部**（设计稿本轮真渲染已复现该形态）。判据 =
+   进/出两向圆心 x **逐值相等**（同一条左列）。多选期行放开为通栏 + 左内边距 30px 让位。
+   🔴 勾选面是真实 `<button role="checkbox">`（键盘可达）。 */
+.fm-flow.fm-select-mode .fm-msg { max-width: 100%; width: 100%; padding-left: 30px; }
 .fm-msg.fm-selecting { position: relative; }
 /* 🔴 「一次只留一个载面」在多选态的延伸：多选期间气泡左侧槽位归勾选面，
    发送态环与失败重发键**不渲染**（不是透明度压制 ⇒ elementFromPoint 打不到）。 */
@@ -1238,57 +1462,64 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-msg.fm-selecting.fm-failed .fm-retry { display: none; }
 .fm-msg-check {
   position: absolute;
-  left: -16px;
-  top: 10px;
+  left: 0;
+  top: 9px;
   box-sizing: border-box;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1px solid var(--glass-etched-border-focus);
-  background: var(--color-surface);
+  border: 1.5px solid var(--glass-etched-border-focus);
+  background: transparent;
   color: transparent;              /* 未选中：勾不可见（零新色值 —— 透明即「无」） */
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.fm-msg-check svg { width: 10px; height: 10px; display: block; }
-/* 选中档：既有 sapphire 15% 底 + 既有描边 token + 描边色作勾色（零新色值，
-   亮/暗两档都取自 token ⇒ 无需第二份暗档覆盖）。 */
+.fm-msg-check svg { width: 12px; height: 12px; display: block; }
+/* 🔴 **D3（照案 · A 档）= sapphire 实心 + 白勾**：守「每视口至多一个彩色强调事件」
+   （不引入第二处微信绿语义 ⇒ 绿仍专属发送键）。色值全部 = 既有 `--sapphire` token。 */
 .fm-msg.fm-selected .fm-msg-check {
-  background: var(--sapphire-tint-15);
+  background: rgb(var(--sapphire));
   border-color: rgb(var(--sapphire));
-  color: rgb(var(--sapphire));
+  color: #fff;
 }
 .fm-msg-check:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
-/* 多选工具条（已选 N 条 / 转发 / 退出）：与输入条同族（发丝上边线 + 同一内边距节奏）。 */
+/* 多选工具条（**等分动作** / 计数已上移头部）：与输入条同族（发丝上边线 + 同一节奏）。
+   🔴 **D5（照案）**：计数由底部条迁到**头部**（`.fm-modal-select-count`），底部条只留动作；
+   动作**等分**（`flex:1`）。可用动作 = 转发 / 逐条转发 / 合并转发（二期）+ 退出 ——
+   实际接线 3 项（转发=转发窗口（D7）/ 逐条转发=既有目标选择器 / 退出），合并转发标二期。 */
 .fm-select-bar {
-  padding: 6px 16px;
+  padding: 10px 16px 12px;
   border-top: 1px solid var(--glass-etched-border);
   font-size: 12px;
   color: var(--color-text-muted, #888);
 }
 .fm-select-bar:not([hidden]) { display: flex; align-items: center; gap: 8px; }
-.fm-select-count { flex: 1; font-variant-numeric: tabular-nums; }
-.fm-select-forward,
+/* 🔴 计数件**整个从底部条撤除**（D5）：宿主 = 窗头 `.fm-modal-select-count`，
+   底部条内**零** `.fm-select-count` 节点 ⇒ 此处**不保留**旧选择器规则（留则成死规则：
+   没有任何 DOM 命中它，且会误导「计数还在条里、只是被藏起来」）。`modalEls.selectCount`
+   的落点已随迁到窗头宿主（`messages.js` 的 `selectCount`），语义不变。 */
+.fm-select-act,
 .fm-select-exit {
+  flex: 1;
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
   border: 1px solid var(--glass-etched-border);
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
 }
-.fm-select-forward:hover:not(:disabled),
+.fm-select-act:hover:not(:disabled),
 .fm-select-exit:hover { background: var(--color-frame-hover); }
-.fm-select-forward:disabled { opacity: 0.4; cursor: default; }
-.fm-select-forward:focus-visible,
+.fm-select-act:disabled { opacity: 0.4; cursor: not-allowed; }
+.fm-select-act:focus-visible,
 .fm-select-exit:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
 
 /* Input bar */

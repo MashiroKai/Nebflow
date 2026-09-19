@@ -1160,6 +1160,13 @@ function renderChatModal(conv) {
   // SEALED (author ruling 2026-09-12): 封存期不挂槽；updateTrustBadge 保留
   // （无槽即天然不产出）。回退 = featureFlags.js 常量改回 false。
   if (!TRUST_SEALED) header.appendChild(el('span', 'fm-trust-slot'));
+  // 多选计数宿主（**D5**：计数由底部条迁到**头部**，作者 2026-09-19 04:22 照案）。
+  // 落位 = 窗头右端（标题 `flex:1` 之后、✕ 之前）——参考图为「头部居中显示计数」，
+  // 本窗头左侧已有头像+名称 ⇒ 取右端（有据适配；几何读数见本批报告 token 表）。
+  // 🔴 计数文案沿用既有 i18n key（不改文案）；非多选态隐藏。
+  const selectCount = el('span', 'fm-modal-select-count', '');
+  selectCount.hidden = true;
+  header.appendChild(selectCount);
   const closeBtn = el('span', 'fm-modal-close');
   closeBtn.textContent = '×';
   closeBtn.setAttribute('role', 'button');
@@ -1190,30 +1197,48 @@ function renderChatModal(conv) {
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
-  // ── msgmenu 一期：两个新 UI 面（**挂载点**在既有一列里，组件全部复用）────────
-  // ① 引用态条 = 既有输入框引用块渲染器（`renderRefBlock(mode:'input')`）的宿主；
-  // ② 多选工具条（已选 N 条 / 转发 / 退出）—— 转发键开既有菜单组件选目标。
-  const quoteStrip = el('div', 'fm-quote-strip');
-  quoteStrip.hidden = true;
-  modal.appendChild(quoteStrip);
+  // ── msgmenu 一期 + visup-b（作者 2026-09-19 04:22 照案）：两个新 UI 面 ─────────
+  // ① 引用态条（**D2：挂输入条下方**）—— 组件本体仍是既有输入框引用块渲染器
+  //    （`renderRefBlock(mode:'input', closeStyle:'disc')` ⇒ ❌ = 主窗口同类件，修正①）；
+  // ② 多选工具条（**D5：等分动作**；已选 N 条已迁到窗头）—— 转发键开**转发窗口**（D7），
+  //    逐条转发走既有目标选择器，合并转发 = 二期（disabled + 标注）。
+  // 🔴 引用态条的 DOM 序必须**晚于** `.fm-input-bar`（D2 的落位 = 输入框下方）：
+  //    旧形态挂在输入条**上方**（DOM 序 header→flow→strip→input-bar）。
   const selectBar = el('div', 'fm-select-bar');
   selectBar.hidden = true;
-  const selectCount = el('span', 'fm-select-count', '');
-  const selectForward = el('button', 'fm-select-forward', t('messages.forward'));
+  const selectForward = el('button', 'fm-select-act fm-select-forward', t('messages.forward'));
   selectForward.type = 'button';
   selectForward.disabled = true;
+  const selectForwardEach = el('button', 'fm-select-act fm-select-forward-each', t('messages.forwardEach'));
+  selectForwardEach.type = 'button';
+  selectForwardEach.disabled = true;
+  // 合并转发 = **二期**（无服务端协议 ⇒ 形态在册、落 disabled + 标注；禁「点了没反应」）。
+  const selectForwardMerge = el('button', 'fm-select-act fm-select-forward-merge', t('messages.forwardMerge'));
+  selectForwardMerge.type = 'button';
+  selectForwardMerge.disabled = true;
+  selectForwardMerge.title = t('messages.forwardMergePhase2');
+  selectForwardMerge.dataset.phase = '2';
   const selectExit = el('button', 'fm-select-exit', t('messages.selectExit'));
   selectExit.type = 'button';
-  selectBar.append(selectCount, selectForward, selectExit);
+  selectBar.append(selectForward, selectForwardEach, selectForwardMerge, selectExit);
   modal.appendChild(selectBar);
-  selectForward.addEventListener('click', () => openTargetPicker(conv, selectForward));
+  selectForward.addEventListener('click', () => openForwardWindow(conv, selectForward));
+  selectForwardEach.addEventListener('click', () => openTargetPicker(conv, selectForwardEach));
   selectExit.addEventListener('click', () => exitSelection());
-  // 「点外退出」：窗内空白处（不在气泡/工具条上的）点击 ⇒ 退多选。覆盖层点击仍是
-  // 既有「关窗」语义（`overlay.addEventListener` 的 `e.target === overlay` 分支）。
+  // 「点外退出」：窗内空白处（不在气泡/工具条/**转发窗口**上的）点击 ⇒ 退多选。
+  // 覆盖层点击仍是既有「关窗」语义（`overlay.addEventListener` 的 `e.target === overlay` 分支）。
+  // 🔴 visup-b：转发窗口（D7）挂在覆层上、**不在本 `modal` 子树内**，但真实点击可能
+  // 落回本窗（面板关时）⇒ 判据里显式排除 `.fm-fwd-modal` 子树，否则面板内的任意点击
+  // 都会被当成「点外」而退多选（＝把刚打开的面板连根收掉）。
   modal.addEventListener('click', (e) => {
     if (!selectionMode) return;
     const t0 = e.target;
-    if (t0 instanceof Element && (t0.closest('.fm-msg') || t0.closest('.fm-select-bar'))) return;
+    if (t0 instanceof Element && (t0.closest('.fm-msg') || t0.closest('.fm-select-bar') || t0.closest('.fm-fwd-modal'))) return;
+    // D7：转发面板在场时，窗内空白的一击**先收面板**（多选态保留 ⇒ 可原地重开，
+    // 不用重新勾选）；面板不在场时仍是既有「点外退出多选」。覆层自身的点击仍是
+    // 既有「点外关窗」（`overlay` 分支 ⇒ `closeChat()` ⇒ `exitSelection()` ⇒
+    // `closeForwardWindow()`）⇒ 面板在任何关窗路径下都会被同拍收掉，零残留。
+    if (fwdState) { closeForwardWindow(); return; }
     exitSelection();
   });
 
@@ -1282,9 +1307,15 @@ function renderChatModal(conv) {
   bar.appendChild(sendBtn);
   modal.appendChild(bar);
 
+  // 引用态条宿主（**D2**：挂载点 = 输入条**之后** ⇒ DOM 序 header→flow→input-bar→strip，
+  // 与「引用条在输入框下方」的参考图实测层序一致）。
+  const quoteStrip = el('div', 'fm-quote-strip');
+  quoteStrip.hidden = true;
+  modal.appendChild(quoteStrip);
+
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward };
+  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
@@ -3433,13 +3464,16 @@ function clearQuote() {
   if (strip) { strip.innerHTML = ''; strip.hidden = true; }
 }
 
-/** 引用态落面：复用既有输入框渲染器（含 × 取消 ⇒ onRemove = clearQuote）。 */
+/** 引用态落面：复用既有输入框渲染器（含 ✕ 取消 ⇒ onRemove = clearQuote）。
+ *  🔴 修正①（2026-09-19 04:22）：❌ 取**主窗口同类件**形态（`closeStyle:'disc'`
+ *  ⇒ 实心圆白 ✕，与主窗口图片/文件附件 ❌ 同一声明块 + 同一字形）——
+ *  不落设计稿的 ⊗ 变体。 */
 function renderQuoteStrip() {
   const strip = modalEls && modalEls.quoteStrip;
   if (!strip) return;
   strip.innerHTML = '';
   if (!pendingQuoteRef) { strip.hidden = true; return; }
-  strip.appendChild(renderRefBlock(pendingQuoteRef, { mode: 'input' }, clearQuote));
+  strip.appendChild(renderRefBlock(pendingQuoteRef, { mode: 'input', closeStyle: 'disc' }, clearQuote));
   strip.hidden = false;
   createIconsIn(strip);
 }
@@ -3493,8 +3527,15 @@ function toggleSelected(node) {
 
 function syncSelectBar() {
   if (!modalEls || !modalEls.selectBar) return;
-  if (modalEls.selectCount) modalEls.selectCount.textContent = t('messages.selectedCount', { n: selectedIds.size });
-  if (modalEls.selectForward) modalEls.selectForward.disabled = selectedIds.size === 0;
+  const n = selectedIds.size;
+  // D5：计数的**唯一落点** = 窗头（底部条不再显示计数）。
+  if (modalEls.selectCount) {
+    modalEls.selectCount.textContent = t('messages.selectedCount', { n });
+    modalEls.selectCount.hidden = !selectionMode;
+  }
+  // 转发族两键随选中数门控（合并转发 = 二期，恒 disabled）。
+  if (modalEls.selectForward) modalEls.selectForward.disabled = n === 0;
+  if (modalEls.selectForwardEach) modalEls.selectForwardEach.disabled = n === 0;
 }
 
 /** 进多选态（入口 = 右键「多选转发」）。 */
@@ -3503,6 +3544,9 @@ function enterSelection() {
   selectionMode = true;
   selectedIds.clear();
   modalEls.selectBar.hidden = false;
+  // D4：多选期消息行放开为**通栏**（判据类，样式在 friends.css 的 fm-select-mode 段）
+  // ⇒ 勾选圆落在同一条左列（进/出向圆心 x 逐值相等）。
+  modalEls.flow.classList.add('fm-select-mode');
   for (const node of modalEls.flow.querySelectorAll('.fm-msg')) attachCheck(node);
   syncSelectBar();
   createIconsIn(modalEls.selectBar);
@@ -3514,6 +3558,8 @@ function exitSelection() {
   selectedIds.clear();
   if (!modalEls) return;
   modalEls.selectBar.hidden = true;
+  modalEls.flow.classList.remove('fm-select-mode');
+  closeForwardWindow();
   for (const node of modalEls.flow.querySelectorAll('.fm-msg')) {
     node.classList.remove('fm-selecting', 'fm-selected');
     node.dataset.selected = '0';
@@ -3541,8 +3587,10 @@ function openTargetPicker(conv, anchor) {
 
 /** 逐条转发到目标会话（**每条选中消息 = 一条新消息、保持原顺序**）。
  *  🔴 不引入服务端新协议（无声明的「合并成一张卡片」形态）；发送走**既有**两条 REST 腿
- *  （好友 `api.sendFriendMessage` / 群 `api.sendGroupMessage`，与 `sendCurrent` 同两个函数）。 */
-async function forwardSelectedTo(target) {
+ *  （好友 `api.sendFriendMessage` / 群 `api.sendGroupMessage`，与 `sendCurrent` 同两个函数）。
+ *  `note`（可选 · D7 附言）：非空时**先**以一条独立消息发给目标会话（附言 = 转发方的话，
+ *  不篡改被转消息正文 —— 与既有「转发不附言」路径逐字兼容：缺省 `undefined` ⇒ 零行为变化）。 */
+async function forwardSelectedTo(target, note) {
   const conv = currentConv();
   if (!conv || !target) return;
   // 顺序 = 窗口序（`chatMsgs`，ASC）= 对话原顺序；**禁**用 Set 插入序（点击序）当发送序。
@@ -3557,17 +3605,176 @@ async function forwardSelectedTo(target) {
   exitSelection();
   if (!rows.length) { modalToast(t('messages.forwardNoneSelected')); return; }
   let failed = 0;
-  for (const body of rows) {
+  const body = String(note == null ? '' : note).trim();
+  const outbound = body ? [body, ...rows] : rows;
+  for (const b of outbound) {
     try {
-      if (target.kind === 'group') await api.sendGroupMessage(target.conversationId, body, undefined, newClientMsgId());
-      else await api.sendFriendMessage(target.friend.userId, body, undefined, newClientMsgId());
+      if (target.kind === 'group') await api.sendGroupMessage(target.conversationId, b, undefined, newClientMsgId());
+      else await api.sendFriendMessage(target.friend.userId, b, undefined, newClientMsgId());
     } catch (err) { failed += 1; console.error('[messages] forward failed:', err); }
   }
-  const sent = rows.length - failed;
+  const sent = outbound.length - failed;
   if (failed > 0) modalToast(t('messages.forwardPartial', { n: sent, f: failed }));
   else if (skipped > 0) modalToast(t('messages.forwardSkipped', { n: sent, k: skipped }));
   else modalToast(t('messages.forwardedCount', { n: sent }));
   void refreshConversations({ friends: 'reuse' });
+}
+
+// ── 转发窗口（**D7 · 本批新增面**）───────────────────────────────────────────
+// 形态（设计稿 §3③ 照案）：① 附言（下沉面 2 行）② 已选 chip 回显（可单个移除）
+// ③ 好友/会话多选列表（勾选圆 22px，与多选态同一族）④ 目标会话行 + 动作行。
+// 🔴 铁律 1：**无 overlay 遮罩**（面板直接浮在聊天窗上方，零背景暗化/模糊），
+//    面板本体毛玻璃 = 既有 `.cfg-modal`（零新材质）。
+// 🔴 **二期边界（照案标注）**：多目标（多选转发到其他会话）为既定二期 ⇒ 本批
+//    列表虽为多选形态，**行为 = 单一目标**（点一行换目标），多目标只需把目标行扩成
+//    多值（布局不变）。该边界挂在 `data-forward-multi="phase2"` + `data-phase` 上，
+//    可机械核（禁把二期当已实现呈现）。
+let fwdState = null;
+
+/** 关闭转发窗口（出多选 / 转发完成 / 再点转发键 共用同一条收口）。 */
+function closeForwardWindow() {
+  if (fwdState) {
+    // 两件资源、同拍收口：① Esc 捕获监听（幂等撤除）；② 面板节点（`remove()` 幂等）。
+    if (fwdState.onEsc) document.removeEventListener('keydown', fwdState.onEsc, true);
+    if (fwdState.el && typeof fwdState.el.remove === 'function') fwdState.el.remove();
+  }
+  fwdState = null;
+}
+
+/** 目标会话是否可在本批充当落点（**与 `openTargetPicker` 同一条判据**）。 */
+function forwardTargetsOf(conv) {
+  return conversations.filter(c =>
+    c.conversationId && c.conversationId !== conv.conversationId && c.kind !== 'device');
+}
+
+function openForwardWindow(conv, anchor) {
+  if (!modalEls || !modalEls.overlay) return;
+  if (fwdState) { closeForwardWindow(); return; }        // 再点 = 关（幂等切换）
+  if (selectedIds.size === 0) { modalToast(t('messages.forwardNoneSelected')); return; }
+  const others = forwardTargetsOf(conv);
+  if (!others.length) { modalToast(t('messages.forwardNoTarget')); return; }
+
+  const panel = el('div', 'cfg-modal fm-fwd-modal');
+  panel.dataset.forwardMulti = 'phase2';                  // 多目标 = 二期（机械可核）
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', t('messages.forward'));
+
+  // 窗头（复用既有窗头语言 ⇒ 修正③ 的标题/间距对齐**由构造继承**）
+  const head = el('div', 'fm-modal-header');
+  head.appendChild(el('div', 'fm-modal-name', t('messages.forward')));
+  panel.appendChild(head);
+
+  const bodyEl = el('div', 'fm-fwd-body');
+  const note = document.createElement('textarea');
+  note.className = 'fm-fwd-note';
+  note.rows = 2;
+  note.placeholder = t('messages.forwardNotePlaceholder');
+  note.setAttribute('aria-label', t('messages.forwardNotePlaceholder'));
+  bodyEl.appendChild(note);
+
+  const chips = el('div', 'fm-fwd-chips');
+  bodyEl.appendChild(chips);
+
+  const list = el('div', 'fm-fwd-list');
+  const targetRow = el('div', 'fm-fwd-target');
+  const targetLabel = el('span', 'fm-fwd-target-label', t('messages.forwardToTitle'));
+  const targetName = el('span', 'fm-fwd-target-name', t('messages.forwardNoPick'));
+  targetRow.append(targetLabel, targetName);
+  panel.appendChild(bodyEl);
+
+  // 列表行 = 真实 `<button>`（键盘可达）；勾选圆 = 22px 同族（选中 = sapphire 实心 + 白勾）。
+  let picked = null;
+  const syncPick = () => {
+    for (const row of list.querySelectorAll('.fm-fwd-row')) {
+      const on = !!picked && row.dataset.conversationId === picked.conversationId;
+      row.classList.toggle('on', on);
+      row.setAttribute('aria-pressed', String(on));
+      const check = row.querySelector('.fm-fwd-check');
+      if (check) check.setAttribute('aria-checked', String(on));
+    }
+    chips.innerHTML = '';
+    if (picked) {
+      const chip = el('span', 'fm-fwd-chip');
+      chip.appendChild(avatarEl(picked.kind === 'group' ? { name: convTitleLabel(picked) } : picked.friend, 28));
+      chip.appendChild(el('span', '', convTitleLabel(picked)));
+      const x = el('button', 'fm-fwd-chip-x');
+      x.type = 'button';
+      x.innerHTML = '<i data-lucide="x"></i>';
+      x.title = t('messages.forwardChipRemove', { name: convTitleLabel(picked) });
+      x.setAttribute('aria-label', x.title);
+      x.addEventListener('click', (e) => { e.stopPropagation(); picked = null; syncPick(); });
+      chip.appendChild(x);
+      chips.appendChild(chip);
+      createIconsIn(chips);
+    }
+    const kindLabel = picked
+      ? (picked.kind === 'group' ? t('messages.forwardTargetGroup') : t('messages.forwardTargetDirect'))
+      : '';
+    targetName.textContent = picked ? `${convTitleLabel(picked)}${kindLabel ? ' · ' + kindLabel : ''}` : t('messages.forwardNoPick');
+    if (okBtn) okBtn.disabled = !picked;
+  };
+
+  for (const c of others) {
+    const row = el('button', 'fm-fwd-row');
+    row.type = 'button';
+    row.dataset.conversationId = c.conversationId;
+    row.dataset.kind = c.kind;
+    row.setAttribute('aria-pressed', 'false');
+    const check = el('span', 'fm-fwd-check');
+    check.setAttribute('role', 'checkbox');
+    check.setAttribute('aria-checked', 'false');
+    check.innerHTML = '<i data-lucide="check"></i>';
+    row.appendChild(check);
+    row.appendChild(avatarEl(c.kind === 'group' ? { name: convTitleLabel(c) } : c.friend, 36));
+    const mid = el('span', 'fm-fwd-row-mid');
+    mid.appendChild(el('span', 'fm-fwd-row-name', convTitleLabel(c)));
+    mid.appendChild(el('span', 'fm-fwd-row-sub', c.kind === 'group'
+      ? t('messages.forwardTargetGroup')
+      : t('messages.forwardTargetDirect')));
+    row.appendChild(mid);
+    row.addEventListener('click', () => { picked = (picked && picked.conversationId === c.conversationId) ? null : c; syncPick(); });
+    list.appendChild(row);
+  }
+  bodyEl.appendChild(list);
+  bodyEl.appendChild(targetRow);
+
+  const foot = el('div', 'fm-fwd-footer');
+  const cancel = el('button', 'fm-fwd-cancel', t('messages.forwardCancel'));
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => closeForwardWindow());
+  const okBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn fm-fwd-ok', t('messages.forwardSend'));
+  okBtn.type = 'button';
+  okBtn.disabled = true;
+  okBtn.addEventListener('click', () => {
+    const target = picked;
+    if (!target) return;
+    const text = note.value;
+    closeForwardWindow();
+    void forwardSelectedTo(target, text);
+  });
+  foot.append(cancel, okBtn);
+  panel.appendChild(foot);
+
+  modalEls.overlay.appendChild(panel);
+  createIconsIn(panel);
+  // 🔴 面板的关闭路径**全部**汇聚到 `closeForwardWindow()`：窗内空白一击（`modal` 的
+  // 点外分支，见上）/ 退多选（`exitSelection`）/ 关窗（`closeChat` → `exitSelection`）/
+  // Esc / 取消键 / 发送后。**不注册** outside-click 监听（点外关闭由既有宿主承接）
+  // ⇒ 结构性零泄漏；**唯一**新增监听 = 下面这一枚 Esc 捕获监听（面板在场才在册，
+  // 收口时随面板同拍撤除，见 `closeForwardWindow`）。
+  // 🔴 为什么是**捕获**相：Esc 的层序必须由**最顶层**决定，而与焦点落在哪无关
+  // （用户点了 chip 的 ✕ 后焦点所在节点已被移除 ⇒ 事件目标退化为 `body`，若靠
+  // 面板自身的冒泡监听就吃不到这一下 Esc，反而会被 document 上的既有 `escClose`
+  // 吃掉而直接退多选）。捕获相在 document 上先手 ⇒ 「面板在场 ⇒ 第一下 Esc 只关面板」。
+  const onEsc = (e) => {
+    if (!fwdState || e.key !== 'Escape') return;
+    e.stopPropagation();
+    closeForwardWindow();
+  };
+  document.addEventListener('keydown', onEsc, true);
+  fwdState = { el: panel, onEsc };
+  syncPick();
+  note.focus();
 }
 
 /** 右键菜单「复制」项（既有复制键的同一动作；菜单项点击后菜单即关 ⇒ 反馈走 toast）。 */

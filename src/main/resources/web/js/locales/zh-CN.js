@@ -323,6 +323,20 @@ export default {
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',
   'messages.selectExit': '退出',
+  // ── visup-b 批（作者 2026-09-19 04:22：D5 底部动作条等分 / D7 转发窗口）新增键 ──
+  // 🔴 同一条硬禁仍在：禁删除/撤回键（含「删除」「撤回」字样），一行都不写。
+  // 合并转发 = **二期**（无服务端协议 ⇒ 键里带 `Phase2`，落 disabled + title）。
+  'messages.forwardEach': '逐条转发',
+  'messages.forwardMerge': '合并转发',
+  'messages.forwardMergePhase2': '合并转发（二期落地）',
+  'messages.forwardToTitle': '转发到',
+  'messages.forwardTargetDirect': '单聊',
+  'messages.forwardTargetGroup': '群聊',
+  'messages.forwardNotePlaceholder': '给朋友留言',
+  'messages.forwardNoPick': '未选择目标会话',
+  'messages.forwardSend': '发送',
+  'messages.forwardCancel': '取消',
+  'messages.forwardChipRemove': '移除 {name}',
   'messages.copied': '已复制',
   'messages.copyFailed': '复制失败',
   'messages.forwardNoTarget': '没有其他会话可以转发',
@@ -1091,6 +1105,9 @@ export default {
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
   'task.nodeBlocked': '阻塞',
+  // 通用「移除」可访问名（visup-b 批：主窗口附件 ❌ 的 aria-label/title —— 图形式 ❌
+  // 无文本可读，必须挂可访问名；与 `ref.remove`（语义化「移除引用」）分开）。
+  'common.remove': '移除',
   'ref.cardAria': '引用',
   'ref.expand': '展开',
   'ref.collapse': '收起',

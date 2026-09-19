@@ -1663,18 +1663,27 @@ export function initInput(view) {
     voiceBaseline = input.value;
   });
 
-  // Update voice UI — the orb reflects the state via notifyVoiceState; the
-  // legacy .recording class is kept for any external consumers (no visual
-  // styling on the orb button itself).
+  // Update voice UI —— 作者 2026-09-19 04:22 **修正④**：麦克风 = 普通麦克风形态
+  // （micOrb 气泡/光球退役 ⇒ `notifyVoiceState` 在本窗已成 no-op，保留调用是为
+  // 设置页/预览面上的同一渲染管线仍在册）。**反馈保留**（同令）：
+  //   · 录音中（listening/speaking）= 既有 `.icon-btn.recording`（微信绿 + 既有
+  //     `voicePulse` 脉冲，值零新增）+ `aria-pressed=true`（可访问态）；
+  //   · 转写中（processing）= `.mic-btn.processing`（既有 sapphire 强调色）；
+  //   · 出错 = 既有 `showToast(…, 'error')` 可见提示 + console.warn（不变）。
+  function setMicState(state) {
+    voiceBtn.classList.toggle('recording', state === 'listening' || state === 'speaking');
+    voiceBtn.classList.toggle('processing', state === 'processing');
+    voiceBtn.setAttribute('aria-pressed', String(state === 'listening' || state === 'speaking'));
+  }
   function updateVoiceUI(state, data) {
     notifyVoiceState(state);
     switch (state) {
       case 'listening':
       case 'speaking':
-        voiceBtn.classList.add('recording');
+        setMicState(state);
         break;
       case 'error':
-        voiceBtn.classList.remove('recording');
+        setMicState('idle');
         // Voice errors must be user-visible, not console-only (#stt-hotfix:
         // a denied/busy mic previously produced zero on-screen feedback).
         // data is an already-classified, i18n'd message from voiceEngine.
@@ -1682,7 +1691,10 @@ export function initInput(view) {
         console.warn('[voice] Error:', data);
         break;
       case 'idle':
-        voiceBtn.classList.remove('recording');
+        setMicState('idle');
+        break;
+      default:
+        setMicState(state);
         break;
     }
   }
@@ -1700,7 +1712,7 @@ export function initInput(view) {
       }
     }
     voiceBaseline = input.value;
-    voiceBtn.classList.add('recording');
+    setMicState('listening');
     input.classList.add('voice-dictating');
     input.focus();
     try { localStorage.setItem(key('voice_used'), '1'); } catch {}
@@ -1717,12 +1729,12 @@ export function initInput(view) {
       voiceInterimLen = 0;
       voiceBaseline = input.value;
     }
-    // Show the "processing" orb state while the captured audio transcribes
+    // Show the "processing" state while the captured audio transcribes
     // (spec §9 pure-front-end addition — voiceEngine emits no processing state
     // after stop; the follow-up onState('idle') from the engine clears it).
     notifyVoiceState('processing');
     stopDictation();
-    voiceBtn.classList.remove('recording');
+    setMicState('processing');
     input.classList.remove('voice-dictating');
     input.focus();
   }

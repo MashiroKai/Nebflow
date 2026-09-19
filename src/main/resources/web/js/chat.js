@@ -12,7 +12,7 @@ import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
-import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine } from './reference.js';
+import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -2693,7 +2693,12 @@ export function renderAttachmentPreview(target) {
       wrap.appendChild(img);
       const rm = document.createElement('div');
       rm.className = 'att-remove';
-      rm.textContent = 'x';
+      // 修正②（作者 2026-09-19 04:22）：图形由文本字符 'x' 改为**几何对称 SVG ✕**
+      // ⇒ 形心 == 圆盘中心（旧形态偏心 1px/16px，见 input.css 的 `.att-remove` 段）。
+      rm.innerHTML = CLOSE_X_SVG;
+      rm.setAttribute('role', 'button');
+      rm.setAttribute('aria-label', t('common.remove'));
+      rm.title = t('common.remove');
       rm.onclick = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
@@ -2707,7 +2712,10 @@ export function renderAttachmentPreview(target) {
       wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">' + escapeHtml(att.name) + '</span>';
       const rm = document.createElement('div');
       rm.className = 'att-remove';
-      rm.textContent = 'x';
+      rm.innerHTML = CLOSE_X_SVG;   // 修正②：几何对称 ✕（同图片附件键）
+      rm.setAttribute('role', 'button');
+      rm.setAttribute('aria-label', t('common.remove'));
+      rm.title = t('common.remove');
       rm.onclick = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
