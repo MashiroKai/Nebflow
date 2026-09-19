@@ -336,7 +336,7 @@ object ChainLedger:
       label = "Mail 正文注入 [mail chainId: <id>]（收件人可回引）",
       wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :621 withChainAnnotation）",
+      writePoint = "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :626 withChainAnnotation）",
       incWhen = "Mail 携带 chainId 且投递成功（批三+ 接线：只算正文已注入注解的两腿 —— node: / Nebula）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     ),
