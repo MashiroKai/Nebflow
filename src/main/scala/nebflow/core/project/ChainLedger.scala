@@ -278,16 +278,21 @@ object ChainLedger:
    * 计数口径：每一拍 reconcile 对**全部**条目/别名行按本表逐面求值并**覆盖式复算**
    * （`refCount = Σ 已接线面`）。🔴 禁增量自减、禁「人工判断无引用」。
    *
-   * **已接线四面**（数据源全在引擎自管状态内 ⇒ 零新写点即机械可求）：
+   * **已接线七面**（面 id 集是判据正本，见 [[WiredFaceIds]]）：
    *   1. `live-member`    链上仍有**活动区**成员（该成员载荷带 chainId）。
    *   2. `declaration`    有节点**显式声明**该链号（`NodeDef.chainId`，批一字段）。
    *   3. `archive-batch`  归档批以该链号命名（批文件 `<chainId>.json` + 批次索引）。
    *   4. `alias-target`   别名行仍解析到本链号（别名表自身是引用者）。
+   *      —— 以上四面（批二）：数据源全在引擎自管状态内 ⇒ 零新写点即机械可求。
+   *   5. `mail-usage` / 6. `board-usage` / 7. `report-usage`（**批三+ 接线**）：引擎自管状态
+   *      **之外**的引用面 ⇒ 走**事件式计账**（`ChainLedgerStore.noteReference` 逐次引用 /
+   *      `noteTextReferences` 正文形态），计在 [[State.externalRefs]]（只计不减），每拍
+   *      [[recomputeRefCounts]] 按账并入覆盖式复算（读数因此仍可复算、仍无丢更新）。
    *
-   * **未接线三面（如实登记；🔴 禁以人工判断代替计数）**：本批红线禁改 Mail 校验、禁改
-   * Flow Map 载荷/板卡/报告面 ⇒ 三面只登记**写入点 + 计数时机 + 归属批次**，由
-   * `ChainLedgerStore.noteReference` 的显式 API 在对应批次接线（接线前的引用不计数 =
-   * 登记在册的**已知缺口**，见批报告「未决/风险」栏，不是静默省略）。
+   * **计数口径的边界（如实登记；🔴 禁以人工判断代替计数）**：外部三面只覆盖各面 `writePoint`
+   * 指认的那个写入点。同族但**未接线**的正文面 —— 引擎按拍落盘的 `tasks/<nodeId>.md` 任务书
+   * 全文、`results/<nodeId>.md` 结果全文 —— **仍不计数**（这些写入点每拍随 diff 复用，其引用
+   * 事件性需另设去重机制）⇒ 登记在册的**已知缺口**，见批报告「未决/风险」栏，不是静默省略。
    */
   val ReferenceFaces: List[ReferenceFace] = List(
     ReferenceFace(
@@ -329,36 +334,39 @@ object ChainLedger:
     ReferenceFace(
       id = "mail-usage",
       label = "Mail 正文注入 [mail chainId: <id>]（收件人可回引）",
-      wired = false,
-      owner = "batch3",
-      writePoint = "src/main/scala/nebflow/core/tools/MailTool.scala:621-626 (withChainAnnotation；校验点 :629-646 validateChainId)",
-      incWhen = "Mail 携带 chainId 且投递成功（批三：与 Mail 校验集合并兜底派生同批接线）",
+      wired = true,
+      owner = "batch3+",
+      writePoint = "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :626 withChainAnnotation）",
+      incWhen = "Mail 携带 chainId 且投递成功（批三+ 接线：只算正文已注入注解的两腿 —— node: / Nebula）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     ),
     ReferenceFace(
       id = "board-usage",
       label = "板卡/任务书引用链号（任务书正文与板卡条目）",
-      wired = false,
+      wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/project/TaskBoardStore.scala (板卡写入点) / <workspace>/.nebflow/tasks/<nodeId>.md",
-      incWhen = "任务书或板卡条目正文引用该链号（批三+：引用面写入点接线）",
+      writePoint = "src/main/scala/nebflow/core/tools/TaskBoardTool.scala:368（call 写成功臂 → :229 countBoardUsage；正文 = title/note/text/links）",
+      incWhen = "板卡写动作（create/update/close/log）成功后，提交正文引用该链号（批三+ 接线）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     ),
     ReferenceFace(
       id = "report-usage",
       label = "节点报告 / 结果正文引用链号",
-      wired = false,
+      wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/tools/NodeReportTool.scala → NodeReportRegistry (node-reports.jsonl) / results/<nodeId>.md",
-      incWhen = "node_report detail / 结果正文引用该链号（批三+：引用面写入点接线）",
+      writePoint = "src/main/scala/nebflow/core/tools/NodeReportTool.scala:277（call 申报登记成功后 → :293 countReportUsage；正文 = detail + suggestion）",
+      incWhen = "node_report 申报登记成功后，detail/suggestion 正文引用该链号（批三+ 接线）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     )
   )
 
-  /** 已接线引用面 id 集（计数判据的机械白名单；改本表 = 改计数口径，须同步测试）。 */
+  /** 已接线引用面 id 集（计数判据的机械白名单；改本表 = 改计数口径，须同步测试）。
+    * 批三+ 接线落地后 = **七面全量**（含外部三面）。 */
   val WiredFaceIds: List[String] = ReferenceFaces.filter(_.wired).map(_.id)
 
-  /** 未接线引用面 id 集（已知缺口清单；批三接线后本表必须随之缩短）。 */
+  /** 未接线引用面 id 集（已知缺口清单）。批三+ 外部三面接线落地后本表 = **空**；日后若新增
+    * 面而不接线，本表随之增长（承重断言 = `ChainLedgerSpec` T7：改 `wired` 标记而不动该断言
+    * ⇒ 必红 —— 面集合的收放**只能**经本表与 [[WiredFaceIds]] 反映，禁静默改写）。 */
   val PendingFaceIds: List[String] = ReferenceFaces.filterNot(_.wired).map(_.id)
 
   // ── 派生视图与解析 ───────────────────────────────────
@@ -551,6 +559,38 @@ object ChainLedger:
       k -> a.copy(refCount = self + (if st.entries.contains(a.canonical) then 1 else 0))
     }
     st.copy(entries = entries, aliases = aliases)
+
+  /** **正文引用面的已登记链号集（热面；纯函数）**：条目 id ∪ 别名 id（旧号在别名表期间照旧
+    * 可被正文引用 ⇒ 必须在内）。**只读、零回填** —— 未登记号（含冷档已退役历史行）不在集合内
+    * ⇒ 正文里出现也不计（🔴 禁为其伪造别名/条目，见批报告「零回填」判据）。 */
+  def knownIds(st: State): Set[String] = st.entries.keySet ++ st.aliases.keySet
+
+  /** 链号字符集（正文命中的**边界判据**用）：与派生链号值域同源 —— 字母/数字 + `-`/`_`/`.`
+    * （改号后缀 `<proto>.<k>` 落在此集内）。 */
+  private def isIdChar(c: Char): Boolean =
+    c.isLetterOrDigit || c == '-' || c == '_' || c == '.'
+
+  /** **正文引用面判据（纯函数，`board-usage` / `report-usage` 共用单点）**：一段自由文本里
+    * **逐字且按链号边界**出现的已登记链号（升序去重；空文本 ⇒ 空表）。
+    *
+    * 边界判据（禁靠巧合）：命中处的前后字符**不得**是 [[isIdChar]] —— 否则 `chain-u-1`
+    * 会被 `chain-u-10` 的正文误命中（前缀族链号在同项目里并存），反之亦然。
+    * 确定性：返回 `sorted` ⇒ 同输入恒同输出（可复算、可断言）。
+    *
+    * 🔴 本函数**只读文本与已知集**，不解析别名、不建条目、不落盘（零回填面）。 */
+  def referencedIds(text: String, registeredIds: Iterable[String]): List[String] =
+    if text.isEmpty then Nil
+    else
+      def occurs(id: String): Boolean =
+        var idx = text.indexOf(id)
+        var hit = false
+        while idx >= 0 && !hit do
+          val beforeOk = idx == 0 || !isIdChar(text.charAt(idx - 1))
+          val end = idx + id.length
+          val afterOk = end >= text.length || !isIdChar(text.charAt(end))
+          if beforeOk && afterOk then hit = true else idx = text.indexOf(id, idx + 1)
+        hit
+      registeredIds.toSet.toList.sorted.filter(id => id.nonEmpty && occurs(id))
 
   // ── 轴(a)+(b)：退役计划 ──────────────────────────────
 

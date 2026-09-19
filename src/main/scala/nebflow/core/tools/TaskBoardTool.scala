@@ -211,6 +211,35 @@ object TaskBoardToolDef extends Tool:
   private def resolveError(msg: String): ToolError =
     ToolError(s"TaskBoard: $msg (${TaskBoardStore.Codes.Param})")
 
+  /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
+  private val FaceBoardUsage = "board-usage"
+
+  /** 写动作集合：只有写动作的正文才可能**新增**引用（`list`/`show` 是只读面 ⇒ 零计数）。
+    * 动作名与 `dispatchSync` 的动词集同源（未知动作不在集合内 ⇒ 零计数）。 */
+  private val BoardWriteActions = Set("create", "update", "close", "log")
+
+  /** **引用面 `board-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「任务书或板卡
+    * 条目正文引用该链号」。
+    *
+    * 计数**只在写成功之后**发生（`Left` = 未写库 ⇒ 引用没发生）；扫描面 = 本次调用提交的正文
+    * 四件：`title` / `note` / `text`（log 正文）/ `links`（关联锚 —— 链号也可以只出现在锚里，
+    * 漏掉即漏计）。命中判据 = `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；
+    * 🔴 未登记号不计、不建条目 ⇒ 禁回填）。
+    * best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），不回滚已写的板卡。 */
+  private def countBoardUsage(
+      rt: ProjectRuntime,
+      action: String,
+      title: Option[String],
+      note: Option[String],
+      text: Option[String],
+      links: Option[List[String]]
+  ): IO[Unit] =
+    if !BoardWriteActions.contains(action) then IO.unit
+    else
+      val body = List(title, note, text).flatten ++ links.getOrElse(Nil)
+      if body.isEmpty then IO.unit
+      else rt.engine.noteChainReferencesIn(body.mkString("\n"), FaceBoardUsage)
+
   override def name: String = "TaskBoard"
 
   override def description: String =
@@ -334,6 +363,10 @@ Starting (→in_progress) or closing is REJECTED while any `blocks` dependency i
                   board, terminal, BoardCaller.fromContext(ctx), action,
                   title = title, id = id, status = status, assignee = assignee,
                   nodeId = nodeId, note = note, blocks = blocks, text = text, links = links))
+              // chainmodel 批三+：引用面 `board-usage` 计数钩子（轴 b）——写成功后计数
+              }.flatMap { r =>
+                if r.isRight then countBoardUsage(rt, action, title, note, text, links).as(r)
+                else IO.pure(r)
               }
       }
     }

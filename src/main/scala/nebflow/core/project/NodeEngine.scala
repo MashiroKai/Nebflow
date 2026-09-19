@@ -1843,6 +1843,36 @@ class NodeEngine(
   /** 链号深解析（同上）：`Some` = 该号可达（热面 / 台账别名 / 冷档历史行）。 */
   def resolveMailChainId(id: String): IO[Option[String]] = store.resolveMailChainId(id)
 
+  /** **引用面计数钩子（chainmodel 批三+ 轴(b) 外部三面；best-effort）**：把**一次已发生的
+    * 引用**计入 `faceId`（面必须先登记在 `ChainLedger.ReferenceFaces`；未登记 ⇒ WARN，不计）。
+    *
+    * 与 [[mailChainIds]] 同款收口理由：工具面对工程的触点收敛到本类 ⇒ `MailTool` /
+    * `TaskBoardTool` / `NodeReportTool` **不直触** `FlowMapStore`（`FlowMapStore.chainLedgerStore`
+    * 保持只读消费面语义，写面单点仍在此）。
+    *
+    * best-effort 口径（与轴(a) 归档绑定的 best-effort 同款，**但不静默**）：计数是退役判据
+    * （轴 b）的输入面，其失败**不得**让已完成的投递/写入回滚 ⇒ 只 WARN 可观察；残留风险
+    * 「某次引用被漏计 ⇒ 退役可能早触发」由批报告「未决/风险」栏承担，不靠本方法兜。
+    * 🔴 调用方**只应在引用已成立之后**调用（投递/写库返回成功之后）：未发生即不计数。 */
+  def noteChainReference(id: String, faceId: String, delta: Int = 1): IO[Unit] =
+    store.chainLedgerStore.noteReference(id, faceId, delta).flatMap {
+      case Right(()) => IO.unit
+      case Left(diag) =>
+        logger.warn(s"chain reference not noted (face=$faceId id=$id): $diag")
+    }.handleErrorWith(e =>
+      logger.warn(s"chain reference not noted (face=$faceId id=$id): ${e.getMessage}"))
+
+  /** 同上的**正文形态**（`board-usage` / `report-usage` 共用）：一段正文里逐字出现的**已登记**
+    * 链号一次性计入；零命中 ⇒ 零写。判据与「禁回填」边界全在
+    * `ChainLedgerStore.noteTextReferences`（纯函数判据见 `ChainLedger.referencedIds`）。 */
+  def noteChainReferencesIn(text: String, faceId: String): IO[Unit] =
+    store.chainLedgerStore.noteTextReferences(text, faceId).flatMap {
+      case Right(_) => IO.unit
+      case Left(diag) =>
+        logger.warn(s"chain text references not noted (face=$faceId): $diag")
+    }.handleErrorWith(e =>
+      logger.warn(s"chain text references not noted (face=$faceId): ${e.getMessage}"))
+
   def sendNodeMessage(
     nodeId: String,
     message: String,

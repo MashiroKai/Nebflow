@@ -189,7 +189,7 @@ class ChainLedgerSpec extends CatsEffectSuite:
 
   // ── T7 引用面枚举（红验）──────────────────────────────────
 
-  test("T7 [轴(b) 面枚举红验] 七面在册 + 各带写点/增减时机；未接线三面如实登记（删任一面 ⇒ 必红）") {
+  test("T7 [轴(b) 面枚举红验] 七面在册 + 各带写点/增减时机；接线状态如实登记（删任一面 / 改 wired 标记 ⇒ 必红）") {
     // 变异: 从 ReferenceFaces 删任一面（或改 wired 标记而不动本断言）⇒ 本断言红
     assertEquals(ChainLedger.ReferenceFaces.map(_.id),
       List("live-member", "declaration", "archive-batch", "alias-target",
@@ -201,11 +201,14 @@ class ChainLedgerSpec extends CatsEffectSuite:
       assert(f.decWhen.trim.nonEmpty, s"face ${f.id} 缺「何时减计数」")
       if !f.wired then assert(f.owner.trim.nonEmpty, s"未接线面 ${f.id} 必须带归属批次")
     }
-    // 本批红线禁改 Mail/载荷/板卡/报告面 ⇒ 三面必须如实登记为未接线（禁静默省略）
-    assertEquals(ChainLedger.PendingFaceIds, List("mail-usage", "board-usage", "report-usage"),
-      "未接线三面 = 登记在册的已知缺口")
+    // 批三+ 外部三面（mail/board/report）接线落地 ⇒ 未接线面表必须为空（禁静默省略；
+    // 禁以人工判断代替计数）。日后新增面若不接线，本断言随之红。
+    assertEquals(ChainLedger.PendingFaceIds, Nil,
+      "外部三面接线落地 ⇒ 空表（登记在册的缺口清单归零）")
     assertEquals(ChainLedger.WiredFaceIds,
-      List("live-member", "declaration", "archive-batch", "alias-target"))
+      List("live-member", "declaration", "archive-batch", "alias-target",
+        "mail-usage", "board-usage", "report-usage"),
+      "已接线面集合 = 七面（批二四面 + 批三+ 三面；改任一面 wired 标记 ⇒ 本断言红）")
   }
 
   // ── T8 轴(c) 双阈值触发（红验：台账无限增长）──────────────
