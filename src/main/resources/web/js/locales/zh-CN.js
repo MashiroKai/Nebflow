@@ -812,6 +812,46 @@ export default {
   'update.phase.aborted': '更新中止：{reason}——当前版本继续服务，未受影响',
   'update.phase.rolled-back': '新版本自检未通过，已回滚到 {version}',
 
+  // 统一进度面的消费侧文案（hotupdate 批 3 · G6）。**全部为加法**：相位文案仍由上面
+  // 的 'update.phase.*' 承载；本组只解析帧内**其它**机器 token——中止/失败原因
+  // （`reason` = UpdateReason 冻结字面）、来源（`source` = UpdateSource 冻结字面）、
+  // 以及受理回执三分支。🔴 禁在 JS 写这些字面（一律走本表）。
+  'update.versions': '当前版本 {current} · 最新版本 {latest}',
+  'update.impact': '更新前影响面（在飞工作）：{detail}',
+  'update.receipt.alreadyInFlight': '同一次更新请求已在途（已合并，不重复执行）：{phase}',
+  'update.receipt.busy': '已有更新正在进行（来源：{source}）——更新是排他动作、不排队：{phase}',
+  'update.receipt.refused': '更新未受理：{reason}',
+  'update.reason.confirm-missing': '缺少确认位',
+  'update.reason.freeze-busy': '当前有工作在跑（忙即拒绝模式）',
+  'update.reason.freeze-wait-limit-exceeded': '等待在飞工作超过等待上限',
+  'update.reason.freeze-drain-deadline-exceeded': '排空收敛期限到达时仍有工作在跑',
+  'update.reason.install-failed': '安装新版本失败',
+  'update.reason.restart-refused': '重启交接被拒绝或中止',
+  'update.reason.orchestrator-unavailable': '本实例未装配热重启编排器',
+  'update.reason.unexpected-error': '更新编排器异常',
+  'update.reason.unspecified': '原因未提供',
+  'update.source.settings': '设置页',
+  'update.source.device-list': '设备列表',
+  'update.source.relay': '中继',
+  'update.source.website': '官网',
+  'update.source.cli': '命令行',
+
+  // 既有重启进度帧（`restartStatus`）的相位文案：该帧是统一进度帧的**子集**
+  // （设计 §4:104 逐字），复用同一进度面与同一渲染器（零第二通道）。
+  'restart.phase.quiesce': '等待在飞工作结束',
+  'restart.phase.draining': '正在冻结并落盘',
+  'restart.phase.spawning': '正在派生新进程',
+  'restart.phase.handing-over': '交接中，旧进程即将退出',
+  'restart.phase.completed': '重启完成',
+  'restart.phase.failed': '重启中止',
+
+  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
+  // 界面侧两段式确认（第二击即确认位）。
+  'settings.restart': '重启服务',
+  'settings.restartConfirm': '确认重启？',
+  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
+  'settings.restartFailed': '重启未受理：{error}',
+
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': '模型',
@@ -1229,6 +1269,9 @@ export default {
   'neblink.cancel': '取消',
   'neblink.updating': '更新中…',
   'neblink.restarting': '重启中…',
+  // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
+  // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
+  'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
   // 切换账号（设置页账号区，2026-09-10）
   'neblink.switchAccount': '切换账号',
   'neblink.logout': '退出登录',

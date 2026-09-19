@@ -18,7 +18,7 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
-import { notifyManualUpdateCheck } from './updateCheck.js';
+import { notifyManualUpdateCheck, restoreUpdateProgress } from './updateCheck.js';
 import { toggleHTML, setToggleState } from './toggle.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import * as presets from './presets.js';
@@ -832,9 +832,18 @@ export function renderSettings() {
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
-        <div style="margin-top:10px">
+        <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
-          <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
+          <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
+          <span id="update-status" style="font-size:12px;line-height:18px;height:18px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></span>
+        </div>
+        <!-- 统一进度面（hotupdate 批 3 · G6）：状态行 + 本块共同承载统一进度帧。
+             固定行高 + nowrap/ellipsis ⇒ **相位切换零重排**（设计 §7:153 通用契约）；
+             面板关闭时元素不存在 ⇒ 静默（既有模式，见 updateCheck.js 的静默口径）。
+             🔴 视觉：失败 / 回滚只用中性灰 + 明确原因，无红块、无轻提示、无弹窗（裁定 10）。 -->
+        <div id="update-progress" data-update-surface="1" style="display:none;margin-top:6px">
+          <div id="update-progress-impact" style="font-size:12px;line-height:16px;height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></div>
+          <div id="update-progress-versions" style="font-size:12px;line-height:16px;height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></div>
         </div>
         <div id="update-action" style="display:${state.updateAvailable ? 'block' : 'none'};margin-top:8px">
           <button class="cfg-btn cfg-btn-primary" id="btn-do-update">${t('settings.updateNow')}</button>
@@ -846,7 +855,11 @@ export function renderSettings() {
   // Silent auto checks (updateCheck.js) record their outcome in state so a
   // panel (re)render shows the same "update available" detail the manual
   // path would — same chain, one source of truth.
-  if (state.updateAvailable) {
+  // 统一进度面（hotupdate 批 3 · G6）：进度帧一旦到达，状态行由它承载（`messageKey`
+  // 解析的相位文案）⇒ 本回填让位，免得面板重渲染把相位文案盖回「发现新版本」。
+  // 两者仍是一条链（updateCheck.js 单点），单一真源未变。
+  const progressRestored = restoreUpdateProgress();
+  if (!progressRestored && state.updateAvailable) {
     const statusEl = document.getElementById('update-status');
     if (statusEl) statusEl.textContent = t('settings.updateAvailable', { version: state.latestVersion });
   }
@@ -1503,6 +1516,35 @@ function bindSettingsEvents(content, cfg) {
   document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
     document.getElementById('update-action').style.display = 'none';
   });
+
+  // --- Restart the gateway (hotupdate 批 3 · G6 后半：界面重启触发补齐) ---
+  // 🔴 沿用**既有** WS 命令 `restart`（`WebSocketRoutes.scala:1585-1619` 的 `case "restart"`）,
+  //    禁新造重启命令、禁新造第二套重启面。
+  // 🔴 载荷只带 `confirm: true`：**不传** `waitTimeoutMs`/`waitIdle` ⇒ 引擎侧沿用既有默认
+  //    （等待上限 600 秒、等待空闲模式），本批对该默认值零改动。
+  // 确认形态 = **两段式**（第二击即确认位）：强制确认位语义要求「用户的确认动作」，
+  // 而共用的 `#delete-box` 确认弹窗其确认键文案是「删除」（`modal.deleteConfirm`），
+  // 复用它会把中文/英文界面都写成错标签 ⇒ 按钮自身两段式，5 秒无第二击自动复位。
+  const restartBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-restart-gateway'));
+  if (restartBtn) {
+    let armed = false;
+    let armTimer = null;
+    const disarm = () => {
+      armed = false;
+      if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+      restartBtn.textContent = t('settings.restart');
+    };
+    restartBtn.addEventListener('click', () => {
+      if (!armed) {
+        armed = true;
+        restartBtn.textContent = t('settings.restartConfirm');
+        armTimer = setTimeout(disarm, 5000);
+        return;
+      }
+      disarm();
+      sendWs({ type: 'restart', confirm: true });
+    });
+  }
 }
 
 // Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
