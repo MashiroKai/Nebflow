@@ -25,6 +25,27 @@ let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
 
+// ── Bounded history back-paging ─────────────────────────────────────────
+// The panel used to fetch exactly ONE tail page and never ask for anything
+// older, so for any session longer than a page the earliest rows — including
+// the injected task prompt the sub-agent received at index 0 — never entered
+// the panel at all. The primary window has always been able to walk back
+// (main.js scroll-to-top → beforeIndex); the panel now reuses that same
+// backend contract (SessionStore.getHistoryPage: beforeIndex = the ≤limit
+// messages before that index) but with explicit ceilings, because the popup
+// must stay cheap to open:
+//   · BG_PAGE_LIMIT          rows per request (the first frame's limit, unchanged)
+//   · BG_MAX_BACKFILL_PAGES  cap on back-fill requests per load cycle
+//   · BG_MAX_BACKFILL_ROWS   cap on rows accumulated per load cycle
+//   · BG_BACKFILL_BUDGET_MS  wall-clock budget for the automatic head-seek
+// The automatic head-seek runs once per load cycle and stops at index 0 or at
+// a ceiling; the user-driven scroll-up continues under the same page/row caps,
+// so neither path can page without bound.
+const BG_PAGE_LIMIT = 100;
+const BG_MAX_BACKFILL_PAGES = 12;
+const BG_MAX_BACKFILL_ROWS = 1300;
+const BG_BACKFILL_BUDGET_MS = 8000;
+
 // ── CSS (shared with flowAgentPopup — same modal style) ───
 // The CSS is injected by flowAgentPopup.js at module load time.
 // Both modules are always loaded together since they're imported by other
@@ -70,7 +91,11 @@ function ensureStepView(sessionId) {
   // dirtyWhileHidden → reopen forces a history refresh).
   chatViews[view.id] = view;
 
-  const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
+  const entry = {
+    view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false,
+    // Bounded back-fill budget for the current load cycle (see BG_* above).
+    backfill: { pages: 0, rows: 0, startedAt: 0, active: false },
+  };
   stepViews.set(sessionId, entry);
   enforceStepViewCap();
   return entry;
@@ -176,6 +201,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   entry.container.addEventListener('scroll', () => {
     // Follow-intent latch for THIS view (shared near-bottom unit, was 40)
     updateScrollSnapped(entry.view, entry.container);
+    // Scroll-to-top → the older page, same gate the primary window uses
+    // (main.js scroll listener: scrollTop < 100 && hasMore && !loading &&
+    // offset > 0). Shares the automatic head-seek's page/row budget, so a
+    // partial scroll cannot push the panel past the caps either.
+    const pag = entry.view.pagination;
+    if (entry.container.scrollTop < 100 && pag.hasMore && !pag.loading && pag.offset > 0) {
+      requestOlderPage(entry);
+    }
   });
 
   // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
@@ -196,7 +229,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     entry.historyLoaded = true;
     setActiveView(entry.view);
     entry.view.pagination.pendingInitialLoad = true;
-    sendWs({ type: 'getHistory', sessionId: nodeSessionId, limit: 100 });
+    sendWs({ type: 'getHistory', sessionId: nodeSessionId, limit: BG_PAGE_LIMIT });
   }
 }
 
@@ -359,6 +392,28 @@ setBgAgentStepInterceptor(interceptBgAgentStep);
 
 // ── historyPage handler ───────────────────────────────────
 
+/** One bounded step of the back-fill walk — shared by the automatic head-seek
+ *  (first load) and the user's scroll-to-top. `beforeIndex` = the index of the
+ *  oldest row we already hold, so the backend answers with the ≤limit rows
+ *  before it (SessionStore.getHistoryPage), exactly like the primary window.
+ *  Returns false when no frame was sent: nothing older exists, a request is
+ *  already in flight, or a page/row ceiling has been reached.
+ *  @param opts.budgeted  also apply the wall-clock budget (automatic run). */
+function requestOlderPage(entry, opts = {}) {
+  const pag = entry.view.pagination;
+  const bf = entry.backfill;
+  if (!bf || !pag || pag.loading || !pag.hasMore || !(pag.offset > 0)) return false;
+  if (bf.pages >= BG_MAX_BACKFILL_PAGES || bf.rows >= BG_MAX_BACKFILL_ROWS) return false;
+  if (opts.budgeted) {
+    if (!bf.startedAt) bf.startedAt = Date.now();
+    if (Date.now() - bf.startedAt > BG_BACKFILL_BUDGET_MS) return false;
+  }
+  pag.loading = true;
+  setActiveView(entry.view);
+  sendWs({ type: 'getHistory', sessionId: entry.view.sessionId, limit: BG_PAGE_LIMIT, beforeIndex: pag.offset });
+  return true;
+}
+
 export function handleBgAgentHistory(msg) {
   const entry = stepViews.get(msg.sessionId);
   if (!entry) return false;
@@ -373,6 +428,11 @@ export function handleBgAgentHistory(msg) {
     view.pagination.offset = msg.offset;
     view.pagination.total = msg.total;
     view.pagination.hasMore = msg.hasMore;
+    // Fresh load cycle → fresh (bounded) back-fill budget.
+    entry.backfill.pages = 0;
+    entry.backfill.rows = 0;
+    entry.backfill.startedAt = Date.now();
+    entry.backfill.active = !!msg.hasMore;
 
     setActiveView(view);
     // #346 boundary fix: mid-turn tail stays flat when the agent is still
@@ -383,7 +443,53 @@ export function handleBgAgentHistory(msg) {
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;
     });
+    // Bounded head-seek: the injected task prompt — and any other early row —
+    // sits at index 0, which the tail page never reached. Walk back page by
+    // page until index 0 is in hand or a ceiling trips.
+    if (entry.backfill.active && !requestOlderPage(entry, { budgeted: true })) {
+      entry.backfill.active = false;
+    }
+    return true;
   }
+
+  // Older page → prepend. Same guard as the primary window's scroll-up path:
+  // skip a response that is not older than what is already rendered (a
+  // duplicate offset-0 page is NOT skipped — offset 0 is the oldest page).
+  if (msg.offset >= view.pagination.offset) return true;
+  // Panel closed mid-walk: stop fetching instead of filling a hidden
+  // container. The next full load re-runs a fresh bounded cycle.
+  if (!view.visible) { entry.backfill.active = false; return true; }
+
+  const bf = entry.backfill;
+  bf.pages += 1;
+  bf.rows += (msg.messages || []).length;
+
+  const prevScrollHeight = entry.container.scrollHeight;
+  const prevScrollTop = entry.container.scrollTop;
+  // restoreFromBackendHistory renders into activeView.dom.chat — point the view
+  // at a detached staging div for the duration of the call (the primary
+  // window's scroll-up path swaps the same way), then move the rendered rows
+  // to the top and restore the reading position.
+  const prevActive = activeView;
+  setActiveView(view);
+  const origChat = view.dom.chat;
+  const stage = document.createElement('div');
+  view.dom.chat = stage;
+  restoreFromBackendHistory(msg.messages, { scrollToBottom: false });
+  view.dom.chat = origChat;
+  if (prevActive !== view) setActiveView(prevActive);
+  const fragment = document.createDocumentFragment();
+  while (stage.firstChild) {
+    const child = stage.firstChild;
+    if (child.classList && child.classList.contains('row')) child.classList.add('prepend-skip-anim');
+    fragment.appendChild(child);
+  }
+  entry.container.prepend(fragment);
+  entry.container.scrollTop = prevScrollTop + (entry.container.scrollHeight - prevScrollHeight);
+  view.pagination.offset = msg.offset;
+  view.pagination.hasMore = msg.hasMore;
+  if (!msg.hasMore) bf.active = false;
+  if (bf.active && !requestOlderPage(entry, { budgeted: true })) bf.active = false;
   return true;
 }
 
