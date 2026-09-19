@@ -187,7 +187,20 @@ private[neblink] final case class DialFailure(reason: String, cls: DialFailureCl
  * candidates that carry none). As long as the WS is open, both
  * devices consider each other online.
  *
- * Heartbeat: ping every 10s; if no pong for 20s the connection is forcibly closed.
+ * Heartbeat: ping every [[NeblinkPresenceService.HeartbeatIntervalSec]] (5s); if no pong for
+ * [[NeblinkPresenceService.HeartbeatTimeoutMs]] (10s) the connection is retired.
+ *
+ * 连接生命周期（hblife 批 2026-09-19 · presence 心跳自振缺陷修复）：
+ *  - **一条连接 = 一条心跳线程**，且两者**同生同灭**：唯一的退役例程 [[retireConnection]]
+ *    负责 `alive=false` + `heartbeat.shutdownNow()` + compare-and-remove + 关自己的 socket；
+ *  - **任何**换连接/关连接的路径都必须走它（发布顶替 / onClosed / disconnectPeer /
+ *    disconnectAll / 心跳僵尸分支）⇒ 不变量：任一颗刻「存活心跳线程数 ≤ `connections` 条数」，
+ *    且**没有**任何线程的宿主 conn 已不在 `connections` 里；
+ *  - 心跳拍**闭包捕获自己的 conn 句柄**，判活只用本 conn 的 `alive`/`lastPong`，
+ *    且僵尸分支必须先做 compare-and-remove：摘到**自己的**那条才允许「掉线 + 重连」，
+ *    摘不到（已被退役/顶替）⇒ 该拍**静默退出**，绝不替新连接触发 removePeer/重连。
+ *  机制依据：`.nebflow/reports/20260919_devflip-forensic.md` §3.4（12.0 次/分 vs 单连接
+ *  理论 3.70 次/分 ⇒ 现场有并发陈旧心跳线程打同一 peer）。
  *
  * Auto-reconnect: when a connection drops unexpectedly (TCP RST, heartbeat
  * timeout, sleep/wake), an exponential-backoff loop immediately starts trying
@@ -213,15 +226,42 @@ final class NeblinkPresenceService(
 )(dispatcher: Dispatcher[IO]):
   private val logger = NebflowLogger.forName("nebflow.neblink.presence")
 
-  private case class PresenceConnection(
+  /**
+   * 一条**自持**的 presence 连接：socket + 它的存活标记 / 最后 pong 时刻 / 心跳线程 / 代际。
+   *
+   * 🔴 `deviceId` 与 `gen` 是「身份」两件套：`deviceId` 让退役例程只按**本 conn** 的键做
+   * compare-and-remove，`gen` 是单调代际（用于日志与读出面：能一眼分辨「这条拍子/这条
+   * 事件属于哪一代连接」）。改前这张表只按 `deviceId` 反查 ⇒ 陈旧线程摘掉的是**别人的**
+   * conn（别名错配家族）。
+   */
+  private[neblink] case class PresenceConnection(
+    deviceId: String,
+    gen: Long,
     ws: WebSocket,
     alive: AtomicBoolean,
     lastPong: AtomicLong,
     heartbeat: ScheduledExecutorService
   )
 
+  /**
+   * 一次拨号的**连接槽**：WS 监听器在 `buildAsync` 之前就要拿到，而 conn 只在握手返回后
+   * 才存在 ⇒ 用这个槽把「事件所属的那条 conn」交接给监听器（监听器带上它，关闭事件就
+   * **不可能**被误算到同 deviceId 的另一条 conn 头上）。
+   *
+   * `earlyClose` = 握手期（发布之前）监听器就收到了 close/error：该次拨号**不得发布**，
+   * 否则会留下一条「上线即死」的在册 conn，并在 ~15s 后制造一次伪掉线 + 重连。
+   */
+  private[neblink] final class ConnSlot:
+    @volatile var conn: PresenceConnection = null
+    @volatile var earlyClose: Boolean = false
+
   /** deviceId -> active outgoing connection. */
   private val connections = new ConcurrentHashMap[String, PresenceConnection]()
+
+  /** 连接代际计数器（全局单调；跨 deviceId 也唯一，便于日志/读数里逐条对账）。 */
+  private val connGen = new AtomicLong(0L)
+
+  private def nextGen(): Long = connGen.incrementAndGet()
 
   /** Peers currently in the reconnection loop (deviceId -> PeerInfo). */
   private val reconnecting = new ConcurrentHashMap[String, PeerInfo]()
@@ -463,14 +503,24 @@ final class NeblinkPresenceService(
     val wsUri = buildWsUri(host, port, id)
     try
       val alive = new AtomicBoolean(true)
+      // 🔴 逾期时钟的起点**刻意留在拨号开始处**（不是握手/发布之后）：逾期判据是「严格大于」阈值，
+      // 而拍子的起点在**握手之后** ⇒ 两者相抵 ⇒ 判定恰好等价于「**本连接建立后**连续 10s 无 pong」
+      // （握手 h > 0 时第 2 拍到达即满足 `h + 2×5s > 10s`；仅 h = 0 的退化情形落到第 3 拍）。
+      // 若把起点挪到握手之后，实际容忍窗会变成 15s（晚一拍），反而偏离「10s 无 pong」的口径。
+      // 判词报告 §3.4 的「单连接自循环 ≈16.2s」是按「起点 = 连接建立 + 第 2 拍恰 10000ms 不触发」
+      // 推的算术值；本批实测的单连接自循环 = **10.05s**（= 10s 无 pong + 环回重连握手 ≈50ms），
+      // 见 `NeblinkPresenceHeartbeatLifecycleSpec` ② 的逐条间隔读数。详见
+      // [[NeblinkPresenceService.singleConnectionSelfCycleMs]]。
       val lastPong = new AtomicLong(System.currentTimeMillis())
+      val gen = nextGen()
       val heartbeat = Executors.newSingleThreadScheduledExecutor { r =>
         val t = new Thread(r, s"presence-hb-${peer.deviceName}")
         t.setDaemon(true)
         t
       }
 
-      val listener = new PresenceWsListener(this, peer)
+      val slot = new ConnSlot
+      val listener = new PresenceWsListener(this, peer, slot)
       val client = HttpClient
         .newBuilder()
         .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
@@ -480,40 +530,65 @@ final class NeblinkPresenceService(
         .buildAsync(URI.create(wsUri), listener)
         .get(budgetMs, TimeUnit.MILLISECONDS)
 
-      val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
-      connections.put(peer.deviceId, conn)
-
-      // Heartbeat: send ping every 5s; force-close if pong overdue (> 10s)
-      heartbeat.scheduleAtFixedRate(
-        { () =>
-          try
-            if alive.get() then
-              if System.currentTimeMillis() - lastPong.get() > 10_000L then
-                logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
-                // Force immediate cleanup — don't rely on onClose (may never fire
-                // if the TCP connection is broken, e.g. after sleep/wake)
-                val zombie = connections.remove(peer.deviceId)
-                if zombie != null then
-                  try zombie.heartbeat.shutdownNow()
-                  catch
-                    case _: Exception => ()
-                // Remove peer and trigger auto-reconnect
-                dispatcher.unsafeRunAndForget(
-                  neblinkService.removePeer(peer.deviceId) *>
-                    logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
-                    startReconnect(peer)
-                )
-                try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
-                catch case _: Exception => ()
-              else ws.sendText("""{"type":"ping"}""", true)
-          catch case _: Exception => ()
-        },
-        5,
-        5,
-        TimeUnit.SECONDS
-      )
-
-      Right(())
+      val conn = PresenceConnection(peer.deviceId, gen, ws, alive, lastPong, heartbeat)
+      slot.conn = conn
+      if slot.earlyClose then
+        // 握手期（发布之前）监听器就收到了 close/error ⇒ 🔴 **不得发布**：否则会留下一条
+        // 「上线即死」的在册 conn，并在 ~15s 后制造一次**伪掉线 + 重连**（本批要消灭的形态）。
+        retireConnection(conn, "closed during handshake")
+        Left(DialFailure("closed during handshake", DialFailureClass.Other))
+      else
+        // ① 无条件先退役同 deviceId 的现役 conn（幂等；禁游离心跳线程）——
+        //    任何换连接路径都必须走这一步。
+        retireAllFor(peer.deviceId, "superseded")
+        // ② 发布本 conn；`put` 的返回值就是被我们顶替掉的那条（并发窗口兜底：它也一并退役）。
+        val incumbent = connections.put(peer.deviceId, conn)
+        if incumbent != null && (incumbent ne conn) then retireConnection(incumbent, "superseded")
+        try
+          // 心跳：每 5s 一拍；逾期（>10s 无 pong）则强制清理。
+          // 🔴 拍子**只认自己的 conn**（闭包捕获 conn 句柄，绝不按 deviceId 反查别人的状态）；
+          //    🔴 顺序纪律 = 先发布、后起拍（反序会在并发顶替下留下「拍子在跑但 conn 不在册」
+          //    的游离线程，正是本批要消灭的形态）。
+          heartbeat.scheduleAtFixedRate(
+            { () =>
+              try
+                if conn.alive.get() then
+                  val overdue = System.currentTimeMillis() - conn.lastPong.get() > NeblinkPresenceService.HeartbeatTimeoutMs
+                  if overdue then
+                    // 僵尸分支：先做 compare-and-remove —— **只有摘到自己的那条**才允许走
+                    // 「掉线 + 重连」腿（真掉线仍须摘除，判据④）。
+                    if removeIfCurrent(conn.deviceId, conn) then
+                      logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
+                      // Force immediate cleanup — don't rely on onClose (may never fire
+                      // if the TCP connection is broken, e.g. after sleep/wake)
+                      retireConnection(conn, "heartbeat timeout")
+                      // Remove peer and trigger auto-reconnect
+                      dispatcher.unsafeRunAndForget(
+                        neblinkService.removePeer(peer.deviceId) *>
+                          logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
+                          startReconnect(peer)
+                      )
+                    else
+                      // 本线程的 conn 已被退役/顶替（迟到拍）⇒ **静默退出该拍**：
+                      // 🔴 禁 removePeer、禁 startReconnect、禁动他人的 socket（判据②③）。
+                      logger.debugSync(
+                        s"Stale heartbeat beat for ${peer.deviceName} (gen $gen, current ${currentGenOf(peer.deviceId)}) — retiring this thread only"
+                      )
+                      retireConnection(conn, "stale heartbeat")
+                  else ws.sendText("""{"type":"ping"}""", true)
+              catch case _: Exception => ()
+            },
+            NeblinkPresenceService.HeartbeatIntervalSec,
+            NeblinkPresenceService.HeartbeatIntervalSec,
+            TimeUnit.SECONDS
+          )
+          Right(())
+        catch
+          case _: java.util.concurrent.RejectedExecutionException =>
+            // 「发布 → 起拍」之间被并发顶替并退役（executor 已 shutdown）⇒ 本 conn 的拍子
+            // 已无宿主。现役 conn 由顶替者持有 ⇒ 本条按拨号失败返回（🔴 不得留下无拍子的在册 conn）。
+            retireConnection(conn, "superseded")
+            Left(DialFailure("superseded during publish", DialFailureClass.Other))
     catch
       case _: java.util.concurrent.TimeoutException =>
         // C3 §反控-3: the "timeout" class is a distinct, attributable reason —
@@ -696,32 +771,132 @@ final class NeblinkPresenceService(
       val allIds = Set[String]() ++ connections.keySet().asScala ++ reconnecting.keySet().asScala
       allIds.foreach(id => cancelReconnect.put(id, true))
       allIds.foreach(id => reconnecting.remove(id))
-      // Close all active connections
-      connections.keySet().asScala.foreach(id => disconnectPeer(id))
+      // Close all active connections（快照遍历：disconnectPeer 会改 `connections`，
+      // 边遍历边摘会让弱一致迭代器漏掉/重复访问 —— 直接取一份键快照）
+      connections.keySet().asScala.toList.foreach(id => disconnectPeer(id))
     }
+
+  // ===== 连接生命周期：唯一退役例程（幂等 · 只对本 conn 生效）=====
+
+  /**
+   * 退役一条连接 —— **唯一**的关连接例程，幂等，且**只对本 conn 生效**（判据①）。
+   *
+   * 三件事（顺序即语义）：
+   *  1. `alive.set(false)`：先把「本 conn 已死」钉住 —— 任何**迟到**事件（onClose / 心跳拍 /
+   *     pong）随后读到的都是「已死」，因此不会再触发 removePeer / 重连（判据③的迟到事件护栏）；
+   *  2. `heartbeat.shutdownNow()`：拍子与连接**同灭** ⇒ 不产生游离心跳线程；
+   *  3. compare-and-remove + 关**自己的** socket：只有 `connections` 里仍是本 conn 时才摘除
+   *     （顶替者绝不被误摘），Close 帧也只发在**自己的** socket 上。
+   *
+   * 🔴 禁在任何地方「按 deviceId 取回一条 conn 就退役」：那正是改前的别名错配
+   * （`onClosed` / 僵尸分支摘掉的是别人的 conn、`shutdownNow` 关掉的是别人的心跳线程）。
+   */
+  private def retireConnection(conn: PresenceConnection, reason: String): Unit =
+    if conn != null then
+      conn.alive.set(false)
+      try conn.heartbeat.shutdownNow()
+      catch case _: Exception => ()
+      removeIfCurrent(conn.deviceId, conn)
+      try conn.ws.sendClose(WebSocket.NORMAL_CLOSURE, reason)
+      catch case _: Exception => ()
+
+  /**
+   * 身份比较-摘除：**只有** `connections(deviceId)` 仍是 `conn` **这一条**时才摘除。
+   *
+   * 为什么不用 `connections.remove(k, v)` 的两参数版：`PresenceConnection` 是 case class ⇒
+   * 两参数版走 `equals`（结构相等），语义会依赖字段实现。这里显式用引用相等判一遍；循环
+   * 封顶（≤8 轮）是为了在「读-比-摘」之间被别的线程改动时不空转 —— 下一轮要么看到自己的
+   * 那条（摘）、要么看到别人的（退出）。
+   */
+  private def removeIfCurrent(deviceId: String, conn: PresenceConnection): Boolean =
+    var removed = false
+    var done = false
+    var guard = 0
+    while !done && guard < 8 do
+      guard += 1
+      val cur = connections.get(deviceId)
+      if cur eq conn then
+        if connections.remove(deviceId, cur) then
+          removed = true
+          done = true
+      else done = true
+    removed
+
+  /** 现役连接代际（读出面：`-1` = 该 deviceId 当前无现役连接）。 */
+  private def currentGenOf(deviceId: String): Long =
+    val cur = connections.get(deviceId)
+    if cur == null then -1L else cur.gen
+
+  /**
+   * 把该 deviceId 名下的现役连接**全部**退役（有界循环，正常路径只跑一轮）。
+   *
+   * 「换连接」类路径专用（[[openConnection]] 发布之前 / 显式断开）：只退役**取到的**那条会
+   * 漏掉并发窗口里刚被换上的另一条 ⇒ 循环到表里没有该键为止。`maxRounds` 只是防活锁兜底
+   * （重连腿已被 `cancelReconnect`/`reconnecting` 锁住，不会无限续命）。
+   */
+  private def retireAllFor(deviceId: String, reason: String, maxRounds: Int = 4): Unit =
+    var rounds = 0
+    var cur = connections.get(deviceId)
+    while cur != null && rounds < maxRounds do
+      rounds += 1
+      retireConnection(cur, reason)
+      cur = connections.get(deviceId)
+
+  /** 现役连接条数（验收读数面：恒有 `count(presence-hb-*) ≤ 本值`，且稳态相等）。 */
+  private[neblink] def connectionCount: Int = connections.size()
+
+  /** 现役连接 `deviceId -> 代际` 快照（验收/诊断读数面：线程 ↔ 连接逐轮对账）。 */
+  private[neblink] def connectionGens: Map[String, Long] =
+    connections.entrySet().asScala.map(e => e.getKey -> e.getValue.gen).toMap
 
   // ===== Internal (called from WS listener / heartbeat threads) =====
 
   /**
-   * Called by the WS listener when the connection closes or errors.
-   * If the close was unexpected (alive still true), removes the peer and
-   * starts auto-reconnection immediately.
+   * Called by the WS listener when the connection closes or errors — **身份入口**：
+   * 带进来的是**事件所属的那条** conn（`slot`），不是按 deviceId 反查到的任意一条。
+   * If the close was unexpected (alive still true **and** this conn was still the live one),
+   * removes the peer and starts auto-reconnection immediately.
+   */
+  private[neblink] def onClosed(slot: ConnSlot, peer: PeerInfo): Unit =
+    val conn = slot.conn
+    if conn == null then slot.earlyClose = true // 握手期关闭：交回 openConnection，不发布
+    else closeConnection(conn, peer)
+
+  /**
+   * 按 deviceId 的关闭入口（**签名保留**：`NeblinkPresenceDialBudgetSpec` 直接调它造
+   * 「对端关闭 ⇒ 梯子立即重拨」形态；生产侧只有 WS 监听器，走上面的身份入口）。
+   *
+   * 语义 = 「以该 deviceId 为身份的那条连接刚关闭」⇒ 退役它并按真掉线处置（判据④）。
+   * 🔴 改前这是**唯一**入口 —— 陈旧监听器的迟到 close 因此会摘掉**新连接的** conn 并关掉
+   * 新连接的心跳线程（别名错配家族）；现在它只对「此刻在册的那条」生效，而知道自己身份的
+   * 调用方（监听器）一律走身份入口。
    */
   private[neblink] def onClosed(deviceId: String, peer: PeerInfo): Unit =
-    val conn = connections.remove(deviceId)
+    closeConnection(connections.get(deviceId), peer)
+
+  /** 退役 `conn`，并按「是否真掉线」决定 removePeer + 重连（判据②③④的汇合点）。 */
+  private def closeConnection(conn: PresenceConnection, peer: PeerInfo): Unit =
     if conn != null then
-      try conn.heartbeat.shutdownNow()
-      catch case _: Exception => ()
-      if conn.alive.get() then
+      // 🔴 wasAlive 必须在退役**之前**读：退役会把 alive 置 false（迟到事件因此按「已死」处理）
+      val wasAlive = conn.alive.get()
+      val wasCurrent = removeIfCurrent(peer.deviceId, conn)
+      retireConnection(conn, "closed")
+      if wasCurrent && wasAlive then
         // Unexpected close — remove peer and auto-reconnect
         dispatcher.unsafeRunAndForget(
-          neblinkService.removePeer(deviceId) *>
+          neblinkService.removePeer(peer.deviceId) *>
             logger.info(s"Presence disconnected: ${peer.deviceName}, auto-reconnecting...") *>
             startReconnect(peer)
         )
-    // If conn is null, heartbeat-timeout or disconnectPeer already handled it.
+    // 非现役 / 已被退役（心跳超时或 disconnectPeer 已处置）⇒ 静默：
+    // 判据③ —— 迟到事件不得为新连接触发 removePeer 或额外重连。
 
-  /** Called by the WS listener when a pong frame arrives — refreshes liveness. */
+  /** Called by the WS listener when a pong frame arrives — refreshes liveness.
+    *
+    * 🔴 hblife 批口径（**刻意不改**）：pong 属于**当前连接**，所以按 deviceId 刷新在册的那条
+    * 是正确语义。陈旧心跳线程不再因此误判 —— 它的 conn 句柄已随退役而死（退役即 shutdownNow +
+    * compare-and-remove），拍子本身也只认自己的 `lastPong`（见 [[openConnection]] 的心跳回调）。
+    */
   private[neblink] def updateLastPong(deviceId: String): Unit =
     val conn = connections.get(deviceId)
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
@@ -846,13 +1021,10 @@ final class NeblinkPresenceService(
     // F-D: 显式断开 / 离开网络 ⇒ 该设备的死端点判定与名册指纹一并复位
     // （重新入网 = 全新评估，不背旧账）。恢复路径：离开网络后回来即从零开始。
     forgetDevice(deviceId)
-    val conn = connections.remove(deviceId)
-    if conn != null then
-      conn.alive.set(false)
-      try conn.heartbeat.shutdownNow()
-      catch case _: Exception => ()
-      try conn.ws.sendClose(WebSocket.NORMAL_CLOSURE, "disconnect")
-      catch case _: Exception => ()
+    // hblife 批：无条件走**唯一退役例程**（改前是「按 deviceId 取回一条 → 关它的心跳」，
+    // 在并发顶替窗口里会摘掉/关掉刚换上的那条）；循环到该 deviceId 名下不再有现役连接为止，
+    // 与「显式断开 = 此后不得再有该 peer 的心跳线程」的语义对齐。
+    retireAllFor(deviceId, "disconnect")
 
   // ===== Helpers =====
 
@@ -939,6 +1111,41 @@ end NeblinkPresenceService
 object NeblinkPresenceService:
 
   /**
+   * 心跳拍间隔与逾期阈值（hblife 批 2026-09-19：从 [[NeblinkPresenceService]] 的
+   * `openConnection` 内联字面量提升为常量）。
+   *
+   * WHY 提升：缺陷判据是「到达间隔 ∈ 理论带」，而理论带 = `3 × 心跳拍 − ε`（第 2 拍恰
+   * `2×5s = 10 000ms` 不触发 `> 10 000ms`，第 3 拍才触发）≈ 15s ⇒ 单连接自循环 ≈16.2s
+   * （+ 重连握手，判词报告 §3.4）。验收 spec 必须引用**同一份**阈值，否则测的是副本
+   * （F-D 批已定同款纪律：`reconnectDelayMs`/`ReconnectDelayCapMs` 也留在这里）。
+   */
+  val HeartbeatIntervalSec: Long = 5L
+
+  /** 逾期阈值：`now - lastPong > 本值` ⇒ 判死（严格大于 ⇒ 恰 10 000ms 不触发）。 */
+  val HeartbeatTimeoutMs: Long = 10_000L
+
+  /**
+   * 单连接自循环的理论周期（ms）= 首个满足 `k×拍间隔 + 握手时长 > 逾期阈值` 的拍号 k 的到达时刻。
+   *
+   * 逐字复算（`HeartbeatIntervalSec = 5s`、`HeartbeatTimeoutMs = 10 000ms`，判据是**严格大于**，
+   * 拍子起点在**握手之后**而 `lastPong` 起点在**拨号开始处**）：
+   *  - `handshake > 0`（一切真实握手）⇒ `h + 2×5000 > 10 000` 成立 ⇒ k = 2 ⇒
+   *    **10 000ms + h**（本机环回 h ≈50ms ⇒ 实测 **10.05s** ≈ 5.7~6.0 次/分）；
+   *  - `handshake = 0`（退化）⇒ k = 3 ⇒ 15 000ms。
+   *  ⇒ 判词报告 §3.4 的「≈16.2s / 3.70 次/分」= k = 3 + 其公网重连握手 1.18s 的算术值，
+   *  与代码实际口径差**一整拍**（起点取在连接建立处）；本批以**实测 10.05s** 为准，
+   *  并在结果里做锚点对账（报告值 ÷ 实测值 = 1.61）。
+   *
+   * 🔴 阈值与公式留在伴生对象（同 `reconnectDelayMs` 先例）：验收 spec 引**同一份**公式，
+   * 而不是把数抄进 spec（否则测的是副本）。
+   */
+  def singleConnectionSelfCycleMs(handshakeMs: Long): Long =
+    val beat = HeartbeatIntervalSec * 1000L
+    var k = 1
+    while k * beat + handshakeMs <= HeartbeatTimeoutMs do k += 1
+    k * beat + handshakeMs
+
+  /**
    * 同步拍／心跳拍的下界 = `NeblinkConfig.syncIntervalSec` 的缺省值（45s；服务端
    * 自己文档化的心跳节奏，见 `NeblinkDiscovery.HeartbeatBackoffCap` 的依据）。
    * 拨号预算与重连梯延迟都以它为天花板：**任何一腿都不许跨拍**。
@@ -968,10 +1175,15 @@ object NeblinkPresenceService:
  * JDK WebSocket.Listener for outgoing presence connections.
  * Forwards events back to NeblinkPresenceService — stateless on its own.
  * Uses *Sync logging because callbacks run on JDK WS threads (no IO context).
+ *
+ * 🔴 `slot`（[[NeblinkPresenceService.ConnSlot]]）是本监听器的**身份**：它把关闭事件
+ * 绑到「事件所属的那条 conn」上，而不是让服务端按 deviceId 反查 —— 陈旧连接的迟到
+ * close/error 因此不可能被算到同 deviceId 的新连接头上（hblife 批 2026-09-19）。
  */
 private final class PresenceWsListener(
   service: NeblinkPresenceService,
-  peer: PeerInfo
+  peer: PeerInfo,
+  slot: service.ConnSlot
 ) extends WebSocket.Listener:
   private val logger = NebflowLogger.forName("nebflow.neblink.presence")
 
@@ -1003,10 +1215,10 @@ private final class PresenceWsListener(
   end onText
 
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
-    service.onClosed(peer.deviceId, peer)
+    service.onClosed(slot, peer)
     null
 
   override def onError(ws: WebSocket, error: Throwable): Unit =
     logger.debugSync(s"Presence WS error: ${peer.deviceName} - ${error.getMessage}")
-    service.onClosed(peer.deviceId, peer)
+    service.onClosed(slot, peer)
 end PresenceWsListener
