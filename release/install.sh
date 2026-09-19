@@ -862,10 +862,6 @@ _download_progress() {  # <url> <target> <label> -> curl exit code
     [ -z "$_total" ] && _total=-1
     curl -fsSL --connect-timeout 10 --max-time 120 "$_url" -o "$_target" 2>/dev/null &
     local _pid=$! _spin=0 _last=0 _now=0 _spd=-1
-    # An interrupt must stop the downloader too: a background job has SIGINT
-    # ignored (non-interactive shell rule), so without this the installer had no
-    # way to stop curl - Ctrl+C left it running and the JAR half-written.
-    trap 'kill "$_pid" 2>/dev/null' INT TERM HUP
     while kill -0 "$_pid" 2>/dev/null; do
         _now=$(_file_size "$_target")
         _spd=$(( (_now - _last) * 2 ))   # 0.5s poll interval
@@ -874,7 +870,6 @@ _download_progress() {  # <url> <target> <label> -> curl exit code
         _spin=$((_spin+1))
         sleep 0.5 2>/dev/null || sleep 1
     done
-    trap - INT TERM HUP
     local _rc=0
     wait "$_pid" || _rc=$?
     _now=$(_file_size "$_target")
