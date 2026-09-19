@@ -829,6 +829,28 @@ stage_deps() {
 
 _file_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
 
+# A JAR that is already present only counts as "up to date" when it is a
+# COMPLETE archive: a truncated file (interrupted download, dropped link) would
+# otherwise be reported as already-installed and never repaired. Semantics
+# mirror the released installer's _jar_valid - size floor + ZIP structural
+# check - degrading to a magic-byte probe when no zip tool is available.
+_jar_valid() {  # <path> -> 0 when the file looks like a complete JAR
+    local _path="$1" _size
+    [ -f "$_path" ] && [ -s "$_path" ] || return 1
+    _size=$(wc -c < "$_path" 2>/dev/null || echo 0)
+    [ "${_size:-0}" -ge 1000000 ] || return 1
+    if command -v unzip > /dev/null 2>&1; then
+        unzip -t "$_path" > /dev/null 2>&1
+        return $?
+    fi
+    if command -v python3 > /dev/null 2>&1; then
+        python3 -c 'import sys,zipfile; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)' "$_path" 2>/dev/null
+        return $?
+    fi
+    # Last resort: JAR/ZIP magic bytes "PK" at offset 0 (no structural check).
+    head -c 2 "$_path" 2>/dev/null | grep -q "PK"
+}
+
 # TTY download with the brand progress bar: curl runs in the background
 # writing to the target file; we poll its size and redraw the bar. Total
 # size comes from a HEAD probe (content-length); unreachable -> spinner mode.
@@ -840,6 +862,10 @@ _download_progress() {  # <url> <target> <label> -> curl exit code
     [ -z "$_total" ] && _total=-1
     curl -fsSL --connect-timeout 10 --max-time 120 "$_url" -o "$_target" 2>/dev/null &
     local _pid=$! _spin=0 _last=0 _now=0 _spd=-1
+    # An interrupt must stop the downloader too: a background job has SIGINT
+    # ignored (non-interactive shell rule), so without this the installer had no
+    # way to stop curl - Ctrl+C left it running and the JAR half-written.
+    trap 'kill "$_pid" 2>/dev/null' INT TERM HUP
     while kill -0 "$_pid" 2>/dev/null; do
         _now=$(_file_size "$_target")
         _spd=$(( (_now - _last) * 2 ))   # 0.5s poll interval
@@ -848,6 +874,7 @@ _download_progress() {  # <url> <target> <label> -> curl exit code
         _spin=$((_spin+1))
         sleep 0.5 2>/dev/null || sleep 1
     done
+    trap - INT TERM HUP
     local _rc=0
     wait "$_pid" || _rc=$?
     _now=$(_file_size "$_target")
@@ -958,8 +985,11 @@ download_jar() {
     local target="${INSTALL_DIR}/${JAR_NAME}"
     mkdir -p "${INSTALL_DIR}"
 
-    # Idempotency: same version already in place -> skip (no re-download)
-    if [ -f "${target}" ]; then
+    # Idempotency: same version already in place -> skip (no re-download).
+    # Presence alone is not enough: a truncated/corrupt file must fall through
+    # to the repair path below instead of being reported as up-to-date (and
+    # silently installed). return, never exit - the pipeline must continue.
+    if [ -f "${target}" ] && _jar_valid "${target}"; then
         log_ok "Already up-to-date (${VERSION})."
         return 0
     fi
