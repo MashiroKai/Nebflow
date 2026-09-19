@@ -3710,6 +3710,28 @@ class WebSocketRoutes(
                 }
 
           case "remoteUpdate" =>
+            // hotupdate 批 3 · G8：请求可带**可选**幂等键 `clientRequestId`（界面设备行
+            // 的触发点生成，见 resources/web/js/contacts.js）。语义（逐条）：
+            //   · 缺席 / 空串 ⇒ 本分支的载荷与回帧与改前**逐字节相同**（老端路径不变）；
+            //   · 带键 ⇒ 只在既有帧与既有 P2P 载荷上**加**一个字段（不新造消息类型、
+            //     不改既有字段语义、不删既有字段——设计 §9:173 逐字），并在每条
+            //     `remoteUpdateResult` 里**回显**该键，使界面能把结果对回它那一次点击。
+            //   · 中继腿的隧道参数面保持 `{beta}`：动作 `RemoteUpdate` 的参数集由跨仓
+            //     契约钉死（契约 §B.1.3），本批零越仓。
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val targetDevice = hc.downField("device").as[String].getOrElse("")
+            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+            val clientRequestId = hc.downField("clientRequestId").as[String].toOption
+              .map(_.trim).filter(_.nonEmpty)
+
+            /** `remoteUpdateResult` 的唯一构造点（本分支内单点）：既有字段原样 +
+              * 带键时追加 `clientRequestId`（缺席时不追加 ⇒ 老端回帧形状不变）。 */
+            def resultFrame(fields: (String, io.circe.Json)*): io.circe.Json =
+              val all: Seq[(String, io.circe.Json)] =
+                Seq("type" -> io.circe.Json.fromString("remoteUpdateResult")) ++ fields ++
+                  clientRequestId.map(id => "clientRequestId" -> io.circe.Json.fromString(id))
+              io.circe.Json.obj(all*)
+
             def tryRelayUpdate(
               ns: nebflow.neblink.NeblinkService,
               peer: nebflow.neblink.PeerInfo,
@@ -3721,33 +3743,26 @@ class WebSocketRoutes(
                   logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
                     client.relayUpdate(peer.deviceId, beta).flatMap {
                       case Right(msg) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
+                        wsSend(resultFrame(
                           "success" -> true.asJson,
                           "device" -> peer.deviceName.asJson,
                           "message" -> msg.asJson
                         ))
                       case Left(err) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
+                        wsSend(resultFrame(
                           "success" -> false.asJson,
                           "error" -> s"P2P: $p2pError; Relay: $err".asJson
                         ))
                     }
                 case None =>
-                  wsSend(io.circe.Json.obj(
-                    "type" -> "remoteUpdateResult".asJson,
+                  wsSend(resultFrame(
                     "success" -> false.asJson,
                     "error" -> p2pError.asJson
                   ))
 
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val targetDevice = hc.downField("device").as[String].getOrElse("")
-            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
             if targetDevice.isEmpty then
               wsSend(
-                io.circe.Json.obj(
-                  "type" -> "remoteUpdateResult".asJson,
+                resultFrame(
                   "success" -> false.asJson,
                   "error" -> "Missing device name".asJson
                 )
@@ -3756,8 +3771,7 @@ class WebSocketRoutes(
               sharedResources.neblinkService match
                 case None =>
                   wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "remoteUpdateResult".asJson,
+                    resultFrame(
                       "success" -> false.asJson,
                       "error" -> "NebLink not enabled".asJson
                     )
@@ -3770,8 +3784,7 @@ class WebSocketRoutes(
                     ) match
                       case None =>
                         wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "remoteUpdateResult".asJson,
+                          resultFrame(
                             "success" -> false.asJson,
                             "error" -> s"Device '$targetDevice' not found".asJson
                           )
@@ -3779,8 +3792,7 @@ class WebSocketRoutes(
                       case Some(peer) =>
                         if peer.address.isEmpty then
                           wsSend(
-                            io.circe.Json.obj(
-                              "type" -> "remoteUpdateResult".asJson,
+                            resultFrame(
                               "success" -> false.asJson,
                               "error" -> s"Device '$targetDevice' has no address".asJson
                             )
@@ -3791,7 +3803,9 @@ class WebSocketRoutes(
                           ) *>
                             IO.blocking {
                               import sttp.client4.*
-                              val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
+                              val fields = List("beta" -> beta.asJson)
+                                ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
+                              val body = io.circe.Json.obj(fields*).noSpaces
                               val resp = basicRequest
                                 .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
                                 .contentType("application/json")
@@ -3803,8 +3817,7 @@ class WebSocketRoutes(
                             }.flatMap { resp =>
                               if resp.code.isSuccess then
                                 wsSend(
-                                  io.circe.Json.obj(
-                                    "type" -> "remoteUpdateResult".asJson,
+                                  resultFrame(
                                     "success" -> true.asJson,
                                     "device" -> peer.deviceName.asJson,
                                     "message" -> "Update installed, device is restarting...".asJson

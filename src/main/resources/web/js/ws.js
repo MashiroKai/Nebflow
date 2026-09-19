@@ -154,6 +154,12 @@ const GLOBAL_MSG_TYPES = new Set([
   // 本批只钉**契约**（帧类型 + 文案键），前端**消费/渲染**属批 3（G6）——此处零消费。
   // 'updateResult' = 受理/已在途/更新中/拒绝的即时应答（同为全局、无 sessionId）。
   'updateProgress', 'updateResult',
+  // 既有热重启进度帧 + 其即时应答（hotupdate 批 3 · G6 后半的前端触发面）：
+  //   restartStatus {type,phase,detail} —— wsHub.broadcast 到**所有**连接、无 sessionId
+  //     ⇒ 不入 GLOBAL 会把**每个**用户正在看的视图切走（不止触发者）。
+  //   restartResult {type,ok,error?|message?} —— 'restart' 命令的直回帧（无 sessionId）。
+  // 两者都只是「既有帧 + 补消费」，零新消息类型。
+  'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',
@@ -300,11 +306,50 @@ export function forceReconnect() {
 }
 
 // ---------- Send ----------
+// 观察项① 收口（hotupdate 批 3 · G6；批 1 判词裁「可接受 / 留后续，建议批 3 落地进度面
+// 时一并收口」）：连接未开时 sendWs **静默丢弃**（无报错、无队列、无回调）——点击
+// 「立即更新」/「重启」时该帧直接消失，界面停在「更新中…」。
+//
+// 本批收口形态 = **有界 pending 队列**（二选一中的队列案）：未连接 ⇒ 入队；连接开启时
+// 按序补发。🔴 生效面 = 本函数这一个**单点**，因此对 ALL WS 命令一致（不是给「立即更新」
+// 开的特例——没有任何命令/按键白名单）。
+// 边界（逐条）：① 容量 100，溢出丢**最旧**（有界，防长时间离线导致内存无界增长）；
+// ② 补发在 onopen 里**先于**既有引导命令（用户显式意图优先；引导命令自带幂等语义，
+//    后发无副作用）；③ 补发中途发送异常 ⇒ 该项退回队首、停止本轮补发（保序），剩余项
+//    留到下一次 open。读取面 `pendingSendCount()` 只作诊断读数。
+const PENDING_SEND_CAP = 100;
+let pendingSends = [];
+
+/** 现读 pending 队列长度（诊断/验证读数；不改变发送语义）。 */
+export function pendingSendCount() {
+  return pendingSends.length;
+}
+
+/** 连接开启后按序补发 pending 队列（仅由 onopen 调用一次）。 */
+function flushPendingSends() {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  while (pendingSends.length > 0) {
+    const msg = pendingSends.shift();
+    try {
+      state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } catch (e) {
+      console.error('[ws] pending send failed - keeping it at the head of the queue:', e);
+      pendingSends.unshift(msg);
+      return;
+    }
+  }
+}
+
 /** @param {WSOutgoingMessage | string} msg */
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    return true;
   }
+  // 未连接 ⇒ 入有界队列（不静默丢弃）。溢出丢最旧。
+  pendingSends.push(msg);
+  while (pendingSends.length > PENDING_SEND_CAP) pendingSends.shift();
+  return false;
 }
 
 // ---------- Connect ----------
@@ -413,6 +458,8 @@ export function connect() {
     reconnectAttempts = 0;
     state.connected = true;
     syncSendButtonConnState();
+    // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
+    flushPendingSends();
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }

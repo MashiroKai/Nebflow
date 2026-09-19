@@ -74,7 +74,18 @@ object UpdateCommand extends CliCommand:
             CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for neblink status)")
           )
         case Some(client) =>
-          val payload = io.circe.Json.obj("device" -> deviceName.asJson, "beta" -> beta.asJson)
+          // hotupdate 批 3 · G8（设计 §9:173 契约增量）：载荷**新增可选**幂等键
+          // `clientRequestId`（加法字段 + 双向容错——老端忽略未知键，本端缺席即现行为
+          // 逐字节不变）。🔴 既有 `device` / `beta` 两字段的语义与存在性零改动。
+          // 键的生成方 = 调用方：一次命令行调用 = 一次逻辑更新请求。命令行面无自动重试
+          // 链（一次尝试零重试），故无需跨调用保留键；界面侧设备行的重试复用规则见
+          // resources/web/js/contacts.js 的触发点注释。
+          val clientRequestId = java.util.UUID.randomUUID().toString
+          val payload = io.circe.Json.obj(
+            "device" -> deviceName.asJson,
+            "beta" -> beta.asJson,
+            "clientRequestId" -> clientRequestId.asJson
+          )
           client.post("/api/neblink/remote-update", payload).flatMap { resp =>
             val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
             val msg = resp.hcursor.downField("message").as[String]

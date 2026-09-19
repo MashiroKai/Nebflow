@@ -1473,7 +1473,11 @@ class RestApiRoutes(
             req.as[Json].flatMap { body =>
               val targetDevice = body.hcursor.downField("device").as[String].getOrElse("")
               val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
-              doRemoteUpdate(ns, targetDevice, beta).flatMap {
+              // 幂等键（hotupdate 批 3 · G8）：**可选**读取（缺席 = 现行为逐字节不变）；
+              // 空串归一成缺席（与「本次未带键」同语义，见契约 §B.2「缺席 = 本次未带键」）。
+              val clientRequestId = body.hcursor.downField("clientRequestId").as[String].toOption
+                .map(_.trim).filter(_.nonEmpty)
+              doRemoteUpdate(ns, targetDevice, beta, clientRequestId).flatMap {
                 case Right(msg) => Ok(Json.obj("success" -> true.asJson, "message" -> msg.asJson))
                 case Left(err)  => Ok(Json.obj("success" -> false.asJson, "error" -> err.asJson))
               }
@@ -2363,11 +2367,17 @@ class RestApiRoutes(
   private def encSeg(s: String): String =
     java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
-  /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers. */
+  /** Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers.
+    *
+    * `clientRequestId`（hotupdate 批 3 · G8）= **可选**幂等键：仅在 P2P 载荷里作为
+    * 加法字段随行（老端对端 read 只见 `beta`，未知键静默忽略）；缺席 ⇒ 载荷与改前
+    * 逐字节相同。🔴 中继腿（`relayUpdateFallback`）的隧道参数面保持 `{beta}` 不变
+    * ——隧道动作 `RemoteUpdate` 的参数集由跨仓契约钉死（契约 §B.1.3），本批零越仓。 */
   private def doRemoteUpdate(
     ns: nebflow.neblink.NeblinkService,
     targetDevice: String,
-    beta: Boolean
+    beta: Boolean,
+    clientRequestId: Option[String] = None
   ): IO[Either[String, String]] =
     ns.peers.flatMap { peers =>
       peers.find(p =>
@@ -2381,7 +2391,9 @@ class RestApiRoutes(
             logger.info(s"Remote update via P2P: ${peer.deviceName} at ${peer.address} (beta=$beta)") *>
               IO.blocking {
                 import sttp.client4.*
-                val body = Json.obj("beta" -> beta.asJson).noSpaces
+                val fields = List("beta" -> beta.asJson)
+                  ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
+                val body = Json.obj(fields*).noSpaces
                 val resp = basicRequest
                   .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
                   .contentType("application/json")

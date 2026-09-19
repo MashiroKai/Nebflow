@@ -178,9 +178,80 @@ export function getNeblinkState() {
   return neblinkState;
 }
 
-// Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error'
+// Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error' | 'timeout'
+//
+// 🔴 hotupdate 批 3 · G7：本变量是设备更新进度的**唯一**状态面——保留面原文（2026-09-15
+// 摘除令注记）为「`deviceUpdateState` 的 WS 结果帧处理与其 i18n 键组**未删**，理由 =
+// 远程更新是服务端面既有能力，本次只摘除其客户端入口」。入口恢复发生在**新家**
+// （联系人面板设备行，`contacts.js`）⇒ 新家只**读/写**本变量与下述访问器，
+// **禁**另建第二套进度状态变量、**禁**另建第二套结果帧处理（结果帧处理仍只有本文件
+// `initNeblink()` 里那一处）。
+//
+// `timeout`（批 3 新增档）= 触发/受理面（裁定 7 的外层 300s）等不到任何结果帧时的
+// 收口档：它是**同一条状态机**的追加档，不是第二个变量。
 let deviceUpdateState = {};
 let _rerender = null;
+
+/** 设备更新状态订阅面（与既有 `onNeblinkStatus`/`statusSubscribers` 同款单点模式）：
+ *  联系人面板设备行据此把进度回显刷成最新（结果帧的消费方仍只有本文件一处）。 */
+const deviceUpdateSubscribers = new Set();
+
+export function onDeviceUpdateChange(cb) {
+  deviceUpdateSubscribers.add(cb);
+  return () => deviceUpdateSubscribers.delete(cb);
+}
+
+/** 状态面变更的唯一播报点：既有保留面 `_rerender`（设置账号块）+ 新家订阅者。 */
+function notifyDeviceUpdateChange() {
+  _rerender?.();
+  for (const cb of [...deviceUpdateSubscribers]) {
+    try { cb(); } catch (e) { console.error('[neblink] device update subscriber failed:', e); }
+  }
+}
+
+/** 现读某设备的更新状态（键 = `peer.deviceName`，与结果帧内 `device` 字段同口径）。 */
+export function getDeviceUpdateState(deviceName) {
+  return deviceUpdateState[deviceName] || null;
+}
+
+/** 触发面进入「更新中」（写入**同一条**状态机；`clientRequestId` 一并留存，供超时/重试
+ *  复用同一枚幂等键——契约 §D.2「用户重试须复用同一个键」）。 */
+export function markDeviceUpdating(deviceName, clientRequestId) {
+  const prior = deviceUpdateState[deviceName];
+  deviceUpdateState[deviceName] = {
+    status: 'updating',
+    clientRequestId: clientRequestId || prior?.clientRequestId || null,
+  };
+  notifyDeviceUpdateChange();
+}
+
+/** 触发/受理面等不到结果帧（外层 300s 上限）⇒ 同一条状态机的 `timeout` 档
+ *  （幂等键沿用 ⇒ 重试仍复用同键）。 */
+export function markDeviceUpdateTimeout(deviceName) {
+  const cur = deviceUpdateState[deviceName];
+  if (!cur || cur.status !== 'updating') return;
+  deviceUpdateState[deviceName] = { status: 'timeout', clientRequestId: cur.clientRequestId || null };
+  notifyDeviceUpdateChange();
+  // 与既有 'done'/'error' 同款 TTL（10 秒后自动清除）：瞬态行状态不留陈旧回显。
+  setTimeout(() => {
+    if (deviceUpdateState[deviceName]?.status === 'timeout') {
+      delete deviceUpdateState[deviceName];
+      notifyDeviceUpdateChange();
+    }
+  }, 10000);
+}
+
+/** 重试复用：把该设备**当前这次逻辑请求**的幂等键交回触发点（契约 §D.2/H10
+ *  「用户重试须复用同一个键」）。留存范围 = 触发/受理/超时/**错误**四档（错误档的含义
+ *  是该次逻辑请求未被送达或未被受理 ⇒ 用户再点仍是「同一次请求」的重试）；
+ *  触达 `done`（设备已受理并重启）⇒ 该次逻辑请求已成立，条目按既有 10s TTL 清空，
+ *  此后再点即新请求（新键）。条目被 TTL 清除后同样返回 null。 */
+export function pendingDeviceUpdateKey(deviceName) {
+  const cur = deviceUpdateState[deviceName];
+  if (!cur || !cur.clientRequestId) return null;
+  if (cur.status === 'done') return null;
+  return cur.clientRequestId;
+}
 
 export function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
@@ -1032,25 +1103,33 @@ export async function initNeblink() {
   onMessage('peerListChanged', () => { fetchNeblinkStatus().then(() => _rerender?.()); });
 
   // Handle remote update result
+  // 🔴 本处理体是设备更新结果帧的**唯一**消费点（hotupdate 批 3 · G7 仅把播报面从
+  // `_rerender` 扩到 `notifyDeviceUpdateChange()`，使联系人面板设备行同帧刷新）；
+  // 状态机语义 / TTL / 泛化分支一律原样——禁另建第二套结果处理。
   onMessage('remoteUpdateResult', (msg) => {
     // msg.device may not be set on error, but we update all 'updating' devices
     const targetDevice = msg.device;
+    // 幂等键**留存**（批 3 · G8/G7 增量，唯一改动点）：结果帧已回显 `clientRequestId`
+    // ⇒ 终局条目也把键带上，使 H10「携带 clientRequestId 的重试须复用同键」在
+    // **错误档**同样成立（重试窗 = 该条目既有 10s TTL；见 `pendingDeviceUpdateKey`）。
+    const keyOf = (dn) => (deviceUpdateState[dn]?.clientRequestId)
+      || (typeof msg.clientRequestId === 'string' ? msg.clientRequestId : null);
     if (targetDevice) {
       deviceUpdateState[targetDevice] = msg.success
-        ? { status: 'done' }
-        : { status: 'error', message: msg.error || 'Failed' };
+        ? { status: 'done', clientRequestId: keyOf(targetDevice) }
+        : { status: 'error', message: msg.error || 'Failed', clientRequestId: keyOf(targetDevice) };
       // Clear 'done' state after 10 seconds (device should be back online)
       if (msg.success) {
-        setTimeout(() => { delete deviceUpdateState[targetDevice]; _rerender?.(); }, 10000);
+        setTimeout(() => { delete deviceUpdateState[targetDevice]; notifyDeviceUpdateChange(); }, 10000);
       }
     } else {
       // No device specified — update all 'updating' entries
       for (const [dn, st] of Object.entries(deviceUpdateState)) {
         if (st.status === 'updating') {
           deviceUpdateState[dn] = msg.success
-            ? { status: 'done' }
-            : { status: 'error', message: msg.error || 'Failed' };
-          if (msg.success) setTimeout(() => { delete deviceUpdateState[dn]; _rerender?.(); }, 10000);
+            ? { status: 'done', clientRequestId: keyOf(dn) }
+            : { status: 'error', message: msg.error || 'Failed', clientRequestId: keyOf(dn) };
+          if (msg.success) setTimeout(() => { delete deviceUpdateState[dn]; notifyDeviceUpdateChange(); }, 10000);
         }
       }
     }
@@ -1058,9 +1137,9 @@ export async function initNeblink() {
     for (const dn of Object.keys(deviceUpdateState)) {
       if (deviceUpdateState[dn].status === 'error') {
         const devName = dn;
-        setTimeout(() => { delete deviceUpdateState[devName]; _rerender?.(); }, 10000);
+        setTimeout(() => { delete deviceUpdateState[devName]; notifyDeviceUpdateChange(); }, 10000);
       }
     }
-    _rerender?.();
+    notifyDeviceUpdateChange();
   });
 }
