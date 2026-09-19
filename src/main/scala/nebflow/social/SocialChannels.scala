@@ -28,6 +28,11 @@ import java.nio.file.attribute.PosixFilePermissions
  *      (`core/CredentialFileAcl`), never a second private copy of the ACL
  *      logic. `restrict` throwing is reported as an explicit failure
  *      (`403 secret_mode`) — never swallowed.
+ *   ③ The plaintext never exists inside a not-yet-narrowed file: a new
+ *      credential file is created `rw-------` from its first byte, an existing
+ *      one is narrowed BEFORE the new plaintext is written into it, and a
+ *      failure removes whatever this call created or wrote (finding F1 of
+ *      `socpanel-verify`, 2026-09-19 — pinned by `SocialChannelsSpec`).
  *
  * Phase 1: no channel has an adapter. `adapterRegistered` is `false` for every
  * channel here as well as in the frontend definition layer (the render
@@ -188,37 +193,101 @@ object SocialChannels:
     val name = f.secretName.getOrElse(s"social-${spec.id}-${f.key}")
     root / "secrets" / name
 
-  /** Write one credential and narrow its permissions through the EXISTING
-    *  `CredentialFileAcl` semantics. Any failure is on the error channel —
-    *  a credential is never reported as stored when it is not readable. */
-  private def writeSecret(root: os.Path, spec: ChannelSpec, f: FieldSpec, plain: String):
-      Either[Failure, Unit] =
-    val path = secretPath(root, spec, f)
+  /** Production narrowing step: the shared module's semantics (POSIX
+    *  `rw-------`; Windows runs its DACL ladder). Injectable so the regression
+    *  test can make the narrowing fail and pin the "no half state" property —
+    *  production never passes anything but the shared module, and there is no
+    *  private second copy of the ACL logic in this file. */
+  private def defaultRestrict(path: Path): Unit = CredentialFileAcl.restrict(path)
+
+  /** Create an EMPTY file with owner-only access `rw-------` (F1: the mode comes
+    *  from the creation attribute, never from a later narrowing step — the
+    *  "write, then narrow" window reported by `socpanel-verify` cannot exist).
+    *
+    *  A filesystem without POSIX permission attributes (Windows) refuses the
+    *  attribute — the file is then created with the ACL it inherits and
+    *  [[CredentialFileAcl.restrict]]'s DACL ladder is the narrowing step there,
+    *  exactly as before this fix. Declared, not silently assumed: the fallback
+    *  also clears a possibly half-created file so the retry cannot trip over
+    *  `FileAlreadyExistsException`. */
+  private def createOwnerOnly(path: Path): Unit =
     try
-      Files.createDirectories(path.toNIO.getParent)
-      Files.write(
-        path.toNIO,
+      Files.createFile(path,
+        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(CredentialFileAcl.PosixMode)))
+    catch
+      case _: UnsupportedOperationException =>
+        try Files.deleteIfExists(path)
+        catch case _: Exception => ()
+        Files.createFile(path)
+
+  /** Write one credential. Order — this order IS the F1 fix (finding F1 of
+    *  `socpanel-verify`; before it the plaintext was written into the final path
+    *  under the default umask and narrowed only afterwards, so a throwing
+    *  `restrict` left a wide-mode plaintext file behind):
+    *
+    *   ① a target that does not exist yet is created with mode `rw-------` from
+    *      its very first byte ([[createOwnerOnly]]);
+    *   ② a target that already exists is NARROWED BEFORE any new plaintext can
+    *      land in it (it may be wide-mode — e.g. left behind by the pre-F1
+    *      code path);
+    *   ③ the new plaintext is written;
+    *   ④ the EXISTING `CredentialFileAcl` semantics run as the authoritative
+    *      narrowing step (POSIX re-assert; Windows DACL ladder).
+    *
+    *  There is therefore no instant at which the plaintext sits in a
+    *  not-yet-narrowed file. The write stays IN PLACE rather than going through
+    *  a tmp file + rename: the inode is preserved, which is what the `nf-file`
+    *  credential-inode snapshot (`NfPathPolicy.credentialInodes`) keys on — a
+    *  rename would hand the credential a fresh inode on every write.
+    *
+    *  Any failure is on the error channel (`403 secret_mode`, the existing
+    *  mapping) and names the path. Zero residue: a file we created or wrote into
+    *  is removed again; a pre-existing target we never wrote into (step ② failed)
+    *  is left exactly as found — we cannot have added plaintext to it. A
+    *  credential is never reported as stored when it is not. */
+  private def writeSecret(root: os.Path, spec: ChannelSpec, f: FieldSpec, plain: String,
+      restrict: Path => Unit): Either[Failure, Unit] =
+    val target = secretPath(root, spec, f).toNIO
+    var ours = false // the file currently at `target` was created or written by THIS call
+    try
+      Files.createDirectories(target.getParent)
+      if Files.exists(target) then
+        restrict(target) // ② narrow the pre-existing file BEFORE the plaintext
+      else
+        createOwnerOnly(target) // ① created owner-only from its very first byte
+      ours = true
+      Files.write( // ③ the plaintext, into an already owner-only file
+        target,
         plain.getBytes("UTF-8"),
-        StandardOpenOption.CREATE,
         StandardOpenOption.TRUNCATE_EXISTING,
         StandardOpenOption.WRITE
       )
-      // The authoritative narrowing step: the shared module's semantics (POSIX
-      // `rw-------`; Windows goes through its DACL ladder). A throw lands on the
-      // error channel — never swallowed.
-      CredentialFileAcl.restrict(path.toNIO)
+      restrict(target) // ④ the authoritative narrowing step — shared module, never swallowed
       Right(())
     catch
       case e: Exception =>
-        Left(Failure.SecretMode(f.key, s"could not store credential for ${spec.id}.${f.key}: ${e.getMessage}"))
+        val residual =
+          if ours then
+            try if Files.deleteIfExists(target) then "deleted" else "absent"
+            catch case _: Exception => "undeletable"
+          else "pre-existing-untouched"
+        Left(Failure.SecretMode(f.key,
+          s"could not store credential for ${spec.id}.${f.key}: " +
+            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")} " +
+            s"(path=$target residual=$residual)"))
 
   /** POST /api/social/channels/<id>.
     *
     * Body: `{"enabled": bool, "fields": {...}}`. Secret fields arrive as
     * PLAINTEXT under their own key and appear in this request body only; what
     * is persisted is the path. Fields absent from the body keep their stored
-    * value (surgical merge — a toggle flip cannot wipe a schema). */
-  def save(root: os.Path, id: String, body: Json): Either[Failure, Json] =
+    * value (surgical merge — a toggle flip cannot wipe a schema).
+    *
+    * `restrict` is the credential-narrowing step; production leaves it at
+    * [[defaultRestrict]] (the shared `CredentialFileAcl` module) and only the
+    * F1 regression test injects a failing one. */
+  def save(root: os.Path, id: String, body: Json,
+      restrict: Path => Unit = defaultRestrict): Either[Failure, Json] =
     channel(id) match
       case None => Left(Failure.UnknownChannel(id))
       case Some(spec) =>
@@ -235,7 +304,8 @@ object SocialChannels:
             val secretWrites = spec.secretFields.flatMap { f =>
               incoming.hcursor.downField(f.key).as[String].toOption.filter(_.nonEmpty).map(f -> _)
             }
-            val writeResults = secretWrites.map { case (f, plain) => writeSecret(root, spec, f, plain) }
+            val writeResults =
+              secretWrites.map { case (f, plain) => writeSecret(root, spec, f, plain, restrict) }
             writeResults.collectFirst { case Left(err) => err } match
               case Some(err) => Left(err)
               case None =>
