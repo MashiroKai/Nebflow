@@ -1768,6 +1768,98 @@ function attachmentCard(att) {
   return card;
 }
 
+// ── ③ 气泡预览盒几何（**唯一算术落点**）· visup-ratio 批 · 作者 2026-09-19 01:29 令 ──
+// 「气泡预览图尺寸按图片**真实宽高比**（禁写死固定比）；微信做法 = 按原图尺寸决定预览框
+//  宽高比；实现侧自定 min/max 夹取防极端长宽比破版；参数按视觉定并在卡面申报。」
+// ⇒ 本段四个常数即**申报的参数**（卡片同款：`css/friends.css` 的 `.fm-att-inline img` 段），
+//    CSS 侧只消费 `--fm-att-w` / `--fm-att-ar`，**禁**第二处比例算术（禁两套并行实现）。
+/** 上限盒宽（px）。沿用既有档（`.fm-att` 卡内容宽同量级）⇒ **零新增几何档**。 */
+const ATT_INLINE_BOX_W = 260;
+/** 上限盒高（px）。同上：既有档，盒永不大于 `260 × 200`。 */
+const ATT_INLINE_BOX_H = 200;
+/** 比夹取下界（1:2）：更竖的图按 1:2 出盒并**居中裁切**（防超长条把版撑破）。 */
+const ATT_INLINE_AR_MIN = 1 / 2;
+/** 比夹取上界（2:1）：更扁的图按 2:1 出盒并**居中裁切**（防超扁条把版撑破）。 */
+const ATT_INLINE_AR_MAX = 2;
+
+/** 由**原图内禀尺寸**算预览盒（**单点**：`W/H` 夹取 + 上限盒 contain + 禁放大）。
+ *
+ *  规则（与 CSS 段逐条对齐）：
+ *   ① 比夹取：`r = clamp(nw / nh, AR_MIN, AR_MAX)`——越界图按界内比出盒（`cover` 居中裁切）；
+ *   ② 上限盒：把 `r` 按 contain 装进 `260 × 200` ⇒ `r ≥ 260/200` 时定宽 260、否则定高 200；
+ *   ③ 禁放大：盒不超过原图自身尺寸（小图按原尺寸出，不被拉大糊掉）。
+ *  `ar` 回传**比率 token**：界内图直接用**所测字节源**的 `nw / nh`，越界图用夹取界
+ *  （`2 / 1`、`1 / 2`）。⚠ 语义 = 「token 的**数值** == 目标比」而**非**「token 逐字恒定」：
+ *  Chromium 对 `aspect-ratio` 的计算值**不约分**（`1600 / 900` 原样回读），且确认面按
+ *  **小图**字节复量（`640 / 480` = 同比、不同 token）⇒ 断言一律走**数值比**（见 spec）。
+ *  @param {number} nw 原图宽（px，>0） @param {number} nh 原图高（px，>0）
+ *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} 尺寸无效 ⇒ null */
+function inlineBoxFor(nw, nh) {
+  const W = Number(nw) || 0;
+  const H = Number(nh) || 0;
+  if (!(W > 0) || !(H > 0)) return null;
+  const raw = W / H;
+  let apx = raw;                    // 夹取后的**比值**（算术用）
+  let ar = `${W} / ${H}`;           // 夹取后的**比率 token**（CSS 用 + 读数面）
+  let clamped = false;
+  if (raw > ATT_INLINE_AR_MAX) { apx = ATT_INLINE_AR_MAX; ar = '2 / 1'; clamped = true; }
+  else if (raw < ATT_INLINE_AR_MIN) { apx = ATT_INLINE_AR_MIN; ar = '1 / 2'; clamped = true; }
+  const boxApx = ATT_INLINE_BOX_W / ATT_INLINE_BOX_H;
+  let bw = apx >= boxApx ? ATT_INLINE_BOX_W : ATT_INLINE_BOX_H * apx;
+  let bh = bw / apx;
+  if (bw > W) { bw = W; bh = bw / apx; }   // 禁放大（横向量）
+  if (bh > H) { bh = H; bw = bh * apx; }   // 禁放大（纵向量）
+  // 向下取整写宽（`ceil`/`round` 会把高度反向顶破 200px 上限：`h = w / r` 随 w 单调增）。
+  const wi = Math.floor(bw);
+  return { w: wi, h: Math.round((wi / apx) * 100) / 100, apx, ar, clamped };
+}
+
+/** 把预览盒写进槽 `<img>`（**单点写面**）：CSS 只读这两个变量 + 三个读数面。
+ *  `data-att-nat` = **本次所测字节源**的内禀尺寸（发送侧乐观面 = 原图；确认面按小图复量，
+ *  同比不同 token）——它是读数面，不是「原图恒等式」的断言面。
+ *  @param {HTMLImageElement} img @param {number} nw @param {number} nh
+ *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} */
+function applyInlineRatio(img, nw, nh) {
+  const g = inlineBoxFor(nw, nh);
+  if (!img || !g) return null;
+  img.style.setProperty('--fm-att-w', `${g.w}px`);
+  img.style.setProperty('--fm-att-ar', g.ar);
+  // 读数面（不参与任何行为分支；与既有 `data-att-src` 同族）：
+  //   `data-att-nat` 原图内禀尺寸 · `data-att-ar` 夹取后比率 token · `data-att-box` 计算盒。
+  img.dataset.attNat = `${nw}x${nh}`;
+  img.dataset.attAr = g.ar;
+  img.dataset.attBox = `${g.w}x${g.h}`;
+  return g;
+}
+
+/** 取 URL 的内禀尺寸（解码一次；失败 ⇒ `null`，绝不阻断出帧）。
+ *  @param {string} url @returns {Promise<{w:number,h:number}|null>} */
+function decodeDims(url) {
+  return new Promise((resolve) => {
+    try {
+      const probe = new Image();
+      probe.onload = () => resolve({ w: probe.naturalWidth || 0, h: probe.naturalHeight || 0 });
+      probe.onerror = () => resolve(null);
+      probe.src = url;
+    } catch { resolve(null); }
+  });
+}
+
+/** 出帧：**先把盒比落地、再点 `src`**（同一帧 ⇒ 图片从不以错误比例被绘制、绘制后零重排）。
+ *
+ *  · 比例已知（发送侧本机帧带内禀尺寸）⇒ 同步落地；
+ *  · 比例未知（接收侧/设备面/回落原文件）⇒ 先解码取内禀尺寸，**再**点 `src`
+ *    —— 骨架期保持 CSS 回退盒（既有上限盒），与真帧之间**只发生一次**几何变更。
+ *  @param {HTMLImageElement} img @param {string} url @param {{w:number,h:number}|null} [dims] */
+function paintInlineFrame(img, url, dims) {
+  const set = (d) => {
+    if (d && d.w > 0 && d.h > 0) applyInlineRatio(img, d.w, d.h);
+    img.src = url;
+  };
+  if (dims && dims.w > 0 && dims.h > 0) { set(dims); return; }
+  decodeDims(url).then(set);
+}
+
 /** 图片附件 → **对话框内直显**（uifix 批 · 作者令 2026-09-17 逐字：
  *  「另外，如果传的附件是图片的话，要支持直接在对话框显示，（好友、群聊、设备）。」）
  *
@@ -1810,15 +1902,23 @@ function attachmentCard(att) {
  *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
  *  @returns {boolean} 是否挂了直显槽
  *
- *  ── imgmsg 批（作者 2026-09-18 三项裁定）新增的两条腿内语义 ──
- *  · ③ **预留**：`<img>` 元素在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染 CSS 盒 =
- *    可见骨架），高度由 CSS `aspect-ratio: 13/10` 占住 ⇒ 字节到达前后**零位移**
- *    （发送面与接收面走同一行代码，两侧同规则）。
+ *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比** + min/max 夹取）──
+ *  · **预留**：`<img>` 元素在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染 CSS 盒 =
+ *    可见骨架）。盒比 = 原图真实比（夹取后），由 `inlineBoxFor` 单点算出（见上段常数）。
+ *  · **新占位语义（显式申报，非静默变更）**：骨架期 CSS 回退盒 = 既有上限盒
+ *    （`260 / 200`）；比例可知的**同一帧**里换成真实比 —— 本函数/`fillLocalThumbs`
+ *    **先解码后点 `src`** ⇒ 图片从不以错误比例被绘制、绘制后**零重排**；骨架 ↔ 真帧
+ *    之间恰好**一次**几何变更，量值 = 由原图 `W×H` 精确算出的预测值。
+ *  · 📌 **取代关系（勿回退）**：imgmsg 批（2026-09-18）的「`aspect-ratio: 13/10` 固定盒 ⇒
+ *    字节到达前后零位移（Δ=0）」**已被 01:29 令取代** ⇒ 真实比与 Δ=0 在数学上互斥
+ *    （骨架期不可能预知真实比），故「零位移」改由「真帧后零重排 + 单次变更 = 预测值」
+ *    承接（旧裁定记 provisional / archived，禁按旧口径描述本槽行为）。
  *  · ① **发送侧本机句柄**：`att.localFace`（**非枚举**属性，只可能挂在发送侧乐观面上）
  *    ⇒ 走本机 blob 腿（② 本地小图优先出帧）。无 `localFace` 的卡（= 接收侧全部、
  *    群面、设备面、历史卡片）⇒ **逐字现状**。
  *  `data-att-src` 是字节源的**读数面**（不参与任何行为分支）：
- *  `local-thumb` / `local-file` / `local-handle` / `server` / `server-cached` / `server-ticket`。 */
+ *  `local-thumb` / `local-file` / `local-handle` / `server` / `server-cached` / `server-ticket`；
+ *  `data-att-nat` / `data-att-ar` / `data-att-box` 是几何读数面（同上，非行为分支）。 */
 function attachInlineImage(card, att, kind, src) {
   if (!card || !att) return false;
   /** 发送侧乐观面（本批唯一新腿）：本机字节句柄。 */
@@ -1835,14 +1935,22 @@ function attachInlineImage(card, att, kind, src) {
   img.alt = ''; // 骨架期无内容 ⇒ 装饰性（真名在字节就位时补上）
   box.appendChild(img);
   let mounted = false;
-  /** @param {string} url @param {string} [tag] 字节源读数（`data-att-src`） */
-  const mount = (url, tag) => {
+  /** @param {string} url @param {string} [tag] 字节源读数（`data-att-src`）
+   *  @param {{w:number,h:number}|null} [dims] 已知内禀尺寸（省一次解码；缺席则本函数自取） */
+  const mount = (url, tag, dims) => {
     if (mounted || !url) return;
     mounted = true;
     img.alt = name;
     if (tag) img.dataset.attSrc = tag;
-    img.src = url;
+    // ③ 先落地盒比再点 `src`（同一帧）⇒ 禁画后重排（见本函数头注「新占位语义」）。
+    paintInlineFrame(img, url, dims || null);
   };
+  // 兜底：任何绕过 `mount`/`fillLocalThumbs` 就点 `src` 的路径（未来腿）也不留
+  // 「以回退比绘制、之后再改比」的画面 —— 幂等（`data-att-box` 已在场即不重复写）。
+  img.addEventListener('load', () => {
+    if (img.dataset.attBox) return;
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) applyInlineRatio(img, img.naturalWidth, img.naturalHeight);
+  }, { once: true });
   img.addEventListener('error', () => box.remove(), { once: true });
   card.insertBefore(box, card.firstChild);
 
@@ -1873,7 +1981,9 @@ function attachInlineImage(card, att, kind, src) {
   //       面挂载 ⇒ 接收侧 / 群面 / 历史卡片**不可能**进入本支（逐字现状）。
   if (localFace && kind !== 'ready' && kind !== 'device') {
     localFace.img = img;
-    if (localFace.url) mount(localFace.url, localFace.isThumb ? 'local-thumb' : 'local-file');
+    // ③ 本机帧已在手 ⇒ 内禀尺寸同帧带上（`fillLocalThumbs` 解码时就量过，禁第二次解码）。
+    const lfDims = (localFace.natW > 0 && localFace.natH > 0) ? { w: localFace.natW, h: localFace.natH } : null;
+    if (localFace.url) mount(localFace.url, localFace.isThumb ? 'local-thumb' : 'local-file', lfDims);
     return true;
   }
 
@@ -2007,14 +2117,17 @@ const localOutAttachmentOrder = [];
 const LOCAL_THUMB_EDGE = 640;
 const LOCAL_THUMB_QUALITY = 0.82;
 
-/** ② 发送端本地小图（**唯一生成点**）：`File` ⇒ 有界长边的 image Blob。
+/** ② 发送端本地小图（**唯一生成点**）：`File` ⇒ 有界长边的 image Blob + **原图内禀尺寸**。
  *
  *  走 `createImageBitmap` 的解码线程（不阻塞主线程、不在 UI 帧里做像素搬运）；
  *  WebP 优先（保 alpha；透明 PNG 不被 JPEG 压成黑底），JPEG 兜底。
  *  🔴 能力缺失 / 解码失败 / 编码失败 ⇒ 返回 `null`（调用方回落**原文件句柄**：
  *     首帧照样出，只是字节大一些）——**绝不为难用户**、绝不阻断发送链。
- *  @param {File|Blob} file @returns {Promise<Blob|null>} */
-async function makeLocalThumbBlob(file) {
+ *  ⚠ `w`/`h` 是**原图**的（不是小图的）：③ 的气泡预览盒按原图比出盒，而本函数
+ *     解码时手上正好就是原图 ⇒ 顺带带出，免第二次解码（本批唯一新增回流面）。
+ *  @param {File|Blob} file
+ *  @returns {Promise<{blob:Blob, w:number, h:number}|null>} */
+async function makeLocalThumbFrame(file) {
   try {
     if (!file || typeof createImageBitmap !== 'function') return null;
     const bmp = await createImageBitmap(file);
@@ -2035,7 +2148,9 @@ async function makeLocalThumbBlob(file) {
       try { cv.toBlob((b) => res(b && b.size > 0 ? b : null), type, LOCAL_THUMB_QUALITY); }
       catch { res(null); }
     });
-    return (await encode('image/webp')) || (await encode('image/jpeg'));
+    const blob = (await encode('image/webp')) || (await encode('image/jpeg'));
+    if (!blob) return null;
+    return { blob, w, h };
   } catch { return null; }
 }
 
@@ -3683,8 +3798,9 @@ function mountOptimisticAttachBubble(conv, files, text) {
   const faces = [];
   const atts = files.map((f) => {
     const att = { id: '', name: f.name, size: f.size, state: 'uploading' };
-    /** 本机句柄台账（**非枚举** ⇒ 不进任何序列化 / 不污染 wire 形态与缓存比对）。 */
-    const face = { file: f, url: '', isThumb: false, img: null, settled: false, bytes: 0 };
+    /** 本机句柄台账（**非枚举** ⇒ 不进任何序列化 / 不污染 wire 形态与缓存比对）。
+     *  `natW`/`natH` = **原图**内禀尺寸（③ 盒比来源；0 = 未知 ⇒ 渲染层自行解码）。 */
+    const face = { file: f, url: '', isThumb: false, img: null, settled: false, bytes: 0, natW: 0, natH: 0 };
     faces.push(face);
     try {
       Object.defineProperty(att, 'localFace', { value: face, enumerable: false, configurable: true });
@@ -3721,21 +3837,26 @@ function mountOptimisticAttachBubble(conv, files, text) {
  *  已确认（`settled`）或已就绪（`url` 非空）⇒ 丢弃本次产物（**不生成 URL ⇒ 无泄漏**）。 */
 async function fillLocalThumbs(pending) {
   await Promise.all((pending.faces || []).map(async (face) => {
-    let blob = null;
-    try { blob = await makeLocalThumbBlob(face.file); } catch { blob = null; }
+    /** 首帧产物 = 小图 blob + **原图**内禀尺寸（③ 的盒比来源；见 `makeLocalThumbFrame`）。 */
+    let frame = null;
+    try { frame = await makeLocalThumbFrame(face.file); } catch { frame = null; }
     if (face.settled || face.url) return; // 确认面已定/已出帧 ⇒ 本次产物作废
+    const blob = frame && frame.blob ? frame.blob : null;
     // 内联预算（既有尺 `MAX_INLINE_IMAGE_BYTES`，本批**不放宽**）：超预算 ⇒ 不出本机帧
     // （回落到确认面的服务端腿，与改前同一条降级面）。
     const bytes = blob ? blob.size : (face.file && face.file.size) || 0;
     if (bytes > MAX_INLINE_IMAGE_BYTES) return;
     face.bytes = bytes;
     face.isThumb = !!blob;
+    face.natW = frame ? frame.w : 0;   // ③ 原图内禀尺寸（比例已知的判据）
+    face.natH = frame ? frame.h : 0;
     face.url = URL.createObjectURL(blob || face.file);
     const img = (face.img && face.img.isConnected) ? face.img : null;
     if (img && !img.getAttribute('src')) {
       img.alt = (face.file && face.file.name) || '';
       img.dataset.attSrc = face.isThumb ? 'local-thumb' : 'local-file';
-      img.src = face.url;
+      // ③ 比例先落地、再点 `src`（同一帧；解码失败 ⇒ 走 `decodeDims` 兜底，仍先比后帧）。
+      paintInlineFrame(img, face.url, (face.natW > 0 && face.natH > 0) ? { w: face.natW, h: face.natH } : null);
     }
   }));
 }
