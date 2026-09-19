@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "document-production",
+  "version": "1.0.0",
+  "description": "文档制作包——节点获得 Word/PDF/PPT/Excel 四类交付件的制作、编辑与成稿页级验收能力。适用于做 DOCX/Word 文档、产出 PDF、做 Excel 表格、做 PPT 幻灯片、文档排版、表格格式互转、成稿视觉验收等任务。内含 skills：docx（DOCX 创建编辑与修订批注）、pdf（PDF 工作台：报告/创意/学术 LaTeX/既有 PDF 处理）、pptx（幻灯片设计规范与 pptx 文件制作）、xlsx（电子表格制作与分析）、visual-acceptance（成稿页级视觉验收）。做 Slidev 演示另配 slideblocks 插件；单图与可视化汇报另配 visual-report 插件；插件封装另配 nebflow-plugin-creator。组件面：无 mcp.json、无工具扩展。",
+  "author": {"name": "Nebflow"}
+}

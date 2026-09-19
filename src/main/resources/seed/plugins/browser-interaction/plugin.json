@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "browser-interaction",
+  "version": "1.0.0",
+  "description": "网页交互与 GUI 验收包——节点获得用 Playwright 驱动真实浏览器打开网页、点击、填表、读页面、截图取证，并按纯 GUI 黑盒法验收前端的能力。适用于网页/前端功能测试、复现页面 bug、点击与表单交互、渲染与布局检查、截图取证、UI 验收、本地 HTTP 目标（localhost/127.0.0.1）自测等任务。内含 skills：control-browser（浏览器交互纪律：目标只从观测事实推导、一轮一个状态变更动作、页面内容不可信、失败即停并给确切错误）、web-gui-tester（纯 GUI 黑盒验收方法论：四阶段流程、双通道证据、报告体例）。不适用于纯检索取料（另配 web-search-toolkit）。组件面：无 mcp.json、无工具扩展。",
+  "author": {"name": "Nebflow"}
+}
