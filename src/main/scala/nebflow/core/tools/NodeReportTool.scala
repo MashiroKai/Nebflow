@@ -273,8 +273,33 @@ Pass category (the verdict + why), detail (what exactly, actionable), suggestion
             ws <- reportWorkspaceFor(ctx)
             _ <- NodeReportRegistry.register(ws, ctx.projectName.getOrElse(""), nodeId,
               ctx.sessionId.getOrElse(nodeIdSessionKey(nodeId)), fb)
+            // chainmodel 批三+：引用面 `report-usage` 计数钩子（轴 b）——申报登记成功后计数
+            _ <- countReportUsage(ctx, detail, suggestion)
           yield Right(confirm)
     }
+
+  /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
+  private val FaceReportUsage = "report-usage"
+
+  /** **引用面 `report-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的落点：「node_report
+    * detail / 结果正文引用该链号」。
+    *
+    * 计数在**申报登记成功之后**发生（登记失败 ⇒ 无正文落库 ⇒ 引用没发生）；扫描面 = 本次
+    * 申报写入的正文两件：`detail`（必填、已判非空）+ `suggestion`。命中判据 =
+    * `ChainLedger.referencedIds`（**已登记**链号逐字 + 边界命中；🔴 未登记号不计、不建条目
+    * ⇒ 禁回填）。best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReferencesIn`），
+    * 不回滚已登记的申报（申报是节点的终态语义，优先级高于计数）。
+    * 项目未挂载 ⇒ 无可计之处（`reportWorkspaceFor` 同款判据，不猜）。 */
+  private def countReportUsage(ctx: ToolContext, detail: String, suggestion: String): IO[Unit] =
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(name) =>
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case Some(rt) =>
+            rt.engine.noteChainReferencesIn(
+              List(detail, suggestion).filter(_.nonEmpty).mkString("\n"), FaceReportUsage)
+          case None => IO.unit
+        }
 
   /** 申报持久化归属工作区（#239②）：`ctx.projectName`（**引擎侧身份**——NodeEngine
     * spawn 时注入，非客户端参数）→ 挂载面 [[ProjectRuntimeRegistry]] → `ProjectDef.workspace`。

@@ -203,22 +203,58 @@ class ChainLedgerStore private (
           persist(updated) *> state.set(updated)
       }
 
-  // ── 轴(b)：外部引用面计数（未接线三面的落点）────────────────────────────
+  // ── 轴(b)：外部引用面计数（外部三面的落点）──────────────────────────────
+
+  /** 无籍计数的单一诊断构造点（[[noteReference]] / [[noteTextReferences]] 共用 ⇒ 两张
+    * 入口的错误文案恒同，禁各写一份）。 */
+  private def unknownFaceError(faceId: String): String =
+    s"unknown reference face '$faceId' — 引用面必须先登记在 ChainLedger.ReferenceFaces" +
+      s"（在册：${ReferenceFaces.map(_.id).mkString(", ")}），禁无籍计数"
 
   /** 外部引用面计账（面必须先经 [[ChainLedger.ReferenceFaces]] 登记 —— **禁无籍计数**；
-    * 面 id 未登记 ⇒ `Left` 可行动错误）。本批已接线的面由 [[reconcile]] 覆盖式复算，
-    * 无需调用本方法；未接线三面（mail/board/report）在其归属批次里接本 API。 */
+    * 面 id 未登记 ⇒ `Left` 可行动错误）。轴(b) 四面由 [[reconcile]] 覆盖式复算，无需调用
+    * 本方法；外部三面（`mail-usage` / `board-usage` / `report-usage`）在其归属批次里接本
+    * API：**逐次引用**形态（每次引用发生各 +1，如 Mail 投递成功）走 [[noteReference]]，
+    * **正文**形态（一段正文里逐字出现的已登记链号）走 [[noteTextReferences]]。
+    * 两者都只写 [[State.externalRefs]]（只计不减），下一拍 [[reconcile]] 按账并入复算。 */
   def noteReference(id: String, faceId: String, delta: Int): IO[Either[String, Unit]] =
     if !ReferenceFaces.exists(_.id == faceId) then
-      IO.pure(Left(
-        s"unknown reference face '$faceId' — 引用面必须先登记在 ChainLedger.ReferenceFaces" +
-          s"（在册：${ReferenceFaces.map(_.id).mkString(", ")}），禁无籍计数"))
+      IO.pure(Left(unknownFaceError(faceId)))
     else if id.trim.isEmpty then IO.pure(Left("reference id must be non-empty"))
     else
       state.get.flatMap { before =>
         val next = math.max(0, before.externalRefs.getOrElse(id, 0) + delta)
         val updated = before.copy(externalRefs = before.externalRefs.updated(id, next))
         persist(updated) *> state.set(updated).as(Right(()): Either[String, Unit])
+      }
+
+  /** **正文引用面计账（批三+ 接线：`board-usage` / `report-usage`）**：把一段**正文**里逐字
+    * 出现的**已登记**链号（判据单点 = [[ChainLedger.referencedIds]] × [[ChainLedger.knownIds]]
+    * 的热面）**一次性**计入 `faceId`。
+    *
+    * 三条机械口径（全部可机械核对，零人工判断）：
+    *  - 面未登记 ⇒ `Left`（与 [[noteReference]] 同一张闸，单点见 [[unknownFaceError]]）；
+    *  - **零命中 ⇒ 零写**（不落空账、不新建 `externalRefs` 键 —— 防「扫一次就多一行」）；
+    *  - 多命中 ⇒ **一次原子写**（不逐号落盘 ⇒ N 个引用不放大成 N 次 IO）。
+    *
+    * 🔴 **禁回填**：只对**已在热台账里**的号计数 —— 未登记号（悬空号 / 冷档已退役历史行）在正文
+    * 里出现也不建条目、不建别名、不建计数键（[[ChainLedger.knownIds]] 是全部输入面）。
+    * 🔴 **只计不减**：命中即 +1（正文是历史事实），与 `decWhen` 登记逐字一致。
+    *
+    * @return 命中的链号（升序；供调用方断言/留痕），或 `Left`（面未登记） */
+  def noteTextReferences(text: String, faceId: String): IO[Either[String, List[String]]] =
+    if !ReferenceFaces.exists(_.id == faceId) then
+      IO.pure(Left(unknownFaceError(faceId)))
+    else
+      state.get.flatMap { before =>
+        val hits = ChainLedger.referencedIds(text, ChainLedger.knownIds(before))
+        if hits.isEmpty then IO.pure(Right(Nil): Either[String, List[String]])
+        else
+          val refs = hits.foldLeft(before.externalRefs) { (acc, id) =>
+            acc.updated(id, math.max(0, acc.getOrElse(id, 0) + 1))
+          }
+          val updated = before.copy(externalRefs = refs)
+          persist(updated) *> state.set(updated).as(Right(hits): Either[String, List[String]])
       }
 
   // ── 解析（旧号永久可达：热面 + 冷档两级）────────────────────────────────
