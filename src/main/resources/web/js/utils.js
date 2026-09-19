@@ -147,17 +147,35 @@ function _renderMarkdownWithMath(text, parseVoice) {
 
 function _renderMarkdownInternal(protected_, voiceBlocks) {
   const mathBlocks = [];
-  // Protect display math ($$...$$)
-  protected_ = protected_.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
-    mathBlocks.push({ display: true, math: math.trim() });
-    return `MATHBLOCK${mathBlocks.length - 1}END`;
-  });
-  // Protect inline math ($...$), skip escaped \$
-  // Note: uses capturing group instead of lookbehind for Safari < 16.4 compatibility
-  protected_ = protected_.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (fullMatch, prefix, math) => {
-    mathBlocks.push({ display: false, math: math.trim() });
-    return prefix + `MATHBLOCK${mathBlocks.length - 1}END`;
-  });
+  // Math is protected BEFORE marked.parse and restored AFTER it on the whole
+  // HTML string, so the protection must be blind to code regions — otherwise
+  // a `$` inside code (shell/JS snippets) is paired up and the KaTeX markup is
+  // injected into <code>, corrupting the code text. Code regions are split out
+  // first and passed through untouched: odd segments of the split are code
+  // (fenced ``` / ~~~ or `inline` spans), even segments are math-eligible prose.
+  const protectMath = (seg) => {
+    // Note: uses capturing group instead of lookbehind for Safari < 16.4 compatibility
+    const add = (math, display) => {
+      mathBlocks.push({ display, math: math.trim() });
+      return `MATHBLOCK${mathBlocks.length - 1}END`;
+    };
+    // Display math: $$...$$ and \[...\]
+    seg = seg.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => add(math, true));
+    seg = seg.replace(/\\\[([\s\S]+?)\\\]/g, (m, math) => add(math, true));
+    // Inline math: $...$ and \(...\). The opening delimiter must not be followed
+    // by whitespace (or another $) and the closing one must not be preceded by
+    // whitespace nor followed by a digit — otherwise currency prose such as
+    // "$100 到 $200" pairs up and swallows the text in between.
+    seg = seg.replace(/(^|[^\\$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/g,
+      (fullMatch, prefix, math) => prefix + add(math, false));
+    seg = seg.replace(/(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g,
+      (fullMatch, prefix, math) => prefix + add(math, false));
+    return seg;
+  };
+  protected_ = protected_
+    .split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`+[^`\n]*?`+)/g)
+    .map((seg, i) => (i % 2 === 1 ? seg : protectMath(seg)))
+    .join('');
   let html = marked.parse(protected_, { headerIds: false });
   // Wrap <pre> blocks with a copy button
   html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>$1');
