@@ -37,12 +37,17 @@ object ConfigCommand extends CliCommand:
                     val value = k
                       .split("\\.")
                       .foldLeft(json)((j, segment) => j.hcursor.downField(segment).as[Json].getOrElse(Json.Null))
+                    // C2: text mode prints the value, not pretty JSON (`config
+                    // get workSchedule` answered a `{ "enabled" : false }`
+                    // block where a scalar was asked for).
                     if ctx.json then CliResult.Json(value)
-                    else CliResult.text(value.spaces2)
+                    else CliResult.text(value.asString.getOrElse(value.noSpaces))
                   case Left(_) => CliResult.Error("Failed to parse config")
               case None =>
-                if ctx.json then CliResult.Json(io.circe.parser.parse(configStr).getOrElse(Json.Null))
-                else CliResult.text(configStr)
+                // Whole-config dump — masked like `config show` (D6).
+                val redacted = io.circe.parser.parse(configStr).map(redact).map(_.noSpaces)
+                if ctx.json then CliResult.Json(io.circe.parser.parse(redacted.getOrElse(configStr)).getOrElse(Json.Null))
+                else CliResult.text(redacted.getOrElse(configStr))
           }
 
   end ConfigGet
@@ -60,12 +65,12 @@ object ConfigCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val key = ctx.positionalArgs.headOption.getOrElse("")
+          val key = ctx.positionalArgs.headOption.orElse(ctx.args.get("key"))
           val value = ctx.positionalArgs.lift(1).orElse(ctx.args.get("value")).getOrElse("")
           if key.isEmpty || value.isEmpty then IO.pure(CliResult.Error("Key and value required"))
           else
             // Build a nested JSON from dot-separated key
-            val configJson = buildNestedJson(key.split("\\.").toList, value)
+            val configJson = buildNestedJson(key.get.split("\\.").toList, value)
             client
               .command(
                 Json.obj(
@@ -81,7 +86,7 @@ object ConfigCommand extends CliCommand:
                   m <- resp.hcursor.downField("message").as[String].toOption
                 yield m) match
                   case Some(err) => IO.pure(CliResult.Error(s"Config update rejected: $err"))
-                  case None      => IO.pure(CliResult.text(s"Config updated: $key = $value"))
+                  case None      => IO.pure(CliResult.text(s"Config updated: ${key.get} = $value"))
               }
               .handleErrorWith(e => IO.pure(CliResult.Error(s"Config update failed: ${e.getMessage}")))
 
@@ -100,9 +105,48 @@ object ConfigCommand extends CliCommand:
       case head :: tail =>
         Json.obj(head -> buildNestedJson(tail, value))
 
+  /** D6: mask credentials in a whole-config dump. The design document already
+    * promised this ("`config show` = API key 脱敏", §5.2 drift table) while the
+    * implementation printed the config verbatim, including provider apiKeys and
+    * tokens. Values of secret-named keys become `***`; every other field is
+    * passed through unchanged (structure and non-secret values preserved).
+    * A targeted `config get <key>` is NOT masked — the user asked for that key
+    * by name and a masked answer would be useless.
+    *
+    * The name test is deliberately narrower than a bare `contains("token")`:
+    * `thinkingConfig.budgetTokens` / `*.maxTokens` (llm/config.scala:183) are
+    * numeric QUOTA fields, not credentials, and masking them would corrupt a
+    * non-secret field (the requirement is "secrets masked, non-secrets as-is").
+    * Plural quota names are therefore exempt; singular `token` / `authToken` /
+    * `accessToken` and any `apikey|secret|password|passwd|credential` name are
+    * masked.
+    */
+  private[cli] def isSecretKey(key: String): Boolean =
+    val k = key.toLowerCase.filter(_.isLetterOrDigit)
+    val named =
+      k.contains("apikey") || k.contains("secret") || k.contains("password") ||
+        k.contains("passwd") || k.contains("credential")
+    // "token" only when it is a singular credential-ish name, never a plural quota
+    val tokenish = k.startsWith("token") || k.endsWith("token")
+    named || tokenish
+
+  private[cli] def redact(json: Json): Json =
+    json.fold(
+      Json.Null,
+      b => Json.fromBoolean(b),
+      n => Json.fromJsonNumber(n),
+      s => Json.fromString(s),
+      arr => Json.fromValues(arr.map(redact)),
+      obj =>
+        Json.fromFields(obj.toList.map { case (k, v) =>
+          if isSecretKey(k) && !v.isNull then k -> (Json.fromString("***"): Json)
+          else k -> redact(v)
+        })
+    )
+
   private object ConfigShow extends CliSubcommand:
     def name = "show"
-    def description = "Show full configuration"
+    def description = "Show full configuration (credentials masked)"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -111,7 +155,7 @@ object ConfigCommand extends CliCommand:
         case Some(client) =>
           client.command(Json.obj("type" -> "getConfig".asJson)).map { resp =>
             val configStr = resp.hcursor.downField("config").as[String].getOrElse("{}")
-            CliResult.text(configStr)
+            CliResult.text(io.circe.parser.parse(configStr).map(redact).map(_.noSpaces).getOrElse(configStr))
           }
 
   private object ConfigEdit extends CliSubcommand:
