@@ -13,7 +13,7 @@ import { dropFriendMessageCache } from './fmMessageCache.js';
 import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
@@ -344,13 +344,40 @@ export function saveMsg(entry, sessionId) {
 //     to the recipient's session)
 //   - source delegate/subtask without eventType → a task prompt this agent
 //     DISPATCHED (completion notifications always carry an eventType)
+//
+// 2026-09-19 (bginject-fix1, 作者 06:17 缺陷派单 · 诊断 n-a7bafc55): both
+// branches used to key on the *globally active* session (state.activeSessionId),
+// which is the PARENT session while a sub-agent panel is open — chatView's
+// setActiveView swaps activeView only and never writes activeSessionId. So
+// inside a delegate-/subtask- panel this agent's own received task prompt was
+// classified as 「本窗口外发」 and dropped: every sub-agent panel rendered zero
+// blue bubbles (467 sessions) while its .ui.json held injected rows. The
+// judgment is now keyed on the session that OWNS the message set being
+// restored — passed in by each consumption point, never read from the stale
+// global pointer — and a sub-agent session is exempt as a whole: the backend
+// persists injected rows at the RECEIVING agent's own emission point
+// (AgentActor#emitInjectedUserEvent → that session's own .ui.json), so every
+// injected row in a delegate-/subtask-/node-/dispatcher- session was received
+// by that agent and none of them can be an outgoing send. The legacy
+// misrecord this filter exists for only ever landed in the parent (recording
+// root) session, so the parent side keeps both branches verbatim.
 function ownAgentName() {
   const sid = state.activeSessionId;
   if (!sid) return null;
   const s = (state.sessions || []).find(x => x && x.id === sid);
   return s ? (s.agentName || s.name || null) : null;
 }
-function isOutgoingInjection(m) {
+/**
+ * @param m          the persisted injected row (type 'user', injected, source)
+ * @param sessionId  the session whose history this row belongs to —
+ *                   restoreFromStorage passes its localStorage cache key
+ *                   (state.activeSessionId), restoreFromBackendHistory passes
+ *                   the view that received the historyPage frame (the sub-agent
+ *                   panels own their own ChatView.sessionId).
+ */
+function isOutgoingInjection(m, sessionId) {
+  const sid = sessionId || state.activeSessionId || null;
+  if (isBgAgentId(sid)) return false;
   const own = ownAgentName();
   if (m.sender && own && m.sender === own) return true;
   if ((m.source === 'delegate' || m.source === 'subtask') && !m.eventType) return true;
@@ -389,6 +416,11 @@ export function saveAskMsgDedup(entry, sessionId, requestId) {
 export function restoreFromStorage(opts = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return;
+  // This path renders the localStorage cache of the ACTIVE session — that cache
+  // key (state.activeSessionId) owns the message set, so it is the identity the
+  // direction filter must judge against (not activeView: the cache is not the
+  // view's). See isOutgoingInjection.
+  const ownerSessionId = state.activeSessionId || null;
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
@@ -397,7 +429,7 @@ export function restoreFromStorage(opts = {}) {
       // (misrecorded into this session by the backend) are not received
       // content — skip them.
       if (m.injected && m.source) {
-        if (isOutgoingInjection(m)) return;
+        if (isOutgoingInjection(m, ownerSessionId)) return;
         chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header));
         return;
       }
@@ -726,6 +758,12 @@ export function restoreFromStorage(opts = {}) {
 export function restoreFromBackendHistory(msgs, opts = {}) {
   const { scrollToBottom = true, busyTail = false } = opts;
   const chat = activeView.dom.chat;
+  // The caller points activeView at the view that received this historyPage
+  // frame (chatView#setActiveView; the sub-agent panels own their own ChatView
+  // with their own sessionId), so that view identifies the session owning
+  // `msgs` — the identity the direction filter must judge against. See
+  // isOutgoingInjection.
+  const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
   const fragment = document.createDocumentFragment();
   let skipMsg = false;
   // Defer expensive markdown+KaTeX rendering into post-append batches.
@@ -742,7 +780,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // Skip outgoing sends misrecorded into this session (see
       // isOutgoingInjection) — the bubble is for received content only.
       if (m.injected && m.source) {
-        if (isOutgoingInjection(m)) return;
+        if (isOutgoingInjection(m, ownerSessionId)) return;
         // deferMd with parseVoice=false (same as the live path): injected
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
