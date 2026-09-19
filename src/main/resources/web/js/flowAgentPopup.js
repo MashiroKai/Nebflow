@@ -37,7 +37,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
   pointer-events: auto;
-  animation: fa-fade-in 0.2s ease;
 }
 @keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -315,11 +314,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 
 /* Fullscreen variant — mounted on document.body, centered in the viewport.
-   No dimming backdrop and no blur: the modal floats directly above the UI. */
+   No dimming backdrop and no blur: the modal floats directly above the UI.
+   Opening animation removed 2026-09-19 (author defect report): the 0.2s
+   VIEWPORT-WIDE overlay opacity fade read as a "two-stage" opening (a whole
+   screen of blurred glass lighting up, then a small card). The panel now
+   appears at its terminal state on the very first frame. Geometry untouched;
+   other panels' animations untouched. */
 .flow-agent-overlay.fullscreen {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   z-index: 1000;
-  animation: fa-fade-in 0.2s ease;
 }
 .flow-agent-overlay.fullscreen .flow-agent-modal {
   position: relative;
