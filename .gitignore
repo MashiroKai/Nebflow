@@ -91,3 +91,22 @@ staging/
 __pycache__/
 # AGENTS.md is a local workspace file, not part of the repo (author ruling 2026-09-17 10:43)
 /AGENTS.md
+
+# --- repo-audit batch (2026-09-19) — untracked-noise classes, appended (no existing line touched)
+# One line each: what it is / why it must not enter the repo.
+# JVM crash log: hs_err_pid<PID>.log, written by the JVM itself on a hard crash — state of one
+# dead process on one machine, never source.
+hs_err_pid*
+# JVM crash-replay log: replay_pid<PID>.log, written next to hs_err — same as above, never source.
+replay_pid*
+# Heap dump: *.hprof (binary, from -XX:+HeapDumpOnOutOfMemoryError / jmap) — a multi-hundred-MB
+# memory image of one run, never source.
+*.hprof
+# Merge / patch residue: *.orig (pre-merge copy) and *.rej (rejected patch hunk) — local conflict
+# scratch of a single working copy, never source.
+*.orig
+*.rej
+# Editor residue: *.swp (vim swap) and *~ (auto backup of the previous revision) — machine-local
+# editor state, never source.
+*.swp
+*~
