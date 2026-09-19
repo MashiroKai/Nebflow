@@ -20,12 +20,11 @@ object HelpCommand extends CliCommand:
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      // Delegate to CliRouter's printHelp logic
-      IO.pure(
-        CliResult.text(
-          "Use 'nebflow' without arguments to show help, or 'nebflow <command> --help' for command details."
-        )
-      )
+      // T7: the previous line said "Use 'nebflow' without arguments to show
+      // help" — the opposite of the implementation (no arguments starts the
+      // Gateway, Main.scala:47-50). Replaced with the pointer line that
+      // printHelp already uses (no new wording).
+      IO.pure(CliResult.text("Use 'nebflow <command> --help' for command details"))
 
 end HelpCommand
 
@@ -185,22 +184,38 @@ object StatusCommand extends CliCommand:
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      val pidOpt = nebflow.cli.ProcessManager.readPid()
-      val running = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
-      val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
-      if ctx.json then
-        IO.pure(
-          CliResult.Json(
-            io.circe.Json.obj(
-              "running" -> running.asJson,
-              "pid" -> pidOpt.asJson,
-              "port" -> port.asJson,
-              "version" -> nebflow.Version.string.asJson
+      GatewayClient.readPort.flatMap { port =>
+        IO.blocking {
+          val pidOpt = nebflow.cli.ProcessManager.readPid()
+          val pidRunning = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
+          // A5: the pid file alone made `status` report "✗ Gateway not running"
+          // while the gateway was actually serving (cross-home start, raced
+          // cleanup, an older build that wrote no pid). Probe the port too:
+          // an identity probe first (is the occupant ours?), then a plain TCP
+          // connect to tell "someone else is on this port" from "free".
+          val ours =
+            if pidRunning then None
+            else nebflow.cli.SingleInstanceGuard.checkPortBlocking("127.0.0.1", port)
+          val foreign =
+            if pidRunning || ours.isDefined then false
+            else nebflow.cli.SingleInstanceGuard.connectProbeAccepted(port)
+          val running = pidRunning || ours.isDefined
+          if ctx.json then
+            CliResult.Json(
+              io.circe.Json.obj(
+                "running" -> running.asJson,
+                "pid" -> pidOpt.asJson,
+                "port" -> port.asJson,
+                "version" -> nebflow.Version.string.asJson
+              )
             )
-          )
-        )
-      else if running then IO.pure(CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"))
-      else IO.pure(CliResult.text("✗ Gateway not running"))
+          else if pidRunning then CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)")
+          else if ours.isDefined then CliResult.text(s"✓ Gateway running (port: $port, no pid file)")
+          else if foreign then
+            CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
+          else CliResult.text("✗ Gateway not running")
+        }
+      }
 
     end run
 
