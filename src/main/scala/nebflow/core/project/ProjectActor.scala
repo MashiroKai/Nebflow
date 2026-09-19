@@ -540,7 +540,32 @@ object ProjectActor:
                   //    欠账批。承载面 = 链级列表/明细面（Flow Map 归档面板，用户主动查看）。
                   //    best-effort：失败仅 WARN，不回滚归档、不影响后续 tick。
                   removals *> audits *> flip *> reconcile *> deliverChainSummaries(cfg)
-                }.as(behavior)
+                } *>
+                // ⑤ 链号台账 reconcile 腿（chainmodel 批二，2026-09-19）：一拍内完成
+                //    「出生 / 承继 / 合并（显式改号 + 别名）/ 拆分 → 引用计数**覆盖式**复算
+                //    → 轴(a)×(b) 退役 → 轴(c) 双阈值压缩（只归档不删除）」，并把**改号
+                //    留痕**逐条发射为批一事件类型 `chain-membership-changed`（字段 = 节点
+                //    + 旧号 + 新号 + reason=re-id；`None ↔ X` 的跃迁归批一写点，本腿**不
+                //    重复记账**）。判据全在 `ChainLedger`（纯函数）；本腿只做拍点编排与
+                //    事件记账。**best-effort**：失败仅 WARN（台账是派生面，下一拍重试；
+                //    零图事实损失，且台账写面自身失败即中止、绝不留半状态）。
+                cfg.engine.store.reconcileChainLedger(System.currentTimeMillis()).flatMap { ledgerChanges =>
+                  ledgerChanges.traverse_ { ch =>
+                    FlowMapEventLog
+                      .append(
+                        cfg.project.workspace,
+                        cfg.project.name,
+                        ch.nodeId,
+                        FlowMapEventLog.ChainMembershipChangedType,
+                        FlowMapEventLog.chainMembershipChangedSummary(ch.from, ch.to, ch.reason),
+                        chainId = ch.to
+                      )
+                      .handleErrorWith(e =>
+                        logger.warn(s"chain-membership-changed (ledger re-id ${ch.from.getOrElse("-")}→${ch.to.getOrElse("-")}) append failed for ${ch.nodeId}: ${e.getMessage}"))
+                  }
+                }.handleErrorWith(e =>
+                  logger.warn(s"chain ledger reconcile failed: ${e.getMessage}").void)
+                  .as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)
           }
