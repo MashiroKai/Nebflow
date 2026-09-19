@@ -8,7 +8,7 @@ import scala.concurrent.duration.*
 
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
-import nebflow.core.hotrestart.{HotRestart, RestartMode, SuccessorGate}
+import nebflow.core.hotrestart.{HotRestart, HotRestartIntent, RestartMode, SuccessorGate}
 import nebflow.core.project.{
   FlowMapStore,
   NodeDef,
@@ -52,7 +52,13 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
+  /** 本测试例的开工墙钟锚点（`beforeEach` 置位）——[[awaitOwnIntent]] 的世代闸门用。
+    * 每例的首条重启链 writeIntent 必然晚于它（排空观察窗 ≥100ms），故可据此把「上一条
+    * 失败例留下的游离链写在同一条 intent 路径上的旧文件」排除在等待判据之外。 */
+  private var testStartedAtMs: Long = 0L
+
   override def beforeEach(context: munit.BeforeEach): Unit =
+    testStartedAtMs = System.currentTimeMillis()
     HotRestart.resetForTest.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
     ProjectRuntimeRegistry.clear.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
     os.remove.all(tempRoot / "restart")
@@ -61,7 +67,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     HotRestart.resetForTest.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
     ProjectRuntimeRegistry.clear.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
-    LlmInterface.cancelAllInflight.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
+    LlmInterface.cancelAllInflight().unsafeRunSync()(using cats.effect.unsafe.implicits.global)
     os.remove.all(tempRoot / "subagent-tasks")
 
   // ── 基建（与 HotRestartSpec 同款；本 spec 只用得到 quiesce/排空/派生面）──
@@ -110,6 +116,25 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     def loop: IO[Unit] = cond.flatMap(if _ then IO.unit else IO.sleep(20.millis) *> loop)
     loop.timeout(timeoutMs.millis)
       .handleErrorWith(_ => IO.raiseError(new AssertionError(s"timeout waiting for: $desc")))
+
+  /** 等本测试例自己的链走到中止相位。⚠️ 判据**不能**读 `orch.status`：中止腿的冻结契约是
+    * 「释放占位 ⇒ 可重试」——`abort` 先 `releasePlaceholder` 再广播 Aborted 帧，故中止后
+    * `status` 恒为 None（同一 spec 的 ①freeze 例**正是断言这个 None**）。中止相位的可观测面
+    * = 统一进度帧（判据 4 的帧；本 spec 随后即逐条断言相位序列）。 */
+  private def awaitAbortFrame(frames: Frames): IO[Unit] =
+    waitUntil("update reached Aborted (unified progress frame)") {
+      frames.progressPhases.get.map(_.contains("aborted"))
+    }
+
+  /** 等**本测试例自己的**重启链落盘 intent。判据 = 世代（`generation`，intent 文件链的
+    * 关联键）晚于本例开工锚点。⚠️ 单用 `os.exists(intentFile)` 会被上一条失败例的游离链
+    * 骗过（intent 路径全例共用）——实测：孤儿链先落盘 ⇒ 本例的 `markPhase` 写到了别人的
+    * 文件上、本链的 `pollReadyToBind` 随后被本链自己的 `writeIntent` 覆盖回 "spawned" ⇒
+    * C2 超时、交接永不完成。故等待面必须带世代闸门。 */
+  private def awaitOwnIntent(): IO[Unit] =
+    waitUntil("hot-restart orchestrator wrote its own intent (generation gate)") {
+      SuccessorGate.readIntent(intentFile).map(_.exists(_.generation >= testStartedAtMs))
+    }
 
   private class FakeProcess(aliveAfterGrace: Boolean, destroyed: Ref[IO, Int])
       extends HotRestart.SpawnedProcess:
@@ -215,7 +240,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       legacyOutcomes <- legacy.get
       _ = assertEquals(legacyOutcomes, List("ok:Update installed, restarting..."), "既有完成帧回执")
       // 重启相位**确实**委托了既有编排器：intent 落盘 = 真实 HotRestart 跑起来了
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      _ <- awaitOwnIntent()
       intent <- SuccessorGate.readIntent(intentFile)
       _ = assertEquals(intent.map(_.triggerSource), Some("update:settings"),
         "restart phase must delegate to the existing orchestrator with the update source")
@@ -238,7 +263,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       (key, _) <- LlmInterface.registerInflight(None) // F4 域在飞 ⇒ 排空无法收敛
       admission <- orch.request(settingsReq(mode = RestartMode.WaitIdle(200L)))
       _ = assert(admission.isInstanceOf[UpdateAdmission.Accepted], admission.toString)
-      _ <- waitUntil("update reached Aborted") { orch.status.map(_.exists(_.phase == UpdatePhase.Aborted)) }
+      _ <- awaitAbortFrame(frames)
       phases <- frames.progressPhases.get
       count <- counter.get
       _ = assertEquals(phases, List("checking", "preparing", "freezing", "aborted"),
@@ -272,7 +297,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         hr, frames, countingInstall(counter, Left("Install script failed (exit code: 13)")))
       legacy <- Ref.of[IO, List[String]](Nil)
       _ <- orch.request(settingsReq(), r => legacy.update(_ :+ r.fold(e => s"failed:$e", ok => s"ok:$ok")))
-      _ <- waitUntil("update reached Aborted") { orch.status.map(_.exists(_.phase == UpdatePhase.Aborted)) }
+      _ <- awaitAbortFrame(frames)
       phases <- frames.progressPhases.get
       _ = assertEquals(phases, List("checking", "preparing", "freezing", "updating", "aborted"), phases)
       count <- counter.get
@@ -298,8 +323,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
       counter <- Ref.of[IO, Int](0)
       gate <- Deferred[IO, Either[String, String]]
-      gatedInstall: UpdateChannel => IO[Either[String, String]] =
-        _ => counter.update(_ + 1) *> gate.get
+      gatedInstall = (_: UpdateChannel) => counter.update(_ + 1) *> gate.get
       orch = mkOrchestrator(hr, frames, gatedInstall)
       req = settingsReq(key = Some("idem-key-1"))
       first <- orch.request(req)
@@ -315,7 +339,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ = assertEquals(count, 1, "a merged duplicate must NOT execute the install action a second time")
       phases <- frames.progressPhases.get
       _ = assertEquals(phases.count(_ == "updating"), 1, s"no second execution may appear: $phases")
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
@@ -332,8 +356,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
       counter <- Ref.of[IO, Int](0)
       gate <- Deferred[IO, Either[String, String]]
-      gatedInstall: UpdateChannel => IO[Either[String, String]] =
-        _ => counter.update(_ + 1) *> gate.get
+      gatedInstall = (_: UpdateChannel) => counter.update(_ + 1) *> gate.get
       orch = mkOrchestrator(hr, frames, gatedInstall)
       _ <- orch.request(settingsReq(key = Some("run-A")))
       _ <- waitUntil("install action started") { counter.get.map(_ >= 1) }
@@ -352,7 +375,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ = assertEquals(count, 1, "the busy request must never be queued and executed")
       phases <- frames.progressPhases.get
       _ = assertEquals(phases.count(_ == "updating"), 1, phases.toString)
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
@@ -436,7 +459,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       _ <- orch.request(settingsReq(mode = RestartMode.RejectIfBusy))
-      _ <- waitUntil("update reached Aborted") { orch.status.map(_.exists(_.phase == UpdatePhase.Aborted)) }
+      _ <- awaitAbortFrame(frames)
       phases <- frames.progressPhases.get
       _ = assertEquals(phases, List("checking", "preparing", "freezing", "aborted"), phases.toString)
       stillRunning <- store.snapshot
@@ -511,9 +534,14 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       expired <- orch.request(req)
       _ = assert(expired.isInstanceOf[UpdateAdmission.Accepted],
         s"after the window the key must expire and be re-accepted: $expired")
+      // 计数判据必须等**第二次执行真跑到安装相位**再读（安装动作在 fork 的执行体上）：
+      // 请求一受理就读计数是竞态，会把真跑过的第二次安装读成 1（本轮实测命中）。
+      _ <- waitUntil("the install action ran a second time") { counter.get.map(_ >= 2) }
       count <- counter.get
       _ = assertEquals(count, 2, "the expired-key request is a genuinely new run (install runs again)")
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      // 第二次执行的重启相位被既有编排器**幂等合并**进在途链（R7：实测本例内只出现一条链、
+      // 一份 intent——第二次执行没有第二次 "draining on"）⇒ 等待面仍是本例自己的那份 intent。
+      _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
@@ -529,13 +557,13 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter, Left("Install script failed (exit code: 13)")))
       _ <- orch.request(settingsReq())
-      _ <- waitUntil("update reached Aborted") { orch.status.map(_.exists(_.phase == UpdatePhase.Aborted)) }
+      _ <- awaitAbortFrame(frames)
       raw <- frames.raw.get
       aborted = raw.filter(_.hcursor.get[String]("phase").contains("aborted"))
       _ = assertEquals(aborted.size, 1)
-      _ = assertEquals(aborted.head.hcursor.get[String]("reason"), Some("install-failed"),
+      _ = assertEquals(aborted.head.hcursor.get[String]("reason").toOption, Some("install-failed"),
         "the aborted frame must carry the frozen reason literal")
-      _ = assertEquals(aborted.head.hcursor.get[String]("messageKey"), Some("update.phase.aborted"))
+      _ = assertEquals(aborted.head.hcursor.get[String]("messageKey").toOption, Some("update.phase.aborted"))
     yield ()
   }
 
@@ -561,7 +589,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ <- progress.traverse_ { j =>
         val hc = j.hcursor
         IO {
-          assertEquals(hc.keys.toList.sorted, List(
+          assertEquals(hc.keys.toList.flatten.sorted, List(
             "channel", "currentVersion", "detail", "idempotencyKey", "latestVersion",
             "messageKey", "phase", "progress", "reason", "source", "state", "type"),
             s"frame keys: ${hc.keys}")
@@ -569,15 +597,20 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
           assertEquals(hc.downField("reason").focus.flatMap(_.asString), None,
             "non-failure phases carry reason=null")
           val phase = hc.get[String]("phase").getOrElse("?")
-          assertEquals(hc.get[String]("messageKey"), Some(s"update.phase.$phase"))
-          assertEquals(hc.get[String]("source"), Some("settings"))
-          assertEquals(hc.get[String]("channel"), Some("beta"))
-          assertEquals(hc.get[String]("idempotencyKey"), Some("settings:beta:local"))
-          assertEquals(hc.get[String]("currentVersion"), Some("2026.9.19"))
-          assertEquals(hc.get[String]("latestVersion"), Some("2026.9.20"))
+          assertEquals(hc.get[String]("messageKey").toOption, Some(s"update.phase.$phase"))
+          assertEquals(hc.get[String]("source").toOption, Some("settings"))
+          assertEquals(hc.get[String]("channel").toOption, Some("beta"))
+          assertEquals(hc.get[String]("idempotencyKey").toOption, Some("settings:beta:local"))
+          assertEquals(hc.get[String]("currentVersion").toOption, Some("2026.9.19"))
+          // 最新版本只在**读到版本指针之后**的相位才有值：检查相位此刻还没读（帧仍带该键，
+          // 见上 12 键断言）⇒ 该帧必须为 null。逐相位钉死，两侧都不放宽。
+          if phase == "checking" then
+            assertEquals(hc.get[String]("latestVersion").toOption, None,
+              "the checking frame cannot carry a latest version yet (the pointer is read in the next step)")
+          else assertEquals(hc.get[String]("latestVersion").toOption, Some("2026.9.20"))
           // 🔴 帧**不携带展示文案**：只有 messageKey + 诊断 detail（D6）
-          assert(!hc.keys.exists(k => k == "text" || k == "label" || k == "message"),
-            s"frames must not carry display text: ${hc.keys}")
+          assert(!hc.keys.toList.flatten.exists(k => k == "text" || k == "label" || k == "message"),
+            s"frames must not carry display text: ${hc.keys.toList.flatten}")
         }
       }
       // 文案键解析：每个相位的 messageKey 必须同时存在于 zh-CN 与 en 文案表
@@ -595,12 +628,12 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ = assert(restart.nonEmpty, "既有 restartStatus 帧仍必须发出（子集保留不删）")
       _ <- restart.traverse_ { j =>
         IO {
-          assertEquals(j.hcursor.keys.toList.sorted, List("detail", "phase", "type"),
+          assertEquals(j.hcursor.keys.toList.flatten.sorted, List("detail", "phase", "type"),
             "restartStatus frame shape unchanged")
-          assertEquals(j.hcursor.get[String]("type"), Some("restartStatus"))
+          assertEquals(j.hcursor.get[String]("type").toOption, Some("restartStatus"))
         }
       }
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
@@ -624,7 +657,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         j.hcursor.get[String]("phase").contains("preparing"))
       _ = assert(preparing.head.hcursor.get[String]("detail").exists(_.contains("unreachable")),
         preparing.head.hcursor.get[String]("detail").toString)
-      _ <- waitUntil("hot-restart orchestrator wrote its intent") { IO(os.exists(intentFile)) }
+      _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
