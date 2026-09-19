@@ -363,7 +363,7 @@ Message type (optional, default "INFO"):
         ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's derived chain set — an unknown id is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
+          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
@@ -623,9 +623,16 @@ Message type (optional, default "INFO"):
       case Some(id) => s"[mail chainId: $id]\n$message"
       case None     => message
 
-  /** B2-x / R-17：`chainId` **只校验、不落库**（零链级账本）。本方法零副作用。
-    * 无项目上下文时只做形态校验（无链集可对）；有项目上下文则对派生链全集。
-    * 错误码 = `MAIL_CHAIN_NOT_FOUND`（非空但不在链集内）。 */
+  /** B2-x / R-17 + **chainmodel 批三 ①（chainmail）**：`chainId` **只校验、不落库**
+    * （本方法零副作用；台账只**读**、**禁回填**）。无项目上下文时只做形态校验（无链集可对）；
+    * 有项目上下文则按**台账解析**给出可达集合：
+    *   声明链 ∪ 兜底派生链 ∪ 链级依赖目标链 ∪ 台账已登记旧号别名
+    * （判据单点 = `NodeEngine.mailChainIds` / `resolveMailChainId` → `FlowMapStore`；
+    * 热面未命中再经台账冷档兜底 ⇒ 「链号改号后旧号永久可达」，见设计件 §二(b)/(c) 第 4 面）。
+    *
+    * 🔴 **负判据保留**（判红线）：完全未登记号（含归档区封存链号）照旧
+    * `MAIL_CHAIN_NOT_FOUND`（`MAIL_CHAIN_NOT_FOUND` = 非空但不可达）——禁把校验放宽成
+    * 「未知也放行」。改造前口径 = 纯派生链集比对（零台账），旧号在链号重归后必然失效。 */
   private[tools] def validateChainId(chainId: Option[String], ctx: ToolContext): IO[Either[ToolError, Option[String]]] =
     chainId match
       case None => IO.pure(Right(None: Option[String]))
@@ -636,14 +643,17 @@ Message type (optional, default "INFO"):
             ProjectRuntimeRegistry.get(projectName).flatMap {
               case None => IO.pure(Right(Some(id): Option[String])) // 项目未挂载：无链集可对，交投递侧报错
               case Some(rt) =>
-                rt.engine.chainIds.map { ids =>
-                  if ids.contains(id) then Right(Some(id): Option[String])
-                  else
-                    Left(ToolError(
-                      s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
-                        s"Known chains: ${if ids.isEmpty then "(none derived)" else ids.toList.sorted.mkString(", ")}. " +
-                        "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
-                    ))
+                rt.engine.resolveMailChainId(id).flatMap {
+                  case Some(_) => IO.pure(Right(Some(id): Option[String]))
+                  case None =>
+                    // 错误路径才取「已知链」清单（避免每次成功校验都多一次全量派生）
+                    rt.engine.mailChainIds.map { ids =>
+                      Left(ToolError(
+                        s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
+                          s"Known chains: ${if ids.isEmpty then "(none registered)" else ids.toList.sorted.mkString(", ")}. " +
+                          "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
+                      ))
+                    }
                 }
             }
 
