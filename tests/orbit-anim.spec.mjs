@@ -410,6 +410,42 @@ test('pending nodes are never animated; running toggles the CSS animation', asyn
   expect(r.inline.every((s) => s === '')).toBe(true);
 });
 
+test('pane-scoped keys isolate identical node ids across projects', async ({ page }) => {
+  // Carries over the rAF-era spec's claim "pane-scoped keys isolate projects",
+  // re-expressed against the bookkeeping that replaced the driver's node map: the
+  // phase origin is keyed by (pane tab id | node id), so two panes showing the SAME
+  // node id keep independent origins, a pending node never enters the map, and a
+  // removed pane drops out again (no cross-project leak).
+  const res = await page.evaluate(`(() => {
+    const pane = document.querySelector('.canvas-tab-pane');
+    const other = document.createElement('div');
+    other.className = 'canvas-tab-pane';
+    other.dataset.tabId = 'flow-map-otherproj';
+    other.innerHTML = '<div class="solar-node running" data-node-id="N1">' +
+      '<div class="solar-orbit">' + [1, 2, 3].map((r) =>
+        '<div class="solar-ring ring-' + r + '"><div class="solar-dot-wrap">' +
+        '<div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>').join('') +
+      '</div></div>';
+    pane.parentElement.appendChild(other);
+    window.__orbitTest.sync();
+    const after = window.__orbitTest.states().map((s) => ({ key: s.key, phase: s.phase }));
+    const seeded = [...other.querySelectorAll('.solar-dot-spin')].map((s) => s.dataset.orbitPhase || null);
+    other.remove();
+    window.__orbitTest.sync();
+    const cleaned = window.__orbitTest.states().map((s) => s.key);
+    return { after, seeded, cleaned };
+  })()`);
+
+  // Same node id in two panes ⇒ two entries, the tab id being part of the key.
+  expect(res.after.map((s) => s.key).sort())
+    .toEqual(['flow-map-otherproj|N1', 'flow-map-testproj|N1']);
+  expect(res.after.every((s) => s.phase === 'running')).toBe(true);
+  // The newly attached pane's node is a fresh DOM element ⇒ seeded exactly once.
+  expect(res.seeded).toEqual(['1', '1', '1']);
+  // #n2 (pending) was never in the map, and the removed pane is dropped again.
+  expect(res.cleaned).toEqual(['flow-map-testproj|N1']);
+});
+
 test('visual record: running vs completed screenshots', async ({ page }) => {
   await page.evaluate(() => window.__orbitTest.sync());
   await page.waitForTimeout(400);
