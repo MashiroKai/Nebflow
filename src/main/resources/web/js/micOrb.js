@@ -1104,11 +1104,21 @@ function deriveState() {
 
 class MicOrb {
   constructor() {
-    /** @type {HTMLElement|null} */ this.btn = document.getElementById('voice-btn');
+    /* 挂载解析（visup-b 批 · 修正④）：canvas 是**唯一的挂载信号** —— 优先按 id
+       `#mic-canvas` 取，取不到才回落到旧形态「`#voice-btn` 内的 `.orb-canvas`」
+       （两个夹具 harness 与历史 DOM 形态仍逐字可用）。宿主按钮同样自证：优先
+       canvas 自己的祖先 `<button>`，再回落 `#voice-btn`。**产品页现无 canvas**
+       ⇒ 本类不会被实例化（`getMicOrb()` 的挂载判据），此处解析只服务夹具 /
+       探测宿主。 */
     /** @type {HTMLCanvasElement|null} */
-    this.canvas = this.btn ? /** @type {HTMLCanvasElement|null} */ (this.btn.querySelector('.orb-canvas')) : null;
+    this.canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById('mic-canvas'));
+    const legacyBtn = /** @type {HTMLElement|null} */ (document.getElementById('voice-btn'));
+    if (!this.canvas && legacyBtn) this.canvas = /** @type {HTMLCanvasElement|null} */ (legacyBtn.querySelector('.orb-canvas'));
     /** @type {HTMLElement|null} */
-    this.cssOrb = this.btn ? /** @type {HTMLElement|null} */ (this.btn.querySelector('.css-orb')) : null;
+    this.btn = (this.canvas && /** @type {HTMLElement|null} */ (this.canvas.closest('button'))) || legacyBtn;
+    /** @type {HTMLElement|null} */
+    this.cssOrb = /** @type {HTMLElement|null} */ (document.getElementById('mic-css-orb'))
+      || (this.btn ? /** @type {HTMLElement|null} */ (this.btn.querySelector('.css-orb')) : null);
     this.state = 'idle';
     this.renderer = null;
     this.webglOk = false;
@@ -1353,9 +1363,18 @@ class MicOrb {
 
 let instance = null;
 
-/** Lazily create + return the MicOrb singleton (binds #voice-btn). */
+/** Lazily create + return the MicOrb singleton (binds the composer's orb canvas).
+ *
+ *  🔴 挂载判据（visup-b 批 · 作者 2026-09-19 04:22 **修正④**）：「语音麦克风样式 =
+ *  普通麦克风（禁现气泡形态）」⇒ 主输入区的 orb（`#mic-canvas` + `.css-orb`）已
+ *  退役（`index.html` 的 `#voice-btn` 现为普通 `.icon-btn` + lucide `mic`）。
+ *  因此挂载判据由「有没有 `#voice-btn`」改为「**有没有 orb 自己的 canvas**」：
+ *  没有 canvas ⇒ 不建实例（返回 null）⇒ `initMicOrb()` / `notifyVoiceState()` 自然
+ *  no-op，录音反馈由 `input.js` 的 `.icon-btn.recording` / `.mic-btn.processing` 承担。
+ *  本模块**本体保留**（OrbRenderer / STATES / orbPresets 渲染管线仍是设置面与
+ *  测试夹具的共用实现 —— 退役的是**输入区的挂载**，不是渲染器）。 */
 export function getMicOrb() {
-  if (!instance && document.getElementById('voice-btn')) instance = new MicOrb();
+  if (!instance && document.getElementById('mic-canvas')) instance = new MicOrb();
   return instance;
 }
 

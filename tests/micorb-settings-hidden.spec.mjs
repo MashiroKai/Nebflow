@@ -169,11 +169,49 @@ function expectSlot(slot, rgb, hex, ctx) {
   expect(rgb, `${ctx} slot ${slot} → ${hex}`).toEqual(want);
 }
 
+/** visup-b 批 · 作者 2026-09-19 04:22 修正④（逐字：「语音麦克风样式 = 普通麦克风
+ *  （禁现气泡形态）」）⇒ 主输入区的 orb 挂载**退役**（产品页零 `#mic-canvas`/
+ *  `.mic-orb-wrap`/`.css-orb`）。
+ *  本 helper 因此把 H3 的「live orb」改为**探测宿主上的同一生产 MicOrb**：
+ *  挂载判据 = `#mic-canvas` 在场（`micOrb.js::getMicOrb`），MicOrb 按 **id** 取 canvas、
+ *  宿主按钮 = canvas 自己的祖先 `<button>` ⇒ 宿主 DOM 形状与旧生产形态**逐字相同**。
+ *  🔴 退役面本身**不被跳过**：H3 先逐条断言「产品页无 orb 挂载」，再挂探测宿主
+ *  （断言数只增不减；`webglOk`/槽位三值等原判据逐条保留）。 */
+async function mountOrbProbe(page) {
+  await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'orb-probe';
+    host.className = 'mic-orb-wrap';
+    host.style.cssText = 'position:fixed;left:40px;top:40px;width:64px;height:64px;z-index:0';
+    host.innerHTML = '<button class="micbubble" id="orb-probe-btn" type="button" aria-label="orb probe">'
+      + '<canvas class="orb-canvas" id="mic-canvas" width="64" height="64" aria-hidden="true"></canvas>'
+      + '<div class="css-orb orb" id="mic-css-orb" role="img" aria-label="orb probe"></div>'
+      + '</button>';
+    document.body.appendChild(host);
+  });
+}
+
 test('H3: hidden entry ≠ dropped config — saveSaved custom selection drives the live orb', async ({ page }) => {
   await page.goto(base + '/index.html');
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
-  // Live orb is the production MicOrb on #mic-canvas (WebGL must be up,
-  // same requirement as micorb-presets T1 in this environment).
+  // ── ① 退役面（修正④）：产品页的输入区 orb 挂载逐条归零（不许静默跳过） ──────
+  const retired = await page.evaluate(async () => ({
+    composerWrap: !!document.querySelector('#input-bar .mic-orb-wrap'),
+    composerCanvas: !!document.querySelector('#input-bar #mic-canvas'),
+    voiceBtnOrbChild: !!document.querySelector('#voice-btn .orb-canvas'),
+    orbLegacyNodes: document.querySelectorAll('.mic-orb-wrap, .micbubble, .orb-canvas, .css-orb').length,
+    singleton: (await import('/js/micOrb.js')).getMicOrb() === null,
+    voiceBtnCls: document.getElementById('voice-btn').className,
+  }));
+  expect(retired.composerWrap, 'composer orb wrap retired').toBe(false);
+  expect(retired.composerCanvas, 'composer orb canvas retired').toBe(false);
+  expect(retired.voiceBtnOrbChild, 'voice button must not carry an orb canvas').toBe(false);
+  expect(retired.orbLegacyNodes, 'product page must have ZERO legacy orb nodes').toBe(0);
+  expect(retired.singleton, 'no MicOrb singleton without an orb canvas (mount gate)').toBe(true);
+  expect(retired.voiceBtnCls, 'mic control = plain icon-btn').toContain('mic-btn');
+  // ── ② 探测宿主上实例化**同一生产** MicOrb（WebGL must be up, same requirement
+  //       as micorb-presets T1 in this environment） ─────────────────────────
+  await mountOrbProbe(page);
   const webglOk = await page.evaluate(async () => (await import('/js/micOrb.js')).getMicOrb().webglOk);
   expect(webglOk, 'headless Chromium must provide WebGL (SwiftShader)').toBe(true);
 

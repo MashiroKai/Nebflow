@@ -3731,7 +3731,11 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
-initMicOrb(); // Mic bubble orb v8.2.2 (#419) — binds #voice-btn canvas/css-orb
+// visup-b 批（作者 2026-09-19 04:22 修正④）：输入区的 micOrb 气泡形态退役 ⇒
+// `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。
+// 调用点保留：设置面/预览面的 OrbRenderer 管线仍由本模块导出，且未来若重挂输入区
+// orb 只需恢复 index.html 的 canvas（一处）。麦克风反馈改由 input.js 承担。
+initMicOrb(); // Mic orb renderer — composer mount retired (no #mic-canvas ⇒ no-op)
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.

@@ -312,6 +312,20 @@ export default {
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',
   'messages.selectExit': 'Exit',
+  // ── visup-b batch (author 2026-09-19 04:22: D5 action bar / D7 forward window) ──
+  // Same hard ban stands: no delete/recall keys anywhere.
+  // "Merge forward" = phase 2 (no server protocol ⇒ key carries `Phase2`).
+  'messages.forwardEach': 'Forward one by one',
+  'messages.forwardMerge': 'Merge forward',
+  'messages.forwardMergePhase2': 'Merge forward (phase 2)',
+  'messages.forwardToTitle': 'Forward to',
+  'messages.forwardTargetDirect': 'Direct chat',
+  'messages.forwardTargetGroup': 'Group chat',
+  'messages.forwardNotePlaceholder': 'Leave a note',
+  'messages.forwardNoPick': 'No target conversation picked',
+  'messages.forwardSend': 'Send',
+  'messages.forwardCancel': 'Cancel',
+  'messages.forwardChipRemove': 'Remove {name}',
   'messages.copied': 'Copied',
   'messages.copyFailed': 'Copy failed',
   'messages.forwardNoTarget': 'No other conversation to forward to',
@@ -1116,6 +1130,10 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // Generic "Remove" accessible name (visup-b batch: the main window's attachment ❌
+  // — the icon-only ❌ carries no text, so it must have an accessible name; kept
+  // separate from `ref.remove`, which is the semantic "Remove reference").
+  'common.remove': 'Remove',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',

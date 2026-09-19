@@ -209,6 +209,17 @@ export function refMentionText(ref) {
 
 const EXPAND_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const COLLAPSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+/**
+ * 待清件「清除」键的 ✕ 字形 —— **单一定义，两处消费者**（作者 2026-09-19 04:22
+ * 修正②「主窗口图片附件的 ❌ 有未居中感 ⇒ 修复居中」/ 修正①「引用条的 ❌ 参考主窗口」）：
+ *   ① 主窗口图片/文件附件 ❌（`js/chat.js::renderAttachmentPreview`，class `.att-remove`）
+ *   ② 好友消息面引用条 ❌（`renderFriendInputRef` 的 `closeStyle:'disc'`，class `.fm-quote-remove`）
+ * 🔴 为什么是 SVG 而不是文本 `x`：flex 居中的对象是**行盒**，行盒含上侧 ascent 空白
+ * ⇒ x-height 字形的视觉中心落在圆盘中线**下方**（作者截图 2 实测 1px / 16px = 6.25%）；
+ * 本字形在 16×16 viewBox 内由两条对角线构成，形心 =(8,8) 恒等于 viewBox 中心，
+ * `display:block` + flex 居中 ⇒ 图形中心 == 圆盘中心（逐值相等，容差 0）。
+ */
+export const CLOSE_X_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 4 L12 12"/><path d="M12 4 L4 12"/></svg>';
 const ICONS = {
   file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>',
   document: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
@@ -230,13 +241,17 @@ function truncate(str, n) {
 /**
  * Build the reference block element.
  * @param {Object} ref  unified Reference
- * @param {{mode?:'input'|'message'}} [opts]
+ * @param {{mode?:'input'|'message', closeStyle?:'glyph'|'disc'}} [opts]
+ *   closeStyle（input 模式）：`'glyph'`（缺省）= 既有 18×18 透明描边 ✕（主窗口输入框
+ *   引用卡 `.att-ref-remove`）；`'disc'` = 主窗口同类的**实心圆白 ✕** 清除键
+ *   （`.fm-quote-remove`，形态与主窗口图片/文件附件 ❌ 同款 —— 作者 2026-09-19
+ *   04:22 修正①：「引用条的 ❌ 与样式一律参考主窗口既有模式」）。
  * @param {(ref:Object)=>void} [onRemove]  input-mode local remove callback
  * @returns {HTMLElement}
  */
-export function renderRefBlock(ref, { mode = 'input' } = {}, onRemove) {
+export function renderRefBlock(ref, { mode = 'input', closeStyle = 'glyph' } = {}, onRemove) {
   if (mode === 'message') return renderMessageRef(ref);
-  return renderInputRef(ref, onRemove);
+  return renderInputRef(ref, onRemove, closeStyle);
 }
 
 // ── 转发消息引用块「按需展开按钮」溢出重估基座（作者 2026-09-14 17:26 裁定）──
@@ -290,7 +305,7 @@ function armFmOverflow(wrap, sync) {
 // #290 A2A (addendum §3.4): friend-message input block - etched surface,
 // header 来自 {好友名} + date corner badge, body 2-line clamp, expand = full
 // text (content.fullText). Fixed footprint, zero new color tokens.
-function renderFriendInputRef(ref, onRemove) {
+function renderFriendInputRef(ref, onRemove, closeStyle) {
   const wrap = document.createElement('div');
   wrap.className = 'att-ref att-ref-fm';
   wrap.dataset.refType = 'friend-message';
@@ -371,8 +386,12 @@ function renderFriendInputRef(ref, onRemove) {
 
   const rm = document.createElement('button');
   rm.type = 'button';
-  rm.className = 'att-ref-remove';
-  rm.textContent = '×';
+  // 修正①（2026-09-19 04:22）：引用条的 ❌ 取**主窗口同类别**形态 —— 实心圆白 ✕
+  //（`.fm-quote-remove`，与主窗口附件 ❌ 同一个声明块、同一个 `CLOSE_X_SVG` 字形）。
+  // 缺省仍是本卡原来的 18px 描边 ✕（`.att-ref-remove`）⇒ 主窗口输入框零变化。
+  const disc = closeStyle === 'disc';
+  rm.className = disc ? 'att-ref-remove fm-quote-remove' : 'att-ref-remove';
+  if (disc) rm.innerHTML = CLOSE_X_SVG; else rm.textContent = '×';
   rm.title = t('ref.remove');
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
@@ -435,8 +454,8 @@ function chipMetaText(ref) {
   return lines.filter(Boolean).join('\n');
 }
 
-function renderInputRef(ref, onRemove) {
-  if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove);
+function renderInputRef(ref, onRemove, closeStyle) {
+  if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove, closeStyle);
   const wrap = document.createElement('div');
   wrap.className = 'att-ref';
   wrap.dataset.refType = ref.refType || '';
@@ -468,8 +487,9 @@ function renderInputRef(ref, onRemove) {
   // ✕ remove (local-only, C16 draft semantics — 删除链路不变)
   const rm = document.createElement('button');
   rm.type = 'button';
-  rm.className = 'att-ref-remove';
-  rm.textContent = '×';
+  const disc = closeStyle === 'disc';
+  rm.className = disc ? 'att-ref-remove fm-quote-remove' : 'att-ref-remove';
+  if (disc) rm.innerHTML = CLOSE_X_SVG; else rm.textContent = '×';
   rm.title = t('ref.remove');
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });

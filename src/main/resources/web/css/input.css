@@ -558,19 +558,43 @@
   padding: 3px 2px;
 }
 .ref-gate-hint[hidden] { display: none; }
-.att-remove {
-  position: absolute;
-  top: -4px; right: -4px;
-  width: 16px; height: 16px;
+/* ── 待清件「清除」键（❌）— **单一声明块、两处消费者** ────────────────────────
+   ① 主窗口图片/文件附件的 ❌（`.att-remove`，`js/chat.js` 的 renderAttachmentPreview）
+   ② 好友消息面引用条的 ❌（`.fm-quote-remove`，`js/reference.js` 的 closeStyle:'disc'
+      —— 作者 2026-09-19 04:22 **修正①**：「引用条的 ❌ 与样式一律参考主窗口既有模式」）
+   ⇒ 形态 = 主窗口既有件：`--color-error` **实心圆** + **白 ✕**，16×16。
+   🔴 **修正②（居中修复）**：旧形态的图形是**文本字符 `x`**（`font-size:10px`），
+   由 flex 居中 ⇒ 居中对象是**行盒**而非字形：行盒含上侧 ascent 空间，x-height 字形
+   的视觉中心落在行盒中线**下方**（作者截图 2 实测：✕ 形心比圆盘 bbox 中心低 1px /
+   16px 直径 ⇒ 6.25% 偏心）。现改为**几何对称的 SVG ✕**（16×16 viewBox 内
+   M4,4→L12,12 / M12,4→L4,12，形心 =(8,8) 恒等于 viewBox 中心），`display:block`
+   + flex 居中 ⇒ 图形中心与圆盘中心**逐值相等**（读数见本批报告「❌ 居中前后」）。
+   白 ✕ 色 = `#fff`（既有字面量，与旧 `color:#fff` 同值，零新色值）。 */
+.att-remove,
+.fm-quote-remove {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
   background: var(--color-error);
   color: #fff;
   border-radius: 50%;
-  font-size: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  flex: none;
 }
+.att-remove { position: absolute; top: -4px; right: -4px; font-size: 10px; }
+.att-remove svg,
+.fm-quote-remove svg { width: 8px; height: 8px; display: block; }
+/* 共用件的 hover 态也归**同一个声明块**：`.att-ref-remove:hover`（本表 :529/:534，
+   0,2,0）会把卡内 ✕ 的底色/字色改成灰档 —— 对**圆盘形态**（`.fm-quote-remove`）
+   那是错的（红圆盘被换成灰底、白 ✕ 被换成红 ✕）。此处以同特异度、更靠后的位置
+   钉回「红底白 ✕」⇒ 形态在任何指针态下都恒等于主窗口附件 ❌。对 `.att-remove`
+   是**计算值零变化**（主窗口此前无 hover 声明，值与此处逐字相同）。 */
+.att-remove:hover,
+.fm-quote-remove:hover { background: var(--color-error); color: #fff; }
 #input {
   border: none;
   background: transparent;
@@ -627,180 +651,18 @@
 }
 
 /* ============================================================================
-   Mic bubble (liquid orb) v8.2.2 — pure Orb, state = color + motion layering,
-   zero overlay layers, no text label (user rulings 2026-08-26 01:11 + 07:31;
-   spec mic-bubble-spec.md §10). Orb body = v7 transparent liquid material;
-   the 9-state colors are sapphire/violet family derived via hue/sat/lum
-   (WebGL shader) or filter (CSS orb). v8.2.2: the two error states
-   (mic-error red / frozen-error amber) go through the SAME WebGL crystalline
-   structure via palette uniforms; the CSS orb below is only the
-   WebGL-unavailable fallback. State class lives on .mic-orb-wrap; the orb +
-   ripple consume --orb-filter / --orb-glow / --orb-dot / --orb-inset.
+   语音输入键（普通麦克风形态）— 作者 2026-09-19 04:22 **修正④**（逐字：「语音麦克风
+   样式 = 普通麦克风（禁现气泡形态）」）⇒ 旧 **micOrb 气泡/光球**（R5 终案
+   `micorb-wave-final`）**archived**，本处不再有 orb 材质/9 态色矩阵/点击涟漪。
+   控件本身 = 主窗口既有 `.icon-btn` 族（36×36、`border-radius:50%`、玻璃 hover、
+   `svg{20px;stroke-width:2}`，见上 `.icon-btn` 段）⇒ 本段只补**录音反馈**两态。
+   🔴 反馈**保留**（同令「语音输入反馈必须保留」）：录音中 = 既有 `.icon-btn.recording`
+   （微信绿 `#07c160` + 既有 `voicePulse`，值零新增）；转写中 = 既有 sapphire 强调色。
    ============================================================================ */
-.mic-orb-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  /* Orb base gradient (dark default); light theme overrides below. */
-  --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
-}
-.micbubble {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  flex-shrink: 0;
-  border-radius: 50%;
-}
-.micbubble:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.6);
-  outline-offset: 2px;
-}
-.micbubble .orb-canvas,
-.micbubble .css-orb {
-  width: 64px;
-  height: 64px;
-  display: block;
-  border-radius: 50%;
-}
+.mic-btn.processing { color: rgb(var(--sapphire)); }
 
-/* Click ripple (v8.1, jarvis orb-ripple paradigm): 2px ring in the current
-   state's semantic color, scale 0.8->1.5 + opacity 0.6->0 over 0.8s. */
-.orb-ripple {
-  position: absolute; inset: 0; border-radius: 50%;
-  border: 2px solid var(--ripple, #78A0DC);
-  opacity: 0; pointer-events: none; z-index: 5;
-}
-.orb-ripple.go { animation: orb-ripple-anim 0.8s ease-out; }
-@keyframes orb-ripple-anim {
-  0% { transform: scale(0.8); opacity: 0.6; }
-  100% { transform: scale(1.5); opacity: 0; }
-}
-
-/* CSS liquid orb (WebGL-unavailable fallback only — v8.2.2: error states use
-   the WebGL palette path too). Base gradient + top highlight + thin
-   filaments, same family as v7 css-orb; v8.2.2 error-state crystallization:
-   --orb-bg uses the --orb-base structure and --orb-inset takes a same-family
-   shadow color (red/amber instead of the old blue-black shadow). */
-.css-orb.orb {
-  position: relative;
-  background: var(--orb-bg, var(--orb-base));
-  box-shadow:
-    inset 0 0 8px rgba(255,255,255,0.10),
-    inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
-    0 0 16px var(--orb-glow, rgba(120,160,220,0.28)),
-    0 2px 8px rgba(0,0,0,0.22);
-  filter: var(--orb-filter, none);
-  transition: filter 0.7s ease, box-shadow 0.7s ease, background 0.7s ease;
-}
-.css-orb.orb::before {
-  content: "";
-  position: absolute; inset: 0; border-radius: 50%;
-  background:
-    radial-gradient(72% 62% at 50% 42%, rgba(255,255,255,0.07) 0%, transparent 62%),
-    radial-gradient(12% 9% at 62% 30%, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.20) 52%, transparent 78%);
-}
-.css-orb.orb::after {
-  content: "";
-  position: absolute; inset: 0; border-radius: 50%;
-  background:
-    radial-gradient(40% 30% at 34% 58%, rgba(255,255,255,0.14) 0%, transparent 62%),
-    radial-gradient(10% 8% at 28% 56%, rgba(255,255,255,0.34) 0%, transparent 72%),
-    radial-gradient(30% 22% at 52% 88%, rgba(120,160,220,0.20) 0%, transparent 70%),
-    radial-gradient(6% 6% at 64% 66%, rgba(255,255,255,0.42) 0%, transparent 78%);
-  mix-blend-mode: screen;
-  animation: css-orb-flow 9s ease-in-out infinite;
-}
-@keyframes css-orb-flow {
-  0%,100% { transform: translate(0,0) scale(1); opacity: 0.85; }
-  33% { transform: translate(6%,-5%) scale(1.06); opacity: 1; }
-  66% { transform: translate(-5%,6%) scale(0.97); opacity: 0.8; }
-}
-
-/* v8.1 (user ruling 08-26 07:31 "orb 下方不要文字了"): the 11.5px text label
-   is removed entirely — state = pure color + motion layering; screen readers
-   get the state from the button/css-orb aria-label (runtime t() text). */
-
-/* 9 states (dark default) — set the shared CSS vars on the wrap.
-   (--orb-dot doubles as the click-ripple color; v8.1 removed the text label,
-   so --orb-label is gone.) */
-.mic-orb-wrap.s-idle      { --orb-filter:none; --orb-glow:rgba(120,160,220,.30); --orb-dot:#78A0DC; }
-.mic-orb-wrap.s-listening { --orb-filter:hue-rotate(-18deg) saturate(1.08) brightness(1.07); --orb-glow:rgba(126,178,236,.34); --orb-dot:#7FB3EA; }
-.mic-orb-wrap.s-processing{ --orb-filter:hue-rotate(22deg) saturate(1.06) brightness(0.96); --orb-glow:rgba(139,134,216,.32); --orb-dot:#8B86D8; }
-.mic-orb-wrap.s-nebula    { --orb-filter:hue-rotate(34deg) saturate(1.16) brightness(1.06); --orb-glow:rgba(169,139,232,.36); --orb-dot:#A98BE8; }
-.mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; }
-.mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; }
-.mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F0D9C0 0%, #C99A6E 48%, #5E4130 100%); --orb-inset:rgba(58,38,22,0.32); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; }
-.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; }
-.mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; }
-
-/* Action layering (v8.1 §10.3③ / v8.2 §10.5, CSS fallback family):
-   working states move, non-working states stay still. */
-/* L0 still: internal filaments frozen */
-.mic-orb-wrap.s-frozen .css-orb.orb::after,
-.mic-orb-wrap.s-frozenerr .css-orb.orb::after,
-.mic-orb-wrap.s-micerr .css-orb.orb::after,
-.mic-orb-wrap.s-offline .css-orb.orb::after { animation: none; }
-/* L2/L3 working: filament flow speed tiers */
-.mic-orb-wrap.s-listening .css-orb.orb::after { animation-duration: 4s; }
-.mic-orb-wrap.s-processing .css-orb.orb::after { animation-duration: 4.5s; }
-.mic-orb-wrap.s-nebula .css-orb.orb::after { animation-duration: 5s; }
-.mic-orb-wrap.s-bg .css-orb.orb::after { animation-duration: 7s; }
-
-/* Listening L3: restrained brightness pulse (replaces the ruled-out shake), ±6%. */
-.mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse 1.6s ease-in-out infinite; }
-@keyframes listen-pulse {
-  0%,100% { filter: hue-rotate(-18deg) saturate(1.05) brightness(1.00); }
-  50% { filter: hue-rotate(-18deg) saturate(1.14) brightness(1.11); }
-}
-
-/* nebula-busy L3: glow rhythm pulse (halo radius 12->26px, 2.2s). */
-.mic-orb-wrap.s-nebula .css-orb.orb { animation: nebula-glow 2.2s ease-in-out infinite; }
-@keyframes nebula-glow {
-  0%,100% { box-shadow: inset 0 0 8px rgba(255,255,255,0.10), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
-    0 0 12px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
-  50% { box-shadow: inset 0 0 10px rgba(255,255,255,0.14), inset -3px -5px 14px var(--orb-inset, rgba(20,26,60,0.30)),
-    0 0 26px var(--orb-glow), 0 2px 8px rgba(0,0,0,0.22); }
-}
-
-/* Frozen orb keeps its own cold color — do NOT apply the generic 0.4 disabled
-   dim on top of it (the label stays full-contrast; the orb shows frozen). */
+/* 冻结态（无 mic 形态变化，仅为声明保留）：麦克风键禁用时不叠通用 0.4 变暗。 */
 #input-bar.frozen #voice-btn[disabled] { opacity: 1; }
-
-@media (prefers-color-scheme: light) {
-  .mic-orb-wrap { --orb-base: radial-gradient(120% 120% at 32% 28%, #a6c0f0 0%, #8C7DD6 48%, #2a3766 100%); }
-  .mic-orb-wrap.s-idle      { --orb-glow:rgba(91,132,216,.16); --orb-dot:#5B84D8; }
-  .mic-orb-wrap.s-listening { --orb-glow:rgba(78,134,220,.18); --orb-dot:#4E86DC; }
-  .mic-orb-wrap.s-processing{ --orb-glow:rgba(106,104,200,.16); --orb-dot:#6A68C8; }
-  .mic-orb-wrap.s-nebula    { --orb-glow:rgba(143,106,214,.18); --orb-dot:#8F6AD6; }
-  .mic-orb-wrap.s-bg        { --orb-glow:rgba(96,106,168,.14); --orb-dot:#606AA8; }
-  .mic-orb-wrap.s-frozen    { --orb-glow:rgba(110,122,143,.12); --orb-dot:#6E7A8F; }
-  .mic-orb-wrap.s-frozenerr { --orb-inset:rgba(66,44,26,0.26); --orb-glow:rgba(190,130,95,.22); --orb-dot:#A8765A; }
-  .mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F6CCC6 0%, #CE4448 52%, #762226 100%); --orb-inset:rgba(72,18,22,0.28); --orb-glow:rgba(201,54,58,.30); --orb-dot:#C9363A; }
-  .mic-orb-wrap.s-offline   { --orb-glow:rgba(128,133,142,.12); --orb-dot:#80858E; }
-  .mic-orb-wrap.s-listening .css-orb.orb { animation: listen-pulse-l 1.6s ease-in-out infinite; }
-  @keyframes listen-pulse-l {
-    0%,100% { filter: hue-rotate(-18deg) saturate(1.04) brightness(1.00); }
-    50% { filter: hue-rotate(-18deg) saturate(1.10) brightness(1.07); }
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .css-orb.orb, .css-orb.orb::after { animation-duration: 0.01s; animation-iteration-count: 1; }
-  .micbubble .orb-canvas, .micbubble .css-orb,
-  .css-orb.orb { transition-duration: 0.01s; }
-  .mic-orb-wrap.s-listening .css-orb.orb,
-  .mic-orb-wrap.s-nebula .css-orb.orb { animation: none; }
-  .orb-ripple { display: none; }
-}
 #send-btn {
   /* WeChat green, solid (2026-09-11 author ruling): the 0.55 glass tint read as
      "too pale" — the author asked for the real WeChat green and picked candidate
