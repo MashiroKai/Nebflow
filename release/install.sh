@@ -832,8 +832,11 @@ _file_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || ech
 # A JAR that is already present only counts as "up to date" when it is a
 # COMPLETE archive: a truncated file (interrupted download, dropped link) would
 # otherwise be reported as already-installed and never repaired. Semantics
-# mirror the released installer's _jar_valid - size floor + ZIP structural
-# check - degrading to a magic-byte probe when no zip tool is available.
+# follow the released installer's _jar_valid - size floor + ZIP structural
+# check - EXCEPT when no zip tool (unzip, python3) exists at all: there the
+# bytes cannot be checked in any way, so the file is reported invalid and the
+# installer re-downloads instead of trusting a magic-byte probe (rather slow
+# than wrong). download_jar warns about that case when it happens.
 _jar_valid() {  # <path> -> 0 when the file looks like a complete JAR
     local _path="$1" _size
     [ -f "$_path" ] && [ -s "$_path" ] || return 1
@@ -847,8 +850,11 @@ _jar_valid() {  # <path> -> 0 when the file looks like a complete JAR
         python3 -c 'import sys,zipfile; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)' "$_path" 2>/dev/null
         return $?
     fi
-    # Last resort: JAR/ZIP magic bytes "PK" at offset 0 (no structural check).
-    head -c 2 "$_path" 2>/dev/null | grep -q "PK"
+    # Last resort: no zip tool at all (neither unzip nor python3) -> the bytes
+    # cannot be verified. An unverifiable file is NOT a trusted file: report it
+    # invalid so the caller re-downloads ("rather slow than wrong" - see the
+    # warning in download_jar for the cost this implies in such environments).
+    return 1
 }
 
 # TTY download with the brand progress bar: curl runs in the background
@@ -1002,6 +1008,13 @@ download_jar() {
     # 公开），单源理由为可达性与带宽，见文件头品牌值区注释。
     if _download "${COS_URL}" "${target}" "${JAR_NAME}"; then
         log_ok "Downloaded ${JAR_NAME} from COS."
+        # Same no-zip-tool situation as in _jar_valid: the fresh bytes cannot be
+        # verified either. Say so out loud - never let the log imply an
+        # integrity check that did not happen - and carry on: failing here
+        # would leave such an environment permanently uninstallable.
+        if ! command -v unzip > /dev/null 2>&1 && ! command -v python3 > /dev/null 2>&1; then
+            log_warn "No unzip or python3 found - cannot verify the downloaded JAR (${JAR_NAME}). Install continues unverified; a re-run will download it again."
+        fi
         return 0
     fi
     log_err "Download failed from COS. Check ${COS_URL}"
