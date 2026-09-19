@@ -25,6 +25,14 @@ import java.security.MessageDigest
  *  3. **失败即中止、账不动**：任一步 IO 失败 ⇒ 整个 [[reconcile]] 失败（调用方 WARN，
  *     下一拍重试），**绝不**留下「载荷已搬走、热账未记」的半状态。
  *
+ * == 轮的坐标口径（拍内链式；先例 D1-a/D1-c）==
+ * 每轮的 `hotBefore` **不由手写读数给出**，而由「`hotAfter` + 本轮搬走量」机械推出
+ * （[[hotBeforeOf]]）—— 与 [[ChainLedger.roundConservation]] 的 `expectAfter` **逐项互逆**
+ * （两处必须同改；单点化正是为了禁「一处按复算前坐标、另一处按复算后坐标」的错位）。
+ * 坐标基准 = **计数复算之后**的热态 ⇒ 同一拍内 `hotAfter(k) == hotBefore(k+1)`
+ * **结构性成立**（判据 = [[ChainLedger.verifyLedger]] ② 查，**只对同拍相邻轮**断言）。
+ * 各轮带 [[ChainLedger.RoundManifest.tick]] 拍标识（同拍恒同值、异拍恒异值）。
+ *
  * == 与 `flow-map.json` 的同生命周期 ==
  * 落点 = `<workspace>/.nebflow/chain-ledger.json`（同目录、同 open 期载入、同进程存活期）。
  * 文件缺失/损坏 ⇒ 空账起步 + WARN（判据：台账是**可重建**的派生面 + 别名表；重建只丢
@@ -99,13 +107,38 @@ class ChainLedgerStore private (
 
   private def manifestOf(
       f: RoundFile,
-      digest: String
+      digest: String,
+      tick: Long
   ): RoundManifest =
     RoundManifest(
       round = f.round, at = f.at, kind = f.kind, file = s"round-${f.round}.json",
       movedEntries = f.entries.size, movedAliases = f.aliases.size,
       movedMembers = f.entries.map(_.members.size).sum,
-      hotBefore = f.hotBefore, hotAfter = f.hotAfter, digest = digest)
+      hotBefore = f.hotBefore, hotAfter = f.hotAfter, digest = digest, tick = tick)
+
+  /** **轮坐标的逆式**：`hotBefore` = `hotAfter` + 本轮搬走的量（条目 / 别名 / 成员 / 引用
+    * 四项）。与 [[ChainLedger.roundConservation]] 的 `expectAfter` **逐项互逆** —— 单点化
+    * 使「一轮的读数」只有一处算法（改一处必改另一处）；先例 D1-a 的病根正是两处手写读数
+    * 各按不同坐标基准（一条按复算前、一条按复算后）⇒ 恒假 `Left`。
+    *
+    * 口径与 [[ChainLedger.roundConservation]] 逐字对齐：[[RoundCompact]] 只搬**载荷**
+    * （条目读数与成员读数留热，不减），其余轮（retire / dissolve）整行移出，四项同减。 */
+  private def hotBeforeOf(
+      hotAfter: Totals,
+      kind: String,
+      rows: List[Entry],
+      aliasRows: List[AliasRow]
+  ): Totals =
+    val movedRows = if kind == RoundCompact then 0 else rows.size
+    val movedMembers = if kind == RoundCompact then 0 else rows.map(_.memberCount).sum
+    val movedEntryRef = if kind == RoundCompact then 0L else rows.map(_.refCount.toLong).sum
+    val movedAliasRef = aliasRows.map(_.refCount.toLong).sum
+    val movedRef = movedEntryRef + movedAliasRef
+    hotAfter.copy(
+      entries = hotAfter.entries + movedRows,
+      aliases = hotAfter.aliases + aliasRows.size,
+      members = hotAfter.members + movedMembers,
+      refCount = hotAfter.refCount + movedRef)
 
   // ── 轴(a)：生命周期绑定（挂既有链归档写点）──────────────────────────────
 
@@ -250,37 +283,36 @@ class ChainLedgerStore private (
         ChainLedger.FaceCounts(activeMembers = activeMembers, declarations = declarations, batchIds = batchIds))
       val retire = ChainLedger.planRetire(stCounted, now)
       val stRetired = retire.state
-      // ── 轮 1（dissolve：链已离场 ⇒ 整行下沉；行已由 observe 移出热面 ⇒ hotBefore 补回）──
+      // ── 拍标识（[[ChainLedger.RoundManifest.tick]]）：本拍**首轮**的轮号 —— 由
+      //    append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值（轮间链式只对同拍相邻轮断言）──
+      val tick = st0.rounds.size + 1
+      // ── 轮 1（dissolve：链已离场 ⇒ 整行下沉）──
+      // 坐标口径（先例 D1-a）：`hotAfter` 取**计数复算之后**的热态（= 轮 2 的 `hotBefore`，
+      // 逐项恒等 ⇒ 拍内链式结构性成立）；`hotBefore` 由「`hotAfter` + 本轮搬走量」机械推出。
+      // 🔴 禁改回 `stObs`（复算之前）：那会让轮 1 与轮 2 站在两套坐标基准上 ⇒ 恒假 `Left`。
       val dissolveRows = obs.dissolved
       val orphanAliases = obs.orphanAliases
       val hasDissolve = dissolveRows.nonEmpty || orphanAliases.nonEmpty
-      val roundDissolve = st0.rounds.size + 1
-      val hotBeforeDissolve = Totals(
-        entries = ChainLedger.totals(stObs).entries + dissolveRows.size,
-        aliases = ChainLedger.totals(stObs).aliases + orphanAliases.size,
-        members = ChainLedger.totals(stObs).members + dissolveRows.map(_.memberCount).sum,
-        refCount = ChainLedger.totals(stObs).refCount +
-          dissolveRows.map(_.refCount.toLong).sum + orphanAliases.map(_.refCount.toLong).sum)
+      val roundDissolve = tick
+      val hotAfterDissolve = ChainLedger.totals(stCounted)
       val fileDissolve = roundFileOf(roundDissolve, RoundDissolve, now,
-        hotBeforeDissolve, ChainLedger.totals(stObs), dissolveRows, orphanAliases)
+        hotBeforeOf(hotAfterDissolve, RoundDissolve, dissolveRows, orphanAliases),
+        hotAfterDissolve, dissolveRows, orphanAliases)
       for
-        // ── 轮 1（dissolve：链已离场 ⇒ 整行下沉；行已由 observe 移出热面 ⇒ hotBefore 补回，
-        //    使「hotAfter = hotBefore − moved」守恒式对该轮同样成立）──
+        // ── 轮 1 落盘（冷档在前、热账在后；见类头注第 2 条）──
         digestD <- if hasDissolve then writeRound(fileDissolve) else IO.pure("")
         stAfterDissolve = if hasDissolve then
-          stObs.copy(rounds = st0.rounds :+ manifestOf(fileDissolve, digestD)) else stObs
+          stObs.copy(rounds = st0.rounds :+ manifestOf(fileDissolve, digestD, tick)) else stObs
         // ── 轮 2（retire：轴 a×b 联合判据；热行移除、冷档留全行）──
         hasRetire = retire.entries.nonEmpty || retire.aliases.nonEmpty
         roundRetire = stAfterDissolve.rounds.size + 1
-        hotBeforeRetire = ChainLedger.totals(
-          stRetired.copy(
-            entries = stRetired.entries ++ retire.entries.map(e => e.chainId -> e),
-            aliases = stRetired.aliases ++ retire.aliases.map(a => a.alias -> a)))
-        fileRetire = roundFileOf(roundRetire, RoundRetire, now, hotBeforeRetire,
-          ChainLedger.totals(stRetired), retire.entries, retire.aliases)
+        hotAfterRetire = ChainLedger.totals(stRetired)
+        fileRetire = roundFileOf(roundRetire, RoundRetire, now,
+          hotBeforeOf(hotAfterRetire, RoundRetire, retire.entries, retire.aliases),
+          hotAfterRetire, retire.entries, retire.aliases)
         digestR <- if hasRetire then writeRound(fileRetire) else IO.pure("")
         stAfterRetire =
-          if hasRetire then stRetired.copy(rounds = stAfterDissolve.rounds :+ manifestOf(fileRetire, digestR))
+          if hasRetire then stRetired.copy(rounds = stAfterDissolve.rounds :+ manifestOf(fileRetire, digestR, tick))
           else stRetired.copy(rounds = stAfterDissolve.rounds)
         // ── 轮 3（compact：轴 c 双阈值 —— 条数 ∨ 字节）──
         bytes <- IO.blocking(encode(stAfterRetire).getBytes("UTF-8").length.toLong)
@@ -290,10 +322,13 @@ class ChainLedgerStore private (
           else ChainLedger.CompactPlan(stAfterRetire)
         hasCompact = capExceeded && !plan.isEmpty
         roundCompact = stAfterRetire.rounds.size + 1
+        // 坐标口径同源：`plan.hotBefore = totals(stAfterRetire)`（= 轮 2 的 `hotAfter`，
+        // `rounds` 字段不进读数）⇒ 拍内链式对轮 3 同样成立；`plan.hotAfter` 与
+        // [[hotBeforeOf]] 互为逆式（compaction 只搬载荷 + 整行移出别名）。
         fileCompact = roundFileOf(roundCompact, RoundCompact, now, plan.hotBefore, plan.hotAfter,
           plan.compactedEntries, plan.retiredAliases)
         digestC <- if hasCompact then writeRound(fileCompact) else IO.pure("")
-        compactManifest = if hasCompact then Some(manifestOf(fileCompact, digestC)) else None
+        compactManifest = if hasCompact then Some(manifestOf(fileCompact, digestC, tick)) else None
         stFinal =
           val base = if hasCompact then plan.state else stAfterRetire
           base.copy(project = project, rounds = stAfterRetire.rounds ++ compactManifest.toList,

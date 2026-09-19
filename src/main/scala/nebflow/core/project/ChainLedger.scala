@@ -61,7 +61,11 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
  * == 可复算校验（崩溃/重启后自洽）==
  * [[verifyLedger]] 四查（任一不过 ⇒ `Left` 可行动诊断；调用方 WARN，**绝不静默吞掉**、
  * 也不因它崩服务）：① 每轮守恒（`hotAfter` 由 `hotBefore` + 搬迁量机械推出）；
- * ② 轮间链式（`k.hotBefore == (k-1).hotAfter`）；③ 压缩镜像一一对应（`compacted=true`
+ * ② 轮间链式 —— **只对同拍（[[RoundManifest.tick]] 相同）的相邻轮**断言
+ * （`k.hotBefore == (k-1).hotAfter`）：出生 / 离场 / 计数复算都发生在轮**之外**，会合法
+ * 改变热读数 ⇒ 跨拍两轮读数本不相同，拿上一轮 `hotAfter` 当本拍 `hotBefore` 对账恒假
+ * （先例：两拍各出一轮 compact、其间仅有普通出生 ⇒ 旧写法恒 `Left`，且轮为 append-only
+ * 故该假警告永不消解）；③ 压缩镜像一一对应（`compacted=true`
  * 的热行在冷档有载荷副本，反之亦然）；④ 结构（同 id 不同时作条目与别名；别名不悬空）。
  */
 object ChainLedger:
@@ -165,7 +169,12 @@ object ChainLedger:
     * @param movedMembers 本轮搬走的成员 id 数（载荷量）
     * @param hotBefore    本轮前的热读数
     * @param hotAfter     本轮后的热读数（守恒判据见 [[roundConservation]]）
-    * @param digest       冷档文件字节 sha-256（留痕 +「冷档未被改写」核对面） */
+    * @param digest       冷档文件字节 sha-256（留痕 +「冷档未被改写」核对面）
+    * @param tick         **拍标识** = 产生本轮的 reconcile 开工时的轮号（= 该拍**首轮**的轮号；
+    *                     同一拍内各轮同值）。由 append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值
+    *                     （任一拍了轮 ⇒ 轮号水位前进 ⇒ 下一拍该值必增），故可作「同拍」判据。
+    *                     用途 = [[verifyLedger]] ② 查的适用范围（同拍相邻轮才链式对账）。
+    *                     0 = 本轮改造前写入的旧账（无拍标识 ⇒ 该查不可判，跳过）。 */
   final case class RoundManifest(
       round: Int,
       at: Long,
@@ -176,7 +185,8 @@ object ChainLedger:
       movedMembers: Int,
       hotBefore: Totals,
       hotAfter: Totals,
-      digest: String
+      digest: String,
+      tick: Long = 0L
   )
 
   object RoundManifest:
@@ -707,9 +717,16 @@ object ChainLedger:
           case Some(f) => err = roundConservation(f, m).left.toOption
     }
     if err.isEmpty then
+      // ② 轮间链式 —— **只对同拍（`tick` 相同）的相邻轮**断言：同一拍内各轮坐标同源
+      //    （`hotAfter(k) == hotBefore(k+1)`，见 `ChainLedgerStore.reconcile` 的坐标口径），
+      //    跨拍不行 —— 出生 / 离场 / 计数复算都发生在轮**之外**（`observe` /
+      //    `recomputeRefCounts`），会合法改变热读数（先例 D1-c：两拍各出一轮 compact、
+      //    其间仅有普通出生 ⇒ 旧写法恒 `Left`，且轮为 append-only 故永不消解）。
+      //    `tick == 0` = 改造前写入的旧账（无拍标识）⇒ 本项不可判，跳过（其余三查照旧）。
       ordered.sliding(2).foreach { w =>
-        if err.isEmpty && w.size == 2 && w.head.hotAfter != w.last.hotBefore then
-          err = Some(s"round chain broken: round ${w.head.round}.hotAfter=${w.head.hotAfter} " +
+        if err.isEmpty && w.size == 2 && w.head.tick > 0 && w.head.tick == w.last.tick &&
+          w.head.hotAfter != w.last.hotBefore then
+          err = Some(s"round chain broken (tick ${w.head.tick}): round ${w.head.round}.hotAfter=${w.head.hotAfter} " +
             s"!= round ${w.last.round}.hotBefore=${w.last.hotBefore}")
       }
     err.toLeft(()).flatMap(_ => structureCheck(st)).flatMap(_ => mirrorCheck(st, coldPayloadIds))

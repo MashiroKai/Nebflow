@@ -21,6 +21,9 @@ import scala.concurrent.duration.*
  * - T9 轴(c) 端到端：越阈值 ⇒ 压缩轮落冷档 + 自检 Right + 压缩后身份不重归
  * - T10 落盘面：原子写 + 启动期载入 + 重启后自洽 + 损坏文件只 WARN 不崩
  * - T11 集成：`FlowMapStore` 拍点接线（出生 → 合并改号 → 轴(a) 归档绑定）
+ * - T12 解析单点：热面别名逐跳 + 冷档下沉兜底（旧号永久可达）
+ * - T13 **轮间链式红验（同拍）**：dissolve + compact 同拍 ⇒ 拍内链式成立（verify=Right）
+ * - T14 **轮间链式红验（跨拍）**：两拍各出一轮 compact、其间仅有出生 ⇒ verify=Right
  *
  * **红验语义**（逐条钉死「把判据改坏 ⇒ 本测试必红」的变异）：
  * 每处 `// 变异:` 注释点名该断言对应哪一处判据；变异 = 把该判据改成永远不成立
@@ -362,4 +365,76 @@ class ChainLedgerSpec extends CatsEffectSuite:
       assertEquals(hot, Some("chain-b"))
       assertEquals(cold, Some("chain-b"), "热面未命中回落冷档（本形态热面即命中 —— 冷档面同款可达）")
       assertEquals(missing, None)
+  }
+
+  // ── T13/T14 轮间链式（同拍 / 跨拍）红验：返工位修 D1（先例 D1-a/D1-b/D1-c）──
+  // 判据：轮间链式（`k.hotBefore == (k-1).hotAfter`）**只对同拍相邻轮**成立。
+  //  - 同拍内：各轮坐标同源（`hotAfter(k) == hotBefore(k+1)` 结构性成立）⇒ 必 Right；
+  //  - 跨拍：出生 / 离场 / 计数复算发生在轮之外 ⇒ 读数合法不同 ⇒ 不得判为链断
+  //    （否则该假警告因轮 append-only 而**永不消解**：每次启动 WARN 一次「台账不自洽」）。
+
+  test("T13 [轮间链式红验 · 同拍] dissolve + compact 同拍 ⇒ 拍内链式成立（verify=Right）；坐标改回复算前 ⇒ 必红") {
+    val dir = os.temp.dir(prefix = "nb-chain-ledger-sametick-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    val all = (0 until ChainLedger.MaxHotRows).toList.map(i => proto(s"chain-n$i", List(s"n$i")))
+    val fresh = (0 until 8).toList.map(i => proto(s"chain-f$i", List(s"f$i")))
+    val tick2 = all.drop(4) ++ fresh
+    val ids2 = tick2.flatMap(_.memberIds).toSet
+    for
+      store <- ChainLedgerStore.open("ledger-sametick", path, arch)
+      _ <- store.reconcile(all, all.flatMap(_.memberIds).toSet, Map.empty, Set.empty, t0)
+      o2 <- store.reconcile(tick2, ids2, Map.empty, Set.empty, t0 + 1000)
+      st2 <- store.snapshot
+      check2 <- store.verify
+      _ <- store.reconcile(tick2, ids2, Map.empty, Set.empty, t0 + 2000)
+      st3 <- store.snapshot
+      check3 <- store.verify
+    yield
+      assertEquals(o2.dissolved.map(_.chainId).sorted,
+        List("chain-n0", "chain-n1", "chain-n2", "chain-n3"),
+        "同拍：4 条链离场（整行下沉）+ 8 条新生 ⇒ 同拍既出 dissolve 又越阈值出 compact")
+      assertEquals(st2.rounds.map(_.kind),
+        List(ChainLedger.RoundDissolve, ChainLedger.RoundCompact),
+        "同一拍内两轮（先例 D1-a 形态）")
+      assert(st2.rounds.forall(_.tick > 0), "每轮必须带拍标识（旧账 tick=0 ⇒ 该查不可判）")
+      assertEquals(st2.rounds(0).tick, st2.rounds(1).tick, "同拍各轮同一拍标识")
+      // 变异: 把 dissolve 轮坐标改回 `stObs`（计数复算**之前**）⇒ 本条与 check2 立即红
+      assertEquals(st2.rounds(0).hotAfter, st2.rounds(1).hotBefore,
+        "拍内链式承重项：dissolve.hotAfter 必须逐项等于 compact.hotBefore（同源坐标）")
+      assertEquals(check2, Right(()): Either[String, Unit],
+        "同拍多轮 ⇒ 台账自洽（判据 1「崩溃/重启后自洽」+ 判据 5(c) 的**多轮**形态）")
+      assert(st3.rounds.size > st2.rounds.size, "后续拍继续出轮（append-only）")
+      // 变异: 把坐标错位改回（或恢复跨拍对账）⇒ check3 必红（先例 D1「假警告永不消解」）
+      assertEquals(check3, Right(()): Either[String, Unit], "轮 append-only ⇒ 假链断禁出现且不得留痕")
+  }
+
+  test("T14 [轮间链式红验 · 跨拍] 两拍各出一轮 compact、其间仅有普通出生 ⇒ verify=Right（禁跨拍对账）") {
+    val dir = os.temp.dir(prefix = "nb-chain-ledger-crosstick-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    val base = (0 until 5000).toList.map(i => proto(s"chain-n$i", List(s"n$i")))
+    val grown = base ++ (0 until 10).toList.map(i => proto(s"chain-b$i", List(s"b$i")))
+    for
+      store <- ChainLedgerStore.open("ledger-crosstick", path, arch)
+      o1 <- store.reconcile(base, base.flatMap(_.memberIds).toSet, Map.empty, Set.empty, t0)
+      st1 <- store.snapshot
+      check1 <- store.verify
+      o2 <- store.reconcile(grown, grown.flatMap(_.memberIds).toSet, Map.empty, Set.empty, t0 + 1000)
+      st2 <- store.snapshot
+      check2 <- store.verify
+    yield
+      assert(o1.compaction.isDefined && o2.compaction.isDefined,
+        "两拍各出一轮压缩（其间仅有普通出生，无 dissolve）")
+      assertEquals(st1.rounds.map(_.kind), List(ChainLedger.RoundCompact), "拍 1 单轮")
+      assertEquals(check1, Right(()): Either[String, Unit], "拍 1 自洽（单轮时链式查本不触发）")
+      assertEquals(st2.rounds.map(_.kind),
+        List(ChainLedger.RoundCompact, ChainLedger.RoundCompact),
+        "两轮皆 compact（先例 D1-c：**无 dissolve 参与**，可达性最强）")
+      assert(st2.rounds(0).tick < st2.rounds(1).tick, "跨拍 ⇒ 拍标识必异")
+      // 变异: 删掉 verifyLedger ② 查的同拍条件（恢复「与上一轮 hotAfter 对账」）⇒ 下两条必红
+      assert(st2.rounds(0).hotAfter != st2.rounds(1).hotBefore,
+        "跨拍读数差（其间出生 10 条 ⇒ entries 5000→5010）—— 这是**合法**变化，禁当链断")
+      assertEquals(check2, Right(()): Either[String, Unit],
+        "跨拍读数差不得判为链断（否则该假警告因轮 append-only 而永不消解）")
   }
