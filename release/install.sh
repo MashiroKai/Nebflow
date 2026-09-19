@@ -827,7 +827,7 @@ stage_deps() {
 
 # ---- [3/6] jar ------------------------------------------------------------
 
-_file_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1" 2>/dev/null || echo 0; }
+_file_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
 
 # TTY download with the brand progress bar: curl runs in the background
 # writing to the target file; we poll its size and redraw the bar. Total
