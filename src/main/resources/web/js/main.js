@@ -3750,12 +3750,20 @@ initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
     // (voice-overlay, slash-dropdown) are excluded — they overlay the chat
     // transiently above the bar, so they must not inflate the padding.
     const inputHeight = inputArea.offsetHeight;
+    // Read the scroll state BEFORE the write (msgfix 批 · 作者 2026-09-19 睡前令):
+    // growing the reserve pushes the whole content down by the delta, so a reading
+    // taken *after* the write answers "is the user still near the bottom?" with the
+    // new geometry — the write would invalidate its own predicate and the last
+    // message would stay parked behind the taller input bar (measured: 129/129 px
+    // of the last row covered). Same order as the sibling top block below
+    // (read → write → correct), which is what the previous batch already did right.
+    const nearBottom = isNearBottom(chat);
     // +2px: minimal breathing room so the last message sits flush above the
     // input bar without touching the glass edge.
     chat.style.setProperty('padding-bottom', `${inputHeight + 2}px`, 'important');
-    // Only re-scroll if the user is already near the bottom — don't yank
+    // Only re-scroll if the user was already near the bottom — don't yank
     // them away from history they're reading (shared NEAR_BOTTOM_PX unit).
-    const nearBottom = isNearBottom(chat);
+    // This runs *after* the write, so the pin lands on the grown reserve.
     if (nearBottom) chat.scrollTop = chat.scrollHeight;
     // Keep the "↓ N new messages" pill parked above the input bar even while
     // its height changes (multi-line input, queue bar, voice panel).

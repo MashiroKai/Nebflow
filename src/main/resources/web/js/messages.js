@@ -535,6 +535,7 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   const wantFriends = friends === 'force'
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
+  let friendsRefreshed = false; // ③ 本拍是否真的换上了新快照（补判的判据，见函数尾）
   try {
     const [convs, fr, grp] = await Promise.all([
       api.getConversations(),
@@ -570,10 +571,15 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     // groupSelfUserId 继续走发送关联自证。
     learnSelfFromGroupRows(conversations);
     if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
-    if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); }
+    if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); friendsRefreshed = true; }
   } catch { /* keep last known */ }
   renderList();
   updateBadge();
+  // ③ 名单装载后**补判一次**（msgfix 批 · 作者 2026-09-19 睡前令）：快照补齐/刷新后
+  //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
+  //   `fm-friends-changed` / 重连三处重判 ⇒ 空快照下开窗的条**粘滞**到关窗重开为止
+  //   （实测 C2b）。此处与 `fm-friends-changed` 分支同款、同函数（禁第二实现）。
+  if (friendsRefreshed && modalEls) applyBlockState(currentConv());
 }
 
 function renderList() {
@@ -784,6 +790,21 @@ function refreshOpenGroupHeaderAvatar() {
 }
 
 function isStillFriend(conv) {
+  // ③ 证据门槛（msgfix 批 · 作者 2026-09-19 睡前令）：`friendsCache` 的「空」有**两种**
+  //   含义 ——「已装载且确实不在名单」（= 真不是好友）与「无证据（快照未装载 / 取数
+  //   失败 / 空快照）」。旧写法把二者折叠成同一个 `false` ⇒ 空快照下开窗必出「对方已
+  //   不是你的好友」且输入框被误禁用（实测 C2a/C3，粘滞见 C2b）。
+  //   证据 = **本模块的这份名单已装载且非空**（`friendsFetchedAt` 与 `friendsCache`
+  //   同生同灭：`refreshConversations` 同帧赋值 `:574` / 未登录同帧清零 `:534`）。
+  //   空名单**不构成**「他不是好友」的证据 —— 200 空体与「取数失败」在界面上无从区分，
+  //   而本条文案是**指控**（作者令：宁可不判定，不得误指）。
+  //   与 `friendsApi.js:470-478 friendStateLoaded()` **同一口径**（「无证据 ≠ 已收敛」）；
+  //   差别在严格度：`friendStateLoaded()` 只要求「成功取过一次数」（空快照也算已装载），
+  //   本判据额外要求名单非空 —— 因为这里被断言的正是这份名单，且空名单的两种来源无法
+  //   区分（实测判据 C2a：空快照必须**不**出条）。
+  //   🔴 fail-closed **不可退**：名单已装载（非空）且该 userId 真不在其中（删除/拉黑）
+  //   ⇒ 仍判假（出条 + 禁用输入框），见实测判据 C4。
+  if (friendsFetchedAt <= 0 || friendsCache.length === 0) return true; // 无证据 ⇒ 未判定
   return !!(conv && conv.friend && friendsCache.some(f => f.userId === conv.friend.userId));
 }
 
@@ -1868,8 +1889,14 @@ function paintInlineFrame(img, url, dims) {
  *  `attachmentPreview.js:14` 已 import 同一函数）⇒ 命中 `'image'` 才直显。
  *  🔴 **非图片附件零行为变化**：本函数第一行即返回，卡片仍走原路径（名称/体积/
  *  下载键/整卡预览）。
- *  字节在手时再以真字节复核（`blob.type` 前缀 `image/`）——判据源仍是既有面
- *  （`avatarCache.js:blobToDataUrl` 同款口径），不新增规格。
+ *  📌 **取代关系（勿回退）**：uifix 批原口径「字节在手时再以真字节复核
+ *  （`blob.type` 前缀 `image/`）」已被作者 2026-09-19 睡前令**取代**（msgfix 批 ②）：
+ *  取字节路由 `/api/friends/attachments/{id}` 的响应头**契约上恒为**
+ *  `application/octet-stream`（`RestApiRoutes.scala` 写死；服务端 DTO 注释逐字
+ *  「Advisory only — never trusted for security」）⇒ 那道复判对**所有**好友/群图片
+ *  恒假、直显腿恒不可达（实测：同一条消息、只换响应头 ⇒ 槽从有到无）。
+ *  判据现为**单点**：调用前的文件名判据（`isImageAttachmentName`）+ 体积上限
+ *  （`MAX_INLINE_IMAGE_BYTES`），响应头不参与判定（禁按上游 mime 建立信任面）。
  *
  *  ── 取字节（🔴 两套**既有**面，禁第三条路）──
  *  · 好友 / 群聊：`api.downloadAttachment(att.id)` = 应用内鉴权路由
@@ -2002,7 +2029,10 @@ function attachInlineImage(card, att, kind, src) {
   }
   api.downloadAttachment(id)
     .then(({ blob }) => {
-      if (!blob || !String(blob.type || '').startsWith('image/')
+      // ② 类型复判已删（msgfix 批 · 作者 2026-09-19 睡前令）：该路由的响应头
+      // **契约上恒为** `application/octet-stream` ⇒ 旧的 `blob.type` 前缀判据恒假、
+      // 直显腿恒不可达。判据保留在上游（`isImageAttachmentName(name)`）+ 体积上限。
+      if (!blob
         || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
         box.remove();
         return;
