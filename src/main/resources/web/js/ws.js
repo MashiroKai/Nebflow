@@ -532,9 +532,20 @@ export function connect() {
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
+      // Sub-agent frames (nodeSessionId present) must NOT be gated on sessionId:
+      // NodeRunner's routeSubagentWsSend leaves sessionId = the sub-agent's OWN id
+      // (emitInjectedUserEvent already stamped it), while DelegateTool's routeWsSend
+      // overwrites sessionId with the PARENT's. Every node-/dispatcher- live frame is
+      // therefore dropped here, so a running sub-agent's popup shows history only
+      // until the agent finishes and its ui.json lands on disk.
+      // Exempt them; the owning window is decided downstream (bg-agent step
+      // interceptor + the injected-bubble ownership gate in main.js).
+      // Frames WITHOUT nodeSessionId evaluate this condition exactly as before —
+      // same operands in the same order, one extra final operand.
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
           !GLOBAL_MSG_TYPES.has(msg.type) && !TERMINAL_MSG_TYPES.has(msg.type) &&
-          !STREAM_MSG_TYPES.has(msg.type)) {
+          !STREAM_MSG_TYPES.has(msg.type) &&
+          !msg.nodeSessionId) {
         return;
       }
 
