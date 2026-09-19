@@ -23,7 +23,8 @@ import scala.concurrent.duration.*
  * §4/§6）：
  *
  * - topologicalChains 判定算法（派生单点）：
- *   T① 弱连通分量——in∪out∪deps 无向并集（D1 deps 算链边）+ 名字形态 out 边解析（D9 正路）
+ *   T① 弱连通分量——in∪out 无向并集（**chainmodel 批一 ① 2026-09-19 起 `deps` 不再是
+ *      成员边**，只登记谱系 via=deps 边；旧口径「in∪out∪deps」作废）+ 名字形态 out 边解析（D9 正路）
  *   T② 跨活动/归档区——combinedNodes 合并集并链（D8）+ chainIdOf 判据（≥2 带/孤立不带）
  *   T③ 悬空名 out 边——跳过不连，两端各自成链（D9 负路）
  *   T④ 菱形多入口——一链两入口一终点（D5/D2/D7）
