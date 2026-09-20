@@ -104,25 +104,30 @@ class RestApiRoutes(
           .flatMap(agg => Ok(agg.asJson))
       }
 
-    // TTS 语音合成（无需 auth，内部调用）
+    // TTS 语音合成。门控（2026-09-20 收尾批）：原注记「无需 auth，内部调用」**已作废** ——
+    // 唯一调用方是登录态 webui（`web/js/chat.js` `VoicePlayer._fetchTts`，本批已补带
+    // `Authorization`）。与其余 REST 面同门：无令牌 403、带令牌照走业务体（`withAuth`
+    // 纯套壳，业务体逐行保留）。门的判据在业务判据（`ttsService` 是否配置）**之前**。
     case req @ POST -> Root / "tts" =>
-      ttsService match
-        case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
-        case Some(svc) =>
-          req.as[Json].flatMap { body =>
-            val text = body.hcursor.downField("text").as[String].getOrElse("")
-            svc.synthesize(text).flatMap {
-              case Some(bytes) =>
-                IO.pure(
-                  Response[IO](
-                    status = Status.Ok,
-                    headers = Headers(`Content-Type`(MediaType.audio.wav)),
-                    body = Stream.emits(bytes).covary[IO]
+      withAuth(req) {
+        ttsService match
+          case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
+          case Some(svc) =>
+            req.as[Json].flatMap { body =>
+              val text = body.hcursor.downField("text").as[String].getOrElse("")
+              svc.synthesize(text).flatMap {
+                case Some(bytes) =>
+                  IO.pure(
+                    Response[IO](
+                      status = Status.Ok,
+                      headers = Headers(`Content-Type`(MediaType.audio.wav)),
+                      body = Stream.emits(bytes).covary[IO]
+                    )
                   )
-                )
-              case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+                case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+              }
             }
-          }
+      }
 
     // Generic command endpoint — mirrors WS messages
     case req @ POST -> Root / "command" =>
@@ -965,87 +970,126 @@ class RestApiRoutes(
     // — it never touches the provider's browser SSO session, so a login
     // right after it silently redirects back into the original account.
     // The full logout (local teardown + Logto end-session handoff) is
-    // GET /neblink/auth/end-session below; the web logout button drives
-    // that one. This endpoint stays for API compatibility and scripted use.
+    // POST /neblink/auth/end-session below (POST + token since the 2026-09-20
+    // closeout batch; the old GET arm is a gated 405); the web logout button
+    // drives that one. This endpoint stays for API compatibility and scripted use.
     case req @ POST -> Root / "neblink" / "logout" =>
       withNeblink(req) { ms =>
         performLocalLogout(ms) *> Ok(Json.obj("ok" -> true.asJson))
       }
 
     // RP-initiated logout (OIDC Session Management, RP-logout fix
-    // 2026-09-06) — browser navigation endpoint: local teardown FIRST
-    // (same steps as POST /neblink/logout above, credential read before
-    // it is cleared), then 302 to the provider's end_session_endpoint with
-    // the persisted id_token as `id_token_hint` (valid hint = no
-    // confirmation page) and the local `/auth/logged-out` landing page as
-    // `post_logout_redirect_uri` (ignored by the provider until the uri is
-    // allow-listed on the Logto app — probed 2026-09-06, always safe).
-    // The browser-side Logto session cookie dies here, so the NEXT login
-    // shows the account page instead of silently re-entering the old
-    // account.
+    // 2026-09-06; POST + gate since the 2026-09-20 closeout batch) — local
+    // teardown FIRST (same steps as POST /neblink/logout above, credential read
+    // before it is cleared), then the provider's end_session_endpoint URL is
+    // returned as DATA (`{"endSessionUrl": …}`) instead of a 302: the caller is
+    // now a `fetch` (a cross-origin 302 cannot be followed by fetch — it is
+    // CORS-blocked and the body is opaque, so the target URL would be
+    // unreachable), and it navigates a popup it reserved in the same gesture
+    // tick (top-level navigation = no CORS). The URL carries the persisted
+    // id_token as `id_token_hint` (valid hint = no confirmation page) and the
+    // local `/auth/logged-out` landing page as `post_logout_redirect_uri`
+    // (ignored by the provider until the uri is allow-listed on the Logto app —
+    // probed 2026-09-06, always safe). The browser-side Logto session cookie
+    // dies at that navigation, so the NEXT login shows the account page instead
+    // of silently re-entering the old account.
     //
-    // No gateway checkAuth BY DESIGN: this is a browser navigation hop (no
-    // Authorization header available) in the standard OIDC RP-logout shape
-    // — the credential it acts on is the provider's own session cookie.
-    // Worst case abuse = triggering a logout redirect (low risk).
+    // 🔴 门控（2026-09-20 收尾批 = 作者裁定 + 分发器定形）：旧注记
+    // 「No gateway checkAuth BY DESIGN」（理由 = 浏览器导航跳拿不到
+    // Authorization）**已作废** —— 同一形态也是「GET 带副作用」的反模式（凭据删除
+    // 可由一次导航 / 链接预取 / 扫描器触发）。现在 **POST + 令牌** 才可达：客户端
+    // `web/js/neblink.js` `openEndSessionHandoff` 在手势内先预约空白窗、再 fetch
+    // （带 Authorization）、拿到 URL 后导航该窗。旧 GET 面留下**门内 405**（下一条 arm）。
+    case req @ POST -> Root / "neblink" / "auth" / "end-session" =>
+      withAuth(req) {
+        // Body（两字段皆可选；缺失 / 空 / 非 JSON body = 纯登出，容错与
+        // POST /neblink/auth/start 同款）：
+        //   {"scenario":"switch","uiLocales":"zh"|"en"}
+        //
+        // Scenario marker (one-window switch, 2026-09-16): `scenario=switch` is
+        // sent ONLY by the switch-account entry; it arms the single-use handoff
+        // so the landing page this hop ends on continues into the login in the
+        // SAME window. A plain logout explicitly DISARMS, so a leftover marker
+        // can never drag the plain-logout landing page into an auto-login.
+        // `uiLocales` is whitelisted exactly like /neblink/auth/start (the
+        // landing hop is a bare navigation — it cannot read the app's locale).
+        // 两者都从 query 迁到 POST body（本批：GET 面退场）。arm/disarm 调用点语义不变。
+        req.attemptAs[Json].value.map(_.toOption).flatMap { bodyJson =>
+          val switchScenario = bodyJson
+            .flatMap(_.hcursor.downField("scenario").as[String].toOption)
+            .contains("switch")
+          val uiLocales = bodyJson
+            .flatMap(_.hcursor.downField("uiLocales").as[String].toOption)
+            .filter(v => v == "zh" || v == "en")
+            .getOrElse("")
+          val armOrDisarm =
+            if switchScenario then switchHandoff.arm(uiLocales) else switchHandoff.disarm
+          neblinkService match
+            case None =>
+              armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
+            case Some(ms) =>
+              val run =
+                for
+                  _ <- armOrDisarm
+                  logto <- ms.neblinkConfig.map(_.effectiveLogto)
+                  // Read the hint BEFORE performLocalLogout deletes the file.
+                  //
+                  // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G5）：读失败**不得**跳过本地拆除。
+                  // 修前这一读异常裸冒泡 ⇒ 整条路由 500、拆除一步没跑（凭据没删、config
+                  // 没关、client 没置空），用户因此**无法通过「退出账号」自救**（上游 S3）。
+                  // 现在：读失败 ⇒ 只跳过 `id_token_hint`（登录态可能不完整），拆除照跑；
+                  // 分类读数由存储层的 WARN 留档（带分类码），无需在这里再判一次。
+                  credentialRead <- DeviceCredential.loadDiagnosed
+                  idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
+                  resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
+                    case Some(lc) =>
+                      val target = LogtoAuthCode.endSessionUrl(
+                        lc.endpoint,
+                        idToken,
+                        Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                      )
+                      for
+                        _ <- performLocalLogout(ms)
+                        _ <- logger.info("RP-initiated logout: local teardown done, returning the provider end_session URL")
+                        // 出口 = 200 + JSON（不再是 302）：见上方注释（fetch 无法消费跨域 302）。
+                        r <- Ok(Json.obj("endSessionUrl" -> target.asJson))
+                      yield r
+                    // Same surface as auth/start: unconfigured provider (or AC app
+                    // id missing) — the caller falls back to the local-only logout,
+                    // and no landing hop will ever come back to consume the marker.
+                    case _ =>
+                      switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+                yield resp
+              // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
+              // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
+              run.handleErrorWith { e =>
+                val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                  e,
+                  nebflow.neblink.CredentialFailure.Unclassified
+                )
+                logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
+                  htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
+              }
+        }
+      }
+
+    // 旧 GET 面（本批退场，分发器 2026-09-20 定形 ⒜(ii)：**门内 405**）—— 旧调用方
+    // （书签 / 脚本 / 旧页缓存）拿到自解释的「方法不对」而不是模糊 404；且因为它**在门内**
+    // （先过 checkAuth），加门后的未门控集仍 = 恰 4 条（4 条设计面豁免），不新增普查条目。
+    // 🔴 副作用不可达：本 arm 只回状态码，不 arm/disarm 标记、不碰凭据。
     case req @ GET -> Root / "neblink" / "auth" / "end-session" =>
-      // Scenario marker (one-window switch, 2026-09-16): `?scenario=switch` is
-      // sent ONLY by the switch-account entry; it arms the single-use handoff
-      // so the landing page this hop ends on continues into the login in the
-      // SAME window. A plain logout explicitly DISARMS, so a leftover marker
-      // can never drag the plain-logout landing page into an auto-login.
-      // `ui_locales` is whitelisted exactly like /neblink/auth/start (the
-      // landing hop is a bare navigation — it cannot read the app's locale).
-      val query = req.uri.query.params
-      val switchScenario = query.get("scenario").contains("switch")
-      val uiLocales = query.get("ui_locales").filter(v => v == "zh" || v == "en").getOrElse("")
-      val armOrDisarm =
-        if switchScenario then switchHandoff.arm(uiLocales) else switchHandoff.disarm
-      neblinkService match
-        case None =>
-          armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
-        case Some(ms) =>
-          val run =
-            for
-              _ <- armOrDisarm
-              logto <- ms.neblinkConfig.map(_.effectiveLogto)
-              // Read the hint BEFORE performLocalLogout deletes the file.
-              //
-              // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G5）：读失败**不得**跳过本地拆除。
-              // 修前这一读异常裸冒泡 ⇒ 整条路由 500、拆除一步没跑（凭据没删、config
-              // 没关、client 没置空），用户因此**无法通过「退出账号」自救**（上游 S3）。
-              // 现在：读失败 ⇒ 只跳过 `id_token_hint`（登录态可能不完整），拆除照跑；
-              // 分类读数由存储层的 WARN 留档（带分类码），无需在这里再判一次。
-              credentialRead <- DeviceCredential.loadDiagnosed
-              idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
-              resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
-                case Some(lc) =>
-                  val target = LogtoAuthCode.endSessionUrl(
-                    lc.endpoint,
-                    idToken,
-                    Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
-                  )
-                  for
-                    _ <- performLocalLogout(ms)
-                    _ <- logger.info("RP-initiated logout: local teardown done, redirecting to provider end_session")
-                    r <- Found(Location(Uri.unsafeFromString(target)))
-                  yield r
-                // Same surface as auth/start: unconfigured provider (or AC app
-                // id missing) — the caller falls back to the local-only logout,
-                // and no landing hop will ever come back to consume the marker.
-                case _ =>
-                  switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
-            yield resp
-          // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
-          // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
-          run.handleErrorWith { e =>
-            val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
-              e,
-              nebflow.neblink.CredentialFailure.Unclassified
+      withAuth(req) {
+        // 显式构造（DSL 的 `MethodNotAllowed` 只接受 `Allow` 头、不带体）：体自解释
+        // （`error` + 迁移目标），调用方拿到 405 而非模糊 404。
+        IO.pure(
+          Response[IO](status = Status.MethodNotAllowed).withEntity(
+            Json.obj(
+              "error" -> "method-not-allowed".asJson,
+              "allow" -> "POST".asJson
             )
-            logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
-              htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
-          }
+          )
+        )
+      }
 
     // Enroll device via pairing code — calls the NebLink Server's
     // /api/device/enroll, receives a long-lived device credential, persists it,
@@ -1316,7 +1360,9 @@ class RestApiRoutes(
     //     400), so the app shows the login panel as the visible failure face
     //     instead of retrying a window.
     // READ-ONLY by construction: it must never consume/arm the marker
-    // (only GET /auth/logged-out consumes; only end-session arms).
+    // (only GET /auth/logged-out consumes; only end-session arms — the POST
+    // arm since the 2026-09-20 closeout batch; the retired GET arm is a gated
+    // 405 and touches no marker).
     case req @ GET -> Root / "neblink" / "auth" / "handoff" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else switchHandoff.stateName.flatMap(s => Ok(Json.obj("state" -> s.asJson)))
