@@ -2,6 +2,7 @@ package nebflow.gateway
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
@@ -11,7 +12,10 @@ import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
 import nebflow.neblink.{NeblinkService, PeerInfo}
 import org.http4s.*
+import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.websocket.WebSocketContext
 import org.typelevel.ci.CIString
+import org.typelevel.vault.Key
 
 /**
  * Device-face hardening batch (chain-devsec-bleed), gateway-side legs:
@@ -27,9 +31,12 @@ import org.typelevel.ci.CIString
  *  - **11-route takedown** — the retired arms are gone from the route table
  *    (they fall through to None), while their live siblings are still served.
  *
- * Route liveness is asserted WITHOUT a token on purpose: `withAuth` refuses
- * early, so `Some(response)` == "the arm still exists", while a retired path
- * falls through to `None` — exactly the takedown's observable contract.
+ * Route liveness is asserted against the surface AS PRODUCTION MOUNTS IT
+ * (`routes <+> presenceWsRoutes(wsb)`, same shape as GatewayMain), with a Bearer
+ * token: a declared arm answers — 200 or an app-level 4xx — while a path nobody
+ * declares falls through to None, which is exactly the takedown's observable
+ * contract. The first takedown test carries a POSITIVE CONTROL on a known-live
+ * path, so an all-None surface cannot masquerade as a clean takedown.
  */
 class DeviceFaceHardeningRoutesSpec extends FunSuite:
 
@@ -78,7 +85,35 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     Request[IO](method = Method.POST, uri = Uri.unsafeFromString(path))
 
   private def served(req: Request[IO]): Boolean =
-    routes.routes(req).value.unsafeRunSync().isDefined
+    mounted(authed(req)).value.unsafeRunSync().isDefined
+
+  /** The route surface as PRODUCTION mounts it — `Router("/api" -> (routes.routes
+    * <+> presenceWsRoutes(wsb)))`, the same shape GatewayMain:1124 and the
+    * presence specs use.
+    *
+    * WHY the union and not just `routes`: the arms this batch retires sit in
+    * `presenceWsRoutes` (they follow the WS presence arm inside that block),
+    * while `/health`, `/groups` and the neblink arms sit in `routes`. Probing one
+    * table would report every path as absent and read as a clean takedown —
+    * which is exactly the false-green the positive control below exists to
+    * catch (it did, on the first two runs of this spec).
+    *
+    * `wsb` is only captured; no WS arm body runs. Constructed directly from the
+    * public companion so this stays a unit test with no bound port. */
+  private val wsb: WebSocketBuilder2[IO] =
+    WebSocketBuilder2[IO](Key.newKey[IO, WebSocketContext[IO]].unsafeRunSync())(using
+      cats.Applicative[IO]
+    )
+
+  private def mounted: HttpRoutes[IO] = routes.routes <+> routes.presenceWsRoutes(wsb)
+
+  /** Same Bearer shape the established gateway specs send (GroupApiRoutesSpec).
+    * A token is deliberate: the invariant being pinned is "a path DECLARED in
+    * the table answers (200 or an app-level 4xx) while a path nobody declares
+    * falls through to None" — so the request must be one the handler would
+    * actually serve. */
+  private def authed(req: Request[IO]): Request[IO] =
+    req.putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $TestToken"))
 
   // ── A1 receiver half ───────────────────────────────────────────────────────
 
@@ -171,7 +206,7 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
 
   private val stillServed: List[(String, Request[IO])] = List(
     ("GET /api/teams/mounted", get("/teams/mounted")),
-    ("GET /api/teams/:sid/mailbox/:flow", get("/teams/test-session/mailbox/research")),
+    ("GET /api/teams/mailbox/:sid/:flow", get("/teams/mailbox/test-session/research")),
     ("GET /api/teams/def/:flow", get("/teams/def/research")),
     ("GET /api/team/rules/:name", get("/team/rules/research")),
     ("GET /api/agents/:name", get("/agents/Nebula")),
@@ -182,6 +217,13 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
   )
 
   test("11-route takedown: every retired arm falls through the route table") {
+    // POSITIVE CONTROL FIRST: the table must be answering at all before "None"
+    // for a retired path means anything. Without it, a table that answered
+    // nothing would read as a successful takedown (vacuous green).
+    val control = served(get("/presets"))
+    println(s"[RTE-R0] POSITIVE CONTROL GET /presets ⇒ served=$control")
+    assert(control, "the route table answered nothing — the takedown readings would be vacuous")
+
     val alive = retired.collect { case (label, req) if served(req) => label }
     retired.foreach { case (label, req) => println(s"[RTE-R1] retired $label ⇒ served=${served(req)}") }
     assert(alive.isEmpty, s"these retired routes are still served: $alive")
