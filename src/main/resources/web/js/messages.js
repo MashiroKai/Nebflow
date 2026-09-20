@@ -74,7 +74,18 @@ import {
 } from './sendState.js';
 // 头像复用池 + 九宫格内容签名（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
 // 唯一入口 = avatarRender.js（判据与池都在那边，本模块只消费）。
-import { avatarImgNode, avatarCellsSignature } from './avatarRender.js';
+import { avatarImgNode, avatarCellsSignature, avatarNodeFor } from './avatarRender.js';
+// 本地优先层（sessperf Phase B · 2026-09-20；卡
+// `.nebflow/20260920_184900_sessperf-local-first-card__chain-sessperf.md` §4①②③）：
+// 唯一属主 = `localStore.js`（IndexedDB）。本模块**只消费**其冻结接口面：
+// 首帧走同步读（`readMessages` / `readRoster`，零 await、零网络），写走异步
+// （`writeMessages` / `writeRoster`），后台对账挂既有 10s beacon（`reconcile`）。
+// 🔴 本地层不可用（L1）⇒ `isLocalStoreEnabled()` 为假 ⇒ 回落 legacy 三层
+// （`fmMessageCache` / `fmDropboxCache`）—— 与改前逐字同行为。
+import {
+  readMessages, readRoster, writeMessages, writeRoster, isLocalStoreEnabled,
+  signatureOf, reconcile as reconcileLocalStore,
+} from './localStore.js';
 // 内联图片附件的取字节/票据面：好友·群面 = 既有鉴权路由（friendsApi），设备面 =
 // 既有本机落盘路径的 nf-ticket 链（`ticketUrl`）。两套都是**既有**取数面，
 // 本批禁新增第三条取字节路（并禁与另一套附件渲染面混淆）。
@@ -320,12 +331,13 @@ function el(tag, cls, text) {
 
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
-  if (person && person.avatarUrl) {
-    // 🔴 uifix 批（2026-09-17）：走**已解码节点复用池**（`avatarRender.js`）——
-    // 同 URL 若池中有游离 `<img>`（= 上一次开窗遗留、位图仍在内存）直接复用，
-    // 零重拉、零重解码、零空白帧。改前恒 `createElement('img')` + `img.src`，
-    // 每次重绘都是一枚未解码的新节点（作者令「禁每次重拉重绘」）。
-    a.appendChild(avatarImgNode(person.avatarUrl));
+  // sessperf Phase B（2026-09-20）：src 解析收口到 `avatarRender.avatarNodeFor`
+  // —— 本地层（`localStore.readAvatar`，键 = userId）命中 ⇒ 直接拿 objectURL，
+  // **零网络、零重取**；未命中 ⇒ 回落既有解码复用池 + 远端直拉（零回归），且由
+  // 本地层低频补字节供下一次开窗命中。判据面（有无 avatarUrl）与改前逐字相同。
+  const node = person ? avatarNodeFor(person) : null;
+  if (node) {
+    a.appendChild(node);
   } else {
     a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
   }
@@ -513,6 +525,10 @@ function updateBadge() {
  *     并行取（2 次往返，与今天一致）。 */
 async function refreshConversations({ friends = 'reuse' } = {}) {
   if (!loggedIn()) { conversations = []; friendsCache = []; friendsFetchedAt = 0; renderList(); return; }
+  // sessperf Phase B（2026-09-20）：面板首帧来源 = 本地层名册快照（**同步、零
+  // await、零网络**）；下面的网络腿降为**增量核对**（卡 §4②「签名相同 ⇒ 零网络、
+  // 零 DOM 操作」的落点见函数尾）。本地层不可用 / 无快照 ⇒ 与改前逐字同行为。
+  seedConversationsFromStore();
   const wantFriends = friends === 'force'
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
@@ -553,8 +569,17 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     learnSelfFromGroupRows(conversations);
     if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); friendsRefreshed = true; }
+    // 写路径（本地层唯一写入口）：合并后的**最终快照**落盘 ⇒ 下一次面板首帧零网络。
+    if (isLocalStoreEnabled()) {
+      writeRoster('conversations', conversations);
+      if (fr) writeRoster('friends', friendsCache);
+      if (grp && Array.isArray(grp.groups)) writeRoster('groups', grp.groups);
+      if (devices.length) writeRoster('devices', devices);
+    }
   } catch { /* keep last known */ }
-  renderList();
+  // 签名相同 ⇒ **零 DOM 操作**（卡 §4②）：内容没变时不做 innerHTML 全量重建
+  // （重建会把每行头像 `<img>` 全部销毁重造，正是「每次进面板都闪一下」的机制）。
+  renderListIfChanged();
   updateBadge();
   // ③ 名单装载后**补判一次**（msgfix 批 · 作者 2026-09-19 睡前令）：快照补齐/刷新后
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
@@ -563,11 +588,60 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   if (friendsRefreshed && modalEls) applyBlockState(currentConv());
 }
 
+// ── 会话列表：本地层首帧 + 内容签名闸（sessperf Phase B · 2026-09-20）──────
+// 卡 §4②「群名册 / 会话列表 / 好友列表：服务端无版本号 ⇒ **内容签名**（有序拼接
+// 「行 id + lastMessage.id + unreadCount + memberCount」）」+「签名相同 ⇒ 零网络、
+// 零 DOM 操作」。本区是这两条的机械落点（唯一实现）。
+
+/** 上一次真正重建过列表 DOM 时的内容签名（`null` = 本会话尚未渲染过）。 */
+let renderedListSig = null;
+
+/** 会话列表内容签名（判定字段 = 卡 §4② 口径；`openConvId` 决定 aria-selected，
+ *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。 */
+function rosterSignature(list) {
+  const parts = [];
+  for (const c of list || []) {
+    if (!c) continue;
+    parts.push(
+      c.conversationId,
+      (c.lastMessage && c.lastMessage.id) || '',
+      Number(c.unreadCount) || 0,
+      Number(c.memberCount) || 0
+    );
+  }
+  parts.push(`open:${openConvId || ''}`);
+  return signatureOf(parts);
+}
+
+/** 签名变了才重建（相同 ⇒ 零 DOM 操作，卡 §4②）。 */
+function renderListIfChanged() {
+  if (rosterSignature(conversations) === renderedListSig) return;
+  renderList();
+}
+
+/** 首帧：本地层名册快照 → 会话列表（同步、零 await、零网络）。
+ *  本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。 */
+function seedConversationsFromStore() {
+  if (!isLocalStoreEnabled() || conversations.length) return false;
+  const cached = readRoster('conversations');
+  const rows = cached && Array.isArray(cached.payload) ? cached.payload : null;
+  if (!rows || !rows.length) return false;
+  conversations = rows.slice();
+  learnSelfFromGroupRows(conversations); // 加性 viewer 字段腿：缓存快照同样可学
+  renderListIfChanged();
+  updateBadge();
+  return true;
+}
+
 function renderList() {
   const box = document.getElementById('fm-conversations');
   if (!box) return;
   box.innerHTML = '';
   updateBadge();
+  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。三条出口（登录空态 /
+  // 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是 index.html 的静态
+  // 节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
+  const sig = rosterSignature(conversations);
 
   if (!loggedIn()) {
     const empty = el('div', 'fm-login-empty');
@@ -576,14 +650,17 @@ function renderList() {
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     box.appendChild(empty);
+    renderedListSig = sig;
     return;
   }
   if (conversations.length === 0) {
     box.appendChild(el('div', 'fm-empty', t('messages.empty')));
+    renderedListSig = sig;
     return;
   }
   for (const conv of conversations) box.appendChild(convRow(conv));
   createIconsIn(box);
+  renderedListSig = sig;
 }
 
 function convRow(conv) {
@@ -799,15 +876,28 @@ function markConvRead(conv) {
   renderList();
 }
 
-/** ⑨ 把当前已加载窗口写进 L2 缓存（水位 = 已见到过的最大数值 id）。 */
+/** ⑨ 把当前已加载窗口写进本地层（水位 = 已见到过的最大数值 id）。
+ *  sessperf Phase B：写路径收口到 `localStore`（IndexedDB）；本地层不可用（L1）
+ *  ⇒ 回落 legacy L2（`fmMessageCache.saveConversation`）—— 两者**不双写**
+ *  （卡 §5.4 风险表：双写期双读数分歧）。 */
 function persistConversation(conv) {
   if (!conv || !conv.conversationId || chatMsgs.length === 0) return;
   let watermark = 0;
   for (const m of chatMsgs) { const n = Number(m.id); if (Number.isFinite(n) && n > watermark) watermark = n; }
-  saveConversation(conv.conversationId, chatMsgs, {
-    watermark,
-    lastMessageAt: toEpochMs(conv.lastMessage?.createdAt),
-  });
+  const lastMessageAt = toEpochMs(conv.lastMessage?.createdAt);
+  if (isLocalStoreEnabled()) {
+    void writeMessages(conv.conversationId, chatMsgs, { watermark, lastMessageAt });
+    return;
+  }
+  saveConversation(conv.conversationId, chatMsgs, { watermark, lastMessageAt });
+}
+
+/** 首帧读取的单点：本地层（同步内存镜像）优先；本地层不可用 ⇒ legacy L2。
+ *  🔴 本地层可用时**不读** legacy（禁双读数：导入是一次性的，此后 IDB 才权威）。 */
+function cachedConversation(conversationId) {
+  const fromLocal = readMessages(conversationId);
+  if (fromLocal) return fromLocal;
+  return isLocalStoreEnabled() ? null : loadConversation(conversationId);
 }
 
 /** ⑨ keyset 水位 = 已加载窗口里的最大数值 id（`after=` 游标的唯一取值来源）。 */
@@ -903,9 +993,11 @@ async function openConversation(conversationId, rowEl) {
   // 群窗：惰性装载成员名册（发送者名回填；失败 = 降级无名字，消息不受影响）。
   if (conv.kind === 'group') hydrateGroupSenderNames(conv);
 
-  // ⑨ 热路径（有缓存）：同步读缓存首屏（零往返），随后一次极小增量核对
+  // ⑨ 热路径（有缓存）：同步读本地层首屏（零往返、零 await），随后一次极小增量核对
   // （`after=<水位>&limit=SYNC_PAGE`）—— 无新消息 = 空响应，**不是**尾窗重取。
-  const cached = loadConversation(conversationId);
+  // sessperf Phase B：读取面 = `localStore.readMessages`（IndexedDB 内存镜像，
+  // 键 = convId）；本地层不可用时回落 legacy L2（L1，行为与改前逐字相同）。
+  const cached = cachedConversation(conversationId);
   if (cached) {
     chatMsgs = cached.msgs.slice();
     oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
@@ -980,37 +1072,74 @@ function groupSenderNameOf(conv, senderId) {
   return (map && map.get(String(senderId))) || '';
 }
 
-/** 开群窗时的成员名册惰性装载（每窗一次；失败降级为无发送者名）。 */
+/** 群成员名册的应用（**唯一**就地渲染实现：窗头组合头像 + 列表行 + 已渲染气泡
+ *  的发送者名回填）。名册来源两腿（本地层快照 / 网络腿）共用它 ⇒ 两腿渲染结果
+ *  逐字同形（禁第二份渲染链）。 */
+function applyGroupRoster(conv, cells) {
+  const convId = String(conv.conversationId);
+  const map = new Map();
+  for (const mem of cells || []) {
+    if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
+  }
+  groupMemberNames.set(convId, map);
+  groupMemberAvatars.set(convId, cells || []);
+  // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
+  refreshOpenGroupHeaderAvatar();
+  // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
+  // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
+  // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
+  // 零新 CSS，不动数据面/接口。
+  rerenderConvRow(conv.conversationId);
+  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
+  if (modalEls && openConvId === conv.conversationId) {
+    for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+      const nm = map.get(s.dataset.senderId);
+      if (nm && !s.textContent) s.textContent = nm;
+    }
+  }
+}
+
+/** 群名册内容签名（卡 §4② 兜底判据的群面口径：成员 id 集合的有序拼接）。
+ *  `userId` 顺序 = 服务端加入序（纯透传 ⇒ 顺序是内容的一部分，禁排序归一）。 */
+function groupRosterSignature(cells) {
+  return signatureOf((cells || []).map((c) => (c && c.userId) || ''));
+}
+
+/** 开群窗时的成员名册装载（每窗一次）。
+ *
+ *  sessperf Phase B（卡 §4② / §5.4）：① 首帧先读本地层快照（**同步、零网络**）
+ *  并就地渲染 —— 集团头像/发送者名不再等一次往返；② 快照新鲜（10 min TTL）且与
+ *  会话行 `memberCount` 一致 ⇒ **零网络**（「签名相同 ⇒ 零网络」的群面落点，
+ *  每窗省 1 次 `GET /api/groups/{id}/members`）；③ 否则取一次，**签名相同 ⇒
+ * 零 DOM 操作**（禁「字母 → 组合头像」的换脸重打）。失败一律降级为无发送者名
+ *  （消息本体不受影响），与改前同一条纪律。 */
 async function hydrateGroupSenderNames(conv) {
+  const convId = String(conv.conversationId);
+  const cachedEntry = readRoster('groupMembers:' + convId);
+  const cachedCells = cachedEntry && Array.isArray(cachedEntry.payload) ? cachedEntry.payload : null;
+  let prevSig = null;
+  if (cachedCells && cachedCells.length) {
+    prevSig = groupRosterSignature(cachedCells);
+    applyGroupRoster(conv, cachedCells);
+    const mc = Number(conv && conv.memberCount);
+    const countMatches = !(Number.isFinite(mc) && mc > 0) || mc === cachedCells.length;
+    if (cachedEntry.fresh && countMatches) return; // ② 零网络
+  }
   try {
     const members = await api.getGroupMembers(conv.conversationId);
     // 成员面信封 `selfUserId`（契约终版 §1.1 #7）= viewer 身份的另一条权威腿：
     // 学到即收敛整窗方向判据（含已渲染气泡的下一次渲染）。
     if (members && members.selfUserId) learnSelfUserId(members.selfUserId);
-    const map = new Map();
     const cells = [];
     for (const mem of members || []) {
-      if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
       // 窗头组合头像格子（身份键 userId 与列表行字段同空间；顺序纯透传 ——
       // 🔴 禁把索引 0 当群主，正典 §A.2 owner 位置不确定）。
       if (mem && mem.userId) cells.push({ userId: mem.userId, name: mem.name, avatarUrl: mem.avatarUrl });
     }
-    groupMemberNames.set(String(conv.conversationId), map);
-    groupMemberAvatars.set(String(conv.conversationId), cells);
-    // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
-    refreshOpenGroupHeaderAvatar();
-    // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
-    // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
-    // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
-    // 零新 CSS，不动数据面/接口。
-    rerenderConvRow(conv.conversationId);
-    // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
-    if (modalEls && openConvId === conv.conversationId) {
-      for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
-        const nm = map.get(s.dataset.senderId);
-        if (nm && !s.textContent) s.textContent = nm;
-      }
-    }
+    const nextSig = groupRosterSignature(cells);
+    void writeRoster('groupMembers:' + convId, cells, { version: 0 });
+    if (prevSig !== null && prevSig === nextSig) return; // ③ 签名相同 ⇒ 零 DOM 操作
+    applyGroupRoster(conv, cells);
   } catch { /* 名册失败 = 降级为无发送者名（禁因名册失败丢消息） */ }
 }
 
@@ -4553,8 +4682,26 @@ async function incrementalResync({ withList = false } = {}) {
   if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
 }
 
+/** 本地层后台对账的节流（> beacon 周期 ⇒ 至多一拍一次；低频率是本条的纪律）。 */
+const LOCAL_RECONCILE_THROTTLE_MS = 60000;
+let lastLocalReconcileAt = 0;
+
+/** 本地层后台对账拍（sessperf Phase B · 卡 §4②「后台对账：挂靠**既有** 10 s
+ *  beacon，**禁新增定时器**」）：预算收口（L5）+ 头像 TTL 兜底刷新。
+ *  🔴 判据独立于下面的帧静默门控 —— 「预算是否超限 / 头像是否过期」与「帧是否在流」
+ *  无关；自身 60 s 节流 + 每拍有界（`reconcile` 内），故帧健康态也只多一次无网络
+ *  的对账（仅超限/过期时才动网）。 */
+function localReconcileTick() {
+  if (!isLocalStoreEnabled()) return;
+  const now = Date.now();
+  if (now - lastLocalReconcileAt < LOCAL_RECONCILE_THROTTLE_MS) return;
+  lastLocalReconcileAt = now;
+  void reconcileLocalStore();
+}
+
 async function backfillTick() {
   if (!loggedIn() || document.hidden) return;
+  localReconcileTick(); // 本地层对账（无网时为纯记账 + 驱逐；见上注）
   // 帧静默门控（作者 2026-09-13 裁定放行，口径见上方红线段）：
   //   · 最近 N 秒内收到过 friend 帧 且 隧道报活 且 WS 在连 ⇒ 已确证送达，零请求
   //     （= 修前「健康路径零请求」的**保真子集**：帧真的在流）；
@@ -5408,36 +5555,114 @@ function markDeviceConvRead(conv) {
   void refreshDeviceReceipts(conv);
 }
 
+/** 落盘条目 → `adaptDeviceMessage` 的入参形状（**唯一**转换点）。
+ *
+ *  两腿共用：服务端行条目（`senderDeviceId` 面）与 legacy 导入条目（`direction`/
+ *  `ts` 面）。方向**不落盘**（见 `localStore.devEntry`）⇒ 读回时按同一单点重算，
+ *  换机 / 换账号后的判据不被冻结。 */
+function deviceEntryToWire(e) {
+  if (!e || typeof e !== 'object') return null;
+  if (e.legacy) {
+    return {
+      msgId: e.id, direction: e.direction, ts: e.ts, kind: e.kind, text: e.body,
+      status: e.status, transferId: e.transferId, fileName: e.fileName, fileSize: e.fileSize,
+    };
+  }
+  return {
+    id: e.id, senderDeviceId: e.senderDeviceId, body: e.body,
+    createdAtMs: e.createdAtMs, kind: e.kind, attachments: e.attachments,
+  };
+}
+
+/** 一行会话的本地层条目（同步）→ 已 adapt 的消息（只认**服务端行**条目：
+ *  legacy 导入条目无 keyset 语义、由 `dropbox.js` 既有层消费，禁混入本腿）。 */
+function cachedDeviceRowMsgs(convId) {
+  const cached = readMessages(convId);
+  if (!cached) return [];
+  const out = [];
+  for (const e of cached.msgs) {
+    if (!e || e.shape !== 'dev' || e.legacy) continue;
+    const a = adaptDeviceMessage(deviceEntryToWire(e));
+    if (a && a.id) out.push(a);
+  }
+  return out;
+}
+
+/** 设备服务端腿**首帧**：本地层条目 → 归并窗（同步、零 await、零网络）。 */
+function cachedDeviceServerMsgs(conv) {
+  const merged = [];
+  for (const row of (conv && conv.serverRows) || []) {
+    for (const m of cachedDeviceRowMsgs(row.conversationId)) merged.push(m);
+  }
+  merged.sort(compareDeviceMsg);
+  return merged;
+}
+
 /** 设备会话服务端取数（keyset 尾窗，D9：MVP-2 由「网关全量」转 keyset）。
  *  🔴 **归并窗 = 两条会话各自取数后按 id 归并**（§9.3）：对端行给出「对端发来的」、
  *  本机行给出「我发出的」，两路都在同一实现面取（禁各自演化）。
- *  任一路取数失败 ⇒ 整窗降级 legacy dropbox 腿（可见提示），不半窗呈现。 */
+ *  任一路取数失败 ⇒ 整窗降级 legacy dropbox 腿（可见提示），不半窗呈现。
+ *
+ *  sessperf Phase B（卡 §4②「开窗零全量重拉」+ §5.3 改动面）：本地层有该行条目 ⇒
+ *  走 `after=<水位>&limit=50` keyset 增量（≤4 页，`MAX_SYNC_PAGES` 数值不变）；
+ *  本地层无条目 ⇒ 冷路径仍是既有尾窗（M6「冷缓存不倒退」基线不变）。
+ *  写回本地层（键 = 该行 `conversationId`）⇒ 下一次开窗首帧零网络。 */
 async function fetchDeviceMsgsServer(conv) {
   const rows = (conv && conv.serverRows) || [];
-  const parts = [];
-  try {
-    for (const row of rows) {
-      const anchor = Number(row.lastMessage && row.lastMessage.id);
-      const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
-      const msgs = await api.getMessages(row.conversationId, { after, limit: HISTORY_WINDOW });
-      for (const m of msgs || []) parts.push(m);
+  if (!rows.length) { deviceMsgs = []; return; }
+  let failure = null;
+  for (const row of rows) {
+    const convId = row.conversationId;
+    const cached = readMessages(convId);
+    const prevEntries = cached ? cached.msgs.filter(e => e && e.shape === 'dev' && !e.legacy) : [];
+    let watermark = cached ? cached.watermark : 0;
+    const fetched = [];
+    try {
+      if (watermark > 0) {
+        for (let i = 0; i < MAX_SYNC_PAGES; i++) {
+          const batch = await api.getMessages(convId, { after: watermark, limit: SYNC_PAGE });
+          const list = batch || [];
+          for (const m of list) fetched.push(m);
+          const maxId = list.reduce((n, m) => Math.max(n, Number(m && m.id) || 0), 0);
+          if (maxId > watermark) watermark = maxId;
+          if (list.length < SYNC_PAGE) break; // 不满页 ⇒ 已到服务端水位
+        }
+      } else {
+        // 本地层无条目 ⇒ 冷路径（与改前逐字同：锚 = 会话行 lastMessage.id 回退一窗）
+        const anchor = Number(row.lastMessage && row.lastMessage.id);
+        const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
+        const list = await api.getMessages(convId, { after, limit: HISTORY_WINDOW }) || [];
+        for (const m of list) fetched.push(m);
+        const maxId = list.reduce((n, m) => Math.max(n, Number(m && m.id) || 0), 0);
+        watermark = Math.max(watermark, maxId);
+      }
+    } catch (err) {
+      failure = err; // 任一路失败 ⇒ 整窗降级（不半窗呈现，既有语义）
+      break;
     }
-  } catch (err) {
+    if (isLocalStoreEnabled()) {
+      void writeMessages(convId, prevEntries.concat(fetched), {
+        watermark,
+        lastMessageAt: toEpochMs(row.lastMessage && row.lastMessage.createdAt),
+        shape: 'dev',
+      });
+    }
+  }
+  if (failure) {
     // 判红④：服务端面不可达（404 neblinkOff / 未登录 / 网络）⇒ **可见降级**，
     // 落 legacy dropbox 腿，绝不留白窗、绝不抛错崩窗。
     syncDeviceMsgs(conv.device.deviceId);
     deviceMsgs = deviceMsgs.map(m => ({ ...m }));
-    if (err && (err.status === 404 || err.status === 403 || err.status === 401)) {
+    if (failure && (failure.status === 404 || failure.status === 403 || failure.status === 401)) {
       modalToast(t('messages.deviceServerUnavailable'));
     }
     return;
   }
   if (openConvId !== conv.conversationId) return; // 窗已被替换
   const next = [];
-  for (const m of parts) {
-    const a = adaptDeviceMessage(m);
-    if (!a.id) continue; // 无 id 的行不可定位（keyedDiff 需要 id），跳过并留待重取
-    next.push(a);
+  for (const row of rows) {
+    // 渲染面 = **本地层**（写回后的镜像：同一条读取路径 ⇒ 与下一次开窗首帧逐字同形）
+    for (const m of cachedDeviceRowMsgs(row.conversationId)) next.push(m);
   }
   next.sort(compareDeviceMsg);
   // 🔴 唯一换装点：先认领（未决乐观项原地换键）再交调用方重渲（§4.1-#7「先认领再重渲」）。
@@ -5599,8 +5824,12 @@ async function openDeviceConversation(conv, rowEl) {
   openConvId = conv.conversationId;
   renderChatModal(conv);
   if (conv.sourceServer) {
-    deviceMsgs = [];
-    showFlowLoading(); // 冷启动可见加载态（与好友面冷路径同一档，不用转圈掩盖慢）
+    // sessperf Phase B（卡 §5.3「服务端腿删 `deviceMsgs = []`，改 store 首帧 → 增量」）：
+    // 首帧来源 = 本地层（**同步、零 await、零网络**）；加载态只服务「本地层无条目」
+    // 这一档（与好友/群面同一条纪律：禁先清空再等网络）。
+    deviceMsgs = cachedDeviceServerMsgs(conv);
+    if (deviceMsgs.length) renderMessages(deviceMsgs);
+    else showFlowLoading();
     await fetchDeviceMsgsServer(conv);
     if (openConvId !== conv.conversationId) return;
     renderMessages(deviceMsgs);

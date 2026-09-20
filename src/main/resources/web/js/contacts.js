@@ -29,6 +29,12 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 本模块三个面：搜索框 / 验证附言 / ⑦ 备注行内编辑器（新增面必须同批接入，
 // 否则就是第 16 个分叉点）。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 头像渲染单点（sessperf Phase B · 2026-09-20）：本文件此前的第二份 `avatarEl`
+// 已收敛到 `avatarRender.avatarNodeFor`（判据：两份实现必然漂移）。
+import { avatarNodeFor } from './avatarRender.js';
+// 本地优先名册层（sessperf Phase B · 2026-09-20）：好友列表首帧来源 = 本地层
+// 快照（同步、零网络），网络腿降为增量核对 —— 唯一属主 `localStore.js`。
+import { readRoster, writeRoster, isLocalStoreEnabled } from './localStore.js';
 
 let friends = [];
 let incoming = [];
@@ -151,6 +157,10 @@ async function refresh() {
 
 async function doRefresh() {
   if (!loggedIn()) { friends = []; incoming = []; outgoing = []; groupInvites = []; listErrorKind = null; render(); return; }
+  // sessperf Phase B（2026-09-20，卡 §4① / §5.3 `contacts.js:143-201`）：
+  // 面板首帧来源 = 本地层名册快照（**同步、零网络**）；下面的网络腿降为补差。
+  // 本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。
+  seedFriendsFromStore();
   try {
     // 批 B（§3.4）：出口唯一 —— `getFriends()` 已按「服务端 `friends[]` 命中」收敛
     // 双向待处理（`friendsApi.convergeRequests`）⇒ 本模块**不再**自行过滤（禁第二份判据）。
@@ -189,6 +199,9 @@ async function doRefresh() {
     // 已是归一后的入站邀请数组。
     const grp = await refreshGroups();
     if (grp) groupInvites = grp.pendingInvites || [];
+    // 写路径（本地层唯一写入口）：**合并后的最终名单**落盘（含拉黑镜像行，
+    // 与 render 的输入逐字同形）⇒ 下一次进面板首帧零网络。
+    if (isLocalStoreEnabled() && friends.length) writeRoster('friends', friends);
   } catch (err) {
     // F4（20260910）：失败≠空。记录分态供 render 区分「空列表」与「加载失败」；
     // 已有缓存数据时 keep-last-known 行为不变（不闪错误态）。
@@ -206,6 +219,18 @@ function panelActive() {
   return !!(panel && panel.classList.contains('active'));
 }
 
+/** 首帧：本地层名册快照 → 好友列表（同步、零 await、零网络）。
+ *  本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。 */
+function seedFriendsFromStore() {
+  if (!isLocalStoreEnabled() || friends.length) return false;
+  const cached = readRoster('friends');
+  const rows = cached && Array.isArray(cached.payload) ? cached.payload : null;
+  if (!rows || !rows.length) return false;
+  friends = rows.slice();
+  render();
+  return true;
+}
+
 function updateBadge() {
   const n = loggedIn() ? unseenIncomingCount() : 0;
   setActivityBadge('contacts-btn', n, t('contacts.ariaRequests', { n }));
@@ -221,13 +246,15 @@ function el(tag, cls, text) {
 
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
-  if (person.avatarUrl) {
-    const img = document.createElement('img');
-    img.src = person.avatarUrl;
-    img.alt = '';
-    a.appendChild(img);
+  // sessperf Phase B（2026-09-20）：本文件此前是**第二份** `avatarEl` 实现
+  // （`createElement('img') + img.src`，连会话内解码池都不走）⇒ 收敛到
+  // `avatarRender.avatarNodeFor`（唯一实现：本地层 objectURL 优先 → 未命中回落
+  // 远端 URL + 解码复用池）。判据面（有无头像）与改前逐字相同。
+  const node = person ? avatarNodeFor(person) : null;
+  if (node) {
+    a.appendChild(node);
   } else {
-    a.textContent = (person.name || person.neblinkId || '?').trim().charAt(0).toUpperCase();
+    a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
   }
   a.setAttribute('aria-hidden', 'true');
   return a;

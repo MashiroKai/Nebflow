@@ -874,6 +874,76 @@ class RestApiRoutes(
         }
       }
 
+    // 对端头像同源只读路由（sessperf Phase B 前置项 · 作者 2026-09-20 18:55 令 B）。
+    //
+    // 为什么需要：网页本地层要给**对端**头像建「内容指纹双层缓存」（方案卡 §4③），
+    // 而跨源头像源站**不发 CORS 头** ⇒ 浏览器直 fetch 恒失败（`AvatarProxy.scala`
+    // 头注 2026-09-07 取证）；`GET /api/neblink/avatar` 只服务当前身份**自己**。
+    // 本路由是「按 userId 取对端头像字节」的唯一取数面。
+    //
+    // 🔴 **出生即包鉴权闸**（作者令：新路由禁裸奔过夜；apiguard 批 38 路由同族口径）：
+    //    判据与全部 `/friends*` / `/conversations*` 代理腿**逐字同款**——
+    //    ① `withAuth`（网关 Bearer 令牌）在先：无令牌 ⇒ **403**，零上游往返；
+    //    ② `friendService` 缺席 ⇒ **404 `NebLink not enabled`**（fail-closed）；
+    //    ③ 上游 `Not logged in` ⇒ **401 `code=neblink_not_logged_in`**（`friendErr` 单点，
+    //       与网关自身 403 的**有意分化**见 `friendErr` 注释）。
+    //
+    // 🔴 **不是开放代理 / SSRF 面为零**：客户端**只能给 `userId`**；具体 URL 由网关从
+    //    **本账号好友档案**（`FriendSummary.avatar`）解出 —— 请求方无法让网关去取任意
+    //    地址。够不着的好友（非好友 / 未知 id / 该好友无头像）⇒ **404 `no avatar`**。
+    //
+    // 响应面（方案卡 §3 前置项逐条）：字节 + `Content-Type` 原样透传，
+    //   带 `X-Avatar-Sha256` + `ETag`（强 ETag = 内容 sha）+ `Cache-Control: private`；
+    //    `If-None-Match` 命中 ⇒ **304**（零重传 —— 客户端「hash 未变 ⇒ 复用旧 blob」的
+    //    判据面）。上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+    case req @ GET -> Root / "avatars" / userId =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            val wanted = userId.trim
+            if wanted.isEmpty then BadRequest(Json.obj("error" -> "userId required".asJson))
+            else
+              fs.listFriends.flatMap {
+                case Left(err) => friendErr(err)
+                case Right(resp) =>
+                  resp.friends.find(_.userId == wanted).flatMap(_.avatar).filter(_.nonEmpty) match
+                    case None => NotFound(Json.obj("error" -> "no avatar".asJson))
+                    case Some(url) =>
+                      AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
+                        case Right((contentType, bytes)) =>
+                          val sha = AvatarProxy.sha256Hex(bytes)
+                          val etag = "\"" + sha + "\""
+                          val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
+                          if inm.nonEmpty && inm.contains(sha) then
+                            IO.pure(
+                              Response[IO](Status.NotModified)
+                                .withHeaders(Headers(Header.Raw(CIString("ETag"), etag)))
+                            )
+                          else
+                            // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
+                            // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
+                            // 变成 JSON 数字数组 ⇒ 图片损坏）。
+                            val ct = org.http4s.headers.`Content-Type`.parse(contentType)
+                              .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                            IO.pure(
+                              Response[IO](Status.Ok)
+                                .withEntity(fs2.Stream.emits(bytes).covary[IO])
+                                .withHeaders(
+                                  Headers(
+                                    ct,
+                                    Header.Raw(CIString("ETag"), etag),
+                                    Header.Raw(CIString("X-Avatar-Sha256"), sha),
+                                    Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
+                                  )
+                                )
+                            )
+                        case Left(err) =>
+                          BadGateway(Json.obj("error" -> err.asJson))
+                      }
+              }
+      }
+
     // Update neblink config (e.g. syncIntervalSec)
     case req @ PATCH -> Root / "neblink" / "config" =>
       withNeblink(req) { ms =>

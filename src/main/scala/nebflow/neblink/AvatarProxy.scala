@@ -36,6 +36,21 @@ object AvatarProxy:
         else Left(s"upstream HTTP $status")
     }
 
+  /** Content fingerprint of the proxied bytes — hex sha-256.
+    *
+    *  sessperf Phase B（2026-09-20，方案卡 §4③）: the web local-first avatar layer
+    *  keys its IndexedDB blob entry by the **content** fingerprint, so a source URL
+    *  change that yields the same bytes must not re-store（「hash 未变 ⇒ 零重取零
+    *  重落盘」）. The gateway is the only party that can compute it (the browser
+    *  never gets the remote URL's bytes directly — the avatar origin sends no CORS
+    *  headers), so the proxy surfaces it as the `X-Avatar-Sha256` response header
+    *  and uses it as the strong ETag（`If-None-Match` ⇒ 304）。
+    *
+    *  Pure function, zero deps（可单测，与 `fetch` 的注入式契约同精神）。 */
+  def sha256Hex(bytes: Array[Byte]): String =
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    md.digest(bytes).map(b => f"${b & 0xff}%02x").mkString
+
   /** Production transport: the shared `OutboundHttpClients.Policy.Direct15s`
     * client (HTTP/1.1, system proxy bypassed, 15 s connect) — the same policy
     * as LogtoDeviceFlow.jdkSend. One memoized instance instead of a new
