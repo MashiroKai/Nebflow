@@ -203,22 +203,30 @@ class UpdateOrchestrator(
             "hot-restart orchestrator is unavailable in this instance",
             latest)
         case Some(hr) =>
-          hr.requestRestart(source = s"update:${run.source.wire}", mode = req.mode).flatMap {
+          // G0 收口（批 2）：走**窄入口**（`requestRestartAwaitingHandover`）——它在
+          // 「四档健康自检通过且已触发优雅让渡」时才回 Right；中止（含自检失败）回
+          // 类型化失败。⇒ 本件不再把「交接已受理」当「已完成」（批 1 verify §11② 的
+          // 残余可见性：显示已完成而实际未起）。既有 WS 重启命令走 `requestRestart`，
+          // 语义零变；相位仍只有 `step` 一个改动点（帧契约逐字不变）。
+          hr.requestRestartAwaitingHandover(source = s"update:${run.source.wire}", mode = req.mode).flatMap {
             case Left(err) =>
-              abort(run, UpdateReason.RestartRefused, s"restart phase refused or aborted: $err", latest)
+              val reason = err.kind match
+                case HotRestart.FailureKind.HealthCheckFailed => UpdateReason.HealthCheckFailed
+                case _                                        => UpdateReason.RestartRefused
+              abort(run, reason, s"restart phase aborted [${err.kind.wire}]: ${err.reason}", latest)
             case Right(()) =>
               // 恢复相位零新增：后继进程自己走既有开机链（崩溃恢复 #16 + 开机重入 #18）。
-              // 完成判定 = 编排器已受理交接（本进程即将优雅退出，不重复等待后继）。
+              // 完成判定 = 健康自检已通过且交接已触发（旧进程即将优雅退出）。
               step(
                 run,
                 UpdatePhase.Recovering,
-                "handover triggered — the successor process runs the existing boot chain (crash recovery + dispatcher wake); zero new recovery machinery",
+                "handover triggered after the new version passed the four-tier health self-check — the successor process runs the existing boot chain (crash recovery + dispatcher wake); zero new recovery machinery",
                 latest
               ) *>
                 step(
                   run,
                   UpdatePhase.Completed,
-                  s"update completed: package on disk and the restart chain is running (version ${latest.getOrElse("unknown")})",
+                  s"update completed: package on disk, the new version passed the health self-check and the handover is running (version ${latest.getOrElse("unknown")})",
                   latest,
                   Some(1.0)
                 )
