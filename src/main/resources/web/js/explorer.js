@@ -964,7 +964,14 @@ onMessage('fileContent', (msg) => {
         content: msg.content || '',
         size: msg.size || 0,
         name: msg.fileName || msg.path.split('/').pop() || msg.path,
-        error: msg.error || null,
+        // A >8MiB text file now arrives as a stream descriptor: it carries no
+        // content, and the attachment pipeline cannot inline bytes it did not
+        // receive. Say so explicitly instead of letting it degrade to the
+        // pipeline's generic "looks binary" message (input.js stays untouched).
+        error: msg.error
+          || (msg.stream
+            ? `file is too large to attach inline (${Math.round((msg.size || 0) / (1024 * 1024))}MB)`
+            : null),
       },
     }));
     return;
@@ -1008,6 +1015,11 @@ onMessage('fileContent', (msg) => {
     rootPath: explorerRoot,
     pinned,
     background,
+    // Text-stream descriptor passthrough (卡 §五 step ④): a >8MiB text file comes
+    // back WITHOUT content + `stream:{v:1,kind:"text"}` + `mtimeMs`. canvas.js and
+    // fileViewers.js consume these two fields; nothing else here changes.
+    stream: msg.stream || null,
+    mtimeMs: msg.mtimeMs || 0,
   };
   window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: item }));
 });
