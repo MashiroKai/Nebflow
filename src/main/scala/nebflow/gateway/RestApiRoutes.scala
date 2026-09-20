@@ -1470,7 +1470,18 @@ class RestApiRoutes(
           case Some(svc) =>
             svc.uploadAndRelay(transferId, req.body).flatMap {
               case Right(_) => Ok(Json.obj("ok" -> true.asJson))
-              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+              case Left(err) =>
+                // xferb 批（P0-3）：失败响应带**结构化原因**（code + errorDetail 全文），
+                // 与 `dropboxError` / `dropbox-file-complete` 事件同形态 —— 前端据此回显
+                // 可判读原因，而不是一句人读文本（第二段上屏消费本字段）。
+                Ok(
+                  Json.obj(
+                    "ok" -> false.asJson,
+                    "error" -> err.render.asJson,
+                    "errorCode" -> err.code.asJson,
+                    "errorDetail" -> err.toJson
+                  )
+                )
             }
       }
 
