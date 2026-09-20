@@ -21,6 +21,9 @@ import java.nio.file.Files
  *  ⑤ **第三方零变化对照臂**：非保留前缀的包在「允许列表空 / 非空」两窗口下判定逐条相同；
  *  ⑥ **首启预置信任端到端**：`SeedService.ensureSeeded()` 在 fresh home 装内置官方包 +
  *     落 Trusted 审计记录，且「允许列表 digest == 信任记录 digest == 装后现算 digest」三方一致。
+ *  ⑦ **jar 形态臂**（分发形态回归，`p03-remediate` §11-3）：真 jar 资源树 ⇒ 允许列表与
+ *     `file:` 形态**同一结果**（jar 分支路径只拼一次 `base`）+ jar 形态下官方包装载/非官方拒
+ *     判定同款。①⑥ 两臂只覆盖 `file:` 分支（sbt 期 classpath = 目录），本臂补 jar 分支。
  *
  * 隔离面：全程 `PathUtil.setDataRoot(<临时目录>)`，**零 real-HOME 写面**
  * （`~/.nebflow/plugins/` 与 `~/.nebflow/nebflow.json` 一个字节都不碰）。
@@ -72,6 +75,41 @@ class OfficialIdentitySpec extends FunSuite:
     val url = getClass.getClassLoader.getResource(s"$rel/plugin.json")
     assert(url != null, s"'$rel' is not on the test classpath (expected under src/test/resources)")
     os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
+
+  /** 单个资源文件的字节（测试 classpath：`src/main/resources` + `src/test/resources`）。 */
+  private def resourceBytes(rel: String): Array[Byte] =
+    val url = getClass.getClassLoader.getResource(rel)
+    assert(url != null, s"'$rel' is not on the test classpath")
+    Files.readAllBytes(java.nio.file.Paths.get(url.toURI))
+
+  /** 构造**真 jar 形态**资源树：真 `seed/manifest.json` 锚点 + 指定内置包的逐字节副本，
+    * 以 `seed/plugins/<pkg>/…` 写进一个真 jar，并用**只认该 jar** 的 `URLClassLoader` 驱动
+    * `OfficialPackages` 的 jar 分支。
+    *
+    * 🔴 parent = `null` 不是风格选择：本 suite 的父 classpath 上就有一棵 `file:` 形态的 `seed/`
+    * 目录树，parent 非空时锚点会解析成**目录** ⇒ 走 file: 分支 ⇒ jar 臂退化成假绿。 */
+  private def withFixtureJar[A](pkgs: List[String])(body: (java.nio.file.Path, ClassLoader) => A): A =
+    val dir = os.Path(Files.createTempDirectory("nb-official-jarform"))
+    val jar = dir / "jarform-fixture.jar"
+    val out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar.toNIO))
+    try
+      def add(rel: String, bytes: Array[Byte]): Unit =
+        out.putNextEntry(new java.util.jar.JarEntry(rel))
+        out.write(bytes)
+        out.closeEntry()
+      add("seed/manifest.json", resourceBytes("seed/manifest.json"))
+      pkgs.foreach { name =>
+        val pkg = resourceDir(s"seed/plugins/$name")
+        os.walk(pkg).filter(os.isFile).toList.sortBy(_.toString).foreach { f =>
+          add(s"seed/plugins/$name/${f.relativeTo(pkg)}", os.read.bytes(f))
+        }
+      }
+    finally out.close()
+    val loader = new java.net.URLClassLoader(Array(jar.toUri.toURL), null)
+    try body(jar, loader)
+    finally
+      loader.close()
+      os.remove.all(dir)
 
   /** 夹具包安装到隔离 home（**禁落真 `~/.nebflow/plugins/`**）。 */
   private def installFixture(name: String): os.Path =
@@ -221,4 +259,54 @@ class OfficialIdentitySpec extends FunSuite:
     val (loaded, rejected) = scan()
     assert(rejected.isEmpty, s"unexpected refusals after seeding: $rejected")
     assert(loaded.exists(p => p.name == "nebflow-plugin-creator" && p.trust.trusted))
+  }
+
+  // ── ⑦ jar 形态臂（分发形态：`jar:` 协议的资源树）──────────────
+  //
+  // 缺陷回归臂（p03-remediate §11-3）：jar 分支曾把已 `stripPrefix(base)` 的相对路径
+  // **再拼一次**包目录名（`$base$pkgDir/$rel` ⇒ jar 内不存在的 `seed/plugins/<pkg>/<pkg>/…`）
+  // ⇒ `getResourceAsStream` 恒 null ⇒ 逐包 `files.isEmpty` ⇒ 允许列表**恒为空表** ⇒ 分发
+  // 形态下官方包整体被 `OFFICIAL_IMPERSONATION` 误拒。①⑥ 两臂只走 file: 分支（sbt 期 classpath
+  // = 目录），故不暴露；本臂以真 jar 资源树覆盖同一条分支。
+
+  test("jar form: a real jar resource tree yields the SAME allowlist as the file: tree") {
+    val samples = BuiltinOfficialSamples
+    withFixtureJar(samples) { (_, jarLoader) =>
+      val fileForm = samples.map(n => n -> digestOfDir(resourceDir(s"seed/plugins/$n"))).toMap
+      OfficialPackages.withClassLoaderForTest(jarLoader) {
+        val table = OfficialPackages.allowlist()
+        assertEquals(table.keySet, fileForm.keySet,
+          "the jar-form resource tree must resolve the same package set as the file: tree " +
+            "(an empty table means the jar entry path was assembled twice)")
+        fileForm.foreach { (name, digest) =>
+          assertEquals(table.get(name), Some(digest),
+            s"'$name': jar-form allowlist digest must equal the authoritative file-form digest")
+          assert(OfficialPackages.admits(name, digest), s"'$name' must be admitted in jar form")
+        }
+        // 非官方（保留前缀 + digest 不在表内）在 jar 形态同样拒载 + 错误码逐字 + 读数非 0
+        val impostor = "nebflow-impostor-in-jar"
+        val bogus = "0" * 64
+        assert(!OfficialPackages.admits(impostor, bogus), "an unshipped reserved-prefix package must not be admitted")
+        val reason = OfficialPackages.rejectionReason(impostor, bogus)
+        assert(reason.contains("OFFICIAL_IMPERSONATION"), reason)
+        assert(reason.contains(s"allowlist holds ${fileForm.size} package(s)"), reason)
+        // 第三方包判定路径零变化（jar 形态同对照臂）
+        assert(OfficialPackages.admits(ThirdPartyFixture, bogus))
+        assert(OfficialPackages.admits("slideblocks", bogus))
+      }
+    }
+  }
+
+  test("jar form: byte-identical built-in official packages load as Trusted against the jar-resolved allowlist") {
+    val pkgs = List("nebflow-plugin-creator", "nebflow-qa")
+    withFixtureJar(pkgs) { (_, jarLoader) =>
+      OfficialPackages.withClassLoaderForTest(jarLoader) {
+        freshHome()
+        pkgs.foreach(installBuiltin)
+        val (loaded, rejected) = scan()
+        assertEquals(rejected, Nil, "byte-identical shipped official packages must not be refused in jar form")
+        assertEquals(loaded.map(_.name).sorted, pkgs.sorted)
+        assert(loaded.forall(_.trust.trusted), "shipped official packages must be trusted without user approval")
+      }
+    }
   }

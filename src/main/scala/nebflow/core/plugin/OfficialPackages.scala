@@ -67,6 +67,12 @@ object OfficialPackages:
   /** 允许列表覆盖——**仅测试钩子**（生产恒 `None`）。存在即优先于现算结果。 */
   private val allowlistOverride = new AtomicReference[Option[Map[String, String]]](None)
 
+  /** 资源定位 classloader —— 生产恒 `None` ⇒ = 本类自身 loader；**仅测试钩子**可临时替换，
+    * 用于以**真 jar 形态**（`jar:` 协议资源树）驱动同一条 `builtinPackages()` 分支。 */
+  private val loaderOverride = new AtomicReference[Option[ClassLoader]](None)
+
+  private def resourceLoader: ClassLoader = loaderOverride.get().getOrElse(getClass.getClassLoader)
+
   /** 官方保留名前缀判定（纯函数，零 IO）。 */
   def isReserved(name: String): Boolean = name.startsWith(ReservedPrefix)
 
@@ -142,7 +148,7 @@ object OfficialPackages:
   /** 分发内置官方包目录的资源树枚举：包目录名 → `[(相对路径, 字节)]`。
     * 锚点 = `seed/manifest.json`（保证存在；file: = sbt/源码形态，jar: = 分发形态）。 */
   private def builtinPackages(): List[(String, List[(String, Array[Byte])])] =
-    val loader = getClass.getClassLoader
+    val loader = resourceLoader
     Option(loader.getResource(Anchor)).toList.flatMap { url =>
       url.getProtocol match
         case "file" =>
@@ -164,8 +170,12 @@ object OfficialPackages:
             .map(_.getName.stripPrefix(base))
             .filter(_.contains("/"))
           rels.groupBy(_.takeWhile(_ != '/')).toList.sortBy(_._1).map { (pkgDir, rs) =>
+            // 🔴 `rel` 自身已含包目录名（上面刚 `stripPrefix(base)` 过）⇒ 资源名逐字只拼一次
+            // `base`：`$BuiltinRoot/<pkgDir>/<rel 其余段>`。再拼一次 pkgDir 会得到
+            // `seed/plugins/<pkgDir>/<pkgDir>/…`（jar 内不存在）⇒ `getResourceAsStream` 恒 null
+            // ⇒ 逐包 `files.isEmpty` ⇒ **允许列表恒为空表**（jar/分发形态下官方包整体被拒载）。
             val files = rs.sorted.flatMap { rel =>
-              Option(loader.getResourceAsStream(s"$base$pkgDir/$rel")).map { in =>
+              Option(loader.getResourceAsStream(s"$base$rel")).map { in =>
                 try rel -> in.readAllBytes()
                 finally in.close()
               }
@@ -210,3 +220,14 @@ object OfficialPackages:
     setAllowlistForTest(Some(table))
     try body
     finally setAllowlistForTest(None)
+
+  /** 作用域内替换资源定位 classloader（**仅测试**：真 jar 形态资源树 + 独立 URLClassLoader），
+    * 退出时**无条件**恢复（含异常路径），并清 memo（换 loader = 换资源树）。 */
+  private[plugin] def withClassLoaderForTest[A](loader: ClassLoader)(body: => A): A =
+    val prev = loaderOverride.get()
+    loaderOverride.set(Some(loader))
+    builtinCache.set(None)
+    try body
+    finally
+      loaderOverride.set(prev)
+      builtinCache.set(None)
