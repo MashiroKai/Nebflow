@@ -67,7 +67,9 @@ object ModelCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val modelRef = ctx.positionalArgs.headOption.getOrElse("")
+          // A3: the named form `--model-ref` was accepted by the parser but
+          // ignored by the body, so only the positional form worked.
+          val modelRef = ctx.positionalArgs.headOption.orElse(ctx.args.get("model-ref")).getOrElse("")
           val sessionId = ctx.args.getOrElse("session", "")
           if modelRef.isEmpty then
             IO.pure(CliResult.Error("Model reference required (e.g. anthropic/claude-sonnet-4-6)"))

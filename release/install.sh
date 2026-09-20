@@ -144,11 +144,12 @@ INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 #           background field (>=7 means a light background); default dark
 #   level : NEBFLOW_UI_LEVEL=0..3 forces a level (preview/testing)
 
-BANNER_MASK=(
-    "G.WW"
-    ".W.W"
-    ".W.W"
-)
+# POSIX: indexed arrays are a bash extension (dash rejects the `NAME=(` form),
+# so the three mask rows below are plain scalars in the same order; the row is
+# selected from BANNER_MASK_0/1/2 in print_banner. Same grid, zero data change.
+BANNER_MASK_0="G.WW"
+BANNER_MASK_1=".W.W"
+BANNER_MASK_2=".W.W"
 
 _ui_level=0
 _ui_theme="dark"
@@ -230,11 +231,22 @@ _rst() { [ "$_ui_level" -ge 1 ] && printf '\033[0m' || true; }
 print_banner() {
     ui_detect
     printf '\n'
-    local _i _j _row
+    local _i _row _ch
     for _i in 0 1 2; do
-        _row="${BANNER_MASK[$_i]}"
+        case "$_i" in
+            0) _row="$BANNER_MASK_0" ;;
+            1) _row="$BANNER_MASK_1" ;;
+            *) _row="$BANNER_MASK_2" ;;
+        esac
         printf '  '
-        for ((_j=0; _j<${#_row}; _j++)); do _px "${_row:$_j:1}"; done
+        # POSIX: no arithmetic for-loop and no ${var:off:len} in dash - walk the
+        # row by consuming one character at a time (${s#?} drops the first char,
+        # ${s%"${s#?}"} keeps exactly it), emitting the SAME _px call sequence.
+        while [ -n "$_row" ]; do
+            _ch="${_row%"${_row#?}"}"
+            _px "$_ch"
+            _row="${_row#?}"
+        done
         case "$_i" in
             1) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
             2) printf '  '; _dim; printf '%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
@@ -271,25 +283,47 @@ _bar() {  # <done> <total|-1> <width> -> bar body (no newline)
         _filled=$((_e/8)); _frac=$((_e%8))
     fi
     local _g="" _r="" _d=""
+    # POSIX: dash does not interpret $'\033...' (it yields the 9 literal bytes
+    # "$'\033[32m"), so the same escape bytes are produced by the file's
+    # existing printf idiom - identical byte sequences, no color change.
     case "$_ui_level" in
-        3) _g=$'\033[38;2;7;193;96m' ;;
-        2) _g=$'\033[38;5;35m' ;;
-        1) _g=$'\033[32m' ;;
+        3) _g=$(printf '\033[38;2;7;193;96m') ;;
+        2) _g=$(printf '\033[38;5;35m') ;;
+        1) _g=$(printf '\033[32m') ;;
     esac
-    if [ -n "$_g" ]; then _r=$'\033[0m'; _d=$'\033[2m'; fi
+    if [ -n "$_g" ]; then _r=$(printf '\033[0m'); _d=$(printf '\033[2m'); fi
     _out="$_g"
     if [ "$_ui_utf8" = 1 ]; then
-        # eighth-block partials give sub-cell precision
-        local _parts=("" "▏" "▎" "▍" "▌" "▋" "▊" "▉")
-        for ((_i=0; _i<_filled; _i++)); do _out="${_out}█"; done
-        if [ "$_frac" -gt 0 ]; then _out="${_out}${_parts[$_frac]}"; _filled=$((_filled+1)); fi
+        # eighth-block partials give sub-cell precision. POSIX: the table is
+        # selected by case instead of an array (index 0 was the empty string
+        # and was unreachable anyway - it sits behind the _frac > 0 guard), and
+        # the three counting loops are while-loops: same iteration counts,
+        # same append order, same bytes.
+        local _part
+        _i=0
+        while [ "$_i" -lt "$_filled" ]; do _out="${_out}█"; _i=$((_i+1)); done
+        if [ "$_frac" -gt 0 ]; then
+            case "$_frac" in
+                1) _part="▏" ;;
+                2) _part="▎" ;;
+                3) _part="▍" ;;
+                4) _part="▌" ;;
+                5) _part="▋" ;;
+                6) _part="▊" ;;
+                *) _part="▉" ;;
+            esac
+            _out="${_out}${_part}"; _filled=$((_filled+1))
+        fi
         _out="${_out}${_r}${_d}"
-        for ((_i=_filled; _i<_w; _i++)); do _out="${_out}░"; done
+        _i=$_filled
+        while [ "$_i" -lt "$_w" ]; do _out="${_out}░"; _i=$((_i+1)); done
     else
-        for ((_i=0; _i<_filled; _i++)); do _out="${_out}#"; done
+        _i=0
+        while [ "$_i" -lt "$_filled" ]; do _out="${_out}#"; _i=$((_i+1)); done
         if [ "$_frac" -gt 0 ]; then _out="${_out}>"; _filled=$((_filled+1)); fi
         _out="${_out}${_r}"
-        for ((_i=_filled; _i<_w; _i++)); do _out="${_out}-"; done
+        _i=$_filled
+        while [ "$_i" -lt "$_w" ]; do _out="${_out}-"; _i=$((_i+1)); done
     fi
     _out="${_out}${_r}"
     printf '%s' "$_out"
@@ -307,8 +341,17 @@ _progress_line() {  # <done> <total|-1> <label> <speed_Bps|-1> <spin_idx>
     if [ "$_total" -gt 0 ] 2>/dev/null; then
         _pct=$(awk -v d="$_done" -v t="$_total" 'BEGIN{p=int(d*100/t); printf "%3d%%", (p>100?100:p)}')
     else
-        local _s='|/-\'
-        _pct="  ${_s:$((_spin % 4)):1} "
+        # POSIX: dash has no ${var:off:len}, and it is fatal there ("Bad
+        # substitution"), so the 4-cell spinner table is selected by case.
+        # Cell order and the surrounding padding are unchanged.
+        local _s_ch
+        case "$((_spin % 4))" in
+            0) _s_ch='|' ;;
+            1) _s_ch='/' ;;
+            2) _s_ch='-' ;;
+            *) _s_ch='\' ;;
+        esac
+        _pct="  ${_s_ch} "
     fi
     local _w=$(( _cols - ${#_label} - ${#_info} - 16 ))
     [ "$_w" -lt 10 ] && _w=10
@@ -346,10 +389,13 @@ detect_region() {
         return 0  # already set by --cn or --global flag
     fi
     # Method 1: check system timezone
+    # POSIX: never write `&> /dev/null` for a probe. dash splits it into a
+    # backgrounded probe plus a bare redirect, so the test is always true and
+    # the real result is lost (rg/java/curl would all read as "present").
     local tz=""
     if [ -f /etc/timezone ]; then
         tz=$(cat /etc/timezone 2>/dev/null)
-    elif command -v timedatectl &> /dev/null; then
+    elif command -v timedatectl > /dev/null 2>&1; then
         tz=$(timedatectl show -p Timezone 2>/dev/null | cut -d= -f2)
     fi
     case "$tz" in
@@ -370,7 +416,7 @@ detect_region() {
     # Method 3: try a quick connectivity test (COS is fast in China, slow elsewhere)
     # Test latency to COS vs GitHub — pick whichever responds first
     local cos_ms=99999 gh_ms=99999
-    if command -v curl &> /dev/null; then
+    if command -v curl > /dev/null 2>&1; then
         cos_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
             "${COS_BASE_CN}/" 2>/dev/null | \
             awk '{printf "%d", $1 * 1000}')
@@ -423,7 +469,7 @@ stage_env() {
 # ---- [2/6] dependencies ---------------------------------------------------
 
 _java_ok() {
-    command -v java &> /dev/null || return 1
+    command -v java > /dev/null 2>&1 || return 1
     local v
     v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
     [ "$v" = "1" ] && v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
@@ -653,11 +699,11 @@ ensure_java() {
 }
 
 ensure_curl() {
-    if command -v curl &> /dev/null; then
+    if command -v curl > /dev/null 2>&1; then
         log_v "curl: $(curl --version 2>/dev/null | head -1 | cut -d' ' -f1-2)"
         return 0
     fi
-    if command -v wget &> /dev/null; then
+    if command -v wget > /dev/null 2>&1; then
         log_warn "curl missing - wget found, downloads will use wget."
         return 0
     fi
@@ -668,7 +714,7 @@ ensure_curl() {
         yum)     sudo yum install -y curl 2>&1 || true ;;
         apk)     sudo apk add --no-cache curl 2>&1 || true ;;
     esac
-    if command -v curl &> /dev/null || command -v wget &> /dev/null; then
+    if command -v curl > /dev/null 2>&1 || command -v wget > /dev/null 2>&1; then
         log_ok "Downloader available."
     else
         log_err "Neither curl nor wget is available and none could be installed."
@@ -744,7 +790,7 @@ ensure_rg() {
         log_ok "rg: cached at ${INSTALL_DIR}/rg"
         return 0
     fi
-    if command -v rg &> /dev/null; then
+    if command -v rg > /dev/null 2>&1; then
         log_ok "rg: $(rg --version 2>/dev/null | head -1)"
         return 0
     fi
@@ -891,9 +937,9 @@ _download() {
     else
         # non-TTY (curl|bash pipe) / dumb terminal: plain one-line log
         [ -n "$label" ] && log_i "Downloading ${label}..."
-        if command -v curl &> /dev/null; then
+        if command -v curl > /dev/null 2>&1; then
             curl -fsSL --connect-timeout 10 --max-time 120 "${url}" -o "${target}"
-        elif command -v wget &> /dev/null; then
+        elif command -v wget > /dev/null 2>&1; then
             wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
         else
             log_err "curl or wget is required."
@@ -924,7 +970,9 @@ fetch_checksum_for() {  # <filename> -> expected sha256 (or empty = unknown)
             || log_v "deps/checksums.txt unreachable - checksum verification degraded."
     fi
     [ -n "$CHECKSUMS_CONTENT" ] || return 0
-    awk -v f="$1" '$2 == f { print $1; exit }' <<< "$CHECKSUMS_CONTENT"
+    # POSIX: no here-strings in dash; printf '%s\n' reproduces the exact
+    # here-string payload (value + one trailing newline) for awk on stdin.
+    printf '%s\n' "$CHECKSUMS_CONTENT" | awk -v f="$1" '$2 == f { print $1; exit }'
 }
 
 expected_checksum_hint() {  # <filename> -> "sha256: <hash>" line (or empty)
@@ -1337,7 +1385,7 @@ stage_finish() {
     fi
     echo ""
     echo "[ok] ${PRODUCT_NAME} ${VERSION} installed."
-    echo "     Run: ${WRAPPER_NAME} --help"
+    echo "     Run: ${WRAPPER_NAME}"
     echo "     Config: ~/${HOME_DIR}/${CONFIG_FILE}"
     echo "     Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
 }
