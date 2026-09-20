@@ -662,12 +662,18 @@ class RestApiRoutes(
       }
 
     // ===== NebLink P2P Discovery (no gateway auth — used by other Nebflow instances) =====
+    // 注（2026-09-20 加固批）：本段的**对端判据**见下方 /neblink/discover 与 /neblink/announce
+    // 两条（前者本批补入 verifyPeerAccess，后者原已内联 isTrustedPeer/isKnownNetworkDevice）。
 
     // Return local device info for NebLink discovery probes
-    case GET -> Root / "neblink" / "discover" =>
-      neblinkService match
-        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
-        case Some(ms) =>
+    // 2026-09-20 加固批（chain-apiguard）：本路由原为裸奔（无门亦无内联判据）。它面向
+    // **对端设备**而非 UI 客户端（对端无 Bearer 令牌）⇒ 落点是本族既有的对端判据
+    // helper（同 /neblink/remote-exec、/neblink/transfer 等），**不**套 withAuth。
+    // NebLink 未启用时 verifyPeerAccess 回 404，体与改前的 None 分支逐字相同。
+    case req @ GET -> Root / "neblink" / "discover" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
           ms.identity.flatMap { id =>
             Ok(
               Json.obj(
@@ -678,6 +684,7 @@ class RestApiRoutes(
               )
             )
           }
+      }
 
     // Receive a peer's announcement ("I'm online, here's my info")
     case req @ POST -> Root / "neblink" / "announce" =>
@@ -2507,177 +2514,197 @@ class RestApiRoutes(
 
     // GET /teams/mounted — return all mounted teams with agent status
     // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
-    case GET -> Root / "teams" / "mounted" =>
-      for
-        _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
-        teamsJson <- buildMountedTeamsJson()
-        result <- Ok(Json.obj("teams" -> teamsJson))
-      yield result
+    case req @ GET -> Root / "teams" / "mounted" =>
+      withAuth(req) {
+        for
+          _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
+          teamsJson <- buildMountedTeamsJson()
+          result <- Ok(Json.obj("teams" -> teamsJson))
+        yield result
+      }
 
     // GET /running-flows — list currently running DAG flow instances
-    case GET -> Root / "running-flows" =>
-      nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
+    case req @ GET -> Root / "running-flows" =>
+      withAuth(req) {
+        nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
+      }
 
     // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
-    case GET -> Root / "flow" / "dag" / flowName =>
-      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
-      else
-        nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
-          case Some(dag) =>
-            val nodesJson = dag.nodes.map { (nodeId, node) =>
-              val route: Json = node.onComplete match
-                case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
-                case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                case p: nebflow.core.entity.NodeRoute.Parallel =>
-                  Json.obj(
-                    "parallel" -> p.fan.asJson,
-                    "onFail" -> (p.onFail match
-                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                      case _ => Json.fromString("abort")
+    case req @ GET -> Root / "flow" / "dag" / flowName =>
+      withAuth(req) {
+        if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+        else
+          nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
+            case Some(dag) =>
+              val nodesJson = dag.nodes.map { (nodeId, node) =>
+                val route: Json = node.onComplete match
+                  case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
+                  case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
+                  case p: nebflow.core.entity.NodeRoute.Parallel =>
+                    Json.obj(
+                      "parallel" -> p.fan.asJson,
+                      "onFail" -> (p.onFail match
+                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                        case _ => Json.fromString("abort")
+                      )
                     )
-                  )
-                case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
-                  Json.obj(
-                    "parallel" -> Json.obj(
-                      "slots" -> Json.fromString(p.slotField),
-                      "template" -> Json.fromString(p.template)
-                    ),
-                    "onFail" -> (p.onFail match
-                      case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                      case _ => Json.fromString("abort")
+                  case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
+                    Json.obj(
+                      "parallel" -> Json.obj(
+                        "slots" -> Json.fromString(p.slotField),
+                        "template" -> Json.fromString(p.template)
+                      ),
+                      "onFail" -> (p.onFail match
+                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
+                        case _ => Json.fromString("abort")
+                      )
                     )
-                  )
-                case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
-                  val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
-                    val target: String = v match
-                      case nebflow.core.entity.NodeRoute.Goto(t) => t
-                      case nebflow.core.entity.NodeRoute.Return => "$return"
-                      case _ => "?"
-                    k -> Json.fromString(target)
-                  })
-                  Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
-              nodeId -> Json.obj(
-                "agent" -> node.agent.asJson,
-                "input" -> node.input.asJson,
-                "onComplete" -> route,
-                "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
-                "maxRetries" -> node.maxRetries.asJson
-              )
-            }
-            Ok(
-              Json.obj(
-                "name" -> dag.name.asJson,
-                "description" -> dag.description.asJson,
-                "entry" -> dag.entry.asJson,
-                "maxLoop" -> dag.maxLoop.asJson,
-                "nodes" -> nodesJson.asJson
-              )
-            )
-          case None =>
-            NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
-        }
-
-    // GET /teams — list all defined teams (from team.json files)
-    case GET -> Root / "teams" =>
-      for
-        teams <- nebflow.core.entity.EntityLoader.listTeams()
-        teamsJson = teams.values.toList.sortBy(_.name).map { t =>
-          io.circe.Json.obj(
-            "name" -> t.name.asJson,
-            "description" -> t.description.asJson,
-            "lead" -> t.lead.asJson,
-            "members" -> t.members.asJson
-          )
-        }
-        result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
-      yield result
-
-    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
-    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
-    case GET -> Root / "teams" / "status" / sessionId =>
-      // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
-      // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
-      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-      else
-        for
-          teamsJson <- buildMountedTeamsJson()
-          result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
-        yield result
-
-    // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
-    case GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-      else
-        for
-          records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
-          result <- Ok(Json.obj("records" -> records.asJson))
-        yield result
-
-    // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
-    case DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-      else
-        for
-          _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
-          result <- Ok(Json.obj("cleared" -> true.asJson))
-        yield result
-
-    // GET /teams/mail-queue/:sessionId — pending queue mails
-    case GET -> Root / "teams" / "mail-queue" / sessionId =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-      else
-        for
-          items <- nebflow.core.flow.MailQueueStore.load(sessionId)
-          result <- Ok(Json.obj("items" -> items.asJson))
-        yield result
-
-    // DELETE /teams/mail-queue/:sessionId/:itemId — cancel a pending queue mail
-    case DELETE -> Root / "teams" / "mail-queue" / sessionId / itemId =>
-      if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-      else
-        for
-          remaining <- nebflow.core.flow.MailQueueStore.removeById(sessionId, itemId)
-          result <- Ok(Json.obj("items" -> remaining.asJson))
-        yield result
-
-    // ===== Flow Editor APIs =====
-
-    // GET /teams/def/:name — return team definition for the editor
-    case GET -> Root / "teams" / "def" / flowName =>
-      if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
-      else
-        for
-          teamOpt <- EntityLoader.loadTeam(flowName)
-          agents <- EntityLoader.listAgents()
-          result <- teamOpt match
-            case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
-            case Some(team) =>
-              val leadEntry = agents.get(team.lead)
-              val memberEntries = team.members.flatMap(agents.get)
-              val allEntries = (leadEntry.toList ++ memberEntries)
-              val agentsJson = allEntries.map { entry =>
-                Json.obj(
-                  "name" -> entry.name.asJson,
-                  "description" -> entry.description.asJson,
-                  "tools" -> entry.tools.asJson,
-                  "systemPrompt" -> entry.systemPrompt.asJson
+                  case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
+                    val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
+                      val target: String = v match
+                        case nebflow.core.entity.NodeRoute.Goto(t) => t
+                        case nebflow.core.entity.NodeRoute.Return => "$return"
+                        case _ => "?"
+                      k -> Json.fromString(target)
+                    })
+                    Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
+                nodeId -> Json.obj(
+                  "agent" -> node.agent.asJson,
+                  "input" -> node.input.asJson,
+                  "onComplete" -> route,
+                  "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
+                  "maxRetries" -> node.maxRetries.asJson
                 )
               }
               Ok(
                 Json.obj(
-                  "name" -> team.name.asJson,
-                  "manager" -> team.lead.asJson,
-                  "description" -> team.description.asJson,
-                  "agents" -> agentsJson.asJson,
-                  "type" -> "team".asJson
+                  "name" -> dag.name.asJson,
+                  "description" -> dag.description.asJson,
+                  "entry" -> dag.entry.asJson,
+                  "maxLoop" -> dag.maxLoop.asJson,
+                  "nodes" -> nodesJson.asJson
                 )
               )
+            case None =>
+              NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
+          }
+      }
+
+    // GET /teams — list all defined teams (from team.json files)
+    case req @ GET -> Root / "teams" =>
+      withAuth(req) {
+        for
+          teams <- nebflow.core.entity.EntityLoader.listTeams()
+          teamsJson = teams.values.toList.sortBy(_.name).map { t =>
+            io.circe.Json.obj(
+              "name" -> t.name.asJson,
+              "description" -> t.description.asJson,
+              "lead" -> t.lead.asJson,
+              "members" -> t.members.asJson
+            )
+          }
+          result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
         yield result
+      }
+
+    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
+    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
+    case req @ GET -> Root / "teams" / "status" / sessionId =>
+      withAuth(req) {
+        // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
+        // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
+        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+        else
+          for
+            teamsJson <- buildMountedTeamsJson()
+            result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
+          yield result
+      }
+
+    // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
+    case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
+      withAuth(req) {
+        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+        else
+          for
+            records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
+            result <- Ok(Json.obj("records" -> records.asJson))
+          yield result
+      }
+
+    // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
+    case req @ DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
+      withAuth(req) {
+        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+        else
+          for
+            _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
+            result <- Ok(Json.obj("cleared" -> true.asJson))
+          yield result
+      }
+
+    // GET /teams/mail-queue/:sessionId — pending queue mails
+    case req @ GET -> Root / "teams" / "mail-queue" / sessionId =>
+      withAuth(req) {
+        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+        else
+          for
+            items <- nebflow.core.flow.MailQueueStore.load(sessionId)
+            result <- Ok(Json.obj("items" -> items.asJson))
+          yield result
+      }
+
+    // DELETE /teams/mail-queue/:sessionId/:itemId — cancel a pending queue mail
+    case req @ DELETE -> Root / "teams" / "mail-queue" / sessionId / itemId =>
+      withAuth(req) {
+        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
+          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+        else
+          for
+            remaining <- nebflow.core.flow.MailQueueStore.removeById(sessionId, itemId)
+            result <- Ok(Json.obj("items" -> remaining.asJson))
+          yield result
+      }
+
+    // ===== Flow Editor APIs =====
+
+    // GET /teams/def/:name — return team definition for the editor
+    case req @ GET -> Root / "teams" / "def" / flowName =>
+      withAuth(req) {
+        if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
+        else
+          for
+            teamOpt <- EntityLoader.loadTeam(flowName)
+            agents <- EntityLoader.listAgents()
+            result <- teamOpt match
+              case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
+              case Some(team) =>
+                val leadEntry = agents.get(team.lead)
+                val memberEntries = team.members.flatMap(agents.get)
+                val allEntries = (leadEntry.toList ++ memberEntries)
+                val agentsJson = allEntries.map { entry =>
+                  Json.obj(
+                    "name" -> entry.name.asJson,
+                    "description" -> entry.description.asJson,
+                    "tools" -> entry.tools.asJson,
+                    "systemPrompt" -> entry.systemPrompt.asJson
+                  )
+                }
+                Ok(
+                  Json.obj(
+                    "name" -> team.name.asJson,
+                    "manager" -> team.lead.asJson,
+                    "description" -> team.description.asJson,
+                    "agents" -> agentsJson.asJson,
+                    "type" -> "team".asJson
+                  )
+                )
+          yield result
+      }
 
     // GET /bg-tasks/:jobId/output?offset=N — background task output view
     // (2026-09-09 author request: the bg-tasks panel rows open a detail card).
@@ -2714,204 +2741,214 @@ class RestApiRoutes(
 
     // GET /agents/list — list all global agents (for extends dropdown)
     // GET /agents/list — list all agents (all three layers)
-    case GET -> Root / "agents" / "list" =>
-      for
-        globalAgents <- EntityLoader.listAgents()
-        teams <- EntityLoader.listTeams()
-        teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
-          IO.blocking {
-            val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
-            if os.exists(dir) then
-              os.list(dir)
-                .filter(os.isDir)
-                .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                .toList
-            else Nil
+    case req @ GET -> Root / "agents" / "list" =>
+      withAuth(req) {
+        for
+          globalAgents <- EntityLoader.listAgents()
+          teams <- EntityLoader.listTeams()
+          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
+              if os.exists(dir) then
+                os.list(dir)
+                  .filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .toList
+              else Nil
+            }
           }
-        }
-        flows <- EntityLoader.listFlows()
-        flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
-          IO.blocking {
-            val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
-            if os.exists(dir) then
-              os.list(dir)
-                .filter(os.isDir)
-                .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                .toList
-            else Nil
+          flows <- EntityLoader.listFlows()
+          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
+              if os.exists(dir) then
+                os.list(dir)
+                  .filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .toList
+              else Nil
+            }
           }
-        }
-        globalList = globalAgents.values.map { a =>
-          Json.obj(
-            "name" -> a.name.asJson,
-            "description" -> a.description.asJson,
-            "tools" -> a.tools.asJson,
-            "displayName" -> a.name.asJson,
-            "systemPrompt" -> a.systemPrompt.asJson,
-            "category" -> a.category.asJson
-          )
-        }
-        teamList = teamAgentEntries.flatten.map { a =>
-          Json.obj(
-            "name" -> a.name.asJson,
-            "description" -> a.description.asJson,
-            "tools" -> a.tools.asJson,
-            "displayName" -> a.name.asJson,
-            "systemPrompt" -> a.systemPrompt.asJson,
-            "category" -> "team".asJson
-          )
-        }
-        flowList = flowAgentEntries.flatten.map { a =>
-          Json.obj(
-            "name" -> a.name.asJson,
-            "description" -> a.description.asJson,
-            "tools" -> a.tools.asJson,
-            "displayName" -> a.name.asJson,
-            "systemPrompt" -> a.systemPrompt.asJson,
-            "category" -> "flow".asJson
-          )
-        }
-        all = globalList ++ teamList ++ flowList
-        result <- Ok(Json.obj("agents" -> all.asJson))
-      yield result
+          globalList = globalAgents.values.map { a =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "tools" -> a.tools.asJson,
+              "displayName" -> a.name.asJson,
+              "systemPrompt" -> a.systemPrompt.asJson,
+              "category" -> a.category.asJson
+            )
+          }
+          teamList = teamAgentEntries.flatten.map { a =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "tools" -> a.tools.asJson,
+              "displayName" -> a.name.asJson,
+              "systemPrompt" -> a.systemPrompt.asJson,
+              "category" -> "team".asJson
+            )
+          }
+          flowList = flowAgentEntries.flatten.map { a =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "tools" -> a.tools.asJson,
+              "displayName" -> a.name.asJson,
+              "systemPrompt" -> a.systemPrompt.asJson,
+              "category" -> "flow".asJson
+            )
+          }
+          all = globalList ++ teamList ++ flowList
+          result <- Ok(Json.obj("agents" -> all.asJson))
+        yield result
+      }
 
     // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
-    case GET -> Root / "agents" / agentName =>
-      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-      else
-        for
-          agentOpt <- EntityLoader.findAgentByName(agentName)
-          result <- agentOpt match
-            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-            case Some(defn) =>
-              Ok(
-                Json.obj(
-                  "name" -> defn.name.asJson,
-                  "description" -> defn.description.asJson,
-                  "tools" -> defn.tools.asJson,
-                  "category" -> defn.category.asJson,
-                  "fixedTools" -> AgentCore.fixedToolsFor(defn).toList.asJson,
-                  "systemPrompt" -> defn.systemPrompt.asJson,
-                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
-                  "model" -> defn.model.asJson,
-                  "skills" -> defn.skills.asJson,
-                  "flows" -> defn.flows.asJson
-                )
-              )
-        yield result
-
-    // GET /agents/:name/model — get agent's model configuration — searches all three layers
-    case GET -> Root / "agents" / agentName / "model" =>
-      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-      else
-        for
-          agentOpt <- EntityLoader.findAgentByName(agentName)
-          result <- agentOpt match
-            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-            case Some(defn) =>
-              val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
-              // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
-              // AgentDef.preset tells us the explicit preset (if any). If absent,
-              // check whether the original agent.json had a non-empty legacy model.
-              val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
-              // Resolve the model this agent would actually use: candidates =
-              // [preferred, ...fallbacks] (or the global chain), filtered by
-              // provider health. Previously this read runtimeModels.values.headOption —
-              // an arbitrary session from a GLOBAL session→model map — which
-              // showed the wrong model for every agent except the first LLM caller.
-              for
-                candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
-                (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
-                current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
-                result <- Ok(
+    case req @ GET -> Root / "agents" / agentName =>
+      withAuth(req) {
+        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else
+          for
+            agentOpt <- EntityLoader.findAgentByName(agentName)
+            result <- agentOpt match
+              case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+              case Some(defn) =>
+                Ok(
                   Json.obj(
-                    "model" -> modelConfig.asJson,
-                    "current" -> current.asJson,
-                    "preferred" -> modelConfig.preferred.asJson,
-                    "fallbacks" -> modelConfig.fallbacks.asJson,
-                    "default" -> modelConfig.preferred.asJson,
-                    "preset" -> defn.preset.asJson,
-                    "resolvedFrom" -> resolvedFrom.asJson
+                    "name" -> defn.name.asJson,
+                    "description" -> defn.description.asJson,
+                    "tools" -> defn.tools.asJson,
+                    "category" -> defn.category.asJson,
+                    "fixedTools" -> AgentCore.fixedToolsFor(defn).toList.asJson,
+                    "systemPrompt" -> defn.systemPrompt.asJson,
+                    "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
+                    "model" -> defn.model.asJson,
+                    "skills" -> defn.skills.asJson,
+                    "flows" -> defn.flows.asJson
                   )
                 )
-              yield result
-              end for
-        yield result
+          yield result
+      }
+
+    // GET /agents/:name/model — get agent's model configuration — searches all three layers
+    case req @ GET -> Root / "agents" / agentName / "model" =>
+      withAuth(req) {
+        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else
+          for
+            agentOpt <- EntityLoader.findAgentByName(agentName)
+            result <- agentOpt match
+              case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+              case Some(defn) =>
+                val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
+                // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
+                // AgentDef.preset tells us the explicit preset (if any). If absent,
+                // check whether the original agent.json had a non-empty legacy model.
+                val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
+                // Resolve the model this agent would actually use: candidates =
+                // [preferred, ...fallbacks] (or the global chain), filtered by
+                // provider health. Previously this read runtimeModels.values.headOption —
+                // an arbitrary session from a GLOBAL session→model map — which
+                // showed the wrong model for every agent except the first LLM caller.
+                for
+                  candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
+                  (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
+                  current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
+                  result <- Ok(
+                    Json.obj(
+                      "model" -> modelConfig.asJson,
+                      "current" -> current.asJson,
+                      "preferred" -> modelConfig.preferred.asJson,
+                      "fallbacks" -> modelConfig.fallbacks.asJson,
+                      "default" -> modelConfig.preferred.asJson,
+                      "preset" -> defn.preset.asJson,
+                      "resolvedFrom" -> resolvedFrom.asJson
+                    )
+                  )
+                yield result
+                end for
+          yield result
+      }
 
     // PUT /agents/:name/model — update agent's model configuration
     case req @ PUT -> Root / "agents" / agentName / "model" =>
-      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-      else
-        req.as[Json].flatMap { body =>
-          // Parse the model config from request body
-          io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
-            case Right(modelConfig) =>
-              for
-                dirOpt <- EntityLoader.findAgentDir(agentName)
-                result <- dirOpt match
-                  case Some(dir) =>
-                    IO.blocking {
-                      val jsonPath = dir / "agent.json"
-                      val json = os.read(jsonPath)
-                      io.circe.parser.parse(json) match
-                        case Right(parsed) =>
-                          val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
-                          AtomicJson.writeSync(jsonPath, updated.noSpaces)
-                          true
-                        case Left(_) => false
-                    }.flatMap {
-                      case true =>
-                        Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
-                      case false =>
-                        InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
-                    }
-                  case None =>
-                    NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-              yield result
-            case Left(err) =>
-              BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
-        }
+      withAuth(req) {
+        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else
+          req.as[Json].flatMap { body =>
+            // Parse the model config from request body
+            io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
+              case Right(modelConfig) =>
+                for
+                  dirOpt <- EntityLoader.findAgentDir(agentName)
+                  result <- dirOpt match
+                    case Some(dir) =>
+                      IO.blocking {
+                        val jsonPath = dir / "agent.json"
+                        val json = os.read(jsonPath)
+                        io.circe.parser.parse(json) match
+                          case Right(parsed) =>
+                            val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                            AtomicJson.writeSync(jsonPath, updated.noSpaces)
+                            true
+                          case Left(_) => false
+                      }.flatMap {
+                        case true =>
+                          Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                        case false =>
+                          InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                      }
+                    case None =>
+                      NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+                yield result
+              case Left(err) =>
+                BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
+          }
+      }
 
     // PUT /agents/:name/preset — set or remove the agent's preset reference.
     // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
     // back to default preset). Uses EntityLoader.findAgentDir to locate the
     // agent.json across all three layers.
     case req @ PUT -> Root / "agents" / agentName / "preset" =>
-      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-      else
-        req.as[Json].flatMap { body =>
-          val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
-          for
-            dirOpt <- EntityLoader.findAgentDir(agentName)
-            result <- dirOpt match
-              case Some(dir) =>
-                IO.blocking {
-                  val jsonPath = dir / "agent.json"
-                  val json = os.read(jsonPath)
-                  parser.parse(json) match
-                    case Right(parsed) =>
-                      val updated = presetOpt match
-                        case Some(name) =>
-                          parsed.deepMerge(Json.obj("preset" -> name.asJson))
-                        case None =>
-                          // Remove the preset field entirely
-                          parsed.asObject
-                            .map(obj => Json.fromFields(obj.toMap.removed("preset")))
-                            .getOrElse(parsed)
-                      AtomicJson.writeSync(jsonPath, updated.noSpaces)
-                      true
-                    case Left(_) => false
-                }.flatMap {
-                  case true =>
-                    Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
-                  case false =>
-                    InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
-                }
-              case None =>
-                NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-          yield result
-          end for
-        }
+      withAuth(req) {
+        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else
+          req.as[Json].flatMap { body =>
+            val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
+            for
+              dirOpt <- EntityLoader.findAgentDir(agentName)
+              result <- dirOpt match
+                case Some(dir) =>
+                  IO.blocking {
+                    val jsonPath = dir / "agent.json"
+                    val json = os.read(jsonPath)
+                    parser.parse(json) match
+                      case Right(parsed) =>
+                        val updated = presetOpt match
+                          case Some(name) =>
+                            parsed.deepMerge(Json.obj("preset" -> name.asJson))
+                          case None =>
+                            // Remove the preset field entirely
+                            parsed.asObject
+                              .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                              .getOrElse(parsed)
+                        AtomicJson.writeSync(jsonPath, updated.noSpaces)
+                        true
+                      case Left(_) => false
+                  }.flatMap {
+                    case true =>
+                      Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
+                    case false =>
+                      InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                  }
+                case None =>
+                  NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+            yield result
+            end for
+          }
+      }
 
     // ===== Entity API (Team/Flow/Agent management) =====
 
@@ -2920,24 +2957,28 @@ class RestApiRoutes(
     // retirement instead of assuming the edit landed. agent.json skills/flows
     // declarations are still PARSED (decision A① — legacy grants stay live
     // until stage 3); only this write path is retired.
-    case PUT -> Root / "agents" / agentName =>
-      if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-      else
-        logger.warn(s"Rejected PUT /agents/$agentName — skills/flows write-back retired 2026-09-06 (stage 2d tool-face batch)")
-        Gone(Json.obj("error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson))
+    case req @ PUT -> Root / "agents" / agentName =>
+      withAuth(req) {
+        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else
+          logger.warn(s"Rejected PUT /agents/$agentName — skills/flows write-back retired 2026-09-06 (stage 2d tool-face batch)")
+          Gone(Json.obj("error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson))
+      }
 
     // GET /skills — list all available skills (name + description) for the Agent panel
-    case GET -> Root / "skills" =>
-      for
-        skills <- SkillService.listSkills()
-        entries = skills.sortBy(_.name).map { s =>
-          Json.obj(
-            "name" -> s.name.asJson,
-            "description" -> s.description.asJson
-          )
-        }
-        result <- Ok(Json.obj("skills" -> entries.asJson))
-      yield result
+    case req @ GET -> Root / "skills" =>
+      withAuth(req) {
+        for
+          skills <- SkillService.listSkills()
+          entries = skills.sortBy(_.name).map { s =>
+            Json.obj(
+              "name" -> s.name.asJson,
+              "description" -> s.description.asJson
+            )
+          }
+          result <- Ok(Json.obj("skills" -> entries.asJson))
+        yield result
+      }
 
     // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
 
@@ -2945,18 +2986,22 @@ class RestApiRoutes(
     // 后条目面无「待审」形态，受信与否 = 在位 ∧ 未被封禁）。
     // 审批清单区块（§B.3）：元信息 / skills 摘要（前 20 行）/ mcp（env 只出键名，
     // 值打码）/ org.nebflow/tools 申请 / 信任状态与 digest。
-    case GET -> Root / "plugins" =>
-      for
-        (plugins, rejected) <- nebflow.core.plugin.PluginRegistry.listWithRejected()
-        entries = plugins.sortBy(_.name).map(nebflow.core.plugin.PluginRegistry.approvalManifest)
-        rejectedEntries = rejected.sortBy(_._1).map { case (n, r) => Json.obj("name" -> n.asJson, "reason" -> r.asJson) }
-        result <- Ok(Json.obj("plugins" -> entries.asJson, "rejected" -> rejectedEntries.asJson))
-      yield result
+    case req @ GET -> Root / "plugins" =>
+      withAuth(req) {
+        for
+          (plugins, rejected) <- nebflow.core.plugin.PluginRegistry.listWithRejected()
+          entries = plugins.sortBy(_.name).map(nebflow.core.plugin.PluginRegistry.approvalManifest)
+          rejectedEntries = rejected.sortBy(_._1).map { case (n, r) => Json.obj("name" -> n.asJson, "reason" -> r.asJson) }
+          result <- Ok(Json.obj("plugins" -> entries.asJson, "rejected" -> rejectedEntries.asJson))
+        yield result
+      }
 
     // GET /plugins/catalog — 分发器目录段同源（trusted only；前端调试/预览用）
-    case GET -> Root / "plugins" / "catalog" =>
-      nebflow.core.plugin.PluginRegistry.renderCatalog().flatMap { catalog =>
-        Ok(Json.obj("catalog" -> catalog.asJson))
+    case req @ GET -> Root / "plugins" / "catalog" =>
+      withAuth(req) {
+        nebflow.core.plugin.PluginRegistry.renderCatalog().flatMap { catalog =>
+          Ok(Json.obj("catalog" -> catalog.asJson))
+        }
       }
 
     // POST /plugins/:name/approve — **兼容保留**（无审批批 2026-09-13 起 UI 主线不再调用）：
@@ -2964,13 +3009,15 @@ class RestApiRoutes(
     // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动
     // approve 一个用户改过的默认集包会让下次 boot 的种子镜像覆盖视为「干净」。
     // 名字段白名单校验（拒绝路径穿越形态）。
-    case POST -> Root / "plugins" / name / "approve" =>
-      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-      else
-        nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
-          case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
-          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-        }
+    case req @ POST -> Root / "plugins" / name / "approve" =>
+      withAuth(req) {
+        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+        else
+          nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
+            case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+          }
+      }
 
     // POST /plugins/:name/revoke — **封禁**（deny-list；2026-09-13 无审批批语义变更）：
     // 写 `plugins.revoked.<name> = {at, by, reason}`（**独立命名空间**，不被任何 approve
@@ -2978,284 +3025,318 @@ class RestApiRoutes(
     // 重验 tick 停掉。路径名保留（零迁移），语义从「撤回审批」翻转为「点名封禁」。
     // body（可选）：{"reason": "…"}。**解封**走下方 /unblock。
     case req @ POST -> Root / "plugins" / name / "revoke" =>
-      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-      else
-        req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
-          val reason = body.hcursor.downField("reason").as[String].toOption.getOrElse("")
-          nebflow.core.plugin.PluginBlockPolicy.block(name, reason, "panel/rest").flatMap {
-            case Right(_) =>
-              Ok(Json.obj("ok" -> true.asJson,
-                "message" -> (s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
-                  "new dispatches and at node start, and its in-flight MCP servers are stopped within 30s. " +
-                  s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'.").asJson))
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+      withAuth(req) {
+        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+        else
+          req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+            val reason = body.hcursor.downField("reason").as[String].toOption.getOrElse("")
+            nebflow.core.plugin.PluginBlockPolicy.block(name, reason, "panel/rest").flatMap {
+              case Right(_) =>
+                Ok(Json.obj("ok" -> true.asJson,
+                  "message" -> (s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
+                    "new dispatches and at node start, and its in-flight MCP servers are stopped within 30s. " +
+                    s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'.").asJson))
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+            }
           }
-        }
+      }
 
     // POST /plugins/:name/unblock — **解封**（2026-09-13 新增）：删 `plugins.revoked.<name>`
     // ⇒ 回落「在位即信任」（目录/派发/装载恢复；已停的在飞 MCP 需重新派发才回来）。
-    case POST -> Root / "plugins" / name / "unblock" =>
-      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-      else
-        nebflow.core.plugin.PluginBlockPolicy.unblock(name, "panel/rest").flatMap {
-          case Right(_) =>
-            Ok(Json.obj("ok" -> true.asJson,
-              "message" -> (s"Plugin '$name' unblocked — back to presence trust: it re-enters the catalog and is " +
-                "available for new dispatches on the next scan.").asJson))
-          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-        }
+    case req @ POST -> Root / "plugins" / name / "unblock" =>
+      withAuth(req) {
+        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+        else
+          nebflow.core.plugin.PluginBlockPolicy.unblock(name, "panel/rest").flatMap {
+            case Right(_) =>
+              Ok(Json.obj("ok" -> true.asJson,
+                "message" -> (s"Plugin '$name' unblocked — back to presence trust: it re-enters the catalog and is " +
+                  "available for new dispatches on the next scan.").asJson))
+            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+          }
+      }
 
     // POST /plugins/:name/disable | /enable — **令 1 派发开关**（2026-09-12）：
     // 只写 `plugins.dispatch.<name>.authorEnabled`（durable 作者意图层）⇒ **只影响
     // 未来派发**：新节点拿不到该插件（闸 A 拒），已在飞/已派发节点**零影响**
     // （闸 B/C/E/D 只判内容面），已注入的 `<injected-plugins>` 提示词全文与审计
     // 留存不变。不放宽内容面（未受信的包此路依然无效）。
-    case POST -> Root / "plugins" / name / "disable" =>
-      dispatchSwitch(name, enable = false)
-    case POST -> Root / "plugins" / name / "enable" =>
-      dispatchSwitch(name, enable = true)
+    case req @ POST -> Root / "plugins" / name / "disable" =>
+      withAuth(req) {
+        dispatchSwitch(name, enable = false)
+      }
+    case req @ POST -> Root / "plugins" / name / "enable" =>
+      withAuth(req) {
+        dispatchSwitch(name, enable = true)
+      }
 
     // POST /plugins/:name/dispatch/grant — **过渡期临时派发授权**（设计 R8：
     // 过渡只能**放宽**、带 TTL 自动失效、不污染作者意图）。body（可选）：
     // {"ttlSecs": 1800, "refs": ["n-…"], "reason": "…"}。缺省 ttlSecs=1800。
     case req @ POST -> Root / "plugins" / name / "dispatch" / "grant" =>
-      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-      else
-        req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
-          val c = body.hcursor
-          val ttl = c.downField("ttlSecs").as[Long].toOption.getOrElse(1800L)
-          val refs = c.downField("refs").as[List[String]].toOption.getOrElse(Nil)
-          val reason = c.downField("reason").as[String].toOption.getOrElse("temporary dispatch grant via REST")
-          nebflow.core.plugin.PluginDispatchPolicy.grantTransition(name, ttl, refs, reason, "rest").flatMap {
-            case Right(_) =>
-              Ok(Json.obj("ok" -> true.asJson,
-                "message" -> s"Plugin '$name' temporary dispatch grant recorded (ttlSecs=$ttl, refs=${refs.mkString(",")}) — new dispatches may use it until it expires; the author's intent is untouched".asJson))
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+      withAuth(req) {
+        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+        else
+          req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+            val c = body.hcursor
+            val ttl = c.downField("ttlSecs").as[Long].toOption.getOrElse(1800L)
+            val refs = c.downField("refs").as[List[String]].toOption.getOrElse(Nil)
+            val reason = c.downField("reason").as[String].toOption.getOrElse("temporary dispatch grant via REST")
+            nebflow.core.plugin.PluginDispatchPolicy.grantTransition(name, ttl, refs, reason, "rest").flatMap {
+              case Right(_) =>
+                Ok(Json.obj("ok" -> true.asJson,
+                  "message" -> s"Plugin '$name' temporary dispatch grant recorded (ttlSecs=$ttl, refs=${refs.mkString(",")}) — new dispatches may use it until it expires; the author's intent is untouched".asJson))
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+            }
           }
-        }
+      }
 
     // POST /plugins/:name/dispatch/clear — 显式结束过渡（幂等；有效值回落作者意图）。
-    case POST -> Root / "plugins" / name / "dispatch" / "clear" =>
-      if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-      else
-        nebflow.core.plugin.PluginDispatchPolicy.clearTransition(name, "rest").flatMap {
-          case Right(_) =>
-            Ok(Json.obj("ok" -> true.asJson,
-              "message" -> s"Plugin '$name' transition cleared — effective dispatch permission falls back to the author's intent".asJson))
-          case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-        }
+    case req @ POST -> Root / "plugins" / name / "dispatch" / "clear" =>
+      withAuth(req) {
+        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+        else
+          nebflow.core.plugin.PluginDispatchPolicy.clearTransition(name, "rest").flatMap {
+            case Right(_) =>
+              Ok(Json.obj("ok" -> true.asJson,
+                "message" -> s"Plugin '$name' transition cleared — effective dispatch permission falls back to the author's intent".asJson))
+            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+          }
+      }
 
     // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
-    case GET -> Root / "flows" / "list" =>
-      for
-        flows <- EntityLoader.listFlows()
-        entries = flows.values.toList.sortBy(_.name).map { f =>
-          val edges = f.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
-            node.onComplete match
-              case NodeRoute.Goto(target) => List((nodeId, target, None))
-              case NodeRoute.Return => List((nodeId, "$return", None))
-              case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
-              case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
-              case NodeRoute.Switch(_, cases, _, _) =>
-                cases.toList.map { (cond, route) =>
-                  route match
-                    case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
-                    case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
-                    case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
-                    case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
-                    case _                     => List((nodeId, "?", Some(cond)))
-                }.flatten
+    case req @ GET -> Root / "flows" / "list" =>
+      withAuth(req) {
+        for
+          flows <- EntityLoader.listFlows()
+          entries = flows.values.toList.sortBy(_.name).map { f =>
+            val edges = f.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
+              node.onComplete match
+                case NodeRoute.Goto(target) => List((nodeId, target, None))
+                case NodeRoute.Return => List((nodeId, "$return", None))
+                case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
+                case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
+                case NodeRoute.Switch(_, cases, _, _) =>
+                  cases.toList.map { (cond, route) =>
+                    route match
+                      case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
+                      case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
+                      case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
+                      case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
+                      case _                     => List((nodeId, "?", Some(cond)))
+                  }.flatten
+            }
+            Json.obj(
+              "name" -> f.name.asJson,
+              "description" -> f.description.asJson,
+              "entry" -> f.entry.asJson,
+              "maxLoop" -> f.maxLoop.asJson,
+              "nodeCount" -> f.nodes.size.asJson,
+              "nodes" -> f.nodes.toList
+                .sortBy(_._1)
+                .map { (nodeId, node) =>
+                  Json.obj(
+                    "nodeId" -> nodeId.asJson,
+                    "agent" -> node.agent.asJson
+                  )
+                }
+                .asJson,
+              "edges" -> edges.map { (from, to, cond) =>
+                Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
+              }.asJson
+            )
           }
-          Json.obj(
-            "name" -> f.name.asJson,
-            "description" -> f.description.asJson,
-            "entry" -> f.entry.asJson,
-            "maxLoop" -> f.maxLoop.asJson,
-            "nodeCount" -> f.nodes.size.asJson,
-            "nodes" -> f.nodes.toList
-              .sortBy(_._1)
-              .map { (nodeId, node) =>
-                Json.obj(
-                  "nodeId" -> nodeId.asJson,
-                  "agent" -> node.agent.asJson
-                )
-              }
-              .asJson,
-            "edges" -> edges.map { (from, to, cond) =>
-              Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
-            }.asJson
-          )
-        }
-        result <- Ok(Json.obj("flows" -> entries.asJson))
-      yield result
+          result <- Ok(Json.obj("flows" -> entries.asJson))
+        yield result
+      }
 
     // GET /teams/:name — team detail
-    case GET -> Root / "teams" / teamName =>
-      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-      else
-        for
-          teamOpt <- EntityLoader.loadTeam(teamName)
-          result <- teamOpt match
-            case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
-            case Some(team) =>
-              Ok(
-                Json.obj(
-                  "name" -> team.name.asJson,
-                  "description" -> team.description.asJson,
-                  "lead" -> team.lead.asJson,
-                  "members" -> team.members.asJson
+    case req @ GET -> Root / "teams" / teamName =>
+      withAuth(req) {
+        if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+        else
+          for
+            teamOpt <- EntityLoader.loadTeam(teamName)
+            result <- teamOpt match
+              case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
+              case Some(team) =>
+                Ok(
+                  Json.obj(
+                    "name" -> team.name.asJson,
+                    "description" -> team.description.asJson,
+                    "lead" -> team.lead.asJson,
+                    "members" -> team.members.asJson
+                  )
                 )
-              )
-        yield result
+          yield result
+      }
 
     // GET /team/rules/:name — read team rules.md
-    case GET -> Root / "team" / "rules" / teamName =>
-      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-      else
-        for
-          rules <- EntityLoader.loadTeamRules(teamName)
-          result <- Ok(Json.obj("content" -> rules.asJson))
-        yield result
+    case req @ GET -> Root / "team" / "rules" / teamName =>
+      withAuth(req) {
+        if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+        else
+          for
+            rules <- EntityLoader.loadTeamRules(teamName)
+            result <- Ok(Json.obj("content" -> rules.asJson))
+          yield result
+      }
 
     // POST /team/rules/:name — save team rules.md + trigger reload
     case req @ POST -> Root / "team" / "rules" / teamName =>
-      if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-      else
-        for
-          body <- req.as[Json]
-          content = body.hcursor.downField("content").as[String].getOrElse("")
-          rulesDir = PathUtil.dataRoot / "teams" / teamName
-          _ <- IO.blocking {
-            os.makeDir.all(rulesDir)
-            val tmp = rulesDir / ".rules.md.tmp"
-            os.write(tmp, content)
-            os.move.over(tmp, rulesDir / "rules.md")
-          }
-          // Trigger reload so changes take effect on next activation
-          _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
-            treeMap.values.toList.traverse_ { treeRef =>
-              treeRef ! TreeCommand.ReloadDefinition(teamName)
+      withAuth(req) {
+        if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+        else
+          for
+            body <- req.as[Json]
+            content = body.hcursor.downField("content").as[String].getOrElse("")
+            rulesDir = PathUtil.dataRoot / "teams" / teamName
+            _ <- IO.blocking {
+              os.makeDir.all(rulesDir)
+              val tmp = rulesDir / ".rules.md.tmp"
+              os.write(tmp, content)
+              os.move.over(tmp, rulesDir / "rules.md")
             }
-          }
-          result <- Ok(Json.obj("saved" -> true.asJson))
-        yield result
+            // Trigger reload so changes take effect on next activation
+            _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
+              treeMap.values.toList.traverse_ { treeRef =>
+                treeRef ! TreeCommand.ReloadDefinition(teamName)
+              }
+            }
+            result <- Ok(Json.obj("saved" -> true.asJson))
+          yield result
+      }
 
     // GET /entity-agents — list all agents (entity format, with useWhen)
-    case GET -> Root / "entity-agents" =>
-      for
-        agents <- EntityLoader.listAgents()
-        entries = agents.values.toList.sortBy(_.name).map { a =>
-          Json.obj(
-            "name" -> a.name.asJson,
-            "description" -> a.description.asJson,
-            "useWhen" -> a.useWhen.asJson,
-            "tools" -> a.tools.asJson,
-            "voice" -> a.voice.asJson,
-            "category" -> a.category.asJson
-          )
-        }
-        result <- Ok(Json.obj("agents" -> entries.asJson))
-      yield result
+    case req @ GET -> Root / "entity-agents" =>
+      withAuth(req) {
+        for
+          agents <- EntityLoader.listAgents()
+          entries = agents.values.toList.sortBy(_.name).map { a =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "useWhen" -> a.useWhen.asJson,
+              "tools" -> a.tools.asJson,
+              "voice" -> a.voice.asJson,
+              "category" -> a.category.asJson
+            )
+          }
+          result <- Ok(Json.obj("agents" -> entries.asJson))
+        yield result
+      }
 
     // ===== Model Presets =====
 
     // GET /presets — list all presets + default name + agent references
-    case GET -> Root / "presets" =>
-      val store = new PresetStore()
-      for
-        file <- IO.blocking(store.load())
-        // Build agent → preset mapping by scanning all agent.json files
-        agentPresets <- IO.blocking(scanAgentPresets())
-        result <- Ok(
-          Json.obj(
-            "defaultPreset" -> file.defaultPreset.asJson,
-            "presets" -> file.presets.values.toList.asJson,
-            "agents" -> agentPresets.asJson
+    case req @ GET -> Root / "presets" =>
+      withAuth(req) {
+        val store = new PresetStore()
+        for
+          file <- IO.blocking(store.load())
+          // Build agent → preset mapping by scanning all agent.json files
+          agentPresets <- IO.blocking(scanAgentPresets())
+          result <- Ok(
+            Json.obj(
+              "defaultPreset" -> file.defaultPreset.asJson,
+              "presets" -> file.presets.values.toList.asJson,
+              "agents" -> agentPresets.asJson
+            )
           )
-        )
-      yield result
+        yield result
+      }
 
     // POST /presets — create a new preset (409 on duplicate name)
     case req @ POST -> Root / "presets" =>
-      req.as[Json].flatMap { body =>
-        val name = body.hcursor.downField("name").as[String].getOrElse("")
-        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-        else
-          val store = new PresetStore()
-          IO.blocking(store.load()).flatMap { file =>
-            if file.presets.contains(name) then Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
-            else
-              val description = body.hcursor.downField("description").as[String].getOrElse("")
-              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
-              val preset = ModelPreset(name, description, preferred, fallbacks)
-              val updated = file.copy(presets = file.presets + (name -> preset))
-              IO.blocking(store.save(updated)) *>
-                Created(preset.asJson)
-          }
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val name = body.hcursor.downField("name").as[String].getOrElse("")
+          if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+          else
+            val store = new PresetStore()
+            IO.blocking(store.load()).flatMap { file =>
+              if file.presets.contains(name) then Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
+              else
+                val description = body.hcursor.downField("description").as[String].getOrElse("")
+                val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+                val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
+                val preset = ModelPreset(name, description, preferred, fallbacks)
+                val updated = file.copy(presets = file.presets + (name -> preset))
+                IO.blocking(store.save(updated)) *>
+                  Created(preset.asJson)
+            }
+        }
       }
 
     // PUT /presets/default — set the default preset (must exist)
     case req @ PUT -> Root / "presets" / "default" =>
-      req.as[Json].flatMap { body =>
-        val name = body.hcursor.downField("name").as[String].getOrElse("")
-        if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-        else
-          val store = new PresetStore()
-          IO.blocking(store.load()).flatMap { file =>
-            if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
-            else
-              val updated = file.copy(defaultPreset = name)
-              IO.blocking(store.save(updated)) *>
-                Ok(Json.obj("defaultPreset" -> name.asJson))
-          }
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val name = body.hcursor.downField("name").as[String].getOrElse("")
+          if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
+          else
+            val store = new PresetStore()
+            IO.blocking(store.load()).flatMap { file =>
+              if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
+              else
+                val updated = file.copy(defaultPreset = name)
+                IO.blocking(store.save(updated)) *>
+                  Ok(Json.obj("defaultPreset" -> name.asJson))
+            }
+        }
       }
 
     // PUT /presets/:name — update an existing preset (name immutable)
     case req @ PUT -> Root / "presets" / presetName =>
-      req.as[Json].flatMap { body =>
-        val store = new PresetStore()
-        IO.blocking(store.load()).flatMap { file =>
-          file.presets.get(presetName) match
-            case None =>
-              NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-            case Some(existing) =>
-              val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
-              val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-              val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
-              val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
-              val newFile = file.copy(presets = file.presets + (presetName -> updated))
-              IO.blocking(store.save(newFile)) *>
-                Ok(updated.asJson)
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val store = new PresetStore()
+          IO.blocking(store.load()).flatMap { file =>
+            file.presets.get(presetName) match
+              case None =>
+                NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+              case Some(existing) =>
+                val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
+                val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
+                val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
+                val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
+                val newFile = file.copy(presets = file.presets + (presetName -> updated))
+                IO.blocking(store.save(newFile)) *>
+                  Ok(updated.asJson)
+          }
         }
       }
 
     // DELETE /presets/:name — delete a preset (409 if default; scrub agent refs)
-    case DELETE -> Root / "presets" / presetName =>
-      val store = new PresetStore()
-      IO.blocking(store.load()).flatMap { file =>
-        if file.defaultPreset == presetName then
-          Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
-        else if !file.presets.contains(presetName) then
-          NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-        else
-          // 1. Delete preset from file
-          val newFile = file.copy(presets = file.presets - presetName)
-          // 2. Scrub all agent.json files that reference this preset
-          for
-            _ <- IO.blocking(store.save(newFile))
-            _ <- scrubPresetRefs(presetName)
-            result <- Ok(Json.obj("deleted" -> true.asJson))
-          yield result
+    case req @ DELETE -> Root / "presets" / presetName =>
+      withAuth(req) {
+        val store = new PresetStore()
+        IO.blocking(store.load()).flatMap { file =>
+          if file.defaultPreset == presetName then
+            Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
+          else if !file.presets.contains(presetName) then
+            NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
+          else
+            // 1. Delete preset from file
+            val newFile = file.copy(presets = file.presets - presetName)
+            // 2. Scrub all agent.json files that reference this preset
+            for
+              _ <- IO.blocking(store.save(newFile))
+              _ <- scrubPresetRefs(presetName)
+              result <- Ok(Json.obj("deleted" -> true.asJson))
+            yield result
+        }
       }
 
     // POST /presets/migrate-legacy — migrate per-agent model configs to presets
     // Body: {"agentNames": ["Coder", "qa-frontend", ...]}
     case req @ POST -> Root / "presets" / "migrate-legacy" =>
-      req.as[Json].flatMap { body =>
-        val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
-        if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
-        else migrateLegacyModels(agentNames)
+      withAuth(req) {
+        req.as[Json].flatMap { body =>
+          val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
+          if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
+          else migrateLegacyModels(agentNames)
+        }
       }
 
     // ===== Provider model discovery =====
