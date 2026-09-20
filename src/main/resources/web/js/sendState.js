@@ -48,14 +48,21 @@ export const SEND_LEG = {
 };
 
 /**
- * R5 两格（好友 / 群**回执位**）的**接口位**（候后端源契约）。
+ * R5 两格（好友 / 群**回执位**）的**能力位** —— 源契约已回投，本批（uxb-seg2）接线。
  *
- * 作者 2026-09-20 18:45 裁定②：好友 / 群回执格的呈现前提由「不出现」改「**候后端源**」
- * ——本批只留槽位与接口，禁实现该两格（回执源 = neblink-server 契约，经 root 回投）。
- * ⇒ 源未回投前恒 `false`；源到达时**只改本常量**（呈现单点 = `applyReceipt`，
- * 取数腿由回投批接入，本批零后端改动、零取数代码）。
+ * 沿革：作者 2026-09-20 18:45 裁定②把两格由「不出现」改为「候后端源」；源契约
+ * `friend-group-receipt-source` **v1.2**（判词 PASS 6/6，sha256 `640de17b2d52…`）
+ * 经 root 回投 ⇒ 本常量翻 `true`，好友 / 群两面**打开回执位**。
+ * ⇒ 取数腿 = `messages.js::refreshConvReceipts`（E1 `GET …/receipts`，窗口按**消息 id**
+ * 口径）；呈现单点仍 = `applyReceipt`（本件，槽位形态与设备面同源）。
+ *
+ * 🔴 **能力位 ≠ 源可用性**：服务端不支持 / 非成员 / 鉴权失效 / 网络 = **运行时降级**面
+ * —— 无回执数据 ⇒ 槽位**不画**（无空槽、无报错噪声），处置落在 `refreshConvReceipts`
+ * 的错误面（契约 §1.4 逐码）。
+ * 🔴 设备面（`kind='device'`）走 E2EE 原则，**本批零触碰**：其回执位判据保持原式
+ * （`sourceServer === true`）。
  */
-const FRIEND_RECEIPT_SOURCE = false;
+const FRIEND_RECEIPT_SOURCE = true;
 
 /**
  * 能力位**唯一判据点**（§3.1）。感受面不各自判 `kind` / `sourceServer`，一律读本表。
@@ -68,7 +75,8 @@ export function capabilitiesOf(conv, leg) {
   const l = leg || SEND_LEG.ATTACH;
   const device = kind === 'device';
   return {
-    // 回执位（S6）：设备**服务端腿**才有源（`device_message_receipts`）；好友 / 群候源。
+    // 回执位（S6）：设备**服务端腿**（`device_message_receipts`）或好友 / 群
+    // （账号回执源 `message_receipts`，契约 v1.2 已回投 ⇒ 上方位为真）。
     receipt: (device && conv.sourceServer === true) || (FRIEND_RECEIPT_SOURCE && !device),
     // 排队态（S1）：附件腿=有（件集全量登记）；文本腿=无（单次 POST，无件集）。
     queue: l !== SEND_LEG.TEXT,
@@ -127,16 +135,42 @@ export function bindRetry(node, onRetry) {
 }
 
 /**
- * 回执位（S6 能力位）的**唯一呈现点** —— 含 R5 两格（好友 / 群）的**预留接口位**。
+ * 回执位的**文案单点**（含群聊计数形态）。
  *
- * 🔴 本批**禁实现**好友 / 群回执（候后端源契约，`FRIEND_RECEIPT_SOURCE` 恒 false）：
- *    本函数只负责「有 slot 才画、无 slot **不画空槽**」，且**不含任何回执取数逻辑**
- *    （取数由回投批按源契约接入 ⇒ 届时调用方喂 state 即可，呈现零改动）。
+ * 口径（契约 v1.2 §1.1 派生式 + §1.2 状态机）：直聊 = 1:1 无歧义 ⇒ 复用
+ * `messages.deviceSent` / `messages.deviceRead`（**逐字沿用既有回执面用语**，零新增文案）；
+ * 群聊 = `已读 {read}/{memberCount}`（契约逐字给出的气泡文案，全会话口径的
+ * `memberCount` 为分母）与同族 `已送达 {sent}/{memberCount}`（同一派生式
+ * `deliveredCount(mid)` 的呈现）⇒ 两枚新键，见 §16 文案申报。
+ * `counts` 缺席（设备面调用形态）/ 分母非正 ⇒ 恒走既有非计数形态（设备面**逐字不变**）。
+ * @param {'sent'|'read'} st 回执态
+ * @param {{read?: number, delivered?: number, total?: number}} [counts]
+ * @returns {string}
+ */
+function receiptText(st, counts) {
+  const total = Number(counts && counts.total);
+  if (!(Number.isFinite(total) && total > 0)) {
+    return st === 'read' ? t('messages.deviceRead') : t('messages.deviceSent');
+  }
+  if (st === 'read') {
+    return t('messages.receiptReadCount', { read: Number((counts && counts.read) || 0), total });
+  }
+  return t('messages.receiptSentCount', { sent: Number((counts && counts.delivered) || 0), total });
+}
+
+/**
+ * 回执位（S6 能力位）的**唯一呈现点** —— 设备面（无计数）与好友 / 群面（群聊带计数）
+ * 共用一份实现；「有 slot 才画、无 slot **不画空槽**」是唯一形态纪律。
+ *
+ * 🔴 本函数**不含任何回执取数逻辑**（取数在 `messages.js::refreshConvReceipts`，
+ * 按 v1.2 契约接线）⇒ 调用方喂 state/counts 即可。
  * @param {HTMLElement} node 气泡节点（`.fm-msg`）
  * @param {'sent'|'read'|null} state 回执态（`null`/假值 ⇒ 撤画）
+ * @param {{read?: number, delivered?: number, total?: number}|null} [counts]
+ *   群聊计数面（`total` = `memberCount`）；缺席 ⇒ 非计数形态（设备 / 直聊）
  * @returns {'sent'|'read'|null} 实际呈现态
  */
-export function applyReceipt(node, state) {
+export function applyReceipt(node, state, counts) {
   if (!node || !node.querySelector) return null;
   const wrap = node;
   const chip = wrap.querySelector('.fm-msg-device-receipt');
@@ -152,9 +186,18 @@ export function applyReceipt(node, state) {
     target.className = 'fm-msg-device-receipt';
     meta.appendChild(target);
   }
-  const text = st === 'read' ? t('messages.deviceRead') : t('messages.deviceSent');
+  const text = receiptText(st, counts);
   if (target.textContent !== text) target.textContent = text;
   target.dataset.receiptState = st;
+  // 计数面 dataset（QA 机械读数面；非计数形态 ⇒ 摘键，禁留陈旧值）。
+  const total = Number(counts && counts.total);
+  if (Number.isFinite(total) && total > 0) {
+    target.dataset.receiptTotal = String(total);
+    target.dataset.receiptCount = String(Number((st === 'read' ? counts.read : counts.delivered) || 0));
+  } else {
+    target.removeAttribute('data-receipt-total');
+    target.removeAttribute('data-receipt-count');
+  }
   return st;
 }
 

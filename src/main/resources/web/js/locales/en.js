@@ -1652,6 +1652,12 @@ export default {
   'messages.deviceDescSaveFailed': 'Could not save the device description.',
   'messages.deviceSent': 'Sent',
   'messages.deviceRead': 'Read',
+  // === friend/group receipt slot (R5 two cells · source contract v1.2) ===
+  // 🔴 The only new copy in this batch (2 keys; see the report's copy declaration):
+  // the contract §1.1 bubble wording `read {readCount}/{memberCount}` for groups,
+  // plus the same derivation's delivered count. Direct/device faces add none.
+  'messages.receiptReadCount': 'Read {read}/{total}',
+  'messages.receiptSentCount': 'Sent {sent}/{total}',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
   'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
   'messages.deviceSendUnavailable': 'This device\'s identity is unavailable — sending is off.',
