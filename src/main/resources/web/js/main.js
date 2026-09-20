@@ -396,9 +396,33 @@ function consumeTurnDuration(sid) {
 // sessionBusy{busy:false}. Keeping one body means the two entry points cannot
 // drift apart (the whole point of ①-2: the idle signal had NO drain wiring, so
 // a lost 'done' stranded the local queue forever — 症状① G1/G3).
+//
+// per-turn 幂等闸（2026-09-20 chain-msgqueue 阶段 B · 方案 A，作者令）：原设计逐字
+// 口径 = 「send first queued message as normal UserInput」（input.js:1105-1107，
+// 单数 + first）⇒ 一次 turn 结束只派发 **1** 条；而引擎对每一轮**固定发两帧**终止
+// 信号（`Done *> emitSessionBusy(busy=false)`，AgentActor.scala:3176-3185）⇒ 同一
+// 窗口内本 helper 被调 2 次、余件被提前捞进对话流（显示态 ≠ 投递态 = 报障本体）。
+// 闸形 = **per-session turn 窗口令牌**：窗口内只放行 1 次**派发**（判定放在定时器
+// 回调里 ⇒ 兄弟帧先到、后到、间隔多久都压得住）；且只有真的派发才关窗（无件 / WS
+// 未开 ⇒ 不关窗，防「队列停摆」= 症状① 复发）。窗口由「新一轮开始」的既有事实复位：
+//   ① 引擎新轮权威信号 sessionBusy{busy:true}（下方 onMessage('sessionBusy') 分支）；
+//   ② 流式帧族（armBusyFromStream 的 5 个入口 = thinkingDelta / textDelta / thinking /
+//      textDone / toolStart）= 本轮正在产出 ⇒ 新一轮事实（depth>0 会话不发 sessionBusy
+//      帧，靠这一支复位 —— 与该函数头注讨论的会话类同源）。
+// 🔴 不按帧类型白名单：'done' 丢帧时 sessionBusy{false} 仍须能派发（①-2 动因）。
+const drainWindowUsed = new Set();
 function scheduleQueueDrain(sid) {
+  if (!sid) return;
   // Delay lets the UI finalize the finished turn first (unchanged 50ms).
-  if (sid) setTimeout(() => drainMessageQueue(sid), 50);
+  setTimeout(() => {
+    if (drainWindowUsed.has(sid)) return;   // 本 turn 窗口已派发过 ⇒ 重复帧 / stale 帧在此挡下
+    // 与 input.js:1109-1111 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不关窗（留待后续终止帧）
+    const q = state.messageQueue[sid];
+    if (!q || q.length === 0) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    drainWindowUsed.add(sid);               // 本次派发 = 新 turn 起点 ⇒ 关窗（待 ①② 复位）
+    drainMessageQueue(sid);
+  }, 50);
 }
 
 // Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
@@ -414,6 +438,11 @@ function scheduleQueueDrain(sid) {
 // ordered, so a frame delivered after `done` was emitted after it).
 const TERMINAL_ARM_GUARD_MS = 5000;
 function armBusyFromStream(sid) {
+  // 2026-09-20 chain-msgqueue 阶段 B：流式帧 = 本轮正在产出 ⇒ 这是「新一轮开始」的
+  // 事实，复位 per-turn drain 闸（新的 turn 窗口）。🔴 必须置于下方 busy 闸**之前**：
+  // 派发后 busy 已被 setBusy(sid) 置 true，放进闸后本支对已 busy 的会话永不执行 ⇒
+  // depth>0 会话（不发 sessionBusy 帧）的队列在第一次派发后即停摆（症状① 复发）。
+  if (sid) drainWindowUsed.delete(sid);
   if (!sid || state.busySessionIds.has(sid)) return;
   const termAt = state.lastTerminalAt[sid];
   if (termAt && Date.now() - termAt <= TERMINAL_ARM_GUARD_MS) return;
@@ -2871,6 +2900,10 @@ onMessage('sessionBusy', (msg, view) => {
     // this session's terminal stamp so the new turn's streaming frames may arm
     // busy again (without this the re-arm gate would lock the session out).
     if (sid) delete state.lastTerminalAt[sid];
+    // 2026-09-20 chain-msgqueue 阶段 B：同一事实复位 per-turn drain 闸（引擎新轮 ⇒ 新的
+    // turn 窗口；与上一行 lastTerminalAt 的取代口径逐字同源）。与流式帧族那一支
+    // （armBusyFromStream 头注）互补：depth>0 会话只靠后者。
+    if (sid) drainWindowUsed.delete(sid);
     setBusy(msg.sessionId);
     // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
     if (sid) state.turnExpecting[sid] = true;
@@ -2883,10 +2916,16 @@ onMessage('sessionBusy', (msg, view) => {
     // drain as the terminal-frame family (clearBusyFor → scheduleQueueDrain,
     // 50ms), reusing the existing drain path rather than adding one.
     // Two decidable properties of doing it here:
-    //   (a) no double delivery: drainMessageQueue shifts the head BEFORE sending
-    //       and returns early on an empty queue (input.js:919/925), so a
-    //       'done' + sessionBusy{false} pair in the same window delivers two
-    //       DISTINCT queued items, never the same one twice.
+    //   (a) one drain per turn window (2026-09-20 chain-msgqueue 阶段 B): the
+    //       'done' + sessionBusy{false} pair the engine emits for EVERY turn
+    //       (AgentActor.scala:3176-3185) now collapses to a SINGLE drain — the
+    //       scheduleQueueDrain window token admits the first terminal frame only,
+    //       the second re-enters the same (already used) window and is skipped ⇒
+    //       ONE queued item per turn, the rest stay in `#queue-bar` as 排队中 (N).
+    //       Previously the pair delivered two DISTINCT queued items (never the
+    //       same one twice — drainMessageQueue shifts the head before sending),
+    //       which put a message into the chat flow a full turn before it was ever
+    //       sent (显示态 ≠ 投递态).
     //   (b) compaction window: no drain while compacting — same rule as the
     //       compactComplete handler below (`!busySessionIds.has(sid)`) and
     //       input.js:494 (`isBusy = busy || compacting`); the resume turn right
