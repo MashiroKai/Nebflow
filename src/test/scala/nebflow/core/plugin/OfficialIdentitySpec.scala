@@ -22,8 +22,9 @@ import java.nio.file.Files
  *  ⑥ **首启预置信任端到端**：`SeedService.ensureSeeded()` 在 fresh home 装内置官方包 +
  *     落 Trusted 审计记录，且「允许列表 digest == 信任记录 digest == 装后现算 digest」三方一致。
  *  ⑦ **jar 形态臂**（分发形态回归，`p03-remediate` §11-3）：真 jar 资源树 ⇒ 允许列表与
- *     `file:` 形态**同一结果**（jar 分支路径只拼一次 `base`）+ jar 形态下官方包装载/非官方拒
- *     判定同款。①⑥ 两臂只覆盖 `file:` 分支（sbt 期 classpath = 目录），本臂补 jar 分支。
+ *     `file:` 形态**同一结果**（jar 分支的「资源名只拼一次 base」+「digest 喂包内相对路径」
+ *     两条同时成立）+ jar 形态下官方包装载/非官方拒判定同款。①⑥ 两臂只覆盖 `file:` 分支
+ *     （sbt 期 classpath = 目录），本臂补 jar 分支。
  *
  * 隔离面：全程 `PathUtil.setDataRoot(<临时目录>)`，**零 real-HOME 写面**
  * （`~/.nebflow/plugins/` 与 `~/.nebflow/nebflow.json` 一个字节都不碰）。
@@ -263,11 +264,14 @@ class OfficialIdentitySpec extends FunSuite:
 
   // ── ⑦ jar 形态臂（分发形态：`jar:` 协议的资源树）──────────────
   //
-  // 缺陷回归臂（p03-remediate §11-3）：jar 分支曾把已 `stripPrefix(base)` 的相对路径
-  // **再拼一次**包目录名（`$base$pkgDir/$rel` ⇒ jar 内不存在的 `seed/plugins/<pkg>/<pkg>/…`）
-  // ⇒ `getResourceAsStream` 恒 null ⇒ 逐包 `files.isEmpty` ⇒ 允许列表**恒为空表** ⇒ 分发
-  // 形态下官方包整体被 `OFFICIAL_IMPERSONATION` 误拒。①⑥ 两臂只走 file: 分支（sbt 期 classpath
-  // = 目录），故不暴露；本臂以真 jar 资源树覆盖同一条分支。
+  // 缺陷回归臂（p03-remediate §11-3；本节点实测把该静态定位补正为**双因**）：jar 分支曾
+  //  ① 把已 `stripPrefix(base)` 的相对路径**再拼一次**包目录名（`$base$pkgDir/$rel` ⇒ jar 内不存在的
+  //     `seed/plugins/<pkg>/<pkg>/…`）⇒ `getResourceAsStream` 恒 null ⇒ 逐包 `files.isEmpty`
+  //     ⇒ 允许列表**恒为空表**（分发形态读数 `allowlist holds 0 package(s)`）；
+  //  ② 喂 digest 的路径余着包目录名（file: 分支是 `f.relativeTo(pkg)`，不带）⇒ ① 修好、表非空后
+  //     digest 仍与装载层权威 `PluginRegistry.computeDigest` 不等 ⇒ 官方包仍被判「装后被人改过」拒载。
+  // 两因分别由下面两个 test 的 **keySet 断言**与 **digest 断言**抓住。①⑥ 两臂只走 file: 分支
+  // （sbt 期 classpath = 目录树），故不暴露；本臂以真 jar 资源树覆盖同一条分支。
 
   test("jar form: a real jar resource tree yields the SAME allowlist as the file: tree") {
     val samples = BuiltinOfficialSamples

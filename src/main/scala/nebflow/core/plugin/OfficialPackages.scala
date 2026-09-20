@@ -170,13 +170,18 @@ object OfficialPackages:
             .map(_.getName.stripPrefix(base))
             .filter(_.contains("/"))
           rels.groupBy(_.takeWhile(_ != '/')).toList.sortBy(_._1).map { (pkgDir, rs) =>
-            // 🔴 `rel` 自身已含包目录名（上面刚 `stripPrefix(base)` 过）⇒ 资源名逐字只拼一次
-            // `base`：`$BuiltinRoot/<pkgDir>/<rel 其余段>`。再拼一次 pkgDir 会得到
-            // `seed/plugins/<pkgDir>/<pkgDir>/…`（jar 内不存在）⇒ `getResourceAsStream` 恒 null
-            // ⇒ 逐包 `files.isEmpty` ⇒ **允许列表恒为空表**（jar/分发形态下官方包整体被拒载）。
+            // jar 分支要与 file: 分支**同一 allowlist 判定结果**，两条必须同时成立：
+            //  ① 资源名 = `$base$rel`：`rel` 自身已含包目录名（上面刚 `stripPrefix(base)` 过）
+            //     ⇒ 只能拼一次 `base`。再拼一次 `pkgDir` 会得到 `seed/plugins/<pkgDir>/<pkgDir>/…`
+            //     （jar 内不存在）⇒ `getResourceAsStream` 恒 null ⇒ 逐包 `files.isEmpty`
+            //     ⇒ 允许列表恒为空表 ⇒ 分发形态下官方包整体被拒载。
+            //  ② 喂 digest 的路径必须是**包内相对路径**：`rel` 需去掉首段包目录名，与 file: 分支的
+            //     `f.relativeTo(pkg)` 同形。余着包目录名会让 jar 形态 digest 与装载层权威
+            //     `PluginRegistry.computeDigest` 不等 ⇒ 表非空但每个官方包都被判成「装后被人改过」
+            //     而拒载（且 manifest 的 `name` 键也退化为目录名）。
             val files = rs.sorted.flatMap { rel =>
               Option(loader.getResourceAsStream(s"$base$rel")).map { in =>
-                try rel -> in.readAllBytes()
+                try rel.stripPrefix(s"$pkgDir/") -> in.readAllBytes()
                 finally in.close()
               }
             }
