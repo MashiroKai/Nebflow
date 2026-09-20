@@ -88,7 +88,7 @@ class OfficialIdentitySpec extends FunSuite:
     *
     * 🔴 parent = `null` 不是风格选择：本 suite 的父 classpath 上就有一棵 `file:` 形态的 `seed/`
     * 目录树，parent 非空时锚点会解析成**目录** ⇒ 走 file: 分支 ⇒ jar 臂退化成假绿。 */
-  private def withFixtureJar[A](pkgs: List[String])(body: (java.nio.file.Path, ClassLoader) => A): A =
+  private def withFixtureJar[A](pkgs: List[String])(body: (os.Path, ClassLoader) => A): A =
     val dir = os.Path(Files.createTempDirectory("nb-official-jarform"))
     val jar = dir / "jarform-fixture.jar"
     val out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar.toNIO))
