@@ -952,7 +952,11 @@ export default {
 
 
   // === Chat area ===
-  'chat.timeout': '响应超时',
+  // freezetimeout B2 · §16 逐字表（真源 = 诊断件 §5）：chat.timeout 由错误语义
+  // 「响应超时」改为状态语义「仍在处理」；新增两条 stillProcessing key。
+  'chat.timeout': '仍在处理',
+  'chat.stillProcessing': '仍在处理，暂未收到新进展',
+  'chat.stillProcessing.interrupt': '仍要中断并重试',
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',

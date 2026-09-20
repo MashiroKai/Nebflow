@@ -982,7 +982,12 @@ export default {
   'delete.folderMsg': 'Delete folder "{name}"?\nSessions inside will be moved to root.',
 
   // === Chat area ===
-  'chat.timeout': 'Response timed out',
+  // freezetimeout B2 · §16 verbatim table (source of truth = diagnosis §5): the
+  // error-semantics 'Response timed out' becomes the status-semantics
+  // 'Still processing'; two new stillProcessing keys are added.
+  'chat.timeout': 'Still processing',
+  'chat.stillProcessing': 'Still processing — no new progress yet',
+  'chat.stillProcessing.interrupt': 'Interrupt and retry anyway',
   'chat.retry': 'Retry',
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
