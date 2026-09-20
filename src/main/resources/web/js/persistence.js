@@ -11,6 +11,10 @@ import { dropFriendMessageCache } from './fmMessageCache.js';
 // ⑩ Dropbox 消息缓存（fmDropboxCache.js）与好友消息缓存同为**纯缓存**：淘汰顺序里
 // 并列第一步，两者都先丢，绝不让它们挤掉会话缓存。
 import { dropDeviceMessageCache } from './fmDropboxCache.js';
+// sessperf Phase B（2026-09-20）：本地优先层（IndexedDB，唯一属主 `localStore.js`）
+// 的驱逐挂靠点 —— 与上面两个纯缓存同级（淘汰次序：纯缓存先让路，会话缓存最后）。
+// 单向依赖、无环；`evict` 自带 L2/L5 降级（配额失败 ⇒ 本池清空重试 ⇒ 只读镜像）。
+import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
@@ -45,6 +49,11 @@ function pruneAndRetrySetSessions(all, keepSid) {
   // ⑨ 淘汰顺序（作者 2026-09-12）：好友消息缓存 = 纯缓存，配额压力下先丢它；
   // 丢掉后能写进就**不剪 session**（剪的是用户的会话缓存，主聊天被伤不可接受）。
   // ⑩ Dropbox 消息缓存同级（两面同为纯缓存，一次丢干净再重试写入）。
+  // sessperf Phase B（卡 §5.3 `persistence.js:44-59`）：本地优先层（IndexedDB，
+  // 唯一属主 localStore.js）的**非阻塞驱逐**也挂在同一次序点上 —— 它自带预算与
+  // 降级（L2/L5），此处只 trigger，不等它（localStorage 配额与 IDB 是两套账，
+  // 本行保证的是「纯缓存先让路」这条**次序纪律**不散落成两处）。
+  void evictLocalStore();
   const droppedAny = dropFriendMessageCache() || dropDeviceMessageCache();
   if (droppedAny && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
   const otherSids = Object.keys(all).filter(k => k !== keepSid);
@@ -69,6 +78,7 @@ export function emergencyCacheCleanup() {
     // pruneAndRetrySetSessions 会去剪会话缓存（方案 §2.3 明确判定「不可接受」）。
     dropFriendMessageCache();
     dropDeviceMessageCache(); // ⑩ 同级第一步：Dropbox 消息缓存（fmDropboxCache.js）
+    void evictLocalStore();   // sessperf Phase B：本地优先层同一次序点（非阻塞；见 pruneAndRetrySetSessions）
     console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
     const all = JSON.parse(raw);
     // Re-sanitize every entry in every session and enforce message cap

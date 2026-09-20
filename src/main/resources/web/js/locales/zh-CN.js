@@ -1619,6 +1619,12 @@ export default {
   'messages.deviceDescSaveFailed': '设备描述未保存。',
   'messages.deviceSent': '已送达',
   'messages.deviceRead': '已读',
+  // === 好友 / 群回执槽位（R5 两格 · 源契约 `friend-group-receipt-source` v1.2）===
+  // 🔴 本批**唯一新增文案**（2 枚，见报告「文案申报」）：契约 §1.1 逐字给出的气泡文案
+  // `已读 {readCount}/{memberCount}`（群聊）+ 同一派生式 `deliveredCount` 的送达计数。
+  // 直聊 / 设备面**零新增**（复用上方 `deviceSent` / `deviceRead` 两枚既有键）。
+  'messages.receiptReadCount': '已读 {read}/{total}',
+  'messages.receiptSentCount': '已送达 {sent}/{total}',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
   'messages.deviceSendFailed': '消息未发出。内容未丢失，请重试。',
   'messages.deviceSendUnavailable': '本机设备身份不可用，暂不能发送。',

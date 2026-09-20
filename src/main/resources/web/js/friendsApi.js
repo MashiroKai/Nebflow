@@ -81,10 +81,12 @@ export function isFriendTerminalCode(code) {
   return FRIEND_TERMINAL_CODES.has(code);
 }
 
-/** 非 2xx 是否携带**任一域**语义码 —— 这类响应**不是**鉴权失败 / 路由缺失 ⇒ 禁折登录链。 */
+/** 非 2xx 是否携带**任一域**语义码 —— 这类响应**不是**鉴权失败 / 路由缺失 ⇒ 禁折登录链。
+ *  形态 = 群域既有判据（`isGroupDomainError`，**唯一调用点原样保留在链内**）∨ 好友域
+ *  终态码 ⇒ 群域语义逐字不变，且不新增死符号。 */
 function isDomainSemanticError(data) {
-  return !!(data && typeof data === 'object'
-    && (GROUP_DOMAIN_ERRORS.has(data.error) || FRIEND_TERMINAL_CODES.has(data.error)));
+  return isGroupDomainError(data)
+    || !!(data && typeof data === 'object' && FRIEND_TERMINAL_CODES.has(data.error));
 }
 
 // ── 群成员头像预览（正典 §A · 加性契约）────────────────────────
@@ -791,20 +793,62 @@ export async function markConversationRead(conversationId, lastReadMessageId) {
 // （`403 device_identity_required` / `403 not_my_device` / `422 invalid_*`）——
 // 本层不折叠、不改写、不静默吞（调用方按码分态）。
 
-/** GET /api/conversations/{id}/receipts → {receipts:[{messageId,state}],
- *  lastSentMessageId, lastReadMessageId}（契约 §8.7：设备会话与直聊**同形状**，
- *  设备维度读自 `device_message_receipts`；`state ∈ {sent,read}`，read 为终态）。 */
-export async function getConversationReceipts(conversationId) {
-  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/receipts`);
+/** E1 查询串（契约 `friend-group-receipt-source` **v1.2** §1.1）。
+ *
+ *  🔴 **`limit` 语义 = 窗口消息条数（计数单位 = 消息 id），不是回执行数** —— 与
+ *  `GET …/messages` 的同名参数（`limit.unwrap_or(50).clamp(1, 200)`）**有意不同**，
+ *  契约逐字禁「按同名参数直觉复用」。本层只做整数归一 + 上界 clamp(1,500)（服务端
+ *  同界），**不做任何计数换算**（换算属服务端语义）。
+ *  🔴 §1.4：`after`/`limit` 非整数 ⇒ axum `Query` 拒绝的 **400 纯文本体**（不是
+ *  `ErrorResponse` 形状）⇒ 本函数**只发整数**，非法/缺席一律不发该键（= 服务端缺省
+ *  `after=0` / 不限），从源头不产生该类 400。 */
+function receiptWindowQuery(opts) {
+  const o = opts || {};
+  const q = [];
+  if (Number.isInteger(o.after) && o.after > 0) q.push(`after=${o.after}`);
+  if (Number.isInteger(o.limit) && o.limit > 0) q.push(`limit=${Math.min(o.limit, 500)}`);
+  return q.length ? `?${q.join('&')}` : '';
+}
+
+/** GET /api/conversations/{id}/receipts → `{receipts:[{messageId,state[,userId,updatedAt]}],
+ *  lastSentMessageId, lastReadMessageId[, conversationKind, memberCount, members]}`。
+ *
+ *  两源合流（**同形状、加性**，契约 §1.1 的加性承诺）：
+ *   · 设备会话 / 直聊 = MVP-2 §8.7 形态（`device_message_receipts` / `message_receipts`），
+ *     直聊响应体在 v1.2 下与今日**逐字节相同**；
+ *   · 群聊 = v1.2 加性新键（`receipts[]` 每项 +`userId`/`updatedAt`，顶层
+ *     +`conversationKind`/`memberCount`/`members[]`）。
+ *  🔴 两个高水位（`lastSentMessageId` / `lastReadMessageId`）与 `members[]` 是
+ *  **全会话口径、不受 `after`/`limit` 窗口裁剪**；仅 `receipts[]` 受裁剪（§1.1）。
+ *
+ *  @param {string} conversationId
+ *  @param {{after?: number, limit?: number}} [opts] E1 窗口（**消息 id 口径**，见上）
+ */
+export async function getConversationReceipts(conversationId, opts) {
+  if (!MOCK) return req('GET', `/api/conversations/${encodeURIComponent(conversationId)}/receipts${receiptWindowQuery(opts)}`);
   await delay();
   const m = mockStore();
-  const rows = (m.messages[conversationId] || [])
+  const all = (m.messages[conversationId] || [])
     .filter(x => x.receiptState)
-    .map(x => ({ messageId: Number(x.id) || 0, state: x.receiptState }));
+    .map(x => ({ messageId: Number(x.id) || 0, state: x.receiptState }))
+    .sort((a, b) => a.messageId - b.messageId); // §1.1：receipts[] 升序 by messageId
+  // 窗口（mock 腿与真面**同语义**）：`after` 下界 + `limit` = **消息条数**上限，
+  // 窗口内每条消息的**全部**确认者行都在返回集内（计数完整性由契约保证）。
+  const o = opts || {};
+  const after = Number.isInteger(o.after) && o.after > 0 ? o.after : 0;
+  const inWin = all.filter(r => r.messageId > after);
+  let rows = inWin;
+  if (Number.isInteger(o.limit) && o.limit > 0) {
+    const keep = new Set([...new Set(inWin.map(r => r.messageId))].slice(0, Math.min(o.limit, 500)));
+    rows = inWin.filter(r => keep.has(r.messageId));
+  }
+  // 高水位 = 全会话口径（窗口外也取 MAX，与 §1.1 逐字一致）。
+  const maxOf = (rs) => rs.reduce((acc, r) => Math.max(acc, r.messageId), 0);
+  const readAll = all.filter(r => r.state === 'read');
   return {
     receipts: rows,
-    lastSentMessageId: rows.length ? rows[rows.length - 1].messageId : 0,
-    lastReadMessageId: rows.filter(r => r.state === 'read').map(r => r.messageId).pop() || 0,
+    lastSentMessageId: maxOf(all),
+    lastReadMessageId: maxOf(readAll),
   };
 }
 

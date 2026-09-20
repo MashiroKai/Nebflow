@@ -42,8 +42,12 @@ import { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL } 
 // `.nebflow/evidence/20260917_attachkey-impl/esm-cycle.txt`（该依据随本改动作废，
 // 本条改由「静态边消失」承担同一目标）。
 
-/** 上传条状态（渲染判据单点；字符串进 `data-upload-state` 供 QA 断言）。 */
+/** 上传条状态（渲染判据单点；字符串进 `data-upload-state` 供 QA 断言）。
+ *  📌 uxconsist Phase B（S1 排队）：`QUEUED` 进**同一**状态常量表 —— 件集在动作入口
+ *     全量登记为排队行，轮到本件才转 `UPLOADING`（§5 R8 三格；队列 = 既有**串行**语义的
+ *     可视化，不改任何传输行为）。设备腿的排队行经同一渲染器出卡（`registerExternalTransfer`）。 */
 export const UPLOAD_STATE = {
+  QUEUED: 'queued',
   UPLOADING: 'uploading',
   SENT: 'sent',
   FAILED: 'failed',
@@ -210,24 +214,54 @@ function uploadCardEl(item) {
   // 进度条**只在真实推进中出现**（宽度 = 服务端已确认的字节 / 总字节）。
   const total = item.totalBytes || item.size || 0;
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(((item.bytesSent || 0) / total) * 100))) : 0;
-  if (item.state === UPLOAD_STATE.UPLOADING) {
+  if (item.state === UPLOAD_STATE.QUEUED) {
+    // ── S1 排队（uxconsist Phase B · §5 R8 三格）────────────────────────────
+    // 说明行 = 复用既有 `input.queued`；**零新 CSS 规则**（同一 `.fm-upload` /
+    // `.fm-upload-note` 族，队列态只多 `data-upload-state="queued"` 一个钩子）。
+    // 取消键 = 仅**外部腿**（设备，`onCancel` 在场）挂 —— 其语义 = 「未 offer 件移出
+    // FIFO」（§5 R7-device）；网页腿（好友 / 群）的件集在第一个 await 前**已开始**串行
+    // 上传，其取消面仍是既有 `UPLOADING` 档那一枚键（逐字不变，禁在此新增第二套）。
+    card.appendChild(el('span', 'fm-upload-note', t('input.queued')));
+    if (typeof item.onCancel === 'function') appendCardCancel(card, item);
+  } else if (item.state === UPLOAD_STATE.UPLOADING) {
     const track = el('div', 'fm-upload-progress');
     const bar = el('div', 'fm-upload-progress-bar');
     bar.style.width = `${pct}%`;
     track.appendChild(bar);
     card.appendChild(track);
     card.appendChild(el('span', 'fm-upload-note', t('messages.attachProgress').replace('{pct}', String(pct))));
-    const cancel = el('button', 'fm-upload-cancel', t('messages.attachCancel'));
-    cancel.type = 'button';
-    cancel.addEventListener('click', () => { void cancelUpload(item.uploadId, item.convId); });
-    card.appendChild(cancel);
+    appendCardCancel(card, item);
   } else if (item.state === UPLOAD_STATE.SENT) {
     card.appendChild(el('span', 'fm-upload-note', t('messages.attachSent')));
   } else {
     // 失败 / 取消 / 未发（fail-closed 可见：**终态文案就在卡上**，不靠 toast 兜底）。
     card.appendChild(el('span', 'fm-upload-note', item.error || t('messages.attachFailed')));
+    // ── S4/S8 后的重试键（§5 R3-device + R4-device）──────────────────────
+    // 仅在**外部腿**（设备，`onRetry` 在场）挂：设备附件腿无幂等键面 ⇒ 重试 = **新传输**
+    // （重走入队，如实声明，不新造键面）。网页腿的失败重试面 = 既有 (c) 臂可重试提示
+    // （`uploadRetryEl`，同键重放），逐字不变 ⇒ 不在此叠第二套。
+    if (typeof item.onRetry === 'function') {
+      const retry = el('button', 'fm-upload-cancel', t('contacts.retry'));
+      retry.type = 'button';
+      retry.dataset.uploadRetry = '1';
+      retry.addEventListener('click', () => { item.onRetry(); });
+      card.appendChild(retry);
+    }
   }
   return card;
+}
+
+/** 卡上取消键（**一枚实现**，两档状态共用）：外部腿走它的 `onCancel`（设备：未 offer 件
+ *  移出 FIFO / 在传件 abort），网页腿走既有 `cancelUpload`（网关取消位 + 断上行）。 */
+function appendCardCancel(card, item) {
+  const cancel = el('button', 'fm-upload-cancel', t('messages.attachCancel'));
+  cancel.type = 'button';
+  cancel.dataset.uploadCancel = '1';
+  cancel.addEventListener('click', () => {
+    if (typeof item.onCancel === 'function') item.onCancel();
+    else void cancelUpload(item.uploadId, item.convId);
+  });
+  card.appendChild(cancel);
 }
 
 /**
@@ -310,22 +344,81 @@ function settleActionOutcome(convId, clientMsgId) {
   if (i >= 0) hints.splice(i, 1);
 }
 
-/** **唯一**渲染入口（messages.js 只在 `renderMessages` 里调它一次 ⇒ 好友窗与群窗
- *  共用同一份实现/同一挂载点；设备窗不调）。幂等：重进只重挂容器。
+/** **唯一**渲染入口（`messages.js` 只在 `renderMessages` 里调它一次 ⇒ 好友窗 / 群窗 /
+ *  **设备窗**共用同一份实现与同一挂载点）。幂等：重进只重挂容器。
  *
  *  🔴 幂等性 = 本函数的**职责**（不是调用方的）：`renderMessages` 每次渲染都调它，
  *  而修前只 append、不清理旧容器 ⇒ 同一个会话在 DOM 里**堆叠多个 `.fm-upload-list`**
  *  （每只都留着上一次 `paint()` 画的那批卡；`paint()` 只重画 `mounted` 指的那只）
  *  ⇒ 屏幕上同一件附件出**多张**上传卡（作者报障「重复且没有意义」的客户端侧成因之一）。
- *  `.fm-upload-list` 的唯一创建者就是本函数 ⇒ 清理面在这里天然闭合。 */
-export function renderUploadCards(flow, convId) {
+ *  `.fm-upload-list` 的唯一创建者就是本函数 ⇒ 清理面在这里天然闭合。
+ *
+ *  📌 uxconsist Phase B（§3.2 / §4.1-#4）：挂载面**扩到设备窗** —— 会话面参数
+ *  （`convKind`）只落 dataset（QA 读数面），**显示面三面同款**；设备腿的**传输**仍由
+ *  `dropbox.js` 单点执行，本模块只经 `registerExternalTransfer` 收显示态。
+ *  @param {HTMLElement} flow 消息流容器
+ *  @param {string} convId 会话 id
+ *  @param {string} [convKind] 会话 kind（'friend' | 'group' | 'device'；缺省 ''） */
+export function renderUploadCards(flow, convId, convKind) {
   if (!flow) return;
   for (const stale of flow.querySelectorAll('.fm-upload-list')) stale.remove();
   const container = el('div', 'fm-upload-list');
   container.dataset.convId = String(convId || '');
+  container.dataset.convKind = String(convKind || '');
   flow.appendChild(container);
   mounted = { container, convId };
   paint();
+}
+
+/** 设备腿**登记口**（§3.2）：外部传输（传输链属 `dropbox.js` 单点）把**显示态**登记进来。
+ *
+ *  🔴 边界（硬）：`attachTargetOf(device)` 恒 `null` ⇒ 设备腿的**传输**永不进本模块，
+ *  此处只共享**显示**（同一渲染器 / 同一容器 / 同一 dataset 契约）。
+ *  🔴 键 = `transferId`（设备腿的**本地件号**；offer 受理后同一条 emission 会带上
+ *  wire 的 `transferId` 供取消/断言用）——同键重复登记 = **就地覆盖**（幂等，不叠卡）。
+ *  @param {string} convId 会话 id（设备面 = `dev:<deviceId>`）
+ *  @param {{transferId: string, name?: string, size?: number, state?: string, bytesSent?: number,
+ *    totalBytes?: number, code?: string, error?: string, onRetry?: () => void,
+ *    onCancel?: () => void}} item 显示态（缺省 = S1 排队行）
+ *  @returns {any} 登记后的条目（调用方禁就地改结构） */
+export function registerExternalTransfer(convId, item) {
+  if (!convId || !item || !item.transferId) return null;
+  const list = convUploads(convId);
+  const entry = {
+    uploadId: `dev-${item.transferId}`,
+    transferId: String(item.transferId),
+    convId,
+    name: item.name || '',
+    size: Number(item.size) || 0,
+    bytesSent: Number(item.bytesSent) || 0,
+    totalBytes: Number(item.totalBytes) || Number(item.size) || 0,
+    state: item.state || UPLOAD_STATE.QUEUED,
+    code: item.code || '',
+    error: item.error || '',
+    attachmentId: '',
+    quiet: false, // 设备腿只有卡面（无乐观气泡）⇒ 卡**给数值**（R6-device）
+    external: true,
+    onRetry: typeof item.onRetry === 'function' ? item.onRetry : null,
+    onCancel: typeof item.onCancel === 'function' ? item.onCancel : null,
+    action: null, // 设备附件腿无幂等键面 ⇒ 不进 (c) 臂的可重试提示转换
+    controller: null,
+  };
+  const i = list.findIndex(x => x.transferId === entry.transferId);
+  if (i >= 0) list[i] = { ...list[i], ...entry };
+  else list.push(entry);
+  paint();
+  return i >= 0 ? list[i] : list[list.length - 1];
+}
+
+/** 设备腿显示态推进（同一登记口的第二半）：**只推进已登记项**（未知键 ⇒ `null`，不新建
+ *  —— 防幽灵卡；「先登记后推进」的顺序由 `dropbox.js` 的 emission 顺序保证）。 */
+export function updateExternalTransfer(convId, transferId, patch) {
+  const list = convUploads(convId);
+  const item = list.find(x => x.transferId === String(transferId));
+  if (!item) return null;
+  Object.assign(item, patch || {});
+  paint();
+  return item;
 }
 
 /** 会话切换/关窗时解除挂载（避免进度帧画到已关闭的窗上）。 */
@@ -335,7 +428,7 @@ export function detachUploadCards() {
 
 // ── 上传链 ────────────────────────────────────────────────
 
-function beginItem(convId, uploadId, file, action, quiet) {
+function beginItem(convId, uploadId, file, action, quiet, state) {
   const item = {
     uploadId,
     convId,
@@ -343,7 +436,7 @@ function beginItem(convId, uploadId, file, action, quiet) {
     size: file.size,
     bytesSent: 0,
     totalBytes: file.size,
-    state: UPLOAD_STATE.UPLOADING,
+    state: state || UPLOAD_STATE.UPLOADING,
     code: '',
     error: '',
     attachmentId: '',
@@ -359,6 +452,12 @@ function beginItem(convId, uploadId, file, action, quiet) {
   convUploads(convId).push(item);
   paint();
   return item;
+}
+
+/** 上传件号（**唯一**生成点：`att-<时间戳>-<单调序>-<随机尾>`）。 */
+function nextUploadId() {
+  seq += 1;
+  return `att-${Date.now()}-${seq}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function findItem(uploadId) {
@@ -465,10 +564,16 @@ export async function sendFiles(conv, fileList, text, opts) {
    *  「本机件 → 附件 id」的强键与句柄登记进未决乐观项（回显认领的身份判据）。 */
   const onUploaded = opts && typeof opts.onUploaded === 'function' ? opts.onUploaded : null;
   const ids = [];
+  // ── S1 排队（uxconsist Phase B · §3.2 排队行前置 / §5 R8-friend + R8-group）────
+  // 件集在**动作入口**（第一个 await 之前）**全量登记为 `queued` 行**，轮到本件才转
+  // `uploading`。传输行为**零变化** —— 仍是同一条串行 for 循环，队列只是把既有
+  // 「一次一件、按序进行」的语义**可见化**（禁借排队改并发/改顺序）。
+  const batch = files.map(file => beginItem(convId, nextUploadId(), file, action, quiet, UPLOAD_STATE.QUEUED));
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
-    const uploadId = `att-${Date.now()}-${(++seq)}-${Math.random().toString(36).slice(2, 8)}`;
-    const item = beginItem(convId, uploadId, file, action, quiet);
+    const item = batch[i];
+    item.state = UPLOAD_STATE.UPLOADING; // 轮到本件（S1 → S2/S3）
+    paint();
     const res = await uploadOne(item, file, targetId);
     if (res.ok) {
       item.attachmentId = res.attachmentId;
@@ -484,9 +589,11 @@ export async function sendFiles(conv, fileList, text, opts) {
       item.code = res.code || 'upload_failed';
       item.error = res.message || t('messages.attachFailed');
       // 取消 ⇒ 用户主动停 ⇒ 剩余件不再上传（禁「偷偷继续传」）。
+      // 剩余件 = **本批已登记的排队行**（S1 → 未发），就地翻终态（不再另建条目：
+      // 同一次动作在屏上恒一组卡，禁两套行）。
       const reasonKey = item.state === UPLOAD_STATE.CANCELLED ? 'messages.attachCancelledRest' : 'messages.attachNotSentRest';
       for (let j = i + 1; j < files.length; j += 1) {
-        const rest = beginItem(convId, `att-${Date.now()}-${(++seq)}-skip`, files[j], action, quiet);
+        const rest = batch[j];
         rest.state = UPLOAD_STATE.SKIPPED;
         rest.code = item.code;
         rest.error = t(reasonKey);

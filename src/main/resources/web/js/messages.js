@@ -44,6 +44,8 @@ import { preserveScrollAnchor } from './msgScrollAnchor.js';
 import {
   deviceMessagesOf, hydrateDeviceCache, requestDeviceHistory, deviceHistoryPending,
   sendDeviceText, sendDeviceFiles, onDeviceMessageChange,
+  onDeviceTransfer, // uxconsist Phase B：设备腿**传输生命周期**通知（显示态登记用）
+  cancelDeviceTransfer, // 同上：新窗卡上取消键的唯一执行入口（传输链在 dropbox.js 单点）
   deviceHasLocalTraffic, // ⑥：通信证据（本地半程）判据单点
   saveDeviceDescription, // ⑤c：设备描述写路径单点（旧设备窗与本窗共用同一函数）
   outFileHandleOf, // selfattach 片 2（A 腿）：发送侧真句柄只读访问器（属主 = dropbox.js）
@@ -57,10 +59,33 @@ import { previewBlob, previewLocalPath, canPreviewLocalPath, canPreviewName, can
 // 附件**上传**（attachcl 批，作者 2026-09-16 07:36）：好友窗与群窗的发送面**唯一**
 // 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
 // （设备腿仍走 dropbox.js 单点，零行为变化）。
-import { sendFiles, attachAvailable, renderUploadCards, detachUploadCards, clearSettledUploads } from './attachUpload.js';
+import {
+  sendFiles, attachAvailable, renderUploadCards, detachUploadCards, clearSettledUploads,
+  registerExternalTransfer, updateExternalTransfer, // 设备腿显示态登记口（只共享显示，传输不碰）
+} from './attachUpload.js';
+// 三面发送状态**统一落码**（uxconsist Phase B，作者 2026-09-20 18:45 三裁批准）：
+// 8 态词汇表 + 能力位 + 气泡左侧单一状态槽 + 重试键 + 回显认领（数组参数化）。
+// 🔴 本模块是三面的**唯一** UI 分流点（`dispatchSend` / `dispatchFiles`）；`conv.kind`
+// 只在适配器选择处出现一次（设计件 §2.2 判据），其余感受面一律读 `PHASE` / 能力位。
+import {
+  PHASE, SEND_LEG, capabilitiesOf, applyPhase, bindRetry, applyReceipt,
+  claim as claimSend, anchorSendToRealId as anchorPend,
+  trackPending, forgetPending, resetPending,
+} from './sendState.js';
 // 头像复用池 + 九宫格内容签名（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
 // 唯一入口 = avatarRender.js（判据与池都在那边，本模块只消费）。
-import { avatarImgNode, avatarCellsSignature } from './avatarRender.js';
+import { avatarImgNode, avatarCellsSignature, avatarNodeFor } from './avatarRender.js';
+// 本地优先层（sessperf Phase B · 2026-09-20；卡
+// `.nebflow/20260920_184900_sessperf-local-first-card__chain-sessperf.md` §4①②③）：
+// 唯一属主 = `localStore.js`（IndexedDB）。本模块**只消费**其冻结接口面：
+// 首帧走同步读（`readMessages` / `readRoster`，零 await、零网络），写走异步
+// （`writeMessages` / `writeRoster`），后台对账挂既有 10s beacon（`reconcile`）。
+// 🔴 本地层不可用（L1）⇒ `isLocalStoreEnabled()` 为假 ⇒ 回落 legacy 三层
+// （`fmMessageCache` / `fmDropboxCache`）—— 与改前逐字同行为。
+import {
+  readMessages, readRoster, writeMessages, writeRoster, isLocalStoreEnabled,
+  signatureOf, reconcile as reconcileLocalStore,
+} from './localStore.js';
 // 内联图片附件的取字节/票据面：好友·群面 = 既有鉴权路由（friendsApi），设备面 =
 // 既有本机落盘路径的 nf-ticket 链（`ticketUrl`）。两套都是**既有**取数面，
 // 本批禁新增第三条取字节路（并禁与另一套附件渲染面混淆）。
@@ -119,6 +144,8 @@ const sentMessageIds = new Set();
 // `api.isFriendTerminalCode` 消费；🔴 禁在本文件另写一份码表）。
 // 语义 = **终态**：对同一动作重试恒无效（同 `clientMsgId` + 同被引坐标重发只会再失败
 // ⇒ 不给重试键，改给原因 + 正文回填），与群腿「按码分态」同族而非同表。
+// 📌 r2 基线适配（uxconsist Phase B 段2 之后）：本表**零改**——码集与文案键是批契约面；
+// 改的只是失败面的**装配形态**（`bindRetry` / `applyPhase` 单点，见 `sendCurrent`）。
 const FRIEND_TERMINAL_TEXT = {
   not_friends: 'messages.friendNotFriends',
   not_blocker: 'messages.friendNotBlocker',
@@ -178,7 +205,10 @@ function noteRowForSelfLearning(m) {
 // 「发送中的乐观项」登记表：一条待锚定的本地消息 = `{ tempId, convId, body, node,
 // entry, anchoredTo }`。生命期 = 一个聊天窗（`renderChatModal` 重置、`closeChat`
 // 清空，与 `chatMsgs` 同拍），条目在 POST 响应回来即出表 ⇒ 长度 ≈ 同时在飞条数。
-let pendingSends = [];
+//
+// 📌 uxconsist Phase B：登记表**属主迁到 `sendState.js`**（三面共用一份 —— 好友 / 群 =
+// `chatMsgs`，设备 = `deviceMsgs`），读写口 = `trackPending` / `forgetPending` /
+// `resetPending` / `claim`。语义逐字不变：本模块只保留「哪个数组是窗口」这一层接线。
 
 /**
  * 乐观项 → 真 id 的**唯一锚定点**（数据层收敛，U-b）。
@@ -203,25 +233,10 @@ let pendingSends = [];
  * @returns {boolean} true = 已锚定（调用方不得再新增节点/条目）
  */
 function anchorSendToRealId(p, realId) {
-  const key = String(realId ?? '');
-  // 窗口已关/重开（乐观节点已脱离文档）⇒ 锚定无意义，交调用方走最小改键回落。
-  if (!p || !modalEls || !p.node || !p.node.isConnected) return false;
-  if (!key) return false;
-  p.anchoredTo = key;
-  const rekeyed = { ...p.entry, id: realId };
-  const i = chatMsgs.indexOf(p.entry);
-  if (i >= 0) chatMsgs[i] = rekeyed;
-  p.entry = rekeyed;
-  p.node.dataset.messageId = key;
-  for (const n of [...modalEls.flow.querySelectorAll('.fm-msg')]) {
-    if (n !== p.node && n.dataset.messageId === key) n.remove();
-  }
-  // 数据面同键去重：**保留乐观项那一条**（= 这个节点对应的一条），服务端副本条目
-  // 出窗。保留顺序不动（窗口恒升序，keyset 水位只认最大数值 id）。
-  for (let j = chatMsgs.length - 1; j >= 0; j--) {
-    if (chatMsgs[j] !== rekeyed && String(chatMsgs[j].id) === key) chatMsgs.splice(j, 1);
-  }
-  return true;
+  // 📌 uxconsist Phase B：换键实现**收敛到 `sendState.js` 的唯一锚定点**（数组参数化：
+  // 好友 / 群 = `chatMsgs`，设备 = `deviceMsgs`）——同一份后置条件，禁第二套换键。
+  if (!modalEls) return false;
+  return anchorPend(p, realId, chatMsgs);
 }
 
 /**
@@ -248,35 +263,14 @@ function anchorSendToRealId(p, realId) {
  */
 function claimPendingSend(m, convId, ours) {
   if (!ours || !modalEls || !m) return false;
-  const key = m.id;
-  if (key === undefined || key === null || key === '') return false;
-  if (!convId || String(convId) !== String(openConvId)) return false;
-  if (chatMsgs.some(x => String(x.id) === String(key))) return false; // 已归属 ⇒ 无未决项
-  const live = (x) => !x.anchoredTo && x.node && x.node.isConnected
-    && (!x.convId || String(x.convId) === String(convId));
-  // ① 判据 A（imgmsg 批 · **强键优先**）：入帧带的附件 id ∩ 未决项的**本机上传回执 id**。
-  //    为什么必须有这一路：图片乐观面的 `body` 常态为**空串**（用户没打字 ⇒ 服务端
-  //    占位正文 `[附件] …` ≠ 空串），正文判据在图片路径上**结构性失配** ⇒ 回显腿会
-  //    新上一屏、与乐观节点同 id 两存 = 重复面。附件 id 是上传回执里铸的、逐件唯一，
-  //    是本路径**唯一可判**的身份键。（正文键仍供纯文本路径逐字使用，顺序在后。）
-  const attIds = (Array.isArray(m.attachments) ? m.attachments : [])
-    .map(a => (a && a.id !== undefined && a.id !== null) ? String(a.id) : '')
-    .filter(Boolean);
-  if (attIds.length > 0) {
-    const byAtt = pendingSends.find(x => live(x) && Array.isArray(x.attachIds)
-      && x.attachIds.some(id => attIds.includes(String(id))));
-    if (byAtt) return anchorSendToRealId(byAtt, key);
-  }
-  // ① 判据 B（既有 · 逐字不变）：正文逐字相同的最老者（服务端 id 升序 = 发送序）。
-  const body = m.body || '';
-  const p = pendingSends.find(x => live(x) && x.body === body);
-  return p ? anchorSendToRealId(p, key) : false;
+  // uxconsist Phase B：语义与判据**逐字**同旧实现，只是把消息数组参数化到
+  // `chatMsgs`（好友 / 群窗的窗口）并交由 sendState 的单一实现承担。
+  return claimSend(chatMsgs, m, { convId, ours });
 }
 
 /** 出表（锚定完成 / 发送失败 / 重试换号）：登记表不随发送条数增长。 */
 function forgetPendingSend(p) {
-  const i = pendingSends.indexOf(p);
-  if (i >= 0) pendingSends.splice(i, 1);
+  forgetPending(p);
 }
 
 // ⑨ 增量同步：单飞 + 回补节流（①opt-A3 挂靠点见 backfillTick）。
@@ -350,12 +344,13 @@ function el(tag, cls, text) {
 
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
-  if (person && person.avatarUrl) {
-    // 🔴 uifix 批（2026-09-17）：走**已解码节点复用池**（`avatarRender.js`）——
-    // 同 URL 若池中有游离 `<img>`（= 上一次开窗遗留、位图仍在内存）直接复用，
-    // 零重拉、零重解码、零空白帧。改前恒 `createElement('img')` + `img.src`，
-    // 每次重绘都是一枚未解码的新节点（作者令「禁每次重拉重绘」）。
-    a.appendChild(avatarImgNode(person.avatarUrl));
+  // sessperf Phase B（2026-09-20）：src 解析收口到 `avatarRender.avatarNodeFor`
+  // —— 本地层（`localStore.readAvatar`，键 = userId）命中 ⇒ 直接拿 objectURL，
+  // **零网络、零重取**；未命中 ⇒ 回落既有解码复用池 + 远端直拉（零回归），且由
+  // 本地层低频补字节供下一次开窗命中。判据面（有无 avatarUrl）与改前逐字相同。
+  const node = person ? avatarNodeFor(person) : null;
+  if (node) {
+    a.appendChild(node);
   } else {
     a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
   }
@@ -543,6 +538,10 @@ function updateBadge() {
  *     并行取（2 次往返，与今天一致）。 */
 async function refreshConversations({ friends = 'reuse' } = {}) {
   if (!loggedIn()) { conversations = []; friendsCache = []; friendsFetchedAt = 0; renderList(); return; }
+  // sessperf Phase B（2026-09-20）：面板首帧来源 = 本地层名册快照（**同步、零
+  // await、零网络**）；下面的网络腿降为**增量核对**（卡 §4②「签名相同 ⇒ 零网络、
+  // 零 DOM 操作」的落点见函数尾）。本地层不可用 / 无快照 ⇒ 与改前逐字同行为。
+  seedConversationsFromStore();
   const wantFriends = friends === 'force'
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
@@ -583,8 +582,17 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     learnSelfFromGroupRows(conversations);
     if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); friendsRefreshed = true; }
+    // 写路径（本地层唯一写入口）：合并后的**最终快照**落盘 ⇒ 下一次面板首帧零网络。
+    if (isLocalStoreEnabled()) {
+      writeRoster('conversations', conversations);
+      if (fr) writeRoster('friends', friendsCache);
+      if (grp && Array.isArray(grp.groups)) writeRoster('groups', grp.groups);
+      if (devices.length) writeRoster('devices', devices);
+    }
   } catch { /* keep last known */ }
-  renderList();
+  // 签名相同 ⇒ **零 DOM 操作**（卡 §4②）：内容没变时不做 innerHTML 全量重建
+  // （重建会把每行头像 `<img>` 全部销毁重造，正是「每次进面板都闪一下」的机制）。
+  renderListIfChanged();
   updateBadge();
   // ③ 名单装载后**补判一次**（msgfix 批 · 作者 2026-09-19 睡前令）：快照补齐/刷新后
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
@@ -593,11 +601,60 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   if (friendsRefreshed && modalEls) applyBlockState(currentConv());
 }
 
+// ── 会话列表：本地层首帧 + 内容签名闸（sessperf Phase B · 2026-09-20）──────
+// 卡 §4②「群名册 / 会话列表 / 好友列表：服务端无版本号 ⇒ **内容签名**（有序拼接
+// 「行 id + lastMessage.id + unreadCount + memberCount」）」+「签名相同 ⇒ 零网络、
+// 零 DOM 操作」。本区是这两条的机械落点（唯一实现）。
+
+/** 上一次真正重建过列表 DOM 时的内容签名（`null` = 本会话尚未渲染过）。 */
+let renderedListSig = null;
+
+/** 会话列表内容签名（判定字段 = 卡 §4② 口径；`openConvId` 决定 aria-selected，
+ *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。 */
+function rosterSignature(list) {
+  const parts = [];
+  for (const c of list || []) {
+    if (!c) continue;
+    parts.push(
+      c.conversationId,
+      (c.lastMessage && c.lastMessage.id) || '',
+      Number(c.unreadCount) || 0,
+      Number(c.memberCount) || 0
+    );
+  }
+  parts.push(`open:${openConvId || ''}`);
+  return signatureOf(parts);
+}
+
+/** 签名变了才重建（相同 ⇒ 零 DOM 操作，卡 §4②）。 */
+function renderListIfChanged() {
+  if (rosterSignature(conversations) === renderedListSig) return;
+  renderList();
+}
+
+/** 首帧：本地层名册快照 → 会话列表（同步、零 await、零网络）。
+ *  本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。 */
+function seedConversationsFromStore() {
+  if (!isLocalStoreEnabled() || conversations.length) return false;
+  const cached = readRoster('conversations');
+  const rows = cached && Array.isArray(cached.payload) ? cached.payload : null;
+  if (!rows || !rows.length) return false;
+  conversations = rows.slice();
+  learnSelfFromGroupRows(conversations); // 加性 viewer 字段腿：缓存快照同样可学
+  renderListIfChanged();
+  updateBadge();
+  return true;
+}
+
 function renderList() {
   const box = document.getElementById('fm-conversations');
   if (!box) return;
   box.innerHTML = '';
   updateBadge();
+  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。三条出口（登录空态 /
+  // 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是 index.html 的静态
+  // 节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
+  const sig = rosterSignature(conversations);
 
   if (!loggedIn()) {
     const empty = el('div', 'fm-login-empty');
@@ -606,14 +663,17 @@ function renderList() {
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     box.appendChild(empty);
+    renderedListSig = sig;
     return;
   }
   if (conversations.length === 0) {
     box.appendChild(el('div', 'fm-empty', t('messages.empty')));
+    renderedListSig = sig;
     return;
   }
   for (const conv of conversations) box.appendChild(convRow(conv));
   createIconsIn(box);
+  renderedListSig = sig;
 }
 
 function convRow(conv) {
@@ -726,7 +786,7 @@ function closeChat() {
   }
   // U-b：窗口一关，在飞乐观项的节点即脱离文档 ⇒ 登记随之作废（在飞 POST 的
   // 续接腿会因 `node.isConnected === false` 自动走最小回落）。
-  pendingSends = [];
+  resetPending();
   // 附件上传卡：解除挂载（进度帧不再画到已关闭的窗上），并清掉已终态卡片
   // （在飞件保留 —— 上传不因关窗而静默中止，其终态由卡片/后续开窗承接）。
   if (openConvId) clearSettledUploads(openConvId);
@@ -829,15 +889,28 @@ function markConvRead(conv) {
   renderList();
 }
 
-/** ⑨ 把当前已加载窗口写进 L2 缓存（水位 = 已见到过的最大数值 id）。 */
+/** ⑨ 把当前已加载窗口写进本地层（水位 = 已见到过的最大数值 id）。
+ *  sessperf Phase B：写路径收口到 `localStore`（IndexedDB）；本地层不可用（L1）
+ *  ⇒ 回落 legacy L2（`fmMessageCache.saveConversation`）—— 两者**不双写**
+ *  （卡 §5.4 风险表：双写期双读数分歧）。 */
 function persistConversation(conv) {
   if (!conv || !conv.conversationId || chatMsgs.length === 0) return;
   let watermark = 0;
   for (const m of chatMsgs) { const n = Number(m.id); if (Number.isFinite(n) && n > watermark) watermark = n; }
-  saveConversation(conv.conversationId, chatMsgs, {
-    watermark,
-    lastMessageAt: toEpochMs(conv.lastMessage?.createdAt),
-  });
+  const lastMessageAt = toEpochMs(conv.lastMessage?.createdAt);
+  if (isLocalStoreEnabled()) {
+    void writeMessages(conv.conversationId, chatMsgs, { watermark, lastMessageAt });
+    return;
+  }
+  saveConversation(conv.conversationId, chatMsgs, { watermark, lastMessageAt });
+}
+
+/** 首帧读取的单点：本地层（同步内存镜像）优先；本地层不可用 ⇒ legacy L2。
+ *  🔴 本地层可用时**不读** legacy（禁双读数：导入是一次性的，此后 IDB 才权威）。 */
+function cachedConversation(conversationId) {
+  const fromLocal = readMessages(conversationId);
+  if (fromLocal) return fromLocal;
+  return isLocalStoreEnabled() ? null : loadConversation(conversationId);
 }
 
 /** ⑨ keyset 水位 = 已加载窗口里的最大数值 id（`after=` 游标的唯一取值来源）。 */
@@ -933,14 +1006,17 @@ async function openConversation(conversationId, rowEl) {
   // 群窗：惰性装载成员名册（发送者名回填；失败 = 降级无名字，消息不受影响）。
   if (conv.kind === 'group') hydrateGroupSenderNames(conv);
 
-  // ⑨ 热路径（有缓存）：同步读缓存首屏（零往返），随后一次极小增量核对
+  // ⑨ 热路径（有缓存）：同步读本地层首屏（零往返、零 await），随后一次极小增量核对
   // （`after=<水位>&limit=SYNC_PAGE`）—— 无新消息 = 空响应，**不是**尾窗重取。
-  const cached = loadConversation(conversationId);
+  // sessperf Phase B：读取面 = `localStore.readMessages`（IndexedDB 内存镜像，
+  // 键 = convId）；本地层不可用时回落 legacy L2（L1，行为与改前逐字相同）。
+  const cached = cachedConversation(conversationId);
   if (cached) {
     chatMsgs = cached.msgs.slice();
     oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
     hasMoreHistory = false;
     renderMessages(chatMsgs);
+    void refreshConvReceipts(conv); // R5 两格：回执面（E1）随开窗取一次（真相源）
     markConvRead(conv);
     if (modalEls) modalEls.input.focus();
     if (chatMsgs.length && oldestLoadedId > 1) probeOlderHistory(conversationId, oldestLoadedId);
@@ -973,6 +1049,7 @@ async function openConversation(conversationId, rowEl) {
   // 病灶）。这里先一律不渲染按钮，交给后台探针探到更早再插入。
   hasMoreHistory = false;
   renderMessages(chatMsgs);
+  void refreshConvReceipts(conv); // R5 两格：回执面（E1）随开窗取一次（真相源）
   markConvRead(conv);
   if (modalEls) modalEls.input.focus();
   // 确定态 ①：本会话第一条 id = 表首 id(1) ⇒ 确定没有更早，探针无需发。
@@ -1010,37 +1087,74 @@ function groupSenderNameOf(conv, senderId) {
   return (map && map.get(String(senderId))) || '';
 }
 
-/** 开群窗时的成员名册惰性装载（每窗一次；失败降级为无发送者名）。 */
+/** 群成员名册的应用（**唯一**就地渲染实现：窗头组合头像 + 列表行 + 已渲染气泡
+ *  的发送者名回填）。名册来源两腿（本地层快照 / 网络腿）共用它 ⇒ 两腿渲染结果
+ *  逐字同形（禁第二份渲染链）。 */
+function applyGroupRoster(conv, cells) {
+  const convId = String(conv.conversationId);
+  const map = new Map();
+  for (const mem of cells || []) {
+    if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
+  }
+  groupMemberNames.set(convId, map);
+  groupMemberAvatars.set(convId, cells || []);
+  // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
+  refreshOpenGroupHeaderAvatar();
+  // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
+  // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
+  // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
+  // 零新 CSS，不动数据面/接口。
+  rerenderConvRow(conv.conversationId);
+  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
+  if (modalEls && openConvId === conv.conversationId) {
+    for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+      const nm = map.get(s.dataset.senderId);
+      if (nm && !s.textContent) s.textContent = nm;
+    }
+  }
+}
+
+/** 群名册内容签名（卡 §4② 兜底判据的群面口径：成员 id 集合的有序拼接）。
+ *  `userId` 顺序 = 服务端加入序（纯透传 ⇒ 顺序是内容的一部分，禁排序归一）。 */
+function groupRosterSignature(cells) {
+  return signatureOf((cells || []).map((c) => (c && c.userId) || ''));
+}
+
+/** 开群窗时的成员名册装载（每窗一次）。
+ *
+ *  sessperf Phase B（卡 §4② / §5.4）：① 首帧先读本地层快照（**同步、零网络**）
+ *  并就地渲染 —— 集团头像/发送者名不再等一次往返；② 快照新鲜（10 min TTL）且与
+ *  会话行 `memberCount` 一致 ⇒ **零网络**（「签名相同 ⇒ 零网络」的群面落点，
+ *  每窗省 1 次 `GET /api/groups/{id}/members`）；③ 否则取一次，**签名相同 ⇒
+ * 零 DOM 操作**（禁「字母 → 组合头像」的换脸重打）。失败一律降级为无发送者名
+ *  （消息本体不受影响），与改前同一条纪律。 */
 async function hydrateGroupSenderNames(conv) {
+  const convId = String(conv.conversationId);
+  const cachedEntry = readRoster('groupMembers:' + convId);
+  const cachedCells = cachedEntry && Array.isArray(cachedEntry.payload) ? cachedEntry.payload : null;
+  let prevSig = null;
+  if (cachedCells && cachedCells.length) {
+    prevSig = groupRosterSignature(cachedCells);
+    applyGroupRoster(conv, cachedCells);
+    const mc = Number(conv && conv.memberCount);
+    const countMatches = !(Number.isFinite(mc) && mc > 0) || mc === cachedCells.length;
+    if (cachedEntry.fresh && countMatches) return; // ② 零网络
+  }
   try {
     const members = await api.getGroupMembers(conv.conversationId);
     // 成员面信封 `selfUserId`（契约终版 §1.1 #7）= viewer 身份的另一条权威腿：
     // 学到即收敛整窗方向判据（含已渲染气泡的下一次渲染）。
     if (members && members.selfUserId) learnSelfUserId(members.selfUserId);
-    const map = new Map();
     const cells = [];
     for (const mem of members || []) {
-      if (mem && mem.userId) map.set(String(mem.userId), mem.name || String(mem.userId));
       // 窗头组合头像格子（身份键 userId 与列表行字段同空间；顺序纯透传 ——
       // 🔴 禁把索引 0 当群主，正典 §A.2 owner 位置不确定）。
       if (mem && mem.userId) cells.push({ userId: mem.userId, name: mem.name, avatarUrl: mem.avatarUrl });
     }
-    groupMemberNames.set(String(conv.conversationId), map);
-    groupMemberAvatars.set(String(conv.conversationId), cells);
-    // 名册到达 ⇒ 窗头组合头像就地重打（同一次拉取的产物，零新增请求）。
-    refreshOpenGroupHeaderAvatar();
-    // r2（判词 V1 的根因）：**列表腿同一时刻重打**。窗头与列表行**共用同一两级优先序**
-    // （名册 → 会话行字段 → 首字母）⇒ 两条腿必须挂在**同一因果链**上；只重打窗头会让
-    // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
-    // 零新 CSS，不动数据面/接口。
-    rerenderConvRow(conv.conversationId);
-    // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
-    if (modalEls && openConvId === conv.conversationId) {
-      for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
-        const nm = map.get(s.dataset.senderId);
-        if (nm && !s.textContent) s.textContent = nm;
-      }
-    }
+    const nextSig = groupRosterSignature(cells);
+    void writeRoster('groupMembers:' + convId, cells, { version: 0 });
+    if (prevSig !== null && prevSig === nextSig) return; // ③ 签名相同 ⇒ 零 DOM 操作
+    applyGroupRoster(conv, cells);
   } catch { /* 名册失败 = 降级为无发送者名（禁因名册失败丢消息） */ }
 }
 
@@ -1274,46 +1388,29 @@ function renderChatModal(conv) {
   //     （唯一实现 = attachUpload.js；闸位常量同源 = dropbox.js 导出的同一组）。
   // 🔴 两面各写一套入口/渲染器是本批明令禁止的形态 ⇒ 下面按 `attachAvailable(conv)`
   //    一个判据分流，二者互斥，设备面走不到新腿。
-  let deviceFileInput = null;
-  let friendFileInput = null;
-  if (conv.kind === 'device') {
-    deviceFileInput = document.createElement('input');
-    deviceFileInput.type = 'file';
-    deviceFileInput.multiple = true;
-    deviceFileInput.style.display = 'none';
-    deviceFileInput.addEventListener('change', () => {
-      if (deviceFileInput.files && deviceFileInput.files.length > 0) {
-        sendDeviceFiles(conv.device.deviceId, deviceFileInput.files);
-      }
-      deviceFileInput.value = '';
-    });
-    const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
-    attachBtn.type = 'button';
-    attachBtn.title = t('dropbox.attachFile');
-    attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-    attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
-    attachBtn.addEventListener('click', () => deviceFileInput.click());
+  // uxconsist Phase B（§4.1-#2 三面入口收敛）：纸夹 = **一枚键 + 一个 input + 一个分派口**。
+  // 改前按 `conv.kind` **二分建两套控件**（两个 input、两枚键、两个 handler）——同一动作
+  // 三面各有实现，闸位/上限/受理面的差异正是从这类分叉里长出来的。现在入口只有一个，
+  // 面间差异全部收在 `dispatchFiles`（闸位/上限/受理面**三面同源**）。
+  const attachInput = document.createElement('input');
+  attachInput.type = 'file';
+  attachInput.multiple = true;
+  attachInput.style.display = 'none';
+  attachInput.addEventListener('change', () => {
+    if (attachInput.files && attachInput.files.length > 0) dispatchFiles(conv, attachInput.files);
+    attachInput.value = '';
+  });
+  const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
+  attachBtn.type = 'button';
+  attachBtn.title = t('dropbox.attachFile');
+  attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
+  attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
+  attachBtn.addEventListener('click', () => attachInput.click());
+  // 入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
+  // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面**不挂假入口**。
+  if (conv.kind === 'device' || attachAvailable(conv)) {
     bar.appendChild(attachBtn);
-    bar.appendChild(deviceFileInput);
-  } else if (attachAvailable(conv)) {
-    friendFileInput = document.createElement('input');
-    friendFileInput.type = 'file';
-    friendFileInput.multiple = true;
-    friendFileInput.style.display = 'none';
-    friendFileInput.addEventListener('change', () => {
-      if (friendFileInput.files && friendFileInput.files.length > 0) {
-        void sendAttachCurrent(conv, friendFileInput.files);
-      }
-      friendFileInput.value = '';
-    });
-    const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
-    attachBtn.type = 'button';
-    attachBtn.title = t('dropbox.attachFile');
-    attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-    attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
-    attachBtn.addEventListener('click', () => friendFileInput.click());
-    bar.appendChild(attachBtn);
-    bar.appendChild(friendFileInput);
+    bar.appendChild(attachInput);
   }
   bar.appendChild(sendBtn);
   modal.appendChild(bar);
@@ -1336,7 +1433,7 @@ function renderChatModal(conv) {
   pendingQuoteRef = null;
   // U-b：旧窗口的乐观项登记随之作废（其节点已脱离文档）——登记表与 chatMsgs
   // 同拍，绝不跨窗残留。
-  pendingSends = [];
+  resetPending();
   oldestLoadedId = 0;
   hasMoreHistory = false;
   loadingHistory = false;
@@ -1356,24 +1453,14 @@ function renderChatModal(conv) {
   overlay.addEventListener('drop', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    // 设备窗（卡 D3）：拖拽 = **发送入口**（设备面独有，纸夹 + 拖拽两条并存；
-    // 闸位/队列/offer 走 dropbox.js 单点，与新窗纸夹键同一实现）。
-    if (conv.kind === 'device') {
-      sendDeviceFiles(conv.device.deviceId, e.dataTransfer.files);
-      return;
-    }
-    // 好友 / 群（attachcl 批**放开**）：拖放与纸夹**同一实现**（同一 `sendAttachCurrent`，
-    // 禁两条腿各写一套闸/上传/渲染）。放开前这里回的是
-    // 「暂无附件发送入口」提示（`messages.attachUnsupported[Group]`）—— 该提示随本批
-    // **被取代**（键保留仅为兼容旧读数，见 i18n 注记）。
-    if (attachAvailable(conv)) {
-      void sendAttachCurrent(conv, e.dataTransfer.files);
-      return;
-    }
-    modalToast(t('messages.attachUnsupported'));
+    // 拖放与纸夹 = **同一实现**（同一 `dispatchFiles`）：闸位 / 上限 / 受理面三面同源，
+    // 禁两条腿各写一套（§4.1-#3）。不可用面（既非设备窗、又无附件寻址面）⇒ 可见提示，
+    // 静默吞文件不可接受（`messages.attachUnsupported` 键保留仅为兼容旧读数）。
+    dispatchFiles(conv, e.dataTransfer.files);
   });
 
-  const doSend = () => (conv.kind === 'device' ? sendDeviceCurrent(conv) : sendCurrent(conv));
+  // ── 发送入口**单一分派**（§4.1-#1）：`conv.kind` 的适配器选择只在本函数内出现一次 ──
+  const doSend = () => dispatchSend(conv);
   sendBtn.addEventListener('click', doSend);
   // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
   input.addEventListener('input', syncComposerSend);
@@ -1954,8 +2041,10 @@ function paintInlineFrame(img, url, dims) {
  *  · **零新真源**：不新增端点、不新增票据类型、不新增 URL 拼接（nf-file 的 URL
  *    拼法仍由 `nfTicket.ticketUrl` 单点产出）。
  *  · **零新增内联预算**：字节上限复用 `attachmentPreview.js` 的
- *    `MAX_INLINE_IMAGE_BYTES`（**同值同源于** `MAX_TEXT_BYTES` 的 10MB —— 同一份
- *    字节从同一条鉴权路由取回，禁第二把尺）。超限 ⇒ 不直显（卡片原样，可见降级）。
+ *    `MAX_INLINE_IMAGE_BYTES`（内联/直显预算族的既有尺；2026-09-20 打开闸批
+ *    10MB→100MB 时**刻意保持 10MB** 并与打开闸尺 `MAX_TEXT_BYTES` 解耦 —— 打开闸
+ *    管「能不能打开」，本尺管「对话框内直显的字节成本」，超限 ⇒ 不直显（卡片原样，
+ *    可见降级））。
  *  · **失败失败静默、可行动**：取字节失败 ⇒ 摘掉直显槽、卡片原样（下载键/预览腿
  *    仍在）⇒ 不造破图、不静默无反应。
  *
@@ -2784,10 +2873,16 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     updateLoadMoreRow();
     renderFlowStatus(msgs.length > 0, false); // 内容到位 ⇒ 撤加载态；确为空 ⇒ 换空态
     keyedDiff(flow, msgs, conv);
-    // 附件上传卡（attachcl 批）：**好友窗与群窗的唯一挂载点**（本函数服务两种会话面）
-    // ⇒ 两面共用同一渲染器（`attachUpload.renderUploadCards`），设备窗不经此
-    // （设备面走自己的 dropbox 传输链与状态渲染，零行为变化）。
-    if (attachAvailable(conv)) renderUploadCards(flow, conv.conversationId);
+    // 附件上传卡（attachcl 批）：**好友窗 / 群窗 / 设备窗的唯一挂载点**（本函数服务三种
+    // 会话面）⇒ 三面共用同一渲染器（`attachUpload.renderUploadCards`）。
+    // 📌 uxconsist Phase B（§4.1-#4）：挂载判据**放开到设备窗**（改前设备窗不挂 ⇒ 动作面
+    // 与反馈面结构性脱节）；设备腿的传输链**零触碰**（仍由 dropbox.js 单点执行，本挂载点
+    // 只承载「显示」，见 `registerExternalTransfer`）。
+    if (attachAvailable(conv) || conv.kind === 'device') renderUploadCards(flow, conv.conversationId, conv.kind);
+    // 回执槽位（R5 两格 + 设备面）：**唯一挂载点**（与上传卡同一条纪律）。零网络 ——
+    // 只把**已到手**的回执态补画到本机所发气泡（取数在 `refreshConvReceipts`）；数据
+    // 未到 / 该消息无确认 ⇒ 不画（无空槽）。
+    applyConvReceipts(conv);
     // msgmenu 一期：引用块可用性在**每次** diff 后重判（加载更早 / 增量补齐都会改变答案）。
     syncQuoteStates(flow);
     createIconsIn(flow);
@@ -3827,6 +3922,27 @@ export function newClientMsgId() {
 let deviceRetry = null; // { convId, body, clientMsgId } | null
 
 // ── Send (§6.2 sending/delivered/failed) ─────────────────
+/** 文本腿**单一分派**（§4.1-#1）：三面的传输适配器选择只在此处出现一次
+ *  （`conv.kind` 的另一处消费面 = `dispatchFiles` 的同名判据 —— 两处都是「入口」）。 */
+function dispatchSend(conv) {
+  return conv.kind === 'device' ? sendDeviceCurrent(conv) : sendCurrent(conv);
+}
+
+/** 附件腿**单一分派**（§4.1-#2 纸夹 / #3 拖放 共用）：闸位、上限、受理面三面同源。
+ *  不可用面（既非设备窗、又无附件寻址）⇒ 可见提示（禁静默吞文件）。 */
+function dispatchFiles(conv, fileList) {
+  if (!conv) return;
+  if (conv.kind === 'device') {
+    sendDeviceFiles(conv.device.deviceId, fileList);
+    return;
+  }
+  if (attachAvailable(conv)) {
+    void sendAttachCurrent(conv, fileList);
+    return;
+  }
+  modalToast(t('messages.attachUnsupported'));
+}
+
 async function sendCurrent(conv, opts) {
   if (!modalEls) return;
   const text = modalEls.input.value.trim();
@@ -3850,20 +3966,12 @@ async function sendCurrent(conv, opts) {
   modalEls.input.value = '';
   syncComposerSend(); // 已清空 ⇒ 发送键回禁用态（判据单源）
 
-  const tempId = 'fm-tmp-' + (++msgSeq);
-  const optimistic = { id: tempId, senderId: 'me', kind: 'text', body, createdAt: new Date().toISOString() };
-  // ⑨-E：乐观回显登记进窗口 —— keyed diff 才知道这个节点「该在」，否则任何一次
-  // 增量补齐的重排都会把它当差集删掉（用户会看到自己刚发的消息凭空消失）。
-  chatMsgs.push(optimistic);
-  const wrap = bubbleEl(optimistic, conv);
-  wrap.classList.add('fm-sending');
-  modalEls.flow.appendChild(wrap);
-  createIconsIn(modalEls.flow);
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
-  // U-b：登记为「发送中的乐观项」——回显（WS 自播帧 / REST keyset 增量）若先于
-  // 响应到达，由 claimPendingSend 认领回这一条（不新增气泡）。
-  const pending = { tempId, convId: conv.conversationId || '', body, node: wrap, entry: optimistic, anchoredTo: null };
-  pendingSends.push(pending);
+  // ── 乐观面**三面共用调用序**（uxconsist Phase B · §4.1-#6）──────────────────
+  // 入列 → 建节点 → 登记未决项 → 置 S2：设备文本腿调用**同一序**（见 `sendDeviceCurrent`），
+  // 三面不再各写一套（改前设备腿无乐观面 ⇒ 双往返期间屏上零变化 = R2-device 格）。
+  const pending = armOptimisticText(conv, body, chatMsgs);
+  const wrap = pending.node;
+  const tempId = pending.tempId;
 
   try {
     // 群发分支（补充卡 §5.1 逐字契约：POST /api/groups/{id}/messages {body} →
@@ -3881,14 +3989,16 @@ async function sendCurrent(conv, opts) {
     // （同形共享信封的外溢字段，已裁：单聊面不消费 —— 单聊方向判据走既有
     // conv.friend.userId 双员封闭，无需 viewer 身份）。
     if (conv.kind === 'group' && resp && resp.selfUserId) learnSelfUserId(resp.selfUserId);
-    wrap.classList.remove('fm-sending');
+    // S6 送达（uxconsist Phase B）：摘载面 = 既有 `fm-sending`（**无痕**，无「已发送」残条）
+    // ＋ `data-send-phase="confirmed"` —— 单一槽位由 `applyPhase` 收口（禁各处手改类）。
+    applyPhase(wrap, PHASE.SENT);
     // U-b 唯一锚定点：回显已先到时此处**幂等**（同一后置条件，节点/条目数不变）；
     // 回显未到时即既有的「temp id → 服务端 id」换键。
     if (!anchorSendToRealId(pending, realId)) {
       // 窗口已关/重开（乐观节点脱离文档）⇒ 退回最小改键（不触碰新窗口的状态）。
       wrap.dataset.messageId = realId;
       const idx = chatMsgs.findIndex(x => x.id === tempId);
-      if (idx >= 0) chatMsgs[idx] = { ...optimistic, id: realId }; // temp id → 服务端 id
+      if (idx >= 0) chatMsgs[idx] = { ...pending.entry, id: realId }; // temp id → 服务端 id
     }
     forgetPendingSend(pending);
     if (!conv.conversationId && resp.conversationId) {
@@ -3897,13 +4007,14 @@ async function sendCurrent(conv, opts) {
       openConvId = resp.conversationId;
     }
     // delivered: silent (§6.2 克制)
-    conv.lastMessage = { ...optimistic, id: realId };
+    conv.lastMessage = { ...pending.entry, id: realId };
     conv.lastMessage.agentSent = false;
     resortAndRender();
     persistConversation(conv); // ⑨ 落盘（temp id 由缓存层过滤，不会存成幻影）
   } catch (err) {
     forgetPendingSend(pending);
-    wrap.classList.remove('fm-sending');
+    // S4 错误态载面（气泡左侧红圈位由 `.fm-failed` 承担；§2.2 S4 行）。
+    applyPhase(wrap, PHASE.ERROR);
     if (conv.kind === 'group') {
       // 群发终态错误（补充卡 §5.3：404 group_not_found / 403 group_disbanded /
       // 403 not_member）⇒ 就地移除该群行 + 可见反馈（退群后历史不可见的呈现）；
@@ -3912,6 +4023,7 @@ async function sendCurrent(conv, opts) {
       const terminal = (err && err.status === 404 && code === 'group_not_found')
         || (err && err.status === 403 && (code === 'group_disbanded' || code === 'not_member'));
       if (terminal) {
+        // S7 失败（语义终态）：气泡撤除 + 分态提示（§2.2 S7 行；逐字沿用既有实现）。
         groupErrToast(err);
         wrap.remove();
         const i = chatMsgs.findIndex(x => x.id === tempId);
@@ -3929,7 +4041,13 @@ async function sendCurrent(conv, opts) {
     // —— 重试会复用同一 `clientMsgId` 与被引坐标，对该终态**恒无效**（改前一律落
     // `.fm-failed` + 重试键 = 给用户一个永远失败的动作）。正文退回输入框（「正文不丢」
     // 纪律与附件/重试面同款）。判据单源 = `api.isFriendTerminalCode`。
+    // 📌 r2 基线适配（Phase B 段2 之后）：形态改走**单点装配** —— ①状态槽只经
+    // `applyPhase`（禁手改类：`classList.add('fm-failed')` 行随段2 撤除，本处零类写入）；
+    // ②本支走 **S7 语义终态**（`PHASE.FAILED`，载面格与 S4 同，词汇表已备而未用）——
+    // 与上方群腿终态支同序「落态 → 撤节点 → 返回」，且**不装配重试键**（无 `bindRetry`
+    // 调用即无键，禁自行 `createElement`，旧内联重试键符号零引用）。
     if (conv.kind !== 'group' && api.isFriendTerminalCode(err && err.data && err.data.error)) {
+      applyPhase(wrap, PHASE.FAILED);
       modalToast(t(FRIEND_TERMINAL_TEXT[err.data.error]));
       wrap.remove();
       const i = chatMsgs.findIndex(x => x.id === tempId);
@@ -3938,10 +4056,9 @@ async function sendCurrent(conv, opts) {
       syncComposerSend();
       return;
     }
-    wrap.classList.add('fm-failed');
-    const flag = el('button', 'fm-retry', '!');
-    flag.title = t('messages.send');
-    flag.addEventListener('click', () => {
+    // S5 重试键（§3.1 唯一装配点 `bindRetry`；`title`/`aria-label` = `contacts.retry` 逐字，
+    // 见 §8.2 改写①——改前用的是 `messages.send`「发送」，与键语义不符）。
+    const retryKey = bindRetry(wrap, () => {
       wrap.remove();
       // 重试会生成新的 temp id ⇒ 旧条目必须出窗口，否则 keyed diff 把刚删掉的
       // 失败气泡又插回来（一屏两个失败气泡）。
@@ -3954,21 +4071,48 @@ async function sendCurrent(conv, opts) {
       // quotejump：结构化引用坐标同属该动作 ⇒ 一并带回（见 `quoteRefId`）。
       sendCurrent(conv, { clientMsgId, replyToMessageId: quoteRefId });
     });
-    wrap.appendChild(flag);
     // rcptcode 批：**好友腿未知码 fail-visible** —— 不在白名单的码（429 / 5xx / 未来新增码）
     // 一律回退「可重试」，但把码**原样**展示（禁静默、禁猜分态）：机器可读挂
     // `data-send-error-code`（断言契约），人读走重试键 title + 就地 toast。
+    // 📌 r2 基线适配（Phase B 段2 之后）：重试键由 `bindRetry` 单点装配并**返回键节点**
+    // ⇒ 本处只做**追加修饰**（`title` 基 = 装配点给的 `contacts.retry` 逐字，仅追加码；
+    // 不重写键语义、不自行 `createElement`/`appendChild` —— 旧内联重试键符号零引用）。
     // 🔴 仅好友腿：群腿失败面（含 `data-*` 面）**逐字不变**（本批禁改群腿客户端行为）。
     if (conv.kind !== 'group') {
       const failCode = err && err.data && (err.data.error || err.data.code);
       if (typeof failCode === 'string' && failCode) {
         const shown = failCode.length > 80 ? `${failCode.slice(0, 80)}…` : failCode;
         wrap.dataset.sendErrorCode = shown;
-        flag.title = `${t('messages.send')} · ${shown}`;
+        if (retryKey) retryKey.title = `${retryKey.title} · ${shown}`;
         modalToast(t('messages.sendFailedCode', { code: shown }));
       }
     }
   }
+}
+
+/**
+ * 文本腿乐观面的**三面共用调用序**（§4.1-#6）：入列 → 建节点 → 置 S2 → 登记未决项。
+ * 好友 / 群（`list = chatMsgs`）与设备服务端腿 / legacy 腿（`list = deviceMsgs`）共用；
+ * 回显认领面（`claim`）据此**原地换键**，不新增气泡。
+ * @param {any} conv @param {string} body 出站正文 @param {any[]} list 本窗消息数组
+ * @returns {any} 未决项登记（`{tempId, convId, body, node, entry, anchoredTo}`）
+ */
+function armOptimisticText(conv, body, list) {
+  const tempId = 'fm-tmp-' + (++msgSeq);
+  const optimistic = { id: tempId, senderId: 'me', kind: 'text', body, createdAt: new Date().toISOString() };
+  // ⑨-E：乐观回显登记进窗口 —— keyed diff 才知道这个节点「该在」，否则任何一次
+  // 增量补齐的重排都会把它当差集删掉（用户会看到自己刚发的消息凭空消失）。
+  list.push(optimistic);
+  const wrap = bubbleEl(optimistic, conv);
+  applyPhase(wrap, PHASE.SENDING); // S2：气泡左侧 14px 环（既有 CSS，零新规则）
+  modalEls.flow.appendChild(wrap);
+  createIconsIn(modalEls.flow);
+  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
+  // U-b：登记为「发送中的乐观项」——回显（WS 自播帧 / REST keyset 增量 / 设备 keyset
+  // 重取）若先于响应到达，由 `claim` 认领回这一条（不新增气泡）。
+  const pending = { tempId, convId: conv.conversationId || '', body, node: wrap, entry: optimistic, anchoredTo: null };
+  trackPending(pending);
+  return pending;
 }
 
 function resortAndRender() {
@@ -4017,8 +4161,12 @@ async function sendAttachCurrent(conv, fileList) {
     syncComposerSend();
     pending = mountOptimisticAttachBubble(conv, files, text);
   }
+  // 能力位（§3.1）：**数值进度**由能力位决定，不再由调用点各写一套 ——
+  // 「有乐观气泡的腿 = 卡不出百分比（反馈由气泡承担）；无乐观面的腿 = 卡给进度条 + 数值」
+  // 由 R6-friend / R6-group 两格的「个案」升为**规则**（消除三面漂移）。
+  const caps = capabilitiesOf(conv, optimistic ? SEND_LEG.ATTACH_OPTIMISTIC : SEND_LEG.ATTACH);
   const res = await sendFiles(conv, files, text, optimistic ? {
-    quiet: true, // ④：本路径不给百分比（反馈 = 乐观直显）
+    quiet: !caps.numericProgress, // ④：本路径不给百分比（反馈 = 乐观直显）
     onUploaded: (attachmentId, file) => { if (pending) noteUploadedForPending(pending, attachmentId, file); },
   } : undefined);
   if (!res.ok) {
@@ -4049,12 +4197,16 @@ async function sendAttachCurrent(conv, fileList) {
   clearSettledUploads(conv.conversationId);
 }
 
-/** ①A1-full **范围闸（唯一判据点）**：仅「好友窗 + 本批件全部是图片」走乐观面。
- *  群窗（`kind === 'group'`）/ 设备窗（`conv.device`）/ 混批（含任一非图片件）/ 空批
- *  ⇒ `false` ⇒ 调用方走既有路径（零行为变化）。判据源 = `isImageAttachmentName`
+/** ①A1-full **范围闸（唯一判据点）**：仅「无设备面的会话 + 本批件全部是图片」走乐观面。
+ *
+ *  📌 uxconsist Phase B（§5 R1-group 行 / §4.1-#9）：**放开 group** —— 群窗与好友窗的
+ *  图片腿**同款**（改前范围闸排 group ⇒ 同一动作两面感受不同 = R1-group 偏差格）；
+ *  `device` 排除**保留**（设备腿不作气泡乐观面：其权威面是传输台账，无 message row
+ *  可锚定，见 §5 R1-device 行）。
+ *  函数名保留为**落点锚**（设计件按此名给点）；判据源仍 = `isImageAttachmentName`
  *  （与卡片直显腿**同一函数**，禁第二张类型表）。 */
 function scopedFriendImageSend(conv, files) {
-  if (!conv || conv.kind === 'group' || conv.device) return false;
+  if (!conv || conv.device) return false;
   if (!Array.isArray(files) || files.length === 0) return false;
   return files.every(f => f && isImageAttachmentName(f.name || ''));
 }
@@ -4103,7 +4255,7 @@ function mountOptimisticAttachBubble(conv, files, text) {
     tempId, convId: conv.conversationId || '', body: text, node: wrap, entry,
     anchoredTo: null, attachIds: [], files, faces, kind: 'attach-image',
   };
-  pendingSends.push(pending);
+  trackPending(pending);
   // ② 本地小图：生成完成即在同一枚 `<img>` 上出帧（不重建气泡、不重排）。
   void fillLocalThumbs(pending);
   return pending;
@@ -4498,6 +4650,24 @@ async function onFriendEvent(msg, retried = false) {
     updateBadge();
     return;
   }
+  if (msg.event === EV_RECEIPT_UPDATE) {
+    // E3 推帧（契约 §1.1 E3 行 + §4.2 帧形）：本分支**不发任何帧**（前端处置契约①：
+    // 不得 ack）；幂等按 `eventId` 塌缩（§1.3）⇒ 重复帧零正确性后果。
+    if (!markReceiptEventSeen(msg.eventId)) return;
+    // payload 取法：网关 `FriendEvent.frontendFrame` 已把 `payload` 展平到帧顶层
+    // （`message_new` 分支同款形态）；此处**兼容**未展平的 `{payload:{…}}` 形态
+    // （判据 = 「payload 是不是对象」，不猜字段值）。
+    const p = (msg.payload && typeof msg.payload === 'object') ? msg.payload : msg;
+    const convId = p.conversationId;
+    if (!convId) return;
+    const conv = conversations.find(c => c.conversationId === convId);
+    // 设备面帧（`conversationKind='device'`/设备会话 id）不走本支路：射程外（E2EE）。
+    if (!conv || conv.kind === 'device') return;
+    // 只有**开着的那一个窗**需要立刻刷新（未开的会话在开窗时取一次 —— 取数点唯一，
+    // 禁在此另建一条未开窗的取数链）。
+    if (openConvId === convId) void refreshConvReceipts(conv);
+    return;
+  }
   if (msg.event === 'friend_accepted') {
     // New friendship → empty conversation appears (summary: systemNowFriends)
     await refreshConversations({ friends: 'force' });
@@ -4585,11 +4755,37 @@ async function incrementalResync({ withList = false } = {}) {
   const convId = openConvId;
   const open = !!convId && !String(convId).startsWith('__pending__');
   if (!open || withList) await refreshConversations();
-  if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
+  if (open) {
+    await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
+    // 契约 §1.1 前端处置契约③（「重连 / 切回窗口**必须**重拉 E1」）在客户端侧的落点：
+    // 本函数 = 唤醒面（回前台 / 回网）与通道降级兜底（帧静默 / 隧道判死）**同一实现**
+    // ⇒ 两类窗口一起覆盖，且不新增定时器。「健康帧流路径零额外请求」的纪律不变
+    // （本函数不被健康路径调用；调用面 = `wakeResync` 与 `backfillTick` 的门控腿）。
+    const conv = currentConv();
+    if (conv && conv.conversationId === convId) void refreshConvReceipts(conv);
+  }
+}
+
+/** 本地层后台对账的节流（> beacon 周期 ⇒ 至多一拍一次；低频率是本条的纪律）。 */
+const LOCAL_RECONCILE_THROTTLE_MS = 60000;
+let lastLocalReconcileAt = 0;
+
+/** 本地层后台对账拍（sessperf Phase B · 卡 §4②「后台对账：挂靠**既有** 10 s
+ *  beacon，**禁新增定时器**」）：预算收口（L5）+ 头像 TTL 兜底刷新。
+ *  🔴 判据独立于下面的帧静默门控 —— 「预算是否超限 / 头像是否过期」与「帧是否在流」
+ *  无关；自身 60 s 节流 + 每拍有界（`reconcile` 内），故帧健康态也只多一次无网络
+ *  的对账（仅超限/过期时才动网）。 */
+function localReconcileTick() {
+  if (!isLocalStoreEnabled()) return;
+  const now = Date.now();
+  if (now - lastLocalReconcileAt < LOCAL_RECONCILE_THROTTLE_MS) return;
+  lastLocalReconcileAt = now;
+  void reconcileLocalStore();
 }
 
 async function backfillTick() {
   if (!loggedIn() || document.hidden) return;
+  localReconcileTick(); // 本地层对账（无网时为纯记账 + 驱逐；见上注）
   // 帧静默门控（作者 2026-09-13 裁定放行，口径见上方红线段）：
   //   · 最近 N 秒内收到过 friend 帧 且 隧道报活 且 WS 在连 ⇒ 已确证送达，零请求
   //     （= 修前「健康路径零请求」的**保真子集**：帧真的在流）；
@@ -4727,6 +4923,12 @@ export function initMessages() {
   //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
   //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
   onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
+  // ①-b 设备腿**传输生命周期**（uxconsist Phase B · §3.3）：通知源 = dropbox.js 的
+  //     `onDeviceTransfer` 单点（入队 / 受理 / 块级进度 / 完成 / 失败 / 取消）。
+  //     本模块据此**登记显示态**（附件的动作面上屏）—— 只共享显示，传输链一行不碰：
+  //     设备腿的反馈面因此**与数据面选路解耦**（`onDeviceMessageChanged` 里
+  //     `sourceServer` 的早退只挡 legacy 数据面重渲，不再连带挡掉附件反馈）。
+  onDeviceTransfer((evt) => { onDeviceTransferEvent(evt); });
   // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
   //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
   //    自行订阅同一源（禁第二份轮询）。
@@ -4775,8 +4977,67 @@ export async function openChatWithFriend(friend) {
 /** 设备会话 id 域：`dev:<deviceId>`（确定性 ⇒ 幂等；与好友/群 id 不同域）。 */
 export const DEVICE_CONV_PREFIX = 'dev:';
 
+/**
+ * 设备附件腿的**显示态登记**（uxconsist Phase B · §3.2 登记口 + §3.3 emission）。
+ *
+ * 把 dropbox.js 的传输生命周期映射成卡表条目（八态的附件面取值）：
+ *   `queued`→S1 卡行 · `transferring`→S3 起 · `progress`→S3 数值 · `sent`→S6（无痕前卡行收口）
+ *   · `failed`→S4 失败卡 + 重试键 · `cancelled`→S8 · `rejected`（闸位/未连接/offer 被拒）→S4 就地可见。
+ *  🔴 只登记**显示**：本模块不发起、不中止任何设备传输（取消/重试都经 dropbox.js 的导出入口）。
+ *  🔴 文案零新增：全部取 §8 白名单键（失败 = `messages.attachFailed`，取消 = `messages.attachCancelled`）。
+ *  @param {any} evt dropbox.js 的传输 emission */
+function onDeviceTransferEvent(evt) {
+  if (!evt || !evt.deviceId || !evt.id) return;
+  const convId = DEVICE_CONV_PREFIX + evt.deviceId;
+  const retryFiles = evt.file ? [evt.file] : (Array.isArray(evt.files) ? evt.files : []);
+  const onRetry = retryFiles.length > 0 ? () => sendDeviceFiles(evt.deviceId, retryFiles) : null;
+  const onCancel = () => cancelDeviceTransfer(evt.deviceId, evt.id);
+  const base = { transferId: evt.id, name: evt.name || '', size: Number(evt.size) || 0 };
+  switch (evt.phase) {
+    case 'queued': // S1
+      registerExternalTransfer(convId, { ...base, state: 'queued', onRetry, onCancel });
+      break;
+    case 'rejected': // 闸位 / 未连接 / offer 被拒 ⇒ S4（就地可见，禁静默）
+      registerExternalTransfer(convId, {
+        ...base, state: 'failed', code: evt.code || 'rejected',
+        error: evt.message || t('messages.attachFailed'), onRetry, onCancel: null,
+      });
+      break;
+    case 'transferring': // S3 起（受理）
+      updateExternalTransfer(convId, evt.id, { state: 'uploading', onCancel });
+      break;
+    case 'progress': // S3 数值（唯一来源 = 服务端确认分块）
+      updateExternalTransfer(convId, evt.id, {
+        bytesSent: Number(evt.bytesSent) || 0,
+        totalBytes: Number(evt.totalBytes) || base.size,
+      });
+      break;
+    case 'sent': // S6
+      updateExternalTransfer(convId, evt.id, { state: 'sent', bytesSent: base.size, totalBytes: base.size, onCancel: null });
+      break;
+    case 'failed': // S4
+      updateExternalTransfer(convId, evt.id, {
+        state: 'failed', code: evt.code || 'upload_failed',
+        error: evt.message || t('messages.attachFailed'), onRetry, onCancel: null,
+      });
+      break;
+    case 'cancelled': // S8
+      updateExternalTransfer(convId, evt.id, {
+        state: 'cancelled', code: 'cancelled',
+        error: evt.message || t('messages.attachCancelled'), onRetry: null, onCancel: null,
+      });
+      break;
+    default:
+      break;
+  }
+}
+
 /** 设备工作集（本模块持有的适配后消息数组；与 `chatMsgs` 同构，但按设备分开）。 */
 let deviceMsgs = [];
+
+/** 设备工作集**上次快照的 id 集合**（uxconsist Phase B · R2-device 认领判据）：
+ *  认领只认**新落地**的行 —— 否则「窗口里早有一条同文消息」会把本次乐观面误锚到旧行上。 */
+let deviceSeenIds = new Set();
 
 /** 设备行去重（卡 O12/P9）：`peers` 里同一 `deviceId` 可能出现多行（上游缺口
  *  board #9/#10）⇒ **渲染层去重**，保首条（先到者 = 状态面板同源的那条）。 */
@@ -5229,7 +5490,53 @@ function syncDeviceMsgs(deviceId) {
     if (!m || m.msgId === undefined || m.msgId === null) continue;
     next.push(adaptDeviceMessage(m));
   }
+  const conv = currentConv();
+  adoptDeviceMsgs(next, (conv && conv.kind === 'device'
+    && conv.conversationId === DEVICE_CONV_PREFIX + deviceId) ? conv : null);
+}
+
+/** 设备窗消息数组的**唯一换装点**（uxconsist Phase B · §4.1-#7「先认领再重渲」）。
+ *
+ *  两条取数腿（服务端 keyset 重取 / legacy 台账同步）都经此 ⇒ 认领判据只有一份
+ *  （禁在各取数腿各写一次）。`deviceSeenIds` = 上一次窗口快照 ⇒ 认领**只认新落地**的行
+ *  （禁把历史里同文的旧行当成这次动作的权威行）。
+ *  @param {any[]} next 新窗口数组 @param {any|null} conv 设备会话（非设备窗 ⇒ `null`） */
+function adoptDeviceMsgs(next, conv) {
+  const prev = deviceSeenIds;
   deviceMsgs = next;
+  deviceSeenIds = new Set(next.map(x => String(x.id)));
+  if (conv) claimDeviceEcho(conv, prev);
+}
+
+/** **R2-device 认领**：把本窗**新落地**的本机所发行认领到未决乐观项上
+ *  （→ `sendState.claim` 的原地换键：不新增气泡、节点数不变，data-send-phase 由调用方
+ *  收口为 `confirmed`）。服务端腿与 legacy 腿**共用**本函数。
+ *  @param {any} conv @param {Set<string>|null} prevIds 发送前/上次同步的 id 快照 */
+function claimDeviceEcho(conv, prevIds) {
+  if (!conv || !conv.conversationId) return false;
+  let claimed = false;
+  for (const m of deviceMsgs) {
+    if (!m || !m.id) continue;
+    if (prevIds && prevIds.has(String(m.id))) continue; // 旧行：不是本次动作的权威行
+    if (resolveOut(m, conv) !== true) continue; // 只认本机所发（无证据 ⇒ 不认）
+    // `presentOk`：设备取数是**整窗替换** ⇒ 权威行必然已在窗内（§ sendState.claim 注释）。
+    if (claimSend(deviceMsgs, m, { convId: conv.conversationId, ours: true, presentOk: true })) {
+      claimed = true;
+      claimDeviceNodePhase(m, conv);
+    }
+  }
+  return claimed;
+}
+
+/** 认领成功的节点置 **S6**（送达 = 无痕）：按 `data-message-id` 找节点（`claim` 已把节点
+ *  换键成权威 id ⇒ 此处只读结果）。用**逐个比对**而非选择器拼接（id 可能是任意字符串，
+ *  禁把 id 直接拼进选择器）。 */
+function claimDeviceNodePhase(m, conv) {
+  if (!modalEls || !modalEls.conv || modalEls.conv.kind !== 'device') return;
+  const key = String(m.id);
+  for (const n of modalEls.flow.querySelectorAll('.fm-msg')) {
+    if (n.dataset.messageId === key) applyPhase(n, PHASE.SENT);
+  }
 }
 
 // ── MVP-2 设备会话切服务端数据源（2026-09-15）─────────────────────────
@@ -5279,7 +5586,8 @@ function deviceReceiptStateOf(id) {
  *  🔴 失败静默容忍（回执是**增强**信息，不是消息本体的承重面）；不重试（避免
  *  「持续无输出」式循环）。 */
 async function refreshDeviceReceipts(conv) {
-  if (!conv || !conv.sourceServer) return;
+  // 判据收敛进能力位（§4.1-#8）：设备服务端腿才有回执源；好友 / 群 = 候源（R5 两格）。
+  if (!conv || !capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;
   const selfConvId = selfConversationId();
   if (!selfConvId) return; // 无本机身份 ⇒ 无「我发出的」面可读，不画假状态
   try {
@@ -5293,23 +5601,16 @@ async function refreshDeviceReceipts(conv) {
 }
 
 /** 把回执态就地补画到已渲染的**本机所发**气泡上（只碰设备窗内节点）。
- *  不走重渲染（`renderMessages` 会重建全窗）——回执到达不移动任何气泡。 */
+ *  不走重渲染（`renderMessages` 会重建全窗）——回执到达不移动任何气泡。
+ *  📌 uxconsist Phase B（§4.1-#8）：出现判据收敛进 `capabilitiesOf(conv).receipt`；
+ *  槽位的**呈现**（有 slot 才画、无 slot 不画空槽）收敛到 `sendState.applyReceipt` ——
+ *  该函数同时是 R5 两格（好友 / 群）的**预留接口位**（候后端回执源契约，本批禁实现）。 */
 function applyDeviceReceipts(conv) {
   if (!modalEls || !modalEls.conv || modalEls.conv.kind !== 'device') return;
   if (openConvId !== (conv && conv.conversationId)) return;
+  if (!capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;
   for (const wrap of modalEls.flow.querySelectorAll('.fm-msg.out')) {
-    let chip = wrap.querySelector('.fm-msg-device-receipt');
-    const state = deviceReceiptStateOf(wrap.dataset.messageId);
-    if (!state) { if (chip) chip.remove(); continue; }
-    if (!chip) {
-      chip = el('span', 'fm-msg-device-receipt');
-      const meta = wrap.querySelector('.fm-msg-meta');
-      if (!meta) continue;
-      meta.appendChild(chip);
-    }
-    const text = state === 'read' ? t('messages.deviceRead') : t('messages.deviceSent');
-    if (chip.textContent !== text) chip.textContent = text;
-    chip.dataset.receiptState = state;
+    applyReceipt(wrap, deviceReceiptStateOf(wrap.dataset.messageId));
   }
 }
 
@@ -5338,39 +5639,285 @@ function markDeviceConvRead(conv) {
   void refreshDeviceReceipts(conv);
 }
 
+// ── 账号回执源：好友 / 群回执槽位接线（R5 两格 · uxconsist Phase B 段 2）──────
+// 契约正本 = neblink-server `.nebflow/Spec/20260920_192859_friend-group-receipt-source.md`
+// **v1.2**（判词 PASS 6/6；sha256 `640de17b2d527b73ce7038bdd3eb80a7ce4c1ece03d0a004451d74bce2d35c20`，
+// 本批开工首动作留痕）：§1.1 E1 读面（窗口口径）/ E2 上报面（不变）/ E3 推帧 envelope、
+// §1.2 状态机、§1.3 幂等、§1.4 错误码、§4.2 帧形、§4.5（帧可丢，E1 是真相源）。
+// 🔴 设备面回执源（`deviceReceipts` / `refreshDeviceReceipts` / `applyDeviceReceipts`）
+//    **零改动**（卡射程外：设备面走 E2EE 原则）——本段只服务好友（direct）/ 群两面。
+
+/** 每会话回执**读面**缓存（会话 id → `{rows, kind, memberCount}`）。
+ *  派生态、不落盘（与 `deviceReceipts` / `markOurs` 同一条「派生态不落盘」纪律）；
+ *  取数失败**保留上次已知**（回执是增强信息，不是消息本体的承重面）。 */
+const convReceipts = new Map();
+
+/** E1 窗口的 `limit`（契约 §1.1：计数单位 = **消息 id**，服务端 `clamp(1, 500)`）。 */
+const RECEIPT_WINDOW_LIMIT = 500;
+
+/** E1 窗口（契约 §1.1）：`after` = 已载窗口**最早**消息 id − 1 ⇒ 窗口内我发出的消息
+ *  **全部**在射程内（服务端判据 `messageId > after`）；无已载消息 ⇒ 无「我发出的」面
+ *  可读 ⇒ null（不发请求；也避免缺 `after` 时响应体随会话长度线性增长，观察项 O1）。 */
+function receiptWindow() {
+  let oldest = 0;
+  for (const m of chatMsgs) {
+    const n = Number(m.id);
+    if (Number.isFinite(n) && n > 0 && (oldest === 0 || n < oldest)) oldest = n;
+  }
+  return oldest > 0 ? { after: oldest - 1, limit: RECEIPT_WINDOW_LIMIT } : null;
+}
+
+/** E1 响应 → 逐消息计数索引（**窗口内**口径，契约 §1.1 派生式）。
+ *
+ *  计数正确性由契约保证（窗口按**消息 id** 计 `limit`，窗口内每条消息的**全部**确认者
+ *  行都返回）⇒ 每条消息要么**计数完整**、要么**整条不在返回集内**（不出现）——不存在
+ *  「部分行」形态 ⇒ 不会出现少报的计数（未覆盖的消息只是**不画**槽位）。
+ *  直聊确认者恒 1（1:1，`userId`/`updatedAt` 键整键省略）；群聊按确认者行累加。 */
+function indexReceiptRows(resp) {
+  const rows = new Map();
+  for (const r of (resp && Array.isArray(resp.receipts) ? resp.receipts : [])) {
+    const mid = Number(r && r.messageId);
+    if (!Number.isFinite(mid) || mid <= 0) continue;
+    const cur = rows.get(mid) || { read: 0, delivered: 0 };
+    cur.delivered += 1; // sent ∪ read —— read 蕴含送达（§1.2 状态机）
+    if (r && r.state === 'read') cur.read += 1;
+    rows.set(mid, cur);
+  }
+  const mc = Number(resp && resp.memberCount);
+  return {
+    rows,
+    kind: (resp && resp.conversationKind === 'group') ? 'group' : 'direct',
+    // `memberCount` = 可确认者数 = 成员数 − 1（请求者自己）；直聊概念上恒为 1（§1.1）。
+    memberCount: (Number.isFinite(mc) && mc > 0) ? mc : 1,
+  };
+}
+
+/** 某条消息的回执态 + 计数面（`{state, counts}`；无确认 ⇒ `null` = **不画**）。
+ *  判据 = 契约 §1.1 派生式（`readCount` / `deliveredCount` 逐条从 `receipts[]` 派生），
+ *  **不用**两个高水位反推 —— 高水位是全会话 MAX，用它反推会给「窗口内无确认」的消息
+ *  画出假状态（高水位蕴含的区间并不等于「每条都已确认」）。
+ *  @returns {{state: 'sent'|'read', counts: {read: number, delivered: number, total: number}|null}|null} */
+function convReceiptStateOf(convId, messageId) {
+  const entry = convReceipts.get(String(convId));
+  if (!entry) return null;
+  const n = Number(messageId);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const row = entry.rows.get(n);
+  if (!row) return null; // 无确认的消息**不出现**（= 未送达）⇒ 无空槽
+  const counted = entry.kind === 'group';
+  return {
+    state: row.read > 0 ? 'read' : 'sent',
+    counts: counted ? { read: row.read, delivered: row.delivered, total: entry.memberCount } : null,
+  };
+}
+
+/** 降级痕迹（**一次 / 会话 / 原因**，禁每次刷新刷屏）。
+ *  §1.4 的处置形态是「槽位关闭降级」而不是「裸红」：用户面**零噪声**（无 toast、无错误条），
+ *  但保留一条可诊断痕迹（否则「不支持 / 非成员 / 网络」与「本就无回执」不可分）。 */
+const receiptDegraded = new Map();
+function noteReceiptDegrade(convId, err) {
+  const status = (err && err.status) || 0;
+  const data = err && err.data;
+  // §1.4 逐码：403 鉴权失效（`req()` 已派全局登录链）/ 403 not_member（非成员 *或* 会话
+  // 不存在——同一函数闸）/ 400（窗口参数被拒：axum 默认**纯文本**体 ⇒ `err.data` 缺席）/
+  // 其余（5xx / 网络 / 422）。
+  const code = (data && typeof data === 'object' && data.error) || (status ? 'non_json_body' : 'network');
+  const reason = status ? `${status}:${code}` : 'network';
+  if (receiptDegraded.get(convId) === reason) return;
+  receiptDegraded.set(convId, reason);
+  console.warn(`[fm] 回执面降级（槽位关闭、保留上次已知）conversationId=${convId} `
+    + `reason=receipt_source_unavailable status=${status} code=${code}`);
+}
+
+/** 回执面刷新的单飞 + 尾随合并（同一会话并发只发一次请求；请求在飞期间到达的后续变化
+ *  记一个「还要再来一次」⇒ **不丢最后一次状态变化**，也不因帧风暴并发打同一端点）。 */
+const convReceiptInflight = new Set();
+const convReceiptAgain = new Set();
+
+/** **E1 读半程**（唯一的回执取数点）：拉 `GET …/receipts`（v1.2 窗口口径）⇒ 就地补画。
+ *
+ *  触发面（全部只此一处取数）：① 开窗（好友 / 群）② E3 帧到达（咨询性唤醒）
+ *  ③ 唤醒 / 通道降级腿（`incrementalResync`，契约 §1.1 前端处置契约③「重连 / 切回窗口
+ *  必须重拉 E1」）。🔴 失败一律**降级**：保留上次已知、槽位无数据即不画、零重试
+ *  （回执是增强信息，禁「持续无输出」式循环）。 */
+async function refreshConvReceipts(conv) {
+  if (!conv || !conv.conversationId) return;
+  if (conv.kind === 'device') return;                        // 设备面零触碰（E2EE 原则）
+  if (!capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;   // 能力位（单点判据）
+  const win = receiptWindow();
+  if (!win) return;                                           // 空窗 ⇒ 无可读面，不打请求
+  const convId = String(conv.conversationId);
+  if (convReceiptInflight.has(convId)) { convReceiptAgain.add(convId); return; }
+  convReceiptInflight.add(convId);
+  try {
+    const resp = await api.getConversationReceipts(convId, win);
+    convReceipts.set(convId, indexReceiptRows(resp));
+    receiptDegraded.delete(convId); // 恢复 ⇒ 清降级痕迹（下次失败重新留痕）
+    applyConvReceipts(conv);
+  } catch (err) {
+    noteReceiptDegrade(convId, err);
+  } finally {
+    convReceiptInflight.delete(convId);
+    if (convReceiptAgain.delete(convId)) void refreshConvReceipts(conv); // 尾随合并
+  }
+}
+
+/** 把回执态就地补画到已渲染的**本机所发**气泡（只碰当前窗；**不重渲染**——回执到达
+ *  不移动任何气泡，与设备面同一条纪律）。挂载点 = `sendState.applyReceipt`（呈现单点，
+ *  设备 / 直聊 / 群三面同源；有 slot 才画、无 slot 不画空槽）。 */
+function applyConvReceipts(conv) {
+  if (!modalEls || !conv || conv.kind === 'device') return;
+  if (openConvId !== conv.conversationId) return;
+  if (!capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;
+  for (const wrap of modalEls.flow.querySelectorAll('.fm-msg.out')) {
+    const st = convReceiptStateOf(conv.conversationId, wrap.dataset.messageId);
+    applyReceipt(wrap, st ? st.state : null, st ? st.counts : null);
+  }
+}
+
+// ── E3 推送帧（契约 §1.1 / §4.2）：`event.type = "receipt_update"` ────────────
+// 前端处置契约（卡 §1.1 逐字）：① **不得 ack**（本分支**不发任何帧**；`receipt-` 前缀
+// 不在 ack 分派任何一条臂内，误 ack 亦无副作用）② 可本地合并计数或**直接重拉 E1**
+// ③ 重连 / 切回窗口**必须**重拉 E1（E1 是真相源；帧只是咨询性唤醒、可能被丢弃 §4.5）。
+// ⇒ 本实现取②的后一支：**一律重拉 E1**（不本地合并计数 —— 计数唯一来源保持单点，
+// 「已读 3/8」不会因丢帧而停在旧值）。
+/** 事件名常量（与 `EV_MESSAGE_NEW` 同一条「两侧不得各写一套字面量」纪律；服务端
+ *  字面量 = `receipt_update`）。 */
+const EV_RECEIPT_UPDATE = 'receipt_update';
+
+/** E3 帧级去重（§1.3）：`eventId` **确定性**（同 (会话,确认者,状态,水位) 恒同串）
+ *  ⇒ 按 `eventId` 塌缩；重复帧**零正确性后果**（连 E1 请求都不发）。
+ *  有界 FIFO ≤512（与 `seenFrameMessageIds` 同族上限）；缺 `eventId` **不拦**
+ *  （「不猜」口径同族先例：拦掉会让真帧静默消失，放宽只会多一次幂等 E1 拉取）。 */
+const seenReceiptEvents = new Set();
+const seenReceiptEventOrder = [];
+const SEEN_RECEIPT_EVENT_MAX = 512;
+/** @returns {boolean} true = 首次见到（继续）；false = 重复（调用方直接 return）。 */
+function markReceiptEventSeen(id) {
+  if (id === undefined || id === null || id === '') return true;
+  const k = String(id);
+  if (seenReceiptEvents.has(k)) return false;
+  seenReceiptEvents.add(k);
+  seenReceiptEventOrder.push(k);
+  if (seenReceiptEventOrder.length > SEEN_RECEIPT_EVENT_MAX) {
+    const oldest = seenReceiptEventOrder.shift();
+    if (oldest !== undefined) seenReceiptEvents.delete(oldest);
+  }
+  return true;
+}
+
+/** 落盘条目 → `adaptDeviceMessage` 的入参形状（**唯一**转换点）。
+ *
+ *  两腿共用：服务端行条目（`senderDeviceId` 面）与 legacy 导入条目（`direction`/
+ *  `ts` 面）。方向**不落盘**（见 `localStore.devEntry`）⇒ 读回时按同一单点重算，
+ *  换机 / 换账号后的判据不被冻结。 */
+function deviceEntryToWire(e) {
+  if (!e || typeof e !== 'object') return null;
+  if (e.legacy) {
+    return {
+      msgId: e.id, direction: e.direction, ts: e.ts, kind: e.kind, text: e.body,
+      status: e.status, transferId: e.transferId, fileName: e.fileName, fileSize: e.fileSize,
+    };
+  }
+  return {
+    id: e.id, senderDeviceId: e.senderDeviceId, body: e.body,
+    createdAtMs: e.createdAtMs, kind: e.kind, attachments: e.attachments,
+  };
+}
+
+/** 一行会话的本地层条目（同步）→ 已 adapt 的消息（只认**服务端行**条目：
+ *  legacy 导入条目无 keyset 语义、由 `dropbox.js` 既有层消费，禁混入本腿）。 */
+function cachedDeviceRowMsgs(convId) {
+  const cached = readMessages(convId);
+  if (!cached) return [];
+  const out = [];
+  for (const e of cached.msgs) {
+    if (!e || e.shape !== 'dev' || e.legacy) continue;
+    const a = adaptDeviceMessage(deviceEntryToWire(e));
+    if (a && a.id) out.push(a);
+  }
+  return out;
+}
+
+/** 设备服务端腿**首帧**：本地层条目 → 归并窗（同步、零 await、零网络）。 */
+function cachedDeviceServerMsgs(conv) {
+  const merged = [];
+  for (const row of (conv && conv.serverRows) || []) {
+    for (const m of cachedDeviceRowMsgs(row.conversationId)) merged.push(m);
+  }
+  merged.sort(compareDeviceMsg);
+  return merged;
+}
+
 /** 设备会话服务端取数（keyset 尾窗，D9：MVP-2 由「网关全量」转 keyset）。
  *  🔴 **归并窗 = 两条会话各自取数后按 id 归并**（§9.3）：对端行给出「对端发来的」、
  *  本机行给出「我发出的」，两路都在同一实现面取（禁各自演化）。
- *  任一路取数失败 ⇒ 整窗降级 legacy dropbox 腿（可见提示），不半窗呈现。 */
+ *  任一路取数失败 ⇒ 整窗降级 legacy dropbox 腿（可见提示），不半窗呈现。
+ *
+ *  sessperf Phase B（卡 §4②「开窗零全量重拉」+ §5.3 改动面）：本地层有该行条目 ⇒
+ *  走 `after=<水位>&limit=50` keyset 增量（≤4 页，`MAX_SYNC_PAGES` 数值不变）；
+ *  本地层无条目 ⇒ 冷路径仍是既有尾窗（M6「冷缓存不倒退」基线不变）。
+ *  写回本地层（键 = 该行 `conversationId`）⇒ 下一次开窗首帧零网络。 */
 async function fetchDeviceMsgsServer(conv) {
   const rows = (conv && conv.serverRows) || [];
-  const parts = [];
-  try {
-    for (const row of rows) {
-      const anchor = Number(row.lastMessage && row.lastMessage.id);
-      const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
-      const msgs = await api.getMessages(row.conversationId, { after, limit: HISTORY_WINDOW });
-      for (const m of msgs || []) parts.push(m);
+  if (!rows.length) { deviceMsgs = []; return; }
+  let failure = null;
+  for (const row of rows) {
+    const convId = row.conversationId;
+    const cached = readMessages(convId);
+    const prevEntries = cached ? cached.msgs.filter(e => e && e.shape === 'dev' && !e.legacy) : [];
+    let watermark = cached ? cached.watermark : 0;
+    const fetched = [];
+    try {
+      if (watermark > 0) {
+        for (let i = 0; i < MAX_SYNC_PAGES; i++) {
+          const batch = await api.getMessages(convId, { after: watermark, limit: SYNC_PAGE });
+          const list = batch || [];
+          for (const m of list) fetched.push(m);
+          const maxId = list.reduce((n, m) => Math.max(n, Number(m && m.id) || 0), 0);
+          if (maxId > watermark) watermark = maxId;
+          if (list.length < SYNC_PAGE) break; // 不满页 ⇒ 已到服务端水位
+        }
+      } else {
+        // 本地层无条目 ⇒ 冷路径（与改前逐字同：锚 = 会话行 lastMessage.id 回退一窗）
+        const anchor = Number(row.lastMessage && row.lastMessage.id);
+        const after = Number.isFinite(anchor) && anchor > HISTORY_WINDOW ? anchor - HISTORY_WINDOW : 0;
+        const list = await api.getMessages(convId, { after, limit: HISTORY_WINDOW }) || [];
+        for (const m of list) fetched.push(m);
+        const maxId = list.reduce((n, m) => Math.max(n, Number(m && m.id) || 0), 0);
+        watermark = Math.max(watermark, maxId);
+      }
+    } catch (err) {
+      failure = err; // 任一路失败 ⇒ 整窗降级（不半窗呈现，既有语义）
+      break;
     }
-  } catch (err) {
+    if (isLocalStoreEnabled()) {
+      void writeMessages(convId, prevEntries.concat(fetched), {
+        watermark,
+        lastMessageAt: toEpochMs(row.lastMessage && row.lastMessage.createdAt),
+        shape: 'dev',
+      });
+    }
+  }
+  if (failure) {
     // 判红④：服务端面不可达（404 neblinkOff / 未登录 / 网络）⇒ **可见降级**，
     // 落 legacy dropbox 腿，绝不留白窗、绝不抛错崩窗。
     syncDeviceMsgs(conv.device.deviceId);
     deviceMsgs = deviceMsgs.map(m => ({ ...m }));
-    if (err && (err.status === 404 || err.status === 403 || err.status === 401)) {
+    if (failure && (failure.status === 404 || failure.status === 403 || failure.status === 401)) {
       modalToast(t('messages.deviceServerUnavailable'));
     }
     return;
   }
   if (openConvId !== conv.conversationId) return; // 窗已被替换
   const next = [];
-  for (const m of parts) {
-    const a = adaptDeviceMessage(m);
-    if (!a.id) continue; // 无 id 的行不可定位（keyedDiff 需要 id），跳过并留待重取
-    next.push(a);
+  for (const row of rows) {
+    // 渲染面 = **本地层**（写回后的镜像：同一条读取路径 ⇒ 与下一次开窗首帧逐字同形）
+    for (const m of cachedDeviceRowMsgs(row.conversationId)) next.push(m);
   }
   next.sort(compareDeviceMsg);
-  deviceMsgs = next;
+  // 🔴 唯一换装点：先认领（未决乐观项原地换键）再交调用方重渲（§4.1-#7「先认领再重渲」）。
+  adoptDeviceMsgs(next, conv);
 }
 
 /** 设备面发送（人发）。与好友面**同一形态**（trim 闸 → 清空 → 发送键回禁用态）。
@@ -5384,20 +5931,29 @@ async function fetchDeviceMsgsServer(conv) {
  *  `dev:<本机>`，与 §9.3 的「两行归并成一窗」自洽。
  *  🔴 本机 device id 缺席 ⇒ **可见禁用**（`applyBlockState` 已禁用输入框 + 只读栏；
  *  本函数再守一道）——绝不把消息打到对端 id（那必然 403）、绝不静默失败。
- *  🔴 回显不做本地乐观气泡——服务端行以 keyset 重取为唯一事实源（同 `clientMsgId`
- *  重复发送是幂等回放，§8.6「201 either way」，不产生第二行）。 */
+ *
+ *  📌 uxconsist Phase B（§4.1-#7 · 格 R1/R2/R3/R4：设备文本腿）：
+ *   · **R1/R2**：发送前先上**乐观气泡 + 左侧环**（与 `sendCurrent` **同一调用序**），
+ *     keyset 权威行回来时**原地认领**（不新增气泡）；
+ *   · **R3**：失败主面 = **气泡 S4**（红圈 + 重试键），不再 toast-only、不再回填输入框；
+ *     语义终态码（403/404）⇒ **S7**：气泡撤除 + 分态提示（`messages.deviceSendFailed`
+ *     由「唯一面 toast」降级为 S7 专用面，§8.2 改写②）；
+ *   · **R4**：重试键复用**同一 `clientMsgId`**（`deviceRetry` 键记忆的同一语义，禁新造键面）。 */
 async function sendDeviceCurrent(conv, opts) {
   if (!modalEls || !conv || !conv.device) return;
-  const body = modalEls.input.value.trim();
+  // 重试面（气泡上的重试键）把正文与键**显式带来**（正文此时只在气泡上，不回填输入框）。
+  const fromOpts = !!(opts && opts.body);
+  const body = String(fromOpts ? opts.body : modalEls.input.value).trim();
   if (!body || body.length > 2000) return; // D8：与好友窗同闸（2000，服务端无 enforcement）
   const selfId = selfDeviceId();
   if (conv.sourceServer && !selfId) {
     modalToast(t('messages.deviceSendUnavailable'));
     return; // 内容留在输入框（输入框此刻是禁用态，正常路径到不了这里）
   }
-  modalEls.input.value = '';
-  syncComposerSend();
-  if (!conv.sourceServer) { sendDeviceText(conv.device.deviceId, body); return; }
+  if (!fromOpts) {
+    modalEls.input.value = '';
+    syncComposerSend();
+  }
   // P2-b 幂等键：服务端腿才走契约幂等面（legacy 腿数据面在 dropbox.js，不在本键面）。
   // 同动作判定 = (会话 id, 正文) 逐字相等 ⇒ 复用失败时记下的键；否则新动作 ⇒ 新键。
   const retryConvId = conv.conversationId || '';
@@ -5406,23 +5962,61 @@ async function sendDeviceCurrent(conv, opts) {
       ? deviceRetry.clientMsgId : null);
   const clientMsgId = remembered || newClientMsgId();
   if (!remembered) deviceRetry = null; // 新动作 ⇒ 陈旧记忆作废（禁跨动作误判重）
+
+  // ── R1-device / R2-device：乐观面（**同一调用序**，见 `armOptimisticText`）──────
+  // 「双往返期间屏上零变化」= 本格病灶：改前这里**不上屏任何东西**，只有 2s toast +
+  // 输入框回填，用户读不出「发出去了没有」。
+  const pending = armOptimisticText(conv, body, deviceMsgs);
+
+  if (!conv.sourceServer) {
+    // legacy 腿（旧网关 / peers 派生行）：数据面在 dropbox.js，发送 = WS 文本帧。
+    // 乐观面留在窗内 ⇒ 回显行到达时由 `claimDeviceEcho`（`syncDeviceMsgs` → `adoptDeviceMsgs`）
+    // 认领（与好友面的「回显先到」同一条收敛语义）。
+    sendDeviceText(conv.device.deviceId, body);
+    return;
+  }
+
   try {
     await api.sendDeviceMessage(selfId, body, clientMsgId);
     deviceRetry = null; // 成功 ⇒ 下一次同文本发送是新动作（新键、照常落新行）
     await fetchDeviceMsgsServer(conv);
     if (openConvId !== conv.conversationId) return;
+    // 认领已在 `fetchDeviceMsgsServer` → `adoptDeviceMsgs` 内完成（先认领再重渲）：
+    // 乐观节点已换键成权威 id 并置 S6（`claimDeviceNodePhase`）⇒ 本次重渲不会新增气泡。
     renderMessages(deviceMsgs, { stickBottom: true });
     conv.lastMessage = deviceMsgs[deviceMsgs.length - 1] || conv.lastMessage;
     renderList();
     void refreshDeviceReceipts(conv);
-  } catch {
-    // 可见失败（正文不丢）：回填输入框 + 就地提示，与好友面失败面同语义。
-    // 同时记下本动作的键：用户原地再发 = 同一动作 ⇒ 复用同键（首投若其实已落库，
-    // 服务端回放原行而不是落第二条）。
+  } catch (err) {
+    // 语义终态（403 not_my_device / 404 设备或会话不存在）⇒ **S7**：气泡撤除 + 分态提示。
+    // 其余（网络 / 5xx / 429）⇒ **S4**：气泡载面红圈 + 重试键（正文与键都在手上，零丢失）。
+    const terminal = !!(err && (err.status === 403 || err.status === 404));
+    if (terminal) {
+      forgetPendingSend(pending);
+      pending.node.remove();
+      const i = deviceMsgs.findIndex(x => x === pending.entry || String(x.id) === String(pending.tempId));
+      if (i >= 0) deviceMsgs.splice(i, 1);
+      deviceRetry = null;
+      renderMessages(deviceMsgs, { stickBottom: false });
+      modalToast(t('messages.deviceSendFailed')); // S7 终态提示面（唯一消费点，见 §8.2 改写②）
+      return;
+    }
+    // S4 / S5：载面 + 重试键（**同一动作 ⇒ 同一 `clientMsgId`**，服务端按同键回放原行）。
+    // 🔴 未决项**留在表里**：若首投其实已落库（响应丢失/超时），那条权威行到达时仍会被
+    //    认领到**这个失败气泡**上（原地换键 + 置 S6）——「看似失败其实已发出」不会变成
+    //    屏上两条消息（与好友面 `claimPendingSend` 的同一条纪律）。
     deviceRetry = { convId: retryConvId, body, clientMsgId };
-    modalEls.input.value = body;
-    syncComposerSend();
-    modalToast(t('messages.deviceSendFailed'));
+    applyPhase(pending.node, PHASE.ERROR);
+    bindRetry(pending.node, () => {
+      // 重试 = **同一动作**：键与正文原样带出；失败气泡与它的未决登记同拍退场
+      // （新的乐观面接管同一动作的载面）。
+      forgetPendingSend(pending);
+      pending.node.remove();
+      const i = deviceMsgs.findIndex(x => x === pending.entry || String(x.id) === String(pending.tempId));
+      if (i >= 0) deviceMsgs.splice(i, 1);
+      renderMessages(deviceMsgs, { stickBottom: false });
+      sendDeviceCurrent(conv, { clientMsgId, body });
+    });
   }
 }
 
@@ -5481,8 +6075,12 @@ async function openDeviceConversation(conv, rowEl) {
   openConvId = conv.conversationId;
   renderChatModal(conv);
   if (conv.sourceServer) {
-    deviceMsgs = [];
-    showFlowLoading(); // 冷启动可见加载态（与好友面冷路径同一档，不用转圈掩盖慢）
+    // sessperf Phase B（卡 §5.3「服务端腿删 `deviceMsgs = []`，改 store 首帧 → 增量」）：
+    // 首帧来源 = 本地层（**同步、零 await、零网络**）；加载态只服务「本地层无条目」
+    // 这一档（与好友/群面同一条纪律：禁先清空再等网络）。
+    deviceMsgs = cachedDeviceServerMsgs(conv);
+    if (deviceMsgs.length) renderMessages(deviceMsgs);
+    else showFlowLoading();
     await fetchDeviceMsgsServer(conv);
     if (openConvId !== conv.conversationId) return;
     renderMessages(deviceMsgs);
