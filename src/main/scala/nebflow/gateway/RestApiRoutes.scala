@@ -16,6 +16,7 @@ import nebflow.core.PathUtil
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
+import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.project.{NodeEngine, NodePayload, ProjectActor, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
@@ -74,29 +75,13 @@ class RestApiRoutes(
     // 但搜索 API 正常" is visible at a glance. `status` stays "ok" while the
     // gateway serves (the watchdog keys on HTTP 200).
     case GET -> Root / "health" =>
-      for
-        modelStates <- sharedResources.healthMonitor.getStates
-        searchHealth <- sharedResources.healthMonitor.getSearchHealth
-        providers = modelStates.map { case (k, st) =>
-          k -> (st match
-            case HealthState.Up              => "up"
-            case HealthState.Down(reason, _) => s"down: $reason")
-        }
-        search = searchHealth match
-          case SearchApiHealth.Unconfigured => Json.obj("status" -> "unconfigured".asJson)
-          case SearchApiHealth.Up           => Json.obj("status" -> "up".asJson)
-          case SearchApiHealth.Down(reason, since) =>
-            Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
-        resp <- Ok(
-          Json.obj(
-            "product" -> "nebflow".asJson, // single-instance guard identification
-            "status" -> "ok".asJson,
-            "version" -> nebflow.Version.string.asJson,
-            "providers" -> providers.asJson,
-            "search" -> search
-          )
-        )
-      yield resp
+      // Payload construction is SINGLE-SOURCED in
+      // `nebflow.core.hotrestart.HealthPayload.build` (hotupdate batch 2, G3): the
+      // hot-restart door self-check (tier 3 "port-serving" / tier 4 "version-match")
+      // reads the very same payload over HTTP, so the version a successor
+      // advertises can never drift from what this endpoint serves. Fields,
+      // field order and value semantics are unchanged (byte-compatible body).
+      HealthPayload.build(sharedResources.healthMonitor).flatMap(Ok(_))
 
     // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
     // telemetry with dimension slicing.
