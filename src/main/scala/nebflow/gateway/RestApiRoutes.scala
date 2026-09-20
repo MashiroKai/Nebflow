@@ -2489,7 +2489,9 @@ class RestApiRoutes(
   /**
    * Accepts incoming WS presence connections from NebLink peers.
    *
-   * The peer's device info arrives as query params on the WS upgrade request.
+   * The peer's device info arrives as handshake headers and/or query params on
+   * the WS upgrade request (A1, 2026-09-20: deviceId moved to the header; see
+   * [[presencePeerDeviceId]]).
    * Once the WS is established:
    *   - Server sends heartbeat pings every 10s.
    *   - Server responds to client pings with pongs.
@@ -2504,10 +2506,11 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          val peerDeviceId = req.params.getOrElse("deviceId", "")
+          val peerDeviceId = presencePeerDeviceId(req)
           // Trust: IP list (primary) or device-ID network membership (fallback).
-          // peerDeviceId is already a query param on the WS upgrade, so the
-          // fallback needs no extra header here.
+          // A1 (2026-09-20): the claiming id arrives in the handshake header
+          // (see presencePeerDeviceId) — the legacy ?deviceId= query param is
+          // still accepted for peers built before the change.
           (if ms.isTrustedPeer(remoteIp) then IO.pure(true)
            else isKnownNetworkDevice(ms, peerDeviceId, remoteIp)).flatMap {
             case false => Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
@@ -2563,24 +2566,9 @@ class RestApiRoutes(
                 }
           }
 
-    // POST /api/flow/event — Source scripts inject external events (no auth, local only)
-    case req @ POST -> Root / "flow" / "event" =>
-      req.as[Json].flatMap { body =>
-        val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
-        val eventType = body.hcursor.downField("type").as[String].getOrElse("")
-        val data = body.hcursor.downField("data").as[JsonObject].getOrElse(JsonObject.empty)
-
-        if sessionId.isEmpty || eventType.isEmpty then
-          BadRequest(Json.obj("error" -> "Missing 'sessionId' or 'type'".asJson))
-        else
-          FlowTreeRegistry.get(sessionId).flatMap {
-            case Some(_) =>
-              // EventFired removed — pipelines don't subscribe to external events
-              Ok(Json.obj("status" -> "ok".asJson, "event" -> eventType.asJson))
-            case None =>
-              NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
-          }
-      }
+    // (2026-09-20 device-face hardening batch) POST /api/flow/event was RETIRED
+    // here — the classify pass recorded it as 仓内零调用点 (no FE/CLI/BE caller)
+    // and the 11-route takedown was authorised by the author.
 
     // GET /teams/mounted — return all mounted teams with agent status
     // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
@@ -2593,104 +2581,13 @@ class RestApiRoutes(
         yield result
       }
 
-    // GET /running-flows — list currently running DAG flow instances
-    case req @ GET -> Root / "running-flows" =>
-      withAuth(req) {
-        nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
+    // the author: GET /running-flows, GET /flow/dag/:name, GET /teams and
+    // GET /teams/status/:sessionId were RETIRED here — each was 仓内零调用点 in
+    // the classify pass (no FE/CLI/BE caller). The live siblings
+    // (/teams/mounted, /teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
+    // /team/rules/*) are untouched.
 
-    // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
-    case req @ GET -> Root / "flow" / "dag" / flowName =>
-      withAuth(req) {
-        if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
-        else
-          nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
-            case Some(dag) =>
-              val nodesJson = dag.nodes.map { (nodeId, node) =>
-                val route: Json = node.onComplete match
-                  case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
-                  case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                  case p: nebflow.core.entity.NodeRoute.Parallel =>
-                    Json.obj(
-                      "parallel" -> p.fan.asJson,
-                      "onFail" -> (p.onFail match
-                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                        case _ => Json.fromString("abort")
-                      )
-                    )
-                  case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
-                    Json.obj(
-                      "parallel" -> Json.obj(
-                        "slots" -> Json.fromString(p.slotField),
-                        "template" -> Json.fromString(p.template)
-                      ),
-                      "onFail" -> (p.onFail match
-                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                        case _ => Json.fromString("abort")
-                      )
-                    )
-                  case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
-                    val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
-                      val target: String = v match
-                        case nebflow.core.entity.NodeRoute.Goto(t) => t
-                        case nebflow.core.entity.NodeRoute.Return => "$return"
-                        case _ => "?"
-                      k -> Json.fromString(target)
-                    })
-                    Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
-                nodeId -> Json.obj(
-                  "agent" -> node.agent.asJson,
-                  "input" -> node.input.asJson,
-                  "onComplete" -> route,
-                  "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
-                  "maxRetries" -> node.maxRetries.asJson
-                )
-              }
-              Ok(
-                Json.obj(
-                  "name" -> dag.name.asJson,
-                  "description" -> dag.description.asJson,
-                  "entry" -> dag.entry.asJson,
-                  "maxLoop" -> dag.maxLoop.asJson,
-                  "nodes" -> nodesJson.asJson
-                )
-              )
-            case None =>
-              NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
-          }
-      }
-
-    // GET /teams — list all defined teams (from team.json files)
-    case req @ GET -> Root / "teams" =>
-      withAuth(req) {
-        for
-          teams <- nebflow.core.entity.EntityLoader.listTeams()
-          teamsJson = teams.values.toList.sortBy(_.name).map { t =>
-            io.circe.Json.obj(
-              "name" -> t.name.asJson,
-              "description" -> t.description.asJson,
-              "lead" -> t.lead.asJson,
-              "members" -> t.members.asJson
-            )
-          }
-          result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
-        yield result
-      }
-
-    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
-    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
-    case req @ GET -> Root / "teams" / "status" / sessionId =>
-      withAuth(req) {
-        // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
-        // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
-        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-        else
-          for
-            teamsJson <- buildMountedTeamsJson()
-            result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
-          yield result
-      }
 
     // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
     case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
@@ -2809,70 +2706,11 @@ class RestApiRoutes(
         }
       }
 
-    // GET /agents/list — list all global agents (for extends dropdown)
-    // GET /agents/list — list all agents (all three layers)
-    case req @ GET -> Root / "agents" / "list" =>
-      withAuth(req) {
-        for
-          globalAgents <- EntityLoader.listAgents()
-          teams <- EntityLoader.listTeams()
-          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .toList
-              else Nil
-            }
-          }
-          flows <- EntityLoader.listFlows()
-          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .toList
-              else Nil
-            }
-          }
-          globalList = globalAgents.values.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> a.category.asJson
-            )
-          }
-          teamList = teamAgentEntries.flatten.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> "team".asJson
-            )
-          }
-          flowList = flowAgentEntries.flatten.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> "flow".asJson
-            )
-          }
-          all = globalList ++ teamList ++ flowList
-          result <- Ok(Json.obj("agents" -> all.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /agents/list
+    // was RETIRED here — 仓内零调用点 in the classify pass (its only in-repo
+    // reference was the smoke-spec probe, updated in the same commit).
+    // GET /agents/:name and /agents/:name/model below are the live faces.
+
 
     // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
     case req @ GET -> Root / "agents" / agentName =>
@@ -3035,20 +2873,10 @@ class RestApiRoutes(
           Gone(Json.obj("error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson))
       }
 
-    // GET /skills — list all available skills (name + description) for the Agent panel
-    case req @ GET -> Root / "skills" =>
-      withAuth(req) {
-        for
-          skills <- SkillService.listSkills()
-          entries = skills.sortBy(_.name).map { s =>
-            Json.obj(
-              "name" -> s.name.asJson,
-              "description" -> s.description.asJson
-            )
-          }
-          result <- Ok(Json.obj("skills" -> entries.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /skills was
+    // RETIRED here — 仓内零调用点 (the plugins page has asserted since the unified
+    // plugin system that it must NOT call it: tests/sidebar-plugins.spec.mjs:396).
+
 
     // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
 
@@ -3161,85 +2989,16 @@ class RestApiRoutes(
           }
       }
 
-    // POST /plugins/:name/dispatch/clear — 显式结束过渡（幂等；有效值回落作者意图）。
-    case req @ POST -> Root / "plugins" / name / "dispatch" / "clear" =>
-      withAuth(req) {
-        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-        else
-          nebflow.core.plugin.PluginDispatchPolicy.clearTransition(name, "rest").flatMap {
-            case Right(_) =>
-              Ok(Json.obj("ok" -> true.asJson,
-                "message" -> s"Plugin '$name' transition cleared — effective dispatch permission falls back to the author's intent".asJson))
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-          }
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
+    // the author: POST /plugins/:name/dispatch/clear and GET /flows/list were
+    // RETIRED here — both 仓内零调用点 in the classify pass. The sibling
+    // POST /plugins/:name/dispatch/grant above stays (it has a BE caller).
 
-    // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
-    case req @ GET -> Root / "flows" / "list" =>
-      withAuth(req) {
-        for
-          flows <- EntityLoader.listFlows()
-          entries = flows.values.toList.sortBy(_.name).map { f =>
-            val edges = f.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
-              node.onComplete match
-                case NodeRoute.Goto(target) => List((nodeId, target, None))
-                case NodeRoute.Return => List((nodeId, "$return", None))
-                case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
-                case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
-                case NodeRoute.Switch(_, cases, _, _) =>
-                  cases.toList.map { (cond, route) =>
-                    route match
-                      case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
-                      case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
-                      case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
-                      case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
-                      case _                     => List((nodeId, "?", Some(cond)))
-                  }.flatten
-            }
-            Json.obj(
-              "name" -> f.name.asJson,
-              "description" -> f.description.asJson,
-              "entry" -> f.entry.asJson,
-              "maxLoop" -> f.maxLoop.asJson,
-              "nodeCount" -> f.nodes.size.asJson,
-              "nodes" -> f.nodes.toList
-                .sortBy(_._1)
-                .map { (nodeId, node) =>
-                  Json.obj(
-                    "nodeId" -> nodeId.asJson,
-                    "agent" -> node.agent.asJson
-                  )
-                }
-                .asJson,
-              "edges" -> edges.map { (from, to, cond) =>
-                Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
-              }.asJson
-            )
-          }
-          result <- Ok(Json.obj("flows" -> entries.asJson))
-        yield result
-      }
 
-    // GET /teams/:name — team detail
-    case req @ GET -> Root / "teams" / teamName =>
-      withAuth(req) {
-        if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-        else
-          for
-            teamOpt <- EntityLoader.loadTeam(teamName)
-            result <- teamOpt match
-              case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
-              case Some(team) =>
-                Ok(
-                  Json.obj(
-                    "name" -> team.name.asJson,
-                    "description" -> team.description.asJson,
-                    "lead" -> team.lead.asJson,
-                    "members" -> team.members.asJson
-                  )
-                )
-          yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /teams/:name
+    // (team detail) was RETIRED here — 仓内零调用点 in the classify pass. The
+    // /team/rules/:name pair below is the live face (FE caller).
+
 
     // GET /team/rules/:name — read team rules.md
     case req @ GET -> Root / "team" / "rules" / teamName =>
@@ -3277,24 +3036,10 @@ class RestApiRoutes(
           yield result
       }
 
-    // GET /entity-agents — list all agents (entity format, with useWhen)
-    case req @ GET -> Root / "entity-agents" =>
-      withAuth(req) {
-        for
-          agents <- EntityLoader.listAgents()
-          entries = agents.values.toList.sortBy(_.name).map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "useWhen" -> a.useWhen.asJson,
-              "tools" -> a.tools.asJson,
-              "voice" -> a.voice.asJson,
-              "category" -> a.category.asJson
-            )
-          }
-          result <- Ok(Json.obj("agents" -> entries.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
+    // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
+    // /agents/:name, /agents/:name/model and /agents/:name/preset.
+
 
     // ===== Model Presets =====
 
@@ -3933,6 +3678,26 @@ class RestApiRoutes(
       else Status.InternalServerError
     Response[IO](status).withEntity(err.toJson)
 
+  /** Identity claimed by the peer opening a presence WS upgrade.
+    *
+    * A1 (2026-09-20 device-face hardening batch): the handshake HEADER
+    * ([[nebflow.neblink.Protocol.DeviceHeader]] — the same channel
+    * [[verifyPeerAccess]] already reads on the REST peer face) is the primary
+    * carrier, so deviceId stops travelling in the URL. The legacy `?deviceId=`
+    * query param stays as the FALLBACK: dialers built before the change send
+    * only that, and dropping it would refuse every existing peer.
+    */
+  private[gateway] def presencePeerDeviceId(req: Request[IO]): String =
+    // Fully qualified on purpose: `org.http4s._` (imported after
+    // `nebflow.neblink._`) also defines a `Protocol`, so the bare name is
+    // ambiguous at this call site.
+    req.headers
+      .get(CIString(nebflow.neblink.Protocol.DeviceHeader))
+      .map(_.head.value)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse(req.params.getOrElse("deviceId", ""))
+
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =    neblinkService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
@@ -3958,8 +3723,20 @@ class RestApiRoutes(
 
   /**
    * Network-membership check by device ID. True when the caller claims a
-   * deviceId we discovered via the NebLink Server (a member of our networkId)
-   * AND the request originates from a private/LAN address.
+   * deviceId we discovered via the NebLink Server (a member of our networkId),
+   * the request originates from a private/LAN address, AND that peer is still
+   * FRESH (within the online window, see [[NeblinkService.isPeerOnline]]).
+   *
+   * A2 (2026-09-20 device-face hardening batch): the freshness leg is the new
+   * half. A peer id is not a secret (it is published, see the A1 half of the
+   * same batch) and the peer map deliberately KEEPS rows for peers the server
+   * has flagged offline (`lastSeen = 0`, `NeblinkService.applyServerPeerStatus`
+   * :374), so "is a known deviceId" alone stayed true forever after a peer went
+   * away — including after DHCP handed its old address to a different host (the
+   * address-reuse row of the threat table). The freshness predicate is REUSED,
+   * not re-derived: [[NeblinkService.isPeerOnline]] with the configured
+   * `syncIntervalSec`, exactly as documented there (floor 90s = the server's
+   * own online TTL, 2x the sync interval).
    */
   private def isKnownNetworkDevice(
     ms: NeblinkService,
@@ -3967,16 +3744,38 @@ class RestApiRoutes(
     remoteIp: String
   ): IO[Boolean] =
     if claimedDeviceId.isEmpty || !isPrivateLanIp(remoteIp) then IO.pure(false)
-    else ms.peers.map(_.exists(_.deviceId == claimedDeviceId))
+    else
+      for
+        peers <- ms.peers
+        cfg <- ms.neblinkConfig
+      yield isFreshKnownPeer(peers, claimedDeviceId, System.currentTimeMillis(), cfg.syncIntervalSec)
 
-  /** RFC1918 private ranges + loopback + link-local. P2P-direct is LAN-only. */
-  private def isPrivateLanIp(rawIp: String): Boolean =
+  /** Pure form of the membership + freshness leg, so the criterion is testable
+    * without a live [[NeblinkService]] (see `PeerCriterionFreshnessSpec`). */
+  private[gateway] def isFreshKnownPeer(
+    peers: List[PeerInfo],
+    claimedDeviceId: String,
+    nowMs: Long,
+    syncIntervalSec: Int
+  ): Boolean =
+    peers.exists(p => p.deviceId == claimedDeviceId && NeblinkService.isPeerOnline(p, nowMs, syncIntervalSec))
+
+  /**
+   * Private addresses a LAN-direct P2P peer can legitimately come from:
+   * loopback, RFC1918 (10/8, 172.16/12, 192.168/16) and IPv6 `::1`.
+   *
+   * A2 (2026-09-20 device-face hardening batch): IPv4 link-local
+   * `169.254.0.0/16` and IPv6 link-local `fe80::/10` are REMOVED here. They are
+   * not "private LAN" ranges (RFC1918/loopback) at all, and any host on the wire
+   * may self-assign them — so they let a caller satisfy "came from a private
+   * address" without ever being part of the trusted network. The legitimate
+   * private ranges below are unchanged (zero narrowing beyond those two).
+   */
+  private[gateway] def isPrivateLanIp(rawIp: String): Boolean =
     val ip = rawIp.stripPrefix("::ffff:")
     ip == "127.0.0.1" || ip == "::1" ||
     ip.startsWith("10.") ||
     ip.startsWith("192.168.") ||
-    ip.startsWith("169.254.") ||
-    ip.startsWith("fe80:") ||
     ip.startsWith("172.") && {
       val octet = ip.split('.').lift(1).flatMap(_.toIntOption).getOrElse(-1)
       octet >= 16 && octet <= 31
