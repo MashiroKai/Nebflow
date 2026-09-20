@@ -74,6 +74,7 @@ function writeFixtures() {
   mkdirSync(FIX_DIR, { recursive: true });
   writeFileSync(MD_PATH, buildMd());
   writeFileSync(PROBE_HTML, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>probe</title></head><body>
+<a id="top-link" href="#">top</a>
 <a id="hash-link" href="#tail">hash</a>
 <div style="height:2400px"></div>
 <h2 id="tail">TAIL</h2>
@@ -582,6 +583,22 @@ console.log(`[mdscroll] engine=${ENGINE} port=${PORT} fixture=${MD_PATH} leakExt
   ok('R5-f 泄露条件成立（画板栈残量 > 0）', panelRes > 0, `${panelRes}px`);
   ok('🎯 R5-g 画板栈残量条件下帧内跳转零泄露：宿主滚动链位移 = 0',
     outer3.length === 0, outer3.join(' | ') || '无变动');
+
+  /* 腿④ 同一脚本的**另一分支**（顺带覆盖，同一残量条件）：`href="#"` = 清屏到顶，走
+     `window.scrollTo(0,0)` —— 滚的是帧自身视口、不跨浏览器上下文。该分支在 r1 树与改后树上
+     行为相同（故非红绿腿），本腿的作用是把「同族实现已闭合」说全：整个 anchorNavScript
+     的每一条分支在残量条件下都不写宿主。 */
+  const b4 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const fBottom = await fr.evaluate(() => document.documentElement.scrollTop);
+  await fr.evaluate(() => document.getElementById('top-link').click());
+  await settle(page, FRAME_SEL);
+  await settleFrame();
+  const a4 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const outer4 = movedLayers(b4, a4);
+  const fTop = await fr.evaluate(() => document.documentElement.scrollTop);
+  info(`   腿④ 同一残量条件下 href="#"（清屏）：帧内 ${fBottom} -> ${fTop}；宿主侧变动层 = ${outer4.length ? outer4.join(' | ') : '(none)'}`);
+  ok('R5-h `href="#"` 仍清屏到顶（帧内 scrollTop → 0）', fTop <= 1, `scrollTop=${fTop}`);
+  ok('🎯 R5-i 残量条件下 `href="#"` 零泄露：宿主滚动链位移 = 0', outer4.length === 0, outer4.join(' | ') || '无变动');
   await ctx.close();
 }
 
