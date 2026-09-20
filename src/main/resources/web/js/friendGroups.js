@@ -35,7 +35,7 @@ import { errKind } from './friendsApi.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 头像已解码节点复用池（uifix 批 2026-09-17，「群头像没有被缓存」修复）：
 // 唯一入口 = avatarRender.js（本模块只消费，不复制池/判定）。
-import { avatarImgNode } from './avatarRender.js';
+import { avatarImgNode, avatarNodeFor } from './avatarRender.js';
 
 // ── 九项裁定常量（唯一落点）────────────────────────────────
 // 成员上限 50（O①，root 裁定 ④「成员上限 50」）：权威闸在服务端；客户端只在
@@ -169,9 +169,12 @@ function el(tag, cls, text) {
 
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
-  if (person && person.avatarUrl) {
-    // uifix 批（2026-09-17）：同 `messages.js::avatarEl` —— 已解码节点复用池。
-    a.appendChild(avatarImgNode(person.avatarUrl));
+  // sessperf Phase B（2026-09-20）：与 `messages.js` / `contacts.js` 的第三份同族
+  // 实现一并收敛到 `avatarRender.avatarNodeFor`（本地层 objectURL 优先 → 未命中
+  // 回落既有解码池 + 远端 URL）。非头像兜底（首字母）判据与改前逐字相同。
+  const node = person ? avatarNodeFor(person) : null;
+  if (node) {
+    a.appendChild(node);
   } else {
     // O④：群头像 = 标题首字母占位（无自定义群头像）；成员头像同既有首字母兜底。
     a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();

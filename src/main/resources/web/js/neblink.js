@@ -11,6 +11,10 @@ import { setCacheAccount, clearMessageCache } from './fmMessageCache.js';
 // ⑩ Dropbox 消息缓存（fmDropboxCache.js）：与好友消息缓存**同一登出链、同一时机**。
 // 分区键仍只有一份来源（`fmMessageCache.getCacheAccount()`），此处只补整槽清除。
 import { clearDeviceMessageCache } from './fmDropboxCache.js';
+// sessperf Phase B（2026-09-20）：本地优先层（IndexedDB，唯一属主 `localStore.js`）
+// 的**生命周期两个挂点**都在这条既有链上：① 状态拍落位账号分区（`openLocalStore`，
+// 与 `setCacheAccount` 同拍、同一分区键）；② 登出/换账号（`clear('all')`）。
+import { openLocalStore, clear as clearLocalStore } from './localStore.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
@@ -321,6 +325,12 @@ export async function fetchNeblinkStatus() {
     // 分区键 = deviceId|email 复合（任一变化即「另一个账号」，跨账号绝不串数据）。
     if (wasLoggedIn && !neblinkState.loggedIn) { clearMessageCache(); clearDeviceMessageCache(); }
     setCacheAccount(neblinkState.device
+      ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
+      : '');
+    // sessperf Phase B：同一分区的本地层落位/切换（幂等；账号未知 ⇒ 本层整体关闭）。
+    // 🔴 与 `setCacheAccount` **同拍、同键** ⇒ 不存在两套分区状态（卡 §5.4 风险表
+    // 「跨账号串数据 = 最高危」的唯一防线）。异步打开 + 预热，绝不阻塞状态拍。
+    void openLocalStore(neblinkState.loggedIn && neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');
     // 设备会话统一批 MVP-1/O10：状态拍落地 ⇒ 推送订阅面（联系人面板设备段等）。
@@ -799,6 +809,7 @@ export function openEndSessionHandoff(continueToLogin = false) {
     // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
     clearMessageCache();
     clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
+    void clearLocalStore('all'); // sessperf Phase B 本地优先层（IndexedDB）同轮清场
     await fetchNeblinkStatus();
     _rerender?.();
   }, 1000);
