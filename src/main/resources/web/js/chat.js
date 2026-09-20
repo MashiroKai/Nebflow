@@ -13,6 +13,10 @@ import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
+// 令牌头（2026-09-20 收尾批）：`/api/tts` 服务端已加门 ⇒ 本调用点必须带 Authorization。
+// 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
+// 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
+import { authHeaders } from './flowHelpers.js';
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -59,7 +63,10 @@ const VoicePlayer = {
     try {
       const resp = await fetch('/api/tts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // 令牌（2026-09-20 收尾批）：服务端路由已套 `withAuth` ⇒ 无令牌 403。
+        // 未登录 webui（localStorage 无 token）时 `authHeaders()` 返回 {} ⇒ 请求不带
+        // Authorization，服务端 403 ⇒ 下方 `!resp.ok` 走既有静默降级（返回 null），不新增崩溃面。
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ text }),
       });
       if (!resp.ok) return null;
