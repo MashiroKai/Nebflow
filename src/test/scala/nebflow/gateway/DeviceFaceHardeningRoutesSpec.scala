@@ -13,9 +13,7 @@ import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, Thin
 import nebflow.neblink.{NeblinkService, PeerInfo}
 import org.http4s.*
 import org.http4s.server.websocket.WebSocketBuilder2
-import org.http4s.websocket.WebSocketContext
 import org.typelevel.ci.CIString
-import org.typelevel.vault.Key
 
 /**
  * Device-face hardening batch (chain-devsec-bleed), gateway-side legs:
@@ -98,12 +96,24 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     * which is exactly the false-green the positive control below exists to
     * catch (it did, on the first two runs of this spec).
     *
-    * `wsb` is only captured; no WS arm body runs. Constructed directly from the
-    * public companion so this stays a unit test with no bound port. */
-  private val wsb: WebSocketBuilder2[IO] =
-    WebSocketBuilder2[IO](Key.newKey[IO, WebSocketContext[IO]].unsafeRunSync())(using
-      cats.Applicative[IO]
-    )
+    * `wsb` is only captured by the closure and never dereferenced (see the
+    * placeholder below) — this stays a unit test with no bound port. */
+  private val wsb: WebSocketBuilder2[IO] = null.asInstanceOf[WebSocketBuilder2[IO]]
+
+  /** WHY the placeholder is safe AND why it is not a hidden dependency:
+    *
+    * `presenceWsRoutes` closes over `wsb`, but its presence arm body starts with
+    * `neblinkService match { case None => NotFound(...) }` (RestApiRoutes:2450),
+    * and this spec builds the class with the default `neblinkService = None` — so
+    * the body short-circuits to a response before the builder is ever touched.
+    * The two assertions below pin that: the WS-bearing table IS reachable (its
+    * presence arm answers, with the "not enabled" 404) while nothing dereferences
+    * the builder. Production never hand-builds one either — it comes from
+    * `withHttpWebSocketApp` (GatewayMain:1124, same as the presence specs). */
+  test("the WS-bearing table is reachable (control for the placeholder builder)") {
+    println(s"[RTE-R4] GET /neblink/presence ⇒ served=${served(get("/neblink/presence"))}")
+    assert(served(get("/neblink/presence")), "the presenceWsRoutes table must answer, not fall through")
+  }
 
   private def mounted: HttpRoutes[IO] = routes.routes <+> routes.presenceWsRoutes(wsb)
 
