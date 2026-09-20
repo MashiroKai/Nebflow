@@ -192,3 +192,41 @@ class DeviceIdentitySpec extends FunSuite:
       assert(nebflow.neblink.EnrollGuard.enrollRefusal(prod).exists(_.contains("NEBFLOW_ALLOW_PROD_ENROLL")))
     }
   }
+
+  // ===== 案 a（2026-09-20 作者令 · 测试卫生）：隔离实例新铸身份带隔离后缀 =====
+  //
+  // 事故真形态 = 「同账号 + **同名**第二条设备行」（核查卡 `20260920_214729_seedpath-card`
+  // §2 环 1 / §4.2 补强②）：id 早已按 scope 派生，撞的是**显示名**。后缀只作用于新铸，
+  // 禁带本机路径（deviceName 随 presence 出网）。
+
+  test("案 a: minted name carries the isolation suffix on a redirected root; id/shape untouched") {
+    val scope = "/tmp/nb-iso-fixture"
+    val dflt = DeviceIdentity.mintedDeviceName("MyBox", nonDefaultHome = false, scope)
+    assertEquals(dflt, "MyBox", "默认 data root：名字逐字不变（零行为变化）")
+    val iso = DeviceIdentity.mintedDeviceName("MyBox", nonDefaultHome = true, scope)
+    assert(iso.startsWith("MyBox-iso-"), s"隔离后缀形态: $iso")
+    assertEquals(iso, DeviceIdentity.mintedDeviceName("MyBox", true, scope), "同一 scope ⇒ 同一后缀（确定性）")
+    assertNotEquals(iso, DeviceIdentity.mintedDeviceName("MyBox", true, "/tmp/nb-iso-other"),
+      "不同隔离 home ⇒ 不同后缀（两台隔离实例可分辨）")
+    assert(!iso.contains("/") && !iso.contains("tmp"), s"名字会随 presence 出网 ⇒ 禁带路径: $iso")
+    val fp = DeviceIdentity.scopeFingerprint(scope)
+    assertEquals(fp.length, 8)
+    assert(fp.matches("^[0-9a-f]{8}$"), s"指纹 = 8 位十六进制: $fp")
+    assertEquals(iso, s"MyBox-iso-$fp")
+  }
+
+  test("案 a live: a fresh identity minted on a redirected root is suffixed, pathless, capability-free") {
+    val home = os.temp.dir()
+    withDataRoot(home) {
+      val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
+      val fp = DeviceIdentity.scopeFingerprint(home.toString)
+      assert(id.deviceName.endsWith(s"-iso-$fp"), id.deviceName)
+      assert(!id.deviceName.contains(home.toString), s"名字里不得出现数据根路径: ${id.deviceName}")
+      // id 仍是 UUIDv5(machineCode|scope) 形态（本批不动 id）
+      assert(id.deviceId.matches("^[0-9a-f-]{36}$"), id.deviceId)
+      // 新铸身份零 capabilities（真机工具路径清单不经铸造面进隔离实例）
+      assertEquals(id.capabilities, Map.empty[String, String])
+      // 第二次读（既有可解码文件）不改名：loadOnce 的「沿用既有身份」语义未动
+      assertEquals(DeviceIdentity.loadOrCreate.unsafeRunSync().deviceName, id.deviceName)
+    }
+  }

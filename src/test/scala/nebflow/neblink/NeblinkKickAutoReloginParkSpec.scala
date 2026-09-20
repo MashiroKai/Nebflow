@@ -89,7 +89,8 @@ class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
           0,
           // 真 silent re-login 钩子（register 的最近前驱）：本钉要测的正是它的入口门。
           onDeviceTokenRejected = Some(
-            LogtoSilentRelogin.make(ms, IO.pure(Option.empty[NeblinkDiscovery]), 0, IO.pure(fix.url))
+            // 案 b①：接缝改 `IO[Option[String]]`（目标缺席 ⇒ 降级不注册）；测试腿给显式目标。
+            LogtoSilentRelogin.make(ms, IO.pure(Option.empty[NeblinkDiscovery]), 0, IO.pure(Some(fix.url)))
           ),
           identity = Some(IO.pure(DeviceIdentity(dev, "qa-host", "macos")))
         )

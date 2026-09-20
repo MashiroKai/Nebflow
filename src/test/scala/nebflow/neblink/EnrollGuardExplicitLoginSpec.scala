@@ -139,6 +139,62 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     )
   }
 
+  // ── ⑤ 案 b①（2026-09-20 作者令 · 测试卫生）：生产默认目标不得被隔离实例继承 ──
+  //
+  // 事故链（核查卡 `20260920_214729_seedpath-card` §2 环 3）：隔离 home 无任何显式 /
+  // 配置 URL ⇒ 登录入口的**末级回落**把 `Branding.serverUrl`（生产真值）当目标 ⇒ 环 5
+  // `POST /api/device/register` 在生产网新增设备行。本组钉住「无目标」这一支 +
+  // 「文案会逐字进用户可见面且仍然干净」。
+
+  test("案 b① pure: only (isolated root ∧ no switch) loses the prod default") {
+    // 默认 home：零行为变化（两条腿都给默认目标）
+    assertEquals(EnrollGuard.prodFallbackRefusal(nonDefaultHome = false, explicitAllow = false), None)
+    assertEquals(EnrollGuard.prodFallbackRefusal(nonDefaultHome = false, explicitAllow = true), None)
+    // 隔离 home + 显式开关：放行（= 改前行为）
+    assertEquals(EnrollGuard.prodFallbackRefusal(nonDefaultHome = true, explicitAllow = true), None)
+    // 隔离 home + 无开关：不回落（本批主改）
+    val refused = EnrollGuard.prodFallbackRefusal(nonDefaultHome = true, explicitAllow = false)
+    assert(refused.isDefined, "隔离数据根无开关 ⇒ 不得继承生产默认目标")
+    val msg = refused.get
+    assert(msg.contains(EnrollGuard.AllowProdEnrollEnv), s"文案必须指名开关: $msg")
+    assert(msg.contains("explicit server URL"), s"文案必须指明显式 URL 这条出路: $msg")
+    assertEquals(EnrollGuard.prodFallbackRefusal(true, false).get, EnrollGuard.prodFallbackRefusalReason,
+      "可见原文 = 单点文案源（禁调用点各拼一份）")
+  }
+
+  test("案 b① live: prodDefaultTarget = None on a redirected root, Some(default) on the default root") {
+    // 本 spec 全程跑在重定向 data root 上（beforeEach）⇒ 默认目标必须缺席
+    assertEquals(DeviceIdentity.isNonDefaultHome, true, "this spec must run on a redirected data root")
+    assertEquals(EnrollGuard.prodDefaultTarget, None, "隔离实例不得拿到生产默认目标")
+    // 默认 data root：逐字回到 Branding.serverUrl（零行为变化）
+    val isolatedRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(os.home / nebflow.core.Branding.homeDirName)
+    try assertEquals(EnrollGuard.prodDefaultTarget, Some(nebflow.core.Branding.serverUrl))
+    finally PathUtil.setDataRoot(isolatedRoot)
+  }
+
+  test("案 b① visible: the refusal text reaches the login page verbatim — and stays clean (判据 G3)") {
+    val d = CredentialDiagnostics.diagnosticOf(
+      CredentialFailure.EnrollRefusedIsolatedHome,
+      EnrollGuard.prodFallbackRefusalReason
+    )
+    // 例外分支照实透出（案 C 语义）：原因里必须看到护栏原文，而不是降级成模板
+    assert(d.reason.contains("isolated data root"), s"原文必须进可见原因: ${d.reason}")
+    assert(d.message.contains(EnrollGuard.AllowProdEnrollEnv), s"开关名必须在可见文案里: ${d.message}")
+    assert(d.message.contains("explicit server URL"), s"显式 URL 出路必须在可见文案里: ${d.message}")
+    // 可见面闸门（判据 G2/G3 + data-root / 文件名二重断言）：文案一旦带上路径或
+    // `.nebflow` 字面量，`diagnosticOf` 会静默退回模板 ⇒ 本断言是「文案在场」的守门人。
+    assertEquals(LogdevTestSupport.violations(d.message, PathUtil.dataRoot), Nil)
+    assert(CredentialDiagnostics.isCleanVisibleText(EnrollGuard.prodFallbackRefusalReason))
+
+    // 负控（防空断言）：把真实生产域名塞进 detail ⇒ 必须被闸门拦下、退回模板原因。
+    val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (${nebflow.core.Branding.serverUrl})"
+    val degraded = CredentialDiagnostics.diagnosticOf(CredentialFailure.EnrollRefusedIsolatedHome, dirty)
+    assert(!degraded.reason.contains("isolated data root"),
+      "含生产域名（`.nebflow` 字面量）的 detail 不得进可见面")
+    assertEquals(degraded.detail, dirty, "原文仍须进日志面（可归因）")
+  }
+
   // ── ④ 停摆解除只挂在显式路径 ─────────────────────────────
 
   test("park: an automatic persist does NOT lift the post-kick park; an explicit persist does") {

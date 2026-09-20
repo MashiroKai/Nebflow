@@ -822,8 +822,15 @@ object GatewayMain extends IOApp:
                                                     // IO.pure 的实参严格求值 ⇒ 该 unsafeRunSync 在 boot 执行，
                                                     // 启动客户端的 silent-relogin server URL 被冻结在 boot 值。
                                                     // 改为 live 读（同 RestApiRoutes.neblinkServerUrl 先例）。
+                                                    //
+                                                    // 案 b①（2026-09-20）：末级回落经**同一判据**
+                                                    // （EnrollGuard.prodDefaultTarget —— 单点，禁第二实现）：
+                                                    // 隔离数据根 + 无显式开关 ⇒ 无目标 ⇒ 本接缝降级为
+                                                    // login-required（不注册），与两侧入口同语。
                                                     neblinkService.neblinkConfig.map(
-                                                      _.neblinkServer.map(_.url).getOrElse(Branding.serverUrl)
+                                                      _.neblinkServer.map(_.url).orElse(
+                                                        nebflow.neblink.EnrollGuard.prodDefaultTarget
+                                                      )
                                                     )
                                                   )
                                                 ),
