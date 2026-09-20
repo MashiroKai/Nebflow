@@ -158,16 +158,65 @@ object ConfigCommand extends CliCommand:
             CliResult.text(io.circe.parser.parse(configStr).map(redact).map(_.noSpaces).getOrElse(configStr))
           }
 
+  // ── D-H5 案 ⒜：`config edit` 的无编辑器 / 非交互兜底（作者 2026-09-23 07:27 批）──
+  // 缺口（计划卡 §一 config 行 缺口①）：`config edit` 在无 tty / 无 `$EDITOR` 的
+  // 环境里照样 `inheritIO` 拉起编辑器 —— headless 下编辑器渲染不出来。基线实测：
+  // env 未设时 `vi` 被拉起，往 stdout 吐 11KB 终端控制序列、stderr 两行「不是终端」
+  // 警告，而 CLI 仍以 `CliResult.ok` 报成功（exit 0）；`EDITOR=` 形态则抛
+  // `Cannot run program ""`。两者都是本批要治的「挂死 / 莫名失败」。
+  // 兜底 = 明确报错 + exit 1 + 指路 `config set`；既有优先级 `$EDITOR` → `$VISUAL`
+  // → `vi` 一处不动。
+
+  /** H9（§16 文案闸：已批逐字，禁改写、禁加前缀/后缀）。 */
+  private[cli] val NoEditorMessage =
+    "No editor available (no interactive terminal / no $EDITOR). Use 'nebflow config set <key> <value>' instead."
+
+  /** 非交互判定 = 「无交互终端」。JDK < 22：`System.console()` 为 null 即 stdin/stdout
+    * 被重定向（非 null 即终端）；JDK ≥ 22（本机运行面 = 23）`System.console()` 恒非
+    * null，终端性只能问 `Console.isTerminal()`（JDK 22 新增）。该法不在本构建的
+    * `-release:17` API 面内（build.sbt:105；`javac --release 17` 同报「找不到符号」），
+    * 且在 JDK 17 运行面上根本不存在 —— 直接调用必 `NoSuchMethodError`，故按名反射
+    * 取；取不到即回到「非 null 即终端」的旧 JDK 语义。实测（本机 JDK 23）：stdin 为
+    * pty ⇒ true；stdin 为 /dev/null（无论 stdout 去向）⇒ false。
+    */
+  private[cli] def hasInteractiveTerminal: Boolean =
+    val console = System.console()
+    if console == null then false
+    else
+      try console.getClass.getMethod("isTerminal").invoke(console).asInstanceOf[Boolean]
+      catch case _: Exception => true
+
+  /** `$EDITOR` → `$VISUAL`（既有优先级，一处不改）。空值/纯空白等同**未设**：
+    * `EDITOR=` 会让 ProcessBuilder 抛 `Cannot run program ""`（见上方缺口实测）。 */
+  private[cli] def pickEditor(editor: Option[String], visual: Option[String]): Option[String] =
+    editor.map(_.trim).filter(_.nonEmpty).orElse(visual.map(_.trim).filter(_.nonEmpty))
+
+  /** 兜底判据（纯函数，ConfigEditHeadlessSpec 直测）：**非交互 ∨ 编辑器不可得**。
+    * 与 §一 题面逐肢对齐：「非交互（stdin 非 tty）」= 第一肢；「编辑器不可得
+    * （`$EDITOR` / `$VISUAL` 均空，或 `vi` 不可执行）」= 第二肢 —— 字面析取下「均空」
+    * 即已走兜底，`vi` 可执行与否不改变结论（该子肢被「均空」肢蕴含，故不另判）；
+    * `vi` 作为优先级链末位保留在解析面（保留原链形，见 ConfigEdit.run）。 */
+  private[cli] def needsEditorFallback(hasTerminal: Boolean, envEditor: Option[String]): Boolean =
+    !hasTerminal || envEditor.isEmpty
+
   private object ConfigEdit extends CliSubcommand:
     def name = "edit"
     def description = "Open config in $EDITOR"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
-      val editor = sys.env.getOrElse("EDITOR", sys.env.getOrElse("VISUAL", "vi"))
-      IO.blocking {
-        val pb = new ProcessBuilder((editor.split("\\s+").toList :+ configPath.toString)*)
-        pb.inheritIO().start().waitFor()
-      }.as(CliResult.ok)
+      val envEditor = pickEditor(sys.env.get("EDITOR"), sys.env.get("VISUAL"))
+      if needsEditorFallback(hasInteractiveTerminal, envEditor) then
+        // 用 CliResult.Exit 而非 Error：验收要求「仅 H9 逐字、逐字节比对、无额外噪音
+        // 行」，Exit 原样打印（Error 会加 `Error: ` 前缀 ⇒ 首个字节即不符）。
+        IO.pure(CliResult.Exit(1, NoEditorMessage))
+      else
+        val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+        // 优先级链末位 `vi`（既有链形保留）：能走到这里 envEditor 必非空，按 D-H5
+        // 口径该肢不再参战（env 均空已在上方走兜底）。
+        val editor = envEditor.getOrElse("vi")
+        IO.blocking {
+          val pb = new ProcessBuilder((editor.split("\\s+").toList :+ configPath.toString)*)
+          pb.inheritIO().start().waitFor()
+        }.as(CliResult.ok)
 end ConfigCommand
