@@ -943,7 +943,8 @@ class WebSocketRoutes(
 
     case req @ GET -> Root / fileName =>
       val allowed =
-        Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
+        Set("style.css", "app.js", "favicon-32.png", "favicon-16.png", "favicon.ico",
+          "favicon-180.png", "favicon-192.png", "favicon-512.png")
       if allowed.contains(fileName) then
         StaticFile
           .fromResource(s"web/$fileName", Some(req))

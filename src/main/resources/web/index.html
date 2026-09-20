@@ -19,10 +19,15 @@
        (224 canvas with 16/40 margins, so 32/16/48 all land on whole art pixels).
        ?v=5 busts the browser cache for the in-place favicon rewrite — the
        gateway root route only serves a fixed filename whitelist, so the
-       favicon-* names cannot change with the artwork. -->
+       favicon-* names cannot change with the artwork.
+       The 180/192/512 tiers (apple-touch + high-resolution, added 2026-09-20) are the
+       same canonical chain — nearest-neighbor direct, same ?v=5 token. -->
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=5">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=5">
   <link rel="shortcut icon" href="favicon.ico?v=5">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=5">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=5">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=5">
   <link rel="stylesheet" href="vendor/katex.min.css">
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
