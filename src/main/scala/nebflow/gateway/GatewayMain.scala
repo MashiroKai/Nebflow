@@ -131,8 +131,15 @@ object GatewayMain extends IOApp:
     * 抢占者进场窗 → 回落 ensureSingleInstance 既有语义（verified stale 清除 /
     * foreign 大声拒绝——单实例红线零弱化）。等待总超时 → failure 记录 + 弃进场退出
     * （旧实例继续服务 / watchdog 人工兜底）。通过后本进程才写 pid 文件（旧实例的
-    * removePid hook 已随其死亡跑完，无竞删窗口）。普通启动恒为 no-op。 */
-  private def succeedPortGate(cfg: GatewayConfig): IO[Unit] =
+    * removePid hook 已随其死亡跑完，无竞删窗口）。普通启动恒为 no-op。
+    *
+    * **批 2 G3 追加（门口探针端点的生产者侧）**：在写 readyToBind 回执**之前**起一个
+    * loopback 临时端点（[[nebflow.core.hotrestart.ProbeEndpoint]]，与既有健康端点同载荷），
+    * 把端口号写进回执的 `probePort`——使**旧实例**能在交接前**独立**观察「新版本能不能
+    * 服务」（该窗口内共享端口仍属旧实例，直接探它等于探自己；见 `ProbeEndpoint` 的次序
+    * 论证）。端点随交接结束即停（`use` 作用域）；**fail-open**：起不来只记 WARN + 不带
+    * `probePort`（旧实例把第三/四档报 `unverified`），既有交接链零改变。 */
+  private def succeedPortGate(cfg: GatewayConfig, healthMonitor: nebflow.llm.ProviderHealthMonitor): IO[Unit] =
     nebflow.core.hotrestart.SuccessorContext.get match
       case None => IO.unit
       case Some(ctx) =>
@@ -142,24 +149,35 @@ object GatewayMain extends IOApp:
             s"[hot-restart] successor zone A done (pid $pid) — marking readyToBind, waiting for old pid ${ctx.oldPid} to hand over port ${cfg.port.value}"
           )
           .flatMap(_ =>
-            nebflow.core.hotrestart.SuccessorGate.markPhase(ctx.intentPath, "readyToBind")) *>
-          nebflow.core.hotrestart.SuccessorGate.awaitHandover(
-            ctx.oldPid,
-            cfg.port.value,
-            pidAlive = p => IO.blocking(ProcessHandle.of(p).map(_.isAlive).orElse(false)),
-            liveListener = p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))
-          ).flatMap {
-            case Right(()) => IO.unit
-            case Left(err) if err == nebflow.core.hotrestart.SuccessorGate.ForeignOccupantSignal =>
-              logger
-                .warn(
-                  s"[hot-restart] old pid ${ctx.oldPid} dead but port ${cfg.port.value} still served — foreign-preemption window; standard single-instance gate applies")
-                .flatMap(_ => ensureSingleInstance(cfg.port.value))
-            case Left(err) =>
-              nebflow.core.hotrestart.SuccessorGate.markFailed(ctx.intentPath, err).attempt.void *>
-                logger.error(s"[hot-restart] port handover failed: $err — successor exiting (old instance unaffected)") *>
-                IO.raiseError(new IllegalStateException(s"hot-restart port handover failed: $err"))
-          } *>
+            // 门口探针端点（fail-open，交接结束即停）
+            nebflow.core.hotrestart.ProbeEndpoint.start(healthMonitor).flatMap { probe =>
+              val announce = probe.toOption.map(_.port)
+              val announceWarn = probe.fold(
+                err => logger.warn(s"[hot-restart] door probe endpoint unavailable (health gate tiers 3/4 will report unverified): $err"),
+                _ => IO.unit)
+              announceWarn *>
+                nebflow.core.hotrestart.SuccessorGate
+                  .markPhase(ctx.intentPath, "readyToBind", probePort = announce)
+                  .flatMap(_ =>
+                    nebflow.core.hotrestart.SuccessorGate.awaitHandover(
+                      ctx.oldPid,
+                      cfg.port.value,
+                      pidAlive = p => IO.blocking(ProcessHandle.of(p).map(_.isAlive).orElse(false)),
+                      liveListener = p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))
+                    ).flatMap {
+                      case Right(()) => IO.unit
+                      case Left(err) if err == nebflow.core.hotrestart.SuccessorGate.ForeignOccupantSignal =>
+                        logger
+                          .warn(
+                            s"[hot-restart] old pid ${ctx.oldPid} dead but port ${cfg.port.value} still served — foreign-preemption window; standard single-instance gate applies")
+                          .flatMap(_ => ensureSingleInstance(cfg.port.value))
+                      case Left(err) =>
+                        nebflow.core.hotrestart.SuccessorGate.markFailed(ctx.intentPath, err).attempt.void *>
+                          logger.error(s"[hot-restart] port handover failed: $err — successor exiting (old instance unaffected)") *>
+                          IO.raiseError(new IllegalStateException(s"hot-restart port handover failed: $err"))
+                    }).guarantee(probe.toOption.map(_.stop).getOrElse(IO.unit))
+                  .void
+            }) *>
           IO.blocking(writePidFile()) *>
           logger.info(s"[hot-restart] port handover confirmed — successor (pid $pid) owns pid file, binding now")
     end match
@@ -690,7 +708,14 @@ object GatewayMain extends IOApp:
                                   sharedResources,
                                   cfg.port.value,
                                   cfg.host.toString,
-                                  wsHub.broadcast
+                                  wsHub.broadcast,
+                                  // 端口探测能力：复用既有 `SingleInstanceGuard.connectProbeAccepted`
+                                  // （既有调用点即本文件的 succeedPortGate）。core 层不得反向
+                                  // 依赖 cli ⇒ 在**构造点**注入（hotupdate 批 2 G3 第三档）。
+                                  connectProbe = Some(p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))),
+                                  // 安装目录（版本留存 + 指针）：生产装配显式注入（spec 传临时
+                                  // 目录 ⇒ 指针动作旁路，绝不动真实安装）
+                                  installDir = Some(nebflow.core.hotrestart.InstallPointer.defaultInstallDir())
                                 )
                                 // 统一更新编排器（hotupdate 批 1，设计 §4 设计 A）：全部入口
                                 // 只发「更新请求」，由它独占执行；重启相位**一律委托**上面的
@@ -705,7 +730,7 @@ object GatewayMain extends IOApp:
                                     hotRestart = Some(hotRestart),
                                     updateOrchestrator = Some(updateOrchestrator)
                                   )
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> succeedPortGate(cfg) *> {
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> succeedPortGate(cfg, sharedResources.healthMonitor) *> {
                                   val sharedResourcesLive = sharedResourcesWithRestart
                                   // 2026-09-13（permshield S1）：`SessionService` 不再需要
                                   // "档位覆盖快照"入参——档位只有应用级全局持久一源
@@ -1162,9 +1187,19 @@ object GatewayMain extends IOApp:
                                                       // completed 帧（此刻重连尚未发生，帧为 best-
                                                       // effort；验收 1 以 last-restart.json 存在为准）。
                                                       // 普通启动（无 SuccessorContext）恒为 no-op。
+                                                      //
+                                                      // **批 2 G3 追加：绑定后健康自检（交接后短窗口内的判据）**
+                                                      // 真端口已在手 ⇒ 第三/四档对**真端口**取证（真 socket +
+                                                      // 真 HTTP + 真载荷），不需要探针端点。判据通过 ⇒ 下面既有的
+                                                      // 终态链原样执行；判据失败 ⇒ **不写「已完成」**，改为：
+                                                      // ① 指针化回滚（切回上一版 + 复起上一版，走既有后继协议）
+                                                      // ② 落盘 rollback.json（诊断面）+ restartStatus 的 rolled-back 帧
+                                                      // ③ 本进程退出，把端口让给上一版（既有 let-handover-machinery）
+                                                      // fail-open：自检自身异常/无期望版本 ⇒ `unverified`（大声记名，
+                                                      // 不当失败）——既有启动链零回归；见 `HealthCheck`。
                                                       _ <- nebflow.core.hotrestart.SuccessorContext.get.traverse_ { ctx =>
                                                         val newPid = ProcessHandle.current.pid
-                                                        nebflow.core.hotrestart.SuccessorGate
+                                                        val complete = nebflow.core.hotrestart.SuccessorGate
                                                           .writeSuccessor(PathUtil.dataRoot, ctx.generation, newPid) *>
                                                           nebflow.core.hotrestart.SuccessorGate
                                                             .archiveIntent(PathUtil.dataRoot) *>
@@ -1179,6 +1214,52 @@ object GatewayMain extends IOApp:
                                                           logger.info(
                                                             s"[hot-restart] handover complete — successor pid $newPid serving, intent archived (generation ${ctx.generation}, old pid ${ctx.oldPid})"
                                                           )
+                                                        val installDir = nebflow.core.hotrestart.InstallPointer.defaultInstallDir()
+                                                        nebflow.core.hotrestart.InstallPointer.expectedVersion(installDir).flatMap { expected =>
+                                                          nebflow.core.hotrestart.HealthCheck
+                                                            .afterBind(
+                                                              cfg.port.value,
+                                                              sharedResources.healthMonitor,
+                                                              expected,
+                                                              nebflow.core.hotrestart.HealthCheck.Timeouts.T3PortServingMs,
+                                                              nebflow.core.hotrestart.HealthCheck.Timeouts.T4VersionMatchMs,
+                                                              nebflow.core.hotrestart.HealthCheck.Timeouts.PollMs
+                                                            )
+                                                            .handleErrorWith(e =>
+                                                              logger
+                                                                .warn(s"[hotupd] post-bind health self-check raised (treated as unverified, boot continues): ${e.getMessage}")
+                                                                .as(nebflow.core.hotrestart.HealthReport(Nil)))
+                                                            .flatMap { report =>
+                                                              if report.isHealthy then
+                                                                report.unverified.traverse_(u =>
+                                                                  logger.warn(
+                                                                    s"[hotupd] post-bind health tier UNVERIFIED (${u.tier.wire}): ${u.detail} — recorded, never reported as pass")) *> complete
+                                                              else
+                                                                val reason = s"post-bind health self-check failed: ${report.failed.map(_.detail).getOrElse("unknown")} [${report.detail}]"
+                                                                val rollback = new nebflow.core.hotupdate.Rollback(
+                                                                  installDir = installDir,
+                                                                  dataRoot = PathUtil.dataRoot,
+                                                                  host = ctx.host,
+                                                                  port = ctx.port)
+                                                                logger.error(s"[hotupd] $reason — rolling back to the retained previous version (pointer-authoritative)") *>
+                                                                  rollback.run(reason).flatMap { outcome =>
+                                                                    wsHub.broadcast(
+                                                                      io.circe.Json.obj(
+                                                                        "type" -> "restartStatus".asJson,
+                                                                        "phase" -> "rolled-back".asJson,
+                                                                        "detail" -> outcome.fold(
+                                                                          err => s"rollback incomplete: $err — pointers and diagnostics are on disk; see the safe-boot path",
+                                                                          o => s"new version ${o.fromVersion} failed its health self-check — rolled back to ${o.toVersion} (jar ${o.jar}); previous version relaunching"
+                                                                        ).asJson
+                                                                      )
+                                                                    ) *>
+                                                                      logger.error(
+                                                                        s"[hotupd] ROLLBACK outcome: ${outcome.fold(identity, o => s"${o.fromVersion} -> ${o.toVersion}")} — this process exits so the previous version can take the port"
+                                                                      ) *>
+                                                                      IO.raiseError(new IllegalStateException(s"new version failed the post-bind health self-check: $reason — rolled back to the retained previous version"))
+                                                              }
+                                                            }
+                                                        }
                                                       }
                                                       // Register bridge as WsHub listener for agent events
                                                       _ <- wsHub.register(json =>

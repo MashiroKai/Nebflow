@@ -804,10 +804,18 @@ object AgentActor extends AgentCore with AgentSession:
   private def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(using
     ctx: ActorContext[AgentCommand]
   ): IO[Unit] =
+    // P0-2（spec §2.5）：会话终态清空 MCP 审批卡的 scope=session 放行记忆 ——
+    // 「不落盘 + 会话终态失效 ⇒ 零跨会话残留」。**放在 depth 判据之外**：子代理会话
+    // （depth>0）的放行记忆同样必须随其终态释放（否则 map 只增不减）。
+    // 只清本会话键（`SessionApprovals.clear(sessionId)` 幂等）。
+    val clearMcpSessionApprovals =
+      IO.delay(nebflow.core.SessionApprovals.clear(state.sessionId.getOrElse("")))
+        .handleErrorWith(_ => IO.unit)
     if state.depth == 0 then
       val hookCtx = buildHookContext(state)
-      ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
-    else IO.unit
+      clearMcpSessionApprovals *>
+        ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
+    else clearMcpSessionApprovals
 
   /**
    * #391 机制 E：restart/Stop 联动——杀该 session 全部 shell 进程树（前台 +

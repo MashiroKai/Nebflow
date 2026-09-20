@@ -645,9 +645,18 @@ case class AgentRecord(
 // 因此一并删除，不留无人消费的字段。
 // ============================================================
 
-/** Interaction kind — what the user is being asked (P2). */
+/** Interaction kind — what the user is being asked (P2).
+  *
+  * P0-1 / P-M1（2026-09-20，机制裁点 S3 = a）：新增第三种 kind `McpPermission`
+  * —— MCP / ScriptTool 调用的审批卡。与既有两种的关系（spec §2.4 + roadmap §2.2 A10）：
+  *   · `Permission`：内置工具审批卡（`type=askPermission`；payload 带完整 `input`）
+  *   · `AskUser`：提问卡（唯一进 chat-input passthrough 的 kind）
+  *   · `McpPermission`：**新 kind**（`type=mcpPermission`）——payload/answer 形状与
+  *     `Permission` 分化（凭据 redact 摘要 + riskTier/declared/hostBanner），
+  *     升级选项按 tier 门控；不新建机制，只加分支（零渲染层重构）。
+  */
 enum InteractionKind:
-  case Permission, AskUser
+  case Permission, AskUser, McpPermission
 
 /**
  * Reply target for an interaction request (P2). Held by the InteractionHub —
@@ -660,6 +669,13 @@ sealed trait InteractionReply
 object InteractionReply:
   final case class PermissionReply(deferred: cats.effect.Deferred[IO, Boolean]) extends InteractionReply
   final case class AskUserReply(replyTo: Option[ActorRef[List[String]]]) extends InteractionReply
+  /** P0-1（spec §2.4/§2.5）：mcpPermission 卡的答复面。比 `PermissionReply` 多带
+    * 可选 `scope`（P0-2 会话放行）与 `upgradeMode`（递进放行，走既有
+    * `PermissionUpgrade.parse` 语义，零改动）——故独立 reply 型别而非扩既有型别
+    * （内置工具审批链逐字不动，A1-8 零回归）。
+    */
+  final case class McpPermissionReply(deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer])
+      extends InteractionReply
 
 /**
  * Unified interaction request (P2). ForwardPermission/ForwardAskUser are gone:

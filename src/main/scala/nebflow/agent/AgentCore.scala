@@ -1113,6 +1113,11 @@ private[agent] trait AgentCore:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val nextTurnIdx = state.turnIdx + 1
     val permissionDeferredRef = cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
+    // P0-1 / P-M1（2026-09-20）：mcpPermission 卡的答复槽（`{approved, scope?, upgradeMode?}`）。
+    // 与 permissionDeferredRef 并列、独立型别 —— 内置工具审批链的类型/语义零改动（A1-8）。
+    // turn 级生命周期与 permissionDeferredRef 一致（turn 结束自然清零）。
+    val mcpPermissionAnswerRef =
+      cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]]](None)
     // #12 劝停：同 turn 同工具的用户拒绝计数（per-turn lifecycle 与
     // permissionDeferredRef 一致——turn 结束自然清零）。
     val permissionDenialsRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
@@ -1280,7 +1285,7 @@ private[agent] trait AgentCore:
                 )
               ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
                 .flatTap(r => logToolStructured(call, callCtx, r))
-            else permissionDecision(resources, call)
+            else permissionDecision(resources, call, sessionIdOpt.getOrElse(""))
               .flatMap {
                 case PermissionDecision.Allow =>
                   // 2026-09-10 卡死判据换轴：工具**开始**点——记当前工具相位
@@ -1307,6 +1312,16 @@ private[agent] trait AgentCore:
                     executeTool(call, callCtx)
                   )
                 case PermissionDecision.Ask => askUserPermission(call, state, resources, permissionDeferredRef, permissionDenialsRef, callCtx)
+                case PermissionDecision.AskMcp(outcome) =>
+                  askMcpPermission(
+                    call,
+                    outcome,
+                    state,
+                    resources,
+                    mcpPermissionAnswerRef,
+                    permissionDenialsRef,
+                    callCtx
+                  )
               }
           )
             .map(r => (call, r))
@@ -1477,18 +1492,53 @@ private[agent] trait AgentCore:
    * 判定顺序：可逆（按档位规则）→ 直接放行；否则 → 出确认卡（Ask）。
    * （此前的 `deny`/`allow` 工具名单来自每会话 `PermissionPolicy`，全仓从未有写入点
    * ——恒空，随桶一并删除；`Deny` 分支因此不可达，已移除。）
+   *
+   * P0-1 / P-M1（2026-09-20）插点：**MCP / ScriptTool 面**在 `isReversible` 之前改走
+   * `McpToolGate.decide`（面判定为 None 的内置工具 ⇒ 上述原路径逐字不变）。
    */
   private enum PermissionDecision:
     case Allow, Ask
+    /** P0-1（spec §2.3）：MCP / ScriptTool 面命中审批门且需出卡 —— 携带门判定结果供
+      * 卡面构造（tier / declared / hostBanner / 遮蔽摘要）与审计使用。 */
+    case AskMcp(outcome: nebflow.core.McpGateOutcome)
 
   private def permissionDecision(
     resources: SharedResources,
-    call: ToolCall
+    call: ToolCall,
+    sessionId: String
   ): IO[PermissionDecision] =
-    resources.effectiveSafetyMode.map { mode =>
-      if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
-      else PermissionDecision.Ask
+    resources.effectiveSafetyMode.flatMap { mode =>
+      // P0-1 / P-M1 插点（spec §2.3）：工具名命中 MCP / ScriptTool 注册面时，在
+      // `ToolReversibility.isReversible` 分支**之前**改走 `McpToolGate.decide`。
+      //
+      // 面判定为 None（内置工具：Read/Write/Edit/Bash/Curl/Pop/…) ⇒ 走原路径**逐字不变**
+      // —— `isReversible` 函数体与调用形状零改动（验收 A1-8 零回归的机械保证）。
+      nebflow.core.McpToolGate.surfaceOf(call.name) match
+        case Some(ref) =>
+          val outcome = nebflow.core.McpToolGate.decide(ref, call.input, mode, sessionId)
+          auditMcpGate(outcome, mode, sessionId) *>
+            IO.pure(
+              if outcome.allowed then PermissionDecision.Allow else PermissionDecision.AskMcp(outcome)
+            )
+        case None =>
+          IO.pure(
+            if ToolReversibility.isReversible(call.name, call.input, mode) then PermissionDecision.Allow
+            else PermissionDecision.Ask
+          )
     }
+
+  /** spec §2.3 末条：每次 Ask / Allow 落结构化审计面（tier / declared / 来源齐备）。
+    * 审计面 = 既有 `nebflow.audit` 单点（与 InteractionHub 的 ask/answer 审计同族；
+    * 零新存储、零新事件类型）。best-effort：审计失败绝不改变判定。 */
+  private def auditMcpGate(
+    outcome: nebflow.core.McpGateOutcome,
+    mode: nebflow.core.SafetyMode,
+    sessionId: String
+  ): IO[Unit] =
+    nebflow.core.NebflowLogger
+      .forName("nebflow.audit")
+      .info(nebflow.core.McpToolGate.auditLine(outcome, mode, sessionId))
+      .handleErrorWith(_ => IO.unit)
 
   private def askUserPermission(
     call: ToolCall,
@@ -1643,6 +1693,131 @@ private[agent] trait AgentCore:
     end for
 
   end sendPermissionRequest
+
+  // ============================================================
+  // P0-1 / P-M1（2026-09-20）：mcpPermission 卡的等待链 + 发送链
+  //
+  // 与 `askUserPermission` / `sendPermissionRequest` 的关系（**刻意同构、不合并**）：
+  //   · 同款等待语义：WaitingForUser 标记对、**无超时**（R1）、Interrupt 唯一出口、
+  //     拒绝计数 + #12 劝停文案。
+  //   · 分化的卡面与答复面：payload 由 `McpToolGate.cardPayload` 产出
+  //     （riskTier/declared/hostBanner/凭据 redact 摘要）；答复型别
+  //     `McpPermissionAnswer`（approved 必需 + scope/upgradeMode 可选）。
+  //   · 不改造既有者 ⇒ 内置工具审批链类型与语义零改动（验收 A1-8）。
+  // ============================================================
+
+  /** mcpPermission 卡：等待用户批答（无超时）。 */
+  private def askMcpPermission(
+    call: ToolCall,
+    outcome: nebflow.core.McpGateOutcome,
+    state: AgentState,
+    resources: SharedResources,
+    answerRef: Ref[IO, Option[cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]]],
+    permissionDenialsRef: Ref[IO, Map[String, Int]],
+    toolCtx: ToolContext
+  )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
+    resources.effectiveSafetyMode.flatMap { effectiveMode =>
+      val currentMode = nebflow.core.SafetyMode.toString(effectiveMode)
+      answerRef.modify {
+        case existing @ Some(_) =>
+          val r = ToolExecResult("Another permission request is already pending", isError = true)
+          (existing, logToolStructured(call, toolCtx, r).as(r))
+        case None =>
+          val deferred = cats.effect.Deferred.unsafe[IO, nebflow.core.McpPermissionAnswer]
+          (
+            Some(deferred),
+            IO(nebflow.core.McpToolGate.cardPayload(outcome, currentMode)).flatMap { cardJson =>
+              val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
+              val sourceSession = state.sessionId.getOrElse("")
+              val rootSessionId =
+                Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
+              for
+                // R2：等待期标记 WaitingForUser（与内置审批卡同款，watcher 不误判 stuck）
+                _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)
+                _ <- sendMcpPermissionRequest(toolCtx, state, cardJson, deferred, sourceAgent, sourceSession, rootSessionId)
+                // R1：无限等待（无超时、无自动拒绝）
+                answer <- AgentCore.awaitMcpPermissionDecision(deferred)
+                _ <- answerRef.set(None)
+                _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Processing)
+                result <-
+                  if answer.approved then executeTool(call, toolCtx)
+                  else
+                    // 拒绝路径语义 = 现内置 deny 分支同款：调用返回 deny 结果给模型（spec §2.3）
+                    // （P0-2 的 scope=session 由 InteractionHub 在答复单点记录，见 InteractionHub.complete）
+                    permissionDenialsRef.modify { m =>
+                      val n = m.getOrElse(call.name, 0) + 1
+                      (m.updated(call.name, n), n)
+                    }.flatMap { n =>
+                      val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
+                      logToolStructured(call, toolCtx, r).as(r)
+                    }
+              yield result
+            }
+          )
+      }.flatten
+    }
+
+  /** mcpPermission 卡发送（InteractionHub 单点渲染；归属字段与内置卡同款补齐）。
+    *
+    * 无 hub 时（early boot / 隔离单测）**fail-closed**：审批门不得因「问不到人」而静默放行
+    * （spec §2.2 缺省 confirm 的 fail-safe 方向）⇒ 立即以 approved=false 完成答复，
+    * 调用走 deny 路径。 */
+  private def sendMcpPermissionRequest(
+    toolCtx: ToolContext,
+    state: AgentState,
+    cardJson: Json,
+    deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer],
+    sourceAgent: String,
+    sourceSession: String,
+    rootSessionId: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    val resourcesOpt = toolCtx.sharedResources
+    for
+      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
+      recordOpt <- resourcesOpt
+        .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
+      flowOpt = (teamOpt, recordOpt, state.sessionName) match
+        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
+          Some(sn.takeWhile(_ != '/'))
+        case _ => None
+      enrichment =
+        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
+        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
+        teamFld.deepMerge(flowFld)
+      enriched = cardJson.deepMerge(enrichment)
+      _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
+        case Some(hub) =>
+          (hub ! InteractionHubCommand.Request(
+            InteractionRequest(
+              requestId = InteractionRequestId.forPermission(),
+              kind = InteractionKind.McpPermission,
+              payload = enriched,
+              reply = InteractionReply.McpPermissionReply(deferred),
+              rootSessionId = rootSessionId,
+              sourceAgent = sourceAgent,
+              sourceSession = sourceSession
+            )
+          )).void
+        case None =>
+          IO.delay(
+            NebflowLogger
+              .forName("nebflow.audit")
+              .infoSync(
+                s"event=mcpGate permission-card-unavailable session=$sourceSession " +
+                  s"agent=$sourceAgent tool=${cardJson.hcursor.downField("toolName").as[String].toOption.getOrElse("-")}" +
+                  " — no InteractionHub spawned; failing CLOSED (deny)"
+              )
+          ).handleErrorWith(_ => IO.unit) *>
+            deferred
+              .complete(nebflow.core.McpPermissionAnswer(approved = false, scope = None, upgradeMode = None))
+              .void
+              .handleErrorWith(_ => IO.unit)
+      }
+    yield ()
+
+    end for
+
+  end sendMcpPermissionRequest
 
   /** 方案 B（审计 20260903）：结构化工具执行写入——经 ToolsLogWriter 异步落盘
     * tools JSONL。所有产出 ToolExecResult 的路径（executeToolInner 内外）
@@ -2504,6 +2679,17 @@ object AgentCore:
    * honored). Caller: AgentCore.askUserPermission (the only permission wait).
    */
   def awaitPermissionDecision(deferred: cats.effect.Deferred[IO, Boolean]): IO[Boolean] =
+    deferred.get
+
+  /**
+   * P0-1（2026-09-20）：mcpPermission 卡的等待原语 —— 与 [[awaitPermissionDecision]]
+   * **同一不变式**（只由用户答复完成、无超时、Interrupt 唯一出口），只是答复型别
+   * 携带 `scope` / `upgradeMode`（spec §2.4）。第二个 seam 而非改造第一个：
+   * 内置工具审批链的等待语义逐字不变（A1-8）。
+   */
+  def awaitMcpPermissionDecision(
+    deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]
+  ): IO[nebflow.core.McpPermissionAnswer] =
     deferred.get
 
   /**

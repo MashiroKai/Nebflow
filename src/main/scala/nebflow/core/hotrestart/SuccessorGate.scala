@@ -32,7 +32,12 @@ final case class HotRestartIntent(
     * 中止路径改写 "failed"（failure 字段带原因）。 */
   phase: String,
   ts: Long,
-  failure: Option[String] = None
+  failure: Option[String] = None,
+  /** 后继在门口公告的 **loopback 探针端口**（hotupdate 批 2 G3；`127.0.0.1:<probePort>`
+    * 上由后继提供与既有健康端点同一载荷的临时端点）。旧实例据此做第三/四档**独立**
+    * 观察。None = 探针端点不可用（legacy 后继 / 起步失败）——旧实例把该两档报
+    * `unverified`，**不静默通过**。向后兼容：旧 intent 无本字段 ⇒ 解码为 None。 */
+  probePort: Option[Int] = None
 )
 
 object HotRestartIntent:
@@ -86,11 +91,20 @@ object SuccessorGate:
     }
 
   /** 回写 phase（read-modify-write 原子；文件缺失 no-op——中止路径竞态下文件可能
-    * 已被归档）。 */
-  def markPhase(path: os.Path, phase: String, failure: Option[String] = None): IO[Unit] =
+    * 已被归档）。`probePort` 非空时一并写入（后继门口的探针端点公告，G3 第三档的
+    * 证据来源；既有调用方不传 ⇒ 字段保持原值/None，行为零变）。 */
+  def markPhase(
+    path: os.Path,
+    phase: String,
+    failure: Option[String] = None,
+    probePort: Option[Int] = None
+  ): IO[Unit] =
     readIntent(path).flatMap {
       case None => IO.unit
-      case Some(intent) => writeIntent(path, intent.copy(phase = phase, failure = failure))
+      case Some(intent) =>
+        writeIntent(
+          path,
+          intent.copy(phase = phase, failure = failure, probePort = probePort.orElse(intent.probePort)))
     }
 
   /** 中止路径失败记录（验收 4/5：intent failure 记录三有一）。 */
