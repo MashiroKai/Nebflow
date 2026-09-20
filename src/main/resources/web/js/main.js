@@ -2801,7 +2801,18 @@ onMessage('user', (msg, view) => {
     // 旧帧缺该字段 ⇒ null（同 intake：缺席即回落，逐字不变）。
     saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null }, sid);
   }
-  if (sid === state.activeSessionId && view) {
+  // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
+  // whose sessionId is the globally active session renders into the active view.
+  // Second disjunct adds the sub-agent case: a node-/dispatcher- frame keeps its
+  // OWN sessionId (NodeRunner.routeSubagentWsSend), so it can never satisfy the
+  // first disjunct — it may render ONLY into the popup view that owns its
+  // nodeSessionId. `view === activeView` is required because renderInjectedBubble
+  // targets activeView; `activeView.sessionId === msg.nodeSessionId` is the
+  // ownership test (a different sub-agent's frame must not land in this window).
+  // Frames WITHOUT nodeSessionId cannot satisfy the second disjunct at all, so
+  // their behaviour is bit-for-bit the pre-existing one.
+  if ((sid === state.activeSessionId && view) ||
+      (view && view === activeView && msg.nodeSessionId && activeView.sessionId === msg.nodeSessionId)) {
     // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
     // 缺席（旧帧 / 词表外 source）时 `buildInjectedRow` 回落既有标签组装。
     renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header);
