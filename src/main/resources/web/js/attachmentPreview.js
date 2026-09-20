@@ -44,16 +44,23 @@ const BLOB_ITEM_TYPES = new Set(['image', 'pdf', 'docx', 'xlsx', 'pptx', 'epub']
  *  （见 `.nebflow/reports/20260915_attbrowsersem-impl.md` 开放项 1）。 */
 const EXCLUDED_ITEM_TYPES = new Set(['html']);
 
-/** 文本预览上限：与 `pop.readFile` 的 10MB 闸**同值同源**（禁第二把尺）。 */
-const MAX_TEXT_BYTES = 10 * 1024 * 1024;
+/** 打开路径的文本预览上限：与 gateway `pop.readFile` 的**打开闸**同值同源
+ *  （禁第二把尺）。2026-09-20 作者令「canvas 的文件大小限制太小了……提高到
+ *  100MB」⇒ 两端同批 10MB → 100MB（服务端常量 = `WebSocketRoutes.MaxPopReadFileBytes`）。 */
+const MAX_TEXT_BYTES = 100 * 1024 * 1024;
 
 /** 对话框内**直显**图片附件的字节上限（uifix 批 2026-09-17）。
  *
- *  刻意**同值同源**于本文件的 `MAX_TEXT_BYTES`：两者都是「一件附件可以进页面」
- *  的同一把尺（同一份字节从同一条鉴权路由取回），分头写两个字面量迟早漂移。
- *  超限 ⇒ 不直显（回落既有附件卡：名称/体积/下载键），**不**做部分渲染、
- *  **不**报错——降级是可见的（卡片本身即说明面）。 */
-export const MAX_INLINE_IMAGE_BYTES = MAX_TEXT_BYTES;
+ *  ⚠ 2026-09-20（打开闸 10MB→100MB 批）：本值**刻意从 `MAX_TEXT_BYTES` 解耦**并
+ *  保持原值 10MB。两把尺管的是两件事——
+ *    · `MAX_TEXT_BYTES` = 「一件附件能不能**进页面打开**」（打开闸，随作者令上移）；
+ *    · 本值 = 「对话框内**直显**一张图片附件的字节成本」（内联/直显预算族，
+ *      作者本批明令零触碰：图片内联 5MB 闸 + `data:` URI 40k 闸同族）。
+ *  解耦前两者是同一个字面量，闸上移会顺带把直显预算放宽到 100MB —— 那是越面改动；
+ *  解耦后本值行为**逐字不变**：超限仍走既有降级（附件卡原样：名称/体积/下载键），
+ *  **不**做部分渲染、**不**报错。
+ *  消费方不变（`messages.js::attachInlineImage` / 本机缩略帧预算，见 messages.js:1945-1947）。 */
+export const MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** 「这件附件是不是图片」——**判据单源**（uifix 批 2026-09-17）。
  *

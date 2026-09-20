@@ -1943,8 +1943,10 @@ function paintInlineFrame(img, url, dims) {
  *  · **零新真源**：不新增端点、不新增票据类型、不新增 URL 拼接（nf-file 的 URL
  *    拼法仍由 `nfTicket.ticketUrl` 单点产出）。
  *  · **零新增内联预算**：字节上限复用 `attachmentPreview.js` 的
- *    `MAX_INLINE_IMAGE_BYTES`（**同值同源于** `MAX_TEXT_BYTES` 的 10MB —— 同一份
- *    字节从同一条鉴权路由取回，禁第二把尺）。超限 ⇒ 不直显（卡片原样，可见降级）。
+ *    `MAX_INLINE_IMAGE_BYTES`（内联/直显预算族的既有尺；2026-09-20 打开闸批
+ *    10MB→100MB 时**刻意保持 10MB** 并与打开闸尺 `MAX_TEXT_BYTES` 解耦 —— 打开闸
+ *    管「能不能打开」，本尺管「对话框内直显的字节成本」，超限 ⇒ 不直显（卡片原样，
+ *    可见降级））。
  *  · **失败失败静默、可行动**：取字节失败 ⇒ 摘掉直显槽、卡片原样（下载键/预览腿
  *    仍在）⇒ 不造破图、不静默无反应。
  *
