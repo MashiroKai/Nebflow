@@ -510,6 +510,14 @@ export default {
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
   'messages.send': 'Send',
+  // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
+  // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback
+  // in messages.js). The code set lives in friendsApi.js `FRIEND_TERMINAL_CODES`.
+  // zh + en in one batch (no single-language additions).
+  'messages.friendNotFriends': 'You are no longer friends — the message was not sent',
+  'messages.friendNotBlocker': 'You have not blocked this user, so that action is not available',
+  'messages.friendReplyTargetInvalid': 'The quoted message is no longer available — the message was not sent',
+  'messages.sendFailedCode': 'Send failed ({code})',
   'messages.yesterday': 'Yesterday',
   'messages.ariaUnread': '{n} unread messages',
   'messages.copy': 'Copy',

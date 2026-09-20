@@ -1697,8 +1697,16 @@ class RestApiRoutes(
                 .filter(_ > 0)
               if text.isEmpty && attachmentIds.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
               else
-                fs.sendAsUser(friendUserId, text, attachmentIds, clientMsgId, replyToMessageId)
-                  .flatMap(friendResult)
+                // rcptcode 批（好友腿终态码 502 折叠修复 · 折叠点 ②）：本路由改走
+                // **保留状态码**通道 —— `sendAsUserWithStatus` + 既有唯一映射器
+                // `groupProxyResult`（上游状态码逐字 + 体优先 JSON；`Left` 仍走
+                // `friendErr` ⇒ 传输失败 502 / 未登录三态**逐字不变**）。
+                // 🔴 为什么不新写第二套映射：群腿 `groupSendProxy` 与附件腿已各自透传，
+                // `(status, body) ⇒ Response` 只有 `groupProxyResult` 这一个事实源。
+                // 🔴 本路由是好友域**唯一**采用该通道的腿（其余 20+ 好友路由继续折叠 ——
+                // 是否推广是另一刀；`GET /friends` 的 502 是 F4 有意为之，勿顺手改）。
+                fs.sendAsUserWithStatus(friendUserId, text, attachmentIds, clientMsgId, replyToMessageId)
+                  .flatMap(groupProxyResult)
             }
       }
 
@@ -2322,7 +2330,11 @@ class RestApiRoutes(
     *  - `"Not logged in"` **且未配置** ⇒ **404** `NebLink not enabled`
     *    （与修前 wire 契约逐字一致——缺了这条就是净回归：前端把 502 认成
     *    `retryable`、重试恒无效）。
-    *  - 其余上游错误 ⇒ **502**（不变）。
+    *  - 其余上游错误 ⇒ **502**（不变）。🟡 **例外（rcptcode 批，2026-09-20）**：好友
+    *    **发送**路由（`POST /friends/{id}/messages`）已改走「保留状态码」通道
+    *    （`sendAsUserWithStatus` + `groupProxyResult`）⇒ 该腿的上游 4xx/5xx **逐字**
+    *    到达客户端、**不经本判据**；其余好友路由（列表/请求/备注/拉黑/已读/搜索）
+    *    **继续**走本判据（是否推广是另一刀）。
     */
   private def friendErr(err: String): IO[Response[IO]] =
     if err != "Not logged in" then BadGateway(Json.obj("error" -> err.asJson))

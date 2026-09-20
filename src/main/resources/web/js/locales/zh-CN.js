@@ -511,6 +511,13 @@ export default {
   'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
   'messages.send': '发送',
+  // rcptcode 批（2026-09-20）：好友腿**终态**分态文案（消费点 = `messages.js` 的
+  // `FRIEND_TERMINAL_TEXT` 白名单 + 未知码回退 `sendFailedCode`）。码集 = `friendsApi.js`
+  // 的 `FRIEND_TERMINAL_CODES`（同源单表）。中英同批新增（禁单语新增）。
+  'messages.friendNotFriends': '你们已不是好友，消息未发送',
+  'messages.friendNotBlocker': '你并未拉黑对方，该操作不可用',
+  'messages.friendReplyTargetInvalid': '被引用的消息已不可用，消息未发送',
+  'messages.sendFailedCode': '发送失败（{code}）',
   'messages.yesterday': '昨天',
   'messages.ariaUnread': '{n} 条未读消息',
   'messages.copy': '复制',
