@@ -988,6 +988,14 @@ export default {
   'chat.timeout': 'Still processing',
   'chat.stillProcessing': 'Still processing — no new progress yet',
   'chat.stillProcessing.interrupt': 'Interrupt and retry anyway',
+  // freezetimeout obsfix micro-batch ① (author order: "truthful copy in the
+  // true-dead state") — new §16 verbatim entry for the watchdog's true-dead
+  // branch (ladder topped out ∧ (socket closed ∨ no liveness evidence)), which
+  // replaces the inherited 'chat.timeout' ("Still processing") — showing
+  // "still processing" on a dead connection contradicts the state (verdict
+  // O-1). The frozen 'chat.timeout' value is untouched ⇒ the slow branch and
+  // the backend timeout-frame path are unchanged.
+  'chat.connectionLost': 'Connection lost — click to retry',
   'chat.retry': 'Retry',
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).

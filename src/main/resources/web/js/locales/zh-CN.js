@@ -957,6 +957,11 @@ export default {
   'chat.timeout': '仍在处理',
   'chat.stillProcessing': '仍在处理，暂未收到新进展',
   'chat.stillProcessing.interrupt': '仍要中断并重试',
+  // freezetimeout obsfix 微批 ①（作者令「真死文案如实态」）· §16 逐字表新增 1 条 key：
+  // 看门真死分支（阶梯到顶 ∧（WS 已断 ∨ 无任何活性证据））的断开如实态文案，
+  // 替代原先沿用的 `chat.timeout`「仍在处理」（真死态显示「仍在处理」语义相悖，
+  // 判词位 O-1）。`chat.timeout` 冻结值维持不动 ⇒ 慢速分支与后端 timeout 帧路径零变动。
+  'chat.connectionLost': '连接已断开，点击重试',
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
