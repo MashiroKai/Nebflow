@@ -25,6 +25,7 @@ import {
   renderUserBubble, renderInjectedBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
+  feedBusyWatchdog, removeStillProcessingNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
@@ -455,6 +456,9 @@ function armBusyFromStream(sid) {
 // turn ended.
 function clearBusyFor(msg) {
   const sid = msg.sessionId || state.activeSessionId;
+  // freezetimeout B2: 任何终态帧都收掉「仍在处理」行（busy 可能已被别的路径清掉，
+  // 故不依赖下面 clearBusy 的条件分支）。
+  if (sid) removeStillProcessingNotice(sid);
   if (state.busySessionIds.has(sid)) {
     clearBusy(sid);
   }
@@ -501,21 +505,13 @@ function clearBusyFor(msg) {
   const view = findViewBySessionId(sid);
   if (view) view.isSending = false;
 }
-// Helper: reset activity-based stream timeout for a busy session
+// Helper: reset activity-based stream timeout for a busy session.
+// freezetimeout B2 (2026-09-20): 判定/动作已分离，本函数退化为「喂活」——阶梯看门
+// （档位 / 到点判定 / 呈现 / 真死收口）唯一属主 = chat.js#armBusyWatchdog /
+// feedBusyWatchdog / onBusyWatchdogDeadline（诊断施工图 §4.2②③）。
 function resetStreamTimeout(sid) {
   if (!sid || !state.busySessionIds.has(sid)) return;
-  if (state.sessionBusyTimeouts[sid]) {
-    clearTimeout(state.sessionBusyTimeouts[sid]);
-  }
-  state.sessionBusyTimeouts[sid] = setTimeout(() => {
-    if (state.busySessionIds.has(sid)) {
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const v = findViewBySessionId(sid);
-        if (v) { setActiveView(v); renderTimeoutNotice(); clearStatus(); }
-        clearBusy(sid);
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  feedBusyWatchdog(sid);
 }
 
 // ── Freeze schedule (work hours) events ──────────────────────────────────
@@ -773,10 +769,11 @@ onMessage('agentFrozen', (msg, view) => {
   // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
   // ROOT session's turn at its outstanding-subagent barrier — busy stays true
   // with zero activity events, so the root sessionBusyTimeout would false-fire
-  // at streamTimeoutMs+30s, send interrupt and kill a turn that is merely
-  // waiting for the barrier (「冻结期间响应超时」 across a multi-hour freeze).
-  // Mirror the 'frozen' handler (F8/F4): clear the root session's timer;
-  // agentResumed → next activity event re-arms it (existing contract).
+  // at streamTimeoutMs+30s (freezetimeout B2 前：发 interrupt 掐掉仍在等屏障的
+  // turn，即「冻结期间响应超时」；B2 后：到点只呈「仍在处理」，不再动手——本处
+  // 抑制仍保留，免去无谓的呈现)。Mirror the 'frozen' handler (F8/F4): clear the
+  // root session's timer; agentResumed → next activity event re-arms it
+  // (existing contract).
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];

@@ -842,31 +842,31 @@ export function send() {
   v.stream.aiText = '';
   v.stream.currentThinkingBubble = null;
   v.stream.thinkingText = '';
-  // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
-  // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
+  // Safety timeout：后端 'timeout' 事件之外的兜底。freezetimeout B2 —— 到点不再发
+  // interrupt（原实现会掐掉仍在慢速推进的 turn），改由阶梯看门只呈现「仍在处理」。
   const sid = v.sessionId;
-  if (sid && state.sessionBusyTimeouts[sid]) {
-    clearTimeout(state.sessionBusyTimeouts[sid]);
-    delete state.sessionBusyTimeouts[sid];
-  }
-  state.sessionBusyTimeouts[sid] = setTimeout(() => {
-    if (state.busySessionIds.has(sid)) {
-      // Send interrupt to backend so the agent cancels its fiber and returns to idle.
-      // Without this, the frontend clears busy but the backend keeps processing — any
-      // new user message gets stashed and the user sees no response until they manually
-      // click Stop (which does send interrupt).
-      sendWs({type: 'interrupt', sessionId: sid});
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const timeoutView = findViewBySessionId(sid);
-        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
-        clearBusy(sid);
-        clearStatus();
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  armBusyWatchdogFor(sid);
 }
 
 // ---------- Input Queue (messages typed while LLM is busy) ----------
+
+/**
+ * freezetimeout B2 (2026-09-20 · 诊断 chain-n-36a3f13d §4.2②)：新 turn 起点武装阶梯
+ * 看门。判定/动作的唯一属主 = chat.js（armBusyWatchdog / onBusyWatchdogDeadline）——
+ * 本文件原有的三处「到点即 `sendWs({type:'interrupt'})`」破坏性分支全部删除：到点只
+ * 呈现「仍在处理」，中断降级为需用户显式确认。动态 import 沿用本文件的既有口径
+ * （chat.js 侧不反向 import 本模块，静态 import 会成环）。
+ */
+export function armBusyWatchdogFor(sid) {
+  if (!sid) return;
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  import('./chat.js')
+    .then(({ armBusyWatchdog }) => { if (state.busySessionIds.has(sid)) armBusyWatchdog(sid); })
+    .catch((e) => console.error('[input] arm busy watchdog failed:', e));
+}
 
 let queueCounter = 0;
 const LS_QUEUE_KEY = key('message_queue');
@@ -1178,22 +1178,8 @@ export function drainMessageQueue(sessionId) {
   setBusy(sessionId);
   state.turnStartTimes[sessionId] = Date.now();
 
-  // Safety timeout
-  if (state.sessionBusyTimeouts[sessionId]) {
-    clearTimeout(state.sessionBusyTimeouts[sessionId]);
-    delete state.sessionBusyTimeouts[sessionId];
-  }
-  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
-    if (state.busySessionIds.has(sessionId)) {
-      sendWs({ type: 'interrupt', sessionId });
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const timeoutView = findViewBySessionId(sessionId);
-        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
-        clearBusy(sessionId);
-        clearStatus();
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）
+  armBusyWatchdogFor(sessionId);
 
   // Clean up thinking placeholders (only for displayed sessions)
   if (view) {
@@ -1269,22 +1255,8 @@ export function injectUserMessage(text, options = {}) {
   // Only set timer if not already running — don't reset during active turn
   if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
 
-  // Safety timeout (same as normal send)
-  if (state.sessionBusyTimeouts[sessionId]) {
-    clearTimeout(state.sessionBusyTimeouts[sessionId]);
-    delete state.sessionBusyTimeouts[sessionId];
-  }
-  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
-    if (state.busySessionIds.has(sessionId)) {
-      sendWs({type: 'interrupt', sessionId});
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const v = findViewBySessionId(sessionId);
-        if (v) { setActiveView(v); renderTimeoutNotice(); }
-        clearBusy(sessionId);
-        clearStatus();
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  // Safety timeout (same as normal send) —— freezetimeout B2: 到点只呈现，不发 interrupt
+  armBusyWatchdogFor(sessionId);
 
   return true;
 }

@@ -91,6 +91,11 @@ export default {
   // Chat streaming (per-session status sets - view-level state lives on ChatView)
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
+  // freezetimeout B2 (2026-09-20, chain-n-36a3f13d 施工图 §4.2②③): 入站通道活性水位。
+  // ws.js 每收到一帧 WS 消息就推进它 —— 这是「判定模型缺独立活性信号」缺口下**前端
+  // 唯一可得的活性证据**（后端独立通道 = B1，作者裁决项，本批禁碰）。busy 看门在阶梯
+  // 到点时用它区分「慢」与「死」：本档内有过入站帧 ⇒ 只呈现/放宽，绝不进错误态。
+  lastWsInboundAt: 0,
   compactingSessionIds: new Set(),
   // Freeze schedule: sessionId set whose agent is parked at a dispatch boundary
   // (work hours ended after a tool round). Sending a message to a frozen session
