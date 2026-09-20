@@ -191,6 +191,46 @@ final class DropboxService private (
   /** 落盘节流（建议值：5 s；见设计件 §9 P-5）。 */
   private val transfersPersistThrottle = 5.seconds
 
+  // ===== 设备腿速率记忆（xferb 批 · P0-1）=====
+  //
+  // 块大小与单块死线按**实测速率**派生（`AttachContract.adaptiveChunkSize` / `chunkDeadline`）。
+  // 速率的唯一来源 = 真实传输里**成功块**的数据时间（`ChunkedSendLoop.onRate`）；无读数时用
+  // `AssumedMinRateBytesPerSec`（保守）。记忆**按对端设备**分格：
+  //   - 不跨对端借用（跨网络制式的速率不可移植：一个 LAN 对端的读数会把 Tailscale 对端的块撑大）；
+  //   - 内存态（进程重启即回落保守假设）—— 与 `FileTransfer` 一样是**临时态**，
+  //     不作为真相源（真相仍是接收端 temp 的实际长度 + 重算摘要）。
+  private val peerRateRef: cats.effect.Ref[IO, Map[String, Long]] =
+    cats.effect.Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
+  /** 会话速率读数（对该对端设备；`None` = 无实测 ⇒ 由 `AttachContract` 用保守假设）。 */
+  private def peerRateHint(deviceId: String): IO[Long] =
+    peerRateRef.get.map(_.getOrElse(deviceId, 0L))
+
+  /**
+   * 记一次实测速率（**指数滑动平均**，α = 0.5）：单次读数不主导会话块参，
+   * 但一两次慢传输足以把块压小（方向 = 保守）。
+   */
+  private def rememberRate(deviceId: String, measured: Long): IO[Unit] =
+    if measured <= 0L then IO.unit
+    else
+      peerRateRef.update { m =>
+        m.get(deviceId) match
+          case Some(prev) if prev > 0L =>
+            m + (deviceId -> ((prev + measured) / 2L))
+          case _ => m + (deviceId -> measured)
+      }
+
+  /**
+   * 失败后的速率假设下调（**有界减半**，下限 `AttachContract.MinRateBytesPerSec`）：
+   * 一块在死线内没传完 ⇒ 该链路的实际速率 < 块/死线 ⇒ 下次会话取更小的块、更宽的死线。
+   * 依据 = 失败自己的算术（改前失败恒 ≈367 s，与文件大小无关，正是因为参数没跟着链路走）。
+   */
+  private def degradeRate(deviceId: String): IO[Unit] =
+    peerRateRef.update { m =>
+      val prev = m.getOrElse(deviceId, AttachContract.AssumedMinRateBytesPerSec)
+      m + (deviceId -> math.max(AttachContract.MinRateBytesPerSec, prev / 2L))
+    }
+
   private val lastTransfersPersistRef: cats.effect.Ref[IO, Long] =
     cats.effect.Ref.unsafe[IO, Long](0L)
 
@@ -323,16 +363,53 @@ final class DropboxService private (
             logger.warn(s"Cannot deliver dropbox message to $deviceId: no P2P WS and no relay client").as(false)
     }
 
-  /** Mark a transfer + its message as failed and tell the frontend (R3/R4). */
+  /** Mark a transfer + its message as failed and tell the frontend (R3/R4).
+    *
+    * 字符串原因版（信令投递失败一类）：包成结构化错误体（`code = PEER_UNREACHABLE`、
+    * `phase = offer`）后走 [[markTransferFailedWith]] —— 前端/台账因此**恒有**码可判。 */
   private def markTransferFailed(
     transferId: String,
     peerDeviceId: String,
     msgId: String,
     reason: String
   ): IO[Unit] =
+    markTransferFailedWith(
+      transferId,
+      peerDeviceId,
+      msgId,
+      AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, reason, phase = "offer"),
+      resumable = false
+    )
+
+  /**
+   * 失败收口（**结构化原因**，xferb 批 · P0-3）。
+   *
+   * 改前：事件只带一个 `error` 字符串、台账只带 `status="failed"` ⇒ 界面上只剩「失败」，
+   * 而服务端其实知道 `code` / `phase` / `chunkIndex` / `p2pReason` / `relayReason`。
+   * 本方法把这三样**同时**落到三处（第二段直接上屏，无需再补网关面）：
+   *   ① 前端事件 `dropbox-file-complete`：`error`（人读，保留）+ `errorCode` + `errorDetail`（结构化全文）；
+   *   ② 台账（`messages.json`）：`errorCode` + `errorDetail`（刷新/重开窗后原因仍在）；
+   *   ③ 日志：`[CODE] …`（既有形态，可 grep 归因）。
+   *
+   * `resumable`（P0-2）：true ⇒ 对端的半成品 temp **必须保留**（同号重试要接着传），
+   * 随 `file-complete` 帧上 wire（新增键；旧对端忽略未知键 ⇒ 退化为旧的「失败即清 temp」行为，无回归）。
+   */
+  private def markTransferFailedWith(
+    transferId: String,
+    peerDeviceId: String,
+    msgId: String,
+    err: AttachContract.AttachError,
+    resumable: Boolean
+  ): IO[Unit] =
     for
       _ <- updateTransferStatus(transferId, "failed")
-      _ <- updateMessageStatus(peerDeviceId, msgId, "failed")
+      _ <- updateMessageStatus(
+            peerDeviceId,
+            msgId,
+            "failed",
+            errorCode = err.code,
+            errorDetail = err.toJson.noSpaces
+          )
       _ <- notifyFrontend(
             "dropbox-file-complete",
             peerDeviceId,
@@ -340,11 +417,24 @@ final class DropboxService private (
               "transferId" -> transferId.asJson,
               "msgId" -> msgId.asJson,
               "success" -> false.asJson,
-              "error" -> reason.asJson
+              "error" -> err.render.asJson,
+              "errorCode" -> err.code.asJson,
+              "errorDetail" -> err.toJson,
+              "resumable" -> resumable.asJson
             )
           )
-      _ <- logger.warn(s"Dropbox transfer $transferId marked failed: $reason")
+      _ <- logger.warn(s"Dropbox transfer $transferId marked failed: ${err.render} (resumable=$resumable)")
     yield ()
+
+  /** 该失败是否**可续**（P0-2 判据）：失败在**传输态**且原因不是「接收端对内容判否」
+    * （摘要不符 / 空洞 / 越界 ⇒ 半成品无效，保留只会污染下次重试）⇒ 对端 temp 值得保留。
+    * 重试时沿用同一 transferId ⇒ 同 temp ⇒ 探针找得到前缀。 */
+  private def isResumable(err: AttachContract.AttachError): Boolean =
+    err.phase == "transfer" && !Set(
+      AttachContract.Codes.ChunkDigestMismatch,
+      AttachContract.Codes.WholeDigestMismatch,
+      AttachContract.Codes.OffsetOutOfRange
+    ).contains(err.code)
 
   /**
    * R4 timeout watchdog: after `timeout`, if the transfer is still parked in
@@ -352,25 +442,53 @@ final class DropboxService private (
    * lost frame (disconnected peer, dead tunnel) can no longer freeze the UI
    * on「传输中…」forever. Fired as a fire-and-forget fiber; a completion that
    * arrives late (reconnect inside the window) simply no-ops here.
+   *
+   * 🆕 xferb 批：`transferring` 态**进展即续窗**（判据 = `lastProgressAt > since`）——
+   * 见 [[failIfStuck]] 的 WHY。`since` = 本窗装表时刻（默认现读时钟）。
    */
   private def armTransferTimeout(
     transferId: String,
     peerDeviceId: String,
     msgId: String,
     timeout: FiniteDuration,
-    stuckStatuses: Set[String]
+    stuckStatuses: Set[String],
+    since: Long = DropboxModels.now
   ): IO[Unit] =
-    (IO.sleep(timeout) *> failIfStuck(transferId, peerDeviceId, msgId, stuckStatuses)).start.void
+    (IO.sleep(timeout) *> failIfStuck(transferId, peerDeviceId, msgId, stuckStatuses, since)).start.void
 
   private def failIfStuck(
     transferId: String,
     peerDeviceId: String,
     msgId: String,
-    stuckStatuses: Set[String]
+    stuckStatuses: Set[String],
+    since: Long
   ): IO[Unit] =
     transfersRef.get.map(_.get(transferId)).flatMap {
       case Some(t) if stuckStatuses.contains(t.status) =>
-        markTransferFailed(transferId, peerDeviceId, msgId, s"timeout while waiting in '${t.status}' state")
+        // ===== 进展即续窗（xferb 批 · P0-1 的必要件）=====
+        // 改前只判**状态**不判**进展**，于是绝对死线把「慢但正常」的传输一并杀掉：
+        // 实测底座 25–30 KB/s 下 50 MB 需 ≈34 min > 本窗口 31 min ⇒ 达标传输必被误判失败，
+        // 且失败帧会让对端把 temp 删掉（字节白传）。`lastProgressAt` 的语义本就是
+        // 「最近一次字节进展」（字段注释原文如此）⇒ 本处改用「窗口内有进展就再等一窗」。
+        // 🔴 只对 `transferring` 生效（有字节预期的态）；`pending`/`accepted` 无字节预期，
+        // 照旧绝对收口。
+        if t.status == "transferring" && t.lastProgressAt > since then
+          logger.info(
+            s"Dropbox transfer $transferId still transferring and progressing (${t.bytesReceived} B confirmed, " +
+              s"lastProgressAt=${t.lastProgressAt}) — extending the watchdog window instead of failing it"
+          ) *> armTransferTimeout(transferId, peerDeviceId, msgId, transferTimeout, Set("transferring"))
+        else
+          markTransferFailedWith(
+            transferId,
+            peerDeviceId,
+            msgId,
+            AttachContract.AttachError(
+              AttachContract.Codes.TransferTimeout,
+              s"timeout while waiting in '${t.status}' state (${t.bytesReceived} B confirmed, no progress within the window)",
+              phase = "transfer"
+            ),
+            resumable = true
+          )
       case _ => IO.unit
     }
 
@@ -522,7 +640,7 @@ final class DropboxService private (
           .map {
             case Right(_) => base.copy(delivered = true)
             case Left(err) =>
-              base.copy(error = Some(err))
+              base.copy(error = Some(err.render))
           }
           .handleErrorWith {
             case _: java.util.concurrent.TimeoutException =>
@@ -697,21 +815,6 @@ final class DropboxService private (
       attachmentCount = count,
       origin = origin
     )
-    val transfer = FileTransfer(
-      transferId = transferId,
-      direction = "out",
-      peerDeviceId = deviceId,
-      peerAddress = peer.address,
-      fileName = spec.fileName,
-      fileSize = spec.fileSize,
-      mimeType = spec.mimeType,
-      msgId = msgId,
-      status = "pending",
-      totalBytes = spec.fileSize,
-      chunkSize = AttachContract.ChunkSize,
-      proto = AttachContract.ProtoRelayTemp,
-      targetDir = targetDir
-    )
     val payloadBase = Json.obj(
       "kind" -> "file-offer".asJson,
       "senderId" -> id.deviceId.asJson,
@@ -735,20 +838,47 @@ final class DropboxService private (
     val payload = targetDir match
       case Some(d) => payloadBase.deepMerge(Json.obj("targetDir" -> d.asJson))
       case None    => payloadBase
-    for
-      _ <- transfersRef.update(_ + (transferId -> transfer))
-      _ <- addMessage(deviceId, msg)
-      delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
-      _ <-
-        if delivered then
-          // Arm pending-timeout: if the file-response never comes back
-          // (peer/relay down), fail instead of parking on「传输中…」.
-          armTransferTimeout(transferId, deviceId, msgId, offerTimeout, Set("pending")) *>
-            notifyFrontend("dropbox-message", deviceId, msg.asJson)
-        else
-          markTransferFailed(transferId, deviceId, msgId, "file-offer could not be delivered")
-      _ <- persistTransfersThrottled
-    yield transferId
+    // 会话块参（xferb 批 · P0-1）：块大小按**实测速率**反解，缺省回落到保守假设。
+    // 会话内冻结（契约 §3.1），随既有 `chunkSize` 会话值/分块头走 —— **零协议改动**。
+    peerRateHint(deviceId).flatMap { rateHint =>
+      val chunkSize = AttachContract.adaptiveChunkSize(rateHint)
+      val transfer = FileTransfer(
+        transferId = transferId,
+        direction = "out",
+        peerDeviceId = deviceId,
+        peerAddress = peer.address,
+        fileName = spec.fileName,
+        fileSize = spec.fileSize,
+        mimeType = spec.mimeType,
+        msgId = msgId,
+        status = "pending",
+        totalBytes = spec.fileSize,
+        chunkSize = chunkSize,
+        proto = AttachContract.ProtoRelayTemp,
+        targetDir = targetDir
+      )
+      logger.info(
+        s"Dropbox transfer $transferId session chunk params: chunkSize=$chunkSize B, " +
+          s"rateHint=${AttachContract.normalizeRate(rateHint)} B/s, " +
+          s"legDeadlines=(p2p=${AttachContract.p2pDeadline(chunkSize.toLong, rateHint).toMillis}ms, " +
+          s"relay=${AttachContract.relayDeadline(chunkSize.toLong, rateHint).toMillis}ms)"
+      ) *>
+        (for
+          _ <- transfersRef.update(_ + (transferId -> transfer))
+          _ <- addMessage(deviceId, msg)
+          delivered <- sendDataOrRelay(deviceId, "dropbox", payload)
+          _ <-
+            if delivered then
+              // Arm pending-timeout: if the file-response never comes back
+              // (peer/relay down), fail instead of parking on「传输中…」.
+              armTransferTimeout(transferId, deviceId, msgId, offerTimeout, Set("pending")) *>
+                notifyFrontend("dropbox-message", deviceId, msg.asJson)
+            else
+              markTransferFailed(transferId, deviceId, msgId, "file-offer could not be delivered")
+          _ <- persistTransfersThrottled
+        yield transferId)
+    }
+  end offerOne
 
   /** Respond to a file offer (accept or reject). Called by the receiving frontend. */
   def respondToOffer(senderDeviceId: String, transferId: String, accepted: Boolean): IO[Unit] =
@@ -790,17 +920,46 @@ final class DropboxService private (
    * 发送端：前端上传 → 落 temp（**字节流上限兜底** + 单遍整件摘要）→ **分块**送对端
    * （P2P 主腿 + relay 兜底共面）→ 双侧整件摘要比对 → 通知两端。
    *
+   * 🆕 **同号续传入口（xferb 批 · P0-2）**：本端点按 `transferId` 索引，重试**沿用同一号**
+   * 即命中同一会话 ⇒ 接收端 temp 的既有前缀可续（权威 = 探针返回的实际长度）。
+   * 状态门据此放宽为 {`accepted`, `failed`, `transferring`}：
+   *   - `accepted` = 首传；
+   *   - `failed` = 同号重试（前一次失败的收口态；这是本批新增的**合法**入口 ——
+   *     改前 failed 会话一律被拒 ⇒ 「重试」只能在客户端新铸号 ⇒ 已传字节全部作废）；
+   *   - `transferring` = 进程重启后从盘上恢复的未终结会话（`loadTransfers` 只恢复未终结态）。
+   * 🔴 判据边界（照卡 P0-2 的风险项）：**同号 = 重试**、新动作 = 新号（由 offer 侧铸号），
+   * 故不需要额外的时间戳/内容判据 —— 号本身就是入口语义。
+   *
    * `transportOverride` 仅供测试自环注入；生产为 `None` ⇒ 真实两腿。
+   *
+   * 返回面（xferb 批 · P0-3）：从 `Either[String, Unit]` 收紧为
+   * `Either[AttachContract.AttachError, Unit]` —— 调用方（REST 端点 / 工具腿）因此拿到
+   * **结构化**原因（code/phase/字段），而不是一句人读文本。人读面照旧由 `err.render` 提供。
    */
   def uploadAndRelay(
     transferId: String,
     body: Stream[IO, Byte],
     transportOverride: Option[ChunkTransport] = None
-  ): IO[Either[String, Unit]] =
+  ): IO[Either[AttachContract.AttachError, Unit]] =
     transfersRef.get.map(_.get(transferId)).flatMap {
-      case None => IO.pure(Left("Transfer not found"))
-      case Some(t) if t.direction != "out" => IO.pure(Left("Not an outgoing transfer"))
-      case Some(t) if t.status != "accepted" => IO.pure(Left("Transfer not accepted by receiver"))
+      case None =>
+        IO.pure[Either[AttachContract.AttachError, Unit]](
+          Left(AttachContract.AttachError(AttachContract.Codes.SessionNotFound, "Transfer not found", phase = "transfer"))
+        )
+      case Some(t) if t.direction != "out" =>
+        IO.pure[Either[AttachContract.AttachError, Unit]](
+          Left(AttachContract.AttachError(AttachContract.Codes.InvalidArgument, "Not an outgoing transfer", phase = "transfer"))
+        )
+      case Some(t) if !retryableOutStates.contains(t.status) =>
+        IO.pure[Either[AttachContract.AttachError, Unit]](
+          Left(
+            AttachContract.AttachError(
+              AttachContract.Codes.InvalidArgument,
+              s"Transfer not accepted by receiver (status=${t.status})",
+              phase = "transfer"
+            )
+          )
+        )
       case Some(t) =>
         val tempPath = senderTempPath(transferId)
         for
@@ -812,23 +971,29 @@ final class DropboxService private (
             case Left(err) =>
               for
                 _ <- IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
-                _ <- markTransferFailed(transferId, t.peerDeviceId, t.msgId, err.render)
-              yield Left(err.render)
+                _ <- markTransferFailedWith(transferId, t.peerDeviceId, t.msgId, err, resumable = false)
+              yield Left(err)
             case Right(senderWhole) =>
               for
+                rateHint <- peerRateHint(t.peerDeviceId)
                 _ <- updateTransferStatus(transferId, "transferring") *>
                   updateMessageStatus(t.peerDeviceId, t.msgId, "transferring")
                 _ <- armTransferTimeout(transferId, t.peerDeviceId, t.msgId, transferTimeout, Set("transferring"))
-                transport = transportOverride.getOrElse(productionTransport(t))
+                transport = transportOverride.getOrElse(productionTransport(t, rateHint))
                 outcome <- ChunkedSendLoop.run(
                   transport,
                   t,
                   tempPath,
-                  // 会话冻结的块大小（offer 时写入 transfer）；0 = 未协商 ⇒ 契约默认值。
+                  // 会话冻结的块大小（offer 时写入 transfer）；0 = 未协商 ⇒ 契约默认值
+                  // （0 只可能来自旧盘上记录；新会话恒由 `offerOne` 按实测速率反解）。
                   chunkSize = if t.chunkSize > 0 then t.chunkSize else AttachContract.ChunkSize,
-                  onProgress = (idx, received) => recordProgress(transferId, t, idx, received)
+                  onProgress = (idx, received) => recordProgress(transferId, t, idx, received),
+                  onInFlight = (acked, inFlight) => recordInFlightProgress(transferId, t, acked, inFlight),
+                  onRate = rate => rememberRate(t.peerDeviceId, rate)
                 )
                 // ② 一切退出路径都清 temp（修今天「失败分支不删」的泄漏面）。
+                //    🔴 清的是**发送端**自己的暂存件（字节源可重取）；**接收端**的半成品
+                //    temp 由 P0-2 保留（`resumable` 随 file-complete 上 wire）——两者不同轴。
                 _ <- IO.blocking(if os.exists(tempPath) then os.remove(tempPath) else ())
                 out <- outcome match
                   case Right(o) =>
@@ -837,12 +1002,33 @@ final class DropboxService private (
                       s"Dropbox transfer $transferId completed: ${o.chunksSent} chunk(s), ${o.bytesSent} B, " +
                         s"sha256(sender)=$senderWhole sha256(receiver)=${o.receiverComputedSha256} leg=${o.leg}"
                     ) *>
-                      completeTransfer(transferId, t, o.receiverComputedSha256)
+                      // 收口腿（`file-complete` 投递）的既有失败面是**字符串**；本批把返回面
+                      // 收紧到结构化 ⇒ 在这里显式转码（相位 `transfer`、支路 `deliver`），
+                      // 而不是让它退化成无字段的文本（P0-3 一致性）。语义不变：
+                      // `completeTransfer` 内部仍按 I3 显式 failed + 落台账。
+                      completeTransfer(transferId, t, o.receiverComputedSha256).map {
+                        case Left(msg) =>
+                          Left(
+                            AttachContract.AttachError(
+                              AttachContract.Codes.PeerUnreachable,
+                              msg,
+                              phase = "transfer",
+                              path = Some("deliver")
+                            )
+                          )
+                        case Right(u) => Right(u)
+                      }
                   case Left(err) =>
-                    markTransferFailed(transferId, t.peerDeviceId, t.msgId, err.render).as(Left(err.render))
+                    // 失败 ⇒ 有界下调该对端的速率假设（下次会话块更小、死线更宽）。
+                    degradeRate(t.peerDeviceId) *>
+                      markTransferFailedWith(transferId, t.peerDeviceId, t.msgId, err, resumable = isResumable(err))
+                        .as(Left(err))
               yield out
         yield res
     }
+
+  /** 允许进入上传/续传的状态（P0-2 同号重试的三个合法入口态）。 */
+  private val retryableOutStates: Set[String] = Set("accepted", "failed", "transferring")
 
   /** 记录块级进展：推进 `bytesReceived` + `lastProgressAt`（看门狗按它计时），并通知前端。 */
   private def recordProgress(transferId: String, t: FileTransfer, chunkIndex: Int, received: Long): IO[Unit] =
@@ -863,6 +1049,39 @@ final class DropboxService private (
           "bytesReceived" -> received.asJson,
           "totalBytes" -> t.totalBytes.asJson
         )
+      )
+
+  /**
+   * **在飞**字节进展（xferb 批 · P0-4，节拍 2 s）。
+   *
+   * 🔴 契约纪律（照方案卡 P0-4）：`bytesReceived` 的既有语义 = **接收端已确认**字节，
+   * 在飞值**必须另立字段** `bytesInFlight` —— 混进 `bytesReceived` 会复活「进度 100%
+   * 但文件没落地」的假进度。
+   *
+   * 本回调**只发事件**：不动会话记录的 `bytesReceived`、也不动 `lastProgressAt`
+   * （在飞 ≠ 已确认 ⇒ 不得成为看门狗「有进展」的证据）。
+   */
+  private def recordInFlightProgress(
+    transferId: String,
+    t: FileTransfer,
+    ackedBytes: Long,
+    inFlightBytes: Long
+  ): IO[Unit] =
+    if t.totalBytes <= 0L then IO.unit
+    else
+      notifyFrontend(
+        "dropbox-file-progress",
+        t.peerDeviceId,
+        Json.obj(
+          "transferId" -> transferId.asJson,
+          "msgId" -> t.msgId.asJson,
+          "bytesReceived" -> ackedBytes.asJson,
+          "bytesInFlight" -> inFlightBytes.asJson,
+          "totalBytes" -> t.totalBytes.asJson,
+          "inFlight" -> true.asJson
+        )
+      ).handleErrorWith(e =>
+        logger.warn(s"in-flight progress for $transferId could not be delivered: ${e.getMessage}")
       )
 
   /** 传输成功收口（唯一一处把 outbound 置 completed）。 */
@@ -1034,11 +1253,18 @@ final class DropboxService private (
         yield Right(hash)
     }
 
-  /** 生产传输腿：P2P 主腿 + relay 兜底（两腿共面）。无 relay 客户端 ⇒ 仅 P2P。 */
-  private def productionTransport(t: FileTransfer): ChunkTransport =
-    val p2p = new P2PChunkTransport(t.peerAddress)
+  /** 生产传输腿：P2P 主腿 + relay 兜底（两腿共面）。无 relay 客户端 ⇒ 仅 P2P。
+    *
+    * xferb 批（P0-1）：单块死线由**同一速率读数**与本端块大小派生（`rateHint <= 0` ⇒
+    * `AttachContract.AssumedMinRateBytesPerSec`）。读数只影响本端超时算术，不上 wire。 */
+  private def productionTransport(t: FileTransfer, rateHintBytesPerSec: Long = 0L): ChunkTransport =
+    val p2p = new P2PChunkTransport(t.peerAddress, AttachContract.P2PDeadlineCeiling, rateHintBytesPerSec)
     neblinkService.relayClientOpt match
-      case Some(client) => ChunkTransport.failover(p2p, new RelayChunkTransport(client))
+      case Some(client) =>
+        ChunkTransport.failover(
+          p2p,
+          new RelayChunkTransport(client, AttachContract.RelayDeadlineCeiling, rateHintBytesPerSec)
+        )
       case None => p2p
 
   // ===== Data Channel Handler =====
@@ -1222,6 +1448,14 @@ final class DropboxService private (
     val hc = payload.hcursor
     val transferId = hc.downField("transferId").as[String].getOrElse("")
     val success = hc.downField("success").as[Boolean].getOrElse(false)
+    // ===== 可续失败（xferb 批 · P0-2）=====
+    // 发送端随帧声明「本次失败**可续**」（同号重试会接着传）。此时**不得**删本端半成品
+    // temp —— 删了就等于把已经付过带宽的字节扔掉（改前 P-11：失败即删 ⇒ 续传物理不可能）。
+    // 旧发送端不带该键 ⇒ 缺省 false ⇒ 行为与今天逐字节一致（零回归）。
+    val resumable = hc.downField("resumable").as[Boolean].getOrElse(false)
+    val errorCode = hc.downField("errorCode").as[String].getOrElse("")
+    val errorDetail = hc.downField("errorDetail").as[Json].getOrElse(Json.Null)
+    val keepTemp = !success && resumable
     for
       // R5: a file-complete arriving after the receiving process restarted has
       // no in-memory transfer. Rebuild from the persisted message (and scan the
@@ -1239,8 +1473,20 @@ final class DropboxService private (
             // naming the exact operation is emitted once, by commit/delete
             // (see `warnTempPath`) — no second copy of the predicate, no
             // duplicate log line for the same event.
+            //
+            // 🆕 可续失败是**第三格**：既不是「落地」（不 commit）也不是「清理」（不删）——
+            // 算作 `Absent`（本次无任何 move/delete 动作）并显式留痕。
+            _ <-
+              if keepTemp then
+                logger.info(
+                  s"Dropbox transfer $transferId failed but is resumable ($errorCode) — the partial temp is kept " +
+                    s"so a same-id retry can resume from it (no move, no delete)"
+                )
+              else IO.unit
             outcome <-
-              if success then commitTempFile(t) else deleteTempFile(t)
+              if success then commitTempFile(t)
+              else if keepTemp then IO.pure(CommitOutcome(TempPathDecision.Absent, None))
+              else deleteTempFile(t)
             savedPath <-
               // 通报/引用面路径 = **已观测到的落地名**（nfpath 批口径：禁预计算名）。
               //
@@ -1252,7 +1498,14 @@ final class DropboxService private (
               // 时间戳与落地 mtime **同一秒**：重算的 `os.exists` 被本次 move 自己改变）。
               if success then landedPathFor(t, outcome) else IO.pure("")
             _ <- updateTransferStatus(transferId, if success then "completed" else "failed")
-            _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if success then "completed" else "failed", savedPath)
+            _ <- updateMessageStatus(
+                  t.peerDeviceId,
+                  t.msgId,
+                  if success then "completed" else "failed",
+                  savedPath,
+                  errorCode = errorCode,
+                  errorDetail = if errorDetail.isNull then "" else errorDetail.noSpaces
+                )
             _ <- notifyFrontend(
               "dropbox-file-complete",
               t.peerDeviceId,
@@ -1260,7 +1513,11 @@ final class DropboxService private (
                 "transferId" -> transferId.asJson,
                 "msgId" -> t.msgId.asJson,
                 "success" -> success.asJson,
-                "savedPath" -> savedPath.asJson
+                "savedPath" -> savedPath.asJson,
+                "errorCode" -> errorCode.asJson,
+                "errorDetail" -> errorDetail,
+                "resumable" -> resumable.asJson,
+                "tempKept" -> keepTemp.asJson
               )
             )
           yield ()
@@ -1276,12 +1533,27 @@ final class DropboxService private (
     messagesRef.update(m => m.updated(deviceId, m.getOrElse(deviceId, Nil) :+ msg))
       *> persistMessages
 
-  private def updateMessageStatus(deviceId: String, msgId: String, status: String, savedPath: String = ""): IO[Unit] =
+  /** 更新一条消息的状态（可选带结构化失败原因，P0-3）。原因为空串 ⇒ 不改写既有原因字段。 */
+  private def updateMessageStatus(
+    deviceId: String,
+    msgId: String,
+    status: String,
+    savedPath: String = "",
+    errorCode: String = "",
+    errorDetail: String = ""
+  ): IO[Unit] =
     messagesRef.update { m =>
       m.updated(
         deviceId,
         m.getOrElse(deviceId, Nil).map { msg =>
-          if msg.msgId == msgId then msg.copy(status = status, savedPath = savedPath) else msg
+          if msg.msgId == msgId then
+            msg.copy(
+              status = status,
+              savedPath = savedPath,
+              errorCode = if errorCode.nonEmpty then errorCode else msg.errorCode,
+              errorDetail = if errorDetail.nonEmpty then errorDetail else msg.errorDetail
+            )
+          else msg
         }
       )
     } *> persistMessages
