@@ -49,13 +49,16 @@ const themePropScript = `<script>
  *  clamped to its own residual (`overflow: hidden` boxes are scroll containers
  *  too). One in-frame hash click therefore also wrote the host: in the harness
  *  (tests/mdscroll-toc-scroll.spec.mjs R5, declared host residual, both engines,
- *  both trees) `documentElement.scrollTop` 0 → 24 with `#main` +24 and
- *  `#canvas-panel.scrollTop` 0 → 28 with `#canvas-panel` +26. With no host
- *  residual nothing can move, which is why the pre-r2 zero-residual reading was
- *  green by construction — it could not falsify this site. The fix writes ONE
- *  container's own scrollTop, and that container is this frame's own scrolling
- *  element: same discipline as viewers/markdown.js `scrollHeadingToTop` and
- *  messages.js `revealQuoteTarget`. */
+ *  both trees) `documentElement.scrollTop` 0 → 24 with `#main` +24, and
+ *  `#canvas-panel.scrollTop` 0 → 26 with `#canvas-panel` +24 (the verifier's
+ *  independent probe read 0 → 28 for the panel under its own injection
+ *  geometry) — in both readings the write equals THAT layer's own residual.
+ *  With no host residual nothing can move, which is why the pre-r2
+ *  zero-residual reading was green by construction — it could not falsify this
+ *  site. The fix writes ONE container's own scrollTop, and that container is
+ *  this frame's own scrolling element: same discipline as
+ *  viewers/markdown.js `scrollHeadingToTop` and messages.js
+ *  `revealQuoteTarget`. */
 const anchorNavScript = `<script>
 (function(){
   // Scroll one anchor target to the TOP of THIS frame's own scroller - and of
