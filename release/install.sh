@@ -983,30 +983,35 @@ download_jar() {
     # resolve_version, before this stage runs).
     JAR_NAME="${LOWER_NAME}-assembly-${VERSION}.jar"
     COS_URL="${COS_BASE_CN}/${JAR_NAME}"
-    local target="${INSTALL_DIR}/${JAR_NAME}"
-    mkdir -p "${INSTALL_DIR}"
+    local target_versioned prev_now
+    target_versioned="$(version_dir "${VERSION}")/${JAR_NAME}"
+    mkdir -p "$(version_dir "${VERSION}")"
+    # The version currently installed is read BEFORE archiving moves the legacy
+    # root jar away (otherwise the rollback target would be lost on upgrade from
+    # a pre-G4 install).
+    prev_now=$(current_version_now)
 
     # Idempotency: same version already in place -> skip (no re-download).
     # Presence alone is not enough: a truncated/corrupt file must fall through
     # to the repair path below instead of being reported as up-to-date (and
     # silently installed). return, never exit - the pipeline must continue.
-    if [ -f "${target}" ] && _jar_valid "${target}"; then
+    if [ -f "${target_versioned}" ] && _jar_valid "${target_versioned}"; then
         log_ok "Already up-to-date (${VERSION})."
+        archive_legacy_jars
+        record_version "${VERSION}" "${prev_now}"
         return 0
     fi
 
-    # Remove old JAR files (keep user data untouched)
-    local old_jars
-    old_jars=$(ls "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
-    if [ -n "$old_jars" ]; then
-        log_i "Removing old version(s)..."
-        rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
-    fi
+    # Version retention (batch 2 G4): old packages are MOVED into their version
+    # dir instead of being deleted - the previous version must survive on disk to
+    # serve as the rollback base (design 6-2: keeping the last two versions is the
+    # one new on-disk mechanism of this face). User data stays untouched.
+    archive_legacy_jars
 
     # 单一源（结论不变）：jar 只从上面的镜像端点取。2026-09-17 更正：此前
     # 的「#29 仓库 private ⇒ GitHub Releases 未认证 404」理由已过时（仓库现已
     # 公开），单源理由为可达性与带宽，见文件头品牌值区注释。
-    if _download "${COS_URL}" "${target}" "${JAR_NAME}"; then
+    if _download "${COS_URL}" "${target_versioned}" "${JAR_NAME}"; then
         log_ok "Downloaded ${JAR_NAME} from COS."
         # Same no-zip-tool situation as in _jar_valid: the fresh bytes cannot be
         # verified either. Say so out loud - never let the log imply an
@@ -1015,6 +1020,7 @@ download_jar() {
         if ! command -v unzip > /dev/null 2>&1 && ! command -v python3 > /dev/null 2>&1; then
             log_warn "No unzip or python3 found - cannot verify the downloaded JAR (${JAR_NAME}). Install continues unverified; a re-run will download it again."
         fi
+        record_version "${VERSION}" "${prev_now}"
         return 0
     fi
     log_err "Download failed from COS. Check ${COS_URL}"
@@ -1022,6 +1028,101 @@ download_jar() {
 }
 
 # ---- [4/6] wrapper + PATH -------------------------------------------------
+
+# Version retention + pointer (batch 2 G4, design section 6-2): the ONE new
+# on-disk mechanism of the auto-restart safety face. Layout:
+#   <installDir>/current-version                      -> pointer, version to run
+#   <installDir>/previous-version                     -> pointer, rollback target
+#   <installDir>/versions/<version>/<jar>             -> one immutable dir per version
+# Selection is POINTER-FIRST (never "the numerically newest file in the dir"):
+# a bad version that is still on disk can therefore never be picked again after
+# a rollback - it stays on disk (rollback base + forensics) but outside the
+# selection face. Legacy installs without a pointer keep the old scan path
+# byte-for-byte (see the wrapper below).
+POINTER_CURRENT="${INSTALL_DIR}/current-version"
+POINTER_PREVIOUS="${INSTALL_DIR}/previous-version"
+VERSIONS_DIR="${INSTALL_DIR}/versions"
+
+version_dir()  { printf '%s/%s' "${VERSIONS_DIR}" "$1"; }
+
+# Version of a jar file name (nebflow-assembly-<version>.jar -> <version>).
+jar_version() {  # <path> -> echoes version or nothing
+    local _base="${1##*/}"
+    case "$_base" in
+        *-assembly-*.jar)
+            _base="${_base##*-assembly-}"
+            printf '%s' "${_base%.jar}"
+            ;;
+    esac
+}
+
+read_pointer() {  # <pointer path> -> echoes version or nothing
+    [ -f "$1" ] || return 0
+    tr -d ' \t\r\n' < "$1" 2>/dev/null || true
+}
+
+write_pointer() {  # <pointer path> <version>
+    local _tmp="$1.tmp"
+    printf '%s\n' "$2" > "$_tmp" 2>/dev/null || return 1
+    mv -f "$_tmp" "$1" 2>/dev/null || return 1
+}
+
+# Move a legacy root-level jar into its version dir (retention, not deletion) so
+# it can serve as the rollback base. Echoes the version when one was archived.
+archive_legacy_jars() {
+    local _f _v _vd
+    for _f in "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar; do
+        [ -f "$_f" ] || continue
+        _v=$(jar_version "$_f")
+        [ -n "$_v" ] || continue
+        _vd=$(version_dir "$_v")
+        if [ ! -f "${_vd}/${_f##*/}" ]; then
+            mkdir -p "$_vd" 2>/dev/null || continue
+            mv -f "$_f" "${_vd}/" 2>/dev/null || continue
+            log_i "Retained previous version ${_v} for rollback (${_vd})"
+        else
+            rm -f "$_f"
+        fi
+    done
+}
+
+# Current version per the pointer, falling back to the legacy root scan (so the
+# retention logic also works for installs made by an older script).
+current_version_now() {
+    local _v
+    _v=$(read_pointer "${POINTER_CURRENT}")
+    if [ -z "$_v" ]; then
+        _v=$(jar_version "$(ls -1 "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null | head -n 1)")
+    fi
+    printf '%s' "$_v"
+}
+
+record_version() {  # <version> [<previous version>] - keep exactly two (current + previous)
+    # ${2:-} (not "$2"): the second argument is optional and the installer itself
+    # runs without `set -u` - read it defensively so the one-argument form
+    # (legacy install: previous version derived from the pointer/root scan)
+    # also works under `set -u` harnesses. No behaviour change otherwise.
+    local _prev="${2:-}" _other _vd
+    [ -n "$_prev" ] || _prev=$(current_version_now)
+    if [ -n "$_prev" ] && [ "$_prev" != "$1" ]; then
+        write_pointer "${POINTER_PREVIOUS}" "$_prev"
+        log_i "Rollback target recorded: ${_prev}"
+    fi
+    write_pointer "${POINTER_CURRENT}" "$1"
+    # Prune: keep the two pointer-named versions, drop every other version dir.
+    _prev=$(read_pointer "${POINTER_PREVIOUS}")
+    if [ -d "${VERSIONS_DIR}" ]; then
+        for _vd in "${VERSIONS_DIR}"/*; do
+            [ -d "$_vd" ] || continue
+            _other="${_vd##*/}"
+            if [ "$_other" = "$1" ] || [ "$_other" = "$_prev" ]; then
+                continue
+            fi
+            log_v "Pruning version ${_other} (retention keeps current + previous)"
+            rm -rf "$_vd"
+        done
+    fi
+}
 
 # Create wrapper script
 create_wrapper() {
@@ -1103,7 +1204,29 @@ _winsort_pick_newest() { # stdin: one candidate path per line -> prints the newe
 }
 # <<< WINSORT-END v1 <<<
 
-JAR=\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | _winsort_pick_newest)
+# >>> POINTER-SELECT-BEGIN v1 (batch 2 G4: rollback-capable selection) >>>
+# The pointer file current-version decides which version runs; a rollback is a
+# pointer switch, so a bad version that is still on disk is never picked again.
+# Version dirs hold one immutable jar each.
+# Strict: if the pointer names a package that is not on disk, we do NOT silently
+# pick something else - the fallback scan below finds nothing (no root jars) and
+# the existing "JAR not found" error path fires loudly.
+JAR=""
+if [ -f "\${SCRIPT_DIR}/current-version" ]; then
+    _pv=\$(tr -d ' \t\r\n' < "\${SCRIPT_DIR}/current-version" 2>/dev/null)
+    if [ -n "\$_pv" ] && [ -f "\${SCRIPT_DIR}/versions/\${_pv}/${LOWER_NAME}-assembly-\${_pv}.jar" ]; then
+        JAR="\${SCRIPT_DIR}/versions/\${_pv}/${LOWER_NAME}-assembly-\${_pv}.jar"
+    elif [ -n "\$_pv" ]; then
+        for _cand in "\${SCRIPT_DIR}/versions/\${_pv}"/*.jar; do
+            [ -f "\$_cand" ] || continue
+            JAR="\$_cand"
+            break
+        done
+    fi
+fi
+# <<< POINTER-SELECT-END v1 <<<
+
+JAR=\${JAR:-\$(ls -1 "\${SCRIPT_DIR}"/${LOWER_NAME}-assembly-*.jar 2>/dev/null | _winsort_pick_newest)}
 if [ -z "\$JAR" ]; then
     echo "ERROR: ${PRODUCT_NAME} JAR not found in \${SCRIPT_DIR}"
     exit 1
