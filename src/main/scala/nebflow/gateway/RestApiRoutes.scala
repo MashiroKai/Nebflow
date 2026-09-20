@@ -1024,10 +1024,14 @@ class RestApiRoutes(
     // 🔴 副作用不可达：本 arm 只回状态码，不 arm/disarm 标记、不碰凭据。
     case req @ GET -> Root / "neblink" / "auth" / "end-session" =>
       withAuth(req) {
-        MethodNotAllowed(
-          Json.obj(
-            "error" -> "method-not-allowed".asJson,
-            "allow" -> "POST".asJson
+        // 显式构造（DSL 的 `MethodNotAllowed` 只接受 `Allow` 头、不带体）：体自解释
+        // （`error` + 迁移目标），调用方拿到 405 而非模糊 404。
+        IO.pure(
+          Response[IO](status = Status.MethodNotAllowed).withEntity(
+            Json.obj(
+              "error" -> "method-not-allowed".asJson,
+              "allow" -> "POST".asJson
+            )
           )
         )
       }
