@@ -9,12 +9,14 @@ import nebflow.core.PathUtil
 object ConfigCommand extends CliCommand:
   def name = "config"
   def description = "Manage configuration"
-  def subcommands = List(ConfigGet, ConfigSet, ConfigShow, ConfigEdit)
+  def subcommands = List(ConfigGet, ConfigSet, ConfigShow, ConfigEdit, ConfigPathSub, ConfigValidateSub)
 
   def examples = List(
     "nebflow config show",
     "nebflow config get workSchedule",
-    "nebflow config set workSchedule.enabled false"
+    "nebflow config set workSchedule.enabled false",
+    "nebflow config path",
+    "nebflow config validate"
   )
 
   private object ConfigGet extends CliSubcommand:
