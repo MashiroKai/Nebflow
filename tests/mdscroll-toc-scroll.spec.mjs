@@ -22,6 +22,12 @@
 //   画板栈残量 = 面板内容可滚），改前判红 / 改后判绿。**修法与残量来源无关**（跳转不再触碰
 //   祖先链 ⇒ 残量再怎么来都不动）。
 //
+//   r2 追加（同族位点 = 画板内网页预览帧内 `#` 锚点，R5）：这条泄露路径不止走宿主祖先链 ——
+//   CSSOM View 的 scroll-into-view 还会**离开嵌套浏览上下文**，把**帧元素本身**在宿主文档里
+//   逐层对齐（同样每层按自身余量夹取）。⇒ 帧内锚点跳转同样满足上面的必要条件，R5 因此同样
+//   需要**残量条件腿**才可判红；零残量下「帧内跳转零泄露」恒过（本批 r1 的原 R5-b 即同因
+//   假绿，已按判词位 F-1 改为腿②/腿③）。
+//
 // 运行：node tests/mdscroll-toc-scroll.spec.mjs                # Chromium（门禁档）
 //      ENGINE=webkit node tests/mdscroll-toc-scroll.spec.mjs   # WebKit（第二引擎腿）
 // 可选 env：PORT=8161、SHOTS_DIR=<dir>、LEAK_EXTRA_PX=24、HEADLESS=0
@@ -167,10 +173,12 @@ async function openHtmlTab(page) {
   await sleep(600);
 }
 
-/** 逐层读祖先链（自 `.canvas-md-scroll` 到 documentElement）：scrollTop/scrollLeft + 余量 + overflow。 */
-const READ_CHAIN = () => {
+/** 逐层读祖先链（自 startSel 到 documentElement）：scrollTop/scrollLeft + 余量 + overflow。
+ *  startSel 缺省 `.canvas-md-scroll`（md 腿）；R5 的 HTML 腿传 `.canvas-tab-pane.active`
+ *  —— 该腿没有 md 内容容器，宿主层清册必须以帧容器为起点，否则「宿主位移」无处可读。 */
+const READ_CHAIN = (startSel = '.canvas-md-scroll') => {
   const de = document.documentElement;
-  const start = document.querySelector('.canvas-md-scroll');
+  const start = document.querySelector(startSel);
   const out = { layers: [], docEl: { top: de.scrollTop, left: de.scrollLeft }, winY: window.scrollY, winX: window.scrollX };
   if (!start) return out;
   let el = start;
@@ -208,17 +216,18 @@ const DOM_CLICK = (href) => {
 };
 
 /** 等滚动落定：smooth 动画按距离有时长，固定 sleep 会读到动画中途的假读数。
- *  轮询整条链的 scrollTop，连续 3 次不变即落定（上限 4s）。 */
-async function settle(page) {
+ *  轮询整条链的 scrollTop，连续 3 次不变即落定（上限 4s）。
+ *  startSel 同 READ_CHAIN：md 腿缺省内容容器；R5 HTML 腿传帧容器（同一条链）。 */
+async function settle(page, startSel = '.canvas-md-scroll') {
   let last = null, stable = 0;
   for (let i = 0; i < 40; i++) {
-    const sig = await page.evaluate(() => {
-      const de = document.documentElement, sc = document.querySelector('.canvas-md-scroll');
+    const sig = await page.evaluate((sel) => {
+      const de = document.documentElement, sc = document.querySelector(sel);
       const parts = [de.scrollTop, window.scrollY, sc ? sc.scrollTop : -1];
       let el = sc ? sc.parentElement : null;
       while (el && el !== de) { parts.push(el.scrollTop); el = el.parentElement; }
       return parts.join(',');
-    });
+    }, startSel);
     if (sig === last) { stable++; if (stable >= 3) return; } else { stable = 0; last = sig; }
     await sleep(100);
   }
@@ -487,7 +496,7 @@ console.log(`[mdscroll] engine=${ENGINE} port=${PORT} fixture=${MD_PATH} leakExt
   });
   info(`   静态面 overscroll-behavior-y：${declared.map((d) => `${d.sel}=${d.present ? d.contain : '(不在场)'}(${d.present ? d.oy : '-'})`).join(' | ')}`);
   info(`   画板栈「用户可滚」层：${declared.filter((d) => d.userScrollable).map((d) => d.sel).join(', ') || '(none)'}`);
-  ok('R4-a 画板栈的唯一用户可滚容器已声明 overscroll-behavior: contain（= 全应用既有 5 处同值同语义）',
+  ok('R4-a 画板栈的唯一用户可滚容器已声明 overscroll-behavior: contain（= 全应用既有 7 处同值同语义，r2 按现读统一）',
     declared.find((d) => d.sel === '.canvas-md-scroll').contain === 'contain',
     `.canvas-md-scroll=${declared.find((d) => d.sel === '.canvas-md-scroll').contain}`);
   ok('R4-b 回归：wheel 到底后外层变动量 = 0（本引擎恒 0，独立于 contain）', noContain.outer.length === 0,
@@ -495,22 +504,84 @@ console.log(`[mdscroll] engine=${ENGINE} port=${PORT} fixture=${MD_PATH} leakExt
   await ctx.close();
 }
 
-/* ── R5: 同族位点 —— canvas HTML 帧内 `#` 锚点（viewers/html.js anchorNavScript） ── */
+/* ── R5: 同族位点 —— canvas HTML 帧内 `#` 锚点（viewers/html.js anchorNavScript） ──
+   本腿 r2 重写。原 R5-b「帧内跳转零泄露到宿主滚动层」在**零残量**下恒过：本机自然态外层
+   余量恒 0（R0-b），没有残量就无处泄露 —— 与 R2/R3 改前同因，是**同因假绿**（判词位
+   F-1 已登记）。现改为**带残量条件腿**：先在宿主注入残量（腿② `#main` ⇒ 根滚动层；
+   腿③ `#canvas-panel` ⇒ 画板栈），再点帧内锚点，断言**宿主整条滚动链（含根滚动层与
+   window）位移 = 0**；帧内自身照常跳转（正控，防「用修不了功能的方式换绿」）。
+   零残量腿保留为基线读数，但显式标注**不可判红**，不再充当泄露判据。 */
 {
+  const FRAME_SEL = '.canvas-tab-pane.active';
   const { ctx, page } = await boot();
   await openHtmlTab(page);
   const fr = await (await page.$('.canvas-tab-pane.active iframe[data-nf-canvas-html]')).contentFrame();
-  const b = await page.evaluate(READ_CHAIN);
-  const fb = await fr.evaluate(() => document.documentElement.scrollTop);
-  await fr.evaluate(() => document.getElementById('hash-link').click());
-  await sleep(1200);
-  const a = await page.evaluate(READ_CHAIN);
-  const fa = await fr.evaluate(() => document.documentElement.scrollTop);
-  const outer = outerMoved(b, a);
-  info('── R5 同族位点：canvas HTML 帧内 `#` 锚点（viewers/html.js:38-53）──');
-  info(`   帧内 documentElement.scrollTop ${fb} -> ${fa}；宿主侧变动层 = ${outer.length ? outer.join(' | ') : '(none)'}`);
-  ok('R5-a 帧内锚点跳转真发生（帧自成一档）', fa - fb > 100, `Δ=${fa - fb}px`);
-  ok('R5-b 帧内跳转零泄露到宿主滚动层（未修位点行为不变）', outer.length === 0, outer.join(' | ') || '无变动');
+
+  /** 帧内（另一个文档）落定：settle 只轮询宿主链，帧自身 documentElement.scrollTop
+   *  不在其签名里 ⇒ 帧内 smooth 动画中途会被读成「已落定」（首轮就跑出 fb=12 的中途读数）。
+   *  故本腿自轮询帧内 scrollTop，连续 3 次不变即落定。 */
+  const settleFrame = async () => {
+    let last = null, stable = 0;
+    for (let i = 0; i < 40; i++) {
+      const v = await fr.evaluate(() => document.documentElement.scrollTop);
+      if (v === last) { stable++; if (stable >= 3) return; } else { stable = 0; last = v; }
+      await sleep(100);
+    }
+  };
+
+  /** 帧内锚点跳一转：帧内 scrollTop 先归零（Δ 可比），再点帧内真 `#` 锚点。 */
+  const clickFrameAnchor = async () => {
+    await fr.evaluate(() => { document.documentElement.scrollTop = 0; });
+    await settleFrame();
+    const fb = await fr.evaluate(() => document.documentElement.scrollTop);
+    await fr.evaluate(() => document.getElementById('hash-link').click());
+    await settle(page, FRAME_SEL);
+    await settleFrame();
+    const fa = await fr.evaluate(() => document.documentElement.scrollTop);
+    return { fb, fa };
+  };
+
+  info('── R5 同族位点：canvas HTML 帧内 `#` 锚点（viewers/html.js anchorNavScript）──');
+
+  /* 腿① 自然态（宿主零残量）：基线读数，不判红 */
+  const b1 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const j1 = await clickFrameAnchor();
+  const a1 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const outer1 = movedLayers(b1, a1);
+  info(`   腿① 自然态（宿主零残量）：帧内 documentElement.scrollTop ${j1.fb} -> ${j1.fa}；宿主侧变动层 = ${outer1.length ? outer1.join(' | ') : '(none)'}`);
+  ok('R5-a 帧内锚点跳转真发生（正控，帧自成一档）', j1.fa - j1.fb > 100, `Δ=${j1.fa - j1.fb}px`);
+  ok('R5-b 自然态宿主零位移（⚠ 零残量下本条**不可判红** —— 保留为基线读数，不作为泄露判据；可判红腿 = R5-d / R5-g）',
+    outer1.length === 0, outer1.join(' | ') || '无变动');
+
+  /* 腿② 根滚动层残量（#main 注入，声明式构造）：宿主链零位移 = 红证面 */
+  await page.evaluate(INJECT_RESIDUAL, { sel: '#main', extra: LEAK_EXTRA_PX });
+  await sleep(250);
+  const rootRes = await page.evaluate(() => Math.max(0, document.documentElement.scrollHeight - document.documentElement.clientHeight));
+  const b2 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const j2 = await clickFrameAnchor();
+  const a2 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const outer2 = movedLayers(b2, a2);
+  info(`   腿② 根滚动层残量 = ${rootRes}px（注入 #main）：帧内 ${j2.fb} -> ${j2.fa}；宿主侧变动层 = ${outer2.length ? outer2.join(' | ') : '(none)'}`);
+  ok('R5-c 泄露条件成立（根滚动层残量 > 0）', rootRes > 0, `${rootRes}px`);
+  ok('🎯 R5-d 残量条件下帧内跳转零泄露：宿主滚动链（含根滚动层 + window）位移 = 0',
+    outer2.length === 0, outer2.join(' | ') || '无变动');
+  ok('R5-e 残量条件下帧内仍真跳转（修法未伤功能）', j2.fa - j2.fb > 100, `Δ=${j2.fa - j2.fb}px`);
+
+  /* 腿③ 画板栈残量（#canvas-panel 注入）：判词位 F-1 的另一半读数形态 */
+  await page.evaluate(INJECT_RESIDUAL, { sel: '#canvas-panel', extra: LEAK_EXTRA_PX });
+  await sleep(250);
+  const panelRes = await page.evaluate(() => {
+    const p = document.querySelector('#canvas-panel');
+    return Math.max(0, p.scrollHeight - p.clientHeight);
+  });
+  const b3 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const j3 = await clickFrameAnchor();
+  const a3 = await page.evaluate(READ_CHAIN, FRAME_SEL);
+  const outer3 = movedLayers(b3, a3);
+  info(`   腿③ 画板栈残量 = ${panelRes}px（注入 #canvas-panel）：帧内 ${j3.fb} -> ${j3.fa}；宿主侧变动层 = ${outer3.length ? outer3.join(' | ') : '(none)'}`);
+  ok('R5-f 泄露条件成立（画板栈残量 > 0）', panelRes > 0, `${panelRes}px`);
+  ok('🎯 R5-g 画板栈残量条件下帧内跳转零泄露：宿主滚动链位移 = 0',
+    outer3.length === 0, outer3.join(' | ') || '无变动');
   await ctx.close();
 }
 
