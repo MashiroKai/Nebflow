@@ -153,7 +153,7 @@ object ToolRegistry:
     * （ScriptTool，`~/.nebflow/tools/<name>/tool.json` 装载）。
     *
     * WHY 走注册表身份而不是名字模式：`ScriptTool.name = config.name`（现读
-    * `ScriptTool.scala:15`）是**自由文本**，全仓无「外部工具名前缀/命名空间」——
+    * `ScriptTool.scala:16`）是**自由文本**，全仓无「外部工具名前缀/命名空间」——
     * 名字模式核不到（spec §6 #8 本批现读结论）。注册表身份是唯一可判据的面。
     *
     * 只读、不改变任何注册行为（`registerTool` / `unregisterTool` 逐字不动）。

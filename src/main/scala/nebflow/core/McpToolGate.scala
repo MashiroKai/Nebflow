@@ -177,7 +177,7 @@ object McpToolRef:
 object ScriptToolRef:
 
   /** spec §6 #8「ScriptTool 注册名模式」本批现读核实结论（**读数，非臆造**）：
-    *   · `ScriptTool.scala:15`：`val name = config.name` —— 名字 = `tool.json` 的
+    *   · `ScriptTool.scala:16`：`val name = config.name` —— 名字 = `tool.json` 的
     *     `config.name` **自由文本**，无前缀、无命名空间（`ToolLoader.reload()` 原样
     *     `registerTool(t)`，现读 `ToolLoader.scala:49-51`）。
     *   · ⇒ **源码不存在可用的「注册名模式」**。名字模式核不到 ⇒ 按任务书 §九
