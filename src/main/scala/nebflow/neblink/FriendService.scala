@@ -1525,6 +1525,56 @@ final class FriendService(
       case Left(err) => IO.pure(Left(err))
     }
 
+  /** [[sendAsUser]] 的**保留状态码**对偶（rcptcode 批：好友腿终态码 502 折叠点 ① 的服务层）。
+    *
+    * 🔴 与 [[sendAsUser]] 的**唯一**差别 = 走 [[NeblinkClient.sendFriendMessageWithStatus]]
+    * ⇒ 上游 `(statusCode, body)` **原样**上传给网关（网关再逐字透传给客户端），而不是被折成
+    * `Left("HTTP <code>: <body>")` ⇒ 网关只能一律答 502。参数面 / 收尾链与 [[sendAsUser]]
+    * 逐字同源（同一字段透传、同一 `pullConversation` 收尾）。
+    *
+    * 收尾纪律（[[sendAsUser]] 同款 + 一条 2xx 判据）：
+    *  - **仅 2xx 算成功** ⇒ 只有 2xx 才解析体、才补拉会话（补拉是收尾不是回执：
+    *    `handleErrorWith(_ => IO.unit)` —— 补拉失败不污染响应）；
+    *  - 非 2xx 的体**不解析**：它不是 `SendMessageResponse`（上游错误体形 = `{"error":"<code>"}`），
+    *    解析成功也无意义；原样上抛由网关透传（🔴 本层**不判终态、不改状态码、不解码语义码**
+    *    —— 判据在服务端与网关两层，本层自判即造第二套真相）；
+    *  - `Left`（传输失败 / 未登录）**原样上抛** —— 网关仍按 `friendErr` 走 502 与
+    *    「Not logged in」三态，语义**逐字不变**。
+    *
+    * 🔴 既有 [[sendAsUser]] **零改**（agent 代发腿 `doSend` 继续用它：那条腿有独立的文本
+    * 回执面）。 */
+  def sendAsUserWithStatus(
+    friendUserId: String,
+    body: String,
+    attachmentIds: List[String] = Nil,
+    clientMsgId: Option[String] = None,
+    replyToMessageId: Option[Long] = None
+  ): IO[Either[String, (Int, String)]] =
+    withClient(
+      _.sendFriendMessageWithStatus(
+        friendUserId,
+        body,
+        attachmentIds = attachmentIds,
+        clientMsgId = clientMsgId,
+        replyToMessageId = replyToMessageId
+      )
+    ).flatMap {
+      case Right((code, raw)) if code >= 200 && code < 300 =>
+        val parsed = io.circe.parser.parse(raw).toOption
+        parsed.flatMap(_.hcursor.get[String]("conversationId").toOption) match
+          case Some(convId) =>
+            pullConversation(
+              convId,
+              FriendPullTrigger.SendAsUser,
+              oursHint = Some(true),
+              afterHint = parsed.flatMap(_.hcursor.get[Long]("messageId").toOption)
+            ).void.handleErrorWith(_ => IO.unit).as(Right((code, raw)))
+          case None => IO.pure(Right((code, raw)))
+      // 非 2xx：状态码与体**原样**上抛（不解析、不改写）—— 透传判定在网关一处。
+      case Right((code, raw)) => IO.pure(Right((code, raw)))
+      case Left(err)          => IO.pure(Left(err))
+    }
+
   def unreadCounts: IO[Map[String, Int]] = guard.unreadSnapshot
 
 end FriendService

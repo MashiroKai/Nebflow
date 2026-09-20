@@ -114,6 +114,17 @@ let selfUserId = '';
 let selfIdAcct = '';
 const sentMessageIds = new Set();
 
+// ── 好友腿终态码 → 分态文案（rcptcode 批 2026-09-20）────────────────────────
+// 判定集合 = `friendsApi.js` 的 `FRIEND_TERMINAL_CODES`（**同源单表**，经
+// `api.isFriendTerminalCode` 消费；🔴 禁在本文件另写一份码表）。
+// 语义 = **终态**：对同一动作重试恒无效（同 `clientMsgId` + 同被引坐标重发只会再失败
+// ⇒ 不给重试键，改给原因 + 正文回填），与群腿「按码分态」同族而非同表。
+const FRIEND_TERMINAL_TEXT = {
+  not_friends: 'messages.friendNotFriends',
+  not_blocker: 'messages.friendNotBlocker',
+  REPLY_TARGET_INVALID: 'messages.friendReplyTargetInvalid',
+};
+
 /** viewer 自身 userId（群方向/未读判据用；单聊路径不受影响——direct 分支
  *  仍走既有 conv.friend.userId 判据）。 */
 function groupSelfUserId() {
@@ -3912,6 +3923,21 @@ async function sendCurrent(conv, opts) {
         return;
       }
     }
+    // rcptcode 批（2026-09-20）：**好友腿终态分态** —— 网关该批起把上游状态码与体
+    // 逐字透传 ⇒ `not_friends` / `not_blocker` / `REPLY_TARGET_INVALID` 原样到达。
+    // 这些码是**语义终态**：撤气泡 + 给原因（`modalToast` 分态文案），**不给重试键**
+    // —— 重试会复用同一 `clientMsgId` 与被引坐标，对该终态**恒无效**（改前一律落
+    // `.fm-failed` + 重试键 = 给用户一个永远失败的动作）。正文退回输入框（「正文不丢」
+    // 纪律与附件/重试面同款）。判据单源 = `api.isFriendTerminalCode`。
+    if (conv.kind !== 'group' && api.isFriendTerminalCode(err && err.data && err.data.error)) {
+      modalToast(t(FRIEND_TERMINAL_TEXT[err.data.error]));
+      wrap.remove();
+      const i = chatMsgs.findIndex(x => x.id === tempId);
+      if (i >= 0) chatMsgs.splice(i, 1);
+      modalEls.input.value = body;
+      syncComposerSend();
+      return;
+    }
     wrap.classList.add('fm-failed');
     const flag = el('button', 'fm-retry', '!');
     flag.title = t('messages.send');
@@ -3929,6 +3955,19 @@ async function sendCurrent(conv, opts) {
       sendCurrent(conv, { clientMsgId, replyToMessageId: quoteRefId });
     });
     wrap.appendChild(flag);
+    // rcptcode 批：**好友腿未知码 fail-visible** —— 不在白名单的码（429 / 5xx / 未来新增码）
+    // 一律回退「可重试」，但把码**原样**展示（禁静默、禁猜分态）：机器可读挂
+    // `data-send-error-code`（断言契约），人读走重试键 title + 就地 toast。
+    // 🔴 仅好友腿：群腿失败面（含 `data-*` 面）**逐字不变**（本批禁改群腿客户端行为）。
+    if (conv.kind !== 'group') {
+      const failCode = err && err.data && (err.data.error || err.data.code);
+      if (typeof failCode === 'string' && failCode) {
+        const shown = failCode.length > 80 ? `${failCode.slice(0, 80)}…` : failCode;
+        wrap.dataset.sendErrorCode = shown;
+        flag.title = `${t('messages.send')} · ${shown}`;
+        modalToast(t('messages.sendFailedCode', { code: shown }));
+      }
+    }
   }
 }
 

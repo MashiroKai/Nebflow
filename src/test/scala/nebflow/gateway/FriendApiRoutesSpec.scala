@@ -177,7 +177,26 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
             respond(ex, 200, """{"ok":true}""")
           case ("POST", p) if p.endsWith("/messages") =>
             // P2-b：记原文 + 按 `clientMsgId` 幂等回放（服务端语义镜像）。
-            writeJson(ex, 200, sendRow(readSentBody(ex)))
+            // rcptcode 批（2026-09-20）：按**被寻址的 uid** 分派「上游拒绝 / 上游成功码」
+            // 形态（一码一位）；其余 uid 保持恒 200 ⇒ 既有用例读数**零变化**。
+            val raw = readSentBody(ex)
+            p.stripPrefix("/api/friends/").stripSuffix("/messages") match
+              case "up-403-notfriends" =>
+                writeJson(ex, 403, """{"error":"not_friends"}""")
+              case "up-403-notblocker" =>
+                // 同域**另一枚**真实语义码：证明透传与码集无关（不是只放行 not_friends）。
+                writeJson(ex, 403, """{"error":"not_blocker"}""")
+              case "up-400-replyinvalid" =>
+                writeJson(ex, 400, """{"error":"REPLY_TARGET_INVALID"}""")
+              case "up-429" =>
+                // 客户端**未知**码（走 fail-visible 回退）：透传面同样逐字。
+                writeJson(ex, 429, """{"error":"upstream_rate_limited"}""")
+              case "up-500" =>
+                writeJson(ex, 500, """{"error":"server_error"}""")
+              case "up-201" =>
+                writeJson(ex, 201, sendRow(raw))
+              case _ =>
+                writeJson(ex, 200, sendRow(raw))
           case ("DELETE", _) => respond(ex, 200, """{"ok":true}""")
           case _ => respond(ex, 404, """{"error":"not found"}""")
     )
@@ -772,6 +791,138 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       resp.as[Json].map(body =>
         assert(body.hcursor.downField("error").as[String].exists(_.contains("Missing or invalid token")))
       )
+    }
+  }
+
+  // ══════════ rcptcode 批（2026-09-20）：好友发送腿「保留状态码」逐字透传 ══════════
+  //
+  // 折叠点 ①（`NeblinkClient.sendRequestTimed`：非 2xx ⇒ `Left("HTTP <code>: <body>")`，
+  // 状态码降级成文本）与折叠点 ②（`friendErr`：非「Not logged in」一律 502）在本路由上
+  // 双双消除 ⇒ 上游 4xx/5xx 与成功码**逐字**到达客户端，客户端才能把 `not_friends` 这类
+  // **语义终态码**与「可重试」分开（8 态机 S7 的进入条件）。
+  //
+  // 改前形态 = 一律 502 + `{"error":"HTTP <code>: {...}"}` 文本；本组逐码钉「逐字」。
+  // 🔴 本组只覆盖**好友发送路由**：上述两条既有 502 用例（unblock / `GET /friends`）是
+  // **有意保留**的折叠护栏，勿随本批混改。
+
+  /** 单次好友发送（指定被寻址 uid）：返回（网关状态、网关响应体）。 */
+  private def postSendTo(fs: FriendService, uid: String, body: Json): IO[(Status, Json)] =
+    runWith(Some(fs))(
+      authed(Request[IO](Method.POST, Uri.unsafeFromString(s"/friends/$uid/messages"))).withEntity(body)
+    ).flatMap(resp => resp.as[Json].map(b => (resp.status, b)))
+
+  /** 折叠形态护栏：折叠通道的产物**恒**以 `HTTP ` 起头（`"HTTP 403: {...}"`）⇒ 任一条
+    * 透传用例若被撤回到折叠实现，本断言必红（判红形态，`verification-rigor` §1）。 */
+  private def assertNotFolded(json: Json): Unit =
+    val err = json.hcursor.downField("error").as[String].toOption
+    assert(!err.exists(_.startsWith("HTTP ")), s"错误体仍是被折叠的文本形态: $err")
+
+  private def sendOne(fs: FriendService, uid: String): IO[(Status, Json)] =
+    postSendTo(fs, uid, Json.obj("body" -> "hi".asJson))
+
+  test("rcptcode A1：上游 403 not_friends ⇒ 网关 403 + 体逐字（禁折 502）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-403-notfriends").map { case (status, body) =>
+          assertEquals(status, Status.Forbidden)
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("not_friends"))
+          assertNotFolded(body)
+        }
+    }
+  }
+
+  test("rcptcode A2：上游 403 not_blocker（同域另一枚语义码）⇒ 403 + 体逐字") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-403-notblocker").map { case (status, body) =>
+          assertEquals(status, Status.Forbidden)
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("not_blocker"))
+          assertNotFolded(body)
+        }
+    }
+  }
+
+  test("rcptcode A3：上游 400 REPLY_TARGET_INVALID ⇒ 400 + 体逐字（非 502、非 200）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-400-replyinvalid").map { case (status, body) =>
+          assertEquals(status, Status.BadRequest)
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("REPLY_TARGET_INVALID"))
+          assertNotFolded(body)
+        }
+    }
+  }
+
+  test("rcptcode A4：上游 429（客户端未知码）⇒ 429 逐字（禁折算成 502/200）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-429").map { case (status, body) =>
+          assertEquals(status, Status.TooManyRequests)
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("upstream_rate_limited"))
+          assertNotFolded(body)
+        }
+    }
+  }
+
+  test("rcptcode A5：上游 500 ⇒ 500 逐字（禁折 502，禁伪装成功）") {
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-500").map { case (status, body) =>
+          assertEquals(status, Status.InternalServerError)
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("server_error"))
+          assertNotFolded(body)
+        }
+    }
+  }
+
+  test("rcptcode A6：上游 201（真实成功码）⇒ 201 逐字 + 体字段保持（行为变化 ①读数）") {
+    // 改前：成功一律被归一为 200（`friendResult` = `Ok(json)`）；改后 = 上游真实码。
+    // 客户端只判 `resp.ok` 与 `messageId`（`web/js/messages.js`）⇒ 兼容，本用例即其读数。
+    withMockServer { (_, client, fs) =>
+      client.login("d1", "dev", "macos", Nil) *>
+        sendOne(fs, "up-201").map { case (status, body) =>
+          assertEquals(status, Status.Created)
+          assertEquals(body.hcursor.downField("messageId").as[Long].toOption, Some(5L))
+          assertEquals(body.hcursor.downField("conversationId").as[String].toOption, Some("c1"))
+        }
+    }
+  }
+
+  test("rcptcode A7：传输失败（上游不可达）⇒ 仍 502（`Left` 通道语义逐字不变）") {
+    // 保留面：折叠点 ①②消除的只是「**上游有响应**」的透传；无响应（连接失败/超时）仍走
+    // `Left` ⇒ `friendErr` ⇒ 502（客户端读作可重试）。会话在停服前建立，故走的是真连接失败。
+    val (server, url) = startMockServer
+    val client        = mkClient(url)
+    val fs            = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
+    (client.login("d1", "dev", "macos", Nil) *>
+      IO.blocking(server.stop(0)) *>
+      sendOne(fs, "u1")
+    ).guarantee(IO.blocking(server.stop(0))).map { case (status, body) =>
+      assertEquals(status, Status.BadGateway)
+      assert(body.hcursor.downField("error").as[String].isRight, "502 体应带可判读原因")
+    }
+  }
+
+  test("rcptcode A8：Not logged in 特判保留（已配置 ⇒ 401+code；未配置 ⇒ 404）") {
+    val post = authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages")))
+      .withEntity(Json.obj("body" -> "hi".asJson))
+    withService(configured = true) { ms =>
+      val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
+      runWith(Some(fs), Some(ms))(post).flatMap { resp =>
+        assertEquals(resp.status, Status.Unauthorized)
+        resp.as[Json].map { body =>
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Not logged in"))
+          assertEquals(body.hcursor.downField("code").as[String].toOption, Some("neblink_not_logged_in"))
+        }
+      }
+    } *> withService(configured = false) { ms =>
+      val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
+      runWith(Some(fs), Some(ms))(post).flatMap { resp =>
+        assertEquals(resp.status, Status.NotFound)
+        resp.as[Json].map(body =>
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled"))
+        )
+      }
     }
   }
 
