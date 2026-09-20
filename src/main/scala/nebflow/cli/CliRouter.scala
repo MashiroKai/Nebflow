@@ -281,9 +281,16 @@ object CliRouter:
     * calls.
     */
   private val OfflineCommands: Set[String] =
-    Set("version", "start", "stop", "status", "update", "doctor", "uninstall", "autostart", "help")
+    Set("version", "start", "stop", "status", "update", "doctor", "uninstall", "autostart", "help",
+      // CLI 命令补全批（2026-09-20）：本机读数 / 本机取数 —— 网关不在时恰恰是它们
+      // 最该可用的时候（health 的网关面与 logs 的取数面都自己探，不靠 ctx.client）。
+      "health", "logs")
 
-  private val OfflineSubcommands: Set[(String, String)] = Set(("skill", "audit"))
+  private val OfflineSubcommands: Set[(String, String)] = Set(("skill", "audit"),
+    // 只读、纯本机，不经网关：配置校验尤其必须在「网关起不来」时可用，否则
+    // 配置坏掉的场景下校验器本身就不可达。沿用 T10 的同一分类机制（见
+    // isOfflineCmd 注释），不新造第二套「可离线子命令」判据。
+    ("config", "path"), ("config", "validate"))
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =
     OfflineCommands.contains(cmdName) || OfflineSubcommands.contains((cmdName, subName))
