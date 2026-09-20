@@ -766,6 +766,24 @@ body.canvas-open #canvas-panel {
   position: absolute;
   inset: 0;
   overflow-y: auto;
+  /* 2026-09-20 (mdscroll batch, author report 2026-09-20 22:56「这个滚动有泄露」):
+     the canvas panel's content scroller is the ONE user-scrollable container in the
+     app without this declaration — `#chat` (chat.css:26), `#explorer-tree`
+     (split.css:145), `.modal-body` (modal.css:1163), `#reminder-list`
+     (reminder.css:140) and both agent popups (flowAgentPopup.js:125,
+     bgTaskOutputPopup.js:199) carry it. Same value, same meaning, no new token:
+     the panel stack above this scroller is `overflow: hidden` all the way out
+     (`#canvas-content` split.css:444, `#canvas-panel` split.css:371) and the root
+     scroller inherits `body`'s hidden overflow (base.css:52) — programmatically
+     scrollable, which is how a leaked scroll leaves this container and shifts the
+     panel / the whole client. `contain` stops a wheel or trackpad scroll that
+     reaches this container's end from chaining out of it.
+     Note the contrast with the sibling `.canvas-tab-pane.scrollable` (split.css:646,
+     above): that rule makes the PANE itself scroll for viewers that do not carry
+     their own scroller (docx/yaml/xlsx). It is the same class of surface in the same
+     panel; it is left untouched here (this batch's face is the markdown viewer) and
+     is reported in the batch report as an open same-class gap. */
+  overscroll-behavior: contain;
 }
 
 .canvas-md-viewer {
