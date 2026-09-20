@@ -1003,6 +1003,7 @@ async function openConversation(conversationId, rowEl) {
     oldestLoadedId = chatMsgs.length ? (Number(chatMsgs[0].id) || 0) : 0;
     hasMoreHistory = false;
     renderMessages(chatMsgs);
+    void refreshConvReceipts(conv); // R5 两格：回执面（E1）随开窗取一次（真相源）
     markConvRead(conv);
     if (modalEls) modalEls.input.focus();
     if (chatMsgs.length && oldestLoadedId > 1) probeOlderHistory(conversationId, oldestLoadedId);
@@ -1035,6 +1036,7 @@ async function openConversation(conversationId, rowEl) {
   // 病灶）。这里先一律不渲染按钮，交给后台探针探到更早再插入。
   hasMoreHistory = false;
   renderMessages(chatMsgs);
+  void refreshConvReceipts(conv); // R5 两格：回执面（E1）随开窗取一次（真相源）
   markConvRead(conv);
   if (modalEls) modalEls.input.focus();
   // 确定态 ①：本会话第一条 id = 表首 id(1) ⇒ 确定没有更早，探针无需发。
@@ -2862,6 +2864,10 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     // 与反馈面结构性脱节）；设备腿的传输链**零触碰**（仍由 dropbox.js 单点执行，本挂载点
     // 只承载「显示」，见 `registerExternalTransfer`）。
     if (attachAvailable(conv) || conv.kind === 'device') renderUploadCards(flow, conv.conversationId, conv.kind);
+    // 回执槽位（R5 两格 + 设备面）：**唯一挂载点**（与上传卡同一条纪律）。零网络 ——
+    // 只把**已到手**的回执态补画到本机所发气泡（取数在 `refreshConvReceipts`）；数据
+    // 未到 / 该消息无确认 ⇒ 不画（无空槽）。
+    applyConvReceipts(conv);
     // msgmenu 一期：引用块可用性在**每次** diff 后重判（加载更早 / 增量补齐都会改变答案）。
     syncQuoteStates(flow);
     createIconsIn(flow);
@@ -4592,6 +4598,24 @@ async function onFriendEvent(msg, retried = false) {
     updateBadge();
     return;
   }
+  if (msg.event === EV_RECEIPT_UPDATE) {
+    // E3 推帧（契约 §1.1 E3 行 + §4.2 帧形）：本分支**不发任何帧**（前端处置契约①：
+    // 不得 ack）；幂等按 `eventId` 塌缩（§1.3）⇒ 重复帧零正确性后果。
+    if (!markReceiptEventSeen(msg.eventId)) return;
+    // payload 取法：网关 `FriendEvent.frontendFrame` 已把 `payload` 展平到帧顶层
+    // （`message_new` 分支同款形态）；此处**兼容**未展平的 `{payload:{…}}` 形态
+    // （判据 = 「payload 是不是对象」，不猜字段值）。
+    const p = (msg.payload && typeof msg.payload === 'object') ? msg.payload : msg;
+    const convId = p.conversationId;
+    if (!convId) return;
+    const conv = conversations.find(c => c.conversationId === convId);
+    // 设备面帧（`conversationKind='device'`/设备会话 id）不走本支路：射程外（E2EE）。
+    if (!conv || conv.kind === 'device') return;
+    // 只有**开着的那一个窗**需要立刻刷新（未开的会话在开窗时取一次 —— 取数点唯一，
+    // 禁在此另建一条未开窗的取数链）。
+    if (openConvId === convId) void refreshConvReceipts(conv);
+    return;
+  }
   if (msg.event === 'friend_accepted') {
     // New friendship → empty conversation appears (summary: systemNowFriends)
     await refreshConversations({ friends: 'force' });
@@ -4679,7 +4703,15 @@ async function incrementalResync({ withList = false } = {}) {
   const convId = openConvId;
   const open = !!convId && !String(convId).startsWith('__pending__');
   if (!open || withList) await refreshConversations();
-  if (open) await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
+  if (open) {
+    await syncConversation(convId, { pages: MAX_SYNC_PAGES, trigger: 'beacon_backfill' });
+    // 契约 §1.1 前端处置契约③（「重连 / 切回窗口**必须**重拉 E1」）在客户端侧的落点：
+    // 本函数 = 唤醒面（回前台 / 回网）与通道降级兜底（帧静默 / 隧道判死）**同一实现**
+    // ⇒ 两类窗口一起覆盖，且不新增定时器。「健康帧流路径零额外请求」的纪律不变
+    // （本函数不被健康路径调用；调用面 = `wakeResync` 与 `backfillTick` 的门控腿）。
+    const conv = currentConv();
+    if (conv && conv.conversationId === convId) void refreshConvReceipts(conv);
+  }
 }
 
 /** 本地层后台对账的节流（> beacon 周期 ⇒ 至多一拍一次；低频率是本条的纪律）。 */
@@ -5553,6 +5585,173 @@ function markDeviceConvRead(conv) {
   updateBadge();
   renderList();
   void refreshDeviceReceipts(conv);
+}
+
+// ── 账号回执源：好友 / 群回执槽位接线（R5 两格 · uxconsist Phase B 段 2）──────
+// 契约正本 = neblink-server `.nebflow/Spec/20260920_192859_friend-group-receipt-source.md`
+// **v1.2**（判词 PASS 6/6；sha256 `640de17b2d527b73ce7038bdd3eb80a7ce4c1ece03d0a004451d74bce2d35c20`，
+// 本批开工首动作留痕）：§1.1 E1 读面（窗口口径）/ E2 上报面（不变）/ E3 推帧 envelope、
+// §1.2 状态机、§1.3 幂等、§1.4 错误码、§4.2 帧形、§4.5（帧可丢，E1 是真相源）。
+// 🔴 设备面回执源（`deviceReceipts` / `refreshDeviceReceipts` / `applyDeviceReceipts`）
+//    **零改动**（卡射程外：设备面走 E2EE 原则）——本段只服务好友（direct）/ 群两面。
+
+/** 每会话回执**读面**缓存（会话 id → `{rows, kind, memberCount}`）。
+ *  派生态、不落盘（与 `deviceReceipts` / `markOurs` 同一条「派生态不落盘」纪律）；
+ *  取数失败**保留上次已知**（回执是增强信息，不是消息本体的承重面）。 */
+const convReceipts = new Map();
+
+/** E1 窗口的 `limit`（契约 §1.1：计数单位 = **消息 id**，服务端 `clamp(1, 500)`）。 */
+const RECEIPT_WINDOW_LIMIT = 500;
+
+/** E1 窗口（契约 §1.1）：`after` = 已载窗口**最早**消息 id − 1 ⇒ 窗口内我发出的消息
+ *  **全部**在射程内（服务端判据 `messageId > after`）；无已载消息 ⇒ 无「我发出的」面
+ *  可读 ⇒ null（不发请求；也避免缺 `after` 时响应体随会话长度线性增长，观察项 O1）。 */
+function receiptWindow() {
+  let oldest = 0;
+  for (const m of chatMsgs) {
+    const n = Number(m.id);
+    if (Number.isFinite(n) && n > 0 && (oldest === 0 || n < oldest)) oldest = n;
+  }
+  return oldest > 0 ? { after: oldest - 1, limit: RECEIPT_WINDOW_LIMIT } : null;
+}
+
+/** E1 响应 → 逐消息计数索引（**窗口内**口径，契约 §1.1 派生式）。
+ *
+ *  计数正确性由契约保证（窗口按**消息 id** 计 `limit`，窗口内每条消息的**全部**确认者
+ *  行都返回）⇒ 每条消息要么**计数完整**、要么**整条不在返回集内**（不出现）——不存在
+ *  「部分行」形态 ⇒ 不会出现少报的计数（未覆盖的消息只是**不画**槽位）。
+ *  直聊确认者恒 1（1:1，`userId`/`updatedAt` 键整键省略）；群聊按确认者行累加。 */
+function indexReceiptRows(resp) {
+  const rows = new Map();
+  for (const r of (resp && Array.isArray(resp.receipts) ? resp.receipts : [])) {
+    const mid = Number(r && r.messageId);
+    if (!Number.isFinite(mid) || mid <= 0) continue;
+    const cur = rows.get(mid) || { read: 0, delivered: 0 };
+    cur.delivered += 1; // sent ∪ read —— read 蕴含送达（§1.2 状态机）
+    if (r && r.state === 'read') cur.read += 1;
+    rows.set(mid, cur);
+  }
+  const mc = Number(resp && resp.memberCount);
+  return {
+    rows,
+    kind: (resp && resp.conversationKind === 'group') ? 'group' : 'direct',
+    // `memberCount` = 可确认者数 = 成员数 − 1（请求者自己）；直聊概念上恒为 1（§1.1）。
+    memberCount: (Number.isFinite(mc) && mc > 0) ? mc : 1,
+  };
+}
+
+/** 某条消息的回执态 + 计数面（`{state, counts}`；无确认 ⇒ `null` = **不画**）。
+ *  判据 = 契约 §1.1 派生式（`readCount` / `deliveredCount` 逐条从 `receipts[]` 派生），
+ *  **不用**两个高水位反推 —— 高水位是全会话 MAX，用它反推会给「窗口内无确认」的消息
+ *  画出假状态（高水位蕴含的区间并不等于「每条都已确认」）。
+ *  @returns {{state: 'sent'|'read', counts: {read: number, delivered: number, total: number}|null}|null} */
+function convReceiptStateOf(convId, messageId) {
+  const entry = convReceipts.get(String(convId));
+  if (!entry) return null;
+  const n = Number(messageId);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const row = entry.rows.get(n);
+  if (!row) return null; // 无确认的消息**不出现**（= 未送达）⇒ 无空槽
+  const counted = entry.kind === 'group';
+  return {
+    state: row.read > 0 ? 'read' : 'sent',
+    counts: counted ? { read: row.read, delivered: row.delivered, total: entry.memberCount } : null,
+  };
+}
+
+/** 降级痕迹（**一次 / 会话 / 原因**，禁每次刷新刷屏）。
+ *  §1.4 的处置形态是「槽位关闭降级」而不是「裸红」：用户面**零噪声**（无 toast、无错误条），
+ *  但保留一条可诊断痕迹（否则「不支持 / 非成员 / 网络」与「本就无回执」不可分）。 */
+const receiptDegraded = new Map();
+function noteReceiptDegrade(convId, err) {
+  const status = (err && err.status) || 0;
+  const data = err && err.data;
+  // §1.4 逐码：403 鉴权失效（`req()` 已派全局登录链）/ 403 not_member（非成员 *或* 会话
+  // 不存在——同一函数闸）/ 400（窗口参数被拒：axum 默认**纯文本**体 ⇒ `err.data` 缺席）/
+  // 其余（5xx / 网络 / 422）。
+  const code = (data && typeof data === 'object' && data.error) || (status ? 'non_json_body' : 'network');
+  const reason = status ? `${status}:${code}` : 'network';
+  if (receiptDegraded.get(convId) === reason) return;
+  receiptDegraded.set(convId, reason);
+  console.warn(`[fm] 回执面降级（槽位关闭、保留上次已知）conversationId=${convId} `
+    + `reason=receipt_source_unavailable status=${status} code=${code}`);
+}
+
+/** 回执面刷新的单飞 + 尾随合并（同一会话并发只发一次请求；请求在飞期间到达的后续变化
+ *  记一个「还要再来一次」⇒ **不丢最后一次状态变化**，也不因帧风暴并发打同一端点）。 */
+const convReceiptInflight = new Set();
+const convReceiptAgain = new Set();
+
+/** **E1 读半程**（唯一的回执取数点）：拉 `GET …/receipts`（v1.2 窗口口径）⇒ 就地补画。
+ *
+ *  触发面（全部只此一处取数）：① 开窗（好友 / 群）② E3 帧到达（咨询性唤醒）
+ *  ③ 唤醒 / 通道降级腿（`incrementalResync`，契约 §1.1 前端处置契约③「重连 / 切回窗口
+ *  必须重拉 E1」）。🔴 失败一律**降级**：保留上次已知、槽位无数据即不画、零重试
+ *  （回执是增强信息，禁「持续无输出」式循环）。 */
+async function refreshConvReceipts(conv) {
+  if (!conv || !conv.conversationId) return;
+  if (conv.kind === 'device') return;                        // 设备面零触碰（E2EE 原则）
+  if (!capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;   // 能力位（单点判据）
+  const win = receiptWindow();
+  if (!win) return;                                           // 空窗 ⇒ 无可读面，不打请求
+  const convId = String(conv.conversationId);
+  if (convReceiptInflight.has(convId)) { convReceiptAgain.add(convId); return; }
+  convReceiptInflight.add(convId);
+  try {
+    const resp = await api.getConversationReceipts(convId, win);
+    convReceipts.set(convId, indexReceiptRows(resp));
+    receiptDegraded.delete(convId); // 恢复 ⇒ 清降级痕迹（下次失败重新留痕）
+    applyConvReceipts(conv);
+  } catch (err) {
+    noteReceiptDegrade(convId, err);
+  } finally {
+    convReceiptInflight.delete(convId);
+    if (convReceiptAgain.delete(convId)) void refreshConvReceipts(conv); // 尾随合并
+  }
+}
+
+/** 把回执态就地补画到已渲染的**本机所发**气泡（只碰当前窗；**不重渲染**——回执到达
+ *  不移动任何气泡，与设备面同一条纪律）。挂载点 = `sendState.applyReceipt`（呈现单点，
+ *  设备 / 直聊 / 群三面同源；有 slot 才画、无 slot 不画空槽）。 */
+function applyConvReceipts(conv) {
+  if (!modalEls || !conv || conv.kind === 'device') return;
+  if (openConvId !== conv.conversationId) return;
+  if (!capabilitiesOf(conv, SEND_LEG.TEXT).receipt) return;
+  for (const wrap of modalEls.flow.querySelectorAll('.fm-msg.out')) {
+    const st = convReceiptStateOf(conv.conversationId, wrap.dataset.messageId);
+    applyReceipt(wrap, st ? st.state : null, st ? st.counts : null);
+  }
+}
+
+// ── E3 推送帧（契约 §1.1 / §4.2）：`event.type = "receipt_update"` ────────────
+// 前端处置契约（卡 §1.1 逐字）：① **不得 ack**（本分支**不发任何帧**；`receipt-` 前缀
+// 不在 ack 分派任何一条臂内，误 ack 亦无副作用）② 可本地合并计数或**直接重拉 E1**
+// ③ 重连 / 切回窗口**必须**重拉 E1（E1 是真相源；帧只是咨询性唤醒、可能被丢弃 §4.5）。
+// ⇒ 本实现取②的后一支：**一律重拉 E1**（不本地合并计数 —— 计数唯一来源保持单点，
+// 「已读 3/8」不会因丢帧而停在旧值）。
+/** 事件名常量（与 `EV_MESSAGE_NEW` 同一条「两侧不得各写一套字面量」纪律；服务端
+ *  字面量 = `receipt_update`）。 */
+const EV_RECEIPT_UPDATE = 'receipt_update';
+
+/** E3 帧级去重（§1.3）：`eventId` **确定性**（同 (会话,确认者,状态,水位) 恒同串）
+ *  ⇒ 按 `eventId` 塌缩；重复帧**零正确性后果**（连 E1 请求都不发）。
+ *  有界 FIFO ≤512（与 `seenFrameMessageIds` 同族上限）；缺 `eventId` **不拦**
+ *  （「不猜」口径同族先例：拦掉会让真帧静默消失，放宽只会多一次幂等 E1 拉取）。 */
+const seenReceiptEvents = new Set();
+const seenReceiptEventOrder = [];
+const SEEN_RECEIPT_EVENT_MAX = 512;
+/** @returns {boolean} true = 首次见到（继续）；false = 重复（调用方直接 return）。 */
+function markReceiptEventSeen(id) {
+  if (id === undefined || id === null || id === '') return true;
+  const k = String(id);
+  if (seenReceiptEvents.has(k)) return false;
+  seenReceiptEvents.add(k);
+  seenReceiptEventOrder.push(k);
+  if (seenReceiptEventOrder.length > SEEN_RECEIPT_EVENT_MAX) {
+    const oldest = seenReceiptEventOrder.shift();
+    if (oldest !== undefined) seenReceiptEvents.delete(oldest);
+  }
+  return true;
 }
 
 /** 落盘条目 → `adaptDeviceMessage` 的入参形状（**唯一**转换点）。
