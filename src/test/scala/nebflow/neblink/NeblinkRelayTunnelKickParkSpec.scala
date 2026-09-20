@@ -133,7 +133,8 @@ class NeblinkRelayTunnelKickParkSpec extends CatsEffectSuite:
           cfg,
           0,
           onDeviceTokenRejected = Some(
-            LogtoSilentRelogin.make(ms, IO.pure(Option.empty[NeblinkDiscovery]), 0, IO.pure(fix.url))
+            // 案 b①：接缝改 `IO[Option[String]]`（目标缺席 ⇒ 降级不注册）；测试腿给显式目标。
+            LogtoSilentRelogin.make(ms, IO.pure(Option.empty[NeblinkDiscovery]), 0, IO.pure(Some(fix.url)))
           ),
           identity = Some(IO.pure(DeviceIdentity(dev, "qa-host", "macos"))),
           autoLoginParked = IO(ms.kickParked)

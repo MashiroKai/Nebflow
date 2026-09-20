@@ -354,7 +354,7 @@ object DeviceIdentity:
     * persists it, so the fallback is a one-time event, not a per-boot loop.
     * `source` is logged so an unreadable machine code is never silent. */
   private def mint(): Minted =
-    val name = detectDeviceName
+    val name = mintedDeviceName(detectDeviceName, isNonDefaultHome, deviceIdScope)
     val platform = detectPlatform
     val secret = UUID.randomUUID().toString + UUID.randomUUID().toString
     readMachineCode() match
@@ -368,6 +368,26 @@ object DeviceIdentity:
           DeviceIdentity(UUID.randomUUID().toString, name, platform, secret),
           "machine code unreadable — random UUID fallback"
         )
+
+  /** 案 a（2026-09-20 作者令 · 测试卫生）：隔离实例**新铸**的身份名带隔离后缀
+    * `<真机名>-iso-<scope 指纹8>`。
+    *
+    * 为什么只改 name、不动 id：id 早已是 `UUIDv5(machineCode|scope)`（见上），隔离实例与
+    * 作者主客户端**不撞身份**；事故的真形态是「同账号 + **同名**第二条设备行」——
+    * 对端列表 / 联系人面板里两个 `Mashiros-MacBook-Pro` 无从分辨
+    * （核查卡 `20260920_214729_seedpath-card` §2 环 1 / §4.2 补强②）。后缀让隔离实例在
+    * 出网显示面（presence query 的 `deviceName`）一眼可辨。
+    *
+    * 指纹取 scope 的哈希（8 位十六进制）而**不是**路径本身：deviceName 会随 presence
+    * 出网，**禁**带本机路径。id / platform / secret 一律不动；`loadOnce` 的「重定向 root
+    * 沿用既有可解码身份」语义也不动 —— 本函数只作用于**新铸**。 */
+  private[neblink] def mintedDeviceName(base: String, nonDefaultHome: Boolean, scope: String): String =
+    if nonDefaultHome then s"$base-iso-${scopeFingerprint(scope)}" else base
+
+  /** 隔离 scope（= dataRoot 路径字符串）的 8 位十六进制指纹：纯函数、确定性 ——
+    * 同一个 home 每次铸造得到同一后缀（与 id 推导同族：UUIDv5 + SHA-1，仅取前 8 位）。 */
+  private[neblink] def scopeFingerprint(scope: String): String =
+    uuidV5(DeviceIdNamespace, s"iso-name|$scope").toString.replace("-", "").take(8)
 
   /** Migrate old DeviceIdentity without deviceSecret — generate one on first load. */
   private def ensureSecret(id: DeviceIdentity): DeviceIdentity =

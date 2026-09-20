@@ -1138,18 +1138,25 @@ class RestApiRoutes(
                 case None =>
                   for
                     identity <- ms.identity
-                    // The neblink-server URL: read from existing config, or use the
-                    // public default. For device flow the server must be reachable
+                    // The neblink-server URL: explicit request field > config > the
+                    // public default — the last one is gated by 案 b① (isolated data
+                    // root without the explicit switch ⇒ **no target**, see
+                    // `neblinkServerUrl`). For device flow the server must be reachable
                     // from both the browser (for OAuth) and the device (for polling).
-                    serverUrl <- neblinkServerUrl(None)
-                    body = Json
-                      .obj(
-                        "deviceId" -> identity.deviceId.asJson,
-                        "deviceName" -> identity.deviceName.asJson,
-                        "platform" -> identity.platform.asJson
-                      )
-                      .noSpaces
-                    result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                    serverTarget <- neblinkServerUrl(None)
+                    result <- serverTarget match
+                      case Some(serverUrl) =>
+                        val body = Json
+                          .obj(
+                            "deviceId" -> identity.deviceId.asJson,
+                            "deviceName" -> identity.deviceName.asJson,
+                            "platform" -> identity.platform.asJson
+                          )
+                          .noSpaces
+                        proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                      case None =>
+                        // 案 b①：无目标 ⇒ 零出站（不发起任何请求，更不注册）。
+                        IO.pure(Left(EnrollGuard.prodFallbackRefusalReason))
                   yield result
               resp <- result match
                 case Right(json) => Ok(json)
@@ -1180,47 +1187,54 @@ class RestApiRoutes(
               case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
               case Some(ms) =>
                 for
-                  resolvedUrl <- neblinkServerUrl(serverUrl)
-                  logto <- ms.neblinkConfig.map(_.logto)
-                  result <- logto match
-                    case Some(lc) =>
-                      LogtoDeviceFlow
-                        .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
-                        .flatMap {
-                          case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
-                            ms.identity.flatMap { identity =>
-                              LogtoDeviceFlow
-                                .register(LogtoDeviceFlow.jdkSend)(
-                                  resolvedUrl,
-                                  accessToken,
-                                  identity.deviceId,
-                                  identity.deviceName,
-                                  identity.platform
-                                )
-                                .map {
-                                  case Right(json) => Right(json)
-                                  case Left(err)   => Left(err)
-                                }
-                            }
-                          // Pending (incl. slow_down, normalized) and terminal
-                          // failures surface as error strings exactly like the
-                          // legacy proxy path — the frontend's
-                          // authorization_pending polling contract is unchanged.
-                          case LogtoDeviceFlow.PollOutcome.Pending(err) =>
-                            IO.pure(Left(err))
-                          case LogtoDeviceFlow.PollOutcome.Failed(err) =>
-                            IO.pure(Left(err))
-                        }
+                  serverTarget <- neblinkServerUrl(serverUrl)
+                  resp <- serverTarget match
                     case None =>
-                      val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                      proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
-                  resp <- result match
-                    case Right(json) =>
-                      // Success — persist credential + update config + hot-swap.
-                      completeDeviceEnrollment(ms, resolvedUrl, json)
-                    case Left(err) =>
-                      // authorization_pending is expected during polling — pass through.
-                      BadRequest(Json.obj("error" -> err.asJson))
+                      // 案 b①：无目标 ⇒ 不轮询、不注册；文案与其余入口同源。
+                      BadRequest(Json.obj("error" -> EnrollGuard.prodFallbackRefusalReason.asJson))
+                    case Some(resolvedUrl) =>
+                      for
+                        logto <- ms.neblinkConfig.map(_.logto)
+                        result <- logto match
+                          case Some(lc) =>
+                            LogtoDeviceFlow
+                              .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
+                              .flatMap {
+                                case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
+                                  ms.identity.flatMap { identity =>
+                                    LogtoDeviceFlow
+                                      .register(LogtoDeviceFlow.jdkSend)(
+                                        resolvedUrl,
+                                        accessToken,
+                                        identity.deviceId,
+                                        identity.deviceName,
+                                        identity.platform
+                                      )
+                                      .map {
+                                        case Right(json) => Right(json)
+                                        case Left(err)   => Left(err)
+                                      }
+                                  }
+                                // Pending (incl. slow_down, normalized) and terminal
+                                // failures surface as error strings exactly like the
+                                // legacy proxy path — the frontend's
+                                // authorization_pending polling contract is unchanged.
+                                case LogtoDeviceFlow.PollOutcome.Pending(err) =>
+                                  IO.pure(Left(err))
+                                case LogtoDeviceFlow.PollOutcome.Failed(err) =>
+                                  IO.pure(Left(err))
+                              }
+                          case None =>
+                            val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                            proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
+                        resp <- result match
+                          case Right(json) =>
+                            // Success — persist credential + update config + hot-swap.
+                            completeDeviceEnrollment(ms, resolvedUrl, json)
+                          case Left(err) =>
+                            // authorization_pending is expected during polling — pass through.
+                            BadRequest(Json.obj("error" -> err.asJson))
+                      yield resp
                 yield resp
             end match
           end if
@@ -4326,9 +4340,18 @@ class RestApiRoutes(
                   // embedded default, then the callback died with a
                   // misleading "Logto 登录未配置" — 2026-08-30).
                   logto <- ms.neblinkConfig.map(_.effectiveLogto)
-                  serverUrl <- neblinkServerUrl(None)
-                  resp <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
-                    case Some((lc, pkceClientId)) =>
+                  target <- neblinkServerUrl(None)
+                  // 案 b①（2026-09-20）：目标解析先于换码 —— `None`（隔离数据根 + 无显式开关
+                  // + 无配置 URL）⇒ 整条 PKCE 腿在**换码之前**失败，环 5 的 `register`
+                  // 从此没有起点。两个缺席原因（无目标 / 无 AC 应用）在此合流为 `None`，
+                  // 由下面的 `case None =>` 按 `target.isEmpty` 各归其类。
+                  resp <- (
+                    for
+                      serverUrl <- target
+                      client <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce)))
+                    yield (serverUrl, client)
+                  ) match
+                    case Some((serverUrl, (lc, pkceClientId))) =>
                       LogtoAuthCode
                         .tokenCall(LogtoDeviceFlow.jdkSend)(
                           LogtoAuthCode.tokenRequest(
@@ -4432,17 +4455,32 @@ class RestApiRoutes(
                               pkceLogin.failDiagnosed(diagnostic) *>
                               htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
                         }
-                    case _ =>
-                      // With effectiveLogto this only fires when an explicit
-                      // logto block exists but lacks pkceClientId (the
-                      // embedded default carries one; a missing block falls
-                      // back to it). Name the actual misconfiguration.
-                      val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                        nebflow.neblink.CredentialFailure.LogtoNotConfigured,
-                        "logto-pkce-client-not-configured"
-                      )
-                      pkceLogin.failDiagnosed(diagnostic) *>
-                        htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
+                    case None =>
+                      if target.isEmpty then
+                        // 案 b①：无目标 —— 隔离实例不得把生产默认当入网目标。失败文案 =
+                        // 护栏原文（`EnrollRefusedIsolatedHome` 的例外分支把**干净**原文
+                        // 逐字送上回调页与 /auth/state 面板；见 CredentialDiagnostics）。
+                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                          CredentialFailure.EnrollRefusedIsolatedHome,
+                          EnrollGuard.prodFallbackRefusalReason
+                        )
+                        logger.warn(
+                          diagnostic.logLine("no enrollment target (案 b①)"),
+                          "code" -> diagnostic.code
+                        ) *>
+                          pkceLogin.failDiagnosed(diagnostic) *>
+                          htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
+                      else
+                        // With effectiveLogto this only fires when an explicit
+                        // logto block exists but lacks pkceClientId (the
+                        // embedded default carries one; a missing block falls
+                        // back to it). Name the actual misconfiguration.
+                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                          nebflow.neblink.CredentialFailure.LogtoNotConfigured,
+                          "logto-pkce-client-not-configured"
+                        )
+                        pkceLogin.failDiagnosed(diagnostic) *>
+                          htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
                 yield resp
         }
 
@@ -4582,19 +4620,41 @@ class RestApiRoutes(
    * Resolve the NebLink Server URL for device-flow requests. Priority:
    * 1. Explicitly provided URL (from the request body).
    * 2. URL from the current neblink config.
-   * 3. The public default URL.
+   * 3. The public default URL — 🔴 **suppressed on a redirected data root**
+   *    (案 b①，2026-09-20 作者令 · 测试卫生).
+   *
+   * `None` = 「**没有目标**」：隔离实例既无显式 URL 也无配置 URL，就**不得**悄悄继承
+   * 生产默认当入网目标（今晚事故链：隔离 home 自铸身份 → 本回落 → 案 C 显式登录 →
+   * `POST /api/device/register` 打到 `neblink.nebflow.space`）。调用点把 `None` 变成
+   * **可见失败**（[[EnrollGuard.prodFallbackRefusalReason]]），放行通道 =
+   * `NEBFLOW_ALLOW_PROD_ENROLL=1`，置上后回落与改前**逐字相同**。
+   *
+   * 默认数据根 / 显式 URL / 配置 URL 三条路径零行为变化（判据不在本函数，而在
+   * `EnrollGuard.prodDefaultTarget` —— 单点）。
    */
-  private def neblinkServerUrl(explicit: Option[String] = None): IO[String] =
+  private def neblinkServerUrl(explicit: Option[String] = None): IO[Option[String]] =
     explicit match
-      case Some(url) => IO.pure(url)
+      case Some(url) => IO.pure(Some(url))
       case None =>
         neblinkService match
           case Some(ms) =>
             ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
-              case Some(url) => IO.pure(url)
-              case None => IO.pure(Branding.serverUrl)
+              case Some(url) => IO.pure(Some(url))
+              case None      => prodDefaultTargetIO
             }
-          case None => IO.pure(Branding.serverUrl)
+          case None => prodDefaultTargetIO
+
+  /** Last-resort enrollment target (`Branding.serverUrl`, gated by [[EnrollGuard]]).
+    * The refusal is loud, never silent — the log line is the 「零注册出网」的日志面判据。 */
+  private def prodDefaultTargetIO: IO[Option[String]] =
+    EnrollGuard.prodDefaultTarget match
+      case some @ Some(_) => IO.pure(some)
+      case None =>
+        logger.warn(
+          "isolated data root: the production server default is NOT used as an enrollment target " +
+            s"(案 b①) — ${EnrollGuard.prodFallbackRefusalReason}",
+          "code" -> CredentialFailure.EnrollRefusedIsolatedHome.code
+        ).as(None)
 
 end RestApiRoutes
 
