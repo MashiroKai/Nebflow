@@ -105,7 +105,7 @@ class OfficialIdentitySpec extends FunSuite:
         }
       }
     finally out.close()
-    val loader = new java.net.URLClassLoader(Array(jar.toUri.toURL), null)
+    val loader = new java.net.URLClassLoader(Array(jar.toNIO.toUri.toURL), null)
     try body(jar, loader)
     finally
       loader.close()
