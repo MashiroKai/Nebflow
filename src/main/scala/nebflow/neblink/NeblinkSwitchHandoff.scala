@@ -21,11 +21,14 @@ import cats.effect.kernel.Ref
   * Lifecycle — one write, one read, one invalidation (all three live here; no
   * other module keeps switch-scenario state):
   *
-  *  - **armed** (`arm`) — ONLY `GET /api/neblink/auth/end-session?scenario=switch`,
-  *    i.e. the switch-account entry (the plain logout entry passes no scenario
-  *    and therefore DISARMS — see below). Keeps the client UI language for the
-  *    continuation's `ui_locales` hint (the landing hop is a bare navigation, so
-  *    it cannot read the app's locale itself).
+  *  - **armed** (`arm`) — ONLY `POST /api/neblink/auth/end-session` with body
+  *    `{"scenario":"switch"}` (query params before the 2026-09-20 closeout
+  *    batch; that route is POST + token now, and its retired GET arm is a gated
+  *    405 that touches no marker), i.e. the switch-account entry (the plain
+  *    logout entry passes no scenario and therefore DISARMS — see below). Keeps
+  *    the client UI language for the continuation's `ui_locales` hint (the
+  *    landing hop is a bare navigation, so it cannot read the app's locale
+  *    itself).
   *  - **consumed** (`consume`) — ONLY the landing route
   *    `GET /auth/logged-out`. Atomic: exactly one caller ever gets
   *    `Outcome.Continue`; the marker becomes `Consumed` in the same step, so
