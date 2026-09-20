@@ -23,6 +23,38 @@ if (!document.getElementById('monaco-caret-fix')) {
   document.head.appendChild(style);
 }
 
+// ── Inbound frame cap mirror (save surface, 卡 §七 登记项 1 / 作者裁 ④) ────────
+// The server drops any WS frame above `MaxMessageSize` (10MB, WebSocketRoutes.scala
+// :1214) at :1241 — SILENTLY, with no `fileSaved` and no `fileSaveError`. An editor
+// whose buffer grows past that cap therefore used to sit on a promise that never
+// settled ("Save" forever pending, no feedback at all).
+//
+// This mirror is a VISIBILITY guard only: the server cap, the inbound frame limit
+// and the silent-drop line are all untouched (out of scope). What it changes is
+// that the frontend stops pretending: an over-cap save is refused locally with a
+// visible banner + an explicit error toast, and `save()` resolves false instead of
+// hanging. Frame length is compared in the same unit the server compares
+// (`text.length` — UTF-16 code units of the JSON frame), so the mirror is exact
+// apart from the ~200-char JSON envelope.
+const MAX_SAVE_FRAME_CHARS = 10 * 1024 * 1024;
+
+/** Char count of the `writeFile` frame this editor's save would produce.
+ *  Short-circuits on an obviously over-cap buffer so a 100MB string is never
+ *  stringified twice just to measure it.
+ *  @param {string} content @param {{path?: string, rootPath?: string|null}} opts
+ *  @param {string|null|undefined} sessionId
+ *  @returns {number} */
+function saveFrameChars(content, opts, sessionId) {
+  if (content.length > MAX_SAVE_FRAME_CHARS) return content.length + 1;
+  return JSON.stringify({
+    type: 'writeFile',
+    sessionId: sessionId || '',
+    path: opts.path,
+    content,
+    rootPath: opts.rootPath || null,
+  }).length;
+}
+
 const MONACO_BASE = '/vendor/monaco/vs';
 
 // ── Worker configuration ──────────────────────────────────────────────
@@ -259,22 +291,84 @@ export async function createEditor(container, opts) {
   const dirtyListeners = new Set();
   let originalContent = opts.content || '';
 
+  // ── Save-cap state (卡 §七 登记项 1) ──────────────────────────────────────
+  // `saveBlocked` is a VISIBLE state, not a silent one: while the buffer's frame
+  // would exceed the inbound cap the pane shows a persistent notice, ⌘S is
+  // refused with an explicit error, and no request is sent (so no promise can
+  // hang waiting for a reply the server will never send).
+  let saveBlocked = false;
+  let blockedNotice = null;
+
+  /** @param {boolean} blocked */
+  function setSaveBlocked(blocked) {
+    if (saveBlocked === blocked) return;
+    saveBlocked = blocked;
+    if (blocked) {
+      if (!blockedNotice) {
+        blockedNotice = document.createElement('div');
+        blockedNotice.className = 'monaco-save-blocked';
+        blockedNotice.dataset.saveBlocked = '1';
+        blockedNotice.style.cssText = [
+          'position:absolute',
+          'left:12px',
+          'right:12px',
+          'bottom:10px',
+          'padding:6px 10px',
+          'border-radius:8px',
+          'border:1px solid var(--color-border, rgba(128,128,128,0.35))',
+          'background:var(--color-surface, rgba(127,127,127,0.12))',
+          'color:var(--color-text, #e8eaed)',
+          'font:500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          'pointer-events:none',
+          'z-index:5',
+        ].join(';');
+        blockedNotice.textContent = t('canvas.saveBlockedNotice');
+        container.appendChild(blockedNotice);
+      }
+      blockedNotice.hidden = false;
+    } else if (blockedNotice) {
+      blockedNotice.hidden = true;
+    }
+  }
+
   model.onDidChangeContent(() => {
     const newDirty = model.getValue() !== originalContent;
     if (newDirty !== dirty) {
       dirty = newDirty;
       dirtyListeners.forEach(fn => fn(dirty));
     }
+    // Cheap length probe (O(1), no full value copy) so the notice appears while
+    // the user is still typing rather than only on the first ⌘S.
+    setSaveBlocked(model.getValueLength() > MAX_SAVE_FRAME_CHARS);
   });
 
   // ── Save handler ──
   async function save() {
     const content = model.getValue();
+    const sessionId = state.activeSessionId;
+    // Over-cap frame ⇒ the server would drop it in silence (:1241). Refuse locally
+    // with a visible reason and settle the promise: never a permanent pending.
+    if (saveFrameChars(content, opts, sessionId) > MAX_SAVE_FRAME_CHARS) {
+      setSaveBlocked(true);
+      console.error('Save refused: frame exceeds the inbound WS cap (10MB)');
+      /** @type {any} */ (window).__showToast?.(t('canvas.saveTooLarge', { name: opts.fileName || opts.path }), 'error');
+      return false;
+    }
+    setSaveBlocked(false);
     return new Promise((resolve) => {
       // Set up one-shot response handlers — either outcome removes BOTH (an
       // orphaned handler would re-fire on later saves and duplicate toasts).
+      // A timeout removes them too: an unanswered save must surface, not hang.
+      const timer = setTimeout(() => {
+        cleanup();
+        cleanupErr();
+        console.error('Save timed out waiting for the server reply');
+        /** @type {any} */ (window).__showToast?.(t('canvas.saveTimeout', { name: opts.fileName || opts.path }), 'error');
+        resolve(false);
+      }, 20000);
       const cleanup = onMessage('fileSaved', (msg) => {
         if (msg.path === opts.path) {
+          clearTimeout(timer);
           cleanup();
           cleanupErr();
           dirty = false;
@@ -286,6 +380,7 @@ export async function createEditor(container, opts) {
       });
       const cleanupErr = onMessage('fileSaveError', (msg) => {
         if (msg.path === opts.path) {
+          clearTimeout(timer);
           cleanup();
           cleanupErr();
           console.error('Save failed:', msg.error);
@@ -296,7 +391,7 @@ export async function createEditor(container, opts) {
 
       sendWs({
         type: 'writeFile',
-        sessionId: state.activeSessionId,
+        sessionId,
         path: opts.path,
         content,
         rootPath: opts.rootPath || null,
