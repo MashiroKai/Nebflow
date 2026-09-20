@@ -79,6 +79,10 @@ enum UpdateReason(val wire: String):
   case InstallFailed extends UpdateReason("install-failed")
   /** 重启相位：既有热重启编排器拒绝或中止。 */
   case RestartRefused extends UpdateReason("restart-refused")
+  /** 重启相位：**四档健康自检失败**（批 2 G3）——既有编排器在「到门口确认」与「优雅
+    * 让渡」之间判不健康，走既有中止路径；旧实例继续服务、准入闸释放。本原因是批 2 G0
+    * 的收口点：该失败**不得**呈现为「已完成」。 */
+  case HealthCheckFailed extends UpdateReason("health-check-failed")
   /** 本实例未装配热重启编排器（能力缺失）。 */
   case OrchestratorUnavailable extends UpdateReason("orchestrator-unavailable")
   /** 编排器自身异常（兜底——绝不留下未收敛的相位）。 */

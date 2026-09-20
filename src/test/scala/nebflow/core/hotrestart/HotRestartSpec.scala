@@ -109,7 +109,13 @@ class HotRestartSpec extends CatsEffectSuite:
     drainDeadlineMs = 5000,
     waitIdlePollMs = 50,
     drainPollMs = 20,
-    cooldownMs = 5000
+    cooldownMs = 5000,
+    // 四档健康自检（批 2 G3）的测试级超时：逐档独立、可注入（生产默认见 Timing）
+    healthT1SuccessorAliveHoldMs = 50,
+    healthT2DoorReceiptMs = 300,
+    healthT3PortServingMs = 200,
+    healthT4VersionMatchMs = 100,
+    healthPollMs = 10
   )
 
   private def waitUntil(desc: String, timeoutMs: Long = 8000)(cond: IO[Boolean]): IO[Unit] =

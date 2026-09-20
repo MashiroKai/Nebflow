@@ -109,7 +109,13 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     drainDeadlineMs = 5000,
     waitIdlePollMs = 50,
     drainPollMs = 20,
-    cooldownMs = 5000
+    cooldownMs = 5000,
+    // 四档健康自检（批 2 G3）的测试级超时：逐档独立、可注入（生产默认见 Timing）
+    healthT1SuccessorAliveHoldMs = 50,
+    healthT2DoorReceiptMs = 300,
+    healthT3PortServingMs = 200,
+    healthT4VersionMatchMs = 100,
+    healthPollMs = 10
   )
 
   private def waitUntil(desc: String, timeoutMs: Long = 8000)(cond: IO[Boolean]): IO[Unit] =
@@ -135,6 +141,13 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     waitUntil("hot-restart orchestrator wrote its own intent (generation gate)") {
       SuccessorGate.readIntent(intentFile).map(_.exists(_.generation >= testStartedAtMs))
     }
+
+  /** 后继门口回执（批 2 契约）：真实后继在 Zone A 末回写 readyToBind；编排器的重启相位
+    * 现在**等到交接真的让渡（含四档健康自检通过）**才收「已完成」（G0 收口），故测试必须
+    * 先把门口回执写上，再等终态——旧契约（受理即 Completed）下这一步在终态之后，属
+    * 已被取代的旧时序。 */
+  private def successorAtTheDoor(): IO[Unit] =
+    awaitOwnIntent() *> SuccessorGate.markPhase(intentFile, "readyToBind")
 
   private class FakeProcess(aliveAfterGrace: Boolean, destroyed: Ref[IO, Int])
       extends HotRestart.SpawnedProcess:
@@ -226,6 +239,14 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       legacy <- Ref.of[IO, List[String]](Nil)
       admission <- orch.request(settingsReq(), r => legacy.update(_ :+ r.fold(e => s"failed:$e", ok => s"ok:$ok")))
       _ = assertEquals(admission, UpdateAdmission.Accepted(settingsReq().effectiveKey))
+      // 重启相位**确实**委托了既有编排器：intent 落盘 = 真实 HotRestart 跑起来了
+      _ <- awaitOwnIntent()
+      intent <- SuccessorGate.readIntent(intentFile)
+      _ = assertEquals(intent.map(_.triggerSource), Some("update:settings"),
+        "restart phase must delegate to the existing orchestrator with the update source")
+      _ = assertEquals(intent.map(_.phase), Some("spawned"))
+      // 后继门口回执 → 四档健康自检 → 优雅让渡 ⇒ 编排器此时才收「已完成」
+      _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- waitUntil("update reached Completed") {
         orch.status.map(_.exists(_.phase == UpdatePhase.Completed))
       }
@@ -239,14 +260,6 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ = assertEquals(count, 1, "install action must run exactly once")
       legacyOutcomes <- legacy.get
       _ = assertEquals(legacyOutcomes, List("ok:Update installed, restarting..."), "既有完成帧回执")
-      // 重启相位**确实**委托了既有编排器：intent 落盘 = 真实 HotRestart 跑起来了
-      _ <- awaitOwnIntent()
-      intent <- SuccessorGate.readIntent(intentFile)
-      _ = assertEquals(intent.map(_.triggerSource), Some("update:settings"),
-        "restart phase must delegate to the existing orchestrator with the update source")
-      _ = assertEquals(intent.map(_.phase), Some("spawned"))
-      // 让被委托的编排器走完（后继模拟回执 → 优雅让渡收敛），不留游离 fiber
-      _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
   }
@@ -334,6 +347,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       _ = assertEquals(second, UpdateAdmission.AlreadyInFlight("idem-key-1", UpdatePhase.Updating),
         s"same key must merge into the in-flight update with its current phase: $second")
       _ <- gate.complete(Right("Update installed, restarting..."))
+      _ <- successorAtTheDoor()
       _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
       count <- counter.get
       _ = assertEquals(count, 1, "a merged duplicate must NOT execute the install action a second time")
@@ -370,6 +384,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       statusMid <- orch.status
       _ = assertEquals(statusMid.map(_.key), Some("run-A"), "站位必须仍是第一个请求的键")
       _ <- gate.complete(Right("Update installed, restarting..."))
+      _ <- successorAtTheDoor()
       _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
       count <- counter.get
       _ = assertEquals(count, 1, "the busy request must never be queued and executed")
@@ -495,7 +510,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
           List(
             "confirm-missing", "freeze-busy", "freeze-wait-limit-exceeded",
             "freeze-drain-deadline-exceeded", "install-failed", "restart-refused",
-            "orchestrator-unavailable", "unexpected-error"))
+            "health-check-failed", "orchestrator-unavailable", "unexpected-error"))
         // source 枚举字面 = 契约词表（设置页｜设备列表｜中继｜官网｜命令行）——同词表，禁两套字面
         assertEquals(
           UpdateSource.values.toList.map(_.wire),
@@ -526,6 +541,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         idempotencyWindowMs = 100L)
       req = settingsReq(key = Some("win-key"))
       _ <- orch.request(req)
+      _ <- successorAtTheDoor()
       _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
       within <- orch.request(req)
       _ = assertEquals(within, UpdateAdmission.AlreadyInFlight("win-key", UpdatePhase.Completed),
@@ -581,6 +597,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       _ <- orch.request(settingsReq(channel = UpdateChannel.Beta))
+      _ <- successorAtTheDoor()
       _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
       raw <- frames.raw.get
       progress = raw.filter(_.hcursor.get[String]("type").contains("updateProgress"))
@@ -649,6 +666,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter), latest = None)
       _ <- orch.request(settingsReq(mode = RestartMode.RejectIfBusy))
+      _ <- successorAtTheDoor()
       _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
       count <- counter.get
       _ = assertEquals(count, 1, "an unreachable pointer must not block the install (same behaviour as before)")
@@ -659,6 +677,101 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         preparing.head.hcursor.get[String]("detail").toString)
       _ <- awaitOwnIntent()
       _ <- SuccessorGate.markPhase(intentFile, "readyToBind")
+      _ <- shutdownD.get.timeout(15.seconds)
+    yield ()
+  }
+
+  // ── 批 2 G3/G0：健康自检接进重启相位（红/绿两条真链读数）─────────────
+
+  test("batch 2 G0 red: the new version fails the four-tier health self-check ⇒ the update is ABORTED with reason health-check-failed, never 'completed'") {
+    for
+      shutdownD <- Deferred[IO, Unit]
+      res <- mkResources(shutdownD)
+      frames <- mkFrames
+      (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = true)
+      // 门口回执带一个「有公告但没人应答」的探针端口 ⇒ 第三档必红（真 connect 探测）
+      deadPort <- IO.blocking {
+        val s = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
+        val p = s.getLocalPort
+        s.close()
+        p
+      }
+      hr = new HotRestart(
+        res,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn,
+        connectProbe = Some(p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p)))
+      )
+      counter <- Ref.of[IO, Int](0)
+      orch = mkOrchestrator(hr, frames, countingInstall(counter))
+      _ <- orch.request(settingsReq())
+      _ <- awaitOwnIntent()
+      _ <- SuccessorGate.markPhase(intentFile, "readyToBind", probePort = Some(deadPort))
+      // 观测面 = 统一进度帧，**不是** `orch.status`：中止腿的冻结契约是「释放占位 ⇒ 可重试」，
+      // `abort` 先 releasePlaceholder 再广播 Aborted 帧 ⇒ 中止后 status 恒为 None（本 spec
+      // 的 ①freeze 例正是断言这个 None）。故等帧（`awaitAbortFrame`）——与既有中止例同款。
+      _ <- awaitAbortFrame(frames)
+      status <- orch.status
+      _ = assert(status.forall(_.phase != UpdatePhase.Completed),
+        "a failed health self-check must never surface as 'completed' (batch 1 verify §11② residual, closed by batch 2 G0)")
+      phases <- frames.progressPhases.get
+      _ = assert(!phases.contains("completed"), s"no completed phase may appear: $phases")
+      _ = assert(phases.contains("aborted"), s"aborted phase must be observable: $phases")
+      aborted <- frames.raw.get.map(_.filter(j => j.hcursor.get[String]("phase").contains("aborted")).last)
+      _ = assertEquals(aborted.hcursor.get[String]("reason").toOption, Some("health-check-failed"),
+        "the aborted frame must carry the frozen reason literal of the health self-check")
+      _ = assert(aborted.hcursor.get[String]("detail").exists(_.contains("health self-check failed")),
+        aborted.hcursor.get[String]("detail").toString)
+      destroyedCount <- destroyed.get
+      _ = assertEquals(destroyedCount, 1, "the failed successor is TERMed through the existing abort path (no second abort machine)")
+    yield ()
+  }
+
+  test("batch 2 G0 green: a successor that answers its announced probe endpoint passes the gate ⇒ recovering then completed") {
+    for
+      shutdownD <- Deferred[IO, Unit]
+      res <- mkResources(shutdownD)
+      frames <- mkFrames
+      (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
+      // 真实 loopback 探针端点：与旧实例的第三/四档探针握手（真 socket、真 HTTP、真载荷）
+      probePort <- IO.blocking {
+        val srv = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        srv.createContext(
+          "/api/health",
+          (ex: com.sun.net.httpserver.HttpExchange) =>
+            val body = io.circe.Json.obj("product" -> io.circe.Json.fromString("nebflow"), "status" -> io.circe.Json.fromString("ok"), "version" -> io.circe.Json.fromString(nebflow.Version.string)).noSpaces.getBytes("UTF-8")
+            ex.sendResponseHeaders(200, body.length.toLong)
+            ex.getResponseBody.write(body)
+            ex.close())
+        srv.start()
+        srv.getAddress.getPort
+      }
+      // 广播面 = 与编排器同一个 capture：生产里 GatewayMain 把同一个 wsHub.broadcast 同时
+      // 交给 HotRestart 与 UpdateOrchestrator，故交接帧（restartStatus/handing-over，含四档
+      // 读数）与进度帧落在同一观测面；测试若给 HotRestart 一个 noop，交接帧永远看不到。
+      hr = new HotRestart(
+        res,
+        8080,
+        "0.0.0.0",
+        capture(frames),
+        tinyTiming,
+        spawnFn,
+        connectProbe = Some(p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p)))
+      )
+      counter <- Ref.of[IO, Int](0)
+      orch = mkOrchestrator(hr, frames, countingInstall(counter))
+      _ <- orch.request(settingsReq())
+      _ <- awaitOwnIntent()
+      _ <- SuccessorGate.markPhase(intentFile, "readyToBind", probePort = Some(probePort))
+      _ <- waitUntil("update reached Completed") { orch.status.map(_.exists(_.phase == UpdatePhase.Completed)) }
+      phases <- frames.progressPhases.get
+      _ = assertEquals(phases, List("checking", "preparing", "freezing", "updating", "restarting", "recovering", "completed"), phases.toString)
+      restart <- frames.restartStatus.get
+      _ = assert(restart.exists(j => j.hcursor.get[String]("detail").exists(_.contains("port-serving"))),
+        "the handover frame must carry the health tier readings (evidence, not a claim)")
       _ <- shutdownD.get.timeout(15.seconds)
     yield ()
   }
