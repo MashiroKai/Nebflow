@@ -38,7 +38,13 @@ object CommandRegistry:
       // 既有条目一字未动、未重排、未整表重格式化 —— login 段同写本件，只增不改
       // 是避免同件冲突的唯一形态。
       HealthCommand,
-      LogsCommand
+      LogsCommand,
+      // headless 批 login 段（chain-headless-lifecycle，2026-09-20）：**append-only 新增三行**
+      // （D-H7 案 ⒝：login + logout + whoami 三件齐）。既有条目一字未动、未重排、
+      // 未整表重格式化 —— 本件为多段共写面，只增不改是避免同件冲突的唯一形态。
+      LoginCommand,
+      LogoutCommand,
+      WhoamiCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)
