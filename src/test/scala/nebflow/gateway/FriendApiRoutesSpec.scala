@@ -903,7 +903,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("rcptcode A8：Not logged in 特判保留（已配置 ⇒ 401+code；未配置 ⇒ 404）") {
+  // A8 的两半必须是**两条独立 test**：隔离 home 的粒度是整条 test（beforeEach 建
+  // tmpDir + setDataRoot，afterEach 才删，见 :57-69），而 `withService(configured=false)`
+  // 不清空 home、只是「不播种」（:74-86）。两半写在同一条 test 内以 `*>` 串接时，
+  // 第一半的 `updateConfig(neblinkServer = …)` 已把配置写进这份 home ⇒ 第二半新起的
+  // NeblinkService 读回 neblinkConfigured=true ⇒ 走 401 而非 404（前置条件自毁）。
+  // 拆开后两半各得全新 home，两条断言各自独立成立。
+
+  test("rcptcode A8a：Not logged in 特判保留（已配置 ⇒ 401+code）") {
     val post = authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages")))
       .withEntity(Json.obj("body" -> "hi".asJson))
     withService(configured = true) { ms =>
@@ -915,7 +922,15 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assertEquals(body.hcursor.downField("code").as[String].toOption, Some("neblink_not_logged_in"))
         }
       }
-    } *> withService(configured = false) { ms =>
+    }
+  }
+
+  test("rcptcode A8b：未配置的**发送腿** ⇒ 404 NebLink not enabled（neblinkOff 保持可表达）") {
+    // 覆盖格：「POST /friends/{id}/messages × 未配置 ⇒ 404」——既有 `unconfigured +
+    // no session -> still 404`（:361）覆盖的是 GET /friends 列表腿，发送腿唯此一格。
+    val post = authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages")))
+      .withEntity(Json.obj("body" -> "hi".asJson))
+    withService(configured = false) { ms =>
       val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
       runWith(Some(fs), Some(ms))(post).flatMap { resp =>
         assertEquals(resp.status, Status.NotFound)
