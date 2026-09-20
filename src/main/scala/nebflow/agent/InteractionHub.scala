@@ -41,7 +41,11 @@ object InteractionHub:
     * 按前缀过滤即内核面。 */
   private val audit = NebflowLogger.forName("nebflow.audit")
 
-  private case class PendingRequest(
+  /** 槽位条目。可见性 `private[agent]`（而非 `private`）：P0-1 验收 A1-5/A1-7 要求对
+    * **生产代码本体**（`answerCompletes` / `snapshotFrames`）取值，而非对测试自造的等价物
+    * —— 故 spec 需在包内构造它。零行为影响（同包可见性放宽，不新增任何写面）。
+    */
+  private[agent] case class PendingRequest(
     reply: InteractionReply,
     rootSessionId: String,
     sourceAgent: String,
@@ -113,6 +117,9 @@ object InteractionHub:
     val render = req.kind match
       case InteractionKind.Permission => renderPermission(req)
       case InteractionKind.AskUser => renderAskUser(req)
+      // P0-1 / P-M1（spec §2.4）：第三种 kind 的分支。与 askPermission / askUser
+      // 同款「加 kind 分支」形态，零渲染层重构（payload 走自由 Json 先例）。
+      case InteractionKind.McpPermission => renderMcpPermission(req)
     for
       _ <- logger.info(
         s"InteractionRequest kind=${req.kind} requestId=${req.requestId} root=${req.rootSessionId} " +
@@ -225,6 +232,25 @@ object InteractionHub:
         .add("sourceSession", req.sourceSession.asJson)
     )
 
+  /** Build the mcpPermission card JSON (P0-1 / P-M1, spec §2.4), rendered at
+    * sessionId=rootSessionId.
+    *
+    * Payload 由 `McpToolGate.cardPayload` 产出（serverId/plugin/tool/凭据 redact 后的
+    * 参数摘要/riskTier/declared/hostBanner/allowUpgrade…），本处只补三个既有归属字段
+    * ——与 `renderPermission` / `renderAskUser` 逐字同款（单一补齐点，不各自拼帧）。
+    * `type` 由调用侧 payload 自带（`mcpPermission`），此处不再改写，避免两处定名。
+    */
+  private def renderMcpPermission(req: InteractionRequest): Json =
+    val base = req.payload.asObject.getOrElse(JsonObject.empty)
+    val withType = if base.contains("type") then base else base.add("type", "mcpPermission".asJson)
+    Json.fromJsonObject(
+      withType
+        .add("sessionId", req.rootSessionId.asJson)
+        .add("requestId", req.requestId.asJson)
+        .add("sourceAgent", req.sourceAgent.asJson)
+        .add("sourceSession", req.sourceSession.asJson)
+    )
+
   // ============================================================
   // 刷新存活 (2026-09-03): reconnect replay — read-only pending snapshot.
   //
@@ -279,31 +305,42 @@ object InteractionHub:
       .flatMap(list => (reply ! list).void)
 
   /** 快照帧构造（按 root 过滤可选 = None 即全局）。只读：不触碰槽位。
-    * 只有 AskUser 类进快照（权限卡不进——前端权限卡走各自会话的历史/渲染链，
-    * 与 `handleListPendingAsks` 既有口径逐字一致）。 */
-  private def snapshotFrames(
+    *
+    * 进快照的 kind：`AskUser`（既有口径，逐字不变）+ **`McpPermission`（P0-1 扩展，
+    * 验收 A1-7）** —— MCP 审批卡必须跨浏览器刷新 / WS 重连存活（spec §2.4「重连重放」、
+    * §6 #7 建议「纳入重放」、roadmap §2.2 A14「三章口径 = 纳入重放」）。
+    * 内置 `Permission` 卡**仍不进快照**（既有口径原文不变：权限卡走各自会话的历史/渲染链）。
+    */
+  private[agent] def snapshotFrames(
     m: Map[String, PendingRequest],
     rootFilter: Option[String]
   ): List[Json] =
     m.toList
       .collect {
         case (rid, p)
-            if p.kind == InteractionKind.AskUser && rootFilter.forall(_ == p.rootSessionId) => (rid, p)
+            if (p.kind == InteractionKind.AskUser || p.kind == InteractionKind.McpPermission) &&
+              rootFilter.forall(_ == p.rootSessionId) => (rid, p)
       }
       .sortBy(_._2.createdAt)
       .map { case (rid, p) =>
-        renderAskUser(
-          InteractionRequest(
-            requestId = rid,
-            kind = p.kind,
-            payload = p.payload,
-            reply = p.reply,
-            rootSessionId = p.rootSessionId,
-            sourceAgent = p.sourceAgent,
-            sourceSession = p.sourceSession
-          )
-        ).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
+        renderPending(p, rid).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
       }
+
+  /** 重放帧按 kind 选渲染器（单一分派点，避免快照侧复制粘贴两份拼帧逻辑）。 */
+  private def renderPending(p: PendingRequest, rid: String): Json =
+    val req = InteractionRequest(
+      requestId = rid,
+      kind = p.kind,
+      payload = p.payload,
+      reply = p.reply,
+      rootSessionId = p.rootSessionId,
+      sourceAgent = p.sourceAgent,
+      sourceSession = p.sourceSession
+    )
+    p.kind match
+      case InteractionKind.AskUser       => renderAskUser(req)
+      case InteractionKind.McpPermission => renderMcpPermission(req)
+      case InteractionKind.Permission    => renderPermission(req)
 
 
   // ============================================================
@@ -400,10 +437,15 @@ object InteractionHub:
     * A PermissionReply needs `approved` (boolean); an AskUserReply needs
     * `answers` (list). Shape-mismatched answers are dropped without consuming
     * the card — they would otherwise complete nothing while deleting the slot.
+    *
+    * P0-1（spec §2.4，验收 A1-5）：`McpPermissionReply` **同款必需 `approved: Boolean`**
+    * —— 缺 `approved`（或非布尔）的答复**不消费卡**，与既有 Permission 判据逐字同构。
     */
-  private def answerCompletes(p: PendingRequest, ans: InteractionAnswered): Boolean =
+  private[agent] def answerCompletes(p: PendingRequest, ans: InteractionAnswered): Boolean =
     p.reply match
       case InteractionReply.PermissionReply(_) =>
+        ans.payload.hcursor.downField("approved").as[Boolean].isRight
+      case InteractionReply.McpPermissionReply(_) =>
         ans.payload.hcursor.downField("approved").as[Boolean].isRight
       case InteractionReply.AskUserReply(_) =>
         ans.payload.hcursor.downField("answers").as[List[String]].isRight
@@ -565,6 +607,28 @@ object InteractionHub:
   private def complete(p: PendingRequest, ans: InteractionAnswered, via: String = "card"): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
+    // P0-1（spec §2.4/§2.5）：mcpPermission 的答复面比 permission 多 scope/upgradeMode。
+    val mcpAnswer =
+      if p.kind == InteractionKind.McpPermission then nebflow.core.McpPermissionAnswer.decode(ans.payload)
+      else None
+    // P0-2（spec §2.5 + §6 #2 建议口径「启用（L0-L2；不落盘）」）：卡答 scope=session 且
+    // approved ⇒ 记 (serverId, tool) 会话内免审。**只内存**（SessionApprovals 无落盘面）；
+    // **只对 L0-L2**（L3 恒审红线在判定侧强制，见 McpToolGate.decide）。
+    val rememberSessionApproval: Unit =
+      mcpAnswer match
+        case Some(a) if a.approved && a.wantsSessionScope =>
+          val sid = p.payload.hcursor.downField("serverId").as[String].toOption.getOrElse("")
+          val tool = p.payload.hcursor.downField("tool").as[String].toOption.getOrElse("")
+          val tier = p.payload.hcursor.downField("riskTier").as[String].toOption.getOrElse("")
+          if sid.nonEmpty && tool.nonEmpty && tier != "L3" then
+            nebflow.core.SessionApprovals.remember(p.sourceSession, sid, tool)
+            logger.infoSync(s"mcpPermission scope=session: session=${p.sourceSession} server=$sid tool=$tool")
+          else
+            logger.warnSync(
+              s"mcpPermission scope=session IGNORED (server='$sid' tool='$tool' tier='$tier') — " +
+                "L3 is always-ask (host red line); no session approval recorded"
+            )
+        case _ => ()
     for
       _ <- logger.info(
         s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}"
@@ -572,12 +636,20 @@ object InteractionHub:
       _ <- auditAnswer(
         ans.requestId,
         p,
-        answers.map(_.mkString(" | ")).orElse(approved.map(a => s"approved=$a")).getOrElse("-"),
+        answers
+          .map(_.mkString(" | "))
+          .orElse(mcpAnswer.map(a =>
+            s"approved=${a.approved} scope=${a.scope.getOrElse("once")} upgrade=${a.upgradeMode.getOrElse("-")}"))
+          .orElse(approved.map(a => s"approved=$a"))
+          .getOrElse("-"),
         via
       )
+      _ <- IO.delay(rememberSessionApproval)
       _ <- p.reply match
         case InteractionReply.PermissionReply(deferred) =>
           approved.fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
+        case InteractionReply.McpPermissionReply(deferred) =>
+          mcpAnswer.fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
         case InteractionReply.AskUserReply(replyTo) =>
           replyTo.fold(IO.unit)(r => (r ! answers.getOrElse(Nil)))
     yield ()
