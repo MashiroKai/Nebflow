@@ -1056,9 +1056,9 @@ function nodeHtml(n, pos, originX, nameOf) {
     <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
          data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
       <div class="solar-orbit">
-        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
-        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
-        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
+        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
+        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
+        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot-spin"><div class="solar-dot"></div></div></div></div>
       </div>
       <div class="fm-node-head${queueFlag ? ' fm-head-queued' : ''}">${worktreeBadge}${flags}${queueFlag}${statusIcon}${statusWord}${chainChev}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
@@ -1789,12 +1789,13 @@ function nodeContentKey(n) {
   ].join('|');
 }
 
-/** 就地更新节点卡片内容，但保留 .solar-orbit——轨道旋转由 flowAnim.js 的 rAF
- *  以 inline transform 逐帧驱动（状态按 pane|nodeId 键控续接）。移植 orbit 以外
- *  子节点使 .solar-dot-wrap 元素及其 inline transform 原地保留：rAF 的键控状态
- *  st.el === el 继续成立，增量更新零打断、零重挂载（全量重建路径由 flowAnim 的
- *  keyed re-attach 兜底续角度）。根 class/状态属性同步替换，rAF reconcile 据此
- *  感知 running→终态并执行滑行淡出。 */
+/** 就地更新节点卡片内容，但保留 .solar-orbit——轨道旋转由 CSS keyframes 驱动
+ *  （flowCss.js 的相位层/动画层），flowAnim.js 只做一次性相位续接与收尾补丁。
+ *  移植 orbit 以外子节点使 .solar-dot-wrap/.solar-dot-spin 元素及其 inline
+ *  animation-delay（相位续接种子）原地保留：旋转动画不重启动、点不瞬移，增量更新
+ *  零打断、零重挂载（全量重建路径由 flowAnim 的 fresh-element 种子兜底续角度）。
+ *  根 class/状态属性同步替换，flowAnim reconcile 据此感知 running→终态并执行
+ *  滑行收尾（一次性 animation 改写）+ 淡出。 */
 function transplantNodeContent(el, n, pos, originX, nameOf) {
   const holder = document.createElement('div');
   holder.innerHTML = nodeHtml(n, pos, originX, nameOf);

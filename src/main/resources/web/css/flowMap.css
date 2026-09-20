@@ -492,10 +492,12 @@
 .fm-node.fm-exit { opacity: 0; transform: scale(0.8); pointer-events: none; }
 
 /* 状态切换平滑过渡：环/点/标签的透明度与描边色（pending→running→completed）。
-   终态轨道点不再用 CSS 处理——@keyframes solar-spin 已随 rAF 重构（flowAnim.js）
-   删除，旋转/收尾（running→completed/cancelled/failed 先滑行到循环端点再淡出）
-   全部由 rAF 以 inline transform/opacity 驱动并自动续接相位；CSS animation 若与
-   inline transform 同属性会互相覆盖，故此处不得再声明 .solar-dot-wrap 动画。 */
+   轨道旋转自 2026-09-19 起是 CSS keyframes（flowCss.js 的 .solar-dot-spin，合成器
+   线程 + .solar-node.running 类门控）；相位层 .solar-dot-wrap 只承载静止基相位
+   （0/120/240）。收尾 = running→终态时由 flowAnim.js 一次性把内层改成「本轮跑满
+   即停」（1 次迭代 + fill forwards，端点 ≡ 基相位），animationend 后再由
+   .fm-orbit-faded 让相位层淡出。故此处**不得**再对 .solar-dot-wrap /
+   .solar-dot-spin 声明 transform 动画或过渡：会与相位层 rotate 及收尾填值互相覆盖。 */
 .fm-node .solar-ring,
 .fm-node .solar-dot,
 .fm-node .solar-node-label {
@@ -537,6 +539,10 @@
   .flowmap-card .solar-canvas { transition: none; }
   .fm-result-summary, .fm-desc, .solar-node-status { animation: none; }
   .fm-node.fm-node-flash { animation: none; box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.3); }
+  /* 审计 §4 #12：边箭头的 0.35s fill/opacity 过渡此前无覆盖（两态同值）。
+     此处只压审计点名的这一个选择器，不扩面到同行其它过渡（.flow-edge.fm-edge
+     等由审计 #5 的动画档位另行覆盖）。 */
+  .fm-edge-arrow { transition: none; }
 }
 
 /* ══ 链摘要卡（折叠态，链级抽象 P1 · spec §3.3 方案 b）════════════════
