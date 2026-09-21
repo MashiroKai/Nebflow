@@ -10,6 +10,7 @@ import nebflow.shared.*
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /**
  * 审计 20260903 子项②——400 Format/重放类失败不参与驱逐（probe 形状取舍面）：
@@ -28,6 +29,29 @@ import scala.concurrent.duration.*
 class FormatErrorNoEvictSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 45.seconds
+
+  // 案① A5（chain-llmstall-fix）：4xx 响应体取证面**豁免 `enabled`** ⇒ 本 spec 造的
+  // 400/401 会落盘。不重定向就会写进生产 home 的 logs/router（与
+  // TaskStuckWatcherSpec / LogWriterHomeIsolationSpec 同款纪律）。
+  private var logTmp: java.nio.file.Path = null
+
+  override def beforeAll(): Unit =
+    logTmp = java.nio.file.Files.createTempDirectory("format-noevict-log-")
+    nebflow.core.LlmLogWriter.setLogDirForTest(logTmp)
+
+  override def afterAll(): Unit =
+    nebflow.core.LlmLogWriter.resetLogDirForTest()
+    // 倒序 walk 删除（不逐个点名文件）：本 spec 在 enabled 被前置 suite 置真时会同时
+    // 落 summary/full 等多条腿，点名删 `_httperror.jsonl` 后 `deleteIfExists(tmp)`
+    // 遇到非空目录会抛 DirectoryNotEmptyException ⇒ 假失败。与
+    // LogWriterHomeIsolationSpec:63-69 同款形态。
+    if logTmp != null && java.nio.file.Files.exists(logTmp) then
+      java.nio.file.Files
+        .walk(logTmp)
+        .sorted(java.util.Comparator.reverseOrder())
+        .iterator()
+        .asScala
+        .foreach(java.nio.file.Files.deleteIfExists)
 
   private val Port400 = 18565
   private val Port401 = 18567
