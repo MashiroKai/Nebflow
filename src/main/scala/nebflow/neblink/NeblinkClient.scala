@@ -808,14 +808,28 @@ class NeblinkClient(
     withSession(token => sendRequest("POST", s"${config.url}$path", AttachmentCapability.ProbeBody, Some(token)))
       .map(AttachmentCapability.judge)
 
-  /**
-   * E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
-   * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。
-   */
-  def createAttachment(friendUserId: String, name: String, size: Long, sha256: String): IO[Either[String, Json]] =
+  /** E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
+    * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。
+    *
+    * 传输集成批（S7 · 跨仓契约 §B.4 逐字）：`preview` 在场 ⇒ 申报体**追加** `preview` 键
+    * （**末位**，同 §B.2「Declared LAST」；编码单点 =
+    * [[AttachmentPreviewContract.encodePreview]]，键序 = 六键声明序）。`None` ⇒ 载荷与改前
+    * **逐字节相同**（既有发送端 / 旧服务端零扰动；旧端 K24 零 `deny_unknown_fields` ⇒
+    * 多出的 `preview` 键被静默忽略 = §B.7 #14 的回落面，本方法**零额外分支**）。 */
+  def createAttachment(
+    friendUserId: String,
+    name: String,
+    size: Long,
+    sha256: String,
+    preview: Option[AttachmentPreview] = None
+  ): IO[Either[String, Json]] =
     withSession { token =>
-      val payload = Json.obj("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson).noSpaces
-      val url = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
+      val base    = Json.obj("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson)
+      val payload =
+        preview
+          .fold(base)(p => base.deepMerge(Json.obj(AttachmentPreviewContract.PreviewKey -> AttachmentPreviewContract.encodePreview(p))))
+          .noSpaces
+      val url     = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
       sendRequest("POST", url, payload, Some(token)).map(_.flatMap(json(_)))
     }
 

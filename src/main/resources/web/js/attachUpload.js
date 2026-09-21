@@ -28,6 +28,17 @@ import * as api from './friendsApi.js';
 // 闸位常量**唯一来源**（设备面 dropbox.js 的既有常量，本批只把它们导出，
 // 不改值、不改用法）⇒ 两个面不可能漂移出两个上限。
 import { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL } from './dropbox.js';
+// ── 传输集成批（S7）：发送侧预览申报 ────────────────────────────────────────
+// 生成单点 = `attachImagePreview.makePreviewFrame`（本批 S5 出口已带 bytes/sha256/b64）；
+// 判读单点 = `attachPreviewField.declarePreviewOf`（六键全有或全无，`null` = 不申报）。
+// 传输 = 整件上传**之前**向网关暂存路由 POST 一枚六键字段（同一 `uploadId` 键）；网关在该
+// `uploadId` 的整件上传落地时**取走即删**并拼进 E1 申报体（跨仓契约 §B.6 P1：预览与附件行
+// 同生，预览只有一个可写时刻）。🔴 预览是**建议性加性面**：生成 / 判读 / 暂存任何一环失败
+// ⇒ 原样走「无预览」上传（逐字现状），零阻塞、零改写上传终态；旧服务端（K24 零
+// deny_unknown_fields）忽略 E1 里的 `preview` 键 ⇒ 静默无预览 = §B.7 #14 回落面，
+// 本模块零额外分支。两件均为零依赖纯函数面（`attachPreviewField` 零 import ⇒ 无环）。
+import { makePreviewFrame } from './attachImagePreview.js';
+import { declarePreviewOf } from './attachPreviewField.js';
 // ── 幂等键（attachkey 批）：**唯一生成点复用**，禁第二套 ────────────────────
 // 作者 2026-09-17 裁定 A：附件腿**不**自建生成器、**不**做独立判重 —— 直接取 P2-b 在
 // `messages.js` 铸键的**同一单点**（`newClientMsgId`，本批按裁定 A 给它加 `export`，
@@ -472,8 +483,34 @@ function findItem(uploadId) {
   return null;
 }
 
+/** S7：发送侧预览申报（best-effort）。任何失败 ⇒ **无预览**上传（诚实降级、零用户面差异）：
+ *  · 非图片（`file.type` 非 `image/*`）⇒ 不生成（生成器对解不了的图自报 `ok:false`，
+ *    判读面同样按「无预览」收口 —— 这里只是省一次无谓解码）；
+ *  · 申报响应非 2xx / 网络失败 ⇒ 网关取不到暂存 ⇒ E1 无 `preview` 键 ⇒ 旧端语义。
+ * @param {object} item 上传条（取 `uploadId` 作暂存键） @param {File} file @param {string} targetId */
+async function stagePreviewDeclaration(item, file, targetId) {
+  try {
+    if (!file || typeof file.type !== 'string' || !file.type.startsWith('image/')) return;
+    const field = declarePreviewOf(await makePreviewFrame(file));
+    if (!field) return;
+    const token = getAuthToken();
+    const qs = new URLSearchParams({
+      conversationId: targetId,
+      name: file.name || 'attachment',
+      uploadId: item.uploadId,
+    });
+    await fetch(`/api/attachments/preview?${qs.toString()}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(field),
+    });
+  } catch { /* best-effort by design：预览缺席永远不是上传失败 */ }
+}
+
 /** 单件上传（整件一次请求）。返回 `{ok:true, attachmentId}` 或 `{ok:false, code, message}`。 */
 async function uploadOne(item, file, targetId) {
+  // S7：先申报预览（best-effort），再发整件 —— 网关在整件上传里消费暂存并拼进 E1。
+  await stagePreviewDeclaration(item, file, targetId);
   const token = getAuthToken();
   const qs = new URLSearchParams({
     conversationId: targetId,

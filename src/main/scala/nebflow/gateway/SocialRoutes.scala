@@ -513,7 +513,14 @@ private[gateway] object SocialRoutes:
                     )
                     val run =
                       if cancellable then registry.register(uploadId) else IO.unit
-                    (run *> fs.uploadStream(conversationId, name, uploadId, req.body, hooks))
+                    // 传输集成批（S7）：取走本 `uploadId` 暂存的预览申报（**消费一次读**，取走即删
+                    // ⇒ 不存在二次消费/串件）。缺席 = 无预览 ⇒ `uploadStream` 走既有路径逐字。
+                    // 不可取消面（客户端未带 `uploadId`）没有暂存键 ⇒ 恒空（申报腿本就要求
+                    // `uploadId`，两处同一把键、同一道形态闸）。
+                    val stagedPreview =
+                      if cancellable then registry.takePreview(uploadId)
+                      else IO.pure(Option.empty[AttachmentPreview])
+                    (run *> stagedPreview.flatMap(p => fs.uploadStream(conversationId, name, uploadId, req.body, hooks, p)))
                       .guarantee(if cancellable then registry.release(uploadId) else IO.unit)
                       .flatMap {
                         case Right(up) =>
@@ -576,6 +583,62 @@ private[gateway] object SocialRoutes:
                           )
                       }
               end if
+        }
+
+      /** **预览申报暂存**（传输集成批 S7 · 跨仓契约 §B.4/§B.6 P1 的网关段）。
+        *
+        * 浏览器在整件上传**之前**先 POST 本路由（同 `conversationId` / `name` / `uploadId`
+        * 参数 + JSON 体 = 六键预览对象）。本层只做三件事：**形态闸**（`uploadId` 复用
+        * [[nebflow.neblink.AttachUploadId]] 唯一判定，与上传/取消路由同一把键同一道闸）、
+        * **契约判定**（体 = [[nebflow.neblink.AttachmentPreviewContract.previewOf]] 的唯一解析
+        * 口径：六键全有或全无 / `fmt` 白名单 / 几何 / 体积 / sha256 / b64 长度自洽——任一不成立
+        * ⇒ `400`，**零暂存**）、**暂存**（`AttachUploadRegistry.stagePreview`，有界；表满 ⇒
+        * `200 {staged:false}`）。E1 侧的拼装发生在**整件上传路由**（`takePreview` 取走即删，
+        * 消费一次读）；本路由**零上游调用** ⇒ 预览申报失败不产生任何 neblink-server 副作用。
+        *
+        * 🔴 **预览是建议性加性面**：本路由任何失败（400 / 网络 / `staged:false`）⇒ 客户端按
+        * 「无预览」原样上传（§B.7 #14 的回落面）；失败形态的差异只供读数，不构成用户可见差异。
+        */
+      case req @ POST -> Root / "attachments" / "preview" =>
+        withAuth(req) {
+          val conversationId = req.params.getOrElse("conversationId", "")
+          val uploadIdForm   = AttachUploadId.validate(req.params.getOrElse("uploadId", ""))
+          if conversationId.trim.isEmpty then
+            BadRequest(Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing conversationId".asJson))
+          else if uploadIdForm.isLeft then
+            // 与上传/取消两条路由**逐字同形**的既有信封（禁第二套错误形状）。
+            BadRequest(
+              Json.obj(
+                "ok" -> false.asJson,
+                "code" -> AttachUploadId.ErrorCode.asJson,
+                "error" -> uploadIdForm.left.toOption.getOrElse("").asJson
+              )
+            )
+          else
+            req.as[Json].attempt.flatMap {
+              case Left(_) =>
+                BadRequest(
+                  Json.obj(
+                    "ok" -> false.asJson,
+                    "code" -> "invalid_argument".asJson,
+                    "error" -> "preview declaration body is not valid JSON".asJson
+                  )
+                )
+              case Right(body) =>
+                AttachmentPreviewContract.previewOf(body) match
+                  case None =>
+                    BadRequest(
+                      Json.obj(
+                        "ok" -> false.asJson,
+                        "code" -> "invalid_argument".asJson,
+                        "error" -> "preview declaration rejected by AttachmentPreviewContract (six keys all-or-nothing; fmt webp|jpeg; 1<=w,h<=1280; 1<=bytes<=262144; sha256 lowercase 64-hex; b64 length == 4*ceil(bytes/3))".asJson
+                      )
+                    )
+                  case Some(p) =>
+                    sharedResources.attachUploads
+                      .stagePreview(uploadIdForm.getOrElse(""), p)
+                      .flatMap(staged => Ok(Json.obj("ok" -> true.asJson, "staged" -> staged.asJson)))
+            }
         }
 
       /**

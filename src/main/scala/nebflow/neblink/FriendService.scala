@@ -1319,11 +1319,12 @@ final class FriendService(
     displayName: String,
     uploadId: String,
     body: fs2.Stream[IO, Byte],
-    hooks: AttachUpload.Hooks = AttachUpload.Hooks.none
+    hooks: AttachUpload.Hooks = AttachUpload.Hooks.none,
+    preview: Option[AttachmentPreview] = None
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     AttachUploadId.validate(uploadId) match
       case Left(reason) => IO.pure(Left((AttachUploadId.ErrorCode, reason)))
-      case Right(id) => uploadStreamChecked(conversationId, displayName, id, body, hooks)
+      case Right(id)    => uploadStreamChecked(conversationId, displayName, id, body, hooks, preview)
 
   /**
    * [[uploadStream]] 的**已过形态闸续体**。
@@ -1339,7 +1340,8 @@ final class FriendService(
     displayName: String,
     uploadId: String,
     body: fs2.Stream[IO, Byte],
-    hooks: AttachUpload.Hooks
+    hooks: AttachUpload.Hooks,
+    preview: Option[AttachmentPreview]
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     currentClient.flatMap {
       case None =>
@@ -1370,7 +1372,7 @@ final class FriendService(
                     case AttachmentCapability.Supported(ev) =>
                       logger.info(s"attachment capability probe (web leg): supported ($ev)")
                       AttachUpload
-                        .pushFile(cli, conversationId, displayName, size, whole, tempPath, hooks)
+                        .pushFile(cli, conversationId, displayName, size, whole, tempPath, preview = preview, hooks = hooks)
                         .flatMap {
                           case Right(up) => IO.pure(Right(up))
                           case Left(fail) => IO.pure(Left((AttachUpload.errorCode(fail), fail.render)))
