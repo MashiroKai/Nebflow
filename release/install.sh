@@ -758,7 +758,12 @@ _install_rg_tarball() {
         rm -rf "$tmp_archive" "$tmp_dir"
         return 1
     fi
-    # Portable extraction (GNU tar AND bsdtar): unpack, then find the binary
+    # Portable extraction (GNU tar AND bsdtar): unpack, then find the binary.
+    # INSTALL_DIR is NOT guaranteed to exist here: ensure_rg runs in stage_deps,
+    # one stage BEFORE download_jar (which creates the dir via version_dir) -
+    # a fresh install previously died at this cp (dormant until seed-first made
+    # this channel load-bearing, envfix batch 2026-09-21).
+    mkdir -p "${INSTALL_DIR}" || return 1
     if tar xzf "$tmp_archive" -C "$tmp_dir" 2>/dev/null; then
         rg_bin=$(find "$tmp_dir" -type f -name rg -perm -u+x 2>/dev/null | head -1)
         [ -z "$rg_bin" ] && rg_bin=$(find "$tmp_dir" -type f -name rg 2>/dev/null | head -1)
@@ -785,40 +790,79 @@ _install_rg_distro() {
     command -v rg > /dev/null 2>&1
 }
 
+# Seed ${INSTALL_DIR}/rg from the rg currently on PATH. Install-time PATH is
+# the login shell's, so a hit here is the host's working rg; cp dereferences
+# brew-style symlinks (sources resolve through ../Cellar/...). The seeded
+# copy is sanity-run before we trust it - a PATH entry that is a broken
+# wrapper/script must fall through to the installer channels instead of
+# seeding garbage. Offline-safe: zero download.
+_seed_rg_from_path() {
+    local _rg_hit
+    _rg_hit=$(command -v rg 2>/dev/null) || return 1
+    [ -n "$_rg_hit" ] && [ -f "$_rg_hit" ] || return 1
+    mkdir -p "${INSTALL_DIR}" || return 1
+    if cp "$_rg_hit" "${INSTALL_DIR}/rg" 2>/dev/null && chmod 755 "${INSTALL_DIR}/rg" \
+        && "${INSTALL_DIR}/rg" --version > /dev/null 2>&1; then
+        log_ok "rg: seeded ${_rg_hit} -> ${INSTALL_DIR}/rg"
+        return 0
+    fi
+    rm -f "${INSTALL_DIR}/rg"
+    log_warn "rg: seed from ${_rg_hit} failed sanity check - trying installer channels..."
+    return 1
+}
+
 ensure_rg() {
     if [ -x "${INSTALL_DIR}/rg" ]; then
         log_ok "rg: cached at ${INSTALL_DIR}/rg"
         return 0
     fi
-    if command -v rg > /dev/null 2>&1; then
-        log_ok "rg: $(rg --version 2>/dev/null | head -1)"
-        return 0
-    fi
-    log_i "Installing ripgrep (rg) for search support..."
+    # Seed-first (author ruling 2026-09-21, envfix batch): a PATH hit no longer
+    # short-circuits without seeding. The seeded copy at ${INSTALL_DIR}/rg is
+    # the ONLY leg a service-context runtime (launchd/systemd minimal PATH) can
+    # rely on - incident 2026-09-21: host launched by launchd with
+    # PATH=/usr/bin:/bin:/usr/sbin:/sbin saw no rg anywhere (readings:
+    # .nebflow/evidence/20260921_env-rg-restore/). Re-entry stays idempotent:
+    # the cached check above returns before any write.
     local installed=0
-    case "$OS_FAMILY" in
-        mac)
-            if [ "$ARCH" = "arm64" ]; then
-                _install_rg_tarball "aarch64-apple-darwin" && installed=1
-            else
-                _install_rg_tarball "x86_64-apple-darwin" && installed=1
-            fi
-            ;;
-        linux)
-            if [ "$ARCH" = "arm64" ]; then
-                # No official aarch64-linux tarball upstream (verified 404,
-                # 2026-09-06) - use the distro package instead.
-                if _install_rg_distro; then installed=1; log_ok "rg installed via ${PKG_MGR}"; fi
-            else
-                if _install_rg_tarball "x86_64-unknown-linux-musl"; then
-                    installed=1
-                elif _install_rg_distro; then
-                    installed=1; log_ok "rg installed via ${PKG_MGR}"
-                fi
-            fi
-            ;;
-    esac
+    if command -v rg > /dev/null 2>&1; then
+        # if-form, not `&&`: the script runs under `set -e` (pipe installs use
+        # dash), and a failing AND-list statement would abort the whole install
+        # instead of falling through to the installer channels.
+        if _seed_rg_from_path; then installed=1; fi
+    fi
     if [ "$installed" = "0" ]; then
+        log_i "Installing ripgrep (rg) for search support..."
+        case "$OS_FAMILY" in
+            mac)
+                if [ "$ARCH" = "arm64" ]; then
+                    _install_rg_tarball "aarch64-apple-darwin" && installed=1
+                else
+                    _install_rg_tarball "x86_64-apple-darwin" && installed=1
+                fi
+                ;;
+            linux)
+                if [ "$ARCH" = "arm64" ]; then
+                    # No official aarch64-linux tarball upstream (verified 404,
+                    # 2026-09-06) - use the distro package instead.
+                    if _install_rg_distro; then installed=1; log_ok "rg installed via ${PKG_MGR}"; fi
+                else
+                    if _install_rg_tarball "x86_64-unknown-linux-musl"; then
+                        installed=1
+                    elif _install_rg_distro; then
+                        installed=1; log_ok "rg installed via ${PKG_MGR}"
+                    fi
+                fi
+                ;;
+        esac
+    fi
+    # A distro install lands rg on the system PATH, NOT in ${INSTALL_DIR} -
+    # seed it from there so the install-dir invariant below holds on every
+    # success path (update re-entry included: the same pipeline re-runs).
+    if [ ! -x "${INSTALL_DIR}/rg" ] && command -v rg > /dev/null 2>&1; then
+        if _seed_rg_from_path; then installed=1; fi
+    fi
+    # Success invariant is the seeded copy itself, not a channel's exit code.
+    if [ ! -x "${INSTALL_DIR}/rg" ]; then
         rg_soft_fail
     fi
 }
@@ -1184,8 +1228,14 @@ create_wrapper() {
 #!/bin/bash
 SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 # Java selection: the pinned JDK (jdk-21) wins; PATH java is only a fallback.
+# A missing pinned JDK must NEVER degrade silently (author ruling 2026-09-21,
+# envfix batch): warn loudly to stderr first, then fall back.
 JAVA_BIN="\$HOME/${HOME_DIR}/jdk-21/bin/java"
-[ -x "\$JAVA_BIN" ] || JAVA_BIN="\$(command -v java || true)"
+if [ ! -x "\$JAVA_BIN" ]; then
+    echo "WARN: ${PRODUCT_NAME} pinned JDK missing at \$JAVA_BIN - falling back to PATH java." >&2
+    echo "      Repair: re-run the ${PRODUCT_NAME} installer (it restores ${HOME_DIR}/jdk-21)." >&2
+    JAVA_BIN="\$(command -v java || true)"
+fi
 java_hint() {
     case "\$(uname -s)" in
         Darwin) echo "  Install: brew install openjdk@21" >&2 ;;
