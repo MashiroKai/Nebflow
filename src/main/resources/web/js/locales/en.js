@@ -509,6 +509,7 @@ export default {
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
+  'messages.voiceInput': 'Voice input',
   'messages.send': 'Send',
   // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
   // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback

@@ -267,14 +267,16 @@
       <div id="slash-dropdown"></div>
       <div id="queue-bar"></div>
       <div id="input-bar">
-        <!-- 语音输入 = **普通麦克风**（作者 2026-09-19 04:22 修正④：micOrb 气泡/光球
-             形态退役，旧终案 `micorb-wave-final` R5 标 archived）。控件 = 主窗口既有
-             `.icon-btn` 族（36×36 圆键 + 玻璃 hover），图标 = lucide `mic`。
-             录音反馈（保留）：`.icon-btn.recording` = 既有微信绿 + `voicePulse`；
-             转写中：`.mic-btn.processing`（既有 sapphire 强调色）。 -->
-        <button class="icon-btn mic-btn" id="voice-btn" type="button" title="Voice input" aria-label="Voice input" aria-pressed="false">
-          <i data-lucide="mic"></i>
-        </button>
+        <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：
+             「参考我们最新的实现……把最近的有光球的回退回来」⇒ 回退源 =
+             2cba0a224 删除前的最近版（git show 2cba0a224^），非 v8.2.2 原初版；
+             设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。 -->
+        <div class="mic-orb-wrap" id="mic-orb-wrap">
+          <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+            <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+            <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
+          </button>
+        </div>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
