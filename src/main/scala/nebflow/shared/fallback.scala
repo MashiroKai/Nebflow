@@ -32,7 +32,23 @@ case class ErrorClassification(
     * 永远成功 → 秒回 UP → 下一个 fallback 再 400）。Auth/404/配额等确证
     * 死亡保持 evict=true。默认 true（除 Format 外全部维持现行为）。
     */
-  evict: Boolean = true
+  evict: Boolean = true,
+  /** 配额类分层（作者令 2026-09-21 19:16 腿 b）：上游错误体证明这是**计划性
+    * 额度耗尽**（HTTP 403，或 429 且上游 code ∈ `Fallback.QuotaUpstreamCodes`）。
+    *
+    * 分界判据 = 「短窗内会不会自愈」：
+    *   - `quota = true`（计划性：现读 403×1 = kimi 5h 额度闸 @16:47；429-1308×1 =
+    *     zhipu 5h 使用上限 @17:54）⇒ interface 侧走**配额软回避窗**：该 candidate
+    *     退出本轮候选、立即换链、不进探测集（不烧必然失败的探测），窗口到期自然
+    *     回链。阻塞式等待（同 provider 退避重试 / 全灭闸 `waitForAnyUp` 等满预算）
+    *     对它无意义——额度不会在一个退避窗内回来。
+    *   - `quota = false`（自愈性：超时 / 连接层 / 频率类 429-1302）⇒ 现形态逐条不变
+    *     （瞬时 = 软回避 [[nebflow.shared.Defaults.TimeoutAvoidWindowMs]] + 探测；
+    *     频率类 = overload 退避 ≥60s + 同 provider 重试）。
+    *
+    * 只影响驱逐**机制**，不改 `reason` 面（零新枚举，UI / attempt 面零改）。
+    */
+  quota: Boolean = false
 )
 
 case class FallbackAttempt(

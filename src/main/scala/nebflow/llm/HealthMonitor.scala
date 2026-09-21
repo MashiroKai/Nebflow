@@ -120,27 +120,34 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     }
 
   /**
-   * 软回避（审计 20260903 子项③）：超时类失败后把 candidate 排除出候选链
-   * `windowMs` 毫秒——与 [[markDown]] 的区别：不写健康状态（[[getStates]]
-   * 看不到 Down）、不进探测集（不烧慢 provider 的探测请求）、无恢复动作
-   * （窗口到期 [[filterCandidates]] 自然放回）。时限由调用方传入
-   * （生产 = Defaults.TimeoutAvoidWindowMs，spec 可缩窗模拟）。
+   * 软回避（审计 20260903 子项③；配额分层 2026-09-21 令）：把 candidate 排除出
+   * 候选链 `windowMs` 毫秒——与 [[markDown]] 的区别：不写健康状态（[[getStates]]
+   * 看不到 Down）、不进探测集（不烧慢/额度死 provider 的探测请求）、无恢复动作
+   * （窗口到期 [[filterCandidates]] 自然放回）。时限与语义标签由调用方传入：
+   *
+   *   - 瞬时类（首 token / 流间隙超时）：`label = "timeout"`，
+   *     `windowMs = Defaults.TimeoutAvoidWindowMs`（45s，「慢 ≠ 死」）；
+   *   - **配额类**（计划性额度耗尽：403 / 429-1308）：`label = "quota exhausted"`，
+   *     `windowMs = Defaults.QuotaAvoidWindowMs`（300s）——同业等待无意义，
+   *     触发的是**换链**（退出本轮候选、立即推进下一根），显式分层于瞬时类。
+   *
+   * spec 可缩窗模拟（生产值见 Defaults）。
    */
-  def softAvoid(providerId: String, model: String, windowMs: Long): IO[Unit] =
+  def softAvoid(providerId: String, model: String, windowMs: Long, label: String = "timeout"): IO[Unit] =
     val k = key(providerId, model)
     avoidUntilRef
       .update(_.updated(k, System.currentTimeMillis() + windowMs))
-      .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms (timeout — NOT evicted, no probe)"))
+      .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms ($label — NOT evicted, no probe)"))
 
   /** 当前软回避截止时刻（观测 / spec 断言用）。 */
   private[llm] def getAvoidUntil: IO[Map[String, Long]] = avoidUntilRef.get
 
   /** Partition candidates into (up, down) based on current health state.
     *
-    * 软回避（子项③）：avoid 窗口内的 candidate 从 up 中剔除，但也不进
-    * down（down 集合 = 探测集，健康探测不应该烧一个只是「慢」的 provider）。
-    * avoid-only 的全空链由 all-Down 门的 waitForAnyUp 5s tick 兜底——窗口
-    * 到期 filterCandidates 放回，等待者 ≤5s 内自行通过，无需额外信号。 */
+    * 软回避（子项③ + 配额分层）：avoid 窗口内的 candidate 从 up 中剔除，但也不进
+    * down（down 集合 = 探测集，健康探测不应该烧一个只是「慢」或**额度计划性耗尽**
+    * 的 provider）。avoid-only 的全空链由 all-Down 门的 waitForAnyUp 5s tick 兜底
+    * ——窗口到期 filterCandidates 放回，等待者 ≤5s 内自行通过，无需额外信号。 */
   def filterCandidates(
     candidates: List[ModelCandidate]
   ): IO[(List[ModelCandidate], List[ModelCandidate])] =

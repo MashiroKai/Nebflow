@@ -101,4 +101,37 @@ class QuotaClassificationSpec extends CatsEffectSuite:
     assertEquals(format400.reason, FailoverReason.Format)
     assertEquals(format400.evict, false)
   }
+
+  // ============================================================
+  // 配额标志面（T5 引用实现新增字段，故随实现同支提交）
+  // ============================================================
+
+  test("T5: 配额标志面——403 / 429-1308 = true；频率类 / 超时 / 连接 / 401 / 400 = false") {
+    val q403 = Fallback.classifyError(http(Kimi403QuotaBody, 403))
+    assertEquals(q403.quota, true)
+    assertEquals(q403.permanence, ErrorPermanence.Permanent)
+
+    val q429 = Fallback.classifyError(http(Zhipu429Quota1308Body, 429))
+    assertEquals(q429.quota, true)
+    assertEquals(q429.permanence, ErrorPermanence.Permanent, "配额类 = 不可自愈 ⇒ 不做同 provider 退避重试")
+
+    val freq429 = Fallback.classifyError(http(Zhipu429Freq1302Body, 429))
+    assertEquals(freq429.quota, false, "同族码 1302 = 频率类，不得并入配额分层")
+
+    // 裸数字不进判据（request_id 等十六进制串可能偶然含 1308）
+    val decoy = Fallback.classifyError(new RuntimeException("""{"request_id":"a1308b"}"""))
+    assertEquals(decoy.quota, false, "无 `\"code\":\"1308\"` 形状的裸数字不得判为配额")
+
+    val quotaShapeDecoy = Fallback.classifyError(http("""{"code":"1308x"}""", 429))
+    assertEquals(quotaShapeDecoy.quota, false, "码必须整段匹配（1308x 不是 1308）")
+
+    List(
+      Fallback.classifyError(new java.util.concurrent.TimeoutException("timeout")),
+      Fallback.classifyError(new java.io.IOException("Connection reset by peer")),
+      Fallback.classifyError(http("unauthorized", 401)),
+      Fallback.classifyError(http("model gone", 404)),
+      Fallback.classifyError(http("invalid request", 400)),
+      Fallback.classifyError(new AllProvidersDownTimeout(120000L))
+    ).foreach(c => assertEquals(c.quota, false, s"非配额类必须保持 quota=false（reason=${c.reason}）"))
+  }
 end QuotaClassificationSpec

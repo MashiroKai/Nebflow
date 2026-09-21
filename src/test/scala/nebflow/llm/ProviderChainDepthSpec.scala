@@ -105,4 +105,16 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
     yield
       assertEquals(refs(cs), List("solo/m1"), "配置只有一根时链深 = 1，不得凭空造候选")
   }
+
+  test("T4: 储备层顺序确定（providerId → model 字典序），同配置两次调用链序一致") {
+    for
+      reg <- mkRegistry(liveLikeConfig)
+      a <- reg.getCandidatesForAgent(Some(generalChain))
+      b <- reg.getCandidatesForAgent(Some(generalChain))
+    yield
+      val r = refs(a)
+      assertEquals(refs(b), r, s"同配置下链序必须可复现（Map 迭代序不保证），实际 $r")
+      val tail = r.drop(presetRefs.size)
+      assertEquals(tail, tail.sorted, s"储备层须按 providerId → model 字典序，实际尾部 = $tail")
+  }
 end ProviderChainDepthSpec
