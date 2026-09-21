@@ -510,6 +510,7 @@ export default {
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
+  'messages.voiceInput': '语音输入',
   'messages.send': '发送',
   // rcptcode 批（2026-09-20）：好友腿**终态**分态文案（消费点 = `messages.js` 的
   // `FRIEND_TERMINAL_TEXT` 白名单 + 未知码回退 `sendFailedCode`）。码集 = `friendsApi.js`
