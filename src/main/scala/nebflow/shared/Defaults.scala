@@ -7,6 +7,16 @@ import scala.concurrent.duration.*
  * Centralized here to avoid magic numbers scattered in multiple files.
  */
 object Defaults:
+  /** 兜底上下文窗口——**语义已降级**（案② B6 · `chain-llmstall-fix`，2026-09-21）：
+    * 历史语义 = 「模型配置缺 `contextWindow` 字段时的取值」；B2 落地后语义 =
+    * **「真值未知时的保守上限」**——即 provider 未上报 `modelMaxContext` 且配置里也没有
+    * 显式值时，本值是该 model 被假定的可受理窗口。
+    *
+    * 🔴 本批**不改数值**（128000 逐字不变）：改值会同时移动「缺字段时」与「真值未知时」
+    * 两个场景的读数，而本批的红验锚点只覆盖 clamp 算式（`PerModelContextClampSpec`）。
+    * 语义登记在此，供后续「保守上限该取多少」的独立决策引用。
+    * 消费点：`ProviderRegistry.effectiveContextWindow`（取数单点）与
+    * `ModelCandidate.contextWindow` 的默认值。 */
   val ContextWindow = 128000
 
   /**
