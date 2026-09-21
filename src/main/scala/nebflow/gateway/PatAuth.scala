@@ -318,7 +318,10 @@ object PatAuth:
     private val lock = new Object
     private var keys: Map[String, PublicKey] = Map.empty
     private var fetchedAtSec: Long = 0L
-    private var lastAttemptSec: Long = 0L
+    // 30s 刷新下限按 kid 记账（per-kid）：陌生 kid 各自有一次有界刷新机会（D1），
+    // 同一陌生 kid 在下限窗口内重复出现不再取数（D5）。全局单值会让首个取数武装下限、
+    // 挡住随后轮换进来的新 kid。
+    private var lastAttemptSec: Map[String, Long] = Map.empty
 
     /** 全部断言逐条：alg 白名单 → kid → 签名 → iss/aud/scope/exp/nbf → 吊销挂点。 */
     def accepts(raw: String): Boolean =
@@ -363,7 +366,7 @@ object PatAuth:
       cached(kid) match
         case Some(k) => Some(k)
         case None =>
-          refresh()
+          refresh(kid)
           cached(kid)
 
     private def cached(kid: String): Option[PublicKey] =
@@ -371,13 +374,14 @@ object PatAuth:
         if fetchedAtSec > 0L && nowSec() - fetchedAtSec <= CacheTtlSec then keys.get(kid) else None
       }
 
-    /** 有界刷新：一次调用最多取数一次；两次取数间隔 ≥ 30s（取数在锁内 ⇒ 并发退化为串行等待，
-      * 上界 = 5s timeout）。失败**保留旧缓存**并把本次判定交给调用者 fail-closed。 */
-    private def refresh(): Unit =
+    /** 有界刷新：一次调用最多取数一次；同一 kid 两次取数间隔 ≥ 30s（per-kid 下限，见
+      * [[lastAttemptSec]]；取数在锁内 ⇒ 并发退化为串行等待，上界 = 5s timeout）。失败**保留旧缓存**
+      * 并把本次判定交给调用者 fail-closed。 */
+    private def refresh(kid: String): Unit =
       lock.synchronized {
         val now = nowSec()
-        if now - lastAttemptSec >= MinRefreshGapSec then
-          lastAttemptSec = now
+        if now - lastAttemptSec.getOrElse(kid, 0L) >= MinRefreshGapSec then
+          lastAttemptSec = lastAttemptSec.updated(kid, now)
           fetchJwks(cfg.jwksUrl) match
             case Right(body) =>
               parseKeys(body) match
