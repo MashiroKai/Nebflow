@@ -187,12 +187,18 @@ final class ExplorerWatchSession(send: Json => IO[Unit], log: NebflowLogger, liv
   // ── Internals ──────────────────────────────────────────────────────────
 
   /** Rel-dir validation (R3 anchor): explorer-relative only — no absolute,
-    * no traversal segments, no backslash. Returns the cleaned form. */
+    * no traversal segments, no backslash. `""` is LEGAL — it is the root in
+    * the explorer coordinate system and the real frontend always leads its
+    * declared visible set with it (explorer.js `visibleWatchDirs()` =
+    * `'' +: expandedDirs`). The root itself is registered BEFORE the
+    * declared set is walked, so a declared `""` re-hits registerDir's
+    * registration dedup map as a no-op. (Rejecting `""` here failed the
+    * WHOLE subscribe fail-closed and killed the push main path in every
+    * configuration — verify round-1 R12.) Returns the cleaned form. */
   private def validateRelDir(rel: String): IO[String] =
-    IO.raiseUnless(rel.nonEmpty)(new RuntimeException("empty path")) *>
-      IO.raiseWhen(rel.startsWith("/"))(new RuntimeException("absolute path not allowed")) *>
+    IO.raiseWhen(rel.startsWith("/"))(new RuntimeException("absolute path not allowed")) *>
       IO.raiseWhen(rel.contains("\\"))(new RuntimeException("backslash not allowed")) *>
-      IO.raiseWhen(rel.split('/').exists(seg => seg.isEmpty || seg == "." || seg == ".."))(
+      IO.raiseWhen(rel.nonEmpty && rel.split('/').exists(seg => seg.isEmpty || seg == "." || seg == ".."))(
         new RuntimeException("path traversal segment")
       ).as(rel.stripSuffix("/"))
 

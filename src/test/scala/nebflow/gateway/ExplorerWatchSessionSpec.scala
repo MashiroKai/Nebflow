@@ -213,6 +213,35 @@ class ExplorerWatchSessionSpec extends CatsEffectSuite:
     }
   }
 
+  test("R3c: declared dirs containing the root coordinate '' subscribe cleanly (round-1 R12 seam contract)") {
+    withTempRoot { tmp =>
+      for
+        root <- IO.pure(canonRoot(tmp))
+        _   <- IO(os.makeDir.all(root / "projA"))
+        _   <- IO(os.makeDir.all(root / "projA" / "src"))
+        ref <- capture()
+        ws   = sessionFor(ref)
+        // The REAL frontend frame always leads dirs with '' (explorer.js
+        // visibleWatchDirs). Verify round-1 R12 caught the backend rejecting
+        // the WHOLE subscribe with "empty path" over it — this pins the
+        // seam: '' in dirs is the root coordinate, not an invalid path.
+        _   <- ws.subscribe(root, "", Some(List("", "projA", "projA/src")))
+        _   <- IO(os.write(root / "projA" / "src" / "seam.txt", "x"))
+        f1  <- await(20.seconds)(fsFrames(ref).map(_.find(f => dirsOf(f).contains("projA/src"))))
+        _   <- IO(os.write(root / "rootmark.txt", "x"))
+        f2  <- await(20.seconds)(fsFrames(ref).map(_.find(f => dirsOf(f).contains(""))))
+        snap <- IO(ws.tableSnapshot)
+        _   <- ws.close()
+      yield
+        assertEquals(f1.hcursor.get[Boolean]("overflow").toOption, Some(false))
+        assert(dirsOf(f1).contains("projA/src"), s"declared-subdir event must deliver: ${dirsOf(f1)}")
+        assert(dirsOf(f2).contains(""), s"root-level event must still deliver: ${dirsOf(f2)}")
+        // '' declared must NOT double-register the root (registerDir dedup):
+        // visible set = root("") + projA + projA/src = exactly 3.
+        assertEquals(snap, List(("", 3)), s"registration set must be root+projA+projA/src exactly: $snap")
+    }
+  }
+
   // ============================================================
   // R4 — synthetic OVERFLOW degrades to overflow:true with empty dirs
   // ============================================================
