@@ -729,7 +729,11 @@ case class AttachmentSummary(
   size: Long,
   sha256: String,
   state: String,
-  mime: Option[String] = None
+  mime: Option[String] = None,
+  // 传输集成批（2026-09-21）：跨仓腿 ① 落地后的**可选内联预览**（设计件 §B.1 六键）。
+  // 形参置末且有默认值 ⇒ 既有构造点（含位置实参）零改动；`None` ⇒ 出参**省键**
+  // （不是 `null`）⇒ 旧端载荷逐字节不变。
+  preview: Option[AttachmentPreview] = None
 ):
   def stateKind: AttachmentState = AttachmentState.of(state)
 
@@ -740,6 +744,25 @@ case class AttachmentSummary(
   def downloadable: Boolean = stateKind == AttachmentState.Ready && id.nonEmpty
 
 end AttachmentSummary
+
+/** 图片附件的**内联预览**（跨仓契约 §B.1 / §B.2 的六键逐字镜像；传输集成批 2026-09-21）。
+  *
+  * 六键**全有或全无**——不存在「只有几何没有字节」的形态；`fmt ∈ {"webp","jpeg"}`（裸格式名，
+  * **不是** `jpg` / `image/webp`）；`w`/`h` = 预览件像素（长边 ≤1280）；`bytes` = **解码后**
+  * 字节数；`sha256` = 对 `b64` 解码后字节取的 64 位小写 hex；`b64` = RFC 4648 §4 标准 base64
+  * （带 `=` 填充、**纯字串**、无 `data:` 前缀 —— `data:` 合成只落客户端单点）。
+  *
+  * 🔴 判定与编码**不在本类型上**：唯一口径 = [[AttachmentPreviewContract.previewOf]] /
+  * [[AttachmentPreviewContract.encodePreview]]（本 case class 只是形状载体，禁第二处校验）。
+  */
+case class AttachmentPreview(
+  fmt: String,
+  w: Int,
+  h: Int,
+  bytes: Long,
+  sha256: String,
+  b64: String
+)
 
 /** `AttachmentDto.state` 的客户端口径（唯一映射点，§B.7 ① 的线上枚举 + 越界兜底）。 */
 enum AttachmentState:
@@ -978,6 +1001,11 @@ object FriendCodecs:
   private def unreadableAttachment(rawState: String): AttachmentSummary =
     AttachmentSummary(id = "", name = "", size = 0L, sha256 = "", state = rawState)
 
+  /** 附件解码（**出参与入参两侧同批扩键** · 传输集成批）：`preview` 与 `mime` 同一条纪律 ——
+    * 键缺席 / `null` / 形状不全（六键缺一、`fmt` 越域、长边越界、`bytes` 越界、`sha256` 非
+    * 64 位小写 hex、`b64` 长度与 `bytes` 不自洽）⇒ `None` ⇒ 上层按「无预览」回落。
+    * 🔴 **降级是可见的**：`preview` 判不可用**不得**让整条附件解码失败（旧形态载荷仍然解得出，
+    * 既有六键取值逐字段不变）—— 判定单点 = [[AttachmentPreviewContract.previewOfAttachment]]。 */
   given Decoder[AttachmentSummary] = Decoder.instance { c =>
     Right(
       AttachmentSummary(
@@ -986,7 +1014,8 @@ object FriendCodecs:
         size = longField(c, "size").getOrElse(0L),
         sha256 = strField(c, "sha256").getOrElse(""),
         state = strField(c, "state").getOrElse(""),
-        mime = strField(c, "mime")
+        mime = strField(c, "mime"),
+        preview = AttachmentPreviewContract.previewOfAttachment(c.value)
       )
     )
   }
@@ -1091,7 +1120,13 @@ object FriendCodecs:
   given Encoder[OutgoingRequestSummary] = deriveEncoder
   given Encoder[FriendListResponse] = deriveEncoder
 
-  /** 附件出参（§B.2 M6）：`mime` 缺席即**省键**（`skip_serializing_if` 同形）。 */
+  /** 附件出参（§B.2 M6）：`mime` 缺席即**省键**（`skip_serializing_if` 同形）。
+    *
+    * 传输集成批加性扩面（同一条纪律）：`preview` 为 `Some` ⇒ 随附件一起出、**追加末位**
+    * （结构体声明序的最后一项）；`None` ⇒ **省键**（不是 `null`）⇒ 无预览件的出参形态与
+    * 旧形态**逐字节一致**。🔴 必须**手写**：`deriveEncoder` 会按 case class 形状过滤，
+    * 而 `preview` 是**对象**（不是标量）—— 派生编码在这里既会漏键也会改键序。
+    * 六键的写法单点 = [[AttachmentPreviewContract.encodePreview]]（禁本处再拼一遍）。 */
   given Encoder[AttachmentSummary] = Encoder.instance { a =>
     Json.fromFields(
       List(
@@ -1100,7 +1135,8 @@ object FriendCodecs:
         Some("size" -> a.size.asJson),
         a.mime.map(m => "mime" -> m.asJson),
         Some("sha256" -> a.sha256.asJson),
-        Some("state" -> a.state.asJson)
+        Some("state" -> a.state.asJson),
+        a.preview.map(p => AttachmentPreviewContract.PreviewKey -> AttachmentPreviewContract.encodePreview(p))
       ).flatten
     )
   }

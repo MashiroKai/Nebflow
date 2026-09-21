@@ -1,37 +1,34 @@
 package nebflow.neblink
 
-import io.circe.*
-import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 
 /**
- * 附件**预览字段**契约声明件 —— 好友/群图片预览传输批 · 解耦包（作者 2026-09-19 20:4x 裁定）。
+ * 附件**预览字段**契约声明件 —— 好友/群图片预览传输批 · **传输集成批**（2026-09-21）。
  *
- * 定位：把「与 `neblink-server` **待落** DTO 的镜像口径」写成**可编译、可测、可引用**的
- * 声明面 —— 字段名 / 取值域 / 生成参数基线 / **双向**编解码语义（去程申报 + 回程解析）。
+ * 定位：把跨仓契约设计件 §B.1（**唯一权威**）的线面口径写成**可编译、可测、可引用**的
+ * 单一真源 —— 字段名 / 六个子键名 / 取值域 / 上限族 / 编码口径 / **双向**判定。
+ * 设计件绝对路径（只读，🔴 本仓禁改）：
+ * `~/.nebflow/projects/neblink-server/.nebflow/Spec/20260919_201155_attachpreview-server-contract__chain-n-8b202bb8.md`
  *
- * 🔴 **本件不接线**（作者逐字范围）：
- *   · 生产解码面仍是 `NeblinkModel.scala`（本批**禁改**）；生产发送面仍是
- *     `RestApiRoutes.scala`（本批**禁改**）；
- *   · 故本件里的 case class **一律带 `Mirror` 名号**，是**契约镜像 / 一致性夹具**，
- *     不是第二套生产 codec；接线批（跨仓腿 ① 落地后）应把 `NeblinkModel` 的手写
- *     编码器**按本件口径扩键**，并**删除本镜像面**（避免两份真源漂移）。
- *   · 本批**不含** E2E 面（真渲染收发 round / 兼容矩阵四格 / 下载 sha 一致）。
+ * ── 本批的**形变登记**（旧形态 → 线面形态，逐条；不是「顺手改」）──
+ *   上一批（`imgpreview-gen`，解耦包）把本件写成**五键**镜面 `{mime,w,h,size,b64}`（mime =
+ *   `image/webp|image/jpeg`）。跨仓腿 ① 落地后（neblink-server `4399d7a4c`）**服务端契约**是
+ *   **六键** `{fmt,w,h,bytes,sha256,b64}`（`fmt ∈ {"webp","jpeg"}`，无 `data:` 前缀，带 sha256）。
+ *   ⇒ 本批把镜像面**逐键对齐到线面**：`mime`→`fmt`（值域改成裸格式名）、`size`→`bytes`、
+ *   **新增 `sha256`**、新增 base64 串长上限 [[MaxB64Len]]（= `4 × ⌈262144/3⌉`）。旧五键形态
+ *   在本仓**从未上过线**（解耦包零接线）⇒ 无载荷兼容面，纯契约对齐。
  *
- * ── 镜像口径（逐条）──
- *   · 键名 = [[PreviewKey]]（`preview`），挂在**附件对象**（镜像 `AttachmentSummary`）上；
- *   · **可选性**：`preview` 为 `Option`，缺省 `None` ⇒ **旧消息 / 非图片附件的形态不变**；
- *   · 子键 = [[PreviewKeys]] 五键（`mime` / `w` / `h` / `size` / `b64`）**全为必填**
- *     （子键不做可选：缺一个即整个字段判不可用 ⇒ 回落「无预览」）；
- *   · mime 取值域 = [[Mimes]]（= 发送侧格式梯两档出口）；
- *   · **「旧端载荷逐字节不变」的编码约束**（= Rust 侧 `skip_serializing_if` 等价语义）：
- *     `preview = None` ⇒ **省键**（**不是** `"preview":null`），且既有六键的**键序与取值
- *     逐字节不变** —— 由 [[LegacyKeyOrder]] + [[MirrorAttachment]] 的手写编码器共同钉住，
- *     单测里与**未改**的真源编码器（`FriendCodecs` 的 `Encoder[AttachmentSummary]`）逐字节对照。
+ * ── 镜像面**退役**（该文件自己写下的计划，本批执行）──
+ *   上一批的 `MirrorPreview` / `MirrorAttachment` / `MirrorDeclaration` / `readPreview` /
+ *   `parsePreview` 是**契约一致性夹具**（注释逐字：「接线批应把 `NeblinkModel` 的手写编码器
+ *   按本件口径扩键，并**删除本镜像面**（避免两份真源漂移）」）。本批即接线批：判定面收敛到
+ *   本件的 [[previewOf]] / [[encodePreview]]（**唯一**解析与编码口径），生产类型与生产编解码
+ *   落 `NeblinkModel`（`AttachmentSummary.preview`）—— 镜像面**已删除**，账号只有一册。
  *
- * ── 生成参数基线（作者裁定；真源 = 前身 `imgpreview-impl` 报告 §6 实测表，禁自行另立口径）──
- *   长边 ≤ [[MaxLongEdge]] px（禁放大）+ WebP [[BaseQuality]] 首选 / JPEG [[BaseQuality]] 兜底
- *   + 单预览软上限 [[SoftCapBytes]]。**数值在此只作声明**：执行面在客户端
- *   （`web/js/attachImagePreview.js`，同值同源）。
+ * ── 数值真源（一个数一处；禁第二处拼写）──
+ *   生成侧同值同源的执行面 = `web/js/attachImagePreview.js`（长边 1280 / q0.82 / 软上限 184320）
+ *   与 `web/js/attachPreviewField.js`（键集 / 白名单 / 硬上限 / b64 串长上限）—— 客户端镜像改动
+ *   必须与本件同一批落地（本批两件已同批改齐）。
  */
 object AttachmentPreviewContract:
 
@@ -40,189 +37,114 @@ object AttachmentPreviewContract:
   /** 预览字段的键名（附件对象上的**可选**加性键）。 */
   val PreviewKey: String = "preview"
 
-  /** 预览字段的**键集**（顺序即编码顺序；客户端镜像 = `web/js/attachPreviewField.js` 的 `PREVIEW_FIELD_KEYS`）。 */
-  val PreviewKeys: List[String] = List("mime", "w", "h", "size", "b64")
+  /** 预览字段的**键集**（顺序即结构体声明序 = 编码顺序；客户端镜像 = `attachPreviewField.js`
+    * 的 `PREVIEW_FIELD_KEYS`）。六键**全有或全无**（无「只有几何没有字节」形态）。 */
+  val PreviewKeys: List[String] = List("fmt", "w", "h", "bytes", "sha256", "b64")
 
   /** 附件对象的**既有**键序（= `NeblinkModel` 手写编码器的键序；「旧端形态」判据面）。 */
   val LegacyKeyOrder: List[String] = List("id", "name", "size", "mime", "sha256", "state")
 
   // ===== 取值域 =====
 
-  /** WebP（首选档）。 */
-  val MimeWebp: String = "image/webp"
+  /** WebP（首选档）—— `fmt` 的**裸格式名**（不是 `image/webp`）。 */
+  val FormatWebp: String = "webp"
 
-  /** JPEG（兜底档）。 */
-  val MimeJpeg: String = "image/jpeg"
+  /** JPEG（兜底档）—— 注意是 `jpeg`，**不是** `jpg`。 */
+  val FormatJpeg: String = "jpeg"
 
-  /** 允许的 mime（不在表内 ⇒ 预览字段判**不可用** ⇒ 回落「无预览」）。 */
-  val Mimes: List[String] = List(MimeWebp, MimeJpeg)
+  /** 允许的 `fmt`（不在表内 ⇒ 该预览判**不可用** ⇒ 上层按「无预览」回落）。 */
+  val Formats: List[String] = List(FormatWebp, FormatJpeg)
 
-  /** mime 是否在取值域内。 */
-  def mimeAllowed(mime: String): Boolean = Mimes.contains(mime)
+  /** `fmt` 是否在取值域内。 */
+  def formatAllowed(fmt: String): Boolean = Formats.contains(fmt)
+
+  /** 生成器（`attachImagePreview.js`）的 mime 出口 —— 与 [[Formats]] 的**唯一**映射表。 */
+  val Mimes: List[String] = List("image/webp", "image/jpeg")
+
+  /** mime → 线面 `fmt`（表的另一向；未知 mime ⇒ `None` ⇒ 不申报预览）。 */
+  def formatOfMime(mime: String): Option[String] = mime match
+    case "image/webp" => Some(FormatWebp)
+    case "image/jpeg" => Some(FormatJpeg)
+    case _            => None
 
   // ===== 生成 / 阈值基线（作者裁定 = 前身报告 §6；执行面同值同源）=====
 
   /** 长边钳制上限（px）—— **禁放大**：任一边 ≤ 本值 ⇒ 只重编码，尺寸逐像素不变。 */
   val MaxLongEdge: Int = 1280
 
-  /** 基线质量档（WebP 首选 / JPEG 兜底同档）。 */
+  /** 基线质量档（WebP 首选 / JPEG 兜底同档）。`q` **不上 wire**（发送端本地生成参数）。 */
   val BaseQuality: Double = 0.82
 
   /** 单预览**软上限** = 180 KiB = 184,320 B（发送侧降级梯的触发线，**非**硬闸）。 */
   val SoftCapBytes: Long = 184320L
 
-  /**
-   * **回程解析硬上界** = 256 KiB —— 与 [[SoftCapBytes]] **刻意不是同一把尺**（不互推）：
-   * 软上限管发送侧降级触发，本值只拦「明显越界 / 恶意构造」的载荷。
-   */
+  /** 服务端**硬上限** = 256 KiB（`bytes` = **解码后**字节数的上界；与软上限刻意不是一把尺）。 */
   val HardCapBytes: Long = 262144L
 
-  /** n 字节的标准 base64 长度（无换行）—— 完整性判据，**免解码**即可判 `b64` 长度是否自洽。 */
+  /** `b64` **串长**上限 = `4 × ⌈262144/3⌉` = 349,528（先验长、再解码 ⇒ 免解码拦巨型串）。 */
+  val MaxB64Len: Long = base64LengthOf(HardCapBytes)
+
+  /** n 字节的标准 base64 长度（RFC 4648 §4 字母表 + `=` 填充、无换行）—— 完整性判据，**免解码**。 */
   def base64LengthOf(byteCount: Long): Long = 4L * ((byteCount + 2L) / 3L)
 
-  // ===== JSON 读面（可空键：`null` 与缺席同义）=====
+  // ===== 判定面（**唯一**解析口径）=====
 
-  private def strField(c: HCursor, name: String): Option[String] =
-    c.downField(name).focus.flatMap(v => if v.isNull then None else v.asString)
+  /** `sha256` 必须是**64 位小写 hex**（服务端 `is_valid_sha256_hex` 的同一条判据）。 */
+  def sha256HexOk(s: String): Boolean =
+    s.length == 64 && s.forall(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
 
-  private def intField(c: HCursor, name: String): Option[Int] =
-    c.downField(name).focus.flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
+  /** `w` / `h`：正整数且长边 ≤ [[MaxLongEdge]]（只校验**声明值**，不解码）。 */
+  def dimsOk(w: Int, h: Int): Boolean = w >= 1 && h >= 1 && math.max(w, h) <= MaxLongEdge
 
-  private def longField(c: HCursor, name: String): Option[Long] =
-    c.downField(name).focus.flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toLong))
+  /** `bytes`：解码后字节数 ∈ `1..=HardCapBytes`。 */
+  def bytesOk(bytes: Long): Boolean = bytes >= 1L && bytes <= HardCapBytes
 
-  // ===== 预览子对象（五键必填）=====
+  /** `b64`：非空、串长 ≤ [[MaxB64Len]] 且 == [[base64LengthOf]]`(bytes)`（免解码完整性判据）。 */
+  def b64Ok(b64: String, bytes: Long): Boolean =
+    b64.nonEmpty && b64.length.toLong <= MaxB64Len && b64.length.toLong == base64LengthOf(bytes)
 
-  /** 预览字段的**镜像** case class（五键 = [[PreviewKeys]]，顺序即编码顺序）。 */
-  final case class MirrorPreview(mime: String, w: Int, h: Int, size: Long, b64: String)
+  /** 对象字段读（`null` 与缺席同义 —— 服务端 `#[serde(default)]` 的镜像语义）。 */
+  private def field(o: JsonObject, name: String): Option[Json] =
+    o(name).filterNot(_.isNull)
+
+  private def strOf(o: JsonObject, name: String): Option[String] = field(o, name).flatMap(_.asString)
+
+  private def intOf(o: JsonObject, name: String): Option[Int] = field(o, name).flatMap(_.asNumber).flatMap(_.toInt)
+
+  private def longOf(o: JsonObject, name: String): Option[Long] = field(o, name).flatMap(_.asNumber).flatMap(_.toLong)
 
   /**
-   * 解析预览字段（**唯一解析口径**：回程解析与去程回显共用）。
-   *
-   * 判据（任一不成立 ⇒ `None` ⇒ 上层判「无预览」= 现行为不变）：
+   * 解析**预览对象**（六键全有或全无；任一不成立 ⇒ `None` ⇒ 上层按「无预览」回落）：
    *   ① 入参是 JSON 对象（`null` / 字符串 / 数组 / 数字一律不算）；
-   *   ② `mime ∈ [[Mimes]]`；
-   *   ③ `w` / `h` 为正整数；`size` 为正且 ≤ [[HardCapBytes]]；
-   *   ④ `b64` 非空且长度 == [[base64LengthOf]]`(size)`（免解码的完整性判据）。
-   * **未知 / 多余键**：只读白名单五键，多余键既不参与判定也不报错。
+   *   ② `fmt ∈ [[Formats]]`；③ [[dimsOk]]；④ [[bytesOk]]；⑤ [[sha256HexOk]]；⑥ [[b64Ok]]。
+   * **未知 / 多余键**：只读白名单六键，多余键既不参与判定也不报错（前向兼容）。
    */
-  def parsePreview(json: Json): Option[MirrorPreview] =
+  def previewOf(json: Json): Option[AttachmentPreview] =
     json.asObject.flatMap { o =>
-      val mime = o("mime").flatMap(v => if v.isNull then None else v.asString)
-      val w = o("w").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
-      val h = o("h").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
-      val size = o("size").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toLong))
-      val b64 = o("b64").flatMap(v => if v.isNull then None else v.asString)
       for
-        m <- mime.filter(mimeAllowed)
-        pw <- w.filter(_ > 0)
-        ph <- h.filter(_ > 0)
-        sz <- size.filter(s => s > 0 && s <= HardCapBytes)
-        bs <- b64.filter(_.nonEmpty)
-        if bs.length.toLong == base64LengthOf(sz)
-      yield MirrorPreview(m, pw, ph, sz, bs)
+        fmt <- strOf(o, "fmt").filter(formatAllowed)
+        w   <- intOf(o, "w")
+        h   <- intOf(o, "h")
+        b   <- longOf(o, "bytes")
+        sha <- strOf(o, "sha256").filter(sha256HexOk)
+        b64 <- strOf(o, "b64")
+        if dimsOk(w, h) && bytesOk(b) && b64Ok(b64, b)
+      yield AttachmentPreview(fmt, w, h, b, sha, b64)
     }
 
-  /** 从**附件对象 JSON** 上读预览字段（键缺席 / `null` / 形状不全 ⇒ `None`）。 */
-  def readPreview(attachmentJson: Json): Option[MirrorPreview] =
-    attachmentJson.asObject.flatMap(_(PreviewKey)).flatMap(parsePreview)
+  /** 从**附件对象 JSON** 上读预览（键缺席 / `null` / 形状不全 ⇒ `None`）。 */
+  def previewOfAttachment(attachmentJson: Json): Option[AttachmentPreview] =
+    attachmentJson.asObject.flatMap(_(PreviewKey)).flatMap(previewOf)
 
-  /** 去程申报体的读数（与 [[readPreview]] 同判据，入参是申报体 JSON）。 */
-  def readDeclaration(declarationJson: Json): Option[MirrorPreview] =
-    readPreview(declarationJson)
-
-  given Encoder[MirrorPreview] = Encoder.instance { p =>
-    Json.fromFields(
-      List(
-        "mime" -> p.mime.asJson,
-        "w" -> p.w.asJson,
-        "h" -> p.h.asJson,
-        "size" -> p.size.asJson,
-        "b64" -> p.b64.asJson
-      )
+  /** 预览对象 → JSON（**唯一**编码口径：键序 = [[PreviewKeys]] 声明序）。 */
+  def encodePreview(p: AttachmentPreview): Json =
+    Json.obj(
+      "fmt"    -> Json.fromString(p.fmt),
+      "w"      -> Json.fromInt(p.w),
+      "h"      -> Json.fromInt(p.h),
+      "bytes"  -> Json.fromLong(p.bytes),
+      "sha256" -> Json.fromString(p.sha256),
+      "b64"    -> Json.fromString(p.b64)
     )
-  }
-
-  /**
-   * 严格解码（契约入参面）：形状不全即 `DecodingFailure`，**不静默**折成空值。
-   * 宽容侧（线上消息面）用 [[readPreview]] —— 两者是**同一判据**的两个出口。
-   */
-  given Decoder[MirrorPreview] = Decoder.instance { c =>
-    parsePreview(c.value) match
-      case Some(p) => Right(p)
-      case None =>
-        Left(
-          DecodingFailure(
-            s"preview field must carry {${PreviewKeys.mkString(", ")}} with mime in {${Mimes.mkString(", ")}}",
-            c.history
-          )
-        )
-  }
-
-  // ===== 回程解析面（服务端 → 本仓镜像）=====
-
-  /**
-   * 附件对象**镜像**（`AttachmentSummary` 形状 + 可选 [[PreviewKey]]）。
-   *
-   * 🔴 **只读镜像 / 一致性夹具**：生产解码面仍是 `NeblinkModel`（本批禁改）。
-   * 本类的存在只为**两条判据可执行**：① `preview = None` 时编码输出与真源**逐字节相同**；
-   * ② `preview = Some` 时既有六键的**前缀**逐字节不变、`preview` 追加在**末位**。
-   */
-  final case class MirrorAttachment(
-    id: String,
-    name: String,
-    size: Long,
-    sha256: String,
-    state: String,
-    mime: Option[String] = None,
-    preview: Option[MirrorPreview] = None
-  )
-
-  given Decoder[MirrorAttachment] = Decoder.instance { c =>
-    Right(
-      MirrorAttachment(
-        id = strField(c, "id").getOrElse(""),
-        name = strField(c, "name").getOrElse(""),
-        size = longField(c, "size").getOrElse(0L),
-        sha256 = strField(c, "sha256").getOrElse(""),
-        state = strField(c, "state").getOrElse(""),
-        mime = strField(c, "mime"),
-        preview = readPreview(c.value)
-      )
-    )
-  }
-
-  /** 附件出参（手写：`mime` / `preview` 缺席即**省键**；键序 = 旧六键 + 末位 `preview`）。 */
-  given Encoder[MirrorAttachment] = Encoder.instance { a =>
-    Json.fromFields(
-      List(
-        Some("id" -> a.id.asJson),
-        Some("name" -> a.name.asJson),
-        Some("size" -> a.size.asJson),
-        a.mime.map(m => "mime" -> m.asJson),
-        Some("sha256" -> a.sha256.asJson),
-        Some("state" -> a.state.asJson),
-        a.preview.map(p => PreviewKey -> p.asJson)
-      ).flatten
-    )
-  }
-
-  // ===== 去程申报面（本仓 → 服务端上传申报）=====
-
-  /**
-   * 上传申报体的**加性键**声明：`{ "preview": {…} }`；`None` ⇒ **空对象**（零键）。
-   *
-   * 与 [[MirrorAttachment]] 同一条纪律（`skip_serializing_if` 等价语义）：`None` **省键** ⇒
-   * 申报体与旧形态逐字节一致，旧服务端解析零影响。
-   */
-  final case class MirrorDeclaration(preview: Option[MirrorPreview] = None)
-
-  given Encoder[MirrorDeclaration] = Encoder.instance { d =>
-    Json.fromFields(List(d.preview.map(p => PreviewKey -> p.asJson)).flatten)
-  }
-
-  given Decoder[MirrorDeclaration] = Decoder.instance { c =>
-    Right(MirrorDeclaration(readDeclaration(c.value)))
-  }
 
 end AttachmentPreviewContract

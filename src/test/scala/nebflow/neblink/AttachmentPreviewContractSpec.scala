@@ -5,196 +5,184 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
 
-import nebflow.neblink.AttachmentPreviewContract.given
 import nebflow.neblink.FriendCodecs.given
 
 /**
- * `AttachmentPreviewContract` 一致性夹具 spec —— 好友/群图片预览传输批 · 解耦包。
+ * 附件预览字段 · **契约编解码单测**（传输集成批 2026-09-21 · 判据 §3.1）。
  *
- * 本 spec 只验**声明面**（字段名 / 可选性 / 双向编解码语义），**不验** E2E（真渲染收发
- * round / 兼容矩阵四格 / 下载 sha 一致 = 候跨仓腿 ①，本批明令不做）。
+ * 判据面（逐条 → 本 spec 的用例）：
+ *   ① 六键逐字往返（`previewOf` ∘ `encodePreview` 恒等）；
+ *   ② `fmt` 白名单外的值 ⇒ 判不可用（`None`，**不**抛、**不**折叠成别的值）；
+ *   ③ `None` ⇒ 出参文本**无该键**（逐字片段证明不是 `"preview":null`）；
+ *   ④ **旧端字节不变**：无 `preview` 件的出参与**改前字面量夹具**逐字节相等；
+ *   ⑤ 上限族（`bytes` / 长边 / `sha256` 拼写 / `b64` 串长）逐条边界；
+ *   ⑥ 旧服务端形态（无 `preview` 键）⇒ 解码零错误、取值逐字段不变（§B.7 #14）；
+ *   ⑦ 键序：`preview` **追加末位**、既有六键前缀逐字节不变。
  *
- * 三例必测（作者裁定）：**缺字段 / 未知字段 / 空值**；另加两条对照读数：
- *   · **「旧端载荷逐字节不变」**：镜像编码器在 `preview = None` 时的输出，与**未改**的真源
- *     编码器（`FriendCodecs` 的 `Encoder[AttachmentSummary]`）**逐字节**相等；
- *   · **未改的生产编码器会丢 `preview` 键**（本批禁改 `NeblinkModel` ⇒ 这是**已知**读数，
- *     接线批必须按本件口径扩键 —— 见本 spec 末例的结论行）。
+ * 🔴 本 spec 是**生产 codec** 的 spec（`FriendCodecs` 的 `Encoder/Decoder[AttachmentSummary]`），
+ * 不是一致性夹具的 spec —— 上一批的镜像面（`MirrorPreview` / `MirrorAttachment` /
+ * `readPreview`）已按该文件自己的计划**退役**（判定面收敛到 `AttachmentPreviewContract`）。
  */
 class AttachmentPreviewContractSpec extends FunSuite:
 
-  /** 测试用 JSON 解析（失败即 fail-fast，禁静默）。 */
   private def jsonOf(s: String): Json =
     parse(s) match
       case Right(j) => j
-      case Left(e) => fail(s"bad test json: ${e.getMessage}")
+      case Left(e)  => fail(s"bad test json: ${e.getMessage}")
 
-  /** 真源（未改）编码器产出 —— 所有「字节不变」对照的**唯一**参照。 */
+  /** **改前字面量夹具**（判据 ④ 的独立参照）：这是本批改动前 `AttachmentSummary` 的唯一出参
+    * 形态 —— 手写字面量（**不是**由被测编码器产出），故「逐字节相等」是同一条判据的真检查。 */
+  private val legacyLiteral = """{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready"}"""
+  private val legacyNoMimeLiteral = """{"id":"a1","name":"p.jpg","size":900000,"sha256":"ab12","state":"ready"}"""
+
   private val legacySummary =
-    AttachmentSummary(
-      id = "a1",
-      name = "p.jpg",
-      size = 900000L,
-      sha256 = "ab12",
-      state = "ready",
-      mime = Some("image/jpeg")
-    )
-  private val legacyBytes = legacySummary.asJson.noSpaces
+    AttachmentSummary(id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready", mime = Some("image/jpeg"))
 
-  private val goodPreviewJson =
-    """{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}"""
+  /** 9 字节的合法 base64（长度 = 4 × ⌈9/3⌉ = 12）与其声明摘要（64 位小写 hex 拼写）。 */
+  private val b64Nine = "AQIDBAUGBwgJ"
+  private val sha64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-  /** 合法的 9 字节 base64（长度 = 4 × ceil(9/3) = 12）。 */
-  private val goodPreview = jsonOf(goodPreviewJson)
+  /** 合法预览（六键；`sha256` 只做拼写校验 —— 服务端不解码，本 spec 同样不重算摘要）。 */
+  private def previewJson(
+    fmt: String = "webp",
+    w: Int = 4,
+    h: Int = 3,
+    bytes: Long = 9L,
+    sha256: String = sha64,
+    b64: String = b64Nine
+  ): String = s"""{"fmt":"$fmt","w":$w,"h":$h,"bytes":$bytes,"sha256":"$sha256","b64":"$b64"}"""
 
-  // ── 例 0：常量单点（数值/键集与客户端同值同源）──────────────
+  private val goodPreview = Json.obj(
+    "fmt"    -> Json.fromString("webp"),
+    "w"      -> Json.fromInt(4),
+    "h"      -> Json.fromInt(3),
+    "bytes"  -> Json.fromLong(9L),
+    "sha256" -> Json.fromString(sha64),
+    "b64"    -> Json.fromString(b64Nine)
+  )
 
-  test("constants: key set / mime set / parameter baseline are the declared ones") {
+  // ── 判据 ①（常量面）：键集 / 白名单 / 上限族与线面逐字同值 ──────────────
+
+  test("constants: key set / format whitelist / cap family are the §B.1 values") {
     assertEquals(AttachmentPreviewContract.PreviewKey, "preview")
-    assertEquals(AttachmentPreviewContract.PreviewKeys, List("mime", "w", "h", "size", "b64"))
+    assertEquals(AttachmentPreviewContract.PreviewKeys, List("fmt", "w", "h", "bytes", "sha256", "b64"))
     assertEquals(AttachmentPreviewContract.LegacyKeyOrder, List("id", "name", "size", "mime", "sha256", "state"))
-    assertEquals(AttachmentPreviewContract.Mimes, List("image/webp", "image/jpeg"))
+    assertEquals(AttachmentPreviewContract.Formats, List("webp", "jpeg"))
     assertEquals(AttachmentPreviewContract.MaxLongEdge, 1280)
     assertEquals(AttachmentPreviewContract.BaseQuality, 0.82)
     assertEquals(AttachmentPreviewContract.SoftCapBytes, 184320L)
     assertEquals(AttachmentPreviewContract.HardCapBytes, 262144L)
+    // b64 串长上限 = 4 × ⌈262144/3⌉（**算出来的**，禁第二处拼数字）
+    assertEquals(AttachmentPreviewContract.MaxB64Len, 349528L)
     assertEquals(AttachmentPreviewContract.base64LengthOf(9L), 12L)
+    assertEquals(AttachmentPreviewContract.base64LengthOf(3L), 4L)
+    assertEquals(AttachmentPreviewContract.base64LengthOf(-1L), 0L)
+    // mime ⇄ fmt 唯一映射表（生成器出口 ↔ 线面取值域）
+    assertEquals(AttachmentPreviewContract.Mimes, List("image/webp", "image/jpeg"))
+    assertEquals(AttachmentPreviewContract.formatOfMime("image/webp"), Some("webp"))
+    assertEquals(AttachmentPreviewContract.formatOfMime("image/jpeg"), Some("jpeg"))
+    assertEquals(AttachmentPreviewContract.formatOfMime("image/png"), None)
   }
 
-  // ── 例 1：缺字段 ⇒ 旧消息现行为不变（逐字节）──────────────
+  // ── 判据 ①（往返）：六键逐字往返 ────────────────────────────────────
 
-  test("missing field: legacy attachment decodes to no-preview and re-encodes byte-identically") {
-    val legacyJson = jsonOf(legacyBytes)
-    assertEquals(AttachmentPreviewContract.readPreview(legacyJson), None)
-    assertEquals(AttachmentPreviewContract.readDeclaration(legacyJson), None)
-    assertEquals(AttachmentPreviewContract.parsePreview(Json.Null), None)
+  test("roundtrip: six keys survive encode → parse → encode verbatim") {
+    val decoded = AttachmentPreviewContract.previewOf(goodPreview)
+    assert(decoded.isDefined, "a well-formed six-key object must parse")
+    assertEquals(decoded.get.fmt, "webp")
+    assertEquals(decoded.get.bytes, 9L)
+    val encoded = AttachmentPreviewContract.encodePreview(decoded.get)
+    assertEquals(encoded.noSpaces, goodPreview.noSpaces, "encode ∘ parse must be the identity on the wire shape")
+    assertEquals(AttachmentPreviewContract.previewOf(encoded).map(_.b64), Some(b64Nine))
+  }
 
-    // 真源解码面（未改）读旧形态：零错误、零字段变化。
-    assertEquals(legacyJson.as[AttachmentSummary], Right(legacySummary))
+  // ── 判据 ②：fmt 白名单外 ⇒ None（且不破坏既有解码面）────────────────
 
-    // 镜像编码器在 preview=None 时与真源编码器**逐字节相等**（skip_serializing_if 等价语义）。
-    val mirror = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1",
-      name = "p.jpg",
-      size = 900000L,
-      sha256 = "ab12",
-      state = "ready",
-      mime = Some("image/jpeg"),
-      preview = None
-    )
-    assertEquals(mirror.asJson.noSpaces, legacyBytes)
+  test("fmt whitelist: jpg / image-webp / WEBP / gif are all refused (no throw, no folding)") {
+    for bad <- List("jpg", "image/webp", "WEBP", "jpeg2000", "gif", "") do
+      val j = jsonOf(s"""{"id":"a1","preview":${previewJson(fmt = bad)}}""")
+      assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(fmt = bad))), None, s"fmt=$bad must be refused")
+      assert(j.as[AttachmentSummary].isRight, s"fmt=$bad must not break the attachment decoder")
+      assertEquals(j.as[AttachmentSummary].toOption.flatMap(_.preview), None)
+    // 两档出口必须都放行（正例；否则上面的拒绝读数是同义反复）
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(fmt = "webp"))).map(_.fmt), Some("webp"))
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(fmt = "jpeg"))).map(_.fmt), Some("jpeg"))
+  }
 
-    // mime 缺席那一支同样逐字节相等（键序 = id,name,size,sha256,state）。
+  // ── 判据 ③ + ④：None ⇒ 省键；旧端载荷逐字节不变 ──────────────────────
+
+  test("absent preview: the key is omitted (never null) and the legacy payload is byte-identical") {
+    val out = legacySummary.asJson.noSpaces
+    assertEquals(out, legacyLiteral, "no-preview attachment must re-encode byte-for-byte as before the batch")
+    assert(!out.contains(AttachmentPreviewContract.PreviewKey), "省键约束：preview=None ⇒ 不得出现该键")
+    assert(!out.contains("null"), "省键约束：preview=None ⇒ 不得写 null")
+    // mime 缺席那一支同样逐字节相等（键序 = id,name,size,sha256,state）
     val noMime = AttachmentSummary(id = "a1", name = "p.jpg", size = 900000L, sha256 = "ab12", state = "ready")
-    val mirrorNoMime = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1",
-      name = "p.jpg",
-      size = 900000L,
-      sha256 = "ab12",
-      state = "ready",
-      mime = None,
-      preview = None
-    )
-    assertEquals(mirrorNoMime.asJson.noSpaces, noMime.asJson.noSpaces)
-    assert(!mirror.asJson.noSpaces.contains("preview"), "省键约束：preview=None ⇒ 不得出现该键")
+    assertEquals(noMime.asJson.noSpaces, legacyNoMimeLiteral)
+    // 解码面：旧形态（无该键）与显式 null 都 ⇒ None，且既有六键取值不变
+    assertEquals(jsonOf(legacyLiteral).as[AttachmentSummary], Right(legacySummary))
+    assertEquals(jsonOf(s"""{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready","preview":null}""").as[AttachmentSummary].toOption.flatMap(_.preview), None)
   }
 
-  // ── 例 2：未知 / 多余字段 ⇒ 忽略不炸，既有键零增删 ──────────
+  // ── 判据 ⑤：上限族逐条边界 ──────────────────────────────────────────
 
-  test("unknown field: extra keys are ignored, and an existing decoder tolerates the additivity") {
-    val withExtra = jsonOf(
-      s"""{"id":"a1","name":"p.jpg","size":900000,"sha256":"ab12","state":"ready","mime":"image/jpeg",
-         | "futureKey":{"keep":true},
-         | "preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ","extra":"ignore","future":42}}""".stripMargin
-    )
-    val p = AttachmentPreviewContract.readPreview(withExtra)
-    assert(p.isDefined, "preview with unknown sub-keys must still parse")
-    assertEquals(p.map(_.mime), Some("image/webp"))
-    assertEquals(p.map(_.size), Some(9L))
-
-    // 归一化结果只带白名单五键 ⇒ 多余键不进结果（也不报错）。
-    val encoded = p.get.asJson.asObject.get.keys.toList
-    assertEquals(encoded.sorted, AttachmentPreviewContract.PreviewKeys.sorted)
-
-    // 真源解码面（未改）面对**加性键**零影响：解得出、不抛、既有六键取值不变。
-    val decodedByReal = withExtra.as[AttachmentSummary]
-    assertEquals(decodedByReal, Right(legacySummary))
-
-    // 未知键不参与判定：preview 形状不全时照样回落 None（不因多余键而"救活"）。
-    val shapeBroken = jsonOf("""{"preview":{"mime":"image/webp","w":4,"extra":"x"}}""")
-    assertEquals(AttachmentPreviewContract.readPreview(shapeBroken), None)
+  test("caps: bytes / long edge / sha256 spelling / b64 length each have an exact boundary") {
+    // bytes ∈ 1..=262_144
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(bytes = 0L, b64 = ""))), None)
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(bytes = 262145L, b64 = "A" * 349528))), None)
+    // 边界内（b64 串长自洽）必须放行：9 字节这条就是下界邻域
+    assert(AttachmentPreviewContract.previewOf(jsonOf(previewJson())).isDefined)
+    // 长边 ≤1280 且 w,h ≥1
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(w = 1281, h = 960, b64 = b64Nine))), None)
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(w = 0, h = 0, b64 = ""))), None)
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(w = -1, h = 3, b64 = b64Nine))), None)
+    // sha256 必须 64 位小写 hex
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(sha256 = "0" * 63))), None)
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(sha256 = "A" * 64))), None)
+    assert(AttachmentPreviewContract.sha256HexOk("0" * 64))
+    assert(!AttachmentPreviewContract.sha256HexOk("0" * 64 + " "))
+    // b64 串长上限（先验长、再解码）：349_529 必拒 —— 即使 bytes 声明在界内
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(bytes = 9L, b64 = "A" * 349529))), None)
+    // 长度与 bytes 不自洽（免解码完整性判据）
+    assertEquals(AttachmentPreviewContract.previewOf(jsonOf(previewJson(bytes = 9L, b64 = "AQIDBAU"))), None)
+    // 6 键缺一 ⇒ 整体不可用（无「部分预览」形态）
+    for k <- AttachmentPreviewContract.PreviewKeys do
+      val o = goodPreview.asObject.get.remove(k)
+      assertEquals(AttachmentPreviewContract.previewOf(Json.fromJsonObject(o)), None, s"missing '$k' must refuse the whole field")
+    // 形状非对象
+    assertEquals(AttachmentPreviewContract.previewOf(Json.Null), None)
+    assertEquals(AttachmentPreviewContract.previewOf(Json.fromString("webp")), None)
+    assertEquals(AttachmentPreviewContract.previewOf(Json.arr()), None)
   }
 
-  // ── 例 3：空值 ⇒ 一律回落「无预览」（fail-closed）──────────
+  // ── 判据 ⑥：旧服务端形态（§B.7 #14）⇒ 零报错、逐字段不变 ──────────────
 
-  test("empty values: null / blank / empty object / out-of-range all fall back to no-preview") {
-    val bad: List[(String, String)] = List(
-      "preview-null" -> """{"id":"a1","preview":null}""",
-      "preview-string" -> """{"id":"a1","preview":"image/webp"}""",
-      "preview-array" -> """{"id":"a1","preview":[]}""",
-      "preview-empty-object" -> """{"id":"a1","preview":{}}""",
-      "mime-empty" -> """{"id":"a1","preview":{"mime":"","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "mime-out-of-set" -> """{"id":"a1","preview":{"mime":"image/png","w":4,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "b64-empty" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":""}}""",
-      "b64-length-mismatch" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":9,"b64":"AQIDBAU"}}""",
-      "size-zero" -> """{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":0,"b64":""}}""",
-      "size-over-hard-cap" -> s"""{"id":"a1","preview":{"mime":"image/webp","w":4,"h":3,"size":${AttachmentPreviewContract.HardCapBytes + 1},"b64":"AQIDBAUGBwgJ"}}""",
-      "w-zero" -> """{"id":"a1","preview":{"mime":"image/webp","w":0,"h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}""",
-      "w-string" -> """{"id":"a1","preview":{"mime":"image/webp","w":"4","h":3,"size":9,"b64":"AQIDBAUGBwgJ"}}"""
-    )
-    for (label, raw) <- bad do
-      val j = jsonOf(raw)
-      assertEquals(AttachmentPreviewContract.readPreview(j), None, s"$label must fall back to no-preview")
-      // 空值/越界**不**使真源解码面变红（加性键的失败只影响自身）。
-      assert(j.as[AttachmentSummary].isRight, s"$label must not break the existing decoder")
+  test("old server face: an attachment without preview decodes cleanly and keeps every legacy value") {
+    val rows = jsonOf(s"""[{"id":"a1","name":"p.jpg","size":900000,"mime":"image/jpeg","sha256":"ab12","state":"ready"},
+                         | {"id":"a2","name":"n.txt","size":10,"sha256":"cd","state":"uploading"}]""".stripMargin)
+    val decoded = rows.as[List[AttachmentSummary]]
+    assert(decoded.isRight, s"old-server payload must decode: $decoded")
+    val head = decoded.toOption.get.head
+    assertEquals(head, legacySummary)
+    assertEquals(head.preview, None)
+    // 网关 REST 出口的重编码（旧服务端 × 新客户端）：仍与该行的旧字节形态逐字节相等
+    assertEquals(head.asJson.noSpaces, legacyLiteral)
   }
 
-  // ── 例 4：字段在场时的双向读数（前缀字节不变 + 末位追加）──────
+  // ── 判据 ⑦：键序 —— 既有六键前缀不变、preview 追加末位 ────────────────
 
-  test("present field: legacy key prefix is byte-identical and preview is appended last") {
-    val mirror = AttachmentPreviewContract.MirrorAttachment(
-      id = "a1",
-      name = "p.jpg",
-      size = 900000L,
-      sha256 = "ab12",
-      state = "ready",
-      mime = Some("image/jpeg"),
-      preview = AttachmentPreviewContract.parsePreview(goodPreview)
-    )
-    val out = mirror.asJson.noSpaces
-    // 既有六键的**前缀**逐字节不变（把真源输出末尾的 `}` 换成 `,` 即为期望前缀）。
-    assert(out.startsWith(legacyBytes.dropRight(1) + ","), s"legacy prefix changed: $out")
+  test("key order: legacy prefix is byte-identical and preview is appended last") {
+    val withPreview = legacySummary.copy(preview = AttachmentPreviewContract.previewOf(goodPreview))
+    val out = withPreview.asJson.noSpaces
+    assert(out.startsWith(legacyLiteral.dropRight(1) + ","), s"legacy key prefix changed: $out")
     assert(out.endsWith("}"), s"unexpected tail: $out")
-    assert(
-      out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"),
-      s"preview must be appended last: $out"
-    )
-    // 往返：镜像编码 → 镜像解码，preview 逐字段等价。
-    assertEquals(AttachmentPreviewContract.readPreview(jsonOf(out)).map(_.b64), Some("AQIDBAUGBwgJ"))
-    // 申报体（去程）：None ⇒ 空对象（零键）；Some ⇒ 单键对象。
-    assertEquals(AttachmentPreviewContract.MirrorDeclaration(None).asJson.noSpaces, "{}")
-    assertEquals(
-      AttachmentPreviewContract.MirrorDeclaration(AttachmentPreviewContract.parsePreview(goodPreview)).asJson.noSpaces,
-      s"""{"preview":$goodPreviewJson}"""
-    )
+    assert(out.contains("," + "\"" + AttachmentPreviewContract.PreviewKey + "\":"), s"preview must be appended last: $out")
+    // 附件对象面往返：解码 → 预览六键逐字段等价（出参 → 入参同形，§B.1「两侧同批扩键」）
+    val back = jsonOf(out).as[AttachmentSummary].toOption.get
+    assertEquals(back, withPreview)
+    assertEquals(back.preview.map(_.fmt), Some("webp"))
+    // 六键编码后的键序 = PreviewKeys 声明序（`fmt,w,h,bytes,sha256,b64`）
+    assertEquals(AttachmentPreviewContract.encodePreview(back.preview.get).asObject.get.keys.toList, AttachmentPreviewContract.PreviewKeys)
   }
 
-  // ── 例 5：已知读数（开放项，非本批红）────────────────────────
-  //
-  // 未改的生产编码器（`FriendCodecs` 的 `Encoder[AttachmentSummary]`）只输出既有六键
-  // ⇒ 服务端下发的 `preview` 键**在网关 REST 出口会被丢弃**。本批明令禁改
-  // `NeblinkModel.scala` ⇒ 这是**声明面与执行面之间已知的缺口**，接线批必须按本件
-  // 口径把该编码器扩键（`preview` 追加末位、`None` 省键）。本例把"缺口存在"钉成
-  // **可执行的读数**，防止它被静默遗忘。
-
-  test("known gap (not this batch's red): the untouched production encoder drops the preview key") {
-    val withPreview = jsonOf(
-      s"""{"id":"a1","name":"p.jpg","size":900000,"sha256":"ab12","state":"ready","mime":"image/jpeg","preview":$goodPreviewJson}"""
-    )
-    val decoded = withPreview.as[AttachmentSummary].toOption.get
-    // 字段本身被正确"忽略"（解码面零影响）……
-    assertEquals(decoded, legacySummary)
-    // ……但重编码（网关出口的实际路径）只剩既有六键 ⇒ 缺口 = 接线批必须扩键。
-    assert(!decoded.asJson.noSpaces.contains(AttachmentPreviewContract.PreviewKey))
-    assertEquals(decoded.asJson.noSpaces, legacyBytes)
-  }
 end AttachmentPreviewContractSpec
