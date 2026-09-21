@@ -1778,7 +1778,7 @@ function showProviderModal(existingName, existingData, onSave) {
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
-  })) : [{id: '', contextWindow: 200000}];
+  })) : [{id: '', contextWindow: 1000000}];
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
@@ -1902,7 +1902,7 @@ function showModal({title, fields, onConfirm}) {
         if (!id) return;
         values.models.push({
           id,
-          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
+          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 1000000,
         });
       });
     }
