@@ -1038,7 +1038,13 @@ object NodeTools:
           // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
           sameKeyProjects = sameKeyForeignProjects,
           // chainmodel 批三 ② 新增键（本次汇聚的上游链；门控与 chainIds 同源，同缺席）
-          mergeUpstreamChains = mergeUpstreamByNode.get(n.id))
+          mergeUpstreamChains = mergeUpstreamByNode.get(n.id),
+          // verifierRoute 条件键（failroute-guard 批 2026-09-21 · 案 A A3）：判据**单点** =
+          // NodePayload.verifierRouteInvalid（纯函数；「合法 fail 选通边」算面与运行期
+          // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
+          // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
+          // 全部 WS 事件写点（不注入）字段集字节级零漂移。
+          nodes = Some(s.nodes))
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None        => base
