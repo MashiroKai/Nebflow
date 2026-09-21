@@ -691,6 +691,15 @@ object GatewayMain extends IOApp:
                                 // 发 TtlTick；无项目时空转。
                                 val projectTtlScanner: IO[Unit] =
                                   nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
+                                // 宿主睡眠/唤醒感知（hostresume 批 2026-09-22，设计卡 §4 #3；
+                                // D-2 默认 true + kill-switch：`nebflow.wake.sense.enabled=false`
+                                // ⇒ launch 即 IO.unit，不挂载 = 逐字节现状）。15s 双钟断流纤维
+                                // （ttlScanner 同款形态）——判出的睡眠窗进 PowerStateTracker 窗集
+                                // （TaskStuckWatcher 两轴与整流 no-progress 守卫的时间基修正消费，
+                                // D-6 首批仅此两处）+ boot-wake.json 台账 append（kind=sleep/wake，
+                                // 恒 blocking=false）+ host-wake 审计事件（D-7：仅审计，不揽分发
+                                // 器）。server listen 前就绪；零新调度器、零子进程（A1 纯 JVM）。
+                                val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
                                 // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                 // 在 startupMount 前就绪默认最小集（project-dispatcher /
                                 // general / memory-consolidator agents + 4 系统插件 +
@@ -730,7 +739,7 @@ object GatewayMain extends IOApp:
                                     hotRestart = Some(hotRestart),
                                     updateOrchestrator = Some(updateOrchestrator)
                                   )
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> succeedPortGate(cfg, sharedResources.healthMonitor) *> {
+                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectBootWake *> projectTtlScanner *> hostWakeSensor *> succeedPortGate(cfg, sharedResources.healthMonitor) *> {
                                   val sharedResourcesLive = sharedResourcesWithRestart
                                   // 2026-09-13（permshield S1）：`SessionService` 不再需要
                                   // "档位覆盖快照"入参——档位只有应用级全局持久一源
