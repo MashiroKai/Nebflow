@@ -641,9 +641,11 @@ button.fm-req-decline:focus-visible {
   padding: 14px 14px 12px 20px;
 }
 
-/* 群窗头组合头像槽（40px 档；**窗头头像槽**。群窗 = 组合头像，好友（单聊）窗 =
-   好友档案头像（`avatarEl`），设备窗不挂。头像本体 = `.fm-avgrid`（唯一实现
-   groupAvatarGrid）／`.fm-avgrid` 或标题首字母那一枚。类名与几何均既有 ⇒ 零新规则。 */
+/* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令
+   「好友/群/设备类对话框统一显示头像」）：群窗 = 组合头像，好友（单聊）窗 =
+   好友档案头像（`avatarEl`），设备窗 = 平台图标（`.fm-avatar-device`，同会话列表
+   设备行那一枚）。头像本体 = `.fm-avgrid`（唯一实现 groupAvatarGrid）／`.fm-avgrid`
+   或标题首字母那一枚／`.fm-avatar-device svg`。类名与几何均既有 ⇒ 零新规则。 */
 .fm-modal-avatar { flex-shrink: 0; display: inline-flex; align-items: center; }
 
 .fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
@@ -657,7 +659,7 @@ button.fm-req-decline:focus-visible {
        字形盒之外再给一圈可点区（纯字形热区过窄、点不准），而**负外边距把热区的
        扩张全部落在盒外** ⇒ 群名文本与成员数文本的**渲染位置与改前逐像素相同**
        （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
-     · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类、无头像槽）。 */
+     · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类）。 */
 .fm-modal-title-btn { cursor: pointer; border-radius: 6px; padding: 4px 8px; margin: -4px -8px; }
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
