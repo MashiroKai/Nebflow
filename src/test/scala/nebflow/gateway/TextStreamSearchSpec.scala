@@ -25,7 +25,8 @@ class TextStreamSearchSpec extends FunSuite:
       val n = math.min(chunk, all.length - off)
       sc.feed(java.util.Arrays.copyOfRange(all, off, off + n), n)
       off += n
-    sc.drainHits() // drain for parity with the route layer
+    sc.finish() // end of input, then drain for parity with the route layer
+    sc.drainHits()
     sc.outcome
 
   private def hitsOf(body: String, query: String, caseSensitive: Boolean = true, maxHits: Int = 1000,
@@ -39,7 +40,8 @@ class TextStreamSearchSpec extends FunSuite:
       sc.feed(java.util.Arrays.copyOfRange(all, off, off + n), n)
       off += n
       out ++= sc.drainHits()
-    if all.isEmpty then out ++= sc.drainHits()
+    sc.finish() // end of input: finalize the unterminated last line
+    out ++= sc.drainHits()
     out.result()
 
   test("hits carry the exact 1-based byte line and column"):
@@ -120,6 +122,7 @@ class TextStreamSearchSpec extends FunSuite:
     val raw = Array[Byte](0x61, 0x0a, 0xff.toByte, 0x0a) ++ bytes("TOKEN\n")
     val sc = new TextStream.LiteralScanner("TOKEN", caseSensitive = true)
     sc.feed(raw, raw.length)
+    sc.finish() // end of input: run the held-back tail ("KEN\n") through bookkeeping
     assertEquals(sc.drainHits().map(x => (x.line, x.col)), Vector((3L, 1L)))
 
   test("draining is incremental — frames never repeat hits"):
@@ -133,6 +136,8 @@ class TextStreamSearchSpec extends FunSuite:
       sc.feed(java.util.Arrays.copyOfRange(all, off, off + n), n)
       seen += sc.drainHits().length
       off += n
+    sc.finish() // end of input: the last line has no trailing newline
+    seen += sc.drainHits().length
     assertEquals(seen, 20)
     assertEquals(sc.totalHits, 20L)
     assertEquals(sc.drainHits().length, 0, "drain clears the buffer")

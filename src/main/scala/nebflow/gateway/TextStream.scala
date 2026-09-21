@@ -130,10 +130,9 @@ object TextStream:
     * its line; `text` is the matched line's content, bounded to `MaxHitTextChars`
     * and `…`-suffixed when the line continues past it. A hit is emitted once its
     * line's echo is final: at the terminating `\n`, or as soon as the excerpt
-    * bound is reached. `drainHits` also flushes hits of the current unterminated
-    * line with the bytes seen so far — at the caller's final (EOF) drain that IS
-    * the complete line; a mid-scan drain of a line straddling a chunk boundary
-    * carries a true prefix of it (line/col stay exact). */
+    * bound is reached — so the echo is invariant under chunking. The last line of
+    * a file may have no terminating newline; `finish()` (end of input) finalizes
+    * its echo with the bytes seen. */
   final case class Hit(line: Long, col: Long, text: String)
 
   /** Terminal state of one scan. `truncated` is always explicit — a capped or
@@ -249,7 +248,9 @@ object TextStream:
     *   "aa" in "aaa" is 2 hits.
     * · A hit's echo is its whole line (bounded): emission waits for the line's
     *   terminating newline or the excerpt bound, so the echo is invariant under
-    *   chunking; `drainHits` flushes the unterminated tail line (see `Hit`).
+    *   chunking. `finish()` marks end of input: it runs the held-back tail
+    *   through line bookkeeping (no match can start there — the needle window
+    *   is provably incomplete) and finalizes the unterminated last line.
     */
   final class LiteralScanner(
     query: String,
@@ -357,11 +358,37 @@ object TextStream:
           bufLen = keep
           base += processLen
 
-    /** Take the hits accumulated since the last drain (frame batching). Hits of
-      * the current unterminated line are flushed with the bytes seen so far —
-      * at the caller's final (EOF) drain that is the complete line. */
+    /** End of input. The held-back tail (`< needle.length` bytes) cannot start
+      * a new match — its needle window is provably incomplete — but its bytes
+      * still belong to the current line: run them through bookkeeping so the
+      * final line's echo (and its pending hits) finalize exactly as a
+      * newline-terminated line's would. Idempotent. */
+    def finish(): Unit =
+      var i = 0
+      while i < bufLen do
+        val b = buf(i)
+        if b == '\n'.toByte then
+          emitPending(continues = prefixFull)
+          line += 1
+          lineStart = base + i + 1
+          prefixLen = 0
+          prefixFull = false
+        else if !prefixFull then
+          if prefixLen < MaxHitTextChars then
+            prefix(prefixLen) = b
+            prefixLen += 1
+          else
+            prefixFull = true
+            emitPending(continues = true)
+        i += 1
+      emitPending(continues = false) // unterminated final line: echo = bytes seen
+      base += bufLen
+      bufLen = 0
+
+    /** Take the hits accumulated since the last drain (frame batching). Only
+      * hits whose echo is final are returned; the unterminated tail line is
+      * held until its newline, its excerpt bound, or `finish()`. */
     def drainHits(): Vector[Hit] =
-      emitPending(continues = false)
       val out = hits.toVector
       hits.clear()
       out

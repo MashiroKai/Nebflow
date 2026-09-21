@@ -1414,7 +1414,7 @@ class WebSocketRoutes(
     def loop(offset: Long): IO[TextStream.SearchOutcome] =
       flag.get.flatMap { stop =>
         if stop || offset >= size || scanner.truncated then
-          flush(scanner.drainHits())
+          IO(scanner.finish()) *> flush(scanner.drainHits())
             .as(TextStream.SearchOutcome(scanner.scannedBytes, scanner.totalHits, stop || scanner.truncated))
         else
           val n = math.min(TextStream.ScanChunkBytes.toLong, size - offset).toInt
