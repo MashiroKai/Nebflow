@@ -307,7 +307,12 @@ object LlmInterface:
   private[llm] def inactivityTimeout[O](
     firstToken: FiniteDuration,
     subsequent: FiniteDuration,
-    transientPhase2: Boolean = false
+    transientPhase2: Boolean = false,
+    // 时间基修正缝（hostresume 批 2026-09-22，设计卡 §4 #5，D-6 首批消费点之一）：
+    // 默认恒等（裸差值 = 现状逐字节）；仅整流 no-progress 守卫调用点注入
+    // `PowerStateTracker.effectiveElapsed` 扣减宿主睡眠冻结秒。每供应商 120s Transient
+    // 看门狗调用点零改动（卡「明确不改」：跨睡眠快速失败 + 重试正是软着陆本体）。
+    effectiveElapsed: (Long, Long) => Long = (startMs, nowMs) => nowMs - startMs
   ): fs2.Pipe[IO, O, O] =
     val firstEx = new java.util.concurrent.TimeoutException(
       s"LLM stream: no response within ${firstToken.toSeconds}s"
@@ -339,10 +344,10 @@ object LlmInterface:
                       gotFirst.get.flatMap { first =>
                         val now2 = now
                         if first then
-                          val age = now2 - last
+                          val age = effectiveElapsed(last, now2)
                           if age > subsequent.toMillis then IO.raiseError(phase2Ex(age))
                           else IO.unit
-                        else if now2 - last > firstToken.toMillis then IO.raiseError(firstEx)
+                        else if effectiveElapsed(last, now2) > firstToken.toMillis then IO.raiseError(firstEx)
                         else IO.unit
                       }
                     }
@@ -1081,7 +1086,12 @@ object LlmInterface:
                 .through(
                   inactivityTimeout(
                     noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds),
-                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds)
+                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds),
+                    // 时间基修正（hostresume 批 2026-09-22，设计卡 §4 #5，D-3 裁定「扣睡眠
+                    // 后仍 Permanent」）：宿主睡眠冻结秒经 PowerStateTracker 扣减，跨睡眠
+                    // 不再误触整流硬超时；超时分类仍是 plain TimeoutException → Permanent
+                    // fail-fast（禁重分类 Transient）。空窗集 / kill-switch ⇒ 逐字节现状。
+                    effectiveElapsed = nebflow.shared.PowerStateTracker.effectiveElapsed
                   )
                 )
                 .interruptWhen(halt.get)
