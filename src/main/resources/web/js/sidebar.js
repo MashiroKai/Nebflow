@@ -1911,7 +1911,7 @@ function showModal({title, fields, onConfirm}) {
       modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
         const id = row.querySelector('.cfg-model-id').value.trim();
         if (!id) return;
-        const ctxEl = row.querySelector('.cfg-model-ctx');
+        const ctxEl = /** @type {HTMLElement|null} */ (row.querySelector('.cfg-model-ctx'));
         const entry = {
           id,
           contextWindow: parseInt(ctxEl.value) || 1000000,
