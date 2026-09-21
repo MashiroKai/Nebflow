@@ -229,7 +229,11 @@ class ProviderRegistry(
           .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
           .map { mc =>
             val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
-            ModelCandidate(providerId, provider, mc.id, mc.contextWindow, vision, caps)
+            // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
+            // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
+            // 「偏离登记」）：
+            ModelCandidate(providerId, provider, mc.id,
+              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), vision, caps, mc.modelMaxContext)
           }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）

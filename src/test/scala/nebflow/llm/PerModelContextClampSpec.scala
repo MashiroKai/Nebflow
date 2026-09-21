@@ -92,6 +92,50 @@ class PerModelContextClampSpec extends CatsEffectSuite:
     }
   }
 
+  test("T5: 储备层（第四构造点）同受 clamp——provchain 腿 a 追加腿不得绕过真值上界") {
+    // 第四构造点 = registry.reserveTier（provchain 腿 a，晚于卡文成文合入 main；
+    // 卡文 B2 只点名两处 ⇒ 本测试是「偏离登记」的钉版：任何后续构造点绕过
+    // effectiveContextWindow 都会在这里红。
+    for
+      configRef <- Ref.of[IO, NebflowServiceConfig](
+        NebflowServiceConfig(
+          llm = ServiceLlmConfig(
+            providers = Map(
+              "p" -> ProviderConfig(
+                baseUrl = "http://127.0.0.1:1",
+                apiKey = "test",
+                protocol = LlmProtocol.Anthropic,
+                models = List(
+                  // agent 链只引 m1 ⇒ m2 不被引用 ⇒ 经储备层（reserveTier）追加进链尾
+                  ModelConfig("m1", contextWindow = 1000000),
+                  ModelConfig("m2", contextWindow = 1000000, modelMaxContext = Some(200000))
+                )
+              )
+            )
+          )
+        )
+      )
+      sessionOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+      triple <- LlmInterface.createLlm(sessionOverrides, None, Some(configRef))
+      registry = triple._2
+      chain <- registry.getCandidatesForAgent(
+        Some(AgentModelConfig(preferred = Some("p/m1"), fallbacks = Nil))
+      )
+      _ <- triple._4
+    yield
+      val reserve = chain.find(c => c.providerId == "p" && c.model == "m2")
+      assert(
+        reserve.isDefined,
+        s"m2 应经储备层进链（agent 链未引用它），实际链：${chain.map(c => s"${c.providerId}/${c.model}")}"
+      )
+      assertEquals(
+        reserve.get.contextWindow,
+        200000,
+        "储备层候选必须同受 min(configured, modelMaxContext) 约束（绕过 = clamp 有洞）"
+      )
+      assertEquals(reserve.get.modelMaxContext, Some(200000), "真值随候选保留")
+  }
+
   /** 建一个注册表实例供纯算式读数用。注意 `effectiveContextWindow` 是 **class
     * ProviderRegistry 上的实例方法**（不是伴生对象成员）——三个 ModelCandidate 构造点
     * 全部经它 ⇒ 「单点」成立；spec 侧走实例调用（salvage 草稿写成伴生对象调用 ⇒ 编译
