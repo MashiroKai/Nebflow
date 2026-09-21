@@ -285,3 +285,124 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
     await waitDoneBubble(page, 'alpha');
   });
 });
+
+// ============================================================
+// 双开缺陷批（2026-09-21 chain-askuserdup）· T3：**非阻塞提问**刷新后的同 id 双卡
+//
+// 定谳（.nebflow/reports/20260921_181620_askuserdup-arch__chain-askuserdup.md §1.5）：
+//   历史恢复腿给**仍 pending** 的卡补一行假 `.option-answer`（`chat.js
+//   renderAskUserHistory` 改前无条件追加）⇒ 重放腿的去重判据（「卡上有没有作答行」）
+//   被击穿 ⇒ 不删既有卡 ⇒ 重放卡挂成第二张。首卡 = 历史卡（`lockOptionBox` 置灰 +
+//   全 disabled + 无 `data-request-id`）⇒ 「总是第一张失效」+ 引擎关不掉它。
+//   触发前置 = `isAskUserPending` 为假，而它要求「askUser 是首屏历史里最后一条真人
+//   行」；**非阻塞提问**之后 agent 继续本 turn 产出 ai 行（`AskUserQuestionTool:400-417`
+//   发起即返回）⇒ 该条件在其真实用法下恒为假 ⇒ 每次刷新/切会话/重连都复现。
+//
+// 本 case 用 mock LLM 的 'ask nb now' 触发腿**真实制造**该形态：
+//   非阻塞提问（卡仍在 hub pending）→ 同 turn 续跑落 `ai` 行 → 刷新 → historyPage
+//   （askUser 条目在首屏内，历史腿真的画卡）→ 重放帧 ⇒ 现场 DOM 读数。
+// 双向钉（同一份断言跑两侧，`ASKUSER_DUP_ARM` 切换期望值；两侧实例由外部 runner
+// 拉起，前端 web 树不同：red = 改前基线树，green = 本支）：
+//   red  （改前代码）：`.option-box` == 2、`.resolved` == 1、`.option-answer` == 1、
+//                     只有 1 张卡可 id 寻址、首卡（.resolved）控件全 disabled；
+//   green（改后代码）：`.option-box` == 1、`.resolved` == 0、`.option-answer` == 0、
+//                     `.option-answer-pending` == 0（历史孪生卡已被 id 优先回收）、
+//                     卡可答（出站 askUserAnswer 带 requestId）+ 待办镜像仍 1。
+// ============================================================
+const ARM = process.env.ASKUSER_DUP_ARM ?? 'green';
+
+async function readDupCards(page) {
+  return page.evaluate(() => {
+    const boxes = [...document.querySelectorAll('#chat .option-box')];
+    return {
+      total: boxes.length,
+      withRid: boxes.filter((b) => b.dataset.requestId).length,
+      rids: boxes.map((b) => b.dataset.requestId || ''),
+      resolved: boxes.filter((b) => b.classList.contains('resolved')).length,
+      answered: boxes.filter((b) => b.querySelector('.option-answer')).length,
+      pendingNote: boxes.filter((b) => b.querySelector('.option-answer-pending')).length,
+      firstCardDisabled: boxes.length > 0
+        ? [...boxes[0].querySelectorAll('.option-btn')].every((b) => b.disabled)
+        : null,
+      lastPendingSnapshot: (() => {
+        const snaps = (window.__nfFrames?.in ?? []).filter((f) => f.type === 'pendingAsksSnapshot');
+        const last = snaps[snaps.length - 1];
+        return last ? (last.asks || []).length : null;
+      })(),
+    };
+  });
+}
+
+test.describe('T3 AskUser 双卡（非阻塞提问 → 刷新）· chain-askuserdup 全链红验', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('T3 非阻塞提问 + 后置 ai 行 → 刷新 ⇒ 现场 DOM 读数（green: 恰 1 张活卡）', async ({ page }) => {
+    test.setTimeout(240000);
+    attachWsCapture(page);
+    // 独立会话（无 padding ⇒ askUser 条目落在首屏历史内 —— 历史恢复腿才会真的画卡）
+    const meta = await api('/sessions', 'POST', { name: `e2e-dupcards-${ARM}-${Date.now()}`, agentName: 'Nebula' });
+    const nsid = meta.id;
+    await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async (s) => {
+      await window.__nf_ws_ready;
+      window.__nf_ws.send(JSON.stringify({ type: 'switchSession', sessionId: s }));
+    }, nsid);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await chatReady(page, nsid);
+
+    // —— 非阻塞提问（mock 'ask nb now' ⇒ AskUserQuestion(mode=non-blocking)）——
+    api(`/sessions/${nsid}/turn`, 'POST', { content: 'ask nb now', timeoutSec: 600 }).catch(() => {
+      /* turn 正常收尾；有意外时由下方断言暴露 */
+    });
+    const nbRid = await waitLiveCard(page);
+    expect(nbRid, '非阻塞卡也应带 requestId').toBeTruthy();
+    // 非阻塞 = 发起即返回 ⇒ 同 turn 续跑一条 ai 行（双开的前置形态）
+    await waitDoneBubble(page, 'MOCK_DONE');
+    const preRefresh = await readDupCards(page);
+    expect(preRefresh.total, '刷新前：恰一张 live 卡').toBe(1);
+    expect(preRefresh.answered, '刷新前：无假作答行').toBe(0);
+
+    // —— 刷新：historyPage（含 askUser 条目）+ 重放帧 ——
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await chatReady(page, nsid);
+    await page.waitForSelector('.option-box[data-request-id]', { timeout: 20000 });
+    await waitForFrame(page, 'in', { type: 'askUser', replayed: true });
+    await page.waitForTimeout(400);
+
+    const cards = await readDupCards(page);
+    // 现场 DOM 读数（补定谳件 §6.1 缺的那张快照）：每卡的 .resolved / .option-answer /
+    // data-request-id 计数 + 首卡控件 disabled 读数
+    console.log(`[T3:${ARM}]`, JSON.stringify(cards));
+
+    if (ARM === 'red') {
+      // 改前代码：同 id 两张卡 —— 首卡（历史恢复）锁定 + 假作答行 + 无 id；次卡（重放）活
+      expect(cards.total, '改前：同 id 两张卡').toBe(2);
+      expect(cards.resolved, '改前：首卡被 lockOptionBox 锁死').toBe(1);
+      expect(cards.answered, '改前：首卡带一行假作答行').toBe(1);
+      expect(cards.pendingNote, '改前：无显式待定标注').toBe(0);
+      expect(cards.withRid, '改前：只有重放卡可 id 寻址（历史卡无 requestId）').toBe(1);
+      expect(cards.firstCardDisabled, '改前：「总是第一个失效」= 首卡控件全 disabled').toBe(true);
+      await page.screenshot({ path: join(SHOT_DIR, `20260921_askuserdup-T3-red-${nsid}.png`), fullPage: false });
+    } else {
+      // 改后代码：id 优先无条件回收 ⇒ 恰一张卡，且是重放活卡
+      expect(cards.total, '改后：恰一张卡').toBe(1);
+      expect(cards.resolved, '改后：幸存卡是活卡（未锁）').toBe(0);
+      expect(cards.answered, '改后：无假作答行').toBe(0);
+      expect(cards.pendingNote, '改后：历史孪生卡已被回收（不留待定卡）').toBe(0);
+      expect(cards.rids, '改后：唯一卡可 id 寻址').toEqual([nbRid]);
+      expect(cards.lastPendingSnapshot, '待办条镜像仍为 1（未回归到镜像面）').toBe(1);
+
+      // 复绿正向：卡可答 → askUserAnswer{requestId} 送达 → 卡片锁定
+      await page.screenshot({ path: join(SHOT_DIR, `20260921_askuserdup-T3-green-${nsid}.png`), fullPage: false });
+      await clickOption(page, 'alpha');
+      await clickOption(page, 'yes');
+      await page.locator('.option-box .option-confirm').first().click();
+      await waitForFrame(page, 'out', { type: 'askUserAnswer', requestId: nbRid });
+      await page.waitForSelector('.option-box .option-answer', { timeout: 10000 });
+      const afterAnswer = await readDupCards(page);
+      expect(afterAnswer.total).toBe(1);
+      expect(afterAnswer.answered, '作答后该卡带答案行').toBe(1);
+      expect(afterAnswer.resolved).toBe(1);
+    }
+  });
+});

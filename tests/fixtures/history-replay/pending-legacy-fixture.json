@@ -1,0 +1,18 @@
+[
+  {
+    "type": "askUser",
+    "items": [
+      {
+        "question": "旧行形态夹具：案 B 之前的 .ui.json 行（不落 requestId）",
+        "options": [
+          { "label": "alpha", "description": "选项 A" },
+          { "label": "beta", "description": "选项 B" }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "ai",
+    "text": "非阻塞提问之后 agent 继续本 turn 的产出（旧行形态同款）"
+  }
+]

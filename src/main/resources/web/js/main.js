@@ -29,6 +29,7 @@ import {
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
+  reclaimAskUserCards,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
@@ -1471,20 +1472,25 @@ onMessage('askUser', (msg, view) => {
   // (browser refresh, WS reconnect, session switch). This is state
   // re-delivery of a card the backend still considers pending, NOT a new ask:
   //  - the history-restored card carries no data-request-id (UiMessage.AskUser
-  //    persists only {type, items}), so #12 precise answer routing (the
-  //    requestId-keyed askUserAnswer / askUserClosed frames) cannot find
-  //    it — rebind by re-rendering with the live requestId;
-  //  - a duplicate replay would stack cards — remove THIS ask's unanswered
-  //    cards first (answered/locked cards and other pending asks stay).
+  //    persists only {type, items}) — REBIND by re-rendering with the live
+  //    requestId;
+  //  - a duplicate replay would stack cards — remove THIS ask's cards first.
   // Answered-before-replay cannot race: the hub snapshot only lists slots
   // still pending, so an answered ask is never replayed.
-  if (msg.replayed) {
+  //
+  // 双开缺陷批「案 A②」（2026-09-21，chain-askuserdup）— 判据换成 **id 优先**：
+  // 改前这里逐卡算 `answered = !!box.querySelector('.option-answer')`，只删「未作答」
+  // 的旧卡；而历史恢复路径给**仍 pending** 的卡也补了一行 `.option-answer`（案 A①
+  // 已修）⇒ 判据对这笔卡恒为「已答」⇒ 不删 ⇒ 重放卡挂成第二张，同 id 两卡且首卡恒死
+  // （历史卡已 lockOptionBox，`closeAskUserCard` 又只认 `[data-request-id]` ⇒ 引擎
+  // 够不到它）。现统一走 chat.js 的**单一判据** `reclaimAskUserCards`：先按
+  // `data-request-id === msg.requestId` **无条件**移除既有卡，再兜底无 id 的历史
+  // 恢复卡（旧 .ui.json 行不落 requestId ⇒ 只能靠形态兜底）。案 B 落盘 requestId 后
+  // ①路径对**新旧**历史卡都成立。案 C：重放帧带 `replaces:true`（替代语义标），与
+  // `replayed:true` 同帧 ⇒ 两标皆认。
+  if (msg.replayed || msg.replaces) {
     if (view) {
-      view.dom.chat.querySelectorAll('.row.ai .option-box').forEach(box => {
-        const rid = box.dataset.requestId || '';
-        const answered = !!box.querySelector('.option-answer');
-        if (!answered && (!rid || rid === msg.requestId)) box.closest('.row.ai').remove();
-      });
+      reclaimAskUserCards(view.dom.chat, msg.requestId, { legacyTwin: true });
       const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
@@ -1501,6 +1507,10 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
+    // 案 A③（双开缺陷批 2026-09-21）：live 腿也过**同一判据**再挂卡 ⇒ 「一 id 一活卡」
+    // 在**任何**入口成立，顺手覆盖 `#433 F4` 兜底扇出把同一 requestId 经 broadcast
+    // 多次送达同一窗的同 id 多送路径（两卡同 id 时后来的真身替换先前那张）。
+    reclaimAskUserCards(activeView.dom.chat, msg.requestId, { legacyTwin: true });
     const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
@@ -1923,10 +1933,11 @@ onMessage('historyPage', (msg, view) => {
     // Simply check if the last history message is askUser with items — if already answered,
     // there would be subsequent Ai/Tool messages after it, so it wouldn't be the last message.
     if (isAskUserPending) {
-      // Remove ALL disabled askUser rows (restored by restoreFromBackendHistory).
-      activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
-        if (row.querySelector('.option-box')) row.remove();
-      });
+      // Remove the superseded askUser cards (restored by restoreFromBackendHistory)
+      // through the SAME single-judgment function (案 A③) — 同 id 的既有卡 + 无 id 的
+      // 历史恢复未作答卡。改前这里是「删掉**全部**带 .option-box 的 .row.ai」，
+      // 会把更早那些**已作答**的历史卡一并从 DOM 里抹掉（超出本步语义）。
+      reclaimAskUserCards(activeView.dom.chat, lastHistMsg.requestId, { legacyTwin: true });
       renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName });
     }
 

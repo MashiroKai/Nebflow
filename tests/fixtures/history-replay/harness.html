@@ -16,6 +16,19 @@
      The spec (tests/history-replay-cards.spec.mjs) serves the repo root over
      a throwaway static server (never the 8080 host) and drives both paths
      against the real fixture extracted from ~/.nebflow/sessions/.
+
+     双开缺陷批（2026-09-21 chain-askuserdup）追加三个驱动 —— 静态镜像
+     「历史恢复 + 重放帧」这条链（tests/askuser-dup-card.spec.mjs，双树对照：
+
+       __replayNamed(name)  → restoreFromBackendHistory(<name>.json) + 读数快照
+       __replayLeg(rid)     → 复刻 main.js 的重放腿：先按该树的判据回收既有卡
+                              （新树 = 真实 reclaimAskUserCards；旧树 = 逐字复刻
+                              改前 main.js:1483-1487 的 DOM 启发式），再挂重放卡
+       __counts()           → 每卡 `.option-answer` / `.option-answer-pending` /
+                              `.resolved` / data-request-id 的现场读数
+
+     驱动里 `await import(...)` 拿到的是**该树**的模块（基线树 = pre-fix 代码）
+     ⇒ 同一份 harness 在两棵树上的行为差 = 被测代码差。
 -->
 <html lang="zh-CN">
 <head>
@@ -102,6 +115,85 @@
     };
 
     window.__ready = true;
+
+    // ---- 双开缺陷批（chain-askuserdup）：历史恢复 + 重放腿的三段驱动 ----
+
+    /** 现场读数：每卡的关键类名/属性计数（二值断言的数据源）。 */
+    window.__counts = () => {
+      const boxes = [...document.querySelectorAll('#chat .option-box')];
+      return {
+        boxes: boxes.length,
+        answered: boxes.filter(b => b.querySelector('.option-answer')).length,
+        pendingNote: boxes.filter(b => b.querySelector('.option-answer-pending')).length,
+        pendingNoteText: (boxes.find(b => b.querySelector('.option-answer-pending'))
+          ?.querySelector('.option-answer-pending').textContent) || null,
+        resolved: boxes.filter(b => b.classList.contains('resolved')).length,
+        historyReplay: boxes.filter(b => b.dataset.historyReplay === '1').length,
+        rids: boxes.map(b => b.dataset.requestId || ''),
+        disabledBtns: boxes.reduce((n, b) => n + [...b.querySelectorAll('.option-btn')].filter(x => x.disabled).length, 0),
+      };
+    };
+
+    async function freshChat() {
+      const { chatViews, activeView } = await import(`${WEB}/chatView.js`);
+      const chat = (activeView && activeView.dom && activeView.dom.chat) || chatEl;
+      chat.innerHTML = '';
+      return chat;
+    }
+
+    /** 历史恢复腿：喂 <name>.json（真实 historyPage.messages 形状）。 */
+    window.__replayNamed = async (name) => {
+      await freshChat();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      const msgs = await (await fetch(`./${name}.json`)).json();
+      restoreFromBackendHistory(msgs);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__counts();
+    };
+
+    /** 重放腿（复刻 main.js onMessage('askUser') 的 msg.replayed 分支）。
+     *  🔴 **不清 DOM**：重放帧是在历史恢复之后的现场之上到达的（清空了就没有孪生卡
+     *  可判，红/绿两侧都会假绿）。
+     *  回收判据取**本树**的真身：新树有 reclaimAskUserCards（单一判据）就直接用；
+     *  旧树（pre-fix）没有该导出 ⇒ 逐字复刻改前内联启发式（`answered` = 卡上有没有
+     *  作答行 ⇒ 有则不删）—— 同一份驱动在两棵树上跑出各自代码的真实行为。 */
+    window.__replayLeg = async (rid, items) => {
+      const chatMod = await import(`${WEB}/chat.js`);
+      const { activeView } = await import(`${WEB}/chatView.js`);
+      const chat = (activeView && activeView.dom && activeView.dom.chat) || chatEl;
+      if (typeof chatMod.reclaimAskUserCards === 'function') {
+        chatMod.reclaimAskUserCards(chat, rid, { legacyTwin: true });
+      } else {
+        chat.querySelectorAll('.row.ai .option-box').forEach(box => {
+          const boxRid = box.dataset.requestId || '';
+          const answered = !!box.querySelector('.option-answer');
+          if (!answered && (!boxRid || boxRid === rid)) box.closest('.row.ai').remove();
+        });
+      }
+      chatMod.renderAskUser(items, 'harness-session', null, rid, null);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__counts();
+    };
+
+    /** 单一判据单元读数：真实 renderAskUser 挂一张**已带作答行**的卡（历史的
+     *  「假已作答」形态），再按 id 回收 —— 钉「id 命中无条件（不看作答行）」。
+     *  旧树无该导出 ⇒ 返回 { supported:false }（红侧据此断言该判据缺失）。 */
+    window.__reclaimUnit = async (rid) => {
+      const chatMod = await import(`${WEB}/chat.js`);
+      const chat = await freshChat();
+      if (typeof chatMod.reclaimAskUserCards !== 'function') return { supported: false };
+      const items = [{ question: 'unit-probe', options: [{ label: 'a' }] }];
+      chatMod.renderAskUser(items, 'harness-session', null, rid, null);
+      const box = chat.querySelector('.option-box');
+      const fake = document.createElement('div');
+      fake.className = 'option-answer';
+      fake.textContent = '-> fake';
+      box.appendChild(fake);
+      const before = window.__counts();
+      const removed = chatMod.reclaimAskUserCards(chat, rid, { legacyTwin: true });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { supported: true, before, removed, after: window.__counts() };
+    };
   </script>
 </body>
 </html>

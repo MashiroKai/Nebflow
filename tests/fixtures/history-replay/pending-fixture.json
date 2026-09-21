@@ -1,0 +1,19 @@
+[
+  {
+    "type": "askUser",
+    "items": [
+      {
+        "question": "双开复现夹具：非阻塞提问（pending 期间 agent 继续产出 ai 行）",
+        "options": [
+          { "label": "alpha", "description": "选项 A" },
+          { "label": "beta", "description": "选项 B" }
+        ]
+      }
+    ],
+    "requestId": "ask-pending-fixture-1"
+  },
+  {
+    "type": "ai",
+    "text": "非阻塞提问之后 agent 继续本 turn 的产出（这才是「askUser 后置 ai 行」形态）"
+  }
+]

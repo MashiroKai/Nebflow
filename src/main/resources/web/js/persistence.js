@@ -19,7 +19,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
+import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards } from './chat.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 
@@ -242,8 +242,36 @@ function restoreSystemNoticeRow(m) {
  *  `askUserAnswer` 帧处理时追加 ⇒ 落在文本之后；阻塞式卡片在 pending 期间 agent
  *  不产出 ai/tool 行，故该 run 的末条即实收答案）。非阻塞式提问（agent 在 pending
  *  期间仍产出 ai 行 ⇒ run 被截断）与「作答后继续打字」两种形态下取值仍可能偏离
- *  ——见 uiclean 批报告「未做/开放项」。 */
+ *  ——见 uiclean 批报告「未做/开放项」。
+ *
+ *  **案 B（双开缺陷批 2026-09-21，chain-askuserdup）= 把上面两条残余边界一次关掉**：
+ *  askUser 行自案 B 起**随行落盘 requestId**，作答行落盘带显式来源标记
+ *  `answerOf = 被作答的 requestId`（`UiMessage.askUserAnswer` 单一构造点）⇒ 取值
+ *  从「邻接启发式」改为**数据精确寻址**：按 `answerOf === 该行的 requestId` 找作答行，
+ *  与相邻行形态（ai/tool/injected/后续打字）全无关。
+ *
+ *  🔴 回落方向（硬口径）：**拿不到作答证据 ⇒ 回落「未作答」（null）**，禁把历史
+ *  一律读成「已作答」——「假已作答」正是重放去重判据被击穿、双开首卡恒死的成因。
+ *  两条腿、一条回落链（先精确后启发式，**不**把无标记一律读成未作答）：
+ *    ① 精确腿（案 B）：本行带 requestId ⇒ 找自称答了这个 id 的作答行
+ *       （`answerOf === 本行 requestId`）。与相邻行形态（ai/tool/injected/后续打字）
+ *       全无关 —— 关掉 #272 的两条残余边界。
+ *    ② 启发式腿（旧数据 / 无标记行的回落）：原 run 读法，逐字不变。
+ *  混合（而非「有 requestId 就只认标记」）是刻意的：存量数据里存在「askUser 行带
+ *  requestId、作答行无标记」的形态（`tests/fixtures/askuser-answer-source/
+ *  answered-fixture.json` 即此形态）—— 只认标记会把它误读成「未作答」，把既有的
+ *  正确还原打回成一张待定死卡。故标记缺席时回落启发式，方向仍偏向「未作答」。 */
 function askUserAnswerText(msgs, i) {
+  const ask = msgs[i];
+  const askRid = ask && ask.requestId;
+  if (typeof askRid === 'string' && askRid) {
+    // ① 案 B 精确腿：答案行必须**自称**答的是这个 requestId。
+    for (let j = i + 1; j < msgs.length; j++) {
+      const m = msgs[j];
+      if (m && m.type === 'user' && m.answerOf === askRid) return m.text;
+    }
+  }
+  // ② 旧读法（run 启发式）逐字保留
   let answer = null;
   for (let j = i + 1; j < msgs.length; j++) {
     const m = msgs[j];
@@ -987,6 +1015,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
       }
     } else if (m.type === 'askUser') {
+      // 一 id 一活卡（案 A③ 单一判据的历史腿）：该 askUser 行带 requestId 且聊天流里
+      // 已有同 id 的卡（live 腿或重放腿先画的真身）⇒ 不再画历史孪生卡。历史分页
+      // （beforeIndex 非空、不清 DOM）与「重放帧先到、历史后到」两个竞态都靠这一步
+      // 收口；禁在这里开 `legacyTwin`（那是替换腿的口子，历史腿开了会把任何遗留
+      // 未作答卡后面的历史卡静默跳过）。
+      const dupLive = m.requestId ? sameAskCards(chat, m.requestId) : [];
+      if (dupLive.length) return;
       // Same card component as the live renderAskUser path (chat.js
       // showOptions) + the terminal lock state of the live confirm/cancel
       // paths — restored answered cards are structurally identical to live
@@ -997,7 +1032,8 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       fragment.appendChild(row);
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // 案 B：持久化的 requestId 一并透传 ⇒ 历史卡带 `data-request-id`（可 id 寻址）。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId);
       // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
       // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
       const askCopy = askUserQuestionText(m.items);
