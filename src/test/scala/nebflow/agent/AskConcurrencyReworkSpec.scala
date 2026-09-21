@@ -158,6 +158,14 @@ class AskConcurrencyReworkSpec extends CatsEffectSuite:
       req1 <- askRequest("ask-dddd000000000000", "root-1", "node-a", got1, system)
       req2 <- askRequest("ask-eeee000000000000", "root-2", "node-a", got2, system)
       _ <- hub ! InteractionHubCommand.Request(req1)
+      // 创建序的确定性前提：hub 对每条 Request 各 fork 一个 turn
+      // （InteractionHub.scala:72 ctx.forkTurn），并发下「槽注册序 ≠ 发送序」，
+      // createdAt 取的是注册时刻 ⇒ 背靠背连发两条时 sortBy(createdAt) 的输入
+      // 本身就是竞态产物（全量负载片实证 req2 先于 req1 注册、:171 顺序红）。
+      // 先等 req1 的卡渲染（handleRequest 先注册槽再渲染 ⇒ 卡可见即槽已在册），
+      // 再发 req2 —— 「req1 严格先于 req2 创建」成为确定性前提，下面的
+      // 顺序断言钉的才是实现契约（快照按 createdAt 升序）而非调度运气。
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", req1.requestId))), "第一张卡未渲染")
       _ <- hub ! InteractionHubCommand.Request(req2)
       _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", req2.requestId))), "第二张卡未渲染")
       all <- globalSnapshot(hub)
