@@ -22,7 +22,7 @@
 //   → canvas 标签（HTML / markdown / URL 查看器）。
 // 后端替身仅两处：/api/nf-file + /api/nf-ticket（tests/nf-ticket-mock.mjs 假票），
 // 以及 WS `pop.readFile` 应答（按 WebSocketRoutes.scala:2280 真语义实现：~ 展开 +
-// 绝对路径 + 存在性 + ≤10MB + FileTypeRegistry 扩展判定）。LIVE 段用真后端复核
+// 绝对路径 + 存在性 + ≤100MB + FileTypeRegistry 扩展判定）。LIVE 段用真后端复核
 // R2 与 R5。
 //
 // 运行：
@@ -143,7 +143,7 @@ async function nfFileRoute(route) {
 /* ─────────────────────────── 应用引导（WS 替身：pop.readFile 真语义） ─────────────────────────── */
 const EXT_ITEM = { html: 'html', htm: 'html', md: 'markdown', markdown: 'markdown', json: 'json', png: 'image', jpg: 'image', svg: 'image', pdf: 'pdf' };
 const BINARY = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'pdf']);
-const MAX_READ = 10 * 1024 * 1024;
+const MAX_READ = 100 * 1024 * 1024;   // = WebSocketRoutes.MaxPopReadFileBytes（打开闸 100MB）
 
 async function boot(browser, live = false) {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
@@ -185,7 +185,7 @@ async function boot(browser, live = false) {
         readFileCalls.push(abs);
         try {
           const buf = readFileSync(abs);
-          if (buf.length > MAX_READ) throw new Error('file exceeds 10MB limit');
+          if (buf.length > MAX_READ) throw new Error('file exceeds 100MB limit');
           const ext = (abs.split('.').pop() || '').toLowerCase();
           const msg = { type: 'fileContent', path: rawPath, absPath: abs, itemType: EXT_ITEM[ext] || 'code', fileName: abs.split('/').pop(), size: buf.length };
           if (!BINARY.has(ext)) msg.content = buf.toString('utf8');

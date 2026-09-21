@@ -203,7 +203,7 @@ class CardToolScanFaceSpec extends FunSuite:
     assertEquals(htmlOf(p), """<img src="/js/cardscan-missing.png"/><script src="/js/app.js"></script>""")
 
   test("exemption: root-level app files and every served prefix are recognised"):
-    val refs = List("/logo.svg", "/style.css", "/favicon.ico", "/assets/index-abc.js", "/css/chat.css",
+    val refs = List("/favicon-512.png", "/style.css", "/favicon.ico", "/assets/index-abc.js", "/css/chat.css",
       "/vendor/monaco/x.js", "/uploads/s1/a.png", "/agents/x/a.png", "/voice-models/m.bin")
     val html = refs.map(r => s"""<img src="$r"/>""").mkString
     val p = card(html)
@@ -242,7 +242,7 @@ class CardToolScanFaceSpec extends FunSuite:
   test("criterion: appRoute recognises exactly the gateway's own surfaces"):
     assertEquals(FileRefs.appRoute("/js/app.js"), Some("/js/"))
     assertEquals(FileRefs.appRoute("js/app.js"), Some("/js/"), "relative is read as web-root relative")
-    assertEquals(FileRefs.appRoute("/logo.svg"), Some("/logo.svg"))
+    assertEquals(FileRefs.appRoute("/favicon-512.png"), Some("/favicon-512.png"))
     assertEquals(FileRefs.appRoute("/tmp/plot.png"), None)
     assertEquals(FileRefs.appRoute("//cdn.example.com/js/app.js"), None, "protocol-relative is not an app route")
     assertEquals(FileRefs.appRoute("https://example.com/js/app.js"), None)

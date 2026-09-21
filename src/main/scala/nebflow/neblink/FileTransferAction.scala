@@ -238,7 +238,7 @@ object FileTransferAction:
           // 帧自洽（offset 由 index 推导；bytes 符合计划）
           val derivedOffset = AttachContract.offsetForIndex(chunkIndex, chunkSize)
           val expectedBytes = math.min(chunkSize.toLong, totalBytes - derivedOffset)
-          if derivedOffset != existing then
+          if derivedOffset > existing then
             Left(
               AttachContract.AttachError(
                 AttachContract.Codes.OffsetOutOfRange,
@@ -275,10 +275,24 @@ object FileTransferAction:
                 ).toJson.noSpaces
               )
             else
+              // ===== 续传对齐（xferb 批 · P0-2）=====
+              // `derivedOffset < existing` 且 index 等于期望 index ⇒ 目标上存的是**非整块尾**
+              // （上一次 append 被中断，或上一次会话用了另一个块大小）。此时**必须**先截到
+              // `derivedOffset` 再 append —— 否则同一段字节落两遍，末块整件摘要必然不符
+              // （改前 = 显式 `OFFSET_OUT_OF_RANGE` 拒绝 ⇒ 该腿的断点续传物理不可行）。
+              // 🔴 只在**本次流拥有该文件**时截（上方 `existing > 0 && !owned` 已 fail-closed 拒绝
+              // 别人的件）——「收端永不覆盖/删除既有件」的口径不放松。
+              val baseBytes =
+                if derivedOffset < existing then
+                  val raf = new java.io.RandomAccessFile(path.toNIO.toFile, "rw")
+                  try raf.setLength(derivedOffset)
+                  finally raf.close()
+                  derivedOffset
+                else existing
               os.write.append(path, payload)
               // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
-              if existing == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
-              val nowBytes = existing + payload.length
+              if baseBytes == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
+              val nowBytes = baseBytes + payload.length
               if nowBytes >= totalBytes then
                 // 唯一比对点：自算整件摘要（流式），不符 ⇒ 删文件（绝不 commit）。
                 val computedWhole = ChunkedTransfer.hashFileStreaming(path)

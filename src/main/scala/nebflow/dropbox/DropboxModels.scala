@@ -59,7 +59,18 @@ case class DropboxMessage(
   // 各自一个 attachmentIndex。默认值保证旧 JSON 兼容（旧消息 = 单件）。
   batchId: String = "",
   attachmentIndex: Int = 0,
-  attachmentCount: Int = 1
+  attachmentCount: Int = 1,
+  // ===== 失败原因（xferb 批 · P0-3，2026-09-20）=====
+  /** 结构化失败原因**码**（`AttachContract.Codes.*`，如 `PEER_UNREACHABLE`）。
+    *
+    * WHY 落台账：失败原因此前只随 `dropbox-file-complete` 一次性事件流动 ⇒ 刷新/重开窗后
+    * 界面上只剩一个「失败」，作者原话「失败没有原因」正是这个形状（服务端知道原因，记录里没有）。
+    * 默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无码（**不伪造**）。 */
+  errorCode: String = "",
+  /** 结构化失败原因**全文**（`AttachError.toJson.noSpaces`，含 phase / chunkIndex /
+    * p2pReason / relayReason 等可选字段）。与 [[errorCode]] 同轴：码供判路、全文供回显。
+    * 只在本机台账 + 本机前端帧里流动（**不上对端帧** —— 对端原因以 `file-complete` 帧为准）。 */
+  errorDetail: String = ""
 )
 
 object DropboxMessage:
@@ -79,7 +90,7 @@ object DropboxMessage:
   // 缺一个可缺键 ⇒ 该 `Map` 整体解码失败 ⇒ `loadMessages` 静默留空表 ⇒
   // `dropbox-get-history` 回 `[]` ⇒ 客户端（以帧为真相源）开窗抹掉本地已知消息。
   //
-  // 两个键集**互相排斥且并集 = 本 case class 的全部 16 键**（`DropboxLedgerDecodeSpec` 断言）：
+  // 两个键集**互相排斥且并集 = 本 case class 的全部 18 键**（`DropboxLedgerDecodeSpec` 断言）：
   //
   //   ① 必给键（缺席 / 类型不符 ⇒ **条目级**失败，由 `DropboxLedger.decode` 跳过该条并计数登记）：
   //      `msgId` / `direction` / `kind` / `ts`
@@ -102,6 +113,8 @@ object DropboxMessage:
   //        | `batchId`         | `""`     |
   //        | `attachmentIndex` | `0`      |
   //        | `attachmentCount` | `1`      |
+  //        | `errorCode`       | `""`     |
+  //        | `errorDetail`     | `""`     |
   //
   // 🔴 缺省值与本 case class 的默认值**逐字相同**（表 = 默认值的镜像），但语义**不依赖**
   //    Scala 默认值机制——逐键语义显式落在下面的 `given Decoder` 里。
@@ -110,10 +123,11 @@ object DropboxMessage:
   /** 必给键（缺席即**条目级**失败；顺序即报告里的列举顺序）。 */
   val RequiredKeys: List[String] = List("msgId", "direction", "kind", "ts")
 
-  /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 16 键）。 */
+  /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 18 键）。 */
   val OptionalKeys: List[String] = List(
     "text", "origin", "transferId", "fileName", "fileSize", "mimeType",
-    "status", "savedPath", "deviceOutPath", "batchId", "attachmentIndex", "attachmentCount"
+    "status", "savedPath", "deviceOutPath", "batchId", "attachmentIndex", "attachmentCount",
+    "errorCode", "errorDetail"
   )
 
   given Encoder[DropboxMessage] = deriveEncoder
@@ -144,11 +158,14 @@ object DropboxMessage:
       batchId         <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
       attachmentIndex <- c.get[Option[Int]]("attachmentIndex").map(_.getOrElse(0))
       attachmentCount <- c.get[Option[Int]]("attachmentCount").map(_.getOrElse(1))
+      errorCode       <- c.get[Option[String]]("errorCode").map(_.getOrElse(""))
+      errorDetail     <- c.get[Option[String]]("errorDetail").map(_.getOrElse(""))
     yield DropboxMessage(
       msgId = msgId, direction = direction, kind = kind, ts = ts, text = text,
       origin = origin, transferId = transferId, fileName = fileName, fileSize = fileSize,
       mimeType = mimeType, status = status, savedPath = savedPath, deviceOutPath = deviceOutPath,
-      batchId = batchId, attachmentIndex = attachmentIndex, attachmentCount = attachmentCount
+      batchId = batchId, attachmentIndex = attachmentIndex, attachmentCount = attachmentCount,
+      errorCode = errorCode, errorDetail = errorDetail
     )
   }
 

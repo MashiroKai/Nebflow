@@ -3,6 +3,8 @@ package nebflow.dropbox
 import io.circe.Json
 import io.circe.syntax.*
 
+import scala.concurrent.duration.*
+
 /**
  * 附件通道冻结契约 —— **单一数值权威面**。
  *
@@ -48,6 +50,104 @@ object AttachContract:
    * 备选：1 MiB（1024 块）/ 8 MiB（128 块）。
    */
   val ChunkSize: Int = 4 * 1024 * 1024
+
+  // ===== 设备腿自适应块参（xferb 批 · 解 P-1「块大小 × 死线与链路能力不匹配」）=====
+  //
+  // 问题（方案卡 §0/§3 实测）：底座容量 24.6–30.3 KB/s，而旧口径要求每块 4 MiB 在
+  // 60 s（P2P）/30 s（relay）内传完 = 要求 ≥69.9 / ≥139.8 KB/s ⇒ **阈值设在能力之上**，
+  // 失败是确定性的（失败耗时与文件大小无关，恒 ≈367 s）。
+  //
+  // 修法（照卡 P0-1）：块大小**按实测速率反解**（`块大小 × 安全系数 ≤ 单块死线 × 速率`），
+  // 单块死线**由块大小与同一速率派生**。两者都在**本机**（块大小走既有 `chunkSize`
+  // 会话参数、死线只进本端 HttpClient/relay 调用的超时形参）⇒ **零协议改动**：
+  // 对端旧构建既不需要新头、也不需要新键（沿用 `X-Dropbox-Chunk-Size` 现成字段）。
+  //
+  // 🔴 与附件腿/好友腿的关系：`ChunkSize`（4 MiB）仍是**它们的**缺省值（零回归）；
+  // 设备腿（`DropboxService`）改用 `adaptiveChunkSize(...)` 取会话值，上限仍是 4 MiB。
+
+  /** 块大小下限 = 256 KiB（**建议值**，非作者给定数）。
+    *
+    * 依据：relay 腿可等窗口 45 s ÷ 256 KiB ⇒ 容忍 ~5.8 KB/s；实测底座下沿 24.6 KB/s 仍有 ~8× 余量。
+    * 代价：块变小 ⇒ 块数上升、RTT 成本线性上升（严格停等、零并行 —— 方案卡 P-7/P1-1）。
+    * 故下限取「够快能成」的最小档，不再往下压。 */
+  val MinChunkSize: Int = 256 * 1024
+
+  /** 块大小上限 = [[ChunkSize]]（4 MiB）：**不放大**既有线上块长，快链路行为与今天一致。 */
+  val MaxChunkSize: Int = ChunkSize
+
+  /** 块大小量化粒度 = 64 KiB：块大小取整数倍，读数/日志可读，免出现 402653.7 这类值。 */
+  val ChunkSizeQuantum: Int = 64 * 1024
+
+  /** 无实测读数时的速率假设 = 24 KiB/s（取方案卡实测底座 24.6–30.3 KB/s 的**下沿**）。
+    *
+    * 🔴 方向 = **保守**（假设慢）：假设偏慢 ⇒ 块偏小、死线偏宽 ⇒ 首传不会因「假设过快」而失败；
+    * 稳态靠实测速率纠正（每传一次收敛一次，见 `DropboxService.peerRateRef`）。 */
+  val AssumedMinRateBytesPerSec: Long = 24 * 1024
+
+  /** 实测速率的夹取下界 = 4 KiB/s：一次抖动不得把块大小/死线推到无意义区。 */
+  val MinRateBytesPerSec: Long = 4 * 1024
+
+  /** 安全系数 = 2.0：一块的**数据时间 × 系数 ≤ 死线**（链路抖动、RTT 与重传余量）。 */
+  val ChunkDeadlineSafety: Double = 2.0
+
+  /** P2P 腿单块死线窗口（建议值）：15 s..60 s。60 s 与旧值同为上限 ⇒ 快链路零变化。 */
+  val P2PDeadlineFloor: FiniteDuration = 15.seconds
+  val P2PDeadlineCeiling: FiniteDuration = 60.seconds
+
+  /** relay 腿单块死线窗口（建议值）：15 s..45 s。
+    *
+    * 🔴 上限从 30 s 提到 45 s（本批唯一「放宽」的数值）：30 s 正是「4 MiB 要在 30 s 内传完」
+    * 那条不可能的要求；块变小后 45 s 对 512 KiB 仍留 2× 余量。纯**本端**超时形参 ——
+    * 不上 wire、不改中继协议（中继侧自身超时属跨项目读数面 C-2，未触碰）。 */
+  val RelayDeadlineFloor: FiniteDuration = 15.seconds
+  val RelayDeadlineCeiling: FiniteDuration = 45.seconds
+
+  /** 单块死线预算 = relay 腿上限（**最紧的一条腿**）：块必须在两腿上都能在死线内传完，
+    * 否则「P2P 能过、failover 到 relay 就必死」——那正是现状失败的形状。 */
+  val ChunkDeadlineBudget: FiniteDuration = RelayDeadlineCeiling
+
+  /** 速率读数夹取（≤0 ⇒ 用假设值；>0 ⇒ 夹到 [MinRate, ∞)）。 */
+  def normalizeRate(rateBytesPerSec: Long): Long =
+    if rateBytesPerSec <= 0L then AssumedMinRateBytesPerSec
+    else math.max(MinRateBytesPerSec, rateBytesPerSec)
+
+  /**
+   * 由速率反解块大小：`floor(预算 × 速率 ÷ 安全系数)`，量化到 [[ChunkSizeQuantum]]，
+   * 夹取 `[MinChunkSize, MaxChunkSize]`。`rate <= 0` ⇒ 用 [[AssumedMinRateBytesPerSec]]。
+   *
+   * 恒等性质（可判红）：对任意速率 r > 0，`chunkDeadline(adaptiveChunkSize(r), r, …, 预算)`
+   * 不超过预算（除下限夹取把块托到 256 KiB 的极慢档，那里由死线夹取兜住并如实登记）。
+   */
+  def adaptiveChunkSize(rateBytesPerSec: Long, budget: FiniteDuration = ChunkDeadlineBudget): Int =
+    val rate = normalizeRate(rateBytesPerSec)
+    val raw = budget.toMillis.toDouble / 1000.0 * rate.toDouble / ChunkDeadlineSafety
+    val quantized = (raw / ChunkSizeQuantum).toInt * ChunkSizeQuantum
+    math.max(MinChunkSize, math.min(MaxChunkSize, quantized))
+
+  /**
+   * 单块死线：`块字节数 ÷ 速率 × 安全系数`，夹取 `[floor, ceiling]`。
+   * `chunkBytes <= 0` ⇒ 取 `floor`（空块不产生等待）。
+   */
+  def chunkDeadline(
+    chunkBytes: Long,
+    rateBytesPerSec: Long,
+    floor: FiniteDuration,
+    ceiling: FiniteDuration
+  ): FiniteDuration =
+    if chunkBytes <= 0L then floor
+    else
+      val rate = normalizeRate(rateBytesPerSec)
+      val neededMs = chunkBytes.toDouble / rate.toDouble * ChunkDeadlineSafety * 1000.0
+      val clamped = math.max(floor.toMillis.toDouble, math.min(ceiling.toMillis.toDouble, neededMs))
+      clamped.toLong.millis
+
+  /** P2P 腿单块死线（窗口 = [[P2PDeadlineFloor]]..[[P2PDeadlineCeiling]]）。 */
+  def p2pDeadline(chunkBytes: Long, rateBytesPerSec: Long): FiniteDuration =
+    chunkDeadline(chunkBytes, rateBytesPerSec, P2PDeadlineFloor, P2PDeadlineCeiling)
+
+  /** relay 腿单块死线（窗口 = [[RelayDeadlineFloor]]..[[RelayDeadlineCeiling]]）。 */
+  def relayDeadline(chunkBytes: Long, rateBytesPerSec: Long): FiniteDuration =
+    chunkDeadline(chunkBytes, rateBytesPerSec, RelayDeadlineFloor, RelayDeadlineCeiling)
 
   /**
    * targetDir 上限 = **1024 字节**（UTF-8 编码后的字节数，**非字符数** —— 一个汉字
@@ -118,6 +218,12 @@ object AttachContract:
     val InsufficientDisk: String = "INSUFFICIENT_DISK"
     val UnsupportedProtocol: String = "UNSUPPORTED_PROTOCOL"
     val InvalidArgument: String = "INVALID_ARGUMENT"
+
+    /** 看门狗收口（xferb 批）：会话在某一态停够时间窗且**无字节进展** ⇒ 显式失败。
+      * 与 `PEER_UNREACHABLE` 分轴：后者 = 试着传了、两条腿都不可达；本码 = **压根没进展**
+      * （对端收下 offer 后不上传 / 前端上传腿从未开始）。前端据此可区分「网络不通」与
+      * 「对面没动」两类原因（第二段上屏）。 */
+    val TransferTimeout: String = "TRANSFER_TIMEOUT"
 
     /** 收端**永不**覆盖/删除既有件（dropnam 批，作者 2026-09-19 裁定②「取接收侧全保护」）：
       * 分块 put 的请求**没有**本文件所属 transfer 的 token，而目标路径上已存在非空文件

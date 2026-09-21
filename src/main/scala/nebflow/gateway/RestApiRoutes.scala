@@ -104,25 +104,30 @@ class RestApiRoutes(
           .flatMap(agg => Ok(agg.asJson))
       }
 
-    // TTS 语音合成（无需 auth，内部调用）
+    // TTS 语音合成。门控（2026-09-20 收尾批）：原注记「无需 auth，内部调用」**已作废** ——
+    // 唯一调用方是登录态 webui（`web/js/chat.js` `VoicePlayer._fetchTts`，本批已补带
+    // `Authorization`）。与其余 REST 面同门：无令牌 403、带令牌照走业务体（`withAuth`
+    // 纯套壳，业务体逐行保留）。门的判据在业务判据（`ttsService` 是否配置）**之前**。
     case req @ POST -> Root / "tts" =>
-      ttsService match
-        case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
-        case Some(svc) =>
-          req.as[Json].flatMap { body =>
-            val text = body.hcursor.downField("text").as[String].getOrElse("")
-            svc.synthesize(text).flatMap {
-              case Some(bytes) =>
-                IO.pure(
-                  Response[IO](
-                    status = Status.Ok,
-                    headers = Headers(`Content-Type`(MediaType.audio.wav)),
-                    body = Stream.emits(bytes).covary[IO]
+      withAuth(req) {
+        ttsService match
+          case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
+          case Some(svc) =>
+            req.as[Json].flatMap { body =>
+              val text = body.hcursor.downField("text").as[String].getOrElse("")
+              svc.synthesize(text).flatMap {
+                case Some(bytes) =>
+                  IO.pure(
+                    Response[IO](
+                      status = Status.Ok,
+                      headers = Headers(`Content-Type`(MediaType.audio.wav)),
+                      body = Stream.emits(bytes).covary[IO]
+                    )
                   )
-                )
-              case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+                case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+              }
             }
-          }
+      }
 
     // Generic command endpoint — mirrors WS messages
     case req @ POST -> Root / "command" =>
@@ -874,6 +879,76 @@ class RestApiRoutes(
         }
       }
 
+    // 对端头像同源只读路由（sessperf Phase B 前置项 · 作者 2026-09-20 18:55 令 B）。
+    //
+    // 为什么需要：网页本地层要给**对端**头像建「内容指纹双层缓存」（方案卡 §4③），
+    // 而跨源头像源站**不发 CORS 头** ⇒ 浏览器直 fetch 恒失败（`AvatarProxy.scala`
+    // 头注 2026-09-07 取证）；`GET /api/neblink/avatar` 只服务当前身份**自己**。
+    // 本路由是「按 userId 取对端头像字节」的唯一取数面。
+    //
+    // 🔴 **出生即包鉴权闸**（作者令：新路由禁裸奔过夜；apiguard 批 38 路由同族口径）：
+    //    判据与全部 `/friends*` / `/conversations*` 代理腿**逐字同款**——
+    //    ① `withAuth`（网关 Bearer 令牌）在先：无令牌 ⇒ **403**，零上游往返；
+    //    ② `friendService` 缺席 ⇒ **404 `NebLink not enabled`**（fail-closed）；
+    //    ③ 上游 `Not logged in` ⇒ **401 `code=neblink_not_logged_in`**（`friendErr` 单点，
+    //       与网关自身 403 的**有意分化**见 `friendErr` 注释）。
+    //
+    // 🔴 **不是开放代理 / SSRF 面为零**：客户端**只能给 `userId`**；具体 URL 由网关从
+    //    **本账号好友档案**（`FriendSummary.avatar`）解出 —— 请求方无法让网关去取任意
+    //    地址。够不着的好友（非好友 / 未知 id / 该好友无头像）⇒ **404 `no avatar`**。
+    //
+    // 响应面（方案卡 §3 前置项逐条）：字节 + `Content-Type` 原样透传，
+    //   带 `X-Avatar-Sha256` + `ETag`（强 ETag = 内容 sha）+ `Cache-Control: private`；
+    //    `If-None-Match` 命中 ⇒ **304**（零重传 —— 客户端「hash 未变 ⇒ 复用旧 blob」的
+    //    判据面）。上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+    case req @ GET -> Root / "avatars" / userId =>
+      withAuth(req) {
+        sharedResources.friendService match
+          case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+          case Some(fs) =>
+            val wanted = userId.trim
+            if wanted.isEmpty then BadRequest(Json.obj("error" -> "userId required".asJson))
+            else
+              fs.listFriends.flatMap {
+                case Left(err) => friendErr(err)
+                case Right(resp) =>
+                  resp.friends.find(_.userId == wanted).flatMap(_.avatar).filter(_.nonEmpty) match
+                    case None => NotFound(Json.obj("error" -> "no avatar".asJson))
+                    case Some(url) =>
+                      AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
+                        case Right((contentType, bytes)) =>
+                          val sha = AvatarProxy.sha256Hex(bytes)
+                          val etag = "\"" + sha + "\""
+                          val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
+                          if inm.nonEmpty && inm.contains(sha) then
+                            IO.pure(
+                              Response[IO](Status.NotModified)
+                                .withHeaders(Headers(Header.Raw(CIString("ETag"), etag)))
+                            )
+                          else
+                            // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
+                            // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
+                            // 变成 JSON 数字数组 ⇒ 图片损坏）。
+                            val ct = org.http4s.headers.`Content-Type`.parse(contentType)
+                              .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                            IO.pure(
+                              Response[IO](Status.Ok)
+                                .withEntity(fs2.Stream.emits(bytes).covary[IO])
+                                .withHeaders(
+                                  Headers(
+                                    ct,
+                                    Header.Raw(CIString("ETag"), etag),
+                                    Header.Raw(CIString("X-Avatar-Sha256"), sha),
+                                    Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
+                                  )
+                                )
+                            )
+                        case Left(err) =>
+                          BadGateway(Json.obj("error" -> err.asJson))
+                      }
+              }
+      }
+
     // Update neblink config (e.g. syncIntervalSec)
     case req @ PATCH -> Root / "neblink" / "config" =>
       withNeblink(req) { ms =>
@@ -895,87 +970,126 @@ class RestApiRoutes(
     // — it never touches the provider's browser SSO session, so a login
     // right after it silently redirects back into the original account.
     // The full logout (local teardown + Logto end-session handoff) is
-    // GET /neblink/auth/end-session below; the web logout button drives
-    // that one. This endpoint stays for API compatibility and scripted use.
+    // POST /neblink/auth/end-session below (POST + token since the 2026-09-20
+    // closeout batch; the old GET arm is a gated 405); the web logout button
+    // drives that one. This endpoint stays for API compatibility and scripted use.
     case req @ POST -> Root / "neblink" / "logout" =>
       withNeblink(req) { ms =>
         performLocalLogout(ms) *> Ok(Json.obj("ok" -> true.asJson))
       }
 
     // RP-initiated logout (OIDC Session Management, RP-logout fix
-    // 2026-09-06) — browser navigation endpoint: local teardown FIRST
-    // (same steps as POST /neblink/logout above, credential read before
-    // it is cleared), then 302 to the provider's end_session_endpoint with
-    // the persisted id_token as `id_token_hint` (valid hint = no
-    // confirmation page) and the local `/auth/logged-out` landing page as
-    // `post_logout_redirect_uri` (ignored by the provider until the uri is
-    // allow-listed on the Logto app — probed 2026-09-06, always safe).
-    // The browser-side Logto session cookie dies here, so the NEXT login
-    // shows the account page instead of silently re-entering the old
-    // account.
+    // 2026-09-06; POST + gate since the 2026-09-20 closeout batch) — local
+    // teardown FIRST (same steps as POST /neblink/logout above, credential read
+    // before it is cleared), then the provider's end_session_endpoint URL is
+    // returned as DATA (`{"endSessionUrl": …}`) instead of a 302: the caller is
+    // now a `fetch` (a cross-origin 302 cannot be followed by fetch — it is
+    // CORS-blocked and the body is opaque, so the target URL would be
+    // unreachable), and it navigates a popup it reserved in the same gesture
+    // tick (top-level navigation = no CORS). The URL carries the persisted
+    // id_token as `id_token_hint` (valid hint = no confirmation page) and the
+    // local `/auth/logged-out` landing page as `post_logout_redirect_uri`
+    // (ignored by the provider until the uri is allow-listed on the Logto app —
+    // probed 2026-09-06, always safe). The browser-side Logto session cookie
+    // dies at that navigation, so the NEXT login shows the account page instead
+    // of silently re-entering the old account.
     //
-    // No gateway checkAuth BY DESIGN: this is a browser navigation hop (no
-    // Authorization header available) in the standard OIDC RP-logout shape
-    // — the credential it acts on is the provider's own session cookie.
-    // Worst case abuse = triggering a logout redirect (low risk).
+    // 🔴 门控（2026-09-20 收尾批 = 作者裁定 + 分发器定形）：旧注记
+    // 「No gateway checkAuth BY DESIGN」（理由 = 浏览器导航跳拿不到
+    // Authorization）**已作废** —— 同一形态也是「GET 带副作用」的反模式（凭据删除
+    // 可由一次导航 / 链接预取 / 扫描器触发）。现在 **POST + 令牌** 才可达：客户端
+    // `web/js/neblink.js` `openEndSessionHandoff` 在手势内先预约空白窗、再 fetch
+    // （带 Authorization）、拿到 URL 后导航该窗。旧 GET 面留下**门内 405**（下一条 arm）。
+    case req @ POST -> Root / "neblink" / "auth" / "end-session" =>
+      withAuth(req) {
+        // Body（两字段皆可选；缺失 / 空 / 非 JSON body = 纯登出，容错与
+        // POST /neblink/auth/start 同款）：
+        //   {"scenario":"switch","uiLocales":"zh"|"en"}
+        //
+        // Scenario marker (one-window switch, 2026-09-16): `scenario=switch` is
+        // sent ONLY by the switch-account entry; it arms the single-use handoff
+        // so the landing page this hop ends on continues into the login in the
+        // SAME window. A plain logout explicitly DISARMS, so a leftover marker
+        // can never drag the plain-logout landing page into an auto-login.
+        // `uiLocales` is whitelisted exactly like /neblink/auth/start (the
+        // landing hop is a bare navigation — it cannot read the app's locale).
+        // 两者都从 query 迁到 POST body（本批：GET 面退场）。arm/disarm 调用点语义不变。
+        req.attemptAs[Json].value.map(_.toOption).flatMap { bodyJson =>
+          val switchScenario = bodyJson
+            .flatMap(_.hcursor.downField("scenario").as[String].toOption)
+            .contains("switch")
+          val uiLocales = bodyJson
+            .flatMap(_.hcursor.downField("uiLocales").as[String].toOption)
+            .filter(v => v == "zh" || v == "en")
+            .getOrElse("")
+          val armOrDisarm =
+            if switchScenario then switchHandoff.arm(uiLocales) else switchHandoff.disarm
+          neblinkService match
+            case None =>
+              armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
+            case Some(ms) =>
+              val run =
+                for
+                  _ <- armOrDisarm
+                  logto <- ms.neblinkConfig.map(_.effectiveLogto)
+                  // Read the hint BEFORE performLocalLogout deletes the file.
+                  //
+                  // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G5）：读失败**不得**跳过本地拆除。
+                  // 修前这一读异常裸冒泡 ⇒ 整条路由 500、拆除一步没跑（凭据没删、config
+                  // 没关、client 没置空），用户因此**无法通过「退出账号」自救**（上游 S3）。
+                  // 现在：读失败 ⇒ 只跳过 `id_token_hint`（登录态可能不完整），拆除照跑；
+                  // 分类读数由存储层的 WARN 留档（带分类码），无需在这里再判一次。
+                  credentialRead <- DeviceCredential.loadDiagnosed
+                  idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
+                  resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
+                    case Some(lc) =>
+                      val target = LogtoAuthCode.endSessionUrl(
+                        lc.endpoint,
+                        idToken,
+                        Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                      )
+                      for
+                        _ <- performLocalLogout(ms)
+                        _ <- logger.info("RP-initiated logout: local teardown done, returning the provider end_session URL")
+                        // 出口 = 200 + JSON（不再是 302）：见上方注释（fetch 无法消费跨域 302）。
+                        r <- Ok(Json.obj("endSessionUrl" -> target.asJson))
+                      yield r
+                    // Same surface as auth/start: unconfigured provider (or AC app
+                    // id missing) — the caller falls back to the local-only logout,
+                    // and no landing hop will ever come back to consume the marker.
+                    case _ =>
+                      switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+                yield resp
+              // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
+              // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
+              run.handleErrorWith { e =>
+                val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                  e,
+                  nebflow.neblink.CredentialFailure.Unclassified
+                )
+                logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
+                  htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
+              }
+        }
+      }
+
+    // 旧 GET 面（本批退场，分发器 2026-09-20 定形 ⒜(ii)：**门内 405**）—— 旧调用方
+    // （书签 / 脚本 / 旧页缓存）拿到自解释的「方法不对」而不是模糊 404；且因为它**在门内**
+    // （先过 checkAuth），加门后的未门控集仍 = 恰 4 条（4 条设计面豁免），不新增普查条目。
+    // 🔴 副作用不可达：本 arm 只回状态码，不 arm/disarm 标记、不碰凭据。
     case req @ GET -> Root / "neblink" / "auth" / "end-session" =>
-      // Scenario marker (one-window switch, 2026-09-16): `?scenario=switch` is
-      // sent ONLY by the switch-account entry; it arms the single-use handoff
-      // so the landing page this hop ends on continues into the login in the
-      // SAME window. A plain logout explicitly DISARMS, so a leftover marker
-      // can never drag the plain-logout landing page into an auto-login.
-      // `ui_locales` is whitelisted exactly like /neblink/auth/start (the
-      // landing hop is a bare navigation — it cannot read the app's locale).
-      val query = req.uri.query.params
-      val switchScenario = query.get("scenario").contains("switch")
-      val uiLocales = query.get("ui_locales").filter(v => v == "zh" || v == "en").getOrElse("")
-      val armOrDisarm =
-        if switchScenario then switchHandoff.arm(uiLocales) else switchHandoff.disarm
-      neblinkService match
-        case None =>
-          armOrDisarm *> NotFound(Json.obj("error" -> "NebLink service not initialized".asJson))
-        case Some(ms) =>
-          val run =
-            for
-              _ <- armOrDisarm
-              logto <- ms.neblinkConfig.map(_.effectiveLogto)
-              // Read the hint BEFORE performLocalLogout deletes the file.
-              //
-              // 🔴 缺陷 A（上游 §8.2 第 4 项 / 判据 G5）：读失败**不得**跳过本地拆除。
-              // 修前这一读异常裸冒泡 ⇒ 整条路由 500、拆除一步没跑（凭据没删、config
-              // 没关、client 没置空），用户因此**无法通过「退出账号」自救**（上游 S3）。
-              // 现在：读失败 ⇒ 只跳过 `id_token_hint`（登录态可能不完整），拆除照跑；
-              // 分类读数由存储层的 WARN 留档（带分类码），无需在这里再判一次。
-              credentialRead <- DeviceCredential.loadDiagnosed
-              idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
-              resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
-                case Some(lc) =>
-                  val target = LogtoAuthCode.endSessionUrl(
-                    lc.endpoint,
-                    idToken,
-                    Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
-                  )
-                  for
-                    _ <- performLocalLogout(ms)
-                    _ <- logger.info("RP-initiated logout: local teardown done, redirecting to provider end_session")
-                    r <- Found(Location(Uri.unsafeFromString(target)))
-                  yield r
-                // Same surface as auth/start: unconfigured provider (or AC app
-                // id missing) — the caller falls back to the local-only logout,
-                // and no landing hop will ever come back to consume the marker.
-                case _ =>
-                  switchHandoff.disarm *> NotFound(Json.obj("error" -> "logto-not-configured".asJson))
-            yield resp
-          // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
-          // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
-          run.handleErrorWith { e =>
-            val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
-              e,
-              nebflow.neblink.CredentialFailure.Unclassified
+      withAuth(req) {
+        // 显式构造（DSL 的 `MethodNotAllowed` 只接受 `Allow` 头、不带体）：体自解释
+        // （`error` + 迁移目标），调用方拿到 405 而非模糊 404。
+        IO.pure(
+          Response[IO](status = Status.MethodNotAllowed).withEntity(
+            Json.obj(
+              "error" -> "method-not-allowed".asJson,
+              "allow" -> "POST".asJson
             )
-            logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
-              htmlResponse(callbackPage(ok = false, diagnostic.message), Status.InternalServerError)
-          }
+          )
+        )
+      }
 
     // Enroll device via pairing code — calls the NebLink Server's
     // /api/device/enroll, receives a long-lived device credential, persists it,
@@ -1068,18 +1182,25 @@ class RestApiRoutes(
                 case None =>
                   for
                     identity <- ms.identity
-                    // The neblink-server URL: read from existing config, or use the
-                    // public default. For device flow the server must be reachable
+                    // The neblink-server URL: explicit request field > config > the
+                    // public default — the last one is gated by 案 b① (isolated data
+                    // root without the explicit switch ⇒ **no target**, see
+                    // `neblinkServerUrl`). For device flow the server must be reachable
                     // from both the browser (for OAuth) and the device (for polling).
-                    serverUrl <- neblinkServerUrl(None)
-                    body = Json
-                      .obj(
-                        "deviceId" -> identity.deviceId.asJson,
-                        "deviceName" -> identity.deviceName.asJson,
-                        "platform" -> identity.platform.asJson
-                      )
-                      .noSpaces
-                    result <- proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                    serverTarget <- neblinkServerUrl(None)
+                    result <- serverTarget match
+                      case Some(serverUrl) =>
+                        val body = Json
+                          .obj(
+                            "deviceId" -> identity.deviceId.asJson,
+                            "deviceName" -> identity.deviceName.asJson,
+                            "platform" -> identity.platform.asJson
+                          )
+                          .noSpaces
+                        proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
+                      case None =>
+                        // 案 b①：无目标 ⇒ 零出站（不发起任何请求，更不注册）。
+                        IO.pure(Left(EnrollGuard.prodFallbackRefusalReason))
                   yield result
               resp <- result match
                 case Right(json) => Ok(json)
@@ -1110,47 +1231,54 @@ class RestApiRoutes(
               case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
               case Some(ms) =>
                 for
-                  resolvedUrl <- neblinkServerUrl(serverUrl)
-                  logto <- ms.neblinkConfig.map(_.logto)
-                  result <- logto match
-                    case Some(lc) =>
-                      LogtoDeviceFlow
-                        .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
-                        .flatMap {
-                          case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
-                            ms.identity.flatMap { identity =>
-                              LogtoDeviceFlow
-                                .register(LogtoDeviceFlow.jdkSend)(
-                                  resolvedUrl,
-                                  accessToken,
-                                  identity.deviceId,
-                                  identity.deviceName,
-                                  identity.platform
-                                )
-                                .map {
-                                  case Right(json) => Right(json)
-                                  case Left(err)   => Left(err)
-                                }
-                            }
-                          // Pending (incl. slow_down, normalized) and terminal
-                          // failures surface as error strings exactly like the
-                          // legacy proxy path — the frontend's
-                          // authorization_pending polling contract is unchanged.
-                          case LogtoDeviceFlow.PollOutcome.Pending(err) =>
-                            IO.pure(Left(err))
-                          case LogtoDeviceFlow.PollOutcome.Failed(err) =>
-                            IO.pure(Left(err))
-                        }
+                  serverTarget <- neblinkServerUrl(serverUrl)
+                  resp <- serverTarget match
                     case None =>
-                      val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                      proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
-                  resp <- result match
-                    case Right(json) =>
-                      // Success — persist credential + update config + hot-swap.
-                      completeDeviceEnrollment(ms, resolvedUrl, json)
-                    case Left(err) =>
-                      // authorization_pending is expected during polling — pass through.
-                      BadRequest(Json.obj("error" -> err.asJson))
+                      // 案 b①：无目标 ⇒ 不轮询、不注册；文案与其余入口同源。
+                      BadRequest(Json.obj("error" -> EnrollGuard.prodFallbackRefusalReason.asJson))
+                    case Some(resolvedUrl) =>
+                      for
+                        logto <- ms.neblinkConfig.map(_.logto)
+                        result <- logto match
+                          case Some(lc) =>
+                            LogtoDeviceFlow
+                              .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
+                              .flatMap {
+                                case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
+                                  ms.identity.flatMap { identity =>
+                                    LogtoDeviceFlow
+                                      .register(LogtoDeviceFlow.jdkSend)(
+                                        resolvedUrl,
+                                        accessToken,
+                                        identity.deviceId,
+                                        identity.deviceName,
+                                        identity.platform
+                                      )
+                                      .map {
+                                        case Right(json) => Right(json)
+                                        case Left(err)   => Left(err)
+                                      }
+                                  }
+                                // Pending (incl. slow_down, normalized) and terminal
+                                // failures surface as error strings exactly like the
+                                // legacy proxy path — the frontend's
+                                // authorization_pending polling contract is unchanged.
+                                case LogtoDeviceFlow.PollOutcome.Pending(err) =>
+                                  IO.pure(Left(err))
+                                case LogtoDeviceFlow.PollOutcome.Failed(err) =>
+                                  IO.pure(Left(err))
+                              }
+                          case None =>
+                            val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                            proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
+                        resp <- result match
+                          case Right(json) =>
+                            // Success — persist credential + update config + hot-swap.
+                            completeDeviceEnrollment(ms, resolvedUrl, json)
+                          case Left(err) =>
+                            // authorization_pending is expected during polling — pass through.
+                            BadRequest(Json.obj("error" -> err.asJson))
+                      yield resp
                 yield resp
             end match
           end if
@@ -1232,7 +1360,9 @@ class RestApiRoutes(
     //     400), so the app shows the login panel as the visible failure face
     //     instead of retrying a window.
     // READ-ONLY by construction: it must never consume/arm the marker
-    // (only GET /auth/logged-out consumes; only end-session arms).
+    // (only GET /auth/logged-out consumes; only end-session arms — the POST
+    // arm since the 2026-09-20 closeout batch; the retired GET arm is a gated
+    // 405 and touches no marker).
     case req @ GET -> Root / "neblink" / "auth" / "handoff" =>
       if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
       else switchHandoff.stateName.flatMap(s => Ok(Json.obj("state" -> s.asJson)))
@@ -1386,7 +1516,18 @@ class RestApiRoutes(
           case Some(svc) =>
             svc.uploadAndRelay(transferId, req.body).flatMap {
               case Right(_) => Ok(Json.obj("ok" -> true.asJson))
-              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+              case Left(err) =>
+                // xferb 批（P0-3）：失败响应带**结构化原因**（code + errorDetail 全文），
+                // 与 `dropboxError` / `dropbox-file-complete` 事件同形态 —— 前端据此回显
+                // 可判读原因，而不是一句人读文本（第二段上屏消费本字段）。
+                Ok(
+                  Json.obj(
+                    "ok" -> false.asJson,
+                    "error" -> err.render.asJson,
+                    "errorCode" -> err.code.asJson,
+                    "errorDetail" -> err.toJson
+                  )
+                )
             }
       }
 
@@ -1602,8 +1743,16 @@ class RestApiRoutes(
                 .filter(_ > 0)
               if text.isEmpty && attachmentIds.isEmpty then BadRequest(Json.obj("error" -> "Missing body".asJson))
               else
-                fs.sendAsUser(friendUserId, text, attachmentIds, clientMsgId, replyToMessageId)
-                  .flatMap(friendResult)
+                // rcptcode 批（好友腿终态码 502 折叠修复 · 折叠点 ②）：本路由改走
+                // **保留状态码**通道 —— `sendAsUserWithStatus` + 既有唯一映射器
+                // `groupProxyResult`（上游状态码逐字 + 体优先 JSON；`Left` 仍走
+                // `friendErr` ⇒ 传输失败 502 / 未登录三态**逐字不变**）。
+                // 🔴 为什么不新写第二套映射：群腿 `groupSendProxy` 与附件腿已各自透传，
+                // `(status, body) ⇒ Response` 只有 `groupProxyResult` 这一个事实源。
+                // 🔴 本路由是好友域**唯一**采用该通道的腿（其余 20+ 好友路由继续折叠 ——
+                // 是否推广是另一刀；`GET /friends` 的 502 是 F4 有意为之，勿顺手改）。
+                fs.sendAsUserWithStatus(friendUserId, text, attachmentIds, clientMsgId, replyToMessageId)
+                  .flatMap(groupProxyResult)
             }
       }
 
@@ -2227,7 +2376,11 @@ class RestApiRoutes(
     *  - `"Not logged in"` **且未配置** ⇒ **404** `NebLink not enabled`
     *    （与修前 wire 契约逐字一致——缺了这条就是净回归：前端把 502 认成
     *    `retryable`、重试恒无效）。
-    *  - 其余上游错误 ⇒ **502**（不变）。
+    *  - 其余上游错误 ⇒ **502**（不变）。🟡 **例外（rcptcode 批，2026-09-20）**：好友
+    *    **发送**路由（`POST /friends/{id}/messages`）已改走「保留状态码」通道
+    *    （`sendAsUserWithStatus` + `groupProxyResult`）⇒ 该腿的上游 4xx/5xx **逐字**
+    *    到达客户端、**不经本判据**；其余好友路由（列表/请求/备注/拉黑/已读/搜索）
+    *    **继续**走本判据（是否推广是另一刀）。
     */
   private def friendErr(err: String): IO[Response[IO]] =
     if err != "Not logged in" then BadGateway(Json.obj("error" -> err.asJson))
@@ -2419,7 +2572,9 @@ class RestApiRoutes(
   /**
    * Accepts incoming WS presence connections from NebLink peers.
    *
-   * The peer's device info arrives as query params on the WS upgrade request.
+   * The peer's device info arrives as handshake headers and/or query params on
+   * the WS upgrade request (A1, 2026-09-20: deviceId moved to the header; see
+   * [[presencePeerDeviceId]]).
    * Once the WS is established:
    *   - Server sends heartbeat pings every 10s.
    *   - Server responds to client pings with pongs.
@@ -2434,10 +2589,11 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          val peerDeviceId = req.params.getOrElse("deviceId", "")
+          val peerDeviceId = presencePeerDeviceId(req)
           // Trust: IP list (primary) or device-ID network membership (fallback).
-          // peerDeviceId is already a query param on the WS upgrade, so the
-          // fallback needs no extra header here.
+          // A1 (2026-09-20): the claiming id arrives in the handshake header
+          // (see presencePeerDeviceId) — the legacy ?deviceId= query param is
+          // still accepted for peers built before the change.
           (if ms.isTrustedPeer(remoteIp) then IO.pure(true)
            else isKnownNetworkDevice(ms, peerDeviceId, remoteIp)).flatMap {
             case false => Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
@@ -2493,24 +2649,9 @@ class RestApiRoutes(
                 }
           }
 
-    // POST /api/flow/event — Source scripts inject external events (no auth, local only)
-    case req @ POST -> Root / "flow" / "event" =>
-      req.as[Json].flatMap { body =>
-        val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
-        val eventType = body.hcursor.downField("type").as[String].getOrElse("")
-        val data = body.hcursor.downField("data").as[JsonObject].getOrElse(JsonObject.empty)
-
-        if sessionId.isEmpty || eventType.isEmpty then
-          BadRequest(Json.obj("error" -> "Missing 'sessionId' or 'type'".asJson))
-        else
-          FlowTreeRegistry.get(sessionId).flatMap {
-            case Some(_) =>
-              // EventFired removed — pipelines don't subscribe to external events
-              Ok(Json.obj("status" -> "ok".asJson, "event" -> eventType.asJson))
-            case None =>
-              NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
-          }
-      }
+    // (2026-09-20 device-face hardening batch) POST /api/flow/event was RETIRED
+    // here — the classify pass recorded it as 仓内零调用点 (no FE/CLI/BE caller)
+    // and the 11-route takedown was authorised by the author.
 
     // GET /teams/mounted — return all mounted teams with agent status
     // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
@@ -2523,104 +2664,13 @@ class RestApiRoutes(
         yield result
       }
 
-    // GET /running-flows — list currently running DAG flow instances
-    case req @ GET -> Root / "running-flows" =>
-      withAuth(req) {
-        nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
+    // the author: GET /running-flows, GET /flow/dag/:name, GET /teams and
+    // GET /teams/status/:sessionId were RETIRED here — each was 仓内零调用点 in
+    // the classify pass (no FE/CLI/BE caller). The live siblings
+    // (/teams/mounted, /teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
+    // /team/rules/*) are untouched.
 
-    // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
-    case req @ GET -> Root / "flow" / "dag" / flowName =>
-      withAuth(req) {
-        if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
-        else
-          nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
-            case Some(dag) =>
-              val nodesJson = dag.nodes.map { (nodeId, node) =>
-                val route: Json = node.onComplete match
-                  case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
-                  case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
-                  case p: nebflow.core.entity.NodeRoute.Parallel =>
-                    Json.obj(
-                      "parallel" -> p.fan.asJson,
-                      "onFail" -> (p.onFail match
-                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                        case _ => Json.fromString("abort")
-                      )
-                    )
-                  case p: nebflow.core.entity.NodeRoute.ParallelDynamic =>
-                    Json.obj(
-                      "parallel" -> Json.obj(
-                        "slots" -> Json.fromString(p.slotField),
-                        "template" -> Json.fromString(p.template)
-                      ),
-                      "onFail" -> (p.onFail match
-                        case nebflow.core.entity.NodeRoute.OnFailMode.Collect => Json.fromString("collect")
-                        case _ => Json.fromString("abort")
-                      )
-                    )
-                  case nebflow.core.entity.NodeRoute.Switch(expr, cases, _, _) =>
-                    val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
-                      val target: String = v match
-                        case nebflow.core.entity.NodeRoute.Goto(t) => t
-                        case nebflow.core.entity.NodeRoute.Return => "$return"
-                        case _ => "?"
-                      k -> Json.fromString(target)
-                    })
-                    Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
-                nodeId -> Json.obj(
-                  "agent" -> node.agent.asJson,
-                  "input" -> node.input.asJson,
-                  "onComplete" -> route,
-                  "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
-                  "maxRetries" -> node.maxRetries.asJson
-                )
-              }
-              Ok(
-                Json.obj(
-                  "name" -> dag.name.asJson,
-                  "description" -> dag.description.asJson,
-                  "entry" -> dag.entry.asJson,
-                  "maxLoop" -> dag.maxLoop.asJson,
-                  "nodes" -> nodesJson.asJson
-                )
-              )
-            case None =>
-              NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
-          }
-      }
-
-    // GET /teams — list all defined teams (from team.json files)
-    case req @ GET -> Root / "teams" =>
-      withAuth(req) {
-        for
-          teams <- nebflow.core.entity.EntityLoader.listTeams()
-          teamsJson = teams.values.toList.sortBy(_.name).map { t =>
-            io.circe.Json.obj(
-              "name" -> t.name.asJson,
-              "description" -> t.description.asJson,
-              "lead" -> t.lead.asJson,
-              "members" -> t.members.asJson
-            )
-          }
-          result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
-        yield result
-      }
-
-    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
-    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
-    case req @ GET -> Root / "teams" / "status" / sessionId =>
-      withAuth(req) {
-        // Validate sessionId: alphanumerics, dot, underscore, hyphen (covers UUID
-        // and flow-node ids like dag-git-merge-scanner-405090), no path traversal
-        if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-          BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-        else
-          for
-            teamsJson <- buildMountedTeamsJson()
-            result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
-          yield result
-      }
 
     // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
     case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
@@ -2739,70 +2789,11 @@ class RestApiRoutes(
         }
       }
 
-    // GET /agents/list — list all global agents (for extends dropdown)
-    // GET /agents/list — list all agents (all three layers)
-    case req @ GET -> Root / "agents" / "list" =>
-      withAuth(req) {
-        for
-          globalAgents <- EntityLoader.listAgents()
-          teams <- EntityLoader.listTeams()
-          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .toList
-              else Nil
-            }
-          }
-          flows <- EntityLoader.listFlows()
-          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
-            IO.blocking {
-              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
-              if os.exists(dir) then
-                os.list(dir)
-                  .filter(os.isDir)
-                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
-                  .toList
-              else Nil
-            }
-          }
-          globalList = globalAgents.values.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> a.category.asJson
-            )
-          }
-          teamList = teamAgentEntries.flatten.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> "team".asJson
-            )
-          }
-          flowList = flowAgentEntries.flatten.map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "displayName" -> a.name.asJson,
-              "systemPrompt" -> a.systemPrompt.asJson,
-              "category" -> "flow".asJson
-            )
-          }
-          all = globalList ++ teamList ++ flowList
-          result <- Ok(Json.obj("agents" -> all.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /agents/list
+    // was RETIRED here — 仓内零调用点 in the classify pass (its only in-repo
+    // reference was the smoke-spec probe, updated in the same commit).
+    // GET /agents/:name and /agents/:name/model below are the live faces.
+
 
     // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
     case req @ GET -> Root / "agents" / agentName =>
@@ -2965,20 +2956,10 @@ class RestApiRoutes(
           Gone(Json.obj("error" -> "agent skills/flows write-back retired 2026-09-06: per-agent capability config is definition/plugin-managed; agent.json is no longer written from the panel".asJson))
       }
 
-    // GET /skills — list all available skills (name + description) for the Agent panel
-    case req @ GET -> Root / "skills" =>
-      withAuth(req) {
-        for
-          skills <- SkillService.listSkills()
-          entries = skills.sortBy(_.name).map { s =>
-            Json.obj(
-              "name" -> s.name.asJson,
-              "description" -> s.description.asJson
-            )
-          }
-          result <- Ok(Json.obj("skills" -> entries.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /skills was
+    // RETIRED here — 仓内零调用点 (the plugins page has asserted since the unified
+    // plugin system that it must NOT call it: tests/sidebar-plugins.spec.mjs:396).
+
 
     // ── Plugins（阶段 2b §B.3：面板审批清单 + CLI 对等）─────────────
 
@@ -3091,85 +3072,16 @@ class RestApiRoutes(
           }
       }
 
-    // POST /plugins/:name/dispatch/clear — 显式结束过渡（幂等；有效值回落作者意图）。
-    case req @ POST -> Root / "plugins" / name / "dispatch" / "clear" =>
-      withAuth(req) {
-        if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
-        else
-          nebflow.core.plugin.PluginDispatchPolicy.clearTransition(name, "rest").flatMap {
-            case Right(_) =>
-              Ok(Json.obj("ok" -> true.asJson,
-                "message" -> s"Plugin '$name' transition cleared — effective dispatch permission falls back to the author's intent".asJson))
-            case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
-          }
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
+    // the author: POST /plugins/:name/dispatch/clear and GET /flows/list were
+    // RETIRED here — both 仓内零调用点 in the classify pass. The sibling
+    // POST /plugins/:name/dispatch/grant above stays (it has a BE caller).
 
-    // GET /flows/list — list all flow definitions (name, description, node count, maxLoop)
-    case req @ GET -> Root / "flows" / "list" =>
-      withAuth(req) {
-        for
-          flows <- EntityLoader.listFlows()
-          entries = flows.values.toList.sortBy(_.name).map { f =>
-            val edges = f.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
-              node.onComplete match
-                case NodeRoute.Goto(target) => List((nodeId, target, None))
-                case NodeRoute.Return => List((nodeId, "$return", None))
-                case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, None))
-                case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, None))
-                case NodeRoute.Switch(_, cases, _, _) =>
-                  cases.toList.map { (cond, route) =>
-                    route match
-                      case NodeRoute.Goto(t)     => List((nodeId, t, Some(cond)))
-                      case NodeRoute.Return      => List((nodeId, "$return", Some(cond)))
-                      case p: NodeRoute.Parallel => p.fan.map(t => (nodeId, t, Some(cond)))
-                      case p: NodeRoute.ParallelDynamic => List((nodeId, p.template, Some(cond)))
-                      case _                     => List((nodeId, "?", Some(cond)))
-                  }.flatten
-            }
-            Json.obj(
-              "name" -> f.name.asJson,
-              "description" -> f.description.asJson,
-              "entry" -> f.entry.asJson,
-              "maxLoop" -> f.maxLoop.asJson,
-              "nodeCount" -> f.nodes.size.asJson,
-              "nodes" -> f.nodes.toList
-                .sortBy(_._1)
-                .map { (nodeId, node) =>
-                  Json.obj(
-                    "nodeId" -> nodeId.asJson,
-                    "agent" -> node.agent.asJson
-                  )
-                }
-                .asJson,
-              "edges" -> edges.map { (from, to, cond) =>
-                Json.obj("from" -> from.asJson, "to" -> to.asJson, "condition" -> cond.asJson)
-              }.asJson
-            )
-          }
-          result <- Ok(Json.obj("flows" -> entries.asJson))
-        yield result
-      }
 
-    // GET /teams/:name — team detail
-    case req @ GET -> Root / "teams" / teamName =>
-      withAuth(req) {
-        if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-        else
-          for
-            teamOpt <- EntityLoader.loadTeam(teamName)
-            result <- teamOpt match
-              case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
-              case Some(team) =>
-                Ok(
-                  Json.obj(
-                    "name" -> team.name.asJson,
-                    "description" -> team.description.asJson,
-                    "lead" -> team.lead.asJson,
-                    "members" -> team.members.asJson
-                  )
-                )
-          yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /teams/:name
+    // (team detail) was RETIRED here — 仓内零调用点 in the classify pass. The
+    // /team/rules/:name pair below is the live face (FE caller).
+
 
     // GET /team/rules/:name — read team rules.md
     case req @ GET -> Root / "team" / "rules" / teamName =>
@@ -3207,24 +3119,10 @@ class RestApiRoutes(
           yield result
       }
 
-    // GET /entity-agents — list all agents (entity format, with useWhen)
-    case req @ GET -> Root / "entity-agents" =>
-      withAuth(req) {
-        for
-          agents <- EntityLoader.listAgents()
-          entries = agents.values.toList.sortBy(_.name).map { a =>
-            Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "useWhen" -> a.useWhen.asJson,
-              "tools" -> a.tools.asJson,
-              "voice" -> a.voice.asJson,
-              "category" -> a.category.asJson
-            )
-          }
-          result <- Ok(Json.obj("agents" -> entries.asJson))
-        yield result
-      }
+    // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
+    // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
+    // /agents/:name, /agents/:name/model and /agents/:name/preset.
+
 
     // ===== Model Presets =====
 
@@ -3863,6 +3761,26 @@ class RestApiRoutes(
       else Status.InternalServerError
     Response[IO](status).withEntity(err.toJson)
 
+  /** Identity claimed by the peer opening a presence WS upgrade.
+    *
+    * A1 (2026-09-20 device-face hardening batch): the handshake HEADER
+    * ([[nebflow.neblink.Protocol.DeviceHeader]] — the same channel
+    * [[verifyPeerAccess]] already reads on the REST peer face) is the primary
+    * carrier, so deviceId stops travelling in the URL. The legacy `?deviceId=`
+    * query param stays as the FALLBACK: dialers built before the change send
+    * only that, and dropping it would refuse every existing peer.
+    */
+  private[gateway] def presencePeerDeviceId(req: Request[IO]): String =
+    // Fully qualified on purpose: `org.http4s._` (imported after
+    // `nebflow.neblink._`) also defines a `Protocol`, so the bare name is
+    // ambiguous at this call site.
+    req.headers
+      .get(CIString(nebflow.neblink.Protocol.DeviceHeader))
+      .map(_.head.value)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse(req.params.getOrElse("deviceId", ""))
+
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =    neblinkService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
@@ -3888,8 +3806,20 @@ class RestApiRoutes(
 
   /**
    * Network-membership check by device ID. True when the caller claims a
-   * deviceId we discovered via the NebLink Server (a member of our networkId)
-   * AND the request originates from a private/LAN address.
+   * deviceId we discovered via the NebLink Server (a member of our networkId),
+   * the request originates from a private/LAN address, AND that peer is still
+   * FRESH (within the online window, see [[NeblinkService.isPeerOnline]]).
+   *
+   * A2 (2026-09-20 device-face hardening batch): the freshness leg is the new
+   * half. A peer id is not a secret (it is published, see the A1 half of the
+   * same batch) and the peer map deliberately KEEPS rows for peers the server
+   * has flagged offline (`lastSeen = 0`, `NeblinkService.applyServerPeerStatus`
+   * :374), so "is a known deviceId" alone stayed true forever after a peer went
+   * away — including after DHCP handed its old address to a different host (the
+   * address-reuse row of the threat table). The freshness predicate is REUSED,
+   * not re-derived: [[NeblinkService.isPeerOnline]] with the configured
+   * `syncIntervalSec`, exactly as documented there (floor 90s = the server's
+   * own online TTL, 2x the sync interval).
    */
   private def isKnownNetworkDevice(
     ms: NeblinkService,
@@ -3897,16 +3827,38 @@ class RestApiRoutes(
     remoteIp: String
   ): IO[Boolean] =
     if claimedDeviceId.isEmpty || !isPrivateLanIp(remoteIp) then IO.pure(false)
-    else ms.peers.map(_.exists(_.deviceId == claimedDeviceId))
+    else
+      for
+        peers <- ms.peers
+        cfg <- ms.neblinkConfig
+      yield isFreshKnownPeer(peers, claimedDeviceId, System.currentTimeMillis(), cfg.syncIntervalSec)
 
-  /** RFC1918 private ranges + loopback + link-local. P2P-direct is LAN-only. */
-  private def isPrivateLanIp(rawIp: String): Boolean =
+  /** Pure form of the membership + freshness leg, so the criterion is testable
+    * without a live [[NeblinkService]] (see `PeerCriterionFreshnessSpec`). */
+  private[gateway] def isFreshKnownPeer(
+    peers: List[PeerInfo],
+    claimedDeviceId: String,
+    nowMs: Long,
+    syncIntervalSec: Int
+  ): Boolean =
+    peers.exists(p => p.deviceId == claimedDeviceId && NeblinkService.isPeerOnline(p, nowMs, syncIntervalSec))
+
+  /**
+   * Private addresses a LAN-direct P2P peer can legitimately come from:
+   * loopback, RFC1918 (10/8, 172.16/12, 192.168/16) and IPv6 `::1`.
+   *
+   * A2 (2026-09-20 device-face hardening batch): IPv4 link-local
+   * `169.254.0.0/16` and IPv6 link-local `fe80::/10` are REMOVED here. They are
+   * not "private LAN" ranges (RFC1918/loopback) at all, and any host on the wire
+   * may self-assign them — so they let a caller satisfy "came from a private
+   * address" without ever being part of the trusted network. The legitimate
+   * private ranges below are unchanged (zero narrowing beyond those two).
+   */
+  private[gateway] def isPrivateLanIp(rawIp: String): Boolean =
     val ip = rawIp.stripPrefix("::ffff:")
     ip == "127.0.0.1" || ip == "::1" ||
     ip.startsWith("10.") ||
     ip.startsWith("192.168.") ||
-    ip.startsWith("169.254.") ||
-    ip.startsWith("fe80:") ||
     ip.startsWith("172.") && {
       val octet = ip.split('.').lift(1).flatMap(_.toIntOption).getOrElse(-1)
       octet >= 16 && octet <= 31
@@ -4457,9 +4409,18 @@ class RestApiRoutes(
                   // embedded default, then the callback died with a
                   // misleading "Logto 登录未配置" — 2026-08-30).
                   logto <- ms.neblinkConfig.map(_.effectiveLogto)
-                  serverUrl <- neblinkServerUrl(None)
-                  resp <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce))) match
-                    case Some((lc, pkceClientId)) =>
+                  target <- neblinkServerUrl(None)
+                  // 案 b①（2026-09-20）：目标解析先于换码 —— `None`（隔离数据根 + 无显式开关
+                  // + 无配置 URL）⇒ 整条 PKCE 腿在**换码之前**失败，环 5 的 `register`
+                  // 从此没有起点。两个缺席原因（无目标 / 无 AC 应用）在此合流为 `None`，
+                  // 由下面的 `case None =>` 按 `target.isEmpty` 各归其类。
+                  resp <- (
+                    for
+                      serverUrl <- target
+                      client <- logto.flatMap(lc => lc.pkceClientId.map(pkce => (lc, pkce)))
+                    yield (serverUrl, client)
+                  ) match
+                    case Some((serverUrl, (lc, pkceClientId))) =>
                       LogtoAuthCode
                         .tokenCall(LogtoDeviceFlow.jdkSend)(
                           LogtoAuthCode.tokenRequest(
@@ -4563,17 +4524,32 @@ class RestApiRoutes(
                               pkceLogin.failDiagnosed(diagnostic) *>
                               htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
                         }
-                    case _ =>
-                      // With effectiveLogto this only fires when an explicit
-                      // logto block exists but lacks pkceClientId (the
-                      // embedded default carries one; a missing block falls
-                      // back to it). Name the actual misconfiguration.
-                      val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                        nebflow.neblink.CredentialFailure.LogtoNotConfigured,
-                        "logto-pkce-client-not-configured"
-                      )
-                      pkceLogin.failDiagnosed(diagnostic) *>
-                        htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
+                    case None =>
+                      if target.isEmpty then
+                        // 案 b①：无目标 —— 隔离实例不得把生产默认当入网目标。失败文案 =
+                        // 护栏原文（`EnrollRefusedIsolatedHome` 的例外分支把**干净**原文
+                        // 逐字送上回调页与 /auth/state 面板；见 CredentialDiagnostics）。
+                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                          CredentialFailure.EnrollRefusedIsolatedHome,
+                          EnrollGuard.prodFallbackRefusalReason
+                        )
+                        logger.warn(
+                          diagnostic.logLine("no enrollment target (案 b①)"),
+                          "code" -> diagnostic.code
+                        ) *>
+                          pkceLogin.failDiagnosed(diagnostic) *>
+                          htmlResponse(callbackPage(ok = false, diagnostic.message), Status.BadRequest)
+                      else
+                        // With effectiveLogto this only fires when an explicit
+                        // logto block exists but lacks pkceClientId (the
+                        // embedded default carries one; a missing block falls
+                        // back to it). Name the actual misconfiguration.
+                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                          nebflow.neblink.CredentialFailure.LogtoNotConfigured,
+                          "logto-pkce-client-not-configured"
+                        )
+                        pkceLogin.failDiagnosed(diagnostic) *>
+                          htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
                 yield resp
         }
 
@@ -4713,19 +4689,41 @@ class RestApiRoutes(
    * Resolve the NebLink Server URL for device-flow requests. Priority:
    * 1. Explicitly provided URL (from the request body).
    * 2. URL from the current neblink config.
-   * 3. The public default URL.
+   * 3. The public default URL — 🔴 **suppressed on a redirected data root**
+   *    (案 b①，2026-09-20 作者令 · 测试卫生).
+   *
+   * `None` = 「**没有目标**」：隔离实例既无显式 URL 也无配置 URL，就**不得**悄悄继承
+   * 生产默认当入网目标（今晚事故链：隔离 home 自铸身份 → 本回落 → 案 C 显式登录 →
+   * `POST /api/device/register` 打到 `neblink.nebflow.space`）。调用点把 `None` 变成
+   * **可见失败**（[[EnrollGuard.prodFallbackRefusalReason]]），放行通道 =
+   * `NEBFLOW_ALLOW_PROD_ENROLL=1`，置上后回落与改前**逐字相同**。
+   *
+   * 默认数据根 / 显式 URL / 配置 URL 三条路径零行为变化（判据不在本函数，而在
+   * `EnrollGuard.prodDefaultTarget` —— 单点）。
    */
-  private def neblinkServerUrl(explicit: Option[String] = None): IO[String] =
+  private def neblinkServerUrl(explicit: Option[String] = None): IO[Option[String]] =
     explicit match
-      case Some(url) => IO.pure(url)
+      case Some(url) => IO.pure(Some(url))
       case None =>
         neblinkService match
           case Some(ms) =>
             ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
-              case Some(url) => IO.pure(url)
-              case None => IO.pure(Branding.serverUrl)
+              case Some(url) => IO.pure(Some(url))
+              case None      => prodDefaultTargetIO
             }
-          case None => IO.pure(Branding.serverUrl)
+          case None => prodDefaultTargetIO
+
+  /** Last-resort enrollment target (`Branding.serverUrl`, gated by [[EnrollGuard]]).
+    * The refusal is loud, never silent — the log line is the 「零注册出网」的日志面判据。 */
+  private def prodDefaultTargetIO: IO[Option[String]] =
+    EnrollGuard.prodDefaultTarget match
+      case some @ Some(_) => IO.pure(some)
+      case None =>
+        logger.warn(
+          "isolated data root: the production server default is NOT used as an enrollment target " +
+            s"(案 b①) — ${EnrollGuard.prodFallbackRefusalReason}",
+          "code" -> CredentialFailure.EnrollRefusedIsolatedHome.code
+        ).as(None)
 
 end RestApiRoutes
 

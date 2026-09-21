@@ -510,6 +510,14 @@ export default {
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
   'messages.send': 'Send',
+  // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
+  // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback
+  // in messages.js). The code set lives in friendsApi.js `FRIEND_TERMINAL_CODES`.
+  // zh + en in one batch (no single-language additions).
+  'messages.friendNotFriends': 'You are no longer friends — the message was not sent',
+  'messages.friendNotBlocker': 'You have not blocked this user, so that action is not available',
+  'messages.friendReplyTargetInvalid': 'The quoted message is no longer available — the message was not sent',
+  'messages.sendFailedCode': 'Send failed ({code})',
   'messages.yesterday': 'Yesterday',
   'messages.ariaUnread': '{n} unread messages',
   'messages.copy': 'Copy',
@@ -1652,6 +1660,12 @@ export default {
   'messages.deviceDescSaveFailed': 'Could not save the device description.',
   'messages.deviceSent': 'Sent',
   'messages.deviceRead': 'Read',
+  // === friend/group receipt slot (R5 two cells · source contract v1.2) ===
+  // 🔴 The only new copy in this batch (2 keys; see the report's copy declaration):
+  // the contract §1.1 bubble wording `read {readCount}/{memberCount}` for groups,
+  // plus the same derivation's delivered count. Direct/device faces add none.
+  'messages.receiptReadCount': 'Read {read}/{total}',
+  'messages.receiptSentCount': 'Sent {sent}/{total}',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
   'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
   'messages.deviceSendUnavailable': 'This device\'s identity is unavailable — sending is off.',

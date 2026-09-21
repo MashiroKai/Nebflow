@@ -943,7 +943,8 @@ class WebSocketRoutes(
 
     case req @ GET -> Root / fileName =>
       val allowed =
-        Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
+        Set("style.css", "app.js", "favicon-32.png", "favicon-16.png", "favicon.ico",
+          "favicon-180.png", "favicon-192.png", "favicon-512.png")
       if allowed.contains(fileName) then
         StaticFile
           .fromResource(s"web/$fileName", Some(req))
@@ -1212,6 +1213,23 @@ class WebSocketRoutes(
   }
 
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+
+  /** The Canvas / file-viewer OPEN gate — the largest file the WS `pop.readFile`
+    * leg will serve (2026-09-20 author order: 10MB → 100MB; the author could not
+    * open a PDF over 10MB). It is the ONE ruler for the open path on the server
+    * side: the frontend pre-check (`web/js/attachmentPreview.js` `MAX_TEXT_BYTES`)
+    * mirrors this value, so the two cannot drift.
+    *
+    * NOT the WS frame cap (`MaxMessageSize` above, inbound), nor
+    * `FileRefs.MaxFileSize` (200MB, the Card/Pop reference probe), nor the
+    * inline budgets (5MB image / 40k `data:` URI) — those are other surfaces.
+    *
+    * Cost note: this gate bounds the WS TEXT-content leg only in size, not in
+    * streaming (a WS frame carries one whole string). The BINARY leg does not
+    * read the bytes at all — it sends metadata and the viewer streams the file
+    * from `GET /api/nf-file` (http4s `StaticFile` ⇒ `fs2.io.file.Files.readRange`),
+    * so a 100MB PDF never enters this JVM's heap (see the `pop.readFile` case). */
+  private val MaxPopReadFileBytes: Long = 100L * 1024 * 1024
 
   /** Public facade for REST API to call into the same message handler. */
   def handleMessagePublic(text: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
@@ -2656,10 +2674,17 @@ class WebSocketRoutes(
                   new RuntimeException("path is not a regular file")
                 )
                 fileSize = os.size(basePath)
-                _ <- IO.raiseWhen(fileSize > 10L * 1024 * 1024)(
-                  new RuntimeException("file exceeds 10MB limit")
+                _ <- IO.raiseWhen(fileSize > MaxPopReadFileBytes)(
+                  new RuntimeException(s"file exceeds ${MaxPopReadFileBytes / (1024 * 1024)}MB limit")
                 )
-                content <- IO.blocking { os.read(basePath) }
+                // 🔴 二进制腿不读字节（2026-09-20 打开闸批）：本 case 只回元数据，
+                // 字节由前端经 `/api/nf-file` 流式取回（`StaticFile` ⇒
+                // `fs2.io.file.Files.readRange`，支持 Range）。改前这里对所有件
+                // 无条件 `os.read` 再丢弃二进制的 content —— 闸提到 100MB 后那等于
+                // 为一次 PDF 打开把 100MB 读进堆里再扔。
+                popExt = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
+                popIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(popExt).binary
+                content <- if popIsBinary then IO.pure("") else IO.blocking { os.read(basePath) }
               yield (content, basePath.toString, fileSize, popFilePath))
                 .flatMap { case (content, absPath, fileSize, origPath) =>
                   val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase

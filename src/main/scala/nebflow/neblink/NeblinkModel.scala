@@ -5,10 +5,58 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
-import nebflow.core.{AtomicJson, Branding, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, Branding, CredentialFileAcl, NebflowLogger, PathUtil}
 
 import java.util.UUID
 import scala.util.matching.Regex
+
+/** Owner-only ACL bound to a credential WRITE PATH (A6, 2026-09-20 device-face
+  * hardening batch).
+  *
+  * WHY it hangs off the write instead of a one-off `chmod`: [[AtomicJson]] writes
+  * a temp file and `ATOMIC_MOVE`s it over the target, so every
+  * `DeviceIdentity.save` yields a NEW inode — a permission applied anywhere else
+  * (at boot, by an operator, by a migration script) is silently discarded by the
+  * next write. Measured on the live root: `~/.nebflow/device.json` sat at `0644`
+  * while the sibling credential written through the same AtomicJson shape PLUS
+  * `restrict` (`neblink/device.json`, `DeviceCredentialStore.scala:379`) stayed
+  * `0600`. `NeblinkConfig.save` truncates in place instead, and a FIRST write
+  * there inherits the process umask — so both write shapes get the same
+  * post-write step.
+  *
+  * Reuse, not a second mechanism: the file step is [[CredentialFileAcl.restrict]]
+  * (the same call the other credential writer uses), the directory step is
+  * [[CredentialFileAcl.restrictDirectory]] (POSIX `rwx------`; Windows directory
+  * DACLs are outside this batch's face and stay a no-op).
+  *
+  * Failure is NOT fatal — the credential is on disk either way — but it is never
+  * silent: a guarantee that failed has to say so. */
+private[neblink] object CredentialWriteAcl:
+
+  private val logger = NebflowLogger.forName("nebflow.neblink.credential")
+
+  /** Narrow `path` and the directory holding it to owner-only, after the write.
+    * `osName`/`port`/`ladder` are parameters only so the call-face spec can drive
+    * the failure branch on a host without ACLs (same seam shape as
+    * `DeviceCredentialStore.save`). In production all three are the defaults. */
+  def bind(
+    path: os.Path,
+    osName: String = CredentialFileAcl.currentOsName,
+    port: CredentialFileAcl.Port = CredentialFileAcl.systemPort,
+    ladder: CredentialFileAcl.WindowsLadder = CredentialFileAcl.systemLadder
+  ): IO[Unit] =
+    IO.blocking {
+      val nio = path.toNIO
+      CredentialFileAcl.restrict(nio, osName, port, ladder)
+      val parent = nio.getParent
+      if parent != null then CredentialFileAcl.restrictDirectory(parent, osName, port)
+    }.handleErrorWith { e =>
+      logger.warn(
+        s"owner-only ACL not applied to '${path.last}' (${e.getClass.getSimpleName}: " +
+          s"${Option(e.getMessage).getOrElse("")}) — that credential may be readable by principals " +
+          "other than the current user"
+      )
+    }
 
 // ===== Device Identity =====
 
@@ -289,9 +337,14 @@ object DeviceIdentity:
 
   /** Atomic write (tmp + `ATOMIC_MOVE`): a crash mid-write can no longer leave
     * a half-written device.json, which used to be the entry into the "decode
-    * fails -> new id every boot" loop. */
+    * fails -> new id every boot" loop.
+    *
+    * A6 (2026-09-20 device-face hardening batch): the owner-only ACL is bound to
+    * the WRITE (see [[CredentialWriteAcl]]) — this file is the credential the
+    * device face trusts, and it is re-created on every write. */
   def save(identity: DeviceIdentity): IO[Unit] =
-    AtomicJson.write(devicePath, identity.asJson.spaces2)
+    AtomicJson.write(devicePath, identity.asJson.spaces2) *>
+      CredentialWriteAcl.bind(devicePath)
 
   /** Minted identity plus the (log-only) provenance of its device id. */
   private case class Minted(identity: DeviceIdentity, source: String)
@@ -301,7 +354,7 @@ object DeviceIdentity:
     * persists it, so the fallback is a one-time event, not a per-boot loop.
     * `source` is logged so an unreadable machine code is never silent. */
   private def mint(): Minted =
-    val name = detectDeviceName
+    val name = mintedDeviceName(detectDeviceName, isNonDefaultHome, deviceIdScope)
     val platform = detectPlatform
     val secret = UUID.randomUUID().toString + UUID.randomUUID().toString
     readMachineCode() match
@@ -315,6 +368,26 @@ object DeviceIdentity:
           DeviceIdentity(UUID.randomUUID().toString, name, platform, secret),
           "machine code unreadable — random UUID fallback"
         )
+
+  /** 案 a（2026-09-20 作者令 · 测试卫生）：隔离实例**新铸**的身份名带隔离后缀
+    * `<真机名>-iso-<scope 指纹8>`。
+    *
+    * 为什么只改 name、不动 id：id 早已是 `UUIDv5(machineCode|scope)`（见上），隔离实例与
+    * 作者主客户端**不撞身份**；事故的真形态是「同账号 + **同名**第二条设备行」——
+    * 对端列表 / 联系人面板里两个 `Mashiros-MacBook-Pro` 无从分辨
+    * （核查卡 `20260920_214729_seedpath-card` §2 环 1 / §4.2 补强②）。后缀让隔离实例在
+    * 出网显示面（presence query 的 `deviceName`）一眼可辨。
+    *
+    * 指纹取 scope 的哈希（8 位十六进制）而**不是**路径本身：deviceName 会随 presence
+    * 出网，**禁**带本机路径。id / platform / secret 一律不动；`loadOnce` 的「重定向 root
+    * 沿用既有可解码身份」语义也不动 —— 本函数只作用于**新铸**。 */
+  private[neblink] def mintedDeviceName(base: String, nonDefaultHome: Boolean, scope: String): String =
+    if nonDefaultHome then s"$base-iso-${scopeFingerprint(scope)}" else base
+
+  /** 隔离 scope（= dataRoot 路径字符串）的 8 位十六进制指纹：纯函数、确定性 ——
+    * 同一个 home 每次铸造得到同一后缀（与 id 推导同族：UUIDv5 + SHA-1，仅取前 8 位）。 */
+  private[neblink] def scopeFingerprint(scope: String): String =
+    uuidV5(DeviceIdNamespace, s"iso-name|$scope").toString.replace("-", "").take(8)
 
   /** Migrate old DeviceIdentity without deviceSecret — generate one on first load. */
   private def ensureSecret(id: DeviceIdentity): DeviceIdentity =
@@ -593,10 +666,13 @@ object NeblinkConfig:
       else NeblinkConfig()
     }
 
+  /** A6 (2026-09-20 device-face hardening batch): `<dataRoot>/neblink` holds the
+    * device credentials and was measured `0755`; the write path binds owner-only
+    * access to both the file and that directory (see [[CredentialWriteAcl]]). */
   def save(config: NeblinkConfig): IO[Unit] =
     IO.blocking {
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
-    }
+    } *> CredentialWriteAcl.bind(configPath)
 end NeblinkConfig
 
 // ===== A2A 好友与消息域类型（spec §6.1 REST 响应，客户端侧解码） =====

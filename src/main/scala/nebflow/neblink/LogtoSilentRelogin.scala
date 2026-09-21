@@ -44,7 +44,7 @@ object LogtoSilentRelogin:
     ms: NeblinkService,
     discovery: IO[Option[NeblinkDiscovery]],
     gatewayPort: Int,
-    serverUrlOf: IO[String]
+    serverUrlOf: IO[Option[String]]
   ): IO[Option[String]] =
     refreshAndRegister(ms, discovery, gatewayPort, serverUrlOf).handleErrorWith(e =>
       warn(s"silent re-login error: ${e.getMessage}").as(None)
@@ -54,7 +54,7 @@ object LogtoSilentRelogin:
     ms: NeblinkService,
     discovery: IO[Option[NeblinkDiscovery]],
     gatewayPort: Int,
-    serverUrlOf: IO[String]
+    serverUrlOf: IO[Option[String]]
   ): IO[Option[String]] =
     // ===== 踢下线停摆门（2026-09-14 踢旧批 r2）— 🔴 必须在 `.register` **之前** =====
     //
@@ -88,9 +88,26 @@ object LogtoSilentRelogin:
           // default PKCE chain stays refreshable after restart (same resolution
           // as the auth/start endpoint).
           logto <- ms.neblinkConfig.map(_.effectiveLogto)
-          serverUrl <- serverUrlOf
-          fresh <- startRefresh(refreshToken, logto.map(_.endpoint), logto.flatMap(_.pkceClientId))
-          out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))
+          // ===== 案 b①（2026-09-20）：目标解析门 —— 与踢下线停摆门同款「I/O 之前」=====
+          //
+          // 本腿的 `register` 发生在 `persist`（护栏）**之前**（见下 `dispatchRefresh`
+          // 的注释与 2026-09-14 踢旧批 r2 的取证），所以「无目标 ⇒ 不注册」必须挡在
+          // **本函数入口**：目标缺席时连 token 轮换都不发起（零出站）。
+          // 目标缺席 = 隔离数据根 + 无显式/配置 URL + 无 `NEBFLOW_ALLOW_PROD_ENROLL=1`
+          // ⇒ `RestApiRoutes.neblinkServerUrl` 给 `None`（生产默认不得被继承）。
+          target <- serverUrlOf
+          out <- target match
+            case Some(serverUrl) =>
+              for
+                fresh <- startRefresh(refreshToken, logto.map(_.endpoint), logto.flatMap(_.pkceClientId))
+                out <- IO.defer(dispatchRefresh(fresh, ms, discovery, gatewayPort, serverUrl, serverUrlOf))
+              yield out
+            case None =>
+              warn(
+                "silent re-login degraded to login-required: this instance has no enrollment target " +
+                  "(isolated data root with no explicit server URL — the production default is not " +
+                  s"inherited; set ${EnrollGuard.AllowProdEnrollEnv}=1 to allow it explicitly)"
+              ).as(None)
         yield out
     }
 
@@ -140,7 +157,7 @@ object LogtoSilentRelogin:
     discovery: IO[Option[NeblinkDiscovery]],
     gatewayPort: Int,
     serverUrl: String,
-    serverUrlOf: IO[String]
+    serverUrlOf: IO[Option[String]]
   ): IO[Option[String]] =
     fresh match
       case Right(tokens) =>

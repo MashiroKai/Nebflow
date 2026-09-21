@@ -36,7 +36,11 @@ object ChunkTransport:
    */
   def failover(primary: ChunkTransport, fallback: ChunkTransport): ChunkTransport =
     new ChunkTransport:
-      def leg: String = "p2p+relay"
+      /** 真实承载腿（P-13 观测缺口）：最近一次**成功**的腿。"p2p+relay" 只在两条腿都还没
+        * 成功过时出现（= 「不知道」的显式表示，不再是一个恒真的标签）。 */
+      private val winner = new java.util.concurrent.atomic.AtomicReference[String](null)
+
+      def leg: String = Option(winner.get()).getOrElse("p2p+relay")
 
       def put(
         target: FileTransfer,
@@ -44,20 +48,24 @@ object ChunkTransport:
         payload: Array[Byte]
       ): IO[Either[AttachContract.AttachError, ChunkedTransfer.ChunkAck]] =
         primary.put(target, frame, payload).flatMap {
-          case r @ Right(_) => IO.pure(r)
+          case r @ Right(_) => IO { winner.set(primary.leg) }.as(r)
           case Left(p2pErr) =>
             fallback.put(target, frame, payload).map {
-              case r @ Right(_) => r
+              case r @ Right(_) =>
+                winner.set(fallback.leg)
+                r
               case Left(relayErr) => Left(peerUnreachable(p2pErr, relayErr))
             }
         }
 
       def probe(target: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
         primary.probe(target).flatMap {
-          case r @ Right(_) => IO.pure(r)
+          case r @ Right(_) => IO { winner.set(primary.leg) }.as(r)
           case Left(p2pErr) =>
             fallback.probe(target).map {
-              case r @ Right(_) => r
+              case r @ Right(_) =>
+                winner.set(fallback.leg)
+                r
               case Left(relayErr) => Left(peerUnreachable(p2pErr, relayErr))
             }
         }
@@ -87,6 +95,10 @@ object ChunkedSendLoop:
   /** 建议值（非冻结口径）：每块每腿 3 次、指数退避 1s/2s/4s；备选 2 次固定 2s / 5 次上限 30s。 */
   val DefaultRetriesPerLeg: Int = 3
 
+  /** 在飞字节上报节拍（建议值 2 s，照方案卡 P0-4；改前 = 一整块落地才报一次，
+    * 4 MiB 块在中继腿要 ≥140 s ⇒ 几分钟零反馈）。 */
+  val DefaultProgressCadence: FiniteDuration = 2.seconds
+
   def defaultBackoff(attempt: Int): FiniteDuration =
     math.min(1L << math.max(0, attempt), 8L).seconds
 
@@ -97,6 +109,11 @@ object ChunkedSendLoop:
    *                   发送与接收必须用**同一个**值 —— 两边各用各的默认值会让
    *                   `chunkIndex × chunkSize` 推导出的 offset 对不上（自环测试实测命中）。
    * @param openSender 给定 startOffset 打开发送游标（续传时由探针结果驱动）
+   * @param onProgress 块级确认回调（块 index, 接收端权威已确认字节）—— 语义不变。
+   * @param onInFlight **在飞**节拍回调（已确认字节, 在飞字节）= (acked, inFlight)；
+   *                   纪律：在飞值与「已确认」**分字段**（P0-4），禁混进 `bytesReceived`。
+   * @param onRate     实测速率回调（bytes/s，按**成功块**的数据时间算；重试/退避计入分母
+   *                   ⇒ 偏向保守）。DropboxService 用它收敛 peer 速率记忆（下次会话的块参）。
    */
   def run(
     transport: ChunkTransport,
@@ -105,7 +122,10 @@ object ChunkedSendLoop:
     chunkSize: Int = AttachContract.ChunkSize,
     retriesPerLeg: Int = DefaultRetriesPerLeg,
     backoff: Int => FiniteDuration = defaultBackoff,
-    onProgress: (Int, Long) => IO[Unit] = (_, _) => IO.unit
+    onProgress: (Int, Long) => IO[Unit] = (_, _) => IO.unit,
+    onInFlight: (Long, Long) => IO[Unit] = (_, _) => IO.unit,
+    progressCadence: FiniteDuration = DefaultProgressCadence,
+    onRate: Long => IO[Unit] = _ => IO.unit
   ): IO[Either[AttachContract.AttachError, Outcome]] =
     // ① 续传探针：权威 offset 在接收端，发送端不得假设。
     transport.probe(target).flatMap {
@@ -113,7 +133,34 @@ object ChunkedSendLoop:
       case Right(state) =>
         val startOffset = math.min(state.bytesReceived, os.size(source))
         ChunkSender.open(source, target.transferId, startOffset, chunkSize).flatMap { sender =>
-          loop(transport, target, sender, retriesPerLeg, backoff, onProgress, 0)
+          // ② 在飞节拍（P0-4）：整个 run 期间每 `progressCadence` 报一次
+          //    「已确认 / 在飞」两个值 —— 块上传本身是阻塞 IO，故节拍跑在独立 fiber 上，
+          //    异常一律吞掉（上报失败绝不打断传输），收口 `guarantee` 取消。
+          //
+          //    🔴 在飞的**定义**（否则本字段恒 0 = 假装报了）：`sender.bytesSent` 只在**块
+          //    ack 之后**推进，块在途的整段时间里它仍等于已确认水位 ⇒ 用它算在飞永远是 0。
+          //    故在飞取「**本次尝试的块尾** − 已确认水位」：块发出前把 `attemptEnd` 置为
+          //    `offset + bytes`（重试不改，同一块），ack 后两者相等 ⇒ 自动归 0。
+          //    这是本端**可观测**的粒度（阻塞式 put 看不到 socket 内部的半块进度），
+          //    故按块算、不假装按字节算。
+          val acked = new java.util.concurrent.atomic.AtomicLong(sender.bytesSent)
+          val attemptEnd = new java.util.concurrent.atomic.AtomicLong(sender.bytesSent)
+          //    🔴 `IO.defer` 不是装饰：`*>` 的右侧是**按值**求值的（`productR(that)`），写
+          //    `IO.sleep(c) *> { ... }` 会让块在**构造时**只求值一次 —— 于是 `acked`/`attemptEnd`
+          //    的读数被冻在传输开始前（恒 0），节拍每次重复执行的都是同一个「(0,0)」的 IO。
+          //    实测形态：6 次节拍全部报 (0,0)，而此刻块正在途（P0-4 等于没报）。`IO.defer`
+          //    把读数推迟到**每次执行**，节拍才是活的。
+          val ticker =
+            (IO.sleep(progressCadence) *> IO.defer {
+              val a = acked.get()
+              onInFlight(a, math.max(0L, attemptEnd.get() - a))
+            })
+              .handleErrorWith(_ => IO.unit)
+              .foreverM
+          ticker.start.flatMap { fiber =>
+            loop(transport, target, sender, acked, attemptEnd, retriesPerLeg, backoff, onProgress, onRate, 0)
+              .guarantee(fiber.cancel)
+          }
         }
     }
 
@@ -121,19 +168,55 @@ object ChunkedSendLoop:
     transport: ChunkTransport,
     target: FileTransfer,
     sender: ChunkSender,
+    ackedRef: java.util.concurrent.atomic.AtomicLong,
+    attemptEndRef: java.util.concurrent.atomic.AtomicLong,
     retriesPerLeg: Int,
     backoff: Int => FiniteDuration,
     onProgress: (Int, Long) => IO[Unit],
+    onRate: Long => IO[Unit],
     chunksSent: Int
   ): IO[Either[AttachContract.AttachError, Outcome]] =
     sender.readNext().flatMap {
       case None =>
         // 空文件（totalBytes == 0）：无块可发，直接以整件摘要收口。
-        IO.pure(Right(Outcome(sender.bytesSent, sender.wholeSha256, transport.leg, chunksSent)))
+        if sender.bytesSent <= 0L then
+          IO.pure(Right(Outcome(sender.bytesSent, sender.wholeSha256, transport.leg, chunksSent)))
+        else
+          // 🔴 续传补验（P0-2）：本次**一块都没发**却有非零 offset ⇒ 对端 temp 已含整件
+          // （上一次尝试的最后一块 ack 丢了 / 进程在 commit 前重启）。此时不得凭发送端
+          // 自算摘要宣布成功（不变量 I2 的反面），必须用**接收端重算**的前缀摘要比对 ——
+          // 探针的 `prefixSha256` 恰是 temp[0, bytesReceived) 的重算值，offset 到底时即整件。
+          transport.probe(target).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(state) =>
+              val receiverWhole = state.prefixSha256
+              if receiverWhole.nonEmpty && receiverWhole == sender.wholeSha256 then
+                IO.pure(Right(Outcome(sender.bytesSent, receiverWhole, transport.leg, chunksSent)))
+              else
+                IO.pure(
+                  Left(
+                    AttachContract.AttachError(
+                      AttachContract.Codes.WholeDigestMismatch,
+                      s"Resume reports ${state.bytesReceived} bytes already landed but the receiver's recomputed " +
+                        s"digest does not match the sender's whole-file digest — refusing to call the transfer complete",
+                      phase = "commit",
+                      bytesReceived = Some(state.bytesReceived),
+                      expected = Some(sender.wholeSha256),
+                      actualHash = Some(receiverWhole)
+                    )
+                  )
+                )
+          }
       case Some((frame, payload)) =>
+        val startedAt = System.nanoTime()
+        // 在飞水位（P0-4）：本块**出发前**先把块尾写进 `attemptEndRef` ⇒ 节拍在块在途的
+        // 时间内能读到「已确认 < 已发出」的差（ack 后两者相等，自动归 0）。
+        attemptEndRef.set(frame.offset + frame.bytes)
         sendWithRetry(transport, target, frame, payload, retriesPerLeg, backoff).flatMap {
           case Left(err) => IO.pure(Left(err))
           case Right(ack) =>
+            val elapsedMillis = math.max(1L, (System.nanoTime() - startedAt) / 1000000L)
+            val measuredRate = math.max(0L, payload.length.toLong * 1000L / elapsedMillis)
             ack.chunkSha256 == frame.chunkSha256 match
               case false =>
                 IO.pure(
@@ -149,7 +232,8 @@ object ChunkedSendLoop:
                   )
                 )
               case true =>
-                onProgress(frame.chunkIndex, ack.bytesReceived) *> {
+                ackedRef.set(ack.bytesReceived)
+                onRate(measuredRate) *> onProgress(frame.chunkIndex, ack.bytesReceived) *> {
                   if ack.bytesReceived >= frame.totalBytes then
                     // 末块：接收端**自算**的整件摘要必须等于发送端单遍算出的整件摘要（I2）。
                     // 注意 senderWhole 必须在**读完末块之后**取（digest 此时才覆盖整件）。
@@ -172,7 +256,7 @@ object ChunkedSendLoop:
                           case Left(err) => IO.pure(Left(err))
                           case Right(_) =>
                             IO.pure(Right(Outcome(ack.bytesReceived, receiverWhole, transport.leg, chunksSent + 1)))
-                  else loop(transport, target, sender, retriesPerLeg, backoff, onProgress, chunksSent + 1)
+                  else loop(transport, target, sender, ackedRef, attemptEndRef, retriesPerLeg, backoff, onProgress, onRate, chunksSent + 1)
                 }
         }
     }

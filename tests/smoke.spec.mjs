@@ -181,14 +181,16 @@ test.describe('Smoke — Flow Canvas', () => {
 
 test.describe('Smoke — Flow Editor APIs', () => {
 
-  test('GET /api/agents/list returns data', async ({ request }) => {
+  test('GET /api/agents/list is RETIRED (11-route takedown, 2026-09-20)', async ({ request }) => {
+    // The route was 仓内零调用点 (classify pass) and taken offline by the
+    // device-face hardening batch. This probe asserts it STAYS gone: with the
+    // route arm removed the request falls through the route table (404), which
+    // is the takedown's observable contract. If the route comes back, this
+    // assertion fails and the takedown has been silently reverted.
     const resp = await request.get(`${BASE}/api/agents/list`, {
       headers: { 'Authorization': `Bearer ${TOKEN}` },
     });
-    expect(resp.status()).toBe(200);
-    const body = await resp.json();
-    expect(body.agents).toBeDefined();
-    expect(body.agents.length).toBeGreaterThan(0);
+    expect(resp.status(), 'GET /api/agents/list must no longer be served').toBe(404);
   });
 
   test('GET /api/flow/def/:name returns flow definition', async ({ request }) => {

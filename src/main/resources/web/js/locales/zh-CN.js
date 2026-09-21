@@ -511,6 +511,13 @@ export default {
   'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
   'messages.send': '发送',
+  // rcptcode 批（2026-09-20）：好友腿**终态**分态文案（消费点 = `messages.js` 的
+  // `FRIEND_TERMINAL_TEXT` 白名单 + 未知码回退 `sendFailedCode`）。码集 = `friendsApi.js`
+  // 的 `FRIEND_TERMINAL_CODES`（同源单表）。中英同批新增（禁单语新增）。
+  'messages.friendNotFriends': '你们已不是好友，消息未发送',
+  'messages.friendNotBlocker': '你并未拉黑对方，该操作不可用',
+  'messages.friendReplyTargetInvalid': '被引用的消息已不可用，消息未发送',
+  'messages.sendFailedCode': '发送失败（{code}）',
   'messages.yesterday': '昨天',
   'messages.ariaUnread': '{n} 条未读消息',
   'messages.copy': '复制',
@@ -1612,6 +1619,12 @@ export default {
   'messages.deviceDescSaveFailed': '设备描述未保存。',
   'messages.deviceSent': '已送达',
   'messages.deviceRead': '已读',
+  // === 好友 / 群回执槽位（R5 两格 · 源契约 `friend-group-receipt-source` v1.2）===
+  // 🔴 本批**唯一新增文案**（2 枚，见报告「文案申报」）：契约 §1.1 逐字给出的气泡文案
+  // `已读 {readCount}/{memberCount}`（群聊）+ 同一派生式 `deliveredCount` 的送达计数。
+  // 直聊 / 设备面**零新增**（复用上方 `deviceSent` / `deviceRead` 两枚既有键）。
+  'messages.receiptReadCount': '已读 {read}/{total}',
+  'messages.receiptSentCount': '已送达 {sent}/{total}',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
   'messages.deviceSendFailed': '消息未发出。内容未丢失，请重试。',
   'messages.deviceSendUnavailable': '本机设备身份不可用，暂不能发送。',
