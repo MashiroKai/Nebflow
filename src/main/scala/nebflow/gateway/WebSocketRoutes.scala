@@ -1344,26 +1344,26 @@ class WebSocketRoutes(
       TextStream.lruGet(entries, key)._1 match
         case Some(idx) => textStreamIndexes.update(es => TextStream.lruPut(es, key, idx)).as(idx)
         case None =>
-          Deferred[IO, Either[Throwable, TextStream.SparseIndex]].flatMap { gate =>
-            textStreamIndexBuilds
-              .modify { m =>
-                m.get(key) match
-                  case Some(existing) => (m, Left(existing))
-                  case None           => (m + (key -> gate), Right(gate))
-              }
-              .flatMap { case (_, decision) =>
-                decision match
-                  case Left(existing) => existing.get.rethrow
-                  case Right(mine) =>
-                    buildTextIndex(p, size, reqId)
-                      .flatTap(idx => textStreamIndexes.update(es => TextStream.lruPut(es, key, idx)))
-                      .attempt
-                      .flatTap(res => mine.complete(res))
-                      .rethrow
-                      .onCancel(mine.complete(Left(new RuntimeException("index build was cancelled"))).void)
-                      .guarantee(textStreamIndexBuilds.update(_ - key))
-              }
-          }
+        Deferred[IO, Either[Throwable, TextStream.SparseIndex]].flatMap { gate =>
+          type Gate = Deferred[IO, Either[Throwable, TextStream.SparseIndex]]
+          textStreamIndexBuilds
+            .modify[Either[Gate, Gate]] { m =>
+              m.get(key) match
+                case Some(existing) => (m, Left(existing))
+                case None           => (m + (key -> gate), Right(gate))
+            }
+            .flatMap {
+              case Left(existing) => existing.get.rethrow
+              case Right(mine) =>
+                buildTextIndex(p, size, reqId)
+                  .flatTap(idx => textStreamIndexes.update(es => TextStream.lruPut(es, key, idx)))
+                  .attempt
+                  .flatTap(res => mine.complete(res))
+                  .rethrow
+                  .onCancel(mine.complete(Left(new RuntimeException("index build was cancelled"))).void)
+                  .guarantee(textStreamIndexBuilds.update(_ - key))
+            }
+        }
     }
 
   /** Exact line number of the first line in a window starting at `startByte`:
