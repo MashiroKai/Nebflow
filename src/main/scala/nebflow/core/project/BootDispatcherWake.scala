@@ -172,14 +172,22 @@ object BootDispatcherWake:
       * false = 仅审计留痕（如 `no-reentry-required`——同 boot 内状态可能再变）。 */
     blocking: Boolean,
     nodes: Int,
-    items: List[MarkerItem]
+    items: List[MarkerItem],
+    /** 条目类别（hostresume 批 2026-09-22，设计卡 §4 #6，C1 台账扩展）：`boot`（默认，
+      * 既有形态逐字兼容）= boot 唤醒腿；`sleep`/`wake` = 宿主睡眠窗（WakeSensor 写点）；
+      * `graceful`/`unclean` = 上次停机成因标注（crash-sweep 腿写点，D-5 仅台账/措辞）。
+      * 默认值 + withDefaults ⇒ 旧 JSON 可读、新 JSON 老代码可读（双向兼容）。 */
+    kind: String = KindBoot,
+    /** 宿主睡眠窗载荷（仅 kind=sleep/wake 有义；恒 blocking=false 条目）。 */
+    sleepAt: Option[Long] = None,
+    wakeAt: Option[Long] = None
   )
   object MarkerEntry:
     given Configuration = Configuration.default.withDefaults
     given Codec[MarkerEntry] = ConfiguredCodec.derived
 
   final case class MarkerFile(
-    v: Int = 1,
+    v: Int = 2,
     project: String = "",
     lastBootId: String = "",
     entries: List[MarkerEntry] = Nil
@@ -187,6 +195,13 @@ object BootDispatcherWake:
   object MarkerFile:
     given Configuration = Configuration.default.withDefaults
     given Codec[MarkerFile] = ConfiguredCodec.derived
+
+  // ── 条目类别常量（hostresume 批 2026-09-22，卡 §4 #6；kind 字段值域）────────
+  val KindBoot: String = "boot"
+  val KindSleep: String = "sleep"
+  val KindWake: String = "wake"
+  val KindGraceful: String = "graceful"
+  val KindUnclean: String = "unclean"
 
   /** 项目 `.nebflow` 目录（与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。 */
   def nebflowDir(pd: ProjectDef): os.Path =
@@ -221,6 +236,59 @@ object BootDispatcherWake:
         .handleErrorWith(err =>
           // fail-soft：标记写失败不阻断唤醒（幂等的第二道防线退化为进程内 Ref），但必须留痕。
           logger.warn(s"[boot-wake] marker write failed at $p: ${err.getMessage}"))
+    }
+
+  /** 电源/停机成因台账 append（hostresume 批 2026-09-22，卡 §4 #6/#8 写点，复用
+    * `appendMarker` 的读-改-写 + AtomicJson + fail-soft 纪律，但**不做 (bootId, project)
+    * 替换**：电源条目 append-only——替换语义若跨 kind，会让 kind=sleep/wake/unclean
+    * 条目顶掉同 boot 的 blocking boot 条目、破坏 duplicate-boot 幂等（卡 §6 口径 3）。
+    * 写点 = `WakeSensor`（kind=sleep/wake）与 `ProjectCrashRecovery.annotateShutdownCause`
+    * （kind=graceful/unclean）；恒 `blocking=false`（调用面约定，本函数不强制）。 */
+  def appendPowerMarker(p: os.Path, project: String, e: MarkerEntry): IO[Unit] =
+    readMarker(p).flatMap { f =>
+      val kept = (f.entries :+ e).takeRight(MarkerKeepEntries)
+      AtomicJson
+        .write(p, MarkerFile(project = project, lastBootId = f.lastBootId, entries = kept).asJson.noSpaces)
+        .handleErrorWith(err =>
+          logger.warn(s"[boot-wake] power marker write failed at $p: ${err.getMessage}"))
+    }
+
+  // ── 停机留痕（hostresume 批 2026-09-22，卡 §4 #7/#8，C2 双向 fail-soft）──────
+
+  /** 优雅停机标记（`GracefulInterruptHook` 起步时 fail-soft 写；下次 boot 读之区分
+    * 「优雅停机」与「断电/kill-9/崩溃」——取证开放项①「信号来源无留痕」的闭环面）。 */
+  final case class ShutdownMarker(v: Int, kind: String, at: Long, bootId: String, cause: String)
+  object ShutdownMarker:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[ShutdownMarker] = ConfiguredCodec.derived
+
+  /** 停机标记文件名（宿主级：`<dataRoot>/shutdown-marker.json`——关机钩子无项目上下文，
+    * 成因是宿主级事实；boot 侧经 [[readShutdownMarker]] 读同一文件）。 */
+  val ShutdownMarkerFileName: String = "shutdown-marker.json"
+
+  def shutdownMarkerPath: os.Path = PathUtil.dataRoot / ShutdownMarkerFileName
+
+  /** 读停机标记（fail-soft：文件缺失 = None；损坏/读失败 = None + WARN——回到现状无标注）。 */
+  def readShutdownMarker: IO[Option[ShutdownMarker]] =
+    IO.blocking {
+      val p = shutdownMarkerPath
+      if !os.exists(p) then None
+      else jsonParse(os.read(p)).flatMap(_.as[ShutdownMarker]).toOption
+    }.handleErrorWith(e =>
+      logger.warn(s"[boot-wake] shutdown marker read failed at $shutdownMarkerPath: ${e.getMessage}").as(None))
+
+  /** boot 期停机成因（卡 §4 #8，D-5 仅措辞/台账）：marker 在 ⇒ `Some(kind)`（graceful）；
+    * 不在但台账已有本 boot 的 unclean 条目（crash-sweep 腿在有 Running/Interrupted 残留
+    * 时写）⇒ `Some("unclean")`；都无（fresh home / 干净 boot）⇒ None = 不追加任何字节
+    * （dispatcher-wake summary 逐字不变）。 */
+  def bootShutdownCause(pd: ProjectDef, bootId: String = instanceId): IO[Option[String]] =
+    readShutdownMarker.flatMap {
+      case Some(m) => IO.pure(Some(m.kind))
+      case None =>
+        readMarker(markerPath(pd)).map { f =>
+          if f.entries.exists(e => e.bootId == bootId && e.project == pd.name && e.kind == KindUnclean)
+          then Some(KindUnclean) else None
+        }
     }
 
   // ── 主入口 ────────────────────────────────────────────────────────────
@@ -284,6 +352,9 @@ object BootDispatcherWake:
     val marker = dir / MarkerFileName
     val key = s"$bootId|${pd.name}"
     for
+      // 停机成因标注（hostresume 批 2026-09-22，卡 §4 #8，D-5）：marker 在 ⇒ graceful；
+      // 本 boot 已被 crash-sweep 腿标注 unclean ⇒ unclean；都无 ⇒ None（summary 逐字不变）。
+      cause <- bootShutdownCause(pd, bootId)
       dup <- hasBlockingEntry(marker, bootId, pd.name)
       memo <- wokenKeys.get.map(_.contains(key))
       out <-
@@ -296,24 +367,24 @@ object BootDispatcherWake:
           BootWakeInventory.fromDisk(dir, pd.name, nowMs(), maxItems, sessionsDir).flatMap {
             case Left(reason) =>
               // 落盘事实不可读（缺失/损坏）：显式记录 + 跳过（禁当「无工作」静默成功）。
-              record(pd, bootId, ResultSkipped, reason, None, blocking = true, atMs = atMs)
+              record(pd, bootId, ResultSkipped, reason, None, blocking = true, atMs = atMs, cause = cause)
             case Right(inv) if !inv.needWake =>
-              record(pd, bootId, ResultSkipped, ReasonNoReentry, Some(inv), blocking = false, atMs = atMs)
+              record(pd, bootId, ResultSkipped, ReasonNoReentry, Some(inv), blocking = false, atMs = atMs, cause = cause)
             case Right(inv) =>
               ProjectRuntimeRegistry.get(pd.name).flatMap {
                 case None =>
-                  record(pd, bootId, ResultSkipped, ReasonNotMounted, Some(inv), blocking = true, atMs = atMs)
+                  record(pd, bootId, ResultSkipped, ReasonNotMounted, Some(inv), blocking = true, atMs = atMs, cause = cause)
                 case Some(rt) =>
                   val fire = trigger.getOrElse(
                     DispatchNotify.defaultTrigger(pd.name, rt.engine.rootSessionId))
                   wokenKeys.update(_ + key) *>
                     fire(wakeText(inv, bootId)).attempt.flatMap {
                       case Right(_) =>
-                        record(pd, bootId, ResultWoken, "", Some(inv), blocking = true, atMs = atMs)
+                        record(pd, bootId, ResultWoken, "", Some(inv), blocking = true, atMs = atMs, cause = cause)
                       case Left(e) =>
                         // 触发链失败 = 显式失败 + **零重试**（无定时器、无循环 ⇒ 风暴不可达）。
                         record(pd, bootId, ResultFailed, ReasonNotifyFailed, Some(inv), blocking = true,
-                          atMs = atMs, err = Some(e))
+                          atMs = atMs, err = Some(e), cause = cause)
                     }
               }
           }
@@ -329,7 +400,8 @@ object BootDispatcherWake:
     inv: Option[BootWakeInventory.Inventory],
     blocking: Boolean,
     atMs: Long,
-    err: Option[Throwable] = None
+    err: Option[Throwable] = None,
+    cause: Option[String] = None
   ): IO[Outcome] =
     val counts = inv.map { i =>
       (i.nodes, i.inBucket(BootWakeInventory.BucketLooseRunning).size,
@@ -346,6 +418,7 @@ object BootDispatcherWake:
         inv.map(i => s" items=${i.items.size}${if i.truncated > 0 then s"(+${i.truncated} more)" else ""}" +
           s" terminalTargets=${i.terminalTargets} upstreamGaps=${i.upstreamGaps}").getOrElse("") +
         s" at=$atMs dispatcher=(spawn/inject via existing TriggerDispatcher channel)" +
+        cause.map(c => s" cause=$c").getOrElse("") +
         err.map(e => s" error=${Option(e.getMessage).getOrElse(e.toString)}").getOrElse("")
     for
       _ <- appendMarker(markerPath(pd), pd.name, entry)
@@ -353,7 +426,7 @@ object BootDispatcherWake:
         .append(pd.workspace, pd.name, pd.name, FlowMapEventLog.DispatcherWakeType,
           FlowMapEventLog.dispatcherWakeSummary(bootId, atMs, result, reason,
             (counts._1, counts._2, counts._3, counts._4, counts._5),
-            inv.map(_.items.size).getOrElse(0), inv.map(_.truncated).getOrElse(0)))
+            inv.map(_.items.size).getOrElse(0), inv.map(_.truncated).getOrElse(0), cause))
         .handleErrorWith(e =>
           logger.warn(s"[boot-wake] event append failed for project '${pd.name}': ${e.getMessage}"))
       _ <- if result == ResultFailed then logger.warn(logLine) else logger.info(logLine)

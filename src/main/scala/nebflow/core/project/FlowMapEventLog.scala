@@ -213,7 +213,9 @@ object FlowMapEventLog:
   val DispatcherWakeType: String = "dispatcher-wake"
 
   /** 唤醒事件结构化 summary（`k=v` 单空格分隔，**值不含空白**——reason 内的空白
-    * 归一为 `_` 并截断，防 k=v 解析被破坏）。`counts` = (nodes, B1, B2, B3, B4)。 */
+    * 归一为 `_` 并截断，防 k=v 解析被破坏）。`counts` = (nodes, B1, B2, B3, B4)。
+    * `cause`（hostresume 批 2026-09-22 可选新增，D-5 仅措辞）：上次停机成因标注——
+    * None = 不追加任何字节（既有 summary 逐字不变）；Some = 尾部追加 ` cause=…`。 */
   def dispatcherWakeSummary(
     bootId: String,
     atMs: Long,
@@ -221,12 +223,42 @@ object FlowMapEventLog:
     reason: String,
     counts: (Int, Int, Int, Int, Int),
     items: Int,
-    truncated: Int
+    truncated: Int,
+    cause: Option[String] = None
   ): String =
     val (nodes, b1, b2, b3, b4) = counts
     val r = if reason.isEmpty then "-" else reason.replaceAll("\\s+", "_").take(80)
     s"boot=${bootId.replaceAll("\\s+", "_")} at=$atMs result=$result reason=$r" +
-      s" nodes=$nodes b1=$b1 b2=$b2 b3=$b3 b4=$b4 items=$items truncated=$truncated"
+      s" nodes=$nodes b1=$b1 b2=$b2 b3=$b3 b4=$b4 items=$items truncated=$truncated" +
+      cause.map(c => s" cause=${noWs(c).take(80)}").getOrElse("")
+
+  /** 宿主睡眠/唤醒审计事件类型（hostresume 批 2026-09-22，设计卡 §4 #10，D-7 裁定
+    * 「唤醒仅审计事件、不揽分发器」）。
+    *
+    * 写点 = `WakeSensor` 双钟断流纤维判出睡眠窗后（每在册项目一条；窗检测与
+    * 台账 append 同点、同 fail-soft 纪律）。语义 = 「宿主经历了冻结窗，此刻已醒」——
+    * 零节点写、零重入、零分发器通知（挂起-恢复内存世界完好、分发器自愈已实证，
+    * 设计卡 §2.3 唤醒面）。
+    *
+    * `nodeId` 字段承载**宿主实例标识**（= `BootDispatcherWake.instanceId`，观测进程
+    * 的 JVM startTime-pid；同 [[DispatcherWakeType]] 以发起者标识承载该字段的先例）。
+    * 不写 `chainId`（宿主级事件不属任何链）。 */
+  val HostWakeType: String = "host-wake"
+
+  /** `host-wake` 结构化 summary（`k=v` 单空格分隔、值不含空白——[[noWs]] 纪律同
+    * [[dispatcherWakeSummary]]）。`wallMs`/`nanoMs` = 该窗的双钟原始读数差（取证对账
+    * 面：`frozenMs = wallMs - nanoMs`）。 */
+  def hostWakeSummary(
+    bootId: String,
+    sleepAtMs: Long,
+    wakeAtMs: Long,
+    frozenMs: Long,
+    wallMs: Long,
+    nanoMs: Long,
+    slopMs: Long
+  ): String =
+    s"boot=${noWs(bootId)} sleepAt=$sleepAtMs wakeAt=$wakeAtMs frozenMs=$frozenMs" +
+      s" wallMs=$wallMs nanoMs=$nanoMs slopMs=$slopMs"
 
   /** 合并窗 FIFO 互斥闸事件类型（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决）。
     *
