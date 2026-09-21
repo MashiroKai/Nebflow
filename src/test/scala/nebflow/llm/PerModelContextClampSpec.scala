@@ -92,10 +92,24 @@ class PerModelContextClampSpec extends CatsEffectSuite:
     }
   }
 
+  /** 建一个注册表实例供纯算式读数用。注意 `effectiveContextWindow` 是 **class
+    * ProviderRegistry 上的实例方法**（不是伴生对象成员）——三个 ModelCandidate 构造点
+    * 全部经它 ⇒ 「单点」成立；spec 侧走实例调用（salvage 草稿写成伴生对象调用 ⇒ 编译
+    * 不过，前身从未编译过）。 */
+  private def withRegistry[A](f: ProviderRegistry => A): IO[A] =
+    for
+      configRef <- Ref.of[IO, NebflowServiceConfig](configWith(1, None))
+      sessionOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+      triple <- LlmInterface.createLlm(sessionOverrides, None, Some(configRef))
+      out <- IO(f(triple._2)).guarantee(triple._4)
+    yield out
+
   test("T4: 纯算式单点（effectiveContextWindow）——与候选构造读数一致") {
-    assertEquals(ProviderRegistry.effectiveContextWindow(1000000, Some(200000)), 200000)
-    assertEquals(ProviderRegistry.effectiveContextWindow(1000000, None), 1000000)
-    assertEquals(ProviderRegistry.effectiveContextWindow(128000, Some(200000)), 128000)
-    assertEquals(ProviderRegistry.effectiveContextWindow(200000, Some(200000)), 200000)
+    withRegistry { reg =>
+      assertEquals(reg.effectiveContextWindow(1000000, Some(200000)), 200000)
+      assertEquals(reg.effectiveContextWindow(1000000, None), 1000000)
+      assertEquals(reg.effectiveContextWindow(128000, Some(200000)), 128000)
+      assertEquals(reg.effectiveContextWindow(200000, Some(200000)), 200000)
+    }
   }
 end PerModelContextClampSpec

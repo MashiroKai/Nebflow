@@ -82,23 +82,41 @@ class LlmHttpErrorLogSpec extends CatsEffectSuite:
   }
 
   test("T3: 隐私面——响应体里的凭据形态必须被抹除（禁落 apiKey / Authorization）") {
+    val jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
     val dirty =
       """{"error":"invalid key: sk-abcdefghijklmnop1234","sent":{"apiKey":"sk-live-SECRETSECRETSECRET",""" +
-        """"Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"}}"""
+        s""""Authorization":"Bearer $jwt"}}"""
+    // 空格形态（非 JSON）单独一条：`Authorization: Bearer <jwt>` 是 header 的自然形态，
+    // 也是「顺序敏感」的泄漏面（见 T4）。两条形态都必须吃掉 token 本体。
+    val dirtyHeader = s"401 from upstream — Authorization: Bearer $jwt"
     for
       _ <- LlmLogWriter.logHttpError(401, dirty, "req-4", "s", "a", "p", "m")
+      _ <- LlmLogWriter.logHttpError(401, dirtyHeader, "req-5", "s", "a", "p", "m")
       ls <- IO(lines())
     yield
       val line = ls.mkString("\n")
       assert(!line.contains("sk-abcdefghijklmnop1234"), s"sk- key 未抹除：$line")
       assert(!line.contains("sk-live-SECRETSECRETSECRET"), s"apiKey 回显未抹除：$line")
-      assert(!line.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"), s"Bearer token 未抹除：$line")
+      assert(!line.contains(jwt), s"Bearer token（JSON / 空格两形态）未抹除：$line")
       assert(line.contains("<redacted>"), s"必须留下抹除痕迹（可读性）：$line")
+      assert(
+        ls.count(_.contains("\"request_id\":\"req-5\"")) == 1,
+        s"空格形态那条也必须落盘（否则上面的断言是空跑）：${ls.mkString("\n")}"
+      )
   }
 
-  test("T4: 纯函数 redactSecrets 的二值读数") {
+  test("T4: 纯函数 redactSecrets 的二值读数（含**顺序敏感**钉版）") {
     assertEquals(LlmLogWriter.redactSecrets("""{"apiKey":"sk-1234567890abcd"}"""), """{"apiKey":"<redacted>"}""")
-    assertEquals(LlmLogWriter.redactSecrets("Authorization: Bearer abcdefghijklmn"), "Authorization: Bearer <redacted>")
+    // 🔴 顺序敏感（不要「顺手」重排三条 replaceAll）：Bearer 腿必须**先**跑。
+    // 若先跑 label 腿（authorization|apiKey），`Authorization: Bearer <jwt>` 里只有
+    // 「Bearer」这个词被吃掉，token 本体反而**活下来**（`Authorization: <redacted> <jwt>`）
+    // —— Bearer 腿随后再也找不到 `Bearer` 前缀 ⇒ 静默泄露。故本行把实际形态钉死：
+    // 两个标记（bearer 腿吃掉 token + label 腿吃掉 "Bearer" 一词）是**预期**读数，
+    // 不是瑕疵；唯一不可让步的性质 = token 本体消失。
+    val hdr = LlmLogWriter.redactSecrets("Authorization: Bearer abcdefghijklmn")
+    assert(!hdr.contains("abcdefghijklmn"), s"Bearer token 本体必须消失：$hdr")
+    assert(hdr.contains("<redacted>"), s"必须留下抹除痕迹：$hdr")
+    assertEquals(hdr, "Authorization: <redacted> <redacted>")
     assertEquals(LlmLogWriter.redactSecrets("plain error text"), "plain error text")
     assertEquals(LlmLogWriter.redactSecrets(""), "")
   }
