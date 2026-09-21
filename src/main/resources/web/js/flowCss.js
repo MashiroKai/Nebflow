@@ -375,6 +375,8 @@ export const FLOW_CSS = `
 .flow-agent-model-select:focus { border-color: rgba(91,127,191,0.35); box-shadow: 0 0 0 2px rgba(91,127,191,0.08); }
 .flow-agent-model-current { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); }
 .flow-agent-model-current.fallback { color: rgb(91, 127, 191); background: rgba(91,127,191,0.10); padding: 2px 8px; border-radius: 6px; }
+/* panelscheme 批（2026-09-21）：非可设 agent 的方案来源注记（只读位，替换原下拉）。 */
+.flow-agent-model-note { font: 400 12px -apple-system, sans-serif; color: var(--color-text-muted); padding: 4px 0; }
 .flow-agent-model-fbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .flow-agent-model-fb { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: 2px 8px; border-radius: 6px; }
 

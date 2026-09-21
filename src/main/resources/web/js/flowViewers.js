@@ -6,7 +6,7 @@ import { renderMarkdownWithMath } from './utils.js';
 import state from './state.js';
 import { esc, authHeaders, fmtTime, fmtRelTime, overlayRoot, setMailPending } from './flowHelpers.js';
 import { t } from './i18n.js';
-import { fetchPresets, setAgentPreset, resolvedChainHtml } from './presets.js';
+import { fetchPresets, setAgentPreset, resolvedChainHtml, SCHEME_SETTABLE, schemeNoteKey } from './presets.js';
 
 // ── 内联 SVG/CSS 图标（2026-09-06 显示优化批：legacy viewer 域禁 emoji/符号字符）──
 // 关闭叉（替代 ✕ U+2715）、阻塞旗（替代 ⚑ U+2691）、收件箭头（替代 → U+2192）、
@@ -45,7 +45,9 @@ async function populateAgentModel(el, agentName) {
   }
 }
 
-/** Render model section: preset dropdown + read-only resolved chain + current indicator. */
+/** Render model section: preset dropdown (settable agents only — panelscheme
+ *  批 2026-09-21：仅 Nebula/任务分发器可设，其余只读链 + 来源注记) + read-only
+ *  resolved chain + current indicator. */
 function renderAgentModelSection(el, agentName, cfg, presetData) {
   const presetName = cfg.preset || '';
   const current = cfg.current || cfg.preferred || cfg.default || '';
@@ -58,17 +60,22 @@ function renderAgentModelSection(el, agentName, cfg, presetData) {
     ? `<span class="flow-agent-model-current fallback">运行: ${esc(current)}</span>`
     : '';
 
-  el.innerHTML = `
-    <div class="flow-agent-model-row">
-      <select class="flow-agent-model-select" data-agent="${esc(agentName)}">
+  const editable = SCHEME_SETTABLE.has(agentName);
+  const pickerHtml = editable
+    ? `<select class="flow-agent-model-select" data-agent="${esc(agentName)}">
         <option value=""${!presetName ? ' selected' : ''}>${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
         ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-      </select>
+      </select>`
+    : `<span class="flow-agent-model-note">${esc(t(schemeNoteKey(agentName)))}</span>`;
+
+  el.innerHTML = `
+    <div class="flow-agent-model-row">
+      ${pickerHtml}
       ${currentHtml}
     </div>
     ${resolvedChainHtml(cfg)}`;
 
-  // Bind dropdown change → PUT /api/agents/:name/preset
+  // Bind dropdown change → PUT /api/agents/:name/preset (settable agents only)
   const sel = el.querySelector('.flow-agent-model-select');
   sel?.addEventListener('change', async () => {
     await setAgentPreset(agentName, sel.value || null);

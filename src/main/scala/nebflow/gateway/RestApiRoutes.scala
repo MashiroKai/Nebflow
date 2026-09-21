@@ -2863,9 +2863,15 @@ class RestApiRoutes(
       }
 
     // PUT /agents/:name/model — update agent's model configuration
+    // panelscheme 批（2026-09-21）：与 PUT /preset 同闸——仅 Nebula/任务分发器可写
+    // （legacy model 引用是两类的自有方案面；其余 agent 的存储引用引擎已忽略）。
     case req @ PUT -> Root / "agents" / agentName / "model" =>
       withAuth(req) {
         if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
+          BadRequest(Json.obj("error" ->
+            (s"Agent '$agentName' does not accept a model config (2026-09-21 panel convergence): only Nebula and " +
+              "project-dispatcher are settable. Existing stored values are kept but ignored by the engine.").asJson))
         else
           req.as[Json].flatMap { body =>
             // Parse the model config from request body
@@ -2902,9 +2908,17 @@ class RestApiRoutes(
     // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
     // back to default preset). Uses EntityLoader.findAgentDir to locate the
     // agent.json across all three layers.
+    // panelscheme 批（2026-09-21，作者令）：面板只有 Nebula 与任务分发器两类可设
+    // 模型方案——其余 agent 拒写（引擎侧 SchemePolicy 已忽略其存储引用，写入只会
+    // 造死数据）；kernel/general 由继承机制决定、其余回落默认方案，均不可设。
     case req @ PUT -> Root / "agents" / agentName / "preset" =>
       withAuth(req) {
         if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+        else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
+          BadRequest(Json.obj("error" ->
+            (s"Agent '$agentName' does not accept a model-scheme setting (2026-09-21 panel convergence): only Nebula and " +
+              "project-dispatcher are settable. kernel inherits Nebula's current scheme; nodes inherit the project " +
+              "dispatcher's; everything else follows the default preset. Existing stored values are kept but ignored by the engine.").asJson))
         else
           req.as[Json].flatMap { body =>
             val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
@@ -3476,9 +3490,14 @@ class RestApiRoutes(
    * Scan all agent.json files and build a map of agentName → presetName (or null
    * if no preset field). Used by GET /presets to show which agents reference
    * which presets.
+   *
+   * panelscheme 批（2026-09-21）：映射的是**有效**引用（SchemePolicy 名称策略）——
+   * 可设两类（Nebula/任务分发器）= 自有原始引用；kernel/general = 继承根
+   * （Nebula/project-dispatcher）的当前引用；其余 agent 引擎已忽略其存储引用 →
+   * null（usedBy 计数不再把「死数据」算进引用者）。
    */
   private def scanAgentPresets(): Map[String, Option[String]] =
-    allAgentJsonFiles().flatMap { path =>
+    val raw: Map[String, Option[String]] = allAgentJsonFiles().flatMap { path =>
       parser.parse(os.read(path)).toOption.flatMap { json =>
         val name = json.hcursor
           .downField("name")
@@ -3489,41 +3508,56 @@ class RestApiRoutes(
         Some(name -> preset)
       }
     }.toMap
+    raw.map { (name, own) =>
+      val (effPreset, _) = nebflow.core.presets.SchemePolicy.effectiveRefs(name, own, None)
+      name -> effPreset
+    }
 
   /**
    * Determine the resolvedFrom value for an agent by reading the raw agent.json.
    * Returns "preset" | "legacy-model" | "default-preset" | "global".
+   *
+   * panelscheme 批（2026-09-21）名称策略感知：非可设两类（kernel/general/其余）
+   * 的存储 preset/model 引用引擎已忽略——kernel/general 的 AgentDef.preset 携带
+   * 继承根（Nebula/project-dispatcher）的引用名，按引用是否存在如实报告；其余
+   * 不再做 legacy-model 探测（那会把「已忽略的死数据」误报为生效来源，误触发
+   * 前端迁移横幅）。可设两类走既有逻辑逐字不变（回归红线）。
    */
   private def computeResolvedFrom(preset: Option[String], agentName: String): String =
     val store = new PresetStore()
-    // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
-    if preset.isDefined then
+    def defaultOrGlobal: String =
       val file = store.load()
-      if file.presets.contains(preset.get) then "preset"
+      if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+        "default-preset"
+      else "global"
+    if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
+      preset match
+        case Some(p) =>
+          if store.load().presets.contains(p) then "preset" else defaultOrGlobal
+        case None => defaultOrGlobal
+    else
+      // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
+      if preset.isDefined then
+        val file = store.load()
+        if file.presets.contains(preset.get) then "preset"
+        else
+          // Dangling preset — check if there's a legacy model
+          EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+            case Some(dir) =>
+              val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+              else defaultOrGlobal
+            case None => "global"
       else
-        // Dangling preset — check if there's a legacy model
+        // No preset — check legacy model
         EntityLoader.findAgentDir(agentName).unsafeRunSync() match
           case Some(dir) =>
             val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
             val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
             if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-            else if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
-              "default-preset"
-            else "global"
+            else defaultOrGlobal
           case None => "global"
-    else
-      // No preset — check legacy model
-      EntityLoader.findAgentDir(agentName).unsafeRunSync() match
-        case Some(dir) =>
-          val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
-          val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-          if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-          else
-            val file = store.load()
-            if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
-              "default-preset"
-            else "global"
-        case None => "global"
 
     end if
 

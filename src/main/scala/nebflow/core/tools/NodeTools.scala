@@ -1181,14 +1181,13 @@ object NodeEditTool extends Tool:
 - out (optional; edit rewrites the edge set; empty/null = dangling (state the intent with dangling=true): result retained, auto-delivered once wired): "B" = pass edge with payload (legacy); "Nebula" = EXIT MARKER (bare = pass/signal, zero root notify; a gate set "(pass)Nebula" / "(pass,failed)Nebula" declares root notify — see notify); fan-out "(pass)B, (failed)C"; failure edge "(failed)C:signal". Gates ⊆ pass,failed,fail (default pass); mode :result (default) | :signal (deps parity) | :loop. 'failed' = NODE-STATUS gate (that node failed); 'fail' = VERDICT gate (verifier reject), verifier-only, always "(fail)<worker>:loop" (NODE_VERDICT_GATE_ON_TASK_NODE / NODE_LOOP_EDGE_ROLE). ':loop' = CONTROL edge: not in the DAG, no in mirror, never settles a barrier; loop nodes must cover pass AND failed. On-failed into a merge node rejected (NODE_MERGE_PASS_ONLY).
 - plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent): skills → first message, mcp.json → MCP servers + tool grants. Must be Catalog-listed (ready to use); a blocked (deny-listed) package is refused. Omitting the key on create is refused (NODE_PLUGINS_UNDECLARED) — use plugins=[] for 'no capability face'.
 - worktree (optional, create-time only): true = isolated git worktree at .nebflow/worktrees/<from-name> (same-name branch off main); fail-fast; refused on edits.
-- preset: legacy (unused).
+- Retired (rejected): agent/skill/mcp (NODE_AGENT_RETIRED) ⇒ plugins; preset (NODE_PRESET_RETIRED) — no per-node scheme; dispatcher's applies.
 - abandon (optional, default false): terminal / wiring / pending / STALE running node → cancelled + edges detached, no TTL. LIVE running refused (use NodeCancel).
 - role (optional, CREATE-ONLY): "task" (default; node_report: finish | blocked) | "verifier" (judges another node's output; node_report: pass | fail | blocked). A verifier's out MUST declare one "(fail)<worker>:loop" route when it declares any out edge (NODE_VERIFIER_NEEDS_ROUTE); an empty-out verifier create needs verifierRoutePending=true; on edit ⇒ NODE_ROLE_CREATE_ONLY.
 - chainId (optional, declare-on-write): EXPLICIT chain membership — the node belongs to this id verbatim (declaration beats the derived fallback; undeclared keeps the derived in/out component). Metadata only: deps NEVER decides membership, so declaring changes no start/merge/barrier behaviour. Value domain in the schema property (else NODE_CHAIN_ID_INVALID); null = withdraw. Audited as chain-membership-changed.
 - reactivateCompleted (optional, edit only): explicit authorization NODE_COMPLETED_REACTIVATION: re-run a COMPLETED node (status → wiring/pending, result cleared, upstreams re-delivered; logged). Omitted ⇒ edit only rewires + auto-delivers the retained result.
 - restoreChain (optional, default false): when in/deps reference an ARCHIVED node (or this nodename is archived), true pulls that whole chain back onto the active map FIRST, then proceeds normally.
 - notify (optional; unset = legacy: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. Legacy one-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
-- Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp ⇒ plugins.
 ## Semantics
 - Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task) runs at create, async.
 - Verdict routing (role=verifier): fail is a VERDICT — THE VERIFIER STILL COMPLETES; "(fail)<worker>:loop" re-runs the target. Its out: distinct pass/fail targets (NODE_VERDICT_ROUTE_COLLISION), one fail target (NODE_VERIFY_MULTI_FAIL_TARGET), never "Nebula" (NODE_LOOP_TARGET_NEBULA), no retry (NODE_RETRY_LOOP_CONFLICT); the engine owns the round/wall-clock budget and fails it on exhaustion (loop-budget).
@@ -1233,7 +1232,6 @@ object NodeEditTool extends Tool:
           Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
         ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog (a listed package is ready to use); a blocked (deny-listed) package is refused, and a package switched off for dispatch by the author is refused for NEW dispatches only".asJson),
         "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
-        "preset" -> Json.obj("type" -> "string".asJson),
         "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
         "notify" -> Json.obj("type" -> "string".asJson,
           "description" -> ("Notification policy for this node's COMPLETED event (unset = legacy resolution; no create-time default). " +
@@ -1303,7 +1301,6 @@ object NodeEditTool extends Tool:
     // 裁定⑤c（20260907）：双层化长描述——可选，≤200，仅 detail 通道消费
     val descriptionLong = input("descriptionLong").flatMap(_.asString)
     val worktree = input("worktree")
-    val preset = input("preset").flatMap(_.asString)
     val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
     // 显式授权入口 `NODE_COMPLETED_REACTIVATION`（nrloop 一期 2026-09-12，附 C5①）：
     // 布尔参数，**仅 completed 节点有意义**（适用范围闸在 editNode 首段；创建路径
@@ -1456,6 +1453,16 @@ object NodeEditTool extends Tool:
           "every node executes the general agent; capability differentiation goes through 'plugins' (a plugin = skills + mcp.json, either " +
           "alone is valid; see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old values for display only. " +
           "(NODE_AGENT_RETIRED)")))
+    // preset 退役硬闸（panelscheme 批 2026-09-21，作者令：节点无自有模型方案设置）——
+    // 节点模型 = 项目分发器当前方案（派发时解析，SchemePolicy 单点）；存量节点保留
+    // 其存储 preset 值仅作显示/审计（引擎已不再读取）。schema 层已删属性，此处运行时
+    // 兜底给可行动错误。
+    else if input.contains("preset") then
+      IO.pure(Left(ToolError(
+        "'preset' node param is RETIRED and no longer accepted (2026-09-21 panel model-scheme convergence) — nodes have no " +
+          "model-scheme setting of their own: a node runs on the project dispatcher's current model scheme (set it on the " +
+          "project-dispatcher agent in Settings; nodes pick it up at dispatch time). Existing nodes keep their stored preset " +
+          "value for display only. (NODE_PRESET_RETIRED)")))
     // worktree 类型闸：布尔显式化（String→Boolean 改造）——传字符串（旧形态）不再
     // 宽容收编，直接拒绝（旧文案教「先建 worktree 再传裸名」的工作流已被
     // 「worktree=true 即时创建」取代）。
@@ -1535,7 +1542,7 @@ object NodeEditTool extends Tool:
                       val newlyAssigned = pluginsForCall.filterNot(existing.plugins.toSet.contains)
                       dispatchFaceCheck(newlyAssigned).flatMap {
                         case Left(err) => IO.pure(Left(ToolError(err)))
-                        case Right(_) => editNode(rt, existing, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx, reactivateCompleted)
+                        case Right(_) => editNode(rt, existing, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), pluginsOpt, inJson, depsJson, outJson, ctx, reactivateCompleted)
                       }
                     case None =>
                       // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
@@ -1551,7 +1558,6 @@ object NodeEditTool extends Tool:
                           case Some(archived) =>
                             val forbidden =
                               task.isDefined || description.isDefined || descriptionLong.isDefined || worktree.isDefined ||
-                                preset.isDefined ||
                                 abandon || inJson.isDefined || depsJson.isDefined ||
                                 pluginsProvided ||
                                 mergeProvided || notifyProvided.isDefined || retryProvided ||
@@ -1572,7 +1578,7 @@ object NodeEditTool extends Tool:
                             else if forbidden then
                               IO.pure(Left(ToolError(
                                 s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/description/in/deps/config edits are not.")))
-                            else editNode(rt, archived, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
+                            else editNode(rt, archived, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), pluginsOpt, inJson, depsJson, outJson, ctx)
                           case None =>
                             if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
                             else if reactivateCompleted then
@@ -1591,7 +1597,7 @@ object NodeEditTool extends Tool:
                             else
                               dispatchFaceCheck(pluginsForCall).flatMap {
                                 case Left(err) => IO.pure(Left(ToolError(err)))
-                                case Right(_) => createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, merge, dangling, verifierRoutePending, pluginsProvided)
+                                case Right(_) => createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), pluginsForCall, inJson, depsJson, outJson, merge, dangling, verifierRoutePending, pluginsProvided)
                               }
                       }
                   }
@@ -1694,7 +1700,6 @@ object NodeEditTool extends Tool:
     description: Option[String],
     descriptionLong: Option[String],
     worktree: Option[Boolean],
-    preset: Option[String],
     plugins: List[String],
     inJson: Option[Json],
     depsJson: Option[Json],
@@ -1800,9 +1805,9 @@ object NodeEditTool extends Tool:
                           IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
                             case Left(err) => IO.pure(Left(ToolError(
                               s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                            case Right(bare) => proceed(rt, nodename, agentName, task, description, descriptionLong, Some(bare), preset, plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
+                            case Right(bare) => proceed(rt, nodename, agentName, task, description, descriptionLong, Some(bare), plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
                           }
-                      case _ => proceed(rt, nodename, agentName, task, description, descriptionLong, None, preset, plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
+                      case _ => proceed(rt, nodename, agentName, task, description, descriptionLong, None, plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
                   // loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
                   // verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
                   loopFlag.config match
@@ -1823,7 +1828,6 @@ object NodeEditTool extends Tool:
     description: Option[String],
     descriptionLong: Option[String],
     worktree: Option[String],
-    preset: Option[String],
     plugins: List[String],
     ins: List[String],
     deps: List[String],
@@ -1972,7 +1976,8 @@ object NodeEditTool extends Tool:
             name = nodename,
             agent = agentName,
             worktree = worktree,
-            preset = preset,
+            // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级
+            // 方案（NodeDef.preset 字段保留，存量数据显示/审计用）。
             task = task,
             description = description.map(_.trim),
             descriptionLong = descriptionLong.map(_.trim),
@@ -2336,7 +2341,6 @@ object NodeEditTool extends Tool:
     descriptionLong: Option[String],
     abandon: Boolean,
     worktree: Option[Boolean],
-    preset: Option[String],
     pluginsOpt: Option[List[String]],
     inJson: Option[Json],
     depsJson: Option[Json],
