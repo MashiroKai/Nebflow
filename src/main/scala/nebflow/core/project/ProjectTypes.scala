@@ -268,21 +268,6 @@ object OutEdge:
   /** 控制边判据（`:loop` 模式单点）——图不变量/镜像/投递三处过滤共用。 */
   def isLoopEdge(edge: OutEdge): Boolean = edge.mode == Loop
 
-  /** **fail 选通边的原始目标串选择器**（failroute-guard 批 2026-09-21 · 案 A，**单一真相源**）：
-    * `canonical` → 只留「控制边 ∧ `on ∋ fail`」→ 剔 `"Nebula"` → 去重（保序）。
-    *
-    * 🔴 **为什么必须是单点**：运行期回边解析（`NodeEngine.loopRouteTargetId`，fail 判词的
-    * 重跑目标）与拒绝态判据（[[NodePayload.verifierRouteInvalid]]，载荷派生键
-    * `verifierRoute`）判的是**同一件事**——两处各自派生即产生「拒绝态说合法、运行期说
-    * 不合法」的对偶分歧（本批头号红线）。故两处一律经本函数取「选通边」面。
-    *
-    * 边界（调用方承担）：本函数**只**做选通边筛选，**不**判目标可解析性——可解析性由
-    * 调用方按 `resolveTargetId(nodes, _)` 现算（`out` / `pendingOut` 的合并面也在调用方，
-    * 例如判据 D 的 `declaredOut = canonical(out) ++ pendingOut`）。 */
-  def failRouteTargets(edges: List[OutEdge]): List[String] =
-    canonical(edges).filter(e => isLoopEdge(e) && e.on.contains(Fail))
-      .map(_.to).filterNot(_ == NebulaTarget).distinct
-
   /** Nebula 边**存量读路径**的缺省门集：completed + failed 双通报（旧拓扑零漂移）。
     *
     * **⚠ 两处语义自此分叉（2026-09-12 裁定 1 / R1-a 起）——本常量不再代表「新写一条
@@ -872,53 +857,11 @@ object NodeDef:
  *     同号入口项前移/去重（信息不可逆），本键保留空过滤原样 ⇒ 既有消费点
  *     （`web/js/flowMapArchive.js:443-456` 剔除首项后计数的多链判据）读旧键零降级，
  *     新键提供「哪些上游链汇聚到这里」这一旧键表达不出的面。
- *   - verifierRoute：**仅「拒绝态」的 verifier 携带**，值恒 `"lost"`（**failroute-guard
- *     批 2026-09-21 · 案 A**，判据 = [[verifierRouteInvalid]]）。**缺键 = 合法**——
- *     合法形态（有可解析 fail 选通边 / 空 out 的两相令牌形态 / `pendingOut` 里已声明
- *     待接线的控制边）一律缺键，故「有 out 的合法节点字段集字节级零漂移」。
- *     语义 = 「该 verifier 此刻**声明面**上没有任何可用的 fail 选通边 ⇒ 它的 fail 判词
- *     将无处可去（链在此停住）」。**纯派生量**（每次从 `canonical(out) ++ pendingOut`
- *     现算、零新持久字段、零迁移；与 `wiringGap` 同纪律）⇒ 补回 fail 边即自动消失。
- *     **仅快照载荷（NodeList / REST flow-map）携带**（与 `mergeQueue` 同款：WS 事件单一
- *     序列化点无项目全量节点视图）——调用方注入 `nodes` 才求值，缺省不带。
  * skill/mcp/preset 为节点配置（2b §B.4/H-11① deprecated，新建参数已退役）：同样
  * 条件序列化——仅非 None 才带（20260907 裁定③，无三键节点字段集字节级零漂移）。 */
 object NodePayload:
   /** taskPreview 截断上限（回退展示第一层，存量节点专用）。 */
   val TaskPreviewMaxChars: Int = 80
-
-  /** 拒绝态派生键的值（唯一取值；**缺键 = 合法**，见 [[buildNodeJson]] 头注）。 */
-  val VerifierRouteLost: String = "lost"
-
-  /** **判据 D：verifier 拒绝态**（failroute-guard 批 2026-09-21 · 案 A · 设计卡 §2.1 逐字）：
-    *
-    * ```
-    * verifierRouteInvalid(v) ≜ role(v) = verifier
-    *                        ∧ declaredOut(v) 中「合法 fail 选通边」数 = 0
-    *                        ∧ declaredOut(v) 非空
-    * declaredOut(v)          = canonical(v.out) ++ pendingOut(v)
-    * 合法 fail 选通边(e)     ≜ isLoopEdge(e) ∧ e.on ∋ fail ∧ e.to ≠ "Nebula"
-    *                        ∧ resolveTargetId(nodes, e.to).isDefined
-    * ```
-    *
-    * **纯函数、无 IO、零新持久字段**（与 `wiringGap` 同纪律：派生态，恢复即自动解禁）。
-    * 「选通边」的算面 = [[OutEdge.failRouteTargets]] **单一真相源**（与运行期
-    * `NodeEngine.loopRouteTargetId` 逐字同源，禁二次派生）。三条边界（裁定后取值）：
-    *  - (i) `declaredOut` **空** ⇒ **不计非法**（创建期两相令牌 `verifierRoutePending`
-    *      放行的正是「空 out」形态，既有声明期语义保留）；
-    *  - (ii) fail 边存在但目标**悬空** ⇒ **计非法**（与编辑期硬拒同口径，
-    *      `NodeTools.verdictRouteGate` 的悬空分支 —— 防「编辑期拒、派生态说合法」的对偶分歧）；
-    *  - (iii) `pendingOut` 非空 ⇒ 计入 `declaredOut`（**硬要求**：指向 running 目标的
-    *      控制边在编辑期入待接线队列、目标离开 running 才落 `out`，若只看 `out`，
-    *      合法补回会在整个待接线窗口被误报成拒绝态 —— 实盘窗口可达 24.5 分钟）。
-    *
-    * @param nodes 活动区节点表（判据 (ii) 的解析面；调用方现读同一份快照，禁跨快照混算）。 */
-  def verifierRouteInvalid(node: NodeDef, nodes: Map[String, NodeDef]): Boolean =
-    if NodeRoles.normalize(node.role) != NodeRoles.Verifier then false
-    else
-      val declaredOut = OutEdge.canonical(node.out) ++ node.pendingOut
-      declaredOut.nonEmpty &&
-        !OutEdge.failRouteTargets(declaredOut).exists(t => OutEdge.resolveTargetId(nodes, t).isDefined)
 
   def buildNodeJson(node: NodeDef, now: Long, chainId: Option[String] = None,
                     chainIds: Option[List[String]] = None,
@@ -927,12 +870,7 @@ object NodePayload:
                     sameKeyProjects: List[String] = Nil,
                     // chainmodel 批三 ②：新增键（默认 None ⇒ 既有调用方字段集零漂移，
                     // 参数追加在末尾 ⇒ 既有位置调用零改动）
-                    mergeUpstreamChains: Option[List[String]] = None,
-                    // failroute-guard 批（2026-09-21 案 A）：**快照专有判据注入**
-                    // （与 mergeQueue/mergeQueuePos 同款）——缺省 None ⇒ 既有调用方
-                    // （全部 WS 事件写点）字段集**字节级零漂移**；快照面
-                    // （NodeList 工具 / REST flow-map）传活动区节点表后按下述判据求值。
-                    nodes: Option[Map[String, NodeDef]] = None): Json =
+                    mergeUpstreamChains: Option[List[String]] = None): Json =
     val ttlLeft = node.ttlExpireAt.map(t => Math.max(0L, (t - now) / 1000L))
     val baseFields = List(
       "id" -> node.id.asJson,
@@ -1192,16 +1130,7 @@ object NodePayload:
       val roleFields = if node.role != NodeRoles.Task then List("role" -> node.role.asJson) else Nil
       val lastVerdictFields =
         node.lastVerdict.filter(_.trim.nonEmpty).toList.map(v => "lastVerdict" -> v.asJson)
-      // verifierRoute 条件序列化（failroute-guard 批 2026-09-21 · 案 A）：**仅拒绝态的
-      // verifier 携带**，值恒 "lost"。判据 = [[verifierRouteInvalid]]（纯函数、纯派生、
-      // 零新持久字段、零迁移）；**缺键 = 合法**——合法形态（可解析的 fail 选通边 /
-      // 空 out 的两相令牌形态 / `pendingOut` 里待接线的控制边）一律缺键 ⇒「有 out 的
-      // 合法节点字段集字节级零漂移」。**仅快照载荷携带**（调用方注入 `nodes` 才求值；
-      // WS 事件单一序列化点不传 ⇒ 事件键集断言零影响，与 `mergeQueue` 同款纪律）。
-      // 🔴 禁复刻判据（前端/分发器/第二处派生）：真源单点 = 本函数。
-      val verifierRouteFields =
-        nodes.filter(ns => verifierRouteInvalid(node, ns)).toList.map(_ => "verifierRoute" -> VerifierRouteLost.asJson)
-      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields ++ verifierRouteFields)*)
+      Json.obj((baseFields ++ outFields ++ legacyConfigFields ++ hasResultFields ++ wiringGapFields ++ taskPreviewFields ++ depsFields ++ feedbackFields ++ pluginFields ++ notifyFields ++ notifyPolicyFields ++ mergeFields ++ loopFields ++ bgWaitFields ++ reportPendingFields ++ destroyAtFields ++ retryFields ++ genFields ++ notifySentAtFields ++ pendingSuccessionFields ++ chainFields ++ roleFields ++ lastVerdictFields ++ mergeQueueFields ++ mergeQueuePosFields)*)
 
 /** Flow Map 活动区（§2.6，磁盘 flow-map.json）。 */
 case class FlowMapState(

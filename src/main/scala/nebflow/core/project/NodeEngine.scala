@@ -4187,13 +4187,11 @@ class NodeEngine(
     }
 
   /** fail 回边目标解析（`(fail)<target>:loop` 的**解析后节点 id**）：无此边 / 目标是
-    * "Nebula" / 悬空（含目标已在归档区——归档 = 已过期，重跑无意义）⇒ None。
-    *
-    * 选通边筛选 = [[OutEdge.failRouteTargets]] **单一真相源**（failroute-guard 批
-    * 2026-09-21 起；与拒绝态判据 `NodePayload.verifierRouteInvalid` 同点——两处各自派生
-    * 即「拒绝态说合法、运行期说不合法」的对偶分歧）。本处只在其上叠加**解析**一步。 */
+    * "Nebula" / 悬空（含目标已在归档区——归档 = 已过期，重跑无意义）⇒ None。 */
   private def loopRouteTargetId(v: NodeDef): IO[Option[String]] =
-    OutEdge.failRouteTargets(v.out).headOption match
+    OutEdge.canonical(v.out)
+      .filter(e => OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Fail))
+      .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct.headOption match
       case None => IO.pure(None)
       case Some(raw) => store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, raw))
 
@@ -4254,16 +4252,11 @@ class NodeEngine(
               case None =>
                 recordVerdict(nodeId, VerdictFail) *>
                   logger.warn(
-                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no usable '(fail)<target>:loop' edge — " +
-                      "REJECTION STATE: the verdict is recorded and the node completes, but NO re-run route exists, so the " +
-                      "judged worker is NOT re-run and the chain stops here. Restore the route with NodeEdit " +
-                      "out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)") *>
+                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no '(fail)<target>:loop' edge — " +
+                      "verdict recorded, no re-run route (the node still completes; see NODE_VERIFIER_NEEDS_ROUTE)") *>
                   FlowMapEventLog.append(workspace, projectName, nodeId, LoopRoundEventType,
-                    "verdict=fail but NO usable fail-route edge is declared — no re-run route exists; " +
-                      "the verifier is in the REJECTION STATE (see verifier-route-lost)") *>
-                  // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
-                  // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
-                  emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route") *>
+                    "verdict=fail but NO fail-route edge is declared — no re-run route exists (loop inert); " +
+                      "node completes with the verdict recorded") *>
                   completeNodeR(nodeId, resultText)
               case Some(targetId) =>
                 store.findNode(targetId).flatMap { tOpt =>
@@ -5355,7 +5348,7 @@ class NodeEngine(
     *
     * @param priorStatus 该节点**在 abandon 写状态之前**的现值（回填路径给当时的
     *        `Cancelled` ⇒ 依赖轨按「未满足」处理，保守留「待承接」可见态）。 */
-  def detachAbandonedNode(nodeId: String, priorStatus: String, emitRouteLost: Boolean = true): IO[NodeEngine.RetireDetach] =
+  def detachAbandonedNode(nodeId: String, priorStatus: String): IO[NodeEngine.RetireDetach] =
     // 零写出口（幂等硬约束的机械承担点）：无残留 ⇒ 一次 store.snapshot、零 mutate、
     // 零帧、零事件 —— 不是「写了同样内容」。快照与事务之间的竞态由事务内重算兜住
     // （真无残留则返回空台账，仍零帧）。
@@ -5404,33 +5397,14 @@ class NodeEngine(
                                  else (byOut.pendingSuccession :+ nodeId).distinct)
                            else byOut)
                 }
-                // **拒绝态受害集**（failroute-guard 批 2026-09-21 · 案 A A1；卡 A3 的判据
-                // 在此**前后各算一次**）：被本次摘边摘掉 fail 选通边的上游 referrer 里，
-                // 「摘前合法 ∧ 摘后失路」的 verifier = 受害位。摘边语义**逐字不动**（本批
-                // 只动它的后果面：可见态 + 告警）——本判据**腿无关**（工具腿 abandon 与
-                // 引擎腿 NodeCancel→30s 回填腿到达同一处），故只在此落点即覆盖两条到达路径。
-                val routeLost: List[String] = outRefs.filter { id =>
-                  (s.nodes.get(id), rewired.get(id)) match
-                    case (Some(before), Some(after)) =>
-                      !NodePayload.verifierRouteInvalid(before, s.nodes) &&
-                        NodePayload.verifierRouteInvalid(after, rewired)
-                    case _ => false
-                }
-                (s.copy(nodes = rewired),
-                 NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap, routeLost))
+                (s.copy(nodes = rewired), NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap))
         }.flatMap { case (_, d) =>
-          val refFrames = d.referrers.foldLeft(IO.unit) { (acc, tid) =>
+          d.referrers.foldLeft(IO.unit) { (acc, tid) =>
             acc >> store.getNode(tid).flatMap {
               case Some(n) => emitUpdated(n)
               case None    => IO.unit
             }
-          }
-          // 告警写点（卡 A2）：受害 verifier 的拒绝态在**同一帧**落盘 + WARN，主语 = 受害
-          // verifier。**按批聚合**（裁定⑤）= 本位退役动作恰一行；回填腿（同批多退役）由
-          // 调用方抑制本位发射、整批收口发一行（传 `emitRouteLost = false`）。
-          refFrames *>
-            (if emitRouteLost then emitVerifierRouteLost(d.routeLost.map(_ -> nodeId), "detach")
-             else IO.unit).as(d)
+          }.as(d)
         }
     }
 
@@ -5461,57 +5435,16 @@ class NodeEngine(
       if candidates.isEmpty then IO.pure(Nil)
       else
         candidates
-          // `emitRouteLost = false`：本条腿是**同批多退役**的集中来源，受害 verifier 的
-          // 告警按批聚合（裁定⑤：防同批多退役逐位刷屏，与 cancelled 通知熔断同纪律）——
-          // 整批收口发一行，见下方 `emitVerifierRouteLost`。
-          .traverse(id => detachAbandonedNode(id, NodeLifecycle.Cancelled, emitRouteLost = false).map(d => (id, d)))
-          .flatMap { pairs =>
-            val detached = pairs.collect { case (id, d) if !d.isEmpty => id }
-            // 受害集从**各退役位自己的台账**取（`RetireDetach.routeLost`）——此刻盘上引用
-            // 已被摘净，事后重扫必然空，故必须用摘边当场算出的台账。
-            val victims = pairs.flatMap { case (retired, d) => d.routeLost.map(v => v -> retired) }
+          .traverse(id => detachAbandonedNode(id, NodeLifecycle.Cancelled).map(d => (id, d)))
+          .map(_.collect { case (id, d) if !d.isEmpty => id })
+          .flatMap { detached =>
             detached.traverse_ { id =>
               FlowMapEventLog.append(workspace, projectName, id, FlowMapEventLog.AbandonedDetachType,
                 s"cancelled node's incident edges detached by the 30s backfill leg (in/out/deps severed on both " +
                   "sides ⇒ the node now forms its own terminal component; the chain sweep archives it)")
-            } *>
-              // 本批（回填腿）的**整批**受害集收口（一条事件行 + 一条 WARN；零受害 ⇒ 零写）。
-              emitVerifierRouteLost(victims, "30s backfill leg").as(detached)
+            }.as(detached)
           }
     }
-
-  /** **受害 verifier 拒绝态告警的收口写点**（failroute-guard 批 2026-09-21 · 案 A A2）：
-    * 按批发**一条** `verifier-route-lost` 事件行 + 一条 WARN（零受害 ⇒ 零写）。
-    *
-    * 主语（`nodeId` 字段）= **首个受害 verifier 的 id**（不是退役节点）——与
-    * `chain-cancelled` 以「代表节点」承载整批 nodeId 同族；summary 逐位载四项：受害
-    * verifier 名/id、被摘的 fail 目标 id、保留的 pass 目标集、可行动恢复文案
-    * （`NodeEdit out="(pass)<landing>, (fail)<worker>:loop"`）。
-    *
-    * `victims` = (受害 verifier id, 被摘的 fail 目标 id 或 "" 表示「无路由可摘」)；
-    * 现读受害者状态以取名字与保留的 pass 面（判据不落持久字段 ⇒ 每次现算）。
-    * 幂等：空集 ⇒ 零写零日志。 */
-  def emitVerifierRouteLost(victims: List[(String, String)], scope: String): IO[Unit] =
-    val uniq = victims.filter(_._1.trim.nonEmpty).distinct.sortBy(_._1)
-    if uniq.isEmpty then IO.unit
-    else
-      store.snapshot.flatMap { s =>
-        val views = uniq.map { case (verId, lostTarget) =>
-          val ver = s.nodes.get(verId)
-          FlowMapEventLog.VerifierRouteLostView(
-            verifierId = verId,
-            verifierName = ver.map(_.name).getOrElse(verId),
-            lostTargets = Option(lostTarget).filter(_.trim.nonEmpty).toList,
-            keptPassTargets = ver.toList.flatMap(v =>
-              OutEdge.canonical(v.out).filter(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e))
-                .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct).sorted)
-        }
-        val summary = FlowMapEventLog.verifierRouteLostSummary(scope, views)
-        FlowMapEventLog.append(workspace, projectName, views.head.verifierId,
-          FlowMapEventLog.VerifierRouteLostType, summary) *>
-          logger.warn(s"[verifier-route-lost] $summary (project=$projectName; see NodeList payload key " +
-            s"'verifierRoute' = ${NodePayload.VerifierRouteLost})")
-      }
 
   /** R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：
     * 终态写点已经知道「谁终态了 + 谁是它的 barrier」，信息完整——把「周期发现」变成
@@ -6520,15 +6453,9 @@ object NodeEngine:
       inMirrors: List[String] = Nil,
       outRefs: List[String] = Nil,
       depsRefs: List[String] = Nil,
-      selfRewired: Boolean = false,
-      /** **拒绝态受害集**（failroute-guard 批 2026-09-21 · 案 A A1）：本次摘边前后各算
-        * 一次「被摘掉 fail 选通边的 referrer」中**摘前合法 ∧ 摘后失路**的 verifier id
-        * （升序去重）。纯台账、零额外写；告警按批收口消费本字段
-        * （`NodeEngine.emitVerifierRouteLost`）。旧台账语义零改动 ⇒ 默认 Nil。 */
-      routeLost: List[String] = Nil
+      selfRewired: Boolean = false
   ):
-    /** 顶层「有没有动过」判据（幂等出口：空 ⇒ 零写、零帧）。**不含 `routeLost`**：
-      * 受害集是「本次摘边的后果读数」，非「有没有摘边」的判据（无摘边 ⇒ 受害集必空）。 */
+    /** 顶层「有没有动过」判据（幂等出口：空 ⇒ 零写、零帧）。 */
     def isEmpty: Boolean =
       inMirrors.isEmpty && outRefs.isEmpty && depsRefs.isEmpty && !selfRewired
     def referrers: List[String] = (inMirrors ++ outRefs ++ depsRefs).distinct.sorted
