@@ -135,9 +135,16 @@ class ProviderRegistry(
    * resolve, we fall back to the global candidate list so the agent still has
    * something to use. No capability filtering is performed — the user picks the
    * models, and fallback stays within that user-chosen set.
+   *
+   * 2026-09-21（作者令 19:16 腿 a）：链尾再追加**储备层**（[[reserveTier]]）——
+   * 配置里已存在但 preset 未引用的 provider/model。事故面：候选链恒为 3 条，且
+   * 恰是 2026-09-21 同日退化的三条（kimi 5h 额度 / zhipu 5h 上限 / deepseek 传输
+   * 层失联）⇒ 17:54 起链上只剩单点。储备层使「有效链深 1」在结构上不可达。
+   * 链序语义不变：储备层只是**追加**，不会插到 preferred/fallbacks 之前
+   * （REST 的「当前模型」显示取 healthy.head，故主用模型面零改）。
    */
   def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
-    agentModel match
+    val base = agentModel match
       case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
         getCandidates() // no config → global list
       case Some(cfg) =>
@@ -146,8 +153,44 @@ class ProviderRegistry(
         for
           resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
           agentCandidates = resolved.flatten
-          base <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidates()
-        yield base
+          b <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidates()
+        yield b
+    for
+      candidates <- base
+      config <- configRef.get
+    yield reserveTier(config, candidates)
+
+  /**
+   * 储备层（腿 a）：把 `config.llm.providers` 里**已存在但当前链未引用**的
+   * provider/model 按确定序（providerId → model id 字典序，非 Map 迭代序）
+   * 追加到链尾。
+   *
+   * 语义边界（逐条申报）：
+   *   - 只取配置**实存**项（provider 与 model 都必须已在 `nebflow.json` 里），
+   *     绝不凭空造候选；配置不足时链深照实（1 根就是 1 根）；
+   *   - 只**追加**、不重排、不去重已引用项之外的东西：与已引用 ref 相同的项被剔除；
+   *   - 字典序保证同配置下链序可复现（Map 迭代序不保证），便于取证与断言；
+   *   - 与 [[filterKnownProviders]] 正交（储备层全部来自当前 config，必然存活）。
+   */
+  private[llm] def reserveTier(
+    config: NebflowServiceConfig,
+    chain: List[ModelCandidate]
+  ): List[ModelCandidate] =
+    if config.llm.providers.isEmpty then chain
+    else
+      val referred = chain.map(c => s"${c.providerId}/${c.model}").toSet
+      val reserve = config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        provider.models
+          .sortBy(_.id)
+          .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
+          .map { mc =>
+            val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+            ModelCandidate(providerId, provider, mc.id, mc.contextWindow, vision, caps)
+          }
+      }
+      // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）
+      chain ++ reserve.distinctBy(c => s"${c.providerId}/${c.model}")
+  end reserveTier
 
   /**
    * Resolve vision + capabilities for a model.
