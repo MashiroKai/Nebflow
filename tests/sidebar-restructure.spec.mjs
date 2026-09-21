@@ -1,7 +1,9 @@
 // sidebar-restructure.spec.mjs — 批4-② 收尾节点验收 spec（隔离静态服务器 +
 // 页内 mock，真实 UI 代码全量执行；8100+ 端口纪律，永不触碰宿主 8080）。
 //
-//   T1 侧边栏重排：上方恰 messages+contacts（dde2c1afc 顺序交换后的现行为）；
+//   T1 侧边栏重排：上方恰 messages+contacts+social（dde2c1afc 顺序交换后的现
+//      行为；social-btn 系 2026-09-19 作者令①③授权的社交手机入口，2026-09-22
+//      随 socpanel r3 返工按 p547b 先例重定标入期望表）；
 //      下方固定序 files→projects→agents→usage→settings；旧面板入口
 //      (legacy-btn/teams-btn/flows-btn/legacy-pop/flows-indicator/flows-dropdown) 零复活。
 //   T2 toggle 收编：设置页与插件面板开关同源 .nb-toggle class + computed
@@ -137,17 +139,20 @@ async function boot(page) {
 // 顺序交换」）把静态 DOM 与 friends-on 重挂腿（activityBar.js enableFriendPanels
 // `spacer.before(msgsBtn, contactsBtn)`）统一改为 messages→contacts，本 spec 未随
 // 更新 ⇒ 基线 RED（spec 过时，p547b 2026-09-15 按现行为重定标，见
-// .nebflow/reports/20260915_p547b-impl.md ⑤#6）。
-const ACTIVITY_ORDER_IDS = ['activity-avatar', 'messages-btn', 'contacts-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
+// .nebflow/reports/20260915_p547b-impl.md ⑤#6）。2026-09-22 socpanel r3 返工
+// （verifier F5）同先例第二次重定标：社交入口 social-btn（index.html :92，
+// contacts 之下、spacer 之前，作者 2026-09-19 令①③授权位）入期望表，topBtns
+// 扩为三元——结构全等断言本身不动，只随现行为修期望值。
+const ACTIVITY_ORDER_IDS = ['activity-avatar', 'messages-btn', 'contacts-btn', 'social-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
 
-test('T1 § sidebar order: top = avatar+contacts+messages; bottom fixed order; no legacy revival', async ({ page }) => {
+test('T1 § sidebar order: top = avatar+messages+contacts+social; bottom fixed order; no legacy revival', async ({ page }) => {
   await boot(page);
   await page.goto(base);
   const ids = await page.$$eval('#activity-bar > *', els => els.map(e => e.id || e.className));
   // Structural equality: exactly the spec elements, in the spec order — any
   // revived legacy entry would break equality.
   expect(ids).toEqual(ACTIVITY_ORDER_IDS);
-  // Top group: exactly two .activity-btn (contacts + messages) above spacer.
+  // Top group: exactly three .activity-btn (messages + contacts + social) above spacer.
   const topBtns = await page.$$eval('#activity-bar > *', els => {
     const out = [];
     for (const e of els) {
@@ -156,7 +161,7 @@ test('T1 § sidebar order: top = avatar+contacts+messages; bottom fixed order; n
     }
     return out;
   });
-  expect(topBtns).toEqual(['messages-btn', 'contacts-btn']);
+  expect(topBtns).toEqual(['messages-btn', 'contacts-btn', 'social-btn']);
   // Dead entries must not exist anywhere in the document (not merely hidden).
   for (const dead of ['legacy-btn', 'teams-btn', 'flows-btn', 'legacy-pop', 'flows-indicator', 'flows-dropdown']) {
     expect(await page.locator(`#${dead}`).count(), `${dead} must stay deleted`).toBe(0);
