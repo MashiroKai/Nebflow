@@ -4,6 +4,47 @@
 import { addSourceToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
 import { mintTickets, stripCredentialParams } from '../nfTicket.js';
 
+/** Scroll one heading to the TOP of the markdown content scroller — and of nothing
+ *  else.
+ *
+ *  Why not `Element.scrollIntoView({ block: 'start' })` (what this path used until
+ *  2026-09-20): the CSSOM View algorithm is NOT scoped to the nearest scroll
+ *  container. It walks the target's entire ancestor chain and aligns the target
+ *  against EVERY scrollable box on the way, each one clamped to its own scroll
+ *  range — and `overflow: hidden` boxes are scroll containers too (they are just
+ *  not user-scrollable). So one TOC click also wrote whatever residual scroll each
+ *  ancestor happened to carry, including the root scroller: pointer-up on a
+ *  directory item moved the whole client (author report 2026-09-20 22:56, Windows:
+ *  「不仅是内容跳转了，nebflow 客户端整体也上移了一点」). Measured in the harness
+ *  (tests/mdscroll-toc-scroll.spec.mjs): with a residual on the root scroller the
+ *  click moved `documentElement.scrollTop` 0 → +N and `window.scrollY` 0 → +N; with
+ *  a residual inside the canvas panel `#canvas-panel.scrollTop` moved with it. The
+ *  intended effect is one container's own scrollTop, so it is written directly and
+ *  nothing else may move — same discipline as messages.js `revealQuoteTarget`
+ *  (「🔴 不使用 scrollIntoView：它会把滚动写进任一 overflow:hidden 祖先」).
+ *
+ *  `block: 'start'` semantics are preserved exactly: the heading's top edge lands on
+ *  the scrollport's top edge, clamped to [0, max]. A heading near the document end
+ *  therefore cannot be aligned — that clamp is the browser's own behaviour, not a
+ *  precision regression (harness judges the landing against the same clamped
+ *  expectation).
+ *
+ *  @param {HTMLElement} mdViewer `.canvas-md-viewer` — the scroller is its parent
+ *    (this viewer builds `<div class="canvas-md-scroll"><div class="canvas-md-viewer">`)
+ *  @param {HTMLElement} target the heading to bring to the top */
+function scrollHeadingToTop(mdViewer, target) {
+  const scroller = /** @type {HTMLElement|null} */ (mdViewer.closest('.canvas-md-scroll'));
+  // No scroller in the chain (an unexpected host mounted this viewer) ⇒ nothing to
+  // scroll. Deliberately NOT a scrollIntoView fallback: that is the leak itself.
+  if (!scroller) return;
+  const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  scroller.scrollTo({
+    top: Math.max(0, Math.min(max, scroller.scrollTop + delta)),
+    behavior: 'smooth',
+  });
+}
+
 /** Markdown viewer - render formatted markdown (read-only preview) */
 async function viewMarkdown(pane, { content, absPath, fileName }) {
   // Content-unchanged guard. Focus/visibility refreshes re-fetch the same
@@ -144,9 +185,10 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
       const href = link.getAttribute('href');
       const route = routeLocalHref(href, baseDir);
       if (route.kind === 'anchor') {
-        // TOC anchor: scroll within the pane, not the window. marked v12
-        // URL-encodes CJK chars in href="#..." anchors, but heading IDs use raw
-        // characters. Try decoded first, fall back to raw.
+        // TOC anchor: scroll within the pane's content container, not the window,
+        // and not any other scrollable ancestor either (scrollHeadingToTop above).
+        // marked v12 URL-encodes CJK chars in href="#..." anchors, but heading IDs
+        // use raw characters. Try decoded first, fall back to raw.
         if (!href || href === '#') return;
         e.preventDefault();
         const raw = href.slice(1);
@@ -154,7 +196,7 @@ async function viewMarkdown(pane, { content, absPath, fileName }) {
         try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
         const target = mdViewer.querySelector(`[id="${decoded}"]`) ||
                        mdViewer.querySelector(`[id="${raw}"]`);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (target) scrollHeadingToTop(mdViewer, target);
         return;
       }
       // `none`: mailto:/tel:/data:/javascript: — the browser's own business.
