@@ -46,6 +46,103 @@ let pendingFileQueues = {};
 // transferId -> File
 let pendingUploads = {};
 
+// ===== 设备腿**传输生命周期**台账 + emission（uxconsist Phase B · §3.3）=====
+//
+// 病灶（R3-device / R6-device / R7-device / R8-device 四格的共同成因）：设备附件腿的
+// 传输态**只活在本模块内部**（FIFO 无 UI、失败只 `console.error`、无取消），而**新窗**
+// （messages.js 面）的附件反馈面此前只由「服务端腿的 dropbox 通知」驱动 ⇒ 动作面与
+// 反馈面**结构性脱节**（§7 清扫 #7）。本段把「传输发生了什么」升为**单点 emission**：
+//   · 唯一属主仍 = 本模块（传输链一行不动：FIFO / offer / 上行 / 台账全在此）；
+//   · 消费方（messages.js）只据此**登记显示态**（`attachUpload.registerExternalTransfer`
+//     / `updateExternalTransfer`）——只共享显示，不碰传输（`attachTargetOf(device)`
+//     恒 `null` 的结构性隔离不变）。
+// 🔴 emission 的 `id` = **本地件号**（`dt-…`）：件在 offer 被受理前后都要有稳定键
+//    （wire 的 `transferId` 由「出向 file 消息逐件对号」给出，见 `dropbox-message` 腿），
+//    故 emission 一律用本地件号，wire id 只作**加性字段**回带（取消/断言用）。
+
+/** 本地件号 → 传输台账条目 `{id, deviceId, file, transferId, state, controller}`。 */
+const deviceTransfers = new Map();
+/** wire `transferId` → 本地件号（帧回包按 wire id 找卡）。 */
+const transferIdIndex = new Map();
+let transferSeq = 0;
+
+/** 本地件号（唯一生成点）。 */
+function nextTransferLocalId() {
+  transferSeq += 1;
+  return `dt-${Date.now().toString(36)}-${transferSeq}`;
+}
+
+/** 入队建台账（S1 排队行的**显示态**源）。 */
+function trackTransfer(deviceId, file) {
+  const item = { id: nextTransferLocalId(), deviceId, file, transferId: '', state: 'queued', controller: null };
+  deviceTransfers.set(item.id, item);
+  return item;
+}
+
+/** 出向 file 消息逐件对号时**同拍**锚上 wire id（与 `pendingUploads` 的 FIFO 同一次
+ *  消费 ⇒ 两表不可能各锚一件；禁另写第二套对号）。 */
+function bindTransferWireId(deviceId, transferId, file) {
+  for (const item of deviceTransfers.values()) {
+    if (item.deviceId === deviceId && item.file === file && !item.transferId) {
+      item.transferId = transferId;
+      transferIdIndex.set(transferId, item.id);
+      return item;
+    }
+  }
+  return null;
+}
+
+const transferSubscribers = /** @type {Set<(evt: any) => void>} */ (new Set());
+
+/** 传输生命周期订阅（返回注销函数；形态同既有 `onDeviceMessageChange`）。**只做通知**。 */
+export function onDeviceTransfer(cb) {
+  transferSubscribers.add(cb);
+  return () => transferSubscribers.delete(cb);
+}
+
+/** emission 单点（订阅方异常**绝不**回灌传输链）。 */
+function emitTransfer(evt) {
+  for (const cb of [...transferSubscribers]) {
+    try { cb(evt); } catch (e) { console.error('[dropbox] transfer subscriber failed:', e); }
+  }
+}
+
+/** 批量置终态（offer 被拒 / 闸位错误回包）：所有**未对号**的排队件一并翻面 ——
+ *  否则它们会永远停在「排队中」（那些文件不会再收到出向 file 消息去消费）。
+ *  🔴 `file` **必须在场**（§5 R3/R4-device）：卡面的重试键由消费方按 `evt.file` 装配
+ *     （`messages.js::onDeviceTransferEvent`）—— 缺它则失败卡只有文案、没有重试入口。 */
+function failQueuedTransfers(deviceId, message, code) {
+  for (const item of deviceTransfers.values()) {
+    if (item.deviceId !== deviceId || item.transferId || item.state !== 'queued') continue;
+    item.state = 'failed';
+    emitTransfer({ phase: 'failed', deviceId, id: item.id, name: item.file.name, size: item.file.size, file: item.file, message, code });
+  }
+}
+
+/** 取消一件设备附件传输（§5 R7-device · S8；新窗卡上的取消键唯一落点）。
+ *
+ *  两档（同一函数的两个分支，语义如实登记）：
+ *   · **未 offer**（仍在 `pendingFileQueues`）：移出 FIFO —— 否则下一次成功 offer 会把
+ *     `transferId` 对号到一件用户已取消的文件（静默传错件，R6 病灶形态）；
+ *   · **在传**：`AbortController` 断上行。
+ *  🔴 「对端是否停」需取消帧 / 后端确认 abort 语义 ⇒ **本批不承诺**（设计件 §9-3 候令项，
+ *     不属本批；此处如实声明：客户端只停**上行**）。 */
+export function cancelDeviceTransfer(deviceId, id) {
+  const item = deviceTransfers.get(id);
+  if (!item || item.state === 'cancelled' || item.state === 'sent') return;
+  const dev = deviceId || item.deviceId;
+  item.state = 'cancelled';
+  const queue = pendingFileQueues[dev] || [];
+  const qi = queue.indexOf(item.file);
+  if (qi >= 0) queue.splice(qi, 1);
+  if (queue.length === 0) delete pendingFileQueues[dev];
+  try { item.controller?.abort(); } catch { /* 已结束 */ }
+  emitTransfer({
+    phase: 'cancelled', deviceId: dev, id: item.id, transferId: item.transferId,
+    name: item.file.name, size: item.file.size, message: t('messages.attachCancelled'),
+  });
+}
+
 // ===== 发送件真句柄表（selfattach 批 · 片 2「A 腿」，作者 D-1 = A + B′ 混合裁定）=====
 //
 // **发**侧本机字节句柄（浏览器 user 腿唯一可得的字节源）：`File` 是**盘上惰性句柄**，
@@ -442,27 +539,33 @@ function clearPendingFileQueue(deviceId) {
 }
 
 /**
- * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤1,073,741,824 B），
+ * 用户选/拖了文件 —— **闸位在本地先判一次**（件数 ≤9、单件 ≤1 GiB、非空件），
  * 超限**可见拒绝并回显实际值**（禁静默丢弃、禁只 console.error）。
  * 后端闸位仍在（本地闸只是提前反馈，不是唯一防线）。
+ *
+ * 📌 uxconsist Phase B（§7 清扫 #1/#2 + §5 R3-device 行）：闸位判据**三面同源** ——
+ * 本腿改调 `attachUpload.js` 的 `validateFiles`（**同一**实现，常量本就同源；补上
+ * 「空件」判据），拒绝面在**新窗**就地可见（卡行）+ 旧 dropbox 窗保留既有台账 notice。
+ * 动态 `import()` = 本仓既有的**破环**手法（本模块 ↔ attachUpload.js 的静态边会成 SCC，
+ * 见 `scripts/check-circular.mjs`；attachUpload.js 侧对 messages.js 用的是同一手法）。
+ * @returns {Promise<void>}
  */
-function handleFilesSelected(deviceId, fileList) {
+async function handleFilesSelected(deviceId, fileList) {
   const files = Array.from(fileList || []);
   if (files.length === 0) return;
 
-  if (files.length > ATTACH_MAX_PER_MESSAGE) {
-    showDropboxNotice(deviceId, t('dropbox.tooManyFiles')
-      .replace('{actual}', String(files.length))
-      .replace('{limit}', String(ATTACH_MAX_PER_MESSAGE)));
-    return;
-  }
-  const tooBig = files.find(f => f.size > ATTACH_MAX_FILE_BYTES);
-  if (tooBig) {
-    showDropboxNotice(deviceId, t('dropbox.fileTooLarge')
-      .replace('{name}', tooBig.name)
-      .replace('{actual}', formatSize(tooBig.size))
-      .replace('{actualBytes}', String(tooBig.size))
-      .replace('{limit}', ATTACH_MAX_FILE_LABEL));
+  const { validateFiles } = await import('./attachUpload.js');
+  const gate = validateFiles(files);
+  if (!gate.ok) {
+    const names = files.map(f => (f && f.name) || '').filter(Boolean);
+    emitTransfer({
+      phase: 'rejected', deviceId, id: nextTransferLocalId(),
+      // 名字只取**实际件名**（不新造「N 件」这类文案：文案白名单外零新增，§8）。
+      name: names[0] || '', size: (files[0] && files[0].size) || 0,
+      files: files.length === 1 ? [files[0]] : [], // 单件才给「重选同件」的重试面（件数超限重试必然再拒）
+      message: gate.message, code: 'gate',
+    });
+    showDropboxNotice(deviceId, gate.message); // 旧窗台账 notice（§7 #2 保留档）
     return;
   }
 
@@ -471,11 +574,25 @@ function handleFilesSelected(deviceId, fileList) {
   // 故先探活再入队；未连接 ⇒ 不入队 + 可见提示。
   if (!(state.ws && state.ws.readyState === 1 /* WebSocket.OPEN */)) {
     clearPendingFileQueue(deviceId);
-    showDropboxNotice(deviceId, t('dropbox.notConnected'));
+    const text = t('dropbox.notConnected');
+    emitTransfer({
+      phase: 'rejected', deviceId, id: nextTransferLocalId(),
+      name: (files[0] && files[0].name) || '', size: (files[0] && files[0].size) || 0,
+      files: files.length === 1 ? [files[0]] : [], message: text, code: 'not_connected',
+    });
+    showDropboxNotice(deviceId, text);
     return;
   }
 
+  // 逐件建台账（S1 排队行 = 本腿的**显示态**源）+ 既有 FIFO 语义逐字不变。
+  const items = files.map(f => trackTransfer(deviceId, f));
   pendingFileQueues[deviceId] = (pendingFileQueues[deviceId] || []).concat(files);
+  for (const item of items) {
+    emitTransfer({
+      phase: 'queued', deviceId, id: item.id,
+      name: item.file.name, size: item.file.size, file: item.file,
+    });
+  }
   sendWs({
     type: 'dropbox-file-offer',
     deviceId,
@@ -766,10 +883,13 @@ export function initDropbox() {
     if (m.kind === 'file' && m.direction === 'out') {
       const queue = pendingFileQueues[deviceId] || [];
       if (queue.length > 0) {
-        pendingUploads[m.transferId] = queue.shift();
+        const nextFile = queue.shift();
+        pendingUploads[m.transferId] = nextFile;
         // selfattach 批 · 片 2（A 腿）：**同处**登记发送侧真句柄 —— 位置**先于**下方
         // `afterDeviceMessageChange` ⇒ 本行**首帧渲染即带句柄**（作者令要求「首帧即带」）。
         rememberOutFileHandle(m.transferId, pendingUploads[m.transferId]);
+        // uxconsist Phase B：**同一次 FIFO 消费**里锚上台账（两表不可能各锚一件）。
+        bindTransferWireId(deviceId, m.transferId, nextFile);
         if (queue.length === 0) delete pendingFileQueues[deviceId];
       }
     }
@@ -788,29 +908,54 @@ export function initDropbox() {
     // transferId 错配到上一次的文件。清空必须与提示**同一轮**发生。
     clearPendingFileQueue(deviceId);
     let text = msg.error || t('dropbox.failed');
+    // 卡面（新窗 = 本批可见面）文案 = **§8 白名单键**：闸位码取同族键，其余（含服务端
+    // 自由文本 `msg.error`）一律落 `messages.attachFailed` —— 🔴 自由文本只留在旧窗台账
+    // notice 上，禁进卡面（白名单外零新增 / 零透传）。
+    let cardText = t('messages.attachFailed');
     if (detail.code === 'ATTACH_TOO_MANY') {
       text = t('dropbox.tooManyFiles')
         .replace('{actual}', String(detail.actual))
         .replace('{limit}', String(detail.limit));
+      cardText = text;
     } else if (detail.code === 'ATTACH_TOO_LARGE') {
       text = t('dropbox.fileTooLarge')
         .replace('{name}', '')
         .replace('{actual}', formatSize(detail.actual))
         .replace('{actualBytes}', String(detail.actual))
         .replace('{limit}', ATTACH_MAX_FILE_LABEL);
+      cardText = text;
     }
     if (deviceId) showDropboxNotice(deviceId, text);
     else console.error('[dropbox]', text);
+    // 未对号的排队件一并翻「失败」（否则永远停在「排队中」）：可见面 = 新窗卡行（卡面文案
+    // 用三面同款 `messages.attachFailed` / 闸位同族键，`text` 仍留在旧窗台账 notice 上）。
+    if (deviceId) failQueuedTransfers(deviceId, cardText, detail.code || 'offer_failed');
   });
 
   // File offer accepted/rejected (sender side)
   onMessage('dropbox-file-response', (msg) => {
     const inner = msg.msg || {};
     const { transferId, accepted } = inner;
+    const localId = transferIdIndex.get(transferId) || '';
     if (accepted && pendingUploads[transferId]) {
       uploadFile(transferId, pendingUploads[transferId]);
     } else if (!accepted) {
       delete pendingUploads[transferId];
+      // 卡面文案 = §8 白名单键（门禁 `check-msgstyle-single-source` 逐键对表）。
+      failQueuedTransfers(msg.deviceId, t('messages.attachFailed'), 'rejected');
+    }
+    if (localId) {
+      const item = deviceTransfers.get(localId);
+      if (item && item.state === 'queued') item.state = accepted ? 'transferring' : 'failed';
+      emitTransfer({
+        phase: accepted ? 'transferring' : 'failed',
+        deviceId: msg.deviceId, id: localId, transferId,
+        name: (item && item.file && item.file.name) || '',
+        size: (item && item.file && item.file.size) || 0,
+        // `file` 在场 ⇒ 失败卡的重试键（§5 R3/R4-device：重试 = 新传输，如实声明）。
+        file: (item && item.file) || null,
+        message: accepted ? '' : t('messages.attachFailed'), code: accepted ? '' : 'rejected',
+      });
     }
     updateFileMessageStatus(msg.deviceId, transferId, accepted ? 'accepted' : 'rejected');
   });
@@ -822,6 +967,18 @@ export function initDropbox() {
     // 🔴 只删「待上传队列」那半（上传交接已完成）——发送侧**句柄表**（`outFileHandles`）
     //    不在此删除：完成态的卡正是要用它取字节（selfattach 批 · 片 2）。
     delete pendingUploads[transferId];
+    const localId = transferIdIndex.get(transferId) || '';
+    if (localId) {
+      const item = deviceTransfers.get(localId);
+      if (item && item.state !== 'cancelled') item.state = success ? 'sent' : 'failed';
+      emitTransfer({
+        phase: success ? 'sent' : 'failed', deviceId: msg.deviceId, id: localId, transferId,
+        name: (item && item.file && item.file.name) || '',
+        size: (item && item.file && item.file.size) || 0,
+        file: (item && item.file) || null, // 失败卡重试键（§5 R3/R4-device）
+        message: success ? '' : t('messages.attachFailed'), code: success ? '' : 'transfer_failed',
+      });
+    }
     const msgs = dropboxMessages[msg.deviceId] || [];
     const m = msgs.find(x => x.transferId === transferId);
     if (m) {
@@ -842,6 +999,18 @@ export function initDropbox() {
       m.totalBytes = totalBytes;
       m.downloadedBytes = bytesReceived;
       afterDeviceMessageChange(msg.deviceId);
+    }
+    // S3 进度 emission（§3.3）：**唯一**进度来源仍是网关「服务端已确认一块」的帧
+    // （禁本地假进度）⇒ 新窗卡上的数值与本帧同拍。
+    const localId = transferIdIndex.get(transferId) || '';
+    if (localId) {
+      const item = deviceTransfers.get(localId);
+      if (item && item.state === 'transferring') {
+        emitTransfer({
+          phase: 'progress', deviceId: msg.deviceId, id: localId, transferId,
+          bytesSent: Number(bytesReceived) || 0, totalBytes: Number(totalBytes) || 0,
+        });
+      }
     }
   });
 
@@ -867,20 +1036,40 @@ function updateFileMessageStatus(deviceId, transferId, status) {
   }
 }
 
+/** 上行（不改任何 wire 形态）。失败面自 uxconsist Phase B 起**可见化**（§3.3 +
+ *  §8.2 改写③）：改前失败**只**进控制台（`console.error` 单一面 ⇒ 用户在屏上零反馈），
+ *  现在同时 emit `failed` ⇒ 新窗卡行显示 `messages.attachFailed`（三面同款文案）。
+ *  `console.error` 保留 = 诊断面（不再承担用户面）。 */
 async function uploadFile(transferId, file) {
+  const localId = transferIdIndex.get(transferId) || '';
+  const item = localId ? deviceTransfers.get(localId) : null;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  if (item) item.controller = controller;
+  const failFace = (code, detail) => {
+    console.error('[dropbox] Upload failed:', detail);
+    if (item && item.state !== 'cancelled') {
+      item.state = 'failed';
+      emitTransfer({
+        phase: 'failed', deviceId: item.deviceId, id: item.id, transferId,
+        name: item.file.name, size: item.file.size,
+        file: item.file, // 失败卡重试键（§5 R3/R4-device：重试 = 重走入队的新传输）
+        message: t('messages.attachFailed'), code,
+      });
+    }
+  };
   try {
     const token = getAuthToken();
     const resp = await fetch(`/api/neblink/dropbox/upload/${transferId}`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` },
-      body: file
+      body: file,
+      ...(controller ? { signal: controller.signal } : {}),
     });
     const data = await resp.json();
-    if (!data.ok) {
-      console.error('[dropbox] Upload failed:', data.error);
-    }
+    if (!data.ok) failFace(data.code || 'upload_failed', data.error);
   } catch (e) {
-    console.error('[dropbox] Upload error:', e);
+    if (item && item.state === 'cancelled') return; // 用户主动取消 ⇒ 终态已定，不覆盖
+    failFace('network', e);
   }
 }
 
@@ -952,7 +1141,8 @@ export function sendDeviceText(deviceId, text) {
   sendWs({ type: 'dropbox-send-text', deviceId, text });
 }
 
-/** 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽）——闸位/队列/offer 全在本模块单点。 */
+/** 附件发送入口（卡 D3：设备面**保留**纸夹 + 拖拽）——闸位/队列/offer 全在本模块单点。
+ *  （Phase B 起闸位判据经动态 import 走三面同源实现，故本入口是 async 的 fire-and-forget。） */
 export function sendDeviceFiles(deviceId, fileList) {
-  handleFilesSelected(deviceId, fileList);
+  void handleFilesSelected(deviceId, fileList);
 }

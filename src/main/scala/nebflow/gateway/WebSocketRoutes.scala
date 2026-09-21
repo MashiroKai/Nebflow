@@ -943,7 +943,8 @@ class WebSocketRoutes(
 
     case req @ GET -> Root / fileName =>
       val allowed =
-        Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
+        Set("style.css", "app.js", "favicon-32.png", "favicon-16.png", "favicon.ico",
+          "favicon-180.png", "favicon-192.png", "favicon-512.png")
       if allowed.contains(fileName) then
         StaticFile
           .fromResource(s"web/$fileName", Some(req))
@@ -1212,6 +1213,23 @@ class WebSocketRoutes(
   }
 
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+
+  /** The Canvas / file-viewer OPEN gate — the largest file the WS `pop.readFile`
+    * leg will serve (2026-09-20 author order: 10MB → 100MB; the author could not
+    * open a PDF over 10MB). It is the ONE ruler for the open path on the server
+    * side: the frontend pre-check (`web/js/attachmentPreview.js` `MAX_TEXT_BYTES`)
+    * mirrors this value, so the two cannot drift.
+    *
+    * NOT the WS frame cap (`MaxMessageSize` above, inbound), nor
+    * `FileRefs.MaxFileSize` (200MB, the Card/Pop reference probe), nor the
+    * inline budgets (5MB image / 40k `data:` URI) — those are other surfaces.
+    *
+    * Cost note: this gate bounds the WS TEXT-content leg only in size, not in
+    * streaming (a WS frame carries one whole string). The BINARY leg does not
+    * read the bytes at all — it sends metadata and the viewer streams the file
+    * from `GET /api/nf-file` (http4s `StaticFile` ⇒ `fs2.io.file.Files.readRange`),
+    * so a 100MB PDF never enters this JVM's heap (see the `pop.readFile` case). */
+  private val MaxPopReadFileBytes: Long = 100L * 1024 * 1024
 
   /** Public facade for REST API to call into the same message handler. */
   def handleMessagePublic(text: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
@@ -2656,10 +2674,17 @@ class WebSocketRoutes(
                   new RuntimeException("path is not a regular file")
                 )
                 fileSize = os.size(basePath)
-                _ <- IO.raiseWhen(fileSize > 10L * 1024 * 1024)(
-                  new RuntimeException("file exceeds 10MB limit")
+                _ <- IO.raiseWhen(fileSize > MaxPopReadFileBytes)(
+                  new RuntimeException(s"file exceeds ${MaxPopReadFileBytes / (1024 * 1024)}MB limit")
                 )
-                content <- IO.blocking { os.read(basePath) }
+                // 🔴 二进制腿不读字节（2026-09-20 打开闸批）：本 case 只回元数据，
+                // 字节由前端经 `/api/nf-file` 流式取回（`StaticFile` ⇒
+                // `fs2.io.file.Files.readRange`，支持 Range）。改前这里对所有件
+                // 无条件 `os.read` 再丢弃二进制的 content —— 闸提到 100MB 后那等于
+                // 为一次 PDF 打开把 100MB 读进堆里再扔。
+                popExt = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
+                popIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(popExt).binary
+                content <- if popIsBinary then IO.pure("") else IO.blocking { os.read(basePath) }
               yield (content, basePath.toString, fileSize, popFilePath))
                 .flatMap { case (content, absPath, fileSize, origPath) =>
                   val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
@@ -3621,33 +3646,25 @@ class WebSocketRoutes(
 
           case "checkUpdate" =>
             val currentVer = nebflow.Version.string
-            val result = IO
-              .blocking {
-                try
-                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
-                  // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
-                  // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
-                  // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
-                  val url = s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
-                  val conn = java.net.URI.create(url).toURL.openConnection()
-                  conn.setConnectTimeout(5000)
-                  conn.setReadTimeout(5000)
-                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim
-                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——OSS 镜像无 release 名，版本号兜底
-                  else None
-                catch case _: Exception => None
-              }
+            // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
+            // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
+            // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
+            // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
+            // hotupdate 批 1：读取与比对本体已抽到 VersionCheck（单一实现）——更新
+            // 编排器的「检查」相位与本分支同源，禁第二套比对。帧形状逐字段不变。
+            val result = nebflow.core.hotupdate.VersionCheck
+              .fetchRaw()
               .flatMap {
-                case Some((tag, releaseName)) =>
+                case Some(tag) =>
                   val latestVer = tag.stripPrefix("v")
-                  val hasUpdate = latestVer != currentVer
+                  val hasUpdate = nebflow.core.hotupdate.VersionCheck.hasUpdate(currentVer, latestVer)
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "updateCheckResult".asJson,
                       "currentVersion" -> currentVer.asJson,
                       "latestVersion" -> latestVer.asJson,
                       "hasUpdate" -> hasUpdate.asJson,
-                      "releaseName" -> releaseName.asJson
+                      "releaseName" -> tag.asJson
                     )
                   )
                 case None =>
@@ -3661,46 +3678,85 @@ class WebSocketRoutes(
               }
             result
 
+          // ── 一键更新（设置页）：接统一更新编排器（hotupdate 批 1 · D3 · 闭 G1）。
+          // 本批前：本段**只装不重启**（内联 curl|sh，整段零重启调用）⇒ 点完仍是旧版在跑。
+          // 本批后：发**更新请求**给编排器 ⇒ 检查 → 准备 → 冻结 → 更新（安装动作本体
+          // #26）→ 重启（**委托既有热重启编排器**）→ 恢复（后继进程自己走既有开机链）。
+          // 向后兼容：既有 updateStarted / updateCompleted 两帧保留不删（安装相位回执经
+          // onInstallOutcome 发出，形状与字段语义不变）；相位进度走统一 updateProgress 帧。
+          // 确认位：沿用既有 restart 命令的强制位语义——缺 confirm 直接拒绝 + 可行动错误。
           case "doUpdate" =>
-            val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
-            wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
-              IO.blocking {
-                import sys.process.*
-                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-                // String concat (not s"") — the powershell snippets contain
-                // $env: which an interpolator would try to resolve.
-                val script =
-                  if beta then
-                    if isWindows then
-                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + Branding.installPs1Url + """ | iex" """
-                    else "curl -fsSL " + Branding.installUrl + " | sh -s -- --beta"
-                  else if isWindows then """powershell -Command "& { iwr """ + Branding.installPs1Url + """ | iex }" """
-                  else "curl -fsSL " + Branding.installUrl + " | sh"
-                val exitCode = script.!
-                if exitCode == 0 then
-                  wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
-                else
-                  wsSend(
-                    io.circe.Json
-                      .obj(
+            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val beta = rc.downField("beta").as[Boolean].getOrElse(false)
+            val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
+            val idemKey = rc.downField("idempotencyKey").as[String].toOption
+            sharedResources.updateOrchestrator match
+              case None =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "updateCompleted".asJson,
+                    "success" -> false.asJson,
+                    "error" -> "update orchestrator is not available in this instance".asJson
+                  )
+                )
+              case Some(orchestrator) =>
+                val updateReq = nebflow.core.hotupdate.UpdateRequest(
+                  source = nebflow.core.hotupdate.UpdateSource.Settings,
+                  confirm = confirmed,
+                  channel =
+                    if beta then nebflow.core.hotupdate.UpdateChannel.Beta
+                    else nebflow.core.hotupdate.UpdateChannel.Stable,
+                  // 裁定 7：更新场景等待上限独立值 300s（界面重启命令那一处的 600s
+                  // 默认本批零改动——两值互不影响，见 UpdateDefaults 注释）。
+                  mode = nebflow.core.hotrestart.RestartMode.WaitIdle(
+                    nebflow.core.hotupdate.UpdateDefaults.awaitIdleMs),
+                  idempotencyKey = idemKey
+                )
+                // 安装相位回执 → 既有完成帧（向后兼容；失败分支的文案来自安装动作本体 #26）
+                val onInstallOutcome: Either[String, String] => IO[Unit] =
+                  case Right(_) =>
+                    wsSend(
+                      io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
+                  case Left(err) =>
+                    wsSend(
+                      io.circe.Json.obj(
                         "type" -> "updateCompleted".asJson,
                         "success" -> false.asJson,
-                        "error" -> s"Exit code: $exitCode".asJson
-                      )
-                  )
-              }.flatten
-                .handleErrorWith { e =>
-                  wsSend(
-                    io.circe.Json
-                      .obj(
-                        "type" -> "updateCompleted".asJson,
-                        "success" -> false.asJson,
-                        "error" -> e.getMessage.asJson
-                      )
-                  )
+                        "error" -> err.asJson
+                      ))
+                orchestrator.request(updateReq, onInstallOutcome).flatMap { admission =>
+                  nebflow.core.hotupdate.UpdateOrchestrator.admissionFrame(admission) match
+                    case None =>
+                      // 受理 → 既有开始帧（向后兼容）
+                      wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson))
+                    case Some(frame) =>
+                      // 已在途 / 更新中 / 拒绝 —— 立即回报（更新是排他动作、不排队）
+                      wsSend(frame)
                 }
 
           case "remoteUpdate" =>
+            // hotupdate 批 3 · G8：请求可带**可选**幂等键 `clientRequestId`（界面设备行
+            // 的触发点生成，见 resources/web/js/contacts.js）。语义（逐条）：
+            //   · 缺席 / 空串 ⇒ 本分支的载荷与回帧与改前**逐字节相同**（老端路径不变）；
+            //   · 带键 ⇒ 只在既有帧与既有 P2P 载荷上**加**一个字段（不新造消息类型、
+            //     不改既有字段语义、不删既有字段——设计 §9:173 逐字），并在每条
+            //     `remoteUpdateResult` 里**回显**该键，使界面能把结果对回它那一次点击。
+            //   · 中继腿的隧道参数面保持 `{beta}`：动作 `RemoteUpdate` 的参数集由跨仓
+            //     契约钉死（契约 §B.1.3），本批零越仓。
+            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+            val targetDevice = hc.downField("device").as[String].getOrElse("")
+            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+            val clientRequestId = hc.downField("clientRequestId").as[String].toOption
+              .map(_.trim).filter(_.nonEmpty)
+
+            /** `remoteUpdateResult` 的唯一构造点（本分支内单点）：既有字段原样 +
+              * 带键时追加 `clientRequestId`（缺席时不追加 ⇒ 老端回帧形状不变）。 */
+            def resultFrame(fields: (String, io.circe.Json)*): io.circe.Json =
+              val all: Seq[(String, io.circe.Json)] =
+                Seq("type" -> io.circe.Json.fromString("remoteUpdateResult")) ++ fields ++
+                  clientRequestId.map(id => "clientRequestId" -> io.circe.Json.fromString(id))
+              io.circe.Json.obj(all*)
+
             def tryRelayUpdate(
               ns: nebflow.neblink.NeblinkService,
               peer: nebflow.neblink.PeerInfo,
@@ -3712,33 +3768,26 @@ class WebSocketRoutes(
                   logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
                     client.relayUpdate(peer.deviceId, beta).flatMap {
                       case Right(msg) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
+                        wsSend(resultFrame(
                           "success" -> true.asJson,
                           "device" -> peer.deviceName.asJson,
                           "message" -> msg.asJson
                         ))
                       case Left(err) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
+                        wsSend(resultFrame(
                           "success" -> false.asJson,
                           "error" -> s"P2P: $p2pError; Relay: $err".asJson
                         ))
                     }
                 case None =>
-                  wsSend(io.circe.Json.obj(
-                    "type" -> "remoteUpdateResult".asJson,
+                  wsSend(resultFrame(
                     "success" -> false.asJson,
                     "error" -> p2pError.asJson
                   ))
 
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val targetDevice = hc.downField("device").as[String].getOrElse("")
-            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
             if targetDevice.isEmpty then
               wsSend(
-                io.circe.Json.obj(
-                  "type" -> "remoteUpdateResult".asJson,
+                resultFrame(
                   "success" -> false.asJson,
                   "error" -> "Missing device name".asJson
                 )
@@ -3747,8 +3796,7 @@ class WebSocketRoutes(
               sharedResources.neblinkService match
                 case None =>
                   wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "remoteUpdateResult".asJson,
+                    resultFrame(
                       "success" -> false.asJson,
                       "error" -> "NebLink not enabled".asJson
                     )
@@ -3761,8 +3809,7 @@ class WebSocketRoutes(
                     ) match
                       case None =>
                         wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "remoteUpdateResult".asJson,
+                          resultFrame(
                             "success" -> false.asJson,
                             "error" -> s"Device '$targetDevice' not found".asJson
                           )
@@ -3770,8 +3817,7 @@ class WebSocketRoutes(
                       case Some(peer) =>
                         if peer.address.isEmpty then
                           wsSend(
-                            io.circe.Json.obj(
-                              "type" -> "remoteUpdateResult".asJson,
+                            resultFrame(
                               "success" -> false.asJson,
                               "error" -> s"Device '$targetDevice' has no address".asJson
                             )
@@ -3782,7 +3828,9 @@ class WebSocketRoutes(
                           ) *>
                             IO.blocking {
                               import sttp.client4.*
-                              val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
+                              val fields = List("beta" -> beta.asJson)
+                                ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
+                              val body = io.circe.Json.obj(fields*).noSpaces
                               val resp = basicRequest
                                 .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
                                 .contentType("application/json")
@@ -3794,8 +3842,7 @@ class WebSocketRoutes(
                             }.flatMap { resp =>
                               if resp.code.isSuccess then
                                 wsSend(
-                                  io.circe.Json.obj(
-                                    "type" -> "remoteUpdateResult".asJson,
+                                  resultFrame(
                                     "success" -> true.asJson,
                                     "device" -> peer.deviceName.asJson,
                                     "message" -> "Update installed, device is restarting...".asJson

@@ -840,7 +840,7 @@ for /f "tokens=1,* delims=-" %%a in ("%NB_VER%") do (
   set "NB_TAIL=%%b"
 )
 if defined NB_TAIL (
-  if /i "%NB_TAIL:beta.=%"=="%NB_TAIL%" exit /b 0
+  if /i not "%NB_TAIL:~0,5%"=="beta." exit /b 0
   set "NB_SEQ=%NB_TAIL:beta.=%"
 )
 rem Date core + optional same-day sequence: 3 or 4 numeric fields; 5+ = reject
@@ -898,12 +898,12 @@ if ($userPath -notlike "*$InstallDir*") {
 Write-Stage 7 7 "Setting up config..."
 
 $configDir = Join-Path $env:USERPROFILE "$HomeDir"
-$configFile = Join-Path $configDir "$ConfigFile"
-if (-not (Test-Path $configFile)) {
+$configPath = Join-Path $configDir "$ConfigFile"
+if (-not (Test-Path $configPath)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     $configContent = "{}"
-    [System.IO.File]::WriteAllText($configFile, $configContent)
-    Write-Ok "Config created: $configFile"
+    [System.IO.File]::WriteAllText($configPath, $configContent)
+    Write-Ok "Config created: $configPath"
     Write-Warn2 "Please edit it to set your API key."
 } else {
     Write-V "Config already exists."

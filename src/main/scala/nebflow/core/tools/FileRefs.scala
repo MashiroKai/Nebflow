@@ -577,10 +577,11 @@ private[tools] object FileRefs:
     List("/js/", "/css/", "/assets/", "/vendor/", "/uploads/", "/voice-models/", "/agents/")
 
   /** Root-level static files served by the `Root / fileName` case
-    *  (`WebSocketRoutes.scala:714`). A card/HTML that references `/logo.svg`
+    *  (`WebSocketRoutes.scala:714`). A card/HTML that references `/favicon-32.png`
     *  means the app's own asset, not a file at the filesystem root. */
   val AppRouteRootFiles: Set[String] =
-    Set("/style.css", "/app.js", "/favicon.svg", "/favicon.ico", "/favicon-16.png", "/favicon-32.png", "/logo.svg")
+    Set("/style.css", "/app.js", "/favicon.ico", "/favicon-16.png", "/favicon-32.png",
+      "/favicon-180.png", "/favicon-192.png", "/favicon-512.png")
 
   /** The gateway route a value addresses, if any. A relative value is read as
     *  web-root-relative (`js/app.js` → `/js/app.js`), which is how a browser

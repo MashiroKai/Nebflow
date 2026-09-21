@@ -1009,15 +1009,19 @@ object NodeTools:
       // 为什么必须同源：节点级 `chainId` 条件键（本处 `chainIdByNode`）与 WS/事件面
       // （`chainAttrsOf` → `chainIdIn`）是同一个载荷键的两条生产路径——不同源 = 同一节点
       // 在工具面与事件面报出不同链号（本批 ① 的直接反例）。零新键、零形状变化。
-      val chains = FlowMapStore.topologicalChains(combined.values)
-        .filter(c => FlowMapStore.chainVisible(combined, c) && c.memberIds.exists(s.nodes.contains))
+      val chains = FlowMapStore.payloadChains(combined, s.nodes.keySet)
       val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
       // U1 多链归属（作者裁定①）：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
       // 首项 + 全量成员链；普通节点恒缺席 = 单值 chainId 语义不变）；派生与 chainId
       // 同源（同一份 chains 分量表，禁双端二次派生）。
-      val chainIdsByNode = combined.values.filter(_.merge).flatMap { n =>
-        FlowMapStore.mergeChainIds(combined, chains, n.id).map(n.id -> _)
+      // chainmodel 批三 ②：同一单点（FlowMapStore.mergeChainAttrs）一次给出两值——
+      // 旧键 chainIds（所属链首项 + 全量成员链，语义逐字保留）与新键 mergeUpstreamChains
+      // （本次汇聚的上游链）；不再分别调用两个投影（禁同一节点算两遍入口可达分解）。
+      val mergeAttrsByNode = combined.values.filter(_.merge).flatMap { n =>
+        FlowMapStore.mergeChainAttrs(combined, chains, n.id).map(n.id -> _)
       }.toMap
+      val chainIdsByNode = mergeAttrsByNode.map { case (id, a) => id -> a.chainIds }
+      val mergeUpstreamByNode = mergeAttrsByNode.map { case (id, a) => id -> a.upstreamChains }
       val nodes = selected.map { n =>
         val base = NodePayload.buildNodeJson(n, now, chainIdByNode.get(n.id), chainIdsByNode.get(n.id),
           // 排队位次条件键（排队位次可见性批 2026-09-14，案 A）：判据**单点** = 引擎闸
@@ -1032,7 +1036,9 @@ object NodeTools:
           mergeQueuePos = mergeQueuePositions.get(n.id),
           // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
           // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
-          sameKeyProjects = sameKeyForeignProjects)
+          sameKeyProjects = sameKeyForeignProjects,
+          // chainmodel 批三 ② 新增键（本次汇聚的上游链；门控与 chainIds 同源，同缺席）
+          mergeUpstreamChains = mergeUpstreamByNode.get(n.id))
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
           case None        => base
@@ -3242,10 +3248,12 @@ With detail=<nodeId>: the same node shape + task + result (full text)."""
                 // chainId / chainIds 条件键（链级抽象 P0 + U1 多链归属批）：detail
                 // 单节点记录与快照/WS 同构——判据单点 FlowMapStore.chainAttrsOf
                 // （双区可达，归档节点同样带链归属；chainIds 仅 merge 多链节点带，
-                // 值 = 主链 id 首项 + 全量成员链）。
-                rt.store.chainAttrsOf(n.id).map { case (chainId, chainIds) =>
+                // 值 = 主链 id 首项 + 全量成员链；chainmodel 批三 ② 起同一单点再给出
+                // mergeUpstreamChains = 本次汇聚的上游链，新增键）。
+                rt.store.chainAttrsOf(n.id).map { attrs =>
                   val now = System.currentTimeMillis()
-                  val base = NodePayload.buildNodeJson(n, now, chainId, chainIds)
+                  val base = NodePayload.buildNodeJson(n, now, attrs.chainId, attrs.chainIds,
+                    mergeUpstreamChains = attrs.mergeUpstreamChains)
                   // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
                   // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
                   // （blocked 节点 base 已含，deepMerge 同值幂等）。

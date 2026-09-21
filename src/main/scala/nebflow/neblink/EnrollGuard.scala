@@ -104,6 +104,57 @@ object EnrollGuard:
           s"it explicitly (same account as another instance ⇒ one live session, the older one is kicked)."
       )
 
+  // ── 案 b①（2026-09-20 作者令 · 测试卫生）：生产默认目标不得被隔离实例继承 ──────
+  //
+  // 事故链（核查卡 `20260920_214729_seedpath-card__chain-test-hygiene.md` §2 环 3）：
+  // `/tmp/nebflow-coldstart`（:8097，`--home` 隔离）**没有**任何显式/配置服务端 URL，
+  // 于是登录/注册入口的**末级回落**把 `Branding.serverUrl`（生产真值）当成了目标 ——
+  // 环 4 案 C 显式登录放行 → 环 5 `POST /api/device/register` 在生产网新增设备行。
+  // 与 `enrollRefusal`（拦「已解析出的目标」）不同，本判据拦的是**目标本身**：
+  // 无显式 URL ⇒ 隔离实例**拿不到**生产默认目标（`None`），调用点据此给可见失败 ——
+  // 而失败文案必须**不含**数据根路径 / 文件名 / `.nebflow` 字面量，因为它会经
+  // `CredentialDiagnostics` 的例外分支（`EnrollRefusedIsolatedHome`）**逐字进用户可见面**。
+  //
+  // 误伤面（与案 a/案 C 同构，刻意最小）：只判「**回落生产默认**」这一段 ——
+  // 显式 URL（请求体 / 配置）与非默认 home 之外的一切路径零影响；要拿隔离实例登
+  // 生产账号的操作员通道 = `NEBFLOW_ALLOW_PROD_ENROLL=1`（放行后与改前逐字相同）。
+
+  /** Live decision: `Some(reason)` = a redirected data root with no explicit
+    * switch must NOT inherit the production default as its enrollment target. */
+  def prodFallbackRefusal: Option[String] =
+    prodFallbackRefusal(DeviceIdentity.isNonDefaultHome, explicitAllowEnv)
+
+  /** Pure decision core (testable): default data root ⇒ `None`; redirected data
+    * root + explicit switch ⇒ `None`; redirected without the switch ⇒ the
+    * reason (which IS the user-visible text — see [[prodFallbackRefusalReason]]). */
+  def prodFallbackRefusal(nonDefaultHome: Boolean, explicitAllow: Boolean): Option[String] =
+    if !nonDefaultHome then None
+    else if explicitAllow then None
+    else Some(prodFallbackRefusalReason)
+
+  /** The single message source for the suppressed fallback (案 b① 的「一条文案」）。
+    *
+    * 🔴 必须保持「干净」（无数据根路径 / 无文件名 / 无 `.nebflow` 字面量 / 无 Java
+    * 类名）：`CredentialDiagnostics.diagnosticOf` 只在 detail 通过 `isCleanVisibleText`
+    * 时才把 `EnrollRefusedIsolatedHome` 的原文透出到登录页 —— 带上真实域名
+    * （`neblink.nebflow.space` 含 `.nebflow` 字面量）就会静默降级成模板文案。
+    * 由 `EnrollGuardExplicitLoginSpec` 的负控断言钉住。 */
+  def prodFallbackRefusalReason: String =
+    "refused: this instance runs on an isolated data root, so it does not fall back to the " +
+      "production NebLink server default; give an explicit server URL, or set " +
+      s"$AllowProdEnrollEnv=1 to allow the production default explicitly"
+
+  /** The production default enrollment target, or `None` when the isolation
+    * policy forbids inheriting it (案 b①).
+    *
+    * **单点判据**：登录/注册的目标解析（`RestApiRoutes.neblinkServerUrl` 的末级回落、
+    * 启动客户端的 silent-relogin 接缝）一律经这里取默认目标，禁各写一份
+    * （本仓「第二实现」缺陷族）。 */
+  def prodDefaultTarget: Option[String] =
+    prodFallbackRefusal match
+      case None    => Some(Branding.serverUrl)
+      case Some(_) => None
+
   /** Parsed explicit switch: `1` / `true` / `yes` (case-insensitive).
     * `Branding.env` takes the bare suffix and prepends the brand prefix, so this
     * reads `NEBFLOW_ALLOW_PROD_ENROLL` today. */

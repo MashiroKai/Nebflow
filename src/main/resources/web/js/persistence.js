@@ -11,6 +11,10 @@ import { dropFriendMessageCache } from './fmMessageCache.js';
 // ⑩ Dropbox 消息缓存（fmDropboxCache.js）与好友消息缓存同为**纯缓存**：淘汰顺序里
 // 并列第一步，两者都先丢，绝不让它们挤掉会话缓存。
 import { dropDeviceMessageCache } from './fmDropboxCache.js';
+// sessperf Phase B（2026-09-20）：本地优先层（IndexedDB，唯一属主 `localStore.js`）
+// 的驱逐挂靠点 —— 与上面两个纯缓存同级（淘汰次序：纯缓存先让路，会话缓存最后）。
+// 单向依赖、无环；`evict` 自带 L2/L5 降级（配额失败 ⇒ 本池清空重试 ⇒ 只读镜像）。
+import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
@@ -45,6 +49,11 @@ function pruneAndRetrySetSessions(all, keepSid) {
   // ⑨ 淘汰顺序（作者 2026-09-12）：好友消息缓存 = 纯缓存，配额压力下先丢它；
   // 丢掉后能写进就**不剪 session**（剪的是用户的会话缓存，主聊天被伤不可接受）。
   // ⑩ Dropbox 消息缓存同级（两面同为纯缓存，一次丢干净再重试写入）。
+  // sessperf Phase B（卡 §5.3 `persistence.js:44-59`）：本地优先层（IndexedDB，
+  // 唯一属主 localStore.js）的**非阻塞驱逐**也挂在同一次序点上 —— 它自带预算与
+  // 降级（L2/L5），此处只 trigger，不等它（localStorage 配额与 IDB 是两套账，
+  // 本行保证的是「纯缓存先让路」这条**次序纪律**不散落成两处）。
+  void evictLocalStore();
   const droppedAny = dropFriendMessageCache() || dropDeviceMessageCache();
   if (droppedAny && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
   const otherSids = Object.keys(all).filter(k => k !== keepSid);
@@ -69,6 +78,7 @@ export function emergencyCacheCleanup() {
     // pruneAndRetrySetSessions 会去剪会话缓存（方案 §2.3 明确判定「不可接受」）。
     dropFriendMessageCache();
     dropDeviceMessageCache(); // ⑩ 同级第一步：Dropbox 消息缓存（fmDropboxCache.js）
+    void evictLocalStore();   // sessperf Phase B：本地优先层同一次序点（非阻塞；见 pruneAndRetrySetSessions）
     console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
     const all = JSON.parse(raw);
     // Re-sanitize every entry in every session and enforce message cap
@@ -175,6 +185,35 @@ function restoreCompactCardRow(m, next) {
     return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
   }
   return buildCompactCardRow('error', t('chat.compactFailed', { attempt: p.attempt ?? 0, maxAttempts: p.maxAttempts ?? 0 }));
+}
+
+// ---------- System-record replay (shared by both restore paths) ----------
+// obsfix 微批 ②（作者令）· 判词位 O-2：`{type:'system'}` 落盘记录（本批新增的
+// 「仍在处理」/「连接已断开」取证记录属此族）在重载路径上曾一律渲成 `.row error`
+// ⇒ 页面重开留下**常驻错误行**，且 `countsAsRealMessage === true`（污染未读计数口径；
+// O-3 复核：谓词成立于那个行类，且非既有功能回归 —— 改前这些行根本不落盘）。
+// 现读法 = **中性 notice**（`.row notice` + `.notice-card notice-info`，与实时
+// 「仍在处理」行同族组件）：
+//   · 语义：落盘记录是**事后痕迹**，不是活的错误态 —— 与 restoreCompactCardRow 的
+//     孤儿规则同源（reload 解不开的状态不得以错误/进行中的面孔复现）。
+//   · 文案来源：有 `i18nKey` ⇒ 按 key 复渲（存 key 不存 HTML）；无 key 的**存量记录**
+//     ⇒ 回落 `m.content`（旧形态原样可读 ⇒ 存量兼容无需内容匹配）。
+//   · 行类 = `notice` ⇒ `countsAsRealMessage(row) === false`（utils.js 单点判据的既有
+//     口径：`.system` / `.notice` 系统提醒家族一律不计真消息），与 `main.js:2569`
+//     自陈「history restore renders it as a quiet notice card」一致 —— 旧 `.row error`
+//     实现与该注释相悖。视觉上同时去掉硬编码 `rgba(91,141,217,0.1)` / `#5b8dd9`
+//     （改由 `.notice-info` 提供，含暗档覆盖）。
+//   · 实时路径（当轮 notice/error 行）零变动：本函数只服务重载分类。
+function restoreSystemNoticeRow(m) {
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  row.dataset.systemNotice = '1';
+  if (m.i18nKey) row.dataset.systemNoticeKey = m.i18nKey;
+  const card = document.createElement('div');
+  card.className = 'notice-card notice-info';
+  card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
+  row.appendChild(card);
+  return row;
 }
 
 /** The persisted user answer that follows an askUser entry (or null). The
@@ -732,15 +771,7 @@ export function restoreFromStorage(opts = {}) {
         if (compactRow) chat.appendChild(compactRow);
         return;
       }
-      const row = document.createElement('div');
-      row.className = 'row error';
-      const card = document.createElement('div');
-      card.className = 'error-card';
-      card.style.background = 'rgba(91,141,217,0.1)';
-      card.style.color = '#5b8dd9';
-      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
-      row.appendChild(card);
-      chat.appendChild(row);
+      chat.appendChild(restoreSystemNoticeRow(m));
     }
   });
   buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
@@ -1090,15 +1121,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         if (compactRow) fragment.appendChild(compactRow);
         return;
       }
-      const row = document.createElement('div');
-      row.className = 'row error';
-      const card = document.createElement('div');
-      card.className = 'error-card';
-      card.style.background = 'rgba(91,141,217,0.1)';
-      card.style.color = '#5b8dd9';
-      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
-      row.appendChild(card);
-      fragment.appendChild(row);
+      fragment.appendChild(restoreSystemNoticeRow(m));
     }
   });
   chat.appendChild(fragment);

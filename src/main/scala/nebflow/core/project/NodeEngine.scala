@@ -1829,13 +1829,49 @@ class NodeEngine(
   // 留痕（裁定⑤）：每条消息（含注入成功/未达/追加）一律追加 FlowMapEventLog
   // （type=node-message，append-only 持久可追溯）；Flow Map 默认载荷零膨胀
   // （不加标记不加键——载荷精简裁定「能不加就不加」）。
-  /** 本项目**派生链全集**的只读访问器（R2「一个 Mail 统一」批 2026-09-12，B2-x /
-    * 设计件 §A.7 U5-3）：`MailTool` 的 `chainId` 参数校验（只校验、不落库）经本
-    * 访问器收口——Mail 对工程存取的触点收敛到 `ProjectRuntimeRegistry` 一处
-    * （与 `node:` 腿复用 [[sendNodeMessage]] 同路径），**不**让 MailTool 直触
-    * `FlowMapStore`。判据源 = `FlowMapStore.allChainIds`（与 `chainIdsOf` /
-    * `chainAttrsOf` 同一 `topologicalChains` 单点，零新增链推导逻辑）。 */
-  def chainIds: IO[Set[String]] = store.allChainIds
+  /** 本项目链号**校验面**（chainmodel 批三 ① 起 = 台账解析）：`MailTool` 的 `chainId`
+    * 参数校验（只校验、不落库）经本访问器收口——Mail 对工程存取的触点仍收敛到
+    * `ProjectRuntimeRegistry` 一处（与 `node:` 腿复用 [[sendNodeMessage]] 同路径），
+    * **不**让 MailTool 直触 `FlowMapStore`。
+    *
+    * 判据单点 = `FlowMapStore.mailChainIds` / `resolveMailChainId`（**声明链 ∪ 兜底派生链 ∪
+    * 链级依赖目标链 ∪ 台账已登记面**，冷档兜底见 `resolveMailChainId`）。
+    * 🔴 改造前口径 = `FlowMapStore.allChainIds`（纯派生链集，零台账）——链号改号/合并后
+    * 旧号立即失效（设计件 §一 取证 4）。 */
+  def mailChainIds: IO[Set[String]] = store.mailChainIds
+
+  /** 链号深解析（同上）：`Some` = 该号可达（热面 / 台账别名 / 冷档历史行）。 */
+  def resolveMailChainId(id: String): IO[Option[String]] = store.resolveMailChainId(id)
+
+  /** **引用面计数钩子（chainmodel 批三+ 轴(b) 外部三面；best-effort）**：把**一次已发生的
+    * 引用**计入 `faceId`（面必须先登记在 `ChainLedger.ReferenceFaces`；未登记 ⇒ WARN，不计）。
+    *
+    * 与 [[mailChainIds]] 同款收口理由：工具面对工程的触点收敛到本类 ⇒ `MailTool` /
+    * `TaskBoardTool` / `NodeReportTool` **不直触** `FlowMapStore`（`FlowMapStore.chainLedgerStore`
+    * 保持只读消费面语义，写面单点仍在此）。
+    *
+    * best-effort 口径（与轴(a) 归档绑定的 best-effort 同款，**但不静默**）：计数是退役判据
+    * （轴 b）的输入面，其失败**不得**让已完成的投递/写入回滚 ⇒ 只 WARN 可观察；残留风险
+    * 「某次引用被漏计 ⇒ 退役可能早触发」由批报告「未决/风险」栏承担，不靠本方法兜。
+    * 🔴 调用方**只应在引用已成立之后**调用（投递/写库返回成功之后）：未发生即不计数。 */
+  def noteChainReference(id: String, faceId: String, delta: Int = 1): IO[Unit] =
+    store.chainLedgerStore.noteReference(id, faceId, delta).flatMap {
+      case Right(()) => IO.unit
+      case Left(diag) =>
+        logger.warn(s"chain reference not noted (face=$faceId id=$id): $diag")
+    }.handleErrorWith(e =>
+      logger.warn(s"chain reference not noted (face=$faceId id=$id): ${e.getMessage}"))
+
+  /** 同上的**正文形态**（`board-usage` / `report-usage` 共用）：一段正文里逐字出现的**已登记**
+    * 链号一次性计入；零命中 ⇒ 零写。判据与「禁回填」边界全在
+    * `ChainLedgerStore.noteTextReferences`（纯函数判据见 `ChainLedger.referencedIds`）。 */
+  def noteChainReferencesIn(text: String, faceId: String): IO[Unit] =
+    store.chainLedgerStore.noteTextReferences(text, faceId).flatMap {
+      case Right(_) => IO.unit
+      case Left(diag) =>
+        logger.warn(s"chain text references not noted (face=$faceId): $diag")
+    }.handleErrorWith(e =>
+      logger.warn(s"chain text references not noted (face=$faceId): ${e.getMessage}"))
 
   def sendNodeMessage(
     nodeId: String,
@@ -1988,17 +2024,19 @@ class NodeEngine(
           IO.pure(Left(s"Node '${node.id}' vanished before the message was appended (NODE_NOT_FOUND)"))
     }
 
-  /** WS 事件链富化单点（链级抽象 P0 + U1 多链归属批）：全部节点事件 payload 经此
-    * 统一补 chainId / chainIds 条件键——判据单点 FlowMapStore.chainAttrsOf（`_1` =
-    * 主链 id，合并集分量成员数 ≥2 才带，孤立单节点链不带；`_2` = 多链归属集 =
-    * 主链 id 首项 + 全量成员链，**仅 merge 节点**且可达成员链数 ≥2 才带，普通节点恒
-    * 不带 = 单值 chainId 语义不变；与快照 buildNodeListPayload 同口径）。查无链
+  /** WS 事件链富化单点（链级抽象 P0 + U1 多链归属批 + chainmodel 批三 ②）：全部节点
+    * 事件 payload 经此统一补 chainId / chainIds / mergeUpstreamChains 条件键——判据单点
+    * FlowMapStore.chainAttrsOf 一次分量派生给出三值（`chainId` = 所属（声明）链；
+    * `chainIds` = 多链归属集 = 主链 id 首项 + 全量成员链，**仅 merge 节点**且可达成员链数
+    * ≥2 才带；`mergeUpstreamChains` = 本次汇聚的上游链，同门控；普通节点恒不带 =
+    * 单值 chainId 语义不变；与快照 buildNodeListPayload 同口径）。查无链
     * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）
     * 零改动——富化只发生在载荷体。 */
   private def emitWithChain(eventType: String, nodeId: String, payload: Json): IO[Unit] =
-    store.chainAttrsOf(nodeId).flatMap { case (cid, cids) =>
-      val enriched = cid.toList.map(c => "chainId" -> c.asJson) ++
-        cids.toList.map(ids => "chainIds" -> ids.asJson)
+    store.chainAttrsOf(nodeId).flatMap { attrs =>
+      val enriched = attrs.chainId.toList.map(c => "chainId" -> c.asJson) ++
+        attrs.chainIds.toList.map(ids => "chainIds" -> ids.asJson) ++
+        attrs.mergeUpstreamChains.toList.map(ids => "mergeUpstreamChains" -> ids.asJson)
       emitEvent(eventType, nodeId,
         if enriched.isEmpty then payload else payload.deepMerge(Json.obj(enriched*)))
     }

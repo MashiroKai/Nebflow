@@ -19,14 +19,18 @@ object MemoryCommand extends CliCommand:
     def description = "View memory"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false)
+      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false, default = Some("session"))
     )
 
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val scope = ctx.args.getOrElse("scope", "agent")
+          // A15: the gateway contract default is `session`
+          // (WebSocketRoutes.scala:3524) — the CLI silently used `agent`,
+          // so `memory get`/`set` answered from a different scope than the
+          // server-side default. The server is the contract authority.
+          val scope = ctx.args.getOrElse("scope", "session")
           client
             .command(
               Json.obj(
@@ -49,7 +53,7 @@ object MemoryCommand extends CliCommand:
     def description = "Set memory content"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false),
+      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false, default = Some("session")),
       CliParam("content", Some('c'), "Memory content", required = true)
     )
 
@@ -57,7 +61,11 @@ object MemoryCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val scope = ctx.args.getOrElse("scope", "agent")
+          // A15: the gateway contract default is `session`
+          // (WebSocketRoutes.scala:3524) — the CLI silently used `agent`,
+          // so `memory get`/`set` answered from a different scope than the
+          // server-side default. The server is the contract authority.
+          val scope = ctx.args.getOrElse("scope", "session")
           val content = ctx.args.getOrElse("content", ctx.positionalArgs.headOption.getOrElse(""))
           if content.isEmpty then IO.pure(CliResult.Error("Content required"))
           else

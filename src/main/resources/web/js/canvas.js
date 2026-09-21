@@ -182,7 +182,14 @@ function attachDragHandlers(tabEl, id) {
   tabEl.addEventListener('dragstart', (e) => {
     draggedTabId = id;
     tabEl.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
+    // canvasdnd: must be 'copyMove', NOT 'move'. initGlobalFileDrop (input.js)
+    // rewrites dropEffect to 'copy' on every document-level dragover of an
+    // application/x-nebflow-ref drag, and per the HTML spec's "current drag
+    // operation" table 'move' × 'copy' resolves to "none" ⇒ the drag operation
+    // fails and Chromium (Edge/Chrome) never delivers a single `drop`, killing
+    // both the reference drop and tab reorder. Same declaration as the explorer
+    // file rows (explorer.js: "copy → input bar, move → tree").
+    e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', id);
     // #303 B6b: a canvas tab dragged to an input bar carries a Reference
     // payload (current page/selection anchor). Dragging onto another tab for

@@ -5,12 +5,12 @@
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
 import { createIconsIn, escapeHtml } from './utils.js';
-import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay } from './neblink.js';
+import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay, getDeviceUpdateState, markDeviceUpdating, markDeviceUpdateTimeout, onDeviceUpdateChange, pendingDeviceUpdateKey } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 // R2（③ 更正轮）：本模块的验证键也要接**链路态**——判据唯一真源 = `state.js` 的
 // `connected`（主对话框 `ws.js:119` / 会话窗 `messages.js:1160` / dropbox
 // `dropbox.js:299` 三处同源），断连/重连两拍由 ws.js 的回调派发（禁第二份判据）。
-import { onMessage, onDisconnect, onReconnect } from './ws.js';
+import { onMessage, onDisconnect, onReconnect, sendWs } from './ws.js';
 import state from './state.js';
 import * as api from './friendsApi.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备段入本面板。数据源/开窗入口都从
@@ -29,6 +29,12 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 本模块三个面：搜索框 / 验证附言 / ⑦ 备注行内编辑器（新增面必须同批接入，
 // 否则就是第 16 个分叉点）。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 头像渲染单点（sessperf Phase B · 2026-09-20）：本文件此前的第二份 `avatarEl`
+// 已收敛到 `avatarRender.avatarNodeFor`（判据：两份实现必然漂移）。
+import { avatarNodeFor } from './avatarRender.js';
+// 本地优先名册层（sessperf Phase B · 2026-09-20）：好友列表首帧来源 = 本地层
+// 快照（同步、零网络），网络腿降为增量核对 —— 唯一属主 `localStore.js`。
+import { readRoster, writeRoster, isLocalStoreEnabled } from './localStore.js';
 
 let friends = [];
 let incoming = [];
@@ -151,6 +157,10 @@ async function refresh() {
 
 async function doRefresh() {
   if (!loggedIn()) { friends = []; incoming = []; outgoing = []; groupInvites = []; listErrorKind = null; render(); return; }
+  // sessperf Phase B（2026-09-20，卡 §4① / §5.3 `contacts.js:143-201`）：
+  // 面板首帧来源 = 本地层名册快照（**同步、零网络**）；下面的网络腿降为补差。
+  // 本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。
+  seedFriendsFromStore();
   try {
     // 批 B（§3.4）：出口唯一 —— `getFriends()` 已按「服务端 `friends[]` 命中」收敛
     // 双向待处理（`friendsApi.convergeRequests`）⇒ 本模块**不再**自行过滤（禁第二份判据）。
@@ -189,6 +199,9 @@ async function doRefresh() {
     // 已是归一后的入站邀请数组。
     const grp = await refreshGroups();
     if (grp) groupInvites = grp.pendingInvites || [];
+    // 写路径（本地层唯一写入口）：**合并后的最终名单**落盘（含拉黑镜像行，
+    // 与 render 的输入逐字同形）⇒ 下一次进面板首帧零网络。
+    if (isLocalStoreEnabled() && friends.length) writeRoster('friends', friends);
   } catch (err) {
     // F4（20260910）：失败≠空。记录分态供 render 区分「空列表」与「加载失败」；
     // 已有缓存数据时 keep-last-known 行为不变（不闪错误态）。
@@ -206,6 +219,18 @@ function panelActive() {
   return !!(panel && panel.classList.contains('active'));
 }
 
+/** 首帧：本地层名册快照 → 好友列表（同步、零 await、零网络）。
+ *  本地层不可用 / 无快照 / 已有内存行 ⇒ 无操作（回落既有网络腿，零回归）。 */
+function seedFriendsFromStore() {
+  if (!isLocalStoreEnabled() || friends.length) return false;
+  const cached = readRoster('friends');
+  const rows = cached && Array.isArray(cached.payload) ? cached.payload : null;
+  if (!rows || !rows.length) return false;
+  friends = rows.slice();
+  render();
+  return true;
+}
+
 function updateBadge() {
   const n = loggedIn() ? unseenIncomingCount() : 0;
   setActivityBadge('contacts-btn', n, t('contacts.ariaRequests', { n }));
@@ -221,13 +246,15 @@ function el(tag, cls, text) {
 
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
-  if (person.avatarUrl) {
-    const img = document.createElement('img');
-    img.src = person.avatarUrl;
-    img.alt = '';
-    a.appendChild(img);
+  // sessperf Phase B（2026-09-20）：本文件此前是**第二份** `avatarEl` 实现
+  // （`createElement('img') + img.src`，连会话内解码池都不走）⇒ 收敛到
+  // `avatarRender.avatarNodeFor`（唯一实现：本地层 objectURL 优先 → 未命中回落
+  // 远端 URL + 解码复用池）。判据面（有无头像）与改前逐字相同。
+  const node = person ? avatarNodeFor(person) : null;
+  if (node) {
+    a.appendChild(node);
   } else {
-    a.textContent = (person.name || person.neblinkId || '?').trim().charAt(0).toUpperCase();
+    a.textContent = ((person && (person.name || person.neblinkId)) || '?').trim().charAt(0).toUpperCase();
   }
   a.setAttribute('aria-hidden', 'true');
   return a;
@@ -297,6 +324,8 @@ function render() {
   //  **收起态**展开体不在 DOM，设备行仍紧邻 nf 本体（顺序与改前逐字相同）。
   body.appendChild(buildDevicesEntry());
   if (devicesExpanded) body.appendChild(buildDeviceRows());
+  // 设备行的更新回显按**状态机现读值**同步（面板每次 render 重建行 ⇒ 重开后不丢进度）。
+  syncDeviceUpdateUI();
 
   // ── 群组一期（friendgroups 客户端腿）──
   // 入站群邀请（pending 态；「邀请需对方确认」= 主卡 A-4/O② 的被邀请侧确认面）。
@@ -420,7 +449,100 @@ function deviceRow(d) {
   row.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); open(); }
   });
+  // 更新入口（G7 新形态 = **单按钮 + 统一进度面**），追加在模板尾（icon → name →
+  // presence → status → 更新面），不动既有四件的位置与类名。
+  for (const node of deviceUpdateEntry(d)) row.appendChild(node);
   return row;
+}
+
+// ── 设备行更新入口（hotupdate 批 3 · G7；裁定 1 = 新形态「单按钮 + 统一进度面」）──
+//
+// 🔴 复用面（逐条，禁第二套；「同名不算复用」故逐件给实际调用）：
+//   · 进度状态机与结果帧处理 = `neblink.js` 的 `deviceUpdateState` + `initNeblink()` 里那个
+//     `remoteUpdateResult` 处理体（2026-09-15 摘除令的**未删保留面**）。本文件只经其导出的
+//     访问器（`getDeviceUpdateState` / `markDeviceUpdating` / `markDeviceUpdateTimeout` /
+//     `pendingDeviceUpdateKey` / `onDeviceUpdateChange`）读写 ⇒ **零第二套进度状态变量、
+//     零第二套结果处理**。
+//   · 按钮 = **保留的既有类名** `.neblink-peer-update-btn`（`neblink.css:153-167`——摘除令
+//     后样式表一字未动，该类仍在）× **保留的既有文案键** `neblink.update`（'更新'）。
+//     ⇒ 恢复发生在**新家**（联系人面板设备行），旧 `neblink.js` 设备行模板与三组键绑定的
+//     摘除令**不回滚**（本函数不碰 neblink.js 的模板段）。
+//   · 行内状态文本 = 既有 `.neblink-peer-status`（11px / `--color-text-muted` 中性灰）。
+//     🔴 刻意**不用** `.neblink-update-status.updating(amber) / .error(red)` 两档：裁定 10
+//     「失败/回滚仅状态行」+ 设计 §7:143-144「中性灰 + 明确原因，不用红块」，且「每视口
+//     至多一个彩色事件」（本行已有一个 presence 彩色事件）。⇒ **样式表零改动**。
+//   · 发送 = **既有** `remoteUpdate` WS 命令（`WebSocketRoutes.scala` 的 `case "remoteUpdate"`）
+//     ⇒ 零新消息类型；载荷在既有 `device` / `beta` 上**加**可选幂等键 `clientRequestId`（G8），
+//     既有字段语义与存在性不变。`beta:false` = 界面不暴露测试通道（裁定 9）。
+//   · 离线设备：**沿用既有错误分支**（裁定 12）——不新增「上线后拉取」机制；按钮照常可点，
+//     后端既有错误文案（device not found / no address / relay 错误）原样回显。
+//
+// 🔴 超时面（裁定 7「外层 300 秒落在触发/受理面」）：本值 = 触发面的受理等待上限，
+// 与内层中继 120s 超时（NebLink 服务侧，本仓零命中）和既有界面 600s 重启默认
+// （`WebSocketRoutes.scala:1585-1619`）**互不影响、本批零改动**。
+const REMOTE_UPDATE_ACCEPT_TIMEOUT_MS = 300_000;
+
+/** 一次逻辑更新请求的幂等键（契约 §D.2 形状 = 字符串；生成方 = 调用方）。 */
+function newClientRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'cru-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+/** 触发点（受层面）：幂等键 + 状态机推进 + 外层 300s 受理等待。 */
+function triggerDeviceUpdate(d) {
+  const dn = d.deviceName || '';
+  if (!dn) return;
+  // 重试复用同键（契约 §D.2「用户重试须复用同一个键」）：pending 态（updating/timeout）
+  // 沿用上一枚；终态或无记录 ⇒ 新生成一枚。
+  const key = pendingDeviceUpdateKey(dn) || newClientRequestId();
+  markDeviceUpdating(dn, key);
+  setTimeout(() => markDeviceUpdateTimeout(dn), REMOTE_UPDATE_ACCEPT_TIMEOUT_MS);
+  sendWs({ type: 'remoteUpdate', device: dn, beta: false, clientRequestId: key });
+}
+
+/** 设备行的更新面两件（状态文本 + 单按钮）。 */
+function deviceUpdateEntry(d) {
+  const dn = d.deviceName || '';
+  const stateEl = el('span', 'neblink-peer-status');
+  stateEl.dataset.deviceUpdateState = dn;
+  const btn = el('button', 'neblink-peer-update-btn', t('neblink.update'));
+  btn.dataset.deviceUpdateBtn = dn;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
+    triggerDeviceUpdate(d);
+  });
+  return [stateEl, btn];
+}
+
+/** 统一进度面 → 行内回显（按状态机现读值同步；结果帧由 neblink.js 单点消费后播报）。
+ *  按 DOM 现读扫描（不整面板重渲染）：零重排、零列表闪烁。 */
+function syncDeviceUpdateUI() {
+  document.querySelectorAll('[data-device-update-state]').forEach((stateEl) => {
+    const dn = stateEl.dataset.deviceUpdateState || '';
+    const row = stateEl.closest('.neblink-peer');
+    const btn = row ? row.querySelector('[data-device-update-btn]') : null;
+    const st = getDeviceUpdateState(dn);
+    if (!st) {
+      stateEl.textContent = '';
+      if (btn) btn.disabled = false;
+      return;
+    }
+    if (st.status === 'updating') {
+      stateEl.textContent = t('neblink.updating');
+      if (btn) btn.disabled = true;
+    } else if (st.status === 'done') {
+      stateEl.textContent = t('neblink.restarting');
+      if (btn) btn.disabled = true;
+    } else if (st.status === 'timeout') {
+      stateEl.textContent = t('neblink.updateTimeout');
+      if (btn) btn.disabled = false;
+    } else { // error —— 文案 = 后端既有错误分支原文（不新增客户端离线机制）
+      stateEl.textContent = st.message || '';
+      if (btn) btn.disabled = false;
+    }
+  });
 }
 
 function friendRow(f) {
@@ -1073,6 +1195,10 @@ export function initContacts() {
       refresh();
     }
   });
+  // 设备更新进度回显（hotupdate 批 3 · G7）：订阅面 = `neblink.js` 里结果帧处理的
+  // **唯一播报点**（`notifyDeviceUpdateChange`）——本模块不注册第二个 `remoteUpdateResult`
+  // 处理器（禁第二套结果处理），只按状态机现读值同步行内回显。
+  onDeviceUpdateChange(syncDeviceUpdateUI);
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   // `{auto:true}`: this is not a user gesture — it fires once per failed
   // friendship request, so it must not open an OAuth window per event

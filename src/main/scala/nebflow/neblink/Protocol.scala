@@ -14,7 +14,13 @@ package nebflow.neblink
   */
 object Protocol:
 
-  /** Relay/tunnel device identity header (direct P2P and relayed requests). */
+  /** Device identity header for peer requests. Set by the P2P leg
+    * (`RemoteExecutor` `remote-exec` dispatch) and read by the gateway's peer
+    * criterion (`RestApiRoutes#verifyPeerAccess`). The RELAY leg does NOT carry
+    * it — a relayed exec authenticates with the tunnel's own
+    * `Authorization: Bearer` session, so this header has no relayed read/write
+    * point (2026-09-20 勘误②: the previous wording claimed "and relayed
+    * requests", which no code supported). */
   val DeviceHeader: String = "X-Neblink-Device"
 
   /** Device-flow and enrollment REST paths on neblink-server (proxied by the

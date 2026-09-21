@@ -11,6 +11,10 @@ import { setCacheAccount, clearMessageCache } from './fmMessageCache.js';
 // ⑩ Dropbox 消息缓存（fmDropboxCache.js）：与好友消息缓存**同一登出链、同一时机**。
 // 分区键仍只有一份来源（`fmMessageCache.getCacheAccount()`），此处只补整槽清除。
 import { clearDeviceMessageCache } from './fmDropboxCache.js';
+// sessperf Phase B（2026-09-20）：本地优先层（IndexedDB，唯一属主 `localStore.js`）
+// 的**生命周期两个挂点**都在这条既有链上：① 状态拍落位账号分区（`openLocalStore`，
+// 与 `setCacheAccount` 同拍、同一分区键）；② 登出/换账号（`clear('all')`）。
+import { openLocalStore, clear as clearLocalStore } from './localStore.js';
 import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
@@ -178,9 +182,80 @@ export function getNeblinkState() {
   return neblinkState;
 }
 
-// Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error'
+// Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error' | 'timeout'
+//
+// 🔴 hotupdate 批 3 · G7：本变量是设备更新进度的**唯一**状态面——保留面原文（2026-09-15
+// 摘除令注记）为「`deviceUpdateState` 的 WS 结果帧处理与其 i18n 键组**未删**，理由 =
+// 远程更新是服务端面既有能力，本次只摘除其客户端入口」。入口恢复发生在**新家**
+// （联系人面板设备行，`contacts.js`）⇒ 新家只**读/写**本变量与下述访问器，
+// **禁**另建第二套进度状态变量、**禁**另建第二套结果帧处理（结果帧处理仍只有本文件
+// `initNeblink()` 里那一处）。
+//
+// `timeout`（批 3 新增档）= 触发/受理面（裁定 7 的外层 300s）等不到任何结果帧时的
+// 收口档：它是**同一条状态机**的追加档，不是第二个变量。
 let deviceUpdateState = {};
 let _rerender = null;
+
+/** 设备更新状态订阅面（与既有 `onNeblinkStatus`/`statusSubscribers` 同款单点模式）：
+ *  联系人面板设备行据此把进度回显刷成最新（结果帧的消费方仍只有本文件一处）。 */
+const deviceUpdateSubscribers = new Set();
+
+export function onDeviceUpdateChange(cb) {
+  deviceUpdateSubscribers.add(cb);
+  return () => deviceUpdateSubscribers.delete(cb);
+}
+
+/** 状态面变更的唯一播报点：既有保留面 `_rerender`（设置账号块）+ 新家订阅者。 */
+function notifyDeviceUpdateChange() {
+  _rerender?.();
+  for (const cb of [...deviceUpdateSubscribers]) {
+    try { cb(); } catch (e) { console.error('[neblink] device update subscriber failed:', e); }
+  }
+}
+
+/** 现读某设备的更新状态（键 = `peer.deviceName`，与结果帧内 `device` 字段同口径）。 */
+export function getDeviceUpdateState(deviceName) {
+  return deviceUpdateState[deviceName] || null;
+}
+
+/** 触发面进入「更新中」（写入**同一条**状态机；`clientRequestId` 一并留存，供超时/重试
+ *  复用同一枚幂等键——契约 §D.2「用户重试须复用同一个键」）。 */
+export function markDeviceUpdating(deviceName, clientRequestId) {
+  const prior = deviceUpdateState[deviceName];
+  deviceUpdateState[deviceName] = {
+    status: 'updating',
+    clientRequestId: clientRequestId || prior?.clientRequestId || null,
+  };
+  notifyDeviceUpdateChange();
+}
+
+/** 触发/受理面等不到结果帧（外层 300s 上限）⇒ 同一条状态机的 `timeout` 档
+ *  （幂等键沿用 ⇒ 重试仍复用同键）。 */
+export function markDeviceUpdateTimeout(deviceName) {
+  const cur = deviceUpdateState[deviceName];
+  if (!cur || cur.status !== 'updating') return;
+  deviceUpdateState[deviceName] = { status: 'timeout', clientRequestId: cur.clientRequestId || null };
+  notifyDeviceUpdateChange();
+  // 与既有 'done'/'error' 同款 TTL（10 秒后自动清除）：瞬态行状态不留陈旧回显。
+  setTimeout(() => {
+    if (deviceUpdateState[deviceName]?.status === 'timeout') {
+      delete deviceUpdateState[deviceName];
+      notifyDeviceUpdateChange();
+    }
+  }, 10000);
+}
+
+/** 重试复用：把该设备**当前这次逻辑请求**的幂等键交回触发点（契约 §D.2/H10
+ *  「用户重试须复用同一个键」）。留存范围 = 触发/受理/超时/**错误**四档（错误档的含义
+ *  是该次逻辑请求未被送达或未被受理 ⇒ 用户再点仍是「同一次请求」的重试）；
+ *  触达 `done`（设备已受理并重启）⇒ 该次逻辑请求已成立，条目按既有 10s TTL 清空，
+ *  此后再点即新请求（新键）。条目被 TTL 清除后同样返回 null。 */
+export function pendingDeviceUpdateKey(deviceName) {
+  const cur = deviceUpdateState[deviceName];
+  if (!cur || !cur.clientRequestId) return null;
+  if (cur.status === 'done') return null;
+  return cur.clientRequestId;
+}
 
 export function getAuthToken() {
   return localStorage.getItem(key('token')) || '';
@@ -250,6 +325,12 @@ export async function fetchNeblinkStatus() {
     // 分区键 = deviceId|email 复合（任一变化即「另一个账号」，跨账号绝不串数据）。
     if (wasLoggedIn && !neblinkState.loggedIn) { clearMessageCache(); clearDeviceMessageCache(); }
     setCacheAccount(neblinkState.device
+      ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
+      : '');
+    // sessperf Phase B：同一分区的本地层落位/切换（幂等；账号未知 ⇒ 本层整体关闭）。
+    // 🔴 与 `setCacheAccount` **同拍、同键** ⇒ 不存在两套分区状态（卡 §5.4 风险表
+    // 「跨账号串数据 = 最高危」的唯一防线）。异步打开 + 预热，绝不阻塞状态拍。
+    void openLocalStore(neblinkState.loggedIn && neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');
     // 设备会话统一批 MVP-1/O10：状态拍落地 ⇒ 推送订阅面（联系人面板设备段等）。
@@ -697,19 +778,79 @@ export function cancelPkceFlow() {
   if (_pkcePollTimer) { clearTimeout(_pkcePollTimer); _pkcePollTimer = null; }
 }
 
+/** 预约一个空白窗。**必须**在手势栈内同步调用（popup-blocker 只认同步 `window.open`）。 */
+function reserveEndSessionWindow() {
+  let w = null;
+  try {
+    w = window.open('about:blank', '_blank');
+  } catch (e) {
+    w = null;
+  }
+  // `noopener` 语义：预约式**不能**用 feature 串（`window.open(url,'_blank','noopener')`
+  // 返回 null ⇒ 窗就再也导航不了）。改为同 tick 置 `w.opener = null`（about:blank
+  // 同源，可写）——隔离性等价，且登录流（activityBar.js `reservePopup`）今天已是同形态。
+  if (w) {
+    try { w.opener = null; } catch (e) { /* 不致命：仅影响跨窗引用隔离 */ }
+  }
+  return w;
+}
+
+/** 把已预约的窗导航到 url；url 为空 / 窗不在 ⇒ 关窗并回 false。 */
+function navigateEndSessionWindow(w, url) {
+  if (!w) return false;
+  try {
+    if (url) { w.location.href = url; return true; }
+    w.close();
+  } catch (e) { /* 跨域或已关闭 —— 忽略 */ }
+  return false;
+}
+
+/** 可见失败面（本批新链路的失败支**禁静默**）：复用既有 `.nebflow-toast*` CSS 类与既有
+ *  i18n 键；带 `link` 时附一个人工入口（popup-blocker 兜底）。形态 = activityBar.js
+ *  `popupBlockedFallback` 同款；本模块**不** import activityBar.js（既有依赖方向是
+ *  activityBar → neblink，反向会成环）。 */
+function endSessionNotice(message, link) {
+  try {
+    const toast = document.createElement('div');
+    toast.className = 'nebflow-toast nebflow-toast-info';
+    const msg = document.createElement('span');
+    msg.className = 'nebflow-toast-msg';
+    msg.textContent = message;
+    toast.append(msg);
+    if (link) {
+      const a = document.createElement('a');
+      a.className = 'glass-control nebflow-toast-link';
+      a.href = link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = t('login.openPage');
+      toast.append(a);
+    }
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 300);
+    }, 8000);
+  } catch (e) { /* 提示失败绝不反噬登出链 */ }
+}
+
 /** RP-initiated logout hop — the **single** window-navigation point of the
  *  logout / switch-account / cleanup-and-relogin chains.
  *
- *  `window.open('/api/neblink/auth/end-session…')` in the SAME gesture tick
- *  (synchronous → popup-blocker safe): the endpoint performs the local
- *  teardown (8 steps, defect-A fix: a credential **read** failure no longer
- *  skips it — judgement G5) and 302s the new tab to the provider's
- *  end_session_endpoint, killing the browser SSO session. Without that hop the
- *  next login silently re-enters the original account.
+ *  2026-09-20 收尾批（作者裁定 + 分发器定形）：服务端该路由由「GET 直接导航」改成
+ *  **POST + 令牌**（`withAuth`），出口由 302 改成 `200 {"endSessionUrl": …}`；旧 GET = 门内
+ *  405（副作用不可达）。前端因此改形为「手势内同步预约空白窗 → fetch POST（带
+ *  Authorization）→ 把预约窗导航到服务端回传的 provider URL」：
+ *   · 预约窗**必须**同步开（`fetch` 之后再 `window.open` 会被 popup-blocker 拦）⇒ 预约/
+ *     导航两段形态与登录流的 `reservePopup`/`navigateReserved` 同款（既有模式，非新造）。
+ *   · 302 无法被 fetch 消费（跨域 + opaque，拿不到目标地址）⇒ 服务端改**回传数据**，由
+ *     **顶层导航**消费（顶层导航无 CORS），provider 回跳语义零改。
+ *   · 失败支禁静默：非 2xx / 缺 `endSessionUrl` / 网络异常 ⇒ 关窗 + 一条可见提示。
  *
- *  `continueToLogin` = the one-window switch shape (`?scenario=switch`): the
- *  landing page this hop ends on continues into the login in the SAME window;
- *  the main window learns the outcome through [[watchSwitchHandoff]].
+ *  `continueToLogin` = the one-window switch shape（`scenario=switch`）：the landing page
+ *  this hop ends on continues into the login in the SAME window; the main window learns the
+ *  outcome through [[watchSwitchHandoff]].
  *
  *  🔴 缺陷 A（上游 §8.2 第 6 项）：「清理并重登」入口走的就是本函数（`continueToLogin=true`）
  *  —— 它是「本地凭据坏了、清理掉再登一次」这条自救路径的既有实现，本批零新增链路。
@@ -718,19 +859,59 @@ export function cancelPkceFlow() {
  *  (activityBar.js) can share it verbatim instead of keeping a second copy.
  * @param {boolean} continueToLogin */
 export function openEndSessionHandoff(continueToLogin = false) {
-  const handoff = continueToLogin
-    ? `?scenario=switch&ui_locales=${getLocale() === 'en' ? 'en' : 'zh'}`
-    : '';
-  window.open('/api/neblink/auth/end-session' + handoff, '_blank', 'noopener');
-  setTimeout(async () => {
-    forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
-    // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
-    // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
-    clearMessageCache();
-    clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
-    await fetchNeblinkStatus();
-    _rerender?.();
-  }, 1000);
+  // ① 手势内**同步**预约空白窗（popup-blocker 语义与旧形态一致：仍是用户手势内的同步 open）。
+  const win = reserveEndSessionWindow();
+  const token = getAuthToken();
+  // ② `scenario` / `uiLocales` 由 query 迁入 POST body（本批契约；字段名与
+  //    POST /api/neblink/auth/start 一致）。
+  const body = continueToLogin
+    ? { scenario: 'switch', uiLocales: getLocale() === 'en' ? 'en' : 'zh' }
+    : {};
+  // ③ 主窗后置清理：内容与时机逐字沿用，唯一区别 = 只在**服务端拆除已落定**后启动
+  //    （失败支不再清缓存：登出没发生就不该表现成已登出）。
+  const afterTeardown = () =>
+    setTimeout(async () => {
+      forgetAvatarProfile(); // drop the last-known snapshot: a logged-out user must not resurrect offline
+      // ⑨ 登出清除（作者口径：消息持久落盘，但换账号/登出必须清）——与头像
+      // last-known 同一条链、同一时机，不留「登出后本地仍躺着上一位的聊天记录」。
+      clearMessageCache();
+      clearDeviceMessageCache(); // ⑩ 与好友缓存同轮：登出后不留上一位的 Dropbox 记录
+      void clearLocalStore('all'); // sessperf Phase B 本地优先层（IndexedDB）同轮清场
+      await fetchNeblinkStatus();
+      _rerender?.();
+    }, 1000);
+  // ④ fetch POST（带令牌）→ 顶层导航预约窗。
+  fetch('/api/neblink/auth/end-session', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+    .then(async (resp) => {
+      if (!resp.ok) {
+        navigateEndSessionWindow(win, null);
+        endSessionNotice(t('login.networkError', { msg: `HTTP ${resp.status}` }));
+        return;
+      }
+      const data = await resp.json().catch(() => null);
+      const url = data && typeof data.endSessionUrl === 'string' ? data.endSessionUrl : '';
+      if (!url) {
+        navigateEndSessionWindow(win, null);
+        endSessionNotice(t('login.networkError', { msg: 'endSessionUrl missing' }));
+        return;
+      }
+      if (!navigateEndSessionWindow(win, url)) {
+        // 预约窗被 popup-blocker 拦下（或已关闭）：给人工入口，禁静默。
+        endSessionNotice(t('login.popupBlocked'), url);
+      }
+      afterTeardown();
+    })
+    .catch((e) => {
+      navigateEndSessionWindow(win, null);
+      endSessionNotice(t('login.networkError', { msg: e.message }));
+    });
 }
 
 // ---- Bind events after HTML insert ----
@@ -739,14 +920,17 @@ export function bindNeblinkEvents(rerender) {
 
   // Full RP-initiated logout chain — the SINGLE shared implementation used by
   // both the settings logout button and the switch-account modal (spec §4:
-  // "原样复用既有 logout 链路"). RP-logout fix, 2026-09-06:
-  // window.open('/api/neblink/auth/end-session') in the SAME gesture tick
-  // (synchronous → popup-blocker safe): the endpoint performs the local
-  // teardown (same 8 steps as the old POST /api/neblink/logout) and 302s
-  // the new tab to Logto's end_session_endpoint, killing the provider's
+  // "原样复用既有 logout 链路"). RP-logout fix, 2026-09-06; **POST + 预约窗**
+  // since the 2026-09-20 closeout batch (the route is POST + token now, the old
+  // GET arm is a gated 405):
+  // a blank popup is reserved in the SAME gesture tick (synchronous →
+  // popup-blocker safe), the request then goes out as `fetch` POST with the
+  // Bearer token, and the reserved window is navigated to the provider URL the
+  // server returns. The endpoint performs the local teardown (same 8 steps as
+  // the old POST /api/neblink/logout) and the navigation kills the provider's
   // browser SSO session. Without that hop, the next login silently
   // re-enters the original account (no account choice — the root cause of
-  // the silent-relogin bug). The new tab ends on the provider's
+  // the silent-relogin bug). The window ends on the provider's
   // logged-out page (or our /auth/logged-out landing once the
   // post_logout_redirect_uri is allow-listed on the Logto app).
   // The main window refreshes its status a beat later, after the local
@@ -755,7 +939,8 @@ export function bindNeblinkEvents(rerender) {
   // `opts.continueToLogin` (one-window switch, 2026-09-16): true marks this
   // logout as the SWITCH-ACCOUNT flow — the gateway arms its single-use handoff
   // marker, and the landing page this window ends on continues into the login
-  // IN THIS SAME WINDOW (`?scenario=switch`). A plain logout passes nothing:
+  // IN THIS SAME WINDOW (POST body `{"scenario":"switch"}`, query before the
+  // 2026-09-20 closeout batch). A plain logout passes nothing:
   // the landing stays the static 「已退出登录」 card and the gateway explicitly
   // clears any leftover marker (zero behaviour change for plain logout).
   // `ui_locales` is carried through the hop because the landing page is a bare
@@ -1032,25 +1217,33 @@ export async function initNeblink() {
   onMessage('peerListChanged', () => { fetchNeblinkStatus().then(() => _rerender?.()); });
 
   // Handle remote update result
+  // 🔴 本处理体是设备更新结果帧的**唯一**消费点（hotupdate 批 3 · G7 仅把播报面从
+  // `_rerender` 扩到 `notifyDeviceUpdateChange()`，使联系人面板设备行同帧刷新）；
+  // 状态机语义 / TTL / 泛化分支一律原样——禁另建第二套结果处理。
   onMessage('remoteUpdateResult', (msg) => {
     // msg.device may not be set on error, but we update all 'updating' devices
     const targetDevice = msg.device;
+    // 幂等键**留存**（批 3 · G8/G7 增量，唯一改动点）：结果帧已回显 `clientRequestId`
+    // ⇒ 终局条目也把键带上，使 H10「携带 clientRequestId 的重试须复用同键」在
+    // **错误档**同样成立（重试窗 = 该条目既有 10s TTL；见 `pendingDeviceUpdateKey`）。
+    const keyOf = (dn) => (deviceUpdateState[dn]?.clientRequestId)
+      || (typeof msg.clientRequestId === 'string' ? msg.clientRequestId : null);
     if (targetDevice) {
       deviceUpdateState[targetDevice] = msg.success
-        ? { status: 'done' }
-        : { status: 'error', message: msg.error || 'Failed' };
+        ? { status: 'done', clientRequestId: keyOf(targetDevice) }
+        : { status: 'error', message: msg.error || 'Failed', clientRequestId: keyOf(targetDevice) };
       // Clear 'done' state after 10 seconds (device should be back online)
       if (msg.success) {
-        setTimeout(() => { delete deviceUpdateState[targetDevice]; _rerender?.(); }, 10000);
+        setTimeout(() => { delete deviceUpdateState[targetDevice]; notifyDeviceUpdateChange(); }, 10000);
       }
     } else {
       // No device specified — update all 'updating' entries
       for (const [dn, st] of Object.entries(deviceUpdateState)) {
         if (st.status === 'updating') {
           deviceUpdateState[dn] = msg.success
-            ? { status: 'done' }
-            : { status: 'error', message: msg.error || 'Failed' };
-          if (msg.success) setTimeout(() => { delete deviceUpdateState[dn]; _rerender?.(); }, 10000);
+            ? { status: 'done', clientRequestId: keyOf(dn) }
+            : { status: 'error', message: msg.error || 'Failed', clientRequestId: keyOf(dn) };
+          if (msg.success) setTimeout(() => { delete deviceUpdateState[dn]; notifyDeviceUpdateChange(); }, 10000);
         }
       }
     }
@@ -1058,9 +1251,9 @@ export async function initNeblink() {
     for (const dn of Object.keys(deviceUpdateState)) {
       if (deviceUpdateState[dn].status === 'error') {
         const devName = dn;
-        setTimeout(() => { delete deviceUpdateState[devName]; _rerender?.(); }, 10000);
+        setTimeout(() => { delete deviceUpdateState[devName]; notifyDeviceUpdateChange(); }, 10000);
       }
     }
-    _rerender?.();
+    notifyDeviceUpdateChange();
   });
 }

@@ -6,13 +6,17 @@ import { key } from './branding.js';
 // 时制（12h/24h）：偏好、格式化与热区绑定的唯一属主 = timeFormat.js（主对话框
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
 import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
-import { activeView, setActiveView, findViewBySessionId } from './chatView.js';
+import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
+// 令牌头（2026-09-20 收尾批）：`/api/tts` 服务端已加门 ⇒ 本调用点必须带 Authorization。
+// 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
+// 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
+import { authHeaders } from './flowHelpers.js';
 
 // Permission-card escalation targets → shield label keys (permshield F1): the
 // upgrade toast must name the mode exactly like the header shield does, so both
@@ -59,7 +63,10 @@ const VoicePlayer = {
     try {
       const resp = await fetch('/api/tts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // 令牌（2026-09-20 收尾批）：服务端路由已套 `withAuth` ⇒ 无令牌 403。
+        // 未登录 webui（localStorage 无 token）时 `authHeaders()` 返回 {} ⇒ 请求不带
+        // Authorization，服务端 403 ⇒ 下方 `!resp.ok` 走既有静默降级（返回 null），不新增崩溃面。
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ text }),
       });
       if (!resp.ok) return null;
@@ -266,6 +273,9 @@ export function setBusy(sessionId) {
 
 export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
+  // freezetimeout B2: 终态（done/error/interrupted/timeout/…）或真死收口时，把「仍在
+  // 处理」呈现行一并收掉——本函数是全部终态路径的必经点，所以挂在这里而不是各调用点。
+  removeStillProcessingNotice(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
     const { input, sendBtn, stopBtn, statusWrap } = activeView.dom;
@@ -1487,19 +1497,213 @@ export function renderError(msg) {
   smartScroll();
 }
 
-// ---------- Timeout notice with retry ----------
-export function renderTimeoutNotice() {
+// ---------- Busy watchdog · 阶梯宽限 + 报/动分离 (freezetimeout B2) ----------
+// 诊断真源 = `.nebflow/20260920_162251_webui-false-timeout-diagnosis__chain-n-36a3f13d.md`
+// §4.2：判定模型缺独立活性信号（「通道静默 ≡ 死」），而三处看门（input.js:852/1186/1277）
+// 一判到点就发 `{type:'interrupt'}` —— 破坏性动作建立在无依据判定上（后端自判 3646/3647
+// 全为「仍在推进」）。本批落地：
+//   ① 报/动分离：到点只呈现「仍在处理」，**绝不自动发 interrupt**；中断降级为需用户显式
+//      确认（原「重试」两步确认 → 行内「仍要中断并重试」）。
+//   ② 阶梯宽限：固定 (streamTimeoutMs+30s) ⇒ 到点逐级放宽 base → 2×base → 4×base（封顶）。
+//   ③ 真死不放过：阶梯放宽到顶 ∧（WS 已断 ∨ 无任何活性证据），且到点回调未迟到 ⇒ 错误态。
+//      呈现文案 = 断开如实态 `chat.connectionLost`（obsfix 微批 ①，作者令）——不得沿用
+//      `chat.timeout`「仍在处理」（真死态与「仍在处理」语义相悖，判词位 O-1）。
+//      落盘记录带 `i18nKey`（obsfix 微批 ②）⇒ 重载按中性 notice 复渲，不留常驻错误行。
+// 活性证据 = 本档内收到过任何入站 WS 帧（`state.lastWsInboundAt`，ws.js 推进）——子代理
+// 心跳帧正属该形态（缺 rootSessionId 路由键 ⇒ 不重置本 timer，但仍是通道活着的证据）。
+// 主线程停摆（换页冻结）会让到点回调迟到 ⇒ 计时不可信 ⇒ 一律只放宽、不判死。
+// 🔴 后端独立示活通道（AgentCore/protocol/ToolHeartbeat）= B1，作者裁决项，本批禁碰。
+const WATCHDOG_RUNG_FACTORS = [1, 2, 4];
+const WATCHDOG_MAX_RUNG = WATCHDOG_RUNG_FACTORS.length - 1;
+const WATCHDOG_LATE_TOLERANCE_MS = 15000;
+const _watchdogRung = new Map();        // sid -> 档位索引
+
+/** 第 rung 档预算 = (streamTimeoutMs + 30s) × 倍率，超出最高档即封顶。 */
+function watchdogBudgetMs(rung) {
+  const base = (Number(state.streamTimeoutMs) || 600000) + 30000;
+  const idx = Math.max(0, Math.min(rung, WATCHDOG_MAX_RUNG));
+  return base * WATCHDOG_RUNG_FACTORS[idx];
+}
+
+function clearWatchdogTimer(sid) {
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+}
+
+/** 武装第 rung 档（沿用 state.sessionBusyTimeouts 槽位：外部各处 clear 面不变）。 */
+function armWatchdogRung(sid, rung) {
+  const budget = watchdogBudgetMs(rung);
+  const deadlineAt = Date.now() + budget;
+  _watchdogRung.set(sid, rung);
+  state.sessionBusyTimeouts[sid] = setTimeout(() => onBusyWatchdogDeadline(sid, deadlineAt), budget);
+}
+
+/** 新 turn 起点（send / 队列 drain / inject）：从第 0 档起算，并清掉上一轮的呈现。 */
+export function armBusyWatchdog(sid) {
+  if (!sid) return;
+  removeStillProcessingNotice(sid);
+  clearWatchdogTimer(sid);
+  armWatchdogRung(sid, 0);
+}
+
+/** 喂活（= 原 main.js resetStreamTimeout 语义）：本档作废、回第 0 档重新计时；有真进展
+ *  ⇒ 已呈现的「仍在处理」行收掉（活性恢复即误报解除）。 */
+export function feedBusyWatchdog(sid) {
+  if (!sid || !state.busySessionIds.has(sid)) return;
+  removeStillProcessingNotice(sid);
+  clearWatchdogTimer(sid);
+  armWatchdogRung(sid, 0);
+}
+
+/** 到点判定 = **判定与动作分离的唯一决策点**（不再有自动 interrupt 分支）。 */
+export function onBusyWatchdogDeadline(sid, deadlineAt) {
+  if (!sid) return;
+  if (!state.busySessionIds.has(sid)) { clearWatchdogTimer(sid); return; }
+  const rung = _watchdogRung.get(sid) || 0;
+  const stalled = (Date.now() - deadlineAt) > WATCHDOG_LATE_TOLERANCE_MS;
+  const armedAt = deadlineAt - watchdogBudgetMs(rung);
+  const inbound = Number(state.lastWsInboundAt) || 0;
+  const hasLiveness = stalled || inbound > armedAt;
+  const wsAlive = !!(state.ws && state.ws.readyState === WebSocket.OPEN);
+  if (!stalled && rung >= WATCHDOG_MAX_RUNG && (!wsAlive || !hasLiveness)) {
+    // 真死：阶梯放宽到顶 ∧（WS 已断 ∨ 无任何活性证据）⇒ 仍进错误态（不放过）。
+    // 🔴 freezetimeout obsfix 微批 ①（作者令「真死文案如实态」）：本支呈现由
+    //    `renderTimeoutNotice`（`chat.timeout`「仍在处理」）改为 `chat.connectionLost`
+    //    「连接已断开，点击重试」——真死态呈现「仍在处理」语义相悖（判词位 O-1）。
+    //    子案（socket 已断 / socket 活着但零活性证据）落 `data-watchdog-dead-reason`
+    //    契约面；两条子案同文案（本支判定 = 该 turn 的通道已死，分支级如实态）。
+    //    慢速分支呈现（`chat.stillProcessing`）与后端 timeout 帧路径**零变动**。
+    const deadReason = !wsAlive ? 'ws-closed' : 'no-inbound';
+    const v = findViewBySessionId(sid);
+    if (v) { setActiveView(v); renderConnectionLostNotice(sid, deadReason); clearStatus(); }
+    clearWatchdogTimer(sid);
+    _watchdogRung.delete(sid);
+    clearBusy(sid);   // ⇒ removeStillProcessingNotice（chat.js:271）：真死态不留「仍在处理」行
+    return;
+  }
+  // 慢 ≠ 死：只呈现 + 放宽一档 —— 不发 interrupt、不清 busy、不 drain 队列。
+  // 到顶后原地续档（继续呈现，不再放宽），把判死权交回「真死」分支的条件面。
+  const nextRung = Math.min(rung + 1, WATCHDOG_MAX_RUNG);
+  renderStillProcessingNotice(sid, nextRung);
+  armWatchdogRung(sid, nextRung);
+}
+
+/** 「仍在处理」呈现（**非** `.row error` ⇒ 不被 countsAsRealMessage 计入，未读语义不受
+ *  误报污染；§4.3②）。文案全部取自 §16 冻结逐字表，本批零新增文案。
+ *  幂等：同一会话同一时刻只留一行（阶梯每次到点只续档，不叠行）。 */
+export function renderStillProcessingNotice(sid, rung = 0) {
+  const v = findViewBySessionId(sid) || activeView;
+  if (!v || !v.dom || !v.dom.chat) return null;
+  const chat = v.dom.chat;
+  const existing = chat.querySelector(`.still-processing-row[data-still-processing="${sid}"]`);
+  if (existing) {
+    // 已呈现 ⇒ 只更新档位契约（data-* 二值断言面，阶梯到点不叠行）。
+    existing.dataset.stillProcessingRung = String(rung);
+    return null;
+  }
+  const row = document.createElement('div');
+  row.className = 'row notice still-processing-row';
+  row.dataset.stillProcessing = sid;
+  row.dataset.stillProcessingRung = String(rung);
+  const card = document.createElement('div');
+  card.className = 'notice-card notice-info';
+  card.style.display = 'flex';
+  card.style.alignItems = 'center';
+  card.style.gap = '12px';
+  const text = document.createElement('span');
+  text.textContent = t('chat.stillProcessing');
+  card.appendChild(text);
+  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  // ① 首次动作：`chat.retry`（文案不变、语义变为**需确认**）——turn 仍在跑时不发 interrupt，
+  //    只把行推进到确认态；turn 已结束（busy 已清）则直接重发，无需确认。
+  const retryBtn = document.createElement('button');
+  retryBtn.className = 'still-processing-retry';
+  retryBtn.textContent = t('chat.retry');
+  retryBtn.style.cssText = btnCss;
+  retryBtn.onmouseenter = () => { retryBtn.style.background = 'var(--color-frame-active)'; };
+  retryBtn.onmouseleave = () => { retryBtn.style.background = 'var(--color-frame-hover)'; };
+  retryBtn.onclick = () => {
+    if (state.busySessionIds.has(sid)) {
+      // 仍在跑 ⇒ 需要显式确认才允许中断（确认态：只揭示确认键，本键不再可点）。
+      retryBtn.remove();
+      interruptBtn.style.display = '';
+      return;
+    }
+    row.remove();
+    resendLastInput(v);
+  };
+  card.appendChild(retryBtn);
+  // ② 显式确认键（`chat.stillProcessing.interrupt`）：用户动作 ⇒ 才允许发 interrupt，
+  //    随后按既有「重试」语义重发上一条输入。
+  const interruptBtn = document.createElement('button');
+  interruptBtn.className = 'still-processing-interrupt';
+  interruptBtn.textContent = t('chat.stillProcessing.interrupt');
+  interruptBtn.style.cssText = btnCss;
+  interruptBtn.style.display = 'none';   // 确认态才出现（见 ①）
+  interruptBtn.onmouseenter = () => { interruptBtn.style.background = 'var(--color-frame-active)'; };
+  interruptBtn.onmouseleave = () => { interruptBtn.style.background = 'var(--color-frame-hover)'; };
+  interruptBtn.onclick = () => {
+    sendWs({ type: 'interrupt', sessionId: sid });
+    row.remove();
+    resendLastInput(v);
+  };
+  card.appendChild(interruptBtn);
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+  // 取证面（A 开放项 3）：本类误报行原本不落任何记录 ⇒ 事后不可复查。落一条 system
+  // 记录进本地会话缓存（backend 侧无对应帧，因此这是唯一可盘查的痕迹）。动态 import
+  // 同 renderSystemBubble：persistence.js 静态依赖本模块，反向静态 import 会成环。
+  // obsfix 微批 ②（作者令）：记录带 `i18nKey`（+ 同串 `content` 保底）⇒ 共享缓存恢复
+  // 分支按 key 复渲成**中性 notice**（存 key 不存 HTML）；无 key 的存量记录回落 content。
+  import('./persistence.js')
+    .then(({ saveMsg }) => { try { saveMsg({ type: 'system', i18nKey: 'chat.stillProcessing', content: t('chat.stillProcessing') }, sid); } catch (e) { /* 缓存写失败不影响呈现 */ } })
+    .catch(() => {});
+  return row;
+}
+
+/** 收掉某会话的「仍在处理」行（活性恢复 / 新 turn / 终态 / 进入错误态时调用）。 */
+export function removeStillProcessingNotice(sid) {
+  if (!sid) return;
+  try {
+    Object.values(chatViews).forEach((v) => {
+      if (!v || !v.dom || !v.dom.chat) return;
+      const row = v.dom.chat.querySelector(`.still-processing-row[data-still-processing="${sid}"]`);
+      if (row) row.remove();
+    });
+  } catch (e) { /* 呈现层清理失败不影响判定 */ }
+}
+
+/** 重发输入历史末条（原「重试」按钮语义，保持不变）。 */
+function resendLastInput(v) {
+  const history = state.inputHistory;
+  const lastMsg = history.length > 0 ? history[history.length - 1] : '';
+  if (!lastMsg) return;
+  if (v && v.dom && v.dom.input) v.dom.input.value = lastMsg;
+  import('./input.js').then(({ send }) => { setActiveView(v); send(); });
+}
+
+// ---------- 终态行（超时 / 连接已断开）with retry ----------
+/** 终态行单点构造 —— 后端 `timeout` 帧（`renderTimeoutNotice`）与看门真死
+ *  （`renderConnectionLostNotice`）共用，两者只差文案 key 与 `data-*` 契约属性。
+ *  🔴 行为面与本批前**逐字一致**（`.row error` 容器 / `error-card` 内联样式 /
+ *  「重试」键语义 / 落盘时机）；唯一增量 = 落盘记录多一个 `i18nKey`
+ *  （obsfix 微批 ②：重载路径按 key 复渲，**不存 HTML**）。 */
+function renderTerminalRow(sid, i18nKey, dataset = {}) {
   const v = activeView; // capture before callback
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row error';
+  Object.entries(dataset).forEach(([k, val]) => { row.dataset[k] = String(val); });
   const card = document.createElement('div');
   card.className = 'error-card';
   card.style.display = 'flex';
   card.style.alignItems = 'center';
   card.style.gap = '12px';
   const text = document.createElement('span');
-  text.textContent = t('chat.timeout');
+  text.textContent = t(i18nKey);
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = t('chat.retry');
@@ -1508,18 +1712,31 @@ export function renderTimeoutNotice() {
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
     row.remove();
-    // Find last user message from input history and resend
-    const history = state.inputHistory;
-    const lastMsg = history.length > 0 ? history[history.length - 1] : '';
-    if (lastMsg) {
-      v.dom.input.value = lastMsg;
-      import('./input.js').then(({ send }) => { setActiveView(v); send(); });
-    }
+    // 终态（后端 timeout 帧 / 真死）下 turn 已结束 ⇒ 重发无需确认中断。
+    resendLastInput(v);
   };
   card.appendChild(btn);
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
+  // 取证面（A 开放项 3 · 原不落任何记录 ⇒ 误报事后不可复查；obsfix ② 起带 i18nKey）。
+  import('./persistence.js')
+    .then(({ saveMsg }) => { try { saveMsg({ type: 'system', i18nKey, content: t(i18nKey) }, sid || state.activeSessionId); } catch (e) { /* 同上 */ } })
+    .catch(() => {});
+  return row;
+}
+
+/** 后端 `timeout` 帧终态行（`chat.timeout` = §5.1 冻结值「仍在处理」，**零变动**）。 */
+export function renderTimeoutNotice(sid) {
+  return renderTerminalRow(sid, 'chat.timeout');
+}
+
+/** 看门真死终态行（obsfix 微批 ①）= 断开如实态 `chat.connectionLost`
+ *  「连接已断开，点击重试」。`reason` ∈ `'ws-closed'`（socket 已断）| `'no-inbound'`
+ *  （socket 活着但本档窗口内零入站帧）——判定子案落 `data-watchdog-dead-reason`，
+ *  文案为分支级单值（判定 = 该 turn 的通道已死）。 */
+export function renderConnectionLostNotice(sid, reason) {
+  return renderTerminalRow(sid, 'chat.connectionLost', { watchdogDead: '1', watchdogDeadReason: reason || 'unknown' });
 }
 
 // ---------- System bubble ----------

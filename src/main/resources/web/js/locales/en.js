@@ -510,6 +510,14 @@ export default {
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
   'messages.send': 'Send',
+  // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
+  // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback
+  // in messages.js). The code set lives in friendsApi.js `FRIEND_TERMINAL_CODES`.
+  // zh + en in one batch (no single-language additions).
+  'messages.friendNotFriends': 'You are no longer friends — the message was not sent',
+  'messages.friendNotBlocker': 'You have not blocked this user, so that action is not available',
+  'messages.friendReplyTargetInvalid': 'The quoted message is no longer available — the message was not sent',
+  'messages.sendFailedCode': 'Send failed ({code})',
   'messages.yesterday': 'Yesterday',
   'messages.ariaUnread': '{n} unread messages',
   'messages.copy': 'Copy',
@@ -823,6 +831,66 @@ export default {
   'settings.updateLater': 'Later',
   'settings.updateError': 'Update check failed',
 
+  // Unified update phase text (hotupdate batch 1 · design §7 naming: `update.phase`
+  // plus the phase name). Phase frames carry a messageKey (e.g.
+  // 'update.phase.freezing') — display text is resolved from this table only;
+  // 🔴 frames carry no display text (ruling 10 / D6: failures and rollbacks use the
+  // status line only — no toasts, no modals, no red blocks). Frontend rendering is
+  // batch 3 (G6).
+  'update.phase.idle': 'Not updated yet',
+  'update.phase.checking': 'Checking for a new version',
+  'update.phase.preparing': 'Update request accepted',
+  'update.phase.freezing': 'Waiting for in-flight work to finish, then freezing',
+  'update.phase.updating': 'Installing the new version',
+  'update.phase.restarting': 'Restarting',
+  'update.phase.recovering': 'Recovering tasks',
+  'update.phase.completed': 'Updated to {version}',
+  'update.phase.aborted': 'Update aborted: {reason} — the current version keeps serving, unaffected',
+  'update.phase.rolled-back': 'The new version failed its health check; rolled back to {version}',
+
+  // Consumer-side text for the unified progress surface (hotupdate batch 3 · G6).
+  // All additive: phase text still comes from 'update.phase.*' above; this group
+  // resolves the other machine tokens the frames carry — the abort/failure reason
+  // (`reason` = frozen UpdateReason literal), the source (`source` = frozen
+  // UpdateSource literal) and the three admission-receipt branches.
+  // 🔴 never hardcode these literals in JS — resolve them from this table.
+  'update.versions': 'Current {current} · latest {latest}',
+  'update.impact': 'Pre-update impact (in-flight work): {detail}',
+  'update.receipt.alreadyInFlight': 'The same update request is already in flight (merged, not re-run): {phase}',
+  'update.receipt.busy': 'An update is already running (source: {source}) — updates are exclusive and never queued: {phase}',
+  'update.receipt.refused': 'Update not admitted: {reason}',
+  'update.reason.confirm-missing': 'the confirmation bit is missing',
+  'update.reason.freeze-busy': 'work is in flight and the mode is reject-if-busy',
+  'update.reason.freeze-wait-limit-exceeded': 'in-flight work exceeded the wait limit',
+  'update.reason.freeze-drain-deadline-exceeded': 'work was still in flight when the drain deadline arrived',
+  'update.reason.install-failed': 'installing the new version failed',
+  'update.reason.restart-refused': 'the restart handover was refused or aborted',
+  'update.reason.orchestrator-unavailable': 'this instance has no hot-restart orchestrator',
+  'update.reason.unexpected-error': 'the update orchestrator hit an unexpected error',
+  'update.reason.unspecified': 'no reason provided',
+  'update.source.settings': 'settings',
+  'update.source.device-list': 'device list',
+  'update.source.relay': 'relay',
+  'update.source.website': 'website',
+  'update.source.cli': 'command line',
+
+  // Phase text for the existing restart progress frame (`restartStatus`): that frame
+  // is a SUBSET of the unified progress frame (design §4:104), reusing the same
+  // progress surface and the same renderer (no second channel).
+  'restart.phase.quiesce': 'Waiting for in-flight work to finish',
+  'restart.phase.draining': 'Freezing and flushing to disk',
+  'restart.phase.spawning': 'Launching the successor process',
+  'restart.phase.handing-over': 'Handing over — the old process is about to exit',
+  'restart.phase.completed': 'Restart completed',
+  'restart.phase.failed': 'Restart aborted',
+
+  // Settings-page restart trigger (hotupdate batch 3 · G6 second half) — reuses the
+  // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
+  'settings.restart': 'Restart Service',
+  'settings.restartConfirm': 'Confirm restart?',
+  'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
+  'settings.restartFailed': 'Restart not admitted: {error}',
+
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': 'Models',
@@ -922,7 +990,20 @@ export default {
   'delete.folderMsg': 'Delete folder "{name}"?\nSessions inside will be moved to root.',
 
   // === Chat area ===
-  'chat.timeout': 'Response timed out',
+  // freezetimeout B2 · §16 verbatim table (source of truth = diagnosis §5): the
+  // error-semantics 'Response timed out' becomes the status-semantics
+  // 'Still processing'; two new stillProcessing keys are added.
+  'chat.timeout': 'Still processing',
+  'chat.stillProcessing': 'Still processing — no new progress yet',
+  'chat.stillProcessing.interrupt': 'Interrupt and retry anyway',
+  // freezetimeout obsfix micro-batch ① (author order: "truthful copy in the
+  // true-dead state") — new §16 verbatim entry for the watchdog's true-dead
+  // branch (ladder topped out ∧ (socket closed ∨ no liveness evidence)), which
+  // replaces the inherited 'chat.timeout' ("Still processing") — showing
+  // "still processing" on a dead connection contradicts the state (verdict
+  // O-1). The frozen 'chat.timeout' value is untouched ⇒ the slow branch and
+  // the backend timeout-frame path are unchanged.
+  'chat.connectionLost': 'Connection lost — click to retry',
   'chat.retry': 'Retry',
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
@@ -1241,6 +1322,10 @@ export default {
   'neblink.cancel': 'Cancel',
   'neblink.updating': 'Updating...',
   'neblink.restarting': 'Restarting...',
+  // Remote-update timeout state (hotupdate batch 3 · ruling 7 "the outer 300s lands on
+  // the trigger/admission face" + design §7:149 "timeout cap and timeout state"): the
+  // trigger face's closing text when no result frame arrived within 300 seconds.
+  'neblink.updateTimeout': 'Timed out (300s) — check the device state',
   // Switch account (settings account area, 2026-09-10)
   'neblink.switchAccount': 'Switch account',
   'neblink.logout': 'Log out',
@@ -1575,6 +1660,12 @@ export default {
   'messages.deviceDescSaveFailed': 'Could not save the device description.',
   'messages.deviceSent': 'Sent',
   'messages.deviceRead': 'Read',
+  // === friend/group receipt slot (R5 two cells · source contract v1.2) ===
+  // 🔴 The only new copy in this batch (2 keys; see the report's copy declaration):
+  // the contract §1.1 bubble wording `read {readCount}/{memberCount}` for groups,
+  // plus the same derivation's delivered count. Direct/device faces add none.
+  'messages.receiptReadCount': 'Read {read}/{total}',
+  'messages.receiptSentCount': 'Sent {sent}/{total}',
   'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
   'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
   'messages.deviceSendUnavailable': 'This device\'s identity is unavailable — sending is off.',

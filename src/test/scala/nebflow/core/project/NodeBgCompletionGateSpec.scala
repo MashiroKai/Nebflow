@@ -51,8 +51,12 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-bg-gate"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
+  // 构造期换根纪律（2026-09-18 判例 6a68914c1 同款残件，S1 组负载敏红族）：**先清树，最后换根**
+  // —— 若先 setDataRoot 再 os.remove.all，此刻全局根已指向本树，前序套件收尾期仍在跑的
+  // 异步写入（按 PathUtil.dataRoot 落盘）会在删树遍历中途把目录重新建出来 ⇒ 构造期
+  // DirectoryNotEmptyException / 组合跑互踩（本 spec 与 NodeBlockedToolSignalSpec 是两个残件）。
   os.remove.all(tempRoot)
+  PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
@@ -216,6 +220,29 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
+  /** 后台任务快照的有界等（S1 组负载敏红修复 · round 2 **根因**收口）：
+    *
+    * 观测到的红 = G2/G4 的 `waitUntil: condition not met in time`（节点在后台完成通知后
+    * 永不进终态）。逐层取证（引擎侧临时 tracer + 事件日志）结论：
+    *   - 唤醒轮**确实跑过并跑完**（`turn-complete msgs=3 textLen=8`，非桩未回、非通知丢失）；
+    *   - 桥**确实收到**第二个 `Completed`（nmsg=4）；
+    *   - 但桥的复检 `BgTaskRegistry.waitingFor(sessionId)` **读回非空**（= 本用例刚「注销」的
+    *     那个 jobId）⇒ 走 hold 分支静默重 hold（`holdEmitted` 已置位 ⇒ 无新事件、无留痕）
+    *     ⇒ 节点挂到 `bgWaitCapMs`（本 spec 注入 1h）⇒ 30s/20s 等待红。
+    *
+    * 为什么等待集没排空：`AgentRecord.status` **出生即 `Idle`**（`protocol.scala:480`），而
+    * [[waitIdle]] 的判据恰是 `status == Idle` ⇒ 负载下 [[waitIdle]] 可在**首轮 LLM 调用之前**
+    * 返回（会话刚 spawn、agent 尚未执行 UserInput）；而后台任务是在**首个 `sendStream` 内**
+    * 登记的（桩的 `BgStubLlm`）⇒ 那一刻 `llm.jobIds` 仍是空表 ⇒ 后面
+    * `jobs.traverse_(BgTaskRegistry.unregister)` 沦为**空转**（注销 0 件）⇒ 等待集永不排空。
+    * 这解释了「本树 1/5–1/11 红、负载敏、两树皆在（预存在）」三点。
+    *
+    * 修法 = 有界等「快照可见」（同批 :447-449 / awaitDelivery 同款纪律，判据本体零改动）：
+    * 登记永远不发生 ⇒ 这里超时红（不掩盖），断言/失败计数逐条不变。
+    */
+  private def awaitJobs(llm: BgStubLlm, timeout: FiniteDuration = 10.seconds): IO[List[String]] =
+    waitUntil(timeout)(llm.jobIds.get.map(_.nonEmpty)) *> llm.jobIds.get
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
       cond: IO[Boolean]
   ): IO[Unit] =
@@ -312,6 +339,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       a <- byName(rt, "plain-a")
       // 批 3：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红（CI 实测）
       imms <- awaitDelivery(recorded, "[Node 'plain-a' completed]")
+      // G1 是「零后台任务」用例（registerTask=false）⇒ 此处**刻意**不用 awaitJobs（它等
+      // 「快照非空」，本用例的正确期望恰是空表）；断言本体逐字不变。
       jobs <- llm.jobIds.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -336,7 +365,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- createNode("bg-g2", ws, "wait-a", "result-ALPHA", res = res, system = system)
       // turn 1 结束（agent Idle），bg 任务仍在册 → 节点必须保持 Running（hold）
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       // beta.57 CI G2 治本（20260908）：固定 sleep 猜窗口改有界轮询——等桥真正
       // 完成 turn-1 持留处理（bg-wait 审计事件落盘）才继续，消除「唤醒轮
       // Completed 先于 hold 建立到达」的时序脆弱；「若未 hold 就错误终态化」
@@ -347,6 +376,10 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       waiting <- BgTaskRegistry.waitingFor(nodeSid)
       // 后台任务完成：unregister（回调同构）+ ExternalEvent 通知 → 唤醒轮
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
+      // 放行前置同步点（round 2）：等待集必须**先排空**再发完成通知 —— 否则桥的复检读到
+      // 非空会静默重 hold（无新事件）⇒ 节点挂到 cap 才红。排不空 ⇒ 在此**显式**超时红
+      // （不再以 30s 下游等待的面目出现）；放行判据/断言本体零改动。
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       // 放行窗口 20s→30s：CI 负载头部空间（本地实测释放 ~4ms，绿路径时长不变）
       _ <- waitUntil(30.seconds)(byName(rt, "wait-a").map(n =>
@@ -418,7 +451,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       rt <- mountProject("bg-g4", ws, system, res)
       _ <- createNode("bg-g4", ws, "kill-a", "result-KILL", res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 模拟看护杀回调（BashTool gateLedger 同构）：unregister + 终局记账。
       // 杀因原文含 "cancelled"（B1 idle 杀文案）——failed 注明必须净化，
@@ -426,6 +459,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- jobs.traverse_(jid => BgTaskRegistry.unregister(jid) *>
         BgTaskRegistry.markFailed(jid, nodeSid, "nebula-root", "spec bg task",
           "Background command was idle (no output) for 300s and was automatically cancelled."))
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(20.seconds)(byName(rt, "kill-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "kill-a")
@@ -457,7 +491,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       rt <- mountProject("bg-g5", ws, system, res, bgWaitCapMs = 1200L)
       _ <- createNode("bg-g5", ws, "cap-a", "result-CAP", res = res, system = system)
       _ <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       // 任务一直不完成 → 1.2s 兜底 → failed
       _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "cap-a")
@@ -491,12 +525,13 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- createNode("bg-g6", ws, "down-a", "result-HOLDBG",
         extraOut = Some("n-g6-down"), res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       // 同 G2 治本：hold 建立改 bg-wait 事件有界轮询（替代固定 sleep 猜窗口）
       _ <- waitUntil(15.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait\""))))
       midRun <- byName(rt, "down-a")
       // 后台完成 → 放行 → completeNode → completed（无 hold 分流）
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(30.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "down-a")
@@ -523,7 +558,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       rt <- mountProject("bg-g7", ws, system, res)
       _ <- createNode("bg-g7", ws, "stuck-a", "result-STUCK", res = res, system = system)
       (nodeSid, _) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 预置 giveUp 计数（≥ StopAttempts+2）：若（变异后）scan 命中 Idle 节点，
       // 立即 giveUp → 桥 Cancelled → 节点 cancelled。正常实现 scan 只看 Processing
@@ -554,7 +589,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       rt <- mountProject("bg-g8", ws, system, res)
       _ <- createNode("bg-g8", ws, "givup-a", "result-GIVEUP", res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 模拟 TaskStuckWatcher 对真卡死通知轮的 giveUp（supervisorRef Cancelled 同链）
       reg <- res.agentRegistry.get
@@ -596,7 +631,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // 批 4：显式等批 flush（见 awaitDelivery）——同 G1/G2/G4；等不到即红（判据本体逐字不变）
       imms <- awaitDelivery(recorded, "[Node 'sealed-a' completed]")
       events <- readEvents(ws)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

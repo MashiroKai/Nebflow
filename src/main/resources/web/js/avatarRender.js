@@ -26,9 +26,11 @@
 //
 // 🔴 池是**会话内**内存缓存（不落 localStorage）：头像字节来自跨源头像源站
 // （无 CORS 头，浏览器直 fetch 恒失败 —— 见 `avatarCache.js` 头部 2026-09-07
-// 取证），因此**字节级**缓存必须走后端代理，本批不动 `src/main/scala/**`；
-// 而**已解码节点**不需要读字节就能复用，是同一目标（不闪）在纯前端可达的实现。
+// 取证）⇒ 本模块只做「已解码节点」复用；**字节级**磁盘层（IndexedDB）的唯一
+// 属主 = `localStore.js`（`readAvatar` / `buildAvatarLater`）。
 // 上限 = LRU 兜底，防长会话累积（头像 URL 数 ≪ 上限，正常永不触发）。
+
+import { readAvatar, buildAvatarLater, avatarKey } from './localStore.js';
 
 /** 每个 URL 最多留几个节点（同一头像可能同时出现在列表行 + 窗头 + 抽屉）。 */
 const MAX_PER_URL = 3;
@@ -93,6 +95,43 @@ export function avatarCellsSignature(list, total, label) {
   const cells = Array.isArray(list) ? list : [];
   const parts = cells.map((c) => `${(c && c.userId) || ''}\u0001${(c && c.avatarUrl) || ''}`).join('\u0002');
   return `${cells.length}\u0003${Number(total) || 0}\u0003${label || ''}\u0003${parts}`;
+}
+
+// ── 本地优先 src 解析（sessperf Phase B · 2026-09-20）────────────────────
+// 卡 `.nebflow/20260920_184900_sessperf-local-first-card__chain-sessperf.md` §4③：
+// 头像字节层（IndexedDB，唯一属主 `localStore.js`）**命中 ⇒ 渲染路径零网络**；
+// 未命中 ⇒ 回落现状（远端 URL 直拉 + 本模块解码池），并由 `buildAvatarLater`
+// **低频、有界**地把字节补进磁盘层（不改首帧等待、不放大请求数）。
+//
+// 🔴 本模块**不落盘、不取字节**：它只把「稳定键 → src」这一层解析收敛成单点
+// （卡 §5.3：`contacts.js` 的第二份 `avatarEl` 正是要收敛的反例）。
+
+/**
+ * 头像 src 的单点解析（渲染路径；**同步、零 await**）。
+ * @param {{userId?: string, avatarUrl?: string}|undefined|null} person
+ * @returns {string} objectURL（本地层命中）或远端 URL；无头像 ⇒ `''`
+ */
+export function avatarSrc(person) {
+  const url = (person && person.avatarUrl) ? String(person.avatarUrl) : '';
+  if (!url) return '';
+  const userId = (person && person.userId) ? String(person.userId) : '';
+  if (!userId) return url; // 无稳定身份键 ⇒ 不猜本地层键，走现状
+  const key = avatarKey(userId);
+  const cached = readAvatar(key);
+  if (cached) return cached;
+  buildAvatarLater(key, { userId, url });
+  return url;
+}
+
+/**
+ * 渲染用节点：src = `avatarSrc(person)`，节点走**同一**解码复用池
+ * （objectURL 与远端 URL 同池同语义 ⇒ 命中本地层时零网络、零解码）。
+ * @param {{userId?: string, avatarUrl?: string}|undefined|null} person
+ * @returns {HTMLImageElement|null} null = 无头像（调用方走首字母/字形兜底）
+ */
+export function avatarNodeFor(person) {
+  const src = avatarSrc(person);
+  return src ? avatarImgNode(src) : null;
 }
 
 /** 测试/诊断用：池现状（只读）。 */

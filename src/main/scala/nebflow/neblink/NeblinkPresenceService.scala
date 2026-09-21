@@ -525,8 +525,10 @@ final class NeblinkPresenceService(
         .newBuilder()
         .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
         .build()
-      val ws = client
-        .newWebSocketBuilder()
+      val wsBuilder = client.newWebSocketBuilder()
+      // A1: our deviceId rides the handshake HEADER, not the URL query.
+      presenceHandshakeHeaders(id).foreach { case (k, v) => wsBuilder.header(k, v); () }
+      val ws = wsBuilder
         .buildAsync(URI.create(wsUri), listener)
         .get(budgetMs, TimeUnit.MILLISECONDS)
 
@@ -1082,13 +1084,25 @@ final class NeblinkPresenceService(
   /**
    * Build the WS URI with our device info as query params.
    *
+   * A1 (2026-09-20 device-face hardening batch): **`deviceId` is no longer in
+   * the URL.** A query string is the least private place a value can sit
+   * (access logs, proxy logs, crash dumps, shell history of a copied URL), and
+   * deviceId is exactly the identifier the peer criterion trusts. It now travels
+   * in the handshake HEADER ([[presenceHandshakeHeaders]]) — the SAME
+   * `X-Neblink-Device` channel the REST peer criterion already reads
+   * (`RestApiRoutes#verifyPeerAccess`), so no second channel was invented. The
+   * peer side reads the header first and still accepts the legacy `?deviceId=`
+   * query param, so older dialers keep pairing; the one residual is a NEW dialer
+   * against an OLD listener (registered in the batch report, not solved here).
+   * The remaining params are peer display metadata (name/platform/caps/port),
+   * not credentials — the hardening requirement named deviceId only.
+   *
    * F-1: `port` is the **dial target's** port (the peer's advertised port when the
    * candidate carries one). The query param `port` is a different thing and stays
    * `serverPort` — it tells the peer which port **we** listen on (正确行为, 零改动).
    */
-  private def buildWsUri(host: String, port: Int, id: DeviceIdentity): String =
+  private[neblink] def buildWsUri(host: String, port: Int, id: DeviceIdentity): String =
     val params = Map(
-      "deviceId" -> id.deviceId,
       "deviceName" -> id.deviceName,
       "platform" -> id.platform,
       "capabilities" -> id.capabilities.asJson.noSpaces,
@@ -1096,6 +1110,11 @@ final class NeblinkPresenceService(
     )
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
     s"ws://$host:$port/api/neblink/presence?$query"
+
+  /** Handshake headers carrying OUR identity on a presence dial (A1). One source
+    * for the write side and for the test face, so the two cannot drift. */
+  private[neblink] def presenceHandshakeHeaders(id: DeviceIdentity): List[(String, String)] =
+    List(Protocol.DeviceHeader -> id.deviceId)
 
   private def enc(s: String): String =
     try java.net.URLEncoder.encode(s, "UTF-8")

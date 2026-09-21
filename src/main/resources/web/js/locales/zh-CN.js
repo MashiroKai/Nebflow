@@ -511,6 +511,13 @@ export default {
   'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
   'messages.send': '发送',
+  // rcptcode 批（2026-09-20）：好友腿**终态**分态文案（消费点 = `messages.js` 的
+  // `FRIEND_TERMINAL_TEXT` 白名单 + 未知码回退 `sendFailedCode`）。码集 = `friendsApi.js`
+  // 的 `FRIEND_TERMINAL_CODES`（同源单表）。中英同批新增（禁单语新增）。
+  'messages.friendNotFriends': '你们已不是好友，消息未发送',
+  'messages.friendNotBlocker': '你并未拉黑对方，该操作不可用',
+  'messages.friendReplyTargetInvalid': '被引用的消息已不可用，消息未发送',
+  'messages.sendFailedCode': '发送失败（{code}）',
   'messages.yesterday': '昨天',
   'messages.ariaUnread': '{n} 条未读消息',
   'messages.copy': '复制',
@@ -797,6 +804,61 @@ export default {
   'settings.updateLater': '稍后',
   'settings.updateError': '检查更新失败',
 
+  // 统一更新相位文案（hotupdate 批 1 · 设计 §7 命名规范 `update.phase` 加相位名）。
+  // 相位帧携带 messageKey（如 'update.phase.freezing'）——展示文案一律由本表解析，
+  // 🔴 帧内不携带展示文案、禁字面硬编码（裁定 10 / D6：失败与回滚只走状态行，
+  // 不新增轻提示/弹窗/红色块）。前端渲染消费属批 3（G6）。
+  'update.phase.idle': '尚未更新',
+  'update.phase.checking': '正在检查新版本',
+  'update.phase.preparing': '已受理更新请求',
+  'update.phase.freezing': '等待在飞工作结束并冻结',
+  'update.phase.updating': '正在安装新版本',
+  'update.phase.restarting': '正在重启',
+  'update.phase.recovering': '正在恢复任务',
+  'update.phase.completed': '已更新到 {version}',
+  'update.phase.aborted': '更新中止：{reason}——当前版本继续服务，未受影响',
+  'update.phase.rolled-back': '新版本自检未通过，已回滚到 {version}',
+
+  // 统一进度面的消费侧文案（hotupdate 批 3 · G6）。**全部为加法**：相位文案仍由上面
+  // 的 'update.phase.*' 承载；本组只解析帧内**其它**机器 token——中止/失败原因
+  // （`reason` = UpdateReason 冻结字面）、来源（`source` = UpdateSource 冻结字面）、
+  // 以及受理回执三分支。🔴 禁在 JS 写这些字面（一律走本表）。
+  'update.versions': '当前版本 {current} · 最新版本 {latest}',
+  'update.impact': '更新前影响面（在飞工作）：{detail}',
+  'update.receipt.alreadyInFlight': '同一次更新请求已在途（已合并，不重复执行）：{phase}',
+  'update.receipt.busy': '已有更新正在进行（来源：{source}）——更新是排他动作、不排队：{phase}',
+  'update.receipt.refused': '更新未受理：{reason}',
+  'update.reason.confirm-missing': '缺少确认位',
+  'update.reason.freeze-busy': '当前有工作在跑（忙即拒绝模式）',
+  'update.reason.freeze-wait-limit-exceeded': '等待在飞工作超过等待上限',
+  'update.reason.freeze-drain-deadline-exceeded': '排空收敛期限到达时仍有工作在跑',
+  'update.reason.install-failed': '安装新版本失败',
+  'update.reason.restart-refused': '重启交接被拒绝或中止',
+  'update.reason.orchestrator-unavailable': '本实例未装配热重启编排器',
+  'update.reason.unexpected-error': '更新编排器异常',
+  'update.reason.unspecified': '原因未提供',
+  'update.source.settings': '设置页',
+  'update.source.device-list': '设备列表',
+  'update.source.relay': '中继',
+  'update.source.website': '官网',
+  'update.source.cli': '命令行',
+
+  // 既有重启进度帧（`restartStatus`）的相位文案：该帧是统一进度帧的**子集**
+  // （设计 §4:104 逐字），复用同一进度面与同一渲染器（零第二通道）。
+  'restart.phase.quiesce': '等待在飞工作结束',
+  'restart.phase.draining': '正在冻结并落盘',
+  'restart.phase.spawning': '正在派生新进程',
+  'restart.phase.handing-over': '交接中，旧进程即将退出',
+  'restart.phase.completed': '重启完成',
+  'restart.phase.failed': '重启中止',
+
+  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
+  // 界面侧两段式确认（第二击即确认位）。
+  'settings.restart': '重启服务',
+  'settings.restartConfirm': '确认重启？',
+  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
+  'settings.restartFailed': '重启未受理：{error}',
+
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': '模型',
@@ -897,7 +959,16 @@ export default {
 
 
   // === Chat area ===
-  'chat.timeout': '响应超时',
+  // freezetimeout B2 · §16 逐字表（真源 = 诊断件 §5）：chat.timeout 由错误语义
+  // 「响应超时」改为状态语义「仍在处理」；新增两条 stillProcessing key。
+  'chat.timeout': '仍在处理',
+  'chat.stillProcessing': '仍在处理，暂未收到新进展',
+  'chat.stillProcessing.interrupt': '仍要中断并重试',
+  // freezetimeout obsfix 微批 ①（作者令「真死文案如实态」）· §16 逐字表新增 1 条 key：
+  // 看门真死分支（阶梯到顶 ∧（WS 已断 ∨ 无任何活性证据））的断开如实态文案，
+  // 替代原先沿用的 `chat.timeout`「仍在处理」（真死态显示「仍在处理」语义相悖，
+  // 判词位 O-1）。`chat.timeout` 冻结值维持不动 ⇒ 慢速分支与后端 timeout 帧路径零变动。
+  'chat.connectionLost': '连接已断开，点击重试',
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
@@ -1214,6 +1285,9 @@ export default {
   'neblink.cancel': '取消',
   'neblink.updating': '更新中…',
   'neblink.restarting': '重启中…',
+  // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
+  // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
+  'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
   // 切换账号（设置页账号区，2026-09-10）
   'neblink.switchAccount': '切换账号',
   'neblink.logout': '退出登录',
@@ -1545,6 +1619,12 @@ export default {
   'messages.deviceDescSaveFailed': '设备描述未保存。',
   'messages.deviceSent': '已送达',
   'messages.deviceRead': '已读',
+  // === 好友 / 群回执槽位（R5 两格 · 源契约 `friend-group-receipt-source` v1.2）===
+  // 🔴 本批**唯一新增文案**（2 枚，见报告「文案申报」）：契约 §1.1 逐字给出的气泡文案
+  // `已读 {readCount}/{memberCount}`（群聊）+ 同一派生式 `deliveredCount` 的送达计数。
+  // 直聊 / 设备面**零新增**（复用上方 `deviceSent` / `deviceRead` 两枚既有键）。
+  'messages.receiptReadCount': '已读 {read}/{total}',
+  'messages.receiptSentCount': '已送达 {sent}/{total}',
   'messages.deviceServerUnavailable': '服务端历史暂不可用 —— 已切换为本机历史。',
   'messages.deviceSendFailed': '消息未发出。内容未丢失，请重试。',
   'messages.deviceSendUnavailable': '本机设备身份不可用，暂不能发送。',

@@ -450,7 +450,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       rt <- mountProject("nmsg-s7", ws, system, res)
       _ <- seedNode(rt, "n-c7", "chain-runner", NodeLifecycle.Running, task = Some("chain 用例任务"))
       recorded <- registerNodeSession(rt, system, "n-c7", "node-chainsess")
-      ids <- rt.engine.chainIds
+      ids <- rt.engine.mailChainIds
       realId = ids.headOption.getOrElse(fail("project must have ≥1 derived chain after seeding a node"))
       r <- MailTool.call(
         Json.obj(
@@ -502,5 +502,50 @@ class NodeMessageSpec extends CatsEffectSuite:
       assert(r.swap.toOption.get.message.contains("MAIL_CHAIN_NOT_FOUND"), s"错误码缺失: $r")
       assert(imms.isEmpty, "校验失败 ⇒ 零投递（校验在一切投递副作用之前）")
       assert(!lines.exists(_.contains("\"type\":\"node-message\"")), "校验失败 ⇒ 零审计事件")
+
+  // ── chainmodel 批三 ①（chainmail）：Mail 校验改走台账解析 —— 旧号别名可达 ──
+
+  test("S7c-CHAINID-LEDGER-ALIAS: 台账已登记的旧号别名 ⇒ 放行（chainmodel 批三 ① 正判据）"):
+    val ws = tempRoot / "ws-nmsg-s7c"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"nmsg-s7c-${scala.util.Random.nextInt(100000)}")
+    // 台账 fixture：一条已出生条目 + 一条指向它的旧号别名行（= 改号后旧号保留的形态）。
+    // 落盘位置与 ChainLedgerStore.open 的读点同源（<ws>/.nebflow/chain-ledger.json），
+    // mountProject → FlowMapStore.open 期载入 ⇒ 校验面即可解析。
+    val canon = "chain-n-legacy-canon"
+    val legacy = "chain-n-legacy-old"
+    val fx = ChainLedger.State(
+      project = "nmsg-s7c", updatedAt = 1L,
+      entries = Map(canon -> ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L)),
+      aliases = Map(legacy -> ChainLedger.AliasRow(alias = legacy, canonical = canon, createdAt = 1L))
+    )
+    // 落盘路径与 FlowMapStore.open 的载入点（`:1585` `base / ChainLedger.FileName`，
+    // `base = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"`）逐字同源；
+    // 🔴 父目录须先建：fixture 早于 `mountProject`（= 早于 open 的 `makeDir.all(base)`）
+    // ⇒ 不建目录则 `os.write.over` 抛 NoSuchFileException（返工 r1 实测失败点）。
+    val ledgerPath = os.Path(ws.toString, PathUtil.dataRoot) / ".nebflow" / ChainLedger.FileName
+    os.makeDir.all(ledgerPath / os.up)
+    os.write.over(ledgerPath, fx.asJson.noSpaces)
+    for
+      res <- mkResources(system, tempRoot)
+      rt <- mountProject("nmsg-s7c", ws, system, res)
+      _ <- seedNode(rt, "n-c7c", "chain-runner-c", NodeLifecycle.Running, task = Some("legacy 用例任务"))
+      recorded <- registerNodeSession(rt, system, "n-c7c", "node-chainsess-c")
+      known <- rt.engine.mailChainIds
+      r <- MailTool.call(
+        Json.obj(
+          "address" -> Json.fromString("node:n-c7c"),
+          "message" -> Json.fromString("旧号别名探针"),
+          "chainId" -> Json.fromString(legacy)
+        ).asObject.get,
+        mkCtx(res, system, ws.toString).copy(isDispatcher = true, projectName = Some("nmsg-s7c"))
+      )
+      imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(known.contains(legacy), s"台账已登记旧号必须在校验集合内，got: ${known.size} ids")
+      assert(r.isRight, s"已登记旧号别名必须放行（改造前恒 MAIL_CHAIN_NOT_FOUND），got: $r")
+      assertEquals(imms.size, 1, s"exactly one ImmediateInput expected, got ${imms.map(_.text.take(60))}")
+      assert(imms.head.text.contains(s"[mail chainId: $legacy]"), "旧号逐字进注入文本（可回引）")
 
 end NodeMessageSpec

@@ -32,7 +32,8 @@ import scala.util.matching.Regex
  *  "projectRoot":"…","cwd":"…"}
  * }}}
  * - `deviceId` = **来源**设备（本机 NebLink 身份，即下发方；p2p 路径同时作为
- *   `X-Nebflow-Device` 头随请求发出），`targetDeviceId` = 被驱动的对端。
+ *   `X-Neblink-Device` 头随请求发出——头名以 `Protocol.DeviceHeader` 为准；relay
+ *   路径不发该头，用隧道 Bearer），`targetDeviceId` = 被驱动的对端。
  * - `command` 一律 **redact**（见 [[redact]]）——密钥/token/长串只留
  *   「长度 + 前缀 + SHA-256 前 8 位」，**禁明文**。
  * - `cwd` = 本机下发进程的工作目录（`user.dir`）；远端 cwd 在下发侧不可知，

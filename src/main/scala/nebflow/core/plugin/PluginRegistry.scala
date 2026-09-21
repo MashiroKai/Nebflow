@@ -37,6 +37,12 @@ import scala.util.matching.Regex
  * 路径围栏（§4.1）：plugin.json/SKILL.md/tools.json/sse 之外被读路径解析符号链接
  * 后必须仍在插件根内，越界 → 拒绝/跳过。
  *
+ * 官方身份校验（P0-3 身份脚手架，基线 §2.4；判定实现在 [[OfficialPackages]]）：
+ * `nebflow-` 前缀 = 官方保留 namespace —— 该前缀的包**必须在分发内置官方允许列表中且目录
+ * 内容 digest 逐字相等**，否则拒载（`OFFICIAL_IMPERSONATION`，登记在 digest 之后、内容面判定
+ * 之前）。非保留前缀的包不经本闸。拒载走**同一**装载错误面（WARN / 段尾缺席注记 / 健康摘要
+ * `[load-failed]` / `listWithRejected`），不新增第四种错误面。
+ *
  * 内容面判定（**无审批批 2026-09-13**，作者令「装了就是信任」）：**在位即信任**
  * （default-allow）+ **点名封禁**（deny-list）。判定顺序（[[PluginRegistry.loadPlugin]]
  * 末尾，勿交换）：① 命中 `nebflow.json → plugins.revoked.<name> = {at, by, reason}`
@@ -616,6 +622,16 @@ object PluginRegistry:
         val (digest, fileCount) = computeDigest(dir) match
           case Right(d) => d
           case Left(err) => return Left(pname -> err)
+
+        // 官方身份装载层闸（P0-3 官方包身份脚手架；基线 §2.4；验收 BU A3）：
+        // `nebflow-` 前缀 = 官方保留 namespace —— 前缀匹配但 digest ∉ 分发内置官方允许列表
+        // ⇒ 拒载（`OFFICIAL_IMPERSONATION`）。本闸**必须在装载层**：拒绝先于可用（拒载的包
+        // 不进 registry ⇒ 不可分配、不可装载、resolve ⇒ PLUGIN_NOT_FOUND）。
+        // 非保留前缀的包不经本闸 ⇒ 第三方包判定路径逐字不变（对照臂）。
+        // 位置在 digest 之后：判定输入 = **目录内容 digest**（不是名字本身），故必须在
+        // `computeDigest` 之后；拒载理由里带上两个短 digest 供人工核对。
+        if !OfficialPackages.admits(pname, digest) then
+          return Left(pname -> OfficialPackages.rejectionReason(pname, digest))
 
         // 内容面判定（无审批批，2026-09-13 作者令「装了就是信任」）：
         //   ① **先查封禁（deny）**：`plugins.revoked.<name>` 命中 ⇒ Blocked（指名阻止）；

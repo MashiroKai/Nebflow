@@ -146,6 +146,20 @@ const GLOBAL_MSG_TYPES = new Set([
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
   'updateCheckResult', 'updateStarted', 'updateCompleted',
+  // Unified update progress (hotupdate 批 1 契约 · 设计 §4/§7): the update
+  // orchestrator broadcasts {type:'updateProgress', phase, messageKey, ...} on
+  // the same channel (wsHub.broadcast → all connections) with NO sessionId.
+  // 🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被 :485-494 当会话内事件 ⇒
+  // setActiveView(primary)，把用户正在看的视图切走（每次相位推进都切一次）。
+  // 本批只钉**契约**（帧类型 + 文案键），前端**消费/渲染**属批 3（G6）——此处零消费。
+  // 'updateResult' = 受理/已在途/更新中/拒绝的即时应答（同为全局、无 sessionId）。
+  'updateProgress', 'updateResult',
+  // 既有热重启进度帧 + 其即时应答（hotupdate 批 3 · G6 后半的前端触发面）：
+  //   restartStatus {type,phase,detail} —— wsHub.broadcast 到**所有**连接、无 sessionId
+  //     ⇒ 不入 GLOBAL 会把**每个**用户正在看的视图切走（不止触发者）。
+  //   restartResult {type,ok,error?|message?} —— 'restart' 命令的直回帧（无 sessionId）。
+  // 两者都只是「既有帧 + 补消费」，零新消息类型。
+  'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',
@@ -292,11 +306,50 @@ export function forceReconnect() {
 }
 
 // ---------- Send ----------
+// 观察项① 收口（hotupdate 批 3 · G6；批 1 判词裁「可接受 / 留后续，建议批 3 落地进度面
+// 时一并收口」）：连接未开时 sendWs **静默丢弃**（无报错、无队列、无回调）——点击
+// 「立即更新」/「重启」时该帧直接消失，界面停在「更新中…」。
+//
+// 本批收口形态 = **有界 pending 队列**（二选一中的队列案）：未连接 ⇒ 入队；连接开启时
+// 按序补发。🔴 生效面 = 本函数这一个**单点**，因此对 ALL WS 命令一致（不是给「立即更新」
+// 开的特例——没有任何命令/按键白名单）。
+// 边界（逐条）：① 容量 100，溢出丢**最旧**（有界，防长时间离线导致内存无界增长）；
+// ② 补发在 onopen 里**先于**既有引导命令（用户显式意图优先；引导命令自带幂等语义，
+//    后发无副作用）；③ 补发中途发送异常 ⇒ 该项退回队首、停止本轮补发（保序），剩余项
+//    留到下一次 open。读取面 `pendingSendCount()` 只作诊断读数。
+const PENDING_SEND_CAP = 100;
+let pendingSends = [];
+
+/** 现读 pending 队列长度（诊断/验证读数；不改变发送语义）。 */
+export function pendingSendCount() {
+  return pendingSends.length;
+}
+
+/** 连接开启后按序补发 pending 队列（仅由 onopen 调用一次）。 */
+function flushPendingSends() {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  while (pendingSends.length > 0) {
+    const msg = pendingSends.shift();
+    try {
+      state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } catch (e) {
+      console.error('[ws] pending send failed - keeping it at the head of the queue:', e);
+      pendingSends.unshift(msg);
+      return;
+    }
+  }
+}
+
 /** @param {WSOutgoingMessage | string} msg */
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    return true;
   }
+  // 未连接 ⇒ 入有界队列（不静默丢弃）。溢出丢最旧。
+  pendingSends.push(msg);
+  while (pendingSends.length > PENDING_SEND_CAP) pendingSends.shift();
+  return false;
 }
 
 // ---------- Connect ----------
@@ -342,6 +395,72 @@ function probeCookieAuth() {
       authParamFallback = true;
     }
   }).catch(() => { /* inconclusive - proceed cookie-first */ });
+}
+
+// ---------- Heartbeat tolerance (freezetimeout B2 · 施工图 §4.1 B 面) ----------
+// 缺陷：原实现「平 5s、单次 miss 即 close()」。承压期（换页）后端 pong 越过 5s 是常态
+// ⇒ 一个健康 socket 被判死 ⇒ onclose 清心跳 + 退避重连，重连期的静默又全部计入 busy
+// 看门预算（诊断 §2(c)）。改法三条：① 连续 N 次 miss 才判死；② 宽限随实测 RTT 自适应；
+// ③ 页面 hidden / 冻结期暂停计时（此刻的排空/迟到不是对端死亡）。
+const HB_INTERVAL_MS = 30000;
+const HB_PONG_GRACE_MIN_MS = 5000;
+const HB_PONG_GRACE_MAX_MS = 30000;
+const HB_MAX_MISSES = 3;
+let hbMisses = 0;          // 连续 miss 计数（收到 pong / 新连接 / 进后台即归零）
+let hbPingAt = 0;          // 最近一次 ping 的发出时刻（算 RTT）
+let hbMaxRttMs = 0;        // 实测 RTT 高点（逐次成功后对折衰减：一次性抖动不会永久放宽）
+
+/** 单次 pong 宽限：max(5s, 3×实测 RTT 高点)，上限 30s。 */
+function hbGraceMs() {
+  return Math.min(HB_PONG_GRACE_MAX_MS, Math.max(HB_PONG_GRACE_MIN_MS, hbMaxRttMs * 3));
+}
+
+/** 发一次 ping 并在宽限内等 pong；未等到记一次 miss —— 连续 HB_MAX_MISSES 次才判死。 */
+function hbProbe() {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.pendingPong = true;
+  hbPingAt = Date.now();
+  sendWs({type: 'ping'});
+  setTimeout(() => {
+    if (!state.pendingPong) return;                                    // pong 已回 ⇒ 健康
+    if (state.ws?.readyState !== WebSocket.OPEN) return;               // 已被 onclose 收走
+    if (document.visibilityState === 'hidden') {                       // 期间进后台 ⇒ 本窗不作数
+      state.pendingPong = false;
+      hbMisses = 0;
+      return;
+    }
+    hbMisses++;
+    if (hbMisses >= HB_MAX_MISSES) {
+      console.log(`[ws] heartbeat: no pong after ${HB_MAX_MISSES} consecutive misses, closing dead connection`);
+      state.ws.close();
+    }
+  }, hbGraceMs());
+}
+
+/** 唤醒/回网探针（原 :706-713 平 2s 单次即 force reconnect 的容错化）：
+ *  同一 ping/pong 口径，连续 maxMisses 次未回才判死。 */
+function probeSocketAfterWake(maxMisses) {
+  let misses = 0;
+  const attempt = () => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;    // onclose 路径已接管
+    if (document.visibilityState === 'hidden') return;                  // 后台期不判死
+    state.pendingPong = true;
+    hbPingAt = Date.now();
+    sendWs({type: 'ping'});
+    setTimeout(() => {
+      if (!state.pendingPong) { hbMisses = 0; return; }                 // 活着
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      if (document.visibilityState === 'hidden') { state.pendingPong = false; return; }
+      misses++;
+      if (misses >= maxMisses) {
+        console.log('[ws] no pong after wake: consecutive misses, force reconnect');
+        state.ws.close();                                              // onclose → scheduleReconnect
+        return;
+      }
+      attempt();
+    }, hbGraceMs());
+  };
+  attempt();
 }
 
 export function connect() {
@@ -404,7 +523,11 @@ export function connect() {
     opened = true;
     reconnectAttempts = 0;
     state.connected = true;
+    hbMisses = 0;             // freezetimeout B2: 新连接从零计 miss
+    state.pendingPong = false;
     syncSendButtonConnState();
+    // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
+    flushPendingSends();
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
@@ -415,18 +538,17 @@ export function connect() {
     sendWs({type: 'getLlmLog'});
     sendWs({type: 'getConfig'});
     sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
+    // freezetimeout B2: 新连接从零计 miss；先清残留 interval 再武装 —— forceReconnect
+    // 会置空 onclose 后 close()（不触发 onclose ⇒ 走不到下面的 clearInterval），若不在
+    // 此处清掉，旧 interval 泄漏 ⇒ 双倍 ping / 双倍 miss 计数（实测 pingTs 间隔 70ms）。
+    if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     state.heartbeat = setInterval(() => {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.pendingPong = true;
-        sendWs({type: 'ping'});
-        setTimeout(() => {
-          if (state.pendingPong && state.ws?.readyState === WebSocket.OPEN) {
-            console.log('[ws] heartbeat: no pong after 5s, closing dead connection');
-            state.ws.close();
-          }
-        }, 5000);
-      }
-    }, 30000);
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      // 冻结/后台期**暂停计时**（freezetimeout B2 · 施工图 §4.1 B 面）：后台期间浏览器
+      // 会掐/降频定时器，此刻的「没回 pong」不是 socket 死了，不能计入 miss。
+      if (document.visibilityState === 'hidden') { hbMisses = 0; return; }
+      hbProbe();
+    }, HB_INTERVAL_MS);
     // On (re)connect, notify callbacks so they can fetch state that
     // requires an open WS (e.g. workspace items, scheduled tasks).
     reconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] connect callback error:', e); } });
@@ -463,8 +585,23 @@ export function connect() {
     try {
       const msg = JSON.parse(e.data);
 
+      // 通道活性水位（freezetimeout B2 · 施工图 §4.2③）：收到**任何**入站帧 = 这条
+      // 通道还活着，是 busy 看门在阶梯到点时可用的唯一独立活性证据。必须在下面各
+      // early-return（pong 等）之前推进。
+      state.lastWsInboundAt = Date.now();
+
       // Pong reply - clear pending flag (used by heartbeat + wake detection)
-      if (msg.type === 'pong') { state.pendingPong = false; return; }
+      if (msg.type === 'pong') {
+        state.pendingPong = false;
+        hbMisses = 0;
+        if (hbPingAt) {
+          const rtt = Date.now() - hbPingAt;
+          hbPingAt = 0;
+          // 衰减保留：连续正常心跳会把一次性抖动收回 5s 底限。
+          hbMaxRttMs = Math.max(rtt, Math.round(hbMaxRttMs * 0.5));
+        }
+        return;
+      }
 
       // ── BUG 6 fix: save/restore activeView ────────────────────────────
       // activeView is a module-global (chatView.js). The bg-agent/flow
@@ -477,9 +614,20 @@ export function connect() {
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
+      // Sub-agent frames (nodeSessionId present) must NOT be gated on sessionId:
+      // NodeRunner's routeSubagentWsSend leaves sessionId = the sub-agent's OWN id
+      // (emitInjectedUserEvent already stamped it), while DelegateTool's routeWsSend
+      // overwrites sessionId with the PARENT's. Every node-/dispatcher- live frame is
+      // therefore dropped here, so a running sub-agent's popup shows history only
+      // until the agent finishes and its ui.json lands on disk.
+      // Exempt them; the owning window is decided downstream (bg-agent step
+      // interceptor + the injected-bubble ownership gate in main.js).
+      // Frames WITHOUT nodeSessionId evaluate this condition exactly as before —
+      // same operands in the same order, one extra final operand.
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
           !GLOBAL_MSG_TYPES.has(msg.type) && !TERMINAL_MSG_TYPES.has(msg.type) &&
-          !STREAM_MSG_TYPES.has(msg.type)) {
+          !STREAM_MSG_TYPES.has(msg.type) &&
+          !msg.nodeSessionId) {
         return;
       }
 
@@ -636,17 +784,11 @@ function checkConnection() {
     // Connection is dead - reconnect immediately
     forceReconnect();
   } else if (state.ws.readyState === WebSocket.OPEN) {
-    // Connection looks alive - send a ping and verify with pong within 2s.
-    // Mac lid-open can leave the TCP connection in a half-open state where
-    // the browser hasn't fired onclose yet.
-    state.pendingPong = true;
-    sendWs({type: 'ping'});
-    setTimeout(() => {
-      if (state.pendingPong && state.ws?.readyState === WebSocket.OPEN) {
-        console.log('[ws] no pong after wake, force reconnect');
-        state.ws.close(); // triggers onclose → scheduleReconnect
-      }
-    }, 2000);
+    // Connection looks alive - probe with ping/pong. Mac lid-open can leave the TCP
+    // connection in a half-open state where the browser hasn't fired onclose yet.
+    // freezetimeout B2: 平 2s 单次 miss 即 force reconnect 改为连续 HB_MAX_MISSES
+    // 次未回才判死（承压期单次 2s 太短，误伤健康 socket ⇒ 断连抖动 + 静默累积）。
+    probeSocketAfterWake(HB_MAX_MISSES);
   }
 }
 

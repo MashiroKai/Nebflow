@@ -5,6 +5,7 @@ import java.nio.file.attribute.{
   AclEntryPermission,
   AclEntryType,
   AclFileAttributeView,
+  PosixFilePermission,
   PosixFilePermissions,
   UserPrincipal
 }
@@ -67,6 +68,15 @@ object CredentialFileAcl:
   /** POSIX mode for credential files: owner read+write only. */
   val PosixMode: String = "rw-------"
 
+  /** POSIX mode for credential DIRECTORIES: `rwx------`.
+    *
+    * A6 (2026-09-20 device-face hardening batch): a directory needs its OWN
+    * mode string — [[PosixMode]] (`rw-------`) applied to a directory strips the
+    * execute bit, which would make the directory untraversable (the credential
+    * inside becomes unreachable for the owner too). Hence a separate constant
+    * and a separate port method rather than reusing the file branch. */
+  val PosixDirMode: String = "rwx------"
+
   /** OS enforcement port — one method per branch, so a test double can record
     * *which* branch ran (and that the other one did not). */
   trait Port:
@@ -76,6 +86,11 @@ object CredentialFileAcl:
     /** Windows branch: replace the DACL with a single owner-only ALLOW ACE. */
     def ownerOnlyWindows(path: Path): Unit
 
+    /** POSIX DIRECTORY branch: `chmod 700` (see [[PosixDirMode]]). Defaulted so
+      * existing doubles keep compiling; the production port overrides it. */
+    def ownerOnlyPosixDir(path: Path): Unit =
+      Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(PosixDirMode))
+
   /** Production port: POSIX mode bits on Unix, DACL on Windows. */
   val systemPort: Port = new Port:
     def ownerOnlyPosix(path: Path): Unit =
@@ -83,6 +98,9 @@ object CredentialFileAcl:
 
     def ownerOnlyWindows(path: Path): Unit =
       installOwnerOnlyAce(aclView(path))
+
+    override def ownerOnlyPosixDir(path: Path): Unit =
+      Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(PosixDirMode))
 
   /** The ACL view of `path`, or an explicit refusal — a filesystem without ACL
     * support must not silently fall back to POSIX permissions (a no-op on
@@ -536,4 +554,44 @@ object CredentialFileAcl:
       port.ownerOnlyWindows(path)
       ladder.enforce(path)
     else port.ownerOnlyPosix(path)
+
+  /** Leave no `group`/`other` bit set — i.e. this directory is ALREADY
+    * owner-only and narrowing it would be a no-op. Read-only probe; a filesystem
+    * without a POSIX view (Windows) throws, and the caller treats that as
+    * "nothing to do here" (see [[restrictDirectory]]). */
+  private[core] def needsNarrowing(dir: Path): Boolean =
+    val perms = Files.getPosixFilePermissions(dir)
+    // Compare by ENUM CONSTANT, not by name string: `PosixFilePermission` is a
+    // Java enum, so the only name accessor is `Enum.name()` — matching on
+    // `OWNER_*` is both type-safe and immune to a future constant rename.
+    !perms.asScala.forall(p =>
+      p == PosixFilePermission.OWNER_READ ||
+        p == PosixFilePermission.OWNER_WRITE ||
+        p == PosixFilePermission.OWNER_EXECUTE
+    )
+
+  /** Owner-only access on the DIRECTORY that holds credential files — the
+    * "目录兜底" half of A6 (2026-09-20 device-face hardening batch).
+    *
+    * WHY a directory step at all: the file bits stop a reader who KNOWS the
+    * path, but a world-readable directory still lets any local principal
+    * enumerate which credential files exist (and `device-profiles.json` next to
+    * them is deliberately not owner-only). Measured state that motivated it:
+    * `~/.nebflow/neblink` was `0755` while `secrets/` was already `0700`.
+    *
+    * Scope, stated explicitly (report §申报): POSIX only — the Windows
+    * DIRECTORY DACL face is NOT touched by this batch (the file-level ladder in
+    * [[restrict]] is file-shaped: it "repairs" by rebuilding the node, which is
+    * meaningless for a directory). On Windows this is a no-op. Idempotent:
+    * already-owner-only directories are left alone.
+    *
+    * Throws on failure; the caller decides whether that is fatal (the write path
+    * warns, never silently swallows — the Q2 lesson). */
+  def restrictDirectory(
+    dir: Path,
+    osName: String = currentOsName,
+    port: Port = systemPort
+  ): Unit =
+    if isWindows(osName) then ()
+    else if Files.exists(dir, LinkOption.NOFOLLOW_LINKS) && needsNarrowing(dir) then port.ownerOnlyPosixDir(dir)
 end CredentialFileAcl

@@ -277,7 +277,20 @@ final class ChunkSender(
 object ChunkSender:
 
   /**
-   * 打开发送游标。`startOffset > 0` 时重读 `[0, startOffset)` 重建整件摘要前缀。
+   * 打开发送游标。`startOffset > 0` 时**先对齐到块边界**（xferb 批 · P0-2），再重读
+   * `[0, aligned)` 重建整件摘要前缀。
+   *
+   * 🔴 为什么必须对齐（改前缺陷）：探测到的权威 offset 是 temp 的**实际长度**，它可以不是
+   * `chunkSize` 的整数倍（上一次 append 被中断）。`readNext` 只会从 `index × chunkSize`
+   * 起读 ⇒ 实际重发的是**含该 offset 的那一整块**。若仍按未对齐的 offset 给摘要打前缀
+   * （改前行为），整件 sha256 的前缀就比实际发送的字节多出那截尾巴 ⇒ **末块整件摘要必然
+   * 不符**（续传永远失败，且原因只显示为「内容不一致」）。对齐后：前缀 = `[0, aligned)`
+   * = 真正会跳过的字节，重发块与接收端截断后的落盘位置严格同源。
+   *
+   * 🔴 对齐的**例外**（xferb 批 · 已落满）：`startOffset ≥ totalBytes` 时**不对齐**。
+   * 此时对端 temp 已含整件，对齐回上一块边界会把**末块**当成「未发」重发一遍（数据上安全，
+   * 但违背 P0-2 的「已传字节不重来」）；不对齐则 `readNext` 直接给 None，由调用方走
+   * **零块收口**（用接收端重算的摘要比对，见 `ChunkedSendLoop.run` 的空读分支）。
    */
   def open(
     source: os.Path,
@@ -288,12 +301,16 @@ object ChunkSender:
     IO.blocking {
       val totalBytes = os.size(source)
       val digest = ChunkedTransfer.newDigest
+      val aligned =
+        if chunkSize <= 0 then math.max(0L, startOffset)
+        else if startOffset >= totalBytes then math.max(0L, startOffset)
+        else math.max(0L, (startOffset / chunkSize.toLong) * chunkSize.toLong)
       var primed = 0L
-      if startOffset > 0 then
+      if aligned > 0 then
         val in = os.read.inputStream(source)
         try
           val buf = new Array[Byte](64 * 1024)
-          var remaining = startOffset
+          var remaining = aligned
           while remaining > 0 do
             val want = math.min(buf.length.toLong, remaining).toInt
             val n = in.read(buf, 0, want)
@@ -389,8 +406,20 @@ final class ChunkReceiver(
                 // ⇒ 整件摘要比对点永远是死代码、末块回执永远不带接收端自算摘要
                 // ⇒ 校验退化成「发送端自证」（不变量 I2 的反面）。自环测试实测命中。
                 IO.blocking {
+                  // ===== 续传对齐（xferb 批 · P0-2）=====
+                  // 本块的 offset 之前若已存在**非整块尾**（上一次 append 被中断，或上一次
+                  // 会话用了另一个块大小），必须先截到 `frame.offset` 再 append —— 否则同一段
+                  // 字节落两遍：落盘长度超出计划、末块整件摘要必然不符（改前 = 静默污染，
+                  // 只表现为 `WHOLE_DIGEST_MISMATCH` 的假「内容不一致」）。
+                  // 只对**本会话自己的 temp** 动手（路径来自会话记录/确定性派生名），
+                  // 不触任何别人的件（收端全保护口径不变）。
+                  val frameStart = frame.offset
+                  if os.exists(tempPath) && os.size(tempPath) > frameStart then
+                    val raf = new java.io.RandomAccessFile(tempPath.toNIO.toFile, "rw")
+                    try raf.setLength(frameStart)
+                    finally raf.close()
                   os.write.append(tempPath, payload)
-                  bytes += payload.length
+                  bytes = frameStart + payload.length
                   bytes
                 }.flatMap { nowBytes =>
                   if nowBytes < totalBytes then

@@ -63,6 +63,109 @@ export function setUpdateDot(show) {
   }
 }
 
+// ── 统一进度面（hotupdate 批 3 · G6）────────────────────────────────────────
+//
+// 消费面（**本模块是唯一消费点**，与批 1 的契约单点同构——禁第二套订阅/第二套渲染器）：
+//   · `updateProgress`（12 键：type/phase/messageKey/state/reason/detail/source/channel/
+//     idempotencyKey/currentVersion/latestVersion/progress）——相位文案**一律**由帧内
+//     `messageKey` 解析 locale 表（🔴 本文件不写任何相位展示字面）；
+//   · `updateResult`（受理回执三分支 already-in-flight / busy / refused）；
+//   · `restartStatus` / `restartResult`（既有热重启进度帧及其应答 = 统一帧的子集）。
+//
+// 视觉（设计 §7:139-145 五行逐条，色值一律走既有 token，零新色）：
+//   未完成态 pending      = 中性次要文本      ⇔ var(--color-frame-text-muted)
+//   进行态   in-progress  = 单一强调色（每视口至多一个彩色事件）⇔ rgb(var(--sapphire))
+//   失败态   failed       = 中性灰 + 明确原因（**不用红块**）  ⇔ var(--color-frame-text)
+//   回滚态   rolled-back  = 中性灰 + 版本对照（**不用红块**）  ⇔ var(--color-frame-text)
+//   终态     completed    = 静默收敛         ⇔ var(--color-frame-text-muted)
+// 🔴 裁定 10：失败 / 回滚**仅状态行**——不新增轻提示、不弹窗、无红色块。
+const UPDATE_STATE_VISUAL = {
+  'pending': { color: 'var(--color-frame-text-muted)' },
+  'in-progress': { color: 'rgb(var(--sapphire))' },
+  'failed': { color: 'var(--color-frame-text)' },
+  'rolled-back': { color: 'var(--color-frame-text)' },
+  'completed': { color: 'var(--color-frame-text-muted)' },
+};
+
+/** 既有重启帧的相位 → 统一四态归属（**机器 token 映射**，展示文案仍从 locale 表解析）。 */
+const RESTART_PHASE_STATE = {
+  'quiesce': 'in-progress',
+  'draining': 'in-progress',
+  'spawning': 'in-progress',
+  'handing-over': 'in-progress',
+  'completed': 'completed',
+  'failed': 'failed',
+};
+
+/** 最近一帧的统一进度快照。面板关闭时元素不存在 ⇒ 只更新快照不渲染（既有
+ *  「元素不存在即静默」模式）；面板重开由 [[restoreUpdateProgress]] 复现
+ *  （与既有 `state.updateAvailable` 回填同款口径）。 */
+let lastProgress = null;
+/** 是否已见到统一进度帧（legacy `updateStarted`/`updateCompleted` 的文案降级标志位）。 */
+let unifiedProgressSeen = false;
+/** 更新是否在途（未到终态）——重启子集帧的仲裁标志（见 `restartStatus` 订阅）。 */
+let updateActive = false;
+
+/** 相位文案：键取自帧内 `messageKey`（缺 ⇒ 由 `phase` 派生同名键），
+ *  `{version}`/`{reason}` 两个占位由帧字段解析（原因走 `update.reason.*` 表）。
+ *  🔴 无任何展示字面——全部经 `t()`。 */
+function phaseText(snap) {
+  const key = snap.messageKey || (snap.phase ? 'update.phase.' + snap.phase : '');
+  if (!key) return '';
+  const version = snap.latestVersion || (lastProgress && lastProgress.latestVersion)
+    || state.serverVersion || '';
+  const reason = snap.reason ? t('update.reason.' + snap.reason) : t('update.reason.unspecified');
+  return t(key, { version, reason });
+}
+
+/** 统一进度面渲染（单点）：状态行 = 相位（四态视觉）+ 进度块 = 影响面/诊断明细 + 版本对照。 */
+function renderUnifiedProgress() {
+  const snap = lastProgress;
+  if (!snap) return;
+  const statusEl = document.getElementById('update-status');
+  const progressEl = document.getElementById('update-progress');
+  const impactEl = document.getElementById('update-progress-impact');
+  const versionsEl = document.getElementById('update-progress-versions');
+  if (statusEl) {
+    statusEl.textContent = phaseText(snap);
+    statusEl.style.color = UPDATE_STATE_VISUAL[snap.state || 'pending'].color;
+    statusEl.dataset.updateState = snap.state || 'pending';
+    statusEl.dataset.updatePhase = snap.phase || '';
+  }
+  if (progressEl) {
+    progressEl.style.display = 'block';
+    if (impactEl) {
+      // 影响面预告（设计 §7:147「直出五域详情」）：数据源 = 帧内 `detail`
+      // （冻结相位承载既有五域快照 `QuiesceReport.detail` 的唯一现成透出面）。
+      impactEl.textContent = snap.detail
+        ? (snap.phase === 'freezing' ? t('update.impact', { detail: snap.detail }) : snap.detail)
+        : '';
+    }
+    if (versionsEl) {
+      versionsEl.textContent = (snap.currentVersion || snap.latestVersion)
+        ? t('update.versions', {
+          current: snap.currentVersion || '—',
+          latest: snap.latestVersion || '—',
+        })
+        : '';
+    }
+  }
+}
+
+/** 「立即更新」按钮复位（拒绝 / 忙 / 已在途三分支都不会有 updateStarted 帧）。 */
+function restoreUpdateButton() {
+  const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-do-update'));
+  if (btn) { btn.textContent = t('settings.updateNow'); btn.disabled = false; }
+}
+
+/** 面板重开时复现最近一帧的统一进度（设置面板每次 renderSettings 都会重建元素）。
+  *  @returns {boolean} true = 已按统一进度帧渲染（调用方据此让出状态行回填）。 */
+export function restoreUpdateProgress() {
+  if (!lastProgress) return false;
+  renderUnifiedProgress();
+  return true;
+}
+
 export function initUpdateCheck() {
   if (initialized) return;
   initialized = true;
@@ -99,7 +202,9 @@ export function initUpdateCheck() {
 
   onMessage('updateStarted', () => {
     const statusEl = document.getElementById('update-status');
-    if (statusEl) statusEl.textContent = t('settings.updating');
+    // 批 1 的既有开始帧保留原样（向后兼容）；统一进度帧一旦到达即以 `messageKey`
+    // 解析的相位文案为准，本帧不再抢状态行（两帧到达次序无保证，故按「谁更具体谁说话」仲裁）。
+    if (statusEl && !unifiedProgressSeen) statusEl.textContent = t('settings.updating');
   });
 
   onMessage('updateCompleted', (msg) => {
@@ -110,11 +215,93 @@ export function initUpdateCheck() {
       state.updateAvailable = false;
       state.latestVersion = '';
       setUpdateDot(false);
-      if (statusEl) statusEl.textContent = '✓ ' + t('settings.upToDate');
+      if (statusEl && !unifiedProgressSeen) statusEl.textContent = '✓ ' + t('settings.upToDate');
       const actionEl = document.getElementById('update-action');
       if (actionEl) actionEl.style.display = 'none';
-    } else if (statusEl) {
+    } else if (statusEl && !unifiedProgressSeen) {
       statusEl.textContent = '✗ ' + (msg.error || t('settings.updateError'));
+    }
+  });
+
+  // ── 统一进度帧消费（hotupdate 批 3 · G6）──────────────────────────────────
+  // 订阅面 = 既有广播通道上的既有帧：updateProgress（12 键，批 1 契约）+
+  // updateResult（受理/已在途/更新中/拒绝三分支）。🔴 零新消息类型。
+  onMessage('updateProgress', (msg) => {
+    unifiedProgressSeen = true;
+    lastProgress = {
+      messageKey: msg.messageKey || (msg.phase ? 'update.phase.' + msg.phase : ''),
+      state: msg.state || '',
+      phase: msg.phase || '',
+      reason: msg.reason || '',
+      detail: msg.detail || '',
+      source: msg.source || '',
+      currentVersion: msg.currentVersion || '',
+      latestVersion: msg.latestVersion || '',
+      phaseKind: 'update',
+    };
+    updateActive = (lastProgress.state !== 'completed' && lastProgress.state !== 'failed'
+      && lastProgress.state !== 'rolled-back');
+    renderUnifiedProgress();
+  });
+
+  onMessage('updateResult', (msg) => {
+    const statusEl = document.getElementById('update-status');
+    const phaseTxt = msg.messageKey || msg.phase
+      ? phaseText({ messageKey: msg.messageKey, phase: msg.phase })
+      : '';
+    let text = '';
+    if (msg.status === 'already-in-flight') {
+      text = t('update.receipt.alreadyInFlight', { phase: phaseTxt });
+    } else if (msg.status === 'busy') {
+      text = t('update.receipt.busy', {
+        source: msg.source ? t('update.source.' + msg.source) : '—',
+        phase: phaseTxt,
+      });
+    } else if (msg.status === 'refused') {
+      const reason = msg.reason ? t('update.reason.' + msg.reason) : t('update.reason.unspecified');
+      text = t('update.receipt.refused', { reason });
+      if (msg.error) text += ' — ' + msg.error;
+    } else {
+      text = msg.error || t('settings.updateError');
+    }
+    // 显式可见态（裁定 10：仅状态行，不加轻提示/弹窗/红块）+ 按钮复位
+    // （拒绝/忙/已在途都不会有 updateStarted ⇒ 不复位就会永久停在「更新中…」禁点态）。
+    if (statusEl) {
+      statusEl.textContent = text;
+      statusEl.style.color = UPDATE_STATE_VISUAL[(msg.status === 'refused') ? 'failed' : 'pending'].color;
+      statusEl.dataset.updateState = (msg.status === 'refused') ? 'failed' : 'pending';
+    }
+    restoreUpdateButton();
+  });
+
+  // 既有热重启进度帧（restartStatus）= 统一进度帧的**子集**（设计 §4:104「既有重启进度帧
+  // 作为其子集保留不删」）⇒ 复用同一进度面与同一渲染器，零第二通道。
+  // 🔴 仲裁：更新在途时统一帧是权威面（更新自身的重启相也会发本帧）⇒ 该期忽略子集帧，
+  // 否则「正在重启」会被「正在派生新进程」覆盖。
+  onMessage('restartStatus', (msg) => {
+    if (updateActive) return;
+    lastProgress = {
+      messageKey: 'restart.phase.' + msg.phase,
+      state: RESTART_PHASE_STATE[msg.phase] || 'in-progress',
+      phase: msg.phase,
+      reason: '',
+      detail: msg.detail || '',
+      source: '',
+      currentVersion: state.serverVersion || '',
+      latestVersion: state.latestVersion || '',
+      phaseKind: 'restart',
+    };
+    renderUnifiedProgress();
+  });
+
+  onMessage('restartResult', (msg) => {
+    const statusEl = document.getElementById('update-status');
+    if (statusEl) {
+      statusEl.textContent = msg.ok
+        ? t('settings.restartAccepted')
+        : t('settings.restartFailed', { error: msg.error || '' });
+      statusEl.style.color = UPDATE_STATE_VISUAL[msg.ok ? 'in-progress' : 'failed'].color;
+      statusEl.dataset.updateState = msg.ok ? 'in-progress' : 'failed';
     }
   });
 

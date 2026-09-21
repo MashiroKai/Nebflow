@@ -335,12 +335,29 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
 
   // ── RP-initiated logout (end-session) ──────────────────────────────────
 
-  private def endSessionRequest: Request[IO] =
-    // Deliberately NO Authorization header: this is a browser navigation hop
-    // (window.open) — the route must not depend on checkAuth.
-    Request[IO](Method.GET, Uri.unsafeFromString("/neblink/auth/end-session"))
+  /** POST + Bearer + optional JSON body —— 2026-09-20 收尾批的契约：该路由已套
+    * `withAuth`，出口从 302 改为 `200 {"endSessionUrl": …}`。
+    * 🔴 夹具**必须**带 Authorization：旧注记「Deliberately NO Authorization header …
+    * must not depend on checkAuth」**已作废** —— 无令牌现在只得到 403（门在前），
+    * 且登出副作用零发生（这正是本批要钉的翻转）。 */
+  private def endSessionRequest(body: Json = Json.obj()): Request[IO] =
+    Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/end-session"))
+      .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+      .withEntity(body)
 
-  test("end-session redirects to the provider end_session with the stored hint and tears local state down") {
+  /** 换号腿：`scenario=switch` / `ui_locales` 由 query 迁入 POST body（本批契约）。 */
+  private def endSessionSwitchRequest: Request[IO] =
+    endSessionRequest(Json.obj("scenario" -> "switch".asJson, "uiLocales" -> "en".asJson))
+
+  /** 本批出口 = 200 + JSON：从 body 取 provider end-session URL 再解析其 query。 */
+  private def endSessionUrlOf(resp: Response[IO]): IO[Uri] =
+    resp.as[Json].map { body =>
+      val url = body.hcursor.downField("endSessionUrl").as[String].toOption
+        .getOrElse(fail(s"endSessionUrl missing in the 200 body: $body"))
+      Uri.unsafeFromString(url)
+    }
+
+  test("end-session returns the provider end_session URL with the stored hint and tears local state down") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
         mkStack(url, dispatcher).flatMap { st =>
@@ -351,15 +368,15 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
               Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
             _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
               logto = Some(LogtoRefresh("rt-1", 1L, Some("tok.hint.sig")))))
-            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+            loc <- endSessionUrlOf(resp)
             peers <- st.ms.peers
             cred <- DeviceCredential.load
             cfg <- st.ms.neblinkConfig
             clientAfter <- st.discovery.currentClient
           yield
-            // 302 to the provider's end_session_endpoint, hint + return uri.
-            assertEquals(resp.status, Status.Found)
-            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location header missing"))
+            // 本批出口：200 + JSON（302 退场 —— fetch 无法消费跨域 302），hint + 回跳 uri 仍在 URL 上。
+            assertEquals(resp.status, Status.Ok)
             assertEquals(loc.path.renderString, "/oidc/session/end")
             val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
             assertEquals(q.get("id_token_hint"), Some("tok.hint.sig"), "stored id_token must be replayed verbatim as the hint")
@@ -384,10 +401,10 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             // Pre-RP-logout credential shape: no idToken block at all.
             _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
               logto = Some(LogtoRefresh("rt-1", 1L))))
-            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+            loc <- endSessionUrlOf(resp)
           yield
-            assertEquals(resp.status, Status.Found)
-            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location header missing"))
+            assertEquals(resp.status, Status.Ok)
             val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
             assertEquals(q.contains("id_token_hint"), false, "never fabricate a hint — omit it entirely")
         }.guarantee(IO.blocking(server.stop(0)))
@@ -405,7 +422,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
           // pkceClientId (the embedded default always carries one).
           for
             _ <- st.ms.updateConfig(cfg => cfg.copy(logto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = None))))
-            resp <- st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
             body <- resp.as[Json]
           yield
             assertEquals(resp.status, Status.NotFound)
@@ -530,7 +547,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   //     （`assertEquals(cred, None, "device credential file removed")`）钉住。
   //   为补上这层信息损失，本用例新增「读失败**带分类码** WARN 实测」——否则「夹具坏了」
   //   与「路由正确分类了」两种情形在断言上不可区分。
-  test("G5 坏凭据（读不开）态下 end-session 仍 302 且本地拆除八步生效（非 500）") {
+  test("G5 坏凭据（读不开）态下 end-session 仍 200 + endSessionUrl 且本地拆除八步生效（非 500）") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
         mkStack(url, dispatcher).flatMap { st =>
@@ -546,10 +563,11 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
               os.write.over(credPath / "occupied-by-a-directory.txt", "not a credential file")
             }
             respAndWarns <- LogdevTestSupport.withWarnsIO(
-              st.routes.routes(endSessionRequest).value.map(_.getOrElse(fail("route fell through")))
+              st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
             )
             resp = respAndWarns._1
             warns = respAndWarns._2
+            loc <- endSessionUrlOf(resp)
             peers <- st.ms.peers
             cred <- DeviceCredential.load
             cfg <- st.ms.neblinkConfig
@@ -557,8 +575,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
             // 拆除第④步的读数：落点必须不再持有坏件（读失败的自愈改名 / 第④步删除皆算）
             gone <- IO.blocking(!os.exists(credPath))
           yield
-            assertEquals(resp.status, Status.Found, "坏凭据下登出必须仍能跳转（302），不是 500")
-            val loc = resp.headers.get[org.http4s.headers.Location].map(_.uri).getOrElse(fail("Location missing"))
+            assertEquals(resp.status, Status.Ok, "坏凭据下登出必须仍能拿到 provider URL（200），不是 500")
             val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
             assertEquals(q.contains("id_token_hint"), false, "读失败 ⇒ 跳过 hint（读不到就不编）")
             assert(
@@ -604,21 +621,19 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
           for
             // ① 续登失败支：arm ⇒ 畸形 endpoint ⇒ landing 消费标记 ⇒ beginPkceLogin 抛
             _ <- st.ms.updateConfig(cfg => cfg.copy(enabled = true, logto = goodLogto))
-            armed <- st.routes.routes(Request[IO](Method.GET,
-              Uri.unsafeFromString("/neblink/auth/end-session?scenario=switch")))
+            armed <- st.routes.routes(endSessionSwitchRequest)
               .value.map(_.getOrElse(fail("end-session route fell through")))
             _ <- st.ms.updateConfig(cfg => cfg.copy(logto = badEndpointLogto))
             land1 <- landOnce
             // ③ 重放支：标记已消费 ⇒ 同一 landing URL 二次访问（静态文案）
             land2 <- landOnce
             // ② 未配置支：重新 arm ⇒ 显式块无 pkceClientId ⇒ beginPkceLogin 返回 None
-            _ <- st.routes.routes(Request[IO](Method.GET,
-              Uri.unsafeFromString("/neblink/auth/end-session?scenario=switch")))
+            _ <- st.routes.routes(endSessionSwitchRequest)
               .value.map(_.getOrElse(fail("end-session route fell through")))
             _ <- st.ms.updateConfig(cfg => cfg.copy(logto = unconfiguredLogto))
             land3 <- landOnce
           yield
-            assertEquals(armed.status, Status.Found, "arm 腿必须 302")
+            assertEquals(armed.status, Status.Ok, "arm 腿必须 200（arm 副作用照发生，出口已是 JSON 数据）")
             assertEquals(land1.status, Status.Ok)
             assertEquals(land2.status, Status.Ok)
             assertEquals(land3.status, Status.Ok)

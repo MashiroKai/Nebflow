@@ -48,6 +48,15 @@ object McpCommand extends CliCommand:
 
   end McpList
 
+  /** T11+A2: these four commands made no wire call at all yet reported success
+    * ("start requested" / "removed (edit nebflow.json to persist)" — a lie: no
+    * request was sent and nothing was persisted). Real start/stop wiring is a
+    * separate batch (the gateway-side behaviour of `toggleMcpServer` has no
+    * runtime evidence yet); until then the answer is honest. Read-only
+    * `mcp list` is unchanged. */
+  private def notImplemented(action: String, id: String): IO[CliResult] =
+    IO.pure(CliResult.Error(s"MCP server '$id' $action: not implemented — use the desktop panel"))
+
   private object McpStart extends CliSubcommand:
     def name = "start"
     def description = "Start an MCP server"
@@ -56,9 +65,7 @@ object McpCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       val id = ctx.positionalArgs.headOption.getOrElse("")
       if id.isEmpty then IO.pure(CliResult.Error("Server ID required"))
-      else
-        // MCP start/stop is handled through config changes + gateway reload
-        IO.pure(CliResult.text(s"MCP server '$id' start requested (requires gateway reload)"))
+      else notImplemented("start", id)
 
   private object McpStop extends CliSubcommand:
     def name = "stop"
@@ -68,7 +75,7 @@ object McpCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       val id = ctx.positionalArgs.headOption.getOrElse("")
       if id.isEmpty then IO.pure(CliResult.Error("Server ID required"))
-      else IO.pure(CliResult.text(s"MCP server '$id' stop requested"))
+      else notImplemented("stop", id)
 
   private object McpRestart extends CliSubcommand:
     def name = "restart"
@@ -78,7 +85,7 @@ object McpCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       val id = ctx.positionalArgs.headOption.getOrElse("")
       if id.isEmpty then IO.pure(CliResult.Error("Server ID required"))
-      else IO.pure(CliResult.text(s"MCP server '$id' restart requested"))
+      else notImplemented("restart", id)
 
   private object McpAdd extends CliSubcommand:
     def name = "add"
@@ -94,7 +101,8 @@ object McpCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val id = ctx.positionalArgs.headOption.getOrElse("")
+          // A3: `--id` was parsed but ignored (only the positional form worked).
+          val id = ctx.positionalArgs.headOption.orElse(ctx.args.get("id")).getOrElse("")
           val command = ctx.args.getOrElse("command", "")
           val args = ctx.args.get("args").map(_.split(",").map(_.trim).toList).getOrElse(Nil)
           if id.isEmpty || command.isEmpty then IO.pure(CliResult.Error("Server ID and command required"))
@@ -103,12 +111,19 @@ object McpCommand extends CliCommand:
               "command" -> command.asJson,
               "args" -> args.asJson
             )
-            val configUpdate = s"""{"mcpServers":{"$id":${mcpEntry.noSpaces}}}"""
+            // A17: the config used to be hand-built by string interpolation
+            // (s"""{"mcpServers":{"$id":${entry}}"""), so an id or command
+            // containing a quote or backslash produced INVALID JSON that was
+            // still reported as "added" (verified: id `mq"x` emitted
+            // {"mcpServers":{"mq"x":{…}}}). buildNestedJson escapes through the
+            // JSON encoder instead — one nested-config helper, already used by
+            // `config set`.
+            val configUpdate = ConfigCommand.buildNestedJson(List("mcpServers", id), mcpEntry.noSpaces)
             client
               .command(
                 Json.obj(
                   "type" -> "updateConfig".asJson,
-                  "config" -> configUpdate.asJson
+                  "config" -> configUpdate.spaces2.asJson
                 )
               )
               .as(CliResult.text(s"MCP server '$id' added"))
@@ -128,5 +143,5 @@ object McpCommand extends CliCommand:
         case Some(client) =>
           val id = ctx.positionalArgs.headOption.getOrElse("")
           if id.isEmpty then IO.pure(CliResult.Error("Server ID required"))
-          else IO.pure(CliResult.text(s"MCP server '$id' removed (edit ${nebflow.core.Branding.configFileName} to persist)"))
+          else notImplemented("remove", id)
 end McpCommand

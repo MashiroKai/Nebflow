@@ -602,34 +602,58 @@ object AgentActor extends AgentCore with AgentSession:
       // 落盘判据与旧录制层逐字保持（`text.nonEmpty && injected` ⇒ 空文本注入
       // 只广播不落盘），写入顺序也保持「先落盘、后广播」单链（同一条 forkTurn
       // 内串行，避免两条 fiber 竞争导致 .ui.json 行序与旧读法不一致）。
+      // bluebubble 批的这条 UI 行现在**一次构造、两处使用**（本会话落盘 + 子代理收件
+      // 镜像）：两处必须是**同一实例**——「同一事件在 root 与子代理窗口逐字节同形」
+      // 是子代理收件批的判据（禁二次构造，防两处字段漂移）。
+      val injectedUiRow = UiMessage.User(
+        text,
+        Nil,
+        injected = true,
+        timestamp = System.currentTimeMillis(),
+        source = Some(source),
+        eventType = eventType,
+        sender = sender,
+        senderTeam = senderTeam,
+        delivery = delivery,
+        // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
+        intake = intake,
+        // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
+        // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
+        // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
+        header = headerOpt
+      )
       val persist =
         if text.nonEmpty then
           resources.sessionStore
-            .appendUiMessages(
-              sid,
-              List(UiMessage.User(
-                text,
-                Nil,
-                injected = true,
-                timestamp = System.currentTimeMillis(),
-                source = Some(source),
-                eventType = eventType,
-                sender = sender,
-                senderTeam = senderTeam,
-                delivery = delivery,
-                // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
-                intake = intake,
-                // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
-                // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
-                // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
-                header = headerOpt
-              ))
-            )
+            .appendUiMessages(sid, List(injectedUiRow))
             .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
+        else IO.unit
+      // 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）：**投递侧增量**。
+      // 本点是全仓唯一的 injected user 行写者（上方 bluebubble 批注释）⇒ 11 处
+      // `emitInjectedUserEvent` 调用点的镜像扩展**在此单点收口**（逐处复制 11 份
+      // 同款镜像腿会造出 11 份会漂移的副本，违反本仓「单一来源」纪律）：11 处调用点
+      // 的全部差异只在**传入字段**，镜像判据只吃 `sid`/`source`/行本身，故单点等价覆盖。
+      // 路由与边界（白名单族 / parent 链 / 前缀族 / 开关 / 只落流不投 agent / 零 WS 帧）
+      // 全在 [[InjectedInboxMirror]] 内（唯一来源）。空文本与落盘腿同判据（只广播不落盘
+      // ⇒ 零镜像行）。位置刻意在 `wsSend` **之后**：live 帧时序与改前逐字一致。
+      val inboxMirror =
+        if text.nonEmpty then
+          resources.agentRegistry.get
+            .flatMap(reg =>
+              InjectedInboxMirror.mirror(
+                reg.iterator.map((s, rec) => (s, rec.rootSessionId)).toList,
+                sid,
+                source,
+                injectedUiRow,
+                (target, row) => resources.sessionStore.appendUiMessages(target, List(row))
+              )
+            )
+            .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: ${e.getMessage}"))
+            .void
         else IO.unit
       ctx.forkTurn(
         persist *> wsSend(withWaiting)
-          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
+          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}")) *> inboxMirror
       )
     }
 
@@ -780,10 +804,18 @@ object AgentActor extends AgentCore with AgentSession:
   private def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(using
     ctx: ActorContext[AgentCommand]
   ): IO[Unit] =
+    // P0-2（spec §2.5）：会话终态清空 MCP 审批卡的 scope=session 放行记忆 ——
+    // 「不落盘 + 会话终态失效 ⇒ 零跨会话残留」。**放在 depth 判据之外**：子代理会话
+    // （depth>0）的放行记忆同样必须随其终态释放（否则 map 只增不减）。
+    // 只清本会话键（`SessionApprovals.clear(sessionId)` 幂等）。
+    val clearMcpSessionApprovals =
+      IO.delay(nebflow.core.SessionApprovals.clear(state.sessionId.getOrElse("")))
+        .handleErrorWith(_ => IO.unit)
     if state.depth == 0 then
       val hookCtx = buildHookContext(state)
-      ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
-    else IO.unit
+      clearMcpSessionApprovals *>
+        ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
+    else clearMcpSessionApprovals
 
   /**
    * #391 机制 E：restart/Stop 联动——杀该 session 全部 shell 进程树（前台 +

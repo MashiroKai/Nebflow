@@ -363,7 +363,7 @@ Message type (optional, default "INFO"):
         ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's derived chain set — an unknown id is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
+          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
@@ -585,7 +585,7 @@ Message type (optional, default "INFO"):
       Some(
         if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
         else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, mailType, ctx)
+        else countMailUsage(deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, mailType, ctx), chainId, ctx)
       )
     else if address.startsWith(ProjectPrefix) then
       val pname = address.stripPrefix(ProjectPrefix).trim
@@ -601,7 +601,9 @@ Message type (optional, default "INFO"):
             s"Address \"Nebula\" is your own (self) address — it is not in your address face ($nebulaFace)."
           ))))
         case SenderRole.Dispatcher =>
-          Some(deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system))
+          Some(countMailUsage(
+            deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system),
+            chainId, ctx))
         case SenderRole.Teamish => None // 既有 canMailNebula 闸不变
     else if role == SenderRole.NebulaRoot then
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
@@ -617,15 +619,62 @@ Message type (optional, default "INFO"):
     else None
   end layeredRoute
 
-  /** chainId 逐字进注入文本（R-18；腿②③一致）。只影响注入体，不落库。 */
+  /** chainId 逐字进注入文本（R-18；腿②③一致）。只影响注入体——**不落 Mail 自身任何库**
+    * （R-17/B2-x「只校验、不落库」逐字保留）；引用**计数**另经批三+ 的 `mail-usage` 面钩子
+    * 记进链号台账（[[countMailUsage]] → `ChainLedgerStore.noteReference` 的 `externalRefs`）
+    * ——「mail 参数入库」与「引用面计数」是两件事，本行前句不因后者改写。 */
   private def withChainAnnotation(message: String, chainId: Option[String]): String =
     chainId match
       case Some(id) => s"[mail chainId: $id]\n$message"
       case None     => message
 
-  /** B2-x / R-17：`chainId` **只校验、不落库**（零链级账本）。本方法零副作用。
-    * 无项目上下文时只做形态校验（无链集可对）；有项目上下文则对派生链全集。
-    * 错误码 = `MAIL_CHAIN_NOT_FOUND`（非空但不在链集内）。 */
+  /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
+  private val FaceMailUsage = "mail-usage"
+
+  /** **引用面 `mail-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的逐字落点：「Mail 携带
+    * chainId **且投递成功**」。
+    *
+    * 只包**正文已注入链号注解**的两条腿（`node:` 腿 / Nebula 腿，注解单点 =
+    * [[withChainAnnotation]]）：注解没进正文的腿（`project:` / 裸项目名 / 短名 / 设备腿 ——
+    * 设备腿的 chainId 明确「只校验不带出」）**结构上不产生**该引用 ⇒ 不计数。
+    * `Left`（未投递 / 越界 / 终态拒绝 / 校验失败）⇒ **零计数**（引用没发生）。
+    * best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReference`），不回滚已投递的 Mail。 */
+  private def countMailUsage(
+      action: IO[Either[ToolError, String]],
+      chainId: Option[String],
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    action.flatMap {
+      case r @ Right(_) if chainId.nonEmpty =>
+        noteChainReferences(ctx, chainId.toList, FaceMailUsage).as(r)
+      case r => IO.pure(r)
+    }
+
+  /** 引用面计数落点（best-effort；`projectName` 空 ⇒ 无可计之处）。
+    *
+    * 「项目未挂载」对本钩子**不可达**：`node:` 腿在项目未挂载时本就投递失败（⇒ `Left` ⇒
+    * 不计数），Nebula 腿的发信会话恒属已挂载项目。故该分支为断言式 `IO.unit`（不猜、不静默
+    * 吞错——真出偏差时 `NodeEngine` 侧 WARN 仍可观察）。 */
+  private def noteChainReferences(ctx: ToolContext, ids: List[String], faceId: String): IO[Unit] =
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(name) =>
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case Some(rt) =>
+            ids.distinct.foldLeft(IO.unit)((acc, id) => acc *> rt.engine.noteChainReference(id, faceId))
+          case None => IO.unit
+        }
+
+  /** B2-x / R-17 + **chainmodel 批三 ①（chainmail）**：`chainId` **只校验、不落库**
+    * （本方法零副作用；台账只**读**、**禁回填**）。无项目上下文时只做形态校验（无链集可对）；
+    * 有项目上下文则按**台账解析**给出可达集合：
+    *   声明链 ∪ 兜底派生链 ∪ 链级依赖目标链 ∪ 台账已登记旧号别名
+    * （判据单点 = `NodeEngine.mailChainIds` / `resolveMailChainId` → `FlowMapStore`；
+    * 热面未命中再经台账冷档兜底 ⇒ 「链号改号后旧号永久可达」，见设计件 §二(b)/(c) 第 4 面）。
+    *
+    * 🔴 **负判据保留**（判红线）：完全未登记号（含归档区封存链号）照旧
+    * `MAIL_CHAIN_NOT_FOUND`（`MAIL_CHAIN_NOT_FOUND` = 非空但不可达）——禁把校验放宽成
+    * 「未知也放行」。改造前口径 = 纯派生链集比对（零台账），旧号在链号重归后必然失效。 */
   private[tools] def validateChainId(chainId: Option[String], ctx: ToolContext): IO[Either[ToolError, Option[String]]] =
     chainId match
       case None => IO.pure(Right(None: Option[String]))
@@ -636,14 +685,17 @@ Message type (optional, default "INFO"):
             ProjectRuntimeRegistry.get(projectName).flatMap {
               case None => IO.pure(Right(Some(id): Option[String])) // 项目未挂载：无链集可对，交投递侧报错
               case Some(rt) =>
-                rt.engine.chainIds.map { ids =>
-                  if ids.contains(id) then Right(Some(id): Option[String])
-                  else
-                    Left(ToolError(
-                      s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
-                        s"Known chains: ${if ids.isEmpty then "(none derived)" else ids.toList.sorted.mkString(", ")}. " +
-                        "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
-                    ))
+                rt.engine.resolveMailChainId(id).flatMap {
+                  case Some(_) => IO.pure(Right(Some(id): Option[String]))
+                  case None =>
+                    // 错误路径才取「已知链」清单（避免每次成功校验都多一次全量派生）
+                    rt.engine.mailChainIds.map { ids =>
+                      Left(ToolError(
+                        s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
+                          s"Known chains: ${if ids.isEmpty then "(none registered)" else ids.toList.sorted.mkString(", ")}. " +
+                          "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
+                      ))
+                    }
                 }
             }
 

@@ -8,12 +8,13 @@ import io.circe.syntax.*
 object SessionCommand extends CliCommand:
   def name = "session"
   def description = "Manage sessions"
-  def subcommands = List(SessionList, SessionCreate, SessionDelete, SessionRename, SessionHistory)
+  def subcommands = List(SessionList, SessionCreate, SessionDelete, SessionRename, SessionHistory, SessionSwitchSub)
 
   def examples = List(
     "nebflow session list",
     "nebflow session create --name \"My Session\"",
-    "nebflow session delete abc-123"
+    "nebflow session delete abc-123",
+    "nebflow session switch abc-123"
   )
 
   private object SessionList extends CliSubcommand:
