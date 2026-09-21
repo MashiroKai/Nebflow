@@ -365,10 +365,13 @@ function avatarEl(person, size) {
  *  逐字节同形的 `<svg>`（同 viewBox / 同 path `d` / 同 fill|stroke 语义）。
  *  🔴 落槽 = `.fm-avatar` 家族（几何随既有 `-40` 档，不新开尺寸座），字形尺寸由
  *  `.fm-avatar-device svg` 单条规则决定（`friends.css`）。
+ *  消费点两处：会话列表设备行（`convRow` 设备分支）＋ 设备**窗头**（`renderChatModal`
+ *  设备分支，作者 2026-09-21 16:54 令「三类对话框统一显示头像」）——同一函数、同一
+ *  字形源，禁第二份构造。
  *  🔴 只换**设备**这一支：好友头像照旧走档案 `avatarUrl` / 首字母，群行照旧首字母
  *  ⇒ 三类头像互不影响（逐类读数见本批报告 §①）。
- *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js:406`
- *  generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
+ *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js`
+ *  `platformDisplay` 兜底档，现读 `:565` generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
 function deviceAvatarEl(device, size) {
   const a = el('span', `fm-avatar fm-avatar-${size} fm-avatar-device`);
   a.innerHTML = platformDisplay(device && device.platform).icon;
@@ -1172,16 +1175,23 @@ function renderChatModal(conv) {
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
-  // 窗头头像槽（两档，同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
+  // 窗头头像槽（**三类全挂**（作者 2026-09-21 16:54 令「好友/群/设备类对话框统一
+  // 显示头像」）：同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
   //   · 群窗 = 组合头像（方案 §3.1 P1），随名册/群列表变更就地重打（禁整窗重建）；
   //   · **好友（单聊）窗 = 好友档案头像**（作者 2026-09-17 令「让好友的对话框能显示
   //     好友的头像」）—— 复用既有 `avatarEl` ＋ 既有 `conv.friend`（**与列表行
   //     `convRow` 的单聊分支**同一调用、同一数据对象，禁第二份取数/渲染链）；
-  //   · 设备窗**不挂**（其窗头形态由作者 2026-09-15 档位固定，本批不扩张）。
-  // 几何申报：40px 头像行必然把窗头抬到 64px 档（群窗先例 `729c56f3d`，已判**非回归**；
-  // 单聊窗同款增量，本批逐条读数见报告 §P2）。
+  //   · **设备窗 = 平台图标**（`deviceAvatarEl`，与会话列表设备行 / 联系人面板设备行
+  //     **同一函数、同一字形源** `platformDisplay` 单点）。设备无档案头像字段 ⇒
+  //     类型图标即其**既有兜底形态**（未知平台 = generic 显示器字形，`neblink.js`
+  //     `platformDisplay` 兜底档），无首字母分支。
+  // 🔴 有意变更申报：2026-09-15 档「设备窗不挂」被本令取代（后续令覆盖前令）；
+  // 群/好友两腿的建槽条件式、调用与数据对象逐字不变 ⇒ 既有头像消费面零变化。
+  // 几何申报：40px 头像行把设备窗头抬到 64px 档（群窗先例 `729c56f3d` / 好友窗
+  // avatarfix 同族增量，均已判非回归；设备窗头无 `.fm-modal-title-btn`，无热区连坐）。
   const isGroupHead = conv.kind === 'group';
-  const headAvatarSlot = (isGroupHead || (conv.kind !== 'device' && !!conv.friend))
+  const isDeviceHead = conv.kind === 'device';
+  const headAvatarSlot = (isGroupHead || isDeviceHead || !!conv.friend)
     ? el('span', 'fm-modal-avatar') : null;
   if (headAvatarSlot) {
     // 🔴 uifix 批（2026-09-17）：首帧**也**先查本窗名册缓存 `groupMemberAvatars`
@@ -1191,6 +1201,7 @@ function renderChatModal(conv) {
     // 带上缓存后，第二次及以后进同一群首帧即命中名册（与随后的名册腿签名相同 ⇒
     // `paintGroupAvatarInto` 的签名闸直接短路，全程零 DOM 操作）。
     if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv, groupMemberAvatars.get(String(conv.conversationId)));
+    else if (isDeviceHead) headAvatarSlot.appendChild(deviceAvatarEl(conv.device, 40));
     else headAvatarSlot.appendChild(avatarEl(conv.friend, 40));
     header.appendChild(headAvatarSlot);
   }
