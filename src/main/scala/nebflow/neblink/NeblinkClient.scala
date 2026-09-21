@@ -673,6 +673,51 @@ class NeblinkClient(
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
     }
 
+  /** 发好友消息（**保留状态码**通道）—— rcptcode 批：好友腿终态码 502 折叠点 ① 的修复。
+    *
+    * 🔴 与 [[sendFriendMessage]] 的**唯一**差别 = 走 [[sendRequestJsonWithStatus]]
+    * （上游 `(statusCode, body)` **逐字保留**），而**不是** [[sendRequest]] 的折叠通道
+    * （后者把任何非 2xx 压成 `Left("HTTP <code>: <body>")` —— 状态码**降级成文本**）。
+    * 折叠的后果是可量化的：调用方只剩一个字符串，无法区分「已不是好友 / 引用目标无效 /
+    * 限速」，网关层也因此只能把任何非「Not logged in」的失败统一答 **502**。
+    *
+    * 字段白名单 / 键序与 [[sendFriendMessage]] **逐字同源**（同一构造：`body` 恒在；
+    * `origin` / `attachments` / `clientMsgId` / `replyToMessageId` **缺席即省键**、追加
+    * 顺序不变）⇒ 本方法只换**通道**，线上请求体**逐字节不变**。⚠ 两处字段表互为镜像
+    * （`sendFriendMessage` 按本批「零改」纪律未抽公共构造）⇒ 未来加键必须**两处同改**。
+    *
+    * 🔴 既有 [[sendFriendMessage]] **零改**：agent 代发腿（[[nebflow.neblink.FriendService]]
+    * 的 `doSend`）继续走折叠通道 —— 它有独立的**文本回执**面，换通道 = 改 tool result
+    * 文案，属另一批。
+    * 🔴 成功码**不归一**：上游 2xx（如 201）原样返回（客户端只判 `resp.ok` 与
+    * `messageId`，见 `web/js/messages.js`）—— 状态码面零新增判据、零改写。
+    *
+    * 同族先例（本仓既有，非新形态）：[[sendGroupMessage]]（群腿）与 [[proxyWithStatus]]
+    * / [[sendRequestJsonWithStatus]]（E4 回执）。 */
+  def sendFriendMessageWithStatus(
+    friendUserId: String,
+    body: String,
+    origin: Option[String] = None,
+    attachmentIds: List[String] = Nil,
+    clientMsgId: Option[String] = None,
+    replyToMessageId: Option[Long] = None
+  ): IO[Either[String, (Int, String)]] =
+    withSession { token =>
+      val fields = List(
+        Some("body" -> body.asJson),
+        origin.map(o => "origin" -> o.asJson),
+        Option.when(attachmentIds.nonEmpty)("attachments" -> attachmentIds.asJson),
+        clientMsgId.map(id => "clientMsgId" -> id.asJson),
+        replyToMessageId.map(id => "replyToMessageId" -> id.asJson)
+      ).flatten
+      sendRequestJsonWithStatus(
+        "POST",
+        s"${config.url}/api/friends/$friendUserId/messages",
+        Json.fromFields(fields).noSpaces,
+        Some(token)
+      )
+    }
+
   /** 发群消息（`POST /api/groups/{groupId}/messages` —— 跨仓**冻结群发契约**，
     * 真源 = neblink-server `src/groups.rs` `group_send_message`）。
     *

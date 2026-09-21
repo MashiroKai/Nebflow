@@ -139,6 +139,19 @@ let selfUserId = '';
 let selfIdAcct = '';
 const sentMessageIds = new Set();
 
+// ── 好友腿终态码 → 分态文案（rcptcode 批 2026-09-20）────────────────────────
+// 判定集合 = `friendsApi.js` 的 `FRIEND_TERMINAL_CODES`（**同源单表**，经
+// `api.isFriendTerminalCode` 消费；🔴 禁在本文件另写一份码表）。
+// 语义 = **终态**：对同一动作重试恒无效（同 `clientMsgId` + 同被引坐标重发只会再失败
+// ⇒ 不给重试键，改给原因 + 正文回填），与群腿「按码分态」同族而非同表。
+// 📌 r2 基线适配（uxconsist Phase B 段2 之后）：本表**零改**——码集与文案键是批契约面；
+// 改的只是失败面的**装配形态**（`bindRetry` / `applyPhase` 单点，见 `sendCurrent`）。
+const FRIEND_TERMINAL_TEXT = {
+  not_friends: 'messages.friendNotFriends',
+  not_blocker: 'messages.friendNotBlocker',
+  REPLY_TARGET_INVALID: 'messages.friendReplyTargetInvalid',
+};
+
 /** viewer 自身 userId（群方向/未读判据用；单聊路径不受影响——direct 分支
  *  仍走既有 conv.friend.userId 判据）。 */
 function groupSelfUserId() {
@@ -4022,9 +4035,30 @@ async function sendCurrent(conv, opts) {
         return;
       }
     }
+    // rcptcode 批（2026-09-20）：**好友腿终态分态** —— 网关该批起把上游状态码与体
+    // 逐字透传 ⇒ `not_friends` / `not_blocker` / `REPLY_TARGET_INVALID` 原样到达。
+    // 这些码是**语义终态**：撤气泡 + 给原因（`modalToast` 分态文案），**不给重试键**
+    // —— 重试会复用同一 `clientMsgId` 与被引坐标，对该终态**恒无效**（改前一律落
+    // `.fm-failed` + 重试键 = 给用户一个永远失败的动作）。正文退回输入框（「正文不丢」
+    // 纪律与附件/重试面同款）。判据单源 = `api.isFriendTerminalCode`。
+    // 📌 r2 基线适配（Phase B 段2 之后）：形态改走**单点装配** —— ①状态槽只经
+    // `applyPhase`（禁手改类：`classList.add('fm-failed')` 行随段2 撤除，本处零类写入）；
+    // ②本支走 **S7 语义终态**（`PHASE.FAILED`，载面格与 S4 同，词汇表已备而未用）——
+    // 与上方群腿终态支同序「落态 → 撤节点 → 返回」，且**不装配重试键**（无 `bindRetry`
+    // 调用即无键，禁自行 `createElement`，旧内联重试键符号零引用）。
+    if (conv.kind !== 'group' && api.isFriendTerminalCode(err && err.data && err.data.error)) {
+      applyPhase(wrap, PHASE.FAILED);
+      modalToast(t(FRIEND_TERMINAL_TEXT[err.data.error]));
+      wrap.remove();
+      const i = chatMsgs.findIndex(x => x.id === tempId);
+      if (i >= 0) chatMsgs.splice(i, 1);
+      modalEls.input.value = body;
+      syncComposerSend();
+      return;
+    }
     // S5 重试键（§3.1 唯一装配点 `bindRetry`；`title`/`aria-label` = `contacts.retry` 逐字，
     // 见 §8.2 改写①——改前用的是 `messages.send`「发送」，与键语义不符）。
-    bindRetry(wrap, () => {
+    const retryKey = bindRetry(wrap, () => {
       wrap.remove();
       // 重试会生成新的 temp id ⇒ 旧条目必须出窗口，否则 keyed diff 把刚删掉的
       // 失败气泡又插回来（一屏两个失败气泡）。
@@ -4037,6 +4071,22 @@ async function sendCurrent(conv, opts) {
       // quotejump：结构化引用坐标同属该动作 ⇒ 一并带回（见 `quoteRefId`）。
       sendCurrent(conv, { clientMsgId, replyToMessageId: quoteRefId });
     });
+    // rcptcode 批：**好友腿未知码 fail-visible** —— 不在白名单的码（429 / 5xx / 未来新增码）
+    // 一律回退「可重试」，但把码**原样**展示（禁静默、禁猜分态）：机器可读挂
+    // `data-send-error-code`（断言契约），人读走重试键 title + 就地 toast。
+    // 📌 r2 基线适配（Phase B 段2 之后）：重试键由 `bindRetry` 单点装配并**返回键节点**
+    // ⇒ 本处只做**追加修饰**（`title` 基 = 装配点给的 `contacts.retry` 逐字，仅追加码；
+    // 不重写键语义、不自行 `createElement`/`appendChild` —— 旧内联重试键符号零引用）。
+    // 🔴 仅好友腿：群腿失败面（含 `data-*` 面）**逐字不变**（本批禁改群腿客户端行为）。
+    if (conv.kind !== 'group') {
+      const failCode = err && err.data && (err.data.error || err.data.code);
+      if (typeof failCode === 'string' && failCode) {
+        const shown = failCode.length > 80 ? `${failCode.slice(0, 80)}…` : failCode;
+        wrap.dataset.sendErrorCode = shown;
+        if (retryKey) retryKey.title = `${retryKey.title} · ${shown}`;
+        modalToast(t('messages.sendFailedCode', { code: shown }));
+      }
+    }
   }
 }
 
