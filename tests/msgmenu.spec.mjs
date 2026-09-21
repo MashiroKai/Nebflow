@@ -751,6 +751,17 @@ async function scenarioSelect(page, pageErrors, retrySlot = null) {
     && b1.selectedDataset.includes('101=1') && b1.selectedDataset.includes('103=1') && b1.selectedDataset.includes('102=0'),
     JSON.stringify({ count: b1.countText, cls: b1.selectedClass, ds: b1.selectedDataset }));
   // 视觉面数值化（无视觉通道 ⇒ 不靠肉眼判图）：选中/未选中两档 + 工具条
+  // 过渡落定闸（voicefix-testsync 补 · 纯测试侧，期望值零动）：`.fm-msg-check` 带
+  // `transition: background/border-color/color .15s`（css/friends.css:1479），而下方读数
+  // 是**逐值精确**对位（`color === 'rgb(255, 255, 255)'` 与 `w/h === '22px'`）⇒ 采样若落在
+  // 过渡插值中即假红（实测两档中间值 `rgba(...,0.992)` / `rgba(...,0.847)`，非产品回归：
+  // 终值即期望值）。等选中面（含子树）的 CSS 过渡真正结束再读；🔴 不改任何期望值、
+  // 不删不跳（纯粹消除采样时序，本批外批遗留的既有 flake，逐条登记在批报告）。
+  await page.evaluate(async () => {
+    const els = [...document.querySelectorAll('.fm-flow .fm-msg.fm-selected .fm-msg-check')];
+    const anims = els.flatMap((e) => (e.getAnimations ? e.getAnimations({ subtree: true }) : []));
+    await Promise.all(anims.map((a) => a.finished.catch(() => {})));
+  });
   const sStyle = await page.evaluate(() => {
     const sel = document.querySelector('.fm-flow .fm-msg.fm-selected .fm-msg-check');
     const un = document.querySelector('.fm-flow .fm-msg:not(.fm-selected) .fm-msg-check');
@@ -1081,20 +1092,33 @@ async function scenarioForwardWindow(page, pageErrors) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// S6 · **修正②（主窗口附件 ❌ 居中）** + **修正④（麦克风 = 普通麦克风 + 反馈保留）**
+// S6 · **修正②（主窗口附件 ❌ 居中）** + **修正④（主窗语音输入形态 + 反馈保留）**
 //   两件都在**主窗口**面（真产品入口 `index.html`），故与好友窗场景分开跑。
 //   修正② 的「改前」面 = 主树声明块的**逐字重建**（同页同字体同底色渲染 ⇒ 前后同框
 //   可比）；像素级读数由 `MM_SHOTS` 落盘后经 `evidence/.../raw/disc_center.py` 出。
+//   修正④ 曾判「普通麦克风 + 零 orb 节点」（visup-b，作者 2026-09-19 04:22）；voicefix
+//   批（commit `aaaaa7765`，作者 2026-09-21 14:0x ③「把最近的有光球的回退回来」）已把
+//   挂载判据**回退** ⇒ 本批（voicefix-testsync）按「纯测试同步、零删除零跳过、断言强度
+//   零减」把修正④ 读数改为**新终态对位**：主窗 = 光球形态 + 九态机反馈；反馈类/aria
+//   判据（setMicState 侧，行为未改）逐条保留，视觉载体判据（`.icon-btn` 专属的绿底/
+//   `voicePulse`/sapphire 色）随旧形态退役，改为光球态（`#mic-orb-wrap.s-*` +
+//   `getMicOrb().state`）。新增 S6b = 好友/群窗麦克风在位（voicefix 腿 B 新终态，
+//   旧规格零覆盖 ⇒ 最小用例补齐）。
 // ══════════════════════════════════════════════════════════════════════
 async function scenarioUiFaces(page, pageErrors) {
   console.log(`\n── S6 · 修正②/④ · MODE=${MODE} · scheme=${MM_SCHEME} ──`);
-  // ── 修正④ ①：形态面 = 普通麦克风；旧 R5 气泡/光球**零命中** ────────────────
-  const mic = await page.evaluate(() => {
+  // ── 修正④ ①（voicefix 新终态）：形态面 = 主输入区液态光球；旧「普通麦克风 + 零
+  //    orb 节点」判据随挂载判据回退整体翻转 ⇒ 同一组读数改**正向对位**（判据数不减、
+  //    「单一挂载点、不留游离/重复件」的严格度照旧）。启动静止态无 `aria-pressed`
+  //    （旧形态在 index.html 硬编码 false；新形态由 setMicState 首态落值 ⇒ 由下方
+  //    录音/转写两态读数逐条钉死 true/false）。 ──────────────────────────────────
+  const mic = await page.evaluate(async () => {
     const b = document.getElementById('voice-btn');
     const r = b ? b.getBoundingClientRect() : null;
     const cs = b ? getComputedStyle(b) : null;
-    const svg = b ? b.querySelector('svg') : null;
-    const anyLegacy = document.querySelectorAll('.mic-orb-wrap, .micbubble, .orb-canvas, .css-orb, .orb-ripple').length;
+    const wrap = b ? b.closest('.mic-orb-wrap') : null;
+    const micOrb = await import('/js/micOrb.js');
+    const o = micOrb.getMicOrb();
     return {
       present: !!b,
       tag: b ? b.tagName : null,
@@ -1103,35 +1127,52 @@ async function scenarioUiFaces(page, pageErrors) {
       title: b ? b.getAttribute('title') : null,
       ariaLabel: b ? b.getAttribute('aria-label') : null,
       ariaPressed: b ? b.getAttribute('aria-pressed') : null,
-      iconSvgCls: svg ? svg.getAttribute('class') : null,
       box: r ? { w: +r.width.toFixed(1), h: +r.height.toFixed(1) } : null,
       radius: cs ? cs.borderRadius : null,
-      legacyNodes: anyLegacy,
-      legacyIds: ['mic-canvas', 'mic-css-orb', 'mic-orb-wrap'].filter(id => document.getElementById(id)),
+      wrapId: wrap ? wrap.id : null,
+      orbCanvasInBtn: !!(b && b.querySelector('.orb-canvas#mic-canvas')),
+      cssOrbInBtn: !!(b && b.querySelector('.css-orb#mic-css-orb')),
+      wrapNodes: document.querySelectorAll('.mic-orb-wrap').length,
+      bubbleNodes: document.querySelectorAll('.micbubble').length,
+      orbCanvasNodes: document.querySelectorAll('.orb-canvas').length,
+      orbCssNodes: document.querySelectorAll('.css-orb').length,
+      orbRippleNodes: document.querySelectorAll('.orb-ripple').length,
+      orbIds: ['mic-canvas', 'mic-css-orb', 'mic-orb-wrap'].filter(id => document.getElementById(id)),
+      singleton: !!o,
+      singletonBound: !!o && !!b && o.btn === b && o.canvas === (b ? b.querySelector('.orb-canvas') : null),
     };
   });
   put('mic.form', mic);
   await shot(page, 'main-mic-idle');
-  ok('S6 修正④：麦克风 = 普通 `.icon-btn`（36×36 圆键 + lucide `mic` 图标）且 `aria-pressed` 可访问态在册',
+  ok('S6 修正④① 光球形态面（voicefix 新终态）：`#voice-btn` = 光球钮（`.micbubble` · 64×64 圆键 · 内嵌 `#mic-canvas` + `#mic-css-orb` · 挂 `#mic-orb-wrap`）+ `aria-pressed` 静止态未落值（null，首态由 setMicState 落）',
     mic.present === true && mic.tag === 'BUTTON' && mic.type === 'button'
-    && mic.cls.split(/\s+/).includes('icon-btn') && mic.cls.split(/\s+/).includes('mic-btn')
-    && !mic.cls.includes('micbubble') && /lucide-mic/.test(String(mic.iconSvgCls))
-    && !!mic.title && !!mic.ariaLabel && mic.ariaPressed === 'false'
-    && mic.box.w === 36 && mic.box.h === 36 && mic.radius === '50%',
+    && mic.cls.split(/\s+/).includes('micbubble')
+    && mic.wrapId === 'mic-orb-wrap' && mic.orbCanvasInBtn && mic.cssOrbInBtn
+    && !!mic.title && !!mic.ariaLabel && mic.ariaPressed === null
+    && mic.box.w === 64 && mic.box.h === 64 && mic.radius === '50%',
     JSON.stringify(mic));
-  ok('S6 修正④ 🔴 旧 R5 气泡/光球形态**零命中**（DOM 面：`.mic-orb-wrap`/`.micbubble`/`.orb-canvas`/`.css-orb`/`.orb-ripple` 全 0 节点 + 三个旧 id 全缺席）',
-    mic.legacyNodes === 0 && mic.legacyIds.length === 0, JSON.stringify({ n: mic.legacyNodes, ids: mic.legacyIds }));
-  // 源码面零命中（输入区形态三件：宿主 DOM / 形态 CSS / 挂载点）——「退役」不是只退 DOM。
+  ok('S6 修正④① 🔴 单一光球挂载点（DOM 面）：宿主/光球钮/画布/css-orb **各恰一件**（零游离/重复件，涟漪只在按下期出现）+ 三个 id 全在册 + MicOrb 单例绑定产品画布（旧「零命中 + 三 id 全缺席」判据的正向对位，严格度不降）',
+    mic.wrapNodes === 1 && mic.bubbleNodes === 1 && mic.orbCanvasNodes === 1 && mic.orbCssNodes === 1
+    && mic.orbRippleNodes === 0 && mic.orbIds.length === 3 && mic.singleton === true && mic.singletonBound === true,
+    JSON.stringify({ wrap: mic.wrapNodes, bubble: mic.bubbleNodes, canvas: mic.orbCanvasNodes, css: mic.orbCssNodes, ripple: mic.orbRippleNodes, ids: mic.orbIds, bound: mic.singletonBound }));
+  // 源码面在位（输入区形态三件：宿主 DOM / 形态 CSS / 挂载点）——「回退」不是只回退
+  // DOM：`index.html` 挂载四件齐 + `css/input.css` 材质四件 + 九态类/涟漪标记齐
+  // （同「源码面」严格度，方向随退役面翻转改**正向对位**）。
   const srcHits = {};
+  const SRC_TOKENS = ['mic-orb-wrap', 'micbubble', 'orb-canvas', 'css-orb'];
   for (const rel of ['index.html', 'css/input.css']) {
     const txt = await readFile(join(WEB, rel), 'utf8');
-    srcHits[rel] = ['mic-orb-wrap', 'micbubble', 'orb-canvas', 'css-orb', 'orb-ripple']
-      .filter(tok => new RegExp(tok.replace(/[-.]/g, '[-.]'), 'i').test(txt));
+    srcHits[rel] = SRC_TOKENS.filter(tok => new RegExp(tok.replace(/[-.]/g, '[-.]'), 'i').test(txt));
   }
-  put('mic.legacySourceHits', srcHits);
-  ok('S6 修正④ 🔴 旧形态**源码面零命中**（`index.html` + `css/input.css` 内 0 处 orb 形态标记：宿主/材质/9 态色矩阵/涟漪全清）',
-    Object.values(srcHits).every(list => list.length === 0), JSON.stringify(srcHits));
-  // ── 修正④ ②：语音反馈**保留**（录音中 / 转写中 两态真转换读数） ──────────────
+  const orbCssTxt = await readFile(join(WEB, 'css/input.css'), 'utf8');
+  srcHits['css/orb-state-tokens'] = ['orb-ripple', 's-offline', 's-listening', 's-processing']
+    .filter(tok => new RegExp(tok.replace(/[-.]/g, '[-.]'), 'i').test(orbCssTxt));
+  put('mic.sourceHits', srcHits);
+  ok('S6 修正④① 🔴 源码面在位（`index.html` 挂载四件 + `css/input.css` 材质四件 + 九态类/涟漪标记齐备——「回退」不是只回退 DOM）',
+    srcHits['index.html'].length === SRC_TOKENS.length && srcHits['css/input.css'].length === SRC_TOKENS.length
+    && srcHits['css/orb-state-tokens'].length === 4, JSON.stringify(srcHits));
+  // ── 修正④ ②：语音反馈**保留**（录音中 / 转写中 两态真转换读数；voicefix 新终态：
+  //  视觉载体 = 光球九态机，`.icon-btn` 专属的绿底/脉冲/`sapphire` 色随旧形态退役） ──
   //  真转换：点 mic（云 STT 路径开 ⇒ 真 `listening`）→ 再点（`stopVoice` ⇒ 真
   //  `processing`，因云腿在等转写应答而**持续在场**）⇒ 两态都可读。
   await page.evaluate(async () => {
@@ -1140,32 +1181,36 @@ async function scenarioUiFaces(page, pageErrors) {
   });
   await page.click('#voice-btn');
   await page.waitForFunction(() => document.getElementById('voice-btn').classList.contains('recording'), null, { timeout: 5000 });
-  await sleep(300);   // `.icon-btn` 有 `transition: background/color .15s` ⇒ 等过渡落定（否则读到插值中间态）
-  const rec = await page.evaluate(() => {
+  await sleep(300);   // 等 `.icon-btn`/光球态过渡落定（否则读到插值中间态）
+  const rec = await page.evaluate(async () => {
     const b = document.getElementById('voice-btn');
     const cs = getComputedStyle(b);
-    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), bg: cs.backgroundColor, color: cs.color, anim: cs.animationName, animDur: cs.animationDuration };
+    const wrap = document.getElementById('mic-orb-wrap');
+    const o = (await import('/js/micOrb.js')).getMicOrb();
+    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), bg: cs.backgroundColor, color: cs.color, anim: cs.animationName, animDur: cs.animationDuration, wrapCls: wrap ? wrap.className : null, orbState: o ? o.state : null };
   });
   put('mic.recording', rec);
   await shot(page, 'main-mic-recording');
-  ok('S6 修正④ 反馈·录音中：`.recording` 在场（既有微信绿底 + 既有 `voicePulse` 脉冲）+ `aria-pressed=true`',
+  ok('S6 修正④② 反馈·录音中（新终态）：`.recording` 类 + `aria-pressed=true` 在册（setMicState 侧行为未改）**且**光球九态机可见落态 = `#mic-orb-wrap` 带 `s-listening`、`getMicOrb().state` = "listening"（原微信绿底 + `voicePulse` 计算样式判据随普通麦克风形态退役，视觉载体改为光球态——判据数不减）',
     rec.cls.split(/\s+/).includes('recording') && rec.ariaPressed === 'true'
-    && /7,\s*193,\s*96|#07c160/i.test(rec.bg) && rec.anim === 'voicePulse' && rec.animDur !== '0s',
+    && String(rec.wrapCls).split(/\s+/).includes('s-listening') && rec.orbState === 'listening',
     JSON.stringify(rec));
   await page.evaluate(() => window.__mic.pump(0.4));   // 让云腿真有音频（否则退化成 noAudio 错误态）
   await page.click('#voice-btn');
   await sleep(400);
-  const proc = await page.evaluate(() => {
+  const proc = await page.evaluate(async () => {
     const b = document.getElementById('voice-btn');
     const cs = getComputedStyle(b);
-    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), color: cs.color, anim: cs.animationName, sapphire: getComputedStyle(document.documentElement).getPropertyValue('--sapphire').trim() };
+    const wrap = document.getElementById('mic-orb-wrap');
+    const o = (await import('/js/micOrb.js')).getMicOrb();
+    return { cls: b.className, ariaPressed: b.getAttribute('aria-pressed'), color: cs.color, anim: cs.animationName, wrapCls: wrap ? wrap.className : null, orbState: o ? o.state : null };
   });
   put('mic.processing', proc);
   await shot(page, 'main-mic-processing');
-  ok('S6 修正④ 反馈·转写中：`.recording` 撤除 + `.processing` 在场（既有 sapphire 强调色）+ `aria-pressed=false`',
+  ok('S6 修正④② 反馈·转写中（新终态）：`.recording` 撤除 + `.processing` 在册 + `aria-pressed=false` + 零 CSS 动画（读数保留）**且**光球落态 = `#mic-orb-wrap` 带 `s-processing`、`getMicOrb().state` = "processing"（原 sapphire 色判据随 `.mic-btn.processing` 规则退役，视觉载体改为光球态——判据数不减）',
     proc.cls.split(/\s+/).includes('processing') && !proc.cls.split(/\s+/).includes('recording')
     && proc.ariaPressed === 'false' && proc.anim === 'none'
-    && /91,\s*127,\s*191/.test(proc.color),
+    && String(proc.wrapCls).split(/\s+/).includes('s-processing') && proc.orbState === 'processing',
     JSON.stringify(proc));
   // ── 修正②：主窗口图片/文件附件的 ❌ 居中（前/后同框） ──────────────────────
   const discGeom = await page.evaluate(async () => {
@@ -1264,6 +1309,126 @@ async function scenarioUiFaces(page, pageErrors) {
     && aDisc.radius === bDisc.radius && aDisc.bg === bDisc.bg,
     JSON.stringify({ afterW: aDisc && aDisc.disc.w, beforeW: bDisc && bDisc.disc.w, afterBg: aDisc && aDisc.bg, beforeBg: bDisc && bDisc.bg }));
   ok('S6 主窗口面零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// S6b · voicefix 腿 B 新终态（旧规格**零覆盖** ⇒ 本批补**最简用例**）
+//   好友/群窗**简单麦克风在位**：形态面 + 两窗**真接线**读数（点一下开 ⇒ 真 listening；
+//   好友窗再点一下关 ⇒ processing —— 同一 voiceEngine 单例、同一「点开点关」令）。
+//   门 = `conv.kind !== 'device'`（messages.js:1399 单点）：好友窗（conv 无 kind 键）与
+//   群窗（kind='group'）同源 ⇒ 本用例取**两个正向面**（各钉一次真接线）；负向面
+//   （设备窗不挂）由判词位 voicefix-verify harness B4 运行时夹逼在案，本用例不虚构造
+//   假设备会话（最简口径，边界见批报告）。
+//   判据方向 = **新终态对位**（旧规格对本面零覆盖 ⇒ 无旧判据可翻转；零删除零跳过照旧）。
+// ══════════════════════════════════════════════════════════════════════
+async function scenarioFmMicLeg(page, pageErrors) {
+  console.log(`\n── S6b · 好友/群窗麦克风（voicefix 腿 B）· MODE=${MODE} · scheme=${MM_SCHEME} ──`);
+  // 云 STT 腿开（与 S6 同一夹具口径：VOICE_HARNESS 假 AudioContext + 假 getUserMedia）
+  await page.evaluate(async () => {
+    const m = await import('/js/state.js');
+    m.default.stt = { sttConfigured: true };
+  });
+  /** 输入条形态读数器（好友窗 / 群窗同一读数器，零复制）。 */
+  const readBar = () => page.evaluate(() => {
+    const bar = document.querySelector('.fm-input-bar');
+    if (!bar) return { barPresent: false };
+    const btn = bar.querySelector('.fm-mic-btn');
+    const r = btn ? btn.getBoundingClientRect() : null;
+    const cs = btn ? getComputedStyle(btn) : null;
+    const svg = btn ? btn.querySelector('svg') : null;
+    return {
+      barPresent: true,
+      present: !!btn,
+      leftmost: !!btn && bar.children[0] === btn,
+      domOrder: [...bar.children].map(e => e.className || e.tagName),
+      cls: btn ? btn.className : null,
+      tag: btn ? btn.tagName : null,
+      type: btn ? btn.getAttribute('type') : null,
+      title: btn ? btn.getAttribute('title') : null,
+      ariaLabel: btn ? btn.getAttribute('aria-label') : null,
+      ariaPressed: btn ? btn.getAttribute('aria-pressed') : null,
+      iconSvgCls: svg ? svg.getAttribute('class') : null,
+      orbNodes: bar.querySelectorAll('.mic-orb-wrap, .micbubble, .orb-canvas, .css-orb').length,
+      box: r ? { w: +r.width.toFixed(1), h: +r.height.toFixed(1) } : null,
+      radius: cs ? cs.borderRadius : null,
+      inputPresent: !!bar.querySelector('.fm-input'),
+      sendPresent: !!bar.querySelector('.fm-send-btn'),
+    };
+  });
+  const micState = () => page.evaluate(() => {
+    const b = document.querySelector('.fm-mic-btn');
+    return { cls: b ? b.className : null, ariaPressed: b ? b.getAttribute('aria-pressed') : null };
+  });
+  /** 形态面共同判据（两窗同源，避免复制判据表达式）。 */
+  const shapeOk = (m) => m.barPresent === true && m.present === true && m.leftmost === true
+    && m.tag === 'BUTTON' && m.type === 'button'
+    && String(m.cls).split(/\s+/).includes('icon-btn') && String(m.cls).split(/\s+/).includes('fm-mic-btn')
+    && !!m.title && !!m.ariaLabel && m.ariaPressed === 'false'
+    && /lucide/.test(String(m.iconSvgCls))
+    && m.box && m.box.w === 36 && m.box.h === 36 && m.radius === '50%'
+    && m.orbNodes === 0 && m.inputPresent === true && m.sendPresent === true;
+
+  // ── ① 好友窗（conv 无 kind 键 ⇒ 门内第一面）形态面 ─────────────────────
+  await openConv(page, 'cA');
+  const fm = await readBar();
+  put('s6b.friend.form', fm);
+  await shot(page, 'friend-mic-idle');
+  ok('S6b 好友窗（voicefix 腿 B 新终态）：`.fm-input-bar` **最左** = 简单麦克风键（`.icon-btn.fm-mic-btn` · 36×36 圆键 · lucide `mic` 已换渲染 · `title`/`aria-label` 在册 · 静止 `aria-pressed="false"`）+ 输入框/发送键同条在位',
+    shapeOk(fm), JSON.stringify(fm));
+  ok('S6b 好友窗 🔴 禁气泡形态（作者 2026-09-19 04:22 修正④ 对**会话窗**仍为现行令）：会话窗输入条零光球件（`.mic-orb-wrap`/`.micbubble`/`.orb-canvas`/`.css-orb` 全 0 节点 —— 气泡/光球是**主窗**形态，不进会话窗）',
+    fm.orbNodes === 0, JSON.stringify({ n: fm.orbNodes, domOrder: fm.domOrder }));
+
+  // ── ② 好友窗**真接线**（形态在位 ≠ 接通：点一下开 ⇒ 再点一下关）─────────
+  await page.click('.fm-mic-btn');
+  await sleep(150);
+  // 云腿录音器就绪 = 键真接进 startDictation（处理器在场才能泵音频）；未就绪则重试
+  const pumped = await page.waitForFunction(() => {
+    try { window.__mic.pump(0.4); return true; } catch { return false; }
+  }, null, { timeout: 5000 }).then(() => true).catch(() => false);
+  const rec = await micState();
+  put('s6b.friend.recording', { ...rec, pumped });
+  await shot(page, 'friend-mic-recording');
+  ok('S6b 好友窗反馈·录音中：点一下开 ⇒ `.recording` 在场 + `aria-pressed="true"`（同一 `fmSetMicState` 写点）**且**云腿录音器真被拉起（`window.__mic.pump()` 命中音频处理器 ⇒ 键接了 `startDictation`，不是只挂了个 DOM）',
+    String(rec.cls).split(/\s+/).includes('recording') && rec.ariaPressed === 'true' && pumped === true,
+    JSON.stringify({ ...rec, pumped }));
+  // 🔴 `force: true`：`.recording` 态按钮跑无限 `voicePulse` 动画 ⇒ Playwright
+  //    actionability「stable」永不满足（判词位 voicefix-verify 假红排查 #4 同款约束）。
+  await page.click('.fm-mic-btn', { force: true });
+  await sleep(250);
+  const proc = await micState();
+  put('s6b.friend.processing', proc);
+  ok('S6b 好友窗反馈·转写中：再点一下关 ⇒ `.recording` 撤除 + `.processing` 在场 + `aria-pressed="false"`（尾段转写在飞 ⇒ 持续在场，与主窗同一收敛约定）',
+    String(proc.cls).split(/\s+/).includes('processing') && !String(proc.cls).split(/\s+/).includes('recording')
+    && proc.ariaPressed === 'false',
+    JSON.stringify(proc));
+  // 关窗收敛（`closeChat` 全路径漏斗调 `modalEls.stopVoice`）
+  await page.click('#fm-chat-overlay .fm-modal-close');
+  await sleep(400);
+  const closed = await page.evaluate(() => ({
+    modal: !!document.querySelector('#fm-chat-overlay'),
+    micLeft: document.querySelectorAll('.fm-mic-btn').length,
+  }));
+  put('s6b.friend.closed', closed);
+  ok('S6b 好友窗关窗收敛：窗体撤除 + 窗内麦克风键随之离场（`closeChat` 同拍 `stopVoice` 的可见面）',
+    closed.modal === false && closed.micLeft === 0, JSON.stringify(closed));
+
+  // ── ③ 群窗（kind='group' ⇒ 门内第二面）形态面 + 真接线 ────────────────
+  await openConv(page, GCONV);
+  const gp = await readBar();
+  put('s6b.group.form', gp);
+  await shot(page, 'group-mic-idle');
+  ok('S6b 群窗（同一 `conv.kind !== \'device\'` 门的第二面）：群会话窗输入条最左同款麦克风键在位 + 零光球件（好友/群同源，谓词单点）',
+    shapeOk(gp), JSON.stringify(gp));
+  await page.click('.fm-mic-btn');
+  await sleep(150);
+  const grec = await micState();
+  put('s6b.group.recording', grec);
+  ok('S6b 群窗真接线：点一下开 ⇒ `.recording` + `aria-pressed="true"`（群窗 handler 为**独立闭包实例** ⇒ 形态在位之外另钉一次接通，不靠「代码同源」推断）',
+    String(grec.cls).split(/\s+/).includes('recording') && grec.ariaPressed === 'true',
+    JSON.stringify(grec));
+
+  put('s6b.pageErrors', pageErrors);
+  ok('S6b 好友/群窗面零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1642,6 +1807,20 @@ try {
     const { ctx, page, pageErrors } = await bootPage({ voice: true });
     try {
       await scenarioUiFaces(page, pageErrors);
+    } finally {
+      await ctx.close();
+    }
+  }
+  // S6b 单独一轮（voicefix 腿 B 新终态：好友/群窗麦克风在位 + 真接线 —— 旧规格零覆盖）
+  //   群场种子复用 S5 既有夹具（seedJump/routeGroupLeg，零新造）；会话窗路由须在
+  //   `openPanel` 之前注册（面板开窗即拉 /api/groups）。
+  if (AFTER && !QJBEFORE) {
+    seedJump();
+    const { ctx, page, pageErrors } = await bootPage({ voice: true });
+    try {
+      await routeGroupLeg(page, (c) => SRV.calls.push(c));
+      await openPanel(page);
+      await scenarioFmMicLeg(page, pageErrors);
     } finally {
       await ctx.close();
     }
