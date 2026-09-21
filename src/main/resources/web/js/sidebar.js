@@ -1645,6 +1645,59 @@ function contextLengthFor(id) {
   return found && found.contextLength ? found.contextLength : null;
 }
 
+// --- chain-ctxbound (2026-09-21): contextWindow entrance bound check ---
+// Paired defense with the engine-side clamp (案② chain-llmstall-fix:
+// effective = min(configured, modelMaxContext)). One truth source, two layers:
+// the per-model bound is the provider-reported contextLength (contextLengthFor
+// ← POST /api/provider/models) — the same payload the engine clamp persists as
+// models[].modelMaxContext. When that truth is unknown (fetch failed / custom
+// endpoint), the entrance falls back to the absolute absurdity ceiling only:
+// 10,000,000 = the largest mainstream provider context window on record
+// (Llama 4 Scout) — anything above is fat-fingered, and the ceiling keeps
+// saved values well inside the engine's Int domain.
+/** Absolute absurdity ceiling for a context window whose model truth is
+ *  unknown. NOT a per-model limit — known-truth models are bounded by their
+ *  own provider-reported maximum instead (which may legitimately differ). */
+export const CTX_WINDOW_HARD_CEILING = 10000000;
+/** Panel default when the field is left empty (author 07:31 令: unchanged). */
+const CTX_WINDOW_DEFAULT = 1000000;
+
+/**
+ * Validate one raw contextWindow input against the paired-defense bound.
+ * Number() semantics, not parseInt: parseInt("1e9") === 1 was a live defect.
+ * Single-shape return (no union narrowing — checkJs baseline discipline).
+ * note: '' clean | 'defaulted-empty' (empty → panel default) |
+ *       'clamped-to-truth' (untouched wizard prefill 1,000,000 with a lower
+ *       provider-reported truth → clamped to the truth, visibly toasted —
+ *       keeps the saved value identical to the engine clamp's effective value).
+ * @param {string|number|null|undefined} rawValue raw input value (un-parsed)
+ * @param {number|null|undefined} [modelMax] provider-reported per-model truth;
+ *   absent ⇒ only the absolute absurdity ceiling applies
+ * @returns {{ok:boolean, value:number, note:string, errKey:string, errParams:Record<string,string>}}
+ *   ok:false ⇒ value/note are inert; errKey/errParams carry the error toast.
+ */
+export function validateContextWindow(rawValue, modelMax) {
+  const raw = String(rawValue ?? '').trim();
+  if (raw === '') return { ok: true, value: CTX_WINDOW_DEFAULT, note: 'defaulted-empty', errKey: '', errParams: {} };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+    return { ok: false, value: 0, note: '', errKey: 'provider.ctxInvalid', errParams: { value: raw } };
+  }
+  const truth = Number.isFinite(modelMax) && modelMax > 0 ? modelMax : null;
+  if (truth !== null && n > truth) {
+    if (n === CTX_WINDOW_DEFAULT) {
+      // The wizard prefills 1,000,000 (author-preserved default); with a known
+      // lower truth the untouched prefill is clamped to the truth + info toast.
+      return { ok: true, value: truth, note: 'clamped-to-truth', errKey: '', errParams: {} };
+    }
+    return { ok: false, value: 0, note: '', errKey: 'provider.ctxExceedsModel', errParams: { value: String(n), max: String(truth) } };
+  }
+  if (truth === null && n > CTX_WINDOW_HARD_CEILING) {
+    return { ok: false, value: 0, note: '', errKey: 'provider.ctxExceedsCeiling', errParams: { value: String(n), max: String(CTX_WINDOW_HARD_CEILING) } };
+  }
+  return { ok: true, value: n, note: '', errKey: '', errParams: {} };
+}
+
 /** Fill the row's contextWindow input with the fetched contextLength — only
  *  when the input is empty (never overwrite a user-set value). */
 function fillContextIfEmpty(row) {
@@ -1801,11 +1854,33 @@ function showProviderModal(existingName, existingData, onSave) {
       if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
       if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
+      // chain-ctxbound entrance gate (paired with the engine-side clamp):
+      // bound per model = live fetched truth (contextLengthFor) → persisted
+      // row truth carried from the edit form (the sibling llmstall-fix batch's
+      // B5 data-model-max, post-merge) → absolute absurdity ceiling. Absurd /
+      // over-truth values are REJECTED with a visible toast (nothing saved);
+      // empty fields keep the 1M panel default and are surfaced in an info
+      // toast after a successful save (钳制 + 明示, author 2026-09-21 裁定⑵).
+      const defaultedIds = [];
+      const clampedRows = [];
+      const checkedModels = [];
+      for (const m of validModels) {
+        const liveMax = contextLengthFor(m.id);
+        const res = validateContextWindow(m.contextWindowRaw,
+          liveMax ?? (Number.isFinite(m.rowModelMax) ? m.rowModelMax : null));
+        if (!res.ok) {
+          window.__showToast?.(t(res.errKey, { id: m.id, ...res.errParams }), 'error');
+          return;
+        }
+        if (res.note === 'defaulted-empty') defaultedIds.push(m.id);
+        if (res.note === 'clamped-to-truth') clampedRows.push({ id: m.id, max: res.value });
+        checkedModels.push({ id: m.id, contextWindow: res.value });
+      }
       // Vision is never written from this form (B1 裁定 2026-08-25): the
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
       // (inline outranks models.json runtime annotations). An explicit inline
       // vision set by hand rides through untouched; new models omit the key.
-      const modelsOut = validModels.map(m => {
+      const modelsOut = checkedModels.map(m => {
         const prev = (p.models || []).find(x => x.id === m.id);
         return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
       });
@@ -1815,6 +1890,14 @@ function showProviderModal(existingName, existingData, onSave) {
         protocol: values.protocol,
         models: modelsOut,
       });
+      if (clampedRows.length) {
+        for (const c of clampedRows) {
+          window.__showToast?.(t('provider.ctxClampedToMax', { id: c.id, max: c.max.toLocaleString() }), 'info');
+        }
+      }
+      if (defaultedIds.length) {
+        window.__showToast?.(t('provider.ctxDefaulted', { ids: defaultedIds.join('、'), def: CTX_WINDOW_DEFAULT.toLocaleString() }), 'info');
+      }
     }
   });
   // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
@@ -1900,10 +1983,21 @@ function showModal({title, fields, onConfirm}) {
       modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
         const id = row.querySelector('.cfg-model-id').value.trim();
         if (!id) return;
-        values.models.push({
-          id,
-          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 1000000,
-        });
+        // chain-ctxbound: carry the RAW input string — no parseInt()||1000000
+        // coercion here (that line silently saved absurd values, and
+        // parseInt("1e9") === 1 truncated scientific notation). Validation +
+        // normalization happen in showProviderModal.onConfirm against the
+        // provider-reported truth (validateContextWindow).
+        const ctxEl = /** @type {HTMLInputElement|null} */ (row.querySelector('.cfg-model-ctx'));
+        /** @type {{id:string, contextWindowRaw:string, rowModelMax?:number}} */
+        const entry = { id, contextWindowRaw: ctxEl ? ctxEl.value : '' };
+        // Forward-compat read (zero-effect until the sibling llmstall-fix
+        // batch merges): its B5 rows carry the persisted provider truth as
+        // data-model-max; reading it keeps this entrance bound identical to
+        // the engine clamp's persisted modelMaxContext. Never written here.
+        const persistedMax = ctxEl ? parseInt(ctxEl.dataset.modelMax || '', 10) : NaN;
+        if (Number.isFinite(persistedMax) && persistedMax > 0) entry.rowModelMax = persistedMax;
+        values.models.push(entry);
       });
     }
     onConfirm(values);
