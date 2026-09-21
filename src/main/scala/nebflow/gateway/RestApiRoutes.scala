@@ -3868,7 +3868,10 @@ class RestApiRoutes(
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
       t
     } match
-      case Some(t) => Auth.validateToken(t, token)
+      // 接受面双轨（patbackend 批，2026-09-20）：轨 1 = 本机文件令牌（Auth，逐字不变）；
+      // 轨 2 = Logto 签发的 PAT（自包含 JWT，用 JWKS 公钥**离线**验签；逻辑全在 PatAuth，
+      // 本行只做薄委调）。两轨皆否 ⇒ 同一个 Forbidden，对外不区分原因（防枚举）。
+      case Some(t) => Auth.validateToken(t, token) || PatAuth.accepts(t)
       case None =>
         req.params.get("token").exists(t => Auth.validateToken(t, token))
 
