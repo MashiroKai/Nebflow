@@ -127,8 +127,13 @@ object TextStream:
   final case class Window(text: String, lineCount: Long, eof: Boolean)
 
   /** One search hit. `col` is the exact 1-based BYTE column of the match inside
-    * its line; `text` is the matched line's leading excerpt
-    * (`MaxHitTextChars`, `…`-suffixed when the line continues past it). */
+    * its line; `text` is the matched line's content, bounded to `MaxHitTextChars`
+    * and `…`-suffixed when the line continues past it. A hit is emitted once its
+    * line's echo is final: at the terminating `\n`, or as soon as the excerpt
+    * bound is reached. `drainHits` also flushes hits of the current unterminated
+    * line with the bytes seen so far — at the caller's final (EOF) drain that IS
+    * the complete line; a mid-scan drain of a line straddling a chunk boundary
+    * carries a true prefix of it (line/col stay exact). */
   final case class Hit(line: Long, col: Long, text: String)
 
   /** Terminal state of one scan. `truncated` is always explicit — a capped or
@@ -237,9 +242,14 @@ object TextStream:
     * · Case folding is ASCII-only; non-ASCII bytes compare byte-exact.
     * · Matches may be found in any chunk: up to `needle.length - 1` trailing
     *   bytes are held back and re-examined with the next chunk.
-    * · Stops at `maxHits` and reports `truncated` (never a silent cap).
+    * · Stops accepting hits at `maxHits`: the FIRST match beyond the cap sets
+    *   `truncated` (never a silent cap); a scan that ends exactly AT the cap is
+    *   complete, not truncated.
     * · Overlapping matches each count (advance by one byte per hit), so
     *   "aa" in "aaa" is 2 hits.
+    * · A hit's echo is its whole line (bounded): emission waits for the line's
+    *   terminating newline or the excerpt bound, so the echo is invariant under
+    *   chunking; `drainHits` flushes the unterminated tail line (see `Hit`).
     */
   final class LiteralScanner(
     query: String,
@@ -258,6 +268,7 @@ object TextStream:
     private val buf = new Array[Byte](ScanChunkBytes + gap + 8)
     private val prefix = new Array[Byte](MaxHitTextChars + 1)
     private val hits = scala.collection.mutable.ArrayBuffer.empty[Hit]
+    private val pendingCols = scala.collection.mutable.ArrayBuffer.empty[Long]
     private var bufLen = 0
     private var base = 0L      // absolute offset of buf(0)
     private var fed = 0L       // absolute bytes accepted from the caller
@@ -290,6 +301,18 @@ object TextStream:
         k += 1
       ok
 
+    /** Emit the pending hits of the current line with its (final or partial)
+      * echo. Invariant: `pendingCols` is non-empty only while `!prefixFull` —
+      * once the excerpt bound is reached the echo is final and hits emit
+      * immediately. */
+    private def emitPending(continues: Boolean): Unit =
+      if pendingCols.nonEmpty then
+        val head = new String(prefix, 0, prefixLen, Utf8)
+        val text = if continues then head + "…" else head
+        val ln = line
+        pendingCols.foreach(c => hits += Hit(ln, c, text))
+        pendingCols.clear()
+
     /** Feed one chunk. Once `truncated` is set the scanner ignores further input. */
     def feed(chunk: Array[Byte], len: Int): Unit =
       if truncatedFlag then ()
@@ -306,17 +329,16 @@ object TextStream:
           var i = 0
           while i < processLen && !truncatedFlag do
             if matchesAt(i) then
-              val col = base + i - lineStart + 1
-              val text =
-                val head = new String(prefix, 0, prefixLen, Utf8)
-                if prefixFull || col > prefixLen then head + "…" else head
-              hits += Hit(line, col, text)
-              total += 1
-              if total >= maxHits then truncatedFlag = true
+              if total >= maxHits then truncatedFlag = true // first hit beyond the cap
+              else
+                total += 1
+                pendingCols += base + i - lineStart + 1 // 1-based byte column
+                if prefixFull then emitPending(continues = true) // echo already final
             // line bookkeeping AFTER the match so a match is attributed to the
             // line it starts on
             val b = buf(i)
             if b == '\n'.toByte then
+              emitPending(continues = prefixFull) // the line's echo is now final
               line += 1
               lineStart = base + i + 1
               prefixLen = 0
@@ -325,7 +347,9 @@ object TextStream:
               if prefixLen < MaxHitTextChars then
                 prefix(prefixLen) = b
                 prefixLen += 1
-              else prefixFull = true
+              else
+                prefixFull = true
+                emitPending(continues = true) // bounded excerpt is final from here on
             i += 1
           // hold back the tail that a next chunk could complete
           val keep = bufLen - processLen
@@ -333,8 +357,11 @@ object TextStream:
           bufLen = keep
           base += processLen
 
-    /** Take the hits accumulated since the last drain (frame batching). */
+    /** Take the hits accumulated since the last drain (frame batching). Hits of
+      * the current unterminated line are flushed with the bytes seen so far —
+      * at the caller's final (EOF) drain that is the complete line. */
     def drainHits(): Vector[Hit] =
+      emitPending(continues = false)
       val out = hits.toVector
       hits.clear()
       out
