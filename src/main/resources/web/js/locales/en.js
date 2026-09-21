@@ -509,6 +509,7 @@ export default {
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
+  'messages.voiceInput': 'Voice input',
   'messages.send': 'Send',
   // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
   // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback
@@ -777,7 +778,7 @@ export default {
   'settings.addProvider': '+ Add Provider',
   'settings.presets': 'Model Presets',
   'settings.addPreset': '+ Add Preset',
-  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for each agent.',
+  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for Nebula and the project dispatcher.',
   'preset.default': 'Default',
   'preset.setDefault': 'Set Default',
   'preset.edit': 'Edit',
@@ -814,6 +815,9 @@ export default {
   'preset.pillPrefix': 'Preset: ',
   'preset.defaultBadge': 'Default preset',
   'preset.loadFailed': 'Failed to load presets',
+  'preset.followsNebula': 'Follows Nebula\u2019s current preset (no setting of its own)',
+  'preset.followsDispatcher': 'Determined by the project dispatcher\u2019s current preset at dispatch time (no setting of its own)',
+  'preset.engineManaged': 'Not settable — follows the default preset',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',

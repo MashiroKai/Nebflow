@@ -19,6 +19,98 @@ class RgHelperSpec extends FunSuite:
 
   private val utf8 = StandardCharsets.UTF_8
 
+  /** launchd 最小 PATH（2026-09-21 事发读数，.nebflow/evidence/20260921_env-rg-restore/）。 */
+  private val launchdMinimalPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+  /** 平台真实的 rg 可执行文件名（RgHelper 的 rgBinName 为 private，测试本地镜像）。 */
+  private def rgName: String =
+    if sys.props.getOrElse("os.name", "").toLowerCase.contains("win") then "rg.exe" else "rg"
+
+  /** 造一个假的 rg 可执行文件（内容无关——解析链只判 isFile，不执行）。 */
+  private def fakeRg(dir: os.Path): String =
+    os.write(dir / rgName, "#!/bin/sh\n", createFolders = true)
+    (dir / rgName).toString
+
+  // ---- envfix 批 2026-09-21：策展前缀腿（作者裁定①，只增解析位不改优先序）--
+
+  test("minimal PATH resolves rg via the curated probe leg (launchd context)") {
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-probe"))
+    try
+      val probeDir = tmp / "opt-homebrew-bin"
+      val seeded = fakeRg(probeDir)
+      val r = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath, // dirs exist but carry no rg
+        probeDirs = List(probeDir.toString),
+        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString, // nonexistent
+        winInstall = None
+      )
+      assertEquals(r, Some(seeded), "curated probe dir must supply the hit when PATH is minimal")
+    finally os.remove.all(tmp)
+  }
+
+  test("PATH leg outranks the curated probe leg (existing priority unchanged)") {
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-order"))
+    try
+      val pathDir = tmp / "on-path"
+      val probeDir = tmp / "probed"
+      val onPath = fakeRg(pathDir)
+      fakeRg(probeDir)
+      val r = RgHelper.resolveRgPathFrom(
+        pathEnv = pathDir.toString,
+        probeDirs = List(probeDir.toString),
+        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString,
+        winInstall = None
+      )
+      assertEquals(r, Some(onPath), "PATH hit must keep priority over the curated probe leg")
+    finally os.remove.all(tmp)
+  }
+
+  test("curated probe leg outranks the local ~/.nebflow/bin leg (PATH-adjacent insertion)") {
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-local"))
+    try
+      val probeDir = tmp / "probed"
+      val probed = fakeRg(probeDir)
+      val localDir = tmp / "local-bin"
+      val local = fakeRg(localDir)
+      val r = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = List(probeDir.toString),
+        localPath = local,
+        winInstall = None
+      )
+      assertEquals(r, Some(probed), "probe leg sits with the PATH leg, before the local bin leg")
+    finally os.remove.all(tmp)
+  }
+
+  test("pre-fix shape (no probe dirs, minimal PATH, no local) still resolves to None") {
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-none"))
+    try
+      val r = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = Nil, // pre-fix shape: the leg did not exist
+        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString,
+        winInstall = None
+      )
+      assertEquals(r, None, "nothing anywhere must stay None (drives the not-found error path)")
+    finally os.remove.all(tmp)
+  }
+
+  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present") {
+    val probeDirs = List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
+    val expected = probeDirs.map(d => java.nio.file.Path.of(d, rgName)).find(java.nio.file.Files.isRegularFile(_))
+    assume(expected.isDefined, s"host has no package-manager rg under ${probeDirs.mkString(", ")} - drill not applicable here")
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-host"))
+    try
+      val r = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = probeDirs,
+        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString, // nonexistent: isolate the probe leg
+        winInstall = None
+      )
+      assertEquals(r, Some(expected.get.toAbsolutePath.toString))
+    finally os.remove.all(tmp)
+  }
+
   test("readWithLimit passes small streams through untruncated") {
     val (out, truncated) = RgHelper.readWithLimit(new ByteArrayInputStream("a\nb\nc".getBytes(utf8)))
     assertEquals(out, "a\nb\nc")

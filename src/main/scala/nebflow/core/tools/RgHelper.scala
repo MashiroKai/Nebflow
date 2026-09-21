@@ -10,7 +10,9 @@ import scala.collection.mutable.StringBuilder
  * Used by GrepTool and GlobTool to avoid duplicating process management and output limiting logic.
  *
  * rg is expected to be installed by the nebflow install script (install.sh/ps1)
- * to ~/.nebflow/bin/rg (or rg.exe on Windows). Falls back to PATH lookup.
+ * to ~/.nebflow/bin/rg (or rg.exe on Windows). Falls back to PATH lookup and,
+ * after it, to curated well-known prefixes (launchd/systemd service contexts
+ * run with a minimal PATH that strips the login shell's entries).
  */
 object RgHelper:
 
@@ -31,13 +33,41 @@ object RgHelper:
       Option(System.getenv("LOCALAPPDATA")).map(_ + File.separator + "Nebflow" + File.separator + rgBinName)
     else None
 
-  /** Resolve rg path: bundled app-dir copy → PATH lookup → local nebflow bin
-    * (~/.nebflow/bin) → Windows install dir. The bundled copy (msi payload
-    * <install>\app\rg.exe, staged by packaging/build-msi.sh) wins for
-    * determinism — pinned version, tested with the release. */
+  /** Well-known rg install prefixes probed after the PATH leg. Service
+    * contexts (launchd/systemd) run with a minimal PATH that never contains
+    * these, so the PATH leg alone cannot find a package-manager rg there
+    * (incident 2026-09-21: launchd PATH=/usr/bin:/bin:/usr/sbin:/sbin, readings
+    * .nebflow/evidence/20260921_env-rg-restore/). Author ruling 2026-09-21
+    * (envfix batch): ADD resolution positions only — the relative priority of
+    * the existing legs is unchanged. Empty on Windows (the msi bundled leg and
+    * the %LOCALAPPDATA% leg already cover the Windows install forms). */
+  private val curatedProbeDirs: List[String] =
+    if isWindows then Nil
+    else List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
+
+  /** Resolve rg path: bundled app-dir copy → PATH lookup → curated well-known
+    * prefixes → local nebflow bin (~/.nebflow/bin) → Windows install dir. The
+    * bundled copy (msi payload <install>\app\rg.exe, staged by
+    * packaging/build-msi.sh) wins for determinism — pinned version, tested
+    * with the release. */
   private def resolveRgPath: Option[String] =
+    resolveRgPathFrom(
+      pathEnv = sys.env.getOrElse("PATH", ""),
+      probeDirs = curatedProbeDirs,
+      localPath = rgLocalPath,
+      winInstall = rgWinInstallPath
+    )
+
+  /** Pure core of [[resolveRgPath]] — parameterized so specs can drive the
+    * resolution chain without touching the process environment (a JVM cannot
+    * rewrite its own PATH). */
+  private[tools] def resolveRgPathFrom(
+    pathEnv: String,
+    probeDirs: List[String],
+    localPath: String,
+    winInstall: Option[String]
+  ): Option[String] =
     val fromBundled = nebflow.core.InstallLayout.bundledRg
-    val pathEnv = sys.env.getOrElse("PATH", "")
     // 1. PATH lookup
     val fromPath = pathEnv
       .split(File.pathSeparator)
@@ -45,11 +75,25 @@ object RgHelper:
       .map(d => new File(d, rgBinName))
       .find(_.isFile)
       .map(_.getAbsolutePath)
-    // 2. Local nebflow bin (macOS/Linux: ~/.nebflow/bin/rg)
-    val fromCache = Some(new File(rgLocalPath)).filter(_.isFile).map(_.getAbsolutePath)
-    // 3. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
-    val fromWinInstall = rgWinInstallPath.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
-    fromBundled.orElse(fromPath).orElse(fromCache).orElse(fromWinInstall)
+    // 2. Curated well-known prefixes (see curatedProbeDirs)
+    val fromProbe = probeDirs.iterator
+      .map(d => new File(d, rgBinName))
+      .find(_.isFile)
+      .map(_.getAbsolutePath)
+    // 3. Local nebflow bin (macOS/Linux: ~/.nebflow/bin/rg)
+    val fromCache = Some(new File(localPath)).filter(_.isFile).map(_.getAbsolutePath)
+    // 4. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
+    val fromWinInstall = winInstall.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
+    fromBundled.orElse(fromPath).orElse(fromProbe).orElse(fromCache).orElse(fromWinInstall)
+
+  /** Not-found message enumerates every leg the resolver probed — the error is
+    * the self-diagnosis sheet. 路径经 PathUtil.dataRootRenderValue 插值（home
+    * 硬编码 → 运行时动态化批 2026-09-11）：默认 home ⇒ `~/.nebflow/bin`，隔离
+    * 实例 ⇒ 其实例数据根下的 bin（该实例真正使用的缓存位）。 */
+  private def notFoundMessage: String =
+    val probeNote =
+      if curatedProbeDirs.nonEmpty then s", well-known prefixes (${curatedProbeDirs.mkString(", ")})" else ""
+    s"ripgrep (rg) not found (checked bundled app dir, PATH$probeNote, ${nebflow.core.PathUtil.dataRootRenderValue}/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
 
   /** Resolved rg path — exposed for the boot-time dependency probe
     * (WindowsDepProbe). */
@@ -100,15 +144,7 @@ object RgHelper:
     truncateOnOverflow: Boolean = false
   ): Either[ToolError, (String, String, Int, Boolean)] =
     resolveRgPath match
-      case None =>
-        Left(
-          ToolError(
-            // 路径经 PathUtil.dataRootRenderValue 插值（home 硬编码 → 运行时动态化
-            // 批 2026-09-11）：默认 home ⇒ `~/.nebflow/bin`，隔离实例 ⇒ 其实例
-            // 数据根下的 bin（该实例真正使用的缓存位）。
-            s"ripgrep (rg) not found (checked bundled app dir, PATH, ${nebflow.core.PathUtil.dataRootRenderValue}/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
-          )
-        )
+      case None => Left(ToolError(notFoundMessage))
       case Some(rgPath) =>
         try
           val proc = new ProcessBuilder((rgPath :: args)*)

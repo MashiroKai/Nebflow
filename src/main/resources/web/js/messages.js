@@ -34,6 +34,10 @@ import { TRUST_SEALED } from './featureFlags.js';
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊会话窗的**简单麦克风**
+// 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
+// voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
+import { startDictation, stopDictation } from './voiceEngine.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
@@ -365,10 +369,13 @@ function avatarEl(person, size) {
  *  逐字节同形的 `<svg>`（同 viewBox / 同 path `d` / 同 fill|stroke 语义）。
  *  🔴 落槽 = `.fm-avatar` 家族（几何随既有 `-40` 档，不新开尺寸座），字形尺寸由
  *  `.fm-avatar-device svg` 单条规则决定（`friends.css`）。
+ *  消费点两处：会话列表设备行（`convRow` 设备分支）＋ 设备**窗头**（`renderChatModal`
+ *  设备分支，作者 2026-09-21 16:54 令「三类对话框统一显示头像」）——同一函数、同一
+ *  字形源，禁第二份构造。
  *  🔴 只换**设备**这一支：好友头像照旧走档案 `avatarUrl` / 首字母，群行照旧首字母
  *  ⇒ 三类头像互不影响（逐类读数见本批报告 §①）。
- *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js:406`
- *  generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
+ *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js`
+ *  `platformDisplay` 兜底档，现读 `:565` generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
 function deviceAvatarEl(device, size) {
   const a = el('span', `fm-avatar fm-avatar-${size} fm-avatar-device`);
   a.innerHTML = platformDisplay(device && device.platform).icon;
@@ -780,6 +787,10 @@ function closeChat() {
   // —— 关窗即弃，禁跨窗残留）。注意：exitSelection 在 modalEls 被清前调用。
   exitSelection();
   clearQuote();
+  // voicefix 批 腿 B：关窗路径（ESC/覆层/×）一律经本函数 ⇒ 在飞的语音听写
+  // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
+  // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
+  if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
   if (modalEls) {
     modalEls.overlay.remove();
     modalEls = null;
@@ -1172,16 +1183,23 @@ function renderChatModal(conv) {
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
-  // 窗头头像槽（两档，同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
+  // 窗头头像槽（**三类全挂**（作者 2026-09-21 16:54 令「好友/群/设备类对话框统一
+  // 显示头像」）：同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
   //   · 群窗 = 组合头像（方案 §3.1 P1），随名册/群列表变更就地重打（禁整窗重建）；
   //   · **好友（单聊）窗 = 好友档案头像**（作者 2026-09-17 令「让好友的对话框能显示
   //     好友的头像」）—— 复用既有 `avatarEl` ＋ 既有 `conv.friend`（**与列表行
   //     `convRow` 的单聊分支**同一调用、同一数据对象，禁第二份取数/渲染链）；
-  //   · 设备窗**不挂**（其窗头形态由作者 2026-09-15 档位固定，本批不扩张）。
-  // 几何申报：40px 头像行必然把窗头抬到 64px 档（群窗先例 `729c56f3d`，已判**非回归**；
-  // 单聊窗同款增量，本批逐条读数见报告 §P2）。
+  //   · **设备窗 = 平台图标**（`deviceAvatarEl`，与会话列表设备行 / 联系人面板设备行
+  //     **同一函数、同一字形源** `platformDisplay` 单点）。设备无档案头像字段 ⇒
+  //     类型图标即其**既有兜底形态**（未知平台 = generic 显示器字形，`neblink.js`
+  //     `platformDisplay` 兜底档），无首字母分支。
+  // 🔴 有意变更申报：2026-09-15 档「设备窗不挂」被本令取代（后续令覆盖前令）；
+  // 群/好友两腿的建槽条件式、调用与数据对象逐字不变 ⇒ 既有头像消费面零变化。
+  // 几何申报：40px 头像行把设备窗头抬到 64px 档（群窗先例 `729c56f3d` / 好友窗
+  // avatarfix 同族增量，均已判非回归；设备窗头无 `.fm-modal-title-btn`，无热区连坐）。
   const isGroupHead = conv.kind === 'group';
-  const headAvatarSlot = (isGroupHead || (conv.kind !== 'device' && !!conv.friend))
+  const isDeviceHead = conv.kind === 'device';
+  const headAvatarSlot = (isGroupHead || isDeviceHead || !!conv.friend)
     ? el('span', 'fm-modal-avatar') : null;
   if (headAvatarSlot) {
     // 🔴 uifix 批（2026-09-17）：首帧**也**先查本窗名册缓存 `groupMemberAvatars`
@@ -1191,6 +1209,7 @@ function renderChatModal(conv) {
     // 带上缓存后，第二次及以后进同一群首帧即命中名册（与随后的名册腿签名相同 ⇒
     // `paintGroupAvatarInto` 的签名闸直接短路，全程零 DOM 操作）。
     if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv, groupMemberAvatars.get(String(conv.conversationId)));
+    else if (isDeviceHead) headAvatarSlot.appendChild(deviceAvatarEl(conv.device, 40));
     else headAvatarSlot.appendChild(avatarEl(conv.friend, 40));
     header.appendChild(headAvatarSlot);
   }
@@ -1375,6 +1394,94 @@ function renderChatModal(conv) {
   input.placeholder = t('messages.inputPlaceholder');
   input.maxLength = 2000;
   input.autocomplete = 'off';
+  // ── 简单麦克风语音输入（voicefix 批 腿 B，作者 2026-09-21 14:0x ③）──────────
+  //   好友（conv 无 kind 键）/ 群聊（kind='group'）会话窗各挂**一枚简单麦克风键**
+  //   （禁气泡形态 —— 气泡是主窗光球的形态，不进本窗）；设备窗不挂。
+  //   形态 = 主窗既有 `.icon-btn` 族 + lucide `mic`（与纸夹同族）；位置 = 输入条
+  //   最左（微信参照稿同位）。接线复用主窗既有管线：同一 voiceEngine 识别流、
+  //   同一回调契约（onInterim 占位刷新 / onText 落终稿 / onState 态机）、同一
+  //   「点一下开、再点一下关」交互（作者 2026-08-25 21:34 令，与主窗一致）。
+  //   反馈 = 主窗既有 `.icon-btn.recording`（微信绿 + voicePulse）+ 转写中
+  //   `.fm-mic-btn.processing`（既有 sapphire）；出错 = modalToast 可见提示。
+  let fmVoiceActive = false;
+  let fmVoiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
+  let fmVoiceInterimLen = 0;  // 当前占位 interim 文本长度
+  let fmStopVoice = null;
+  if (conv.kind !== 'device') {
+    const micBtn = el('button', 'icon-btn fm-mic-btn');
+    micBtn.type = 'button';
+    micBtn.title = t('messages.voiceInput');
+    micBtn.setAttribute('aria-label', t('messages.voiceInput'));
+    micBtn.setAttribute('aria-pressed', 'false');
+    micBtn.innerHTML = '<i data-lucide="mic"></i>';
+    const fmSetMicState = (s) => {
+      micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
+      micBtn.classList.toggle('processing', s === 'processing');
+      micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
+    };
+    fmStopVoice = () => {
+      if (!fmVoiceActive) return;
+      fmVoiceActive = false;
+      // 丢弃未落定的 interim 占位（与主窗 stopVoice 同一约定）
+      if (fmVoiceInterimLen > 0) {
+        input.value = input.value.substring(0, fmVoiceAnchor) + input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
+        fmVoiceInterimLen = 0;
+      }
+      // 尾段转写在飞 ⇒ processing；引擎随后的 onState('idle') 收敛回常态
+      fmSetMicState('processing');
+      stopDictation();
+      syncComposerSend();
+    };
+    micBtn.addEventListener('click', () => {
+      if (input.disabled) return; // 拉黑/断连等禁用态不挂假入口行为
+      if (fmVoiceActive) { fmStopVoice(); return; }
+      fmVoiceActive = true;
+      fmVoiceAnchor = input.selectionStart ?? input.value.length;
+      fmVoiceInterimLen = 0;
+      // 与主窗 startVoice 同一约定：锚点前字符非空白 ⇒ 补一个分隔空格
+      if (fmVoiceAnchor > 0) {
+        const ch = input.value[fmVoiceAnchor - 1];
+        if (ch && ch !== ' ') {
+          input.value = input.value.substring(0, fmVoiceAnchor) + ' ' + input.value.substring(fmVoiceAnchor);
+          fmVoiceAnchor++;
+        }
+      }
+      fmSetMicState('listening');
+      input.focus();
+      startDictation({
+        onInterim: (text) => {
+          // [anchor, anchor+interimLen) 占位槽原位刷新（同主窗契约）
+          const before = input.value.substring(0, fmVoiceAnchor);
+          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
+          input.value = before + text + after;
+          fmVoiceInterimLen = text.length;
+          input.setSelectionRange(fmVoiceAnchor + text.length, fmVoiceAnchor + text.length);
+        },
+        onText: (text) => {
+          // 终稿落定 = 占位槽换终稿 + 尾随空格，锚点随移（同主窗契约）
+          const before = input.value.substring(0, fmVoiceAnchor);
+          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
+          const insert = text + ' ';
+          input.value = before + insert + after;
+          fmVoiceInterimLen = 0;
+          fmVoiceAnchor = before.length + insert.length;
+          input.setSelectionRange(fmVoiceAnchor, fmVoiceAnchor);
+          syncComposerSend(); // 程序化写入不触发 input 事件 ⇒ 发送键可用态就地同步
+        },
+        onState: (s, data) => {
+          if (s === 'error') {
+            // data = 引擎内已分类、已 i18n 的文案；错误必须用户可见（同 #stt-hotfix 纪律）
+            fmSetMicState('idle');
+            modalToast(String(data || t('messages.voiceInput')));
+            console.warn('[voice] friend/group mic error:', data);
+            return;
+          }
+          fmSetMicState(s);
+        },
+      });
+    });
+    bar.appendChild(micBtn);
+  }
   // ③ 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
   //   同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
   //   墨色**（`sidebar.css:1162-1170` 的主操作白墨声明，既有类名 ⇒ 零新增字面量色值）；
@@ -1423,7 +1530,7 @@ function renderChatModal(conv) {
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge };
+  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: fmStopVoice };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];

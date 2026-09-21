@@ -82,7 +82,20 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     };
     fit();
 
+    // ── Geometry-converge re-fit ───────────────────────────
+    // The first fit() above can run while the canvas panel is still in its
+    // open transition (flex-basis 0 → target, 0.32s), reading a near-zero
+    // viewport width ⇒ s≈0 ⇒ the image renders at scale(0), visually blank
+    // (the "Fit to view" button later re-runs the same fit and "fixes" it).
+    // ResizeObserver fires on every transition frame, so re-fit as the
+    // geometry settles — until the user takes over zoom/pan manually.
+    let userTouched = false;
+    new ResizeObserver(() => {
+      if (!userTouched && pane.isConnected) fit();
+    }).observe(viewport);
+
     const applyScale = (next, pivot) => {
+      userTouched = true; // manual zoom — stop auto re-fit
       const old = s;
       s = next;
       if (pivot) {
@@ -98,7 +111,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       min: 0.05, max: 8,
       getScale: () => s,
       applyScale,
-      reset: fit,
+      reset: () => { userTouched = false; fit(); }, // explicit re-fit re-arms geometry follow
       attachTo: viewport,
     });
 
@@ -106,6 +119,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     let drag = null;
     viewport.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      userTouched = true; // manual pan — stop auto re-fit
       drag = { x: e.clientX, y: e.clientY, tx, ty };
       viewport.setPointerCapture(e.pointerId);
       viewport.classList.add('panning');
@@ -123,7 +137,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     viewport.addEventListener('dblclick', (e) => {
       const rect = viewport.getBoundingClientRect();
       const pivot = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      if (Math.abs(s - 1) < 0.01) fit();
+      if (Math.abs(s - 1) < 0.01) { userTouched = false; fit(); } // toggle to fit = re-arm follow
       else applyScale(1, pivot);
     });
   };

@@ -7,6 +7,16 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 
+// ── 面板方案收敛（panelscheme 批 2026-09-21 作者令）──────────────
+// 面板只有两类 agent 可设模型方案；其余 agent 的模型来源按引擎侧 SchemePolicy
+// 对齐展示（kernel 跟随 Nebula / general 跟随任务分发器 / 其余默认方案）。
+export const SCHEME_SETTABLE = new Set(['Nebula', 'project-dispatcher']);
+export function schemeNoteKey(agentName) {
+  if (agentName === 'kernel') return 'preset.followsNebula';
+  if (agentName === 'general') return 'preset.followsDispatcher';
+  return 'preset.engineManaged';
+}
+
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {

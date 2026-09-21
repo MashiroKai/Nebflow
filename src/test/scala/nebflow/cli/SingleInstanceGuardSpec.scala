@@ -168,13 +168,16 @@ class SingleInstanceGuardSpec extends FunSuite:
 
   test("health JSON carries the product marker") {
     // Contract side: /api/health must include "product":"nebflow" so the
-    // guard's primary identification marker actually exists (RestApiRoutes).
-    // Pinned here textually to survive refactorings of the route; the route
-    // itself is exercised E2E.
-    val route = scala.io.Source.fromFile(
-      java.nio.file.Path.of("src/main/scala/nebflow/gateway/RestApiRoutes.scala").toFile
+    // guard's primary identification marker actually exists. The health
+    // payload's single source is HealthPayload.build (hotupdate 批 2 G3
+    // 单一来源化, nebflow/core/hotrestart/HealthProbe.scala) — the route
+    // (RestApiRoutes) delegates to it and no longer carries the literal.
+    // Pinned here textually against that single source to survive
+    // refactorings; the route itself is exercised E2E.
+    val source = scala.io.Source.fromFile(
+      java.nio.file.Path.of("src/main/scala/nebflow/core/hotrestart/HealthProbe.scala").toFile
     ).mkString
-    assert(route.contains("\"product\" -> \"nebflow\""), "health product marker missing")
+    assert(source.contains("\"product\" -> \"nebflow\""), "health product marker missing")
   }
 
 end SingleInstanceGuardSpec

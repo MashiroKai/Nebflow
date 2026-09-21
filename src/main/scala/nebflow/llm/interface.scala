@@ -959,9 +959,20 @@ object LlmInterface:
                                                 //  - reason=Timeout（首 token 看门狗 TimeoutException 走
                                                 //    Permanent 分类）：软下线回避窗——「慢 ≠ 死」，窗口后自然
                                                 //    回链，无需探测恢复。
-                                                //  - 其余（Auth/404/配额/EmptyStream 等确证死亡）：维持 markDown。
+                                                //  - quota=true（配额分层，令 2026-09-21 19:16 腿 b）：
+                                                //    **计划性额度耗尽**（403 / 429-1308）⇒ 换链 + 配额软回避窗
+                                                //    （QuotaAvoidWindowMs ≫ 瞬时窗）。阻塞等待无意义：短窗内
+                                                //    不会自愈，探测也不会把它救回来 ⇒ 不用 markDown 进探测集。
+                                                //  - 其余（Auth/404/EmptyStream 等确证死亡）：维持 markDown。
                                                 val eviction =
                                                   if !classification.evict then IO.unit
+                                                  else if classification.quota then
+                                                    healthMonitor.softAvoid(
+                                                      candidate.providerId,
+                                                      candidate.model,
+                                                      Defaults.QuotaAvoidWindowMs,
+                                                      label = "quota exhausted"
+                                                    )
                                                   else if classification.reason == FailoverReason.Timeout then
                                                     healthMonitor.softAvoid(
                                                       candidate.providerId,
@@ -1006,10 +1017,21 @@ object LlmInterface:
                                                   // 审计 20260903 子项③：Timeout 类降级软下线——超时 = 慢，
                                                   // 不是死。跳过本次请求 + 软回避窗（TimeoutAvoidWindowMs），
                                                   // 不 markDown 不进探测集，窗口到期自然回链；markDown
-                                                  // 保留给 Auth/404/配额等确证死亡。非超时 Transient 耗尽
+                                                  // 保留给 Auth/404 等确证死亡。非超时 Transient 耗尽
                                                   // （如 429 重试耗尽）维持原 markDown 行为。
+                                                  // 配额分层（令 2026-09-21 19:16 腿 b）：配额类恒为
+                                                  // Permanent（不可自愈），正常不到达本分支；此处仍置于
+                                                  // 最前作为防御一致性——任何路径的配额类都走配额窗 + 换链，
+                                                  // 绝不落进 markDown/阻塞等待。
                                                   val eviction =
-                                                    if isTimeout then
+                                                    if classification.quota then
+                                                      healthMonitor.softAvoid(
+                                                        candidate.providerId,
+                                                        candidate.model,
+                                                        Defaults.QuotaAvoidWindowMs,
+                                                        label = "quota exhausted"
+                                                      )
+                                                    else if isTimeout then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,
                                                         candidate.model,

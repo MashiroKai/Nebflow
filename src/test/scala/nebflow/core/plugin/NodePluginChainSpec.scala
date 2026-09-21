@@ -460,9 +460,9 @@ class NodePluginChainSpec extends CatsEffectSuite:
     }
   }
 
-  // ── §E.3：node.preset 消费接通（协议符合度批，2b 遗留）─────────
+  // ── panelscheme（2026-09-21）：preset 参数退役 + 节点继承分发器方案 ──────────
 
-  test("§E.3 preset: node.preset → 预设链进会话 LLM 请求（agentModel）；未知 preset → 节点 failed 含可用清单") {
+  test("panelscheme: NodeEdit preset 参数退役（NODE_PRESET_RETIRED）；节点模型 = 分发器当前方案（general 动态继承）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-preset"
     os.makeDir.all(ws)
@@ -472,40 +472,41 @@ class NodePluginChainSpec extends CatsEffectSuite:
       "presets" -> Json.obj(
         "general" -> Json.obj("name" -> "general".asJson, "preferred" -> "general-model".asJson, "fallbacks" -> List.empty[String].asJson),
         "fast" -> Json.obj("name" -> "fast".asJson, "preferred" -> "fast-model".asJson, "fallbacks" -> List("fb-fallback").asJson))).noSpaces)
+    // 分发器 fixture：preset=fast —— 节点（general）经 SchemePolicy 动态继承它
+    // （general 自身 agent.json 不带 preset：继承读的是 project-dispatcher 的当前引用）
+    os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+    os.write.over(tempRoot / "agents" / "project-dispatcher" / "agent.json",
+      """{"name":"project-dispatcher","description":"dispatcher fixture","preset":"fast"}""")
+    os.write.over(tempRoot / "agents" / "project-dispatcher" / "system.md", "# dispatcher\n")
     val system = ActorSystem(s"plc-preset-${scala.util.Random.nextInt(100000)}")
     val program =
       for
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-preset", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok",
-          "description" -> Json.fromString("preset ok node"),
+        // ① 退役参数硬闸：preset 键出现即拒（NODE_PRESET_RETIRED），节点零落库
+        rejected <- nodeEdit(nodeInput("plc-preset", "preset-retired",
+          "description" -> Json.fromString("preset retired"),
           "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
           "preset" -> Json.fromString("fast")), ctx)
-        _ = assert(ok.isRight, s"NodeEdit with valid preset must succeed: $ok")
+        _ = assert(rejected.isLeft, s"NodeEdit with the preset param must be rejected: $rejected")
+        _ = assert(rejected.left.exists(_.contains("NODE_PRESET_RETIRED")), s"rejection must carry NODE_PRESET_RETIRED: $rejected")
+        noNode <- rt.store.snapshot.map(s => !s.nodes.values.exists(_.name == "preset-retired"))
+        _ = assert(noNode, "rejected NodeEdit must not create a node")
+        // ② 节点模型 = 分发器当前方案：无 preset 参数的普通节点，general 经
+        //    SchemePolicy 动态继承 project-dispatcher 的 fast 链
+        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok",
+          "description" -> Json.fromString("dispatcher inherited"),
+          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+        _ = assert(ok.isRight, s"plain NodeEdit must succeed: $ok")
         _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
           _.nodes.values.exists(n => n.name == "preset-ok" && n.status == NodeLifecycle.Completed)))
-        bad <- nodeEdit(nodeInput("plc-preset", "preset-bad",
-          "description" -> Json.fromString("preset bad node"),
-          "task" -> Json.fromString("t-preset-missing"), "out" -> Json.fromString("Nebula"),
-          "preset" -> Json.fromString("no-such-preset")), ctx)
-        _ = assert(bad.isRight, s"NodeEdit accepts the preset param (validation is spawn-side §E.3): $bad")
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == "preset-bad" && n.status == NodeLifecycle.Failed)))
-        badNode <- rt.store.snapshot.map(_.nodes.values.find(_.name == "preset-bad")).flatMap {
-          case Some(n) => IO.pure(n)
-          case None => IO.raiseError(new RuntimeException("preset-bad vanished"))
-        }
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield (capture.values.find(_.sessionId.startsWith("node-")), badNode)
-    program.map { case (reqOpt, badNode) =>
-      val req = reqOpt.getOrElse(fail("no LLM request captured for preset node"))
+      yield capture.values.find(_.sessionId.startsWith("node-"))
+    program.map { reqOpt =>
+      val req = reqOpt.getOrElse(fail("no LLM request captured for dispatcher-inherited node"))
       assertEquals(req.agentModel, Some(nebflow.shared.AgentModelConfig(Some("fast-model"), List("fb-fallback"))),
-        s"node.preset must drive the session model chain (§E.3 consumption), got: ${req.agentModel}")
-      assertEquals(badNode.status, NodeLifecycle.Failed, "unresolvable preset must fail the node")
-      val result = badNode.result.getOrElse("")
-      assert(result.contains("preset") && result.contains("unresolved") && result.contains("general"),
-        s"failure must carry §E.3 guidance with available presets, got: $result")
+        s"node session must run the dispatcher's current preset chain (dynamic inheritance), got: ${req.agentModel}")
     }
   }
 

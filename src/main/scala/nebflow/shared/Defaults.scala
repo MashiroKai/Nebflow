@@ -114,6 +114,24 @@ object Defaults:
    */
   val TimeoutAvoidWindowMs: Long = 45_000L
 
+  /**
+   * 配额类失败的软回避窗（ms，作者令 2026-09-21 19:16 腿 b）：**计划性额度耗尽**
+   * （HTTP 403 / 429 且上游 code 1308；现读 = kimi 5h 额度闸 16:47:33.722 +
+   * zhipu 5h 使用上限 17:54:58）既不是「死」（探测恢复无意义：额度不会因探测
+   * 回来）也不是「瞬时」（45s 窗内不会自愈），而是**窗口型不可用** ⇒ 触发**换链**
+   * （该 candidate 退出本轮候选、立即推进下一根），不做阻塞式等待。
+   *
+   * 取值 300s 的三条理由（分层必需的最小新增常量，逐条申报）：
+   *   1. ≫ [[TimeoutAvoidWindowMs]]（45s）——分层必须**可判别**，否则等价于没分层
+   *      （判据面：配额窗 / 瞬时窗比值 > 3，见 QuotaChainSwitchSpec）；
+   *   2. > [[nebflow.llm.ProviderHealthMonitor.ProbeIntervalSec]]（120s）——不烧
+   *      配额死 provider 的探测请求（旧路径 markDown 每 120s 烧一次必然失败的探测）；
+   *   3. ≪ 5 小时额度窗（实测 5h 闸），**刻意有界**：误判或额度提前重置的代价 =
+   *      每窗最多一次快速失败（配额类判为不可自愈 ⇒ 零退避立即换链），不会把候选链
+   *      长期打窄。interface.scala 错误分支消费。
+   */
+  val QuotaAvoidWindowMs: Long = 300_000L
+
   /** Bash tool max timeout in ms. */
   val BashMaxTimeoutMs: Long = 3_600_000L
 
