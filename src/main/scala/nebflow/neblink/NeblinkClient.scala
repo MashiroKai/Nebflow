@@ -1215,22 +1215,29 @@ class NeblinkClient(
    * reports it offline. Without this mapping, an offline-flagged device would
    * refresh itself back to "online" on every heartbeat just by appearing in
    * the response, fighting the DeviceStatusUpdate push (C6). */
-  def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo]): List[PeerInfo] =
+  def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo], selfDeviceId: Option[String] = None): List[PeerInfo] =
     val prefixes = localPrefixes
-    serverPeers.filter(_.endpoints.nonEmpty).map { p =>
-      val urls = EndpointPreference.order(
-        p.endpoints.map(ep => s"http://${ep.address}:${ep.port}"),
-        prefixes
-      )
-      PeerInfo(
-        deviceId = p.deviceId,
-        deviceName = p.deviceName,
-        platform = p.platform,
-        address = urls.head,
-        lastSeen = if p.online then System.currentTimeMillis() else 0L,
-        endpoints = urls
-      )
-    }
+    serverPeers
+      // 卡②（2026-09-21）：self 过滤对称化——与 NeblinkService.handleAnnounce 的
+      // `info.deviceId == id.deviceId ⇒ ignore self-announce` 同一判据；服务端名册回传
+      // 本机自身时不得进设备面（否则本机会把自己列进设备面并拨通自己）。默认参 None ⇒
+      // 既有调用点/测试零改，向后兼容。信任面 peerAddresses 不在本改动面。
+      .filterNot(p => selfDeviceId.contains(p.deviceId))
+      .filter(_.endpoints.nonEmpty)
+      .map { p =>
+        val urls = EndpointPreference.order(
+          p.endpoints.map(ep => s"http://${ep.address}:${ep.port}"),
+          prefixes
+        )
+        PeerInfo(
+          deviceId = p.deviceId,
+          deviceName = p.deviceName,
+          platform = p.platform,
+          address = urls.head,
+          lastSeen = if p.online then System.currentTimeMillis() else 0L,
+          endpoints = urls
+        )
+      }
 
   /** Extract all peer IP addresses from NebLink Server peer list. */
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =

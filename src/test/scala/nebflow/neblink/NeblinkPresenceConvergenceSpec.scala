@@ -47,6 +47,16 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
       override def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] = IO.pure(Right(peers))
 
+  /** Discovery stub — 覆写 `discover`（`discoverCycle` / `discoverViaServer` 的入口），不触网。 */
+  private def discoverStubClient(peers: List[NeblinkPeerInfo]): NeblinkClient =
+    new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
+      override def discover(
+        deviceId: String,
+        deviceName: String,
+        platform: String,
+        endpoints: List[NeblinkEndpoint]
+      ): IO[Either[String, List[NeblinkPeerInfo]]] = IO.pure(Right(peers))
+
   private def withStack[A](use: (NeblinkService, NeblinkPresenceService, NeblinkDiscovery) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -290,6 +300,43 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         val now = System.currentTimeMillis()
         assert(after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
           "online:true must win over status:offline")
+    }
+  }
+
+  // ===== ② self 过滤对称化（名册入口带 self ⇒ 本机把自己列进设备面并拨通自己）=====
+  //
+  // 判据源 = `NeblinkService.handleAnnounce:329`（announce 路径已有 self 过滤）；名册路径
+  // `NeblinkClient.toNeblinkPeers` 改前没有同判据。两条 namelist 腿（心跳 / 发现）必须**都**过闸。
+  // 🔴 改前红臂取在**调用点级**（discovery 两条腿）：直接调 `toNeblinkPeers(_, Some(self))` 的
+  // spec 在改前**不存在该签名**（编译不过），而调用点级红臂改前可编译、且同时钉住两个调用点。
+
+  test("② 心跳腿：服务端名册回传本机自身时不得进设备面（self 条目被剔除）") {
+    withStack { (ms, _, discovery) =>
+      for
+        me <- ms.identity
+        _ <- discovery.setClient(Some(stubClient(List(serverPeer(me.deviceId), serverPeer("peer-2")))))
+        _ <- discovery.heartbeatCycle
+        after <- ms.peers
+      yield
+        assertEquals(
+          after.exists(_.deviceId == me.deviceId),
+          false,
+          s"本机自身（${me.deviceId}）不得出现在设备面：${after.map(_.deviceId)}"
+        )
+        assert(after.exists(_.deviceId == "peer-2"), s"非 self 条目必须照旧入册：${after.map(_.deviceId)}")
+    }
+  }
+
+  test("② 发现腿：discoverViaServer 同样不得把本机自身写进设备面") {
+    withStack { (ms, _, discovery) =>
+      for
+        me <- ms.identity
+        _ <- discovery.setClient(Some(discoverStubClient(List(serverPeer(me.deviceId), serverPeer("peer-3")))))
+        _ <- discovery.discoverCycle
+        after <- ms.peers
+      yield
+        assertEquals(after.exists(_.deviceId == me.deviceId), false, s"发现腿同样必须剔除 self：${after.map(_.deviceId)}")
+        assert(after.exists(_.deviceId == "peer-3"), s"非 self 条目照旧入册：${after.map(_.deviceId)}")
     }
   }
 
