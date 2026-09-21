@@ -51,7 +51,9 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
 
     // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
-    // preset/skills 字段合法入 seed——project-dispatcher: preset=general, skills=[]
+    // preset/skills 字段合法入 seed——project-dispatcher（**可设两类之一**）: preset=general, skills=[]。
+    // panelscheme 批（2026-09-21）：可设性收敛为 Nebula + 任务分发器两类，种子只在这两类
+    // 下发自有 preset；general 见下（改钉缺键）。
     val pd = io.circe.parser.parse(os.read(pdAgentJson)).toOption.get
     assert(pd.hcursor.downField("preset").as[String].toOption.contains("general"),
       "project-dispatcher preset=general")
@@ -60,8 +62,12 @@ class SeedServiceSpec extends FunSuite:
     assert(pd.hcursor.downField("name").as[String].toOption.contains("project-dispatcher"))
 
     val gen = io.circe.parser.parse(os.read(genAgentJson)).toOption.get
-    assert(gen.hcursor.downField("preset").as[String].toOption.contains("general"),
-      "general preset=general")
+    // panelscheme 批（2026-09-21，作者令：节点无自有模型方案）：`general` 是节点
+    // worker/verify 的唯一执行 agent，模型方案由引擎动态继承**任务分发器当前方案**
+    // （SchemePolicy），种子不再下发自有 preset——下发即死键（引擎忽略），故此处改钉
+    // 「缺键」契约：谁把 general 的自有方案写回种子，本条即时红。
+    assert(gen.hcursor.downField("preset").as[String].toOption.isEmpty,
+      "general must ship no self-owned preset (panelscheme 2026-09-21: nodes inherit the dispatcher's scheme)")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
     // 现行默认插件集 = 3 包（manifest.json:8-10，作者 2026-09-12 裁定回退）：

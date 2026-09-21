@@ -510,7 +510,6 @@ export default {
   'messages.reconnecting': '连接已断开，正在重连…',
   'messages.networkError': '网络错误，请检查连接',
   'messages.inputPlaceholder': '发送消息',
-  'messages.voiceInput': '语音输入',
   'messages.send': '发送',
   // rcptcode 批（2026-09-20）：好友腿**终态**分态文案（消费点 = `messages.js` 的
   // `FRIEND_TERMINAL_TEXT` 白名单 + 未知码回退 `sendFailedCode`）。码集 = `friendsApi.js`
@@ -751,7 +750,7 @@ export default {
   'settings.addProvider': '+ 添加服务商',
   'settings.presets': '模型方案',
   'settings.addPreset': '+ 添加方案',
-  'settings.presetsEmptyHint': '请先在「LLM 服务商」中添加并配置服务，之后即可针对每个 agent 调整模型方案。',
+  'settings.presetsEmptyHint': '请先在「LLM 服务商」中添加并配置服务，之后即可为 Nebula 与任务分发器调整模型方案。',
   'preset.default': '默认',
   'preset.setDefault': '设为默认',
   'preset.edit': '编辑',
@@ -788,6 +787,9 @@ export default {
   'preset.pillPrefix': '方案: ',
   'preset.defaultBadge': '默认方案',
   'preset.loadFailed': '加载方案失败',
+  'preset.followsNebula': '跟随 Nebula 的当前方案（无自有设置，动态继承）',
+  'preset.followsDispatcher': '由任务分发器的当前方案在派发时决定（无自有设置）',
+  'preset.engineManaged': '不可单独设置——跟随默认方案',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',

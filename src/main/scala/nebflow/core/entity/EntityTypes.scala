@@ -88,7 +88,11 @@ object AgentEntry:
    */
   extension (a: AgentEntry)
     def toAgentDef: AgentDef =
-      val (resolvedModel, _) = PresetStore().resolve(a.preset, a.model)
+      // panelscheme 批（2026-09-21）：输入先经 SchemePolicy 名称策略（与
+      // AgentLibrary.loadFromDir 同一单点）——kernel 继承 Nebula、general 继承
+      // project-dispatcher、其余引擎忽略存储引用；可设两类原样（红线不变）。
+      val (effPreset, effModel) = nebflow.core.presets.SchemePolicy.effectiveRefs(a.name, a.preset, a.model)
+      val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
       AgentDef(
         name = a.name,
         description = a.description,
@@ -98,7 +102,7 @@ object AgentEntry:
         category = a.category,
         mcpServers = a.mcpServers,
         model = Some(resolvedModel),
-        preset = a.preset,
+        preset = effPreset,
         skills = a.skills,
         flows = a.flows
       )
