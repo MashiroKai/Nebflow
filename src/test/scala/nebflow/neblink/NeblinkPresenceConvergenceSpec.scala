@@ -61,6 +61,12 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, testGrace)
+        // 腿 A 活动面闸（chain neblink-lifecycle-fix）的前置条件：本 suite 测的是
+        // 「外发腿返回的名册如何收敛本地表」，桩 client 模拟的就是服务端响应 ⇒
+        // 夹具必须表达「已登录/已启用」形态（enabled=true），否则 heartbeatCycle /
+        // discoverCycle 被 gate 压成空转、用例失去判别力。与其他夹具
+        // （NeblinkLogoutRoutesSpec.mkStack、NeblinkRelayTunnel*Spec）同款形态。
+        _ <- ms.updateConfig(_.copy(enabled = true))
         ps = new NeblinkPresenceService(ms, 0)(dispatcher)
         discovery = new NeblinkDiscovery(ms, 0, ps, None)
         out <- use(ms, ps, discovery)
