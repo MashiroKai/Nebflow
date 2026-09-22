@@ -13,7 +13,7 @@ import nebflow.core.Branding
 import nebflow.core.CanvasTabs
 import nebflow.core.CanvasTabStore
 import nebflow.core.PathUtil
-import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
+import nebflow.core.daemon.{DaemonConfig, DaemonPanelSchema, DaemonPanelStore, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
@@ -3382,15 +3382,30 @@ class RestApiRoutes(
               // no longer reach it (id changed/removed → 404).
               svc.reconcile(configs) *> svc.getStates(configs).flatMap { states =>
                 val cfgById = configs.map(c => c.id -> c).toMap
-                val statesJson = states.map { st =>
-                  st.asJson.deepMerge(
-                    Json.obj(
-                      "autoStart" -> cfgById.get(st.id).exists(_.autoStart).asJson,
-                      "restartOnExit" -> cfgById.get(st.id).exists(_.restartOnExit).asJson
+                configRef.get.flatMap { svcCfg =>
+                  val statesJson: Json = states.map { st =>
+                    val cfg = cfgById.get(st.id)
+                    // daemonpanel Phase A: publish the panel flag ONLY when the
+                    // declaration validated. A daemon without a (valid) panel
+                    // keeps its response key set byte-for-byte identical to the
+                    // baseline — that is the F1 / C7 zero-regression pin (an
+                    // invalid declaration is rejected whole, so its entry is
+                    // hidden rather than partially rendered).
+                    val hasPanel = cfg
+                      .flatMap(_.configPanel)
+                      .exists(raw =>
+                        DaemonPanelSchema.validate(raw, DaemonPanelSchema.allowWeb(svcCfg.daemonPanel)).isRight
+                      )
+                    val base: Json = Json.obj(
+                      "autoStart" -> cfg.exists(_.autoStart).asJson,
+                      "restartOnExit" -> cfg.exists(_.restartOnExit).asJson
                     )
-                  )
+                    val merged: Json =
+                      if hasPanel then base.deepMerge(Json.obj("hasConfigPanel" -> true.asJson)) else base
+                    st.asJson.deepMerge(merged)
+                  }.asJson
+                  Ok(Json.obj("daemons" -> statesJson))
                 }
-                Ok(Json.obj("daemons" -> statesJson.asJson))
               }
             }
       }
@@ -3404,7 +3419,10 @@ class RestApiRoutes(
             req.as[Json].flatMap { body =>
               val autoStartOpt = body.hcursor.downField("autoStart").as[Option[Boolean]].toOption.flatten
               val restartOnExitOpt = body.hcursor.downField("restartOnExit").as[Option[Boolean]].toOption.flatten
-              if autoStartOpt.isEmpty && restartOnExitOpt.isEmpty then
+              // daemonpanel Phase A: the declaration may be set/cleared through
+              // this endpoint too (whitelist +1 key). A JSON null clears it.
+              val configPanelOpt = body.hcursor.downField("configPanel").focus
+              if autoStartOpt.isEmpty && restartOnExitOpt.isEmpty && configPanelOpt.isEmpty then
                 BadRequest(
                   Json.obj("error" -> "No updatable fields provided (expected autoStart or restartOnExit)".asJson)
                 )
@@ -3416,7 +3434,11 @@ class RestApiRoutes(
                     cfg =>
                       cfg.copy(
                         autoStart = autoStartOpt.getOrElse(cfg.autoStart),
-                        restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit)
+                        restartOnExit = restartOnExitOpt.getOrElse(cfg.restartOnExit),
+                        configPanel = configPanelOpt match
+                          case Some(j) if j.isNull => None
+                          case Some(j)             => Some(j)
+                          case None                => cfg.configPanel
                       )
                   )
                   .flatMap {
@@ -3442,6 +3464,9 @@ class RestApiRoutes(
               val autoStart = body.hcursor.downField("autoStart").as[Boolean].getOrElse(false)
               val restartOnExit = body.hcursor.downField("restartOnExit").as[Boolean].getOrElse(false)
               val port = body.hcursor.downField("port").as[Option[Int]].toOption.flatten
+              // daemonpanel Phase A: whitelist +1 key — a new daemon may carry
+              // its panel declaration at creation time.
+              val configPanel = body.hcursor.downField("configPanel").focus.filterNot(_.isNull)
 
               if id.isEmpty || name.isEmpty || command.isEmpty then
                 BadRequest(Json.obj("error" -> "Missing required fields: id, name, command".asJson))
@@ -3454,7 +3479,8 @@ class RestApiRoutes(
                   env = env,
                   autoStart = autoStart,
                   restartOnExit = restartOnExit,
-                  port = port
+                  port = port,
+                  configPanel = configPanel
                 )
                 val store = new DaemonStore()
                 store.add(config).flatMap { updated =>
@@ -3535,7 +3561,154 @@ class RestApiRoutes(
               case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
             }
       }
+
+    // ===== Daemon config panel (daemonpanel Phase A) =====
+    //
+    // Three endpoints, all `withAuth` (same discipline as the seven above).
+    // The declaration is inline in daemons.json; values live outside it. A
+    // declaration that fails validation hides the daemon's entry entirely
+    // (fail-closed, never a partial render), and a daemon without a valid
+    // declaration answers 409 `no config panel` — not 400 (F-8).
+    //
+    // E4 white-list note: a panel may reach ONLY {its own daemon origin} ∪
+    // {these config-panel endpoints, relayed by the host}. The read-only probe
+    // GET .../config-panel/credentials is the explicitly named second
+    // read-only endpoint (F-9); `/api/config` and `/api/daemons` are NOT in
+    // the panel white-list.
+
+    // GET /daemons/:id/config-panel — declaration + current values (secrets masked)
+    case req @ GET -> Root / "daemons" / daemonId / "config-panel" =>
+      withAuth(req) {
+        if daemonId == "credentials" then NotFound(Json.obj("error" -> "Daemon 'credentials' not found".asJson))
+        else
+          daemonPanelContext(daemonId).flatMap {
+            case Left(resp) => IO.pure(resp)
+            case Right((decl, _)) =>
+              val store = new DaemonPanelStore()
+              store.readMasked(decl, daemonId).flatMap { values =>
+                Ok(
+                  Json.obj(
+                    "id" -> daemonId.asJson,
+                    "version" -> decl.version.asJson,
+                    "kind" -> decl.kind.asJson,
+                    "title" -> decl.title.asJson,
+                    "fields" -> decl.fields
+                      .map(f =>
+                        Json.obj(
+                          "key" -> f.key.asJson,
+                          "label" -> f.label.asJson,
+                          "type" -> f.ftype.asJson,
+                          "required" -> f.required.asJson
+                        )
+                          .deepMerge(f.min.fold(Json.obj())(m => Json.obj("min" -> m.asJson)))
+                          .deepMerge(f.max.fold(Json.obj())(m => Json.obj("max" -> m.asJson)))
+                          .deepMerge(if f.options.nonEmpty then Json.obj("options" -> f.options.asJson) else Json.obj())
+                      )
+                      .asJson,
+                    "values" -> values.asJson,
+                    "sandbox" -> decl.sandboxTokens.asJson,
+                    // Only ever a same-origin host-minted handle, NEVER a
+                    // credential: the panel URL carries zero token=/ticket=.
+                    "panelUrl" -> (if decl.isWeb then decl.url.getOrElse("") else "").asJson
+                  )
+                )
+              }
+          }
+      }
+
+    // GET /daemons/:id/config-panel/credentials — read-only credential probe
+    case req @ GET -> Root / "daemons" / daemonId / "config-panel" / "credentials" =>
+      withAuth(req) {
+        daemonPanelContext(daemonId).flatMap {
+          case Left(resp) => IO.pure(resp)
+          case Right((decl, _)) =>
+            val store = new DaemonPanelStore()
+            store.credentialStates(decl, daemonId).flatMap { states =>
+              Ok(
+                Json.obj(
+                  "id" -> daemonId.asJson,
+                  "credentials" -> states
+                    .map(s =>
+                      Json.obj("key" -> s.key.asJson, "name" -> s.name.asJson, "state" -> s.state.asJson)
+                        .deepMerge(s.mode.fold(Json.obj())(m => Json.obj("mode" -> m.asJson)))
+                    )
+                    .asJson
+                )
+              )
+            }
+        }
+      }
+
+    // PUT /daemons/:id/config-panel — write values
+    case req @ PUT -> Root / "daemons" / daemonId / "config-panel" =>
+      withAuth(req) {
+        daemonPanelContext(daemonId).flatMap {
+          case Left(resp) => IO.pure(resp)
+          case Right((decl, _)) =>
+            req.as[Json].flatMap { body =>
+              val raw = body.hcursor.downField("values").focus.getOrElse(body)
+              raw.asObject match
+                case None => BadRequest(Json.obj("error" -> "invalid value: expected a 'values' object".asJson))
+                case Some(obj) =>
+                  val store = new DaemonPanelStore()
+                  val incoming = obj.toMap
+                  store.writeValues(decl, daemonId, incoming).flatMap {
+                    case Left(err) =>
+                      // "unknown field"/"invalid value" are client errors; a
+                      // credential-permission refusal is also 400 with a reason
+                      // (never a silent success, never a 200 on a failed write).
+                      if err.startsWith("unknown field") then
+                        BadRequest(Json.obj("error" -> "unknown field".asJson, "detail" -> err.asJson))
+                      else BadRequest(Json.obj("error" -> "invalid value".asJson, "detail" -> err.asJson))
+                    case Right(_) =>
+                      store.readMasked(decl, daemonId).flatMap { values =>
+                        Ok(Json.obj("id" -> daemonId.asJson, "saved" -> true.asJson, "values" -> values.asJson))
+                      }
+                  }
+            }
+        }
+      }
   }
+
+  /** Resolve a daemon id to its validated config-panel declaration.
+    *
+    * Shared by the three config-panel endpoints so their degradation is
+    * uniform and mechanical:
+    *   - daemon unknown                    -> 404
+    *   - no `configPanel` key              -> 409 `no config panel`   (F-8)
+    *   - declaration fails validation      -> 409 `no config panel`   (F-8,
+    *     fail-closed: an invalid declaration is hidden, never partially used)
+    *   - `kind:"web"` without the explicit  -> 409 `no config panel`   (F-5/F-9,
+    *     nebflow.json switch                    default-closed escape hatch)
+    */
+  private def daemonPanelContext(
+    daemonId: String
+  ): IO[Either[Response[IO], (DaemonPanelSchema.Declaration, DaemonConfig)]] =
+    // Bare `Response` values (not the DSL constructors, which yield
+    // `IO[Response[IO]]`) so callers can uniformly `IO.pure` the error branch.
+    def jsonResponse(status: Status, body: Json): Response[IO] =
+      Response[IO](status).withEntity(body)
+    val noPanel: Response[IO] =
+      jsonResponse(
+        Status.Conflict,
+        Json.obj("error" -> "no config panel".asJson, "id" -> daemonId.asJson)
+      )
+    new DaemonStore().load().flatMap { configs =>
+      configs.find(_.id == daemonId) match
+        case None =>
+          IO.pure(Left(jsonResponse(Status.NotFound, Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))))
+        case Some(cfg) =>
+          cfg.configPanel match
+            case None => IO.pure(Left(noPanel))
+            case Some(raw) =>
+              configRef.get.map { svcCfg =>
+                DaemonPanelSchema.validate(raw, DaemonPanelSchema.allowWeb(svcCfg.daemonPanel)) match
+                  case Left(reason) =>
+                    logger.warn(s"Rejected configPanel declaration for daemon '$daemonId': $reason")
+                    Left(noPanel)
+                  case Right(decl) => Right((decl, cfg))
+              }
+    }
 
   // ── Preset helpers ──────────────────────────────────────
 
