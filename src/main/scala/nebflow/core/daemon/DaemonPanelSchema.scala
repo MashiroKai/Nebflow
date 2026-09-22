@@ -132,59 +132,285 @@ object DaemonPanelSchema:
   private def cspMetaTag: String =
     s"""<meta $CspTagMarker http-equiv="Content-Security-Policy" content="$PanelCsp">"""
 
-  /** True when `html` carries an injected panel CSP meta (the full tag shape,
-    * not merely the marker substring — a hostile document can print the marker
-    * text in its own body without any policy being in force).
+  /** Elements whose content is RAW TEXT: everything up to their close tag is
+    * text, never markup, so a `<head>` written inside them is not an element.
     */
-  def hasPanelCsp(html: String): Boolean = html.contains(cspMetaTag)
+  private val RawTextTags: Set[String] = Set("script", "style", "textarea", "title")
 
-  /** Inject the local `<meta CSP>` as the FIRST thing inside `<head>` (falling
-    * back to a prepended head, or to a bare prepend for a fragment).
+  /** Tags the HTML parser admits inside `<head>` while the head is still open.
+    * Anything else is body content, which implicitly CLOSES the head — this is
+    * the rule that decides whether a later `<head>` tag is an element at all.
+    */
+  private val HeadAllowedTags: Set[String] = Set(
+    "base", "basefont", "bgsound", "link", "meta", "title", "noscript",
+    "noframes", "style", "script", "template", "head"
+  )
+
+  /** Location of an element's start/end tag pair inside a document. */
+  private final case class TagSpan(openEnd: Int, closeStart: Int)
+
+  /** What a single document-order scan learned about the head. */
+  private final case class DocIndex(
+    head: Option[TagSpan],
+    htmlOpenEnd: Option[Int],
+    firstBodyStart: Option[Int]
+  ):
+    /** The `<html>` tag precedes all body content, so a `<head>` spliced after
+      * it will still be the parser's head rather than a dropped one.
+      */
+    def canSpliceHeadAfterHtml: Boolean = htmlOpenEnd.exists { h =>
+      firstBodyStart.forall(b => h <= b)
+    }
+
+  private def isNameChar(c: Char): Boolean =
+    c.isLetterOrDigit || c == '-' || c == ':' || c == '_'
+
+  /** Byte ranges occupied by HTML comments — computed once per document and
+    * reused, so "is this offset inside a comment?" is a cheap query.
+    */
+  private final class CommentIndex(html: String):
+    private val ranges: List[(Int, Int)] =
+      val out = scala.collection.mutable.ListBuffer[(Int, Int)]()
+      var i = html.indexOf("<!--")
+      while i >= 0 do
+        val end = html.indexOf("-->", i + 4)
+        val stop = if end < 0 then html.length else end + 3
+        out += ((i, stop))
+        i = html.indexOf("<!--", stop)
+      out.toList
+
+    def contains(idx: Int): Boolean = ranges.exists { case (a, b) => idx >= a && idx < b }
+
+  /** Index just past the `>` that closes the tag whose name ended at `from`.
+    *
+    * Quoted attribute values are skipped as units, so a `>` inside an attribute
+    * (`data-x="a>b"`) does not end the tag early — and, more to the point here,
+    * an attribute value that spells `<head>` is never read as a tag. -1 when the
+    * tag never terminates.
+    */
+  private def tagEndFrom(html: String, from: Int): Int =
+    var i = from
+    val n = html.length
+    var done = -1
+    while done < 0 && i < n do
+      val c = html.charAt(i)
+      if c == '"' || c == '\'' then
+        val close = html.indexOf(c, i + 1)
+        i = if close < 0 then n else close + 1
+      else if c == '>' then done = i
+      else i += 1
+    done
+
+  /** The REAL head, plus the anchors needed to place one when it is missing.
+    *
+    * Textual, dependency-free and total, but it answers the question the BROWSER
+    * answers rather than "where does the bytes `<head` first appear". A candidate
+    * `<head>` tag counts only when all three hold:
+    *   1. it is not inside a comment, and not inside the raw text of a
+    *      `script`/`style`/`textarea`/`title` element;
+    *   2. its tag name ends at the boundary, so `<header`/`<heading` never count;
+    *   3. the PARSER would be in head state there — no body-level content has
+    *      started yet. A `<head>` written after `<body>`/`<div>`/`<p>`… is
+    *      DISCARDED by the HTML parser, so anchoring on it would put the policy
+    *      exactly where the browser drops it.
+    *
+    * 🔴 This is the whole F-7 fix. Keying on the first `<head` substring let a
+    * declaration put the anchor anywhere it liked — `<!-- <head> -->`, a script
+    * string, an attribute value, a `<header>` element, or a `<head>` after body
+    * content had begun — and the injected `<meta CSP>` then landed where the
+    * browsing context ignores it, while the bytes still said "policy present"
+    * and the wire said `cspInjected: true`.
+    */
+  private def indexDocument(html: String): DocIndex =
+    val lower = html.toLowerCase
+    val comments = new CommentIndex(html)
+    val n = lower.length
+    var i = 0
+    // Parser state: "before head" (true) until body content starts.
+    var inHead = true
+    var head: Option[TagSpan] = None
+    var htmlOpenEnd: Option[Int] = None
+    var firstBodyStart: Option[Int] = None
+    while i < n do
+      val lt = lower.indexOf('<', i)
+      if lt < 0 then i = n
+      else if lower.startsWith("<!--", lt) then
+        // Skip the WHOLE comment: its body is not markup, and the next `<`
+        // inside it must never be read as a tag (that is the decoy itself).
+        val end = lower.indexOf("-->", lt + 4)
+        i = if end < 0 then n else end + 3
+      else if lower.startsWith("</", lt) then
+        val end = html.indexOf('>', lt)
+        i = if end < 0 then n else end + 1
+      else if lower.startsWith("<!", lt) || lower.startsWith("<?", lt) then
+        // doctype / PI: not an element, no parser state effect.
+        val end = html.indexOf('>', lt)
+        i = if end < 0 then n else end + 1
+      else
+        val first = if lt + 1 < n then lower.charAt(lt + 1) else ' '
+        if !first.isLetter then i = lt + 1 // not a tag opening (e.g. "a < b", "a <3")
+        else
+          var k = lt + 1
+          while k < n && isNameChar(lower.charAt(k)) do k += 1
+          val name = lower.substring(lt + 1, k)
+          val tagEnd = tagEndFrom(html, k)
+          if tagEnd < 0 then i = n
+          else if name == "head" then
+            if inHead && head.isEmpty then
+              // The parser's head: an explicit one, or the implicit head being
+              // made explicit. This is the element to inject into.
+              val close = findEndTag(html, comments, tagEnd + 1, "head")
+              head = Some(TagSpan(tagEnd + 1, close.getOrElse(-1)))
+              i = tagEnd + 1
+            else
+              // A `<head>` after body content began: the parser drops it, so it
+              // must not become our anchor.
+              if firstBodyStart.isEmpty then firstBodyStart = Some(lt)
+              i = tagEnd + 1
+          else if name == "body" then
+            if firstBodyStart.isEmpty then firstBodyStart = Some(lt)
+            i = tagEnd + 1
+            inHead = false
+          else if name == "html" then
+            htmlOpenEnd = Some(tagEnd + 1)
+            i = tagEnd + 1
+          else if HeadAllowedTags.contains(name) then
+            // A head-content token implies the head element exists.
+            if RawTextTags.contains(name) then
+              findEndTag(html, comments, tagEnd + 1, name) match
+                case None => i = n
+                case Some(ct) =>
+                  val g = html.indexOf('>', ct)
+                  i = if g < 0 then n else g + 1
+            else i = tagEnd + 1
+          else
+            // Any other start tag is body content: head state is over.
+            if firstBodyStart.isEmpty then firstBodyStart = Some(lt)
+            inHead = false
+            i = tagEnd + 1
+    DocIndex(head, htmlOpenEnd, firstBodyStart)
+
+  /** Index of the first real `</name…>` close tag at or after `from`.
+    *
+    * The tag name is matched with its full boundary (`</header>` is not
+    * `</head>`), and a close tag spelled inside a comment does not count.
+    */
+  private def findEndTag(
+    html: String,
+    comments: CommentIndex,
+    from: Int,
+    name: String
+  ): Option[Int] =
+    val lower = html.toLowerCase
+    val n = lower.length
+    var at = from
+    var found = -1
+    while found < 0 && at >= 0 && at < n do
+      val i = lower.indexOf(s"</$name", at)
+      if i < 0 then at = -1
+      else
+        val afterIdx = i + 2 + name.length
+        val after = if afterIdx < n then lower.charAt(afterIdx) else '>'
+        val isClose = after == '>' || after.isWhitespace || after == '/'
+        if isClose && !comments.contains(i) then found = i
+        else at = i + 2 + name.length
+    if found < 0 then None else Some(found)
+
+  /** True when `html` carries an injected panel CSP meta that will actually be
+    * HONOURED: the full tag shape (not merely the marker substring — a hostile
+    * document can print the marker text without any policy being in force) AND
+    * landing inside the real `<head>` element, which is the only place a `<meta
+    * http-equiv>` policy is honoured.
+    *
+    * 🔴 The placement half is not cosmetic. A meta outside the real head is
+    * present in the bytes but IGNORED by the browsing context, so answering
+    * `true` on bytes alone would attest to protection that is not in force —
+    * a fail-open reading. False is the safe answer when placement cannot be
+    * established, so this predicate deliberately under-reports.
+    */
+  /** True when `html` carries an injected panel CSP meta that will actually be
+    * HONOURED: the full tag shape (not merely the marker substring — a hostile
+    * document can print the marker text without any policy being in force) AND
+    * landing inside the real `<head>` element, which is the only place a `<meta
+    * http-equiv>` policy is honoured.
+    *
+    * 🔴 The placement half is not cosmetic. A meta outside the real head — in the
+    * body, ahead of the document, inside a comment, or in a head the parser
+    * already left — is present in the bytes but IGNORED by the browsing context,
+    * so answering `true` on bytes alone would attest to protection that is not in
+    * force: a fail-open reading. False is the safe answer whenever placement
+    * cannot be established, so this predicate deliberately under-reports.
+    *
+    * Every occurrence is considered (not just the first), so author-supplied
+    * marker text in a comment cannot mask a genuinely placed policy — and cannot
+    * masquerade as one either.
+    */
+  def hasPanelCsp(html: String): Boolean =
+    indexDocument(html).head.exists { span =>
+      val comments = new CommentIndex(html)
+      val regionEnd = if span.closeStart >= 0 then span.closeStart else html.length
+      var idx = html.indexOf(cspMetaTag)
+      var found = false
+      while !found && idx >= 0 do
+        if idx >= span.openEnd && idx < regionEnd && !comments.contains(idx) then found = true
+        else idx = html.indexOf(cspMetaTag, idx + cspMetaTag.length)
+      found
+    }
+
+  /** Inject the local `<meta CSP>` as the FIRST thing inside the REAL `<head>`
+    * (falling back to a prepended head, or to a bare prepend for a fragment).
     *
     * Purely textual and total: no parsing of untrusted markup beyond locating
-    * the first `<head ...>` open tag, and never an exception on malformed input.
+    * the head element, and never an exception on malformed input.
     *
-    * 🔴 The skip condition is the removal of OUR OWN tag, never the bare marker
-    * substring: keying idempotence on a string the declaration can also contain
-    * would let a hostile declaration suppress the policy by quoting the marker
-    * (a fail-open hole). Here a prior injected tag is stripped and re-inserted,
-    * so a second call is byte-identical while an author's own marker text has no
-    * effect at all.
+    * 🔴 Two fail-open holes are closed here, both keyed on text a declaration
+    * controls:
+    *   1. The anchor is the real head ELEMENT (see `indexDocument`), not the
+    *      first `<head` substring — otherwise `<head>` inside a comment / script
+    *      string / attribute value, a `<header>` element, or a `<head>` the
+    *      parser has already left head state for becomes the anchor, and the
+    *      policy lands where the browser ignores it.
+    *   2. The skip condition is the removal of OUR OWN tag, never the bare
+    *      marker substring: keying idempotence on a string the declaration can
+    *      also contain would let a hostile declaration suppress the policy by
+    *      quoting the marker. Here a prior injected tag is stripped and
+    *      re-inserted, so a second call is byte-identical while an author's own
+    *      marker text has no effect at all.
     */
   def injectPanelCsp(html: String): String =
     val stripped = html.replace(cspMetaTag, "")
-    val lower = stripped.toLowerCase
-    // Locate `<head>` and the end of its open tag, so the meta becomes the
-    // first child of head (before any author script can run fetch()).
-    val headIdx = lower.indexOf("<head")
-    if headIdx < 0 then cspMetaTag + stripped
-    else
-      val closeIdx = stripped.indexOf('>', headIdx)
-      if closeIdx < 0 then cspMetaTag + stripped
-      else stripped.substring(0, closeIdx + 1) + cspMetaTag + stripped.substring(closeIdx + 1)
+    // Locate the real head element, so the meta becomes its first child
+    // (before any author script can run fetch()).
+    indexDocument(stripped).head match
+      case None       => cspMetaTag + stripped
+      case Some(span) => stripped.substring(0, span.openEnd) + cspMetaTag + stripped.substring(span.openEnd)
 
-  /** Give the document a `<head>` element if it has none, so the injected
+  /** Give the document a REAL `<head>` element if it has none, so the injected
     * `<meta>` is actually honoured — a `<meta>` outside `head` (or ahead of the
     * doctype) is ignored by the browser, and a policy that is present in the
     * bytes but not in force is worse than none because it reads as protection.
     *
-    * Three shapes, in order: an existing `<head>` is left alone; an `<html>`
-    * without a head gets an empty head inserted right after its open tag; a bare
-    * fragment is wrapped into a minimal document.
+    * Three shapes, in order: an existing REAL head is left alone (a bare
+    * `<head` substring does not count — a document whose only `<head` is really
+    * a `<header>`, or sits after body content, gets a real head); an `<html>`
+    * that still precedes all body content gets an empty head spliced right after
+    * its open tag; otherwise the document is wrapped into a minimal one.
+    *
+    * 🔴 The splice point matters as much as the anchor: a head inserted after
+    * body content has begun is DISCARDED by the parser, so `canSpliceHeadAfterHtml`
+    * gates that branch and everything else takes the wrap (where a leading
+    * doctype makes the generated head the parser's head by construction).
     */
   def normalizePanelDocument(html: String): String =
-    val lower = html.toLowerCase
-    if lower.contains("<head") then html
-    else
-      val htmlIdx = lower.indexOf("<html")
-      if htmlIdx >= 0 then
-        val closeIdx = html.indexOf('>', htmlIdx)
-        if closeIdx < 0 then s"<head></head>$html"
-        else html.substring(0, closeIdx + 1) + "<head></head>" + html.substring(closeIdx + 1)
-      else s"<!doctype html><html><head></head><body>$html</body></html>"
+    val idx = indexDocument(html)
+    if idx.head.isDefined then html
+    else if idx.canSpliceHeadAfterHtml then
+      val at = idx.htmlOpenEnd.get
+      html.substring(0, at) + "<head></head>" + html.substring(at)
+    else s"<!doctype html><html><head></head><body>$html</body></html>"
 
   /** Build the final `srcdoc` payload for a host-carried panel document:
-    * normalize (so a head exists) then inject the local policy.
+    * normalize (so a real head exists) then inject the local policy.
     */
   def panelSrcdoc(html: String): String = injectPanelCsp(normalizePanelDocument(html))
 
