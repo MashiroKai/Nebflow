@@ -255,3 +255,240 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     assert(ours > 0 && theirs > 0, "both metas expected in the fixture")
     assert(ours < theirs, s"the injected policy ($ours) must precede the author's ($theirs)")
   }
+
+  // ── F-7 placement · the policy must land in the REAL head, not in text ──
+  //
+  // Placement is the half of F-7 that "the marker is in the bytes" cannot see:
+  // a <meta> outside a real <head> is IGNORED by the browsing context, so a
+  // byte-level check would attest to protection that is not in force.
+  //
+  // These specs locate the head INDEPENDENTLY of the implementation: candidate
+  // offsets in comment/raw-text regions are excluded first, and a tag name only
+  // counts on its full boundary. They are the red instrument for the fail-open
+  // family that keys a security decision on declaration-controlled text.
+
+  /** Offsets sitting inside an HTML comment or a raw-text element body. */
+  private def opaqueRegions(doc: String): List[(Int, Int)] =
+    val out = scala.collection.mutable.ListBuffer[(Int, Int)]()
+    var i = doc.indexOf("<!--")
+    while i >= 0 do
+      val end = doc.indexOf("-->", i + 4)
+      val stop = if end < 0 then doc.length else end + 3
+      out += ((i, stop))
+      i = doc.indexOf("<!--", stop)
+    List("script", "style", "textarea", "title").foreach { tag =>
+      val lower = doc.toLowerCase
+      var at = 0
+      var go = true
+      while go do
+        val open = lower.indexOf(s"<$tag", at)
+        if open < 0 then go = false
+        else
+          val afterO = if open + tag.length + 1 < lower.length then lower.charAt(open + tag.length + 1) else '>'
+          val isTag = afterO == '>' || afterO.isWhitespace
+          val close = lower.indexOf(s"</$tag", open)
+          if isTag && close >= 0 then
+            val end = doc.indexOf('>', close)
+            out += ((open, if end < 0 then doc.length else end + 1))
+            at = if end < 0 then doc.length else end + 1
+          else at = open + 1
+    }
+    out.toList
+
+  end opaqueRegions
+
+  private def isOpaque(regions: List[(Int, Int)], idx: Int): Boolean =
+    regions.exists { case (a, b) => idx >= a && idx < b }
+
+  /**
+   * [start, end) of the FIRST real `<head …>` element in `doc`, or None.
+   *
+   * Deliberately a different traversal from the implementation's, and it also
+   * models the parser rule that matters: a `<head>` reached after body-level
+   * content has begun is DISCARDED by the HTML parser (the round-2 arrival
+   * probe caught exactly that shape), so head state must be tracked.
+   */
+  private def realHeadSpan(doc: String): Option[(Int, Int)] =
+    val lower = doc.toLowerCase
+    val regions = opaqueRegions(doc)
+    val headAllowed = Set(
+      "base",
+      "basefont",
+      "bgsound",
+      "link",
+      "meta",
+      "title",
+      "noscript",
+      "noframes",
+      "style",
+      "script",
+      "template",
+      "head"
+    )
+    val rawText = Set("script", "style", "textarea", "title")
+    var i = 0
+    var inHead = true
+    var found: Option[Int] = None
+    while found.isEmpty && i < lower.length do
+      val lt = lower.indexOf('<', i)
+      if lt < 0 then i = lower.length
+      else if lower.startsWith("<!--", lt) then
+        val e = lower.indexOf("-->", lt + 4)
+        i = if e < 0 then lower.length else e + 3
+      else if isOpaque(regions, lt) then i = lt + 1
+      else
+        val m = "^</?([a-zA-Z][a-zA-Z0-9:-]*)".r.findFirstMatchIn(doc.substring(lt)).filter(_.start == 0)
+        m match
+          case None => i = lt + 1
+          case Some(mm) =>
+            val name = mm.group(1).toLowerCase
+            val gt = doc.indexOf('>', lt)
+            if gt < 0 then i = lower.length
+            else if name == "head" then
+              if inHead then found = Some(gt + 1)
+              i = gt + 1
+            else if name == "body" || name == "html" then
+              if name == "body" then inHead = false
+              i = gt + 1
+            else if headAllowed.contains(name) then
+              if rawText.contains(name) then
+                val close = lower.indexOf(s"</$name", gt)
+                i = if close < 0 then lower.length else lower.indexOf('>', close) + 1
+              else i = gt + 1
+            else
+              inHead = false
+              i = gt + 1
+            end if
+        end match
+      end if
+    end while
+    if found.isEmpty then None
+    else
+      val open = found.get
+      val close = lower.indexOf("</head", open)
+      Some((open, if close < 0 then doc.length else close))
+
+  end realHeadSpan
+
+  private def assertPolicyInRealHead(label: String, doc: String): String =
+    val out = DaemonPanelSchema.panelSrcdoc(doc)
+    val meta = out.indexOf("data-daemon-panel-csp")
+    assert(meta >= 0, s"[$label] no injected meta at all")
+    assert(
+      !isOpaque(opaqueRegions(out), meta),
+      s"[$label] the meta was written inside a comment/script body (browser ignores it)"
+    )
+    val span = realHeadSpan(out)
+    assert(span.isDefined, s"[$label] the result has no real <head> element")
+    val (a, b) = span.get
+    assert(meta >= a && meta < b, s"[$label] meta@$meta is outside the real head [$a,$b)")
+    assert(DaemonPanelSchema.hasPanelCsp(out), s"[$label] hasPanelCsp disagrees with the real placement")
+    out
+
+  test("F-7 · a '<head>' decoy inside a COMMENT is not the insertion anchor") {
+    val doc = "<!-- <head> --><html><head><title>t</title></head><body><p>x</p></body></html>"
+    assertPolicyInRealHead("comment-decoy", doc)
+  }
+
+  test("F-7 · a document whose only '<head' is really '<header>' gains a real head") {
+    val doc =
+      """<html><body><header>hdr</header>
+        |<script>fetch('https://evil.example/x')</script></body></html>""".stripMargin
+    assertPolicyInRealHead("header-only", doc)
+  }
+
+  test("F-7 · a '<head>' inside a SCRIPT string is not the insertion anchor") {
+    val doc =
+      """<script>var s = '<head>';</script><html><head><title>t</title></head>
+        |<body><p>x</p></body></html>""".stripMargin
+    assertPolicyInRealHead("script-string", doc)
+  }
+
+  test("F-7 · a '<head>' inside an ATTRIBUTE value is not the insertion anchor") {
+    val doc = """<div data-x="<head>">d</div><html><head><title>t</title></head><body>x</body></html>"""
+    assertPolicyInRealHead("attr-decoy", doc)
+  }
+
+  test("F-7 · a '<head>' the parser DROPS (body content already began) is not the anchor") {
+    // The HTML parser leaves head state at the first body-level token, so a
+    // <head> written after <body>/<header> is DISCARDED — anchoring on it puts
+    // the policy exactly where the browser drops it. Found by the round-2
+    // server-side arrival probe, not by the byte-level specs: the bytes look
+    // fine and only real enforcement exposes it.
+    val doc = "<html><body><header>h</header></body><head><title>t</title></head><body><p>x</p></body></html>"
+    assertPolicyInRealHead("head-after-body", doc)
+  }
+
+  test("F-7 · a '<head>' inside a STYLE raw-text body is not the insertion anchor") {
+    val doc =
+      """<style>/* <head> */</style><html><head><title>t</title></head><body><p>x</p></body></html>"""
+    assertPolicyInRealHead("style-rawtext", doc)
+  }
+
+  test("F-7 · a document whose only head is COMMENTED OUT gains a real head") {
+    val doc = "<html><body><!-- <head></head> --><p>x</p></body></html>"
+    assertPolicyInRealHead("commented-head-tag", doc)
+  }
+
+  test("F-7 · cspInjected never answers true for a policy outside the real head") {
+    // The wire field is computed from hasPanelCsp. If placement can be ignored
+    // while the flag says yes, the wire attests to protection that is not in
+    // force — the fail-open reading this whole fix exists to close. Asserted as
+    // an AGREEEMENT between the two questions over the decoy family.
+    val docs = List(
+      "<!-- <head> --><html><head><title>t</title></head><body><p>x</p></body></html>",
+      "<html><body><header>hdr</header><p>x</p></body></html>",
+      "<html><body><p>x</p></body></html>",
+      "<script>var s='<head>';</script><html><head><title>t</title></head><body>x</body></html>",
+      "<div data-x='<head>'>d</div><html><head><title>t</title></head><body>x</body></html>",
+      "<!doctype html><html><head></head><body>data-daemon-panel-csp</body></html>"
+    )
+    val disagreements = docs.flatMap { doc =>
+      val out = DaemonPanelSchema.panelSrcdoc(doc)
+      val meta = out.indexOf("data-daemon-panel-csp")
+      val honoured = realHeadSpan(out).exists { case (a, b) => meta >= a && meta < b }
+      if DaemonPanelSchema.hasPanelCsp(out) && !honoured then Some(doc.take(56)) else None
+    }
+    assert(
+      disagreements.isEmpty,
+      s"cspInjected=true while the policy sits outside the real head: $disagreements"
+    )
+  }
+
+  test("F-7 · hasPanelCsp reports FALSE for a misplaced policy (attestation is placement-aware)") {
+    // 🔴 This asks hasPanelCsp DIRECTLY, on hand-built input. Going through
+    // panelSrcdoc cannot cover it: once the injector always lands the meta
+    // correctly, a bytes-only predicate would agree on every generated document
+    // and a regression to "the marker is present => true" would stay invisible.
+    // The semantic the ruling requires is narrower than "our bytes are there":
+    // report true only when the policy is in the real head, false otherwise.
+    //
+    // The tag is taken from the injector's OWN output (it is private, and
+    // rebuilding it by hand would test a different string than production).
+    val generated = DaemonPanelSchema.panelSrcdoc("<!doctype html><html><head></head><body>x</body></html>")
+    val start = generated.indexOf("<meta data-daemon-panel-csp")
+    val end = generated.indexOf('>', start) + 1
+    val tag = generated.substring(start, end)
+    assert(tag.contains("http-equiv=\"Content-Security-Policy\""), s"unexpected tag: $tag")
+
+    // (a) present but in the BODY (outside the head) => NOT honoured.
+    val inBody = s"<!doctype html><html><head><title>t</title></head><body>$tag</body></html>"
+    assert(!DaemonPanelSchema.hasPanelCsp(inBody), "a meta in the body is ignored by the browser")
+
+    // (b) present but inside a COMMENT => not markup at all.
+    val inComment = s"<!doctype html><html><head><!-- $tag --><title>t</title></head><body>x</body></html>"
+    assert(!DaemonPanelSchema.hasPanelCsp(inComment), "a commented-out meta is not in force")
+
+    // (c) present but before the head opens (ahead of the doctype) => ignored.
+    val beforeHead = s"$tag<!doctype html><html><head><title>t</title></head><body>x</body></html>"
+    assert(!DaemonPanelSchema.hasPanelCsp(beforeHead), "a meta ahead of the document is ignored")
+
+    // (d) no real head at all => nothing to honour it.
+    val noHead = s"<!doctype html><html><body>$tag<p>x</p></body></html>"
+    assert(!DaemonPanelSchema.hasPanelCsp(noHead), "no real <head> means no honoured policy")
+
+    // (e) the control: correctly placed => true, and only then.
+    val good = s"<!doctype html><html><head>$tag<title>t</title></head><body>x</body></html>"
+    assert(DaemonPanelSchema.hasPanelCsp(good), "a correctly placed policy must be attested")
+  }
+end DaemonPanelSchemaSpec
