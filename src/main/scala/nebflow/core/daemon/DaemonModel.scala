@@ -33,11 +33,30 @@ case class DaemonConfig(
    *      is alive. 0 disables the active health check (only process-exit
    *      detection remains).
    */
-  healthCheckSec: Int = 15
+  healthCheckSec: Int = 15,
+  /**
+   * Optional config-panel declaration (daemonpanel Phase A). Raw JSON — the
+   *      declaration is validated by DaemonPanelSchema (closed field-type
+   *      whitelist + whole-declaration fail-closed); `None` (or absent key in
+   *      daemons.json) means "no config panel" and is the zero-migration
+   *      backward-compatible default for every pre-existing config.
+   */
+  configPanel: Option[Json] = None
 )
 
 object DaemonConfig:
-  given Encoder[DaemonConfig] = deriveEncoder
+  /**
+   * Derived encoder, with the `configPanel` key DROPPED when it is None:
+   *      a panel-less config must re-serialize byte-for-byte as it always did
+   *      (legacy daemons.json is never rewritten with a `"configPanel": null`
+   *      key — zero migration).
+   */
+  given Encoder[DaemonConfig] = deriveEncoder[DaemonConfig].mapJson { json =>
+    json.asObject match
+      case Some(obj) if obj("configPanel").exists(_.isNull) =>
+        Json.fromJsonObject(obj.remove("configPanel"))
+      case _ => json
+  }
 
   given Decoder[DaemonConfig] = Decoder.instance { c =>
     for
@@ -56,6 +75,9 @@ object DaemonConfig:
       restartMaxAttempts <- c.downField("restartMaxAttempts").as[Option[Int]]
       restartStableWindowSec <- c.downField("restartStableWindowSec").as[Option[Int]]
       healthCheckSec <- c.downField("healthCheckSec").as[Option[Int]]
+      // Raw declaration JSON; DaemonPanelSchema is its only validator. An
+      // explicit JSON null is normalized to None (same as an absent key).
+      configPanel <- c.downField("configPanel").as[Option[Json]]
     yield DaemonConfig(
       id,
       name,
@@ -68,7 +90,8 @@ object DaemonConfig:
       restartBackoffSec.getOrElse(2),
       restartMaxAttempts.getOrElse(5),
       restartStableWindowSec.getOrElse(60),
-      healthCheckSec.getOrElse(15)
+      healthCheckSec.getOrElse(15),
+      configPanel.filterNot(_.isNull)
     )
   }
 
