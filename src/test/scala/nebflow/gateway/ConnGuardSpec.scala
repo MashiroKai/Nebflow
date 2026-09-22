@@ -122,15 +122,133 @@ class ConnGuardSpec extends CatsEffectSuite:
     yield
       assertEquals(s.reqTotal, 3L) // 两次 .1 + 一次 .2
       assertEquals(s.topReq.headOption.map(_._1), Some("9.9.9.1"))
+      assertEquals(s.reqUntrackedTotal, 0L) // 表远未满 ⇒ 全部建档
       assertEquals(verdict, None)
 
-  // ── IP 归一化：ip4s toString 形态 → 裸 IP ───────────────────────────────
+  // ── D2 返工红验基线：请求面伪造源 IP 洪峰不得突破 maxTrackedIps 封顶 ──────
+  // 🔴 旧交付树在此必红（observeRequest 无封顶、无淘汰 ⇒ 20000 个 IP 撑到 20000）。
 
-  test("normalizeIpStr: v4:vport, leading slash, bracketed v6, bare ip"):
+  test("request-face self-flood is bounded by maxTrackedIps (no evictable entry needed)"):
+    val cfg = ConnGuardConfig(wsPerIpCap = 64, wsTotalCap = 1024, maxTrackedIps = 64)
+    val n = 5000
+    for
+      g <- guard(cfg)
+      _ <- (0 until n).toList.traverse_(i => g.observeRequest(s"10.${i / 65536 % 256}.${i / 256 % 256}.${i % 256}"))
+      s <- g.snapshot
+    yield
+      assertEquals(s.reqTotal, n.toLong) // 请求总数照实累加（不丢计）
+      assert(s.trackedIps <= cfg.maxTrackedIps, s"trackedIps=${s.trackedIps} 超出封顶 ${cfg.maxTrackedIps}")
+      assertEquals(s.trackedIps, cfg.maxTrackedIps) // 封顶打满即恒定（旧版此处 = 5000）
+      assert(s.evictedTotal > 0L) // 换位（汰最老零会话）发生，非静默丢弃
+      assertEquals(s.wsTotal, 0) // 请求面洪峰不产生会话
+
+  test("ws + request faces share one bound; active sessions are never evicted"):
+    val cfg = ConnGuardConfig(wsPerIpCap = 10, wsTotalCap = 100, maxTrackedIps = 4)
+    for
+      g <- guard(cfg)
+      h1 <- g.acquireWs("9.0.0.1") // 4 条活跃会话占满全表
+      _ <- g.acquireWs("9.0.0.2")
+      _ <- g.acquireWs("9.0.0.3")
+      _ <- g.acquireWs("9.0.0.4")
+      _ <- g.observeRequest("10.0.0.1") // 无零会话可汰 ⇒ 只计总数不建档
+      mid <- g.snapshot
+      _ <- g.releaseWs(h1) // 腾出零会话条目 ⇒ 下个新 IP 可换位建档
+      _ <- g.observeRequest("10.0.0.2")
+      end <- g.snapshot
+    yield
+      assertEquals(mid.trackedIps, 4)
+      assertEquals(mid.reqTotal, 1L)
+      assertEquals(mid.reqUntrackedTotal, 1L) // 无位可换 ⇒ 未建档差额可观测
+      assertEquals(mid.wsTotal, 4) // 活跃会话一条不丢（封顶不吞会话账）
+      assert(end.trackedIps <= cfg.maxTrackedIps)
+      assertEquals(end.wsTotal, 3) // release 已回减；换位未误伤活跃会话
+
+  test("oldest idle entry yields its slot to a new peer (bounded + no starvation)"):
+    val cfg = ConnGuardConfig(wsPerIpCap = 10, wsTotalCap = 100, maxTrackedIps = 2)
+    for
+      g <- guard(cfg)
+      _ <- g.observeRequest("10.0.0.1")
+      _ <- g.observeRequest("10.0.0.2")
+      full <- g.snapshot
+      _ <- g.observeRequest("10.0.0.3") // 两条皆零会话 ⇒ 汰最老（.1）腾位
+      after <- g.snapshot
+    yield
+      assertEquals(full.trackedIps, 2)
+      assertEquals(after.trackedIps, 2) // 恒 ≤ 封顶
+      assert(after.evictedTotal >= 1L)
+      assertEquals(after.reqTotal, 3L)
+
+  test("trusted ip at a full all-active table: admitted, overflow-counted, no ghost count"):
+    val cfg = ConnGuardConfig(wsPerIpCap = 10, wsTotalCap = 100, maxTrackedIps = 2)
+    for
+      g <- guard(cfg)
+      h1 <- g.acquireWs("9.0.0.1")
+      h2 <- g.acquireWs("9.0.0.2") // 封顶已满且全为活跃会话
+      hT <- g.acquireWs("127.0.0.1") // 受信 IP 撞满表 ⇒ 走 overflow 腿（不淘汰活跃条目）
+      mid <- g.snapshot
+      verdict <- g.checkWs("127.0.0.1")
+      _ <- g.releaseWs(hT)
+      afterT <- g.snapshot
+      _ <- g.releaseWs(h1)
+      _ <- g.releaseWs(h2)
+      end <- g.snapshot
+    yield
+      assertEquals(mid.trackedIps, 2) // 活跃条目零淘汰
+      assertEquals(mid.overflowConns, 1)
+      assertEquals(mid.wsTotal, 3)
+      assertEquals(verdict, None) // 受信面照旧不被拒（可达性不损失）
+      assertEquals(afterT.overflowConns, 0) // 凭据配对回正确的桶
+      assertEquals(end.wsTotal, 0) // 全释放归零 ⇒ 零幽灵计数
+      assertEquals(end.overflowConns, 0)
+
+  // ── IP 归一化：socket 串兜底面（真 host:port 才截尾）─────────────────────
+
+  test("normalizeIpStr: only true host:port forms are truncated; bare v6 untouched"):
     assertEquals(ConnGuard.normalizeIpStr("1.2.3.4:5678"), "1.2.3.4")
     assertEquals(ConnGuard.normalizeIpStr("/1.2.3.4:5678"), "1.2.3.4")
     assertEquals(ConnGuard.normalizeIpStr("[::1]:8080"), "::1")
     assertEquals(ConnGuard.normalizeIpStr("127.0.0.1"), "127.0.0.1")
+    // 裸 IPv6（多冒号、无括号）= 不是 host:port ⇒ 一字不动（旧截尾规则在此剪坏）
+    assertEquals(ConnGuard.normalizeIpStr("::1"), "::1")
+    assertEquals(ConnGuard.normalizeIpStr("2001:db8::1"), "2001:db8::1")
+
+  // ── D1 返工红验基线：生产真实输入（Option[IpAddress]，即 req.remoteAddr 实型）──
+  // 🔴 这组断言在旧交付树上必红（旧 normalizeIp 走字符串截尾 ⇒ ::1 → ":"）；
+  //    若把这套截尾逻辑注回 normalizeIp，本组立即验红 ⇒ 固定防止回归。
+
+  private def ip(s: String): Option[com.comcast.ip4s.IpAddress] =
+    com.comcast.ip4s.IpAddress.fromString(s)
+
+  test("normalizeIp (production input Option[IpAddress]): v6 loopback stays trusted"):
+    // ip4s toString 已裸；::1 与全展开形态必须同键且都落在环回白名单
+    assertEquals(ConnGuard.normalizeIp(ip("::1")), "::1")
+    assertEquals(ConnGuard.normalizeIp(ip("0:0:0:0:0:0:0:1")), "::1")
+    assert(ConnGuardConfig.DefaultTrustedIps.contains(ConnGuard.normalizeIp(ip("::1"))))
+    assert(ConnGuardConfig.DefaultTrustedIps.contains(ConnGuard.normalizeIp(ip("127.0.0.1"))))
+    assertEquals(ConnGuard.normalizeIp(None), "unknown")
+
+  test("normalizeIp: v4-mapped collapses to dotted v4 (mapped loopback is trusted)"):
+    assertEquals(ConnGuard.normalizeIp(ip("::ffff:127.0.0.1")), "127.0.0.1")
+    assert(ConnGuardConfig.DefaultTrustedIps.contains(ConnGuard.normalizeIp(ip("::ffff:127.0.0.1"))))
+
+  test("normalizeIp: distinct adjacent v6 peers never share a bucket"):
+    val a = ConnGuard.normalizeIp(ip("2001:db8::1"))
+    val b = ConnGuard.normalizeIp(ip("2001:db8::2"))
+    assertEquals(a, "2001:db8::1")
+    assertEquals(b, "2001:db8::2")
+    assertNotEquals(a, b)
+
+  test("real-input loopback bypass: typed ::1 over per-ip cap is still admitted"):
+    val loopKey = ConnGuard.normalizeIp(ip("::1"))
+    for
+      g <- guard(ConnGuardConfig(wsPerIpCap = 1, wsTotalCap = 100))
+      _ <- g.acquireWs(loopKey)
+      _ <- g.acquireWs(loopKey)
+      over <- g.checkWs(loopKey)
+      v4map <- g.checkWs(ConnGuard.normalizeIp(ip("::ffff:127.0.0.1")))
+    yield
+      assertEquals(over, None)
+      assertEquals(v4map, None)
 
   // ── env 解析：非法值回落默认，不 crash ──────────────────────────────────
 
@@ -139,20 +257,23 @@ class ConnGuardSpec extends CatsEffectSuite:
     assertEquals(d.wsPerIpCap, 64)
     assertEquals(d.wsTotalCap, 1024)
     assertEquals(d.warnPct, 80)
+    assertEquals(d.maxTrackedIps, 1024)
     assert(d.trustedIps.contains("127.0.0.1"))
 
     val o = ConnGuardConfig.fromEnv {
-      case "GATEWAY_CONN_GUARD_WS_PER_IP_CAP" => Some("32")
-      case "GATEWAY_CONN_GUARD_WS_TOTAL_CAP"  => Some("512")
-      case "GATEWAY_CONN_GUARD"               => Some("off")
-      case "GATEWAY_CONN_GUARD_TRUSTED_IPS"   => Some(" 100.91.165.120 , 10.0.0.7 ")
-      case "GATEWAY_CONN_GUARD_WARN_PCT"      => Some("not-a-number")
+      case "GATEWAY_CONN_GUARD_WS_PER_IP_CAP"    => Some("32")
+      case "GATEWAY_CONN_GUARD_WS_TOTAL_CAP"     => Some("512")
+      case "GATEWAY_CONN_GUARD"                  => Some("off")
+      case "GATEWAY_CONN_GUARD_TRUSTED_IPS"      => Some(" 100.91.165.120 , 10.0.0.7 ")
+      case "GATEWAY_CONN_GUARD_WARN_PCT"         => Some("not-a-number")
+      case "GATEWAY_CONN_GUARD_MAX_TRACKED_IPS"  => Some("128")
       case _                  => None // lookup 是全函数：未提及的名字一律「未设置」
     }
     assertEquals(o.wsPerIpCap, 32)
     assertEquals(o.wsTotalCap, 512)
     assertEquals(o.enabled, false)
     assertEquals(o.warnPct, 80) // 非法值回落
+    assertEquals(o.maxTrackedIps, 128)
     assert(o.trustedIps.contains("100.91.165.120"))
     assert(o.trustedIps.contains("10.0.0.7"))
     assert(o.trustedIps.contains("::1")) // 环回恒在
@@ -169,8 +290,11 @@ class ConnGuardSpec extends CatsEffectSuite:
       rejectedTotal = 0,
       evictedTotal = 0,
       reqTotal = 0,
+      reqUntrackedTotal = 0,
       wsPerIpCap = 64,
       wsTotalCap = 1024,
+      maxTrackedIps = 1024,
+      maxConnections = 4096,
       warnPct = 80,
       topWs = Vector(("9.9.9.1", wsTotal)),
       topReq = Vector.empty,
@@ -180,4 +304,62 @@ class ConnGuardSpec extends CatsEffectSuite:
     assert(ConnGuard.warnLine(snap(820)).exists(_.contains("80%")))
     assert(ConnGuard.snapshotLine(snap(12)).contains("ws=12/1024"))
     assert(ConnGuard.snapshotLine(snap(12)).contains("top=[9.9.9.1:12]"))
+    assert(ConnGuard.snapshotLine(snap(12)).contains("trackedIps=1/1024"))
+
+  // ── 预警腿②（判词项 (c) 口径对齐）：连接代理腿各自独立，不与 WS 腿同相 ──────
+
+  test("connWarnLine (fd vs ember maxConnections) is independent of the ws leg"):
+    val base = ConnGuard.Snapshot(
+      enabled = true,
+      wsTotal = 10, // WS 腿远未到 80%（10/1024）
+      trackedIps = 1,
+      overflowConns = 0,
+      acceptedTotal = 10L,
+      rejectedTotal = 0,
+      evictedTotal = 0,
+      reqTotal = 0,
+      reqUntrackedTotal = 0,
+      wsPerIpCap = 64,
+      wsTotalCap = 1024,
+      maxTrackedIps = 1024,
+      maxConnections = 4096,
+      warnPct = 80,
+      topWs = Vector(("9.9.9.1", 10)),
+      topReq = Vector.empty,
+    )
+    assertEquals(ConnGuard.warnLine(base), None) // WS 腿静默
+    assertEquals(ConnGuard.connWarnLine(base, 3276L), None) // 79.98% fd ⇒ 静默
+    assert(ConnGuard.connWarnLine(base, 3277L).isDefined) // ≥80% fd ⇒ 触发
+    assert(ConnGuard.connWarnLine(base, 3277L).exists(_.contains("maxConnections")))
+    assertEquals(ConnGuard.connWarnLine(base, -1L), None) // fd 不可得 ⇒ 不猜、不预警
+    assertEquals(ConnGuard.connWarnLine(base.copy(enabled = false), 4096L), None)
+    // 双向独立性：fd 腿静默而 WS 腿触发
+    assertEquals(ConnGuard.connWarnLine(base.copy(wsTotal = 820), 100L), None)
+    assert(ConnGuard.warnLine(base.copy(wsTotal = 820)).isDefined)
+
+  test("healthJson exposes both warn calibers and the bounded-table readings"):
+    val s = ConnGuard.Snapshot(
+      enabled = true,
+      wsTotal = 3,
+      trackedIps = 7,
+      overflowConns = 1,
+      acceptedTotal = 4L,
+      rejectedTotal = 2L,
+      evictedTotal = 5L,
+      reqTotal = 9L,
+      reqUntrackedTotal = 4L,
+      wsPerIpCap = 64,
+      wsTotalCap = 1024,
+      maxTrackedIps = 1024,
+      maxConnections = 4096,
+      warnPct = 80,
+      topWs = Vector(("9.9.9.1", 3)),
+      topReq = Vector(("9.9.9.1", 9L)),
+    )
+    val j = ConnGuard.healthJson(s, 42L)
+    val caps = j.hcursor.downField("caps")
+    assertEquals(caps.get[Int]("maxTrackedIps").toOption, Some(1024))
+    assertEquals(caps.get[Int]("maxConnections").toOption, Some(4096))
+    assertEquals(j.hcursor.downField("requests").get[Long]("untrackedTotal").toOption, Some(4L))
+    assertEquals(j.hcursor.get[Long]("fdCount").toOption, Some(42L))
 end ConnGuardSpec

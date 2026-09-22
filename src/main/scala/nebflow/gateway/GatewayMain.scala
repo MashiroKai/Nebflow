@@ -1127,7 +1127,10 @@ object GatewayMain extends IOApp:
                                                   // 摄取 → 整个 HTTP 面失聪（健康检查 HTTP=000）。
                                                   // 4096 = 4 倍余量；idleTimeout 1h→5min 加速回收僵
                                                   // 死连接（presence WS 心跳 5s/10s，不受影响）。
-                                                  .withMaxConnections(4096)
+                                                  // R-1b 返工：值改单源引用（ConnGuardConfig.
+                                                  // EmberMaxConnections），供 conn-guard 的「连接代理
+                                                  // 预警腿」按同一上限对齐口径（判词项 (c)）。
+                                                  .withMaxConnections(ConnGuardConfig.EmberMaxConnections)
                                                   // R-1a 落定的 idle 值改单源引用（值不变，零行为变更）。
                                                   .withIdleTimeout(ConnGuardConfig.IdleTimeout)
                                                   // R-1b：摄取层超时显式化——库默认 javap 钉死（header 5s /
