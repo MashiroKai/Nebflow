@@ -1397,6 +1397,13 @@ export default {
   'daemons.restartFirst': '先启动',
   'daemons.deleteTitle': '删除心跳进程',
   'daemons.deleteConfirm': '删除心跳进程「{name}」？',
+  // daemonpanel Phase A — 配置面板（daemons.config* 键）
+  'daemons.config': '配置',
+  'daemons.configClose': '关闭',
+  'daemons.configSave': '保存',
+  'daemons.configSaved': '已保存',
+  'daemons.configEnabled': '启用',
+  'daemons.configSecretHint': '保留「***」表示沿用已存值；留空则不修改。',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
   'explorer.delete': '删除',

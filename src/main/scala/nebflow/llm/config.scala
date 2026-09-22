@@ -255,7 +255,12 @@ case class NebflowServiceConfig(
     * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
     * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
     * 仅用户显式开/关（WS `setLlmLog`）才写入本键。 */
-  llmLog: Option[io.circe.Json] = None
+  llmLog: Option[io.circe.Json] = None,
+  /** daemon 配置面板（daemonpanel Phase A）的顶层 `daemonPanel` 节原样 JSON。
+    * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
+    * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
+    * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。 */
+  daemonPanel: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

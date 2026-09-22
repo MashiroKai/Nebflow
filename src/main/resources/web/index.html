@@ -267,6 +267,12 @@
       <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
       <div id="notification-banner"></div>
     </div>
+    <!-- daemonpanel Phase A: daemon config-panel overlay. BODY-LEVEL on purpose
+         — #daemon-panel is an `overflow:hidden` + backdrop-filter container, and
+         such an ancestor both clips its descendants and becomes the containing
+         block for their fixed positioning (the #392 precedent: DOM assertions
+         all green while the overlay is invisible on screen). -->
+    <div id="daemon-config-overlay" role="dialog" aria-modal="false"></div>
     <div id="chat"></div>
     <div id="input-area">
       <div class="voice-overlay" id="voice-overlay">
