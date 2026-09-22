@@ -3755,13 +3755,22 @@ export function handleBrowseResult(data) {
 
   const errBox = document.getElementById('path-picker-error');
   const noteBox = document.getElementById('path-picker-truncated');
+  // The path a FAILED navigation carries is the one the user typed, not one they
+  // are in — remember where they actually were so the error branch can roll back
+  // to it. `pathPickerCurrentPath` is the value the Select button commits (both
+  // the callback and `setFolderProjectRoot`), so leaving the failed path in place
+  // would let the picker hand out a directory it just said it cannot open.
+  const prevPath = pathPickerCurrentPath;
   pathPickerCurrentPath = data.path || '';
   const entries = data.entries || [];
 
   // ── C: inline path error (invalid / not a directory / unreadable) ──────────
   if (data.error || data.errorKind) {
     // A failed navigation must not move the breadcrumb/selection away from the
-    // directory the user was actually in — only the error line changes.
+    // directory the user was actually in — the error line changes, and the
+    // commit target is rolled back to that same directory (it was moved above,
+    // unconditionally, before this frame was known to be a failure).
+    pathPickerCurrentPath = prevPath;
     if (errBox) {
       errBox.textContent = data.error || t('pathPicker.error.invalid');
       errBox.hidden = false;
