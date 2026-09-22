@@ -66,9 +66,17 @@ final class NeblinkDiscovery(
 
   /** Discovery cycle — use NebLink Server if configured. */
   def discoverCycle: IO[Unit] =
-    clientRef.get.flatMap {
-      case Some(client) => discoverViaServer(client)
-      case None => logger.warn("NebLink Server is not configured — discovery skipped")
+    // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）：本腿是**外发**（`client.discover`
+    // = 服务端登录/会话交换 + 名册拉取）。`enabled=false` ⇒ 显式空转（零 HTTP），
+    // 并在同一调用点判（不是启动期快照）⇒ 运行期登出/重登一拍内生效。
+    neblinkService.activityEnabled.flatMap {
+      case false =>
+        logger.debug("discoverCycle suppressed: NebLink is disabled (enabled=false) — zero outbound")
+      case true =>
+        clientRef.get.flatMap {
+          case Some(client) => discoverViaServer(client)
+          case None => logger.warn("NebLink Server is not configured — discovery skipped")
+        }
     }
 
   /**
@@ -76,9 +84,15 @@ final class NeblinkDiscovery(
    * Used by the periodic heartbeat loop. Returns immediately if no client.
    */
   def heartbeatCycle: IO[Unit] =
-    clientRef.get.flatMap {
-      case Some(client) => doHeartbeat(client)
-      case None => IO.unit
+    // 同上：心跳是**外发**腿（且心跳失败还会回落整轮 discovery ⇒ 连带会话交换）。
+    neblinkService.activityEnabled.flatMap {
+      case false =>
+        logger.debug("heartbeatCycle suppressed: NebLink is disabled (enabled=false) — zero outbound")
+      case true =>
+        clientRef.get.flatMap {
+          case Some(client) => doHeartbeat(client)
+          case None => IO.unit
+        }
     }
 
   private def doHeartbeat(client: NeblinkClient): IO[Unit] =

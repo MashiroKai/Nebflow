@@ -981,6 +981,16 @@ export default {
   'pathPicker.select': 'Select This Folder',
   'pathPicker.clear': 'Clear',
   'pathPicker.empty': 'No subdirectories in this folder',
+  // picker-trunc batch (2026-09-22 author ruling A+B+C)
+  'pathPicker.truncated': '{count} more not shown (of {total})',
+  'pathPicker.searchPlaceholder': 'Search in this folder (server-side filter)',
+  'pathPicker.noMatch': 'No subdirectory matches "{query}"',
+  'pathPicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
+  'pathPicker.hint.empty': 'Type a path to jump there, or go up one level',
+  'pathPicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
+  'pathPicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
+  'pathPicker.go': 'Go',
+  'pathPicker.error.invalid': 'Invalid path',
 
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',

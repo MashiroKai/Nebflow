@@ -948,6 +948,16 @@ export default {
   'pathPicker.select': '选择此目录',
   'pathPicker.clear': '清除',
   'pathPicker.empty': '此目录下无子目录',
+  // picker-trunc 批（2026-09-22 作者裁定 A+B+C）
+  'pathPicker.truncated': '还有 {count} 项未显示（共 {total} 项）',
+  'pathPicker.searchPlaceholder': '在此目录中搜索（服务端过滤）',
+  'pathPicker.noMatch': '无匹配「{query}」的子目录',
+  'pathPicker.hint.truncated': '可输入路径直达下方目录，或用搜索过滤',
+  'pathPicker.hint.empty': '可输入路径直达该目录，或回到上级',
+  'pathPicker.hint.noMatch': '清空搜索框可恢复全部；也可输入路径直达',
+  'pathPicker.gotoPlaceholder': '输入路径直达，如 ~/Downloads',
+  'pathPicker.go': '跳转',
+  'pathPicker.error.invalid': '路径无效',
 
   // === Session sidebar ===
   'session.namePlaceholder': '会话名称...',
