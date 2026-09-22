@@ -1115,7 +1115,14 @@ object GatewayMain extends IOApp:
                                                   .default[IO]
                                                   .withHost(cfg.host)
                                                   .withPort(cfg.port)
-                                                  .withIdleTimeout(1.hour)
+                                                  // 2026-09-22 watchdog repair: 默认 maxConnections=1024
+                                                  // 被 KAI 对端的 presence 拨号风暴（~1 条/秒、请求永
+                                                  // 不被读取也永不关闭）耗尽 → parJoin(1024) 饿死连接
+                                                  // 摄取 → 整个 HTTP 面失聪（健康检查 HTTP=000）。
+                                                  // 4096 = 4 倍余量；idleTimeout 1h→5min 加速回收僵
+                                                  // 死连接（presence WS 心跳 5s/10s，不受影响）。
+                                                  .withMaxConnections(4096)
+                                                  .withIdleTimeout(5.minutes)
                                                   .withHttpWebSocketApp { wsb =>
                                                     val wsRoutes = new WebSocketRoutes(
                                                       wsb,
