@@ -1,5 +1,5 @@
 ---
-name: desktop-control
+name: computer-use
 description: 观测并操控 macOS 本机桌面。用 Bash 通道 + 系统自带工具读取应用/窗口/屏幕截图/剪贴板，按「观测一次—动作一次—复核」纪律执行，权限缺失时呈引导卡后收口。当需要桌面自动化、操控鼠标键盘、点击、输入、截图、窗口与界面元素读取、剪贴板读写、本机 app 自动化、GUI 验收时使用。
 ---
 
@@ -195,7 +195,7 @@ open -b com.apple.Safari         # 按 bundle id（更稳，避免同名歧义�
 ## 附 · 本包结构
 
 ```
-skills/desktop-control/
+skills/computer-use/
 ├── SKILL.md                        本文件
 ├── references/tool-surface.md      30 项工具面 → 本平台载体逐项对账（含分级与可用性）
 ├── references/host-dependencies.md 暂缺项：缺什么 + 补齐判定；门控红线；延后登记

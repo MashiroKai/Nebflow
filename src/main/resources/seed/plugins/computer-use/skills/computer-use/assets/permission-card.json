@@ -1,5 +1,5 @@
 {
-  "_purpose": "desktop-control 权限引导卡卡体。失败信息显式点名辅助功能或屏幕录制时，把本文件的 questions 数组原样传给 AskUserQuestion（只发一次；denied 即结束本回合，不重试）。",
+  "_purpose": "computer-use 权限引导卡卡体。失败信息显式点名辅助功能或屏幕录制时，把本文件的 questions 数组原样传给 AskUserQuestion（只发一次；denied 即结束本回合，不重试）。",
   "_discipline": "授权只能由使用者在系统设置完成；本卡只做引导，不做程序化申请。",
   "questions": [
     {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# desktop-control · 自测（全部为零副作用断言：不截图、不发按键、不读剪贴板内容）
+# computer-use · 自测（全部为零副作用断言：不截图、不发按键、不读剪贴板内容）
 # 退出码：0 全过 / 1 有断言失败
 set -u
 
@@ -10,7 +10,7 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); echo "  [PASS] $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  [FAIL] $1"; echo "         实际: $2"; }
 
-echo "== desktop-control selftest =="
+echo "== computer-use selftest =="
 
 # T1 readiness 可跑通并给出宿主保护区读数
 out=$("$OBS" readiness 2>&1); rc=$?
@@ -51,7 +51,7 @@ if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q '^dry-run:' && ! printf '%s' "$
 else bad "T6 dry-run" "rc=$rc out=$(printf '%s' "$out" | head -2 | tr '\n' '|')"; fi
 
 # T7 dry-run：screen 未加 --run ⇒ 不产出文件
-TMPF="${TMPDIR:-/tmp}/desktop-control-selftest-$$.png"
+TMPF="${TMPDIR:-/tmp}/computer-use-selftest-$$.png"
 rm -f "$TMPF"
 out=$("$OBS" screen "$TMPF" 2>&1); rc=$?
 if [ "$rc" = 0 ] && [ ! -e "$TMPF" ]; then ok "T7 screen 默认 dry-run（未产出文件）"
