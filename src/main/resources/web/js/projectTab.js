@@ -119,9 +119,12 @@ function announceProjects(scroll, text) {
 //   ③ 视图守卫：Flow Map 就地视图下摘除（该视图有自己的悬浮层，见 G13）。
 const PROJECTS_SOURCE_STATE = 'sourceMode';
 
-/** 源码态下要显示的正文 = 最近一次成功取数的**线上原文**（由 renderProjectsInto 落槽）。 */
+/** 源码态下要显示的正文 = 最近一次成功取数的**线上原文**（由 renderProjectsInto 落槽）。
+ *  `_projectsRaw` 挂在 pane 上（母本 `_editorHandle`/`_dirty` 同族的 pane 级私有槽），
+ *  故经 `any` 访问——checkJs 门禁对 HTMLElement 的未知属性报 TS2339（仓内既有惯例）。 */
 function projectsSourceText(pane) {
-  return typeof pane._projectsRaw === 'string' ? pane._projectsRaw : '';
+  const raw = /** @type {any} */ (pane)._projectsRaw;
+  return typeof raw === 'string' ? raw : '';
 }
 
 /** 渲染态出口：清源码态并让既有渲染管线重建列表（复用 `ensureScroll` + 取数路径，
@@ -131,7 +134,7 @@ function projectsSourceText(pane) {
  *    本批 readOnly ⇒ 与线上原文逐字相同；仍按母本语义「向前携带」，
  *    使将来若可编辑化，改动不会在此丢帧。 */
 function renderProjectsListInto(pane, latest) {
-  if (typeof latest === 'string') pane._projectsRaw = latest;
+  if (typeof latest === 'string') /** @type {any} */ (pane)._projectsRaw = latest;
   exitProjectsSourceMode(pane);
   const scroll = ensureScroll(pane);
   if (scroll) renderProjectsInto(scroll);
@@ -266,7 +269,7 @@ async function renderProjectsInto(scroll) {
     return;
   }
   if (stale()) return;
-  if (pane && typeof raw === 'string') pane._projectsRaw = raw;
+  if (pane && typeof raw === 'string') /** @type {any} */ (pane)._projectsRaw = raw;
   resetProjectsRetry(); // 取数成功（无论空态/就绪态）⇒ 本轮重试预算归零
   if (!projects || projects.length === 0) {
     if (scroll.querySelector('.project-card')) {
