@@ -51,7 +51,10 @@ class WebSocketRoutes(
   nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
   /** C1-5 injection seam: the credential-namespace policy the read and the
     * signing endpoints share. Memoized so the R2 inode scan is a one-off. */
-  nfPathPolicy: WebSocketRoutes.NfPathPolicy = WebSocketRoutes.NfPathPolicy.memoized()
+  nfPathPolicy: WebSocketRoutes.NfPathPolicy = WebSocketRoutes.NfPathPolicy.memoized(),
+  /** R-1b conn-guard：per-IP WS 看护（升级面准入 + 计数）。缺省 = 全放行
+    * 实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。 */
+  connGuard: ConnGuard = ConnGuard.disabled
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -765,6 +768,20 @@ class WebSocketRoutes(
       // not lock the client out: if the cookie does not validate but a valid
       // ?token= is presented, accept it.
       if Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token) then
+        // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
+        // 环回恒放行）。入账延后到 wsb.build 前（下方 acquireWs——中途失败
+        // 不留幽灵计数），回减挂流 finalizer（releaseWs 凭据配对）。
+        // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
+        val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
+        connGuard.checkWs(wsIp).flatMap {
+          case Some(reason) =>
+            logger.warn(
+              s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+            ) *>
+              TooManyRequests(
+                s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
+              )
+          case None => (
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
 
@@ -848,8 +865,14 @@ class WebSocketRoutes(
             )
           )
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
-          ws <- wsb.build(sendStream, receivePipe)
+          // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
+          // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
+          guardHandle <- connGuard.acquireWs(wsIp)
+          guardedPipe = receivePipe.andThen(_.onFinalize(connGuard.releaseWs(guardHandle)))
+          ws <- wsb.build(sendStream, guardedPipe)
         yield ws
+          )
+        }
       else
         logger.warn(
           s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
