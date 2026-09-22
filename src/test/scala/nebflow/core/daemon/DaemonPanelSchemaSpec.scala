@@ -223,6 +223,25 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
       assert(DaemonPanelSchema.panelSrcdoc(s).nonEmpty, s"empty result for ${s.take(20)}")
   }
 
+  test("F-7 · a declaration cannot suppress the policy by quoting the marker (fail-open hole)") {
+    // The idempotence check must key on the removal of OUR OWN tag, never on the
+    // bare marker substring: a declaration that merely PRINTS the marker text
+    // would, under a substring-keyed skip, make the injector believe the policy
+    // was already in force — and the panel would run with NO policy at all.
+    val quoting =
+      """<html><head></head><body><p>data-daemon-panel-csp is a marker string</p></body></html>"""
+    val out = DaemonPanelSchema.panelSrcdoc(quoting)
+    assert(DaemonPanelSchema.hasPanelCsp(out), "the marker substring suppressed the real injection")
+    assert(out.contains(DaemonPanelSchema.PanelCsp), "the policy text is absent")
+    assert(out.contains("http-equiv=\"Content-Security-Policy\""), "no real meta was written")
+    // The author's own marker text survives (we do not edit their markup).
+    assert(out.contains("is a marker string"), "the author's body was altered")
+    // And a document that is NOT a document at all still gets a policy when it
+    // quotes the marker in plain text.
+    val plain = DaemonPanelSchema.panelSrcdoc("data-daemon-panel-csp")
+    assert(DaemonPanelSchema.hasPanelCsp(plain), plain)
+  }
+
   test("F-7 · a declaration cannot remove or weaken the injected policy") {
     // A hostile declaration puts its OWN, permissive meta first — the injected
     // policy is still present, and the strictest policy wins because the FIRST
