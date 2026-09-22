@@ -342,9 +342,11 @@ final class NeblinkPresenceService(
       // F-D 恢复路径②：名册里候选集合变了 ⇒ 该设备的死端点判定整体失效（设备换网/
       // 换地址后旧判定不再适用），复位重新评估。对**全部**在册 peer 做，不只看要拨
       // 的那些（正在重连的 peer 也要能被名册变化复位）。
-      _ <- IO(peers.foreach(p => refreshCandidateFingerprint(p, candidatesOf(p))))
+      _ <- peers.traverse_(p => refreshCandidateFingerprint(p, candidatesOf(p)))
       // Disconnect peers that left the network
-      _ <- IO.blocking((stalePeerIds ++ staleConnIds).foreach(id => disconnectPeer(id)))
+      // 卡①：名册缺席 = 成员资格事件，不是端点健康事件 ⇒ forgetEndpointHealth = false
+      // （成员资格面照旧走下行 removePeer 的 15s grace，两态解耦）。
+      _ <- IO.blocking((stalePeerIds ++ staleConnIds).foreach(id => disconnectPeer(id, forgetEndpointHealth = false)))
       _ <- (stalePeerIds ++ staleConnIds).toList.traverse_(id => neblinkService.removePeer(id))
       // Cancel reconnection for peers no longer in the network
       _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
@@ -722,22 +724,41 @@ final class NeblinkPresenceService(
       IO {
         val key = endpointKey(peer.deviceId, endpoint)
         val now = System.currentTimeMillis()
-        // 窗口已过期（或从未剔除）⇒ 旧计数视为失效，从零重评（恢复路径①的落点）
-        val fresh = Option(endpointHealth.get(key)).filter(h => h.suppressedUntilMs == 0L || h.suppressedUntilMs > now)
-        val base = fresh.getOrElse(EndpointHealth(0, 0, 0L, "", 0L))
-        val (refusals, timeouts) = cls match
-          case DialFailureClass.Refused => (base.refusals + 1, 0)
-          case DialFailureClass.Timeout => (0, base.timeouts + 1)
-          case DialFailureClass.Other   => (0, 0)
-        val strikes = if cls == DialFailureClass.Refused then refusals else timeouts
-        val threshold = if cls == DialFailureClass.Refused then eviction.refusalStrikes else eviction.timeoutStrikes
-        if cls != DialFailureClass.Other && strikes >= threshold then
-          endpointHealth.put(key, EndpointHealth(0, 0, now + eviction.suppressedTtlMs, cls.label, now))
+        // R1（裁2 并入，2026-09-21）：get→put 读-改-写改为 `compute` 单语句原子化 + **锁窗**
+        // （窗内条目直接保留）——改前并发两次失败可把已在剔除窗内的条目覆写成
+        // `suppressedUntilMs = 0`（窗被抹掉）。迁移边用局部 var 捕获（compute 内禁副作用）。
+        var suppressedNow = false
+        var strikesAtVerdict = 0
+        endpointHealth.compute(
+          key,
+          (_, prev) =>
+            if prev != null && prev.suppressedUntilMs > now then prev // 锁窗：窗内不覆写
+            else
+              // 窗口已过期（或从未剔除）⇒ 旧计数视为失效，从零重评（恢复路径①的落点）
+              val base = Option(prev).filter(_.suppressedUntilMs == 0L).getOrElse(EndpointHealth(0, 0, 0L, "", 0L))
+              val (refusals, timeouts) = cls match
+                case DialFailureClass.Refused => (base.refusals + 1, 0)
+                case DialFailureClass.Timeout => (0, base.timeouts + 1)
+                case DialFailureClass.Other   => (0, 0)
+              val strikes = if cls == DialFailureClass.Refused then refusals else timeouts
+              val threshold = if cls == DialFailureClass.Refused then eviction.refusalStrikes else eviction.timeoutStrikes
+              if cls != DialFailureClass.Other && strikes >= threshold then
+                suppressedNow = true
+                strikesAtVerdict = strikes
+                EndpointHealth(0, 0, now + eviction.suppressedTtlMs, cls.label, now)
+              else EndpointHealth(refusals, timeouts, 0L, cls.label, now)
+        )
+        (suppressedNow, strikesAtVerdict)
+      }.flatMap { case (suppressedNow, strikes) =>
+        // 前置项（死码改活）：改前此 WARN 是 built-but-discarded 的 IO（建出即弃，字节码
+        // warn 后即 pop）⇒ 置窗事件零判读面；改为被组合执行，且只在「本拍迁入剔除窗」的
+        // 迁移边发一次（锁窗 ⇒ 窗内后续失败不重发）。
+        if suppressedNow then
           logger.warn(
             s"Presence endpoint suppressed for ${peer.deviceName} via $endpoint: ${cls.label} × $strikes " +
               s"(retry after ${eviction.suppressedTtlMs / 1000}s; also reset by namelist change / reconnect-ladder handback)"
           )
-        else endpointHealth.put(key, EndpointHealth(refusals, timeouts, 0L, cls.label, now))
+        else IO.unit
       }
 
   /** 拨通即清除该候选的账本（恢复路径④）。 */
@@ -755,12 +776,15 @@ final class NeblinkPresenceService(
     dialRounds.remove(deviceId)
 
   /** F-D 恢复路径②：名册候选集合变化 ⇒ 复位该设备的死端点判定。 */
-  private def refreshCandidateFingerprint(peer: PeerInfo, candidates: List[String]): Unit =
+  private def refreshCandidateFingerprint(peer: PeerInfo, candidates: List[String]): IO[Unit] =
     val fp = candidates.mkString("\u0000")
     val prev = candidateFingerprints.put(peer.deviceId, fp)
     if prev != null && prev != fp then
       clearEndpointHealth(peer.deviceId)
+      // 前置项（死码改活）：改前此 INFO 是 built-but-discarded 的 IO（建出即弃）；
+      // 方法改返 IO[Unit]，由唯一调用点（syncPeers）traverse_ 组合执行。
       logger.info(s"Presence candidate list changed for ${peer.deviceName} — dead-endpoint verdicts reset")
+    else IO.unit
 
   /** Explicitly disconnect from a peer by deviceId. Cancels any pending reconnection. */
   def disconnect(deviceId: String): IO[Unit] =
@@ -1016,13 +1040,18 @@ final class NeblinkPresenceService(
 
   // ===== Explicit disconnect (cancels reconnection) =====
 
-  /** Close WS, shut down heartbeat, remove from map. Signals reconnection to stop. */
-  private def disconnectPeer(deviceId: String): Unit =
+  /** Close WS, shut down heartbeat, remove from map. Signals reconnection to stop.
+   *
+   * 卡①（裁 1 = 离册即不清账，2026-09-21）：`forgetEndpointHealth = false` 时**不清账**
+   * （账本 / 名册指纹 / 轮记录保留）——「名册缺席一拍」是成员资格事件，不构成端点
+   * 不可达的证据；显式断开 / 登出（`disconnect` / `disconnectAll`，默认 `true`）照旧清零。 */
+  private def disconnectPeer(deviceId: String, forgetEndpointHealth: Boolean = true): Unit =
     cancelReconnect.put(deviceId, true)
     reconnecting.remove(deviceId)
-    // F-D: 显式断开 / 离开网络 ⇒ 该设备的死端点判定与名册指纹一并复位
-    // （重新入网 = 全新评估，不背旧账）。恢复路径：离开网络后回来即从零开始。
-    forgetDevice(deviceId)
+    // F-D: 显式断开 / 登出 ⇒ 该设备的死端点判定与名册指纹一并复位（不背旧账）；
+    // 名册缺席一拍（syncPeers staleness）传 false ⇒ 账本跨缺席存活（卡① 目标语义），
+    // 复位面由 TTL / 候选集合变化 / 梯子收手 / 拨通四条恢复路径兜底。
+    if forgetEndpointHealth then forgetDevice(deviceId)
     // hblife 批：无条件走**唯一退役例程**（改前是「按 deviceId 取回一条 → 关它的心跳」，
     // 在并发顶替窗口里会摘掉/关掉刚换上的那条）；循环到该 deviceId 名下不再有现役连接为止，
     // 与「显式断开 = 此后不得再有该 peer 的心跳线程」的语义对齐。
