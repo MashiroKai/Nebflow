@@ -72,6 +72,15 @@
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
 .social-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* 🔴 Author ruling 2026-09-23 (Part A): the remote-access section is WITHHELD
+   from the visible face (`hidden` in index.html) — hidden, not deleted, so its
+   DOM, JS consumers and locale keys all survive and restoring it is one
+   attribute less. The companion rule below is REQUIRED and not decoration: the
+   `.social-section` declaration just above sets `display: flex`, and an author
+   declaration of any specificity beats the user agent's `[hidden] { display:
+   none }`, so a bare `hidden` attribute would be silently defeated. Precedent
+   in this repo: flowMap.css:783 / :929, usage.css:16, sidebar.css:861. */
+#social-section-remote[hidden] { display: none; }
 .social-section-title {
   font-size: 12px;
   font-weight: 600;

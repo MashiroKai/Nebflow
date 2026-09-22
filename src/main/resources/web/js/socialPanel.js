@@ -5,7 +5,10 @@
 //   · A  entry: `#social-btn` directly below `#contacts-btn` (smartphone icon),
 //        gated the same way the contacts anchor is (button hidden WITH it).
 //   · B  modal + one card per SOCIAL_CHANNELS entry + the remote-access section
-//        (`#social-section-remote`, always present, never a channel card).
+//        (`#social-section-remote`, always present IN THE DOM — it is now
+//        withdrawn from the VISIBLE face by the `hidden` attribute it carries
+//        in index.html, see the hide ruling below; the mapping for its four
+//        caption ids is kept so no locale key becomes an orphan).
 //   · D  "fill and save directly": a pasted credential goes into the POST body
 //        ONCE; the backend writes the secret file and the config keeps only a
 //        path. The panel never echoes a stored credential back (it renders
@@ -20,6 +23,16 @@
 //    adaptation range. This file therefore renders NO link, NO QR image and NO
 //    guessed address. `[data-remote-url]` / `[data-copy-link]` do not exist —
 //    that is the intended, frozen state of this node, not an oversight.
+//
+// 🔴 HIDE RULING (author, 2026-09-23, Part A): the whole remote-access section
+//    is HIDDEN FROM THE VISIBLE FACE, NOT DELETED — `#social-section-remote`
+//    carries `hidden` in index.html plus the companion rule in css/social.css.
+//    Nothing in this file changes: its DOM subtree stays built, and the four
+//    `social-remote-*` entries below keep translating it, so the `social.remote.*`
+//    locale keys stay consumed (no orphan keys, no key churn). The section's own
+//    CSS body is kept as well. Restoring the section = dropping one attribute.
+//    O1–O5 are NOT settled by the hide ruling — they stay suspended exactly as
+//    described above. Hidden ≠ deleted is the whole point of this shape.
 //
 // Style: css/social.css (new file; sapphire.css is off-limits for this batch).
 // Switch component: shared js/toggle.js (`nb-toggle`), never a private copy.
