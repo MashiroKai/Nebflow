@@ -30,11 +30,33 @@
 //    be mistaken for a pass, and it must never be "fixed" by inventing an
 //    address.
 //
+// 🔴 HIDE RULING (author 2026-09-23, Part A) — W4's remote leg only: the
+//    `#social-section-remote` section is withdrawn from the VISIBLE face by the
+//    `hidden` attribute (plus css/social.css's companion
+//    `#social-section-remote[hidden] { display: none; }` rule — required,
+//    because `.social-section { display: flex }` would otherwise outrank the
+//    user agent's `[hidden]` style and the attribute would be silently
+//    defeated). HIDDEN, NOT DELETED: W4 therefore flips from "the section is
+//    rendered" to "the section is still IN THE DOM and NOT VISIBLE", and the
+//    absence assertions of W5/W15/W17 (no link, no QR, no guessed address) are
+//    unchanged — they keep holding on the hidden subtree. Nothing about the
+//    O1–O5 suspension changes: hiding the section does not decide it.
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
 //   SOCIAL_MUTATE=adapter-true node tests/social-panel.spec.mjs
 //   SOCIAL_API_BASE=http://127.0.0.1:8155 SOCIAL_API_TOKEN=<token> node tests/social-panel.spec.mjs
+//
+//   🔴 RED leg for an assertion this batch FLIPPED (hide ruling 2026-09-23) —
+//      run the AFTER suite against a pre-change tree, so the new assertion is
+//      exercised against the tree that must make it fail:
+//   SOCIAL_SUITE=after SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web \
+//     SOCIAL_SHOT_DIR=/tmp/nb-socpanel-hide-red node tests/social-panel.spec.mjs
+//      (SOCIAL_SUITE only SELECTS which suite runs; SOCIAL_WEB_ROOT still says
+//       which tree is served. Without it, SOCIAL_WEB_ROOT implies BEFORE, whose
+//       suite is red-by-absence and never reaches the flipped assertions — see
+//       the note on MODE below.)
 
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
@@ -47,7 +69,20 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
 const REPO_WEB = join(REPO, 'src', 'main', 'resources', 'web');
 const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) : REPO_WEB;
-const MODE = process.env.SOCIAL_WEB_ROOT ? 'BEFORE' : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE' : 'AFTER');
+// Suite selection (SOCIAL_SUITE) is DECOUPLED from tree selection
+// (SOCIAL_WEB_ROOT / SOCIAL_MUTATE). Unset = the original behaviour, unchanged:
+// a baseline tree implies BEFORE, a mutated tree FIXTURE, else AFTER. The
+// decoupling exists for exactly one job — the RED leg of an assertion this
+// batch FLIPPED (hide ruling 2026-09-23): the AFTER suite has to run against a
+// PRE-CHANGE tree, which the tree-derived rule cannot express, because
+// SOCIAL_WEB_ROOT alone would silently route to the BEFORE suite (red-by-absence,
+// which never even reaches the flipped assertions) and would prove nothing
+// about them. SOCIAL_SUITE only SELECTS the suite; it never changes which tree
+// is served (the `web=` reading on the mode line below states the tree).
+const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
+const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture'
+  ? SUITE_ENV.toUpperCase()
+  : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE' : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE' : 'AFTER'));
 const SHOTS = process.env.SOCIAL_SHOT_DIR || '/tmp/nb-socpanel';
 const API_BASE = process.env.SOCIAL_API_BASE || '';
 const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
@@ -349,8 +384,39 @@ async function afterSuite(browser, base) {
       const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.toggle);
       check(`W4 card shape (count = definition length) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
         `cards=${cards.count} expected=${EXPECTED_CARDS} headsOk=${headsOk}`);
-      const remote = await page.locator('#social-section-remote').count();
-      check(`W4 remote section always present (${tag})`, remote === 1, `#social-section-remote = ${remote}`);
+      // 🔴 W4 flipped to HIDE semantics (author ruling 2026-09-23, Part A).
+      //
+      // JUDGEMENT — why this assertion is RED on the pre-change tree: before the
+      // ruling `#social-section-remote` carried neither a `hidden` attribute nor
+      // a companion rule, and its own cascade resolves `display` through
+      // `.social-section { display: flex }` — which OUTRANKS the user agent's
+      // `[hidden] { display: none }`. So on the pre-change tree this element
+      // reads `display: flex` with a NON-ZERO box even while it is inside the
+      // open modal, and the check below must FAIL there (both the display and
+      // the box reading bite). That is exactly the silent-defeat the companion
+      // `#social-section-remote[hidden] { display: none; }` rule in
+      // css/social.css exists to prevent, so the assertion has to measure the
+      // COMPUTED result and not the presence of the attribute.
+      //
+      // The other half of the ruling is "hidden, NOT deleted": `present === 1`
+      // plus the four surviving caption ids prove the DOM subtree is intact.
+      const remote = await page.evaluate(() => {
+        const el = document.getElementById('social-section-remote');
+        if (!el) return { present: 0 };
+        const box = el.getBoundingClientRect();
+        return {
+          present: document.querySelectorAll('#social-section-remote').length,
+          display: getComputedStyle(el).display,
+          hiddenAttr: el.hasAttribute('hidden'),
+          subtree: el.querySelectorAll('#social-remote-title, #social-remote-suspended, #social-remote-safety-key, #social-remote-safety-plain').length,
+          boxW: Math.round(box.width),
+          boxH: Math.round(box.height),
+        };
+      });
+      check(`W4 remote section in the DOM but not visible (${tag})`,
+        remote.present === 1 && remote.display === 'none'
+        && remote.boxW === 0 && remote.boxH === 0 && remote.subtree === 4,
+        `#social-section-remote = ${remote.present} display=${remote.display} hiddenAttr=${remote.hiddenAttr} box=${remote.boxW}x${remote.boxH} surviving captions=${remote.subtree}`);
 
       const st = await statuses(page);
       check(`W8 empty config ⇒ every card notConfigured (${tag})`,

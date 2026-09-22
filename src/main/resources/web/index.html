@@ -465,7 +465,22 @@
        INERT in this batch — the switch semantics, the address export, the QR
        code and the clipboard fallback are author-face items O1–O5 of the
        redesign and are NOT decided yet. No link, no QR, no guessed address is
-       rendered here (see js/socialPanel.js header). -->
+       rendered here (see js/socialPanel.js header).
+
+       🔴 HIDDEN FROM THE VISIBLE FACE (author ruling 2026-09-23, Part A): the
+       whole section is withdrawn from the visible face by the `hidden`
+       attribute below — HIDDEN, NOT DELETED. The DOM subtree, its JS consumers
+       (js/socialPanel.js's applyStaticText mapping), the `social.remote.*`
+       locale keys and the section's own CSS body all stay intact, so restoring
+       the section is exactly one attribute less (drop `hidden`) at zero cost.
+       The channel-configuration face (the three cards + pill / switch / save /
+       re-probe) is untouched by this ruling. O1–O5 remain UNDECIDED — hiding
+       the section does NOT settle them.
+       A bare `hidden` is not sufficient on its own: `css/social.css`'s
+       `.social-section { display: flex; }` outranks the user agent's
+       `[hidden] { display: none }`, so the section also needs the companion
+       `#social-section-remote[hidden] { display: none; }` rule added there
+       (same precedent as flowMap.css / usage.css). -->
   <div id="social-overlay">
     <div id="social-modal" role="dialog" aria-modal="true" aria-labelledby="social-modal-title">
       <div class="social-modal-header">
@@ -473,7 +488,7 @@
         <button id="social-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
       </div>
       <div class="social-modal-body">
-        <div id="social-section-remote" class="social-section">
+        <div id="social-section-remote" class="social-section" hidden>
           <div id="social-remote-title" class="social-section-title"></div>
           <div class="social-card social-remote-card">
             <div id="social-remote-suspended" class="social-remote-note"></div>
