@@ -4155,6 +4155,16 @@ class RestApiRoutes(
    * occurrence wins). Each entry is `{id}` plus `contextLength` when the
    * provider reports one (OpenRouter `context_length`, others
    * `context_window`).
+   *
+   * 案② B4（`chain-llmstall-fix`，2026-09-21）——**本函数是「per-model 真值上界」的
+   * 唯一来源，零新增解析**：抽出的 `contextLength` 经 `/api/provider/models` 到前端
+   * （`sidebar.js` 的 `providerModelChoices` / `contextLengthFor`），由
+   * `fillContextIfEmpty` 写回 `llm.providers.*.models[].modelMaxContext`
+   * （`ModelConfig.modelMaxContext`），再由后端取数单点
+   * `ProviderRegistry.effectiveContextWindow` 参与 `min(configured, modelMaxContext)`。
+   * ⇒ 此处**不需要也不允许**新增第二份解析 / 第二个真值口：语义修正在消费端
+   * （前后端两处），真值口保持本单点。判定面：`check-provider-modellist.mjs`
+   * （AGENTS §13）钉的正是本函数所在的面。
    */
   private def extractModels(json: Json): List[Json] =
     val entries = json.hcursor

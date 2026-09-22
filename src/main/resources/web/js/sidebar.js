@@ -1676,14 +1676,25 @@ function contextLengthFor(id) {
 }
 
 /** Fill the row's contextWindow input with the fetched contextLength — only
- *  when the input is empty (never overwrite a user-set value). */
+ *  when the input is empty (never overwrite a user-set value).
+ *
+ *  B5（案② chain-llmstall-fix，2026-09-21）：**不论输入框是否已有值**，都把 provider
+ *  上报的真值记为 clamp 上界（`data-model-max`，保存时写成
+ *  `models[].modelMaxContext`；后端取数单点取 `min(configured, 真值)`）。
+ *  旧行为：`ctxInput.value` 非空即直接 return ⇒ 真值永远落不了地——而新模型行在
+ *  `showProviderModal` 里已被预填 1000000，于是 provider 上报的上限（如 200k）被
+ *  完整覆盖（定谳报告 `20260921_182544` 核查 2）。
+ *  🔴 显示值仍**只在空时**填：绝不覆盖用户手写值（保存路径的 1M 兜底同样保持不动）。 */
 function fillContextIfEmpty(row) {
   if (!row) return;
   const sel = row.querySelector('.cfg-model-id');
   const ctxInput = row.querySelector('.cfg-model-ctx');
-  if (!sel || !ctxInput || ctxInput.value) return;
+  if (!sel || !ctxInput) return;
   const len = contextLengthFor(sel.value);
-  if (len) ctxInput.value = len;
+  if (!len) return;
+  ctxInput.dataset.modelMax = String(len);
+  if (ctxInput.value) return;
+  ctxInput.value = len;
 }
 
 function renderModelIdSelect(currentId) {
@@ -1975,10 +1986,17 @@ function showModal({title, fields, onConfirm}) {
       modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
         const id = row.querySelector('.cfg-model-id').value.trim();
         if (!id) return;
-        values.models.push({
+        const ctxEl = /** @type {HTMLElement|null} */ (row.querySelector('.cfg-model-ctx'));
+        const entry = {
           id,
-          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 1000000,
-        });
+          contextWindow: parseInt(ctxEl.value) || 1000000,
+        };
+        // B5：真值上界（provider 上报，fillContextIfEmpty 记在行内）随行持久化。
+        // 未知 ⇒ 不写该键（后端 `modelMaxContext = None` ⇒ 生效值逐字等于
+        // contextWindow = 旧行为；禁顺手收紧）。
+        const maxCtx = parseInt(ctxEl.dataset.modelMax, 10);
+        if (Number.isFinite(maxCtx) && maxCtx > 0) entry.modelMaxContext = maxCtx;
+        values.models.push(entry);
       });
     }
     onConfirm(values);
@@ -1989,6 +2007,9 @@ function showModal({title, fields, onConfirm}) {
 function renderModelRowContent(m) {
   const id = m ? m.id : '';
   const ctx = m ? m.contextWindow : '';
+  // B5：真值上界随行渲染——编辑既有 provider 时不得把它丢掉（保存路径从行内读回；
+  // 丢掉 = 该模型的 clamp 防线在下次保存后静默失效）。缺席 ⇒ 不渲染该属性。
+  const maxAttr = m && Number.isFinite(m.modelMaxContext) ? ` data-model-max="${m.modelMaxContext}"` : '';
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
     : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
@@ -1997,7 +2018,7 @@ function renderModelRowContent(m) {
   // maxTokens control removed (maxcfg batch 2026-09-16, author ruling): the
   // output cap is an internal engine constant, not user config.
   return `${idField}
-<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
+<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }
 

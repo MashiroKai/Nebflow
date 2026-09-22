@@ -59,6 +59,21 @@ object Fallback:
   val InitialBackoffMs: Long = 1000L
   val MaxBackoffMs: Long = 10000L
 
+  /** 案①（LLM 硬杀波 · `chain-llmstall-fix`，2026-09-21 作者绿灯）——**全链失败轮次上限**：
+    * 一次 `sendStream` 内，候选链最多被整体重投这么多轮；轮次耗尽 ⇒
+    * `FallbackExhaustedError`（显式终局），不再回到 `attemptWithHealthCheck`。
+    *
+    * 动因（定谳报告 20260921_182544 §一.4）：全链 400（Format ⇒ `evict = false`，见
+    * [[classifyError]]）时无人被 markDown ⇒ health-check 过滤返回**同一全链** ⇒
+    * `tryCandidate ⇄ attemptWithHealthCheck` 无计数 / 无退避 / 无终态地闭环：流不产
+    * chunk 也不抛错 ⇒ agent 无活动信号 ⇒ 600s 后看门狗硬杀。
+    *
+    * 取值 2 的依据（**回归共存硬约束**，非任意）：既有 `FormatErrorNoEvictSpec` T1
+    * 断言「a/m1 命中恰好 1 次 + b 成功」——轮内语义只在「整链试完」时才推进轮次，
+    * 上限 ≥ 2 保证「一次完整候选遍历 + 一次换轮重试」这条既有合法路径零变化。
+    * 单测锚点：`AllCandidatesFormatLoopSpec`（全链 400 必须在该上限内终止）。 */
+  val MaxChainRounds: Int = 2
+
   /**
    * Per-turn LLM RETRY budget (2026-08-18 token incident, plan C): a single
    * turn may make at most this many failed-retry re-dispatches (incremented
@@ -117,6 +132,22 @@ object Fallback:
         c == 403 || (c == 429 && QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code)))
       case _ => QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code))
 
+  /** 案① A4（chain-llmstall-fix）：**Format 类失败的终局语义单点定义**——结构化
+    * 400（`HttpError` 分支）与 stringly 400（`invalid request` / `bad request` / `400`
+    * 文本分支）共用本工厂。三元组逐字等于两条路径改造前的取值：
+    * `reason = Format` / `permanence = Permanent` / `evict = false`（400 = provider 解析并
+    * 拒绝了我们的请求 ⇒ 它活着 ⇒ 不驱逐，只跳本次请求）。
+    *
+    * **与案① A1/A2 的关系**：本工厂只定「分类」，不定「终局」——终局由 stream 层的
+    * 轮次上限（`Fallback.MaxChainRounds`）给出（interface.scala `tryCandidate` 的
+    * `case Nil` 出口）。两处 Format 路径都走同一个 `ErrorPermanence.Permanent` 分支 ⇒
+    * 同受该上限约束，这就是 A4 要求的「两处同受约束」。 */
+  private[llm] def formatClassification(
+    statusCode: Option[Int],
+    message: Option[String]
+  ): ErrorClassification =
+    ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, statusCode, message, evict = false)
+
   def classifyError(error: Throwable): ErrorClassification =
     val body = Option(error.getMessage).getOrElse("")
     val classified = classifyBase(error)
@@ -155,7 +186,15 @@ object Fallback:
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
         val evict = !(c == 400 && !isContextOverflow)
-        ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
+        if c == 400 && !isContextOverflow then
+          // 案① A4（chain-llmstall-fix）：结构化 400-Format 与下方 stringly 残余路径
+          // **同源收口**——两者都经 [[formatClassification]]，终局语义（Format /
+          // Permanent / evict=false）在树内只有一份定义，不会各自漂移。
+          // 两处同受 stream 层案① A1/A2 的轮次上限约束：无论哪条路径产生 Permanent，
+          // 都被 interface.scala `tryCandidate` 的同一 `round` 递归管辖（`case Nil`
+          // 出口 = 唯一终局点），不再存在「跳完无人约束」的闭环。
+          formatClassification(Some(c), Some(error.getMessage))
+        else ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
       case e: TurnBudgetExceeded =>
@@ -222,13 +261,9 @@ object Fallback:
           ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
           // 同上（子项②）：stringly 400 形状同样不驱逐（与非流式 adapter 结构化
-          // HttpError 之外的残余路径保持一致语义）。
-          ErrorClassification(
-            FailoverReason.Format,
-            ErrorPermanence.Permanent,
-            message = Some(error.getMessage),
-            evict = false
-          )
+          // HttpError 之外的残余路径保持一致语义）。案① A4：与结构化路径共用
+          // [[formatClassification]] ⇒ 终局语义单点定义（先前是两份字面副本）。
+          formatClassification(None, Some(error.getMessage))
         else if msg.contains("empty response") || msg.contains("no content") then
           ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))

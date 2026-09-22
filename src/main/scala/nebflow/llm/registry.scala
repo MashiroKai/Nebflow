@@ -8,13 +8,28 @@ import nebflow.shared.Defaults
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 
+/**
+ * One candidate of a fallback chain.
+ *
+ * @param contextWindow
+ *   **生效**上下文窗口 = `min(configured, modelMaxContext)`（案② `chain-llmstall-fix`，
+ *   2026-09-21）：配置值（用户填写）与 provider 侧真值的较小者。旧配置无真值字段 ⇒
+ *   `modelMaxContext = None` ⇒ 逐字等于配置值（向后兼容的铁律，禁顺手收紧）。
+ * @param modelMaxContext
+ *   provider 上报的该 model 真实可受理上限（`None` = 未知）。取数单点 =
+ *   [[ProviderRegistry.effectiveContextWindow]]；真值来源 = 模型列举端点的
+ *   `context_length` / `context_window`（`RestApiRoutes.extractModels`，经前端
+ *   写回 `ModelConfig.modelMaxContext`）。保留在候选上是为了让「配置值被真值压低」
+ *   这件事在运行时可读（案① A3 的日志面 / 调试面），不参与别的判定。
+ */
 case class ModelCandidate(
   providerId: String,
   provider: ProviderConfig,
   model: String,
   contextWindow: Int = Defaults.ContextWindow,
   vision: Boolean = false,
-  capabilities: Set[String] = Set.empty
+  capabilities: Set[String] = Set.empty,
+  modelMaxContext: Option[Int] = None
 )
 
 class ProviderRegistry(
@@ -69,9 +84,15 @@ class ProviderRegistry(
           config.llm.providers.get(providerId) match
             case Some(provider) =>
               val modelConfig = provider.models.find(_.id == modelId)
-              val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+              // 案② B2：`min(configured, modelMaxContext)` 的取数**单点**（见
+              // [[effectiveContextWindow]]）——此处是「全局链」这条腿。
+              val contextWindow = effectiveContextWindow(
+                modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
+                modelConfig.flatMap(_.modelMaxContext)
+              )
               val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-              Some(ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps))
+              Some(ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps,
+                modelConfig.flatMap(_.modelMaxContext)))
             case None => None // Skip unknown provider
         catch case _: Exception => None // Skip malformed ref
       }
@@ -84,12 +105,30 @@ class ProviderRegistry(
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
               val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
-              ModelCandidate(providerId, provider, mc.id, mc.contextWindow, vision, caps)
+              // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
+              // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
+              ModelCandidate(providerId, provider, mc.id,
+                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), vision, caps, mc.modelMaxContext)
             }
           }
           .flatten
           .toList
     }
+
+  /** 案② B2（chain-llmstall-fix）：**生效上下文窗口的唯一算式**——
+    * `effective = modelMaxContext.fold(configured)(m => math.min(configured, m))`。
+    *
+    * 语义：配置值（用户在设置面板填写的 `provider.models[].contextWindow`）是**愿望
+    * 上界**；provider 上报的真值（`modelMaxContext`）是**物理上界**；取较小者。
+    * 真值未知（`None`：旧配置、或 provider 未上报）⇒ **逐字返回配置值** ⇒ 旧行为零
+    * 变化（禁「顺手收紧」——卡文 §三 向后兼容条）。
+    *
+    * 为什么必须是单点：`contextWindow` 有三个消费者（压缩门限
+    * `CompactThreshold.threshold`、硬截断 `AgentCore.hardLimit = 0.95 × cw`、回传前端的
+    * `LlmMeta.contextWindow`），任何一处拿到未 clamp 的值都会让整条压缩/截断链按错
+    * 的窗口计算（1M→200k 时门限应为 160k 而非 256k）。 */
+  private[llm] def effectiveContextWindow(configured: Int, modelMaxContext: Option[Int]): Int =
+    modelMaxContext.fold(configured)(m => math.min(configured, m))
 
   /** List all available models across all providers. Returns (ref, displayName) pairs. */
   def getAllModels(): IO[List[(String, String)]] =
@@ -119,9 +158,14 @@ class ProviderRegistry(
         val (providerId, modelId) = Config.parseModelRef(ref)
         config.llm.providers.get(providerId).map { provider =>
           val modelConfig = provider.models.find(_.id == modelId)
-          val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+          // 案② B2：取数单点（按 ref 这条腿）。
+          val contextWindow = effectiveContextWindow(
+            modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow),
+            modelConfig.flatMap(_.modelMaxContext)
+          )
           val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps)
+          ModelCandidate(providerId, provider, modelId, contextWindow, vision, caps,
+            modelConfig.flatMap(_.modelMaxContext))
         }
       catch case _: Exception => None
     }
@@ -185,7 +229,11 @@ class ProviderRegistry(
           .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
           .map { mc =>
             val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
-            ModelCandidate(providerId, provider, mc.id, mc.contextWindow, vision, caps)
+            // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
+            // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
+            // 「偏离登记」）：
+            ModelCandidate(providerId, provider, mc.id,
+              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext), vision, caps, mc.modelMaxContext)
           }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）

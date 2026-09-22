@@ -541,6 +541,72 @@ object LlmLogWriter:
         )
       }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logIntake: ${e.getMessage}"))
 
+  // ── 4xx 取证面（案① A5 · 豁免 `enabled`）───────────────────────────────
+
+  /** 常见凭据形态的**防御性**抹除（`apiKey` 回显、Bearer 头、sk- 前缀 key）。
+    *
+    * 本对象**从不接收**请求头 / 凭据参数（结构性保证）；本函数是第二道防线——
+    * provider 有时把收到的凭据回显在错误体里，若原样落盘就等于把密钥写进日志。
+    * 纯函数，供 [[logHttpError]]、`LlmInterface` 的 permanent-error WARN 行
+    * （案① A3，响应体是同一份数据）与回归 spec 三方共用。
+    *
+    * 可见性 `private[nebflow]`（非 `private[core]`）：消费点之一是
+    * `nebflow.llm.interface`（A3 的日志腿），它不在 `nebflow.core` 子树内。 */
+  private[nebflow] def redactSecrets(s: String): String =
+    if s == null || s.isEmpty then s
+    else
+      s
+        .replaceAll("(?i)bearer\\s+[A-Za-z0-9._\\-]{8,}", "Bearer <redacted>")
+        .replaceAll("(?i)(authorization|api[_-]?key|x-api-key)(\"?\\s*[:=]\\s*\"?)[^\",\\s}]+", "$1$2<redacted>")
+        .replaceAll("sk-[A-Za-z0-9_\\-]{12,}", "sk-<redacted>")
+
+  /** **400/4xx provider 响应体的常驻取证面**（案① A5；作者令「随案① 落地带上」）。
+    *
+    * 与其余四个写入面（summary / full / sse / objects / intake）的关键差异：
+    * **不受 [[enabled]] 门控**（regardless of enabled）。动因（定谳报告
+    * `20260921_182544_llmstall-diag` 核查 3）：事故当日 11,102 条
+    * `permanent error (Format)` 的**响应体原文缺失**——LLM 请求/响应日志器默认关
+    * （见 [[DefaultEnabled]]），一行不写 ⇒「`enable_search` 被 MaaS 端点拒绝」/
+    * 「模型名在端点不存在」/「请求体超端点限制」三条成因无法区分。4xx 是**低成本、
+    * 低频、高信息**的一类，单独留一条常驻腿不会重现「默认开启全量落盘」的体量问题。
+    *
+    * 只落：状态码 + 响应体（[[redactSecrets]] 后）+ 关联 id（requestId / session /
+    * agent / provider / model）。🔴 **禁落 `apiKey` / `Authorization` 头**：本方法
+    * 签名里没有任何头 / 凭据位 ⇒ 凭据在类型层面进不来；响应体里的回显由
+    * [[redactSecrets]] 抹除。与定谳报告「取证件中未记录 API key」同口径。
+    *
+    * 落点 = `<dataRoot>/logs/router/{date}_httperror.jsonl`（与既有写入面同目录 ⇒
+    * 自动落进 [[retentionDays]] 的回收腿，见 [[deleteOutOfWindowJsonl]] 按日期前缀
+    * 删除，无需另加回收逻辑）。非 4xx（含 2xx / 5xx）**不落**——本腿只对「请求形状
+    * vs 契约」类故障负责。绝不抛出（错误降级为 WARN，不污染 LLM 主路径）。 */
+  def logHttpError(
+    statusCode: Int,
+    body: String,
+    requestId: String,
+    sessionId: String,
+    agentId: String,
+    providerId: String,
+    model: String
+  ): IO[Unit] =
+    if statusCode < 400 || statusCode >= 500 then IO.unit
+    else
+      IO.blocking {
+        appendJsonl(
+          "httperror",
+          Json.obj(
+            "timestamp" -> Instant.now().toString.asJson,
+            "type" -> "http_error".asJson,
+            "status_code" -> statusCode.asJson,
+            "request_id" -> requestId.asJson,
+            "session" -> sessionId.asJson,
+            "agent" -> agentId.asJson,
+            "provider" -> providerId.asJson,
+            "model" -> model.asJson,
+            "response_body" -> redactSecrets(body).asJson
+          )
+        )
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logHttpError: ${e.getMessage}"))
+
   private def appendJsonl(suffix: String, json: Json): Unit = writeLock.synchronized {
     try
       if writeDelayMsForTest.get() > 0 then Thread.sleep(writeDelayMsForTest.get())
