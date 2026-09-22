@@ -740,6 +740,39 @@ object Defaults:
    */
   val ShutdownInterruptTimeoutMs: Long = 5_000L
 
+  // ---- 宿主睡眠感知（hostresume 批 2026-09-22，设计卡
+  //      20260921_235342_host-interrupt-resume-design §4 #9，作者「七项全照推荐」裁定）----
+
+  /**
+   * 宿主睡眠/唤醒感知总开关（设计卡 D-2，作者裁定「默认 true + kill-switch」）。
+   * 默认 true：`WakeSensor` 双钟断流纤维随 boot 链挂载（`projectTtlScanner` 邻位，
+   * server listen 前就绪）；检测到的睡眠窗进 `PowerStateTracker` 窗集——
+   * `TaskStuckWatcher` 两轴与整流 no-progress 守卫的时间基修正据此扣减睡眠冻结秒
+   * （设计卡 D-6：首批消费点仅此两处）——另加 boot-wake.json 台账 append（kind=sleep /
+   * kind=wake）与 `host-wake` 审计事件（D-7：仅审计，不揽分发器）。
+   *
+   * false = **完全回本批前现状（逐字节）**：GatewayMain 不挂感知纤维（零新 fiber）、
+   * 窗集恒空且消费入口直通裸差值 ⇒ 修正量恒为零（判词与文案逐字不变）、台账/事件
+   * 零写点。system prop `nebflow.wake.sense.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def WakeSenseEnabled: Boolean =
+    sys.props.getOrElse("nebflow.wake.sense.enabled", "true").toBoolean
+
+  /**
+   * 断流 slop（毫秒，**常量**——`L3VerifyDelayMs`「第一版为常量」先例，标定后再决定
+   * 是否外放）：墙钟 Δ 超前单调钟 Δ 超过此值才判睡眠窗。45s = 3×15s 探测周期——
+   * 吸收 NTP 步进（Δwall≈Δnano ⇒ 差值≈0，设计卡 §6 口径 5）与 DarkWake 突刺
+   * （取证实测 19s 缝 < 45s ⇒ 不产生窗，§6 口径 4）。
+   */
+  val WakeSenseSlopMs: Long = 45_000L
+
+  /**
+   * 探测周期（s）：15s 周期纤维 ⇒ 唤醒后 ≤15s 检出（设计卡 §2.1 A1 判定）。
+   * 常量（同上先例）；检测精度受其下限约束，不改扫描族任何既有定时器。
+   */
+  val WakeSenseTickSec: Int = 15
+
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 
   /**

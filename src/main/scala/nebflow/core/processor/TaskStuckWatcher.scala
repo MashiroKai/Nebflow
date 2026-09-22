@@ -362,11 +362,17 @@ object TaskStuckWatcher:
     rec: AgentRecord,
     now: Long,
     thresholdMs: Long = nebflow.shared.Defaults.StuckThresholdMs,
-    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs
+    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs,
+    elapsed: (Long, Long) => Long = nebflow.shared.PowerStateTracker.effectiveElapsed
   ): Option[StuckAssessment] =
-    val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
+    // 时间基修正（hostresume 批 2026-09-22，设计卡 §4 #4，D-6 首批消费点之一）：
+    // 两轴墙钟差值改经 `effectiveElapsed`（扣减宿主睡眠窗冻结秒）。默认 = 全局入口
+    // （空窗集 ⇒ 修正量恒为零 ⇒ 判词与文案逐字不变；kill-switch false ⇒ 恒等回裸差值）。
+    // 测试经 `elapsed` 参数注入合成窗（卡 §6 口径 1/2）；既有两消费点（watcher 扫描 /
+    // AgentControlTool 展示）签名与行为零改动。
+    val agentIdleMs = if rec.lastActivityMs > 0 then elapsed(rec.lastActivityMs, now) else 0L
     val agentStale = rec.lastActivityMs > 0 && agentIdleMs > thresholdMs
-    val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+    val toolPhaseMs = if rec.currentToolStartedAt > 0 then elapsed(rec.currentToolStartedAt, now) else 0L
     // R6（**已裁定 2026-09-10：以 `max` 为准**）：有效工具相位阈值——命令声明了
     // 合法时长就取 max(默认档, 声明 + 宽限)。**只放宽不收紧**；未声明 `timeout`
     // 的工具仍按默认档 10min 判死。（旧文写 min，与「尊重命令自己声明的合法时长」
@@ -397,9 +403,10 @@ object TaskStuckWatcher:
     rec: AgentRecord,
     now: Long,
     thresholdMs: Long = nebflow.shared.Defaults.StuckThresholdMs,
-    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs
+    toolPhaseThresholdMs: Long = nebflow.shared.Defaults.ToolPhaseStuckMs,
+    elapsed: (Long, Long) => Long = nebflow.shared.PowerStateTracker.effectiveElapsed
   ): Option[(Long, String)] =
-    assessDetailed(rec, now, thresholdMs, toolPhaseThresholdMs).map(a => (a.secs, a.reason))
+    assessDetailed(rec, now, thresholdMs, toolPhaseThresholdMs, elapsed).map(a => (a.secs, a.reason))
 
   /**
    * 扫描集合 = taskKinds + Root + Team。Root（Nebula 主窗口）虽不在活跃子代理列表

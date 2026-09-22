@@ -5,7 +5,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import io.circe.syntax.*
+import nebflow.core.{AtomicJson, NebflowLogger}
 import nebflow.llm.LlmInterface
 import nebflow.shared.Defaults
 
@@ -83,6 +84,7 @@ object GracefulInterruptHook:
     else
       try
         ShutdownState.beginDraining()
+        writeShutdownMarker()
         interruptRunningNodes(timeoutMs).unsafeRunSync()(using global) match
           case Report(flipped, remaining, timedOut) =>
             if flipped.nonEmpty then
@@ -98,6 +100,29 @@ object GracefulInterruptHook:
       finally
         // token 燃烧防线（2026-08-19 P0）：原样保留，顺序恒在翻态之后。
         LlmInterface.cancelAllInflightSync()
+
+  /** 停机留痕（hostresume 批 2026-09-22，设计卡 §4 #7，C2 双向 fail-soft 之写半边）：
+    * `beginDraining` 后 fail-soft 写 `<dataRoot>/shutdown-marker.json`（kind=graceful）——
+    * 下次 boot 由 `BootDispatcherWake.readShutdownMarker` /
+    * `ProjectCrashRecovery.annotateShutdownCause` 读之区分「优雅停机」与「断电/kill-9/
+    * 崩溃」（取证开放项①「信号来源无留痕」的闭环写点）。写失败只 WARN、绝不阻断关机
+    * 钩子（后果 = 下次 boot 推断 unclean——保守方向、可接受）。回滚形态
+    * （`Defaults.ShutdownInterruptEnabled=false`）不经过本方法 = 零写点（逐字节现状）。
+    * 钩子序保持「顺序即正确性」原样：本写点在 draining 置位后、翻态前，失败不影响任何
+    * 既有步骤。 */
+  private def writeShutdownMarker(): Unit =
+    try
+      val m = BootDispatcherWake.ShutdownMarker(
+        v = 1, kind = "graceful", at = System.currentTimeMillis(),
+        bootId = BootDispatcherWake.instanceId, cause = "SIGINT/SIGTERM")
+      AtomicJson
+        .write(BootDispatcherWake.shutdownMarkerPath, m.asJson.noSpaces)
+        .unsafeRunSync()(using global)
+      logger.info(s"shutdown marker written (kind=graceful at=${m.at} boot=${m.bootId})")
+    catch
+      case e: Throwable =>
+        logger.warn(s"shutdown marker write failed (fail-soft; next boot infers unclean): " +
+          s"${Option(e.getMessage).getOrElse(e.toString)}")
 
   /** 翻态主体（IO 形态，可测）：遍历全部已挂载项目的 Running 节点逐个 CAS。
     *
