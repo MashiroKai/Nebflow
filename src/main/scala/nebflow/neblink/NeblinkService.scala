@@ -262,14 +262,16 @@ class NeblinkService private (
     * 本方法只**新增一个读取点**，用于「活动面」gate；本腿明禁动其语义。
     *
     * 为什么闸落在 `enabled` 而不是「启动时不建 service」（作者给定的修法方向）：
-    * `/api/neblink/enroll` 等登录面挂在 `neblinkService` 上（`RestApiRoutes.scala:706`
-    * 与 `:3841` 的 `withNeblink`），不建 service ⇒ 用户**再也无法重新登录**。
+    * `/api/neblink/enroll` 等登录面挂在 `neblinkService` 上（`RestApiRoutes.scala:1106`
+    * 的 enroll 路由与 `:3841` 的 `withNeblink` 公共前置），不建 service ⇒ 用户
+    * **再也无法重新登录**。
     * 正解 = **服务照建**（保住登录能力），只让**活动面**在 `enabled=false` 时空转。
     * 登出后重启：服务在、地址在、可重新登录；但不再拨号、不再灌连接表。
     *
     * **运行期可判（非仅启动期）**：本方法每拍现读 `configRef`；`enabled` 的两个运行期
     * 写面 = 登录成功（`NeblinkEnrollment.scala:201`，`enabled = true`）与登出第 5 步
-    * （`RestApiRoutes.scala:4548`，`enabled = false`）。⇒ 重新登录后活动面**无需重启**
+    * （`RestApiRoutes.scala:4484` 的 `updateConfig(_.copy(enabled = false))`，登出第 5 步）。
+    * ⇒ 重新登录后活动面**无需重启**
     * 即恢复（该形态由 `NeblinkActivityGateSpec` 钉住）。
     *
     * 消费面（活动面四腿，逐条见报告 §2）：`syncLoop`（本文件）／
@@ -543,7 +545,7 @@ class NeblinkService private (
       // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）：`enabled=false` 时本拍
       // **不跑任何外发腿**（discovery 钩子 = 服务端登录/心跳 + syncPeers 拨号）。
       // 逐拍**现读**（不是启动期快照）⇒ 登出/重登的运行期变化一拍内生效，无需重启：
-      //   · 登出第 5 步 `enabled=false` ⇒ 本闸合上（`RestApiRoutes.scala:4548`）；
+      //   · 登出第 5 步 `enabled=false` ⇒ 本闸合上（`RestApiRoutes.scala:4484`）；
       //   · 登录成功 `enabled=true`（`NeblinkEnrollment.scala:201`）⇒ 本闸张开。
       // 空转形态 = **仍在同一 45s 拍上醒来**（下面 sleepIO 不动）⇒ 只是本拍两个
       // cycle 体被跳过；这样重登后最多等一拍（45s）即恢复，且 45s 唤醒本身不触网。
