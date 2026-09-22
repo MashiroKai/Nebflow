@@ -1579,6 +1579,8 @@ export default {
   'plugins.noAgents': '未配置智能体',
   'plugins.loading': '加载中...',
   'plugins.loadFailed': '插件清单加载失败：{error}',
+  'plugins.authRequired': '未登录 · 需注册 — 登录后使用插件面板',
+  'plugins.relogin': '登录',
   'plugins.detail': '详情',
   'chatQueue.dragReorder': '拖动以排序',
   'chatQueue.clickExpand': '点击展开',

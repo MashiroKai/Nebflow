@@ -1622,6 +1622,8 @@ export default {
   'plugins.noAgents': 'No agents configured',
   'plugins.loading': 'Loading...',
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
+  'plugins.authRequired': 'Not signed in — sign up or log in to use plugins',
+  'plugins.relogin': 'Log in',
   'plugins.detail': 'Details',
   'chatQueue.dragReorder': 'Drag to reorder',
   'chatQueue.clickExpand': 'Click to expand',
