@@ -771,15 +771,20 @@ class WebSocketRoutes(
           perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
           hubConnId <- wsHub.register(perConnWsSend)
 
+          // explorer-rt (chain-n-1981ce87): one watch-subscription table per
+          // connection. Chained into the finalizer below — a dropped
+          // connection releases every WatchService it registered.
+          watchSession = new ExplorerWatchSession(perConnWsSend, logger)
+
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend).handleErrorWith { e =>
+              handleMessage(text, perConnWsSend, watchSession).handleErrorWith { e =>
                 logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                 IO.unit
               }
             case _ => IO.unit
           }.onFinalize(
-            wsHub.unregister(hubConnId)
+            wsHub.unregister(hubConnId) *> watchSession.close()
           )
 
           // sendStream: read from outbound queue, send via WebSocket.
@@ -1425,13 +1430,33 @@ class WebSocketRoutes(
       }
     loop(0L)
 
+  /** explorer-rt: shared explorer root resolution (listDir + watchSubscribe
+    * same judgment by construction). `overrideRoot` wins verbatim; otherwise
+    * session project root, falling back to the default projects dir — byte
+    * -for-byte the resolution listDir has always used; the canonical-path
+    * escape guard stays at the call sites (it guards a resolved subpath, not
+    * the root itself). */
+  private def resolveExplorerBaseRoot(sessionId: String, overrideRoot: Option[String]): IO[String] =
+    overrideRoot match
+      case Some(root) => IO.pure(root)
+      case None =>
+        for
+          metaOpt <- sessionStore.getSessionMeta(sessionId)
+          folderId = metaOpt.flatMap(_.folderId)
+          prOpt <- sessionStore.resolveProjectRoot(folderId)
+        yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+
   /** Public facade for REST API to call into the same message handler. */
   def handleMessagePublic(text: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
-    handleMessage(text, wsSend)
+    // Non-live watch session: explorer-rt subscriptions need a real WS
+    // connection (lifecycle-tied); a REST-invoked handler answers fileOpError
+    // for watch frames instead of silently leaking a WatchService.
+    handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))
 
   private def handleMessage(
     text: String,
-    wsSend: io.circe.Json => IO[Unit]
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
   ): IO[Unit] =
     if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
     else
@@ -2736,14 +2761,7 @@ class WebSocketRoutes(
             if exSessionId.nonEmpty then
               val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
               (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(exSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                pr <- resolveExplorerBaseRoot(exSessionId, overrideRoot)
                 basePath = if subPath.isEmpty then os.Path(pr) else PathUtil.resolvePath(subPath, os.Path(pr))
                 canonicalBase = basePath.toIO.getCanonicalPath
                 canonicalRoot = os.Path(pr).toIO.getCanonicalPath
@@ -2751,16 +2769,21 @@ class WebSocketRoutes(
                   new RuntimeException("path outside project root")
                 )
                 entries <- IO.blocking(WebSocketRoutes.listDirEntries(basePath))
-              yield (basePath.toString, entries))
-                .flatMap { case (resolvedPath, entries) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "dirListing".asJson,
-                      "path" -> subPath.asJson,
-                      "resolvedPath" -> resolvedPath.asJson,
-                      "entries" -> entries.asJson
+              yield (basePath, entries))
+                .flatMap { case (basePath, entries) =>
+                  // explorer-rt: a listed dir is a visible dir — auto-mode
+                  // watch subscriptions on this connection grow here (the
+                  // frontend's explicit-dirs subscribers manage their own set;
+                  // this is a no-op for them and when nothing is subscribed).
+                  watchSession.noteListed(basePath) *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "dirListing".asJson,
+                        "path" -> subPath.asJson,
+                        "resolvedPath" -> basePath.toString.asJson,
+                        "entries" -> entries.asJson
+                      )
                     )
-                  )
                 }
                 .handleErrorWith { e =>
                   logger.warn(s"listDir failed: ${e.getMessage}")
@@ -2768,6 +2791,59 @@ class WebSocketRoutes(
                 }
             else IO.unit
             end if
+
+          // ===== Explorer real-time watch (explorer-rt · chain-n-1981ce87) =====
+          // Case C hybrid: push as main path, existing refresh legs untouched
+          // as fallback. Frame contract in ExplorerWatchSession's doc — three
+          // new cases, zero changes to existing frame shapes.
+
+          case "watchSubscribe" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val wtSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            if wtSessionId.nonEmpty then
+              val rootOverride = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              val dirs = hc.downField("dirs").as[Option[List[String]]].toOption.flatten
+              (for
+                pr <- resolveExplorerBaseRoot(wtSessionId, rootOverride)
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- watchSession.subscribe(
+                  os.Path(canonicalRoot),
+                  rootOverride.getOrElse(""),
+                  dirs
+                )
+              yield ())
+                .handleErrorWith { e =>
+                  logger.warn(s"watchSubscribe failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileOpError".asJson,
+                        "error" -> s"Explorer watch subscribe failed: ${e.getMessage}".asJson
+                      )
+                    )
+                }
+            else IO.unit
+
+          case "watchUnsubscribe" =>
+            // No session gate on purpose: teardown is keyed by the client-sent
+            // rootPath echo value alone (no root resolution, cannot fail), and
+            // it must still land once the session is gone — the frontend drops
+            // its subscription on session close while the connection stays
+            // open; a sessionId-gated no-op there would keep a WatchService
+            // polling the old root until the socket dies. Unknown key is an
+            // idempotent no-op server-side.
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val rootOverride = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            watchSession.unsubscribe(rootOverride.getOrElse("")).handleErrorWith { e =>
+              logger.warn(s"watchUnsubscribe failed: ${e.getMessage}")
+                *> wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "fileOpError".asJson,
+                    "error" -> s"Explorer watch unsubscribe failed: ${e.getMessage}".asJson
+                  )
+                )
+            }
 
           case "readFile" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)

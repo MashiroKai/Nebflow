@@ -7,7 +7,7 @@
 
 import state from './state.js';
 import { key } from './branding.js';
-import { sendWs, onMessage } from './ws.js';
+import { sendWs, onMessage, onReconnect } from './ws.js';
 import { openPathPickerCallback } from './sidebar.js';
 import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
@@ -673,6 +673,7 @@ function renderTree() {
   body.innerHTML = '';
   // Root-level listing — path "" means project root
   body.appendChild(buildDirNode('', true, 0));
+  syncWatch();
 }
 
 function buildDirNode(path, isRoot, depth) {
@@ -824,6 +825,8 @@ function toggleDir(path, chevronEl, childrenEl, depth) {
     childrenEl.innerHTML = '';
     loadDir(path, childrenEl, depth);
   }
+  // The visible-dir set changed — the watch subscription follows it (throttled).
+  syncWatch();
 }
 
 function loadDir(path, container, depth) {
@@ -1129,6 +1132,8 @@ export function initExplorer() {
   });
 
   bindFocusRefresh();
+  bindWatchReconnect();
+  bindSlowReconcile();
 
   if (state.activeSessionId) {
     expandedDirs.clear();
@@ -1463,6 +1468,9 @@ export function refreshExplorer(sessionId) {
     const body = $('#explorer-tree');
     if (body) body.innerHTML = '';
   }
+  // Session switch: re-subscribe to the new session's project root (renderTree
+  // path) or drop the subscription entirely (no session → empty tree).
+  syncWatch();
 }
 
 // ── Focus refresh ─────────────────────────────────────────────────────
@@ -1509,5 +1517,136 @@ function bindFocusRefresh() {
   window.addEventListener('focus', onRegainFocus);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) onRegainFocus();
+  });
+}
+
+// ── Real-time watch (explorer-rt · chain-n-1981ce87 case C hybrid) ────
+// Main path: server pushes `fsChanged{rootPath, dirs, overflow}` and the
+// affected visible dirs reload through the SAME pipeline as the focus leg
+// (loadDir → dirListing → expand/selection restore). Fallback legs —
+// expand-reload, focus refresh, canvas tab-activation refresh — are untouched;
+// a slow reconcile timer (below) covers OVERFLOW / reconnect event-loss
+// windows. Failure toasts ride the existing `fileOpError` → `__showToast`
+// channel; zero new visual components.
+
+const WATCH_SYNC_THROTTLE_MS = 250; // collapse expand/collapse bursts
+let watchRootSent = undefined;      // undefined = never subscribed; '' or abs path = current
+let watchSyncTimer = null;
+
+/** Visible dir set (root + every expanded dir), explorer-relative paths. */
+function visibleWatchDirs() {
+  return ['', ...[...expandedDirs]];
+}
+
+/** (Re-)send watchSubscribe for the current root + visible dir set; drops the
+ *  previous subscription when the root changed. Idempotent — safe to call on
+ *  every tree mutation. No active session ⇒ unsubscribe (empty tree). */
+function syncWatch(immediate = false) {
+  clearTimeout(watchSyncTimer);
+  watchSyncTimer = setTimeout(() => {
+    const rootPath = explorerRoot || '';
+    if (!state.activeSessionId) {
+      if (watchRootSent !== undefined) {
+        sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+        watchRootSent = undefined;
+      }
+      return;
+    }
+    if (watchRootSent !== undefined && watchRootSent !== rootPath) {
+      sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+    }
+    sendWs({ type: 'watchSubscribe', sessionId: state.activeSessionId, rootPath: explorerRoot, dirs: visibleWatchDirs() });
+    watchRootSent = rootPath;
+  }, immediate ? 0 : WATCH_SYNC_THROTTLE_MS);
+}
+
+/** Reload one visible directory's children container in place — same shape
+ *  as the per-dir leg of refreshExpandedDirs (zero new render mechanism).
+ *  Dirs that are not visible (collapsed/absent) are skipped: their next
+ *  expand reloads from disk anyway. */
+function reloadVisibleDir(dirPath) {
+  if (dirPath) {
+    if (!expandedDirs.has(dirPath)) return;
+    const wrapper = document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(dirPath)}"]`);
+    // Direct child only: a bare descendant query would match a nested
+    // wrapper's container first on some structures (same reason
+    // refreshExpandedDirs/getSiblingPaths scope their queries).
+    const children = wrapper?.querySelector(':scope > .explorer-children');
+    if (children && !loadingDirs.has(dirPath)) {
+      children.innerHTML = '';
+      loadDir(dirPath, children, dirPath.split('/').length);
+    }
+  } else {
+    const rootChildren = document.querySelector('.explorer-root > .explorer-children');
+    if (rootChildren && !loadingDirs.has('')) {
+      rootChildren.innerHTML = '';
+      loadDir('', rootChildren, 0);
+    }
+  }
+}
+
+onMessage('fsChanged', (msg) => {
+  // Only frames for the root this panel currently watches.
+  if ((msg.rootPath || '') !== (explorerRoot || '')) return;
+  if (msg.overflow) {
+    // Watch-service overflow: events were dropped server-side — tighten the
+    // reconcile period (card: shorter cycle only after OVERFLOW/reconnect) and
+    // degrade to a full visible-tree reload (equivalent to the focus leg).
+    boostReconcile();
+    if (document.querySelector('.explorer-root')) refreshExpandedDirs();
+  } else {
+    for (const d of (msg.dirs || [])) reloadVisibleDir(d);
+  }
+  // File content may have changed too — canvas re-checks the active file tab
+  // (dirty-guarded, debounced, cooldown there; zero new mechanism).
+  window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+});
+
+// ── Slow reconcile (fallback leg #4) ──────────────────────────────────
+// Covers the "silent event loss" residual surface: baseline 120 s, tightened
+// to 60 s for 5 minutes after an OVERFLOW or a reconnect. Visibility-gated
+// (hidden tabs skip the tick — same gate as the focus leg).
+
+const RECONCILE_TICK_MS = 60000;        // timer granularity
+const RECONCILE_BASE_MS = 120000;       // healthy-watch period
+const RECONCILE_BOOST_MS = 60000;       // post-OVERFLOW/reconnect period
+const RECONCILE_BOOST_WINDOW_MS = 300000;
+let reconcileNextAllowedAt = 0;
+let reconcileBoostUntil = 0;
+let reconcileTimer = null;
+
+function boostReconcile() {
+  reconcileBoostUntil = Date.now() + RECONCILE_BOOST_WINDOW_MS;
+}
+
+function reconcileTick() {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now < reconcileNextAllowedAt) return;
+  reconcileNextAllowedAt = now + (now < reconcileBoostUntil ? RECONCILE_BOOST_MS : RECONCILE_BASE_MS);
+  if (!document.querySelector('.explorer-root')) return;
+  refreshExpandedDirs();
+  window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+}
+
+function bindSlowReconcile() {
+  if (reconcileTimer) return;
+  reconcileTimer = setInterval(reconcileTick, RECONCILE_TICK_MS);
+}
+
+/** Bind reconnect compensation once (called from initExplorer): subscriptions
+ *  die with the connection (server clears the table on close) — re-subscribe
+ *  immediately and run one full visible-tree reconcile. */
+function bindWatchReconnect() {
+  const win = /** @type {any} */ (window);
+  if (win.__explorerWatchReconnectBound) return;
+  win.__explorerWatchReconnectBound = true;
+  onReconnect(() => {
+    boostReconcile();
+    syncWatch(true);
+    if (document.querySelector('.explorer-root')) {
+      refreshExpandedDirs();
+      window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+    }
   });
 }
