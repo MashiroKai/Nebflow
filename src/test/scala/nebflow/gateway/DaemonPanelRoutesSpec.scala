@@ -9,7 +9,7 @@ import io.circe.parser.parse
 import munit.FunSuite
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
-import nebflow.core.daemon.DaemonService
+import nebflow.core.daemon.{DaemonPanelSchema, DaemonService}
 import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -283,7 +283,112 @@ class DaemonPanelRoutesSpec extends FunSuite:
     }
   }
 
-  // ── F1 · no panel ⇒ the baseline response is untouched ────────────────
+  // ── F-7 · the host-carried panel document + its local CSP ──────────────
+
+  /** A `kind:"web"` + `htmlFile` daemon whose panel file lives in the data
+    * root's servable namespace (`docs/`). `allowWeb` is on. */
+  private def withHtmlPanel(
+    fileContent: String,
+    relPath: String = "docs/panel.html"
+  )(f: HttpRoutes[IO] => Unit): Unit =
+    val web = s"""{"kind": "web", "htmlFile": "$relPath"}"""
+    withRoutes(daemonWith("mail", Some(web)), allowWeb = true) { routes =>
+      val p = PathUtil.dataRoot / os.RelPath(relPath)
+      os.write.over(p, fileContent, createFolders = true)
+      f(routes)
+    }
+
+  test("F-7 · an htmlFile panel is carried host-side into srcdoc with the local CSP injected") {
+    val doc = """<!doctype html><html><head><title>p</title><script>window.x=1;</script></head>
+                |<body><p>panel</p></body></html>""".stripMargin
+    withHtmlPanel(doc) { routes =>
+      val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
+      assertEquals(status, Status.Ok)
+      assertEquals(body.flatMap(_.hcursor.get[Boolean]("cspInjected").toOption), Some(true))
+      val srcdoc = body.flatMap(_.hcursor.get[String]("srcdoc").toOption).getOrElse("")
+      // The policy is the design's local, strict shape — and it is really there.
+      assert(srcdoc.contains("default-src 'none'"), "no CSP in the carried document")
+      assert(srcdoc.contains("http-equiv=\"Content-Security-Policy\""), "the meta is not an http-equiv meta")
+      // Injected as the FIRST child of head: before the author's own script, so
+      // the policy is in force before any panel code can run.
+      val metaIdx = srcdoc.indexOf("data-daemon-panel-csp")
+      val scriptIdx = srcdoc.indexOf("<script>")
+      assert(metaIdx > 0 && scriptIdx > 0 && metaIdx < scriptIdx, s"meta@$metaIdx script@$scriptIdx")
+      // The panel's own body survives: the host carries the document, it does
+      // not rewrite the daemon's markup.
+      assert(srcdoc.contains("<p>panel</p>"), "the panel body was altered")
+      // F13/E3: the carried document carries no credential parameters, and the
+      // url leg is empty in this mode (so no src exists at all).
+      assert(!srcdoc.contains("token=") && !srcdoc.contains("ticket="), "credential param in srcdoc")
+      assertEquals(body.flatMap(_.hcursor.get[String]("panelUrl").toOption), Some(""))
+      // E1: the sandbox token set is still the strict one.
+      assertEquals(
+        body.flatMap(_.hcursor.downField("sandbox").as[List[String]].toOption),
+        Some(List("allow-scripts"))
+      )
+    }
+  }
+
+  test("F-7 · a fragment gains a head, so the injected meta is honoured rather than inert") {
+    withHtmlPanel("<p>bare fragment</p>") { routes =>
+      val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
+      assertEquals(status, Status.Ok)
+      val srcdoc = body.flatMap(_.hcursor.get[String]("srcdoc").toOption).getOrElse("")
+      assert(srcdoc.contains("<head"), "a meta outside <head> is ignored by the browser")
+      val headEnd = srcdoc.indexOf('>', srcdoc.indexOf("<head"))
+      val metaIdx = srcdoc.indexOf("data-daemon-panel-csp")
+      assert(metaIdx > 0 && metaIdx > headEnd, s"meta must sit INSIDE head (head ends $headEnd, meta $metaIdx)")
+      assert(srcdoc.contains("<p>bare fragment</p>"), "the fragment was lost")
+    }
+  }
+
+  test("F-7 · an unusable panel document is fail-closed: 409 AND no hasConfigPanel flag") {
+    // (a) the file does not exist at all.
+    val web = """{"kind": "web", "htmlFile": "docs/nope.html"}"""
+    withRoutes(daemonWith("mail", Some(web)), allowWeb = true) { routes =>
+      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel")._1, Status.Conflict)
+      // The button and the endpoint answer the SAME question: an unusable panel
+      // is hidden from the list too, never a button that always answers 409.
+      val list = call(routes, Method.GET, "/daemons")._2
+      val entries = list.flatMap(_.hcursor.downField("daemons").as[List[Json]].toOption).getOrElse(Nil)
+      val mail = entries.find(_.hcursor.get[String]("id").toOption.contains("mail")).get
+      assertEquals(mail.asObject.exists(_.contains("hasConfigPanel")), false, s"unusable panel published: $mail")
+    }
+    // (b) a non-html extension is refused even though the file exists.
+    withHtmlPanel("<p>x</p>", "docs/panel.js") { routes =>
+      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel")._1, Status.Conflict)
+    }
+    // (c) an oversized document is refused, never truncated (a truncation could
+    //     drop the panel's own closing tags).
+    withHtmlPanel("<p>" + "x" * (DaemonPanelSchema.MaxPanelHtmlBytes + 10) + "</p>") { routes =>
+      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel")._1, Status.Conflict)
+    }
+  }
+
+  test("F-7/E4 · a panel file in the credential namespace is refused (one path judge, no second policy)") {
+    // `secrets/` is inside the data root but NOT in the servable allowlist: the
+    // SAME ladder `/api/nf-file` uses must refuse it here too. Without the shared
+    // judge this would happily serve a credential-shaped path as a panel.
+    val web = """{"kind": "web", "htmlFile": "secrets/panel.html"}"""
+    withRoutes(daemonWith("mail", Some(web)), allowWeb = true) { routes =>
+      os.write.over(PathUtil.dataRoot / "secrets" / "panel.html", "<p>leak</p>", createFolders = true)
+      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel")._1, Status.Conflict)
+    }
+    // And a traversal path never becomes a panel at all (validator refusal).
+    val traversal = """{"kind": "web", "htmlFile": "../../secrets/panel.html"}"""
+    withRoutes(daemonWith("mail", Some(traversal)), allowWeb = true) { routes =>
+      assertEquals(call(routes, Method.GET, "/daemons/mail/config-panel")._1, Status.Conflict)
+    }
+    // A `url` panel keeps the plain src mode: no srcdoc is invented for it.
+    val urlPanel = """{"kind": "web", "url": "http://localhost:3000/config"}"""
+    withRoutes(daemonWith("mail", Some(urlPanel)), allowWeb = true) { routes =>
+      val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
+      assertEquals(status, Status.Ok)
+      assertEquals(body.flatMap(_.hcursor.get[String]("srcdoc").toOption), Some(""))
+      assertEquals(body.flatMap(_.hcursor.get[Boolean]("cspInjected").toOption), Some(false))
+    }
+  }
+
 
   test("F1 · a daemon with no declaration contributes an unchanged key set") {
     withRoutes(daemonWith("mail", None)) { routes =>

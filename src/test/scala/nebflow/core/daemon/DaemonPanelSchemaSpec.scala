@@ -177,3 +177,62 @@ class DaemonPanelSchemaSpec extends CatsEffectSuite:
     val back = withPanel.asJson.as[DaemonConfig].toOption.get
     assertEquals(back.configPanel, withPanel.configPanel)
   }
+
+  // ── F-7 · the LOCAL <meta CSP> injected into a host-carried panel doc ──
+
+  test("F-7 · the panel CSP is default-src 'none' and denies outbound connections") {
+    // The policy must be the strict, local-only shape the ruling asked for:
+    // no global CSP is touched anywhere; this string only ever lands inside the
+    // panel iframe's own document.
+    assert(DaemonPanelSchema.PanelCsp.contains("default-src 'none'"), DaemonPanelSchema.PanelCsp)
+    assert(DaemonPanelSchema.PanelCsp.contains("connect-src 'none'"), DaemonPanelSchema.PanelCsp)
+    assert(!DaemonPanelSchema.PanelCsp.contains("connect-src 'self'"), "a host-carried doc has no 'self' origin")
+    assert(!DaemonPanelSchema.PanelCsp.contains("allow-same-origin"), DaemonPanelSchema.PanelCsp)
+  }
+
+  test("F-7 · the meta lands as the FIRST child of <head>, before any author script") {
+    val doc =
+      """<!doctype html><html><head><title>t</title>
+        |<script>window.__ran = true;</script></head>
+        |<body><p>panel</p></body></html>""".stripMargin
+    val out = DaemonPanelSchema.panelSrcdoc(doc)
+    assert(DaemonPanelSchema.hasPanelCsp(out), "the CSP marker is absent from the injected document")
+    val metaIdx = out.indexOf("data-daemon-panel-csp")
+    val scriptIdx = out.indexOf("<script>")
+    assert(metaIdx > 0 && metaIdx < scriptIdx, s"meta ($metaIdx) must precede the first script ($scriptIdx)")
+    // It is a real meta element carrying the policy, not a comment or a string.
+    assert(out.contains(s"""http-equiv="Content-Security-Policy""""), out.take(400))
+    assert(out.contains(DaemonPanelSchema.PanelCsp), "the policy text itself is missing")
+    // The document's own markup survives untouched.
+    assert(out.contains("<p>panel</p>"), "the author body was altered")
+  }
+
+  test("F-7 · injection is idempotent and total on malformed input") {
+    val doc = """<html><head></head><body>x</body></html>"""
+    val once = DaemonPanelSchema.injectPanelCsp(doc)
+    val twice = DaemonPanelSchema.injectPanelCsp(once)
+    assertEquals(twice, once, "a second injection must be a no-op")
+    assertEquals(once.sliding("data-daemon-panel-csp".length).count(_ == "data-daemon-panel-csp"), 1)
+    // No <head> at all: a meta outside head would be IGNORED by the browser,
+    // so a fragment is wrapped into a minimal document first.
+    val fragment = DaemonPanelSchema.panelSrcdoc("<p>bare</p>")
+    assert(DaemonPanelSchema.hasPanelCsp(fragment), fragment)
+    assert(fragment.contains("<head"), "a meta outside <head> would be silently dropped")
+    // Degenerate inputs never throw.
+    for s <- List("", "<", "<head", "plain text", "<html><head") do
+      assert(DaemonPanelSchema.panelSrcdoc(s).nonEmpty, s"empty result for ${s.take(20)}")
+  }
+
+  test("F-7 · a declaration cannot remove or weaken the injected policy") {
+    // A hostile declaration puts its OWN, permissive meta first — the injected
+    // policy is still present, and the strictest policy wins because the FIRST
+    // meta in head is the one the browser honours and ours is injected first.
+    val hostile =
+      """<html><head><meta http-equiv="Content-Security-Policy" content="default-src *">
+        |</head><body>x</body></html>""".stripMargin
+    val out = DaemonPanelSchema.panelSrcdoc(hostile)
+    val ours = out.indexOf("data-daemon-panel-csp")
+    val theirs = out.indexOf("default-src *")
+    assert(ours > 0 && theirs > 0, "both metas expected in the fixture")
+    assert(ours < theirs, s"the injected policy ($ours) must precede the author's ($theirs)")
+  }
