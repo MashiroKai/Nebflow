@@ -1429,6 +1429,13 @@ export default {
   'daemons.restartFirst': 'Start first',
   'daemons.deleteTitle': 'Delete Daemon',
   'daemons.deleteConfirm': 'Delete daemon "{name}"?',
+  // daemonpanel Phase A — config panel (daemons.config* keys)
+  'daemons.config': 'Configure',
+  'daemons.configClose': 'Close',
+  'daemons.configSave': 'Save',
+  'daemons.configSaved': 'Saved',
+  'daemons.configEnabled': 'Enabled',
+  'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
   'explorer.delete': 'Delete',
