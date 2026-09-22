@@ -3091,6 +3091,46 @@ class RestApiRoutes(
     // RETIRED here — both 仓内零调用点 in the classify pass. The sibling
     // POST /plugins/:name/dispatch/grant above stays (it has a BE caller).
 
+    // ── Social interface channels (socpanel batch, 2026-09-19) ────────────
+    // Design = `socremote-design` (n-5c95367d) arch §7.2/§7.3. Config lives in
+    // the top-level `socialChannels` key of nebflow.json; a pasted credential
+    // goes through the EXISTING core/CredentialFileAcl narrowing and the config
+    // keeps only its path. 🔴 No response ever carries secret content — the
+    // read side answers the mechanical triple `{exists, modeOk, readable}`.
+    // All three endpoints sit behind the shared auth gate (withAuth).
+    case req @ GET -> Root / "social" / "channels" =>
+      withAuth(req) {
+        IO.blocking(nebflow.social.SocialChannels.channelsJson(PathUtil.dataRoot)).flatMap(json => Ok(json))
+      }
+
+    case req @ POST -> Root / "social" / "channels" / channelId =>
+      withAuth(req) {
+        req.as[Json].attempt.flatMap {
+          case Left(_) =>
+            BadRequest(Json.obj(
+              "error" -> "invalid_field".asJson,
+              "reason" -> "request body must be a JSON object".asJson
+            ))
+          case Right(body) =>
+            IO.blocking(nebflow.social.SocialChannels.save(PathUtil.dataRoot, channelId, body)).flatMap {
+              case Right(json) => Ok(json)
+              case Left(err)   => socialErrorResponse(err)
+            }
+        }
+      }
+
+    case req @ GET -> Root / "social" / "probe" =>
+      withAuth(req) {
+        val channelId = req.params.getOrElse("channel", "")
+        IO.blocking(nebflow.social.SocialChannels.probeJson(PathUtil.dataRoot, channelId)).flatMap {
+          case Right(json) => Ok(json)
+          case Left(err)   => socialErrorResponse(err)
+        }
+      }
+
+    // (r3 merge 2026-09-21) GET /flows/list stays RETIRED per the main-side
+    // device-face hardening takedown above — the branch-side copy carried into
+    // this conflict from the pre-takedown base was dropped, not resurrected.
 
     // (2026-09-20 device-face hardening batch) 11-route takedown: GET /teams/:name
     // (team detail) was RETIRED here — 仓内零调用点 in the classify pass. The
@@ -3746,6 +3786,28 @@ class RestApiRoutes(
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if checkAuth(req) then f
     else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+
+  /** Error-code mapping for the social-channel endpoints (arch §7.3):
+    * `400 invalid_field` / `400 unknown_channel` / `403 secret_mode` / `500 io`.
+    * A credential-storage failure is a 403 with the field named — it is never
+    * folded into a generic 500, and never reported as a success.
+    *
+    * Returns the response in effect (`IO`), not a bare value: the http4s dsl
+    * constructors already produce `F[Response[F]]`, so wrapping them here and
+    * de-wrapping at the call site would be a pointless round trip. */
+  private def socialErrorResponse(err: nebflow.social.SocialChannels.Failure): IO[Response[IO]] =
+    import nebflow.social.SocialChannels.Failure
+    err match
+      case Failure.UnknownChannel(id) =>
+        BadRequest(Json.obj("error" -> "unknown_channel".asJson, "channel" -> id.asJson))
+      case Failure.InvalidField(field, reason) =>
+        BadRequest(Json.obj("error" -> "invalid_field".asJson, "field" -> field.asJson,
+          "reason" -> reason.asJson))
+      case Failure.SecretMode(field, reason) =>
+        Forbidden(Json.obj("error" -> "secret_mode".asJson, "field" -> field.asJson,
+          "reason" -> reason.asJson))
+      case Failure.Io(reason) =>
+        InternalServerError(Json.obj("error" -> "io".asJson, "reason" -> reason.asJson))
 
   /** Run block only if NeblinkService is available and request is authenticated. */
   private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]]): IO[Response[IO]] =

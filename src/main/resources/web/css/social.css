@@ -1,0 +1,214 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Social interface cards — dialog + channel cards (socpanel batch, 2026-09-19)
+
+   Upstream design: `socremote-design` (n-5c95367d), faces A/B/D/E.
+   🔴 Scope note: `web/css/sapphire.css` is OFF-LIMITS for this batch, so every
+   rule this feature needs lives here. All VALUES are reused tokens
+   (--glass-*, --color-frame-*, --color-danger, --overlay-bg, --brand-green) —
+   this batch introduces no new colour, no new radius family and no new
+   breakpoint (480 / 768 are the existing values, see design §B.2).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Overlay: centred shell, NO dimming backdrop (W3) ──────────────────────
+   The reference form is a bare floating card on top of the live UI; the
+   shared `--overlay-bg` token is already `transparent` in both themes, so the
+   computed background is rgba(0,0,0,0) by construction. */
+#social-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--overlay-bg);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 320;
+}
+#social-overlay.on { display: flex; }
+
+/* ── Shell (glass card; modal.css's shared list is not ours to extend) ──── */
+#social-modal {
+  display: none;
+  flex-direction: column;
+  position: relative;
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  max-height: 85vh;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#social-overlay.on #social-modal { display: flex; }
+
+.social-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 12px 20px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+#social-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.social-modal-body {
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+.social-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.social-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-frame-text-muted);
+  text-transform: none;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.social-card-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.social-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg);
+  min-width: 0;
+}
+.social-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.social-card-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--color-frame-text); }
+.social-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  min-width: 0;
+}
+/* Status pill on the same row, pushed right; the switch closes the row.
+   The pill's material comes from the shared `.plugins-state-pill` rule
+   (sidebar.css); only the status colour mapping is ours (X1 定序). */
+.social-card-head .social-status-pill { margin-left: auto; }
+.social-status-pill[data-status="notConfigured"] {
+  color: var(--color-frame-text-muted);
+  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+  border-color: transparent;
+}
+/* 已配置·未接入 — neutral family, one step stronger + the caption carries the
+   meaning. 🔴 Deliberately NOT the sapphire/`on` family: in this product
+   sapphire reads as "enabled / live", which would be a fake-connection cue. */
+.social-status-pill[data-status="configuredNotLinked"] {
+  color: var(--color-frame-text);
+  background: color-mix(in srgb, var(--color-frame-text) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-frame-text) 20%, transparent);
+}
+/* 配置有误 — the only coloured state (--color-danger: the token with a
+   contrast ruling and a dark-theme counterpart). */
+.social-status-pill[data-status="configInvalid"] {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+}
+/* Phase-2 reserved: unreachable while `adapterRegistered` is false. Keeping the
+   rule here documents the intent without creating any render point. */
+.social-status-pill[data-status="connected"] {
+  color: rgb(var(--brand-green));
+  background: rgb(var(--brand-green) / 0.1);
+  border-color: rgb(var(--brand-green) / 0.25);
+}
+
+.social-card-desc {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+}
+
+.social-card-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+}
+.social-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.social-field-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted);
+}
+.social-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-input-text, var(--color-frame-text));
+}
+.social-input:focus {
+  outline: none;
+  border-color: rgb(var(--sapphire) / 0.4);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.social-secret-state { font-size: 10px; color: var(--color-frame-text-dim); }
+
+/* Wrong configuration is the ONLY state that gets the warning colour (W9). */
+.social-card-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+.social-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
+
+/* ── Remote-access section (令②): an independent section, NOT a channel card.
+   This batch renders it inert on purpose — no link, no QR, no address. ──── */
+.social-remote-card { gap: 10px; }
+.social-remote-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-frame-text);
+  border-left: 2px solid var(--color-frame-text-dim);
+  padding-left: 8px;
+}
+.social-remote-safety { display: flex; flex-direction: column; gap: 4px; }
+.social-remote-safety-line {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+}
+
+/* ── Narrow viewports (design §B.2: existing 480 / 768 values only) ─────── */
+@media (max-width: 768px) {
+  #social-modal { max-width: calc(100vw - 24px); max-height: 90vh; }
+  .social-modal-body { padding: 12px 14px 16px; gap: 14px; }
+}
+@media (max-width: 480px) {
+  /* Fields go single-column; the pill + switch row may wrap without pushing
+     the card wider than its box. */
+  .social-card-fields { grid-template-columns: minmax(0, 1fr); }
+  .social-card-actions > button { flex: 1 1 auto; }
+}
