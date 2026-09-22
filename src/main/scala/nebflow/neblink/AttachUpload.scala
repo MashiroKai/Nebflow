@@ -66,8 +66,8 @@ object AttachUpload:
   final case class Uploaded(attachmentId: String, name: String, size: Long, sha256: String)
 
   /** 桌面腿入口：字节源 = 本机磁盘件（size 与整件摘要由本函数自盘上取）。
-    * 传输集成批（S7）：桌面腿（agent 代发 `os.Path` 件）**不产预览**（预览只能由
-    * 浏览器端生成器产出）⇒ 固定 `preview = None`，E1 申报体与改前逐字节相同。 */
+    * 桌面腿（agent 代发 `os.Path` 件）**不产预览**（预览只能由浏览器端生成器产出）
+    * ⇒ 固定 `preview = None`，E1 申报体与改前逐字节相同。 */
   def uploadFile(
     cli: NeblinkClient,
     conversationId: String,
@@ -87,6 +87,9 @@ object AttachUpload:
    * `size`/`whole` 由调用方给定（桌面腿 = 盘上现算；网页腿 = 落临时件的同一遍流式
    * 写出顺带算），此后逐字同链：E1 建会话 → 取 `attachmentId` → 按
    * [[nebflow.dropbox.AttachContract.plan]] 逐块 E2。
+   *
+   * `previewDialectId` = E1 申报体里 `preview` 内层的**方言**（默认 = 契约件的默认发面方言）。
+   * 它是**政策参数**、不是判据：键名/键序全部由契约件的方言登记表算出。
    */
   def pushFile(
     cli: NeblinkClient,
@@ -96,9 +99,10 @@ object AttachUpload:
     whole: String,
     path: os.Path,
     preview: Option[AttachmentPreview] = None,
+    previewDialectId: String = AttachmentPreviewContract.DefaultSendDialectId,
     hooks: Hooks = Hooks.none
   ): IO[Either[Failure, Uploaded]] =
-    cli.createAttachment(conversationId, displayName, size, whole, preview).flatMap {
+    cli.createAttachment(conversationId, displayName, size, whole, preview, previewDialectId).flatMap {
       case Left(err) =>
         IO.pure(Left(Failure.Failed(s"attachment upload failed for '$displayName' (create): $err")))
       case Right(json) =>

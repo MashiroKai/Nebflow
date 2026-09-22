@@ -1320,11 +1320,12 @@ final class FriendService(
     uploadId: String,
     body: fs2.Stream[IO, Byte],
     hooks: AttachUpload.Hooks = AttachUpload.Hooks.none,
-    preview: Option[AttachmentPreview] = None
+    preview: Option[AttachmentPreview] = None,
+    previewDialectId: String = AttachmentPreviewContract.DefaultSendDialectId
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     AttachUploadId.validate(uploadId) match
       case Left(reason) => IO.pure(Left((AttachUploadId.ErrorCode, reason)))
-      case Right(id)    => uploadStreamChecked(conversationId, displayName, id, body, hooks, preview)
+      case Right(id)    => uploadStreamChecked(conversationId, displayName, id, body, hooks, preview, previewDialectId)
 
   /**
    * [[uploadStream]] 的**已过形态闸续体**。
@@ -1341,7 +1342,8 @@ final class FriendService(
     uploadId: String,
     body: fs2.Stream[IO, Byte],
     hooks: AttachUpload.Hooks,
-    preview: Option[AttachmentPreview]
+    preview: Option[AttachmentPreview],
+    previewDialectId: String
   ): IO[Either[(String, String), AttachUpload.Uploaded]] =
     currentClient.flatMap {
       case None =>
@@ -1372,7 +1374,17 @@ final class FriendService(
                     case AttachmentCapability.Supported(ev) =>
                       logger.info(s"attachment capability probe (web leg): supported ($ev)")
                       AttachUpload
-                        .pushFile(cli, conversationId, displayName, size, whole, tempPath, preview = preview, hooks = hooks)
+                        .pushFile(
+                          cli,
+                          conversationId,
+                          displayName,
+                          size,
+                          whole,
+                          tempPath,
+                          preview = preview,
+                          previewDialectId = previewDialectId,
+                          hooks = hooks
+                        )
                         .flatMap {
                           case Right(up) => IO.pure(Right(up))
                           case Left(fail) => IO.pure(Left((AttachUpload.errorCode(fail), fail.render)))
