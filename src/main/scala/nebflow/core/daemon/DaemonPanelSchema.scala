@@ -32,6 +32,21 @@ object DaemonPanelSchema:
     */
   val AllowedSandboxTokens: Set[String] = Set("allow-scripts", "allow-forms")
 
+  /** Extensions a panel file may carry. Narrow on purpose: the host reads the
+    * bytes and hands them to the panel as an `srcdoc` document (F-7), so this
+    * is NOT the browser-facing `/api/nf-file` whitelist — that one deliberately
+    * omits `html`/`htm`, which is exactly why the host carries the document
+    * instead of pointing the iframe at a URL.
+    */
+  val PanelHtmlExtensions: Set[String] = Set("html", "htm")
+
+  /** Upper bound on the panel document the host will carry into `srcdoc`.
+    * Fail-closed: an oversized file is refused rather than silently truncated
+    * (a truncated document could drop the panel's own `<meta CSP>` or its
+    * closing tags). 512 KB is far above any hand-written settings panel.
+    */
+  val MaxPanelHtmlBytes: Int = 512 * 1024
+
   /** Top-level declaration keys, closed: an unknown key rejects the whole
     * declaration rather than being quietly ignored.
     */
@@ -89,6 +104,89 @@ object DaemonPanelSchema:
     val Missing = "missing"
     val Permissive = "permissive"
   end CredentialStates
+
+  /** The LOCAL content-security policy injected into a host-carried panel
+    * document (F-7). Never a global CSP — this string only ever lands inside the
+    * panel iframe's own `<meta http-equiv>`, injected by the HOST, so a daemon
+    * declaration cannot remove or weaken it.
+    *
+    * `default-src 'none'` denies every fetch class by default; scripts and
+    * styles are admitted inline because a self-contained panel document carries
+    * its own `<script>`/`<style>`; `img-src data:` keeps inline icons working.
+    * `connect-src 'none'` is deliberate and STRICTER than the design's suggested
+    * `connect-src 'self'`: a host-carried document runs in an opaque origin
+    * (sandbox without `allow-same-origin`), where `'self'` matches no origin at
+    * all, and Phase A has no panel -> network leg by design (the host relays
+    * configuration I/O; the panel ships zero `postMessage` consumer). So the
+    * panel document can reach NOTHING — and in particular
+    * `fetch('https://evil.example')` is refused.
+    */
+  val PanelCsp: String =
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+      "img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"
+
+  /** Markers used to make the injection both idempotent and assertable. */
+  private val CspTagMarker = "data-daemon-panel-csp"
+
+  /** The `<meta>` the injector writes, carrying the assertable marker. */
+  private def cspMetaTag: String =
+    s"""<meta $CspTagMarker http-equiv="Content-Security-Policy" content="$PanelCsp">"""
+
+  /** True when `html` carries an injected panel CSP meta (the full tag shape,
+    * not merely the marker substring — a hostile document can print the marker
+    * text in its own body without any policy being in force).
+    */
+  def hasPanelCsp(html: String): Boolean = html.contains(cspMetaTag)
+
+  /** Inject the local `<meta CSP>` as the FIRST thing inside `<head>` (falling
+    * back to a prepended head, or to a bare prepend for a fragment).
+    *
+    * Purely textual and total: no parsing of untrusted markup beyond locating
+    * the first `<head ...>` open tag, and never an exception on malformed input.
+    *
+    * 🔴 The skip condition is the removal of OUR OWN tag, never the bare marker
+    * substring: keying idempotence on a string the declaration can also contain
+    * would let a hostile declaration suppress the policy by quoting the marker
+    * (a fail-open hole). Here a prior injected tag is stripped and re-inserted,
+    * so a second call is byte-identical while an author's own marker text has no
+    * effect at all.
+    */
+  def injectPanelCsp(html: String): String =
+    val stripped = html.replace(cspMetaTag, "")
+    val lower = stripped.toLowerCase
+    // Locate `<head>` and the end of its open tag, so the meta becomes the
+    // first child of head (before any author script can run fetch()).
+    val headIdx = lower.indexOf("<head")
+    if headIdx < 0 then cspMetaTag + stripped
+    else
+      val closeIdx = stripped.indexOf('>', headIdx)
+      if closeIdx < 0 then cspMetaTag + stripped
+      else stripped.substring(0, closeIdx + 1) + cspMetaTag + stripped.substring(closeIdx + 1)
+
+  /** Give the document a `<head>` element if it has none, so the injected
+    * `<meta>` is actually honoured — a `<meta>` outside `head` (or ahead of the
+    * doctype) is ignored by the browser, and a policy that is present in the
+    * bytes but not in force is worse than none because it reads as protection.
+    *
+    * Three shapes, in order: an existing `<head>` is left alone; an `<html>`
+    * without a head gets an empty head inserted right after its open tag; a bare
+    * fragment is wrapped into a minimal document.
+    */
+  def normalizePanelDocument(html: String): String =
+    val lower = html.toLowerCase
+    if lower.contains("<head") then html
+    else
+      val htmlIdx = lower.indexOf("<html")
+      if htmlIdx >= 0 then
+        val closeIdx = html.indexOf('>', htmlIdx)
+        if closeIdx < 0 then s"<head></head>$html"
+        else html.substring(0, closeIdx + 1) + "<head></head>" + html.substring(closeIdx + 1)
+      else s"<!doctype html><html><head></head><body>$html</body></html>"
+
+  /** Build the final `srcdoc` payload for a host-carried panel document:
+    * normalize (so a head exists) then inject the local policy.
+    */
+  def panelSrcdoc(html: String): String = injectPanelCsp(normalizePanelDocument(html))
 
   /** The `nebflow.json` explicit switch for the web escape hatch. Absent or
     * malformed config reads as DENY (fail-closed default).
