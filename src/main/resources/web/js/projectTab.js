@@ -29,10 +29,11 @@ import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
-import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
+import { fetchProjects, fetchProjectsRaw, fetchFlowMap, summarize, API } from './nodeData.js';
 import { renderFlowMapInto } from './flowMapTab.js';
 import { openAgentFile } from './agentFileViewer.js';
 import { playFlip, prefersReducedMotion, snapshotRects } from './listFlip.js';
+import { addSourceToggle } from './viewers/shared.js';
 
 // 两段动画取值（🔴 逐字对齐取证报告 §F「统一取值」表，零新造）：
 // 入场本体 220ms / 退场本体 280ms / 一次性强调环 900ms / 邻卡 FLIP 240ms /
@@ -54,10 +55,11 @@ function openProjectTab() {
   // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ Flow Map 就地视图」双态页，
   // 列表渲染进 .team-scroll；若当前在 Flow Map 就地视图（nav-bar + flowmap-view-body），
   // 先清掉再建滚动体，避免列表渲染进旧 Flow Map 滚动体、或 nav-bar 残留在列表上方。
+  exitProjectsSourceMode(pane); // 打开/重开面板 = 回到渲染态（源码态是会话内的临时视图）
   pane.dataset.projectsView = 'list';
   delete pane.dataset.flowMapProject;
   if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
-  const scroll = ensureScroll(pane);
+  const scroll = ensureScroll(pane); // 内部单点挂载切换钮（DOM 重建后随之回归）
   resetProjectsRetry(); // 用户动作打开面板 = 新一轮序列，重试预算重置
   renderProjectsInto(scroll);
 }
@@ -68,6 +70,11 @@ function openProjectTab() {
  *  容器 `tabindex="-1"`：退场时若焦点在卡内且无下一张卡，焦点移交给容器
  *  （§F-3③；无 tabindex 的元素 focus() 是 no-op）。 */
 function ensureScroll(pane) {
+  // 🔴 源码态守卫（A 波②）：源码态下列表体已让位给 Monaco，此刻**禁**重建
+  // （`pane.innerHTML = ''` 会把编辑器容器一并抹掉）。返回 null ⇒ 调用方的
+  // `renderProjectsInto(null)` 早退，等于「源码态下后台刷新是 no-op」——与母本
+  // （canvas.js:978 源码态跳过重渲）同款语义。回渲染态先经 exitProjectsSourceMode。
+  if (pane.dataset[PROJECTS_SOURCE_STATE] === '1') return null;
   let scroll = pane.querySelector('.team-scroll');
   if (!scroll) {
     pane.innerHTML = '';
@@ -81,6 +88,7 @@ function ensureScroll(pane) {
     scroll.tabIndex = -1;
     pane.appendChild(scroll);
   }
+  attachProjectsSourceToggle(pane); // 单点挂载：DOM 重建后钮随之回归（幂等）
   return scroll;
 }
 
@@ -89,6 +97,84 @@ function announceProjects(scroll, text) {
   if (!scroll || !text) return;
   const live = scroll.closest('.canvas-tab-pane')?.querySelector('.project-live-status');
   if (live) live.textContent = text;
+}
+
+// ── 右下角「源码/渲染」切换钮（作者 2026-09-22 补办令 A 波②）────────────────────
+// 🔴 形态来源是硬约束：**不新造**——直接把母本函数 `addSourceToggle`
+//   （web/js/viewers/shared.js:501-577，md/html 预览右下角那枚钮的唯一实现）原样复用，
+//   故控件类型/定位（absolute bottom:16 right:16）/尺寸（40×40 圆）/材质
+//   （--glass-control-* 玻璃 + backdrop blur）/图标（code ⇄ eye，同一对 SVG 常量）
+//   /状态键（pane.dataset.sourceMode === '1'）/hover（scale(1.05)）与母本**逐条同源**，
+//   零新类名、零新 CSS 值（样式仍由 split.css:689-717 的 `.canvas-source-toggle` 承担）。
+// 两态定义（面板语境）：
+//   渲染 = 现有的卡片列表（默认态）；
+//   源码 = GET /api/projects 的**线上原始载荷**（wire 保真），以 Monaco 只读呈现
+//          ——与「空 Flow Map 不渲染」同族：源码态不做任何本地派生/复序列化。
+// 🔴 只读理由：本载荷是 gateway 的项目列表快照，**没有对应的写端点**，若可编辑就会让
+//   ⌘S 对不存在的路径发 `writeFile` 帧（母本两处是真实可写文件，故仍可编辑）。
+// 与母本的**已申报差异**：
+//   ① `readOnly: true`（母本 false）——依据见上；
+//   ② 状态不持久化（母本同样不持久化：`dataset.sourceMode` 只活在 pane 上，
+//      刷新/重启后回渲染态）——本批**与母本一致**，不新增 localStorage 键；
+//   ③ 视图守卫：Flow Map 就地视图下摘除（该视图有自己的悬浮层，见 G13）。
+const PROJECTS_SOURCE_STATE = 'sourceMode';
+
+/** 源码态下要显示的正文 = 最近一次成功取数的**线上原文**（由 renderProjectsInto 落槽）。 */
+function projectsSourceText(pane) {
+  return typeof pane._projectsRaw === 'string' ? pane._projectsRaw : '';
+}
+
+/** 渲染态出口：清源码态并让既有渲染管线重建列表（复用 `ensureScroll` + 取数路径，
+ *  🔴 不另造第二个渲染器）。
+ *  @param {HTMLElement} pane
+ *  @param {string=} latest — 母本回调携带的最新缓冲（`addSourceToggle` 传出）。
+ *    本批 readOnly ⇒ 与线上原文逐字相同；仍按母本语义「向前携带」，
+ *    使将来若可编辑化，改动不会在此丢帧。 */
+function renderProjectsListInto(pane, latest) {
+  if (typeof latest === 'string') pane._projectsRaw = latest;
+  exitProjectsSourceMode(pane);
+  const scroll = ensureScroll(pane);
+  if (scroll) renderProjectsInto(scroll);
+}
+
+/** 清掉源码态标记与编辑器（幂等；进入 Flow Map 视图 / 重开面板 / 关闭页签都走这里）。 */
+function exitProjectsSourceMode(pane) {
+  if (!pane) return;
+  delete pane.dataset[PROJECTS_SOURCE_STATE];
+  const handle = /** @type {any} */ (pane)._editorHandle;
+  if (handle) {
+    try { handle.dispose(); } catch (_) { /* 已销毁（页签关闭路径）⇒ no-op */ }
+    /** @type {any} */ (pane)._editorHandle = null;
+  }
+  pane._dirty = false;
+  pane.querySelector('.canvas-monaco-container')?.remove();
+}
+
+/** 挂载右下角切换钮。幂等两重：① 已在场则不重建（避免每次重渲都换节点、抢焦点）；
+ *  ② `addSourceToggle` 自身也先 remove 旧钮（母本纪律）。
+ *  仅在**列表视图**在场时挂；Flow Map 就地视图由调用方先摘除。
+ *
+ *  🔴 `content` 用 **getter**（不是取值快照）：本面板的载荷是异步取回的，挂钮那一刻
+ *  `_projectsRaw` 往往还是空的；若按值传入，点开源码态会是空编辑器。getter 让母本
+ *  每次 `ctx.content` 读取都拿到**当下**的线上原文，而母本函数与调用方（md/html）
+ *  零改动——`{ ...ctx, content: latest }` 的展开会即时求值，语义仍是「向前携带」。 */
+function attachProjectsSourceToggle(pane) {
+  if (!pane) return;
+  if (pane.dataset.projectsView === 'flow-map') { pane.querySelector('.canvas-source-toggle')?.remove(); return; }
+  if (pane.querySelector('.canvas-source-toggle')) return; // 已在场 ⇒ 幂等早退
+  addSourceToggle(pane, (p, ctx) => renderProjectsListInto(p, ctx?.content), {
+    get content() { return projectsSourceText(pane); },
+    // 🔴 `fileName` 只用于挑语言，此处**刻意取 plaintext**：`.json` 会让 Monaco 去拉
+    // 语言专属 worker，而本仓 vendor 树里那条路径是坏的（`/vendor/monaco/vs/vs/
+    // language/json/jsonWorker.js` 双 `vs` ⇒ 404 + pageerror）——该缺陷**既存且与本批
+    // 无关**（改前树用真实路径打开任意 .json 文件即复现，见证据
+    // `probe-json-worker.mjs` 读数）。本批不修它（越面：monacoEditor.js 的 worker
+    // 接线属共享件，不在本批写面），但**不继承**它 ⇒ 本特性零新增控制台错误。
+    // 形态约束（控件类型/视觉语言/定位/交互）与语言选择无关，故不构成形态偏离。
+    absPath: 'api-projects.txt',
+    fileName: 'projects.txt',
+    readOnly: true, // 母本差异 ①（申报见上）
+  });
 }
 
 /** 打开 Project 标签页（由 activity bar Project 按钮调用）。 */
@@ -137,6 +223,16 @@ function scheduleProjectsRetry(scroll) {
 
 async function renderProjectsInto(scroll) {
   if (!scroll) return;
+  // 🔴 源码态守卫（A 波②）：源码态下列表体已让位给 Monaco（`.team-scroll` 已脱树），
+  // 任何后台重渲（WS nodeCreated/… 事件 / 兜底 C 轮询 / onReconnect）都**不得**把用户
+  // 从源码态拽回渲染态——否则用户正在读的载荷会被异常重绘。回渲染态只由切换钮的
+  // renderFn（renderProjectsListInto）显式触发。
+  // 与母本逐条同源：canvas.js:647/978 同样以 `dataset.sourceMode === '1'` 跳过刷新
+  // （源码态 = 冻结缓冲，不随后台刷新漂移）。
+  // ⚠ pane 必须由 `getTabPane` 取（脱树的 scroll 上 `.closest()` 恒返回 null，
+  // 那样 inSource 会永远算成 false ⇒ 守卫失效）。
+  const pane = getTabPane('projects');
+  if (pane && pane.dataset[PROJECTS_SOURCE_STATE] === '1') return;
   // 渲染代：WS churn（nodeCreated/Updated/…）与手动打开会并发发起渲染，
   // 慢的那次回来晚就会用旧数据盖掉新数据（卡片"时有时无"的根因之一）。
   // 只有最后一次发起的渲染允许写 DOM。
@@ -148,8 +244,11 @@ async function renderProjectsInto(scroll) {
     scroll.innerHTML = `<div class="flowmap-loading">${esc(t('project.loading'))}</div>`;
   }
   let projects;
+  let raw = '';
   try {
-    projects = await fetchProjects();
+    const res = await fetchProjectsRaw();
+    projects = res.projects;
+    raw = res.raw;
   } catch (e) {
     if (stale()) return;
     // 已有卡片 ⇒ **保留现列表**（一次刷新失败不该把可见列表换成错误页——兜底 C 的
@@ -167,6 +266,7 @@ async function renderProjectsInto(scroll) {
     return;
   }
   if (stale()) return;
+  if (pane && typeof raw === 'string') pane._projectsRaw = raw;
   resetProjectsRetry(); // 取数成功（无论空态/就绪态）⇒ 本轮重试预算归零
   if (!projects || projects.length === 0) {
     if (scroll.querySelector('.project-card')) {
@@ -589,6 +689,11 @@ function openFlowMapInPlace(projectName, highlightNodeId, highlightChainId) {
     && pane.dataset.flowMapProject === projectName;
   if (!sameView) {
     ensureFlowCss();
+    // 🔴 Flow Map 就地视图不承载切换钮（A 波②）：该视图自带悬浮层
+    // （.fm-float-layer / .fm-fab，flowMap.css:723 同角落 16/16），两枚同锚点圆钮
+    // 会互相遮挡 ⇒ 进图前先摘钮并清源码态（连同编辑器一起拆，避免残留会话）。
+    exitProjectsSourceMode(pane);
+    pane.querySelector('.canvas-source-toggle')?.remove();
     pane.dataset.projectsView = 'flow-map';
     pane.dataset.flowMapProject = projectName;
     pane.innerHTML = `
