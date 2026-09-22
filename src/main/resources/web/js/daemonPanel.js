@@ -29,6 +29,7 @@ import { t } from './i18n.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn } from './utils.js';
+import { stripCredentialParams } from './nfTicket.js';
 
 const PANEL_CSS = `
 <style id="daemon-panel-css">
@@ -327,6 +328,18 @@ function renderOverlay() {
 
 /** The web escape hatch. Sandbox tokens come from the SERVER's validated
  *  declaration and are re-checked here: `allow-same-origin` must never appear.
+ *
+ *  Two carriage modes, chosen by what the server published:
+ *
+ *    - `srcdoc` (kind:"web" + htmlFile): the HOST read the panel document and
+ *      injected the local `<meta CSP>` into it (F-7), so the policy is in force
+ *      on the very first byte the iframe parses. This is the only carriage on
+ *      which a panel policy can exist at all — a standalone document cannot be
+ *      given a meta by its embedder.
+ *    - `src` (kind:"web" + url): a remote document the host cannot reach into;
+ *      its isolation is the sandbox + referrer policy below.
+ *
+ *  In both modes the frame is credential-free (E3/F13).
  */
 function buildWebFrame(decl) {
   const frame = document.createElement('iframe');
@@ -335,9 +348,19 @@ function buildWebFrame(decl) {
     tk === 'allow-scripts' || tk === 'allow-forms');
   frame.setAttribute('sandbox', tokens.join(' '));
   frame.setAttribute('referrerpolicy', 'no-referrer');
+
+  const srcdoc = typeof decl.srcdoc === 'string' ? decl.srcdoc : '';
+  if (srcdoc) {
+    // Host-carried document: the CSP is already in the markup, and there is no
+    // URL at all — so no credential parameter can ride along by construction.
+    frame.setAttribute('srcdoc', srcdoc);
+    frame.dataset.panelCarriage = 'srcdoc';
+    return frame;
+  }
   // Belt: a credential parameter must never ride on a panel URL.
-  const url = String(decl.panelUrl || '').replace(/([?&])(token|ticket)=[^&]*/g, '$1').replace(/[?&]$/, '');
+  const url = stripCredentialParams(String(decl.panelUrl || ''));
   frame.src = url;
+  frame.dataset.panelCarriage = 'src';
   return frame;
 }
 
