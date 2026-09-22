@@ -106,7 +106,6 @@ try {
     window.__sent = [];
     window.__picked = 'NOT-CALLED';
     window.__roots = [];
-    const origSend = proto.send;
     proto.send = function (d) {
       try {
         const m = typeof d === 'string' ? JSON.parse(d) : d;
@@ -115,7 +114,6 @@ try {
       } catch { window.__sent.push(String(d)); }
       return true; // 真实 send 在无服务端时会抛/丢弃；此处只记不发
     };
-    void origSend;
     Object.defineProperty(proto, 'readyState', { configurable: true, get: () => 1 }); // WebSocket.OPEN === 1
     // 真实入站分发入口（ws.js `onmessage` 闭包；main.js 的 onMessage('browseResult') 挂其上）
     window.__entry = state.ws && typeof state.ws.onmessage === 'function' ? state.ws.onmessage : null;
