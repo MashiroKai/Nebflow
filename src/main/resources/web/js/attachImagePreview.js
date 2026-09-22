@@ -25,15 +25,17 @@
 //   rung, capMet, mode, upscaled, scaleRatio, source:{…}, ladder:[…], probe:{…}, format, formatReason }`
 //   即「Blob + 生成元数据（mime / 尺寸 / 字节数 / 实际档位）」。
 //
-// ── 传输集成批（2026-09-21 · S5）出口扩面 ──
-//   `ok:true` 时出参**补两键**（线面六键的字节半边；几何半边 `width`/`height` 既有）：
+// ── 摘要 / base64 出口（传输集成批 S5；字段方言双兼容批沿用）──
+//   `ok:true` 时出参**补两键**（**与方言无关**：这里只产「标准内部表示」的字节半边 ——
+//   线面拼写（`{mime,w,h,size,b64}` ⇄ `{fmt,w,h,bytes,sha256,b64}`）由
+//   `attachPreviewField.js` 的方言登记表在**写出时**决定，本件零方言知识）：
 //     · `sha256` = 对**所选 blob 字节**的 SHA-256（64 位小写 hex；实现单点 =
 //       `attachPreviewField.js::sha256HexOfBytes`，本件零第二份）；
 //     · `b64` = 同一份字节的标准 base64（RFC 4648 §4 带填充、无 `data:` 前缀；
 //       实现单点 = `attachPreviewField.js::bytesToBase64`）。
-//   三者与 `bytes`(= `blob.size`) 同源于**同一份字节** ⇒ 机械自洽（`declarePreviewOf`
-//   的 `bytes` 交叉复核 + 上限族判定收口）。摘要/编码能力缺失 ⇒ `ok:false`
-//   （fail-closed：线面字段没有 sha256 就不成立，禁发半截预览）。
+//   三者与 `bytes`(= `blob.size`) 同源于**同一份字节** ⇒ 机械自洽（归一化面的
+//   `bytes` 交叉复核 + 上限族判定收口）。摘要/编码能力缺失 ⇒ `ok:false`
+//   （fail-closed：没有摘要就不成字段，禁发半截预览）。
 //   `q`（quality）**留本地、不上 wire**（生成参数，非契约键）。
 //
 // 🔴 **本件没有「这件是不是图片」的判据**（刻意）：判据单源在既有

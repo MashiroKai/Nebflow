@@ -38,9 +38,9 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
 // voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
 import { startDictation, stopDictation } from './voiceEngine.js';
-// 传输集成批（S6）：预览字段的**读面单点**（六键判读 + `data:` 合成全仓唯一落点；
+// 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
 // 该模块零 import ⇒ 无环）。
-import { previewOf, previewDataUrlOf } from './attachPreviewField.js';
+import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
 import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
@@ -2310,19 +2310,22 @@ function attachInlineImage(card, att, kind, src) {
     mount(cached, localOutAttachmentIds.has(id) ? 'local-handle' : 'server-cached');
     return true;
   }
-  // S6（传输集成批 · 契约件的收端消费腿）：**预览优先、免往返即显** ——
-  //   · 判读单点 = `attachPreviewField.previewOf`（六键全有或全无；缺键 / `null` /
-  //     形状不全 / 越上限 ⇒ null ⇒ 走下面今天的「拉原件」路，逐字现状）；
+  // 收端消费腿（字段方言双兼容批）：**预览优先、免往返即显** ——
+  //   · 判读单点 = `attachPreviewField.readPreviewField`（按**方言登记表**逐条试：五键
+  //     `{mime,w,h,size,b64}` 与六键 `{fmt,w,h,bytes,sha256,b64}` **都认**；第三种未知
+  //     方言 / 缺键 / `null` / 形状不全 / 越上限 ⇒ null ⇒ 走下面今天的「拉原件」路，逐字现状）；
   //   · `data:` 合成只经 `previewDataUrlOf`（全仓唯一合成点；wire 面零 `data:` 前缀）；
-  //   · 盒比协同（visup-ratio 批唯一算术落点）：尺寸已知 ⇒ `preview.w/h` 经
+  //   · 盒比协同（visup-ratio 批唯一算术落点）：尺寸已知 ⇒ 归一化 `w/h` 经
   //     `mount`→`paintInlineFrame` 直通**同一个** `inlineBoxFor`（禁另立宽高逻辑），
   //     骨架→真帧同帧落地、且**零解码取尺寸**（连内禀尺寸探测都省了）；
-  //   · 读数面：`data-att-src="inline-preview"` + `data-att-preview="1"`（判据 ④① 的
-  //     机械读数 = 本腿 `return` ⇒ `api.downloadAttachment` 调用计数 **0**）；
+  //   · 读数面：`data-att-src="inline-preview"` + `data-att-preview="1"`（免往返的机械读数
+  //     = 本腿 `return` ⇒ `api.downloadAttachment` 调用计数 **0**）+ `data-att-dialect`
+  //     （识别到的那一版，便于对账）；
   //   · 本腿在既有内联预算闸**之后** ⇒ 预算外大原件行为逐字不变（零越面）。
-  const previewField = previewOf(att);
+  const previewField = readPreviewField(att);
   if (previewField) {
     img.dataset.attPreview = '1';
+    img.dataset.attDialect = previewField.dialectId;
     mount(previewDataUrlOf(att), 'inline-preview', { w: previewField.w, h: previewField.h });
     return true;
   }
