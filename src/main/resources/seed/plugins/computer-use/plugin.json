@@ -2,6 +2,6 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "computer-use",
   "version": "0.1.0",
-  "description": "桌面观测与操控包——节点获得在 macOS 本机观测桌面（应用/窗口/屏幕截图/剪贴板）与操控桌面应用（打开激活、按键、点击）的可用路径、权限引导与无害化纪律。适用于桌面自动化、操控鼠标键盘、点击与输入、程序化按键、屏幕截图、窗口与界面元素读取、剪贴板读写、本机 app 自动化、GUI 验收等任务。内含 skill：desktop-control（观测—动作—复核主循环、观测路径与命令、权限引导卡、分级与 fail-closed 收口）。不适用于浏览器页面操作（由独立的浏览器操控插件面承担）；宿主进程与宿主应用窗口永不可入观测面；出图与汇报另配 visual-report。组件面：宿主执行器未就绪（见 references/host-dependencies.md），无 mcp.json、无工具扩展。",
+  "description": "桌面观测与操控包——节点获得在 macOS 本机观测桌面（应用/窗口/屏幕截图/剪贴板）与操控桌面应用（打开激活、按键、点击）的可用路径、权限引导与无害化纪律。适用于桌面自动化、操控鼠标键盘、点击与输入、程序化按键、屏幕截图、窗口与界面元素读取、剪贴板读写、本机 app 自动化、GUI 验收等任务。内含 skill：computer-use（观测—动作—复核主循环、观测路径与命令、权限引导卡、分级与 fail-closed 收口）。不适用于浏览器页面操作（由独立的浏览器操控插件面承担）；宿主进程与宿主应用窗口永不可入观测面；出图与汇报另配 visual-report。组件面：宿主执行器未就绪（见 references/host-dependencies.md），无 mcp.json、无工具扩展。",
   "author": {"name": "Nebflow"}
 }
