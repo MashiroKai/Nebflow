@@ -1111,6 +1111,12 @@ object GatewayMain extends IOApp:
 
                                             TtsService.create().flatMap { ttsService =>
                                               SttService.create().flatMap { sttService =>
+                                                // R-1b conn-guard（2026-09-22）：per-IP WS 看护 + 摄取超时
+                                                // 显式化 + 连接面快照/预警 + /health/conn（设计件 §C④，
+                                                // 20260917_gateway-connection-hardening.md）。引用点：下方
+                                                // builder 钩子 / WS·REST 构造 / 快照循环 / requestTap。
+                                                val connGuardLogger = NebflowLogger.forName("nebflow.conn-guard")
+                                                ConnGuard.create(connGuardLogger).flatMap { connGuard =>
                                                 EmberServerBuilder
                                                   .default[IO]
                                                   .withHost(cfg.host)
@@ -1122,7 +1128,38 @@ object GatewayMain extends IOApp:
                                                   // 4096 = 4 倍余量；idleTimeout 1h→5min 加速回收僵
                                                   // 死连接（presence WS 心跳 5s/10s，不受影响）。
                                                   .withMaxConnections(4096)
-                                                  .withIdleTimeout(5.minutes)
+                                                  // R-1a 落定的 idle 值改单源引用（值不变，零行为变更）。
+                                                  .withIdleTimeout(ConnGuardConfig.IdleTimeout)
+                                                  // R-1b：摄取层超时显式化——库默认 javap 钉死（header 5s /
+                                                  // shutdown 30s：http4s-server_3-0.23.30 package$defaults$ 与
+                                                  // ember Defaults$）。零行为变更；防上游默认漂移 + 摄取面可
+                                                  // 检索（设计件 §E.3「留给实施批钉」项）。
+                                                  .withRequestHeaderReceiveTimeout(ConnGuardConfig.HeaderReceiveTimeout)
+                                                  .withShutdownTimeout(ConnGuardConfig.ShutdownTimeout)
+                                                  // 连接级异常钩子（0.23.30 仅有的官方连接级缝，设计件 §B.4/§C④-3）：
+                                                  // ReadTimeout = 闲置回收（5min idle 的常规动作）；RequestHeaders
+                                                  // Timeout = 头部摄取超时（慢速摄取/风暴形状信号）；写失败 = 对端
+                                                  // 断开。逐条落 nebflow.log——把「静默失联」变可留痕。未匹配异常
+                                                  // 走 ember 默认处理，行为零改动。（注：RequestHeadersTimeout 类
+                                                  // 本体 private[ember] ⇒ 以类名守卫判别，不用类型模式。）
+                                                  .withConnectionErrorHandler {
+                                                    case e
+                                                        if e.getClass.getSimpleName.contains(
+                                                          "RequestHeadersTimeout"
+                                                        ) =>
+                                                      connGuardLogger.warn(
+                                                        s"conn-guard: ember request-headers-timeout (slow ingestion, ${ConnGuardConfig.HeaderReceiveTimeout}): ${String.valueOf(e.getMessage)}"
+                                                      )
+                                                    case e: org.http4s.ember.core.EmberException.ReadTimeout =>
+                                                      connGuardLogger.debug(
+                                                        s"conn-guard: ember read-timeout (idle reap, ${ConnGuardConfig.IdleTimeout}): ${String.valueOf(e.getMessage)}"
+                                                      )
+                                                  }
+                                                  .withOnWriteFailure { (reqOpt, _resp, t) =>
+                                                    connGuardLogger.debug(
+                                                      s"conn-guard: ember write-failure to ${reqOpt.fold("?")(r => ConnGuard.normalizeIp(r.remoteAddr))}: ${t.toString}"
+                                                    )
+                                                  }
                                                   .withHttpWebSocketApp { wsb =>
                                                     val wsRoutes = new WebSocketRoutes(
                                                       wsb,
@@ -1140,7 +1177,8 @@ object GatewayMain extends IOApp:
                                                       mcpManager,
                                                       sttService = sttService,
                                                       nfTicketStore = nfTicketStore,
-                                                      nfPathPolicy = nfPathPolicy
+                                                      nfPathPolicy = nfPathPolicy,
+                                                      connGuard = connGuard
                                                     )
                                                     wsRoutesHolder = Some(wsRoutes)
 
@@ -1155,20 +1193,25 @@ object GatewayMain extends IOApp:
                                                       ttsService = ttsService,
                                                       neblinkDiscovery = Some(tsDiscovery),
                                                       gatewayPort = cfg.port.value,
-                                                      wsHub = wsHub
+                                                      wsHub = wsHub,
+                                                      connGuard = connGuard
                                                     )
 
-                                                    Router(
-                                                      "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                        .presenceWsRoutes(wsb)),
-                                                      // Logto AC+PKCE loopback callback (RFC 8252) —
-                                                      // root-level, outside /api: the provider's browser
-                                                      // redirect carries no gateway token.
-                                                      "/auth" -> restApiRoutes.authCallbackRoutes,
-                                                      // Static tree only — gzip must never wrap the
-                                                      // "/api" tree (SSE stream, presence WS).
-                                                      "/" -> GzipMiddleware(wsRoutes.routes)
-                                                    ).orNotFound
+                                                    // R-1b：请求级 per-IP 观测 tap（§C④-2，只计数不拦截——
+                                                    // WS 升级面的准入由各受理点 connGuard.checkWs 把门）。
+                                                    ConnGuard.requestTap(connGuard)(
+                                                      Router(
+                                                        "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
+                                                          .presenceWsRoutes(wsb)),
+                                                        // Logto AC+PKCE loopback callback (RFC 8252) —
+                                                        // root-level, outside /api: the provider's browser
+                                                        // redirect carries no gateway token.
+                                                        "/auth" -> restApiRoutes.authCallbackRoutes,
+                                                        // Static tree only — gzip must never wrap the
+                                                        // "/api" tree (SSE stream, presence WS).
+                                                        "/" -> GzipMiddleware(wsRoutes.routes)
+                                                      ).orNotFound
+                                                    )
                                                   }
                                                   .build
                                                   .use { _ =>
@@ -1184,6 +1227,10 @@ object GatewayMain extends IOApp:
                                                       _ <- logger.info(
                                                         s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                       )
+                                                      // R-1b conn-guard：60s 连接面快照 + warnPct 预警
+                                                      // （§C④-1/5）。不经 HTTP 面——连接层被灌死时这条
+                                                      // 观察者路仍照常输出，正是失联取证需要的独立观察者。
+                                                      _ <- connGuard.snapshotLoop.start
                                                       // ── 插件装载健康摘要（P1 静默缩容可见性，2026-09-10）──
                                                       // 启动完成即聚合输出一次：总包数/载入数/目录可见数 +
                                                       // 拒载清单 + 未批准清单 + digest 漂移清单（一行一条）。
@@ -1393,6 +1440,7 @@ object GatewayMain extends IOApp:
                                                       mcpManager.stopAll() *>
                                                       releaseBackend
                                                   )
+                                                } // end connGuard (R-1b)
                                               } // end sttService
                                             } // end ttsService
                                         } // end neblinkService setup block

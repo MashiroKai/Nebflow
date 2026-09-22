@@ -54,7 +54,10 @@ class RestApiRoutes(
   ttsService: Option[TtsService] = None,
   neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
   gatewayPort: Int = 8080,
-  wsHub: WsHub = new WsHub
+  wsHub: WsHub = new WsHub,
+  /** R-1b conn-guard：presence WS 受理面 per-IP 看护 + /health/conn 读数源。
+    * 缺省 = 全放行实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。 */
+  connGuard: ConnGuard = ConnGuard.disabled
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -82,6 +85,12 @@ class RestApiRoutes(
       // advertises can never drift from what this endpoint serves. Fields,
       // field order and value semantics are unchanged (byte-compatible body).
       HealthPayload.build(sharedResources.healthMonitor).flatMap(Ok(_))
+
+    // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
+    // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
+    // （watchdog/作者探视用）；不含任何 header/body/token 内容。
+    case GET -> Root / "health" / "conn" =>
+      connGuard.snapshot.flatMap(s => Ok(ConnGuard.healthJson(s, ConnGuard.fdCount())))
 
     // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
     // telemetry with dimension slicing.
@@ -2600,6 +2609,18 @@ class RestApiRoutes(
             case true =>
               if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
               else
+                // R-1b conn-guard：信任闸与 deviceId 校验之后、受理之前——
+                // per-IP WS 并发检查（拒 ⇒ 可见 429，不静默）。环回恒放行；
+                // NebLink 受信对端（如 100.x 组网）照常受 per-IP 上限约束
+                // （昨日灌表对端正是受信对端——信任闸不构成资源面防线）。
+                val wsIpNorm = ConnGuard.normalizeIp(req.remoteAddr)
+                connGuard.checkWs(wsIpNorm).flatMap {
+                  case Some(reason) =>
+                    logger.warn(s"conn-guard: presence WS upgrade rejected ip=$wsIpNorm reason=$reason") *>
+                      TooManyRequests(
+                        Json.obj("error" -> s"Connection guard: WebSocket limit reached ($reason)".asJson)
+                      )
+                  case None => { // 大段受理体原缩进零改排（花括号区域经典解析）
                 val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
                 val peerPlatform = req.params.getOrElse("platform", "")
                 val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
@@ -2644,9 +2665,16 @@ class RestApiRoutes(
                       }.onFinalize(
                         ms.removePeer(peerDeviceId).handleErrorWith(_ => IO.unit)
                       )
-                    wsb.build(send, receive)
+                    // R-1b：入账在 build 前（此后仅剩 build 本身，失败即自然不
+                    // build ⇒ 无幽灵计数）；回减挂流 finalizer（与 removePeer 同缝，
+                    // 连接关闭必走）。
+                    connGuard.acquireWs(wsIpNorm).flatMap { guardHandle =>
+                      wsb.build(send, receive.andThen(_.onFinalize(connGuard.releaseWs(guardHandle))))
+                    }
                   }
                 }
+                } // end conn-guard case None
+                } // end conn-guard checkWs flatMap
           }
 
     // (2026-09-20 device-face hardening batch) POST /api/flow/event was RETIRED
