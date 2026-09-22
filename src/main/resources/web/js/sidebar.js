@@ -26,6 +26,36 @@ import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.j
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
+// ── Provider protocol face: display ←→ stored value (protoface-ui batch,
+// 2026-09-22) ────────────────────────────────────────────────────────────────
+// Stored values stay `openai` / `anthropic` forever (the engine's LlmProtocol
+// decoder — config.scala:19-23 — is unchanged by this batch); only the FACE the
+// user reads changes. The two id⇄endpoint-form pairs are the engine's own two
+// adapters: OpenAiAdapter.scala:45-47 (`{base}/chat/completions`) and
+// AnthropicAdapter.scala:30-32 (`{base}/v1/messages`).
+const PROTOCOL_FORM_LABEL = { openai: 'chat/completions', anthropic: 'messages' };
+const PROTOCOL_ENDPOINT_PATH = { openai: '/chat/completions', anthropic: '/v1/messages' };
+
+/** Stored protocol id → the endpoint form shown to the user. An id this build
+ *  does not know is shown verbatim (never silently re-labelled). */
+function protocolFormLabel(protocol) {
+  return PROTOCOL_FORM_LABEL[protocol] || protocol || '';
+}
+
+/** The POST target the engine will hit for `protocol` + `baseUrl`. Same
+ *  normalization as the adapters (OpenAiAdapter.scala:45-47 /
+ *  AnthropicAdapter.scala:30-32): trailing slashes stripped, a base that
+ *  already ends in the endpoint path kept as-is. Empty string = "no target to
+ *  promise yet" — an unknown face, or a baseUrl still blank (the same rule the
+ *  model-fetch status line follows at :1709-1713). */
+function protocolPostTarget(protocol, baseUrl) {
+  const path = PROTOCOL_ENDPOINT_PATH[protocol];
+  if (!path) return '';
+  const base = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+  return base.endsWith(path) ? base : base + path;
+}
+
 // 2026-09-03 作者裁定：光球（micOrb）按预设驱动，设置页隐藏光球配置区。
 // 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
 // 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
@@ -936,7 +966,7 @@ function renderProviderCard(name, p) {
         <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
       <div class="cfg-card-meta">
-        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
+        <span class="cfg-card-badge">${escapeHtml(protocolFormLabel(p.protocol))}</span>
         <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
       </div>
       ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
@@ -1786,7 +1816,10 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
       {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
       {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
-      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
+      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: [
+        { value: 'anthropic', label: 'messages' },
+        { value: 'openai', label: 'chat/completions' },
+      ]},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
     ],
     onConfirm(values) {
@@ -1820,6 +1853,37 @@ function showProviderModal(existingName, existingData, onSave) {
   // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
   // manual input when the proxy endpoint is unavailable.
   wireProviderModelFetch();
+  // protocol select → live POST-target helper (render-only, zero network).
+  wireProtocolHelper();
+}
+
+/** Protocol select → helper line under it showing the POST target the engine
+ *  will hit for the currently selected face + the currently typed baseUrl
+ *  (protoface-ui batch 2026-09-22). Precedent for the "small muted status line
+ *  inside a .cfg-form-group" shape = the model-list fetch row (:1699-1704).
+ *  Live on both inputs; 🔴 pure rendering — no fetch, no send, no config write. */
+function wireProtocolHelper() {
+  const overlay = document.getElementById('cfg-modal');
+  if (!overlay) return;
+  // checkJs: querySelector returns Element; the casts pin the two element
+  // types this function reads `.value` from (no new baseline rows).
+  const select = /** @type {HTMLSelectElement|null} */ (overlay.querySelector('[data-field="protocol"]'));
+  const baseInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="baseUrl"]'));
+  if (!select || !baseInput) return;
+
+  const line = document.createElement('div');
+  line.className = 'cfg-hint cfg-protocol-helper';
+  line.dataset.helper = 'protocol';
+  select.closest('.cfg-form-group')?.appendChild(line);
+
+  const paint = () => {
+    const target = protocolPostTarget(select.value, baseInput.value);
+    line.textContent = target ? t('provider.protocolHelper', { target }) : '';
+  };
+  select.addEventListener('change', paint);
+  // 'input' too: the target follows the baseUrl keystroke-by-keystroke.
+  baseInput.addEventListener('input', paint);
+  paint();
 }
 
 // --- Generic modal ---
@@ -1827,11 +1891,22 @@ function showModal({title, fields, onConfirm}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
+  // Option shape (protoface-ui batch 2026-09-22): a plain string means
+  // value === label and keeps the legacy interpolation VERBATIM (byte-identical
+  // output for every string input, so the other string-array selects render
+  // exactly as before); `{value, label}` is the new shape — value is the stored
+  // value, label is display-only, and both are escaped (new surface).
+  const optionHtml = (o, selected) => {
+    const obj = o && typeof o === 'object';
+    const value = obj ? o.value : o;
+    const label = obj ? o.label : o;
+    return `<option value="${obj ? escapeHtml(value) : value}" ${value === selected ? 'selected' : ''}>${obj ? escapeHtml(label) : label}</option>`;
+  };
   const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
-              ${f.options.map(o => `<option value="${o}" ${o === f.value ? 'selected' : ''}>${o}</option>`).join('')}
+              ${f.options.map(o => optionHtml(o, f.value)).join('')}
             </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
             f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}

@@ -907,7 +907,11 @@ export default {
   'provider.keyPlaceholder': 'Leave as *** to keep existing',
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
-  'provider.protocol': 'Protocol',
+  'provider.protocol': 'Endpoint format',
+  // The helper line under the endpoint-format select (protoface-ui batch
+  // 2026-09-22): shows the POST target the engine will actually hit for the
+  // selected face + the currently typed base URL. {target} = full URL.
+  'provider.protocolHelper': 'This provider will receive: POST {target}',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',

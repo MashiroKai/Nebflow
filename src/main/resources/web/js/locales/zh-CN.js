@@ -875,7 +875,10 @@ export default {
   'provider.keyPlaceholder': '留为 *** 保持不变',
   'provider.keyRequired': '新建服务商需要 API Key',
   'provider.required': '必填',
-  'provider.protocol': '协议',
+  'provider.protocol': '接口格式',
+  // 接口格式下拉下方的 helper 行（protoface-ui 批，2026-09-22）：显示当前所选
+  // 面 + 当前 baseUrl 推导出的实际 POST 目标。{target} = 完整 URL。
+  'provider.protocolHelper': '该服务商将收到：POST {target}',
   'provider.idRequired': '请填写服务商 ID',
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
