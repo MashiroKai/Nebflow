@@ -1077,6 +1077,11 @@ export default {
   'askUser.viewCompare': 'View in Canvas',
   'askUser.pendingTitle': 'Pending questions',
   'askUser.sourceClosed': 'Source closed (node cancelled)',
+  // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
+  // history question row with NO recorded answer (it used to be painted as
+  // answered — a fake `-> ` line). An explicitly labelled dead card beats
+  // silently claiming it was answered.
+  'askUser.historyUnanswered': 'No recorded answer in history (pending)',
   // Multi AskUser concurrency batch (#250)
   'askUser.turnInterrupted': 'Turn interrupted (question void)',
   'askUser.nextPending': 'Next pending ({n})',

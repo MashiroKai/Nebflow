@@ -323,7 +323,15 @@ object InteractionHub:
       }
       .sortBy(_._2.createdAt)
       .map { case (rid, p) =>
-        renderPending(p, rid).deepMerge(Json.obj("replayed" -> Json.fromBoolean(true)))
+        // 案 C（双开缺陷批 2026-09-21，chain-askuserdup）：重放帧带**替代语义标**
+        // `replaces:true`（= 本帧替代本会话内同 requestId 的既有卡，不是一张新提问）。
+        // `replayed:true` 是既有的「快照重发」标，两者同帧：前者面向「这张卡与既有卡
+        // 的关系」，后者面向「本帧的来源」，前端按 `msg.replayed || msg.replaces` 走
+        // 替代腿（`main.js`）。🔴 本标不可单独闭环（历史卡仍须靠案 B 的 requestId 才
+        // 能被寻址），故与案 B 同批落地、只作附属帧。
+        renderPending(p, rid).deepMerge(
+          Json.obj("replayed" -> Json.fromBoolean(true), "replaces" -> Json.fromBoolean(true))
+        )
       }
 
   /** 重放帧按 kind 选渲染器（单一分派点，避免快照侧复制粘贴两份拼帧逻辑）。 */

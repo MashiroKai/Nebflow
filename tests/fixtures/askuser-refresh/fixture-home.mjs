@@ -38,7 +38,11 @@ const PROJECT = process.env.FIXTURE_PROJECT || 'qa-e2eask-refresh';
 const EPOCH = Number(process.env.FIXTURE_EPOCH || 1757000000000);
 const SEED_AGENTS = join(REPO, 'src/main/resources/seed/agents');
 // 夹具内 agent 面：seed 有的取 seed（repo-tracked ⇒ 确定性）；`Nebula` 只有宿主面 ⇒ 合成最小定义。
-const AGENTS_FROM_SEED = ['general', 'project-dispatcher', 'kernel'];
+// 🔴 2026-09-21（chain-askuserdup 批）：原清单含 `kernel`，而该 seed agent 已于
+// `e50b885e7`（promptopt W1，seed 4 → 3）退役 ⇒ 本 provisioner 自那之后**结构性跑不起来**
+// （`seed agent missing` 非零退出）。按现读 seed 面收敛（general / project-dispatcher），
+// 与退役后的 seed 树逐条对齐。
+const AGENTS_FROM_SEED = ['general', 'project-dispatcher'];
 const MODE = process.argv[2] && process.argv[2].startsWith('--') ? process.argv[2] : '--provision';
 
 if (!HOME) { console.error('[fixture] NEBFLOW_HOME_DIR required'); process.exit(1); }

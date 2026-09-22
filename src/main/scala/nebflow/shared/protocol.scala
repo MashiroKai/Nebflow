@@ -277,7 +277,24 @@ object UiMessage:
       * （`AgentActor#emitInjectedUserEvent`）产出的整串 `KIND · PROJECT · SUBJECT ·
       * STATE` 随注入帧与 .ui.json **同源落盘** ⇒ live 渲染与历史恢复逐字节一致。
       * 缺席（旧历史行 / 词表外 source）⇒ 前端回落 `injectedSourceLabel`（逐字节不变）。 */
-    header: Option[String] = None
+    header: Option[String] = None,
+    /** **作答行的显式来源标记**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：
+      * 值 = 本条 user 行所**作答的那个 requestId** —— 即「这是一次卡片作答」的**数据**
+      * 证据（不再靠「askUser 条目后面第一条 user 行」的邻接启发式）。
+      *
+      * WHY：卡片作答落盘原本是一条无标记的裸 `User(answerText)`，前端重建历史时必须
+      * 用 run 启发式猜（`persistence.js askUserAnswerText`：遇第一个非 user 行即
+      * break）。非阻塞提问（pending 期间 agent 仍产出 ai/tool 行 ⇒ run 被截断 ⇒ 取样
+      * null）与「作答后继续打字」两种形态下取样会偏 —— 取样 null 又被
+      * `renderAskUserHistory` 渲染成「已作答」（无条件补 `.option-answer`）⇒ 重放腿
+      * 的去重判据被击穿 ⇒ 同 id 双卡（首卡死）。同一处缺口也是 uiclean 批登记项
+      * 「#272 残余边界」的可见后果 ⇒ 本条字段一次关掉三件事：双开、#272 取值、
+      * 「历史卡不可按 id 关闭」。
+      *
+      * 缺席即不落键（`.ui.json` 旧行字节形态与旧读法**逐字不变**）：旧行无标记 ⇒
+      * 前端**必须回落「未作答」**（禁把历史一律读成「已作答」，方向见
+      * `persistence.js askUserAnswerText`）。单一构造点 = [[UiMessage.askUserAnswer]]。 */
+    answerOf: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -309,7 +326,19 @@ object UiMessage:
   ) extends UiMessage:
     val typeName = "agent"
 
-  case class AskUser(items: List[Json]) extends UiMessage:
+  /** 落盘的 AskUser 提问行。
+    *
+    * `requestId`（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：提问卡在 hub 里的
+    * 唯一身份，随行落盘 ⇒ 历史恢复出的卡**可 id 寻址**（重放腿按 id 替换、`askUserClosed`
+    * 关卡可达、#272 取值由数据决定）。
+    *
+    * 改前只落 `{type, items}` ⇒ 历史卡永远无 `data-request-id`：前端既无法按 id 去重
+    * （只能看「卡上有没有作答行」的 DOM 启发式，被伪造的作答行击穿），引擎也关不掉它
+    * （`chat.js closeAskUserCard` 只认 `[data-request-id]`）。
+    *
+    * 缺席即不落键（旧 `.ui.json` 行字节形态与旧读法逐字不变；旧行 ⇒ 前端回落
+    * 「按形态兜底」的去重腿，见 `chat.js sameAskCards`）。 */
+  case class AskUser(items: List[Json], requestId: Option[String] = None) extends UiMessage:
     val typeName = "askUser"
 
   case class Ask(
@@ -336,6 +365,20 @@ object UiMessage:
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
     val typeName = "system"
 
+  /** 卡片作答的**落盘行构造单点**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）。
+    *
+    * 唯一消费者 = `WebSocketRoutes` 的 `askUserAnswer` 帧处理（落盘 + 转发 hub）。
+    * 收敛成一处的理由：行的形状（text = 各 answer 槽用 '\n' join + `answerOf` 标记 +
+    * timestamp）与「这是本 requestId 的作答」这一语义必须**同源**——散在调用点手写
+    * 就会再次漂移出无标记的行（正是本缺陷的成因面）。
+    *
+    * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
+    * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
+    */
+  def askUserAnswer(answerText: String, requestId: String, timestamp: Long): User =
+    val rid = requestId.trim
+    User(answerText, timestamp = timestamp, answerOf = if rid.isEmpty then None else Some(rid))
+
   given Encoder[UiMessage] = Encoder.instance {
     case m: User =>
       val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
@@ -353,7 +396,11 @@ object UiMessage:
       // `NotificationHeader`）随行落盘 ⇒ 历史恢复路径与 live 帧逐字渲染同一串，
       // 前端不再二次拼接。缺席即不落键（旧 .ui.json 行字节形态逐字不变；
       // 旧行由前端 `injectedSourceLabel` 回落渲染）。
-      m.header.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
+      val withHeader = m.header.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
+      // 双开缺陷批「案 B」（2026-09-21，chain-askuserdup）：作答行的显式来源标记 ——
+      // 本行是某个 requestId 卡的作答记录。缺席即不落键（旧 .ui.json 行的字节形态与
+      // 旧读法逐字不变；旧行 ⇒ 前端回落「未作答」）。
+      m.answerOf.fold(withHeader)(r => withHeader.deepMerge(Json.obj("answerOf" -> r.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -373,7 +420,10 @@ object UiMessage:
       val base = Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
       // R1：timestamp 缺席即不落键（与 User/Ai 同款条件编码 ⇒ 旧 .ui.json 行不变）。
       if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
-    case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
+    case m: AskUser =>
+      // 案 B：requestId 随行落盘（历史卡可 id 寻址）。缺席即不落键 ⇒ 旧行形态逐字不变。
+      val base = Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
+      m.requestId.filter(_.nonEmpty).fold(base)(r => base.deepMerge(Json.obj("requestId" -> r.asJson)))
     case m: Ask =>
       val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -409,6 +459,8 @@ object UiMessage:
           delivery <- cursor.downField("delivery").as[Option[String]]
           intake <- cursor.downField("intake").as[Option[String]]
           header <- cursor.downField("header").as[Option[String]]
+          // 案 B：作答行来源标记（旧行缺席 ⇒ None ⇒ 前端回落「未作答」）
+          answerOf <- cursor.downField("answerOf").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -420,7 +472,8 @@ object UiMessage:
           senderTeam,
           delivery,
           intake,
-          header
+          header,
+          answerOf.filter(_.nonEmpty)
         )
       case "ai" =>
         for
@@ -451,7 +504,11 @@ object UiMessage:
           timestamp <- cursor.downField("timestamp").as[Option[Long]]   // R1：旧行缺席 ⇒ 0
         yield Agent(agentId, text, timestamp.getOrElse(0L))
       case "askUser" =>
-        cursor.downField("items").as[List[Json]].map(AskUser(_))
+        for
+          items <- cursor.downField("items").as[List[Json]]
+          // 案 B：旧行无 requestId ⇒ None（前端回落形态兜底，不强求 id）
+          requestId <- cursor.downField("requestId").as[Option[String]]
+        yield AskUser(items, requestId.filter(_.nonEmpty))
       case "ask" =>
         for
           question <- cursor.downField("question").as[String]

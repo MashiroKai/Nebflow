@@ -3,30 +3,52 @@
 // 状态机（按请求 messages 的最后一条判定）：
 //   last role === 'tool'                                  → 终答 "MOCK_DONE(<tool result 摘要>)"
 //   last user 消息含 'ask me now'                          → 工具调用 AskUserQuestion（两问：选项 + 开放）
-//   其他（padding 消息 'pad-N' 等）                         → 纯文本 "ok"
+//   last user 消息含 'ask nb now'（chain-askuserdup 追加）  → 工具调用 AskUserQuestion(mode=non-blocking)
+//  其他（padding 消息 'pad-N' 等）                         → 纯文本 "ok"
 // 端口取 argv[2]。仅监听 127.0.0.1。
+//
+// 非阻塞腿（双开缺陷批 2026-09-21）：工具**发起即返回** ack ⇒ turn 不暂停 ⇒ 随后那轮
+// tool-result 请求落成一条 `ai` 行 ⇒ 落盘形态 = `[… , askUser(仍在 hub pending) , ai , …]`
+// —— 正是双开（历史恢复的假已作答卡 + 重放腿再挂一张）的必要前置形态。
 import http from 'node:http';
 
 const PORT = Number(process.argv[2] || 18990);
 
-const ASK_ARGS = JSON.stringify({
-  questions: [
-    {
-      question: 'E2E 刷新存活验证：请选择一个选项',
-      options: [
-        { label: 'alpha', description: '选项 A' },
-        { label: 'beta', description: '选项 B' },
-      ],
-    },
-    {
-      question: 'E2E 第二问：确认执行？',
-      options: [
-        { label: 'yes', description: '执行' },
-        { label: 'no', description: '不执行' },
-      ],
-    },
-  ],
-});
+const ASK_QUESTIONS = [
+  {
+    question: 'E2E 刷新存活验证：请选择一个选项',
+    options: [
+      { label: 'alpha', description: '选项 A' },
+      { label: 'beta', description: '选项 B' },
+    ],
+  },
+  {
+    question: 'E2E 第二问：确认执行？',
+    options: [
+      { label: 'yes', description: '执行' },
+      { label: 'no', description: '不执行' },
+    ],
+  },
+];
+
+const ASK_ARGS = JSON.stringify({ questions: ASK_QUESTIONS });
+// mode 字面量 = AskMode.NonBlockingWire（`nebflow/agent/protocol.scala`："non-blocking"）
+const ASK_NB_ARGS = JSON.stringify({ mode: 'non-blocking', questions: [
+  {
+    question: 'E2E 非阻塞提问（双开复现）：请选择一个选项',
+    options: [
+      { label: 'alpha', description: '选项 A' },
+      { label: 'beta', description: '选项 B' },
+    ],
+  },
+  {
+    question: 'E2E 第二问：确认执行？',
+    options: [
+      { label: 'yes', description: '执行' },
+      { label: 'no', description: '不执行' },
+    ],
+  },
+] });
 
 function msgText(m) {
   const c = m?.content;
@@ -58,6 +80,7 @@ function decide(messages) {
     }
   }
   if (lastUserText(messages).includes('ask me now')) return { kind: 'ask' };
+  if (lastUserText(messages).includes('ask nb now')) return { kind: 'ask-nb' };
   return { kind: 'ok' };
 }
 
@@ -76,11 +99,12 @@ function chunk(delta, finish) {
 }
 
 function streamFor(decision) {
-  if (decision.kind === 'ask') {
+  if (decision.kind === 'ask' || decision.kind === 'ask-nb') {
+    const args = decision.kind === 'ask-nb' ? ASK_NB_ARGS : ASK_ARGS;
     return [
       chunk({ role: 'assistant' }),
       chunk({
-        tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'AskUserQuestion', arguments: ASK_ARGS } }],
+        tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'AskUserQuestion', arguments: args } }],
       }),
       chunk({}, 'tool_calls'),
       'data: [DONE]\n\n',

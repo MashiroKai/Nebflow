@@ -1042,6 +1042,9 @@ export default {
   'askUser.viewCompare': '在 Canvas 查看',
   'askUser.pendingTitle': '待回答问题',
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
+  // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
+  // （改前这种卡被画成「已作答」= 一行假的 `-> `）—— 死卡显式标注优于静默死亡。
+  'askUser.historyUnanswered': '历史无作答记录（待定）',
   // 多 AskUser 并发批（#250）
   'askUser.turnInterrupted': '本轮已中断（提问作废）',
   'askUser.nextPending': '下一张待办（{n}）',

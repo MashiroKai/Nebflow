@@ -1451,7 +1451,12 @@ class WebSocketRoutes(
                 val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
                 sessionStore.appendUiMessages(
                   askSessionId,
-                  List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
+                  // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：作答行经**单一构造
+                  // 点**落盘，带显式来源标记 answerOf = 被作答的 requestId ⇒ 历史恢复
+                  // 取值由**数据**决定，不再靠「askUser 条目后面第一条 user 行」的邻接
+                  // 启发式（该启发式在非阻塞提问/作答后继续打字的形态下会取偏 ⇒ 取样
+                  // null ⇒ 历史卡被渲染成「已作答」⇒ 重放去重判据被击穿 ⇒ 同 id 双卡）。
+                  List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
                 ) *>
                   forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
               case _ => IO.unit
@@ -5422,7 +5427,11 @@ class WebSocketRoutes(
 
       case "askUser" =>
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
+        // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
+        // 恢复出的卡可 id 寻址（重放腿按 id 替换、askUserClosed 关卡可达）。旧行缺席
+        // ⇒ None ⇒ 前端回落形态兜底去重腿（`chat.js sameAskCards` ②）。
+        val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items, askRid)))
 
       case "askPermission" =>
         val toolName = hc.downField("toolName").as[String].getOrElse("")
