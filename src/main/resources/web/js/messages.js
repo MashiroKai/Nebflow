@@ -605,7 +605,23 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
   //   `fm-friends-changed` / 重连三处重判 ⇒ 空快照下开窗的条**粘滞**到关窗重开为止
   //   （实测 C2b）。此处与 `fm-friends-changed` 分支同款、同函数（禁第二实现）。
-  if (friendsRefreshed && modalEls) applyBlockState(currentConv());
+  //
+  //   群面标签是同一类残留（groupremark-fix · 判词 D1）：气泡发送者名只在建气泡时取
+  //   一次值，成员抽屉行却每次现取 ⇒ 好友快照晚于群窗首帧到达时，气泡被钉死在显示名、
+  //   抽屉行却是备注（作者令「两渲染点必须一致」被破坏，实测粘滞到关窗重开）。修在
+  //   **取数出口**（本尾钩），不在各渲染点：与上面 `applyBlockState` 同址同族、清同一
+  //   类残留；两个函数都已存在且幂等全量重打 ⇒ 零新实现、零新状态、零新请求。
+  if (friendsRefreshed && modalEls) {
+    applyBlockState(currentConv());
+    const c = currentConv();
+    if (c && c.kind === 'group') {
+      paintGroupSenderNames(c);
+      // The member drawer is another render point this module does not own
+      // (same call site and same accessor as the `fm-remark-changed` leg).
+      const drawer = document.querySelector('.fm-group-settings');
+      if (drawer) repaintGroupMemberLabels(drawer);
+    }
+  }
 }
 
 // ── 会话列表：本地层首帧 + 内容签名闸（sessperf Phase B · 2026-09-20）──────
