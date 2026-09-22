@@ -285,6 +285,35 @@ class DaemonPanelRoutesSpec extends FunSuite:
 
   // ── F-7 · the host-carried panel document + its local CSP ──────────────
 
+  /**
+   * Index just past the first REAL `<head…>` open tag in `doc`, or None.
+   * Independent of the implementation: comment and raw-text bodies are skipped,
+   * and the tag name must end at the boundary (`<header` is not a head).
+   */
+  private def realHeadOpenIndex(doc: String): Option[Int] =
+    val lower = doc.toLowerCase
+    var i = 0
+    var found = -1
+    while found < 0 && i < lower.length do
+      val lt = lower.indexOf("<head", i)
+      if lt < 0 then i = lower.length
+      else
+        val after = if lt + 5 < lower.length then lower.charAt(lt + 5) else '>'
+        val isTag = after == '>' || after.isWhitespace
+        if isTag && !insideComment(doc, lt) then
+          val gt = doc.indexOf('>', lt)
+          found = if gt < 0 then -1 else gt + 1
+          i = if gt < 0 then lower.length else gt + 1
+        else i = lt + 5
+    if found < 0 then None else Some(found)
+
+  end realHeadOpenIndex
+
+  /** True when `idx` sits inside an HTML comment. */
+  private def insideComment(doc: String, idx: Int): Boolean =
+    val open = doc.lastIndexOf("<!--", idx)
+    open >= 0 && doc.indexOf("-->", open) > idx
+
   /** A `kind:"web"` + `htmlFile` daemon whose panel file lives in the data
     * root's servable namespace (`docs/`). `allowWeb` is on. */
   private def withHtmlPanel(
@@ -339,6 +368,65 @@ class DaemonPanelRoutesSpec extends FunSuite:
       val metaIdx = srcdoc.indexOf("data-daemon-panel-csp")
       assert(metaIdx > 0 && metaIdx > headEnd, s"meta must sit INSIDE head (head ends $headEnd, meta $metaIdx)")
       assert(srcdoc.contains("<p>bare fragment</p>"), "the fragment was lost")
+    }
+  }
+
+  test("F-7 · the ENDPOINT bytes place the policy in a real head for every decoy shape") {
+    // 🔴 The round-2 rework's closure. The verifier measured the failure on the
+    // endpoint's OWN emitted bytes (`cspInjected=true` while the browser ignored
+    // the policy), so the fix must be pinned there too — a validator-level spec
+    // would not catch a wrong srcdoc assembly at the route.
+    //
+    // Each shape is a document whose markup-looking text previously stole the
+    // insertion anchor. The assertion is placement in a REAL head (comments and
+    // raw-text bodies excluded, tag name exactly `head`, head still parser-open)
+    // plus the wire flag agreeing.
+    val shapes = List(
+      "comment-decoy" ->
+        "<!-- <head> --><html><head><title>t</title></head><body><p>x</p></body></html>",
+      "script-string" ->
+        "<script>var s='<head>';</script><html><head><title>t</title></head><body><p>x</p></body></html>",
+      "attribute-decoy" ->
+        "<div data-x='<head>'>d</div><html><head><title>t</title></head><body><p>x</p></body></html>",
+      "header-only" ->
+        "<html><body><header>hdr</header><p>x</p></body></html>",
+      "head-after-body" ->
+        "<html><body><header>h</header></body><head><title>t</title></head><body><p>x</p></body></html>",
+      "commented-head-tag" ->
+        "<html><body><!-- <head></head> --><p>x</p></body></html>"
+    )
+    for (label, doc) <- shapes do
+      withHtmlPanel(doc) { routes =>
+        val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
+        assertEquals(status, Status.Ok, s"[$label] unexpected status")
+        // The wire must attest the policy...
+        assertEquals(
+          body.flatMap(_.hcursor.get[Boolean]("cspInjected").toOption),
+          Some(true),
+          s"[$label] cspInjected must be true once the policy is really placed"
+        )
+        val srcdoc = body.flatMap(_.hcursor.get[String]("srcdoc").toOption).getOrElse("")
+        val metaIdx = srcdoc.indexOf("data-daemon-panel-csp")
+        assert(metaIdx >= 0, s"[$label] no injected meta in the endpoint bytes")
+        // ...and the bytes must show WHY it is true: a real head, not a decoy.
+        val headOpen = realHeadOpenIndex(srcdoc)
+        assert(headOpen.isDefined, s"[$label] the endpoint bytes carry no real <head>")
+        assert(metaIdx >= headOpen.get, s"[$label] meta precedes the real head open")
+        val close = srcdoc.toLowerCase.indexOf("</head", headOpen.get)
+        val regionEnd = if close < 0 then srcdoc.length else close
+        assert(metaIdx < regionEnd, s"[$label] meta is outside the real head")
+        assert(!insideComment(srcdoc, metaIdx), s"[$label] meta was written into a comment")
+      }
+    end for
+  }
+
+  test("F-7 · the endpoint never claims cspInjected for a url panel (no srcdoc is invented)") {
+    val urlPanel = """{"kind": "web", "url": "http://localhost:3000/config"}"""
+    withRoutes(daemonWith("mail", Some(urlPanel)), allowWeb = true) { routes =>
+      val (status, body) = call(routes, Method.GET, "/daemons/mail/config-panel")
+      assertEquals(status, Status.Ok)
+      assertEquals(body.flatMap(_.hcursor.get[Boolean]("cspInjected").toOption), Some(false))
+      assertEquals(body.flatMap(_.hcursor.get[String]("srcdoc").toOption), Some(""))
     }
   }
 
