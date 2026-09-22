@@ -104,6 +104,69 @@ class DeviceFaceHardeningSpec extends FunSuite:
     }
   }
 
+  // ── deviceId-compat leg (2026-09-22, chain neblink-lifecycle-fix) ──────────
+
+  import java.net.http.{HttpClient, HttpHeaders, HttpResponse, WebSocketHandshakeException}
+
+  /** Minimal `HttpResponse` stub — same shape as `RelayTunnelDiagnosticsSpec`. */
+  private def fakeResponse(code: Int, bodyText: String): HttpResponse[String] =
+    new HttpResponse[String]:
+      def statusCode(): Int = code
+      def request(): java.net.http.HttpRequest = null
+      def previousResponse(): java.util.Optional[HttpResponse[String]] = java.util.Optional.empty()
+      def headers(): HttpHeaders = HttpHeaders.of(java.util.Map.of(), (_, _) => true)
+      def body(): String = bodyText
+      def sslSession(): java.util.Optional[javax.net.ssl.SSLSession] = java.util.Optional.empty()
+      def uri(): java.net.URI = java.net.URI.create("ws://10.0.0.5:8099/api/neblink/presence")
+      def version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
+
+  private def handshake(code: Int, bodyText: String): WebSocketHandshakeException =
+    new WebSocketHandshakeException(fakeResponse(code, bodyText))
+
+  test("compat①: the compat URI carries deviceId AND every A1 param; header contract unchanged") {
+    withPresence { ps =>
+      val compat = ps.buildCompatWsUri("10.0.0.5", 8099, id)
+      println(s"[C1-R1] compat dial URI = $compat")
+      assert(compat.startsWith("ws://10.0.0.5:8099/api/neblink/presence?"), s"unexpected compat URI: $compat")
+      assert(
+        compat.contains("deviceId=dev-abc"),
+        s"compat URI must carry deviceId in the query (legacy listeners read the query ONLY): $compat"
+      )
+      assert(compat.contains("deviceName="), s"peer display metadata stays on the compat URL: $compat")
+      // header contract is byte-identical on the compat path (header semantics unchanged)
+      assertEquals(ps.presenceHandshakeHeaders(id), List(Protocol.DeviceHeader -> "dev-abc"))
+      // and the PRIMARY URI form stays clean (A1② above re-asserts it too)
+      assert(!ps.buildWsUri("10.0.0.5", 8099, id).contains("deviceId"), "primary URI must stay free of deviceId")
+    }
+  }
+
+  test("compat②: the retry trigger fires ONLY on an HTTP-400 upgrade rejection") {
+    withPresence { ps =>
+      // wrapped shapes, exactly as .get() surfaces them
+      val wrapped400 = new java.util.concurrent.ExecutionException(handshake(400, """{"error":"Missing deviceId"}"""))
+      val wrapped403 = new java.util.concurrent.ExecutionException(handshake(403, """{"error":"Not a trusted peer"}"""))
+      val wrapped404 = new java.util.concurrent.ExecutionException(handshake(404, "not found"))
+      val wrapped500 = new java.util.concurrent.ExecutionException(handshake(500, "boom"))
+      println(
+        s"[C2-R1] 400 wrapped=${ps.isLegacyMissingDeviceIdRejection(wrapped400)} " +
+          s"403=${ps.isLegacyMissingDeviceIdRejection(wrapped403)} " +
+          s"404=${ps.isLegacyMissingDeviceIdRejection(wrapped404)} " +
+          s"500=${ps.isLegacyMissingDeviceIdRejection(wrapped500)}"
+      )
+      assert(ps.isLegacyMissingDeviceIdRejection(wrapped400), "400 on the upgrade = legacy missing-deviceId rejection")
+      assert(!ps.isLegacyMissingDeviceIdRejection(wrapped403), "403 = trust gate — must NOT trigger the compat retry")
+      assert(!ps.isLegacyMissingDeviceIdRejection(wrapped404), "404 = wrong path — must NOT trigger the compat retry")
+      assert(!ps.isLegacyMissingDeviceIdRejection(wrapped500), "5xx = server-side failure — must NOT trigger the retry")
+      // non-handshake failures keep their own classification
+      assert(!ps.isLegacyMissingDeviceIdRejection(new java.net.ConnectException("refused")), "refusal is not a compat case")
+      assert(
+        !ps.isLegacyMissingDeviceIdRejection(new java.util.concurrent.TimeoutException("budget")),
+        "budget timeout is not a compat case"
+      )
+      assert(!ps.isLegacyMissingDeviceIdRejection(null), "null-safe: no crash, no trigger")
+    }
+  }
+
   // ── A6 ─────────────────────────────────────────────────────────────────────
 
   test("A6: DeviceIdentity.save writes 0600 AND narrows the data root") {
