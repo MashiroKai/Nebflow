@@ -1240,6 +1240,20 @@ class WebSocketRoutes(
     Json.obj(fields.toList*)
   }
 
+  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+    * `browsePath` frame builders. Body lives in the companion object (pure core,
+    * spec-callable — `deletePathsSafely` precedent), these are the seam the
+    * handler uses. */
+  private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
+
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    WebSocketRoutes.browseErrorFrame(displayPath, kind, msg, query)
+
+  /** How many entries a `browsePath` frame carries before `truncated` turns on —
+    * the ONE ruler for that leg (was a literal `take(200)`). */
+  private[gateway] val BrowseEntryCap: Int = WebSocketRoutes.BrowseEntryCap
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /** The Canvas / file-viewer OPEN gate — the largest file the WS `pop.readFile`
@@ -3946,41 +3960,51 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
-          // Directory browser for project root selection
+          // Directory browser for project root selection.
+          // picker-trunc (2026-09-22 author ruling, A+B+C): the old body ended in
+          // a silent `entries.take(200)` with no truncation word — the author
+          // could not find `~/Downloads` and got no hint that anything was cut.
+          // Now: real cap ([[BrowseEntryCap]]) + explicit `truncated`/`total`
+          // (A), server-side `query` filtering before the cap (B), and
+          // `~`/`~/` expansion via the shared expandTilde with a typed inline
+          // error on an unusable path (C).
           case "browsePath" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val path = json.hcursor.downField("path").as[String].getOrElse("~")
-            val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
+            val rawPath = json.hcursor.downField("path").as[String].getOrElse("~")
+            val query = json.hcursor.downField("query").as[String].getOrElse("")
             IO.blocking {
-              val dir = os.Path(expanded, os.pwd)
-              if os.isDir(dir) then
-                val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
-                val result = entries.take(200).map { p =>
-                  io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
-                }
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> dir.toString.asJson,
-                  "entries" -> result.asJson
-                )
-              else
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> path.asJson,
-                  "entries" -> io.circe.Json.arr()
-                )
-              end if
-            }.flatMap(wsSend)
-              .handleErrorWith { e =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "browseResult".asJson,
-                    "path" -> path.asJson,
-                    "entries" -> io.circe.Json.arr(),
-                    "error" -> e.getMessage.asJson
-                  )
-                )
-              }
+              // C: `~` forms resolve through the shared expandTilde (same helper
+              // wsBrowse.list / wsBrowse.mkdir use), so `~` and `~/...` agree.
+              val expanded = expandTilde(rawPath.trim)
+              scala.util.Try(os.Path(expanded, os.pwd)).toOption match
+                case None =>
+                  (None, browseErrorFrame(rawPath, "invalid-path", s"Invalid path: $rawPath", query))
+                case Some(dir) if !os.exists(dir) =>
+                  (None, browseErrorFrame(rawPath, "invalid-path", s"No such directory: $rawPath", query))
+                case Some(dir) if !os.isDir(dir) =>
+                  (None, browseErrorFrame(rawPath, "not-a-directory", s"Not a directory: $rawPath", query))
+                case Some(dir) =>
+                  // The frame reports the RESOLVED path (the frontend breadcrumb
+                  // has always consumed `path`); the raw `~` form stays in the
+                  // error arm only.
+                  (Some(dir), browseResultFrame(dir, dir.toString, query, BrowseEntryCap))
+            }.flatMap {
+              case (dirOpt, frame) =>
+                dirOpt match
+                  case Some(dir) =>
+                    logger.info(
+                      s"browsePath: path=$rawPath query=$query cap=$BrowseEntryCap " +
+                        s"total=${frame.hcursor.get[Int]("total").getOrElse(-1)} " +
+                        s"truncated=${frame.hcursor.get[Boolean]("truncated").getOrElse(false)} resolved=${dir.toString}"
+                    )
+                  case None => ()
+                wsSend(frame)
+            }.handleErrorWith { e =>
+              // An unreadable directory (permissions, I/O error) is reported with
+              // the same typed frame — never silently an empty list.
+              logger.warn(s"browsePath failed: path=$rawPath query=$query ${e.getMessage}")
+              wsSend(browseErrorFrame(rawPath, "unreadable", s"${e.getClass.getSimpleName}: ${e.getMessage}", query))
+            }
 
           // ===== Folder Rules Management =====
 
@@ -5734,6 +5758,79 @@ object WebSocketRoutes:
     * **纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕**必须
     * 在本层落笔 ⇒ 需要本层自己的 logger（与类侧 `nebflow.ws` 同名，日志面同源）。 */
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.ws")
+
+  /** How many entries a `browsePath` frame carries before `truncated` turns on —
+    * the ONE ruler for that leg (it replaced a literal `take(200)`).
+    *
+    * Chosen from MEASURED real shapes on this host, not from a guess
+    * (`.nebflow/evidence/20260922_picker-impl/`):
+    *   · the author's own scenario (home = 110 dirs, `Downloads` at lexical rank
+    *     79) needs only 110;
+    *   · the heaviest REAL directory reachable from the picker is
+    *     `~/Library/Application Scripts` = 1061 dirs, then `~/Library/Containers`
+    *     = 855, `~/Library/Caches` = 267, `/opt/homebrew/Cellar` = 223;
+    *   · 2000 covers all of them — 1.9x margin over the heaviest measured — and
+    *     the heaviest such frame measured 147 KiB / ≤463 ms enumerate+serialize
+    *     over the wire, versus the 10 MiB WS frame cap.
+    * Stepping higher buys nothing on the measurements: cap=5000 produced the
+    * SAME 147 KiB (no real directory here is that deep) while frame size and
+    * render time grow linearly in the cap. Directories with more than 2000
+    * subdirectories still hit the cap — that case is no longer silent (A's
+    * `truncated`/`total`), and B (search) / C (direct entry) are the ways to
+    * reach an entry that is cut. */
+  private[gateway] val BrowseEntryCap: Int = 2000
+
+  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+    * `browsePath` success frame. Pure core: the spec calls it directly.
+    *
+    * A. **No silent truncation**: `total` is the full FILTERED entry count and
+    *    `truncated` says whether the cap cut it. The two keys are ADDITIVE —
+    *    `type` / `path` / `entries` keep their exact previous semantics, so an
+    *    older consumer that ignores unknown keys is unaffected.
+    * B. `query` filters SERVER-side (case-insensitive substring on the entry
+    *    name) BEFORE the cap, and `total`/`truncated` describe the FILTERED set.
+    *    Capping first and filtering the page would be the false fix the author's
+    *    ruling forbids. `query` is echoed back so the frontend can discard a
+    *    frame that answers a stale filter string.
+    */
+  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json = {
+    val q = query.trim.toLowerCase
+    // ONE listing pass: lexical order (pre-existing), then filter, then cap.
+    val all = os
+      .list(dir)
+      .filter(os.isDir)
+      .map(_.last)
+      .toList
+      .sorted
+    val matched = if q.isEmpty then all else all.filter(_.toLowerCase.contains(q))
+    val shown = matched.take(cap)
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> shown
+        .map(n => Json.obj("name" -> n.asJson, "path" -> (dir / n).toString.asJson))
+        .asJson,
+      "total" -> matched.size.asJson,
+      "truncated" -> (matched.size > shown.size).asJson,
+      "query" -> query.asJson
+    )
+  }
+
+  /** The `browsePath` failure frame (C): same shape, empty `entries`, plus a
+    * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`) the
+    * frontend renders inline. A failure is never a bare empty list — that is
+    * exactly the silent shape this batch removes. */
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> Json.arr(),
+      "total" -> 0.asJson,
+      "truncated" -> false.asJson,
+      "query" -> query.asJson,
+      "errorKind" -> kind.asJson,
+      "error" -> msg.asJson
+    )
 
   /** UI 文件浏览器**删除成功分支**的审计行（#159/#176 ④「补盲区」）。
     *
