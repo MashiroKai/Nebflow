@@ -478,6 +478,80 @@
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
 }
+/* ---------- Path Picker: path direct-entry (C) + server-side search (B) -------
+   材质全部落既有 token（--glass-etched-bg / --glass-border / --color-*），
+   零新色值。两行各占一行：直输行在上（跳转 = 定位动作），搜索行在下（过滤 =
+   收窄动作），与列表同宽，避免挤动既有 520px 弹窗版式。 */
+#path-picker-goto,
+#path-picker-search {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+#path-picker-goto-input,
+#path-picker-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+#path-picker-goto-input:focus,
+#path-picker-search-input:focus {
+  border-color: rgba(91, 127, 191, 0.5);
+}
+#path-picker-goto-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--glass-border);
+  background: rgba(91, 127, 191, 0.03);
+  color: var(--color-frame-text-dim);
+  transition: all 0.25s ease;
+}
+#path-picker-goto-btn:hover {
+  background: rgba(91, 127, 191, 0.08);
+  border-color: var(--sapphire-edge-strong);
+  color: var(--color-frame-text-bright);
+}
+/* A: the explicit truncation word (never silent) — same etched strip as the
+   breadcrumb, muted ink, so it reads as a status line not an alert. */
+#path-picker-truncated {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  line-height: 1.4;
+}
+/* The second line of the note = the way out (search / direct entry), dimmer than
+   the fact above it. */
+#path-picker-truncated .pp-hint {
+  color: var(--color-frame-text-dim);
+  margin-top: 2px;
+}
+/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
+#path-picker-error {
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+  line-height: 1.4;
+  word-break: break-all;
+}
 #path-picker-breadcrumb {
   font-size: 12px;
   color: var(--color-frame-text-muted);

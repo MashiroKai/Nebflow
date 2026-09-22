@@ -20,6 +20,7 @@ import docxViewer from './viewers/docx.js';
 import xlsxViewer from './viewers/xlsx.js';
 import pptxViewer from './viewers/pptx.js';
 import epubViewer from './viewers/epub.js';
+import largeTextViewer from './viewers/largeText.js';
 
 const registry = new Map();  // itemType → viewer protocol object
 
@@ -75,7 +76,14 @@ export function itemTypeForFileName(fileName) {
  * @param {import('./utils.js').ViewerContext} ctx
  */
 export async function renderFile(pane, ctx) {
-  const viewer = registry.get(ctx.itemType) || registry.get('code');
+  // ── Single-point stream branch (project rule: unified factory + one renderer) ──
+  // A file opened through the streaming descriptor carries NO content: it is
+  // rendered by the read-only virtual-scroll view and fed by on-demand windows.
+  // This is the ONE place that decides it — callers only forward `ctx.stream`.
+  const stream = /** @type {any} */ (ctx).stream;
+  const viewer = (stream && stream.kind === 'text')
+    ? largeTextViewer
+    : (registry.get(ctx.itemType) || registry.get('code'));
   try {
     await viewer.render(pane, ctx);
   } catch (err) {

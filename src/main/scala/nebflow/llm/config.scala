@@ -30,13 +30,26 @@ object LlmProtocol:
  * constant (`Defaults.MaxTokens` / `Defaults.MaxThinkingBudget`). The decoder
  * is derived, so circe silently ignores a legacy `maxTokens` key still present
  * in an existing `nebflow.json` (no error, no migration needed).
+ *
+ * @param modelMaxContext
+ *   案② B3（`chain-llmstall-fix`，2026-09-21）：provider 侧**真值上界**（该 model 实际
+ *   可受理的上下文长度）。持久化字段，由模型列举端点上报的 `context_length` /
+ *   `context_window` 经前端写回自动填充（见 `RestApiRoutes.extractModels` +
+ *   `sidebar.js` 的 `fillContextIfEmpty`）。
+ *   - **缺席 ⇒ `None` ⇒ 生效值逐字等于 `contextWindow`**（旧配置 / provider 未上报
+ *     时的现行为，向后兼容的硬约束——derived decoder 容忍字段缺失）；
+ *   - 存在时**只可能压低**生效窗口（`min(configured, modelMaxContext)`，取数单点
+ *     `ProviderRegistry.effectiveContextWindow`），不可能放大；
+ *   - 与 `contextWindow` 的分工：前者 = 用户的愿望上界（UI 可改），本字段 = 物理
+ *     上界（机器上报，不应手改）。
  */
 case class ModelConfig(
   id: String,
   contextWindow: Int = Defaults.ContextWindow,
   description: Option[String] = None,
   vision: Option[Boolean] = None,
-  capabilities: Option[List[String]] = None
+  capabilities: Option[List[String]] = None,
+  modelMaxContext: Option[Int] = None
 )
 
 object ModelConfig:
@@ -242,7 +255,12 @@ case class NebflowServiceConfig(
     * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
     * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
     * 仅用户显式开/关（WS `setLlmLog`）才写入本键。 */
-  llmLog: Option[io.circe.Json] = None
+  llmLog: Option[io.circe.Json] = None,
+  /** daemon 配置面板（daemonpanel Phase A）的顶层 `daemonPanel` 节原样 JSON。
+    * 现读唯一消费者 = `DaemonPanelSchema.allowWeb`：`kind:"web"` 逃生口**默认
+    * 关闭**，只有本节显式 `{"allowWeb":true}` 才生效（缺省/非法 ⇒ 拒绝，fail-closed）。
+    * 开关本身是作者动作，agent 改它会留下可见 diff。无效值不影响其它键解码。 */
+  daemonPanel: Option[io.circe.Json] = None
 )
 
 object NebflowServiceConfig:

@@ -16,6 +16,13 @@
 //      CHANGE_EVENT → loadSaved → renderer boards (hidden entry ≠ dropped
 //      config; existing user selections keep working).
 //
+// voicefix-testsync（chain-voicefix，2026-09-21）· **纯测试同步、行为零改**：
+//   voicefix 批落地（commit `aaaaa7765`）按作者 2026-09-21 14:0x ③「把最近的有光球的
+//   回退回来」复原了主输入区 orb 挂载（micOrb.js 字节级回退 + index.html 四件 +
+//   input.css 光球段）⇒ 输入区光球 = **现行终态**，visup-b 修正④ 的「退役面」判据整体
+//   翻转。本文件 H1/H2（设置页外观区维持关闭 / 模块保留）**原样不动**；只有 H3 的
+//   退役面读数改为**新终态对位**（零删除零跳过；判据逐条对位、强度不减）。
+//
 // Self-contained: static server on 127.0.0.1:8177 (never 8080) serving
 // src/main/resources/web only; WS/API mocked in-page; server closed at end.
 
@@ -169,49 +176,73 @@ function expectSlot(slot, rgb, hex, ctx) {
   expect(rgb, `${ctx} slot ${slot} → ${hex}`).toEqual(want);
 }
 
-/** visup-b 批 · 作者 2026-09-19 04:22 修正④（逐字：「语音麦克风样式 = 普通麦克风
- *  （禁现气泡形态）」）⇒ 主输入区的 orb 挂载**退役**（产品页零 `#mic-canvas`/
- *  `.mic-orb-wrap`/`.css-orb`）。
- *  本 helper 因此把 H3 的「live orb」改为**探测宿主上的同一生产 MicOrb**：
- *  挂载判据 = `#mic-canvas` 在场（`micOrb.js::getMicOrb`），MicOrb 按 **id** 取 canvas、
- *  宿主按钮 = canvas 自己的祖先 `<button>` ⇒ 宿主 DOM 形状与旧生产形态**逐字相同**。
- *  🔴 退役面本身**不被跳过**：H3 先逐条断言「产品页无 orb 挂载」，再挂探测宿主
- *  （断言数只增不减；`webglOk`/槽位三值等原判据逐条保留）。 */
-async function mountOrbProbe(page) {
-  await page.evaluate(() => {
-    const host = document.createElement('div');
-    host.id = 'orb-probe';
-    host.className = 'mic-orb-wrap';
-    host.style.cssText = 'position:fixed;left:40px;top:40px;width:64px;height:64px;z-index:0';
-    host.innerHTML = '<button class="micbubble" id="orb-probe-btn" type="button" aria-label="orb probe">'
-      + '<canvas class="orb-canvas" id="mic-canvas" width="64" height="64" aria-hidden="true"></canvas>'
-      + '<div class="css-orb orb" id="mic-css-orb" role="img" aria-label="orb probe"></div>'
-      + '</button>';
-    document.body.appendChild(host);
-  });
+/** 状态就绪闸（voicefix-testsync 补 · 纯测试侧、期望值零动）：
+ *  本文件以下的槽位断言对位对象 = **基调板**（`idle` 解析到基调），而 `offline` 是
+ *  一条**合法**的更高优先态（`micOrb.js` `resolveState`：offline 优先于 idle；板 =
+ *  `ash`）。offline 由 `micOrb.js` 的 1s 轮询 `pollDerived()` 推出：
+ *  `offline = state.connected === false`，而 `state.connected` 默认 false
+ *  （`state.js:60`）、只在 `ws.js` 的 `onopen` 置 true ⇒ mock 环境的 WS 开面**晚于首个
+ *  轮询 tick** 时光球会合法落 offline 板，断言读到 `#B9C2D2`(=ash a) 而非基调板。
+ *  实测（同树连跑）：H3 1 过 2 红（本闸前）。本 helper 只等**被测状态到位**，
+ *  🔴 不改任何期望值、不删不跳任何断言（强度零减）；真·offline 不恢复时本闸超时
+ *  报「等 idle 超时」而非伪装成颜色不符。 */
+async function waitForOrbIdle(page) {
+  // 🔴 谓词必须**同步**：`page.waitForFunction` 不 await 异步谓词的 Promise
+  // （返回值序列化后恒为真值 ⇒ 立刻通过 = 空闸；实测 6ms 返回而 state 仍 `offline`）。
+  // 同步谓词读承载类 = 与产品同一读数面（`apply()` 逐态移除后加当前态类）。
+  await page.waitForFunction(() => {
+    const wrap = document.getElementById('mic-orb-wrap');
+    return !!wrap && wrap.classList.contains('s-idle');
+  }, null, { timeout: 15000 });
 }
+
+/** voicefix 批（作者 2026-09-21 14:0x ③「把最近的有光球的回退回来」）已把 visup-b
+ *  修正④ 的挂载退役**回退**：主输入区 orb 复活 ⇒ 产品面自身就是 live orb，H3 直接
+ *  驱动**产品面单例**。
+ *  🔴 原「探测宿主」（`mountOrbProbe`）随退役面翻转而**失去必要且有害**：再挂一个同 id
+ *  `#mic-canvas` 会与产品面真实挂载点重复（`getMicOrb` 挂载判据按 id 取画布）⇒ 本批
+ *  移除该 helper，改为**正向对位**断言产品面单挂载点（宿主/画布/css-orb 各恰一件 +
+ *  单例绑定该画布）。`webglOk`/槽位三值/状态映射等原判据**逐条保留**（强度不减）。 */
 
 test('H3: hidden entry ≠ dropped config — saveSaved custom selection drives the live orb', async ({ page }) => {
   await page.goto(base + '/index.html');
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
-  // ── ① 退役面（修正④）：产品页的输入区 orb 挂载逐条归零（不许静默跳过） ──────
-  const retired = await page.evaluate(async () => ({
-    composerWrap: !!document.querySelector('#input-bar .mic-orb-wrap'),
-    composerCanvas: !!document.querySelector('#input-bar #mic-canvas'),
-    voiceBtnOrbChild: !!document.querySelector('#voice-btn .orb-canvas'),
-    orbLegacyNodes: document.querySelectorAll('.mic-orb-wrap, .micbubble, .orb-canvas, .css-orb').length,
-    singleton: (await import('/js/micOrb.js')).getMicOrb() === null,
-    voiceBtnCls: document.getElementById('voice-btn').className,
-  }));
-  expect(retired.composerWrap, 'composer orb wrap retired').toBe(false);
-  expect(retired.composerCanvas, 'composer orb canvas retired').toBe(false);
-  expect(retired.voiceBtnOrbChild, 'voice button must not carry an orb canvas').toBe(false);
-  expect(retired.orbLegacyNodes, 'product page must have ZERO legacy orb nodes').toBe(0);
-  expect(retired.singleton, 'no MicOrb singleton without an orb canvas (mount gate)').toBe(true);
-  expect(retired.voiceBtnCls, 'mic control = plain icon-btn').toContain('mic-btn');
-  // ── ② 探测宿主上实例化**同一生产** MicOrb（WebGL must be up, same requirement
+  // ── ① 新终态（voicefix 回退）：产品面**单一**光球挂载点在位（旧反向判据逐条正向对位，
+  //      判据数只增不减） ──────────────────────────────────────────────────────
+  const mounted = await page.evaluate(async () => {
+    const micOrb = await import('/js/micOrb.js');
+    const o = micOrb.getMicOrb();
+    const btn = document.getElementById('voice-btn');
+    const canvas = document.getElementById('mic-canvas');
+    return {
+      composerWrap: !!document.querySelector('#input-bar .mic-orb-wrap'),
+      composerCanvas: !!document.querySelector('#input-bar #mic-canvas'),
+      voiceBtnOrbChild: !!document.querySelector('#voice-btn .orb-canvas'),
+      orbWrapNodes: document.querySelectorAll('.mic-orb-wrap').length,
+      orbBubbleNodes: document.querySelectorAll('.micbubble').length,
+      orbCanvasNodes: document.querySelectorAll('.orb-canvas').length,
+      orbCssNodes: document.querySelectorAll('.css-orb').length,
+      canvasIdNodes: document.querySelectorAll('#mic-canvas').length,
+      singleton: !!o,
+      singletonBound: !!o && !!btn && !!canvas && o.btn === btn && o.canvas === canvas,
+      voiceBtnCls: btn ? btn.className : null,
+    };
+  });
+  expect(mounted.composerWrap, 'composer orb wrap mounted (voicefix revert)').toBe(true);
+  expect(mounted.composerCanvas, 'composer orb canvas mounted (voicefix revert)').toBe(true);
+  expect(mounted.voiceBtnOrbChild, 'voice button carries the orb canvas').toBe(true);
+  // 「单一挂载点」= 旧「零节点」判据的正向对位：不得有游离/重复件（挂载判据按 id 取
+  // 画布，重复 `#mic-canvas` 会让单例绑错目标）。
+  expect(mounted.orbWrapNodes, 'exactly one orb wrap').toBe(1);
+  expect(mounted.orbBubbleNodes, 'exactly one micbubble').toBe(1);
+  expect(mounted.orbCanvasNodes, 'exactly one orb canvas').toBe(1);
+  expect(mounted.orbCssNodes, 'exactly one css-orb').toBe(1);
+  expect(mounted.canvasIdNodes, 'exactly one #mic-canvas').toBe(1);
+  expect(mounted.singleton, 'MicOrb singleton is live (mount gate satisfied)').toBe(true);
+  expect(mounted.singletonBound, 'MicOrb singleton bound to the PRODUCT button + canvas').toBe(true);
+  expect(mounted.voiceBtnCls, 'mic control = the orb button (.micbubble)').toContain('micbubble');
+  // ── ② 产品面**同一生产** MicOrb 单例（WebGL must be up, same requirement
   //       as micorb-presets T1 in this environment） ─────────────────────────
-  await mountOrbProbe(page);
   const webglOk = await page.evaluate(async () => (await import('/js/micOrb.js')).getMicOrb().webglOk);
   expect(webglOk, 'headless Chromium must provide WebGL (SwiftShader)').toBe(true);
 
@@ -226,6 +257,9 @@ test('H3: hidden entry ≠ dropped config — saveSaved custom selection drives 
     });
   });
   // CHANGE_EVENT → loadSaved → board re-resolve (target is set synchronously).
+  // 状态就绪闸：本组断言的对位对象是基调板 ⇒ 先等光球落 `idle`（见 helper 注释；
+  // 期望值逐条不动）。
+  await waitForOrbIdle(page);
   let board = await targetBoard(page);
   expectSlot('a', board.a, '#40E0FF', 'idle w/ custom dark override');
   expectSlot('b', board.b, '#B8E05A', 'idle w/ emerald base');

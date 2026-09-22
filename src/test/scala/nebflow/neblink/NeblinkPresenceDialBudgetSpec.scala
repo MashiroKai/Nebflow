@@ -16,6 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /**
  * F-D 批（2026-09-17 presence 层拨号抖动）· 预算放宽 + 死端点剔除 + 重连梯兜底。
@@ -96,14 +97,48 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
       endpoints = candidates
     )
 
-  /** 无监听的环回端口 ⇒ 立刻拒绝（拒绝类失败）。 */
+  /** 无监听的环回端口 ⇒ 立刻拒绝（**refused 轴**夹具；本批保留、不回退）。 */
   private def closedPort(): Int =
     val s = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
     try s.getLocalPort
     finally s.close()
 
+  /**
+   * 黑洞候选 = 环回别名上的无监听端口，口径「**丢 SYN 不回包**」⇒ `timeout` 轴。
+   *
+   * 为什么必须是独立 helper（卡③ T1）：现役故障轴是 timeout，而既有夹具（[[closedPort]]）
+   * 走 refused 轴，两轴的**门槛不同**（5 vs 3）⇒ 轴归属若靠 OS 偶发（把 `127.0.0.0/8`
+   * 全段当本地网段的平台上，黑洞会转 `ECONNREFUSED`）就会**静默降级**成 refused 轴仍绿。
+   * 本机（macOS）实测口径：`127.0.0.2/.3/.4:<无监听端口>` >3s 无响应（丢包）。
+   */
+  private def blackholeEndpoint(port: Int, alias: Int): String = s"http://127.0.0.$alias:$port"
+
   private def roundOf(ps: NeblinkPresenceService, id: String): PresenceDialRound =
     ps.lastDialRound(id).getOrElse(fail(s"未记录到 $id 的拨号轮（F-D 读数面缺失）"))
+
+  /**
+   * 源级日志夹具：把 `nebflow.neblink.presence` 的事件收进 logback `ListAppender`。
+   *
+   * 判据必须断言「日志是否真的发出」，**不是**断言返回值——built-but-discarded 的
+   * `IO[Unit]`（死码：`NebflowLogger.warn/info` 建出 IO 值即弃）在返回值面完全看不见，
+   * 只有源级断言看得见（先例 `DeadLoggingResurrectionSpec`）。断言一律按
+   * **deviceName 过滤**（`Dev-<id>` 唯一），免受并行 suite 的同名日志干扰。
+   */
+  private def withPresenceLogs[A](use: IO[A]): IO[(A, List[String])] =
+    IO {
+      val logger = org.slf4j.LoggerFactory
+        .getLogger("nebflow.neblink.presence")
+        .asInstanceOf[ch.qos.logback.classic.Logger]
+      val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      appender.start()
+      logger.addAppender(appender)
+      (logger, appender)
+    }.flatMap { pair =>
+      val logger = pair._1
+      val appender = pair._2
+      use.map(a => (a, appender.list.asScala.toList.map(_.getFormattedMessage)))
+        .guarantee(IO(logger.detachAppender(appender)))
+    }
 
   /**
    * 轮询等待「判据满足」。
@@ -496,6 +531,215 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
       assert(connected)
       assertEquals(served, 1, "只发生一次拨号")
       assert(elapsed < 1_500L, s"成功路径耗时 $elapsed ms 与改前同量级")
+    }
+  }
+
+  // ===== ⑥ 卡③ spec 补件（timeout 轴 / 计数存活 / 剔除判读面 / 正例读数）=====
+  //
+  // 上游缺口（修复卡 §3.1 G1–G4）：① 轴归属从未被断言钉住（只有原因串 `"timeout after 1500ms"`
+  // 的串面断言，可随实现漂移）；② 夹具的轴归属靠 OS 偶发 ⇒ 可静默降级成 refused 轴仍绿；
+  // ③ 无用例区分「第 4 拍生效（refused 3 连击）」与「第 6 拍生效（timeout 5 连击）」——
+  // 而现场故障轴正是 timeout；④ 剔除 WARN 死码 ⇒ 「置窗恰 1 条」的判据无处绿。
+
+  test("T1 轴钉正：黑洞夹具首轮失败类必须是 Timeout（读到 Refused 即硬红，禁静默降级）") {
+    val port = closedPort()
+    val epA = blackholeEndpoint(port, 2)
+    val epB = blackholeEndpoint(port, 3)
+    withStack(port) { (_, ps) =>
+      val p = peer("axis", List(epA, epB))
+      for
+        _ <- ps.connect(p)
+        r1 <- IO(roundOf(ps, "axis"))
+      yield (r1, epA, epB)
+    }.map { case (r1, epA, epB) =>
+      assertEquals(
+        r1.failures.map(_._2),
+        List(DialFailureClass.Timeout, DialFailureClass.Timeout),
+        s"黑洞夹具（丢 SYN 不回包）的轴归属必须是 timeout；实测 ${r1.failures} ⇒ 该平台把 " +
+          "127.0.0.0/8 全段当本地网段（黑洞转 ECONNREFUSED ⇒ 轴漂移成 refused、门槛由 5 变 3）。" +
+          "判据 = 宁可红不许静默降级：换黑洞构造（与 refused 轴分离），或该平台显式 skip + 留读数。"
+      )
+      assertEquals(r1.attempted, List(epA, epB), "轴归属读数与预算无关：双候选首轮都拨")
+      assertEquals(r1.skippedSuppressed, Nil, "首轮未达任何门槛")
+    }
+  }
+
+  test("T2 门槛轴可分：timeout 轴第 4 拍不得置窗、第 5 拍末置窗、第 6 拍半开探测（refused 轴第 4 拍早已置窗）") {
+    val port = closedPort()
+    val epA = blackholeEndpoint(port, 2)
+    val epB = blackholeEndpoint(port, 3)
+    withStack(port) { (_, ps) =>
+      val p = peer("axes", List(epA, epB))
+      for
+        _ <- ps.connect(p)
+        r1 <- IO(roundOf(ps, "axes"))
+        _ <- ps.connect(p)
+        r2 <- IO(roundOf(ps, "axes"))
+        _ <- ps.connect(p) // 第 3 拍（凑满 refused 轴门槛 3 ⇒ 若轴被降级，此拍末即置窗）
+        _ <- ps.connect(p)
+        r4 <- IO(roundOf(ps, "axes"))
+        _ <- ps.connect(p)
+        r5 <- IO(roundOf(ps, "axes"))
+        t0 <- IO.monotonic
+        _ <- ps.connect(p) // 第 6 拍：全部候选在窗内 ⇒ 半开探测
+        elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
+        r6 <- IO(roundOf(ps, "axes"))
+      yield (r1, r2, r4, r5, r6, elapsed)
+    }.map { case (r1, r2, r4, r5, r6, elapsed) =>
+      assertEquals(EvictionPolicy.Default.refusalStrikes, 3, "refused 轴门槛 = 3 连击")
+      assertEquals(EvictionPolicy.Default.timeoutStrikes, 5, "timeout 轴门槛 = 5 连击（歧义信号给足机会）")
+      assertEquals(r1.skippedSuppressed, Nil, "第 1 拍：未达门槛")
+      assertEquals(r2.skippedSuppressed, Nil, "第 2 拍：未达门槛")
+      assertEquals(
+        r4.skippedSuppressed,
+        Nil,
+        "🔴 G3 收口：timeout 轴第 4 拍**不得**置窗（refused 轴此拍已置窗 ⇒ 非空即轴被静默降级）"
+      )
+      assertEquals(r4.attempted, List(epA, epB), "第 4 拍仍全拨（轴未漂移）")
+      assertEquals(r5.attempted, List(epA, epB), "第 5 拍（凑满 5 连击）本轮仍全拨：门槛在记账末尾判定")
+      assertEquals(r5.skippedSuppressed, Nil, "第 5 拍置窗前不得跳过")
+      assertEquals(r6.skippedSuppressed, List(epB), "第 6 拍：全部候选在窗内 ⇒ 只跳次优（半开探测）")
+      assertEquals(r6.attempted, List(epA), "第 6 拍只拨最优候选")
+      assert(
+        elapsed >= 1_300L && elapsed <= 2_400L,
+        s"半开探测每拍成本必须 ≈1×budget(1500ms)，实测 ${elapsed}ms（两候选全拨会是 ≈3000ms）"
+      )
+    }
+  }
+
+  test("T3 计数存活跨名册缺席：名册缺席一拍不得清账（改前：账本被抹 ⇒ 回册后从零重累）") {
+    val port = closedPort()
+    val epA = blackholeEndpoint(port, 2)
+    val epB = blackholeEndpoint(port, 3)
+    withStack(port) { (ms, ps) =>
+      val p = peer("survive", List(epA, epB))
+      for
+        _ <- ms.upsertPeer(p)
+        _ <- ps.connect(p)
+        _ <- ps.connect(p)
+        _ <- ps.connect(p)
+        _ <- ps.connect(p)
+        _ <- ps.connect(p) // 第 5 拍末：两候选同时置窗（5 连击）
+        windowed <- IO(roundOf(ps, "survive"))
+        _ <- ps.syncPeers(Nil) // 名册缺席一拍 = 成员资格事件
+        during <- ms.peers
+        _ <- IO.sleep(600.millis) // 等过 grace(300ms)
+        evicted <- ms.peers
+        tSync <- IO.realTime // 与 PresenceDialRound.atMs（epoch millis）同时钟；monotonic 异钟 ⇒ 判据恒真、读到缺席前的旧轮
+        _ <- ps.syncPeers(List(p)) // 回册
+        _ <- awaitRoundWhere(ps, "survive", _.atMs > tSync.toMillis)
+        t0 <- IO.monotonic
+        _ <- ps.connect(p)
+        elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
+        after <- IO(roundOf(ps, "survive"))
+      yield (windowed, during, evicted, after, elapsed)
+    }.map { case (windowed, during, evicted, after, elapsed) =>
+      assertEquals(windowed.skippedSuppressed, Nil, "第 5 拍末才置窗 ⇒ 该轮仍全拨")
+      assert(during.exists(_.deviceId == "survive"), "名册缺席后 grace 窗内仍在册（pending removal 已登记）")
+      assertEquals(evicted.exists(_.deviceId == "survive"), false, "成员资格面照旧离册（两态解耦，不是把两态粘回去）")
+      assertEquals(
+        after.skippedSuppressed,
+        List(epB),
+        "🔴 回册后账本必须存活（改前此处读到 Nil：名册缺席一拍把账本/指纹/轮记录一次同清 ⇒ 计数从零重累）"
+      )
+      assertEquals(after.attempted, List(epA), "回册后只半开探测最优候选（改前 = [epA, epB] 全拨）")
+      assert(
+        elapsed <= 2_400L,
+        s"每拍成本 1×budget(1500ms) 的半开探测，实测 ${elapsed}ms（改前 ≈3000ms = 两候选全拨）"
+      )
+    }
+  }
+
+  test("T4 剔除判读面：置窗恰 1 条 suppressed WARN、名册变化恰 1 条 changed INFO（同 run 对照 dial failed > 0）") {
+    val srv = new PresenceWsFixture()
+    val deadPort = closedPort()
+    val deadEp = s"http://127.0.0.1:$deadPort"
+    withStack(srv.port) { (_, ps) =>
+      val liveEp = srv.endpoint
+      val p = peer("readout", List(deadEp, liveEp))
+      val acc = scala.collection.mutable.ListBuffer.empty[PresenceDialRound]
+      withPresenceLogs {
+        for
+          _ <- ps.connect(p) // 首拍：黑洞候选 1 次 refused
+          _ <- awaitConnected(ps, "readout")
+          _ <- driveReconnectRounds(ps, p, acc, 2) // 再 2 拍 ⇒ 3 连击 ⇒ 置窗 + 1 条 WARN
+          // 指纹只由 syncPeers 登记（connect/梯子腿不写）⇒ 先落一次原序名册作基线
+          // （prev=null 不触发日志），下一行的重序才构成「候选集合变化」。
+          _ <- ps.syncPeers(List(p))
+          _ <- ps.syncPeers(List(peer("readout", List(liveEp, deadEp)))) // 候选集合变化 ⇒ 1 条 INFO
+        yield ()
+      }
+    }.guarantee(IO(srv.close())).map { case (_, msgs) =>
+      def count(s: String): Int = msgs.count(_.contains(s))
+      assertEquals(
+        count("Presence endpoint suppressed for Dev-readout"),
+        1,
+        s"置窗必须恰 1 条 suppressed WARN（死码修活前此处 = 0）：$msgs"
+      )
+      assertEquals(
+        count("Presence candidate list changed for Dev-readout"),
+        1,
+        s"名册候选集合变化必须恰 1 条 changed INFO（死码修活前此处 = 0）：$msgs"
+      )
+      assert(
+        count("Presence dial failed for Dev-readout") > 0,
+        s"同 run 对照：dial failed 必须落盘（证明 logger 通道本身可写，排除「断言写错面」）：$msgs"
+      )
+    }
+  }
+
+  test("T5 §4 正例读数：10/8 · 172.16/12（两沿）· 192.168/16 均 Lan/1500ms；fc00::/7 现落 Other/2500ms（登记不改）") {
+    val b = DialBudget.Default
+    assertEquals(DialBudget.defaultClassify("10.0.0.7"), DialAddressClass.Lan, "10/8 ⇒ Lan")
+    assertEquals(b.budgetMsFor("http://10.0.0.7:8080"), 1_500L, "10/8 预算 1500ms")
+    assertEquals(DialBudget.defaultClassify("172.16.0.7"), DialAddressClass.Lan, "172.16/12 下沿 ⇒ Lan")
+    assertEquals(b.budgetMsFor("http://172.16.0.7:8080"), 1_500L, "172.16/12 下沿预算 1500ms")
+    assertEquals(DialBudget.defaultClassify("172.31.255.7"), DialAddressClass.Lan, "172.16/12 上沿 ⇒ Lan")
+    assertEquals(b.budgetMsFor("http://172.31.255.7:8080"), 1_500L, "172.16/12 上沿预算 1500ms")
+    assertEquals(DialBudget.defaultClassify("192.168.1.7"), DialAddressClass.Lan, "192.168/16 ⇒ Lan")
+    assertEquals(b.budgetMsFor("http://192.168.1.7:8080"), 1_500L, "192.168/16 预算 1500ms")
+    // 现状事实（本批不改分类，只把现读钉住以防日后静默漂移）：`isPrivateOrLoopbackHost` 只解析
+    // IPv4 点分四段（octets 要求 4 段）⇒ ULA `fc00::/7` 落 Other/2500ms。
+    assertEquals(DialBudget.defaultClassify("fc00::1"), DialAddressClass.Other, "fc00::/7 现落 Other（现状登记）")
+    assertEquals(b.budgetMsFor("http://[fc00::1]:8080"), 2_500L, "fc00::/7 预算现读 2500ms（登记不改）")
+  }
+
+  test("T6 §4 行为臂：合法（活）候选跨名册缺席既不入窗也不被跳过；黑洞候选保持置窗（名册缺席≠清账原因）") {
+    val srv = new PresenceWsFixture()
+    val deadEp = s"http://127.0.0.2:${srv.port}" // timeout 轴黑洞（LAN 档 = §4 三类的同一档）
+    withStack(srv.port) { (ms, ps) =>
+      val liveEp = srv.endpoint
+      val p = peer("nocollateral", List(deadEp, liveEp))
+      val acc = scala.collection.mutable.ListBuffer.empty[PresenceDialRound]
+      for
+        _ <- ms.upsertPeer(p)
+        _ <- ps.connect(p)
+        _ <- awaitConnected(ps, "nocollateral")
+        _ <- IO.sleep(80.millis)
+        _ <- IO(acc += roundOf(ps, "nocollateral"))
+        _ <- driveReconnectRounds(ps, p, acc, 4) // 第 2..5 拍（黑洞候选第 5 次超时后置窗）
+        windowed <- IO(acc.toList)
+        _ <- ps.syncPeers(Nil) // 名册缺席一拍（卡① 路径：disconnectPeer(_, forgetEndpointHealth = false)）
+        _ <- ps.syncPeers(List(p)) // 回册（卡① 路径：spawned connect，deadEp 被跳过 ⇒ 秒级接通、dedup 静默）
+        // 确定性后置轮：spawn 轮若已接通则本 connect 是 no-op（读 spawn 轮）；spawn 若被
+        // 在飞关闭事件/梯子竞争吞掉则本 connect 自己产轮。两形态的轮都满足同一判据
+        // （deadEp 已跳过 ⇒ 本轮只拨 liveEp）——不赌 spawn 与关闭事件的时序。
+        _ <- ps.connect(p)
+        after <- awaitRoundWhere(ps, "nocollateral", _.atMs > windowed.last.atMs) // 同钟判据（atMs vs atMs）
+      yield (windowed, after, liveEp, deadEp)
+    }.guarantee(IO(srv.close())).map { case (windowed, after, liveEp, deadEp) =>
+      assertEquals(windowed.size, 5, "首拍 + 4 拍重连 = 5 轮读数")
+      assert(
+        windowed.forall(r => !r.skippedSuppressed.contains(liveEp)),
+        s"🔴 活候选在任何一拍都不得入窗（零误伤）：${windowed.map(_.skippedSuppressed)}"
+      )
+      assert(windowed.forall(_.attempted.contains(liveEp)), "活候选每拍都必须被拨")
+      assertEquals(after.skippedSuppressed, List(deadEp), "名册缺席一拍后黑洞候选仍保持置窗（账本存活）")
+      assertEquals(
+        after.attempted,
+        List(liveEp),
+        "🔴 名册缺席一拍不得成为任何候选的入窗或清账原因：合法候选照旧被拨、零跳过"
+      )
     }
   }
 

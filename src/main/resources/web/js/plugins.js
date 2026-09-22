@@ -85,6 +85,8 @@ import { contentText } from './contentI18n.js';
 import { escapeHtml } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
+import { key } from './branding.js';
+import { openLoginModal } from './activityBar.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function esc(s) { return escapeHtml(s); }
@@ -96,18 +98,51 @@ function shortModel(ref) {
   return idx >= 0 ? ref.slice(idx + 1) : ref;
 }
 
-/** Authorized JSON fetch (same token pattern as agentManager.js). */
+/** Authorized JSON fetch (same token pattern as agentManager.js).
+ *
+ *  🔴 2026-09-22 作者裁定 (c) 之③（**潜在功能缺陷**，本批最高优先项）：改前此处
+ *  硬编码 legacy 字面 token 键（`nebflow_` + `token` 的裸拼写）。品牌改名后该键
+ *  失配 ⇒ **有登录态也读不到 token** ⇒ 本面板**永远**失败（外观与「未登录」相同，
+ *  却是被 token 键吃掉的）。现取命名空间形态 `key('token')`，与全站同族先例逐字
+ *  同形（`agentManager.js:18` / `avatarCache.js:78` / `chatSearch.js:732` /
+ *  `daemons.js:263` / `dropbox.js:205` / `neblink.js:261`）。
+ *  （🔴 本注释刻意**不**复写那个 legacy 字面量：R1 的判据 = 单引号包裹的 legacy
+ *   token 键在**本文件** grep **零命中** —— 注释里留副本会污染读数。）
+ *
+ *  鉴权失败面（裁定 (c) 之①）：`status ∈ {401,403}` 时派 **既有** 全局事件
+ *  `fm-auth-required`（写法照 `friendsApi.js:160/170` 与 `:690` 的
+ *  `window.dispatchEvent(new CustomEvent('fm-auth-required'))`）——**不新造形态**，
+ *  由既有两个消费方（`messages.js:4989` / `contacts.js:1207`）走
+ *  `openLoginModal({ auto: true })`（带 15s burst 重复守卫）。
+ *  · 本函数**只**在 `!resp.ok && (401|403)` 时派事件：200 路径零触碰（不读 body、
+ *    不改 headers、不改返回值），非鉴权错误（5xx / 404 / 网络错）**不派**事件。
+ *  · ⚠ **不搬好友域码表**：`friendsApi.js` 的 `FRIEND_TERMINAL_CODES` /
+ *    `GROUP_DOMAIN_ERRORS`（「域语义码不派登录链」判据）是好友/群域正典，
+ *    `/api/plugins` 不产这类语义码 ⇒ 跨域挪用 = 新造第二套形态，故此处**只**判状态码。
+ *  · 调用方仍拿到原 resp（红线：本函数是**可见性**升级，不是拦截层）。 */
 async function api(path, opts = {}) {
-  const tok = localStorage.getItem('nebflow_token') || '';
+  const tok = localStorage.getItem(key('token')) || '';
   if (tok) opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${tok}` };
-  return fetch(path, opts);
+  const resp = await fetch(path, opts);
+  if (!resp.ok && (resp.status === 401 || resp.status === 403)) {
+    window.dispatchEvent(new CustomEvent('fm-auth-required'));
+  }
+  return resp;
 }
 
 /** GET /api/plugins — 注册表全量（approvalManifest + 拒载原因）。
- *  Response: { plugins: [manifest…], rejected: [{name, reason}] } */
+ *  Response: { plugins: [manifest…], rejected: [{name, reason}] }
+ *
+ *  失败面（本批新增 `.status` 挂载，形态照 `friendsApi.js:154-160`）：错误对象带上
+ *  HTTP 状态码，供渲染面分态 —— `401/403` ⇒ 登录引导卡（裁定 (c) 之②），其余
+ *  （5xx / 404 / 网络）⇒ 既有「加载失败」文案（原键保留，不删）。 */
 async function fetchPluginRegistry() {
   const resp = await api('/api/plugins');
-  if (!resp.ok) throw new Error(`GET /api/plugins ${resp.status}`);
+  if (!resp.ok) {
+    const err = /** @type {Error & {status?: number}} */ (new Error(`GET /api/plugins ${resp.status}`));
+    err.status = resp.status;
+    throw err;
+  }
   return resp.json();
 }
 
@@ -418,8 +453,38 @@ export function renderPlugins() {
     bindPluginsEvents(content);
   }).catch(err => {
     if (!content.isConnected) return;
-    content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
+    // 失败分态（2026-09-22 作者裁定 (c) 之②）：401/403 ⇒ 面板内**可见兜底**登录引导卡；
+    // 其余（5xx / 404 / 网络 / 解析）⇒ 既有「加载失败」文案（原键**保留**）。
+    // 分工逐字照 `contacts.js:747` 注释所述（「401/403→登录失效卡+重登按钮
+    // （`fm-auth-required` 全局链保留，卡片为兜底可见反馈）」）：链负责弹窗、
+    // 卡片负责**面板内可见反馈**（用户没看到弹窗时面板不留白、不误报「加载失败」）。
+    if (err?.status === 401 || err?.status === 403) renderAuthRequired(content);
+    else content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
   });
+}
+
+/** 登录引导卡（本批裁定 (c) 之②「未登录 · 需注册」可见降级）—— 形态照
+ *  `contacts.js:794-810 buildSearchError()` 的 `auth` 分态：`fm-empty` 语义文案
+ *  + `fm-result-foot` 内的 `glass-control fm-login-btn` 重登键 → `openLoginModal()`。
+ *  🔴 只**复用**既有 `fm-*` 类与 `.fm-login-btn`（登录键族正典，sapphire.css:538
+ *  起）：零新 class 形态、零新 token、零新色值；不往 CSS 面加任何东西
+ *  （本批改动面 = `web/js/plugins.js` + `locales/{en,zh-CN}.js`）。
+ *  重登键是**真手势** ⇒ 按族内既有纪律走无参 `openLoginModal()`（不加 `{auto:true}`：
+ *  自动档是给非手势调用方的 burst 守卫，手势调用不受限，同四枚既有键逐字同形）。 */
+function renderAuthRequired(content) {
+  content.innerHTML = `
+    <div class="plugins-topbar">
+      <span class="plugins-title">${esc(t('activity.plugins'))}</span>
+    </div>
+    <div class="plugins-section">
+      <div class="fm-result-card fm-search-error" role="alert" data-plugins-auth-card>
+        <div class="fm-empty">${esc(t('plugins.authRequired'))}</div>
+        <div class="fm-result-foot">
+          <button type="button" class="glass-control fm-login-btn" data-plugins-relogin>${esc(t('plugins.relogin'))}</button>
+        </div>
+      </div>
+    </div>`;
+  content.querySelector('[data-plugins-relogin]')?.addEventListener('click', () => openLoginModal());
 }
 
 /** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
@@ -657,6 +722,11 @@ async function pluginsPollTick() {
   try {
     const registry = await fetchPluginRegistry();
     if (!pluginsPanelActive()) return; // tab closed mid-flight
+    // 登录引导卡在屏时**没有**卡片列表（`applyRegistryStates` 找不到目标列表会直接
+    // 归零返回）⇒ 登录成功后必须整页重渲，否则用户「重登 → 成功」后面板仍停在引导卡
+    // 上（= 动作静默无效，违本文件头的 F1「零静默、可行动」纪律）。判据 = 引导卡元素
+    // 在场（二值、可断言）；在屏时这一拍改走 `renderPlugins()` 原地收敛。
+    if (pluginsContentEl()?.querySelector('[data-plugins-auth-card]')) { renderPlugins(); return; }
     applyRegistryStates(registry);
   } catch { /* transient — next tick retries */ }
 }

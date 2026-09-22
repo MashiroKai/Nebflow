@@ -1802,6 +1802,14 @@
   vertical-align: middle;
 }
 
+/* panelscheme 批（2026-09-21）：非可设 agent 的模型方案来源注记（跟随 Nebula /
+ * 分发器决定 / 默认方案）——替换原 preset 下拉位置的说明行。 */
+.agent-detail-scheme-note {
+  font: 400 12px -apple-system, sans-serif;
+  color: var(--color-text-muted, #888);
+  padding: 2px 0 6px;
+}
+
 /* Tool toggle chip grid — retired 2026-09-06 (agent-detail capability
    sections removed; dead legacy read-only chips below removed with it). */
 

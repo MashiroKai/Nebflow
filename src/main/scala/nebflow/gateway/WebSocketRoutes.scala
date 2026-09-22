@@ -51,7 +51,10 @@ class WebSocketRoutes(
   nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
   /** C1-5 injection seam: the credential-namespace policy the read and the
     * signing endpoints share. Memoized so the R2 inode scan is a one-off. */
-  nfPathPolicy: WebSocketRoutes.NfPathPolicy = WebSocketRoutes.NfPathPolicy.memoized()
+  nfPathPolicy: WebSocketRoutes.NfPathPolicy = WebSocketRoutes.NfPathPolicy.memoized(),
+  /** R-1b conn-guard：per-IP WS 看护（升级面准入 + 计数）。缺省 = 全放行
+    * 实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。 */
+  connGuard: ConnGuard = ConnGuard.disabled
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -765,21 +768,40 @@ class WebSocketRoutes(
       // not lock the client out: if the cookie does not validate but a valid
       // ?token= is presented, accept it.
       if Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token) then
+        // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
+        // 环回恒放行）。入账延后到 wsb.build 前（下方 acquireWs——中途失败
+        // 不留幽灵计数），回减挂流 finalizer（releaseWs 凭据配对）。
+        // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
+        val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
+        connGuard.checkWs(wsIp).flatMap {
+          case Some(reason) =>
+            logger.warn(
+              s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+            ) *>
+              TooManyRequests(
+                s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
+              )
+          case None => (
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
 
           perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
           hubConnId <- wsHub.register(perConnWsSend)
 
+          // explorer-rt (chain-n-1981ce87): one watch-subscription table per
+          // connection. Chained into the finalizer below — a dropped
+          // connection releases every WatchService it registered.
+          watchSession = new ExplorerWatchSession(perConnWsSend, logger)
+
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend).handleErrorWith { e =>
+              handleMessage(text, perConnWsSend, watchSession).handleErrorWith { e =>
                 logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                 IO.unit
               }
             case _ => IO.unit
           }.onFinalize(
-            wsHub.unregister(hubConnId)
+            wsHub.unregister(hubConnId) *> watchSession.close()
           )
 
           // sendStream: read from outbound queue, send via WebSocket.
@@ -843,8 +865,14 @@ class WebSocketRoutes(
             )
           )
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
-          ws <- wsb.build(sendStream, receivePipe)
+          // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
+          // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
+          guardHandle <- connGuard.acquireWs(wsIp)
+          guardedPipe = receivePipe.andThen(_.onFinalize(connGuard.releaseWs(guardHandle)))
+          ws <- wsb.build(sendStream, guardedPipe)
         yield ws
+          )
+        }
       else
         logger.warn(
           s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
@@ -1212,6 +1240,20 @@ class WebSocketRoutes(
     Json.obj(fields.toList*)
   }
 
+  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+    * `browsePath` frame builders. Body lives in the companion object (pure core,
+    * spec-callable — `deletePathsSafely` precedent), these are the seam the
+    * handler uses. */
+  private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
+
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    WebSocketRoutes.browseErrorFrame(displayPath, kind, msg, query)
+
+  /** How many entries a `browsePath` frame carries before `truncated` turns on —
+    * the ONE ruler for that leg (was a literal `take(200)`). */
+  private[gateway] val BrowseEntryCap: Int = WebSocketRoutes.BrowseEntryCap
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   /** The Canvas / file-viewer OPEN gate — the largest file the WS `pop.readFile`
@@ -1231,13 +1273,227 @@ class WebSocketRoutes(
     * so a 100MB PDF never enters this JVM's heap (see the `pop.readFile` case). */
   private val MaxPopReadFileBytes: Long = 100L * 1024 * 1024
 
+  // ── Text-stream legs (design card §三.4/§三.5, `TextStream.scala`) ─────────
+  // The render-path switch: text files ABOVE `TextStream.ThresholdBytes` (8MiB,
+  // server single point of truth) open as a read-only virtual-scroll view fed by
+  // on-demand windows instead of one whole `content` frame. NOT a second open
+  // gate — `MaxPopReadFileBytes` above stays the only size limit on this path.
+
+  /** Per-request cancellation flags. `textCancel` flips the flag; the index
+    * builder and the scan loop check it between chunks (cooperative cancel, so a
+    * cancelled stream stops at the next 256KiB boundary). */
+  private val textStreamCancels: Ref[IO, Map[String, Ref[IO, Boolean]]] = Ref.unsafe(Map.empty)
+
+  /** In-flight scan count, capped at `TextStream.MaxConcurrentScans` — the pull
+    * protocol already limits one window per tab, this bounds the server side when
+    * several tabs search at once. */
+  private val textStreamScans: Ref[IO, Int] = Ref.unsafe(0)
+
+  /** Sparse-index LRU, bounded to `TextStream.MaxCachedIndexes` entries and keyed
+    * by (path, size, mtimeMs): `size`/`mtimeMs` changing IS the invalidation. */
+  private val textStreamIndexes: Ref[IO, Vector[(TextStream.IndexKey, TextStream.SparseIndex)]] =
+    Ref.unsafe(Vector.empty)
+
+  /** In-flight index builds, keyed by the same (path, size, mtimeMs). Without
+    * this, the window request that needs `firstLine` and the parallel `textIndex`
+    * request of the same open would both scan a 100MiB file. */
+  private val textStreamIndexBuilds
+    : Ref[IO, Map[TextStream.IndexKey, Deferred[IO, Either[Throwable, TextStream.SparseIndex]]]] =
+    Ref.unsafe(Map.empty)
+
+  /** Read [start, start+count) without ever holding the whole file: one bounded
+    * array + a positional channel read. Short reads (EOF) are returned as-is. */
+  private def readRangeBytes(p: os.Path, start: Long, count: Int): IO[Array[Byte]] =
+    IO.blocking {
+      val bb = java.nio.ByteBuffer.allocate(math.max(count, 0))
+      val ch = java.nio.channels.FileChannel.open(p.toNIO, java.nio.file.StandardOpenOption.READ)
+      try
+        var pos = start
+        var done = false
+        while !done && bb.hasRemaining do
+          val n = ch.read(bb, pos)
+          if n <= 0 then done = true else pos += n
+        bb.flip()
+        val out = new Array[Byte](bb.remaining())
+        bb.get(out)
+        out
+      finally ch.close()
+    }
+
+  /** Count newlines in [from, to) chunk by chunk — the `firstLine` refinement for
+    * a window that does not start on an index anchor. Memory stays O(chunk); the
+    * span is bounded by the distance from the nearest stride anchor, which for
+    * line-aligned requests is one window or less. */
+  private def countNewlinesBetween(p: os.Path, from: Long, to: Long): IO[Long] =
+    def loop(offset: Long, acc: Long): IO[Long] =
+      if offset >= to then IO.pure(acc)
+      else
+        val n = math.min(TextStream.ScanChunkBytes.toLong, to - offset).toInt
+        readRangeBytes(p, offset, n).flatMap { chunk =>
+          loop(offset + chunk.length, acc + TextStream.countNewlines(chunk, chunk.length))
+        }
+    loop(from, 0L)
+
+  /** The text-stream legs' shared admission ruling — deliberately the SAME
+    * reachable surface as today's text leg (`pop.readFile`): absolute path,
+    * exists, regular file, ≤ the 100MB open gate. No credential-namespace check
+    * and no extension whitelist, so streaming opens NO new surface (card §二.3 ②).
+    * Binary files are refused: they have their own byte leg. */
+  private def resolveStreamPath(rawPath: String): IO[os.Path] =
+    for
+      _ <- IO.raiseUnless(PathUtil.isAbsolute(rawPath))(new RuntimeException("path must be absolute"))
+      p = PathUtil.resolvePath(rawPath)
+      _ <- IO.raiseUnless(os.exists(p))(new RuntimeException(s"file not found: $rawPath"))
+      _ <- IO.raiseUnless(os.isFile(p))(new RuntimeException("path is not a regular file"))
+      size <- IO.blocking(os.size(p))
+      _ <- IO.raiseWhen(size > MaxPopReadFileBytes)(
+        new RuntimeException(s"file exceeds ${MaxPopReadFileBytes / (1024 * 1024)}MB limit")
+      )
+      ext = rawPath.split('.').lastOption.getOrElse("").toLowerCase
+      _ <- IO.raiseWhen(nebflow.core.workspace.FileTypeRegistry.detect(ext).binary)(
+        new RuntimeException("not a text file")
+      )
+    yield p
+
+  private def textStreamCancelled(reqId: String): IO[Boolean] =
+    if reqId.isEmpty then IO.pure(false)
+    else
+      textStreamCancels.get.flatMap { m =>
+        m.get(reqId) match
+          case Some(flag) => flag.get
+          case None       => IO.pure(false)
+      }
+
+  /** Scan a file chunk by chunk into a sparse index. Cancellable between chunks. */
+  private def buildTextIndex(p: os.Path, size: Long, reqId: String): IO[TextStream.SparseIndex] =
+    val builder = new TextStream.IndexBuilder()
+    def loop(offset: Long): IO[TextStream.SparseIndex] =
+      textStreamCancelled(reqId).flatMap { stop =>
+        if stop || offset >= size then IO.pure(builder.result)
+        else
+          val n = math.min(TextStream.ScanChunkBytes.toLong, size - offset).toInt
+          readRangeBytes(p, offset, n).flatMap { chunk =>
+            builder.feed(chunk, chunk.length)
+            loop(offset + chunk.length)
+          }
+      }
+    loop(0L)
+
+  /** Cached index for (path, size, mtimeMs), de-duplicating concurrent builds. */
+  private def textIndexFor(p: os.Path, size: Long, mtimeMs: Long, reqId: String): IO[TextStream.SparseIndex] =
+    val key = TextStream.IndexKey(p.toString, size, mtimeMs)
+    textStreamIndexes.get.flatMap { entries =>
+      TextStream.lruGet(entries, key)._1 match
+        case Some(idx) => textStreamIndexes.update(es => TextStream.lruPut(es, key, idx)).as(idx)
+        case None =>
+        Deferred[IO, Either[Throwable, TextStream.SparseIndex]].flatMap { gate =>
+          type Gate = Deferred[IO, Either[Throwable, TextStream.SparseIndex]]
+          textStreamIndexBuilds
+            .modify[Either[Gate, Gate]] { m =>
+              m.get(key) match
+                case Some(existing) => (m, Left(existing))
+                case None           => (m + (key -> gate), Right(gate))
+            }
+            .flatMap {
+              case Left(existing) => existing.get.rethrow
+              case Right(mine) =>
+                buildTextIndex(p, size, reqId)
+                  .flatTap(idx => textStreamIndexes.update(es => TextStream.lruPut(es, key, idx)))
+                  .attempt
+                  .flatTap(res => mine.complete(res))
+                  .rethrow
+                  .onCancel(mine.complete(Left(new RuntimeException("index build was cancelled"))).void)
+                  .guarantee(textStreamIndexBuilds.update(_ - key))
+            }
+        }
+    }
+
+  /** Exact line number of the first line in a window starting at `startByte`:
+    * the index anchor gives the line exactly when the request is anchor-aligned
+    * (jump case, O(1)); otherwise the residual span is counted. */
+  private def textFirstLine(p: os.Path, index: TextStream.SparseIndex, startByte: Long): IO[Long] =
+    val (anchorOffset, anchorLine) = index.anchorFor(startByte)
+    if anchorOffset >= startByte then IO.pure(anchorLine)
+    else countNewlinesBetween(p, anchorOffset, startByte).map(n => TextStream.firstLineFrom(anchorLine, n))
+
+  private def acquireScanSlot: IO[Boolean] =
+    textStreamScans.modify(n =>
+      if n < TextStream.MaxConcurrentScans then (n + 1, true) else (n, false)
+    )
+
+  private def releaseScanSlot: IO[Unit] = textStreamScans.update(n => math.max(0, n - 1))
+
+  private def hitsJson(hits: Vector[TextStream.Hit]): Json =
+    Json.arr(
+      hits.map(h =>
+        Json.obj("line" -> Json.fromLong(h.line), "col" -> Json.fromLong(h.col), "text" -> Json.fromString(h.text))
+      )*
+    )
+
+  /** Stream the literal scan in `ScanChunkBytes` reads, emitting `textSearchHit`
+    * frames of ≤ `TextStream.HitsPerFrame` hits. Stops on cancel, on EOF or on the
+    * hit cap — every stop is reported as `truncated` (never a silent partial). */
+  private def runTextSearch(
+    wsSend: io.circe.Json => IO[Unit],
+    reqId: String,
+    tabId: String,
+    p: os.Path,
+    size: Long,
+    scanner: TextStream.LiteralScanner,
+    flag: Ref[IO, Boolean]
+  ): IO[TextStream.SearchOutcome] =
+    def sendBatch(batch: Vector[TextStream.Hit]): IO[Unit] =
+      wsSend(
+        Json.obj(
+          "type" -> "textSearchHit".asJson,
+          "reqId" -> reqId.asJson,
+          "tabId" -> tabId.asJson,
+          "hits" -> hitsJson(batch)
+        )
+      )
+    def flush(hits: Vector[TextStream.Hit]): IO[Unit] =
+      hits.grouped(TextStream.HitsPerFrame).toVector.foldLeft(IO.unit)((acc, b) => acc *> sendBatch(b))
+    def loop(offset: Long): IO[TextStream.SearchOutcome] =
+      flag.get.flatMap { stop =>
+        if stop || offset >= size || scanner.truncated then
+          IO(scanner.finish()) *> flush(scanner.drainHits())
+            .as(TextStream.SearchOutcome(scanner.scannedBytes, scanner.totalHits, stop || scanner.truncated))
+        else
+          val n = math.min(TextStream.ScanChunkBytes.toLong, size - offset).toInt
+          readRangeBytes(p, offset, n).flatMap { chunk =>
+            scanner.feed(chunk, chunk.length)
+            flush(scanner.drainHits()) *> loop(offset + chunk.length)
+          }
+      }
+    loop(0L)
+
+  /** explorer-rt: shared explorer root resolution (listDir + watchSubscribe
+    * same judgment by construction). `overrideRoot` wins verbatim; otherwise
+    * session project root, falling back to the default projects dir — byte
+    * -for-byte the resolution listDir has always used; the canonical-path
+    * escape guard stays at the call sites (it guards a resolved subpath, not
+    * the root itself). */
+  private def resolveExplorerBaseRoot(sessionId: String, overrideRoot: Option[String]): IO[String] =
+    overrideRoot match
+      case Some(root) => IO.pure(root)
+      case None =>
+        for
+          metaOpt <- sessionStore.getSessionMeta(sessionId)
+          folderId = metaOpt.flatMap(_.folderId)
+          prOpt <- sessionStore.resolveProjectRoot(folderId)
+        yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+
   /** Public facade for REST API to call into the same message handler. */
   def handleMessagePublic(text: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
-    handleMessage(text, wsSend)
+    // Non-live watch session: explorer-rt subscriptions need a real WS
+    // connection (lifecycle-tied); a REST-invoked handler answers fileOpError
+    // for watch frames instead of silently leaking a WatchService.
+    handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))
 
   private def handleMessage(
     text: String,
-    wsSend: io.circe.Json => IO[Unit]
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
   ): IO[Unit] =
     if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
     else
@@ -1257,7 +1513,12 @@ class WebSocketRoutes(
                 val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
                 sessionStore.appendUiMessages(
                   askSessionId,
-                  List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
+                  // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：作答行经**单一构造
+                  // 点**落盘，带显式来源标记 answerOf = 被作答的 requestId ⇒ 历史恢复
+                  // 取值由**数据**决定，不再靠「askUser 条目后面第一条 user 行」的邻接
+                  // 启发式（该启发式在非阻塞提问/作答后继续打字的形态下会取偏 ⇒ 取样
+                  // null ⇒ 历史卡被渲染成「已作答」⇒ 重放去重判据被击穿 ⇒ 同 id 双卡）。
+                  List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
                 ) *>
                   forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
               case _ => IO.unit
@@ -2537,14 +2798,7 @@ class WebSocketRoutes(
             if exSessionId.nonEmpty then
               val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
               (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(exSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+                pr <- resolveExplorerBaseRoot(exSessionId, overrideRoot)
                 basePath = if subPath.isEmpty then os.Path(pr) else PathUtil.resolvePath(subPath, os.Path(pr))
                 canonicalBase = basePath.toIO.getCanonicalPath
                 canonicalRoot = os.Path(pr).toIO.getCanonicalPath
@@ -2552,16 +2806,21 @@ class WebSocketRoutes(
                   new RuntimeException("path outside project root")
                 )
                 entries <- IO.blocking(WebSocketRoutes.listDirEntries(basePath))
-              yield (basePath.toString, entries))
-                .flatMap { case (resolvedPath, entries) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "dirListing".asJson,
-                      "path" -> subPath.asJson,
-                      "resolvedPath" -> resolvedPath.asJson,
-                      "entries" -> entries.asJson
+              yield (basePath, entries))
+                .flatMap { case (basePath, entries) =>
+                  // explorer-rt: a listed dir is a visible dir — auto-mode
+                  // watch subscriptions on this connection grow here (the
+                  // frontend's explicit-dirs subscribers manage their own set;
+                  // this is a no-op for them and when nothing is subscribed).
+                  watchSession.noteListed(basePath) *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "dirListing".asJson,
+                        "path" -> subPath.asJson,
+                        "resolvedPath" -> basePath.toString.asJson,
+                        "entries" -> entries.asJson
+                      )
                     )
-                  )
                 }
                 .handleErrorWith { e =>
                   logger.warn(s"listDir failed: ${e.getMessage}")
@@ -2569,6 +2828,59 @@ class WebSocketRoutes(
                 }
             else IO.unit
             end if
+
+          // ===== Explorer real-time watch (explorer-rt · chain-n-1981ce87) =====
+          // Case C hybrid: push as main path, existing refresh legs untouched
+          // as fallback. Frame contract in ExplorerWatchSession's doc — three
+          // new cases, zero changes to existing frame shapes.
+
+          case "watchSubscribe" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val wtSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            if wtSessionId.nonEmpty then
+              val rootOverride = hc.downField("rootPath").as[Option[String]].toOption.flatten
+              val dirs = hc.downField("dirs").as[Option[List[String]]].toOption.flatten
+              (for
+                pr <- resolveExplorerBaseRoot(wtSessionId, rootOverride)
+                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+                _ <- watchSession.subscribe(
+                  os.Path(canonicalRoot),
+                  rootOverride.getOrElse(""),
+                  dirs
+                )
+              yield ())
+                .handleErrorWith { e =>
+                  logger.warn(s"watchSubscribe failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileOpError".asJson,
+                        "error" -> s"Explorer watch subscribe failed: ${e.getMessage}".asJson
+                      )
+                    )
+                }
+            else IO.unit
+
+          case "watchUnsubscribe" =>
+            // No session gate on purpose: teardown is keyed by the client-sent
+            // rootPath echo value alone (no root resolution, cannot fail), and
+            // it must still land once the session is gone — the frontend drops
+            // its subscription on session close while the connection stays
+            // open; a sessionId-gated no-op there would keep a WatchService
+            // polling the old root until the socket dies. Unknown key is an
+            // idempotent no-op server-side.
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val rootOverride = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            watchSession.unsubscribe(rootOverride.getOrElse("")).handleErrorWith { e =>
+              logger.warn(s"watchUnsubscribe failed: ${e.getMessage}")
+                *> wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "fileOpError".asJson,
+                    "error" -> s"Explorer watch unsubscribe failed: ${e.getMessage}".asJson
+                  )
+                )
+            }
 
           case "readFile" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -2595,15 +2907,22 @@ class WebSocketRoutes(
                 _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
                   new RuntimeException("path outside project root")
                 )
+                fileSize <- IO.blocking(os.size(basePath))
+                readExt = filePath.split('.').lastOption.getOrElse("").toLowerCase
+                readIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(readExt).binary
+                // 流式态（卡 §三.3，`readFile` 腿同判）：文本件 > 阈值即不读字节。
+                // 改前这里对所有件无条件读（二进制读到的 content 在帧里被丢弃），
+                // 现在二进制与流式态都跳过读取。
+                readIsStream = TextStream.isStream(readIsBinary, fileSize)
+                readMtimeMs <- IO.blocking(os.mtime(basePath))
                 content <- IO.blocking {
-                  val size = os.size(basePath)
-                  if size > 2 * 1024 * 1024 then
+                  if readIsBinary || readIsStream then ""
+                  else if fileSize > 2 * 1024 * 1024 then
                     os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
                   else os.read(basePath)
                 }
-                fileSize = os.size(basePath)
-              yield (content, basePath.toString, fileSize))
-                .flatMap { case (content, absPath, fileSize) =>
+              yield (content, basePath.toString, fileSize, readMtimeMs, readIsStream))
+                .flatMap { case (content, absPath, fileSize, mtimeMs, isStream) =>
                   val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
                   val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
                   val itemType = entry.itemType
@@ -2618,6 +2937,21 @@ class WebSocketRoutes(
                         "itemType" -> itemType.asJson,
                         "fileName" -> filePath.split('/').last.asJson,
                         "size" -> fileSize.asJson
+                      )
+                    )
+                  else if isStream then
+                    // 流式描述符（同 `pop.readFile` 腿）：无 `content` + `stream` +
+                    // `mtimeMs`；`itemType` 非空是硬要求（坑 ①）。
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> filePath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> filePath.split('/').last.asJson,
+                        "size" -> fileSize.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "stream" -> io.circe.Json.obj("v" -> io.circe.Json.fromInt(1), "kind" -> "text".asJson)
                       )
                     )
                   else
@@ -2684,9 +3018,14 @@ class WebSocketRoutes(
                 // 为一次 PDF 打开把 100MB 读进堆里再扔。
                 popExt = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
                 popIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(popExt).binary
-                content <- if popIsBinary then IO.pure("") else IO.blocking { os.read(basePath) }
-              yield (content, basePath.toString, fileSize, popFilePath))
-                .flatMap { case (content, absPath, fileSize, origPath) =>
+                // 流式态（卡 §三.3）：> TextStream.ThresholdBytes 的文本件**不读字节** ——
+                // 100MiB 整件读出 = 单帧 106.4M 字符 / 峰值 +1.07GB。改为回元数据 +
+                // `stream` 描述符，字节由 `textWindow` 按需拉（一窗一取 = 流控本体）。
+                popIsStream = TextStream.isStream(popIsBinary, fileSize)
+                popMtimeMs <- IO.blocking(os.mtime(basePath))
+                content <- if popIsBinary || popIsStream then IO.pure("") else IO.blocking { os.read(basePath) }
+              yield (content, basePath.toString, fileSize, popFilePath, popMtimeMs, popIsStream))
+                .flatMap { case (content, absPath, fileSize, origPath, mtimeMs, isStream) =>
                   val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
                   val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
                   val itemType = entry.itemType
@@ -2700,6 +3039,23 @@ class WebSocketRoutes(
                         "itemType" -> itemType.asJson,
                         "fileName" -> origPath.split('/').last.asJson,
                         "size" -> fileSize.asJson
+                      )
+                    )
+                  else if isStream then
+                    // 流式描述符：无 `content`（与二进制腿同形），+ `stream` + `mtimeMs`。
+                    // 🔴 `itemType` 必须非空（卡 §三.3 坑 ①）：空 itemType 会命中
+                    // canvas.js 的「空内容再取一次」分支 ⇒ 自激循环。FileTypeRegistry
+                    // 对未知扩展名回落 `code`，故非空 —— TextStreamSpec 钉住该不变量。
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> origPath.asJson,
+                        "absPath" -> absPath.asJson,
+                        "itemType" -> itemType.asJson,
+                        "fileName" -> origPath.split('/').last.asJson,
+                        "size" -> fileSize.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "stream" -> io.circe.Json.obj("v" -> io.circe.Json.fromInt(1), "kind" -> "text".asJson)
                       )
                     )
                   else
@@ -2727,6 +3083,204 @@ class WebSocketRoutes(
                         )
                     )
                 }
+            else IO.unit
+            end if
+
+          // ── Text-stream legs (design card §三.4: frame shapes are the contract) ──
+          // Pull protocol: the client asks one window / the index / one scan at a
+          // time, so flow control is structural (per tab ≤1 window in flight) and
+          // the server never queues a file's worth of bytes (the `Queue.unbounded`
+          // outbound trap, §二.3 ②).
+
+          case "textWindow" =>
+            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val twReqId = thc.downField("reqId").as[String].getOrElse("")
+            val twTabId = thc.downField("tabId").as[String].getOrElse("")
+            val twPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
+            val twMtime = thc.downField("mtimeMs").as[Long].getOrElse(0L)
+            val twStart = thc.downField("startByte").as[Long].getOrElse(-1L)
+            val twEnd = thc.downField("endByte").as[Long].getOrElse(-1L)
+            if twReqId.nonEmpty && twPath.nonEmpty then
+              (for
+                twFile <- resolveStreamPath(twPath)
+                twSize <- IO.blocking(os.size(twFile))
+                twMtimeNow <- IO.blocking(os.mtime(twFile))
+                _ <- IO.raiseWhen(twMtime > 0 && twMtime != twMtimeNow)(
+                  new RuntimeException("file changed since the index was built (mtime drift) — re-index")
+                )
+                _ <- IO.raiseUnless(twStart >= 0 && twEnd > twStart)(
+                  new RuntimeException(s"invalid window range [$twStart, $twEnd)")
+                )
+                _ <- IO.raiseWhen(twEnd - twStart > TextStream.MaxWindowBytes)(
+                  new RuntimeException(s"window request exceeds ${TextStream.MaxWindowBytes} bytes")
+                )
+                _ <- IO.raiseUnless(twStart < twSize)(new RuntimeException("window starts beyond end of file"))
+                twIndex <- textIndexFor(twFile, twSize, twMtimeNow, twReqId)
+                twReadEnd = math.min(twEnd, twSize)
+                twBytes <- readRangeBytes(twFile, twStart, (twReadEnd - twStart).toInt)
+                twFirstLine <- textFirstLine(twFile, twIndex, twStart)
+              yield (twBytes, twFirstLine, twSize, twMtimeNow))
+                .timeoutTo(
+                  TextStream.RequestTimeout,
+                  IO.raiseError(new RuntimeException(s"text window timed out after ${TextStream.RequestTimeout}"))
+                )
+                .flatMap { case (twBytes, twFirstLine, twSize, twMtimeNow) =>
+                  val realEnd = twStart + twBytes.length
+                  val twText = TextStream.decode(twBytes, twBytes.length)
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "textWindow".asJson,
+                      "reqId" -> twReqId.asJson,
+                      "tabId" -> twTabId.asJson,
+                      "path" -> twPath.asJson,
+                      "mtimeMs" -> twMtimeNow.asJson,
+                      "startByte" -> twStart.asJson,
+                      "endByte" -> realEnd.asJson,
+                      "text" -> twText.asJson,
+                      "firstLine" -> twFirstLine.asJson,
+                      "lineCount" -> TextStream.lineCountOf(twText).asJson,
+                      "eof" -> (realEnd >= twSize).asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"textWindow failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "textWindow".asJson,
+                        "reqId" -> twReqId.asJson,
+                        "tabId" -> twTabId.asJson,
+                        "path" -> twPath.asJson,
+                        "error" -> e.getMessage.asJson
+                      )
+                    )
+                }
+            else IO.unit
+            end if
+
+          case "textIndex" =>
+            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val tiReqId = thc.downField("reqId").as[String].getOrElse("")
+            val tiTabId = thc.downField("tabId").as[String].getOrElse("")
+            val tiPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
+            val tiMtime = thc.downField("mtimeMs").as[Long].getOrElse(0L)
+            if tiReqId.nonEmpty && tiPath.nonEmpty then
+              (for
+                tiFile <- resolveStreamPath(tiPath)
+                tiSize <- IO.blocking(os.size(tiFile))
+                tiMtimeNow <- IO.blocking(os.mtime(tiFile))
+                _ <- IO.raiseWhen(tiMtime > 0 && tiMtime != tiMtimeNow)(
+                  new RuntimeException("file changed since the index was built (mtime drift) — re-index")
+                )
+                tiIndex <- textIndexFor(tiFile, tiSize, tiMtimeNow, tiReqId)
+              yield (tiSize, tiMtimeNow, tiIndex))
+                .timeoutTo(
+                  TextStream.RequestTimeout,
+                  IO.raiseError(new RuntimeException(s"text index timed out after ${TextStream.RequestTimeout}"))
+                )
+                .flatMap { case (tiSize, tiMtimeNow, tiIndex) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "textIndex".asJson,
+                      "reqId" -> tiReqId.asJson,
+                      "tabId" -> tiTabId.asJson,
+                      "path" -> tiPath.asJson,
+                      "size" -> tiSize.asJson,
+                      "mtimeMs" -> tiMtimeNow.asJson,
+                      "totalLines" -> tiIndex.totalLines.asJson,
+                      "stride" -> tiIndex.stride.asJson,
+                      "lineStarts" -> io.circe.Json.arr(tiIndex.lineStarts.map(io.circe.Json.fromLong)*)
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"textIndex failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "textIndex".asJson,
+                        "reqId" -> tiReqId.asJson,
+                        "tabId" -> tiTabId.asJson,
+                        "path" -> tiPath.asJson,
+                        "error" -> e.getMessage.asJson
+                      )
+                    )
+                }
+            else IO.unit
+            end if
+
+          case "textSearch" =>
+            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val tsReqId = thc.downField("reqId").as[String].getOrElse("")
+            val tsTabId = thc.downField("tabId").as[String].getOrElse("")
+            val tsPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
+            val tsMtime = thc.downField("mtimeMs").as[Long].getOrElse(0L)
+            val tsQuery = thc.downField("query").as[String].getOrElse("")
+            val tsCase = thc.downField("caseSensitive").as[Boolean].getOrElse(false)
+            val tsMaxHitsRaw = thc.downField("maxHits").as[Long].getOrElse(TextStream.DefaultMaxHits.toLong)
+            val tsMaxHits =
+              if tsMaxHitsRaw <= 0 then TextStream.DefaultMaxHits
+              else math.min(tsMaxHitsRaw, TextStream.MaxAllowedMaxHits.toLong).toInt
+            if tsReqId.nonEmpty && tsPath.nonEmpty && tsQuery.nonEmpty then
+              (for
+                tsFile <- resolveStreamPath(tsPath)
+                tsSize <- IO.blocking(os.size(tsFile))
+                tsMtimeNow <- IO.blocking(os.mtime(tsFile))
+                _ <- IO.raiseWhen(tsMtime > 0 && tsMtime != tsMtimeNow)(
+                  new RuntimeException("file changed since the index was built (mtime drift) — re-index")
+                )
+                tsSlot <- acquireScanSlot
+                _ <- IO.raiseUnless(tsSlot)(
+                  new RuntimeException(s"too many concurrent text searches (limit ${TextStream.MaxConcurrentScans})")
+                )
+                tsScanner = new TextStream.LiteralScanner(tsQuery, tsCase, tsMaxHits)
+                tsFlag <- Ref[IO].of(false)
+                _ <- textStreamCancels.update(_ + (tsReqId -> tsFlag))
+                tsOutcome <- runTextSearch(wsSend, tsReqId, tsTabId, tsFile, tsSize, tsScanner, tsFlag)
+                  .guarantee(releaseScanSlot *> textStreamCancels.update(_ - tsReqId))
+              yield tsOutcome)
+                .timeoutTo(
+                  TextStream.RequestTimeout,
+                  IO.raiseError(new RuntimeException(s"text search timed out after ${TextStream.RequestTimeout}"))
+                )
+                .flatMap { tsOutcome =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "textSearchDone".asJson,
+                      "reqId" -> tsReqId.asJson,
+                      "tabId" -> tsTabId.asJson,
+                      "path" -> tsPath.asJson,
+                      "scannedBytes" -> tsOutcome.scannedBytes.asJson,
+                      "hits" -> tsOutcome.totalHits.asJson,
+                      "truncated" -> tsOutcome.truncated.asJson
+                    )
+                  )
+                }
+                .handleErrorWith { e =>
+                  logger.warn(s"textSearch failed: ${e.getMessage}")
+                    *> wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "textSearch".asJson,
+                        "reqId" -> tsReqId.asJson,
+                        "tabId" -> tsTabId.asJson,
+                        "path" -> tsPath.asJson,
+                        "error" -> e.getMessage.asJson
+                      )
+                    )
+                }
+            else IO.unit
+            end if
+
+          case "textCancel" =>
+            // tab 关闭 / 卸载 ⇒ 释放服务端 per-stream 状态并中断在跑扫描（卡 §三.5：
+            // 不做跨会话续传，重开 = 重建索引 + 重取可见窗，成本有界）。
+            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val tcReqId = thc.downField("reqId").as[String].getOrElse("")
+            if tcReqId.nonEmpty then
+              textStreamCancels.get.flatMap { m =>
+                m.get(tcReqId) match
+                  case Some(flag) => flag.set(true)
+                  case None       => IO.unit
+              }
             else IO.unit
             end if
 
@@ -3406,41 +3960,51 @@ class WebSocketRoutes(
             else IO.unit
             end if
 
-          // Directory browser for project root selection
+          // Directory browser for project root selection.
+          // picker-trunc (2026-09-22 author ruling, A+B+C): the old body ended in
+          // a silent `entries.take(200)` with no truncation word — the author
+          // could not find `~/Downloads` and got no hint that anything was cut.
+          // Now: real cap ([[BrowseEntryCap]]) + explicit `truncated`/`total`
+          // (A), server-side `query` filtering before the cap (B), and
+          // `~`/`~/` expansion via the shared expandTilde with a typed inline
+          // error on an unusable path (C).
           case "browsePath" =>
             val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val path = json.hcursor.downField("path").as[String].getOrElse("~")
-            val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
+            val rawPath = json.hcursor.downField("path").as[String].getOrElse("~")
+            val query = json.hcursor.downField("query").as[String].getOrElse("")
             IO.blocking {
-              val dir = os.Path(expanded, os.pwd)
-              if os.isDir(dir) then
-                val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
-                val result = entries.take(200).map { p =>
-                  io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
-                }
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> dir.toString.asJson,
-                  "entries" -> result.asJson
-                )
-              else
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> path.asJson,
-                  "entries" -> io.circe.Json.arr()
-                )
-              end if
-            }.flatMap(wsSend)
-              .handleErrorWith { e =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "browseResult".asJson,
-                    "path" -> path.asJson,
-                    "entries" -> io.circe.Json.arr(),
-                    "error" -> e.getMessage.asJson
-                  )
-                )
-              }
+              // C: `~` forms resolve through the shared expandTilde (same helper
+              // wsBrowse.list / wsBrowse.mkdir use), so `~` and `~/...` agree.
+              val expanded = expandTilde(rawPath.trim)
+              scala.util.Try(os.Path(expanded, os.pwd)).toOption match
+                case None =>
+                  (None, browseErrorFrame(rawPath, "invalid-path", s"Invalid path: $rawPath", query))
+                case Some(dir) if !os.exists(dir) =>
+                  (None, browseErrorFrame(rawPath, "invalid-path", s"No such directory: $rawPath", query))
+                case Some(dir) if !os.isDir(dir) =>
+                  (None, browseErrorFrame(rawPath, "not-a-directory", s"Not a directory: $rawPath", query))
+                case Some(dir) =>
+                  // The frame reports the RESOLVED path (the frontend breadcrumb
+                  // has always consumed `path`); the raw `~` form stays in the
+                  // error arm only.
+                  (Some(dir), browseResultFrame(dir, dir.toString, query, BrowseEntryCap))
+            }.flatMap {
+              case (dirOpt, frame) =>
+                dirOpt match
+                  case Some(dir) =>
+                    logger.info(
+                      s"browsePath: path=$rawPath query=$query cap=$BrowseEntryCap " +
+                        s"total=${frame.hcursor.get[Int]("total").getOrElse(-1)} " +
+                        s"truncated=${frame.hcursor.get[Boolean]("truncated").getOrElse(false)} resolved=${dir.toString}"
+                    )
+                  case None => ()
+                wsSend(frame)
+            }.handleErrorWith { e =>
+              // An unreadable directory (permissions, I/O error) is reported with
+              // the same typed frame — never silently an empty list.
+              logger.warn(s"browsePath failed: path=$rawPath query=$query ${e.getMessage}")
+              wsSend(browseErrorFrame(rawPath, "unreadable", s"${e.getClass.getSimpleName}: ${e.getMessage}", query))
+            }
 
           // ===== Folder Rules Management =====
 
@@ -4986,7 +5550,11 @@ class WebSocketRoutes(
 
       case "askUser" =>
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
+        // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
+        // 恢复出的卡可 id 寻址（重放腿按 id 替换、askUserClosed 关卡可达）。旧行缺席
+        // ⇒ None ⇒ 前端回落形态兜底去重腿（`chat.js sameAskCards` ②）。
+        val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items, askRid)))
 
       case "askPermission" =>
         val toolName = hc.downField("toolName").as[String].getOrElse("")
@@ -5190,6 +5758,79 @@ object WebSocketRoutes:
     * **纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕**必须
     * 在本层落笔 ⇒ 需要本层自己的 logger（与类侧 `nebflow.ws` 同名，日志面同源）。 */
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.ws")
+
+  /** How many entries a `browsePath` frame carries before `truncated` turns on —
+    * the ONE ruler for that leg (it replaced a literal `take(200)`).
+    *
+    * Chosen from MEASURED real shapes on this host, not from a guess
+    * (`.nebflow/evidence/20260922_picker-impl/`):
+    *   · the author's own scenario (home = 110 dirs, `Downloads` at lexical rank
+    *     79) needs only 110;
+    *   · the heaviest REAL directory reachable from the picker is
+    *     `~/Library/Application Scripts` = 1061 dirs, then `~/Library/Containers`
+    *     = 855, `~/Library/Caches` = 267, `/opt/homebrew/Cellar` = 223;
+    *   · 2000 covers all of them — 1.9x margin over the heaviest measured — and
+    *     the heaviest such frame measured 147 KiB / ≤463 ms enumerate+serialize
+    *     over the wire, versus the 10 MiB WS frame cap.
+    * Stepping higher buys nothing on the measurements: cap=5000 produced the
+    * SAME 147 KiB (no real directory here is that deep) while frame size and
+    * render time grow linearly in the cap. Directories with more than 2000
+    * subdirectories still hit the cap — that case is no longer silent (A's
+    * `truncated`/`total`), and B (search) / C (direct entry) are the ways to
+    * reach an entry that is cut. */
+  private[gateway] val BrowseEntryCap: Int = 2000
+
+  /** picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+    * `browsePath` success frame. Pure core: the spec calls it directly.
+    *
+    * A. **No silent truncation**: `total` is the full FILTERED entry count and
+    *    `truncated` says whether the cap cut it. The two keys are ADDITIVE —
+    *    `type` / `path` / `entries` keep their exact previous semantics, so an
+    *    older consumer that ignores unknown keys is unaffected.
+    * B. `query` filters SERVER-side (case-insensitive substring on the entry
+    *    name) BEFORE the cap, and `total`/`truncated` describe the FILTERED set.
+    *    Capping first and filtering the page would be the false fix the author's
+    *    ruling forbids. `query` is echoed back so the frontend can discard a
+    *    frame that answers a stale filter string.
+    */
+  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json = {
+    val q = query.trim.toLowerCase
+    // ONE listing pass: lexical order (pre-existing), then filter, then cap.
+    val all = os
+      .list(dir)
+      .filter(os.isDir)
+      .map(_.last)
+      .toList
+      .sorted
+    val matched = if q.isEmpty then all else all.filter(_.toLowerCase.contains(q))
+    val shown = matched.take(cap)
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> shown
+        .map(n => Json.obj("name" -> n.asJson, "path" -> (dir / n).toString.asJson))
+        .asJson,
+      "total" -> matched.size.asJson,
+      "truncated" -> (matched.size > shown.size).asJson,
+      "query" -> query.asJson
+    )
+  }
+
+  /** The `browsePath` failure frame (C): same shape, empty `entries`, plus a
+    * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`) the
+    * frontend renders inline. A failure is never a bare empty list — that is
+    * exactly the silent shape this batch removes. */
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> Json.arr(),
+      "total" -> 0.asJson,
+      "truncated" -> false.asJson,
+      "query" -> query.asJson,
+      "errorKind" -> kind.asJson,
+      "error" -> msg.asJson
+    )
 
   /** UI 文件浏览器**删除成功分支**的审计行（#159/#176 ④「补盲区」）。
     *

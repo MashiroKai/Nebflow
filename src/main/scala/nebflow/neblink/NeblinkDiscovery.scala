@@ -66,9 +66,17 @@ final class NeblinkDiscovery(
 
   /** Discovery cycle — use NebLink Server if configured. */
   def discoverCycle: IO[Unit] =
-    clientRef.get.flatMap {
-      case Some(client) => discoverViaServer(client)
-      case None => logger.warn("NebLink Server is not configured — discovery skipped")
+    // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）：本腿是**外发**（`client.discover`
+    // = 服务端登录/会话交换 + 名册拉取）。`enabled=false` ⇒ 显式空转（零 HTTP），
+    // 并在同一调用点判（不是启动期快照）⇒ 运行期登出/重登一拍内生效。
+    neblinkService.activityEnabled.flatMap {
+      case false =>
+        logger.debug("discoverCycle suppressed: NebLink is disabled (enabled=false) — zero outbound")
+      case true =>
+        clientRef.get.flatMap {
+          case Some(client) => discoverViaServer(client)
+          case None => logger.warn("NebLink Server is not configured — discovery skipped")
+        }
     }
 
   /**
@@ -76,24 +84,35 @@ final class NeblinkDiscovery(
    * Used by the periodic heartbeat loop. Returns immediately if no client.
    */
   def heartbeatCycle: IO[Unit] =
-    clientRef.get.flatMap {
-      case Some(client) => doHeartbeat(client)
-      case None => IO.unit
+    // 同上：心跳是**外发**腿（且心跳失败还会回落整轮 discovery ⇒ 连带会话交换）。
+    neblinkService.activityEnabled.flatMap {
+      case false =>
+        logger.debug("heartbeatCycle suppressed: NebLink is disabled (enabled=false) — zero outbound")
+      case true =>
+        clientRef.get.flatMap {
+          case Some(client) => doHeartbeat(client)
+          case None => IO.unit
+        }
     }
 
   private def doHeartbeat(client: NeblinkClient): IO[Unit] =
     client.heartbeat.flatMap {
       case Right(serverPeers) =>
-        val neblinkPeers = client.toNeblinkPeers(serverPeers)
-        val peerIps = client.peerAddresses(serverPeers)
-        // syncPeers (not bare upsert): the heartbeat path must CONVERGE the
-        // local peer list — peers that vanished from the server response are
-        // removed, not just refreshed. Upsert-only growth was the root cause
-        // of permanent ghost entries (logged-out devices staying "online").
-        presenceService.syncPeers(neblinkPeers) *>
-          neblinkService.updateTrustedIps(peerIps) *>
-          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-          resetFailCount
+        // 卡②：心跳腿注入 self deviceId ⇒ 名册回传本机自身时不进设备面
+        // （与 NeblinkService.handleAnnounce 的 self 过滤同判据；作用域内无 identity
+        // ⇒ 取一次再注入，identity 取不到 = 不过滤，保持向后兼容）。
+        neblinkService.identity.map(id => Some(id.deviceId)).handleError(_ => None).flatMap { selfId =>
+          val neblinkPeers = client.toNeblinkPeers(serverPeers, selfId)
+          val peerIps = client.peerAddresses(serverPeers)
+          // syncPeers (not bare upsert): the heartbeat path must CONVERGE the
+          // local peer list — peers that vanished from the server response are
+          // removed, not just refreshed. Upsert-only growth was the root cause
+          // of permanent ghost entries (logged-out devices staying "online").
+          presenceService.syncPeers(neblinkPeers) *>
+            neblinkService.updateTrustedIps(peerIps) *>
+            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+            resetFailCount
+        }
       case Left(err) =>
         // Heartbeat failed — fall back to full discovery (auto re-login if needed).
         logger.debug(s"Heartbeat failed ($err), falling back to discovery...") *>
@@ -109,7 +128,8 @@ final class NeblinkDiscovery(
       result <- client.discover(identity.deviceId, identity.deviceName, identity.platform, Nil)
       _ <- result match
         case Right(serverPeers) =>
-          val neblinkPeers = client.toNeblinkPeers(serverPeers)
+          // 卡②：发现腿同样注入 self deviceId（identity 已在 :108 作用域内）。
+          val neblinkPeers = client.toNeblinkPeers(serverPeers, Some(identity.deviceId))
           val peerIps = client.peerAddresses(serverPeers)
           for
             _ <- neblinkPeers.traverse_(p => neblinkService.upsertPeer(p))

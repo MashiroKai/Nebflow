@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# desktop-control · 观测入口
+# computer-use · 观测入口
 #
 # 两条硬语义：
 #   1) 默认 dry-run —— 不加 --run 时只打印将执行的命令原文，一个宿主调用都不发。

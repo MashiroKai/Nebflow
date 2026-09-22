@@ -23,7 +23,7 @@ import * as api from './friendsApi.js';
 // 同一转发入口（主卡 D2：同一契约，ref.id/refType/type='ref' 逐字不变）。
 import {
   refreshGroups, groupsAvailable, groupTitleOf, buildGroupSettings, groupErrToast,
-  groupAvatarGrid,
+  groupAvatarGrid, repaintGroupMemberLabels,
 } from './friendGroups.js';
 import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -369,10 +369,13 @@ function avatarEl(person, size) {
  *  逐字节同形的 `<svg>`（同 viewBox / 同 path `d` / 同 fill|stroke 语义）。
  *  🔴 落槽 = `.fm-avatar` 家族（几何随既有 `-40` 档，不新开尺寸座），字形尺寸由
  *  `.fm-avatar-device svg` 单条规则决定（`friends.css`）。
+ *  消费点两处：会话列表设备行（`convRow` 设备分支）＋ 设备**窗头**（`renderChatModal`
+ *  设备分支，作者 2026-09-21 16:54 令「三类对话框统一显示头像」）——同一函数、同一
+ *  字形源，禁第二份构造。
  *  🔴 只换**设备**这一支：好友头像照旧走档案 `avatarUrl` / 首字母，群行照旧首字母
  *  ⇒ 三类头像互不影响（逐类读数见本批报告 §①）。
- *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js:406`
- *  generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
+ *  ⚠ 平台映射的兜底档（未知平台）返回**显示器/笔记本形**glyph（`neblink.js`
+ *  `platformDisplay` 兜底档，现读 `:565` generic）⇒ 无名/未知平台的「空白态」设备同样有设备语义图标，不回落字母。 */
 function deviceAvatarEl(device, size) {
   const a = el('span', `fm-avatar fm-avatar-${size} fm-avatar-device`);
   a.innerHTML = platformDisplay(device && device.platform).icon;
@@ -602,7 +605,23 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
   //   「不是好友」的判定可能已翻转（无证据 ⇒ 已装载且命中）。旧形态只在开窗 /
   //   `fm-friends-changed` / 重连三处重判 ⇒ 空快照下开窗的条**粘滞**到关窗重开为止
   //   （实测 C2b）。此处与 `fm-friends-changed` 分支同款、同函数（禁第二实现）。
-  if (friendsRefreshed && modalEls) applyBlockState(currentConv());
+  //
+  //   群面标签是同一类残留（groupremark-fix · 判词 D1）：气泡发送者名只在建气泡时取
+  //   一次值，成员抽屉行却每次现取 ⇒ 好友快照晚于群窗首帧到达时，气泡被钉死在显示名、
+  //   抽屉行却是备注（作者令「两渲染点必须一致」被破坏，实测粘滞到关窗重开）。修在
+  //   **取数出口**（本尾钩），不在各渲染点：与上面 `applyBlockState` 同址同族、清同一
+  //   类残留；两个函数都已存在且幂等全量重打 ⇒ 零新实现、零新状态、零新请求。
+  if (friendsRefreshed && modalEls) {
+    applyBlockState(currentConv());
+    const c = currentConv();
+    if (c && c.kind === 'group') {
+      paintGroupSenderNames(c);
+      // The member drawer is another render point this module does not own
+      // (same call site and same accessor as the `fm-remark-changed` leg).
+      const drawer = document.querySelector('.fm-group-settings');
+      if (drawer) repaintGroupMemberLabels(drawer);
+    }
+  }
 }
 
 // ── 会话列表：本地层首帧 + 内容签名闸（sessperf Phase B · 2026-09-20）──────
@@ -1079,9 +1098,16 @@ function convTitleLabel(conv) {
 }
 
 // ── 群气泡发送者名（腿B §5.2 #2 的群新增面）───────────────────────────
-// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单；显示名而非好友
-// 备注，主卡 H 节口径）。开群窗时惰性取一次；首帧早于名册时先挂空槽（带
-// data-sender-id），名册到达后就地回填 —— 消息本体渲染不受名册成败影响。
+// 名册来源 = GET /api/groups/{id}/members（主卡:249 接口清单）。开群窗时惰性取一次；
+// 首帧早于名册时先挂空槽（带 data-sender-id），名册到达后就地回填 —— 消息本体渲染
+// 不受名册成败影响。
+//
+// 群面标签 = 「好友备注 > 成员显示名」（作者 2026-09-22 两裁 · 案 (a) 渲染层覆盖）：
+// 原口径「显示名而非好友备注」已由该裁定**作废**。备注是纯本地态、上游永不带该键
+// （`FriendSummary` 的 Decoder 有意不读），而群成员腿是零注入原文代理
+// （`RestApiRoutes.groupProxy`）⇒ 群面必须在客户端从既有好友快照解析备注
+// （`api.friendRemarkOf`，唯一取值点；注入形态取 A-2 = 前端查表，零后端改动）。
+// 名字仍是**渲染时现取**（wire 无名字快照）⇒ 历史消息与新消息同源、一并变备注。
 const groupMemberNames = new Map(); // conversationId -> Map(senderId -> displayName)
 // 窗头组合头像的**名册腿**（conversationId -> [{userId,name,avatarUrl}]）：来源 =
 // 与发送者名**同一次** `getGroupMembers`（零新增请求、零 N+1；方案 §3.2.5「群会话
@@ -1089,10 +1115,30 @@ const groupMemberNames = new Map(); // conversationId -> Map(senderId -> display
 // 名册到达后就地升级。
 const groupMemberAvatars = new Map();
 
-/** 群发送者显示名（未命中 ⇒ ''，渲染层留空槽等待回填）。 */
+/** 群发送者显示标签（好友备注 > 成员显示名；未命中 ⇒ ''，渲染层留空槽等待回填）。
+ *
+ *  备注是**渲染时现取**（wire 无名字快照，`MessageSummary` 只带 `senderId`）：
+ *  每次渲染都向好友快照问一次 ⇒ 备注一改变，历史消息与新消息同源、一并生效。
+ *  非好友群成员 / 备注为空 / 好友快照未装载 ⇒ 回落名册显示名 —— 与作者
+ *  「非好友成员不允许起备注」裁定同构：自然收敛，且**零新增录入面**。 */
 function groupSenderNameOf(conv, senderId) {
+  const remark = api.friendRemarkOf(senderId);
+  if (remark) return remark;
   const map = groupMemberNames.get(String(conv && conv.conversationId));
   return (map && map.get(String(senderId))) || '';
+}
+
+/** 已渲染气泡的发送者名就地重打（**唯一**重打实现：名册晚到回填 + 备注变更重打
+ *  共用它，禁第二份遍历）。
+ *
+ *  幂等且**全量覆盖**：按当前备注/名册重算并回写，不做「只在空槽时写」的增量判据
+ *  ——增量写法会把旧文本钉死，备注变更就没有能覆盖旧值的路径（正是本批要修的面）。 */
+function paintGroupSenderNames(conv) {
+  if (!modalEls || !conv || conv.kind !== 'group') return;
+  if (String(openConvId) !== String(conv.conversationId)) return;
+  for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
+    s.textContent = groupSenderNameOf(conv, s.dataset.senderId);
+  }
 }
 
 /** 群成员名册的应用（**唯一**就地渲染实现：窗头组合头像 + 列表行 + 已渲染气泡
@@ -1113,13 +1159,9 @@ function applyGroupRoster(conv, cells) {
   // 列表停在首字母直到下一次刷新事件（两侧逐格不等）。同一次拉取的产物 ⇒ 零新增请求、
   // 零新 CSS，不动数据面/接口。
   rerenderConvRow(conv.conversationId);
-  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等）。
-  if (modalEls && openConvId === conv.conversationId) {
-    for (const s of modalEls.flow.querySelectorAll('.fm-msg-sender[data-sender-id]')) {
-      const nm = map.get(s.dataset.senderId);
-      if (nm && !s.textContent) s.textContent = nm;
-    }
-  }
+  // 就地回填：名册晚于首帧到达时，补齐已渲染气泡的发送者名（幂等；与备注变更重打
+  // 共用 `paintGroupSenderNames` 这一条遍历，禁第二份实现）。
+  paintGroupSenderNames(conv);
 }
 
 /** 群名册内容签名（卡 §4② 兜底判据的群面口径：成员 id 集合的有序拼接）。
@@ -1180,16 +1222,23 @@ function renderChatModal(conv) {
   // 窗头转发按钮已移除（作者 2026-09-12 裁定，方案 §3.1 S5）：转发入口只保留
   // 按消息的两条 —— 气泡内按钮 + 气泡右键，共用 forwardBubble（无第二实现）。
   const header = el('div', 'fm-modal-header');
-  // 窗头头像槽（两档，同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
+  // 窗头头像槽（**三类全挂**（作者 2026-09-21 16:54 令「好友/群/设备类对话框统一
+  // 显示头像」）：同槽类 `.fm-modal-avatar`、同 40px 档 ⇒ **零新 CSS**）：
   //   · 群窗 = 组合头像（方案 §3.1 P1），随名册/群列表变更就地重打（禁整窗重建）；
   //   · **好友（单聊）窗 = 好友档案头像**（作者 2026-09-17 令「让好友的对话框能显示
   //     好友的头像」）—— 复用既有 `avatarEl` ＋ 既有 `conv.friend`（**与列表行
   //     `convRow` 的单聊分支**同一调用、同一数据对象，禁第二份取数/渲染链）；
-  //   · 设备窗**不挂**（其窗头形态由作者 2026-09-15 档位固定，本批不扩张）。
-  // 几何申报：40px 头像行必然把窗头抬到 64px 档（群窗先例 `729c56f3d`，已判**非回归**；
-  // 单聊窗同款增量，本批逐条读数见报告 §P2）。
+  //   · **设备窗 = 平台图标**（`deviceAvatarEl`，与会话列表设备行 / 联系人面板设备行
+  //     **同一函数、同一字形源** `platformDisplay` 单点）。设备无档案头像字段 ⇒
+  //     类型图标即其**既有兜底形态**（未知平台 = generic 显示器字形，`neblink.js`
+  //     `platformDisplay` 兜底档），无首字母分支。
+  // 🔴 有意变更申报：2026-09-15 档「设备窗不挂」被本令取代（后续令覆盖前令）；
+  // 群/好友两腿的建槽条件式、调用与数据对象逐字不变 ⇒ 既有头像消费面零变化。
+  // 几何申报：40px 头像行把设备窗头抬到 64px 档（群窗先例 `729c56f3d` / 好友窗
+  // avatarfix 同族增量，均已判非回归；设备窗头无 `.fm-modal-title-btn`，无热区连坐）。
   const isGroupHead = conv.kind === 'group';
-  const headAvatarSlot = (isGroupHead || (conv.kind !== 'device' && !!conv.friend))
+  const isDeviceHead = conv.kind === 'device';
+  const headAvatarSlot = (isGroupHead || isDeviceHead || !!conv.friend)
     ? el('span', 'fm-modal-avatar') : null;
   if (headAvatarSlot) {
     // 🔴 uifix 批（2026-09-17）：首帧**也**先查本窗名册缓存 `groupMemberAvatars`
@@ -1199,6 +1248,7 @@ function renderChatModal(conv) {
     // 带上缓存后，第二次及以后进同一群首帧即命中名册（与随后的名册腿签名相同 ⇒
     // `paintGroupAvatarInto` 的签名闸直接短路，全程零 DOM 操作）。
     if (isGroupHead) paintGroupAvatarInto(headAvatarSlot, conv, groupMemberAvatars.get(String(conv.conversationId)));
+    else if (isDeviceHead) headAvatarSlot.appendChild(deviceAvatarEl(conv.device, 40));
     else headAvatarSlot.appendChild(avatarEl(conv.friend, 40));
     header.appendChild(headAvatarSlot);
   }
@@ -4956,16 +5006,30 @@ export function initMessages() {
     if (modalEls) updateTrustBadge(currentConv());
   });
   // ⑦ 备注改动（contacts 行内编辑提交 / 清除）——会话列表行与开着的聊天窗头
-  // 标题面同步（三处显示优先级「备注 > 显示名」；server 端 remark 落到
+  // 标题面同步（显示优先级「备注 > 显示名」；server 端 remark 落到
   // conversations 的 friend 档案是下一次 refresh 的事，本地先就地更新）。
+  // 群面同一信号（作者 2026-09-22 裁 · 案 (a)）：群气泡发送者名与成员抽屉行都读
+  // 备注 ⇒ 改完备注当场重打（不等下一次 refresh）。备注是**渲染时现取**，
+  // 重打同时覆盖历史消息（作者裁 1「历史一并变」的落地）。
   window.addEventListener('fm-remark-changed', (e) => {
     const d = /** @type {CustomEvent<{userId?: string, remark?: string|null}>} */ (e).detail || {};
     if (!d.userId) return;
     const remark = d.remark || null;
     for (const c of conversations) if (c.friend && c.friend.userId === d.userId) c.friend.remark = remark;
     for (const f of friendsCache) if (f.userId === d.userId) f.remark = remark;
+    // 好友快照（群面备注的唯一来源）同拍覆盖：它由整次 getFriends 替换，本地编辑
+    // 不会回写，漏这一步群面读到的是改前值（陈旧显示）。
+    api.applyLocalFriendRemark(d.userId, remark);
     renderList();
     updateModalTitle(modalEls ? currentConv() : null);
+    const cur = modalEls ? currentConv() : null;
+    if (cur && cur.kind === 'group') {
+      paintGroupSenderNames(cur);
+      // 成员抽屉行是**另一处**渲染点（本模块不持有它的 DOM）：交属主就地重打，
+      // 免造第二份写 `.fm-member-name` 的实现（两处必须是同一判据）。
+      const drawer = document.querySelector('.fm-group-settings');
+      if (drawer) repaintGroupMemberLabels(drawer);
+    }
   });
   // 时制偏好变更 → 会话列表行时间（`.fm-conv-time`）就地重渲染随之刷新。列表行
   // 本身已是 role=option 按钮，**不挂**热区（嵌套可交互元素 = 点击语义冲突）；

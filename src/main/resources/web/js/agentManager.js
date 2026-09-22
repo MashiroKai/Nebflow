@@ -308,10 +308,12 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
 
       <div class="agent-detail-section">
         <div class="agent-detail-label">Model${showDefaultBadge ? `<span class="agent-detail-default-badge">${t('preset.defaultBadge')}</span>` : ''}</div>
+        ${presets.SCHEME_SETTABLE.has(name) ? `
         <select class="agent-detail-preset-select" id="agent-detail-preset-select">
           <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
           ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-        </select>
+        </select>` : `
+        <div class="agent-detail-scheme-note">${esc(t(presets.schemeNoteKey(name)))}</div>`}
         <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
         <div class="agent-detail-model-current" id="agent-detail-model-current"></div>
       </div>

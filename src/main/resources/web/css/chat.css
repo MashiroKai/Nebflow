@@ -1706,6 +1706,18 @@
   font-weight: 400;
 }
 
+/* 无作答记录的历史卡（双开缺陷批 chain-askuserdup 案 A①，2026-09-21）：显式待定标注。
+   与 `.option-answer`（= 已作答，语义此后严格互斥）同一槽位、同一排版，仅把颜色降到
+    muted 并斜体 —— 零新增颜色 token（`--color-text-muted` 是本文件既有变量），也不给
+    「待定」任何强调色：它不是结果读数，是「读不到结果」的如实标注。 */
+.option-answer-pending {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-weight: 400;
+}
+
 /* ---------- 已决卡置灰（共用层单一闸 `.option-box.resolved`，2026-09-18 作者报单） ---------- */
 /* 已决（作答 / 取消 / 引擎关闭 / 历史回放）⇒ 卡内可交互件置灰、光标中性、hover 与位移
    反馈收敛。禁用档位沿用既有值域（opacity 0.5 = `.option-btn:disabled` 同档，组件内

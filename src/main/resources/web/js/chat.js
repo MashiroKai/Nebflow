@@ -2592,6 +2592,48 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source)
   };
 }
 
+// ---------- 一 id 一活卡：单一判据（双开缺陷批「案 A③」2026-09-21 chain-askuserdup） ----------
+/** 容器内与 `requestId` **指同一张提问**的既有卡（`.option-box`）——本仓「一 id 一活卡」
+ *  的**单一判据**，live / replay / history 三路共用（禁三处各自演化）。
+ *
+ *  ① **id 优先（无条件）**：`data-request-id === requestId` ⇒ 恒命中，不论该卡是否带
+ *     `.option-answer` / `.resolved`。
+ *     改前这里是纯 DOM 启发式（`!!box.querySelector('.option-answer')` = 「有作答行 ⇒
+ *     判为已答 ⇒ 不删」），而历史恢复路径对**仍 pending**的卡也补了一行 `.option-answer`
+ *     ⇒ 判据对这笔卡恒被击穿 ⇒ 重放腿再挂一张同 id 的活卡（首卡历史卡恒死）。
+ *  ② **形态兜底**（`opts.legacyTwin`）：无 id 的**历史恢复**卡（`data-history-replay="1"`）
+ *     且**确无作答记录**（无 `.option-answer`）。只为案 B 之前的旧 `.ui.json` 行保留
+ *     （旧行不落 requestId ⇒ 没有 id 可匹，只能靠形态）。案 B 之后新行带 id ⇒ 走 ①。
+ *
+ *  🔴 方向不可反：**不许**再拿「有作答行」当「已答」的判据（那正是被击穿的启发式），
+ *  只许拿「确实没有作答记录」当**可删/可替换**的判据。
+ *  🔴 `legacyTwin` 只给**替换腿**（live / replay：新帧是这张卡的真身，旧孪生卡该让位）；
+ *  历史腿问的是「同 id 的活卡是否已在 DOM」，那里**不能**开这个口子，否则任何一张遗留
+ *  未作答卡都会让后画的历史卡被静默跳过。
+ */
+export function sameAskCards(chat, requestId, opts = {}) {
+  const out = [];
+  if (!chat || !chat.querySelectorAll) return out;
+  chat.querySelectorAll('.option-box').forEach((box) => {
+    const rid = box.dataset.requestId || '';
+    if (requestId && rid === requestId) { out.push(box); return; } // ① id 优先，无条件
+    if (opts.legacyTwin && !rid && box.dataset.historyReplay === '1'
+        && !box.querySelector('.option-answer')) out.push(box); // ② 旧行形态兜底
+  });
+  return out;
+}
+
+/** 消费侧：移除 [[sameAskCards]] 命中的既有卡，返回移除张数。调用方在挂新卡**之前**
+ *  调用（live 腿覆盖 `#433 F4` 同 id 多送 / replay 腿 = 本缺陷主修复面）。 */
+export function reclaimAskUserCards(chat, requestId, opts = {}) {
+  const cards = sameAskCards(chat, requestId, opts);
+  cards.forEach((box) => {
+    const row = box.closest('.row.ai');
+    (row || box).remove();
+  });
+  return cards.length;
+}
+
 /** Lock an AskUser card whose owning ask was closed by the engine (the
  *  `askUserClosed` frame, main.js onMessage). Historically this function had a
  *  second caller: the chat-input passthrough receiver (`askUserAnswered`,
@@ -2649,11 +2691,19 @@ export function closeAskUserCard(sessionId, requestId, note) {
  *  (answer slots joined with '\n' by the gateway askUserAnswer recording),
  *  or null when no answer was recorded. The '__cancelled__' sentinel
  *  reproduces the live cancel end-state: everything disabled, buttons
- *  visible, no answer line. */
-export function renderAskUserHistory(bubble, items, answerText) {
+ *  visible, no answer line. `null` (案 A①) = 历史无作答记录 ⇒ 不补答案行，改挂
+ *  `.option-answer-pending` 显式待定标注（禁把「无记录」画成「已作答」）。
+ *  requestId: 案 B 起随 askUser 行落盘的提问 id（旧行缺席 ⇒ undefined）。
+ *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
+ *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
+ *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
+export function renderAskUserHistory(bubble, items, answerText, requestId) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
-    showOptions(bubble, items, null, null, null, undefined, undefined);
+    // 案 B：持久化的 requestId 透传进 showOptions ⇒ 历史恢复的卡也带
+    // `data-request-id`（可 id 寻址：重放腿按 id 替换、askUserClosed 关卡可达）。
+    // 旧 .ui.json 行无该键 ⇒ undefined ⇒ 卡不带属性（改前形态，逐字不变）。
+    showOptions(bubble, items, null, null, null, undefined, requestId);
   } catch (e) {
     console.error('[askUser] history render failed:', e);
     bubble.textContent = t('chat.failedRender');
@@ -2661,6 +2711,10 @@ export function renderAskUserHistory(bubble, items, answerText) {
   }
   const box = bubble.querySelector('.option-box');
   if (!box) return;
+  // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
+  // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
+  // 不受影响。
+  box.dataset.historyReplay = '1';
   box.classList.remove('ob-fade-in'); // settled card — no creation animation on replay
   const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
@@ -2675,8 +2729,21 @@ export function renderAskUserHistory(bubble, items, answerText) {
     if (confirmBtn) confirmBtn.style.display = 'none';
     if (cancelBtn) cancelBtn.style.display = 'none';
     const ansDiv = document.createElement('div');
-    ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + formatHistoryAnswer(answerText);
+    // 案 A①（双开缺陷批 2026-09-21，chain-askuserdup）：**无作答记录**（`answerText
+    // == null`：旧行无法取证、或非阻塞提问 pending 期间后继 ai/tool 行把 run 截断）
+    // 不再伪装成「已作答」——改前无条件补 `.option-answer`，于是重放腿的去重判据
+    // （看卡上有没有作答行）对这笔卡必然失效 ⇒ 同 id 双卡、首卡恒死。
+    // 现改挂**显式待定标注**（死卡显式标注优于静默死亡）：卡片保持终态（不自作主张
+    // 变回可点 —— 「无作答记录的已答过卡」与「真 pending 卡」在数据上不可分离），
+    // 但把「历史无作答记录」明说出来，并让 `.option-answer` 的语义此后**严格等于
+    // 「已作答」**（`closeAskUserCard` 复用该语义 ⇒ 历史卡可被引擎关闭）。
+    if (answerText == null) {
+      ansDiv.className = 'option-answer-pending';
+      ansDiv.textContent = t('askUser.historyUnanswered');
+    } else {
+      ansDiv.className = 'option-answer';
+      ansDiv.textContent = '-> ' + formatHistoryAnswer(answerText);
+    }
     box.appendChild(ansDiv);
   }
 }

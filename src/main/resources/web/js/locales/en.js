@@ -778,7 +778,7 @@ export default {
   'settings.addProvider': '+ Add Provider',
   'settings.presets': 'Model Presets',
   'settings.addPreset': '+ Add Preset',
-  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for each agent.',
+  'settings.presetsEmptyHint': 'Add and configure a provider under "LLM Providers" first — then you can adjust the model preset for Nebula and the project dispatcher.',
   'preset.default': 'Default',
   'preset.setDefault': 'Set Default',
   'preset.edit': 'Edit',
@@ -815,6 +815,9 @@ export default {
   'preset.pillPrefix': 'Preset: ',
   'preset.defaultBadge': 'Default preset',
   'preset.loadFailed': 'Failed to load presets',
+  'preset.followsNebula': 'Follows Nebula\u2019s current preset (no setting of its own)',
+  'preset.followsDispatcher': 'Determined by the project dispatcher\u2019s current preset at dispatch time (no setting of its own)',
+  'preset.engineManaged': 'Not settable — follows the default preset',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
@@ -904,7 +907,11 @@ export default {
   'provider.keyPlaceholder': 'Leave as *** to keep existing',
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
-  'provider.protocol': 'Protocol',
+  'provider.protocol': 'Endpoint format',
+  // The helper line under the endpoint-format select (protoface-ui batch
+  // 2026-09-22): shows the POST target the engine will actually hit for the
+  // selected face + the currently typed base URL. {target} = full URL.
+  'provider.protocolHelper': 'This provider will receive: POST {target}',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
@@ -981,6 +988,16 @@ export default {
   'pathPicker.select': 'Select This Folder',
   'pathPicker.clear': 'Clear',
   'pathPicker.empty': 'No subdirectories in this folder',
+  // picker-trunc batch (2026-09-22 author ruling A+B+C)
+  'pathPicker.truncated': '{count} more not shown (of {total})',
+  'pathPicker.searchPlaceholder': 'Search in this folder (server-side filter)',
+  'pathPicker.noMatch': 'No subdirectory matches "{query}"',
+  'pathPicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
+  'pathPicker.hint.empty': 'Type a path to jump there, or go up one level',
+  'pathPicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
+  'pathPicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
+  'pathPicker.go': 'Go',
+  'pathPicker.error.invalid': 'Invalid path',
 
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',
@@ -1081,6 +1098,11 @@ export default {
   'askUser.viewCompare': 'View in Canvas',
   'askUser.pendingTitle': 'Pending questions',
   'askUser.sourceClosed': 'Source closed (node cancelled)',
+  // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
+  // history question row with NO recorded answer (it used to be painted as
+  // answered — a fake `-> ` line). An explicitly labelled dead card beats
+  // silently claiming it was answered.
+  'askUser.historyUnanswered': 'No recorded answer in history (pending)',
   // Multi AskUser concurrency batch (#250)
   'askUser.turnInterrupted': 'Turn interrupted (question void)',
   'askUser.nextPending': 'Next pending ({n})',
@@ -1424,6 +1446,13 @@ export default {
   'daemons.restartFirst': 'Start first',
   'daemons.deleteTitle': 'Delete Daemon',
   'daemons.deleteConfirm': 'Delete daemon "{name}"?',
+  // daemonpanel Phase A — config panel (daemons.config* keys)
+  'daemons.config': 'Configure',
+  'daemons.configClose': 'Close',
+  'daemons.configSave': 'Save',
+  'daemons.configSaved': 'Saved',
+  'daemons.configEnabled': 'Enabled',
+  'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
   'explorer.delete': 'Delete',
@@ -1445,6 +1474,25 @@ export default {
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
+  // === Text stream: save-cap visibility (author ruling ④, 2026-09-21) ===
+  'canvas.saveTooLarge': '{name} is too large to save (over 10MB per WS frame) — the change is NOT saved',
+  'canvas.saveTimeout': 'Save of {name} timed out — the change is NOT saved',
+  'canvas.saveBlockedNotice': 'Too large to save (over 10MB): editing will not be persisted',
+  // === Large text read-only streaming view (textstream batch, 2026-09-21) ===
+  'canvas.largeTextReadOnly': 'Large file · read-only',
+  'canvas.largeTextReadOnlyHint': 'Files over 8MB open in a read-only streaming view: only the visible window is fetched, so the whole file never enters the editor.',
+  'canvas.largeTextLoading': 'Loading window…',
+  'canvas.largeTextLines': '{count} lines',
+  'canvas.largeTextDrift': 'File changed on disk — reloading',
+  'canvas.largeTextRetry': 'Retry',
+  'canvas.largeTextLoadFailed': 'Stream failed: {error}',
+  'canvas.largeTextSearchPlaceholder': 'Search in file',
+  'canvas.largeTextSearching': 'Searching…',
+  'canvas.largeTextSearchHits': '{count} matches',
+  'canvas.largeTextSearchTruncated': '{count} matches (result truncated — refine the query)',
+  'canvas.largeTextPrevHit': 'Previous match',
+  'canvas.largeTextNextHit': 'Next match',
+  'canvas.largeTextGoToLine': 'Go to line',
   // === Canvas external file drop / paste (canvasdrop, 2026-09-11 author rulings R1–R7) ===
   'canvas.dropInserted': 'Inserted {ref}',
   'canvas.dropBatchInserted': 'Inserted {count} image references',
@@ -1598,6 +1646,8 @@ export default {
   'plugins.noAgents': 'No agents configured',
   'plugins.loading': 'Loading...',
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
+  'plugins.authRequired': 'Not signed in — sign up or log in to use plugins',
+  'plugins.relogin': 'Log in',
   'plugins.detail': 'Details',
   'chatQueue.dragReorder': 'Drag to reorder',
   'chatQueue.clickExpand': 'Click to expand',
@@ -1728,4 +1778,57 @@ export default {
   'content.skill.nebflow-plugin-creator/plugin-packaging.desc': 'Execution manual for packaging a capability requirement into a compliant Nebflow plugin pack — the whole pipeline (three-input form determination: migrating an existing skill / MCP server configuration / a spoken capability description → generation → mechanical self-check → delivery), including the handling of six forks and the \'takes effect once written to disk\' delivery convention; follow this manual when a node is assigned a packaging / build-a-plugin task.',
   'content.skill.slideblocks/slideblocks.desc': 'Autonomously create or improve complete, polished Slidev presentations with SlideBlocks from short requests and mixed materials including PDF, Word, web pages, Markdown, spreadsheets, images, brand assets, and PowerPoint source decks. Use when the user wants a presentation made, migrated to Slidev, redesigned, extended, or improved; needs a full deck for a report, pitch, review, lesson, launch, decision, or talk; wants SlideBlocks Blocks, Decks, or Recipes; or provides materials and simply asks to make them into a PPT. Do not use when the required final deliverable is any PPT/PPTX or Office file, for general Office editing, or for non-Slidev presentation runtimes.',
   'content.skill.visual-report/visual-report.desc': 'Visual reporting toolkit. Generate SVG figures with professional tools (matplotlib/graphviz/plotly and the like); after writing them to disk, give the absolute path in the delivery text (display belongs to Nebula — nodes do not invoke Pop). Use when you need to draw charts, architecture diagrams or flow diagrams, when you need data visualization, or when you need a visual report.',
+
+  // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
+  // Key-for-key mirror of the zh-CN block (gate: equal key sets, both sides
+  // non-empty). Definition/data lives in js/socialChannels.js.
+  // 🔴 Phase 1 opens no real channel. Keep this text free of the
+  //    fake-connection vocabulary (W6). The remote-access face is HELD for the
+  //    author ruling (O1–O5): no link, no QR code, no guessed address.
+  'social.title': 'Social channels',
+  'social.btn.title': 'Phone access — social channel configuration',
+  'social.channels.title': 'Channel configuration',
+  'social.remote.title': 'Phone remote access',
+  'social.remote.suspended': 'Held for the author ruling (this face is inert in the current batch): no link, no QR code, and no address that the backend has not confirmed is shown here.',
+  'social.remote.safetyKey': 'Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone.',
+  'social.remote.safetyPlain': 'Plain HTTP: not encrypted on the local network — trusted networks only.',
+  'social.action.save': 'Save configuration',
+  'social.action.saving': 'Saving…',
+  'social.action.saved': 'Saved',
+  'social.action.saveFailed': 'Save failed ({code})',
+  'social.action.recheck': 'Check again',
+  'social.action.close': 'Close',
+  'social.secret.placeholder': 'Paste the credential (never echoed back)',
+  'social.secret.stored': 'Written · not echoed',
+  'social.secret.empty': 'Not written',
+  'social.probe.summary': 'Credential probe: exists={exists} · modeOk={modeOk} · readable={readable}',
+  'social.value.yes': 'yes',
+  'social.value.no': 'no',
+  'social.hint.missingRef': 'Referenced file does not exist: {path}',
+  'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
+  'social.hint.pattern': 'Field format mismatch: {field}',
+  'social.status.notConfigured': 'Not configured',
+  'social.status.configuredNotLinked': 'Configured · not linked',
+  'social.status.configInvalid': 'Invalid configuration',
+  'social.status.connected': 'Connected',
+  'social.wechat.name': 'WeChat',
+  'social.wechat.desc': 'Credential set for a WeChat official account. This phase stores the configuration only — no outbound channel is opened.',
+  'social.wechat.field.appId': 'App ID',
+  'social.wechat.field.appSecret': 'App secret',
+  'social.wechat.field.token': 'Verification token',
+  'social.wechat.field.aesKey': 'Encoding AES key',
+  'social.feishu.name': 'Feishu / Lark',
+  'social.feishu.desc': 'Feishu and Lark share one schema, so they are one card with a region choice (China / international). This phase stores the configuration only.',
+  'social.feishu.field.appId': 'App ID',
+  'social.feishu.field.appSecret': 'App secret',
+  'social.feishu.field.verificationToken': 'Verification token',
+  'social.feishu.field.encryptKey': 'Encrypt key (optional)',
+  'social.feishu.field.region': 'Region',
+  'social.feishu.region.feishu': 'Feishu (China)',
+  'social.feishu.region.lark': 'Lark (international)',
+  'social.telegram.name': 'Telegram',
+  'social.telegram.desc': 'Credential set for a Telegram bot. This phase stores the configuration only — no outbound channel is opened.',
+  'social.telegram.field.botToken': 'Bot token',
+  'social.telegram.field.chatId': 'Target chat ID',
+  'social.telegram.field.apiBase': 'API base URL',
 };

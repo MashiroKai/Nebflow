@@ -51,6 +51,36 @@ object ProjectCrashRecovery:
       }.map(_.count(_ > 0))
     }
 
+  /** 停机成因标注（hostresume 批 2026-09-22，设计卡 §4 #8 可选增强件，本批实施；
+    * D-5 裁定「仅台账/事件措辞」）：有 Running/Interrupted 残留（`residues > 0`，即本次
+    * sweep 资格集命中）时——shutdown marker 在 ⇒ 上次优雅停机（kind=graceful）；不在 ⇒
+    * 推断 unclean（断电/kill-9/崩溃，无钩子机会）。条目经
+    * `BootDispatcherWake.appendPowerMarker` 进 boot-wake 台账（append-only、恒
+    * blocking=false——与 kind=boot 条目共存，不触碰 duplicate-boot 幂等）。
+    * `residues <= 0` ⇒ 零条目（fresh/干净 boot 不制造噪音）。fail-soft：本函数内
+    * 读/写失败已逐层降级（readShutdownMarker/appendPowerMarker 各自 fail-soft），外层
+    * 再兜一道 WARN——绝不阻断 sweep 认领链。 */
+  private[project] def annotateShutdownCause(pd: ProjectDef, residues: Int, atMs: Long): IO[Unit] =
+    if residues <= 0 then IO.unit
+    else
+      BootDispatcherWake.readShutdownMarker.flatMap {
+        case Some(m) =>
+          BootDispatcherWake.appendPowerMarker(BootDispatcherWake.markerPath(pd), pd.name,
+            BootDispatcherWake.MarkerEntry(
+              bootId = BootDispatcherWake.instanceId, project = pd.name, at = atMs, result = "noted",
+              reason = s"last shutdown graceful (marker at=${m.at} kind=${m.kind} cause=${m.cause})",
+              blocking = false, nodes = residues, items = Nil,
+              kind = BootDispatcherWake.KindGraceful, sleepAt = None, wakeAt = None))
+        case None =>
+          BootDispatcherWake.appendPowerMarker(BootDispatcherWake.markerPath(pd), pd.name,
+            BootDispatcherWake.MarkerEntry(
+              bootId = BootDispatcherWake.instanceId, project = pd.name, at = atMs, result = "noted",
+              reason = "unclean shutdown inferred (no shutdown marker + Running/Interrupted residue: power-loss / kill-9 / crash)",
+              blocking = false, nodes = residues, items = Nil,
+              kind = BootDispatcherWake.KindUnclean, sleepAt = None, wakeAt = None))
+      }.handleErrorWith(e =>
+        logger.warn(s"[boot-recovery] shutdown-cause annotation failed for project '${pd.name}': ${Option(e.getMessage).getOrElse(e.toString)}"))
+
   /** 单项目恢复：快段同步（认领 + 汇总通知）*> 慢段 fork。返回动作总数（认领 +
     * (c) 处置；0 = 无崩溃残留，零动作零事件零通知）。trigger 注入点供测试捕获，
     * 默认 = DispatchNotify.defaultTrigger 同款通道（TriggerDispatcher → spawn/注入
@@ -73,6 +103,15 @@ object ProjectCrashRecovery:
           n.status == NodeLifecycle.Running ||
             (Defaults.ShutdownInterruptEnabled && n.status == NodeLifecycle.Interrupted))
         .toList
+      // 停机成因标注（hostresume 批 2026-09-22，设计卡 §4 #8，D-5 仅台账/措辞）：
+      // 有 Running/Interrupted 残留（= 本次 sweep 资格集命中）才判读——marker 在 ⇒ 上次
+      // 优雅停机；不在 ⇒ 推断 unclean（断电/kill-9/崩溃，无钩子机会）。条目进 boot-wake
+      // 台账（kind=graceful/unclean，恒 blocking=false）；boot-wake 腿经
+      // `BootDispatcherWake.bootShutdownCause` 消费同一事实源标注 dispatcher-wake 事件
+      // 措辞。零残留 ⇒ 零条目（fresh/干净 boot 不制造噪音）。fail-soft：读/写失败只 WARN，
+      // 绝不阻断 sweep（认领链零改动）。
+      _ <- IO(System.currentTimeMillis()).flatMap(at =>
+        annotateShutdownCause(rt.project, candidates.size, at))
       outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates.traverse { n =>
         rt.engine.bootRecoveryClaim(n).map(out => (n.id, out))
           .handleErrorWith(e =>

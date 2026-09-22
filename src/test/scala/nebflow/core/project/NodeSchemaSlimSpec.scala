@@ -60,9 +60,9 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
     os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
     os.write.over(tempRoot / "nebflow.json", "{}")
-    // 20260907 修复（pre-existing 主干红，与本支裁定无关的夹具腐化）：E2E 用 preset
-    // "qa"，但夹具从未 seed model-presets.json——引擎 §E.3 preset 解析（须有非空
-    // model chain）失败 → 节点 failed → waitUntil 超时。seed 含 qa 链的 preset 表
+    // 20260907 修复（历史注记，panelscheme 批后 E2E 已不再传 preset 参数）：当年
+    // E2E 用 preset "qa" 但夹具未 seed model-presets.json → §E.3 解析失败 → 节点
+    // failed。preset 表 fixture 保留（默认链 health 兜底 +qa 链留作其它断言用）
     // （RecordingLlm 为 stub，模型名不触真实调用）。
     os.write.over(tempRoot / "model-presets.json",
       """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}""")
@@ -211,13 +211,20 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // 基座实测 6,345（距 6350 预算仅 5 字符余量，两条新语义行无处可压）⇒ 预算 6350→7000
     //（本批实测 6,948；两数均为 `description` 字面量内容长度，静态读取，未编译验证）。
     // chainId 的完整值域文本进 schema property（同 nodegate 批先例）。
-    assert(d.length <= 7000, s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款), got ${d.length}")
+    // panelscheme 批（2026-09-21，作者令：节点无自有模型方案）：`preset` 参数退役，
+    // 退役条与既有 `NODE_AGENT_RETIRED` 条**并成一行**（两条同属「已退役参数」族，
+    // 原尾部独立一条为重复）——净增 43 字符，实测 6,991（**未抬预算**，仍守 7,000；
+    // 余量 9 字符，下批新增语义须先压缩或按先例抬预算）。
+    assert(d.length <= 7000, s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款+panelscheme 批 retired 行合并), got ${d.length}")
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
     for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
         "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain",
         // chainmodel 批一（定义层）：成员制声明面 + 跨链依赖原语 + 归属变更事件三条契约必须
         // 常驻描述（分发器不读代码，只读描述——丢一条 = 声明面失联）
-        "chainId", "chain:<id>", "chain-membership-changed", "NODE_CHAIN_REF_UNKNOWN", "NODE_CHAIN_ID_INVALID") do
+        "chainId", "chain:<id>", "chain-membership-changed", "NODE_CHAIN_REF_UNKNOWN", "NODE_CHAIN_ID_INVALID",
+        // panelscheme 批（2026-09-21）：preset 参数退役契约——退役错误码必须常驻描述
+        // （分发器不读代码；丢这条 = 它会继续按旧习惯传 preset 吃一次硬拒往返）。
+        "NODE_PRESET_RETIRED") do
       assert(d.contains(anchor), s"compressed description must keep '$anchor'")
   }
 
@@ -371,7 +378,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 4. E2E：新 schema 建节点 → 执行至 completed → 载荷收敛 + 按需读取 ──
 
-  test("E2E: plugins[approved]+preset+description+worktree=true → completed; payload metadata-only; detail channel returns full result") {
+  test("E2E: plugins[approved]+description+worktree=true → completed; payload metadata-only; detail channel returns full result (panelscheme: preset 参数已退役)") {
     val ws = gitWorkspace("e2e")
     val system = ActorSystem(s"slim-e2e-${Random.nextInt(100000)}")
     for
@@ -387,7 +394,6 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         "task" -> Json.fromString("produce the result"),
         "out" -> Json.fromString("Nebula"),
         "plugins" -> Json.arr(Json.fromString("slim-e2e")),
-        "preset" -> Json.fromString("qa"),
         "worktree" -> Json.fromBoolean(true)), ctx)
       _ <- waitUntil(60.seconds)(rt.store.snapshot.map(
         _.nodes.values.exists(n => n.name == "E2E-主节点" && n.status == NodeLifecycle.Completed)))
@@ -407,7 +413,8 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       // 执行统一 general + 配置面
       assertEquals(n.agent, "general", "new node agent must be pinned to general")
       assertEquals(n.plugins, List("slim-e2e"), "approved plugin must be allocated")
-      assertEquals(n.preset, Some("qa"))
+      // panelscheme 批（2026-09-21）：preset 参数退役——新建节点不再携带节点级方案
+      assertEquals(n.preset, None, "retired preset param must leave new nodes preset-free")
       assert(n.worktree.isDefined, "worktree=true must bind a worktree")
       assert(os.exists(ws / ".nebflow" / "worktrees" / n.worktree.get / ".git"), "derived worktree must exist")
       // 默认载荷：元数据 only —— 无 result 键（全文与摘要都不进）

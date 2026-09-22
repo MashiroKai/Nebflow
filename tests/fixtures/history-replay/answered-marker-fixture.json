@@ -1,0 +1,29 @@
+[
+  {
+    "type": "askUser",
+    "items": [
+      {
+        "question": "案 B 已作答夹具：提问行带 requestId，作答行带 answerOf 来源标记",
+        "options": [
+          { "label": "alpha", "description": "选项 A" },
+          { "label": "beta", "description": "选项 B" }
+        ]
+      }
+    ],
+    "requestId": "ask-answered-fixture-1"
+  },
+  {
+    "type": "ai",
+    "text": "非阻塞提问之后 agent 继续本 turn 的产出（把旧读法的 user run 截断）"
+  },
+  {
+    "type": "user",
+    "text": "alpha",
+    "timestamp": 1757000001000,
+    "answerOf": "ask-answered-fixture-1"
+  },
+  {
+    "type": "ai",
+    "text": "作答之后的续跑输出"
+  }
+]

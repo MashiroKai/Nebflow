@@ -229,18 +229,25 @@ function bridgeExplorerTitle() {
 // detached at boot; enableFriendPanels() re-attaches + registers them when
 // the flag is on. Decision latches once per boot (main.js); a config edit
 // takes effect on reload.
-/** @type {{msgsBtn: HTMLElement, contactsBtn: HTMLElement, msgsPanel: HTMLElement, contactsPanel: HTMLElement} | null} */
+/** @type {{msgsBtn: HTMLElement, contactsBtn: HTMLElement, socialBtn: HTMLElement|null, msgsPanel: HTMLElement, contactsPanel: HTMLElement} | null} */
 let friendEntryNodes = null;
 
-/** Detach the gated friend entries from the DOM (default-off boot posture). */
+/** Detach the gated friend entries from the DOM (default-off boot posture).
+ *
+ *  The social-cards entry (2026-09-19 socpanel batch, author ruling 令①③) sits
+ *  DIRECTLY BELOW the contacts entry, so it is part of the same gate: with the
+ *  contacts anchor gone it must disappear too (degrade rule — no silent drift
+ *  of a floating entry whose anchor no longer exists). */
 function detachFriendEntries() {
   const msgsBtn = document.getElementById('messages-btn');
   const contactsBtn = document.getElementById('contacts-btn');
   const msgsPanel = document.getElementById('panel-messages');
   const contactsPanel = document.getElementById('panel-contacts');
   if (!msgsBtn || !contactsBtn || !msgsPanel || !contactsPanel) return;
-  friendEntryNodes = { msgsBtn, contactsBtn, msgsPanel, contactsPanel };
-  for (const el of Object.values(friendEntryNodes)) el.remove();
+  const socialBtn = document.getElementById('social-btn');
+  friendEntryNodes = { msgsBtn, contactsBtn, socialBtn, msgsPanel, contactsPanel };
+  for (const el of [msgsBtn, contactsBtn, msgsPanel, contactsPanel]) el.remove();
+  socialBtn?.remove();
 }
 
 /**
@@ -249,9 +256,11 @@ function detachFriendEntries() {
  */
 export function enableFriendPanels() {
   if (!friendEntryNodes) return;
-  const { msgsBtn, contactsBtn, msgsPanel, contactsPanel } = friendEntryNodes;
+  const { msgsBtn, contactsBtn, socialBtn, msgsPanel, contactsPanel } = friendEntryNodes;
   friendEntryNodes = null;
-  document.querySelector('#activity-bar .activity-spacer')?.before(msgsBtn, contactsBtn);
+  // Re-attach in the static order: messages → contacts → social, before the
+  // spacer (W1: the social entry's previous sibling stays the contacts entry).
+  document.querySelector('#activity-bar .activity-spacer')?.before(msgsBtn, contactsBtn, ...(socialBtn ? [socialBtn] : []));
   document.getElementById('sidebar-panel')?.append(msgsPanel, contactsPanel);
   registerSidePanel({
     id: 'messages',
@@ -270,6 +279,7 @@ export function enableFriendPanels() {
   if (typeof lucide !== 'undefined') {
     createIconsIn(msgsBtn);
     createIconsIn(contactsBtn);
+    if (socialBtn) createIconsIn(socialBtn);
   }
   // Honor the persisted active panel now that the registry knows these ids.
   const stored = localStorage.getItem(LS_PANEL);

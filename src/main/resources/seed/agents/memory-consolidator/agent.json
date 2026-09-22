@@ -1,6 +1,5 @@
 {
   "name": "memory-consolidator",
   "description": "记忆整理智能体——负责把对话中值得长期保留的信息整理进记忆，供之后的会话继续使用。",
-  "preset": "general",
   "skills": []
 }

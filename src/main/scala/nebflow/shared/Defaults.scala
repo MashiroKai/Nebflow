@@ -7,6 +7,16 @@ import scala.concurrent.duration.*
  * Centralized here to avoid magic numbers scattered in multiple files.
  */
 object Defaults:
+  /** 兜底上下文窗口——**语义已降级**（案② B6 · `chain-llmstall-fix`，2026-09-21）：
+    * 历史语义 = 「模型配置缺 `contextWindow` 字段时的取值」；B2 落地后语义 =
+    * **「真值未知时的保守上限」**——即 provider 未上报 `modelMaxContext` 且配置里也没有
+    * 显式值时，本值是该 model 被假定的可受理窗口。
+    *
+    * 🔴 本批**不改数值**（128000 逐字不变）：改值会同时移动「缺字段时」与「真值未知时」
+    * 两个场景的读数，而本批的红验锚点只覆盖 clamp 算式（`PerModelContextClampSpec`）。
+    * 语义登记在此，供后续「保守上限该取多少」的独立决策引用。
+    * 消费点：`ProviderRegistry.effectiveContextWindow`（取数单点）与
+    * `ModelCandidate.contextWindow` 的默认值。 */
   val ContextWindow = 128000
 
   /**
@@ -113,6 +123,24 @@ object Defaults:
    * AllProvidersDownTimeout。interface.scala 错误分支消费。
    */
   val TimeoutAvoidWindowMs: Long = 45_000L
+
+  /**
+   * 配额类失败的软回避窗（ms，作者令 2026-09-21 19:16 腿 b）：**计划性额度耗尽**
+   * （HTTP 403 / 429 且上游 code 1308；现读 = kimi 5h 额度闸 16:47:33.722 +
+   * zhipu 5h 使用上限 17:54:58）既不是「死」（探测恢复无意义：额度不会因探测
+   * 回来）也不是「瞬时」（45s 窗内不会自愈），而是**窗口型不可用** ⇒ 触发**换链**
+   * （该 candidate 退出本轮候选、立即推进下一根），不做阻塞式等待。
+   *
+   * 取值 300s 的三条理由（分层必需的最小新增常量，逐条申报）：
+   *   1. ≫ [[TimeoutAvoidWindowMs]]（45s）——分层必须**可判别**，否则等价于没分层
+   *      （判据面：配额窗 / 瞬时窗比值 > 3，见 QuotaChainSwitchSpec）；
+   *   2. > [[nebflow.llm.ProviderHealthMonitor.ProbeIntervalSec]]（120s）——不烧
+   *      配额死 provider 的探测请求（旧路径 markDown 每 120s 烧一次必然失败的探测）；
+   *   3. ≪ 5 小时额度窗（实测 5h 闸），**刻意有界**：误判或额度提前重置的代价 =
+   *      每窗最多一次快速失败（配额类判为不可自愈 ⇒ 零退避立即换链），不会把候选链
+   *      长期打窄。interface.scala 错误分支消费。
+   */
+  val QuotaAvoidWindowMs: Long = 300_000L
 
   /** Bash tool max timeout in ms. */
   val BashMaxTimeoutMs: Long = 3_600_000L
@@ -721,6 +749,39 @@ object Defaults:
    * 路径，行为安全降级——见 `GracefulInterruptHook.Report.timedOut`）。
    */
   val ShutdownInterruptTimeoutMs: Long = 5_000L
+
+  // ---- 宿主睡眠感知（hostresume 批 2026-09-22，设计卡
+  //      20260921_235342_host-interrupt-resume-design §4 #9，作者「七项全照推荐」裁定）----
+
+  /**
+   * 宿主睡眠/唤醒感知总开关（设计卡 D-2，作者裁定「默认 true + kill-switch」）。
+   * 默认 true：`WakeSensor` 双钟断流纤维随 boot 链挂载（`projectTtlScanner` 邻位，
+   * server listen 前就绪）；检测到的睡眠窗进 `PowerStateTracker` 窗集——
+   * `TaskStuckWatcher` 两轴与整流 no-progress 守卫的时间基修正据此扣减睡眠冻结秒
+   * （设计卡 D-6：首批消费点仅此两处）——另加 boot-wake.json 台账 append（kind=sleep /
+   * kind=wake）与 `host-wake` 审计事件（D-7：仅审计，不揽分发器）。
+   *
+   * false = **完全回本批前现状（逐字节）**：GatewayMain 不挂感知纤维（零新 fiber）、
+   * 窗集恒空且消费入口直通裸差值 ⇒ 修正量恒为零（判词与文案逐字不变）、台账/事件
+   * 零写点。system prop `nebflow.wake.sense.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def WakeSenseEnabled: Boolean =
+    sys.props.getOrElse("nebflow.wake.sense.enabled", "true").toBoolean
+
+  /**
+   * 断流 slop（毫秒，**常量**——`L3VerifyDelayMs`「第一版为常量」先例，标定后再决定
+   * 是否外放）：墙钟 Δ 超前单调钟 Δ 超过此值才判睡眠窗。45s = 3×15s 探测周期——
+   * 吸收 NTP 步进（Δwall≈Δnano ⇒ 差值≈0，设计卡 §6 口径 5）与 DarkWake 突刺
+   * （取证实测 19s 缝 < 45s ⇒ 不产生窗，§6 口径 4）。
+   */
+  val WakeSenseSlopMs: Long = 45_000L
+
+  /**
+   * 探测周期（s）：15s 周期纤维 ⇒ 唤醒后 ≤15s 检出（设计卡 §2.1 A1 判定）。
+   * 常量（同上先例）；检测精度受其下限约束，不改扫描族任何既有定时器。
+   */
+  val WakeSenseTickSec: Int = 15
 
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 

@@ -11,9 +11,8 @@ import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
-import nebflow.core.presets.PresetStore
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.{BgTaskRegistry, PresetResolver}
+import nebflow.core.tools.BgTaskRegistry
 import nebflow.shared.Message
 
 import scala.concurrent.duration.*
@@ -2673,29 +2672,28 @@ class NodeEngine(
           // （SkillService.loadSkill 单点复用）组装 <injected-plugins> 块；
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
-          // §E.3 preset 消费（协议符合度批接通，2b 遗留）：同样翻转前 failNode。
-          // resume（crash-recovery 批 D2/D3）：插件/preset/装配链逐行复用，仅两处
+          // panelscheme 批（2026-09-21）：§E.3 node.preset 静态消费**废止**——
+          // 节点无自有方案，worker 模型 = 分发器当前方案（entry.toAgentDef 经
+          // SchemePolicy 对 general 动态继承 project-dispatcher，装载期现读）。
+          // resume（crash-recovery 批 D2/D3）：插件/装配链逐行复用，仅两处
           // 差异——sessionId 复用 sessionRef 旧 id（transcript 单文件续写 + F2 队列
           // 重放白捡，BackoffSupervisor respawn 同款先例）+ initialMessages 水合。
-          nodePresetDef(node, entry).flatMap {
+          val baseDef = entry.toAgentDef
+          prepareNodePlugins(node).flatMap {
             case Left(err) => failNode(nodeId, err)
-            case Right(baseDef) =>
-              prepareNodePlugins(node).flatMap {
+            case Right(prepared) =>
+              val sessionId = resume.fold(s"node-${java.util.UUID.randomUUID().toString.take(8)}")(_.sessionId)
+              val inputWithPlugins =
+                if prepared.injectedBlock.isEmpty then inputText
+                else inputText + "\n\n" + prepared.injectedBlock
+              resources.pluginMcp.acquire(sessionId, prepared.mcpPlugins).flatMap {
                 case Left(err) => failNode(nodeId, err)
-                case Right(prepared) =>
-                  val sessionId = resume.fold(s"node-${java.util.UUID.randomUUID().toString.take(8)}")(_.sessionId)
-                  val inputWithPlugins =
-                    if prepared.injectedBlock.isEmpty then inputText
-                    else inputText + "\n\n" + prepared.injectedBlock
-                  resources.pluginMcp.acquire(sessionId, prepared.mcpPlugins).flatMap {
-                    case Left(err) => failNode(nodeId, err)
-                    case Right(grant) =>
-                      // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
-                      // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
-                      // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
-                      runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant, resume, chain)
-                        .guarantee(resources.pluginMcp.release(sessionId))
-                  }
+                case Right(grant) =>
+                  // 回收兜底（§B.4 第 5 步）：completed/failed/cancelled/blocked 全
+                  // 终态汇合点=runWithAgent 完成；异常中止路径由 guarantee 补位。
+                  // release 幂等（PluginMcpManager 内 no-op 语义），双保险不重复卸载。
+                  runWithAgent(node, baseDef, inputWithPlugins, sessionId, prepared, grant, resume, chain)
+                    .guarantee(resources.pluginMcp.release(sessionId))
               }
           }
     yield ()
@@ -2730,74 +2728,64 @@ class NodeEngine(
         case (None, _) => failNode(nodeId, s"worker agent '${node.agent}' not found in global library (loop node)")
         case (_, None) => failNode(nodeId, s"verify agent '${loopCfg.verify}' not found in global library (loop node)")
         case (Some(wEntry), Some(vEntry)) =>
-          // worker 侧 preset 消费（§E.3 同款）；verify 侧无单独 preset（LoopConfig 精简，
-          // 与 node.preset 归 worker 的 §2.1 口径一致）。
-          nodePresetDef(node, wEntry).flatMap {
+          // panelscheme 批（2026-09-21）：worker/verify 均经 SchemePolicy 名称策略
+          // ——worker（general）动态继承 project-dispatcher 当前方案（节点无自有
+          // 设置）；verify agent 同一策略（§E.3 node.preset 静态消费已废止）。
+          val workerBase = wEntry.toAgentDef
+          val verifyBase = vEntry.toAgentDef
+          // worker/verify 均注入 node.plugins（§2.1 verify=通用 agent+plugins，验证域
+          // 分配共享同域能力包）；各 session 独立 acquire MCP grant（引用记账分离）。
+          prepareNodePlugins(node).flatMap {
             case Left(err) => failNode(nodeId, err)
-            case Right(workerBase) =>
-              val verifyBase = vEntry.toAgentDef
-              // worker/verify 均注入 node.plugins（§2.1 verify=通用 agent+plugins，验证域
-              // 分配共享同域能力包）；各 session 独立 acquire MCP grant（引用记账分离）。
-              prepareNodePlugins(node).flatMap {
-                case Left(err) => failNode(nodeId, err)
-                case Right(prepared) =>
-                  for
-                    wGrantE <- resources.pluginMcp.acquire(workerSessionId, prepared.mcpPlugins)
-                    vGrantE <- resources.pluginMcp.acquire(verifySessionId, prepared.mcpPlugins)
-                    _ <- (wGrantE, vGrantE) match
-                      case (Left(err), _) => failNode(nodeId, err)
-                      case (_, Left(err)) => failNode(nodeId, err)
-                      case (Right(wGrant), Right(vGrant)) =>
-                        for
-                          cancelSig <- Deferred[IO, Unit]
-                          _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
-                          worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot,
-                            initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
-                            // TaskBoard 批 2（§1d）：loop worker/verify 会话同属该
-                            // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
-                            // 同面：仅自己名下任务 status+note）。
-                            flowNodeId = Some(nodeId),
-                            // nrloop 一期（§3.2 透传表）：loop 双会话角色 = 该 loop
-                            // 节点自身 role（与普通节点同源口径，worker/verify 同值）。
-                            flowNodeRole = Some(node.role),
-                            // D6 批 F1（G9 路径 a）：节点名随路注入（AskUser 归因）。
-                            flowNodeName = Some(node.name),
-                            // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
-                            // 节点 → 同一条链的同一快照（startNode 单点算出）。
-                            flowChainId = chain.map(_.chainId))
-                          verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
-                            initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
-                            flowNodeId = Some(nodeId),
-                            flowNodeRole = Some(node.role),
-                            flowNodeName = Some(node.name),
-                            flowChainId = chain.map(_.chainId))
-                          _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
-                            .guarantee(
-                              destroyLoopSessions(nodeId, worker, verify) *>
-                                resources.pluginMcp.release(workerSessionId) *>
-                                resources.pluginMcp.release(verifySessionId) *>
-                                running.update(_ - nodeId) *>
-                                nodeSessions.update(_ - nodeId)
-                            )
-                        yield ()
-                  yield ()
-              }
+            case Right(prepared) =>
+              for
+                wGrantE <- resources.pluginMcp.acquire(workerSessionId, prepared.mcpPlugins)
+                vGrantE <- resources.pluginMcp.acquire(verifySessionId, prepared.mcpPlugins)
+                _ <- (wGrantE, vGrantE) match
+                  case (Left(err), _) => failNode(nodeId, err)
+                  case (_, Left(err)) => failNode(nodeId, err)
+                  case (Right(wGrant), Right(vGrant)) =>
+                    for
+                      cancelSig <- Deferred[IO, Unit]
+                      _ <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
+                      worker <- spawnLoopSession(workerBase, prepared, wGrant, workerSessionId, node.name, projectRoot,
+                        initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
+                        // TaskBoard 批 2（§1d）：loop worker/verify 会话同属该
+                        // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
+                        // 同面：仅自己名下任务 status+note）。
+                        flowNodeId = Some(nodeId),
+                        // nrloop 一期（§3.2 透传表）：loop 双会话角色 = 该 loop
+                        // 节点自身 role（与普通节点同源口径，worker/verify 同值）。
+                        flowNodeRole = Some(node.role),
+                        // D6 批 F1（G9 路径 a）：节点名随路注入（AskUser 归因）。
+                        flowNodeName = Some(node.name),
+                        // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
+                        // 节点 → 同一条链的同一快照（startNode 单点算出）。
+                        flowChainId = chain.map(_.chainId))
+                      verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
+                        initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
+                        flowNodeId = Some(nodeId),
+                        flowNodeRole = Some(node.role),
+                        flowNodeName = Some(node.name),
+                        flowChainId = chain.map(_.chainId))
+                      _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
+                        .guarantee(
+                          destroyLoopSessions(nodeId, worker, verify) *>
+                            resources.pluginMcp.release(workerSessionId) *>
+                            resources.pluginMcp.release(verifySessionId) *>
+                            running.update(_ - nodeId) *>
+                            nodeSessions.update(_ - nodeId)
+                        )
+                    yield ()
+              yield ()
           }
     yield ()
 
-  /** §E.3 preset 消费接通（协议符合度批补齐，2b 遗留）：node.preset →
-    * PresetResolver 单点解析（Delegate/SubTask #291 先例同款）——预设链写入
-    * AgentDef.model/preset/modelOverride，modelOverride 经 ContextRefresher
-    * 每 turn 热重载保活。解析失败（不存在/空链，错误含可用预设清单）= 节点级
-    * 失败，状态翻转前 failNode（与插件准备同纪律：失败路径零 running 残留）。
-    * node.preset 缺省 → 原 AgentDef 原样透传（旧行为零变化）。 */
-  private def nodePresetDef(node: NodeDef, entry: nebflow.core.entity.AgentEntry): IO[Either[String, nebflow.agent.AgentDef]] =
-    IO.blocking {
-      PresetResolver.applyPreset(PresetStore(), entry.toAgentDef, node.preset).left.map { err =>
-        s"Node '${node.name}' preset '${node.preset.getOrElse("")}' unresolved: $err " +
-          "(§E.3 node.preset consumption — presets live in model-presets.json)"
-      }
-    }
+  /** panelscheme 批（2026-09-21）：§E.3 nodePresetDef（node.preset →
+    * PresetResolver 静态消费）**整体移除**——节点侧静态覆盖废止，引擎解析不再
+    * 读节点存储方案（NodeDef.preset 字段保留：存量数据零删除，仅显示/审计）。
+    * 节点 worker/verify 模型 = 分发器当前方案，经 AgentEntry.toAgentDef 内
+    * SchemePolicy 名称策略（general 动态继承 project-dispatcher）单点生效。 */
 
   /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
     * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
@@ -2890,7 +2878,7 @@ class NodeEngine(
 
   private def runWithAgent(
     node: NodeDef,
-    baseDef: nebflow.agent.AgentDef, // §E.3 preset 消费：已过 PresetResolver 的 AgentDef（协议符合度批）
+    baseDef: nebflow.agent.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（继承分发器当前方案）
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,
@@ -3527,7 +3515,7 @@ class NodeEngine(
 
   /** spawn 单个 Loop 会话（agent + 常驻桥 + registry 注册）。MCP grant 由调用方
     * （spawnAndRunLoop）分别对 worker/verify acquire 后传入（各自独立引用记账）。
-    * baseDef=已过 PresetResolver 的 AgentDef；prepared=已解析的插件分配。 */
+    * baseDef=经 SchemePolicy 名称策略的 AgentDef；prepared=已解析的插件分配。 */
   private def spawnLoopSession(
     baseDef: AgentDef,
     prepared: NodeEngine.PluginPreparation,
@@ -4199,11 +4187,13 @@ class NodeEngine(
     }
 
   /** fail 回边目标解析（`(fail)<target>:loop` 的**解析后节点 id**）：无此边 / 目标是
-    * "Nebula" / 悬空（含目标已在归档区——归档 = 已过期，重跑无意义）⇒ None。 */
+    * "Nebula" / 悬空（含目标已在归档区——归档 = 已过期，重跑无意义）⇒ None。
+    *
+    * 选通边筛选 = [[OutEdge.failRouteTargets]] **单一真相源**（failroute-guard 批
+    * 2026-09-21 起；与拒绝态判据 `NodePayload.verifierRouteInvalid` 同点——两处各自派生
+    * 即「拒绝态说合法、运行期说不合法」的对偶分歧）。本处只在其上叠加**解析**一步。 */
   private def loopRouteTargetId(v: NodeDef): IO[Option[String]] =
-    OutEdge.canonical(v.out)
-      .filter(e => OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Fail))
-      .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct.headOption match
+    OutEdge.failRouteTargets(v.out).headOption match
       case None => IO.pure(None)
       case Some(raw) => store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, raw))
 
@@ -4264,11 +4254,16 @@ class NodeEngine(
               case None =>
                 recordVerdict(nodeId, VerdictFail) *>
                   logger.warn(
-                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no '(fail)<target>:loop' edge — " +
-                      "verdict recorded, no re-run route (the node still completes; see NODE_VERIFIER_NEEDS_ROUTE)") *>
+                    s"Node '${v.name}' (${nodeId}) reported a fail verdict but declares no usable '(fail)<target>:loop' edge — " +
+                      "REJECTION STATE: the verdict is recorded and the node completes, but NO re-run route exists, so the " +
+                      "judged worker is NOT re-run and the chain stops here. Restore the route with NodeEdit " +
+                      "out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)") *>
                   FlowMapEventLog.append(workspace, projectName, nodeId, LoopRoundEventType,
-                    "verdict=fail but NO fail-route edge is declared — no re-run route exists (loop inert); " +
-                      "node completes with the verdict recorded") *>
+                    "verdict=fail but NO usable fail-route edge is declared — no re-run route exists; " +
+                      "the verifier is in the REJECTION STATE (see verifier-route-lost)") *>
+                  // 拒绝态留痕（卡 A4 / §2.5）：主语 = 本 verifier；「判词无处可去」这一事实
+                  // 不再只落一句良性退化文案 —— 事件行 + WARN + 载荷键三级同款。
+                  emitVerifierRouteLost(List(nodeId -> ""), "fail verdict with no usable route") *>
                   completeNodeR(nodeId, resultText)
               case Some(targetId) =>
                 store.findNode(targetId).flatMap { tOpt =>
@@ -5360,7 +5355,7 @@ class NodeEngine(
     *
     * @param priorStatus 该节点**在 abandon 写状态之前**的现值（回填路径给当时的
     *        `Cancelled` ⇒ 依赖轨按「未满足」处理，保守留「待承接」可见态）。 */
-  def detachAbandonedNode(nodeId: String, priorStatus: String): IO[NodeEngine.RetireDetach] =
+  def detachAbandonedNode(nodeId: String, priorStatus: String, emitRouteLost: Boolean = true): IO[NodeEngine.RetireDetach] =
     // 零写出口（幂等硬约束的机械承担点）：无残留 ⇒ 一次 store.snapshot、零 mutate、
     // 零帧、零事件 —— 不是「写了同样内容」。快照与事务之间的竞态由事务内重算兜住
     // （真无残留则返回空台账，仍零帧）。
@@ -5409,14 +5404,33 @@ class NodeEngine(
                                  else (byOut.pendingSuccession :+ nodeId).distinct)
                            else byOut)
                 }
-                (s.copy(nodes = rewired), NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap))
+                // **拒绝态受害集**（failroute-guard 批 2026-09-21 · 案 A A1；卡 A3 的判据
+                // 在此**前后各算一次**）：被本次摘边摘掉 fail 选通边的上游 referrer 里，
+                // 「摘前合法 ∧ 摘后失路」的 verifier = 受害位。摘边语义**逐字不动**（本批
+                // 只动它的后果面：可见态 + 告警）——本判据**腿无关**（工具腿 abandon 与
+                // 引擎腿 NodeCancel→30s 回填腿到达同一处），故只在此落点即覆盖两条到达路径。
+                val routeLost: List[String] = outRefs.filter { id =>
+                  (s.nodes.get(id), rewired.get(id)) match
+                    case (Some(before), Some(after)) =>
+                      !NodePayload.verifierRouteInvalid(before, s.nodes) &&
+                        NodePayload.verifierRouteInvalid(after, rewired)
+                    case _ => false
+                }
+                (s.copy(nodes = rewired),
+                 NodeEngine.RetireDetach(inMirrors, outRefs, depsRefs, selfHasGap, routeLost))
         }.flatMap { case (_, d) =>
-          d.referrers.foldLeft(IO.unit) { (acc, tid) =>
+          val refFrames = d.referrers.foldLeft(IO.unit) { (acc, tid) =>
             acc >> store.getNode(tid).flatMap {
               case Some(n) => emitUpdated(n)
               case None    => IO.unit
             }
-          }.as(d)
+          }
+          // 告警写点（卡 A2）：受害 verifier 的拒绝态在**同一帧**落盘 + WARN，主语 = 受害
+          // verifier。**按批聚合**（裁定⑤）= 本位退役动作恰一行；回填腿（同批多退役）由
+          // 调用方抑制本位发射、整批收口发一行（传 `emitRouteLost = false`）。
+          refFrames *>
+            (if emitRouteLost then emitVerifierRouteLost(d.routeLost.map(_ -> nodeId), "detach")
+             else IO.unit).as(d)
         }
     }
 
@@ -5447,16 +5461,57 @@ class NodeEngine(
       if candidates.isEmpty then IO.pure(Nil)
       else
         candidates
-          .traverse(id => detachAbandonedNode(id, NodeLifecycle.Cancelled).map(d => (id, d)))
-          .map(_.collect { case (id, d) if !d.isEmpty => id })
-          .flatMap { detached =>
+          // `emitRouteLost = false`：本条腿是**同批多退役**的集中来源，受害 verifier 的
+          // 告警按批聚合（裁定⑤：防同批多退役逐位刷屏，与 cancelled 通知熔断同纪律）——
+          // 整批收口发一行，见下方 `emitVerifierRouteLost`。
+          .traverse(id => detachAbandonedNode(id, NodeLifecycle.Cancelled, emitRouteLost = false).map(d => (id, d)))
+          .flatMap { pairs =>
+            val detached = pairs.collect { case (id, d) if !d.isEmpty => id }
+            // 受害集从**各退役位自己的台账**取（`RetireDetach.routeLost`）——此刻盘上引用
+            // 已被摘净，事后重扫必然空，故必须用摘边当场算出的台账。
+            val victims = pairs.flatMap { case (retired, d) => d.routeLost.map(v => v -> retired) }
             detached.traverse_ { id =>
               FlowMapEventLog.append(workspace, projectName, id, FlowMapEventLog.AbandonedDetachType,
                 s"cancelled node's incident edges detached by the 30s backfill leg (in/out/deps severed on both " +
                   "sides ⇒ the node now forms its own terminal component; the chain sweep archives it)")
-            }.as(detached)
+            } *>
+              // 本批（回填腿）的**整批**受害集收口（一条事件行 + 一条 WARN；零受害 ⇒ 零写）。
+              emitVerifierRouteLost(victims, "30s backfill leg").as(detached)
           }
     }
+
+  /** **受害 verifier 拒绝态告警的收口写点**（failroute-guard 批 2026-09-21 · 案 A A2）：
+    * 按批发**一条** `verifier-route-lost` 事件行 + 一条 WARN（零受害 ⇒ 零写）。
+    *
+    * 主语（`nodeId` 字段）= **首个受害 verifier 的 id**（不是退役节点）——与
+    * `chain-cancelled` 以「代表节点」承载整批 nodeId 同族；summary 逐位载四项：受害
+    * verifier 名/id、被摘的 fail 目标 id、保留的 pass 目标集、可行动恢复文案
+    * （`NodeEdit out="(pass)<landing>, (fail)<worker>:loop"`）。
+    *
+    * `victims` = (受害 verifier id, 被摘的 fail 目标 id 或 "" 表示「无路由可摘」)；
+    * 现读受害者状态以取名字与保留的 pass 面（判据不落持久字段 ⇒ 每次现算）。
+    * 幂等：空集 ⇒ 零写零日志。 */
+  def emitVerifierRouteLost(victims: List[(String, String)], scope: String): IO[Unit] =
+    val uniq = victims.filter(_._1.trim.nonEmpty).distinct.sortBy(_._1)
+    if uniq.isEmpty then IO.unit
+    else
+      store.snapshot.flatMap { s =>
+        val views = uniq.map { case (verId, lostTarget) =>
+          val ver = s.nodes.get(verId)
+          FlowMapEventLog.VerifierRouteLostView(
+            verifierId = verId,
+            verifierName = ver.map(_.name).getOrElse(verId),
+            lostTargets = Option(lostTarget).filter(_.trim.nonEmpty).toList,
+            keptPassTargets = ver.toList.flatMap(v =>
+              OutEdge.canonical(v.out).filter(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e))
+                .map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct).sorted)
+        }
+        val summary = FlowMapEventLog.verifierRouteLostSummary(scope, views)
+        FlowMapEventLog.append(workspace, projectName, views.head.verifierId,
+          FlowMapEventLog.VerifierRouteLostType, summary) *>
+          logger.warn(s"[verifier-route-lost] $summary (project=$projectName; see NodeList payload key " +
+            s"'verifierRoute' = ${NodePayload.VerifierRouteLost})")
+      }
 
   /** R3 终态写点**即时** barrier 检查（取消静默死锁修复批，作者裁定 R3 方案 3）：
     * 终态写点已经知道「谁终态了 + 谁是它的 barrier」，信息完整——把「周期发现」变成
@@ -6465,9 +6520,15 @@ object NodeEngine:
       inMirrors: List[String] = Nil,
       outRefs: List[String] = Nil,
       depsRefs: List[String] = Nil,
-      selfRewired: Boolean = false
+      selfRewired: Boolean = false,
+      /** **拒绝态受害集**（failroute-guard 批 2026-09-21 · 案 A A1）：本次摘边前后各算
+        * 一次「被摘掉 fail 选通边的 referrer」中**摘前合法 ∧ 摘后失路**的 verifier id
+        * （升序去重）。纯台账、零额外写；告警按批收口消费本字段
+        * （`NodeEngine.emitVerifierRouteLost`）。旧台账语义零改动 ⇒ 默认 Nil。 */
+      routeLost: List[String] = Nil
   ):
-    /** 顶层「有没有动过」判据（幂等出口：空 ⇒ 零写、零帧）。 */
+    /** 顶层「有没有动过」判据（幂等出口：空 ⇒ 零写、零帧）。**不含 `routeLost`**：
+      * 受害集是「本次摘边的后果读数」，非「有没有摘边」的判据（无摘边 ⇒ 受害集必空）。 */
     def isEmpty: Boolean =
       inMirrors.isEmpty && outRefs.isEmpty && depsRefs.isEmpty && !selfRewired
     def referrers: List[String] = (inMirrors ++ outRefs ++ depsRefs).distinct.sorted

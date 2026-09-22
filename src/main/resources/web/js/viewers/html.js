@@ -38,9 +38,44 @@ const themePropScript = `<script>
  *  here) because the chat card renders the same kind of documents and must get
  *  the identical handler: one implementation, no drift. The two scripts do not
  *  overlap — this one only ever claims `a[href^="#"]`, the shared one returns
- *  early for `#` hrefs. */
+ *  early for `#` hrefs.
+ *
+ *  2026-09-20 (mdscroll r2 — same-family fix, author order 「同族面……若同实现一并
+ *  修」): until now this path called `target.scrollIntoView({block:'start'})`, i.e.
+ *  the same leak the markdown TOC path was fixed for — and the last one. The
+ *  CSSOM View algorithm is NOT scoped to this frame's scroller: after aligning
+ *  the target inside the frame it leaves the nested browsing context and aligns
+ *  the FRAME ELEMENT against every scrollable box of the HOST document, each one
+ *  clamped to its own residual (`overflow: hidden` boxes are scroll containers
+ *  too). One in-frame hash click therefore also wrote the host: in the harness
+ *  (tests/mdscroll-toc-scroll.spec.mjs R5, declared host residual, both engines,
+ *  both trees) `documentElement.scrollTop` 0 → 24 with `#main` +24, and
+ *  `#canvas-panel.scrollTop` 0 → 26 with `#canvas-panel` +24 (the verifier's
+ *  independent probe read 0 → 28 for the panel under its own injection
+ *  geometry) — in both readings the write equals THAT layer's own residual.
+ *  With no host residual nothing can move, which is why the pre-r2
+ *  zero-residual reading was green by construction — it could not falsify this
+ *  site. The fix writes ONE container's own scrollTop, and that container is
+ *  this frame's own scrolling element: same discipline as
+ *  viewers/markdown.js `scrollHeadingToTop` and messages.js
+ *  `revealQuoteTarget`. */
 const anchorNavScript = `<script>
 (function(){
+  // Scroll one anchor target to the TOP of THIS frame's own scroller - and of
+  // nothing else. Not Element.scrollIntoView: that algorithm also leaves the
+  // frame and aligns the frame element against every scrollable box of the
+  // parent document, so one in-frame hash click moved the host client too
+  // (see the note above this script). document.scrollingElement is this
+  // document's scroller (= documentElement); writing it cannot reach the host.
+  // Same shape as the parent viewer's scrollHeadingToTop: offset = target top -
+  // scrollport top, clamped to [0, residual]; 'smooth' kept.
+  function scrollAnchorToTop(target){
+    var scroller = document.scrollingElement || document.documentElement;
+    if(!scroller) return;
+    var max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    var delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: Math.max(0, Math.min(max, scroller.scrollTop + delta)), behavior: 'smooth' });
+  }
   document.addEventListener('click', function(e) {
     var link = e.target.closest('a[href^="#"]');
     if (!link) return;
@@ -49,7 +84,7 @@ const anchorNavScript = `<script>
     e.preventDefault();
     var id = href.slice(1);
     var target = document.getElementById(id);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (target) scrollAnchorToTop(target);
   });
 })();
 <\/script>`;

@@ -751,7 +751,7 @@ export default {
   'settings.addProvider': '+ 添加服务商',
   'settings.presets': '模型方案',
   'settings.addPreset': '+ 添加方案',
-  'settings.presetsEmptyHint': '请先在「LLM 服务商」中添加并配置服务，之后即可针对每个 agent 调整模型方案。',
+  'settings.presetsEmptyHint': '请先在「LLM 服务商」中添加并配置服务，之后即可为 Nebula 与任务分发器调整模型方案。',
   'preset.default': '默认',
   'preset.setDefault': '设为默认',
   'preset.edit': '编辑',
@@ -788,6 +788,9 @@ export default {
   'preset.pillPrefix': '方案: ',
   'preset.defaultBadge': '默认方案',
   'preset.loadFailed': '加载方案失败',
+  'preset.followsNebula': '跟随 Nebula 的当前方案（无自有设置，动态继承）',
+  'preset.followsDispatcher': '由任务分发器的当前方案在派发时决定（无自有设置）',
+  'preset.engineManaged': '不可单独设置——跟随默认方案',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
@@ -872,7 +875,10 @@ export default {
   'provider.keyPlaceholder': '留为 *** 保持不变',
   'provider.keyRequired': '新建服务商需要 API Key',
   'provider.required': '必填',
-  'provider.protocol': '协议',
+  'provider.protocol': '接口格式',
+  // 接口格式下拉下方的 helper 行（protoface-ui 批，2026-09-22）：显示当前所选
+  // 面 + 当前 baseUrl 推导出的实际 POST 目标。{target} = 完整 URL。
+  'provider.protocolHelper': '该服务商将收到：POST {target}',
   'provider.idRequired': '请填写服务商 ID',
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
@@ -949,6 +955,16 @@ export default {
   'pathPicker.select': '选择此目录',
   'pathPicker.clear': '清除',
   'pathPicker.empty': '此目录下无子目录',
+  // picker-trunc 批（2026-09-22 作者裁定 A+B+C）
+  'pathPicker.truncated': '还有 {count} 项未显示（共 {total} 项）',
+  'pathPicker.searchPlaceholder': '在此目录中搜索（服务端过滤）',
+  'pathPicker.noMatch': '无匹配「{query}」的子目录',
+  'pathPicker.hint.truncated': '可输入路径直达下方目录，或用搜索过滤',
+  'pathPicker.hint.empty': '可输入路径直达该目录，或回到上级',
+  'pathPicker.hint.noMatch': '清空搜索框可恢复全部；也可输入路径直达',
+  'pathPicker.gotoPlaceholder': '输入路径直达，如 ~/Downloads',
+  'pathPicker.go': '跳转',
+  'pathPicker.error.invalid': '路径无效',
 
   // === Session sidebar ===
   'session.namePlaceholder': '会话名称...',
@@ -1046,6 +1062,9 @@ export default {
   'askUser.viewCompare': '在 Canvas 查看',
   'askUser.pendingTitle': '待回答问题',
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
+  // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
+  // （改前这种卡被画成「已作答」= 一行假的 `-> `）—— 死卡显式标注优于静默死亡。
+  'askUser.historyUnanswered': '历史无作答记录（待定）',
   // 多 AskUser 并发批（#250）
   'askUser.turnInterrupted': '本轮已中断（提问作废）',
   'askUser.nextPending': '下一张待办（{n}）',
@@ -1385,6 +1404,13 @@ export default {
   'daemons.restartFirst': '先启动',
   'daemons.deleteTitle': '删除心跳进程',
   'daemons.deleteConfirm': '删除心跳进程「{name}」？',
+  // daemonpanel Phase A — 配置面板（daemons.config* 键）
+  'daemons.config': '配置',
+  'daemons.configClose': '关闭',
+  'daemons.configSave': '保存',
+  'daemons.configSaved': '已保存',
+  'daemons.configEnabled': '启用',
+  'daemons.configSecretHint': '保留「***」表示沿用已存值；留空则不修改。',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
   'explorer.delete': '删除',
@@ -1406,6 +1432,25 @@ export default {
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',
+  // === 文本流：保存撞帽可见性（作者裁 ④，2026-09-21）===
+  'canvas.saveTooLarge': '{name} 过大无法保存（超单帧 10MB 上限）——本次修改未保存',
+  'canvas.saveTimeout': '保存 {name} 超时——本次修改未保存',
+  'canvas.saveBlockedNotice': '文件过大无法保存（超 10MB）：编辑内容不会被持久化',
+  // === 大文本只读流式视图（textstream 批，2026-09-21）===
+  'canvas.largeTextReadOnly': '大文件 · 只读',
+  'canvas.largeTextReadOnlyHint': '超过 8MB 的文件以只读流式视图打开：只按需取可见窗口，整件不会进入编辑器。',
+  'canvas.largeTextLoading': '正在加载窗口…',
+  'canvas.largeTextLines': '{count} 行',
+  'canvas.largeTextDrift': '磁盘上文件已变化 —— 正在重新加载',
+  'canvas.largeTextRetry': '重试',
+  'canvas.largeTextLoadFailed': '流式取数失败：{error}',
+  'canvas.largeTextSearchPlaceholder': '在文件内搜索',
+  'canvas.largeTextSearching': '搜索中…',
+  'canvas.largeTextSearchHits': '{count} 处命中',
+  'canvas.largeTextSearchTruncated': '{count} 处命中（结果被截断——请细化查询）',
+  'canvas.largeTextPrevHit': '上一处命中',
+  'canvas.largeTextNextHit': '下一处命中',
+  'canvas.largeTextGoToLine': '跳转到行',
   // === Canvas 外部文件拖入 / 粘贴（canvasdrop，2026-09-11 作者裁定 R1–R7）===
   'canvas.dropInserted': '已插入 {ref}',
   'canvas.dropBatchInserted': '已插入 {count} 张图片引用',
@@ -1558,6 +1603,8 @@ export default {
   'plugins.noAgents': '未配置智能体',
   'plugins.loading': '加载中...',
   'plugins.loadFailed': '插件清单加载失败：{error}',
+  'plugins.authRequired': '未登录 · 需注册 — 登录后使用插件面板',
+  'plugins.relogin': '登录',
   'plugins.detail': '详情',
   'chatQueue.dragReorder': '拖动以排序',
   'chatQueue.clickExpand': '点击展开',
@@ -1688,4 +1735,60 @@ export default {
   'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 Nebflow 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
   'content.skill.slideblocks/slideblocks.desc': '用 SlideBlocks 自主制作或改进完整、精良的 Slidev 演示——输入可以是一条很短的请求，也可以是 PDF、Word、网页、Markdown、表格、图片、品牌素材、PowerPoint 源 deck 等混合材料。适用于：用户想做一份演示；想迁移到 Slidev；想重新设计、扩充或改进演示；需要为报告、路演、评审、授课、发布、决策或演讲做一份完整 deck；想要 SlideBlocks 的 Blocks、Decks 或 Recipes；或直接给材料说「做成 PPT」。不适用于：要求的最终交付物是任何 PPT/PPTX 或 Office 文件、通用 Office 编辑、或非 Slidev 的演示运行时。',
   'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
+
+  // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
+  // Definition/data lives in js/socialChannels.js (one array drives order,
+  // count and ids); this block must stay key-for-key equal to en.js
+  // (tests/sidebar-restructure.spec.mjs + tests/settings-cleanup.spec.mjs).
+  // 🔴 Phase 1 opens no real channel: every card's terminal state is
+  //    「已配置 · 未接入」. The status closed set has no reachable "live" state.
+  'social.title': '社交接口',
+  'social.btn.title': '手机访问 — 社交接口配置',
+  'social.channels.title': '渠道配置',
+  'social.remote.title': '手机远程访问',
+  // The remote-access face is held: O1–O5 (switch semantics / QR code / address
+  // export / mobile range / clipboard fallback) are author decisions.
+  // 🔴 Keep this text free of the fake-connection vocabulary (W6).
+  'social.remote.suspended': '本节内容待作者裁定（本批未接通）：不生成链接、不生成二维码、不显示任何未经后端确认的地址。',
+  'social.remote.safetyKey': '安全边界：远程访问链接等同于访问凭据，请勿转发给他人。',
+  'social.remote.safetyPlain': '明文 HTTP：局域网内不加密，仅限可信网络。',
+  'social.action.save': '保存配置',
+  'social.action.saving': '保存中…',
+  'social.action.saved': '已保存',
+  'social.action.saveFailed': '保存失败（{code}）',
+  'social.action.recheck': '重新检查',
+  'social.action.close': '关闭',
+  'social.secret.placeholder': '粘贴凭据（填入后不回显）',
+  'social.secret.stored': '已写入 · 不回显',
+  'social.secret.empty': '未写入',
+  'social.probe.summary': '凭据探针：exists={exists} · modeOk={modeOk} · readable={readable}',
+  'social.value.yes': '是',
+  'social.value.no': '否',
+  'social.hint.missingRef': '引用文件不存在：{path}',
+  'social.hint.modeBad': '权限不正确（应为 rw-------）：{path}',
+  'social.hint.pattern': '字段格式不符：{field}',
+  'social.status.notConfigured': '未配置',
+  'social.status.configuredNotLinked': '已配置 · 未接入',
+  'social.status.configInvalid': '配置有误',
+  'social.status.connected': '已接入',
+  'social.wechat.name': '微信',
+  'social.wechat.desc': '微信服务号 / 订阅号的接口凭据。一期只做配置落盘，不建立任何对外通道。',
+  'social.wechat.field.appId': '应用 ID',
+  'social.wechat.field.appSecret': '应用密钥',
+  'social.wechat.field.token': '消息校验 Token',
+  'social.wechat.field.aesKey': '消息加解密密钥',
+  'social.feishu.name': '飞书 / Lark',
+  'social.feishu.desc': '飞书与 Lark 同构，合并为一张卡，用「区域」区分境内 / 国际。一期只做配置落盘。',
+  'social.feishu.field.appId': '应用 ID',
+  'social.feishu.field.appSecret': '应用密钥',
+  'social.feishu.field.verificationToken': '事件订阅 Token',
+  'social.feishu.field.encryptKey': '加密密钥（选填）',
+  'social.feishu.field.region': '区域',
+  'social.feishu.region.feishu': '飞书（中国）',
+  'social.feishu.region.lark': 'Lark（国际）',
+  'social.telegram.name': 'Telegram',
+  'social.telegram.desc': 'Telegram 机器人接口凭据。一期只做配置落盘，不建立任何对外通道。',
+  'social.telegram.field.botToken': 'Bot Token',
+  'social.telegram.field.chatId': '目标会话 ID',
+  'social.telegram.field.apiBase': 'API 基址',
 };

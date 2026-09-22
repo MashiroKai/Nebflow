@@ -8,17 +8,20 @@ import scala.concurrent.duration.*
 
 /**
  * dispatcher-ctx 批（2026-09-05）——DispatcherContextCatalog spec：
- * 分发器上下文双目录（插件能力目录 + 预设场景目录）渲染语义。
+ * 分发器上下文目录（插件能力目录）渲染语义。
  *
  * 描述单源批（2026-09-10 作者裁定）改口径：manifest `description` 是唯一描述源，
  * `capability` 键 deprecated（装载不报错、渲染层忽略）。
+ *
+ * panelscheme 批（2026-09-21）改口径：**Model Preset 场景目录整体退役**——节点
+ * 无自有模型方案（节点模型 = 分发器当前方案，派发时 SchemePolicy 解析），NodeEdit
+ * `preset` 参数已退役（NODE_PRESET_RETIRED），目录失去唯一消费者。
  *
  * 覆盖：
  * - description 单源渲染（capability 键存在时目录只出 description、键不报错）
  * - 无 capability / 空白 capability → description 正常渲染（向后兼容形态）
  * - 过滤链同源：untrusted 不出现（默认拒绝）；plugins.enabled=false 总闸压制插件段
- * - 预设场景目录不受 plugins 总闸影响；"name — description" / 无 description 只出 name
- * - 双段拼装：render() 非空段空行相接
+ * - preset 段退役：render() 不再输出 "# Model Preset Catalog"（= 插件段单段）
  */
 class DispatcherContextCatalogSpec extends CatsEffectSuite:
 
@@ -177,8 +180,8 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       viaDispatcher <- DispatcherContextCatalog.render()
       viaDebug <- PluginRegistry.renderCatalog()
     yield
-      // D10 双渲染器收敛：插件段字节一致（render() = 插件段 + 空行 + preset 段，
-      // 故调试输出须为 render() 的前缀且止于插件段末尾）
+      // D10 双渲染器收敛：插件段字节一致（panelscheme 批后 render() = 插件段的
+      // substituteDataRoot 包装，调试输出与其相等——保留前缀断言容真实 data_root 渲染差异）
       assert(viaDispatcher.startsWith(viaDebug) || viaDebug.isEmpty,
         s"debug catalog must equal the injected plugin section prefix\n--debug--\n$viaDebug\n--injected--\n$viaDispatcher")
       assert(viaDebug.contains("# Plugin Catalog"), s"debug header must present: $viaDebug")
@@ -186,32 +189,19 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       assert(!viaDebug.contains("旧能力句"), "debug renderer must ignore deprecated capability too")
   }
 
-  test("预设场景目录：name — description / 无 description 只出 name") {
+  test("panelscheme 退役：preset 场景目录不再渲染（render() = 插件段单段）") {
     for
       _ <- approveAll
       rendered <- DispatcherContextCatalog.render()
     yield
-      assert(rendered.contains("# Model Preset Catalog"), s"preset header: $rendered")
-      assert(
-        rendered.contains("- deep-analyze — 深度分析场景：调研/审阅/方案设计节点"),
-        s"preset scene line: $rendered")
-      assert(rendered.contains("- general\n") || rendered.endsWith("- general"),
-        s"description-less preset must render name only: $rendered")
-      assert(!rendered.contains("general —"), "no stray description for name-only preset")
+      assert(!rendered.contains("# Model Preset Catalog"),
+        s"preset catalog section is retired (panelscheme 2026-09-21): $rendered")
+      assert(!rendered.contains("deep-analyze"),
+        s"preset lines must not leak into the dispatcher prompt: $rendered")
+      assert(rendered.contains("# Plugin Catalog"), s"plugin section must still render: $rendered")
   }
 
-  test("双段拼装：render() 非空段以空行相接") {
-    for
-      _ <- approveAll
-      rendered <- DispatcherContextCatalog.render()
-    yield
-      val pluginIdx = rendered.indexOf("# Plugin Catalog")
-      val presetIdx = rendered.indexOf("# Model Preset Catalog")
-      assert(pluginIdx >= 0 && presetIdx > pluginIdx, s"both sections present, plugin first: $rendered")
-      assert(rendered.contains("\n\n# Model Preset Catalog"), "sections joined by a blank line")
-  }
-
-  test("plugins.enabled=false → 插件段压制；预设段不受总闸影响（refuse 空文件误伤）") {
+  test("plugins.enabled=false → 插件段压制（preset 段已退役，render() 全空）") {
     for
       _ <- approveAll
       _ <- setFlagMerged(false)
@@ -219,8 +209,7 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
       _ <- setFlagMerged(true)
     yield
       assert(!rendered.contains("# Plugin Catalog"), "flag off must suppress plugin section")
-      assert(rendered.contains("# Model Preset Catalog"), "preset section is independent of plugins flag")
-      assert(rendered.contains("- deep-analyze — "), "preset lines still render under flag off")
+      assertEquals(rendered, "", "with the preset section retired, flag-off render must be empty")
   }
 
 end DispatcherContextCatalogSpec

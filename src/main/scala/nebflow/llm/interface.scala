@@ -307,7 +307,12 @@ object LlmInterface:
   private[llm] def inactivityTimeout[O](
     firstToken: FiniteDuration,
     subsequent: FiniteDuration,
-    transientPhase2: Boolean = false
+    transientPhase2: Boolean = false,
+    // 时间基修正缝（hostresume 批 2026-09-22，设计卡 §4 #5，D-6 首批消费点之一）：
+    // 默认恒等（裸差值 = 现状逐字节）；仅整流 no-progress 守卫调用点注入
+    // `PowerStateTracker.effectiveElapsed` 扣减宿主睡眠冻结秒。每供应商 120s Transient
+    // 看门狗调用点零改动（卡「明确不改」：跨睡眠快速失败 + 重试正是软着陆本体）。
+    effectiveElapsed: (Long, Long) => Long = (startMs, nowMs) => nowMs - startMs
   ): fs2.Pipe[IO, O, O] =
     val firstEx = new java.util.concurrent.TimeoutException(
       s"LLM stream: no response within ${firstToken.toSeconds}s"
@@ -339,10 +344,10 @@ object LlmInterface:
                       gotFirst.get.flatMap { first =>
                         val now2 = now
                         if first then
-                          val age = now2 - last
+                          val age = effectiveElapsed(last, now2)
                           if age > subsequent.toMillis then IO.raiseError(phase2Ex(age))
                           else IO.unit
-                        else if now2 - last > firstToken.toMillis then IO.raiseError(firstEx)
+                        else if effectiveElapsed(last, now2) > firstToken.toMillis then IO.raiseError(firstEx)
                         else IO.unit
                       }
                     }
@@ -592,10 +597,20 @@ object LlmInterface:
                         fs2.Stream.eval(IO.ref(req.messages)).flatMap { messagesRef =>
                           fs2.Stream.eval(IO.ref(false)).flatMap { imageStrippedRef =>
 
+                            /** 案① A1：候选身份键（`providerId/model`）——「本轮已尝试候选集合」
+                              * 的元素形态，只用于事实面（日志/终局错误）与空集护栏。 */
+                            def candidateKey(c: ModelCandidate): String = s"${c.providerId}/${c.model}"
+
                             // Health-check wrapper: filters candidates by health state.
                             // If all are Down, notifies the frontend and blocks until
                             // at least one provider recovers, then re-filters.
-                            def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
+                            //
+                            // 案① A2 (chain-llmstall-fix, 2026-09-21 作者绿灯)：本 wrapper 携带
+                            // **全链失败轮次** `round`（1-based）。它现在只从 tryCandidate 的
+                            // 「本轮全部候选都已被试过」出口被再次进入，且该出口带轮次上限
+                            // （见 tryCandidate `case Nil`）⇒ 入口调用点（下方 `attemptWithHealthCheck`）
+                            // 用默认轮次 1 起跑。
+                            def attemptWithHealthCheck(round: Int = 1): fs2.Stream[IO, StreamChunk] =
                               fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
                                 case (Nil, down) =>
                                   val notifyDown = onAttempt.traverse_(
@@ -645,22 +660,58 @@ object LlmInterface:
                                           )
                                         )
                                       )
-                                      fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck
+                                      fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck(round)
                                     }
                                 case (up, _) =>
-                                  tryCandidate(up)
+                                  // 新一轮：已尝试集合清空（`remaining = up` 是本链的**全量**候选），
+                                  // 轮次原样传入——轮次只在「一轮全部候选试完」时递增。
+                                  tryCandidate(up, maxRetries, Fallback.InitialBackoffMs, Set.empty, round)
                               }
 
                             def tryCandidate(
                               remaining: List[ModelCandidate],
                               retriesLeft: Int = maxRetries,
-                              backoffMs: Long = Fallback.InitialBackoffMs
+                              backoffMs: Long = Fallback.InitialBackoffMs,
+                              // 案① A1（chain-llmstall-fix）：本轮**已尝试候选集合**（`provider/model`）。
+                              // 只增不减、只在换轮时清空；用途 = ① 终局判定「这轮到底试没试过东西」
+                              // （空集 = 一次都没试 ⇒ 不得再进健康检查环，直接终态）② 终局日志/错误的
+                              // 事实面（「试过谁」可读）。
+                              attempted: Set[String] = Set.empty,
+                              // 案① A1/A2：全链失败轮次（1-based）。与 attemptWithHealthCheck 的
+                              // `round` 同源——见其 `case Nil` 出口。
+                              round: Int = 1
                             ): fs2.Stream[IO, StreamChunk] =
                               remaining match
                                 case Nil =>
-                                  // All up candidates exhausted during this attempt —
-                                  // cycle back through health check (will block if all Down)
-                                  attemptWithHealthCheck
+                                  // 本轮所有候选都已试过（或本轮起始候选集为空）。
+                                  //
+                                  // 病（2026-09-21 硬杀波定谳）：全链 provider 永久错误（400 Format ⇒
+                                  // fallback.scala:107 `evict=false`）时无人被 markDown ⇒
+                                  // `attemptWithHealthCheck` 的 filterCandidates 返回**同一全链** ⇒
+                                  // `tryCandidate(up)` 重投全链 ⇒ 无计数 / 无退避 / 无终态的闭环：
+                                  // 不产 chunk、不抛错 ⇒ AgentActor.lastActivityMs 冻结 ⇒
+                                  // TaskStuckWatcher 在 600s 判 agent-stale ⇒ L1 hard-cancel（StuckAbort）
+                                  // ⇒ 节点 failed。现场读数：单日 11,102 条 `permanent error (Format)`、
+                                  // 13 个节点同型被杀。
+                                  //
+                                  // 停药（A1+A2）：轮次上限 + 「本轮一枚都没试过」的 fail-closed 护栏。
+                                  // 上限 = Fallback.MaxChainRounds（≥2 ⇒ 既有 FormatErrorNoEvictSpec T1
+                                  // 「A 命中恰好 1 次 + B 成功」的**轮内**语义逐字不变）。
+                                  if round >= Fallback.MaxChainRounds || attempted.isEmpty then
+                                    fs2.Stream.eval(failureRef.get).flatMap { failures =>
+                                      fs2.Stream.eval(
+                                        logger.warn(
+                                          s"Stream: all candidates exhausted after $round round(s) " +
+                                            s"(cap ${Fallback.MaxChainRounds}) — failing fast instead of " +
+                                            s"re-entering the health-check loop " +
+                                            s"[providers attempted: ${failures.size} attempt(s), " +
+                                            s"candidates: ${attempted.toList.sorted.mkString(", ")}]"
+                                        )
+                                      ) *> fs2.Stream.raiseError[IO](new FallbackExhaustedError(failures))
+                                    }
+                                  else
+                                    // 尚有余轮：进健康检查（全员 Down 时阻塞等待恢复），换轮重试。
+                                    attemptWithHealthCheck(round + 1)
                                 case candidate :: rest =>
                                   // Clamp the thinking budget at the internal ceiling (maxcfg batch
                                   // 2026-09-16). The budget no longer follows the removed
@@ -840,7 +891,9 @@ object LlmInterface:
                                                       .drain ++ tryCandidate(
                                                       candidate :: rest,
                                                       maxRetries,
-                                                      Fallback.InitialBackoffMs
+                                                      Fallback.InitialBackoffMs,
+                                                      attempted,
+                                                      round
                                                     )
                                                   else fs2.Stream.raiseError[IO](err)
                                                   end if
@@ -937,6 +990,29 @@ object LlmInterface:
                                               .orElse(Option(err.getMessage))
                                               .getOrElse(classification.reason.toString)
 
+                                            // 案① A5（作者令「随案① 落地带上」）：4xx 的 provider
+                                            // 响应体**不受 llmLog `enabled` 开关门控**，常驻落盘
+                                            // （`logs/router/{date}_httperror.jsonl`）。动因：事故当日
+                                            // 11,102 条 `permanent error (Format)` 的**响应体原文缺失**
+                                            // （默认关 ⇒ 一行不写），三条候选成因无法区分。只落状态码 +
+                                            // 响应体 + 关联 id；LlmLogWriter 侧结构性不接受任何请求头 /
+                                            // 凭据参数，且对响应体做一次防御性凭据抹除（见
+                                            // [[nebflow.core.LlmLogWriter.logHttpError]]）。
+                                            def retain4xx: IO[Unit] =
+                                              classification.statusCode
+                                                .filter(c => c >= 400 && c < 500)
+                                                .traverse_(code =>
+                                                  nebflow.core.LlmLogWriter.logHttpError(
+                                                    statusCode = code,
+                                                    body = classification.message.orElse(Option(err.getMessage)).getOrElse(""),
+                                                    requestId = key,
+                                                    sessionId = req.sessionId,
+                                                    agentId = req.agentId,
+                                                    providerId = candidate.providerId,
+                                                    model = candidate.model
+                                                  )
+                                                )
+
                                             classification.permanence match
                                               case ErrorPermanence.Fatal =>
                                                 // Error affects all providers — abort entire stream
@@ -946,6 +1022,7 @@ object LlmInterface:
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
+                                                    *> retain4xx
                                                 ) *> fs2.Stream.raiseError[IO](
                                                   new FallbackExhaustedError(List(attempt))
                                                 )
@@ -959,9 +1036,20 @@ object LlmInterface:
                                                 //  - reason=Timeout（首 token 看门狗 TimeoutException 走
                                                 //    Permanent 分类）：软下线回避窗——「慢 ≠ 死」，窗口后自然
                                                 //    回链，无需探测恢复。
-                                                //  - 其余（Auth/404/配额/EmptyStream 等确证死亡）：维持 markDown。
+                                                //  - quota=true（配额分层，令 2026-09-21 19:16 腿 b）：
+                                                //    **计划性额度耗尽**（403 / 429-1308）⇒ 换链 + 配额软回避窗
+                                                //    （QuotaAvoidWindowMs ≫ 瞬时窗）。阻塞等待无意义：短窗内
+                                                //    不会自愈，探测也不会把它救回来 ⇒ 不用 markDown 进探测集。
+                                                //  - 其余（Auth/404/EmptyStream 等确证死亡）：维持 markDown。
                                                 val eviction =
                                                   if !classification.evict then IO.unit
+                                                  else if classification.quota then
+                                                    healthMonitor.softAvoid(
+                                                      candidate.providerId,
+                                                      candidate.model,
+                                                      Defaults.QuotaAvoidWindowMs,
+                                                      label = "quota exhausted"
+                                                    )
                                                   else if classification.reason == FailoverReason.Timeout then
                                                     healthMonitor.softAvoid(
                                                       candidate.providerId,
@@ -973,11 +1061,37 @@ object LlmInterface:
                                                 fs2.Stream.eval(
                                                   logger.warn(
                                                       s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                                        // 案① A3：补回被丢弃的 provider 响应体（原 warn 只报
+                                                        // reason 串 —— 这正是事故当日「无法定因」的直接原因）。
+                                                        // 前缀 `permanent error (Format)` 逐字保留（现场 grep 锚点）。
+                                                        //
+                                                        // 🔴 隐私面（与 A5 同口径）：provider 可能把收到的凭据
+                                                        // 回显在错误体里 ⇒ 落盘前先走 `redactSecrets`。不抹除的话
+                                                        // 本行会在事故形态下（秒级重投 × 每候选每轮一条）把密钥
+                                                        // 写进 nebflow.log，而同一份响应体在 httperror.jsonl 里
+                                                        // 反而是抹除过的——两条腿不一致。截断 + 抹除都不影响
+                                                        // 「响应体可读」这个 A3 目的。
+                                                        + classification.message
+                                                          .map(m =>
+                                                            s" — provider response: ${
+                                                              nebflow.core.LlmLogWriter.redactSecrets(m.take(2048))
+                                                            }"
+                                                          )
+                                                          .getOrElse("")
+                                                        + s" [status=${classification.statusCode.map(_.toString).getOrElse("n/a")}, " +
+                                                        s"evict=${classification.evict}, round=$round/${Fallback.MaxChainRounds}]"
                                                     )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
+                                                    *> retain4xx
                                                     *> eviction
-                                                ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                                ) *> tryCandidate(
+                                                  rest,
+                                                  maxRetries,
+                                                  Fallback.InitialBackoffMs,
+                                                  attempted + candidateKey(candidate),
+                                                  round
+                                                )
                                               case ErrorPermanence.Transient =>
                                                 if retriesLeft > 0 && !isTimeout then
                                                   // Only retry same provider for non-timeout errors.
@@ -994,7 +1108,7 @@ object LlmInterface:
                                                     notify *> logger.warn(
                                                       s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
                                                     ) *> IO.sleep(delay.millis)
-                                                  ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
+                                                  ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2, attempted, round)
                                                 else
                                                   // Timeout / retries exhausted — try next provider
                                                   val skipMsg =
@@ -1006,10 +1120,21 @@ object LlmInterface:
                                                   // 审计 20260903 子项③：Timeout 类降级软下线——超时 = 慢，
                                                   // 不是死。跳过本次请求 + 软回避窗（TimeoutAvoidWindowMs），
                                                   // 不 markDown 不进探测集，窗口到期自然回链；markDown
-                                                  // 保留给 Auth/404/配额等确证死亡。非超时 Transient 耗尽
+                                                  // 保留给 Auth/404 等确证死亡。非超时 Transient 耗尽
                                                   // （如 429 重试耗尽）维持原 markDown 行为。
+                                                  // 配额分层（令 2026-09-21 19:16 腿 b）：配额类恒为
+                                                  // Permanent（不可自愈），正常不到达本分支；此处仍置于
+                                                  // 最前作为防御一致性——任何路径的配额类都走配额窗 + 换链，
+                                                  // 绝不落进 markDown/阻塞等待。
                                                   val eviction =
-                                                    if isTimeout then
+                                                    if classification.quota then
+                                                      healthMonitor.softAvoid(
+                                                        candidate.providerId,
+                                                        candidate.model,
+                                                        Defaults.QuotaAvoidWindowMs,
+                                                        label = "quota exhausted"
+                                                      )
+                                                    else if isTimeout then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,
                                                         candidate.model,
@@ -1024,7 +1149,13 @@ object LlmInterface:
                                                       *> failureRef.update(_ :+ attempt)
                                                       *> notify
                                                       *> eviction
-                                                  ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                                  ) *> tryCandidate(
+                                                    rest,
+                                                    maxRetries,
+                                                    Fallback.InitialBackoffMs,
+                                                    attempted + candidateKey(candidate),
+                                                    round
+                                                  )
                                                 end if
                                             end match
                                           end if
@@ -1033,7 +1164,8 @@ object LlmInterface:
                                     }
                                   } // end per-attempt abortedRef flatMap (hard-recovery P1/P6)
 
-                            attemptWithHealthCheck
+                            // 入口：轮次从 1 起跑（案① A2 —— wrapper 现在带轮次参数）。
+                            attemptWithHealthCheck()
                           }
                         }
                       }
@@ -1059,7 +1191,12 @@ object LlmInterface:
                 .through(
                   inactivityTimeout(
                     noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds),
-                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds)
+                    noProgressTimeoutOverride.getOrElse(Defaults.LlmStreamNoProgressTimeoutSec.seconds),
+                    // 时间基修正（hostresume 批 2026-09-22，设计卡 §4 #5，D-3 裁定「扣睡眠
+                    // 后仍 Permanent」）：宿主睡眠冻结秒经 PowerStateTracker 扣减，跨睡眠
+                    // 不再误触整流硬超时；超时分类仍是 plain TimeoutException → Permanent
+                    // fail-fast（禁重分类 Transient）。空窗集 / kill-switch ⇒ 逐字节现状。
+                    effectiveElapsed = nebflow.shared.PowerStateTracker.effectiveElapsed
                   )
                 )
                 .interruptWhen(halt.get)

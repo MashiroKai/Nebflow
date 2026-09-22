@@ -26,6 +26,36 @@ import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.j
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
+// ── Provider protocol face: display ←→ stored value (protoface-ui batch,
+// 2026-09-22) ────────────────────────────────────────────────────────────────
+// Stored values stay `openai` / `anthropic` forever (the engine's LlmProtocol
+// decoder — config.scala:19-23 — is unchanged by this batch); only the FACE the
+// user reads changes. The two id⇄endpoint-form pairs are the engine's own two
+// adapters: OpenAiAdapter.scala:45-47 (`{base}/chat/completions`) and
+// AnthropicAdapter.scala:30-32 (`{base}/v1/messages`).
+const PROTOCOL_FORM_LABEL = { openai: 'chat/completions', anthropic: 'messages' };
+const PROTOCOL_ENDPOINT_PATH = { openai: '/chat/completions', anthropic: '/v1/messages' };
+
+/** Stored protocol id → the endpoint form shown to the user. An id this build
+ *  does not know is shown verbatim (never silently re-labelled). */
+function protocolFormLabel(protocol) {
+  return PROTOCOL_FORM_LABEL[protocol] || protocol || '';
+}
+
+/** The POST target the engine will hit for `protocol` + `baseUrl`. Same
+ *  normalization as the adapters (OpenAiAdapter.scala:45-47 /
+ *  AnthropicAdapter.scala:30-32): trailing slashes stripped, a base that
+ *  already ends in the endpoint path kept as-is. Empty string = "no target to
+ *  promise yet" — an unknown face, or a baseUrl still blank (the same rule the
+ *  model-fetch status line follows at :1709-1713). */
+function protocolPostTarget(protocol, baseUrl) {
+  const path = PROTOCOL_ENDPOINT_PATH[protocol];
+  if (!path) return '';
+  const base = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!base) return '';
+  return base.endsWith(path) ? base : base + path;
+}
+
 // 2026-09-03 作者裁定：光球（micOrb）按预设驱动，设置页隐藏光球配置区。
 // 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
 // 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
@@ -936,7 +966,7 @@ function renderProviderCard(name, p) {
         <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
       <div class="cfg-card-meta">
-        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
+        <span class="cfg-card-badge">${escapeHtml(protocolFormLabel(p.protocol))}</span>
         <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
       </div>
       ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
@@ -1699,14 +1729,25 @@ export function validateContextWindow(rawValue, modelMax) {
 }
 
 /** Fill the row's contextWindow input with the fetched contextLength — only
- *  when the input is empty (never overwrite a user-set value). */
+ *  when the input is empty (never overwrite a user-set value).
+ *
+ *  B5（案② chain-llmstall-fix，2026-09-21）：**不论输入框是否已有值**，都把 provider
+ *  上报的真值记为 clamp 上界（`data-model-max`，保存时写成
+ *  `models[].modelMaxContext`；后端取数单点取 `min(configured, 真值)`）。
+ *  旧行为：`ctxInput.value` 非空即直接 return ⇒ 真值永远落不了地——而新模型行在
+ *  `showProviderModal` 里已被预填 1000000，于是 provider 上报的上限（如 200k）被
+ *  完整覆盖（定谳报告 `20260921_182544` 核查 2）。
+ *  🔴 显示值仍**只在空时**填：绝不覆盖用户手写值（保存路径的 1M 兜底同样保持不动）。 */
 function fillContextIfEmpty(row) {
   if (!row) return;
   const sel = row.querySelector('.cfg-model-id');
   const ctxInput = row.querySelector('.cfg-model-ctx');
-  if (!sel || !ctxInput || ctxInput.value) return;
+  if (!sel || !ctxInput) return;
   const len = contextLengthFor(sel.value);
-  if (len) ctxInput.value = len;
+  if (!len) return;
+  ctxInput.dataset.modelMax = String(len);
+  if (ctxInput.value) return;
+  ctxInput.value = len;
 }
 
 function renderModelIdSelect(currentId) {
@@ -1839,7 +1880,10 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
       {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
       {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
-      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
+      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: [
+        { value: 'anthropic', label: 'messages' },
+        { value: 'openai', label: 'chat/completions' },
+      ]},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
     ],
     onConfirm(values) {
@@ -1867,14 +1911,21 @@ function showProviderModal(existingName, existingData, onSave) {
       for (const m of validModels) {
         const liveMax = contextLengthFor(m.id);
         const res = validateContextWindow(m.contextWindowRaw,
-          liveMax ?? (Number.isFinite(m.rowModelMax) ? m.rowModelMax : null));
+          liveMax ?? (Number.isFinite(m.modelMaxContext) ? m.modelMaxContext : null));
         if (!res.ok) {
           window.__showToast?.(t(res.errKey, { id: m.id, ...res.errParams }), 'error');
           return;
         }
         if (res.note === 'defaulted-empty') defaultedIds.push(m.id);
         if (res.note === 'clamped-to-truth') clampedRows.push({ id: m.id, max: res.value });
-        checkedModels.push({ id: m.id, contextWindow: res.value });
+        // Normalization ownership = this check point: `contextWindow` takes the
+        // validator's output value (the raw string never reaches the payload).
+        // The B5 persistence key rides along unchanged — dropping it here would
+        // silently wipe the engine-side clamp bound on every save.
+        /** @type {{id:string, contextWindow:number, modelMaxContext?:number}} */
+        const checked = { id: m.id, contextWindow: res.value };
+        if (Number.isFinite(m.modelMaxContext) && m.modelMaxContext > 0) checked.modelMaxContext = m.modelMaxContext;
+        checkedModels.push(checked);
       }
       // Vision is never written from this form (B1 裁定 2026-08-25): the
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
@@ -1903,6 +1954,37 @@ function showProviderModal(existingName, existingData, onSave) {
   // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
   // manual input when the proxy endpoint is unavailable.
   wireProviderModelFetch();
+  // protocol select → live POST-target helper (render-only, zero network).
+  wireProtocolHelper();
+}
+
+/** Protocol select → helper line under it showing the POST target the engine
+ *  will hit for the currently selected face + the currently typed baseUrl
+ *  (protoface-ui batch 2026-09-22). Precedent for the "small muted status line
+ *  inside a .cfg-form-group" shape = the model-list fetch row (:1699-1704).
+ *  Live on both inputs; 🔴 pure rendering — no fetch, no send, no config write. */
+function wireProtocolHelper() {
+  const overlay = document.getElementById('cfg-modal');
+  if (!overlay) return;
+  // checkJs: querySelector returns Element; the casts pin the two element
+  // types this function reads `.value` from (no new baseline rows).
+  const select = /** @type {HTMLSelectElement|null} */ (overlay.querySelector('[data-field="protocol"]'));
+  const baseInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="baseUrl"]'));
+  if (!select || !baseInput) return;
+
+  const line = document.createElement('div');
+  line.className = 'cfg-hint cfg-protocol-helper';
+  line.dataset.helper = 'protocol';
+  select.closest('.cfg-form-group')?.appendChild(line);
+
+  const paint = () => {
+    const target = protocolPostTarget(select.value, baseInput.value);
+    line.textContent = target ? t('provider.protocolHelper', { target }) : '';
+  };
+  select.addEventListener('change', paint);
+  // 'input' too: the target follows the baseUrl keystroke-by-keystroke.
+  baseInput.addEventListener('input', paint);
+  paint();
 }
 
 // --- Generic modal ---
@@ -1910,11 +1992,22 @@ function showModal({title, fields, onConfirm}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
+  // Option shape (protoface-ui batch 2026-09-22): a plain string means
+  // value === label and keeps the legacy interpolation VERBATIM (byte-identical
+  // output for every string input, so the other string-array selects render
+  // exactly as before); `{value, label}` is the new shape — value is the stored
+  // value, label is display-only, and both are escaped (new surface).
+  const optionHtml = (o, selected) => {
+    const obj = o && typeof o === 'object';
+    const value = obj ? o.value : o;
+    const label = obj ? o.label : o;
+    return `<option value="${obj ? escapeHtml(value) : value}" ${value === selected ? 'selected' : ''}>${obj ? escapeHtml(label) : label}</option>`;
+  };
   const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
-              ${f.options.map(o => `<option value="${o}" ${o === f.value ? 'selected' : ''}>${o}</option>`).join('')}
+              ${f.options.map(o => optionHtml(o, f.value)).join('')}
             </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
             f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
@@ -1985,18 +2078,23 @@ function showModal({title, fields, onConfirm}) {
         if (!id) return;
         // chain-ctxbound: carry the RAW input string — no parseInt()||1000000
         // coercion here (that line silently saved absurd values, and
-        // parseInt("1e9") === 1 truncated scientific notation). Validation +
-        // normalization happen in showProviderModal.onConfirm against the
-        // provider-reported truth (validateContextWindow).
+        // parseInt("1e9") === 1 truncated scientific notation). The raw string
+        // is a VALIDATION INPUT only; normalization happens at the
+        // showProviderModal.onConfirm check point against the provider-reported
+        // truth (validateContextWindow) and never rides into the saved payload.
         const ctxEl = /** @type {HTMLInputElement|null} */ (row.querySelector('.cfg-model-ctx'));
-        /** @type {{id:string, contextWindowRaw:string, rowModelMax?:number}} */
+        /** @type {{id:string, contextWindowRaw:string, modelMaxContext?:number}} */
         const entry = { id, contextWindowRaw: ctxEl ? ctxEl.value : '' };
-        // Forward-compat read (zero-effect until the sibling llmstall-fix
-        // batch merges): its B5 rows carry the persisted provider truth as
-        // data-model-max; reading it keeps this entrance bound identical to
-        // the engine clamp's persisted modelMaxContext. Never written here.
-        const persistedMax = ctxEl ? parseInt(ctxEl.dataset.modelMax || '', 10) : NaN;
-        if (Number.isFinite(persistedMax) && persistedMax > 0) entry.rowModelMax = persistedMax;
+        // B5 persistence contract (llmstallfix batch, merged): the provider-
+        // reported truth upper bound is carried on the row as data-model-max
+        // (rendered by renderModelRowContent, recorded by fillContextIfEmpty)
+        // and is read back here under its persisted key name `modelMaxContext`,
+        // so onConfirm's rebuilt payload re-emits it. Unknown ⇒ the key is NOT
+        // written (backend `modelMaxContext = None` ⇒ the effective value stays
+        // byte-identical to `contextWindow` = the old behaviour; banned to
+        // tighten opportunistically).
+        const maxCtx = ctxEl ? parseInt(ctxEl.dataset.modelMax || '', 10) : NaN;
+        if (Number.isFinite(maxCtx) && maxCtx > 0) entry.modelMaxContext = maxCtx;
         values.models.push(entry);
       });
     }
@@ -2008,6 +2106,9 @@ function showModal({title, fields, onConfirm}) {
 function renderModelRowContent(m) {
   const id = m ? m.id : '';
   const ctx = m ? m.contextWindow : '';
+  // B5：真值上界随行渲染——编辑既有 provider 时不得把它丢掉（保存路径从行内读回；
+  // 丢掉 = 该模型的 clamp 防线在下次保存后静默失效）。缺席 ⇒ 不渲染该属性。
+  const maxAttr = m && Number.isFinite(m.modelMaxContext) ? ` data-model-max="${m.modelMaxContext}"` : '';
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
     : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
@@ -2016,7 +2117,7 @@ function renderModelRowContent(m) {
   // maxTokens control removed (maxcfg batch 2026-09-16, author ruling): the
   // output cap is an internal engine constant, not user config.
   return `${idField}
-<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
+<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }
 
@@ -3626,6 +3727,30 @@ export function initRulesModal() {
 let pathPickerFolderId = null;
 let pathPickerCurrentPath = '';
 let pathPickerCallback = null;
+let pathPickerSearchTimer = null;
+
+/** The filter string currently in the box — sent with EVERY request (navigation
+  * included) so a frame can be matched against the newest request: see the
+  * staleness guard in handleBrowseResult. */
+function pathPickerQuery() {
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  return el ? el.value.trim() : '';
+}
+
+function resetPathPickerInputs() {
+  const search = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  if (search) search.value = '';
+  const goto = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  if (goto) goto.value = '';
+  if (pathPickerSearchTimer) {
+    clearTimeout(pathPickerSearchTimer);
+    pathPickerSearchTimer = null;
+  }
+  const note = document.getElementById('path-picker-truncated');
+  if (note) { note.hidden = true; note.textContent = ''; }
+  const err = document.getElementById('path-picker-error');
+  if (err) { err.hidden = true; err.textContent = ''; }
+}
 
 export function openPathPicker(folderId, currentRoot) {
   pathPickerFolderId = folderId;
@@ -3635,6 +3760,12 @@ export function openPathPicker(folderId, currentRoot) {
   document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
   document.getElementById('path-picker-clear').textContent = t('pathPicker.clear');
   document.getElementById('path-picker-select').textContent = t('pathPicker.select');
+  document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
+  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
+  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
+  resetPathPickerInputs();
   // Show/hide clear button based on current state
   document.getElementById('path-picker-clear').style.display = currentRoot ? 'inline-block' : 'none';
   document.getElementById('path-picker-overlay').classList.add('on');
@@ -3649,6 +3780,12 @@ export function openPathPickerCallback(currentRoot, callback) {
   document.getElementById('path-picker-title').textContent = t('pathPicker.title');
   document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
   document.getElementById('path-picker-select').textContent = t('pathPicker.select');
+  document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
+  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
+  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
+  resetPathPickerInputs();
   document.getElementById('path-picker-clear').style.display = 'none';
   document.getElementById('path-picker-overlay').classList.add('on');
   document.getElementById('path-picker-modal').classList.add('show');
@@ -3659,12 +3796,25 @@ function closePathPicker() {
   pathPickerFolderId = null;
   pathPickerCallback = null;
   pathPickerCurrentPath = '';
+  resetPathPickerInputs();
   document.getElementById('path-picker-overlay').classList.remove('on');
   document.getElementById('path-picker-modal').classList.remove('show');
 }
 
+/** Navigate to `path` — always carries the current search string so the server
+  * filters (B) over the whole directory rather than the truncated page. */
 function browseTo(path) {
-  sendWs({ type: 'browsePath', path });
+  sendWs({ type: 'browsePath', path, query: pathPickerQuery() });
+}
+
+/** C: path direct-entry — the box's content goes to the server verbatim; `~` /
+  * `~/…` are expanded there by the shared expandTilde. An unusable path comes
+  * back as a typed error frame and is rendered inline (never a silent no-op). */
+function goToTypedPath() {
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  const typed = el ? el.value.trim() : '';
+  if (!typed) return;
+  browseTo(typed);
 }
 
 function buildBreadcrumb(path) {
@@ -3695,15 +3845,60 @@ function buildBreadcrumb(path) {
 export function handleBrowseResult(data) {
   const list = document.getElementById('path-picker-list');
   if (!list) return;
+  // Staleness guard: typing in the search box fires a new request while the
+  // previous frame may still be in flight. The server echoes the filter string
+  // it answered (`query`), so a frame whose filter is no longer the box's is
+  // dropped instead of repainting the list with stale results.
+  const frameQuery = typeof data.query === 'string' ? data.query : '';
+  if (frameQuery !== pathPickerQuery()) return;
+
+  const errBox = document.getElementById('path-picker-error');
+  const noteBox = document.getElementById('path-picker-truncated');
+  // The path a FAILED navigation carries is the one the user typed, not one they
+  // are in — remember where they actually were so the error branch can roll back
+  // to it. `pathPickerCurrentPath` is the value the Select button commits (both
+  // the callback and `setFolderProjectRoot`), so leaving the failed path in place
+  // would let the picker hand out a directory it just said it cannot open.
+  const prevPath = pathPickerCurrentPath;
   pathPickerCurrentPath = data.path || '';
-  buildBreadcrumb(pathPickerCurrentPath);
   const entries = data.entries || [];
-  list.innerHTML = '';
-  list.removeAttribute('data-empty');
-  if (data.error) {
-    list.setAttribute('data-empty', data.error);
+
+  // ── C: inline path error (invalid / not a directory / unreadable) ──────────
+  if (data.error || data.errorKind) {
+    // A failed navigation must not move the breadcrumb/selection away from the
+    // directory the user was actually in — the error line changes, and the
+    // commit target is rolled back to that same directory (it was moved above,
+    // unconditionally, before this frame was known to be a failure).
+    pathPickerCurrentPath = prevPath;
+    if (errBox) {
+      errBox.textContent = data.error || t('pathPicker.error.invalid');
+      errBox.hidden = false;
+    }
+    if (noteBox) { noteBox.hidden = true; noteBox.textContent = ''; }
     return;
   }
+  if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
+
+  buildBreadcrumb(pathPickerCurrentPath);
+  list.innerHTML = '';
+  list.removeAttribute('data-empty');
+
+  // ── A: explicit truncation word (never silent). The note is TWO lines: the
+  // fact (count/total) then the way out — B's search and C's direct entry. ────
+  const total = typeof data.total === 'number' ? data.total : entries.length;
+  const hidden = Math.max(0, total - entries.length);
+  if (noteBox) {
+    if (data.truncated && hidden > 0) {
+      noteBox.innerHTML =
+        '<div>' + escapeHtml(t('pathPicker.truncated', { count: hidden, total })) + '</div>' +
+        '<div class="pp-hint">' + escapeHtml(t('pathPicker.hint.truncated')) + '</div>';
+      noteBox.hidden = false;
+    } else {
+      noteBox.hidden = true;
+      noteBox.textContent = '';
+    }
+  }
+
   // Parent directory item — hidden at filesystem root
   if (pathPickerCurrentPath !== '/') {
     const parentItem = document.createElement('div');
@@ -3720,8 +3915,12 @@ export function handleBrowseResult(data) {
 
   if (entries.length === 0) {
     const emptyHint = document.createElement('div');
-    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;';
-    emptyHint.textContent = t('pathPicker.empty');
+    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;line-height:1.6;';
+    // B: the empty state distinguishes "nothing here" from "nothing matched the
+    // filter" — each names its own way out (clear the box; type a path).
+    const line = frameQuery ? t('pathPicker.noMatch', { query: frameQuery }) : t('pathPicker.empty');
+    const hint = frameQuery ? t('pathPicker.hint.noMatch') : t('pathPicker.hint.empty');
+    emptyHint.textContent = line + ' — ' + hint;
     list.appendChild(emptyHint);
     return;
   }
@@ -3739,6 +3938,30 @@ export function initPathPicker() {
   document.getElementById('path-picker-cancel').addEventListener('click', closePathPicker);
   document.getElementById('path-picker-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'path-picker-overlay') closePathPicker();
+  });
+  // ── C: direct entry. Enter or the Go button jumps to the typed path; the box
+  // keeps its text so a wrong path can be corrected instead of retyped. ───────
+  const gotoInput = document.getElementById('path-picker-goto-input');
+  document.getElementById('path-picker-goto-btn').addEventListener('click', goToTypedPath);
+  gotoInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); goToTypedPath(); }
+  });
+  // ── B: server-side filter, 250ms debounce. Clearing the box restores the full
+  // listing (the server treats an empty query as "no filter"). ────────────────
+  const searchInput = document.getElementById('path-picker-search-input');
+  searchInput.addEventListener('input', () => {
+    if (pathPickerSearchTimer) clearTimeout(pathPickerSearchTimer);
+    pathPickerSearchTimer = setTimeout(() => {
+      pathPickerSearchTimer = null;
+      if (pathPickerCurrentPath) browseTo(pathPickerCurrentPath);
+    }, 250);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (pathPickerSearchTimer) { clearTimeout(pathPickerSearchTimer); pathPickerSearchTimer = null; }
+      if (pathPickerCurrentPath) browseTo(pathPickerCurrentPath);
+    }
   });
   document.getElementById('path-picker-select').addEventListener('click', () => {
     // Callback mode (Explorer folder picker)

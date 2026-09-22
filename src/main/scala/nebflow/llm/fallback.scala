@@ -59,6 +59,21 @@ object Fallback:
   val InitialBackoffMs: Long = 1000L
   val MaxBackoffMs: Long = 10000L
 
+  /** 案①（LLM 硬杀波 · `chain-llmstall-fix`，2026-09-21 作者绿灯）——**全链失败轮次上限**：
+    * 一次 `sendStream` 内，候选链最多被整体重投这么多轮；轮次耗尽 ⇒
+    * `FallbackExhaustedError`（显式终局），不再回到 `attemptWithHealthCheck`。
+    *
+    * 动因（定谳报告 20260921_182544 §一.4）：全链 400（Format ⇒ `evict = false`，见
+    * [[classifyError]]）时无人被 markDown ⇒ health-check 过滤返回**同一全链** ⇒
+    * `tryCandidate ⇄ attemptWithHealthCheck` 无计数 / 无退避 / 无终态地闭环：流不产
+    * chunk 也不抛错 ⇒ agent 无活动信号 ⇒ 600s 后看门狗硬杀。
+    *
+    * 取值 2 的依据（**回归共存硬约束**，非任意）：既有 `FormatErrorNoEvictSpec` T1
+    * 断言「a/m1 命中恰好 1 次 + b 成功」——轮内语义只在「整链试完」时才推进轮次，
+    * 上限 ≥ 2 保证「一次完整候选遍历 + 一次换轮重试」这条既有合法路径零变化。
+    * 单测锚点：`AllCandidatesFormatLoopSpec`（全链 400 必须在该上限内终止）。 */
+  val MaxChainRounds: Int = 2
+
   /**
    * Per-turn LLM RETRY budget (2026-08-18 token incident, plan C): a single
    * turn may make at most this many failed-retry re-dispatches (incremented
@@ -78,7 +93,73 @@ object Fallback:
    *  the window edge just burns another 429 and re-sends the full context. */
   val OverloadBackoffMinMs: Long = 60_000L
 
+  /**
+   * 配额类上游错误码白名单（现读真源 `~/.nebflow/logs/nebflow.log`，2026-09-21）：
+   *
+   *   - `"1308"` = zhipu「已达到 5 小时的使用上限」（HTTP 429，17:54:58，当日最后
+   *     一条 zhipu 事件；此后无 `recovered (UP)`）——**额度**语义，计划性。
+   *
+   * 同族码 `1302`（HTTP 429 ×16，16:58–17:54，「您的账户已达到速率限制，请您控制
+   * 请求频率」/ `rate_limit_error`）经现读判读为**频率类**（60s 窗口自愈）⇒
+   * **不并入**本白名单：频率类的正确动作是退避等待（`OverloadBackoffMinMs`），
+   * 不是换链。判据级别 = 只增「确证是额度语义」的码，禁凭形状编造。
+   *
+   * 403 面不靠码识别（LLM 面唯一实证形态 = kimi 5h 额度闸，错误体
+   * `permission_error` + `5-hour usage limit`），见 [[isQuotaError]]。
+   */
+  val QuotaUpstreamCodes: Set[String] = Set("1308")
+
+  /** 错误体是否携带某上游码：JSON 引号形（`"code":"1308"`）/ 上游 message 前缀形
+    * （`[1308]`）。**不认裸数字文本**——request_id 等十六进制串可能偶然含该数字，
+    * 裸匹配会凭空制造配额判定。
+    */
+  private def carriesUpstreamCode(body: String, code: String): Boolean =
+    body.contains(s""""code":"$code"""") || body.contains(s"[$code]")
+
+  /**
+   * 配额类判据（计划性额度耗尽）：
+   *   - HTTP **403**：LLM 面唯一实证形态 = 5h 额度闸（kimi 2026-09-21 16:47）；
+   *   - HTTP **429** 且错误体带 [[QuotaUpstreamCodes]] 的码（zhipu 17:54 code 1308）；
+   *   - 字符串路径（无结构化状态码）：只认码，不认裸数字。
+   *
+   * 判据来源 = 作者令 2026-09-21 19:16 腿 b（「配额类 403 / 429 且上游 code 1308」）
+   * + providerwipe-arch 定谳 §2.1 的原始错误体。码集合的边界见 [[QuotaUpstreamCodes]]。
+   */
+  def isQuotaError(error: Throwable, body: String): Boolean =
+    error match
+      case e: sttp.client4.HttpError[?] =>
+        val c = e.statusCode.code
+        c == 403 || (c == 429 && QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code)))
+      case _ => QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code))
+
+  /** 案① A4（chain-llmstall-fix）：**Format 类失败的终局语义单点定义**——结构化
+    * 400（`HttpError` 分支）与 stringly 400（`invalid request` / `bad request` / `400`
+    * 文本分支）共用本工厂。三元组逐字等于两条路径改造前的取值：
+    * `reason = Format` / `permanence = Permanent` / `evict = false`（400 = provider 解析并
+    * 拒绝了我们的请求 ⇒ 它活着 ⇒ 不驱逐，只跳本次请求）。
+    *
+    * **与案① A1/A2 的关系**：本工厂只定「分类」，不定「终局」——终局由 stream 层的
+    * 轮次上限（`Fallback.MaxChainRounds`）给出（interface.scala `tryCandidate` 的
+    * `case Nil` 出口）。两处 Format 路径都走同一个 `ErrorPermanence.Permanent` 分支 ⇒
+    * 同受该上限约束，这就是 A4 要求的「两处同受约束」。 */
+  private[llm] def formatClassification(
+    statusCode: Option[Int],
+    message: Option[String]
+  ): ErrorClassification =
+    ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, statusCode, message, evict = false)
+
   def classifyError(error: Throwable): ErrorClassification =
+    val body = Option(error.getMessage).getOrElse("")
+    val classified = classifyBase(error)
+    // 配额类分层（令 2026-09-21 19:16 腿 b）：计划性额度耗尽 ⇒ **不可自愈**
+    // （Permanent ⇒ 不做同 provider 的退避重试）+ 打配额标志（interface 侧据此走
+    // 配额软回避窗，而非 markDown / 阻塞等待）。Fatal（上下文溢出 / StuckAbort /
+    // RecoverableAbort / turn 预算）永不被改写——那些是多 provider 共性或有意中止。
+    if classified.permanence != ErrorPermanence.Fatal && isQuotaError(error, body) then
+      classified.copy(permanence = ErrorPermanence.Permanent, quota = true)
+    else classified
+
+  private def classifyBase(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
     error match
       case e: sttp.client4.HttpError[?] =>
@@ -105,7 +186,15 @@ object Fallback:
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
         val evict = !(c == 400 && !isContextOverflow)
-        ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
+        if c == 400 && !isContextOverflow then
+          // 案① A4（chain-llmstall-fix）：结构化 400-Format 与下方 stringly 残余路径
+          // **同源收口**——两者都经 [[formatClassification]]，终局语义（Format /
+          // Permanent / evict=false）在树内只有一份定义，不会各自漂移。
+          // 两处同受 stream 层案① A1/A2 的轮次上限约束：无论哪条路径产生 Permanent，
+          // 都被 interface.scala `tryCandidate` 的同一 `round` 递归管辖（`case Nil`
+          // 出口 = 唯一终局点），不再存在「跳完无人约束」的闭环。
+          formatClassification(Some(c), Some(error.getMessage))
+        else ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
       case e: TurnBudgetExceeded =>
@@ -172,19 +261,15 @@ object Fallback:
           ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
           // 同上（子项②）：stringly 400 形状同样不驱逐（与非流式 adapter 结构化
-          // HttpError 之外的残余路径保持一致语义）。
-          ErrorClassification(
-            FailoverReason.Format,
-            ErrorPermanence.Permanent,
-            message = Some(error.getMessage),
-            evict = false
-          )
+          // HttpError 之外的残余路径保持一致语义）。案① A4：与结构化路径共用
+          // [[formatClassification]] ⇒ 终局语义单点定义（先前是两份字面副本）。
+          formatClassification(None, Some(error.getMessage))
         else if msg.contains("empty response") || msg.contains("no content") then
           ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
         end if
 
-  end classifyError
+  end classifyBase
 
   private def withTimeoutIO[A](ioa: IO[A], ms: Long): IO[A] =
     ioa.timeout(ms.millis)
