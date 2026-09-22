@@ -530,6 +530,53 @@ export function friendStateSnapshot() {
   };
 }
 
+/** 好友备注的**显示面唯一取值点**（群聊渲染层覆盖批；作者 2026-09-22 两裁落地）。
+ *
+ *  Why one accessor: a friend remark is a purely local overlay (`FriendRemarkStore`,
+ *  key = userId). Upstream never carries the key (the `FriendSummary` decoder ignores
+ *  it on purpose) and the gateway only overlays it on the friend legs
+ *  (`FriendService.applyRemark` / `applyRemarksToConvs`). The group legs are
+ *  zero-injection pass-through (`RestApiRoutes.groupProxy`), so a group member row
+ *  never carries `remark` — group surfaces must resolve it **client-side** from the
+ *  accepted-friends snapshot. Both group render points (message-bubble sender name and
+ *  member-drawer row) read it from here; two lookups would be two predicates and would
+ *  drift apart, which is exactly the inconsistency the ruling forbids.
+ *
+ *  Semantics mirror `FriendService.applyRemark`'s
+ *  `remarks.get(f.userId).filter(_.nonEmpty)`: a friend hit with a non-empty remark
+ *  wins, anything else (no snapshot loaded / not a friend / absent / empty remark)
+ *  returns `null` and the caller keeps its own display-name chain. Non-friend group
+ *  members therefore fall back to the display name **by construction**, and no remark
+ *  entry surface is opened for them.
+ *
+ *  Evidence vs. absence: `null` covers both "not a friend" and "snapshot never loaded".
+ *  `friendStateLoaded()` separates the two (`true` ⇒ the friend list is loaded, so a
+ *  `null` here really means "not a friend") — the same discriminator the not-friend
+ *  gate in `messages.js` uses. */
+export function friendRemarkOf(userId) {
+  if (!userId) return null;
+  const hit = lastFriendState.friends.find(f => f && String(f.userId) === String(userId));
+  const remark = hit && hit.remark;
+  return (typeof remark === 'string' && remark.length) ? remark : null;
+}
+
+/** 本地备注的就地覆盖更新（`fm-remark-changed` 信号的快照腿）。
+ *
+ *  `lastFriendState` is replaced wholesale by every `getFriends()` call and is not
+ *  re-fetched after a remark edit, while the other consumers patch their own copies of
+ *  the friend rows (`messages.js` patches its `friendsCache`). Without this the snapshot
+ *  would keep the pre-edit remark until the next fetch and the group surfaces would show
+ *  the stale name. Empty/absent remark clears the value — the same
+ *  trim-then-empty-means-clear semantics as `PUT /api/friends/{id}/remark`. No-op when
+ *  no snapshot was ever loaded or the user is not in it. */
+export function applyLocalFriendRemark(userId, remark) {
+  if (!userId) return;
+  const v = typeof remark === 'string' ? remark.trim() : '';
+  for (const f of lastFriendState.friends) {
+    if (f && String(f.userId) === String(userId)) f.remark = v ? v : null;
+  }
+}
+
 /** mock 链路的 `GET /api/friends` 注入点（既有测试夹具用）：注入后**同一套**收敛
  *  判据生效（判据面与生产链路同源，禁两份）。 */
 export function __convergeForTest(data) {
@@ -1087,8 +1134,17 @@ function attachSelfId(list, selfId) {
 /** 群成员行归一（可带 viewer id）：档案 = 契约 `#[serde(flatten)] FriendPublic`（顶层平铺
  *  userId/username/display_name/avatar，model.rs:538-549+805-809）⇒ 走本文件
  *  **唯一** wire↔内部档案边界 personFromWire（display_name→name、avatar→avatarUrl、
- *  username→neblinkId）。显示名（H 节口径 = 显示名而非好友备注）缺省链
- *  name → neblinkId → userId；role 缺省 member（admin 字段留置不开放，O⑧）。
+ *  username→neblinkId）。标签缺省链 name → neblinkId → userId；role 缺省 member
+ *  （admin 字段留置不开放，O⑧）。
+ *
+ *  🔴 标签口径**已变更**（作者 2026-09-22 两裁 · 案 (a) 渲染层覆盖）：原口径「显示名
+ *  而非好友备注」**作废**，群面标签 = 「好友备注 > 显示名」。但本归一化函数**仍不产出
+ *  `remark` 键**，这是**有意**的而非残留：群成员腿是零注入原文代理（`RestApiRoutes.groupProxy`；
+ *  网关 `Decoder[FriendSummary]` 亦显式不读该键）⇒ 成员行在 wire 上**必然**没有该键，
+ *  在这里凭空造一个就是给「备注」造第二个真相源。备注由**渲染层**按 `userId` 从好友快照
+ *  查表（唯一取值点 = `friendRemarkOf`，见其上方注释），两个群渲染点（气泡发送者名 /
+ *  成员抽屉行）共用它。
+ *
  *  `selfId` = 信封层契约 `selfUserId`（§1.1 #7 的消费形态 `userId === selfUserId`
  *  ⇒ 这里就地算出 `isSelf`；**信封值缺席 ⇒ null = 未知**，禁猜、禁默认 false）。 */
 function normalizeMemberRow(row, selfId = '') {
