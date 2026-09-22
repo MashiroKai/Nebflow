@@ -59,6 +59,10 @@ import nebflow.core.PathUtil
  *   abandoned-detach（**cancelled 滞留主图修复批 · 案 A** 2026-09-14：存量回填腿
  *   对被 retired 却仍挂在活链上的 cancelled 节点补做摘边时的留痕，写点 =
  *   `NodeEngine.backfillAbandonedDetach`；见 [[AbandonedDetachType]]）/
+ *   verifier-route-lost（**failroute-guard 批 2026-09-21 · 案 A**：摘边 / 判词后果面
+ *   致某 verifier 失去 fail 路由时的**可行动**留痕——主语 = **受害 verifier**（非退役
+ *   节点）；按批聚合、摘要逐位载被摘目标/保留 pass 面/恢复文案；见
+ *   [[VerifierRouteLostType]]）/
  *   node-report-unconsumed（**engine-defects 批 #239①** 2026-09-15：`node_report` 申报
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
@@ -106,6 +110,51 @@ object FlowMapEventLog:
     * 把 `pendingOut` 里的控制边并入 `out` 时逐节点留痕。控制边零投递语义 ⇒ 本事件代表的
     * 是**纯声明面追加**（零补投递、零启动副作用）。 */
   val WiringAppliedType = "wiring-applied"
+
+  /** **受害 verifier 拒绝态事件类型**（failroute-guard 批 2026-09-21 · 案 A，
+    * 作者选型 = 案 A 薄）。
+    *
+    * 语义 = 「某个 verifier 的 fail 路由没了」——**主语（`nodeId` 字段）= 受害 verifier**，
+    * **不是**退役节点。这是本类型存在的理由：摘边事件（`abandoned` / `abandoned-detach`）
+    * 的主语是**退役位**，其文案里只有一句裸计数（`out-refs=1`）——「哪条边被摘、谁因此
+    * 变非法」在审计面**结构性不可见**（实盘取证：某位全史零路由事件，成因无法从审计面
+    * 重建）。本行是被摘除方的**可行动**留痕。
+    *
+    * 两个写点（同一事实的两个时刻，禁合并归他型）：
+    *  1. `NodeEngine.emitVerifierRouteLost`（摘边后果面）——工具腿 `NodeEdit(abandon)` 与
+    *     引擎腿 `NodeCancel → 30s 回填腿` 到达同一摘除点，一律经此收口；
+    *  2. 同函数（判词期）——`NodeEngine.verifierFailR` 的「无可用 fail 路由」分支
+    *     （判词无处可去 ⇒ 拒绝态留痕；旧口径只有一句「良性退化」文案）。
+    *
+    * **按批聚合**（裁定⑤）：一次退役动作 / 一批回填退役 / 一次判词各**恰一条**（防同批
+    * 多退役逐位刷屏，与 `chain-cancelled` 的聚合纪律同源）；summary 逐位载四项 = 受害
+    * verifier 名/id + 被摘的 fail 目标 id + 保留的 pass 目标集 + 可行动恢复文案，形态见
+    * [[verifierRouteLostSummary]]。幂等：无受害 ⇒ 零写。
+    *
+    * 🔴 **不新增通知族、不发 Mail 面**（节点无 Mail 身份）：可见性三级 = 本事件行 +
+    * 引擎 WARN + `NodeList` 载荷派生键 `verifierRoute`（见 `NodePayload`）。 */
+  val VerifierRouteLostType = "verifier-route-lost"
+
+  /** `verifier-route-lost` 的单受害者视图（写点组装的纯数据；summary 组装单点消费）。 */
+  final case class VerifierRouteLostView(
+      verifierId: String,
+      verifierName: String,
+      lostTargets: List[String],
+      keptPassTargets: List[String])
+
+  /** `verifier-route-lost` 结构化 summary（单行、可 grep、给人看）：逐位四项 + 可行动文案。
+    * 分组符号与家族惯例一致（`;` 分位、`|` 分项、`-` 表空），空白照常（与 `abandoned` /
+    * `cancelled` 的英文自由文本同族；链族/分发器族的 `k=v` 纪律不适用本型）。 */
+  def verifierRouteLostSummary(scope: String, views: List[VerifierRouteLostView]): String =
+    def items(xs: List[String]): String = if xs.isEmpty then "-" else xs.mkString("|")
+    val ordered = views.sortBy(_.verifierId)
+    val detail = ordered.map { v =>
+      s"${v.verifierId}('${v.verifierName}') lost=${items(v.lostTargets)} kept=${items(v.keptPassTargets)}"
+    }.mkString("; ")
+    s"verifier fail route lost (scope=$scope; victims=${ordered.size}) — " +
+      s"$detail — the verifier is in the REJECTION STATE: it declares no usable '(fail)<target>:loop' route, " +
+      "so a fail verdict can no longer re-run anything and the chain stops there. " +
+      "Restore the route with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
 
   /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
     * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */

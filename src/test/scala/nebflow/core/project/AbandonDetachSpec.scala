@@ -10,7 +10,7 @@ import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -478,3 +478,83 @@ class AbandonDetachSpec extends CatsEffectSuite:
     assert(d.contains("abandon") && d.contains("Nebula") && d.contains("restoreChain"),
       "semantic anchors of the compressed description must survive")
   }
+
+  // ── 补臂（chain-failroute-guard 批）：**回填腿同款检测** ─────────────
+  //
+  // 🔴 本用例补的是上面 `:339` 用例的**结构性错开臂**：那条断言只覆盖**同步取消腿**
+  // （`detachCancelledUpstream` 当日形态「不回退 upstream out-refs」），而实盘 8 例中
+  // **5 例（#2–#6）的 fail 边摘除发生在 12–26s 之后的 30s 回填腿**
+  // （`ProjectActor.TtlTick` → `backfillAbandonedDetach` → 同一 `detachAbandonedNode`）。
+  // 该窗口此前**零覆盖面** ⇒ 「零回归」保证与缺陷面错开一臂，是五例长期无症状的机械原因。
+  //
+  // 判据（红-绿可判，两段读数同测并列）：
+  //  - **段 1（同步取消腿的当时读数）**：reap 之后、回填**之前**，verifier 的 fail 边
+  //    **仍在**（`:339` 的语义逐字保留）——这正是「错开一臂」的机械证明；
+  //  - **段 2（回填腿）**：`backfillAbandonedDetach()` 之后 fail 边被摘除，且受害
+  //    verifier **同帧落拒绝态**（`verifier-route-lost` 主语 = verifier + 载荷派生键
+  //    `verifierRoute="lost"`）——改前此段**全红**（边被静默摘除、零 verifier 侧留痕）。
+
+  test("backfill-leg same-detection (chain-failroute-guard): the 30s backfill leg severs the victim verifier's fail edge — the sync-cancel reading is taken first (edge still there), then the backfill runs and the victim verifier must land in the REJECTION STATE (verifier-route-lost + payload verifierRoute=lost)") {
+    val ws = tempRoot / "ws-fillver"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"ad-fillver-${scala.util.Random.nextInt(100000)}")
+    val now = System.currentTimeMillis()
+    for
+      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      frames <- Ref.of[IO, List[Json]](Nil)
+      rt <- mountProject("ad-fillver", ws, system, res, frames)
+      // 判据拓扑：worker(被判位, stale running) ← `(fail)worker:loop` ← verifier(role=verifier) → land
+      _ <- seed(rt.store, NodeDef(id = "n-work", name = "WORK", agent = "general", status = NodeLifecycle.Running,
+        task = Some("work"), startedAt = Some(now - 3_600_000L), createdAt = now - 3_600_000L))
+      _ <- seed(rt.store, NodeDef(id = "n-ver", name = "VER", agent = "general", status = NodeLifecycle.Pending,
+        task = Some("judge"), in = List("n-work"), role = NodeRoles.Verifier,
+        out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
+        createdAt = now - 120_000L))
+      _ <- seed(rt.store, NodeDef(id = "n-land", name = "LAND", agent = "general", status = NodeLifecycle.Pending,
+        task = Some("land"), in = List("n-ver"), createdAt = now - 60_000L))
+      // 段 1：同步取消腿（NodeCancel/reap）——`detachCancelledUpstream` 不碰他人 out
+      reap <- rt.engine.reapStaleRunning("n-work")
+      verAfterCancel <- node(rt, "n-ver")
+      keyAfterCancel <- payloadKey(rt, "n-ver")
+      auditAfterCancel <- readAudit(ws)
+      _ <- IO(println(s"[spec] backfill-arm segment 1 (sync cancel leg) — verifier.out=${verAfterCancel.out} ; " +
+        s"verifierRoute=$keyAfterCancel ; verifier-route-lost lines=" +
+        s"${auditAfterCancel.count(_._1 == "verifier-route-lost")}"))
+      // 段 2：30s 回填腿（等价于 `ProjectActor.TtlTick` 的下一拍）
+      detached <- rt.engine.backfillAbandonedDetach()
+      verAfterFill <- node(rt, "n-ver")
+      keyAfterFill <- payloadKey(rt, "n-ver")
+      auditAfterFill <- readAudit(ws)
+      lostLines = auditAfterFill.filter(_._1 == "verifier-route-lost")
+      _ <- IO(println(s"[spec] backfill-arm segment 2 (30s backfill leg) — detached=$detached ; " +
+        s"verifier.out=${verAfterFill.out} ; verifierRoute=$keyAfterFill ; " +
+        s"verifier-route-lost=${lostLines.map(l => s"[nodeId=${l._2}] ${l._3}")}"))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(reap.isRight, s"reap must succeed: $reap")
+      // ── 段 1 读数（`:339` 语义逐字保留：同步腿不摘 upstream out-refs）──
+      assert(verAfterCancel.out.exists(e => e.on.contains(OutEdge.Fail) && OutEdge.isLoopEdge(e)),
+        s"segment 1: the sync cancel leg must NOT prune the referrer's fail edge (unchanged), got ${verAfterCancel.out}")
+      assertEquals(keyAfterCancel, None, "segment 1: still healthy ⇒ no rejection-state key")
+      assertEquals(auditAfterCancel.count(_._1 == "verifier-route-lost"), 0,
+        "segment 1: the sync cancel leg must log no verifier-route-lost line")
+      // ── 段 2 读数（本批新增的检测面：回填腿摘边 ⇒ 同帧落拒绝态）──
+      assertEquals(detached, List("n-work"), "segment 2: the backfill leg detaches the cancelled node")
+      assertEquals(verAfterFill.out, List(OutEdge("n-land")),
+        "segment 2: the backfill leg DOES sever the victim verifier's fail edge (the coverage gap this arm closes)")
+      assertEquals(keyAfterFill, Some("lost"),
+        "segment 2: the victim verifier must carry the derived rejection-state key")
+      assertEquals(lostLines.map(_._2).distinct, List("n-ver"),
+        s"segment 2: the audit subject must be the VICTIM VERIFIER, got ${lostLines.map(_._2)}")
+      assert(lostLines.exists(_.last.contains("(fail)")),
+        s"segment 2: the line must carry the actionable restore form, got ${lostLines.map(_.last)}")
+  }
+
+  /** 载荷派生键读数（NodeList 快照载荷 = 工具面/REST 共用序列化点）。 */
+  private def payloadKey(rt: ProjectRuntime, id: String): IO[Option[String]] =
+    NodeTools.buildNodeListPayload(rt).map { j =>
+      j.hcursor.downField("nodes").as[List[Json]].getOrElse(Nil)
+        .find(_.hcursor.get[String]("id").toOption.contains(id))
+        .map(_.hcursor.get[String]("verifierRoute").toOption)
+        .getOrElse(fail(s"node '$id' must appear in the NodeList payload"))
+    }
