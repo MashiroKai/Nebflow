@@ -439,6 +439,13 @@ function syncCanvasPanelButtons() {
  *  (markdown source toggle) have no mounted handle; their cached model is
  *  released by path instead. Safe for panes that never had an editor. */
 function disposeTabEditor(entry) {
+  // Text-stream tabs hold a live client (windows / index / server-side scan):
+  // closing the tab releases the server side too (卡 §三.5 textCancel).
+  const streamView = entry.paneEl?._streamClient;
+  if (streamView) {
+    if (typeof streamView.destroy === 'function') streamView.destroy();
+    entry.paneEl._streamClient = null;
+  }
   const handle = entry.paneEl?._editorHandle;
   if (handle) {
     handle.dispose({ disposeModel: true });
@@ -893,7 +900,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor, warnings } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -960,6 +967,14 @@ export async function openWorkspaceItem(item) {
     // engages, and refresh→setActiveTab loops forever (each cycle stealing
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
+    // Streamed large-text tab (卡 §三.3 后台刷新行): the response carries NO content,
+    // so the re-render branch below never fires. Compare mtimeMs/size instead —
+    // changed ⇒ the view voids its loaded windows + index and re-fetches (never a
+    // silent mix of two revisions). Unchanged ⇒ nothing to do.
+    if (stream) {
+      const view = /** @type {any} */ (entry.paneEl)._streamClient;
+      if (view && typeof view.acceptMeta === 'function') view.acceptMeta({ mtimeMs, size });
+    }
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
@@ -1063,8 +1078,10 @@ export async function openWorkspaceItem(item) {
   // await ticketUrl(absPath)`). It is a real runtime field but is not declared on
   // the shared ViewerContext typedef (utils.js), so the context is widened here
   // locally — typed only, the object passed to renderFile is unchanged.
-  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string}} */
-  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl };
+  // `stream`/`mtimeMs` are the text-stream descriptor fields (卡 §三.4): also
+  // widened here for the same reason — the viewer reads them, nothing else changes.
+  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number}} */
+  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0 };
   await renderFile(pane, renderCtx);
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }

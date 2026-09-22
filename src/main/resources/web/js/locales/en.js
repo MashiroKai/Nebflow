@@ -1441,6 +1441,25 @@ export default {
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
+  // === Text stream: save-cap visibility (author ruling ④, 2026-09-21) ===
+  'canvas.saveTooLarge': '{name} is too large to save (over 10MB per WS frame) — the change is NOT saved',
+  'canvas.saveTimeout': 'Save of {name} timed out — the change is NOT saved',
+  'canvas.saveBlockedNotice': 'Too large to save (over 10MB): editing will not be persisted',
+  // === Large text read-only streaming view (textstream batch, 2026-09-21) ===
+  'canvas.largeTextReadOnly': 'Large file · read-only',
+  'canvas.largeTextReadOnlyHint': 'Files over 8MB open in a read-only streaming view: only the visible window is fetched, so the whole file never enters the editor.',
+  'canvas.largeTextLoading': 'Loading window…',
+  'canvas.largeTextLines': '{count} lines',
+  'canvas.largeTextDrift': 'File changed on disk — reloading',
+  'canvas.largeTextRetry': 'Retry',
+  'canvas.largeTextLoadFailed': 'Stream failed: {error}',
+  'canvas.largeTextSearchPlaceholder': 'Search in file',
+  'canvas.largeTextSearching': 'Searching…',
+  'canvas.largeTextSearchHits': '{count} matches',
+  'canvas.largeTextSearchTruncated': '{count} matches (result truncated — refine the query)',
+  'canvas.largeTextPrevHit': 'Previous match',
+  'canvas.largeTextNextHit': 'Next match',
+  'canvas.largeTextGoToLine': 'Go to line',
   // === Canvas external file drop / paste (canvasdrop, 2026-09-11 author rulings R1–R7) ===
   'canvas.dropInserted': 'Inserted {ref}',
   'canvas.dropBatchInserted': 'Inserted {count} image references',

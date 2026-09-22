@@ -1402,6 +1402,25 @@ export default {
   // === Canvas 保存反馈 ===
   'canvas.saved': '已保存 {name}',
   'canvas.saveFailed': '保存 {name} 失败：{error}',
+  // === 文本流：保存撞帽可见性（作者裁 ④，2026-09-21）===
+  'canvas.saveTooLarge': '{name} 过大无法保存（超单帧 10MB 上限）——本次修改未保存',
+  'canvas.saveTimeout': '保存 {name} 超时——本次修改未保存',
+  'canvas.saveBlockedNotice': '文件过大无法保存（超 10MB）：编辑内容不会被持久化',
+  // === 大文本只读流式视图（textstream 批，2026-09-21）===
+  'canvas.largeTextReadOnly': '大文件 · 只读',
+  'canvas.largeTextReadOnlyHint': '超过 8MB 的文件以只读流式视图打开：只按需取可见窗口，整件不会进入编辑器。',
+  'canvas.largeTextLoading': '正在加载窗口…',
+  'canvas.largeTextLines': '{count} 行',
+  'canvas.largeTextDrift': '磁盘上文件已变化 —— 正在重新加载',
+  'canvas.largeTextRetry': '重试',
+  'canvas.largeTextLoadFailed': '流式取数失败：{error}',
+  'canvas.largeTextSearchPlaceholder': '在文件内搜索',
+  'canvas.largeTextSearching': '搜索中…',
+  'canvas.largeTextSearchHits': '{count} 处命中',
+  'canvas.largeTextSearchTruncated': '{count} 处命中（结果被截断——请细化查询）',
+  'canvas.largeTextPrevHit': '上一处命中',
+  'canvas.largeTextNextHit': '下一处命中',
+  'canvas.largeTextGoToLine': '跳转到行',
   // === Canvas 外部文件拖入 / 粘贴（canvasdrop，2026-09-11 作者裁定 R1–R7）===
   'canvas.dropInserted': '已插入 {ref}',
   'canvas.dropBatchInserted': '已插入 {count} 张图片引用',
