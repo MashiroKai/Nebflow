@@ -3634,14 +3634,14 @@ let pathPickerSearchTimer = null;
   * included) so a frame can be matched against the newest request: see the
   * staleness guard in handleBrowseResult. */
 function pathPickerQuery() {
-  const el = document.getElementById('path-picker-search-input');
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
   return el ? el.value.trim() : '';
 }
 
 function resetPathPickerInputs() {
-  const search = document.getElementById('path-picker-search-input');
+  const search = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
   if (search) search.value = '';
-  const goto = document.getElementById('path-picker-goto-input');
+  const goto = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
   if (goto) goto.value = '';
   if (pathPickerSearchTimer) {
     clearTimeout(pathPickerSearchTimer);
@@ -3662,8 +3662,10 @@ export function openPathPicker(folderId, currentRoot) {
   document.getElementById('path-picker-clear').textContent = t('pathPicker.clear');
   document.getElementById('path-picker-select').textContent = t('pathPicker.select');
   document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
-  document.getElementById('path-picker-goto-input').placeholder = t('pathPicker.gotoPlaceholder');
-  document.getElementById('path-picker-search-input').placeholder = t('pathPicker.searchPlaceholder');
+  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
+  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
   resetPathPickerInputs();
   // Show/hide clear button based on current state
   document.getElementById('path-picker-clear').style.display = currentRoot ? 'inline-block' : 'none';
@@ -3680,8 +3682,10 @@ export function openPathPickerCallback(currentRoot, callback) {
   document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
   document.getElementById('path-picker-select').textContent = t('pathPicker.select');
   document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
-  document.getElementById('path-picker-goto-input').placeholder = t('pathPicker.gotoPlaceholder');
-  document.getElementById('path-picker-search-input').placeholder = t('pathPicker.searchPlaceholder');
+  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
+  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
+  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
+  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
   resetPathPickerInputs();
   document.getElementById('path-picker-clear').style.display = 'none';
   document.getElementById('path-picker-overlay').classList.add('on');
@@ -3708,7 +3712,7 @@ function browseTo(path) {
   * `~/…` are expanded there by the shared expandTilde. An unusable path comes
   * back as a typed error frame and is rendered inline (never a silent no-op). */
 function goToTypedPath() {
-  const el = document.getElementById('path-picker-goto-input');
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
   const typed = el ? el.value.trim() : '';
   if (!typed) return;
   browseTo(typed);
