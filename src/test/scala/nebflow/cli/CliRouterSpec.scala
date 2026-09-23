@@ -82,24 +82,35 @@ class CliRouterSpec extends FunSuite:
   /**
    * Capture stdout of a router run.
    *
-   * `scala.Console.withOut` is NOT enough: the router prints through
+   * `scala.Console.withOut` alone is NOT enough: the router prints through
    * cats-effect `IO.println` (= `Console[IO]`), which writes to the JVM's
    * `System.out` when the effect runs, bypassing `scala.Console`. Redirecting
    * `System.out` is what actually catches those lines (and `System.err` too, so
    * a stray stack trace cannot leak between assertions).
+   *
+   * 2026-09-24: `System.setOut` alone is ALSO not enough — bare `println`
+   * (scala `Predef.println`) resolves `scala.Console.out`, which binds to the
+   * JVM stdout at first use and then ignores `System.setOut`. If any earlier
+   * suite in the same JVM printed before this spec ran, `println`-based output
+   * escaped the capture and T7 went red purely from suite ordering. Both
+   * channels are now redirected for the duration of `f`.
    */
   private def capture(f: => Unit): String =
     val buf = new ByteArrayOutputStream()
     val ps = new java.io.PrintStream(buf, true, "UTF-8")
-    val (oldOut, oldErr) = (System.out, System.err)
-    try
-      System.setOut(ps)
-      System.setErr(ps)
-      f
-    finally
-      ps.flush()
-      System.setOut(oldOut)
-      System.setErr(oldErr)
+    scala.Console.withOut(ps) {
+      scala.Console.withErr(ps) {
+        val (oldOut, oldErr) = (System.out, System.err)
+        try
+          System.setOut(ps)
+          System.setErr(ps)
+          f
+        finally
+          ps.flush()
+          System.setOut(oldOut)
+          System.setErr(oldErr)
+      }
+    }
     buf.toString("UTF-8")
 
   private def runCaptured(args: String*): (String, Int) =
