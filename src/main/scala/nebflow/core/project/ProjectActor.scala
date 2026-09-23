@@ -760,7 +760,8 @@ object ProjectActor:
     sessionId: String
   ): Behavior[AgentEvent] =
     def teardown: IO[Behavior[AgentEvent]] =
-      (cfg.resources.agentRegistry.update(_ - sessionId) *>
+      (pendingFor(active, sessionId).flatMap(p => auditDispatcherQueueDrop(cfg, sessionId, "session-teardown", p)) *>
+        cfg.resources.agentRegistry.update(_ - sessionId) *>
         (ref ! AgentCommand.Stop("dispatcher turn done")).void *>
         logger.info(s"Project '${cfg.project.name}' dispatcher session $sessionId finished — unregistered"))
         .as(Behaviors.stopped)
@@ -1063,7 +1064,8 @@ object ProjectActor:
     idleSecs: Long,
     windowMs: Long
   ): IO[Unit] =
-    cfg.resources.agentRegistry.update(_ - a.sessionId) *>
+    auditDispatcherQueueDrop(cfg, a.sessionId, "idle-window-expired", a.pendingTaskTexts) *>
+      cfg.resources.agentRegistry.update(_ - a.sessionId) *>
       (a.agentRef ! AgentCommand.Stop("dispatcher idle window expired")).void *>
       cfg.system.stop(a.bridgeRef).handleErrorWith(_ => IO.unit) *>
       logger
@@ -1080,7 +1082,43 @@ object ProjectActor:
         )
         .handleErrorWith(e => logger.warn(s"dispatcher-idle-expired audit append failed: ${e.getMessage}"))
 
-  /** 重入任务的触发文本（投递标注摘要来源；一行可读描述而非全文注入 prompt）。 */
+  /** **未消费注入件留痕（D · mailack 批 2026-09-23）**：分发器会话拆除前，若待消费件非空
+    * （已注入本会话、turn 尚未消费的件），把件数与逐件首行落一条
+    * [[FlowMapEventLog.DispatcherQueueDroppedType]] 事件 + 一条 WARN。
+    *
+    * 🔴 本腿**只留痕、不补投**：补投需要幂等键，而注入件正文是任务文本、非幂等语义载体
+    * （重放会重复开工），属另批另议。目的 = 让「静默蒸发」变成**可审计**
+    * （2026-09-23 audit §3.6：`cancelAgent` 时 `pending=31` 而零留痕）。
+    *
+    * 🔴 `pending` 由**调用点**传入（唯一真源 = `activeRef` 的 `pendingTaskTexts`）——
+    * 本腿**不另立状态**（禁第二判据）。失败只 WARN，绝不阻断拆除。 */
+  private def auditDispatcherQueueDrop(
+      cfg: ProjectConfig,
+      sessionId: String,
+      reason: String,
+      pending: List[String]
+  ): IO[Unit] =
+    if pending.isEmpty then IO.unit
+    else
+      val firstLines = pending.map(_.linesIterator.nextOption().getOrElse("").take(160))
+      (FlowMapEventLog
+        .append(
+          cfg.project.workspace,
+          cfg.project.name,
+          sessionId,
+          FlowMapEventLog.DispatcherQueueDroppedType,
+          FlowMapEventLog.dispatcherQueueDroppedSummary(sessionId, pending.size, reason, firstLines)
+        ) *>
+        logger.warn(
+          s"Project '${cfg.project.name}' dispatcher session $sessionId torn down ($reason) with " +
+            s"${pending.size} unconsumed injected item(s) — recorded as ${FlowMapEventLog.DispatcherQueueDroppedType} (no replay; see the event)"
+        )).handleErrorWith(e => logger.warn(s"dispatcher queue-drop audit failed: ${e.getMessage}"))
+
+  /** 拆除点现读未消费件（唯一真源 = `activeRef` 内该会话的 `pendingTaskTexts`）。 */
+  private def pendingFor(active: Ref[IO, Option[ActiveDispatcher]], sessionId: String): IO[List[String]] =
+    active.get.map(_.filter(_.sessionId == sessionId).map(_.pendingTaskTexts).getOrElse(Nil))
+
+
   private def reentryTaskText(node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
     s"[reentry] 节点 ${node.name} blocked 第 $blockCount 轮（${feedback.category}）"
 
