@@ -6215,8 +6215,18 @@ class NodeEngine(
     case Parked
 
   /** root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToNebula]]
-    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。 */
-  private def offerRootNotify(text: String, nodeName: String, status: String, nodeId: Option[String]): IO[RootNotifyOffer] =
+    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。
+    *
+    * `windowItems`（notifypack 解 b 批 · 2026-09-23）：**默认 `None`** ⇒ 既有全部调用点
+    * （`deliverToNebula` 单件腿 / 两条旁路 / `deliverStaleSummary`）逐字保持改前形态
+    * （帧里不出现该键的载荷）；唯 [[flushRootNotify]] 的 `case many` 传 `Some(...)`。 */
+  private def offerRootNotify(
+      text: String,
+      nodeName: String,
+      status: String,
+      nodeId: Option[String],
+      windowItems: Option[List[AgentCommand.WindowItem]] = None
+  ): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
         // 缺口4：同 (identity, status) 60s 窗口去重——抑制重复 offer（首投已入
@@ -6235,7 +6245,8 @@ class NodeEngine(
               source = Some("node"),
               eventType = Some(status),
               sender = Some(s"$projectName/$nodeName"),
-              fromUser = false // ② 服务端注入（节点状态），不是真人输入
+              fromUser = false, // ② 服务端注入（节点状态），不是真人输入
+              windowItems = windowItems
             )) *> nodeId.traverse_(id => markNebulaDelivered(id)) *>
               IO.pure(RootNotifyOffer.Offered)
         }
@@ -6387,7 +6398,20 @@ class NodeEngine(
                 mergedRootNotifyText(many),
                 many.head.nodeName,
                 mergedRootNotifyStatus(many),
-                nodeId = None
+                nodeId = None,
+                // notifypack 解 b 批（2026-09-23 · 作者裁定 A · 载体 A-ii）：**唯一写入点**
+                // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
+                // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
+                // 记账序**逐字不变**；逐件 `sender` 在**此写入点**用 `projectName` 直接构造
+                // （该处确在作用域内）⇒ 展开点零字符串手术，与 `NotificationHeader.split`
+                // 的「首个 `/`」切分口径结构同源。
+                windowItems = Some(many.toList.map(e =>
+                  AgentCommand.WindowItem(
+                    text = e.text,
+                    nodeName = e.nodeName,
+                    status = e.status,
+                    sender = s"$projectName/${e.nodeName}"
+                  )))
               ).flatMap {
                 // F-1（作者裁定 (a)）：`Offered` = 交付事实成立 ⇒ 逐件记账；`Parked`/`Suppressed`
                 // = 本批**没发出去** ⇒ 一件都不记（否则件被标已发却未发、补投判据
