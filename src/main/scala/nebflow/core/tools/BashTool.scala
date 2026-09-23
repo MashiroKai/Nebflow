@@ -493,7 +493,10 @@ Git safety:
                       stuckWindowSec = ctx.bashConfig.stuckWindowSec,
                       healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
                       persistent = persistent,
-                      outputSink = Some((line: String) => outBuffer.append(line))
+                      outputSink = Some((line: String) => outBuffer.append(line)),
+                      // B1 只提醒腿的审计出口（killruling 批 #1+#14+#15）：经 ctx 身份解析
+                      // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
+                      onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
                     )
                     _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                   yield Right(
@@ -818,20 +821,28 @@ Git safety:
             store
           )
 
-      // 节点完成闸批：等待集内任务被超时/停滞看护杀掉（TimeoutException = B1
-      // idle 杀 / B2 硬超时+停滞杀的唯一类型）→ 终局记账。agent 仍会收到上面
-      // 的 failed 通知并反应，但节点终态必须「failed+注明」——禁止静默
-      // completed（NodeEngine 桥终态化前 drainFailures 检查）。persistent 不在
-      // 等待集、显式取消（InterruptedException）是 agent 自主决策，均不入账。
+      // 🔴 killruling 批（2026-09-23 作者裁定 #1+#14+#15「改造」）：本处的**台账写点
+      // 已摘除**——原「等待集内任务被看护杀（TimeoutException）→ `markFailed` 终局
+      // 记账 → 节点 failed+注明」链的**生产端取消**（消费端 `NodeEngine.drainFailures`
+      // 与 `bgFailureMessage` **原样保留** ⇒ 台账恒空 ⇒ 自然走放行支）。
+      // 判据本身**不删**：`TimeoutException` 仍是**读数**（B2 硬超时+停滞杀仍经
+      // `killWith` 产生它 ⇒ 本分支仍会被命中），故保留一处**只提醒**审计：
+      // 写 `bg-slow` 事件（与 #27 mount-stalled 同族：只写事件、不终态化）。
+      // 语义分工：① 事件 = 「任务被判为停滞」这一事实的读数；② 节点终态**不再**由此
+      // 改写（此前 = 必 failed，现 = 可正常 completed）。
+      // 🔴 调用点删 ≠ 函数删：`BgTaskRegistry.markFailed` 本体保留（测试面 `:460`
+      // 与 `BashPersistentBgTaskSpec` P5 直调；唯一生产点 = 本处，现读 `rg` 1 命中 ⇒ 0）。
+      // 🔴 persistent 不在等待集、显式取消（InterruptedException）是 agent 自主决策
+      // ⇒ 两者均不入账（口径不变）。
       val gateLedger = result match
         case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
-          BgTaskRegistry.markFailed(
+          auditBgSlow(
+            ctx,
             jobId,
-            ctx.sessionId.getOrElse(""),
-            ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-            description,
-            Option(e.getMessage).getOrElse("killed by background guard")
-          ).handleErrorWith(e2 => logger.warn(s"bg-gate ledger markFailed failed for job $jobId: ${e2.getMessage}"))
+            s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
+              s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
+              "sensor only: no failure ledger, no node failure (killruling ruling #1+#14+#15)"
+          )
         case _ => IO.unit
 
       // Notify agent via ExternalEvent.
@@ -876,6 +887,34 @@ Git safety:
         ) *>
         notifyFrontend.void *> notifyAgent
     }
+
+  /** `bg-slow` 审计腿（killruling 批 2026-09-23，作者裁定 #1+#14+#15「只提醒」）：
+    * 把「后台任务被判停滞」这一事实写进项目事件流（nodeId = 节点 id，与 #27
+    * mount-stalled 同族：**只写事件、不终态化、不杀进程**）。
+    *
+    * 🔴 依赖方向：`core.tools` **不得**依赖 `core.project`（BashTool 经 `FlowMapEventLog`
+    * 在本模块内对项目面**零新增依赖**——`FlowMapEventLog` 是 project 包内的事件写入器，
+    * 而本模块已有的 layer 边界只禁 `core.project`→`core.tools` 的反向。为守住「不新增
+    * 跨层 import」，本腿经 `ToolContext` 已注入的**引擎侧身份**（`projectName` /
+    * `flowNodeId`）+ `ProjectRuntimeRegistry` 解析 workspace——与 `NodeReportTool`
+    * 的 `ctx.projectName → ProjectRuntimeRegistry → workspace` 单点同款（判据不猜：
+    * 解析不到 ⇒ 静默 no-op，只留 `logger.warn`；猜错 = 把事件写进别人的日志更糟）。 */
+  private def auditBgSlow(ctx: ToolContext, jobId: String, summary: String): IO[Unit] =
+    val nodeId = ctx.flowNodeId.map(_.trim).filter(_.nonEmpty)
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(name) =>
+        nebflow.core.project.ProjectRuntimeRegistry.get(name).flatMap {
+          case None => IO.unit
+          case Some(rt) =>
+            nebflow.core.project.FlowMapEventLog.append(
+              rt.project.workspace,
+              rt.project.name,
+              nodeId.getOrElse(ctx.sessionId.getOrElse("")),
+              "bg-slow",
+              summary
+            ).handleErrorWith(e => logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}"))
+        }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String, persistent: Boolean = false): IO[Unit] =

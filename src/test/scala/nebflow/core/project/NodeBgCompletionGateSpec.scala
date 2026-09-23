@@ -27,11 +27,14 @@ import scala.concurrent.duration.*
  *   Running、不投递）→ 任务完成（unregister + ExternalEvent 通知）→ 唤醒轮
  *   （Completed 经 supervisorRef 回桥）→ 放行投递，result = 最后一轮文本
  * - G3 三态·服务型不等待：persistent=true 的任务不纳入等待集 → 立即完成
- * - G4 超时/停滞杀 → failed 注明：等待集内任务被看护杀（registry 终局记账）
- *   → 节点 Failed（非 Cancelled——杀因原文措辞净化）+ result 含杀因与 agent
- *   消化失败通知后的最终输出
- * - G5 等待总上限兜底：等待期超 bgWaitCapMs → Failed + 注明（后台任务不能
- *   卡死节点）
+ * - G4 看护命中 → **只提醒**（killruling 批 2026-09-23 裁定 #1+#14+#15 改判）：
+ *   等待集内任务被看护判为停滞（`bg-slow` 事件 = 读数传感器）**不再**写失败台账、
+ *   **不再**把节点判 failed ⇒ 节点正常 **Completed**，agent 最终输出保留；
+ *   🔴 改前口径（「超时/停滞杀 → failed 注明：等待集内任务被看护杀（registry 终局
+ *   记账）→ 节点 Failed（非 Cancelled——杀因原文措辞净化）+ result 含杀因与 agent
+ *   消化失败通知后的最终输出」）**已被作者令改判**，逐字留档于本段。
+ * - G5 等待总上限兜底 → **转挂起**（killruling 批裁定 #17）：等待期超 bgWaitCapMs →
+ *   节点**保持 Running**（挂起中，不再 failed）+ `bg-wait-timeout` 事件
  * - G6 下游 out 交互：节点（out 指向下游节点）先等后台（bg-wait 留痕）再
  *   finalize completed——bg 等待先于终态投递发生
  * - G7 卡死防护：等待期 agent=Idle，TaskStuckWatcher 不命中（Idle 永不判
@@ -41,7 +44,9 @@ import scala.concurrent.duration.*
  *
  * 变异验红记录（实施报告 §变异）：
  * ①摘除桥 gate（Completed 直接 complete）→ G2 红；②waitingFor 不过滤
- * persistent → G3 红；③放行路径摘除 drainFailures 检查 → G4 红；
+ * persistent → G3 红；③~~放行路径摘除 drainFailures 检查~~ → 🔴 **本变异已随 #1+#14+#15
+ * 改造作废**（台账生产端已摘除 ⇒ 摘除检查不再改变节点终态）⇒ **改后变异点 =
+ * 「把 `BgTaskRegistry.markFailed` 调用注回 `BashTool`」** ⇒ G4 新断言转红（见 G4 节）；
  * ④watcher scan 误含 Idle（+预置 giveUp 计数）→ G7 红。每变异后恢复验绿。
  */
 class NodeBgCompletionGateSpec extends CatsEffectSuite:
@@ -319,6 +324,11 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       if os.exists(f) then os.read(f).linesIterator.toList else Nil
     }
 
+  /** 写 `bg-slow` 传感器事件（killruling 批 #1+#14+#15：B1/B2 命中的**读数**载体）
+    * ——spec 侧等价模拟生产写点（`BashTool.auditBgSlow` → `FlowMapEventLog.append`）。 */
+  private def writeBgSlowEvent(ws: os.Path, jobId: String, summary: String): IO[Unit] =
+    FlowMapEventLog.append(ws.toString, "bg-g4-spec", jobId, "bg-slow", summary)
+
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
@@ -437,9 +447,9 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       assert(rawStill, "persistent task stays registered for the frontend WS snapshot")
   }
 
-  // ── G4 超时/停滞杀 → failed 注明（拒绝静默 completed）─────────
+  // ── G4 看护命中 → **只提醒**（读数传感器保留；killruling 批裁定 #1+#14+#15）────
 
-  test("G4: guard-killed bg task (ledger) finalizes node as FAILED with annotation, never silent completed") {
+  test("G4: guard-slow bg task (sensor) no longer fails the node — completes normally with the sensor event") {
     val ws = tempRoot / "ws-g4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-g4-${scala.util.Random.nextInt(100000)}")
@@ -453,33 +463,48 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       (nodeSid, agentRef) <- waitIdle(res)
       jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
-      // 模拟看护杀回调（BashTool gateLedger 同构）：unregister + 终局记账。
-      // 杀因原文含 "cancelled"（B1 idle 杀文案）——failed 注明必须净化，
-      // 且节点终态必须是 Failed 而非 Cancelled（completeNode 路由回归红线）。
+      // 模拟看护命中回调（BashTool gateLedger 同构）：unregister + **只写 `bg-slow`
+      // 传感器事件**（改判后生产端不写台账——节点终态不再由本链改写）。
+      // 杀因原文仍含 "cancelled"（B1 idle 文案）：改判后该文案**不得**出现在节点
+      // result 的任何路径上（护栏断言，见 yield 段）。
       _ <- jobs.traverse_(jid => BgTaskRegistry.unregister(jid) *>
-        BgTaskRegistry.markFailed(jid, nodeSid, "nebula-root", "spec bg task",
-          "Background command was idle (no output) for 300s and was automatically cancelled."))
+        writeBgSlowEvent(ws, jid,
+          s"wait-set bg task guard-hit: job $jid — sensor only (killruling ruling #1+#14+#15)"))
       _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(20.seconds)(byName(rt, "kill-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "kill-a")
       // 批 4：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红；判据本体逐字不变
-      imms <- awaitDelivery(recorded, "[Node 'kill-a' failed]")
+      imms <- recordedImmediate(recorded)
       ledgerLeft <- BgTaskRegistry.drainFailures(nodeSid)
+      events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Failed, "guard-killed wait-set task must fail the node, not complete it")
-      assert(done.result.exists(_.contains("killed by the background guard")), s"annotation expected: ${done.result}")
-      assert(done.result.exists(_.contains("automatically auto-stopped")), s"cause (scrubbed) expected: ${done.result}")
-      assert(!done.result.exists(_.contains("automatically cancelled")), "raw cause wording must be scrubbed (cancelNode routing)")
-      assertEquals(done.result.map(_.contains("bg-noted")), Some(true), "agent final output must be preserved in the annotation")
-      assert(imms.exists(m => m.text.contains("[Node 'kill-a' failed]")), "failed delivery must happen")
-      assertEquals(ledgerLeft, Nil, "failure ledger must be consumed by the bridge (no leak)")
+      // 🔴 改后断言（原 7 条 :471-477 ⇒ 改后仍 7 条；断言数不减）
+      // :471 改：终态从 Failed 改 Completed（判据继续保留为读数传感器）
+      assertEquals(done.status, NodeLifecycle.Completed,
+        "guard-slow bg task must NOT fail the node after the ruling — detection stays a read-only sensor")
+      // :472 改：杀因注明必须消失
+      assert(done.result.forall(!_.contains("killed by the background guard")),
+        s"guard-kill annotation must be gone after the ruling: ${done.result}")
+      // :473 改：措辞净化断言随之作废，改为「raw wording 亦不得出现」
+      assert(done.result.forall(!_.contains("automatically cancelled")),
+        "raw cause wording must not be re-introduced via any path")
+      // :474 保留（原样）——agent 最终输出仍必须保留
+      assertEquals(done.result.map(_.contains("bg-noted")), Some(true),
+        "agent final output must be preserved in the annotation")
+      // :475 改：failed 投递改断言「零 failed 投递」（护栏）
+      assert(!imms.exists(_.text.contains("[Node 'kill-a' failed]")),
+        "no failed delivery must be emitted for a guard-slow bg task")
+      // :476 改：新增读数传感器证据
+      assert(events.exists(_.contains("\"bg-slow\"")), "bg-slow audit event expected (sensor retained)")
+      // :477 保留（原样）——台账不得泄漏
+      assertEquals(ledgerLeft, Nil, "failure ledger must not leak")
   }
 
-  // ── G5 等待总上限兜底：后台任务不能卡死节点 ──────────────────
+  // ── G5 等待总上限 → **转挂起**（killruling 批裁定 #17）────────────────────
 
-  test("G5: wait cap (small injected) finalizes node as FAILED with annotation while task pending") {
+  test("G5: wait cap (small injected) SUSPENDS the node — stays Running, never failed") {
     val ws = tempRoot / "ws-g5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-g5-${scala.util.Random.nextInt(100000)}")
@@ -492,15 +517,21 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- createNode("bg-g5", ws, "cap-a", "result-CAP", res = res, system = system)
       _ <- waitIdle(res)
       jobs <- awaitJobs(llm)
-      // 任务一直不完成 → 1.2s 兜底 → failed
-      _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      // 任务一直不完成 → 1.2s 兜底 → **转挂起**（节点保持 Running）
+      // 判据 = `bg-wait-timeout` 事件出现（阈值到点的确定性读数）——不再等终态
+      //（改判后本路径**不产生终态**，等 Terminal 会永久挂）。
+      _ <- waitUntil(20.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait-timeout\""))))
+      _ <- IO.sleep(500.millis) // 给「假如仍有终态写」留观察窗口（护栏）
       done <- byName(rt, "cap-a")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
-      assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
+      // 🔴 改后断言（原 2 条 :502-503 ⇒ 改后仍 2 条 + 保留 :504/:505 两条 = 4 条，断言数不减）
+      assertEquals(done.status, NodeLifecycle.Running,
+        "wait cap must SUSPEND the node (kept Running) — never finalize it failed (killruling ruling #17)")
+      assert(done.result.forall(!_.contains("wait cap exceeded")),
+        s"no failed cap annotation may be written any more: ${done.result}")
       assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected")
       assert(events.exists(_.contains("\"bg-wait-timeout\"")), "bg-wait-timeout audit expected")
   }

@@ -18,6 +18,9 @@ import nebflow.shared.Defaults
  *   - `NodeEngine.failNode` / `NodeEngine.autoFailDeadRunning` 头部守卫拒绝写 failed
  *     + 拒绝 `deliverFailed`（abort 钩子诱发的失败链全部撞上守卫——spec §1.2 逐跳噪音
  *     链的拦断面）；
+ *     🔴 killruling 批（2026-09-23 裁定 #19）后 `autoFailDeadRunning` **已不再写 failed**
+ *     （降档为只提醒腿）——本守卫对该名称保留的是「**降档前的语义**」：守卫本身仍是
+ *     `failNode` 的拦断面，且 `autoFailDeadRunning` 的提醒腿亦在 draining 期拒绝发声。
  *   - 唯一置位点 = [[GracefulInterruptHook]]（关机钩子线程），**且必须先于**在飞 LLM
  *     abort，否则「abort 先跑、失败链先落 failed」的窗口重新出现；
  *   - 回滚开关 `Defaults.ShutdownInterruptEnabled=false` ⇒ 钩子不置位 ⇒ 标志恒 false

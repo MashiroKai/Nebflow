@@ -328,8 +328,9 @@ object Defaults:
     sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
 
   /**
-   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **30 分钟**；
-   * 令 3 分发器生命周期设计 §3.4）。
+   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **4 小时**；
+   * 令 3 分发器生命周期设计 §3.4；🔴 killruling 批 2026-09-23 作者裁定 **#63** 把
+   * 阈值从 30 分钟**抬到小时级**，本批按 `4 * 60 * 60 * 1000L` 落）。
    *
    * 语义：分发器会话的生命周期从「turn 级」升级为「派发批次级 + 空闲窗」——
    * 观察桥在 `pendingInjected` 归零的那个 `Completed` **不再立即拆除**，改为记
@@ -340,12 +341,19 @@ object Defaults:
    *
    * 与 `NodeDestroyWindowMs` 同款先例：`sys.props` **每次调用现读**（spec /
    * 运维可即时翻转——验收可把窗口压到秒级做等效实验）。
-   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关。
+   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关
+   * （与 `RootNotifyQuietMs` 的「`≤0` = 关闭打包」同款措辞；判据点 =
+   * `ProjectActor.sweepIdleDispatchers` 的 `if windowMs <= 0 then IO.unit`）。
+   *
+   * 🔴 **代价（抬阈值换来，必须显式登记）**：会话驻留更久 ⇒ 内存 / 句柄占用与
+   * 「空闲会话被误当活会话」的窗口同时变长。涨到 4 h 后「实际拆会话次数」的
+   * 可观测读数 = `flow-map-events.jsonl` 的 `dispatcher-idle-expired` 逐条时刻
+   * 反推会话存活时长分布（改前阈 30 min ⇒ 分布被 30 min 截断）。
    *
    * 有效空闲窗 = **[窗口, 窗口 + 30 s]**（`TtlTick` 节拍粒度，设计 §3.1-4）。
    */
   def DispatcherIdleWindowMs: Long =
-    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (30 * 60 * 1000L).toString).toLong
+    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString).toLong
 
   // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
   //
@@ -575,11 +583,14 @@ object Defaults:
   //   T3 `StuckThresholdMs` ………………………… 本文件（本节上方，I2 **新加**） 600000
   //   T4 `SessionKickIdleSec` ……………………… 本文件（下方，**已有** prop）    150
   //   T5 `BgIdleTimeoutSec` ………………………… 本文件（上方，I2 **新加**）      300
-  //   T6 `StuckDetectionGracePeriod` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 30s
+  //   T6 ~~`StuckDetectionGracePeriod`~~ … 🔴 **已退役（killruling 批 2026-09-23，裁定 #3）**
+  //                                          —— 随 M3 机制同删，取数点 `StuckDetectionGraceSec` 已无
   //   T7 `CpuActiveThresholdNanos` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 1e7ns
   //   T8 死会话 bg-wait **无时限**豁免 …… `core/project/NodeEngine.scala`（本批新增腿）
-  // 🔴 T6/T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
-  //    `shell.scala` 的两个既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // 🔴 T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
+  //    `shell.scala` 的既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // 🔴 T6 行**留档不留值**：该行由 killruling 批（2026-09-23 作者裁定 #3「去」）退役，
+  //    非 I5 翻值（原提案 300s 随机制一并作废）。
   // ───────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -660,17 +671,6 @@ object Defaults:
     sys.props.getOrElse("nebflow.stuck.demandTickSec", "900").toInt
 
   /**
-   * **T6 prop 面**（设计 §4.4.1 T6；I2 在本层新建取数点）：静默后台进程的**停滞探测
-   * 宽限期**（s）——本值之后才开始「零输出 ∧ CPU 增量 < 阈值」的判死采样。
-   *
-   * 现状值 = 30（`core/tools/shell.scala` 原 `private val StuckDetectionGracePeriod =
-   * 30.seconds`）⇒ **默认 `30` = 旧行为现行取值**；设计提案值 300s（#462 涓流/零输出族
-   * 过激）归 I5 翻值。每次调用现读。
-   */
-  def StuckDetectionGraceSec: Int =
-    sys.props.getOrElse("nebflow.shell.stuckDetectionGraceSec", "30").toInt
-
-  /**
    * **T7 prop 面**（设计 §4.4.1 T7；I2 在本层新建取数点）：**后台**判据仍在用的 CPU
    * 活动阈值（ns / 采样窗）——`(cpu2 - cpu1) > 本值` 才算「本窗有进展」。
    *
@@ -678,9 +678,19 @@ object Defaults:
    * CpuActiveThresholdNanos = 10_000_000L`）⇒ **默认 `10000000` = 旧行为现行取值**；
    * 设计提案值 `1_000_000_000`（与前台 [[ForegroundCpuProgressNanos]] 重新对齐，
    * 修「10ms/2s = 0.5% 单核即算忙」的同型盲区）归 I5 翻值。每次调用现读。
+   *
+   * 🔴 killruling 批（2026-09-23 作者裁定 #3）：本项**保留**——删 M3 后消费点仍在
+   * （`shell.scala` 的 B1 `isStalled` 判据 + B2 同款双条件 + `BashTool` 活动桥共三处），
+   * 不是孤儿。
    */
   def CpuActiveThresholdNanos: Long =
     sys.props.getOrElse("nebflow.shell.cpuActiveThresholdNanos", "10000000").toLong
+
+  // 🔴 **T6 `StuckDetectionGraceSec` 已退役**（killruling 批 2026-09-23，作者裁定 #3「去」）：
+  // 原「后台 30 s 停滞探测杀的宽限期」prop 随 M3 机制整块删除——删后**零消费点**
+  // （i2 批的先例纪律「删机制则同删其 prop，留着会误导『还以为有 30 s 档』」）。
+  // 退役前默认值 = `30`（旧行为现行取值）。挂死反馈时延 30s → 300s（B1），见
+  // `nebflow.core.tools.shell` 顶注 + `.nebflow/Spec/20260907_bash-timeout-mechanism-audit.md`。
 
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 

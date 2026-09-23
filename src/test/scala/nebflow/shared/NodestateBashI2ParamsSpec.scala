@@ -9,9 +9,12 @@ import munit.FunSuite
   *
   * 本 spec 钉三件（对应 I2 验收判据 ②③）：
   *   ① **默认值逐项**：新增腿 = 设计件逐字给定值（§4.2/O1 = 300000、A1/O2 = 600000、
-  *      O5 = 120000、T8 = 1800000、G2 = 300、G3 = 900）；既存现网阈值 T3/T5/T6/T7 =
-  *      **旧行为现行取值**（600000 / 300 / 30 / 10000000）——🔴 I2 禁上调，设计件提案值
-  *      （1800s / 900s / 300s / 1e9）的翻值归 I5；
+  *      O5 = 120000、T8 = 1800000、G2 = 300、G3 = 900）；既存现网阈值 T3/T5/T7 =
+  *      **旧行为现行取值**（600000 / 300 / 10000000）——🔴 I2 禁上调，设计件提案值
+  *      （1800s / 900s / 1e9）的翻值归 I5；
+  *      🔴 **T6 已退役**（killruling 批 2026-09-23 裁定 #3「去」M3 机制 ⇒ prop 与取数点
+  *      同删）——原三项断言（默认/翻转/清场）的断言对象已不存在，改为**退役回归锁**
+  *      （见 T6 节；断言数不变）。
   *   ② **正控（现读）**：翻转 prop ⇒ **下一次读取**即为新值（证明取值点是
   *      `sys.props.getOrElse` 每次调用现读，不是启动/对象初始化时的快照）；
   *   ③ **清场**：移除 prop ⇒ 回到默认（防跨 suite 全局污染）。
@@ -33,7 +36,6 @@ class NodestateBashI2ParamsSpec extends FunSuite:
     "nebflow.stuck.demandTickSec",              // 新参 StuckDemandTickSec（G3）
     "nebflow.stuck.thresholdMs",                // T3 prop 面（I2 新加）
     "nebflow.shell.bgIdleTimeoutSec",           // T5 prop 面（I2 新加）
-    "nebflow.shell.stuckDetectionGraceSec",     // T6 prop 面（I2 新加）
     "nebflow.shell.cpuActiveThresholdNanos"     // T7 prop 面（I2 新加）
   )
 
@@ -115,8 +117,29 @@ class NodestateBashI2ParamsSpec extends FunSuite:
     intFace("nebflow.shell.bgIdleTimeoutSec", () => Defaults.BgIdleTimeoutSec, 300, 33)
   }
 
-  test("T6 StuckDetectionGraceSec：默认 30 = 旧行为现行取值（提案 300s 归 I5），prop 现读") {
-    intFace("nebflow.shell.stuckDetectionGraceSec", () => Defaults.StuckDetectionGraceSec, 30, 44)
+  // 🔴 **T6 已退役**（killruling 批 2026-09-23，作者裁定 #3「去」）：`nebflow.shell.
+  // stuckDetectionGraceSec` 与其取数点 `Defaults.StuckDetectionGraceSec` 随 M3 机制
+  // （后台 30s 零输出 ∧ 零 CPU 停滞探测杀，`shell.scala` 原 `:717-746`）**同删**——
+  // 删 M3 后该 prop **零消费点**。原「T6 StuckDetectionGraceSec：默认 30 = 旧行为现行
+  // 取值（提案 300s 归 I5），prop 现读」用例因此**不可维持**（访问已删符号 = 编译红）。
+  // 本用例 = 该退役事实的**回归锁**（三条断言，与原 intFace 三条同数；判据从「现值 =
+  // 默认」改为「退役三面俱消失」——旧判据的断言对象（该 prop）已不存在，留着只会是
+  // 空引用）。保留的 T7 `CpuActiveThresholdNanos` 在下方原样在册（**不是孤儿**：仍被
+  // B1/B2 双条件与 `BashTool` 活动桥消费）；本用例第 3 条断言正是拿它作**非空读**对照
+  // （防「读失败 ⇒ 两条负断言恒真」的空遍历形态）。
+  //
+  // 手段 = 源码面静态读（免构建、与 `.nebflow/tools/20260914_nodestate-i2-params-check.sh`
+  // 的 §1/§3 grep 断言同向）。🔴 该 tools 脚本**不在本批改动集**（任务书禁改
+  // `.nebflow/tools/**`）⇒ 其 §1 T6 与 §3 T6 两条断言会因本批退役而**失效**，已作为
+  // 「不该改但被本波波及」单列登记在 impl result 的 grep 复检节。
+  test("T6 已退役（killruling 批裁定 #3）：stuckDetectionGraceSec 既无 prop 面也无取数点（退役回归锁）") {
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "shared" / "Defaults.scala")
+    assert(!src.contains("getOrElse(\"nebflow.shell.stuckDetectionGraceSec\""),
+      "T6 prop 面必须已随 M3 同删（退役后零消费点 —— 留着会误导「还以为有 30s 档」）")
+    assert(!src.contains("def StuckDetectionGraceSec"),
+      "T6 取数点 def 必须已删（M3 是唯一消费点）")
+    assert(src.contains("def CpuActiveThresholdNanos"),
+      "T7（保留面）必须仍在册 —— 本条同时证「上两条不是读失败导致的恒真」（非空读对照）")
   }
 
   test("T7 CpuActiveThresholdNanos：默认 10000000 = 10ms/窗 = 旧行为现行取值（提案 1e9 归 I5），prop 现读") {
