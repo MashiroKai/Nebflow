@@ -13,7 +13,7 @@ import nebflow.core.PathUtil
  * every entry with bare os.isDir/os.size calls; a dangling symlink inside the
  * directory (real case: .nebflow/flowmap-anim → worktrees/flowmap-anim with
  * an emptied worktrees/ dir) threw NoSuchFile and poisoned the WHOLE listing
- * (dirListing{error}). Fix: WebSocketRoutes.listDirEntries stats each entry
+ * (dirListing{error}). Fix: FsOps.listDirEntries stats each entry
  * inside a Try — a failing entry degrades to type=file, size=0, broken=true
  * and never aborts the listing.
  *
@@ -51,7 +51,7 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
   test("listing a .nebflow dir containing a dangling symlink succeeds with all entries") {
     withTempRoot { root =>
       scaffoldNebflowDir(root)
-      val entries = WebSocketRoutes.listDirEntries(root / ".nebflow")
+      val entries = FsOps.listDirEntries(root / ".nebflow")
       val names = entries.flatMap(_.hcursor.get[String]("name").toOption).toSet
       assertEquals(
         names,
@@ -63,7 +63,7 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
   test("dangling symlink degrades to a size-0 broken file entry, not an error") {
     withTempRoot { root =>
       scaffoldNebflowDir(root)
-      val entries = WebSocketRoutes.listDirEntries(root / ".nebflow")
+      val entries = FsOps.listDirEntries(root / ".nebflow")
       val e = entryOf(entries, "flowmap-anim")
       assertEquals(e.hcursor.get[String]("type").toOption, Some("file"))
       assertEquals(e.hcursor.get[Long]("size").toOption, Some(0L))
@@ -76,7 +76,7 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
   test("normal files and a valid symlink list with real types, sizes and broken=false") {
     withTempRoot { root =>
       scaffoldNebflowDir(root)
-      val entries = WebSocketRoutes.listDirEntries(root / ".nebflow")
+      val entries = FsOps.listDirEntries(root / ".nebflow")
 
       val flowMap = entryOf(entries, "flow-map.json")
       assertEquals(flowMap.hcursor.get[String]("type").toOption, Some("file"))
@@ -102,7 +102,7 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
       // Make the case-ordering observable: uppercase file name sorts with
       // lowercase peers (same tie-break the pre-fix implementation used).
       os.write(root / ".nebflow" / "Zebra.txt", "z")
-      val listing = WebSocketRoutes
+      val listing = FsOps
         .listDirEntries(root / ".nebflow")
         .map(e =>
           (e.hcursor.get[String]("type").toOption.getOrElse("?"), e.hcursor.get[String]("name").toOption.getOrElse("?"))
@@ -117,9 +117,9 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
   test("empty directory and non-directory paths return empty listings") {
     withTempRoot { root =>
       scaffoldNebflowDir(root)
-      assertEquals(WebSocketRoutes.listDirEntries(root / ".nebflow" / "worktrees"), Nil)
-      assertEquals(WebSocketRoutes.listDirEntries(root / ".nebflow" / "flow-map.json"), Nil)
-      assertEquals(WebSocketRoutes.listDirEntries(root / "no-such-dir"), Nil)
+      assertEquals(FsOps.listDirEntries(root / ".nebflow" / "worktrees"), Nil)
+      assertEquals(FsOps.listDirEntries(root / ".nebflow" / "flow-map.json"), Nil)
+      assertEquals(FsOps.listDirEntries(root / "no-such-dir"), Nil)
     }
   }
 

@@ -17,7 +17,7 @@ class MovePathSpec extends FunSuite:
     withTempRoot { root =>
       os.makeDir.all(root / "sub")
       os.write(root / "a.txt", "hello")
-      assertEquals(WebSocketRoutes.movePathSafely("a.txt", "sub", root), Right("sub/a.txt"))
+      assertEquals(FsOps.movePathSafely("a.txt", "sub", root), Right("sub/a.txt"))
       assert(!os.exists(root / "a.txt"))
       assertEquals(os.read(root / "sub" / "a.txt"), "hello")
     }
@@ -27,7 +27,7 @@ class MovePathSpec extends FunSuite:
     withTempRoot { root =>
       os.makeDir.all(root / "d1" / "d2")
       os.write(root / "notes.md", "x")
-      assertEquals(WebSocketRoutes.movePathSafely("notes.md", "d1/d2", root), Right("d1/d2/notes.md"))
+      assertEquals(FsOps.movePathSafely("notes.md", "d1/d2", root), Right("d1/d2/notes.md"))
       assert(os.exists(root / "d1" / "d2" / "notes.md"))
     }
   }
@@ -38,7 +38,7 @@ class MovePathSpec extends FunSuite:
       os.write(root / "src" / "utils" / "helper.scala", "code")
       os.write(root / "src" / "README.md", "r")
       os.makeDir.all(root / "archive")
-      assertEquals(WebSocketRoutes.movePathSafely("src", "archive", root), Right("archive/src"))
+      assertEquals(FsOps.movePathSafely("src", "archive", root), Right("archive/src"))
       assert(!os.exists(root / "src"))
       assert(os.exists(root / "archive" / "src" / "utils" / "helper.scala"))
       assertEquals(os.read(root / "archive" / "src" / "README.md"), "r")
@@ -53,7 +53,7 @@ class MovePathSpec extends FunSuite:
       os.write.over(outside, "keep me")
       try
         assertEquals(
-          WebSocketRoutes.movePathSafely("../nb-move-outside-marker.txt", ".", root),
+          FsOps.movePathSafely("../nb-move-outside-marker.txt", ".", root),
           Left("path outside project root")
         )
         // traversal rejection must keep the outside file intact
@@ -66,7 +66,7 @@ class MovePathSpec extends FunSuite:
     withTempRoot { root =>
       os.write(root / "a.txt", "x")
       assertEquals(
-        WebSocketRoutes.movePathSafely("a.txt", "../nb-move-outside-dir", root),
+        FsOps.movePathSafely("a.txt", "../nb-move-outside-dir", root),
         Left("target directory outside project root")
       )
       assert(os.exists(root / "a.txt"))
@@ -80,7 +80,7 @@ class MovePathSpec extends FunSuite:
         os.makeDir.all(root / "dest")
         val link = root / "link"
         os.symlink(link, outsideDir)
-        assertEquals(WebSocketRoutes.movePathSafely("link", "dest", root), Left("path outside project root"))
+        assertEquals(FsOps.movePathSafely("link", "dest", root), Left("path outside project root"))
         assert(os.exists(outsideDir))
       finally os.remove.all(outsideDir)
     }
@@ -90,8 +90,8 @@ class MovePathSpec extends FunSuite:
 
   test("movePathSafely refuses to move the project root itself") {
     withTempRoot { root =>
-      assertEquals(WebSocketRoutes.movePathSafely(".", "sub", root), Left("cannot move project root"))
-      assertEquals(WebSocketRoutes.movePathSafely("", "sub", root), Left("cannot move project root"))
+      assertEquals(FsOps.movePathSafely(".", "sub", root), Left("cannot move project root"))
+      assertEquals(FsOps.movePathSafely("", "sub", root), Left("cannot move project root"))
       assert(os.exists(root))
     }
   }
@@ -101,7 +101,7 @@ class MovePathSpec extends FunSuite:
   test("movePathSafely rejects a missing target directory") {
     withTempRoot { root =>
       os.write(root / "a.txt", "x")
-      assertEquals(WebSocketRoutes.movePathSafely("a.txt", "no-such-dir", root), Left("target directory not found"))
+      assertEquals(FsOps.movePathSafely("a.txt", "no-such-dir", root), Left("target directory not found"))
       assert(os.exists(root / "a.txt"))
     }
   }
@@ -110,7 +110,7 @@ class MovePathSpec extends FunSuite:
     withTempRoot { root =>
       os.write(root / "a.txt", "x")
       os.write(root / "plain-file", "not a dir")
-      assertEquals(WebSocketRoutes.movePathSafely("a.txt", "plain-file", root), Left("target directory not found"))
+      assertEquals(FsOps.movePathSafely("a.txt", "plain-file", root), Left("target directory not found"))
       assert(os.exists(root / "a.txt"))
     }
   }
@@ -120,7 +120,7 @@ class MovePathSpec extends FunSuite:
   test("movePathSafely rejects moving a directory into itself") {
     withTempRoot { root =>
       os.makeDir.all(root / "sub")
-      assertEquals(WebSocketRoutes.movePathSafely("sub", "sub", root), Left("cannot move path into itself"))
+      assertEquals(FsOps.movePathSafely("sub", "sub", root), Left("cannot move path into itself"))
       assert(os.exists(root / "sub"))
     }
   }
@@ -129,7 +129,7 @@ class MovePathSpec extends FunSuite:
     withTempRoot { root =>
       os.makeDir.all(root / "sub" / "inner")
       assertEquals(
-        WebSocketRoutes.movePathSafely("sub", "sub/inner", root),
+        FsOps.movePathSafely("sub", "sub/inner", root),
         Left("cannot move path into itself")
       )
       assert(os.exists(root / "sub" / "inner"))
@@ -143,7 +143,7 @@ class MovePathSpec extends FunSuite:
       os.makeDir.all(root / "dest")
       os.write(root / "a.txt", "moving")
       os.write(root / "dest" / "a.txt", "existing")
-      assertEquals(WebSocketRoutes.movePathSafely("a.txt", "dest", root), Left("destination already exists"))
+      assertEquals(FsOps.movePathSafely("a.txt", "dest", root), Left("destination already exists"))
       // original untouched, destination untouched
       assertEquals(os.read(root / "a.txt"), "moving")
       assertEquals(os.read(root / "dest" / "a.txt"), "existing")
@@ -153,7 +153,7 @@ class MovePathSpec extends FunSuite:
   test("movePathSafely rejects moving a path onto itself (same parent)") {
     withTempRoot { root =>
       os.write(root / "a.txt", "x")
-      assertEquals(WebSocketRoutes.movePathSafely("a.txt", ".", root), Left("destination already exists"))
+      assertEquals(FsOps.movePathSafely("a.txt", ".", root), Left("destination already exists"))
       assert(os.exists(root / "a.txt"))
     }
   }
@@ -163,7 +163,7 @@ class MovePathSpec extends FunSuite:
   test("movePathSafely reports a missing source") {
     withTempRoot { root =>
       os.makeDir.all(root / "dest")
-      assertEquals(WebSocketRoutes.movePathSafely("vanished.txt", "dest", root), Left("source path not found"))
+      assertEquals(FsOps.movePathSafely("vanished.txt", "dest", root), Left("source path not found"))
     }
   }
 

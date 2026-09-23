@@ -48,7 +48,7 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     os.makeDir.all(root / "sub")
     os.write(root / "sub" / "b.txt", "y")
     val (out, logs) = capturedLogs {
-      WebSocketRoutes
+      FsOps
         .deletePathsSafely(List("a.txt", "sub"), root, "sess-audit-1")
         .unsafeRunSync()
     }
@@ -78,7 +78,7 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     val root = os.temp.dir(prefix = "wtsurv-del-audit-neg")
     os.write(root / "keep.txt", "k")
     val (out, logs) = capturedLogs {
-      WebSocketRoutes
+      FsOps
         .deletePathsSafely(List("../outside.txt", ".", "vanished.txt"), root, "sess-audit-2")
         .unsafeRunSync()
     }
@@ -92,13 +92,13 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
   }
 
   test("④(文案单点) deleteAuditLine：单删与批删同源同形（防两处漂移）") {
-    val one = WebSocketRoutes.deleteAuditLine("deletePath", "/p/x.txt", "s1", isDir = false)
-    val many = WebSocketRoutes.deleteAuditLine("deletePaths", "/p/x.txt", "s1", isDir = false)
+    val one = FsOps.deleteAuditLine("deletePath", "/p/x.txt", "s1", isDir = false)
+    val many = FsOps.deleteAuditLine("deletePaths", "/p/x.txt", "s1", isDir = false)
     assert(one.startsWith("deletePath: removed '/p/x.txt'"), one)
     assert(many.startsWith("deletePaths: removed '/p/x.txt'"), many)
     assert(one.contains("(session=s1, kind=file, channel=ui-file-explorer)"), one)
     assert(many.contains("(session=s1, kind=file, channel=ui-file-explorer)"), many)
-    val dir = WebSocketRoutes.deleteAuditLine("deletePath", "/p/d", "s2", isDir = true)
+    val dir = FsOps.deleteAuditLine("deletePath", "/p/d", "s2", isDir = true)
     assert(dir.contains("kind=dir-recursive"), dir)
   }
 end DeletePathAuditLogSpec
