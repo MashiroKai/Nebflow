@@ -14,58 +14,64 @@ sealed trait AgentCommand
 enum RestartLevel:
   case Soft, Rollback, Prune, Full
 
-/** 注入来源标注 —— blue injected bubble（浅蓝注入气泡）顶栏字段的**单点定义**
-  * （bluebubble 批 2026-09-12）。
-  *
-  * 字段名与取值域**与前端判据同源**，两侧不得各写一套：
-  *  - 后端载体：本 case class → [[AgentCommand.UserInput]] / [[AgentCommand.ImmediateInput]]
-  *    的同名参数 → 唯一发射点 `AgentActor#emitInjectedUserEvent`（WS 帧
-  *    `{type:"user", injected:true, source, sender, senderTeam, eventType, delivery}`）
-  *    → 唯一落盘点（同方法内 `SessionStore.appendUiMessages`）→ `UiMessage.User`。
-  *  - 前端消费：`web/js/persistence.js#isOutgoingInjection`（**判据**：`sender`
-  *    与该会话自身 agent 名相等 ⇒ 本会话自己的外发，不渲染）＋
-  *    `web/js/chat.js#injectedSourceLabel` / `#INJECTED_SOURCE_LABELS`（**呈现**：
-  *    `SOURCE · AGENT · EVENT_TYPE`，Team 消息走 `team/agent`）。
-  *    ⇒ `sender` 的取值域恒 = **发送方 agent 自身名**（与 `ownAgentName()` 同名空间）；
-  *      `eventType` 取邮件类型(mailType.toLowerCase) / 终态码；`senderTeam` 取团队名。
-  *
-  * 空值语义：`None` = 该段不显示（向后兼容——既有调用点不传即保持既有呈现，
-  * 前端旧历史行缺字段同样优雅降级）。 */
+/**
+ * 注入来源标注 —— blue injected bubble（浅蓝注入气泡）顶栏字段的**单点定义**
+ * （bluebubble 批 2026-09-12）。
+ *
+ * 字段名与取值域**与前端判据同源**，两侧不得各写一套：
+ *  - 后端载体：本 case class → [[AgentCommand.UserInput]] / [[AgentCommand.ImmediateInput]]
+ *    的同名参数 → 唯一发射点 `AgentActor#emitInjectedUserEvent`（WS 帧
+ *    `{type:"user", injected:true, source, sender, senderTeam, eventType, delivery}`）
+ *    → 唯一落盘点（同方法内 `SessionStore.appendUiMessages`）→ `UiMessage.User`。
+ *  - 前端消费：`web/js/persistence.js#isOutgoingInjection`（**判据**：`sender`
+ *    与该会话自身 agent 名相等 ⇒ 本会话自己的外发，不渲染）＋
+ *    `web/js/chat.js#injectedSourceLabel` / `#INJECTED_SOURCE_LABELS`（**呈现**：
+ *    `SOURCE · AGENT · EVENT_TYPE`，Team 消息走 `team/agent`）。
+ *    ⇒ `sender` 的取值域恒 = **发送方 agent 自身名**（与 `ownAgentName()` 同名空间）；
+ *      `eventType` 取邮件类型(mailType.toLowerCase) / 终态码；`senderTeam` 取团队名。
+ *
+ * 空值语义：`None` = 该段不显示（向后兼容——既有调用点不传即保持既有呈现，
+ * 前端旧历史行缺字段同样优雅降级）。
+ */
 case class InjectionAttribution(
   sender: Option[String] = None,
   senderTeam: Option[String] = None,
   eventType: Option[String] = None,
-  /** **收件判别字段**（mailbadge 批 2026-09-13，作者裁定「必须显示 MAIL」⇒ 选项 C）：
-    * 本注入件是经**哪条收件通道**进来的，与 [[AgentCommand.UserInput.source]] 的
-    * **会计语义分离**——`source` 恒为桥的消费计数口径（`"task"`，见
-    * `ProjectActor.DispatcherInjectedSources`），本字段只承担**呈现判别**。
-    *
-    * 取值域 = [[InjectionAttribution.IntakeMarkers]]（后端唯一定名源）；前端
-    * `web/js/chat.js#injectedSourceLabel` 用它**优先**取展示标签，缺席回落
-    * `source`（回落路径逐字不变）。`None`（默认）= 无收件通道判别 ⇒ 呈现与
-    * 改前逐字节一致（向后兼容：既有调用点与旧历史行零影响）。
-    *
-    * 两侧同源门 = `InjectionIntakeContractSpec`（置位侧 ↔ 帧字段 ↔ 标签优先级）。 */
+  /**
+   * **收件判别字段**（mailbadge 批 2026-09-13，作者裁定「必须显示 MAIL」⇒ 选项 C）：
+   * 本注入件是经**哪条收件通道**进来的，与 [[AgentCommand.UserInput.source]] 的
+   * **会计语义分离**——`source` 恒为桥的消费计数口径（`"task"`，见
+   * `ProjectActor.DispatcherInjectedSources`），本字段只承担**呈现判别**。
+   *
+   * 取值域 = [[InjectionAttribution.IntakeMarkers]]（后端唯一定名源）；前端
+   * `web/js/chat.js#injectedSourceLabel` 用它**优先**取展示标签，缺席回落
+   * `source`（回落路径逐字不变）。`None`（默认）= 无收件通道判别 ⇒ 呈现与
+   * 改前逐字节一致（向后兼容：既有调用点与旧历史行零影响）。
+   *
+   * 两侧同源门 = `InjectionIntakeContractSpec`（置位侧 ↔ 帧字段 ↔ 标签优先级）。
+   */
   intake: Option[String] = None,
-  /** **发送方所属项目**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：四段式
-    * header `KIND · PROJECT · SUBJECT · STATE` 的第 2 段来源，取**发送方**（不是收件方）
-    * 所属项目名。
-    *
-    * 取值链（禁臆造、禁静默填空；逐处落位见交付报告 §r3-2 与 R-A 补节）：
-    *   ① 发送方项目 = 构造点的项目上下文（`MailTool.mailAttribution` / `MailTool.sendMail`
-    *      取 `ToolContext.projectName`）——**已落位**（R-A 补 2026-09-15 ③）：Mail 三腿
-    *      同源置位，故「发送方自带项目」的调用面（项目节点会话 / 分发器越面 `project:`
-    *      调用 / 跨项目团队收件）在此取到发送方实际项目域；
-    *   ② 未置位 ⇒ **按腿分派**：Mail 腿①（`Mail → project` 分发器收件面）由**发射面**
-    *      `ProjectActor.leg1SenderProject` 取根域值（无项目上下文的发送方 =
-    *      「跨 root 直投件」⇒ `NotificationHeader.RootProject`，**不**取收件方项目）；
-    *      其余腿由发射点（`AgentActor#emitInjectedUserEvent`）用接收会话的
-    *      `AgentState.projectName` 补 —— 发送方与接收方**同项目**时与本字段同值；
-    *   ③ 仍取不到（跨 root 直投 / 根域注入）⇒ `NotificationHeader.RootProject`。
-    *
-    * NODE/CHAIN 腿**不依赖本字段**：其 `sender` 已按路径约定携带
-    * `"<项目名>/<节点名|链id>"`，`NotificationHeader.header` 直接切分。
-    * `None`（默认）= 构造点未置位 ⇒ 走 ②/③ 回落；既有调用点与旧历史行零影响。 */
+  /**
+   * **发送方所属项目**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：四段式
+   * header `KIND · PROJECT · SUBJECT · STATE` 的第 2 段来源，取**发送方**（不是收件方）
+   * 所属项目名。
+   *
+   * 取值链（禁臆造、禁静默填空；逐处落位见交付报告 §r3-2 与 R-A 补节）：
+   *   ① 发送方项目 = 构造点的项目上下文（`MailTool.mailAttribution` / `MailTool.sendMail`
+   *      取 `ToolContext.projectName`）——**已落位**（R-A 补 2026-09-15 ③）：Mail 三腿
+   *      同源置位，故「发送方自带项目」的调用面（项目节点会话 / 分发器越面 `project:`
+   *      调用 / 跨项目团队收件）在此取到发送方实际项目域；
+   *   ② 未置位 ⇒ **按腿分派**：Mail 腿①（`Mail → project` 分发器收件面）由**发射面**
+   *      `ProjectActor.leg1SenderProject` 取根域值（无项目上下文的发送方 =
+   *      「跨 root 直投件」⇒ `NotificationHeader.RootProject`，**不**取收件方项目）；
+   *      其余腿由发射点（`AgentActor#emitInjectedUserEvent`）用接收会话的
+   *      `AgentState.projectName` 补 —— 发送方与接收方**同项目**时与本字段同值；
+   *   ③ 仍取不到（跨 root 直投 / 根域注入）⇒ `NotificationHeader.RootProject`。
+   *
+   * NODE/CHAIN 腿**不依赖本字段**：其 `sender` 已按路径约定携带
+   * `"<项目名>/<节点名|链id>"`，`NotificationHeader.header` 直接切分。
+   * `None`（默认）= 构造点未置位 ⇒ 走 ②/③ 回落；既有调用点与旧历史行零影响。
+   */
   project: Option[String] = None
 )
 
@@ -74,97 +80,131 @@ object InjectionAttribution:
   /** 显式空标注（调用点表态用；等价于 Option 的 None）。 */
   val Empty: InjectionAttribution = InjectionAttribution()
 
-  /** 腿②（分发器 → `node:<id>`）的注入 source 定名（D-3 裁定：保持节点侧既有
-    * 呈现，`mail` 只出现在真实邮件来源处）。 */
+  /**
+   * 腿②（分发器 → `node:<id>`）的注入 source 定名（D-3 裁定：保持节点侧既有
+   * 呈现，`mail` 只出现在真实邮件来源处）。
+   */
   val SourceSystem: String = "system"
 
-  /** 收件通道判别定名（mailbadge 批 2026-09-13，选项 C）：`MailTool` 腿①
-    * （`Mail(address="project:<name>")`）——本件是**收件方视角的 Mail**。
-    * **只置位在腿①**：腿②（`node:<id>`，source 保持 `"system"` ⇒ 标签 `System`）
-    * 与腿③（非 project 面，source 已是 `"mail"` ⇒ 标签 `Mail`）**不置位**——
-    * 节点收件面不在本批（已单独立项），非 project 面呈现不得漂移。 */
+  /**
+   * 收件通道判别定名（mailbadge 批 2026-09-13，选项 C）：`MailTool` 腿①
+   * （`Mail(address="project:<name>")`）——本件是**收件方视角的 Mail**。
+   * **只置位在腿①**：腿②（`node:<id>`，source 保持 `"system"` ⇒ 标签 `System`）
+   * 与腿③（非 project 面，source 已是 `"mail"` ⇒ 标签 `Mail`）**不置位**——
+   * 节点收件面不在本批（已单独立项），非 project 面呈现不得漂移。
+   */
   val IntakeMail: String = "mail"
 
-  /** 后端**自定名**的收件通道取值域 —— 前端必须逐值显式登记（同
-    * [[BackendNamedSources]] 的纪律：值取自 source 词表，故共用同一张
-    * `INJECTED_SOURCE_LABELS` 表项即为显式登记）。契约门 =
-    * `InjectionIntakeContractSpec`。 */
+  /**
+   * 后端**自定名**的收件通道取值域 —— 前端必须逐值显式登记（同
+   * [[BackendNamedSources]] 的纪律：值取自 source 词表，故共用同一张
+   * `INJECTED_SOURCE_LABELS` 表项即为显式登记）。契约门 =
+   * `InjectionIntakeContractSpec`。
+   */
   val IntakeMarkers: Set[String] = Set(IntakeMail)
 
-  /** 后端**自定名**（非用户可传）的 source 取值域 —— 前端
-    * `web/js/chat.js#INJECTED_SOURCE_LABELS` 必须逐值**显式登记**（或由
-    * `injectedSourceLabel` 的显式分支处理），**禁靠首字母大写兜底**。
-    * 契约门 = `InjectionSourceContractSpec`（后端是唯一定名源，前端登记面
-    * 落后于本集合即红）。
-    *
-    * 出处（逐个可溯源）：
-    *   mail                MailTool#sendMail（腿③ / team 腿）
-    *   task / dispatch     ProjectActor.SourceTask / SourceDispatch（腿①）
-    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
-    *   node                NodeEngine#deliverToNebula（节点完成通报）
-    *   skill               AgentActor SkillActivate 分支
-    *   delegate / subtask / flow / tool   AgentActor#inferInjectionSource
-    *   background          AgentActor#visibleExternalEventSource（源名 background-task）
-  *   chain               **已退役（不再发射）**：原出处 = NodeEngine#deliverChainSummary
-  *                       （链级聚合摘要投根，b64 批 2026-09-13）。全降级列表态批
-  *                       （2026-09-16，作者裁定「全部降级列表态」）后链腿零投根
-  *                       ⇒ 无发射点；本词表项保留**仅服务存量历史行**的渲染
-  *                       （宿主 sessions 面现取 ≈49 处 source="chain" 落盘，条数随轮转漂移），
-  *                       与前端 `INJECTED_SOURCE_LABELS.chain` / NotificationHeader
-  *                       `KindLabels("chain")` 三处同源保留（删源会连带改词表 pin，属
-  *                       本批未取侧）。
-  *   deviceMail          跨设备 Nebula 邮件收件腿（device-mail 批 2026-09-15）：
-  *                       对端设备经 NebLink 设备通道送来 `agent_mail` 载荷
-  *                       （`DeviceMail.SourceDeviceMail`，注入点 = DeviceMailInbox）
-  *                       ⇒ 注入本机 Nebula 会话的蓝色气泡（标签 = i18n
-  *                       「来自 <from_device> 的 Nebula」，前端走显式分支，
-  *                       同 `node` 先例）
-    * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
-    * 不受本集合约束 —— 前端对其走既有兜底分支。 */
+  /**
+   * 后端**自定名**（非用户可传）的 source 取值域 —— 前端
+   * `web/js/chat.js#INJECTED_SOURCE_LABELS` 必须逐值**显式登记**（或由
+   * `injectedSourceLabel` 的显式分支处理），**禁靠首字母大写兜底**。
+   * 契约门 = `InjectionSourceContractSpec`（后端是唯一定名源，前端登记面
+   * 落后于本集合即红）。
+   *
+   * 出处（逐个可溯源）：
+   *   mail                MailTool#sendMail（腿③ / team 腿）
+   *   task / dispatch     ProjectActor.SourceTask / SourceDispatch（腿①）
+   *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
+   *   node                NodeEngine#deliverToNebula（节点完成通报）
+   *   skill               AgentActor SkillActivate 分支
+   *   delegate / subtask / flow / tool   AgentActor#inferInjectionSource
+   *   background          AgentActor#visibleExternalEventSource（源名 background-task）
+   *   chain               **已退役（不再发射）**：原出处 = NodeEngine#deliverChainSummary
+   *                       （链级聚合摘要投根，b64 批 2026-09-13）。全降级列表态批
+   *                       （2026-09-16，作者裁定「全部降级列表态」）后链腿零投根
+   *                       ⇒ 无发射点；本词表项保留**仅服务存量历史行**的渲染
+   *                       （宿主 sessions 面现取 ≈49 处 source="chain" 落盘，条数随轮转漂移），
+   *                       与前端 `INJECTED_SOURCE_LABELS.chain` / NotificationHeader
+   *                       `KindLabels("chain")` 三处同源保留（删源会连带改词表 pin，属
+   *                       本批未取侧）。
+   *   deviceMail          跨设备 Nebula 邮件收件腿（device-mail 批 2026-09-15）：
+   *                       对端设备经 NebLink 设备通道送来 `agent_mail` 载荷
+   *                       （`DeviceMail.SourceDeviceMail`，注入点 = DeviceMailInbox）
+   *                       ⇒ 注入本机 Nebula 会话的蓝色气泡（标签 = i18n
+   *                       「来自 <from_device> 的 Nebula」，前端走显式分支，
+   *                       同 `node` 先例）
+   * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
+   * 不受本集合约束 —— 前端对其走既有兜底分支。
+   */
   val BackendNamedSources: Set[String] =
-    Set("mail", "task", "dispatch", "system", "node", "skill", "delegate", "subtask", "flow", "tool", "background", "chain", "deviceMail")
+    Set(
+      "mail",
+      "task",
+      "dispatch",
+      "system",
+      "node",
+      "skill",
+      "delegate",
+      "subtask",
+      "flow",
+      "tool",
+      "background",
+      "chain",
+      "deviceMail"
+    )
 
-/** AskUserQuestion 双模式（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）：
-  *  - [[AskMode.Blocking]]（默认，**全角色**可用）= 现状语义：工具挂起 turn，答复
-  *    作为该次工具调用的返回值回投；
-  *  - [[AskMode.NonBlocking]]（**仅 Nebula 根会话**）= 工具发起即返回 ack，卡片与
-  *    requestId 与阻塞模式同构地注册进 hub，答复不作为返回值，而是以注入式用户
-  *    输入（[[AgentCommand.ImmediateInput]]，`fromUser=true`）在下一个 turn 边界
-  *    到达本会话。
-  *
-  * 授权面三层（规格书 §0/§3，作者 2026-09-13 令）：① 第一性 = **定义层分化**
-  * （非 root 会话的 `AskUserQuestion` 定义里**整体不含** `mode`，落点
-  * `AgentCore.buildToolList`）；② 第二道 = 运行期显式拒绝
-  * （`AskUserQuestionTool.call` 的 `ASKUSER_NONBLOCK_NOT_ROOT`，先于任何副作用）；
-  * ③ 第三道 = description（仅描述性，不承担机制）。**schema 分化不替代授权判定**：
-  * 引擎无 JSON-Schema 校验器 ⇒ 面外参数会被静默忽略，故 ② 不得删除。
-  *
-  * 判据单点 = [[AgentCore.isNebulaRoot]]（`name=="Nebula" && depth==0`），
-  * 定义期（挑变体）与运行期（兜底闸）**同一份实现**，禁第二份同表达式。 */
+end InjectionAttribution
+
+/**
+ * AskUserQuestion 双模式（工具面按角色分化批 B4，2026-09-13 作者裁定 T2=(a)）：
+ *  - [[AskMode.Blocking]]（默认，**全角色**可用）= 现状语义：工具挂起 turn，答复
+ *    作为该次工具调用的返回值回投；
+ *  - [[AskMode.NonBlocking]]（**仅 Nebula 根会话**）= 工具发起即返回 ack，卡片与
+ *    requestId 与阻塞模式同构地注册进 hub，答复不作为返回值，而是以注入式用户
+ *    输入（[[AgentCommand.ImmediateInput]]，`fromUser=true`）在下一个 turn 边界
+ *    到达本会话。
+ *
+ * 授权面三层（规格书 §0/§3，作者 2026-09-13 令）：① 第一性 = **定义层分化**
+ * （非 root 会话的 `AskUserQuestion` 定义里**整体不含** `mode`，落点
+ * `AgentCore.buildToolList`）；② 第二道 = 运行期显式拒绝
+ * （`AskUserQuestionTool.call` 的 `ASKUSER_NONBLOCK_NOT_ROOT`，先于任何副作用）；
+ * ③ 第三道 = description（仅描述性，不承担机制）。**schema 分化不替代授权判定**：
+ * 引擎无 JSON-Schema 校验器 ⇒ 面外参数会被静默忽略，故 ② 不得删除。
+ *
+ * 判据单点 = [[AgentCore.isNebulaRoot]]（`name=="Nebula" && depth==0`），
+ * 定义期（挑变体）与运行期（兜底闸）**同一份实现**，禁第二份同表达式。
+ */
 enum AskMode:
   case Blocking, NonBlocking
 
 object AskMode:
-  /** 线上字面量（`AskUserQuestionTool` 的 schema enum 与本枚举**共用此一处**，
-    * 防两份字面量漂移）。 */
+  /**
+   * 线上字面量（`AskUserQuestionTool` 的 schema enum 与本枚举**共用此一处**，
+   * 防两份字面量漂移）。
+   */
   val BlockingWire = "blocking"
   val NonBlockingWire = "non-blocking"
 
-  /** 非阻塞 ack（`ImmediateInput.source`）的定名——真人点卡作答的答案，故
-    * 与 `fromUser=true` 同行；`fromUser=true` 时 source 被
-    * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡）
-    * ⇒ 不需要前端登记面。 */
+  /**
+   * 非阻塞 ack（`ImmediateInput.source`）的定名——真人点卡作答的答案，故
+   * 与 `fromUser=true` 同行；`fromUser=true` 时 source 被
+   * `AgentActor.injectionSourceFor` 单点折成 None（答案呈现为普通 user 气泡）
+   * ⇒ 不需要前端登记面。
+   */
   val AnswerSource = "askUserAnswer"
 
   def parse(raw: String): Option[AskMode] = raw match
-    case BlockingWire    => Some(AskMode.Blocking)
+    case BlockingWire => Some(AskMode.Blocking)
     case NonBlockingWire => Some(AskMode.NonBlocking)
-    case _               => None
+    case _ => None
 
-  /** 该模式是否把 turn 停在等待态（`AgentActor` 的 `WaitingForUser` 标注 +
-    * `DelegateBudget.pause` 只在阻塞模式发生——非阻塞从未等待，无配对物，误标
-    * 即造出「永不解除的等待」）。 */
+  /**
+   * 该模式是否把 turn 停在等待态（`AgentActor` 的 `WaitingForUser` 标注 +
+   * `DelegateBudget.pause` 只在阻塞模式发生——非阻塞从未等待，无配对物，误标
+   * 即造出「永不解除的等待」）。
+   */
   def parksTurn(mode: AskMode): Boolean = mode == AskMode.Blocking
+
+end AskMode
 
 object AgentCommand:
 
@@ -186,31 +226,39 @@ object AgentCommand:
     senderTeam: Option[String] = None,
     /** Delivery mode marker: "queue" | "immediate" for Mail-injected inputs. */
     delivery: Option[String] = None,
-    /** Structured event type (e.g. completion status) for the UI source label —
+    /**
+     * Structured event type (e.g. completion status) for the UI source label —
      *  carried through from ImmediateInput so flow results render
-     *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'. */
+     *  'Flow · <name> · Completed/Failed' instead of a bare 'Flow'.
+     */
     eventType: Option[String] = None,
-    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：见
-      * [[InjectionAttribution.intake]]。**只影响呈现判别**——`source` 仍是桥的
-      * 消费计数口径（`"task"`），本字段不参与任何会计/去重/生命周期判定。
-      * 默认 `None` ⇒ 既有调用点与旧历史行呈现逐字不变。 */
+    /**
+     * 收件通道判别（mailbadge 批 2026-09-13，选项 C）：见
+     * [[InjectionAttribution.intake]]。**只影响呈现判别**——`source` 仍是桥的
+     * 消费计数口径（`"task"`），本字段不参与任何会计/去重/生命周期判定。
+     * 默认 `None` ⇒ 既有调用点与旧历史行呈现逐字不变。
+     */
     intake: Option[String] = None,
-    /** ② (2026-09-11, queue-direct-pass diagnosis §2): real-user origin flag.
-      * True only when this UserInput was born from a real human message
-      * (WS direct send, or an ImmediateInput forwarded from one — see
-      * [[ImmediateInput.fromUser]]). The idle judgement reads it as
-      * `clientMessageId.isDefined || fromUser ⇒ source=None`, so a real-user
-      * text that reached the agent through the ImmediateInput leg is never
-      * mislabelled with an injection source. Server-side injections keep the
-      * default false and say so explicitly at the call site. */
+    /**
+     * ② (2026-09-11, queue-direct-pass diagnosis §2): real-user origin flag.
+     * True only when this UserInput was born from a real human message
+     * (WS direct send, or an ImmediateInput forwarded from one — see
+     * [[ImmediateInput.fromUser]]). The idle judgement reads it as
+     * `clientMessageId.isDefined || fromUser ⇒ source=None`, so a real-user
+     * text that reached the agent through the ImmediateInput leg is never
+     * mislabelled with an injection source. Server-side injections keep the
+     * default false and say so explicitly at the call site.
+     */
     fromUser: Boolean = false,
-    /** **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：见
-      * [[InjectionAttribution.project]] 的取值链。默认 `None` ⇒ 发射点走回落链，
-      * 既有调用点零影响。
-      *
-      * **位置刻意置末**（`fromUser` 之后）：本仓存在**位置参数**构造点
-      * （`AgentActor` 冻结腿的 `pendingUserInputs` 追加），插在中间会把旧实参
-      * 错位到本字段 ⇒ 置末使既有位置调用逐字保持可编译。 */
+    /**
+     * **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：见
+     * [[InjectionAttribution.project]] 的取值链。默认 `None` ⇒ 发射点走回落链，
+     * 既有调用点零影响。
+     *
+     * **位置刻意置末**（`fromUser` 之后）：本仓存在**位置参数**构造点
+     * （`AgentActor` 冻结腿的 `pendingUserInputs` 追加），插在中间会把旧实参
+     * 错位到本字段 ⇒ 置末使既有位置调用逐字保持可编译。
+     */
     project: Option[String] = None
   ) extends AgentCommand
 
@@ -227,32 +275,35 @@ object AgentCommand:
     senderTeam: Option[String] = None,
     /** Delivery mode marker: "queue" | "immediate" for Mail delivery. */
     delivery: Option[String] = None,
-    /** ② (2026-09-11, queue-direct-pass diagnosis §2 根因): real-user origin
-      * flag. The ImmediateInput leg carries NO clientMessageId by construction,
-      * which used to make a real human text fall into the
-      * `no clientMessageId ⇒ tool injection` fallback (AgentActor.idle) —
-      * rendering a bogus blue `source:"tool"` card and dropping the turn out of
-      * `isRealUserTurn` (time/task reminders degraded).
-      *
-      *   true  → WS `immediateInput` frame (user clicked send), CLI
-      *           `userMessage` frame  [真人 = 客户端直接投递]
-      *   false → every server-side injection: Mail / Delegate / SubTask / Flow /
-      *           Node / Dispatcher / Schedule / system, AND the REST headless
-      *           turn (`rest-turn` = a program, see dispatchHeadlessTurn)
-      *
-      * Kept as an explicit, defaulted field (not inferred) so every construction
-      * site states its origin; the compiler + the explicit-argument discipline
-      * keep the two families apart. */
+    /**
+     * ② (2026-09-11, queue-direct-pass diagnosis §2 根因): real-user origin
+     * flag. The ImmediateInput leg carries NO clientMessageId by construction,
+     * which used to make a real human text fall into the
+     * `no clientMessageId ⇒ tool injection` fallback (AgentActor.idle) —
+     * rendering a bogus blue `source:"tool"` card and dropping the turn out of
+     * `isRealUserTurn` (time/task reminders degraded).
+     *
+     *   true  → WS `immediateInput` frame (user clicked send), CLI
+     *           `userMessage` frame  [真人 = 客户端直接投递]
+     *   false → every server-side injection: Mail / Delegate / SubTask / Flow /
+     *           Node / Dispatcher / Schedule / system, AND the REST headless
+     *           turn (`rest-turn` = a program, see dispatchHeadlessTurn)
+     *
+     * Kept as an explicit, defaulted field (not inferred) so every construction
+     * site states its origin; the compiler + the explicit-argument discipline
+     * keep the two families apart.
+     */
     fromUser: Boolean = false,
-    /** **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：见
-      * [[InjectionAttribution.project]] 的取值链。`None` ⇒ 发射点走 ②/③ 回落。
-      *
-      * **位置刻意置末**（`fromUser` 之后）：本仓存在**位置参数**构造点
-      * （`CompactionQueueStore:70`），插在中间会把 `fromUser` 实参错位到本字段
-      * ⇒ 置末使既有位置调用逐字保持可编译。 */
+    /**
+     * **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：见
+     * [[InjectionAttribution.project]] 的取值链。`None` ⇒ 发射点走 ②/③ 回落。
+     *
+     * **位置刻意置末**（`fromUser` 之后）：本仓存在**位置参数**构造点
+     * （`CompactionQueueStore:70`），插在中间会把 `fromUser` 实参错位到本字段
+     * ⇒ 置末使既有位置调用逐字保持可编译。
+     */
     project: Option[String] = None
   ) extends AgentCommand
-
 
   case class Interrupt() extends AgentCommand
 
@@ -260,10 +311,12 @@ object AgentCommand:
     requestId: String,
     items: List[AskItem],
     replyTo: Option[ActorRef[List[String]]] = None,
-    /** 双模式（B4）：**带默认值** ⇒ 两个既有构造点（`AskUserQuestionTool` /
+    /**
+     * 双模式（B4）：**带默认值** ⇒ 两个既有构造点（`AskUserQuestionTool` /
      * `ProjectCreateTool` 的 pathPanel）不传即逐字节维持阻塞语义；`AgentActor`
      * 的共享处理链据此决定是否标 `WaitingForUser` / `DelegateBudget.pause`
-     * （仅阻塞模式标——见 [[AskMode.parksTurn]]）。 */
+     * （仅阻塞模式标——见 [[AskMode.parksTurn]]）。
+     */
     mode: AskMode = AskMode.Blocking
   ) extends AgentCommand
 
@@ -277,9 +330,11 @@ object AgentCommand:
     error: Throwable,
     replyTo: Option[ActorRef[AgentEvent]],
     turnId: Long,
-    /** Block 3：LoopGuard L1 终止路径的计数器快照（terminatedFps 随 state 存活，
-      * 后续 turn 同 fp 复发 → 直接 L2 冻结）。该路径不投 ToolsComplete——
-      * LlmFailed 本身是计数器写回的唯一载体。其余调用方默认 None。 */
+    /**
+     * Block 3：LoopGuard L1 终止路径的计数器快照（terminatedFps 随 state 存活，
+     * 后续 turn 同 fp 复发 → 直接 L2 冻结）。该路径不投 ToolsComplete——
+     * LlmFailed 本身是计数器写回的唯一载体。其余调用方默认 None。
+     */
     loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None
   ) extends AgentCommand
 
@@ -292,19 +347,25 @@ object AgentCommand:
     compactedMessages: Option[List[Message]] = None,
     thinking: Option[String] = None,
     thinkingSignature: Option[String] = None,
-    /** Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒——
-      * 下一轮以 user system-reminder 消息注入，
-      * 零成本给模型自纠机会。 */
+    /**
+     * Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒——
+     * 下一轮以 user system-reminder 消息注入，
+     * 零成本给模型自纠机会。
+     */
     loopReminder: Option[String] = None,
-    /** Block 3：本轮 evaluate 产出的计数器快照——pipeToolExecutions 的计数器在
-      * 异步 IO 内计算，行为返回时不可见；经消息携带由 ToolsComplete handler 写回
-      * state（S1/S2 跨轮、S3 跨 turn 持久化的载体）。None=非 loop-guard 路径。 */
+    /**
+     * Block 3：本轮 evaluate 产出的计数器快照——pipeToolExecutions 的计数器在
+     * 异步 IO 内计算，行为返回时不可见；经消息携带由 ToolsComplete handler 写回
+     * state（S1/S2 跨轮、S3 跨 turn 持久化的载体）。None=非 loop-guard 路径。
+     */
     loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None,
-    /** Block 3 L2：Some(detail) 时 handler 完成消息组装/持久化/计数器写回后
-      * 不续轮（不 pipeLlmCall），转而冻结（loopDetected 广播 + 父通知 +
-      * enterFrozen(Loop)）。此前用独立 LoopFreezeDetected 消息实现——但
-      * ToolsComplete 链式 dispatch 会递增 currentTurnId，后续消息按 stale
-      * 丢弃，冻结永不落地（wiring 实证）。 */
+    /**
+     * Block 3 L2：Some(detail) 时 handler 完成消息组装/持久化/计数器写回后
+     * 不续轮（不 pipeLlmCall），转而冻结（loopDetected 广播 + 父通知 +
+     * enterFrozen(Loop)）。此前用独立 LoopFreezeDetected 消息实现——但
+     * ToolsComplete 链式 dispatch 会递增 currentTurnId，后续消息按 stale
+     * 丢弃，冻结永不落地（wiring 实证）。
+     */
     freezeAfter: Option[String] = None
   ) extends AgentCommand
 
@@ -437,9 +498,11 @@ object AgentCommand:
     fromSessionId: String
   ) extends AgentCommand
 
-  /** v2 冻结式错误恢复升级链（§5.2）：FreezeScheduler.scan 发现 escalation 超时
-    * 后发送——frozen behavior 中执行 escalate 动作（level+1，通知上一级/用户终态）。
-    * 消息幂等：非 frozen/无 escalation 时 no-op。 */
+  /**
+   * v2 冻结式错误恢复升级链（§5.2）：FreezeScheduler.scan 发现 escalation 超时
+   * 后发送——frozen behavior 中执行 escalate 动作（level+1，通知上一级/用户终态）。
+   * 消息幂等：非 frozen/无 escalation 时 no-op。
+   */
   case object Escalate extends AgentCommand
 end AgentCommand
 
@@ -580,21 +643,27 @@ case class AgentRecord(
    * AgentState 的 lastErrorFreezeReason 同步维护；恢复/解除冻结时清 None。
    */
   frozenReason: Option[String] = None,
-  /** Block 3 循环检测器观测镜像（supervision trio §D2-B）：当前 turn 的
-    * 同参同败连续计数 / 非进展轮数——pipeToolExecutions 每轮随 touchRegistryActivity
-    * 同步写入。AgentControl list 的 stuck? 列旁显示 loop×N（诊断「高活动零进展」）。 */
+  /**
+   * Block 3 循环检测器观测镜像（supervision trio §D2-B）：当前 turn 的
+   * 同参同败连续计数 / 非进展轮数——pipeToolExecutions 每轮随 touchRegistryActivity
+   * 同步写入。AgentControl list 的 stuck? 列旁显示 loop×N（诊断「高活动零进展」）。
+   */
   loopStreak: Int = 0,
   loopRounds: Int = 0,
-  /** Project 归属（2026-09-06 作者裁定：Sub-Agents 面板 Flow 徽标旁标注项目名）。
-    * 仅 Project 域会话（node- 与 dispatcher- 前缀，NodeEngine/ProjectActor 注册点）有值；
-    * Delegate/SubTask/Ephemeral/FlowDAG/Team 等 None（默认 = 既有注册点零改动）。
-    * 恢复路径数据源：activeAgentEntryJson 输出 project 字段供前端刷新后渲染徽标；
-    * 实时路径不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入）。 */
+  /**
+   * Project 归属（2026-09-06 作者裁定：Sub-Agents 面板 Flow 徽标旁标注项目名）。
+   * 仅 Project 域会话（node- 与 dispatcher- 前缀，NodeEngine/ProjectActor 注册点）有值；
+   * Delegate/SubTask/Ephemeral/FlowDAG/Team 等 None（默认 = 既有注册点零改动）。
+   * 恢复路径数据源：activeAgentEntryJson 输出 project 字段供前端刷新后渲染徽标；
+   * 实时路径不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入）。
+   */
   project: Option[String] = None,
-  /** 会话展示名（刷新恢复路径专用，20260907 节点名刷新持久化批）：Project 域注册点
-    * （NodeEngine 节点 / ProjectActor 分发器）写 Flow Map 节点名 / "dispatcher/<project>"；
-    * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
-    * meta.agentName → displayName → sessionId 三档。 */
+  /**
+   * 会话展示名（刷新恢复路径专用，20260907 节点名刷新持久化批）：Project 域注册点
+   * （NodeEngine 节点 / ProjectActor 分发器）写 Flow Map 节点名 / "dispatcher/<project>"；
+   * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
+   * meta.agentName → displayName → sessionId 三档。
+   */
   displayName: Option[String] = None,
   /**
    * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
@@ -645,16 +714,17 @@ case class AgentRecord(
 // 因此一并删除，不留无人消费的字段。
 // ============================================================
 
-/** Interaction kind — what the user is being asked (P2).
-  *
-  * P0-1 / P-M1（2026-09-20，机制裁点 S3 = a）：新增第三种 kind `McpPermission`
-  * —— MCP / ScriptTool 调用的审批卡。与既有两种的关系（spec §2.4 + roadmap §2.2 A10）：
-  *   · `Permission`：内置工具审批卡（`type=askPermission`；payload 带完整 `input`）
-  *   · `AskUser`：提问卡（唯一进 chat-input passthrough 的 kind）
-  *   · `McpPermission`：**新 kind**（`type=mcpPermission`）——payload/answer 形状与
-  *     `Permission` 分化（凭据 redact 摘要 + riskTier/declared/hostBanner），
-  *     升级选项按 tier 门控；不新建机制，只加分支（零渲染层重构）。
-  */
+/**
+ * Interaction kind — what the user is being asked (P2).
+ *
+ * P0-1 / P-M1（2026-09-20，机制裁点 S3 = a）：新增第三种 kind `McpPermission`
+ * —— MCP / ScriptTool 调用的审批卡。与既有两种的关系（spec §2.4 + roadmap §2.2 A10）：
+ *   · `Permission`：内置工具审批卡（`type=askPermission`；payload 带完整 `input`）
+ *   · `AskUser`：提问卡（唯一进 chat-input passthrough 的 kind）
+ *   · `McpPermission`：**新 kind**（`type=mcpPermission`）——payload/answer 形状与
+ *     `Permission` 分化（凭据 redact 摘要 + riskTier/declared/hostBanner），
+ *     升级选项按 tier 门控；不新建机制，只加分支（零渲染层重构）。
+ */
 enum InteractionKind:
   case Permission, AskUser, McpPermission
 
@@ -669,11 +739,13 @@ sealed trait InteractionReply
 object InteractionReply:
   final case class PermissionReply(deferred: cats.effect.Deferred[IO, Boolean]) extends InteractionReply
   final case class AskUserReply(replyTo: Option[ActorRef[List[String]]]) extends InteractionReply
-  /** P0-1（spec §2.4/§2.5）：mcpPermission 卡的答复面。比 `PermissionReply` 多带
-    * 可选 `scope`（P0-2 会话放行）与 `upgradeMode`（递进放行，走既有
-    * `PermissionUpgrade.parse` 语义，零改动）——故独立 reply 型别而非扩既有型别
-    * （内置工具审批链逐字不动，A1-8 零回归）。
-    */
+
+  /**
+   * P0-1（spec §2.4/§2.5）：mcpPermission 卡的答复面。比 `PermissionReply` 多带
+   * 可选 `scope`（P0-2 会话放行）与 `upgradeMode`（递进放行，走既有
+   * `PermissionUpgrade.parse` 语义，零改动）——故独立 reply 型别而非扩既有型别
+   * （内置工具审批链逐字不动，A1-8 零回归）。
+   */
   final case class McpPermissionReply(deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer])
       extends InteractionReply
 
@@ -722,9 +794,11 @@ final case class InteractionAnswered(
  */
 case class ToolPipelineError(message: String) extends RuntimeException(message)
 
-/** Block 3 循环检测器 L1（supervision trio §D3）：同参同败超阈 / 轮预算超限的
-  * turn 级终止。分类=Permanent（不重试不冻结）→ LlmFailed fatal 链（supervisor
-  * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。 */
+/**
+ * Block 3 循环检测器 L1（supervision trio §D3）：同参同败超阈 / 轮预算超限的
+ * turn 级终止。分类=Permanent（不重试不冻结）→ LlmFailed fatal 链（supervisor
+ * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。
+ */
 final case class LoopDetectedError(message: String) extends RuntimeException(message)
 
 sealed trait AgentEvent
@@ -732,6 +806,7 @@ sealed trait AgentEvent
 object AgentEvent:
   case class Completed(sessionId: String, messages: List[Message] = Nil) extends AgentEvent
   case class Failed(sessionId: String, error: AgentError) extends AgentEvent
+
   /**
    * AgentControl 取消终态（spec §3.1）：sealed 穷尽——所有 adapter 必须处理。
    * BackoffSupervisor/persistentAdapter 走 notifyParentAndStop("cancelled")；
@@ -739,34 +814,43 @@ object AgentEvent:
    */
   case class Cancelled(sessionId: String, reason: String) extends AgentEvent
 
-/** 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
-  * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。
-  * 缺省 Schedule 保证旧调用点零改动（时间表冻结=特例）。 */
+/**
+ * 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
+ * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。
+ * 缺省 Schedule 保证旧调用点零改动（时间表冻结=特例）。
+ */
 enum FreezeReason:
-  case Schedule        // 时间表冻结（#337 黑名单），恢复条件=出冻结段
-  case LlmTransient    // LLM transient 错误预算耗尽（429/529 overload），恢复条件=退避到期+provider 恢复
-  case Network         // 连接重置/超时/未知瞬态，恢复条件=短退避到期
-  case ProviderDown    // 全候选 provider Down，恢复条件=HealthMonitor 探测恢复（P0 用 R1 轮询兜底）
+  case Schedule // 时间表冻结（#337 黑名单），恢复条件=出冻结段
+  case LlmTransient // LLM transient 错误预算耗尽（429/529 overload），恢复条件=退避到期+provider 恢复
+  case Network // 连接重置/超时/未知瞬态，恢复条件=短退避到期
+  case ProviderDown // 全候选 provider Down，恢复条件=HealthMonitor 探测恢复（P0 用 R1 轮询兜底）
   case RestartRecovery // 崩溃/进程重启后重建，恢复条件=条件检查通过后立即续跑
-  case Loop            // Block 3 循环检测器 L2（supervision trio §D3）：恢复条件=仅人工（用户输入唤醒 / AgentControl restart / cancel）——不自动续跑
+  case Loop // Block 3 循环检测器 L2（supervision trio §D3）：恢复条件=仅人工（用户输入唤醒 / AgentControl restart / cancel）——不自动续跑
 
-/** 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
-  * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。 */
+/**
+ * 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
+ * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。
+ */
 case class EscalationInfo(
   level: Int,
   escalateAt: Long,
   awaitedParentSessionId: String
 )
 
-/** v2 升级链判定（§5.1 规则，纯函数——可单测）：升级只沿 parentSessionId 静态链
-  * 向上、每级一次（通知按 level 去重）、无环（单父树）；父记录不存在 → 跳级；
-  * 最终到达用户（root/无父）即终态，无再升级对象。 */
+/**
+ * v2 升级链判定（§5.1 规则，纯函数——可单测）：升级只沿 parentSessionId 静态链
+ * 向上、每级一次（通知按 level 去重）、无环（单父树）；父记录不存在 → 跳级；
+ * 最终到达用户（root/无父）即终态，无再升级对象。
+ */
 object Escalation:
+
   enum Target:
     /** 父存活：通知父（ExternalEvent 注入其上下文，排队不唤醒）。 */
     case Parent
+
     /** 父缺失：跳级（P0 无父链信息，视同到达用户终态，detail 标注）。 */
     case Grandparent
+
     /** 无父（root/standalone）：用户终态——WS errorEscalated，不设超时。 */
     case User
 
@@ -780,9 +864,12 @@ enum AgentStreamEvent:
   case TextDelta(text: String)
   case ToolStart(label: String)
   case ToolEnd(label: String, summary: String, content: String, isError: Boolean, input: Option[JsonObject] = None)
-  /** 工具执行期心跳（审计 20260903 子项①）：toolStart→toolEnd 之间每
-    * Defaults.ToolHeartbeatSec 秒发一条，喂活前端 busy timer——前台长工具
-    * 执行零事件段不再触发前端 630s 纯静默超时误杀。 */
+
+  /**
+   * 工具执行期心跳（审计 20260903 子项①）：toolStart→toolEnd 之间每
+   * Defaults.ToolHeartbeatSec 秒发一条，喂活前端 busy timer——前台长工具
+   * 执行零事件段不再触发前端 630s 纯静默超时误杀。
+   */
   case ToolHeartbeat(label: String)
   case AgentStart(agentName: String, agentType: String, taskDescription: Option[String] = None)
   case AgentEnd(agentName: String)
@@ -797,6 +884,7 @@ enum AgentStreamEvent:
     compactThreshold: Option[Double] = None,
     outputTokens: Option[Int] = None
   )
+
   case UsageUpdate(
     inputTokens: Int,
     contextWindow: Int,
@@ -815,21 +903,25 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
-  /** 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。
-    * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表冻结（默认，缺省兼容旧前端）；
-    * LlmTransient/Network/ProviderDown/RestartRecovery=错误恢复族（§3.1）；detail/retryCount/
-    * escalation 为错误族附加信息（可选，缺省无）。 */
+  /**
+   * 冻结调度：agent 在 dispatch 边界被冻结（处于冻结时段内，#337 黑名单语义）。resumeAtMillis 供前端展示。
+   * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表冻结（默认，缺省兼容旧前端）；
+   * LlmTransient/Network/ProviderDown/RestartRecovery=错误恢复族（§3.1）；detail/retryCount/
+   * escalation 为错误族附加信息（可选，缺省无）。
+   */
   case Frozen(
-      resumeAtMillis: Option[Long],
-      reason: FreezeReason = FreezeReason.Schedule,
-      detail: Option[String] = None,
-      retryCount: Int = 0,
-      escalation: Option[EscalationInfo] = None
+    resumeAtMillis: Option[Long],
+    reason: FreezeReason = FreezeReason.Schedule,
+    detail: Option[String] = None,
+    retryCount: Int = 0,
+    escalation: Option[EscalationInfo] = None
   )
 
-  /** 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。
-    * nextChangeAt = 恢复时刻的下一翻转点（工作态 = 下一冻结开始时刻，供前端
-    * 展示「下一段 HH:mm 再冻结」；None = 无未来翻转点，如配置关闭）。 */
+  /**
+   * 冻结调度：恢复（出冻结段自动恢复 / 用户输入唤醒 / 交互豁免路径不会发出本事件）。
+   * nextChangeAt = 恢复时刻的下一翻转点（工作态 = 下一冻结开始时刻，供前端
+   * 展示「下一段 HH:mm 再冻结」；None = 无未来翻转点，如配置关闭）。
+   */
   case Resumed(nextChangeAt: Option[Long] = None)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
@@ -912,23 +1004,27 @@ enum AgentStreamEvent:
         // #308: model (actual model of this round) is merged last, same style as
         // Done's withModel — absent when None so old payloads stay byte-stable.
         if isSubagent then
-          Json.obj(
-            "type" -> "usageUpdate".asJson,
-            "sessionId" -> sessionId.asJson,
-            "nodeSessionId" -> sessionId.asJson,
-            "inputTokens" -> inputTokens.asJson,
-            "contextWindow" -> contextWindow.asJson,
-            "compactThreshold" -> compactThreshold.asJson
-          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+          Json
+            .obj(
+              "type" -> "usageUpdate".asJson,
+              "sessionId" -> sessionId.asJson,
+              "nodeSessionId" -> sessionId.asJson,
+              "inputTokens" -> inputTokens.asJson,
+              "contextWindow" -> contextWindow.asJson,
+              "compactThreshold" -> compactThreshold.asJson
+            )
+            .deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
             .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
         else
-          Json.obj(
-            "type" -> "usageUpdate".asJson,
-            "sessionId" -> sessionId.asJson,
-            "inputTokens" -> inputTokens.asJson,
-            "contextWindow" -> contextWindow.asJson,
-            "compactThreshold" -> compactThreshold.asJson
-          ).deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
+          Json
+            .obj(
+              "type" -> "usageUpdate".asJson,
+              "sessionId" -> sessionId.asJson,
+              "inputTokens" -> inputTokens.asJson,
+              "contextWindow" -> contextWindow.asJson,
+              "compactThreshold" -> compactThreshold.asJson
+            )
+            .deepMerge(outputTokens.fold(Json.obj())(ot => Json.obj("outputTokens" -> ot.asJson)))
             .deepMerge(model.fold(Json.obj())(m => Json.obj("model" -> m.asJson)))
       case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
@@ -1008,15 +1104,16 @@ enum AgentStreamEvent:
         val withResume = resumeAtMillis.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("resumeAt" -> t.asJson)))
         // reason 缺省='schedule'（默认参数），旧前端/旧后端双向兼容；错误族前端按 reason 区分两族视觉
         val reasonStr = reason match
-          case FreezeReason.Schedule        => "schedule"
-          case FreezeReason.LlmTransient    => "llm-transient"
-          case FreezeReason.Network         => "network"
-          case FreezeReason.ProviderDown    => "provider-down"
+          case FreezeReason.Schedule => "schedule"
+          case FreezeReason.LlmTransient => "llm-transient"
+          case FreezeReason.Network => "network"
+          case FreezeReason.ProviderDown => "provider-down"
           case FreezeReason.RestartRecovery => "restart-recovery"
-          case FreezeReason.Loop            => "loop"
+          case FreezeReason.Loop => "loop"
         val withReason = withResume.deepMerge(Json.obj("reason" -> reasonStr.asJson))
         val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
-        val withRetry = if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
+        val withRetry =
+          if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
         escalation.fold(withRetry)(e =>
           withRetry.deepMerge(
             Json.obj(
@@ -1034,8 +1131,7 @@ enum AgentStreamEvent:
           else Json.obj("type" -> "resumed".asJson, "sessionId" -> sessionId.asJson)
         // 解冻显式布尔 + 下一翻转点（None 省略，旧载荷 byte-stable）
         val withFrozen = base.deepMerge(Json.obj("frozen" -> false.asJson))
-        nextChangeAt.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("nextChangeAt" -> t.asJson)))
-      )
+        nextChangeAt.fold(withFrozen)(t => withFrozen.deepMerge(Json.obj("nextChangeAt" -> t.asJson))))
   end toJson
 end AgentStreamEvent
 
@@ -1057,11 +1153,13 @@ case class AgentError(
   errorType: AgentErrorType,
   message: String,
   cause: Option[AgentError] = None,
-  /** Flow-node supervision P2 (2026-08-26): agent-turn-level retryability of
-    * the failure (single source AgentActor.llmFailureRetryable). None =
-    * legacy/unset (treated as not retryable by consumers). Lets the flow
-    * executor distinguish "LLM stall, checkpoint-restart may heal it" from
-    * hard failures without string-matching error messages. */
+  /**
+   * Flow-node supervision P2 (2026-08-26): agent-turn-level retryability of
+   * the failure (single source AgentActor.llmFailureRetryable). None =
+   * legacy/unset (treated as not retryable by consumers). Lets the flow
+   * executor distinguish "LLM stall, checkpoint-restart may heal it" from
+   * hard failures without string-matching error messages.
+   */
   retryable: Option[Boolean] = None
 )
 
@@ -1069,6 +1167,7 @@ enum AgentStatus:
   case Idle
   case Processing
   case WaitingForUser
+
   /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
   case Frozen
   case Error(msg: String)
@@ -1097,14 +1196,18 @@ case class CompactionJob(
 
 case class TurnContext(
   agentDef: AgentDef,
-  /** 阶段 2 批 A（2026-09）systemPrefix 整层退役——恒空串；字段保留至阶段 3
-    * 随 TurnContext 清理一并移除（PromptSections.assembleSystemPrompt 的
-    * prefix 参数已同批删除，稳定首段 = agent system.md）。 */
+  /**
+   * 阶段 2 批 A（2026-09）systemPrefix 整层退役——恒空串；字段保留至阶段 3
+   * 随 TurnContext 清理一并移除（PromptSections.assembleSystemPrompt 的
+   * prefix 参数已同批删除，稳定首段 = agent system.md）。
+   */
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
-  /** §E.2: workspace-root AGENTS.md（每 turn 重读盘；仅 project 会话，gating 见
-    * ContextRefresher.agentsMdEnabledFor）。默认 None 保构造点兼容。 */
+  /**
+   * §E.2: workspace-root AGENTS.md（每 turn 重读盘；仅 project 会话，gating 见
+   * ContextRefresher.agentsMdEnabledFor）。默认 None 保构造点兼容。
+   */
   agentsMd: Option[String] = None,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
@@ -1128,8 +1231,10 @@ case class SessionContext(
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
-  /** §E.2: workspace-root AGENTS.md spawn 快照（消费权威在 refreshTurn 每 turn
-    * 重读盘的 TurnContext.agentsMd）。默认 None 保序列化/构造点兼容。 */
+  /**
+   * §E.2: workspace-root AGENTS.md spawn 快照（消费权威在 refreshTurn 每 turn
+   * 重读盘的 TurnContext.agentsMd）。默认 None 保序列化/构造点兼容。
+   */
   agentsMd: Option[String] = None,
   folderId: Option[String] = None,
   chatWidth: Int = 0,
@@ -1152,51 +1257,59 @@ case class SessionContext(
   expectsMail: Boolean = false,
   /** Total mail turns completed in this session. */
   mailTurnCount: Int = 0,
-  /** 阶段 2a 沙箱会话开关（§A.6/H-5①）：true 时 AgentCore 从 projectRoot 派生
-    * ToolContext.sandbox（root=worktree 或 workspace；分发器=project workspace）。
-    * 置位点 = project 节点（NodeEngine）与分发器（ProjectActor）spawn，以及
-    * Nebula 根会话（WebSocketRoutes，2026-09-05 裁定）；team/flow/Delegate 等双轨
-    * 会话默认 false=旧行为（§A.7，双轨期不动旧体系）。
-    * 边界（[沙箱拆围栏批 S1, 2026-09-10]）：本字段自本批起**只承载「围栏总闸」**
-    * ——root 推导 + 闸门开关；「是否项目作用域会话」由 projectSession 独立承载
-    * （AGENTS.md 注入判据），两信号不再互为代名词。 */
+  /**
+   * 阶段 2a 沙箱会话开关（§A.6/H-5①）：true 时 AgentCore 从 projectRoot 派生
+   * ToolContext.sandbox（root=worktree 或 workspace；分发器=project workspace）。
+   * 置位点 = project 节点（NodeEngine）与分发器（ProjectActor）spawn，以及
+   * Nebula 根会话（WebSocketRoutes，2026-09-05 裁定）；team/flow/Delegate 等双轨
+   * 会话默认 false=旧行为（§A.7，双轨期不动旧体系）。
+   * 边界（[沙箱拆围栏批 S1, 2026-09-10]）：本字段自本批起**只承载「围栏总闸」**
+   * ——root 推导 + 闸门开关；「是否项目作用域会话」由 projectSession 独立承载
+   * （AGENTS.md 注入判据），两信号不再互为代名词。
+   */
   sandboxEnabled: Boolean = false,
-  /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
-    * NodeEngine spawn 点传入项目工作区根，worktree 节点沙箱 root 收敛为工作区
-    * 根而非 worktree 目录自身（主仓 .git/worktrees/<name>/ 元数据可直写，git
-    * commit 走通）；节点 cwd / projectRoot 工具语义不动，只放宽写边界。None =
-    * 沿用 projectRoot 推导（分发器/未接线节点旧行为逐字节不变）。推导权威在
-    * SandboxPolicy.sessionRoot。 */
+  /**
+   * 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+   * NodeEngine spawn 点传入项目工作区根，worktree 节点沙箱 root 收敛为工作区
+   * 根而非 worktree 目录自身（主仓 .git/worktrees/<name>/ 元数据可直写，git
+   * commit 走通）；节点 cwd / projectRoot 工具语义不动，只放宽写边界。None =
+   * 沿用 projectRoot 推导（分发器/未接线节点旧行为逐字节不变）。推导权威在
+   * SandboxPolicy.sessionRoot。
+   */
   sandboxRoot: Option[String] = None,
-  /** **会话初始 cwd 信号**（B5 缺口② · 作者 2026-09-17 M-1 裁定「会话启动即 `cd`
-    * 座椅」，选项①）：Some = 该会话的 shell 初 cwd（**座椅路径**，worktree 节点的
-    * `<ws>/.nebflow/worktrees/<name>`）；None = 无座椅信号 ⇒ 旧行为（初 cwd = 沙箱根
-    * = 工作区根，逐字节不变）。
-    *
-    * 与 [[sandboxRoot]] **分道**：sandboxRoot 是**围栏面**（2026-09-05 21:05 作者裁定
-    * 的写边界——本批不动它，root 仍 = 工作区根，不推翻该裁定）；本字段只是**会话 cwd
-    * 面**：围栏不窄、cwd 落到座椅，提示词「worktree 节点 = worktree 根」由此从承诺变成
-    * 机制。非 worktree 节点两值同源（projectRoot = 工作区根 = 沙箱根）⇒ 行为无差别。
-    *
-    * 🔴 **fail-closed**（作者明示接受该新失败面）：座椅目录缺失 ⇒ 该会话的 Bash
-    * **显式失败**（`ShellSession.resolveCwdOrFail` → `InvalidCwdError`），**禁**静默回落
-    * 工作区根——后者正是缺口② 的根因形态（静默降级）。置位点 = NodeEngine 两个 spawn
-    * 点（普通节点 / loop 会话）；分发器 / WS 根会话 / team / flow / Delegate 轨不传
-    * （None ⇒ 零变化）。消费单点 = `BashTool` 的 `initialDir` 推导。 */
+  /**
+   * **会话初始 cwd 信号**（B5 缺口② · 作者 2026-09-17 M-1 裁定「会话启动即 `cd`
+   * 座椅」，选项①）：Some = 该会话的 shell 初 cwd（**座椅路径**，worktree 节点的
+   * `<ws>/.nebflow/worktrees/<name>`）；None = 无座椅信号 ⇒ 旧行为（初 cwd = 沙箱根
+   * = 工作区根，逐字节不变）。
+   *
+   * 与 [[sandboxRoot]] **分道**：sandboxRoot 是**围栏面**（2026-09-05 21:05 作者裁定
+   * 的写边界——本批不动它，root 仍 = 工作区根，不推翻该裁定）；本字段只是**会话 cwd
+   * 面**：围栏不窄、cwd 落到座椅，提示词「worktree 节点 = worktree 根」由此从承诺变成
+   * 机制。非 worktree 节点两值同源（projectRoot = 工作区根 = 沙箱根）⇒ 行为无差别。
+   *
+   * 🔴 **fail-closed**（作者明示接受该新失败面）：座椅目录缺失 ⇒ 该会话的 Bash
+   * **显式失败**（`ShellSession.resolveCwdOrFail` → `InvalidCwdError`），**禁**静默回落
+   * 工作区根——后者正是缺口② 的根因形态（静默降级）。置位点 = NodeEngine 两个 spawn
+   * 点（普通节点 / loop 会话）；分发器 / WS 根会话 / team / flow / Delegate 轨不传
+   * （None ⇒ 零变化）。消费单点 = `BashTool` 的 `initialDir` 推导。
+   */
   sessionCwd: Option[String] = None,
-  /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦，2026-09-10）：true = 本会话属项目
-    * 作用域（project 节点 / 分发器）——项目级契约文件 AGENTS.md 的注入判据
-    * （ContextRefresher.agentsMdEnabledFor）。
-    *
-    * 与 sandboxEnabled 分道的原因：拆围栏批将退役 sandboxEnabled 这一「围栏总闸」
-    * 语义，而 AGENTS.md 注入必须继续生效——继续复用旧信号就会造成「拆围栏顺带
-    * 关掉项目契约注入」的静默回归（design §0 结论 4 / R8 的 h2 禁止项）。判据按
-    * 会话形态（spawn 置位）而非围栏开关置位，两者生命周期就此解耦。
-    *
-    * 置位点（call site 口径 3 处）：NodeEngine 节点 spawn ×2（普通节点 / loop
-    * worker·verify）+ ProjectActor 分发器 spawn ×1；WebSocketRoutes 的 WS 根会话
-    * （含 Nebula）保持 false——AGENTS.md 接收面 = project 分发器 + 节点会话不变。
-    * 详见 design §4.4 S1 / §7 交下游纪律 1。 */
+  /**
+   * 项目会话信号（沙箱拆围栏批 S1/R8 解耦，2026-09-10）：true = 本会话属项目
+   * 作用域（project 节点 / 分发器）——项目级契约文件 AGENTS.md 的注入判据
+   * （ContextRefresher.agentsMdEnabledFor）。
+   *
+   * 与 sandboxEnabled 分道的原因：拆围栏批将退役 sandboxEnabled 这一「围栏总闸」
+   * 语义，而 AGENTS.md 注入必须继续生效——继续复用旧信号就会造成「拆围栏顺带
+   * 关掉项目契约注入」的静默回归（design §0 结论 4 / R8 的 h2 禁止项）。判据按
+   * 会话形态（spawn 置位）而非围栏开关置位，两者生命周期就此解耦。
+   *
+   * 置位点（call site 口径 3 处）：NodeEngine 节点 spawn ×2（普通节点 / loop
+   * worker·verify）+ ProjectActor 分发器 spawn ×1；WebSocketRoutes 的 WS 根会话
+   * （含 Nebula）保持 false——AGENTS.md 接收面 = project 分发器 + 节点会话不变。
+   * 详见 design §4.4 S1 / §7 交下游纪律 1。
+   */
   projectSession: Boolean = false,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
@@ -1223,38 +1336,48 @@ case class SessionContext(
    * nebflow.json 后下个 turn 生效，无需重启或 respawn。
    */
   userFacingNode: Boolean = false,
-  /** Project 任务板身份（TaskBoard 批 2 接线，规格 §1d）：flowNodeId = project 节点
-    * 会话的 NodeDef.id（NodeEngine spawn 点置位）；isDispatcher = 分发器会话标记
-    * （ProjectActor spawn 点置位）。经 AgentCore 透传进 ToolContext——TaskBoard
-    * 工具的引擎侧身份判定来源（不信客户端参数）。两字段皆空 = 非项目会话
-    * （Nebula/team/flow 双轨/REST）→ 工具未挂载 + 工具内拒绝，双保险不可达。 */
+  /**
+   * Project 任务板身份（TaskBoard 批 2 接线，规格 §1d）：flowNodeId = project 节点
+   * 会话的 NodeDef.id（NodeEngine spawn 点置位）；isDispatcher = 分发器会话标记
+   * （ProjectActor spawn 点置位）。经 AgentCore 透传进 ToolContext——TaskBoard
+   * 工具的引擎侧身份判定来源（不信客户端参数）。两字段皆空 = 非项目会话
+   * （Nebula/team/flow 双轨/REST）→ 工具未挂载 + 工具内拒绝，双保险不可达。
+   */
   flowNodeId: Option[String] = None,
   isDispatcher: Boolean = false,
-  /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
-    * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。NodeEngine 节点 spawn
-    * 点从 `NodeDef.role` 置位 → 经 AgentCore 透传进 `ToolContext.flowNodeRole`
-    * ——`node_report` 值域按角色分化的判据来源（错误码
-    * `NODE_REPORT_CATEGORY_ROLE`）；同时驱动 `ProtocolFootnote` 的角色分支注入。
-    * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
-    * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。 */
+  /**
+   * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：本节点会话所属
+   * `NodeDef.role`（`task` | `verifier`，见 `NodeRoles`）。NodeEngine 节点 spawn
+   * 点从 `NodeDef.role` 置位 → 经 AgentCore 透传进 `ToolContext.flowNodeRole`
+   * ——`node_report` 值域按角色分化的判据来源（错误码
+   * `NODE_REPORT_CATEGORY_ROLE`）；同时驱动 `ProtocolFootnote` 的角色分支注入。
+   * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
+   * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。
+   */
   flowNodeRole: Option[String] = None,
-  /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
-    * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
-    * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
-    * resolveProject fallback 链）在节点会话内也生效。None = 非项目会话。 */
+  /**
+   * 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
+   * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
+   * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
+   * resolveProject fallback 链）在节点会话内也生效。None = 非项目会话。
+   */
   projectName: Option[String] = None,
-  /** 节点人类可读名（D6 批 F1 G9 路径 a：spawn 置位随路注入，spec §3.3）——
-    * NodeEngine 置 node.name（loop worker/verify 同属该 loop 节点名）；
-    * AskUser payload 的 nodeName 字段来源（badge「project · nodeName」归因）。
-    * None = 非项目节点会话（Nebula/分发器/REPL——分发器由 isDispatcher 标注）。 */
+  /**
+   * 节点人类可读名（D6 批 F1 G9 路径 a：spawn 置位随路注入，spec §3.3）——
+   * NodeEngine 置 node.name（loop worker/verify 同属该 loop 节点名）；
+   * AskUser payload 的 nodeName 字段来源（badge「project · nodeName」归因）。
+   * None = 非项目节点会话（Nebula/分发器/REPL——分发器由 isDispatcher 标注）。
+   */
   flowNodeName: Option[String] = None,
-  /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 2）：本节点
-    * 所属链 id（NodeEngine 节点 spawn 时经 FlowMapStore.chainIdOf 判据单点取
-    * spawn 时刻快照注入；分量成员数 ≥2 才带值）。经 AgentCore 透传
-    * ToolContext.flowChainId——节点在过程文档**文件名尾段**写链归属 `__<chainId>`
-    * 的值来源（正文零元数据头；2026-09-11 作者裁定 R-3）。
-    * 分发器/非项目会话/孤立单节点分量 = None（分发器口径显式化见 ProjectActor
-    * spawn 点）。快照语义见 ToolContext.flowChainId 注释。 */
+  /**
+   * 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 2）：本节点
+   * 所属链 id（NodeEngine 节点 spawn 时经 FlowMapStore.chainIdOf 判据单点取
+   * spawn 时刻快照注入；分量成员数 ≥2 才带值）。经 AgentCore 透传
+   * ToolContext.flowChainId——节点在过程文档**文件名尾段**写链归属 `__<chainId>`
+   * 的值来源（正文零元数据头；2026-09-11 作者裁定 R-3）。
+   * 分发器/非项目会话/孤立单节点分量 = None（分发器口径显式化见 ProjectActor
+   * spawn 点）。快照语义见 ToolContext.flowChainId 注释。
+   */
   flowChainId: Option[String] = None,
   /**
    * D11 交互豁免（freeze-schedule spec v1.1）：用户在场等待的交互会话
@@ -1263,21 +1386,23 @@ case class SessionContext(
    * gate 内的 askMode.isDefined 检查，不经此字段。
    */
   freezeExempt: Boolean = false,
-  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A；作者卡答逐字
-    * 「按方案A实施」+「上限90%，下限不得小于当前上下文用量而且大于15%」）。
-    *
-    * 语义 = 「有会话覆盖用覆盖，无覆盖走现值函数」——判定/上报一律经
-    * [[CompactThresholdOverride.effectiveThreshold]] / `effectiveRatio`，
-    * `None`（默认）分支逐字等于 `CompactThreshold.threshold(contextWindow)`
-    * （口径②承重钉，`CompactThreshold.scala` 本批零改动）。
-    *
-    * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
-    * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
-    * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
-    * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
-    * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
-    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`。 */
+  /**
+   * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A；作者卡答逐字
+   * 「按方案A实施」+「上限90%，下限不得小于当前上下文用量而且大于15%」）。
+   *
+   * 语义 = 「有会话覆盖用覆盖，无覆盖走现值函数」——判定/上报一律经
+   * [[CompactThresholdOverride.effectiveThreshold]] / `effectiveRatio`，
+   * `None`（默认）分支逐字等于 `CompactThreshold.threshold(contextWindow)`
+   * （口径②承重钉，`CompactThreshold.scala` 本批零改动）。
+   *
+   * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
+   * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
+   * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
+   * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
+   * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
+   * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
+   * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`。
+   */
   compactThresholdRatio: Option[Double] = None
 )
 
@@ -1393,6 +1518,7 @@ case class ExecutionContext(
 
 /** P0 阶段 3：touch turn 活动戳（幂等——仅更新时间戳，不改变其他状态）。 */
 extension (e: ExecutionContext)
+
   def touchActivity(now: Long = System.currentTimeMillis()): ExecutionContext =
     e.copy(lastActivityMs = now)
 
@@ -1441,16 +1567,20 @@ case class SystemStableSnapshot(
   sessions: String = "",
   language: Option[String] = None,
   envInfo: String = "",
-  /** Mounted-project list body at systemStable build time (cache v2 change
-    * detection). Only populated for the root Nebula agent; "" for others. */
+  /**
+   * Mounted-project list body at systemStable build time (cache v2 change
+   * detection). Only populated for the root Nebula agent; "" for others.
+   */
   mountedProjects: String = "",
-  /** Rendered `# Plugin Catalog` section the session was last TOLD about
-    * (plugins-live 批 2026-09-12 change detection). Dispatcher sessions only:
-    * ProjectActor injects the catalog into the session's first message at spawn,
-    * so this field starts as that snapshot and is advanced by AgentCore whenever a
-    * plugin-surface reminder is actually emitted (trust/enabled change) — the
-    * reminder is the only refresh path for an open session. "" = no plugin face
-    * in context (non-dispatcher sessions). */
+  /**
+   * Rendered `# Plugin Catalog` section the session was last TOLD about
+   * (plugins-live 批 2026-09-12 change detection). Dispatcher sessions only:
+   * ProjectActor injects the catalog into the session's first message at spawn,
+   * so this field starts as that snapshot and is advanced by AgentCore whenever a
+   * plugin-surface reminder is actually emitted (trust/enabled change) — the
+   * reminder is the only refresh path for an open session. "" = no plugin face
+   * in context (non-dispatcher sessions).
+   */
   pluginCatalog: String = ""
 )
 
@@ -1474,15 +1604,19 @@ case class AgentState(
   cachedSystemStable: Option[String],
   /** Dynamic values at the time systemStable was last built (change detection). */
   stableSnapshot: Option[SystemStableSnapshot],
-  /** Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
-    * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。 */
+  /**
+   * Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
+   * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。
+   */
   loopCounters: nebflow.core.processor.LoopGuard.Counters,
-  /** Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
-    * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
-    * 续跑不递增）。LoopGuard 的 turnKey 来源——currentTurnId 是每次 LLM
-    * dispatch 都 +1 的序号（wiring 实证），不能当 turn 身份用。
-    * （默认值只在 object AgentState.apply 提供——case class 字段带默认会与
-    * 自定义 apply 的全默认参数形成重载冲突。） */
+  /**
+   * Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
+   * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
+   * 续跑不递增）。LoopGuard 的 turnKey 来源——currentTurnId 是每次 LLM
+   * dispatch 都 +1 的序号（wiring 实证），不能当 turn 身份用。
+   * （默认值只在 object AgentState.apply 提供——case class 字段带默认会与
+   * 自定义 apply 的全默认参数形成重载冲突。）
+   */
   loopTurnKey: Long
 )
 
@@ -1527,15 +1661,21 @@ object AgentState:
     flowChainId: Option[String] = None,
     sandboxEnabled: Boolean = false,
     sandboxRoot: Option[String] = None,
-    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：spawn 侧
-      * 置位，见 SessionContext.sessionCwd。默认 None = 旧行为（初 cwd = 沙箱根）。 */
+    /**
+     * **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：spawn 侧
+     * 置位，见 SessionContext.sessionCwd。默认 None = 旧行为（初 cwd = 沙箱根）。
+     */
     sessionCwd: Option[String] = None,
-    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：spawn 侧置位，见
-      * SessionContext.projectSession。默认 false = 非项目会话（WS 根会话 /
-      * team / flow / Delegate / SubTask 双轨面）语义与旧行为逐字节不变。 */
+    /**
+     * 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：spawn 侧置位，见
+     * SessionContext.projectSession。默认 false = 非项目会话（WS 根会话 /
+     * team / flow / Delegate / SubTask 双轨面）语义与旧行为逐字节不变。
+     */
     projectSession: Boolean = false,
-    /** ctxthresh 批：会话级压缩阈值比例覆盖（详见 SessionContext.compactThresholdRatio）。
-      * 默认 None = 无覆盖 ⇒ 走现值函数（除 root spawn 外**所有**构造点零改动）。 */
+    /**
+     * ctxthresh 批：会话级压缩阈值比例覆盖（详见 SessionContext.compactThresholdRatio）。
+     * 默认 None = 无覆盖 ⇒ 走现值函数（除 root spawn 外**所有**构造点零改动）。
+     */
     compactThresholdRatio: Option[Double] = None,
     loopTurnKey: Long = 0L
   ): AgentState =
@@ -1588,12 +1728,15 @@ object AgentState:
 end AgentState
 
 extension (s: AgentState)
+
   def withLoopCounters(c: nebflow.core.processor.LoopGuard.Counters): AgentState =
     s.copy(loopCounters = c)
 
-  /** Block 3：turn 纪元 +1——真实 turn 开始的 dispatch 点调用
-    *（UserInput/ExternalEvent 唤醒/Mail 激活/冻结唤醒/队列 drain）；
-    * ToolsComplete 续轮、retry、save/compact 续跑不递增。 */
+  /**
+   * Block 3：turn 纪元 +1——真实 turn 开始的 dispatch 点调用
+   * （UserInput/ExternalEvent 唤醒/Mail 激活/冻结唤醒/队列 drain）；
+   * ToolsComplete 续轮、retry、save/compact 续跑不递增。
+   */
   def withNextLoopTurn: AgentState =
     s.copy(loopTurnKey = s.loopTurnKey + 1)
 
@@ -1667,6 +1810,8 @@ object CompactThresholdOverride:
   def effectiveRatio(contextWindow: Int, overrideRatio: Option[Double]): Double =
     overrideRatio.getOrElse(CompactThreshold.thresholdRatio(contextWindow))
 
+end CompactThresholdOverride
+
 extension (s: AgentState)
   def messages: List[Message] = s.execution.messages
   def status: AgentStatus = s.execution.status
@@ -1697,11 +1842,17 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def sandboxEnabled: Boolean = s.session.sandboxEnabled
   def sandboxRoot: Option[String] = s.session.sandboxRoot
-  /** **会话初始 cwd**（B5 缺口② · M-1 裁定）：见 SessionContext.sessionCwd。
-    * 消费单点 = AgentCore → ToolContext.sessionCwd → BashTool.initialDir。 */
+
+  /**
+   * **会话初始 cwd**（B5 缺口② · M-1 裁定）：见 SessionContext.sessionCwd。
+   * 消费单点 = AgentCore → ToolContext.sessionCwd → BashTool.initialDir。
+   */
   def sessionCwd: Option[String] = s.session.sessionCwd
-  /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：AGENTS.md 注入判据的来源，见
-    * SessionContext.projectSession。 */
+
+  /**
+   * 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：AGENTS.md 注入判据的来源，见
+   * SessionContext.projectSession。
+   */
   def projectSession: Boolean = s.session.projectSession
   def rulesMd: Option[String] = s.session.rulesMd
   def agentsMd: Option[String] = s.session.agentsMd
@@ -1717,6 +1868,7 @@ extension (s: AgentState)
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
   def flowNodeName: Option[String] = s.session.flowNodeName
+
   /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */
   def flowChainId: Option[String] = s.session.flowChainId
 
@@ -1765,21 +1917,27 @@ extension (s: AgentState)
   /** ctxthresh 批：本会话的阈值比例覆盖（`None` = 无覆盖 ⇒ 走现值函数）。 */
   def compactThresholdRatioOverride: Option[Double] = s.session.compactThresholdRatio
 
-  /** ctxthresh 批：热更入口（[[AgentCommand.SetCompactThresholdRatio]] 的三个
-    * behavior 分支都用它；`None` = 清除覆盖）。 */
+  /**
+   * ctxthresh 批：热更入口（[[AgentCommand.SetCompactThresholdRatio]] 的三个
+   * behavior 分支都用它；`None` = 清除覆盖）。
+   */
   def withCompactThresholdRatio(ratio: Option[Double]): AgentState =
     s.copy(session = s.session.copy(compactThresholdRatio = ratio))
 
-  /** ctxthresh 批：**生效门限**（绝对 token）——判定点唯一读数。
-    *
-    * 有覆盖 ⇒ `(contextWindow × r).toInt`；无覆盖 ⇒ `CompactThreshold.threshold(window)`
-    * **逐字**（口径②承重钉：`CompactThreshold.scala` 零改动，diff 反证）。 */
+  /**
+   * ctxthresh 批：**生效门限**（绝对 token）——判定点唯一读数。
+   *
+   * 有覆盖 ⇒ `(contextWindow × r).toInt`；无覆盖 ⇒ `CompactThreshold.threshold(window)`
+   * **逐字**（口径②承重钉：`CompactThreshold.scala` 零改动，diff 反证）。
+   */
   def compactThresholdTokens: Int =
     CompactThresholdOverride.effectiveThreshold(s.session.contextWindow, s.session.compactThresholdRatio)
 
-  /** ctxthresh 批：生效比例（wire 上报 / UI 回显：`Done` / `UsageUpdate` /
-    * `CompactStart` 的 `compactThreshold` 字段统一取它，保证「判定面」与
-    * 「上报面」同源——否则面板显示的阈值与真正触发压缩的门限会脱节）。 */
+  /**
+   * ctxthresh 批：生效比例（wire 上报 / UI 回显：`Done` / `UsageUpdate` /
+   * `CompactStart` 的 `compactThreshold` 字段统一取它，保证「判定面」与
+   * 「上报面」同源——否则面板显示的阈值与真正触发压缩的门限会脱节）。
+   */
   def effectiveCompactThresholdRatio: Double =
     CompactThresholdOverride.effectiveRatio(s.session.contextWindow, s.session.compactThresholdRatio)
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
@@ -1839,12 +1997,14 @@ extension (s: AgentState)
   def invalidateSystemStableCache: AgentState =
     s.copy(cachedSystemStable = None, stableSnapshot = None)
 
-  /** Advance ONLY the plugin-catalog baseline of the current snapshot (plugins-live
-    * 批 2026-09-12): called when a plugin-surface reminder was actually emitted, so
-    * the next turn compares against the value the session has just been told. The
-    * other snapshot fields keep their systemStable-era values (their own delta
-    * channels must not be reset). No snapshot at all ⇒ no-op — the baseline then
-    * falls back to the current render inside the change detection (no reminder). */
+  /**
+   * Advance ONLY the plugin-catalog baseline of the current snapshot (plugins-live
+   * 批 2026-09-12): called when a plugin-surface reminder was actually emitted, so
+   * the next turn compares against the value the session has just been told. The
+   * other snapshot fields keep their systemStable-era values (their own delta
+   * channels must not be reset). No snapshot at all ⇒ no-op — the baseline then
+   * falls back to the current render inside the change detection (no reminder).
+   */
   def withPluginSurfaceBaseline(catalog: String): AgentState =
     s.copy(stableSnapshot = s.stableSnapshot.map(_.copy(pluginCatalog = catalog)))
 
@@ -1877,27 +2037,35 @@ extension (s: AgentState)
     case _ => s
 
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
-    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId)
-      // Sub-agent barrier: already-received results held for batch delivery are
-      // still due to the agent — survive the reset (the workers keep running).
-      .copy(pendingEvents = s.execution.pendingEvents,
-            outstandingSubagentResults = s.execution.outstandingSubagentResults,
-            // #25: a parked completion notification is still owed — the
-            // supervisor/bridge is still waiting for the final answer.
-            owedCompletion = s.execution.owedCompletion))
+    s.copy(execution =
+      ExecutionContext
+        .idle(messages, turnIdx, s.execution.currentTurnId)
+        // Sub-agent barrier: already-received results held for batch delivery are
+        // still due to the agent — survive the reset (the workers keep running).
+        .copy(
+          pendingEvents = s.execution.pendingEvents,
+          outstandingSubagentResults = s.execution.outstandingSubagentResults,
+          // #25: a parked completion notification is still owed — the
+          // supervisor/bridge is still waiting for the final answer.
+          owedCompletion = s.execution.owedCompletion
+        )
+    )
 
   def resetForInterrupt: AgentState = s.copy(
-    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
+    execution = ExecutionContext
+      .idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId)
       // Sub-agent barrier: held results survive an interrupt — they are still due.
-      .copy(pendingEvents = s.execution.pendingEvents,
-            outstandingSubagentResults = s.execution.outstandingSubagentResults,
-            // #25: parked completion debt survives an interrupt/restart —
-            // the waiting requester is still owed the final answer.
-            owedCompletion = s.execution.owedCompletion,
-            // #13: undelivered immediate inputs (queued Mail) survive
-            // interrupt/restart — they are user-originated work; resetting
-            // them away silently dropped tasks on every restartAgent.
-            pendingImmediateInputs = s.execution.pendingImmediateInputs),
+      .copy(
+        pendingEvents = s.execution.pendingEvents,
+        outstandingSubagentResults = s.execution.outstandingSubagentResults,
+        // #25: parked completion debt survives an interrupt/restart —
+        // the waiting requester is still owed the final answer.
+        owedCompletion = s.execution.owedCompletion,
+        // #13: undelivered immediate inputs (queued Mail) survive
+        // interrupt/restart — they are user-originated work; resetting
+        // them away silently dropped tasks on every restartAgent.
+        pendingImmediateInputs = s.execution.pendingImmediateInputs
+      ),
     compaction = s.compaction.copy(pendingJob = None)
   )
 end extension
@@ -1912,9 +2080,11 @@ case class ConsumeResult(
   thinkingSignature: Option[String] = None,
   model: Option[String] = None,
   contextWindow: Option[Int] = None,
-  /** 当轮 LLM 请求 id（审计 20260903 方案 B）：pipeLlmCall 生成并同时传给
-    * LlmLogWriter（router JSONL 的 request_id）与本字段；工具执行轮经
-    * pipeToolExecutions 流入 ToolContext.requestId，实现工具日志与 router
-    * 日志精确对齐。Retry 重跑同一 cr 时 id 不变（同一 LLM 响应）。 */
+  /**
+   * 当轮 LLM 请求 id（审计 20260903 方案 B）：pipeLlmCall 生成并同时传给
+   * LlmLogWriter（router JSONL 的 request_id）与本字段；工具执行轮经
+   * pipeToolExecutions 流入 ToolContext.requestId，实现工具日志与 router
+   * 日志精确对齐。Retry 重跑同一 cr 时 id 不变（同一 LLM 响应）。
+   */
   requestId: Option[String] = None
 )

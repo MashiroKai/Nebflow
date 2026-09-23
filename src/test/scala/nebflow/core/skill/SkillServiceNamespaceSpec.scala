@@ -77,12 +77,14 @@ class SkillServiceNamespaceSpec extends FunSuite:
     assert(os.exists(skillsDir / "nebflow"))
     assertEquals(SkillService.deleteSkill("../agents").unsafeRunSync(), false, "traversal refused")
     assertEquals(SkillService.deleteSkill("nebflow/ghost").unsafeRunSync(), false, "missing refused")
+
   test("frontmatter governance fields (audience/last_verified/status/replaced_by) are parsed and encoded"):
     writeSkillFile(
       skillsDir / "governed",
       "name: governed\ndescription: Governed skill\naudience: nebflow\nlast_verified: 2026-08-14\nstatus: deprecated\nreplaced_by: nebflow/visual-style"
     )
-    val skill = SkillService.listSkills().unsafeRunSync().find(_.name == "governed").getOrElse(fail("governed not loaded"))
+    val skill =
+      SkillService.listSkills().unsafeRunSync().find(_.name == "governed").getOrElse(fail("governed not loaded"))
     assertEquals(skill.audience, Some("nebflow"))
     assertEquals(skill.lastVerified, Some("2026-08-14"))
     assertEquals(skill.status, Some("deprecated"))

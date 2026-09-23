@@ -75,8 +75,10 @@ object GracefulInterruptHook:
   ):
     def flippedCount: Int = flipped.size
 
-  /** 钩子执行体（JVM 关机钩子线程内同步跑）。`timeoutMs` 默认取
-    * `Defaults.ShutdownInterruptTimeoutMs`（唯一取值点）；测试传注入值验证降级路径。 */
+  /**
+   * 钩子执行体（JVM 关机钩子线程内同步跑）。`timeoutMs` 默认取
+   * `Defaults.ShutdownInterruptTimeoutMs`（唯一取值点）；测试传注入值验证降级路径。
+   */
   def run(timeoutMs: Long = Defaults.ShutdownInterruptTimeoutMs): Unit =
     if !Defaults.ShutdownInterruptEnabled then
       // 回滚形态：无翻态、无守卫、无 draining——只有本批前既有的 abort 在飞 LLM。
@@ -89,11 +91,13 @@ object GracefulInterruptHook:
           case Report(flipped, remaining, timedOut) =>
             if flipped.nonEmpty then
               logger.warn(
-                s"graceful shutdown: ${flipped.size} running node(s) marked interrupted (non-terminal — boot recovery will resume them): ${flipped.mkString(",")}")
+                s"graceful shutdown: ${flipped.size} running node(s) marked interrupted (non-terminal — boot recovery will resume them): ${flipped.mkString(",")}"
+              )
             if timedOut then
               logger.warn(
                 s"graceful shutdown: interrupt sweep timed out after ${timeoutMs}ms — ${remaining.size} node(s) left Running " +
-                  s"(they fall back to the kill -9 style boot sweep path): ${remaining.mkString(",")}")
+                  s"(they fall back to the kill -9 style boot sweep path): ${remaining.mkString(",")}"
+              )
       catch
         case e: Throwable =>
           logger.warn(s"graceful shutdown: interrupt sweep failed: ${Option(e.getMessage).getOrElse(e.toString)}")
@@ -101,39 +105,49 @@ object GracefulInterruptHook:
         // token 燃烧防线（2026-08-19 P0）：原样保留，顺序恒在翻态之后。
         LlmInterface.cancelAllInflightSync()
 
-  /** 停机留痕（hostresume 批 2026-09-22，设计卡 §4 #7，C2 双向 fail-soft 之写半边）：
-    * `beginDraining` 后 fail-soft 写 `<dataRoot>/shutdown-marker.json`（kind=graceful）——
-    * 下次 boot 由 `BootDispatcherWake.readShutdownMarker` /
-    * `ProjectCrashRecovery.annotateShutdownCause` 读之区分「优雅停机」与「断电/kill-9/
-    * 崩溃」（取证开放项①「信号来源无留痕」的闭环写点）。写失败只 WARN、绝不阻断关机
-    * 钩子（后果 = 下次 boot 推断 unclean——保守方向、可接受）。回滚形态
-    * （`Defaults.ShutdownInterruptEnabled=false`）不经过本方法 = 零写点（逐字节现状）。
-    * 钩子序保持「顺序即正确性」原样：本写点在 draining 置位后、翻态前，失败不影响任何
-    * 既有步骤。 */
+  /**
+   * 停机留痕（hostresume 批 2026-09-22，设计卡 §4 #7，C2 双向 fail-soft 之写半边）：
+   * `beginDraining` 后 fail-soft 写 `<dataRoot>/shutdown-marker.json`（kind=graceful）——
+   * 下次 boot 由 `BootDispatcherWake.readShutdownMarker` /
+   * `ProjectCrashRecovery.annotateShutdownCause` 读之区分「优雅停机」与「断电/kill-9/
+   * 崩溃」（取证开放项①「信号来源无留痕」的闭环写点）。写失败只 WARN、绝不阻断关机
+   * 钩子（后果 = 下次 boot 推断 unclean——保守方向、可接受）。回滚形态
+   * （`Defaults.ShutdownInterruptEnabled=false`）不经过本方法 = 零写点（逐字节现状）。
+   * 钩子序保持「顺序即正确性」原样：本写点在 draining 置位后、翻态前，失败不影响任何
+   * 既有步骤。
+   */
   private def writeShutdownMarker(): Unit =
     try
       val m = BootDispatcherWake.ShutdownMarker(
-        v = 1, kind = "graceful", at = System.currentTimeMillis(),
-        bootId = BootDispatcherWake.instanceId, cause = "SIGINT/SIGTERM")
+        v = 1,
+        kind = "graceful",
+        at = System.currentTimeMillis(),
+        bootId = BootDispatcherWake.instanceId,
+        cause = "SIGINT/SIGTERM"
+      )
       AtomicJson
         .write(BootDispatcherWake.shutdownMarkerPath, m.asJson.noSpaces)
         .unsafeRunSync()(using global)
       logger.info(s"shutdown marker written (kind=graceful at=${m.at} boot=${m.bootId})")
     catch
       case e: Throwable =>
-        logger.warn(s"shutdown marker write failed (fail-soft; next boot infers unclean): " +
-          s"${Option(e.getMessage).getOrElse(e.toString)}")
+        logger.warn(
+          s"shutdown marker write failed (fail-soft; next boot infers unclean): " +
+            s"${Option(e.getMessage).getOrElse(e.toString)}"
+        )
 
-  /** 翻态主体（IO 形态，可测）：遍历全部已挂载项目的 Running 节点逐个 CAS。
-    *
-    * deadline 语义：`clock()` ≥ deadline 即放弃剩余节点（记入 `remaining` 并置
-    * `timedOut`）——**降级路径**（残余 Running 由 boot sweep 认领，行为安全降级）。
-    * `timeoutMs = 0` ⇒ 全部节点直接降级（测试的确定性入口）。
-    *
-    * 逐节点 fresh 守卫（R2 纪律）：`Running → Interrupted` 单事务 CAS；节点已终态 /
-    * 已翻转 / 消失 ⇒ 拒写（不覆盖并发终态化，也不重复发事件）。本批不改任何其他字段：
-    * `sessionRef`（恢复依据）与 `deliveredTo`（in-barrier 已收投递）原样保留，`result`
-    * 不写（无失败事实），TTL 不写（无 TTL 写点 ⇒ 永不自动归档）。 */
+  /**
+   * 翻态主体（IO 形态，可测）：遍历全部已挂载项目的 Running 节点逐个 CAS。
+   *
+   * deadline 语义：`clock()` ≥ deadline 即放弃剩余节点（记入 `remaining` 并置
+   * `timedOut`）——**降级路径**（残余 Running 由 boot sweep 认领，行为安全降级）。
+   * `timeoutMs = 0` ⇒ 全部节点直接降级（测试的确定性入口）。
+   *
+   * 逐节点 fresh 守卫（R2 纪律）：`Running → Interrupted` 单事务 CAS；节点已终态 /
+   * 已翻转 / 消失 ⇒ 拒写（不覆盖并发终态化，也不重复发事件）。本批不改任何其他字段：
+   * `sessionRef`（恢复依据）与 `deliveredTo`（in-barrier 已收投递）原样保留，`result`
+   * 不写（无失败事实），TTL 不写（无 TTL 写点 ⇒ 永不自动归档）。
+   */
   def interruptRunningNodes(
     timeoutMs: Long,
     clock: () => Long = () => System.currentTimeMillis()
@@ -146,12 +160,12 @@ object GracefulInterruptHook:
             val running = snap.nodes.values.filter(_.status == NodeLifecycle.Running).toList.sortBy(_.id)
             running.foldLeft(IO.pure(rep)) { (acc2, node) =>
               acc2.flatMap { r =>
-                if clock() >= deadline then
-                  IO.pure(r.copy(remaining = r.remaining :+ node.id, timedOut = true))
-                else interruptNode(rt, node.id).map {
-                  case true  => r.copy(flipped = r.flipped :+ node.id)
-                  case false => r // CAS 输给并发状态变更（已终态化/已翻转）——既非翻转也非残余
-                }
+                if clock() >= deadline then IO.pure(r.copy(remaining = r.remaining :+ node.id, timedOut = true))
+                else
+                  interruptNode(rt, node.id).map {
+                    case true => r.copy(flipped = r.flipped :+ node.id)
+                    case false => r // CAS 输给并发状态变更（已终态化/已翻转）——既非翻转也非残余
+                  }
               }
             }
           }
@@ -159,31 +173,52 @@ object GracefulInterruptHook:
       }
     }
 
+  end interruptRunningNodes
+
   /** 单节点翻态：`Running → Interrupted`（+ bgWait 清空）+ WS 事件 + 审计留痕。 */
   private def interruptNode(rt: ProjectRuntime, nodeId: String): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
-      rt.store.mutateWithResult { st =>
-        st.nodes.get(nodeId) match
-          case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            (st.copy(nodes = st.nodes.updated(nodeId, fresh.copy(
-              status = NodeLifecycle.Interrupted,
-              // G4 同语义：等待集随进程蒸发（resume prompt 既有死亡告知自动生效）。
-              bgWait = None))), true)
-          case _ => (st, false)
-      }.flatMap { case (s, changed) =>
-        if !changed then IO.pure(false)
-        else
-          s.nodes.get(nodeId).traverse_ { n =>
-            rt.engine.emitUpdated(n) *>
-              FlowMapEventLog.append(rt.project.workspace, rt.project.name, nodeId,
-                NodeEngine.InterruptedEventType,
-                "graceful shutdown: host is draining — node marked interrupted (non-terminal; " +
-                  s"crash recovery will resume it from its checkpoint; startedAt=${n.startedAt.getOrElse(0L)}, " +
-                  s"sessionRef=${n.sessionRef.getOrElse("-")}; cause: SIGINT/SIGTERM on the host)") *>
-              logger.warn(
-                s"Node '${n.name}' ($nodeId) marked interrupted by graceful shutdown (host draining, status now ${NodeLifecycle.Interrupted})")
-          }.as(true)
-      }
+      rt.store
+        .mutateWithResult { st =>
+          st.nodes.get(nodeId) match
+            case Some(fresh) if fresh.status == NodeLifecycle.Running =>
+              (
+                st.copy(nodes =
+                  st.nodes.updated(
+                    nodeId,
+                    fresh.copy(
+                      status = NodeLifecycle.Interrupted,
+                      // G4 同语义：等待集随进程蒸发（resume prompt 既有死亡告知自动生效）。
+                      bgWait = None
+                    )
+                  )
+                ),
+                true
+              )
+            case _ => (st, false)
+        }
+        .flatMap { case (s, changed) =>
+          if !changed then IO.pure(false)
+          else
+            s.nodes
+              .get(nodeId)
+              .traverse_ { n =>
+                rt.engine.emitUpdated(n) *>
+                  FlowMapEventLog.append(
+                    rt.project.workspace,
+                    rt.project.name,
+                    nodeId,
+                    NodeEngine.InterruptedEventType,
+                    "graceful shutdown: host is draining — node marked interrupted (non-terminal; " +
+                      s"crash recovery will resume it from its checkpoint; startedAt=${n.startedAt.getOrElse(0L)}, " +
+                      s"sessionRef=${n.sessionRef.getOrElse("-")}; cause: SIGINT/SIGTERM on the host)"
+                  ) *>
+                  logger.warn(
+                    s"Node '${n.name}' ($nodeId) marked interrupted by graceful shutdown (host draining, status now ${NodeLifecycle.Interrupted})"
+                  )
+              }
+              .as(true)
+        }
     }
 
 end GracefulInterruptHook

@@ -21,21 +21,35 @@ import java.nio.file.Files
 class MemoryQueuePlanSpec extends FunSuite:
 
   private def note(
-      id: String,
-      atMs: Long,
-      target: String,
-      action: String,
-      section: Option[String] = None,
-      matchText: Option[String] = None,
-      content: Option[String] = None
+    id: String,
+    atMs: Long,
+    target: String,
+    action: String,
+    section: Option[String] = None,
+    matchText: Option[String] = None,
+    content: Option[String] = None
   ): MemoryQueue.Note =
-    MemoryQueue.Note(id, atMs, "2026-09-12T00:00:00Z", target, action, section, matchText, content, Some("s"), MemoryQueue.TriggerManual)
+    MemoryQueue.Note(
+      id,
+      atMs,
+      "2026-09-12T00:00:00Z",
+      target,
+      action,
+      section,
+      matchText,
+      content,
+      Some("s"),
+      MemoryQueue.TriggerManual
+    )
 
-  private def stateOf(notes: Vector[MemoryQueue.Note], outcomes: Vector[MemoryQueue.Outcome] = Vector.empty): MemoryQueue.State =
+  private def stateOf(
+    notes: Vector[MemoryQueue.Note],
+    outcomes: Vector[MemoryQueue.Outcome] = Vector.empty
+  ): MemoryQueue.State =
     MemoryQueue.State(notes, outcomes, Set.empty, 0, 0)
 
   private def tf(path: String, content: String): MemoryQueue.TargetFile = MemoryQueue.TargetFile(path, content)
-  private def tfMissing(path: String): MemoryQueue.TargetFile           = MemoryQueue.TargetFile(path, "", exists = false)
+  private def tfMissing(path: String): MemoryQueue.TargetFile = MemoryQueue.TargetFile(path, "", exists = false)
 
   private val userFile = "/tmp/x/User.md"
 
@@ -52,8 +66,7 @@ class MemoryQueuePlanSpec extends FunSuite:
     )
     val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> tf(userFile, content)))
     assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 1, s"只有 q-1 可落: ${plan.items}")
-    assertEquals(plan.authorized.sorted, Vector("q-1", "q-2", "q-3", "q-4", "q-5"),
-      "可落条目 + 只回写裁决的条目都进授权集（后者零文件写）")
+    assertEquals(plan.authorized.sorted, Vector("q-1", "q-2", "q-3", "q-4", "q-5"), "可落条目 + 只回写裁决的条目都进授权集（后者零文件写）")
     assertEquals(plan.deferred, Vector.empty[String], "无预算截断")
     assert(plan.refusal.isEmpty, "有可落条目 ⇒ 闸不拒")
     val byRef = plan.items.map(i => i.ref -> (i.bucket, i.detail)).toMap
@@ -90,7 +103,7 @@ class MemoryQueuePlanSpec extends FunSuite:
     assertEquals(empty.projections.head.projectedBytes, "- [DECISION] 新条\n".getBytes(UTF_8).length.toLong)
     // 缺文件是**通则**（不止项目层）
     val userNotes = Vector(notes.head.copy(target = "user"))
-    val noUser    = MemoryQueue.plan(stateOf(userNotes), Map("user" -> tfMissing(userFile)))
+    val noUser = MemoryQueue.plan(stateOf(userNotes), Map("user" -> tfMissing(userFile)))
     assertEquals(noUser.countOf(MemoryQueue.Bucket.WouldRetry), 1, "任一层文件缺失一律同办")
 
   test("`## ` 前缀在 section/match 参数里可选（与 MemoryNoteTool 归一化同规）"):
@@ -114,17 +127,20 @@ class MemoryQueuePlanSpec extends FunSuite:
     val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> tf(userFile, content)))
     // q-1/q-2 定位到同一行（甲条目）⇒ q-1 superseded；q-3 被 q-4 的 match 命中 ⇒ superseded
     assertEquals(plan.items.filter(_.detail.startsWith("superseded")).map(_.ref).sorted, Vector("q-1", "q-3"))
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 1,
-      s"只有 q-2 可落（q-1 同线 superseded、q-3 被后续 remove 命中 superseded、q-4 静态定位不到 ⇒ 均 would-obsolete）: ${plan.items}")
+    assertEquals(
+      plan.countOf(MemoryQueue.Bucket.WouldApply),
+      1,
+      s"只有 q-2 可落（q-1 同线 superseded、q-3 被后续 remove 命中 superseded、q-4 静态定位不到 ⇒ 均 would-obsolete）: ${plan.items}"
+    )
 
   test("②（真时序）：同一行上**时间更晚的 remove** 胜过**时间更早的 update**（相位序会判反）"):
     // 生产实测 8 条分歧的 4 条同形（最大早 16.3 h）。相位序 = remove(0) 先、update(1) 后
     // ⇒ 改动前 `dropRight(1)` 留下 update ⇒ 更晚的 remove 被更早的 update 吃掉。
     val content = "# U\n\n## 节\n\n- 甲条目\n"
-    val early   = note("q-early", 1000L, "user", "update", None, Some("甲条目"), Some("- 甲条目（改）"))
-    val late    = note("q-late", 9000L, "user", "remove", None, Some("甲条目"), None)
-    val plan    = MemoryQueue.plan(stateOf(Vector(early, late)), Map("user" -> tf(userFile, content)))
-    val byRef   = plan.items.map(i => i.ref -> (i.bucket, i.detail)).toMap
+    val early = note("q-early", 1000L, "user", "update", None, Some("甲条目"), Some("- 甲条目（改）"))
+    val late = note("q-late", 9000L, "user", "remove", None, Some("甲条目"), None)
+    val plan = MemoryQueue.plan(stateOf(Vector(early, late)), Map("user" -> tf(userFile, content)))
+    val byRef = plan.items.map(i => i.ref -> (i.bucket, i.detail)).toMap
     assertEquals(byRef("q-late")._1, MemoryQueue.Bucket.WouldApply, s"更晚的意图赢: ${plan.items}")
     assertEquals(byRef("q-early")._1, MemoryQueue.Bucket.WouldObsolete, s"更早的 update 转被取代: ${plan.items}")
     assert(byRef("q-early")._2.startsWith("superseded-by-later"), s"${byRef("q-early")}")
@@ -161,9 +177,13 @@ class MemoryQueuePlanSpec extends FunSuite:
     val home = os.Path(Files.createTempDirectory("nb-memq-plan"))
     try
       val queue = home / "memory" / "queue.jsonl"
-      val user  = home / "User.md"
+      val user = home / "User.md"
       os.write.over(user, "# U\n\n## 节\n\n- 甲条目\n", createFolders = true)
-      os.write.over(queue, """{"kind":"note","id":"q-1","atMs":1,"at":"t","target":"user","action":"append","content":"- 新","source":{"trigger":"manual"}}""" + "\n", createFolders = true)
+      os.write.over(
+        queue,
+        """{"kind":"note","id":"q-1","atMs":1,"at":"t","target":"user","action":"append","content":"- 新","source":{"trigger":"manual"}}""" + "\n",
+        createFolders = true
+      )
       val beforeUser = os.read(user)
       val beforeQueue = os.read(queue)
       val beforeList = os.list(home).map(_.last).toList.sorted
@@ -174,6 +194,7 @@ class MemoryQueuePlanSpec extends FunSuite:
       assertEquals(os.read(queue), beforeQueue, "队列零写入（无 outcome 追加）")
       assertEquals(os.list(home).map(_.last).toList.sorted, beforeList, "无新目录/文件（无快照副作用）")
     finally os.remove.all(home)
+    end try
 
   // ── 预算 fail-closed（硬红线：超硬顶即停、剩余留 pending）──────
 
@@ -184,7 +205,7 @@ class MemoryQueuePlanSpec extends FunSuite:
     val baseBytes = base.getBytes(UTF_8).length.toLong
     assert(baseBytes < MemoryBudget.UserHardBytes, s"前置：基线 $baseBytes 未超硬顶")
     val deficit = (MemoryBudget.UserHardBytes - baseBytes).toInt
-    val filler  = "- " + ("z" * (deficit + 4)) // 单条即超顶（含行尾换行）
+    val filler = "- " + ("z" * (deficit + 4)) // 单条即超顶（含行尾换行）
     val notes = Vector(
       note("q-1", 1L, "user", "append", None, None, Some(filler)),
       note("q-2", 2L, "user", "append", None, None, Some("- 后续条目"))
@@ -192,7 +213,10 @@ class MemoryQueuePlanSpec extends FunSuite:
     val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> tf(userFile, base)))
     assertEquals(plan.countOf(MemoryQueue.Bucket.WouldDefer), 2, s"q-1 即超顶 ⇒ q-1/q-2 全 defer: ${plan.items}")
     assert(plan.items.head.detail.contains("budget:"), s"${plan.items.head}")
-    assert(plan.items.head.detail.contains("staying here") || plan.items.head.detail.contains("stopping here"), s"${plan.items.head}")
+    assert(
+      plan.items.head.detail.contains("staying here") || plan.items.head.detail.contains("stopping here"),
+      s"${plan.items.head}"
+    )
     assertEquals(plan.authorized, Vector.empty[String], "停点起无授权条目")
     val refusal = plan.refusal.getOrElse(fail("授权集为空 ⇒ 必须 fail-closed 拒绝本轮"))
     assert(refusal.contains("REFUSED"), refusal)
@@ -214,17 +238,21 @@ class MemoryQueuePlanSpec extends FunSuite:
   // ── 实测：本机真实队列（只读）────────────────────────────────
 
   test("实测（只读）：本机队列 dry-run ⇒ would-apply / would-obsolete / would-defer 三段 + 逐文件投影"):
-    val root = sys.env.get("NEBFLOW_HOME").map(os.Path(_)).getOrElse(os.Path(System.getProperty("user.home")) / ".nebflow")
+    val root =
+      sys.env.get("NEBFLOW_HOME").map(os.Path(_)).getOrElse(os.Path(System.getProperty("user.home")) / ".nebflow")
     val queue = root / "memory" / "queue.jsonl"
     assume(os.exists(queue), s"本机队列不存在（$queue）——环境依赖用例，skip")
     val lines = os.read(queue).linesIterator.toVector
-    val raw   = os.read(queue)
-    val st    = MemoryQueue.parseState(lines)
+    val raw = os.read(queue)
+    val st = MemoryQueue.parseState(lines)
     assume(st.notes.nonEmpty, "队列无 note —— skip")
     val files = Map(
-      "user"  -> tf((root / "User.md").toString, if os.exists(root / "User.md") then os.read(root / "User.md") else ""),
-      "agent" -> tf((root / "agents" / "Nebula" / "memory.md").toString,
-        if os.exists(root / "agents" / "Nebula" / "memory.md") then os.read(root / "agents" / "Nebula" / "memory.md") else "")
+      "user" -> tf((root / "User.md").toString, if os.exists(root / "User.md") then os.read(root / "User.md") else ""),
+      "agent" -> tf(
+        (root / "agents" / "Nebula" / "memory.md").toString,
+        if os.exists(root / "agents" / "Nebula" / "memory.md") then os.read(root / "agents" / "Nebula" / "memory.md")
+        else ""
+      )
     )
     val plan = MemoryQueue.plan(st, files)
     println("[memqueue-dry-run][BEGIN]")
@@ -235,14 +263,18 @@ class MemoryQueuePlanSpec extends FunSuite:
     assertEquals(
       plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete) +
         plan.countOf(MemoryQueue.Bucket.WouldRetry) + plan.countOf(MemoryQueue.Bucket.WouldDefer),
-      plan.items.size)
+      plan.items.size
+    )
     assertEquals(
       plan.authorized.size,
       plan.countOf(MemoryQueue.Bucket.WouldApply) + plan.countOf(MemoryQueue.Bucket.WouldObsolete) +
-        plan.countOf(MemoryQueue.Bucket.WouldRetry))
+        plan.countOf(MemoryQueue.Bucket.WouldRetry)
+    )
     assertEquals(plan.retryable.size, plan.countOf(MemoryQueue.Bucket.WouldRetry), "retryable = would-retry 的 ref 集")
     // 🔴 可重试族（目标缺失族）一律不得落进终态桶——否则「文件还没建」被当成「内容已作废」
-    assert(!plan.retryable.exists(r => plan.items.exists(i => i.ref == r && i.bucket == MemoryQueue.Bucket.WouldObsolete)))
+    assert(
+      !plan.retryable.exists(r => plan.items.exists(i => i.ref == r && i.bucket == MemoryQueue.Bucket.WouldObsolete))
+    )
     assertEquals(os.read(queue), raw, "实测全程只读：队列逐字未变")
 
 end MemoryQueuePlanSpec

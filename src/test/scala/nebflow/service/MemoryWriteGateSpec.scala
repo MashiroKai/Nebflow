@@ -101,8 +101,7 @@ class MemoryWriteGateSpec extends FunSuite:
 
     assertEquals(err.code, MemoryWriteGate.Code.Budget, "拒绝码须为预算码（机器可判）")
     assertEquals(os.read(memPath), "- old entry\n", "被拒 ⇒ 记忆面零变化（零写入）")
-    assertEquals(snapshotDirsFor("User.md").size, snapshotsBefore,
-      "v2 (a)：拒绝路径**不快照** ⇒ 备份面零写（拒绝是高频路径，备份面不得只增不减）")
+    assertEquals(snapshotDirsFor("User.md").size, snapshotsBefore, "v2 (a)：拒绝路径**不快照** ⇒ 备份面零写（拒绝是高频路径，备份面不得只增不减）")
     assert(err.detail.contains("## 节"), "拒绝文本须含 top-3 最大节（可行动）")
   }
 
@@ -182,8 +181,7 @@ class MemoryWriteGateSpec extends FunSuite:
     IO.blocking(os.write.over(memPath, shrunk, createFolders = true)).unsafeRunSync()
 
     assertEquals(os.read(memPath), shrunk, "豁免 ⇒ 收缩写入真的落盘（硬顶下的自救路径）")
-    assert(snapshotDirsFor("User.md").size > snapshotsBefore,
-      "豁免只豁预算闸 ⇒ 快照前置照旧（放行路径的唯一触发点）")
+    assert(snapshotDirsFor("User.md").size > snapshotsBefore, "豁免只豁预算闸 ⇒ 快照前置照旧（放行路径的唯一触发点）")
   }
 
   // ── 正控 A5（v2 夹带拦截）：适格但净增 ⇒ 照拒 ─────────────────
@@ -249,8 +247,7 @@ class MemoryWriteGateSpec extends FunSuite:
     val memPath = home / "User.md"
     val big = contentOfBytes(MemoryBudget.UserHardBytes.toInt + 4096)
     os.write.over(memPath, big, createFolders = true) // = Edit / Write / Bash 同型直写
-    assert(byteLen(os.read(memPath)) > MemoryBudget.UserHardBytes,
-      "本项**不覆盖**直写通道：直写不受本闸影响（如实登记，非缺陷承诺）")
+    assert(byteLen(os.read(memPath)) > MemoryBudget.UserHardBytes, "本项**不覆盖**直写通道：直写不受本闸影响（如实登记，非缺陷承诺）")
   }
 
 end MemoryWriteGateSpec

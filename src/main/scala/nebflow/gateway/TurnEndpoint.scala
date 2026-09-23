@@ -11,25 +11,25 @@ import org.http4s.dsl.io.*
 import scala.concurrent.duration.*
 
 /**
-  * Headless synchronous turn executor (P0 benchmark — /tmp/headless-design.md
-  * D1/D2). Standalone object (zero class deps) so it is directly unit-testable
-  * — RestApiRoutes only wires auth/session validation around it.
-  *
-  * Completion is observed through a WsHub listener: the agent's turn lifecycle
-  * already broadcasts `done` (UiMessage flush happens inside the recording
-  * wsSend BEFORE the event is forwarded) and then `sessionBusy busy=false`.
-  * The actor is untouched — the Deferred is awaited on the caller's fiber,
-  * and the listener callback is fire-and-forget from the actor's perspective.
-  */
+ * Headless synchronous turn executor (P0 benchmark — /tmp/headless-design.md
+ * D1/D2). Standalone object (zero class deps) so it is directly unit-testable
+ * — RestApiRoutes only wires auth/session validation around it.
+ *
+ * Completion is observed through a WsHub listener: the agent's turn lifecycle
+ * already broadcasts `done` (UiMessage flush happens inside the recording
+ * wsSend BEFORE the event is forwarded) and then `sessionBusy busy=false`.
+ * The actor is untouched — the Deferred is awaited on the caller's fiber,
+ * and the listener callback is fire-and-forget from the actor's perspective.
+ */
 object TurnEndpoint:
 
   /**
-    * Turn gate: at most one in-flight synchronous turn per session. The
-    * actor's ImmediateInput queueing still exists underneath — this gate only
-    * stops HTTP callers from racing two synchronous turns whose completion
-    * events would be indistinguishable. Object-level singleton: one gate set
-    * per JVM, shared across route instances.
-    */
+   * Turn gate: at most one in-flight synchronous turn per session. The
+   * actor's ImmediateInput queueing still exists underneath — this gate only
+   * stops HTTP callers from racing two synchronous turns whose completion
+   * events would be indistinguishable. Object-level singleton: one gate set
+   * per JVM, shared across route instances.
+   */
   private val inFlightTurns: cats.effect.Ref[IO, Set[String]] =
     cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
 
@@ -85,16 +85,21 @@ object TurnEndpoint:
             case "done" =>
               // depth-0 done carries model/contextWindow/inputTokens — capture
               // verbatim for the response usage field (better than estimating).
-              usageRef.set(Some(Json.obj(
-                "model" -> hc.downField("model").as[Option[String]].getOrElse(None).asJson,
-                "contextWindow" -> hc.downField("contextWindow").as[Option[Int]].getOrElse(None).asJson,
-                "inputTokens" -> hc.downField("inputTokens").as[Option[Int]].getOrElse(None).asJson
-              )))
+              usageRef.set(
+                Some(
+                  Json.obj(
+                    "model" -> hc.downField("model").as[Option[String]].getOrElse(None).asJson,
+                    "contextWindow" -> hc.downField("contextWindow").as[Option[Int]].getOrElse(None).asJson,
+                    "inputTokens" -> hc.downField("inputTokens").as[Option[Int]].getOrElse(None).asJson
+                  )
+                )
+              )
             case "error" =>
               hc.downField("message").as[String].toOption match
                 case Some(msg) => errorRef.set(Some(msg))
-                case None      => IO.unit
+                case None => IO.unit
             case _ => IO.unit
+        end if
       }
       // Persist the user bubble + dispatch ImmediateInput (same sequence as
       // the WS immediateInput/userMessage cases — production wiring passes
@@ -108,9 +113,8 @@ object TurnEndpoint:
       usageOpt <- usageRef.get
     yield
       val body = Json.obj(
-        "status" -> (if completed then
-                      (if errorOpt.isDefined then "error" else "completed")
-                    else "timeout").asJson,
+        "status" -> (if completed then (if errorOpt.isDefined then "error" else "completed")
+                     else "timeout").asJson,
         "sessionId" -> sessionId.asJson,
         "finalMessage" -> finalMessage.asJson,
         "toolCalls" -> toolCalls.asJson,
@@ -124,14 +128,14 @@ object TurnEndpoint:
   end runTurn
 
   /**
-    * Extract this turn's result from the UiMessage stream. The recording
-    * wsSend flushes the final Ai bubble as part of the done event — BEFORE
-    * the busy=false broadcast reaches our listener — so the first read
-    * normally hits. The 200ms × 25 retry is defensive (slow disk flush,
-    * backfill-only turns): on exhaustion it degrades to an empty
-    * finalMessage while keeping status=completed (a lagging persist is not a
-    * turn failure).
-    */
+   * Extract this turn's result from the UiMessage stream. The recording
+   * wsSend flushes the final Ai bubble as part of the done event — BEFORE
+   * the busy=false broadcast reaches our listener — so the first read
+   * normally hits. The 200ms × 25 retry is defensive (slow disk flush,
+   * backfill-only turns): on exhaustion it degrades to an empty
+   * finalMessage while keeping status=completed (a lagging persist is not a
+   * turn failure).
+   */
   private def readTurnResult(
     sessionId: String,
     totalBefore: Int,

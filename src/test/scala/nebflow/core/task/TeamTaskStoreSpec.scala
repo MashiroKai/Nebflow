@@ -37,8 +37,10 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
 
   private val store: TaskStore = FileTaskStore
 
-  /** beforeEach already provides a fresh tempRoot; reset() wipes it again for
-    * tests that want a blank slate mid-test (kept for readability). */
+  /**
+   * beforeEach already provides a fresh tempRoot; reset() wipes it again for
+   * tests that want a blank slate mid-test (kept for readability).
+   */
   private def reset(): IO[Unit] =
     IO.delay { if os.exists(tempRoot) then os.remove.all(tempRoot) } *>
       IO.delay { os.makeDir.all(tempRoot) }
@@ -121,7 +123,10 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
       key = teamKey("legacy-decode")
       dir = tempRoot / "tasks" / "teams" / "legacy-decode"
       _ = os.makeDir.all(dir)
-      _ = os.write(dir / "1.json", """{"id":"1","subject":"nc","description":"d","status":"needs_confirmation","events":[]}""")
+      _ = os.write(
+        dir / "1.json",
+        """{"id":"1","subject":"nc","description":"d","status":"needs_confirmation","events":[]}"""
+      )
       _ = os.write(dir / "2.json", """{"id":"2","subject":"d","description":"d","status":"dismissed","events":[]}""")
       _ = os.write(dir / "3.json", """{"id":"3","subject":"c","description":"d","status":"cancelled","events":[]}""")
       nc <- store.get(key, "1")
@@ -277,7 +282,10 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
   test("create stamps assignee from the input (team-domain member attribution)"):
     for
       _ <- reset()
-      id <- store.create("team:attribution-create", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      id <- store.create(
+        "team:attribution-create",
+        TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend"))
+      )
       t <- store.get("team:attribution-create", id)
     yield assertEquals(t.map(_.assignee), Some(Some("Backend")))
 
@@ -298,7 +306,10 @@ class TeamTaskStoreSpec extends CatsEffectSuite:
   test("update reassigns assignee (trim), blank clears, absent keeps; event recorded on change"):
     for
       _ <- reset()
-      id <- store.create("team:attribution-update", TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend")))
+      id <- store.create(
+        "team:attribution-update",
+        TaskCreateInput(subject = "s", description = "d", assignee = Some("Backend"))
+      )
       // trim on set
       _ <- store.update("team:attribution-update", id, TaskUpdateInput(assignee = Some("  Frontend  ")))
       t1 <- store.get("team:attribution-update", id)

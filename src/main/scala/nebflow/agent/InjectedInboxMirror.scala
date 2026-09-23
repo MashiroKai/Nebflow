@@ -143,9 +143,7 @@ object InjectedInboxMirror:
     val tgts = targets(emitterSid, source, candidates)
     tgts.traverse { t =>
       append(t, ui)
-        .handleErrorWith(e =>
-          logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=${e.getMessage}")
-        )
+        .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=${e.getMessage}"))
         .as(t)
     }
 end InjectedInboxMirror

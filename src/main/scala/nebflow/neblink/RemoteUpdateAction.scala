@@ -20,9 +20,11 @@ import cats.effect.IO
  */
 object RemoteUpdateAction:
 
-  /** The exact install command this action would run for the given channel (single
-    * source: [[runInstallScript]] executes what this returns, the hot-update batch-1
-    * verification reads it without executing). */
+  /**
+   * The exact install command this action would run for the given channel (single
+   * source: [[runInstallScript]] executes what this returns, the hot-update batch-1
+   * verification reads it without executing).
+   */
   def installCommand(beta: Boolean): String =
     val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
     if beta then
@@ -47,8 +49,8 @@ object RemoteUpdateAction:
         import sys.process.*
         installCommand(beta).!
       }.flatMap {
-        case 0     => IO.pure(Right("Update installed, restarting..."))
-        case code  => IO.pure(Left(s"Install script failed (exit code: $code)"))
+        case 0 => IO.pure(Right("Update installed, restarting..."))
+        case code => IO.pure(Left(s"Install script failed (exit code: $code)"))
       }.handleErrorWith(e => IO.pure(Left(s"Install error: ${e.getMessage}")))
 
 end RemoteUpdateAction

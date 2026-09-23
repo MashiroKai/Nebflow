@@ -11,26 +11,27 @@ import nebflow.core.PathUtil
 import java.nio.file.Files
 import scala.concurrent.duration.*
 
-/** kaiauth 修法批 ③（2026-09-16 作者「治本」已批）—— **单飞闸跨 hot-swap 加固 +
-  * enroll 串行化**的机制级红/绿构造。
-  *
-  * 诊断报告把本条标注为**推断**（§6 最强候选机制）：`reloginGate` 是**实例级** `Ref`，
-  * 而 `NeblinkEnrollment.persist` 的 hot-swap 会建新 client ⇒ 闸被重置；服务端
-  * `enroll_device` 是 `INSERT OR REPLACE`（跨仓只读 `store.rs:2951-2969`）⇒ **每次 enroll
-  * 立刻作废上一次**，客户端对「谁是最后一次」没有任何保证 ⇒「enroll 成功」与「发送值
-  * 有效」可以不重合。
-  *
-  * 本 spec 给**机制级**构造（不求现场复现，作者口径）：
-  *  - **N4-a（跨 hot-swap 的会话闸）**：两个**不同实例**（= hot-swap 前后的两个 client，
-  *    同 `url + networkId`）并发触发自愈 —— 真夹具下 `POST /api/device/register`（enroll
-  *    的唯一线上形态）必须**恰一次**。修前实例级闸 ⇒ 两次 register（必红）。
-  *  - **N4-b（enroll 单飞闸本身）**：闸的持有者**根本不是任何 client 实例**（测试自己持闸），
-  *    两条并发 `NeblinkEnrollment.persist` 仍必须**都**等在闸上并复用同一结果 ⇒
-  *    「闸是进程级、按 (deviceId, networkId)」这一形态被直接证明（与实例生命周期解耦）。
-  *
-  * 边界（诚实登记）：跨**进程**与跨**实例**（另一台机器）面**不做**中央协调、零 wire 新增 ——
-  * 本批只把「同一 JVM 内」的单飞做满（与 `NeblinkService.kickParked` 的进程内口径同源）。
-  */
+/**
+ * kaiauth 修法批 ③（2026-09-16 作者「治本」已批）—— **单飞闸跨 hot-swap 加固 +
+ * enroll 串行化**的机制级红/绿构造。
+ *
+ * 诊断报告把本条标注为**推断**（§6 最强候选机制）：`reloginGate` 是**实例级** `Ref`，
+ * 而 `NeblinkEnrollment.persist` 的 hot-swap 会建新 client ⇒ 闸被重置；服务端
+ * `enroll_device` 是 `INSERT OR REPLACE`（跨仓只读 `store.rs:2951-2969`）⇒ **每次 enroll
+ * 立刻作废上一次**，客户端对「谁是最后一次」没有任何保证 ⇒「enroll 成功」与「发送值
+ * 有效」可以不重合。
+ *
+ * 本 spec 给**机制级**构造（不求现场复现，作者口径）：
+ *  - **N4-a（跨 hot-swap 的会话闸）**：两个**不同实例**（= hot-swap 前后的两个 client，
+ *    同 `url + networkId`）并发触发自愈 —— 真夹具下 `POST /api/device/register`（enroll
+ *    的唯一线上形态）必须**恰一次**。修前实例级闸 ⇒ 两次 register（必红）。
+ *  - **N4-b（enroll 单飞闸本身）**：闸的持有者**根本不是任何 client 实例**（测试自己持闸），
+ *    两条并发 `NeblinkEnrollment.persist` 仍必须**都**等在闸上并复用同一结果 ⇒
+ *    「闸是进程级、按 (deviceId, networkId)」这一形态被直接证明（与实例生命周期解耦）。
+ *
+ * 边界（诚实登记）：跨**进程**与跨**实例**（另一台机器）面**不做**中央协调、零 wire 新增 ——
+ * 本批只把「同一 JVM 内」的单飞做满（与 `NeblinkService.kickParked` 的进程内口径同源）。
+ */
 class NeblinkEnrollSingleFlightSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: Duration = 120.seconds
@@ -64,7 +65,12 @@ class NeblinkEnrollSingleFlightSpec extends CatsEffectSuite:
     }
 
   /** 一个 client 工厂（每次调用一个新实例 = hot-swap 前后的两个实例）。 */
-  private def mkClient(ms: NeblinkService, cfg: NeblinkServerConfig, dev: String, fix: RelayAuthFixtureServer): NeblinkClient =
+  private def mkClient(
+    ms: NeblinkService,
+    cfg: NeblinkServerConfig,
+    dev: String,
+    fix: RelayAuthFixtureServer
+  ): NeblinkClient =
     new NeblinkClient(
       cfg,
       0,
@@ -144,28 +150,30 @@ class NeblinkEnrollSingleFlightSpec extends CatsEffectSuite:
           _ <- hold.get
           held <- IO(NeblinkSingleFlight.inFlightKeys.contains(key))
           _ <- IO(assert(held, s"闸必须在册：$key（在册 = 后续调用会加入而不是另开一个）"))
-          both <- IO.parSequenceN(2)(
-            List(
-              NeblinkEnrollment.persist(
-                ms,
-                resolvedUrl = fix.url,
-                json = enrollJson("tok-A"),
-                logtoRefresh = None,
-                discovery = Some(discovery),
-                gatewayPort = 0,
-                reloginHook = None
-              ),
-              NeblinkEnrollment.persist(
-                ms,
-                resolvedUrl = fix.url,
-                json = enrollJson("tok-B"),
-                logtoRefresh = None,
-                discovery = Some(discovery),
-                gatewayPort = 0,
-                reloginHook = None
+          both <- IO
+            .parSequenceN(2)(
+              List(
+                NeblinkEnrollment.persist(
+                  ms,
+                  resolvedUrl = fix.url,
+                  json = enrollJson("tok-A"),
+                  logtoRefresh = None,
+                  discovery = Some(discovery),
+                  gatewayPort = 0,
+                  reloginHook = None
+                ),
+                NeblinkEnrollment.persist(
+                  ms,
+                  resolvedUrl = fix.url,
+                  json = enrollJson("tok-B"),
+                  logtoRefresh = None,
+                  discovery = Some(discovery),
+                  gatewayPort = 0,
+                  reloginHook = None
+                )
               )
             )
-          ).start
+            .start
           _ <- IO.sleep(400.millis) // 给两条 persist 充分的机会去「另开一个闸」（若有的话）
           _ <- releaseHold.complete(())
           results <- both.join.flatMap(_.embedNever)

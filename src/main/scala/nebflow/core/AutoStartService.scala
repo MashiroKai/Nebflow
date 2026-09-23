@@ -104,6 +104,8 @@ $argsXml
 </plist>
 """
 
+  end renderPlist
+
   /** Render the Linux XDG autostart .desktop entry (pure; jar form only). */
   def renderDesktopEntry(javaBin: String, jarPath: String): String =
     s"""[Desktop Entry]
@@ -139,9 +141,9 @@ X-GNOME-Autostart-enabled=true
     val runJar = resolveRunJar()
     val supported = runJar.isDefined
     val enabled = osName match
-      case "mac"  => os.exists(launchAgentPlist)
-      case "win"  => checkWindowsTask()
-      case _      => os.exists(linuxAutostartFile)
+      case "mac" => os.exists(launchAgentPlist)
+      case "win" => checkWindowsTask()
+      case _ => os.exists(linuxAutostartFile)
     val reason =
       if supported then None
       else Some("Development mode (sbt run) — auto-start needs a packaged Nebflow JAR")
@@ -152,19 +154,22 @@ X-GNOME-Autostart-enabled=true
     val runJar = resolveRunJar()
     runJar match
       case None =>
-        OpResult(ok = false, "Cannot determine Nebflow JAR path — auto-start is only available from a packaged instance")
+        OpResult(
+          ok = false,
+          "Cannot determine Nebflow JAR path — auto-start is only available from a packaged instance"
+        )
       case Some(jar) =>
         osName match
-          case "mac"  => enableMacOS(jar)
-          case "win"  => enableWindows(jar)
-          case _      => enableLinux(jar)
+          case "mac" => enableMacOS(jar)
+          case "win" => enableWindows(jar)
+          case _ => enableLinux(jar)
   }
 
   def disable(): IO[OpResult] = IO.blocking {
     osName match
-      case "mac"  => disableMacOS()
-      case "win"  => disableWindows()
-      case _      => disableLinux()
+      case "mac" => disableMacOS()
+      case "win" => disableWindows()
+      case _ => disableLinux()
   }
 
   // ===== macOS =====
@@ -187,8 +192,15 @@ X-GNOME-Autostart-enabled=true
     OpResult(
       ok = true,
       "Auto-start enabled (macOS LaunchAgent)",
-      List(s"  Plist: ${launchAgentPlist}", s"  Form: $form", "  Nebflow will start automatically on login.", s"  Logs: $logPath")
+      List(
+        s"  Plist: ${launchAgentPlist}",
+        s"  Form: $form",
+        "  Nebflow will start automatically on login.",
+        s"  Logs: $logPath"
+      )
     )
+
+  end enableMacOS
 
   private def disableMacOS(): OpResult =
     if os.exists(launchAgentPlist) then
@@ -205,7 +217,8 @@ X-GNOME-Autostart-enabled=true
     val logsDir = PathUtil.dataRoot / "logs"
     if !os.exists(logsDir) then os.makeDir.all(logsDir)
     val cmd = s""""$javaBin" --add-opens java.base/java.lang=ALL-UNNAMED -jar "$jar" start --no-browser"""
-    val createCmd = Seq("schtasks", "/create", "/tn", RestartHelper.WinTaskName, "/tr", cmd, "/sc", "onlogon", "/rl", "highest", "/f")
+    val createCmd =
+      Seq("schtasks", "/create", "/tn", RestartHelper.WinTaskName, "/tr", cmd, "/sc", "onlogon", "/rl", "highest", "/f")
     val exitCode = createCmd.!
     if exitCode == 0 then
       OpResult(
@@ -215,10 +228,13 @@ X-GNOME-Autostart-enabled=true
       )
     else OpResult(ok = false, s"Failed to create scheduled task (exit code: $exitCode)")
 
+  end enableWindows
+
   private def disableWindows(): OpResult =
     val deleteCmd = Seq("schtasks", "/delete", "/tn", RestartHelper.WinTaskName, "/f")
-    val exitCode = try deleteCmd.!
-    catch case _: Exception => 1
+    val exitCode =
+      try deleteCmd.!
+      catch case _: Exception => 1
     if exitCode == 0 then OpResult(ok = true, "Auto-start disabled (scheduled task removed)")
     else OpResult(ok = true, "Auto-start was not enabled")
 

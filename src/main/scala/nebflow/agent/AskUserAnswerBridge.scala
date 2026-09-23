@@ -43,8 +43,10 @@ object AskUserAnswerBridge:
 
   private val logger = NebflowLogger.forName("nebflow.agent.askuser")
 
-  /** 桥的唯一构造点。`requestId` 进 path（日志/诊断可归因），`items` 用于把
-    * 答复格式化成模型可读文本（与阻塞模式**同一** `formatAnswer`）。 */
+  /**
+   * 桥的唯一构造点。`requestId` 进 path（日志/诊断可归因），`items` 用于把
+   * 答复格式化成模型可读文本（与阻塞模式**同一** `formatAnswer`）。
+   */
   def ref(
     target: ActorRef[AgentCommand],
     items: List[AskItem],
@@ -58,13 +60,17 @@ object AskUserAnswerBridge:
         deliver(target, items, requestId, answers, ctx)
 
       def ?[R](makeMsg: ActorRef[R] => List[String], t: Option[FiniteDuration]): IO[R] =
-        IO.raiseError(new UnsupportedOperationException(
-          "the one-shot askUser answer bridge does not accept asks"
-        ))
+        IO.raiseError(
+          new UnsupportedOperationException(
+            "the one-shot askUser answer bridge does not accept asks"
+          )
+        )
 
-  /** 答复 → 注入（D4）。`fromUser = true`（裁定 T6=(a)：真人点了卡）——该标志使
-    * `AgentActor.injectionSourceFor` 把 `source` 折成 None（呈现为普通 user 气泡）
-    * ⇒ 不需要前端登记面、零前端改动。 */
+  /**
+   * 答复 → 注入（D4）。`fromUser = true`（裁定 T6=(a)：真人点了卡）——该标志使
+   * `AgentActor.injectionSourceFor` 把 `source` 折成 None（呈现为普通 user 气泡）
+   * ⇒ 不需要前端登记面、零前端改动。
+   */
   private def deliver(
     target: ActorRef[AgentCommand],
     items: List[AskItem],
@@ -92,12 +98,16 @@ object AskUserAnswerBridge:
           ))
     }
 
-  /** 目标会话是否还在（注册表行存在 = 活着）。无 sharedResources / 无 sessionId
-    * （spec harness、非 agent 上下文）⇒ 不阻拦投递（保持可独立单测），但那条
-    * 路径在生产里不存在（工具只在 agent 会话里被调用）。 */
+  end deliver
+
+  /**
+   * 目标会话是否还在（注册表行存在 = 活着）。无 sharedResources / 无 sessionId
+   * （spec harness、非 agent 上下文）⇒ 不阻拦投递（保持可独立单测），但那条
+   * 路径在生产里不存在（工具只在 agent 会话里被调用）。
+   */
   private def sessionAlive(ctx: ToolContext): IO[Boolean] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) => res.agentRegistry.get.map(_.contains(sid))
-      case _                      => IO.pure(true)
+      case _ => IO.pure(true)
 
 end AskUserAnswerBridge

@@ -103,8 +103,13 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
   // ── ① 判据序：正信号门 / 类④ 分流 / 类① 非破坏档（纯函数）──────────────
 
   /** 正控① 的输入形态：>600s 单工具调用 + 命令自带 `timeout=3000000ms` + 持续推进。 */
-  private def toolPhaseRecord(sid: String, ref: ActorRef[AgentCommand], now: Long,
-                              progressAgeMs: Option[Long], deadlineMs: Long = 3_000_000L): AgentRecord =
+  private def toolPhaseRecord(
+    sid: String,
+    ref: ActorRef[AgentCommand],
+    now: Long,
+    progressAgeMs: Option[Long],
+    deadlineMs: Long = 3_000_000L
+  ): AgentRecord =
     AgentRecord(
       sessionId = sid,
       ref = ref,
@@ -132,8 +137,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       cls = TaskStuckWatcher.classify(rec, a, now, inflight = 0)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield
-      assertEquals(a.branch, TaskStuckWatcher.BranchAgentStale,
-        "轴① 命中（工具执行期 agent 侧零事件）——正是改造前必判死的形态")
+      assertEquals(a.branch, TaskStuckWatcher.BranchAgentStale, "轴① 命中（工具执行期 agent 侧零事件）——正是改造前必判死的形态")
       assertEquals(cls.cls, TaskStuckWatcher.ClassFalsePositive, s"正信号在场 ⇒ 类②，得 ${cls.cls}: ${cls.note}")
       assert(!cls.recoverable, "类② 不进恢复链")
       assert(!cls.destructiveAllowed, "类② 不许破坏档")
@@ -174,12 +178,19 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
   // 语料 = 生产事件面 `~/.nebflow/logs/watchdog/2026-09-12_events.jsonl`（541 条 /
   // `stuck-detected` 378 条），逐条重放见 [[WatchdogCriteriaReplaySpec]]。
 
-  /** 生产样本形态（本批三条目标行为的输入面）：命令自带 `timeout` 声明、单工具调用
-    * 持续、工具执行期 agent 侧零事件（轴① 同步停滞）。
-    * `declaredMs` = 命令声明时长（= `AgentRecord.currentToolDeadlineMs`，0 = 未声明）。 */
-  private def productionShape(sid: String, ref: ActorRef[AgentCommand], now: Long,
-                              declaredMs: Long, toolPhaseMs: Long,
-                              progressAgeMs: Option[Long]): AgentRecord =
+  /**
+   * 生产样本形态（本批三条目标行为的输入面）：命令自带 `timeout` 声明、单工具调用
+   * 持续、工具执行期 agent 侧零事件（轴① 同步停滞）。
+   * `declaredMs` = 命令声明时长（= `AgentRecord.currentToolDeadlineMs`，0 = 未声明）。
+   */
+  private def productionShape(
+    sid: String,
+    ref: ActorRef[AgentCommand],
+    now: Long,
+    declaredMs: Long,
+    toolPhaseMs: Long,
+    progressAgeMs: Option[Long]
+  ): AgentRecord =
     AgentRecord(
       sessionId = sid,
       ref = ref,
@@ -202,37 +213,52 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       // 生产样本 node-eb8a9c70 形态：toolPhaseMs 604810ms、正信号 3s 前、未登记声明
       // （有效阈值 600s）⇒ 改造前必判 true-stuck（事件面实读为 class=true-stuck）。
-      rec = productionShape("node-wdfix1", ref, now, declaredMs = 0L,
-        toolPhaseMs = 604_810L, progressAgeMs = Some(3_000L))
+      rec = productionShape(
+        "node-wdfix1",
+        ref,
+        now,
+        declaredMs = 0L,
+        toolPhaseMs = 604_810L,
+        progressAgeMs = Some(3_000L)
+      )
       a = TaskStuckWatcher.assessDetailed(rec, now).getOrElse(fail("判据必须命中（前提）"))
       cls = TaskStuckWatcher.classify(rec, a, now, inflight = 0)
       // 对照臂：声明了 `timeout=600s`（有效阈值 660s）而工具相位 700s —— 同样必须类②。
-      rec2 = productionShape("node-wdfix1b", ref, now, declaredMs = 600_000L,
-        toolPhaseMs = 700_000L, progressAgeMs = Some(5_000L))
+      rec2 = productionShape(
+        "node-wdfix1b",
+        ref,
+        now,
+        declaredMs = 600_000L,
+        toolPhaseMs = 700_000L,
+        progressAgeMs = Some(5_000L)
+      )
       a2 = TaskStuckWatcher.assessDetailed(rec2, now).getOrElse(fail("判据必须命中（前提）"))
       cls2 = TaskStuckWatcher.classify(rec2, a2, now, inflight = 0)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield
       assertEquals(a.branch, TaskStuckWatcher.BranchMerged, "轴①+轴② 双命中 ⇒ merged（生产样本形态）")
-      assertEquals(cls.cls, TaskStuckWatcher.ClassFalsePositive,
-        s"正信号新鲜（3s）⇒ 类②，得 ${cls.cls}: ${cls.note}")
+      assertEquals(cls.cls, TaskStuckWatcher.ClassFalsePositive, s"正信号新鲜（3s）⇒ 类②，得 ${cls.cls}: ${cls.note}")
       assert(!cls.recoverable, "类② 不进恢复链")
       assert(!cls.destructiveAllowed, "类② 不许破坏档")
-      assertEquals(cls2.cls, TaskStuckWatcher.ClassFalsePositive,
-        s"声明 600s / 工具相位 700s 超授权但正信号新鲜 ⇒ 类②，得 ${cls2.cls}: ${cls2.note}")
+      assertEquals(
+        cls2.cls,
+        TaskStuckWatcher.ClassFalsePositive,
+        s"声明 600s / 工具相位 700s 超授权但正信号新鲜 ⇒ 类②，得 ${cls2.cls}: ${cls2.note}"
+      )
       // ③ 文案如实：超授权事实必须写清，且**不得**再出现「没有正信号」与新鲜正信号同句。
-      assert(cls.note.contains("over its authorised window"),
-        s"超授权分支必须写明超授权事实，得 ${cls.note}")
-      assert(cls.note.contains("tool phase 604s") && cls.note.contains("authorised 600s"),
-        s"机器可读读数（工具相位 / 授权）必须保留，得 ${cls.note}")
-      assert(cls.note.contains("progress signal 3s ago"),
-        s"机器可读读数（正信号新鲜度）必须保留，得 ${cls.note}")
-      assert(!cls.note.contains("no progress signal") && !cls.note.contains("no fresh progress signal"),
-        s"有新鲜正信号时不得写「无正信号」（③ 自相矛盾面），得 ${cls.note}")
-      assert(!cls.note.contains("still inside its authorised window"),
-        s"超授权时不得再写「仍在授权窗内」，得 ${cls.note}")
-      assertEquals(cls2.note.contains("over its authorised window"), true,
-        s"声明 600s 的对照臂同样按超授权分支输出，得 ${cls2.note}")
+      assert(cls.note.contains("over its authorised window"), s"超授权分支必须写明超授权事实，得 ${cls.note}")
+      assert(
+        cls.note.contains("tool phase 604s") && cls.note.contains("authorised 600s"),
+        s"机器可读读数（工具相位 / 授权）必须保留，得 ${cls.note}"
+      )
+      assert(cls.note.contains("progress signal 3s ago"), s"机器可读读数（正信号新鲜度）必须保留，得 ${cls.note}")
+      assert(
+        !cls.note.contains("no progress signal") && !cls.note.contains("no fresh progress signal"),
+        s"有新鲜正信号时不得写「无正信号」（③ 自相矛盾面），得 ${cls.note}"
+      )
+      assert(!cls.note.contains("still inside its authorised window"), s"超授权时不得再写「仍在授权窗内」，得 ${cls.note}")
+      assertEquals(cls2.note.contains("over its authorised window"), true, s"声明 600s 的对照臂同样按超授权分支输出，得 ${cls2.note}")
+    end for
   }
 
   test("wd② 声明 3600s + 安静 74s ⇒ 类②（窗随授权联动 = max(60s, 声明/10) = 360s）") {
@@ -243,32 +269,52 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       // 生产样本 node-8920254c 形态：命令自带 timeout=3600s（有效阈值 3660s），
       // 工具相位 676s、正信号 74s 前 ⇒ 改造前因「正信号 >60s 未刷新」判 true-stuck。
-      rec = productionShape("node-wdfix2", ref, now, declaredMs = 3_600_000L,
-        toolPhaseMs = 676_006L, progressAgeMs = Some(74_000L))
+      rec = productionShape(
+        "node-wdfix2",
+        ref,
+        now,
+        declaredMs = 3_600_000L,
+        toolPhaseMs = 676_006L,
+        progressAgeMs = Some(74_000L)
+      )
       a = TaskStuckWatcher.assessDetailed(rec, now).getOrElse(fail("判据必须命中（前提）"))
       cls = TaskStuckWatcher.classify(rec, a, now, inflight = 0)
       // 同形态但安静段超出联动窗（360s）⇒ 必须**仍判**类①（真卡死不因联动被放走）。
-      recStale = productionShape("node-wdfix2b", ref, now, declaredMs = 3_600_000L,
-        toolPhaseMs = 1_000_000L, progressAgeMs = Some(400_000L))
+      recStale = productionShape(
+        "node-wdfix2b",
+        ref,
+        now,
+        declaredMs = 3_600_000L,
+        toolPhaseMs = 1_000_000L,
+        progressAgeMs = Some(400_000L)
+      )
       aStale = TaskStuckWatcher.assessDetailed(recStale, now).getOrElse(fail("判据必须命中（前提）"))
       clsStale = TaskStuckWatcher.classify(recStale, aStale, now, inflight = 0)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield
-      assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(3_600_000L), 360_000L,
-        "声明 3600s ⇒ 有效窗 360s（max(60s, 3600s/10)）")
-      assert(TaskStuckWatcher.hasProgressSignal(rec, now,
-        TaskStuckWatcher.effectiveProgressWindowMs(rec.currentToolDeadlineMs)),
-        "74s 的安静段落在 360s 联动窗内 ⇒ 正信号新鲜")
-      assert(!TaskStuckWatcher.hasProgressSignal(rec, now,
-        nebflow.shared.Defaults.StuckProgressSignalWindowMs),
-        "对照：基础 60s 窗下同一读数被判为无正信号（= 改造前判死根因）")
-      assertEquals(cls.cls, TaskStuckWatcher.ClassFalsePositive,
-        s"窗联动后不再判死，得 ${cls.cls}: ${cls.note}")
-      assert(cls.note.contains("window 360s"),
-        s"note 必须给出实际生效的窗（可复核联动），得 ${cls.note}")
-      assertEquals(clsStale.cls, TaskStuckWatcher.ClassTrueStuck,
-        s"安静段超出联动窗 ⇒ 仍判类①（不得放走真卡死），得 ${clsStale.cls}: ${clsStale.note}")
+      assertEquals(
+        TaskStuckWatcher.effectiveProgressWindowMs(3_600_000L),
+        360_000L,
+        "声明 3600s ⇒ 有效窗 360s（max(60s, 3600s/10)）"
+      )
+      assert(
+        TaskStuckWatcher
+          .hasProgressSignal(rec, now, TaskStuckWatcher.effectiveProgressWindowMs(rec.currentToolDeadlineMs)),
+        "74s 的安静段落在 360s 联动窗内 ⇒ 正信号新鲜"
+      )
+      assert(
+        !TaskStuckWatcher.hasProgressSignal(rec, now, nebflow.shared.Defaults.StuckProgressSignalWindowMs),
+        "对照：基础 60s 窗下同一读数被判为无正信号（= 改造前判死根因）"
+      )
+      assertEquals(cls.cls, TaskStuckWatcher.ClassFalsePositive, s"窗联动后不再判死，得 ${cls.cls}: ${cls.note}")
+      assert(cls.note.contains("window 360s"), s"note 必须给出实际生效的窗（可复核联动），得 ${cls.note}")
+      assertEquals(
+        clsStale.cls,
+        TaskStuckWatcher.ClassTrueStuck,
+        s"安静段超出联动窗 ⇒ 仍判类①（不得放走真卡死），得 ${clsStale.cls}: ${clsStale.note}"
+      )
       assert(clsStale.recoverable, "类① 必须仍可进恢复链")
+    end for
   }
 
   test("wd③ 无正信号 + 工具相位超授权 ⇒ 仍类①（真判不减少；文案写清超授权事实）") {
@@ -277,12 +323,24 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       _ <- IO(system)
       ref <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "wdfix-3-ref")
       now = System.currentTimeMillis()
-      rec = productionShape("node-wdfix3", ref, now, declaredMs = 0L,
-        toolPhaseMs = 604_810L, progressAgeMs = None) // 从未观测到正信号
+      rec = productionShape(
+        "node-wdfix3",
+        ref,
+        now,
+        declaredMs = 0L,
+        toolPhaseMs = 604_810L,
+        progressAgeMs = None
+      ) // 从未观测到正信号
       a = TaskStuckWatcher.assessDetailed(rec, now).getOrElse(fail("判据必须命中（前提）"))
       cls = TaskStuckWatcher.classify(rec, a, now, inflight = 0)
-      recStale = productionShape("node-wdfix3b", ref, now, declaredMs = 0L,
-        toolPhaseMs = 604_810L, progressAgeMs = Some(75_000L)) // 正信号已过期（>60s 基础窗）
+      recStale = productionShape(
+        "node-wdfix3b",
+        ref,
+        now,
+        declaredMs = 0L,
+        toolPhaseMs = 604_810L,
+        progressAgeMs = Some(75_000L)
+      ) // 正信号已过期（>60s 基础窗）
       aStale = TaskStuckWatcher.assessDetailed(recStale, now).getOrElse(fail("判据必须命中（前提）"))
       clsStale = TaskStuckWatcher.classify(recStale, aStale, now, inflight = 0)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
@@ -291,12 +349,13 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       assert(cls.recoverable, "类① 允许进恢复链（挂起 + 从 transcript 续跑）")
       assert(!cls.destructiveAllowed, "类① 非破坏档（禁 L2 进程 kill / L3 终态化）")
       assert(cls.note.contains("no progress signal"), s"从未观测 ⇒ 文案如实写无正信号，得 ${cls.note}")
-      assert(cls.note.contains("over its authorised window"),
-        s"超授权事实必须写明，得 ${cls.note}")
-      assertEquals(clsStale.cls, TaskStuckWatcher.ClassTrueStuck,
-        s"正信号过期（75s > 60s 基础窗、未声明授权）⇒ 仍类①，得 ${clsStale.note}")
-      assert(clsStale.note.contains("no fresh progress signal") && clsStale.note.contains("75s ago"),
-        s"文案必须写「不新鲜」并给出实际读数（不写「没有正信号」），得 ${clsStale.note}")
+      assert(cls.note.contains("over its authorised window"), s"超授权事实必须写明，得 ${cls.note}")
+      assertEquals(clsStale.cls, TaskStuckWatcher.ClassTrueStuck, s"正信号过期（75s > 60s 基础窗、未声明授权）⇒ 仍类①，得 ${clsStale.note}")
+      assert(
+        clsStale.note.contains("no fresh progress signal") && clsStale.note.contains("75s ago"),
+        s"文案必须写「不新鲜」并给出实际读数（不写「没有正信号」），得 ${clsStale.note}"
+      )
+    end for
   }
 
   test("wd② 窗联动单调性: 声明越长窗不得越小；未声明 ⇒ 基础窗逐字不变（零行为变化）") {
@@ -305,11 +364,9 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
     val windows = declared.map(d => TaskStuckWatcher.effectiveProgressWindowMs(d))
     assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(0L), base, "未声明 ⇒ 基础窗 60s")
     assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(-1L), base, "非正数视作未声明")
-    assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(600_000L), base,
-      "声明 600s（600000/10 = 60000 = 基础窗）⇒ 基础窗")
+    assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(600_000L), base, "声明 600s（600000/10 = 60000 = 基础窗）⇒ 基础窗")
     assertEquals(TaskStuckWatcher.effectiveProgressWindowMs(3_600_000L), 360_000L)
-    assert(windows.sliding(2).forall { case List(a, b) => b >= a; case _ => true },
-      s"窗必须随声明时长单调不减，得 $windows")
+    assert(windows.sliding(2).forall { case List(a, b) => b >= a; case _ => true }, s"窗必须随声明时长单调不减，得 $windows")
   }
 
   test("负控③: inflightFor(sid) > 0 → 类④ provider hang（不执行 L2 进程 kill / L3）") {
@@ -334,6 +391,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       assertEquals(cls.cls, TaskStuckWatcher.ClassProviderHang, s"inflight>0 ⇒ 类④，得 ${cls.cls}: ${cls.note}")
       assert(!cls.destructiveAllowed, "类④ 不许 L2 进程 kill（负控③）")
       assert(!cls.recoverable, "类④ 不进节点级恢复腿 ⇒ L3 被结构性跳过（负控③）")
+    end for
   }
 
   test("判据序优先级: inflight 优先于工具相位（类④ 先命中）") {
@@ -347,8 +405,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       a = TaskStuckWatcher.assessDetailed(rec, now).getOrElse(fail("判据必须命中"))
       cls = TaskStuckWatcher.classify(rec, a, now, inflight = 2)
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
-    yield assertEquals(cls.cls, TaskStuckWatcher.ClassProviderHang,
-      "设计 §2.1 判定顺序：inflightFor 是第一档，先于工具相位分支")
+    yield assertEquals(cls.cls, TaskStuckWatcher.ClassProviderHang, "设计 §2.1 判定顺序：inflightFor 是第一档，先于工具相位分支")
   }
 
   test("LlmInterface.inflightFor 是**只读**：不触发 halt/abort，且 per-session 计数精确") {
@@ -415,6 +472,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       assertEquals(mine.head.hcursor.get[String]("branch").toOption, Some(TaskStuckWatcher.BranchAgentStale))
       assertEquals(mine.head.hcursor.get[Boolean]("recoverable").toOption, Some(false))
       assertEquals(mine.head.hcursor.get[Boolean]("destructiveAllowed").toOption, Some(false))
+    end for
   }
 
   test("负控③ 扫描面: 有在飞 LLM 请求 ⇒ 类④ 三拍均不达 L3（0 桥 Cancelled / 0 L3 待复查登记）") {
@@ -431,9 +489,15 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       now = System.currentTimeMillis()
       sid = "node-scann3"
       rec = AgentRecord(
-        sessionId = sid, ref = agentRef, kind = AgentKind.Flow, rootSessionId = "root-n3",
-        startedAt = now - 30 * 60 * 1000L, status = AgentStatus.Processing,
-        lastActivityMs = now - threshold - 1000L, supervisorRef = Some(bridgeRef))
+        sessionId = sid,
+        ref = agentRef,
+        kind = AgentKind.Flow,
+        rootSessionId = "root-n3",
+        startedAt = now - 30 * 60 * 1000L,
+        status = AgentStatus.Processing,
+        lastActivityMs = now - threshold - 1000L,
+        supervisorRef = Some(bridgeRef)
+      )
       _ <- resources.agentRegistry.set(Map(sid -> rec))
       (_, _) <- nebflow.llm.LlmInterface.registerInflight(Some(sid))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
@@ -448,15 +512,19 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       _ <- nebflow.llm.LlmInterface.cancelAllInflight()
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield
-      assert(!evts.exists(_.isInstanceOf[AgentEvent.Cancelled]),
-        s"类④ 不得走节点级 L3 腿（负控③「不执行 L3」），得 $evts")
+      assert(!evts.exists(_.isInstanceOf[AgentEvent.Cancelled]), s"类④ 不得走节点级 L3 腿（负控③「不执行 L3」），得 $evts")
       assertEquals(pend, Nil, "类④ 不得登记 L3 待复查（节点级腿未开火）")
       val mine = detected.filter(_.hcursor.get[String]("sessionId").toOption.contains(sid))
       assertEquals(mine.size, 3, s"三拍各留一条 stuck-detected，得 ${mine.size}")
-      assert(mine.forall(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassProviderHang)),
-        s"三拍均须判为类④，得 ${mine.map(_.hcursor.get[String]("class").toOption)}")
-      assert(mine.forall(_.hcursor.get[Boolean]("destructiveAllowed").toOption.contains(false)),
-        "类④ 三拍均不得允许破坏档（进程 kill 结构性收回）")
+      assert(
+        mine.forall(_.hcursor.get[String]("class").toOption.contains(TaskStuckWatcher.ClassProviderHang)),
+        s"三拍均须判为类④，得 ${mine.map(_.hcursor.get[String]("class").toOption)}"
+      )
+      assert(
+        mine.forall(_.hcursor.get[Boolean]("destructiveAllowed").toOption.contains(false)),
+        "类④ 三拍均不得允许破坏档（进程 kill 结构性收回）"
+      )
+    end for
   }
 
   // ── ③ 写入语义单点：正信号 / 跨轮指纹投影 ───────────────────────────────
@@ -501,8 +569,14 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       wsHub = new WsHub()
       now = System.currentTimeMillis()
       // 真卡死形态：声明 3600s 授权 + 从未有正信号（安静段远超联动窗）⇒ 类①
-      rec = productionShape("node-wdfix4", agentRef, now, declaredMs = 3_600_000L,
-        toolPhaseMs = 1_500_000L, progressAgeMs = None).copy(supervisorRef = Some(bridgeRef))
+      rec = productionShape(
+        "node-wdfix4",
+        agentRef,
+        now,
+        declaredMs = 3_600_000L,
+        toolPhaseMs = 1_500_000L,
+        progressAgeMs = None
+      ).copy(supervisorRef = Some(bridgeRef))
       _ <- resources.agentRegistry.set(Map(rec.sessionId -> rec))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
@@ -526,29 +600,41 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
       pend <- pendingL3.get
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
     yield
-      val levels = fires.filter(_.hcursor.get[String]("sessionId").toOption.contains("node-wdfix4"))
+      val levels = fires
+        .filter(_.hcursor.get[String]("sessionId").toOption.contains("node-wdfix4"))
         .flatMap(_.hcursor.get[String]("level").toOption)
-      assert(levels.contains("L1") && levels.contains("L2") && levels.contains("L3"),
-        s"L1→L3 分级必须逐拍发生（真判不减少），得 $levels")
+      assert(
+        levels.contains("L1") && levels.contains("L2") && levels.contains("L3"),
+        s"L1→L3 分级必须逐拍发生（真判不减少），得 $levels"
+      )
       assertEquals(counts.getOrElse("node-wdfix4", 0), 3, "扫描三拍 ⇒ 升级阶梯计数 3")
       assertEquals(pend.map(_.sessionId), List("node-wdfix4"), "L3 必须登记待复查（复查面未被本批改动）")
       val mine = detected.filter(_.hcursor.get[String]("sessionId").toOption.contains("node-wdfix4"))
-      assert(mine.nonEmpty && mine.forall(_.hcursor.get[String]("class").toOption
-        .contains(TaskStuckWatcher.ClassTrueStuck)),
-        s"每一拍都必须判类①（无正信号），得 ${mine.map(_.hcursor.get[String]("class").toOption)}")
+      assert(
+        mine.nonEmpty && mine.forall(
+          _.hcursor
+            .get[String]("class")
+            .toOption
+            .contains(TaskStuckWatcher.ClassTrueStuck)
+        ),
+        s"每一拍都必须判类①（无正信号），得 ${mine.map(_.hcursor.get[String]("class").toOption)}"
+      )
       // 三拍各留一条（L3 拍在既有实现里写两次 `stuck-detected`——`classifyNote` 在
       // Flow 分支与 L3 分支各执行一次；生产语料同形的重复行即此因，本批未动它）。
-      assertEquals(mine.flatMap(_.hcursor.get[Long]("toolPhaseMs").toOption).distinct.size, 3,
-        "三拍必须各自留痕（读数三点互异）")
+      assertEquals(mine.flatMap(_.hcursor.get[Long]("toolPhaseMs").toOption).distinct.size, 3, "三拍必须各自留痕（读数三点互异）")
       // 批 3（C11）增补：三点互异**必须是逐拍前进**的真实读数（显式步进的直接读数，
       // 而非「恰好不同」）。读数 = `now - currentToolStartedAt` ⇒ 相邻两拍之差 ≥ 步进值。
       val readings = mine.flatMap(_.hcursor.get[Long]("toolPhaseMs").toOption).distinct.sorted
-      assert(readings.size == 3 && readings.sliding(2).forall(w => w(1) - w(0) >= tapStep.toMillis),
-        s"三拍读数须逐拍前进（步进 ≥${tapStep.toMillis}ms），得 $readings")
+      assert(
+        readings.size == 3 && readings.sliding(2).forall(w => w(1) - w(0) >= tapStep.toMillis),
+        s"三拍读数须逐拍前进（步进 ≥${tapStep.toMillis}ms），得 $readings"
+      )
+    end for
   }
 
   /** 薄包装：把 `AgentCore.projectLoopCounters` 提到测试可读处（避免重复 import 长链）。 */
   private object AgentCoreProjection:
+
     def of(c: nebflow.core.processor.LoopGuard.Counters): (Int, String) =
       nebflow.agent.AgentCore.projectLoopCounters(c)
 

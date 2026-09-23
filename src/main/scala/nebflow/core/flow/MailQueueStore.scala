@@ -95,7 +95,7 @@ object MailQueueStore:
           if os.exists(file) then
             decode[List[MailQueueItem]](os.read(file)) match
               case Right(items) => items
-              case Left(_)      => Nil // corrupt file — start fresh
+              case Left(_) => Nil // corrupt file — start fresh
           else Nil
         val updated = current :+ item
         AtomicJson.writeSync(file, updated.asJson.noSpaces)

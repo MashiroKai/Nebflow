@@ -7,14 +7,15 @@ import io.circe.parser.decode
 import munit.CatsEffectSuite
 import nebflow.core.PathUtil
 
-/** Issue #23: writeTask must be atomic (tmp + rename). A bare os.write.over
-  * can leave truncated JSON if the process dies mid-write — readTask then
-  * silently drops the task. Guards:
-  *   - concurrent updates to the same task never interleave partial writes
-  *     (final file always decodes as a valid Task)
-  *   - no .tmp.* residue left in the session dir
-  *   - legacy behavior: target file content is the last-write-wins task JSON
-  */
+/**
+ * Issue #23: writeTask must be atomic (tmp + rename). A bare os.write.over
+ * can leave truncated JSON if the process dies mid-write — readTask then
+ * silently drops the task. Guards:
+ *   - concurrent updates to the same task never interleave partial writes
+ *     (final file always decodes as a valid Task)
+ *   - no .tmp.* residue left in the session dir
+ *   - legacy behavior: target file content is the last-write-wins task JSON
+ */
 class TaskStoreAtomicWriteSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-taskstore-atomic"
   PathUtil.setDataRoot(tempRoot)
@@ -28,8 +29,10 @@ class TaskStoreAtomicWriteSpec extends CatsEffectSuite:
   private def mkTask(sessionId: String, subject: String): IO[String] =
     store.create(sessionId, TaskCreateInput(subject = subject, description = "d", taskKind = Some("agent")))
 
-  /** Spawn each IO on its own fiber and join all — plain CE3 concurrency
-    * without relying on Parallel syntax extensions. */
+  /**
+   * Spawn each IO on its own fiber and join all — plain CE3 concurrency
+   * without relying on Parallel syntax extensions.
+   */
   private def concurrently(ios: List[IO[Unit]]): IO[Unit] =
     ios.traverse(_.start).flatMap(_.traverse_(_.joinWithNever))
 

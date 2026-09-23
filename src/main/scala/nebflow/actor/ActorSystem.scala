@@ -21,9 +21,12 @@ trait ActorSystem:
   def resolve[Msg](path: String): IO[ActorRef[Msg]]
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
-  /** Liveness probe (#22): a cached ActorRef whose loop has exited (crash /
-    * TTL / stop without watched cleanup) still offers into its queue —
-    * messages sent to it vanish silently. This checks the live registry. */
+
+  /**
+   * Liveness probe (#22): a cached ActorRef whose loop has exited (crash /
+   * TTL / stop without watched cleanup) still offers into its queue —
+   * messages sent to it vanish silently. This checks the live registry.
+   */
   def isAlive(path: ActorPath): IO[Boolean]
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit]

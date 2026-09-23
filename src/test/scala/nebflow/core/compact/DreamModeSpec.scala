@@ -49,13 +49,22 @@ class DreamModeSpec extends FunSuite:
     MemoryStore.invalidateAgentCache("Nebula")
 
   private def noteOf(
-      id: String,
-      section: Option[String],
-      content: Option[String]
+    id: String,
+    section: Option[String],
+    content: Option[String]
   ): MemoryQueue.Note =
     MemoryQueue.Note(
-      id, 1L, "2026-09-12T00:00:00Z", "user", "append", section, None, content,
-      Some("s"), MemoryQueue.TriggerDream)
+      id,
+      1L,
+      "2026-09-12T00:00:00Z",
+      "user",
+      "append",
+      section,
+      None,
+      content,
+      Some("s"),
+      MemoryQueue.TriggerDream
+    )
 
   private def stateOf(notes: Vector[MemoryQueue.Note]): MemoryQueue.State =
     MemoryQueue.State(notes, Vector.empty, Set.empty, 0, 0)
@@ -67,8 +76,7 @@ class DreamModeSpec extends FunSuite:
 
   test("parseFact：`FACT n: [CATEGORY] text` 解析（类别大写化；空文本/非 FACT 行 ⇒ None）"):
     assertEquals(DreamMode.parseFact("FACT 1: [PATTERN] 先写 spec"), Some(("PATTERN", "先写 spec")))
-    assertEquals(DreamMode.parseFact("  FACT 12 : [user_preference] 深色主题  "),
-      Some(("USER_PREFERENCE", "深色主题")))
+    assertEquals(DreamMode.parseFact("  FACT 12 : [user_preference] 深色主题  "), Some(("USER_PREFERENCE", "深色主题")))
     assertEquals(DreamMode.parseFact("FACT 3: [DECISION]"), None, "空文本不解析")
     assertEquals(DreamMode.parseFact("不是 FACT 格式"), None)
 
@@ -89,8 +97,11 @@ class DreamModeSpec extends FunSuite:
       .unsafeRunSync()
     val notes = MemoryQueue.readState().notes
     assertEquals(notes.size, 2)
-    assertEquals(notes.map(_.section).distinct, Vector[Option[String]](None),
-      "无具名节：`## Dream Extract` 已随 DreamMode 机制停用退役")
+    assertEquals(
+      notes.map(_.section).distinct,
+      Vector[Option[String]](None),
+      "无具名节：`## Dream Extract` 已随 DreamMode 机制停用退役"
+    )
 
   test("无具名节的文件上照旧可落：两条 pending 判 would-apply（文件尾追加），零缺节重试族"):
     reset()
@@ -99,24 +110,18 @@ class DreamModeSpec extends FunSuite:
       .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙"), Some("sess-1"))
       .unsafeRunSync()
     val path = MemoryStore.userMemoryPath
-    val plan = MemoryQueue.plan(
-      MemoryQueue.readState(),
-      Map("user" -> MemoryQueue.TargetFile(path.toString, os.read(path))))
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 2,
-      s"两条都可落（section=None ⇒ 文件尾追加）: ${plan.items}")
-    assertEquals(plan.retryable, Vector.empty[String],
-      "不落缺节重试族（引擎无具名节可缺）")
+    val plan =
+      MemoryQueue.plan(MemoryQueue.readState(), Map("user" -> MemoryQueue.TargetFile(path.toString, os.read(path))))
+    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 2, s"两条都可落（section=None ⇒ 文件尾追加）: ${plan.items}")
+    assertEquals(plan.retryable, Vector.empty[String], "不落缺节重试族（引擎无具名节可缺）")
 
   // ===== ④ 反向钉：该节不再是可落节 ⇒ 引擎不创建它 =====
 
   test("退役面反向钉：以 `## Dream Extract` 为落点的 append 在无该节的文件上判 would-retry（零落笔 ⇒ 不创建该节）"):
     val note = noteOf("q-1", Some("## Dream Extract"), Some("- [PATTERN] 旧语义落点"))
     val plan = MemoryQueue.plan(stateOf(Vector(note)), targetFile("# User\n\n## 工作风格\n\n- 早睡早起\n"))
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 0,
-      s"该节不再是可落节（无节 ⇒ 不落、不新建）: ${plan.items}")
-    assertEquals(plan.retryable, Vector("q-1"),
-      "落点节不存在 ⇒ 可重试族（保持 pending，零落笔）")
-    assert(!plan.render().contains("## Dream Extract"),
-      "计划输出不含该节名（引擎侧无该节概念）")
+    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldApply), 0, s"该节不再是可落节（无节 ⇒ 不落、不新建）: ${plan.items}")
+    assertEquals(plan.retryable, Vector("q-1"), "落点节不存在 ⇒ 可重试族（保持 pending，零落笔）")
+    assert(!plan.render().contains("## Dream Extract"), "计划输出不含该节名（引擎侧无该节概念）")
 
 end DreamModeSpec

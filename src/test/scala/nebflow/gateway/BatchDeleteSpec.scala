@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class BatchDeleteSpec extends FunSuite:
 

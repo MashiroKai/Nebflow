@@ -60,7 +60,17 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       createdAt = System.currentTimeMillis() - 60_000L
     )
 
-  private def withFixture(name: String)(body: (FlowMapStore, NodeEngine, SharedResources, ActorSystem, Ref[IO, List[AgentCommand]], String, nebflow.actor.ActorRef[AgentCommand]) => Unit): Unit =
+  private def withFixture(name: String)(
+    body: (
+      FlowMapStore,
+      NodeEngine,
+      SharedResources,
+      ActorSystem,
+      Ref[IO, List[AgentCommand]],
+      String,
+      nebflow.actor.ActorRef[AgentCommand]
+    ) => Unit
+  ): Unit =
     val tmp = os.temp.dir(prefix = s"v8-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"v8-$name")
@@ -83,7 +93,10 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         llm = new nebflow.shared.LlmHandle[IO]:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
-          def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+          def sendStream(
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ) =
             fs2.Stream(nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
         resources = SharedResources(
           llm = llm,
@@ -141,22 +154,31 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       // （宁留一个临时目录，也不删可能仍被写入的目录——删除与存活写入者并发正是
       // `DirectoryNotEmptyException` 的唯一来源）。
       if awaitFixtureQuiescent(tmp) then os.remove.all(tmp)
-      else System.err.println(
-        s"[v8-spec] fixture tree still changing after ${FixtureQuiesceDeadlineMs}ms — left in place (not deleted): $tmp")
+      else
+        System.err.println(
+          s"[v8-spec] fixture tree still changing after ${FixtureQuiesceDeadlineMs}ms — left in place (not deleted): $tmp"
+        )
+
+    end try
+
+  end withFixture
 
   /** fixture 树签名：路径 + 大小 + mtime（排序后拼接，稳定可比）。 */
   private def fixtureSignature(root: os.Path): String =
     try
       if !os.exists(root) then "<absent>"
       else
-        os.walk(root).toList
+        os.walk(root)
+          .toList
           .map(p => s"$p:${os.size(p)}:${os.mtime(p)}")
           .sorted
           .mkString("|")
     catch case _: Exception => "<unreadable>"
 
-  /** 有界静默等待（见 teardown 处头注）。逐轮读数写 stderr；终止条件 = 连续
-    * [[FixtureQuiesceRounds]] 轮签名不变。返回 true = 可安全删除。 */
+  /**
+   * 有界静默等待（见 teardown 处头注）。逐轮读数写 stderr；终止条件 = 连续
+   * [[FixtureQuiesceRounds]] 轮签名不变。返回 true = 可安全删除。
+   */
   private def awaitFixtureQuiescent(root: os.Path): Boolean =
     var round = 0
     var stable = 0
@@ -175,7 +197,11 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
   private val FixtureQuiesceIntervalMs = 250L
   private val FixtureQuiesceDeadlineMs = 15_000L
 
-  private def registerRoot(resources: SharedResources, rootSid: String, rootRef: nebflow.actor.ActorRef[AgentCommand]): IO[Unit] =
+  private def registerRoot(
+    resources: SharedResources,
+    rootSid: String,
+    rootRef: nebflow.actor.ActorRef[AgentCommand]
+  ): IO[Unit] =
     resources.agentRegistry.update(_ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid)))
 
   /** 自引用 recorder behavior：收到的 AgentCommand 全部记账。 */
@@ -184,15 +210,17 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       Behaviors.receiveMessage[AgentCommand](msg => recorded.update(_ :+ msg).as(b))
     b
 
-  /** 有界轮询等待投递消息记账（ad0a50ad awaitMsgs 模式）：deliverToNebula 是
-    * `ref ! ImmediateInput` fire-and-forget——扫描返回时消息可能仍在 recorder
-    * 邮箱里未处理，立即直读 recorded 有竞态（R4 CI 偶发 NoSuchElementException
-    * head of empty list @:200；R1@:147 / R5@:218 同根因偶发 size 断言红）。
-    * 等预期投递记录到达后再断言，不改断言语义。 */
+  /**
+   * 有界轮询等待投递消息记账（ad0a50ad awaitMsgs 模式）：deliverToNebula 是
+   * `ref ! ImmediateInput` fire-and-forget——扫描返回时消息可能仍在 recorder
+   * 邮箱里未处理，立即直读 recorded 有竞态（R4 CI 偶发 NoSuchElementException
+   * head of empty list @:200；R1@:147 / R5@:218 同根因偶发 size 断言红）。
+   * 等预期投递记录到达后再断言，不改断言语义。
+   */
   private def awaitImms(
-      recorded: Ref[IO, List[AgentCommand]],
-      min: Int,
-      timeoutMs: Long = 10_000L
+    recorded: Ref[IO, List[AgentCommand]],
+    min: Int,
+    timeoutMs: Long = 10_000L
   ): IO[List[AgentCommand.ImmediateInput]] =
     def snapshot: IO[List[AgentCommand.ImmediateInput]] =
       recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
@@ -207,7 +235,11 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     withFixture("r1") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-done" -> completedNode("n-done", NodeLifecycle.Completed, "V8_CRASH_WINDOW_RESULT"))))
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-done" -> completedNode("n-done", NodeLifecycle.Completed, "V8_CRASH_WINDOW_RESULT"))
+          )
+        )
         n1 <- engine.redeliverUnconsumedNebulaResults()
         msgs <- awaitImms(recorded, min = 1)
         node <- store.getNode("n-done")
@@ -216,7 +248,10 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       assertEquals(clue(n1), 1, "scan must report one redelivery")
       val imms = msgs.collect { case m: AgentCommand.ImmediateInput => m }
       assertEquals(clue(imms.size), 1, "exactly one ImmediateInput to the root")
-      assert(clue(imms.head.text).contains("V8_CRASH_WINDOW_RESULT"), s"result text must be delivered: ${imms.head.text}")
+      assert(
+        clue(imms.head.text).contains("V8_CRASH_WINDOW_RESULT"),
+        s"result text must be delivered: ${imms.head.text}"
+      )
       assert(imms.head.source.contains("node"), "node-source bubble semantics preserved")
       assert(clue(node.flatMap(_.nebulaDeliveredAt)).isDefined, "delivery must be recorded (nebulaDeliveredAt)")
     }
@@ -226,7 +261,9 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     withFixture("r2") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-a" -> completedNode("n-a", NodeLifecycle.Completed, "r2 result"))))
+        _ <- store.mutate(s =>
+          s.copy(nodes = s.nodes + ("n-a" -> completedNode("n-a", NodeLifecycle.Completed, "r2 result")))
+        )
         _ <- engine.redeliverUnconsumedNebulaResults()
         countAfterFirst <- awaitImms(recorded, min = 1).map(_.size)
         n2 <- engine.redeliverUnconsumedNebulaResults()
@@ -244,7 +281,9 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     withFixture("r3") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         // Root NOT registered (lazy spawn — the real early-boot shape).
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-park" -> completedNode("n-park", NodeLifecycle.Completed, "r3 parked"))))
+        _ <- store.mutate(s =>
+          s.copy(nodes = s.nodes + ("n-park" -> completedNode("n-park", NodeLifecycle.Completed, "r3 parked")))
+        )
         n <- engine.redeliverUnconsumedNebulaResults()
         msgs <- recorded.get
         node <- store.getNode("n-park")
@@ -261,7 +300,9 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     withFixture("r4") { (store, engine, resources, system, recorded, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-fail" -> completedNode("n-fail", NodeLifecycle.Failed, "r4 failure detail"))))
+        _ <- store.mutate(s =>
+          s.copy(nodes = s.nodes + ("n-fail" -> completedNode("n-fail", NodeLifecycle.Failed, "r4 failure detail")))
+        )
         n <- engine.redeliverUnconsumedNebulaResults()
         msgs <- awaitImms(recorded, min = 1)
       yield (n, msgs)
@@ -297,9 +338,13 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- registerRoot(resources, rootSid, rootRef)
         node = completedNode("n-marked", NodeLifecycle.Completed, "r5b marked")
         // 已记账（= 结果早已投达 root）：再走一遍人工改接不得重复投
-        //（旧口径「已记账也再投一次」＝本批 N4/M1 要堵的重复面）。
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-marked" ->
-          node.copy(nebulaDeliveredAt = Some(System.currentTimeMillis() - 3600_000L)))))
+        // （旧口径「已记账也再投一次」＝本批 N4/M1 要堵的重复面）。
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-marked" ->
+              node.copy(nebulaDeliveredAt = Some(System.currentTimeMillis() - 3600_000L)))
+          )
+        )
         marked <- store.getNode("n-marked").map(_.get)
         _ <- engine.deliverOutTo(marked, "Nebula", "r5b marked")
         _ <- IO.sleep(300.millis)
@@ -328,7 +373,10 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       assertEquals(clue(n), 1, "only the explicit-gate (mode=result) node is a redelivery candidate")
       assertEquals(clue(imms.size), 1)
       assert(clue(imms.head.text).contains("R6_NOTIFY_RESULT"), "explicit-gate notify still redelivers")
-      assert(!imms.exists(_.text.contains("R6_EXIT_MARKER_RESULT")), "signal exit marker must never be redelivered to root")
+      assert(
+        !imms.exists(_.text.contains("R6_EXIT_MARKER_RESULT")),
+        "signal exit marker must never be redelivered to root"
+      )
     }
   }
 
@@ -338,24 +386,54 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- registerRoot(resources, rootSid, rootRef)
         now <- IO(System.currentTimeMillis())
         // (a) failed 源 + 只有 pass 腿 ⇒ 跳过（旧口径方向相反的缺口）
-        failedPass = NodeDef(id = "n-fp", name = "fp", agent = "worker",
-          out = List(OutEdge("n-down", Set(OutEdge.Pass))), status = NodeLifecycle.Failed,
-          result = Some("FAILED_ERR_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        failedPass = NodeDef(
+          id = "n-fp",
+          name = "fp",
+          agent = "worker",
+          out = List(OutEdge("n-down", Set(OutEdge.Pass))),
+          status = NodeLifecycle.Failed,
+          result = Some("FAILED_ERR_TEXT"),
+          createdAt = now - 60_000L,
+          completedAt = Some(now)
+        )
         // (b) failed 源 + failed 腿 ⇒ 投递（按源 status 选门）
-        failedFail = NodeDef(id = "n-ff", name = "ff", agent = "worker",
-          out = List(OutEdge("n-down2", Set(OutEdge.Failed), OutEdge.Signal)), status = NodeLifecycle.Failed,
-          result = Some("FAILED_EDGE_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        failedFail = NodeDef(
+          id = "n-ff",
+          name = "ff",
+          agent = "worker",
+          out = List(OutEdge("n-down2", Set(OutEdge.Failed), OutEdge.Signal)),
+          status = NodeLifecycle.Failed,
+          result = Some("FAILED_EDGE_TEXT"),
+          createdAt = now - 60_000L,
+          completedAt = Some(now)
+        )
         // (c) cancelled 源 ⇒ 整体不投（仅 info）
-        cancelled = NodeDef(id = "n-cx", name = "cx", agent = "worker",
-          out = List(OutEdge("n-down3", Set(OutEdge.Pass))), status = NodeLifecycle.Cancelled,
-          result = Some("CANCELLED_TEXT"), createdAt = now - 60_000L, completedAt = Some(now))
+        cancelled = NodeDef(
+          id = "n-cx",
+          name = "cx",
+          agent = "worker",
+          out = List(OutEdge("n-down3", Set(OutEdge.Pass))),
+          status = NodeLifecycle.Cancelled,
+          result = Some("CANCELLED_TEXT"),
+          createdAt = now - 60_000L,
+          completedAt = Some(now)
+        )
         // 目标节点（wiring）——投递 = deliveredTo 记账 + startNode 尝试
         down = NodeDef(id = "n-down", name = "down", agent = "worker", in = List("n-fp"), createdAt = now)
         down2 = NodeDef(id = "n-down2", name = "down2", agent = "worker", in = List("n-ff"), createdAt = now)
         down3 = NodeDef(id = "n-down3", name = "down3", agent = "worker", in = List("n-cx"), createdAt = now)
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          "n-fp" -> failedPass, "n-ff" -> failedFail, "n-cx" -> cancelled,
-          "n-down" -> down, "n-down2" -> down2, "n-down3" -> down3)))
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              "n-fp" -> failedPass,
+              "n-ff" -> failedFail,
+              "n-cx" -> cancelled,
+              "n-down" -> down,
+              "n-down2" -> down2,
+              "n-down3" -> down3
+            )
+          )
+        )
         _ <- engine.deliverOutTo(failedPass, "n-down", "FAILED_ERR_TEXT")
         _ <- engine.deliverOutTo(failedFail, "n-down2", "FAILED_EDGE_TEXT")
         _ <- engine.deliverOutTo(cancelled, "n-down3", "CANCELLED_TEXT")
@@ -364,12 +442,17 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         d3 <- store.getNode("n-down3")
       yield (d1, d2, d3)
       val (d1, d2, d3) = io.unsafeRunSync()
-      assertEquals(clue(d1.map(_.deliveredTo)), Some(List.empty[String]),
-        "failed source on a pass-only edge must NOT deliver (gate selected by source status)")
-      assertEquals(clue(d2.map(_.deliveredTo)), Some(List("n-ff")),
-        "failed source on a failed edge must deliver")
-      assertEquals(clue(d3.map(_.deliveredTo)), Some(List.empty[String]),
-        "cancelled source never delivers (no input semantics)")
+      assertEquals(
+        clue(d1.map(_.deliveredTo)),
+        Some(List.empty[String]),
+        "failed source on a pass-only edge must NOT deliver (gate selected by source status)"
+      )
+      assertEquals(clue(d2.map(_.deliveredTo)), Some(List("n-ff")), "failed source on a failed edge must deliver")
+      assertEquals(
+        clue(d3.map(_.deliveredTo)),
+        Some(List.empty[String]),
+        "cancelled source never delivers (no input semantics)"
+      )
     }
   }
 

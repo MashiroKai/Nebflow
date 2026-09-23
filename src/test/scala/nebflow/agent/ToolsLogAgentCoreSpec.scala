@@ -16,12 +16,14 @@ import java.nio.file.{Files, Path}
 import java.time.Instant
 import scala.jdk.CollectionConverters.*
 
-/** 方案 B（审计 20260903 §5）真链路验收 ⑤：经真实 AgentCore.executeTool 链
-  * （registry 查找 → hook 引擎 → 工具执行 → flatTap 埋点）跑真实工具执行，
-  * 成功行 + 三种失败变体（工具不存在 / Left 返回 / 抛异常）各落一条 JSONL 到
-  * 临时目录；⑥ requestId 关联——同一条 id 同时出现在 tools 与 router 两类 JSONL
-  * （LlmLogWriter 目录重定向到临时路径，不碰真实日志）。
-  * 风格照 HookExecutionIntegrationSpec（CoreProbe 模式，AgentCore private[agent]）。 */
+/**
+ * 方案 B（审计 20260903 §5）真链路验收 ⑤：经真实 AgentCore.executeTool 链
+ * （registry 查找 → hook 引擎 → 工具执行 → flatTap 埋点）跑真实工具执行，
+ * 成功行 + 三种失败变体（工具不存在 / Left 返回 / 抛异常）各落一条 JSONL 到
+ * 临时目录；⑥ requestId 关联——同一条 id 同时出现在 tools 与 router 两类 JSONL
+ * （LlmLogWriter 目录重定向到临时路径，不碰真实日志）。
+ * 风格照 HookExecutionIntegrationSpec（CoreProbe 模式，AgentCore private[agent]）。
+ */
 class ToolsLogAgentCoreSpec extends FunSuite:
 
   private val toolsDate: String = Instant.now().toString.take(10)
@@ -50,7 +52,7 @@ class ToolsLogAgentCoreSpec extends FunSuite:
   private def findByTool(lines: List[io.circe.Json], tool: String): io.circe.Json =
     lines.filter(_.hcursor.get[String]("tool").toOption.contains(tool)) match
       case j :: _ => j
-      case Nil    => fail(s"no tools JSONL line for tool=$tool in ${lines.map(_.hcursor.get[String]("tool").toOption)}")
+      case Nil => fail(s"no tools JSONL line for tool=$tool in ${lines.map(_.hcursor.get[String]("tool").toOption)}")
 
   override def afterEach(context: munit.AfterEach): Unit =
     ToolsLogWriter.flushSync()
@@ -64,7 +66,8 @@ class ToolsLogAgentCoreSpec extends FunSuite:
     ToolsLogWriter.setDirForTest(dir)
     try
       os.write(root / "hello.txt", "hello tools log")
-      val call = ToolCall(id = "t-ok", name = "Read", input = JsonObject("file_path" -> (root / "hello.txt").toString.asJson))
+      val call =
+        ToolCall(id = "t-ok", name = "Read", input = JsonObject("file_path" -> (root / "hello.txt").toString.asJson))
       val res = CoreProbe.exec(call, mkCtx(root)).unsafeRunSync()
       assert(!res.isError, s"Read failed: ${res.content.take(200)}")
 
@@ -87,6 +90,7 @@ class ToolsLogAgentCoreSpec extends FunSuite:
     finally
       os.remove.all(root)
       os.remove.all(os.Path(dir))
+    end try
   }
 
   test("failure variant 1: tool not found (path converged — bypassed flatTap pre-fix)") {
@@ -108,6 +112,7 @@ class ToolsLogAgentCoreSpec extends FunSuite:
     finally
       os.remove.all(root)
       os.remove.all(os.Path(dir))
+    end try
   }
 
   test("failure variant 2: tool returns Left(ToolError) — Read on missing file") {
@@ -161,6 +166,7 @@ class ToolsLogAgentCoreSpec extends FunSuite:
       nebflow.core.tools.ToolRegistry.unregisterTool("ExplodingTool_ToolsLogSpec")
       os.remove.all(root)
       os.remove.all(os.Path(dir))
+    end try
   }
 
   test("⑥ requestId: tools row and router row share the same request_id; non-LLM rows carry null") {
@@ -196,10 +202,12 @@ class ToolsLogAgentCoreSpec extends FunSuite:
           resultModel = Some("spec-model")
         )
         .unsafeRunSync()
-      val call = ToolCall(id = "t-align", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
+      val call =
+        ToolCall(id = "t-align", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
       CoreProbe.exec(call, mkCtx(root, requestId = Some(alignId))).unsafeRunSync()
       // 非 LLM 触发的执行（requestId 缺失）——key 必在、值 null
-      val callNoReq = ToolCall(id = "t-noreq", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
+      val callNoReq =
+        ToolCall(id = "t-noreq", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
       CoreProbe.exec(callNoReq, mkCtx(root, requestId = None)).unsafeRunSync()
 
       ToolsLogWriter.flushSync()
@@ -230,6 +238,7 @@ class ToolsLogAgentCoreSpec extends FunSuite:
       os.remove.all(root)
       os.remove.all(os.Path(toolsDir))
       os.remove.all(os.Path(routerDir))
+    end try
   }
 
 end ToolsLogAgentCoreSpec

@@ -235,6 +235,8 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       wsSend = Some(j => IO(wsSent += j).void)
     )
 
+  end mkCtx
+
   private def callTool(input: Json, ctx: ToolContext): Either[ToolError, String] =
     ScheduleTool.call(input.asObject.get, ctx).unsafeRunSync()
 
@@ -287,15 +289,25 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       assert(text.contains("will not fire"), text)
       assertEquals(due, Nil, "cancelled recurring task must never fire")
       assertEquals(pending, Nil, "cancelled task must vanish from list immediately")
-      assert(wsSent.exists(j => j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted") &&
-        j.hcursor.downField("id").as[String].toOption.contains(t.id)), s"WS delete broadcast missing: $wsSent")
+      assert(
+        wsSent.exists(j =>
+          j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted") &&
+            j.hcursor.downField("id").as[String].toOption.contains(t.id)
+        ),
+        s"WS delete broadcast missing: $wsSent"
+      )
 
   test("tool cancel works cross-session (task lives in another session file)"):
     for
       _ <- reset()
       t <- IO(ScheduledTask.create("s-other", "far away task", future, None, None, None))
       _ <- taskStore.addTask(t)
-      res <- IO(callTool(Json.obj("action" -> "cancel".asJson, "id" -> t.id.asJson), mkCtx(taskStore, sessionId = Some("s-tool"))))
+      res <- IO(
+        callTool(
+          Json.obj("action" -> "cancel".asJson, "id" -> t.id.asJson),
+          mkCtx(taskStore, sessionId = Some("s-tool"))
+        )
+      )
       pending <- taskStore.getAllPendingTasks
     yield
       assert(res.isRight, res.toString)
@@ -306,15 +318,17 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       _ <- reset()
       old <- IO(ScheduledTask.create("s-old", "old dream review", future, None, Some("daily"), Some("dream-review")))
       _ <- taskStore.addTask(old)
-      res <- IO(callTool(
-        Json.obj(
-          "content" -> "新的梦境日审".asJson,
-          "triggerAt" -> (future + 60_000L).asJson,
-          "repeat" -> "daily".asJson,
-          "name" -> "dream-review".asJson
-        ),
-        mkCtx(taskStore)
-      ))
+      res <- IO(
+        callTool(
+          Json.obj(
+            "content" -> "新的梦境日审".asJson,
+            "triggerAt" -> (future + 60_000L).asJson,
+            "repeat" -> "daily".asJson,
+            "name" -> "dream-review".asJson
+          ),
+          mkCtx(taskStore)
+        )
+      )
       pending <- taskStore.getAllPendingTasks
     yield
       val text = res.toOption.get
@@ -324,23 +338,36 @@ class ScheduleActionsSpec extends CatsEffectSuite:
       // 收敛单份 + 不双份注入的前提：全库只剩一条该 name 的待触发任务
       assertEquals(pending.count(_.name.contains("dream-review")), 1)
       // WS：旧任务广播删除、新任务广播创建（前端面板同步）
-      assert(wsSent.exists(j => j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted") &&
-        j.hcursor.downField("id").as[String].toOption.contains(old.id)), s"old task delete broadcast missing: $wsSent")
-      assert(wsSent.exists(j => j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskCreated") &&
-        j.hcursor.downField("task").downField("name").as[String].toOption.contains("dream-review")),
-        s"created broadcast must carry name: $wsSent")
+      assert(
+        wsSent.exists(j =>
+          j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskDeleted") &&
+            j.hcursor.downField("id").as[String].toOption.contains(old.id)
+        ),
+        s"old task delete broadcast missing: $wsSent"
+      )
+      assert(
+        wsSent.exists(j =>
+          j.hcursor.downField("type").as[String].toOption.contains("scheduledTaskCreated") &&
+            j.hcursor.downField("task").downField("name").as[String].toOption.contains("dream-review")
+        ),
+        s"created broadcast must carry name: $wsSent"
+      )
 
   test("tool create without action/name keeps legacy behavior (plain add, no dedup)"):
     for
       _ <- reset()
-      r1 <- IO(callTool(
-        Json.obj("content" -> "one-off a".asJson, "triggerAt" -> future.asJson),
-        mkCtx(taskStore)
-      ))
-      r2 <- IO(callTool(
-        Json.obj("content" -> "one-off b".asJson, "triggerAt" -> (future + 1).asJson),
-        mkCtx(taskStore)
-      ))
+      r1 <- IO(
+        callTool(
+          Json.obj("content" -> "one-off a".asJson, "triggerAt" -> future.asJson),
+          mkCtx(taskStore)
+        )
+      )
+      r2 <- IO(
+        callTool(
+          Json.obj("content" -> "one-off b".asJson, "triggerAt" -> (future + 1).asJson),
+          mkCtx(taskStore)
+        )
+      )
       pending <- taskStore.getAllPendingTasks
     yield
       assert(r1.toOption.get.startsWith("Scheduled task"), r1.toString)
@@ -356,10 +383,12 @@ class ScheduleActionsSpec extends CatsEffectSuite:
     for
       _ <- reset()
       noContent <- IO(callTool(Json.obj("action" -> "create".asJson, "triggerAt" -> future.asJson), mkCtx(taskStore)))
-      pastTrigger <- IO(callTool(
-        Json.obj("content" -> "x".asJson, "triggerAt" -> (System.currentTimeMillis() - 60_000L).asJson),
-        mkCtx(taskStore)
-      ))
+      pastTrigger <- IO(
+        callTool(
+          Json.obj("content" -> "x".asJson, "triggerAt" -> (System.currentTimeMillis() - 60_000L).asJson),
+          mkCtx(taskStore)
+        )
+      )
     yield
       assert(noContent.left.toOption.get.message.contains("content"), noContent.toString)
       assert(pastTrigger.left.toOption.get.message.contains("future"), pastTrigger.toString)

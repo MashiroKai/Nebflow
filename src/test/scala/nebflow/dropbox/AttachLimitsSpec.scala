@@ -69,7 +69,7 @@ class AttachLimitsSpec extends CatsEffectSuite:
     val ten = List.fill(10)(1_000L)
     AttachContract.checkMessage(ten) match
       case Left(err) => assertEquals(err.code, AttachContract.Codes.AttachTooMany)
-      case Right(_)  => fail("10 attachments must be rejected")
+      case Right(_) => fail("10 attachments must be rejected")
   }
 
   test("错误体是机器可解析的（code/actual/limit 三键齐备）") {

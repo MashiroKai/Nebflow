@@ -82,44 +82,55 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
   // ── ③ persist 咽喉（自动仍拦 / 显式放行）─────────────────
 
   test("persist: the automatic path is still refused on an isolated root against prod (regression pin)") {
-    Dispatcher.parallel[IO].use { dispatcher =>
-      NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
-        NeblinkEnrollment.persist(
-          ms,
-          resolvedUrl = ProdUrl,
-          json = enrollJson("tok-auto"),
-          logtoRefresh = None,
-          discovery = None,
-          gatewayPort = 8095,
-          reloginHook = None
-        )
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
+          NeblinkEnrollment.persist(
+            ms,
+            resolvedUrl = ProdUrl,
+            json = enrollJson("tok-auto"),
+            logtoRefresh = None,
+            discovery = None,
+            gatewayPort = 8095,
+            reloginHook = None
+          )
+        }
       }
-    }.map { out =>
-      out match
-        case Left(err) => assert(err.contains("isolated data root"), s"left must carry the guard reason: $err")
-        case Right(v)  => fail(s"automatic persist must be refused, got $v")
-    }.unsafeRunSync()
+      .map { out =>
+        out match
+          case Left(err) => assert(err.contains("isolated data root"), s"left must carry the guard reason: $err")
+          case Right(v) => fail(s"automatic persist must be refused, got $v")
+      }
+      .unsafeRunSync()
     // 零落盘：拒绝路径不得留下 device.json / config
-    assert(!os.exists(os.Path(tmpDir, os.pwd) / "neblink" / "device.json"), "a refused enroll must not write a credential")
+    assert(
+      !os.exists(os.Path(tmpDir, os.pwd) / "neblink" / "device.json"),
+      "a refused enroll must not write a credential"
+    )
   }
 
   test("persist: the explicit user action passes the gate and lands the credential (案 C 红→绿)") {
-    Dispatcher.parallel[IO].use { dispatcher =>
-      NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
-        NeblinkEnrollment.persist(
-          ms,
-          resolvedUrl = ProdUrl,
-          json = enrollJson("tok-explicit"),
-          logtoRefresh = None,
-          discovery = None,
-          gatewayPort = 8095,
-          reloginHook = None,
-          explicitUserAction = true
-        )
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
+          NeblinkEnrollment.persist(
+            ms,
+            resolvedUrl = ProdUrl,
+            json = enrollJson("tok-explicit"),
+            logtoRefresh = None,
+            discovery = None,
+            gatewayPort = 8095,
+            reloginHook = None,
+            explicitUserAction = true
+          )
+        }
       }
-    }.map { out =>
-      assertEquals(out, Right("tok-explicit"), "the explicit login must be released and persisted")
-    }.unsafeRunSync()
+      .map { out =>
+        assertEquals(out, Right("tok-explicit"), "the explicit login must be released and persisted")
+      }
+      .unsafeRunSync()
     // kaiauth 修法批 ②（2026-09-16）：落地面改判 —— **权威写面**是 `config.json` 的
     // `neblinkServer.deviceToken`（出站点实际发送的那一份），`neblink/device.json` 侧
     // **停写**该字段（见 `DeviceCredential` 的 DEPRECATED 注记）。旧断言
@@ -158,8 +169,11 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     val msg = refused.get
     assert(msg.contains(EnrollGuard.AllowProdEnrollEnv), s"文案必须指名开关: $msg")
     assert(msg.contains("explicit server URL"), s"文案必须指明显式 URL 这条出路: $msg")
-    assertEquals(EnrollGuard.prodFallbackRefusal(true, false).get, EnrollGuard.prodFallbackRefusalReason,
-      "可见原文 = 单点文案源（禁调用点各拼一份）")
+    assertEquals(
+      EnrollGuard.prodFallbackRefusal(true, false).get,
+      EnrollGuard.prodFallbackRefusalReason,
+      "可见原文 = 单点文案源（禁调用点各拼一份）"
+    )
   }
 
   test("案 b① live: prodDefaultTarget = None on a redirected root, Some(default) on the default root") {
@@ -190,49 +204,52 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     // 负控（防空断言）：把真实生产域名塞进 detail ⇒ 必须被闸门拦下、退回模板原因。
     val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (${nebflow.core.Branding.serverUrl})"
     val degraded = CredentialDiagnostics.diagnosticOf(CredentialFailure.EnrollRefusedIsolatedHome, dirty)
-    assert(!degraded.reason.contains("isolated data root"),
-      "含生产域名（`.nebflow` 字面量）的 detail 不得进可见面")
+    assert(!degraded.reason.contains("isolated data root"), "含生产域名（`.nebflow` 字面量）的 detail 不得进可见面")
     assertEquals(degraded.detail, dirty, "原文仍须进日志面（可归因）")
   }
 
   // ── ④ 停摆解除只挂在显式路径 ─────────────────────────────
 
   test("park: an automatic persist does NOT lift the post-kick park; an explicit persist does") {
-    Dispatcher.parallel[IO].use { dispatcher =>
-      NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
-        val tunnel = new NeblinkRelayTunnel(ms, () => IO.pure(None: Option[String]))(dispatcher)
-        ms.setRelayTunnel(tunnel)
-        val localUrl = "http://127.0.0.1:9095" // 非生产域：护栏不参与，单独验停摆耦合
-        for
-          _ <- tunnel.noteServerDisconnect()
-          parked <- IO(tunnel.parkedAfterKick)
-          _ <- IO(assert(parked, "the disconnect must park"))
-          // 自动路径（silent relogin / device-flow poll 的等价形状）
-          auto <- NeblinkEnrollment.persist(
-            ms,
-            resolvedUrl = localUrl,
-            json = enrollJson("tok-auto-2"),
-            logtoRefresh = None,
-            discovery = None,
-            gatewayPort = 8095,
-            reloginHook = None
-          )
-          _ <- IO(assertEquals(auto, Right("tok-auto-2"), "non-prod host is not gated in either path"))
-          _ <- IO(assert(tunnel.parkedAfterKick, "an automatic persist must NOT lift the park"))
-          // 显式路径
-          _ <- NeblinkEnrollment.persist(
-            ms,
-            resolvedUrl = localUrl,
-            json = enrollJson("tok-explicit-2"),
-            logtoRefresh = None,
-            discovery = None,
-            gatewayPort = 8095,
-            reloginHook = None,
-            explicitUserAction = true
-          )
-          _ <- IO(assertEquals(tunnel.parkedAfterKick, false, "an explicit persist must lift the park"))
-        yield ()
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        NeblinkService.createForTest(8095, dispatcher, 15.seconds).flatMap { ms =>
+          val tunnel = new NeblinkRelayTunnel(ms, () => IO.pure(None: Option[String]))(dispatcher)
+          ms.setRelayTunnel(tunnel)
+          val localUrl = "http://127.0.0.1:9095" // 非生产域：护栏不参与，单独验停摆耦合
+          for
+            _ <- tunnel.noteServerDisconnect()
+            parked <- IO(tunnel.parkedAfterKick)
+            _ <- IO(assert(parked, "the disconnect must park"))
+            // 自动路径（silent relogin / device-flow poll 的等价形状）
+            auto <- NeblinkEnrollment.persist(
+              ms,
+              resolvedUrl = localUrl,
+              json = enrollJson("tok-auto-2"),
+              logtoRefresh = None,
+              discovery = None,
+              gatewayPort = 8095,
+              reloginHook = None
+            )
+            _ <- IO(assertEquals(auto, Right("tok-auto-2"), "non-prod host is not gated in either path"))
+            _ <- IO(assert(tunnel.parkedAfterKick, "an automatic persist must NOT lift the park"))
+            // 显式路径
+            _ <- NeblinkEnrollment.persist(
+              ms,
+              resolvedUrl = localUrl,
+              json = enrollJson("tok-explicit-2"),
+              logtoRefresh = None,
+              discovery = None,
+              gatewayPort = 8095,
+              reloginHook = None,
+              explicitUserAction = true
+            )
+            _ <- IO(assertEquals(tunnel.parkedAfterKick, false, "an explicit persist must lift the park"))
+          yield ()
+          end for
+        }
       }
-    }.unsafeRunSync()
+      .unsafeRunSync()
   }
 end EnrollGuardExplicitLoginSpec

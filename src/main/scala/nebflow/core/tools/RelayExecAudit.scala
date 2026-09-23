@@ -52,14 +52,18 @@ object RelayExecAudit:
   /** 单行上限：redact 后的命令摘要最多保留的字符数（超出 → 前缀 + 长度 + 哈希）。 */
   private val MaxCommandChars = 300
 
-  /** 通用「长串」判据：token 字符集连续 ≥32 字符（**不含 `/` `.` `:`**——避免把
-    * 路径/URL 误判成长串，那会让摘要失去可读性）。 */
+  /**
+   * 通用「长串」判据：token 字符集连续 ≥32 字符（**不含 `/` `.` `:`**——避免把
+   * 路径/URL 误判成长串，那会让摘要失去可读性）。
+   */
   private val LongRunRe = """[A-Za-z0-9_\-+=]{32,}""".r
 
-  /** 密钥名（`NAME=value` / `NAME: value` / JSON `"NAME": value` 结构）。`Bearer`/
-    * `Basic` 由单独规则处理。键名尾的可选引号属于键名组——保留原样输出。
-    * 裸值排除 shell 分隔符（`; & | ( ) 引号`）——否则 `TOKEN=x; next-cmd` 会把
-    * 分号一起吃掉，摘要里两条命令粘连（2026-09-11 取证 dump 实测形态）。 */
+  /**
+   * 密钥名（`NAME=value` / `NAME: value` / JSON `"NAME": value` 结构）。`Bearer`/
+   * `Basic` 由单独规则处理。键名尾的可选引号属于键名组——保留原样输出。
+   * 裸值排除 shell 分隔符（`; & | ( ) 引号`）——否则 `TOKEN=x; next-cmd` 会把
+   * 分号一起吃掉，摘要里两条命令粘连（2026-09-11 取证 dump 实测形态）。
+   */
   private val SecretKeyRe = (
     """(?i)([A-Za-z0-9_.\-]*(?:token|secret|passw(?:or)?d|api[_-]?key|apikey|access[_-]?key|auth(?:orization)?|credential)[A-Za-z0-9_.\-]*["']?)(\s*[=:]\s*)("([^"]*)"|'([^']*)'|([^\s"'`()|;&]+))"""
   ).r
@@ -67,8 +71,10 @@ object RelayExecAudit:
   /** `Bearer <cred>` / `Basic <b64>`（Authorization 头与命令行都走这条）。 */
   private val BearerRe = """(?i)\b(bearer|basic)\s+([A-Za-z0-9._\-+/=]{6,})""".r
 
-  /** CLI 旗标形态：`--token <value>` / `-password <value>`（无 `=`/`:` 分隔符的
-    * 那种）。 */
+  /**
+   * CLI 旗标形态：`--token <value>` / `-password <value>`（无 `=`/`:` 分隔符的
+   * 那种）。
+   */
   private val SecretFlagRe = (
     """(?i)(--?(?:token|secret|passw(?:or)?d|api[_-]?key|apikey|access[_-]?key|auth(?:orization)?|credential)\b\s+)([^\s"'`()|;&]+)"""
   ).r
@@ -77,8 +83,10 @@ object RelayExecAudit:
   private val KnownPrefixRe =
     """(?i)\b(sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{12,}|xox[baprs]-[A-Za-z0-9\-]{8,})""".r
 
-  /** URL userinfo 中的口令：`scheme://user:pass@host`（**只遮蔽口令**——用户名留
-    * 着才有取证价值）。 */
+  /**
+   * URL userinfo 中的口令：`scheme://user:pass@host`（**只遮蔽口令**——用户名留
+   * 着才有取证价值）。
+   */
   private val UrlUserinfoRe = """://([^/\s:@]{1,64}):([^/\s@]{1,128})@""".r
 
   /** Fixed-millisecond ISO8601 UTC（与 ToolsLogWriter 同款，字典序可排）。 */
@@ -97,8 +105,10 @@ object RelayExecAudit:
     val d = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8))
     d.take(4).map(b => f"${b & 0xff}%02x").mkString
 
-  /** 遮蔽占位：长度 + （≥8 字符才给）前 3 字符 + SHA-256 前 8 位。短密钥不给前缀
-    * ——6 字符口令露 3 字符等于露一半。 */
+  /**
+   * 遮蔽占位：长度 + （≥8 字符才给）前 3 字符 + SHA-256 前 8 位。短密钥不给前缀
+   * ——6 字符口令露 3 字符等于露一半。
+   */
   private def maskOf(raw: String): String =
     if raw.length < 8 then s"[redacted len=${raw.length} sha256:${sha8(raw)}]"
     else s"[redacted len=${raw.length} pre=${raw.take(3)} sha256:${sha8(raw)}]"
@@ -141,8 +151,10 @@ object RelayExecAudit:
       val s5 = replaceMatches(s4, LongRunRe, m => maskOf(m.matched))
       capLength(s5)
 
-  /** 按匹配手工拼串（不用 `appendReplacement`：它的 `$`/`\` 转义语义会让「遮蔽
-    * 文本本身被当替换模板」——拼串无此歧义）。 */
+  /**
+   * 按匹配手工拼串（不用 `appendReplacement`：它的 `$`/`\` 转义语义会让「遮蔽
+   * 文本本身被当替换模板」——拼串无此歧义）。
+   */
   private def replaceMatches(s: String, re: Regex, f: Regex.Match => String): String =
     val sb = new StringBuilder
     var last = 0
@@ -207,7 +219,8 @@ object RelayExecAudit:
         "cwd" -> cwd.asJson
       )
       // kind 加性键：非空才落键 ⇒ 普通下发行与旧形态逐字节一致（缺省即旧行为）
-      val entry = if kind.nonEmpty then Json.fromJsonObject(base.add("kind", kind.asJson)) else Json.fromJsonObject(base)
+      val entry =
+        if kind.nonEmpty then Json.fromJsonObject(base.add("kind", kind.asJson)) else Json.fromJsonObject(base)
       val path = auditFile
       writeLock.synchronized {
         Files.createDirectories(path.getParent)
@@ -218,6 +231,7 @@ object RelayExecAudit:
           StandardOpenOption.APPEND
         )
       }
-    }.void.handleErrorWith(e => logger.warn(s"RelayExecAudit: audit line dropped: ${e.getMessage}"))
+    }.void
+      .handleErrorWith(e => logger.warn(s"RelayExecAudit: audit line dropped: ${e.getMessage}"))
 
 end RelayExecAudit

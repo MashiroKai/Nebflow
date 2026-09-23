@@ -41,6 +41,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
   // 类级：隔离 dataRoot + 预置 project-dispatcher / test-agent 定义
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -56,16 +57,19 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     s"""BLOCKED: 无法继续
        |{"category":"$category","detail":"$detail","suggestion":"$suggestion"}""".stripMargin
 
-  /** 门控 LLM：分发器 turn（非 will-block-S 输入）等 gate 后回 "ok"；节点 turn
-    * （will-block-S 任务）立即回 BLOCKED 文本（不占 gate）。inputs 记录全部分发器输入。 */
+  /**
+   * 门控 LLM：分发器 turn（非 will-block-S 输入）等 gate 后回 "ok"；节点 turn
+   * （will-block-S 任务）立即回 BLOCKED 文本（不占 gate）。inputs 记录全部分发器输入。
+   */
   private class GatedLlm(gates: Queue[IO, Deferred[IO, Unit]]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     def offerGate: IO[Deferred[IO, Unit]] = Deferred[IO, Unit].flatTap(gates.offer)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         if text.contains("will-block-S") then
@@ -78,6 +82,10 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
             .eval(inputs.update(_ :+ text))
             .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
             .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
+
+      end sendStream
+
+  end GatedLlm
 
   private def mkGatedLlm: IO[GatedLlm] =
     Queue.unbounded[IO, Deferred[IO, Unit]].map(new GatedLlm(_))
@@ -112,7 +120,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -141,8 +149,15 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     // 既保持原判据语义不变，又顺带成为「回退开关零回归」的验收面。
     // 保活档（窗口 > 0）的语义由 `DispatcherIdleWindowSpec` 独立覆盖。
     ProjectRuntimeRegistry.mount(
-      pd, system, res, None, rootSessionId = "nebula-root", dispatcherIdleWindowMs = Some(0L)
+      pd,
+      system,
+      res,
+      None,
+      rootSessionId = "nebula-root",
+      dispatcherIdleWindowMs = Some(0L)
     )
+
+  end mount
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -157,13 +172,16 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def waitStatus(rt: ProjectRuntime, name: String, statuses: Set[String]): IO[Unit] =
     waitUntil(20.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
@@ -204,6 +222,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assert(ins(1).contains("New task arrived"), s"第二个 turn 必须是注入形态（含「新任务到达」标注），got: ${ins(1).take(120)}")
       assert(ins(1).contains("任务乙"), "注入文本必须携带任务内容")
       assert(!ins(0).contains("New task arrived"), "首个 turn 是 spawn prompt，非注入形态")
+    end for
   }
 
   // ── 2. 并发到达只 spawn 一个 ─────────────────────────────────────
@@ -244,6 +263,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assert(ins(0).contains("任务甲") && !ins(0).contains("New task arrived"), "turn 1 = spawn prompt 形态")
       assert(ins(1).contains("New task arrived") && ins(1).contains("任务乙"), "turn 2 = 注入排队消费（乙）")
       assert(ins(2).contains("New task arrived") && ins(2).contains("任务丙"), "turn 3 = 注入排队消费（丙）")
+    end for
   }
 
   // ── 3. 终态后 spawn 新实例 ───────────────────────────────────────
@@ -277,6 +297,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assertEquals(ins.size, 2)
       assert(!ins(1).contains("New task arrived"), "终态后的新任务走 spawn 路径（fresh prompt，非注入形态）")
       assert(ins(1).contains("任务乙"))
+    end for
   }
 
   // ── 4. 重入优先投递活跃会话（§2.2 修订）──────────────────────────
@@ -295,8 +316,16 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲", "nebula-root")).void
       _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty)) // turn 1 gated 在飞
       // blocked 节点 → FeedbackRouter(auto) → ReenterDispatcher → 活跃会话 → 注入排队
-      _ <- nodeEdit(nodeInput("singleton-reentry", "blk-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block-S"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "singleton-reentry",
+          "blk-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block-S"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "blk-node", Set(NodeLifecycle.Blocked))
       _ <- IO.sleep(1.second) // ProjectActor 处理完 ReenterDispatcher 注入
       _ <- g1.complete(()).void // turn 1 完成 → 延迟拆除 → 边界消费重入注入
@@ -312,6 +341,7 @@ class ProjectDispatcherSingletonSpec extends CatsEffectSuite:
       assertEquals(ins.size, 2, "全程恰好 2 个分发器 turn")
       assert(ins(1).contains("Node-feedback re-entry"), s"第二个 turn 必须是重入注入形态，got: ${ins(1).take(120)}")
       assert(ins(1).contains("blk-node"), "重入注入必须携带 blocked 节点名")
+    end for
   }
 
 end ProjectDispatcherSingletonSpec

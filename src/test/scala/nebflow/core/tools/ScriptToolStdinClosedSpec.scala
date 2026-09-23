@@ -49,8 +49,10 @@ class ScriptToolStdinClosedSpec extends FunSuite:
       dir
     )
 
-  /** 大于任何平台管道缓冲区的载荷（512KB ≫ macOS 16–64KB）——把「写入晚于子进程退出」
-    * 从竞态钉成必然（见类头注）。 */
+  /**
+   * 大于任何平台管道缓冲区的载荷（512KB ≫ macOS 16–64KB）——把「写入晚于子进程退出」
+   * 从竞态钉成必然（见类头注）。
+   */
   private def oversizedInput: JsonObject =
     JsonObject("pad" -> io.circe.Json.fromString("x" * (512 * 1024)))
 

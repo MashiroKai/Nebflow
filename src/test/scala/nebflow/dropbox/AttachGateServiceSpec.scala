@@ -25,15 +25,17 @@ class AttachGateServiceSpec extends CatsEffectSuite:
   private def peer(id: String): PeerInfo =
     PeerInfo(deviceId = id, deviceName = s"Device-$id", platform = "macos", address = "http://127.0.0.1:9")
 
-  /** 栈夹具（批 3 · 同族治本 B · 2026-09-16）：`PathUtil.dataRoot` 的重定向**必须包
-    * `guarantee`**。
-    *
-    * 旧形态把还原动作写在 for-comprehension **尾部**（`_ <- IO { setDataRoot(prevRoot); … }`）
-    * ⇒ 任一失败用例（本 spec 的闸位负控就是 `fail(...)`）在 `use` 抛出时**整段跳过还原**，
-    * `dataRoot` 停在 tempDir 上**泄漏给同 JVM 的后续用例**（批 2 实测：令
-    * `MemoryTargetRetryDomainSpec ⑤` 读到不存在的 `tempDir/memory/queue.jsonl` ⇒ 假 skip）。
-    * 修法 = 把「重定向 + 建栈 + use + hub 卸注册」整体收进一层，还原挂其 `guarantee`
-    *（成功/失败/取消三路都执行）⇒ 泄漏**结构性**不可能。判据与断言零改动。 */
+  /**
+   * 栈夹具（批 3 · 同族治本 B · 2026-09-16）：`PathUtil.dataRoot` 的重定向**必须包
+   * `guarantee`**。
+   *
+   * 旧形态把还原动作写在 for-comprehension **尾部**（`_ <- IO { setDataRoot(prevRoot); … }`）
+   * ⇒ 任一失败用例（本 spec 的闸位负控就是 `fail(...)`）在 `use` 抛出时**整段跳过还原**，
+   * `dataRoot` 停在 tempDir 上**泄漏给同 JVM 的后续用例**（批 2 实测：令
+   * `MemoryTargetRetryDomainSpec ⑤` 读到不存在的 `tempDir/memory/queue.jsonl` ⇒ 假 skip）。
+   * 修法 = 把「重定向 + 建栈 + use + hub 卸注册」整体收进一层，还原挂其 `guarantee`
+   * （成功/失败/取消三路都执行）⇒ 泄漏**结构性**不可能。判据与断言零改动。
+   */
   private def withStack[A](use: (NeblinkService, DropboxService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -158,11 +160,13 @@ class AttachGateServiceSpec extends CatsEffectSuite:
           case Right(ids) => fail(s"1,073,741,825 B must be rejected, got $ids")
         atLimit match
           case Right(ids) => assertEquals(ids.size, 1, "边界正控：1,073,741,824 B 必须被接受")
-          case Left(err)  => fail(s"1,073,741,824 B must be accepted (正控防线量纲写错), got ${err.render}")
+          case Left(err) => fail(s"1,073,741,824 B must be accepted (正控防线量纲写错), got ${err.render}")
         println(
           s"[READING C1] service gate: 1,073,741,825 B -> code=${over.left.toOption.map(_.code).getOrElse("-")} " +
             s"actual=${over.left.toOption.flatMap(_.actual).getOrElse(-1L)} limit=${over.left.toOption.flatMap(_.limit).getOrElse(-1L)}\n" +
-            s"[READING C1] service gate: 1,073,741,824 B -> ${if atLimit.isRight then "ACCEPTED" else "REJECTED (WRONG)"} " +
+            s"[READING C1] service gate: 1,073,741,824 B -> ${
+                if atLimit.isRight then "ACCEPTED" else "REJECTED (WRONG)"
+              } " +
             s"transfers=${atLimit.toOption.map(_.size).getOrElse(-1)}"
         )
     }
@@ -216,12 +220,11 @@ class AttachGateServiceSpec extends CatsEffectSuite:
       for
         _ <- ms.upsertPeer(peer("known"))
         res <- svc.offerFiles("ghost-device", List(spec("a.bin", 1_000L)))
-      yield
-        res match
-          case Left(err) =>
-            assertEquals(err.code, AttachContract.Codes.PeerUnreachable)
-            assert(err.message.contains("nothing was offered or written locally"), err.message)
-          case Right(ids) => fail(s"unknown peer must fail explicitly, got $ids")
+      yield res match
+        case Left(err) =>
+          assertEquals(err.code, AttachContract.Codes.PeerUnreachable)
+          assert(err.message.contains("nothing was offered or written locally"), err.message)
+        case Right(ids) => fail(s"unknown peer must fail explicitly, got $ids")
     }
   }
 

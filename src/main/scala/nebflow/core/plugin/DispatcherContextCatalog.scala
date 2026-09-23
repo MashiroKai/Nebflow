@@ -37,25 +37,31 @@ import cats.effect.IO
  */
 object DispatcherContextCatalog:
 
-  /** Plugin 能力目录段：单点委托 [[PluginRegistry.renderCatalog]]（描述单源批
-    * 2026-09-10 收敛——段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。 */
+  /**
+   * Plugin 能力目录段：单点委托 [[PluginRegistry.renderCatalog]]（描述单源批
+   * 2026-09-10 收敛——段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。
+   */
   def pluginSection(): IO[String] = PluginRegistry.renderCatalog()
 
-  /** 插件段 + 数据根渲染（plugins-live 批 2026-09-12）：与 [[render]] 注入首条
-    * 消息的插件段同字节规则（`{{data_root}}` 同上渲染）——会话内收敛提醒
-    * （AgentCore 的 plugin-surface 通道）拿它当**权威现值**，与首条消息里的
-    * spawn 期快照区分开。substituteDataRoot 单点复用，勿复制实现。 */
+  /**
+   * 插件段 + 数据根渲染（plugins-live 批 2026-09-12）：与 [[render]] 注入首条
+   * 消息的插件段同字节规则（`{{data_root}}` 同上渲染）——会话内收敛提醒
+   * （AgentCore 的 plugin-surface 通道）拿它当**权威现值**，与首条消息里的
+   * spawn 期快照区分开。substituteDataRoot 单点复用，勿复制实现。
+   */
   def pluginSectionResolved(): IO[String] =
     pluginSection().map(nebflow.core.PathUtil.substituteDataRoot)
 
-  /** 目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：原「插件段 + preset 段
-    * 双目录」中的 preset 段随 panelscheme 批退役——本入口即插件段的 substituteDataRoot
-    * 包装（签名保留，调用点零改动）。
-    *
-    * 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：段内 `{{data_root}}`
-    * （如插件 manifest description 里写的路径形态）在此渲染为**本实例**的数据根
-    * ——PathUtil.substituteDataRoot 单点（与 AgentCore.buildSystemPrompt /
-    * NodeEngine.injectedPluginBlock 同一实现，勿复制）。 */
+  /**
+   * 目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：原「插件段 + preset 段
+   * 双目录」中的 preset 段随 panelscheme 批退役——本入口即插件段的 substituteDataRoot
+   * 包装（签名保留，调用点零改动）。
+   *
+   * 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：段内 `{{data_root}}`
+   * （如插件 manifest description 里写的路径形态）在此渲染为**本实例**的数据根
+   * ——PathUtil.substituteDataRoot 单点（与 AgentCore.buildSystemPrompt /
+   * NodeEngine.injectedPluginBlock 同一实现，勿复制）。
+   */
   def render(): IO[String] =
     pluginSection().map(nebflow.core.PathUtil.substituteDataRoot)
 

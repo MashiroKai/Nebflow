@@ -30,8 +30,10 @@ import java.net.http.{HttpResponse, WebSocketHandshakeException}
  */
 private[neblink] object RelayTunnelDiagnostics:
 
-  /** Classified upgrade failure. `summary` is always non-empty (never `null`),
-    * safe to log verbatim. */
+  /**
+   * Classified upgrade failure. `summary` is always non-empty (never `null`),
+   * safe to log verbatim.
+   */
   final case class UpgradeFailure(statusCode: Option[Int], bodySnippet: Option[String], summary: String):
     /** 401/403 = OUR credential was rejected (self-healable, narrow gate). */
     def authRejected: Boolean = statusCode.exists(c => c == 401 || c == 403)
@@ -57,16 +59,18 @@ private[neblink] object RelayTunnelDiagnostics:
     val head = code.fold("no HTTP status")(c => s"HTTP $c")
     body.fold(head)(b => s"$head — body: $b")
 
-  /** First `WebSocketHandshakeException` in the cause chain (the JDK wraps it
-    * in `ExecutionException` / `CompletionException`). Depth-capped and
-    * cycle-safe. */
+  /**
+   * First `WebSocketHandshakeException` in the cause chain (the JDK wraps it
+   * in `ExecutionException` / `CompletionException`). Depth-capped and
+   * cycle-safe.
+   */
   private def handshakeOf(t: Throwable): Option[WebSocketHandshakeException] =
     var cur: Throwable = t
     var depth = 0
     while cur != null && depth < 10 do
       cur match
         case hs: WebSocketHandshakeException => return Some(hs)
-        case other                           => cur = other.getCause
+        case other => cur = other.getCause
       depth += 1
     None
 
@@ -79,16 +83,18 @@ private[neblink] object RelayTunnelDiagnostics:
       depth += 1
     cur
 
-  /** Response body of the rejected upgrade. The JDK's WebSocket opening
-    * handshake uses `BodyHandlers.ofString()` (`OpeningHandshake.send`), so the
-    * body is already fully read and this cannot block. */
+  /**
+   * Response body of the rejected upgrade. The JDK's WebSocket opening
+   * handshake uses `BodyHandlers.ofString()` (`OpeningHandshake.send`), so the
+   * body is already fully read and this cannot block.
+   */
   private def bodyFragment(resp: HttpResponse[?]): Option[String] =
     val raw =
       try
         Option(resp.body()) match
-          case None            => None
+          case None => None
           case Some(s: String) => Some(s)
-          case Some(other)     => Some(other.toString)
+          case Some(other) => Some(other.toString)
       catch case _: Exception => None
     raw.map(_.trim).filter(_.nonEmpty).map(redact).map(truncate)
 
@@ -107,6 +113,9 @@ private[neblink] object RelayTunnelDiagnostics:
     s
       .replaceAll("(?i)bearer\\s+[A-Za-z0-9._~+/-]+=*", "Bearer <redacted>")
       .replaceAll("eyJ[A-Za-z0-9_-]{6,}\\.[A-Za-z0-9_-]{6,}(\\.[A-Za-z0-9_-]+)?", "<redacted-jwt>")
-      .replaceAll("(?i)\"(token|sessiontoken|devicetoken|refresh_token|access_token)\"\\s*:\\s*\"[^\"]*\"", "\"$1\":\"<redacted>\"")
+      .replaceAll(
+        "(?i)\"(token|sessiontoken|devicetoken|refresh_token|access_token)\"\\s*:\\s*\"[^\"]*\"",
+        "\"$1\":\"<redacted>\""
+      )
 
 end RelayTunnelDiagnostics

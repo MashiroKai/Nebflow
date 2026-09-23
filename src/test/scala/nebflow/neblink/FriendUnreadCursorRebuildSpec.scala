@@ -74,18 +74,24 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
     )
 
   /** 记录型 stub：捕获 (conversationId, after) 并回一条消息。 */
-  private final class RecordingClient(pulls: Ref[IO, List[(String, Long)]]) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+  private final class RecordingClient(pulls: Ref[IO, List[(String, Long)]])
+      extends NeblinkClient(
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
       conversationId: String,
       after: Long,
       limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
-      pulls.update(_ :+ ((conversationId, after))).as(
-        Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
-      )
+      pulls
+        .update(_ :+ ((conversationId, after)))
+        .as(
+          Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
+        )
+
+  end RecordingClient
 
   /** 真 `FriendService` + 真 guard，**不预置任何 cursor**（boot 期形态）。 */
   private def mkService(pulls: Ref[IO, List[(String, Long)]], guard: FriendMessagingGuard): FriendService =
@@ -179,7 +185,9 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
     )
   }
 
-  test("#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / readAnchor / unreadSnapshot 语义未破（setRead 判据按 §3.5 拆字段更新）") {
+  test(
+    "#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / readAnchor / unreadSnapshot 语义未破（setRead 判据按 §3.5 拆字段更新）"
+  ) {
     // 本用例刻意**不依赖缺席回落**：cursor 一律由既有入口（mergeUnread）建 —— 故
     // 反转 #309 修法后它必须**保持绿**。它是本 spec 的对偶：证明 L1–L3 的变红是
     // 钉子有效，而非"什么都会红"。
@@ -212,12 +220,34 @@ class FriendUnreadCursorRebuildSpec extends FunSuite:
       afterPostRead <- g.unreadSnapshot
       missingMax <- g.localMaxId("c-none")
     yield (
-      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId, readA,
-      afterRead, maxIdAfterRead, readB, maxIdAfterBack, readC, afterPostRead, missingMax
+      seeded,
+      afterBumpExisting,
+      afterMerge,
+      afterAnchor,
+      maxId,
+      readA,
+      afterRead,
+      maxIdAfterRead,
+      readB,
+      maxIdAfterBack,
+      readC,
+      afterPostRead,
+      missingMax
     )
     val (
-      seeded, afterBumpExisting, afterMerge, afterAnchor, maxId, readA,
-      afterRead, maxIdAfterRead, readB, maxIdAfterBack, readC, afterPostRead, missingMax
+      seeded,
+      afterBumpExisting,
+      afterMerge,
+      afterAnchor,
+      maxId,
+      readA,
+      afterRead,
+      maxIdAfterRead,
+      readB,
+      maxIdAfterBack,
+      readC,
+      afterPostRead,
+      missingMax
     ) = prog.unsafeRunSync()
 
     assertEquals(seeded.get("c"), Some(3), "mergeUnread 建条目并按服务端权威置数")

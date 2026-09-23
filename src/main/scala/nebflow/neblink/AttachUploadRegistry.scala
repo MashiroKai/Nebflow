@@ -35,12 +35,16 @@ final class AttachUploadRegistry(ref: Ref[IO, Set[String]]):
   /** 在飞 id 快照（读数/诊断用）。 */
   def inFlight: IO[Set[String]] = ref.get.map(_.filterNot(_.startsWith(AttachUploadRegistry.CancelPrefix)))
 
+end AttachUploadRegistry
+
 object AttachUploadRegistry:
   private[neblink] val CancelPrefix = "cancel:"
   private def cancelKey(uploadId: String): String = CancelPrefix + uploadId
 
   def create: IO[AttachUploadRegistry] = Ref.of[IO, Set[String]](Set.empty).map(new AttachUploadRegistry(_))
 
-  /** 供 [[nebflow.agent.SharedResources]] 的字段缺省值使用（同其既有 `Ref.unsafe` 先例：
-    * 缺省值只在构造期求值一次，构造方 = GatewayMain 单点）。 */
+  /**
+   * 供 [[nebflow.agent.SharedResources]] 的字段缺省值使用（同其既有 `Ref.unsafe` 先例：
+   * 缺省值只在构造期求值一次，构造方 = GatewayMain 单点）。
+   */
   def unsafe: AttachUploadRegistry = new AttachUploadRegistry(Ref.unsafe[IO, Set[String]](Set.empty))

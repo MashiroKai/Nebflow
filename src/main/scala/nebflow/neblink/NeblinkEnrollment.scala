@@ -5,43 +5,45 @@ import io.circe.Json
 import nebflow.core.NebflowLogger
 
 /**
-  * Enrollment persistence shared by every login path (device flow poll,
-  * AC+PKCE callback, silent re-login): device.json + config update +
-  * discovery hot-swap + re-discovery + profile info. Previously private in
-  * RestApiRoutes; extracted so the silent re-login hook can run from any
-  * client construction site (RestApiRoutes completes with an HTTP context,
-  * GatewayMain's startup client does not).
-  */
+ * Enrollment persistence shared by every login path (device flow poll,
+ * AC+PKCE callback, silent re-login): device.json + config update +
+ * discovery hot-swap + re-discovery + profile info. Previously private in
+ * RestApiRoutes; extracted so the silent re-login hook can run from any
+ * client construction site (RestApiRoutes completes with an HTTP context,
+ * GatewayMain's startup client does not).
+ */
 object NeblinkEnrollment:
 
   private val logger = NebflowLogger.forName("nebflow.neblink.enroll")
 
-  /** Persist the EnrollResponse fields. `logtoRefresh` carries the provider
-    * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
-    * (RP-logout fix, 2026-09-06) the raw id_token for the end-session
-    * `id_token_hint` AND for the switch-account identity hints. `reloginHook`
-    * is wired into the hot-swapped client so IT can silent-relogin too.
-    * Returns the persisted device token.
-    *
-    * The two Logto options are INDEPENDENT since the O5 companion fix
-    * (2026-09-11): a post-O5 login carries an id_token and no refresh token, so
-    * the device.json `logto` block is written when EITHER is present. Both are
-    * MERGED with the stored credential (incoming wins, absent keeps stored) —
-    * see the comment in [[persistImpl]] for why.
-    *
-    * Isolation guard (2026-09-11): an instance running on a redirected data
-    * root must not auto-register with the production network — see
-    * [[EnrollGuard]]. The refusal is returned on the Left channel (so every
-    * caller surfaces it) AND logged; `NEBFLOW_ALLOW_PROD_ENROLL=1` bypasses it.
-    * Default data root: unchanged behaviour.
-    *
-    * Explicit-user-action release (2026-09-14 作者裁定「案 C」):
-    * `explicitUserAction = true` passes the guard AND lifts the relay tunnel's
-    * post-kick park (「须用户显式再登录」), because that is the one act a kicked
-    * instance is allowed to come back with. Only the PKCE loopback callback
-    * sets it, and only on a matched, single-use state — every automatic path
-    * (boot client, silent re-login, device-flow poll, tests) defaults to
-    * `false` and is gated exactly as before. */
+  /**
+   * Persist the EnrollResponse fields. `logtoRefresh` carries the provider
+   * refresh token (AC+PKCE / silent re-login) into device.json; `logtoIdToken`
+   * (RP-logout fix, 2026-09-06) the raw id_token for the end-session
+   * `id_token_hint` AND for the switch-account identity hints. `reloginHook`
+   * is wired into the hot-swapped client so IT can silent-relogin too.
+   * Returns the persisted device token.
+   *
+   * The two Logto options are INDEPENDENT since the O5 companion fix
+   * (2026-09-11): a post-O5 login carries an id_token and no refresh token, so
+   * the device.json `logto` block is written when EITHER is present. Both are
+   * MERGED with the stored credential (incoming wins, absent keeps stored) —
+   * see the comment in [[persistImpl]] for why.
+   *
+   * Isolation guard (2026-09-11): an instance running on a redirected data
+   * root must not auto-register with the production network — see
+   * [[EnrollGuard]]. The refusal is returned on the Left channel (so every
+   * caller surfaces it) AND logged; `NEBFLOW_ALLOW_PROD_ENROLL=1` bypasses it.
+   * Default data root: unchanged behaviour.
+   *
+   * Explicit-user-action release (2026-09-14 作者裁定「案 C」):
+   * `explicitUserAction = true` passes the guard AND lifts the relay tunnel's
+   * post-kick park (「须用户显式再登录」), because that is the one act a kicked
+   * instance is allowed to come back with. Only the PKCE loopback callback
+   * sets it, and only on a matched, single-use state — every automatic path
+   * (boot client, silent re-login, device-flow poll, tests) defaults to
+   * `false` and is gated exactly as before.
+   */
   def persist(
     ms: NeblinkService,
     resolvedUrl: String,
@@ -69,21 +71,23 @@ object NeblinkEnrollment:
           explicitUserAction
         )
 
-  /** Pre-guard implementation — see [[persist]] for the entry point.
-    *
-    * kaiauth 修法批（2026-09-16 作者「治本」已批）在本咽喉上的三笔改动：
-    *  - **③ enroll 单飞**：整个「凭据落地 + config 落地 + hot-swap」临界区按
-    *    `(deviceId, networkId)` 串行化（[[NeblinkSingleFlight]]，**进程级** ⇒ hot-swap
-    *    不重置它）。键与服务端 `enroll_device` 的 `INSERT OR REPLACE` 行维度
-    *    （跨仓只读 `neblink-server/src/store.rs:2951-2969`）**逐字同源**；并发输家
-    *    **复用**赢家的结果 ⇒ 并发 enroll 不再互相作废、「enroll 成功」与「发送值有效」
-    *    不再分叉。
-    *  - **② 单源化**：`deviceToken` **不再**落 `neblink/device.json`（见
-    *    [[DeviceCredential]] 的 DEPRECATED 注记）；**唯一权威写面 = 出站点所用的那份
-    *    `config.json`**（下方 `ms.updateConfig(newConfig)` 一笔，出站点逐行不变）。
-    *  - **①配套**：自动路径（`explicitUserAction = false`）下，若本进程已停摆，用新铸
-    *    凭据做**一次**证明性交换；**成功才**解除停摆，失败保持（见
-    *    [[liftParkOnProvenCredential]]）。显式路径逐字不变。 */
+  /**
+   * Pre-guard implementation — see [[persist]] for the entry point.
+   *
+   * kaiauth 修法批（2026-09-16 作者「治本」已批）在本咽喉上的三笔改动：
+   *  - **③ enroll 单飞**：整个「凭据落地 + config 落地 + hot-swap」临界区按
+   *    `(deviceId, networkId)` 串行化（[[NeblinkSingleFlight]]，**进程级** ⇒ hot-swap
+   *    不重置它）。键与服务端 `enroll_device` 的 `INSERT OR REPLACE` 行维度
+   *    （跨仓只读 `neblink-server/src/store.rs:2951-2969`）**逐字同源**；并发输家
+   *    **复用**赢家的结果 ⇒ 并发 enroll 不再互相作废、「enroll 成功」与「发送值有效」
+   *    不再分叉。
+   *  - **② 单源化**：`deviceToken` **不再**落 `neblink/device.json`（见
+   *    [[DeviceCredential]] 的 DEPRECATED 注记）；**唯一权威写面 = 出站点所用的那份
+   *    `config.json`**（下方 `ms.updateConfig(newConfig)` 一笔，出站点逐行不变）。
+   *  - **①配套**：自动路径（`explicitUserAction = false`）下，若本进程已停摆，用新铸
+   *    凭据做**一次**证明性交换；**成功才**解除停摆，失败保持（见
+   *    [[liftParkOnProvenCredential]]）。显式路径逐字不变。
+   */
   private def persistImpl(
     ms: NeblinkService,
     resolvedUrl: String,
@@ -131,7 +135,7 @@ object NeblinkEnrollment:
             // 用户可见文案（§8.3），因此登录框再也不会出现「只有路径」的字面。
             .handleErrorWith {
               case e: CredentialDiagnostics.CredentialStoreError => IO.pure(Left(e.diagnostic.message))
-              case other                                        => IO.raiseError(other)
+              case other => IO.raiseError(other)
             }
         yield out
       case None =>
@@ -140,6 +144,10 @@ object NeblinkEnrollment:
         IO.pure(
           Left(CredentialDiagnostics.diagnosticOf(CredentialFailure.ServerNoDeviceToken).message)
         )
+
+    end match
+
+  end persistImpl
 
   /** 单飞临界区本体（`(deviceId, networkId)` 已被 [[persistImpl]] 的闸包住）。 */
   private def persistCredential(
@@ -234,8 +242,9 @@ object NeblinkEnrollment:
       // 🔴 2026-09-16（kaiauth 修法批 ①配套）：`else` 支不再是空操作 —— 自动路径
       // 改为**证据式**解除（先证明后解锁，失败保持）。显式路径那一支**逐字不变**
       // （案 C 语义：显式登录是无条件解除口）。
-      _ <- if explicitUserAction then ms.relayTunnelOpt.fold(IO.unit)(_.resumeAfterUserLogin())
-           else liftParkOnProvenCredential(ms, hotSwapped.map(_._2), identity)
+      _ <-
+        if explicitUserAction then ms.relayTunnelOpt.fold(IO.unit)(_.resumeAfterUserLogin())
+        else liftParkOnProvenCredential(ms, hotSwapped.map(_._2), identity)
       _ <- ms.ensureRelayTunnel
       // Trigger immediate re-discovery.
       _ <- ms.sendSync(SyncCommand.PeerDiscovered)
@@ -243,22 +252,24 @@ object NeblinkEnrollment:
       _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
     yield Right(tok)
 
-  /** 停摆门的**证据式**解除（kaiauth 修法批 ①配套，2026-09-16）。
-    *
-    * 判据（作者给的口径「新凭据已铸成且经一次成功交换证明有效」，两条**都**要）：
-    *  - 已铸成 = 本节前面刚写完整份新凭据（`config.json` 的 deviceToken 是**本次**
-    *    的 `tok`，出站点那一份 = 唯一权威来源）；
-    *  - 已证明 = 用新 client 对新凭据做**一次**会话交换且成功
-    *    （[[NeblinkClient.proveSessionExchange]]）。
-    *
-    * 🔴 **失败绝不解锁**（防风暴的回归钉）：证明失败 ⇒ 打 WARN、停摆门**保持**、
-    * 零重试、零额外 enroll。未停摆 ⇒ 直接返回（**零额外请求**：无门可解时本步
-    * 在 wire 面上完全不可观测）。
-    *
-    * 边界（诚实登记）：本步需要**已 hot-swap 的新 client**（`discovery` 为 None 的
-    * 装配面没有新 client ⇒ 无凭据可证 ⇒ 保守保持停摆并 WARN）。生产装配
-    * （`GatewayMain` / `RestApiRoutes`）都传 `discovery`，故该边界只影响
-    * `discovery = None` 的装配面（含部分测试）。 */
+  /**
+   * 停摆门的**证据式**解除（kaiauth 修法批 ①配套，2026-09-16）。
+   *
+   * 判据（作者给的口径「新凭据已铸成且经一次成功交换证明有效」，两条**都**要）：
+   *  - 已铸成 = 本节前面刚写完整份新凭据（`config.json` 的 deviceToken 是**本次**
+   *    的 `tok`，出站点那一份 = 唯一权威来源）；
+   *  - 已证明 = 用新 client 对新凭据做**一次**会话交换且成功
+   *    （[[NeblinkClient.proveSessionExchange]]）。
+   *
+   * 🔴 **失败绝不解锁**（防风暴的回归钉）：证明失败 ⇒ 打 WARN、停摆门**保持**、
+   * 零重试、零额外 enroll。未停摆 ⇒ 直接返回（**零额外请求**：无门可解时本步
+   * 在 wire 面上完全不可观测）。
+   *
+   * 边界（诚实登记）：本步需要**已 hot-swap 的新 client**（`discovery` 为 None 的
+   * 装配面没有新 client ⇒ 无凭据可证 ⇒ 保守保持停摆并 WARN）。生产装配
+   * （`GatewayMain` / `RestApiRoutes`）都传 `discovery`，故该边界只影响
+   * `discovery = None` 的装配面（含部分测试）。
+   */
   private def liftParkOnProvenCredential(
     ms: NeblinkService,
     fresh: Option[NeblinkClient],

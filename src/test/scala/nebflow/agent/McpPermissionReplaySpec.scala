@@ -165,3 +165,4 @@ class McpPermissionReplaySpec extends FunSuite:
     // 全局快照（rootFilter=None）同样纳入 —— #250 第③项的对账面
     assertEquals(InteractionHub.snapshotFrames(m, None).size, 1)
   }
+end McpPermissionReplaySpec

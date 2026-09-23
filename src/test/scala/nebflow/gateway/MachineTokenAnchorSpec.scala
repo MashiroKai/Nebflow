@@ -15,16 +15,17 @@ import java.nio.charset.StandardCharsets
 import java.security.{KeyPair, KeyPairGenerator, Signature}
 import java.util.Base64
 
-/** 接受面 · **轨 1**（本机文件令牌）指纹 spec —— 本批的「逐字不变」机械钉。
-  *
-  * 钉死三件事：
-  *  1. 信任锚语义未变：`Auth.validateToken` 只认以 `MessageDigest.isEqual` 比对的本机令牌；
-  *     一个**真签名**的 Logto 式 PAT 与 `nbfl_` 令牌在这里都是 false（轨 1 **永不**接受 PAT）。
-  *  2. 受保护端点（`GET /neblink/status`）在**无凭证**下仍是 403，在**本机令牌**下仍落到
-  *     `withNeblink` 的未启用分支（404）——与 `patbackend-impl` 基线逐字一致。
-  *  3. 轨 2 的引入不得改变以上两点（配合 `git diff <基线> -- gateway/auth.scala` 必空 +
-  *     `checkAuth` 只多一行薄委调）。
-  */
+/**
+ * 接受面 · **轨 1**（本机文件令牌）指纹 spec —— 本批的「逐字不变」机械钉。
+ *
+ * 钉死三件事：
+ *  1. 信任锚语义未变：`Auth.validateToken` 只认以 `MessageDigest.isEqual` 比对的本机令牌；
+ *     一个**真签名**的 Logto 式 PAT 与 `nbfl_` 令牌在这里都是 false（轨 1 **永不**接受 PAT）。
+ *  2. 受保护端点（`GET /neblink/status`）在**无凭证**下仍是 403，在**本机令牌**下仍落到
+ *     `withNeblink` 的未启用分支（404）——与 `patbackend-impl` 基线逐字一致。
+ *  3. 轨 2 的引入不得改变以上两点（配合 `git diff <基线> -- gateway/auth.scala` 必空 +
+ *     `checkAuth` 只多一行薄委调）。
+ */
 class MachineTokenAnchorSpec extends CatsEffectSuite:
 
   private val MachineToken = "machine-token-anchor-1234"
@@ -51,6 +52,8 @@ class MachineTokenAnchorSpec extends CatsEffectSuite:
     s.initSign(kp.getPrivate)
     s.update(input.getBytes(StandardCharsets.UTF_8))
     s"$input.${b64u(s.sign())}"
+
+  end signedPat
 
   private def resources: SharedResources = SharedResources(
     llm = null,

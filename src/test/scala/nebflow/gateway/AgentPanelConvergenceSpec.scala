@@ -64,6 +64,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
 
+    end try
+
+  end withFixture
+
   private def mkRoutes: RestApiRoutes =
     val config = NebflowServiceConfig(
       llm = ServiceLlmConfig(providers = Map.empty)
@@ -96,6 +100,8 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
       wsRoutes = null
     )
 
+  end mkRoutes
+
   private def getAgents: IO[Response[IO]] =
     val req = Request[IO](Method.GET, Uri.unsafeFromString("/agents"))
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
@@ -114,8 +120,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
           assertEquals(names, Keepers, "面板恰三 keeper——fixture team/flow 域 agent 与干扰目录一律不出现")
           assert(!names.contains("domain-agent"), "team 域 agent 不得泄漏进面板")
           assert(!names.contains("flow-agent"), "flow 域 agent 不得泄漏进面板")
-          assert(!names.contains("ExplorerX") && !names.contains("MailX") && !names.contains("emptyX"),
-            ".archived / 仅 memory.md / 空目录一律不出现")
+          assert(
+            !names.contains("ExplorerX") && !names.contains("MailX") && !names.contains("emptyX"),
+            ".archived / 仅 memory.md / 空目录一律不出现"
+          )
         }
       }
     }
@@ -137,6 +145,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
   test("auth gate: no token -> 403"):
     withFixture { _ =>
       val req = Request[IO](Method.GET, Uri.unsafeFromString("/agents"))
-      mkRoutes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+      mkRoutes
+        .routes(req)
+        .value
+        .map(_.getOrElse(fail("route fell through")))
         .map(resp => assertEquals(resp.status, Status.Forbidden))
     }
+end AgentPanelConvergenceSpec

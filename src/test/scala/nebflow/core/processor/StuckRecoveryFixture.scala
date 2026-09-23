@@ -10,8 +10,18 @@ import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.project.{FeedbackRouter, FlowMapEventLog, FlowMapStore, NodeDef, NodeEngine, NodeLifecycle,
-  OutEdge, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  FeedbackRouter,
+  FlowMapEventLog,
+  FlowMapStore,
+  NodeDef,
+  NodeEngine,
+  NodeLifecycle,
+  OutEdge,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
@@ -86,10 +96,15 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
     def loop: Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand](_ => IO.pure(loop))
     system.spawn(loop, name)
 
-  /** 替身桥：收到带挂起哨兵的 `Cancelled` ⇒ 做真引擎挂起分支的同一可观测写点（会话摘除），
-    * ack 时可附加 `onAck`（负控用它模拟「并发终态化」）。 */
-  protected def mkSuspendAckEvt(res: SharedResources, sink: Ref[IO, List[AgentEvent]],
-                                onAck: IO[Unit] = IO.unit): Behavior[AgentEvent] =
+  /**
+   * 替身桥：收到带挂起哨兵的 `Cancelled` ⇒ 做真引擎挂起分支的同一可观测写点（会话摘除），
+   * ack 时可附加 `onAck`（负控用它模拟「并发终态化」）。
+   */
+  protected def mkSuspendAckEvt(
+    res: SharedResources,
+    sink: Ref[IO, List[AgentEvent]],
+    onAck: IO[Unit] = IO.unit
+  ): Behavior[AgentEvent] =
     def loop: Behavior[AgentEvent] =
       Behaviors.receiveMessage[AgentEvent] { e =>
         sink.update(_ :+ e) *> (e match
@@ -100,25 +115,53 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
     loop
 
   protected def seedNode(store: FlowMapStore, id: String, sid: String, status: String): IO[Unit] =
-    store.mutate(s => s.copy(nodes = s.nodes + (id -> NodeDef(
-      id = id, name = id, agent = "test-agent", status = status, sessionRef = Some(sid),
-      task = Some("stuck-recovery ledger write-point fixture"),
-      startedAt = Some(System.currentTimeMillis() - 60_000L),
-      out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
+    store
+      .mutate(s =>
+        s.copy(nodes =
+          s.nodes + (id -> NodeDef(
+            id = id,
+            name = id,
+            agent = "test-agent",
+            status = status,
+            sessionRef = Some(sid),
+            task = Some("stuck-recovery ledger write-point fixture"),
+            startedAt = Some(System.currentTimeMillis() - 60_000L),
+            out = List(OutEdge.nebula),
+            createdAt = System.currentTimeMillis() - 60_000L
+          ))
+        )
+      )
+      .void
 
   protected def seedTranscript(res: SharedResources, sid: String): IO[Unit] =
-    res.sessionStore.saveMessagesForSession(sid, List(
-      Message(role = MessageRole.User, content = Left(s"fixture transcript for $sid"))))
+    res.sessionStore.saveMessagesForSession(
+      sid,
+      List(Message(role = MessageRole.User, content = Left(s"fixture transcript for $sid")))
+    )
 
   /** registry 里一条**停滞形态**的 Flow 会话记录（agent 侧事件停滞轴）。 */
-  protected def putStuckRecord(res: SharedResources, sid: String, rootSid: String,
-                               ref: ActorRef[AgentCommand],
-                               bridge: Option[ActorRef[AgentEvent]]): IO[AgentRecord] =
+  protected def putStuckRecord(
+    res: SharedResources,
+    sid: String,
+    rootSid: String,
+    ref: ActorRef[AgentCommand],
+    bridge: Option[ActorRef[AgentEvent]]
+  ): IO[AgentRecord] =
     val now = System.currentTimeMillis()
-    val rec = AgentRecord(sessionId = sid, ref = ref, kind = AgentKind.Flow, rootSessionId = rootSid,
-      startedAt = now - 30 * 60 * 1000L, status = AgentStatus.Processing,
-      lastActivityMs = now - threshold - 1000L, currentToolStartedAt = 0L, supervisorRef = bridge)
+    val rec = AgentRecord(
+      sessionId = sid,
+      ref = ref,
+      kind = AgentKind.Flow,
+      rootSessionId = rootSid,
+      startedAt = now - 30 * 60 * 1000L,
+      status = AgentStatus.Processing,
+      lastActivityMs = now - threshold - 1000L,
+      currentToolStartedAt = 0L,
+      supervisorRef = bridge
+    )
     res.agentRegistry.update(_ + (sid -> rec)).as(rec)
+
+  end putStuckRecord
 
   protected def withFixture(name: String)(body: Rig => IO[Unit]): IO[Unit] =
     IO.blocking(os.temp.dir(prefix = s"ledgerwp-$name")).flatMap { tmp =>
@@ -127,8 +170,10 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
         _ <- IO {
           PathUtil.setDataRoot(dataRoot)
           os.makeDir.all(dataRoot / "agents" / "test-agent")
-          os.write.over(dataRoot / "agents" / "test-agent" / "agent.json",
-            """{"name":"test-agent","description":"ledger write-point fixture","tools":[],"category":"standalone"}""")
+          os.write.over(
+            dataRoot / "agents" / "test-agent" / "agent.json",
+            """{"name":"test-agent","description":"ledger write-point fixture","tools":[],"category":"standalone"}"""
+          )
           os.write.over(dataRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
         }
         system <- IO(ActorSystem(s"ledgerwp-$name"))
@@ -157,25 +202,40 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
             providerRegistry = null,
             healthMonitor = ProviderHealthMonitor(null),
             actorSystem = system,
-            voiceMutedRef = voiceMuted)
+            voiceMutedRef = voiceMuted
+          )
           ws = tmp / "ws"
           _ <- IO(os.makeDir.all(ws))
           _ <- ProjectRuntimeRegistry.clear
           store <- FlowMapStore.open(s"ledgerwp-$name", ws.toString)
-          engine = new NodeEngine(store, system, res, (_: io.circe.Json) => IO.unit, ws.toString,
-            s"root-$name", s"ledgerwp-$name", FeedbackRouter.ModeAuto,
+          engine = new NodeEngine(
+            store,
+            system,
+            res,
+            (_: io.circe.Json) => IO.unit,
+            ws.toString,
+            s"root-$name",
+            s"ledgerwp-$name",
+            FeedbackRouter.ModeAuto,
             (_: String, _: String, _: io.circe.Json) => IO.unit,
-            notifyTriggerOverride = Some((_: String) => IO.unit))
-          pd = ProjectDef(name = s"ledgerwp-$name", workspace = ws.toString,
-            agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+            notifyTriggerOverride = Some((_: String) => IO.unit)
+          )
+          pd = ProjectDef(
+            name = s"ledgerwp-$name",
+            workspace = ws.toString,
+            agentFile = (ws / "AGENTS.md").toString,
+            createdAt = System.currentTimeMillis()
+          )
           rt = ProjectRuntime(pd, store, engine, system, res, None)
           _ <- ProjectRuntimeRegistry.register(rt)
           _ <- body(Rig(rt, res, system, ws))
         yield ()).guarantee(
           ProjectRuntimeRegistry.clear.attempt.void *>
             system.stopAll.attempt.void *>
-            IO { PathUtil.setDataRoot(originalRoot); rmBounded(tmp) })
+            IO { PathUtil.setDataRoot(originalRoot); rmBounded(tmp) }
+        )
       yield out
+      end for
     }
 
   /** L1→L2→L3 阶梯：三轮扫描触发挂起腿 + 恢复腿（与生产扫描循环同形）。 */
@@ -184,5 +244,7 @@ trait StuckRecoveryFixture extends CatsEffectSuite:
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pending <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
       _ <- (1 to 3).toList.traverse_(_ =>
-        TaskStuckWatcher.scan(fx.res, new WsHub(), threshold, stopCounts, pending, ledger = ledger))
+        TaskStuckWatcher.scan(fx.res, new WsHub(), threshold, stopCounts, pending, ledger = ledger)
+      )
     yield ()
+end StuckRecoveryFixture

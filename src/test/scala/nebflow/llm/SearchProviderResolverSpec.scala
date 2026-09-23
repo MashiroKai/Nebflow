@@ -11,10 +11,12 @@ import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
-/** WebSearch P0 (E2-4): resolver table + echo byte-identity + Tier 2 executor
-  * against a scripted LlmHandle — including the anti-hallucination evidence
-  * rule (no structured searchInfo and no kimi round-trip ⇒ degrade to None)
-  * and the kimi echo round-trip budget. */
+/**
+ * WebSearch P0 (E2-4): resolver table + echo byte-identity + Tier 2 executor
+ * against a scripted LlmHandle — including the anti-hallucination evidence
+ * rule (no structured searchInfo and no kimi round-trip ⇒ degrade to None)
+ * and the kimi echo round-trip budget.
+ */
 class SearchProviderResolverSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 30.seconds
@@ -22,9 +24,18 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
   // ── E2-4: resolve() table ────────────────────────────────────────────
 
   test("resolve: five-provider table (zhipu/kimi/qwen → Tier 2; deepseek/unknown → Tier 3)") {
-    assertEquals(SearchProviderResolver.resolve("zhipu"), SearchRoute.ProviderSearch("zhipu", ProviderSearchKind.ZhipuWebSearchTool))
-    assertEquals(SearchProviderResolver.resolve("kimi"), SearchRoute.ProviderSearch("kimi", ProviderSearchKind.KimiBuiltinWebSearch))
-    assertEquals(SearchProviderResolver.resolve("qwen"), SearchRoute.ProviderSearch("qwen", ProviderSearchKind.QwenEnableSearch))
+    assertEquals(
+      SearchProviderResolver.resolve("zhipu"),
+      SearchRoute.ProviderSearch("zhipu", ProviderSearchKind.ZhipuWebSearchTool)
+    )
+    assertEquals(
+      SearchProviderResolver.resolve("kimi"),
+      SearchRoute.ProviderSearch("kimi", ProviderSearchKind.KimiBuiltinWebSearch)
+    )
+    assertEquals(
+      SearchProviderResolver.resolve("qwen"),
+      SearchRoute.ProviderSearch("qwen", ProviderSearchKind.QwenEnableSearch)
+    )
     assertEquals(SearchProviderResolver.resolve("deepseek"), SearchRoute.BuiltinAggregated)
     assertEquals(SearchProviderResolver.resolve("totally-unknown"), SearchRoute.BuiltinAggregated)
     // The user's 107 gateway (USTC, Anthropic protocol) → Tier 3.
@@ -59,7 +70,10 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
       SearchProviderResolver.capabilityFor("zhipu-openai", ""),
       Some(ProviderSearchKind.ZhipuWebSearchTool)
     )
-    assertEquals(SearchProviderResolver.capabilityFor("my-kimi-proxy", ""), Some(ProviderSearchKind.KimiBuiltinWebSearch))
+    assertEquals(
+      SearchProviderResolver.capabilityFor("my-kimi-proxy", ""),
+      Some(ProviderSearchKind.KimiBuiltinWebSearch)
+    )
     // Token equality, not substring: no false positives.
     assertEquals(SearchProviderResolver.capabilityFor("qwenty", ""), None)
     assertEquals(SearchProviderResolver.capabilityFor("107", ""), None)
@@ -186,15 +200,17 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
   /** Scripted non-streaming handle: answers by call index, records requests. */
   private class ScriptedLlm(scripts: List[LlmResponse]) extends LlmHandle[IO]:
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       requests.modify { list => (req :: list, list.size) }.flatMap { idx =>
         scripts.lift(idx) match
           case Some(resp) => IO.pure(resp)
           case None => IO.raiseError(new RuntimeException(s"unexpected LLM send #$idx"))
       }
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.raiseError[IO](new RuntimeException("sendStream not expected here"))
 
@@ -341,7 +357,11 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
     // structured search evidence produces a real result instead of Tier 3.
     val kimiInfo = Json.obj(
       "search_results" -> Json.arr(
-        Json.obj("title" -> "CZT pixel detector".asJson, "url" -> "https://example.com/czt".asJson, "snippet" -> "sub-pixel readout".asJson)
+        Json.obj(
+          "title" -> "CZT pixel detector".asJson,
+          "url" -> "https://example.com/czt".asJson,
+          "snippet" -> "sub-pixel readout".asJson
+        )
       )
     )
     val llm = new ScriptedLlm(List(LlmResponse("ans", Nil, None, meta("kimi"), Some(kimiInfo))))
@@ -388,7 +408,10 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
         assert(result.isDefined)
         assert(result.get.contains("provider:zhipu"))
         llm.requests.get.map(reqs =>
-          assertEquals(reqs.head.agentModel, Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("kimi/k3", "deepseek/v4"))))
+          assertEquals(
+            reqs.head.agentModel,
+            Some(AgentModelConfig(Some("zhipu/glm-5.3"), List("kimi/k3", "deepseek/v4")))
+          )
         )
       }
   }

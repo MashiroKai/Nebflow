@@ -49,16 +49,20 @@ class CardToolWinPathRefSpec extends FunSuite:
     assert(result.startsWith("___CARD_HTML___"), s"sentinel contract: ${result.take(60)}")
     io.circe.parser.parse(result.substring("___CARD_HTML___".length)) match
       case Right(json) => json
-      case Left(err)   => fail(s"payload must be pure JSON: $err")
+      case Left(err) => fail(s"payload must be pure JSON: $err")
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
+
   private def reasonOf(p: Json): String =
     warningsOf(p).headOption.flatMap(_.hcursor.get[String]("reason").toOption).getOrElse("")
+
   private def detailOf(p: Json): String =
     warningsOf(p).headOption.flatMap(_.hcursor.get[String]("detail").toOption).getOrElse("")
+
   private def resolvedOf(p: Json): Option[String] =
     warningsOf(p).headOption.flatMap(_.hcursor.get[Option[String]]("resolvedPath").toOption.flatten)
+
   private def refs(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
@@ -71,13 +75,15 @@ class CardToolWinPathRefSpec extends FunSuite:
         .asScala
         .foreach(Files.deleteIfExists)
 
-  /** A `C:/…` tree UNDER THE CURRENT WORKING DIRECTORY. On a POSIX JVM
-    *  `Paths.get("C:/…")` is a relative path whose first segment is the literal
-    *  name `C:`, so a real file can live at `<cwd>/C:/Users/you/…`. That is
-    *  exactly what the fix must let through — the reference is CLASSIFIED, never
-    *  rewritten, and the existing probe/inline path then runs unchanged. On a
-    *  Windows JVM `C:/…` would address the real drive C:, so the test is
-    *  skipped there (`assume`). */
+  /**
+   * A `C:/…` tree UNDER THE CURRENT WORKING DIRECTORY. On a POSIX JVM
+   *  `Paths.get("C:/…")` is a relative path whose first segment is the literal
+   *  name `C:`, so a real file can live at `<cwd>/C:/Users/you/…`. That is
+   *  exactly what the fix must let through — the reference is CLASSIFIED, never
+   *  rewritten, and the existing probe/inline path then runs unchanged. On a
+   *  Windows JVM `C:/…` would address the real drive C:, so the test is
+   *  skipped there (`assume`).
+   */
   private def withDriveFile[A](f: (String, Path) => A): A =
     val root = Paths.get("C:")
     assert(!Files.exists(root), "precondition: no `C:` entry in the working directory")
@@ -145,7 +151,8 @@ class CardToolWinPathRefSpec extends FunSuite:
       assertEquals(refs(p, "proxied"), 1)
       assertEquals(
         htmlOf(p),
-        s"""<img src="/api/nf-file?path=${java.net.URLEncoder.encode("C:/Users/you/cardref-win/data.json", "UTF-8")}"/>"""
+        s"""<img src="/api/nf-file?path=${java.net.URLEncoder
+            .encode("C:/Users/you/cardref-win/data.json", "UTF-8")}"/>"""
       )
     finally deleteRecursively(root)
 
@@ -281,3 +288,4 @@ class CardToolWinPathRefSpec extends FunSuite:
     // unchanged boundary: an extension-less relative string stays ignored
     assert(!FileRefs.looksLikeFilePath("notes"))
     assert(FileRefs.looksLikeFilePath("images/logo.png"))
+end CardToolWinPathRefSpec

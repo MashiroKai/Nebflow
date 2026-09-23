@@ -17,20 +17,21 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import scala.concurrent.duration.*
 import scala.util.Random
 
-/** Node 工具 project 名解析 spec（2026-09-07 作者裁定：工具 project 参数可选化 + 大小写容错）。
-  *
-  * 实证锚点：`NodeList(Nebflow) — Project 'Nebflow' is not mounted. Use ProjectCreate first.`
-  * 分发器在项目沙箱内传 "Nebflow" 而被拒（registry 精确 key 匹配，canonical 名是小写）。
-  *
-  * 修复落点（three-way）：
-  *  1. `ProjectRuntimeRegistry.get` 大小写不敏感（精确 key 优先，equalsIgnoreCase 兜底）——
-  *     MailTool/TaskTool/FeedbackRouter/DispatchNotify 同享；
-  *  2. 四 Node 工具 schema `project` 退为 optional（缺省=分发器当前项目，ctx.projectName）；
-  *  3. 不匹配报错附可用项目列表（mountError 纯函数）。
-  *
-  * 本 spec 验证行为路径（resolveProject/registry get）——纯函数 mountError 由
-  * NodeToolsSpec 覆盖。
-  */
+/**
+ * Node 工具 project 名解析 spec（2026-09-07 作者裁定：工具 project 参数可选化 + 大小写容错）。
+ *
+ * 实证锚点：`NodeList(Nebflow) — Project 'Nebflow' is not mounted. Use ProjectCreate first.`
+ * 分发器在项目沙箱内传 "Nebflow" 而被拒（registry 精确 key 匹配，canonical 名是小写）。
+ *
+ * 修复落点（three-way）：
+ *  1. `ProjectRuntimeRegistry.get` 大小写不敏感（精确 key 优先，equalsIgnoreCase 兜底）——
+ *     MailTool/TaskTool/FeedbackRouter/DispatchNotify 同享；
+ *  2. 四 Node 工具 schema `project` 退为 optional（缺省=分发器当前项目，ctx.projectName）；
+ *  3. 不匹配报错附可用项目列表（mountError 纯函数）。
+ *
+ * 本 spec 验证行为路径（resolveProject/registry get）——纯函数 mountError 由
+ * NodeToolsSpec 覆盖。
+ */
 class NodeNameResolveSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 60.seconds
@@ -41,8 +42,11 @@ class NodeNameResolveSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -50,9 +54,10 @@ class NodeNameResolveSpec extends CatsEffectSuite:
 
   private class NoLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -89,7 +94,9 @@ class NodeNameResolveSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -99,12 +106,22 @@ class NodeNameResolveSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
-  private def mkCtx(res: SharedResources, system: ActorSystem, ws: String, projectName: Option[String] = None): ToolContext =
+  private def mkCtx(
+    res: SharedResources,
+    system: ActorSystem,
+    ws: String,
+    projectName: Option[String] = None
+  ): ToolContext =
     ToolContext(
       projectRoot = ws,
       sessionId = Some("resolve-sid"),
@@ -129,8 +146,11 @@ class NodeNameResolveSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString, projectName = Some("res-p1"))
       r <- NodeTools.resolveProject(None, ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(r.map(_.project.name), Right("res-p1"), "no explicit project → fall back to ctx.projectName (dispatcher's current project)")
+    yield assertEquals(
+      r.map(_.project.name),
+      Right("res-p1"),
+      "no explicit project → fall back to ctx.projectName (dispatcher's current project)"
+    )
   }
 
   test("R② 大小写不敏感：project=Some(\"RES-P1\") 解析成功（registry equalsIgnoreCase 兜底）") {
@@ -147,9 +167,18 @@ class NodeNameResolveSpec extends CatsEffectSuite:
       regGet <- ProjectRuntimeRegistry.get("RES-P1")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(viaTool.map(_.project.name), Right("res-p1"), "case variant project name must resolve case-insensitively")
+      assertEquals(
+        viaTool.map(_.project.name),
+        Right("res-p1"),
+        "case variant project name must resolve case-insensitively"
+      )
       assertEquals(viaCtx.map(_.project.name), Right("res-p1"), "mixed-case variant resolves too")
-      assertEquals(regGet.map(_.project.name), Some("res-p1"), "registry get is case-insensitive (benefits Mail/Task/Feedback/Dispatch too)")
+      assertEquals(
+        regGet.map(_.project.name),
+        Some("res-p1"),
+        "registry get is case-insensitive (benefits Mail/Task/Feedback/Dispatch too)"
+      )
+    end for
   }
 
   test("R③ 不匹配报错含可用项目列表：实际名称提示，不裸报 not mounted") {
@@ -169,9 +198,12 @@ class NodeNameResolveSpec extends CatsEffectSuite:
       assert(e.contains("nonexistent"), s"error must name the requested project, got: $e")
       // 挂载项目会列在可用列表里（前缀 + 实际项目名；不要求紧跟前缀——跨 suite 残留时
       // 列表可能含其它项目，仅需证明实际挂载项目被列出）
-      assert(e.contains("Available projects:") && e.contains("res-p1"),
-        s"error must list the mounted project(s) in 'Available projects:', got: $e")
+      assert(
+        e.contains("Available projects:") && e.contains("res-p1"),
+        s"error must list the mounted project(s) in 'Available projects:', got: $e"
+      )
       assert(e.contains("Use ProjectCreate first"), s"error must point to ProjectCreate, got: $e")
+    end for
   }
 
 end NodeNameResolveSpec

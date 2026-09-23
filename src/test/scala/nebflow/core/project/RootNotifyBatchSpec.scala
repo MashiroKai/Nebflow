@@ -66,10 +66,10 @@ class RootNotifyBatchSpec extends FunSuite:
   // ── 夹具 ───────────────────────────────────────────────────────────────────────
 
   private def node(
-      id: String,
-      status: String = NodeLifecycle.Completed,
-      result: String = "RESULT",
-      completedAt: Option[Long] = None
+    id: String,
+    status: String = NodeLifecycle.Completed,
+    result: String = "RESULT",
+    completedAt: Option[Long] = None
   ): NodeDef =
     NodeDef(
       id = id,
@@ -83,23 +83,28 @@ class RootNotifyBatchSpec extends FunSuite:
       ttlExpireAt = None
     )
 
-  /** fixture：quietMs = 打包窗长（0 = 关窗）；batchMax = 条数上限。
-    * 夹具树不删除（临时目录由 OS 回收）——本 spec 的窗长均为毫秒级或关窗，且末尾一律
-    * 显式等待/排空，避免删除与晚到写入者竞态（`NebulaDeliveryRedeliverySpec` 头注同源教训）。 */
+  /**
+   * fixture：quietMs = 打包窗长（0 = 关窗）；batchMax = 条数上限。
+   * 夹具树不删除（临时目录由 OS 回收）——本 spec 的窗长均为毫秒级或关窗，且末尾一律
+   * 显式等待/排空，避免删除与晚到写入者竞态（`NebulaDeliveryRedeliverySpec` 头注同源教训）。
+   */
   private def withFixture(name: String, quietMs: Long, batchMax: Int)(
-      body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String) => Unit
+    body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String) => Unit
   ): Unit =
     withFixtureCore(name, quietMs, batchMax, rootPresent = true)((store, engine, recorded, sid, _) =>
-      body(store, engine, recorded, sid))
+      body(store, engine, recorded, sid)
+    )
 
-  /** [[withFixture]] 的两相变体：把「根 ref 是否**初始**已登记」与「事后补登记动作」
-    * 交给调用方（V9 用——需要「先缺根 ⇒ 后补根」两相；缺根相 = 复核位 V9a 探针的同型形态）。
-    * 其余装配逐字相同（只多这一个变量）。 */
+  /**
+   * [[withFixture]] 的两相变体：把「根 ref 是否**初始**已登记」与「事后补登记动作」
+   * 交给调用方（V9 用——需要「先缺根 ⇒ 后补根」两相；缺根相 = 复核位 V9a 探针的同型形态）。
+   * 其余装配逐字相同（只多这一个变量）。
+   */
   private def withFixtureCore(
-      name: String,
-      quietMs: Long,
-      batchMax: Int,
-      rootPresent: Boolean
+    name: String,
+    quietMs: Long,
+    batchMax: Int,
+    rootPresent: Boolean
   )(body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String, IO[Unit]) => Unit): Unit =
     val tmp = os.temp.dir(prefix = s"rootnotify-$name")
     PathUtil.setDataRoot(tmp / "data")
@@ -119,8 +124,8 @@ class RootNotifyBatchSpec extends FunSuite:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
           def sendStream(
-              req: nebflow.shared.LlmRequest,
-              onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
           ) =
             fs2.Stream(nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
         resources = SharedResources(
@@ -163,7 +168,9 @@ class RootNotifyBatchSpec extends FunSuite:
           rootNotifyQuietMs = Some(quietMs),
           rootNotifyBatchMax = Some(batchMax)
         )
-        attachRoot = resources.agentRegistry.update(_ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid)))
+        attachRoot = resources.agentRegistry.update(
+          _ + (rootSid -> AgentRecord(rootSid, rootRef, AgentKind.Root, rootSid))
+        )
         _ <- if rootPresent then attachRoot else IO.unit
       yield (store, engine, recorded, rootSid, attachRoot)
       val (store, engine, recorded, rootSid, attachRoot) = io.unsafeRunSync()
@@ -171,6 +178,10 @@ class RootNotifyBatchSpec extends FunSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
+
+    end try
+
+  end withFixtureCore
 
   private def recorderBehavior(recorded: Ref[IO, List[AgentCommand]]): nebflow.actor.Behavior[AgentCommand] =
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
@@ -182,9 +193,9 @@ class RootNotifyBatchSpec extends FunSuite:
 
   /** 有界轮询等待注入到达（`ref ! ImmediateInput` 是 fire-and-forget，直读有竞态）。 */
   private def awaitImms(
-      recorded: Ref[IO, List[AgentCommand]],
-      min: Int,
-      timeoutMs: Long = 10_000L
+    recorded: Ref[IO, List[AgentCommand]],
+    min: Int,
+    timeoutMs: Long = 10_000L
   ): IO[List[AgentCommand.ImmediateInput]] =
     def go(deadline: Long): IO[List[AgentCommand.ImmediateInput]] =
       imms(recorded).flatMap { ms =>
@@ -210,17 +221,19 @@ class RootNotifyBatchSpec extends FunSuite:
   /** 集合注入件的 nodeId 序（保序：批内 + 批间）。 */
   private def flatIds(ms: List[AgentCommand.ImmediateInput]): List[String] = ms.flatMap(m => idsOf(m.text))
 
-  /** **注入件身份序（跨两种文本形态）** —— A5b 口径：超限溢出后**尾窗只剩 1 件**时，
-    * `NodeEngine.flushRootNotify` 走 legacy 原样路径（`case one :: Nil`，`:5943`）⇒ 文本
-    * **无分节行**（A2「单件零漂移」的必然结果）⇒ [[flatIds]] 对该件读不到身份（第四轮
-    * 实证：5 件读到 4 件、缺 `n-a5b-5`）。故沿用 [[batchSizeOf]] 的同款约定
-    * （**无分节 = 单件**）分流取身份：多件批 = 分节行 `identity`；单件 = `sender`
-    * （`"<project>/<nodeName>"`，A2 已逐字钉住的既有字段，引擎 `:5806` 单点构造）。
-    * `nameToId` 由夹具 `name = s"node-$id"` 归一；缺映射时回落原名 ⇒ 身份对不上即转红
-    * （fail-loud，不静默放行）。判据强度与原 `flatIds` 一致：**全件数 + 严格到达序**。 */
+  /**
+   * **注入件身份序（跨两种文本形态）** —— A5b 口径：超限溢出后**尾窗只剩 1 件**时，
+   * `NodeEngine.flushRootNotify` 走 legacy 原样路径（`case one :: Nil`，`:5943`）⇒ 文本
+   * **无分节行**（A2「单件零漂移」的必然结果）⇒ [[flatIds]] 对该件读不到身份（第四轮
+   * 实证：5 件读到 4 件、缺 `n-a5b-5`）。故沿用 [[batchSizeOf]] 的同款约定
+   * （**无分节 = 单件**）分流取身份：多件批 = 分节行 `identity`；单件 = `sender`
+   * （`"<project>/<nodeName>"`，A2 已逐字钉住的既有字段，引擎 `:5806` 单点构造）。
+   * `nameToId` 由夹具 `name = s"node-$id"` 归一；缺映射时回落原名 ⇒ 身份对不上即转红
+   * （fail-loud，不静默放行）。判据强度与原 `flatIds` 一致：**全件数 + 严格到达序**。
+   */
   private def flatIdentities(
-      ms: List[AgentCommand.ImmediateInput],
-      nameToId: Map[String, String]
+    ms: List[AgentCommand.ImmediateInput],
+    nameToId: Map[String, String]
   ): List[String] =
     ms.flatMap { m =>
       val sec = idsOf(m.text)
@@ -247,7 +260,11 @@ class RootNotifyBatchSpec extends FunSuite:
 
   test("A1 GREEN: three nodes inside ONE window → exactly one injection carrying all three (no per-item turn)") {
     withFixture("a1", quietMs = 400L, batchMax = 10) { (store, engine, recorded, _) =>
-      val nodes = List(node("n-a1-1", result = "A1_BODY_ONE"), node("n-a1-2", result = "A1_BODY_TWO"), node("n-a1-3", result = "A1_BODY_THREE"))
+      val nodes = List(
+        node("n-a1-1", result = "A1_BODY_ONE"),
+        node("n-a1-2", result = "A1_BODY_TWO"),
+        node("n-a1-3", result = "A1_BODY_THREE")
+      )
       val io = for
         _ <- seed(store, nodes)
         _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, s"${n.result.get}"))
@@ -257,17 +274,24 @@ class RootNotifyBatchSpec extends FunSuite:
         ms <- awaitImms(recorded, min = 1)
         _ <- IO.sleep(600.millis) // 窗口已过：不得再冒出第二/第三条
         after <- imms(recorded)
-        marked <- store.snapshot.map(_.nodes.filter(n => nodes.exists(_.id == n._1)).values.map(_.nebulaDeliveredAt.isDefined))
+        marked <- store.snapshot.map(
+          _.nodes.filter(n => nodes.exists(_.id == n._1)).values.map(_.nebulaDeliveredAt.isDefined)
+        )
       yield (pending, before, ms, after, marked)
       val (pending, before, ms, after, marked) = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] A1 DIAG pendingAtWindow=$pending before=$before injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} texts=${after.map(_.text.take(80))}")
+      println(
+        s"[RootNotifyBatchSpec] A1 DIAG pendingAtWindow=$pending before=$before injections=${after.size} batchSizes=${after
+            .map(m => batchSizeOf(m.text))} texts=${after.map(_.text.take(80))}"
+      )
       assertEquals(clue(pending), 3, "all three items must sit in the batch buffer inside the window")
       assertEquals(clue(before.size), 0, "inside the window NOTHING may be injected one-by-one")
       assertEquals(clue(after.size), 1, "exactly ONE injection for the window (this is the whole point)")
       val one = after.head
       assertEquals(clue(one.source), Some("node"), "node-source bubble semantics preserved")
       assertEquals(clue(batchSizeOf(one.text)), 3, "the merged injection must report batch=3")
-      List("n-a1-1", "n-a1-2", "n-a1-3").foreach(id => assert(clue(one.text).contains(id), s"digest must carry nodeId $id"))
+      List("n-a1-1", "n-a1-2", "n-a1-3").foreach(id =>
+        assert(clue(one.text).contains(id), s"digest must carry nodeId $id")
+      )
       assertEquals(clue(idsOf(one.text)), List("n-a1-1", "n-a1-2", "n-a1-3"), "FIFO order inside the batch")
       assertEquals(clue(mergedRatio(after)), 1.0, "R3: mergedRatio == 1 for the burst")
       assert(clue(marked).forall(identity), "every merged node must be ledger-marked after the flush")
@@ -294,6 +318,7 @@ class RootNotifyBatchSpec extends FunSuite:
         io.unsafeRunSync()
       }
       out.get
+    end capture
 
     val windowed = capture(400L)
     val legacy = capture(0L)
@@ -319,14 +344,20 @@ class RootNotifyBatchSpec extends FunSuite:
       val nodes = List(node("n-a3-1"), node("n-a3-2"), node("n-a3-3"))
       val io = for
         _ <- seed(store, nodes)
-        _ <- engine.enqueueRootNotify("[Node 'p0-alpha' interrupt]\nP0_INTERRUPT_BODY", "p0-alpha", "interrupt", Some("n-p0"))
+        _ <- engine.enqueueRootNotify(
+          "[Node 'p0-alpha' interrupt]\nP0_INTERRUPT_BODY",
+          "p0-alpha",
+          "interrupt",
+          Some("n-p0")
+        )
         _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, "P1 body"))
         ms <- awaitImms(recorded, min = 2)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
       yield after
       val after = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] A3 DIAG injections=${after.size} eventTypes=${after.map(_.eventType)} batchSizes=${after.map(m => batchSizeOf(m.text))}")
+      println(s"[RootNotifyBatchSpec] A3 DIAG injections=${after.size} eventTypes=${after
+          .map(_.eventType)} batchSizes=${after.map(m => batchSizeOf(m.text))}")
       assertEquals(clue(after.size), 2, "P0 (immediate) + P1 (batched) = exactly two injections")
       val p0 = after.head
       assertEquals(clue(p0.eventType), Some("interrupt"), "P0 rides the interrupt header")
@@ -370,7 +401,9 @@ class RootNotifyBatchSpec extends FunSuite:
       )
       val io = for
         _ <- seed(store, aged)
-        _ <- aged.traverse_(n => engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id)))
+        _ <- aged.traverse_(n =>
+          engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id))
+        )
         ms <- awaitImms(recorded, min = 1)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
@@ -429,7 +462,9 @@ class RootNotifyBatchSpec extends FunSuite:
       val nodes = ids.map(id => node(id, result = s"body-$id"))
       val io = for
         _ <- seed(store, nodes)
-        _ <- nodes.traverse_(n => engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id)))
+        _ <- nodes.traverse_(n =>
+          engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id))
+        )
         pending <- engine.rootNotifyPendingCount
         armed <- engine.rootNotifyWindowArmed
         _ <- engine.flushRootNotify()
@@ -442,14 +477,20 @@ class RootNotifyBatchSpec extends FunSuite:
         armedAfter <- engine.rootNotifyWindowArmed
       yield (pending, armed, ms, after, pendingAfter, armedAfter)
       val (pending, armed, ms, after, pendingAfter, armedAfter) = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] A5 DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} pendingBefore=$pending pendingAfter=$pendingAfter")
+      println(
+        s"[RootNotifyBatchSpec] A5 DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} pendingBefore=$pending pendingAfter=$pendingAfter"
+      )
       assertEquals(clue(pending), 25, "all 25 queued (buffer holds the overflow — decision ③: no folding/downgrade)")
       assertEquals(clue(armed), true, "the rolling window is armed by the first arrival (不随新件延长)")
       assertEquals(clue(after.size), 3, "25 items at cap=10 ⇒ exactly 3 injections")
       assertEquals(clue(after.map(m => batchSizeOf(m.text))), List(10, 10, 5), "each injection ≤ cap, FIFO")
       assertEquals(clue(flatIds(after)), ids, "R5: concatenated nodeId order == arrival order")
       assert(clue(orderMatches(flatIds(after), ids)), "R5 order predicate")
-      assertEquals(clue(orderMatches(flatIds(after).reverse, ids)), false, "R5 anti-cheat: the comparator must REJECT reversed order")
+      assertEquals(
+        clue(orderMatches(flatIds(after).reverse, ids)),
+        false,
+        "R5 anti-cheat: the comparator must REJECT reversed order"
+      )
       assertEquals(clue(pendingAfter), 0, "buffer fully drained")
       assertEquals(clue(armedAfter), false, "window disarmed once the buffer is empty")
 
@@ -477,7 +518,9 @@ class RootNotifyBatchSpec extends FunSuite:
       // （多件批 = 分节行 identity；单件 = `sender`）。判据仍是**全 5 件 + 严格到达序**，
       // 零位置假设（不写死「尾窗必为单件」的窗口切分算术 ⇒ 切分变更不假红/不漏判）。
       val nameToId = ids.map(id => s"node-$id" -> id).toMap
-      println(s"[RootNotifyBatchSpec] A5b DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} identities=${flatIdentities(after, nameToId)}")
+      println(
+        s"[RootNotifyBatchSpec] A5b DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))} identities=${flatIdentities(after, nameToId)}"
+      )
       assertEquals(clue(after.size), 3, "cap=2 × 5 items ⇒ 3 window-driven injections")
       assertEquals(clue(after.map(m => batchSizeOf(m.text))), List(2, 2, 1))
       assertEquals(
@@ -506,11 +549,14 @@ class RootNotifyBatchSpec extends FunSuite:
       val io = for
         _ <- seed(store, nodes)
         _ <- mixed.traverse_((id, st, body) =>
-          engine.enqueueRootNotify(s"[Node 'node-$id' $st]\n$body", s"node-$id", st, Some(id)))
+          engine.enqueueRootNotify(s"[Node 'node-$id' $st]\n$body", s"node-$id", st, Some(id))
+        )
         ms <- awaitImms(recorded, min = 1)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
-        marked <- store.snapshot.map(_.nodes.values.filter(n => mixed.exists(_._1 == n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap)
+        marked <- store.snapshot.map(
+          _.nodes.values.filter(n => mixed.exists(_._1 == n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap
+        )
         rescan <- engine.redeliverUnconsumedNebulaResults()
         _ <- IO.sleep(200.millis)
         afterRescan <- imms(recorded)
@@ -520,8 +566,14 @@ class RootNotifyBatchSpec extends FunSuite:
       assertEquals(clue(after.size), 1, "decision ②: exception classes ride the SAME window (not listed separately)")
       assertEquals(clue(flatIds(after)).sorted, mixed.map(_._1).sorted, "multiset equality (no loss, no dup)")
       assertEquals(clue(flatIds(after)), mixed.map(_._1), "arrival order preserved")
-      assertEquals(clue(after.head.eventType), Some(NodeLifecycle.Failed), "mixed batch rides the strongest header (failed)")
-      mixed.foreach((id, _, body) => assert(clue(after.head.text).contains(body), s"full body of $id must survive the merge"))
+      assertEquals(
+        clue(after.head.eventType),
+        Some(NodeLifecycle.Failed),
+        "mixed batch rides the strongest header (failed)"
+      )
+      mixed.foreach((id, _, body) =>
+        assert(clue(after.head.text).contains(body), s"full body of $id must survive the merge")
+      )
       assertEquals(clue(marked.values.count(identity)), mixed.size, s"every node marked exactly once: $marked")
       assertEquals(clue(rescan), 0, "nothing left unconsumed ⇒ the ledger was written for every merged item")
       assertEquals(clue(afterRescan.size), 1, "the follow-up scan must NOT re-inject (no duplicate)")
@@ -533,57 +585,85 @@ class RootNotifyBatchSpec extends FunSuite:
   // ── V9（F-1 修复面：复核位 V9a 探针纳入本批 spec 面）─────────────────────────────
 
   test("V9 GREEN (F-1): root ref ABSENT + ≥2 items ⇒ NOTHING accounted, and the rescan re-enqueues ALL N") {
-    withFixtureCore("v9a", quietMs = 250L, batchMax = 10, rootPresent = false) { (store, engine, recorded, _, attachRoot) =>
-      val nodes = List(node("n-v9a-1", result = "V9A_BODY_ONE"), node("n-v9a-2", result = "V9A_BODY_TWO"))
-      val ids = nodes.map(_.id)
-      def marks: IO[Map[String, Boolean]] =
-        store.snapshot.map(_.nodes.values.filter(n => ids.contains(n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap)
-      val io = for
-        _ <- seed(store, nodes)
-        _ <- nodes.traverse_(n =>
-          engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id)))
-        // 相 1：窗口出口（≥2 件 ⇒ 合并腿），但根 ref 缺失 ⇒ offer 不落地
-        _ <- engine.flushRootNotify()
-        offeredAfterFlush <- imms(recorded)
-        markedAfterFlush <- marks
-        pendingAfterFlush <- engine.rootNotifyPendingCount
-        // 相 2：根 ref 回归 ⇒ 补投扫描（fresh 腿）重新入队 ⇒ 下一窗合并重投
-        _ <- attachRoot
-        rescan <- engine.redeliverUnconsumedNebulaResults()
-        requeued <- engine.rootNotifyPendingCount
-        _ <- awaitImms(recorded, min = 1)
-        _ <- IO.sleep(500.millis)
-        afterRedelivery <- imms(recorded)
-        markedAfterRedelivery <- marks
-        pendingAfterRedelivery <- engine.rootNotifyPendingCount
-      yield (offeredAfterFlush, markedAfterFlush, pendingAfterFlush, rescan, requeued, afterRedelivery, markedAfterRedelivery, pendingAfterRedelivery)
-      val (offeredAfterFlush, markedAfterFlush, pendingAfterFlush, rescan, requeued, afterRedelivery, markedAfterRedelivery, pendingAfterRedelivery) =
-        io.unsafeRunSync()
-      println(
-        s"[RootNotifyBatchSpec] V9 DIAG offered=${offeredAfterFlush.size} markedAfterFlush=${markedAfterFlush.values.count(identity)}/${ids.size} pendingAfterFlush=$pendingAfterFlush rescan=$rescan requeued=$requeued redelivered=${afterRedelivery.size} batchSizes=${afterRedelivery.map(m => batchSizeOf(m.text))} markedAfterRedelivery=${markedAfterRedelivery.values.count(identity)}/${ids.size}")
-      // ❶ 根 ref 缺失 ⇒ 交付事实 = 0 次 offer
-      assertEquals(clue(offeredAfterFlush.size), 0, "root ref absent ⇒ the flush must NOT offer anything (delivery fact = 0)")
-      // ❷ F-1 本体：offer 未落地 ⇒ **不得**记账（记账必须反映交付事实）
-      assertEquals(
-        clue(markedAfterFlush.values.count(identity)),
-        0,
-        s"🔴 nothing may be accounted as delivered when no offer landed: $markedAfterFlush"
-      )
-      // ❸ 窗口已排空（件不在缓冲里）⇒ 唯一补救面 = 补投扫描
-      assertEquals(clue(pendingAfterFlush), 0, "the window drained — the buffer is not the recovery face")
-      // ❹ 根回归 ⇒ 补投扫描把 N 件**全部**重新入队
-      assertEquals(clue(rescan), ids.size, "the rescan must re-queue every unaccounted item")
-      assertEquals(clue(requeued), ids.size, "N items re-entered the batch buffer")
-      // ❺ 窗到 ⇒ 合并重投：同批 N 件、身份序 == 到达序（不丢、保序）
-      assertEquals(clue(afterRedelivery.size), 1, "the re-queued items ride ONE window ⇒ one merged re-injection")
-      assertEquals(clue(idsOf(afterRedelivery.head.text)), ids, "no loss + order preserved on the redelivery leg")
-      // ❻ 这次 offer 落地 ⇒ 逐件记账
-      assertEquals(
-        clue(markedAfterRedelivery.values.count(identity)),
-        ids.size,
-        s"after a LANDED offer every item is accounted: $markedAfterRedelivery"
-      )
-      assertEquals(clue(pendingAfterRedelivery), 0)
+    withFixtureCore("v9a", quietMs = 250L, batchMax = 10, rootPresent = false) {
+      (store, engine, recorded, _, attachRoot) =>
+        val nodes = List(node("n-v9a-1", result = "V9A_BODY_ONE"), node("n-v9a-2", result = "V9A_BODY_TWO"))
+        val ids = nodes.map(_.id)
+        def marks: IO[Map[String, Boolean]] =
+          store.snapshot.map(
+            _.nodes.values.filter(n => ids.contains(n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap
+          )
+        val io = for
+          _ <- seed(store, nodes)
+          _ <- nodes.traverse_(n =>
+            engine.enqueueRootNotify(s"[Node '${n.name}' completed]\n${n.result.get}", n.name, "completed", Some(n.id))
+          )
+          // 相 1：窗口出口（≥2 件 ⇒ 合并腿），但根 ref 缺失 ⇒ offer 不落地
+          _ <- engine.flushRootNotify()
+          offeredAfterFlush <- imms(recorded)
+          markedAfterFlush <- marks
+          pendingAfterFlush <- engine.rootNotifyPendingCount
+          // 相 2：根 ref 回归 ⇒ 补投扫描（fresh 腿）重新入队 ⇒ 下一窗合并重投
+          _ <- attachRoot
+          rescan <- engine.redeliverUnconsumedNebulaResults()
+          requeued <- engine.rootNotifyPendingCount
+          _ <- awaitImms(recorded, min = 1)
+          _ <- IO.sleep(500.millis)
+          afterRedelivery <- imms(recorded)
+          markedAfterRedelivery <- marks
+          pendingAfterRedelivery <- engine.rootNotifyPendingCount
+        yield (
+          offeredAfterFlush,
+          markedAfterFlush,
+          pendingAfterFlush,
+          rescan,
+          requeued,
+          afterRedelivery,
+          markedAfterRedelivery,
+          pendingAfterRedelivery
+        )
+        val (
+          offeredAfterFlush,
+          markedAfterFlush,
+          pendingAfterFlush,
+          rescan,
+          requeued,
+          afterRedelivery,
+          markedAfterRedelivery,
+          pendingAfterRedelivery
+        ) =
+          io.unsafeRunSync()
+        println(
+          s"[RootNotifyBatchSpec] V9 DIAG offered=${offeredAfterFlush.size} markedAfterFlush=${markedAfterFlush.values.count(identity)}/${ids.size} pendingAfterFlush=$pendingAfterFlush rescan=$rescan requeued=$requeued redelivered=${afterRedelivery.size} batchSizes=${afterRedelivery
+              .map(m => batchSizeOf(m.text))} markedAfterRedelivery=${markedAfterRedelivery.values.count(identity)}/${ids.size}"
+        )
+        // ❶ 根 ref 缺失 ⇒ 交付事实 = 0 次 offer
+        assertEquals(
+          clue(offeredAfterFlush.size),
+          0,
+          "root ref absent ⇒ the flush must NOT offer anything (delivery fact = 0)"
+        )
+        // ❷ F-1 本体：offer 未落地 ⇒ **不得**记账（记账必须反映交付事实）
+        assertEquals(
+          clue(markedAfterFlush.values.count(identity)),
+          0,
+          s"🔴 nothing may be accounted as delivered when no offer landed: $markedAfterFlush"
+        )
+        // ❸ 窗口已排空（件不在缓冲里）⇒ 唯一补救面 = 补投扫描
+        assertEquals(clue(pendingAfterFlush), 0, "the window drained — the buffer is not the recovery face")
+        // ❹ 根回归 ⇒ 补投扫描把 N 件**全部**重新入队
+        assertEquals(clue(rescan), ids.size, "the rescan must re-queue every unaccounted item")
+        assertEquals(clue(requeued), ids.size, "N items re-entered the batch buffer")
+        // ❺ 窗到 ⇒ 合并重投：同批 N 件、身份序 == 到达序（不丢、保序）
+        assertEquals(clue(afterRedelivery.size), 1, "the re-queued items ride ONE window ⇒ one merged re-injection")
+        assertEquals(clue(idsOf(afterRedelivery.head.text)), ids, "no loss + order preserved on the redelivery leg")
+        // ❻ 这次 offer 落地 ⇒ 逐件记账
+        assertEquals(
+          clue(markedAfterRedelivery.values.count(identity)),
+          ids.size,
+          s"after a LANDED offer every item is accounted: $markedAfterRedelivery"
+        )
+        assertEquals(clue(pendingAfterRedelivery), 0)
     }
   }
 
@@ -591,7 +671,8 @@ class RootNotifyBatchSpec extends FunSuite:
 
   test("R1 GREEN: window OFF reproduces the pre-fix baseline — three individual batch=1 injections") {
     withFixture("r1", quietMs = 0L, batchMax = 10) { (store, engine, recorded, _) =>
-      val nodes = List(node("n-r1-1", result = "R1_ONE"), node("n-r1-2", result = "R1_TWO"), node("n-r1-3", result = "R1_THREE"))
+      val nodes =
+        List(node("n-r1-1", result = "R1_ONE"), node("n-r1-2", result = "R1_TWO"), node("n-r1-3", result = "R1_THREE"))
       val io = for
         _ <- seed(store, nodes)
         _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, s"${n.result.get}"))
@@ -601,14 +682,20 @@ class RootNotifyBatchSpec extends FunSuite:
         pending <- engine.rootNotifyPendingCount
       yield (ms, after, pending)
       val (ms, after, pending) = io.unsafeRunSync()
-      println(s"[RootNotifyBatchSpec] R1 DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))}")
+      println(
+        s"[RootNotifyBatchSpec] R1 DIAG injections=${after.size} batchSizes=${after.map(m => batchSizeOf(m.text))}"
+      )
       assertEquals(clue(after.size), 3, "window off ⇒ per-item behaviour (the 178/178 batch=1 baseline)")
       assertEquals(clue(after.map(m => batchSizeOf(m.text))), List(1, 1, 1), "every injection is batch=1")
-      assertEquals(clue(after.map(_.text)), List(
-        "[Node 'node-n-r1-1' completed]\nR1_ONE",
-        "[Node 'node-n-r1-2' completed]\nR1_TWO",
-        "[Node 'node-n-r1-3' completed]\nR1_THREE"
-      ), "per-item text byte-identical to today's shape")
+      assertEquals(
+        clue(after.map(_.text)),
+        List(
+          "[Node 'node-n-r1-1' completed]\nR1_ONE",
+          "[Node 'node-n-r1-2' completed]\nR1_TWO",
+          "[Node 'node-n-r1-3' completed]\nR1_THREE"
+        ),
+        "per-item text byte-identical to today's shape"
+      )
       assertEquals(clue(pending), 0, "nothing buffered when the window is off")
       assertEquals(clue(mergedRatio(after)), 0.0, "R3: mergedRatio == 0 on the pre-fix path (binary metric)")
       assertEquals(clue(ms.size), 3)
@@ -624,7 +711,11 @@ class RootNotifyBatchSpec extends FunSuite:
       val nodes = ids.zip(bodies).map((id, b) => node(id, result = b))
       val io = for
         _ <- seed(store, nodes)
-        _ <- ids.zip(bodies).traverse_((id, b) => engine.enqueueRootNotify(s"[Node 'node-$id' completed]\n$b", s"node-$id", "completed", Some(id)))
+        _ <- ids
+          .zip(bodies)
+          .traverse_((id, b) =>
+            engine.enqueueRootNotify(s"[Node 'node-$id' completed]\n$b", s"node-$id", "completed", Some(id))
+          )
         ms <- awaitImms(recorded, min = 1)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)

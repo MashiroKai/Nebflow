@@ -37,19 +37,19 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         prev <- IO(PathUtil.dataRoot)
-        tmp  <- IO.blocking(os.temp.dir(prefix = "nb-tdse-"))
-        _    <- IO(PathUtil.setDataRoot(tmp))
+        tmp <- IO.blocking(os.temp.dir(prefix = "nb-tdse-"))
+        _ <- IO(PathUtil.setDataRoot(tmp))
         // 接收端本地允许根配置（发送端无法影响该清单）
         _ <- IO.blocking(
-               os.write.over(tmp / "nebflow.json", s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
-             )
-        ms   <- NeblinkService.create(0, dispatcher)
+          os.write.over(tmp / "nebflow.json", s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
+        )
+        ms <- NeblinkService.create(0, dispatcher)
         seen <- Ref.of[IO, List[Json]](Nil)
-        _    <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
-        svc  <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
-        out  <- use(ms, svc, seen)
-        _    <- IO(PathUtil.setDataRoot(prev))
-        _    <- IO(os.remove.all(tmp))
+        _ <- ms.setSendDataFn((_, _, p) => seen.update(_ :+ p).as(true))
+        svc <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
+        out <- use(ms, svc, seen)
+        _ <- IO(PathUtil.setDataRoot(prev))
+        _ <- IO(os.remove.all(tmp))
       yield out
     }
 
@@ -60,16 +60,18 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
     proto: Option[Int]
   ): Json =
     val base = Json.obj(
-      "kind"       -> "file-offer".asJson,
-      "senderId"   -> "evil-peer".asJson,
+      "kind" -> "file-offer".asJson,
+      "senderId" -> "evil-peer".asJson,
       "transferId" -> transferId.asJson,
-      "msgId"      -> s"$transferId-m".asJson,
-      "fileName"   -> fileName.asJson,
-      "fileSize"   -> 5.asJson,
-      "mimeType"   -> "application/octet-stream".asJson
+      "msgId" -> s"$transferId-m".asJson,
+      "fileName" -> fileName.asJson,
+      "fileSize" -> 5.asJson,
+      "mimeType" -> "application/octet-stream".asJson
     )
     val withProto = proto.fold(base)(p => base.deepMerge(Json.obj("proto" -> p.asJson)))
     targetDir.fold(withProto)(d => withProto.deepMerge(Json.obj("targetDir" -> d.asJson)))
+
+  end offerFrame
 
   private def responses(seen: List[Json]): List[Json] =
     seen.filter(_.hcursor.downField("kind").as[String].toOption.contains("file-response"))
@@ -86,19 +88,23 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
 
   test("D1 越权目标（允许根外，存在/不存在各一）⇒ 结构化拒 + 目标目录不存在 + 允许根零改动"):
     val parent = os.temp.dir(prefix = "nb-tdse-tree-")
-    val allow  = parent / "allowed"
+    val allow = parent / "allowed"
     os.makeDir.all(allow)
-    val outside     = parent / "outside"
-    val outsideNew  = parent / "outside-not-created"
+    val outside = parent / "outside"
+    val outsideNew = parent / "outside-not-created"
     IO(os.makeDir.all(outside))
       .flatMap(_ =>
         withReceiver(allow) { (ms, _, seen) =>
           for
             before <- IO(listing(allow))
-            _      <- ms.handleDataMessage(offerFrame("t-d1-exist", "a.bin", Some(outside.toString), Some(AttachContract.ProtoAssignDir)))
-            _      <- ms.handleDataMessage(offerFrame("t-d1-new", "b.bin", Some(outsideNew.toString), Some(AttachContract.ProtoAssignDir)))
+            _ <- ms.handleDataMessage(
+              offerFrame("t-d1-exist", "a.bin", Some(outside.toString), Some(AttachContract.ProtoAssignDir))
+            )
+            _ <- ms.handleDataMessage(
+              offerFrame("t-d1-new", "b.bin", Some(outsideNew.toString), Some(AttachContract.ProtoAssignDir))
+            )
             frames <- seen.get
-            after  <- IO(listing(allow))
+            after <- IO(listing(allow))
           yield
             val rs = responses(frames)
             assertEquals(rs.size, 2, s"两次非法 offer 都必须有裁定回执：$frames")
@@ -124,15 +130,17 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
 
   test("D2 词法穿越（`..` 段）⇒ TARGET_DIR_INVALID + 允许根外零创建"):
     val parent = os.temp.dir(prefix = "nb-tdse-dotdot-")
-    val allow  = parent / "allowed"
+    val allow = parent / "allowed"
     os.makeDir.all(allow)
     val escapee = parent / ".ssh"
     withReceiver(allow) { (ms, _, seen) =>
       for
         before <- IO(listing(parent))
-        _      <- ms.handleDataMessage(offerFrame("t-d2", "c.bin", Some(s"$allow/../.ssh"), Some(AttachContract.ProtoAssignDir)))
+        _ <- ms.handleDataMessage(
+          offerFrame("t-d2", "c.bin", Some(s"$allow/../.ssh"), Some(AttachContract.ProtoAssignDir))
+        )
         frames <- seen.get
-        after  <- IO(listing(parent))
+        after <- IO(listing(parent))
       yield
         val rs = responses(frames)
         assertEquals(rs.size, 1)
@@ -143,18 +151,18 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
 
   test("D3 被拒会话**不得**再接受字节（拒 + 零副作用不可被事后推块绕过）"):
     val parent = os.temp.dir(prefix = "nb-tdse-chunk-")
-    val allow  = parent / "allowed"
+    val allow = parent / "allowed"
     os.makeDir.all(allow)
     withReceiver(allow) { (ms, svc, seen) =>
       for
         before <- IO(listing(allow))
-        _      <- ms.handleDataMessage(offerFrame("t-d3", "d.bin", Some("/etc"), Some(AttachContract.ProtoAssignDir)))
+        _ <- ms.handleDataMessage(offerFrame("t-d3", "d.bin", Some("/etc"), Some(AttachContract.ProtoAssignDir)))
         frames <- seen.get
         res <- svc.receiveChunkFromPeer(
-                 "t-d3",
-                 Stream.empty[IO],
-                 DropboxService.ChunkHeaders(0, 5L, AttachContract.ChunkSize, "a" * 64, "b" * 64)
-               )
+          "t-d3",
+          Stream.empty[IO],
+          DropboxService.ChunkHeaders(0, 5L, AttachContract.ChunkSize, "a" * 64, "b" * 64)
+        )
         after <- IO(listing(allow))
       yield
         assertEquals(errCode(responses(frames).head), Some(AttachContract.Codes.TargetDirNotAllowed))
@@ -169,12 +177,14 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
 
   test("D4 允许根内不存在的子目录（判定通过）⇒ 允许，且此时**尚未**建任何目录"):
     val parent = os.temp.dir(prefix = "nb-tdse-ok-")
-    val allow  = parent / "allowed"
+    val allow = parent / "allowed"
     os.makeDir.all(allow)
     val target = allow / "sub" / "deep"
     withReceiver(allow) { (ms, _, seen) =>
       for
-        _      <- ms.handleDataMessage(offerFrame("t-d4", "e.bin", Some(target.toString), Some(AttachContract.ProtoAssignDir)))
+        _ <- ms.handleDataMessage(
+          offerFrame("t-d4", "e.bin", Some(target.toString), Some(AttachContract.ProtoAssignDir))
+        )
         frames <- seen.get
       yield
         val rs = responses(frames)
@@ -190,7 +200,7 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
 
   test("E1 旧端形态 offer（无 targetDir、proto 缺席或 1）⇒ 照旧 accepted=true，且不落任何 targetDir 字段"):
     val parent = os.temp.dir(prefix = "nb-tdse-e1-")
-    val allow  = parent / "allowed"
+    val allow = parent / "allowed"
     os.makeDir.all(allow)
     withReceiver(allow) { (ms, _, seen) =>
       for
@@ -208,32 +218,34 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
     }.flatMap(_ => IO(os.remove.all(parent)))
 
   test("E2 缺省落点 = downloadsDir（逐字节一致）；有 targetDir 时取会话固化落点"):
-    IO.blocking(os.temp.dir(prefix = "nb-tdse-e2-")).map { d =>
-      val t = FileTransfer(
-        transferId = "t-e2",
-        direction = "in",
-        peerDeviceId = "p",
-        peerAddress = "",
-        fileName = "x.bin",
-        fileSize = 1L,
-        mimeType = "",
-        msgId = "m",
-        status = "accepted"
-      )
-      assertEquals(DropboxService.landingDirFor(t), DropboxUtil.downloadsDir)
-      assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some(""))), DropboxUtil.downloadsDir)
-      assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some("relative/x"))), DropboxUtil.downloadsDir)
-      val canon = d.toNIO.toRealPath().toString
-      assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some(canon))).toString, canon)
-      // 落点名派生链（resolveFinalPath）的缺省父目录不变
-      val resolved = DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, "nb-tdse-nope-xyz.bin")
-      assert(
-        resolved.toString == (DropboxUtil.downloadsDir / "nb-tdse-nope-xyz.bin").toString ||
-          resolved.toString.startsWith((DropboxUtil.downloadsDir / "nb-tdse-nope-xyz").toString),
-        s"缺省落点必须仍在 downloadsDir 内，实际 $resolved"
-      )
-      os.remove.all(d)
-    }.unsafeRunSync()
+    IO.blocking(os.temp.dir(prefix = "nb-tdse-e2-"))
+      .map { d =>
+        val t = FileTransfer(
+          transferId = "t-e2",
+          direction = "in",
+          peerDeviceId = "p",
+          peerAddress = "",
+          fileName = "x.bin",
+          fileSize = 1L,
+          mimeType = "",
+          msgId = "m",
+          status = "accepted"
+        )
+        assertEquals(DropboxService.landingDirFor(t), DropboxUtil.downloadsDir)
+        assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some(""))), DropboxUtil.downloadsDir)
+        assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some("relative/x"))), DropboxUtil.downloadsDir)
+        val canon = d.toNIO.toRealPath().toString
+        assertEquals(DropboxService.landingDirFor(t.copy(targetDir = Some(canon))).toString, canon)
+        // 落点名派生链（resolveFinalPath）的缺省父目录不变
+        val resolved = DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, "nb-tdse-nope-xyz.bin")
+        assert(
+          resolved.toString == (DropboxUtil.downloadsDir / "nb-tdse-nope-xyz.bin").toString ||
+            resolved.toString.startsWith((DropboxUtil.downloadsDir / "nb-tdse-nope-xyz").toString),
+          s"缺省落点必须仍在 downloadsDir 内，实际 $resolved"
+        )
+        os.remove.all(d)
+      }
+      .unsafeRunSync()
 
   test("E3 旧 transfers.json（无 targetDir/targetDirCode/peerProto 键）照旧解码，新字段全默认 None"):
     // 逐字 = 本批**之前**的 `FileTransfer` 编码形态（含当时就无默认值的既有字段 receiverHash）。

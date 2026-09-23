@@ -138,3 +138,4 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       assert(!d.tools.contains("FlowReport"), s"retired FlowReport re-appended by reload: ${d.tools}")
       assertEquals(d.flowContract, retired.flowContract, "flowContract must still survive the reload")
   }
+end ContextRefresherFlowInjectSpec

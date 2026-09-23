@@ -9,12 +9,13 @@ import nebflow.shared.{ContentBlock, Defaults, Message, MessageRole}
 
 import java.nio.file.Files
 
-/** #38 Layer B — compact 轮输入的大结果精准剔除（2026-09-01）。
-  *
-  * 回归护栏：压缩轮喂给 LLM 的输入中，超大 ToolResult 必须被替换为
-  * 占位符+落盘路径（否则历史超 provider 上限时压缩死锁）；小结果与
-  * 结构原样保留；已落盘预览不重复处理。
-  */
+/**
+ * #38 Layer B — compact 轮输入的大结果精准剔除（2026-09-01）。
+ *
+ * 回归护栏：压缩轮喂给 LLM 的输入中，超大 ToolResult 必须被替换为
+ * 占位符+落盘路径（否则历史超 provider 上限时压缩死锁）；小结果与
+ * 结构原样保留；已落盘预览不重复处理。
+ */
 class CompactUtilsOversizedSpec extends CatsEffectSuite:
 
   private val testRoot = Files.createTempDirectory("compact-oversized-test")
@@ -44,12 +45,16 @@ class CompactUtilsOversizedSpec extends CatsEffectSuite:
 
   private val big = "x" * 300_000
   private val small = "s" * 1_000
-  private val persistedPreview = "<persisted-output>\nOutput too large (60.0 KB). Full output saved to: /x/y.txt\n</persisted-output>"
+
+  private val persistedPreview =
+    "<persisted-output>\nOutput too large (60.0 KB). Full output saved to: /x/y.txt\n</persisted-output>"
 
   test("300K ToolResult is stripped to placeholder + path, message body < 10K"):
     val messages = List(assistantMsg("call-1"), userMsg(toolResult("call-1", big)))
     val stripped = CompactUtils.stripOversizedToolResults(messages, "sess-b1")
-    val resultContent = stripped(1).content.toOption.get.collectFirst { case tr: ContentBlock.ToolResult => tr.content }.get
+    val resultContent = stripped(1).content.toOption.get.collectFirst { case tr: ContentBlock.ToolResult =>
+      tr.content
+    }.get
     assert(resultContent.startsWith("<persisted-output>"), "must be persisted marker")
     assert(resultContent.contains("Full output saved to:"), "must reference on-disk file")
     assert(resultContent.contains("tool-results/sess-b1/call-1.txt"), "must carry the exact path")

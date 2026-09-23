@@ -73,8 +73,10 @@ class GlobalSafetySpec extends CatsEffectSuite:
   // **负控**：原「覆盖优先」用例（覆盖存在时不看全局）已改为不可成立的形态 ——
   // 没有任何入参可以表达"某个会话有自己的档位"，故旧行为在类型上被排除。
 
-  /** 最小 SharedResources：只填 resolver 会读的槽位（隔离 dataRoot 的配置文件），
-    * 其余为 null（`ListFriendsToolRegistrationSpec` 先例）。 */
+  /**
+   * 最小 SharedResources：只填 resolver 会读的槽位（隔离 dataRoot 的配置文件），
+   * 其余为 null（`ListFriendsToolRegistrationSpec` 先例）。
+   */
   private def resourcesWith(): nebflow.agent.SharedResources =
     nebflow.agent.SharedResources(
       llm = null,

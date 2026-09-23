@@ -37,17 +37,21 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
     val body = providers.map { case (id, port) => s""""$id":${providerJson(port)}""" }.mkString(",")
     os.write.over(root / "nebflow.json", s"""{"llm":{"providers":{$body}}}""")
 
-  /** Redirect the global dataRoot to a temp dir for the duration of `f`
-    * (reloadConfig reads the config from `PathUtil.dataRoot`). Restored in
-    * guarantee — sequential munit suites make capture-at-start safe. */
+  /**
+   * Redirect the global dataRoot to a temp dir for the duration of `f`
+   * (reloadConfig reads the config from `PathUtil.dataRoot`). Restored in
+   * guarantee — sequential munit suites make capture-at-start safe.
+   */
   private def withTempDataRoot[A](f: os.Path => IO[A]): IO[A] =
     val original = PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "nb-stale-session-")
     PathUtil.setDataRoot(tmp)
     f(tmp).guarantee(IO(PathUtil.setDataRoot(original)) *> IO(os.remove.all(tmp)))
 
-  /** Fast Anthropic-SSE mock (multi-threaded — a serial executor would mask
-    * concurrency behavior under test). */
+  /**
+   * Fast Anthropic-SSE mock (multi-threaded — a serial executor would mask
+   * concurrency behavior under test).
+   */
   private def startMock(port: Int, hits: AtomicInteger): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -126,23 +130,24 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
         configRef <- Ref.of[IO, NebflowServiceConfig](Config.loadServiceConfig())
         overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
         attempts <- Ref.of[IO, List[FallbackAttempt]](Nil)
-        result <- LlmInterface.createLlm(overrides, None, Some(configRef)).flatMap { case (handle, registry, _, release) =>
-          for
-            candA <- registry.getCandidateForRef("a/m1")
-            _ <- IO(assert(candA.isDefined, "a/m1 must resolve in initial config"))
-            _ <- overrides.set(Map("s1" -> candA.get))
-            // Hot-reload removes provider "a" → the override for s1 is dropped.
-            _ <- IO(writeConfig(root, Map("b" -> 19112)))
-            staleIds <- registry.reloadConfig(Some(overrides))
-            t0 <- IO.monotonic
-            chunks <- handle
-              .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
-              .compile
-              .toList
-            elapsed <- IO.monotonic.map(_ - t0)
-            remaining <- overrides.get
-            _ <- release
-          yield (staleIds, chunks, elapsed, remaining)
+        result <- LlmInterface.createLlm(overrides, None, Some(configRef)).flatMap {
+          case (handle, registry, _, release) =>
+            for
+              candA <- registry.getCandidateForRef("a/m1")
+              _ <- IO(assert(candA.isDefined, "a/m1 must resolve in initial config"))
+              _ <- overrides.set(Map("s1" -> candA.get))
+              // Hot-reload removes provider "a" → the override for s1 is dropped.
+              _ <- IO(writeConfig(root, Map("b" -> 19112)))
+              staleIds <- registry.reloadConfig(Some(overrides))
+              t0 <- IO.monotonic
+              chunks <- handle
+                .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
+                .compile
+                .toList
+              elapsed <- IO.monotonic.map(_ - t0)
+              remaining <- overrides.get
+              _ <- release
+            yield (staleIds, chunks, elapsed, remaining)
         }
         (staleIds, chunks, elapsed, remaining) = result
         _ <- IO.blocking(serverB.stop(0))

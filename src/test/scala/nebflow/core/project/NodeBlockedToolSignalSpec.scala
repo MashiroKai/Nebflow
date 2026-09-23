@@ -45,6 +45,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   // DirectoryNotEmptyException / 组合跑互踩（本 spec 与 NodeBgCompletionGateSpec 是两个残件）。
   os.remove.all(tempRoot)
   PathUtil.setDataRoot(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -59,11 +60,12 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   /** 按输入内容响应的 LLM：inputs 记录全部 user 文本（断言 turn 形态）。 */
   private class FuncLlm(respond: String => IO[String]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -71,13 +73,16 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
 
-  /** 工具申报状态机 LLM：首 turn 发 node_report 工具调用（category 参数化——
-    * blocked/pass/fail 三语义共用驱动），见到工具结果后输出无锚定收尾文本——
-    * 证明终态由工具通道驱动而非文本形态。
-    * 探测走 ContentBlock.ToolResult（textContent 只含 Text 块——tool_result 在
-    * role=user 消息的块列表里，文本面不可见）。 */
+  /**
+   * 工具申报状态机 LLM：首 turn 发 node_report 工具调用（category 参数化——
+   * blocked/pass/fail 三语义共用驱动），见到工具结果后输出无锚定收尾文本——
+   * 证明终态由工具通道驱动而非文本形态。
+   * 探测走 ContentBlock.ToolResult（textContent 只含 Text 块——tool_result 在
+   * role=user 消息的块列表里，文本面不可见）。
+   */
   private class ToolCallLlm(category: String, detail: String, suggestion: String, closing: String):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     private def ackText: String =
       // nrloop 一期（2026-09-12）：confirm 回执按角色/类别分支——blocked 面文本不变；
       // verdict 面（pass/fail）与 finish 面的回执改为 `[OK] verdict recorded (<cat>)`
@@ -88,6 +93,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       else if nebflow.core.tools.NodeReportToolDef.isFinish(category)
       then s"[OK] node report ($category) recorded"
       else s"[OK] verdict recorded ($category)"
+
     private def sawDeclarationAck(req: LlmRequest): Boolean =
       req.messages.exists { m =>
         m.content match
@@ -99,11 +105,12 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
             }
           case Left(t) => t.contains(ackText)
       }
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         if sawDeclarationAck(req) then
@@ -112,13 +119,25 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
         else
           Stream.eval(inputs.update(_ :+ text)) >>
             Stream(
-              StreamChunk.ToolCallChunk(ToolCall(
-                "rb-1", "node_report",
-                JsonObject(
-                  "category" -> category.asJson,
-                  "detail" -> detail.asJson,
-                  "suggestion" -> suggestion.asJson))),
-              StreamChunk.Done(Some("tool_use"), None))
+              StreamChunk.ToolCallChunk(
+                ToolCall(
+                  "rb-1",
+                  "node_report",
+                  JsonObject(
+                    "category" -> category.asJson,
+                    "detail" -> detail.asJson,
+                    "suggestion" -> suggestion.asJson
+                  )
+                )
+              ),
+              StreamChunk.Done(Some("tool_use"), None)
+            )
+
+        end if
+
+      end sendStream
+
+  end ToolCallLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -162,7 +181,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -175,7 +194,10 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   /** 引擎挂载（无 ProjectActor：重入走 router 的 warn 降级路径）+ WS 事件捕获。 */
   private def mountEngineOnly(
@@ -201,7 +223,12 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
         // 未申报降级面用例（文本锚定）依赖「未申报照常放行」的旧口径。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield (rt, events)
@@ -209,7 +236,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[NodeDef] =
@@ -219,15 +246,19 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     waitUntil(20.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAuditTypes(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -235,7 +266,9 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
 
   // ── 工具申报 → blocked 终态（spec §9.2 核心重放面：6 例申报形态被工具通道归一）──
 
-  test("tool declaration: node_report call drives blocked terminal (feedback/count/ttl/result head+full text), no text anchor needed, downstream NOT settled") {
+  test(
+    "tool declaration: node_report call drives blocked terminal (feedback/count/ttl/result head+full text), no text anchor needed, downstream NOT settled"
+  ) {
     val ws = tempRoot / "ws-tool-blocked"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-tool-${scala.util.Random.nextInt(100000)}")
@@ -244,18 +277,38 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       category = "external-dependency",
       detail = "等待外部 API 恢复",
       suggestion = "API 恢复后重派",
-      closing = closing)
+      closing = closing
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-tool", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 wiring（blocked 零结算断言面；store 直种——20260903 out 规范下
       // wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-d" -> NodeDef(id = "n-down-d", name = "down-d", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("bts-tool", "tool-blocked-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block-tool-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-down-d" -> NodeDef(
+              id = "n-down-d",
+              name = "down-d",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "bts-tool",
+          "tool-blocked-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block-tool-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "tool-blocked-a", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "tool-blocked-a")
       a <- nodeById(rt, aId)
@@ -267,8 +320,12 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       // nodeUpdated（Running → Blocked），只等「任一 nodeUpdated」会在 Running 那条上立即返回
       // ⇒ 读到的快照仍缺 Blocked 那条（实测红：:293 断言）。等它到 ⇒ 断言本体逐字不变。
       _ <- waitUntil(10.seconds)(
-        events.get.map(_.exists((t, id, p) => t == "nodeUpdated" && id == aId &&
-          p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)))
+        events.get.map(
+          _.exists((t, id, p) =>
+            t == "nodeUpdated" && id == aId &&
+              p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
+          )
+        )
       )
       evs <- events.get
       _ <- waitUntil(10.seconds)(
@@ -285,7 +342,10 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       assertEquals(a.blockCount, 1)
       assertEquals(a.ttlExpireAt, None, "blocked never expires (待办语义)")
       // result = 渲染串头部 + 收尾全文拼接（spec §5.2 #6）
-      assert(a.result.exists(_.startsWith("[blocked:external-dependency]")), s"result head must be render string, got: ${a.result}")
+      assert(
+        a.result.exists(_.startsWith("[blocked:external-dependency]")),
+        s"result head must be render string, got: ${a.result}"
+      )
       assert(a.result.exists(_.contains(closing)), s"result must carry the full closing report, got: ${a.result}")
       // 收尾文本不含裸 BLOCKED 锚定 → 文本降级面未参与，blocked 纯由工具驱动
       assert(!closing.trim.startsWith("BLOCKED"), "closing text must NOT carry the text anchor (tool-driven proof)")
@@ -293,10 +353,15 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       assertEquals(dAfter.status, NodeLifecycle.Wiring, "downstream must NOT be settled by blocked")
       assertEquals(dAfter.deliveredTo, Nil)
       // WS + 审计（既有消费面不变）
-      assert(evs.exists((t, id, p) => t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)),
-        "blocked must emit nodeUpdated")
+      assert(
+        evs.exists((t, id, p) =>
+          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
+        ),
+        "blocked must emit nodeUpdated"
+      )
       assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "blocked must NOT emit nodeCompleted")
       assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
+    end for
   }
 
   // ── 误判回归（spec §9.3 第一行）：正文含 BLOCKED 字样、未调工具 → completed ──
@@ -311,8 +376,16 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-mis", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("bts-mis", "finisher", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-finish-with-word"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bts-mis",
+          "finisher",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-finish-with-word"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "finisher", Set(NodeLifecycle.Completed))
       fId <- idOf(rt, "finisher")
       f <- nodeById(rt, fId)
@@ -322,6 +395,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       assertEquals(f.blockedFeedback, None, "no blockedFeedback without a declaration")
       assertEquals(f.blockCount, 0)
       assertEquals(f.result, Some(tricky), "completed result is the raw output (no render-string rewrite)")
+    end for
   }
 
   // ── 申报残留对称清理：cancelled 路径不消费、清理幂等（cleanupRunTables 钩子）──
@@ -346,26 +420,43 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
 
   // ── NodeReport 泛化批扩面：pass/fail 主动申报集成重放（作者裁定三语义统一迁移）──
 
-  test("finish declaration (role=task): node_report(finish) drives the existing completed chain — no blockedFeedback, downstream settled") {
+  test(
+    "finish declaration (role=task): node_report(finish) drives the existing completed chain — no blockedFeedback, downstream settled"
+  ) {
     val ws = tempRoot / "ws-tool-pass"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-pass-${scala.util.Random.nextInt(100000)}")
     val closing = "验收条件逐条核对通过，正式声明完成。本节点收尾。"
-    val llm = new ToolCallLlm(
-      category = "finish",
-      detail = "验收条件逐条核对通过",
-      suggestion = "",
-      closing = closing)
+    val llm = new ToolCallLlm(category = "finish", detail = "验收条件逐条核对通过", suggestion = "", closing = closing)
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-pass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 wiring（completed 链 → out 结算断言面；store 直种同上）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-p" -> NodeDef(id = "n-down-p", name = "down-p", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("bts-pass", "tool-pass-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-pass-tool-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-down-p" -> NodeDef(
+              id = "n-down-p",
+              name = "down-p",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "bts-pass",
+          "tool-pass-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-pass-tool-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "tool-pass-a", Set(NodeLifecycle.Completed))
       pId <- idOf(rt, "tool-pass-a")
       p <- nodeById(rt, pId)
@@ -390,11 +481,17 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       assertEquals(dAfter.status, NodeLifecycle.Wiring, "no edge → no settlement (unchanged)")
       assertEquals(dAfter.deliveredTo, Nil, "no edge → no delivery (unchanged)")
       // 完成链证据：nodeCompleted 事件 + 零 blocked 痕迹
-      assert(evs.exists((t, id, _) => t == "nodeCompleted" && id == pId), "finish must emit nodeCompleted (existing chain)")
+      assert(
+        evs.exists((t, id, _) => t == "nodeCompleted" && id == pId),
+        "finish must emit nodeCompleted (existing chain)"
+      )
       assert(!audit.exists((t, id) => t == "blocked" && id == pId), s"no blocked audit line, got: $audit")
+    end for
   }
 
-  test("verifier verdict=pass: node completes with lastVerdict=pass and ITS pass edge is delivered (verifier pass is not node failure/success of a task)") {
+  test(
+    "verifier verdict=pass: node completes with lastVerdict=pass and ITS pass edge is delivered (verifier pass is not node failure/success of a task)"
+  ) {
     val ws = tempRoot / "ws-tool-vpass"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-vpass-${scala.util.Random.nextInt(100000)}")
@@ -405,15 +502,39 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       (rt, events) <- mountEngineOnly("bts-vpass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 回边目标（worker，待二期执行腿驱动重跑）+ 落点（pass 边下游）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-work-vp" -> NodeDef(id = "n-work-vp", name = "work-vp", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
-        "n-land-vp" -> NodeDef(id = "n-land-vp", name = "land-vp", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("bts-vpass", "tool-vpass-a", "description" -> Json.fromString("verifier node purpose"),
-        "task" -> Json.fromString("will-verdict-pass"),
-        "role" -> Json.fromString("verifier"),
-        "out" -> Json.fromString("(pass)n-land-vp, (fail)n-work-vp:loop")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-work-vp" -> NodeDef(
+              id = "n-work-vp",
+              name = "work-vp",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            ),
+            "n-land-vp" -> NodeDef(
+              id = "n-land-vp",
+              name = "land-vp",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "bts-vpass",
+          "tool-vpass-a",
+          "description" -> Json.fromString("verifier node purpose"),
+          "task" -> Json.fromString("will-verdict-pass"),
+          "role" -> Json.fromString("verifier"),
+          "out" -> Json.fromString("(pass)n-land-vp, (fail)n-work-vp:loop")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "tool-vpass-a", Set(NodeLifecycle.Completed))
       vId <- idOf(rt, "tool-vpass-a")
       v <- nodeById(rt, vId)
@@ -426,36 +547,66 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     yield
       assertEquals(v.status, NodeLifecycle.Completed, "a pass verdict completes the verifier node normally")
       assertEquals(v.role, NodeRoles.Verifier, "role=verifier persists (create-only)")
-      assertEquals(v.lastVerdict, Some("pass"), "lastVerdict must be recorded (deliverOut's verdict awareness reads it)")
+      assertEquals(
+        v.lastVerdict,
+        Some("pass"),
+        "lastVerdict must be recorded (deliverOut's verdict awareness reads it)"
+      )
       assertEquals(v.result, Some(closing), "raw output kept (no render rewrite for pass)")
-      assert(land.deliveredTo.contains(vId), s"the pass edge must deliver to the landing node, got: ${land.deliveredTo}")
+      assert(
+        land.deliveredTo.contains(vId),
+        s"the pass edge must deliver to the landing node, got: ${land.deliveredTo}"
+      )
       assertEquals(work.status, NodeLifecycle.Wiring, "a pass verdict must not touch the re-run target")
       assert(!audit.exists((t, id) => t == "loop-round" && id == vId), "pass must not consume a loop round")
+    end for
   }
 
-  test("verifier verdict=fail: THIS node still completes; the pass edge is NOT delivered; the fail control edge is recorded (no failNode)") {
+  test(
+    "verifier verdict=fail: THIS node still completes; the pass edge is NOT delivered; the fail control edge is recorded (no failNode)"
+  ) {
     val ws = tempRoot / "ws-tool-fail"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bts-fail-${scala.util.Random.nextInt(100000)}")
     val closing = "被判定对象不合格，正式给出 fail verdict。本节点收尾。"
-    val llm = new ToolCallLlm(
-      category = "fail",
-      detail = "产物编译红",
-      suggestion = "回滚上游依赖后重派",
-      closing = closing)
+    val llm = new ToolCallLlm(category = "fail", detail = "产物编译红", suggestion = "回滚上游依赖后重派", closing = closing)
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-fail", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-work-f" -> NodeDef(id = "n-work-f", name = "work-f", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
-        "n-land-f" -> NodeDef(id = "n-land-f", name = "land-f", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("bts-fail", "tool-fail-a", "description" -> Json.fromString("verifier node purpose"),
-        "task" -> Json.fromString("will-verdict-fail"),
-        "role" -> Json.fromString("verifier"),
-        "out" -> Json.fromString("(pass)n-land-f, (fail)n-work-f:loop")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-work-f" -> NodeDef(
+              id = "n-work-f",
+              name = "work-f",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            ),
+            "n-land-f" -> NodeDef(
+              id = "n-land-f",
+              name = "land-f",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "bts-fail",
+          "tool-fail-a",
+          "description" -> Json.fromString("verifier node purpose"),
+          "task" -> Json.fromString("will-verdict-fail"),
+          "role" -> Json.fromString("verifier"),
+          "out" -> Json.fromString("(pass)n-land-f, (fail)n-work-f:loop")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "tool-fail-a", Set(NodeLifecycle.Completed))
       fId <- idOf(rt, "tool-fail-a")
       f <- nodeById(rt, fId)
@@ -478,20 +629,42 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 核心语义翻转（设计 §3.1 纪律③）：fail 是 verdict，**不是**节点失败
-      assertEquals(f.status, NodeLifecycle.Completed, "a fail VERDICT must NOT fail the verifier node (verdict ≠ node status)")
+      assertEquals(
+        f.status,
+        NodeLifecycle.Completed,
+        "a fail VERDICT must NOT fail the verifier node (verdict ≠ node status)"
+      )
       assertEquals(f.lastVerdict, Some("fail"), "lastVerdict=fail recorded")
       assertEquals(f.blockedFeedback, None, "fail must NOT land a blockedFeedback (fail ≠ blocked)")
       assertEquals(f.result, Some(closing), "result = the raw closing output (旧 render 串改写已被取代)")
-      assert(!f.result.exists(_.startsWith("[node-report:fail]")), s"the old render-string rewrite must be gone, got: ${f.result}")
+      assert(
+        !f.result.exists(_.startsWith("[node-report:fail]")),
+        s"the old render-string rewrite must be gone, got: ${f.result}"
+      )
       // 选通面：pass 边**不投**；回边只登记（执行腿落二期）
-      assertEquals(land.deliveredTo, Nil, "verdict=fail must NOT deliver along the pass edge (verdict-aware deliverOut)")
-      assertEquals(work.status, NodeLifecycle.Wiring, "the :loop control edge never settles the target's barrier (execution leg is phase 2)")
-      assert(work.loopStartedAt.isDefined, "the target's loop timer starts on the first in-budget fail (wall-clock cap source)")
+      assertEquals(
+        land.deliveredTo,
+        Nil,
+        "verdict=fail must NOT deliver along the pass edge (verdict-aware deliverOut)"
+      )
+      assertEquals(
+        work.status,
+        NodeLifecycle.Wiring,
+        "the :loop control edge never settles the target's barrier (execution leg is phase 2)"
+      )
+      assert(
+        work.loopStartedAt.isDefined,
+        "the target's loop timer starts on the first in-budget fail (wall-clock cap source)"
+      )
       assert(audit.exists((t, id) => t == "loop-round" && id == fId), s"a loop-round event must be logged, got: $audit")
       assert(!audit.exists((t, id) => t == "loop-budget" && id == fId), "budget not exhausted yet — no circuit-break")
       // 既有 completed 链照样走；零 blocked 痕迹
-      assert(evs.exists((t, id, _) => t == "nodeCompleted" && id == fId), "the verifier emits nodeCompleted (completed chain)")
+      assert(
+        evs.exists((t, id, _) => t == "nodeCompleted" && id == fId),
+        "the verifier emits nodeCompleted (completed chain)"
+      )
       assert(!audit.exists((t, id) => t == "blocked" && id == fId), s"no blocked audit line, got: $audit")
+    end for
   }
 
 end NodeBlockedToolSignalSpec

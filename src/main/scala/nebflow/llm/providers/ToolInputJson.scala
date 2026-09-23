@@ -2,7 +2,7 @@ package nebflow.llm.providers
 
 import io.circe.parser.parse
 import io.circe.syntax.*
-import io.circe.{JsonObject}
+import io.circe.JsonObject
 
 import nebflow.core.NebflowLogger
 

@@ -9,7 +9,14 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
-import nebflow.core.project.{FlowMapStore, NodeEngine, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  FlowMapStore,
+  NodeEngine,
+  NodeLifecycle,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
@@ -48,6 +55,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -59,15 +67,21 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
 
   private val skillDir = tempRoot / "plugins" / "inject-skill"
   os.makeDir.all(skillDir / "skills" / "howto")
-  os.write.over(skillDir / "plugin.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"dispatch face fixture"}""")
-  os.write.over(skillDir / "skills" / "howto" / "SKILL.md",
+
+  os.write.over(
+    skillDir / "plugin.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"dispatch face fixture"}"""
+  )
+
+  os.write.over(
+    skillDir / "skills" / "howto" / "SKILL.md",
     """---
       |name: howto
       |description: dispatch face skill
       |---
       |## DispatchFaceBodyMarker
-      |body""".stripMargin)
+      |body""".stripMargin
+  )
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -83,9 +97,10 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
   private class GatedLlm(gate: Deferred[IO, Unit]) extends LlmHandle[IO]:
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       val text = req.messages.map(_.textContent).mkString("\n")
       Stream.eval(requests.update(_ :+ text)).flatMap { _ =>
@@ -135,7 +150,9 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -143,7 +160,12 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -152,7 +174,10 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -169,7 +194,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     waitUntil(30.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
@@ -185,14 +210,16 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + 30_000L)
 
-  /** fixture 卫生（无审批批）：记录 + **确保未封禁**——封禁写入独立命名空间，前序用例
-    * 留下的 deny-list 不会因 approve 自动消失，须显式解封；`PluginBlockPolicy.unblock`
-    * 对未封禁**不幂等**而是返回 `Left("Plugin '<name>' is not blocked — nothing to unblock")`
-    * （零静默纪律），此处 `.void` 丢弃返回值、该 Left 不作为判据。 */
+  /**
+   * fixture 卫生（无审批批）：记录 + **确保未封禁**——封禁写入独立命名空间，前序用例
+   * 留下的 deny-list 不会因 approve 自动消失，须显式解封；`PluginBlockPolicy.unblock`
+   * 对未封禁**不幂等**而是返回 `Left("Plugin '<name>' is not blocked — nothing to unblock")`
+   * （零静默纪律），此处 `.void` 丢弃返回值、该 Left 不作为判据。
+   */
   private def approveFixture: IO[Unit] =
     PluginRegistry.approve("inject-skill").flatMap {
       case Right(_) => IO.unit
-      case Left(e)  => IO.raiseError(new AssertionError(s"fixture approve failed: $e"))
+      case Left(e) => IO.raiseError(new AssertionError(s"fixture approve failed: $e"))
     } *> PluginBlockPolicy.unblock("inject-skill", "spec-fixture").void
 
   // ── ① 零迁移 + ⑤ 内容面动作语义未变 ────────────────────────────────
@@ -231,14 +258,18 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     // 里同时成立，否则「消失」可能只是段空了。
     val keepDir = tempRoot / "plugins" / "keep-skill"
     os.makeDir.all(keepDir / "skills" / "contrast")
-    os.write.over(keepDir / "plugin.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"keep-skill","version":"1.0.0","description":"contrast face fixture"}""")
-    os.write.over(keepDir / "skills" / "contrast" / "SKILL.md",
+    os.write.over(
+      keepDir / "plugin.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"keep-skill","version":"1.0.0","description":"contrast face fixture"}"""
+    )
+    os.write.over(
+      keepDir / "skills" / "contrast" / "SKILL.md",
       """---
         |name: contrast
         |description: contrast face skill
         |---
-        |body""".stripMargin)
+        |body""".stripMargin
+    )
     PluginRegistry.invalidateCache()
     for
       _ <- approveFixture
@@ -256,18 +287,23 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     yield
       assert(!eff, "关闭后有效派发许可必须为 false（将来派发被挡）")
       assert(trusted, "关闭**不得**动内容信任面（trusted 仍 true）")
-      assert(res.isRight,
+      assert(
+        res.isRight,
         "内容面 resolve 必须仍 Right ⇒ 闸 B/C/E（spawn/resume/loop 装载门）与闸 D（30s 重验）" +
-          "对已派发节点零影响——这正是「不影响目前的」的结构保证")
+          "对已派发节点零影响——这正是「不影响目前的」的结构保证"
+      )
       assert(!catalog.contains("- inject-skill:"), "已关闭 ⇒ 能力行消失（S5）")
-      assert(!catalog.contains("inject-skill"),
-        s"已关闭 ⇒ 目录输出**零痕迹**（能力行与点名行皆无；2026-09-14 面板收敛批删除段尾点名）。catalog=\n$catalog")
-      assert(!catalog.contains("已关闭·禁派发"),
-        s"关闭注记字面量不得再出现（零残留哨兵）。catalog=\n$catalog")
-      assert(catalog.contains("- keep-skill:"),
-        s"对照面：未被关闭的包仍出现在同一份目录输出里。catalog=\n$catalog")
-      assert(auditRaw.contains("\"event\":\"authorEnabled\"") && auditRaw.contains("\"name\":\"inject-skill\""),
-        s"写侧动作必须落 append-only 审计（设计 R8-C），got: $auditRaw")
+      assert(
+        !catalog.contains("inject-skill"),
+        s"已关闭 ⇒ 目录输出**零痕迹**（能力行与点名行皆无；2026-09-14 面板收敛批删除段尾点名）。catalog=\n$catalog"
+      )
+      assert(!catalog.contains("已关闭·禁派发"), s"关闭注记字面量不得再出现（零残留哨兵）。catalog=\n$catalog")
+      assert(catalog.contains("- keep-skill:"), s"对照面：未被关闭的包仍出现在同一份目录输出里。catalog=\n$catalog")
+      assert(
+        auditRaw.contains("\"event\":\"authorEnabled\"") && auditRaw.contains("\"name\":\"inject-skill\""),
+        s"写侧动作必须落 append-only 审计（设计 R8-C），got: $auditRaw"
+      )
+    end for
   }
 
   // ── ③ 已派发节点不受关闭影响（核心验收：复现并关闭 R2 P0 通道）──────────
@@ -284,22 +320,34 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       rt <- mountProject("dispatch-face", ws, system, resources)
       ctx = mkCtx(resources, system, ws.toString)
       // 上游节点（GATE-UP 任务）→ 挂在 gate 上，保持 Running ⇒ 下游 barrier 未归零
-      up <- nodeEdit(nodeInput("dispatch-face", "up",
-        "description" -> Json.fromString("upstream gate node"),
-        "task" -> Json.fromString("GATE-UP produce something"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      up <- nodeEdit(
+        nodeInput(
+          "dispatch-face",
+          "up",
+          "description" -> Json.fromString("upstream gate node"),
+          "task" -> Json.fromString("GATE-UP produce something"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ = assert(up.isRight, s"上游建立必须成功，got $up")
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Running))
       // `in` 是**纯 id 契约**（NodeTools.ensureNodeExists:67-71；nodename 是显示名，
       // 真实 id = `n-<8hex>`，见 NodeTools.scala:1290）⇒ 先按名取 id 再接线。
       upId <- waitNodeId(rt, "up")
       // 下游节点：**已做出派发承诺**（NodeEdit 落库时刻插件仍可派发），但尚未启动
-      down <- nodeEdit(nodeInput("dispatch-face", "down",
-        "description" -> Json.fromString("downstream plugin node"),
-        "task" -> Json.fromString("down work"),
-        "plugins" -> Json.arr(Json.fromString("inject-skill")),
-        "in" -> Json.fromString(upId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      down <- nodeEdit(
+        nodeInput(
+          "dispatch-face",
+          "down",
+          "description" -> Json.fromString("downstream plugin node"),
+          "task" -> Json.fromString("down work"),
+          "plugins" -> Json.arr(Json.fromString("inject-skill")),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ = assert(down.isRight, s"下游派发必须成功（此刻插件仍可派发），got $down")
       // ── 作者关闭该插件（派发面）──
       _ <- PluginDispatchPolicy.setAuthorEnabled("inject-skill", false, "author")
@@ -307,33 +355,41 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       //    （未终态）⇒ 下游 barrier 未归零 ⇒ down 必未启动。此后才放行 gate，
       //    因此「down 跑到 Completed + 注入全文在位」严格发生在关闭之后。──
       atClose <- rt.store.snapshot.map { s =>
-        (s.nodes.values.find(_.name == "up").map(_.status),
-         s.nodes.values.find(_.name == "down").map(_.status))
+        (s.nodes.values.find(_.name == "up").map(_.status), s.nodes.values.find(_.name == "down").map(_.status))
       }
       // ── 关闭后新派发被拒（闸 A 对照：同一插件此刻拿不到）──
-      rejected <- nodeEdit(nodeInput("dispatch-face", "late",
-        "description" -> Json.fromString("must be rejected"),
-        "task" -> Json.fromString("late work"),
-        "plugins" -> Json.arr(Json.fromString("inject-skill")),
-        "out" -> Json.fromString("Nebula")), ctx)
+      rejected <- nodeEdit(
+        nodeInput(
+          "dispatch-face",
+          "late",
+          "description" -> Json.fromString("must be rejected"),
+          "task" -> Json.fromString("late work"),
+          "plugins" -> Json.arr(Json.fromString("inject-skill")),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // ── 上游放行 ⇒ 已派发的下游启动（闸 B 在此刻跑）──
       _ <- gate.complete(()).void
       _ <- waitStatus(rt, "down", Set(NodeLifecycle.Completed))
       ins <- llm.requests.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(atClose._1.contains(NodeLifecycle.Running),
-        s"关闭生效那一刻上游必须仍被 gate 挂在 running（barrier 未归零），got ${atClose._1}")
-      assert(atClose._2.exists(st => st == NodeLifecycle.Wiring || st == NodeLifecycle.Pending),
-        s"下游在关闭那一刻必须尚未启动（wiring/pending），got ${atClose._2}")
+      assert(
+        atClose._1.contains(NodeLifecycle.Running),
+        s"关闭生效那一刻上游必须仍被 gate 挂在 running（barrier 未归零），got ${atClose._1}"
+      )
+      assert(
+        atClose._2.exists(st => st == NodeLifecycle.Wiring || st == NodeLifecycle.Pending),
+        s"下游在关闭那一刻必须尚未启动（wiring/pending），got ${atClose._2}"
+      )
       assert(rejected.isLeft, "关闭后**新派发**必须被拒（闸 A）")
-      assert(rejected.left.exists(_.contains("PLUGIN_DISPATCH_DISABLED")),
-        s"拒绝必须带可行动错误码 + 指引，got $rejected")
+      assert(rejected.left.exists(_.contains("PLUGIN_DISPATCH_DISABLED")), s"拒绝必须带可行动错误码 + 指引，got $rejected")
       val downReq = ins.find(_.contains("down work")).getOrElse("")
       assert(downReq.nonEmpty, s"已派发节点必须在关闭后仍能启动并跑到 LLM，got ${ins.size} request(s)")
-      assert(downReq.contains("<injected-plugins>"),
-        "已派发节点的插件注入块必须完整在位（关闭只影响未来派发；已启用提示词的审计面不变）")
+      assert(downReq.contains("<injected-plugins>"), "已派发节点的插件注入块必须完整在位（关闭只影响未来派发；已启用提示词的审计面不变）")
       assert(downReq.contains("DispatchFaceBodyMarker"), "SKILL 全文照注入（内容面未撤）")
+    end for
   }
 
   // ── ④ 过渡授权：只放宽 + 到期自动失效 ──────────────────────────────
@@ -343,7 +399,13 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       _ <- approveFixture
       _ <- PluginDispatchPolicy.setAuthorEnabled("inject-skill", false, "spec")
       closedEff = PluginDispatchPolicy.effective("inject-skill", trusted = true)
-      _ <- PluginDispatchPolicy.grantTransition("inject-skill", ttlSecs = 1, refs = Nil, reason = "unit spec", by = "spec")
+      _ <- PluginDispatchPolicy.grantTransition(
+        "inject-skill",
+        ttlSecs = 1,
+        refs = Nil,
+        reason = "unit spec",
+        by = "spec"
+      )
       granted <- IO(PluginDispatchPolicy.effective("inject-skill", trusted = true))
       // 到期后自动回落（不写任何东西）
       _ <- IO.sleep(1300.millis)

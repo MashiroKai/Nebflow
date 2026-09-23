@@ -8,23 +8,23 @@ import nebflow.core.flow.TeamSessionRegistry
 import nebflow.actor.ActorRef
 
 /**
-  * Regression tests for the Teams ghost-running fix: getActiveAgents used to
-  * report every AgentRegistry entry of kind Team as running. Team agents are
-  * long-lived (activateAgent registers them on the first Mail; they stay in
-  * the registry while idle), so after any browser refresh the bg-agent
-  * dropdown showed idle team agents as running ghosts — the "3 bare-name
-  * running rows" in the Teams panel (2026-08-16 report).
-  *
-  * filterActiveAgents now gates Team entries on the same busy signal
-  * /api/teams/mounted uses (TeamSessionRegistry.markBusy/markIdle, driven by
-  * markTeamBusy/markTeamIdle around each team agent turn). Task-lifecycle
-  * kinds (Delegate/Ephemeral/Flow/SubTask) remain presence-based: they
-  * unregister on completion.
-  *
-  * Uses the REAL TeamSessionRegistry singleton (busyMap) — each test marks
-  * only its own session ids and clears them in finally, so no cross-test
-  * state leaks.
-  */
+ * Regression tests for the Teams ghost-running fix: getActiveAgents used to
+ * report every AgentRegistry entry of kind Team as running. Team agents are
+ * long-lived (activateAgent registers them on the first Mail; they stay in
+ * the registry while idle), so after any browser refresh the bg-agent
+ * dropdown showed idle team agents as running ghosts — the "3 bare-name
+ * running rows" in the Teams panel (2026-08-16 report).
+ *
+ * filterActiveAgents now gates Team entries on the same busy signal
+ * /api/teams/mounted uses (TeamSessionRegistry.markBusy/markIdle, driven by
+ * markTeamBusy/markTeamIdle around each team agent turn). Task-lifecycle
+ * kinds (Delegate/Ephemeral/Flow/SubTask) remain presence-based: they
+ * unregister on completion.
+ *
+ * Uses the REAL TeamSessionRegistry singleton (busyMap) — each test marks
+ * only its own session ids and clears them in finally, so no cross-test
+ * state leaks.
+ */
 class ActiveAgentsFilterSpec extends FunSuite:
 
   // filterActiveAgents never touches the actor ref — null is safe here.
@@ -116,3 +116,4 @@ class ActiveAgentsFilterSpec extends FunSuite:
       )
     }
   }
+end ActiveAgentsFilterSpec

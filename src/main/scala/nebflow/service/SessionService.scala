@@ -7,28 +7,30 @@ import io.circe.syntax.*
 import nebflow.gateway.{Folder, SessionMeta, SessionStore}
 import nebflow.shared.Message
 
-/** 会话服务层。
-  *
-  * 2026-09-13（permshield S1）：档位相关职责收敛为**出口 overlay** —— 会话列表里
-  * 逐会话 `safetyMode` 输出**有效档位** = 应用级全局持久档位
-  * （`GlobalSafety.defaultMode`，与 `SharedResources.effectiveSafetyMode` 同源）。
-  * 会话级覆盖面已删除 ⇒ 本层**没有任何档位入参**（构造参数里原来那个"覆盖快照
-  * 提供者"随之删除：它唯一的存在理由就是漏注入会让出口报全局值，而现在出口**就是**
-  * 全局值）。新建会话**不再把档位写进 meta**（meta 是非权威遗留键）。
-  */
+/**
+ * 会话服务层。
+ *
+ * 2026-09-13（permshield S1）：档位相关职责收敛为**出口 overlay** —— 会话列表里
+ * 逐会话 `safetyMode` 输出**有效档位** = 应用级全局持久档位
+ * （`GlobalSafety.defaultMode`，与 `SharedResources.effectiveSafetyMode` 同源）。
+ * 会话级覆盖面已删除 ⇒ 本层**没有任何档位入参**（构造参数里原来那个"覆盖快照
+ * 提供者"随之删除：它唯一的存在理由就是漏注入会让出口报全局值，而现在出口**就是**
+ * 全局值）。新建会话**不再把档位写进 meta**（meta 是非权威遗留键）。
+ */
 class SessionService(
   store: SessionStore
 ):
 
-  /** 新建会话。
-    *
-    * 2026-09-12 权限全局单一权威源（设计 §10 #16 / §13 #13）：**不再解析全局值写进
-    * meta**。会话的**有效档位**由 resolver（覆盖 ?? 全局）决定，与盘上键无关；因此
-    * 「新会话的初始档 = 全局值」这条语义由 resolver 保证，无需也不需要落盘。
-    *
-    * 历史沿革：启动默认 = 全部放行（2026-09-12 作者令）曾在此把全局值写进 `meta`，
-    * 那正是"会话各自持有权威档位"的承载面（R1/T-2 同族），本批结构性移除。
-    */
+  /**
+   * 新建会话。
+   *
+   * 2026-09-12 权限全局单一权威源（设计 §10 #16 / §13 #13）：**不再解析全局值写进
+   * meta**。会话的**有效档位**由 resolver（覆盖 ?? 全局）决定，与盘上键无关；因此
+   * 「新会话的初始档 = 全局值」这条语义由 resolver 保证，无需也不需要落盘。
+   *
+   * 历史沿革：启动默认 = 全部放行（2026-09-12 作者令）曾在此把全局值写进 `meta`，
+   * 那正是"会话各自持有权威档位"的承载面（R1/T-2 同族），本批结构性移除。
+   */
   def createSession(
     name: String,
     agentName: Option[String] = None,

@@ -86,117 +86,138 @@ object FlowMapEventLog:
   /** 链归档事件类型（写点：ProjectActor TtlTick → sweep 出库后追加）。 */
   val ChainArchivedType = "chain-archived"
 
-  /** **abandon 回填摘边事件类型**（cancelled 滞留主图修复批 · 案 A 腿 2，2026-09-14
-    * 作者 17:24 拍板）。写点 = [[NodeEngine.backfillAbandonedDetach]]（30s `TtlTick`
-    * 扫描腿，排在链级归档 sweep 之前）——对**已 cancelled 且仍有挂线**的滞留节点补做
-    * 摘边（`NodeEngine.detachAbandonedNode`）时逐件留痕。
-    *
-    * 与同批的 `abandoned`（工具路径 `NodeEditTool.abandonNode` 的写点）**分开记账**：
-    * 本条回答的是「我没动过这个节点，它的拓扑为什么变了」——回填是引擎自主动作，
-    * 与被退役时刻的 `abandoned` 行不是同一事实。幂等：`RetireDetach.isEmpty` 时零写。 */
+  /**
+   * **abandon 回填摘边事件类型**（cancelled 滞留主图修复批 · 案 A 腿 2，2026-09-14
+   * 作者 17:24 拍板）。写点 = [[NodeEngine.backfillAbandonedDetach]]（30s `TtlTick`
+   * 扫描腿，排在链级归档 sweep 之前）——对**已 cancelled 且仍有挂线**的滞留节点补做
+   * 摘边（`NodeEngine.detachAbandonedNode`）时逐件留痕。
+   *
+   * 与同批的 `abandoned`（工具路径 `NodeEditTool.abandonNode` 的写点）**分开记账**：
+   * 本条回答的是「我没动过这个节点，它的拓扑为什么变了」——回填是引擎自主动作，
+   * 与被退役时刻的 `abandoned` 行不是同一事实。幂等：`RetireDetach.isEmpty` 时零写。
+   */
   val AbandonedDetachType = "abandoned-detach"
 
-  /** **待接线登记事件类型**（B5 缺口③ · 作者 2026-09-17 M-3 裁定，选项①）。
-    *
-    * 写点 = `NodeTools` 的 NodeEdit 写路径（唯一）：本次编辑里指向 **running** 目标的
-    * **控制边**（`:loop`）不进 `out`、改入 `NodeDef.pendingOut` 时逐次留痕。此行的存在
-    * 是机制的成立条件——「接线时刻不确定」必须对分发器可见（否则分发器以为已接、实际
-    * 待接）。一次编辑恰一条（`pendingOut` 为空时零写，幂等）。 */
+  /**
+   * **待接线登记事件类型**（B5 缺口③ · 作者 2026-09-17 M-3 裁定，选项①）。
+   *
+   * 写点 = `NodeTools` 的 NodeEdit 写路径（唯一）：本次编辑里指向 **running** 目标的
+   * **控制边**（`:loop`）不进 `out`、改入 `NodeDef.pendingOut` 时逐次留痕。此行的存在
+   * 是机制的成立条件——「接线时刻不确定」必须对分发器可见（否则分发器以为已接、实际
+   * 待接）。一次编辑恰一条（`pendingOut` 为空时零写，幂等）。
+   */
   val WiringDeferredType = "wiring-deferred"
 
-  /** **待接线自动接线事件类型**（同批，与 [[WiringDeferredType]] 成对）。
-    *
-    * 写点 = `NodeEngine.applyDeferredWiring`（30s `TtlTick` 扫描腿）：目标离开 running 后
-    * 把 `pendingOut` 里的控制边并入 `out` 时逐节点留痕。控制边零投递语义 ⇒ 本事件代表的
-    * 是**纯声明面追加**（零补投递、零启动副作用）。 */
+  /**
+   * **待接线自动接线事件类型**（同批，与 [[WiringDeferredType]] 成对）。
+   *
+   * 写点 = `NodeEngine.applyDeferredWiring`（30s `TtlTick` 扫描腿）：目标离开 running 后
+   * 把 `pendingOut` 里的控制边并入 `out` 时逐节点留痕。控制边零投递语义 ⇒ 本事件代表的
+   * 是**纯声明面追加**（零补投递、零启动副作用）。
+   */
   val WiringAppliedType = "wiring-applied"
 
-  /** **受害 verifier 拒绝态事件类型**（failroute-guard 批 2026-09-21 · 案 A，
-    * 作者选型 = 案 A 薄）。
-    *
-    * 语义 = 「某个 verifier 的 fail 路由没了」——**主语（`nodeId` 字段）= 受害 verifier**，
-    * **不是**退役节点。这是本类型存在的理由：摘边事件（`abandoned` / `abandoned-detach`）
-    * 的主语是**退役位**，其文案里只有一句裸计数（`out-refs=1`）——「哪条边被摘、谁因此
-    * 变非法」在审计面**结构性不可见**（实盘取证：某位全史零路由事件，成因无法从审计面
-    * 重建）。本行是被摘除方的**可行动**留痕。
-    *
-    * 两个写点（同一事实的两个时刻，禁合并归他型）：
-    *  1. `NodeEngine.emitVerifierRouteLost`（摘边后果面）——工具腿 `NodeEdit(abandon)` 与
-    *     引擎腿 `NodeCancel → 30s 回填腿` 到达同一摘除点，一律经此收口；
-    *  2. 同函数（判词期）——`NodeEngine.verifierFailR` 的「无可用 fail 路由」分支
-    *     （判词无处可去 ⇒ 拒绝态留痕；旧口径只有一句「良性退化」文案）。
-    *
-    * **按批聚合**（裁定⑤）：一次退役动作 / 一批回填退役 / 一次判词各**恰一条**（防同批
-    * 多退役逐位刷屏，与 `chain-cancelled` 的聚合纪律同源）；summary 逐位载四项 = 受害
-    * verifier 名/id + 被摘的 fail 目标 id + 保留的 pass 目标集 + 可行动恢复文案，形态见
-    * [[verifierRouteLostSummary]]。幂等：无受害 ⇒ 零写。
-    *
-    * 🔴 **不新增通知族、不发 Mail 面**（节点无 Mail 身份）：可见性三级 = 本事件行 +
-    * 引擎 WARN + `NodeList` 载荷派生键 `verifierRoute`（见 `NodePayload`）。 */
+  /**
+   * **受害 verifier 拒绝态事件类型**（failroute-guard 批 2026-09-21 · 案 A，
+   * 作者选型 = 案 A 薄）。
+   *
+   * 语义 = 「某个 verifier 的 fail 路由没了」——**主语（`nodeId` 字段）= 受害 verifier**，
+   * **不是**退役节点。这是本类型存在的理由：摘边事件（`abandoned` / `abandoned-detach`）
+   * 的主语是**退役位**，其文案里只有一句裸计数（`out-refs=1`）——「哪条边被摘、谁因此
+   * 变非法」在审计面**结构性不可见**（实盘取证：某位全史零路由事件，成因无法从审计面
+   * 重建）。本行是被摘除方的**可行动**留痕。
+   *
+   * 两个写点（同一事实的两个时刻，禁合并归他型）：
+   *  1. `NodeEngine.emitVerifierRouteLost`（摘边后果面）——工具腿 `NodeEdit(abandon)` 与
+   *     引擎腿 `NodeCancel → 30s 回填腿` 到达同一摘除点，一律经此收口；
+   *  2. 同函数（判词期）——`NodeEngine.verifierFailR` 的「无可用 fail 路由」分支
+   *     （判词无处可去 ⇒ 拒绝态留痕；旧口径只有一句「良性退化」文案）。
+   *
+   * **按批聚合**（裁定⑤）：一次退役动作 / 一批回填退役 / 一次判词各**恰一条**（防同批
+   * 多退役逐位刷屏，与 `chain-cancelled` 的聚合纪律同源）；summary 逐位载四项 = 受害
+   * verifier 名/id + 被摘的 fail 目标 id + 保留的 pass 目标集 + 可行动恢复文案，形态见
+   * [[verifierRouteLostSummary]]。幂等：无受害 ⇒ 零写。
+   *
+   * 🔴 **不新增通知族、不发 Mail 面**（节点无 Mail 身份）：可见性三级 = 本事件行 +
+   * 引擎 WARN + `NodeList` 载荷派生键 `verifierRoute`（见 `NodePayload`）。
+   */
   val VerifierRouteLostType = "verifier-route-lost"
 
   /** `verifier-route-lost` 的单受害者视图（写点组装的纯数据；summary 组装单点消费）。 */
   final case class VerifierRouteLostView(
-      verifierId: String,
-      verifierName: String,
-      lostTargets: List[String],
-      keptPassTargets: List[String])
+    verifierId: String,
+    verifierName: String,
+    lostTargets: List[String],
+    keptPassTargets: List[String]
+  )
 
-  /** `verifier-route-lost` 结构化 summary（单行、可 grep、给人看）：逐位四项 + 可行动文案。
-    * 分组符号与家族惯例一致（`;` 分位、`|` 分项、`-` 表空），空白照常（与 `abandoned` /
-    * `cancelled` 的英文自由文本同族；链族/分发器族的 `k=v` 纪律不适用本型）。 */
+  /**
+   * `verifier-route-lost` 结构化 summary（单行、可 grep、给人看）：逐位四项 + 可行动文案。
+   * 分组符号与家族惯例一致（`;` 分位、`|` 分项、`-` 表空），空白照常（与 `abandoned` /
+   * `cancelled` 的英文自由文本同族；链族/分发器族的 `k=v` 纪律不适用本型）。
+   */
   def verifierRouteLostSummary(scope: String, views: List[VerifierRouteLostView]): String =
     def items(xs: List[String]): String = if xs.isEmpty then "-" else xs.mkString("|")
     val ordered = views.sortBy(_.verifierId)
-    val detail = ordered.map { v =>
-      s"${v.verifierId}('${v.verifierName}') lost=${items(v.lostTargets)} kept=${items(v.keptPassTargets)}"
-    }.mkString("; ")
+    val detail = ordered
+      .map { v =>
+        s"${v.verifierId}('${v.verifierName}') lost=${items(v.lostTargets)} kept=${items(v.keptPassTargets)}"
+      }
+      .mkString("; ")
     s"verifier fail route lost (scope=$scope; victims=${ordered.size}) — " +
       s"$detail — the verifier is in the REJECTION STATE: it declares no usable '(fail)<target>:loop' route, " +
       "so a fail verdict can no longer re-run anything and the chain stops there. " +
       "Restore the route with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\" (NODE_VERIFIER_NEEDS_ROUTE)"
 
-  /** 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
-    * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。 */
+  /**
+   * 链拉回事件类型（对称口径，spec §6.2/§9.3：链抽象 P2 `restoreChain` 落地后由
+   * 其调用点写入；**本批只定义类型 + 消费者回翻分支，无写入点**——禁止虚构调用点）。
+   */
   val ChainRestoredType = "chain-restored"
 
-  /** **链级 / 级联取消事件类型**（chaincancel 批 2026-09-17，R2 §2.3-3）。
-    *
-    * 写点 = `DispatchNotify.notifyChainCancelled`（**唯一**写点）：一次链级取消操作
-    * 恰一条——`nodeId` 字段承载**本次首个被取消节点**（升序首项；链标识由顶层
-    * `chainId` 字段承载，与 [[ChainArchivedType]] 以「分量头节点」承载 nodeId 同族：
-    * 本字段承载代表节点标识），`chainId` = 该链 id。
-    *
-    * 与逐节点 `cancelled` 事件**留痕不合并**（设计 D3）：N 条 `cancelled` 各自回答
-    * 「哪个节点因何被取消」，本条回答「**一次**链级操作发生过、它的成员/保留/跳过
-    * 清单是什么、注入了几次」——即 C5 判据的观测面（`chain-cancelled` == 1 条）。
-    * 幂等：无被取消节点（重复调用 / 全终态链）⇒ 零写（C6/C5 的第二次调用读数 == 0）。 */
+  /**
+   * **链级 / 级联取消事件类型**（chaincancel 批 2026-09-17，R2 §2.3-3）。
+   *
+   * 写点 = `DispatchNotify.notifyChainCancelled`（**唯一**写点）：一次链级取消操作
+   * 恰一条——`nodeId` 字段承载**本次首个被取消节点**（升序首项；链标识由顶层
+   * `chainId` 字段承载，与 [[ChainArchivedType]] 以「分量头节点」承载 nodeId 同族：
+   * 本字段承载代表节点标识），`chainId` = 该链 id。
+   *
+   * 与逐节点 `cancelled` 事件**留痕不合并**（设计 D3）：N 条 `cancelled` 各自回答
+   * 「哪个节点因何被取消」，本条回答「**一次**链级操作发生过、它的成员/保留/跳过
+   * 清单是什么、注入了几次」——即 C5 判据的观测面（`chain-cancelled` == 1 条）。
+   * 幂等：无被取消节点（重复调用 / 全终态链）⇒ 零写（C6/C5 的第二次调用读数 == 0）。
+   */
   val ChainCancelledType = "chain-cancelled"
 
-  /** **链归属变更事件类型**（chainmodel 批一 ⑤；设计件取证 6 的「最硬未决项」：事件流
-    * 44 类里零该类型，重归只能靠人写的 `node-message` 正文回溯 ⇒ 跳号不可事后追）。
-    *
-    * 写点 = `NodeTools.emitChainMembershipChanges`（NodeEdit **create / edit 两条写路径**
-    * 的尾部各一处，是本类型的**唯一**生产写入点）：每次写操作前后各取一次「有效链归属
-    * 视图」（`FlowMapStore.chainIdView`，与载荷 `chainId` 判据同源），逐节点比对 ——
-    * 归属发生变化者逐条留痕。三项变更原因（`reason` 值域）：
-    *   - `declaration`：本节点首次声明链归属（旧值缺省 → 新值 = 声明值）；
-    *   - `re-id`：本节点声明值变更（改号；旧值 → 新值都是声明值）；
-    *   - `fallback`：其余（拓扑/归档等令**派生**分量重组 ⇒ 归属变化，旧口径下完全静默）。
-    *
-    * `nodeId` = 归属发生变化的节点；顶层 `chainId` = **新**链号（无归属时缺键，与
-    * [[ChainArchivedType]] 同款；**旧**链号在 summary 里）。summary 形态见
-    * [[chainMembershipChangedSummary]]（`k=v` 单空格）。
-    *
-    * 与链族既有三型的分工（同族不同事实，禁合并）：`chain-archived` = 整链出库、
-    * `chain-restored` = 整链拉回、`chain-cancelled` = 一次链级取消操作；本型回答的是
-    * 「**哪个节点的链号从 X 变成 Y、为什么**」——跨链并合/拆分的唯一机械观测面。 */
+  /**
+   * **链归属变更事件类型**（chainmodel 批一 ⑤；设计件取证 6 的「最硬未决项」：事件流
+   * 44 类里零该类型，重归只能靠人写的 `node-message` 正文回溯 ⇒ 跳号不可事后追）。
+   *
+   * 写点 = `NodeTools.emitChainMembershipChanges`（NodeEdit **create / edit 两条写路径**
+   * 的尾部各一处，是本类型的**唯一**生产写入点）：每次写操作前后各取一次「有效链归属
+   * 视图」（`FlowMapStore.chainIdView`，与载荷 `chainId` 判据同源），逐节点比对 ——
+   * 归属发生变化者逐条留痕。三项变更原因（`reason` 值域）：
+   *   - `declaration`：本节点首次声明链归属（旧值缺省 → 新值 = 声明值）；
+   *   - `re-id`：本节点声明值变更（改号；旧值 → 新值都是声明值）；
+   *   - `fallback`：其余（拓扑/归档等令**派生**分量重组 ⇒ 归属变化，旧口径下完全静默）。
+   *
+   * `nodeId` = 归属发生变化的节点；顶层 `chainId` = **新**链号（无归属时缺键，与
+   * [[ChainArchivedType]] 同款；**旧**链号在 summary 里）。summary 形态见
+   * [[chainMembershipChangedSummary]]（`k=v` 单空格）。
+   *
+   * 与链族既有三型的分工（同族不同事实，禁合并）：`chain-archived` = 整链出库、
+   * `chain-restored` = 整链拉回、`chain-cancelled` = 一次链级取消操作；本型回答的是
+   * 「**哪个节点的链号从 X 变成 Y、为什么**」——跨链并合/拆分的唯一机械观测面。
+   */
   val ChainMembershipChangedType = "chain-membership-changed"
 
-  /** `chain-membership-changed` 结构化 summary（`k=v` 单空格分隔，值不含空白——
-    * 沿 [[noWs]] 纪律）：`from` = 旧链号（`-` = 无归属）、`to` = 新链号（`-` = 无归属）、
-    * `reason` ∈ declaration | re-id | fallback。时戳由 [[append]] 的顶层 `ts` 字段承载，
-    * 节点 id 由 `nodeId` 字段承载，新链号由顶层 `chainId` 字段承载（三字段分工既有先例）。 */
+  /**
+   * `chain-membership-changed` 结构化 summary（`k=v` 单空格分隔，值不含空白——
+   * 沿 [[noWs]] 纪律）：`from` = 旧链号（`-` = 无归属）、`to` = 新链号（`-` = 无归属）、
+   * `reason` ∈ declaration | re-id | fallback。时戳由 [[append]] 的顶层 `ts` 字段承载，
+   * 节点 id 由 `nodeId` 字段承载，新链号由顶层 `chainId` 字段承载（三字段分工既有先例）。
+   */
   def chainMembershipChangedSummary(
     from: Option[String],
     to: Option[String],
@@ -205,8 +226,10 @@ object FlowMapEventLog:
     s"from=${from.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} " +
       s"to=${to.filter(_.trim.nonEmpty).map(noWs).getOrElse("-")} reason=${noWs(reason)}"
 
-  /** `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
-    * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。 */
+  /**
+   * `chain-cancelled` 结构化 summary（`k=v` 单空格分隔，值不含空白——沿
+   * [[dispatcherWakeSummary]] 的 [[noWs]] 纪律，reason 全文进通知文本/节点 result）。
+   */
   def chainCancelledSummary(
     chainId: String,
     source: CancelSource,
@@ -220,51 +243,61 @@ object FlowMapEventLog:
       s"reason=${noWs(reason).take(80)} cancelled=$cancelled preserved=$preserved skipped=$skipped " +
       s"members=${memberIds.mkString(",")}"
 
-  /** **判词闸回退告警**事件类型（engine-defects 批 #238：2026-09-15 `8a3ac535e` 定义，
-    * 同日泛化笔 `v238-impl` 语义反转为**回退检测器**——类型串保持不变，消费面零迁移）。
-    *
-    * 写点 = [[NodeEngine.startNode]] 的 verdict 闸收口（`NodeEngine.logVerdictGateBreach`）。
-    *   - **泛化前**（`8a3ac535e`）：判词闸是 merge-only ⇒「非 merge 收口位带非 pass 判词
-    *     上游仍被拉起」属**常态**，本行 = 「人肉口径 → 机械口径」的可见化；
-    *   - **泛化后**（同批第二笔）：闸覆盖全部收口位（判据对节点形态零分叉）⇒ 该形态
-    *     **结构性不可能再发生**（本告警与闸共用 `staleVerdictUps` 单点，闸持有时走不到写点）
-    *     ⇒ 本行语义 = **不变式告警**：出现即表示闸被绕过 / 被改弱（或新增了绕开
-    *     `startNode` 收口的启动腿）。
-    * nodeId = 被启动的下游；同一 (下游, 持有者清单) 只发一次（单发记账防刷屏）。
-    * 取证：`grep 'verdict-gate-gap' <ws>/.nebflow/flow-map-events.jsonl`。 */
+  /**
+   * **判词闸回退告警**事件类型（engine-defects 批 #238：2026-09-15 `8a3ac535e` 定义，
+   * 同日泛化笔 `v238-impl` 语义反转为**回退检测器**——类型串保持不变，消费面零迁移）。
+   *
+   * 写点 = [[NodeEngine.startNode]] 的 verdict 闸收口（`NodeEngine.logVerdictGateBreach`）。
+   *   - **泛化前**（`8a3ac535e`）：判词闸是 merge-only ⇒「非 merge 收口位带非 pass 判词
+   *     上游仍被拉起」属**常态**，本行 = 「人肉口径 → 机械口径」的可见化；
+   *   - **泛化后**（同批第二笔）：闸覆盖全部收口位（判据对节点形态零分叉）⇒ 该形态
+   *     **结构性不可能再发生**（本告警与闸共用 `staleVerdictUps` 单点，闸持有时走不到写点）
+   *     ⇒ 本行语义 = **不变式告警**：出现即表示闸被绕过 / 被改弱（或新增了绕开
+   *     `startNode` 收口的启动腿）。
+   * nodeId = 被启动的下游；同一 (下游, 持有者清单) 只发一次（单发记账防刷屏）。
+   * 取证：`grep 'verdict-gate-gap' <ws>/.nebflow/flow-map-events.jsonl`。
+   */
   val VerdictGateGapType = "verdict-gate-gap"
 
-  /** 分发器会话空闲到期销毁事件类型（**令 3 分发器生命周期** 2026-09-12 批，设计
-    * §3.2/§4 R4-(a)）：写点 = `ProjectActor.expireIdleDispatcher`（30 s `TtlTick`
-    * 扫描腿到点拆除时）。语义 = 「保活期结束 ⇒ 会话已销毁」，使「活着但空闲」与
-    * 「已销毁」在事后可对齐（面板/registry 在 turn 末即无行，空闲期无第二观察面）。
-    * `nodeId` 字段承载**会话 id**（`dispatcher-<uuid8>`）——分发器不是 Flow 节点、
-    * 无 NodeDef.id（`ProjectActor` spawn 处 `flowChainId = None` 同口径）；不写
-    * `chainId`（分发器不属任何链）。 */
+  /**
+   * 分发器会话空闲到期销毁事件类型（**令 3 分发器生命周期** 2026-09-12 批，设计
+   * §3.2/§4 R4-(a)）：写点 = `ProjectActor.expireIdleDispatcher`（30 s `TtlTick`
+   * 扫描腿到点拆除时）。语义 = 「保活期结束 ⇒ 会话已销毁」，使「活着但空闲」与
+   * 「已销毁」在事后可对齐（面板/registry 在 turn 末即无行，空闲期无第二观察面）。
+   * `nodeId` 字段承载**会话 id**（`dispatcher-<uuid8>`）——分发器不是 Flow 节点、
+   * 无 NodeDef.id（`ProjectActor` spawn 处 `flowChainId = None` 同口径）；不写
+   * `chainId`（分发器不属任何链）。
+   */
   val DispatcherIdleExpiredType = "dispatcher-idle-expired"
 
-  /** 空闲到期事件结构化 summary（`k=v` 单空格分隔，值不含空白；`session` 值形如
-    * `dispatcher-<8hex>`，天然无空白）。 */
+  /**
+   * 空闲到期事件结构化 summary（`k=v` 单空格分隔，值不含空白；`session` 值形如
+   * `dispatcher-<8hex>`，天然无空白）。
+   */
   def dispatcherIdleSummary(sessionId: String, idleSecs: Long, windowMs: Long): String =
     s"session=$sessionId idleSecs=$idleSecs windowMs=$windowMs"
 
-  /** 宿主启动自动重入事件类型（boot-wake 批 2026-09-13，方案件 A 档 A1「控制面唤醒腿」）。
-    *
-    * 写点 = `BootDispatcherWake.record`（GatewayMain boot 链 `projectBootWake` 腿）：
-    * 每 boot 每在册项目**恰一条**——含未唤醒形态（`skipped` + reason），使「零唤醒 boot」
-    * 在事件流里可审计（方案 §1.4(c)/R9：此前唯一正证据只有 `mount-stalled`，其余全是
-    * 「缺失的日志行」）。
-    *
-    * `nodeId` 字段承载**项目名**（分发器不是 Flow 节点、无 `NodeDef.id`；同
-    * [[DispatcherIdleExpiredType]] 以会话 id 承载该字段的先例：此字段承载发起者标识）。
-    * 不写 `chainId`（唤醒是项目级动作，不属任何链）。清单正文只进分发器首条输入与
-    * `boot-wake.json`（事件行必须保持单行 `k=v`）。 */
+  /**
+   * 宿主启动自动重入事件类型（boot-wake 批 2026-09-13，方案件 A 档 A1「控制面唤醒腿」）。
+   *
+   * 写点 = `BootDispatcherWake.record`（GatewayMain boot 链 `projectBootWake` 腿）：
+   * 每 boot 每在册项目**恰一条**——含未唤醒形态（`skipped` + reason），使「零唤醒 boot」
+   * 在事件流里可审计（方案 §1.4(c)/R9：此前唯一正证据只有 `mount-stalled`，其余全是
+   * 「缺失的日志行」）。
+   *
+   * `nodeId` 字段承载**项目名**（分发器不是 Flow 节点、无 `NodeDef.id`；同
+   * [[DispatcherIdleExpiredType]] 以会话 id 承载该字段的先例：此字段承载发起者标识）。
+   * 不写 `chainId`（唤醒是项目级动作，不属任何链）。清单正文只进分发器首条输入与
+   * `boot-wake.json`（事件行必须保持单行 `k=v`）。
+   */
   val DispatcherWakeType: String = "dispatcher-wake"
 
-  /** 唤醒事件结构化 summary（`k=v` 单空格分隔，**值不含空白**——reason 内的空白
-    * 归一为 `_` 并截断，防 k=v 解析被破坏）。`counts` = (nodes, B1, B2, B3, B4)。
-    * `cause`（hostresume 批 2026-09-22 可选新增，D-5 仅措辞）：上次停机成因标注——
-    * None = 不追加任何字节（既有 summary 逐字不变）；Some = 尾部追加 ` cause=…`。 */
+  /**
+   * 唤醒事件结构化 summary（`k=v` 单空格分隔，**值不含空白**——reason 内的空白
+   * 归一为 `_` 并截断，防 k=v 解析被破坏）。`counts` = (nodes, B1, B2, B3, B4)。
+   * `cause`（hostresume 批 2026-09-22 可选新增，D-5 仅措辞）：上次停机成因标注——
+   * None = 不追加任何字节（既有 summary 逐字不变）；Some = 尾部追加 ` cause=…`。
+   */
   def dispatcherWakeSummary(
     bootId: String,
     atMs: Long,
@@ -280,23 +313,28 @@ object FlowMapEventLog:
     s"boot=${bootId.replaceAll("\\s+", "_")} at=$atMs result=$result reason=$r" +
       s" nodes=$nodes b1=$b1 b2=$b2 b3=$b3 b4=$b4 items=$items truncated=$truncated" +
       cause.map(c => s" cause=${noWs(c).take(80)}").getOrElse("")
+  end dispatcherWakeSummary
 
-  /** 宿主睡眠/唤醒审计事件类型（hostresume 批 2026-09-22，设计卡 §4 #10，D-7 裁定
-    * 「唤醒仅审计事件、不揽分发器」）。
-    *
-    * 写点 = `WakeSensor` 双钟断流纤维判出睡眠窗后（每在册项目一条；窗检测与
-    * 台账 append 同点、同 fail-soft 纪律）。语义 = 「宿主经历了冻结窗，此刻已醒」——
-    * 零节点写、零重入、零分发器通知（挂起-恢复内存世界完好、分发器自愈已实证，
-    * 设计卡 §2.3 唤醒面）。
-    *
-    * `nodeId` 字段承载**宿主实例标识**（= `BootDispatcherWake.instanceId`，观测进程
-    * 的 JVM startTime-pid；同 [[DispatcherWakeType]] 以发起者标识承载该字段的先例）。
-    * 不写 `chainId`（宿主级事件不属任何链）。 */
+  /**
+   * 宿主睡眠/唤醒审计事件类型（hostresume 批 2026-09-22，设计卡 §4 #10，D-7 裁定
+   * 「唤醒仅审计事件、不揽分发器」）。
+   *
+   * 写点 = `WakeSensor` 双钟断流纤维判出睡眠窗后（每在册项目一条；窗检测与
+   * 台账 append 同点、同 fail-soft 纪律）。语义 = 「宿主经历了冻结窗，此刻已醒」——
+   * 零节点写、零重入、零分发器通知（挂起-恢复内存世界完好、分发器自愈已实证，
+   * 设计卡 §2.3 唤醒面）。
+   *
+   * `nodeId` 字段承载**宿主实例标识**（= `BootDispatcherWake.instanceId`，观测进程
+   * 的 JVM startTime-pid；同 [[DispatcherWakeType]] 以发起者标识承载该字段的先例）。
+   * 不写 `chainId`（宿主级事件不属任何链）。
+   */
   val HostWakeType: String = "host-wake"
 
-  /** `host-wake` 结构化 summary（`k=v` 单空格分隔、值不含空白——[[noWs]] 纪律同
-    * [[dispatcherWakeSummary]]）。`wallMs`/`nanoMs` = 该窗的双钟原始读数差（取证对账
-    * 面：`frozenMs = wallMs - nanoMs`）。 */
+  /**
+   * `host-wake` 结构化 summary（`k=v` 单空格分隔、值不含空白——[[noWs]] 纪律同
+   * [[dispatcherWakeSummary]]）。`wallMs`/`nanoMs` = 该窗的双钟原始读数差（取证对账
+   * 面：`frozenMs = wallMs - nanoMs`）。
+   */
   def hostWakeSummary(
     bootId: String,
     sleepAtMs: Long,
@@ -309,32 +347,38 @@ object FlowMapEventLog:
     s"boot=${noWs(bootId)} sleepAt=$sleepAtMs wakeAt=$wakeAtMs frozenMs=$frozenMs" +
       s" wallMs=$wallMs nanoMs=$nanoMs slopMs=$slopMs"
 
-  /** 合并窗 FIFO 互斥闸事件类型（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决）。
-    *
-    * 写点 = `NodeEngine` 的 merge 互斥闸判定位（[[logMutexHold]] 与
-    * `alarmSameGitDirProjects`）。两种 summary（`k=v` 单行）：
-    *   - `kind=hold`：本 merge 被同键更高优先者挡住（闸停等留痕，单发=持有者集合变化时
-    *     才写，禁每轮刷屏）；
-    *   - `kind=same-git-dir-multi-project`：**O-1 已知缺口告警**——检测到另一在册项目
-    *     与本项目**同键**（`realpath(git-common-dir)` 相等）⇒ 引擎侧持有者派生自本项目
-    *     store，此形态**漏互斥**（本批不实现 claim/抢占，作者令）；只做「发生即告警」。
-    * 设计件 §7.2 规划的第三种 summary（等待超预算）**引擎侧不写**：等待超预算的上报按
-    * SEM-3 由 sink 自身承担（引擎不自动上报，与既有「合法等待」口径一致）。
-    * `nodeId` 字段对 hold 形态承载节点 id；对相同 git 目录形态承载**项目名**（与
-    * [[DispatcherWakeType]] 同款先例：该字段承载发起者标识）。不写 `chainId`。 */
+  /**
+   * 合并窗 FIFO 互斥闸事件类型（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决）。
+   *
+   * 写点 = `NodeEngine` 的 merge 互斥闸判定位（[[logMutexHold]] 与
+   * `alarmSameGitDirProjects`）。两种 summary（`k=v` 单行）：
+   *   - `kind=hold`：本 merge 被同键更高优先者挡住（闸停等留痕，单发=持有者集合变化时
+   *     才写，禁每轮刷屏）；
+   *   - `kind=same-git-dir-multi-project`：**O-1 已知缺口告警**——检测到另一在册项目
+   *     与本项目**同键**（`realpath(git-common-dir)` 相等）⇒ 引擎侧持有者派生自本项目
+   *     store，此形态**漏互斥**（本批不实现 claim/抢占，作者令）；只做「发生即告警」。
+   * 设计件 §7.2 规划的第三种 summary（等待超预算）**引擎侧不写**：等待超预算的上报按
+   * SEM-3 由 sink 自身承担（引擎不自动上报，与既有「合法等待」口径一致）。
+   * `nodeId` 字段对 hold 形态承载节点 id；对相同 git 目录形态承载**项目名**（与
+   * [[DispatcherWakeType]] 同款先例：该字段承载发起者标识）。不写 `chainId`。
+   */
   val MergeQueueType: String = "merge-queue"
 
-  /** k=v 值归一（空白 → `_`，与 [[dispatcherWakeSummary]] 同款；防 `k=v` 解析被注释
-    * 或路径中的空白破坏——真实键是绝对路径，本仓工作区含空格）。 */
+  /**
+   * k=v 值归一（空白 → `_`，与 [[dispatcherWakeSummary]] 同款；防 `k=v` 解析被注释
+   * 或路径中的空白破坏——真实键是绝对路径，本仓工作区含空格）。
+   */
   def noWs(s: String): String = s.replaceAll("\\s+", "_")
 
   /** `merge-queue` / hold 形态 summary：本 merge 被同键更高优先者挡住。 */
   def mergeQueueHoldSummary(where: String, holders: List[String]): String =
     s"kind=hold at=${noWs(where)} holders=${holders.mkString(",")}"
 
-  /** `merge-queue` / 同键多项目形态 summary（O-1 告警；键按 k=v 纪律归一，原始键
-    * 全文在同期 WARN 日志行里，取证走日志面）。`foreignRunning` = 他项目中此刻处于
-    * running 的 merge 节点数（>0 = 真实并发争用，而非静态配置问题）。 */
+  /**
+   * `merge-queue` / 同键多项目形态 summary（O-1 告警；键按 k=v 纪律归一，原始键
+   * 全文在同期 WARN 日志行里，取证走日志面）。`foreignRunning` = 他项目中此刻处于
+   * running 的 merge 节点数（>0 = 真实并发争用，而非静态配置问题）。
+   */
   def mergeQueueSameGitDirSummary(
     key: String,
     foreign: List[String],
@@ -344,8 +388,10 @@ object FlowMapEventLog:
     s"kind=same-git-dir-multi-project key=${noWs(key)} foreign=${foreign.mkString(",")} " +
       s"foreignRunning=$foreignRunning mineRunning=$mineRunning"
 
-  /** 归档事件结构化 summary（`k=v` 单空格分隔，值不含空白；消费者侧解析单点
-    * [[parseChainSummary]] 与本函数同源，防写读口径漂移）。 */
+  /**
+   * 归档事件结构化 summary（`k=v` 单空格分隔，值不含空白；消费者侧解析单点
+   * [[parseChainSummary]] 与本函数同源，防写读口径漂移）。
+   */
   def chainArchivedSummary(chainId: String, archivedAt: Long, members: Int): String =
     s"chain=$chainId archivedAt=$archivedAt members=$members"
 
@@ -353,10 +399,14 @@ object FlowMapEventLog:
   def chainRestoredSummary(chainId: String, restoredAt: Long, members: Int): String =
     s"chain=$chainId restoredAt=$restoredAt members=$members"
 
-  /** 结构化 summary 解析：按空白切分取 `k=v` 对（非 `k=v` 词条丢弃）。消费者只取
-    * `chain` / `archivedAt` / `restoredAt` / `members`，未知键照收不拒（向前兼容）。 */
+  /**
+   * 结构化 summary 解析：按空白切分取 `k=v` 对（非 `k=v` 词条丢弃）。消费者只取
+   * `chain` / `archivedAt` / `restoredAt` / `members`，未知键照收不拒（向前兼容）。
+   */
   def parseChainSummary(summary: String): Map[String, String] =
-    summary.split("\\s+").iterator
+    summary
+      .split("\\s+")
+      .iterator
       .filter(t => t.indexOf('=') > 0)
       .map { t =>
         val i = t.indexOf('=')
@@ -364,15 +414,23 @@ object FlowMapEventLog:
       }
       .toMap
 
-  /** 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。
-    * dispatch-notify 批（2026-09-05）：新增事件 type `dispatch-notify`（节点终态
-    * 回流分发器通知——triggered / budget-exhausted 两形态，写点在 DispatchNotify，
-    * 追加式注册同 bg-wait/trigger-starved 先例）。
-    * P3 归档联动批（2026-09-10）：新增可选顶层 `chainId`（默认 None = 不写该键，
-    * 既有调用点零改动、旧行零迁移）；链族事件（[[ChainArchivedType]] /
-    * [[ChainRestoredType]]）写入时带上，消费者免从 summary 反解析取链 id。 */
-  def append(workspace: String, project: String, nodeId: String, typ: String, summary: String,
-             chainId: Option[String] = None): IO[Unit] =
+  /**
+   * 追加一条审计事件。workspace 为项目工作区绝对路径；IO.blocking 隔离磁盘写。
+   * dispatch-notify 批（2026-09-05）：新增事件 type `dispatch-notify`（节点终态
+   * 回流分发器通知——triggered / budget-exhausted 两形态，写点在 DispatchNotify，
+   * 追加式注册同 bg-wait/trigger-starved 先例）。
+   * P3 归档联动批（2026-09-10）：新增可选顶层 `chainId`（默认 None = 不写该键，
+   * 既有调用点零改动、旧行零迁移）；链族事件（[[ChainArchivedType]] /
+   * [[ChainRestoredType]]）写入时带上，消费者免从 summary 反解析取链 id。
+   */
+  def append(
+    workspace: String,
+    project: String,
+    nodeId: String,
+    typ: String,
+    summary: String,
+    chainId: Option[String] = None
+  ): IO[Unit] =
     // ts 求值时点修复（noderpt 批 B 段 2026-09-11，实测 `n-0931699e`）：此前
     // `System.currentTimeMillis()` 在 **IO 构造期**求值（在 `IO.blocking` 之外），
     // 事件行的 ts 因此是「构造该 IO 的时刻」而不是「真正落盘的时刻」——对
@@ -397,3 +455,4 @@ object FlowMapEventLog:
       // 因目录缺失整条丢失（既有写点均在已挂载项目内，本参数对其零行为变化）。
       os.write.append(os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileName, line + "\n", createFolders = true)
     }.void
+end FlowMapEventLog

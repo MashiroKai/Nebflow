@@ -56,27 +56,37 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
   override def beforeAll(): Unit =
     os.remove.all(tempRoot)
     os.makeDir.all(tempRoot / "agents" / "general")
-    os.write.over(tempRoot / "agents" / "general" / "agent.json",
-      """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+    os.write.over(
+      tempRoot / "agents" / "general" / "agent.json",
+      """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+    )
     os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
     os.write.over(tempRoot / "nebflow.json", "{}")
     // 20260907 修复（历史注记，panelscheme 批后 E2E 已不再传 preset 参数）：当年
     // E2E 用 preset "qa" 但夹具未 seed model-presets.json → §E.3 解析失败 → 节点
     // failed。preset 表 fixture 保留（默认链 health 兜底 +qa 链留作其它断言用）
     // （RecordingLlm 为 stub，模型名不触真实调用）。
-    os.write.over(tempRoot / "model-presets.json",
-      """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}""")
+    os.write.over(
+      tempRoot / "model-presets.json",
+      """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"default","preferred":"mock/mock-a","fallbacks":["mock/mock-b"]},"qa":{"name":"qa","description":"qa fixture preset","preferred":"mock/mock-qa","fallbacks":["mock/mock-qa-b"]}}}"""
+    )
     os.makeDir.all(slimPluginDir / "skills" / "howto")
-    os.write.over(slimPluginDir / "plugin.json",
-      """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}""")
-    os.write.over(slimPluginDir / "skills" / "howto" / "SKILL.md",
+    os.write.over(
+      slimPluginDir / "plugin.json",
+      """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}"""
+    )
+    os.write.over(
+      slimPluginDir / "skills" / "howto" / "SKILL.md",
       """---
         |name: howto
         |description: slim e2e skill
         |---
         |## SlimE2E Marker
-        |Body.""".stripMargin)
+        |Body.""".stripMargin
+    )
     PathUtil.setDataRoot(tempRoot)
+
+  end beforeAll
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -86,9 +96,10 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta(ResultText), StreamChunk.Done(None, None))
 
@@ -134,7 +145,9 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -144,7 +157,12 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -153,7 +171,10 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -183,7 +204,9 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
 
   // ── 1. description 契约 ─────────────────────────────────
 
-  test("A⓪ tool doc budget: NodeEdit description ≤7000 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350；chainmodel 批一 chainId 声明参数行 + deps 链引用条款→7000)") {
+  test(
+    "A⓪ tool doc budget: NodeEdit description ≤7000 chars (⑤b 7438→3742；merge语义→4308；E1 out门控→4395；E2 retry 参数行→4700；D2 描述重写→5450；中断恢复批 R2 interrupted 重激活条款→5700；链级抽象 P2 restoreChain 参数行 + 归档编辑语义→6050；nodegate 建位期声明闸批 dangling/verifierRoutePending/plugins-undeclared/out·role·merge 行内标记→6350；chainmodel 批一 chainId 声明参数行 + deps 链引用条款→7000)"
+  ) {
     val d = NodeEditTool.description
     // 3800 为 ⑤b 压缩批自钉预算；合并观测面P0P1引擎批时解冲吸收 main 后落语义
     // （failed 重激活条款 / abandon 无 TTL 裁定 / notifyDispatcher completion-only）
@@ -209,67 +232,177 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     // 参数行（声明即归属 / 纯元数据不改调度 / null 撤销 / chain-membership-changed 留痕）
     // + `deps` 行尾 chain:<id> 链引用条款（纯调度闸、deps-only、NODE_CHAIN_REF_UNKNOWN）。
     // 基座实测 6,345（距 6350 预算仅 5 字符余量，两条新语义行无处可压）⇒ 预算 6350→7000
-    //（本批实测 6,948；两数均为 `description` 字面量内容长度，静态读取，未编译验证）。
+    // （本批实测 6,948；两数均为 `description` 字面量内容长度，静态读取，未编译验证）。
     // chainId 的完整值域文本进 schema property（同 nodegate 批先例）。
     // panelscheme 批（2026-09-21，作者令：节点无自有模型方案）：`preset` 参数退役，
     // 退役条与既有 `NODE_AGENT_RETIRED` 条**并成一行**（两条同属「已退役参数」族，
     // 原尾部独立一条为重复）——净增 43 字符，实测 6,991（**未抬预算**，仍守 7,000；
     // 余量 9 字符，下批新增语义须先压缩或按先例抬预算）。
-    assert(d.length <= 7000, s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款+panelscheme 批 retired 行合并), got ${d.length}")
+    assert(
+      d.length <= 7000,
+      s"NodeEdit description must stay ≤7000 chars (⑤b压缩+E1门控+E2 retry+D2重写+R2 interrupted条款+P2 restoreChain条款+nodegate 建位期声明闸+chainmodel 批一 chainId/deps链引用条款+panelscheme 批 retired 行合并), got ${d.length}"
+    )
     // 语义锚点抽查：核心参数/错误码/机制关键词不得在压缩中丢失
-    for anchor <- List("nodename", "descriptionLong", "replace-on-provide", "NODE_AGENT_RETIRED", "EMPTY_NODE_CONNECTION",
-        "NODE_MERGE_REQUIRES_UPSTREAM", "worktree", "abandon", "notifyDispatcher", "Nebula", "NodeList(detail=", "retry", "restoreChain",
+    for anchor <- List(
+        "nodename",
+        "descriptionLong",
+        "replace-on-provide",
+        "NODE_AGENT_RETIRED",
+        "EMPTY_NODE_CONNECTION",
+        "NODE_MERGE_REQUIRES_UPSTREAM",
+        "worktree",
+        "abandon",
+        "notifyDispatcher",
+        "Nebula",
+        "NodeList(detail=",
+        "retry",
+        "restoreChain",
         // chainmodel 批一（定义层）：成员制声明面 + 跨链依赖原语 + 归属变更事件三条契约必须
         // 常驻描述（分发器不读代码，只读描述——丢一条 = 声明面失联）
-        "chainId", "chain:<id>", "chain-membership-changed", "NODE_CHAIN_REF_UNKNOWN", "NODE_CHAIN_ID_INVALID",
+        "chainId",
+        "chain:<id>",
+        "chain-membership-changed",
+        "NODE_CHAIN_REF_UNKNOWN",
+        "NODE_CHAIN_ID_INVALID",
         // panelscheme 批（2026-09-21）：preset 参数退役契约——退役错误码必须常驻描述
         // （分发器不读代码；丢这条 = 它会继续按旧习惯传 preset 吃一次硬拒往返）。
-        "NODE_PRESET_RETIRED") do
-      assert(d.contains(anchor), s"compressed description must keep '$anchor'")
+        "NODE_PRESET_RETIRED"
+      )
+    do assert(d.contains(anchor), s"compressed description must keep '$anchor'")
+    end for
   }
 
-  test("A① create without description → NODE_DESCRIPTION_REQUIRED; empty → same; >60 → NODE_DESCRIPTION_TOO_LONG (裁定⑤c)") {
+  test(
+    "A① create without description → NODE_DESCRIPTION_REQUIRED; empty → same; >60 → NODE_DESCRIPTION_TOO_LONG (裁定⑤c)"
+  ) {
     val ws = plainWorkspace("desc")
     val system = ActorSystem(s"slim-desc-${Random.nextInt(100000)}")
     for
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-desc", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      missing <- nodeEdit(nodeInput("slim-desc", "n-missing", "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      blank <- nodeEdit(nodeInput("slim-desc", "n-blank", "description" -> Json.fromString("   "), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      tooLong <- nodeEdit(nodeInput("slim-desc", "n-long", "description" -> Json.fromString("x" * 61), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      ok60 <- nodeEdit(nodeInput("slim-desc", "n-ok60", "description" -> Json.fromString("x" * 60), "task" -> Json.fromString("task-ok60"), "out" -> Json.fromString("Nebula")), ctx)
-      longDesc <- nodeEdit(nodeInput("slim-desc", "n-longd", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("L" * 201), "task" -> Json.fromString("task-longd"), "out" -> Json.fromString("Nebula")), ctx)
-      okLong <- nodeEdit(nodeInput("slim-desc", "n-oklong", "description" -> Json.fromString("short"), "descriptionLong" -> Json.fromString("详述：" + "L" * 190), "task" -> Json.fromString("task-oklong"), "out" -> Json.fromString("Nebula")), ctx)
+      missing <- nodeEdit(
+        nodeInput("slim-desc", "n-missing", "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")),
+        ctx
+      )
+      blank <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-blank",
+          "description" -> Json.fromString("   "),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      tooLong <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-long",
+          "description" -> Json.fromString("x" * 61),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      ok60 <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-ok60",
+          "description" -> Json.fromString("x" * 60),
+          "task" -> Json.fromString("task-ok60"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      longDesc <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-longd",
+          "description" -> Json.fromString("short"),
+          "descriptionLong" -> Json.fromString("L" * 201),
+          "task" -> Json.fromString("task-longd"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      okLong <- nodeEdit(
+        nodeInput(
+          "slim-desc",
+          "n-oklong",
+          "description" -> Json.fromString("short"),
+          "descriptionLong" -> Json.fromString("详述：" + "L" * 190),
+          "task" -> Json.fromString("task-oklong"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(missing.isLeft && missing.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")), s"missing description must be rejected, got: $missing")
-      assert(blank.isLeft && blank.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")), s"blank description must be rejected, got: $blank")
-      assert(tooLong.isLeft && tooLong.left.exists(_.contains("NODE_DESCRIPTION_TOO_LONG")), s">60 must be rejected (裁定⑤c), got: $tooLong")
+      assert(
+        missing.isLeft && missing.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")),
+        s"missing description must be rejected, got: $missing"
+      )
+      assert(
+        blank.isLeft && blank.left.exists(_.contains("NODE_DESCRIPTION_REQUIRED")),
+        s"blank description must be rejected, got: $blank"
+      )
+      assert(
+        tooLong.isLeft && tooLong.left.exists(_.contains("NODE_DESCRIPTION_TOO_LONG")),
+        s">60 must be rejected (裁定⑤c), got: $tooLong"
+      )
       assert(ok60.isRight, s"exactly-60 description must pass, got: $ok60")
-      assert(longDesc.isLeft && longDesc.left.exists(_.contains("NODE_DESCRIPTION_LONG_TOO_LONG")), s"descriptionLong >200 must be rejected, got: $longDesc")
+      assert(
+        longDesc.isLeft && longDesc.left.exists(_.contains("NODE_DESCRIPTION_LONG_TOO_LONG")),
+        s"descriptionLong >200 must be rejected, got: $longDesc"
+      )
       assert(okLong.isRight, s"valid descriptionLong must pass, got: $okLong")
       // 双层落库：短文进 NodeDef.description，长文进 descriptionLong（均 trim 归一）
-      assertEquals(snap.nodes.values.find(_.name == "n-oklong").map(n => (n.description, n.descriptionLong)),
-        Some((Some("short"), Some("详述：" + "L" * 190))), "both layers must be stored trimmed")
+      assertEquals(
+        snap.nodes.values.find(_.name == "n-oklong").map(n => (n.description, n.descriptionLong)),
+        Some((Some("short"), Some("详述：" + "L" * 190))),
+        "both layers must be stored trimmed"
+      )
+    end for
   }
 
-  test("A② edit updates description; descriptionLong detail-only (not in default payload, present in detail channel) (裁定⑤c)") {
+  test(
+    "A② edit updates description; descriptionLong detail-only (not in default payload, present in detail channel) (裁定⑤c)"
+  ) {
     val ws = plainWorkspace("desc-edit")
     val system = ActorSystem(s"slim-de-${Random.nextInt(100000)}")
     for
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-de", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("slim-de", "n-e", "description" -> Json.fromString("before"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      upd <- nodeEdit(nodeInput("slim-de", "n-e", "description" -> Json.fromString("after"), "descriptionLong" -> Json.fromString("编辑后的长描述")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "slim-de",
+          "n-e",
+          "description" -> Json.fromString("before"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      upd <- nodeEdit(
+        nodeInput(
+          "slim-de",
+          "n-e",
+          "description" -> Json.fromString("after"),
+          "descriptionLong" -> Json.fromString("编辑后的长描述")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       payload <- NodeTools.buildNodeListPayload(rt)
       nodeId = snap.nodes.values.find(_.name == "n-e").map(_.id).getOrElse("")
-      detailRaw <- NodeListTool.call(io.circe.JsonObject.fromIterable(List(
-        "project" -> Json.fromString("slim-de"),
-        "detail" -> Json.fromString(nodeId))), ctx)
+      detailRaw <- NodeListTool.call(
+        io.circe.JsonObject
+          .fromIterable(List("project" -> Json.fromString("slim-de"), "detail" -> Json.fromString(nodeId))),
+        ctx
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(upd.isRight, s"description edit must succeed, got: $upd")
@@ -277,11 +410,21 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       assertEquals(snap.nodes.values.find(_.name == "n-e").flatMap(_.descriptionLong), Some("编辑后的长描述"))
       // 默认载荷：不带 descriptionLong 键（键集零漂移）
       val nodes = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
-      val mine = nodes.find(_.hcursor.get[String]("id").toOption.contains(nodeId)).getOrElse(fail("node missing from payload"))
-      assert(!mine.asObject.exists(_.contains("descriptionLong")), "default payload must NOT carry descriptionLong (裁定⑤c detail-only)")
+      val mine =
+        nodes.find(_.hcursor.get[String]("id").toOption.contains(nodeId)).getOrElse(fail("node missing from payload"))
+      assert(
+        !mine.asObject.exists(_.contains("descriptionLong")),
+        "default payload must NOT carry descriptionLong (裁定⑤c detail-only)"
+      )
       // detail 通道：条件键携带
-      val detail = io.circe.parser.parse(detailRaw.toOption.getOrElse(fail("detail failed"))).getOrElse(fail("detail not json"))
-      assertEquals(detail.hcursor.get[String]("descriptionLong").toOption, Some("编辑后的长描述"), "detail channel must carry descriptionLong")
+      val detail =
+        io.circe.parser.parse(detailRaw.toOption.getOrElse(fail("detail failed"))).getOrElse(fail("detail not json"))
+      assertEquals(
+        detail.hcursor.get[String]("descriptionLong").toOption,
+        Some("编辑后的长描述"),
+        "detail channel must carry descriptionLong"
+      )
+    end for
   }
 
   // ── 2. agent/skill/mcp 退役 ─────────────────────────────
@@ -293,17 +436,51 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-ret", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      withAgent <- nodeEdit(nodeInput("slim-ret", "n-a", "agent" -> Json.fromString("test-agent"), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      withSkill <- nodeEdit(nodeInput("slim-ret", "n-s", "skill" -> Json.fromString("some-skill"), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
-      withMcp <- nodeEdit(nodeInput("slim-ret", "n-m", "mcp" -> Json.fromString("some-mcp"), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      withAgent <- nodeEdit(
+        nodeInput(
+          "slim-ret",
+          "n-a",
+          "agent" -> Json.fromString("test-agent"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      withSkill <- nodeEdit(
+        nodeInput(
+          "slim-ret",
+          "n-s",
+          "skill" -> Json.fromString("some-skill"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      withMcp <- nodeEdit(
+        nodeInput(
+          "slim-ret",
+          "n-m",
+          "mcp" -> Json.fromString("some-mcp"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       for (r, label) <- List((withAgent, "agent"), (withSkill, "skill"), (withMcp, "mcp")) do
         assert(r.isLeft, s"$label param must be rejected")
-        assert(r.left.exists(_.contains("NODE_AGENT_RETIRED")), s"$label rejection must carry NODE_AGENT_RETIRED, got: ${r.left.getOrElse("")}")
+        assert(
+          r.left.exists(_.contains("NODE_AGENT_RETIRED")),
+          s"$label rejection must carry NODE_AGENT_RETIRED, got: ${r.left.getOrElse("")}"
+        )
         assert(r.left.exists(_.contains("plugins")), s"$label rejection must point at plugins")
       assert(snap.nodes.isEmpty, "no node must be created from retired-param calls")
+    end for
   }
 
   // ── 3. worktree 布尔派生（创建时机裁决 a：NodeEdit 即时创建 fail-fast）──
@@ -315,10 +492,23 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wtnb", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("slim-wtnb", "n-str", "worktree" -> Json.fromString("pre-made"), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "slim-wtnb",
+          "n-str",
+          "worktree" -> Json.fromString("pre-made"),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.isLeft && r.left.exists(_.contains("WORKTREE_NOT_BOOLEAN")), s"string worktree must be rejected, got: $r")
+    yield assert(
+      r.isLeft && r.left.exists(_.contains("WORKTREE_NOT_BOOLEAN")),
+      s"string worktree must be rejected, got: $r"
+    )
+    end for
   }
 
   test("C② worktree=true on non-git workspace → fail-fast rejection, NO node created") {
@@ -328,12 +518,26 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-nogit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("slim-nogit", "n-ng", "worktree" -> Json.fromBoolean(true), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "slim-nogit",
+          "n-ng",
+          "worktree" -> Json.fromBoolean(true),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isLeft && r.left.exists(_.contains("git repository")), s"non-git workspace must reject worktree=true, got: $r")
+      assert(
+        r.isLeft && r.left.exists(_.contains("git repository")),
+        s"non-git workspace must reject worktree=true, got: $r"
+      )
       assert(snap.nodes.isEmpty, "fail-fast: node must NOT be created when worktree creation fails")
+    end for
   }
 
   test("C③ worktree=true on git workspace → derived worktree+branch created immediately, node bound to it") {
@@ -343,7 +547,17 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wtyes", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("slim-wtyes", "调研-派生一", "worktree" -> Json.fromBoolean(true), "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "slim-wtyes",
+          "调研-派生一",
+          "worktree" -> Json.fromBoolean(true),
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       // worktrees[] 名单自动纳入（NodeList 载荷 worktree 标记链路）
       payload <- NodeTools.buildNodeListPayload(rt)
@@ -360,6 +574,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       val branches = os.proc("git", "-C", ws.toString, "branch", "--list", derived).call(check = true).out.trim()
       assert(branches.nonEmpty, s"same-name branch must exist for worktree '$derived', got: '$branches'")
       assert(wts.contains(derived), s"worktrees[] must include the derived worktree, got: $wts")
+    end for
   }
 
   test("C④ worktree on edit → WORKTREE_CREATE_ONLY (create-time binding)") {
@@ -369,39 +584,66 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wte", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("slim-wte", "n-w", "description" -> Json.fromString("d"), "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "slim-wte",
+          "n-w",
+          "description" -> Json.fromString("d"),
+          "task" -> Json.fromString("t"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       r <- nodeEdit(nodeInput("slim-wte", "n-w", "worktree" -> Json.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assert(r.isLeft && r.left.exists(_.contains("WORKTREE_CREATE_ONLY")), s"worktree on edit must be refused, got: $r")
+    yield assert(
+      r.isLeft && r.left.exists(_.contains("WORKTREE_CREATE_ONLY")),
+      s"worktree on edit must be refused, got: $r"
+    )
+    end for
   }
 
   // ── 4. E2E：新 schema 建节点 → 执行至 completed → 载荷收敛 + 按需读取 ──
 
-  test("E2E: plugins[approved]+description+worktree=true → completed; payload metadata-only; detail channel returns full result (panelscheme: preset 参数已退役)") {
+  test(
+    "E2E: plugins[approved]+description+worktree=true → completed; payload metadata-only; detail channel returns full result (panelscheme: preset 参数已退役)"
+  ) {
     val ws = gitWorkspace("e2e")
     val system = ActorSystem(s"slim-e2e-${Random.nextInt(100000)}")
     for
       _ <- nebflow.core.plugin.PluginRegistry.approve("slim-e2e").flatMap {
         case Right(_) => IO.unit
-        case Left(e)  => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
+        case Left(e) => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
       }
       res <- mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-e2e", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      created <- nodeEdit(nodeInput("slim-e2e", "E2E-主节点",
-        "description" -> Json.fromString("端到端载荷收敛验证节点"),
-        "task" -> Json.fromString("produce the result"),
-        "out" -> Json.fromString("Nebula"),
-        "plugins" -> Json.arr(Json.fromString("slim-e2e")),
-        "worktree" -> Json.fromBoolean(true)), ctx)
-      _ <- waitUntil(60.seconds)(rt.store.snapshot.map(
-        _.nodes.values.exists(n => n.name == "E2E-主节点" && n.status == NodeLifecycle.Completed)))
+      created <- nodeEdit(
+        nodeInput(
+          "slim-e2e",
+          "E2E-主节点",
+          "description" -> Json.fromString("端到端载荷收敛验证节点"),
+          "task" -> Json.fromString("produce the result"),
+          "out" -> Json.fromString("Nebula"),
+          "plugins" -> Json.arr(Json.fromString("slim-e2e")),
+          "worktree" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
+      _ <- waitUntil(60.seconds)(
+        rt.store.snapshot.map(_.nodes.values.exists(n => n.name == "E2E-主节点" && n.status == NodeLifecycle.Completed))
+      )
       snap <- rt.store.snapshot
       payload <- NodeTools.buildNodeListPayload(rt)
-      detailRaw <- NodeListTool.call(io.circe.JsonObject.fromIterable(List(
-        "project" -> Json.fromString("slim-e2e"),
-        "detail" -> Json.fromString(snap.nodes.values.find(_.name == "E2E-主节点").map(_.id).getOrElse("")))), ctx)
+      detailRaw <- NodeListTool.call(
+        io.circe.JsonObject.fromIterable(
+          List(
+            "project" -> Json.fromString("slim-e2e"),
+            "detail" -> Json.fromString(snap.nodes.values.find(_.name == "E2E-主节点").map(_.id).getOrElse(""))
+          )
+        ),
+        ctx
+      )
       nodeId = snap.nodes.values.find(_.name == "E2E-主节点").map(_.id).getOrElse("")
       diskJson <- IO.blocking(os.read(ws / ".nebflow" / "flow-map.json"))
       fileFull <- IO.blocking(os.read(ws / ".nebflow" / "results" / s"$nodeId.md"))
@@ -419,24 +661,33 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       assert(os.exists(ws / ".nebflow" / "worktrees" / n.worktree.get / ".git"), "derived worktree must exist")
       // 默认载荷：元数据 only —— 无 result 键（全文与摘要都不进）
       val nodes = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
-      val mine = nodes.find(_.hcursor.get[String]("id").toOption.contains(n.id)).getOrElse(fail("node missing from payload"))
+      val mine =
+        nodes.find(_.hcursor.get[String]("id").toOption.contains(n.id)).getOrElse(fail("node missing from payload"))
       assert(!mine.asObject.exists(_.keys.exists(_ == "result")), "default payload must NOT carry result")
       assertEquals(mine.hcursor.get[String]("description").toOption, Some("端到端载荷收敛验证节点"))
       assertEquals(mine.hcursor.get[Boolean]("hasResult").toOption, Some(true))
       // plugins 正向钉（Flow Map 卡显示插件分配批 2026-09-06）：带插件节点的载荷必须
       // 携带插件名字数组（条件字段，非空才带；只放名字，禁塞描述全文）。无插件节点的
       // 字段集零漂移由 NodeEventPushSpec NodeListKeys 精确键集断言兜底。
-      assertEquals(mine.hcursor.get[List[String]]("plugins").toOption, Some(List("slim-e2e")),
-        "payload must carry plugins name array for plugin-assigned nodes")
+      assertEquals(
+        mine.hcursor.get[List[String]]("plugins").toOption,
+        Some(List("slim-e2e")),
+        "payload must carry plugins name array for plugin-assigned nodes"
+      )
       // detail 通道：全文一致（同源 = 内存水合全文 = 落盘文件）
       val detail = detailRaw match
         case Right(raw) => io.circe.parser.parse(raw).getOrElse(fail("detail not json"))
-        case Left(e)    => fail(s"detail failed: $e")
-      assertEquals(detail.hcursor.get[String]("result").toOption, memResult, "detail channel result must equal in-memory full text")
+        case Left(e) => fail(s"detail failed: $e")
+      assertEquals(
+        detail.hcursor.get[String]("result").toOption,
+        memResult,
+        "detail channel result must equal in-memory full text"
+      )
       assertEquals(memResult, Some(ResultText), "in-memory result = stub LLM full output")
       // 落盘拆分：JSON 摘要、文件全文
       assert(!diskJson.contains(ResultText), "flow-map.json must NOT contain the full result text")
       assertEquals(fileFull, ResultText)
+    end for
   }
 
 end NodeSchemaSlimSpec

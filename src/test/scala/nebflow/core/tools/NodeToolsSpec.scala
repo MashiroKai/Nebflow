@@ -51,30 +51,32 @@ class NodeToolsSpec extends FunSuite:
   test("parseOut: 扇出 '(pass)B, (failed)C' → 两边（pass 缺省 + failed 声明）") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass)n-b, (failed)n-c"))),
-      Right(List(OutEdge("n-b", Set("pass")), OutEdge("n-c", Set("failed")))))
+      Right(List(OutEdge("n-b", Set("pass")), OutEdge("n-c", Set("failed"))))
+    )
   }
 
   test("parseOut: 失败纯信号边 '(failed)C:signal' → failed 门 + signal 模式") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(failed)n-c:signal"))),
-      Right(List(OutEdge("n-c", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-c", Set("failed"), "signal")))
+    )
   }
 
   test("parseOut: 多门组 '(pass,failed)B' 合并门集；canonical 合并同 (to,mode)") {
     // 同 (to, mode=result) 两段 → canonical 合并为单边 on 取并集（compat #1：一次终态至多投一次）
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass,failed)n-b, (failed)n-b"))),
-      Right(List(OutEdge("n-b", Set("pass", "failed")))))
+      Right(List(OutEdge("n-b", Set("pass", "failed"))))
+    )
     // 同 to 异 mode 不合并（result 与 signal 是不同投递语义的两条边）
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass,failed)n-b, (failed)n-b:signal"))),
-      Right(List(OutEdge("n-b", Set("pass", "failed"), "result"), OutEdge("n-b", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-b", Set("pass", "failed"), "result"), OutEdge("n-b", Set("failed"), "signal")))
+    )
   }
 
   test("parseOut: 显式 '(pass)Nebula' 收窄 Nebula 缺省双通报门") {
-    assertEquals(
-      NodeTools.parseOut(Some(Json.fromString("(pass)Nebula"))),
-      Right(List(OutEdge("Nebula", Set("pass")))))
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass)Nebula"))), Right(List(OutEdge("Nebula", Set("pass")))))
   }
 
   test("parseOut: 非法门/非法 mode/未闭合门组 → 可行动错误") {
@@ -87,7 +89,8 @@ class NodeToolsSpec extends FunSuite:
   test("parseOut: 大小写/空白宽容（'(FAILED) n-c : SIGNAL'）") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(FAILED) n-c : SIGNAL"))),
-      Right(List(OutEdge("n-c", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-c", Set("failed"), "signal")))
+    )
   }
 
   // ── parseIn 宽容解析（修复次因 B，回归⑦）────────────────
@@ -95,19 +98,16 @@ class NodeToolsSpec extends FunSuite:
   test("parseIn: native JSON array accepted") {
     assertEquals(
       NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString("n-b")))),
-      Right(List("n-a", "n-b")))
+      Right(List("n-a", "n-b"))
+    )
   }
 
   test("parseIn: JSON-array-as-string accepted (LLM 把数组整体字符串化的实证形态)") {
-    assertEquals(
-      NodeTools.parseIn(Some(Json.fromString("[\"n-a\",\"n-b\"]"))),
-      Right(List("n-a", "n-b")))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("[\"n-a\",\"n-b\"]"))), Right(List("n-a", "n-b")))
   }
 
   test("parseIn: comma-separated string accepted") {
-    assertEquals(
-      NodeTools.parseIn(Some(Json.fromString("n-a, n-b ,n-c"))),
-      Right(List("n-a", "n-b", "n-c")))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a, n-b ,n-c"))), Right(List("n-a", "n-b", "n-c")))
   }
 
   test("parseIn: single plain id stays single") {
@@ -118,7 +118,8 @@ class NodeToolsSpec extends FunSuite:
     assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a,, ,n-b,"))), Right(List("n-a", "n-b")))
     assertEquals(
       NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString(""), Json.fromString(" ")))),
-      Right(List("n-a")))
+      Right(List("n-a"))
+    )
     assertEquals(NodeTools.parseIn(Some(Json.fromString(""))), Right(Nil))
     assertEquals(NodeTools.parseIn(Some(Json.fromString("   "))), Right(Nil))
   }
@@ -179,13 +180,21 @@ class NodeToolsSpec extends FunSuite:
 
   test("four node tools: 'project' removed from required (dispatcher defaults to current project)") {
     // NodeEdit: nodename 仍必填
-    assert(!requiredOf(NodeEditTool).contains("project") && requiredOf(NodeEditTool).contains("nodename"),
-      s"NodeEdit required should drop project, keep nodename; got ${requiredOf(NodeEditTool)}")
+    assert(
+      !requiredOf(NodeEditTool).contains("project") && requiredOf(NodeEditTool).contains("nodename"),
+      s"NodeEdit required should drop project, keep nodename; got ${requiredOf(NodeEditTool)}"
+    )
     // NodeList: 唯一必填原本就是 project → 现在无必填
-    assertEquals(requiredOf(NodeListTool), Nil, "NodeList has no other required param — project optional leaves required empty")
+    assertEquals(
+      requiredOf(NodeListTool),
+      Nil,
+      "NodeList has no other required param — project optional leaves required empty"
+    )
     // NodeCancel: node-id 仍必填
-    assert(!requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
-      s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}")
+    assert(
+      !requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
+      s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}"
+    )
     // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
     // `Mail(address="node:<id>", message=...)`。
     // device-mail 批（2026-09-15）：Mail 的目标面从「address 必填」扩成
@@ -198,11 +207,15 @@ class NodeToolsSpec extends FunSuite:
       List("message"),
       s"Mail required should be message only (address/device are mutually exclusive targets); got $mailReq"
     )
-    assert(!mailReq.contains("nodeId") && !mailReq.contains("project"),
-      s"Mail must not carry the retired NodeMessage params; got $mailReq")
+    assert(
+      !mailReq.contains("nodeId") && !mailReq.contains("project"),
+      s"Mail must not carry the retired NodeMessage params; got $mailReq"
+    )
     val mailProps = MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
-    assert(mailProps.contains("address") && mailProps.contains("device"),
-      s"Mail must declare both target parameters (address + device); got ${mailProps.toList.sorted}")
+    assert(
+      mailProps.contains("address") && mailProps.contains("device"),
+      s"Mail must declare both target parameters (address + device); got ${mailProps.toList.sorted}"
+    )
   }
 
 end NodeToolsSpec

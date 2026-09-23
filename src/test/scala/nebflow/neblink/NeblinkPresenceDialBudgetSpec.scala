@@ -136,7 +136,8 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     }.flatMap { pair =>
       val logger = pair._1
       val appender = pair._2
-      use.map(a => (a, appender.list.asScala.toList.map(_.getFormattedMessage)))
+      use
+        .map(a => (a, appender.list.asScala.toList.map(_.getFormattedMessage)))
         .guarantee(IO(logger.detachAppender(appender)))
     }
 
@@ -585,6 +586,7 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
         elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
         r6 <- IO(roundOf(ps, "axes"))
       yield (r1, r2, r4, r5, r6, elapsed)
+      end for
     }.map { case (r1, r2, r4, r5, r6, elapsed) =>
       assertEquals(EvictionPolicy.Default.refusalStrikes, 3, "refused 轴门槛 = 3 连击")
       assertEquals(EvictionPolicy.Default.timeoutStrikes, 5, "timeout 轴门槛 = 5 连击（歧义信号给足机会）")
@@ -633,6 +635,7 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
         elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
         after <- IO(roundOf(ps, "survive"))
       yield (windowed, during, evicted, after, elapsed)
+      end for
     }.map { case (windowed, during, evicted, after, elapsed) =>
       assertEquals(windowed.skippedSuppressed, Nil, "第 5 拍末才置窗 ⇒ 该轮仍全拨")
       assert(during.exists(_.deviceId == "survive"), "名册缺席后 grace 窗内仍在册（pending removal 已登记）")
@@ -727,6 +730,7 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
         _ <- ps.connect(p)
         after <- awaitRoundWhere(ps, "nocollateral", _.atMs > windowed.last.atMs) // 同钟判据（atMs vs atMs）
       yield (windowed, after, liveEp, deadEp)
+      end for
     }.guarantee(IO(srv.close())).map { case (windowed, after, liveEp, deadEp) =>
       assertEquals(windowed.size, 5, "首拍 + 4 拍重连 = 5 轮读数")
       assert(
@@ -781,6 +785,8 @@ private final class PresenceWsFixture(handshakeDelayMs: Long = 0L, closeAfterHan
     t.start()
     t
 
+  end acceptor
+
   private def serve(s: Socket): Unit =
     try
       val in = s.getInputStream
@@ -813,9 +819,11 @@ private final class PresenceWsFixture(handshakeDelayMs: Long = 0L, closeAfterHan
         case (1, '\n') => 2
         case (2, '\r') => 3
         case (3, '\n') => 4
-        case _         => 0
+        case _ => 0
       if state < 4 then b = in.read()
     sb.toString
+
+  end readHeaders
 
   private def handshakeResponse(request: String): String =
     val key = request.linesIterator
@@ -834,5 +842,9 @@ private final class PresenceWsFixture(handshakeDelayMs: Long = 0L, closeAfterHan
     stopped = true
     try serverSocket.close()
     catch case _: Throwable => ()
-    clients.forEach(s => try s.close() catch case _: Throwable => ())
+    clients.forEach(s =>
+      try s.close()
+      catch case _: Throwable => ()
+    )
     handlers.forEach(t => t.interrupt())
+end PresenceWsFixture

@@ -54,6 +54,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"idle-window test dispatcher","tools":[],"category":"standalone"}"""
@@ -63,16 +64,19 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 记录型 LLM：每次分发器 turn 记录「请求全文」（用于上下文连贯性断言）+ 计数
-    * 已结束的 stream（用于等待 turn 终态）。文本 delta 即收尾（零工具调用）。 */
+  /**
+   * 记录型 LLM：每次分发器 turn 记录「请求全文」（用于上下文连贯性断言）+ 计数
+   * 已结束的 stream（用于等待 turn 终态）。文本 delta 即收尾（零工具调用）。
+   */
   private class RecordingLlm:
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val streamsDone: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream.eval(inputs.update(_ :+ text)).flatMap { _ =>
@@ -110,7 +114,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -152,6 +156,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
       ttlCheckIntervalSec = 1,
       dispatcherIdleWindowMs = idleWindowMs
     )
+  end mount
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear

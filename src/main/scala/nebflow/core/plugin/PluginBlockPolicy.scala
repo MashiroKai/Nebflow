@@ -40,8 +40,10 @@ object PluginBlockPolicy:
 
   // ── 读面 ──────────────────────────────────────────────────────────
 
-  /** 读 `plugins.revoked` 表（热读；缺失/非法 → 空表 = 全部未封禁，fail-open 到
-    * 「在位即信任」的默认语义）。 */
+  /**
+   * 读 `plugins.revoked` 表（热读；缺失/非法 → 空表 = 全部未封禁，fail-open 到
+   * 「在位即信任」的默认语义）。
+   */
   def readTable(): Map[String, Json] =
     val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(configPath) then Map.empty
@@ -88,14 +90,22 @@ object PluginBlockPolicy:
         case Right(_) =>
           PluginRegistry.invalidateCache()
           audit("blocked", name, by, reason) *>
-            IO(logger.infoSync(
-              s"Plugin '$name' blocked by $by${if reason.nonEmpty then s" ($reason)" else ""} — " +
-                "removed from the catalog, refused at dispatch/load gates, in-flight MCP servers stopped at the next trust revalidation"))
-        case Left(e) => IO(logger.warnSync(s"Plugin '$name' block refused: $e"))).as(res)
+            IO(
+              logger.infoSync(
+                s"Plugin '$name' blocked by $by${if reason.nonEmpty then s" ($reason)" else ""} — " +
+                  "removed from the catalog, refused at dispatch/load gates, in-flight MCP servers stopped at the next trust revalidation"
+              )
+            )
+        case Left(e) => IO(logger.warnSync(s"Plugin '$name' block refused: $e"))
+      ).as(res)
     }
 
-  /** 解封：删除 `plugins.revoked.<name>`。幂等（无记录 ⇒ Left 提示，不静默成功——
-    * 「零静默」纪律：面板/CLI 需要能区分「确实解封了」与「本来就没封」）。 */
+  end block
+
+  /**
+   * 解封：删除 `plugins.revoked.<name>`。幂等（无记录 ⇒ Left 提示，不静默成功——
+   * 「零静默」纪律：面板/CLI 需要能区分「确实解封了」与「本来就没封」）。
+   */
   def unblock(name: String, by: String): IO[Either[String, Unit]] =
     IO.blocking {
       if !isBlocked(name) then Left(s"Plugin '$name' is not blocked — nothing to unblock")
@@ -106,13 +116,13 @@ object PluginBlockPolicy:
           PluginRegistry.invalidateCache()
           audit("unblocked", name, by, "") *>
             IO(logger.infoSync(s"Plugin '$name' unblocked by $by — falls back to presence trust (trusted on disk)"))
-        case Left(e) => IO(logger.warnSync(s"Plugin '$name' unblock refused: $e"))).as(res)
+        case Left(e) => IO(logger.warnSync(s"Plugin '$name' unblock refused: $e"))
+      ).as(res)
     }
 
   /** 面板/CLI 展示用的封禁审计条目（本面读面单点；空 reason 不出字段）。 */
   def entryJson(name: String): Option[Json] =
-    entryFor(name).map(e =>
-      Json.obj("at" -> e.at.asJson, "by" -> e.by.asJson, "reason" -> e.reason.asJson))
+    entryFor(name).map(e => Json.obj("at" -> e.at.asJson, "by" -> e.by.asJson, "reason" -> e.reason.asJson))
 
   // ── 内部：nebflow.json 手术式改写（保留全部其他键；`plugins.revoked` 独立命名空间）
   // 口径与 `PluginRegistry.mutateNebflowJson` / `PluginDispatchPolicy.mutateDispatch` 同款
@@ -124,14 +134,16 @@ object PluginBlockPolicy:
   private def removeRevoked(name: String): Either[String, Unit] =
     mutatePluginsMap("revoked", name)(None)
 
-  /** `plugins.<table>.<name>` 的通用手术式改写：`Some(v)` = 置值，`None` = 删键。
-    * 表为空且删键 ⇒ 保留空对象（不删表本身：写面语义恒定，读面 absent 与 `{}` 等价）。 */
+  /**
+   * `plugins.<table>.<name>` 的通用手术式改写：`Some(v)` = 置值，`None` = 删键。
+   * 表为空且删键 ⇒ 保留空对象（不删表本身：写面语义恒定，读面 absent 与 `{}` 等价）。
+   */
   private def mutatePluginsMap(table: String, name: String)(value: Option[Json]): Either[String, Unit] =
     val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       val tableJson = value match
         case Some(v) => Json.obj(name -> v)
-        case None    => Json.obj()
+        case None => Json.obj()
       AtomicJson.writeSync(configPath, Json.obj("plugins" -> Json.obj(table -> tableJson)).noSpaces)
       Right(())
     else
@@ -143,7 +155,7 @@ object PluginBlockPolicy:
           val current = plugins.hcursor.downField(table).focus.getOrElse(Json.obj())
           val next = value match
             case Some(v) => Json.fromJsonObject(current.asObject.getOrElse(JsonObject.empty).add(name, v))
-            case None    => Json.fromJsonObject(current.asObject.getOrElse(JsonObject.empty).remove(name))
+            case None => Json.fromJsonObject(current.asObject.getOrElse(JsonObject.empty).remove(name))
           val newPlugins = Json.fromJsonObject(
             plugins.asObject.getOrElse(JsonObject.empty).add(table, next)
           )
@@ -153,8 +165,14 @@ object PluginBlockPolicy:
           AtomicJson.writeSync(configPath, out.noSpaces)
           Right(())
 
-  /** append-only 审计（与 `logs/plugin-dispatch.jsonl` 同族）：每次写侧动作一条——
-    * 「谁/何时/因何封禁」可从本文件重放。best-effort（审计失败不影响判定，只 WARN）。 */
+    end if
+
+  end mutatePluginsMap
+
+  /**
+   * append-only 审计（与 `logs/plugin-dispatch.jsonl` 同族）：每次写侧动作一条——
+   * 「谁/何时/因何封禁」可从本文件重放。best-effort（审计失败不影响判定，只 WARN）。
+   */
   private def audit(event: String, name: String, by: String, reason: String): IO[Unit] =
     IO.blocking {
       val fields = List(
@@ -167,7 +185,7 @@ object PluginBlockPolicy:
         .map { case (k, v) => s""""$k":${Json.fromString(v).noSpaces}""" }
         .mkString("{", ",", "}")
       os.write.append(PathUtil.dataRoot / "logs" / "plugin-block.jsonl", line + "\n", createFolders = true)
-    }.void.handleErrorWith(e =>
-      IO(logger.warnSync(s"plugin block audit append failed ($name/$event): ${e.getMessage}")))
+    }.void
+      .handleErrorWith(e => IO(logger.warnSync(s"plugin block audit append failed ($name/$event): ${e.getMessage}")))
 
 end PluginBlockPolicy

@@ -71,8 +71,10 @@ object AttachmentPreviewContract:
   /** 单预览**软上限** = 180 KiB = 184,320 B（发送侧降级梯的触发线，**非**硬闸）。 */
   val SoftCapBytes: Long = 184320L
 
-  /** **回程解析硬上界** = 256 KiB —— 与 [[SoftCapBytes]] **刻意不是同一把尺**（不互推）：
-    * 软上限管发送侧降级触发，本值只拦「明显越界 / 恶意构造」的载荷。 */
+  /**
+   * **回程解析硬上界** = 256 KiB —— 与 [[SoftCapBytes]] **刻意不是同一把尺**（不互推）：
+   * 软上限管发送侧降级触发，本值只拦「明显越界 / 恶意构造」的载荷。
+   */
   val HardCapBytes: Long = 262144L
 
   /** n 字节的标准 base64 长度（无换行）—— 完整性判据，**免解码**即可判 `b64` 长度是否自洽。 */
@@ -107,10 +109,10 @@ object AttachmentPreviewContract:
   def parsePreview(json: Json): Option[MirrorPreview] =
     json.asObject.flatMap { o =>
       val mime = o("mime").flatMap(v => if v.isNull then None else v.asString)
-      val w    = o("w").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
-      val h    = o("h").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
+      val w = o("w").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
+      val h = o("h").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toInt))
       val size = o("size").flatMap(v => if v.isNull then None else v.asNumber.flatMap(_.toLong))
-      val b64  = o("b64").flatMap(v => if v.isNull then None else v.asString)
+      val b64 = o("b64").flatMap(v => if v.isNull then None else v.asString)
       for
         m <- mime.filter(mimeAllowed)
         pw <- w.filter(_ > 0)
@@ -133,16 +135,18 @@ object AttachmentPreviewContract:
     Json.fromFields(
       List(
         "mime" -> p.mime.asJson,
-        "w"    -> p.w.asJson,
-        "h"    -> p.h.asJson,
+        "w" -> p.w.asJson,
+        "h" -> p.h.asJson,
         "size" -> p.size.asJson,
-        "b64"  -> p.b64.asJson
+        "b64" -> p.b64.asJson
       )
     )
   }
 
-  /** 严格解码（契约入参面）：形状不全即 `DecodingFailure`，**不静默**折成空值。
-    * 宽容侧（线上消息面）用 [[readPreview]] —— 两者是**同一判据**的两个出口。 */
+  /**
+   * 严格解码（契约入参面）：形状不全即 `DecodingFailure`，**不静默**折成空值。
+   * 宽容侧（线上消息面）用 [[readPreview]] —— 两者是**同一判据**的两个出口。
+   */
   given Decoder[MirrorPreview] = Decoder.instance { c =>
     parsePreview(c.value) match
       case Some(p) => Right(p)
@@ -192,12 +196,12 @@ object AttachmentPreviewContract:
   given Encoder[MirrorAttachment] = Encoder.instance { a =>
     Json.fromFields(
       List(
-        Some("id"     -> a.id.asJson),
-        Some("name"   -> a.name.asJson),
-        Some("size"   -> a.size.asJson),
+        Some("id" -> a.id.asJson),
+        Some("name" -> a.name.asJson),
+        Some("size" -> a.size.asJson),
         a.mime.map(m => "mime" -> m.asJson),
         Some("sha256" -> a.sha256.asJson),
-        Some("state"  -> a.state.asJson),
+        Some("state" -> a.state.asJson),
         a.preview.map(p => PreviewKey -> p.asJson)
       ).flatten
     )

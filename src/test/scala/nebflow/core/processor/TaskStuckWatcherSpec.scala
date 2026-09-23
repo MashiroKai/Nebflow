@@ -90,7 +90,6 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-
   test("#22: Team agent Processing 超时 → 只读广播 taskStuck(action=attention)，绝不发 Stop") {
     val system = ActorSystem("test-team-stuck")
     for
@@ -133,6 +132,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(ev.hcursor.get[Long]("idleSecs").toOption.exists(_ > 0), s"idleSecs: $ev")
       // 只读铁律：长驻 team agent 绝不自动 Stop（AgentControl §4 Team=只读）
       assert(teamCmds.isEmpty, s"Team agent must NOT receive any command, got $teamCmds")
+    end for
   }
 
   test("子 agent Processing 超时 → 广播 taskStuck(action=restart) + 发 Stop（AgentControl spec §3.5）") {
@@ -177,6 +177,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(ev.hcursor.get[Long]("idleSecs").toOption.exists(_ > 0), s"idleSecs must be positive: $ev")
       // 恢复动作不变：仍然发 Stop（→ BackoffSupervisor death-watch 重启）
       assert(stopMsgs.count(_.isInstanceOf[AgentCommand.Stop]) == 1, s"Stop must still be sent, got $stopMsgs")
+    end for
   }
 
   test("根 agent Processing 超时 → 广播 taskStuck，不 Stop") {
@@ -209,6 +210,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       val ev = wsEvents.head
       assertEquals(ev.hcursor.get[String]("type").toOption.getOrElse(""), "taskStuck")
       assertEquals(ev.hcursor.get[String]("sessionId").toOption.getOrElse(""), "root-stuck")
+    end for
   }
 
   test("Idle 态永不判卡死（run_in_background 防误杀铁律）") {
@@ -236,6 +238,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- IO.sleep(200.millis)
       msgs <- received.get
     yield assert(msgs.isEmpty, s"idle agent must never be stopped, got $msgs")
+    end for
   }
 
   test("lastActivityMs 在阈值内（有活动）不判卡死") {
@@ -264,6 +267,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- IO.sleep(200.millis)
       msgs <- received.get
     yield assert(msgs.isEmpty, s"recently-active agent must not be stopped, got $msgs")
+    end for
   }
 
   test("lastActivityMs==0（刚注册未 touch）不判卡死") {
@@ -291,6 +295,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- IO.sleep(200.millis)
       msgs <- received.get
     yield assert(msgs.isEmpty, s"freshly-registered agent must not be stopped, got $msgs")
+    end for
   }
 
   test("#22: Team 加入扫描集合但只读——广播 taskStuck，绝不 Stop") {
@@ -329,6 +334,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       // 但要被看见：长驻 Team 卡死不再是盲区（#22 12:28-13:45 两小时零可见性）
       assert(wsEvents.nonEmpty, s"Team stuck must broadcast taskStuck, got: $wsEvents")
       assert(wsEvents.head.hcursor.get[String]("kind").toOption.contains("Team"), s"kind=Team: ${wsEvents.head}")
+    end for
   }
 
   test("空 registry 扫描不抛错") {
@@ -370,6 +376,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     yield
       assert(msgs.size == 1, s"expected exactly one Stop, got $msgs")
       assert(msgs.head.isInstanceOf[AgentCommand.Stop], s"expected Stop, got ${msgs.head.getClass.getSimpleName}")
+    end for
   }
 
   test("run 循环跨 sleep 边界递归 ≥2 轮不栈溢出（回归：`*> loop` 构建期无限递归）") {
@@ -407,8 +414,8 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       _ <- fiber.cancel
       msgs <- received.get
     yield assert(msgs.size >= 2, s"expected >=2 Stop across loop rounds, got ${msgs.size}")
+    end for
   }
-
 
   test("gate-wedge P1-1: 第二次扫描对无视 Stop 的卡死子 agent 硬取消在飞 LLM 请求") {
     // 事故链：suspended 在 LLM fiber 上的 agent 永不消费 mailbox 的 Stop——
@@ -450,6 +457,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
         case Left(e: nebflow.llm.StuckAbort) => assert(e.sessionId == "session-escalate")
         case other => fail(s"expected Left(StuckAbort), got $other")
       assert(cmds.count(_.isInstanceOf[AgentCommand.Stop]) == 2, s"both scans must still send Stop, got $cmds")
+    end for
   }
 
   // ---- Block 0 (supervision trio): team stuck notice carries turn-level
@@ -462,7 +470,8 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
   test("Block 0: team stuck notice wording — turn-level semantics, not read-only") {
     val system = ActorSystem("test-team-stuck-wording")
     val lbLogger =
-      org.slf4j.LoggerFactory.getLogger("nebflow.core.processor.stuck")
+      org.slf4j.LoggerFactory
+        .getLogger("nebflow.core.processor.stuck")
         .asInstanceOf[ch.qos.logback.classic.Logger]
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     appender.start()
@@ -478,15 +487,17 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
         now = IO(System.currentTimeMillis())
         _ <- now.flatMap { n =>
           resources.agentRegistry.set(
-            Map("team-w-1" -> AgentRecord(
-              sessionId = "team-w-1",
-              ref = teamRef,
-              kind = AgentKind.Team,
-              rootSessionId = "root-1",
-              startedAt = n - 2 * 60 * 60 * 1000L,
-              status = AgentStatus.Processing,
-              lastActivityMs = n - 11 * 60 * 1000L
-            ))
+            Map(
+              "team-w-1" -> AgentRecord(
+                sessionId = "team-w-1",
+                ref = teamRef,
+                kind = AgentKind.Team,
+                rootSessionId = "root-1",
+                startedAt = n - 2 * 60 * 60 * 1000L,
+                status = AgentStatus.Processing,
+                lastActivityMs = n - 11 * 60 * 1000L
+              )
+            )
           )
         }
         _ <- TaskStuckWatcher.scan(resources, wsHub, 10 * 60 * 1000L)
@@ -510,16 +521,17 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
     finally
       lbLogger.detachAppender(appender)
       system.stopAll.attempt.void.unsafeRunSync()
+    end try
   }
 
   // ── Project flow 会话（node-/dispatcher-）卡死恢复（let-it-crash）──────────
 
   /** kind=Flow + supervisorRef=观察桥 + parentRef=None 的卡死分发器/节点形态。 */
   private def stuckProjectFlow(
-      system: ActorSystem,
-      sid: String,
-      bridgeRef: nebflow.actor.ActorRef[AgentEvent],
-      threshold: Long
+    system: ActorSystem,
+    sid: String,
+    bridgeRef: nebflow.actor.ActorRef[AgentEvent],
+    threshold: Long
   ): IO[AgentRecord] =
     for
       ref <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), s"$sid-agent")
@@ -587,6 +599,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(agentCmds.isEmpty, s"flow session must NOT receive raw Stop, got $agentCmds")
       // 未到 giveUp 阈值：桥不收 Cancelled
       assert(bridgeEvts.isEmpty, s"bridge must not receive events before giveUp, got $bridgeEvts")
+    end for
   }
 
   test("Project flow 会话连续分级接管 → L3 挂起腿（无恢复锚 ⇒ 不发桥信号）；resume 失败计数保留 → L4 failed 可达") {
@@ -621,13 +634,16 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       // 不重试，直接一次上报」，**挂起腿根本不启动**、故不发任何桥信号（这是负控① 的
       // 预期读数）。本用例保留的核心断言（**零 raw Stop** + 计数保留 ⇒ 可上报）逐字不变。
       val cancelled = bridgeEvts.collect { case c: AgentEvent.Cancelled => c }
-      assertEquals(cancelled, Nil,
-        s"无恢复锚（A1 空）⇒ 不启动挂起腿、不发桥信号（负控①：直接一次上报），got: $bridgeEvts")
+      assertEquals(cancelled, Nil, s"无恢复锚（A1 空）⇒ 不启动挂起腿、不发桥信号（负控①：直接一次上报），got: $bridgeEvts")
       // 全程零 raw Stop（即便 giveUp 也走桥 Cancelled）
       assert(agentCmds.isEmpty, s"flow session must never receive raw Stop, got $agentCmds")
       // L3 resume 失败（无 project runtime）→ 计数保留 → L4 "failed" 拍可达
       // （响亮失败，不因清零而静默掩盖迟钝恢复）。
-      assert(counts.contains("node-aaaa1111"), s"stopCounts must persist after failed resume so L4 failed is reachable, got: $counts")
+      assert(
+        counts.contains("node-aaaa1111"),
+        s"stopCounts must persist after failed resume so L4 failed is reachable, got: $counts"
+      )
+    end for
   }
 
   test("旧 flow 系统 dag- 会话（无 supervisorRef）维持 notice-only——不硬取消、不发 Cancelled") {
@@ -669,6 +685,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       assert(wsEvents.size == 1, s"expected one taskStuck notice, got $wsEvents")
       assertEquals(wsEvents.head.hcursor.get[String]("action").toOption, Some("attention"))
       assert(agentCmds.isEmpty, s"dag session must not receive commands, got $agentCmds")
+    end for
   }
 
 end TaskStuckWatcherSpec

@@ -2,7 +2,7 @@ package nebflow.gateway
 
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class MovePathSpec extends FunSuite:
 

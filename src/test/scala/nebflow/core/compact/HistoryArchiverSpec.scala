@@ -37,7 +37,10 @@ class HistoryArchiverSpec extends CatsEffectSuite:
             archive.sessionDir.contains("/test-session-abc123/compaction"),
             s"sessionDir should be <sessionsRoot>/<sessionId>/compaction: ${archive.sessionDir}"
           )
-          assert(!archive.sessionDir.contains("/archives/"), s"legacy archives/ path must not appear: ${archive.sessionDir}")
+          assert(
+            !archive.sessionDir.contains("/archives/"),
+            s"legacy archives/ path must not appear: ${archive.sessionDir}"
+          )
           assert(archive.beforeJsonPath.endsWith("-before.json"))
           assert(archive.afterJsonPath.endsWith("-after.json"))
           // All files should exist
@@ -156,7 +159,10 @@ class HistoryArchiverSpec extends CatsEffectSuite:
         case Right(archive) =>
           IO {
             val expected = (tmpHome / "sessions" / "wiring-session-01" / "compaction").toString
-            assert(archive.sessionDir.startsWith(expected), s"sessionDir under dataRoot sessions: ${archive.sessionDir}")
+            assert(
+              archive.sessionDir.startsWith(expected),
+              s"sessionDir under dataRoot sessions: ${archive.sessionDir}"
+            )
           }
         case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
       }

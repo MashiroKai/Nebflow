@@ -154,18 +154,19 @@ Git safety:
     """(?i)\benv\s+(-i\s+)?\w+=.*\$\w+""".r
   )
 
-  /** `rm` against the data root — derived at call time from PathUtil.dataRoot
-    * （home 硬编码 → 运行时动态化批 2026-09-11）。
-    *
-    * 旧实现是固定字面 `rm\s+.*~/.nebflow`：隔离实例（--home /tmp/...）下护错对象
-    * ——真正要护的是**本实例**的数据根。此处同时覆盖两种写法，保护面只增不减：
-    *   - `~/<homeDirName>`（默认 home 的字面形态，当前品牌 = `~/\.nebflow`）——
-    *     与旧正则同一目标串（Regex.quote 精确转义，等价面不缩水）；
-    *   - dataRoot 绝对路径（隔离实例 / 显式 --home 实例的真实写根）。
-    * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。 */
+  /**
+   * `rm` against the data root — derived at call time from PathUtil.dataRoot
+   * （home 硬编码 → 运行时动态化批 2026-09-11）。
+   *
+   * 旧实现是固定字面 `rm\s+.*~/.nebflow`：隔离实例（--home /tmp/...）下护错对象
+   * ——真正要护的是**本实例**的数据根。此处同时覆盖两种写法，保护面只增不减：
+   *   - `~/<homeDirName>`（默认 home 的字面形态，当前品牌 = `~/\.nebflow`）——
+   *     与旧正则同一目标串（Regex.quote 精确转义，等价面不缩水）；
+   *   - dataRoot 绝对路径（隔离实例 / 显式 --home 实例的真实写根）。
+   * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。
+   */
   private def dataRootWipePatterns: List[scala.util.matching.Regex] =
-    List("~/" + nebflow.core.Branding.homeDirName, nebflow.core.PathUtil.dataRoot.toString)
-      .distinct
+    List("~/" + nebflow.core.Branding.homeDirName, nebflow.core.PathUtil.dataRoot.toString).distinct
       .map(root => ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r)
 
   private def allDangerousPatterns: List[scala.util.matching.Regex] =
@@ -499,6 +500,7 @@ Git safety:
                   yield Right(
                     s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                   )
+                  end for
                 else if ctx.isRemoteExec then
                   // Remote-exec: run synchronously to completion and return the
                   // real output. The caller (another Nebflow instance via HTTP)
@@ -527,6 +529,8 @@ Git safety:
               }
           end if
     end match
+
+  end doCall
 
   /**
    * Execute a command in the foreground until it completes or fails.
@@ -660,9 +664,12 @@ Git safety:
             else IO.unit
           val sleepLike = shell.SleepCommandRe.findFirstIn(command).isDefined
           val hasProgress = alive && (lines > lastLines || cpuActive || sleepLike)
-          runningLog *> (if hasProgress then touchProcessActivity(ctx) *> loop(lines, cpu, tick) else loop(lastLines, lastCpu, tick))
+          runningLog *> (if hasProgress then touchProcessActivity(ctx) *> loop(lines, cpu, tick)
+                         else loop(lastLines, lastCpu, tick))
         }
     loop(health.outputLineCount.get(), 0L, 0).start
+
+  end startActivityBridge
 
   /**
    * Refresh the agent registry's **process-side** activity stamp for this
@@ -761,8 +768,10 @@ Git safety:
   private def trimTrailingWhitespace(s: String): String =
     s.split("\n").map(_.replaceAll("[ \t]+$", "")).mkString("\n")
 
-  /** 节点完成闸批：本调用是否发生在 Project 节点会话（node- 前缀，NodeEngine
-    * spawn 的单发 Flow 会话）。前缀常量单一来源 = NodeEngine.SessionPrefix。 */
+  /**
+   * 节点完成闸批：本调用是否发生在 Project 节点会话（node- 前缀，NodeEngine
+   * spawn 的单发 Flow 会话）。前缀常量单一来源 = NodeEngine.SessionPrefix。
+   */
   private def isNodeSession(ctx: ToolContext): Boolean =
     ctx.sessionId.exists(_.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
 
@@ -825,13 +834,15 @@ Git safety:
       // 等待集、显式取消（InterruptedException）是 agent 自主决策，均不入账。
       val gateLedger = result match
         case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
-          BgTaskRegistry.markFailed(
-            jobId,
-            ctx.sessionId.getOrElse(""),
-            ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-            description,
-            Option(e.getMessage).getOrElse("killed by background guard")
-          ).handleErrorWith(e2 => logger.warn(s"bg-gate ledger markFailed failed for job $jobId: ${e2.getMessage}"))
+          BgTaskRegistry
+            .markFailed(
+              jobId,
+              ctx.sessionId.getOrElse(""),
+              ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+              description,
+              Option(e.getMessage).getOrElse("killed by background guard")
+            )
+            .handleErrorWith(e2 => logger.warn(s"bg-gate ledger markFailed failed for job $jobId: ${e2.getMessage}"))
         case _ => IO.unit
 
       // Notify agent via ExternalEvent.
@@ -867,8 +878,9 @@ Git safety:
       BgTaskRegistry.unregister(jobId) *>
         // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
         // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
-        BgTaskOutputStore.finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt).handleErrorWith(e2 =>
-          logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
+        BgTaskOutputStore
+          .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
+          .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
         gateLedger *>
         logger.info(
           s"Background job $jobId callback: $eventType$exitInfo",
@@ -878,7 +890,12 @@ Git safety:
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
-  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String, persistent: Boolean = false): IO[Unit] =
+  private def emitBgTaskStarted(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    persistent: Boolean = false
+  ): IO[Unit] =
     // 来源标注（2026-09-07 后台任务面板重设计，作者指令②）：类别+显示名从
     // 注册会话推导（node- → Flow Map 节点名，dispatcher- → dispatcher/<project>，
     // 其余 → Nebula），注册与 WS 信封同源携带。
@@ -911,6 +928,8 @@ Git safety:
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
           send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))
       })
+
+  end emitBgTaskStarted
 
   /** Build a heartbeat callback that sends WS updates to frontend. */
   private def makeHeartbeatCallback(

@@ -81,7 +81,7 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
 
   private def mkProject(name: String, ws: os.Path): IO[Unit] =
     ProjectStore.create(name, ws.toString, None, s"# $name template\n").map {
-      case Right(_)  => ()
+      case Right(_) => ()
       case Left(err) => fail(s"create failed: $err")
     }
 

@@ -36,8 +36,10 @@ class WaitTimeoutR1PermissionSpec extends CatsEffectSuite:
       d <- Deferred[IO, Boolean]
       // 观测点：等待一旦提前结算（= 存在超时自动拒绝路径）立即记录其结果。
       earlyOutcome <- Ref.of[IO, Option[Boolean]](None)
-      fiber <- AgentCore.awaitPermissionDecision(d)
-        .flatMap(r => earlyOutcome.set(Some(r)).as(r)).start
+      fiber <- AgentCore
+        .awaitPermissionDecision(d)
+        .flatMap(r => earlyOutcome.set(Some(r)).as(r))
+        .start
       // 用户迟到 6min 才回答（> 被移除的 5min PermissionTimeout）。
       _ <- IO.sleep(6.minutes)
       // 6min 检查点：等待必须仍挂起（R1 后无任何提前结算路径；

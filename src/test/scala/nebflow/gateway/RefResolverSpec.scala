@@ -34,6 +34,8 @@ class RefResolverSpec extends FunSuite:
       acc.mapObject(_.add(k, v))
     }
 
+  end fileRef
+
   test("file ref resolves to a pointer block (source + title, no content)"):
     val res = RefResolver.resolve(fileRef())
     assert(res.isDefined)
@@ -106,7 +108,8 @@ class RefResolverSpec extends FunSuite:
   test("html-element ref resolves with element tag from the selector"):
     val el = fileRef(
       "refType" -> "html-element".asJson,
-      "source" -> Json.obj("kind" -> "web".asJson, "url" -> "https://ex.com/post".asJson, "title" -> "Post title".asJson),
+      "source" -> Json
+        .obj("kind" -> "web".asJson, "url" -> "https://ex.com/post".asJson, "title" -> "Post title".asJson),
       "anchor" -> Json.obj(
         "kind" -> "element".asJson,
         "selector" -> "html>body>div.post>p:nth-of-type(2)".asJson,
@@ -171,7 +174,12 @@ class RefResolverSpec extends FunSuite:
   test("task refType is NOT resolved here (routes to the return flow)"):
     val task = fileRef(
       "refType" -> "task".asJson,
-      "source" -> Json.obj("kind" -> "task".asJson, "taskId" -> "101".asJson, "sessionId" -> "sess-x".asJson, "title" -> "修复登录".asJson)
+      "source" -> Json.obj(
+        "kind" -> "task".asJson,
+        "taskId" -> "101".asJson,
+        "sessionId" -> "sess-x".asJson,
+        "title" -> "修复登录".asJson
+      )
     )
     assert(RefResolver.resolve(task).isEmpty)
 
@@ -210,7 +218,11 @@ class RefResolverSpec extends FunSuite:
         "fullText" -> fullText.asJson
       ),
       "meta" -> Json.obj("icon" -> "message-circle".asJson, "typeLabel" -> "好友消息".asJson, "date" -> date.asJson),
-      "display" -> Json.obj("label" -> "来自 林小满".asJson, "preview" -> fullText.take(160).asJson, "pageBadge" -> date.asJson)
+      "display" -> Json.obj(
+        "label" -> "来自 林小满".asJson,
+        "preview" -> fullText.take(160).asJson,
+        "pageBadge" -> date.asJson
+      )
     )
 
   test("friend-message ref injects the pinned text-layer block with the full body"):

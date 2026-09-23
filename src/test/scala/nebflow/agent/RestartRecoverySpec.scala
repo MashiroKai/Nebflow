@@ -19,16 +19,16 @@ import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Mess
 import scala.concurrent.duration.*
 
 /**
-  * Issue #13: AgentActor Mail 队列死锁——turn 卡死后 Mail 只见
-  * immediate-input-queued 永不 injected，restartAgent 无法恢复
-  * （pipeLlmCall 新调用静默挂起）。
-  *
-  * 本 spec 在当前基线复刻该场景：挂起 LLM 流（Stream.never，无 Done）的
-  * turn + 排队 ImmediateInput + restartAgent。断言三件事：
-  *  A. restart 后新 LLM 调用真的发生（不静默挂起）
-  *  B. 排队的 immediate 输入在 restart 后被注入（不被 reset 吃掉）
-  *  C. Full 级别真正从磁盘重建消息（不再与 Soft 同实现）
-  */
+ * Issue #13: AgentActor Mail 队列死锁——turn 卡死后 Mail 只见
+ * immediate-input-queued 永不 injected，restartAgent 无法恢复
+ * （pipeLlmCall 新调用静默挂起）。
+ *
+ * 本 spec 在当前基线复刻该场景：挂起 LLM 流（Stream.never，无 Done）的
+ * turn + 排队 ImmediateInput + restartAgent。断言三件事：
+ *  A. restart 后新 LLM 调用真的发生（不静默挂起）
+ *  B. 排队的 immediate 输入在 restart 后被注入（不被 reset 吃掉）
+ *  C. Full 级别真正从磁盘重建消息（不再与 Soft 同实现）
+ */
 class RestartRecoverySpec extends CatsEffectSuite:
 
   /** 吞掉所有消息的 parent 占位 behavior。 */
@@ -37,11 +37,13 @@ class RestartRecoverySpec extends CatsEffectSuite:
 
   /** 首请求永久挂起，后续请求正常回复——模拟卡死 turn。 */
   private class StuckThenOkLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >> Stream.eval(counter.get).flatMap { n =>
         if n <= stuckCount then Stream.never[IO]
@@ -80,11 +82,11 @@ class RestartRecoverySpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -134,7 +136,10 @@ class RestartRecoverySpec extends CatsEffectSuite:
       _ <- IO.sleep(500.millis)
       // Mail arrives mid-stuck-turn → immediate-input-queued (processing)
       _ <- ref ! AgentCommand.ImmediateInput(
-        "MAIL_WHILE_STUCK", source = Some("mail"), sender = Some("boss"), delivery = Some("immediate")
+        "MAIL_WHILE_STUCK",
+        source = Some("mail"),
+        sender = Some("boss"),
+        delivery = Some("immediate")
       )
       _ <- IO.sleep(200.millis)
       // Supervisor restart — the recovery under test
@@ -177,7 +182,10 @@ class RestartRecoverySpec extends CatsEffectSuite:
       _ <- ref ! AgentCommand.UserInput("STUCK_TURN_TASK_B", None)
       _ <- IO.sleep(500.millis)
       _ <- ref ! AgentCommand.ImmediateInput(
-        "MAIL_SURVIVES_RESTART", source = Some("mail"), sender = Some("boss"), delivery = Some("immediate")
+        "MAIL_SURVIVES_RESTART",
+        source = Some("mail"),
+        sender = Some("boss"),
+        delivery = Some("immediate")
       )
       _ <- IO.sleep(200.millis)
       _ <- ref ! AgentCommand.RestartAgent(RestartLevel.Soft)

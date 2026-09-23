@@ -49,13 +49,15 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private def writeSkill(dir: os.Path, skill: String, body: String): Unit =
     os.makeDir.all(dir / "skills" / skill)
-    os.write.over(dir / "skills" / skill / "SKILL.md",
+    os.write.over(
+      dir / "skills" / skill / "SKILL.md",
       s"""---
          |name: $skill
          |description: $skill test skill
          |---
          |# $skill
-         |$body""".stripMargin)
+         |$body""".stripMargin
+    )
 
   private def writeTools(dir: os.Path, tools: List[String]): Unit =
     os.makeDir.all(dir / "org.nebflow")
@@ -71,8 +73,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private val full = pluginDir("full")
   writeManifest(full, "full")
   writeSkill(full, "howto", "read ${SKILL_DIR}/refs/spec.md for details")
-  os.write.over(full / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"fetch":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
+
+  os.write.over(
+    full / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"fetch":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}"""
+  )
   writeTools(full, List("WebSearch", "WebFetch"))
 
   private val skillsOnly = pluginDir("skills-only")
@@ -81,16 +86,22 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private val mcpOnly = pluginDir("mcp-only")
   writeManifest(mcpOnly, "mcp-only")
-  os.write.over(mcpOnly / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
+
+  os.write.over(
+    mcpOnly / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}"""
+  )
 
   private val empty = pluginDir("empty")
   writeManifest(empty, "empty")
 
   private val badTools = pluginDir("bad-tools")
   writeManifest(badTools, "bad-tools")
-  os.write.over(badTools / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}""")
+
+  os.write.over(
+    badTools / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}"""
+  )
   writeTools(badTools, List("Mail")) // 编排类工具永不进白名单（§B.6；R2 2026-09-12：Task 退役，改判 Mail）
 
   private val messy = pluginDir("messy")
@@ -109,13 +120,16 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private def scan: IO[List[PluginRegistry.PluginDef]] = PluginRegistry.scan()
   private def names: IO[Set[String]] = scan.map(_.map(_.name).toSet)
+
   private def reset: IO[Unit] = IO {
     os.write.over(tempRoot / "nebflow.json", "{}")
     PluginRegistry.invalidateCache()
   }
 
-  /** 本 suite 盘上 6 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 载入
-    * 校验拒载；其余 4 包**在位即信任**⇒ 恒在目录里，不再构成缺席）。只列非零分类。 */
+  /**
+   * 本 suite 盘上 6 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 载入
+   * 校验拒载；其余 4 包**在位即信任**⇒ 恒在目录里，不再构成缺席）。只列非零分类。
+   */
   private val absenceNote2 = "另有 2 个插件未载入（装载失败 2）"
 
   // ── 扫描 / 装载校验（§B.2 / §B.8-7/5/8）────────────────────
@@ -152,8 +166,10 @@ class PluginRegistrySpec extends CatsEffectSuite:
       assert(!loaded.exists(_.name == "bad-tools"), "bad-tools must NOT load")
       val entry = rejected.find(_._1 == "bad-tools")
       assert(entry.isDefined, s"bad-tools must be rejected, got $rejected")
-      assert(entry.get._2.contains("Mail") && entry.get._2.contains("WebSearch"),
-        "rejection must name the illegal tool and the whitelist")
+      assert(
+        entry.get._2.contains("Mail") && entry.get._2.contains("WebSearch"),
+        "rejection must name the illegal tool and the whitelist"
+      )
     }
   }
 
@@ -194,12 +210,18 @@ class PluginRegistrySpec extends CatsEffectSuite:
       resolved <- PluginRegistry.resolve("messy") // 本 spec 从未 approve 过 messy
       scanned <- scan.map(_.find(_.name == "messy"))
     yield
-      assert(resolved.isRight,
-        s"a package with NO approval record must resolve (presence = trust), got: ${resolved.swap.toOption}")
-      assert(scanned.exists(p => p.trust.trusted && !p.contentChanged),
-        "no record ⇒ trusted=true, contentChanged=false (nothing to compare against)")
-      assert(!resolved.swap.toOption.getOrElse("").contains("default-deny"),
-        "the default-deny wording must be gone from every path")
+      assert(
+        resolved.isRight,
+        s"a package with NO approval record must resolve (presence = trust), got: ${resolved.swap.toOption}"
+      )
+      assert(
+        scanned.exists(p => p.trust.trusted && !p.contentChanged),
+        "no record ⇒ trusted=true, contentChanged=false (nothing to compare against)"
+      )
+      assert(
+        !resolved.swap.toOption.getOrElse("").contains("default-deny"),
+        "the default-deny wording must be gone from every path"
+      )
   }
 
   test("在位即信任: 无记录包进分发给新节点的 Plugin Catalog（作者令最直观的可见效果）") {
@@ -210,8 +232,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
       for n <- List("full", "skills-only", "mcp-only", "messy")
       do assert(catalog.contains(s"- $n:"), s"record-less package '$n' must appear in the catalog:\n$catalog")
       assert(!catalog.contains("- empty:"), "load-failed package must not render a line")
-      assertEquals(catalog.linesIterator.toList.last, absenceNote2,
-        s"catalog tail must aggregate the load-failed absences: $catalog")
+      assertEquals(
+        catalog.linesIterator.toList.last,
+        absenceNote2,
+        s"catalog tail must aggregate the load-failed absences: $catalog"
+      )
   }
 
   test("§B.3 审计记录: approve 写记录（不再决定装载）、resolve 幂等仍 Right") {
@@ -233,23 +258,25 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- reset
       _ <- PluginRegistry.approve("mcp-only")
       clean <- scan.map(_.find(_.name == "mcp-only"))
-      _ = assert(clean.exists(p => p.trust.trusted && !p.contentChanged),
-        "approved & untouched ⇒ contentChanged=false")
+      _ = assert(clean.exists(p => p.trust.trusted && !p.contentChanged), "approved & untouched ⇒ contentChanged=false")
       _ <- IO.sleep(20.millis) // mtime 粒度保险
       _ <- IO.blocking(os.write.append(tempRoot / "plugins" / "mcp-only" / "mcp.json", "\n"))
       _ <- IO(PluginRegistry.invalidateCache())
       after <- PluginRegistry.resolve("mcp-only")
       drifted <- scan.map(_.find(_.name == "mcp-only"))
       catalog <- PluginRegistry.renderCatalog()
-      manifest <- PluginRegistry.listWithRejected().map(_._1.find(_.name == "mcp-only").map(PluginRegistry.approvalManifest))
+      manifest <- PluginRegistry
+        .listWithRejected()
+        .map(_._1.find(_.name == "mcp-only").map(PluginRegistry.approvalManifest))
     yield
-      assert(after.isRight,
-        s"content change must NOT gate loading any more, got: ${after.swap.toOption}")
+      assert(after.isRight, s"content change must NOT gate loading any more, got: ${after.swap.toOption}")
       assert(drifted.exists(_.contentChanged), "digest drift must surface as the non-blocking contentChanged flag")
       assert(catalog.contains("- mcp-only:"), "a content-changed package stays in the catalog (visible, not removed)")
       assert(catalog.contains("内容与上次记录的版本不同"), s"catalog tail must carry the content-changed note:\n$catalog")
-      assert(manifest.exists(_.hcursor.downField("contentChanged").as[Boolean].getOrElse(false)),
-        "GET /plugins item must expose contentChanged=true")
+      assert(
+        manifest.exists(_.hcursor.downField("contentChanged").as[Boolean].getOrElse(false)),
+        "GET /plugins item must expose contentChanged=true"
+      )
   }
 
   test("封禁: block → resolve Left(PLUGIN_BLOCKED, 文案含 unblock) + 出目录 + 清单 blocked=true") {
@@ -258,7 +285,8 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- PluginBlockPolicy.block("full", "spec denial", "spec")
       blocked <- PluginRegistry.resolve("full")
       catalog <- PluginRegistry.renderCatalog()
-      item <- PluginRegistry.listWithRejected()
+      item <- PluginRegistry
+        .listWithRejected()
         .map(_._1.find(_.name == "full").map(PluginRegistry.approvalManifest))
       _ <- PluginBlockPolicy.unblock("full", "spec")
       restored <- PluginRegistry.resolve("full")
@@ -268,12 +296,18 @@ class PluginRegistrySpec extends CatsEffectSuite:
       val err = blocked.swap.toOption.getOrElse("")
       assert(err.contains("PLUGIN_BLOCKED"), s"block reason must carry its error code, got: $err")
       assert(err.contains("unblock"), s"block reason must point at the action that exists, got: $err")
-      assert(!err.contains("never approved") && !err.contains("default-deny"),
-        s"the retired default-deny wording must never come back, got: $err")
+      assert(
+        !err.contains("never approved") && !err.contains("default-deny"),
+        s"the retired default-deny wording must never come back, got: $err"
+      )
       assert(!catalog.contains("- full:"), s"a blocked package must leave the catalog:\n$catalog")
       val it = item.getOrElse(fail("full must still be listed (blocked, not hidden)"))
       assertEquals(it.hcursor.downField("blocked").as[Boolean].toOption, Some(true), "item.blocked must be true")
-      assertEquals(it.hcursor.downField("trusted").as[Boolean].toOption, Some(false), "item.trusted must be false for a blocked package")
+      assertEquals(
+        it.hcursor.downField("trusted").as[Boolean].toOption,
+        Some(false),
+        "item.trusted must be false for a blocked package"
+      )
       assertEquals(it.hcursor.downField("trust").downField("status").as[String].toOption, Some("blocked"))
       assert(restored.isRight, "unblock must restore presence trust")
       assert(catalogAfter.contains("- full:"), "an unblocked package must re-enter the catalog")
@@ -289,8 +323,10 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- PluginBlockPolicy.unblock("skills-only", "spec")
       restored <- PluginRegistry.resolve("skills-only")
     yield
-      assert(stillBlocked.isLeft,
-        s"approve must NOT clear a block (independent namespace): ${stillBlocked.swap.toOption}")
+      assert(
+        stillBlocked.isLeft,
+        s"approve must NOT clear a block (independent namespace): ${stillBlocked.swap.toOption}"
+      )
       assert(revokedOnDisk, "the block record must live in its own `plugins.revoked` namespace")
       assert(restored.isRight, "unblock restores availability")
   }
@@ -303,9 +339,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- PluginBlockPolicy.unblock("messy", "spec")
     yield
       assert(!catalog.contains("- messy:"), s"blocked package must not render a line:\n$catalog")
-      assertEquals(catalog.linesIterator.toList.last,
+      assertEquals(
+        catalog.linesIterator.toList.last,
         "另有 3 个插件未载入（装载失败 2 / 已封禁 1）",
-        s"absence note must count the blocked package:\n$catalog")
+        s"absence note must count the blocked package:\n$catalog"
+      )
   }
 
   test("健康摘要: 拒载 + 封禁 + 内容变更各一行（内容变更不缺席）") {
@@ -313,7 +351,9 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- reset
       _ <- PluginRegistry.approve("skills-only")
       _ <- IO.sleep(20.millis)
-      _ <- IO.blocking(os.write.append(tempRoot / "plugins" / "skills-only" / "skills" / "explore" / "SKILL.md", "\nmod\n"))
+      _ <- IO.blocking(
+        os.write.append(tempRoot / "plugins" / "skills-only" / "skills" / "explore" / "SKILL.md", "\nmod\n")
+      )
       _ <- PluginBlockPolicy.block("messy", "spec health", "spec")
       _ <- IO(PluginRegistry.invalidateCache())
       health <- PluginRegistry.healthSummary()
@@ -321,16 +361,28 @@ class PluginRegistrySpec extends CatsEffectSuite:
     yield
       val text = health.getOrElse(fail("anomalous registry must produce a health summary"))
       val lines = text.linesIterator.toList
-      assert(lines.head.startsWith("6 package(s) on disk, 4 loaded, 3 catalog-visible, 3 absent (load-failed 2 / blocked 1), "),
-        s"head counts must be complete: ${lines.head}")
-      assert(lines.head.endsWith("content-changed") && lines.head.matches(".*, \\d+ content-changed$"),
-        s"head must count content changes: ${lines.head}")
-      assert(lines.exists(l => l.contains("[load-failed] empty:") && l.contains("neither")),
-        s"rejected package must be listed with its reason: $text")
-      assert(lines.exists(l => l.contains("[blocked] messy:") && l.contains("spec health")),
-        s"blocked package must be listed with its block reason: $text")
-      assert(lines.exists(l => l.contains("[content-changed] skills-only:") && l.contains("not intercepted")),
-        s"content-changed package must be listed as NON-blocking: $text")
+      assert(
+        lines.head.startsWith(
+          "6 package(s) on disk, 4 loaded, 3 catalog-visible, 3 absent (load-failed 2 / blocked 1), "
+        ),
+        s"head counts must be complete: ${lines.head}"
+      )
+      assert(
+        lines.head.endsWith("content-changed") && lines.head.matches(".*, \\d+ content-changed$"),
+        s"head must count content changes: ${lines.head}"
+      )
+      assert(
+        lines.exists(l => l.contains("[load-failed] empty:") && l.contains("neither")),
+        s"rejected package must be listed with its reason: $text"
+      )
+      assert(
+        lines.exists(l => l.contains("[blocked] messy:") && l.contains("spec health")),
+        s"blocked package must be listed with its block reason: $text"
+      )
+      assert(
+        lines.exists(l => l.contains("[content-changed] skills-only:") && l.contains("not intercepted")),
+        s"content-changed package must be listed as NON-blocking: $text"
+      )
   }
 
   // ── feature flag（§G.2）────────────────────────────────

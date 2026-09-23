@@ -55,9 +55,13 @@ class TaskListReminderSpec extends FunSuite:
     val store = readStore.getOrElse(nebflow.core.tools.TaskListData())
     val existing = store.tasks.filterNot(_.id == id)
     val entry = nebflow.core.tools.TaskListEntry(
-      id = id, title = title, status = status,
-      createdAt = Some("2026-09-06T00:00:00Z"), updatedAt = Some("2026-09-06T00:00:00Z"),
-      closedAt = Option.when(status == "done")("2026-09-06T00:00:00Z"))
+      id = id,
+      title = title,
+      status = status,
+      createdAt = Some("2026-09-06T00:00:00Z"),
+      updatedAt = Some("2026-09-06T00:00:00Z"),
+      closedAt = Option.when(status == "done")("2026-09-06T00:00:00Z")
+    )
     os.write.over(file, store.copy(tasks = existing :+ entry).asJson.noSpaces, createFolders = true)
 
   private def readStore: Option[nebflow.core.tools.TaskListData] =
@@ -111,8 +115,8 @@ class TaskListReminderSpec extends FunSuite:
     seedTask("1", "机密标题内容不应全量出现在提示里", "open")
     // note 直写盘面（seedTask 不含 note 字段，手动补）
     val store = readStore.get
-    val patched = store.copy(tasks = store.tasks.map(t =>
-      if t.id == "1" then t.copy(note = Some("这是很长的机密备注正文不应注入提示词XYZ")) else t))
+    val patched =
+      store.copy(tasks = store.tasks.map(t => if t.id == "1" then t.copy(note = Some("这是很长的机密备注正文不应注入提示词XYZ")) else t))
     os.write.over(file, patched.asJson.noSpaces)
     val block = ContextRefresher.buildMemoryBlock("Nebula")
     assert(block.contains("[TaskList]"), "摘要行在")
@@ -134,17 +138,18 @@ class TaskListReminderSpec extends FunSuite:
     seedTask("1", "写交付报告", "open")
     MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false)
     val block = ContextRefresher.buildMemoryBlock("Nebula")
-    assert(block.contains("TaskList(action=list|show)"),
-      s"尾指引必须含 show（否则模型不知道能查变更史）: $block")
+    assert(block.contains("TaskList(action=list|show)"), s"尾指引必须含 show（否则模型不知道能查变更史）: $block")
 
   test("升级批：变更史 / 时间线文本永不进记忆块（史只在 show 按需读取）"):
     resetTasks()
     seedTask("1", "有史任务", "open")
     // 直造史文件：含醒目标记串 + note 时间线形态文本
-    os.write.over(home / "tasks-history.jsonl",
+    os.write.over(
+      home / "tasks-history.jsonl",
       """{"at":"2026-09-11T00:00:00Z","actor":"nebula","kind":"log","id":"1","text":"史文件机密正文XYZ不应注入"}
         |{"at":"2026-09-11T00:01:00Z","actor":"nebula","kind":"update","id":"1","field":"note","from":"旧版机密A不应注入","to":"新版机密B不应注入"}""".stripMargin,
-      createFolders = true)
+      createFolders = true
+    )
     MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false)
     val block = ContextRefresher.buildMemoryBlock("Nebula")
     assert(block.contains("[TaskList]"), block)

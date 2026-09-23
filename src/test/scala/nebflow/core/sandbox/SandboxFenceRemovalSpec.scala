@@ -58,7 +58,10 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
     pinnedDataRoot = None
     // 自清：本批建的临时目录一律删除（跑完零残留；与 AGENTS.md「自起进程跑完即清」
     // 同口径的测试侧纪律）
-    createdDirs.foreach(p => try os.remove.all(p) catch case _: Exception => ())
+    createdDirs.foreach(p =>
+      try os.remove.all(p)
+      catch case _: Exception => ()
+    )
     createdDirs.clear()
     super.afterEach(context)
 
@@ -82,16 +85,19 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       "项目节点会话（projectSession=true）必须仍注入 AGENTS.md"
     )
     assert(
-      ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = Some("/ws/a"), agentName = "project-dispatcher"),
+      ContextRefresher
+        .agentsMdEnabledFor(projectSession = true, projectRoot = Some("/ws/a"), agentName = "project-dispatcher"),
       "分发器会话必须仍注入 AGENTS.md"
     )
     // 边界：Nebula 根会话（WS 根会话形态位不置 false→projectSession=false；名字排除为第二道保险）
     assert(
-      !ContextRefresher.agentsMdEnabledFor(projectSession = false, projectRoot = Some("/x/.nebflow/projects"), agentName = "Nebula"),
+      !ContextRefresher
+        .agentsMdEnabledFor(projectSession = false, projectRoot = Some("/x/.nebflow/projects"), agentName = "Nebula"),
       "Nebula 根会话不得注入"
     )
     assert(
-      !ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = Some("/x/.nebflow/projects"), agentName = "Nebula"),
+      !ContextRefresher
+        .agentsMdEnabledFor(projectSession = true, projectRoot = Some("/x/.nebflow/projects"), agentName = "Nebula"),
       "即便 projectSession 误置 true，Nebula 名字排除仍拦（第二道保险）"
     )
     assert(!ContextRefresher.agentsMdEnabledFor(projectSession = true, projectRoot = None), "无 projectRoot 不注入")
@@ -104,8 +110,10 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
     assertEquals(nodeShape.session.sandboxEnabled, true)
     // 解耦核心：围栏总闸关掉（sandboxEnabled=false）不影响项目会话注入判据
     val fenceOffShape = AgentState(sessionId = Some("s-node-off"), projectSession = true, sandboxEnabled = false)
-    assert(ContextRefresher.agentsMdEnabledFor(fenceOffShape.session.projectSession, Some("/ws/b"), "qa-backend"),
-      "sandboxEnabled=false + projectSession=true ⇒ 仍注入（拆围栏不得连带关注入）")
+    assert(
+      ContextRefresher.agentsMdEnabledFor(fenceOffShape.session.projectSession, Some("/ws/b"), "qa-backend"),
+      "sandboxEnabled=false + projectSession=true ⇒ 仍注入（拆围栏不得连带关注入）"
+    )
     // 默认位 = 非项目会话（WS 根会话 / team / flow / Delegate / SubTask 双轨面）
     assertEquals(AgentState().session.projectSession, false)
     assertEquals(AgentState().session.sandboxEnabled, false)
@@ -144,10 +152,14 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "rel.txt").swap.toOption.map(_.message),
       Some("Path must be absolute, got: rel.txt")
     )
-    assertEquals(ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "~/rel.txt").swap.toOption.map(_.message),
-      Some("Path must be absolute, got: ~/rel.txt"))
-    assertEquals(ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "/abs/y.txt").toOption.map(_.toString),
-      Some("/abs/y.txt"))
+    assertEquals(
+      ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "~/rel.txt").swap.toOption.map(_.message),
+      Some("Path must be absolute, got: ~/rel.txt")
+    )
+    assertEquals(
+      ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "/abs/y.txt").toOption.map(_.toString),
+      Some("/abs/y.txt")
+    )
   }
 
   // ------------------------------------------------------------------
@@ -159,8 +171,7 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
     val ctx = ctxIn(tmp)
     val outsideHome = os.home / "nb-s2-decouple-probe.txt"
     // Write/Edit/MultiEdit → checkWrite；Read → checkRead；Glob/Grep 搜索根 → checkReadRoot
-    for
-      case (probe, isWrite) <- List(
+    for case (probe, isWrite) <- List(
         (outsideHome.toString, true),
         ("/etc/hosts", true),
         (outsideHome.toString, false),
@@ -186,16 +197,26 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
   test("S2-a: 回退态（off / enabled=false）行为逐字不变——四件套仍拒相对路径，无 canon/无闸") {
     val tmp = freshDir("rollback")
     val offCtx = ToolContext(projectRoot = tmp.toString, sandbox = SandboxPolicy.off)
-    assertEquals(FileSandbox.checkWrite(offCtx, "rel.txt").swap.toOption.map(_.message),
-      Some("Path must be absolute, got: rel.txt"))
-    assertEquals(FileSandbox.checkRead(offCtx, "rel.txt").swap.toOption.map(_.message),
-      Some("Path must be absolute, got: rel.txt"))
-    assertEquals(FileSandbox.checkWrite(offCtx, "/tmp/rollback-probe.txt").toOption.map(_.toString),
-      Some("/tmp/rollback-probe.txt"), "off 态原样返回（不 canonicalize，旧行为）")
+    assertEquals(
+      FileSandbox.checkWrite(offCtx, "rel.txt").swap.toOption.map(_.message),
+      Some("Path must be absolute, got: rel.txt")
+    )
+    assertEquals(
+      FileSandbox.checkRead(offCtx, "rel.txt").swap.toOption.map(_.message),
+      Some("Path must be absolute, got: rel.txt")
+    )
+    assertEquals(
+      FileSandbox.checkWrite(offCtx, "/tmp/rollback-probe.txt").toOption.map(_.toString),
+      Some("/tmp/rollback-probe.txt"),
+      "off 态原样返回（不 canonicalize，旧行为）"
+    )
     // cfg.enabled=false → forRoot 短路 off（§4.5 回退点保留）
-    val cfgOff = ToolContext(projectRoot = tmp.toString, sandbox = SandboxPolicy.forRoot(tmp, SandboxConfig(enabled = false)))
-    assertEquals(FileSandbox.checkWrite(cfgOff, "rel.txt").swap.toOption.map(_.message),
-      Some("Path must be absolute, got: rel.txt"))
+    val cfgOff =
+      ToolContext(projectRoot = tmp.toString, sandbox = SandboxPolicy.forRoot(tmp, SandboxConfig(enabled = false)))
+    assertEquals(
+      FileSandbox.checkWrite(cfgOff, "rel.txt").swap.toOption.map(_.message),
+      Some("Path must be absolute, got: rel.txt")
+    )
   }
 
   test("S2-b: agents/<agent>/memory.md 写拒仍在（R3=c1 写侧例外）；Nebula 自身豁免；symlink 间接路径同拦") {
@@ -208,8 +229,10 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
         assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
         assert(err.message.contains("private-memory"), s"文案须点名规则: ${err.message}")
       case Right(_) => fail("agents/<agent>/memory.md（非 Nebula 份）写必须仍拒——R3=c1 写侧例外")
-    assert(FileSandbox.checkWrite(ctx, nebulaMem.toString).isRight,
-      "Nebula 自身 memory.md 走审计只读例外（写放行，数据根写面承载）——例外语义不得被误扩大")
+    assert(
+      FileSandbox.checkWrite(ctx, nebulaMem.toString).isRight,
+      "Nebula 自身 memory.md 走审计只读例外（写放行，数据根写面承载）——例外语义不得被误扩大"
+    )
     // symlink 间接路径：canonical 域比较拦下（与旧实现同构）
     val alias = tmp / "alias.md"
     try
@@ -250,7 +273,9 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       .unsafeRunSync() match
       case Right(out) => assert(out.contains("memory.md"), s"遍历排除退役后应命中 memory.md: $out")
       case Left(err) => fail(s"Grep 不得报错：${err.message}")
-    GlobTool.call(JsonObject("pattern" -> "**/memory.md".asJson, "path" -> agentsDir.toString.asJson), ctx).unsafeRunSync() match
+    GlobTool
+      .call(JsonObject("pattern" -> "**/memory.md".asJson, "path" -> agentsDir.toString.asJson), ctx)
+      .unsafeRunSync() match
       case Right(out) =>
         assert(out.contains("memory.md"), s"Glob 应命中 memory.md: $out")
         assert(out.contains("Nebula") && out.contains("Coder"), s"应命中两份 agent 记忆: $out")
@@ -269,3 +294,4 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       case Right(out) => assert(out.contains("needle.txt"), s"Glob 缺省根应为会话根: $out")
       case Left(err) => fail(s"Glob 缺省根调用失败：${err.message}")
   }
+end SandboxFenceRemovalSpec

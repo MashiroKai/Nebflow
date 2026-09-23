@@ -67,6 +67,7 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
     private val bodies = new ConcurrentLinkedQueue[String]()
 
     server.setExecutor(pool)
+
     server.createContext(
       "/api/neblink/remote-exec",
       (ex: HttpExchange) =>
@@ -78,7 +79,7 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
           .flatMap(_.hcursor.get[String]("action").toOption)
           .getOrElse("?")
         val envelope = action match
-          case "Read"         => Json.obj("output" -> readOutput.asJson, "error" -> "".asJson)
+          case "Read" => Json.obj("output" -> readOutput.asJson, "error" -> "".asJson)
           case "FileTransfer" => Json.obj("output" -> transferJson.asJson, "error" -> "".asJson)
           // 画像探针（Read 前的那一条只读 Bash）与其它动作：空成功即可。
           case _ => Json.obj("output" -> "".asJson, "error" -> "".asJson)
@@ -107,6 +108,8 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
       pool.shutdownNow()
       ()
 
+  end StubPeerServer
+
   /** 建一个可源件比对的 PNG（ImageIO 可解码 ⇒ `prepareImage` 原样返回）。 */
   private def writePng(name: String): (String, Array[Byte]) =
     val img = new java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB)
@@ -126,25 +129,28 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
     filePath: String
   ): IO[(ToolExecResult, List[String])] =
     IO.blocking(new StubPeerServer(readOutput, transferJson)).flatMap { stub =>
-      Dispatcher.parallel[IO].use { dispatcher =>
-        for
-          ms <- NeblinkService.create(0, dispatcher)
-          _ = ms.setRelayClient(None)
-          _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
-          _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", stub.address))
-          ctx = ToolContext(projectRoot = tmpDir.toString)
-          call = ToolCall(
-            id = "call-1",
-            name = "Read",
-            input = JsonObject(
-              "file_path" -> filePath.asJson,
-              "device" -> "peer-one".asJson
+      Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          for
+            ms <- NeblinkService.create(0, dispatcher)
+            _ = ms.setRelayClient(None)
+            _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+            _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", stub.address))
+            ctx = ToolContext(projectRoot = tmpDir.toString)
+            call = ToolCall(
+              id = "call-1",
+              name = "Read",
+              input = JsonObject(
+                "file_path" -> filePath.asJson,
+                "device" -> "peer-one".asJson
+              )
             )
-          )
-          result <- new TestCore().exec(call, ctx)
-          seen <- IO.blocking(stub.actions)
-        yield (result, seen)
-      }.guarantee(IO.blocking(stub.close()))
+            result <- new TestCore().exec(call, ctx)
+            seen <- IO.blocking(stub.actions)
+          yield (result, seen)
+        }
+        .guarantee(IO.blocking(stub.close()))
     }
 
   test("设备腿读图：远端 `[image: …]` 标记 ⇒ 经既有 FileTransfer 回拉 ⇒ imageBlocks 非空且块与源件一致"):

@@ -91,14 +91,20 @@ object GlobTool extends Tool:
     // head_limit（20260909 Glob 修复批）：缺省 MAX_RESULTS；非法值给可行动文案
     val headLimit: Either[ToolError, Int] =
       input("head_limit").flatMap(_.asNumber).flatMap(_.toInt) match // JsonNumber.toInt: Option[Int]（可溢出）
-        case None    => Right(MAX_RESULTS)
+        case None => Right(MAX_RESULTS)
         case Some(n) =>
           if n < 1 then
-            Left(ToolError(
-              s"Invalid head_limit: $n — must be >= 1. Omit the parameter for the default ($MAX_RESULTS). (GLOB_HEAD_LIMIT)"))
+            Left(
+              ToolError(
+                s"Invalid head_limit: $n — must be >= 1. Omit the parameter for the default ($MAX_RESULTS). (GLOB_HEAD_LIMIT)"
+              )
+            )
           else if n > MAX_HEAD_LIMIT then
-            Left(ToolError(
-              s"Invalid head_limit: $n — must be <= $MAX_HEAD_LIMIT. Use a more specific pattern instead of a larger window. (GLOB_HEAD_LIMIT)"))
+            Left(
+              ToolError(
+                s"Invalid head_limit: $n — must be <= $MAX_HEAD_LIMIT. Use a more specific pattern instead of a larger window. (GLOB_HEAD_LIMIT)"
+              )
+            )
           else Right(n)
 
     // Resolve search directory
@@ -122,17 +128,23 @@ object GlobTool extends Tool:
         Right(os.Path(baseFromPattern))
       else if baseFromPattern.nonEmpty then
         if baseFromPattern.split('/').contains("..") then
-          Left(ToolError(
-            s"Invalid glob pattern: static directory prefix '$baseFromPattern' must not contain '..' segments — " +
-              "search stays within the search root; adjust the pattern's directory prefix. (GLOB_PATTERN)"))
+          Left(
+            ToolError(
+              s"Invalid glob pattern: static directory prefix '$baseFromPattern' must not contain '..' segments — " +
+                "search stays within the search root; adjust the pattern's directory prefix. (GLOB_PATTERN)"
+            )
+          )
         else
           val base = explicitPath.getOrElse(workDirPath)
           try Right(base / os.RelPath(baseFromPattern))
           catch
             case e: Exception =>
-              Left(ToolError(
-                s"Invalid glob pattern: static directory prefix '$baseFromPattern' is not a usable relative path " +
-                  s"(${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}). (GLOB_PATTERN)"))
+              Left(
+                ToolError(
+                  s"Invalid glob pattern: static directory prefix '$baseFromPattern' is not a usable relative path " +
+                    s"(${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}). (GLOB_PATTERN)"
+                )
+              )
       else Right(explicitPath.getOrElse(workDirPath))
 
     // dot 显式判定（20260909 Glob 修复批）：用户 pattern 任一路径段以 "." 开头
@@ -193,8 +205,7 @@ object GlobTool extends Tool:
     // 过滤（rg 15 实证），故负向 glob 实现；"!.*/" 剪枝隐藏目录（.git/.svn/.hg
     // 等 dot 目录一并覆盖——旧五条 VCS 专用排除被替代）。pattern 显式含 "." 段
     // 时不加（显式点名放行，defect ③ 的 "*/.git" 场景）。
-    if !dotExplicit then
-      args ++= List("--glob", "!.*/", "--glob", "!.*")
+    if !dotExplicit then args ++= List("--glob", "!.*/", "--glob", "!.*")
     // agent 私有记忆排除（后置 glob 规则优先级更高——rg last-match-wins）
     args ++= memoryExcludes
 
@@ -243,5 +254,6 @@ object GlobTool extends Tool:
                 s"Use a more specific pattern to narrow, or raise head_limit (max $MAX_HEAD_LIMIT).)"
             else ""
           Right(output + note)
+    end match
   end runGlob
 end GlobTool

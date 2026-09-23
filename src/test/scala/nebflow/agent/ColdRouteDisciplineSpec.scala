@@ -3,21 +3,22 @@ package nebflow.agent
 import nebflow.agent.PromptSections.*
 import nebflow.core.PathUtil
 
-/** 冷启动路由纪律批（2026-09-17）——order-370 根代理段的定向断言。
-  *
-  * 存在理由：提示词字面量（`AgentLibrary.Seeds.Nebula`）里作者六句 spec 的
-  * ④⑤⑥ 零落地，冷启动实例以 10×Read 探地开场、0 次 Mail（诊断件
-  * `.nebflow/reports/20260917_coldroute-diag.md`）。本 spec 只钉三条机制面
-  * 不变量，不重复诊断件的行为层结论：
-  *
-  *   1. 存在性 —— 根身份（`isRootAgent = true`）装配结果含本段；
-  *   2. 隔离性 —— 非根身份（项目分发器 / 节点会话）装配结果不含本段；
-  *   3. 文本纪律 —— 纯静态、与 PromptContext 无关、零绝对路径、零 hostname。
-  *
-  * 复用既有套件的隔离手法（`PromptSectionsSpec.withIsolatedDataRoot` 同款）：
-  * 文件版条件段（`<dataRoot>/prompts/sections/` 下的 .md 与子目录，同 order 可覆盖内建段）不得
-  * 影响内建段的注入断言。
-  */
+/**
+ * 冷启动路由纪律批（2026-09-17）——order-370 根代理段的定向断言。
+ *
+ * 存在理由：提示词字面量（`AgentLibrary.Seeds.Nebula`）里作者六句 spec 的
+ * ④⑤⑥ 零落地，冷启动实例以 10×Read 探地开场、0 次 Mail（诊断件
+ * `.nebflow/reports/20260917_coldroute-diag.md`）。本 spec 只钉三条机制面
+ * 不变量，不重复诊断件的行为层结论：
+ *
+ *   1. 存在性 —— 根身份（`isRootAgent = true`）装配结果含本段；
+ *   2. 隔离性 —— 非根身份（项目分发器 / 节点会话）装配结果不含本段；
+ *   3. 文本纪律 —— 纯静态、与 PromptContext 无关、零绝对路径、零 hostname。
+ *
+ * 复用既有套件的隔离手法（`PromptSectionsSpec.withIsolatedDataRoot` 同款）：
+ * 文件版条件段（`<dataRoot>/prompts/sections/` 下的 .md 与子目录，同 order 可覆盖内建段）不得
+ * 影响内建段的注入断言。
+ */
 class ColdRouteDisciplineSpec extends munit.FunSuite:
 
   private val sectionHeader = "## Routing discipline (root agent)"

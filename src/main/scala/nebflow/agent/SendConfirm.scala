@@ -54,8 +54,10 @@ object SendConfirm:
   /** 拒绝标签（展示用；非批准值一律不投递，故它不是唯一的不放行信号）。 */
   val DeclineLabel = "拒绝"
 
-  /** 确认等待上限 = 60s（`FriendService` 既有口径「ask：每次弹确认（60s 超时=拒绝）」
-    * 的现代表达：超时 = 不发送，且**可判定**为一等错误而非静默拒绝）。 */
+  /**
+   * 确认等待上限 = 60s（`FriendService` 既有口径「ask：每次弹确认（60s 超时=拒绝）」
+   * 的现代表达：超时 = 不发送，且**可判定**为一等错误而非静默拒绝）。
+   */
   val DefaultTimeout: FiniteDuration = 60.seconds
 
   /** 超时可注入（规格/冒烟用；生产缺省 60s）。每次读取 —— 测试可临时覆写。 */
@@ -68,21 +70,24 @@ object SendConfirm:
       .map(_.millis)
       .getOrElse(DefaultTimeout)
 
-  /** 一次代发的交互靶：「谁在问（会话/agent）+ 问谁（收件人标签）+ 等多久」。
-    * 字段名 `waitFor`（**非** `wait`）：`wait` 是 `java.lang.Object.wait` 的
-    * final 成员，case class 字段同名即编译报 E164。 */
+  /**
+   * 一次代发的交互靶：「谁在问（会话/agent）+ 问谁（收件人标签）+ 等多久」。
+   * 字段名 `waitFor`（**非** `wait`）：`wait` 是 `java.lang.Object.wait` 的
+   * final 成员，case class 字段同名即编译报 E164。
+   */
   final case class AskTarget(ctx: ToolContext, recipientLabel: String, waitFor: FiniteDuration)
 
   /** 确认链不可用（无靶 / hub 未起 / 无会话 id）。fail-closed。 */
-  final class Unavailable(detail: String)
-      extends Exception(s"no interactive confirmation surface: $detail")
+  final class Unavailable(detail: String) extends Exception(s"no interactive confirmation surface: $detail")
 
   /** 窗口内未答复。fail-closed（不发送），卡片已撤回。 */
   final class TimedOut(requestId: String, waited: FiniteDuration)
       extends Exception(s"confirmation timed out after ${waited.toMillis}ms (requestId=$requestId)")
 
-  /** fiber-local 靶（`IOLocal`：CE 标准原语，fiber 作用域 ⇒ 多会话并发零串台）。
-    * 对象初始化期创建（`LlmLogWriter` 的 `Queue.bounded(...).unsafeRunSync()` 同族先例）。 */
+  /**
+   * fiber-local 靶（`IOLocal`：CE 标准原语，fiber 作用域 ⇒ 多会话并发零串台）。
+   * 对象初始化期创建（`LlmLogWriter` 的 `Queue.bounded(...).unsafeRunSync()` 同族先例）。
+   */
   private val target: IOLocal[Option[AskTarget]] =
     IOLocal[Option[AskTarget]](None).unsafeRunSync()
 
@@ -94,9 +99,11 @@ object SendConfirm:
   def targetFor(ctx: ToolContext, recipientLabel: String, waitFor: FiniteDuration = timeout): AskTarget =
     AskTarget(ctx, recipientLabel, waitFor)
 
-  /** **装配缝实现**（`GatewayMain` 经 `NeblinkWiring.friendService` 接的就是它，
-    * 生产运行时执行的就是它）。无靶（调用侧未进 `locally`，如 REST 直调/harness）
-    * ⇒ 显式 fail-closed。 */
+  /**
+   * **装配缝实现**（`GatewayMain` 经 `NeblinkWiring.friendService` 接的就是它，
+   * 生产运行时执行的就是它）。无靶（调用侧未进 `locally`，如 REST 直调/harness）
+   * ⇒ 显式 fail-closed。
+   */
   val production: String => IO[Boolean] =
     body =>
       target.get.flatMap {
@@ -124,7 +131,7 @@ object SendConfirm:
             hubOpt <- res.interactionHubRef.get
             hub <- hubOpt match
               case Some(h) => IO.pure(h)
-              case None    => IO.raiseError(new Unavailable("InteractionHub is not spawned (headless / early boot)"))
+              case None => IO.raiseError(new Unavailable("InteractionHub is not spawned (headless / early boot)"))
             // #250 第⑤项：requestId 熵强化（单点生成器，作用域 confirm-）
             requestId = InteractionRequestId.forSendConfirm()
             slot <- Deferred[IO, List[String]]
@@ -159,6 +166,12 @@ object SendConfirm:
             )
           yield approved
 
+        end if
+
+    end match
+
+  end ask
+
   /** 确认卡（单选两选项 + 禁自由文本：放行信号必须是**点击**，不是输入）。 */
   private def confirmItem(recipientLabel: String, body: String): AskItem =
     val shown = if body.length > 400 then body.take(400) + "…" else body
@@ -179,13 +192,15 @@ object SendConfirm:
       res.interactionHubRef.get
         .flatMap {
           case Some(hub) => (hub ! InteractionHubCommand.CloseRequest(requestId)).void.handleErrorWith(_ => IO.unit)
-          case None      => IO.unit
+          case None => IO.unit
         }
         .handleErrorWith(_ => IO.unit) *>
       IO.raiseError[List[String]](new TimedOut(requestId, wait))
 
-  /** 一次性回复引用（`InteractionReply.AskUserReply` 的目标）。与 `ActorRef.?` 内部的
-    * 临时引用同形：只接一次答复，不支持嵌套 ask。 */
+  /**
+   * 一次性回复引用（`InteractionReply.AskUserReply` 的目标）。与 `ActorRef.?` 内部的
+   * 临时引用同形：只接一次答复，不支持嵌套 ask。
+   */
   private def oneShotReply(slot: Deferred[IO, List[String]], requestId: String): ActorRef[List[String]] =
     new ActorRef[List[String]]:
       val path: ActorPath = ActorPath("__sendconfirm", List(requestId))

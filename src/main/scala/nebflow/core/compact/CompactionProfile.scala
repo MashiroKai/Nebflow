@@ -59,3 +59,4 @@ object CompactionProfile:
       else if isLead then Manager
       else Worker
     else Worker
+end CompactionProfile

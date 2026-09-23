@@ -64,7 +64,11 @@ class AutoStartServiceSpec extends FunSuite:
 
   test("renderDesktopEntry quotes java and jar paths in Exec") {
     val entry = AutoStartService.renderDesktopEntry("/usr/bin/java", "/opt/neb flow/Nebflow.jar")
-    assert(entry.contains("Exec='/usr/bin/java' --add-opens java.base/java.lang=ALL-UNNAMED -jar '/opt/neb flow/Nebflow.jar' start --no-browser"))
+    assert(
+      entry.contains(
+        "Exec='/usr/bin/java' --add-opens java.base/java.lang=ALL-UNNAMED -jar '/opt/neb flow/Nebflow.jar' start --no-browser"
+      )
+    )
     assert(entry.contains("X-GNOME-Autostart-enabled=true"))
   }
 

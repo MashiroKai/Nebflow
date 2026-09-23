@@ -32,16 +32,20 @@ class McpCallTimeoutSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 60.seconds
 
-  /** 慢响应传输桩：send 固定 delay 后返回成功响应（虚拟时钟下 delay 可为
-    * 分钟级，真实耗时毫秒级）。 */
+  /**
+   * 慢响应传输桩：send 固定 delay 后返回成功响应（虚拟时钟下 delay 可为
+   * 分钟级，真实耗时毫秒级）。
+   */
   private class SlowTransport(delay: FiniteDuration) extends McpTransport:
+
     def send(request: JsonRpcRequest): IO[JsonRpcResponse] =
-      IO.sleep(delay).as(
-        JsonRpcResponse(
-          id = request.id,
-          result = Some(Json.obj("content" -> Json.arr(Json.obj("text" -> Json.fromString("slow-but-fine")))))
+      IO.sleep(delay)
+        .as(
+          JsonRpcResponse(
+            id = request.id,
+            result = Some(Json.obj("content" -> Json.arr(Json.obj("text" -> Json.fromString("slow-but-fine")))))
+          )
         )
-      )
     def sendNotification(notification: JsonRpcNotification): IO[Unit] = IO.unit
     def onNotification(handler: JsonRpcNotification => IO[Unit]): IO[Unit] = IO.unit
     def close(): IO[Unit] = IO.unit
@@ -77,8 +81,7 @@ class McpCallTimeoutSpec extends CatsEffectSuite:
       result match
         case Right(tooLucky) => fail(s"配置了上限必须到限报错，却返回了: $tooLucky")
         case Left(_) =>
-          assert(elapsed >= 1.second && elapsed < 5.seconds,
-            s"到限即报（≈1s），不是等调用自然结束（5s），got ${elapsed}")
+          assert(elapsed >= 1.second && elapsed < 5.seconds, s"到限即报（≈1s），不是等调用自然结束（5s），got ${elapsed}")
     }
   }
 

@@ -30,3 +30,4 @@ object MemoryTrackSignal:
 
   /** 测试钩子（生产代码禁用；`private[nebflow]` = spec 隔离面）。 */
   private[nebflow] def resetForTest(): Unit = reason.set(None)
+end MemoryTrackSignal

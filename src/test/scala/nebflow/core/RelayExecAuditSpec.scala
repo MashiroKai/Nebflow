@@ -62,7 +62,9 @@ class RelayExecAuditSpec extends CatsEffectSuite:
     )
     assert(RelayExecAudit.redact("export API_TOKEN=abc123").contains("API_TOKEN=[redacted len=6 sha256:"))
     assert(
-      RelayExecAudit.redact("""mysql --password: "hunter2xyz"""").contains("""password: [redacted len=10 pre=hun sha256:""")
+      RelayExecAudit
+        .redact("""mysql --password: "hunter2xyz"""")
+        .contains("""password: [redacted len=10 pre=hun sha256:""")
     )
     assert(
       RelayExecAudit.redact("""{"api_key": "0123456789abcdef"}""").contains("""[redacted len=16 pre=012 sha256:""")
@@ -78,7 +80,10 @@ class RelayExecAuditSpec extends CatsEffectSuite:
 
   test("redact: 已知密钥前缀（sk-/ghp_/AKIA）") {
     assertNoPlaintext(RelayExecAudit.redact("deploy --key sk-ABCDEFGH12345678"), "sk-ABCDEFGH12345678")
-    assertNoPlaintext(RelayExecAudit.redact("git clone https://ghp_ABCDEFGHIJKLMNOPQRSTUVWX@github.com/a/b"), "ghp_ABCDEFGHIJKLMNOPQRSTUVWX")
+    assertNoPlaintext(
+      RelayExecAudit.redact("git clone https://ghp_ABCDEFGHIJKLMNOPQRSTUVWX@github.com/a/b"),
+      "ghp_ABCDEFGHIJKLMNOPQRSTUVWX"
+    )
   }
 
   test("redact: URL userinfo 口令") {
@@ -115,14 +120,14 @@ class RelayExecAuditSpec extends CatsEffectSuite:
     val cmd = s"scp -i /k ./a.tar user@10.0.0.9:/tmp/ && export API_TOKEN=$secret"
     for
       _ <- RelayExecAudit.record(
-             sourceDeviceId = "qa-source",
-             targetDeviceId = "peer-1",
-             via = "relay",
-             action = "Bash",
-             command = cmd,
-             projectRoot = "/tmp/qa-proj",
-             cwd = "/tmp/qa-cwd"
-           )
+        sourceDeviceId = "qa-source",
+        targetDeviceId = "peer-1",
+        via = "relay",
+        action = "Bash",
+        command = cmd,
+        projectRoot = "/tmp/qa-proj",
+        cwd = "/tmp/qa-cwd"
+      )
       _ <- RelayExecAudit.record("qa-source", "peer-1", "p2p", "Bash", "echo second", "/tmp/qa-proj", "/tmp/qa-cwd")
       lines <- IO.blocking(auditLines)
     yield
@@ -150,6 +155,7 @@ class RelayExecAuditSpec extends CatsEffectSuite:
       assert(shown.contains("scp -i /k"), s"非密钥部分保留: $shown")
       assertEquals(c.downField("via").as[String], Right("relay"))
       assertEquals(parse(lines(1)).toOption.flatMap(_.hcursor.downField("via").as[String].toOption), Some("p2p"))
+    end for
   }
 
   test("summarizeParams: Bash 用 command；其余工具扁平化 key=value（密钥名同样遮蔽路径）") {

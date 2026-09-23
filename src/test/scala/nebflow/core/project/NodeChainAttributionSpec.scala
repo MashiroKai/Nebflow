@@ -59,6 +59,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / ProbeAgent)
+
   os.write.over(
     tempRoot / "agents" / ProbeAgent / "agent.json",
     s"""{"name":"$ProbeAgent","description":"chain passthrough regression agent","tools":["*"],"category":"standalone"}"""
@@ -75,20 +76,26 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
   private val ExpectedChainId = "chain-n-ca"
   private val ExpectedHeader = s"[chain: 链标题A ($ExpectedChainId) · 2 节点]"
 
-  /** 文件名尾溯源提示段标记（`NodeEngine.DocProvenanceBlock` 首行前缀；R-3 2026-09-11；
-    * prompt-en-slim-impl 批：段首行随提示词英文化改为英文前缀，锚点同步）。 */
+  /**
+   * 文件名尾溯源提示段标记（`NodeEngine.DocProvenanceBlock` 首行前缀；R-3 2026-09-11；
+   * prompt-en-slim-impl 批：段首行随提示词英文化改为英文前缀，锚点同步）。
+   */
   private val ProvenanceMarker = "[Process doc naming · provenance"
 
-  /** 八键白名单（**存量历史**：`CONVENTIONS.md:7` / spec §3.2；R-3 后仅用于
-    * 「注入面不得再含元数据头键」的负断言与 `headViolations` 存量判据）。 */
+  /**
+   * 八键白名单（**存量历史**：`CONVENTIONS.md:7` / spec §3.2；R-3 后仅用于
+   * 「注入面不得再含元数据头键」的负断言与 `headViolations` 存量判据）。
+   */
   private val KeyWhitelist =
     Set("chain", "chains", "chain-source", "chain-role", "produced-by", "produced-at", "doc-class", "root")
 
-  /** 存量元数据头合规判据（**键数口径**，2026-09-10 作者裁定 / `CONVENTIONS.md:7` 与
-    * `:78`；R-3 后引擎不再注入正文头，本条仅作存量文档读取侧判据的历史记录——
-    * `index-backfill.py:159-161` 同口径容错读取）：取首个 `---` 行到配对 `---` 行的
-    * front matter 段 → 键数 ≤8；行数为派生量 = 键数 + 2 ⇒ ≤10 行（8 键单链 9 行 /
-    * 多链 10 行合法）；键 ⊆ 白名单；零路径值。返回违规清单（Nil = 合规）。 */
+  /**
+   * 存量元数据头合规判据（**键数口径**，2026-09-10 作者裁定 / `CONVENTIONS.md:7` 与
+   * `:78`；R-3 后引擎不再注入正文头，本条仅作存量文档读取侧判据的历史记录——
+   * `index-backfill.py:159-161` 同口径容错读取）：取首个 `---` 行到配对 `---` 行的
+   * front matter 段 → 键数 ≤8；行数为派生量 = 键数 + 2 ⇒ ≤10 行（8 键单链 9 行 /
+   * 多链 10 行合法）；键 ⊆ 白名单；零路径值。返回违规清单（Nil = 合规）。
+   */
   private def headViolations(text: String): List[String] =
     val lines = text.linesIterator.toList
     val start = lines.indexWhere(_.trim == "---")
@@ -99,11 +106,14 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       val keys = fm.slice(1, fm.size - 1).map(_.takeWhile(ch => ch != ':' && ch != ' ').trim).filter(_.nonEmpty)
       val out = List.newBuilder[String]
       if keys.size > 8 then out += s"key count > 8: ${keys.size} ($keys)"
-      if !keys.forall(KeyWhitelist.contains) then out += s"keys outside whitelist: ${keys.filterNot(KeyWhitelist.contains)}"
-      if fm.size != keys.size + 2 then out += s"line count must equal keys + 2, got ${fm.size} lines / ${keys.size} keys"
+      if !keys.forall(KeyWhitelist.contains) then
+        out += s"keys outside whitelist: ${keys.filterNot(KeyWhitelist.contains)}"
+      if fm.size != keys.size + 2 then
+        out += s"line count must equal keys + 2, got ${fm.size} lines / ${keys.size} keys"
       if fm.size > 10 then out += s"line count > 10: ${fm.size}"
       if fm.exists(_.contains("/")) then out += s"path value present: $fm"
       out.result()
+  end headViolations
 
   // ── 探针工具：把 ToolContext 的链身份落到 Ref（真实会话内断言面）──
 
@@ -111,6 +121,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     val name = "chain_probe_p2"
     val ack = "[OK] chain-probe recorded"
     val captured: Ref[IO, List[Option[String]]] = Ref.unsafe[IO, List[Option[String]]](Nil)
+
     val probe: Tool = new Tool:
       def name: String = ChainProbe.name
       def description: String = "test-only probe: records ToolContext.flowChainId for chain passthrough assertions"
@@ -120,25 +131,29 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       def summarize(input: JsonObject): String = s"$name()"
       def summarizeResult(input: JsonObject, result: String): String = s"$name → probe"
 
-  /** 脚本 LLM：上游节点（输入含 up-task）直接收尾；下游节点（含 down-task）首 turn
-    * 发探针工具调用，见到 ack 后收尾（两会话共用同一 handle，按输入文本分流）。 */
+  /**
+   * 脚本 LLM：上游节点（输入含 up-task）直接收尾；下游节点（含 down-task）首 turn
+   * 发探针工具调用，见到 ack 后收尾（两会话共用同一 handle，按输入文本分流）。
+   */
   private class ProbeLlm:
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     private def sawAck(req: LlmRequest): Boolean =
       req.messages.exists { m =>
         m.content match
           case Right(blocks) =>
             blocks.exists {
               case ContentBlock.ToolResult(_, content, _) => content.contains(ChainProbe.ack)
-              case _                                      => false
+              case _ => false
             }
           case Left(t) => t.contains(ChainProbe.ack)
       }
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream.eval(inputs.update(_ :+ text)).flatMap { _ =>
@@ -150,6 +165,8 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
             )
           else Stream(StreamChunk.TextDelta(UpDone), StreamChunk.Done(None, None))
         }
+
+  end ProbeLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -196,8 +213,12 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -216,32 +237,62 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
   private def waitNodeStatus(rt: ProjectRuntime, id: String, statuses: Set[String]): IO[Unit] =
     waitUntil(60.seconds)(rt.store.getNode(id).map(_.exists(n => statuses.contains(n.status))))
 
-  /** 两节点链夹具（直种 store：确定性 createdAt → 链 id/title 可逐字断言）：
-    * n-ca（早，description=链标题A，out→n-cb）— n-cb（in=[n-ca]）。 */
+  /**
+   * 两节点链夹具（直种 store：确定性 createdAt → 链 id/title 可逐字断言）：
+   * n-ca（早，description=链标题A，out→n-cb）— n-cb（in=[n-ca]）。
+   */
   private def seedChain(rt: ProjectRuntime): IO[Unit] =
     rt.store
       .mutate(s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "n-ca" -> NodeDef(id = "n-ca", name = "chain-a", agent = ProbeAgent, description = Some("链标题A"),
-            task = Some("up-task"), status = NodeLifecycle.Pending, out = List(OutEdge("n-cb")), createdAt = t0),
-          "n-cb" -> NodeDef(id = "n-cb", name = "chain-b", agent = ProbeAgent, description = Some("链标题B"),
-            task = Some("down-task"), status = NodeLifecycle.Pending, in = List("n-ca"), createdAt = t0 + 1000)
-        ))
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-ca" -> NodeDef(
+              id = "n-ca",
+              name = "chain-a",
+              agent = ProbeAgent,
+              description = Some("链标题A"),
+              task = Some("up-task"),
+              status = NodeLifecycle.Pending,
+              out = List(OutEdge("n-cb")),
+              createdAt = t0
+            ),
+            "n-cb" -> NodeDef(
+              id = "n-cb",
+              name = "chain-b",
+              agent = ProbeAgent,
+              description = Some("链标题B"),
+              task = Some("down-task"),
+              status = NodeLifecycle.Pending,
+              in = List("n-ca"),
+              createdAt = t0 + 1000
+            )
+          )
+        )
       )
       .void
 
   private def seedIsolated(rt: ProjectRuntime, id: String): IO[Unit] =
     rt.store
       .mutate(s =>
-        s.copy(nodes = s.nodes.updated(
-          id,
-          NodeDef(id = id, name = s"iso-$id", agent = ProbeAgent, description = Some("孤立节点"),
-            task = Some("solo-task"), status = NodeLifecycle.Pending, createdAt = t0)
-        ))
+        s.copy(nodes =
+          s.nodes.updated(
+            id,
+            NodeDef(
+              id = id,
+              name = s"iso-$id",
+              agent = ProbeAgent,
+              description = Some("孤立节点"),
+              task = Some("solo-task"),
+              status = NodeLifecycle.Pending,
+              createdAt = t0
+            )
+          )
+        )
       )
       .void
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
+
   override def afterEach(context: munit.AfterEach): Unit =
     ProjectRuntimeRegistry.clear
     ChainProbe.captured.set(Nil).unsafeRunSync()
@@ -269,24 +320,30 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       assertEquals(c.memberCount, 2, "memberCount = 分量成员数")
       // ② 链头：单行、逐字形态（§9.2 项 7）
       assert(input.contains(ExpectedHeader), s"chain header line injected verbatim, got:\n${input.take(700)}")
-      assertEquals(input.linesIterator.filter(_.startsWith("[chain:")).toList, List(ExpectedHeader),
-        "exactly one chain header line")
+      assertEquals(
+        input.linesIterator.filter(_.startsWith("[chain:")).toList,
+        List(ExpectedHeader),
+        "exactly one chain header line"
+      )
       // ③ 文件名尾溯源提示段（R-3 2026-09-11）：紧随链头 + 教 `__<chainId>` 尾段
       //    + **零正文元数据头**（负断言：无 `---` 行、无八键白名单行）
       val lines = input.linesIterator.toList
       val hIdx = lines.indexOf(ExpectedHeader)
-      assert(hIdx >= 0 && lines.lift(hIdx + 1).exists(_.startsWith(ProvenanceMarker)),
-        s"provenance hint must follow the chain header, got: ${lines.slice(math.max(hIdx, 0), hIdx + 3)}")
+      assert(
+        hIdx >= 0 && lines.lift(hIdx + 1).exists(_.startsWith(ProvenanceMarker)),
+        s"provenance hint must follow the chain header, got: ${lines.slice(math.max(hIdx, 0), hIdx + 3)}"
+      )
       assert(input.contains("__<chainId>"), "hint must teach the filename-tail chain marker")
-      assert(!lines.exists(_.trim == "---"),
-        "injected input must carry no YAML front matter delimiter (正文零元数据头)")
-      assert(!lines.exists(l => KeyWhitelist.exists(k => l.trim.startsWith(s"$k:"))),
-        "injected input must carry no legacy metadata head key line")
-      assertEquals(headViolations(input), List("no front matter block found"),
-        "R-3 负控：注入面既不是也不含合规元数据头")
+      assert(!lines.exists(_.trim == "---"), "injected input must carry no YAML front matter delimiter (正文零元数据头)")
+      assert(
+        !lines.exists(l => KeyWhitelist.exists(k => l.trim.startsWith(s"$k:"))),
+        "injected input must carry no legacy metadata head key line"
+      )
+      assertEquals(headViolations(input), List("no front matter block found"), "R-3 负控：注入面既不是也不含合规元数据头")
       // 结构不变式：链块在自身 task 之前（首屏可见），协议脚注仍在末尾
       assert(input.indexOf(ExpectedHeader) < input.indexOf("up-task"), "chain block precedes the task text")
       assert(input.endsWith(NodeEngine.ProtocolFootnote), "protocol footnote stays last (unchanged)")
+    end for
   }
 
   // ── ③bis 存量口径（历史）：上限以键数计而非行数（2026-09-10 作者裁定；
@@ -309,8 +366,10 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     assertEquals(single.linesIterator.size - 1, 8, "single-chain sample: 7 keys + 2 delimiters")
     assertEquals(multi.linesIterator.size - 1, 9, "multi-chain sample: 8 keys + 2 delimiters")
     // 反例闸：越白名单键 / 带路径值 / 行数 ≠ 键数 + 2
-    assert(headViolations(single.replace("chain-role: head", "chain-role: head\nfoo: 1")).nonEmpty,
-      "非白名单键（同时越 8 键）必须违规")
+    assert(
+      headViolations(single.replace("chain-role: head", "chain-role: head\nfoo: 1")).nonEmpty,
+      "非白名单键（同时越 8 键）必须违规"
+    )
     assert(headViolations(single.replace("root: home", "root: ~/.nebflow/docs")).nonEmpty, "路径值必须违规")
     assert(headViolations(single.replace("---\n", "")).nonEmpty, "无 front matter 段 → 违规（解析器定位失败）")
   }
@@ -337,8 +396,11 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       assert(!input.contains("[chain:"), s"no chain → no chain header line, got:\n${input.take(400)}")
       assert(!input.contains(ProvenanceMarker), "no chain → no provenance hint (no attribution subject)")
       assert(!input.contains("\n\n\n"), "no chain → zero blank-line artifacts (整行不注入)")
-      assert(input.contains("solo-task") && input.endsWith(NodeEngine.ProtocolFootnote),
-        "task + protocol footnote unchanged")
+      assert(
+        input.contains("solo-task") && input.endsWith(NodeEngine.ProtocolFootnote),
+        "task + protocol footnote unchanged"
+      )
+    end for
   }
 
   // ── ④ 全链透传：节点 spawn → ToolContext.flowChainId（真实引擎路径）────
@@ -363,11 +425,18 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     yield
       // 透传链实证：探针在真实节点会话（NodeEngine spawn → NodeRunner.SpawnParams →
       // AgentActor → AgentState → AgentCore → ToolContext）内读到的链 id
-      assertEquals(cap, List(Some(ExpectedChainId)),
-        s"probe must see the spawn-time chain id via ToolContext.flowChainId, got $cap")
+      assertEquals(
+        cap,
+        List(Some(ExpectedChainId)),
+        s"probe must see the spawn-time chain id via ToolContext.flowChainId, got $cap"
+      )
       // 链头与 ToolContext 值同源（同一快照）：首条消息链头含同一 chainId
-      val downInput = ins.find(_.contains("down-task")).getOrElse(fail(s"downstream input missing, got ${ins.map(_.take(80))}"))
-      assert(downInput.contains(ExpectedHeader), s"downstream first message must carry the chain header, got:\n${downInput.take(700)}")
+      val downInput =
+        ins.find(_.contains("down-task")).getOrElse(fail(s"downstream input missing, got ${ins.map(_.take(80))}"))
+      assert(
+        downInput.contains(ExpectedHeader),
+        s"downstream first message must carry the chain header, got:\n${downInput.take(700)}"
+      )
       val upInput = ins.find(_.contains("up-task")).getOrElse(fail("upstream input missing"))
       assert(upInput.contains(ExpectedHeader), "upstream node sees the same chain header (both members of one chain)")
       // 编排未变：上游完成 → 下游结算启动 → 终态
@@ -387,7 +456,8 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       // 分发器 spawn 形态（ProjectActor :600-628 同参：isDispatcher=true + projectName + 显式 None）
       params = NodeRunner.SpawnParams(
-        agentDef = nebflow.agent.AgentDef(name = ProbeAgent, description = "dispatcher-gate", tools = Nil, category = "standalone"),
+        agentDef = nebflow.agent
+          .AgentDef(name = ProbeAgent, description = "dispatcher-gate", tools = Nil, category = "standalone"),
         resources = res,
         sessionId = "dispatcher-gate-sid",
         sessionName = "dispatcher/gate",
@@ -402,11 +472,18 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     yield
       assertEquals(params.flowChainId, None, "dispatcher belongs to no chain（口径显式 None，不依赖调用方记忆）")
       assertEquals(params.flowNodeId, None, "分发器无 NodeDef.id（对照：节点 spawn 置 Some）")
-      assertEquals(nebflow.agent.AgentState(flowChainId = Some("chain-x")).flowChainId, Some("chain-x"),
-        "SessionContext 字段/参数/accessor 三处接通（AgentState 透传面 + extension accessor）")
+      assertEquals(
+        nebflow.agent.AgentState(flowChainId = Some("chain-x")).flowChainId,
+        Some("chain-x"),
+        "SessionContext 字段/参数/accessor 三处接通（AgentState 透传面 + extension accessor）"
+      )
       assertEquals(nebflow.agent.AgentState().flowChainId, None, "非项目会话默认 None")
-      assertEquals(nebflow.agent.AgentState(flowChainId = Some("chain-x")).session.flowChainId, Some("chain-x"),
-        "SessionContext 字段本体承载（扩展 accessor 与字段同源）")
+      assertEquals(
+        nebflow.agent.AgentState(flowChainId = Some("chain-x")).session.flowChainId,
+        Some("chain-x"),
+        "SessionContext 字段本体承载（扩展 accessor 与字段同源）"
+      )
+    end for
   }
 
 end NodeChainAttributionSpec

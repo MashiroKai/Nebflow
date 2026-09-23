@@ -39,10 +39,12 @@ case class ProjectRuntime(
   system: ActorSystem,
   resources: SharedResources,
   actorRef: Option[ActorRef[ProjectActor.ProjectCommand]] = None,
-  /** 项目任务板（TaskBoard 批 2，规格 §1f）：mount 时 TaskBoardStore.open 同位
-    * 挂载（fail-soft——异常仅 WARN 置 None，不拖垮项目挂载）。工具层经
-    * NodeTools.resolveProject → rt.board 取用；None = 该项目无板（工具报
-    * TBOARD_PARAM 引导），注入面整块省略。 */
+  /**
+   * 项目任务板（TaskBoard 批 2，规格 §1f）：mount 时 TaskBoardStore.open 同位
+   * 挂载（fail-soft——异常仅 WARN 置 None，不拖垮项目挂载）。工具层经
+   * NodeTools.resolveProject → rt.board 取用；None = 该项目无板（工具报
+   * TBOARD_PARAM 引导），注入面整块省略。
+   */
   board: Option[TaskBoardStore] = None
 )
 
@@ -53,10 +55,13 @@ object ProjectRuntimeRegistry:
 
   def register(rt: ProjectRuntime): IO[Unit] = runtimes.update(_ + (rt.project.name -> rt))
   def unregister(name: String): IO[Unit] = runtimes.update(_ - name)
-  /** 取项目运行时：精确 key 匹配优先（无回归），否则对 project.name 做
-    * equalsIgnoreCase 兜底——项目标识天然大小写不敏感（NodeList(Nebflow) 与
-    * NodeList(nebflow) 同解析，分发器实名报错根因）。unregister/mount 用
-    * canonical 名不受影响。 */
+
+  /**
+   * 取项目运行时：精确 key 匹配优先（无回归），否则对 project.name 做
+   * equalsIgnoreCase 兜底——项目标识天然大小写不敏感（NodeList(Nebflow) 与
+   * NodeList(nebflow) 同解析，分发器实名报错根因）。unregister/mount 用
+   * canonical 名不受影响。
+   */
   def get(name: String): IO[Option[ProjectRuntime]] =
     runtimes.get.map { m =>
       m.get(name).orElse(m.values.find(_.project.name.equalsIgnoreCase(name)))
@@ -64,22 +69,24 @@ object ProjectRuntimeRegistry:
   def all: IO[List[ProjectRuntime]] = runtimes.get.map(_.values.toList)
   def clear: IO[Unit] = runtimes.set(Map.empty)
 
-  /** 启动自动挂载（0b 契约「阶段 1 补自动挂载」，#37 重启窗口收尾）：
-    * 磁盘已有项目 → 幂等挂载。rootSessionId = 顶层 Nebula 主会话 id
-    * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
-    * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
-    * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
-    * #46 fail-soft：单个项目 mount 失败（workspace 不可创建/不可解析，如跨平台
-    * 机器特定绝对路径、权限受限、路径被删——FlowMapStore.open 抛异常）时记 WARN
-    * 并跳过该项目（不计数、不中断），其余项目照常挂载，gateway 正常启动——不再
-    * 因一个坏项目拖垮整个启动批（此前异常沿 mount→mountAll→startupMount 冒泡到
-    * GatewayMain 启动退出）。不改 mount 本身（运行时 ProjectCreate 路径语义保持）。
-    * wsSend：启动期传入 wsHub.broadcast——否则 engine 的 wsSendFn 是 no-op，
-    * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。
-    * skipStaleReap（crash-recovery 批 2026-09-07）：true = 启动挂载且崩溃恢复开启
-    * ——跳过挂载期僵尸收殓，崩溃残留 running 节点留给紧随 startupMount 的
-    * ProjectCrashRecovery sweep 认领（rehydrate/failed，语义优于 cancelled 收殓）；
-    * false（默认，运行时挂载/恢复开关关闭）= 既有收殓行为零变化。 */
+  /**
+   * 启动自动挂载（0b 契约「阶段 1 补自动挂载」，#37 重启窗口收尾）：
+   * 磁盘已有项目 → 幂等挂载。rootSessionId = 顶层 Nebula 主会话 id
+   * （启动期无会话上下文，调用方直接传顶层根——A 修复后的 thread 语义）。
+   * 与 ProjectCreate 幂等挂载（运行时主动路径，241ef6c5）互补：
+   * 本函数管重启免人工，ProjectCreate 管运行时挂载/重挂。返回新挂载数。
+   * #46 fail-soft：单个项目 mount 失败（workspace 不可创建/不可解析，如跨平台
+   * 机器特定绝对路径、权限受限、路径被删——FlowMapStore.open 抛异常）时记 WARN
+   * 并跳过该项目（不计数、不中断），其余项目照常挂载，gateway 正常启动——不再
+   * 因一个坏项目拖垮整个启动批（此前异常沿 mount→mountAll→startupMount 冒泡到
+   * GatewayMain 启动退出）。不改 mount 本身（运行时 ProjectCreate 路径语义保持）。
+   * wsSend：启动期传入 wsHub.broadcast——否则 engine 的 wsSendFn 是 no-op，
+   * 节点/分发器事件永远到不了前端（#28 可观测缺口根因之一）。
+   * skipStaleReap（crash-recovery 批 2026-09-07）：true = 启动挂载且崩溃恢复开启
+   * ——跳过挂载期僵尸收殓，崩溃残留 running 节点留给紧随 startupMount 的
+   * ProjectCrashRecovery sweep 认领（rehydrate/failed，语义优于 cancelled 收殓）；
+   * false（默认，运行时挂载/恢复开关关闭）= 既有收殓行为零变化。
+   */
   def mountAll(
     projects: List[ProjectDef],
     rootSessionId: String,
@@ -112,8 +119,10 @@ object ProjectRuntimeRegistry:
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
     ttlCheckIntervalSec: Int = 30,
     skipStaleReap: Boolean = false,
-    /** 分发器空闲保活窗覆盖（令 3）：None = 现读 `Defaults.DispatcherIdleWindowMs`；
-      * Some(v) = spec 注入（`≤0` = 关闭保活 = 旧行为，供回退开关/零回归验收）。 */
+    /**
+     * 分发器空闲保活窗覆盖（令 3）：None = 现读 `Defaults.DispatcherIdleWindowMs`；
+     * Some(v) = spec 注入（`≤0` = 关闭保活 = 旧行为，供回退开关/零回归验收）。
+     */
     dispatcherIdleWindowMs: Option[Long] = None
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
@@ -126,16 +135,19 @@ object ProjectRuntimeRegistry:
           // 置 None（fail-soft），不拖垮项目挂载。
           board <- IO(TaskBoardStore.open(project.name, project.workspace))
             .map(Some.apply: TaskBoardStore => Option[TaskBoardStore])
-            .handleErrorWith(e => logger
-              .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
-              .as(None))
+            .handleErrorWith(e =>
+              logger
+                .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
+                .as(None)
+            )
           // M4（b64 批 2026-09-13）：`notify.quietMs` 校验单点 —— 缺键 = 缺省 5s；
           // 超上界（60s）/非正 ⇒ **可行动报错**（键名 + 允许区间 + 当前值）并
           // **fail-fast 本项目挂载**，禁静默截断到上界（作者裁定 M4）。
           quietMs <- IO.fromEither(
             NotifyPolicy
               .parseQuietMs(project.notifyConfig.flatMap(_.quietMs))
-              .leftMap(msg => new RuntimeException(s"Project '${project.name}' config rejected: $msg")))
+              .leftMap(msg => new RuntimeException(s"Project '${project.name}' config rejected: $msg"))
+          )
           engine <- IO.pure(
             new NodeEngine(
               store,
@@ -182,12 +194,15 @@ object ProjectRuntimeRegistry:
           // 崩溃残留 running 留给紧随其后的 ProjectCrashRecovery sweep 认领（快段
           // 先于 projectTtlScanner 结构性保证，见 GatewayMain boot 链）；sweep 未
           // 认领的残余仍由 watchdog（TtlTick settleStaleRunningNodes→failed）兜底。
-          _ <- if skipStaleReap then IO.unit
-          else
-            store.snapshot.flatMap { s =>
-              s.nodes.values.filter(_.status == NodeLifecycle.Running).toList
-                .traverse_(n => engine.reapStaleRunning(n.id).void)
-            }
+          _ <-
+            if skipStaleReap then IO.unit
+            else
+              store.snapshot.flatMap { s =>
+                s.nodes.values
+                  .filter(_.status == NodeLifecycle.Running)
+                  .toList
+                  .traverse_(n => engine.reapStaleRunning(n.id).void)
+              }
           // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
@@ -197,7 +212,10 @@ object ProjectRuntimeRegistry:
         yield rt
     }
 
-  private def emitNodeEvent(project: String, wsSend: Option[Json => IO[Unit]])(eventType: String, nodeId: String, nodeJson: Json): IO[Unit] =
+  private def emitNodeEvent(
+    project: String,
+    wsSend: Option[Json => IO[Unit]]
+  )(eventType: String, nodeId: String, nodeJson: Json): IO[Unit] =
     wsSend.fold(IO.unit) { send =>
       send(
         Json.obj(
@@ -209,6 +227,8 @@ object ProjectRuntimeRegistry:
       )
     }
 
+end ProjectRuntimeRegistry
+
 object ProjectActor:
   private val logger = NebflowLogger.forName("nebflow.project.actor")
 
@@ -216,29 +236,31 @@ object ProjectActor:
   // 项目级事件帧（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）
   // ============================================================
 
-  /** 帧外壳单点（与类内 `emitNodeEvent` :200-210 同族）：两处 emit 点
-    * ——创建腿 `NodeTools.mountProject`、归档腿 `RestApiRoutes` POST archive 路由
-    * ——都只调这两个构造函数，不各自拼 Json（禁第二套推送语义/帧形）。
-    *
-    * 载荷逐字对齐取证报告 §D-2（`.nebflow/reports/20260917_tabrealtime-forensic.md`）：
-    *
-    * {{{
-    * 事件 1（创建成功、已挂载）
-    *   type    : "projectCreated"
-    *   project : <string>   项目名（= ProjectDef.name）
-    *   row     : { name, workspace, agentFile, description, createdAt }   ← 与 GET /api/projects 行同构
-    *   mounted : <bool>     挂载成功 true；定义就绪但无会话上下文（NodeTools 无 actorSystem
-    *                        分支）false
-    *
-    * 事件 2（归档成功）
-    *   type       : "projectArchived"
-    *   project    : <string>
-    *   archivedAt : <long>   （= ProjectStore.archive 返回的 ts）
-    * }}}
-    *
-    * `row` 与 `RestApiRoutes` 的 `GET /projects` 行（:366-375 五字段）逐字段同构 ⇒
-    * 前端可零重拉把新卡按名定点插进列表（退场/入场动画不必等重拉返回）。
-    * 🔴 不采单 `projectsChanged`（裁定 (e)：需前端拉全量分辨、语义不清）。 */
+  /**
+   * 帧外壳单点（与类内 `emitNodeEvent` :200-210 同族）：两处 emit 点
+   * ——创建腿 `NodeTools.mountProject`、归档腿 `RestApiRoutes` POST archive 路由
+   * ——都只调这两个构造函数，不各自拼 Json（禁第二套推送语义/帧形）。
+   *
+   * 载荷逐字对齐取证报告 §D-2（`.nebflow/reports/20260917_tabrealtime-forensic.md`）：
+   *
+   * {{{
+   * 事件 1（创建成功、已挂载）
+   *   type    : "projectCreated"
+   *   project : <string>   项目名（= ProjectDef.name）
+   *   row     : { name, workspace, agentFile, description, createdAt }   ← 与 GET /api/projects 行同构
+   *   mounted : <bool>     挂载成功 true；定义就绪但无会话上下文（NodeTools 无 actorSystem
+   *                        分支）false
+   *
+   * 事件 2（归档成功）
+   *   type       : "projectArchived"
+   *   project    : <string>
+   *   archivedAt : <long>   （= ProjectStore.archive 返回的 ts）
+   * }}}
+   *
+   * `row` 与 `RestApiRoutes` 的 `GET /projects` 行（:366-375 五字段）逐字段同构 ⇒
+   * 前端可零重拉把新卡按名定点插进列表（退场/入场动画不必等重拉返回）。
+   * 🔴 不采单 `projectsChanged`（裁定 (e)：需前端拉全量分辨、语义不清）。
+   */
   def projectCreatedFrame(pd: ProjectDef, mounted: Boolean): Json =
     Json.obj(
       "type" -> "projectCreated".asJson,
@@ -261,77 +283,94 @@ object ProjectActor:
     )
 
   enum ProjectCommand:
-    /** @param attribution
-      *   注入来源标注（bluebubble 批 2026-09-12）：腿① 由 MailTool 传出邮件发信方
-      *   （sender/senderTeam/eventType），使分发器会话的蓝气泡顶栏能标注「来自谁」。
-      *   默认 None ⇒ 既有调用点（DispatchNotify / ProjectCrashRecovery / 重入）
-      *   零改动、呈现逐字不变。 */
+
+    /**
+     * @param attribution
+     *   注入来源标注（bluebubble 批 2026-09-12）：腿① 由 MailTool 传出邮件发信方
+     *   （sender/senderTeam/eventType），使分发器会话的蓝气泡顶栏能标注「来自谁」。
+     *   默认 None ⇒ 既有调用点（DispatchNotify / ProjectCrashRecovery / 重入）
+     *   零改动、呈现逐字不变。
+     */
     case TriggerDispatcher(
       taskText: String,
       rootSessionId: String,
       source: String = ProjectActor.SourceTask,
       attribution: Option[InjectionAttribution] = None
     )
-    /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
-      * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
+
+    /**
+     * blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
+     * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。
+     */
     case ReenterDispatcher(nodeId: String, feedback: BlockedFeedback, blockCount: Int)
     case CancelNode(nodeId: String)
     case TtlTick
     case Shutdown
+  end ProjectCommand
 
-  /** 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
-    *  - [[SourceTask]] = 项目触发入口（`Mail(address="project:<name>")` / 重入 /
-    *    spawn 首条 prompt；**值不改名**——R2 批 D-5 裁定观测面零断代。
-    *    本条覆盖此前相关指令：旧注释里的 `Task` 工具已删净退役，
-    *    入口唯一 = Mail）；
-    *  - [[SourceDispatch]] = 回流通知（DispatchNotify → TriggerDispatcher）；
-    *  - `"node"` = 节点消息（NodeEngine.deliverToNebula 侧，本批不动）。
-    * 前端 `INJECTED_SOURCE_LABELS` 有对应显式标签（web/js/chat.js）——
-    * **后端是唯一定名源**，前端不得靠首字母大写兜底。
-    * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（MailTool /
-    * ProjectCrashRecovery）零改动即落 task 语义。 */
+  /**
+   * 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
+   *  - [[SourceTask]] = 项目触发入口（`Mail(address="project:<name>")` / 重入 /
+   *    spawn 首条 prompt；**值不改名**——R2 批 D-5 裁定观测面零断代。
+   *    本条覆盖此前相关指令：旧注释里的 `Task` 工具已删净退役，
+   *    入口唯一 = Mail）；
+   *  - [[SourceDispatch]] = 回流通知（DispatchNotify → TriggerDispatcher）；
+   *  - `"node"` = 节点消息（NodeEngine.deliverToNebula 侧，本批不动）。
+   * 前端 `INJECTED_SOURCE_LABELS` 有对应显式标签（web/js/chat.js）——
+   * **后端是唯一定名源**，前端不得靠首字母大写兜底。
+   * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（MailTool /
+   * ProjectCrashRecovery）零改动即落 task 语义。
+   */
   val SourceTask: String = "task"
   val SourceDispatch: String = "dispatch"
 
   /** 分发器全局 agent 名（定义文件交付 Nebula/entity-creator 注册）。 */
   val DispatcherAgentName = "project-dispatcher"
 
-  /** 分发器会话 id 前缀（sessionId = "dispatcher-<uuid8>"）。AgentControl/
-    * 面板的 cancel 白名单按此识别新 Project 系统会话（与 NodeEngine.SessionPrefix
-    * 同款跨层契约；前端 utils.isBgAgentId 硬编码同值）。 */
+  /**
+   * 分发器会话 id 前缀（sessionId = "dispatcher-<uuid8>"）。AgentControl/
+   * 面板的 cancel 白名单按此识别新 Project 系统会话（与 NodeEngine.SessionPrefix
+   * 同款跨层契约；前端 utils.isBgAgentId 硬编码同值）。
+   */
   val DispatcherSessionPrefix = "dispatcher-"
 
-  /** 活跃分发器会话登记（单例化裁定 2026-09-02）。spawn 时置位、观察桥终态时
-    * 清除（与 agentRegistry 同点清理）。pendingInjected = 已注入本会话但 turn
-    * 尚未终结的件数：注入任务以 UserInput(replyTo=观察桥) 进入，**spawn 首条
-    * prompt 也计 1 件**。
-    * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
-    * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者。
-    * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
-    * 显式 `Mail(address="Nebula", …)` 承担。）
-    *
-    * Q3-a（2026-09-11 收件规则批）曾允许 mid-turn 直投让**一个 turn 消费多件**
-    * （tools-complete 边界整队合批）；该合批已由 2026-09-15 ub 缺陷批（root 裁定
-    * 「排队消息按序逐条注入、每条独立成 turn、禁合并语义」）删除 ⇒ 一件 = 一次注入
-    * = 一个 turn = 一个 Completed 的口径恢复。本 turn 消费几件仍由
-    * [[ActiveDispatcher.consumedTaskMsgs]] 增量判定（会话历史里带注入来源标签的
-    * 消息条数；逐条注入下增量恒为 1）；余件 > 0 → 保活，归零 → 拆除。 */
+  /**
+   * 活跃分发器会话登记（单例化裁定 2026-09-02）。spawn 时置位、观察桥终态时
+   * 清除（与 agentRegistry 同点清理）。pendingInjected = 已注入本会话但 turn
+   * 尚未终结的件数：注入任务以 UserInput(replyTo=观察桥) 进入，**spawn 首条
+   * prompt 也计 1 件**。
+   * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
+   * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者。
+   * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
+   * 显式 `Mail(address="Nebula", …)` 承担。）
+   *
+   * Q3-a（2026-09-11 收件规则批）曾允许 mid-turn 直投让**一个 turn 消费多件**
+   * （tools-complete 边界整队合批）；该合批已由 2026-09-15 ub 缺陷批（root 裁定
+   * 「排队消息按序逐条注入、每条独立成 turn、禁合并语义」）删除 ⇒ 一件 = 一次注入
+   * = 一个 turn = 一个 Completed 的口径恢复。本 turn 消费几件仍由
+   * [[ActiveDispatcher.consumedTaskMsgs]] 增量判定（会话历史里带注入来源标签的
+   * 消息条数；逐条注入下增量恒为 1）；余件 > 0 → 保活，归零 → 拆除。
+   */
   case class ActiveDispatcher(
     sessionId: String,
     agentRef: ActorRef[AgentCommand],
     bridgeRef: ActorRef[AgentEvent],
     pendingInjected: Int = 0,
     pendingTaskTexts: List[String] = Nil,
-    /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
-      * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
+    /**
+     * 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
+     * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。
+     */
     consumedTaskMsgs: Int = 0,
-    /** 空闲保活计时起点（**令 3 分发器生命周期**，设计 §3.1）：语义 =「本会话进入
-      * 空闲的墙钟时刻（ms）」。`None` = 有件在飞（`pendingInjected > 0`，不必计）。
-      * 置位点 = 桥 `Completed` 分支裁决 `remaining == 0` 的那一瞬（**计时起点 =
-      * 上一次派发的 turn 终态**，非会话创建）；清零点 = `dispatchTask` /
-      * `dispatchReentry` 的注入命中分支（新任务到达 ⇒ 重置计时）。到期扫描
-      * [[ProjectActor.sweepIdleDispatchers]] 挂在既有 30 s `TtlTick` 上。
-      * 不持久化（设计 R6-(a)）：宿主重启后与今天一致（新 spawn）。 */
+    /**
+     * 空闲保活计时起点（**令 3 分发器生命周期**，设计 §3.1）：语义 =「本会话进入
+     * 空闲的墙钟时刻（ms）」。`None` = 有件在飞（`pendingInjected > 0`，不必计）。
+     * 置位点 = 桥 `Completed` 分支裁决 `remaining == 0` 的那一瞬（**计时起点 =
+     * 上一次派发的 turn 终态**，非会话创建）；清零点 = `dispatchTask` /
+     * `dispatchReentry` 的注入命中分支（新任务到达 ⇒ 重置计时）。到期扫描
+     * [[ProjectActor.sweepIdleDispatchers]] 挂在既有 30 s `TtlTick` 上。
+     * 不持久化（设计 R6-(a)）：宿主重启后与今天一致（新 spawn）。
+     */
     idleSince: Option[Long] = None
   )
 
@@ -351,22 +390,28 @@ object ProjectActor:
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
     ttlCheckIntervalSec: Int = 30,
-    /** 项目任务板（TaskBoard 批 2 §3a）：分发器 spawn 注入（newTaskPrompt/
-      * reentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。 */
+    /**
+     * 项目任务板（TaskBoard 批 2 §3a）：分发器 spawn 注入（newTaskPrompt/
+     * reentryPrompt）数据源；None = 无板（注入整块省略）。mount 构造时传入。
+     */
     board: Option[TaskBoardStore] = None,
-    /** 分发器空闲保活窗覆盖（**令 3**）：`None`（**生产默认**）= 每拍现读
-      * `Defaults.DispatcherIdleWindowMs`（`sys.props` 热读语义，与
-      * `NodeDestroyWindowMs` 同款先例）；`Some(v)` = 测试注入固定值——spec 不碰
-      * 全局 prop（避跨 suite 污染；`NodeEngine(destroyWindowMs)` / `ttlCheckIntervalSec`
-      * 同款先例）。`≤ 0` = **关闭保活**（回退到 turn 级即拆的今天行为）。 */
+    /**
+     * 分发器空闲保活窗覆盖（**令 3**）：`None`（**生产默认**）= 每拍现读
+     * `Defaults.DispatcherIdleWindowMs`（`sys.props` 热读语义，与
+     * `NodeDestroyWindowMs` 同款先例）；`Some(v)` = 测试注入固定值——spec 不碰
+     * 全局 prop（避跨 suite 污染；`NodeEngine(destroyWindowMs)` / `ttlCheckIntervalSec`
+     * 同款先例）。`≤ 0` = **关闭保活**（回退到 turn 级即拆的今天行为）。
+     */
     dispatcherIdleWindowMs: Option[Long] = None
   )
 
-  /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
-    * TTL 只管 **completed** 节点 24h 显示消失（2026-09-07 裁定收紧：failed/cancelled
-    * 不过期不归档，死亡现场保留待上层裁决）；Node 运行本身不设超时（硬约束）。
-    * Bug 1 修复（QA e2e SOE）：`*> loop` 的 by-name 递归在构造期被 eager 求值 →
-    * 必须 `*> IO.defer(loop)` 显式延迟到执行期（lazy val 同样会初始化死循环）。 */
+  /**
+   * 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
+   * TTL 只管 **completed** 节点 24h 显示消失（2026-09-07 裁定收紧：failed/cancelled
+   * 不过期不归档，死亡现场保留待上层裁决）；Node 运行本身不设超时（硬约束）。
+   * Bug 1 修复（QA e2e SOE）：`*> loop` 的 by-name 递归在构造期被 eager 求值 →
+   * 必须 `*> IO.defer(loop)` 显式延迟到执行期（lazy val 同样会初始化死循环）。
+   */
   def ttlScanner(interval: FiniteDuration): IO[Unit] =
     def loop: IO[Unit] =
       IO.sleep(interval) *>
@@ -398,7 +443,8 @@ object ProjectActor:
               }
             case ProjectCommand.ReenterDispatcher(nodeId, feedback, blockCount) =>
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchReentry(cfg, active, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
+                case Right(()) =>
+                  dispatchReentry(cfg, active, behavior, nodeId, feedback, blockCount, cfg.rootSessionId)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher reentry refused during draining: $reason").as(behavior)
               }
@@ -414,37 +460,45 @@ object ProjectActor:
               // dispatch-notify 补投（2026-09-05 批）：重启后未触发通知（notifySentAt
               // 为空）30s 内补投——redeliverUnconsumedNebulaResults 同形态周期兜底；
               // best-effort 失败仅 WARN，不影响后续 TTL sweep。
-              cfg.engine.dispatchNotify.redeliver()
+              cfg.engine.dispatchNotify
+                .redeliver()
                 .handleErrorWith(e => logger.warn(s"dispatch-notify redelivery scan failed: ${e.getMessage}").void) *>
-              cfg.engine.revalidatePluginTrust()
-                .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
-                cfg.engine.redeliverUnconsumedNebulaResults()
-                .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0)).void *>
+                cfg.engine
+                  .revalidatePluginTrust()
+                  .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .redeliverUnconsumedNebulaResults()
+                  .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0))
+                  .void *>
                 // 资格回扫（trigger-chain-fix §6.2）：pending/wiring 启动资格周期
                 // 重估——孤儿 barrier 自愈 + 合格者 fork 启动 + settle-sweep/
                 // trigger-starved 留痕。best-effort 同款（失败不影响 TTL sweep）。
-                cfg.engine.settleRunnableSweep()
-                .handleErrorWith(e => logger.warn(s"settle sweep failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .settleRunnableSweep()
+                  .handleErrorWith(e => logger.warn(s"settle sweep failed: ${e.getMessage}")) *>
                 // 死会话 running 自动收敛（僵尸收敛批 2026-09-06）：仅对「可证明
                 // 无活会话且无在途后台任务」的 running 节点收敛 failed（非 cancelled
                 // ——cancelled 不投递下游，barrier 永挂）。best-effort 同款
-                //（失败不影响 TTL sweep）。
-                cfg.engine.settleStaleRunningNodes()
-                .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
+                // （失败不影响 TTL sweep）。
+                cfg.engine
+                  .settleStaleRunningNodes()
+                  .handleErrorWith(e => logger.warn(s"dead-session settle failed: ${e.getMessage}")) *>
                 // 未申报提醒阶梯（noderpt 批 A 段 2026-09-11 作者裁定）：完成门腿 2
                 // （未申报不终态化）的配套兜底——对「已交棒但未 node_report」的 Running
                 // 节点按阶梯注入提醒轮 + 写 node-report-missing 事件，阶梯耗尽转 quiescent
                 // 档（只留痕不注入）。**永不判 failed、永不杀会话**：本扫描腿零终态化动作。
                 // best-effort 同款（失败不影响后续 sweep）。
-                cfg.engine.remindUnreportedNodes()
-                .handleErrorWith(e => logger.warn(s"node-report reminder sweep failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .remindUnreportedNodes()
+                  .handleErrorWith(e => logger.warn(s"node-report reminder sweep failed: ${e.getMessage}")) *>
                 // 终态销毁窗口扫描（noderpt 批 B 段 2026-09-11 作者裁定「一律存活 30 分钟
                 // 再销毁」）：对 `destroyAt` 到点的终态节点执行对称收殓（`reclaimSession`：
                 // 杀进程树 + 注销 registry + 逐条 finalizeTask + 释放 ShellSession 条目 +
                 // WS cancelled 帧）并清字段；顺带按持久字段重建禁 spawn 表（重启自愈）。
                 // 幂等（字段已清 ⇒ 不再入选）；best-effort 同款（失败不影响后续 sweep）。
-                cfg.engine.sweepDestroyWindows()
-                .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .sweepDestroyWindows()
+                  .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
                 // 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4）：`idleSince`
                 // 有值且 `now - idleSince ≥ Defaults.DispatcherIdleWindowMs` ⇒ 走既有
                 // teardown 语义拆除（registry 注销 + AgentCommand.Stop + 桥停），下一个
@@ -452,7 +506,7 @@ object ProjectActor:
                 // registry `status == Idle`）防误杀；窗口 ≤0 = 关闭保活（零成本短路）。
                 // best-effort 同款（失败仅 WARN，不影响后续 sweep）。
                 sweepIdleDispatchers(cfg, active)
-                .handleErrorWith(e => logger.warn(s"dispatcher idle sweep failed: ${e.getMessage}")) *>
+                  .handleErrorWith(e => logger.warn(s"dispatcher idle sweep failed: ${e.getMessage}")) *>
                 // loop 时间帽扫描（nrloop 一期 2026-09-12，设计 §3.6 时间维）：对
                 // 「非终态 ∧ loopStartedAt 已置位 ∧ now-loopStartedAt ≥ maxWallClockMs」
                 // 的重跑目标熔断——反查到活 verifier 驱动方 ⇒ 该 verifier 终态化 failed +
@@ -460,15 +514,17 @@ object ProjectActor:
                 // 链）；反查不到（计时起点成孤儿）⇒ 清起点 + 单发 orphan 事件，绝不终态化
                 // 无关节点。闸门前置（maxWallClockMs ≤ 0 = 该维关闭 ⇒ 零成本短路）。
                 // 幂等（起点清除 CAS 单发）；best-effort 同款（失败不影响后续 sweep）。
-                cfg.engine.sweepLoopBudgets()
-                .handleErrorWith(e => logger.warn(s"loop budget sweep failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .sweepLoopBudgets()
+                  .handleErrorWith(e => logger.warn(s"loop budget sweep failed: ${e.getMessage}")) *>
                 // 待接线队列扫描（B5 缺口③ · 作者 2026-09-17 M-3 裁定，选项①）：控制边
                 // 在编辑期因目标 running 入队（`NodeDef.pendingOut`）后，目标离开 running
                 // ⇒ 自动接线（`pendingOut` → `out`）+ `wiring-applied` 事件——「到点自动
                 // 接」的落点。幂等（目标仍 running 时零写）；best-effort 同款（失败仅 WARN，
                 // 不影响后续 sweep）。
-                cfg.engine.applyDeferredWiring()
-                .handleErrorWith(e => logger.warn(s"deferred wiring sweep failed: ${e.getMessage}")) *>
+                cfg.engine
+                  .applyDeferredWiring()
+                  .handleErrorWith(e => logger.warn(s"deferred wiring sweep failed: ${e.getMessage}")) *>
                 // 链级即时归档 sweep（裁定④「TTL 分开」批 2026-09-07）：整链全终态
                 // → 整批立即移归档（移除旧 24h 活动区滞留）；链未齐（含 blocked 待办）
                 // → 保留。视觉「同帧淡出」由前端派生管线承担，本 sweep 出库+落盘。
@@ -500,7 +556,8 @@ object ProjectActor:
                 // 一次性手工改 flow-map.json 既不可复跑也逃过审计（写点单点在引擎）。
                 // 顺序 = 摘边在前、sweep 在后（顺序即语义，禁调换）。best-effort：
                 // 失败只 WARN，绝不阻塞归档 sweep 与后续腿。
-                cfg.engine.backfillAbandonedDetach()
+                cfg.engine
+                  .backfillAbandonedDetach()
                   .handleErrorWith(e => logger.warn(s"abandon detach backfill failed: ${e.getMessage}").as(Nil))
                   .void *>
                 cfg.engine.store.sweepCompletedChainsDetailed(System.currentTimeMillis()).flatMap { swept =>
@@ -516,7 +573,8 @@ object ProjectActor:
                         Some(c.chainId)
                       )
                       .handleErrorWith(e =>
-                        logger.warn(s"chain-archived audit append failed (${c.chainId}): ${e.getMessage}"))
+                        logger.warn(s"chain-archived audit append failed (${c.chainId}): ${e.getMessage}")
+                      )
                   }
                   // ③ 索引翻转（事件驱动、幂等）：出库后把链块/条目 state 在 active ↔
                   //    archived 间迁移。swept 空 → 不调用（零开销，禁 30s 空扫）。
@@ -524,14 +582,12 @@ object ProjectActor:
                     if swept.isEmpty then IO.unit
                     else
                       DocIndexConsumer
-                        .applyChainEvents(cfg.project.workspace,
-                          DocIndexConsumer.indexRootsFor(cfg.project.workspace))
+                        .applyChainEvents(cfg.project.workspace, DocIndexConsumer.indexRootsFor(cfg.project.workspace))
                         .handleErrorWith(e => logger.warn(s"doc-index flip failed: ${e.getMessage}"))
                         .void
                   val reconcile = DocIndexConsumer
                     .tick(cfg.project.workspace)
-                    .handleErrorWith(e =>
-                      logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
+                    .handleErrorWith(e => logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
                     .void
                   // ④ 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2，b64 批 2026-09-13；
                   //    全降级列表态批 2026-09-16 作者裁定「全部降级列表态」）：本次
@@ -549,22 +605,27 @@ object ProjectActor:
                 //    重复记账**）。判据全在 `ChainLedger`（纯函数）；本腿只做拍点编排与
                 //    事件记账。**best-effort**：失败仅 WARN（台账是派生面，下一拍重试；
                 //    零图事实损失，且台账写面自身失败即中止、绝不留半状态）。
-                cfg.engine.store.reconcileChainLedger(System.currentTimeMillis()).flatMap { ledgerChanges =>
-                  ledgerChanges.traverse_ { ch =>
-                    FlowMapEventLog
-                      .append(
-                        cfg.project.workspace,
-                        cfg.project.name,
-                        ch.nodeId,
-                        FlowMapEventLog.ChainMembershipChangedType,
-                        FlowMapEventLog.chainMembershipChangedSummary(ch.from, ch.to, ch.reason),
-                        chainId = ch.to
-                      )
-                      .handleErrorWith(e =>
-                        logger.warn(s"chain-membership-changed (ledger re-id ${ch.from.getOrElse("-")}→${ch.to.getOrElse("-")}) append failed for ${ch.nodeId}: ${e.getMessage}"))
+                cfg.engine.store
+                  .reconcileChainLedger(System.currentTimeMillis())
+                  .flatMap { ledgerChanges =>
+                    ledgerChanges.traverse_ { ch =>
+                      FlowMapEventLog
+                        .append(
+                          cfg.project.workspace,
+                          cfg.project.name,
+                          ch.nodeId,
+                          FlowMapEventLog.ChainMembershipChangedType,
+                          FlowMapEventLog.chainMembershipChangedSummary(ch.from, ch.to, ch.reason),
+                          chainId = ch.to
+                        )
+                        .handleErrorWith(e =>
+                          logger.warn(
+                            s"chain-membership-changed (ledger re-id ${ch.from.getOrElse("-")}→${ch.to.getOrElse("-")}) append failed for ${ch.nodeId}: ${e.getMessage}"
+                          )
+                        )
+                    }
                   }
-                }.handleErrorWith(e =>
-                  logger.warn(s"chain ledger reconcile failed: ${e.getMessage}").void)
+                  .handleErrorWith(e => logger.warn(s"chain ledger reconcile failed: ${e.getMessage}").void)
                   .as(behavior)
             case ProjectCommand.Shutdown =>
               IO.pure(Behaviors.stopped)
@@ -573,26 +634,28 @@ object ProjectActor:
       }
     }
 
-  /** 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13 投根 →
-    * 全降级列表态批 2026-09-16，作者裁定「全部降级列表态」）。
-    *
-    * == 本批语义（零投主对话）==
-    * 链完成横幅**不再投 root**（不进 LLM 上下文、不出即时气泡）——承载面改为
-    * **链级列表/明细面**（Flow Map 归档面板，用户主动查看时呈现）。本腿保留原骨架：
-    *
-    *   ① **本回合出库链**：sweep 已把账本置「已启用未投递」⇒ 本腿降级登记；
-    *   ② **历史欠账扫描**：账本未置位的批（历史窗口/崩溃）本腿继续登记（幂等）。
-    *
-    * **M2**：单成员（孤立）链**不入摘要面**（判据 `FlowMapStore.MinChainMembersForSummary`）。
-    * **R11**：独立条目 ≤ `ChainSummaryMaxPerRound`（3）条，超出部分合并为**一条**计数条目。
-    * **R-9（硬）**：降级登记 ⇒ **照记** `summarySentAt`（批文件置位）——防每拍重算与
-    * 重复降级；本批后无「投递失败 ⇒ 不记账」分支（root 面不存在）。
-    * **R-10（口径变化显式申报）**：额度语义从「本回合**投递** ≤3 条」变为
-    * 「本回合**登记** ≤3 条 + 1 条溢出合并」——计数口径与投递数解耦：本回合
-    * `candidates = individual + overflow` 条被**降级登记**，`deliveries = 0` 恒成立；
-    * 「出库链数」（sweep 事实）由 `chain-archived` 审计事件独立可读。日志面显式区分
-    * （`downgraded` / `deliveries=0`），禁把「出库链数」读作「投递数」。
-    * 全部 best-effort（登记/记账失败只 WARN，下拍重试）。 */
+  /**
+   * 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2；b64 批 2026-09-13 投根 →
+   * 全降级列表态批 2026-09-16，作者裁定「全部降级列表态」）。
+   *
+   * == 本批语义（零投主对话）==
+   * 链完成横幅**不再投 root**（不进 LLM 上下文、不出即时气泡）——承载面改为
+   * **链级列表/明细面**（Flow Map 归档面板，用户主动查看时呈现）。本腿保留原骨架：
+   *
+   *   ① **本回合出库链**：sweep 已把账本置「已启用未投递」⇒ 本腿降级登记；
+   *   ② **历史欠账扫描**：账本未置位的批（历史窗口/崩溃）本腿继续登记（幂等）。
+   *
+   * **M2**：单成员（孤立）链**不入摘要面**（判据 `FlowMapStore.MinChainMembersForSummary`）。
+   * **R11**：独立条目 ≤ `ChainSummaryMaxPerRound`（3）条，超出部分合并为**一条**计数条目。
+   * **R-9（硬）**：降级登记 ⇒ **照记** `summarySentAt`（批文件置位）——防每拍重算与
+   * 重复降级；本批后无「投递失败 ⇒ 不记账」分支（root 面不存在）。
+   * **R-10（口径变化显式申报）**：额度语义从「本回合**投递** ≤3 条」变为
+   * 「本回合**登记** ≤3 条 + 1 条溢出合并」——计数口径与投递数解耦：本回合
+   * `candidates = individual + overflow` 条被**降级登记**，`deliveries = 0` 恒成立；
+   * 「出库链数」（sweep 事实）由 `chain-archived` 审计事件独立可读。日志面显式区分
+   * （`downgraded` / `deliveries=0`），禁把「出库链数」读作「投递数」。
+   * 全部 best-effort（登记/记账失败只 WARN，下拍重试）。
+   */
   private def deliverChainSummaries(cfg: ProjectConfig): IO[Unit] =
     cfg.engine.store
       .chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
@@ -602,7 +665,8 @@ object ProjectActor:
             .deliverChainSummary(c.text, c.chainId, c.eventType) *>
             cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis()) *>
             logger.info(
-              s"Project '${cfg.project.name}' chain summary downgraded: ${c.chainId} (${c.members} members, ${c.completed}c/${c.failed}f/${c.cancelled}x) — ledger marked, deliveries=0")
+              s"Project '${cfg.project.name}' chain summary downgraded: ${c.chainId} (${c.members} members, ${c.completed}c/${c.failed}f/${c.cancelled}x) — ledger marked, deliveries=0"
+            )
         val overflow =
           if tail.isEmpty then IO.unit
           else
@@ -610,52 +674,64 @@ object ProjectActor:
             // R11 溢出合并条事件类型：三元逐项提升（failed > cancelled > completed）——
             // 与 `FlowMapStore.renderChainSummary` 同序（R-4 消费点②）。
             val eventType =
-              if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventFailed) then FlowMapStore.ChainSummaryEventFailed
-              else if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventCancelled) then FlowMapStore.ChainSummaryEventCancelled
+              if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventFailed) then
+                FlowMapStore.ChainSummaryEventFailed
+              else if tail.exists(_.eventType == FlowMapStore.ChainSummaryEventCancelled) then
+                FlowMapStore.ChainSummaryEventCancelled
               else FlowMapStore.ChainSummaryEventCompleted
             cfg.engine.deliverChainSummary(text, s"overflow-${tail.size}", eventType) *>
               tail.traverse_(c => cfg.engine.store.markChainSummarySent(c.chainId, System.currentTimeMillis())) *>
               logger.info(
-                s"Project '${cfg.project.name}' chain summary overflow downgraded: ${tail.size} chain(s) merged (R11 cap ${FlowMapStore.ChainSummaryMaxPerRound}) — ledger marked, deliveries=0")
+                s"Project '${cfg.project.name}' chain summary overflow downgraded: ${tail.size} chain(s) merged (R11 cap ${FlowMapStore.ChainSummaryMaxPerRound}) — ledger marked, deliveries=0"
+              )
         // R-10 口径行：登记数（individual + overflow 合并条）与投递数分列，机械可核。
         val roundLine =
           if head.isEmpty && tail.isEmpty then IO.unit
           else
             logger.info(
-              s"Project '${cfg.project.name}' chain summary round: individual=${head.size} overflowChains=${tail.size} overflowMerged=${if tail.isEmpty then 0 else 1} deliveries=0 (list-state downgrade; per-tick cap ${FlowMapStore.ChainSummaryMaxPerRound})")
+              s"Project '${cfg.project.name}' chain summary round: individual=${head.size} overflowChains=${tail.size} overflowMerged=${
+                  if tail.isEmpty then 0 else 1
+                } deliveries=0 (list-state downgrade; per-tick cap ${FlowMapStore.ChainSummaryMaxPerRound})"
+            )
         head.traverse_(downgradeOne) *> overflow *> roundLine
       }
       .handleErrorWith(e => logger.warn(s"chain summary downgrade failed: ${e.getMessage}"))
 
-  /** Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
-    * 受信 plugin 目录（无审批批 2026-09-13 后在位即受信；未受信的唯一形态 = 已封禁，
-    * deny-list 命中者不出现，§B.3）；flag 关 / 盘上无插件 → ""。可见性批
-    * （2026-09-10）：段尾缺席注记随段给出（装载失败 / 已封禁计数；「信任未批准」「digest
-    * 漂移」两类随 default-deny 一起消亡，内容变更另走非拦截可见性注记），
-    * 目录缩容时不再静默——口径见 PluginRegistry.renderCatalog。
-    * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
-    * （分发器单次会话、目录规模小，不多造工具）。
-    * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog
-    * 双段拼装（插件能力目录 description 单源 + 预设场景目录），本类只留挂接。 */
+  /**
+   * Plugin Catalog 段（阶段 2b §B.4 第 2 步）：分发器 prompt 组装的注入源。
+   * 受信 plugin 目录（无审批批 2026-09-13 后在位即受信；未受信的唯一形态 = 已封禁，
+   * deny-list 命中者不出现，§B.3）；flag 关 / 盘上无插件 → ""。可见性批
+   * （2026-09-10）：段尾缺席注记随段给出（装载失败 / 已封禁计数；「信任未批准」「digest
+   * 漂移」两类随 default-deny 一起消亡，内容变更另走非拦截可见性注记），
+   * 目录缩容时不再静默——口径见 PluginRegistry.renderCatalog。
+   * 对齐 skillCatalog order 800 注入先例——用注入目录段而非新增查询工具
+   * （分发器单次会话、目录规模小，不多造工具）。
+   * dispatcher-ctx 批（2026-09-05）：目录渲染收口到 DispatcherContextCatalog
+   * 双段拼装（插件能力目录 description 单源 + 预设场景目录），本类只留挂接。
+   */
   private def pluginCatalogText(): IO[String] = nebflow.core.plugin.DispatcherContextCatalog.render()
 
-  /** 项目记忆注入段（project-memory 批 2026-09-05 §3）：本项目 workspace
-    * `.nebflow/memory.md` 的渲染块——预算内全文、软警区全文+WARN 脚注、超硬顶
-    * 头部+统计（三态渲染单点在 ProjectMemory.injectionBlock）。文件缺失/空 →
-    * ""（调用方不注空段）。
-    * 注入语义=「派发项目任务 → 该项目记忆自动注入」：只挂 spawn 形态两 prompt
-    * （newTaskPrompt/reentryPrompt）；注入活跃会话形态（taskInjectionText/
-    * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
-    * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
-    * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。 */
+  /**
+   * 项目记忆注入段（project-memory 批 2026-09-05 §3）：本项目 workspace
+   * `.nebflow/memory.md` 的渲染块——预算内全文、软警区全文+WARN 脚注、超硬顶
+   * 头部+统计（三态渲染单点在 ProjectMemory.injectionBlock）。文件缺失/空 →
+   * ""（调用方不注空段）。
+   * 注入语义=「派发项目任务 → 该项目记忆自动注入」：只挂 spawn 形态两 prompt
+   * （newTaskPrompt/reentryPrompt）；注入活跃会话形态（taskInjectionText/
+   * reentryInjectionText）不重复注入——会话 spawn 时已带当次记忆快照，turn
+   * 边界间的增量由 NodeList 现读与节点 out 结果承接（最小改动纪律）。
+   * 全局注入（ContextRefresher）不含项目记忆——瘦身边界（§3 默认注入只含全局）。
+   */
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
-  /** 分发器任务板注入段（TaskBoard 批 2 §3a）：renderDispatcher 全板紧凑行
-    * （≤1200 字符/20 行，超限整行丢弃+尾注——降级纪律在 renderer 单点）。
-    * 无板/空板 → ""（调用方不注空段，项目记忆先例同款）。⚠node-done join 数据
-    * 从 Flow Map 快照现读（§2d 真实终态映射，TaskBoardStore.nodeTerminalMap 单点），
-    * 不缓存——分发器每次 spawn/reentry 拿当下漂移面。 */
+  /**
+   * 分发器任务板注入段（TaskBoard 批 2 §3a）：renderDispatcher 全板紧凑行
+   * （≤1200 字符/20 行，超限整行丢弃+尾注——降级纪律在 renderer 单点）。
+   * 无板/空板 → ""（调用方不注空段，项目记忆先例同款）。⚠node-done join 数据
+   * 从 Flow Map 快照现读（§2d 真实终态映射，TaskBoardStore.nodeTerminalMap 单点），
+   * 不缓存——分发器每次 spawn/reentry 拿当下漂移面。
+   */
   private def dispatcherBoardText(cfg: ProjectConfig): IO[String] =
     cfg.board match
       case None => IO.pure("")
@@ -665,27 +741,42 @@ object ProjectActor:
           IO.blocking(board.entriesSync())
             .map(entries => TaskBoardRenderer.renderDispatcher(entries, terminal))
             .handleErrorWith(e =>
-              logger.warn(s"Project '${cfg.project.name}' task-board injection skipped: ${e.getMessage}").as(""))
+              logger.warn(s"Project '${cfg.project.name}' task-board injection skipped: ${e.getMessage}").as("")
+            )
         }
 
-  /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
-    * 观测面上下文经济学批（20260907 裁定①方向 B）：不嵌 Flow Map 快照——旧实现
-    * `snapshot.asJson.noSpaces` 直灌首条消息（内存模型 result/task 双全文水合，
-    * nebflow 规模 ≈1,055KB，spawn 即超 CompactThreshold），改为「先 NodeList 读
-    * 现状」按需拉取（与工具通道同源同守卫）。private[project] 供 spawn 首条消息
-    * 形态 spec（DispatcherSpawnPromptSpec）固化断言。
-    * TaskBoard 批 2（§3a）：taskBoard = <task-board> 注入块（renderer 单点渲染，
-    * 上限 1200 字符/20 行）——拼装相对顺序 …→插件目录→项目记忆→任务板→任务文本
-    * （任务板在任务文本之前；空串不注空段）。 */
-  private[project] def newTaskPrompt(project: ProjectDef, taskText: String, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
+  /**
+   * 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
+   * 观测面上下文经济学批（20260907 裁定①方向 B）：不嵌 Flow Map 快照——旧实现
+   * `snapshot.asJson.noSpaces` 直灌首条消息（内存模型 result/task 双全文水合，
+   * nebflow 规模 ≈1,055KB，spawn 即超 CompactThreshold），改为「先 NodeList 读
+   * 现状」按需拉取（与工具通道同源同守卫）。private[project] 供 spawn 首条消息
+   * 形态 spec（DispatcherSpawnPromptSpec）固化断言。
+   * TaskBoard 批 2（§3a）：taskBoard = <task-board> 注入块（renderer 单点渲染，
+   * 上限 1200 字符/20 行）——拼装相对顺序 …→插件目录→项目记忆→任务板→任务文本
+   * （任务板在任务文本之前；空串不注空段）。
+   */
+  private[project] def newTaskPrompt(
+    project: ProjectDef,
+    taskText: String,
+    pluginCatalog: String,
+    projectMemory: String,
+    taskBoard: String = ""
+  ): String =
     s"""You are the task dispatcher for project "${project.name}".
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}Task: $taskText
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${
+        if projectMemory.nonEmpty then projectMemory + "\n" else ""
+      }${
+        if taskBoard.nonEmpty then taskBoard + "\n" else ""
+      }Task: $taskText
        |
        |Read the Flow Map first (NodeList — topology and node status on demand), then create / wire / rewire nodes with NodeEdit as needed. Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
 
-  /** 重入协议四动作块（reentryPrompt 与 reentryInjectionText 共用，单点维护；
-    * 设计 §2.2 原文照抄——四动作选择/abandon 说明/「无需回报」）。 */
+  /**
+   * 重入协议四动作块（reentryPrompt 与 reentryInjectionText 共用，单点维护；
+   * 设计 §2.2 原文照抄——四动作选择/abandon 说明/「无需回报」）。
+   */
   private def reentryActions(project: ProjectDef): String =
     s"""Read the current state first (NodeList — focus on blocked nodes and their pending downstreams),
        |then pick and execute one action (NodeEdit / NodeCancel):
@@ -695,13 +786,23 @@ object ProjectActor:
        |4. External condition needed / no materially different adjustment available → abandon and do not re-dispatch (avoid a futile loop).
        |Every Node tool call carries project=${project.name}. No report needed — topology and status live in the Flow Map.""".stripMargin
 
-  /** 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
-    * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
-    * 裁定①（20260907 方向 B）：快照注入移除，同 newTaskPrompt——四动作块自带
-    * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。
-    * TaskBoard 批 2（§3a）：taskBoard 注入块同 newTaskPrompt——拼装在项目记忆
-    * 之后、四动作块之前（任务板在任务文本之前语义的重入对应位）。 */
-  private[project] def reentryPrompt(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int, pluginCatalog: String, projectMemory: String, taskBoard: String = ""): String =
+  /**
+   * 重入调整形态 prompt（spawnDispatcher 双形态之二，设计 §2.2 原文照抄——
+   * 含节点名/id/blockCount/反馈三字段/四动作选择/abandon 说明/「无需回报」）。
+   * 裁定①（20260907 方向 B）：快照注入移除，同 newTaskPrompt——四动作块自带
+   * 「先 NodeList 读现状」。private[project] 供 spec 固化断言。
+   * TaskBoard 批 2（§3a）：taskBoard 注入块同 newTaskPrompt——拼装在项目记忆
+   * 之后、四动作块之前（任务板在任务文本之前语义的重入对应位）。
+   */
+  private[project] def reentryPrompt(
+    project: ProjectDef,
+    node: NodeDef,
+    feedback: BlockedFeedback,
+    blockCount: Int,
+    pluginCatalog: String,
+    projectMemory: String,
+    taskBoard: String = ""
+  ): String =
     s"""You are the task dispatcher for project "${project.name}" — this round is a [node-feedback re-entry], not a new task.
        |
        |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
@@ -709,17 +810,26 @@ object ProjectActor:
        |  detail: ${feedback.detail}
        |  topology suggestion: ${feedback.suggestion}
        |
-       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${if projectMemory.nonEmpty then projectMemory + "\n" else ""}${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
+       |${if pluginCatalog.nonEmpty then pluginCatalog + "\n" else ""}${
+        if projectMemory.nonEmpty then projectMemory + "\n" else ""
+      }${if taskBoard.nonEmpty then taskBoard + "\n" else ""}${reentryActions(project)}""".stripMargin
 
-  /** 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
-    * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。 */
+  /**
+   * 注入现有会话的新任务文本（单例化裁定：标注「新任务到达」来源；与进行中
+   * 工作按 turn 串行——处理中排 pendingUserInputs，turn 边界消费）。
+   */
   private def taskInjectionText(taskText: String): String =
     s"""── New task arrived (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──
        |
        |$taskText""".stripMargin
 
   /** 注入现有会话的重入调整文本（单例化裁定 × §2.2 修订：重入优先投活跃会话）。 */
-  private def reentryInjectionText(project: ProjectDef, node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
+  private def reentryInjectionText(
+    project: ProjectDef,
+    node: NodeDef,
+    feedback: BlockedFeedback,
+    blockCount: Int
+  ): String =
     s"""── Node-feedback re-entry (injected into the live dispatcher session; serialized with in-flight work turn by turn) ──
        |
        |Node ${node.name} (${node.id}) reported blocked (round $blockCount):
@@ -729,29 +839,32 @@ object ProjectActor:
        |
        |${reentryActions(project)}""".stripMargin
 
-  /** 有效空闲保活窗（令 3）：spec 注入优先，否则现读 `Defaults.DispatcherIdleWindowMs`。
-    * 桥与扫描腿**同源读本函数**（防「桥记了 idleSince 但扫描腿永不拆」或反之的
-    * 分叉）。`≤ 0` = 关闭保活。 */
+  /**
+   * 有效空闲保活窗（令 3）：spec 注入优先，否则现读 `Defaults.DispatcherIdleWindowMs`。
+   * 桥与扫描腿**同源读本函数**（防「桥记了 idleSince 但扫描腿永不拆」或反之的
+   * 分叉）。`≤ 0` = 关闭保活。
+   */
   private def idleWindowMs(cfg: ProjectConfig): Long =
     cfg.dispatcherIdleWindowMs.getOrElse(nebflow.shared.Defaults.DispatcherIdleWindowMs)
 
-  /** 分发器观察桥（单例化改造后）：Completed 按 pendingInjected 延迟裁决 /
-    * Failed+Cancelled 立即拆除（清 activeRef 登记 + registry + 停 agent）。
-    *
-    * **令 3 分发器生命周期（2026-09-12，设计 §3.1/§3.3；作者 14:14 原话「30 mins
-    * 无新任务才销毁为新会话，保证连续任务派发的连贯性。目前是每次都是新的实例」）**：
-    * `Completed` 裁决 `remaining == 0`（本 turn 把所有注入件消费干净）时**不再
-    * 立即拆除**——改为写 `idleSince = Some(now)` 后**保活**，等
-    * [[ProjectActor.sweepIdleDispatchers]] 在 `Defaults.DispatcherIdleWindowMs`
-    * 到点后走既有 `teardown` 拆除。⇒ 空闲窗内到达的新派发复用**同一会话**（同 id
-    * + 同上下文）。`Failed`/`Cancelled` 分支**一字不改**（致命失败/取消仍即时拆除，
-    * 不享受空闲窗）。窗口 ≤0 = 关闭保活（回退到 turn 级即拆的旧行为）。
-    *
-    * 桥寿命 = 会话寿命（设计 §2.5）：桥同时是 `supervisorRef`（取消通道）与
-    * `replyTo`（注入回执通道），必须活满整个空闲窗——故保活分支**不** stop 桥。
-    *
-    * rootSessionId：面板终态帧的归桶键（Sub-Agents 面板实时刷新修复）。
-    */
+  /**
+   * 分发器观察桥（单例化改造后）：Completed 按 pendingInjected 延迟裁决 /
+   * Failed+Cancelled 立即拆除（清 activeRef 登记 + registry + 停 agent）。
+   *
+   * **令 3 分发器生命周期（2026-09-12，设计 §3.1/§3.3；作者 14:14 原话「30 mins
+   * 无新任务才销毁为新会话，保证连续任务派发的连贯性。目前是每次都是新的实例」）**：
+   * `Completed` 裁决 `remaining == 0`（本 turn 把所有注入件消费干净）时**不再
+   * 立即拆除**——改为写 `idleSince = Some(now)` 后**保活**，等
+   * [[ProjectActor.sweepIdleDispatchers]] 在 `Defaults.DispatcherIdleWindowMs`
+   * 到点后走既有 `teardown` 拆除。⇒ 空闲窗内到达的新派发复用**同一会话**（同 id
+   * + 同上下文）。`Failed`/`Cancelled` 分支**一字不改**（致命失败/取消仍即时拆除，
+   * 不享受空闲窗）。窗口 ≤0 = 关闭保活（回退到 turn 级即拆的旧行为）。
+   *
+   * 桥寿命 = 会话寿命（设计 §2.5）：桥同时是 `supervisorRef`（取消通道）与
+   * `replyTo`（注入回执通道），必须活满整个空闲窗——故保活分支**不** stop 桥。
+   *
+   * rootSessionId：面板终态帧的归桶键（Sub-Agents 面板实时刷新修复）。
+   */
   private def dispatcherBridge(
     cfg: ProjectConfig,
     active: Ref[IO, Option[ActiveDispatcher]],
@@ -786,39 +899,52 @@ object ProjectActor:
           // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。
           val seenInjectedMsgs =
             messages.count(m => m.source.exists(DispatcherInjectedSources.contains))
-          active.modify {
-            case Some(a) if a.sessionId == sessionId =>
-              val consumed =
-                if seenInjectedMsgs > a.consumedTaskMsgs then seenInjectedMsgs - a.consumedTaskMsgs
-                else if a.pendingInjected > 0 then 1
-                else 0
-              val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
-              val remaining = a.pendingInjected - k
-              if remaining > 0 then
-                (Some(a.copy(
-                  pendingInjected = remaining,
-                  pendingTaskTexts = a.pendingTaskTexts.drop(k),
-                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
-                  idleSince = None // 仍在飞（有未跑完的注入件）——不计空闲
-                )), false)
-              else if idleWindowMs(cfg) > 0 then
-                // 令 3 保活：本 turn 把所有注入件消费干净 ⇒ 记空闲起点，**不拆**，
-                // 拆除移交 30 s 扫描腿（空闲窗内新任务复用同一会话）。
-                (Some(a.copy(
-                  pendingInjected = 0,
-                  pendingTaskTexts = Nil,
-                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
-                  idleSince = Some(System.currentTimeMillis())
-                )), false)
-              // 窗口 ≤0 = 关闭保活 ⇒ 逐字保留今天的 turn 级即拆（回退开关）。
-              else (None, true)
-            case _ => (None, true)
-          }.flatMap { teardownNow =>
-            // `teardownNow` 仅剩「activeRef 里已不是本会话」一支（旧会话的迟到
-            // Completed，如取消/失败后残留）——照旧拆，语义不变。
-            if teardownNow then teardown
-            else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
-          }
+          active
+            .modify {
+              case Some(a) if a.sessionId == sessionId =>
+                val consumed =
+                  if seenInjectedMsgs > a.consumedTaskMsgs then seenInjectedMsgs - a.consumedTaskMsgs
+                  else if a.pendingInjected > 0 then 1
+                  else 0
+                val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
+                val remaining = a.pendingInjected - k
+                if remaining > 0 then
+                  (
+                    Some(
+                      a.copy(
+                        pendingInjected = remaining,
+                        pendingTaskTexts = a.pendingTaskTexts.drop(k),
+                        consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                        idleSince = None // 仍在飞（有未跑完的注入件）——不计空闲
+                      )
+                    ),
+                    false
+                  )
+                else if idleWindowMs(cfg) > 0 then
+                  // 令 3 保活：本 turn 把所有注入件消费干净 ⇒ 记空闲起点，**不拆**，
+                  // 拆除移交 30 s 扫描腿（空闲窗内新任务复用同一会话）。
+                  (
+                    Some(
+                      a.copy(
+                        pendingInjected = 0,
+                        pendingTaskTexts = Nil,
+                        consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                        idleSince = Some(System.currentTimeMillis())
+                      )
+                    ),
+                    false
+                  )
+                // 窗口 ≤0 = 关闭保活 ⇒ 逐字保留今天的 turn 级即拆（回退开关）。
+                else (None, true)
+                end if
+              case _ => (None, true)
+            }
+            .flatMap { teardownNow =>
+              // `teardownNow` 仅剩「activeRef 里已不是本会话」一支（旧会话的迟到
+              // Completed，如取消/失败后残留）——照旧拆，语义不变。
+              if teardownNow then teardown
+              else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
+            }
         case AgentEvent.Failed(_, _) | AgentEvent.Cancelled(_, _) =>
           // 面板实时终态帧（Sub-Agents 面板取消/终止实时刷新修复）：取消与
           // 致命失败此前零 WS 出口（会话级 done 只走正常完成路径）→ 面板行由
@@ -831,31 +957,35 @@ object ProjectActor:
             active.update(_.filterNot(_.sessionId == sessionId)) *> teardown
     }
 
-  /** 腿①（Mail → 项目分发器）**四段式 header PROJECT 段的发射面取值**（「气泡四段式
-    * 统一」批 2026-09-15，作者 12:33 令；r3 落位，逐条落位与读数见交付报告 §r3-2；
-    * R-A 补 2026-09-15 ③：① 级置位已落位）。
-    *
-    * 判据逐字：`PROJECT` = **发送方所属项目**；「跨 root 直投件项目段用 NEBULA」。取值
-    * 顺序（禁臆造、禁静默填空）：
-    *   ① `attribution.project` = **构造点显式置位**（`MailTool.mailAttribution` 取
-    *      `ToolContext.projectName`）⇒ **优先**。R-A 补起该置位**已落位**
-    *      （腿① `mailAttribution` / 腿③ `sendMail` 同源置位）⇒ 「发送方自带项目」的
-    *      调用面（如项目节点会话 / 分发器越面发 `project:`）在此取到**其实际项目域**。
-    *   ② 构造点未置位 ⇒ 本腿的**在册地址面**放行两类非 dispatcher 身份（`MailTool.roleOf`：
-    *      按 `isDispatcher` / agent 名判，**不按会话类别**）——`NebulaRoot` 根系 /
-    *      `Teamish` 其余：**NebulaRoot 与无项目上下文的团队会话** ⇒ 发送方所属项目落在
-    *      **根域** = [[NotificationHeader.RootProject]]（= 作者令后半句「跨 root 直投件」）。
-    *      🔴 反例登记（R-B）：`Teamish` **包含带项目上下文者**（项目节点会话，`ToolContext.projectName`
-    *      由 `NodeEngine` 注入）——这类发送方本就该由 ① 级置位闭合，不得靠本级兜底。
-    *
-    * 🔴 为何本腿**不得**复用发射点 ② 级回落（接收会话所属项目）：腿① 的接收面 = **目标
-    * 项目**的分发器会话 ⇒ ② 级恒取到**收件方**项目，与判据「发送方所属项目」**相反**
-    * （复核位实测成串 `MAIL · PROJ-P1 · NEBULA · INFO`）；①/② 级皆空时以根域取值即判据形态
-    * `MAIL · NEBULA · NEBULA · INFO`。
-    *
-    * `None`（`attribution` 缺席 = `DispatchNotify` 回流 / 重入触发等非 Mail 腿）⇒ **保持
-    * `None`**：该两腿行为逐字不变（PROJECT 段仍走发射点 ②/③ 回落），本兜底**只作用**
-    * 于 Mail 腿①（唯一携带 attribution 的调用面）。 */
+  end dispatcherBridge
+
+  /**
+   * 腿①（Mail → 项目分发器）**四段式 header PROJECT 段的发射面取值**（「气泡四段式
+   * 统一」批 2026-09-15，作者 12:33 令；r3 落位，逐条落位与读数见交付报告 §r3-2；
+   * R-A 补 2026-09-15 ③：① 级置位已落位）。
+   *
+   * 判据逐字：`PROJECT` = **发送方所属项目**；「跨 root 直投件项目段用 NEBULA」。取值
+   * 顺序（禁臆造、禁静默填空）：
+   *   ① `attribution.project` = **构造点显式置位**（`MailTool.mailAttribution` 取
+   *      `ToolContext.projectName`）⇒ **优先**。R-A 补起该置位**已落位**
+   *      （腿① `mailAttribution` / 腿③ `sendMail` 同源置位）⇒ 「发送方自带项目」的
+   *      调用面（如项目节点会话 / 分发器越面发 `project:`）在此取到**其实际项目域**。
+   *   ② 构造点未置位 ⇒ 本腿的**在册地址面**放行两类非 dispatcher 身份（`MailTool.roleOf`：
+   *      按 `isDispatcher` / agent 名判，**不按会话类别**）——`NebulaRoot` 根系 /
+   *      `Teamish` 其余：**NebulaRoot 与无项目上下文的团队会话** ⇒ 发送方所属项目落在
+   *      **根域** = [[NotificationHeader.RootProject]]（= 作者令后半句「跨 root 直投件」）。
+   *      🔴 反例登记（R-B）：`Teamish` **包含带项目上下文者**（项目节点会话，`ToolContext.projectName`
+   *      由 `NodeEngine` 注入）——这类发送方本就该由 ① 级置位闭合，不得靠本级兜底。
+   *
+   * 🔴 为何本腿**不得**复用发射点 ② 级回落（接收会话所属项目）：腿① 的接收面 = **目标
+   * 项目**的分发器会话 ⇒ ② 级恒取到**收件方**项目，与判据「发送方所属项目」**相反**
+   * （复核位实测成串 `MAIL · PROJ-P1 · NEBULA · INFO`）；①/② 级皆空时以根域取值即判据形态
+   * `MAIL · NEBULA · NEBULA · INFO`。
+   *
+   * `None`（`attribution` 缺席 = `DispatchNotify` 回流 / 重入触发等非 Mail 腿）⇒ **保持
+   * `None`**：该两腿行为逐字不变（PROJECT 段仍走发射点 ②/③ 回落），本兜底**只作用**
+   * 于 Mail 腿①（唯一携带 attribution 的调用面）。
+   */
   private def leg1SenderProject(attribution: Option[InjectionAttribution]): Option[String] =
     attribution.map(a => a.project.map(_.trim).filter(_.nonEmpty).getOrElse(NotificationHeader.RootProject))
 
@@ -878,7 +1008,17 @@ object ProjectActor:
       pluginCatalogText().flatMap { catalog =>
         projectMemoryText(cfg.project).flatMap { memory =>
           dispatcherBoardText(cfg).flatMap { boardText =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
+            spawnDispatcher(
+              cfg,
+              active,
+              same,
+              newTaskPrompt(cfg.project, taskText, catalog, memory, boardText),
+              rootSessionId,
+              "",
+              taskText,
+              source,
+              attribution
+            )
           }
         }
       }
@@ -888,48 +1028,63 @@ object ProjectActor:
     // 开新 turn）；无（含占位瞬间会话刚终结）→ spawn 新实例。
     // 令 3：注入命中即 `idleSince = None`（**新任务到达 = 重置空闲计时**，设计 §3.1-3）。
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
-    active.modify {
-      case Some(a) =>
-        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
-      case None => (None, None)
-    }.flatMap {
-      case Some(a) =>
-        // R7-(c) 注入前活性前置校验（令 3）：registry 无该会话行 ⇒ activeRef 是残影
-        // （会话已被拆除/收殓），本次派发改走 spawn 新会话，绝不把任务投进死 actor
-        // 的邮箱（静默丢弃）。
-        // 合并口径（merge main be16e748，2026-09-12）：main 侧的 `attribution` 链
-        // （bluebubble 批：Mail 发信方随注入落到蓝气泡顶栏）与本批的活性前置校验
-        // **两侧都保留**——校验在外层，注入载荷带 attribution。
-        liveRegistration(cfg, a.sessionId).flatMap {
-          case true =>
-            (a.agentRef ! AgentCommand.UserInput(
-              text = taskInjectionText(taskText),
-              replyTo = Some(a.bridgeRef),
-              source = Some(source),
-              // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
-              // mailbadge 批（2026-09-13，选项 C）：`intake` 同源透传（**只影响
-              // 呈现判别**——`source` 仍是 `Some(source)`=`task`，桥的消费计数
-              // 单点与 `idleSince` 空闲窗零触碰）。
-              sender = attribution.flatMap(_.sender),
-              senderTeam = attribution.flatMap(_.senderTeam),
-              eventType = attribution.flatMap(_.eventType),
-              intake = attribution.flatMap(_.intake),
-              // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级 = 发送方所属项目。
-              // r3（作者令后半句 / 复核位 fail 项闭合）：**腿① 发射面取值** —— 构造点
-              // 置位优先，未置位时取根域（本腿发送方无项目上下文），见 leg1SenderProject。
-              project = leg1SenderProject(attribution)
-            )).void *>
-              logger
-                .info(
-                  s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
-                )
-                .as(same)
-          case false =>
-            logger.warn(s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session") *>
-              dropStale(cfg, active, a.sessionId) *> spawnFresh
-        }
-      case None => spawnFresh
-    }
+    active
+      .modify {
+        case Some(a) =>
+          (
+            Some(
+              a.copy(
+                pendingInjected = a.pendingInjected + 1,
+                pendingTaskTexts = a.pendingTaskTexts :+ taskText,
+                idleSince = None
+              )
+            ),
+            Some(a)
+          )
+        case None => (None, None)
+      }
+      .flatMap {
+        case Some(a) =>
+          // R7-(c) 注入前活性前置校验（令 3）：registry 无该会话行 ⇒ activeRef 是残影
+          // （会话已被拆除/收殓），本次派发改走 spawn 新会话，绝不把任务投进死 actor
+          // 的邮箱（静默丢弃）。
+          // 合并口径（merge main be16e748，2026-09-12）：main 侧的 `attribution` 链
+          // （bluebubble 批：Mail 发信方随注入落到蓝气泡顶栏）与本批的活性前置校验
+          // **两侧都保留**——校验在外层，注入载荷带 attribution。
+          liveRegistration(cfg, a.sessionId).flatMap {
+            case true =>
+              (a.agentRef ! AgentCommand.UserInput(
+                text = taskInjectionText(taskText),
+                replyTo = Some(a.bridgeRef),
+                source = Some(source),
+                // 腿① 来源标注（bluebubble 批）：Mail 发信方随注入落到蓝气泡顶栏。
+                // mailbadge 批（2026-09-13，选项 C）：`intake` 同源透传（**只影响
+                // 呈现判别**——`source` 仍是 `Some(source)`=`task`，桥的消费计数
+                // 单点与 `idleSince` 空闲窗零触碰）。
+                sender = attribution.flatMap(_.sender),
+                senderTeam = attribution.flatMap(_.senderTeam),
+                eventType = attribution.flatMap(_.eventType),
+                intake = attribution.flatMap(_.intake),
+                // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级 = 发送方所属项目。
+                // r3（作者令后半句 / 复核位 fail 项闭合）：**腿① 发射面取值** —— 构造点
+                // 置位优先，未置位时取根域（本腿发送方无项目上下文），见 leg1SenderProject。
+                project = leg1SenderProject(attribution)
+              )).void *>
+                logger
+                  .info(
+                    s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
+                  )
+                  .as(same)
+            case false =>
+              logger.warn(
+                s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session"
+              ) *>
+                dropStale(cfg, active, a.sessionId) *> spawnFresh
+          }
+        case None => spawnFresh
+      }
+
+  end dispatchTask
 
   private def dispatchReentry(
     cfg: ProjectConfig,
@@ -949,8 +1104,15 @@ object ProjectActor:
           pluginCatalogText().flatMap { catalog =>
             projectMemoryText(cfg.project).flatMap { memory =>
               dispatcherBoardText(cfg).flatMap { boardText =>
-                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+                spawnDispatcher(
+                  cfg,
+                  active,
+                  same,
+                  reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText),
+                  rootSessionId,
+                  s" (reentry round $blockCount: ${node.name})",
+                  reentryTaskText(node, feedback, blockCount)
+                )
               }
             }
           }
@@ -958,67 +1120,86 @@ object ProjectActor:
         // 分发器会话（不并行 spawn 重入会话）；会话已不活跃才走 spawn 路径。
         // 令 3：重入同属「新任务到达」⇒ 重置空闲计时（`idleSince = None`，
         // 设计 §2.1 重置条件逐类结论表：blocked 升级/反馈重入 = **是**）。
-        active.modify {
-          case Some(a) =>
-            (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount), idleSince = None)), Some(a))
-          case None => (None, None)
-        }.flatMap {
-          case Some(a) =>
-            // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
-            liveRegistration(cfg, a.sessionId).flatMap {
-              case true =>
-                (a.agentRef ! AgentCommand.UserInput(
-                  text = reentryInjectionText(cfg.project, node, feedback, blockCount),
-                  replyTo = Some(a.bridgeRef),
-                  // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
-                  // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
-                  source = Some(SourceTask)
-                )).void *>
-                  logger
-                    .info(
-                      s"Project '${cfg.project.name}' reentry (round $blockCount: ${node.name}) injected into active dispatcher ${a.sessionId}"
-                    )
-                    .as(same)
-              case false =>
-                logger.warn(s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session for reentry") *>
-                  dropStale(cfg, active, a.sessionId) *> spawnFresh
-            }
-          case None => spawnFresh
-        }
+        active
+          .modify {
+            case Some(a) =>
+              (
+                Some(
+                  a.copy(
+                    pendingInjected = a.pendingInjected + 1,
+                    pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount),
+                    idleSince = None
+                  )
+                ),
+                Some(a)
+              )
+            case None => (None, None)
+          }
+          .flatMap {
+            case Some(a) =>
+              // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
+              liveRegistration(cfg, a.sessionId).flatMap {
+                case true =>
+                  (a.agentRef ! AgentCommand.UserInput(
+                    text = reentryInjectionText(cfg.project, node, feedback, blockCount),
+                    replyTo = Some(a.bridgeRef),
+                    // 重入是 task 形态入口（FeedbackRouter 独占 blocked 重入，非 DispatchNotify
+                    // 回流）——来源标签与 Task 入口同值（Q2-B2 三分之外的既有语义，保持不变）。
+                    source = Some(SourceTask)
+                  )).void *>
+                    logger
+                      .info(
+                        s"Project '${cfg.project.name}' reentry (round $blockCount: ${node.name}) injected into active dispatcher ${a.sessionId}"
+                      )
+                      .as(same)
+                case false =>
+                  logger.warn(
+                    s"Project '${cfg.project.name}' stale dispatcher registration ${a.sessionId} (no registry entry) — discarded, spawning a fresh session for reentry"
+                  ) *>
+                    dropStale(cfg, active, a.sessionId) *> spawnFresh
+              }
+            case None => spawnFresh
+          }
     }
 
-  /** 注入前活性前置校验（令 3 设计 §4 R7 推荐优先项 (c)）：registry 是会话拆除的
-    * 单点落点（`teardown` / 空闲到期 / 异常收殓均在此注销），故「registry 无该
-    * 会话行」= 该会话已死或已拆 ⇒ `activeRef` 是残影。保活把「死会话静默吞任务」
-    * 的窗口从 ≈0 拉长到 ≤空闲窗，本校验把该风险从**注入源头**堵死（残影丢弃 +
-    * spawn 新会话，任务必达）。
-    *
-    * 局限（如实标注，属设计 R7-(b) 的未做部分）：registry **有行**但 actor 已卡死
-    * 的情形探不到——那需要 ask+超时的真探针，本批不做（不伪造覆盖）。 */
+  /**
+   * 注入前活性前置校验（令 3 设计 §4 R7 推荐优先项 (c)）：registry 是会话拆除的
+   * 单点落点（`teardown` / 空闲到期 / 异常收殓均在此注销），故「registry 无该
+   * 会话行」= 该会话已死或已拆 ⇒ `activeRef` 是残影。保活把「死会话静默吞任务」
+   * 的窗口从 ≈0 拉长到 ≤空闲窗，本校验把该风险从**注入源头**堵死（残影丢弃 +
+   * spawn 新会话，任务必达）。
+   *
+   * 局限（如实标注，属设计 R7-(b) 的未做部分）：registry **有行**但 actor 已卡死
+   * 的情形探不到——那需要 ask+超时的真探针，本批不做（不伪造覆盖）。
+   */
   private def liveRegistration(cfg: ProjectConfig, sessionId: String): IO[Boolean] =
     cfg.resources.agentRegistry.get.map(_.contains(sessionId))
 
-  /** 丢弃残影登记（仅当 activeRef 里仍是该会话——ProjectActor 单 actor 串行处理，
-    * 本调用与紧随的 spawn 在同一 handler IO 内，无并发交错窗口）。 */
+  /**
+   * 丢弃残影登记（仅当 activeRef 里仍是该会话——ProjectActor 单 actor 串行处理，
+   * 本调用与紧随的 spawn 在同一 handler IO 内，无并发交错窗口）。
+   */
   private def dropStale(cfg: ProjectConfig, active: Ref[IO, Option[ActiveDispatcher]], sessionId: String): IO[Unit] =
     active.update(_.filterNot(_.sessionId == sessionId)) *>
       cfg.resources.agentRegistry.update(_ - sessionId)
 
-  /** 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4 / §3.2）：挂在既有 30 s
-    * `TtlTick` 上的新增扫描腿（R2-(a)：零新 fiber，崩溃即无残留）。
-    *
-    * 到期判据 = `idleSince` 有值 ∧ `now - idleSince ≥ Defaults.DispatcherIdleWindowMs`
-    * ∧ **硬护栏双条件**（`pendingInjected == 0` ∧ registry `status == Idle`，设计
-    * §3.1-5：第二条件防御「桥计数漂移但 turn 在飞」的误杀）。
-    *
-    * 拆除动作 = 逐字复用既有 `teardown` 动作集（R3-(a)：零新增动作），另加一条
-    * `dispatcher-idle-expired` 审计事件（R4-(a) 的「已销毁」可事后对齐面）。
-    *
-    * 幂等：`active.modify` 内复检「同会话 + 同判据」的 CAS——重复 tick / 竞争只留
-    * 一个赢家。窗口 `≤ 0` ⇒ 关闭保活（短路，零开销回退开关）。
-    * **只收殓本会话**（R8-(a)）：`AgentCommand.Stop` 只杀本 session 登记的进程树
-    * （`AgentActor` → `BgTaskRegistry.reclaimSession`），已派发节点是 `node-*` 独立
-    * 会话，**零触碰**。 */
+  /**
+   * 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4 / §3.2）：挂在既有 30 s
+   * `TtlTick` 上的新增扫描腿（R2-(a)：零新 fiber，崩溃即无残留）。
+   *
+   * 到期判据 = `idleSince` 有值 ∧ `now - idleSince ≥ Defaults.DispatcherIdleWindowMs`
+   * ∧ **硬护栏双条件**（`pendingInjected == 0` ∧ registry `status == Idle`，设计
+   * §3.1-5：第二条件防御「桥计数漂移但 turn 在飞」的误杀）。
+   *
+   * 拆除动作 = 逐字复用既有 `teardown` 动作集（R3-(a)：零新增动作），另加一条
+   * `dispatcher-idle-expired` 审计事件（R4-(a) 的「已销毁」可事后对齐面）。
+   *
+   * 幂等：`active.modify` 内复检「同会话 + 同判据」的 CAS——重复 tick / 竞争只留
+   * 一个赢家。窗口 `≤ 0` ⇒ 关闭保活（短路，零开销回退开关）。
+   * **只收殓本会话**（R8-(a)）：`AgentCommand.Stop` 只杀本 session 登记的进程树
+   * （`AgentActor` → `BgTaskRegistry.reclaimSession`），已派发节点是 `node-*` 独立
+   * 会话，**零触碰**。
+   */
   private def sweepIdleDispatchers(
     cfg: ProjectConfig,
     active: Ref[IO, Option[ActiveDispatcher]]
@@ -1034,19 +1215,22 @@ object ProjectActor:
           cfg.resources.agentRegistry.get.flatMap { reg =>
             reg.get(a.sessionId).map(_.status) match
               case Some(AgentStatus.Idle) =>
-                active.modify {
-                  case Some(cur) if cur.sessionId == a.sessionId && due(cur) => (None, true)
-                  case other => (other, false)
-                }.flatMap { expired =>
-                  if expired then
-                    val idleSecs = a.idleSince.map(t => (now - t) / 1000L).getOrElse(0L)
-                    expireIdleDispatcher(cfg, a, idleSecs, windowMs)
-                  else IO.unit
-                }
+                active
+                  .modify {
+                    case Some(cur) if cur.sessionId == a.sessionId && due(cur) => (None, true)
+                    case other => (other, false)
+                  }
+                  .flatMap { expired =>
+                    if expired then
+                      val idleSecs = a.idleSince.map(t => (now - t) / 1000L).getOrElse(0L)
+                      expireIdleDispatcher(cfg, a, idleSecs, windowMs)
+                    else IO.unit
+                  }
               // registry 无行 = 会话已被别处拆除（残影）⇒ 只清登记，不重复拆除。
               case None =>
                 logger.warn(
-                  s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by idle sweep — registry entry already gone") *>
+                  s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by idle sweep — registry entry already gone"
+                ) *>
                   active.update(_.filterNot(_.sessionId == a.sessionId))
               // 非 Idle（turn 在飞）⇒ 本拍不拆（等下一拍，护栏生效）。
               case Some(_) => IO.unit
@@ -1054,9 +1238,15 @@ object ProjectActor:
         case _ => IO.unit
       }
 
-  /** 空闲到期的实际拆除（设计 R3-(a)：逐字复用 `teardown` 动作集——registry 注销 +
-    * `AgentCommand.Stop` + 桥停；唯一新增 = 一条 info 日志 + 一条 `dispatcher-idle-expired`
-    * 审计事件）。 */
+    end if
+
+  end sweepIdleDispatchers
+
+  /**
+   * 空闲到期的实际拆除（设计 R3-(a)：逐字复用 `teardown` 动作集——registry 注销 +
+   * `AgentCommand.Stop` + 桥停；唯一新增 = 一条 info 日志 + 一条 `dispatcher-idle-expired`
+   * 审计事件）。
+   */
   private def expireIdleDispatcher(
     cfg: ProjectConfig,
     a: ActiveDispatcher,
@@ -1116,7 +1306,8 @@ object ProjectActor:
               // rootSessionId/nodeSessionId 后在 subagent 面板可见
               // （Processing 状态 + 工具调用过程，与 Delegate/SubTask 同标准）。
               // project：agentStart 帧注入项目名（面板项目徽标，2026-09-06）。
-              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId, Some(project.name)),
+              wsSend =
+                NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId, Some(project.name)),
               projectRoot = Some(project.workspace),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
@@ -1155,7 +1346,10 @@ object ProjectActor:
           // 首个 Completed（=最后一 turn 终态）才清 registry+停 agent。Failed/
           // Cancelled 不延迟：致命失败是一次性终态（排队任务随会话丢弃，与
           // failed 语义一致），取消本就是立即终止语义。
-          bridgeRef <- cfg.system.spawn(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId), s"dispatchbridge-${sessionId.take(8)}")
+          bridgeRef <- cfg.system.spawn(
+            dispatcherBridge(cfg, active, ref, rootSessionId, sessionId),
+            s"dispatchbridge-${sessionId.take(8)}"
+          )
           // 注册元数据对齐 DelegateTool 注册约定（AgentControl 注释原文）：
           // startedAt/lastActivityMs 驱动 list 的 up/idle 列与卡死判定
           // （lastActivityMs=now 从出生即可见——修复「turn 在首次 LLM touch 前
@@ -1187,7 +1381,11 @@ object ProjectActor:
           // pendingTaskTexts.size**（桥的消费计数 k 直接同减两者）；且首条 prompt
           // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
           // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))))
+          _ <- active.set(
+            Some(
+              ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))
+            )
+          )
           _ <- (ref ! AgentCommand.UserInput(
             text = prompt,
             replyTo = Some(bridgeRef),
@@ -1205,4 +1403,7 @@ object ProjectActor:
           )).void
           _ <- logger.info(s"Project '${project.name}' dispatcher session spawned: $sessionId$tag")
         yield same
+        end for
     }
+  end spawnDispatcher
+end ProjectActor

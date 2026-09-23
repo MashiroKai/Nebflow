@@ -28,6 +28,7 @@ object ModelRegistry:
   )
 
   object ModelEntry:
+
     // Tolerant decoding (same rationale as ModelRegistryFile): partial
     // hand-written entries must load instead of rejecting the whole file.
     given Decoder[ModelEntry] = new Decoder[ModelEntry]:
@@ -44,6 +45,7 @@ object ModelRegistry:
   )
 
   object ModelRegistryFile:
+
     // Tolerant decoding: models.json is machine-written by runtime
     // auto-demotion (B3) but also hand-edited / written by older versions —
     // a missing top-level field falls back to empty instead of rejecting
@@ -114,7 +116,7 @@ object ModelRegistry:
     val current = ensureLoaded
     val updatedEntry = current.models.get(key) match
       case Some(existing) => existing.copy(vision = Some(vision))
-      case None           => ModelEntry(vision = Some(vision))
+      case None => ModelEntry(vision = Some(vision))
     val updated = current.copy(models = current.models + (key -> updatedEntry))
     AtomicJson.writeSync(configPath, updated.asJson.noSpaces)
     cache = Some(updated)

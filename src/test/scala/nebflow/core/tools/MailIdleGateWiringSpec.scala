@@ -43,20 +43,22 @@ class MailIdleGateWiringSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -88,11 +90,11 @@ class MailIdleGateWiringSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -125,13 +127,21 @@ class MailIdleGateWiringSpec extends FunSuite:
 
   private def queueItem(id: String, from: String, fromSession: String, message: String): MailQueueStore.MailQueueItem =
     MailQueueStore.MailQueueItem(
-      id = id, from = from, fromSession = fromSession,
-      message = message, `type` = "INFO",
-      timestamp = System.currentTimeMillis(), imagePaths = Nil
+      id = id,
+      from = from,
+      fromSession = fromSession,
+      message = message,
+      `type` = "INFO",
+      timestamp = System.currentTimeMillis(),
+      imagePaths = Nil
     )
 
   /** 往 registry 注入任务型子记录（parentRef=目标），模拟「目标有子 agent 在飞」。 */
-  private def injectChild(resources: SharedResources, childSid: String, parentRef: Option[nebflow.actor.ActorRef[AgentCommand]]): IO[Unit] =
+  private def injectChild(
+    resources: SharedResources,
+    childSid: String,
+    parentRef: Option[nebflow.actor.ActorRef[AgentCommand]]
+  ): IO[Unit] =
     resources.agentRegistry.update { m =>
       m + (childSid -> AgentRecord(
         sessionId = childSid,
@@ -172,8 +182,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- injectChild(resources, "member-child", memberRef)
       // root → boss queue mail：Manager 自身+子树空闲 → 应当立即投递
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A6_TEAM_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, "root-sid"), system, "root-sid"
+        bossMeta.id,
+        "boss",
+        "A6_TEAM_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "root-sid"),
+        system,
+        "root-sid"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -182,8 +198,10 @@ class MailIdleGateWiringSpec extends FunSuite:
 
     val (reqs, queueAfter) = io.unsafeRunSync()
     val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
-    assert(clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")),
-      "Nebula→Manager queue mail must deliver on the Manager's own idle — a sibling member's busy subtree must not block (08-28 ruling)")
+    assert(
+      clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")),
+      "Nebula→Manager queue mail must deliver on the Manager's own idle — a sibling member's busy subtree must not block (08-28 ruling)"
+    )
     assert(clue(queueAfter).isEmpty, s"queue not drained: $queueAfter")
 
   // ---------- AC-7：规则② team 内 queue：等目标自身子树，不管其他成员 ----------
@@ -209,8 +227,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A7_SELF_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A7_SELF_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis)
       _ <- llm.requests.update(_ => Nil)
@@ -249,8 +273,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A7B_SIBLING_BUSY_OK", "INFO", Nil,
-        ctxFor(resources, system, memberMeta.id), system, memberMeta.id
+        bossMeta.id,
+        "boss",
+        "A7B_SIBLING_BUSY_OK",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, memberMeta.id),
+        system,
+        memberMeta.id
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -283,16 +313,28 @@ class MailIdleGateWiringSpec extends FunSuite:
       // 激活 boss（确保 registry 记录与 live ref）
       _ <- MailTool.activateAgent(bossMeta.id, resources, system, ctxFor(resources, system, "root-sid"))
       // running flow 关联 boss（Q3：sessionId 关联触发者）→ 不投递
-      _ <- RunningFlowRegistry.register(RunningFlowRegistry.RunningFlow(
-        instanceId = "flow-a8", flowName = "f8", description = "", entry = "n",
-        nodes = Map.empty, edges = Nil,
-        status = nebflow.core.flow.NodeStatus.Running,
-        startedAt = System.currentTimeMillis(),
-        sessionId = Some(bossMeta.id)
-      ))
+      _ <- RunningFlowRegistry.register(
+        RunningFlowRegistry.RunningFlow(
+          instanceId = "flow-a8",
+          flowName = "f8",
+          description = "",
+          entry = "n",
+          nodes = Map.empty,
+          edges = Nil,
+          status = nebflow.core.flow.NodeStatus.Running,
+          startedAt = System.currentTimeMillis(),
+          sessionId = Some(bossMeta.id)
+        )
+      )
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A8_FLOW_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, "root-sid"), system, "root-sid"
+        bossMeta.id,
+        "boss",
+        "A8_FLOW_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "root-sid"),
+        system,
+        "root-sid"
       )
       _ <- IO.sleep(600.millis)
       _ <- llm.requests.update(_ => Nil)
@@ -359,11 +401,13 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       // immediate 投递 = ImmediateInput 注入（sendMail 内部机制），不经 MailQueued/gate
-      _ <- memberRef.traverse_(ref => ref ! AgentCommand.ImmediateInput(
-        "A11A_IMMEDIATE_OK",
-        source = Some("mail"),
-        sender = Some("boss")
-      ))
+      _ <- memberRef.traverse_(ref =>
+        ref ! AgentCommand.ImmediateInput(
+          "A11A_IMMEDIATE_OK",
+          source = Some("mail"),
+          sender = Some("boss")
+        )
+      )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
     yield reqs
@@ -441,8 +485,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A12_WEDGE_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A12_WEDGE_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis) // let the deferral land (count=1, queue retained)
       _ <- llm.requests.update(_ => Nil)
@@ -456,9 +506,11 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- removeChild(resources, "member-child")
       memberRef3 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- memberRef3.traverse_(ref => ref ! AgentCommand.ImmediateInput("A12_TURN2", source = Some("test")))
-      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
-        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A12_WEDGE_MARKER"))
-      )))
+      _ <- waitUntil(20.seconds)(
+        llm.requests.get.map(
+          _.exists(r => r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A12_WEDGE_MARKER")))
+        )
+      )
       reqs <- llm.requests.get
       queueAfter <- MailQueueStore.load(memberMeta.id)
     yield (reqs, queueAfter)
@@ -494,13 +546,25 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- injectChild(resources, "member-child", memberRef)
       // 两封 queue mail 在 idle+子树忙时相继到达（各走一次 idle gate 拦截）
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_FIRST_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A13_FIRST_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(300.millis)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_SECOND_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A13_SECOND_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis) // both deferrals land; count must be 2, not 1
       _ <- llm.requests.update(_ => Nil)
@@ -508,9 +572,11 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- removeChild(resources, "member-child")
       memberRef2 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- memberRef2.traverse_(ref => ref ! AgentCommand.ImmediateInput("A13_TURN", source = Some("test")))
-      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
-        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A13_SECOND_MARKER"))
-      )))
+      _ <- waitUntil(20.seconds)(
+        llm.requests.get.map(
+          _.exists(r => r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A13_SECOND_MARKER")))
+        )
+      )
       _ <- IO.sleep(1.seconds) // let the second item drain too
       reqs <- llm.requests.get
       queueAfter <- MailQueueStore.load(memberMeta.id)
@@ -562,7 +628,7 @@ class MailIdleGateWiringSpec extends FunSuite:
           "node: 腿必须显式拒 queue（退役单点文案，不得落入本闸）"
         )
         assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
-      case Right(v)  => fail(s"node: + queue 不得成功，got: $v")
+      case Right(v) => fail(s"node: + queue 不得成功，got: $v")
     assertEquals(queueCount, 0, "node: 腿不得落 MailQueueStore（idle gate 结构上不可达）")
     assert(clue(reqs).isEmpty, "node: 腿不得触发任何 turn（注入/追加由引擎三态决定）")
   }

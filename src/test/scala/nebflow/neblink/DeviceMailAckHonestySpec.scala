@@ -78,8 +78,10 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
 
   // ── 读数设施 ────────────────────────────────────────────────────────
 
-  /** 捕获本腿（`nebflow.neblink.devicemail`）日志原文，按级别分列（同
-    * `DeviceMailDedupSpec` 手法；Resource 形态 ⇒ 断言失败/超时也必 detach）。 */
+  /**
+   * 捕获本腿（`nebflow.neblink.devicemail`）日志原文，按级别分列（同
+   * `DeviceMailDedupSpec` 手法；Resource 形态 ⇒ 断言失败/超时也必 detach）。
+   */
   private def withLegLog[A](io: IO[A]): IO[(A, List[String], List[String])] =
     val acquire = IO {
       val lb = LoggerFactory.getLogger(LogName).asInstanceOf[ch.qos.logback.classic.Logger]
@@ -100,16 +102,19 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
           )
         }
       }
+  end withLegLog
 
   private final case class AuditLine(action: String, command: String, deviceId: String)
 
-  /** 审计盘面（`<dataRoot>/logs/relay-exec-audit.jsonl`，逐行现读）。
-    *
-    * ⚠ **R5 脱敏（须知，勿读成缺字段）**：`RelayExecAudit.redact` 把摘要里
-    * **≥32 字符**的 token 字符集连续段替换成 `[redacted len=.. pre=.. sha256:..]`
-    * ——所以本 spec 的断言一律落在 `action` 与**短字面**（`reason=no_live_socket` /
-    * `eventId=<≤24 字符 id>`）上，绝不拿 `command` 列做「事件号是否出现」的判重读数
-    * （那正是上游 §1-④ R5 的坑）。 */
+  /**
+   * 审计盘面（`<dataRoot>/logs/relay-exec-audit.jsonl`，逐行现读）。
+   *
+   * ⚠ **R5 脱敏（须知，勿读成缺字段）**：`RelayExecAudit.redact` 把摘要里
+   * **≥32 字符**的 token 字符集连续段替换成 `[redacted len=.. pre=.. sha256:..]`
+   * ——所以本 spec 的断言一律落在 `action` 与**短字面**（`reason=no_live_socket` /
+   * `eventId=<≤24 字符 id>`）上，绝不拿 `command` 列做「事件号是否出现」的判重读数
+   * （那正是上游 §1-④ R5 的坑）。
+   */
   private def auditLines(): IO[List[AuditLine]] =
     IO.blocking {
       val f = (PathUtil.dataRoot / "logs" / "relay-exec-audit.jsonl").toNIO
@@ -128,13 +133,14 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
               )
             }
           )
+      end if
     }
 
   // ── 收件腿夹具（真 sessionStore + Root 记录 + 记录型 actor/wsSend） ──
 
   private final case class Inbox(
-      msgs: Ref[IO, List[AgentCommand]],
-      frames: Ref[IO, List[Json]]
+    msgs: Ref[IO, List[AgentCommand]],
+    frames: Ref[IO, List[Json]]
   ):
     def injections: Int = msgs.get.unsafeRunSync().size
     def alerts: Int = frames.get.unsafeRunSync().size
@@ -149,9 +155,9 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
       .unsafeRunSync()
 
   private def resourcesWith(
-      registry: Map[String, AgentRecord],
-      store: SessionStore,
-      ns: Option[NeblinkService]
+    registry: Map[String, AgentRecord],
+    store: SessionStore,
+    ns: Option[NeblinkService]
   ): SharedResources =
     new SharedResources(
       llm = null,
@@ -175,10 +181,12 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
       voiceMutedRef = Ref.unsafe[IO, Boolean](false)
     )
 
-  /** 接线（真 sessionStore 里一条 `agentName == "Nebula"` 的 root 会话 ⇒ 注入必成功）。
-    *
-    * 🔴 ack 出口 = **生产同款**（`GatewayMain:1010-1015` 的形态）：`sendAckLive` 的
-    * live 读隧道 —— 本 spec 不注入 mock 回执出口，读到的就是生产判据。 */
+  /**
+   * 接线（真 sessionStore 里一条 `agentName == "Nebula"` 的 root 会话 ⇒ 注入必成功）。
+   *
+   * 🔴 ack 出口 = **生产同款**（`GatewayMain:1010-1015` 的形态）：`sendAckLive` 的
+   * live 读隧道 —— 本 spec 不注入 mock 回执出口，读到的就是生产判据。
+   */
   private def wireInbox(ms: NeblinkService): Inbox =
     val root = PathUtil.dataRoot
     val store = SessionStore(root / "sessions", root / "tasks")
@@ -204,9 +212,13 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
     )
     Inbox(msgs, frames)
 
+  end wireInbox
+
   /** v2.1 收件入场信封（逐字，与 `DeviceMailSpec` / `DeviceMailDedupSpec` 同源）。 */
   private val contractPayload: Json =
-    parse("""{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}""")
+    parse(
+      """{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}"""
+    )
       .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), identity)
 
   private def envelope(eventId: String): Json =
@@ -234,10 +246,12 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
       loop
     }
 
-  /** fixture + 真 `NeblinkClient` + 真 `NeblinkRelayTunnel`（同 GatewayMain 装配：
-    * relay client 注册 + 隧道注册 + server 址写进 config ref）。 */
+  /**
+   * fixture + 真 `NeblinkClient` + 真 `NeblinkRelayTunnel`（同 GatewayMain 装配：
+   * relay client 注册 + 隧道注册 + server 址写进 config ref）。
+   */
   private def withStack[A](fix: RelayAuthFixtureServer)(
-      body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel) => IO[A]
+    body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel) => IO[A]
   ): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -251,10 +265,12 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
         _ <- client.login(Device, "qa-host", "macos", Nil)
         tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          )
+        )
         fiber <- tunnel.connect().start
         out <- body(ms, client, tunnel).guarantee(fiber.cancel *> tunnel.stop())
       yield out
@@ -324,7 +340,8 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
           "审计行与事实一致：注入一次 + 回执**未发出**（禁 ack-sent）"
         )
         assert(
-          audit.exists(a => a.action == "DeviceMail.inject.ack-not-sent" && a.command.contains("reason=no_live_socket")),
+          audit
+            .exists(a => a.action == "DeviceMail.inject.ack-not-sent" && a.command.contains("reason=no_live_socket")),
           s"审计行须写明 reason=no_live_socket，实得：${audit.map(_.command)}"
         )
     }
@@ -429,6 +446,7 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
             List("DeviceMail.inject.injected", "DeviceMail.inject.ack-sent"),
             "审计行照旧 = 注入一次 + 回执**已发出**"
           )
+        end for
       }
     }
   }

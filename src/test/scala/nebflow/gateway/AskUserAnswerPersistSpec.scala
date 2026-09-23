@@ -10,25 +10,26 @@ import nebflow.shared.UiMessage
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*
 
-/** 双开缺陷批「案 B」定向 spec（2026-09-21，chain-askuserdup）。
-  *
-  * 定谳：`.nebflow/reports/20260921_181620_askuserdup-arch__chain-askuserdup.md`
-  *   §1.2 落盘（无 id）/ §1.5 三行判据 / §5 案 B。
-  *
-  * 案 B = 数据面根治（同时关掉双开 + uiclean D 项「#272 残余边界」+「历史卡不可按 id
-  * 关闭」三件事）。本 spec 钉两条**落盘事实**与一条**旧行兼容方向**：
-  *   ① 作答行带**显式来源标记** `answerOf = 被作答的 requestId`（单一构造点
-  *      [[UiMessage.askUserAnswer]]，生产消费者 = `WebSocketRoutes` 的 askUserAnswer
-  *      帧处理）；
-  *   ② 提问行**随行落盘 requestId**（[[UiMessage.AskUser]]）⇒ 历史恢复出的卡可
-  *      id 寻址（前端重放腿按 id 替换 / `askUserClosed` 关卡可达 / 取值由数据决定）；
-  *   ③ 🔴 **旧行字节不变 + 旧文件可读**：缺席即不落键（编码器逐键断言），解码旧行 ⇒
-  *      `None` ⇒ 前端**回落「未作答」**（禁把历史一律读成「已作答」——那正是双开首卡
-  *      恒死的成因）。
-  *
-  * 落盘面读数走**真实 SessionStore**（`appendUiMessages` → `flushPendingUiWrites` →
-  * 读盘上 `.ui.json` 原始字节）+ 解码面读数（`getUiMessages`），两处互证。
-  */
+/**
+ * 双开缺陷批「案 B」定向 spec（2026-09-21，chain-askuserdup）。
+ *
+ * 定谳：`.nebflow/reports/20260921_181620_askuserdup-arch__chain-askuserdup.md`
+ *   §1.2 落盘（无 id）/ §1.5 三行判据 / §5 案 B。
+ *
+ * 案 B = 数据面根治（同时关掉双开 + uiclean D 项「#272 残余边界」+「历史卡不可按 id
+ * 关闭」三件事）。本 spec 钉两条**落盘事实**与一条**旧行兼容方向**：
+ *   ① 作答行带**显式来源标记** `answerOf = 被作答的 requestId`（单一构造点
+ *      [[UiMessage.askUserAnswer]]，生产消费者 = `WebSocketRoutes` 的 askUserAnswer
+ *      帧处理）；
+ *   ② 提问行**随行落盘 requestId**（[[UiMessage.AskUser]]）⇒ 历史恢复出的卡可
+ *      id 寻址（前端重放腿按 id 替换 / `askUserClosed` 关卡可达 / 取值由数据决定）；
+ *   ③ 🔴 **旧行字节不变 + 旧文件可读**：缺席即不落键（编码器逐键断言），解码旧行 ⇒
+ *      `None` ⇒ 前端**回落「未作答」**（禁把历史一律读成「已作答」——那正是双开首卡
+ *      恒死的成因）。
+ *
+ * 落盘面读数走**真实 SessionStore**（`appendUiMessages` → `flushPendingUiWrites` →
+ * 读盘上 `.ui.json` 原始字节）+ 解码面读数（`getUiMessages`），两处互证。
+ */
 class AskUserAnswerPersistSpec extends CatsEffectSuite:
 
   private val askItems: List[Json] =
@@ -46,8 +47,10 @@ class AskUserAnswerPersistSpec extends CatsEffectSuite:
 
   private def uiFile(sessionsDir: os.Path, sid: String): os.Path = sessionsDir / s"$sid.ui.json"
 
-  /** 🔴 统一经 `UiMessage` 静态类型出编码（本仓只有 `given Encoder[UiMessage]`，
-    *  子类型无 given ⇒ `User(...).asJson` 编译不过）。落盘形态 = 生产同款编码器。 */
+  /**
+   * 🔴 统一经 `UiMessage` 静态类型出编码（本仓只有 `given Encoder[UiMessage]`，
+   *  子类型无 given ⇒ `User(...).asJson` 编译不过）。落盘形态 = 生产同款编码器。
+   */
   private def js(m: UiMessage): Json = m.asJson
 
   private def field(m: UiMessage, key: String): Option[String] =
@@ -163,6 +166,7 @@ class AskUserAnswerPersistSpec extends CatsEffectSuite:
     finally
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+    end try
   }
 
   test("⑦ 旧 .ui.json 文件（无新键）可读，且读出的两行都不带新字段（回落方向）") {
@@ -188,3 +192,4 @@ class AskUserAnswerPersistSpec extends CatsEffectSuite:
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
   }
+end AskUserAnswerPersistSpec

@@ -5,7 +5,12 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
 import nebflow.agent.{
-  AgentCommand, AgentStatus, AskMode, AskUserAnswerBridge, InteractionHubCommand, InteractionRequestId
+  AgentCommand,
+  AgentStatus,
+  AskMode,
+  AskUserAnswerBridge,
+  InteractionHubCommand,
+  InteractionRequestId
 }
 import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
 import nebflow.shared.ToolDefinition
@@ -51,16 +56,20 @@ Conditional branching (dependsOn):
 Behavior:
 - This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers."""
 
-  /** 基础变体（= 上面 `description`）**逐字节保持不变**（规格 §5.1 补充条）——
-    * 非 root 会话看到的永远是这一份，分化只许在 root 变体上「加」，不许在基础
-    * 变体上「改/删/美化」（否则非 root 会话的请求前缀会漂移，且语义面被扩大）。
-    * spec `AskUserDualModeSpec` 用字节比对钉住本不变量。 */
+  /**
+   * 基础变体（= 上面 `description`）**逐字节保持不变**（规格 §5.1 补充条）——
+   * 非 root 会话看到的永远是这一份，分化只许在 root 变体上「加」，不许在基础
+   * 变体上「改/删/美化」（否则非 root 会话的请求前缀会漂移，且语义面被扩大）。
+   * spec `AskUserDualModeSpec` 用字节比对钉住本不变量。
+   */
   val descriptionBase: String = description
 
-  /** root 变体的增量段（工具面按角色分化批 B1/L5）：只在
-    * [[nebulaRootVariant]] 里拼接，绝不并入基线段。三段内容 = ① 非阻塞的确切
-    * 语义（发起即返回 + 答复稍后以消息到达 + 未答按最佳判断继续）、② 默认值、
-    * ③ 适用面声明（本形态仅本会话可见）。 */
+  /**
+   * root 变体的增量段（工具面按角色分化批 B1/L5）：只在
+   * [[nebulaRootVariant]] 里拼接，绝不并入基线段。三段内容 = ① 非阻塞的确切
+   * 语义（发起即返回 + 答复稍后以消息到达 + 未答按最佳判断继续）、② 默认值、
+   * ③ 适用面声明（本形态仅本会话可见）。
+   */
   private val nebulaRootExtraDescription =
     """
 - Non-blocking mode (`mode` = "non-blocking", default "blocking"): the tool returns immediately with an acknowledgement instead of waiting. Your turn does NOT pause; the question card is shown to the user exactly as in blocking mode, and the answer arrives later as a new user message in this session (it wakes a new turn when you are idle, or lands at the next turn boundary). The acknowledgement carries the requestId — match the incoming answer to it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up.
@@ -165,8 +174,10 @@ Behavior:
       "as a user message in this session; the card is identical. Non-blocking is available to the Nebula root session only.").asJson
   )
 
-  /** root 变体 schema：基础 schema + `properties.mode`（从传入的基础定义派生 ⇒
-    * 与基础变体的字节一致性由构造方式保证）。 */
+  /**
+   * root 变体 schema：基础 schema + `properties.mode`（从传入的基础定义派生 ⇒
+   * 与基础变体的字节一致性由构造方式保证）。
+   */
   def schemaNebulaRoot(base: JsonObject): JsonObject =
     val props = base("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
     base.add("properties", io.circe.Json.fromJsonObject(props.add("mode", modePropertySchema)))
@@ -175,9 +186,11 @@ Behavior:
   def baseHasModeProperty: Boolean =
     inputSchema("properties").flatMap(_.asObject).exists(_.contains("mode"))
 
-  /** root 变体定义（B1）：从**已注册的定义**（`ToolRegistry.ALL_TOOLS` 那份，
-    * 已经过 `RemoteExecutor.augmentSchema`）派生 ⇒ 变体只多一个属性 + 一段描述，
-    * 基础面逐字节不受影响；工具名不变（成员资格与权限边界零变化）。 */
+  /**
+   * root 变体定义（B1）：从**已注册的定义**（`ToolRegistry.ALL_TOOLS` 那份，
+   * 已经过 `RemoteExecutor.augmentSchema`）派生 ⇒ 变体只多一个属性 + 一段描述，
+   * 基础面逐字节不受影响；工具名不变（成员资格与权限边界零变化）。
+   */
   def nebulaRootVariant(base: ToolDefinition): ToolDefinition =
     base.copy(
       description = descriptionNebulaRoot,
@@ -196,10 +209,11 @@ Behavior:
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 100 then result.take(97) + "..." else result
 
-  /** Parse the raw `questions` JSON array into AskItems. Pure — spec-covered.
-    * Malformed entries (empty question / empty option label) are skipped, matching
-    * the historical behavior. `multiple` defaults to false when absent.
-    */
+  /**
+   * Parse the raw `questions` JSON array into AskItems. Pure — spec-covered.
+   * Malformed entries (empty question / empty option label) are skipped, matching
+   * the historical behavior. `multiple` defaults to false when absent.
+   */
   def parseItems(questionsJson: Seq[io.circe.Json]): List[AskItem] =
     questionsJson.flatMap { q =>
       val question = q.hcursor.downField("question").as[String].getOrElse("")
@@ -237,12 +251,13 @@ Behavior:
   val HeadlessErrorMessage =
     "Headless mode: no interactive user available — decide autonomously and continue with your best judgment."
 
-  /** Headless guard: NEBFLOW_HEADLESS=1 (benchmark mode) means no interactive
-    * user — dispatching AgentCommand.AskUser would park the run on a reply
-    * that never arrives. Returning a ToolError instead tells the agent to
-    * decide autonomously and continue. Pure (flag passed in) so both branches
-    * are spec-covered; the call touchpoint binds HeadlessMode.enabled.
-    */
+  /**
+   * Headless guard: NEBFLOW_HEADLESS=1 (benchmark mode) means no interactive
+   * user — dispatching AgentCommand.AskUser would park the run on a reply
+   * that never arrives. Returning a ToolError instead tells the agent to
+   * decide autonomously and continue. Pure (flag passed in) so both branches
+   * are spec-covered; the call touchpoint binds HeadlessMode.enabled.
+   */
   def askGuard(headless: Boolean = HeadlessMode.enabled): Option[ToolError] =
     if headless then Some(ToolError(HeadlessErrorMessage)) else None
 
@@ -265,9 +280,11 @@ Behavior:
   /** 非阻塞**无窗口可投**的错误码（B6 可达性预检；规格 §3.4#4）。 */
   val NoRootWindowCode = "ASKUSER_NONBLOCK_NO_ROOT_WINDOW"
 
-  /** `mode` 解析（B3）：**缺席 ⇒ 默认阻塞**（既有调用点零行为漂移）；**出现但
-    * 非法 ⇒ 显式 ToolError**（类型不对 / 值域外 / 空串一律显式，绝不静默回落
-    * 到阻塞——那正是明禁的「静默忽略参数」伪处理）。 */
+  /**
+   * `mode` 解析（B3）：**缺席 ⇒ 默认阻塞**（既有调用点零行为漂移）；**出现但
+   * 非法 ⇒ 显式 ToolError**（类型不对 / 值域外 / 空串一律显式，绝不静默回落
+   * 到阻塞——那正是明禁的「静默忽略参数」伪处理）。
+   */
   def parseMode(input: JsonObject): Either[ToolError, AskMode] =
     input("mode") match
       case None => Right(AskMode.Blocking)
@@ -275,14 +292,18 @@ Behavior:
         j.asString.flatMap(AskMode.parse) match
           case Some(m) => Right(m)
           case None =>
-            Left(ToolError(
-              s"AskUserQuestion: invalid `mode` value ${j.noSpaces} — legal values are " +
-                s""""${AskMode.BlockingWire}" | "${AskMode.NonBlockingWire}" (omit `mode` for the default "Blocking"); """ +
-                s"nothing was asked ($BadModeCode)."
-            ))
+            Left(
+              ToolError(
+                s"AskUserQuestion: invalid `mode` value ${j.noSpaces} — legal values are " +
+                  s""""${AskMode.BlockingWire}" | "${AskMode.NonBlockingWire}" (omit `mode` for the default "Blocking"); """ +
+                  s"nothing was asked ($BadModeCode)."
+              )
+            )
 
-  /** 非 root 携带非阻塞的拒答（规格 §3.3 定稿文案：错在哪 / 期望是什么 / 合法
-    * 选项 / 错误码；并显式禁止重试）。 */
+  /**
+   * 非 root 携带非阻塞的拒答（规格 §3.3 定稿文案：错在哪 / 期望是什么 / 合法
+   * 选项 / 错误码；并显式禁止重试）。
+   */
   def nonBlockingNotRootError(ctx: ToolContext): ToolError =
     val who = ctx.agentDef.map(_.name).getOrElse("<no agent session>")
     ToolError(
@@ -293,8 +314,10 @@ Behavior:
         s"Do not retry with mode=\"${AskMode.NonBlockingWire}\"."
     )
 
-  /** 非阻塞可达性预检失败（B6）：问题**发不到任何窗口** ⇒ fail-closed 拒绝，
-    * 且**零槽位**（预检是只读的，发生在任何 hub 注册之前）。 */
+  /**
+   * 非阻塞可达性预检失败（B6）：问题**发不到任何窗口** ⇒ fail-closed 拒绝，
+   * 且**零槽位**（预检是只读的，发生在任何 hub 注册之前）。
+   */
   def noRootWindowError(ctx: ToolContext): ToolError =
     val root = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("<unknown>")
     ToolError(
@@ -350,7 +373,7 @@ Behavior:
               }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
-      end match
+    end match
   end askUser
 
   // ============================================================
@@ -360,18 +383,22 @@ Behavior:
   /** 预检上限（B6）：只读查询的有界等待；超时 = fail-closed 拒绝（不静默放行）。 */
   val PreflightTimeout: FiniteDuration = 5.seconds
 
-  /** 非阻塞 ack（L6）：机器可读（requestId + 问题数）+ 明确「不要在此等待」+
-    * 未答兜底指令（D6：丢答案的降级必须是**设计内**的，不是静默的）。 */
+  /**
+   * 非阻塞 ack（L6）：机器可读（requestId + 问题数）+ 明确「不要在此等待」+
+   * 未答兜底指令（D6：丢答案的降级必须是**设计内**的，不是静默的）。
+   */
   def nonBlockingAck(items: List[AskItem], requestId: String): String =
     s"requestId=$requestId · ${items.size} question(s) · non-blocking: the answer will arrive later as a " +
       "message in this session — do not wait for it; if no answer arrives and you cannot decide, proceed with your best judgment."
 
-  /** 可达性预检（B6/M10）：**只读**问 hub「本会话 root 的窗口是否已注册」。
-    *
-    * WHY：非阻塞下没人等待 ⇒ root 不可达时卡被丢弃（hub 仅 warn）就会变成**静默
-    * 丢失答案**（规格 §5.4 root 不可达风险行的唯一「必修正」项）。fail-closed：
-    * 无 hub / 无 root 窗口 / hub 未在有界窗口内应答 ⇒ 显式拒绝。**零槽位**：预检
-    * 不注册任何 pending（发生在 `AgentCommand.AskUser` 派发之前）。 */
+  /**
+   * 可达性预检（B6/M10）：**只读**问 hub「本会话 root 的窗口是否已注册」。
+   *
+   * WHY：非阻塞下没人等待 ⇒ root 不可达时卡被丢弃（hub 仅 warn）就会变成**静默
+   * 丢失答案**（规格 §5.4 root 不可达风险行的唯一「必修正」项）。fail-closed：
+   * 无 hub / 无 root 窗口 / hub 未在有界窗口内应答 ⇒ 显式拒绝。**零槽位**：预检
+   * 不注册任何 pending（发生在 `AgentCommand.AskUser` 派发之前）。
+   */
   private def rootWindowReachable(ctx: ToolContext): IO[Either[ToolError, Unit]] =
     val rootSid = ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty)).getOrElse("")
     if rootSid.isEmpty then IO.pure(Left(noRootWindowError(ctx)))
@@ -391,12 +418,18 @@ Behavior:
                 .handleErrorWith(_ => IO.pure(Left(noRootWindowError(ctx))))
           }
 
-  /** 非阻塞执行链（L6）：同校验、同 items、同 hub 卡片链（`AgentCommand.AskUser`
-    * → `AgentActor` → `InteractionHubCommand.Request`），两处不同：
-    *  ① `replyTo` = 一次性桥接引用（[[AskUserAnswerBridge]]）而非工具 fiber 的回执；
-    *  ② **不做 `.?`**（不等待）⇒ 派发后立刻返回 ack，turn 不暂停。
-    * `AgentCommand.AskUser` 携带 `AskMode.NonBlocking` ⇒ `AgentActor` 跳过
-    * `WaitingForUser` 标注与 `DelegateBudget.pause`（等待从未发生，无配对物）。 */
+    end if
+
+  end rootWindowReachable
+
+  /**
+   * 非阻塞执行链（L6）：同校验、同 items、同 hub 卡片链（`AgentCommand.AskUser`
+   * → `AgentActor` → `InteractionHubCommand.Request`），两处不同：
+   *  ① `replyTo` = 一次性桥接引用（[[AskUserAnswerBridge]]）而非工具 fiber 的回执；
+   *  ② **不做 `.?`**（不等待）⇒ 派发后立刻返回 ack，turn 不暂停。
+   * `AgentCommand.AskUser` 携带 `AskMode.NonBlocking` ⇒ `AgentActor` 跳过
+   * `WaitingForUser` 标注与 `DelegateBudget.pause`（等待从未发生，无配对物）。
+   */
   private def askUserNonBlocking(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     parseOrError(input) match
       case Left(err) => IO.pure(Left(err))
@@ -413,19 +446,20 @@ Behavior:
                 (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), AskMode.NonBlocking))
                   .as(Right(nonBlockingAck(items, requestId)))
             }
-      end match
+    end match
   end askUserNonBlocking
 
-
-  /** R2 (wait-timeout-fix): paired un-mark for the WaitingForUser status the
-    * agent's AskUser handler set when this question was dispatched. Registry
-    * entry present → status=Processing + fresh lastActivityMs (same touch
-    * semantics as AgentCore.touchRegistryActivity — never creates a ghost
-    * row). No-op when sharedResources/sessionId are absent (harness calls).
-    * Failure-safe: a registry touch must never fail the user's answer.
-    * private[tools]: ProjectCreateTool's path panel dispatches the same
-    * AgentCommand.AskUser and must pair the same un-mark (one shared
-    * implementation — no divergent copy). */
+  /**
+   * R2 (wait-timeout-fix): paired un-mark for the WaitingForUser status the
+   * agent's AskUser handler set when this question was dispatched. Registry
+   * entry present → status=Processing + fresh lastActivityMs (same touch
+   * semantics as AgentCore.touchRegistryActivity — never creates a ghost
+   * row). No-op when sharedResources/sessionId are absent (harness calls).
+   * Failure-safe: a registry touch must never fail the user's answer.
+   * private[tools]: ProjectCreateTool's path panel dispatches the same
+   * AgentCommand.AskUser and must pair the same un-mark (one shared
+   * implementation — no divergent copy).
+   */
   private[tools] def restoreRegistryAfterAnswer(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
@@ -434,32 +468,34 @@ Behavior:
         // 3600s wall-clock 预算从此刻继续累计（等待期不计入）。非 Delegate 会话
         // 无预算通道 ⇒ 无害 no-op。发起侧配对点 = AgentActor 的 AskUser 分支。
         nebflow.agent.DelegateBudget.resume(sid) *>
-          res.agentRegistry.modify { m =>
-            m.get(sid) match
-              case Some(rec) => (m.updated(sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = now)), ())
-              case None      => (m, ())
-          }.handleErrorWith(_ => IO.unit)
+          res.agentRegistry
+            .modify { m =>
+              m.get(sid) match
+                case Some(rec) => (m.updated(sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = now)), ())
+                case None => (m, ())
+            }
+            .handleErrorWith(_ => IO.unit)
       case _ => IO.unit
 
-  /** Normalize a multi-select answer for the LLM: canonical compact JSON array
-    * (`["A","B"]`). The frontend serializes a multi-select answer as a JSON
-    * array string in its answers slot (the wire stays List[String], one slot
-    * per question). Non-JSON payloads (older frontends, joined text) pass
-    * through unchanged.
-    */
+  /**
+   * Normalize a multi-select answer for the LLM: canonical compact JSON array
+   * (`["A","B"]`). The frontend serializes a multi-select answer as a JSON
+   * array string in its answers slot (the wire stays List[String], one slot
+   * per question). Non-JSON payloads (older frontends, joined text) pass
+   * through unchanged.
+   */
   private def formatMultiple(raw: String): String =
     io.circe.parser.decode[List[String]](raw) match
       case Right(values) => values.asJson.noSpaces
-      case Left(_)       => raw
+      case Left(_) => raw
 
   /** Format user answers for display. */
   def formatAnswer(items: List[AskItem], answers: List[String]): String =
     def present(item: Option[AskItem], raw: String): String =
       item match
         case Some(i) if i.multiple => formatMultiple(raw)
-        case _                     => raw
-    if items.size <= 1 then
-      answers.headOption.filter(_.nonEmpty).map(a => present(items.headOption, a)).getOrElse("")
+        case _ => raw
+    if items.size <= 1 then answers.headOption.filter(_.nonEmpty).map(a => present(items.headOption, a)).getOrElse("")
     else
       items.zipWithIndex
         .map { case (item, idx) =>

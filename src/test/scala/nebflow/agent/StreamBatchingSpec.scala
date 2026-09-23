@@ -9,16 +9,17 @@ import scala.concurrent.duration.*
 
 import nebflow.shared.StreamChunk
 
-/** StreamBatching 回归（2026-09-07 B-after-A 冒烟悬案修复）：
-  *
-  * 旧 streamEmitter 内联合批的 flush 只在「满 50 条 / 距上次 flush ≥50ms /
-  * ToolCall 星号族/Done」——无常驻 ticker。流 parking（楔死/半开连接，hard-recovery
-  * 的目标场景）且首 delta 距管道构建 <50ms（热连接往返 ~5ms）时缓冲永不出网：
-  * 实例日志实证 B 会话 [sse-chunk] 到达而 textDelta WS 帧缺席，round-6/7 冒烟
-  * B 场景 wedge 步 20s 超时。修复 = Ref 状态 + awakeEvery ticker 挂
-  * .concurrently。本 spec 锁定三个反事实：park 后必出帧（T1）、满批即出
-  * （T2）、Done 兜底（T3）。
-  */
+/**
+ * StreamBatching 回归（2026-09-07 B-after-A 冒烟悬案修复）：
+ *
+ * 旧 streamEmitter 内联合批的 flush 只在「满 50 条 / 距上次 flush ≥50ms /
+ * ToolCall 星号族/Done」——无常驻 ticker。流 parking（楔死/半开连接，hard-recovery
+ * 的目标场景）且首 delta 距管道构建 <50ms（热连接往返 ~5ms）时缓冲永不出网：
+ * 实例日志实证 B 会话 [sse-chunk] 到达而 textDelta WS 帧缺席，round-6/7 冒烟
+ * B 场景 wedge 步 20s 超时。修复 = Ref 状态 + awakeEvery ticker 挂
+ * .concurrently。本 spec 锁定三个反事实：park 后必出帧（T1）、满批即出
+ * （T2）、Done 兜底（T3）。
+ */
 class StreamBatchingSpec extends CatsEffectSuite:
 
   private def framesRef: IO[Ref[IO, Vector[Json]]] = IO.ref(Vector.empty)
@@ -40,12 +41,15 @@ class StreamBatchingSpec extends CatsEffectSuite:
   private val parked: Stream[IO, StreamChunk] = Stream.never[IO]
 
   private def textDeltas(ref: Ref[IO, Vector[Json]]): IO[Vector[String]] =
-    ref.get.map(_.collect { case j if j.hcursor.downField("type").as[String].toOption.contains("textDelta") =>
-      j.hcursor.downField("delta").as[String].getOrElse("")
+    ref.get.map(_.collect {
+      case j if j.hcursor.downField("type").as[String].toOption.contains("textDelta") =>
+        j.hcursor.downField("delta").as[String].getOrElse("")
     })
 
-  /** T1（核心反事实）：两 delta 快速到达后流永久 parking——ticker 必须把缓冲
-    * 送出网。旧实现在此场景零 WS 帧（缓冲随 parking 永存）。 */
+  /**
+   * T1（核心反事实）：两 delta 快速到达后流永久 parking——ticker 必须把缓冲
+   * 送出网。旧实现在此场景零 WS 帧（缓冲随 parking 永存）。
+   */
   test("StreamBatching T1: parked stream still flushes buffered deltas via ticker") {
     for
       ref <- framesRef
@@ -115,3 +119,4 @@ class StreamBatchingSpec extends CatsEffectSuite:
       tx <- IO(types.indexOf("textDelta"))
     yield assert(ti >= 0 && tx > ti, s"thinking must precede text; types=$types")
   }
+end StreamBatchingSpec

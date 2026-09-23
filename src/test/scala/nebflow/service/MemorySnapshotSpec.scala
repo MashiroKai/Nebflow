@@ -94,7 +94,7 @@ class MemorySnapshotSpec extends FunSuite:
     val missing = home / "no-such.md"
 
     val gate = MemorySnapshot.snapshotGate(Vector(userF, agentFile, missing), "unit-test", rootG)
-    val set  = gate.toOption.getOrElse(fail(s"expected Right, got $gate"))
+    val set = gate.toOption.getOrElse(fail(s"expected Right, got $gate"))
     assertEquals(set.files.size, 3)
     assertEquals(set.files.count(_.absent), 1, "不存在的目标记为 absent（无可回滚对象，不阻断）")
     assertEquals(set.label, "unit-test")
@@ -150,7 +150,9 @@ class MemorySnapshotSpec extends FunSuite:
     MemorySnapshot.pruneForTest(agentFile, rootP)
 
     assert(os.exists(pinned / key), "pinned 子树必须不受 prune 影响（人工快照 = 钉住）")
-    val auto = os.list(rootP).filter(os.isDir(_))
+    val auto = os
+      .list(rootP)
+      .filter(os.isDir(_))
       .filter(_.last != MemorySnapshot.PinnedDirName)
       .filter(d => os.exists(d / key))
     assertEquals(auto.size, MemorySnapshot.KeepPerFile, "pinned 不占槽位，自动槽位仍为 KeepPerFile")
@@ -171,24 +173,29 @@ class MemorySnapshotSpec extends FunSuite:
 
     MemorySnapshot.pruneForTest(agentFile, rootP)
 
-    val auto = os.list(rootP).filter(os.isDir(_))
+    val auto = os
+      .list(rootP)
+      .filter(os.isDir(_))
       .filter(_.last != MemorySnapshot.PinnedDirName)
-      .map(_.last).sorted
+      .map(_.last)
+      .sorted
     assertEquals(auto.size, MemorySnapshot.KeepPerFile, "自动槽位 = KeepPerFile")
     assertEquals(auto.head, "20260906-000000-000000-002", "同池最老 2 份被淘汰（名字序不变）")
     assert(os.exists(pinned / key), "pinned 不参与淘汰")
   }
 
-  /** **载力断言（R8-B）**：`prune` 的 `.filter(_.last != PinnedDirName)` 是「pinned 不占槽位」
-    * 在**防御性布局**（`pinned` 直接含 key）下的唯一防线。
-    *
-    * 变异自证（2026-09-13 复核缺陷 1 的返工验证法）：删掉 `MemorySnapshot.prune` 里那行
-    * `.filter(_.last != PinnedDirName)` → 本 spec **必须转红**（`pinned` 以「最新目录」身份
-    * 占掉一个槽位 ⇒ 最老的自动快照 `...-000` 被挤掉 ⇒ `autoNames.size = 19`、
-    * `autoNames.head = "...-001"`）；恢复该行 → 复绿。
-    *
-    * 断言刻意**不复用生产 filter 语义**（逐个数 `2026…` 前缀的自动目录），否则断言会随实现
-    * 一起漂、给出假绿。 */
+  /**
+   * **载力断言（R8-B）**：`prune` 的 `.filter(_.last != PinnedDirName)` 是「pinned 不占槽位」
+   * 在**防御性布局**（`pinned` 直接含 key）下的唯一防线。
+   *
+   * 变异自证（2026-09-13 复核缺陷 1 的返工验证法）：删掉 `MemorySnapshot.prune` 里那行
+   * `.filter(_.last != PinnedDirName)` → 本 spec **必须转红**（`pinned` 以「最新目录」身份
+   * 占掉一个槽位 ⇒ 最老的自动快照 `...-000` 被挤掉 ⇒ `autoNames.size = 19`、
+   * `autoNames.head = "...-001"`）；恢复该行 → 复绿。
+   *
+   * 断言刻意**不复用生产 filter 语义**（逐个数 `2026…` 前缀的自动目录），否则断言会随实现
+   * 一起漂、给出假绿。
+   */
   test("R8-B 载力：pinned 直下含 key（防御性布局）⇒ 过滤行缺席时最老自动快照被挤掉") {
     val rootP = home / "memory-backups-pinned-direct"
     os.write.over(agentFile, "- pinned direct probe\n", createFolders = true)
@@ -206,8 +213,12 @@ class MemorySnapshotSpec extends FunSuite:
     MemorySnapshot.pruneForTest(agentFile, rootP)
 
     assert(os.exists(pinned / key), "pinned 必须存活（钉住语义）")
-    val autoNames = os.list(rootP).filter(os.isDir(_)).map(_.last)
-      .filter(_.startsWith("2026")).sorted
+    val autoNames = os
+      .list(rootP)
+      .filter(os.isDir(_))
+      .map(_.last)
+      .filter(_.startsWith("2026"))
+      .sorted
     assertEquals(
       autoNames.size,
       MemorySnapshot.KeepPerFile,
@@ -219,3 +230,4 @@ class MemorySnapshotSpec extends FunSuite:
       "最老自动快照不得被 pinned 挤掉（过滤行缺席时它会被整目录删除）"
     )
   }
+end MemorySnapshotSpec

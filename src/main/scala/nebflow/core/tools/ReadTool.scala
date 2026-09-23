@@ -24,6 +24,7 @@ object ReadTool extends Tool:
   private[tools] type ImagePrep = ImageInject.ImagePrep
   private[tools] val Prepared = ImageInject.Prepared
   private[tools] val TooLarge = ImageInject.TooLarge
+
   private[tools] def prepareImage(bytes: Array[Byte], mediaType: String, fileName: String): ImagePrep =
     ImageInject.prepareImage(bytes, mediaType, fileName)
 
@@ -32,12 +33,14 @@ object ReadTool extends Tool:
 
   val name = "Read"
 
-  /** Read output is guarded like any other tool: >50K chars → persisted to
-    * disk with a preview (ToolResultGuard). Read's own 512KB/2000-line safety
-    * limits remain as the tool-level net. For large files use offset/limit
-    * to paginate — a single Read may return at most the default cap.
-    * (2026-09-01 #38: was Int.MaxValue — exempting Read was the single biggest
-    * context-bloat vector, incl. agents re-reading persisted tool-results.) */
+  /**
+   * Read output is guarded like any other tool: >50K chars → persisted to
+   * disk with a preview (ToolResultGuard). Read's own 512KB/2000-line safety
+   * limits remain as the tool-level net. For large files use offset/limit
+   * to paginate — a single Read may return at most the default cap.
+   * (2026-09-01 #38: was Int.MaxValue — exempting Read was the single biggest
+   * context-bloat vector, incl. agents re-reading persisted tool-results.)
+   */
   override val maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
 
   val description =

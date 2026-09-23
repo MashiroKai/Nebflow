@@ -11,13 +11,14 @@ import nebflow.shared.{Message, MessageRole}
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
-/** #38 Layer C — deleteSession 删除闭环（2026-09-01）。
-  *
-  * 回归护栏：deleteSession 必须删除 tool-results 落盘目录 + 清 turn-state
-  * （否则重启后恢复/防抖 persist 复活会话）；TeamSessionRegistry 的
-  * sessionMap/actorMap 映射删除后无残留（否则 team 成员 actor 存活持
-  * ~10MB state.messages 原样写回——qa-backend「删不掉」根因）。
-  */
+/**
+ * #38 Layer C — deleteSession 删除闭环（2026-09-01）。
+ *
+ * 回归护栏：deleteSession 必须删除 tool-results 落盘目录 + 清 turn-state
+ * （否则重启后恢复/防抖 persist 复活会话）；TeamSessionRegistry 的
+ * sessionMap/actorMap 映射删除后无残留（否则 team 成员 actor 存活持
+ * ~10MB state.messages 原样写回——qa-backend「删不掉」根因）。
+ */
 class DeleteSessionCleanupSpec extends CatsEffectSuite:
 
   private val tmp: Path = Files.createTempDirectory("delete-session-cleanup-test")

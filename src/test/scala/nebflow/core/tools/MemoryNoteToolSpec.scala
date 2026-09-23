@@ -59,11 +59,14 @@ class MemoryNoteToolSpec extends FunSuite:
 
   private def callAs(identity: String, params: (String, Json)*): Either[ToolError, String] =
     val input = JsonObject.fromIterable(params.map((k, v) => k -> v))
-    MemoryNoteTool.call(input, ToolContext(
-      projectRoot = home.toString,
-      agentDef = Some(AgentDef(name = identity, description = "")))).unsafeRunSync()
+    MemoryNoteTool
+      .call(
+        input,
+        ToolContext(projectRoot = home.toString, agentDef = Some(AgentDef(name = identity, description = "")))
+      )
+      .unsafeRunSync()
 
-  private def userFile: os.Path  = home / "User.md"
+  private def userFile: os.Path = home / "User.md"
   private def agentFile: os.Path = home / "agents" / "Nebula" / "memory.md"
 
   /** 队列清空（每测独立起点；两代文件一并清）。 */
@@ -79,8 +82,7 @@ class MemoryNoteToolSpec extends FunSuite:
     resetQueue()
     seedUser("# User\n\n- 既有条目甲\n")
     val before = os.read(userFile)
-    val res = call("target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- 用户偏好深色主题（→pref-dark）".asJson)
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 用户偏好深色主题（→pref-dark）".asJson)
     assert(res.isRight, s"expect ok: ${res.left.toOption.map(_.message)}")
     assertEquals(os.read(userFile), before, "直写通道已关闭：记忆文件字节不变")
     assert(!os.exists(home / "memory-backups"), "记账不做写前快照（无落盘对象）")
@@ -94,14 +96,31 @@ class MemoryNoteToolSpec extends FunSuite:
 
   test("append 带 section / update / remove / replace_section 各自的字段落进 note"):
     resetQueue()
-    assert(call("target" -> "agent".asJson, "action" -> "append".asJson,
-      "section" -> "Routing".asJson, "content" -> "- 新路由条目".asJson).isRight)
-    assert(call("target" -> "agent".asJson, "action" -> "update".asJson,
-      "match" -> "alpha".asJson, "content" -> "- alpha 已更新".asJson).isRight)
-    assert(call("target" -> "agent".asJson, "action" -> "remove".asJson,
-      "match" -> "stale".asJson).isRight)
-    assert(call("target" -> "agent".asJson, "action" -> "replace_section".asJson,
-      "section" -> "## Bulk".asJson, "content" -> "- 新一\n- 新二".asJson).isRight)
+    assert(
+      call(
+        "target" -> "agent".asJson,
+        "action" -> "append".asJson,
+        "section" -> "Routing".asJson,
+        "content" -> "- 新路由条目".asJson
+      ).isRight
+    )
+    assert(
+      call(
+        "target" -> "agent".asJson,
+        "action" -> "update".asJson,
+        "match" -> "alpha".asJson,
+        "content" -> "- alpha 已更新".asJson
+      ).isRight
+    )
+    assert(call("target" -> "agent".asJson, "action" -> "remove".asJson, "match" -> "stale".asJson).isRight)
+    assert(
+      call(
+        "target" -> "agent".asJson,
+        "action" -> "replace_section".asJson,
+        "section" -> "## Bulk".asJson,
+        "content" -> "- 新一\n- 新二".asJson
+      ).isRight
+    )
     val ns = notes
     assertEquals(ns.size, 4)
     assertEquals(ns(0).section, Some("Routing"))
@@ -115,8 +134,7 @@ class MemoryNoteToolSpec extends FunSuite:
 
   test("返回值：queued q-… (applied at next compaction)，且不回显「已写入」"):
     resetQueue()
-    val res = call("target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- 条目".asJson).toOption.get
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 条目".asJson).toOption.get
     assert(res.contains("queued q-"), s"必须明示 queued q-id: $res")
     assert(res.contains("(applied at next compaction)"), "必须明示应用时机")
     assert(res.contains("NOT written yet"), "必须明示尚未落盘")
@@ -125,8 +143,11 @@ class MemoryNoteToolSpec extends FunSuite:
 
   test("schema 无路径参数（白名单面 = 五个语义参数）"):
     val props = MemoryNoteTool.inputSchema("properties").flatMap(_.asObject).get
-    assertEquals(props.keys.toSet, Set("target", "action", "section", "match", "content"),
-      "whitelist surface: exactly the five semantic params, no path/file parameter")
+    assertEquals(
+      props.keys.toSet,
+      Set("target", "action", "section", "match", "content"),
+      "whitelist surface: exactly the five semantic params, no path/file parameter"
+    )
 
   // ===== target 值域 =====
 
@@ -150,15 +171,16 @@ class MemoryNoteToolSpec extends FunSuite:
     os.makeDir.all(home / "projects" / "pmem-basic")
     os.write.over(
       home / "projects" / "pmem-basic" / "project.json",
-      s"""{"name":"pmem-basic","workspace":"${ws.toString}","agentFile":"${(ws / "AGENTS.md").toString}","createdAt":1}""")
-    val res = call("target" -> "project:pmem-basic".asJson, "action" -> "append".asJson,
-      "content" -> "- 项目状态：队列化已落地".asJson)
+      s"""{"name":"pmem-basic","workspace":"${ws.toString}","agentFile":"${(ws / "AGENTS.md").toString}","createdAt":1}"""
+    )
+    val res =
+      call("target" -> "project:pmem-basic".asJson, "action" -> "append".asJson, "content" -> "- 项目状态：队列化已落地".asJson)
     assert(res.isRight, s"expect ok: ${res.left.toOption.map(_.message)}")
     assertEquals(notes.head.target, "project:pmem-basic")
     assert(!os.exists(ws / ".nebflow" / "memory.md"), "项目记忆文件同样零写入")
 
-    val unknown = call("target" -> "project:no-such-project".asJson, "action" -> "append".asJson,
-      "content" -> "- x".asJson)
+    val unknown =
+      call("target" -> "project:no-such-project".asJson, "action" -> "append".asJson, "content" -> "- x".asJson)
     val msg = unknown.left.toOption.get.message
     assert(msg.contains("MEMORYEDIT_TARGET") && msg.contains("registry"), "未知项目拒收并指向注册表")
 
@@ -191,45 +213,74 @@ class MemoryNoteToolSpec extends FunSuite:
 
   test("条目格式闸：append/update 多行或非 '- ' 开头 → MEMORYEDIT_ENTRY_FORMAT（零入队）"):
     resetQueue()
-    val multi = call("target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- 第一行\n第二行不是条目".asJson)
+    val multi = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 第一行\n第二行不是条目".asJson)
     val msg = multi.left.toOption.get.message
     assert(msg.contains("MEMORYEDIT_ENTRY_FORMAT") && msg.contains("replace_section"), "给出可行动出路")
-    val prose = call("target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "正文段落，不是条目".asJson)
+    val prose = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "正文段落，不是条目".asJson)
     assert(prose.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"))
-    val multiUpdate = call("target" -> "user".asJson, "action" -> "update".asJson,
-      "match" -> "x".asJson, "content" -> "- 替换行\n漂移行".asJson)
+    val multiUpdate = call(
+      "target" -> "user".asJson,
+      "action" -> "update".asJson,
+      "match" -> "x".asJson,
+      "content" -> "- 替换行\n漂移行".asJson
+    )
     assert(multiUpdate.left.toOption.get.message.contains("MEMORYEDIT_ENTRY_FORMAT"))
     assert(notes.isEmpty, "格式闸在入队前拒收")
     // replace_section 按设计允许多行（闸不适用）
-    assert(call("target" -> "user".asJson, "action" -> "replace_section".asJson,
-      "section" -> "Bulk".asJson, "content" -> "- 新一\n续行".asJson).isRight)
+    assert(
+      call(
+        "target" -> "user".asJson,
+        "action" -> "replace_section".asJson,
+        "section" -> "Bulk".asJson,
+        "content" -> "- 新一\n续行".asJson
+      ).isRight
+    )
 
   // ===== dream 受限准入（原样保留）=====
 
   test("dream append → DREAM_APPEND_DENIED，零入队；dream remove → 入队"):
     resetQueue()
-    val denied = callAs("dream", "target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- dream 试图新增的记忆".asJson)
+    val denied =
+      callAs("dream", "target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- dream 试图新增的记忆".asJson)
     val msg = denied.left.toOption.get.message
     assert(msg.contains("DREAM_APPEND_DENIED") && msg.contains("dream 禁写新记忆"), s"结构性错误码: $msg")
     assert(msg.contains("update") && msg.contains("replace_section"), "给出可行动出路（修订动作）")
     assert(notes.isEmpty, "被拒零入队")
-    assert(callAs("dream", "target" -> "agent".asJson, "action" -> "remove".asJson,
-      "match" -> "stale-xyz".asJson).isRight, "dream 修订动作放行")
+    assert(
+      callAs("dream", "target" -> "agent".asJson, "action" -> "remove".asJson, "match" -> "stale-xyz".asJson).isRight,
+      "dream 修订动作放行"
+    )
     assertEquals(notes.size, 1)
 
   test("Nebula 全四动作照常（agentDef=Nebula 显式走一遍）"):
     resetQueue()
-    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- Nebula 追加条目".asJson).isRight)
-    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "update".asJson,
-      "match" -> "旧条目".asJson, "content" -> "- 旧条目已更新".asJson).isRight)
-    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "replace_section".asJson,
-      "section" -> "Sec".asJson, "content" -> "- 区段定稿".asJson).isRight)
-    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "remove".asJson,
-      "match" -> "临时条目".asJson).isRight)
+    assert(
+      callAs(
+        "Nebula",
+        "target" -> "user".asJson,
+        "action" -> "append".asJson,
+        "content" -> "- Nebula 追加条目".asJson
+      ).isRight
+    )
+    assert(
+      callAs(
+        "Nebula",
+        "target" -> "user".asJson,
+        "action" -> "update".asJson,
+        "match" -> "旧条目".asJson,
+        "content" -> "- 旧条目已更新".asJson
+      ).isRight
+    )
+    assert(
+      callAs(
+        "Nebula",
+        "target" -> "user".asJson,
+        "action" -> "replace_section".asJson,
+        "section" -> "Sec".asJson,
+        "content" -> "- 区段定稿".asJson
+      ).isRight
+    )
+    assert(callAs("Nebula", "target" -> "user".asJson, "action" -> "remove".asJson, "match" -> "临时条目".asJson).isRight)
     assertEquals(notes.size, 4)
 
   // ===== 幂等 =====
@@ -261,8 +312,7 @@ class MemoryNoteToolSpec extends FunSuite:
 
   test("变更史：每次入队落一行 history:queue，与 note 以 ref 可对账"):
     resetQueue()
-    val res = call("target" -> "user".asJson, "action" -> "append".asJson,
-      "content" -> "- 变更史条目".asJson).toOption.get
+    val res = call("target" -> "user".asJson, "action" -> "append".asJson, "content" -> "- 变更史条目".asJson).toOption.get
     val id = notes.head.id
     val evs = MemoryHistory.ofKind(MemoryHistory.KindQueue)
     assertEquals(evs.size, 1)
@@ -276,4 +326,6 @@ class MemoryNoteToolSpec extends FunSuite:
     assertEquals(
       MemoryHistory.discrepancies(st.notes.map(_.id).toList, st.outcomeRefs),
       Nil,
-      "history ↔ note/outcome 三者对账一致")
+      "history ↔ note/outcome 三者对账一致"
+    )
+end MemoryNoteToolSpec

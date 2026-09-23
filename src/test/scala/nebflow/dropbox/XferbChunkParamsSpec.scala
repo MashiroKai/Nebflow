@@ -84,11 +84,13 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         f(src, dst).guarantee(IO.blocking(os.remove.all(dir)).handleErrorWith(_ => IO.unit))
     }
 
-  /** 自环腿：块喂给真实 `ChunkReceiver`（temp 落真实磁盘）。
-    *
-    *   - `failAfterChunk` = Some(k)：应用到 k 号块时**不落地**，直接回「对端不可达」；
-    *   - `partialAtChunk` = Some((k, n))：k 号块**只落前 n 字节**再回「对端不可达」
-    *     —— 忠实复刻「append 中途被杀」留下的**非整块尾**（P0-2 的关键夹具）。 */
+  /**
+   * 自环腿：块喂给真实 `ChunkReceiver`（temp 落真实磁盘）。
+   *
+   *   - `failAfterChunk` = Some(k)：应用到 k 号块时**不落地**，直接回「对端不可达」；
+   *   - `partialAtChunk` = Some((k, n))：k 号块**只落前 n 字节**再回「对端不可达」
+   *     —— 忠实复刻「append 中途被杀」留下的**非整块尾**（P0-2 的关键夹具）。
+   */
   private class LoopbackTransport(
     receiver: ChunkReceiver,
     failAfterChunk: Option[Int] = None,
@@ -99,6 +101,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
     val putLog: scala.collection.mutable.ArrayBuffer[(Int, Long)] = scala.collection.mutable.ArrayBuffer.empty
   ) extends ChunkTransport:
     def leg: String = "harness"
+
     def put(t: FileTransfer, frame: ChunkedTransfer.ChunkFrame, payload: Array[Byte]) =
       putLog += ((frame.chunkIndex, System.nanoTime()))
       val maybeFail =
@@ -132,7 +135,9 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
               receiver.applyChunk(frame, payload)
       val paused = if putDelay > Duration.Zero then IO.sleep(putDelay) else IO.unit
       paused *> maybeFail
+    end put
     def probe(t: FileTransfer) = receiver.prime().map(Right(_))
+  end LoopbackTransport
 
   // ===== A. 自适应块参（P0-1）=====
 
@@ -225,19 +230,31 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         // 第一次：块 0/1 正常落地，块 2 **只落半截**（append 被中断）后断连
         // ⇒ 磁盘上是**非整块尾**（这正是续传对齐要处理的形状）。
         t1 = new LoopbackTransport(receiver, partialAtChunk = Some((2, Chunk / 2)))
-        r1 <- ChunkedSendLoop.run(t1, target("p", "tid-p", "partial.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        r1 <- ChunkedSendLoop.run(
+          t1,
+          target("p", "tid-p", "partial.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
         onDiskAfterBreak <- IO.blocking(os.size(tempPath))
         probeState <- receiver.prime()
         // 第二次：**同号**续传 —— 探针给的是未对齐的实际长度。
         t2 = new LoopbackTransport(receiver)
-        r2 <- ChunkedSendLoop.run(t2, target("p", "tid-p", "partial.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        r2 <- ChunkedSendLoop.run(
+          t2,
+          target("p", "tid-p", "partial.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
         finalSize <- IO.blocking(os.size(tempPath))
         finalHash <- IO.blocking(sha256File(tempPath))
         srcHash = sha256File(source)
       yield
         r1 match
           case Left(err) => assertEquals(err.code, AttachContract.Codes.PeerUnreachable)
-          case Right(_)  => fail("第一次必须因模拟断连失败")
+          case Right(_) => fail("第一次必须因模拟断连失败")
         assertEquals(onDiskAfterBreak, 2L * Chunk + Chunk / 2, s"夹具必须造出非整块尾，实测 $onDiskAfterBreak B")
         assert(onDiskAfterBreak % Chunk.toLong != 0L, "尾巴必须不是整块（否则本用例不承重）")
         assertEquals(probeState.bytesReceived, onDiskAfterBreak, "探针权威值 = temp 实际长度（不夹取到块边界）")
@@ -253,11 +270,11 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
             // 已确认的块 0/1 不得重传；只发剩余 3 块（含被截断后重发的块 2）。
             assertEquals(t2.puts, 3, s"续传只应发 3 块，实发 ${t2.puts}")
             println(
-              s"[READING B1] break: onDisk=$onDiskAfterBreak/${size} (unaligned tail=${
-                  onDiskAfterBreak % Chunk
-                } B), probeOffset=${probeState.bytesReceived}, resumedPuts=${t2.puts}, finalSize=$finalSize"
+              s"[READING B1] break: onDisk=$onDiskAfterBreak/${size} (unaligned tail=${onDiskAfterBreak % Chunk} B), probeOffset=${probeState.bytesReceived}, resumedPuts=${t2.puts}, finalSize=$finalSize"
             )
           case Left(err) => fail(s"续传必须成功，实得 ${err.render}")
+        end match
+      end for
     }
   }
 
@@ -270,7 +287,13 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         receiver = new ChunkReceiver("tid-a2", size, Chunk, tempPath)
         _ <- receiver.prime()
         t1 = new LoopbackTransport(receiver, failAfterChunk = Some(1))
-        _ <- ChunkedSendLoop.run(t1, target("p", "tid-a2", "authority.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        _ <- ChunkedSendLoop.run(
+          t1,
+          target("p", "tid-a2", "authority.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
         // 伪造「内存计数」：全新 receiver 实例（等价进程重启）—— offset 仍须来自磁盘。
         fresh = new ChunkReceiver("tid-a2", size, Chunk, tempPath)
         state <- fresh.prime()
@@ -279,6 +302,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         assertEquals(state.bytesReceived, onDisk, "恢复权威 = temp 实际长度")
         assertEquals(state.bytesReceived, Chunk.toLong, "块 0 已落盘 ⇒ offset 一块")
         assertEquals(state.prefixSha256, ChunkedTransfer.hashFileStreaming(tempPath, onDisk), "前缀摘要必须重算")
+      end for
     }
   }
 
@@ -293,10 +317,22 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         receiver = new ChunkReceiver("tid-c", size, Chunk, tempPath)
         _ <- receiver.prime()
         t1 = new LoopbackTransport(receiver)
-        r1 <- ChunkedSendLoop.run(t1, target("p", "tid-c", "already.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        r1 <- ChunkedSendLoop.run(
+          t1,
+          target("p", "tid-c", "already.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
         // 第二次：对端已落满 ⇒ 无块可发 + 探针重算摘要 ⇒ 成功收口，且 puts 不增。
         t2 = new LoopbackTransport(receiver)
-        r2 <- ChunkedSendLoop.run(t2, target("p", "tid-c", "already.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        r2 <- ChunkedSendLoop.run(
+          t2,
+          target("p", "tid-c", "already.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
       yield
         assertEquals(r1.map(_.chunksSent), Right(3))
         r2 match
@@ -305,6 +341,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
             assertEquals(o.receiverComputedSha256, sha256File(source), "收口摘要必须来自接收端重算")
             assertEquals(t2.puts, 0, "零重传")
           case Left(err) => fail(s"已落满的续传必须成功，实得 ${err.render}")
+      end for
     }
   }
 
@@ -317,18 +354,31 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         receiver = new ChunkReceiver("tid-c2", size, Chunk, tempPath)
         _ <- receiver.prime()
         t1 = new LoopbackTransport(receiver)
-        _ <- ChunkedSendLoop.run(t1, target("p", "tid-c2", "tamper.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        _ <- ChunkedSendLoop.run(
+          t1,
+          target("p", "tid-c2", "tamper.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
         _ <- IO.blocking {
           val bytes = os.read.bytes(tempPath)
           bytes(0) = (bytes(0) ^ 0x01).toByte
           os.write.over(tempPath, bytes)
         }
         t2 = new LoopbackTransport(receiver)
-        r2 <- ChunkedSendLoop.run(t2, target("p", "tid-c2", "tamper.bin", size), source, chunkSize = Chunk, retriesPerLeg = 0)
+        r2 <- ChunkedSendLoop.run(
+          t2,
+          target("p", "tid-c2", "tamper.bin", size),
+          source,
+          chunkSize = Chunk,
+          retriesPerLeg = 0
+        )
       yield r2 match
         case Left(err) => assertEquals(err.code, AttachContract.Codes.WholeDigestMismatch)
         case Right(o) =>
           fail(s"篡改后的「已落满」不得被宣布成功（得 bytesSent=${o.bytesSent}）")
+      end for
     }
   }
 
@@ -356,8 +406,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
           onProgress = (_, received) => IO { acks += received; () },
           // 🔴 节拍的**每次**执行都要重新记一行（本字段曾因 `*>` 按值求值被冻成常量 ——
           //    见 `ChunkedSendLoop.run` 的 `IO.defer` 注）：`tickNs` 让「节拍是否真在跑」可判。
-          onInFlight = (acked, inFlight) =>
-            IO { ticks += ((acked, inFlight)); tickNs += System.nanoTime(); () },
+          onInFlight = (acked, inFlight) => IO { ticks += ((acked, inFlight)); tickNs += System.nanoTime(); () },
           progressCadence = 100.millis,
           onRate = rate => IO { rates += rate; () }
         )
@@ -389,6 +438,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         assertEquals(acks.last, size, "末块 ack = totalBytes")
         assert(rates.nonEmpty && rates.forall(_ > 0L), s"每块必须有实测速率读数：${rates.toList}")
         println(s"[READING D1] cadence=100ms ticks=${ticks.size} puts=${t.puts} rates=$rates")
+      end for
     }
   }
 
@@ -417,17 +467,17 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
           "transferId" -> io.circe.Json.fromString("tid-e")
         )
         res <- nebflow.neblink.FileTransferAction.handle(params)
-      yield
-        res match
-          case Left(raw) =>
-            val json = io.circe.parser.parse(raw).getOrElse(fail(s"结构化错误体必须是可解析 JSON：$raw"))
-            val hc = json.hcursor
-            assertEquals(hc.downField("code").as[String].toOption, Some("OFFSET_OUT_OF_RANGE"))
-            assertEquals(hc.downField("phase").as[String].toOption, Some("transfer"))
-            assertEquals(hc.downField("expectedIndex").as[Int].toOption, Some(1))
-            assertEquals(hc.downField("actualIndex").as[Int].toOption, Some(2))
-            assert(hc.downField("bytesReceived").as[Long].toOption.contains(Chunk.toLong))
-          case Right(ok) => fail(s"空洞块必须被拒，实得成功回执 $ok")
+      yield res match
+        case Left(raw) =>
+          val json = io.circe.parser.parse(raw).getOrElse(fail(s"结构化错误体必须是可解析 JSON：$raw"))
+          val hc = json.hcursor
+          assertEquals(hc.downField("code").as[String].toOption, Some("OFFSET_OUT_OF_RANGE"))
+          assertEquals(hc.downField("phase").as[String].toOption, Some("transfer"))
+          assertEquals(hc.downField("expectedIndex").as[Int].toOption, Some(1))
+          assertEquals(hc.downField("actualIndex").as[Int].toOption, Some(2))
+          assert(hc.downField("bytesReceived").as[Long].toOption.contains(Chunk.toLong))
+        case Right(ok) => fail(s"空洞块必须被拒，实得成功回执 $ok")
+      end for
     }
   }
 
@@ -459,12 +509,13 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
         )
         res <- nebflow.neblink.FileTransferAction.handle(params)
         onDisk <- IO.blocking(os.size(path))
-      yield
-        res match
-          case Right(json) =>
-            val bytes = json.hcursor.downField("bytesReceived").as[Long].getOrElse(0L)
-            assertEquals(bytes, 2L * Chunk, "截尾后 append ⇒ 落盘恰为 2 块（改前 = 重影 ⇒ 2.5 块）")
-            assertEquals(onDisk, 2L * Chunk)
-          case Left(err) => fail(s"非整块尾的续传必须成功（截尾修复），实得 $err")
+      yield res match
+        case Right(json) =>
+          val bytes = json.hcursor.downField("bytesReceived").as[Long].getOrElse(0L)
+          assertEquals(bytes, 2L * Chunk, "截尾后 append ⇒ 落盘恰为 2 块（改前 = 重影 ⇒ 2.5 块）")
+          assertEquals(onDisk, 2L * Chunk)
+        case Left(err) => fail(s"非整块尾的续传必须成功（截尾修复），实得 $err")
+      end for
     }
   }
+end XferbChunkParamsSpec

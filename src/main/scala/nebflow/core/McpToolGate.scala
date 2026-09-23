@@ -37,24 +37,27 @@ enum RiskTier:
     case L2 => "L2"
     case L3 => "L3"
 
-  /** spec §2.3：dangerLevel 映射对齐 askPermission payload 既有 3/2/1 语义
-    * （`AgentCore.askUserPermission` 的 dangerLevel 字段）；**L0 不出卡**。
-    */
+  /**
+   * spec §2.3：dangerLevel 映射对齐 askPermission payload 既有 3/2/1 语义
+   * （`AgentCore.askUserPermission` 的 dangerLevel 字段）；**L0 不出卡**。
+   */
   def dangerLevel: Int = this match
     case L0 => 0
     case L1 => 1
     case L2 => 2
     case L3 => 3
 
+end RiskTier
+
 /** 声明档（spec §2.1-2 / §2.2 列标题）；wire 值域 = 卡面 `declared` 字段。 */
 enum Declared:
   case DeclaredAuto, DeclaredConfirm, Undeclared, Unclassified
 
   def wire: String = this match
-    case DeclaredAuto    => "declared-auto"
+    case DeclaredAuto => "declared-auto"
     case DeclaredConfirm => "declared-confirm"
-    case Undeclared      => "undeclared"
-    case Unclassified    => "unclassified"
+    case Undeclared => "undeclared"
+    case Unclassified => "unclassified"
 
   /** §2.2 合成规则用：只有「声明 auto」免审（L3 红线除外）。 */
   def isAuto: Boolean = this == DeclaredAuto
@@ -64,14 +67,15 @@ enum ExecForm:
   case Container, HostExecutor, SandboxProcess, BareProcess
 
   def wire: String = this match
-    case Container     => "container"
-    case HostExecutor  => "host-executor"
+    case Container => "container"
+    case HostExecutor => "host-executor"
     case SandboxProcess => "sandbox-process"
-    case BareProcess   => "bare-process"
+    case BareProcess => "bare-process"
 
-  /** 「宿主执行」面（spec §2.1-1）：host-executor / 降级裸进程 = 宿主执行；沙箱进程同为宿主
-    * 进程树内（seatbelt 不隔离 spawn，spec §4.2 诚实陈述），故同属宿主面；容器面为 false。
-    */
+  /**
+   * 「宿主执行」面（spec §2.1-1）：host-executor / 降级裸进程 = 宿主执行；沙箱进程同为宿主
+   * 进程树内（seatbelt 不隔离 spawn，spec §4.2 诚实陈述），故同属宿主面；容器面为 false。
+   */
   def isHostSurface: Boolean = this != Container
 
 object ExecForm:
@@ -93,7 +97,7 @@ enum ToolSurface:
   case Mcp, ScriptTool
 
   def wire: String = this match
-    case Mcp        => "mcp"
+    case Mcp => "mcp"
     case ScriptTool => "script-tool"
 
 /**
@@ -111,6 +115,7 @@ trait DeclarationSource:
   def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared]
 
 object DeclarationSource:
+
   /** P0-1 缺省实现（本批唯一实现）：一律未声明。 */
   val alwaysUndeclared: DeclarationSource = new DeclarationSource:
     def lookup(surface: ToolSurface, serverId: String, tool: String): Option[Declared] = None
@@ -144,16 +149,17 @@ object McpToolRef:
 
   private val McpPrefix = "mcp__"
 
-  /** 解析 MCP 注册名。非 `mcp__` 名 / 缺 server 或缺工具名 ⇒ None（不猜）。
-    *
-    * 分隔判据：前缀之后**第一个** `__` 为 serverId↔tool 分界（serverId 自身只可能含
-    * 单下划线：`plugin_<plugin>_<server>` / `agent-<agent>-<server>`）——与
-    * `summarizeToolCall`（`handlers.scala:33-36`）的 `split("__")` 口径同族。
-    *
-    * plugin 解析：`plugin_<plugin>_<server>` 以**最后一个** `_` 为 plugin↔server 分界
-    * （plugin 名含 `-` 不含 `_` 时为精确解；含 `_` 的 plugin 名属下界歧义，落
-    * `pluginAmbiguous` 注释面，不静默猜错）。
-    */
+  /**
+   * 解析 MCP 注册名。非 `mcp__` 名 / 缺 server 或缺工具名 ⇒ None（不猜）。
+   *
+   * 分隔判据：前缀之后**第一个** `__` 为 serverId↔tool 分界（serverId 自身只可能含
+   * 单下划线：`plugin_<plugin>_<server>` / `agent-<agent>-<server>`）——与
+   * `summarizeToolCall`（`handlers.scala:33-36`）的 `split("__")` 口径同族。
+   *
+   * plugin 解析：`plugin_<plugin>_<server>` 以**最后一个** `_` 为 plugin↔server 分界
+   * （plugin 名含 `-` 不含 `_` 时为精确解；含 `_` 的 plugin 名属下界歧义，落
+   * `pluginAmbiguous` 注释面，不静默猜错）。
+   */
   def parse(fullName: String): Option[McpToolRef] =
     if !fullName.startsWith(McpPrefix) then None
     else
@@ -173,25 +179,30 @@ object McpToolRef:
             else None
           Some(McpToolRef(fullName, ToolSurface.Mcp, serverId, plugin, tool))
 
+end McpToolRef
+
 /** ScriptTool 面的解析（**无注册名模式** —— 见下）。 */
 object ScriptToolRef:
 
-  /** spec §6 #8「ScriptTool 注册名模式」本批现读核实结论（**读数，非臆造**）：
-    *   · `ScriptTool.scala:16`：`val name = config.name` —— 名字 = `tool.json` 的
-    *     `config.name` **自由文本**，无前缀、无命名空间（`ToolLoader.reload()` 原样
-    *     `registerTool(t)`，现读 `ToolLoader.scala:49-51`）。
-    *   · ⇒ **源码不存在可用的「注册名模式」**。名字模式核不到 ⇒ 按任务书 §九
-    *     「核实不到 ⇒ 单列，禁臆造」处理：识别改走**注册表身份**（下表）。
-    *   · 注册表身份判据（本批采用）= `ToolRegistry` 中该名字对应的实例是
-    *     `nebflow.core.tools.ScriptTool`（`ToolRegistry.isExternalTool`）。
-    *     「外部工具名模式」开放项见报告（候选：`ToolLoader` 暴露 external 名集，
-    *     或 `tool.json` 增 `namePattern` 字段 —— 均需作者裁）。
-    */
+  /**
+   * spec §6 #8「ScriptTool 注册名模式」本批现读核实结论（**读数，非臆造**）：
+   *   · `ScriptTool.scala:16`：`val name = config.name` —— 名字 = `tool.json` 的
+   *     `config.name` **自由文本**，无前缀、无命名空间（`ToolLoader.reload()` 原样
+   *     `registerTool(t)`，现读 `ToolLoader.scala:49-51`）。
+   *   · ⇒ **源码不存在可用的「注册名模式」**。名字模式核不到 ⇒ 按任务书 §九
+   *     「核实不到 ⇒ 单列，禁臆造」处理：识别改走**注册表身份**（下表）。
+   *   · 注册表身份判据（本批采用）= `ToolRegistry` 中该名字对应的实例是
+   *     `nebflow.core.tools.ScriptTool`（`ToolRegistry.isExternalTool`）。
+   *     「外部工具名模式」开放项见报告（候选：`ToolLoader` 暴露 external 名集，
+   *     或 `tool.json` 增 `namePattern` 字段 —— 均需作者裁）。
+   */
   def of(fullName: String): Option[McpToolRef] =
     if fullName.startsWith("mcp__") then None
     else if nebflow.core.tools.ToolRegistry.isExternalTool(fullName) then
       Some(McpToolRef(fullName, ToolSurface.ScriptTool, serverId = fullName, plugin = None, tool = fullName))
     else None
+
+end ScriptToolRef
 
 /**
  * 会话级放行记忆（P0-2，spec §2.5）。
@@ -228,6 +239,8 @@ object SessionApprovals:
 
   /** 测试观测面（全清）。 */
   def reset(): Unit = map.clear()
+
+end SessionApprovals
 
 /**
  * 卡面参数摘要的凭据遮蔽（roadmap §2.2 附表「参数摘要 · 经凭据 redact」；规则本批统一定，统一总纲 N3/R7）。
@@ -276,6 +289,8 @@ object GateRedact:
         joined.take(MaxSummaryChars) + s"...(truncated, +${joined.length - MaxSummaryChars} chars)"
       else joined
 
+end GateRedact
+
 /** 判定结果（卡面 + 审计的唯一来源；纯数据，可单测）。 */
 final case class McpGateOutcome(
   ref: McpToolRef,
@@ -295,6 +310,8 @@ final case class McpGateOutcome(
 
   /** 判定折成既有 `PermissionDecision` 的二值语义（Allow / Ask）。 */
   def allowed: Boolean = !needApproval
+
+end McpGateOutcome
 
 /**
  * McpToolGate —— P-M1 审批门本体（spec §2.3）。
@@ -318,8 +335,10 @@ object McpToolGate:
   private def tokens(tool: String): List[String] =
     tool.toLowerCase.split("[^a-z0-9]+").toList.filter(_.nonEmpty)
 
-  /** 命中判据：词元 == 词 ∨ 词元以词开头 ∨ 词元以词结尾（覆盖 camelCase / snake_case 两形态）。
-    * 这是**启发式**，宁可多审不可漏审（fail-safe 方向）。 */
+  /**
+   * 命中判据：词元 == 词 ∨ 词元以词开头 ∨ 词元以词结尾（覆盖 camelCase / snake_case 两形态）。
+   * 这是**启发式**，宁可多审不可漏审（fail-safe 方向）。
+   */
   private def wordHits(tool: String, words: List[String]): Option[String] =
     val ts = tokens(tool)
     words.find(w => ts.exists(t => t == w || t.startsWith(w) || t.endsWith(w)))
@@ -341,7 +360,7 @@ object McpToolGate:
                 case None =>
                   wordHits(tool, L0Words) match
                     case Some(w) => (RiskTier.L0, s"heuristic:$w")
-                    case None    => (RiskTier.L0, "unclassified")
+                    case None => (RiskTier.L0, "unclassified")
     else
       // 容器形态：L3 词表结构性失效（宿主面不可达）⇒ 落到其余词表；全不匹配 = unclassified。
       if l3.isDefined then
@@ -353,7 +372,7 @@ object McpToolGate:
               case None =>
                 wordHits(tool, L0Words) match
                   case Some(w) => (RiskTier.L0, s"form-correction(container)+heuristic:$w")
-                  case None    => (RiskTier.L0, "form-correction(container)+unclassified")
+                  case None => (RiskTier.L0, "form-correction(container)+unclassified")
       else
         wordHits(tool, L2Words) match
           case Some(w) => (RiskTier.L2, s"heuristic:$w")
@@ -363,7 +382,11 @@ object McpToolGate:
               case None =>
                 wordHits(tool, L0Words) match
                   case Some(w) => (RiskTier.L0, s"heuristic:$w")
-                  case None    => (RiskTier.L0, "unclassified")
+                  case None => (RiskTier.L0, "unclassified")
+
+    end if
+
+  end classify
 
   /** §2.2 合成规则（原文）：`needApproval = L3 ? true : declared==auto ? false : mode==AutoAll ? false : true`。 */
   def needApproval(tier: RiskTier, declared: Declared, mode: SafetyMode): Boolean =
@@ -388,7 +411,7 @@ object McpToolGate:
     val (rawTier, tierSource) = classify(ref.tool, form)
     val declared = source.lookup(ref.surface, ref.serverId, ref.tool) match
       case Some(d) => d
-      case None    => if tierSource.contains("unclassified") then Declared.Unclassified else Declared.Undeclared
+      case None => if tierSource.contains("unclassified") then Declared.Unclassified else Declared.Undeclared
     // spec §6 #2 建议口径：会话放行只对 L0-L2 生效；L3 恒审（宿主红线）。
     val sessionApproved = rawTier != RiskTier.L3 && approvals.contains(sessionId, ref.serverId, ref.tool)
     val need = if sessionApproved then false else needApproval(rawTier, declared, mode)
@@ -402,6 +425,8 @@ object McpToolGate:
       needApproval = need,
       inputSummary = GateRedact.summarize(input)
     )
+
+  end decide
 
   /**
    * 卡面 payload（roadmap §2.2 统一 payload schema 附表；spec §2.4）。
@@ -443,6 +468,8 @@ object McpToolGate:
       s"tierSource=${o.tierSource} form=${o.form.wire} safetyMode=${SafetyMode.toString(mode)} " +
       s"sessionApproved=${o.sessionApproved} hostBanner=${o.hostBanner} session=$sessionId"
 
+end McpToolGate
+
 /**
  * 审批卡答复形状（spec §2.4）。
  *
@@ -459,6 +486,7 @@ final case class McpPermissionAnswer(
   def wantsSessionScope: Boolean = scope.contains("session")
 
 object McpPermissionAnswer:
+
   def decode(payload: Json): Option[McpPermissionAnswer] =
     payload.hcursor.downField("approved").as[Boolean].toOption.map { approved =>
       McpPermissionAnswer(

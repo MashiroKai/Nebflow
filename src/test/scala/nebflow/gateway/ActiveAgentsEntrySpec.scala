@@ -8,22 +8,22 @@ import nebflow.agent.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.shared.SessionMeta
 
 /**
-  * Contract tests for the activeAgents restore reply entry
-  * (WebSocketRoutes.activeAgentEntryJson).
-  *
-  * The frontend keys its bg-agent map by the agentId of BOTH this restore
-  * reply and live agentStart events. Live events carry the ACTOR PATH NAME
-  * (ctx.self.path.name), so the two key spaces only merge when every
-  * subagent spawn path names its actor by the session id — the Mail path
-  * used to spawn "mail-<sid8>", and after a browser refresh the restore
-  * reply (agentId=sid) plus the next live agentStart (agentId=mail-<sid8>)
-  * filed TWO running rows for ONE session: the Teams panel double-entry
-  * ghost (2026-08-17 report, Mail-activation path).
-  *
-  * `task` mirrors the live agentStart taskDescription (= session display
-  * name, "team/agent" for mounted team sessions) so restored rows render
-  * with the same team attribution as live ones.
-  */
+ * Contract tests for the activeAgents restore reply entry
+ * (WebSocketRoutes.activeAgentEntryJson).
+ *
+ * The frontend keys its bg-agent map by the agentId of BOTH this restore
+ * reply and live agentStart events. Live events carry the ACTOR PATH NAME
+ * (ctx.self.path.name), so the two key spaces only merge when every
+ * subagent spawn path names its actor by the session id — the Mail path
+ * used to spawn "mail-<sid8>", and after a browser refresh the restore
+ * reply (agentId=sid) plus the next live agentStart (agentId=mail-<sid8>)
+ * filed TWO running rows for ONE session: the Teams panel double-entry
+ * ghost (2026-08-17 report, Mail-activation path).
+ *
+ * `task` mirrors the live agentStart taskDescription (= session display
+ * name, "team/agent" for mounted team sessions) so restored rows render
+ * with the same team attribution as live ones.
+ */
 class ActiveAgentsEntrySpec extends FunSuite:
 
   // activeAgentEntryJson never touches the actor ref — null is safe here

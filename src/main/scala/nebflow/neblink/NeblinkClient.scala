@@ -122,25 +122,27 @@ import FriendCodecs.{given, *}
  *   （kick-on-re-enroll），那正是复核位判 fail 的那条腿。唯一解除口 = 用户显式登录
  *   （`NeblinkEnrollment.persist(explicitUserAction = true)` 清停摆位）。
  */
-/** E3 下载响应（4b 腿 A-3）：**状态码 + 原始字节 + 两个透传头**。
-  *
-  * 设计要点：非 2xx **不折叠成 `Left`** —— 410 `attachment_expired` / 404
-  * `attachment_not_found` / 403 `not_friends` 是**三个语义不同的可判读态**
-  * （§B.7 ③ 要求「已过期」与「下载失败」在客户端**可区分**），折叠会把它们
-  * 压成一个「失败」。
-  *
-  * 已知代价（如实登记）：字节**整件进内存**（`BodyHandlers.ofByteArray()`）—— 4b 腿 A
-  * 立项时上限 = 100,000,000 B，该代价按 100 MB 级登记并接受。
-  *
-  * 🔴 **上限升到 1024 MB = 1 GiB 后本代价放大 10.7 倍，已不再可接受**（2026-09-14
-  * 附件上限批 r2 实测登记，**本批未改此腿**）：宿主 JVM 堆 = `MaxRAMPercentage=12.5`
-  * ⇒ 本机 2 GB，且配 `-XX:+ExitOnOutOfMemoryError`（OOM = 硬退出，看门狗再拉起）。
-  * 一次 1 GiB 附件的 E3 下载会在该堆里一次分配 ≈1 GiB（`Array[Byte]`），叠加
-  * `RestApiRoutes` 的 `Stream.emits(fetch.bytes)` 还会再留一份引用 ⇒ 逼近/触顶 2 GB
-  * 堆。**修复方向（未实施，交下一批）**：E3 改流式落盘（`BodyHandlers.ofFile` /
-  * 分块 GET），`AttachmentFetch` 由 `bytes: Array[Byte]` 换成临时文件句柄 + 响应
-  * 完成即删；或对**好友下载腿**单列一个内存可承载的上限（与作者给定数解耦）。
-  * 详见报告 `.nebflow/reports/20260914_dropbox-attach-fix-impl2-r2.md` 的开放项。 */
+/**
+ * E3 下载响应（4b 腿 A-3）：**状态码 + 原始字节 + 两个透传头**。
+ *
+ * 设计要点：非 2xx **不折叠成 `Left`** —— 410 `attachment_expired` / 404
+ * `attachment_not_found` / 403 `not_friends` 是**三个语义不同的可判读态**
+ * （§B.7 ③ 要求「已过期」与「下载失败」在客户端**可区分**），折叠会把它们
+ * 压成一个「失败」。
+ *
+ * 已知代价（如实登记）：字节**整件进内存**（`BodyHandlers.ofByteArray()`）—— 4b 腿 A
+ * 立项时上限 = 100,000,000 B，该代价按 100 MB 级登记并接受。
+ *
+ * 🔴 **上限升到 1024 MB = 1 GiB 后本代价放大 10.7 倍，已不再可接受**（2026-09-14
+ * 附件上限批 r2 实测登记，**本批未改此腿**）：宿主 JVM 堆 = `MaxRAMPercentage=12.5`
+ * ⇒ 本机 2 GB，且配 `-XX:+ExitOnOutOfMemoryError`（OOM = 硬退出，看门狗再拉起）。
+ * 一次 1 GiB 附件的 E3 下载会在该堆里一次分配 ≈1 GiB（`Array[Byte]`），叠加
+ * `RestApiRoutes` 的 `Stream.emits(fetch.bytes)` 还会再留一份引用 ⇒ 逼近/触顶 2 GB
+ * 堆。**修复方向（未实施，交下一批）**：E3 改流式落盘（`BodyHandlers.ofFile` /
+ * 分块 GET），`AttachmentFetch` 由 `bytes: Array[Byte]` 换成临时文件句柄 + 响应
+ * 完成即删；或对**好友下载腿**单列一个内存可承载的上限（与作者给定数解耦）。
+ * 详见报告 `.nebflow/reports/20260914_dropbox-attach-fix-impl2-r2.md` 的开放项。
+ */
 case class AttachmentFetch(
   status: Int,
   bytes: Array[Byte],
@@ -148,20 +150,22 @@ case class AttachmentFetch(
   sha256Header: Option[String] = None
 )
 
-/** 设备邮件中继的响应读数（B 批，2026-09-16 作者裁定「路径 B」一步到位）。
-  *
-  *   - `id` = 服务端事件 id（`message-` 前缀已剥；响应未带可判读 id 即**空串** ——
-  *     **不伪造 id**，原语义逐字不变）；
-  *   - `delivered` = 服务端 `delivered` 键的读数：`true` = 载荷已推进对端的**活体隧道**
-  *     （`push_background` 被接受 ⇒ **≠ 对端已注入**）；`false` = 此刻无该设备隧道 ⇒
-  *     行已持久、随下一轮隧道注册补齐，**不是错误**（服务端口径逐字见 `neblink-server`
-  *     `agentmail.rs:227-259` / `routes.rs:1893-1906`）。
-  *
-  * **键缺席降级口径（首次选定，加性）**：旧服务端 / 契约外响应不带 `delivered` ⇒ 按
-  * `false`（**保守支**）——只在服务端**显式**断言 `true` 时才声称一次活体推送，缺席
-  * 一律按「服务端已接受、尚未确认活体推送」处理（**禁冒认**服务端未断言的推送）。
-  * 既有语义面（`error` 判读 / id 三候选宽容读取 / `Left` 失败语义 / 请求面 / ack 面）
-  * 全部**零变更**。 */
+/**
+ * 设备邮件中继的响应读数（B 批，2026-09-16 作者裁定「路径 B」一步到位）。
+ *
+ *   - `id` = 服务端事件 id（`message-` 前缀已剥；响应未带可判读 id 即**空串** ——
+ *     **不伪造 id**，原语义逐字不变）；
+ *   - `delivered` = 服务端 `delivered` 键的读数：`true` = 载荷已推进对端的**活体隧道**
+ *     （`push_background` 被接受 ⇒ **≠ 对端已注入**）；`false` = 此刻无该设备隧道 ⇒
+ *     行已持久、随下一轮隧道注册补齐，**不是错误**（服务端口径逐字见 `neblink-server`
+ *     `agentmail.rs:227-259` / `routes.rs:1893-1906`）。
+ *
+ * **键缺席降级口径（首次选定，加性）**：旧服务端 / 契约外响应不带 `delivered` ⇒ 按
+ * `false`（**保守支**）——只在服务端**显式**断言 `true` 时才声称一次活体推送，缺席
+ * 一律按「服务端已接受、尚未确认活体推送」处理（**禁冒认**服务端未断言的推送）。
+ * 既有语义面（`error` 判读 / id 三候选宽容读取 / `Left` 失败语义 / 请求面 / ack 面）
+ * 全部**零变更**。
+ */
 final case class RelayMailResult(id: String, delivered: Boolean)
 
 class NeblinkClient(
@@ -213,8 +217,10 @@ class NeblinkClient(
   /** C1: own `/24` prefixes from the last [[detectLocalEndpoints]] run (see [[localPrefixes]]). */
   @volatile private var cachedLocalPrefixes: Set[String] = Set.empty
 
-  /** Active long-lived device credential — starts from config, replaced by
-    * the silent re-login hook when the server rejects the old one. */
+  /**
+   * Active long-lived device credential — starts from config, replaced by
+   * the silent re-login hook when the server rejects the old one.
+   */
   @volatile private var activeDeviceToken: Option[String] = config.deviceToken
 
   /** Expose current session token for NeblinkRelayTunnel (live read on each reconnect). */
@@ -260,13 +266,14 @@ class NeblinkClient(
   private def classifyKind(address: String): String =
     if EndpointPreference.isTailscaleHost(address) then "tailscale" else "lan"
 
-  /** Local `/24` prefixes seen by the most recent [[detectLocalEndpoints]] run.
-    *
-    * Both caller paths that produce a namelist run it first — `login`
-    * (`doLogin` detects when the caller passes no endpoints) and `heartbeat`
-    * (re-detects every beat) — so this is warm by the time
-    * [[toNeblinkPeers]] maps a server response.
-    */
+  /**
+   * Local `/24` prefixes seen by the most recent [[detectLocalEndpoints]] run.
+   *
+   * Both caller paths that produce a namelist run it first — `login`
+   * (`doLogin` detects when the caller passes no endpoints) and `heartbeat`
+   * (re-detects every beat) — so this is warm by the time
+   * [[toNeblinkPeers]] maps a server response.
+   */
   def localPrefixes: Set[String] = cachedLocalPrefixes
 
   /**
@@ -309,24 +316,26 @@ class NeblinkClient(
         doLoginUnparked(deviceId, deviceName, platform, endpoints, allowRelogin)
     }
 
-  /** 踢下线停摆门（2026-09-14 踢旧批 r2）——**自动登录入口的公共前置**。
-    *
-    * 返回 `Some(err)` = 停摆中，调用方必须原样返回该错误（**零 HTTP 请求**）；
-    * `None` = 未停摆，照常走原路径。
-    *
-    * 为什么门必须比「persist 失败」更深一层：服务端 register 里的
-    * kick-on-re-enroll 发生在**客户端 persist 之前**（`LogtoSilentRelogin` 的
-    * `.register` 先于 `NeblinkEnrollment.persist`）⇒ 只堵 persist / 只堵隧道，
-    * 被踢端照样每 ~24s（心跳周期）把 register 打到服务端。本门挡住的是
-    * **登录/会话交换本身**，register 因此没有机会起飞（第二道门在
-    * `LogtoSilentRelogin.refreshAndRegister`，那是 register 的最近前驱）。
-    *
-    * 调用面（列全，全为自动路径）：`login` ← `discover`（心跳失效后的 re-login）
-    * 与 `silentRelogin`（API/隧道自愈）。用户显式登录不经过本客户端
-    * （`POST /api/neblink/auth/start` → PKCE 回环 → `RestApiRoutes.handleAuthCallback`
-    * → `LogtoDeviceFlow.register`，与 `NeblinkClient` 无关）。
-    *
-    * `entry` 只用于日志归因（哪个消费者发现停摆），不参与判定。 */
+  /**
+   * 踢下线停摆门（2026-09-14 踢旧批 r2）——**自动登录入口的公共前置**。
+   *
+   * 返回 `Some(err)` = 停摆中，调用方必须原样返回该错误（**零 HTTP 请求**）；
+   * `None` = 未停摆，照常走原路径。
+   *
+   * 为什么门必须比「persist 失败」更深一层：服务端 register 里的
+   * kick-on-re-enroll 发生在**客户端 persist 之前**（`LogtoSilentRelogin` 的
+   * `.register` 先于 `NeblinkEnrollment.persist`）⇒ 只堵 persist / 只堵隧道，
+   * 被踢端照样每 ~24s（心跳周期）把 register 打到服务端。本门挡住的是
+   * **登录/会话交换本身**，register 因此没有机会起飞（第二道门在
+   * `LogtoSilentRelogin.refreshAndRegister`，那是 register 的最近前驱）。
+   *
+   * 调用面（列全，全为自动路径）：`login` ← `discover`（心跳失效后的 re-login）
+   * 与 `silentRelogin`（API/隧道自愈）。用户显式登录不经过本客户端
+   * （`POST /api/neblink/auth/start` → PKCE 回环 → `RestApiRoutes.handleAuthCallback`
+   * → `LogtoDeviceFlow.register`，与 `NeblinkClient` 无关）。
+   *
+   * `entry` 只用于日志归因（哪个消费者发现停摆），不参与判定。
+   */
   private def autoLoginBlocked(entry: String): IO[Option[String]] =
     autoLoginParked.flatMap {
       case false => IO.pure(None)
@@ -441,7 +450,8 @@ class NeblinkClient(
       }
     yield result
 
-  /** Send heartbeat and get updated peer list. Requires prior login.
+  /**
+   * Send heartbeat and get updated peer list. Requires prior login.
    *
    * Re-detects local endpoints on every heartbeat so the server sees our current
    * IP — after a network change (e.g. laptop moved to a different Wi-Fi), the
@@ -454,12 +464,14 @@ class NeblinkClient(
       case None => IO.pure(Left("Not logged in"))
       case Some(token) =>
         detectLocalEndpoints.flatMap { endpoints =>
-          val body = Json.obj(
-            "endpoints" -> endpoints.map { e =>
-              Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
-            }.asJson,
-            "version" -> nebflow.Version.string.asJson
-          ).noSpaces
+          val body = Json
+            .obj(
+              "endpoints" -> endpoints.map { e =>
+                Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
+              }.asJson,
+              "version" -> nebflow.Version.string.asJson
+            )
+            .noSpaces
           sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {
             case Right(respBody) =>
               decode[HeartbeatResponse](respBody) match
@@ -550,31 +562,46 @@ class NeblinkClient(
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
-  /** 搜索：username OR email 双键 NOCASE 精确（neblink-server /api/users/search，
-    * friend-search-contract §4.1——唯一搜索入口，替代已移除的 /api/users/lookup）。
-    * 命中 {found:true,user:{username,display_name,avatar},relation_status}；
-    * 未命中统一 {found:false}；>256 字符 422 invalid_query、超频 429 —— 均由上游折叠，
-    * 网关透传不变形。 */
+  /**
+   * 搜索：username OR email 双键 NOCASE 精确（neblink-server /api/users/search，
+   * friend-search-contract §4.1——唯一搜索入口，替代已移除的 /api/users/lookup）。
+   * 命中 {found:true,user:{username,display_name,avatar},relation_status}；
+   * 未命中统一 {found:false}；>256 字符 422 invalid_query、超频 429 —— 均由上游折叠，
+   * 网关透传不变形。
+   */
   def searchUser(q: String): IO[Either[String, Json]] =
     withSession { token =>
       sendRequest("GET", s"${config.url}/api/users/search?q=${java.net.URLEncoder.encode(q, "UTF-8")}", "", Some(token))
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
-  /** [U3] 自定义 NebLink 号（PUT /api/users/me/neblink-id）。200 {neblinkId} /
-    * 上游 409 taken / 422 invalid 折叠为 Left("HTTP <code>: <body>")。 */
+  /**
+   * [U3] 自定义 NebLink 号（PUT /api/users/me/neblink-id）。200 {neblinkId} /
+   * 上游 409 taken / 422 invalid 折叠为 Left("HTTP <code>: <body>")。
+   */
   def setNeblinkId(neblinkId: String): IO[Either[String, Json]] =
     withSession { token =>
-      sendRequest("PUT", s"${config.url}/api/users/me/neblink-id",
-        Json.obj("neblinkId" -> neblinkId.asJson).noSpaces, Some(token))
+      sendRequest(
+        "PUT",
+        s"${config.url}/api/users/me/neblink-id",
+        Json.obj("neblinkId" -> neblinkId.asJson).noSpaces,
+        Some(token)
+      )
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
-  /** [U3] 号可用性实时检测（GET /api/users/me/neblink-id/available?q=）。
-    * 200 {available, reason?}（reason: taken | invalid）；限速与查号同桶。 */
+  /**
+   * [U3] 号可用性实时检测（GET /api/users/me/neblink-id/available?q=）。
+   * 200 {available, reason?}（reason: taken | invalid）；限速与查号同桶。
+   */
   def neblinkIdAvailable(q: String): IO[Either[String, Json]] =
     withSession { token =>
-      sendRequest("GET", s"${config.url}/api/users/me/neblink-id/available?q=${java.net.URLEncoder.encode(q, "UTF-8")}", "", Some(token))
+      sendRequest(
+        "GET",
+        s"${config.url}/api/users/me/neblink-id/available?q=${java.net.URLEncoder.encode(q, "UTF-8")}",
+        "",
+        Some(token)
+      )
         .map(_.flatMap(body => decode[Json](body).left.map(_.getMessage)))
     }
 
@@ -611,35 +638,45 @@ class NeblinkClient(
   def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withSessionJson[List[ConversationSummary]]("GET", "/api/conversations", "")
 
-  /** 群会话列表（`GET /api/groups`，**裸数组**，与 `GET /api/conversations` 同约定）。
-    *
-    * 消费方 = 群目标解析（gmsgsend 批 · 补充卡 §6.2）：`SendMessage(to="group:<…>")`
-    * 需要「本用户所属、未解散群会话」的 `groupId`/`title` 表。
-    *
-    * 契约边界（逐条，全部落在**跨仓真源**上，本层零判定）：
-    *  - **解散态不在表内**：服务端契约「Disbanded groups never appear」
-    *    ⇒ 已解散的群在解析层结构上不可命中；终态判定的权威仍是服务端的
-    *    403 `group_disbanded`（本层**不**复制该判定，禁双实现）。
-    *  - **非成员不在表内**：服务端按鉴权身份出表 ⇒ 解析层无从构造「非本群成员」
-    *    的成功寻址；成员闸的权威同样在服务端（403 `not_member`）。
-    *  - 身份**只**由 `withSession` 的 `Authorization: Bearer <device session token>`
-    *    承载（与全部既有 friends / conversations 面逐字一致，客户端**不得**自报身份）。
-    *  - 本方法只做「取表 + 解码」，任何筛选/排序不在本层。
-    */
+  /**
+   * 群会话列表（`GET /api/groups`，**裸数组**，与 `GET /api/conversations` 同约定）。
+   *
+   * 消费方 = 群目标解析（gmsgsend 批 · 补充卡 §6.2）：`SendMessage(to="group:<…>")`
+   * 需要「本用户所属、未解散群会话」的 `groupId`/`title` 表。
+   *
+   * 契约边界（逐条，全部落在**跨仓真源**上，本层零判定）：
+   *  - **解散态不在表内**：服务端契约「Disbanded groups never appear」
+   *    ⇒ 已解散的群在解析层结构上不可命中；终态判定的权威仍是服务端的
+   *    403 `group_disbanded`（本层**不**复制该判定，禁双实现）。
+   *  - **非成员不在表内**：服务端按鉴权身份出表 ⇒ 解析层无从构造「非本群成员」
+   *    的成功寻址；成员闸的权威同样在服务端（403 `not_member`）。
+   *  - 身份**只**由 `withSession` 的 `Authorization: Bearer <device session token>`
+   *    承载（与全部既有 friends / conversations 面逐字一致，客户端**不得**自报身份）。
+   *  - 本方法只做「取表 + 解码」，任何筛选/排序不在本层。
+   */
   def listGroups: IO[Either[String, List[GroupSummary]]] =
     withSessionJson[List[GroupSummary]]("GET", "/api/groups", "")
 
   /** keyset 分页拉消息（after=0 全量，limit 默认 50）。 */
-  def listMessages(conversationId: String, after: Long = 0L, limit: Int = 50): IO[Either[String, List[MessageSummary]]] =
-    withSessionJson[List[MessageSummary]]("GET", s"/api/conversations/$conversationId/messages?after=$after&limit=$limit", "")
+  def listMessages(
+    conversationId: String,
+    after: Long = 0L,
+    limit: Int = 50
+  ): IO[Either[String, List[MessageSummary]]] =
+    withSessionJson[List[MessageSummary]](
+      "GET",
+      s"/api/conversations/$conversationId/messages?after=$after&limit=$limit",
+      ""
+    )
 
-  /** 发消息（好友寻址，服务器 get-or-create 会话）。
-    *
-    * `origin` 透传给服务器落库（#290 spec v1.1 wire 契约：缺省 "user"，
-    * 非法值 422）。agent 代发链（FriendService.sendAsAgent → doSend）必须
-    * 传 Some("agent")——否则 agent 发的消息被标成 user，origin 语义
-    * （前端徽章/审计/spec §7.2 限速区分）整体失效。
-    */
+  /**
+   * 发消息（好友寻址，服务器 get-or-create 会话）。
+   *
+   * `origin` 透传给服务器落库（#290 spec v1.1 wire 契约：缺省 "user"，
+   * 非法值 422）。agent 代发链（FriendService.sendAsAgent → doSend）必须
+   * 传 Some("agent")——否则 agent 发的消息被标成 user，origin 语义
+   * （前端徽章/审计/spec §7.2 限速区分）整体失效。
+   */
   def sendFriendMessage(
     friendUserId: String,
     body: String,
@@ -669,31 +706,38 @@ class NeblinkClient(
         // 🔴 仅好友腿：群 / 设备腿走**原文转发**（[[sendGroupMessage]] 不发该键）。
         replyToMessageId.map(id => "replyToMessageId" -> id.asJson)
       ).flatten
-      sendRequest("POST", s"${config.url}/api/friends/$friendUserId/messages", Json.fromFields(fields).noSpaces, Some(token))
+      sendRequest(
+        "POST",
+        s"${config.url}/api/friends/$friendUserId/messages",
+        Json.fromFields(fields).noSpaces,
+        Some(token)
+      )
         .map(_.flatMap(resp => decode[Json](resp).left.map(_.getMessage)))
     }
 
-  /** 发好友消息（**保留状态码**通道）—— rcptcode 批：好友腿终态码 502 折叠点 ① 的修复。
-    *
-    * 🔴 与 [[sendFriendMessage]] 的**唯一**差别 = 走 [[sendRequestJsonWithStatus]]
-    * （上游 `(statusCode, body)` **逐字保留**），而**不是** [[sendRequest]] 的折叠通道
-    * （后者把任何非 2xx 压成 `Left("HTTP <code>: <body>")` —— 状态码**降级成文本**）。
-    * 折叠的后果是可量化的：调用方只剩一个字符串，无法区分「已不是好友 / 引用目标无效 /
-    * 限速」，网关层也因此只能把任何非「Not logged in」的失败统一答 **502**。
-    *
-    * 字段白名单 / 键序与 [[sendFriendMessage]] **逐字同源**（同一构造：`body` 恒在；
-    * `origin` / `attachments` / `clientMsgId` / `replyToMessageId` **缺席即省键**、追加
-    * 顺序不变）⇒ 本方法只换**通道**，线上请求体**逐字节不变**。⚠ 两处字段表互为镜像
-    * （`sendFriendMessage` 按本批「零改」纪律未抽公共构造）⇒ 未来加键必须**两处同改**。
-    *
-    * 🔴 既有 [[sendFriendMessage]] **零改**：agent 代发腿（[[nebflow.neblink.FriendService]]
-    * 的 `doSend`）继续走折叠通道 —— 它有独立的**文本回执**面，换通道 = 改 tool result
-    * 文案，属另一批。
-    * 🔴 成功码**不归一**：上游 2xx（如 201）原样返回（客户端只判 `resp.ok` 与
-    * `messageId`，见 `web/js/messages.js`）—— 状态码面零新增判据、零改写。
-    *
-    * 同族先例（本仓既有，非新形态）：[[sendGroupMessage]]（群腿）与 [[proxyWithStatus]]
-    * / [[sendRequestJsonWithStatus]]（E4 回执）。 */
+  /**
+   * 发好友消息（**保留状态码**通道）—— rcptcode 批：好友腿终态码 502 折叠点 ① 的修复。
+   *
+   * 🔴 与 [[sendFriendMessage]] 的**唯一**差别 = 走 [[sendRequestJsonWithStatus]]
+   * （上游 `(statusCode, body)` **逐字保留**），而**不是** [[sendRequest]] 的折叠通道
+   * （后者把任何非 2xx 压成 `Left("HTTP <code>: <body>")` —— 状态码**降级成文本**）。
+   * 折叠的后果是可量化的：调用方只剩一个字符串，无法区分「已不是好友 / 引用目标无效 /
+   * 限速」，网关层也因此只能把任何非「Not logged in」的失败统一答 **502**。
+   *
+   * 字段白名单 / 键序与 [[sendFriendMessage]] **逐字同源**（同一构造：`body` 恒在；
+   * `origin` / `attachments` / `clientMsgId` / `replyToMessageId` **缺席即省键**、追加
+   * 顺序不变）⇒ 本方法只换**通道**，线上请求体**逐字节不变**。⚠ 两处字段表互为镜像
+   * （`sendFriendMessage` 按本批「零改」纪律未抽公共构造）⇒ 未来加键必须**两处同改**。
+   *
+   * 🔴 既有 [[sendFriendMessage]] **零改**：agent 代发腿（[[nebflow.neblink.FriendService]]
+   * 的 `doSend`）继续走折叠通道 —— 它有独立的**文本回执**面，换通道 = 改 tool result
+   * 文案，属另一批。
+   * 🔴 成功码**不归一**：上游 2xx（如 201）原样返回（客户端只判 `resp.ok` 与
+   * `messageId`，见 `web/js/messages.js`）—— 状态码面零新增判据、零改写。
+   *
+   * 同族先例（本仓既有，非新形态）：[[sendGroupMessage]]（群腿）与 [[proxyWithStatus]]
+   * / [[sendRequestJsonWithStatus]]（E4 回执）。
+   */
   def sendFriendMessageWithStatus(
     friendUserId: String,
     body: String,
@@ -718,25 +762,26 @@ class NeblinkClient(
       )
     }
 
-  /** 发群消息（`POST /api/groups/{groupId}/messages` —— 跨仓**冻结群发契约**，
-    * 真源 = neblink-server `src/groups.rs` `group_send_message`）。
-    *
-    * 与 [[sendFriendMessage]] 的**唯一**差别 = 目标寻址段（`/api/groups/{id}` vs
-    * `/api/friends/{uid}`）+ **保留状态码**（见下）；请求体键集与语义逐字同源
-    * （`body` 必填 / `origin` 可选，`"agent" | "user"`，缺席 = `"user"`，
-    * 非法值 ⇒ 422 `invalid_origin`；`clientMsgId` 幂等键语义同款）。
-    *
-    * 🔴 **为什么保留状态码**（本方法**不**走 [[sendFriendMessage]] 的 `Left` 折叠）：
-    * 群域三个错误码是**群终态**，折叠成 `Left("HTTP <code>: <body>")` 后调用方只能靠
-    * 解析字符串区分「群不存在 / 群已解散 / 我不是成员」——而补充卡 §6.4 要求回执
-    * **显式给出原因**（🔴 禁静默）。同族先例（本仓既有，非新形态）：
-    * [[proxyWithStatus]]（网关群路由代理腿）与 [[sendRequestJsonWithStatus]]（E4 回执）。
-    * `origin` 的 agent 语义由调用侧（[[nebflow.neblink.FriendService]]，
-    * `origin = Some("agent")`）**唯一**给定——本层不自作判断、不给缺省 "agent"。
-    *
-    * 附件腿**不在本批**（补充卡 §6.1 一期文本）：本方法**不发** `attachments` 键
-    * ⇒ 无附件群消息的请求体与「服务端默认」逐字节同形。
-    */
+  /**
+   * 发群消息（`POST /api/groups/{groupId}/messages` —— 跨仓**冻结群发契约**，
+   * 真源 = neblink-server `src/groups.rs` `group_send_message`）。
+   *
+   * 与 [[sendFriendMessage]] 的**唯一**差别 = 目标寻址段（`/api/groups/{id}` vs
+   * `/api/friends/{uid}`）+ **保留状态码**（见下）；请求体键集与语义逐字同源
+   * （`body` 必填 / `origin` 可选，`"agent" | "user"`，缺席 = `"user"`，
+   * 非法值 ⇒ 422 `invalid_origin`；`clientMsgId` 幂等键语义同款）。
+   *
+   * 🔴 **为什么保留状态码**（本方法**不**走 [[sendFriendMessage]] 的 `Left` 折叠）：
+   * 群域三个错误码是**群终态**，折叠成 `Left("HTTP <code>: <body>")` 后调用方只能靠
+   * 解析字符串区分「群不存在 / 群已解散 / 我不是成员」——而补充卡 §6.4 要求回执
+   * **显式给出原因**（🔴 禁静默）。同族先例（本仓既有，非新形态）：
+   * [[proxyWithStatus]]（网关群路由代理腿）与 [[sendRequestJsonWithStatus]]（E4 回执）。
+   * `origin` 的 agent 语义由调用侧（[[nebflow.neblink.FriendService]]，
+   * `origin = Some("agent")`）**唯一**给定——本层不自作判断、不给缺省 "agent"。
+   *
+   * 附件腿**不在本批**（补充卡 §6.1 一期文本）：本方法**不发** `attachments` 键
+   * ⇒ 无附件群消息的请求体与「服务端默认」逐字节同形。
+   */
   def sendGroupMessage(
     groupId: String,
     body: String,
@@ -763,28 +808,34 @@ class NeblinkClient(
   // 线面逐字对齐跨仓契约件 §B.1（E1–E4）；本仓**不新增**任何端点号/协议号
   // （红线：4b 不占 `AttachContract` proto 号）。
 
-  /** A-5：**服务端附件能力存在性探测** —— 裁定④（不加自报字段）下唯一判据，
-    * 三态语义/理由见 [[AttachmentCapability]]。
-    *
-    * 探测体故意非法（`name` 空 + `size = 0`）⇒ 按 §B.1 E1 的校验顺序，新服务端
-    * **零副作用**地答 422；老服务端（无该路由）答 404。两码互斥 ⇒ 判据单调。 */
+  /**
+   * A-5：**服务端附件能力存在性探测** —— 裁定④（不加自报字段）下唯一判据，
+   * 三态语义/理由见 [[AttachmentCapability]]。
+   *
+   * 探测体故意非法（`name` 空 + `size = 0`）⇒ 按 §B.1 E1 的校验顺序，新服务端
+   * **零副作用**地答 422；老服务端（无该路由）答 404。两码互斥 ⇒ 判据单调。
+   */
   def probeAttachmentCapability(friendUserId: String): IO[AttachmentCapability] =
     val path = AttachmentCapability.probePath(friendUserId)
     withSession(token => sendRequest("POST", s"${config.url}$path", AttachmentCapability.ProbeBody, Some(token)))
       .map(AttachmentCapability.judge)
 
-  /** E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
-    * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。 */
+  /**
+   * E1 创建上传会话（§B.1）：`{name,size,sha256}` → 201 `{attachmentId,receivedBytes,state}`。
+   * 错误码逐字按 §E.3（403 `not_friends` / 422 `ATTACH_TOO_LARGE`/`INVALID_ARGUMENT` / 429）。
+   */
   def createAttachment(friendUserId: String, name: String, size: Long, sha256: String): IO[Either[String, Json]] =
     withSession { token =>
       val payload = Json.obj("name" -> name.asJson, "size" -> size.asJson, "sha256" -> sha256.asJson).noSpaces
-      val url     = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
+      val url = s"${config.url}/api/friends/${enc(friendUserId)}/attachments"
       sendRequest("POST", url, payload, Some(token)).map(_.flatMap(json(_)))
     }
 
-  /** E2 追加一块（§B.1）：raw bytes + `X-Chunk-Sha256` 头；`offset` 由
-    * [[nebflow.dropbox.AttachContract.plan]] 推导（**唯一**来源，禁自由填）。
-    * `offset < receivedBytes` 的重传语义由服务端负责（截断重写）⇒ 本方法天然可重试。 */
+  /**
+   * E2 追加一块（§B.1）：raw bytes + `X-Chunk-Sha256` 头；`offset` 由
+   * [[nebflow.dropbox.AttachContract.plan]] 推导（**唯一**来源，禁自由填）。
+   * `offset < receivedBytes` 的重传语义由服务端负责（截断重写）⇒ 本方法天然可重试。
+   */
   def uploadAttachmentChunk(
     attachmentId: String,
     offset: Long,
@@ -797,30 +848,34 @@ class NeblinkClient(
         .map(_.flatMap(json(_)))
     }
 
-  /** E3 下载（腿 A-3）：**应用内鉴权**取字节。
-    *
-    * 只被网关的鉴权代理路由（`GET /api/friends/attachments/{id}`）调用 ⇒ 前端拿不到
-    * 服务端地址/凭证，也不存在任何静态/公开 URL 面（裁定②；服务端附件目录不挂 Caddy）。
-    * 非 2xx **不抛**：调用方按状态码分派可判读态（410 已过期 / 404 不存在 / 403 非好友）。 */
+  /**
+   * E3 下载（腿 A-3）：**应用内鉴权**取字节。
+   *
+   * 只被网关的鉴权代理路由（`GET /api/friends/attachments/{id}`）调用 ⇒ 前端拿不到
+   * 服务端地址/凭证，也不存在任何静态/公开 URL 面（裁定②；服务端附件目录不挂 Caddy）。
+   * 非 2xx **不抛**：调用方按状态码分派可判读态（410 已过期 / 404 不存在 / 403 非好友）。
+   */
   def downloadAttachment(attachmentId: String): IO[Either[String, AttachmentFetch]] =
     withSession(token => sendRequestBinary("GET", s"${config.url}/api/attachments/${enc(attachmentId)}", Some(token)))
 
-  /** E4 接收完毕回执（补件批 4b1 · §B.1 / §F.1b ②）：`POST /api/attachments/{id}/received`，
-    * body **逐字** `{"wholeSha256":"<64 位小写 hex>"}`。
-    *
-    * 调用方 = 网关鉴权路由 → `FriendService.ackAttachmentReceived`（**唯一**调用链；
-    * 前端只上报证据，判定在引擎侧 [[AttachmentAck]]）。本方法**不含任何判定**：
-    * 「能不能发」在闸里，「发出去成没成」由状态码回给调用方。
-    *
-    * 三态**不折叠**（同 E3 的设计要点，理由见 [[AttachmentFetch]] 的注释）：
-    *   - `200` ⇒ 服务端已置 `deleted`（含 `state='deleted'` 的**幂等**重复 ack，§B.1）；
-    *   - `404`/`410` ⇒ **无需回执**（未就绪 `uploading`/`staged` §F.1b ⑥ / 已按瞬态口径删除）
-    *     ⇒ 调用方记**信息级**日志，不是失败；
-    *   - `422` ⇒ `WHOLE_DIGEST_MISMATCH`（本地与服务端 digest 不符 ⇒ 服务端零副作用）。
-    *
-    * 鉴权/自愈缝 = 既有 `withSession`（禁新造 HTTP 客户端、禁复制鉴权与关系闸——禁双实现）。
-    * 超时 = `DefaultRelayTimeout`（10 s）：回执是**尽力而为**面，**不给**它长尾
-    * （失败静默容忍 + 24 h TTL 兜底，§F.1b 规则 4）。 */
+  /**
+   * E4 接收完毕回执（补件批 4b1 · §B.1 / §F.1b ②）：`POST /api/attachments/{id}/received`，
+   * body **逐字** `{"wholeSha256":"<64 位小写 hex>"}`。
+   *
+   * 调用方 = 网关鉴权路由 → `FriendService.ackAttachmentReceived`（**唯一**调用链；
+   * 前端只上报证据，判定在引擎侧 [[AttachmentAck]]）。本方法**不含任何判定**：
+   * 「能不能发」在闸里，「发出去成没成」由状态码回给调用方。
+   *
+   * 三态**不折叠**（同 E3 的设计要点，理由见 [[AttachmentFetch]] 的注释）：
+   *   - `200` ⇒ 服务端已置 `deleted`（含 `state='deleted'` 的**幂等**重复 ack，§B.1）；
+   *   - `404`/`410` ⇒ **无需回执**（未就绪 `uploading`/`staged` §F.1b ⑥ / 已按瞬态口径删除）
+   *     ⇒ 调用方记**信息级**日志，不是失败；
+   *   - `422` ⇒ `WHOLE_DIGEST_MISMATCH`（本地与服务端 digest 不符 ⇒ 服务端零副作用）。
+   *
+   * 鉴权/自愈缝 = 既有 `withSession`（禁新造 HTTP 客户端、禁复制鉴权与关系闸——禁双实现）。
+   * 超时 = `DefaultRelayTimeout`（10 s）：回执是**尽力而为**面，**不给**它长尾
+   * （失败静默容忍 + 24 h TTL 兜底，§F.1b 规则 4）。
+   */
   def confirmAttachmentReceived(attachmentId: String, wholeSha256: String): IO[Either[String, (Int, String)]] =
     withSession(token =>
       sendRequestJsonWithStatus(
@@ -835,8 +890,10 @@ class NeblinkClient(
 
   private def json(body: String): Either[String, Json] = decode[Json](body).left.map(_.getMessage)
 
-  /** 二进制**请求**通道（E2 分块上传专用；本批唯一新增传输面）。
-    * 返回约定与 [[sendRequest]] 逐字同形：非 2xx ⇒ `Left("HTTP <code>: <body>")`。 */
+  /**
+   * 二进制**请求**通道（E2 分块上传专用；本批唯一新增传输面）。
+   * 返回约定与 [[sendRequest]] 逐字同形：非 2xx ⇒ `Left("HTTP <code>: <body>")`。
+   */
   protected def sendRequestBytes(
     method: String,
     url: String,
@@ -853,7 +910,10 @@ class NeblinkClient(
           .header("Content-Type", "application/octet-stream")
         token.foreach(t => builder.header("Authorization", s"Bearer $t"))
         headers.foreach { case (k, v) => builder.header(k, v) }
-        val response = httpClient.send(builder.method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofString())
+        val response = httpClient.send(
+          builder.method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+          HttpResponse.BodyHandlers.ofString()
+        )
         if response.statusCode() >= 200 && response.statusCode() < 300 then Right(response.body())
         else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
       catch
@@ -862,9 +922,11 @@ class NeblinkClient(
           Left(if e.getMessage == null then e.toString else e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
-  /** 二进制**响应**通道（E3 下载专用）。与 [[sendRequestBytes]] 的差别只有一处：
-    * **非 2xx 也返回 `Right`**（携状态码 + 原始字节）—— 410/404/403 是**可判读态**，
-    * 不是「失败」；只有传输层异常才是 `Left`。 */
+  /**
+   * 二进制**响应**通道（E3 下载专用）。与 [[sendRequestBytes]] 的差别只有一处：
+   * **非 2xx 也返回 `Right`**（携状态码 + 原始字节）—— 410/404/403 是**可判读态**，
+   * 不是「失败」；只有传输层异常才是 `Left`。
+   */
   protected def sendRequestBinary(
     method: String,
     url: String,
@@ -877,7 +939,10 @@ class NeblinkClient(
           .uri(URI.create(url))
           .timeout(java.time.Duration.ofMillis(NeblinkClient.AttachmentDownloadTimeout.toMillis))
         token.foreach(t => builder.header("Authorization", s"Bearer $t"))
-        val response = httpClient.send(builder.method(method, HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofByteArray())
+        val response = httpClient.send(
+          builder.method(method, HttpRequest.BodyPublishers.noBody()).build(),
+          HttpResponse.BodyHandlers.ofByteArray()
+        )
         val hs = response.headers()
         Right(
           AttachmentFetch(
@@ -893,14 +958,16 @@ class NeblinkClient(
           Left(if e.getMessage == null then e.toString else e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
-  /** JSON **请求**通道，**保留状态码**（E4 回执专用）。与 [[sendRequestTimed]] 的差别
-    * 只有一处：非 2xx **不是** `Left`，而是 `Right((<code>, <body>))` —— `404`/`410`
-    * 是**可判读态**（无需回执）而非失败，折叠成 `Left` 会让调用方只能靠解析字符串
-    * 区分它们（同 [[sendRequestBinary]] 与 [[sendRequestBytes]] 的关系）。只有传输层
-    * 异常才是 `Left`（其文案与 [[sendRequestTimed]] 逐字同形，下游日志口径不变）。
-    *
-    * 超时**按调用传**：默认 `DefaultRelayTimeout`，与 [[sendRequest]] 同值 ⇒ 不动任何
-    * 既有语义（E2/E3 的长超时各有自己的常量，本通道不碰）。 */
+  /**
+   * JSON **请求**通道，**保留状态码**（E4 回执专用）。与 [[sendRequestTimed]] 的差别
+   * 只有一处：非 2xx **不是** `Left`，而是 `Right((<code>, <body>))` —— `404`/`410`
+   * 是**可判读态**（无需回执）而非失败，折叠成 `Left` 会让调用方只能靠解析字符串
+   * 区分它们（同 [[sendRequestBinary]] 与 [[sendRequestBytes]] 的关系）。只有传输层
+   * 异常才是 `Left`（其文案与 [[sendRequestTimed]] 逐字同形，下游日志口径不变）。
+   *
+   * 超时**按调用传**：默认 `DefaultRelayTimeout`，与 [[sendRequest]] 同值 ⇒ 不动任何
+   * 既有语义（E2/E3 的长超时各有自己的常量，本通道不碰）。
+   */
   protected def sendRequestJsonWithStatus(
     method: String,
     url: String,
@@ -916,7 +983,8 @@ class NeblinkClient(
           .timeout(java.time.Duration.ofMillis(timeout.toMillis))
         token.foreach(t => builder.header("Authorization", s"Bearer $t"))
         builder.header("Content-Type", "application/json")
-        val request = if method == "POST" then builder.POST(HttpRequest.BodyPublishers.ofString(body)).build()
+        val request =
+          if method == "POST" then builder.POST(HttpRequest.BodyPublishers.ofString(body)).build()
           else builder.method(method, HttpRequest.BodyPublishers.ofString(body)).build()
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         Right((response.statusCode(), response.body()))
@@ -940,26 +1008,34 @@ class NeblinkClient(
   //     上服务端按设备身份写 `device_read_cursors`，见契约 §8.7）
   // 本层**只做透传**，不复制第二套语义判定（分派由服务端按 `conversations.kind` 完成）。
 
-  /** `GET /api/conversations/{id}/receipts` —— 会话级 送达/已读 回执（P2-C1 面）。
-    *
-    * MVP-2 加性面（契约 §8.7 逐字）：「设备维度回执读自 `device_message_receipts`；
-    * state ∈ {`sent`,`read`}（`read` 为终态）」——服务端**同形状**返回
-    * （`ReceiptsResponse`：`receipts[{messageId,state}]` + `lastSentMessageId` +
-    * `lastReadMessageId`），故客户端**一个解析器读两个面**（服务端逐字承诺
-    * 「Same response shape and same high-water semantics as the legacy branch, so
-    * one client parser reads both faces」，`src/friends.rs:1725-1726`）。
-    *
-    * 🔴 **保留状态码**（走 [[sendRequestJsonWithStatus]] 而非 `withSessionRaw`）：
-    * 设备会话上 `403 device_identity_required`（契约 §8.7）是一个**可判读的语义态**
-    * ——「本次调用的凭证没有设备身份」，折叠成 `Left("HTTP 403: …")` 后调用方只能
-    * 解析字符串。同族先例 = [[proxyWithStatus]]（群路由）/ [[sendRequestJsonWithStatus]]
-    * （E4 回执）；两者均非新形态。
-    *
-    * 🔴 设备 id 走路径段时**必须 URL 编码**（[[enc]]）：`device_id` 来自服务端，本层
-    * 不假定它只含 URL 安全字符。 */
+  /**
+   * `GET /api/conversations/{id}/receipts` —— 会话级 送达/已读 回执（P2-C1 面）。
+   *
+   * MVP-2 加性面（契约 §8.7 逐字）：「设备维度回执读自 `device_message_receipts`；
+   * state ∈ {`sent`,`read`}（`read` 为终态）」——服务端**同形状**返回
+   * （`ReceiptsResponse`：`receipts[{messageId,state}]` + `lastSentMessageId` +
+   * `lastReadMessageId`），故客户端**一个解析器读两个面**（服务端逐字承诺
+   * 「Same response shape and same high-water semantics as the legacy branch, so
+   * one client parser reads both faces」，`src/friends.rs:1725-1726`）。
+   *
+   * 🔴 **保留状态码**（走 [[sendRequestJsonWithStatus]] 而非 `withSessionRaw`）：
+   * 设备会话上 `403 device_identity_required`（契约 §8.7）是一个**可判读的语义态**
+   * ——「本次调用的凭证没有设备身份」，折叠成 `Left("HTTP 403: …")` 后调用方只能
+   * 解析字符串。同族先例 = [[proxyWithStatus]]（群路由）/ [[sendRequestJsonWithStatus]]
+   * （E4 回执）；两者均非新形态。
+   *
+   * 🔴 设备 id 走路径段时**必须 URL 编码**（[[enc]]）：`device_id` 来自服务端，本层
+   * 不假定它只含 URL 安全字符。
+   */
   def conversationReceipts(conversationId: String): IO[Either[String, (Int, String)]] =
     withSession(token =>
-      sendRequestJsonWithStatus("GET", s"${config.url}/api/conversations/${enc(conversationId)}/receipts", "", Some(token)))
+      sendRequestJsonWithStatus(
+        "GET",
+        s"${config.url}/api/conversations/${enc(conversationId)}/receipts",
+        "",
+        Some(token)
+      )
+    )
 
   // 注：设备会话**发送**面（`POST /api/devices/{device_id}/messages`，契约 §8.6）**不**在
   // 本层新增方法。理由：它的请求体含 `attachments` 等加性键，必须**按原文转发**
@@ -969,24 +1045,25 @@ class NeblinkClient(
   // 原行，不是失败）；拒绝面 = `403 not_my_device` / `422 invalid_origin` /
   // `422 invalid_length`（三者均为可判读终态）。
 
-  /** 群路由代理腿（gwroutes 批，2026-09-15）：**保留上游状态码**的会话内转发口。
-    *
-    * 与 [[withSessionRaw]] 的**唯一**差别：非 2xx 不折叠成
-    * `Left("HTTP <code>: <body>")`，而是 `Right((<code>, <body>))`。理由 = 群域的
-    * `404 group_not_found` / `403 group_disbanded` / `403 not_member` 是**群终态**
-    * （客户端 `web/js/friendGroups.js` 的 `groupErrToast` 按语义码分态），折叠后
-    * 统一压成 502 ⇒ 客户端再也分不出「群不存在 / 群已解散 / 我被踢了」。
-    *
-    * 同族先例（本仓既有，非新形态）：[[sendRequestJsonWithStatus]]（E4 回执）与
-    * [[sendRequestBinary]]（E3 下载）—— 可判读的非 2xx 走 `Right`，**只有传输层
-    * 异常**才是 `Left`（其文案口径与既有通道逐字同形，下游日志不受影响）。
-    *
-    * `path` 为**相对段**（含 `/api` 前缀，形如 `/api/groups/invites`），与
-    * [[withSessionRaw]] / [[withSessionJson]] 同形。鉴权身份仍**只**由 `withSession`
-    * 的 `Authorization: Bearer <device session token>` 承载——与全部既有 friends /
-    * conversations 代理逐字一致：本层**不发** `sender` / `uid` 类自定义头（服务端
-    * 由 session token 自行解身份，客户端不得自报身份）。
-    */
+  /**
+   * 群路由代理腿（gwroutes 批，2026-09-15）：**保留上游状态码**的会话内转发口。
+   *
+   * 与 [[withSessionRaw]] 的**唯一**差别：非 2xx 不折叠成
+   * `Left("HTTP <code>: <body>")`，而是 `Right((<code>, <body>))`。理由 = 群域的
+   * `404 group_not_found` / `403 group_disbanded` / `403 not_member` 是**群终态**
+   * （客户端 `web/js/friendGroups.js` 的 `groupErrToast` 按语义码分态），折叠后
+   * 统一压成 502 ⇒ 客户端再也分不出「群不存在 / 群已解散 / 我被踢了」。
+   *
+   * 同族先例（本仓既有，非新形态）：[[sendRequestJsonWithStatus]]（E4 回执）与
+   * [[sendRequestBinary]]（E3 下载）—— 可判读的非 2xx 走 `Right`，**只有传输层
+   * 异常**才是 `Left`（其文案口径与既有通道逐字同形，下游日志不受影响）。
+   *
+   * `path` 为**相对段**（含 `/api` 前缀，形如 `/api/groups/invites`），与
+   * [[withSessionRaw]] / [[withSessionJson]] 同形。鉴权身份仍**只**由 `withSession`
+   * 的 `Authorization: Bearer <device session token>` 承载——与全部既有 friends /
+   * conversations 代理逐字一致：本层**不发** `sender` / `uid` 类自定义头（服务端
+   * 由 session token 自行解身份，客户端不得自报身份）。
+   */
   def proxyWithStatus(method: String, path: String, body: String): IO[Either[String, (Int, String)]] =
     withSession(token => sendRequestJsonWithStatus(method, s"${config.url}$path", body, Some(token)))
 
@@ -995,7 +1072,7 @@ class NeblinkClient(
   private def withSession[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =
     withSessionPlain(f).flatMap {
       case Left(err) if NeblinkClient.sessionRecoverable(err) => selfHeal(err, f)
-      case other                                              => IO.pure(other)
+      case other => IO.pure(other)
     }
 
   private def withSessionPlain[A](f: String => IO[Either[String, A]]): IO[Either[String, A]] =
@@ -1021,24 +1098,26 @@ class NeblinkClient(
   // a fresh 401/403 after healing surfaces as-is (per-request single shot,
   // mirroring doLogin's allowRelogin = false pattern).
 
-  /** Single-flight gate: N concurrent auth rejections must produce exactly ONE
-    * re-login (each login kicks the previous session server-side — racing
-    * logins would kick each other in a loop). Losers await the winner's
-    * outcome and reuse it. Shared by EVERY heal caller through
-    * ensureFreshSession.
-    *
-    * 🔴 **闸是进程级的**（kaiauth 修法批 ③，2026-09-16 作者「治本」已批）：修前它是
-    * 本类的实例级 `Ref`，而 hot-swap（`NeblinkEnrollment.persist` 建新 client）会把
-    * 闸**重置为空** ⇒ 旧实例在飞的 re-login/enroll 不受新实例约束，两次并发 enroll
-    * 互相作废服务端的 `INSERT OR REPLACE` 凭据行（诊断报告 §6 的一条口子）。
-    * 现在闸落在 [[NeblinkSingleFlight]]（companion 级、JVM 内共享）⇒ 同一
-    * `(url, networkId)` 维度**跨 hot-swap 不重置**。类注释里的前提
-    * 「all consumers share one instance」不再需要成立。
-    *
-    * 键取 `url + networkId`（构造期可得，无需 identity IO）：`url` + `networkId`
-    * 就是服务端「一设备一活会话」判据的地址面（deviceId 在单数据根下唯一）。
-    * 命名空间 `session` **故意**与 enroll 的 `enroll` 不同——enroll 的 body 内部会
-    * 发起会话交换，同键会让同一 fiber 在自己的闸上自等（死锁）。 */
+  /**
+   * Single-flight gate: N concurrent auth rejections must produce exactly ONE
+   * re-login (each login kicks the previous session server-side — racing
+   * logins would kick each other in a loop). Losers await the winner's
+   * outcome and reuse it. Shared by EVERY heal caller through
+   * ensureFreshSession.
+   *
+   * 🔴 **闸是进程级的**（kaiauth 修法批 ③，2026-09-16 作者「治本」已批）：修前它是
+   * 本类的实例级 `Ref`，而 hot-swap（`NeblinkEnrollment.persist` 建新 client）会把
+   * 闸**重置为空** ⇒ 旧实例在飞的 re-login/enroll 不受新实例约束，两次并发 enroll
+   * 互相作废服务端的 `INSERT OR REPLACE` 凭据行（诊断报告 §6 的一条口子）。
+   * 现在闸落在 [[NeblinkSingleFlight]]（companion 级、JVM 内共享）⇒ 同一
+   * `(url, networkId)` 维度**跨 hot-swap 不重置**。类注释里的前提
+   * 「all consumers share one instance」不再需要成立。
+   *
+   * 键取 `url + networkId`（构造期可得，无需 identity IO）：`url` + `networkId`
+   * 就是服务端「一设备一活会话」判据的地址面（deviceId 在单数据根下唯一）。
+   * 命名空间 `session` **故意**与 enroll 的 `enroll` 不同——enroll 的 body 内部会
+   * 发起会话交换，同键会让同一 fiber 在自己的闸上自等（死锁）。
+   */
   private val sessionGateKey: String =
     NeblinkSingleFlight.key("session", config.url, config.networkId)
 
@@ -1080,67 +1159,75 @@ class NeblinkClient(
         // ——取消 ≠ 新会话已建立，故如实报 false。
         NeblinkSingleFlight
           .serialize(sessionGateKey)(silentRelogin(trigger))
-          .handleErrorWith(e =>
-            logger.warn(s"NebLink silent re-login did not complete: ${e.getMessage}").as(false)
-          )
+          .handleErrorWith(e => logger.warn(s"NebLink silent re-login did not complete: ${e.getMessage}").as(false))
     }
 
-  /** **证明性会话交换**（一次，无重登腿）—— 唯一调用面 =
-    * `NeblinkEnrollment.persistImpl` 的「停摆门证据式解除」步骤。
-    *
-    * 语义 = 「用**当前** `activeDeviceToken` 走一次 `doLoginUnparked`，只看成不成」。
-    * 返回 `true` 的**唯一**含义：这一刻本实例的凭据与服务端的凭据行**对得上**
-    * （换取会话成功）。这正是「新凭据已铸成**且经一次成功交换证明有效**」里的后半句。
-    *
-    * 🔴 为什么**绕过**自动登录停摆门（`autoLoginBlocked`）：
-    *  - 本方法只在「刚铸成新凭据 + 本进程已停摆」时被调用（见 persistImpl 的守卫），
-    *    而停摆恰是**因为这次 enroll 自己**踢掉了自己的旧会话（服务端
-    *    kick-on-re-enroll → `disconnect` 帧 → `markKickParked`）⇒ 若这里也走停摆门，
-    *    新凭据**永远无法被证明**、停摆门永远无法带证据解除 ⇒ 回到「只有人显式登录能
-    *    解锁」的死循环（本批要修的就是它）。
-    *  - **有界**：恰一次请求；`allowRelogin = false` ⇒ **不**进 Logto hook、**不**发
-    *    register、**不**判 401/403 重登；调用点在 enroll 单飞闸内
-    *    （[[NeblinkEnrollment]] 的 `(deviceId, networkId)` 单飞）⇒ 一次 enroll
-    *    ≤ 一次证明交换。**失败路径不解锁**（返回 false ⇒ 停摆门保持）。 */
+  /**
+   * **证明性会话交换**（一次，无重登腿）—— 唯一调用面 =
+   * `NeblinkEnrollment.persistImpl` 的「停摆门证据式解除」步骤。
+   *
+   * 语义 = 「用**当前** `activeDeviceToken` 走一次 `doLoginUnparked`，只看成不成」。
+   * 返回 `true` 的**唯一**含义：这一刻本实例的凭据与服务端的凭据行**对得上**
+   * （换取会话成功）。这正是「新凭据已铸成**且经一次成功交换证明有效**」里的后半句。
+   *
+   * 🔴 为什么**绕过**自动登录停摆门（`autoLoginBlocked`）：
+   *  - 本方法只在「刚铸成新凭据 + 本进程已停摆」时被调用（见 persistImpl 的守卫），
+   *    而停摆恰是**因为这次 enroll 自己**踢掉了自己的旧会话（服务端
+   *    kick-on-re-enroll → `disconnect` 帧 → `markKickParked`）⇒ 若这里也走停摆门，
+   *    新凭据**永远无法被证明**、停摆门永远无法带证据解除 ⇒ 回到「只有人显式登录能
+   *    解锁」的死循环（本批要修的就是它）。
+   *  - **有界**：恰一次请求；`allowRelogin = false` ⇒ **不**进 Logto hook、**不**发
+   *    register、**不**判 401/403 重登；调用点在 enroll 单飞闸内
+   *    （[[NeblinkEnrollment]] 的 `(deviceId, networkId)` 单飞）⇒ 一次 enroll
+   *    ≤ 一次证明交换。**失败路径不解锁**（返回 false ⇒ 停摆门保持）。
+   */
   def proveSessionExchange(deviceId: String, deviceName: String, platform: String): IO[Boolean] =
     doLoginUnparked(deviceId, deviceName, platform, Nil, allowRelogin = false).map(_.isRight)
 
   private def selfHeal[A](err: String, f: String => IO[Either[String, A]]): IO[Either[String, A]] =
     ensureFreshSession("api-auth-reject").flatMap {
-      case true  => replayAfterHeal(f, err)
+      case true => replayAfterHeal(f, err)
       case false => IO.pure(Left(err))
     }
 
-  /** One replay attempt with the (possibly refreshed) session token. Reads the
-    * token live so a re-login that swapped it in is picked up; no session
-    * means the heal didn't produce one — surface the ORIGINAL error. */
+  /**
+   * One replay attempt with the (possibly refreshed) session token. Reads the
+   * token live so a re-login that swapped it in is picked up; no session
+   * means the heal didn't produce one — surface the ORIGINAL error.
+   */
   private def replayAfterHeal[A](f: String => IO[Either[String, A]], originalErr: String): IO[Either[String, A]] =
     sessionToken match
-      case None         => IO.pure(Left(originalErr))
-      case Some(token)  => f(token)
+      case None => IO.pure(Left(originalErr))
+      case Some(token) => f(token)
 
-  /** Silent re-login for the self-heal path. Uses the full public login chain
-    * (allowRelogin = true): the kicked-session case re-exchanges the still
-    * valid deviceToken; the revoked-deviceToken case additionally runs the
-    * Logto hook. Never throws — failures map to false. `trigger` name-tags the
-    * log line so a burst can be attributed to its consumer (API vs relay
-    * tunnel). */
+  /**
+   * Silent re-login for the self-heal path. Uses the full public login chain
+   * (allowRelogin = true): the kicked-session case re-exchanges the still
+   * valid deviceToken; the revoked-deviceToken case additionally runs the
+   * Logto hook. Never throws — failures map to false. `trigger` name-tags the
+   * log line so a burst can be attributed to its consumer (API vs relay
+   * tunnel).
+   */
   private def silentRelogin(trigger: String): IO[Boolean] =
     identity match
       case None => IO.pure(false)
       case Some(getId) =>
         logger.warn(s"NebLink session rejected by server (401/403 auth) — attempting silent re-login [$trigger]") *>
-          getId.flatMap { id =>
-            login(id.deviceId, id.deviceName, id.platform, Nil).flatMap {
-              case Right(_)  => IO.pure(true)
-              case Left(e)   => logger.warn(s"NebLink silent re-login failed: $e").as(false)
+          getId
+            .flatMap { id =>
+              login(id.deviceId, id.deviceName, id.platform, Nil).flatMap {
+                case Right(_) => IO.pure(true)
+                case Left(e) => logger.warn(s"NebLink silent re-login failed: $e").as(false)
+              }
             }
-          }.handleErrorWith(e => logger.warn(s"NebLink silent re-login errored: ${e.getMessage}").as(false))
+            .handleErrorWith(e => logger.warn(s"NebLink silent re-login errored: ${e.getMessage}").as(false))
 
   private def withSessionRaw(method: String, path: String, body: String): IO[Either[String, String]] =
     withSession(token => sendRequest(method, s"${config.url}$path", body, Some(token)))
 
-  private def withSessionJson[A](method: String, path: String, body: String)(using d: io.circe.Decoder[A]): IO[Either[String, A]] =
+  private def withSessionJson[A](method: String, path: String, body: String)(using
+    d: io.circe.Decoder[A]
+  ): IO[Either[String, A]] =
     withSessionRaw(method, path, body).map(_.flatMap(resp => decode[A](resp).left.map(_.getMessage)))
 
   /**
@@ -1154,11 +1241,13 @@ class NeblinkClient(
     params: JsonObject,
     timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
   ): IO[Either[String, String]] =
-    val body = Json.obj(
-      "action" -> action.asJson,
-      "params" -> params.asJson,
-      "projectRoot" -> System.getProperty("user.dir", ".").asJson
-    ).noSpaces
+    val body = Json
+      .obj(
+        "action" -> action.asJson,
+        "params" -> params.asJson,
+        "projectRoot" -> System.getProperty("user.dir", ".").asJson
+      )
+      .noSpaces
     // 2026-09-10 隧道鉴权自愈批: this used to read sessionToken directly and
     // was therefore the one cross-device dispatch path WITHOUT the 401/403
     // self-heal (the friend batch registered it as a leftover). It now goes
@@ -1181,6 +1270,8 @@ class NeblinkClient(
       case Left(err) => IO.pure(Left(err))
     }
 
+  end relayExec
+
   /**
    * 唯一出口：**默认超时**走可覆写的 `sendRequest`（既有测试桩零改动），
    * **自定义超时**走真实传输 `sendRequestTimed`（分块腿专用）。
@@ -1199,7 +1290,8 @@ class NeblinkClient(
     if timeout == NeblinkClient.DefaultRelayTimeout then sendRequest(method, url, body, token)
     else sendRequestTimed(method, url, body, token, timeout)
 
-  /** Convert NebLink Server peers to neblink PeerInfo.
+  /**
+   * Convert NebLink Server peers to neblink PeerInfo.
    *
    * C1 (2026-09-11 P2P 直连修复批): **keeps every declared endpoint**, ordered by
    * [[EndpointPreference]] (Tailscale → 同网段 → 其余), with `address` =
@@ -1214,7 +1306,8 @@ class NeblinkClient(
    * judgement) maps to lastSeen=0 — non-fresh, so the C3 freshness predicate
    * reports it offline. Without this mapping, an offline-flagged device would
    * refresh itself back to "online" on every heartbeat just by appearing in
-   * the response, fighting the DeviceStatusUpdate push (C6). */
+   * the response, fighting the DeviceStatusUpdate push (C6).
+   */
   def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo], selfDeviceId: Option[String] = None): List[PeerInfo] =
     val prefixes = localPrefixes
     serverPeers
@@ -1238,6 +1331,8 @@ class NeblinkClient(
           endpoints = urls
         )
       }
+
+  end toNeblinkPeers
 
   /** Extract all peer IP addresses from NebLink Server peer list. */
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
@@ -1263,8 +1358,10 @@ class NeblinkClient(
    * `Left(可读错误)` = HTTP/鉴权/远端 error 面失败 ⇒ **未送达**
    * （由调用方如实报错，禁静默成功）。
    */
-  /** 设备邮件端点 URL（**唯一构造点**，契约 v2 ①：目标走路径）。
-    * 纯函数 ⇒ spec 可直接断言形态（禁查询串、禁 body 内带 target、禁第二端点）。 */
+  /**
+   * 设备邮件端点 URL（**唯一构造点**，契约 v2 ①：目标走路径）。
+   * 纯函数 ⇒ spec 可直接断言形态（禁查询串、禁 body 内带 target、禁第二端点）。
+   */
   def mailUrl(targetDeviceId: String): String =
     s"${config.url}/api/relay/$targetDeviceId/mail"
 
@@ -1292,7 +1389,10 @@ class NeblinkClient(
               // ⇒ 宽容读取 `messageId` → `eventId` → `id`，缺席即空串（**不伪造 id**；
               // 调用方据此登记「ack 无法关联」并留读数）。
               val hc = json.hcursor
-              val rawId = hc.downField("messageId").as[String].toOption
+              val rawId = hc
+                .downField("messageId")
+                .as[String]
+                .toOption
                 .orElse(hc.downField("eventId").as[String].toOption)
                 .orElse(hc.downField("id").as[String].toOption)
                 .getOrElse("")
@@ -1302,6 +1402,7 @@ class NeblinkClient(
               // 既有键（`error` / id 三候选）的判读**逐字不变**。
               val delivered = hc.downField("delivered").as[Boolean].toOption.getOrElse(false)
               IO.pure(Right(RelayMailResult(DeviceMail.stripMessagePrefix(rawId), delivered)))
+            end if
           case Left(_) =>
             // 非 JSON 响应（例如纯文本 ack）⇒ 原样交出（调用方按 ack 形态再判一次）；
             // `delivered` 无读数 ⇒ 保守支 `false`（与键缺席**同**口径）。
@@ -1348,6 +1449,7 @@ class NeblinkClient(
           case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
       case Left(err) => IO.pure(Left(err))
     }
+  end relayTransferPut
 
   // ===== Relay 分块腿（附件腿批，2026-09-12）=====
   //
@@ -1361,12 +1463,14 @@ class NeblinkClient(
   // `/api/neblink/transfer` / `NeblinkService.receiveFile|sendFile` 一个不删，
   // 本组方法只是给同一条 relay 腿加上分块参数。
 
-  /** 推**一块**给远端（relay 腿）。返回远端自算的摘要回执。
-    *
-    * `transferId`（dropnam 批，**可选键**）：本次块所属的 transfer —— 接收端据此判
-    * 「这条路径上已有字节是**本次的续传**还是**别人的件**」。旧接收端忽略未知键 ⇒ 向后兼容；
-    * 缺省 `None` = 不声明归属（接收端对已存在非空目标一律 fail-closed 拒绝，见
-    * `AttachContract.Codes.FileExistsRefusingAppend`）。 */
+  /**
+   * 推**一块**给远端（relay 腿）。返回远端自算的摘要回执。
+   *
+   * `transferId`（dropnam 批，**可选键**）：本次块所属的 transfer —— 接收端据此判
+   * 「这条路径上已有字节是**本次的续传**还是**别人的件**」。旧接收端忽略未知键 ⇒ 向后兼容；
+   * 缺省 `None` = 不声明归属（接收端对已存在非空目标一律 fail-closed 拒绝，见
+   * `AttachContract.Codes.FileExistsRefusingAppend`）。
+   */
   def relayTransferPutChunk(
     targetDeviceId: String,
     path: String,
@@ -1401,6 +1505,8 @@ class NeblinkClient(
       case Left(err) => IO.pure(Left(err))
     }
 
+  end relayTransferPutChunk
+
   /** 续传探针（relay 腿）：问远端当前 offset 与其自算的前缀摘要。 */
   def relayTransferProbe(
     targetDeviceId: String,
@@ -1418,6 +1524,8 @@ class NeblinkClient(
           case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
       case Left(err) => IO.pure(Left(err))
     }
+
+  end relayTransferProbe
 
   /** Send a notification message to a remote device via relay (Notify action). */
   def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
@@ -1483,15 +1591,15 @@ class NeblinkClient(
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
         if response.statusCode() >= 200 && response.statusCode() < 300 then Right(response.body())
         else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
-        catch
-          case e: Exception =>
-            // D4(a) instrument: bucket + count + log before the value is
-            // collapsed (the Left text below is deliberately unchanged).
-            NeblinkClient.noteOutboundFailure(e, method, url, logger)
-            // Some JDK-native exceptions (e.g. bare ConnectException) carry a
-            // null message — fall back to toString so downstream Left values
-            // never NPE on encoding/logging.
-            Left(if e.getMessage == null then e.toString else e.getMessage)
+      catch
+        case e: Exception =>
+          // D4(a) instrument: bucket + count + log before the value is
+          // collapsed (the Left text below is deliberately unchanged).
+          NeblinkClient.noteOutboundFailure(e, method, url, logger)
+          // Some JDK-native exceptions (e.g. bare ConnectException) carry a
+          // null message — fall back to toString so downstream Left values
+          // never NPE on encoding/logging.
+          Left(if e.getMessage == null then e.toString else e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
 end NeblinkClient
@@ -1508,23 +1616,29 @@ object NeblinkClient:
   val DefaultRelayTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(10, scala.concurrent.duration.SECONDS)
 
-  /** E2 单块上传超时（工程值，非冻结口径）：一块 ≤ `AttachContract.ChunkSize`
-    * （4 MiB）；60 s 对局域网/公网都留足余量，且**不**改动 [[DefaultRelayTimeout]]。 */
+  /**
+   * E2 单块上传超时（工程值，非冻结口径）：一块 ≤ `AttachContract.ChunkSize`
+   * （4 MiB）；60 s 对局域网/公网都留足余量，且**不**改动 [[DefaultRelayTimeout]]。
+   */
   val ChunkUploadTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(60, scala.concurrent.duration.SECONDS)
 
-  /** E3 整件下载超时（工程值）：单件上限 = 作者给定数 1,073,741,824 B（1024 MB = 1 GiB）。
-    *
-    * ⚠️ 上限升到 1 GiB 后本超时的**有效含义变了**（2026-09-14 r2 登记，本批未改值）：
-    * 300 s 走完 1 GiB 需要 ≥3.6 MB/s 的持续吞吐；更慢的链路会在中途 `HttpTimeout`
-    * 失败（该腿是**整件一个请求**，不是分块 ⇒ 没有断点续传兜底）。是否放宽/改分块
-    * 属设计裁定，见报告开放项。 */
+  /**
+   * E3 整件下载超时（工程值）：单件上限 = 作者给定数 1,073,741,824 B（1024 MB = 1 GiB）。
+   *
+   * ⚠️ 上限升到 1 GiB 后本超时的**有效含义变了**（2026-09-14 r2 登记，本批未改值）：
+   * 300 s 走完 1 GiB 需要 ≥3.6 MB/s 的持续吞吐；更慢的链路会在中途 `HttpTimeout`
+   * 失败（该腿是**整件一个请求**，不是分块 ⇒ 没有断点续传兜底）。是否放宽/改分块
+   * 属设计裁定，见报告开放项。
+   */
   val AttachmentDownloadTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.FiniteDuration(300, scala.concurrent.duration.SECONDS)
 
-  /** 自动登录被停摆门拒绝时的错误原文（2026-09-14 踢旧批 r2）。它走 `Left(...)`
-    * 通道，与网络/服务端失败在调用方侧可区分（自愈把它翻成 `false` ⇒ 用户看到
-    * 原始 401 并被告知需显式登录），且**不含任何 URL / 凭据**，可安全落日志。 */
+  /**
+   * 自动登录被停摆门拒绝时的错误原文（2026-09-14 踢旧批 r2）。它走 `Left(...)`
+   * 通道，与网络/服务端失败在调用方侧可区分（自愈把它翻成 `false` ⇒ 用户看到
+   * 原始 401 并被告知需显式登录），且**不含任何 URL / 凭据**，可安全落日志。
+   */
   val KickParkedAutoLoginRefusal: String =
     "Signed out on another device — automatic re-login and re-registration are parked " +
       "until an explicit user login"
@@ -1556,16 +1670,17 @@ object NeblinkClient:
   private val outboundFailureCounts =
     new java.util.concurrent.ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicLong]()
 
-  /** Classify one transport failure. NOTE the order: `HttpConnectTimeoutException`
-    * extends `HttpTimeoutException` extends `IOException`, so the most specific
-    * class must be matched first or every connect timeout would land in the
-    * plain-timeout bucket. A GOAWAY is only distinguishable by message text
-    * (the JDK raises a bare `IOException`), hence the message probes.
-    */
+  /**
+   * Classify one transport failure. NOTE the order: `HttpConnectTimeoutException`
+   * extends `HttpTimeoutException` extends `IOException`, so the most specific
+   * class must be matched first or every connect timeout would land in the
+   * plain-timeout bucket. A GOAWAY is only distinguishable by message text
+   * (the JDK raises a bare `IOException`), hence the message probes.
+   */
   private[neblink] def bucketOf(e: Throwable): String =
     e match
       case _: java.net.http.HttpConnectTimeoutException => Bucket.ConnectTimeout
-      case _: java.net.http.HttpTimeoutException        => Bucket.Timeout
+      case _: java.net.http.HttpTimeoutException => Bucket.Timeout
       case io: java.io.IOException =>
         val m = Option(io.getMessage).getOrElse("").toLowerCase
         if m.contains("goaway") then Bucket.Goaway
@@ -1573,11 +1688,12 @@ object NeblinkClient:
         else Bucket.Other
       case _ => Bucket.Other
 
-  /** One classified failure: bump the bucket, then log the raw evidence line.
-    * Called from inside `sendRequestTimed`'s catch — sync logger on purpose
-    * (we are already on `IO.blocking`). Never throws: the instrument must not
-    * be able to change the request outcome.
-    */
+  /**
+   * One classified failure: bump the bucket, then log the raw evidence line.
+   * Called from inside `sendRequestTimed`'s catch — sync logger on purpose
+   * (we are already on `IO.blocking`). Never throws: the instrument must not
+   * be able to change the request outcome.
+   */
   private[neblink] def noteOutboundFailure(e: Exception, method: String, url: String, logger: NebflowLogger): Unit =
     try
       val bucket = bucketOf(e)
@@ -1602,11 +1718,12 @@ object NeblinkClient:
   /** Test seam — the counters are JVM-global, so specs reset them. */
   private[neblink] def resetOutboundFailureCounters(): Unit = outboundFailureCounts.clear()
 
-  /** Path SHAPE only, for logs: no query string, no host, no token. Segments
-    * that look like identifiers (any digit, or a non `[A-Za-z0-9._-]` byte —
-    * UUIDs, hex ids, percent-encoded values) collapse to `:id`, so
-    * `/api/friends/<id>/messages?token=…` logs as `/api/friends/:id/messages`.
-    */
+  /**
+   * Path SHAPE only, for logs: no query string, no host, no token. Segments
+   * that look like identifiers (any digit, or a non `[A-Za-z0-9._-]` byte —
+   * UUIDs, hex ids, percent-encoded values) collapse to `:id`, so
+   * `/api/friends/<id>/messages?token=…` logs as `/api/friends/:id/messages`.
+   */
   private[neblink] def pathShapeOf(url: String): String =
     val cut =
       val q = url.indexOf('?')
@@ -1627,10 +1744,11 @@ object NeblinkClient:
     else if s.forall(c => c.isLetter || c == '-' || c == '_' || c == '.') then s
     else ":id"
 
-  /** Belt-and-braces scrub for the logged message: a query string, a bearer
-    * token or a `secret=…` pair must never reach the log line (the path shape
-    * is already host- and query-free, this covers the free-text message).
-    */
+  /**
+   * Belt-and-braces scrub for the logged message: a query string, a bearer
+   * token or a `secret=…` pair must never reach the log line (the path shape
+   * is already host- and query-free, this covers the free-text message).
+   */
   private def scrub(s: String): String =
     s.replaceAll("(?i)bearer\\s+\\S+", "Bearer <redacted>")
       .replaceAll("(?i)(token|secret|password|api[_-]?key)=[^\\s&]+", "$1=<redacted>")
@@ -1688,12 +1806,14 @@ object NeblinkClient:
   private[neblink] def reloginAllowed(err: String, allowRelogin: Boolean, credentialLeg: Boolean = false): Boolean =
     allowRelogin && (isUnauthorized(err) || (credentialLeg && isCredentialFamilyRejection(err)))
 
-  /** 凭据族拒收的**状态码判据**（403 = 服务端 `verify_device_credential` 失败的唯一
-    * 应答码）。**单独拆出来**是为了让「调用面 + 状态码」两个因子各自可测：调用面锚
-    * （`credentialLeg`）在 [[reloginAllowed]] 的调用点，状态码在场函数里。
-    *
-    * ⚠️ 本判据**只在凭据腿的失败分支**上有意义（`doLoginUnparked`，
-    * grep 可核唯一调用面）——它不是「任何 403 都该重登」的许可。 */
+  /**
+   * 凭据族拒收的**状态码判据**（403 = 服务端 `verify_device_credential` 失败的唯一
+   * 应答码）。**单独拆出来**是为了让「调用面 + 状态码」两个因子各自可测：调用面锚
+   * （`credentialLeg`）在 [[reloginAllowed]] 的调用点，状态码在场函数里。
+   *
+   * ⚠️ 本判据**只在凭据腿的失败分支**上有意义（`doLoginUnparked`，
+   * grep 可核唯一调用面）——它不是「任何 403 都该重登」的许可。
+   */
   private[neblink] def isCredentialFamilyRejection(err: String): Boolean =
     err.startsWith("HTTP 403")
 

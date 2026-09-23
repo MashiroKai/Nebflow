@@ -3,19 +3,19 @@ package nebflow.core
 import munit.FunSuite
 
 /**
-  * L3 rebrand compat spec (batch 3, 2026-08-17). The compat layer's contract:
-  * every legacy name (".nebflow" dir, NEBFLOW_ env prefix, "nebflow.json"
-  * config file) is HARDCODED as the fallback and never derived from
-  * brand.conf — so with the current brand values every dual-read collapses
-  * to a single lookup and the whole layer no-ops. On rename day the new
-  * names (from brand.conf) take priority and the legacy values keep old
-  * data, old env scripts and old config files working.
-  *
-  * The rename-day branches cannot be exercised through the live Branding
-  * vals (compile-time constants from brand.conf), so each dual-read has a
-  * parameterized pure core (resolveDefaultDataRoot / dualEnv /
-  * resolveConfigJson) that this spec drives with rename-day values.
-  */
+ * L3 rebrand compat spec (batch 3, 2026-08-17). The compat layer's contract:
+ * every legacy name (".nebflow" dir, NEBFLOW_ env prefix, "nebflow.json"
+ * config file) is HARDCODED as the fallback and never derived from
+ * brand.conf — so with the current brand values every dual-read collapses
+ * to a single lookup and the whole layer no-ops. On rename day the new
+ * names (from brand.conf) take priority and the legacy values keep old
+ * data, old env scripts and old config files working.
+ *
+ * The rename-day branches cannot be exercised through the live Branding
+ * vals (compile-time constants from brand.conf), so each dual-read has a
+ * parameterized pure core (resolveDefaultDataRoot / dualEnv /
+ * resolveConfigJson) that this spec drives with rename-day values.
+ */
 class RebrandCompatSpec extends FunSuite:
 
   // ── Branding.dualEnv ─────────────────────────────────────────────────────

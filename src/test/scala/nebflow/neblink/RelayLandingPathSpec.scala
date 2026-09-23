@@ -90,8 +90,8 @@ class RelayLandingPathSpec extends FunSuite:
   test("① 门控只做**旧收端**回退：level None / 2 / 1 一律今天的裸名形态，且不出现 .dropbox- 名") {
     // None = 对端等级不可知（旧端不报 proto）⇒ 按旧行为，fail-safe 方向 = 不改对端可见形态
     for level <- List(None, Some(AttachContract.ProtoAssignDir), Some(AttachContract.ProtoChunked)) do
-      val t  = transfer("legacy.bin", peerProto = level)
-      val p  = DropboxUtil.relayLandingPath(t)
+      val t = transfer("legacy.bin", peerProto = level)
+      val p = DropboxUtil.relayLandingPath(t)
       assertEquals(p, "~/Downloads/legacy.bin", s"peerProto=$level 必须逐字节同今天")
       assert(!p.contains(".dropbox-"), s"peerProto=$level 不得出现新 temp 名")
       assert(!DropboxUtil.peerSupportsRelayTemp(t), s"peerProto=$level 不得判为支持落点收口")

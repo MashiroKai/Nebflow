@@ -36,7 +36,8 @@ object MailDeliveryDedup:
 
   /** SHA-256 hex of sender + recipient + content. Same triple → same fp. */
   def fingerprint(from: String, recipientSessionId: String, message: String): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest(s"$from|$recipientSessionId|$message".getBytes(java.nio.charset.StandardCharsets.UTF_8))
     digest.map(b => f"${b & 0xff}%02x").mkString
 
@@ -47,8 +48,10 @@ object MailDeliveryDedup:
   private val cache = Ref.unsafe[IO, Map[String, Long]](Map.empty)
   private val loaded = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  /** Cumulative count of suppressed duplicate deliveries (observability, task
-    * requirement "WARN + dedup count"). Monotonic within the process. */
+  /**
+   * Cumulative count of suppressed duplicate deliveries (observability, task
+   * requirement "WARN + dedup count"). Monotonic within the process.
+   */
   private val suppressedCount = new java.util.concurrent.atomic.AtomicLong(0L)
 
   /** Total suppressed duplicates since process start. */
@@ -61,7 +64,7 @@ object MailDeliveryDedup:
       else
         decode[Map[String, Long]](os.read(file)) match
           case Right(m) => m
-          case Left(_)  => Map.empty // corrupt file — start fresh
+          case Left(_) => Map.empty // corrupt file — start fresh
     }.flatMap { disk =>
       // Prune expired entries on load; merge with anything already recorded in
       // memory this process. Right-biased union: mem entries are always from
@@ -74,12 +77,16 @@ object MailDeliveryDedup:
       }
     }.handleErrorWith(e => logger.warn(s"MailDeliveryDedup load failed: ${e.getMessage}"))
 
+  end loadDiskIntoCache
+
   private def persist(now: Long): IO[Unit] =
-    cache.get.flatMap { m =>
-      def fresh(ts: Long): Boolean = now - ts < Defaults.MailDedupWindowMs
-      val cleaned = m.filter((_, ts) => fresh(ts))
-      AtomicJson.write(storeFile, cleaned.asJson.noSpaces)
-    }.handleErrorWith(e => logger.warn(s"MailDeliveryDedup persist failed: ${e.getMessage}"))
+    cache.get
+      .flatMap { m =>
+        def fresh(ts: Long): Boolean = now - ts < Defaults.MailDedupWindowMs
+        val cleaned = m.filter((_, ts) => fresh(ts))
+        AtomicJson.write(storeFile, cleaned.asJson.noSpaces)
+      }
+      .handleErrorWith(e => logger.warn(s"MailDeliveryDedup persist failed: ${e.getMessage}"))
 
   /**
    * Record a delivery attempt for `fp` at time `now`.
@@ -107,14 +114,18 @@ object MailDeliveryDedup:
     if !withinReplayWindow then
       // Outside the replay window: not a restart-replay shape — deliver
       // without consulting (and without recording) the fingerprint ledger.
-      logger.debug(s"[mail-dedup] outside replay window — deliver unconditionally (recipient=${recipientSessionId.take(8)})").as(true)
+      logger
+        .debug(
+          s"[mail-dedup] outside replay window — deliver unconditionally (recipient=${recipientSessionId.take(8)})"
+        )
+        .as(true)
     else
       for
         _ <- if loaded.compareAndSet(false, true) then loadDiskIntoCache(now) else IO.unit
         allowed <- cache.modify { m =>
           m.get(fp) match
             case Some(ts) if now - ts < Defaults.MailDedupWindowMs => (m, false)
-            case _                                                 => (m + (fp -> now), true)
+            case _ => (m + (fp -> now), true)
         }
         _ <-
           if allowed then persist(now)
@@ -125,8 +136,10 @@ object MailDeliveryDedup:
             ) *> persist(now)
       yield allowed
 
-  /** TEST-ONLY hook: drop the in-memory cache + loaded flag (simulates a
-   * restart while the disk file survives). Production code never calls this. */
+  /**
+   * TEST-ONLY hook: drop the in-memory cache + loaded flag (simulates a
+   * restart while the disk file survives). Production code never calls this.
+   */
   def reset(): Unit =
     cache.set(Map.empty).void.unsafeRunSync()(using cats.effect.unsafe.implicits.global)
     loaded.set(false)

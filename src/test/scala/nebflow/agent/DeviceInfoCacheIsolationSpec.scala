@@ -18,38 +18,46 @@ import fs2.Stream
 
 import scala.concurrent.duration.*
 
-/** isofix 批（2026-09-17）· **跨 suite 单例 memo 串扰**的最小判别钉（承重负控载体）。
-  *
-  * 缺陷形态（判据 = `.nebflow/reports/20260917_devicesred-diag.md` §3 四要素链）：
-  * `object AgentActor extends AgentCore` 上的 `deviceInfoCache`（`# Devices` 块的 30s
-  * memo）**只按时间窗失效、且短路在读 `RemoteExecutor.current` 之前** ⇒ 同 JVM 内
-  * `RemoteExecutor.initialize` 把全局执行器**重新指向**另一个 `NeblinkService` 后，
-  * memo 里上一个执行器的设备清单在窗口内仍被复用。
-  *
-  * 本 spec 把该机制**在同一 suite 内两次 `initialize` 之间**确定性地钉住（不依赖
-  * 邻居 suite 的构成、不需 sleep）：
-  *  - 用例 1（承重基座）：executor **α**（peer 表 = `peer-one`）跑一个真回合 ⇒
-  *    α 的设备块必须进了模型收到的请求（**这同时证明 memo 被写过**）；
-  *  - 用例 2（隔离钉）：换源到 executor **β**（peer 表 = `DEVX`/`DEVY`）后**首个**
-  *    回合 ⇒ 必须实读 β，**不得**残留 α 的 `peer-one`。
-  *
-  * 读数口径：memo 未带源身份时（修复前）用例 2 必红（读到的仍是 α 块）；memo 键含
-  * 源身份后（修复后）必绿。故本 spec 即「修法真的承重」的可推翻读数载体。
-  *
-  * 🔴 本 spec 不改动 `DevicesDeltaBaselineSpec` 的任何字节；两 spec 各钉一层
-  * （本 spec 钉**机制**、DDB 钉**产品语义**），断言口径互不替代。
-  */
+/**
+ * isofix 批（2026-09-17）· **跨 suite 单例 memo 串扰**的最小判别钉（承重负控载体）。
+ *
+ * 缺陷形态（判据 = `.nebflow/reports/20260917_devicesred-diag.md` §3 四要素链）：
+ * `object AgentActor extends AgentCore` 上的 `deviceInfoCache`（`# Devices` 块的 30s
+ * memo）**只按时间窗失效、且短路在读 `RemoteExecutor.current` 之前** ⇒ 同 JVM 内
+ * `RemoteExecutor.initialize` 把全局执行器**重新指向**另一个 `NeblinkService` 后，
+ * memo 里上一个执行器的设备清单在窗口内仍被复用。
+ *
+ * 本 spec 把该机制**在同一 suite 内两次 `initialize` 之间**确定性地钉住（不依赖
+ * 邻居 suite 的构成、不需 sleep）：
+ *  - 用例 1（承重基座）：executor **α**（peer 表 = `peer-one`）跑一个真回合 ⇒
+ *    α 的设备块必须进了模型收到的请求（**这同时证明 memo 被写过**）；
+ *  - 用例 2（隔离钉）：换源到 executor **β**（peer 表 = `DEVX`/`DEVY`）后**首个**
+ *    回合 ⇒ 必须实读 β，**不得**残留 α 的 `peer-one`。
+ *
+ * 读数口径：memo 未带源身份时（修复前）用例 2 必红（读到的仍是 α 块）；memo 键含
+ * 源身份后（修复后）必绿。故本 spec 即「修法真的承重」的可推翻读数载体。
+ *
+ * 🔴 本 spec 不改动 `DevicesDeltaBaselineSpec` 的任何字节；两 spec 各钉一层
+ * （本 spec 钉**机制**、DDB 钉**产品语义**），断言口径互不替代。
+ */
 class DeviceInfoCacheIsolationSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
 
-  private val peerOne = PeerInfo(deviceId = "peer-1", deviceName = "peer-one", platform = "macos", address = "http://127.0.0.1:9")
-  private val peerX   = PeerInfo(deviceId = "dev-x", deviceName = "DEVX", platform = "macos", address = "http://127.0.0.1:7")
-  private val peerY   = PeerInfo(deviceId = "dev-y", deviceName = "DEVY", platform = "linux", address = "http://127.0.0.1:8")
+  private val peerOne =
+    PeerInfo(deviceId = "peer-1", deviceName = "peer-one", platform = "macos", address = "http://127.0.0.1:9")
+
+  private val peerX =
+    PeerInfo(deviceId = "dev-x", deviceName = "DEVX", platform = "macos", address = "http://127.0.0.1:7")
+
+  private val peerY =
+    PeerInfo(deviceId = "dev-y", deviceName = "DEVY", platform = "linux", address = "http://127.0.0.1:8")
 
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -100,7 +108,7 @@ class DeviceInfoCacheIsolationSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -112,7 +120,7 @@ class DeviceInfoCacheIsolationSpec extends CatsEffectSuite:
   private def cleanupTree(tmp: os.Path): IO[Unit] =
     IO.blocking {
       var attempts = 0
-      var removed  = false
+      var removed = false
       while !removed && attempts < 3 do
         attempts += 1
         try
@@ -137,7 +145,12 @@ class DeviceInfoCacheIsolationSpec extends CatsEffectSuite:
       // 🔴 被钉的那个动作：换源 = 把全局执行器重新指向本用例自己的 service
       _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
       _ <- peers.traverse_(p => ms.upsertPeer(p))
-      nebulaDef = AgentDef(name = "Nebula", description = "memo-isolation root", tools = List("Read"), systemPrompt = "")
+      nebulaDef = AgentDef(
+        name = "Nebula",
+        description = "memo-isolation root",
+        tools = List("Read"),
+        systemPrompt = ""
+      )
       ref <- system.spawn(
         AgentActor(
           agentDef = nebulaDef,
@@ -153,11 +166,15 @@ class DeviceInfoCacheIsolationSpec extends CatsEffectSuite:
       _ <- ref ! AgentCommand.UserInput(s"turn 1", None, Some(s"$tag-cmid-1"))
       _ <- waitUntil(20.seconds)(requests.get.map(_.nonEmpty))
       reqs <- requests.get
-      // `# Devices` 块由 `PromptSections` 装配进 system 面（`AgentCore.scala:662`
-      // `devInfo = deviceInfoBlock` ⇒ `systemDynamic`/`systemStable`），**不在**
-      // messages 里 —— 与 DDB 只取 messages 的差量行口径不同，本钉必须三面并取。
+    // `# Devices` 块由 `PromptSections` 装配进 system 面（`AgentCore.scala:662`
+    // `devInfo = deviceInfoBlock` ⇒ `systemDynamic`/`systemStable`），**不在**
+    // messages 里 —— 与 DDB 只取 messages 的差量行口径不同，本钉必须三面并取。
     yield (reqs.head.systemStable.toList ++ reqs.head.systemDynamic.toList ++
       reqs.head.messages.map(_.textContent)).mkString("\n")
+
+    end for
+
+  end turnBody
 
   /** 装配一个真回合，返回模型真正收到的那条请求全文；退出前恢复全局态并清 temp。 */
   private def assembleOneTurn(peers: List[PeerInfo], tag: String): IO[String] =

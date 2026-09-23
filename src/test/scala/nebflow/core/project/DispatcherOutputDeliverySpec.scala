@@ -48,6 +48,7 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
   // 类级：隔离 dataRoot + 预置 project-dispatcher / test-agent 定义
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -59,18 +60,21 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 可编程回复 LLM：按输入关键词决定回复文本；全部 turn 等 gate（精确控制 turn
-    * 边界）；inputs 记录全部分发器输入。回复文本成为该 turn 的最终 assistant 文本
-    * （无工具调用，单轮直答——分发器占位/直接作答形态）。 */
+  /**
+   * 可编程回复 LLM：按输入关键词决定回复文本；全部 turn 等 gate（精确控制 turn
+   * 边界）；inputs 记录全部分发器输入。回复文本成为该 turn 的最终 assistant 文本
+   * （无工具调用，单轮直答——分发器占位/直接作答形态）。
+   */
   private class ScriptedLlm(gates: Queue[IO, Deferred[IO, Unit]]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     def offerGate: IO[Deferred[IO, Unit]] = Deferred[IO, Unit].flatTap(gates.offer)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[nebflow.shared.LlmResponse] =
         IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         val reply =
@@ -81,6 +85,7 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
           .flatMap(_ => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
+  end ScriptedLlm
 
   private def mkScriptedLlm: IO[ScriptedLlm] = Queue.unbounded[IO, Deferred[IO, Unit]].map(new ScriptedLlm(_))
 
@@ -128,7 +133,9 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
   ): IO[ProjectRuntime] =
     for
       rootRef <- system.spawn(recorderBehavior(recorded), s"rec-$project")
-      _ <- res.agentRegistry.update(_ + ("nebula-root" -> AgentRecord("nebula-root", rootRef, AgentKind.Root, "nebula-root")))
+      _ <- res.agentRegistry.update(
+        _ + ("nebula-root" -> AgentRecord("nebula-root", rootRef, AgentKind.Root, "nebula-root"))
+      )
       pd = ProjectDef(
         name = project,
         workspace = ws.toString,
@@ -139,12 +146,18 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
       // ——保活落地后该语义由 ≤0 回退档逐字保留（关闭保活）。理由与
       // ProjectDispatcherSingletonSpec 同款：本 spec 验的是**投递/提示词面**，
       // 不是生命周期；保活档语义由 DispatcherIdleWindowSpec 独立覆盖。
-      rt <- ProjectRuntimeRegistry.mount(pd, system, res, None, rootSessionId = "nebula-root",
-        dispatcherIdleWindowMs = Some(0L))
+      rt <- ProjectRuntimeRegistry.mount(
+        pd,
+        system,
+        res,
+        None,
+        rootSessionId = "nebula-root",
+        dispatcherIdleWindowMs = Some(0L)
+      )
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -188,10 +201,12 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
       // 给误投留充分窗口（旧实现此处必有 1 条 ImmediateInput 到达）
       _ <- IO.sleep(2.seconds)
       msgs <- imms(recorded)
-      _ <- waitUntil(30.seconds)(resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix))))
+      _ <- waitUntil(30.seconds)(
+        resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(msgs, Nil, s"R7-b：桥收敛后不得有任何自动投递，got ${msgs.map(_.text.take(120))}")
+    yield assertEquals(msgs, Nil, s"R7-b：桥收敛后不得有任何自动投递，got ${msgs.map(_.text.take(120))}")
+    end for
   }
 
   test("R7-b-2: 分发器输出含占位/极简文本时同样零自动投递；桥的拆除职责保留") {
@@ -212,11 +227,14 @@ class DispatcherOutputDeliverySpec extends CatsEffectSuite:
       _ <- IO.sleep(2.seconds)
       msgs <- imms(recorded)
       // 桥的非投递职责仍在：Completed 后 activeRef 清空 → 会话注销（拆除裁决未受影响）
-      gone <- waitUntil(30.seconds)(resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))).attempt
+      gone <- waitUntil(30.seconds)(
+        resources.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+      ).attempt
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(msgs, Nil, "极简输出同样零自动投递（旧 D4 逆命题）")
       assert(gone.isRight, "R7-b 只摘投递，不摘拆除：Completed 后分发器会话仍应注销")
+    end for
   }
 
 end DispatcherOutputDeliverySpec

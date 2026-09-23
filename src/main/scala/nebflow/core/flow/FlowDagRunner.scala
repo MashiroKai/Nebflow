@@ -50,7 +50,9 @@ object FlowDagRunner:
           else s"flow-${flowDef.name.take(15)}-${java.util.UUID.randomUUID().toString.take(8)}"
         val parentAgentRef = Some(replyTo) // replyTo is the AgentRef of the agent that triggered the flow
         for
-          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId${if dynamic then ", dynamic" else ""})")
+          _ <- logger.info(s"Starting DAG execution for flow '${flowDef.name}' (instance: $instanceId${
+              if dynamic then ", dynamic" else ""
+            })")
           result <- FlowDagExecutor
             .execute(
               flowDef,

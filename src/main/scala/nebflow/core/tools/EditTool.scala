@@ -164,6 +164,7 @@ Edit patterns:
                 record.as(Right(result))
               case left => IO.pure(left)
             }
+        end match
     end match
   end call
 

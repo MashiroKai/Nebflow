@@ -223,10 +223,12 @@ object EntityLoader:
           .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
     }
 
-  /** Agent names declared under flows/<flowName>/agents/ — flow-local agents
-    * that loadFlowAgent resolves BEFORE falling back to the global library.
-    * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
-    * these as valid, so callers merge them into the compiler's agentNames. */
+  /**
+   * Agent names declared under flows/<flowName>/agents/ — flow-local agents
+   * that loadFlowAgent resolves BEFORE falling back to the global library.
+   * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
+   * these as valid, so callers merge them into the compiler's agentNames.
+   */
   def listFlowAgentNames(flowName: String): IO[Set[String]] =
     IO.blocking {
       val dir = flowsDir / flowName / "agents"
@@ -374,7 +376,10 @@ object EntityLoader:
    *   surfaces (REST routes / user editing on disk). Do not add new callers;
    *   slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeTeam(team: TeamDef): IO[Unit] =
     writeJson(teamsDir / team.name / "team.json", team.asJson.noSpaces)
 
@@ -385,7 +390,10 @@ object EntityLoader:
    *   no production caller; flows are created/edited as flow.json files by
    *   their owning surfaces. Do not add new callers; slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeFlow(flow: FlowDagDef): IO[Unit] =
     writeJson(flowsDir / s"${flow.name}.json", flow.asJson.noSpaces)
 
@@ -397,7 +405,10 @@ object EntityLoader:
    *   surfaces (AgentLibrary update methods, REST PUT endpoints). Do not add
    *   new callers; slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeAgent(entry: AgentEntry): IO[Unit] =
     IO.blocking {
       val dir = agentsDir / entry.name
@@ -439,10 +450,13 @@ object EntityLoader:
       .map(a => s"agent '$a' not found")
       .toList
     val badRoutes = flow.nodes.toList.flatMap { (id, node) =>
-      FlowStructure.routeTargets(node.onComplete).collect {
-        case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
-          s"node '$id' routes to unknown node '$target'"
-      }.distinct
+      FlowStructure
+        .routeTargets(node.onComplete)
+        .collect {
+          case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
+            s"node '$id' routes to unknown node '$target'"
+        }
+        .distinct
     }
     entryMissing ++ missingAgents.distinct ++ badRoutes
 
@@ -471,7 +485,7 @@ object EntityLoader:
       // fanout over cap) with a clear reason instead of letting them fail at
       // runtime in confusing ways. Agent-existence checks stay in validateFlow.
       FlowStructure.validate(fd) match
-        case Nil   => Right(fd)
+        case Nil => Right(fd)
         case errs => Left(s"invalid flow structure: ${errs.mkString("; ")}")
       end match
     }

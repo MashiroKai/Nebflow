@@ -52,8 +52,11 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -76,33 +79,45 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
     val declaredSids: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-        Stream.eval {
-          for
-            turn <- turnCount.updateAndGet(_ + 1)
-            _ <- IO(Option(res)).flatMap {
-              case None => IO.unit
-              case Some(r) =>
-                r.agentRegistry.get.flatMap { reg =>
-                  reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                    case None => IO.unit
-                    case Some(rec) =>
-                      declaredSids.update(s => (s :+ rec.sessionId).distinct) *>
-                        (if turn == declareOnTurn then
-                           NodeReportRegistry.register((tempRoot / "ws-probe-registry").toString,
-                             "probe-spec", "n-probe", rec.sessionId,
-                             BlockedFeedback(category, s"probe declare ($category)", ""))
-                         else IO.unit)
-                }
-            }
-          yield turn
-        }.flatMap { turn =>
-          val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "probe-turn-ack"
-          Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
-        }
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
+        Stream
+          .eval {
+            for
+              turn <- turnCount.updateAndGet(_ + 1)
+              _ <- IO(Option(res)).flatMap {
+                case None => IO.unit
+                case Some(r) =>
+                  r.agentRegistry.get.flatMap { reg =>
+                    reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
+                      case None => IO.unit
+                      case Some(rec) =>
+                        declaredSids.update(s => (s :+ rec.sessionId).distinct) *>
+                          (if turn == declareOnTurn then
+                             NodeReportRegistry.register(
+                               (tempRoot / "ws-probe-registry").toString,
+                               "probe-spec",
+                               "n-probe",
+                               rec.sessionId,
+                               BlockedFeedback(category, s"probe declare ($category)", "")
+                             )
+                           else IO.unit)
+                  }
+              }
+            yield turn
+          }
+          .flatMap { turn =>
+            val text = req.messages.map(_.textContent).mkString("\n")
+            val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "probe-turn-ack"
+            Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
+          }
+
+  end StubLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -145,7 +160,9 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (j: Json) => wsFrames.update(_ :+ j),
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -155,7 +172,12 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
         reportGateHold = Some(reportGateHold),
         destroyWindowMs = Some(destroyWindowMs)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -165,31 +187,56 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       cond.flatMap {
         case true => IO.unit
         case false =>
-          if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
           else IO.sleep(every) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String, res: SharedResources, system: ActorSystem): IO[Unit] =
-    val ctx = ToolContext(projectRoot = ws.toString, sessionId = Some("spec-sid"),
-      rootSessionId = Some("nebula-root"), sharedResources = Some(res), actorSystem = Some(system))
-    NodeEditTool.call(nodeInput(project, name,
-      "description" -> Json.fromString("noderpt verify probe node"),
-      "task" -> Json.fromString(task),
-      "out" -> Json.fromString("Nebula")).asObject.get, ctx)
+  private def createNode(
+    project: String,
+    ws: os.Path,
+    name: String,
+    task: String,
+    res: SharedResources,
+    system: ActorSystem
+  ): IO[Unit] =
+    val ctx = ToolContext(
+      projectRoot = ws.toString,
+      sessionId = Some("spec-sid"),
+      rootSessionId = Some("nebula-root"),
+      sharedResources = Some(res),
+      actorSystem = Some(system)
+    )
+    NodeEditTool
+      .call(
+        nodeInput(
+          project,
+          name,
+          "description" -> Json.fromString("noderpt verify probe node"),
+          "task" -> Json.fromString(task),
+          "out" -> Json.fromString("Nebula")
+        ).asObject.get,
+        ctx
+      )
       .map(_.left.map(_.message))
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
+
+  end createNode
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def waitIdle(res: SharedResources, timeout: FiniteDuration = 20.seconds): IO[String] =
@@ -198,7 +245,8 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
           case Some(rec) if rec.status == AgentStatus.Idle => IO.pure(rec.sessionId)
           case _ =>
-            if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError("node agent never went Idle"))
+            if System.currentTimeMillis() >= deadline then
+              IO.raiseError(new AssertionError("node agent never went Idle"))
             else IO.sleep(50.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
@@ -217,7 +265,9 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
 
   // ── P1：判据② 第四分量 —— BgTaskOutputStore 在窗口内 running、到点 cancelled ──
 
-  test("P1: the bg output store stays 'running'/readable inside the destroy window and flips to 'cancelled' at expiry") {
+  test(
+    "P1: the bg output store stays 'running'/readable inside the destroy window and flips to 'cancelled' at expiry"
+  ) {
     val ws = tempRoot / "ws-p1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"probe-p1-${scala.util.Random.nextInt(100000)}")
@@ -237,12 +287,18 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       _ <- waitUntil(15.seconds)(IO.blocking(os.exists(pidFile)))
       pid <- IO.blocking(os.read(pidFile).trim.toLong)
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-p1" -> NodeDef(
-          id = "n-p1", name = "probe-p1-node", agent = "general",
-          status = NodeLifecycle.Completed, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some(sid),
-          destroyAt = Some(System.currentTimeMillis() - 1L))))
+        s.copy(nodes =
+          s.nodes + ("n-p1" -> NodeDef(
+            id = "n-p1",
+            name = "probe-p1-node",
+            agent = "general",
+            status = NodeLifecycle.Completed,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sid),
+            destroyAt = Some(System.currentTimeMillis() - 1L)
+          ))
+        )
       }
       // 窗口内读数：进程活 + 任务在册 + 输出留存区 running 且内容可读
       aliveInWindow <- IO(java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false))
@@ -260,16 +316,25 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     yield
       assert(aliveInWindow, s"inside the window the real process (pid $pid) must stay alive")
       assert(tasksInWindow.nonEmpty, "inside the window the bg task stays registered")
-      assertEquals(outInWindow.map(_.status), Some("running"),
-        "inside the window the output store must still report 'running' (readable evidence)")
-      assert(outInWindow.exists(_.output.contains("probe-line-inside-window")),
-        s"inside the window the buffered output must be readable: $outInWindow")
+      assertEquals(
+        outInWindow.map(_.status),
+        Some("running"),
+        "inside the window the output store must still report 'running' (readable evidence)"
+      )
+      assert(
+        outInWindow.exists(_.output.contains("probe-line-inside-window")),
+        s"inside the window the buffered output must be readable: $outInWindow"
+      )
       assert(dead, s"at expiry the sweep must kill the process tree (pid $pid still alive)")
       assertEquals(tasksAfter, Nil, "at expiry the task must be unregistered")
-      assertEquals(outAfter.map(_.status), Some("cancelled"),
-        s"at expiry BgTaskOutputStore must flip the task to a terminal state: $outAfter")
+      assertEquals(
+        outAfter.map(_.status),
+        Some("cancelled"),
+        s"at expiry BgTaskOutputStore must flip the task to a terminal state: $outAfter"
+      )
       assertEquals(deniedFrames(framesAfter), 1, "exactly one cancelled frame per reclaimed job")
       assertEquals(after.destroyAt, None, "destroyAt must be cleared after the reclaim")
+    end for
   }
 
   // ── P2：abandon 终态写点是否清计时（⑧-3 覆盖穷尽性）────────────────────
@@ -284,32 +349,53 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       rt <- mountProject("probe-p2", ws, system, res, destroyWindowMs = 0L)
       // 与 NodeReportReminderSpec R8 同构的种子：Running + 无活 fiber（死会话），带计时
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-p2" -> NodeDef(
-          id = "n-p2", name = "abandon-probe", agent = "general",
-          status = NodeLifecycle.Running, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some("probe-p2-dead-sid"),
-          reportPendingSince = Some(System.currentTimeMillis() - 70000L),
-          reportReminderCount = 2)))
+        s.copy(nodes =
+          s.nodes + ("n-p2" -> NodeDef(
+            id = "n-p2",
+            name = "abandon-probe",
+            agent = "general",
+            status = NodeLifecycle.Running,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some("probe-p2-dead-sid"),
+            reportPendingSince = Some(System.currentTimeMillis() - 70000L),
+            reportReminderCount = 2
+          ))
+        )
       }
-      r <- NodeEditTool.call(nodeInput("probe-p2", "abandon-probe",
-        "abandon" -> Json.fromBoolean(true)).asObject.get,
-        ToolContext(projectRoot = ws.toString, sessionId = Some("spec-sid"),
-          rootSessionId = Some("nebula-root"), sharedResources = Some(res), actorSystem = Some(system)))
+      r <- NodeEditTool.call(
+        nodeInput("probe-p2", "abandon-probe", "abandon" -> Json.fromBoolean(true)).asObject.get,
+        ToolContext(
+          projectRoot = ws.toString,
+          sessionId = Some("spec-sid"),
+          rootSessionId = Some("nebula-root"),
+          sharedResources = Some(res),
+          actorSystem = Some(system)
+        )
+      )
       node <- byName(rt, "abandon-probe")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"abandon must succeed on a dead-session running node: $r")
       assertEquals(node.status, NodeLifecycle.Cancelled, "abandon → cancelled")
-      assertEquals(node.reportPendingSince, None,
-        s"abandon is a terminal write point — it must clear the pending clock like the 6 covered points (actual=${node.reportPendingSince})")
-      assertEquals(node.reportReminderCount, 0,
-        s"abandon must reset the rung counter (actual=${node.reportReminderCount})")
+      assertEquals(
+        node.reportPendingSince,
+        None,
+        s"abandon is a terminal write point — it must clear the pending clock like the 6 covered points (actual=${node.reportPendingSince})"
+      )
+      assertEquals(
+        node.reportReminderCount,
+        0,
+        s"abandon must reset the rung counter (actual=${node.reportReminderCount})"
+      )
+    end for
   }
 
   // ── P3：NodeMessage 重入 + 申报 ⇒ 是否被终态化 / 是否仍有提醒兜底 ──────────
 
-  test("P3: a node_report declared on a NodeMessage-driven turn (no bridge Completed) still gets finalized or reminded") {
+  test(
+    "P3: a node_report declared on a NodeMessage-driven turn (no bridge Completed) still gets finalized or reminded"
+  ) {
     // 阶梯压到 700ms —— 关键：扫描腿只在**有档到点**时才走 peek 分支
     // （`if !ladderStage && !quiescentStage then IO.unit`），故必须让第 1 档到点，
     // 才能复现「peek 见申报 ⇒ 清表」这条路。本探针**手动逐拍驱动**扫描腿
@@ -332,7 +418,8 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(NodeReportRegistry.peek(sid).map(_.isDefined)).attempt
       declared <- NodeReportRegistry.peek(sid)
       _ <- waitUntil(20.seconds)( // 等重入轮跑完（该轮不产生 bridge Completed）
-        res.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle)))
+        res.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
+      )
       _ <- IO.sleep(900.millis) // 越过第 1 档阈值（700ms）
       _ <- rt.engine.remindUnreportedNodes() // 第 1 拍：peek 见申报 ⇒ 清表（本批逻辑）
       afterScan <- byName(rt, "reentry-a")
@@ -351,9 +438,12 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       val diag = s"status=${settled.status} pendingSince=${settled.reportPendingSince} " +
         s"rungs=${settled.reportReminderCount} reminderEvents=${reminderSummaryCount(events)} " +
         s"clockAfterFirstScan=${afterScan.reportPendingSince.isDefined} jobDone=${afterScan.destroyAt.isDefined}"
-      assert(NodeLifecycle.Terminal.contains(settled.status) || settled.reportPendingSince.isDefined,
+      assert(
+        NodeLifecycle.Terminal.contains(settled.status) || settled.reportPendingSince.isDefined,
         s"a declaration that the bridge cannot observe must NOT silently disarm the safety net — " +
-          s"the node must either be finalized or still be covered by the ladder; got $diag")
+          s"the node must either be finalized or still be covered by the ladder; got $diag"
+      )
+    end for
   }
 
   // ── P4：销毁窗口被链级归档吞掉（生产盘上实测：n-future 到点前 12s 被归档、永不收殓）──
@@ -365,7 +455,9 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
   //      （进程杀 / 任务注销 / 归档副本 `destroyAt` 清零 / `node-destroyed` 事件）；
   //   ③ 归档副本清字段但**不复活**进活动区（no-revive 纪律）。
   // 本用例按生产 TtlTick 同拍顺序（销毁扫描 → 链级归档）驱动，三段各钉一条。
-  test("P4: a terminal node whose chain is archived while its destroy window is still open IS still reclaimed at expiry") {
+  test(
+    "P4: a terminal node whose chain is archived while its destroy window is still open IS still reclaimed at expiry"
+  ) {
     val ws = tempRoot / "ws-p4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"probe-p4-${scala.util.Random.nextInt(100000)}")
@@ -384,11 +476,18 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
       at = System.currentTimeMillis() + 1500L
       // 终态 + 窗口**未到点**（等价于 `scheduleDestroy` 刚登记的时刻）
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-p4" -> NodeDef(
-          id = "n-p4", name = "probe-p4-node", agent = "general",
-          status = NodeLifecycle.Completed, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some(sid), destroyAt = Some(at))))
+        s.copy(nodes =
+          s.nodes + ("n-p4" -> NodeDef(
+            id = "n-p4",
+            name = "probe-p4-node",
+            agent = "general",
+            status = NodeLifecycle.Completed,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sid),
+            destroyAt = Some(at)
+          ))
+        )
       }
       _ <- BgTaskRegistry.markSessionFinalized(sid, at)
       // 生产 TtlTick 的**同一拍**：销毁扫描在前（未到点 ⇒ 零动作），链级归档紧随其后
@@ -418,29 +517,49 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     yield
       assert(beforeSweep.isRight, s"the first (pre-expiry) sweep must not blow up: $beforeSweep")
       // ① 窗口未到期**不阻塞**出库（＝ 原始探针的 D1 复现前提；归档语义与窗口正交）
-      assert(sweptWhileOpen.exists(_.nodeIds.contains("n-p4")),
-        s"F1': an open destroy window must NOT block the chain sweep (archive eligibility is orthogonal): $sweptWhileOpen")
-      assert(!activeIds.contains("n-p4"),
-        s"F1': the node must have left the active map once its chain was archived: $activeIds")
-      assert(archivedWhileOpen.contains("n-p4"),
-        s"F1': the node must be in the archive (with its open window) : $archivedWhileOpen")
+      assert(
+        sweptWhileOpen.exists(_.nodeIds.contains("n-p4")),
+        s"F1': an open destroy window must NOT block the chain sweep (archive eligibility is orthogonal): $sweptWhileOpen"
+      )
+      assert(
+        !activeIds.contains("n-p4"),
+        s"F1': the node must have left the active map once its chain was archived: $activeIds"
+      )
+      assert(
+        archivedWhileOpen.contains("n-p4"),
+        s"F1': the node must be in the archive (with its open window) : $archivedWhileOpen"
+      )
       // ② 归档区读面：禁 spawn 表自愈（重启后一拍内重建，源 = 归档副本）+ 窗口内任务/进程照跑
-      assertEquals(banRestored, Some(at),
-        s"F1': the spawn-ban self-heal must rebuild from the ARCHIVED copy (in-memory table was cleared): $banRestored")
+      assertEquals(
+        banRestored,
+        Some(at),
+        s"F1': the spawn-ban self-heal must rebuild from the ARCHIVED copy (in-memory table was cleared): $banRestored"
+      )
       assert(tasksInWindow.nonEmpty, "inside the window the bg task stays registered (read-only evidence window)")
       assert(aliveInWindow, s"inside the window the real background process (pid $pid) must still be alive")
       // ③ 到点收殓：进程被杀 + 任务注销 + 恰 1 条 node-destroyed + 归档副本清字段 + 不复活
       val diag = s"pid=$pid aliveAfterExpiry=$aliveAfter tasksStillRegistered=${tasksAfter.size} " +
         s"destroyEvents=${events.count(_.contains("\"node-destroyed\""))} archivedDestroyAt=${arch.nodes.get("n-p4").flatMap(_.destroyAt)} " +
         s"activeAfter=$activeAfter"
-      assert(!aliveAfter, s"an archived member's destroy window must still be honoured at expiry (its processes may not leak); got $diag")
+      assert(
+        !aliveAfter,
+        s"an archived member's destroy window must still be honoured at expiry (its processes may not leak); got $diag"
+      )
       assertEquals(tasksAfter, Nil, s"its bg tasks must be reclaimed at expiry; got $diag")
-      assertEquals(events.count(_.contains("\"node-destroyed\"")), 1,
-        s"exactly one node-destroyed event expected (idempotent sweep); got $diag")
-      assert(arch.nodes.get("n-p4").exists(_.destroyAt.isEmpty),
-        s"F1': the ARCHIVED copy must carry a cleared window after the reclaim: ${arch.nodes.get("n-p4").map(_.destroyAt)}")
-      assert(!activeAfter.contains("n-p4"),
-        s"F1': clearing the window on the archived copy must NOT revive the node into the active map: $activeAfter")
+      assertEquals(
+        events.count(_.contains("\"node-destroyed\"")),
+        1,
+        s"exactly one node-destroyed event expected (idempotent sweep); got $diag"
+      )
+      assert(
+        arch.nodes.get("n-p4").exists(_.destroyAt.isEmpty),
+        s"F1': the ARCHIVED copy must carry a cleared window after the reclaim: ${arch.nodes.get("n-p4").map(_.destroyAt)}"
+      )
+      assert(
+        !activeAfter.contains("n-p4"),
+        s"F1': clearing the window on the archived copy must NOT revive the node into the active map: $activeAfter"
+      )
+    end for
   }
 
 end NoderptVerifyProbeSpec

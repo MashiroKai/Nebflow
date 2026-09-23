@@ -67,9 +67,7 @@ class TaskBoardInjectionSpec extends FunSuite:
 
   test("ProtocolFootnote 末行上报指引：close=完成，blocked=受阻（与 blocked 协议同点注入）"):
     val last = NodeEngine.ProtocolFootnote.linesIterator.toList.last
-    assertEquals(
-      last,
-      "TaskBoard work order ⇒ close = done, blocked = stuck.")
+    assertEquals(last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
     // blocked 协议本体不动（既有断言锚）
     assert(NodeEngine.ProtocolFootnote.contains("needs-split"))
 

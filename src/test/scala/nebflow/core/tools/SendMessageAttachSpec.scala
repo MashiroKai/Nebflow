@@ -67,8 +67,14 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(err.message.contains("Use the exact deviceId"), err.message)
 
   test("device resolve: 唯一命中五档（精确/前缀/包含）"):
-    assertEquals(FriendMessageTool.resolveDevice("d2", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId), Right("d2"))
-    assertEquals(FriendMessageTool.resolveDevice("kai", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId), Right("d2"))
+    assertEquals(
+      FriendMessageTool.resolveDevice("d2", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId),
+      Right("d2")
+    )
+    assertEquals(
+      FriendMessageTool.resolveDevice("kai", List(peer("d1", "MacBook"), peer("d2", "KAI"))).map(_.deviceId),
+      Right("d2")
+    )
 
   // ===== 工具级负控（无 sharedResources ⇒ 服务缺席显式报错；前置拒在零网络处） =====
 
@@ -85,8 +91,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   test("device 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（服务访问之前，零网络）"):
     val res = callTool(
       obj(
-        "to"          -> Json.fromString("device:KAI"),
-        "message"     -> Json.fromString("hi"),
+        "to" -> Json.fromString("device:KAI"),
+        "message" -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("relative.bin"))
       )
     ).unsafeRunSync()
@@ -98,8 +104,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   test("friend 目标 + attachments ⇒ **不再**前置拒绝（4b 腿 A 解除该缺口）；服务缺席走既有显式报错"):
     val res = callTool(
       obj(
-        "to"          -> Json.fromString("alice"),
-        "message"     -> Json.fromString("hi"),
+        "to" -> Json.fromString("alice"),
+        "message" -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
       )
     ).unsafeRunSync()
@@ -118,8 +124,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   test("friend 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（与设备支同判据，服务访问之前）"):
     val res = callTool(
       obj(
-        "to"          -> Json.fromString("alice"),
-        "message"     -> Json.fromString("hi"),
+        "to" -> Json.fromString("alice"),
+        "message" -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("relative.bin"))
       )
     ).unsafeRunSync()
@@ -134,8 +140,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     // `FriendMessageToolTargetDirSpec` A2（真服务栈 + level-1 桩）与 `TargetDirGuardSpec`。
     val res = callTool(
       obj(
-        "to"        -> Json.fromString("device:KAI"),
-        "message"   -> Json.fromString("hi"),
+        "to" -> Json.fromString("device:KAI"),
+        "message" -> Json.fromString("hi"),
         "targetDir" -> Json.fromString("/tmp/whatever")
       )
     ).unsafeRunSync()
@@ -150,12 +156,12 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         prevRoot <- IO(PathUtil.dataRoot)
-        tempDir  <- IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-spec-"))
-        _        <- IO(PathUtil.setDataRoot(tempDir))
-        ms  <- NeblinkService.create(0, dispatcher)
+        tempDir <- IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-spec-"))
+        _ <- IO(PathUtil.setDataRoot(tempDir))
+        ms <- NeblinkService.create(0, dispatcher)
         svc <- DropboxService.createForTest(ms, new WsHub, 400.millis, 400.millis, 500.millis)
         out <- use(ms, svc)
-        _   <- IO { PathUtil.setDataRoot(prevRoot); os.remove.all(tempDir) }
+        _ <- IO { PathUtil.setDataRoot(prevRoot); os.remove.all(tempDir) }
       yield out
     }
 
@@ -219,7 +225,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-dead-")).flatMap { dir =>
         val f = tmpFile(dir, "a.bin", 5)
         for
-          _   <- ms.upsertPeer(peer("dead-1", "DeadPeer"))
+          _ <- ms.upsertPeer(peer("dead-1", "DeadPeer"))
           res <- svc.sendLocalFiles("dead-1", List(f), acceptWait = 2.seconds, uploadWait = 5.seconds)
           txt <- svc.sendText("dead-1", "hello")
         yield
@@ -246,9 +252,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       val b = tmpFile(src, "b.bin", 7)
       callTool(
         obj(
-          "to"          -> Json.fromString("local"),
+          "to" -> Json.fromString("local"),
           "attachments" -> Json.arr(Json.fromString(a.toString), Json.fromString(b.toString)),
-          "targetDir"   -> Json.fromString(dst.toString)
+          "targetDir" -> Json.fromString(dst.toString)
         )
       ).unsafeRunSync() match
         case Right(msg) =>
@@ -270,9 +276,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       os.write.over(dst / "a.txt", Array.fill(9)('y'.toByte))
       val refused = callTool(
         obj(
-          "to"          -> Json.fromString("local"),
+          "to" -> Json.fromString("local"),
           "attachments" -> Json.arr(Json.fromString(a.toString)),
-          "targetDir"   -> Json.fromString(dst.toString)
+          "targetDir" -> Json.fromString(dst.toString)
         )
       ).unsafeRunSync()
       assert(refused.isLeft)
@@ -281,10 +287,10 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
       val replaced = callTool(
         obj(
-          "to"          -> Json.fromString("local"),
+          "to" -> Json.fromString("local"),
           "attachments" -> Json.arr(Json.fromString(a.toString)),
-          "targetDir"   -> Json.fromString(dst.toString),
-          "overwrite"   -> Json.fromBoolean(true)
+          "targetDir" -> Json.fromString(dst.toString),
+          "overwrite" -> Json.fromBoolean(true)
         )
       ).unsafeRunSync()
       assert(replaced.isRight, replaced.left.toOption.get.message)
@@ -293,9 +299,11 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     }
 
   test("local: 缺 targetDir / 缺 attachments ⇒ 显式必填报错"):
-    val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x")))).unsafeRunSync()
+    val noDir = callTool(obj("to" -> Json.fromString("local"), "attachments" -> Json.arr(Json.fromString("/tmp/x"))))
+      .unsafeRunSync()
     assert(noDir.isLeft && noDir.left.toOption.get.message.contains("requires `targetDir`"))
-    val noFiles = callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
+    val noFiles =
+      callTool(obj("to" -> Json.fromString("local"), "targetDir" -> Json.fromString("/tmp/x"))).unsafeRunSync()
     assert(noFiles.isLeft && noFiles.left.toOption.get.message.contains("requires `attachments`"))
 
   // ===== 退役读数 =====
@@ -326,7 +334,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
   test("schema surface: attachments/targetDir/overwrite 参数在面；to+message 必填"):
     val schema = FriendMessageTool.inputSchema
-    val props  = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
+    val props = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
     assert(props.contains("attachments"))
     assert(props.contains("targetDir"))
     assert(props.contains("overwrite"))

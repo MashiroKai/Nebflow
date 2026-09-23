@@ -24,9 +24,11 @@ object NebflowBackup:
   private val home: Path = PathUtil.dataRoot
   private val fmt = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
-  /** File patterns to back up (relative to the data root). The config file
-    * matches BOTH the brand name and the hardcoded legacy "nebflow.json"
-    * (L3 rebrand compat — identical names collapse to one match). */
+  /**
+   * File patterns to back up (relative to the data root). The config file
+   * matches BOTH the brand name and the hardcoded legacy "nebflow.json"
+   * (L3 rebrand compat — identical names collapse to one match).
+   */
   private val includePatterns: List[String => Boolean] = List(
     // Top-level config files
     _ == "User.md",

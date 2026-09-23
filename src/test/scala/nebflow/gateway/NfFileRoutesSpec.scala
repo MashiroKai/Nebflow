@@ -43,9 +43,11 @@ class NfFileRoutesSpec extends CatsEffectSuite:
 
   private val store = NfTicketStore.unsafeCreate(1800)
 
-  /** Injected C1-5 policy: nothing under test lives in P1/P3, and the R2
-    * inode set is empty — the subject here is the ticket leg, not the
-    * credential namespace (that is NfTicketRoutesSpec's job). */
+  /**
+   * Injected C1-5 policy: nothing under test lives in P1/P3, and the R2
+   * inode set is empty — the subject here is the ticket leg, not the
+   * credential namespace (that is NfTicketRoutesSpec's job).
+   */
   private val policy = WebSocketRoutes.NfPathPolicy(
     java.nio.file.Paths.get("/nonexistent-nebflow-data-root"),
     java.nio.file.Paths.get("/nonexistent-nebflow-workspace"),
@@ -62,9 +64,16 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     Files.write(tmp.resolve("evil.sh"), "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8))
     try test(os.Path(tmp)).unsafeRunSync()
     finally
-      Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(
-        Files.deleteIfExists
-      )
+      Files
+        .walk(tmp)
+        .sorted(java.util.Comparator.reverseOrder())
+        .iterator()
+        .asScala
+        .foreach(
+          Files.deleteIfExists
+        )
+
+  end withTempFiles
 
   /** One seeded file in its own temp dir; cleaned up after `test`. */
   private def withSeedFile[A](name: String, bytes: Array[Byte])(test: Path => IO[A]): A =
@@ -80,8 +89,10 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   private def ticketFor(p: String): String =
     store.issue("spec", java.nio.file.Paths.get(p).toRealPath().toString).unsafeRunSync().token
 
-  /** A ticket for a path that need not exist (the read-leg 404 case: the
-    * issuer would never mint one, so the store is called directly). */
+  /**
+   * A ticket for a path that need not exist (the read-leg 404 case: the
+   * issuer would never mint one, so the store is called directly).
+   */
   private def ticketForMissing(p: String): String =
     store.issue("spec", p).unsafeRunSync().token
 
@@ -194,9 +205,38 @@ class NfFileRoutesSpec extends CatsEffectSuite:
 
   test("whitelist: pre-fix media types intact (no silent narrowing)") {
     val preFix = Set(
-      "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
-      "mp4", "webm", "ogg", "ogv", "mov", "mp3", "wav", "oga", "flac", "aac", "m4a",
-      "woff", "woff2", "ttf", "otf", "pdf", "docx", "xlsx", "xlsm", "pptx", "epub"
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "ico",
+      "bmp",
+      "avif",
+      "tiff",
+      "tif",
+      "mp4",
+      "webm",
+      "ogg",
+      "ogv",
+      "mov",
+      "mp3",
+      "wav",
+      "oga",
+      "flac",
+      "aac",
+      "m4a",
+      "woff",
+      "woff2",
+      "ttf",
+      "otf",
+      "pdf",
+      "docx",
+      "xlsx",
+      "xlsm",
+      "pptx",
+      "epub"
     )
     assert(preFix.subsetOf(WebSocketRoutes.NfFileAllowedExt))
   }
@@ -232,11 +272,42 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     // Equality in BOTH directions is the point: `++` alone would let a silent
     // deletion through, and `subsetOf` would let an unnoticed extra in.
     val atBranchBase = Set(
-      "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
-      "mp4", "webm", "ogg", "ogv", "mov", "mp3", "wav", "oga", "flac", "aac", "m4a",
-      "woff", "woff2", "ttf", "otf",
-      "pdf", "docx", "xlsx", "xlsm", "pptx", "epub",
-      "js", "mjs", "css", "json"
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "ico",
+      "bmp",
+      "avif",
+      "tiff",
+      "tif",
+      "mp4",
+      "webm",
+      "ogg",
+      "ogv",
+      "mov",
+      "mp3",
+      "wav",
+      "oga",
+      "flac",
+      "aac",
+      "m4a",
+      "woff",
+      "woff2",
+      "ttf",
+      "otf",
+      "pdf",
+      "docx",
+      "xlsx",
+      "xlsm",
+      "pptx",
+      "epub",
+      "js",
+      "mjs",
+      "css",
+      "json"
     )
     assertEquals(atBranchBase.size, 36, "the base census must stay the documented 36 entries")
     assertEquals(
@@ -289,3 +360,4 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+end NfFileRoutesSpec

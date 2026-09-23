@@ -167,11 +167,18 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
     // 顶档下 `ToolReversibility` 恒 true ⇒ `permissionDecision` 恒 Allow ⇒ 后端从不
     // 发 `askPermission` 帧 ⇒ 前端那两条静默应答路径**无卡可答**（不是"被抑制"，
     // 而是没有对象）。对照：confirm-edits 下 Write 必须为不可逆（⇒ 出卡）。
-    val write = JsonObject("file_path" -> io.circe.Json.fromString("/tmp/x"), "content" -> io.circe.Json.fromString("y"))
+    val write =
+      JsonObject("file_path" -> io.circe.Json.fromString("/tmp/x"), "content" -> io.circe.Json.fromString("y"))
     val dangerousBash = JsonObject("command" -> io.circe.Json.fromString("rm -rf /tmp/permshield-probe"))
     assert(ToolReversibility.isReversible("Write", write, SafetyMode.AutoAll), "auto-all: Write is auto-approved")
-    assert(ToolReversibility.isReversible("Bash", dangerousBash, SafetyMode.AutoAll), "auto-all: even dangerous Bash is auto-approved")
-    assert(!ToolReversibility.isReversible("Write", write, SafetyMode.ConfirmEdits), "confirm-edits: Write must ask (card)")
+    assert(
+      ToolReversibility.isReversible("Bash", dangerousBash, SafetyMode.AutoAll),
+      "auto-all: even dangerous Bash is auto-approved"
+    )
+    assert(
+      !ToolReversibility.isReversible("Write", write, SafetyMode.ConfirmEdits),
+      "confirm-edits: Write must ask (card)"
+    )
 
   // ── 严格 wire 解析（写入口白名单；禁静默兜底）──────────────────────────────
 

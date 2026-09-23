@@ -238,7 +238,8 @@ class ConfigServiceSpec extends FunSuite:
 
     // #339：llm.model 校验/改写均已删——incoming 带旧名 refs 直接接受（无
     // 校验可触发拒绝），死字段按 merge 原样保留。
-    val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
+    val incoming =
+      s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
@@ -324,29 +325,36 @@ class ConfigServiceSpec extends FunSuite:
     assertEquals(coding.downField("description").as[String], Right("d"))
   }
 
-
   // ── runtime-authoritative overrides（冻结修复 2026-08-27）：陈旧快照不得回滚 ──
 
-  /** Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
-    * state after the user has configured a freeze schedule. */
+  /**
+   * Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
+   * state after the user has configured a freeze schedule.
+   */
   private def seedConfigWithSchedule(enabled: Boolean, segs: String): Unit =
     os.write.over(
       PathUtil.dataRoot / "nebflow.json",
-      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider("glm").noSpaces}}}}""",
+      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider(
+          "glm"
+        ).noSpaces}}}}""",
       createFolders = true
     )
 
   private def readWorkSchedule(): Option[Json] =
     parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
 
-  test("updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)") {
+  test(
+    "updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)"
+  ) {
     seedConfigWithSchedule(enabled = true, segs = """[{"start":"09:00","end":"12:00"}]""")
     // The authoritative in-memory ref says: disabled BUT segments preserved (08-25 ruling).
     val authoritative = parse("""{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}""").toOption.get
     // A stale full-config snapshot captured BEFORE the user toggled off — it still
     // carries enabled=true. Any provider save flushes this back; without the
     // override the disk rolls back and freeze resurrects after restart.
-    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider("newp").noSpaces}}}}"""
+    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider(
+        "newp"
+      ).noSpaces}}}}"""
     val result = ConfigService.updateConfig(staleIncoming, Map("workSchedule" -> authoritative)).unsafeRunSync()
     assertEquals(result, Right(()))
     val ws = readWorkSchedule().get
@@ -358,7 +366,8 @@ class ConfigServiceSpec extends FunSuite:
       """{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}"""
     )
     // The non-runtime part of the update still landed (deep merge unchanged).
-    val providers = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
+    val providers =
+      parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
     assertEquals(providers.downField("newp").as[Json].isRight, true)
   }
 

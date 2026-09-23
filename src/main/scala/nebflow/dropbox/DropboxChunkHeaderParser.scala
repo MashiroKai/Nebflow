@@ -25,13 +25,13 @@ object DropboxChunkHeaderParser:
     def h(name: String): Option[String] =
       headers.get(CIString(name)).map(_.head.value.trim).filter(_.nonEmpty)
     for
-      proto     <- h("x-dropbox-proto").flatMap(_.toIntOption)
+      proto <- h("x-dropbox-proto").flatMap(_.toIntOption)
       if proto == AttachContract.ProtoChunked
-      index     <- h("x-dropbox-index").flatMap(_.toIntOption)
-      total     <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
+      index <- h("x-dropbox-index").flatMap(_.toIntOption)
+      total <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
       chunkSize <- h("x-dropbox-chunk-size").flatMap(_.toIntOption)
-      chunkSha  <- h("x-dropbox-chunk-sha256")
-      wholeSha  <- h("x-dropbox-whole-sha256")
+      chunkSha <- h("x-dropbox-chunk-sha256")
+      wholeSha <- h("x-dropbox-whole-sha256")
     yield DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
 
 end DropboxChunkHeaderParser

@@ -81,7 +81,10 @@ class FlowDagCompilerSpec extends FunSuite:
 
   test("E-016: param min > max"):
     val flow = FlowDagDef(
-      "f", "d", Map("a" -> node(onComplete = Return)), "a",
+      "f",
+      "d",
+      Map("a" -> node(onComplete = Return)),
+      "a",
       params = Map("x" -> FlowParamSpec("int", min = Some(5), max = Some(2)))
     )
     assert(hasCode(flow, "016"))
@@ -95,18 +98,26 @@ class FlowDagCompilerSpec extends FunSuite:
   private def templateFlow(input: String, templateIsStatic: Boolean): FlowDagDef =
     if templateIsStatic then
       // 'w' is NOT referenced as a dynamic template — any {{}} in its input is E-101
-      FlowDagDef("f", "d",
+      FlowDagDef(
+        "f",
+        "d",
         Map(
           "p" -> node(onComplete = Goto("w")),
           "w" -> node(input = input, onComplete = Return)
-        ), "p")
+        ),
+        "p"
+      )
     else
       // 'w' IS the dynamic template — p must declare the slots field the fan reads
-      FlowDagDef("f", "d",
+      FlowDagDef(
+        "f",
+        "d",
         Map(
           "p" -> node(onComplete = ParallelDynamic("$p.slots.items", "w"), outputs = Map("items" -> "array")),
           "w" -> node(input = input, onComplete = Return)
-        ), "p")
+        ),
+        "p"
+      )
 
   test("E-101: static node uses {{item}} (v4 join accident regression)"):
     val flow = templateFlow("汇总 {{item}}", templateIsStatic = true)
@@ -128,37 +139,53 @@ class FlowDagCompilerSpec extends FunSuite:
   // ── Pass 2 引用与结构 ─────────────────────────────────────────────────
 
   test("E-201: slot reference without declared outputs (redo accident regression)"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "qa" -> node(onComplete = Goto("judge1")),
         "judge1" -> node(onComplete = Goto("redo"), outputs = Map("passBlocks" -> "array")),
         "redo" -> node(input = "$judge1.slots.failBlocks", onComplete = Return)
-      ), "qa")
+      ),
+      "qa"
+    )
     val errs = errorsOf(flow)
     assert(errs.exists(e => e.startsWith("[E-201] node 'redo'.input") && e.contains("failBlocks")), errs.mkString("\n"))
 
   test("E-201: literal slotField without declared outputs on the owner"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "p" -> node(onComplete = ParallelDynamic("blocks", "w")),
         "w" -> node(input = "{{item}}", onComplete = Return)
-      ), "p")
+      ),
+      "p"
+    )
     assert(hasCode(flow, "201"))
 
   test("E-201: self-referencing slot"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(input = "$a.slots.self", onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     val errs = errorsOf(flow)
     assert(errs.exists(_.startsWith("[E-201] node 'a'.input")), errs.mkString("\n"))
 
   test("E-202: switch case routes to a ghost node"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Switch("$a.verdict", Map("pass" -> Goto("ghost"), "fail" -> Goto("b")))),
         "b" -> node(onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "202"))
 
   test("E-203.1: entry not in nodes"):
@@ -166,76 +193,103 @@ class FlowDagCompilerSpec extends FunSuite:
     assert(hasCode(flow, "203.1"))
 
   test("E-203.2: orphan node is a warning (not blocking)"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Return),
         "orphan" -> node(onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     val r = compile(flow)
     assert(r.warnings.exists(_.code == "203.2"), r.renderAll)
     assert(!r.rejected, "orphan must not block (D2 warning)")
 
   test("E-203.3: unconditional cycle A→B→A"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Goto("b")),
         "b" -> node(onComplete = Goto("a"))
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "203.3"))
 
   test("E-204: $params.ghost with no declared param"):
-    val flow = FlowDagDef("f", "d",
-      Map("a" -> node(input = "$params.ghost", onComplete = Return)), "a")
+    val flow = FlowDagDef("f", "d", Map("a" -> node(input = "$params.ghost", onComplete = Return)), "a")
     assert(hasCode(flow, "204"))
 
   test("E-205: $ghost.output references a nonexistent node"):
-    val flow = FlowDagDef("f", "d",
-      Map("a" -> node(input = "$ghost.output", onComplete = Return)), "a")
+    val flow = FlowDagDef("f", "d", Map("a" -> node(input = "$ghost.output", onComplete = Return)), "a")
     assert(hasCode(flow, "205"))
 
   test("E-206: $worker.all.output but worker is not a dynamic template"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(input = "$worker.all.output", onComplete = Goto("worker")),
         "worker" -> node(onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "206"))
 
   test("E-207: switch expression references a ghost node"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Switch("$ghost.verdict", Map("pass" -> Goto("b"), "fail" -> Goto("b")))),
         "b" -> node(onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "207"))
 
   test("E-207: switch expression not of the form $node.field"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Switch("verdict", Map("pass" -> Goto("b"), "fail" -> Goto("b")))),
         "b" -> node(onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "207"))
 
   // ── Pass 2/4 结构 + agent ─────────────────────────────────────────────
 
   test("E-208: static fan exceeds maxFanout"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Parallel(List("b1", "b2", "b3"))),
         "b1" -> node(onComplete = Goto("j")),
         "b2" -> node(onComplete = Goto("j")),
         "b3" -> node(onComplete = Goto("j")),
         "j" -> node(onComplete = Return)
-      ), "a", maxFanout = 2)
+      ),
+      "a",
+      maxFanout = 2
+    )
     assert(hasCode(flow, "208"))
 
   test("E-211: no termination path"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(onComplete = Goto("b")),
         "b" -> node(onComplete = Goto("a"))
-      ), "a")
+      ),
+      "a"
+    )
     assert(hasCode(flow, "211"))
 
   test("E-212: single node (agent + skill, not a flow)"):
@@ -250,49 +304,70 @@ class FlowDagCompilerSpec extends FunSuite:
   // ── Pass 类型层 ───────────────────────────────────────────────────────
 
   test("E-301: parallel.slots references a string-typed slot"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "p" -> node(onComplete = ParallelDynamic("$p.slots.items", "w"), outputs = Map("items" -> "string")),
         "w" -> node(input = "{{item}}", onComplete = Return)
-      ), "p")
+      ),
+      "p"
+    )
     assert(hasCode(flow, "301"))
 
   test("E-303: $t.all.slots.f where template lacks the slot declaration"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "p" -> node(onComplete = ParallelDynamic("$p.slots.items", "w"), outputs = Map("items" -> "array")),
         "w" -> node(input = "{{item}}", onComplete = Goto("j")),
         "j" -> node(input = "$w.all.slots.result", onComplete = Return)
-      ), "p")
+      ),
+      "p"
+    )
     assert(hasCode(flow, "303"))
 
   test("E-304: one template referenced by two dynamic fans"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "p1" -> node(onComplete = ParallelDynamic("$p1.slots.a", "w"), outputs = Map("a" -> "array")),
         "p2" -> node(onComplete = ParallelDynamic("$p2.slots.b", "w"), outputs = Map("b" -> "array")),
         "w" -> node(input = "{{item}}", onComplete = Return)
-      ), "p1")
+      ),
+      "p1"
+    )
     assert(hasCode(flow, "304"))
 
   // ── 正例 ──────────────────────────────────────────────────────────────
 
   test("R3 positive case: planner outputs.blocks + judge outputs.failBlocks + template {{}} compiles clean"):
     val flow = FlowDagDef(
-      "r3", "R3 实证模式",
+      "r3",
+      "R3 实证模式",
       Map(
-        "planner" -> node(input = "$task", onComplete = ParallelDynamic("$planner.slots.blocks", "worker"),
-          outputs = Map("blocks" -> "array")),
+        "planner" -> node(
+          input = "$task",
+          onComplete = ParallelDynamic("$planner.slots.blocks", "worker"),
+          outputs = Map("blocks" -> "array")
+        ),
         "worker" -> node(input = "处理 {{item}} ({{index}}/{{len}})", onComplete = Goto("join")),
         "join" -> node(input = "$worker.all.output", onComplete = Goto("judge")),
-        "judge" -> node(input = "$task", onComplete = Switch("$judge.verdict",
-          Map("pass" -> Return, "fail" -> Goto("redo2")), default = Some(Return)),
-          outputs = Map("failBlocks" -> "array")),
+        "judge" -> node(
+          input = "$task",
+          onComplete = Switch("$judge.verdict", Map("pass" -> Return, "fail" -> Goto("redo2")), default = Some(Return)),
+          outputs = Map("failBlocks" -> "array")
+        ),
         // fail→redo2 是第二层 dynamic fanout（judge.failBlocks → redo-worker#N →
         // join）——join 的所有 in-edge 都是 fan 分支到达，不触发 E-210 混合到达
         "redo2" -> node(input = "$task", onComplete = ParallelDynamic("$judge.slots.failBlocks", "redo-worker")),
         "redo-worker" -> node(input = "修复 {{item}}", onComplete = Goto("join"))
-      ), "planner", maxFanout = 8)
+      ),
+      "planner",
+      maxFanout = 8
+    )
     val r = compile(flow)
     assert(r.errors.isEmpty, r.renderAll)
     assert(r.warnings.isEmpty, r.renderAll)
@@ -300,18 +375,26 @@ class FlowDagCompilerSpec extends FunSuite:
   // ── 格式 ──────────────────────────────────────────────────────────────
 
   test("error format matches compiler style (code + location + reason + fix)"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(input = "{{item}}", onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     val line = errorsOf(flow).find(_.startsWith("[E-101]")).get
     assert(line.matches("""\[E-101\] node 'a'\.input: .* — .*"""), line)
 
   test("all errors are collected (not fail-fast on the first)"):
-    val flow = FlowDagDef("f", "d",
+    val flow = FlowDagDef(
+      "f",
+      "d",
       Map(
         "a" -> node(input = "{{item}} $ghost.output $params.nope", onComplete = Return)
-      ), "a")
+      ),
+      "a"
+    )
     val errs = errorsOf(flow)
     assert(errs.exists(_.startsWith("[E-101]")), errs.mkString("\n"))
     assert(errs.exists(_.startsWith("[E-205]")), errs.mkString("\n"))
@@ -354,6 +437,8 @@ class FlowDagCompilerSpec extends FunSuite:
       createFolders = true
     )
 
+  end writeFixtureFlows
+
   test("all predefined flows under <dataRoot>/flows compile with zero errors (fixture data root)"):
     val dataRoot = os.temp.dir(prefix = "nb-flowdagspec-root-")
     try
@@ -371,10 +456,13 @@ class FlowDagCompilerSpec extends FunSuite:
             // Predefined-flow nodes resolve via loadFlowAgent: flow-local
             // agents (flows/<name>/agents/) first, global fallback.
             val flowAgentDir = f / os.up / "agents"
-            val flowAgents = if os.exists(flowAgentDir) then os.list(flowAgentDir).filter(os.isDir).map(_.last).toSet else Set.empty[String]
+            val flowAgents =
+              if os.exists(flowAgentDir) then os.list(flowAgentDir).filter(os.isDir).map(_.last).toSet
+              else Set.empty[String]
             val r = FlowDagCompiler.validate(flow, agents ++ flowAgents)
             assert(r.errors.isEmpty, s"${f} compile errors:\n${r.renderAll}")
       }
     finally os.remove.all(dataRoot)
+    end try
 
 end FlowDagCompilerSpec

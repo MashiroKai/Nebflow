@@ -16,14 +16,16 @@ case class DropboxMessage(
   ts: Long,
   text: String = "",
   // ===== 设备会话统一批 MVP-1（2026-09-15）：消息来源标记 =====
-  /** 该消息的**作者面**：`"user"`（人发的，默认）/ `"agent"`（本机 agent 经
-    * `SendMessage to=device:` 代发，`FriendMessageTool.sendDevice`）。
-    *
-    * 默认值保证**旧 JSON 兼容**（`messages.json` 里无该键的历史消息照旧解码 = user）。
-    * 客户端 `messages.js` 的 `isAgentSent` 直读此字段渲染「Agent 代发」徽章。
-    *
-    * 🔴 收端纪律（设计卡 §9 P3）：该字段由**发送端网关**权威写入；收端**不得**把 wire
-    * 传来的 `origin` 直读为「agent 发」的定论（可作**提示级**渲染）。服务端强制属 MVP-2。 */
+  /**
+   * 该消息的**作者面**：`"user"`（人发的，默认）/ `"agent"`（本机 agent 经
+   * `SendMessage to=device:` 代发，`FriendMessageTool.sendDevice`）。
+   *
+   * 默认值保证**旧 JSON 兼容**（`messages.json` 里无该键的历史消息照旧解码 = user）。
+   * 客户端 `messages.js` 的 `isAgentSent` 直读此字段渲染「Agent 代发」徽章。
+   *
+   * 🔴 收端纪律（设计卡 §9 P3）：该字段由**发送端网关**权威写入；收端**不得**把 wire
+   * 传来的 `origin` 直读为「agent 发」的定论（可作**提示级**渲染）。服务端强制属 MVP-2。
+   */
   origin: String = "user",
   // File-specific fields
   transferId: String = "",
@@ -33,26 +35,28 @@ case class DropboxMessage(
   status: String = "", // "pending" | "accepted" | "rejected" | "transferring" | "completed" | "failed"
   savedPath: String = "", // where the file was saved (receiver side, after completion)
   // ===== 发送端本机真实路径（selfattach 批 · 作者 D-1 = A + B′ 混合裁定，2026-09-17）=====
-  /** **发送端**本机真实绝对路径（B′ 腿）。与 [[savedPath]] **不同轴**，禁互相借用：
-    *
-    *   - `savedPath` 逐字限**接收端落点**（作者 2026-09-17 裁定原文：`receiver side,
-    *     after completion`）——语义在**收**侧；
-    *   - 本键 = **发**侧自己的本地现实（「每侧记录自己的本地现实」的发送半边）。
-    *
-    *  唯一写者 = **工具 / agent 附件腿**（`DropboxService.sendLocalFiles` 的
-    *  `sendLocalOne(…, p, …)`：字节从本机磁盘直读，`p` 已过绝对 / 存在 / 非目录三道校验）。
-    *  浏览器 user 腿**没有**该值（`<input type=file>` 的 `File` 不暴露绝对路径；服务端
-    *  staging temp 在完成前已删）⇒ 那侧恒 `""`（缺省 = 无值，**不猜、不拼接**）。
-    *
-    *  🔴 隐私（作者约束「记录发送端本地真实路径、**零复制**、**禁随 WS 帧广播对端**」）：
-    *  本键**不上对端帧** —— 网关发往对端的载荷全部是手写 `Json.obj`
-    *  （`offerOne` 的 `file-offer` / `file-response` / `completeTransfer` 的 `file-complete`），
-    *  不含本键；它只随**本机**台账（`messages.json`）与**本机**前端帧
-    *  （`dropbox-message` / `dropbox-get-history`）流动。
-    *
-    *  🔴 零字节复制 / 零留存：只记字符串本身，不产生任何副本、暂存件或缓存件。
-    *
-    *  默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无值。 */
+  /**
+   * **发送端**本机真实绝对路径（B′ 腿）。与 [[savedPath]] **不同轴**，禁互相借用：
+   *
+   *   - `savedPath` 逐字限**接收端落点**（作者 2026-09-17 裁定原文：`receiver side,
+   *     after completion`）——语义在**收**侧；
+   *   - 本键 = **发**侧自己的本地现实（「每侧记录自己的本地现实」的发送半边）。
+   *
+   *  唯一写者 = **工具 / agent 附件腿**（`DropboxService.sendLocalFiles` 的
+   *  `sendLocalOne(…, p, …)`：字节从本机磁盘直读，`p` 已过绝对 / 存在 / 非目录三道校验）。
+   *  浏览器 user 腿**没有**该值（`<input type=file>` 的 `File` 不暴露绝对路径；服务端
+   *  staging temp 在完成前已删）⇒ 那侧恒 `""`（缺省 = 无值，**不猜、不拼接**）。
+   *
+   *  🔴 隐私（作者约束「记录发送端本地真实路径、**零复制**、**禁随 WS 帧广播对端**」）：
+   *  本键**不上对端帧** —— 网关发往对端的载荷全部是手写 `Json.obj`
+   *  （`offerOne` 的 `file-offer` / `file-response` / `completeTransfer` 的 `file-complete`），
+   *  不含本键；它只随**本机**台账（`messages.json`）与**本机**前端帧
+   *  （`dropbox-message` / `dropbox-get-history`）流动。
+   *
+   *  🔴 零字节复制 / 零留存：只记字符串本身，不产生任何副本、暂存件或缓存件。
+   *
+   *  默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无值。
+   */
   deviceOutPath: String = "",
   // ===== 单条消息多附件（附件腿批，2026-09-12）=====
   // 一条消息最多 9 件（AttachContract.MaxAttachmentsPerMessage）；N 件共用同一 batchId，
@@ -61,25 +65,31 @@ case class DropboxMessage(
   attachmentIndex: Int = 0,
   attachmentCount: Int = 1,
   // ===== 失败原因（xferb 批 · P0-3，2026-09-20）=====
-  /** 结构化失败原因**码**（`AttachContract.Codes.*`，如 `PEER_UNREACHABLE`）。
-    *
-    * WHY 落台账：失败原因此前只随 `dropbox-file-complete` 一次性事件流动 ⇒ 刷新/重开窗后
-    * 界面上只剩一个「失败」，作者原话「失败没有原因」正是这个形状（服务端知道原因，记录里没有）。
-    * 默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无码（**不伪造**）。 */
+  /**
+   * 结构化失败原因**码**（`AttachContract.Codes.*`，如 `PEER_UNREACHABLE`）。
+   *
+   * WHY 落台账：失败原因此前只随 `dropbox-file-complete` 一次性事件流动 ⇒ 刷新/重开窗后
+   * 界面上只剩一个「失败」，作者原话「失败没有原因」正是这个形状（服务端知道原因，记录里没有）。
+   * 默认值 ⇒ 旧 JSON（无该键）照旧解码 = 无码（**不伪造**）。
+   */
   errorCode: String = "",
-  /** 结构化失败原因**全文**（`AttachError.toJson.noSpaces`，含 phase / chunkIndex /
-    * p2pReason / relayReason 等可选字段）。与 [[errorCode]] 同轴：码供判路、全文供回显。
-    * 只在本机台账 + 本机前端帧里流动（**不上对端帧** —— 对端原因以 `file-complete` 帧为准）。 */
+  /**
+   * 结构化失败原因**全文**（`AttachError.toJson.noSpaces`，含 phase / chunkIndex /
+   * p2pReason / relayReason 等可选字段）。与 [[errorCode]] 同轴：码供判路、全文供回显。
+   * 只在本机台账 + 本机前端帧里流动（**不上对端帧** —— 对端原因以 `file-complete` 帧为准）。
+   */
   errorDetail: String = ""
 )
 
 object DropboxMessage:
   /** `origin` 的两个合法取值（单一来源；调用方不得写字面量）。 */
-  val OriginUser  = "user"
+  val OriginUser = "user"
   val OriginAgent = "agent"
 
-  /** 读 wire / 旧 JSON 的 `origin`：**未知值一律回落 `OriginUser`**（fail-safe 方向 =
-    * 「不声称是 agent 发的」——徽章是加强断言，缺证据不得自证）。 */
+  /**
+   * 读 wire / 旧 JSON 的 `origin`：**未知值一律回落 `OriginUser`**（fail-safe 方向 =
+   * 「不声称是 agent 发的」——徽章是加强断言，缺证据不得自证）。
+   */
   def normalizeOrigin(raw: String): String =
     if raw == OriginAgent then OriginAgent else OriginUser
 
@@ -125,14 +135,26 @@ object DropboxMessage:
 
   /** 可缺键（缺席即按上表缺省值补齐；与 [[RequiredKeys]] 互补且并集 = 全部 18 键）。 */
   val OptionalKeys: List[String] = List(
-    "text", "origin", "transferId", "fileName", "fileSize", "mimeType",
-    "status", "savedPath", "deviceOutPath", "batchId", "attachmentIndex", "attachmentCount",
-    "errorCode", "errorDetail"
+    "text",
+    "origin",
+    "transferId",
+    "fileName",
+    "fileSize",
+    "mimeType",
+    "status",
+    "savedPath",
+    "deviceOutPath",
+    "batchId",
+    "attachmentIndex",
+    "attachmentCount",
+    "errorCode",
+    "errorDetail"
   )
 
   given Encoder[DropboxMessage] = deriveEncoder
 
-  /** 显式 decoder（取代裸 `deriveDecoder`）——**逐键容错**，逐键语义如下：
+  /**
+   * 显式 decoder（取代裸 `deriveDecoder`）——**逐键容错**，逐键语义如下：
    *
    *   - 必给键：`c.get[...]` ⇒ 缺席 / 类型不符 = `Left`（**该条目**失败；绝不放大成整表失败，
    *     整表聚合由 [[DropboxLedger.decode]] 负责跳过 + 计数）；
@@ -142,32 +164,46 @@ object DropboxMessage:
    */
   given Decoder[DropboxMessage] = Decoder.instance { c =>
     for
-      msgId           <- c.get[String]("msgId")
-      direction       <- c.get[String]("direction")
-      kind            <- c.get[String]("kind")
-      ts              <- c.get[Long]("ts")
-      text            <- c.get[Option[String]]("text").map(_.getOrElse(""))
-      origin          <- c.get[Option[String]]("origin").map(_.getOrElse(OriginUser))
-      transferId      <- c.get[Option[String]]("transferId").map(_.getOrElse(""))
-      fileName        <- c.get[Option[String]]("fileName").map(_.getOrElse(""))
-      fileSize        <- c.get[Option[Long]]("fileSize").map(_.getOrElse(0L))
-      mimeType        <- c.get[Option[String]]("mimeType").map(_.getOrElse(""))
-      status          <- c.get[Option[String]]("status").map(_.getOrElse(""))
-      savedPath       <- c.get[Option[String]]("savedPath").map(_.getOrElse(""))
-      deviceOutPath   <- c.get[Option[String]]("deviceOutPath").map(_.getOrElse(""))
-      batchId         <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
+      msgId <- c.get[String]("msgId")
+      direction <- c.get[String]("direction")
+      kind <- c.get[String]("kind")
+      ts <- c.get[Long]("ts")
+      text <- c.get[Option[String]]("text").map(_.getOrElse(""))
+      origin <- c.get[Option[String]]("origin").map(_.getOrElse(OriginUser))
+      transferId <- c.get[Option[String]]("transferId").map(_.getOrElse(""))
+      fileName <- c.get[Option[String]]("fileName").map(_.getOrElse(""))
+      fileSize <- c.get[Option[Long]]("fileSize").map(_.getOrElse(0L))
+      mimeType <- c.get[Option[String]]("mimeType").map(_.getOrElse(""))
+      status <- c.get[Option[String]]("status").map(_.getOrElse(""))
+      savedPath <- c.get[Option[String]]("savedPath").map(_.getOrElse(""))
+      deviceOutPath <- c.get[Option[String]]("deviceOutPath").map(_.getOrElse(""))
+      batchId <- c.get[Option[String]]("batchId").map(_.getOrElse(""))
       attachmentIndex <- c.get[Option[Int]]("attachmentIndex").map(_.getOrElse(0))
       attachmentCount <- c.get[Option[Int]]("attachmentCount").map(_.getOrElse(1))
-      errorCode       <- c.get[Option[String]]("errorCode").map(_.getOrElse(""))
-      errorDetail     <- c.get[Option[String]]("errorDetail").map(_.getOrElse(""))
+      errorCode <- c.get[Option[String]]("errorCode").map(_.getOrElse(""))
+      errorDetail <- c.get[Option[String]]("errorDetail").map(_.getOrElse(""))
     yield DropboxMessage(
-      msgId = msgId, direction = direction, kind = kind, ts = ts, text = text,
-      origin = origin, transferId = transferId, fileName = fileName, fileSize = fileSize,
-      mimeType = mimeType, status = status, savedPath = savedPath, deviceOutPath = deviceOutPath,
-      batchId = batchId, attachmentIndex = attachmentIndex, attachmentCount = attachmentCount,
-      errorCode = errorCode, errorDetail = errorDetail
+      msgId = msgId,
+      direction = direction,
+      kind = kind,
+      ts = ts,
+      text = text,
+      origin = origin,
+      transferId = transferId,
+      fileName = fileName,
+      fileSize = fileSize,
+      mimeType = mimeType,
+      status = status,
+      savedPath = savedPath,
+      deviceOutPath = deviceOutPath,
+      batchId = batchId,
+      attachmentIndex = attachmentIndex,
+      attachmentCount = attachmentCount,
+      errorCode = errorCode,
+      errorDetail = errorDetail
     )
   }
+end DropboxMessage
 
 // ===== File Transfer State (in-memory + throttled persistence) =====
 
@@ -198,16 +234,20 @@ case class FileTransfer(
   proto: Int = 0, // 0 = legacy 整件，1 = 分块，2 = 分块 + 接收端指定目录（AttachContract.ProtoAssignDir）
   // ===== 设备腿 targetDir（契约升版批，2026-09-14）=====
   // 全部带默认值 ⇒ 旧 transfers.json（无这些键）照旧解码，向后兼容。
-  /** 落点目录。
-    *   - 接收端（direction = "in"）：§③ 判定链**通过后**的 canonical 落点 —— 判定结果
-    *     在 `file-offer` 阶段固化一次，收块/commit 阶段**不得**重新解释字符串；
-    *   - 发送端（direction = "out"）：本次请求的 `targetDir`（NFC 形态，回显用）。
-    * `None` = 缺省语义（落 `DropboxUtil.downloadsDir`），与今天逐字节一致。 */
+  /**
+   * 落点目录。
+   *   - 接收端（direction = "in"）：§③ 判定链**通过后**的 canonical 落点 —— 判定结果
+   *     在 `file-offer` 阶段固化一次，收块/commit 阶段**不得**重新解释字符串；
+   *   - 发送端（direction = "out"）：本次请求的 `targetDir`（NFC 形态，回显用）。
+   * `None` = 缺省语义（落 `DropboxUtil.downloadsDir`），与今天逐字节一致。
+   */
   targetDir: Option[String] = None,
   /** 接收端裁定：非空 = 该请求被拒（`AttachContract.Codes.TargetDir*`），落点不生效。 */
   targetDirCode: Option[String] = None,
-  /** 发送端：对端自报的 proto 等级（来源 `file-response.proto`）。`None` = 未知/旧端
-    * ⇒ 按 §4.2 候选 1「未确认等级 ⇒ 不发 `targetDir`」。 */
+  /**
+   * 发送端：对端自报的 proto 等级（来源 `file-response.proto`）。`None` = 未知/旧端
+   * ⇒ 按 §4.2 候选 1「未确认等级 ⇒ 不发 `targetDir`」。
+   */
   peerProto: Option[Int] = None,
   lastProgressAt: Long = 0L // 最后一次字节进展（看门狗按它计时，非绝对时间）
 )
@@ -242,7 +282,9 @@ final case class DropboxLedgerDecode(
 )
 
 object DropboxLedger:
-  /** 台账**逐条容错**解码（`~/.nebflow/dropbox/messages.json` 的唯一解码入口）。
+
+  /**
+   * 台账**逐条容错**解码（`~/.nebflow/dropbox/messages.json` 的唯一解码入口）。
    *
    *  分级失败语义（🔴 本批核心判据 = **禁整表失败**）：
    *   - **表级 fail-closed**（唯一）：非 JSON / 顶层不是对象 ⇒ `Left`。这一级没有「其余条目」

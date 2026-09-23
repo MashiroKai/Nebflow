@@ -290,13 +290,14 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   end recoverFolderName
 
-  /** Scan disk for session files not in the index and recover them.
-    *
-    * ⚠ T-2/R1 = C（2026-09-12 作者裁定）：恢复出的会话档位**显式**取全局权威源
-    * （`GlobalSafety.defaultMode`），不再落到 `SessionMeta` 的构造缺省（字面量
-    * "auto-all"）。回归钉 = `SessionStoreRecoverAuthoritySpec`（把全局设为
-    * confirm-edits ⇒ 恢复出的 meta 必须是 confirm-edits，硬编码缺省会变红）。
-    */
+  /**
+   * Scan disk for session files not in the index and recover them.
+   *
+   * ⚠ T-2/R1 = C（2026-09-12 作者裁定）：恢复出的会话档位**显式**取全局权威源
+   * （`GlobalSafety.defaultMode`），不再落到 `SessionMeta` 的构造缺省（字面量
+   * "auto-all"）。回归钉 = `SessionStoreRecoverAuthoritySpec`（把全局设为
+   * confirm-edits ⇒ 恢复出的 meta 必须是 confirm-edits，硬编码缺省会变红）。
+   */
   private def recoverOrphans(indexed: List[SessionMeta]): IO[List[SessionMeta]] =
     nebflow.core.GlobalSafety.defaultMode.flatMap { authorityMode =>
       recoverOrphansWith(indexed, authorityMode)
@@ -530,19 +531,19 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   // `dag-<flow[:10]>-<nodeId>-<ts6>`. Greedy middles + anchored suffixes keep
   // the parse deterministic when agent/flow/node names contain hyphens.
   private val DelegateId = "^delegate-(.+)-[0-9a-f]{8}$".r
-  private val DagId      = "^dag-(.+)-([0-9]{6})$".r
-  private val SubtaskId  = "^subtask-[0-9a-f]{8}$".r
+  private val DagId = "^dag-(.+)-([0-9]{6})$".r
+  private val SubtaskId = "^subtask-[0-9a-f]{8}$".r
 
   /** Derive (name, agentName) for an on-disk-only session from its file id. */
   private def unindexedNameAndAgent(id: String): (String, String) =
     id match
       case DelegateId(agent) => (s"$agent (delegate)", agent)
-      case SubtaskId()       => (s"Subtask ${id.drop("subtask-".length)}", "")
-      case DagId(middle, _)  =>
+      case SubtaskId() => (s"Subtask ${id.drop("subtask-".length)}", "")
+      case DagId(middle, _) =>
         // The flow/node boundary is ambiguous once both contain hyphens; taking
         // the last segment matches the common single-segment nodeId case.
         (s"$middle (flow)", middle.split('-').last)
-      case _                 => (id, "")
+      case _ => (id, "")
 
   /**
    * Search-scope session list: indexed sessions ∪ on-disk `.ui.json` files
@@ -914,15 +915,17 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
-  /** ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖的**持久态**写入——
-    * `SessionMeta.compactThresholdRatio` → `<dataRoot>/sessions/_index.json`，与
-    * [[updateSessionModel]] 同形同列（同一「会话级覆盖」形态）。
-    *
-    * 🔴 **不参与启动清零**：与 `modelRef` 不同，本键**没有**镜像
-    * [[clearAllSessionModels]] 的路径（作者卡答采纳设计 §9-O4(a)：比例是纯标量，
-    * 无「旧配置快照」陈旧风险）⇒ 跨重启保留、用户显式设定不失效。
-    *
-    * `None` = 清除覆盖（恢复默认 = 回现值函数）。 */
+  /**
+   * ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖的**持久态**写入——
+   * `SessionMeta.compactThresholdRatio` → `<dataRoot>/sessions/_index.json`，与
+   * [[updateSessionModel]] 同形同列（同一「会话级覆盖」形态）。
+   *
+   * 🔴 **不参与启动清零**：与 `modelRef` 不同，本键**没有**镜像
+   * [[clearAllSessionModels]] 的路径（作者卡答采纳设计 §9-O4(a)：比例是纯标量，
+   * 无「旧配置快照」陈旧风险）⇒ 跨重启保留、用户显式设定不失效。
+   *
+   * `None` = 清除覆盖（恢复默认 = 回现值函数）。
+   */
   def updateSessionCompactThreshold(id: String, ratio: Option[Double]): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == id then s.copy(compactThresholdRatio = ratio) else s)

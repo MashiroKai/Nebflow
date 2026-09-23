@@ -42,28 +42,28 @@ class AssetsRoutesSpec extends CatsEffectSuite:
   test("serves nested chunks at any depth (web-dist/assets/chunks)") {
     get("/assets/chunks/nested-1.js").map {
       case Some(resp) => assertEquals(resp.status, Status.Ok)
-      case None       => fail("route fell through for nested chunk")
+      case None => fail("route fell through for nested chunk")
     }
   }
 
   test("trailing slash (directory request) is rejected") {
     get("/assets/chunks/").map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)
-      case None       => fail("should have matched the /assets prefix")
+      case None => fail("should have matched the /assets prefix")
     }
   }
 
   test("path traversal is rejected") {
     get("/assets/..%2F..%2Fsecret.js").map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)
-      case None       => fail("should have matched the /assets prefix")
+      case None => fail("should have matched the /assets prefix")
     }
   }
 
   test("backslash in a segment is rejected") {
     get("/assets/chunks%5Cevil.js").map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)
-      case None       => fail("should have matched the /assets prefix")
+      case None => fail("should have matched the /assets prefix")
     }
   }
 
@@ -73,14 +73,14 @@ class AssetsRoutesSpec extends CatsEffectSuite:
     // (they would 404 too, but via the fileName whitelist — keep it local).
     get("/assets/app-deadbeef.js").map {
       case Some(resp) => assertEquals(resp.status, Status.NotFound)
-      case None       => fail("prefix-matched request must not fall through")
+      case None => fail("prefix-matched request must not fall through")
     }
   }
 
   test("non-assets paths do not match this route (fall through)") {
     get("/js/main.js").map {
       case Some(_) => fail("assetsRoutes must not own /js paths")
-      case None    => () // HttpRoutes fallthrough semantics — correct here
+      case None => () // HttpRoutes fallthrough semantics — correct here
     }
   }
 

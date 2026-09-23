@@ -52,6 +52,7 @@ class DeadLoggingResurrectionSpec extends FunSuite:
       lbLogger.detachAppender(appender)
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
 end DeadLoggingResurrectionSpec

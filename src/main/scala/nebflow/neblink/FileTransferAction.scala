@@ -88,6 +88,12 @@ object FileTransferAction:
                   case other => Left(s"Unknown direction: $other")
               }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
 
+      end match
+
+    end if
+
+  end handle
+
   /**
    * legacy 整件 put 的**撞名保护**（dropnam 批 · 作者 2026-09-19 裁定② 明确要求本分支也在保护面内）：
    *   - 目标不存在（或不是普通文件）⇒ 与今天**逐字节一致**（原样写入 / 原样报错）；
@@ -133,9 +139,11 @@ object FileTransferAction:
   //     「既有件 = k × 4 MiB 且 < 来件 total」即触发，见方案件 D3/D4）。
   // 收端**永不**覆盖/删除既有件（作者 2026-09-19 裁定②）⇒ 只有**归属明确**的路径才可写/可清。
 
-  /** 进程内 claim 表：记录「本进程在某路径上**从零开始**写入过的那条流」。
-    * 跨重启失效（重启后旧流本就断了 ⇒ 保守方向 = 对已存在目标 fail-closed 拒绝）。
-    * 键 = 路径字符串；值 = 流标识（`totalBytes/chunkSize`）。完成/失败清理时移除。 */
+  /**
+   * 进程内 claim 表：记录「本进程在某路径上**从零开始**写入过的那条流」。
+   * 跨重启失效（重启后旧流本就断了 ⇒ 保守方向 = 对已存在目标 fail-closed 拒绝）。
+   * 键 = 路径字符串；值 = 流标识（`totalBytes/chunkSize`）。完成/失败清理时移除。
+   */
   private val streamClaims = new java.util.concurrent.ConcurrentHashMap[String, String]()
 
   private def streamKey(totalBytes: Long, chunkSize: Int): String = s"$totalBytes/$chunkSize"
@@ -144,9 +152,11 @@ object FileTransferAction:
   private def transferIdToken(params: JsonObject): Option[String] =
     params("transferId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
 
-  /** 归属判据：① 请求自带 `transferId`，且**路径里内嵌的 `<tid8>` 与之相符**
-    * （路径自证 —— 落名本身由发送端从 transferId 生成，声明与路径同源）；
-    * ② 或本进程曾在该路径上从零写入过同一条流（无 token 的合法多块续传）。 */
+  /**
+   * 归属判据：① 请求自带 `transferId`，且**路径里内嵌的 `<tid8>` 与之相符**
+   * （路径自证 —— 落名本身由发送端从 transferId 生成，声明与路径同源）；
+   * ② 或本进程曾在该路径上从零写入过同一条流（无 token 的合法多块续传）。
+   */
   private def pathOwnedBy(params: JsonObject, path: os.Path, totalBytes: Long, chunkSize: Int): Boolean =
     val tokenOwns = transferIdToken(params).exists(tid => path.last.endsWith(s".dropbox-${tid.take(8)}"))
     tokenOwns || Option(streamClaims.get(path.toString)).contains(streamKey(totalBytes, chunkSize))
@@ -188,16 +198,19 @@ object FileTransferAction:
         // （改前：D1 形态回**成功 ack**（进度面 100%、零字节写入）；D3/D4 形态 append 污染后
         //   `os.remove.all` **删掉对端原件** —— 两者都是本批要消灭的静默失败。）
         Left(
-          AttachContract.AttachError(
-            AttachContract.Codes.FileExistsRefusingAppend,
-            s"Refusing to append to existing $path ($existing bytes): this request declares no ownership of it " +
-              "(no matching transferId token, and this process did not create that file) — the existing file is left untouched (zero write, zero delete)",
-            phase = "transfer",
-            chunkIndex = Some(chunkIndex),
-            bytesReceived = Some(existing),
-            expected = Some(totalBytes.toString),
-            path = Some(path.toString)
-          ).toJson.noSpaces
+          AttachContract
+            .AttachError(
+              AttachContract.Codes.FileExistsRefusingAppend,
+              s"Refusing to append to existing $path ($existing bytes): this request declares no ownership of it " +
+                "(no matching transferId token, and this process did not create that file) — the existing file is left untouched (zero write, zero delete)",
+              phase = "transfer",
+              chunkIndex = Some(chunkIndex),
+              bytesReceived = Some(existing),
+              expected = Some(totalBytes.toString),
+              path = Some(path.toString)
+            )
+            .toJson
+            .noSpaces
         )
       else if zeroChunks then Right(chunkAckJson(0L, computedChunk, None, totalBytes))
       else if alreadyAtOrPastTotal then
@@ -208,13 +221,16 @@ object FileTransferAction:
         // （发送端以为已应用 0 字节，次块因 gap 报 OFFSET_OUT_OF_RANGE）。
         // 分块 put 是「按 offset 追加」语义，本就不该在 overwrite=false 下走 —— 显式拒绝。
         Left(
-          AttachContract.AttachError(
-            AttachContract.Codes.InvalidArgument,
-            s"Chunked put requires overwrite=true (path $path does not exist yet and overwrite=false would silently apply nothing)",
-            phase = "transfer",
-            chunkIndex = Some(chunkIndex),
-            bytesReceived = Some(existing)
-          ).toJson.noSpaces
+          AttachContract
+            .AttachError(
+              AttachContract.Codes.InvalidArgument,
+              s"Chunked put requires overwrite=true (path $path does not exist yet and overwrite=false would silently apply nothing)",
+              phase = "transfer",
+              chunkIndex = Some(chunkIndex),
+              bytesReceived = Some(existing)
+            )
+            .toJson
+            .noSpaces
         )
       else
         val expectedIndex = AttachContract.indexForOffset(existing, chunkSize)
@@ -223,15 +239,18 @@ object FileTransferAction:
           Right(chunkAckJson(existing, computedChunk, None, totalBytes))
         else if chunkIndex > expectedIndex then
           Left(
-            AttachContract.AttachError(
-              AttachContract.Codes.OffsetOutOfRange,
-              s"Chunk $chunkIndex arrives out of order: expected index $expectedIndex (bytesReceived=$existing)",
-              phase = "transfer",
-              chunkIndex = Some(chunkIndex),
-              expectedIndex = Some(expectedIndex),
-              actualIndex = Some(chunkIndex),
-              bytesReceived = Some(existing)
-            ).toJson.noSpaces
+            AttachContract
+              .AttachError(
+                AttachContract.Codes.OffsetOutOfRange,
+                s"Chunk $chunkIndex arrives out of order: expected index $expectedIndex (bytesReceived=$existing)",
+                phase = "transfer",
+                chunkIndex = Some(chunkIndex),
+                expectedIndex = Some(expectedIndex),
+                actualIndex = Some(chunkIndex),
+                bytesReceived = Some(existing)
+              )
+              .toJson
+              .noSpaces
           )
         else
           val payload = java.util.Base64.getDecoder.decode(contentB64)
@@ -240,39 +259,48 @@ object FileTransferAction:
           val expectedBytes = math.min(chunkSize.toLong, totalBytes - derivedOffset)
           if derivedOffset > existing then
             Left(
-              AttachContract.AttachError(
-                AttachContract.Codes.OffsetOutOfRange,
-                s"Chunk $chunkIndex declares offset $derivedOffset but the target already holds $existing bytes",
-                phase = "transfer",
-                chunkIndex = Some(chunkIndex),
-                expected = Some(existing.toString),
-                actual = Some(derivedOffset)
-              ).toJson.noSpaces
+              AttachContract
+                .AttachError(
+                  AttachContract.Codes.OffsetOutOfRange,
+                  s"Chunk $chunkIndex declares offset $derivedOffset but the target already holds $existing bytes",
+                  phase = "transfer",
+                  chunkIndex = Some(chunkIndex),
+                  expected = Some(existing.toString),
+                  actual = Some(derivedOffset)
+                )
+                .toJson
+                .noSpaces
             )
           else if expectedBytes != payload.length.toLong then
             Left(
-              AttachContract.AttachError(
-                AttachContract.Codes.OffsetOutOfRange,
-                s"Chunk $chunkIndex carries ${payload.length} bytes but the plan says $expectedBytes",
-                phase = "transfer",
-                chunkIndex = Some(chunkIndex),
-                expected = Some(expectedBytes.toString),
-                actual = Some(payload.length.toLong)
-              ).toJson.noSpaces
+              AttachContract
+                .AttachError(
+                  AttachContract.Codes.OffsetOutOfRange,
+                  s"Chunk $chunkIndex carries ${payload.length} bytes but the plan says $expectedBytes",
+                  phase = "transfer",
+                  chunkIndex = Some(chunkIndex),
+                  expected = Some(expectedBytes.toString),
+                  actual = Some(payload.length.toLong)
+                )
+                .toJson
+                .noSpaces
             )
           else
             // **接收端自算**块摘要（禁自证）
             val computedChunk = ChunkedTransfer.sha256Hex(payload)
             if computedChunk != chunkSha then
               Left(
-                AttachContract.AttachError(
-                  AttachContract.Codes.ChunkDigestMismatch,
-                  s"Chunk $chunkIndex digest mismatch: declared $chunkSha, computed $computedChunk",
-                  phase = "transfer",
-                  chunkIndex = Some(chunkIndex),
-                  expected = Some(chunkSha),
-                  actualHash = Some(computedChunk)
-                ).toJson.noSpaces
+                AttachContract
+                  .AttachError(
+                    AttachContract.Codes.ChunkDigestMismatch,
+                    s"Chunk $chunkIndex digest mismatch: declared $chunkSha, computed $computedChunk",
+                    phase = "transfer",
+                    chunkIndex = Some(chunkIndex),
+                    expected = Some(chunkSha),
+                    actualHash = Some(computedChunk)
+                  )
+                  .toJson
+                  .noSpaces
               )
             else
               // ===== 续传对齐（xferb 批 · P0-2）=====
@@ -301,32 +329,49 @@ object FileTransferAction:
                     os.remove.all(path)
                     streamClaims.remove(path.toString)
                     Left(
-                      AttachContract.AttachError(
-                        AttachContract.Codes.WholeDigestMismatch,
-                        s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole",
-                        phase = "commit",
-                        expected = Some(wholeSha),
-                        actualHash = Some(computedWhole),
-                        bytesReceived = Some(nowBytes)
-                      ).toJson.noSpaces
+                      AttachContract
+                        .AttachError(
+                          AttachContract.Codes.WholeDigestMismatch,
+                          s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole",
+                          phase = "commit",
+                          expected = Some(wholeSha),
+                          actualHash = Some(computedWhole),
+                          bytesReceived = Some(nowBytes)
+                        )
+                        .toJson
+                        .noSpaces
                     )
                   else
                     // 防御性分支（正常不可达：非归属目标已在入口被拒）—— 禁删别人的件。
                     Left(
-                      AttachContract.AttachError(
-                        AttachContract.Codes.WholeDigestMismatch,
-                        s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole; " +
-                          "the pre-existing file was left untouched (not created by this transfer stream)",
-                        phase = "commit",
-                        expected = Some(wholeSha),
-                        actualHash = Some(computedWhole),
-                        bytesReceived = Some(nowBytes)
-                      ).toJson.noSpaces
+                      AttachContract
+                        .AttachError(
+                          AttachContract.Codes.WholeDigestMismatch,
+                          s"Whole-file digest mismatch: declared $wholeSha, receiver computed $computedWhole; " +
+                            "the pre-existing file was left untouched (not created by this transfer stream)",
+                          phase = "commit",
+                          expected = Some(wholeSha),
+                          actualHash = Some(computedWhole),
+                          bytesReceived = Some(nowBytes)
+                        )
+                        .toJson
+                        .noSpaces
                     )
                 else
                   streamClaims.remove(path.toString)
                   Right(chunkAckJson(nowBytes, computedChunk, Some(computedWhole), totalBytes))
+                end if
               else Right(chunkAckJson(nowBytes, computedChunk, None, totalBytes))
+
+              end if
+
+            end if
+
+          end if
+
+        end if
+
+      end if
 
   private def chunkAckJson(
     bytesReceived: Long,

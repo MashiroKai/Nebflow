@@ -111,23 +111,25 @@ class NeblinkService private (
     _kickParkedAtMs = 0L
     was
 
-  /** **证据式解除停摆**（kaiauth 修法批 ①配套，2026-09-16 作者「治本」已批）。
-    *
-    * 与 [[clearKickPark]] 的区别：本方法的**调用方承担举证责任** —— 只有
-    * 「新凭据已铸成**且**经一次成功交换证明有效」这一读数为真时才可调用
-    * （唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤；失败路径**不**调用）。
-    * 因此这里不重复判定证据，只做三件事：清位 + 唤醒隧道 + 留一行可判读日志。
-    *
-    * WHY 需要它（修前的死循环）：停摆位的读侧是三条腿（隧道 connectLoop /
-    * `NeblinkClient` 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而**清侧
-    * 修前只有一条**（用户显式登录）⇒ 「自动路径铸成了有效新凭据、却因为同一次 enroll
-    * 踢掉了自己而被停摆」这一状态**没有任何自动出口**（诊断报告 §9③：唯一出口 =
-    * 人显式登录）。案 C 的语义**逐字保留**（显式登录仍是**无条件**解除口，见
-    * `NeblinkEnrollment.persist(explicitUserAction = true)`）；本方法只是**新增**
-    * 一条**带证据、有界、失败绝不解锁**的自动解除腿。
-    *
-    * 防风暴边界（本方法不放宽的部分）：停摆期**照旧**不发任何自动登录/register
-    * （三条读侧门全部原样）；本方法只在**一次已经成功走完的 enroll** 内部被调用。 */
+  /**
+   * **证据式解除停摆**（kaiauth 修法批 ①配套，2026-09-16 作者「治本」已批）。
+   *
+   * 与 [[clearKickPark]] 的区别：本方法的**调用方承担举证责任** —— 只有
+   * 「新凭据已铸成**且**经一次成功交换证明有效」这一读数为真时才可调用
+   * （唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤；失败路径**不**调用）。
+   * 因此这里不重复判定证据，只做三件事：清位 + 唤醒隧道 + 留一行可判读日志。
+   *
+   * WHY 需要它（修前的死循环）：停摆位的读侧是三条腿（隧道 connectLoop /
+   * `NeblinkClient` 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而**清侧
+   * 修前只有一条**（用户显式登录）⇒ 「自动路径铸成了有效新凭据、却因为同一次 enroll
+   * 踢掉了自己而被停摆」这一状态**没有任何自动出口**（诊断报告 §9③：唯一出口 =
+   * 人显式登录）。案 C 的语义**逐字保留**（显式登录仍是**无条件**解除口，见
+   * `NeblinkEnrollment.persist(explicitUserAction = true)`）；本方法只是**新增**
+   * 一条**带证据、有界、失败绝不解锁**的自动解除腿。
+   *
+   * 防风暴边界（本方法不放宽的部分）：停摆期**照旧**不发任何自动登录/register
+   * （三条读侧门全部原样）；本方法只在**一次已经成功走完的 enroll** 内部被调用。
+   */
   def liftKickParkAfterProvenCredential: IO[Unit] =
     IO(clearKickPark()).flatMap { wasParked =>
       if wasParked then
@@ -138,32 +140,37 @@ class NeblinkService private (
       else IO.unit
     }
 
-  /** Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
-    * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
-    * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which
-    * hot-swaps the client) only ask for the tunnel to be ensured — they never
-    * build one. Held in a Ref (not a bare `@volatile`), and the ensure path is
-    * serialized by `relayTunnelEnsureGate`. */
+  /**
+   * Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
+   * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
+   * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which
+   * hot-swaps the client) only ask for the tunnel to be ensured — they never
+   * build one. Held in a Ref (not a bare `@volatile`), and the ensure path is
+   * serialized by `relayTunnelEnsureGate`.
+   */
   private val relayTunnelStarter: Ref[IO, Option[IO[Unit]]] = Ref.unsafe[IO, Option[IO[Unit]]](None)
 
-  /** 登记 starter。**返回 IO**：调用点必须把它放进 IO 位置（`*>` / for 生成器）——
-    * cats-effect 惯例（同 `updateTrustedIps` / `setDiscoveryHook`），写成裸语句会
-    * 静默不执行。 */
+  /**
+   * 登记 starter。**返回 IO**：调用点必须把它放进 IO 位置（`*>` / for 生成器）——
+   * cats-effect 惯例（同 `updateTrustedIps` / `setDiscoveryHook`），写成裸语句会
+   * 静默不执行。
+   */
   def setRelayTunnelStarter(starter: IO[Unit]): IO[Unit] = relayTunnelStarter.set(Some(starter))
 
-  /** Single-flight `ensure`: serialized (Semaphore) delegation to the starter.
-    *
-    * WHY it matters: `stop()` on logout used to kill the tunnel forever — the
-    * only recovery was a process restart. After a re-login the tunnel must come
-    * back, and two concurrent ensures (e.g. enroll + a second device-flow
-    * callback) must not spawn two loops. Idempotent end-to-end: the starter is
-    * `NeblinkRelayTunnel.ensure()`, whose CAS makes it a no-op while running.
-    */
+  /**
+   * Single-flight `ensure`: serialized (Semaphore) delegation to the starter.
+   *
+   * WHY it matters: `stop()` on logout used to kill the tunnel forever — the
+   * only recovery was a process restart. After a re-login the tunnel must come
+   * back, and two concurrent ensures (e.g. enroll + a second device-flow
+   * callback) must not spawn two loops. Idempotent end-to-end: the starter is
+   * `NeblinkRelayTunnel.ensure()`, whose CAS makes it a no-op while running.
+   */
   def ensureRelayTunnel: IO[Unit] =
     relayTunnelEnsureGate.permit.use { _ =>
       relayTunnelStarter.get.flatMap {
         case Some(starter) => starter
-        case None          => IO.unit
+        case None => IO.unit
       }
     }
 
@@ -405,21 +412,22 @@ class NeblinkService private (
   /** Run one sync cycle: NebLink discovery. */
   def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
 
-  /** 批 C（§3.6）**消息面对账拍**，跑在**本类既有 45s 拍**（`syncLoop`）上 ——
-    * 🔴 禁新造第三套定时器（取证稿 §3.6 ①：既有 45s 拍 与 前端 10s beacon 之外
-    * 不再加第三个周期）。
-    *
-    * 装配来源 = **既有**引用：`NeblinkRelayTunnel.friendService` 是 GatewayMain 早已
-    * 传入的 `Some(friendService)`（boot 装配点未变、本批**零 GatewayMain 改动**）。
-    * 未装配（未登录 / boot 早期 / 测试夹具）⇒ `None` ⇒ 显式 no-op（不静默走第二条实现）。
-    *
-    * 与 `runSyncCycle` 的**分工不混**：本腿只做好友消息面（逐会话水位对账 + 差态补齐），
-    * `runSyncCycle` 仍是 discovery/heartbeat，二者共用同一拍但互不依赖。
-    */
+  /**
+   * 批 C（§3.6）**消息面对账拍**，跑在**本类既有 45s 拍**（`syncLoop`）上 ——
+   * 🔴 禁新造第三套定时器（取证稿 §3.6 ①：既有 45s 拍 与 前端 10s beacon 之外
+   * 不再加第三个周期）。
+   *
+   * 装配来源 = **既有**引用：`NeblinkRelayTunnel.friendService` 是 GatewayMain 早已
+   * 传入的 `Some(friendService)`（boot 装配点未变、本批**零 GatewayMain 改动**）。
+   * 未装配（未登录 / boot 早期 / 测试夹具）⇒ `None` ⇒ 显式 no-op（不静默走第二条实现）。
+   *
+   * 与 `runSyncCycle` 的**分工不混**：本腿只做好友消息面（逐会话水位对账 + 差态补齐），
+   * `runSyncCycle` 仍是 discovery/heartbeat，二者共用同一拍但互不依赖。
+   */
   def runMessageReconcile: IO[Unit] =
     IO(relayTunnelOpt).flatMap {
       case Some(t) => t.friendService.fold(IO.unit)(_.reconcileConversations())
-      case None    => IO.unit
+      case None => IO.unit
     }
 
   /** Trigger discovery immediately and return current peers. */
@@ -526,9 +534,7 @@ class NeblinkService private (
       // friendService 时 runMessageReconcile 是显式 no-op。
       _ <-
         if running then
-          runMessageReconcile.handleErrorWith(e =>
-            logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void
-          )
+          runMessageReconcile.handleErrorWith(e => logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void)
         else IO.unit
       interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
       sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never
@@ -597,7 +603,17 @@ object NeblinkService:
       descRef <- Ref.of[IO, Map[String, String]](peerDescs)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
       relayTunnelGate <- Semaphore[IO](1)
-      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher, relayTunnelGate, gracePeriod)
+      service = new NeblinkService(
+        idRef,
+        cfgRef,
+        peersRef,
+        descRef,
+        serverPort,
+        syncQueue,
+        dispatcher,
+        relayTunnelGate,
+        gracePeriod
+      )
       // Start sync loop — NebLink Server is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
     yield service

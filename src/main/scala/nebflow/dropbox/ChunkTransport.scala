@@ -36,8 +36,10 @@ object ChunkTransport:
    */
   def failover(primary: ChunkTransport, fallback: ChunkTransport): ChunkTransport =
     new ChunkTransport:
-      /** 真实承载腿（P-13 观测缺口）：最近一次**成功**的腿。"p2p+relay" 只在两条腿都还没
-        * 成功过时出现（= 「不知道」的显式表示，不再是一个恒真的标签）。 */
+      /**
+       * 真实承载腿（P-13 观测缺口）：最近一次**成功**的腿。"p2p+relay" 只在两条腿都还没
+       * 成功过时出现（= 「不知道」的显式表示，不再是一个恒真的标签）。
+       */
       private val winner = new java.util.concurrent.atomic.AtomicReference[String](null)
 
       def leg: String = Option(winner.get()).getOrElse("p2p+relay")
@@ -71,7 +73,10 @@ object ChunkTransport:
         }
 
   /** 两腿均失败：错误体带 `p2pReason` 与 `relayReason` 两个字段（契约 §3.7）。 */
-  def peerUnreachable(p2pErr: AttachContract.AttachError, relayErr: AttachContract.AttachError): AttachContract.AttachError =
+  def peerUnreachable(
+    p2pErr: AttachContract.AttachError,
+    relayErr: AttachContract.AttachError
+  ): AttachContract.AttachError =
     AttachContract.AttachError(
       AttachContract.Codes.PeerUnreachable,
       s"Peer unreachable on both legs — p2p: ${p2pErr.render} | relay: ${relayErr.render}",
@@ -79,6 +84,8 @@ object ChunkTransport:
       p2pReason = Some(p2pErr.render),
       relayReason = Some(relayErr.render)
     )
+
+end ChunkTransport
 
 /**
  * 分块发送编排（传输无关）。
@@ -95,8 +102,10 @@ object ChunkedSendLoop:
   /** 建议值（非冻结口径）：每块每腿 3 次、指数退避 1s/2s/4s；备选 2 次固定 2s / 5 次上限 30s。 */
   val DefaultRetriesPerLeg: Int = 3
 
-  /** 在飞字节上报节拍（建议值 2 s，照方案卡 P0-4；改前 = 一整块落地才报一次，
-    * 4 MiB 块在中继腿要 ≥140 s ⇒ 几分钟零反馈）。 */
+  /**
+   * 在飞字节上报节拍（建议值 2 s，照方案卡 P0-4；改前 = 一整块落地才报一次，
+   * 4 MiB 块在中继腿要 ≥140 s ⇒ 几分钟零反馈）。
+   */
   val DefaultProgressCadence: FiniteDuration = 2.seconds
 
   def defaultBackoff(attempt: Int): FiniteDuration =
@@ -206,6 +215,7 @@ object ChunkedSendLoop:
                     )
                   )
                 )
+              end if
           }
       case Some((frame, payload)) =>
         val startedAt = System.nanoTime()
@@ -256,8 +266,22 @@ object ChunkedSendLoop:
                           case Left(err) => IO.pure(Left(err))
                           case Right(_) =>
                             IO.pure(Right(Outcome(ack.bytesReceived, receiverWhole, transport.leg, chunksSent + 1)))
-                  else loop(transport, target, sender, ackedRef, attemptEndRef, retriesPerLeg, backoff, onProgress, onRate, chunksSent + 1)
+                    end match
+                  else
+                    loop(
+                      transport,
+                      target,
+                      sender,
+                      ackedRef,
+                      attemptEndRef,
+                      retriesPerLeg,
+                      backoff,
+                      onProgress,
+                      onRate,
+                      chunksSent + 1
+                    )
                 }
+            end match
         }
     }
 
@@ -276,7 +300,15 @@ object ChunkedSendLoop:
       case Left(err) if !isRetryable(err) => IO.pure(Left(err))
       case Left(err) if retriesLeft <= 0 => IO.pure(Left(err))
       case Left(_) =>
-        IO.sleep(backoff(attempt)) *> sendWithRetry(transport, target, frame, payload, retriesLeft - 1, backoff, attempt + 1)
+        IO.sleep(backoff(attempt)) *> sendWithRetry(
+          transport,
+          target,
+          frame,
+          payload,
+          retriesLeft - 1,
+          backoff,
+          attempt + 1
+        )
     }
 
   /** 不可重试项（契约 §3.7）：立即失败，不消耗重试额度。 */

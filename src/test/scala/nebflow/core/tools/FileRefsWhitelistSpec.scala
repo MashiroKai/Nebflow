@@ -69,7 +69,9 @@ class FileRefsWhitelistSpec extends FunSuite:
     assert(List("projects", "uploads", "plots", "workspace-items", "voice-models").forall(ns.contains))
     assertEquals(FileRefs.DataRootServedNamespacesText, ns.map(_ + "/**").mkString(", "))
     assert(FileRefs.DataRootServedNamespacesText.contains("docs/**"))
-    assert(!FileRefs.DataRootServedNamespacesText.startsWith(",") && !FileRefs.DataRootServedNamespacesText.contains("  "))
+    assert(
+      !FileRefs.DataRootServedNamespacesText.startsWith(",") && !FileRefs.DataRootServedNamespacesText.contains("  ")
+    )
   }
 
   test("A1-mirror: the shipped tool descriptions name every served namespace (prose cannot drift)") {
@@ -107,3 +109,4 @@ class FileRefsWhitelistSpec extends FunSuite:
       "docsx/x.svg"
     ).foreach(rel => assert(deny(rel).isDefined, s"$rel must STAY refused (one-entry widening)"))
   }
+end FileRefsWhitelistSpec

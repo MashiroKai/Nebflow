@@ -97,7 +97,8 @@ class CardModelFaceSpec extends FunSuite:
     javax.imageio.ImageIO.write(img, "png", p.toFile)
     p
 
-  private def card(input0: (String, String)*): JsonObject = JsonObject.fromIterable(input0.map((k, v) => k -> Json.fromString(v)))
+  private def card(input0: (String, String)*): JsonObject =
+    JsonObject.fromIterable(input0.map((k, v) => k -> Json.fromString(v)))
 
   private def callOf(input: JsonObject, id: String = "call-card-1"): ToolCall =
     ToolCall(id = id, name = "Card", input = input)
@@ -191,7 +192,8 @@ class CardModelFaceSpec extends FunSuite:
     // 过线载荷同 C1 = **大正文**（小图仍在 40,000 累计预算内、真内联）：本用例的判据
     // （guard 不再触发）只有载荷**真的过了 50,000 线**才非真空，故前提写成断言。
     val png = writePng("guard.png", 64)
-    val input = card("html" -> s"""<div><img src="$png"><p>$bodyMarker${"x" * 120_000}</p></div>""", "title" -> "Guarded")
+    val input =
+      card("html" -> s"""<div><img src="$png"><p>$bodyMarker${"x" * 120_000}</p></div>""", "title" -> "Guarded")
     val call = callOf(input, "call-guard")
     val payload = rawPayload(input)
     assert(payload.length > 50_000, s"fixture must exceed the guard threshold (was ${payload.length})")
@@ -199,7 +201,10 @@ class CardModelFaceSpec extends FunSuite:
     val guarded = ToolResultGuard.guardResult(call, res, "sess-cardface").unsafeRunSync()
 
     assert(guarded.content.length <= 50_000, s"model face must not be guard-replaced (was ${guarded.content.length})")
-    assert(!guarded.content.startsWith("<persisted-output>"), s"guard must not fire on Card: ${guarded.content.take(120)}")
+    assert(
+      !guarded.content.startsWith("<persisted-output>"),
+      s"guard must not fire on Card: ${guarded.content.take(120)}"
+    )
     val persisted = tmpDir.resolve("tool-results").resolve("sess-cardface")
     val files = if Files.isDirectory(persisted) then Files.list(persisted).iterator().asScala.toList else Nil
     assert(files.isEmpty, s"no disk copy for a card's model face: $files")

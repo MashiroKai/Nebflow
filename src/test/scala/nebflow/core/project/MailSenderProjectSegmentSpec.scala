@@ -50,6 +50,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"R-A 补 pin dispatcher","tools":[],"category":"standalone"}"""
@@ -63,11 +64,12 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
   /** 记录型 LLM：immediate 收尾（零工具调用），只计数已结束 stream。 */
   private class QuietLlm:
     val streamsDone: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)) ++
           Stream.eval(streamsDone.update(_ + 1)).drain
@@ -112,7 +114,12 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  private def mount(name: String, system: ActorSystem, res: SharedResources, frames: Ref[IO, List[Json]]): IO[ProjectRuntime] =
+  private def mount(
+    name: String,
+    system: ActorSystem,
+    res: SharedResources,
+    frames: Ref[IO, List[Json]]
+  ): IO[ProjectRuntime] =
     val ws = tempRoot / name
     os.makeDir.all(ws)
     val pd = ProjectDef(
@@ -131,6 +138,8 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       dispatcherIdleWindowMs = Some(300_000L)
     )
 
+  end mount
+
   private def injectedFrames(frames: Ref[IO, List[Json]]): IO[List[Json]] =
     frames.get.map(_.filter(j => j.hcursor.downField("injected").as[Boolean].getOrElse(false)))
 
@@ -147,20 +156,22 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
         ctx
       )
       .map {
-        case Right(s)   => s"RIGHT: $s"
-        case Left(err)  => s"LEFT: ${err.message}"
+        case Right(s) => s"RIGHT: $s"
+        case Left(err) => s"LEFT: ${err.message}"
       }
 
-  /** 腿①（`Mail → project` 分发器收件面）：走**生产构造点** `MailTool.call`，
-    * 读回收件会话注入帧的 `header` 整串。
-    *
-    * @param senderProject 发送方的**项目上下文**（`ToolContext.projectName` = 会话实际项目域，
-    *                      `None` = 无项目上下文 / 根域会话）
-    * @param senderAgent   发送方 agent 名（`Nebula` ⇒ `roleOf` 判 NebulaRoot） */
+  /**
+   * 腿①（`Mail → project` 分发器收件面）：走**生产构造点** `MailTool.call`，
+   * 读回收件会话注入帧的 `header` 整串。
+   *
+   * @param senderProject 发送方的**项目上下文**（`ToolContext.projectName` = 会话实际项目域，
+   *                      `None` = 无项目上下文 / 根域会话）
+   * @param senderAgent   发送方 agent 名（`Nebula` ⇒ `roleOf` 判 NebulaRoot）
+   */
   private def runLeg1(
-      tag: String,
-      senderProject: Option[String],
-      senderAgent: String
+    tag: String,
+    senderProject: Option[String],
+    senderAgent: String
   ): IO[(String, Option[String])] =
     val system = ActorSystem(s"mail-projseg-$tag-${scala.util.Random.nextInt(100000)}")
     for
@@ -188,6 +199,10 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       println(s"[$tag-HEADER] ${h.getOrElse("<absent>")}")
       (out, h)
 
+    end for
+
+  end runLeg1
+
   test("T1 双向钉 (a)：腿① 发送方**自带项目** ⇒ 气泡第二段 = 其实际项目域"):
     runLeg1("t1", Some("PROJ-P6-SRC"), "worker-a").map { (out, h) =>
       assert(out.startsWith("RIGHT:"), s"生产构造点必须放行（非 dispatcher 自带的项目会话可发 project: 腿）：$out")
@@ -208,8 +223,10 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       )
     }
 
-  /** 发射点 `AgentActor#emitInjectedUserEvent` 的 PROJECT 段回落链**逐字复刻**
-    * （`project.orElse(sessionProject).orElse(RootProject)`）。 */
+  /**
+   * 发射点 `AgentActor#emitInjectedUserEvent` 的 PROJECT 段回落链**逐字复刻**
+   * （`project.orElse(sessionProject).orElse(RootProject)`）。
+   */
   private def emitReduction(project: Option[String], sessionProject: Option[String]): String =
     NotificationHeader
       .header(
@@ -227,8 +244,10 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
     loop
 
-  /** 腿③（分发器 → root）：真 actor 收录 `ImmediateInput`，读**置位字段** `project`
-    * （= 气泡 PROJECT 段链首级）+ 发射点回落链复刻读数。 */
+  /**
+   * 腿③（分发器 → root）：真 actor 收录 `ImmediateInput`，读**置位字段** `project`
+   * （= 气泡 PROJECT 段链首级）+ 发射点回落链复刻读数。
+   */
   private def runLeg3(tag: String, senderProject: Option[String]): IO[(String, Option[String], String)] =
     val system = ActorSystem(s"mail-projseg-$tag-${scala.util.Random.nextInt(100000)}")
     for
@@ -275,6 +294,10 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       println(s"[$tag-CALL] $out | ImmediateInput#=${imm.size} project=${got.getOrElse("<None>")}")
       // ⑥ 发射点回落链复刻（会话侧 = root 会话：无项目上下文 ⇒ sessionProject=None）
       (out, got, emitReduction(got, None))
+
+    end for
+
+  end runLeg3
 
   test("T3 同源置位：腿③（分发器 → root）`ImmediateInput.project` = 发送方项目 / 根域回落 None"):
     for

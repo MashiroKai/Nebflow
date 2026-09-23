@@ -29,19 +29,26 @@ class PanelSchemeRoutesSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp)
     try
       os.makeDir.all(tmp / "agents" / "kernel")
-      os.write(tmp / "agents" / "kernel" / "agent.json",
-        """{"name":"kernel","description":"fixture kernel","preset":"stale"}""")
+      os.write(
+        tmp / "agents" / "kernel" / "agent.json",
+        """{"name":"kernel","description":"fixture kernel","preset":"stale"}"""
+      )
       os.write(tmp / "agents" / "kernel" / "system.md", "k")
       os.makeDir.all(tmp / "agents" / "Nebula")
-      os.write(tmp / "agents" / "Nebula" / "agent.json",
-        """{"name":"Nebula","description":"fixture nebula"}""")
+      os.write(tmp / "agents" / "Nebula" / "agent.json", """{"name":"Nebula","description":"fixture nebula"}""")
       os.write(tmp / "agents" / "Nebula" / "system.md", "n")
-      os.write(tmp / "model-presets.json",
-        """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"","preferred":"m/g1","fallbacks":[]},"vision":{"name":"vision","description":"","preferred":"m/v1","fallbacks":[]}}}""")
+      os.write(
+        tmp / "model-presets.json",
+        """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"","preferred":"m/g1","fallbacks":[]},"vision":{"name":"vision","description":"","preferred":"m/v1","fallbacks":[]}}}"""
+      )
       test().unsafeRunSync()
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+
+    end try
+
+  end withFixture
 
   private def mkRoutes: HttpRoutes[IO] =
     val inner = new RestApiRoutes(
@@ -59,6 +66,8 @@ class PanelSchemeRoutesSpec extends CatsEffectSuite:
     // 不触 WS ⇒ 占位 builder 安全（同 DeviceFaceHardeningRoutesSpec 先例）。
     val wsb = null.asInstanceOf[org.http4s.server.websocket.WebSocketBuilder2[IO]]
     inner.routes <+> inner.presenceWsRoutes(wsb)
+
+  end mkRoutes
 
   private def putJson(path: String, body: io.circe.Json): IO[Response[IO]] =
     val req = Request[IO](Method.PUT, Uri.unsafeFromString(path))
@@ -85,12 +94,19 @@ class PanelSchemeRoutesSpec extends CatsEffectSuite:
 
   test("PUT /agents/kernel/model → 400（legacy model 写路径同闸）"):
     withFixture { () =>
-      putJson("/agents/kernel/model", io.circe.Json.obj("preferred" -> "m/x".asJson, "fallbacks" -> io.circe.Json.arr())).flatMap { resp =>
+      putJson(
+        "/agents/kernel/model",
+        io.circe.Json.obj("preferred" -> "m/x".asJson, "fallbacks" -> io.circe.Json.arr())
+      ).flatMap { resp =>
         for
           _ <- IO(assertEquals(resp.status, Status.BadRequest))
           json <- resp.as[io.circe.Json]
-          _ <- IO(assert(json.hcursor.downField("error").as[String].getOrElse("").contains("does not accept a model config"),
-            "model write rejection must be actionable"))
+          _ <- IO(
+            assert(
+              json.hcursor.downField("error").as[String].getOrElse("").contains("does not accept a model config"),
+              "model write rejection must be actionable"
+            )
+          )
         yield ()
       }
     }

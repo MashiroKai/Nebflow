@@ -5,24 +5,25 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.FunSuite
 
-/** F1 of the 2026-09-10 friend-search incident: client reference unification.
-  *
-  * Failure being nailed (report §五-2, structural root cause): FriendService
-  * captured a constructor-time NeblinkClient while enrollment hot-swap only
-  * replaced the discovery's clientRef — after a UI re-login / account switch
-  * the two references split (discovery: live session; FriendService: kicked
-  * session → permanent 403 until restart).
-  *
-  * The fix makes FriendService resolve the client per call from the
-  * authoritative source (`discovery.currentClient`). These specs pin the
-  * contract:
-  *  - swapping the Ref is enough for FriendService to follow (mutation
-  *    check: reverting to a constructor-time capture turns the swap spec
-  *    red — the second phase would still hit the dead client);
-  *  - `listFriends` (REST direct path, F4) surfaces upstream Left, while
-  *    `refreshFriends` (background chain) still folds it to an empty list;
-  *  - client-less states surface "Not logged in".
-  */
+/**
+ * F1 of the 2026-09-10 friend-search incident: client reference unification.
+ *
+ * Failure being nailed (report §五-2, structural root cause): FriendService
+ * captured a constructor-time NeblinkClient while enrollment hot-swap only
+ * replaced the discovery's clientRef — after a UI re-login / account switch
+ * the two references split (discovery: live session; FriendService: kicked
+ * session → permanent 403 until restart).
+ *
+ * The fix makes FriendService resolve the client per call from the
+ * authoritative source (`discovery.currentClient`). These specs pin the
+ * contract:
+ *  - swapping the Ref is enough for FriendService to follow (mutation
+ *    check: reverting to a constructor-time capture turns the swap spec
+ *    red — the second phase would still hit the dead client);
+ *  - `listFriends` (REST direct path, F4) surfaces upstream Left, while
+ *    `refreshFriends` (background chain) still folds it to an empty list;
+ *  - client-less states surface "Not logged in".
+ */
 class FriendServiceClientRefSpec extends FunSuite:
 
   private val deadReply: Either[String, FriendListResponse] =
@@ -40,8 +41,8 @@ class FriendServiceClientRefSpec extends FunSuite:
   test("F1 nail: swapping the authoritative client is enough — FriendService follows the hot-swap") {
     val dead = stubClient("dead-0", deadReply)
     val live = stubClient("live-1", Right(friendsOk))
-    val ref  = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
-    val svc  = new FriendService(ref.get, AgentMessagingConfig())
+    val ref = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
+    val svc = new FriendService(ref.get, AgentMessagingConfig())
 
     // Phase 0: the constructor-time client is dead — 403s (the incident state).
     val before = svc.listFriends.unsafeRunSync()
@@ -58,10 +59,10 @@ class FriendServiceClientRefSpec extends FunSuite:
 
   test("F4 nail: listFriends (REST direct) surfaces Left; refreshFriends folds to empty") {
     val dead = stubClient("dead-0", deadReply)
-    val ref  = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
-    val svc  = new FriendService(ref.get, AgentMessagingConfig())
+    val ref = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
+    val svc = new FriendService(ref.get, AgentMessagingConfig())
 
-    val direct     = svc.listFriends.unsafeRunSync()
+    val direct = svc.listFriends.unsafeRunSync()
     val background = svc.refreshFriends().unsafeRunSync()
 
     assertEquals(direct, deadReply, "REST path must NOT fold upstream failures — the frontend distinguishes them")

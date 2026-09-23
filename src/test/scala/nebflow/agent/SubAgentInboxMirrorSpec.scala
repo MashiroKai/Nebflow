@@ -68,7 +68,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     finally
       prev match
         case Some(v) => sys.props(InjectedInboxMirror.SwitchProp) = v
-        case None    => sys.props.remove(InjectedInboxMirror.SwitchProp)
+        case None => sys.props.remove(InjectedInboxMirror.SwitchProp)
 
   // ============================================================
   // ① 纯路由（路由表逐行）
@@ -105,8 +105,23 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   }
 
   test("① -2 反例：豁免族逐族零命中（原生族 / node / ask / 非注入族）") {
-    for src <- List("tool", "system", "delegate", "subtask", "task", "dispatch", "flow", "background",
-        "skill", "node", "ask", "chain", "deviceMail", "") do
+    for src <- List(
+        "tool",
+        "system",
+        "delegate",
+        "subtask",
+        "task",
+        "dispatch",
+        "flow",
+        "background",
+        "skill",
+        "node",
+        "ask",
+        "chain",
+        "deviceMail",
+        ""
+      )
+    do
       assertEquals(
         InjectedInboxMirror.targets("root-1", src, candidates),
         Nil,
@@ -168,7 +183,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     val evidenceOverride = sys.env.get("NEBFLOW_SUBINBOX_EVIDENCE_DIR").map(d => os.Path(d))
     val tempRoot = evidenceOverride match
       case Some(d) => d / "green_store"
-      case None    => os.pwd / "target" / "test-subinbox-mirror"
+      case None => os.pwd / "target" / "test-subinbox-mirror"
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
 
@@ -232,8 +247,8 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       assertEquals(target.head.header, None)
       val nodeRows = rowsOrEmpty("node-B").collect { case u: UiMessage.User => u }
       assertEquals(nodeRows.map(_.text), List(row.text), "多目标并发时每个窗口各得一行")
-    else
-      assertEquals(target, Nil, "开关关闭态下目标子代理会话流仍有镜像行（假绿）")
+    else assertEquals(target, Nil, "开关关闭态下目标子代理会话流仍有镜像行（假绿）")
+    end if
 
     // ② -变异（同批次内）：开关关 ⇒ 零目标 + 目标会话流零新增
     val before = rowsOrEmpty("delegate-A").size

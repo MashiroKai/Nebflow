@@ -18,23 +18,24 @@ import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamC
 import scala.concurrent.duration.*
 import scala.util.Random
 
-/** 分发器「建节点+接线」最小闭环冒烟（观测面上下文经济学批 20260907 裁定①验收②）。
-  *
-  * 审计基准：.nebflow/Spec/20260907_nodelist-flowmap-context-audit.md §4 P0-1 验收②
-  * ——spawn 快照移除后分发器必须仍能完成「先 NodeList 读现状 → NodeEdit 建节点 →
-  * 接线（in-barrier）→ 节点执行 → 结果投递」最小闭环。形态复用 isolated-smoke
-  * §6 mock-LLM 状态机先例（#28 0b：NodeList/NodeEdit 全链路，真实 NodeEngine/store
-  * /接线/投递语义在环）：
-  *
-  *  - 节点请求经 req.sessionId "node-" 前缀识别（§6.2 坑——agentId 可能为空）；
-  *  - tool_result 在 role=user 消息的 content blocks（Anthropic 协议，§6.1 坑）；
-  *  - 状态机以内容匹配 + 标志推进（§6.5 坑——不数请求），节点 id 靠历史扫描
-  *    （创建回执可能与其他消息合并）。
-  *
-  * 断言：A（入口 task+out）与 B（in=[A]+out=Nebula）双双 completed；A.out 被 B 的
-  * in 声明改接为 B；分发器恰好 4 个 turn（NodeList → 建 A → 建 B → 收尾）、节点
-  * 会话 ≥2 次。
-  */
+/**
+ * 分发器「建节点+接线」最小闭环冒烟（观测面上下文经济学批 20260907 裁定①验收②）。
+ *
+ * 审计基准：.nebflow/Spec/20260907_nodelist-flowmap-context-audit.md §4 P0-1 验收②
+ * ——spawn 快照移除后分发器必须仍能完成「先 NodeList 读现状 → NodeEdit 建节点 →
+ * 接线（in-barrier）→ 节点执行 → 结果投递」最小闭环。形态复用 isolated-smoke
+ * §6 mock-LLM 状态机先例（#28 0b：NodeList/NodeEdit 全链路，真实 NodeEngine/store
+ * /接线/投递语义在环）：
+ *
+ *  - 节点请求经 req.sessionId "node-" 前缀识别（§6.2 坑——agentId 可能为空）；
+ *  - tool_result 在 role=user 消息的 content blocks（Anthropic 协议，§6.1 坑）；
+ *  - 状态机以内容匹配 + 标志推进（§6.5 坑——不数请求），节点 id 靠历史扫描
+ *    （创建回执可能与其他消息合并）。
+ *
+ * 断言：A（入口 task+out）与 B（in=[A]+out=Nebula）双双 completed；A.out 被 B 的
+ * in 声明改接为 B；分发器恰好 4 个 turn（NodeList → 建 A → 建 B → 收尾）、节点
+ * 会话 ≥2 次。
+ */
 class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 240.seconds
@@ -44,6 +45,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -62,32 +64,39 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
         m.content match
           case Left(s) => s
           case Right(blocks) =>
-            blocks.collect {
-              case ContentBlock.Text(t)             => t
-              case ContentBlock.ToolResult(_, c, _) => c
-            }.mkString("\n")
+            blocks
+              .collect {
+                case ContentBlock.Text(t) => t
+                case ContentBlock.ToolResult(_, c, _) => c
+              }
+              .mkString("\n")
       }
       .mkString("\n")
 
   private val NodeIdPattern = """n-[0-9a-f]{8}""".r
 
-  /** mock-LLM 状态机：分发器 turn 推进 NodeList→建A→建B→收尾；节点 turn 一律
-    * 文本完成（内容匹配 + 标志推进，§6.5/§6.6）。 */
+  /**
+   * mock-LLM 状态机：分发器 turn 推进 NodeList→建A→建B→收尾；节点 turn 一律
+   * 文本完成（内容匹配 + 标志推进，§6.5/§6.6）。
+   */
   private class StateMachineLlm:
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val phase: Ref[IO, String] = Ref.unsafe[IO, String]("start")
+
     private def toolCall(id: String, name: String, input: JsonObject): Stream[IO, StreamChunk] =
       Stream(
         StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(id, name, input)),
         StreamChunk.Done(None, None)
       )
+
     private def finalText(t: String): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta(t), StreamChunk.Done(None, None))
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = reqText(req)
         if req.sessionId.startsWith("node-") then
@@ -104,40 +113,54 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                 }
               case "listed" => // turn 2: NodeList 回执在手 → 建入口节点 A（task+out，创建即跑）
                 Stream.eval(phase.set("a_created")).flatMap { _ =>
-                  toolCall("c2", "NodeEdit", JsonObject(
-                    "project" -> Json.fromString("closed-loop"),
-                    "nodename" -> Json.fromString("闭环-执行A"),
-                    // 建位期声明闸（nodegate 批 0accce90e 四项④，NodeTools.scala:1424）：
-                    // mock 发出的建位调用必须与真实调用方同形——省略 `plugins` 键一律拒
-                    // （§6.4「mock 序列必须符合产品工具校验语义」同款坑）。本夹具节点零插件
-                    // ⇒ `plugins=[]`（显式「无需能力面」）。
-                    "plugins" -> Json.arr(),
-                    "description" -> Json.fromString("闭环冒烟入口节点"),
-                    "task" -> Json.fromString("produce A"),
-                    // 显式双通报门集（批 A 回改 B1）：迁移前 bare "Nebula" 经旧解析 = {pass,failed}/result
-                    // ⇒ 此处字面与 :211 断言 `OutEdge.nebula` 逐字节等价（断言零改动）。
-                    "out" -> Json.fromString("(pass,failed)Nebula")
-                  ))
+                  toolCall(
+                    "c2",
+                    "NodeEdit",
+                    JsonObject(
+                      "project" -> Json.fromString("closed-loop"),
+                      "nodename" -> Json.fromString("闭环-执行A"),
+                      // 建位期声明闸（nodegate 批 0accce90e 四项④，NodeTools.scala:1424）：
+                      // mock 发出的建位调用必须与真实调用方同形——省略 `plugins` 键一律拒
+                      // （§6.4「mock 序列必须符合产品工具校验语义」同款坑）。本夹具节点零插件
+                      // ⇒ `plugins=[]`（显式「无需能力面」）。
+                      "plugins" -> Json.arr(),
+                      "description" -> Json.fromString("闭环冒烟入口节点"),
+                      "task" -> Json.fromString("produce A"),
+                      // 显式双通报门集（批 A 回改 B1）：迁移前 bare "Nebula" 经旧解析 = {pass,failed}/result
+                      // ⇒ 此处字面与 :211 断言 `OutEdge.nebula` 逐字节等价（断言零改动）。
+                      "out" -> Json.fromString("(pass,failed)Nebula")
+                    )
+                  )
                 }
               case "a_created" => // turn 3: 建 A 回执（历史扫描取 A id）→ 建下游 B（in=[A]，接线）
                 val aId = NodeIdPattern.findFirstIn(text).getOrElse(sys.error("A creation ack must carry node id"))
                 Stream.eval(phase.set("b_created")).flatMap { _ =>
-                  toolCall("c3", "NodeEdit", JsonObject(
-                    "project" -> Json.fromString("closed-loop"),
-                    "nodename" -> Json.fromString("闭环-下游B"),
-                    // 同上（:126 建位期声明闸，建位必须显式声明能力面）
-                    "plugins" -> Json.arr(),
-                    "description" -> Json.fromString("闭环冒烟下游节点"),
-                    "task" -> Json.fromString("assemble B"),
-                    "in" -> Json.arr(Json.fromString(aId)),
-                    // 同上（:212 断言 `OutEdge.nebula` 零改动）。
-                    "out" -> Json.fromString("(pass,failed)Nebula")
-                  ))
+                  toolCall(
+                    "c3",
+                    "NodeEdit",
+                    JsonObject(
+                      "project" -> Json.fromString("closed-loop"),
+                      "nodename" -> Json.fromString("闭环-下游B"),
+                      // 同上（:126 建位期声明闸，建位必须显式声明能力面）
+                      "plugins" -> Json.arr(),
+                      "description" -> Json.fromString("闭环冒烟下游节点"),
+                      "task" -> Json.fromString("assemble B"),
+                      "in" -> Json.arr(Json.fromString(aId)),
+                      // 同上（:212 断言 `OutEdge.nebula` 零改动）。
+                      "out" -> Json.fromString("(pass,failed)Nebula")
+                    )
+                  )
                 }
               case _ => // turn 4: B 建成 → 分发器收尾（纯文本，session Completed → 拆桥）
                 finalText("闭环完成：A 执行、B 接线就绪。")
             }
           }
+
+        end if
+
+      end sendStream
+
+  end StateMachineLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -169,7 +192,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -181,17 +204,19 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 完整挂载（真实 ProjectActor——分发器 spawn 路径需要）。
-    *
-    * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前走 `ProjectRuntimeRegistry.mount`
-    * （不注入 `reportGateHold`）⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold`
-    * = true）判「未申报 node_report 不终态化」⇒ A/B 永不 completed，:196 的 60s
-    * waitUntil 先超时、:207-:212 的目标断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
-    * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：显式注入
-    * `reportGateHold = Some(false)`——**仅测试面、零生产改动**（本 spec 主题是「建节点→接线→
-    * 投递」闭环，未申报提醒语义由 NodeReportReminderSpec 覆盖）。其余装配与 mount 逐项同构；
-    * mount 另跑的两个动作（僵尸 running 收殓 + Nebula 欠账补投扫描）对本 spec 的全新工作区
-    * 恒为空操作，故省略。 */
+  /**
+   * 完整挂载（真实 ProjectActor——分发器 spawn 路径需要）。
+   *
+   * **批 A 回改（B1 掩蔽处置，2026-09-12）**：此前走 `ProjectRuntimeRegistry.mount`
+   * （不注入 `reportGateHold`）⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold`
+   * = true）判「未申报 node_report 不终态化」⇒ A/B 永不 completed，:196 的 60s
+   * waitUntil 先超时、:207-:212 的目标断言**恒不可达**（与范围外既有红同因 ⇒ 被掩蔽）。
+   * 改为**自有挂载夹具**（NodeAcceptanceSpec / OutNullableDeliverySpec 同款先例）：显式注入
+   * `reportGateHold = Some(false)`——**仅测试面、零生产改动**（本 spec 主题是「建节点→接线→
+   * 投递」闭环，未申报提醒语义由 NodeReportReminderSpec 覆盖）。其余装配与 mount 逐项同构；
+   * mount 另跑的两个动作（僵尸 running 收殓 + Nebula 欠账补投扫描）对本 spec 的全新工作区
+   * 恒为空操作，故省略。
+   */
   private def mount(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
@@ -201,10 +226,13 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
     )
     for
       store <- FlowMapStore.open(name, ws.toString)
-      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+      board <- IO(TaskBoardStore.open(name, ws.toString))
+        .map(Some(_): Option[TaskBoardStore])
         .handleErrorWith(_ => IO.pure(None))
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -222,6 +250,10 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       rt = ProjectRuntime(pd, store, engine, system, res, Some(ref), board)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
+
+    end for
+
+  end mount
 
   test("闭环：NodeList → 建入口A → 接线下游B → A/B 双 completed → B 投递 Nebula 记账") {
     val ws = tempRoot / "ws-closed-loop"
@@ -251,7 +283,11 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       assertEquals(b.status, NodeLifecycle.Completed, "downstream node B must complete")
       // 接线：B 的 in 声明给 A.out 追加 B 边（P1 追加语义——既有 Nebula 分发边保留）
       assert(b.in.contains(a.id), s"B.in must contain A (${a.id}), got: ${b.in}")
-      assertEquals(a.out, List(OutEdge.nebula, OutEdge(b.id)), "A.out must keep Nebula + append B edge (in-declaration append semantics)")
+      assertEquals(
+        a.out,
+        List(OutEdge.nebula, OutEdge(b.id)),
+        "A.out must keep Nebula + append B edge (in-declaration append semantics)"
+      )
       assertEquals(b.out, List(OutEdge.nebula), "B.out must be Nebula")
       // 注：B→Nebula 投递记账（nebulaDeliveredAt）在本 harness 不可观测——无真实
       // root 会话，deliverToNebula 按设计 WARN 不落账（同 ProjectDispatcher*Spec
@@ -261,6 +297,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       assert(ins.count(_.startsWith("[node]")) >= 2, "both nodes must have executed a session")
       // 零 BLOCKED：闭环无阻塞
       assert(snap.nodes.values.forall(_.status != NodeLifecycle.Blocked), "closed loop must not block")
+    end for
   }
 
 end DispatcherClosedLoopSmokeSpec

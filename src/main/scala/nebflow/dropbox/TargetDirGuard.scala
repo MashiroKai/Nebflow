@@ -34,14 +34,16 @@ object TargetDirGuard:
   /** 缺省允许根清单 = `[接收端 downloadsDir]`（spec §3.1 机制 1）。 */
   def defaultAllowRoots: List[os.Path] = List(DropboxUtil.downloadsDir)
 
-  /** 接收端本地配置扩展的额外允许根（`nebflow.json` 的 `dropbox.allowTargetDirRoots`）。
-    *
-    * **只来自接收端本地** —— 发送端无法影响该清单（它只存在于接收端，永不出现在 wire 上）。
-    * fail-safe：配置缺席 / 非法 / 读盘失败 / 非绝对路径一律**丢弃**（只收紧，不放过）。
-    *
-    * 本参数即 spec §3.2 签名里的 `locallyConfirmed`：本批口径 = 「允许根命中 = 已确认」
-    * （自动确认，§3.1 机制 2），故该集合的语义是**接收端本地确认的额外允许根**；
-    * 逐次人工确认（弹卡）不在本批（见 spec §3.1 机制 2 与 §⑤ 的回退粒度理由）。 */
+  /**
+   * 接收端本地配置扩展的额外允许根（`nebflow.json` 的 `dropbox.allowTargetDirRoots`）。
+   *
+   * **只来自接收端本地** —— 发送端无法影响该清单（它只存在于接收端，永不出现在 wire 上）。
+   * fail-safe：配置缺席 / 非法 / 读盘失败 / 非绝对路径一律**丢弃**（只收紧，不放过）。
+   *
+   * 本参数即 spec §3.2 签名里的 `locallyConfirmed`：本批口径 = 「允许根命中 = 已确认」
+   * （自动确认，§3.1 机制 2），故该集合的语义是**接收端本地确认的额外允许根**；
+   * 逐次人工确认（弹卡）不在本批（见 spec §3.1 机制 2 与 §⑤ 的回退粒度理由）。
+   */
   def configuredAllowRoots: Set[os.Path] = loadConfiguredRoots()
 
   private def loadConfiguredRoots(): Set[os.Path] =
@@ -63,6 +65,7 @@ object TargetDirGuard:
             catch case _: Exception => None
           }
           .toSet
+      end if
     catch case _: Exception => Set.empty
 
   /** 生产入口：缺省允许根 + 接收端本地配置扩展。 */
@@ -71,10 +74,12 @@ object TargetDirGuard:
 
   // ===== 判定链 =====
 
-  /** NFC 归一化（判定前先做；**落盘与回显一律用归一化后的形态**）。
-    *
-    * macOS 卷按 NFD 存储，不做归一化则「同字形不同码位」可绕前缀白名单
-    * （同一目录两个码位表示 ⇒ 两套等价串）。 */
+  /**
+   * NFC 归一化（判定前先做；**落盘与回显一律用归一化后的形态**）。
+   *
+   * macOS 卷按 NFD 存储，不做归一化则「同字形不同码位」可绕前缀白名单
+   * （同一目录两个码位表示 ⇒ 两套等价串）。
+   */
   def normalize(s: String): String = Normalizer.normalize(s, Normalizer.Form.NFC)
 
   private def utf8Len(s: String): Int = s.getBytes(UTF_8).length
@@ -127,10 +132,12 @@ object TargetDirGuard:
       )
     )
 
-  /** Windows 盘符（`C:\…`）或 UNC（`\\server\share`）形态。
-    *
-    * `PathUtil.isAbsolute` **明确接受**这两种形态（`core/paths.scala:21-24`），而 POSIX 上
-    * `os.Path("C:\\x", pwd)` 会把它们当**相对段**拼出怪路径 ⇒ 必须显式驳回。 */
+  /**
+   * Windows 盘符（`C:\…`）或 UNC（`\\server\share`）形态。
+   *
+   * `PathUtil.isAbsolute` **明确接受**这两种形态（`core/paths.scala:21-24`），而 POSIX 上
+   * `os.Path("C:\\x", pwd)` 会把它们当**相对段**拼出怪路径 ⇒ 必须显式驳回。
+   */
   private def looksWindowsOrUnc(s: String): Boolean =
     s.startsWith("\\\\") || (s.length >= 2 && s.charAt(1) == ':')
 
@@ -183,6 +190,9 @@ object TargetDirGuard:
         catch
           case e: Exception =>
             invalid(raw, s"unresolvable path (${e.getClass.getSimpleName}: ${e.getMessage})") // 异常收成结构化码，不逃逸
+      end if
+    end if
+  end resolve
 
   /**
    * 步骤 6：目标存在 ⇒ 必须是目录 + 可写；目标不存在 ⇒ 最深**存在**祖先必须是目录且可写。
@@ -209,8 +219,7 @@ object TargetDirGuard:
       // 最深**存在**祖先（NOFOLLOW：悬空链也算「存在」，与 canonicalize 同口径）。
       var base = target
       while base.getParent != null && !Files.exists(base, LinkOption.NOFOLLOW_LINKS) do base = base.getParent
-      if !Files.isDirectory(base) then
-        notFound(target, s"the deepest existing ancestor '$base' is not a directory")
+      if !Files.isDirectory(base) then notFound(target, s"the deepest existing ancestor '$base' is not a directory")
       else if !Files.isWritable(base) then notWritable(target, s"the deepest existing ancestor '$base' is not writable")
       else Right(os.Path(target))
 

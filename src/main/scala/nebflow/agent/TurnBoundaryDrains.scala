@@ -43,7 +43,7 @@ object TurnBoundaryDrains:
     results.count { (call, r) =>
       !r.isError && (
         call.name == "SubTask" ||
-        (call.name == "Delegate" && call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent"))
+          (call.name == "Delegate" && call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent"))
       )
     }
 

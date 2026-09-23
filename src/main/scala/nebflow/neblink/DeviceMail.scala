@@ -60,13 +60,17 @@ object DeviceMail:
   /** 契约不变量：`to_nebula` 恒为真（本批唯一目标形态 = 对端 Nebula 会话）。 */
   val ToNebulaValue: Boolean = true
 
-  /** 注入来源定名（后端唯一定名源 = `InjectionAttribution.BackendNamedSources` 的
-    * 一员；前端 `web/js/chat.js#injectedSourceLabel` 必须显式登记 —— 契约门
-    * `InjectionSourceContractSpec` 守两侧同源）。 */
+  /**
+   * 注入来源定名（后端唯一定名源 = `InjectionAttribution.BackendNamedSources` 的
+   * 一员；前端 `web/js/chat.js#injectedSourceLabel` 必须显式登记 —— 契约门
+   * `InjectionSourceContractSpec` 守两侧同源）。
+   */
   val SourceDeviceMail: String = "deviceMail"
 
-  /** 邮件类型语义 = **INFO**（作者口径「类型 INFO 语义」）：补充上下文、不打断
-    * 当前工作。线上取值 = `MailTool` 既有口径（mailType.toLowerCase）。 */
+  /**
+   * 邮件类型语义 = **INFO**（作者口径「类型 INFO 语义」）：补充上下文、不打断
+   * 当前工作。线上取值 = `MailTool` 既有口径（mailType.toLowerCase）。
+   */
   val EventTypeInfo: String = "info"
 
   /** 注入文本头行（逐字，作者口径）：`[DEVICE-MAIL · from <from_device>]`。 */
@@ -107,7 +111,8 @@ object DeviceMail:
       json.hcursor.get[String](KeyEventId).toOption.map(_.trim).filter(_.nonEmpty)
     }
 
-  /** `"message-<id>"` → `<id>`（id 面的**唯一**去前缀点；非该前缀原样返回 trim 结果）。 */  def stripMessagePrefix(raw: String): String =
+  /** `"message-<id>"` → `<id>`（id 面的**唯一**去前缀点；非该前缀原样返回 trim 结果）。 */
+  def stripMessagePrefix(raw: String): String =
     val t = raw.trim
     if t.startsWith(AckEventIdPrefix) then t.drop(AckEventIdPrefix.length) else t
 
@@ -127,15 +132,19 @@ object DeviceMail:
   def envelopeEventType(frame: Json): Option[String] =
     frame.hcursor.downField(KeyEvent).get[String](KeyType).toOption
 
-  /** 是否为本批的设备邮件事件（**唯一**入场判据：`type == friend_event` ∧
-    * `event.type == agent_mail`）。非本判据的帧一律交回既有路径（零副作用）。 */
+  /**
+   * 是否为本批的设备邮件事件（**唯一**入场判据：`type == friend_event` ∧
+   * `event.type == agent_mail`）。非本判据的帧一律交回既有路径（零副作用）。
+   */
   def isAgentMailEnvelope(frame: Json): Boolean =
     frame.hcursor.get[String](KeyType).toOption.contains(TypeFriendEvent) &&
       envelopeEventType(frame).contains(TypeAgentMail)
 
-  /** 信封拆解（`isAgentMailEnvelope` 为真时才给出值；`payload` 非对象 ⇒ 不给值，
-    * 由 [[parseEnvelope]] 给出可读原因）。`eventId` 取帧根，回落内层（v2.1 实证样例
-    * 在帧根）。 */
+  /**
+   * 信封拆解（`isAgentMailEnvelope` 为真时才给出值；`payload` 非对象 ⇒ 不给值，
+   * 由 [[parseEnvelope]] 给出可读原因）。`eventId` 取帧根，回落内层（v2.1 实证样例
+   * 在帧根）。
+   */
   def envelope(frame: Json): Option[Envelope] =
     if !isAgentMailEnvelope(frame) then None
     else
@@ -146,14 +155,18 @@ object DeviceMail:
 
   /** 帧级 eventId（帧根优先，回落 `event.eventId`；空串视同缺席）。 */
   def frameEventId(frame: Json): Option[String] =
-    frame.hcursor.get[String](KeyEventId).toOption
+    frame.hcursor
+      .get[String](KeyEventId)
+      .toOption
       .orElse(frame.hcursor.downField(KeyEvent).get[String](KeyEventId).toOption)
       .map(_.trim)
       .filter(_.nonEmpty)
 
-  /** 事件流信封的 **fail-closed 解析**（v2.1 唯一收件入场）：非本批事件 ⇒
-    * `Left(可读原因)`（调用方按帧类别决定 DEBUG/WARN）；`payload` 缺口/五键校验失败
-    * ⇒ `Left(可读原因)`。零副作用、零 IO。 */
+  /**
+   * 事件流信封的 **fail-closed 解析**（v2.1 唯一收件入场）：非本批事件 ⇒
+   * `Left(可读原因)`（调用方按帧类别决定 DEBUG/WARN）；`payload` 缺口/五键校验失败
+   * ⇒ `Left(可读原因)`。零副作用、零 IO。
+   */
   def parseEnvelope(frame: Json): Either[String, (Incoming, Option[String])] =
     frame.hcursor.get[String](KeyType).toOption match
       case Some(TypeFriendEvent) =>
@@ -168,11 +181,13 @@ object DeviceMail:
           case other =>
             Left(s"event.type='${other.getOrElse("<absent>")}' is not '$TypeAgentMail'")
       case Some(other) => Left(s"frame type '$other' is not '$TypeFriendEvent'")
-      case None        => Left(s"frame has no '$KeyType'")
+      case None => Left(s"frame has no '$KeyType'")
 
-  /** **fail-closed 解析**（老版本对端降级面）：未知 `type` / 缺字段 / 类型错 /
-    * `to_nebula` 非真值 / 空正文 ⇒ `Left(可读原因)`，调用方**忽略 + 落可读日志**，
-    * 禁崩溃、禁误渲染（本方法零副作用、零 IO）。 */
+  /**
+   * **fail-closed 解析**（老版本对端降级面）：未知 `type` / 缺字段 / 类型错 /
+   * `to_nebula` 非真值 / 空正文 ⇒ `Left(可读原因)`，调用方**忽略 + 落可读日志**，
+   * 禁崩溃、禁误渲染（本方法零副作用、零 IO）。
+   */
   def parse(json: Json): Either[String, Incoming] =
     val hc = json.hcursor
     if !isAgentMail(json) then
@@ -190,10 +205,13 @@ object DeviceMail:
             case None => Left(s"missing/blank '$KeyFromDeviceId'")
             case Some(_) =>
               toNebula match
-                case Some(true) => text match
+                case Some(true) =>
+                  text match
                     case Some(t) => Right(Incoming(t, fromDevice.get, fromDeviceId.get))
-                    case None    => Left(s"missing/blank '$KeyText'")
+                    case None => Left(s"missing/blank '$KeyText'")
                 case Some(other) => Left(s"'$KeyToNebula' must be true (got $other)")
-                case None        => Left(s"missing/non-boolean '$KeyToNebula'")
+                case None => Left(s"missing/non-boolean '$KeyToNebula'")
+    end if
+  end parse
 
 end DeviceMail

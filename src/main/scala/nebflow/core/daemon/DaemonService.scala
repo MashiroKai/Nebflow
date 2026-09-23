@@ -24,8 +24,10 @@ import scala.jdk.StreamConverters.*
  */
 final class DaemonService(
   dispatcher: Dispatcher[IO],
-  /** Marker file recording spawned pids — used to reclaim stale processes of
-   *  an abnormally-killed previous instance at boot (see reclaimStaleDaemons). */
+  /**
+   * Marker file recording spawned pids — used to reclaim stale processes of
+   *  an abnormally-killed previous instance at boot (see reclaimStaleDaemons).
+   */
   markerFile: os.Path = PathUtil.dataRoot / "daemon-pids.json"
 ):
 
@@ -246,7 +248,8 @@ final class DaemonService(
                   logger.info(s"[daemon] '${e2.config.name}' port $p freed — taking over") *>
                     doStartInternal(e2.config, 0).void
                       .handleErrorWith(err =>
-                        logger.error(s"[daemon] Takeover start failed for '${e2.config.name}': ${err.getMessage}") *> loop
+                        logger
+                          .error(s"[daemon] Takeover start failed for '${e2.config.name}': ${err.getMessage}") *> loop
                       )
                 case _ => IO.unit // someone else started it — done
               }
@@ -255,6 +258,9 @@ final class DaemonService(
         case _ => IO.unit // user stopped it, entry removed, or we started it — done
       )
     loop
+
+  end lowRateTakeover
+
   private def doStartInternal(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
     IO.blocking {
       val workDir = config.cwd match
@@ -622,7 +628,8 @@ final class DaemonService(
                 try
                   val opt = ph.info.startInstant()
                   if opt.isPresent then opt.get().toEpochMilli else 0L
-                catch case _: Exception => 0L
+                catch
+                  case _: Exception => 0L
               // Guard against pid reuse: a recycled pid has a DIFFERENT start
               // time than the one we recorded at spawn → not our process.
               startMs != 0L && math.abs(startMs - m.startedAt) <= 2000
@@ -631,9 +638,9 @@ final class DaemonService(
               logger.info(
                 s"[daemon] Reclaiming stale process of previous instance: '${m.name}' (pid=${m.pid}${m.port.map(p => s", port $p").getOrElse("")})"
               ) *>
-                ProcessTree.killProcessTree(ph).handleErrorWith(e =>
-                  logger.warn(s"[daemon] Reclaim kill failed for '${m.name}': ${e.getMessage}")
-                )
+                ProcessTree
+                  .killProcessTree(ph)
+                  .handleErrorWith(e => logger.warn(s"[daemon] Reclaim kill failed for '${m.name}': ${e.getMessage}"))
             } *> clearMarkers()
     }
 

@@ -114,7 +114,7 @@ class PathUtilSpec extends FunSuite:
   }
 
   test("isAbsolute: drive-like edge cases") {
-    assertEquals(PathUtil.isAbsolute("C"), false)  // single char, no colon
+    assertEquals(PathUtil.isAbsolute("C"), false) // single char, no colon
     assertEquals(PathUtil.isAbsolute("CX"), false) // colon check is position 1 only
     assertEquals(PathUtil.isAbsolute(":C"), false)
   }

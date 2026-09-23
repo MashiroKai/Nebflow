@@ -44,16 +44,20 @@ class SeedManifestCoverageSpec extends FunSuite:
   private val PluginsPrefix = "plugins:"
   private val SeedPluginsResource = "seed/plugins"
 
-  /** 默认预装集（硬编码锚点；与此不符即红）。
-    *
-    * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
-    * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
-    * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。 */
+  /**
+   * 默认预装集（硬编码锚点；与此不符即红）。
+   *
+   * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
+   * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
+   * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。
+   */
   private val ExpectedDefaultPlugins: Set[String] =
     Set("slideblocks", "visual-report", "nebflow-plugin-creator", "web-search-toolkit")
 
-  /** 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
-    * `SeedService.resourceDirList` 的协议判定同口径：sbt test = file，assembly = jar）。 */
+  /**
+   * 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
+   * `SeedService.resourceDirList` 的协议判定同口径：sbt test = file，assembly = jar）。
+   */
   private def seedTreeDirs(): Map[String, Boolean] =
     val url = Option(getClass.getClassLoader.getResource(SeedPluginsResource)).getOrElse(
       fail(s"classpath resource '$SeedPluginsResource' not found — seed plugin tree missing from test classpath")
@@ -65,15 +69,22 @@ class SeedManifestCoverageSpec extends FunSuite:
       case "jar" =>
         // jar 未必带目录条目 ⇒ 目录名从条目名首段归并，合法性 = 存在 `<name>/plugin.json` 条目
         val entries = jarSeedEntries(url)
-        entries.map(_.split('/').head).distinct
-          .map(n => n -> entries.contains(s"$n/plugin.json")).toMap
+        entries
+          .map(_.split('/').head)
+          .distinct
+          .map(n => n -> entries.contains(s"$n/plugin.json"))
+          .toMap
       case other =>
         fail(s"unsupported classpath protocol '$other' for $SeedPluginsResource — cannot enumerate seed tree")
+
+  end seedTreeDirs
 
   /** jar 内 `seed/plugins/` 下**文件**条目（rel 形如 `<name>/…`，过滤掉根级散文件）。 */
   private def jarSeedEntries(url: java.net.URL): List[String] =
     val jar = url.openConnection().asInstanceOf[JarURLConnection].getJarFile
-    jar.entries().asScala
+    jar
+      .entries()
+      .asScala
       .map(_.getName)
       .filter(n => n.startsWith(s"$SeedPluginsResource/") && !n.endsWith("/"))
       .map(_.stripPrefix(s"$SeedPluginsResource/"))
@@ -92,7 +103,9 @@ class SeedManifestCoverageSpec extends FunSuite:
     try
       val text = new String(in.readAllBytes(), UTF_8)
       val json = io.circe.parser.parse(text).fold(e => fail(s"seed/manifest.json invalid: ${e.getMessage}"), identity)
-      json.hcursor.downField("items").as[List[String]]
+      json.hcursor
+        .downField("items")
+        .as[List[String]]
         .fold(e => fail(s"seed/manifest.json 'items' unreadable: ${e.getMessage}"), identity)
     finally in.close()
 
@@ -129,7 +142,9 @@ class SeedManifestCoverageSpec extends FunSuite:
     )
 
   // ── c. 默认预装集恰为四条（写死锚点）────────────────────────
-  test("K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit}"):
+  test(
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit}"
+  ):
     val declared = declaredPluginNames()
     val added = (declared -- ExpectedDefaultPlugins).toList.sorted
     val removed = (ExpectedDefaultPlugins -- declared).toList.sorted

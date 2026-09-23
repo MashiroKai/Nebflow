@@ -38,9 +38,11 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
   os.makeDir.all(tempRoot / "sessions")
 
@@ -90,13 +92,22 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (_, _, _) => IO.unit
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
   /** registry 里登记一个活会话 recorder（节点真实会话的替身）。 */
-  private def registerLiveSession(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
+  private def registerLiveSession(
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String
+  ): IO[Ref[IO, List[AgentCommand]]] =
     def mkBehavior(recorded: Ref[IO, List[AgentCommand]]): nebflow.actor.Behavior[AgentCommand] =
       lazy val behavior: nebflow.actor.Behavior[AgentCommand] =
         Behaviors.receiveMessage[AgentCommand](m => recorded.update(_ :+ m).as(behavior))
@@ -109,14 +120,23 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
 
   private def seedRunningNode(rt: ProjectRuntime, sessionRef: String): IO[Unit] =
     rt.store.mutate { s =>
-      s.copy(nodes = s.nodes.updated("n-r1", NodeDef(
-        id = "n-r1", name = "react-a", agent = "general",
-        task = Some("原任务（已被 NodeEdit 重激活改写）"), out = List(OutEdge.nebula),
-        status = NodeLifecycle.Running,
-        startedAt = Some(System.currentTimeMillis()),
-        createdAt = System.currentTimeMillis(),
-        sessionRef = Some(sessionRef),
-        deliveredTo = Nil)))
+      s.copy(nodes =
+        s.nodes.updated(
+          "n-r1",
+          NodeDef(
+            id = "n-r1",
+            name = "react-a",
+            agent = "general",
+            task = Some("原任务（已被 NodeEdit 重激活改写）"),
+            out = List(OutEdge.nebula),
+            status = NodeLifecycle.Running,
+            startedAt = Some(System.currentTimeMillis()),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sessionRef),
+            deliveredTo = Nil
+          )
+        )
+      )
     }.void
 
   test("re-activated node: missing session cache resolves via persisted sessionRef (realtime resolution)") {
@@ -141,10 +161,13 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
     yield
       assertEquals(pre, None, "precondition: no cached handle")
       assert(result.isRight, s"delivery must succeed, got $result")
-      assert(delivered.exists(_.text.contains("增量指令：改用方案 B")),
-        "the LIVE session must receive the injection ([NODE-MESSAGE] header + text)")
+      assert(
+        delivered.exists(_.text.contains("增量指令：改用方案 B")),
+        "the LIVE session must receive the injection ([NODE-MESSAGE] header + text)"
+      )
       assert(delivered.forall(_.source.contains("system")), "injection carries source=system")
       assertEquals(healed, Some(liveSid), "session cache must self-heal to the live session")
+    end for
   }
 
   test("re-activated node: STALE cached handle (dead old session) yields to sessionRef and self-heals") {
@@ -170,9 +193,12 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(result.isRight, s"delivery must succeed despite the stale cached handle, got $result")
-      assert(delivered.exists(_.text.contains("重试投递：现场取证样本")),
-        "injection must reach the NEW live session, not bounce off the dead handle")
+      assert(
+        delivered.exists(_.text.contains("重试投递：现场取证样本")),
+        "injection must reach the NEW live session, not bounce off the dead handle"
+      )
       assertEquals(healed, Some(liveSid), "stale cache entry must be replaced by the live session id")
+    end for
   }
 
   test("真终结会话（两个候选都查无）仍走「注入未达」兜底——不误投、留痕不丢") {
@@ -198,5 +224,6 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
       assert(result.toOption.exists(_.contains("注入未达")), s"must report the undelivered fallback, got $result")
       assert(node.task.exists(_.contains("不应送达的消息")), "message must be recorded on the node task")
       assert(events.exists(e => e.contains("not-delivered")), "audit event must be preserved")
+    end for
   }
 end NodeMessageReactivationSpec

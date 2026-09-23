@@ -52,7 +52,7 @@ class BrandingSpec extends FunSuite:
   test("academicSearchUserAgent is byte-identical to the pre-rebrand UA") {
     assertEquals(
       Branding.academicSearchUserAgent,
-      "Nebflow/academic-search (mailto:research@nebflow.space)",
+      "Nebflow/academic-search (mailto:research@nebflow.space)"
     )
   }
 
@@ -61,7 +61,7 @@ class BrandingSpec extends FunSuite:
     val env = Map(
       "NEBFLOW_BRAND_DOMAIN" -> "nebflow.space",
       "NEBFLOW_PROFILE_URL" -> "https://nebflow.space/profile",
-      "NEBFLOW_HOME" -> "/tmp/legacy-home",
+      "NEBFLOW_HOME" -> "/tmp/legacy-home"
     )
     assertEquals(Branding.dualEnv(env, "NEBFLOW", "BRAND_DOMAIN"), Some("nebflow.space"))
     assertEquals(Branding.dualEnv(env, "NEBFLOW", "PROFILE_URL"), Some("https://nebflow.space/profile"))

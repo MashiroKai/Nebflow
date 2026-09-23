@@ -40,6 +40,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"barrier regression agent","tools":[],"category":"standalone"}"""
@@ -47,22 +48,28 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 捕获输入 LLM：记录每次请求的 user 文本（断言下游节点输入含上游结果）。
-    * 逐请求延迟由 delayOf（按输入内容）决定——构造指定节点的 running 窗口。 */
+  /**
+   * 捕获输入 LLM：记录每次请求的 user 文本（断言下游节点输入含上游结果）。
+   * 逐请求延迟由 delayOf（按输入内容）决定——构造指定节点的 running 窗口。
+   */
   private class CaptureLlm(delayOf: String => FiniteDuration = _ => 0.millis):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -111,7 +118,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -124,7 +131,10 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -147,7 +157,12 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -156,7 +171,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -167,7 +182,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     waitUntil(15.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
@@ -187,12 +202,31 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // 先建 B（wiring，无 task），再建入口 A 且 out → B。
       // B store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-b" -> NodeDef(id = "n-b", name = "node-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-b" -> NodeDef(
+              id = "n-b",
+              name = "node-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       bId <- idOf(rt, "node-b")
-      _ <- nodeEdit(nodeInput("bar-chain", "node-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("produce-X"), "out" -> Json.fromString(bId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-chain",
+          "node-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("produce-X"),
+          "out" -> Json.fromString(bId)
+        ),
+        ctx
+      )
       // A 完成（后台）→ deliverOut 沿 fresh.out → B barrier 归零启动 → B 完成
       _ <- waitStatus(rt, "node-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "node-b", Set(NodeLifecycle.Completed))
@@ -205,8 +239,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       assert(b.exists(_.deliveredTo.contains(aId)), s"B must have received A's delivery, got ${b.map(_.deliveredTo)}")
       assertEquals(b.map(_.status), Some(NodeLifecycle.Completed), "B must have run to completion")
       // A 的 result = LLM 应答 "ok"；B 输入 = own task + "=== Node node-a ===\n<result>"
-      assert(bInput.exists(_.contains("=== Node node-a ===")),
-        s"B's input must carry A's result header, got: ${bInput.map(_.take(300))}")
+      assert(
+        bInput.exists(_.contains("=== Node node-a ===")),
+        s"B's input must carry A's result header, got: ${bInput.map(_.take(300))}"
+      )
+    end for
   }
 
   // ── ③ 并行 barrier A、B→C ──────────────────────────────
@@ -221,14 +258,41 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       rt <- mountProject("bar-parallel", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // merge-c store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-merge-c" -> NodeDef(id = "n-merge-c", name = "merge-c", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-merge-c" -> NodeDef(
+              id = "n-merge-c",
+              name = "merge-c",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       cId <- idOf(rt, "merge-c")
-      _ <- nodeEdit(nodeInput("bar-parallel", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("result-of-A"), "out" -> Json.fromString(cId)), ctx)
-      _ <- nodeEdit(nodeInput("bar-parallel", "src-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("result-of-B"), "out" -> Json.fromString(cId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-parallel",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("result-of-A"),
+          "out" -> Json.fromString(cId)
+        ),
+        ctx
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-parallel",
+          "src-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("result-of-B"),
+          "out" -> Json.fromString(cId)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "src-b", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "merge-c", Set(NodeLifecycle.Completed))
@@ -240,10 +304,17 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     yield
       assert(c.isDefined, "C must exist")
       assertEquals(c.get.in.toSet, Set(aId, bId), s"C.in must hold both upstreams, got ${c.get.in}")
-      assertEquals(c.get.deliveredTo.toSet, Set(aId, bId), s"C must have received BOTH results, got ${c.get.deliveredTo}")
+      assertEquals(
+        c.get.deliveredTo.toSet,
+        Set(aId, bId),
+        s"C must have received BOTH results, got ${c.get.deliveredTo}"
+      )
       assertEquals(c.get.status, NodeLifecycle.Completed, "C must start after barrier and complete")
-      assert(cInput.isDefined,
-        s"C's input must contain BOTH upstream results (=== headers), got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(150))}")
+      assert(
+        cInput.isDefined,
+        s"C's input must contain BOTH upstream results (=== headers), got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(150))}"
+      )
+    end for
   }
 
   // ── ④ 改接补投递（create 路径 D1 + edit 路径补齐）───────
@@ -258,14 +329,30 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       rt <- mountProject("bar-d1-create", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口（悬空完成：out=Nebula 仅满足连接下限，Nebula 通知在测试环境无根会话，无断言影响）
-      _ <- nodeEdit(nodeInput("bar-d1-create", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-d1-create",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       // 新建 B 接 in=[A]（JSON 数组字符串形态，顺带回归次因 B）→ D1 自动投递 + 启动
-      _ <- nodeEdit(nodeInput("bar-d1-create", "consumer-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("consume"), "in" -> Json.fromString(s"""["$aId"]"""),
-        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-d1-create",
+          "consumer-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("consume"),
+          "in" -> Json.fromString(s"""["$aId"]"""),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "consumer-b", Set(NodeLifecycle.Completed))
       bId <- idOf(rt, "consumer-b")
       b <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
@@ -275,7 +362,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       assertEquals(b.in, List(aId), s"B.in must reference A (parsed from JSON-array-string), got ${b.in}")
       assert(b.deliveredTo.contains(aId), s"B must have received A's result, got ${b.deliveredTo}")
       assertEquals(b.status, NodeLifecycle.Completed, "B must start after delivery")
-      assert(bInput.isDefined, s"B's input must contain A's result header, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(120))}")
+      assert(
+        bInput.isDefined,
+        s"B's input must contain A's result header, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(120))}"
+      )
+    end for
   }
 
   test("④b edit-path: completed dangling A + EXISTING wiring W appends in=[A] → auto delivered and started (补齐)") {
@@ -288,15 +379,34 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       rt <- mountProject("bar-d1-edit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 悬空完成（out=Nebula 仅满足连接下限，校验五——测试环境无 Nebula 根会话无副作用）
-      _ <- nodeEdit(nodeInput("bar-d1-edit", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dangling-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-d1-edit",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dangling-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId0 <- idOf(rt, "done-a")
       // 已存在 wiring 节点 W（无 task，store 直种——20260903 创建必带 out 新规范下
       // out-only wiring 节点不可经 NodeEdit 创建；本用例主体是 edit-append 路径，种子等价）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-wiring-w" -> NodeDef(
+              id = "n-wiring-w",
+              name = "wiring-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       // edit 路径追加 in=[A]（修复次因 A）→ 立即投递 + barrier 结算启动
       _ <- nodeEdit(nodeInput("bar-d1-edit", "wiring-w", "in" -> Json.fromString(aId0)), ctx)
       _ <- waitStatus(rt, "wiring-w", Set(NodeLifecycle.Completed))
@@ -309,7 +419,11 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       assert(w.in.contains(aId), s"W.in must reference A after append, got ${w.in}")
       assert(w.deliveredTo.contains(aId), s"W must have received A's result via edit-append, got ${w.deliveredTo}")
       assertEquals(w.status, NodeLifecycle.Completed, "W must start after appended delivery")
-      assert(wInput.isDefined, s"W's input must contain A's result header, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(120))}")
+      assert(
+        wInput.isDefined,
+        s"W's input must contain A's result header, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(120))}"
+      )
+    end for
   }
 
   // ── ⑤ 运行中接线竞态（本次核心）────────────────────────
@@ -326,15 +440,34 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       // A 入口运行中（out 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）。
       // 2026-09-12 批 A1：字面用**显式门集** `(pass,failed)Nebula`（= 通知汇报边
       // `OutEdge.nebula`）；bare `"Nebula"` 今日已收敛为纯出口标记（`{pass}/signal`）。
-      _ <- nodeEdit(nodeInput("bar-race", "race-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("race-result-A"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-race",
+          "race-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("race-result-A"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "race-a", Set(NodeLifecycle.Running))
       // A 运行中建 C 并接线 in=[A]（NodeTools.setOut 改写运行中节点的 out）。
       // C store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经
       // NodeEdit 创建；本用例主体是运行中接线竞态，种子等价）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-race-c" -> NodeDef(id = "n-race-c", name = "race-c", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-race-c" -> NodeDef(
+              id = "n-race-c",
+              name = "race-c",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       cId <- idOf(rt, "race-c")
       aId0 <- idOf(rt, "race-a")
       _ <- nodeEdit(nodeInput("bar-race", "race-c", "in" -> Json.fromString(aId0)), ctx)
@@ -349,17 +482,27 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     yield
       // 核心断言 1：A 完成后 out 仍含 C（修复前被启动快照的 out=None 覆盖回写）。
       // P1 追加语义：in 声明给上游 out 追加指向本节点的边，不再切断既有 Nebula 汇报边
-      assertEquals(aAfter.out, List(OutEdge.nebula, OutEdge(cId)), "A.out must keep the mid-run rewiring (no stale snapshot overwrite)")
+      assertEquals(
+        aAfter.out,
+        List(OutEdge.nebula, OutEdge(cId)),
+        "A.out must keep the mid-run rewiring (no stale snapshot overwrite)"
+      )
       // 核心断言 2：C 收到 A 的结果并启动（修复前 deliveredTo 空 + 永久 wiring）
       assert(c.deliveredTo.contains(aId), s"C must have received A's result, got ${c.deliveredTo}")
       assertEquals(c.status, NodeLifecycle.Completed, s"C must start and complete, got ${c.status}")
       // C 输入 = own task + "=== Node race-a ===\n<A result>"（结果头即投递证据）
-      assert(cInput.exists(_.contains("=== Node race-a ===")), s"C's input must carry A's result header, got: ${cInput.map(_.take(300))}")
+      assert(
+        cInput.exists(_.contains("=== Node race-a ===")),
+        s"C's input must carry A's result header, got: ${cInput.map(_.take(300))}"
+      )
+    end for
   }
 
   // ── ⑥ edit 路径 in 追加已完成上游 → 立即投递（部分 barrier）──
 
-  test("⑥ edit-append into partial barrier: appended completed upstream delivered immediately, starts when running upstream finishes") {
+  test(
+    "⑥ edit-append into partial barrier: appended completed upstream delivered immediately, starts when running upstream finishes"
+  ) {
     val ws = tempRoot / "ws-append"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bar-app-${scala.util.Random.nextInt(100000)}")
@@ -368,7 +511,8 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val llm = CaptureLlm(text =>
       if text.contains("running-result-R") then 2500.millis
       else if text.contains("done-result-A") then 200.millis
-      else 0.millis)
+      else 0.millis
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-append", ws, system, res)
@@ -376,15 +520,42 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       // W（wiring）+ R 入口 out→W（R 运行中 → W 的 barrier 挂起等 R）。
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经
       // NodeEdit 创建；本用例主体是分批 barrier 投递，种子等价）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "w-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-w")
-      _ <- nodeEdit(nodeInput("bar-append", "run-r", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("running-result-R"), "out" -> Json.fromString(wId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-append",
+          "run-r",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("running-result-R"),
+          "out" -> Json.fromString(wId)
+        ),
+        ctx
+      )
       // A 悬空完成（out=Nebula 仅满足连接下限，校验五——追加目标）
-      _ <- nodeEdit(nodeInput("bar-append", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-append",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       rId <- idOf(rt, "run-r")
@@ -400,11 +571,21 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 追加后、R 完成前：A 已投递（立即投递证据）、W 尚未启动（barrier 仍等待）
-      assert(partial.deliveredTo.contains(aId), s"A's result must be delivered right after edit-append, got ${partial.deliveredTo}")
-      assert(partial.status == NodeLifecycle.Wiring, s"W must still be waiting for R at append time, got ${partial.status}")
+      assert(
+        partial.deliveredTo.contains(aId),
+        s"A's result must be delivered right after edit-append, got ${partial.deliveredTo}"
+      )
+      assert(
+        partial.status == NodeLifecycle.Wiring,
+        s"W must still be waiting for R at append time, got ${partial.status}"
+      )
       assertEquals(w.deliveredTo.toSet, Set(rId, aId), s"W must receive both, got ${w.deliveredTo}")
       assertEquals(w.status, NodeLifecycle.Completed, "W must start only after barrier completes")
-      assert(wInput.isDefined, s"W's input must contain BOTH results, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(150))}")
+      assert(
+        wInput.isDefined,
+        s"W's input must contain BOTH results, got inputs=${llm.inputs.get.unsafeRunSync().map(_.take(150))}"
+      )
+    end for
   }
 
   // ── 终态显示 TTL：一次性计算 + 24h 量级（2026-09-02 作者裁定）──
@@ -418,8 +599,16 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-ttl", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("bar-ttl", "node-ttl", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("ttl-check"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "bar-ttl",
+          "node-ttl",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("ttl-check"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "node-ttl", Set(NodeLifecycle.Completed))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       n <- rt.store.snapshot.map(_.nodes.values.find(_.name == "node-ttl"))
@@ -431,8 +620,12 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       val completedAt = node.completedAt.getOrElse(fail("completedAt must be set on completed node"))
       val ttlExpireAt = node.ttlExpireAt.getOrElse(fail("ttlExpireAt must be set on terminalized node"))
       // 一次性计算语义：ttlExpireAt - completedAt 恒等于常量（终态转换时算一次，此后不再重算）
-      assertEquals(ttlExpireAt - completedAt, NodeEngine.TtlDisplayMs,
-        s"ttlExpireAt must be exactly completedAt + ${NodeEngine.TtlDisplayMs}ms (24h)")
+      assertEquals(
+        ttlExpireAt - completedAt,
+        NodeEngine.TtlDisplayMs,
+        s"ttlExpireAt must be exactly completedAt + ${NodeEngine.TtlDisplayMs}ms (24h)"
+      )
+    end for
   }
 
   // ── 附带：加载净化存量 out="null" 字面串 ────────────────

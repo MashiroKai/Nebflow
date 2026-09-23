@@ -39,17 +39,21 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 120.seconds
 
-  /** 脚本化 LLM：首轮吐 AskUserQuestion 工具调用（入参由用例注入），后续轮次文本收尾。
-    * `gate` = 观察窗（先例 `WaitTimeoutAskUserWiringSpec` 的 secondGate）：未放行时
-    * turn 停在第二轮 LLM 调用上 ⇒「非阻塞不标 WaitingForUser」可在**确定的时间窗内**
-    * 读数（否则 turn 秒完，turn-end 兜底会把状态刷回 Idle，读数变空转）。 */
+  /**
+   * 脚本化 LLM：首轮吐 AskUserQuestion 工具调用（入参由用例注入），后续轮次文本收尾。
+   * `gate` = 观察窗（先例 `WaitTimeoutAskUserWiringSpec` 的 secondGate）：未放行时
+   * turn 停在第二轮 LLM 调用上 ⇒「非阻塞不标 WaitingForUser」可在**确定的时间窗内**
+   * 读数（否则 turn 秒完，turn-end 兜底会把状态刷回 Idle，读数变空转）。
+   */
   private class ScriptedAskLlm(
     requests: Ref[IO, List[LlmRequest]],
     askInput: JsonObject,
     gate: Deferred[IO, Unit]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -61,9 +65,10 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
               StreamChunk.ToolCallChunk(ToolCall("tu-ask", AskUserQuestionTool.Name, askInput)),
               StreamChunk.Done(None, None)
             )
-          else
-            Stream.eval(gate.get).drain ++ Stream(StreamChunk.TextDelta("turn-done"), StreamChunk.Done(None, None))
+          else Stream.eval(gate.get).drain ++ Stream(StreamChunk.TextDelta("turn-done"), StreamChunk.Done(None, None))
         }
+
+  end ScriptedAskLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -148,8 +153,10 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
     cleanup: IO[Unit]
   )
 
-  /** 装配：hub（可选注册 root 窗口）+ 真实 AgentActor（Nebula/depth=0 或 general/depth=1）。
-    * `holdTurn` = 把 turn 停在第二轮 LLM 调用上（观察窗，见 [[ScriptedAskLlm]]）。 */
+  /**
+   * 装配：hub（可选注册 root 窗口）+ 真实 AgentActor（Nebula/depth=0 或 general/depth=1）。
+   * `holdTurn` = 把 turn 停在第二轮 LLM 调用上（观察窗，见 [[ScriptedAskLlm]]）。
+   */
   private def setup(
     name: String,
     agentDef: AgentDef,
@@ -174,7 +181,9 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       wsEvents <- IO.ref(List.empty[Json])
       hub <- system.spawn(InteractionHub(), s"hub-$name")
       _ <- resources.interactionHubRef.set(Some(hub))
-      _ <- if registerWindow then hub ! InteractionHubCommand.RegisterRoot(sid, (j: Json) => wsEvents.update(_ :+ j)) else IO.unit
+      _ <-
+        if registerWindow then hub ! InteractionHubCommand.RegisterRoot(sid, (j: Json) => wsEvents.update(_ :+ j))
+        else IO.unit
       actor <- system.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -189,23 +198,33 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         s"agent-$name"
       )
       now <- IO(System.currentTimeMillis())
-      _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(
-        sessionId = sid,
-        ref = actor,
-        kind = if depth == 0 then AgentKind.Root else AgentKind.Delegate,
-        rootSessionId = sid,
-        parentRef = None,
-        startedAt = now,
-        status = AgentStatus.Processing,
-        lastActivityMs = now
-      )))
+      _ <- resources.agentRegistry.update(
+        _ + (sid -> AgentRecord(
+          sessionId = sid,
+          ref = actor,
+          kind = if depth == 0 then AgentKind.Root else AgentKind.Delegate,
+          rootSessionId = sid,
+          parentRef = None,
+          startedAt = now,
+          status = AgentStatus.Processing,
+          lastActivityMs = now
+        ))
+      )
       _ <- actor ! AgentCommand.UserInput("ask me now", None, Some(s"cmid-$name"))
-    yield Fixture(system, resources, hub, actor, sid, wsEvents, requests,
+    yield Fixture(
+      system,
+      resources,
+      hub,
+      actor,
+      sid,
+      wsEvents,
+      requests,
       releaseTurn = gate.complete(()).void,
       cleanup = IO {
         nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
         PathUtil.setDataRoot(prevRoot)
-      } *> system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void)
+      } *> system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void
+    )
     try program.unsafeRunSync()
     catch
       case e: Throwable =>
@@ -215,32 +234,44 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         os.remove.all(tmp)
         throw e
 
+  end setup
+
   private val askInputNonBlocking: JsonObject =
     JsonObject(
-      "questions" -> Json.arr(Json.obj("question" -> "运行态非阻塞验证：选一个".asJson,
-        "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson)))),
+      "questions" -> Json.arr(
+        Json.obj(
+          "question" -> "运行态非阻塞验证：选一个".asJson,
+          "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson))
+        )
+      ),
       "mode" -> AskMode.NonBlockingWire.asJson
     )
 
   private val askInputBlocking: JsonObject =
     JsonObject(
-      "questions" -> Json.arr(Json.obj("question" -> "运行态阻塞验证：选一个".asJson,
-        "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson))))
+      "questions" -> Json.arr(
+        Json.obj(
+          "question" -> "运行态阻塞验证：选一个".asJson,
+          "options" -> Json.arr(Json.obj("label" -> "alpha".asJson), Json.obj("label" -> "beta".asJson))
+        )
+      )
     )
 
   /** 从 LLM 请求里取最后一次 tool_result 文本（工具返回值 = 模型的可见反馈）。 */
   private def lastToolResults(reqs: List[LlmRequest]): List[String] =
     reqs.lastOption.toList.flatMap { r =>
-      r.messages.reverse.collectFirst {
-        case m if m.role == nebflow.shared.MessageRole.User =>
-          m.content.toOption.toList.flatMap(_.collect {
-            case t: nebflow.shared.ContentBlock.ToolResult => t.content
-          })
-      }.getOrElse(Nil)
+      r.messages.reverse
+        .collectFirst {
+          case m if m.role == nebflow.shared.MessageRole.User =>
+            m.content.toOption.toList.flatMap(_.collect { case t: nebflow.shared.ContentBlock.ToolResult =>
+              t.content
+            })
+        }
+        .getOrElse(Nil)
     }
 
   private def statusOf(resources: SharedResources, sid: String): IO[AgentStatus] =
-    resources.agentRegistry.get.map(_ (sid).status)
+    resources.agentRegistry.get.map(_(sid).status)
 
   // ============================================================
   // 1. root 非阻塞全链
@@ -266,9 +297,12 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       // `AskUserQuestionTool.scala:409-411`，生成器 `InteractionRequestId.forAskUserNonBlocking`）。
       // 旧正则 `requestId=([0-9a-f]+)` 只能从 `asknb-…` 里捞到首字符 `a` ⇒ 期望值随之错（假红）；
       // 下一条断言（卡片 requestId == 本值）即「同步期望值」腿。
-      requestId = """requestId=(asknb-[0-9a-f]+)""".r.findFirstMatchIn(ack).map(_.group(1)).getOrElse(fail(s"ack 缺 requestId：$ack"))
+      requestId = """requestId=(asknb-[0-9a-f]+)""".r
+        .findFirstMatchIn(ack)
+        .map(_.group(1))
+        .getOrElse(fail(s"ack 缺 requestId：$ack"))
       // 判据强度只增不减：随机段长度逐字钉到契约常量 `InteractionRequestId.RandomHexChars`
-      //（熵强化正是本条契约的本体 —— 旧版只比对「正则捞到的串 == 卡片串」，熵退化不会被发现）。
+      // （熵强化正是本条契约的本体 —— 旧版只比对「正则捞到的串 == 卡片串」，熵退化不会被发现）。
       _ = assertEquals(
         requestId.length,
         "asknb-".length + InteractionRequestId.RandomHexChars,
@@ -305,7 +339,7 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
             case Right(blocks) =>
               blocks.exists {
                 case nebflow.shared.ContentBlock.Text(t) => t.contains("alpha")
-                case _                                   => false
+                case _ => false
               })
         }
         .getOrElse(fail(s"新 turn 里看不到答案文本：${reqs2.last.messages.takeRight(3)}"))
@@ -388,8 +422,11 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       askInput = askInputBlocking
     )
     (for
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "阻塞模式未标 WaitingForUser（现状漂移）")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
+        "阻塞模式未标 WaitingForUser（现状漂移）"
+      )
       _ <- waitFor(f.wsEvents, _.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")), "阻塞模式未渲染卡片")
       pend <- pendingAsks(f.hub, f.sid)
       _ = assertEquals(pend.size, 1)
@@ -413,8 +450,20 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       td.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("mode"))
 
     val baseline = nebflow.core.tools.ToolRegistry.ALL_TOOLS.find(_.name == AskUserQuestionTool.Name).get
-    val rootFx = setup("reqface-root", AgentDef(name = "Nebula", description = "", tools = Nil), 0, "reqface-root", askInputBlocking)
-    val nodeFx = setup("reqface-node", AgentDef(name = "general", description = "", tools = Nil), 1, "reqface-node", askInputBlocking)
+    val rootFx = setup(
+      "reqface-root",
+      AgentDef(name = "Nebula", description = "", tools = Nil),
+      0,
+      "reqface-root",
+      askInputBlocking
+    )
+    val nodeFx = setup(
+      "reqface-node",
+      AgentDef(name = "general", description = "", tools = Nil),
+      1,
+      "reqface-node",
+      askInputBlocking
+    )
     (for
       _ <- waitFor(rootFx.requests, _.nonEmpty, "root 请求未到达")
       _ <- waitFor(nodeFx.requests, _.nonEmpty, "node 请求未到达")

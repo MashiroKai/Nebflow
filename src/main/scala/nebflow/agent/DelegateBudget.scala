@@ -50,11 +50,12 @@ object DelegateBudget:
    * wall-clock，含等待）可区分的那一行。
    */
   final case class Ledger(
-      budgetMs: Long,
-      startedAt: Long,
-      pausedAt: Option[Long] = None,
-      pausedTotalMs: Long = 0L
+    budgetMs: Long,
+    startedAt: Long,
+    pausedAt: Option[Long] = None,
+    pausedTotalMs: Long = 0L
   ):
+
     /** 进入等待（重复 Pause 幂等——第一次的起点为准）。 */
     def pause(now: Long): Ledger =
       if pausedAt.isDefined then this else copy(pausedAt = Some(now))
@@ -63,7 +64,7 @@ object DelegateBudget:
     def resume(now: Long): Ledger =
       pausedAt match
         case Some(t0) => copy(pausedAt = None, pausedTotalMs = pausedTotalMs + math.max(0L, now - t0))
-        case None     => this
+        case None => this
 
     /** 已计入预算的执行时长（等待期扣除）。 */
     def countedMs(now: Long): Long =
@@ -77,8 +78,10 @@ object DelegateBudget:
     def exhausted(now: Long): Boolean = pausedAt.isEmpty && remainingMs(now) <= 0L
   end Ledger
 
-  /** 活预算通道：sessionId → 信号队列。只含被 register 过的 Delegate 内核会话
-    * （其余会话的 pause/resume/release 调用是无害 no-op）。 */
+  /**
+   * 活预算通道：sessionId → 信号队列。只含被 register 过的 Delegate 内核会话
+   * （其余会话的 pause/resume/release 调用是无害 no-op）。
+   */
   private val channels = TrieMap.empty[String, Queue[IO, Signal]]
 
   /** 可观测读数（诊断 / 测试用）：当前有预算在跑的会话数。 */
@@ -90,9 +93,9 @@ object DelegateBudget:
    * `clock` 可注入（测试）；生产用墙上时钟。
    */
   def register(
-      sessionId: String,
-      budget: FiniteDuration = DefaultBudget,
-      clock: () => Long = () => System.currentTimeMillis()
+    sessionId: String,
+    budget: FiniteDuration = DefaultBudget,
+    clock: () => Long = () => System.currentTimeMillis()
   )(onTimeout: IO[Unit]): IO[Unit] =
     for
       _ <- release(sessionId)
@@ -105,7 +108,9 @@ object DelegateBudget:
         clock,
         onTimeout
       ).start.void
-      _ <- logger.info(s"DelegateBudget: budget ${budget.toSeconds}s armed for $sessionId (wait-time excluded, ruling U1=C-a)")
+      _ <- logger.info(
+        s"DelegateBudget: budget ${budget.toSeconds}s armed for $sessionId (wait-time excluded, ruling U1=C-a)"
+      )
     yield ()
 
   /** ask 发起单点调用（`AgentActor` 的 AskUser 分支）：暂停计时。 */
@@ -120,14 +125,14 @@ object DelegateBudget:
   private def signal(sessionId: String, s: Signal): IO[Unit] =
     channels.get(sessionId) match
       case Some(q) => q.offer(s).void
-      case None    => IO.unit
+      case None => IO.unit
 
   private def loop(
-      sessionId: String,
-      q: Queue[IO, Signal],
-      ledger: Ledger,
-      clock: () => Long,
-      onTimeout: IO[Unit]
+    sessionId: String,
+    q: Queue[IO, Signal],
+    ledger: Ledger,
+    clock: () => Long,
+    onTimeout: IO[Unit]
   ): IO[Unit] =
     val now = clock()
     // 顺序有意：等待态优先（等待无界，即使剩余已 ≤0 也不收割——U1=C-a）。
@@ -135,31 +140,33 @@ object DelegateBudget:
     else if ledger.exhausted(now) then fire(sessionId, ledger, clock, onTimeout)
     else
       IO.race(IO.sleep(ledger.remainingMs(now).millis), q.take).flatMap {
-        case Left(_)               => fire(sessionId, ledger, clock, onTimeout)
+        case Left(_) => fire(sessionId, ledger, clock, onTimeout)
         case Right(Signal.Release) => IO(channels.remove(sessionId)).void
-        case Right(Signal.Resume)  => loop(sessionId, q, ledger, clock, onTimeout)
-        case Right(Signal.Pause)   => loop(sessionId, q, ledger.pause(clock()), clock, onTimeout)
+        case Right(Signal.Resume) => loop(sessionId, q, ledger, clock, onTimeout)
+        case Right(Signal.Pause) => loop(sessionId, q, ledger.pause(clock()), clock, onTimeout)
       }
+
+  end loop
 
   /** 等待期：预算冻结，直到 Resume（继续计时）或 Release（放弃）。 */
   private def awaitResume(
-      sessionId: String,
-      q: Queue[IO, Signal],
-      ledger: Ledger,
-      clock: () => Long,
-      onTimeout: IO[Unit]
+    sessionId: String,
+    q: Queue[IO, Signal],
+    ledger: Ledger,
+    clock: () => Long,
+    onTimeout: IO[Unit]
   ): IO[Unit] =
     q.take.flatMap {
       case Signal.Release => IO(channels.remove(sessionId)).void
-      case Signal.Resume  => loop(sessionId, q, ledger.resume(clock()), clock, onTimeout)
-      case Signal.Pause   => awaitResume(sessionId, q, ledger, clock, onTimeout)
+      case Signal.Resume => loop(sessionId, q, ledger.resume(clock()), clock, onTimeout)
+      case Signal.Pause => awaitResume(sessionId, q, ledger, clock, onTimeout)
     }
 
   private def fire(
-      sessionId: String,
-      ledger: Ledger,
-      clock: () => Long,
-      onTimeout: IO[Unit]
+    sessionId: String,
+    ledger: Ledger,
+    clock: () => Long,
+    onTimeout: IO[Unit]
   ): IO[Unit] =
     val counted = ledger.countedMs(clock())
     logger.warn(
@@ -167,6 +174,9 @@ object DelegateBudget:
         s"(counted ${counted / 1000}s excluding human-wait) — cancelling via the existing chain (reason=timeout)"
     ) *>
       IO(channels.remove(sessionId)).void *>
-      onTimeout.handleErrorWith(e => logger.warn(s"DelegateBudget: timeout cancel failed for $sessionId: ${e.getMessage}"))
+      onTimeout.handleErrorWith(e =>
+        logger.warn(s"DelegateBudget: timeout cancel failed for $sessionId: ${e.getMessage}")
+      )
+  end fire
 
 end DelegateBudget

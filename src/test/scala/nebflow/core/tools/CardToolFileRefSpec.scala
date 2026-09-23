@@ -40,15 +40,23 @@ class CardToolFileRefSpec extends FunSuite:
     val jsonText = result.substring(sentinel.length)
     io.circe.parser.parse(jsonText) match
       case Right(json) => json
-      case Left(err)   => fail(s"everything after the sentinel must be pure JSON (frontend JSON.parse): $err")
+      case Left(err) => fail(s"everything after the sentinel must be pure JSON (frontend JSON.parse): $err")
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
-  private def reasonOf(p: Json): String = warningsOf(p).headOption.flatMap(_.hcursor.get[String]("reason").toOption).getOrElse("")
-  private def detailOf(p: Json): String = warningsOf(p).headOption.flatMap(_.hcursor.get[String]("detail").toOption).getOrElse("")
+
+  private def reasonOf(p: Json): String =
+    warningsOf(p).headOption.flatMap(_.hcursor.get[String]("reason").toOption).getOrElse("")
+
+  private def detailOf(p: Json): String =
+    warningsOf(p).headOption.flatMap(_.hcursor.get[String]("detail").toOption).getOrElse("")
+
   private def resolvedOf(p: Json): Option[String] =
     warningsOf(p).headOption.flatMap(_.hcursor.get[Option[String]]("resolvedPath").toOption.flatten)
-  private def countOf(p: Json): Int = warningsOf(p).headOption.flatMap(_.hcursor.get[Int]("count").toOption).getOrElse(-1)
+
+  private def countOf(p: Json): Int =
+    warningsOf(p).headOption.flatMap(_.hcursor.get[Int]("count").toOption).getOrElse(-1)
+
   private def refs(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
@@ -61,16 +69,18 @@ class CardToolFileRefSpec extends FunSuite:
         .asScala
         .foreach(Files.deleteIfExists)
 
-  /** A REAL 8x6 RGB PNG (205 bytes, sha256
-    *  5ad35da434c4ea3e3a740b5c6d4493cf9b47b7f145df7a05c1507a74148d42b8), the same
-    *  bytes as `.nebflow/evidence/20260918_imgref/r1/space dir/fail space.png`.
-    *
-    *  imgref batch (2026-09-18): these two fixtures used to be `Files.createTempFile`
-    *  ZERO-BYTE files. The batch's retrievability gate (proxied must mean a browser
-    *  can actually fetch bytes) refuses a 0-byte file as `not-readable` — a fixture
-    *  that is 0 bytes tests the gate, not the feature it was written for — so the
-    *  fixtures now carry real content. No assertion was relaxed: `warnings == Nil`,
-    *  `inlined == 1` and the byte-identity claims are unchanged. */
+  /**
+   * A REAL 8x6 RGB PNG (205 bytes, sha256
+   *  5ad35da434c4ea3e3a740b5c6d4493cf9b47b7f145df7a05c1507a74148d42b8), the same
+   *  bytes as `.nebflow/evidence/20260918_imgref/r1/space dir/fail space.png`.
+   *
+   *  imgref batch (2026-09-18): these two fixtures used to be `Files.createTempFile`
+   *  ZERO-BYTE files. The batch's retrievability gate (proxied must mean a browser
+   *  can actually fetch bytes) refuses a 0-byte file as `not-readable` — a fixture
+   *  that is 0 bytes tests the gate, not the feature it was written for — so the
+   *  fixtures now carry real content. No assertion was relaxed: `warnings == Nil`,
+   *  `inlined == 1` and the byte-identity claims are unchanged.
+   */
   private val PngBytes: Array[Byte] =
     java.util.Base64.getDecoder.decode(
       "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAlElEQVR42gXBOQpCMRAA0Jwv" +
@@ -171,7 +181,10 @@ class CardToolFileRefSpec extends FunSuite:
       "precondition: ~/projects/gamma-telescope must not exist on this machine"
     )
     assertEquals(reasonOf(p), "not-found")
-    assertEquals(resolvedOf(p), Some(s"${sys.props("user.home")}/projects/gamma-telescope/reports/20260911_113327_博士课题方向-场景矩阵图.svg"))
+    assertEquals(
+      resolvedOf(p),
+      Some(s"${sys.props("user.home")}/projects/gamma-telescope/reports/20260911_113327_博士课题方向-场景矩阵图.svg")
+    )
     assert(htmlOf(p).contains(ref), "the raw reference stays in the HTML so the placeholder can name it")
 
   test("relative reference warns unresolvable (never proxied, never silent)"):
@@ -276,7 +289,10 @@ class CardToolFileRefSpec extends FunSuite:
     val p = card("<div>hi</div>", title = "My Card")
     assertEquals(p.hcursor.get[String]("title").toOption, Some("My Card"))
     assertEquals(p.hcursor.get[String]("html").toOption, Some("<div>hi</div>"))
-    assertEquals(CardTool.summarizeResult(JsonObject("title" -> Json.fromString("My Card")), s"${sentinel}${p.noSpaces}"), "My Card rendered")
+    assertEquals(
+      CardTool.summarizeResult(JsonObject("title" -> Json.fromString("My Card")), s"${sentinel}${p.noSpaces}"),
+      "My Card rendered"
+    )
 
   // ── ④ 附件：匹配顺序 bug（修复前后可判红） ────────────────
 
@@ -324,3 +340,4 @@ class CardToolFileRefSpec extends FunSuite:
     val dataRoot = nebflow.core.PathUtil.dataRootRenderValue
     assert(d.contains(s"$dataRoot/projects/<name>/"), "the description must teach the workspace path shape")
     assert(d.contains("fileRefs"), "the description must name the fileRefs counters")
+end CardToolFileRefSpec

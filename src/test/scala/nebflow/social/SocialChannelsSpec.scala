@@ -8,25 +8,26 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path}
 import scala.collection.mutable.ArrayBuffer
 
-/** F1 防回归（2026-09-19，判词位 `socpanel-verify` 回流）。
-  *
-  * 缺陷形态（改前 `SocialChannels.writeSecret`）：`Files.write` 先以默认 umask 模式把
-  * 明文落到**最终路径**，随后才 `CredentialFileAcl.restrict` 收窄；`restrict` 抛异常时
-  * 函数返回 `403 secret_mode`，但**明文文件以默认模式留在磁盘上**（无删除、无回滚）。
-  *
-  * 本 spec 钉的不变量（= 改法自身）：**明文永不落在未收窄的文件里**。
-  *   · 新目标：创建属性即 `rw-------`（模式不来自「事后再收窄」）⇒ 窗口不存在；
-  *   · 已存在目标：**先收窄、后写明文**（R3 用「第一次收窄调用时盘上仍是旧内容 + 仍是
-  *     宽模式」证明这个次序）；
-  *   · 失败零残留：本次创建/写入的文件被删除；只做「写前收窄」期间失败的目标保持原样
-  *     （不可能掺进我们的明文）。
-  *
-  * 手法：`save` 的收窄步骤可注入（🔴 生产恒为共享模块 `CredentialFileAcl`，本文件没有
-  * 第二套 ACL 逻辑）。旧行为（先写后收窄、失败不清理）在 R1 必红：
-  * 收窄抛异常后目标文件会带着默认模式留在盘上。
-  *
-  * 🔴 变异安全：只读写本 spec 自己的临时 home，不触碰真实 `~/.nebflow`。
-  */
+/**
+ * F1 防回归（2026-09-19，判词位 `socpanel-verify` 回流）。
+ *
+ * 缺陷形态（改前 `SocialChannels.writeSecret`）：`Files.write` 先以默认 umask 模式把
+ * 明文落到**最终路径**，随后才 `CredentialFileAcl.restrict` 收窄；`restrict` 抛异常时
+ * 函数返回 `403 secret_mode`，但**明文文件以默认模式留在磁盘上**（无删除、无回滚）。
+ *
+ * 本 spec 钉的不变量（= 改法自身）：**明文永不落在未收窄的文件里**。
+ *   · 新目标：创建属性即 `rw-------`（模式不来自「事后再收窄」）⇒ 窗口不存在；
+ *   · 已存在目标：**先收窄、后写明文**（R3 用「第一次收窄调用时盘上仍是旧内容 + 仍是
+ *     宽模式」证明这个次序）；
+ *   · 失败零残留：本次创建/写入的文件被删除；只做「写前收窄」期间失败的目标保持原样
+ *     （不可能掺进我们的明文）。
+ *
+ * 手法：`save` 的收窄步骤可注入（🔴 生产恒为共享模块 `CredentialFileAcl`，本文件没有
+ * 第二套 ACL 逻辑）。旧行为（先写后收窄、失败不清理）在 R1 必红：
+ * 收窄抛异常后目标文件会带着默认模式留在盘上。
+ *
+ * 🔴 变异安全：只读写本 spec 自己的临时 home，不触碰真实 `~/.nebflow`。
+ */
 class SocialChannelsSpec extends FunSuite:
 
   private def body(plain: String): io.circe.Json =
@@ -97,10 +98,9 @@ class SocialChannelsSpec extends FunSuite:
     Files.write(target(root), oldPlain.getBytes("UTF-8"))
     Files.setPosixFilePermissions(target(root), PosixFilePermissions.fromString("rw-r--r--"))
     val seen = ArrayBuffer.empty[String]
-    val recordingRestrict: Path => Unit = { p =>
+    val recordingRestrict: Path => Unit = p =>
       seen += s"${modeOf(p)}|${contentOf(p)}"
       CredentialFileAcl.restrict(p)
-    }
     val res = SocialChannels.save(root, "telegram", body(newPlain), recordingRestrict)
     assert(res.isRight, s"实得 $res")
     assertEquals(
@@ -128,3 +128,4 @@ class SocialChannelsSpec extends FunSuite:
     assertEquals(modeOf(target(root)), CredentialFileAcl.PosixMode, "旧凭据不得被降级")
     assertEquals(namesUnderSecrets(root), List("social-telegram-bot-token"), "零残件")
   }
+end SocialChannelsSpec

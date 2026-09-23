@@ -6,7 +6,15 @@ import cats.effect.{IO, Ref}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.neblink.{AgentMessagingConfig, FriendRoster, FriendService, FriendSummary, NeblinkClient, NeblinkEndpoint, NeblinkServerConfig}
+import nebflow.neblink.{
+  AgentMessagingConfig,
+  FriendRoster,
+  FriendService,
+  FriendSummary,
+  NeblinkClient,
+  NeblinkEndpoint,
+  NeblinkServerConfig
+}
 
 /**
  * SendMessage tool 单测（#290 域 A）。
@@ -19,13 +27,18 @@ import nebflow.neblink.{AgentMessagingConfig, FriendRoster, FriendService, Frien
  * server 生命周期挂在 IO guarantee 上（munit IO 体返回后才执行——禁止同步 finally）。
  */
 object FriendMessageToolSpec:
-  /** 默认上游名册（u1 的 NL 号恰为邮箱——既有夹具形态 ⇒ 「邮箱串」会走 L1 直命，
-    * 不经 L4。α 的靶子见 `CustomIdRoster`）。 */
+
+  /**
+   * 默认上游名册（u1 的 NL 号恰为邮箱——既有夹具形态 ⇒ 「邮箱串」会走 L1 直命，
+   * 不经 L4。α 的靶子见 `CustomIdRoster`）。
+   */
   val DefaultFriendsJson: String =
     """{"friends":[{"userId":"u1","neblinkId":"lin@example.com","name":"林小满"}],"incoming":[],"outgoing":[]}"""
 
-  /** 「NL 号已自定义、邮箱是另一个串」的名册 = L4 邮箱 α 唯一覆盖的洞：u1 的
-    * username 是 `customNL1`，邮箱 `lin@example.com` 不在任何本地匹配键上。 */
+  /**
+   * 「NL 号已自定义、邮箱是另一个串」的名册 = L4 邮箱 α 唯一覆盖的洞：u1 的
+   * username 是 `customNL1`，邮箱 `lin@example.com` 不在任何本地匹配键上。
+   */
   val CustomIdRoster: String =
     """{"friends":[{"userId":"u1","username":"customNL1","display_name":"林小满","avatar":null}],"incoming":[],"outgoing":[]}"""
 
@@ -58,7 +71,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   test("resolveFriend ambiguous prefix lists all candidates") {
     val err = FriendMessageTool.resolveFriend("林小", friends).left.toOption
     assert(err.isDefined, "ambiguous prefix must fail")
-    val msg  = err.get.message
+    val msg = err.get.message
     val hits = friends.filter(_.displayName.startsWith("林小"))
     hits.foreach { f => assert(msg.contains(f.displayName), s"candidates must list ${f.displayName}") }
     assert(msg.contains("username"), "must suggest using the exact username")
@@ -68,7 +81,9 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     val err = FriendMessageTool.resolveFriend("不存在", friends).left.toOption
     assert(err.isDefined)
     assert(err.get.message.contains("not found"))
-    friends.foreach { f => assert(err.get.message.contains(f.displayName), s"available list must contain ${f.displayName}") }
+    friends.foreach { f =>
+      assert(err.get.message.contains(f.displayName), s"available list must contain ${f.displayName}")
+    }
   }
 
   test("resolveFriend empty query rejected") {
@@ -77,13 +92,14 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   // ── 档位行为 + 参数校验（NeblinkClient sendRequest seam stub——零网络） ──
 
-  /** Transport-seam stub (NeblinkClientReloginSpec pattern): route by URL,
-    * canned replies, record message-POST + search paths. Login first so
-    * sessionToken is set — no HttpServer, no dataRoot writes.
-    *
-    * ⑦（2026-09-12）扩面：`/api/users/search`（L4 邮箱 α 的唯一通路）+ 可换的
-    * 好友名册 JSON（「NL 号已自定义、邮箱是另一个串」的洞需要名册里 username ≠ 邮箱）。
-    */
+  /**
+   * Transport-seam stub (NeblinkClientReloginSpec pattern): route by URL,
+   * canned replies, record message-POST + search paths. Login first so
+   * sessionToken is set — no HttpServer, no dataRoot writes.
+   *
+   * ⑦（2026-09-12）扩面：`/api/users/search`（L4 邮箱 α 的唯一通路）+ 可换的
+   * 好友名册 JSON（「NL 号已自定义、邮箱是另一个串」的洞需要名册里 username ≠ 邮箱）。
+   */
   private class StubClient(
     friendsJson: String = FriendMessageToolSpec.DefaultFriendsJson
   ):
@@ -105,10 +121,8 @@ class FriendMessageToolSpec extends CatsEffectSuite:
       ): IO[Either[String, String]] =
         if url.endsWith("/api/device/login") then
           IO.pure(Right("""{"token":"tok-1","networkId":"n1","deviceId":"d1","peers":[]}"""))
-        else if url.contains("/api/users/search") then
-          IO { searchedPaths += url } *> IO.pure(searchReply)
-        else if url.endsWith("/api/friends") && method == "GET" then
-          IO.pure(Right(friendsJson))
+        else if url.contains("/api/users/search") then IO { searchedPaths += url } *> IO.pure(searchReply)
+        else if url.endsWith("/api/friends") && method == "GET" then IO.pure(Right(friendsJson))
         else if url.endsWith("/messages") then
           IO { postedPaths += url } *> IO.pure(Right("""{"messageId":5,"conversationId":"c1","createdAt":123}"""))
         else IO.pure(Left(s"unexpected request: $method $url"))
@@ -118,12 +132,14 @@ class FriendMessageToolSpec extends CatsEffectSuite:
         .login("dev-1", "TestMac", "macos", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
         .unsafeRunSync()
 
+  end StubClient
+
   private def withStubFs[A](
-      mode: String,
-      remarks: Map[String, String] = Map.empty,
-      friendsJson: String = FriendMessageToolSpec.DefaultFriendsJson
+    mode: String,
+    remarks: Map[String, String] = Map.empty,
+    friendsJson: String = FriendMessageToolSpec.DefaultFriendsJson
   )(
-      use: (FriendService, StubClient) => IO[A]
+    use: (FriendService, StubClient) => IO[A]
   ): IO[A] =
     IO.delay {
       val stub = StubClient(friendsJson)
@@ -137,14 +153,13 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   /** 备注注入版装配：启动期 `load → Ref` 的等价形态（`remarks` 非空即当已持久化）。 */
   private def withFs[A](mode: String, remarks: Map[String, String] = Map.empty)(
-      use: FriendService => IO[A]
+    use: FriendService => IO[A]
   ): IO[A] =
     withStubFs(mode, remarks) { (fs, _) => use(fs) }
 
-  private def callTool(fs: FriendService, input: JsonObject): IO[Either[ToolError, String]] = {
+  private def callTool(fs: FriendService, input: JsonObject): IO[Either[ToolError, String]] =
     FriendMessageTool.initialize(fs)
     FriendMessageTool.call(input, ToolContext(projectRoot = "/tmp"))
-  }
 
   test("mode=off: tool reports the user has disabled agent messaging") {
     withFs("off") { fs =>
@@ -196,7 +211,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   test("schema: required = to + message, both typed string") {
     val schema = FriendMessageTool.inputSchema
-    val req    = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
+    val req = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
     assertEquals(req.toSet, Set("to", "message"))
     assert(schema("properties").isDefined)
     assert(schema("properties").get.asObject.get("to").isDefined)
@@ -223,12 +238,19 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   )
 
   test("L0 备注命中：备注（NOCASE + trim）优先于 L1，唯一命中即成功") {
-    assertEquals(FriendRoster.resolve("老林", remarkFriends).map(_.userId), Right("u1"),
-      "恰 1 个好友的备注匹配 ⇒ 命中该好友（备注是用户自己设的意图信号，排在 username 前）")
-    assertEquals(FriendRoster.resolve("  老林 ", remarkFriends).map(_.userId), Right("u1"),
-      "query 前后空白必须 trim 后参与 L0 匹配")
-    assertEquals(FriendRoster.resolve("OLD LIN", List(FriendSummary("u9", "nl9", "九", remark = Some("Old Lin"))))
-      .map(_.userId), Right("u9"), "L0 大小写不敏感（NOCASE）")
+    assertEquals(
+      FriendRoster.resolve("老林", remarkFriends).map(_.userId),
+      Right("u1"),
+      "恰 1 个好友的备注匹配 ⇒ 命中该好友（备注是用户自己设的意图信号，排在 username 前）"
+    )
+    assertEquals(FriendRoster.resolve("  老林 ", remarkFriends).map(_.userId), Right("u1"), "query 前后空白必须 trim 后参与 L0 匹配")
+    assertEquals(
+      FriendRoster
+        .resolve("OLD LIN", List(FriendSummary("u9", "nl9", "九", remark = Some("Old Lin"))))
+        .map(_.userId),
+      Right("u9"),
+      "L0 大小写不敏感（NOCASE）"
+    )
   }
 
   test("L0 冲突（多命中）⇒ 立即报错并列候选，不得降级命中 L1（⑦-D5）") {
@@ -271,8 +293,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
       callTool(fs, JsonObject("to" -> "老林".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight, s"expected success, got ${res.left.toOption.map(_.message)}")
         val receipt = res.toOption.get
-        assert(receipt.contains("已发送给 老林（lin@example.com）"),
-          s"回执必须能确认「打到了谁」= 备注（username），got: $receipt")
+        assert(receipt.contains("已发送给 老林（lin@example.com）"), s"回执必须能确认「打到了谁」= 备注（username），got: $receipt")
       }
     }
   }
@@ -284,15 +305,22 @@ class FriendMessageToolSpec extends CatsEffectSuite:
       )
       // 名册里 u1 的 username 是自定义 NL 号，邮箱（lin@example.com）不在任何匹配键上
       // ⇒ L0–L3 必全未命中（正是 α 要补的洞）。
-      assertEquals(FriendRoster.resolve("lin@example.com", List(FriendSummary("u1", "customNL1", "林小满"))).isLeft, true,
-        "前提：邮箱不是 username/昵称 ⇒ 本地链必然 miss")
+      assertEquals(
+        FriendRoster.resolve("lin@example.com", List(FriendSummary("u1", "customNL1", "林小满"))).isLeft,
+        true,
+        "前提：邮箱不是 username/昵称 ⇒ 本地链必然 miss"
+      )
       callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight, s"α 命中必须送达，got ${res.left.toOption.map(_.message)}")
-        assertEquals(stub.searchedPaths.toList,
+        assertEquals(
+          stub.searchedPaths.toList,
           List("http://stub.local/api/users/search?q=lin%40example.com"),
-          "α 走唯一通路 /api/users/search（同桶 20/min，⑦-D11 的会计锚）")
-        assert(stub.postedPaths.exists(_.endsWith("/api/friends/u1/messages")),
-          s"按命中卡 userId 精确回映射 → 发给 u1，got: ${stub.postedPaths.toList}")
+          "α 走唯一通路 /api/users/search（同桶 20/min，⑦-D11 的会计锚）"
+        )
+        assert(
+          stub.postedPaths.exists(_.endsWith("/api/friends/u1/messages")),
+          s"按命中卡 userId 精确回映射 → 发给 u1，got: ${stub.postedPaths.toList}"
+        )
       }
     }
   }
@@ -313,24 +341,27 @@ class FriendMessageToolSpec extends CatsEffectSuite:
         stub.searchReply = Left("connection refused")
         callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
       }
-    yield
-      List(res429, res5xx, resNet).foreach { res =>
-        assert(res.isLeft, "回落路径必须是失败（不发送）")
-        val msg = res.left.toOption.get.message
-        assertEquals(msg, expected, "必须原样返回 α 之前的失败文案（候选列表不变，逐字相等）")
-        assert(!msg.contains("429") && !msg.contains("503") && !msg.contains("connection refused"),
-          s"上游故障不得泄进错误面（更不得被说成「好友不存在」），got: $msg")
-      }
+    yield List(res429, res5xx, resNet).foreach { res =>
+      assert(res.isLeft, "回落路径必须是失败（不发送）")
+      val msg = res.left.toOption.get.message
+      assertEquals(msg, expected, "必须原样返回 α 之前的失败文案（候选列表不变，逐字相等）")
+      assert(
+        !msg.contains("429") && !msg.contains("503") && !msg.contains("connection refused"),
+        s"上游故障不得泄进错误面（更不得被说成「好友不存在」），got: $msg"
+      )
+    }
+    end for
   }
 
   test("α miss（found:false / 命中非好友 / 命中卡无 userId）⇒ 一律回落原样 not-found，且零发送") {
     val friends = List(FriendSummary("u1", "customNL1", "林小满"))
     val expected = FriendRoster.resolve("lin@example.com", friends).left.toOption.get.message
-    val miss  = Right("""{"found":false}""")
+    val miss = Right("""{"found":false}""")
     val stranger = Right(
       """{"found":true,"user":{"userId":"u-stranger","username":"someone","display_name":"陌生人","avatar":null},"relation_status":"addable"}"""
     )
-    val noIdCard = Right("""{"found":true,"user":{"username":"someone","display_name":"无 id 卡"},"relation_status":"addable"}""")
+    val noIdCard =
+      Right("""{"found":true,"user":{"username":"someone","display_name":"无 id 卡"},"relation_status":"addable"}""")
     for
       a <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = miss
@@ -344,9 +375,12 @@ class FriendMessageToolSpec extends CatsEffectSuite:
         stub.searchReply = noIdCard
         callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
       }
-      after <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) => // 零发送断言需要 stub 的快照
-        stub.searchReply = stranger
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map(r => r -> stub.postedPaths.toList)
+      after <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) {
+        (fs, stub) => // 零发送断言需要 stub 的快照
+          stub.searchReply = stranger
+          callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map(r =>
+            r -> stub.postedPaths.toList
+          )
       }
     yield
       List(a, b, c).zip(List("miss", "命中非好友", "命中卡无 userId")).foreach { (res, label) =>
@@ -354,6 +388,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
         assertEquals(res.left.toOption.get.message, expected, s"$label: 原样回落（候选列表逐字不变）")
       }
       assertEquals(after._2, List.empty[String], "零发送（只有好友可发）")
+    end for
   }
 
   test("α 仅失败路径触发：L1/L2 命中的发送不产生任何搜索往返（零额外上游开销）") {
@@ -375,10 +410,16 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     assert(!d.contains("Plain text only."), "陈旧事实句必须消失（好友腿已支持附件）")
     assert(!d.contains("NOT supported"), "不得再声明好友附件不支持")
     assert(d.contains("Files") || d.contains("files"), "description 必须说明附件可用")
-    val toDesc = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
-      .flatMap(_("to")).flatMap(_.hcursor.get[String]("description").toOption).getOrElse("")
-    assert(toDesc.contains("remark") && toDesc.contains("username") && toDesc.contains("email"),
-      s"schema to 文案必须三选一（旧字面「Friend's username or display name.」已过时），got: $toDesc")
+    val toDesc = FriendMessageTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("to"))
+      .flatMap(_.hcursor.get[String]("description").toOption)
+      .getOrElse("")
+    assert(
+      toDesc.contains("remark") && toDesc.contains("username") && toDesc.contains("email"),
+      s"schema to 文案必须三选一（旧字面「Friend's username or display name.」已过时），got: $toDesc"
+    )
   }
 
 end FriendMessageToolSpec

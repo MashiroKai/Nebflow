@@ -31,19 +31,23 @@ object OnboardingService:
 
   sealed trait OnboardingState:
     def name: String
+
   object OnboardingState:
+
     case object Pending extends OnboardingState:
       val name = "pending"
+
     case object Done extends OnboardingState:
       val name = "done"
+
     case object Skipped extends OnboardingState:
       val name = "skipped"
 
     def fromString(s: String): Option[OnboardingState] = s match
       case "pending" => Some(Pending)
-      case "done"    => Some(Done)
+      case "done" => Some(Done)
       case "skipped" => Some(Skipped)
-      case _         => None
+      case _ => None
 
   /** Full persisted record. probeOkAt = epoch millis of the last successful LLM probe. */
   final case class StoredState(state: OnboardingState, probeOkAt: Option[Long])
@@ -77,11 +81,12 @@ object OnboardingService:
     readStored().flatMap { current =>
       val currentProbe = current.flatMap(_.probeOkAt)
       if next == OnboardingState.Done && currentProbe.isEmpty then
-        IO.pure(Left(
-          "onboarding not complete: no successful LLM probe on record — call probeLlm and succeed first (配置未生效，拒绝完成引导)"
-        ))
-      else
-        writeStored(StoredState(next, currentProbe)).as(Right(next))
+        IO.pure(
+          Left(
+            "onboarding not complete: no successful LLM probe on record — call probeLlm and succeed first (配置未生效，拒绝完成引导)"
+          )
+        )
+      else writeStored(StoredState(next, currentProbe)).as(Right(next))
     }
 
   /** Legacy direct write kept for internal use / tests; preserves probeOkAt. */
@@ -94,17 +99,21 @@ object OnboardingService:
     os.makeDir.all(statePath / os.up)
     os.write.over(
       statePath,
-      io.circe.Json.obj(
-        "state" -> stored.state.name.asJson,
-        "probeOkAt" -> stored.probeOkAt.asJson
-      ).noSpaces
+      io.circe.Json
+        .obj(
+          "state" -> stored.state.name.asJson,
+          "probeOkAt" -> stored.probeOkAt.asJson
+        )
+        .noSpaces
     )
   }
 
   /** Record a successful probe timestamp without touching the state field. */
   def recordProbeOk(): IO[Unit] =
     readStored().flatMap { current =>
-      writeStored(StoredState(current.map(_.state).getOrElse(OnboardingState.Pending), Some(System.currentTimeMillis())))
+      writeStored(
+        StoredState(current.map(_.state).getOrElse(OnboardingState.Pending), Some(System.currentTimeMillis()))
+      )
     }
 
   // ===== LLM probe (hard gate) =====

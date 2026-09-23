@@ -68,18 +68,22 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     os.remove.all(os.Path(tmpDir, os.pwd))
     super.afterEach(context)
 
-  /** 隔离 home 里的真实 NeblinkService（不联网：只建 config ref + identity）。
-    * `configured = true` 表示用户配置过 / 登录过 NebLink（server 址在 live
-    * config 里），`false` = 全新 home。 */
+  /**
+   * 隔离 home 里的真实 NeblinkService（不联网：只建 config ref + identity）。
+   * `configured = true` 表示用户配置过 / 登录过 NebLink（server 址在 live
+   * config 里），`false` = 全新 home。
+   */
   private def withService[A](configured: Boolean)(body: NeblinkService => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       NeblinkService.create(0, dispatcher).flatMap { ms =>
         val seed =
           if configured then
-            ms.updateConfig(_.copy(
-              enabled = true,
-              neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
-            ))
+            ms.updateConfig(
+              _.copy(
+                enabled = true,
+                neblinkServer = Some(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"))
+              )
+            )
           else IO.unit
         seed *> body(ms)
       }
@@ -97,9 +101,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     val messagesJson =
       """[{"id":1,"senderId":"u1","kind":"text","body":"hi","createdAt":1234567890}]"""
 
-    /** 写响应（**不碰请求体**——请求体已由 [[readSentBody]] 读完的路径必须用它，
-      *  否则二次 drain 已关闭的流会抛 IOException、handler 直接死掉不写响应，
-      *  上游侧表现为 `header parser received no bytes`）。 */
+    /**
+     * 写响应（**不碰请求体**——请求体已由 [[readSentBody]] 读完的路径必须用它，
+     *  否则二次 drain 已关闭的流会抛 IOException、handler 直接死掉不写响应，
+     *  上游侧表现为 `header parser received no bytes`）。
+     */
     def writeJson(ex: HttpExchange, status: Int, body: String): Unit =
       val bytes = body.getBytes(StandardCharsets.UTF_8)
       ex.getResponseHeaders.add("Content-Type", "application/json")
@@ -116,18 +122,22 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       ex.getRequestBody.close()
       writeJson(ex, status, body)
 
-    /** 读走并**记下**上游收到的请求体原文（P2-b 读数面）：先读后回（keep-alive 要求，
-      *  见 respond 注），且**不**解析后再编码 —— 加性判据按**字节**比，重编码会掩盖
-      *  键序 / 键集漂移（正是本批要钉的东西）。 */
+    /**
+     * 读走并**记下**上游收到的请求体原文（P2-b 读数面）：先读后回（keep-alive 要求，
+     *  见 respond 注），且**不**解析后再编码 —— 加性判据按**字节**比，重编码会掩盖
+     *  键序 / 键集漂移（正是本批要钉的东西）。
+     */
     def readSentBody(ex: HttpExchange): String =
       val raw = new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
       ex.getRequestBody.close()
       sentBodies.add(raw)
       raw
 
-    /** 服务端幂等语义镜像（§8.6：同 `clientMsgId` 重复 ⇒ 仍是成功、`existing:true`
-      *  仅表示回放原行、**不新增行**）。带键且该键已落行 ⇒ 回放原行（同 messageId）；
-      *  否则真落一行（自增 messageId）。 */
+    /**
+     * 服务端幂等语义镜像（§8.6：同 `clientMsgId` 重复 ⇒ 仍是成功、`existing:true`
+     *  仅表示回放原行、**不新增行**）。带键且该键已落行 ⇒ 回放原行（同 messageId）；
+     *  否则真落一行（自增 messageId）。
+     */
     def sendRow(raw: String): String =
       val key = io.circe.parser
         .parse(raw)
@@ -197,8 +207,10 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
                 writeJson(ex, 201, sendRow(raw))
               case _ =>
                 writeJson(ex, 200, sendRow(raw))
+            end match
           case ("DELETE", _) => respond(ex, 200, """{"ok":true}""")
           case _ => respond(ex, 404, """{"error":"not found"}""")
+        end match
     )
     server.createContext(
       "/api/conversations",
@@ -231,7 +243,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         // 其余 q 走旧形态（neblink-server 新 lookup 端点就绪前的兼容锚）。
         val q = Option(ex.getRequestURI.getQuery).getOrElse("")
         if q.contains("newform") then
-          respond(ex, 200, """{"found":true,"userId":"u-nf","username":"newform","displayName":"新形态","avatar":"https://example.com/a.png","email":"nf@example.com"}""")
+          respond(
+            ex,
+            200,
+            """{"found":true,"userId":"u-nf","username":"newform","displayName":"新形态","avatar":"https://example.com/a.png","email":"nf@example.com"}"""
+          )
         else respond(ex, 200, """{"found":true,"neblinkId":"lin@example.com","name":"林小满"}""")
     )
     // 搜索（friend-search-contract §4.1 唯一入口）：hit → 契约命中形态（user 卡为
@@ -241,10 +257,13 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       "/api/users/search",
       ex =>
         val q = Option(ex.getRequestURI.getQuery).getOrElse("")
-        if q.contains("ghost") then
-          respond(ex, 200, """{"found":false}""")
+        if q.contains("ghost") then respond(ex, 200, """{"found":false}""")
         else
-          respond(ex, 200, """{"found":true,"user":{"username":"alice42","display_name":"Alice","avatar":"https://example.com/a.png"},"relation_status":"addable"}""")
+          respond(
+            ex,
+            200,
+            """{"found":true,"user":{"username":"alice42","display_name":"Alice","avatar":"https://example.com/a.png"},"relation_status":"addable"}"""
+          )
     )
     // [U3] NL 号自定义 + 可用性检测（0904 批次新增代理路由的上游形态）
     server.createContext(
@@ -263,6 +282,8 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     server.start()
     val url = s"http://127.0.0.1:${server.getAddress.getPort}"
     (server, url)
+
+  end startMockServer
 
   /** Server lifetime tied to the test IO — see class doc for the timing trap. */
   private def withMockServer[A](use: (String, NeblinkClient, FriendService) => IO[A]): IO[A] =
@@ -333,9 +354,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     runWith(None)(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
       .flatMap { resp =>
         assertEquals(resp.status, Status.NotFound)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled"))
-        )
+        resp.as[Json].map(body => assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled")))
       }
   }
 
@@ -367,9 +386,9 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       runWith(Some(fs), Some(ms))(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
         .flatMap { resp =>
           assertEquals(resp.status, Status.NotFound)
-          resp.as[Json].map(body =>
-            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled"))
-          )
+          resp
+            .as[Json]
+            .map(body => assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled")))
         }
     }
   }
@@ -408,8 +427,14 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           val incoming = body.hcursor.downField("incoming").as[Vector[Json]].getOrElse(Vector.empty)
           assertEquals(incoming.size, 1)
           assertEquals(incoming.head.hcursor.downField("from").downField("userId").as[String].toOption, Some("u-new"))
-          assertEquals(incoming.head.hcursor.downField("from").downField("username").as[String].toOption, Some("newbie42"))
-          assertEquals(incoming.head.hcursor.downField("from").downField("display_name").as[String].toOption, Some("新同学"))
+          assertEquals(
+            incoming.head.hcursor.downField("from").downField("username").as[String].toOption,
+            Some("newbie42")
+          )
+          assertEquals(
+            incoming.head.hcursor.downField("from").downField("display_name").as[String].toOption,
+            Some("新同学")
+          )
           assertEquals(incoming.head.hcursor.downField("requestId").as[String].toOption, Some("rq-9"))
           assertEquals(incoming.head.hcursor.downField("note").as[String].toOption, Some("你好"))
           assertEquals(incoming.head.hcursor.downField("createdAt").as[Long].toOption, Some(1234560000L))
@@ -436,8 +461,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
           assertEquals(friends(1).hcursor.downField("blocked").as[Boolean].toOption, Some(true))
           // ⑦（2026-09-12）：`remark` 键**恒在**（未设 ⇒ null，不是省略键），
           // 且 **Decoder 不读上游同名键**（u2 的上游 wire 带了 remark，出参必须仍是 null）
-          assertEquals(friends(1).hcursor.downField("remark").focus.map(_.isNull), Some(true),
-            "remark 键恒在（null 形态；focus=None 即键缺席=红）+ 上游同名键被忽略（备注是本地态）")
+          assertEquals(
+            friends(1).hcursor.downField("remark").focus.map(_.isNull),
+            Some(true),
+            "remark 键恒在（null 形态；focus=None 即键缺席=红）+ 上游同名键被忽略（备注是本地态）"
+          )
         }
       }
     }
@@ -467,24 +495,26 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   test("POST /friends/:id/messages sends as user and returns upstream body") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *>
-      runWith(Some(fs))(
-        authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages")))
-          .withEntity(Json.obj("body" -> "hello".asJson))
-      ).flatMap { resp =>
-        assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map { body =>
-          assertEquals(body.hcursor.downField("messageId").as[Long].toOption, Some(5L))
-          assertEquals(body.hcursor.downField("conversationId").as[String].toOption, Some("c1"))
+        runWith(Some(fs))(
+          authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages")))
+            .withEntity(Json.obj("body" -> "hello".asJson))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp.as[Json].map { body =>
+            assertEquals(body.hcursor.downField("messageId").as[Long].toOption, Some(5L))
+            assertEquals(body.hcursor.downField("conversationId").as[String].toOption, Some("c1"))
+          }
         }
-      }
     }
   }
 
   // ── P2-b：幂等键 `clientMsgId`（加性透传 + 服务端幂等镜像）────────────
 
-  /** 好友发送面单次调用：**先钉响应状态**（200）再交响应体 —— 上游 mock 的 handler
-    * 若抛掉不写响应，网关会折叠成 502，此时只比「响应体里的字段」会拿到 None == None
-    * 的**假绿**；状态断言是唯一能把它挡在外面的那一环。 */
+  /**
+   * 好友发送面单次调用：**先钉响应状态**（200）再交响应体 —— 上游 mock 的 handler
+   * 若抛掉不写响应，网关会折叠成 502，此时只比「响应体里的字段」会拿到 None == None
+   * 的**假绿**；状态断言是唯一能把它挡在外面的那一环。
+   */
   private def postFriendSend(fs: FriendService, json: Json): IO[Json] =
     runWith(Some(fs))(
       authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/messages"))).withEntity(json)
@@ -522,7 +552,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   test("P2-b 幂等：同键重复 ⇒ 回放同一行；无键重复 ⇒ 各落新行（服务端语义镜像）") {
     withMockServer { (_, client, fs) =>
       val keyed = Json.obj("body" -> "dup".asJson, "clientMsgId" -> "K-2".asJson)
-      val bare  = Json.obj("body" -> "dup".asJson)
+      val bare = Json.obj("body" -> "dup".asJson)
       def mid(j: Json) = j.hcursor.downField("messageId").as[Long].toOption
       for
         _ <- client.login("d1", "dev", "macos", Nil)
@@ -555,7 +585,10 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         a <- postGroup("G-1")
         b <- postGroup("G-1")
       yield
-        assertEquals(upstreamBodies, List("""{"body":"gmsg","clientMsgId":"G-1"}""", """{"body":"gmsg","clientMsgId":"G-1"}"""))
+        assertEquals(
+          upstreamBodies,
+          List("""{"body":"gmsg","clientMsgId":"G-1"}""", """{"body":"gmsg","clientMsgId":"G-1"}""")
+        )
         assertEquals(mid(a), mid(b), "群腿同键应回放同一行")
         assertEquals(mockRowSeq.get(), 6, "群腿同键两次只真落 1 行（5→6）")
     }
@@ -579,15 +612,13 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   test("POST /conversations/:id/read marks read") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *>
-      runWith(Some(fs))(
-        authed(Request[IO](Method.POST, Uri.unsafeFromString("/conversations/c1/read")))
-          .withEntity(Json.obj("lastReadMessageId" -> Json.fromLong(1L)))
-      ).flatMap { resp =>
-        assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-        )
-      }
+        runWith(Some(fs))(
+          authed(Request[IO](Method.POST, Uri.unsafeFromString("/conversations/c1/read")))
+            .withEntity(Json.obj("lastReadMessageId" -> Json.fromLong(1L)))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp.as[Json].map(body => assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true)))
+        }
     }
   }
 
@@ -597,9 +628,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/lookup?q=lin%40example.com")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(true))
-        )
+        resp.as[Json].map(body => assertEquals(body.hcursor.downField("found").as[Boolean].toOption, Some(true)))
       }
     }
   }
@@ -676,40 +705,40 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   test("PUT /users/me/neblink-id proxies custom id ([U3])") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *>
-      runWith(Some(fs))(
-        authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
-          .withEntity(Json.obj("neblinkId" -> "newid42".asJson))
-      ).flatMap { resp =>
-        assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("neblinkId").as[String].toOption, Some("newid42"))
-        )
-      }
+        runWith(Some(fs))(
+          authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
+            .withEntity(Json.obj("neblinkId" -> "newid42".asJson))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp
+            .as[Json]
+            .map(body => assertEquals(body.hcursor.downField("neblinkId").as[String].toOption, Some("newid42")))
+        }
     }
   }
 
   test("PUT /users/me/neblink-id without neblinkId -> 400") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *>
-      runWith(Some(fs))(
-        authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
-          .withEntity(Json.obj())
-      ).map(resp => assertEquals(resp.status, Status.BadRequest))
+        runWith(Some(fs))(
+          authed(Request[IO](Method.PUT, Uri.unsafeFromString("/users/me/neblink-id")))
+            .withEntity(Json.obj())
+        ).map(resp => assertEquals(resp.status, Status.BadRequest))
     }
   }
 
   test("GET /users/me/neblink-id/available proxies availability ([U3])") {
     withMockServer { (_, client, fs) =>
       client.login("d1", "dev", "macos", Nil) *>
-      runWith(Some(fs))(
-        authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/me/neblink-id/available?q=takenid")))
-      ).flatMap { resp =>
-        assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map { body =>
-          assertEquals(body.hcursor.downField("available").as[Boolean].toOption, Some(false))
-          assertEquals(body.hcursor.downField("reason").as[String].toOption, Some("taken"))
+        runWith(Some(fs))(
+          authed(Request[IO](Method.GET, Uri.unsafeFromString("/users/me/neblink-id/available?q=takenid")))
+        ).flatMap { resp =>
+          assertEquals(resp.status, Status.Ok)
+          resp.as[Json].map { body =>
+            assertEquals(body.hcursor.downField("available").as[Boolean].toOption, Some(false))
+            assertEquals(body.hcursor.downField("reason").as[String].toOption, Some("taken"))
+          }
         }
-      }
     }
   }
 
@@ -719,9 +748,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/block")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-        )
+        resp.as[Json].map(body => assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true)))
       }
     }
   }
@@ -732,9 +759,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/u1/unblock")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.Ok)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-        )
+        resp.as[Json].map(body => assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true)))
       }
     }
   }
@@ -747,9 +772,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.POST, Uri.unsafeFromString("/friends/forbidden-guy/unblock")))
       ).flatMap { resp =>
         assertEquals(resp.status, Status.BadGateway)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("error").as[String].exists(_.contains("not_blocker")))
-        )
+        resp.as[Json].map(body => assert(body.hcursor.downField("error").as[String].exists(_.contains("not_blocker"))))
       }
     }
   }
@@ -780,17 +803,17 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     )
     server.start()
     val url = s"http://127.0.0.1:${server.getAddress.getPort}"
-    val client  = new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), 8080)
-    val fs      = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
+    val client = new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), 8080)
+    val fs = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
     val checked = client.login("d1", "dev", "macos", Nil) *> runWith(Some(fs))(
       authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends")))
     ).guarantee(IO.blocking(server.stop(0)))
 
     checked.flatMap { resp =>
       assertEquals(resp.status, Status.BadGateway)
-      resp.as[Json].map(body =>
-        assert(body.hcursor.downField("error").as[String].exists(_.contains("Missing or invalid token")))
-      )
+      resp
+        .as[Json]
+        .map(body => assert(body.hcursor.downField("error").as[String].exists(_.contains("Missing or invalid token"))))
     }
   }
 
@@ -811,8 +834,10 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       authed(Request[IO](Method.POST, Uri.unsafeFromString(s"/friends/$uid/messages"))).withEntity(body)
     ).flatMap(resp => resp.as[Json].map(b => (resp.status, b)))
 
-  /** 折叠形态护栏：折叠通道的产物**恒**以 `HTTP ` 起头（`"HTTP 403: {...}"`）⇒ 任一条
-    * 透传用例若被撤回到折叠实现，本断言必红（判红形态，`verification-rigor` §1）。 */
+  /**
+   * 折叠形态护栏：折叠通道的产物**恒**以 `HTTP ` 起头（`"HTTP 403: {...}"`）⇒ 任一条
+   * 透传用例若被撤回到折叠实现，本断言必红（判红形态，`verification-rigor` §1）。
+   */
   private def assertNotFolded(json: Json): Unit =
     val err = json.hcursor.downField("error").as[String].toOption
     assert(!err.exists(_.startsWith("HTTP ")), s"错误体仍是被折叠的文本形态: $err")
@@ -892,12 +917,11 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
     // 保留面：折叠点 ①②消除的只是「**上游有响应**」的透传；无响应（连接失败/超时）仍走
     // `Left` ⇒ `friendErr` ⇒ 502（客户端读作可重试）。会话在停服前建立，故走的是真连接失败。
     val (server, url) = startMockServer
-    val client        = mkClient(url)
-    val fs            = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
+    val client = mkClient(url)
+    val fs = new FriendService(IO.pure(Some(client)), AgentMessagingConfig())
     (client.login("d1", "dev", "macos", Nil) *>
       IO.blocking(server.stop(0)) *>
-      sendOne(fs, "u1")
-    ).guarantee(IO.blocking(server.stop(0))).map { case (status, body) =>
+      sendOne(fs, "u1")).guarantee(IO.blocking(server.stop(0))).map { case (status, body) =>
       assertEquals(status, Status.BadGateway)
       assert(body.hcursor.downField("error").as[String].isRight, "502 体应带可判读原因")
     }
@@ -934,9 +958,9 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
       runWith(Some(fs), Some(ms))(post).flatMap { resp =>
         assertEquals(resp.status, Status.NotFound)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled"))
-        )
+        resp
+          .as[Json]
+          .map(body => assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled")))
       }
     }
   }
@@ -954,14 +978,19 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
   private def getFriends(fs: Option[FriendService]): IO[Response[IO]] =
     runWith(fs)(authed(Request[IO](Method.GET, Uri.unsafeFromString("/friends"))))
 
-  /** `friends[idx].remark` 三态读：`None` = **键缺席**（= 红，键必须恒在）；
-    * `Some(None)` = 键在、值 `null`；`Some(Some(v))` = 有值。
-    *
-    * 用 `focus` 而非 `as[Option[String]]`：circe 的 `Decoder[Option[A]]` 对「键缺席」
-    * 也成功返回 `None`，两种形态不可区分（键恒在的断言会变成空转）。 */
+  /**
+   * `friends[idx].remark` 三态读：`None` = **键缺席**（= 红，键必须恒在）；
+   * `Some(None)` = 键在、值 `null`；`Some(Some(v))` = 有值。
+   *
+   * 用 `focus` 而非 `as[Option[String]]`：circe 的 `Decoder[Option[A]]` 对「键缺席」
+   * 也成功返回 `None`，两种形态不可区分（键恒在的断言会变成空转）。
+   */
   private def remarkAt(resp: Response[IO], idx: Int): IO[Option[Option[String]]] =
     resp.as[Json].map { body =>
-      body.hcursor.downField("friends").as[Vector[Json]].toOption
+      body.hcursor
+        .downField("friends")
+        .as[Vector[Json]]
+        .toOption
         .flatMap(_.lift(idx))
         .flatMap(_.hcursor.downField("remark").focus)
         .map(v => if v.isNull then None else v.asString)
@@ -1001,8 +1030,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
         ).flatMap { resp =>
           assertEquals(resp.status, Status.Forbidden)
           // 未认证 ⇒ 零写入：随后带上 token 读，remark 仍是 null
-          getFriends(Some(fs)).flatMap(g => remarkAt(g, 0).map(r => assertEquals(r, Some(None),
-            "403 路径不得产生副作用")))
+          getFriends(Some(fs)).flatMap(g => remarkAt(g, 0).map(r => assertEquals(r, Some(None), "403 路径不得产生副作用")))
         }
     }
   }
@@ -1048,10 +1076,12 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
             val convs = body.asArray.getOrElse(Vector.empty)
             assertEquals(convs.size, 1)
             val f = convs.head.hcursor.downField("friend")
-            assertEquals(f.downField("remark").focus.flatMap(_.asString), Some("老林"),
-              "会话行的 friend 档案必须带备注值（前端消息列表「备注 > 显示名」读这里）")
-            assertEquals(f.downField("display_name").as[String].toOption, Some("林小满"),
-              "显示名原样保留（备注是追加键，不顶替显示名）")
+            assertEquals(
+              f.downField("remark").focus.flatMap(_.asString),
+              Some("老林"),
+              "会话行的 friend 档案必须带备注值（前端消息列表「备注 > 显示名」读这里）"
+            )
+            assertEquals(f.downField("display_name").as[String].toOption, Some("林小满"), "显示名原样保留（备注是追加键，不顶替显示名）")
           }
         }
     }

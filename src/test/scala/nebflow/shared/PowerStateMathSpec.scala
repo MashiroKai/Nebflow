@@ -4,11 +4,12 @@ import munit.FunSuite
 
 import scala.jdk.CollectionConverters.*
 
-/** 时间基修正纯函数面单测（hostresume 批 2026-09-22，设计卡 §4 #1 / §6 口径 1、2、6）。
-  *
-  * 覆盖：空窗集逐字节等价（口径 1 的数学半边）、合成睡眠窗扣减 + 红绿对照（口径 2）、
-  * 交集边界与钳制、窗集修剪、实例隔离、kill-switch 全局闸（口径 6 的消费侧半边）。
-  */
+/**
+ * 时间基修正纯函数面单测（hostresume 批 2026-09-22，设计卡 §4 #1 / §6 口径 1、2、6）。
+ *
+ * 覆盖：空窗集逐字节等价（口径 1 的数学半边）、合成睡眠窗扣减 + 红绿对照（口径 2）、
+ * 交集边界与钳制、窗集修剪、实例隔离、kill-switch 全局闸（口径 6 的消费侧半边）。
+ */
 class PowerStateMathSpec extends FunSuite:
 
   private val S = 1000L // 1s in ms
@@ -50,19 +51,17 @@ class PowerStateMathSpec extends FunSuite:
     val start = 1_000_000L
     val now = 2_000_000L
     // 窗完全覆盖跨度 ⇒ 钳 ≥0
-    assertEquals(
-      PowerStateMath.effectiveElapsed(List(SleepWindow(start - 5_000L, now + 5_000L)), start, now), 0L)
+    assertEquals(PowerStateMath.effectiveElapsed(List(SleepWindow(start - 5_000L, now + 5_000L)), start, now), 0L)
     // 窗与跨度相离 ⇒ 恒等
-    assertEquals(
-      PowerStateMath.effectiveElapsed(List(SleepWindow(now + 1L, now + 9_999L)), start, now), now - start)
+    assertEquals(PowerStateMath.effectiveElapsed(List(SleepWindow(now + 1L, now + 9_999L)), start, now), now - start)
     // 端点相切（hi == lo）⇒ 贡献 0
-    assertEquals(
-      PowerStateMath.effectiveElapsed(List(SleepWindow(now, now + 9_999L)), start, now), now - start)
-    assertEquals(
-      PowerStateMath.effectiveElapsed(List(SleepWindow(start - 9_999L, start)), start, now), now - start)
+    assertEquals(PowerStateMath.effectiveElapsed(List(SleepWindow(now, now + 9_999L)), start, now), now - start)
+    assertEquals(PowerStateMath.effectiveElapsed(List(SleepWindow(start - 9_999L, start)), start, now), now - start)
     // 部分交叠：窗 [start−100, start+400] ⇒ 扣 500... 精确 = [start, start+400] = 400
     assertEquals(
-      PowerStateMath.effectiveElapsed(List(SleepWindow(start - 100L, start + 400L)), start, now), now - start - 400L)
+      PowerStateMath.effectiveElapsed(List(SleepWindow(start - 100L, start + 400L)), start, now),
+      now - start - 400L
+    )
   }
 
   test("T6 多窗求和 + 重叠窗钳制不返回负值") {
@@ -122,6 +121,6 @@ class PowerStateMathSpec extends FunSuite:
       assert(sys.props.get("nebflow.wake.sense.enabled").isEmpty, "前置：prop 未设")
       PowerStateTracker.registerSleepWindow(now - 900 * S, now)
       assertEquals(PowerStateTracker.effectiveElapsed(now - 910 * S, now), 10 * S)
-    finally
-      PowerStateTracker.resetGlobalForTest()
+    finally PowerStateTracker.resetGlobalForTest()
   }
+end PowerStateMathSpec

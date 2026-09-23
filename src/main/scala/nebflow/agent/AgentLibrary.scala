@@ -332,13 +332,15 @@ Memory: record only what cannot be obtained from the project's code and helps fu
 """ + "\n"
   )
 
-  /** Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
-    * Nebula is both the only seed and the runtime fallback; every other agent
-    * is defined on disk only (git-tracked definitions, restorable outside the
-    * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
-    * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
-    * agent.json, so keeping retired names out of this list is what keeps them
-    * retired across restarts (GatewayMain calls seedDefaults() on startup). */
+  /**
+   * Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
+   * Nebula is both the only seed and the runtime fallback; every other agent
+   * is defined on disk only (git-tracked definitions, restorable outside the
+   * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
+   * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
+   * agent.json, so keeping retired names out of this list is what keeps them
+   * retired across restarts (GatewayMain calls seedDefaults() on startup).
+   */
   val all = List(Nebula)
 
 end Seeds

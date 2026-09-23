@@ -128,6 +128,8 @@ object DropboxUtil:
         )
     }
 
+  end streamToFileWithHashBounded
+
   private def writtenBytesSafe(path: os.Path): IO[Long] =
     IO.blocking(if os.exists(path) then os.size(path) else 0L).handleErrorWith(_ => IO.pure(0L))
 
@@ -187,7 +189,7 @@ object DropboxUtil:
         t.targetDir.map(_.trim).filter(_.nonEmpty).filter(d => t.targetDirCode.isEmpty && d.startsWith("/"))
       acceptedDir match
         case Some(dir) => s"$dir/$name"
-        case None      => s"$RelayDefaultDirTilde/$name"
+        case None => s"$RelayDefaultDirTilde/$name"
 
   /** 对端（**接收端**）是否支持 relay 落点收口 —— 唯一判据点（`put` / `probe` / 归属 token 共用）。 */
   def peerSupportsRelayTemp(t: FileTransfer): Boolean =
@@ -197,6 +199,7 @@ object DropboxUtil:
   private enum OccupyOutcome:
     /** 硬链接已建立：`p` 与 temp 同一 inode，内容已完整、零占位残留。 */
     case Occupied(path: os.Path)
+
     /** 0 字节占位已用 `O_EXCL` 原子建立（硬链接不可用时的回退）⇒ 调用方须把 temp 搬上来。 */
     case Placeholder(path: os.Path)
     case Collision
@@ -227,7 +230,10 @@ object DropboxUtil:
     def tryAt(k: Int): IO[Either[String, os.Path]] =
       if k >= maxTries then
         IO.pure(
-          Left(s"cannot reserve a unique name for '$fileName' in $landDir after $maxTries tries"): Either[String, os.Path]
+          Left(s"cannot reserve a unique name for '$fileName' in $landDir after $maxTries tries"): Either[
+            String,
+            os.Path
+          ]
         )
       else
         val cand = landDir / finalNameCandidate(fileName, k, now)
@@ -243,7 +249,11 @@ object DropboxUtil:
               // 硬链接不可用 ⇒ 0 字节占位（O_EXCL，原子且不覆盖）。
               try
                 java.nio.file.Files
-                  .newByteChannel(cand.toNIO, java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)
+                  .newByteChannel(
+                    cand.toNIO,
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                    java.nio.file.StandardOpenOption.WRITE
+                  )
                   .close()
                 OccupyOutcome.Placeholder(cand)
               catch
@@ -271,14 +281,17 @@ object DropboxUtil:
               IO.blocking {
                 if os.exists(p) && os.size(p) == 0L then java.nio.file.Files.deleteIfExists(p.toNIO)
                 ()
-              }.attempt.as(
-                Left(
-                  s"cannot place '$fileName' as $p: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                ): Either[String, os.Path]
-              )
+              }.attempt
+                .as(
+                  Left(
+                    s"cannot place '$fileName' as $p: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                  ): Either[String, os.Path]
+                )
             }
         }
     tryAt(0)
+
+  end reserveAndPlace
 
   /**
    * 撞名时的**改名落点**（单次请求内可用的原子占据；调用方随后把内容写进去）。
@@ -296,17 +309,24 @@ object DropboxUtil:
       else
         val cand = dir / finalNameCandidate(fileName, k, now)
         try
-          java.nio.file.Files.newByteChannel(
-            cand.toNIO,
-            java.nio.file.StandardOpenOption.CREATE_NEW,
-            java.nio.file.StandardOpenOption.WRITE
-          ).close()
+          java.nio.file.Files
+            .newByteChannel(
+              cand.toNIO,
+              java.nio.file.StandardOpenOption.CREATE_NEW,
+              java.nio.file.StandardOpenOption.WRITE
+            )
+            .close()
           Right(cand)
         catch
           case _: java.nio.file.FileAlreadyExistsException => tryAt(k + 1)
           case e: java.io.IOException =>
-            Left(s"cannot occupy a conflict-free name for '$fileName' in $dir: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")
+            Left(
+              s"cannot occupy a conflict-free name for '$fileName' in $dir: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+            )
+        end try
     tryAt(0)
+
+  end occupyConflictFreeName
 
   /**
    * Resolve the final save path, appending a timestamp suffix if the name already exists.

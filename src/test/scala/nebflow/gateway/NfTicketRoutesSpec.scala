@@ -24,17 +24,20 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
-  /** 隔离的 P1（dataRoot）/ P3（workspace）——临时目录，真测试里不碰真实家目录。
-    *
-    * `policy` is a lazy val on purpose: the R2 inode snapshot must be taken
-    * AFTER `seed()` has created the credential files, otherwise the set is
-    * empty and the hard-link guard silently has nothing to match. */
+  /**
+   * 隔离的 P1（dataRoot）/ P3（workspace）——临时目录，真测试里不碰真实家目录。
+   *
+   * `policy` is a lazy val on purpose: the R2 inode snapshot must be taken
+   * AFTER `seed()` has created the credential files, otherwise the set is
+   * empty and the hard-link guard silently has nothing to match.
+   */
   private final class Env(
     val root: Path,
     val dataRoot: Path,
     val workspaceRoot: Path,
     val outside: Path
   ):
+
     lazy val policy: WebSocketRoutes.NfPathPolicy =
       WebSocketRoutes.NfPathPolicy(
         dataRoot,
@@ -72,6 +75,8 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
     def pathOf(rel: String): Path = dataRoot.resolve(rel)
 
+  end Env
+
   private def withEnv[A](test: Env => IO[A]): A =
     val root = Files.createTempDirectory("nebflow-nfticket-test").toRealPath()
     val dataRoot = Files.createDirectories(root.resolve("dataroot"))
@@ -87,6 +92,8 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         .iterator()
         .asScala
         .foreach(p => Files.deleteIfExists(p))
+
+  end withEnv
 
   private def bodyOf(resp: org.http4s.Response[IO]): String =
     resp.bodyText.compile.string.unsafeRunSync()
@@ -374,7 +381,9 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("A17-counter: the widening is ONE entry — a sibling dir, a data-root credential and a .ssh traversal stay refused") {
+  test(
+    "A17-counter: the widening is ONE entry — a sibling dir, a data-root credential and a .ssh traversal stay refused"
+  ) {
     withEnv { env =>
       IO {
         val logs = env.pathOf("logs/x.svg")
@@ -468,7 +477,9 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("policy: P3 namespace is <workspace>/.nebflow — repo files pass, the project .nebflow is denied, evidence*/** is allowlisted") {
+  test(
+    "policy: P3 namespace is <workspace>/.nebflow — repo files pass, the project .nebflow is denied, evidence*/** is allowlisted"
+  ) {
     // Pins R1's P3 boundary at the pure-judge level (no HTTP, no existence
     // race). The 2026-09-11 regression this catches: rooting P3 at the
     // workspace/repo ROOT instead of the project's `.nebflow` dir makes every
@@ -500,6 +511,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         .iterator()
         .asScala
         .foreach(p => Files.deleteIfExists(p))
+    end try
   }
 
   test("policy: production P3 root is <cwd>/.nebflow (R1), not the workspace root") {
@@ -509,3 +521,4 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     assertEquals(actual, expected)
     assertNotEquals(actual, WebSocketRoutes.NfPathPolicy.canonicalOrSelf(cwd))
   }
+end NfTicketRoutesSpec

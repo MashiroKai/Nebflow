@@ -6,7 +6,7 @@ import munit.FunSuite
 import nebflow.llm.FallbackExhaustedError
 import nebflow.shared.*
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class OnboardingServiceSpec extends FunSuite:
 
@@ -120,7 +120,10 @@ class OnboardingServiceSpec extends FunSuite:
 
   private def fakeLlm(result: Either[Throwable, LlmResponse]): LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = result.fold(IO.raiseError, IO.pure)
-    def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("not used in probe"))
 
   private def okResponse(providerId: String): LlmResponse =
@@ -128,7 +131,8 @@ class OnboardingServiceSpec extends FunSuite:
       reply = "ok",
       toolCalls = Nil,
       usage = None,
-      meta = LlmMeta(sessionId = "llm-probe", agentId = "llm-probe", providerId = providerId, model = "m", durationMs = 1)
+      meta =
+        LlmMeta(sessionId = "llm-probe", agentId = "llm-probe", providerId = providerId, model = "m", durationMs = 1)
     )
 
   test("probeLlm sends minimal User message request through the global handle") {
@@ -136,7 +140,10 @@ class OnboardingServiceSpec extends FunSuite:
     val spy = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] =
         captured = req; IO.pure(okResponse("prov-a"))
-      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      ): fs2.Stream[IO, StreamChunk] =
         fs2.Stream.empty
     val res = OnboardingService.probeLlm(spy).unsafeRunSync()
     assert(res.ok)

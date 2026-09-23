@@ -49,14 +49,16 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
   private def writeGlobal(mode: String): Unit =
     os.write.over(tmp / "nebflow.json", s"""{"safety": {"defaultMode": "$mode"}}""", createFolders = true)
 
-  /** 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒
-    * `loadFromIndex` → `recoverOrphans` 重建它）。孤儿**不写 safetyMode** ——
-    * 正是恢复路径要填的那一格。
-    *
-    * @param indexedSafetyMode 索引里那个在册会话的 `safetyMode`（`None` = 不写键）。
-    *   `Some("auto-all")` = **存量形态**：盘上写着顶档、全局却是 confirm-edits ——
-    *   A-10 用例用它证明"逐会话键不构成权威"，同时让该用例的观测面**可分辨**
-    *   （没有这个"盘上值 ≠ 全局值"的会话，任何断言都只能恒真）。 */
+  /**
+   * 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒
+   * `loadFromIndex` → `recoverOrphans` 重建它）。孤儿**不写 safetyMode** ——
+   * 正是恢复路径要填的那一格。
+   *
+   * @param indexedSafetyMode 索引里那个在册会话的 `safetyMode`（`None` = 不写键）。
+   *   `Some("auto-all")` = **存量形态**：盘上写着顶档、全局却是 confirm-edits ——
+   *   A-10 用例用它证明"逐会话键不构成权威"，同时让该用例的观测面**可分辨**
+   *   （没有这个"盘上值 ≠ 全局值"的会话，任何断言都只能恒真）。
+   */
   private def seedDir(indexedSafetyMode: Option[String] = None): os.Path =
     val sessionsDir = tmp / "sessions"
     os.makeDir.all(sessionsDir)
@@ -73,6 +75,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       """[{"role":"user","content":[{"type":"text","text":"orphan session"}]}]"""
     )
     sessionsDir
+  end seedDir
 
   private def newStore(sessionsDir: os.Path): SessionStore = SessionStore(sessionsDir, tmp / "tasks")
 
@@ -163,6 +166,8 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       )
       // ④ 对照：盘上键**没有被改写**（方案 A「读时忽略」，不是把数据改了）
       assertEquals(indexed.safetyMode, "auto-all", "reads must not rewrite the stale disk value")
+
+    end for
 
   test("recovery persists the authority value (re-read from disk after an index write)"):
     writeGlobal("confirm-edits")

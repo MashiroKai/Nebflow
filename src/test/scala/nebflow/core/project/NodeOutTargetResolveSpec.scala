@@ -16,28 +16,29 @@ import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
 
-/** out 边目标「标识符二元性」修复回归（20260909 in 落盘丢失事故，五个实证节点
-  * n-fdfb01e1 / n-7f645f0c / n-9ba4fb19 / n-fb2c7a1e / n-b8cce0f8）：
-  *
-  * 事故链（宿主事件日志 + 会话转录 + 归档边形态三方实证）：分发器标准组图工作流
-  * 「create 下游带 in=<上游id> → 随后 NodeEdit(上游, out=<下游名>) 接线」——
-  * 旧 setOut.rewire 按原始串 diff：旧边 to=下游 id、新边 to=下游名 → 误判为改接他点，
-  * removed 侧把下游 in 抹掉；added 侧名字查 id 键 Map MISS 漏记 → in 蒸发 →
-  * settle sweep 对空 in 空真放行 → 提前启动 / merge 空真收集（barrier 失效）。
-  *
-  * 修复面：OutEdge.resolveTargetId 解析单点（id/名字 → 节点 id），校验/in 镜像/投递
-  * 三处统一按解析后 id 记账：
-  *  - ① 事故重放：out 按名改接到既有 in 上游 → in 必须保留 + sweep 不得提前启动
-  *    （上游未 completed 时下游绝不进入 running——端到端 barrier 断言）；
-  *  - ② added 侧按名接线：目标 in 正确建立（旧实现静默漏记 = 半接线）；
-  *  - ③ 投递侧：名字形态边可投递（旧实现 findNode 按原始串查 = 死边）；
-  *  - ④ create 的 out 目标接受名字（镜像+环检按解析 id）；悬空目标显式拒绝
-  *    （旧实现对编辑路径静默放行）；
-  *  - ⑤ create 回执一致性：带 in 创建的节点立即快照读 in 非空（写后读哨兵）。
-  *
-  * 变异验红锚：revert setOut.rewire 至原始串 diff → ①② 红（①的 sweep 提前启动、
-  * ② 的 in 缺失）；revert settleTo 解析 → ①③ 红（下游永久 wiring 直至超时）。
-  */
+/**
+ * out 边目标「标识符二元性」修复回归（20260909 in 落盘丢失事故，五个实证节点
+ * n-fdfb01e1 / n-7f645f0c / n-9ba4fb19 / n-fb2c7a1e / n-b8cce0f8）：
+ *
+ * 事故链（宿主事件日志 + 会话转录 + 归档边形态三方实证）：分发器标准组图工作流
+ * 「create 下游带 in=<上游id> → 随后 NodeEdit(上游, out=<下游名>) 接线」——
+ * 旧 setOut.rewire 按原始串 diff：旧边 to=下游 id、新边 to=下游名 → 误判为改接他点，
+ * removed 侧把下游 in 抹掉；added 侧名字查 id 键 Map MISS 漏记 → in 蒸发 →
+ * settle sweep 对空 in 空真放行 → 提前启动 / merge 空真收集（barrier 失效）。
+ *
+ * 修复面：OutEdge.resolveTargetId 解析单点（id/名字 → 节点 id），校验/in 镜像/投递
+ * 三处统一按解析后 id 记账：
+ *  - ① 事故重放：out 按名改接到既有 in 上游 → in 必须保留 + sweep 不得提前启动
+ *    （上游未 completed 时下游绝不进入 running——端到端 barrier 断言）；
+ *  - ② added 侧按名接线：目标 in 正确建立（旧实现静默漏记 = 半接线）；
+ *  - ③ 投递侧：名字形态边可投递（旧实现 findNode 按原始串查 = 死边）；
+ *  - ④ create 的 out 目标接受名字（镜像+环检按解析 id）；悬空目标显式拒绝
+ *    （旧实现对编辑路径静默放行）；
+ *  - ⑤ create 回执一致性：带 in 创建的节点立即快照读 in 非空（写后读哨兵）。
+ *
+ * 变异验红锚：revert setOut.rewire 至原始串 diff → ①② 红（①的 sweep 提前启动、
+ * ② 的 in 缺失）；revert settleTo 解析 → ①③ 红（下游永久 wiring 直至超时）。
+ */
 class NodeOutTargetResolveSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 180.seconds
@@ -48,8 +49,11 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -60,7 +64,8 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
   test("resolveTargetId: id hit > name hit > miss (dangling)") {
     val nodes = Map(
       "n-aaa" -> NodeDef(id = "n-aaa", name = "上游修复支", agent = "general", createdAt = 1L),
-      "n-bbb" -> NodeDef(id = "n-bbb", name = "合并批", agent = "general", createdAt = 2L))
+      "n-bbb" -> NodeDef(id = "n-bbb", name = "合并批", agent = "general", createdAt = 2L)
+    )
     assertEquals(OutEdge.resolveTargetId(nodes, "n-aaa"), Some("n-aaa"), "id form must hit directly")
     assertEquals(OutEdge.resolveTargetId(nodes, "合并批"), Some("n-bbb"), "name form must resolve to id")
     assertEquals(OutEdge.resolveTargetId(nodes, "n-zzz"), None, "unknown id must miss")
@@ -71,11 +76,12 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
 
   private class CaptureLlm(delayOf: String => FiniteDuration = _ => 0.millis):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -124,7 +130,7 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -137,7 +143,10 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -160,7 +169,12 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -168,7 +182,7 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist in active area")
+      case None => fail(s"node '$name' must exist in active area")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -178,7 +192,7 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
     waitUntil(15.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
@@ -187,7 +201,9 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
 
   // ── ① 事故重放：create 带 in → out 按名改接 → in 保留 + 不提前启动 ──
 
-  test("① incident replay: out-edit rewiring to downstream BY NAME preserves its in edge; settle sweep must NOT start while upstream is running (end-to-end barrier)") {
+  test(
+    "① incident replay: out-edit rewiring to downstream BY NAME preserves its in edge; settle sweep must NOT start while upstream is running (end-to-end barrier)"
+  ) {
     val ws = tempRoot / "ws-incident"
     os.makeDir.all(ws)
     val system = ActorSystem(s"otr-inc-${scala.util.Random.nextInt(100000)}")
@@ -197,13 +213,30 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
       rt <- mountProject("otr-incident", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 上游：入口节点，跑 2.5s（给 sweep 留出「上游仍 running」的窗口）
-      created <- nodeEdit(nodeInput("otr-incident", "slow-upstream", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-upstream"), "out" -> Json.fromString("Nebula")), ctx)
+      created <- nodeEdit(
+        nodeInput(
+          "otr-incident",
+          "slow-upstream",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-upstream"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-upstream", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "slow-upstream")
       // 下游：task + in=[上游 id]（事故节点形态：带 task 的 wiring barrier 节点）
-      _ <- nodeEdit(nodeInput("otr-incident", "下游合并批", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("collect"), "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "otr-incident",
+          "下游合并批",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("collect"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       downId <- idOf(rt, "下游合并批")
       afterCreate <- nodeById(rt, downId)
       // 分发器标准第二拍：out 按下游**名字**接线（事故触发动作）
@@ -224,14 +257,24 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
       assert(created.isRight, s"create must succeed, got: $created")
       assertEquals(afterCreate.map(_.in), Some(List(upId)), "⑤ create receipt: in must be persisted with the node")
       assert(wired.isRight, s"by-name out wiring must succeed, got: $wired")
-      assertEquals(afterEdit.map(_.in), Some(List(upId)),
-        "① THE incident: out-edit by NAME must NOT wipe the downstream in edge")
+      assertEquals(
+        afterEdit.map(_.in),
+        Some(List(upId)),
+        "① THE incident: out-edit by NAME must NOT wipe the downstream in edge"
+      )
       assert(up.out.exists(_.to == "下游合并批"), s"upstream out must hold the name-form edge, got ${up.out}")
-      assertEquals(afterSweep.map(_.status), Some(NodeLifecycle.Wiring),
-        "① end-to-end barrier: upstream still running → sweep must NOT start the downstream (pre-fix: vacuous empty-in start)")
+      assertEquals(
+        afterSweep.map(_.status),
+        Some(NodeLifecycle.Wiring),
+        "① end-to-end barrier: upstream still running → sweep must NOT start the downstream (pre-fix: vacuous empty-in start)"
+      )
       assertEquals(done.status, NodeLifecycle.Completed, "downstream must complete after upstream delivery")
       assertEquals(done.deliveredTo, List(upId), "delivery must credit the barrier via the resolved name edge")
-      assert(collectInput.isDefined, s"downstream input must carry the upstream result header, got inputs=${allInputs.map(_.take(150))}")
+      assert(
+        collectInput.isDefined,
+        s"downstream input must carry the upstream result header, got inputs=${allInputs.map(_.take(150))}"
+      )
+    end for
   }
 
   // ── ② added 侧：out 按名接线 → 目标 in 正确建立 ──────────
@@ -246,11 +289,30 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
       rt <- mountProject("otr-added", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（wiring 空节点；out-only wiring 不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w" -> NodeDef(id = "n-w", name = "收集批", agent = "general",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("otr-added", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-result-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "收集批",
+              agent = "general",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "otr-added",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-result-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "done-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "done-a")
       // 按**名字**接线（不是 id）
@@ -265,11 +327,14 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
       assert(w.in.contains(aId), s"② added-side mirror must establish W.in by resolved id, got ${w.in}")
       assert(w.deliveredTo.contains(aId), s"delivery must reach W via the name-form edge, got ${w.deliveredTo}")
       assert(wInput.isDefined, s"W input must carry A's result header, got inputs=${allInputs.map(_.take(150))}")
+    end for
   }
 
   // ── ④ create 的 out 目标接受名字 + 悬空目标显式拒绝 ──────
 
-  test("④ create with out=<existing node NAME> mirrors the target's in edge; dangling out target is rejected with an actionable error") {
+  test(
+    "④ create with out=<existing node NAME> mirrors the target's in edge; dangling out target is rejected with an actionable error"
+  ) {
     val ws = tempRoot / "ws-create-name"
     os.makeDir.all(ws)
     val system = ActorSystem(s"otr-cn-${scala.util.Random.nextInt(100000)}")
@@ -279,12 +344,28 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
       rt <- mountProject("otr-create-name", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W' 入口节点先建（out=Nebula）
-      _ <- nodeEdit(nodeInput("otr-create-name", "前置节点", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("prep"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "otr-create-name",
+          "前置节点",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("prep"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       prepId <- idOf(rt, "前置节点")
       // 新节点 out 按名字指向前置节点（旧实现对名字形态误拒 "Referenced node not found"）
-      created <- nodeEdit(nodeInput("otr-create-name", "后续节点", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("follow-up"), "out" -> Json.fromString("前置节点")), ctx)
+      created <- nodeEdit(
+        nodeInput(
+          "otr-create-name",
+          "后续节点",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("follow-up"),
+          "out" -> Json.fromString("前置节点")
+        ),
+        ctx
+      )
       followId <- idOf(rt, "后续节点")
       prep <- nodeById(rt, prepId).map(_.getOrElse(fail("prep must exist")))
       // 悬空目标：显式拒绝（不再静默放行进拓扑）
@@ -293,8 +374,11 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
     yield
       assert(created.isRight, s"create with by-name out must succeed, got: $created")
       assert(prep.in.contains(followId), s"④ create-time by-name out must mirror target's in edge, got ${prep.in}")
-      assert(dangling.isLeft && dangling.left.exists(_.contains("not found")),
-        s"④ dangling out target must be rejected, got: $dangling")
+      assert(
+        dangling.isLeft && dangling.left.exists(_.contains("not found")),
+        s"④ dangling out target must be rejected, got: $dangling"
+      )
+    end for
   }
 
 end NodeOutTargetResolveSpec

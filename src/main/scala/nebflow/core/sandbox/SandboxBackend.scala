@@ -29,18 +29,21 @@ object SandboxProvider:
   /** 合法取值表（校验文案与文档共用）。 */
   val names: List[String] = List("host", "local-process", "container", "auto")
 
-  /** 解析 provider 取值。非法值 → `Left(可读文案)`：**绝不静默回落 host**（U7）——
-    * 调用方把原因带在 `SandboxConfig.providerError` 上，由 `SandboxRuntime.init`
-    * 转成 Bash 的显式失败。 */
+  /**
+   * 解析 provider 取值。非法值 → `Left(可读文案)`：**绝不静默回落 host**（U7）——
+   * 调用方把原因带在 `SandboxConfig.providerError` 上，由 `SandboxRuntime.init`
+   * 转成 Bash 的显式失败。
+   */
   def parse(raw: String): Either[String, SandboxProvider] =
     raw.trim.toLowerCase match
-      case "host"          => Right(Host)
+      case "host" => Right(Host)
       case "local-process" => Right(LocalProcess)
-      case "container"     => Right(Container)
-      case "auto"          => Right(Auto)
+      case "container" => Right(Container)
+      case "auto" => Right(Auto)
       case "seatbelt" | "docker" =>
         Left(
-          s""""sandbox.provider": "$raw" 是 docker 批 A2/A3 的旧取值，已由「执行环境 provider」语义取代（design §4.2 / R4=d2）——请改用 ${names.mkString("\"", "\", \"", "\"")}（"seatbelt" → "local-process"）。"""
+          s""""sandbox.provider": "$raw" 是 docker 批 A2/A3 的旧取值，已由「执行环境 provider」语义取代（design §4.2 / R4=d2）——请改用 ${names
+              .mkString("\"", "\", \"", "\"")}（"seatbelt" → "local-process"）。"""
         )
       case other =>
         Left(s""""sandbox.provider": 未知取值 "$other"（合法值：${names.mkString("\"", "\", \"", "\"")}）。""")
@@ -85,9 +88,11 @@ object SandboxBackend:
     val available = true
     def wrap(argv: List[String], policy: SandboxPolicy): Option[List[String]] = None
 
-  /** 不可用后端（probe 失败 / 非 darwin / 未初始化）：永远 wrap 不出。
-    * [S3] 语义收窄：仅剩「provider=host 未激活 + enabled=false 旧行为」的占位与
-    * 测试注入位——不再是「Bash 必须被拦」的信号（判定已移出 available）。 */
+  /**
+   * 不可用后端（probe 失败 / 非 darwin / 未初始化）：永远 wrap 不出。
+   * [S3] 语义收窄：仅剩「provider=host 未激活 + enabled=false 旧行为」的占位与
+   * 测试注入位——不再是「Bash 必须被拦」的信号（判定已移出 available）。
+   */
   object Unavailable extends SandboxBackend:
     val name = "unavailable"
     val available = false
@@ -134,17 +139,20 @@ object SandboxBackend:
     /** profile 缓存：key = writableRoots + hooks 拒绝路径（root 集合有限，§A.4-2）。 */
     private val profileCache = new ConcurrentHashMap[String, String]()
 
-    /** 启动 probe（§A.4-4）：只读 profile 跑 /bin/bash -c true，exit 0 才可用。
-      * [verify-fix] 2026-09-03 独立验证节点：原用 /bin/true，但本机（Darwin 25.4）
-      * 无 /bin/true（仅 /usr/bin/true）→ execvp ENOENT → probe 恒败 → fail-closed
-      * 拒绝一切沙箱 Bash。改用 /bin/bash -c true：与 wrap() 硬编码的执行二进制
-      * 完全一致——probe 探的正是沙箱路径真正依赖的那个文件。 */
+    /**
+     * 启动 probe（§A.4-4）：只读 profile 跑 /bin/bash -c true，exit 0 才可用。
+     * [verify-fix] 2026-09-03 独立验证节点：原用 /bin/true，但本机（Darwin 25.4）
+     * 无 /bin/true（仅 /usr/bin/true）→ execvp ENOENT → probe 恒败 → fail-closed
+     * 拒绝一切沙箱 Bash。改用 /bin/bash -c true：与 wrap() 硬编码的执行二进制
+     * 完全一致——probe 探的正是沙箱路径真正依赖的那个文件。
+     */
     def probe(sandboxExecPath: String = SandboxExecPath): Boolean =
       val isMac = sys.props.getOrElse("os.name", "").toLowerCase.contains("mac")
       if !isMac then false
       else
         try
-          val pb = new ProcessBuilder(sandboxExecPath, "-p", "(version 1)(allow default)", "--", "/bin/bash", "-c", "true")
+          val pb =
+            new ProcessBuilder(sandboxExecPath, "-p", "(version 1)(allow default)", "--", "/bin/bash", "-c", "true")
           pb.redirectInput(new java.io.File("/dev/null"))
           pb.redirectErrorStream(true)
           val proc = pb.start()
@@ -157,6 +165,10 @@ object SandboxBackend:
           case e: Exception =>
             logger.warnSync(s"sandbox-exec probe error: ${e.getClass.getSimpleName}: ${e.getMessage}")
             false
+
+      end if
+
+    end probe
 
     /**
      * profile 模板（§A.4.2）。读/进程/网络默认放行（H-10①：Bash 读面本轮不设
@@ -175,7 +187,8 @@ object SandboxBackend:
       val sbpl =
         if cached != null then cached
         else
-          val allows = SandboxPolicy.writableRoots(policy)
+          val allows = SandboxPolicy
+            .writableRoots(policy)
             .map(r => s"""(subpath "${sbplEscape(r.toString)}")""")
             .mkString(" ")
           val rendered =
@@ -185,6 +198,7 @@ object SandboxBackend:
           profileCache.put(cacheKey, rendered)
           rendered
       (sbpl, List("-D", s"SB_GIT_HOOKS=${hooksDeny.toString}"))
+    end profileFor
 
     /** SBPL 字符串转义：仅 " 与 \（路径来自配置/工程目录，不含控制字符）。 */
     private def sbplEscape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -215,8 +229,10 @@ object SandboxRuntime:
   /** 当前生效的 provider（启动期由 `init` 定妥；测试可直接断言）。 */
   def provider: SandboxProvider = activeProvider
 
-  /** provider 面显式失败原因：`Some` = 不可用/未实现 ⇒ Bash 显式失败（U7）；
-    * `None` = 正常（含 provider=host 与 enabled=false 旧行为）。 */
+  /**
+   * provider 面显式失败原因：`Some` = 不可用/未实现 ⇒ Bash 显式失败（U7）；
+   * `None` = 正常（含 provider=host 与 enabled=false 旧行为）。
+   */
   def failureCause: Option[String] = providerFailure
 
   /** 启动时调用一次：按 provider 装配执行面（provider=local-process 才 probe，阻塞 <1s）。 */
@@ -285,12 +301,15 @@ object SandboxRuntime:
               logger.errorSync(
                 "sandbox provider=auto 未实现 ⇒ Bash 显式失败（不静默回落宿主执行，design §4.2 U7）"
               )
+        end if
 
   def current: SandboxBackend = backend
 
-  /** provider 面显式失败文案（§A.4-4 的 SANDBOX_UNAVAILABLE 契约保留：模型侧只
-    * 需认前缀）。语义要点：说明**为什么**、**期望是什么**、**怎么改**——并显式
-    * 声明「没有回落宿主执行」，防模型误以为命令已在宿主上跑过。 */
+  /**
+   * provider 面显式失败文案（§A.4-4 的 SANDBOX_UNAVAILABLE 契约保留：模型侧只
+   * 需认前缀）。语义要点：说明**为什么**、**期望是什么**、**怎么改**——并显式
+   * 声明「没有回落宿主执行」，防模型误以为命令已在宿主上跑过。
+   */
   def failureMessage(cause: String, root: os.Path, providerRef: SandboxProvider = activeProvider): String =
     s"""SANDBOX_UNAVAILABLE
        |[sandbox: provider=$providerRef — $cause. Bash execution is refused (explicit failure) and was NOT silently downgraded to host execution.]

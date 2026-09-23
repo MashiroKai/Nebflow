@@ -85,31 +85,35 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
   private def served(req: Request[IO]): Boolean =
     mounted(authed(req)).value.unsafeRunSync().isDefined
 
-  /** The route surface as PRODUCTION mounts it — `Router("/api" -> (routes.routes
-    * <+> presenceWsRoutes(wsb)))`, the same shape GatewayMain:1124 and the
-    * presence specs use.
-    *
-    * WHY the union and not just `routes`: the arms this batch retires sit in
-    * `presenceWsRoutes` (they follow the WS presence arm inside that block),
-    * while `/health`, `/groups` and the neblink arms sit in `routes`. Probing one
-    * table would report every path as absent and read as a clean takedown —
-    * which is exactly the false-green the positive control below exists to
-    * catch (it did, on the first two runs of this spec).
-    *
-    * `wsb` is only captured by the closure and never dereferenced (see the
-    * placeholder below) — this stays a unit test with no bound port. */
+  /**
+   * The route surface as PRODUCTION mounts it — `Router("/api" -> (routes.routes
+   * <+> presenceWsRoutes(wsb)))`, the same shape GatewayMain:1124 and the
+   * presence specs use.
+   *
+   * WHY the union and not just `routes`: the arms this batch retires sit in
+   * `presenceWsRoutes` (they follow the WS presence arm inside that block),
+   * while `/health`, `/groups` and the neblink arms sit in `routes`. Probing one
+   * table would report every path as absent and read as a clean takedown —
+   * which is exactly the false-green the positive control below exists to
+   * catch (it did, on the first two runs of this spec).
+   *
+   * `wsb` is only captured by the closure and never dereferenced (see the
+   * placeholder below) — this stays a unit test with no bound port.
+   */
   private val wsb: WebSocketBuilder2[IO] = null.asInstanceOf[WebSocketBuilder2[IO]]
 
-  /** WHY the placeholder is safe AND why it is not a hidden dependency:
-    *
-    * `presenceWsRoutes` closes over `wsb`, but its presence arm body starts with
-    * `neblinkService match { case None => NotFound(...) }` (RestApiRoutes:2450),
-    * and this spec builds the class with the default `neblinkService = None` — so
-    * the body short-circuits to a response before the builder is ever touched.
-    * The two assertions below pin that: the WS-bearing table IS reachable (its
-    * presence arm answers, with the "not enabled" 404) while nothing dereferences
-    * the builder. Production never hand-builds one either — it comes from
-    * `withHttpWebSocketApp` (GatewayMain:1124, same as the presence specs). */
+  /**
+   * WHY the placeholder is safe AND why it is not a hidden dependency:
+   *
+   * `presenceWsRoutes` closes over `wsb`, but its presence arm body starts with
+   * `neblinkService match { case None => NotFound(...) }` (RestApiRoutes:2450),
+   * and this spec builds the class with the default `neblinkService = None` — so
+   * the body short-circuits to a response before the builder is ever touched.
+   * The two assertions below pin that: the WS-bearing table IS reachable (its
+   * presence arm answers, with the "not enabled" 404) while nothing dereferences
+   * the builder. Production never hand-builds one either — it comes from
+   * `withHttpWebSocketApp` (GatewayMain:1124, same as the presence specs).
+   */
   test("the WS-bearing table is reachable (control for the placeholder builder)") {
     println(s"[RTE-R4] GET /neblink/presence ⇒ served=${served(get("/neblink/presence"))}")
     assert(served(get("/neblink/presence")), "the presenceWsRoutes table must answer, not fall through")
@@ -117,11 +121,13 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
 
   private def mounted: HttpRoutes[IO] = routes.routes <+> routes.presenceWsRoutes(wsb)
 
-  /** Same Bearer shape the established gateway specs send (GroupApiRoutesSpec).
-    * A token is deliberate: the invariant being pinned is "a path DECLARED in
-    * the table answers (200 or an app-level 4xx) while a path nobody declares
-    * falls through to None" — so the request must be one the handler would
-    * actually serve. */
+  /**
+   * Same Bearer shape the established gateway specs send (GroupApiRoutesSpec).
+   * A token is deliberate: the invariant being pinned is "a path DECLARED in
+   * the table answers (200 or an app-level 4xx) while a path nobody declares
+   * falls through to None" — so the request must be one the handler would
+   * actually serve.
+   */
   private def authed(req: Request[IO]): Request[IO] =
     req.putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $TestToken"))
 
@@ -264,3 +270,4 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     stillServed.foreach { case (label, req) => println(s"[RTE-R2] live $label ⇒ served=${served(req)}") }
     assert(dead.isEmpty, s"these live routes were collaterally dropped: $dead")
   }
+end DeviceFaceHardeningRoutesSpec

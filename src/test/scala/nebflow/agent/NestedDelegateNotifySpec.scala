@@ -13,7 +13,7 @@ import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager}
+import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -60,8 +60,10 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
     counters: Ref[IO, Map[String, Int]],
     requests: Ref[IO, List[LlmRequest]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -81,15 +83,17 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
       n match
         case 1 =>
           Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-delegate-root",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "coordinate the nested job".asJson,
-                "description" -> "nested-e2e clone".asJson,
-                "agent" -> "Worker".asJson
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-delegate-root",
+                name = "Delegate",
+                input = JsonObject(
+                  "prompt" -> "coordinate the nested job".asJson,
+                  "description" -> "nested-e2e clone".asJson,
+                  "agent" -> "Worker".asJson
+                )
               )
-            )),
+            ),
             StreamChunk.Done(None, None)
           )
         case _ =>
@@ -99,14 +103,16 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
       n match
         case 1 =>
           Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-subtask-clone",
-              name = "SubTask",
-              input = JsonObject(
-                "prompt" -> "do the leaf work and report the marker".asJson,
-                "description" -> "nested-e2e grandchild".asJson
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-subtask-clone",
+                name = "SubTask",
+                input = JsonObject(
+                  "prompt" -> "do the leaf work and report the marker".asJson,
+                  "description" -> "nested-e2e grandchild".asJson
+                )
               )
-            )),
+            ),
             StreamChunk.Done(None, None)
           )
         case 2 =>
@@ -182,7 +188,7 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -201,16 +207,20 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
   private def seedAgents(tmp: os.Path): Unit =
     val nebulaDir = tmp / "agents" / "Nebula"
     os.makeDir.all(nebulaDir)
-    os.write.over(nebulaDir / "agent.json",
+    os.write.over(
+      nebulaDir / "agent.json",
       """{"name":"Nebula","displayName":"Nebula","description":"e2e root","tools":["Read","Delegate"]}"""
     )
     // The clone runs the Worker def: SubTask in tools → it can spawn the
     // grandchild (SubTask is NOT Nebula-exclusive; the clone is not Nebula).
     val workerDir = tmp / "agents" / "Worker"
     os.makeDir.all(workerDir)
-    os.write.over(workerDir / "agent.json",
+    os.write.over(
+      workerDir / "agent.json",
       """{"name":"Worker","displayName":"Worker","description":"e2e nested target","tools":["Read","SubTask"]}"""
     )
+
+  end seedAgents
 
   // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例测嵌套 Delegate 完成通知（#25 死信），
   // Delegate 已架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
@@ -245,7 +255,9 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
         _ <- rootRef ! AgentCommand.UserInput("run the nested delegation", None, Some("e2e-nested-1"))
         // Both levels spawned
         _ <- waitUntil(10.seconds)(
-          resources.agentRegistry.get.map(m => sidByPrefix(m, "delegate-").isDefined && sidByPrefix(m, "subtask-").isDefined)
+          resources.agentRegistry.get.map(m =>
+            sidByPrefix(m, "delegate-").isDefined && sidByPrefix(m, "subtask-").isDefined
+          )
         )
         registry1 <- resources.agentRegistry.get
         cloneSid = sidByPrefix(registry1, "delegate-").get
@@ -258,11 +270,16 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
         )
         _ <- IO.sleep(500.millis) // settle: turn-2 finish fully processed
         taskMid <- resources.subAgentTaskStore.findByTaskId(cloneSid)
-        _ = assertEquals(taskMid.map(_.status), Some("running"),
-          s"the clone must NOT be completed while its grandchild is in flight (pre-fix dead-letter): $taskMid")
+        _ = assertEquals(
+          taskMid.map(_.status),
+          Some("running"),
+          s"the clone must NOT be completed while its grandchild is in flight (pre-fix dead-letter): $taskMid"
+        )
         registryMid <- resources.agentRegistry.get
-        _ = assert(registryMid.contains(cloneSid),
-          "the clone must still be registered while the grandchild is in flight")
+        _ = assert(
+          registryMid.contains(cloneSid),
+          "the clone must still be registered while the grandchild is in flight"
+        )
         // ── The grandchild's result is consumed by the clone (not dead-lettered):
         // clone turn 3 request carries the grandchild marker.
         _ <- waitUntil(15.seconds)(
@@ -287,9 +304,11 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
         // Root persisted session saw the final payload too (LLM-visible, not
         // just a UI bubble — the #25 companion defect).
         _ <- waitUntil(10.seconds)(
-          resources.sessionStore.loadMessagesForSession(rootSid).map(
-            _.exists(_.textContent.contains(CloneFinalMarker))
-          )
+          resources.sessionStore
+            .loadMessagesForSession(rootSid)
+            .map(
+              _.exists(_.textContent.contains(CloneFinalMarker))
+            )
         )
       yield ()
       program.unsafeRunSync()
@@ -298,6 +317,7 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end NestedDelegateNotifySpec

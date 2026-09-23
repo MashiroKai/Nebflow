@@ -39,19 +39,21 @@ class MergeDesignGapSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
 
-  /** 每跑唯一夹具根。
-    *
-    * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-merge-gap` + 类初始化器里
-    * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
-    * `PathUtil.dataRoot` 的异步写入者**竞态：前序 suite 的 `LlmLogWriter`
-    * （object 级有界队列 + 后台 fiber，写点 `logDir = dataRoot/logs/router`）在
-    * 本类初始化器改指 dataRoot 之后才落盘，`os.remove.all` 走查（walk）期间根目录
-    * 被写回 ⇒ `DirectoryNotEmptyException` ⇒ `initializationError`，整支用例组
-    * 不入计数。
-    *
-    * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失（不是把删除
-    * 做得更快，而是删除了「删除」这个动作）。夹具数据只被本 spec 读，路径变更对
-    * 断言零影响；`target/` 为构建产物目录（`sbt clean` 回收）。 */
+  /**
+   * 每跑唯一夹具根。
+   *
+   * 旧形态 = 仓内**固定共享路径** `os.pwd/target/test-merge-gap` + 类初始化器里
+   * 「`setDataRoot(tempRoot)` → `os.remove.all(tempRoot)`」。该删除与**晚解析
+   * `PathUtil.dataRoot` 的异步写入者**竞态：前序 suite 的 `LlmLogWriter`
+   * （object 级有界队列 + 后台 fiber，写点 `logDir = dataRoot/logs/router`）在
+   * 本类初始化器改指 dataRoot 之后才落盘，`os.remove.all` 走查（walk）期间根目录
+   * 被写回 ⇒ `DirectoryNotEmptyException` ⇒ `initializationError`，整支用例组
+   * 不入计数。
+   *
+   * 唯一化即根治：新目录本就为空，**无需删除** ⇒ 竞态窗口结构性消失（不是把删除
+   * 做得更快，而是删除了「删除」这个动作）。夹具数据只被本 spec 读，路径变更对
+   * 断言零影响；`target/` 为构建产物目录（`sbt clean` 回收）。
+   */
   private val tempRoot: os.Path =
     val scratchBase = os.pwd / "target"
     os.makeDir.all(scratchBase)
@@ -60,8 +62,11 @@ class MergeDesignGapSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"merge-gap spec agent","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"merge-gap spec agent","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -72,9 +77,13 @@ class MergeDesignGapSpec extends CatsEffectSuite:
   // ── 装配（与 CancelDeadlockFixSpec 同款，零 LLM 调用）─────────────
 
   private class StubLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
@@ -106,8 +115,10 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** 挂载一个 runtime。`rootSessionId` 显式可注 —— 复现生产形态（**同一 rootSessionId
-    * 挂载多个项目**）的唯一途径。 */
+  /**
+   * 挂载一个 runtime。`rootSessionId` 显式可注 —— 复现生产形态（**同一 rootSessionId
+   * 挂载多个项目**）的唯一途径。
+   */
   private def mountProject(
     name: String,
     ws: os.Path,
@@ -120,22 +131,29 @@ class MergeDesignGapSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (j: Json) => frames.update(_ :+ j),
         workspace = ws.toString,
         rootSessionId = rootSessionId,
         projectName = name,
         emitEvent = (typ: String, nodeId: String, payload: Json) =>
-          frames.update(_ :+ payload.deepMerge(Json.obj(
-            "type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))),
+          frames.update(
+            _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
+          ),
         // 通知触发器接缝（与 CancelDeadlockFixSpec 同款）：不 spawn 分发会话，只记账
         notifyTriggerOverride = Some((text: String) => notified.update(_ :+ text)),
         // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开；
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -152,31 +170,54 @@ class MergeDesignGapSpec extends CatsEffectSuite:
   private def readAudit(ws: os.Path): IO[List[(String, String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(_.flatMap(l => jsonParse(l).toOption.map(j => (
-        j.hcursor.get[String]("type").getOrElse(""),
-        j.hcursor.get[String]("nodeId").getOrElse(""),
-        j.hcursor.get[String]("summary").getOrElse("")))))
+      .map(
+        _.flatMap(l =>
+          jsonParse(l).toOption.map(j =>
+            (
+              j.hcursor.get[String]("type").getOrElse(""),
+              j.hcursor.get[String]("nodeId").getOrElse(""),
+              j.hcursor.get[String]("summary").getOrElse("")
+            )
+          )
+        )
+      )
       .handleError(_ => Nil)
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
-    ToolContext(projectRoot = ws, sessionId = Some("mgap-sid"), rootSessionId = Some("nebula-root"),
-      sharedResources = Some(res), actorSystem = Some(system))
+    ToolContext(
+      projectRoot = ws,
+      sessionId = Some("mgap-sid"),
+      rootSessionId = Some("nebula-root"),
+      sharedResources = Some(res),
+      actorSystem = Some(system)
+    )
 
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def nid(suffix: String): String = s"n-$suffix"
 
   private def upstream(id: String, status: String): NodeDef =
-    NodeDef(id = id, name = s"up-$id", agent = "general", status = status,
-      sessionRef = None, createdAt = System.currentTimeMillis() - 100_000L)
+    NodeDef(
+      id = id,
+      name = s"up-$id",
+      agent = "general",
+      status = status,
+      sessionRef = None,
+      createdAt = System.currentTimeMillis() - 100_000L
+    )
 
   // ── P2①：会话归属判定（生产形态 = 多项目共享同一 rootSessionId）────
 
-  test("P2①: ownsSession is per-store — two projects mounted under the SAME rootSessionId claim only their own session (old rootSessionId key is ambiguous by construction)") {
+  test(
+    "P2①: ownsSession is per-store — two projects mounted under the SAME rootSessionId claim only their own session (old rootSessionId key is ambiguous by construction)"
+  ) {
     val system = ActorSystem(s"mgap-own-${scala.util.Random.nextInt(100000)}")
     for
       res <- mkResources(system, tempRoot)
@@ -187,10 +228,28 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       rtA <- mountProject("mgap-a", wsA, system, res, rootSessionId = "shared-root-sid")
       rtB <- mountProject("mgap-b", wsB, system, res, rootSessionId = "shared-root-sid")
       // 会话 node-sess-a 只属于 A 的节点；B 只有别的会话
-      _ <- seed(rtA.store, NodeDef(id = nid("a"), name = "A", agent = "general",
-        status = NodeLifecycle.Running, sessionRef = Some("node-sess-a"), createdAt = 1L))
-      _ <- seed(rtB.store, NodeDef(id = nid("b"), name = "B", agent = "general",
-        status = NodeLifecycle.Running, sessionRef = Some("node-sess-b"), createdAt = 1L))
+      _ <- seed(
+        rtA.store,
+        NodeDef(
+          id = nid("a"),
+          name = "A",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          sessionRef = Some("node-sess-a"),
+          createdAt = 1L
+        )
+      )
+      _ <- seed(
+        rtB.store,
+        NodeDef(
+          id = nid("b"),
+          name = "B",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          sessionRef = Some("node-sess-b"),
+          createdAt = 1L
+        )
+      )
       // 旧判据：两者恒真（不可区分）——这正是「命错引擎」的结构性根因
       sameKey <- IO.pure(rtA.engine.rootSessionId == rtB.engine.rootSessionId)
       // 新判据：按 store 归属
@@ -200,8 +259,17 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       bOwnsB <- rtB.engine.ownsSession("node-sess-b")
       ghost <- rtA.engine.ownsSession("node-sess-ghost")
       // sessionRefVerify（loop 节点 verify 会话）同判据
-      _ <- seed(rtA.store, NodeDef(id = nid("lv"), name = "LV", agent = "general",
-        status = NodeLifecycle.Running, sessionRefVerify = Some("node-sess-verify"), createdAt = 2L))
+      _ <- seed(
+        rtA.store,
+        NodeDef(
+          id = nid("lv"),
+          name = "LV",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          sessionRefVerify = Some("node-sess-verify"),
+          createdAt = 2L
+        )
+      )
       verifyOwned <- rtA.engine.ownsSession("node-sess-verify")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -212,11 +280,14 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       assert(bOwnsB, "B must own its own session")
       assert(!ghost, "an unbound session must not be claimed by anyone")
       assert(verifyOwned, "sessionRefVerify must count as ownership (loop verify session)")
+    end for
   }
 
   // ── P2②：查无节点出口的兜底腿 ────────────────────────────────────
 
-  test("P2②-a: settleFailedHardResume with the node out of the active region (archived) performs the LATE cancelled-side detach — reverse prune of in + pendingSuccession + nodeUpdated + hard-recovery audit") {
+  test(
+    "P2②-a: settleFailedHardResume with the node out of the active region (archived) performs the LATE cancelled-side detach — reverse prune of in + pendingSuccession + nodeUpdated + hard-recovery audit"
+  ) {
     val ws = tempRoot / "ws-late"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-late-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
@@ -226,13 +297,32 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       rt <- mountProject("mgap-late", ws, system, res, frames = frames)
       // 节点已出活动区（归档），但下游仍在活动区且 in 仍引用它（不一致拓扑的极端形态：
       // 归档判据按分量，引用边单侧存在时两者可异区）
-      _ <- seedArchive(rt.store, NodeDef(id = nid("x"), name = "X", agent = "general",
-        status = NodeLifecycle.Cancelled, sessionRef = Some("node-sess-x"),
-        result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: …)"),
-        out = List(OutEdge.nebula), notifySentAt = Some(now - 1_000L),
-        createdAt = now - 900_000L, completedAt = Some(now - 800_000L)))
-      _ <- seed(rt.store, NodeDef(id = nid("d"), name = "D", agent = "general",
-        status = NodeLifecycle.Pending, in = List(nid("x")), createdAt = now - 700_000L))
+      _ <- seedArchive(
+        rt.store,
+        NodeDef(
+          id = nid("x"),
+          name = "X",
+          agent = "general",
+          status = NodeLifecycle.Cancelled,
+          sessionRef = Some("node-sess-x"),
+          result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: …)"),
+          out = List(OutEdge.nebula),
+          notifySentAt = Some(now - 1_000L),
+          createdAt = now - 900_000L,
+          completedAt = Some(now - 800_000L)
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("d"),
+          name = "D",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          in = List(nid("x")),
+          createdAt = now - 700_000L
+        )
+      )
       // 无归属会话（同一调用会先走 lateDetach；此会话名与归档节点 sessionRef 不同 ⇒ 走 ERROR 腿）
       _ <- rt.engine.settleFailedHardResume("node-sess-nobody")
       d0 <- node(rt, nid("d"))
@@ -253,40 +343,83 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       // ① ERROR 腿（两区皆无）：回退出「有账」——事件流一条 hard-recovery，零动作
       val orphan = audit0.filter(r => r._1 == "hard-recovery" && r._2 == "")
       assertEquals(orphan.size, 1, s"the unlocatable leg must leave exactly one audit line, got ${audit0}")
-      assert(orphan.head._3.contains("no node owns this session"), s"orphan audit text self-explanatory, got ${orphan.head._3}")
+      assert(
+        orphan.head._3.contains("no node owns this session"),
+        s"orphan audit text self-explanatory, got ${orphan.head._3}"
+      )
       assertEquals(d0.in, List(nid("x")), "the orphan leg must not touch any node (nothing to reference)")
       // ② 归档可定位 ⇒ 迟到摘除：prune + 待承接 + 帧 + 事件
       assertEquals(d.in, Nil, s"U3/B: the archived node's active referrer must have its in-mirror pruned, got ${d.in}")
-      assertEquals(d.pendingSuccession, List(nid("x")),
-        s"U3/B: the referrer must be marked pendingSuccession (待承接), got ${d.pendingSuccession}")
-      assert(arch.nodes.get(nid("x")).exists(_.notifySentAt.isEmpty),
-        "the L3 notify hold must be released for the archived node (no stale dedup marker left behind)")
-      assert(f.exists(j => j.hcursor.get[String]("nodeId").toOption.contains(nid("d"))),
-        s"U3/B: the pruned referrer must get a nodeUpdated frame, got ${f.map(_.noSpaces.take(80))}")
+      assertEquals(
+        d.pendingSuccession,
+        List(nid("x")),
+        s"U3/B: the referrer must be marked pendingSuccession (待承接), got ${d.pendingSuccession}"
+      )
+      assert(
+        arch.nodes.get(nid("x")).exists(_.notifySentAt.isEmpty),
+        "the L3 notify hold must be released for the archived node (no stale dedup marker left behind)"
+      )
+      assert(
+        f.exists(j => j.hcursor.get[String]("nodeId").toOption.contains(nid("d"))),
+        s"U3/B: the pruned referrer must get a nodeUpdated frame, got ${f.map(_.noSpaces.take(80))}"
+      )
       val late = audit.filter(r => r._1 == "hard-recovery" && r._2 == nid("x"))
-      assertEquals(late.size, 1, s"exactly one late-detach audit line expected, got ${audit.filter(_._1 == "hard-recovery")}")
-      assert(late.head._3.contains("cancelled-side R4 detach applied late"), s"audit text must state the late detach: ${late.head._3}")
+      assertEquals(
+        late.size,
+        1,
+        s"exactly one late-detach audit line expected, got ${audit.filter(_._1 == "hard-recovery")}"
+      )
+      assert(
+        late.head._3.contains("cancelled-side R4 detach applied late"),
+        s"audit text must state the late detach: ${late.head._3}"
+      )
       assert(late.head._3.contains(nid("d")), s"audit text must name the pruned referrer: ${late.head._3}")
       // ③ 幂等：重放零写零帧（U5 的「不破坏重入幂等」）
       assertEquals(d2.in, Nil, "replay must be a no-op (idempotent)")
       assertEquals(d2.pendingSuccession, List(nid("x")), "replay must not duplicate the pendingSuccession marker")
       assertEquals(f2.size, f.size, "replay must not emit extra frames")
-      assertEquals(audit2.size, audit.size + 1, "replay appends only its own audit line (audit is append-only by design)")
+      assertEquals(
+        audit2.size,
+        audit.size + 1,
+        "replay appends only its own audit line (audit is append-only by design)"
+      )
+    end for
   }
 
-  test("P2②-b: settleFailedHardResume's LOCATED node path is unchanged — re-judged failed, zero detach, zero pendingSuccession (D5 red line)") {
+  test(
+    "P2②-b: settleFailedHardResume's LOCATED node path is unchanged — re-judged failed, zero detach, zero pendingSuccession (D5 red line)"
+  ) {
     val ws = tempRoot / "ws-located"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-loc-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
       res <- mkResources(system, tempRoot)
       rt <- mountProject("mgap-located", ws, system, res)
-      _ <- seed(rt.store, NodeDef(id = nid("u"), name = "U", agent = "general",
-        status = NodeLifecycle.Cancelled, sessionRef = Some("node-sess-loc"),
-        result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: …)"),
-        out = List(OutEdge(nid("d"))), createdAt = now - 900_000L, completedAt = Some(now - 800_000L)))
-      _ <- seed(rt.store, NodeDef(id = nid("d"), name = "D", agent = "general",
-        status = NodeLifecycle.Pending, in = List(nid("u")), createdAt = now - 700_000L))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("u"),
+          name = "U",
+          agent = "general",
+          status = NodeLifecycle.Cancelled,
+          sessionRef = Some("node-sess-loc"),
+          result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: …)"),
+          out = List(OutEdge(nid("d"))),
+          createdAt = now - 900_000L,
+          completedAt = Some(now - 800_000L)
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("d"),
+          name = "D",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          in = List(nid("u")),
+          createdAt = now - 700_000L
+        )
+      )
       _ <- rt.engine.settleFailedHardResume("node-sess-loc")
       u <- node(rt, nid("u"))
       d <- node(rt, nid("d"))
@@ -296,11 +429,14 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       assertEquals(u.out, List(OutEdge(nid("d"))), "R4 red line: failed side must NOT detach")
       assertEquals(d.in, List(nid("u")), "failed side must keep the downstream in mirror (D5 stop-wait)")
       assertEquals(d.pendingSuccession, Nil, "R4 red line: failed side must NOT write 待承接")
+    end for
   }
 
   // ── U5/E：不一致拓扑下取消 → 反向 prune（旧口径静默零操作）────────
 
-  test("U5/E: cancelling a node whose out holds no node target (rewired to Nebula) STILL prunes an active downstream that mirrors it in `in` — reverse scan, idempotent") {
+  test(
+    "U5/E: cancelling a node whose out holds no node target (rewired to Nebula) STILL prunes an active downstream that mirrors it in `in` — reverse scan, idempotent"
+  ) {
     val ws = tempRoot / "ws-u5"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-u5-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
@@ -309,12 +445,31 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot)
       rt <- mountProject("mgap-u5", ws, system, res, frames = frames)
       // 不一致拓扑：out 已改接 Nebula（只剩 Nebula 边），下游 in 仍镜像引用本节点
-      _ <- seed(rt.store, NodeDef(id = nid("c"), name = "C", agent = "general",
-        status = NodeLifecycle.Running, out = List(OutEdge.nebula),
-        startedAt = Some(now - 60_000L), createdAt = now - 60_000L))
-      _ <- seed(rt.store, NodeDef(id = nid("m"), name = "M", agent = "general", merge = true,
-        status = NodeLifecycle.Pending, in = List(nid("c")), out = List(OutEdge.nebula),
-        createdAt = now - 50_000L))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("c"),
+          name = "C",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          out = List(OutEdge.nebula),
+          startedAt = Some(now - 60_000L),
+          createdAt = now - 60_000L
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("m"),
+          name = "M",
+          agent = "general",
+          merge = true,
+          status = NodeLifecycle.Pending,
+          in = List(nid("c")),
+          out = List(OutEdge.nebula),
+          createdAt = now - 50_000L
+        )
+      )
       r1 <- rt.engine.reapStaleRunning(nid("c"))
       c <- node(rt, nid("c"))
       m <- node(rt, nid("m"))
@@ -326,13 +481,23 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       assert(r1.isRight, s"the seeded dead running node must be reaped: $r1")
       assertEquals(c.status, NodeLifecycle.Cancelled, "reap finalizes the node as cancelled")
       // U5/E 核心断言：旧口径 targets.isEmpty ⇒ 静默零操作；现在必须 prune
-      assertEquals(m.in, Nil, s"U5/E red: the downstream in-mirror must be pruned even when out has no node target, got ${m.in}")
-      assertEquals(m.pendingSuccession, List(nid("c")),
-        s"U5/E red: the downstream must be marked 待承接, got ${m.pendingSuccession}")
-      assert(f1.exists(j => j.hcursor.get[String]("nodeId").toOption.contains(nid("m"))),
-        "the pruned downstream must get a nodeUpdated frame (visibility contract)")
+      assertEquals(
+        m.in,
+        Nil,
+        s"U5/E red: the downstream in-mirror must be pruned even when out has no node target, got ${m.in}"
+      )
+      assertEquals(
+        m.pendingSuccession,
+        List(nid("c")),
+        s"U5/E red: the downstream must be marked 待承接, got ${m.pendingSuccession}"
+      )
+      assert(
+        f1.exists(j => j.hcursor.get[String]("nodeId").toOption.contains(nid("m"))),
+        "the pruned downstream must get a nodeUpdated frame (visibility contract)"
+      )
       assertEquals(m2.in, Nil, "stable state after the prune (no dangling reference left behind)")
       assertEquals(m2.pendingSuccession, List(nid("c")), "the marker is written exactly once (distinct)")
+    end for
   }
 
   // ── U2/P1：merge 硬闸 ───────────────────────────────────────────
@@ -348,19 +513,45 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       _ <- (1 to 6).toList.traverse_(i => seed(rt.store, upstream(nid(s"u$i"), NodeLifecycle.Running)))
       ids = (1 to 6).toList.map(i => nid(s"u$i"))
       // create：5 → 拒（边界 =4 合法 / =5 拒）
-      c5 <- nodeEdit(nodeInput("mgap-cap", "m5", "task" -> Json.fromString("merge"),
-        "description" -> Json.fromString("cap probe 5 upstreams"),
-        "out" -> Json.fromString("Nebula"), "merge" -> Json.fromBoolean(true),
-        "in" -> Json.fromString(ids.take(5).mkString(","))), ctx)
+      c5 <- nodeEdit(
+        nodeInput(
+          "mgap-cap",
+          "m5",
+          "task" -> Json.fromString("merge"),
+          "description" -> Json.fromString("cap probe 5 upstreams"),
+          "out" -> Json.fromString("Nebula"),
+          "merge" -> Json.fromBoolean(true),
+          "in" -> Json.fromString(ids.take(5).mkString(","))
+        ),
+        ctx
+      )
       // create：4 → 合法
-      c4 <- nodeEdit(nodeInput("mgap-cap", "m4", "task" -> Json.fromString("merge"),
-        "description" -> Json.fromString("cap probe 4 upstreams"),
-        "out" -> Json.fromString("Nebula"), "merge" -> Json.fromBoolean(true),
-        "in" -> Json.fromString(ids.take(4).mkString(","))), ctx)
+      c4 <- nodeEdit(
+        nodeInput(
+          "mgap-cap",
+          "m4",
+          "task" -> Json.fromString("merge"),
+          "description" -> Json.fromString("cap probe 4 upstreams"),
+          "out" -> Json.fromString("Nebula"),
+          "merge" -> Json.fromBoolean(true),
+          "in" -> Json.fromString(ids.take(4).mkString(","))
+        ),
+        ctx
+      )
       // edit：3 → 4 合法（未触发 wiring 期追加是正常回流）
-      _ <- seed(rt.store, NodeDef(id = nid("e3"), name = "e3", agent = "general", merge = true,
-        status = NodeLifecycle.Wiring, in = List(ids(0), ids(1), ids(2)),
-        out = List(OutEdge.nebula), createdAt = now - 1_000L))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = nid("e3"),
+          name = "e3",
+          agent = "general",
+          merge = true,
+          status = NodeLifecycle.Wiring,
+          in = List(ids(0), ids(1), ids(2)),
+          out = List(OutEdge.nebula),
+          createdAt = now - 1_000L
+        )
+      )
       e3ok <- nodeEdit(nodeInput("mgap-cap", "e3", "in" -> Json.fromString(ids(3))), ctx)
       e3 <- node(rt, nid("e3"))
       // edit：4 → 5 拒
@@ -368,25 +559,43 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       e3after <- node(rt, nid("e3"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(c5.isLeft && c5.left.exists(_.contains("NODE_MERGE_IN_CAP")),
-        s"C-⑥: a 5-upstream merge create must be refused with NODE_MERGE_IN_CAP, got $c5")
+      assert(
+        c5.isLeft && c5.left.exists(_.contains("NODE_MERGE_IN_CAP")),
+        s"C-⑥: a 5-upstream merge create must be refused with NODE_MERGE_IN_CAP, got $c5"
+      )
       assert(c5.left.exists(_.contains("at most 4")), s"C-⑥: the message must state the cap, got $c5")
       assert(c4.isRight, s"C-⑥: a 4-upstream merge create is the legal boundary and must pass, got $c4")
       assert(e3ok.isRight, s"C-⑥: appending the 4th upstream (un-triggered wiring merge) must pass, got $e3ok")
       assertEquals(e3.in.sorted, List(ids(0), ids(1), ids(2), ids(3)).sorted, "the 4th upstream must be persisted")
-      assert(e4bad.isLeft && e4bad.left.exists(_.contains("NODE_MERGE_IN_CAP")),
-        s"C-⑥: appending a 5th upstream must be refused with NODE_MERGE_IN_CAP, got $e4bad")
-      assertEquals(e3after.in.sorted, List(ids(0), ids(1), ids(2), ids(3)).sorted,
-        "a refused edit must leave the ledger untouched (zero side effects)")
+      assert(
+        e4bad.isLeft && e4bad.left.exists(_.contains("NODE_MERGE_IN_CAP")),
+        s"C-⑥: appending a 5th upstream must be refused with NODE_MERGE_IN_CAP, got $e4bad"
+      )
+      assertEquals(
+        e3after.in.sorted,
+        List(ids(0), ids(1), ids(2), ids(3)).sorted,
+        "a refused edit must leave the ledger untouched (zero side effects)"
+      )
+    end for
   }
 
-  test("C-⑧: NODE_MERGE_FIRED_NO_IN — running/blocked/completed merge refuses new in; wiring/pending accepts; re-sending existing in is not 'adding'") {
+  test(
+    "C-⑧: NODE_MERGE_FIRED_NO_IN — running/blocked/completed merge refuses new in; wiring/pending accepts; re-sending existing in is not 'adding'"
+  ) {
     val ws = tempRoot / "ws-fired"; os.makeDir.all(ws)
     val system = ActorSystem(s"mgap-fired-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     def mkNode(id: String, status: String, in: List[String], merge: Boolean = true): NodeDef =
-      NodeDef(id = id, name = id, agent = "general", merge = merge, status = status,
-        in = in, out = List(OutEdge.nebula), createdAt = now - 1_000L)
+      NodeDef(
+        id = id,
+        name = id,
+        agent = "general",
+        merge = merge,
+        status = status,
+        in = in,
+        out = List(OutEdge.nebula),
+        createdAt = now - 1_000L
+      )
     for
       res <- mkResources(system, tempRoot)
       rt <- mountProject("mgap-fired", ws, system, res)
@@ -414,8 +623,10 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       for (r, st) <- List((r1, "running"), (r2, "blocked"), (r3, "completed")) do
-        assert(r.isLeft && r.left.exists(_.contains("NODE_MERGE_FIRED_NO_IN")),
-          s"C-⑧: a $st merge must refuse new in with NODE_MERGE_FIRED_NO_IN, got $r")
+        assert(
+          r.isLeft && r.left.exists(_.contains("NODE_MERGE_FIRED_NO_IN")),
+          s"C-⑧: a $st merge must refuse new in with NODE_MERGE_FIRED_NO_IN, got $r"
+        )
       assert(r4.isRight, s"C-⑧: wiring (un-triggered) merge must still accept appended in, got $r4")
       assert(r5.isRight, s"C-⑧: pending (un-triggered) merge must still accept appended in, got $r5")
       assert(r6.isRight, s"C-⑧: the gate is merge-only — a plain running node still accepts in, got $r6")
@@ -423,5 +634,6 @@ class MergeDesignGapSpec extends CatsEffectSuite:
       assertEquals(wir.in.sorted, List(ids(0), ids(1)).sorted, "wiring merge gets the appended upstream")
       assertEquals(pen.in.sorted, List(ids(0), ids(1)).sorted, "pending merge gets the appended upstream")
       assertEquals(plain.in.sorted, List(ids(0), ids(1)).sorted, "plain node keeps append-only in semantics")
+    end for
   }
-
+end MergeDesignGapSpec

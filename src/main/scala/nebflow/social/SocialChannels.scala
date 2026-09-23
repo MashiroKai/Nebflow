@@ -49,6 +49,7 @@ object SocialChannels:
     secretName: Option[String] = None
   ):
     def isSecret: Boolean = kind == "secret"
+
     /** Config key holding the value: secrets store a path, never the value. */
     def storedKey: String = if isSecret then s"${key}_ref" else key
 
@@ -57,29 +58,45 @@ object SocialChannels:
     def field(key: String): Option[FieldSpec] = fields.find(_.key == key)
     def secretFields: List[FieldSpec] = fields.filter(_.isSecret)
 
-  /** Field schema — a mirror of `web/js/socialChannels.js` (the UI copy is UX
-    *  feedback only; THIS one is the enforcement point). Feishu and Lark share
-    *  one card with a region choice (author ruling 2026-09-19). */
+  /**
+   * Field schema — a mirror of `web/js/socialChannels.js` (the UI copy is UX
+   *  feedback only; THIS one is the enforcement point). Feishu and Lark share
+   *  one card with a region choice (author ruling 2026-09-19).
+   */
   val channels: List[ChannelSpec] = List(
-    ChannelSpec("wechat", List(
-      FieldSpec("app_id", "text", required = true, pattern = Some("^wx[0-9a-f]{16}$")),
-      FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-wechat-app-secret")),
-      FieldSpec("token", "secret", required = true, pattern = None, Some("social-wechat-token")),
-      FieldSpec("aes_key", "secret", required = true, pattern = None, Some("social-wechat-aes-key"))
-    )),
-    ChannelSpec("feishu", List(
-      FieldSpec("app_id", "text", required = true, pattern = Some("^cli_[0-9a-zA-Z]{16,}$")),
-      FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-feishu-app-secret")),
-      FieldSpec("verification_token", "secret", required = true, pattern = None,
-        Some("social-feishu-verification-token")),
-      FieldSpec("encrypt_key", "secret", required = false, pattern = None, Some("social-feishu-encrypt-key")),
-      FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$"))
-    )),
-    ChannelSpec("telegram", List(
-      FieldSpec("bot_token", "secret", required = true, pattern = None, Some("social-telegram-bot-token")),
-      FieldSpec("chat_id", "text", required = true, pattern = Some("^-?\\d+$")),
-      FieldSpec("api_base", "url", required = false, pattern = Some("^https?://"))
-    ))
+    ChannelSpec(
+      "wechat",
+      List(
+        FieldSpec("app_id", "text", required = true, pattern = Some("^wx[0-9a-f]{16}$")),
+        FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-wechat-app-secret")),
+        FieldSpec("token", "secret", required = true, pattern = None, Some("social-wechat-token")),
+        FieldSpec("aes_key", "secret", required = true, pattern = None, Some("social-wechat-aes-key"))
+      )
+    ),
+    ChannelSpec(
+      "feishu",
+      List(
+        FieldSpec("app_id", "text", required = true, pattern = Some("^cli_[0-9a-zA-Z]{16,}$")),
+        FieldSpec("app_secret", "secret", required = true, pattern = None, Some("social-feishu-app-secret")),
+        FieldSpec(
+          "verification_token",
+          "secret",
+          required = true,
+          pattern = None,
+          Some("social-feishu-verification-token")
+        ),
+        FieldSpec("encrypt_key", "secret", required = false, pattern = None, Some("social-feishu-encrypt-key")),
+        FieldSpec("region", "select", required = true, pattern = Some("^(feishu|lark)$"))
+      )
+    ),
+    ChannelSpec(
+      "telegram",
+      List(
+        FieldSpec("bot_token", "secret", required = true, pattern = None, Some("social-telegram-bot-token")),
+        FieldSpec("chat_id", "text", required = true, pattern = Some("^-?\\d+$")),
+        FieldSpec("api_base", "url", required = false, pattern = Some("^https?://"))
+      )
+    )
   )
 
   def channelIds: List[String] = channels.map(_.id)
@@ -104,14 +121,16 @@ object SocialChannels:
     else
       io.circe.parser.parse(os.read(p)) match
         case Right(j) => j
-        case Left(_)  => Json.obj() // unreadable config: the READ side answers `{}`; writes refuse below
+        case Left(_) => Json.obj() // unreadable config: the READ side answers `{}`; writes refuse below
 
   /** The `socialChannels` subtree; absent key ⇒ `{}` (old installs, arch §7.2). */
   def readChannels(root: os.Path): Json =
     parseConfig(root).hcursor.downField("socialChannels").focus.getOrElse(Json.obj())
 
-  /** GET /api/social/channels payload. Secret fields only ever surface their
-    *  PATH (the stored `_ref` value) — never a credential. */
+  /**
+   * GET /api/social/channels payload. Secret fields only ever surface their
+   *  PATH (the stored `_ref` value) — never a credential.
+   */
   def channelsJson(root: os.Path): Json =
     val stored = readChannels(root).hcursor.downField("channels").focus.getOrElse(Json.obj())
     val out = channelIds.map { id =>
@@ -122,13 +141,16 @@ object SocialChannels:
     }
     Json.obj("channels" -> Json.fromFields(out), "adapterRegistered" -> false.asJson)
 
-  /** The mechanical triple for one stored path: `{exists, modeOk, readable}`.
-    *  Content is never read. */
+  /**
+   * The mechanical triple for one stored path: `{exists, modeOk, readable}`.
+   *  Content is never read.
+   */
   private def probePath(path: os.Path, osName: String): Json =
     val nio: Path = path.toNIO
-    val exists = try Files.exists(nio) catch case _: Exception => false
-    if !exists then
-      Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson, "readable" -> false.asJson)
+    val exists =
+      try Files.exists(nio)
+      catch case _: Exception => false
+    if !exists then Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson, "readable" -> false.asJson)
     else
       val modeOk =
         if CredentialFileAcl.isWindows(osName) then
@@ -138,18 +160,27 @@ object SocialChannels:
           // "clean by default". (True-machine reading is unproven on this host:
           // macOS only; the branch is exercised by an injected-osName test.)
           try
-            CredentialFileAcl.systemWindowsAcl.readAcl(nio)
+            CredentialFileAcl.systemWindowsAcl
+              .readAcl(nio)
               .exists(m => m.missing(CredentialFileAcl.expectedBits).isEmpty)
           catch case _: Exception => false
         else
           try PosixFilePermissions.toString(Files.getPosixFilePermissions(nio)) == CredentialFileAcl.PosixMode
           catch case _: Exception => false
-      val readable = try Files.isReadable(nio) catch case _: Exception => false
+      val readable =
+        try Files.isReadable(nio)
+        catch case _: Exception => false
       Json.obj("exists" -> true.asJson, "modeOk" -> modeOk.asJson, "readable" -> readable.asJson)
 
-  /** Rendered form of the data-root-token, i.e. what a default install sees.
-    *  Kept in step with the rest of the product: a default install renders
-    *  `~/.nebflow`, an isolated instance renders its own absolute root. */
+    end if
+
+  end probePath
+
+  /**
+   * Rendered form of the data-root-token, i.e. what a default install sees.
+   *  Kept in step with the rest of the product: a default install renders
+   *  `~/.nebflow`, an isolated instance renders its own absolute root.
+   */
   private def renderRoot(root: os.Path): String =
     if root == os.home / nebflow.core.Branding.homeDirName then s"~/${nebflow.core.Branding.homeDirName}"
     else root.toString
@@ -157,8 +188,7 @@ object SocialChannels:
   /** Inverse of [[renderRoot]]: a stored reference back to a real path. */
   private def resolveRef(root: os.Path, ref: String): os.Path =
     val rendered = renderRoot(root)
-    if ref.startsWith(rendered + "/") then
-      os.Path(root.toString + ref.drop(rendered.length), os.pwd)
+    if ref.startsWith(rendered + "/") then os.Path(root.toString + ref.drop(rendered.length), os.pwd)
     else if ref.startsWith("/") then os.Path(ref, os.pwd)
     else os.Path(root.toString + "/" + ref, os.pwd)
 
@@ -172,89 +202,103 @@ object SocialChannels:
     val triples = spec.secretFields.map { f =>
       fields.hcursor.downField(f.storedKey).as[String].toOption.filter(_.nonEmpty) match
         case Some(ref) => f.key -> probePath(resolveRef(root, ref), osName)
-        case None      => f.key -> Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson,
-          "readable" -> false.asJson)
+        case None => f.key -> Json.obj("exists" -> false.asJson, "modeOk" -> false.asJson, "readable" -> false.asJson)
     }
     Json.fromFields(triples)
 
-  /** GET /api/social/probe?channel=<id>. `adapterRegistered` is a hard `false`
-    *  for the whole of phase 1 — the render authority is the frontend
-    *  definition layer, and both sides agree there is no adapter yet. */
+  /**
+   * GET /api/social/probe?channel=<id>. `adapterRegistered` is a hard `false`
+   *  for the whole of phase 1 — the render authority is the frontend
+   *  definition layer, and both sides agree there is no adapter yet.
+   */
   def probeJson(root: os.Path, id: String): Either[Failure, Json] =
     channel(id) match
-      case None       => Left(Failure.UnknownChannel(id))
+      case None => Left(Failure.UnknownChannel(id))
       case Some(spec) => Right(Json.obj("adapterRegistered" -> false.asJson, "secrets" -> probeOf(root, spec)))
 
   // ─────────────────────────── write side ───────────────────────────
 
-  /** Where a secret for `f` of `spec` lives. Kept under the data root's
-    *  `secrets/` subtree and named after the field (arch §7.2). */
+  /**
+   * Where a secret for `f` of `spec` lives. Kept under the data root's
+   *  `secrets/` subtree and named after the field (arch §7.2).
+   */
   private def secretPath(root: os.Path, spec: ChannelSpec, f: FieldSpec): os.Path =
     val name = f.secretName.getOrElse(s"social-${spec.id}-${f.key}")
     root / "secrets" / name
 
-  /** Production narrowing step: the shared module's semantics (POSIX
-    *  `rw-------`; Windows runs its DACL ladder). Injectable so the regression
-    *  test can make the narrowing fail and pin the "no half state" property —
-    *  production never passes anything but the shared module, and there is no
-    *  private second copy of the ACL logic in this file. */
+  /**
+   * Production narrowing step: the shared module's semantics (POSIX
+   *  `rw-------`; Windows runs its DACL ladder). Injectable so the regression
+   *  test can make the narrowing fail and pin the "no half state" property —
+   *  production never passes anything but the shared module, and there is no
+   *  private second copy of the ACL logic in this file.
+   */
   private def defaultRestrict(path: Path): Unit = CredentialFileAcl.restrict(path)
 
-  /** Create an EMPTY file with owner-only access `rw-------` (F1: the mode comes
-    *  from the creation attribute, never from a later narrowing step — the
-    *  "write, then narrow" window reported by `socpanel-verify` cannot exist).
-    *
-    *  A filesystem without POSIX permission attributes (Windows) refuses the
-    *  attribute — the file is then created with the ACL it inherits and
-    *  [[CredentialFileAcl.restrict]]'s DACL ladder is the narrowing step there,
-    *  exactly as before this fix. Declared, not silently assumed: the fallback
-    *  also clears a possibly half-created file so the retry cannot trip over
-    *  `FileAlreadyExistsException`. */
+  /**
+   * Create an EMPTY file with owner-only access `rw-------` (F1: the mode comes
+   *  from the creation attribute, never from a later narrowing step — the
+   *  "write, then narrow" window reported by `socpanel-verify` cannot exist).
+   *
+   *  A filesystem without POSIX permission attributes (Windows) refuses the
+   *  attribute — the file is then created with the ACL it inherits and
+   *  [[CredentialFileAcl.restrict]]'s DACL ladder is the narrowing step there,
+   *  exactly as before this fix. Declared, not silently assumed: the fallback
+   *  also clears a possibly half-created file so the retry cannot trip over
+   *  `FileAlreadyExistsException`.
+   */
   private def createOwnerOnly(path: Path): Unit =
     try
-      Files.createFile(path,
-        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(CredentialFileAcl.PosixMode)))
+      Files.createFile(
+        path,
+        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(CredentialFileAcl.PosixMode))
+      )
     catch
       case _: UnsupportedOperationException =>
         try Files.deleteIfExists(path)
         catch case _: Exception => ()
         Files.createFile(path)
 
-  /** Write one credential. Order — this order IS the F1 fix (finding F1 of
-    *  `socpanel-verify`; before it the plaintext was written into the final path
-    *  under the default umask and narrowed only afterwards, so a throwing
-    *  `restrict` left a wide-mode plaintext file behind):
-    *
-    *   ① a target that does not exist yet is created with mode `rw-------` from
-    *      its very first byte ([[createOwnerOnly]]);
-    *   ② a target that already exists is NARROWED BEFORE any new plaintext can
-    *      land in it (it may be wide-mode — e.g. left behind by the pre-F1
-    *      code path);
-    *   ③ the new plaintext is written;
-    *   ④ the EXISTING `CredentialFileAcl` semantics run as the authoritative
-    *      narrowing step (POSIX re-assert; Windows DACL ladder).
-    *
-    *  There is therefore no instant at which the plaintext sits in a
-    *  not-yet-narrowed file. The write stays IN PLACE rather than going through
-    *  a tmp file + rename: the inode is preserved, which is what the `nf-file`
-    *  credential-inode snapshot (`NfPathPolicy.credentialInodes`) keys on — a
-    *  rename would hand the credential a fresh inode on every write.
-    *
-    *  Any failure is on the error channel (`403 secret_mode`, the existing
-    *  mapping) and names the path. Zero residue: a file we created or wrote into
-    *  is removed again; a pre-existing target we never wrote into (step ② failed)
-    *  is left exactly as found — we cannot have added plaintext to it. A
-    *  credential is never reported as stored when it is not. */
-  private def writeSecret(root: os.Path, spec: ChannelSpec, f: FieldSpec, plain: String,
-      restrict: Path => Unit): Either[Failure, Unit] =
+  /**
+   * Write one credential. Order — this order IS the F1 fix (finding F1 of
+   *  `socpanel-verify`; before it the plaintext was written into the final path
+   *  under the default umask and narrowed only afterwards, so a throwing
+   *  `restrict` left a wide-mode plaintext file behind):
+   *
+   *   ① a target that does not exist yet is created with mode `rw-------` from
+   *      its very first byte ([[createOwnerOnly]]);
+   *   ② a target that already exists is NARROWED BEFORE any new plaintext can
+   *      land in it (it may be wide-mode — e.g. left behind by the pre-F1
+   *      code path);
+   *   ③ the new plaintext is written;
+   *   ④ the EXISTING `CredentialFileAcl` semantics run as the authoritative
+   *      narrowing step (POSIX re-assert; Windows DACL ladder).
+   *
+   *  There is therefore no instant at which the plaintext sits in a
+   *  not-yet-narrowed file. The write stays IN PLACE rather than going through
+   *  a tmp file + rename: the inode is preserved, which is what the `nf-file`
+   *  credential-inode snapshot (`NfPathPolicy.credentialInodes`) keys on — a
+   *  rename would hand the credential a fresh inode on every write.
+   *
+   *  Any failure is on the error channel (`403 secret_mode`, the existing
+   *  mapping) and names the path. Zero residue: a file we created or wrote into
+   *  is removed again; a pre-existing target we never wrote into (step ② failed)
+   *  is left exactly as found — we cannot have added plaintext to it. A
+   *  credential is never reported as stored when it is not.
+   */
+  private def writeSecret(
+    root: os.Path,
+    spec: ChannelSpec,
+    f: FieldSpec,
+    plain: String,
+    restrict: Path => Unit
+  ): Either[Failure, Unit] =
     val target = secretPath(root, spec, f).toNIO
     var ours = false // the file currently at `target` was created or written by THIS call
     try
       Files.createDirectories(target.getParent)
-      if Files.exists(target) then
-        restrict(target) // ② narrow the pre-existing file BEFORE the plaintext
-      else
-        createOwnerOnly(target) // ① created owner-only from its very first byte
+      if Files.exists(target) then restrict(target) // ② narrow the pre-existing file BEFORE the plaintext
+      else createOwnerOnly(target) // ① created owner-only from its very first byte
       ours = true
       Files.write( // ③ the plaintext, into an already owner-only file
         target,
@@ -271,23 +315,32 @@ object SocialChannels:
             try if Files.deleteIfExists(target) then "deleted" else "absent"
             catch case _: Exception => "undeletable"
           else "pre-existing-untouched"
-        Left(Failure.SecretMode(f.key,
-          s"could not store credential for ${spec.id}.${f.key}: " +
-            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")} " +
-            s"(path=$target residual=$residual)"))
+        Left(
+          Failure.SecretMode(
+            f.key,
+            s"could not store credential for ${spec.id}.${f.key}: " +
+              s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")} " +
+              s"(path=$target residual=$residual)"
+          )
+        )
 
-  /** POST /api/social/channels/<id>.
-    *
-    * Body: `{"enabled": bool, "fields": {...}}`. Secret fields arrive as
-    * PLAINTEXT under their own key and appear in this request body only; what
-    * is persisted is the path. Fields absent from the body keep their stored
-    * value (surgical merge — a toggle flip cannot wipe a schema).
-    *
-    * `restrict` is the credential-narrowing step; production leaves it at
-    * [[defaultRestrict]] (the shared `CredentialFileAcl` module) and only the
-    * F1 regression test injects a failing one. */
-  def save(root: os.Path, id: String, body: Json,
-      restrict: Path => Unit = defaultRestrict): Either[Failure, Json] =
+    end try
+
+  end writeSecret
+
+  /**
+   * POST /api/social/channels/<id>.
+   *
+   * Body: `{"enabled": bool, "fields": {...}}`. Secret fields arrive as
+   * PLAINTEXT under their own key and appear in this request body only; what
+   * is persisted is the path. Fields absent from the body keep their stored
+   * value (surgical merge — a toggle flip cannot wipe a schema).
+   *
+   * `restrict` is the credential-narrowing step; production leaves it at
+   * [[defaultRestrict]] (the shared `CredentialFileAcl` module) and only the
+   * F1 regression test injects a failing one.
+   */
+  def save(root: os.Path, id: String, body: Json, restrict: Path => Unit = defaultRestrict): Either[Failure, Json] =
     channel(id) match
       case None => Left(Failure.UnknownChannel(id))
       case Some(spec) =>
@@ -313,8 +366,12 @@ object SocialChannels:
                 val existing = storedFields(root, id)
                 val secretRefs = spec.secretFields.flatMap { f =>
                   if secretWrites.exists(_._1.key == f.key) then
-                    Some(f.storedKey -> Json.fromString(s"${renderRoot(root)}/secrets/" +
-                      f.secretName.getOrElse(s"social-${spec.id}-${f.key}")))
+                    Some(
+                      f.storedKey -> Json.fromString(
+                        s"${renderRoot(root)}/secrets/" +
+                          f.secretName.getOrElse(s"social-${spec.id}-${f.key}")
+                      )
+                    )
                   else None
                 }
                 val plainJson = plainPairs.map { case (f, v) => f.key -> Json.fromString(v) }
@@ -332,8 +389,14 @@ object SocialChannels:
                   case Right(_) =>
                     Right(Json.obj("ok" -> true.asJson, "probe" -> probeOf(root, spec)))
 
-  /** Surgical `socialChannels.channels.<id>` rewrite: every other key of
-    *  nebflow.json survives (same shape as PluginBlockPolicy's writer). */
+            end match
+
+        end match
+
+  /**
+   * Surgical `socialChannels.channels.<id>` rewrite: every other key of
+   *  nebflow.json survives (same shape as PluginBlockPolicy's writer).
+   */
   private def persist(root: os.Path, id: String, entry: Json): Either[Failure, Unit] =
     val p = configPath(root)
     try
@@ -356,6 +419,9 @@ object SocialChannels:
           )
           AtomicJson.writeSync(p, out.noSpaces)
           Right(())
+      end match
     catch case e: Exception => Left(Failure.Io(s"could not persist social channel config: ${e.getMessage}"))
+    end try
+  end persist
 
 end SocialChannels

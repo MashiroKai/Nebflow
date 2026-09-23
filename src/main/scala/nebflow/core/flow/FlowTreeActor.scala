@@ -74,8 +74,10 @@ object TeamSessionRegistry:
   ): IO[Unit] =
     actorMap.update(_ + (sid -> ref)) *>
       parentForRecord(sid).flatMap { parentOpt =>
-        resources.agentRegistry.update(_ + (sid ->
-          AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId))))
+        resources.agentRegistry.update(
+          _ + (sid ->
+            AgentRecord(sid, ref, AgentKind.Team, rootSessionId, parentSessionId = parentOpt.getOrElse(rootSessionId)))
+        )
       }
 
   def unregisterActor(sid: String): IO[Unit] =
@@ -94,21 +96,25 @@ object TeamSessionRegistry:
   def isManager(sid: String): IO[Boolean] =
     managerMap.get.map(_.values.toSet.contains(sid))
 
-  /** Block 0 registration chain (supervision trio §B2): the Manager sessionId
-    * for a team instance, if registered. */
+  /**
+   * Block 0 registration chain (supervision trio §B2): the Manager sessionId
+   * for a team instance, if registered.
+   */
   def managerOf(instance: String): IO[Option[String]] =
     managerMap.get.map(_.get(instance))
 
-  /** Block 0 registration chain: resolve the parent session for a team agent
-    * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
-    * the mounting root session (parentSessionMap). Unknown session → None
-    * (callers fall back to the activating/mounting session id). */
+  /**
+   * Block 0 registration chain: resolve the parent session for a team agent
+   * record — a MEMBER's parent is its team Manager; the MANAGER's parent is
+   * the mounting root session (parentSessionMap). Unknown session → None
+   * (callers fall back to the activating/mounting session id).
+   */
   def parentForRecord(sid: String): IO[Option[String]] =
     teamOfSession(sid).flatMap {
       case Some(inst) =>
         managerOf(inst).flatMap {
           case Some(mgr) if mgr != sid => IO.pure(Some(mgr))
-          case _                        => parentSessionOf(inst)
+          case _ => parentSessionOf(inst)
         }
       case None => IO.pure(None)
     }
@@ -698,8 +704,7 @@ object FlowTreeActor:
             for
               // permshield S1（2026-09-13）：档位 = 应用级全局持久值，走**唯一入口**
               // （`cfg.safetyMode` 仍是建树快照/展示用，非权威；不再作为兜底来源）。
-              safetyMode <- cfg.resources
-                .effectiveSafetyMode
+              safetyMode <- cfg.resources.effectiveSafetyMode
                 .map(nebflow.core.SafetyMode.toString)
               ref <- cfg.resources.actorSystem.spawn(
                 AgentActor(

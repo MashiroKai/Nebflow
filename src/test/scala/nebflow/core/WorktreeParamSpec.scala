@@ -105,8 +105,10 @@ class WorktreeParamSpec extends FunSuite:
     checkActionable(r.swap.toOption.get)
   }
 
-  /** 轴 2 文案四要素：错误码 + 示例裸名 + 禁形态提示 + 补救 git 命令；
-    * 且 os-lib 原始文案（"not a valid path segment"）不得外泄。 */
+  /**
+   * 轴 2 文案四要素：错误码 + 示例裸名 + 禁形态提示 + 补救 git 命令；
+   * 且 os-lib 原始文案（"not a valid path segment"）不得外泄。
+   */
   private def checkActionable(msg: String): Unit =
     assert(msg.contains("WORKTREE_FORMAT"), s"error code missing: $msg")
     assert(msg.contains(Example), s"example bare name missing: $msg")
@@ -159,9 +161,7 @@ class WorktreeParamSpec extends FunSuite:
     // → 权威分支赢，返回 canonical 路径（同物理目录，沙箱 canonicalize 后等价）。
     val w = ws("alias")
     os.makeDir.all(w / ".nebflow" / "worktrees" / "wt-e")
-    java.nio.file.Files.createSymbolicLink(
-      (w / ".nebflow" / "wt-e").toNIO,
-      (os.rel / "worktrees" / "wt-e").toNIO)
+    java.nio.file.Files.createSymbolicLink((w / ".nebflow" / "wt-e").toNIO, (os.rel / "worktrees" / "wt-e").toNIO)
     assertEquals(PathUtil.resolveWorktreeDir(w, "wt-e"), Some(w / ".nebflow" / "worktrees" / "wt-e"))
   }
 
@@ -169,9 +169,7 @@ class WorktreeParamSpec extends FunSuite:
     // os.exists 沿软链（follow-links）语义与现状一致：软链指向的实存目录即命中。
     val w = ws("symlink")
     os.makeDir.all(w / ".nebflow" / "real-wt-f")
-    java.nio.file.Files.createSymbolicLink(
-      (w / ".nebflow" / "wt-f").toNIO,
-      (os.rel / "real-wt-f").toNIO)
+    java.nio.file.Files.createSymbolicLink((w / ".nebflow" / "wt-f").toNIO, (os.rel / "real-wt-f").toNIO)
     assertEquals(PathUtil.resolveWorktreeDir(w, "wt-f"), Some(w / ".nebflow" / "wt-f"))
   }
 
@@ -189,7 +187,8 @@ class WorktreeParamSpec extends FunSuite:
     os.makeDir.all(w / ".nebflow" / "worktrees" / "wt-a")
     assertEquals(
       PathUtil.resolveNodeProjectRoot(w.toString, Some("wt-a")),
-      (os.Path(w.toString) / ".nebflow" / "worktrees" / "wt-a").toString)
+      (os.Path(w.toString) / ".nebflow" / "worktrees" / "wt-a").toString
+    )
   }
 
   test("projectRoot: prefix-form stored value ('worktrees/<n>') resolves to authoritative dir") {
@@ -197,7 +196,8 @@ class WorktreeParamSpec extends FunSuite:
     os.makeDir.all(w / ".nebflow" / "worktrees" / "wt-a")
     assertEquals(
       PathUtil.resolveNodeProjectRoot(w.toString, Some("worktrees/wt-a")),
-      (os.Path(w.toString) / ".nebflow" / "worktrees" / "wt-a").toString)
+      (os.Path(w.toString) / ".nebflow" / "worktrees" / "wt-a").toString
+    )
   }
 
   test("projectRoot: no worktree → workspace unchanged") {
@@ -209,7 +209,8 @@ class WorktreeParamSpec extends FunSuite:
     val w = ws("root-gone")
     assertEquals(
       PathUtil.resolveNodeProjectRoot(w.toString, Some("wt-gone")),
-      (os.Path(w.toString) / ".nebflow" / "wt-gone").toString)
+      (os.Path(w.toString) / ".nebflow" / "wt-gone").toString
+    )
   }
 
   test("projectRoot: corrupt stored value ('a/b') → workspace fallback, no crash") {

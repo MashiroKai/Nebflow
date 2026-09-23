@@ -91,31 +91,37 @@ When to use:
 
   // ── kind policy（§4 矩阵）──────────────────────────────────
 
-  /** 无条件 cancelable kinds。Team 是条件放行（kindRejection Team 分支：直接父/root），
-    * 不进此白名单——WS cancelAgent handler 复用此白名单 → 管理面板对 Team 保持只读，
-    * 权限门只在工具路径。 */
+  /**
+   * 无条件 cancelable kinds。Team 是条件放行（kindRejection Team 分支：直接父/root），
+   * 不进此白名单——WS cancelAgent handler 复用此白名单 → 管理面板对 Team 保持只读，
+   * 权限门只在工具路径。
+   */
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
-  /** 新 Project 系统的 Flow 会话（Project 节点 node-* / 任务分发器 dispatcher-*）。
-    * 旧 flow 系统的 dag-* 会话不在此列（其取消走 cancelFlow / RunningFlowRegistry）。
-    * 前缀权威定义：NodeEngine.SessionPrefix / ProjectActor.DispatcherSessionPrefix。 */
+  /**
+   * 新 Project 系统的 Flow 会话（Project 节点 node-* / 任务分发器 dispatcher-*）。
+   * 旧 flow 系统的 dag-* 会话不在此列（其取消走 cancelFlow / RunningFlowRegistry）。
+   * 前缀权威定义：NodeEngine.SessionPrefix / ProjectActor.DispatcherSessionPrefix。
+   */
   def isProjectFlowSession(sessionId: String): Boolean =
     sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) ||
       sessionId.startsWith(nebflow.core.project.ProjectActor.DispatcherSessionPrefix)
 
-  /** 面板/工具共用的 cancel 白名单：无条件 kind 白名单 + 新 Project flow 会话
-    * （须有 supervisor 取消通道——观察桥的 Cancelled 分支；dag- 旧 flow 会话
-    * 无此通道，保持只读）。 */
+  /**
+   * 面板/工具共用的 cancel 白名单：无条件 kind 白名单 + 新 Project flow 会话
+   * （须有 supervisor 取消通道——观察桥的 Cancelled 分支；dag- 旧 flow 会话
+   * 无此通道，保持只读）。
+   */
   def cancelable(rec: AgentRecord): Boolean =
     CancelableKinds.contains(rec.kind) ||
       (rec.kind == AgentKind.Flow && isProjectFlowSession(rec.sessionId) && rec.supervisorRef.isDefined)
 
   private def kindRejection(
-      rec: AgentRecord,
-      action: String,
-      callerIsDirectParent: Boolean = false,
-      callerIsRoot: Boolean = false
+    rec: AgentRecord,
+    action: String,
+    callerIsDirectParent: Boolean = false,
+    callerIsRoot: Boolean = false
   ): Option[String] =
     rec.kind match
       case AgentKind.Flow =>
@@ -149,14 +155,18 @@ When to use:
         val allowed = if action == "restart" then RestartableKinds else CancelableKinds
         if allowed.contains(k) then None
         else if action == "restart" then
-          Some(s"Ephemeral agents have no supervisor/checkpoint carrier — restart is not supported. Cancel it and spawn a new one.")
+          Some(
+            s"Ephemeral agents have no supervisor/checkpoint carrier — restart is not supported. Cancel it and spawn a new one."
+          )
         else None
 
   // ── 渲染 helpers ──────────────────────────────────────────
 
-  /** Block 1 (supervision trio §B3): walk the parentSessionId chain from
-    * `from` upward (≤ maxDepth hops, cycle-safe by depth bound); true iff an
-    * anchor session is reached. Pure — unit-testable. */
+  /**
+   * Block 1 (supervision trio §B3): walk the parentSessionId chain from
+   * `from` upward (≤ maxDepth hops, cycle-safe by depth bound); true iff an
+   * anchor session is reached. Pure — unit-testable.
+   */
   private def chainReaches(
     registry: Map[String, AgentRecord],
     from: String,
@@ -169,13 +179,15 @@ When to use:
         val parentOpt = registry.get(sid).map(_.parentSessionId).filter(_.nonEmpty)
         parentOpt match
           case Some(p) => anchors.contains(p) || walk(p, depth + 1)
-          case None    => false
+          case None => false
     walk(from, 0)
 
-  /** Block 1 (§B3): the manager scope anchor set — the caller itself plus
-    * every session of the team instance it leads. None = caller does not
-    * lead any instance (not a Manager, or a member of one) → no scope → no
-    * manageability. */
+  /**
+   * Block 1 (§B3): the manager scope anchor set — the caller itself plus
+   * every session of the team instance it leads. None = caller does not
+   * lead any instance (not a Manager, or a member of one) → no scope → no
+   * manageability.
+   */
   private def managerAnchors(callerSid: String): IO[Option[Set[String]]] =
     TeamSessionRegistry.teamOfSession(callerSid).flatMap {
       case None => IO.pure(None)
@@ -187,15 +199,16 @@ When to use:
         }
     }
 
-  /** Block 1 (§B3): a root-bucket caller's rootSessionId IS its own session id
-    * (Nebula / root agents). All other callers (team Managers) are scoped to
-    * their subtree instead of the bucket. A caller with NO registry record is
-    * treated as root-bucket: only Nebula (Root) and team Managers hold the
-    * tool, both are registered whenever they act — an unregistered caller is
-    * a legacy/test shape and keeps the legacy global semantics. */
+  /**
+   * Block 1 (§B3): a root-bucket caller's rootSessionId IS its own session id
+   * (Nebula / root agents). All other callers (team Managers) are scoped to
+   * their subtree instead of the bucket. A caller with NO registry record is
+   * treated as root-bucket: only Nebula (Root) and team Managers hold the
+   * tool, both are registered whenever they act — an unregistered caller is
+   * a legacy/test shape and keeps the legacy global semantics.
+   */
   private def callerIsRootBucket(registry: Map[String, AgentRecord], callerSid: String): Boolean =
     callerSid.isEmpty || registry.get(callerSid).fold(true)(_.rootSessionId == callerSid)
-
 
   private def fmtDuration(ms: Long): String =
     if ms < 0 then "-"
@@ -231,7 +244,7 @@ When to use:
   private def toolPhaseLabel(rec: AgentRecord, now: Long): String =
     (rec.currentToolName, rec.currentToolStartedAt) match
       case (Some(name), startedAt) if startedAt > 0 => s"$name ${fmtDuration(now - startedAt)}"
-      case _                                        => "-"
+      case _ => "-"
 
   // ── actions ───────────────────────────────────────────────
 
@@ -269,23 +282,27 @@ When to use:
               Left(ToolError(s"Unknown action '$other'. Supported: list, status, cancel, restart."))
             )
 
-  /** 统一守卫（§4）：查无 / kind 白名单 / 自杀守卫 / rootSessionId 同桶。
-    * Block 1（supervision trio §B3）：root 桶调用者（Nebula，rootSessionId ==
-    * 自身 sid）维持同桶=全局；非 root 调用者（team Manager，唯一非 root 被
-    * 授权者）从「同桶」收紧为「子树」——同桶会放行它管**别的 team** 的子代
-    * （所有挂载 team 共享挂载 root 的桶）。
-    * Block 2（§C3）：Team 目标过 kind 门后，强确认门（Manager 目标需
-    * confirm=true + 非空 reason）+ nebflow.audit 审计行（一切 Team
-    * cancel/restart 留痕）。 */
+        end match
+
+  /**
+   * 统一守卫（§4）：查无 / kind 白名单 / 自杀守卫 / rootSessionId 同桶。
+   * Block 1（supervision trio §B3）：root 桶调用者（Nebula，rootSessionId ==
+   * 自身 sid）维持同桶=全局；非 root 调用者（team Manager，唯一非 root 被
+   * 授权者）从「同桶」收紧为「子树」——同桶会放行它管**别的 team** 的子代
+   * （所有挂载 team 共享挂载 root 的桶）。
+   * Block 2（§C3）：Team 目标过 kind 门后，强确认门（Manager 目标需
+   * confirm=true + 非空 reason）+ nebflow.audit 审计行（一切 Team
+   * cancel/restart 留痕）。
+   */
   private def withGuardedRecord(
-      resources: SharedResources,
-      ctx: ToolContext,
-      sessionId: String,
-      action: String,
-      confirm: Boolean,
-      reason: String
+    resources: SharedResources,
+    ctx: ToolContext,
+    sessionId: String,
+    action: String,
+    confirm: Boolean,
+    reason: String
   )(
-      body: (AgentRecord, String) => IO[Either[ToolError, String]]
+    body: (AgentRecord, String) => IO[Either[ToolError, String]]
   ): IO[Either[ToolError, String]] =
     val callerSessionId = ctx.sessionId.getOrElse("")
     def proceed(rec: AgentRecord, callerRoot: String, rootBucket: Boolean): IO[Either[ToolError, String]] =
@@ -321,6 +338,8 @@ When to use:
                 auditTeamAction(ctx, action, rec, confirm, reason) *> body(rec, callerRoot)
             }
           else body(rec, callerRoot)
+      end match
+    end proceed
     for
       registry <- resources.agentRegistry.get
       callerRoot = registry.get(callerSessionId).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(callerSessionId)
@@ -328,7 +347,9 @@ When to use:
       result <- registry.get(sessionId) match
         case None =>
           val manageable = registry.values
-            .filter(r => CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind) || r.kind == AgentKind.Team)
+            .filter(r =>
+              CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind) || r.kind == AgentKind.Team
+            )
             .map(_.sessionId)
             .toList
           val hint = if manageable.isEmpty then "(none currently)" else manageable.mkString(", ")
@@ -371,12 +392,22 @@ When to use:
                 )
             }
     yield result
+    end for
+  end withGuardedRecord
 
-  /** Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
-    * （随 nebflow.log 落盘）。 */
+  /**
+   * Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
+   * （随 nebflow.log 落盘）。
+   */
   private val auditLogger = nebflow.core.NebflowLogger.forName("nebflow.audit")
 
-  private def auditTeamAction(ctx: ToolContext, action: String, rec: AgentRecord, confirm: Boolean, reason: String): IO[Unit] =
+  private def auditTeamAction(
+    ctx: ToolContext,
+    action: String,
+    rec: AgentRecord,
+    confirm: Boolean,
+    reason: String
+  ): IO[Unit] =
     val callerSid = ctx.sessionId.getOrElse("-")
     val callerAgent = ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("-")
     auditLogger.info(
@@ -385,6 +416,8 @@ When to use:
         s"confirm=$confirm reason=\"$reason\"" +
         (if action == "restart" then " note=\"history restored; turn NOT auto-resumed\"" else "")
     )
+
+  end auditTeamAction
 
   /** 审计/通知里的调用者署名：agent 名优先（Nebula/Manager），回退 session 名。 */
   private def callerLabel(ctx: ToolContext): String =
@@ -398,10 +431,11 @@ When to use:
         TeamSessionRegistry.managerOf(inst).map(_ == Some(sid))
     }
 
-
-  /** Block 1（supervision trio §B4）：list 的可见面。root 桶调用者（Nebula）
-    * 看全部；非 root 调用者（team Manager）只看自己的子树（本队成员 + 其
-    * 子代），表头附 parent 列辅助辨认层级。 */
+  /**
+   * Block 1（supervision trio §B4）：list 的可见面。root 桶调用者（Nebula）
+   * 看全部；非 root 调用者（team Manager）只看自己的子树（本队成员 + 其
+   * 子代），表头附 parent 列辅助辨认层级。
+   */
   private def scopeFilterFor(
     resources: SharedResources,
     ctx: ToolContext
@@ -409,21 +443,23 @@ When to use:
     val callerSid = ctx.sessionId.getOrElse("")
     for
       registry <- resources.agentRegistry.get
-      pred <- if callerIsRootBucket(registry, callerSid) then IO.pure(None)
-              else managerAnchors(callerSid)
+      pred <-
+        if callerIsRootBucket(registry, callerSid) then IO.pure(None)
+        else managerAnchors(callerSid)
     yield (registry, pred)
+
   private def doList(resources: SharedResources, ctx: ToolContext): IO[Either[ToolError, String]] =
     for
       (registry, anchorsOpt) <- scopeFilterFor(resources, ctx)
       inScope = (sid: String) =>
         anchorsOpt match
-          case None         => true // root bucket caller — global view
+          case None => true // root bucket caller — global view
           case Some(anchors) => anchors.contains(sid) || chainReaches(registry, sid, anchors, 8)
       // V2 (2026-09-03): orphan scope — a crash-survivor task has no registry
       // row of its own; scope it by its PARENT session instead.
       orphanInScope = (parentSid: String) =>
         anchorsOpt match
-          case None         => true
+          case None => true
           case Some(anchors) => anchors.contains(parentSid) || chainReaches(registry, parentSid, anchors, 8)
       runningTasks <- resources.subAgentTaskStore.findRunningTasks
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
@@ -439,9 +475,9 @@ When to use:
           val stuck =
             stuckAssessment(rec, now) match
               case Some((secs, _)) => s"⚠ ${fmtDuration(secs * 1000)}"
-              case None            => "no"
+              case None => "no"
           // Block 3（§3.4）：LoopGuard 计数镜像——S1 连败 streak / S2 无进展轮数
-          //（streak@warn=3, terminate=8；非零即有循环嫌疑，供 Manager/Nebula 决策）
+          // （streak@warn=3, terminate=8；非零即有循环嫌疑，供 Manager/Nebula 决策）
           val loop =
             if rec.loopStreak > 0 || rec.loopRounds > 0 then s"${rec.loopStreak}/${rec.loopRounds}"
             else "-"
@@ -479,7 +515,21 @@ When to use:
           )
         }
     yield
-      val header = List("sessionId", "kind", "agent", "parent", "status", "stuck?", "phase", "loop", "barrier", "up", "idle", "retries", "task")
+      val header = List(
+        "sessionId",
+        "kind",
+        "agent",
+        "parent",
+        "status",
+        "stuck?",
+        "phase",
+        "loop",
+        "barrier",
+        "up",
+        "idle",
+        "retries",
+        "task"
+      )
       // V2 (2026-09-03): orphan rows — tasks with status=running but NO live
       // registry entry (previous process crashed mid-task; the registry is
       // memory-only). This join-free listing is the only surface where the
@@ -508,13 +558,14 @@ When to use:
       val scopeNote =
         if anchorsOpt.isDefined then
           "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
-          else ""
+        else ""
       val orphanNote =
         if orphanRows.nonEmpty then
           "\norphan(running) = task survived a process crash: no live actor exists, its result was lost. The startup sweep terminalizes these and notifies the parent session on next restart."
-          else ""
+        else ""
       val summary =
-        if rows.isEmpty && orphanRows.isEmpty then "No live background agents in your scope (registry is empty or outside your subtree)."
+        if rows.isEmpty && orphanRows.isEmpty then
+          "No live background agents in your scope (registry is empty or outside your subtree)."
         else
           s"""Background agents (${rows.size + orphanRows.size}):
              |
@@ -551,47 +602,50 @@ When to use:
             )
         }
       else doStatusBody(resources, registry, sessionId, rootBucket)
+      end if
     }
 
   private def doStatusBody(
-      resources: SharedResources,
-      registry: Map[String, AgentRecord],
-      sessionId: String,
-      callerIsRoot: Boolean = false
+    resources: SharedResources,
+    registry: Map[String, AgentRecord],
+    sessionId: String,
+    callerIsRoot: Boolean = false
   ): IO[Either[ToolError, String]] =
-    {
-      val now = System.currentTimeMillis()
-      registry.get(sessionId) match
-        case Some(rec) =>
-          resources.subAgentTaskStore.findByTaskId(sessionId).map { taskOpt =>
-            // 2026-09-10 换轴：stuck 详情带判据原因（哪条轴触发）；
-            // toolPhase = 当前工具名 + 已持续时长（进程占死形态的第一手信息）。
-            val stuckLine = stuckAssessment(rec, now) match
-              case Some((secs, reason)) => s"YES (${fmtDuration(secs * 1000)} — $reason)"
-              case None                 => "no"
-            val lines = List(
-              s"sessionId: ${rec.sessionId}",
-              s"kind: ${rec.kind}",
-              s"status: ${rec.status}",
-              s"stuck: $stuckLine",
-              s"toolPhase: ${toolPhaseLabel(rec, now)}" +
-                (if rec.turnStartedAt > 0 then s" (turn started ${fmtDuration(now - rec.turnStartedAt)} ago)" else ""),
-              // Block 3（§3.4）：loop-guard 计数详情
-              s"loop: streak=${rec.loopStreak} rounds=${rec.loopRounds}" +
-                (if rec.loopStreak >= 3 then " ⚠ same call failing repeatedly" else ""),
-              s"startedAt: ${if rec.startedAt > 0 then fmtMillis(now - rec.startedAt) + " ago" else "(unknown)"}",
-              // idle 列语义收紧（2026-09-10）：agent 侧事件停滞时长——进程侧
-              // 活性（processActivityMs）刻意不在此展示（避免把进程动静读成进展）。
-              s"lastActivity: ${if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago (agent-side)" else "(never)"}",
-              s"rootSessionId: ${rec.rootSessionId}",
-              s"parentSessionId: ${if rec.parentSessionId.nonEmpty then rec.parentSessionId else "-"}",
-              s"supervised: ${rec.supervisorRef.isDefined}",
-              // issue #31 Fix D: barrier snapshot (phantom visibility)
-              s"barrier: outstanding=${rec.outstandingSubagents} held=${rec.pendingEventCount}" +
-                (if rec.outstandingSubagents > 0 then
-                   " ⚠ outstanding > 0 — if no batch is actually in flight this is a phantom slot"
-                 else "")
-            ) ++ taskOpt.map { t =>
+    val now = System.currentTimeMillis()
+    registry.get(sessionId) match
+      case Some(rec) =>
+        resources.subAgentTaskStore.findByTaskId(sessionId).map { taskOpt =>
+          // 2026-09-10 换轴：stuck 详情带判据原因（哪条轴触发）；
+          // toolPhase = 当前工具名 + 已持续时长（进程占死形态的第一手信息）。
+          val stuckLine = stuckAssessment(rec, now) match
+            case Some((secs, reason)) => s"YES (${fmtDuration(secs * 1000)} — $reason)"
+            case None => "no"
+          val lines = List(
+            s"sessionId: ${rec.sessionId}",
+            s"kind: ${rec.kind}",
+            s"status: ${rec.status}",
+            s"stuck: $stuckLine",
+            s"toolPhase: ${toolPhaseLabel(rec, now)}" +
+              (if rec.turnStartedAt > 0 then s" (turn started ${fmtDuration(now - rec.turnStartedAt)} ago)" else ""),
+            // Block 3（§3.4）：loop-guard 计数详情
+            s"loop: streak=${rec.loopStreak} rounds=${rec.loopRounds}" +
+              (if rec.loopStreak >= 3 then " ⚠ same call failing repeatedly" else ""),
+            s"startedAt: ${if rec.startedAt > 0 then fmtMillis(now - rec.startedAt) + " ago" else "(unknown)"}",
+            // idle 列语义收紧（2026-09-10）：agent 侧事件停滞时长——进程侧
+            // 活性（processActivityMs）刻意不在此展示（避免把进程动静读成进展）。
+            s"lastActivity: ${
+                if rec.lastActivityMs > 0 then fmtMillis(now - rec.lastActivityMs) + " ago (agent-side)" else "(never)"
+              }",
+            s"rootSessionId: ${rec.rootSessionId}",
+            s"parentSessionId: ${if rec.parentSessionId.nonEmpty then rec.parentSessionId else "-"}",
+            s"supervised: ${rec.supervisorRef.isDefined}",
+            // issue #31 Fix D: barrier snapshot (phantom visibility)
+            s"barrier: outstanding=${rec.outstandingSubagents} held=${rec.pendingEventCount}" +
+              (if rec.outstandingSubagents > 0 then
+                 " ⚠ outstanding > 0 — if no batch is actually in flight this is a phantom slot"
+               else "")
+          ) ++ taskOpt
+            .map { t =>
               List(
                 s"task.description: ${t.description}",
                 s"task.status: ${t.status}",
@@ -599,51 +653,64 @@ When to use:
                 s"task.prompt: ${t.prompt.take(200)}${if t.prompt.length > 200 then "…" else ""}",
                 s"task.lastError: ${t.lastError.getOrElse("-")}"
               )
-            }.getOrElse(List("task record: (none — not a Delegate/SubTask task, or file pruned)"))
-            // Block 2 §C3 语义对齐：能到达 status body 的调用者只有两类——root 桶
-            // （callerIsRoot=true）或已过子树门的 Manager（callerIsRoot=false 且
-            // anchors 命中）——对 Team 目标分别对应 callerIsRoot / 直接父放行，
-            // manage 行不得再用无 caller 语境的 kindRejection 恒显 read-only。
-            val teamRestartable = rec.kind == AgentKind.Team
-            val manage = kindRejection(rec, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
+            }
+            .getOrElse(List("task record: (none — not a Delegate/SubTask task, or file pruned)"))
+          // Block 2 §C3 语义对齐：能到达 status body 的调用者只有两类——root 桶
+          // （callerIsRoot=true）或已过子树门的 Manager（callerIsRoot=false 且
+          // anchors 命中）——对 Team 目标分别对应 callerIsRoot / 直接父放行，
+          // manage 行不得再用无 caller 语境的 kindRejection 恒显 read-only。
+          val teamRestartable = rec.kind == AgentKind.Team
+          val manage =
+            kindRejection(rec, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
               case Some(_) => "manageable: no (read-only kind)"
               case None =>
                 "manageable: cancel" +
                   (if RestartableKinds.contains(rec.kind) || teamRestartable then " / restart" else " only")
-            Right((lines :+ manage).mkString("\n"))
-          }
-        case None =>
-          resources.subAgentTaskStore.findByTaskId(sessionId).map {
-            case Some(t) if t.status == "running" || t.status == "restarting" =>
-              Right(
-                s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
-                  s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
-                  "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
-                  "task can be re-delegated."
+          Right((lines :+ manage).mkString("\n"))
+        }
+      case None =>
+        resources.subAgentTaskStore.findByTaskId(sessionId).map {
+          case Some(t) if t.status == "running" || t.status == "restarting" =>
+            Right(
+              s"Orphan task: no live actor for '$sessionId' but the task file still says status=${t.status} " +
+                s"(agent=${t.agentName}, parent=${t.parentSessionId}). The actor died without a terminal event " +
+                "(e.g. gateway restart). It can be ignored — startup recovery / pruning will clean it — or the " +
+                "task can be re-delegated."
+            )
+          case Some(t) =>
+            Right(
+              s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}."
+            )
+          case None =>
+            Left(
+              ToolError(
+                s"No agent or task record with sessionId='$sessionId'. Run AgentControl(action=list) to see live sessions."
               )
-            case Some(t) =>
-              Right(s"Session '$sessionId' is no longer live. Task record: status=${t.status}, retries=${t.retryCount}, lastError=${t.lastError.getOrElse("-")}.")
-            case None =>
-              Left(ToolError(s"No agent or task record with sessionId='$sessionId'. Run AgentControl(action=list) to see live sessions."))
-          }
-    }
+            )
+        }
 
-  /** Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent
-    * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
-    * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
-    * （Stop + 自补通知 + taskStore cancelled + registry 移除）。
-    *
-    * notifyWs：面板实时终态帧出口（Sub-Agents 面板取消实时刷新修复）——node-*
-    * Project 会话经此补发 agentDone 同构帧（dispatcher-* 不在此发：其观察桥
-    * 拆除点 ProjectActor 统一补发，覆盖含 Failed/watcher giveUp 的全部路径，
-    * 避免双发）。工具路径传 ctx.wsSend、面板路径传连接 wsSend；None = 静默
-    * （既有测试/无 WS 语境零改动）。 */
+    end match
+
+  end doStatusBody
+
+  /**
+   * Cancel 终止任务终态（区别于 Interrupt 停当前 turn）。public：WS cancelAgent
+   * handler（子 agent 管理面板）复用同链路——supervisorRef 优先（Cancelled →
+   * notifyParentAndStop，barrier 正确释放），无 supervisor 走降级兜底
+   * （Stop + 自补通知 + taskStore cancelled + registry 移除）。
+   *
+   * notifyWs：面板实时终态帧出口（Sub-Agents 面板取消实时刷新修复）——node-*
+   * Project 会话经此补发 agentDone 同构帧（dispatcher-* 不在此发：其观察桥
+   * 拆除点 ProjectActor 统一补发，覆盖含 Failed/watcher giveUp 的全部路径，
+   * 避免双发）。工具路径传 ctx.wsSend、面板路径传连接 wsSend；None = 静默
+   * （既有测试/无 WS 语境零改动）。
+   */
   def doCancel(
-      resources: SharedResources,
-      rec: AgentRecord,
-      reason: String,
-      by: String = "the user panel",
-      notifyWs: Option[io.circe.Json => IO[Unit]] = None
+    resources: SharedResources,
+    rec: AgentRecord,
+    reason: String,
+    by: String = "the user panel",
+    notifyWs: Option[io.circe.Json => IO[Unit]] = None
   ): IO[Either[ToolError, String]] =
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
@@ -722,10 +789,16 @@ When to use:
             )
           )
 
-  /** F3(b) 如实化（loop-detected 报告 §6-F3，2026-08-30）：Team 成员 restart
-    * 只重建会话（持久化 history 恢复），**turn 不自动续跑**——旧文案「resumes
-    * from the last persisted checkpoint」是误导（checkpoint 续跑是 Delegate/
-    * SubTask supervisor 分支的真实机制，Team 分支没有）。 */
+    end match
+
+  end doCancel
+
+  /**
+   * F3(b) 如实化（loop-detected 报告 §6-F3，2026-08-30）：Team 成员 restart
+   * 只重建会话（持久化 history 恢复），**turn 不自动续跑**——旧文案「resumes
+   * from the last persisted checkpoint」是误导（checkpoint 续跑是 Delegate/
+   * SubTask supervisor 分支的真实机制，Team 分支没有）。
+   */
   private[tools] def teamRestartSuccessText(sessionId: String): String =
     s"Restart sent for Team member '$sessionId': stopped and re-activated from persisted history " +
       "(parent-restart). Turn NOT auto-resumed (turn 未自动续跑) — re-dispatch the task if it should continue."
@@ -767,6 +840,7 @@ When to use:
                   s"Team member '${rec.sessionId}' stopped but re-activation failed (session or agent def not found)."
                 )
               )
+          end for
         case _ =>
           IO.pure(
             Left(

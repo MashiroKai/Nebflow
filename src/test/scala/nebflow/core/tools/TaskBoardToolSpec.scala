@@ -45,23 +45,63 @@ class TaskBoardToolSpec extends FunSuite:
 
   private def store: TaskBoardStore = TaskBoardStore.open("projT", home.toString)
 
-  private def d(action: String, title: Option[String] = None, id: Option[String] = None,
-      status: Option[String] = None, assignee: Option[String] = None, nodeId: Option[String] = None,
-      note: Option[String] = None, blocks: Option[List[String]] = None,
-      text: Option[String] = None, links: Option[List[String]] = None,
-      term: Map[String, String] = Map.empty): Either[ToolError, String] =
-    TaskBoardTool.dispatchSync(store, term, BoardCaller.Dispatcher, action,
-      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note,
-      blocks = blocks, text = text, links = links)
+  private def d(
+    action: String,
+    title: Option[String] = None,
+    id: Option[String] = None,
+    status: Option[String] = None,
+    assignee: Option[String] = None,
+    nodeId: Option[String] = None,
+    note: Option[String] = None,
+    blocks: Option[List[String]] = None,
+    text: Option[String] = None,
+    links: Option[List[String]] = None,
+    term: Map[String, String] = Map.empty
+  ): Either[ToolError, String] =
+    TaskBoardTool.dispatchSync(
+      store,
+      term,
+      BoardCaller.Dispatcher,
+      action,
+      title = title,
+      id = id,
+      status = status,
+      assignee = assignee,
+      nodeId = nodeId,
+      note = note,
+      blocks = blocks,
+      text = text,
+      links = links
+    )
 
-  private def n(self: String)(action: String, title: Option[String] = None, id: Option[String] = None,
-      status: Option[String] = None, assignee: Option[String] = None, nodeId: Option[String] = None,
-      note: Option[String] = None, blocks: Option[List[String]] = None,
-      text: Option[String] = None, links: Option[List[String]] = None,
-      term: Map[String, String] = Map.empty): Either[ToolError, String] =
-    TaskBoardTool.dispatchSync(store, term, BoardCaller.FlowNode(self), action,
-      title = title, id = id, status = status, assignee = assignee, nodeId = nodeId, note = note,
-      blocks = blocks, text = text, links = links)
+  private def n(self: String)(
+    action: String,
+    title: Option[String] = None,
+    id: Option[String] = None,
+    status: Option[String] = None,
+    assignee: Option[String] = None,
+    nodeId: Option[String] = None,
+    note: Option[String] = None,
+    blocks: Option[List[String]] = None,
+    text: Option[String] = None,
+    links: Option[List[String]] = None,
+    term: Map[String, String] = Map.empty
+  ): Either[ToolError, String] =
+    TaskBoardTool.dispatchSync(
+      store,
+      term,
+      BoardCaller.FlowNode(self),
+      action,
+      title = title,
+      id = id,
+      status = status,
+      assignee = assignee,
+      nodeId = nodeId,
+      note = note,
+      blocks = blocks,
+      text = text,
+      links = links
+    )
 
   private def o(action: String, title: Option[String] = None, id: Option[String] = None): Either[ToolError, String] =
     TaskBoardTool.dispatchSync(store, Map.empty, BoardCaller.Other, action, title = title, id = id)
@@ -72,10 +112,19 @@ class TaskBoardToolSpec extends FunSuite:
   // ===== 身份派生（引擎侧，不信客户端参数）=====
 
   test("BoardCaller.fromContext: isDispatcher 优先 > flowNodeId > Other"):
-    assertEquals(BoardCaller.fromContext(ToolContext(projectRoot = "", isDispatcher = true, flowNodeId = Some("n-a"))), BoardCaller.Dispatcher)
-    assertEquals(BoardCaller.fromContext(ToolContext(projectRoot = "", flowNodeId = Some("n-a"))), BoardCaller.FlowNode("n-a"))
+    assertEquals(
+      BoardCaller.fromContext(ToolContext(projectRoot = "", isDispatcher = true, flowNodeId = Some("n-a"))),
+      BoardCaller.Dispatcher
+    )
+    assertEquals(
+      BoardCaller.fromContext(ToolContext(projectRoot = "", flowNodeId = Some("n-a"))),
+      BoardCaller.FlowNode("n-a")
+    )
     assertEquals(BoardCaller.fromContext(ToolContext(projectRoot = "", isDispatcher = false)), BoardCaller.Other)
-    assertEquals(BoardCaller.fromContext(ToolContext(projectRoot = "", projectName = Some("p"))), BoardCaller.Other) // 项目名≠身份
+    assertEquals(
+      BoardCaller.fromContext(ToolContext(projectRoot = "", projectName = Some("p"))),
+      BoardCaller.Other
+    ) // 项目名≠身份
 
   // ===== §1d 矩阵·分发器列（全权）=====
 
@@ -86,8 +135,16 @@ class TaskBoardToolSpec extends FunSuite:
     assert(d("create", title = Some("任务B"), assignee = Some("n-x"), nodeId = Some("n-x")).isRight)
     // update 任意任务 + 全部结构字段（title/assignee/nodeId/blocks）——#2 尚为
     // open（依赖闸只闸 in_progress 迁移，此处无闸）
-    assert(d("update", id = Some("2"), title = Some("改名"), assignee = Some("n-y"),
-      nodeId = Some("n-z"), blocks = Some(List("1"))).isRight)
+    assert(
+      d(
+        "update",
+        id = Some("2"),
+        title = Some("改名"),
+        assignee = Some("n-y"),
+        nodeId = Some("n-z"),
+        blocks = Some(List("1"))
+      ).isRight
+    )
     // 依赖闸正路：先闭环 #1，#2 才可开工与关闭
     assert(d("close", id = Some("1")).isRight)
     assert(d("update", id = Some("2"), status = Some("in_progress")).isRight)
@@ -233,8 +290,11 @@ class TaskBoardToolSpec extends FunSuite:
     assert(log.isRight, log)
     val hist = TaskBoardHistory.open(home.toString)
     assertEquals(hist.readFor("1", only = TaskBoardHistory.isNoteChange).events.map(_.text), List(Some("补充第一段")))
-    assertEquals(hist.readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor, "dispatcher",
-      "actor 由身份派生（分发器）")
+    assertEquals(
+      hist.readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor,
+      "dispatcher",
+      "actor 由身份派生（分发器）"
+    )
     assertEquals(store.entriesSync().head.note, Some("工作记录"), "log 不改板面 note")
     val show = d("show", id = Some("1"))
     assert(show.isRight, show)
@@ -249,12 +309,18 @@ class TaskBoardToolSpec extends FunSuite:
     store.createSync("他人工单", assignee = Some("n-b"), note = Some("他人记录"))
     val mine = n("n-a")("log", id = Some("1"), text = Some("节点补充"))
     assert(mine.isRight, mine)
-    assertEquals(TaskBoardHistory.open(home.toString).readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor,
-      "node", "actor 由身份派生（节点）")
+    assertEquals(
+      TaskBoardHistory.open(home.toString).readFor("1", only = TaskBoardHistory.isNoteChange).events.head.actor,
+      "node",
+      "actor 由身份派生（节点）"
+    )
     val other = n("n-a")("log", id = Some("2"), text = Some("越权"))
     assert(other.isLeft && code(other).exists(_.contains(TaskBoardStore.Codes.Forbidden)), other)
-    assertEquals(TaskBoardHistory.open(home.toString).readFor("2", only = TaskBoardHistory.isNoteChange).total, 0,
-      "越权 log 零落史")
+    assertEquals(
+      TaskBoardHistory.open(home.toString).readFor("2", only = TaskBoardHistory.isNoteChange).total,
+      0,
+      "越权 log 零落史"
+    )
     val showAll = n("n-a")("show", id = Some("2"))
     assert(showAll.isRight && showAll.toOption.get.contains("他人记录"), showAll)
 
@@ -270,11 +336,9 @@ class TaskBoardToolSpec extends FunSuite:
     val schema = TaskBoardToolDef.inputSchema
     val props = schema("properties").flatMap(_.asObject).get
     val actionEnum = props("action").flatMap(_.hcursor.downField("enum").as[List[String]].toOption).get
-    assertEquals(actionEnum, List("create", "update", "list", "close", "log", "show"),
-      "action enum 六值（升级批）")
+    assertEquals(actionEnum, List("create", "update", "list", "close", "log", "show"), "action enum 六值（升级批）")
     assert(props.contains("text") && props.contains("links"), "新增参数入 schema")
-    assert(!props.contains("actor") && !props.contains("history"),
-      "actor/history 不出现在 schema（引擎侧派生/独立文件，客户端无法注入）")
+    assert(!props.contains("actor") && !props.contains("history"), "actor/history 不出现在 schema（引擎侧派生/独立文件，客户端无法注入）")
     // 未知 action 文案 = 六值清单
     val unknown = code(d("frobnicate")).getOrElse("")
     assert(unknown.contains("create/update/list/close/log/show"), unknown)

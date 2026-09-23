@@ -57,6 +57,7 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"ref-faces wiring agent","tools":[],"category":"standalone"}"""
@@ -68,11 +69,13 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
 
   /** 本 spec 不 spawn 真会话（不发任何 LLM 请求）。 */
   private object NoLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[nebflow.shared.LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.raiseError[IO](new RuntimeException("sendStream not expected"))
 
@@ -115,11 +118,11 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
     )
 
   private def mountProject(
-      name: String,
-      ws: os.Path,
-      system: ActorSystem,
-      res: SharedResources,
-      withBoard: Boolean = false
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    withBoard: Boolean = false
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -134,21 +137,36 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
         feedbackMode = FeedbackRouter.ModeAuto,
         emitEvent = (_, _, _) => IO.unit
       )
-      pd = ProjectDef(name = name, workspace = ws.toString,
-        agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
-      rt = ProjectRuntime(pd, store, engine, system, res, None,
-        board = if withBoard then Some(TaskBoardStore.open(name, ws.toString)) else None)
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
+      rt = ProjectRuntime(
+        pd,
+        store,
+        engine,
+        system,
+        res,
+        None,
+        board = if withBoard then Some(TaskBoardStore.open(name, ws.toString)) else None
+      )
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
-  /** 台账文件路径 —— 与 `FlowMapStore.open` 的载入点逐字同源（`base = os.Path(ws, dataRoot) /
-    * ".nebflow"`）；🔴 父目录须先建：fixture 早于 `mountProject`（= 早于 open 的
-    * `makeDir.all(base)`）⇒ 不建目录则 `os.write.over` 抛 NoSuchFileException。 */
+  /**
+   * 台账文件路径 —— 与 `FlowMapStore.open` 的载入点逐字同源（`base = os.Path(ws, dataRoot) /
+   * ".nebflow"`）；🔴 父目录须先建：fixture 早于 `mountProject`（= 早于 open 的
+   * `makeDir.all(base)`）⇒ 不建目录则 `os.write.over` 抛 NoSuchFileException。
+   */
   private def ledgerFilePath(ws: os.Path): os.Path =
     os.Path(ws.toString, PathUtil.dataRoot) / ".nebflow" / ChainLedger.FileName
 
-  /** 落一份台账 fixture（早于 mountProject ⇒ open 期载入）；`project` 名与所落项目一致
-    * （判据面只看 entries/aliases/externalRefs，project 仅为账内自述）。 */
+  /**
+   * 落一份台账 fixture（早于 mountProject ⇒ open 期载入）；`project` 名与所落项目一致
+   * （判据面只看 entries/aliases/externalRefs，project 仅为账内自述）。
+   */
   private def writeLedgerFixture(ws: os.Path, project: String, st: ChainLedger.State): IO[Unit] =
     IO.blocking {
       val p = ledgerFilePath(ws)
@@ -157,15 +175,30 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
     }
 
   private def seedNode(
-      rt: ProjectRuntime,
-      id: String,
-      name: String,
-      status: String,
-      task: Option[String] = None
+    rt: ProjectRuntime,
+    id: String,
+    name: String,
+    status: String,
+    task: Option[String] = None
   ): IO[Unit] =
-    rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-      id -> NodeDef(id = id, name = name, agent = "test-agent", task = task, result = None,
-        status = status, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis())))).void
+    rt.store
+      .mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            id -> NodeDef(
+              id = id,
+              name = name,
+              agent = "test-agent",
+              task = task,
+              result = None,
+              status = status,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      .void
 
   private def ledgerOf(rt: ProjectRuntime): IO[ChainLedger.State] =
     rt.store.chainLedgerStore.snapshot
@@ -181,8 +214,10 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
   /** 单条目台账 fixture（一条已出生链 —— 正文/引用面的计数目标行）。 */
   private def canonFixture(project: String, canon: String = Canon): ChainLedger.State =
     ChainLedger.State(
-      project = project, updatedAt = 1L,
-      entries = Map(canon -> ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L)))
+      project = project,
+      updatedAt = 1L,
+      entries = Map(canon -> ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L))
+    )
 
   // ── R1 [c) mail-usage 端到端] ──────────────────────────────────────────
 
@@ -199,26 +234,38 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       dispCtx = mkCtx(res, system, ws.toString).copy(isDispatcher = true, projectName = Some("rf-r1"))
       st0 <- ledgerOf(rt)
       // ① 投递成功 + 携带链号 ⇒ 计 1
-      ok <- MailTool.call(
-        Json.obj("address" -> "node:n-r1".asJson, "message" -> "带链号".asJson,
-          "chainId" -> Canon.asJson).asObject.get, dispCtx)
+      ok <- MailTool
+        .call(
+          Json.obj("address" -> "node:n-r1".asJson, "message" -> "带链号".asJson, "chainId" -> Canon.asJson).asObject.get,
+          dispCtx
+        )
         .map(failMsg)
       st1 <- ledgerOf(rt)
       // ② 不带链号 ⇒ 照常投递、零计数
-      okNoChain <- MailTool.call(
-        Json.obj("address" -> "node:n-r1".asJson, "message" -> "无链号".asJson).asObject.get, dispCtx)
+      okNoChain <- MailTool
+        .call(Json.obj("address" -> "node:n-r1".asJson, "message" -> "无链号".asJson).asObject.get, dispCtx)
         .map(failMsg)
       st2 <- ledgerOf(rt)
       // ③ 带链号但投递失败（终态节点 ⇒ NODE_TERMINAL_NO_MESSAGE）⇒ 零计数
-      refused <- MailTool.call(
-        Json.obj("address" -> "node:n-r1-term".asJson, "message" -> "迟到".asJson,
-          "chainId" -> Canon.asJson).asObject.get, dispCtx)
+      refused <- MailTool
+        .call(
+          Json
+            .obj("address" -> "node:n-r1-term".asJson, "message" -> "迟到".asJson, "chainId" -> Canon.asJson)
+            .asObject
+            .get,
+          dispCtx
+        )
         .map(failMsg)
       st3 <- ledgerOf(rt)
       // ④ 校验失败（未登记号 ⇒ MAIL_CHAIN_NOT_FOUND）⇒ 零计数（引用没发生）
-      rejected <- MailTool.call(
-        Json.obj("address" -> "node:n-r1".asJson, "message" -> "悬空号".asJson,
-          "chainId" -> "chain-n-rf-ghost".asJson).asObject.get, dispCtx)
+      rejected <- MailTool
+        .call(
+          Json
+            .obj("address" -> "node:n-r1".asJson, "message" -> "悬空号".asJson, "chainId" -> "chain-n-rf-ghost".asJson)
+            .asObject
+            .get,
+          dispCtx
+        )
         .map(failMsg)
       st4 <- ledgerOf(rt)
       onDisk <- IO.blocking(os.read(ledgerFilePath(ws)))
@@ -227,18 +274,20 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
     yield
       assertEquals(st0.externalRefs, Map.empty[String, Int], "起跑：台账零外部引用")
       assert(ok.startsWith("Right("), s"带链号的合法 Mail 必须投递成功，got: $ok")
-      assertEquals(st1.externalRefs.get(Canon), Some(1),
-        "🔴 incWhen 落点：Mail 携带 chainId 且投递成功 ⇒ mail-usage 面计 1（noteReference 落痕）")
+      assertEquals(
+        st1.externalRefs.get(Canon),
+        Some(1),
+        "🔴 incWhen 落点：Mail 携带 chainId 且投递成功 ⇒ mail-usage 面计 1（noteReference 落痕）"
+      )
       assert(okNoChain.startsWith("Right("), s"无链号 Mail 照常投递，got: $okNoChain")
       assertEquals(st2.externalRefs, st1.externalRefs, "无链号 ⇒ 零计数（面只在携带链号时计）")
       assert(refused.contains("NODE_TERMINAL_NO_MESSAGE"), s"终态节点必须拒绝投递，got: $refused")
       assertEquals(st3.externalRefs, st1.externalRefs, "投递失败 ⇒ 零计数（引用未发生）")
       assert(rejected.contains("MAIL_CHAIN_NOT_FOUND"), s"未登记号必须拒，got: $rejected")
       assertEquals(st4, st3, "校验失败 ⇒ 台账逐字不变（零副作用）")
-      assertEquals(counted.entries(Canon).refCount, 1,
-        "🔴 读数：覆盖式复算按账并入 ⇒ 该链 refCount 由 0 变 1（Mail 引用真实挡住退役）")
-      assert(onDisk.contains(Canon) && onDisk.contains("externalRefs"),
-        "落痕持久：台账文件明档可读该引用键（非内存态）")
+      assertEquals(counted.entries(Canon).refCount, 1, "🔴 读数：覆盖式复算按账并入 ⇒ 该链 refCount 由 0 变 1（Mail 引用真实挡住退役）")
+      assert(onDisk.contains(Canon) && onDisk.contains("externalRefs"), "落痕持久：台账文件明档可读该引用键（非内存态）")
+    end for
   }
 
   // ── R2 [c) board-usage] ────────────────────────────────────────────────
@@ -254,25 +303,32 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString).copy(isDispatcher = true, projectName = Some("rf-r2"))
       st0 <- ledgerOf(rt)
       // ① 写动作成功 + 正文命中 ⇒ 计 1（note 里带链号）
-      ok <- TaskBoardToolDef.call(
-        Json.obj("action" -> "create".asJson, "title" -> "任务书".asJson,
-          "note" -> s"本条任务引用链 $Canon（板卡正文面）".asJson).asObject.get, ctx)
+      ok <- TaskBoardToolDef
+        .call(
+          Json
+            .obj("action" -> "create".asJson, "title" -> "任务书".asJson, "note" -> s"本条任务引用链 $Canon（板卡正文面）".asJson)
+            .asObject
+            .get,
+          ctx
+        )
         .map(failMsg)
       st1 <- ledgerOf(rt)
       // ② 只读动作（list）⇒ 零计数
       _ <- TaskBoardToolDef.call(Json.obj("action" -> "list".asJson).asObject.get, ctx).map(failMsg)
       st2 <- ledgerOf(rt)
       // ③ 写失败（缺 title）⇒ 零计数
-      bad <- TaskBoardToolDef.call(
-        Json.obj("action" -> "create".asJson,
-          "note" -> s"写失败的正文 $Canon".asJson).asObject.get, ctx)
+      bad <- TaskBoardToolDef
+        .call(Json.obj("action" -> "create".asJson, "note" -> s"写失败的正文 $Canon".asJson).asObject.get, ctx)
         .map(failMsg)
       st3 <- ledgerOf(rt)
       // ④ log 正文命中 ⇒ 再计 1（每次引用各计一次）；条目 id 从板面现读（不猜编号）
       boardId <- IO.blocking(rt.board.toList.flatMap(_.entriesSync()).headOption.map(_.id).getOrElse(""))
-      _ <- TaskBoardToolDef.call(
-        Json.obj("action" -> "log".asJson, "id" -> boardId.asJson,
-          "text" -> s"补记：$Canon 的落地读数".asJson).asObject.get, ctx).map(failMsg)
+      _ <- TaskBoardToolDef
+        .call(
+          Json.obj("action" -> "log".asJson, "id" -> boardId.asJson, "text" -> s"补记：$Canon 的落地读数".asJson).asObject.get,
+          ctx
+        )
+        .map(failMsg)
       st4 <- ledgerOf(rt)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -282,8 +338,8 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       assertEquals(st2.externalRefs, st1.externalRefs, "list（只读）⇒ 零计数")
       assert(bad.contains("TBOARD_PARAM"), s"缺 title 的 create 必须失败，got: $bad")
       assertEquals(st3.externalRefs, st1.externalRefs, "写失败 ⇒ 零计数（引用未发生）")
-      assertEquals(st4.externalRefs.get(Canon), Some(2),
-        s"log 正文再次引用 ⇒ 再计 1（只计不减、每次引用各计；entry id=$boardId）")
+      assertEquals(st4.externalRefs.get(Canon), Some(2), s"log 正文再次引用 ⇒ 再计 1（只计不减、每次引用各计；entry id=$boardId）")
+    end for
   }
 
   // ── R3 [c) report-usage] ───────────────────────────────────────────────
@@ -297,17 +353,21 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot)
       rt <- mountProject("rf-r3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString).copy(
-        projectName = Some("rf-r3"), flowNodeId = Some("n-r3"), flowNodeRole = Some(NodeRoles.Task))
+        projectName = Some("rf-r3"),
+        flowNodeId = Some("n-r3"),
+        flowNodeRole = Some(NodeRoles.Task)
+      )
       st0 <- ledgerOf(rt)
-      ok <- NodeReportToolDef.call(
-        Json.obj("category" -> "finish".asJson,
-          "detail" -> s"本节点交付物引用链 $Canon（报告正文面）".asJson).asObject.get, ctx)
+      ok <- NodeReportToolDef
+        .call(Json.obj("category" -> "finish".asJson, "detail" -> s"本节点交付物引用链 $Canon（报告正文面）".asJson).asObject.get, ctx)
         .map(failMsg)
       st1 <- ledgerOf(rt)
       // 未登记号只在正文里 ⇒ 零计数（禁回填）
-      _ <- NodeReportToolDef.call(
-        Json.obj("category" -> "finish".asJson,
-          "detail" -> "本条只提到 chain-n-rf-ghost 与 681".asJson).asObject.get, ctx)
+      _ <- NodeReportToolDef
+        .call(
+          Json.obj("category" -> "finish".asJson, "detail" -> "本条只提到 chain-n-rf-ghost 与 681".asJson).asObject.get,
+          ctx
+        )
         .map(failMsg)
       st2 <- ledgerOf(rt)
       onDisk <- IO.blocking {
@@ -321,27 +381,37 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       assertEquals(st1.externalRefs.get(Canon), Some(1), "🔴 report-usage 计数钩子：申报登记成功后正文命中 ⇒ 计 1")
       assertEquals(st2.externalRefs, st1.externalRefs, "未登记号 ⇒ 零计数（零回填）")
       assert(onDisk.contains("chain-n-rf-ghost"), "申报正文照旧落库（计数与否不改变申报本身）")
+    end for
   }
 
   // ── R4 [d) 退役判据不回归 + 不复活] ────────────────────────────────────
 
   test("R4 [d) 退役判据不回归 + 不复活] refCount==0 才可退役（读数）；本批计数不得复活已退役/已归档链") {
     val canon = "chain-n-r4-canon"
-    val archived = ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L,
-      status = ChainLedger.StatusArchived, archivedAt = Some(2L), refCount = 0)
+    val archived = ChainLedger.Entry(
+      chainId = canon,
+      anchor = canon,
+      bornAt = 1L,
+      status = ChainLedger.StatusArchived,
+      archivedAt = Some(2L),
+      refCount = 0
+    )
     // ① 纯函数读数：归档 ∧ 零引用 ⇒ 退役 1 行；同一行被外部面计 1 ⇒ 退役 0 行
     val stZero = ChainLedger.State(project = "r4", entries = Map(canon -> archived))
     val retiredZero = ChainLedger.planRetire(stZero, 5L)
-    val stCounted = ChainLedger.recomputeRefCounts(
-      stZero.copy(externalRefs = Map(canon -> 1)), ChainLedger.FaceCounts())
+    val stCounted =
+      ChainLedger.recomputeRefCounts(stZero.copy(externalRefs = Map(canon -> 1)), ChainLedger.FaceCounts())
     val retiredCounted = ChainLedger.planRetire(stCounted, 5L)
     // ② store 端到端读数：归档零引用行经一拍 reconcile 下沉冷档 ⇒ 之后引用只落零命中
     val ws = tempRoot / "ws-rf-r4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"rf-r4-${scala.util.Random.nextInt(100000)}")
     for
-      _ <- writeLedgerFixture(ws, "rf-r4", ChainLedger.State(project = "rf-r4", updatedAt = 1L,
-        entries = Map(canon -> archived)))
+      _ <- writeLedgerFixture(
+        ws,
+        "rf-r4",
+        ChainLedger.State(project = "rf-r4", updatedAt = 1L, entries = Map(canon -> archived))
+      )
       res <- mkResources(system, tempRoot)
       rt <- mountProject("rf-r4", ws, system, res)
       before <- ledgerOf(rt)
@@ -352,21 +422,20 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       afterNote <- ledgerOf(rt)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(retiredZero.entries.map(_.chainId), List(canon),
-        "🔴 读数：已归档 ∧ refCount==0 ⇒ 退役 1 行（判据本体不变）")
+      assertEquals(retiredZero.entries.map(_.chainId), List(canon), "🔴 读数：已归档 ∧ refCount==0 ⇒ 退役 1 行（判据本体不变）")
       assertEquals(stCounted.entries(canon).refCount, 1, "外部面按账并入 ⇒ 该行引用数 1")
-      assert(retiredCounted.isEmpty,
-        s"🔴 有活引用 ⇒ 退役 0 行（本批计数确实拦住早退役：轴 b 承重），got ${retiredCounted.entries.map(_.chainId)}")
+      assert(
+        retiredCounted.isEmpty,
+        s"🔴 有活引用 ⇒ 退役 0 行（本批计数确实拦住早退役：轴 b 承重），got ${retiredCounted.entries.map(_.chainId)}"
+      )
       assert(before.entries.contains(canon), "起跑：归档零引用行仍在热面（未到拍）")
       assertEquals(obs.dissolved.map(_.chainId), List(canon), "无命中分量 ⇒ 离场 ⇒ 整行下沉（读数：1 行）")
       assert(!after.entries.contains(canon), "下沉后热面不再有该行（载荷整行在冷档）")
       assertEquals(rounds.map(_.kind), List(ChainLedger.RoundDissolve), "冷档留痕：dissolve 一轮（只归档不删除）")
-      assertEquals(noted, Right(Nil): Either[String, List[String]],
-        "已退役号不在 knownIds（热面）⇒ 零命中")
-      assertEquals(afterNote.externalRefs, Map.empty[String, Int],
-        "🔴 不复活：不为已退役号新建计数键（本批计数零副作用）")
-      assertEquals(afterNote.entries.keySet, after.entries.keySet,
-        "🔴 不复活：entries 集合逐字不变（计数不建条目、不改状态）")
+      assertEquals(noted, Right(Nil): Either[String, List[String]], "已退役号不在 knownIds（热面）⇒ 零命中")
+      assertEquals(afterNote.externalRefs, Map.empty[String, Int], "🔴 不复活：不为已退役号新建计数键（本批计数零副作用）")
+      assertEquals(afterNote.entries.keySet, after.entries.keySet, "🔴 不复活：entries 集合逐字不变（计数不建条目、不改状态）")
+    end for
   }
 
   // ── R5 [e) 零回填] ────────────────────────────────────────────────────
@@ -389,32 +458,50 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       st2 <- ledgerOf(rt)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(hit, Right(List(Canon)): Either[String, List[String]],
-        "🔴 命中集 = 恰一个已登记号（前缀近似号 chain-n-rf-can ≠ chain-n-rf-canon；裸编号不计）")
+      assertEquals(
+        hit,
+        Right(List(Canon)): Either[String, List[String]],
+        "🔴 命中集 = 恰一个已登记号（前缀近似号 chain-n-rf-can ≠ chain-n-rf-canon；裸编号不计）"
+      )
       assertEquals(st1.externalRefs, Map(Canon -> 1), "只有登记号进账（一次原子写）")
       assertEquals(st1.entries.keySet, st0.entries.keySet, "本批新增条目 = 0（零回填）")
       assertEquals(st1.aliases.keySet, st0.aliases.keySet, "本批新增别名行 = 0（零回填）")
       assertEquals(st1.externalRefs.size, 1, "🔴 本批新增回填笔数 = 0（externalRefs 无悬空键）")
       assertEquals(none, Right(Nil): Either[String, List[String]], "纯悬空号正文 ⇒ 零命中")
       assertEquals(st2, st1, "零命中 ⇒ 零写（台账逐字不变，禁空账轮）")
+    end for
   }
 
   // ── R6 正文命中判据（纯函数，边界承重）────────────────────────────────
 
   test("R6 [正文命中判据] 逐字 + 链号边界：前缀族链号互不误命中；空文本/空已知集恒空") {
     val known = Set("chain-u-1", "chain-u-10", "chain-n-rf-canon", "chain-legacy.old")
-    assertEquals(ChainLedger.referencedIds("chain-u-10", Set("chain-u-1")), Nil,
-      "🔴 边界判据：`chain-u-1` 不得因 `chain-u-10` 出现而命中")
-    assertEquals(ChainLedger.referencedIds("chain-u-1", Set("chain-u-10")), Nil,
-      "反向同款：`chain-u-10` 不得因 `chain-u-1` 出现而命中")
-    assertEquals(ChainLedger.referencedIds("见 chain-u-1 与 chain-u-10", known),
-      List("chain-u-1", "chain-u-10"), "两个都在 ⇒ 两个都命中（升序确定）")
-    assertEquals(ChainLedger.referencedIds("前缀 chain-n-rf-can 不算", Set("chain-n-rf-canon")), Nil,
-      "未完整出现的登记号不算引用")
-    assertEquals(ChainLedger.referencedIds("[chain-u-1] (chain-u-1)、chain-u-1。", known),
-      List("chain-u-1"), "标点/括号/换行皆为合法边界（非链号字符）")
-    assertEquals(ChainLedger.referencedIds("改号后缀 chain-legacy.old 命中", known),
-      List("chain-legacy.old"), "`.` 是链号字符：带点后缀号整体命中")
+    assertEquals(
+      ChainLedger.referencedIds("chain-u-10", Set("chain-u-1")),
+      Nil,
+      "🔴 边界判据：`chain-u-1` 不得因 `chain-u-10` 出现而命中"
+    )
+    assertEquals(
+      ChainLedger.referencedIds("chain-u-1", Set("chain-u-10")),
+      Nil,
+      "反向同款：`chain-u-10` 不得因 `chain-u-1` 出现而命中"
+    )
+    assertEquals(
+      ChainLedger.referencedIds("见 chain-u-1 与 chain-u-10", known),
+      List("chain-u-1", "chain-u-10"),
+      "两个都在 ⇒ 两个都命中（升序确定）"
+    )
+    assertEquals(ChainLedger.referencedIds("前缀 chain-n-rf-can 不算", Set("chain-n-rf-canon")), Nil, "未完整出现的登记号不算引用")
+    assertEquals(
+      ChainLedger.referencedIds("[chain-u-1] (chain-u-1)、chain-u-1。", known),
+      List("chain-u-1"),
+      "标点/括号/换行皆为合法边界（非链号字符）"
+    )
+    assertEquals(
+      ChainLedger.referencedIds("改号后缀 chain-legacy.old 命中", known),
+      List("chain-legacy.old"),
+      "`.` 是链号字符：带点后缀号整体命中"
+    )
     assertEquals(ChainLedger.referencedIds("", known), Nil, "空文本 = 空表")
     assertEquals(ChainLedger.referencedIds("chain-u-1", Nil), Nil, "空已知集 = 空表")
   }
@@ -435,25 +522,29 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       st1 <- ledgerOf(rt)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r1.left.exists(_.contains("unknown reference face 'no-such-face'")),
-        s"未登记面必须显式拒绝，got: $r1")
-      assert(r2.left.exists(_.contains("unknown reference face 'no-such-face'")),
-        s"正文入口同款拒绝，got: $r2")
-      assert(r1.left.exists(_.contains("禁无籍计数")) && r2.left.exists(_.contains("禁无籍计数")),
-        "两张入口文案同源（单点 unknownFaceError）")
+      assert(r1.left.exists(_.contains("unknown reference face 'no-such-face'")), s"未登记面必须显式拒绝，got: $r1")
+      assert(r2.left.exists(_.contains("unknown reference face 'no-such-face'")), s"正文入口同款拒绝，got: $r2")
+      assert(
+        r1.left.exists(_.contains("禁无籍计数")) && r2.left.exists(_.contains("禁无籍计数")),
+        "两张入口文案同源（单点 unknownFaceError）"
+      )
       assertEquals(st1, st0, "无籍计数 ⇒ 零写（台账逐字不变）")
+    end for
   }
 
   // ── R8 计数账在覆盖式复算下单调（只计不减）────────────────────────────
 
   test("R8 [只计不减] 覆盖式复算不清外部账：连续两拍复算 ⇒ 计数不丢、不归零") {
     val canon = "chain-n-r8-canon"
-    val st0 = ChainLedger.State(project = "r8",
+    val st0 = ChainLedger.State(
+      project = "r8",
       entries = Map(canon -> ChainLedger.Entry(chainId = canon, anchor = canon, bornAt = 1L)),
-      externalRefs = Map(canon -> 3))
+      externalRefs = Map(canon -> 3)
+    )
     val st1 = ChainLedger.recomputeRefCounts(st0, ChainLedger.FaceCounts())
     val st2 = ChainLedger.recomputeRefCounts(st1, ChainLedger.FaceCounts())
     assertEquals(st1.entries(canon).refCount, 3, "外部面按账并入（3 次引用 ⇒ refCount 3）")
     assertEquals(st2.entries(canon).refCount, 3, "🔴 再复算一拍仍为 3（丢更新不可复算的反面：恒等式）")
     assertEquals(st2.externalRefs, st0.externalRefs, "externalRefs 是覆盖式复算的**输入**，不被复算改写")
   }
+end ReferenceFacesWiringSpec

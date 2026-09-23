@@ -28,6 +28,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
 
   /** protected `buildToolList` 的探针（先例：`AskUserDualModeSchemaSpec.CoreProbe`）。 */
   private object CoreProbe extends AgentCore:
+
     def face(
       defn: AgentDef,
       depth: Int = 0,
@@ -45,6 +46,8 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         projectBoardSession = projectBoardSession
       ).getOrElse(Nil)
 
+  end CoreProbe
+
   private def defNamed(name: String, category: String = "standalone"): AgentDef =
     AgentDef(name = name, description = "", tools = Nil, category = category)
 
@@ -61,8 +64,10 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   private def find(tds: List[ToolDefinition], name: String): Option[ToolDefinition] =
     tds.find(_.name == name)
 
-  /** 载荷序列化（与 `AnthropicAdapter.toAnthropicTools` 同形；spec 内单一实现）：
-    * 用于「工具载荷字节数 / sha256」读数（cache 前缀代价的字节面）。 */
+  /**
+   * 载荷序列化（与 `AnthropicAdapter.toAnthropicTools` 同形；spec 内单一实现）：
+   * 用于「工具载荷字节数 / sha256」读数（cache 前缀代价的字节面）。
+   */
   private def payload(tds: List[ToolDefinition]): String =
     tds
       .map(t => s"""{"name":${t.name},"description":${t.description},"input_schema":${t.inputSchema}}""")
@@ -72,12 +77,27 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   // 身份横断面（六个）
   // ============================================================
   private val nebulaRootFace = CoreProbe.face(defNamed("Nebula"), depth = 0)
+
   private val dispatcherFace =
     CoreProbe.face(defNamed("project-dispatcher"), isDispatcher = true, projectBoardSession = true)
+
   private val taskNodeFace =
-    CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, projectBoardSession = true, flowNodeRole = Some("task"))
+    CoreProbe.face(
+      defNamed("general"),
+      depth = 1,
+      flowNodeSession = true,
+      projectBoardSession = true,
+      flowNodeRole = Some("task")
+    )
+
   private val verifierNodeFace =
-    CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, projectBoardSession = true, flowNodeRole = Some("verifier"))
+    CoreProbe.face(
+      defNamed("general"),
+      depth = 1,
+      flowNodeSession = true,
+      projectBoardSession = true,
+      flowNodeRole = Some("verifier")
+    )
   private val kernelFace = CoreProbe.face(defNamed("kernel"), depth = 1)
   private val teamFace = CoreProbe.face(defNamed("Coder", category = "team"))
 
@@ -115,15 +135,23 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
   test("① 选择逻辑可证: 同一 ToolDefinition 输入按身份产出不同定义；基础身份恒等映射") {
     val mail = baseOf("Mail")
     assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity()), mail, "基础身份未恒等映射")
-    assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)).description,
-      MailTool.descriptionNebulaRoot)
-    assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
-      MailTool.descriptionDispatcher)
+    assertEquals(
+      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)).description,
+      MailTool.descriptionNebulaRoot
+    )
+    assertEquals(
+      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
+      MailTool.descriptionDispatcher
+    )
     val nr = baseOf(NodeReportToolDef.Name)
-    assertEquals(AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))).description,
-      NodeReportToolDef.descriptionTask)
-    assertEquals(AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier"))).description,
-      NodeReportToolDef.descriptionVerifier)
+    assertEquals(
+      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))).description,
+      NodeReportToolDef.descriptionTask
+    )
+    assertEquals(
+      AgentCore.schemaVariantFor(nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier"))).description,
+      NodeReportToolDef.descriptionVerifier
+    )
     // 变体选择**只**动 description（Q5 判据 + 试点口径）
     for (td, id) <- List(
         (mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)),
@@ -175,7 +203,9 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       .filter { p =>
         val noBlock = """(?s)/\*.*?\*/""".r.replaceAllIn(os.read(p), " ")
         val noLine = noBlock.linesIterator
-          .map { l => val i = l.indexOf("//"); if i < 0 then l else l.take(i) }
+          .map { l =>
+            val i = l.indexOf("//"); if i < 0 then l else l.take(i)
+          }
           .mkString("\n")
         pred.findFirstIn(noLine).isDefined
       }
@@ -238,8 +268,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     for role <- List(None, Some(""), Some("unknown-role"), Some("verifier-x"))
     do
       val face = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = role)
-      assertEquals(find(face, NodeReportToolDef.Name).getOrElse(fail("节点面丢了 node_report")), baseOf(NodeReportToolDef.Name),
-        s"role=$role 拿到了分化面（未登记形态必须落基础面）")
+      assertEquals(
+        find(face, NodeReportToolDef.Name).getOrElse(fail("节点面丢了 node_report")),
+        baseOf(NodeReportToolDef.Name),
+        s"role=$role 拿到了分化面（未登记形态必须落基础面）"
+      )
   }
 
   // ============================================================
@@ -280,7 +313,11 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assert(!dispMail.description.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
     // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
-      rootMail.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("address")).exists(_.noSpaces.contains("Project dispatcher")),
+      rootMail
+        .inputSchema("properties")
+        .flatMap(_.asObject)
+        .flatMap(_.apply("address"))
+        .exists(_.noSpaces.contains("Project dispatcher")),
       "参数级 address description 被改动了 —— Q5 口径 = inputSchema 逐字节不变（若作者要放开须先裁）"
     )
   }
@@ -303,24 +340,36 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some("nope"), false).nodeRole, None)
     // 归一（大小写宽容）走 NodeRoles 单点 ⇒ 合法值归一后仍是白名单值
     assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some("VERIFIER"), false).nodeRole, Some("verifier"))
-    assertEquals(AgentCore.toolFaceIdentity(defNamed("general"), 1, Some(" Verifier "), false).nodeRole, Some("verifier"))
+    assertEquals(
+      AgentCore.toolFaceIdentity(defNamed("general"), 1, Some(" Verifier "), false).nodeRole,
+      Some("verifier")
+    )
   }
 
   test("⑤③ 身份维度完整: depth 分量 + 角色维度缺失即误取变体（判红面）") {
     // depth 分量：Nebula 名 + depth=1（节点会话）绝不拿 root 变体
-    val nebulaNamedNode = CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true, flowNodeRole = Some("task"))
+    val nebulaNamedNode =
+      CoreProbe.face(defNamed("Nebula"), depth = 1, flowNodeSession = true, flowNodeRole = Some("task"))
     val mail = find(nebulaNamedNode, "Mail")
     assert(mail.forall(_.description == MailTool.descriptionBase), "depth=1 的 Nebula 节点会话拿到了 root 地址面（谓词丢 depth）")
-    assertEquals(find(nebulaNamedNode, NodeReportToolDef.Name).map(_.description), Some(NodeReportToolDef.descriptionTask))
+    assertEquals(
+      find(nebulaNamedNode, NodeReportToolDef.Name).map(_.description),
+      Some(NodeReportToolDef.descriptionTask)
+    )
 
     // dispatcher 维度：只有 isDispatcher 才拿 dispatcher 面
-    assert(CoreProbe.face(defNamed("project-dispatcher")).forall(td => td.description == baseOf(td.name).description),
-      "未标 isDispatcher 的分发器名会话拿到了 dispatcher 面")
+    assert(
+      CoreProbe.face(defNamed("project-dispatcher")).forall(td => td.description == baseOf(td.name).description),
+      "未标 isDispatcher 的分发器名会话拿到了 dispatcher 面"
+    )
 
     // 角色维度：角色互斥（task 面不得含 verifier 段，反之亦然）+ 大小写宽容
     val upper = CoreProbe.face(defNamed("general"), depth = 1, flowNodeSession = true, flowNodeRole = Some("Verifier"))
-    assertEquals(find(upper, NodeReportToolDef.Name).map(_.description), Some(NodeReportToolDef.descriptionVerifier),
-      "大写角色名未归一（判据丢归一维度）")
+    assertEquals(
+      find(upper, NodeReportToolDef.Name).map(_.description),
+      Some(NodeReportToolDef.descriptionVerifier),
+      "大写角色名未归一（判据丢归一维度）"
+    )
   }
 
   // ============================================================

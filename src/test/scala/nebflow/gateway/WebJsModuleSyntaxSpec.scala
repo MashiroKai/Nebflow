@@ -44,15 +44,19 @@ import java.nio.file.{Files, Path, Paths}
  */
 class WebJsModuleSyntaxSpec extends FunSuite:
 
-  /** The SOURCE tree — what the dev server serves and what the bundle is built
-    * from (the classpath copy under `target/` is derived from it). */
+  /**
+   * The SOURCE tree — what the dev server serves and what the bundle is built
+   * from (the classpath copy under `target/` is derived from it).
+   */
   private val jsDir: Path =
     Paths.get(os.pwd.toString).resolve("src").resolve("main").resolve("resources").resolve("web").resolve("js")
 
-  /** The CHECKED= floor: a path mistake (or an empty tree) must fail loudly
-    * instead of turning this gate into a vacuous green. The tree has held
-    * ~97 modules since the viewers split; keep the floor well below that so
-    * ordinary module-count drift never false-fails. */
+  /**
+   * The CHECKED= floor: a path mistake (or an empty tree) must fail loudly
+   * instead of turning this gate into a vacuous green. The tree has held
+   * ~97 modules since the viewers split; keep the floor well below that so
+   * ordinary module-count drift never false-fails.
+   */
   private val minChecked = 50
 
   test("every web/js module parses as an ES module and the graph from main.js links"):
@@ -91,15 +95,20 @@ class WebJsModuleSyntaxSpec extends FunSuite:
         checked >= minChecked,
         s"the gate only saw $checked module(s) (< $minChecked) — it is not looking at the real tree"
       )
-    finally
-      Files.deleteIfExists(script)
+    finally Files.deleteIfExists(script)
+
+    end try
+
+end WebJsModuleSyntaxSpec
 
 object WebJsModuleSyntaxSpec:
 
-  /** The checker, run as `node --experimental-vm-modules <this> <jsDir>`.
-    *
-    * Plain (non-interpolated) Scala string on purpose: the JS uses template
-    * literals and `${…}`, which an `s"""…"""` interpolator would rewrite. */
+  /**
+   * The checker, run as `node --experimental-vm-modules <this> <jsDir>`.
+   *
+   * Plain (non-interpolated) Scala string on purpose: the JS uses template
+   * literals and `${…}`, which an `s"""…"""` interpolator would rewrite.
+   */
   val checker: String =
     """// ESM parse + link check over a web/js tree (real V8 parser — no regexes).
 // usage: node --experimental-vm-modules check-web-esm.mjs <jsDir>

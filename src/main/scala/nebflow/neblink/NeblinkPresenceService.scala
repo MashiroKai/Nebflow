@@ -70,8 +70,10 @@ final case class PresenceDialRound(
 enum DialAddressClass(val label: String, val budgetMs: Long):
   /** `100.64.0.0/10`（Tailscale / CGNAT）：跨网络，可能经 DERP 中继 ⇒ RTT 大且抖。 */
   case Tailnet extends DialAddressClass("tailnet", 3_000L)
+
   /** RFC1918 / 环回 / 链路本地：同链路，RTT 在毫秒级。 */
   case Lan extends DialAddressClass("lan", 1_500L)
+
   /** 公网 IPv4 或主机名：路径类别未知（≥1 个 WAN RTT，无中继不确定性）。 */
   case Other extends DialAddressClass("other", 2_500L)
 
@@ -140,6 +142,8 @@ object DialBudget:
   /** 生产口径（本批默认值；注入仅供环境校准/判据复现）。 */
   val Default: DialBudget = DialBudget()
 
+end DialBudget
+
 /**
  * 死端点剔除策略（F-D ②）。
  *
@@ -170,8 +174,10 @@ object EvictionPolicy:
 enum DialFailureClass(val label: String):
   /** 地址主动拒绝 / 无路由 / 域名不可解析 —— 端点确定不服务（强信号）。 */
   case Refused extends DialFailureClass("refused")
+
   /** 预算耗尽 —— 歧义信号（黑洞 / 中继拥塞 / 睡眠唤醒），单轮全超时绝不判死。 */
   case Timeout extends DialFailureClass("timeout")
+
   /** 其它（握手层/本地异常）。 */
   case Other extends DialFailureClass("other")
 
@@ -357,10 +363,12 @@ final class NeblinkPresenceService(
         .filter(p => p.lastSeen > 0 && !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId))
         .traverse_(p => connect(p).start.void)
     yield ()
+    end for
 
   end syncPeers
 
-  /** Establish an outgoing WS presence connection to a peer. No-op if already connected.
+  /**
+   * Establish an outgoing WS presence connection to a peer. No-op if already connected.
    *
    * C1 (2026-09-11 P2P 直连修复批): dials every candidate endpoint in preference
    * order with a short per-candidate budget, short-circuiting on the first
@@ -379,8 +387,7 @@ final class NeblinkPresenceService(
     if connections.containsKey(peer.deviceId) then IO.unit
     else
       val candidates = candidatesOf(peer)
-      if candidates.isEmpty then
-        recordDialOutcome(peer, "", Some("no usable endpoint (empty peer address)"))
+      if candidates.isEmpty then recordDialOutcome(peer, "", Some("no usable endpoint (empty peer address)"))
       else
         neblinkService.identity
           .flatMap(id => dialRound(peer, candidates, id))
@@ -407,7 +414,9 @@ final class NeblinkPresenceService(
       if probeOnly then
         logger.debug(s"All candidates suppressed for ${peer.deviceName} — half-open probing ${toTry.head}")
       else if skipped.nonEmpty then
-        logger.debug(s"Skipping ${skipped.size} suppressed candidate(s) for ${peer.deviceName}: ${skipped.mkString(", ")}")
+        logger.debug(
+          s"Skipping ${skipped.size} suppressed candidate(s) for ${peer.deviceName}: ${skipped.mkString(", ")}"
+        )
       else IO.unit
     preamble *>
       dialCandidates(peer, toTry, id, startedAtMs, Nil, Nil, probeOnly).flatMap {
@@ -421,6 +430,8 @@ final class NeblinkPresenceService(
                )
              else IO.unit)
       }
+
+  end dialRound
 
   /**
    * Try candidates left-to-right; on success record the winner and write it back as
@@ -557,7 +568,8 @@ final class NeblinkPresenceService(
             { () =>
               try
                 if conn.alive.get() then
-                  val overdue = System.currentTimeMillis() - conn.lastPong.get() > NeblinkPresenceService.HeartbeatTimeoutMs
+                  val overdue =
+                    System.currentTimeMillis() - conn.lastPong.get() > NeblinkPresenceService.HeartbeatTimeoutMs
                   if overdue then
                     // 僵尸分支：先做 compare-and-remove —— **只有摘到自己的那条**才允许走
                     // 「掉线 + 重连」腿（真掉线仍须摘除，判据④）。
@@ -580,6 +592,7 @@ final class NeblinkPresenceService(
                       )
                       retireConnection(conn, "stale heartbeat")
                   else ws.sendText("""{"type":"ping"}""", true)
+                  end if
               catch case _: Exception => ()
             },
             NeblinkPresenceService.HeartbeatIntervalSec,
@@ -593,6 +606,8 @@ final class NeblinkPresenceService(
             // 已无宿主。现役 conn 由顶替者持有 ⇒ 本条按拨号失败返回（🔴 不得留下无拍子的在册 conn）。
             retireConnection(conn, "superseded")
             Left(DialFailure("superseded during publish", DialFailureClass.Other))
+        end try
+      end if
     catch
       case _: java.util.concurrent.TimeoutException =>
         // C3 §反控-3: the "timeout" class is a distinct, attributable reason —
@@ -600,6 +615,10 @@ final class NeblinkPresenceService(
         Left(DialFailure(s"timeout after ${budgetMs}ms", DialFailureClass.Timeout))
       case e: Exception =>
         Left(dialFailureOf(e))
+
+    end try
+
+  end openConnection
 
   /**
    * 把一次失败的拨号异常折成 [[DialFailure]]（F-D 2026-09-17）。
@@ -657,15 +676,15 @@ final class NeblinkPresenceService(
 
   private def isRefusal(t: Throwable): Boolean =
     t match
-      case _: java.net.ConnectException | _: java.net.NoRouteToHostException |
-          _: java.net.UnknownHostException | _: java.net.PortUnreachableException =>
+      case _: java.net.ConnectException | _: java.net.NoRouteToHostException | _: java.net.UnknownHostException |
+          _: java.net.PortUnreachableException =>
         true
       case _ => false
 
   private def isTimeoutSignal(t: Throwable): Boolean =
     t match
       case _: java.net.SocketTimeoutException | _: java.net.http.HttpTimeoutException => true
-      case _                                                                          => false
+      case _ => false
 
   /**
    * Record a dial outcome (C3) and log **only on state change** — a peer that
@@ -696,6 +715,7 @@ final class NeblinkPresenceService(
           logger.info(
             s"Presence dial ok for ${peer.deviceName} via $shown (dial target ${dialTargetLabel(endpoint)})"
           )
+  end recordDialOutcome
 
   // ===== F-D ②: 死端点剔除（账本 + 恢复语义） =====
 
@@ -739,9 +759,10 @@ final class NeblinkPresenceService(
               val (refusals, timeouts) = cls match
                 case DialFailureClass.Refused => (base.refusals + 1, 0)
                 case DialFailureClass.Timeout => (0, base.timeouts + 1)
-                case DialFailureClass.Other   => (0, 0)
+                case DialFailureClass.Other => (0, 0)
               val strikes = if cls == DialFailureClass.Refused then refusals else timeouts
-              val threshold = if cls == DialFailureClass.Refused then eviction.refusalStrikes else eviction.timeoutStrikes
+              val threshold =
+                if cls == DialFailureClass.Refused then eviction.refusalStrikes else eviction.timeoutStrikes
               if cls != DialFailureClass.Other && strikes >= threshold then
                 suppressedNow = true
                 strikesAtVerdict = strikes
@@ -917,12 +938,13 @@ final class NeblinkPresenceService(
     // 非现役 / 已被退役（心跳超时或 disconnectPeer 已处置）⇒ 静默：
     // 判据③ —— 迟到事件不得为新连接触发 removePeer 或额外重连。
 
-  /** Called by the WS listener when a pong frame arrives — refreshes liveness.
-    *
-    * 🔴 hblife 批口径（**刻意不改**）：pong 属于**当前连接**，所以按 deviceId 刷新在册的那条
-    * 是正确语义。陈旧心跳线程不再因此误判 —— 它的 conn 句柄已随退役而死（退役即 shutdownNow +
-    * compare-and-remove），拍子本身也只认自己的 `lastPong`（见 [[openConnection]] 的心跳回调）。
-    */
+  /**
+   * Called by the WS listener when a pong frame arrives — refreshes liveness.
+   *
+   * 🔴 hblife 批口径（**刻意不改**）：pong 属于**当前连接**，所以按 deviceId 刷新在册的那条
+   * 是正确语义。陈旧心跳线程不再因此误判 —— 它的 conn 句柄已随退役而死（退役即 shutdownNow +
+   * compare-and-remove），拍子本身也只认自己的 `lastPong`（见 [[openConnection]] 的心跳回调）。
+   */
   private[neblink] def updateLastPong(deviceId: String): Unit =
     val conn = connections.get(deviceId)
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
@@ -935,9 +957,11 @@ final class NeblinkPresenceService(
   def isConnected(deviceId: String): Boolean =
     connections.containsKey(deviceId)
 
-  /** Send a data message to a connected peer over the WS presence connection.
-    * Returns true if the message was actually flushed to the socket, false if
-    * there is no connection or the write did not complete (half-open TCP). */
+  /**
+   * Send a data message to a connected peer over the WS presence connection.
+   * Returns true if the message was actually flushed to the socket, false if
+   * there is no connection or the write did not complete (half-open TCP).
+   */
   def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     IO.blocking {
       val conn = connections.get(deviceId)
@@ -956,12 +980,14 @@ final class NeblinkPresenceService(
         try
           conn.ws.sendText(msg.noSpaces, true).get(5, TimeUnit.SECONDS)
           true
-        catch case _: Exception =>
-          logger.debug(s"WS send to $deviceId did not complete (half-open?), caller should use relay fallback")
-          false
+        catch
+          case _: Exception =>
+            logger.debug(s"WS send to $deviceId did not complete (half-open?), caller should use relay fallback")
+            false
       else
         logger.debug(s"No WS connection to $deviceId, data message not delivered via P2P")
         false
+      end if
     }
 
   /**
@@ -1040,11 +1066,13 @@ final class NeblinkPresenceService(
 
   // ===== Explicit disconnect (cancels reconnection) =====
 
-  /** Close WS, shut down heartbeat, remove from map. Signals reconnection to stop.
+  /**
+   * Close WS, shut down heartbeat, remove from map. Signals reconnection to stop.
    *
    * 卡①（裁 1 = 离册即不清账，2026-09-21）：`forgetEndpointHealth = false` 时**不清账**
    * （账本 / 名册指纹 / 轮记录保留）——「名册缺席一拍」是成员资格事件，不构成端点
-   * 不可达的证据；显式断开 / 登出（`disconnect` / `disconnectAll`，默认 `true`）照旧清零。 */
+   * 不可达的证据；显式断开 / 登出（`disconnect` / `disconnectAll`，默认 `true`）照旧清零。
+   */
   private def disconnectPeer(deviceId: String, forgetEndpointHealth: Boolean = true): Unit =
     cancelReconnect.put(deviceId, true)
     reconnecting.remove(deviceId)
@@ -1083,10 +1111,11 @@ final class NeblinkPresenceService(
       Option(host).map(_.trim).filter(_.nonEmpty).map(h => (h, endpointPortOf(address).getOrElse(serverPort)))
     catch case _: Exception => None
 
-  /** Port written in the candidate endpoint's authority (`http://h:8097` → 8097);
-    * `None` when the candidate carries no (valid) port — [[resolveDialTarget]] then
-    * falls back to `serverPort`. IPv6 literals (`[::1]:8097`) are handled).
-    */
+  /**
+   * Port written in the candidate endpoint's authority (`http://h:8097` → 8097);
+   * `None` when the candidate carries no (valid) port — [[resolveDialTarget]] then
+   * falls back to `serverPort`. IPv6 literals (`[::1]:8097`) are handled).
+   */
   private def endpointPortOf(address: String): Option[Int] =
     val stripped = address.replaceFirst("(?i)^https?://", "")
     val slashIdx = stripped.indexOf('/')
@@ -1104,9 +1133,11 @@ final class NeblinkPresenceService(
 
   private def isValidPort(p: Int): Boolean = p > 0 && p <= 65535
 
-  /** The `host:port` a dial attempt actually opened — the log-line read-out of
-    * [[resolveDialTarget]] (F-4: never present the candidate string as if it were
-    * the dial target). */
+  /**
+   * The `host:port` a dial attempt actually opened — the log-line read-out of
+   * [[resolveDialTarget]] (F-4: never present the candidate string as if it were
+   * the dial target).
+   */
   private def dialTargetLabel(endpoint: String): String =
     resolveDialTarget(endpoint).map((h, p) => s"$h:$p").getOrElse("(unresolved)")
 
@@ -1140,8 +1171,10 @@ final class NeblinkPresenceService(
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
     s"ws://$host:$port/api/neblink/presence?$query"
 
-  /** Handshake headers carrying OUR identity on a presence dial (A1). One source
-    * for the write side and for the test face, so the two cannot drift. */
+  /**
+   * Handshake headers carrying OUR identity on a presence dial (A1). One source
+   * for the write side and for the test face, so the two cannot drift.
+   */
   private[neblink] def presenceHandshakeHeaders(id: DeviceIdentity): List[(String, String)] =
     List(Protocol.DeviceHeader -> id.deviceId)
 
@@ -1218,6 +1251,8 @@ object NeblinkPresenceService:
   /** 梯子全部耗尽的时长上界（每轮拨号 + 每次退避）——收手日志的读数来源。 */
   def ladderDrainUpperBoundMs(attempts: Int, roundMs: Long): Long =
     (0 until attempts.max(0)).map(a => reconnectDelayMs(a) + roundMs).sum
+
+end NeblinkPresenceService
 
 /**
  * JDK WebSocket.Listener for outgoing presence connections.

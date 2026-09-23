@@ -108,23 +108,33 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
         else if path.contains("foreign-group") then respond(ex, 403, """{"error":"not_member"}""")
         else
           (method, path) match
-            case ("GET", "/api/groups")                          => respond(ex, 200, s"[$groupRow]")
-            case ("POST", "/api/groups")                         => respond(ex, 201, """{"groupId":"grp-1","title":"团队","createdAt":1}""")
-            case ("GET", "/api/groups/invites")                  => respond(ex, 200, invitesJson)
-            case ("POST", p) if p.endsWith("/invites")           => respond(ex, 201, """{"inviteId":"inv-1","groupId":"grp-1","inviteeUserId":"u2","status":"pending","createdAt":1}""")
-            case ("POST", p) if p.endsWith("/accept")            => respond(ex, 200, """{"ok":true,"groupId":"grp-1","title":"团队"}""")
-            case ("POST", p) if p.endsWith("/decline")           => respond(ex, 200, """{"ok":true,"groupId":"grp-1","title":null}""")
-            case ("GET", p) if p.endsWith("/members")            => respond(ex, 200, membersJson)
-            case ("POST", p) if p.endsWith("/kick")              => respond(ex, 200, """{"ok":true}""")
-            case ("POST", p) if p.endsWith("/messages")          => respond(ex, 201, sendJson)
-            case ("POST", p) if p.endsWith("/leave")             => respond(ex, 200, """{"ok":true}""")
-            case ("PUT", p) if p.endsWith("/title")              => respond(ex, 200, """{"ok":true,"title":"新名字"}""")
-            case ("DELETE", _)                                   => respond(ex, 200, """{"ok":true}""")
-            case _                                               => respond(ex, 404, """{"error":"not found"}""")
+            case ("GET", "/api/groups") => respond(ex, 200, s"[$groupRow]")
+            case ("POST", "/api/groups") => respond(ex, 201, """{"groupId":"grp-1","title":"团队","createdAt":1}""")
+            case ("GET", "/api/groups/invites") => respond(ex, 200, invitesJson)
+            case ("POST", p) if p.endsWith("/invites") =>
+              respond(
+                ex,
+                201,
+                """{"inviteId":"inv-1","groupId":"grp-1","inviteeUserId":"u2","status":"pending","createdAt":1}"""
+              )
+            case ("POST", p) if p.endsWith("/accept") =>
+              respond(ex, 200, """{"ok":true,"groupId":"grp-1","title":"团队"}""")
+            case ("POST", p) if p.endsWith("/decline") =>
+              respond(ex, 200, """{"ok":true,"groupId":"grp-1","title":null}""")
+            case ("GET", p) if p.endsWith("/members") => respond(ex, 200, membersJson)
+            case ("POST", p) if p.endsWith("/kick") => respond(ex, 200, """{"ok":true}""")
+            case ("POST", p) if p.endsWith("/messages") => respond(ex, 201, sendJson)
+            case ("POST", p) if p.endsWith("/leave") => respond(ex, 200, """{"ok":true}""")
+            case ("PUT", p) if p.endsWith("/title") => respond(ex, 200, """{"ok":true,"title":"新名字"}""")
+            case ("DELETE", _) => respond(ex, 200, """{"ok":true}""")
+            case _ => respond(ex, 404, """{"error":"not found"}""")
+        end if
     )
     server.start()
     val url = s"http://127.0.0.1:${server.getAddress.getPort}"
     (server, url)
+
+  end startMockServer
 
   /** Server lifetime tied to the test IO（见类头时序注意）。 */
   private def withMockServer[A](use: (String, NeblinkClient, FriendService) => IO[A]): IO[A] =
@@ -172,8 +182,10 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
   private def authed(req: Request[IO]): Request[IO] =
     req.withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
 
-  /** 逐字字节体（**不经** Json AST 编码器）：代理腿的「原样转发」判据必须在字节层
-    * 成立（Json 编码会重排键 ⇒ 那就不叫逐字）。 */
+  /**
+   * 逐字字节体（**不经** Json AST 编码器）：代理腿的「原样转发」判据必须在字节层
+   * 成立（Json 编码会重排键 ⇒ 那就不叫逐字）。
+   */
   private def rawBodyReq(method: Method, path: String, raw: String): Request[IO] =
     Request[IO](method, Uri.unsafeFromString(path))
       .withBodyStream(fs2.Stream.emit(raw).through(fs2.text.utf8.encode))
@@ -186,9 +198,11 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
 
   // ── 路由对表（server groups.rs:616-639 ⇄ 本层）────────────
 
-  /** `(上游方法, 上游路径, 网关请求路径, 可选请求体)` —— 12 个 method+path 对，逐条来自
-    * `groups.rs`：`.route("/api/groups", post(group_create).get(group_list))`
-    * （一条注册两个方法）+ 其余 10 条各一方法。**顺序即 groups.rs 的声明顺序**。 */
+  /**
+   * `(上游方法, 上游路径, 网关请求路径, 可选请求体)` —— 12 个 method+path 对，逐条来自
+   * `groups.rs`：`.route("/api/groups", post(group_create).get(group_list))`
+   * （一条注册两个方法）+ 其余 10 条各一方法。**顺序即 groups.rs 的声明顺序**。
+   */
   private val RouteTable: List[(Method, String, String, Option[String])] = List(
     (Method.POST, "/api/groups", "/groups", Some("""{"title":"团队"}""")),
     (Method.GET, "/api/groups", "/groups", None),
@@ -212,7 +226,7 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
             runWith(Some(fs))(
               body match
                 case Some(b) => authed(rawBodyReq(m, gwPath, b))
-                case None    => authed(Request[IO](m, Uri.unsafeFromString(gwPath)))
+                case None => authed(Request[IO](m, Uri.unsafeFromString(gwPath)))
             ).flatMap { resp =>
               IO {
                 val got = seenList
@@ -271,8 +285,12 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
           assertEquals(row.downField("lastMessageId").as[Int].toOption, Some(0))
           assertEquals(row.downField("createdAt").as[Int].toOption, Some(1))
           // 网关**不得**增删字段（无 invites/pendingInvites 之类自创信封键）
-          assertEquals(body.asArray.get.head.asObject.map(_.keys.toSet),
-            Some(Set("groupId", "title", "role", "memberCount", "lastMessage", "unreadCount", "lastMessageId", "createdAt")))
+          assertEquals(
+            body.asArray.get.head.asObject.map(_.keys.toSet),
+            Some(
+              Set("groupId", "title", "role", "memberCount", "lastMessage", "unreadCount", "lastMessageId", "createdAt")
+            )
+          )
         }
       }
     }
@@ -305,8 +323,7 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
         authed(Request[IO](Method.GET, Uri.unsafeFromString("/groups")))
       ).map { resp =>
         assertEquals(resp.status, Status.Ok)
-        assertEquals(seenAuth.get(), Some("Bearer tok-1"),
-          "身份只由 session token 承载（与既有 friends/conversations 代理逐字一致）")
+        assertEquals(seenAuth.get(), Some("Bearer tok-1"), "身份只由 session token 承载（与既有 friends/conversations 代理逐字一致）")
       }
     }
   }
@@ -326,9 +343,9 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
     runWith(None)(authed(Request[IO](Method.GET, Uri.unsafeFromString("/groups"))))
       .flatMap { resp =>
         assertEquals(resp.status, Status.NotFound)
-        resp.as[Json].map(body =>
-          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled"))
-        )
+        resp
+          .as[Json]
+          .map(body => assertEquals(body.hcursor.downField("error").as[String].toOption, Some("NebLink not enabled")))
       }
   }
 
@@ -350,8 +367,11 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
               IO {
                 assertEquals(resp.status, wantStatus, s"$gid 的状态码必须逐字透传（禁折成 502/500）")
               } *> resp.as[Json].map { body =>
-                assertEquals(body.hcursor.downField("error").as[String].toOption, Some(wantCode),
-                  s"$gid 的语义码必须原样到达（禁折成空成功/泛化错误）")
+                assertEquals(
+                  body.hcursor.downField("error").as[String].toOption,
+                  Some(wantCode),
+                  s"$gid 的语义码必须原样到达（禁折成空成功/泛化错误）"
+                )
               }
             }
         }
@@ -365,9 +385,9 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
           authed(rawBodyReq(Method.POST, "/groups/dead-group/messages", """{"body":"hi"}"""))
         ).flatMap { resp =>
           assertEquals(resp.status, Status.Forbidden)
-          resp.as[Json].map(body =>
-            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("group_disbanded"))
-          )
+          resp
+            .as[Json]
+            .map(body => assertEquals(body.hcursor.downField("error").as[String].toOption, Some("group_disbanded")))
         }
     }
   }
@@ -383,8 +403,11 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
         ).flatMap { resp =>
           IO {
             assertEquals(resp.status, Status.Created)
-            assertEquals(seenBodies.toArray(Array.empty[String]).toList, List(raw),
-              "上游收到的字节必须与客户端发出的逐字相同（解析后重编码会重排键/丢未知键）")
+            assertEquals(
+              seenBodies.toArray(Array.empty[String]).toList,
+              List(raw),
+              "上游收到的字节必须与客户端发出的逐字相同（解析后重编码会重排键/丢未知键）"
+            )
           }
         }
     }
@@ -397,9 +420,7 @@ class GroupApiRoutesSpec extends CatsEffectSuite:
           authed(rawBodyReq(Method.POST, "/groups", """{"title":"团队"}"""))
         ).flatMap { resp =>
           assertEquals(resp.status, Status.Created, "上游 201 必须保持 201")
-          resp.as[Json].map(body =>
-            assertEquals(body.hcursor.downField("groupId").as[String].toOption, Some("grp-1"))
-          )
+          resp.as[Json].map(body => assertEquals(body.hcursor.downField("groupId").as[String].toOption, Some("grp-1")))
         }
     }
   }

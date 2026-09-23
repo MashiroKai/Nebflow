@@ -53,8 +53,7 @@ object GzipMiddleware:
     else
       resp.status match
         case Status.Ok if hasCompressibleContentType(resp) =>
-          if acceptsGzip(req) && resp.headers.get[`Content-Encoding`].isEmpty then
-            compress(resp)
+          if acceptsGzip(req) && resp.headers.get[`Content-Encoding`].isEmpty then compress(resp)
           else
             // Compressible resource but the client does not accept gzip (or
             // the origin already encoded the body): still advertise Vary so

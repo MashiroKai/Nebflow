@@ -86,8 +86,10 @@ object ChainLedger:
   // ── 冷档轮类型（留痕形态判据）────────────────────────
   /** 轴(c)：载荷搬迁（热行保留身份，`members` 清空 + `compacted=true`）。 */
   val RoundCompact: String = "compact"
+
   /** 轴(a)+(b)：整行退役（热行移除，冷档保留全行）。 */
   val RoundRetire: String = "retire"
+
   /** 轴(a) 禁悬空臂：链已离场 ⇒ 整行下沉（热行移除，冷档保留全行）。 */
   val RoundDissolve: String = "dissolve"
 
@@ -97,8 +99,10 @@ object ChainLedger:
   // ── 轴(c) 双阈值（**在册可查**：常量 + 随每轮冷档留痕）──────────────────
   /** 条数阈值：热台账行数（`entries + aliases`）上限。 */
   val MaxHotRows: Int = 4096
+
   /** 字节阈值：热台账 JSON（= 落盘字节）上限。 */
   val MaxHotBytes: Int = 1024 * 1024
+
   /** 单轮搬迁行数上限（有界轮：一轮不搬空全库 ⇒ 可观测、可中断复跑）。 */
   val CompactionBatchRows: Int = 512
 
@@ -113,38 +117,42 @@ object ChainLedger:
 
   // ── 模型 ─────────────────────────────────────────────
 
-  /** **台账条目** = 一条**已出生**链。
-    *
-    * @param chainId     出生即定的链号（本类是其唯一裁决点；永不按分量重算）
-    * @param anchor      出生时刻分量内 `(createdAt, id)` 最小成员 —— **身份锚**：载荷已
-    *                    压缩时命中判据退化为「分量是否含锚点」（见 [[observe]]）
-    * @param bornAt      出生时刻（生还者判定第一键：先出生者保号）
-    * @param members     最近一次观察到的成员集（`(createdAt, id)` 升序；压缩后为 `Nil`）
-    * @param memberCount 成员数（**压缩不改读数**：载荷搬迁不动它）
-    * @param status      [[StatusActive]] | [[StatusArchived]]（轴 a，由归档写点翻）
-    * @param archivedAt  归档时刻（轴 a 绑定点；也是压缩排序的冷度键）
-    * @param refCount    活引用数（轴 b；覆盖式复算，持久化）
-    * @param compacted   载荷已下沉（`members` 在冷档）——身份/状态/计数**不随压缩变化** */
+  /**
+   * **台账条目** = 一条**已出生**链。
+   *
+   * @param chainId     出生即定的链号（本类是其唯一裁决点；永不按分量重算）
+   * @param anchor      出生时刻分量内 `(createdAt, id)` 最小成员 —— **身份锚**：载荷已
+   *                    压缩时命中判据退化为「分量是否含锚点」（见 [[observe]]）
+   * @param bornAt      出生时刻（生还者判定第一键：先出生者保号）
+   * @param members     最近一次观察到的成员集（`(createdAt, id)` 升序；压缩后为 `Nil`）
+   * @param memberCount 成员数（**压缩不改读数**：载荷搬迁不动它）
+   * @param status      [[StatusActive]] | [[StatusArchived]]（轴 a，由归档写点翻）
+   * @param archivedAt  归档时刻（轴 a 绑定点；也是压缩排序的冷度键）
+   * @param refCount    活引用数（轴 b；覆盖式复算，持久化）
+   * @param compacted   载荷已下沉（`members` 在冷档）——身份/状态/计数**不随压缩变化**
+   */
   final case class Entry(
-      chainId: String,
-      anchor: String,
-      bornAt: Long,
-      members: List[String] = Nil,
-      memberCount: Int = 0,
-      status: String = StatusActive,
-      archivedAt: Option[Long] = None,
-      refCount: Int = 0,
-      compacted: Boolean = false
+    chainId: String,
+    anchor: String,
+    bornAt: Long,
+    members: List[String] = Nil,
+    memberCount: Int = 0,
+    status: String = StatusActive,
+    archivedAt: Option[Long] = None,
+    refCount: Int = 0,
+    compacted: Boolean = false
   )
 
   object Entry:
     given Configuration = Configuration.default.withDefaults
     given Codec[Entry] = ConfiguredCodec.derived
 
-  /** **别名行** = 改号遗留的旧链号 → 现链号（合并被吸收者 / 显式改号的历史名）。
-    *
-    * 🔴 旧号在本行存在期间（热面）或冷档存在期间（`ChainLedgerStore.resolveDeep`）
-    * **永久可达** —— 供批三 Mail 校验与一切引用面解析，禁静默丢弃。 */
+  /**
+   * **别名行** = 改号遗留的旧链号 → 现链号（合并被吸收者 / 显式改号的历史名）。
+   *
+   * 🔴 旧号在本行存在期间（热面）或冷档存在期间（`ChainLedgerStore.resolveDeep`）
+   * **永久可达** —— 供批三 Mail 校验与一切引用面解析，禁静默丢弃。
+   */
   final case class AliasRow(alias: String, canonical: String, createdAt: Long, refCount: Int = 0)
 
   object AliasRow:
@@ -158,35 +166,37 @@ object ChainLedger:
     given Configuration = Configuration.default.withDefaults
     given Codec[Totals] = ConfiguredCodec.derived
 
-  /** **压缩轮清单**（热台账里的一行账）：一轮恰一条，留痕可复算。
-    *
-    * @param round        轮号（1 起 = `rounds.size + 1`；崩在「冷档已写、热账未写」之间 ⇒
-    *                     下一拍以同轮号重放（候选集确定 ⇒ 内容相同 ⇒ 幂等覆写））
-    * @param kind         [[RoundCompact]] | [[RoundRetire]] | [[RoundDissolve]]
-    * @param file         冷档文件名（`round-<n>.json`）
-    * @param movedEntries 本轮搬走的条目数
-    * @param movedAliases 本轮搬走的别名行数
-    * @param movedMembers 本轮搬走的成员 id 数（载荷量）
-    * @param hotBefore    本轮前的热读数
-    * @param hotAfter     本轮后的热读数（守恒判据见 [[roundConservation]]）
-    * @param digest       冷档文件字节 sha-256（留痕 +「冷档未被改写」核对面）
-    * @param tick         **拍标识** = 产生本轮的 reconcile 开工时的轮号（= 该拍**首轮**的轮号；
-    *                     同一拍内各轮同值）。由 append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值
-    *                     （任一拍了轮 ⇒ 轮号水位前进 ⇒ 下一拍该值必增），故可作「同拍」判据。
-    *                     用途 = [[verifyLedger]] ② 查的适用范围（同拍相邻轮才链式对账）。
-    *                     0 = 本轮改造前写入的旧账（无拍标识 ⇒ 该查不可判，跳过）。 */
+  /**
+   * **压缩轮清单**（热台账里的一行账）：一轮恰一条，留痕可复算。
+   *
+   * @param round        轮号（1 起 = `rounds.size + 1`；崩在「冷档已写、热账未写」之间 ⇒
+   *                     下一拍以同轮号重放（候选集确定 ⇒ 内容相同 ⇒ 幂等覆写））
+   * @param kind         [[RoundCompact]] | [[RoundRetire]] | [[RoundDissolve]]
+   * @param file         冷档文件名（`round-<n>.json`）
+   * @param movedEntries 本轮搬走的条目数
+   * @param movedAliases 本轮搬走的别名行数
+   * @param movedMembers 本轮搬走的成员 id 数（载荷量）
+   * @param hotBefore    本轮前的热读数
+   * @param hotAfter     本轮后的热读数（守恒判据见 [[roundConservation]]）
+   * @param digest       冷档文件字节 sha-256（留痕 +「冷档未被改写」核对面）
+   * @param tick         **拍标识** = 产生本轮的 reconcile 开工时的轮号（= 该拍**首轮**的轮号；
+   *                     同一拍内各轮同值）。由 append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值
+   *                     （任一拍了轮 ⇒ 轮号水位前进 ⇒ 下一拍该值必增），故可作「同拍」判据。
+   *                     用途 = [[verifyLedger]] ② 查的适用范围（同拍相邻轮才链式对账）。
+   *                     0 = 本轮改造前写入的旧账（无拍标识 ⇒ 该查不可判，跳过）。
+   */
   final case class RoundManifest(
-      round: Int,
-      at: Long,
-      kind: String,
-      file: String,
-      movedEntries: Int,
-      movedAliases: Int,
-      movedMembers: Int,
-      hotBefore: Totals,
-      hotAfter: Totals,
-      digest: String,
-      tick: Long = 0L
+    round: Int,
+    at: Long,
+    kind: String,
+    file: String,
+    movedEntries: Int,
+    movedAliases: Int,
+    movedMembers: Int,
+    hotBefore: Totals,
+    hotAfter: Totals,
+    digest: String,
+    tick: Long = 0L
   )
 
   object RoundManifest:
@@ -195,23 +205,25 @@ object ChainLedger:
 
   /** 台账热态（落盘 `<workspace>/.nebflow/chain-ledger.json`；原子写）。 */
   final case class State(
-      v: Int = Version,
-      project: String = "",
-      updatedAt: Long = 0L,
-      entries: Map[String, Entry] = Map.empty,
-      aliases: Map[String, AliasRow] = Map.empty,
-      /** 外部引用面已计的增量（`noteReference` 写入；面登记见 [[ReferenceFaces]]） */
-      externalRefs: Map[String, Int] = Map.empty,
-      /** 压缩/退役/离场轮清单（append-only，按轮号升序） */
-      rounds: List[RoundManifest] = Nil
+    v: Int = Version,
+    project: String = "",
+    updatedAt: Long = 0L,
+    entries: Map[String, Entry] = Map.empty,
+    aliases: Map[String, AliasRow] = Map.empty,
+    /** 外部引用面已计的增量（`noteReference` 写入；面登记见 [[ReferenceFaces]]） */
+    externalRefs: Map[String, Int] = Map.empty,
+    /** 压缩/退役/离场轮清单（append-only，按轮号升序） */
+    rounds: List[RoundManifest] = Nil
   )
 
   object State:
     given Configuration = Configuration.default.withDefaults
     given Codec[State] = ConfiguredCodec.derived
 
-  /** **归属变更留痕**（字段与批一 `ChainMembershipChangedType` 逐字同构：节点 id + 旧号 +
-    * 新号 + 原因；`reason` 恒 [[ReasonReId]]，批界见类头注）。 */
+  /**
+   * **归属变更留痕**（字段与批一 `ChainMembershipChangedType` 逐字同构：节点 id + 旧号 +
+   * 新号 + 原因；`reason` 恒 [[ReasonReId]]，批界见类头注）。
+   */
   final case class Change(nodeId: String, from: Option[String], to: Option[String], reason: String)
 
   object Change:
@@ -220,39 +232,45 @@ object ChainLedger:
 
   /** 一次 reconcile 的结构化产出（调用方据此发射事件 / 记日志；**派生只发生一次**）。 */
   final case class Observation(
-      state: State,
-      changes: List[Change] = Nil,
-      born: List[String] = Nil,
-      absorbed: List[String] = Nil,
-      /** **本拍裁决表**：派生原型链号（`ChainInfo.id`）→ 该分量本拍的**稳定链号**
-        * （= 出生号 / 承继号 / 生还者号）。调用方据此把「分量成员」折算到稳定链号上
-        * （轴 b 的 `live-member` 面**不依赖**行内载荷 —— 载荷可能已压缩下沉，读数口径
-        * 因此与 [[Entry.compacted]] 无关）。 */
-      assigned: Map[String, String] = Map.empty,
-      /** 本拍离场（链已不在图上）的条目**全行** —— 只归档不删除（下沉冷档） */
-      dissolved: List[Entry] = Nil,
-      /** 本拍失去 canonical（所属链已离场且无吸收目标）的别名行**全行** —— 同款下沉 */
-      orphanAliases: List[AliasRow] = Nil,
-      /** 轴(a)×(b)：本拍退役行数（条目 + 别名行；0 = 无行满足「已归档 ∧ 零引用」） */
-      retired: Int = 0,
-      /** 轴(c)：本拍热读数是否越过双阈值（true 且 `compaction` 为空 = 超限但无行可搬，
-      * 已落 WARN 信号 —— 见 `ChainLedgerStore.reconcile`，禁空转成风暴） */
-      capExceeded: Boolean = false,
-      /** 轴(c)：本拍压缩轮清单（有 ⇒ 冷档已落 + 热账 `rounds` 已追加） */
-      compaction: Option[RoundManifest] = None
+    state: State,
+    changes: List[Change] = Nil,
+    born: List[String] = Nil,
+    absorbed: List[String] = Nil,
+    /**
+     * **本拍裁决表**：派生原型链号（`ChainInfo.id`）→ 该分量本拍的**稳定链号**
+     * （= 出生号 / 承继号 / 生还者号）。调用方据此把「分量成员」折算到稳定链号上
+     * （轴 b 的 `live-member` 面**不依赖**行内载荷 —— 载荷可能已压缩下沉，读数口径
+     * 因此与 [[Entry.compacted]] 无关）。
+     */
+    assigned: Map[String, String] = Map.empty,
+    /** 本拍离场（链已不在图上）的条目**全行** —— 只归档不删除（下沉冷档） */
+    dissolved: List[Entry] = Nil,
+    /** 本拍失去 canonical（所属链已离场且无吸收目标）的别名行**全行** —— 同款下沉 */
+    orphanAliases: List[AliasRow] = Nil,
+    /** 轴(a)×(b)：本拍退役行数（条目 + 别名行；0 = 无行满足「已归档 ∧ 零引用」） */
+    retired: Int = 0,
+    /**
+     * 轴(c)：本拍热读数是否越过双阈值（true 且 `compaction` 为空 = 超限但无行可搬，
+     * 已落 WARN 信号 —— 见 `ChainLedgerStore.reconcile`，禁空转成风暴）
+     */
+    capExceeded: Boolean = false,
+    /** 轴(c)：本拍压缩轮清单（有 ⇒ 冷档已落 + 热账 `rounds` 已追加） */
+    compaction: Option[RoundManifest] = None
   )
 
-  /** **冷档文件**（`chain-ledger-archive/round-<n>.json`）：搬迁行的**逐字载荷**
-    * （只归档不删除的落点）+ 该轮自证读数（阈值 / 前后读数）⇒ 离线可复算。 */
+  /**
+   * **冷档文件**（`chain-ledger-archive/round-<n>.json`）：搬迁行的**逐字载荷**
+   * （只归档不删除的落点）+ 该轮自证读数（阈值 / 前后读数）⇒ 离线可复算。
+   */
   final case class RoundFile(
-      round: Int,
-      at: Long,
-      kind: String,
-      thresholds: Thresholds,
-      hotBefore: Totals,
-      hotAfter: Totals,
-      entries: List[Entry] = Nil,
-      aliases: List[AliasRow] = Nil
+    round: Int,
+    at: Long,
+    kind: String,
+    thresholds: Thresholds,
+    hotBefore: Totals,
+    hotAfter: Totals,
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil
   )
 
   object RoundFile:
@@ -261,15 +279,15 @@ object ChainLedger:
 
   /** 引用面登记（[[ReferenceFaces]] 的元素形态）。 */
   final case class ReferenceFace(
-      id: String,
-      label: String,
-      /** 本批是否已接线（false ⇒ 计数钩子归 `owner` 批次） */
-      wired: Boolean,
-      owner: String,
-      /** 计引用写点（`path:line` 锚点，可机械核对） */
-      writePoint: String,
-      incWhen: String,
-      decWhen: String
+    id: String,
+    label: String,
+    /** 本批是否已接线（false ⇒ 计数钩子归 `owner` 批次） */
+    wired: Boolean,
+    owner: String,
+    /** 计引用写点（`path:line` 锚点，可机械核对） */
+    writePoint: String,
+    incWhen: String,
+    decWhen: String
   )
 
   /**
@@ -318,7 +336,8 @@ object ChainLedger:
       label = "归档批以该链号命名（批文件 + 批次索引）",
       wired = true,
       owner = "batch2",
-      writePoint = "src/main/scala/nebflow/core/project/FlowMapStore.scala (sweepCompletedChainsDetailed → persistBatchFiles)",
+      writePoint =
+        "src/main/scala/nebflow/core/project/FlowMapStore.scala (sweepCompletedChainsDetailed → persistBatchFiles)",
       incWhen = "链出库注册归档批（批 id = 链号，批文件名 = <chainId>.json）",
       decWhen = "批被拉回（restoreChainsFromArchiveDetailed 清索引）或批文件删除（persistBatchFiles 成员全移除臂）"
     ),
@@ -336,7 +355,8 @@ object ChainLedger:
       label = "Mail 正文注入 [mail chainId: <id>]（收件人可回引）",
       wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :626 withChainAnnotation）",
+      writePoint =
+        "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :626 withChainAnnotation）",
       incWhen = "Mail 携带 chainId 且投递成功（批三+ 接线：只算正文已注入注解的两腿 —— node: / Nebula）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     ),
@@ -345,7 +365,8 @@ object ChainLedger:
       label = "板卡/任务书引用链号（任务书正文与板卡条目）",
       wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/tools/TaskBoardTool.scala:368（call 写成功臂 → :229 countBoardUsage；正文 = title/note/text/links）",
+      writePoint =
+        "src/main/scala/nebflow/core/tools/TaskBoardTool.scala:368（call 写成功臂 → :229 countBoardUsage；正文 = title/note/text/links）",
       incWhen = "板卡写动作（create/update/close/log）成功后，提交正文引用该链号（批三+ 接线）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     ),
@@ -354,19 +375,24 @@ object ChainLedger:
       label = "节点报告 / 结果正文引用链号",
       wired = true,
       owner = "batch3+",
-      writePoint = "src/main/scala/nebflow/core/tools/NodeReportTool.scala:277（call 申报登记成功后 → :293 countReportUsage；正文 = detail + suggestion）",
+      writePoint =
+        "src/main/scala/nebflow/core/tools/NodeReportTool.scala:277（call 申报登记成功后 → :293 countReportUsage；正文 = detail + suggestion）",
       incWhen = "node_report 申报登记成功后，detail/suggestion 正文引用该链号（批三+ 接线）",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     )
   )
 
-  /** 已接线引用面 id 集（计数判据的机械白名单；改本表 = 改计数口径，须同步测试）。
-    * 批三+ 接线落地后 = **七面全量**（含外部三面）。 */
+  /**
+   * 已接线引用面 id 集（计数判据的机械白名单；改本表 = 改计数口径，须同步测试）。
+   * 批三+ 接线落地后 = **七面全量**（含外部三面）。
+   */
   val WiredFaceIds: List[String] = ReferenceFaces.filter(_.wired).map(_.id)
 
-  /** 未接线引用面 id 集（已知缺口清单）。批三+ 外部三面接线落地后本表 = **空**；日后若新增
-    * 面而不接线，本表随之增长（承重断言 = `ChainLedgerSpec` T7：改 `wired` 标记而不动该断言
-    * ⇒ 必红 —— 面集合的收放**只能**经本表与 [[WiredFaceIds]] 反映，禁静默改写）。 */
+  /**
+   * 未接线引用面 id 集（已知缺口清单）。批三+ 外部三面接线落地后本表 = **空**；日后若新增
+   * 面而不接线，本表随之增长（承重断言 = `ChainLedgerSpec` T7：改 `wired` 标记而不动该断言
+   * ⇒ 必红 —— 面集合的收放**只能**经本表与 [[WiredFaceIds]] 反映，禁静默改写）。
+   */
   val PendingFaceIds: List[String] = ReferenceFaces.filterNot(_.wired).map(_.id)
 
   // ── 派生视图与解析 ───────────────────────────────────
@@ -378,8 +404,10 @@ object ChainLedger:
   def viewOf(entries: Iterable[Entry]): Map[String, String] =
     entries.foldLeft(Map.empty[String, String])((acc, e) => acc ++ entryView(e))
 
-  /** **链号解析单点（热面）**：现链号 → 自身；旧链号（别名）→ 现链号（逐跳，带环守卫）。
-    * 冷档内（已下沉）的行由 `ChainLedgerStore.resolveDeep` 兜底 ⇒「旧号永久可达」分两级。 */
+  /**
+   * **链号解析单点（热面）**：现链号 → 自身；旧链号（别名）→ 现链号（逐跳，带环守卫）。
+   * 冷档内（已下沉）的行由 `ChainLedgerStore.resolveDeep` 兜底 ⇒「旧号永久可达」分两级。
+   */
   def resolve(st: State, id: String): Option[String] =
     var cur = id
     var hops = 0
@@ -397,12 +425,15 @@ object ChainLedger:
           case _ =>
             done = true
     result
+  end resolve
 
   // ── 轴：出生 / 承继 / 合并 / 拆分（链号稳定化的唯一裁决点）──────────────
 
-  /** **命中面判据单点**：条目在「分量 ↔ 条目」比对里暴露的键 —— 载荷已压缩（或载荷为
-    * 空）⇒ 只剩**锚点**（身份恒在，见 [[Entry.compacted]]）；否则 = 成员集。命中比对、
-    * 成员视图、别名目标求值三处**共用本函数**（禁各写一份 `if compacted ...` 分支）。 */
+  /**
+   * **命中面判据单点**：条目在「分量 ↔ 条目」比对里暴露的键 —— 载荷已压缩（或载荷为
+   * 空）⇒ 只剩**锚点**（身份恒在，见 [[Entry.compacted]]）；否则 = 成员集。命中比对、
+   * 成员视图、别名目标求值三处**共用本函数**（禁各写一份 `if compacted ...` 分支）。
+   */
   private def hitKeys(e: Entry): List[String] =
     if e.compacted || e.members.isEmpty then List(e.anchor) else e.members
 
@@ -434,7 +465,7 @@ object ChainLedger:
       (if hs.exists(e => c.memberIds.contains(e.anchor)) then 0 else 1, c.id)
     }
     val assigned = scala.collection.mutable.LinkedHashMap.empty[String, String] // compId -> stable id
-    val used = scala.collection.mutable.HashSet.empty[String]                   // 已被占用的稳定链号
+    val used = scala.collection.mutable.HashSet.empty[String] // 已被占用的稳定链号
     def free(id: String): Boolean = !used.contains(id)
     def freshId(proto: String): String =
       if free(proto) then proto
@@ -468,16 +499,20 @@ object ChainLedger:
         case Some(prev) =>
           // 承继（载荷在热面）：链号/锚点/出生时刻/状态/归档时刻/计数**一律不动**，只
           // 刷新成员读数（成员集可生长/收缩；链号不动 = 「永不重归」的可执行判据）。
-          nextEntries.update(cid,
-            prev.copy(members = c.memberIds, memberCount = c.memberIds.size))
+          nextEntries.update(cid, prev.copy(members = c.memberIds, memberCount = c.memberIds.size))
         case None =>
           born += cid
-          nextEntries.update(cid, Entry(
-            chainId = cid,
-            anchor = c.memberIds.headOption.getOrElse(cid),
-            bornAt = now,
-            members = c.memberIds,
-            memberCount = c.memberIds.size))
+          nextEntries.update(
+            cid,
+            Entry(
+              chainId = cid,
+              anchor = c.memberIds.headOption.getOrElse(cid),
+              bornAt = now,
+              members = c.memberIds,
+              memberCount = c.memberIds.size
+            )
+          )
+      end match
     }
     val keptEntries = nextEntries.toMap
     // ④ 别名：被吸收 / 已离场的旧号 → 生还者（显式改号；旧号永久可达）
@@ -491,18 +526,18 @@ object ChainLedger:
     // 既有别名行：canonical 尚在 ⇒ 保行（吸收则重指向）；canonical 已离场且无吸收目标
     // ⇒ 本行失去目标，**下沉冷档**（既不留悬空行，也不静默删除）
     val repointed: (Map[String, AliasRow], List[AliasRow]) =
-      st.aliases.foldLeft((Map.empty[String, AliasRow], List.empty[AliasRow])) {
-        case ((keep, orphan), (k, r)) =>
-          val t =
-            if keptEntries.contains(r.canonical) then r.canonical
-            else absorbedTargets.getOrElse(r.canonical, "")
-          if t.nonEmpty then (keep.updated(k, r.copy(canonical = t)), orphan)
-          else (keep, r :: orphan)
+      st.aliases.foldLeft((Map.empty[String, AliasRow], List.empty[AliasRow])) { case ((keep, orphan), (k, r)) =>
+        val t =
+          if keptEntries.contains(r.canonical) then r.canonical
+          else absorbedTargets.getOrElse(r.canonical, "")
+        if t.nonEmpty then (keep.updated(k, r.copy(canonical = t)), orphan)
+        else (keep, r :: orphan)
       }
     val (keptAliases, orphanAliases) = repointed
     val aliasesAfter: Map[String, AliasRow] =
       keptAliases ++ absorbedTargets.map { case (old, target) =>
-        old -> st.aliases.get(old)
+        old -> st.aliases
+          .get(old)
           .map(_.copy(canonical = target))
           .getOrElse(AliasRow(alias = old, canonical = target, createdAt = now))
       }
@@ -512,7 +547,7 @@ object ChainLedger:
     val changes = (beforeView.keySet ++ afterView.keySet).toList.sorted.flatMap { n =>
       (beforeView.get(n), afterView.get(n)) match
         case (Some(a), Some(b)) if a != b => Some(Change(n, Some(a), Some(b), ReasonReId))
-        case _                            => None
+        case _ => None
     }
     Observation(
       state = st.copy(entries = keptEntries, aliases = aliasesAfter, updatedAt = now),
@@ -523,26 +558,29 @@ object ChainLedger:
       dissolved = superseded.filterNot(absorbedTargets.contains).flatMap(st.entries.get),
       orphanAliases = orphanAliases.sortBy(_.alias)
     )
+  end observe
 
   // ── 轴(b)：引用计数复算（机械、覆盖式；禁增量自减）──────────────────────
 
   /** 引用面求值的机械输入（全部来自引擎自管状态；零人工判断）。 */
   final case class FaceCounts(
-      /** 链号 → 该链在**活动区**的成员 id（face `live-member`） */
-      activeMembers: Map[String, Set[String]] = Map.empty,
-      /** 链号 → 声明该链号的节点 id（face `declaration`） */
-      declarations: Map[String, Set[String]] = Map.empty,
-      /** 归档批 id 全集（face `archive-batch`） */
-      batchIds: Set[String] = Set.empty
+    /** 链号 → 该链在**活动区**的成员 id（face `live-member`） */
+    activeMembers: Map[String, Set[String]] = Map.empty,
+    /** 链号 → 声明该链号的节点 id（face `declaration`） */
+    declarations: Map[String, Set[String]] = Map.empty,
+    /** 归档批 id 全集（face `archive-batch`） */
+    batchIds: Set[String] = Set.empty
   )
 
   object FaceCounts:
     given Configuration = Configuration.default.withDefaults
     given Codec[FaceCounts] = ConfiguredCodec.derived
 
-  /** 覆盖式复算全部行计数（轴 b）。**纯函数**：同输入恒同输出 ⇒ 可复算、可测试、崩溃后
-    * 下一拍自然纠正（不存在丢更新）。外部引用面（`noteReference` 写入的
-    * [[State.externalRefs]]）按账并入。 */
+  /**
+   * 覆盖式复算全部行计数（轴 b）。**纯函数**：同输入恒同输出 ⇒ 可复算、可测试、崩溃后
+   * 下一拍自然纠正（不存在丢更新）。外部引用面（`noteReference` 写入的
+   * [[State.externalRefs]]）按账并入。
+   */
   def recomputeRefCounts(st: State, in: FaceCounts): State =
     val entries = st.entries.map { case (k, e) =>
       val c = in.activeMembers.getOrElse(k, Set.empty).size +
@@ -559,25 +597,32 @@ object ChainLedger:
       k -> a.copy(refCount = self + (if st.entries.contains(a.canonical) then 1 else 0))
     }
     st.copy(entries = entries, aliases = aliases)
+  end recomputeRefCounts
 
-  /** **正文引用面的已登记链号集（热面；纯函数）**：条目 id ∪ 别名 id（旧号在别名表期间照旧
-    * 可被正文引用 ⇒ 必须在内）。**只读、零回填** —— 未登记号（含冷档已退役历史行）不在集合内
-    * ⇒ 正文里出现也不计（🔴 禁为其伪造别名/条目，见批报告「零回填」判据）。 */
+  /**
+   * **正文引用面的已登记链号集（热面；纯函数）**：条目 id ∪ 别名 id（旧号在别名表期间照旧
+   * 可被正文引用 ⇒ 必须在内）。**只读、零回填** —— 未登记号（含冷档已退役历史行）不在集合内
+   * ⇒ 正文里出现也不计（🔴 禁为其伪造别名/条目，见批报告「零回填」判据）。
+   */
   def knownIds(st: State): Set[String] = st.entries.keySet ++ st.aliases.keySet
 
-  /** 链号字符集（正文命中的**边界判据**用）：与派生链号值域同源 —— 字母/数字 + `-`/`_`/`.`
-    * （改号后缀 `<proto>.<k>` 落在此集内）。 */
+  /**
+   * 链号字符集（正文命中的**边界判据**用）：与派生链号值域同源 —— 字母/数字 + `-`/`_`/`.`
+   * （改号后缀 `<proto>.<k>` 落在此集内）。
+   */
   private def isIdChar(c: Char): Boolean =
     c.isLetterOrDigit || c == '-' || c == '_' || c == '.'
 
-  /** **正文引用面判据（纯函数，`board-usage` / `report-usage` 共用单点）**：一段自由文本里
-    * **逐字且按链号边界**出现的已登记链号（升序去重；空文本 ⇒ 空表）。
-    *
-    * 边界判据（禁靠巧合）：命中处的前后字符**不得**是 [[isIdChar]] —— 否则 `chain-u-1`
-    * 会被 `chain-u-10` 的正文误命中（前缀族链号在同项目里并存），反之亦然。
-    * 确定性：返回 `sorted` ⇒ 同输入恒同输出（可复算、可断言）。
-    *
-    * 🔴 本函数**只读文本与已知集**，不解析别名、不建条目、不落盘（零回填面）。 */
+  /**
+   * **正文引用面判据（纯函数，`board-usage` / `report-usage` 共用单点）**：一段自由文本里
+   * **逐字且按链号边界**出现的已登记链号（升序去重；空文本 ⇒ 空表）。
+   *
+   * 边界判据（禁靠巧合）：命中处的前后字符**不得**是 [[isIdChar]] —— 否则 `chain-u-1`
+   * 会被 `chain-u-10` 的正文误命中（前缀族链号在同项目里并存），反之亦然。
+   * 确定性：返回 `sorted` ⇒ 同输入恒同输出（可复算、可断言）。
+   *
+   * 🔴 本函数**只读文本与已知集**，不解析别名、不建条目、不落盘（零回填面）。
+   */
   def referencedIds(text: String, registeredIds: Iterable[String]): List[String] =
     if text.isEmpty then Nil
     else
@@ -595,9 +640,9 @@ object ChainLedger:
   // ── 轴(a)+(b)：退役计划 ──────────────────────────────
 
   final case class RetirePlan(
-      state: State,
-      entries: List[Entry] = Nil,
-      aliases: List[AliasRow] = Nil
+    state: State,
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil
   ):
     def isEmpty: Boolean = entries.isEmpty && aliases.isEmpty
 
@@ -638,18 +683,20 @@ object ChainLedger:
 
   def hotRows(st: State): Int = st.entries.size + st.aliases.size
 
-  /** **双阈值触发判据**（条数 ∨ 字节；阈值在册见 [[MaxHotRows]] / [[MaxHotBytes]]）。 */
+  /**
+   * **双阈值触发判据**（条数 ∨ 字节；阈值在册见 [[MaxHotRows]] / [[MaxHotBytes]]）。
+   */
   def needsCompaction(st: State, bytes: Long): Boolean =
     hotRows(st) > MaxHotRows || bytes > MaxHotBytes
 
   final case class CompactPlan(
-      state: State,
-      /** 载荷搬迁的条目（热行保留身份，`members` 清空 + `compacted=true`） */
-      compactedEntries: List[Entry] = Nil,
-      /** 整行下沉的别名行（热面移除；冷档保留） */
-      retiredAliases: List[AliasRow] = Nil,
-      hotBefore: Totals = Totals(),
-      hotAfter: Totals = Totals()
+    state: State,
+    /** 载荷搬迁的条目（热行保留身份，`members` 清空 + `compacted=true`） */
+    compactedEntries: List[Entry] = Nil,
+    /** 整行下沉的别名行（热面移除；冷档保留） */
+    retiredAliases: List[AliasRow] = Nil,
+    hotBefore: Totals = Totals(),
+    hotAfter: Totals = Totals()
   ):
     def isEmpty: Boolean = compactedEntries.isEmpty && retiredAliases.isEmpty
 
@@ -669,12 +716,14 @@ object ChainLedger:
    */
   def planCompaction(st: State, bytes: Long): CompactPlan =
     val ordered = st.entries.values.toList.sortBy(e =>
-      (if e.status == StatusArchived then 0 else 1, e.archivedAt.getOrElse(e.bornAt), e.bornAt, e.chainId))
+      (if e.status == StatusArchived then 0 else 1, e.archivedAt.getOrElse(e.bornAt), e.bornAt, e.chainId)
+    )
     val movableEntries = ordered.filterNot(_.compacted).take(CompactionBatchRows)
     val movableIds = movableEntries.map(_.chainId).toSet
     val movableAliases = st.aliases.values
       .filter(a => movableIds.contains(a.canonical))
-      .toList.sortBy(_.alias)
+      .toList
+      .sortBy(_.alias)
       .take(math.max(0, CompactionBatchRows - movableEntries.size))
     val nextEntries = st.entries ++ movableEntries.map(e => e.chainId -> e.copy(members = Nil, compacted = true))
     val nextAliases = st.aliases -- movableAliases.map(_.alias)
@@ -685,14 +734,17 @@ object ChainLedger:
       hotBefore = totals(st),
       hotAfter = totals(st.copy(entries = nextEntries, aliases = nextAliases))
     )
+  end planCompaction
 
   // ── 可复算校验（崩溃/重启后自洽）──────────────────────
 
-  /** 轮守恒：`hotAfter` 必须由 `hotBefore` 与本轮搬迁量**机械推出**（禁事后改写读数）。
-    *
-    * 两支口径：[[RoundCompact]] 只搬**载荷**（条目行留在热面 ⇒ 条目读数不减；
-    * 但与载荷同走的别名行整行移出 ⇒ 别名/引用读数照减）；[[RoundRetire]] /
-    * [[RoundDissolve]] 整行移出 ⇒ 条目与别名读数同减。 */
+  /**
+   * 轮守恒：`hotAfter` 必须由 `hotBefore` 与本轮搬迁量**机械推出**（禁事后改写读数）。
+   *
+   * 两支口径：[[RoundCompact]] 只搬**载荷**（条目行留在热面 ⇒ 条目读数不减；
+   * 但与载荷同走的别名行整行移出 ⇒ 别名/引用读数照减）；[[RoundRetire]] /
+   * [[RoundDissolve]] 整行移出 ⇒ 条目与别名读数同减。
+   */
   def roundConservation(f: RoundFile, m: RoundManifest): Either[String, Unit] =
     val droppedEntries = if f.kind == RoundCompact then 0 else f.entries.size
     // 载荷搬迁（compact）**不动条目读数**（身份/成员数/引用数留热）；整行移出（retire/dissolve）
@@ -705,9 +757,9 @@ object ChainLedger:
       entries = f.hotBefore.entries - droppedEntries,
       aliases = f.hotBefore.aliases - f.aliases.size,
       members = f.hotBefore.members - droppedMembers,
-      refCount = f.hotBefore.refCount - droppedRef)
-    if m.kind != f.kind then
-      Left(s"round ${m.round}: kind mismatch manifest=${m.kind} file=${f.kind}")
+      refCount = f.hotBefore.refCount - droppedRef
+    )
+    if m.kind != f.kind then Left(s"round ${m.round}: kind mismatch manifest=${m.kind} file=${f.kind}")
     else if m.hotBefore != f.hotBefore then
       Left(s"round ${m.round}: hotBefore mismatch manifest=${m.hotBefore} file=${f.hotBefore}")
     else if m.hotAfter != f.hotAfter then
@@ -715,12 +767,20 @@ object ChainLedger:
     else if f.hotAfter != expectAfter then
       Left(s"round ${m.round}: conservation broken expected=$expectAfter got=${f.hotAfter}")
     else if m.movedEntries != f.entries.size || m.movedAliases != f.aliases.size then
-      Left(s"round ${m.round}: moved-count mismatch manifest=${m.movedEntries}/${m.movedAliases} " +
-        s"file=${f.entries.size}/${f.aliases.size}")
+      Left(
+        s"round ${m.round}: moved-count mismatch manifest=${m.movedEntries}/${m.movedAliases} " +
+          s"file=${f.entries.size}/${f.aliases.size}"
+      )
     else if m.movedMembers != f.entries.map(_.members.size).sum then
-      Left(s"round ${m.round}: moved-members mismatch manifest=${m.movedMembers} " +
-        s"file=${f.entries.map(_.members.size).sum}")
+      Left(
+        s"round ${m.round}: moved-members mismatch manifest=${m.movedMembers} " +
+          s"file=${f.entries.map(_.members.size).sum}"
+      )
     else Right(())
+
+    end if
+
+  end roundConservation
 
   /** 压缩镜像一一对应：`compacted=true` 的热行在冷档须有载荷副本；冷档载荷须有热行。 */
   def mirrorCheck(st: State, coldPayloadIds: Set[String]): Either[String, Unit] =
@@ -739,13 +799,15 @@ object ChainLedger:
         case None =>
           st.aliases.values.find(a => !st.entries.contains(a.canonical)) match
             case Some(a) => Left(s"alias ${a.alias} points to unknown chain ${a.canonical} (dangling)")
-            case None    => Right(())
+            case None => Right(())
 
-  /** **全量台账校验**（启动期 / verify 位用）：结构 + 每轮守恒 + 轮间链式 + 压缩镜像。 */
+  /**
+   * **全量台账校验**（启动期 / verify 位用）：结构 + 每轮守恒 + 轮间链式 + 压缩镜像。
+   */
   def verifyLedger(
-      st: State,
-      files: List[RoundFile],
-      coldPayloadIds: Set[String]
+    st: State,
+    files: List[RoundFile],
+    coldPayloadIds: Set[String]
   ): Either[String, Unit] =
     val byRound = files.map(f => f.round -> f).toMap
     val ordered = st.rounds.sortBy(_.round)
@@ -753,7 +815,7 @@ object ChainLedger:
     ordered.foreach { m =>
       if err.isEmpty then
         byRound.get(m.round) match
-          case None    => err = Some(s"round ${m.round}: cold file missing (冷档是每轮的证据面)")
+          case None => err = Some(s"round ${m.round}: cold file missing (冷档是每轮的证据面)")
           case Some(f) => err = roundConservation(f, m).left.toOption
     }
     if err.isEmpty then
@@ -765,8 +827,14 @@ object ChainLedger:
       //    `tick == 0` = 改造前写入的旧账（无拍标识）⇒ 本项不可判，跳过（其余三查照旧）。
       ordered.sliding(2).foreach { w =>
         if err.isEmpty && w.size == 2 && w.head.tick > 0 && w.head.tick == w.last.tick &&
-          w.head.hotAfter != w.last.hotBefore then
-          err = Some(s"round chain broken (tick ${w.head.tick}): round ${w.head.round}.hotAfter=${w.head.hotAfter} " +
-            s"!= round ${w.last.round}.hotBefore=${w.last.hotBefore}")
+          w.head.hotAfter != w.last.hotBefore
+        then
+          err = Some(
+            s"round chain broken (tick ${w.head.tick}): round ${w.head.round}.hotAfter=${w.head.hotAfter} " +
+              s"!= round ${w.last.round}.hotBefore=${w.last.hotBefore}"
+          )
       }
+    end if
     err.toLeft(()).flatMap(_ => structureCheck(st)).flatMap(_ => mirrorCheck(st, coldPayloadIds))
+  end verifyLedger
+end ChainLedger

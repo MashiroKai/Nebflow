@@ -88,10 +88,17 @@ class TaskListHistorySpec extends FunSuite:
   test("独立落盘：create/update/close/log 各追加一行；tasks.json 不含史文本；list/show 零写盘"):
     reset()
     assert(create("任务A").isRight)
-    assert(call("action" -> Json.fromString("update"), "id" -> Json.fromString("1"),
-      "status" -> Json.fromString("in_progress"), "note" -> Json.fromString("当前态摘要")).isRight)
-    assert(call("action" -> Json.fromString("close"), "id" -> Json.fromString("1"),
-      "note" -> Json.fromString("收口")).isRight)
+    assert(
+      call(
+        "action" -> Json.fromString("update"),
+        "id" -> Json.fromString("1"),
+        "status" -> Json.fromString("in_progress"),
+        "note" -> Json.fromString("当前态摘要")
+      ).isRight
+    )
+    assert(
+      call("action" -> Json.fromString("close"), "id" -> Json.fromString("1"), "note" -> Json.fromString("收口")).isRight
+    )
     assert(log("1", "补记一条").isRight)
 
     assert(os.exists(histFile), "史文件必须落盘")
@@ -137,10 +144,10 @@ class TaskListHistorySpec extends FunSuite:
 
   test("actor 引擎侧派生：Nebula → nebula；dispatcher / 节点 / 无身份各自取值"):
     val nebula = ToolContext(projectRoot = "/tmp", agentDef = Some(AgentDef(name = "Nebula", description = "")))
-    val lower  = ToolContext(projectRoot = "/tmp", agentDef = Some(AgentDef(name = "General", description = "")))
-    val disp   = ToolContext(projectRoot = "/tmp", isDispatcher = true)
-    val node   = ToolContext(projectRoot = "/tmp", flowNodeId = Some("n-abc"))
-    val none   = ToolContext(projectRoot = "/tmp")
+    val lower = ToolContext(projectRoot = "/tmp", agentDef = Some(AgentDef(name = "General", description = "")))
+    val disp = ToolContext(projectRoot = "/tmp", isDispatcher = true)
+    val node = ToolContext(projectRoot = "/tmp", flowNodeId = Some("n-abc"))
+    val none = ToolContext(projectRoot = "/tmp")
     assertEquals(TaskListHistory.actorOf(nebula), "nebula")
     assertEquals(TaskListHistory.actorOf(lower), "general")
     assertEquals(TaskListHistory.actorOf(disp), "dispatcher")
@@ -151,11 +158,14 @@ class TaskListHistorySpec extends FunSuite:
 
   test("客户端传 actor/history 字段一律忽略（引擎侧派生不可被改写）"):
     reset()
-    assert(call(
-      "action" -> Json.fromString("create"),
-      "title" -> Json.fromString("伪造身份"),
-      "actor" -> Json.fromString("author"),
-      "history" -> Json.arr(Json.fromString("fake-event"))).isRight)
+    assert(
+      call(
+        "action" -> Json.fromString("create"),
+        "title" -> Json.fromString("伪造身份"),
+        "actor" -> Json.fromString("author"),
+        "history" -> Json.arr(Json.fromString("fake-event"))
+      ).isRight
+    )
     assertEquals(events.map(_.actor), List("nebula"), "客户端 actor 被忽略")
     assert(!os.read(histFile).contains("fake-event"), "客户端 history 不得进史文件")
     // 工具层完全不带这两个参数时行为逐字一致（未知键容忍；at 为时钟值故比对时归一）
@@ -180,12 +190,12 @@ class TaskListHistorySpec extends FunSuite:
 
     assert(log("1", "汉" * 2000).isRight, "2,000 字符通过")
     assertEquals(events.count(_.kind == "log"), 1)
-    val longNote = call("action" -> Json.fromString("update"), "id" -> Json.fromString("1"),
-      "note" -> Json.fromString(over))
+    val longNote =
+      call("action" -> Json.fromString("update"), "id" -> Json.fromString("1"), "note" -> Json.fromString(over))
     assert(longNote.isLeft && longNote.swap.toOption.get.message.contains("TASKLIST_PARAM"), longNote)
     // close 的 outcome note 同口径
-    val longClose = call("action" -> Json.fromString("close"), "id" -> Json.fromString("1"),
-      "note" -> Json.fromString(over))
+    val longClose =
+      call("action" -> Json.fromString("close"), "id" -> Json.fromString("1"), "note" -> Json.fromString(over))
     assert(longClose.isLeft && longClose.swap.toOption.get.message.contains("TASKLIST_PARAM"), longClose)
 
   // ===== ④ 损坏半行容错 =====
@@ -210,8 +220,13 @@ class TaskListHistorySpec extends FunSuite:
   test("轮转：活动文件越 5 MiB → 下一次写归档为 .1（覆盖上一代）+ 首行 rotate 事件 + 硬顶 ≤10 MiB"):
     reset()
     // 造一个 >5 MiB 的活动文件（每行 ~1 KB 的合法事件行）
-    val filler = TaskListEvent(at = "2026-09-11T00:00:00Z", actor = "system", kind = "log",
-      id = Some("999"), text = Some("x" * 900)).asJson.noSpaces
+    val filler = TaskListEvent(
+      at = "2026-09-11T00:00:00Z",
+      actor = "system",
+      kind = "log",
+      id = Some("999"),
+      text = Some("x" * 900)
+    ).asJson.noSpaces
     val n = 6000
     os.write.over(histFile, (List.fill(n)(filler).mkString("\n")) + "\n", createFolders = true)
     val beforeBytes = os.size(histFile)
@@ -240,10 +255,15 @@ class TaskListHistorySpec extends FunSuite:
 
   test("prune 后史仍在：任务条目被清 → 史行数不减（+1 条 prune 事件）→ show 给 [gone] 降级时间线"):
     reset()
-    create("将被清理")                                  // #1
-    assert(call("action" -> Json.fromString("close"), "id" -> Json.fromString("1"),
-      "note" -> Json.fromString("收口备注")).isRight)
-    create("保留项")                                    // #2（留着，避免 prune 后 id 复用）
+    create("将被清理") // #1
+    assert(
+      call(
+        "action" -> Json.fromString("close"),
+        "id" -> Json.fromString("1"),
+        "note" -> Json.fromString("收口备注")
+      ).isRight
+    )
+    create("保留项") // #2（留着，避免 prune 后 id 复用）
     val linesBefore = historyLines.size
     val matchedBefore = TaskListHistory.readFor("1").matched
     assert(matchedBefore >= 2, s"create+close 应有 ≥2 条: $matchedBefore")
@@ -255,8 +275,10 @@ class TaskListHistorySpec extends FunSuite:
     os.write.over(tasksFile, patched.asJson.noSpaces)
 
     assert(create("触发 prune").isRight)
-    assert(!tasks.exists(_.title == "将被清理"),
-      s"超期 done 条目被 prune；实际：${tasks.map(t => (t.id, t.title, t.status, t.closedAt))}")
+    assert(
+      !tasks.exists(_.title == "将被清理"),
+      s"超期 done 条目被 prune；实际：${tasks.map(t => (t.id, t.title, t.status, t.closedAt))}"
+    )
     assert(tasks.exists(_.id == "2"), "未超期条目保留")
     assert(historyLines.size > linesBefore, "史行数不减（+1 条 prune 事件）")
     assert(events.exists(e => e.kind == "prune" && e.id.contains("1")), "prune 留痕（actor=system）")
@@ -278,14 +300,16 @@ class TaskListHistorySpec extends FunSuite:
 
   test("id 复用回归：prune 后 id 不回收 → 新条目零混入、旧 id [gone]、随机 id 仍 NO_ID"):
     reset()
-    create("第一代")                                     // #1
+    create("第一代") // #1
     assert(call("action" -> Json.fromString("close"), "id" -> Json.fromString("1")).isRight)
     log("1", "第一代的补记（不得出现在第二代）")
     // 40 天前 closedAt → 下一次 create 触发 prune
     val store = decode[TaskListData](os.read(tasksFile)).toOption.get
     val old = java.time.Instant.now().minusSeconds(40L * 24 * 3600).toString
-    os.write.over(tasksFile,
-      store.copy(tasks = store.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      tasksFile,
+      store.copy(tasks = store.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
 
     assert(create("第二代").isRight)
     assert(!tasks.exists(_.id == "1"), "第一代已被 prune")
@@ -307,10 +331,13 @@ class TaskListHistorySpec extends FunSuite:
 
   test("id 水位零迁移：旧库无 nextId 键 → 解码回 0；create 从 max+1 续接并回写水位"):
     reset()
-    os.write(tasksFile, // 旧 9 键形态（顶层无 nextId）
+    os.write(
+      tasksFile, // 旧 9 键形态（顶层无 nextId）
       """{"version":1,"tasks":[
         |{"id":"7","title":"旧条目","status":"open","blocks":[],"createdAt":"2026-09-07T00:00:00.000Z","updatedAt":"2026-09-07T00:00:00.000Z","closedAt":null}
-        |]}""".stripMargin, createFolders = true)
+        |]}""".stripMargin,
+      createFolders = true
+    )
     val legacy = decode[TaskListData](os.read(tasksFile)).toOption.get
     assertEquals(legacy.nextId, 0, "缺键回默认（零迁移读入）")
     assertEquals(TaskListStore.nextNumId(legacy), 8, "续接 = max(存量 max, 水位) + 1")
@@ -321,9 +348,9 @@ class TaskListHistorySpec extends FunSuite:
 
   test("残余（如实申报，本批不修）：quarantine 重建空库 → 水位归 0 ⇒ 其后新建可复用损坏前 id"):
     reset()
-    assert(create("损坏前").isRight)                       // #1
+    assert(create("损坏前").isRight) // #1
     assertEquals(decode[TaskListData](os.read(tasksFile)).toOption.get.nextId, 1)
-    os.write.over(tasksFile, "{ broken json !!!")          // 模拟损坏
+    os.write.over(tasksFile, "{ broken json !!!") // 模拟损坏
     assert(create("重建后").isRight)
     assertEquals(tasks.map(_.id), List("1"), "空库重建 ⇒ 水位归 0 ⇒ id 从 1 重新起算（已知残余窗口）")
     assertEquals(decode[TaskListData](os.read(tasksFile)).toOption.get.nextId, 1)
@@ -354,11 +381,21 @@ class TaskListHistorySpec extends FunSuite:
     (1 to 20).foreach { i =>
       val id = i.toString
       assert(create(s"批量任务$i").isRight)
-      assert(call("action" -> Json.fromString("update"), "id" -> Json.fromString(id),
-        "status" -> Json.fromString("in_progress")).isRight)
+      assert(
+        call(
+          "action" -> Json.fromString("update"),
+          "id" -> Json.fromString(id),
+          "status" -> Json.fromString("in_progress")
+        ).isRight
+      )
       if i <= 5 then
-        assert(call("action" -> Json.fromString("update"), "id" -> Json.fromString(id),
-          "note" -> Json.fromString(s"做法 $i：从方案 A 改为方案 B")).isRight)
+        assert(
+          call(
+            "action" -> Json.fromString("update"),
+            "id" -> Json.fromString(id),
+            "note" -> Json.fromString(s"做法 $i：从方案 A 改为方案 B")
+          ).isRight
+        )
       if i <= 3 then assert(log(id, s"补记 $i：补充信息若干（作者补记形态）").isRight)
       assert(call("action" -> Json.fromString("close"), "id" -> Json.fromString(id)).isRight)
     }
@@ -375,11 +412,16 @@ class TaskListHistorySpec extends FunSuite:
     def pct(a: Int, b: Int): String = f"${a * 100.0 / math.max(1, b)}%.1f%%"
     def mean(l: List[TaskListEvent], b: Int): String = f"${b.toDouble / math.max(1, l.size)}%.1f B"
     val kinds = all.groupBy(_.kind).view.mapValues(_.size).toList.sortBy(-_._2).map((k, n) => s"$k=$n").mkString(", ")
-    println(
-      s"""[tbu-list][composition]
+    println(s"""[tbu-list][composition]
          |file bytes=$fileBytes lines=${all.size}
-         |note/log content lines=${noteEvs.size} (${pct(noteEvs.size, all.size)}) bytes=$noteBytes (${pct(noteBytes, totalBytes)}) mean=${mean(noteEvs, noteBytes)}
-         |state/structural lines=${stateEvs.size} (${pct(stateEvs.size, all.size)}) bytes=$stateBytes (${pct(stateBytes, totalBytes)}) mean=${mean(stateEvs, stateBytes)}
+         |note/log content lines=${noteEvs.size} (${pct(noteEvs.size, all.size)}) bytes=$noteBytes (${pct(
+        noteBytes,
+        totalBytes
+      )}) mean=${mean(noteEvs, noteBytes)}
+         |state/structural lines=${stateEvs.size} (${pct(stateEvs.size, all.size)}) bytes=$stateBytes (${pct(
+        stateBytes,
+        totalBytes
+      )}) mean=${mean(stateEvs, stateBytes)}
          |kinds: $kinds""".stripMargin)
 
     assertEquals(totalBytes, fileBytes, "读数口径自校验：逐行 UTF-8 字节（含换行）合计 == 文件实际字节")

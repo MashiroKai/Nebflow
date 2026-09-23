@@ -92,8 +92,13 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
       server.createContext(
         "/api/device/logout",
         ex =>
-          logoutCalls.add(Recorded(ex.getRequestMethod, ex.getRequestURI.getPath,
-            Option(ex.getRequestHeaders.getFirst("Authorization")).getOrElse("")))
+          logoutCalls.add(
+            Recorded(
+              ex.getRequestMethod,
+              ex.getRequestURI.getPath,
+              Option(ex.getRequestHeaders.getFirst("Authorization")).getOrElse("")
+            )
+          )
           respond(ex, 200, """{"ok":true}""")
       )
       server.start()
@@ -165,10 +170,12 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
       _ <- ms.setRelayTunnelStarter(tunnel.ensure())
       _ = ms.setPresenceService(ps)
       discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
-      _ <- ms.updateConfig(_.copy(
-        enabled = true,
-        neblinkServer = Some(NeblinkServerConfig(url = serverUrl, networkId = "n1", secret = "s"))
-      ))
+      _ <- ms.updateConfig(
+        _.copy(
+          enabled = true,
+          neblinkServer = Some(NeblinkServerConfig(url = serverUrl, networkId = "n1", secret = "s"))
+        )
+      )
       _ <- DeviceCredential.save(DeviceCredential(serverUrl, "n1", "d1", "dev-tok"))
       // A peer that must not survive logout.
       _ <- ms.upsertPeer(PeerInfo("ghost", "GhostPC", "macos", "http://127.0.0.1:9"))
@@ -179,35 +186,37 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("logout notifies server (DELETE /api/device/logout), stops tunnel, clears local state") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, logoutCalls) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.client.login("d1", "dev", "macos", Nil)
-            _ <- IO(assertEquals(st.client.currentSessionToken, Some("tok-1"), "login must set session token"))
-            resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
-            body <- resp.as[Json]
-            calls = logoutCalls.asScala.toList
-            peers <- st.ms.peers
-            cfg <- st.ms.neblinkConfig
-            cred <- DeviceCredential.load
-            clientAfter <- st.discovery.currentClient
-          yield
-            assertEquals(resp.status, Status.Ok)
-            assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-            // C1-1: server notified on the live client
-            assertEquals(calls.length, 1, s"exactly one logout call expected, got $calls")
-            assertEquals(calls.head.method, "DELETE")
-            assertEquals(calls.head.path, "/api/device/logout")
-            assertEquals(calls.head.auth, "Bearer tok-1")
-            // C1-2: relay tunnel stopped
-            assertEquals(st.tunnel.isRunning, false, "relay tunnel must be stopped")
-            assertEquals(st.tunnel.isAlive, false)
-            // Local cleanup (pre-existing semantics, pinned here)
-            assertEquals(st.client.currentSessionToken, None, "session token cleared")
-            assertEquals(clientAfter, None, "discovery client hot-swapped to None")
-            assertEquals(peers, Nil, "peers cleared")
-            assertEquals(cred, None, "device credential file removed")
-            assertEquals(cfg.enabled, false, "neblink disabled in config")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.client.login("d1", "dev", "macos", Nil)
+              _ <- IO(assertEquals(st.client.currentSessionToken, Some("tok-1"), "login must set session token"))
+              resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+              body <- resp.as[Json]
+              calls = logoutCalls.asScala.toList
+              peers <- st.ms.peers
+              cfg <- st.ms.neblinkConfig
+              cred <- DeviceCredential.load
+              clientAfter <- st.discovery.currentClient
+            yield
+              assertEquals(resp.status, Status.Ok)
+              assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
+              // C1-1: server notified on the live client
+              assertEquals(calls.length, 1, s"exactly one logout call expected, got $calls")
+              assertEquals(calls.head.method, "DELETE")
+              assertEquals(calls.head.path, "/api/device/logout")
+              assertEquals(calls.head.auth, "Bearer tok-1")
+              // C1-2: relay tunnel stopped
+              assertEquals(st.tunnel.isRunning, false, "relay tunnel must be stopped")
+              assertEquals(st.tunnel.isAlive, false)
+              // Local cleanup (pre-existing semantics, pinned here)
+              assertEquals(st.client.currentSessionToken, None, "session token cleared")
+              assertEquals(clientAfter, None, "discovery client hot-swapped to None")
+              assertEquals(peers, Nil, "peers cleared")
+              assertEquals(cred, None, "device credential file removed")
+              assertEquals(cfg.enabled, false, "neblink disabled in config")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -244,36 +253,38 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
     // relayAvailable:false、RemoteExecutor 恒判 relay 不可用）。
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.client.login("d1", "dev", "macos", Nil)
-            _ <- st.tunnel.connect()
-            _ <- IO(assert(st.tunnel.isRunning, "connect() 后隧道必须在跑"))
-            resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
-            afterLogout <- IO(st.tunnel.isRunning)
-            spawnsAfterLogout <- IO(st.tunnel.loopSpawnCount)
-            // 重新 enroll（device-flow / AC+PKCE 的等价物）：persist 内部发 ensure 信号
-            _ <- NeblinkEnrollment.persist(
-              st.ms,
-              resolvedUrl = url,
-              json = parse("""{"deviceToken":"tok-re","networkId":"n1"}""").toOption.get,
-              logtoRefresh = None,
-              discovery = Some(st.discovery),
-              gatewayPort = 0,
-              reloginHook = None
-            )
-            revived <- IO(st.tunnel.isRunning)
-            spawns <- IO(st.tunnel.loopSpawnCount)
-          yield
-            assertEquals(resp.status, Status.Ok)
-            assertEquals(afterLogout, false, "logout 必须停隧道（既有语义不变）")
-            assertEquals(
-              revived,
-              true,
-              "重新 enroll（ensure）后隧道必须复活 —— 此前 running 无复位路径，只有进程重启能救"
-            )
-            assertEquals(spawns, spawnsAfterLogout + 1, "ensure 只能拉起一条连接链（不得双隧道）")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.client.login("d1", "dev", "macos", Nil)
+              _ <- st.tunnel.connect()
+              _ <- IO(assert(st.tunnel.isRunning, "connect() 后隧道必须在跑"))
+              resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+              afterLogout <- IO(st.tunnel.isRunning)
+              spawnsAfterLogout <- IO(st.tunnel.loopSpawnCount)
+              // 重新 enroll（device-flow / AC+PKCE 的等价物）：persist 内部发 ensure 信号
+              _ <- NeblinkEnrollment.persist(
+                st.ms,
+                resolvedUrl = url,
+                json = parse("""{"deviceToken":"tok-re","networkId":"n1"}""").toOption.get,
+                logtoRefresh = None,
+                discovery = Some(st.discovery),
+                gatewayPort = 0,
+                reloginHook = None
+              )
+              revived <- IO(st.tunnel.isRunning)
+              spawns <- IO(st.tunnel.loopSpawnCount)
+            yield
+              assertEquals(resp.status, Status.Ok)
+              assertEquals(afterLogout, false, "logout 必须停隧道（既有语义不变）")
+              assertEquals(
+                revived,
+                true,
+                "重新 enroll（ensure）后隧道必须复活 —— 此前 running 无复位路径，只有进程重启能救"
+              )
+              assertEquals(spawns, spawnsAfterLogout + 1, "ensure 只能拉起一条连接链（不得双隧道）")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -281,25 +292,34 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("status reports real per-peer freshness (C3 — no hardcoded online)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          val now = System.currentTimeMillis()
-          for
-            _ <- st.ms.upsertPeer(PeerInfo("fresh", "FreshPC", "macos", "http://127.0.0.1:9", lastSeen = now))
-            _ <- st.ms.upsertPeer(PeerInfo("stale", "StalePC", "windows", "http://127.0.0.1:9", lastSeen = now - 200_000))
-            resp <- st.routes.routes(
-              Request[IO](Method.GET, Uri.unsafeFromString("/neblink/status"))
-                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-            ).value.map(_.getOrElse(fail("route fell through")))
-            body <- resp.as[Json]
-          yield
-            assertEquals(resp.status, Status.Ok)
-            val peers = body.hcursor.downField("peers").values.getOrElse(fail("peers array missing")).toList
-            def onlineOf(id: String): Option[Boolean] =
-              peers.find(_.hcursor.downField("deviceId").as[String].toOption.contains(id))
-                .flatMap(_.hcursor.downField("online").as[Boolean].toOption)
-            assertEquals(onlineOf("fresh"), Some(true), "recently-seen peer must be online")
-            assertEquals(onlineOf("stale"), Some(false), "peer unseen for 200s must be offline (was hardcoded true)")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            val now = System.currentTimeMillis()
+            for
+              _ <- st.ms.upsertPeer(PeerInfo("fresh", "FreshPC", "macos", "http://127.0.0.1:9", lastSeen = now))
+              _ <- st.ms.upsertPeer(
+                PeerInfo("stale", "StalePC", "windows", "http://127.0.0.1:9", lastSeen = now - 200_000)
+              )
+              resp <- st.routes
+                .routes(
+                  Request[IO](Method.GET, Uri.unsafeFromString("/neblink/status"))
+                    .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+                )
+                .value
+                .map(_.getOrElse(fail("route fell through")))
+              body <- resp.as[Json]
+            yield
+              assertEquals(resp.status, Status.Ok)
+              val peers = body.hcursor.downField("peers").values.getOrElse(fail("peers array missing")).toList
+              def onlineOf(id: String): Option[Boolean] =
+                peers
+                  .find(_.hcursor.downField("deviceId").as[String].toOption.contains(id))
+                  .flatMap(_.hcursor.downField("online").as[Boolean].toOption)
+              assertEquals(onlineOf("fresh"), Some(true), "recently-seen peer must be online")
+              assertEquals(onlineOf("stale"), Some(false), "peer unseen for 200s must be offline (was hardcoded true)")
+            end for
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -307,39 +327,51 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("device status push flips /neblink/status online flag both ways (C6)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          def statusOnline(id: String): IO[Option[Boolean]] =
-            st.routes.routes(
-              Request[IO](Method.GET, Uri.unsafeFromString("/neblink/status"))
-                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-            ).value.flatMap(_.getOrElse(fail("route fell through")).as[Json]).map { body =>
-              body.hcursor.downField("peers").values.getOrElse(Nil).toList
-                .find(_.hcursor.downField("deviceId").as[String].toOption.contains(id))
-                .flatMap(_.hcursor.downField("online").as[Boolean].toOption)
-            }
-          for
-            // mkStack seeds peer "ghost" (freshly seen)
-            before <- statusOnline("ghost")
-            _ <- st.ms.applyServerPeerStatus("ghost", online = false)
-            off <- statusOnline("ghost")
-            _ <- st.ms.applyServerPeerStatus("ghost", online = true)
-            on <- statusOnline("ghost")
-          yield
-            assertEquals(before, Some(true), "seeded peer starts online")
-            assertEquals(off, Some(false), "offline push must flip status to offline")
-            assertEquals(on, Some(true), "online push must flip status back")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            def statusOnline(id: String): IO[Option[Boolean]] =
+              st.routes
+                .routes(
+                  Request[IO](Method.GET, Uri.unsafeFromString("/neblink/status"))
+                    .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+                )
+                .value
+                .flatMap(_.getOrElse(fail("route fell through")).as[Json])
+                .map { body =>
+                  body.hcursor
+                    .downField("peers")
+                    .values
+                    .getOrElse(Nil)
+                    .toList
+                    .find(_.hcursor.downField("deviceId").as[String].toOption.contains(id))
+                    .flatMap(_.hcursor.downField("online").as[Boolean].toOption)
+                }
+            for
+              // mkStack seeds peer "ghost" (freshly seen)
+              before <- statusOnline("ghost")
+              _ <- st.ms.applyServerPeerStatus("ghost", online = false)
+              off <- statusOnline("ghost")
+              _ <- st.ms.applyServerPeerStatus("ghost", online = true)
+              on <- statusOnline("ghost")
+            yield
+              assertEquals(before, Some(true), "seeded peer starts online")
+              assertEquals(off, Some(false), "offline push must flip status to offline")
+              assertEquals(on, Some(true), "online push must flip status back")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
 
   // ── RP-initiated logout (end-session) ──────────────────────────────────
 
-  /** POST + Bearer + optional JSON body —— 2026-09-20 收尾批的契约：该路由已套
-    * `withAuth`，出口从 302 改为 `200 {"endSessionUrl": …}`。
-    * 🔴 夹具**必须**带 Authorization：旧注记「Deliberately NO Authorization header …
-    * must not depend on checkAuth」**已作废** —— 无令牌现在只得到 403（门在前），
-    * 且登出副作用零发生（这正是本批要钉的翻转）。 */
+  /**
+   * POST + Bearer + optional JSON body —— 2026-09-20 收尾批的契约：该路由已套
+   * `withAuth`，出口从 302 改为 `200 {"endSessionUrl": …}`。
+   * 🔴 夹具**必须**带 Authorization：旧注记「Deliberately NO Authorization header …
+   * must not depend on checkAuth」**已作废** —— 无令牌现在只得到 403（门在前），
+   * 且登出副作用零发生（这正是本批要钉的翻转）。
+   */
   private def endSessionRequest(body: Json = Json.obj()): Request[IO] =
     Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/end-session"))
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
@@ -352,7 +384,10 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   /** 本批出口 = 200 + JSON：从 body 取 provider end-session URL 再解析其 query。 */
   private def endSessionUrlOf(resp: Response[IO]): IO[Uri] =
     resp.as[Json].map { body =>
-      val url = body.hcursor.downField("endSessionUrl").as[String].toOption
+      val url = body.hcursor
+        .downField("endSessionUrl")
+        .as[String]
+        .toOption
         .getOrElse(fail(s"endSessionUrl missing in the 200 body: $body"))
       Uri.unsafeFromString(url)
     }
@@ -360,33 +395,51 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("end-session returns the provider end_session URL with the stored hint and tears local state down") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            // Configure the AC provider like a real PKCE install + seed a
-            // credential carrying the id_token hint.
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
-              logto = Some(LogtoRefresh("rt-1", 1L, Some("tok.hint.sig")))))
-            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
-            loc <- endSessionUrlOf(resp)
-            peers <- st.ms.peers
-            cred <- DeviceCredential.load
-            cfg <- st.ms.neblinkConfig
-            clientAfter <- st.discovery.currentClient
-          yield
-            // 本批出口：200 + JSON（302 退场 —— fetch 无法消费跨域 302），hint + 回跳 uri 仍在 URL 上。
-            assertEquals(resp.status, Status.Ok)
-            assertEquals(loc.path.renderString, "/oidc/session/end")
-            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
-            assertEquals(q.get("id_token_hint"), Some("tok.hint.sig"), "stored id_token must be replayed verbatim as the hint")
-            assertEquals(q.get("post_logout_redirect_uri"), Some("http://127.0.0.1:8080/auth/logged-out"))
-            // Local teardown (same 8 steps as POST /neblink/logout) happened.
-            assertEquals(cred, None, "credential (with the hint) removed")
-            assertEquals(peers, Nil)
-            assertEquals(clientAfter, None)
-            assertEquals(cfg.enabled, false)
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              // Configure the AC provider like a real PKCE install + seed a
+              // credential carrying the id_token hint.
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              _ <- DeviceCredential.save(
+                DeviceCredential(
+                  url,
+                  "n1",
+                  "d1",
+                  "dev-tok",
+                  logto = Some(LogtoRefresh("rt-1", 1L, Some("tok.hint.sig")))
+                )
+              )
+              resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+              loc <- endSessionUrlOf(resp)
+              peers <- st.ms.peers
+              cred <- DeviceCredential.load
+              cfg <- st.ms.neblinkConfig
+              clientAfter <- st.discovery.currentClient
+            yield
+              // 本批出口：200 + JSON（302 退场 —— fetch 无法消费跨域 302），hint + 回跳 uri 仍在 URL 上。
+              assertEquals(resp.status, Status.Ok)
+              assertEquals(loc.path.renderString, "/oidc/session/end")
+              val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+              assertEquals(
+                q.get("id_token_hint"),
+                Some("tok.hint.sig"),
+                "stored id_token must be replayed verbatim as the hint"
+              )
+              assertEquals(q.get("post_logout_redirect_uri"), Some("http://127.0.0.1:8080/auth/logged-out"))
+              // Local teardown (same 8 steps as POST /neblink/logout) happened.
+              assertEquals(cred, None, "credential (with the hint) removed")
+              assertEquals(peers, Nil)
+              assertEquals(clientAfter, None)
+              assertEquals(cfg.enabled, false)
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -394,20 +447,28 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("end-session without a stored id_token still logs out (no hint param, cookie-based)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            // Pre-RP-logout credential shape: no idToken block at all.
-            _ <- DeviceCredential.save(DeviceCredential(url, "n1", "d1", "dev-tok",
-              logto = Some(LogtoRefresh("rt-1", 1L))))
-            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
-            loc <- endSessionUrlOf(resp)
-          yield
-            assertEquals(resp.status, Status.Ok)
-            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
-            assertEquals(q.contains("id_token_hint"), false, "never fabricate a hint — omit it entirely")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              // Pre-RP-logout credential shape: no idToken block at all.
+              _ <- DeviceCredential.save(
+                DeviceCredential(url, "n1", "d1", "dev-tok", logto = Some(LogtoRefresh("rt-1", 1L)))
+              )
+              resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+              loc <- endSessionUrlOf(resp)
+            yield
+              assertEquals(resp.status, Status.Ok)
+              val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+              assertEquals(q.contains("id_token_hint"), false, "never fabricate a hint — omit it entirely")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -415,19 +476,25 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("end-session answers logto-not-configured when no AC app is configured") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          // end-session reads effectiveLogto (same resolution as auth/start:
-          // explicit block wins verbatim, missing block → embeddedDefault).
-          // This pins the only 404 arm: an EXPLICIT block without a
-          // pkceClientId (the embedded default always carries one).
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = None))))
-            resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
-            body <- resp.as[Json]
-          yield
-            assertEquals(resp.status, Status.NotFound)
-            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("logto-not-configured"))
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            // end-session reads effectiveLogto (same resolution as auth/start:
+            // explicit block wins verbatim, missing block → embeddedDefault).
+            // This pins the only 404 arm: an EXPLICIT block without a
+            // pkceClientId (the embedded default always carries one).
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = None))
+                )
+              )
+              resp <- st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+              body <- resp.as[Json]
+            yield
+              assertEquals(resp.status, Status.NotFound)
+              assertEquals(body.hcursor.downField("error").as[String].toOption, Some("logto-not-configured"))
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -435,21 +502,35 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("auth/start with forceLogin=true returns a prompt=login+consent authorize URL") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
-              .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-              .withEntity(Json.obj("forceLogin" -> true.asJson))
-            resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
-            body <- resp.as[Json]
-          yield
-            assertEquals(resp.status, Status.Ok)
-            val authorizeUrl = body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
-            assert(authorizeUrl.contains("prompt=login+consent"), s"forceLogin must force the account form: $authorizeUrl")
-            assert(!authorizeUrl.contains("offline_access"), s"O5: no offline_access on the forceLogin authorize either: $authorizeUrl")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+                .withEntity(Json.obj("forceLogin" -> true.asJson))
+              resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+              body <- resp.as[Json]
+            yield
+              assertEquals(resp.status, Status.Ok)
+              val authorizeUrl =
+                body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
+              assert(
+                authorizeUrl.contains("prompt=login+consent"),
+                s"forceLogin must force the account form: $authorizeUrl"
+              )
+              assert(
+                !authorizeUrl.contains("offline_access"),
+                s"O5: no offline_access on the forceLogin authorize either: $authorizeUrl"
+              )
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -457,20 +538,31 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("auth/start without a body stays a plain prompt=consent login (empty-body tolerance)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            // No .withEntity — the legacy call shape (empty body).
-            req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
-              .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-            resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
-            body <- resp.as[Json]
-          yield
-            assertEquals(resp.status, Status.Ok)
-            val authorizeUrl = body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
-            assert(authorizeUrl.contains("prompt=consent") && !authorizeUrl.contains("login"), s"plain login unchanged: $authorizeUrl")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              // No .withEntity — the legacy call shape (empty body).
+              req = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+              resp <- st.routes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+              body <- resp.as[Json]
+            yield
+              assertEquals(resp.status, Status.Ok)
+              val authorizeUrl =
+                body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
+              assert(
+                authorizeUrl.contains("prompt=consent") && !authorizeUrl.contains("login"),
+                s"plain login unchanged: $authorizeUrl"
+              )
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -478,34 +570,45 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("auth/start forwards uiLocales zh/en and whitelists everything else (BYUI handoff)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            start = (ui: Option[String]) =>
-              val base = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
-                .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-              val req = ui.fold(base)(v => base.withEntity(Json.obj("uiLocales" -> v.asJson)))
-              st.routes.routes(req).value.map(_.getOrElse(fail("route fell through"))).flatMap(_.as[Json])
-              .map(body =>
-                body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing")))
-            zhUrl <- start(Some("zh"))
-            enUrl <- start(Some("en"))
-            legacyUrl <- start(None) // old callers: no uiLocales field at all
-            junkUrl <- start(Some("de-DE")) // not whitelisted → param omitted
-          yield
-            assert(zhUrl.contains("ui_locales=zh"), s"zh handoff must reach the authorize URL: $zhUrl")
-            assert(enUrl.contains("ui_locales=en"), s"en handoff must reach the authorize URL: $enUrl")
-            assert(!legacyUrl.contains("ui_locales"), s"legacy callers keep the byte-identical URL: $legacyUrl")
-            assert(!junkUrl.contains("ui_locales"), s"non-whitelisted values are dropped, not forwarded: $junkUrl")
-            // Invariants that must survive on every variant.
-            for (u <- Seq(zhUrl, enUrl, legacyUrl, junkUrl)) {
-              // prompt=consent stays an invariant of every variant, but as
-              // shipped UX only — O5 removed the refresh-token rationale.
-              assert(u.contains("prompt=consent"), s"prompt=consent intact on every variant: $u")
-              assert(!u.contains("offline_access"), s"O5: no variant may request offline_access: $u")
-            }
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              start = (ui: Option[String]) =>
+                val base = Request[IO](Method.POST, Uri.unsafeFromString("/neblink/auth/start"))
+                  .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+                val req = ui.fold(base)(v => base.withEntity(Json.obj("uiLocales" -> v.asJson)))
+                st.routes
+                  .routes(req)
+                  .value
+                  .map(_.getOrElse(fail("route fell through")))
+                  .flatMap(_.as[Json])
+                  .map(body =>
+                    body.hcursor.downField("authorizeUrl").as[String].toOption.getOrElse(fail("authorizeUrl missing"))
+                  )
+              zhUrl <- start(Some("zh"))
+              enUrl <- start(Some("en"))
+              legacyUrl <- start(None) // old callers: no uiLocales field at all
+              junkUrl <- start(Some("de-DE")) // not whitelisted → param omitted
+            yield
+              assert(zhUrl.contains("ui_locales=zh"), s"zh handoff must reach the authorize URL: $zhUrl")
+              assert(enUrl.contains("ui_locales=en"), s"en handoff must reach the authorize URL: $enUrl")
+              assert(!legacyUrl.contains("ui_locales"), s"legacy callers keep the byte-identical URL: $legacyUrl")
+              assert(!junkUrl.contains("ui_locales"), s"non-whitelisted values are dropped, not forwarded: $junkUrl")
+              // Invariants that must survive on every variant.
+              for u <- Seq(zhUrl, enUrl, legacyUrl, junkUrl) do
+                // prompt=consent stays an invariant of every variant, but as
+                // shipped UX only — O5 removed the refresh-token rationale.
+                assert(u.contains("prompt=consent"), s"prompt=consent intact on every variant: $u")
+                assert(!u.contains("offline_access"), s"O5: no variant may request offline_access: $u")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -513,19 +616,24 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("/auth/logged-out serves the RP-logout landing page") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          for
-            resp <- st.routes.authCallbackRoutes(
-              Request[IO](Method.GET, Uri.unsafeFromString("/logged-out"))
-            ).value.map(_.getOrElse(fail("route fell through")))
-            // Raw byte decode: CirceEntityCodec (imported above) would
-            // otherwise route as[String] to the JSON decoder and choke on HTML.
-            body <- resp.body.through(fs2.text.utf8.decode).compile.string
-          yield
-            assertEquals(resp.status, Status.Ok)
-            assert(body.contains("已退出登录"), "landing page headline")
-            assertEquals(resp.contentType.map(_.mediaType), Some(MediaType.text.html), "served as HTML")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            for
+              resp <- st.routes
+                .authCallbackRoutes(
+                  Request[IO](Method.GET, Uri.unsafeFromString("/logged-out"))
+                )
+                .value
+                .map(_.getOrElse(fail("route fell through")))
+              // Raw byte decode: CirceEntityCodec (imported above) would
+              // otherwise route as[String] to the JSON decoder and choke on HTML.
+              body <- resp.body.through(fs2.text.utf8.decode).compile.string
+            yield
+              assertEquals(resp.status, Status.Ok)
+              assert(body.contains("已退出登录"), "landing page headline")
+              assertEquals(resp.contentType.map(_.mediaType), Some(MediaType.text.html), "served as HTML")
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -550,44 +658,52 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("G5 坏凭据（读不开）态下 end-session 仍 200 + endSessionUrl 且本地拆除八步生效（非 500）") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          val credPath = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
-          for
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto =
-              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))))
-            // 平台中立的「读不开」夹具：先清掉 mkStack 落盘的真凭据，再把落点占成非空目录
-            // （非空 ⇒ 删也删不掉；读抛 IOException）。
-            _ <- DeviceCredential.clear
-            _ <- IO.blocking {
-              os.makeDir.all(credPath)
-              os.write.over(credPath / "occupied-by-a-directory.txt", "not a credential file")
-            }
-            respAndWarns <- LogdevTestSupport.withWarnsIO(
-              st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
-            )
-            resp = respAndWarns._1
-            warns = respAndWarns._2
-            loc <- endSessionUrlOf(resp)
-            peers <- st.ms.peers
-            cred <- DeviceCredential.load
-            cfg <- st.ms.neblinkConfig
-            clientAfter <- st.discovery.currentClient
-            // 拆除第④步的读数：落点必须不再持有坏件（读失败的自愈改名 / 第④步删除皆算）
-            gone <- IO.blocking(!os.exists(credPath))
-          yield
-            assertEquals(resp.status, Status.Ok, "坏凭据下登出必须仍能拿到 provider URL（200），不是 500")
-            val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
-            assertEquals(q.contains("id_token_hint"), false, "读失败 ⇒ 跳过 hint（读不到就不编）")
-            assert(
-              warns.exists(_.contains(CredentialFailure.CredentialUnreadable.code)),
-              s"读失败必须留一条带分类码的 WARN（否则「夹具坏了」与「正确分类」不可区分）: $warns"
-            )
-            assertEquals(cred, None, "本地凭据不在了")
-            assert(gone, "凭据落点必须不再持有坏件（坏件不挡拆除）")
-            assertEquals(peers, Nil, "第八步清 peers 生效")
-            assertEquals(clientAfter, None, "第六步置空 client 生效")
-            assertEquals(cfg.enabled, false, "第五步关 enabled 生效")
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            val credPath = os.Path(tmpDir, os.pwd) / "neblink" / "device.json"
+            for
+              _ <- st.ms.updateConfig(cfg =>
+                cfg.copy(logto =
+                  Some(
+                    LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app"))
+                  )
+                )
+              )
+              // 平台中立的「读不开」夹具：先清掉 mkStack 落盘的真凭据，再把落点占成非空目录
+              // （非空 ⇒ 删也删不掉；读抛 IOException）。
+              _ <- DeviceCredential.clear
+              _ <- IO.blocking {
+                os.makeDir.all(credPath)
+                os.write.over(credPath / "occupied-by-a-directory.txt", "not a credential file")
+              }
+              respAndWarns <- LogdevTestSupport.withWarnsIO(
+                st.routes.routes(endSessionRequest()).value.map(_.getOrElse(fail("route fell through")))
+              )
+              resp = respAndWarns._1
+              warns = respAndWarns._2
+              loc <- endSessionUrlOf(resp)
+              peers <- st.ms.peers
+              cred <- DeviceCredential.load
+              cfg <- st.ms.neblinkConfig
+              clientAfter <- st.discovery.currentClient
+              // 拆除第④步的读数：落点必须不再持有坏件（读失败的自愈改名 / 第④步删除皆算）
+              gone <- IO.blocking(!os.exists(credPath))
+            yield
+              assertEquals(resp.status, Status.Ok, "坏凭据下登出必须仍能拿到 provider URL（200），不是 500")
+              val q = loc.query.pairs.collect { case (k, Some(v)) => k -> v }.toMap
+              assertEquals(q.contains("id_token_hint"), false, "读失败 ⇒ 跳过 hint（读不到就不编）")
+              assert(
+                warns.exists(_.contains(CredentialFailure.CredentialUnreadable.code)),
+                s"读失败必须留一条带分类码的 WARN（否则「夹具坏了」与「正确分类」不可区分）: $warns"
+              )
+              assertEquals(cred, None, "本地凭据不在了")
+              assert(gone, "凭据落点必须不再持有坏件（坏件不挡拆除）")
+              assertEquals(peers, Nil, "第八步清 peers 生效")
+              assertEquals(clientAfter, None, "第六步置空 client 生效")
+              assertEquals(cfg.enabled, false, "第五步关 enabled 生效")
+            end for
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -603,56 +719,72 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
   test("D1 换号续登失败页：可见串过三重判据（正则 / data-root / device.json）且三段式带稳定码") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher).flatMap { st =>
-          val dataRoot = os.Path(tmpDir, os.pwd)
-          val goodLogto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy",
-            pkceClientId = Some("pkce-app")))
-          val badEndpointLogto = Some(LogtoConfig(endpoint = "C:\\Users\\kaiyu\\.nebflow\\bad endpoint",
-            clientId = "legacy", pkceClientId = Some("pkce-app")))
-          val unconfiguredLogto = Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy",
-            pkceClientId = None))
-          /** 一次 landing 访问的用户可见读数（`<p>` = 用户实际读到的那一行）。 */
-          case class Land(status: Status, text: String)
-          def landOnce: IO[Land] =
-            st.routes.authCallbackRoutes
-              .orNotFound
-              .run(Request[IO](Method.GET, Uri.unsafeFromString("/logged-out")))
-              .flatMap(r => r.body.through(fs2.text.utf8.decode).compile.string.map(b => Land(r.status, pTextOf(b))))
-          for
-            // ① 续登失败支：arm ⇒ 畸形 endpoint ⇒ landing 消费标记 ⇒ beginPkceLogin 抛
-            _ <- st.ms.updateConfig(cfg => cfg.copy(enabled = true, logto = goodLogto))
-            armed <- st.routes.routes(endSessionSwitchRequest)
-              .value.map(_.getOrElse(fail("end-session route fell through")))
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = badEndpointLogto))
-            land1 <- landOnce
-            // ③ 重放支：标记已消费 ⇒ 同一 landing URL 二次访问（静态文案）
-            land2 <- landOnce
-            // ② 未配置支：重新 arm ⇒ 显式块无 pkceClientId ⇒ beginPkceLogin 返回 None
-            _ <- st.routes.routes(endSessionSwitchRequest)
-              .value.map(_.getOrElse(fail("end-session route fell through")))
-            _ <- st.ms.updateConfig(cfg => cfg.copy(logto = unconfiguredLogto))
-            land3 <- landOnce
-          yield
-            assertEquals(armed.status, Status.Ok, "arm 腿必须 200（arm 副作用照发生，出口已是 JSON 数据）")
-            assertEquals(land1.status, Status.Ok)
-            assertEquals(land2.status, Status.Ok)
-            assertEquals(land3.status, Status.Ok)
-            // 失败支：三段式（原因 + 动作 + 稳定诊断码），且**原文**（路径 / URL / state）不在页面上
-            assert(land1.text.startsWith("登录失败："), s"续登失败页必须承载三段式: ${land1.text}")
-            assert(land1.text.contains("下一步："), s"续登失败页缺动作句: ${land1.text}")
-            assert(land1.text.contains(s"诊断码：${CredentialFailure.Unclassified.code}"),
-              s"续登失败页必须带稳定诊断码: ${land1.text}")
-            assert(!land1.text.contains("Invalid URI"), s"裸异常原文不得进用户可见面: ${land1.text}")
-            assert(!land1.text.contains("state=") && !land1.text.contains("code_challenge"),
-              s"authorize URL / PKCE 参数不得进用户可见面: ${land1.text}")
-            List(
-              "D1.续登失败支" -> land1.text,
-              "D1.重放支" -> land2.text,
-              "D1.未配置支" -> land3.text
-            ).foreach { case (tag, text) =>
-              assertEquals(LogdevTestSupport.violations(text, dataRoot), Nil, s"$tag 三条判据必须全过: $text")
-            }
-        }.guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher)
+          .flatMap { st =>
+            val dataRoot = os.Path(tmpDir, os.pwd)
+            val goodLogto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))
+            val badEndpointLogto = Some(
+              LogtoConfig(
+                endpoint = "C:\\Users\\kaiyu\\.nebflow\\bad endpoint",
+                clientId = "legacy",
+                pkceClientId = Some("pkce-app")
+              )
+            )
+            val unconfiguredLogto =
+              Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = None))
+
+            /** 一次 landing 访问的用户可见读数（`<p>` = 用户实际读到的那一行）。 */
+            case class Land(status: Status, text: String)
+            def landOnce: IO[Land] =
+              st.routes.authCallbackRoutes.orNotFound
+                .run(Request[IO](Method.GET, Uri.unsafeFromString("/logged-out")))
+                .flatMap(r => r.body.through(fs2.text.utf8.decode).compile.string.map(b => Land(r.status, pTextOf(b))))
+            for
+              // ① 续登失败支：arm ⇒ 畸形 endpoint ⇒ landing 消费标记 ⇒ beginPkceLogin 抛
+              _ <- st.ms.updateConfig(cfg => cfg.copy(enabled = true, logto = goodLogto))
+              armed <- st.routes
+                .routes(endSessionSwitchRequest)
+                .value
+                .map(_.getOrElse(fail("end-session route fell through")))
+              _ <- st.ms.updateConfig(cfg => cfg.copy(logto = badEndpointLogto))
+              land1 <- landOnce
+              // ③ 重放支：标记已消费 ⇒ 同一 landing URL 二次访问（静态文案）
+              land2 <- landOnce
+              // ② 未配置支：重新 arm ⇒ 显式块无 pkceClientId ⇒ beginPkceLogin 返回 None
+              _ <- st.routes
+                .routes(endSessionSwitchRequest)
+                .value
+                .map(_.getOrElse(fail("end-session route fell through")))
+              _ <- st.ms.updateConfig(cfg => cfg.copy(logto = unconfiguredLogto))
+              land3 <- landOnce
+            yield
+              assertEquals(armed.status, Status.Ok, "arm 腿必须 200（arm 副作用照发生，出口已是 JSON 数据）")
+              assertEquals(land1.status, Status.Ok)
+              assertEquals(land2.status, Status.Ok)
+              assertEquals(land3.status, Status.Ok)
+              // 失败支：三段式（原因 + 动作 + 稳定诊断码），且**原文**（路径 / URL / state）不在页面上
+              assert(land1.text.startsWith("登录失败："), s"续登失败页必须承载三段式: ${land1.text}")
+              assert(land1.text.contains("下一步："), s"续登失败页缺动作句: ${land1.text}")
+              assert(
+                land1.text.contains(s"诊断码：${CredentialFailure.Unclassified.code}"),
+                s"续登失败页必须带稳定诊断码: ${land1.text}"
+              )
+              assert(!land1.text.contains("Invalid URI"), s"裸异常原文不得进用户可见面: ${land1.text}")
+              assert(
+                !land1.text.contains("state=") && !land1.text.contains("code_challenge"),
+                s"authorize URL / PKCE 参数不得进用户可见面: ${land1.text}"
+              )
+              List(
+                "D1.续登失败支" -> land1.text,
+                "D1.重放支" -> land2.text,
+                "D1.未配置支" -> land3.text
+              ).foreach { case (tag, text) =>
+                assertEquals(LogdevTestSupport.violations(text, dataRoot), Nil, s"$tag 三条判据必须全过: $text")
+              }
+            end for
+          }
+          .guarantee(IO.blocking(server.stop(0)))
       }
     }
   }

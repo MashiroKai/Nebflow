@@ -35,8 +35,10 @@ import scala.concurrent.duration.*
 final class P2PChunkTransport(
   peerAddress: String,
   chunkTimeout: FiniteDuration = AttachContract.P2PDeadlineCeiling,
-  /** 会话速率读数（bytes/s；`<= 0` ⇒ 用 `AttachContract.AssumedMinRateBytesPerSec`）。
-    * 只影响本端超时算术，**不上 wire**。 */
+  /**
+   * 会话速率读数（bytes/s；`<= 0` ⇒ 用 `AttachContract.AssumedMinRateBytesPerSec`）。
+   * 只影响本端超时算术，**不上 wire**。
+   */
   rateHintBytesPerSec: Long = 0L
 ) extends ChunkTransport:
 
@@ -50,7 +52,16 @@ final class P2PChunkTransport(
     payload: Array[Byte]
   ): IO[Either[AttachContract.AttachError, ChunkedTransfer.ChunkAck]] =
     if peerAddress.isEmpty then
-      IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, "Peer address is empty — no P2P route", phase = "transfer", path = Some("p2p"))))
+      IO.pure(
+        Left(
+          AttachContract.AttachError(
+            AttachContract.Codes.PeerUnreachable,
+            "Peer address is empty — no P2P route",
+            phase = "transfer",
+            path = Some("p2p")
+          )
+        )
+      )
     else
       IO.blocking {
         val client = HttpClient.newBuilder().proxy(java.net.ProxySelector.of(null)).build()
@@ -80,24 +91,34 @@ final class P2PChunkTransport(
           .build()
         val response = client.send(request, HttpResponse.BodyHandlers.ofString())
         (response.statusCode(), response.body())
-      }.attempt.map {
-        case Left(e) =>
-          Left(
-            AttachContract.AttachError(
-              AttachContract.Codes.PeerUnreachable,
-              s"P2P chunk ${frame.chunkIndex} failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
-              phase = "transfer",
-              chunkIndex = Some(frame.chunkIndex),
-              path = Some("p2p")
+      }.attempt
+        .map {
+          case Left(e) =>
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.PeerUnreachable,
+                s"P2P chunk ${frame.chunkIndex} failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+                phase = "transfer",
+                chunkIndex = Some(frame.chunkIndex),
+                path = Some("p2p")
+              )
             )
-          )
-        case Right((status, body)) =>
-          parseAck(frame, status, body, "p2p")
-      }
+          case Right((status, body)) =>
+            parseAck(frame, status, body, "p2p")
+        }
 
   def probe(target: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
     if peerAddress.isEmpty then
-      IO.pure(Left(AttachContract.AttachError(AttachContract.Codes.PeerUnreachable, "Peer address is empty — no P2P route", phase = "transfer", path = Some("p2p"))))
+      IO.pure(
+        Left(
+          AttachContract.AttachError(
+            AttachContract.Codes.PeerUnreachable,
+            "Peer address is empty — no P2P route",
+            phase = "transfer",
+            path = Some("p2p")
+          )
+        )
+      )
     else
       IO.blocking {
         val client = HttpClient.newBuilder().proxy(java.net.ProxySelector.of(null)).build()
@@ -111,18 +132,19 @@ final class P2PChunkTransport(
           .build()
         val response = client.send(request, HttpResponse.BodyHandlers.ofString())
         (response.statusCode(), response.body())
-      }.attempt.map {
-        case Left(e) =>
-          Left(
-            AttachContract.AttachError(
-              AttachContract.Codes.PeerUnreachable,
-              s"P2P probe failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
-              phase = "transfer",
-              path = Some("p2p")
+      }.attempt
+        .map {
+          case Left(e) =>
+            Left(
+              AttachContract.AttachError(
+                AttachContract.Codes.PeerUnreachable,
+                s"P2P probe failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+                phase = "transfer",
+                path = Some("p2p")
+              )
             )
-          )
-        case Right((status, body)) => parseProbe(target, status, body, "p2p")
-      }
+          case Right((status, body)) => parseProbe(target, status, body, "p2p")
+        }
 
   private def parseAck(
     frame: ChunkedTransfer.ChunkFrame,
@@ -155,8 +177,7 @@ final class P2PChunkTransport(
           )
         case Some(json) =>
           val hc = json.hcursor
-          if !hc.downField("ok").as[Boolean].getOrElse(false) then
-            decodeError(json, frame.chunkIndex, legName)
+          if !hc.downField("ok").as[Boolean].getOrElse(false) then decodeError(json, frame.chunkIndex, legName)
           else
             Right(
               ChunkedTransfer.ChunkAck(
@@ -224,6 +245,7 @@ final class P2PChunkTransport(
         path = Some(legName)
       )
     )
+  end decodeError
 
 end P2PChunkTransport
 
@@ -314,6 +336,8 @@ final class RelayChunkTransport(
           )
         )
       )
+
+  end put
 
   def probe(target: FileTransfer): IO[Either[AttachContract.AttachError, ChunkedTransfer.ReceiveState]] =
     client
@@ -406,5 +430,8 @@ final class RelayChunkTransport(
                 bytesReceived = hc.downField("bytesReceived").as[Long].toOption,
                 path = Some("relay")
               )
+          end match
+    end if
+  end relayFailure
 
 end RelayChunkTransport

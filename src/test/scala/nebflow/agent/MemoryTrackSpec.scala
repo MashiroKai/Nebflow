@@ -41,10 +41,16 @@ class MemoryTrackSpec extends FunSuite:
     MemoryTrackSignal.resetForTest()
 
   private def enqueue(content: String): String =
-    MemoryQueue.enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
+    MemoryQueue
+      .enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
+      .id
 
-  /** 最小 SharedResources 夹具（本 spec 只走到「前置闸拒绝」路径 ⇒ 全程不触资源位；
-    * 形态沿用 ToolPhaseStuckAxisSpec 的同款 null 夹具）。 */
+  /**
+   * 最小 SharedResources 夹具（本 spec 只走到「前置闸拒绝」路径 ⇒ 全程不触资源位；
+   * 形态沿用 ToolPhaseStuckAxisSpec 的同款 null 夹具）。
+   */
   private def mkResources(): SharedResources =
     SharedResources(
       llm = null,
@@ -71,12 +77,9 @@ class MemoryTrackSpec extends FunSuite:
 
   test("谓词三支全否 ⇒ false（空队列 + 未超软线 + 无信号 = 零记忆轨 LLM 请求）"):
     assertEquals(
-      MemoryTrack.shouldRun(
-        userBytes = 1000L,
-        agentBytes = 1000L,
-        pendingCount = 0,
-        unconsumedSignal = false),
-      false)
+      MemoryTrack.shouldRun(userBytes = 1000L, agentBytes = 1000L, pendingCount = 0, unconsumedSignal = false),
+      false
+    )
 
   test("谓词三支任一为真 ⇒ true（字节 ∨ pending 计数 ∨ 未消费信号 的或）"):
     val under = 1000L
@@ -107,7 +110,11 @@ class MemoryTrackSpec extends FunSuite:
     reset()
     // 造一份「再 append 一条必超硬顶」的 User.md，并排一条 append
     val hard = MemoryBudget.UserHardBytes
-    os.write.over(MemoryStore.userMemoryPath, "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n", createFolders = true)
+    os.write.over(
+      MemoryStore.userMemoryPath,
+      "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n",
+      createFolders = true
+    )
     val before = os.read(MemoryStore.userMemoryPath)
     enqueue("- " + ("z" * 30))
     val queueBefore = os.read(MemoryQueue.queuePath)
@@ -169,8 +176,11 @@ class MemoryTrackSpec extends FunSuite:
     }.toList
     assertEquals(
       results,
-      List.fill(MemoryQueue.MaxInfraOutcomesPerRef)(MemoryQueue.ResultNotRun) :+ MemoryQueue.ResultBlocked :+ MemoryQueue.ResultBlocked,
-      "前 N 轮 notrun，随后 blocked（写一次后不再追加）")
+      List.fill(MemoryQueue.MaxInfraOutcomesPerRef)(
+        MemoryQueue.ResultNotRun
+      ) :+ MemoryQueue.ResultBlocked :+ MemoryQueue.ResultBlocked,
+      "前 N 轮 notrun，随后 blocked（写一次后不再追加）"
+    )
     val st = MemoryQueue.readState()
     val infraWrites = st.outcomes.count(o => o.ref == id && MemoryQueue.EngineInfraResults.contains(o.result))
     assertEquals(infraWrites, MemoryQueue.MaxInfraOutcomesPerRef + 1, "infra 结局行数有界（防队列膨胀）")
@@ -215,10 +225,7 @@ class MemoryTrackSpec extends FunSuite:
     assertEquals(tools, Set("Read", "Write", "Edit", "Glob", "Grep", "Bash", "AskUserQuestion"))
     assert(!tools.contains("MemoryNote"), "队列化后它不需要 MemoryNote")
     assert(AgentCore.ConvergedAgentNames.contains(MemoryTrack.AgentName), "收敛名 ⇒ tools/mcp 声明整体失效")
-    assertEquals(
-      AgentCore.fixedToolsFor(defn.copy(category = "team")),
-      tools,
-      "category 短路：team/flow 推不出 legacy 面")
+    assertEquals(AgentCore.fixedToolsFor(defn.copy(category = "team")), tools, "category 短路：team/flow 推不出 legacy 面")
 
   // ===== W2 直写关闭（IMPL-4 / R7(4) O-A）=====
 
@@ -248,7 +255,12 @@ class MemoryTrackSpec extends FunSuite:
     enqueue("- 条目一")
     assertEquals(MemoryQueue.summaryLine().contains("Memory queue: 1 pending note(s)"), true)
     val withLine = ContextRefresher.renderMemoryBlock(
-      Some("- 记忆内容"), None, (false, false), openTasksLine = "", memoryQueueLine = MemoryQueue.summaryLine())
+      Some("- 记忆内容"),
+      None,
+      (false, false),
+      openTasksLine = "",
+      memoryQueueLine = MemoryQueue.summaryLine()
+    )
     assert(withLine.contains("Memory queue: 1 pending note(s)"), s"注入行在场: $withLine")
     assert(withLine.contains("applied at the next compaction"), "口径：写入推迟到压缩")
 

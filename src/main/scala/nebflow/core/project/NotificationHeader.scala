@@ -55,17 +55,21 @@ object NotificationHeader:
   /** 段分隔符：一律 ` · `（U+00B7，两侧各一个半角空格）。 */
   val Sep: String = " · "
 
-  /** 根域项目名：回落链末级「跨 root 直投件」的项目段取值（作者裁定逐字 `NEBULA`，
-    * 经全大写归一后即此字面量）。 */
+  /**
+   * 根域项目名：回落链末级「跨 root 直投件」的项目段取值（作者裁定逐字 `NEBULA`，
+   * 经全大写归一后即此字面量）。
+   */
   val RootProject: String = "Nebula"
 
-  /** KIND 词表（后端自定名 source → 四段式第 1 段）。**键集 = 后端自定名源全集**
-    * （`InjectionAttribution.BackendNamedSources`，由 spec 硬门守住）。
-    *
-    * 取值口径 = 前端既有的 `INJECTED_SOURCE_LABELS` 显示标签**全大写**
-    * （`mail→Mail→MAIL` 等；`subtask` 的既有标签 `SubTask` ⇒ `SUBTASK`）——
-    * 不新造命名，只做大小写归一，使「KIND 含 CHAIN/NODE/MAIL 及其余源一律纳入」
-    * 成为机械可核的覆盖关系。 */
+  /**
+   * KIND 词表（后端自定名 source → 四段式第 1 段）。**键集 = 后端自定名源全集**
+   * （`InjectionAttribution.BackendNamedSources`，由 spec 硬门守住）。
+   *
+   * 取值口径 = 前端既有的 `INJECTED_SOURCE_LABELS` 显示标签**全大写**
+   * （`mail→Mail→MAIL` 等；`subtask` 的既有标签 `SubTask` ⇒ `SUBTASK`）——
+   * 不新造命名，只做大小写归一，使「KIND 含 CHAIN/NODE/MAIL 及其余源一律纳入」
+   * 成为机械可核的覆盖关系。
+   */
   val KindLabels: Map[String, String] = Map(
     "mail" -> "MAIL",
     "task" -> "TASK",
@@ -81,11 +85,13 @@ object NotificationHeader:
     "chain" -> "CHAIN"
   )
 
-  /** STATE 词表（eventType → 第 4 段）。来源 = 前端 `NODE_STATUS_LABELS`
-    * （`chat.js:381-387`，NODE 专用：`COMPLETED` / `FAILED` / `CANCELED`）∪
-    * `EVENT_TYPE_LABELS`（`chat.js:372-377`，通用面）——两表**引擎侧同源副本**，
-    * 语义逐字保持（注意 `cancelled → CANCELED` 这一个字母的历史口径不得漂移）。
-    * 表外 eventType ⇒ 原样全大写（旧前端的兜底口径，逐字保持）。 */
+  /**
+   * STATE 词表（eventType → 第 4 段）。来源 = 前端 `NODE_STATUS_LABELS`
+   * （`chat.js:381-387`，NODE 专用：`COMPLETED` / `FAILED` / `CANCELED`）∪
+   * `EVENT_TYPE_LABELS`（`chat.js:372-377`，通用面）——两表**引擎侧同源副本**，
+   * 语义逐字保持（注意 `cancelled → CANCELED` 这一个字母的历史口径不得漂移）。
+   * 表外 eventType ⇒ 原样全大写（旧前端的兜底口径，逐字保持）。
+   */
   val StateLabels: Map[String, String] = Map(
     "completed" -> "COMPLETED",
     "failed" -> "FAILED",
@@ -102,33 +108,37 @@ object NotificationHeader:
 
   private def up(s: String): String = s.trim.toUpperCase(Locale.ROOT)
 
-  /** 四段组装（纯函数）：分隔符一律 [[Sep]]，段值 trim + 全大写，**空段跳过**
-    * （不产生双分隔符 / 首尾分隔符）。 */
+  /**
+   * 四段组装（纯函数）：分隔符一律 [[Sep]]，段值 trim + 全大写，**空段跳过**
+   * （不产生双分隔符 / 首尾分隔符）。
+   */
   def render(kind: String, project: Option[String], subject: Option[String], state: Option[String]): String =
     List(kind, project.getOrElse(""), subject.getOrElse(""), state.getOrElse(""))
       .map(up)
       .filter(_.nonEmpty)
       .mkString(Sep)
 
-  /** 由注入件的来源字段解出整条 header。
-    *
-    * @param source     注入来源（`InjectionAttribution` / `UserInput.source`）
-    * @param intake     **呈现判别**字段（mailbadge 批）：与前端同序——有值即优先取它
-    *                   作 KIND 键（`source` 的会计语义不受影响）
-    * @param project    **发送方所属项目**（链首级；`None` ⇒ 由发射点走回落链）
-    * @param sender     发送方标识：NODE/CHAIN 腿 = `"<项目名>/<节点名|链id>"`，
-    *                   Mail/Team 腿 = 发送方 agent 名
-    * @param senderTeam Team 名（Team 消息的 SUBJECT = `team/agent`，旧呈现口径逐字保持）
-    * @param eventType  结构化事件类型 / Mail 类型
-    * @return `None` = 该 source 不属 [[KindLabels]] 词表 ⇒ 帧不带 `header`，
-    *         前端回落既有渲染（在飞批新增源不被本函数接管）。 */
+  /**
+   * 由注入件的来源字段解出整条 header。
+   *
+   * @param source     注入来源（`InjectionAttribution` / `UserInput.source`）
+   * @param intake     **呈现判别**字段（mailbadge 批）：与前端同序——有值即优先取它
+   *                   作 KIND 键（`source` 的会计语义不受影响）
+   * @param project    **发送方所属项目**（链首级；`None` ⇒ 由发射点走回落链）
+   * @param sender     发送方标识：NODE/CHAIN 腿 = `"<项目名>/<节点名|链id>"`，
+   *                   Mail/Team 腿 = 发送方 agent 名
+   * @param senderTeam Team 名（Team 消息的 SUBJECT = `team/agent`，旧呈现口径逐字保持）
+   * @param eventType  结构化事件类型 / Mail 类型
+   * @return `None` = 该 source 不属 [[KindLabels]] 词表 ⇒ 帧不带 `header`，
+   *         前端回落既有渲染（在飞批新增源不被本函数接管）。
+   */
   def header(
-      source: String,
-      intake: Option[String] = None,
-      project: Option[String] = None,
-      sender: Option[String] = None,
-      senderTeam: Option[String] = None,
-      eventType: Option[String] = None
+    source: String,
+    intake: Option[String] = None,
+    project: Option[String] = None,
+    sender: Option[String] = None,
+    senderTeam: Option[String] = None,
+    eventType: Option[String] = None
   ): Option[String] =
     val key = intake.map(_.trim).filter(_.nonEmpty).getOrElse(source)
     KindLabels
@@ -139,21 +149,25 @@ object NotificationHeader:
         render(kind, proj, subj, eventType.map(stateLabel0))
       }
 
-  /** NODE/CHAIN 腿：`sender` 是路径约定 `"<项目名>/<节点名|链id>"`（`NodeEngine`
-    * `deliverToNebula` / `deliverChainSummary`）⇒ 切分即得 PROJECT + SUBJECT；
-    * 无 `/` 的旧形态（缺段）⇒ PROJECT 走回落链、**SUBJECT 省略**（旧前端
-    * `chat.js:410-411` 记录的降级口径 `NODE · <状态>` 逐字保持）。
-    * 其余腿：SUBJECT = Team 组合名（`team/agent`，旧呈现逐字）或 sender。
-    *
-    * **CHAIN 腿状态（全降级列表态批 2026-09-16）**：`deliverChainSummary` 已零投根
-    * ⇒ 本函数不再收到 `source="chain"` 的活帧；CHAIN 分支与其词表项保留**仅服务存量
-    * 历史行**（`.ui.json` 旧行自带 `header` 者逐字渲染；无 `header` 者走前端回落）。
-    * 本函数零改动即对本批正确（无新 source、无新 eventType）。 */
+  end header
+
+  /**
+   * NODE/CHAIN 腿：`sender` 是路径约定 `"<项目名>/<节点名|链id>"`（`NodeEngine`
+   * `deliverToNebula` / `deliverChainSummary`）⇒ 切分即得 PROJECT + SUBJECT；
+   * 无 `/` 的旧形态（缺段）⇒ PROJECT 走回落链、**SUBJECT 省略**（旧前端
+   * `chat.js:410-411` 记录的降级口径 `NODE · <状态>` 逐字保持）。
+   * 其余腿：SUBJECT = Team 组合名（`team/agent`，旧呈现逐字）或 sender。
+   *
+   * **CHAIN 腿状态（全降级列表态批 2026-09-16）**：`deliverChainSummary` 已零投根
+   * ⇒ 本函数不再收到 `source="chain"` 的活帧；CHAIN 分支与其词表项保留**仅服务存量
+   * 历史行**（`.ui.json` 旧行自带 `header` 者逐字渲染；无 `header` 者走前端回落）。
+   * 本函数零改动即对本批正确（无新 source、无新 eventType）。
+   */
   private def split(
-      kind: String,
-      project: Option[String],
-      sender: Option[String],
-      senderTeam: Option[String]
+    kind: String,
+    project: Option[String],
+    sender: Option[String],
+    senderTeam: Option[String]
   ): (Option[String], Option[String]) =
     def nonEmpty(s: String): Option[String] = Option(s).map(_.trim).filter(_.nonEmpty)
     if kind == "NODE" || kind == "CHAIN" then
@@ -165,11 +179,16 @@ object NotificationHeader:
         case None => (project.flatMap(nonEmpty), None)
     else
       val subj = senderTeam.flatMap(nonEmpty) match
-        case Some(t) => sender.flatMap(nonEmpty) match
+        case Some(t) =>
+          sender.flatMap(nonEmpty) match
             case Some(s) => Some(s"$t/$s")
-            case None    => Some(t)
+            case None => Some(t)
         case None => sender.flatMap(nonEmpty)
       (project.flatMap(nonEmpty), subj)
+
+    end if
+
+  end split
 
   private def stateLabel0(eventType: String): String =
     StateLabels.getOrElse(eventType, eventType)

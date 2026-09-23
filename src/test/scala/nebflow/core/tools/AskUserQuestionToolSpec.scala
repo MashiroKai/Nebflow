@@ -23,13 +23,15 @@ class AskUserQuestionToolSpec extends FunSuite:
   // ============================================================
 
   test("parseItems: multiple absent defaults to false") {
-    val input = List(questionJson(
-      "question" -> "Which stack?".asJson,
-      "options" -> Json.arr(
-        Json.obj("label" -> "Scala".asJson),
-        Json.obj("label" -> "Rust".asJson)
+    val input = List(
+      questionJson(
+        "question" -> "Which stack?".asJson,
+        "options" -> Json.arr(
+          Json.obj("label" -> "Scala".asJson),
+          Json.obj("label" -> "Rust".asJson)
+        )
       )
-    ))
+    )
     val items = AskUserQuestionTool.parseItems(input)
     assertEquals(items.size, 1)
     assertEquals(items.head.multiple, false)
@@ -37,39 +39,47 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: multiple true is decoded") {
-    val input = List(questionJson(
-      "question" -> "Which areas?".asJson,
-      "multiple" -> true.asJson,
-      "options" -> Json.arr(Json.obj("label" -> "Frontend".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Which areas?".asJson,
+        "multiple" -> true.asJson,
+        "options" -> Json.arr(Json.obj("label" -> "Frontend".asJson))
+      )
+    )
     val items = AskUserQuestionTool.parseItems(input)
     assertEquals(items.head.multiple, true)
   }
 
   test("parseItems: multiple false is decoded") {
-    val input = List(questionJson(
-      "question" -> "Deploy?".asJson,
-      "multiple" -> false.asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Deploy?".asJson,
+        "multiple" -> false.asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.multiple, false)
   }
 
   test("parseItems: non-boolean multiple falls back to false (lenient)") {
-    val input = List(questionJson(
-      "question" -> "Deploy?".asJson,
-      "multiple" -> "yes".asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Deploy?".asJson,
+        "multiple" -> "yes".asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.multiple, false)
   }
 
   test("parseItems: multiple coexists with id and dependsOn") {
-    val input = List(questionJson(
-      "question" -> "Extras?".asJson,
-      "id" -> "extras".asJson,
-      "multiple" -> true.asJson,
-      "dependsOn" -> Json.obj("ref" -> "target".asJson, "equals" -> "docker".asJson),
-      "options" -> Json.arr(Json.obj("label" -> "Cache".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Extras?".asJson,
+        "id" -> "extras".asJson,
+        "multiple" -> true.asJson,
+        "dependsOn" -> Json.obj("ref" -> "target".asJson, "equals" -> "docker".asJson),
+        "options" -> Json.arr(Json.obj("label" -> "Cache".asJson))
+      )
+    )
     val item = AskUserQuestionTool.parseItems(input).head
     assertEquals(item.multiple, true)
     assertEquals(item.id, Some("extras"))
@@ -105,32 +115,40 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: canvas string is decoded") {
-    val input = List(questionJson(
-      "question" -> "Pick a scheme".asJson,
-      "canvas" -> "/abs/path/compare.html".asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick a scheme".asJson,
+        "canvas" -> "/abs/path/compare.html".asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.canvas, Some("/abs/path/compare.html"))
   }
 
   test("parseItems: preview absent defaults to None") {
-    val input = List(questionJson(
-      "question" -> "Pick".asJson,
-      "options" -> Json.arr(Json.obj("label" -> "A".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick".asJson,
+        "options" -> Json.arr(Json.obj("label" -> "A".asJson))
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.options.head.preview, None)
   }
 
   test("parseItems: swatch preview is decoded (type + colors)") {
-    val input = List(questionJson(
-      "question" -> "Color scheme?".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "Morning mist".asJson,
-        "preview" -> Json.obj(
-          "type" -> "swatch".asJson,
-          "colors" -> Json.arr("#6b9c8a".asJson, "#a8c3b5".asJson)
+    val input = List(
+      questionJson(
+        "question" -> "Color scheme?".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "Morning mist".asJson,
+            "preview" -> Json.obj(
+              "type" -> "swatch".asJson,
+              "colors" -> Json.arr("#6b9c8a".asJson, "#a8c3b5".asJson)
+            )
+          )
         )
-      ))
-    ))
+      )
+    )
     val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
     assertEquals(pv.map(_.`type`), Some("swatch"))
     assertEquals(pv.flatMap(_.colors), Some(List("#6b9c8a", "#a8c3b5")))
@@ -138,13 +156,17 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: image preview is decoded (type + src)") {
-    val input = List(questionJson(
-      "question" -> "Which mockup?".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "A".asJson,
-        "preview" -> Json.obj("type" -> "image".asJson, "src" -> "https://example.com/a.png".asJson)
-      ))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Which mockup?".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "A".asJson,
+            "preview" -> Json.obj("type" -> "image".asJson, "src" -> "https://example.com/a.png".asJson)
+          )
+        )
+      )
+    )
     val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
     assertEquals(pv.map(_.`type`), Some("image"))
     assertEquals(pv.flatMap(_.src), Some("https://example.com/a.png"))
@@ -152,13 +174,17 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: malformed preview (no type) falls back to None — option kept") {
-    val input = List(questionJson(
-      "question" -> "Pick".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "A".asJson,
-        "preview" -> Json.obj("src" -> "https://example.com/x.png".asJson) // missing type
-      ))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "A".asJson,
+            "preview" -> Json.obj("src" -> "https://example.com/x.png".asJson) // missing type
+          )
+        )
+      )
+    )
     val opt = AskUserQuestionTool.parseItems(input).head.options.head
     assertEquals(opt.label, "A")
     assertEquals(opt.preview, None)

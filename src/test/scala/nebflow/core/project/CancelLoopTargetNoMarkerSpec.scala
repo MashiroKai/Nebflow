@@ -48,8 +48,11 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"cancel-loop-target spec agent","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"cancel-loop-target spec agent","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -60,9 +63,13 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   // ── 装配（与 ChainCascadeSpec 同款骨架；独立临时工作区，无周期 sweep ⇒ 帧读数确定）──
 
   private class StubLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -98,7 +105,8 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     rt: ProjectRuntime,
     ws: os.Path,
     triggered: Ref[IO, List[String]],
-    frames: Ref[IO, List[Json]])
+    frames: Ref[IO, List[Json]]
+  )
 
   private def mount(name: String, system: ActorSystem, res: SharedResources): IO[Rig] =
     val ws = tempRoot / s"ws-$name-${scala.util.Random.nextInt(100000)}"
@@ -108,22 +116,33 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
       triggered <- Ref.of[IO, List[String]](Nil)
       frames <- Ref.of[IO, List[Json]](Nil)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (j: Json) => frames.update(_ :+ j),
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (typ: String, nodeId: String, payload: Json) =>
-          frames.update(_ :+ payload.deepMerge(Json.obj(
-            "type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))),
+          frames.update(
+            _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
+          ),
         notifyTriggerOverride = Some((text: String) => triggered.update(_ :+ text)),
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield Rig(rt, ws, triggered, frames)
+
+    end for
+
+  end mount
 
   private def withRig[A](name: String)(f: Rig => IO[A]): IO[A] =
     val system = ActorSystem(s"cancel-loop-target-$name-${scala.util.Random.nextInt(100000)}")
@@ -133,15 +152,32 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
       a <- f(rig)
     yield a
 
-  private def n(id: String, status: String, createdAt: Long, in: List[String] = Nil,
-               out: List[OutEdge] = Nil, deps: List[String] = Nil,
-               pendingSuccession: List[String] = Nil,
-               role: String = NodeRoles.Task,
-               lastVerdict: Option[String] = None,
-               result: Option[String] = None): NodeDef =
-    NodeDef(id = id, name = id, agent = "general", status = status, in = in, out = out, deps = deps,
-      pendingSuccession = pendingSuccession, role = role, lastVerdict = lastVerdict, result = result,
-      createdAt = createdAt)
+  private def n(
+    id: String,
+    status: String,
+    createdAt: Long,
+    in: List[String] = Nil,
+    out: List[OutEdge] = Nil,
+    deps: List[String] = Nil,
+    pendingSuccession: List[String] = Nil,
+    role: String = NodeRoles.Task,
+    lastVerdict: Option[String] = None,
+    result: Option[String] = None
+  ): NodeDef =
+    NodeDef(
+      id = id,
+      name = id,
+      agent = "general",
+      status = status,
+      in = in,
+      out = out,
+      deps = deps,
+      pendingSuccession = pendingSuccession,
+      role = role,
+      lastVerdict = lastVerdict,
+      result = result,
+      createdAt = createdAt
+    )
 
   private def seed(rig: Rig, nodes: List[NodeDef]): IO[Unit] =
     rig.rt.store.mutate(s => s.copy(nodes = s.nodes ++ nodes.map(x => x.id -> x).toMap)).void
@@ -161,20 +197,31 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   private def audit(rig: Rig): IO[List[(String, String, String)]] =
     IO.blocking(os.read(rig.ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(_.flatMap(l => jsonParse(l).toOption.map(j => (
-        j.hcursor.get[String]("type").getOrElse(""),
-        j.hcursor.get[String]("nodeId").getOrElse(""),
-        j.hcursor.get[String]("summary").getOrElse("")))))
+      .map(
+        _.flatMap(l =>
+          jsonParse(l).toOption.map(j =>
+            (
+              j.hcursor.get[String]("type").getOrElse(""),
+              j.hcursor.get[String]("nodeId").getOrElse(""),
+              j.hcursor.get[String]("summary").getOrElse("")
+            )
+          )
+        )
+      )
       .handleError(_ => Nil)
 
-  /** 源码判据的**代码行视图**：剥掉注释行（以行注释符 / `*` / 块注释起首符 开头的整行）
-    * ——文档注释里逐字引用了被判据约束的代码原文，不剥则「改掉代码、留下注释」照样绿
-    * （M8/M11 同款手法）。 */
+  /**
+   * 源码判据的**代码行视图**：剥掉注释行（以行注释符 / `*` / 块注释起首符 开头的整行）
+   * ——文档注释里逐字引用了被判据约束的代码原文，不剥则「改掉代码、留下注释」照样绿
+   * （M8/M11 同款手法）。
+   */
   private def codeOnly(src: String): String =
-    src.linesIterator.filterNot { l =>
-      val t = l.trim
-      t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
-    }.mkString("\n")
+    src.linesIterator
+      .filterNot { l =>
+        val t = l.trim
+        t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
+      }
+      .mkString("\n")
 
   private def nodeEngineSrc: String =
     codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
@@ -186,18 +233,33 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     assert(start >= 0, s"anchor not found in NodeEngine.scala: $sig")
     lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
 
-  /** 判据拓扑（与 [[ChainCascadeSpec]] M9 逐字同形）：
-    *   n-work(worker) ← `(fail)n-work:loop` ← n-ver(verifier) → n-land(正常 out sink)。
-    * 🔴 worker 的 `in` 为空——**回边不写 `in` 镜像**（`NodeTools` 三处写点同款过滤）⇒
-    * 它只可能经**前向**扫描进目标集（这正是本批排除面的唯一入口）。 */
-  private def loopTopology(rig: Rig, verStatus: String = NodeLifecycle.Pending,
-                           verLastVerdict: Option[String] = None): IO[Unit] =
-    seed(rig, List(
-      n("n-work", NodeLifecycle.Pending, 1000L),
-      n("n-ver", verStatus, 2000L, in = List("n-work"), role = NodeRoles.Verifier,
-        lastVerdict = verLastVerdict,
-        out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop))),
-      n("n-land", NodeLifecycle.Pending, 3000L, in = List("n-ver"))))
+  /**
+   * 判据拓扑（与 [[ChainCascadeSpec]] M9 逐字同形）：
+   *   n-work(worker) ← `(fail)n-work:loop` ← n-ver(verifier) → n-land(正常 out sink)。
+   * 🔴 worker 的 `in` 为空——**回边不写 `in` 镜像**（`NodeTools` 三处写点同款过滤）⇒
+   * 它只可能经**前向**扫描进目标集（这正是本批排除面的唯一入口）。
+   */
+  private def loopTopology(
+    rig: Rig,
+    verStatus: String = NodeLifecycle.Pending,
+    verLastVerdict: Option[String] = None
+  ): IO[Unit] =
+    seed(
+      rig,
+      List(
+        n("n-work", NodeLifecycle.Pending, 1000L),
+        n(
+          "n-ver",
+          verStatus,
+          2000L,
+          in = List("n-work"),
+          role = NodeRoles.Verifier,
+          lastVerdict = verLastVerdict,
+          out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop))
+        ),
+        n("n-land", NodeLifecycle.Pending, 3000L, in = List("n-ver"))
+      )
+    )
 
   /** P1 核心读数（三段入口共用）：worker 零便签 + 零帧；verifier 落 cancelled。 */
   private def assertLoopTargetUntouched(rig: Rig, leg: String): IO[Unit] =
@@ -206,8 +268,12 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
       workMarker <- markerOf(rig, "n-work")
       workFrames <- framesFor(rig, "n-work")
       verStatus <- statusOf(rig, "n-ver")
-      _ <- IO(println(s"[spec] $leg — worker(status=$workStatus, pendingSuccession=$workMarker, " +
-        s"frames=${workFrames.length} ${workFrames.map(_.noSpaces.take(160))}); verifier=$verStatus"))
+      _ <- IO(
+        println(
+          s"[spec] $leg — worker(status=$workStatus, pendingSuccession=$workMarker, " +
+            s"frames=${workFrames.length} ${workFrames.map(_.noSpaces.take(160))}); verifier=$verStatus"
+        )
+      )
     yield
       assertEquals(verStatus, NodeLifecycle.Cancelled, s"$leg: the verifier itself must be cancelled")
       assertEquals(workStatus, NodeLifecycle.Pending, s"$leg: the loop target keeps its status (never burned)")
@@ -217,7 +283,9 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
 
   // ── P1（三段入口：级联腿 / 单节点腿 / reap 腿）─────────────────────────
 
-  test("P1 cascade leg: cancelling the verifier (cascade=true) never marks/bumps the ':loop' back-edge target — while the normal-out sink is still cancelled as today") {
+  test(
+    "P1 cascade leg: cancelling the verifier (cascade=true) never marks/bumps the ':loop' back-edge target — while the normal-out sink is still cancelled as today"
+  ) {
     withRig("p1-cascade") { rig =>
       for
         _ <- loopTopology(rig)
@@ -227,20 +295,34 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
         sts <- List("n-ver", "n-land", "n-work").traverse(statusOf(rig, _))
         landMarker <- markerOf(rig, "n-land")
         landFrames <- framesFor(rig, "n-land")
-        _ <- IO(println(s"[spec] P1/cascade 保留面对照 — n-land(pendingSuccession=$landMarker, frames=${landFrames.length})"))
+        _ <- IO(
+          println(s"[spec] P1/cascade 保留面对照 — n-land(pendingSuccession=$landMarker, frames=${landFrames.length})")
+        )
       yield
-        assertEquals(chain.map(_.info.memberIds).getOrElse(Nil), List("n-work", "n-ver", "n-land"),
-          "precondition: component membership still includes the loop edge (FlowMapStore.topologicalChains)")
-        assertEquals(report.cancelled.map(_.nodeId).sorted, List("n-land", "n-ver"),
-          "the conduction face is untouched: the normal-out sink still cascades, the worker never enters the cancel set")
+        assertEquals(
+          chain.map(_.info.memberIds).getOrElse(Nil),
+          List("n-work", "n-ver", "n-land"),
+          "precondition: component membership still includes the loop edge (FlowMapStore.topologicalChains)"
+        )
+        assertEquals(
+          report.cancelled.map(_.nodeId).sorted,
+          List("n-land", "n-ver"),
+          "the conduction face is untouched: the normal-out sink still cascades, the worker never enters the cancel set"
+        )
         assertEquals(sts, List("cancelled", "cancelled", "pending"))
         // 保留面：非回边下游照旧被 prune（in 镜像）+ 打标；其标记为 suppressTargets 命中（取消集内）⇒ 无便签
-        assertEquals(landMarker, Nil, "the sink is inside the cancelled set ⇒ suppressTargets keeps its marker empty (unchanged)")
+        assertEquals(
+          landMarker,
+          Nil,
+          "the sink is inside the cancelled set ⇒ suppressTargets keeps its marker empty (unchanged)"
+        )
         assert(landFrames.nonEmpty, "the sink is still touched by the cancel family (its frames are unchanged)")
     }
   }
 
-  test("P1 single-node leg (NodeCancel口径, cascade=false): the loop target still gets zero marker / zero frame, while the non-loop downstream keeps today's marker + exactly one frame") {
+  test(
+    "P1 single-node leg (NodeCancel口径, cascade=false): the loop target still gets zero marker / zero frame, while the non-loop downstream keeps today's marker + exactly one frame"
+  ) {
     withRig("p1-single") { rig =>
       for
         _ <- loopTopology(rig)
@@ -250,19 +332,23 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
         landMarker <- markerOf(rig, "n-land")
         landFrames <- framesFor(rig, "n-land")
         verOut <- outOf(rig, "n-ver")
-        _ <- IO(println(s"[spec] P1/single-node 保留面对照 — n-land(status=$landStatus, " +
-          s"pendingSuccession=$landMarker, frames=${landFrames.length}); n-ver.out=$verOut"))
+        _ <- IO(
+          println(
+            s"[spec] P1/single-node 保留面对照 — n-land(status=$landStatus, " +
+              s"pendingSuccession=$landMarker, frames=${landFrames.length}); n-ver.out=$verOut"
+          )
+        )
       yield
         assertEquals(landStatus, NodeLifecycle.Pending, "no cascade ⇒ the sink is not cancelled")
-        assertEquals(landMarker, List("n-ver"),
-          "保留面：非回边前向目标照旧收「待承接」便签（逐字今日行为）")
+        assertEquals(landMarker, List("n-ver"), "保留面：非回边前向目标照旧收「待承接」便签（逐字今日行为）")
         assertEquals(landFrames.length, 1, "保留面：非回边目标照旧收那 1 帧 nodeUpdated")
-        assertEquals(verOut, List(OutEdge.nebula),
-          "保留面：被取消节点 out 改接 Nebula（该节点 out 里还有非回边目标 ⇒ 仍走改接腿）")
+        assertEquals(verOut, List(OutEdge.nebula), "保留面：被取消节点 out 改接 Nebula（该节点 out 里还有非回边目标 ⇒ 仍走改接腿）")
     }
   }
 
-  test("P1 reap leg: a dead-session (stale running) verifier reaped through the cancel family leaves the ':loop' target unmarked and frameless") {
+  test(
+    "P1 reap leg: a dead-session (stale running) verifier reaped through the cancel family leaves the ':loop' target unmarked and frameless"
+  ) {
     withRig("p1-reap") { rig =>
       for
         _ <- loopTopology(rig, verStatus = NodeLifecycle.Running)
@@ -274,13 +360,25 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
 
   // ── P1″ 声明的连带面（#697 范围外；本批在报告 ⑥/⑨ 逐条申报）────────────
 
-  test("P1'' declared collateral: when the cancelled node's out carries ONLY a ':loop' edge (no node target), the target set is empty ⇒ zero-write early exit also skips the out→Nebula rewrite (the ':loop' declaration edge is retained)") {
+  test(
+    "P1'' declared collateral: when the cancelled node's out carries ONLY a ':loop' edge (no node target), the target set is empty ⇒ zero-write early exit also skips the out→Nebula rewrite (the ':loop' declaration edge is retained)"
+  ) {
     withRig("p1-looponly") { rig =>
       for
-        _ <- seed(rig, List(
-          n("n-work", NodeLifecycle.Pending, 1000L),
-          n("n-ver", NodeLifecycle.Pending, 2000L, in = List("n-work"), role = NodeRoles.Verifier,
-            out = List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)))))
+        _ <- seed(
+          rig,
+          List(
+            n("n-work", NodeLifecycle.Pending, 1000L),
+            n(
+              "n-ver",
+              NodeLifecycle.Pending,
+              2000L,
+              in = List("n-work"),
+              role = NodeRoles.Verifier,
+              out = List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop))
+            )
+          )
+        )
         _ <- rig.rt.engine.cancelNodes(List("n-ver"), CancelSource.User, "loop-only out", cascade = false)
         _ <- assertLoopTargetUntouched(rig, "P1''/loop-only")
         verOut <- outOf(rig, "n-ver")
@@ -288,22 +386,31 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
         cancelledSummaries = verAudit.filter(_._1 == "cancelled").map(_._3)
         _ <- IO(println(s"[spec] P1'' 连带面读数 — n-ver.out=$verOut; cancelled summaries=$cancelledSummaries"))
       yield
-        assertEquals(verOut, List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
-          "declared collateral (#697 范围外)：targets 全被排除 ⇒ 早退零写 ⇒ ':loop' 声明边保留")
-        assert(cancelledSummaries.forall(!_.contains("awaiting handover")),
-          s"no phantom handover successor may be named for a pure ':loop' target: $cancelledSummaries")
+        assertEquals(
+          verOut,
+          List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
+          "declared collateral (#697 范围外)：targets 全被排除 ⇒ 早退零写 ⇒ ':loop' 声明边保留"
+        )
+        assert(
+          cancelledSummaries.forall(!_.contains("awaiting handover")),
+          s"no phantom handover successor may be named for a pure ':loop' target: $cancelledSummaries"
+        )
     }
   }
 
   // ── P2（负向零回归：机械核 + 行为核）─────────────────────────────────
 
-  test("P2 machine: the non-cancel-family marker legs stay free of cascade flags (comment-stripped source windows), and the cancel-family window keeps the exclusion + its 取代面") {
+  test(
+    "P2 machine: the non-cancel-family marker legs stay free of cascade flags (comment-stripped source windows), and the cancel-family window keeps the exclusion + its 取代面"
+  ) {
     val src = nodeEngineSrc
     val detachCancelled = window(src, "private def detachCancelledUpstream", 60)
     val abandon = window(src, "def detachAbandonedNode", 60)
     val reversePrune = window(src, "private def reversePruneReferences", 20)
-    println(s"[spec] P2 machine windows — detachCancelledUpstream=${detachCancelled.linesIterator.size} lines, " +
-      s"detachAbandonedNode=${abandon.linesIterator.size}, reversePruneReferences=${reversePrune.linesIterator.size} lines")
+    println(
+      s"[spec] P2 machine windows — detachCancelledUpstream=${detachCancelled.linesIterator.size} lines, " +
+        s"detachAbandonedNode=${abandon.linesIterator.size}, reversePruneReferences=${reversePrune.linesIterator.size} lines"
+    )
     // ① 保留面：非取消族两条腿与 cascade 族**零耦合**
     assert(!abandon.contains("cascade"), "detachAbandonedNode must stay cascade-agnostic")
     assert(!abandon.contains("suppressTargets"), "detachAbandonedNode must not take suppressTargets")
@@ -314,18 +421,26 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     assert(detachCancelled.contains("suppressTargets"), "the cancel-family detach keeps its suppressTargets 取代面")
     assert(detachCancelled.contains("cascadeCancelledIds"), "and keeps consulting the cross-call suppress set")
     // ③ 本批判据（#675(a)）：目标集前向腿排除 `:loop`
-    assert(detachCancelled.contains("from.out.filterNot(OutEdge.isLoopEdge)"),
-      "the marking leg's forward scan must skip ':loop' back-edges (the whole point of #675(a))")
+    assert(
+      detachCancelled.contains("from.out.filterNot(OutEdge.isLoopEdge)"),
+      "the marking leg's forward scan must skip ':loop' back-edges (the whole point of #675(a))"
+    )
   }
 
-  test("P2 behaviour: the abandon detach leg still writes today's 待承接 marker even after a cascade ran (non-cancel leg untouched)") {
+  test(
+    "P2 behaviour: the abandon detach leg still writes today's 待承接 marker even after a cascade ran (non-cancel leg untouched)"
+  ) {
     withRig("p2-behaviour") { rig =>
       for
-        _ <- seed(rig, List(
-          n("n-a", NodeLifecycle.Pending, 1000L, out = List(OutEdge("n-b"))),
-          n("n-b", NodeLifecycle.Pending, 2000L, in = List("n-a")),
-          n("n-z", NodeLifecycle.Cancelled, 3000L, out = List(OutEdge("n-y"))),
-          n("n-y", NodeLifecycle.Pending, 4000L, in = List("n-z"))))
+        _ <- seed(
+          rig,
+          List(
+            n("n-a", NodeLifecycle.Pending, 1000L, out = List(OutEdge("n-b"))),
+            n("n-b", NodeLifecycle.Pending, 2000L, in = List("n-a")),
+            n("n-z", NodeLifecycle.Cancelled, 3000L, out = List(OutEdge("n-y"))),
+            n("n-y", NodeLifecycle.Pending, 4000L, in = List("n-z"))
+          )
+        )
         _ <- rig.rt.engine.cancelNodes(List("n-a"), CancelSource.User, "prime the cascade set", cascade = true)
         d <- rig.rt.engine.detachAbandonedNode("n-z", NodeLifecycle.Cancelled)
         marker <- markerOf(rig, "n-y")
@@ -337,19 +452,28 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
 
   // ── L6（传导面保留：本批零改动的具名钉点）────────────────────────────
 
-  test("L6: the conduction exclusion stays pinned at referencesOf — both :loop scan faces are present there and absent as a *behaviour* change in this batch") {
+  test(
+    "L6: the conduction exclusion stays pinned at referencesOf — both :loop scan faces are present there and absent as a *behaviour* change in this batch"
+  ) {
     val src = nodeEngineSrc
     val refs = window(src, "private def referencesOf", 30)
-    assert(refs.contains("filterNot(OutEdge.isLoopEdge)"),
-      "the forward conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)")
-    assert(refs.contains("!OutEdge.isLoopEdge(e)"),
-      "the reverse conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)")
+    assert(
+      refs.contains("filterNot(OutEdge.isLoopEdge)"),
+      "the forward conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)"
+    )
+    assert(
+      refs.contains("!OutEdge.isLoopEdge(e)"),
+      "the reverse conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)"
+    )
     withRig("l6") { rig =>
       for
         _ <- loopTopology(rig)
         report <- rig.rt.engine.cancelNodes(List("n-ver"), CancelSource.User, "conduction face check", cascade = true)
-      yield
-        assertEquals(report.cancelled.map(_.nodeId).sorted, List("n-land", "n-ver"),
-          "conduction face reading is unchanged: the worker is never carried into the cancel set by the ':loop' edge")
+      yield assertEquals(
+        report.cancelled.map(_.nodeId).sorted,
+        List("n-land", "n-ver"),
+        "conduction face reading is unchanged: the worker is never carried into the cancel set by the ':loop' edge"
+      )
     }
   }
+end CancelLoopTargetNoMarkerSpec

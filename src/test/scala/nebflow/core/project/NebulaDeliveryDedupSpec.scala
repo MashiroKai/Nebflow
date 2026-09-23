@@ -46,12 +46,19 @@ class NebulaDeliveryDedupSpec extends FunSuite:
 
   private def node(id: String, name: String, status: String, result: String): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "worker", out = List(OutEdge.nebula), status = status,
-      result = Some(result), createdAt = System.currentTimeMillis() - 2 * Hour,
+      id = id,
+      name = name,
+      agent = "worker",
+      out = List(OutEdge.nebula),
+      status = status,
+      result = Some(result),
+      createdAt = System.currentTimeMillis() - 2 * Hour,
       completedAt = Some(System.currentTimeMillis() - Hour)
     )
 
-  private def withFixture(name: String)(body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
+  private def withFixture(name: String)(
+    body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit
+  ): Unit =
     val tmp = os.temp.dir(prefix = s"dedup-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"dedup-$name")
@@ -69,25 +76,44 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         llm = new nebflow.shared.LlmHandle[IO]:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
-          def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+          def sendStream(
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ) =
             fs2.Stream(nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
         resources = SharedResources(
-          llm = llm, dispatcher = dispatcher,
+          llm = llm,
+          dispatcher = dispatcher,
           sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-          projectRoot = os.pwd, thinkingConfigRef = thinkingRef, rateLimiter = rateLimiter,
-          fileChangeTracker = tracker, contextWindow = 100_000,
-          agentLibrary = new AgentLibrary(tmp / "agents"), taskStore = FileTaskStore,
-          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"), fileLockManager = fileLocks,
-          sessionModelOverrides = modelOverrides, providerRegistry = null,
-          healthMonitor = ProviderHealthMonitor(null), actorSystem = system,
+          projectRoot = os.pwd,
+          thinkingConfigRef = thinkingRef,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new AgentLibrary(tmp / "agents"),
+          taskStore = FileTaskStore,
+          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+          fileLockManager = fileLocks,
+          sessionModelOverrides = modelOverrides,
+          providerRegistry = null,
+          healthMonitor = ProviderHealthMonitor(null),
+          actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
           voiceMutedRef = voiceMuted
         )
         recorded <- Ref.of[IO, List[AgentCommand]](Nil)
         rootSid = s"dedup-root-$name"
         rootRef <- system.spawn(recorderBehavior(recorded), s"dedup-rec-$name")
-        engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
-          rootSid, "dedupproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
+        engine = new NodeEngine(
+          store,
+          system,
+          resources,
+          _ => IO.unit,
+          workspace.toString,
+          rootSid,
+          "dedupproj",
+          FeedbackRouter.ModeAuto,
+          (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题 = 投递去重记账 ⇒ 显式关腿 2（生产默认开）。
           reportGateHold = Some(false),
           // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
@@ -95,7 +121,8 @@ class NebulaDeliveryDedupSpec extends FunSuite:
           // 会把「窗口内几件」先攒起来，两个窗叠加使判据不可判 ⇒ 关掉**另一个**窗（root
           // 打包窗），只留本 spec 要测的那一个。窗本体由 `RootNotifyBatchSpec` 专项覆盖；
           // 🔴 原断言一字未改。
-          rootNotifyQuietMs = Some(0))
+          rootNotifyQuietMs = Some(0)
+        )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry
@@ -106,6 +133,10 @@ class NebulaDeliveryDedupSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
+
+  end withFixture
 
   private def recorderBehavior(recorded: Ref[IO, List[AgentCommand]]): nebflow.actor.Behavior[AgentCommand] =
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
@@ -169,7 +200,8 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         // 预置窗口外旧投递记录（61s 前——超过 60s 窗口，顺路验证时间窗淘汰）
         now <- IO(System.currentTimeMillis())
         _ <- engine.recentNebulaDeliveries.update(
-          _ + (("n-expired", "completed") -> (now - NodeEngine.NebulaDedupWindowMs - 1000L)))
+          _ + (("n-expired", "completed") -> (now - NodeEngine.NebulaDedupWindowMs - 1000L))
+        )
         _ <- engine.deliverOutTo(n, "Nebula", n.result.get)
         msgs <- awaitMsgs(recorded, min = 1)
       yield msgs

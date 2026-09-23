@@ -68,7 +68,11 @@ object WatchdogEventLog:
     IO.blocking {
       // 单行 append（与 FlowMapEventLog 同款；写入方 = 扫描循环单线程顺序调用）。
       os.write.append(fileFor(System.currentTimeMillis()), event.noSpaces + "\n", createFolders = true)
-    }.void.handleErrorWith(e =>
-      logger.warn(s"watchdog event append failed (audit-only, scan unaffected): ${Option(e.getMessage).getOrElse(e.toString)}"))
+    }.void
+      .handleErrorWith(e =>
+        logger.warn(
+          s"watchdog event append failed (audit-only, scan unaffected): ${Option(e.getMessage).getOrElse(e.toString)}"
+        )
+      )
 
 end WatchdogEventLog

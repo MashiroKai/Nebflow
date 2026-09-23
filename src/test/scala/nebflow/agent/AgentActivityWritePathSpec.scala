@@ -21,6 +21,7 @@ import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
  * 不是复刻。
  */
 object ActivityWriteProbe extends AgentCore:
+
   /** 生产写入点的直通转发（参数与 AgentCore.touchRegistryActivity 同名同义）。 */
   def touch(
     resources: SharedResources,
@@ -87,7 +88,10 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(afterTurn.lastActivityMs, t0, "agent-side stamp must advance"))
       // 工具开始（同 turn 内第 1 轮）
       _ <- ActivityWriteProbe.touch(
-        resources, Some(Sid), AgentStatus.Processing, t0 + 1000,
+        resources,
+        Some(Sid),
+        AgentStatus.Processing,
+        t0 + 1000,
         toolStarting = Some(("Bash", t0 + 1000))
       )
       afterTool <- rec(registry)
@@ -95,6 +99,7 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(afterTool.currentToolStartedAt, t0 + 1000, "tool start must be recorded"))
       _ <- IO(assertEquals(afterTool.turnStartedAt, t0, "same turn — turnStartedAt must NOT be reset"))
     yield ()
+    end for
   }
 
   test("同 turn 多轮：后续 LLM 调用不重置 turnStartedAt；批次完成（clearToolPhase）清相位") {
@@ -104,7 +109,10 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       resources = mkResources(registry)
       _ <- ActivityWriteProbe.touch(resources, Some(Sid), AgentStatus.Processing, t0, turnStart = true)
       _ <- ActivityWriteProbe.touch(
-        resources, Some(Sid), AgentStatus.Processing, t0 + 500,
+        resources,
+        Some(Sid),
+        AgentStatus.Processing,
+        t0 + 500,
         toolStarting = Some(("Grep", t0 + 500))
       )
       // 第 2 轮 LLM 起点（同 turn）
@@ -118,6 +126,7 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(afterBatch.currentToolName, None, "batch completion clears the tool phase"))
       _ <- IO(assertEquals(afterBatch.currentToolStartedAt, 0L, "batch completion zeroes the phase start"))
     yield ()
+    end for
   }
 
   test("WaitingForUser：不算新 turn、清工具相位；答题恢复 Processing 仍不重置 turn 起点") {
@@ -127,7 +136,10 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       resources = mkResources(registry)
       _ <- ActivityWriteProbe.touch(resources, Some(Sid), AgentStatus.Processing, t0, turnStart = true)
       _ <- ActivityWriteProbe.touch(
-        resources, Some(Sid), AgentStatus.Processing, t0 + 100,
+        resources,
+        Some(Sid),
+        AgentStatus.Processing,
+        t0 + 100,
         toolStarting = Some(("AskUserQuestion", t0 + 100))
       )
       // 进入人机交互等待（生产：AgentCore.askUserPermission）
@@ -141,6 +153,7 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       resumed <- rec(registry)
       _ <- IO(assertEquals(resumed.turnStartedAt, t0, "resume from WaitingForUser is NOT a new turn"))
     yield ()
+    end for
   }
 
   test("回到 Idle：清工具相位（run_in_background 防误杀铁律的相位侧）") {
@@ -150,7 +163,10 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       resources = mkResources(registry)
       _ <- ActivityWriteProbe.touch(resources, Some(Sid), AgentStatus.Processing, t0, turnStart = true)
       _ <- ActivityWriteProbe.touch(
-        resources, Some(Sid), AgentStatus.Processing, t0 + 10,
+        resources,
+        Some(Sid),
+        AgentStatus.Processing,
+        t0 + 10,
         toolStarting = Some(("Bash", t0 + 10))
       )
       _ <- ActivityWriteProbe.touch(resources, Some(Sid), AgentStatus.Idle, t0 + 20)
@@ -159,6 +175,7 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(idle.currentToolName, None, "Idle clears the tool phase"))
       _ <- IO(assertEquals(idle.currentToolStartedAt, 0L, "Idle zeroes the phase start"))
     yield ()
+    end for
   }
 
   test("非 Processing 状态写入：phase 参数被忽略（相位只在 Processing 语义下有意义）") {
@@ -168,13 +185,17 @@ class AgentActivityWritePathSpec extends CatsEffectSuite:
       resources = mkResources(registry)
       // 即便调用方传了相位，WaitingForUser 落盘后仍必须是空相位
       _ <- ActivityWriteProbe.touch(
-        resources, Some(Sid), AgentStatus.WaitingForUser, t0,
+        resources,
+        Some(Sid),
+        AgentStatus.WaitingForUser,
+        t0,
         toolStarting = Some(("Bash", t0))
       )
       r <- rec(registry)
       _ <- IO(assertEquals(r.currentToolName, None, "non-Processing write must not carry a tool phase"))
       _ <- IO(assertEquals(r.currentToolStartedAt, 0L, "non-Processing write must zero the phase start"))
     yield ()
+    end for
   }
 
 end AgentActivityWritePathSpec

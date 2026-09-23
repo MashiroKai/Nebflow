@@ -46,8 +46,11 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -63,17 +66,29 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     out: List[OutEdge] = Nil,
     deps: List[String] = Nil
   ): NodeDef =
-    NodeDef(id = id, name = s"name-$id", agent = "general", status = status,
-      in = in, out = out, deps = deps, createdAt = createdAt)
+    NodeDef(
+      id = id,
+      name = s"name-$id",
+      agent = "general",
+      status = status,
+      in = in,
+      out = out,
+      deps = deps,
+      createdAt = createdAt
+    )
 
-  /** 链 a → b 直种归档区（走 mutateArchive ⇒ persistArchiveDiff 的孤儿重聚簇会把两成员
-    * 注册成同一拓扑批 `chain-n-a` 并落批文件——与生产归档同路径，非测试旁路）。 */
+  /**
+   * 链 a → b 直种归档区（走 mutateArchive ⇒ persistArchiveDiff 的孤儿重聚簇会把两成员
+   * 注册成同一拓扑批 `chain-n-a` 并落批文件——与生产归档同路径，非测试旁路）。
+   */
   private def seedArchivedChain(store: FlowMapStore): IO[Unit] =
     store.mutateArchive { a0 =>
-      a0.copy(nodes = a0.nodes ++ Map(
-        "n-a" -> def0("n-a", t0, out = List(OutEdge("n-b"))),
-        "n-b" -> def0("n-b", t0 + 1000, in = List("n-a"))
-      ))
+      a0.copy(nodes =
+        a0.nodes ++ Map(
+          "n-a" -> def0("n-a", t0, out = List(OutEdge("n-b"))),
+          "n-b" -> def0("n-b", t0 + 1000, in = List("n-a"))
+        )
+      )
     }.void
 
   private def batchFileOf(ws: os.Path, batchId: String): os.Path =
@@ -85,13 +100,18 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     else
       jsonParse(os.read(f)).flatMap(_.as[FlowMapArchiveBatch]) match
         case Right(b) => Right(b.nodes.keySet)
-        case Left(e)  => Left(e.getMessage)
+        case Left(e) => Left(e.getMessage)
 
   /** 只读 store 的 ProjectRuntime 桩（R②/R⑥ 用：不触 engine 的纯 store 单点）。 */
   private def mkRuntimeStub(store: FlowMapStore, ws: os.Path): ProjectRuntime =
     ProjectRuntime(
       ProjectDef(name = store.project, workspace = ws.toString, agentFile = "", createdAt = t0),
-      store, null, null, null, None)
+      store,
+      null,
+      null,
+      null,
+      None
+    )
 
   // ── R① 整批拉回 ─────────────────────────────────────────
 
@@ -113,13 +133,13 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     yield
       assertEquals(btBefore.keySet, Set("chain-n-a"), "seeded archive batch registered under the topological chain id")
       assert(fileBefore, "seeded batch file must exist on disk")
-      assertEquals(restored.map(_.id).sorted, List("n-a", "n-b"),
-        "a single target pulls the WHOLE batch (恒整批 §5.3-⑧)")
+      assertEquals(restored.map(_.id).sorted, List("n-a", "n-b"), "a single target pulls the WHOLE batch (恒整批 §5.3-⑧)")
       assertEquals(s.nodes.keySet, Set("n-a", "n-b"), "both members back on the active map")
       assertEquals(arch.nodes.keySet, Set.empty[String], "archive zone emptied (no double-zone residue)")
       assertEquals(btAfter.keySet, Set.empty[String], "batch index cleared")
       assert(!fileAfter, "batch file removed once all its members left the archive")
       assertEquals(again, Nil, "restore is idempotent — a second call is a no-op")
+    end for
   }
 
   // ── R② 旗标缺省（负控）───────────────────────────────────
@@ -131,17 +151,32 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       _ <- seedArchivedChain(store)
       stubRt = mkRuntimeStub(store, ws)
       // ① 旗标 false（缺省形态）：即便引用命中归档区，也零动作
-      noFlag <- NodeTools.maybeRestoreChains(stubRt, flag = false,
-        inJson = Some(Json.fromString("n-a")), depsJson = None, nodename = "name-n-a")
+      noFlag <- NodeTools.maybeRestoreChains(
+        stubRt,
+        flag = false,
+        inJson = Some(Json.fromString("n-a")),
+        depsJson = None,
+        nodename = "name-n-a"
+      )
       s0 <- store.snapshot
       arch0 <- store.archiveSnapshot
       // 活动区节点（按名解析命中活动区 ⇒ 无需拉回）
       _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-live" -> def0("n-live", t0 + 5000, NodeLifecycle.Wiring))))
-      liveRef <- NodeTools.maybeRestoreChains(stubRt, flag = true,
-        inJson = Some(Json.fromString("name-n-live")), depsJson = None, nodename = "fresh-node")
+      liveRef <- NodeTools.maybeRestoreChains(
+        stubRt,
+        flag = true,
+        inJson = Some(Json.fromString("name-n-live")),
+        depsJson = None,
+        nodename = "fresh-node"
+      )
       // 两区皆无 ⇒ 忽略（交给既有「引用不存在」校验报错）
-      ghostRef <- NodeTools.maybeRestoreChains(stubRt, flag = true,
-        inJson = Some(Json.fromString("no-such-node")), depsJson = None, nodename = "fresh-node")
+      ghostRef <- NodeTools.maybeRestoreChains(
+        stubRt,
+        flag = true,
+        inJson = Some(Json.fromString("no-such-node")),
+        depsJson = None,
+        nodename = "fresh-node"
+      )
       s1 <- store.snapshot
       arch1 <- store.archiveSnapshot
     yield
@@ -152,6 +187,7 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       assertEquals(ghostRef, Nil, "a reference in neither zone is ignored (existing not-found validation owns it)")
       assertEquals(s1.nodes.keySet, Set("n-live"), "no restore happened for the last two probes")
       assertEquals(arch1.nodes.keySet, Set("n-a", "n-b"), "archive untouched throughout")
+    end for
   }
 
   // ── R⑤ 重挂窗口 ─────────────────────────────────────────
@@ -173,15 +209,18 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     yield
       assertEquals(restored.map(_.chainId), List("chain-n-a"), "restore returns one chain entry (batch id = chain id)")
       assertEquals(restored.head.nodeIds.sorted, List("n-a", "n-b"), "entry carries the whole member set")
-      assertEquals(inWindow, Nil,
-        "sweep must yield to a freshly restored chain (30s TtlTick racing the re-attach)")
+      assertEquals(inWindow, Nil, "sweep must yield to a freshly restored chain (30s TtlTick racing the re-attach)")
       assertEquals(s1.nodes.keySet, Set("n-a", "n-b"), "restored members stay on the active map inside the window")
       assertEquals(arch1.nodes.keySet, Set.empty[String], "no immediate re-archive inside the window")
-      assertEquals(afterWindow.sorted, List("n-a", "n-b"),
-        "after the window the chain is swept again normally (self-healing, not exempt forever)")
+      assertEquals(
+        afterWindow.sorted,
+        List("n-a", "n-b"),
+        "after the window the chain is swept again normally (self-healing, not exempt forever)"
+      )
       assertEquals(s2.nodes.keySet, Set.empty[String], "active zone emptied by the post-window sweep")
       assertEquals(arch2.nodes.keySet, Set("n-a", "n-b"), "members back in the archive zone")
       assertEquals(bt2.keySet, Set("chain-n-a"), "re-archived under the same topological chain id (id stability)")
+    end for
   }
 
   // ── R⑦ open 双区对账 ────────────────────────────────────
@@ -204,6 +243,7 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       assertEquals(arch.nodes.keySet, Set("n-b"), "only the archive copy of the crashed member is dropped")
       assertEquals(bt.keySet, Set("chain-n-a"), "the surviving member keeps its batch registration")
       assertEquals(fileIds, Right(Set("n-b")), "batch file rewritten with the surviving member only")
+    end for
   }
 
   // ── R⑥ 审计事件 ─────────────────────────────────────────
@@ -224,15 +264,27 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     yield
       assertEquals(parsed.size, 1, s"exactly one audit line, got ${lines.mkString(" | ")}")
       val ev = parsed.head
-      assertEquals(ev.typ, FlowMapEventLog.ChainRestoredType,
-        "event type = chain-restored (the previously unwired interface point is now live)")
+      assertEquals(
+        ev.typ,
+        FlowMapEventLog.ChainRestoredType,
+        "event type = chain-restored (the previously unwired interface point is now live)"
+      )
       assertEquals(ev.chainId, Some("chain-n-a"), "top-level chainId written (no summary re-parsing needed)")
       assertEquals(ev.project, "restore-r6")
-      assertEquals(ev.nodeId, "n-a", "nodeId = the chain anchor (earliest createdAt member) — symmetric with chain-archived")
+      assertEquals(
+        ev.nodeId,
+        "n-a",
+        "nodeId = the chain anchor (earliest createdAt member) — symmetric with chain-archived"
+      )
       assertEquals(ev.fields.get("members"), Some("2"), "structured summary carries members")
       assert(ev.fields.get("restoredAt").exists(_.toLongOption.isDefined), s"summary: ${ev.summary}")
-      assertEquals(ev.atMs, restored.head.restoredAt, "atMs resolves from restoredAt (same key semantics as archivedAt)")
+      assertEquals(
+        ev.atMs,
+        restored.head.restoredAt,
+        "atMs resolves from restoredAt (same key semantics as archivedAt)"
+      )
       assertEquals(lines2.size, 1, "empty restore ⇒ zero audit writes")
+    end for
   }
 
   // ── R③ 旗标正控 e2e（创建形态）───────────────────────────
@@ -247,18 +299,34 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedArchivedChain(rt.store)
       // 负控：同一创建 + 不传旗标 → 归档上游仍可接线（D1 通道）但**不拉回**
-      negCreate <- NodeEditTool.call(nodeInput("restore-r3", "plain-follow",
-        "description" -> Json.fromString("plain follow-up"),
-        "task" -> Json.fromString("plain follow-up task"),
-        "in" -> Json.fromString("n-a")).asObject.get, ctx).map(_.left.map(_.message))
+      negCreate <- NodeEditTool
+        .call(
+          nodeInput(
+            "restore-r3",
+            "plain-follow",
+            "description" -> Json.fromString("plain follow-up"),
+            "task" -> Json.fromString("plain follow-up task"),
+            "in" -> Json.fromString("n-a")
+          ).asObject.get,
+          ctx
+        )
+        .map(_.left.map(_.message))
       archNeg <- rt.store.archiveSnapshot
       activeNeg <- rt.store.snapshot
       // 正控：传旗标 → 先拉回整链再创建
-      posCreate <- NodeEditTool.call(nodeInput("restore-r3", "restored-follow",
-        "description" -> Json.fromString("follow-up on restored chain"),
-        "task" -> Json.fromString("follow-up on the restored chain"),
-        "in" -> Json.fromString("n-a"),
-        "restoreChain" -> Json.fromBoolean(true)).asObject.get, ctx).map(_.left.map(_.message))
+      posCreate <- NodeEditTool
+        .call(
+          nodeInput(
+            "restore-r3",
+            "restored-follow",
+            "description" -> Json.fromString("follow-up on restored chain"),
+            "task" -> Json.fromString("follow-up on the restored chain"),
+            "in" -> Json.fromString("n-a"),
+            "restoreChain" -> Json.fromBoolean(true)
+          ).asObject.get,
+          ctx
+        )
+        .map(_.left.map(_.message))
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
       combined <- rt.store.combinedNodes
@@ -269,17 +337,33 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     yield
       assert(negCreate.isRight, s"plain reference onto an archived upstream is legal without the flag, got $negCreate")
       assert(!negCreate.exists(_.contains("[chain-restored]")), s"no restore without the flag, got $negCreate")
-      assertEquals(archNeg.nodes.keySet, Set("n-a", "n-b"),
-        "negative control: flag off keeps the chain archived (pure reference = D1 delivery only)")
-      assert(activeNeg.nodes.values.exists(_.name == "plain-follow"), "negative control node created in the active zone")
+      assertEquals(
+        archNeg.nodes.keySet,
+        Set("n-a", "n-b"),
+        "negative control: flag off keeps the chain archived (pure reference = D1 delivery only)"
+      )
+      assert(
+        activeNeg.nodes.values.exists(_.name == "plain-follow"),
+        "negative control node created in the active zone"
+      )
       assert(posCreate.isRight, s"flagged create must succeed, got $posCreate")
-      assert(posCreate.exists(_.contains("[chain-restored] chain-n-a back on the active map (2 node(s))")),
-        s"tool result must lead with the restore notice, got $posCreate")
-      assertEquals(arch.nodes.keySet, Set.empty[String], "flagged create emptied the archive (whole chain restored first)")
+      assert(
+        posCreate.exists(_.contains("[chain-restored] chain-n-a back on the active map (2 node(s))")),
+        s"tool result must lead with the restore notice, got $posCreate"
+      )
+      assertEquals(
+        arch.nodes.keySet,
+        Set.empty[String],
+        "flagged create emptied the archive (whole chain restored first)"
+      )
       assert(follow.exists(_.in.contains("n-a")), s"new node wired to the restored upstream, got ${follow.map(_.in)}")
-      assertEquals(chains.map(_.id), List("chain-n-a"),
-        s"restored members + the follow-up node = one derived chain: ${chains.map(c => c.id -> c.memberIds)}")
+      assertEquals(
+        chains.map(_.id),
+        List("chain-n-a"),
+        s"restored members + the follow-up node = one derived chain: ${chains.map(c => c.id -> c.memberIds)}"
+      )
       assert(chains.head.memberIds.contains(followId), "the follow-up node belongs to the restored chain")
+    end for
   }
 
   // ── R④ 旗标正负控 e2e（编辑形态）─────────────────────────
@@ -294,13 +378,25 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedArchivedChain(rt.store)
       // (a) 负控：归档节点 + description 编辑、无旗标 → 现状拒绝
-      neg <- NodeEditTool.call(nodeInput("restore-r4", "name-n-a",
-        "description" -> Json.fromString("rewritten purpose")).asObject.get, ctx).map(_.left.map(_.message))
+      neg <- NodeEditTool
+        .call(
+          nodeInput("restore-r4", "name-n-a", "description" -> Json.fromString("rewritten purpose")).asObject.get,
+          ctx
+        )
+        .map(_.left.map(_.message))
       archAfterNeg <- rt.store.archiveSnapshot
       // (b) 正控：同一输入 + restoreChain=true → 先拉回（整链回活动区）再走原编辑流
-      pos <- NodeEditTool.call(nodeInput("restore-r4", "name-n-a",
-        "description" -> Json.fromString("rewritten purpose"),
-        "restoreChain" -> Json.fromBoolean(true)).asObject.get, ctx).map(_.left.map(_.message))
+      pos <- NodeEditTool
+        .call(
+          nodeInput(
+            "restore-r4",
+            "name-n-a",
+            "description" -> Json.fromString("rewritten purpose"),
+            "restoreChain" -> Json.fromBoolean(true)
+          ).asObject.get,
+          ctx
+        )
+        .map(_.left.map(_.message))
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
       desc <- rt.store.snapshot.map(_.nodes.get("n-a").flatMap(_.description))
@@ -310,12 +406,15 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
       assert(neg.left.exists(_.contains("is archived")), s"refusal must name the archived state, got $neg")
       assertEquals(archAfterNeg.nodes.keySet, Set("n-a", "n-b"), "(a) negative control: archive untouched")
       assert(pos.isRight, s"with restoreChain=true the edit must proceed, got $pos")
-      assert(pos.exists(_.contains("[chain-restored] chain-n-a")),
-        s"tool result must lead with the restore notice, got $pos")
+      assert(
+        pos.exists(_.contains("[chain-restored] chain-n-a")),
+        s"tool result must lead with the restore notice, got $pos"
+      )
       assert(!pos.exists(_.contains("is archived")), s"the archived-edit gate must be lifted, got $pos")
       assertEquals(s.nodes.keySet, Set("n-a", "n-b"), "(b) whole chain back on the active map")
       assertEquals(arch.nodes.keySet, Set.empty[String], "(b) archive emptied")
       assertEquals(desc, Some("rewritten purpose"), "(b) the edit itself landed on the restored node")
+    end for
   }
 
   // ── harness ──────────────────────────────────────────────
@@ -332,9 +431,11 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = new LlmHandle[IO]:
         def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-        def sendStream(req: LlmRequest,
-                       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None)
-          : Stream[IO, StreamChunk] = Stream.empty,
+        def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        ): Stream[IO, StreamChunk] = Stream.empty
+      ,
       dispatcher = dispatcher,
       sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
@@ -363,13 +464,18 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
     )
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -377,11 +483,16 @@ class FlowMapRestoreChainSpec extends CatsEffectSuite:
         emitEvent = (_, _, _) => IO.unit,
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
+end FlowMapRestoreChainSpec

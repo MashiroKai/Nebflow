@@ -24,34 +24,35 @@ object NeblinkWiring:
 
   private val logger = NebflowLogger.forName("nebflow.neblink.wiring")
 
-  /** Build the boot-singleton `FriendService`.
-    *
-    * `clientProvider` is the authoritative LIVE client resolver
-    * (`NeblinkDiscovery.currentClient`, F1): the service never captures a client
-    * snapshot, so an enrollment hot-swap is picked up per call. One instance for
-    * the whole process keeps `FriendMessagingGuard` state (unread cursors /
-    * eventId dedupe set / rate-limit windows) intact — rebuilding the service on
-    * every login would reset all three.
-    *
-    * `remarks`（2026-09-12 ⑦）：启动期由调用方（`GatewayMain`）从
-    * `FriendRemarkStore.load` 读入并透传 —— 工厂保持**纯函数**（不自己跑 IO），
-    * 与 `NeblinkService.createInternal` 的 `PeerDescriptionStore.load → Ref.of`
-    * 同族形态；测试可注入任意初始 map。默认空 map ⇒ 既有调用点零改动。
-    *
-    * `askConfirm`（#147 接线段，2026-09-12）：ask 档确认链的**装配缝接线点**。
-    * 此参数此前**不存在** ⇒ `FriendService.askConfirm` 恒为默认 `None` ⇒ `ask`
-    * 档一调即 `Left("ask mode requires a confirmation callback (not wired)")`
-    * （作者 2026-09-11 裁定 U-5 的事实锚）。默认 `None` 保留「未接线」这一显式
-    * 条件（既有调用点/测试零改动）。
-    *
-    * 生产装配（`GatewayMain`）传的值 = `nebflow.agent.SendConfirm.production`
-    * —— **运行时真正执行的就是它**（不是桩、没有第二条实现）：它会向确认卡
-    * 请求链发出 AskUser 并据此决定投递与否。会话靶（谁在问）不由本缝决定——
-    * 缝在 boot 期，不知道任何会话；靶由唯一持 `ToolContext` 的调用侧
-    * （`FriendMessageTool`）按次以 `SendConfirm.locally` 挂进 fiber-local，
-    * `production` 在本次调用内读它；无靶（REST 直调/harness）⇒ 显式 fail-closed。
-    * 理由与代码锚见 `nebflow.agent.SendConfirm` 文件头。
-    */
+  /**
+   * Build the boot-singleton `FriendService`.
+   *
+   * `clientProvider` is the authoritative LIVE client resolver
+   * (`NeblinkDiscovery.currentClient`, F1): the service never captures a client
+   * snapshot, so an enrollment hot-swap is picked up per call. One instance for
+   * the whole process keeps `FriendMessagingGuard` state (unread cursors /
+   * eventId dedupe set / rate-limit windows) intact — rebuilding the service on
+   * every login would reset all three.
+   *
+   * `remarks`（2026-09-12 ⑦）：启动期由调用方（`GatewayMain`）从
+   * `FriendRemarkStore.load` 读入并透传 —— 工厂保持**纯函数**（不自己跑 IO），
+   * 与 `NeblinkService.createInternal` 的 `PeerDescriptionStore.load → Ref.of`
+   * 同族形态；测试可注入任意初始 map。默认空 map ⇒ 既有调用点零改动。
+   *
+   * `askConfirm`（#147 接线段，2026-09-12）：ask 档确认链的**装配缝接线点**。
+   * 此参数此前**不存在** ⇒ `FriendService.askConfirm` 恒为默认 `None` ⇒ `ask`
+   * 档一调即 `Left("ask mode requires a confirmation callback (not wired)")`
+   * （作者 2026-09-11 裁定 U-5 的事实锚）。默认 `None` 保留「未接线」这一显式
+   * 条件（既有调用点/测试零改动）。
+   *
+   * 生产装配（`GatewayMain`）传的值 = `nebflow.agent.SendConfirm.production`
+   * —— **运行时真正执行的就是它**（不是桩、没有第二条实现）：它会向确认卡
+   * 请求链发出 AskUser 并据此决定投递与否。会话靶（谁在问）不由本缝决定——
+   * 缝在 boot 期，不知道任何会话；靶由唯一持 `ToolContext` 的调用侧
+   * （`FriendMessageTool`）按次以 `SendConfirm.locally` 挂进 fiber-local，
+   * `production` 在本次调用内读它；无靶（REST 直调/harness）⇒ 显式 fail-closed。
+   * 理由与代码锚见 `nebflow.agent.SendConfirm` 文件头。
+   */
   def friendService(
     clientProvider: IO[Option[NeblinkClient]],
     config: AgentMessagingConfig,
@@ -59,12 +60,14 @@ object NeblinkWiring:
     onFriendEvent: Option[FriendEvent => IO[Unit]] = None,
     askConfirm: Option[String => IO[Boolean]] = None,
     remarks: Map[String, String] = Map.empty,
-    /** D-B（2026-09-13 好友推送修复批）：送达确证发送面（帧形状冻结见
-      * `NeblinkRelayTunnel.sendAck`）。缺省 `None` = 未接线（既有调用点/测试零改动），
-      * 生产由 `GatewayMain` 接 `neblinkService.relayTunnelOpt` 的 **live** 读取。
-      *
-      * 🔴 F4（2026-09-18 回执诚实性批）：返回值 = 可判别的
-      * `NeblinkRelayTunnel.AckOutcome`（「无 live socket」不再被吞成成功）。 */
+    /**
+     * D-B（2026-09-13 好友推送修复批）：送达确证发送面（帧形状冻结见
+     * `NeblinkRelayTunnel.sendAck`）。缺省 `None` = 未接线（既有调用点/测试零改动），
+     * 生产由 `GatewayMain` 接 `neblinkService.relayTunnelOpt` 的 **live** 读取。
+     *
+     * 🔴 F4（2026-09-18 回执诚实性批）：返回值 = 可判别的
+     * `NeblinkRelayTunnel.AckOutcome`（「无 live socket」不再被吞成成功）。
+     */
     ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   ): FriendService =
     new FriendService(
@@ -77,24 +80,25 @@ object NeblinkWiring:
       ackSender = ackSender
     )
 
-  /** The value written into `SharedResources.friendService` (A 案, 2026-09-11).
-    *
-    * The slot is ALWAYS `Some`: a fresh home (boot snapshot = `None`) must still
-    * get a live-resolving friend domain, otherwise a UI login can never bring it
-    * into existence without a process restart — the defect this batch fixes
-    * (16 `/api/friends*` sites stuck on `404 NebLink not enabled`). "Not logged
-    * in" is expressed by the SERVICE (`FriendService.withClient` →
-    * `Left("Not logged in")` → 401/404 by config criterion), never by the
-    * absence of the service.
-    *
-    * `bootClient` is deliberately kept in the signature and *only* logged: the
-    * boot snapshot stays visible at the call site (it is still what the startup
-    * client / relay client are derived from), while no longer being part of the
-    * existence judgement. Keeping the parameter also keeps the wiring line in
-    * `FriendBootSnapshotRedlineSpec` identical before and after the fix — the
-    * red-line spec's assertions flipped from red to green without a single
-    * change to its wiring line or assertions.
-    */
+  /**
+   * The value written into `SharedResources.friendService` (A 案, 2026-09-11).
+   *
+   * The slot is ALWAYS `Some`: a fresh home (boot snapshot = `None`) must still
+   * get a live-resolving friend domain, otherwise a UI login can never bring it
+   * into existence without a process restart — the defect this batch fixes
+   * (16 `/api/friends*` sites stuck on `404 NebLink not enabled`). "Not logged
+   * in" is expressed by the SERVICE (`FriendService.withClient` →
+   * `Left("Not logged in")` → 401/404 by config criterion), never by the
+   * absence of the service.
+   *
+   * `bootClient` is deliberately kept in the signature and *only* logged: the
+   * boot snapshot stays visible at the call site (it is still what the startup
+   * client / relay client are derived from), while no longer being part of the
+   * existence judgement. Keeping the parameter also keeps the wiring line in
+   * `FriendBootSnapshotRedlineSpec` identical before and after the fix — the
+   * red-line spec's assertions flipped from red to green without a single
+   * change to its wiring line or assertions.
+   */
   def sharedResourcesSlot(
     bootClient: Option[NeblinkClient],
     friendService: FriendService

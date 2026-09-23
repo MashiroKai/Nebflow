@@ -16,8 +16,10 @@ import java.util.Base64
 object SttService:
   private val logger = NebflowLogger.forName("nebflow.stt")
 
-  /** STT 配置文件路径。def（非 val）——PathUtil.dataRoot 可被测试 setDataRoot
-    * 重定向，val 会在类加载时冻结（#295）。 */
+  /**
+   * STT 配置文件路径。def（非 val）——PathUtil.dataRoot 可被测试 setDataRoot
+   * 重定向，val 会在类加载时冻结（#295）。
+   */
   def configPath: os.Path = PathUtil.dataRoot / "stt-config.json"
 
   def create(): IO[Option[SttService]] =
@@ -42,11 +44,14 @@ object SttService:
     }
   end create
 
-  /** #295 A2：字段级三态。None=字段省略（保留旧值）；Some(None)=显式空串
-    * （清除该字段）；Some(Some(v))=设值（已 trim、非空）。 */
+  /**
+   * #295 A2：字段级三态。None=字段省略（保留旧值）；Some(None)=显式空串
+   * （清除该字段）；Some(Some(v))=设值（已 trim、非空）。
+   */
   type SttField = Option[Option[String]]
 
   final case class SttConfigPatch(endpoint: SttField, apiKey: SttField, model: SttField):
+
     /** 全部字段显式清除——等价于清空整个配置。 */
     def clearsEverything: Boolean =
       List(endpoint, apiKey, model).forall(_.contains(None))
@@ -81,6 +86,8 @@ object SttService:
         case _ => Right(())
     yield SttConfigPatch(endpoint, apiKey, model)
 
+  end parsePatch
+
   /**
    * patch 叠加旧配置（#295 A2 纯函数）。省略=保留旧值；显式空=删字段；
    * 设值=覆写。返回 None=合并后无任何字段（未配置态——调用方删文件，
@@ -92,8 +99,8 @@ object SttService:
       old.flatMap(_.hcursor.downField(name).as[String].toOption).filter(_.nonEmpty)
     def apply(name: String, f: SttField): Option[(String, Json)] =
       f match
-        case None         => oldField(name).map(v => name -> v.asJson) // omitted — keep
-        case Some(None)   => None // explicit clear
+        case None => oldField(name).map(v => name -> v.asJson) // omitted — keep
+        case Some(None) => None // explicit clear
         case Some(Some(v)) => Some(name -> v.asJson)
     val fields = List(
       apply("endpoint", patch.endpoint),
@@ -102,6 +109,8 @@ object SttService:
     ).flatten
     if fields.isEmpty then None
     else Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
+
+  end mergeConfig
 
   /**
    * serverConfig 广播的 stt 节（#295）：{sttConfigured, endpoint?, model?}——
@@ -120,22 +129,22 @@ object SttService:
 end SttService
 
 /**
-  * STT 语音识别服务。按 endpoint 后缀自动识别两种协议（2026-08-21 MiMo 支持）：
-  *
-  * 1. **chat/completions 协议**——endpoint 以 `/chat/completions` 结尾。MiMo 的
-  *    「OpenAI API Compatibility」是 chat 协议而非 transcriptions（无
-  *    /v1/audio/transcriptions，全部 404）。实测定稿：input_audio data-URL
-  *    (WAV base64) + asr_options.language（仅 auto/zh/en），转写文本在
-  *    choices[0].message.content。
-  * 2. **multipart transcriptions 协议**（原有路径）——OpenAI Whisper 风格服务。
-  *
-  * 不加新配置字段，按 endpoint 后缀分流。配置文件: ~/.nebflow/stt-config.json
-  * {
-  *   "apiKey": "your-key",
-  *   "model": "mimo-v2.5-asr",
-  *   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
-  * }
-  */
+ * STT 语音识别服务。按 endpoint 后缀自动识别两种协议（2026-08-21 MiMo 支持）：
+ *
+ * 1. **chat/completions 协议**——endpoint 以 `/chat/completions` 结尾。MiMo 的
+ *    「OpenAI API Compatibility」是 chat 协议而非 transcriptions（无
+ *    /v1/audio/transcriptions，全部 404）。实测定稿：input_audio data-URL
+ *    (WAV base64) + asr_options.language（仅 auto/zh/en），转写文本在
+ *    choices[0].message.content。
+ * 2. **multipart transcriptions 协议**（原有路径）——OpenAI Whisper 风格服务。
+ *
+ * 不加新配置字段，按 endpoint 后缀分流。配置文件: ~/.nebflow/stt-config.json
+ * {
+ *   "apiKey": "your-key",
+ *   "model": "mimo-v2.5-asr",
+ *   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+ * }
+ */
 class SttService private[gateway] (
   apiKey: String,
   /** 转录模型名（serverConfig 广播可见；apiKey 永不外露）。 */
@@ -167,18 +176,20 @@ class SttService private[gateway] (
   private def isChatCompletionsEndpoint: Boolean =
     endpoint.trim.endsWith("/chat/completions")
 
-  /** chat 协议语言映射：MiMo asr_options.language 仅接受 auto/zh/en。前端传
-    * BCP-47（zh-CN/en-US/...）——startsWith 前缀映射，其余（含 None）→ auto。 */
+  /**
+   * chat 协议语言映射：MiMo asr_options.language 仅接受 auto/zh/en。前端传
+   * BCP-47（zh-CN/en-US/...）——startsWith 前缀映射，其余（含 None）→ auto。
+   */
   private def mapLanguage(language: Option[String]): String =
     language.map(_.trim.toLowerCase) match
       case Some(l) if l.startsWith("zh") => "zh"
       case Some(l) if l.startsWith("en") => "en"
-      case _                             => "auto"
+      case _ => "auto"
 
   /** MiMo 风格 chat/completions ASR（2026-08-21 实测定稿，0.8s 中文转写验证）。 */
   private def transcribeViaChat(
-      wavBytes: Array[Byte],
-      language: Option[String]
+    wavBytes: Array[Byte],
+    language: Option[String]
   ): IO[Either[String, String]] =
     val audioB64 = Base64.getEncoder.encodeToString(wavBytes)
     val body = Json.obj(
@@ -219,19 +230,23 @@ class SttService private[gateway] (
         parse(response.body()).toOption match
           case Some(json) =>
             json.hcursor
-              .downField("choices").downArray
-              .downField("message").downField("content").as[String] match
+              .downField("choices")
+              .downArray
+              .downField("message")
+              .downField("content")
+              .as[String] match
               case Right(text) => Right(text.trim)
-              case Left(_)     => Left("STT API returned unexpected format")
+              case Left(_) => Left("STT API returned unexpected format")
           case None => Left("Empty response from STT API")
+      end if
     }.handleErrorWith { e =>
       logger.warn(s"STT transcription failed: ${e.getMessage}").as(Left(e.getMessage))
     }
   end transcribeViaChat
 
   private def transcribeViaMultipart(
-      wavBytes: Array[Byte],
-      language: Option[String]
+    wavBytes: Array[Byte],
+    language: Option[String]
   ): IO[Either[String, String]] =
     // Build multipart/form-data body
     val boundary = "----nebflow-stt-" + System.currentTimeMillis().toHexString

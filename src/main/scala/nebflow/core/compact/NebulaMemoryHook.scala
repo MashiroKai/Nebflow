@@ -108,8 +108,10 @@ object NebulaMemoryHook extends PreCompactionHook:
   /** User.md 面（queue target 词汇，与 [[MemoryQueue]] 同源）。 */
   private val UserFace: String = "user"
 
-  /** `~/.nebflow/agents/Nebula/memory.md` 面（[[MemoryQueue.targetLayerHasFile]] 亦以
-    * Nebula 解析 "agent" 面 ⇒ 判据不另起一套）。 */
+  /**
+   * `~/.nebflow/agents/Nebula/memory.md` 面（[[MemoryQueue.targetLayerHasFile]] 亦以
+   * Nebula 解析 "agent" 面 ⇒ 判据不另起一套）。
+   */
   private val AgentFace: String = "agent"
 
   /** 分流记录的稳定机读码（日志 grep / 证据引用用；判词不随文案漂移）。 */
@@ -128,26 +130,30 @@ object NebulaMemoryHook extends PreCompactionHook:
 
   /** 分流裁决（纯值）。 */
   private[nebflow] enum RouteDecision:
-    /** `face` = 落点面；`normal = false` ⇒ 该条分流/偏差**必落记录**。
-      * 无落点节字段：引擎不再拥有具名节（见类头注「落点节」段），条目恒文件尾追加。 */
+    /**
+     * `face` = 落点面；`normal = false` ⇒ 该条分流/偏差**必落记录**。
+     * 无落点节字段：引擎不再拥有具名节（见类头注「落点节」段），条目恒文件尾追加。
+     */
     case Send(face: String, code: String, normal: Boolean)
 
     /** 两面皆无余量 ⇒ 停投；`userRoom`/`agentRoom` = 现场余量读数（≤ 0 = 无余量/已超顶）。 */
     case Drop(code: String, userRoom: Long, agentRoom: Long)
 
-  /** **纯函数分流裁决**（零 IO，可直测）：首选面 = user（现状默认）；备用面 = agent。
-    *
-    * `faceRoom(face)` = 该面余量字节（`Some` = 读数 / `None` = 读不到）。判据一律
-    * 「本条目字节 ≤ 余量」。
-    *
-    * **读数不可得绝不丢**（fail-open 到首选面 + 落记录）：丢一条不可复得的事实比投进一个
-    * 可能在 plan 侧被扣发的面更坏，且 plan 侧预算闸仍是权威闸（本函数只是**生产者侧**止损）。
-    * ⇒ `Drop` 只可能在**两面都测到无余量**时发生。 */
+  /**
+   * **纯函数分流裁决**（零 IO，可直测）：首选面 = user（现状默认）；备用面 = agent。
+   *
+   * `faceRoom(face)` = 该面余量字节（`Some` = 读数 / `None` = 读不到）。判据一律
+   * 「本条目字节 ≤ 余量」。
+   *
+   * **读数不可得绝不丢**（fail-open 到首选面 + 落记录）：丢一条不可复得的事实比投进一个
+   * 可能在 plan 侧被扣发的面更坏，且 plan 侧预算闸仍是权威闸（本函数只是**生产者侧**止损）。
+   * ⇒ `Drop` 只可能在**两面都测到无余量**时发生。
+   */
   private[nebflow] def decideRoute(entryBytes: Long, faceRoom: String => Option[Long]): RouteDecision =
     def fits(face: String): Option[Boolean] = faceRoom(face).map(room => entryBytes <= room)
     fits(UserFace) match
       case Some(true) => RouteDecision.Send(UserFace, RouteCode.Preferred, true)
-      case None       => RouteDecision.Send(UserFace, RouteCode.FailOpen, false)
+      case None => RouteDecision.Send(UserFace, RouteCode.FailOpen, false)
       case Some(false) =>
         val userRoom = faceRoom(UserFace).getOrElse(0L)
         fits(AgentFace) match
@@ -158,9 +164,11 @@ object NebulaMemoryHook extends PreCompactionHook:
           case None =>
             RouteDecision.Send(UserFace, RouteCode.FailOpen, false)
 
-  /** 面余量读数（**只读**，零写记忆文件、零新建）：`硬顶 − (现文件字节 + 该面 pending 追加字节)`。
-    * 硬顶取 [[MemoryBudget]]（同源）；目标文件不存在 ⇒ `None`（A′「零新建」口径：不投也不建）；
-    * 读数异常 ⇒ `None`（fail-open，由 [[decideRoute]] 处置）。 */
+  /**
+   * 面余量读数（**只读**，零写记忆文件、零新建）：`硬顶 − (现文件字节 + 该面 pending 追加字节)`。
+   * 硬顶取 [[MemoryBudget]]（同源）；目标文件不存在 ⇒ `None`（A′「零新建」口径：不投也不建）；
+   * 读数异常 ⇒ `None`（fail-open，由 [[decideRoute]] 处置）。
+   */
   private[nebflow] def faceRoom(face: String, pendingBytes: Long): Option[Long] =
     try
       val path =
@@ -173,9 +181,11 @@ object NebulaMemoryHook extends PreCompactionHook:
       else Some(hard - (utf8Bytes(os.read(path)) + pendingBytes))
     catch case _: Exception => None
 
-  /** 各面 pending 追加字节（一次读全队列、逐面求和；口径见类头注「判据的同源与边界」：
-    * 只累加 `append`，不减收缩 ⇒ 保守）。读不到 ⇒ 空表（⇒ [[faceRoom]] 传 0，
-    * fail-open 由 [[decideRoute]] 处置）。 */
+  /**
+   * 各面 pending 追加字节（一次读全队列、逐面求和；口径见类头注「判据的同源与边界」：
+   * 只累加 `append`，不减收缩 ⇒ 保守）。读不到 ⇒ 空表（⇒ [[faceRoom]] 传 0，
+   * fail-open 由 [[decideRoute]] 处置）。
+   */
   private[nebflow] def pendingBytesByFace(): Map[String, Long] =
     try
       MemoryQueue
@@ -210,20 +220,22 @@ object NebulaMemoryHook extends PreCompactionHook:
       // 「T2/T3 清扫提示」。仅置位一行。
       IO(nebflow.agent.MemoryHygieneSignal.markCompacted())
 
-  /** facts 逐条**先按面余量分流**（P0-c）、再入队：落点 `append` + `- [CATEGORY] text`
-    * （类别以 in-band 形式写进条目；`section` 恒 `None` = 文件尾追加，见类头注「落点节」段，
-    * 类别信息不丢）。
-    *
-    * ⚠️ **生产链路当前无调用方**（抽取轮停用后）：本方法与面余量分流
-    * （`decideRoute`/`faceRoom`/`pendingBytesByFace`）作为「队列写入面 + 面分流判据」的
-    * 既有断言面保留，删除与否留待后续批（见类头注「待决」段）。
-    *
-    * 记录面（🔴 禁静默丢）：改投 / fail-open / 停投 / 入队失败**逐条** `warnSync`；
-    * 停投记录**带全文**（该条未入队 ⇒ 这行是它唯一的存在面 ⇒ 才能「逐条回答为什么没落」）；
-    * 改投记录不带全文（内容已在队列留痕：`queue.jsonl` + [[nebflow.core.tools.MemoryHistory]]）。
-    *
-    * 记录一律 `warnSync`：[[NebflowLogger]] 的 `warn` 返回 `IO[Unit]`，在 `IO.blocking` 的
-    * 裸语句位会被丢弃（死日志家族，`scripts/check-dead-logging.sh` 的已知边界外）。 */
+  /**
+   * facts 逐条**先按面余量分流**（P0-c）、再入队：落点 `append` + `- [CATEGORY] text`
+   * （类别以 in-band 形式写进条目；`section` 恒 `None` = 文件尾追加，见类头注「落点节」段，
+   * 类别信息不丢）。
+   *
+   * ⚠️ **生产链路当前无调用方**（抽取轮停用后）：本方法与面余量分流
+   * （`decideRoute`/`faceRoom`/`pendingBytesByFace`）作为「队列写入面 + 面分流判据」的
+   * 既有断言面保留，删除与否留待后续批（见类头注「待决」段）。
+   *
+   * 记录面（🔴 禁静默丢）：改投 / fail-open / 停投 / 入队失败**逐条** `warnSync`；
+   * 停投记录**带全文**（该条未入队 ⇒ 这行是它唯一的存在面 ⇒ 才能「逐条回答为什么没落」）；
+   * 改投记录不带全文（内容已在队列留痕：`queue.jsonl` + [[nebflow.core.tools.MemoryHistory]]）。
+   *
+   * 记录一律 `warnSync`：[[NebflowLogger]] 的 `warn` 返回 `IO[Unit]`，在 `IO.blocking` 的
+   * 裸语句位会被丢弃（死日志家族，`scripts/check-dead-logging.sh` 的已知边界外）。
+   */
   private[nebflow] def enqueueFacts(
     facts: List[String],
     sessionId: Option[String]
@@ -233,7 +245,7 @@ object NebulaMemoryHook extends PreCompactionHook:
       def room(face: String): Option[Long] = faceRoom(face, pendingBytes.getOrElse(face, 0L))
       facts.flatMap(DreamMode.parseFact).distinct.foreach { (cat, text) =>
         val content = s"- [$cat] $text"
-        val bytes   = utf8Bytes(content) + 1L
+        val bytes = utf8Bytes(content) + 1L
         decideRoute(bytes, room) match
           case RouteDecision.Send(face, code, normal) =>
             if !normal then
@@ -258,12 +270,14 @@ object NebulaMemoryHook extends PreCompactionHook:
                 logger.warnSync(
                   s"Fact enqueue failed: $reason (ref=${refOf(text)} bytes=$bytes cat=$cat target=$face)"
                 )
+            end match
           case RouteDecision.Drop(code, userRoom, agentRoom) =>
             logger.warnSync(
               s"[memory-route] code=$code ref=${refOf(text)} bytes=$bytes cat=$cat " +
                 s"userRoom=$userRoom agentRoom=$agentRoom " +
                 s"(hard: user=${MemoryBudget.UserHardBytes} agent=${MemoryBudget.AgentHardBytes}) text=$text"
             )
+        end match
       }
     }
 

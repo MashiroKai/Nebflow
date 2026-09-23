@@ -79,7 +79,7 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -134,6 +134,7 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ---- Block 0 registration chain (supervision trio §B2) ----
@@ -187,6 +188,7 @@ class EphemeralBridgeWatchSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end EphemeralBridgeWatchSpec

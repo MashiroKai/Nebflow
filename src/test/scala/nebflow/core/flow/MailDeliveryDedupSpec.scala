@@ -38,7 +38,8 @@ class MailDeliveryDedupSpec extends FunSuite:
     assert(first, "first delivery must pass")
     assert(!second, "same fingerprint within the window must be suppressed")
     assertEquals(
-      MailDeliveryDedup.suppressedTotal - before, 1L,
+      MailDeliveryDedup.suppressedTotal - before,
+      1L,
       "suppression must bump the dedup counter (WARN+count observability)"
     )
   }
@@ -46,10 +47,15 @@ class MailDeliveryDedupSpec extends FunSuite:
   test("② different content / sender / recipient all pass") {
     val sid = "sess-recipient-2"
     val now = System.currentTimeMillis()
-    val a = MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("alice", sid, "content A"), now).unsafeRunSync()
-    val b = MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("alice", sid, "content B"), now).unsafeRunSync()
-    val c = MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("bob", sid, "content A"), now).unsafeRunSync()
-    val d = MailDeliveryDedup.tryDeliver("other-session", MailDeliveryDedup.fingerprint("alice", "other-session", "content A"), now).unsafeRunSync()
+    val a =
+      MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("alice", sid, "content A"), now).unsafeRunSync()
+    val b =
+      MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("alice", sid, "content B"), now).unsafeRunSync()
+    val c =
+      MailDeliveryDedup.tryDeliver(sid, MailDeliveryDedup.fingerprint("bob", sid, "content A"), now).unsafeRunSync()
+    val d = MailDeliveryDedup
+      .tryDeliver("other-session", MailDeliveryDedup.fingerprint("alice", "other-session", "content A"), now)
+      .unsafeRunSync()
     assert(a && b && c && d, s"distinct fingerprints must all pass: a=$a b=$b c=$c d=$d")
   }
 
@@ -102,7 +108,7 @@ class MailDeliveryDedupSpec extends FunSuite:
 
   test("M-1 R2 分层地址面：指纹面 = (sender|recipientSessionId|content)，地址形态与 chainId 均无独立字段") {
     // R2 三腿（project:<name> / Nebula / node:<id>）在投递前一律解析成**会话 id**
-    //（MailTool.deliverToNode / deliverToProject / deliverToNebulaRoot），投递层
+    // （MailTool.deliverToNode / deliverToProject / deliverToNebulaRoot），投递层
     // 只见会话 ⇒ 去重口径与地址形态解耦。
     val sid = "node-sess-r2"
     val fp = MailDeliveryDedup.fingerprint("disp-1", sid, "same content")
@@ -115,7 +121,8 @@ class MailDeliveryDedupSpec extends FunSuite:
     assertEquals(fp, expect, "指纹面必须是 SHA-256(sender|recipientSessionId|content) —— 无 chainId 字段")
     // 同一收件会话 + 同内容 + 同发送者 ⇒ 同指纹，与地址写法无关（地址不进指纹）
     assertEquals(
-      MailDeliveryDedup.fingerprint("disp-1", sid, "same content"), fp,
+      MailDeliveryDedup.fingerprint("disp-1", sid, "same content"),
+      fp,
       "地址形态（node:<id> vs 解析后会话 id）不进指纹 —— 同会话同内容恒同指纹"
     )
     // B2-x「chainId 只校验不落库、零链级账本」：指纹面没有 chainId 维度；它只经

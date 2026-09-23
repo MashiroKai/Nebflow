@@ -38,6 +38,7 @@ import munit.FunSuite
 class NebulaSixBaseToolsSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:
+
     def allowed(defn: AgentDef, isFlowNode: Boolean = false): Set[String] =
       buildAllowedToolSet(defn, isFlowNode = isFlowNode)
 
@@ -48,8 +49,10 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ TaskList 在——再摘文件面任一件或摘掉 TaskList、计数漂移即红"):
     val six = AgentCore.BaseTools
-    assert(six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
-      "前置：BaseTools 即基础六件（全体默认不变）——2026-09-18 令只动 root 面，本行即反向钉")
+    assert(
+      six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
+      "前置：BaseTools 即基础六件（全体默认不变）——2026-09-18 令只动 root 面，本行即反向钉"
+    )
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     // 钉死断言（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）：
     // root 面**在场**恢复 Bash/Edit/Write/Glob/Grep + 既有 Read ⇒ 文件面六件——取代
@@ -79,25 +82,37 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
-    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）")
+    assertEquals(
+      fixed.size,
+      AgentCore.NebulaOrchestrationToolsExpectedSize,
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）"
+    )
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
-    assertEquals(AgentCore.NebulaOrchestrationTools.size, 17,
-      "NebulaOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
+    assertEquals(
+      AgentCore.NebulaOrchestrationTools.size,
+      17,
+      "NebulaOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）"
+    )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 
   test("② 六件基础 ⊆ general 机制集（GeneralFixedTools=六件+AskUserQuestion 恰七件；2026-09-10 摘 Pop）"):
     val six = AgentCore.BaseTools
-    assert(six.subsetOf(AgentCore.GeneralFixedTools),
-      s"general 固定集必须含基础六件（缺: ${six.diff(AgentCore.GeneralFixedTools)}）")
-    assertEquals(AgentCore.GeneralFixedTools.size, 7,
-      "general 固定集恰七件（BaseTools 六件 + AskUserQuestion；2026-09-08 作者修订恢复 AskUser；2026-09-10 作者裁定摘 Pop——收归 Nebula 专属）")
-    assert(AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
-      "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）")
-    assert(!AgentCore.GeneralFixedTools.contains("Pop"),
-      "general 固定集零 Pop（2026-09-10 作者裁定——变异验红锚：加回即红）")
+    assert(
+      six.subsetOf(AgentCore.GeneralFixedTools),
+      s"general 固定集必须含基础六件（缺: ${six.diff(AgentCore.GeneralFixedTools)}）"
+    )
+    assertEquals(
+      AgentCore.GeneralFixedTools.size,
+      7,
+      "general 固定集恰七件（BaseTools 六件 + AskUserQuestion；2026-09-08 作者修订恢复 AskUser；2026-09-10 作者裁定摘 Pop——收归 Nebula 专属）"
+    )
+    assert(
+      AgentCore.GeneralFixedTools.contains("AskUserQuestion"),
+      "general 固定集含 AskUserQuestion（2026-09-08 作者修订恢复——变异验红锚）"
+    )
+    assert(!AgentCore.GeneralFixedTools.contains("Pop"), "general 固定集零 Pop（2026-09-10 作者裁定——变异验红锚：加回即红）")
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
 

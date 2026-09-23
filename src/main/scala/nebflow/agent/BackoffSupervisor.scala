@@ -84,29 +84,31 @@ object BackoffSupervisor:
           DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
         else IO.unit
       budgetArmedIO *> ctx.watch(childRef) *>
-        logger.info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)").as(
-          active(
-            childRef,
-            childSpawnFn,
-            childName,
-            parentRef,
-            description,
-            agentName,
-            subagentId,
-            parentSessionId,
-            resources,
-            initialPrompt,
-            source,
-            extraMetadata,
-            wsSend,
-            restartCount = 0,
-            restartHistory = Nil,
-            minBackoff,
-            maxBackoff,
-            maxRestarts,
-            withinTimeRange
+        logger
+          .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")
+          .as(
+            active(
+              childRef,
+              childSpawnFn,
+              childName,
+              parentRef,
+              description,
+              agentName,
+              subagentId,
+              parentSessionId,
+              resources,
+              initialPrompt,
+              source,
+              extraMetadata,
+              wsSend,
+              restartCount = 0,
+              restartHistory = Nil,
+              minBackoff,
+              maxBackoff,
+              maxRestarts,
+              withinTimeRange
+            )
           )
-        )
     }
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
@@ -215,9 +217,7 @@ object BackoffSupervisor:
               )
               val notifyIO = wsSend match
                 case Some(send) =>
-                  send(retryEvent).handleErrorWith(e =>
-                    logger.warn(s"subagentRetry WS event failed: ${e.getMessage}")
-                  )
+                  send(retryEvent).handleErrorWith(e => logger.warn(s"subagentRetry WS event failed: ${e.getMessage}"))
                 case None => IO.unit
 
               for
@@ -281,23 +281,25 @@ object BackoffSupervisor:
                 // If we recovered messages, send a "continue" instruction so the
                 // child picks up where it left off. Otherwise re-inject the
                 // original prompt (fresh start fallback).
-                _ <- if recoveredMessages.nonEmpty then
-                  newChild ! AgentCommand.UserInput(
-                    "[system] Your previous turn was interrupted by a crash. " +
-                      "Please continue your task from where you left off.",
-                    Some(ctx.self)
-                  )
-                else
-                  newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
+                _ <-
+                  if recoveredMessages.nonEmpty then
+                    newChild ! AgentCommand.UserInput(
+                      "[system] Your previous turn was interrupted by a crash. " +
+                        "Please continue your task from where you left off.",
+                      Some(ctx.self)
+                    )
+                  else newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
                 _ <- logger.info(
                   s"BackoffSupervisor: respawned $childName, " +
                     s"recovered ${recoveredMessages.size} messages" +
-                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)" else " (re-injected original prompt)")
+                    (if recoveredMessages.nonEmpty then " (resuming from checkpoint)"
+                     else " (re-injected original prompt)")
                 )
                 // respawn 后重新装配预算（Delegate 轨）——上一条已在释放时退出。
-                _ <- if source == "delegate" then
-                  DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
-                else IO.unit
+                _ <-
+                  if source == "delegate" then
+                    DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
+                  else IO.unit
               yield active(
                 newChild,
                 childSpawnFn,
@@ -386,9 +388,11 @@ object BackoffSupervisor:
 
       end notifyParentAndStop
 
-      /** source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；
-        * 第一个是项目引擎 NodeEngine）：终态 / respawn 时清掉该会话的 pending
-        * ask 槽并广播 askUserClosed。hub 未装配（早期 boot / 测试）或无槽 = no-op。 */
+      /**
+       * source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；
+       * 第一个是项目引擎 NodeEngine）：终态 / respawn 时清掉该会话的 pending
+       * ask 槽并广播 askUserClosed。hub 未装配（早期 boot / 测试）或无槽 = no-op。
+       */
       private def cleanupPendingAsks(resources: SharedResources, sessionId: String): IO[Unit] =
         resources.interactionHubRef.get.flatMap {
           case Some(hub) =>

@@ -59,14 +59,18 @@ class NodeReportReminderSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"node_report reminder regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -84,49 +88,60 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     System.clearProperty("nebflow.noderpt.remind.maxRungs")
     System.clearProperty("nebflow.noderpt.remind.quiescentIntervalMs")
 
-  /** 桩 LLM：turn 1 应答任务首行（不申报）；`declareOnTurn` 指定的轮次登记一条申报
-    * （模拟 agent 调 node_report）后应答 —— 用于「提醒 → 申报 → 放行」链。
-    * `requests` 记录每轮请求的**上下文全文**（提醒是否真进了 agent 上下文 = 注入证据）。
-    * `replyOverride`（noderpt 批 B 段 · ⑧-4 豁免用例）：固定每轮应答文本——用来精确
-    * 控制节点**最终输出文本**（判定 `BlockedReader` 是否命中）。 */
-  private class StubLlm(declareOnTurn: Int = 0, category: String = "pass",
-      replyOverride: Option[String] = None):
+  /**
+   * 桩 LLM：turn 1 应答任务首行（不申报）；`declareOnTurn` 指定的轮次登记一条申报
+   * （模拟 agent 调 node_report）后应答 —— 用于「提醒 → 申报 → 放行」链。
+   * `requests` 记录每轮请求的**上下文全文**（提醒是否真进了 agent 上下文 = 注入证据）。
+   * `replyOverride`（noderpt 批 B 段 · ⑧-4 豁免用例）：固定每轮应答文本——用来精确
+   * 控制节点**最终输出文本**（判定 `BlockedReader` 是否命中）。
+   */
+  private class StubLlm(declareOnTurn: Int = 0, category: String = "pass", replyOverride: Option[String] = None):
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val sessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val requests: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     @volatile var res: SharedResources = null
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        Stream.eval {
-          for
-            turn <- turnCount.updateAndGet(_ + 1)
-            _ <- requests.update(_ :+ req.messages.map(_.textContent).mkString("\n"))
-            _ <- IO(Option(res)).flatMap {
-              case None => IO.unit
-              case Some(r) =>
-                r.agentRegistry.get.flatMap { reg =>
-                  reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                    case None => IO.unit
-                    case Some(rec) =>
-                      sessions.update(_ :+ rec.sessionId) *>
-                        (if turn == declareOnTurn then
-                           NodeReportRegistry.register((tempRoot / "ws-reminder-registry").toString,
-                             "reminder-spec", "n-reminder", rec.sessionId,
-                             BlockedFeedback(category, s"spec declare ($category)", ""))
-                         else IO.unit)
-                }
-            }
-          yield turn
-        }.flatMap { turn =>
-          val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = replyOverride.getOrElse(
-            if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "reminder-turn-ack")
-          Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
-        }
+        Stream
+          .eval {
+            for
+              turn <- turnCount.updateAndGet(_ + 1)
+              _ <- requests.update(_ :+ req.messages.map(_.textContent).mkString("\n"))
+              _ <- IO(Option(res)).flatMap {
+                case None => IO.unit
+                case Some(r) =>
+                  r.agentRegistry.get.flatMap { reg =>
+                    reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
+                      case None => IO.unit
+                      case Some(rec) =>
+                        sessions.update(_ :+ rec.sessionId) *>
+                          (if turn == declareOnTurn then
+                             NodeReportRegistry.register(
+                               (tempRoot / "ws-reminder-registry").toString,
+                               "reminder-spec",
+                               "n-reminder",
+                               rec.sessionId,
+                               BlockedFeedback(category, s"spec declare ($category)", "")
+                             )
+                           else IO.unit)
+                  }
+              }
+            yield turn
+          }
+          .flatMap { turn =>
+            val text = req.messages.map(_.textContent).mkString("\n")
+            val reply = replyOverride.getOrElse(
+              if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "reminder-turn-ack"
+            )
+            Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
+          }
+
+  end StubLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -157,7 +172,11 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  private def registerRecorder(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
+  private def registerRecorder(
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String
+  ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       ref <- system.spawn(recorderBehavior(recorded), s"nrr-rec-${scala.util.Random.nextInt(100000)}")
@@ -172,8 +191,10 @@ class NodeReportReminderSpec extends CatsEffectSuite:
   private def recordedImmediate(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
-  /** 挂载引擎：reportGateHold 默认 **true**（生产默认口径）；bgGateCompletionHold 默认
-    * false（① 封存后的生产口径）。 */
+  /**
+   * 挂载引擎：reportGateHold 默认 **true**（生产默认口径）；bgGateCompletionHold 默认
+   * false（① 封存后的生产口径）。
+   */
   private def mountProject(
     name: String,
     ws: os.Path,
@@ -201,14 +222,18 @@ class NodeReportReminderSpec extends CatsEffectSuite:
         // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
         rootNotifyQuietMs = Some(0)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -221,10 +246,19 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String,
-      res: SharedResources, system: ActorSystem): IO[Unit] =
+  private def createNode(
+    project: String,
+    ws: os.Path,
+    name: String,
+    task: String,
+    res: SharedResources,
+    system: ActorSystem
+  ): IO[Unit] =
     val ctx = ToolContext(
       projectRoot = ws.toString,
       sessionId = Some("spec-sid"),
@@ -244,13 +278,15 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       .map(_.left.map(_.message))
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
+
+  end createNode
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   /** 等节点 agent 回 Idle（首轮结束、桥已收到 Completed）。 */
@@ -276,8 +312,10 @@ class NodeReportReminderSpec extends CatsEffectSuite:
   private def scan(rt: ProjectRuntime, times: Int = 1): IO[Unit] =
     rt.engine.remindUnreportedNodes().replicateA_(times)
 
-  /** `node-report-missing` 事件的 **summary 串**（真实消费路径 = 解 JSONL 取 `summary`
-    * 字段，再交 `parseReportMissingSummary` 单点解析）。 */
+  /**
+   * `node-report-missing` 事件的 **summary 串**（真实消费路径 = 解 JSONL 取 `summary`
+   * 字段，再交 `parseReportMissingSummary` 单点解析）。
+   */
   private def reminderEvents(events: List[String]): List[String] =
     events
       .filter(l => l.contains("\"node-report-missing\""))
@@ -325,6 +363,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(reminderEvents(events), Nil, "no reminder event before the first rung")
       assertEquals(after.status, NodeLifecycle.Running, "node stays Running after idle scans")
       assertEquals(reminderEvents(eventsAfter), Nil, "scans below the first rung are no-ops")
+    end for
   }
 
   // ── R2 第 1 拍：注入提醒轮（活会话）+ node-report-missing（active）──────
@@ -365,10 +404,12 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(fields.get("ladderExhausted"), Some("false"))
       assert(fields.get("elapsedMs").exists(_.toLong >= 800), s"elapsed must be recorded: $fields")
       assert(fields.get("pendingSince").exists(_.toLong > 0), s"pendingSince must be recorded: $fields")
-      assertEquals(fields.get("delivered"), Some("true"),
-        "the reminder must be delivered to the live node session")
-      assert(reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
-        s"the reminder text ([NODE-REPORT-REMINDER]) must reach the live session's context ($nodeSid)")
+      assertEquals(fields.get("delivered"), Some("true"), "the reminder must be delivered to the live node session")
+      assert(
+        reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
+        s"the reminder text ([NODE-REPORT-REMINDER]) must reach the live session's context ($nodeSid)"
+      )
+    end for
   }
 
   // ── R3 只置不重 + 第 2 拍（末拍 ladderExhausted）─────────────────────
@@ -401,13 +442,17 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     yield
       assertEquals(afterRung1.reportReminderCount, 1)
       assertEquals(afterRung2.reportReminderCount, 2, "rung 2 must fire at its threshold")
-      assertEquals(afterRung2.reportPendingSince, afterRung1.reportPendingSince,
-        "the clock start must never be recomputed (代裁 4 只置不重)")
+      assertEquals(
+        afterRung2.reportPendingSince,
+        afterRung1.reportPendingSince,
+        "the clock start must never be recomputed (代裁 4 只置不重)"
+      )
       assertEquals(afterRung2.status, NodeLifecycle.Running, "still Running — never failed")
       val rungs = reminderEvents(events).map(NodeEngine.parseReportMissingSummary)
       assertEquals(rungs.map(_.get("stage")).distinct, List(Some(NodeEngine.NodeReportStageActive)))
       assertEquals(rungs.map(_.get("rung")), List(Some("1/2"), Some("2/2")))
       assertEquals(rungs.last.get("ladderExhausted"), Some("true"), "last rung carries ladderExhausted=true")
+    end for
   }
 
   // ── R4 申报 ⇒ 清表 + 放行 ⇒ 既有链终态化 completed ────────────────────
@@ -446,6 +491,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(done.reportReminderCount, 0, "rung counter cleared with the clock")
       assert(!payload.contains("reportPendingSince"), s"finalized node must not carry the pending key: $payload")
       assert(imms.exists(_.text.contains("[Node 'release-a' completed]")), "delivery must happen after release")
+    end for
   }
 
   // ── R5 quiescent 档：阶梯耗尽 ⇒ 不注入、只留痕、仍 Running ──────────────
@@ -465,7 +511,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       _ <- waitIdle(res)
       _ <- waitUntil(20.seconds)(byName(rt, "quiet-a").map(_.reportPendingSince.isDefined))
       _ <- IO.sleep(500.millis)
-      _ <- scan(rt)          // 第 1 拍（= 唯一一拍）
+      _ <- scan(rt) // 第 1 拍（= 唯一一拍）
       rung1 <- byName(rt, "quiet-a")
       // 进入 quiescent 档：连续多拍只写事件、不注入
       _ <- IO.sleep(600.millis)
@@ -481,13 +527,19 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(quiet.status, NodeLifecycle.Running, "quiescent stage never fails/kills the node")
       assertEquals(quiet.reportReminderCount, 1, "quiescent events must NOT increment reminderCount")
       val parsed = reminderEvents(events).map(NodeEngine.parseReportMissingSummary)
-      assertEquals(parsed.count(_.get("stage") == Some(NodeEngine.NodeReportStageActive)), 1,
-        s"exactly one active-stage reminder: ${events.mkString("|")}")
-      assert(parsed.count(_.get("stage") == Some(NodeEngine.NodeReportStageQuiescent)) >= 1,
-        s"quiescent events expected after the ladder: ${events.mkString("|")}")
+      assertEquals(
+        parsed.count(_.get("stage") == Some(NodeEngine.NodeReportStageActive)),
+        1,
+        s"exactly one active-stage reminder: ${events.mkString("|")}"
+      )
+      assert(
+        parsed.count(_.get("stage") == Some(NodeEngine.NodeReportStageQuiescent)) >= 1,
+        s"quiescent events expected after the ladder: ${events.mkString("|")}"
+      )
       val injected = reqs.count(_.contains(NodeEngine.NodeReportReminderPrefix))
       assertEquals(injected, 1, "quiescent stage injects nothing (no further LLM turns)")
       assert(!events.exists(_.contains("\"type\":\"failed\"")), "no failed path may exist in this leg")
+    end for
   }
 
   // ── R7 计时落盘（跨宿主重启存活）+ R6 腿 2 关闭 ⇒ 未申报照常放行 ────────
@@ -518,16 +570,24 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val st = io.circe.parser.parse(raw).toOption.getOrElse(fail(s"flow-map.json must parse: $raw"))
-      val nodeJson = st.hcursor.downField("nodes").downField(node.id).focus.getOrElse(fail("node must be in flow-map.json"))
-      assertEquals(nodeJson.hcursor.get[Long]("reportPendingSince").toOption, node.reportPendingSince,
-        s"pending clock must be persisted verbatim: $nodeJson")
-      assertEquals(nodeJson.hcursor.get[Int]("reportReminderCount").toOption, Some(1),
-        s"rung counter must be persisted: $nodeJson")
+      val nodeJson =
+        st.hcursor.downField("nodes").downField(node.id).focus.getOrElse(fail("node must be in flow-map.json"))
+      assertEquals(
+        nodeJson.hcursor.get[Long]("reportPendingSince").toOption,
+        node.reportPendingSince,
+        s"pending clock must be persisted verbatim: $nodeJson"
+      )
+      assertEquals(
+        nodeJson.hcursor.get[Int]("reportReminderCount").toOption,
+        Some(1),
+        s"rung counter must be persisted: $nodeJson"
+      )
       // 下一宿主 boot 的读取路径 = 同一 NodeDef 解码器（NodeDef.given Codec）——往返证明
       val decoded = nodeJson.as[NodeDef].toOption.getOrElse(fail(s"node JSON must decode back: $nodeJson"))
       assertEquals(decoded.reportPendingSince, node.reportPendingSince, "decoded clock must match")
       assertEquals(decoded.reportReminderCount, 1, "decoded rung counter must match")
       assertEquals(decoded.status, NodeLifecycle.Running, "held node stays Running across persistence")
+    end for
   }
 
   // ── R6 腿 2 关闭 ⇒ 未申报照常放行（今天的降级面）─────────────────────
@@ -547,12 +607,18 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       rt <- mountProject("nrr-r8", ws, system, res)
       // store 直种一个 running 且带计时的节点（无活 fiber = boot 期僵尸形态）
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-r8-stale" -> NodeDef(
-          id = "n-r8-stale", name = "stale-node", agent = "general",
-          status = NodeLifecycle.Running, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          reportPendingSince = Some(System.currentTimeMillis() - 70000),
-          reportReminderCount = 3)))
+        s.copy(nodes =
+          s.nodes + ("n-r8-stale" -> NodeDef(
+            id = "n-r8-stale",
+            name = "stale-node",
+            agent = "general",
+            status = NodeLifecycle.Running,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            reportPendingSince = Some(System.currentTimeMillis() - 70000),
+            reportReminderCount = 3
+          ))
+        )
       }
       _ <- rt.engine.reapStaleRunning("n-r8-stale")
       reaped <- byName(rt, "stale-node")
@@ -564,6 +630,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(reaped.reportReminderCount, 0, "terminal write must reset the rung counter")
       assert(events.exists(_.contains("\"reaped\"")), s"reap audit line expected: $events")
       assertEquals(reminderEvents(events), Nil, "a cancelled node must never be reminded")
+    end for
   }
 
   test("R6: with reportGateHold off an unreported hand-off finalizes as before (text-anchored fallback)") {
@@ -590,6 +657,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(done.result, Some("result-OFF"))
       assertEquals(reminderEvents(events), Nil, "no reminder may fire once the node is finalized")
       assert(done.reportPendingSince.isEmpty, "gate off never starts the clock")
+    end for
   }
   // ── R9/R10 文本锚定 BLOCKED 豁免（noderpt 批 B 段 · 作者代裁 ⑧-4 = (a)）──────
   //
@@ -624,18 +692,27 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       payload = NodePayload.buildNodeJson(after, System.currentTimeMillis()).noSpaces
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Blocked,
-        "a BLOCKED-anchored final text must finalize through the existing blocked chain (⑧-4 豁免)")
+      assertEquals(
+        done.status,
+        NodeLifecycle.Blocked,
+        "a BLOCKED-anchored final text must finalize through the existing blocked chain (⑧-4 豁免)"
+      )
       assert(done.result.exists(_.contains("[blocked:")), s"blocked render string expected: ${done.result}")
       assert(done.blockedFeedback.isDefined, "blockedFeedback must be persisted for the dispatcher chain")
       assertEquals(after.status, NodeLifecycle.Blocked, "no later scan may change it")
       assert(done.reportPendingSince.isEmpty, "the exemption must never start the pending clock")
-      assertEquals(reminderEvents(events), Nil,
-        s"the reminder ladder must NOT fire for an exempted BLOCKED text: ${events.mkString("|").take(400)}")
+      assertEquals(
+        reminderEvents(events),
+        Nil,
+        s"the reminder ladder must NOT fire for an exempted BLOCKED text: ${events.mkString("|").take(400)}"
+      )
       assertEquals(after.reportReminderCount, 0, "no rung may be consumed")
       assert(!payload.contains("reportPendingSince"), s"payload must not carry the pending key: $payload")
-      assert(!imms.exists(_.text.contains("[Node 'blockedtext-a' completed]")),
-        "a blocked node must not deliver a completed result downstream")
+      assert(
+        !imms.exists(_.text.contains("[Node 'blockedtext-a' completed]")),
+        "a blocked node must not deliver a completed result downstream"
+      )
+    end for
   }
 
   test("R10 (⑧-4 boundary): text merely CONTAINING 'BLOCKED' is NOT exempt — the node is still held + reminded") {
@@ -661,8 +738,11 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       reqs <- llm.requests.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(held.status, NodeLifecycle.Running,
-        "non-anchored text must NOT be exempt (⑧-4 exempts only BlockedReader-anchored text)")
+      assertEquals(
+        held.status,
+        NodeLifecycle.Running,
+        "non-anchored text must NOT be exempt (⑧-4 exempts only BlockedReader-anchored text)"
+      )
       assert(held.reportPendingSince.isDefined, "the clock must start for a silent finish")
       assertEquals(afterRung1.status, NodeLifecycle.Running, "still Running — the ladder never fails the node")
       assertEquals(afterRung1.reportReminderCount, 1, "rung 1 must fire for a held node")
@@ -672,8 +752,11 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assertEquals(fields.get("stage"), Some(NodeEngine.NodeReportStageActive))
       assertEquals(fields.get("rung"), Some("1/3"))
       assertEquals(fields.get("delivered"), Some("true"))
-      assert(reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
-        "the reminder must be delivered into the live session's context")
+      assert(
+        reqs.exists(_.contains(NodeEngine.NodeReportReminderPrefix)),
+        "the reminder must be delivered into the live session's context"
+      )
+    end for
   }
 
   // ── R11 释放唤醒（noderpt 批 F2 = 复核 D2 修复）：申报到了但桥未观测 ⇒ 必须放行 ──
@@ -705,9 +788,11 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       sent <- rt.engine.sendNodeMessage(held.id, "please continue and report")
       _ <- waitUntil(20.seconds)(NodeReportRegistry.peek(sid).map(_.isDefined))
       declared <- NodeReportRegistry.peek(sid)
-      _ <- waitUntil(20.seconds)(res.agentRegistry.get.map(_.get(sid).exists(_.status == nebflow.agent.AgentStatus.Idle)))
+      _ <- waitUntil(20.seconds)(
+        res.agentRegistry.get.map(_.get(sid).exists(_.status == nebflow.agent.AgentStatus.Idle))
+      )
       _ <- IO.sleep(900.millis) // 越过第 1 档
-      _ <- scan(rt)             // 第 1 拍：peek 见申报 ⇒ 释放唤醒（桥复检放行）
+      _ <- scan(rt) // 第 1 拍：peek 见申报 ⇒ 释放唤醒（桥复检放行）
       _ <- waitUntil(30.seconds)(byName(rt, "reentry-b").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "reentry-b")
       imms <- recordedImmediate(recorded)
@@ -717,23 +802,36 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       assert(sent.isRight, s"NodeMessage to a held Running node must be accepted: $sent")
       assert(declared.isDefined, "the re-entered turn must have registered the node_report declaration")
       assertEquals(held.status, NodeLifecycle.Running, "the hand-off without a declaration holds the node")
-      assertEquals(done.status, NodeLifecycle.Completed,
-        "a declaration the bridge cannot observe must still be released (F2: no silent permanent Running)")
+      assertEquals(
+        done.status,
+        NodeLifecycle.Completed,
+        "a declaration the bridge cannot observe must still be released (F2: no silent permanent Running)"
+      )
       assertEquals(done.result, Some("reminder-turn-ack"), "result = the wake turn's text")
       assert(done.reportPendingSince.isEmpty, "the bridge's release clears the clock (清表与放行同点)")
       assertEquals(done.reportReminderCount, 0, "rung counter cleared with the clock")
-      assert(imms.exists(_.text.contains("[Node 'reentry-b' completed]")),
-        "the released node must deliver its result downstream")
+      assert(
+        imms.exists(_.text.contains("[Node 'reentry-b' completed]")),
+        "the released node must deliver its result downstream"
+      )
       // 释放腿的留痕（不是提醒腿）：release-wake 事件 1 条、delivered=true、零提醒事件
       val wakes = events.filter(l => l.contains(s"\"${NodeEngine.NodeReportReleaseWakeEventType}\""))
       assertEquals(wakes.size, 1, s"exactly one release-wake event expected: ${events.mkString("|").take(600)}")
       assertEquals(
-        NodeEngine.parseReportMissingSummary(
-          io.circe.parser.parse(wakes.head).toOption.flatMap(_.hcursor.get[String]("summary").toOption).getOrElse("")
-        ).get("delivered"),
-        Some("true"), s"the wake must be delivered to the live session: ${wakes.head}")
-      assertEquals(reminderEvents(events), Nil,
-        s"a declared node must not consume reminder rungs: ${events.mkString("|").take(400)}")
+        NodeEngine
+          .parseReportMissingSummary(
+            io.circe.parser.parse(wakes.head).toOption.flatMap(_.hcursor.get[String]("summary").toOption).getOrElse("")
+          )
+          .get("delivered"),
+        Some("true"),
+        s"the wake must be delivered to the live session: ${wakes.head}"
+      )
+      assertEquals(
+        reminderEvents(events),
+        Nil,
+        s"a declared node must not consume reminder rungs: ${events.mkString("|").take(400)}"
+      )
+    end for
   }
 
 end NodeReportReminderSpec

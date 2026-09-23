@@ -47,8 +47,10 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
   private def lines(out: String): List[String] =
     out.linesIterator.map(_.trim).filter(_.nonEmpty).toList
 
-  /** Bash 结果首行是 `(cwd: <dir>)` 前缀（BashTool.formatResult 的既有形态）——它是
-    * 「本调用在哪个目录里跑」的第二读数，断言单独取用；`pwd` 读数取其后的命令行。 */
+  /**
+   * Bash 结果首行是 `(cwd: <dir>)` 前缀（BashTool.formatResult 的既有形态）——它是
+   * 「本调用在哪个目录里跑」的第二读数，断言单独取用；`pwd` 读数取其后的命令行。
+   */
   private def cwdPrefix(out: String): String =
     lines(out).find(_.startsWith("(cwd:")).getOrElse("")
 
@@ -66,8 +68,10 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
       assertEquals(ls.size, 2, s"two pwd readings expected, raw output:\n$out")
       assertEquals(ls.head, seat.toString, s"`pwd` must be the seat verbatim; raw output:\n$out")
       assertEquals(ls(1), seat.toString, s"`pwd -P` (physical cwd) must be the seat verbatim; raw output:\n$out")
-      assert(cwdPrefix(out).contains(seat.toString),
-        s"the tool's own cwd stamp must name the seat too; raw output:\n$out")
+      assert(
+        cwdPrefix(out).contains(seat.toString),
+        s"the tool's own cwd stamp must name the seat too; raw output:\n$out"
+      )
   }
 
   test("A② 缺口② fail-closed：座椅目录缺失 ⇒ 该会话 Bash 显式失败（不回落工作区根）") {
@@ -89,8 +93,11 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
     for r <- bashCall("pwd -P", ctxFor(s, None))
     yield
       val out = r.fold(e => fail(s"plain Bash must still work without a seat signal, got: $e"), identity)
-      assertEquals(cmdLines(out).headOption.getOrElse(""), os.pwd.toString,
-        s"absent the seat signal the shell keeps the legacy cwd; raw output:\n$out")
+      assertEquals(
+        cmdLines(out).headOption.getOrElse(""),
+        os.pwd.toString,
+        s"absent the seat signal the shell keeps the legacy cwd; raw output:\n$out"
+      )
   }
 
   test("A④ 缺口② 透传链 + 消费点接线：AgentState → SessionContext，且三处接线在位（静态断言）") {
@@ -100,12 +107,20 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
     assertEquals(AgentState().sessionCwd, None, "absent the signal the field stays None (zero change)")
 
     val bashSrc = os.read(os.pwd / "src/main/scala/nebflow/core/tools/BashTool.scala")
-    assert(bashSrc.contains("ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))"),
-      "BashTool must derive the shell initialDir from ctx.sessionCwd (fallback = sandbox root)")
+    assert(
+      bashSrc.contains("ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))"),
+      "BashTool must derive the shell initialDir from ctx.sessionCwd (fallback = sandbox root)"
+    )
     val coreSrc = os.read(os.pwd / "src/main/scala/nebflow/agent/AgentCore.scala")
-    assert(coreSrc.contains("sessionCwd = state.session.sessionCwd"),
-      "AgentCore must thread SessionContext.sessionCwd into ToolContext")
+    assert(
+      coreSrc.contains("sessionCwd = state.session.sessionCwd"),
+      "AgentCore must thread SessionContext.sessionCwd into ToolContext"
+    )
     val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala")
-    assertEquals("sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size, 2,
-      "both NodeEngine spawn points (normal node / loop session) must pass the seat signal")
+    assertEquals(
+      "sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size,
+      2,
+      "both NodeEngine spawn points (normal node / loop session) must pass the seat signal"
+    )
   }
+end NodeSeatCwdSpec

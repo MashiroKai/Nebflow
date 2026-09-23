@@ -35,9 +35,16 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       if Files.exists(tmp) then
-        Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(
-          Files.deleteIfExists
-        )
+        Files
+          .walk(tmp)
+          .sorted(java.util.Comparator.reverseOrder())
+          .iterator()
+          .asScala
+          .foreach(
+            Files.deleteIfExists
+          )
+
+  end withTempUploads
 
   private def get(path: String, cookie: Option[(String, String)] = None) =
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
@@ -106,3 +113,4 @@ class UploadsRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+end UploadsRoutesSpec

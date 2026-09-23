@@ -240,10 +240,12 @@ object SkillService:
         val visible = declared ++ appended
         if visible.isEmpty then ""
         else
-          val entries = visible.map { s =>
-            val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
-            s"- ${s.name}: ${s.description.take(200)}$when"
-          }.mkString("\n")
+          val entries = visible
+            .map { s =>
+              val when = s.whenToUse.filter(_.nonEmpty).map(w => s" [when: $w]").getOrElse("")
+              s"- ${s.name}: ${s.description.take(200)}$when"
+            }
+            .mkString("\n")
           s"""# Skills
              |
              |Skills live at ${PathUtil.dataRootRenderValue}/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
@@ -318,11 +320,13 @@ object SkillService:
   // Multi-source loading
   // ============================================================
 
-  /** Project-level skill directories to scan, in priority order. Both the
-    * brand dir name and the hardcoded legacy ".nebflow" are listed — project
-    * dirs belong to the user's repo and are never migrated, so rename-day
-    * projects on either name keep loading (distinct collapses the current
-    * identical pair). */
+  /**
+   * Project-level skill directories to scan, in priority order. Both the
+   * brand dir name and the hardcoded legacy ".nebflow" are listed — project
+   * dirs belong to the user's repo and are never migrated, so rename-day
+   * projects on either name keep loading (distinct collapses the current
+   * identical pair).
+   */
   private def projectSkillPaths: List[os.Path] =
     val cwd = os.pwd
     List(
@@ -369,7 +373,8 @@ object SkillService:
           }
           // Namespaced skills: the relative path is the authoritative identifier —
           // a mismatched frontmatter name must not break subscription by path.
-          val nested = os.list(subDir)
+          val nested = os
+            .list(subDir)
             .filter(nameDir => os.isDir(nameDir) && nameDir.baseName != "_example")
             .flatMap { nameDir =>
               val relName = s"${subDir.baseName}/${nameDir.baseName}"

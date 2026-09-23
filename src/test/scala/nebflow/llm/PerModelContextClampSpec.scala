@@ -136,10 +136,12 @@ class PerModelContextClampSpec extends CatsEffectSuite:
       assertEquals(reserve.get.modelMaxContext, Some(200000), "真值随候选保留")
   }
 
-  /** 建一个注册表实例供纯算式读数用。注意 `effectiveContextWindow` 是 **class
-    * ProviderRegistry 上的实例方法**（不是伴生对象成员）——三个 ModelCandidate 构造点
-    * 全部经它 ⇒ 「单点」成立；spec 侧走实例调用（salvage 草稿写成伴生对象调用 ⇒ 编译
-    * 不过，前身从未编译过）。 */
+  /**
+   * 建一个注册表实例供纯算式读数用。注意 `effectiveContextWindow` 是 **class
+   * ProviderRegistry 上的实例方法**（不是伴生对象成员）——三个 ModelCandidate 构造点
+   * 全部经它 ⇒ 「单点」成立；spec 侧走实例调用（salvage 草稿写成伴生对象调用 ⇒ 编译
+   * 不过，前身从未编译过）。
+   */
   private def withRegistry[A](f: ProviderRegistry => A): IO[A] =
     for
       configRef <- Ref.of[IO, NebflowServiceConfig](configWith(1, None))

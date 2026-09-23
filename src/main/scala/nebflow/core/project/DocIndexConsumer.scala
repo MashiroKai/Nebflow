@@ -66,8 +66,10 @@ object DocIndexConsumer:
   /** 索引扫描最大深度（`<root>/<域>/INDEX.md` = 2 层；留一层余量）。 */
   val MaxIndexScanDepth = 3
 
-  /** 对账兜底节流间隔（挂 30s TtlTick 周期，内部按此节流；**按 workspace 键**——每个
-    * 项目的 ws 域索引互不饿死）。 */
+  /**
+   * 对账兜底节流间隔（挂 30s TtlTick 周期，内部按此节流；**按 workspace 键**——每个
+   * 项目的 ws 域索引互不饿死）。
+   */
   val DefaultReconcileIntervalMs: Long = 10 * 60 * 1000L
 
   /** 条目 state 值域（spec §5.2：`active` | `archived`，索引自治可变）。 */
@@ -82,8 +84,10 @@ object DocIndexConsumer:
   val ChainEventTypes: Set[String] =
     Set(FlowMapEventLog.ChainArchivedType, FlowMapEventLog.ChainRestoredType)
 
-  /** 事件行模型：`chainId` 优先取顶层可选字段，缺则回退 summary 的 `chain=`（旧行/他
-    * 写点零迁移兼容）；`fields` = 结构化 summary 的 `k=v` 解析结果。 */
+  /**
+   * 事件行模型：`chainId` 优先取顶层可选字段，缺则回退 summary 的 `chain=`（旧行/他
+   * 写点零迁移兼容）；`fields` = 结构化 summary 的 `k=v` 解析结果。
+   */
   final case class ChainEvent(
     ts: Long,
     typ: String,
@@ -93,6 +97,7 @@ object DocIndexConsumer:
     summary: String,
     fields: Map[String, String]
   ):
+
     /** 事件时刻（归档事件 = archivedAt，拉回事件 = restoredAt；缺则回退行 ts）。 */
     def atMs: Long =
       fields.get("archivedAt").orElse(fields.get("restoredAt")).flatMap(_.toLongOption).getOrElse(ts)
@@ -115,13 +120,17 @@ object DocIndexConsumer:
           fields = fields
         )
       }
+    end if
+  end parseEventLine
 
   /** 链的期望状态（事件回放折叠结果）。members 仅留痕（事件载荷事实），不参与判定。 */
   final case class DesiredState(chainId: String, archived: Boolean, atMs: Long, members: Option[Int])
 
-  /** 事件回放折叠：append-only 文件顺序 = 时序，同 chainId **后写覆盖先写**
-    * （archived → restored → archived 三事件链 = 末态 archived）。无 chainId 的链族
-    * 事件无法定位链 → 丢弃（消费者无从派生链 id）。 */
+  /**
+   * 事件回放折叠：append-only 文件顺序 = 时序，同 chainId **后写覆盖先写**
+   * （archived → restored → archived 三事件链 = 末态 archived）。无 chainId 的链族
+   * 事件无法定位链 → 丢弃（消费者无从派生链 id）。
+   */
   def desiredStates(events: List[ChainEvent]): Map[String, DesiredState] =
     events.foldLeft(Map.empty[String, DesiredState]) { (acc, e) =>
       e.chainId match
@@ -145,14 +154,16 @@ object DocIndexConsumer:
 
   private def kindOf(heading: String): SectionKind =
     SectionKindRe.findFirstMatchIn(heading).map(_.group(1).toLowerCase) match
-      case Some("active")       => Active
-      case Some("archived")     => Archived
+      case Some("active") => Active
+      case Some("archived") => Archived
       case Some("unattributed") => Unattributed
-      case Some("live")         => Live
-      case _                    => Other
+      case Some("live") => Live
+      case _ => Other
 
-  /** 链块：`lines` 含标题行（若存在）与后续所有行（含尾部空行，逐字保留 → 未改动
-    * 区块渲染逐字节同原文）。 */
+  /**
+   * 链块：`lines` 含标题行（若存在）与后续所有行（含尾部空行，逐字保留 → 未改动
+   * 区块渲染逐字节同原文）。
+   */
   private final case class Block(lines: List[String]):
     def headingLine: Option[String] = lines.headOption.filter(l => BlockHeadingRe.matches(l))
     def chainId: Option[String] = headingLine.flatMap(h => ChainIdTokenRe.findFirstMatchIn(h).map(_.group(1)))
@@ -162,8 +173,13 @@ object DocIndexConsumer:
 
   private final case class TableSchema(stateIdx: Option[Int], chainIdxs: List[Int], docIdx: Option[Int])
 
-  private final case class RowInfo(idx: Int, chains: List[String], stateIdx: Option[Int],
-                                   state: Option[String], docKey: Option[String])
+  private final case class RowInfo(
+    idx: Int,
+    chains: List[String],
+    stateIdx: Option[Int],
+    state: Option[String],
+    docKey: Option[String]
+  )
 
   private final case class StaleEntry(chainId: String, doc: Option[String], indexPath: String)
 
@@ -177,7 +193,7 @@ object DocIndexConsumer:
       else
         raw.lastOption match
           case Some((_, body)) => body += l
-          case None            => preamble += l
+          case None => preamble += l
     }
     val sections = raw.toList.map { case (heading, body) => buildSection(heading, body.toList) }
     (preamble.toList, sections)
@@ -190,7 +206,7 @@ object DocIndexConsumer:
       else
         raw.lastOption match
           case Some(buf) => buf += l
-          case None      => pre += l
+          case None => pre += l
     }
     Section(kindOf(heading), heading, pre.toList, raw.toList.map(b => Block(b.toList)))
 
@@ -222,7 +238,7 @@ object DocIndexConsumer:
     def idx(names: Set[String]): Option[Int] =
       header.indexWhere(c => names.contains(c.toLowerCase.trim)) match
         case -1 => None
-        case i  => Some(i)
+        case i => Some(i)
     val chainIdx = idx(Set("chain", "链"))
     val chainsIdx = idx(Set("chains", "多链", "链集"))
     TableSchema(
@@ -233,7 +249,8 @@ object DocIndexConsumer:
 
   /** 单元格内的链 id 列表（`[chain-a, chain-b]` / `chain-a chain-b` / `chain-a`）。 */
   private def chainsInCell(v: String): List[String] =
-    v.replace("[", " ").replace("]", " ")
+    v.replace("[", " ")
+      .replace("]", " ")
       .split("[\\s,，;；、|`'\"]+")
       .toList
       .map(_.trim)
@@ -249,8 +266,7 @@ object DocIndexConsumer:
       val l = lines(i)
       if isTableRow(l) then
         val cells = cellsOf(l)
-        if isHeaderCells(cells) && !isSeparatorCells(cells) then
-          schema = Some(schemaOf(cells))
+        if isHeaderCells(cells) && !isSeparatorCells(cells) then schema = Some(schemaOf(cells))
         else if !isSeparatorCells(cells) then
           schema match
             case Some(sc) =>
@@ -261,7 +277,10 @@ object DocIndexConsumer:
               out += RowInfo(i, chains, stateIdx, state, docKey)
             case None => ()
       i += 1
+    end while
     out.toList
+
+  end rowsOf
 
   private def setStateCell(line: String, stateIdx: Int, value: String): Option[String] =
     val cells = cellsOf(line)
@@ -273,8 +292,13 @@ object DocIndexConsumer:
   // ── 纯变换（幂等不动点） ─────────────────────────────────────
 
   /** 变换结果：`changed=false` 时 [[content]] 与输入逐字节相同（调用方据此免写盘）。 */
-  final case class TransformResult(content: String, changed: Boolean, stateFlips: Int,
-                                   blocksMoved: Int, notes: List[String])
+  final case class TransformResult(
+    content: String,
+    changed: Boolean,
+    stateFlips: Int,
+    blocksMoved: Int,
+    notes: List[String]
+  )
 
   private val IsoSecFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
 
@@ -295,11 +319,17 @@ object DocIndexConsumer:
     else if body.last.trim.isEmpty then body ++ extra
     else body ++ ("" :: extra)
 
-  /** 行级 state 翻转：`force` = 块整体迁移时的强制口径（None = 按行链集判定——
-    * 行链集全归档 → archived；行链集命中拉回链 → active；无链/未定态 → 不动）。
-    * 返 (块, 翻转行数, 无法翻转的行数(缺 state 列))。 */
-  private def flipRows(b: Block, archivedSet: Set[String], restoredSet: Set[String],
-                       force: Option[Boolean]): (Block, Int, Int) =
+  /**
+   * 行级 state 翻转：`force` = 块整体迁移时的强制口径（None = 按行链集判定——
+   * 行链集全归档 → archived；行链集命中拉回链 → active；无链/未定态 → 不动）。
+   * 返 (块, 翻转行数, 无法翻转的行数(缺 state 列))。
+   */
+  private def flipRows(
+    b: Block,
+    archivedSet: Set[String],
+    restoredSet: Set[String],
+    force: Option[Boolean]
+  ): (Block, Int, Int) =
     val rows = rowsOf(b.lines)
     if rows.isEmpty then (b, 0, 0)
     else
@@ -317,19 +347,30 @@ object DocIndexConsumer:
             case Some(si) =>
               setStateCell(buf(r.idx), si, if toArchived then StateArchived else StateActive) match
                 case Some(nl) => buf(r.idx) = nl; flips += 1
-                case None     => ()
+                case None => ()
             case None => noStateCol += 1
         }
       }
       (b.copy(lines = buf.toList), flips, noStateCol)
 
-  /** 目标分区落位：已有同链块 → 行合并（按 doc 键去重，保原块标题与位置）；无 → 追加
-    * （归档目标补 `· archived <iso>` 时间戳，拉回目标剥除该后缀）。 */
-  private def appendOrMerge(blocks: List[Block], incoming: Block, archived: Boolean, iso: String,
-                           notes: ListBuffer[String]): (List[Block], Boolean) =
+    end if
+
+  end flipRows
+
+  /**
+   * 目标分区落位：已有同链块 → 行合并（按 doc 键去重，保原块标题与位置）；无 → 追加
+   * （归档目标补 `· archived <iso>` 时间戳，拉回目标剥除该后缀）。
+   */
+  private def appendOrMerge(
+    blocks: List[Block],
+    incoming: Block,
+    archived: Boolean,
+    iso: String,
+    notes: ListBuffer[String]
+  ): (List[Block], Boolean) =
     val existingIdx = incoming.chainId match
       case Some(cid) => blocks.indexWhere(_.chainId.contains(cid))
-      case None      => -1
+      case None => -1
     if existingIdx >= 0 then
       val existing = blocks(existingIdx)
       val existingDocKeys = rowsOf(existing.lines).flatMap(_.docKey).toSet
@@ -353,21 +394,26 @@ object DocIndexConsumer:
           incoming
       (blocks :+ withHeading, true)
 
-  /** 索引变换（纯函数、幂等）：
-    * - 链块从非归档分区迁入「已归档链分区（archived）」（标题补归档时间戳），块内行
-    *   state → archived；反向（链块从归档分区迁回「活跃链分区（active）」）剥时间戳、
-    *   行 state → active。**块级口径**：块内条目随块整体翻（spec §6.3「同一链分区下的
-    *   文档条目在同一时间随链归档事件翻状态」一次事件批量翻，含块内多链行）。
-    * - 未被迁移的行（无链标题的松散表、块内不随块的其他情形）按**行链集**判定：行链集
-    *   全部归档 → archived；行链集命中拉回链 → active；两者都不满足（含无链的行）→
-    *   不动。多链行部分归档时不离场（spec 未覆盖多链行，取保守口径）。
-    * - 目标分区缺失 / 无四分区结构 / 查无该链条目 → 结构零改写，记 note（不新建分区、
-    *   不自创链标题、不猜条目）。 */
+    end if
+
+  end appendOrMerge
+
+  /**
+   * 索引变换（纯函数、幂等）：
+   * - 链块从非归档分区迁入「已归档链分区（archived）」（标题补归档时间戳），块内行
+   *   state → archived；反向（链块从归档分区迁回「活跃链分区（active）」）剥时间戳、
+   *   行 state → active。**块级口径**：块内条目随块整体翻（spec §6.3「同一链分区下的
+   *   文档条目在同一时间随链归档事件翻状态」一次事件批量翻，含块内多链行）。
+   * - 未被迁移的行（无链标题的松散表、块内不随块的其他情形）按**行链集**判定：行链集
+   *   全部归档 → archived；行链集命中拉回链 → active；两者都不满足（含无链的行）→
+   *   不动。多链行部分归档时不离场（spec 未覆盖多链行，取保守口径）。
+   * - 目标分区缺失 / 无四分区结构 / 查无该链条目 → 结构零改写，记 note（不新建分区、
+   *   不自创链标题、不猜条目）。
+   */
   def transformIndex(content: String, desired: Map[String, DesiredState]): TransformResult =
     val (preamble, sections) = parseIndex(content)
     if desired.isEmpty || sections.isEmpty then
-      TransformResult(content, changed = false, 0, 0,
-        if sections.isEmpty then List("index-has-no-sections") else Nil)
+      TransformResult(content, changed = false, 0, 0, if sections.isEmpty then List("index-has-no-sections") else Nil)
     else
       val notes = ListBuffer.empty[String]
       val archById = desired.values.filter(_.archived).map(d => d.chainId -> d).toMap
@@ -391,13 +437,13 @@ object DocIndexConsumer:
         s.blocks.foreach { b =>
           val target: Option[Boolean] = s.kind match
             case Archived => b.chainId.filter(restSet.contains).map(_ => false)
-            case Other    => None
-            case _        => b.chainId.filter(archSet.contains).map(_ => true)
+            case Other => None
+            case _ => b.chainId.filter(archSet.contains).map(_ => true)
           val movable =
             target match
-              case Some(true)  => hasArchivedSection
+              case Some(true) => hasArchivedSection
               case Some(false) => hasActiveSection
-              case None        => false
+              case None => false
           if target.isDefined && !movable then
             notes += s"target-section-missing: ${b.chainId.getOrElse("(no-chain)")} (结构未动，仅按行翻 state)"
           if movable then
@@ -417,6 +463,7 @@ object DocIndexConsumer:
             flips += f
             if miss > 0 then notes += s"no-state-column: ${b.chainId.getOrElse("(no-chain)")} ($miss 行未翻 state)"
             keep += nb
+          end if
         }
         kept += s.copy(prelude = prelude2.lines, blocks = keep.toList)
       }
@@ -437,8 +484,16 @@ object DocIndexConsumer:
         TransformResult(out, changed = out != content, flips, moved, notes.toList)
       else TransformResult(content, changed = false, 0, 0, notes.toList)
 
-  /** 索引内出现过的链 id 集（块标题 + 行 chain/chains 单元格）——对账与「条目缺失」判定
-    * 共用，纯读取、零派生。 */
+      end if
+
+    end if
+
+  end transformIndex
+
+  /**
+   * 索引内出现过的链 id 集（块标题 + 行 chain/chains 单元格）——对账与「条目缺失」判定
+   * 共用，纯读取、零派生。
+   */
   def chainIdsIn(content: String): Set[String] =
     val (_, sections) = parseIndex(content)
     sections.flatMap(s => s.blocks.flatMap(b => b.chainId.toList ++ rowsOf(b.lines).flatMap(_.chains))).toSet
@@ -457,8 +512,13 @@ object DocIndexConsumer:
   // ── IO 入口 ───────────────────────────────────────────────
 
   /** 单索引文件应用结果。 */
-  final case class IndexApplyResult(indexPath: String, changed: Boolean, stateFlips: Int,
-                                    blocksMoved: Int, notes: List[String])
+  final case class IndexApplyResult(
+    indexPath: String,
+    changed: Boolean,
+    stateFlips: Int,
+    blocksMoved: Int,
+    notes: List[String]
+  )
 
   /** 索引维护批次报告。 */
   final case class ApplyReport(
@@ -474,8 +534,10 @@ object DocIndexConsumer:
     dryRun: Boolean
   )
 
-  /** 对账报表：missing-in-index = 归档区有事实、索引 chain 集无；stale-in-index =
-    * 索引条目 state=active 但链已在归档区。**只报表，不改文档本体。** */
+  /**
+   * 对账报表：missing-in-index = 归档区有事实、索引 chain 集无；stale-in-index =
+   * 索引条目 state=active 但链已在归档区。**只报表，不改文档本体。**
+   */
   final case class ReconcileReport(
     workspace: String,
     generatedAt: Long,
@@ -504,8 +566,10 @@ object DocIndexConsumer:
       (parsed.flatten, parsed.count(_.isEmpty))
     }
 
-  /** 归档事实：`flow-map-archive/<batchId>.json` 的 batchId 全集（文件名 = batchId，
-    * 单一事实源，spec §6.1 分文件布局）。 */
+  /**
+   * 归档事实：`flow-map-archive/<batchId>.json` 的 batchId 全集（文件名 = batchId，
+   * 单一事实源，spec §6.1 分文件布局）。
+   */
   def archiveChainIds(workspace: String): IO[Set[String]] =
     val dir = archiveDir(workspace)
     IO.blocking {
@@ -517,19 +581,25 @@ object DocIndexConsumer:
   /** 扫描索引根下的 INDEX.md（存在才算；**绝不创建**）。 */
   def scanIndexFiles(roots: List[String]): IO[List[os.Path]] =
     IO.blocking {
-      roots.filter(r => os.exists(os.Path(r))).flatMap { r =>
-        os.walk(os.Path(r), maxDepth = MaxIndexScanDepth)
-          .filter(p => p.last == IndexFileName && os.isFile(p))
-          .toList
-      }.distinct.sortBy(_.toString)
+      roots
+        .filter(r => os.exists(os.Path(r)))
+        .flatMap { r =>
+          os.walk(os.Path(r), maxDepth = MaxIndexScanDepth)
+            .filter(p => p.last == IndexFileName && os.isFile(p))
+            .toList
+        }
+        .distinct
+        .sortBy(_.toString)
     }
 
-  /** 索引维护入口（消费者主函数）：读事件 → 折叠期望状态 → 翻转/迁移所有 INDEX.md。
-    * 调用方（本批接线，见类注释）：① ProjectActor.TtlTick 出库后（swept.nonEmpty 门控）
-    * ② [[tick]] 内的 10min 兜底 catch-up。**幂等**：同事件重放零 diff → 不写盘。
-    *
-    * 无链族事件 → 单次事件文件读取即返回（零索引扫描零日志）：接线后本函数每 10min 被
-    * 兜底 tick 调一次，无事实时不得为「空跑」白扫 home 域全量 INDEX.md。 */
+  /**
+   * 索引维护入口（消费者主函数）：读事件 → 折叠期望状态 → 翻转/迁移所有 INDEX.md。
+   * 调用方（本批接线，见类注释）：① ProjectActor.TtlTick 出库后（swept.nonEmpty 门控）
+   * ② [[tick]] 内的 10min 兜底 catch-up。**幂等**：同事件重放零 diff → 不写盘。
+   *
+   * 无链族事件 → 单次事件文件读取即返回（零索引扫描零日志）：接线后本函数每 10min 被
+   * 兜底 tick 调一次，无事实时不得为「空跑」白扫 home 域全量 INDEX.md。
+   */
   def applyChainEvents(workspace: String, indexRoots: List[String], dryRun: Boolean = false): IO[ApplyReport] =
     readEvents(workspace).flatMap { case (events, parseErrors) =>
       val chainEvents = events.filter(e => ChainEventTypes.contains(e.typ))
@@ -551,9 +621,14 @@ object DocIndexConsumer:
             if skipped.nonEmpty then
               logger.info(s"doc-index: chain(s) with events but no index entry — skipped: ${skipped.mkString(", ")}")
             else IO.unit
-          _ <- if !dryRun && results.exists(_.changed) then
-            IO(logger.infoSync(s"doc-index: ${results.count(_.changed)} index file(s) updated (flips=${results.map(_.stateFlips).sum}, blocksMoved=${results.map(_.blocksMoved).sum})"))
-          else IO.unit
+          _ <-
+            if !dryRun && results.exists(_.changed) then
+              IO(
+                logger.infoSync(
+                  s"doc-index: ${results.count(_.changed)} index file(s) updated (flips=${results.map(_.stateFlips).sum}, blocksMoved=${results.map(_.blocksMoved).sum})"
+                )
+              )
+            else IO.unit
         yield ApplyReport(
           workspace = workspace,
           eventLines = events.size,
@@ -565,14 +640,20 @@ object DocIndexConsumer:
           parseErrors = parseErrors,
           dryRun = dryRun
         )
+      end if
     }
 
-  private def applyToIndex(path: os.Path, content: String, desired: Map[String, DesiredState],
-                           dryRun: Boolean): IO[IndexApplyResult] =
+  private def applyToIndex(
+    path: os.Path,
+    content: String,
+    desired: Map[String, DesiredState],
+    dryRun: Boolean
+  ): IO[IndexApplyResult] =
     if path.last != IndexFileName then
       // 防呆白名单：本消费者只允许改写 INDEX.md（文件本体零变化纪律的机械保证）
-      logger.info(s"doc-index: refuse to rewrite non-index file $path").as(
-        IndexApplyResult(path.toString, changed = false, 0, 0, List("not-an-index-file")))
+      logger
+        .info(s"doc-index: refuse to rewrite non-index file $path")
+        .as(IndexApplyResult(path.toString, changed = false, 0, 0, List("not-an-index-file")))
     else
       val r = transformIndex(content, desired)
       val write = if r.changed && !dryRun then IO.blocking(os.write.over(path, r.content)) else IO.unit
@@ -598,7 +679,8 @@ object DocIndexConsumer:
         archiveChains = archiveChains.toList.sorted,
         indexChains = indexChains.toList.sorted,
         missingInIndex = archiveChains.diff(indexChains).toList.sorted,
-        staleInIndex = stale.map(e => s"chain=${e.chainId} doc=${e.doc.getOrElse("(no-doc-cell)")} index=${e.indexPath}").sorted,
+        staleInIndex =
+          stale.map(e => s"chain=${e.chainId} doc=${e.doc.getOrElse("(no-doc-cell)")} index=${e.indexPath}").sorted,
         indexFiles = files.map(_.toString),
         reportPath = reportPath(workspace).toString
       )
@@ -620,23 +702,27 @@ object DocIndexConsumer:
       "note" -> "只读对账（文档本体零改动）：missing-in-index = 归档区有事实、索引 chain 集无；stale-in-index = 索引条目 state=active 但链已在归档区".asJson
     )
 
-  /** **索引根单点**（P3 接线批 2026-09-10）——固定返回两域：
-    *   - home 域 `<dataRoot>/docs`（`~/.nebflow/docs`，文档规范 §1 域目录的父目录，
-    *     **多项目共享**：链 id 全局唯一，跨项目不撞见「假设清单」）；
-    *   - ws 域 `<workspace>/.nebflow/Spec`（项目内规格域，各项目独立）。
-    *
-    * 纯计算（无 IO、无存在性检查）：不存在的根由 [[scanIndexFiles]] 过滤 ⇒ 零成本跳过。
-    * **唯一允许的根来源**——禁 roots 配置文件 / env / 新设置项 / 新参数面（本批只要
-    * 「两域固定计算」两行事实）。[[tick]] 复用于此。 */
+  /**
+   * **索引根单点**（P3 接线批 2026-09-10）——固定返回两域：
+   *   - home 域 `<dataRoot>/docs`（`~/.nebflow/docs`，文档规范 §1 域目录的父目录，
+   *     **多项目共享**：链 id 全局唯一，跨项目不撞见「假设清单」）；
+   *   - ws 域 `<workspace>/.nebflow/Spec`（项目内规格域，各项目独立）。
+   *
+   * 纯计算（无 IO、无存在性检查）：不存在的根由 [[scanIndexFiles]] 过滤 ⇒ 零成本跳过。
+   * **唯一允许的根来源**——禁 roots 配置文件 / env / 新设置项 / 新参数面（本批只要
+   * 「两域固定计算」两行事实）。[[tick]] 复用于此。
+   */
   def indexRootsFor(workspace: String): List[String] =
     List(
       (PathUtil.dataRoot / "docs").toString,
       (os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / "Spec").toString
     )
 
-  /** 节流闸（JVM 内、**按 workspace 键**）：同一 workspace 串行 check-and-set。
-    * 键化理由（本批）：根含 ws 域（各项目不同）——全局单点会让先到者把后到者的 ws 域
-    * 节流掉（多项目安装下后到项目的写路径 catch-up 永不执行）。 */
+  /**
+   * 节流闸（JVM 内、**按 workspace 键**）：同一 workspace 串行 check-and-set。
+   * 键化理由（本批）：根含 ws 域（各项目不同）——全局单点会让先到者把后到者的 ws 域
+   * 节流掉（多项目安装下后到项目的写路径 catch-up 永不执行）。
+   */
   private val lastTickMs = scala.collection.concurrent.TrieMap.empty[String, Long]
   private val tickGate = new Object
 
@@ -648,18 +734,23 @@ object DocIndexConsumer:
       due
     }
 
-  /** 定时兜底（挂 ProjectActor.TtlTick 30s 周期；按 workspace 节流，多项目各自独立）。
-    * 一趟两段：
-    *   1. 写路径 catch-up [[applyChainEvents]]（幂等）——覆盖「事件已写、apply 未落地」
-    *      的进程死亡窗口（崩溃/重启后下一个 10min 窗内补齐翻转）；
-    *   2. 只读对账（报表语义不变：仍只读文档本体，仍落
-    *      `<workspace>/.nebflow/tmp/doc-index-reconcile.json`；报表干净不写盘）。
-    *
-    * catch-up 失败仅 WARN（fail-soft）——对账照常跑，绝不因写路径异常炸 tick。
-    * `indexRoots = None` → [[indexRootsFor]]（home + ws 两域，口径单点）；显式 Some 供
-    * 测试/自定义域根。索引区无 INDEX.md / 无链族事件 → 零开销 no-op（不写盘不打日志）。 */
-  def tick(workspace: String, minIntervalMs: Long = DefaultReconcileIntervalMs,
-           indexRoots: Option[List[String]] = None): IO[Option[ReconcileReport]] =
+  /**
+   * 定时兜底（挂 ProjectActor.TtlTick 30s 周期；按 workspace 节流，多项目各自独立）。
+   * 一趟两段：
+   *   1. 写路径 catch-up [[applyChainEvents]]（幂等）——覆盖「事件已写、apply 未落地」
+   *      的进程死亡窗口（崩溃/重启后下一个 10min 窗内补齐翻转）；
+   *   2. 只读对账（报表语义不变：仍只读文档本体，仍落
+   *      `<workspace>/.nebflow/tmp/doc-index-reconcile.json`；报表干净不写盘）。
+   *
+   * catch-up 失败仅 WARN（fail-soft）——对账照常跑，绝不因写路径异常炸 tick。
+   * `indexRoots = None` → [[indexRootsFor]]（home + ws 两域，口径单点）；显式 Some 供
+   * 测试/自定义域根。索引区无 INDEX.md / 无链族事件 → 零开销 no-op（不写盘不打日志）。
+   */
+  def tick(
+    workspace: String,
+    minIntervalMs: Long = DefaultReconcileIntervalMs,
+    indexRoots: Option[List[String]] = None
+  ): IO[Option[ReconcileReport]] =
     IO.blocking(claimTick(workspace, System.currentTimeMillis(), minIntervalMs)).flatMap {
       case false => IO.pure(None)
       case true =>
@@ -676,3 +767,4 @@ object DocIndexConsumer:
         }
         catchUp *> reconcileNow
     }
+end DocIndexConsumer

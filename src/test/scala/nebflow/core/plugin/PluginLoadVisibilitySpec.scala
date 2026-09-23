@@ -58,17 +58,23 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
   private def writePlugin(name: String, description: String = ""): os.Path =
     val d = pluginDir(name)
     val desc = if description.nonEmpty then description else s"$name fixture plugin"
-    os.write.over(d / "plugin.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$desc"}""")
+    os.write.over(
+      d / "plugin.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$desc"}"""
+    )
     os.makeDir.all(d / "skills" / "howto")
-    os.write.over(d / "skills" / "howto" / "SKILL.md",
+    os.write.over(
+      d / "skills" / "howto" / "SKILL.md",
       s"""---
          |name: howto
          |description: $name test skill
          |---
          |# howto
-         |body""".stripMargin)
+         |body""".stripMargin
+    )
     d
+
+  end writePlugin
 
   /** 缺 $schema → 装载失败（§5.3 required）。 */
   private def writeRejectedPlugin(name: String): os.Path =
@@ -100,6 +106,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
     yield ()
 
   private val expectedNote = "另有 2 个插件未载入（装载失败 1 / 已封禁 1）"
+
   private val expectedChangedNote =
     "另有 1 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：drifted"
 
@@ -113,13 +120,20 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
       assert(catalog.startsWith(PluginRegistry.CatalogHeader), s"header must stay first: $catalog")
       assert(catalog.contains("- ok-a: 可见插件 A"), s"visible line must render: $catalog")
       assert(catalog.contains("- ok-b: 可见插件 B"), s"visible line must render: $catalog")
-      assert(catalog.contains("- never-recorded: 无记录但在位即受信"),
-        s"a record-less package must be in the catalog (presence = trust): $catalog")
-      assert(catalog.contains("- drifted: 内容变更探针"),
-        s"a content-changed package MUST stay in the catalog (not intercepted): $catalog")
+      assert(
+        catalog.contains("- never-recorded: 无记录但在位即受信"),
+        s"a record-less package must be in the catalog (presence = trust): $catalog"
+      )
+      assert(
+        catalog.contains("- drifted: 内容变更探针"),
+        s"a content-changed package MUST stay in the catalog (not intercepted): $catalog"
+      )
       val lines = catalog.linesIterator.toList
-      assertEquals(lines.takeRight(2), List(expectedNote, expectedChangedNote),
-        s"aggregated notes must sit at the section tail: $catalog")
+      assertEquals(
+        lines.takeRight(2),
+        List(expectedNote, expectedChangedNote),
+        s"aggregated notes must sit at the section tail: $catalog"
+      )
       assert(!catalog.contains("- blocked-pkg:"), s"blocked package must not render a line: $catalog")
       assert(!catalog.contains("- bad-manifest:"), s"rejected package must not render a line: $catalog")
   }
@@ -130,8 +144,11 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
       viaDispatcher <- DispatcherContextCatalog.pluginSection()
       viaDebug <- PluginRegistry.renderCatalog()
     yield
-      assertEquals(viaDispatcher, viaDebug,
-        "dispatcher injection section and debug renderer must stay byte-identical (notes included)")
+      assertEquals(
+        viaDispatcher,
+        viaDebug,
+        "dispatcher injection section and debug renderer must stay byte-identical (notes included)"
+      )
       assert(viaDebug.contains(expectedNote), s"absence note must survive both renderers: $viaDebug")
       assert(viaDebug.contains(expectedChangedNote), s"content-changed note must survive both renderers: $viaDebug")
   }
@@ -145,16 +162,27 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
       val lines = text.linesIterator.toList
       assertEquals(lines.size, 4, s"head + 2 absent + 1 content-changed: $text")
       assert(
-        lines.head.startsWith("6 package(s) on disk, 5 loaded, 4 catalog-visible, 2 absent (load-failed 1 / blocked 1), "),
-        s"head counts must be complete: ${lines.head}")
+        lines.head.startsWith(
+          "6 package(s) on disk, 5 loaded, 4 catalog-visible, 2 absent (load-failed 1 / blocked 1), "
+        ),
+        s"head counts must be complete: ${lines.head}"
+      )
       assert(lines.head.endsWith("1 content-changed"), s"head must count content changes: ${lines.head}")
-      assert(lines.exists(l => l.contains("[load-failed] bad-manifest:") && l.contains("schema")),
-        s"rejected package must be listed with its reason: $text")
-      assert(lines.exists(l => l.contains("[blocked] blocked-pkg:") && l.contains("spec: deny-list probe")),
-        s"blocked package must be listed with its block reason: $text")
-      assert(lines.exists(l => l.contains("[content-changed] drifted:") && l.contains("load-failed") == false
-        && l.contains("not intercepted")),
-        s"content-changed package must be listed as NON-blocking: $text")
+      assert(
+        lines.exists(l => l.contains("[load-failed] bad-manifest:") && l.contains("schema")),
+        s"rejected package must be listed with its reason: $text"
+      )
+      assert(
+        lines.exists(l => l.contains("[blocked] blocked-pkg:") && l.contains("spec: deny-list probe")),
+        s"blocked package must be listed with its block reason: $text"
+      )
+      assert(
+        lines.exists(l =>
+          l.contains("[content-changed] drifted:") && l.contains("load-failed") == false
+            && l.contains("not intercepted")
+        ),
+        s"content-changed package must be listed as NON-blocking: $text"
+      )
   }
 
   test("健康摘要去重：同状态重复调用只输出一次（重扫 tick 不刷屏）") {
@@ -205,12 +233,15 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
       _ <- PluginRegistry.logHealthSummary("rescan")
       after = PluginRegistry.healthSummaryLogStateForTest
     yield
-      assert(catalog.contains("- ok-a: 可见插件 A"),
-        s"content-changed package must stay visible: $catalog")
-      assert(catalog.contains("另有 1 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：ok-a"),
-        s"fresh content change must be annotated again: $catalog")
-      assert(health.exists(_.contains("[content-changed] ok-a:")),
-        s"fresh content change must appear in the health summary: $health")
+      assert(catalog.contains("- ok-a: 可见插件 A"), s"content-changed package must stay visible: $catalog")
+      assert(
+        catalog.contains("另有 1 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：ok-a"),
+        s"fresh content change must be annotated again: $catalog"
+      )
+      assert(
+        health.exists(_.contains("[content-changed] ok-a:")),
+        s"fresh content change must appear in the health summary: $health"
+      )
       assertEquals(after._1, before._1 + 1, "state change after clean reset must emit again")
       assert(after._2.isDefined, "emitted body must be retained for the next dedupe comparison")
   }

@@ -65,12 +65,14 @@ object Main extends IOApp:
 
   end run
 
-  /** Parse --home, --port, --no-browser, --succeed from args, returning
-    * (homeOpt, portOpt, succeedIntentOpt, remainingArgs).
-    *
-    * --succeed <intentPath>（hot-restart 批设计 §3.3）：热重启后继进场旗标——
-    * 仅热重启编排器 spawn 的后继进程携带；普通启动永不出现（普通启动不解析
-    * 任何 intent）。 */
+  /**
+   * Parse --home, --port, --no-browser, --succeed from args, returning
+   * (homeOpt, portOpt, succeedIntentOpt, remainingArgs).
+   *
+   * --succeed <intentPath>（hot-restart 批设计 §3.3）：热重启后继进场旗标——
+   * 仅热重启编排器 spawn 的后继进程携带；普通启动永不出现（普通启动不解析
+   * 任何 intent）。
+   */
   private def parseGlobalFlags(args: List[String]): (Option[String], Option[Int], Option[os.Path], List[String]) =
     var home: Option[String] = None
     var port: Option[Int] = None
@@ -95,6 +97,7 @@ object Main extends IOApp:
         case other =>
           remaining += other
           i += 1
+    end while
     if noBrowser then GatewayConfig.setNoBrowser(true)
     (home, port, succeed, remaining.result())
 
@@ -136,9 +139,9 @@ object Main extends IOApp:
                 case None =>
                   IO.println(s"nebflow is already running (pid: $pid)") *>
                     IO.println("Run 'nebflow stop' to stop it.")
-              // Focusing an existing instance is a success exit — the desktop
-              // .app relaunch must not look like a crash (stdout is discarded
-              // there; the browser focus is the visible action).
+            // Focusing an existing instance is a success exit — the desktop
+            // .app relaunch must not look like a crash (stdout is discarded
+            // there; the browser focus is the visible action).
             yield ExitCode.Success
           case _ =>
             // Port-level guard (2026-08-27 hard requirement): the pid file is
@@ -166,20 +169,25 @@ object Main extends IOApp:
                 }
             }
 
-  /** Hot-restart successor entry (--succeed <intent>, hot-restart 批设计 §3.3):
-    * boot the gateway WITHOUT the pid fast-path and port classification gates —
-    * the successor is the SAME instance's relay, not a second instance (the
-    * guard's focus-existing semantics would kill the relay here; §4.2 bundled-
-    * form note). The standard single-instance hardening still applies LATER,
-    * in GatewayMain's succeed gate — but only after the old pid is confirmed
-    * dead (a live old listener must NEVER be classified stale-and-killed by
-    * its own successor: 禁裸 kill 红线零弱化).
-    *
-    * PID file discipline: NOT written here. The old instance's removePid
-    * shutdown hook would race-delete a successor-written pid file; GatewayMain's
-    * succeed gate writes it only after the old pid is confirmed dead (old hooks
-    * have completed by then — pid death is the confirmation).
-    */
+    end match
+
+  end startGateway
+
+  /**
+   * Hot-restart successor entry (--succeed <intent>, hot-restart 批设计 §3.3):
+   * boot the gateway WITHOUT the pid fast-path and port classification gates —
+   * the successor is the SAME instance's relay, not a second instance (the
+   * guard's focus-existing semantics would kill the relay here; §4.2 bundled-
+   * form note). The standard single-instance hardening still applies LATER,
+   * in GatewayMain's succeed gate — but only after the old pid is confirmed
+   * dead (a live old listener must NEVER be classified stale-and-killed by
+   * its own successor: 禁裸 kill 红线零弱化).
+   *
+   * PID file discipline: NOT written here. The old instance's removePid
+   * shutdown hook would race-delete a successor-written pid file; GatewayMain's
+   * succeed gate writes it only after the old pid is confirmed dead (old hooks
+   * have completed by then — pid death is the confirmation).
+   */
   private def succeedGateway(intentPath: os.Path): IO[ExitCode] =
     // [s0] parse the intent EARLY — garbage intent → loud exit, zero side
     // effects; the old instance is unaffected (still serving; its C2 poll will
@@ -208,13 +216,15 @@ object Main extends IOApp:
         // GatewayMain must not be swallowed into 0 — the hot-restart
         // orchestrator would then read "JVM too old, refused to start" as a
         // clean handover.
-        nebflow.gateway.GatewayMain.run(Nil)
+        nebflow.gateway.GatewayMain
+          .run(Nil)
           .guarantee(IO.blocking(ProcessManager.removePid()))
     }
 
-  /** For the pid-file hit: probe whether our port serves a nebflow health
-    * endpoint (best-effort, reused from the guard). Some -> focus URL.
-    */
+  /**
+   * For the pid-file hit: probe whether our port serves a nebflow health
+   * endpoint (best-effort, reused from the guard). Some -> focus URL.
+   */
   private def pidFocusState(cfg: nebflow.gateway.GatewayConfig): Option[String] =
     nebflow.cli.SingleInstanceGuard.checkPortBlocking(cfg.host.toString, cfg.port.value)
 
@@ -247,7 +257,8 @@ object Main extends IOApp:
     // success path stays Success, but a gate refusal must not be swallowed
     // into 0 — scripts/launchd would otherwise read "JVM too old, refused to
     // start" as a normal exit.
-    nebflow.gateway.GatewayMain.run(Nil)
+    nebflow.gateway.GatewayMain
+      .run(Nil)
       .guarantee(IO.blocking(ProcessManager.removePid()))
   end bootGateway
 end Main

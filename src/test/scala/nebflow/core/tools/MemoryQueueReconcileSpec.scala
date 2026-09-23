@@ -19,17 +19,31 @@ import munit.FunSuite
 class MemoryQueueReconcileSpec extends FunSuite:
 
   private def note(
-      id: String,
-      atMs: Long,
-      target: String,
-      action: String,
-      section: Option[String] = None,
-      matchText: Option[String] = None,
-      content: Option[String] = None
+    id: String,
+    atMs: Long,
+    target: String,
+    action: String,
+    section: Option[String] = None,
+    matchText: Option[String] = None,
+    content: Option[String] = None
   ): MemoryQueue.Note =
-    MemoryQueue.Note(id, atMs, "2026-09-13T00:00:00Z", target, action, section, matchText, content, Some("s"), MemoryQueue.TriggerManual)
+    MemoryQueue.Note(
+      id,
+      atMs,
+      "2026-09-13T00:00:00Z",
+      target,
+      action,
+      section,
+      matchText,
+      content,
+      Some("s"),
+      MemoryQueue.TriggerManual
+    )
 
-  private def stateOf(notes: Vector[MemoryQueue.Note], outcomes: Vector[MemoryQueue.Outcome] = Vector.empty): MemoryQueue.State =
+  private def stateOf(
+    notes: Vector[MemoryQueue.Note],
+    outcomes: Vector[MemoryQueue.Outcome] = Vector.empty
+  ): MemoryQueue.State =
     MemoryQueue.State(notes, outcomes, Set.empty, 0, 0)
 
   private def outcome(ref: String, result: String): MemoryQueue.Outcome =
@@ -53,14 +67,22 @@ class MemoryQueueReconcileSpec extends FunSuite:
 
   test("④ 对账只认两支高精度判据：逐字行命中（append⇒deduped / update⇒applied-by-reconcile）+ 定位键消失（remove⇒applied-by-reconcile）；其余不判"):
     val notes = Vector(
-      note("q-dup", 1L, "user", "append", None, None, Some("- 已存在的条目")),          // 已落 append ⇒ deduped
-      note("q-new", 2L, "user", "append", None, None, Some("- 全新条目")),              // 未落 ⇒ 不判
-      note("q-up-ok", 3L, "user", "update", None, Some("某旧文本"), Some("- 全量派发 + pending 节点模式（Plan first）→full-dispatch-pending-node [T1]")), // content 行已在 ⇒ 判
+      note("q-dup", 1L, "user", "append", None, None, Some("- 已存在的条目")), // 已落 append ⇒ deduped
+      note("q-new", 2L, "user", "append", None, None, Some("- 全新条目")), // 未落 ⇒ 不判
+      note(
+        "q-up-ok",
+        3L,
+        "user",
+        "update",
+        None,
+        Some("某旧文本"),
+        Some("- 全量派发 + pending 节点模式（Plan first）→full-dispatch-pending-node [T1]")
+      ), // content 行已在 ⇒ 判
       note("q-up-miss", 4L, "user", "update", None, Some("定位键已消失"), Some("- 改写后的新文本")), // L3 落空形态 ⇒ 不判
-      note("q-rm-miss", 5L, "user", "remove", None, Some("- 已不存在的键"), None),        // 定位键消失 ⇒ 判
-      note("q-rm-hit", 6L, "user", "remove", None, Some("已存在的条目"), None),           // 定位键仍在 ⇒ 不判
-      note("q-sec", 7L, "user", "replace_section", Some("节"), None, Some("- 整段替换")),  // 整段替换 ⇒ 不判
-      note("q-empty", 8L, "user", "append", None, None, Some("   "))                      // 空内容 ⇒ 不判
+      note("q-rm-miss", 5L, "user", "remove", None, Some("- 已不存在的键"), None), // 定位键消失 ⇒ 判
+      note("q-rm-hit", 6L, "user", "remove", None, Some("已存在的条目"), None), // 定位键仍在 ⇒ 不判
+      note("q-sec", 7L, "user", "replace_section", Some("节"), None, Some("- 整段替换")), // 整段替换 ⇒ 不判
+      note("q-empty", 8L, "user", "append", None, None, Some("   ")) // 空内容 ⇒ 不判
     )
     val report = MemoryQueue.reconcile(stateOf(notes), Map("user" -> tf(ghostPath, fileBody)))
 
@@ -93,10 +115,14 @@ class MemoryQueueReconcileSpec extends FunSuite:
       note("q-2", 2L, "user", "remove", None, Some("- y"), None)
     )
     assert(MemoryQueue.reconcile(stateOf(withTarget), Map.empty).closed.isEmpty, "postFiles 空 ⇒ 不判")
-    assert(MemoryQueue.reconcile(stateOf(withTarget), Map("other" -> tf(ghostPath, fileBody))).closed.isEmpty, "目标层不在 postFiles ⇒ 不判")
+    assert(
+      MemoryQueue.reconcile(stateOf(withTarget), Map("other" -> tf(ghostPath, fileBody))).closed.isEmpty,
+      "目标层不在 postFiles ⇒ 不判"
+    )
     assert(
       MemoryQueue.reconcile(stateOf(withTarget), Map("user" -> tf(ghostPath, ""))).closed.isEmpty,
-      "跑后内容为空串（文件不存在/首次写入）⇒ 无凭据、不判（remove 也不会被误标「已消失」）")
+      "跑后内容为空串（文件不存在/首次写入）⇒ 无凭据、不判（remove 也不会被误标「已消失」）"
+    )
 
   // ── (iii) 终态集与未知结局的保守方向 ─────────────────────────────
 

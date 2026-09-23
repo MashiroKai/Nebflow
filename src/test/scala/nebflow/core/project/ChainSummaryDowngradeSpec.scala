@@ -49,8 +49,11 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"chainlist downgrade spec agent","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"chainlist downgrade spec agent","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -59,9 +62,10 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
 
   private class NoopLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -71,10 +75,10 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
     loop
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      registry: Ref[IO, Map[String, AgentRecord]]
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    registry: Ref[IO, Map[String, AgentRecord]]
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -107,9 +111,17 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
 
   /** 挂项目 + 起生产 `ProjectActor`（TtlTick 入口同生产）；root 会话 = 记录式 sink。 */
   private def fixture(
-      tag: String,
-      nodes: Map[String, NodeDef]
-  ): IO[(os.Path, ActorSystem, nebflow.actor.ActorRef[ProjectActor.ProjectCommand], Ref[IO, List[AgentCommand]], FlowMapStore)] =
+    tag: String,
+    nodes: Map[String, NodeDef]
+  ): IO[
+    (
+      os.Path,
+      ActorSystem,
+      nebflow.actor.ActorRef[ProjectActor.ProjectCommand],
+      Ref[IO, List[AgentCommand]],
+      FlowMapStore
+    )
+  ] =
     val ws = tempRoot / s"ws-$tag-${System.nanoTime()}"
     os.makeDir.all(ws)
     val system = ActorSystem(s"chainlist-$tag-${scala.util.Random.nextInt(100000)}")
@@ -117,25 +129,39 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
       received <- Ref.of[IO, List[AgentCommand]](Nil)
       sink <- system.spawn(recordingActor(received), s"sink-$tag-${scala.util.Random.nextInt(100000)}")
       registry <- Ref.of[IO, Map[String, AgentRecord]](
-        Map(RootSid -> AgentRecord(RootSid, sink, AgentKind.Root, RootSid, None)))
+        Map(RootSid -> AgentRecord(RootSid, sink, AgentKind.Root, RootSid, None))
+      )
       res <- mkResources(system, tempRoot, new NoopLlm, registry)
       store <- FlowMapStore.open(s"chainlist-$tag", ws.toString)
-      engine = new NodeEngine(store, system, res,
+      engine = new NodeEngine(
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = RootSid,
         projectName = s"chainlist-$tag",
         emitEvent = (_: String, _: String, _: Json) => IO.unit,
-        reportGateHold = Some(false))
-      pd = ProjectDef(name = s"chainlist-$tag", workspace = ws.toString,
-        agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+        reportGateHold = Some(false)
+      )
+      pd = ProjectDef(
+        name = s"chainlist-$tag",
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
       _ <- store.mutate(s => s.copy(nodes = nodes))
       ref <- system.spawn(
         ProjectActor(ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, RootSid)),
-        s"proj-chainlist-$tag-${scala.util.Random.nextInt(100000)}")
+        s"proj-chainlist-$tag-${scala.util.Random.nextInt(100000)}"
+      )
     yield (ws, system, ref, received, store)
+
+    end for
+
+  end fixture
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -147,8 +173,10 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 投给 sink 的链级注入计数（判据 = `source == Some("chain")`；与
-    * `FlowMapStore.ChainSummarySource` 同值，此处逐字写死防同源误判）。 */
+  /**
+   * 投给 sink 的链级注入计数（判据 = `source == Some("chain")`；与
+   * `FlowMapStore.ChainSummarySource` 同值，此处逐字写死防同源误判）。
+   */
   private def chainInjections(received: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     received.get.map(_.collect {
       case i: AgentCommand.ImmediateInput if i.source.contains("chain") => i
@@ -156,8 +184,8 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
 
   /** 注入面全量普查（逐条 `source` + 文本首段）——供断言消息与证据落盘。 */
   private def injectionCensus(received: Ref[IO, List[AgentCommand]]): IO[List[String]] =
-    received.get.map(_.collect {
-      case i: AgentCommand.ImmediateInput => s"${i.source.getOrElse("-")}|${i.text.take(60).replace('\n', ' ')}"
+    received.get.map(_.collect { case i: AgentCommand.ImmediateInput =>
+      s"${i.source.getOrElse("-")}|${i.text.take(60).replace('\n', ' ')}"
     })
 
   /** 链横幅**内容**判据（防「改 source 名」型假绿）：正文头行 `[Chain '…' · N nodes` 不得出现。 */
@@ -172,16 +200,37 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
     val base = System.currentTimeMillis() - 100_000
     val nodes = Map(
       // 链 ④′ 形态（今晚实战）：head → tail 同分量、全终态 ⇒ 可归档；≥2 成员 ⇒ 入摘要面
-      "n-dg-a" -> NodeDef(id = "n-dg-a", name = "downgrade-head", agent = "general",
-        status = NodeLifecycle.Completed, createdAt = base, completedAt = Some(base + 1),
-        out = List(OutEdge("n-dg-b", Set(OutEdge.Pass), OutEdge.Result)), result = Some("head result line")),
-      "n-dg-b" -> NodeDef(id = "n-dg-b", name = "downgrade-tail", agent = "general",
-        status = NodeLifecycle.Completed, createdAt = base + 10, completedAt = Some(base + 20),
-        in = List("n-dg-a"), out = List(OutEdge.nebula), result = Some("tail result line")),
+      "n-dg-a" -> NodeDef(
+        id = "n-dg-a",
+        name = "downgrade-head",
+        agent = "general",
+        status = NodeLifecycle.Completed,
+        createdAt = base,
+        completedAt = Some(base + 1),
+        out = List(OutEdge("n-dg-b", Set(OutEdge.Pass), OutEdge.Result)),
+        result = Some("head result line")
+      ),
+      "n-dg-b" -> NodeDef(
+        id = "n-dg-b",
+        name = "downgrade-tail",
+        agent = "general",
+        status = NodeLifecycle.Completed,
+        createdAt = base + 10,
+        completedAt = Some(base + 20),
+        in = List("n-dg-a"),
+        out = List(OutEdge.nebula),
+        result = Some("tail result line")
+      ),
       // 单成员孤立链（M2 负控）：不得产生任何投递
-      "n-dg-lone" -> NodeDef(id = "n-dg-lone", name = "downgrade-lone", agent = "general",
-        status = NodeLifecycle.Completed, createdAt = base + 30, completedAt = Some(base + 31),
-        result = Some("lone result line"))
+      "n-dg-lone" -> NodeDef(
+        id = "n-dg-lone",
+        name = "downgrade-lone",
+        agent = "general",
+        status = NodeLifecycle.Completed,
+        createdAt = base + 30,
+        completedAt = Some(base + 31),
+        result = Some("lone result line")
+      )
     )
     for
       (ws, system, ref, received, store) <- fixture("j2", nodes)
@@ -196,15 +245,17 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
       // 读数落盘（证据面）：root 会话（sink 替身）收到的注入面全量普查——本批后
       // 应为「零链横幅 + 节点级腿照旧」。
       _ <- IO(println(s"[chainlist-probe] root-injection census (source|text-head) = $census"))
-      _ <- IO(println(s"[chainlist-probe] chain-flavored injections by source = ${injections.size}, by content = ${byContent.size}"))
+      _ <- IO(
+        println(
+          s"[chainlist-probe] chain-flavored injections by source = ${injections.size}, by content = ${byContent.size}"
+        )
+      )
       metas <- store.archiveBatches
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       _ <- IO {
         // ── J2 绿锚 ──
-        assertEquals(injections, Nil,
-          s"链级摘要必须零投主对话（实得 ${injections.size} 条 source=chain 注入；改前树此处 = 1 条）；注入面普查=$census")
-        assertEquals(byContent, Nil,
-          s"链横幅正文（`[Chain '…' · N nodes`）不得以任何 source 名达到 root（防改 source 型假绿）：$byContent")
+        assertEquals(injections, Nil, s"链级摘要必须零投主对话（实得 ${injections.size} 条 source=chain 注入；改前树此处 = 1 条）；注入面普查=$census")
+        assertEquals(byContent, Nil, s"链横幅正文（`[Chain '…' · N nodes`）不得以任何 source 名达到 root（防改 source 型假绿）：$byContent")
         // 节点级腿**不受本批影响**（J3 绿锚：非链源的注入照旧存在/照旧缺席，本 fixture 上报全量普查）
         assert(census.forall(!_.contains("[Chain ")), s"普查中不得出现链横幅：$census")
         // ── J5/R-9 台账（≥2 成员链的批账本照记；单成员链不入摘要面）──
@@ -214,14 +265,13 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
         // M2 负控：单成员孤立链**照常归档**（批账本条目在），但**不进摘要面**
         // ⇒ 其 summarySentAt 恒缺席（从未被降级登记腿选中）
         val loneMeta = metas.getOrElse("chain-n-dg-lone", fail("M2：单成员链照常出库归档（批账本条目应在）"))
-        assertEquals(loneMeta.summarySentAt, None,
-          "M2：单成员链不入摘要面 ⇒ 无 summarySentAt（降级登记腿只处理 ≥2 成员链）")
+        assertEquals(loneMeta.summarySentAt, None, "M2：单成员链不入摘要面 ⇒ 无 summarySentAt（降级登记腿只处理 ≥2 成员链）")
         // ── 归档事实照旧（降级 ≠ 删除）：批文件 + 归档区实存 ──
-        assert(os.exists(ws / ".nebflow" / FlowMapStore.ArchiveDirName / "chain-n-dg-a.json"),
-          "归档批文件照写（承载面数据源仍在）")
+        assert(os.exists(ws / ".nebflow" / FlowMapStore.ArchiveDirName / "chain-n-dg-a.json"), "归档批文件照写（承载面数据源仍在）")
         assert(ws.toString.nonEmpty)
       }
     yield ()
+    end for
   }
 
   // ── J4 状态段三元（改前树同文件应红）────────────────────────────────
@@ -234,14 +284,31 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(storeName, ws.toString)
       _ <- store.mutate { s =>
-        s.copy(nodes = Map(
-          "n-cx-a" -> NodeDef(id = "n-cx-a", name = "cancel-a", agent = "general",
-            status = NodeLifecycle.Cancelled, createdAt = base, completedAt = Some(base + 1),
-            out = List(OutEdge("n-cx-b", Set(OutEdge.Pass), OutEdge.Result)), result = Some("cancelled a")),
-          "n-cx-b" -> NodeDef(id = "n-cx-b", name = "cancel-b", agent = "general",
-            status = NodeLifecycle.Cancelled, createdAt = base + 10, completedAt = Some(base + 20),
-            in = List("n-cx-a"), out = List(OutEdge.nebula), result = Some("cancelled b"))
-        ))
+        s.copy(nodes =
+          Map(
+            "n-cx-a" -> NodeDef(
+              id = "n-cx-a",
+              name = "cancel-a",
+              agent = "general",
+              status = NodeLifecycle.Cancelled,
+              createdAt = base,
+              completedAt = Some(base + 1),
+              out = List(OutEdge("n-cx-b", Set(OutEdge.Pass), OutEdge.Result)),
+              result = Some("cancelled a")
+            ),
+            "n-cx-b" -> NodeDef(
+              id = "n-cx-b",
+              name = "cancel-b",
+              agent = "general",
+              status = NodeLifecycle.Cancelled,
+              createdAt = base + 10,
+              completedAt = Some(base + 20),
+              in = List("n-cx-a"),
+              out = List(OutEdge.nebula),
+              result = Some("cancelled b")
+            )
+          )
+        )
       }
       _ <- store.sweepCompletedChainsDetailed(System.currentTimeMillis())
       batch <- store.chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
@@ -249,16 +316,23 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
         val c = batch._1.headOption.getOrElse(fail("全 cancelled ≥2 成员链必须入摘要候选（M2 只看成员数）"))
         assertEquals(c.cancelled, 2, s"两成员全 cancelled：$c")
         assertEquals(c.failed, 0)
-        assertEquals(c.eventType, FlowMapStore.ChainSummaryEventCancelled,
-          s"J4 根因修复：全 cancelled 链不得标 completed（改前值 = completed）")
+        assertEquals(
+          c.eventType,
+          FlowMapStore.ChainSummaryEventCancelled,
+          s"J4 根因修复：全 cancelled 链不得标 completed（改前值 = completed）"
+        )
         // 状态段在引擎四段式里的取值（保留面读数；列表态另有 chainStatusOf 最坏态口径）
-        assertEquals(NotificationHeader.header("chain", None, Some("NEBFLOW"), Some("NEBFLOW/chain-n-cx-a"), None, Some(c.eventType)),
+        assertEquals(
+          NotificationHeader
+            .header("chain", None, Some("NEBFLOW"), Some("NEBFLOW/chain-n-cx-a"), None, Some(c.eventType)),
           Some("CHAIN · NEBFLOW · CHAIN-N-CX-A · CANCELED"),
-          "状态段 = CANCELED（非 COMPLETED）")
+          "状态段 = CANCELED（非 COMPLETED）"
+        )
         // 对照：含 failed 时仍优先标 failed（三元顺序 failed > cancelled）
         assert(c.text.contains("cancelled"), "摘要正文照旧含 cancelled 计数")
       }
     yield ()
+    end for
   }
 
   test("J4 三元顺序：failed ∧ cancelled 混合 ⇒ failed（强提醒优先）") {
@@ -268,16 +342,32 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(s"chainlist-j4b-${System.nanoTime()}", ws.toString)
       _ <- store.mutate { s =>
-        s.copy(nodes = Map(
-          "n-mx-a" -> NodeDef(id = "n-mx-a", name = "mixed-a", agent = "general",
-            status = NodeLifecycle.Failed, createdAt = base, completedAt = Some(base + 1),
-            // failed 成员需 `notifySentAt` 才满足归档资格（chainArchivable：
-            // `Failed => n.notifySentAt.isDefined`，即分发器腿已上报）
-            notifySentAt = Some(base + 2), result = Some("failed a")),
-          "n-mx-b" -> NodeDef(id = "n-mx-b", name = "mixed-b", agent = "general",
-            status = NodeLifecycle.Cancelled, createdAt = base + 10, completedAt = Some(base + 20),
-            in = List("n-mx-a"), result = Some("cancelled b"))
-        ))
+        s.copy(nodes =
+          Map(
+            "n-mx-a" -> NodeDef(
+              id = "n-mx-a",
+              name = "mixed-a",
+              agent = "general",
+              status = NodeLifecycle.Failed,
+              createdAt = base,
+              completedAt = Some(base + 1),
+              // failed 成员需 `notifySentAt` 才满足归档资格（chainArchivable：
+              // `Failed => n.notifySentAt.isDefined`，即分发器腿已上报）
+              notifySentAt = Some(base + 2),
+              result = Some("failed a")
+            ),
+            "n-mx-b" -> NodeDef(
+              id = "n-mx-b",
+              name = "mixed-b",
+              agent = "general",
+              status = NodeLifecycle.Cancelled,
+              createdAt = base + 10,
+              completedAt = Some(base + 20),
+              in = List("n-mx-a"),
+              result = Some("cancelled b")
+            )
+          )
+        )
       }
       _ <- store.sweepCompletedChainsDetailed(System.currentTimeMillis())
       batch <- store.chainSummaryBatch(FlowMapStore.ChainSummaryMaxPerRound)
@@ -285,9 +375,14 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
         val c = batch._1.headOption.getOrElse(fail("混合终态 ≥2 成员链必须入摘要候选"))
         assertEquals(c.failed, 1)
         assertEquals(c.cancelled, 1)
-        assertEquals(c.eventType, FlowMapStore.ChainSummaryEventFailed, "failed 优先（三元顺序 failed > cancelled > completed）")
+        assertEquals(
+          c.eventType,
+          FlowMapStore.ChainSummaryEventFailed,
+          "failed 优先（三元顺序 failed > cancelled > completed）"
+        )
       }
     yield ()
+    end for
   }
 
 end ChainSummaryDowngradeSpec

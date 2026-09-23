@@ -355,7 +355,10 @@ class UsageRecordStore(baseDir: os.Path):
       .map(Option(_))
       .handleErrorWith { e =>
         IO.delay(
-          logger.warnSync("usage aggregate cache diagnostics degraded", "error" -> s"${e.getClass.getSimpleName}: ${e.getMessage}")
+          logger.warnSync(
+            "usage aggregate cache diagnostics degraded",
+            "error" -> s"${e.getClass.getSimpleName}: ${e.getMessage}"
+          )
         ) *> IO.pure(None)
       }
       .map(c => diagnosticsOf(c.getOrElse(emptyCache(ZoneId.systemDefault().getId))))
@@ -461,8 +464,15 @@ class UsageRecordStore(baseDir: os.Path):
               else line.write(b.toInt)
               i += 1
             pos += n
+          end if
+        end if
+      end while
       (lines, consumedEnd)
     finally raf.close()
+
+    end try
+
+  end scanLines
 
   /** Consume `[start, EOF)` into additive cells + hour spans. */
   private def scanDelta(path: os.Path, start: Long, zone: ZoneId): Delta =
@@ -513,6 +523,8 @@ class UsageRecordStore(baseDir: os.Path):
       hourSpans = UsageAggCache.mergeSpans(base.hourSpans, d.spans)
     )
 
+  end applyDelta
+
   private def emptyCache(zoneId: String): UsageAggCacheFile =
     UsageAggCacheFile(
       schemaVersion = UsageAggCache.SchemaVersion,
@@ -541,14 +553,20 @@ class UsageRecordStore(baseDir: os.Path):
   private def invalidReason(cache: UsageAggCacheFile, size: Long): Option[String] =
     val w = cache.watermark
     val zoneId = ZoneId.systemDefault().getId
-    if cache.schemaVersion != UsageAggCache.SchemaVersion then Some(s"schemaVersion=${cache.schemaVersion} (expected ${UsageAggCache.SchemaVersion})")
+    if cache.schemaVersion != UsageAggCache.SchemaVersion then
+      Some(s"schemaVersion=${cache.schemaVersion} (expected ${UsageAggCache.SchemaVersion})")
     else if cache.timezoneId != zoneId then Some(s"timezoneId=${cache.timezoneId} (current $zoneId)")
     else if w.byteOffset > size then Some(s"source truncated/rotated: watermark=${w.byteOffset} > size=$size")
-    else if w.byteOffset > 0 && !atLineBoundary(w.byteOffset) then Some(s"watermark ${w.byteOffset} is not on a line boundary")
-    else if w.byteOffset > 0 && headDigestOf(logPath, w.byteOffset) != w.headDigest then Some("head digest mismatch (in-place rewrite)")
-    else if w.byteOffset > 0 && tailDigestOf(logPath, w.byteOffset) != w.tailDigest then Some("tail digest mismatch (in-place rewrite)")
+    else if w.byteOffset > 0 && !atLineBoundary(w.byteOffset) then
+      Some(s"watermark ${w.byteOffset} is not on a line boundary")
+    else if w.byteOffset > 0 && headDigestOf(logPath, w.byteOffset) != w.headDigest then
+      Some("head digest mismatch (in-place rewrite)")
+    else if w.byteOffset > 0 && tailDigestOf(logPath, w.byteOffset) != w.tailDigest then
+      Some("tail digest mismatch (in-place rewrite)")
     else if !cellsWellFormed(cache) then Some("cell/hour-span table inconsistent")
     else None
+
+  end invalidReason
 
   private def quarantine(reason: String): Unit =
     try
@@ -598,6 +616,10 @@ class UsageRecordStore(baseDir: os.Path):
         logger.warnSync("usage aggregate cache persist failed (served result unaffected)", "error" -> e.getMessage)
         try Files.deleteIfExists(tmp.toNIO)
         catch case NonFatal(_) => ()
+
+    end try
+
+  end persist
 
   private def setMemo(size: Long, cache: UsageAggCacheFile): Unit =
     val (exists, cSize, cMtime) = cacheFileStamp
@@ -679,6 +701,8 @@ class UsageRecordStore(baseDir: os.Path):
         if delta.lines > 0 then persist(merged)
         setMemo(size, merged)
         merged
+    end match
+  end loadOrRebuild
 
   // ── query: cells + exact re-read of the hours a window edge cuts ────────────
 
@@ -703,6 +727,8 @@ class UsageRecordStore(baseDir: os.Path):
       }
     }
 
+  end aggregateIncremental
+
   /**
    * Records of the (at most two) hours a window edge cuts: their cached cell is
    * discarded and rebuilt from the raw byte span of that hour, filtered by the
@@ -724,8 +750,7 @@ class UsageRecordStore(baseDir: os.Path):
           cache.hourSpans.get(h).foreach { span =>
             scanLines(logPath, span.start, span.end) { (_, _, rec) =>
               rec.foreach { r =>
-                if
-                  UsageAggCache.hourKey(r.timestamp, zone) == h &&
+                if UsageAggCache.hourKey(r.timestamp, zone) == h &&
                   from.forall(r.timestamp >= _) &&
                   to.forall(r.timestamp < _)
                 then out += UsageAggCache.cellOf(r, h)
@@ -735,5 +760,7 @@ class UsageRecordStore(baseDir: os.Path):
         }
         out.result()
       }
+    end if
+  end edgeCells
 
 end UsageRecordStore

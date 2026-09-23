@@ -2,7 +2,7 @@ package nebflow.gateway
 
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 import nebflow.core.PathUtil
 
 /**
@@ -102,8 +102,11 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
       // Make the case-ordering observable: uppercase file name sorts with
       // lowercase peers (same tie-break the pre-fix implementation used).
       os.write(root / ".nebflow" / "Zebra.txt", "z")
-      val listing = WebSocketRoutes.listDirEntries(root / ".nebflow")
-        .map(e => (e.hcursor.get[String]("type").toOption.getOrElse("?"), e.hcursor.get[String]("name").toOption.getOrElse("?")))
+      val listing = WebSocketRoutes
+        .listDirEntries(root / ".nebflow")
+        .map(e =>
+          (e.hcursor.get[String]("type").toOption.getOrElse("?"), e.hcursor.get[String]("name").toOption.getOrElse("?"))
+        )
       val dirs = listing.takeWhile(_._1 == "dir").map(_._2)
       val files = listing.dropWhile(_._1 == "dir").map(_._2)
       assertEquals(dirs, Seq("worktrees"))

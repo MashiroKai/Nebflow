@@ -108,6 +108,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       assertEquals(end.overflowConns, 0)
       assertEquals(end.wsTotal, 2)
       assertEquals(end.trackedIps, 3)
+    end for
 
   // ── 请求观测：只计数不拦截 ──────────────────────────────────────────────
 
@@ -162,6 +163,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       assertEquals(mid.wsTotal, 4) // 活跃会话一条不丢（封顶不吞会话账）
       assert(end.trackedIps <= cfg.maxTrackedIps)
       assertEquals(end.wsTotal, 3) // release 已回减；换位未误伤活跃会话
+    end for
 
   test("oldest idle entry yields its slot to a new peer (bounded + no starvation)"):
     val cfg = ConnGuardConfig(wsPerIpCap = 10, wsTotalCap = 100, maxTrackedIps = 2)
@@ -200,6 +202,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       assertEquals(afterT.overflowConns, 0) // 凭据配对回正确的桶
       assertEquals(end.wsTotal, 0) // 全释放归零 ⇒ 零幽灵计数
       assertEquals(end.overflowConns, 0)
+    end for
 
   // ── IP 归一化：socket 串兜底面（真 host:port 才截尾）─────────────────────
 
@@ -261,13 +264,13 @@ class ConnGuardSpec extends CatsEffectSuite:
     assert(d.trustedIps.contains("127.0.0.1"))
 
     val o = ConnGuardConfig.fromEnv {
-      case "GATEWAY_CONN_GUARD_WS_PER_IP_CAP"    => Some("32")
-      case "GATEWAY_CONN_GUARD_WS_TOTAL_CAP"     => Some("512")
-      case "GATEWAY_CONN_GUARD"                  => Some("off")
-      case "GATEWAY_CONN_GUARD_TRUSTED_IPS"      => Some(" 100.91.165.120 , 10.0.0.7 ")
-      case "GATEWAY_CONN_GUARD_WARN_PCT"         => Some("not-a-number")
-      case "GATEWAY_CONN_GUARD_MAX_TRACKED_IPS"  => Some("128")
-      case _                  => None // lookup 是全函数：未提及的名字一律「未设置」
+      case "GATEWAY_CONN_GUARD_WS_PER_IP_CAP" => Some("32")
+      case "GATEWAY_CONN_GUARD_WS_TOTAL_CAP" => Some("512")
+      case "GATEWAY_CONN_GUARD" => Some("off")
+      case "GATEWAY_CONN_GUARD_TRUSTED_IPS" => Some(" 100.91.165.120 , 10.0.0.7 ")
+      case "GATEWAY_CONN_GUARD_WARN_PCT" => Some("not-a-number")
+      case "GATEWAY_CONN_GUARD_MAX_TRACKED_IPS" => Some("128")
+      case _ => None // lookup 是全函数：未提及的名字一律「未设置」
     }
     assertEquals(o.wsPerIpCap, 32)
     assertEquals(o.wsTotalCap, 512)
@@ -297,7 +300,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       maxConnections = 4096,
       warnPct = 80,
       topWs = Vector(("9.9.9.1", wsTotal)),
-      topReq = Vector.empty,
+      topReq = Vector.empty
     )
     assertEquals(ConnGuard.warnLine(snap(819)), None) // 79%
     assert(ConnGuard.warnLine(snap(820)).isDefined) // 80%
@@ -325,7 +328,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       maxConnections = 4096,
       warnPct = 80,
       topWs = Vector(("9.9.9.1", 10)),
-      topReq = Vector.empty,
+      topReq = Vector.empty
     )
     assertEquals(ConnGuard.warnLine(base), None) // WS 腿静默
     assertEquals(ConnGuard.connWarnLine(base, 3276L), None) // 79.98% fd ⇒ 静默
@@ -354,7 +357,7 @@ class ConnGuardSpec extends CatsEffectSuite:
       maxConnections = 4096,
       warnPct = 80,
       topWs = Vector(("9.9.9.1", 3)),
-      topReq = Vector(("9.9.9.1", 9L)),
+      topReq = Vector(("9.9.9.1", 9L))
     )
     val j = ConnGuard.healthJson(s, 42L)
     val caps = j.hcursor.downField("caps")

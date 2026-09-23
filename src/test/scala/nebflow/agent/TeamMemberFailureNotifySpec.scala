@@ -36,8 +36,10 @@ class TeamMemberFailureNotifySpec extends CatsEffectSuite:
 
   // 401-style message → classifyError = Permanent → no llm-fail-retry
   private class FakeLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -79,7 +81,7 @@ class TeamMemberFailureNotifySpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -92,22 +94,23 @@ class TeamMemberFailureNotifySpec extends CatsEffectSuite:
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val dataRoot = tmp / "data"
-    IO.delay(PathUtil.setDataRoot(dataRoot)).bracket { _ =>
-      // Probe: the "team lead" — collects every AgentCommand it is sent.
-      def probe(ref: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
-        Behaviors.receiveMessage[AgentCommand](m => ref.update(_ :+ m).as(probe(ref)))
-      for
-        received <- IO.ref(List.empty[AgentCommand])
-        resources <- mkResources(system, tmp, new FakeLlm)
-        memberSid = "team-member-sess-1"
-        memberDef = AgentDef(
-          name = "Backend",
-          description = "test member",
-          tools = List("Read"),
-          systemPrompt = ""
-        )
-        probeRef <- system.spawn(probe(received), "lead-probe")
-        member <- system.spawn(
+    IO.delay(PathUtil.setDataRoot(dataRoot))
+      .bracket { _ =>
+        // Probe: the "team lead" — collects every AgentCommand it is sent.
+        def probe(ref: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
+          Behaviors.receiveMessage[AgentCommand](m => ref.update(_ :+ m).as(probe(ref)))
+        for
+          received <- IO.ref(List.empty[AgentCommand])
+          resources <- mkResources(system, tmp, new FakeLlm)
+          memberSid = "team-member-sess-1"
+          memberDef = AgentDef(
+            name = "Backend",
+            description = "test member",
+            tools = List("Read"),
+            systemPrompt = ""
+          )
+          probeRef <- system.spawn(probe(received), "lead-probe")
+          member <- system.spawn(
             AgentActor(
               agentDef = memberDef,
               resources = resources,
@@ -120,35 +123,37 @@ class TeamMemberFailureNotifySpec extends CatsEffectSuite:
             ),
             "member-backend"
           )
-        // Mail member turns arrive exactly like this: UserInput with replyTo=None.
-        // (ActorRef.! returns IO[Unit] — flatMap it directly, wrapping it in
-        // IO.delay would discard the tell entirely.)
-        _ <- member ! AgentCommand.UserInput("finish the W2 report")
-        _ <- waitUntil(10.seconds)(
-          received.get.map(_.exists {
-            case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "failed"
-            case _ => false
-          })
-        )
-        events <- received.get
-        _ <- system.stopAll.attempt.void
-        failed = events.collect { case e: AgentCommand.ExternalEvent => e }
-          .filter(_.eventType == "failed")
-      yield
-        assertEquals(failed.size, 1, s"exactly one failed event, got: ${events.map(_.getClass.getSimpleName)}")
-        val ev = failed.head
-        assertEquals(ev.source, "team")
-        assert(ev.payload.contains("Backend"), s"payload must name the member: ${ev.payload}")
-        val meta = ev.metadata
-        assertEquals(meta("failedSessionId").flatMap(_.asString), Some(memberSid))
-        assertEquals(meta("retryable").flatMap(_.asBoolean), Some(true))
-        assertEquals(meta("failureType").flatMap(_.asString), Some("LlmFailed"))
-        assertEquals(meta("agentName").flatMap(_.asString), Some("Backend"))
-        assertEquals(ev.correlationId, Some(memberSid))
-    } { _ =>
-      IO.delay(PathUtil.setDataRoot(prevRoot)) *>
-        system.stopAll.attempt.void *>
-        IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
-    }
+          // Mail member turns arrive exactly like this: UserInput with replyTo=None.
+          // (ActorRef.! returns IO[Unit] — flatMap it directly, wrapping it in
+          // IO.delay would discard the tell entirely.)
+          _ <- member ! AgentCommand.UserInput("finish the W2 report")
+          _ <- waitUntil(10.seconds)(
+            received.get.map(_.exists {
+              case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "failed"
+              case _ => false
+            })
+          )
+          events <- received.get
+          _ <- system.stopAll.attempt.void
+          failed = events
+            .collect { case e: AgentCommand.ExternalEvent => e }
+            .filter(_.eventType == "failed")
+        yield
+          assertEquals(failed.size, 1, s"exactly one failed event, got: ${events.map(_.getClass.getSimpleName)}")
+          val ev = failed.head
+          assertEquals(ev.source, "team")
+          assert(ev.payload.contains("Backend"), s"payload must name the member: ${ev.payload}")
+          val meta = ev.metadata
+          assertEquals(meta("failedSessionId").flatMap(_.asString), Some(memberSid))
+          assertEquals(meta("retryable").flatMap(_.asBoolean), Some(true))
+          assertEquals(meta("failureType").flatMap(_.asString), Some("LlmFailed"))
+          assertEquals(meta("agentName").flatMap(_.asString), Some("Backend"))
+          assertEquals(ev.correlationId, Some(memberSid))
+        end for
+      } { _ =>
+        IO.delay(PathUtil.setDataRoot(prevRoot)) *>
+          system.stopAll.attempt.void *>
+          IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
+      }
   }
 end TeamMemberFailureNotifySpec

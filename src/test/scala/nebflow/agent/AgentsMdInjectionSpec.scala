@@ -205,10 +205,12 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
       friendService = None
     )
 
-  /** node/分发器会话形态的 spawn 侧契约：[沙箱拆围栏批 S1/R8 解耦] 后 AGENTS.md
-    * 注入判据 = projectSession（会话形态信号），生产置位点 = NodeEngine 节点 spawn
-    * ×2 + ProjectActor 分发器 spawn ×1（与 sandboxEnabled 同点置位）——本 helper 按
-    * 同款契约置两个位，断言语义零变化。 */
+  /**
+   * node/分发器会话形态的 spawn 侧契约：[沙箱拆围栏批 S1/R8 解耦] 后 AGENTS.md
+   * 注入判据 = projectSession（会话形态信号），生产置位点 = NodeEngine 节点 spawn
+   * ×2 + ProjectActor 分发器 spawn ×1（与 sandboxEnabled 同点置位）——本 helper 按
+   * 同款契约置两个位，断言语义零变化。
+   */
   private def nodeShapedState(ws: os.Path, sandbox: Boolean): AgentState =
     AgentState(
       sessionId = None, // node/分发器会话形态：无 folderId、无 team 注册
@@ -260,7 +262,7 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
 
   private def mkProject(name: String, ws: os.Path): IO[Unit] =
     ProjectStore.create(name, ws.toString, None, s"# $name template\n").map {
-      case Right(_)  => ()
+      case Right(_) => ()
       case Left(err) => fail(s"create failed: $err")
     }
 
@@ -278,7 +280,9 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
     }
   }
 
-  test("load migration ①b: legacy symlink (target != root) -> root gets target content, link removed, TARGET UNTOUCHED") {
+  test(
+    "load migration ①b: legacy symlink (target != root) -> root gets target content, link removed, TARGET UNTOUCHED"
+  ) {
     val ws = tempRoot / "ws-mig-link"
     os.makeDir.all(ws / ".nebflow" / "docs")
     mkProject("am-mig-link", ws) *> IO(os.remove(ws / "AGENTS.md")) *> IO {

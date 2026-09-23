@@ -13,9 +13,11 @@ enum HealthState:
   case Up
   case Down(reason: String, since: Long)
 
-/** Health of the Tier 2a standalone search API (P2, 2026-08-25) — tracked
-  * INDEPENDENTLY of model-provider health so layered health output can show
-  * the decoupling the user asked for ("模型配额 DOWN ≠ 搜索 DOWN"). */
+/**
+ * Health of the Tier 2a standalone search API (P2, 2026-08-25) — tracked
+ * INDEPENDENTLY of model-provider health so layered health output can show
+ * the decoupling the user asked for ("模型配额 DOWN ≠ 搜索 DOWN").
+ */
 enum SearchApiHealth:
   case Unconfigured
   case Up
@@ -73,8 +75,10 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
   private val signalRef: Ref[IO, Deferred[IO, Unit]] =
     Ref.unsafe(Deferred.unsafe[IO, Unit])
 
-  /** Tier 2a standalone search API health (P2, 2026-08-25). Starts
-    * Unconfigured; the first standalone search call records Up/Down. */
+  /**
+   * Tier 2a standalone search API health (P2, 2026-08-25). Starts
+   * Unconfigured; the first standalone search call records Up/Down.
+   */
   private val searchHealthRef: Ref[IO, SearchApiHealth] =
     Ref.unsafe(SearchApiHealth.Unconfigured)
 
@@ -82,8 +86,10 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
   def recordSearchSuccess(): IO[Unit] =
     searchHealthRef.set(SearchApiHealth.Up)
 
-  /** Record a failed Tier 2a standalone search call (reason = the classified
-    * diagnostic, e.g. quota/rate limited / auth failed / timeout). */
+  /**
+   * Record a failed Tier 2a standalone search call (reason = the classified
+   * diagnostic, e.g. quota/rate limited / auth failed / timeout).
+   */
   def recordSearchFailure(reason: String): IO[Unit] =
     searchHealthRef.set(SearchApiHealth.Down(reason, System.currentTimeMillis()))
 
@@ -142,12 +148,14 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
   /** 当前软回避截止时刻（观测 / spec 断言用）。 */
   private[llm] def getAvoidUntil: IO[Map[String, Long]] = avoidUntilRef.get
 
-  /** Partition candidates into (up, down) based on current health state.
-    *
-    * 软回避（子项③ + 配额分层）：avoid 窗口内的 candidate 从 up 中剔除，但也不进
-    * down（down 集合 = 探测集，健康探测不应该烧一个只是「慢」或**额度计划性耗尽**
-    * 的 provider）。avoid-only 的全空链由 all-Down 门的 waitForAnyUp 5s tick 兜底
-    * ——窗口到期 filterCandidates 放回，等待者 ≤5s 内自行通过，无需额外信号。 */
+  /**
+   * Partition candidates into (up, down) based on current health state.
+   *
+   * 软回避（子项③ + 配额分层）：avoid 窗口内的 candidate 从 up 中剔除，但也不进
+   * down（down 集合 = 探测集，健康探测不应该烧一个只是「慢」或**额度计划性耗尽**
+   * 的 provider）。avoid-only 的全空链由 all-Down 门的 waitForAnyUp 5s tick 兜底
+   * ——窗口到期 filterCandidates 放回，等待者 ≤5s 内自行通过，无需额外信号。
+   */
   def filterCandidates(
     candidates: List[ModelCandidate]
   ): IO[(List[ModelCandidate], List[ModelCandidate])] =

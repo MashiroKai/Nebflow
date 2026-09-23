@@ -37,7 +37,8 @@ class FriendSelfSendReplaySpec extends FunSuite:
     """[{"conversationId":"c1","friend":{"userId":"u1","username":"customNL1","display_name":"林小满"},"lastMessage":null,"unreadCount":0}]"""
 
   /** 投递成功响应（服务端 `SendMessageResponse` 真形状：camelCase + 四个必填）。 */
-  private val SendOk = """{"messageId":5,"conversationId":"c1","createdAt":1700000000,"createdAtMs":1700000000000,"existing":false}"""
+  private val SendOk =
+    """{"messageId":5,"conversationId":"c1","createdAt":1700000000,"createdAtMs":1700000000000,"existing":false}"""
 
   private final class Fixture(
     val order: Ref[IO, List[String]],
@@ -47,11 +48,13 @@ class FriendSelfSendReplaySpec extends FunSuite:
     val client: NeblinkClient
   )
 
-  /** **非补拉回放**帧（= 事件帧 / 自播帧）。
-    *
-    * 批 A（§3.2①「拉取即派发」）后，每次补拉都会额外广播**回放帧**（`backfill: true`）。
-    * 本 spec 的计数判据（「恰一帧」）判的是**自播腿有没有重复广播**，所以一律只数非回放帧：
-    * 回放帧由前端按 `messageId` 幂等去重（`markFrameMessageSeen`），不构成「重复上屏」。 */
+  /**
+   * **非补拉回放**帧（= 事件帧 / 自播帧）。
+   *
+   * 批 A（§3.2①「拉取即派发」）后，每次补拉都会额外广播**回放帧**（`backfill: true`）。
+   * 本 spec 的计数判据（「恰一帧」）判的是**自播腿有没有重复广播**，所以一律只数非回放帧：
+   * 回放帧由前端按 `messageId` 幂等去重（`markFrameMessageSeen`），不构成「重复上屏」。
+   */
   private def replayFrames(fs: List[Json]): List[Json] =
     fs.filter(f => !f.hcursor.get[Boolean]("backfill").toOption.contains(true))
 
@@ -95,9 +98,7 @@ class FriendSelfSendReplaySpec extends FunSuite:
       svc = NeblinkWiring.friendService(
         IO.pure(Some(client)),
         AgentMessagingConfig(mode = mode),
-        onFriendEvent = Some(ev =>
-          order.update(_ :+ "broadcast") *> frames.update(_ :+ FriendEvent.frontendFrame(ev))
-        ),
+        onFriendEvent = Some(ev => order.update(_ :+ "broadcast") *> frames.update(_ :+ FriendEvent.frontendFrame(ev))),
         askConfirm = askConfirm
       )
     yield new Fixture(order, frames, posts, svc, client)
@@ -181,9 +182,7 @@ class FriendSelfSendReplaySpec extends FunSuite:
       svc = NeblinkWiring.friendService(
         IO.pure(None),
         AgentMessagingConfig(mode = "auto"),
-        onFriendEvent = Some(ev =>
-          order.update(_ :+ "broadcast") *> frames.update(_ :+ FriendEvent.frontendFrame(ev))
-        )
+        onFriendEvent = Some(ev => order.update(_ :+ "broadcast") *> frames.update(_ :+ FriendEvent.frontendFrame(ev)))
       )
       res <- svc.sendAsAgent("customNL1", "never-sent")
       fs <- frames.get
@@ -328,3 +327,4 @@ class FriendSelfSendReplaySpec extends FunSuite:
       "自播帧正文序 = 投递序"
     )
   }
+end FriendSelfSendReplaySpec

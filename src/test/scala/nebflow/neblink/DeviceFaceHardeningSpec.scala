@@ -59,11 +59,13 @@ class DeviceFaceHardeningSpec extends FunSuite:
   private def mode(p: Path): String =
     PosixFilePermissions.toString(Files.getPosixFilePermissions(p))
 
-  /** True when ANY group/other bit is still set (what "owner-only" forbids).
-    *
-    * Matching on the enum CONSTANT rather than on a name string: a Java enum's
-    * only name accessor is `Enum.name()`, and `OWNER_*` is the exact set the
-    * product allows, so the complement is what must be empty. */
+  /**
+   * True when ANY group/other bit is still set (what "owner-only" forbids).
+   *
+   * Matching on the enum CONSTANT rather than on a name string: a Java enum's
+   * only name accessor is `Enum.name()`, and `OWNER_*` is the exact set the
+   * product allows, so the complement is what must be empty.
+   */
   private def widerThanOwner(p: Path): Boolean =
     Files
       .getPosixFilePermissions(p)
@@ -77,7 +79,8 @@ class DeviceFaceHardeningSpec extends FunSuite:
   private val id = DeviceIdentity(deviceId = "dev-abc", deviceName = "Testbox", platform = "macos")
 
   private def withPresence[A](use: NeblinkPresenceService => A): A =
-    Dispatcher.parallel[IO]
+    Dispatcher
+      .parallel[IO]
       .use { dispatcher =>
         NeblinkService.createForTest(0, dispatcher, 400.millis).map { ms =>
           use(new NeblinkPresenceService(ms, 8099)(dispatcher))
@@ -154,3 +157,4 @@ class DeviceFaceHardeningSpec extends FunSuite:
     assert(os.exists(file), "the credential is on disk either way")
     assert(os.read(file).contains("dev-abc"), "content intact")
   }
+end DeviceFaceHardeningSpec

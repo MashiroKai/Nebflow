@@ -43,41 +43,49 @@ object ProjectMemory:
   /** 文件名（定稿依据见类 doc）。 */
   val FileName: String = "memory.md"
 
-  /** 项目记忆文件绝对路径：`<workspace>/.nebflow/memory.md`。workspace 相对
-    * 形式以 dataRoot 为基准解析（与 ProjectStore.create 的 os.Path(workspace,
-    * PathUtil.dataRoot) 同规）。 */
+  /**
+   * 项目记忆文件绝对路径：`<workspace>/.nebflow/memory.md`。workspace 相对
+   * 形式以 dataRoot 为基准解析（与 ProjectStore.create 的 os.Path(workspace,
+   * PathUtil.dataRoot) 同规）。
+   */
   def path(workspace: String): os.Path =
     os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileName
 
-  /** 读（read-fresh，无缓存——注入点频度为每次分发器 spawn/每节点启动一次，
-    * 单个小文件读可承受；省一层 mtime 缓存失效面）。文件缺失/空 → None。 */
+  /**
+   * 读（read-fresh，无缓存——注入点频度为每次分发器 spawn/每节点启动一次，
+   * 单个小文件读可承受；省一层 mtime 缓存失效面）。文件缺失/空 → None。
+   */
   def load(p: os.Path): Option[String] =
     if !os.isFile(p) then None
     else
       val c = os.read(p).trim
       if c.isEmpty then None else Some(c)
 
-  /** 写（项目记忆的落盘面）。createFolders 兜底存量 workspace 无 `.nebflow/` 的边缘态
-    * （ProjectStore.create 恒建目录，此处纵深防御）。
-    *
-    * M4（2026-09-13 作者立项）：与全局两级同纪律——本单点挂**预算闸 + 写前快照闸**
-    * （[[MemoryWriteGate]]，target="project"，判据 = `MemoryBudget` 的 project 常量）。
-    * 闸序（作者 2026-09-14 v2 裁定）= **预算 → 快照 → 落盘**：拒绝路径**零文件写**
-    * （含备份面）；快照唯一触发点 = 预算放行、即将落盘。
-    * 拒绝/快照失败 ⇒ `MemoryWriteGate.Rejected`（IO 错误通道）+ **零写入**。
-    *
-    * 🔴 现场读数（2026-09-13，作者项 ①③ 的如实登记）：**本方法今天零生产调用方**
-    * （2026-09-12 记忆改造批后 MemoryNote 改为「只入队、零落盘」，最后一个调用方随之消失）
-    * ⇒ 本闸对其**当前覆盖为空**。项目记忆文件今天的实际写入者 = 整理会话经 Write/Edit
-    * 直写（**不在** M4 边界内，见 MemoryWriteGate 头注）。本方法保留闸是为了让「未来的
-    * 调用方」天然过闸，而不是宣称今天已覆盖。 */
+  /**
+   * 写（项目记忆的落盘面）。createFolders 兜底存量 workspace 无 `.nebflow/` 的边缘态
+   * （ProjectStore.create 恒建目录，此处纵深防御）。
+   *
+   * M4（2026-09-13 作者立项）：与全局两级同纪律——本单点挂**预算闸 + 写前快照闸**
+   * （[[MemoryWriteGate]]，target="project"，判据 = `MemoryBudget` 的 project 常量）。
+   * 闸序（作者 2026-09-14 v2 裁定）= **预算 → 快照 → 落盘**：拒绝路径**零文件写**
+   * （含备份面）；快照唯一触发点 = 预算放行、即将落盘。
+   * 拒绝/快照失败 ⇒ `MemoryWriteGate.Rejected`（IO 错误通道）+ **零写入**。
+   *
+   * 🔴 现场读数（2026-09-13，作者项 ①③ 的如实登记）：**本方法今天零生产调用方**
+   * （2026-09-12 记忆改造批后 MemoryNote 改为「只入队、零落盘」，最后一个调用方随之消失）
+   * ⇒ 本闸对其**当前覆盖为空**。项目记忆文件今天的实际写入者 = 整理会话经 Write/Edit
+   * 直写（**不在** M4 边界内，见 MemoryWriteGate 头注）。本方法保留闸是为了让「未来的
+   * 调用方」天然过闸，而不是宣称今天已覆盖。
+   */
   def save(p: os.Path, content: String): IO[Unit] =
     MemoryWriteGate.guard("project", p, content) *> IO.blocking(os.write.over(p, content, createFolders = true))
 
-  /** 注入块渲染（ProjectActor 分发器 prompt 与 NodeEngine 节点首条消息共用
-    * 单点——两处格式/三态行为由本函数唯一决定）。
-    *
-    * 返回 ""：文件缺失/空（调用方不注空段）。三态见类 doc。 */
+  /**
+   * 注入块渲染（ProjectActor 分发器 prompt 与 NodeEngine 节点首条消息共用
+   * 单点——两处格式/三态行为由本函数唯一决定）。
+   *
+   * 返回 ""：文件缺失/空（调用方不注空段）。三态见类 doc。
+   */
   def injectionBlock(workspace: String, projectName: String): IO[String] =
     IO.blocking {
       val p = path(workspace)
@@ -103,5 +111,7 @@ object ProjectMemory:
                  |（file OVER the ${hard}-byte hard budget: $bytes bytes, $entries entries — full text NOT inlined this session. Largest sections:
                  |${MemoryBudget.topSections(content)}
                  |Consolidate first via MemoryNote target=project:$projectName remove/replace_section.）"""
-  }
+          end match
+      end match
+    }
 end ProjectMemory

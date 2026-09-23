@@ -28,9 +28,7 @@ import munit.FunSuite
 class FriendEventSeamSpec extends FunSuite:
 
   private def envelope(eventId: String, event: Json): Json =
-    Json.obj("type" -> Json.fromString("friend_event"),
-      "eventId" -> Json.fromString(eventId),
-      "event" -> event)
+    Json.obj("type" -> Json.fromString("friend_event"), "eventId" -> Json.fromString(eventId), "event" -> event)
 
   /** 真服务端信封形状：`{"type":"message_new","payload":{…}}`。 */
   private def serverEvent(convId: String, messageId: Long): Json =
@@ -46,25 +44,32 @@ class FriendEventSeamSpec extends FunSuite:
       )
     )
 
-  /** 记录型 stub：捕获 (conversationId, after) 并回一条消息，驱动 cursor 前进。
-    * `order`（段 A K-1）：把「补拉真的发生了」写进共用的次序日志，与广播侧标记
-    * 合成同一条时间线 —— 顺序断言必须落在**真实发生次序**上（不靠读代码推断）。 */
+  /**
+   * 记录型 stub：捕获 (conversationId, after) 并回一条消息，驱动 cursor 前进。
+   * `order`（段 A K-1）：把「补拉真的发生了」写进共用的次序日志，与广播侧标记
+   * 合成同一条时间线 —— 顺序断言必须落在**真实发生次序**上（不靠读代码推断）。
+   */
   private final class RecordingClient(
     pulls: Ref[IO, List[(String, Long)]],
     order: Option[Ref[IO, List[String]]] = None
   ) extends NeblinkClient(
-    NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
-    serverPort = 1
-  ):
+        NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = "n", secret = "s"),
+        serverPort = 1
+      ):
+
     override def listMessages(
       conversationId: String,
       after: Long,
       limit: Int
     ): IO[Either[String, List[MessageSummary]]] =
       order.fold(IO.unit)(_.update(_ :+ "pull")) *>
-        pulls.update(_ :+ ((conversationId, after))).as(
-          Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
-        )
+        pulls
+          .update(_ :+ ((conversationId, after)))
+          .as(
+            Right(List(MessageSummary(after + 1L, "u-peer", "text", "hi", 1700000000L)))
+          )
+
+  end RecordingClient
 
   private def mkService(
     pulls: Ref[IO, List[(String, Long)]],
@@ -83,13 +88,17 @@ class FriendEventSeamSpec extends FunSuite:
       )
     )
 
-  /** 生产同形前置：boot / 重连的 `refreshAll` → `refreshConversations` 会给每个
-    * 已知会话建 cursor 条目（`mergeUnread`）。本 spec 走这条**生产正常路径**
-    * （cursor 先于推送就位），只钉 A2 接缝本身。
-    *
-    * 「cursor 缺席时首条推送的 +1」边界原为 `case None => s` no-op，已由 #309
-    * 修复（`bumpUnread` 改为缺席 materialize 条目 + 返回回落信号），回归钉子见
-    * `FriendUnreadCursorRebuildSpec`。 */
+  end mkService
+
+  /**
+   * 生产同形前置：boot / 重连的 `refreshAll` → `refreshConversations` 会给每个
+   * 已知会话建 cursor 条目（`mergeUnread`）。本 spec 走这条**生产正常路径**
+   * （cursor 先于推送就位），只钉 A2 接缝本身。
+   *
+   * 「cursor 缺席时首条推送的 +1」边界原为 `case None => s` no-op，已由 #309
+   * 修复（`bumpUnread` 改为缺席 materialize 条目 + 返回回落信号），回归钉子见
+   * `FriendUnreadCursorRebuildSpec`。
+   */
   private def seedCursor(guard: FriendMessagingGuard, convId: String): IO[Unit] =
     guard.mergeUnread(ConversationSummary(convId, FriendSummary("u-peer", "peer", "Peer"), None, 0)).void
 
@@ -337,16 +346,20 @@ class FriendEventSeamSpec extends FunSuite:
     assertEquals(fr.size, 1, "帧仍透传（前端自行判会话命中）")
   }
 
-  test("frontendFrame 纯函数：嵌套与扁平两种入参产出同一扁平帧；畸形入参不抛") {    val nested = FriendEvent("message_new", serverEvent("c-x", 1L))
-    val flat = FriendEvent("message_new", Json.obj(
-      "type" -> Json.fromString("message_new"),
-      "messageId" -> Json.fromLong(1L),
-      "conversationId" -> Json.fromString("c-x"),
-      "sender" -> Json.obj("userId" -> Json.fromString("u-peer"), "username" -> Json.fromString("peer")),
-      "kind" -> Json.fromString("text"),
-      "body" -> Json.fromString("hi"),
-      "createdAt" -> Json.fromLong(1700000000L)
-    ))
+  test("frontendFrame 纯函数：嵌套与扁平两种入参产出同一扁平帧；畸形入参不抛") {
+    val nested = FriendEvent("message_new", serverEvent("c-x", 1L))
+    val flat = FriendEvent(
+      "message_new",
+      Json.obj(
+        "type" -> Json.fromString("message_new"),
+        "messageId" -> Json.fromLong(1L),
+        "conversationId" -> Json.fromString("c-x"),
+        "sender" -> Json.obj("userId" -> Json.fromString("u-peer"), "username" -> Json.fromString("peer")),
+        "kind" -> Json.fromString("text"),
+        "body" -> Json.fromString("hi"),
+        "createdAt" -> Json.fromLong(1700000000L)
+      )
+    )
     val a = FriendEvent.frontendFrame(nested)
     val b = FriendEvent.frontendFrame(flat)
     assertEquals(a, b, "嵌套/扁平两种信封必须折叠成同一帧（旧形状容错分支）")

@@ -148,7 +148,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
       assert(line.contains(NebulaMemoryHook.RouteCode.Drop), s"机读码在场：$line")
       assert(line.contains(NebulaMemoryHook.refOf("无处可落的事实")), s"识别子在场：$line")
       assert(line.contains("无处可落的事实"), s"条目全文在场（能逐条回答「为什么没落」）：$line")
-    finally
-      lbLogger.detachAppender(appender)
+    finally lbLogger.detachAppender(appender)
+    end try
 
 end NebulaMemoryHookRouteSpec

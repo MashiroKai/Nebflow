@@ -47,8 +47,11 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
   os.remove.all(tempRoot)
   // general：统一执行 agent（createNode 固定校验并落库 "general"）
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -57,11 +60,12 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
   /** 按输入文本分派延迟的捕获 LLM。 */
   private class EchoLlm(delayOf: String => FiniteDuration = _ => 0.millis):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -110,7 +114,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -123,7 +127,10 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -149,7 +156,12 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         // engine-defects 批 #85：告警升级窗口接缝（M8 注 300ms；其余用例 None = 生产默认 10min）
         stallReNotifyMs = stallReNotifyMs
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -157,24 +169,36 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
-  private def waitStatus(rt: ProjectRuntime, name: String, statuses: Set[String], timeout: FiniteDuration = 20.seconds): IO[Unit] =
+  private def waitStatus(
+    rt: ProjectRuntime,
+    name: String,
+    statuses: Set[String],
+    timeout: FiniteDuration = 20.seconds
+  ): IO[Unit] =
     waitUntil(timeout) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAudit(ws: os.Path): IO[List[(String, String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j => (
-        j.hcursor.get[String]("type").getOrElse(""),
-        j.hcursor.get[String]("nodeId").getOrElse(""),
-        j.hcursor.get[String]("summary").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption.map(j =>
+            (
+              j.hcursor.get[String]("type").getOrElse(""),
+              j.hcursor.get[String]("nodeId").getOrElse(""),
+              j.hcursor.get[String]("summary").getOrElse("")
+            )
+          )
+        )
+      )
       .handleError(_ => Nil)
 
   /** 直种活动区节点（绕过 NodeEdit——停滞闸测试的「历史遗留形态」播种）。 */
@@ -186,7 +210,9 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
 
   // ── M① 零上游 merge 创建拒绝（NODE_MERGE_REQUIRES_UPSTREAM）────────
 
-  test("M1: merge=true with zero upstreams is rejected at create — semantic error, node NOT created (n-371cf932 form)") {
+  test(
+    "M1: merge=true with zero upstreams is rejected at create — semantic error, node NOT created (n-371cf932 form)"
+  ) {
     val ws = tempRoot / "ws-m1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m1-${scala.util.Random.nextInt(100000)}")
@@ -196,27 +222,55 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       rt <- mountProject("me-m1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 事故形态复刻：merge=true、in 缺省（=[] 等价）、task+out 在、零 in
-      r1 <- nodeEdit(nodeInput("me-m1", "m0", "description" -> Json.fromString("merge empty mount"),
-        "task" -> Json.fromString("landing"), "out" -> Json.fromString("Nebula"),
-        "merge" -> Json.fromBoolean(true)), ctx)
+      r1 <- nodeEdit(
+        nodeInput(
+          "me-m1",
+          "m0",
+          "description" -> Json.fromString("merge empty mount"),
+          "task" -> Json.fromString("landing"),
+          "out" -> Json.fromString("Nebula"),
+          "merge" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
       // 显式空数组 in=[] 同判（parseIn 归一化为 Nil）
-      r2 <- nodeEdit(nodeInput("me-m1", "m0b", "description" -> Json.fromString("merge empty mount arr"),
-        "task" -> Json.fromString("landing"), "out" -> Json.fromString("Nebula"),
-        "in" -> Json.arr(), "merge" -> Json.fromBoolean(true)), ctx)
+      r2 <- nodeEdit(
+        nodeInput(
+          "me-m1",
+          "m0b",
+          "description" -> Json.fromString("merge empty mount arr"),
+          "task" -> Json.fromString("landing"),
+          "out" -> Json.fromString("Nebula"),
+          "in" -> Json.arr(),
+          "merge" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r1.isLeft, s"zero-upstream merge create must be rejected, got $r1")
-      assert(r1.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"error must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r1")
-      assert(r1.left.exists(m => m.contains("in-barrier") || m.contains("in") ),
-        s"error must explain the semantics (fires via in-barrier of upstream delivery), got: $r1")
-      assert(r1.left.exists(m => m.contains("never fire") || m.contains("pending forever")),
-        s"error must state the empty-mount consequence, got: $r1")
-      assert(r2.isLeft && r2.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"explicit in=[] must be rejected identically, got: $r2")
-      assert(!snap.nodes.values.exists(n => n.name == "m0" || n.name == "m0b"),
-        "rejected creates must leave NO node in the store (0 spawn)")
+      assert(
+        r1.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        s"error must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r1"
+      )
+      assert(
+        r1.left.exists(m => m.contains("in-barrier") || m.contains("in")),
+        s"error must explain the semantics (fires via in-barrier of upstream delivery), got: $r1"
+      )
+      assert(
+        r1.left.exists(m => m.contains("never fire") || m.contains("pending forever")),
+        s"error must state the empty-mount consequence, got: $r1"
+      )
+      assert(
+        r2.isLeft && r2.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        s"explicit in=[] must be rejected identically, got: $r2"
+      )
+      assert(
+        !snap.nodes.values.exists(n => n.name == "m0" || n.name == "m0b"),
+        "rejected creates must leave NO node in the store (0 spawn)"
+      )
+    end for
   }
 
   // ── M1b 第 6 例形态实证钉住（20260909 blocked-signal spec §0 附带发现/§1 例6）──
@@ -236,17 +290,31 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       rt <- mountProject("me-m1b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 事故形态逐字复刻：merge=true、显式空数组 in=[]、task+out 在（entry 直跑形态）
-      r <- nodeEdit(nodeInput("me-m1b", "merge-smoke-fix", "description" -> Json.fromString("n-e8b82fd5 form pin"),
-        "task" -> Json.fromString("landing smoke fixes"), "out" -> Json.fromString("Nebula"),
-        "in" -> Json.arr(), "merge" -> Json.fromBoolean(true)), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "me-m1b",
+          "merge-smoke-fix",
+          "description" -> Json.fromString("n-e8b82fd5 form pin"),
+          "task" -> Json.fromString("landing smoke fixes"),
+          "out" -> Json.fromString("Nebula"),
+          "in" -> Json.arr(),
+          "merge" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isLeft, s"n-e8b82fd5 form (merge=true, task, in=[]) must be rejected, got: $r")
-      assert(r.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
-        s"rejection must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r")
-      assert(!snap.nodes.values.exists(n => n.name == "merge-smoke-fix"),
-        "rejected incident form must leave NO node in the store (0 spawn)")
+      assert(
+        r.left.exists(_.contains("NODE_MERGE_REQUIRES_UPSTREAM")),
+        s"rejection must carry NODE_MERGE_REQUIRES_UPSTREAM, got: $r"
+      )
+      assert(
+        !snap.nodes.values.exists(n => n.name == "merge-smoke-fix"),
+        "rejected incident form must leave NO node in the store (0 spawn)"
+      )
+    end for
   }
 
   // ── M② in 引用存在性钉死 ───────────────────────────────
@@ -260,15 +328,26 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("me-m2", "barrier", "description" -> Json.fromString("dangling in"),
-        "in" -> Json.fromString("n-nonexistent"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "me-m2",
+          "barrier",
+          "description" -> Json.fromString("dangling in"),
+          "in" -> Json.fromString("n-nonexistent"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       snap <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isLeft, s"dangling in must be rejected, got $r")
-      assert(r.left.exists(_.contains("Referenced node 'n-nonexistent' not found")),
-        s"error must name the missing reference, got: $r")
+      assert(
+        r.left.exists(_.contains("Referenced node 'n-nonexistent' not found")),
+        s"error must name the missing reference, got: $r"
+      )
       assert(!snap.nodes.values.exists(_.name == "barrier"), "rejected create must not persist the node")
+    end for
   }
 
   // ── M③ 入口节点创建即 running（锚点②钉死）──────────────────
@@ -282,8 +361,16 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("me-m3", "entry", "description" -> Json.fromString("entry start pin"),
-        "task" -> Json.fromString("entry-runs-at-once"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "me-m3",
+          "entry",
+          "description" -> Json.fromString("entry start pin"),
+          "task" -> Json.fromString("entry-runs-at-once"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // 创建即 running（不等待任何上游；startNode 后台 fork 但立即翻转状态）。
       // Running 是瞬态：0 延迟 EchoLlm 下节点可在一次 50ms 轮询间隙内跑到 Completed，
       // 原「等 Running」会偶发超时（节点实际已 completed）。治本=观测条件改为接受
@@ -296,11 +383,14 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     yield
       assert(n.startedAt.isDefined, "entry node must carry startedAt (mount took effect immediately)")
       assertEquals(n.status, NodeLifecycle.Completed, "entry node must run to completion")
+    end for
   }
 
   // ── M④ 合法新顺序 + payload merge 条件字段 ──────────────────
 
-  test("M4: legal order (upstream first, merge with in=<id>) — merge persists, payload carries merge:true only for merge nodes, no loop key, barrier triggers") {
+  test(
+    "M4: legal order (upstream first, merge with in=<id>) — merge persists, payload carries merge:true only for merge nodes, no loop key, barrier triggers"
+  ) {
     val ws = tempRoot / "ws-m4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m4-${scala.util.Random.nextInt(100000)}")
@@ -310,14 +400,31 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("me-m4", "slow-up", "description" -> Json.fromString("m4 upstream"),
-        "task" -> Json.fromString("slow-up-work"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "me-m4",
+          "slow-up",
+          "description" -> Json.fromString("m4 upstream"),
+          "task" -> Json.fromString("slow-up-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "slow-up")
       // 新合法顺序：上游已存在 → 合并节点 in=<upId> 创建
-      r <- nodeEdit(nodeInput("me-m4", "merge-m4", "description" -> Json.fromString("m4 landing sink"),
-        "task" -> Json.fromString("landing"), "in" -> Json.fromString(upId),
-        "out" -> Json.fromString("Nebula"), "merge" -> Json.fromBoolean(true)), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "me-m4",
+          "merge-m4",
+          "description" -> Json.fromString("m4 landing sink"),
+          "task" -> Json.fromString("landing"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula"),
+          "merge" -> Json.fromBoolean(true)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "merge-m4", Set(NodeLifecycle.Completed))
       merge <- idOf(rt, "merge-m4").flatMap(id => rt.store.getNode(id)).map(_.getOrElse(fail("merge must exist")))
@@ -329,19 +436,34 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     yield
       assert(r.isRight, s"merge create with existing upstream must succeed, got $r")
       assertEquals(merge.merge, true, "merge flag must persist")
-      assertEquals(mergeJson.hcursor.get[Boolean]("merge").toOption, Some(true),
-        "payload must carry merge:true for merge nodes (REST/WS/NodeList single serialization point)")
-      assert(!plainJson.asObject.exists(_.keys.exists(_ == "merge")),
-        "non-merge node payload must NOT carry the merge key (conditional serialization, zero drift)")
-      assert(!mergeJson.asObject.exists(_.keys.exists(_ == "loop")) && !plainJson.asObject.exists(_.keys.exists(_ == "loop")),
-        "loop forward-defense field must be absent while the engine has no loop node concept")
-      assertEquals(merge.status, NodeLifecycle.Completed,
-        "merge node must trigger after upstream completion (in-barrier semantics intact under the new order)")
+      assertEquals(
+        mergeJson.hcursor.get[Boolean]("merge").toOption,
+        Some(true),
+        "payload must carry merge:true for merge nodes (REST/WS/NodeList single serialization point)"
+      )
+      assert(
+        !plainJson.asObject.exists(_.keys.exists(_ == "merge")),
+        "non-merge node payload must NOT carry the merge key (conditional serialization, zero drift)"
+      )
+      assert(
+        !mergeJson.asObject.exists(_.keys.exists(_ == "loop")) && !plainJson.asObject.exists(
+          _.keys.exists(_ == "loop")
+        ),
+        "loop forward-defense field must be absent while the engine has no loop node concept"
+      )
+      assertEquals(
+        merge.status,
+        NodeLifecycle.Completed,
+        "merge node must trigger after upstream completion (in-barrier semantics intact under the new order)"
+      )
+    end for
   }
 
   // ── M⑤ 停滞闸：入口停滞 → mount-stalled 事件 + 回扫补触发 ────
 
-  test("M5: entry node 60s past its triggerable point (createdAt) and still pending → mount-stalled event + settle sweep takeover starts it") {
+  test(
+    "M5: entry node 60s past its triggerable point (createdAt) and still pending → mount-stalled event + settle sweep takeover starts it"
+  ) {
     val ws = tempRoot / "ws-m5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m5-${scala.util.Random.nextInt(100000)}")
@@ -351,10 +473,17 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m5", ws, system, res)
       // 历史遗留形态播种：入口 pending、createdAt 回拨 61s（= fork 启动从未生效）
-      _ <- seedNode(rt, NodeDef(
-        id = "n-stalled-entry", name = "stalled-entry", agent = "general",
-        task = Some("stalled-entry-work"), status = NodeLifecycle.Pending,
-        createdAt = now - 61_000L))
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-stalled-entry",
+          name = "stalled-entry",
+          agent = "general",
+          task = Some("stalled-entry-work"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 61_000L
+        )
+      )
       _ <- rt.engine.settleRunnableSweep()
       // 补触发：回扫 fork startNode → 节点跑完
       _ <- waitStatus(rt, "stalled-entry", Set(NodeLifecycle.Completed))
@@ -362,16 +491,21 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val events = audit.filter((t, id, _) => t == "mount-stalled" && id == "n-stalled-entry")
-      assert(events.nonEmpty,
-        s"mount-stalled event must be logged for the stalled entry node, got: ${audit.map((t, id, _) => (t, id))}")
+      assert(
+        events.nonEmpty,
+        s"mount-stalled event must be logged for the stalled entry node, got: ${audit.map((t, id, _) => (t, id))}"
+      )
       val (_, _, summary) = events.head
       assert(summary.contains("triggerable"), s"summary must state the triggerable-point staleness, got: $summary")
       assert(summary.contains("entry node"), s"summary must identify the entry (no upstreams) form, got: $summary")
+    end for
   }
 
   // ── M⑥ 不误伤：等待 running 上游的 pending 超 60s 不判停滞 ────
 
-  test("M6: pending waiting on a RUNNING upstream for >60s must NOT be flagged mount-stalled (barrier-aware legal wait); normal delivery resumes after upstream completes") {
+  test(
+    "M6: pending waiting on a RUNNING upstream for >60s must NOT be flagged mount-stalled (barrier-aware legal wait); normal delivery resumes after upstream completes"
+  ) {
     val ws = tempRoot / "ws-m6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m6-${scala.util.Random.nextInt(100000)}")
@@ -382,16 +516,33 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("me-m6", "slow-up", "description" -> Json.fromString("m6 upstream"),
-        "task" -> Json.fromString("slow-up-m6"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "me-m6",
+          "slow-up",
+          "description" -> Json.fromString("m6 upstream"),
+          "task" -> Json.fromString("slow-up-m6"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-up", Set(NodeLifecycle.Running))
       upId <- idOf(rt, "slow-up")
       // 下游播种：pending、极老（>60s）、in=[running 上游]（含 out 改接，模拟 in 声明接线）
-      _ <- seedNode(rt, NodeDef(
-        id = "n-waiter", name = "waiter", agent = "general",
-        in = List(upId), status = NodeLifecycle.Wiring,
-        createdAt = now - 600_000L))
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(upId, s.nodes(upId).copy(out = List(OutEdge("n-waiter"))))))
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-waiter",
+          name = "waiter",
+          agent = "general",
+          in = List(upId),
+          status = NodeLifecycle.Wiring,
+          createdAt = now - 600_000L
+        )
+      )
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes = s.nodes.updated(upId, s.nodes(upId).copy(out = List(OutEdge("n-waiter")))))
+      )
       _ <- rt.engine.settleRunnableSweep()
       postSweep <- rt.store.getNode("n-waiter").map(_.getOrElse(fail("waiter must exist")))
       auditAfterSweep <- readAudit(ws)
@@ -401,18 +552,28 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       auditFinal <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(postSweep.status, NodeLifecycle.Wiring,
-        "waiter must stay un-started right after the sweep (running upstream = legal wait, not stalled)")
-      assert(!auditAfterSweep.exists((t, id, _) => t == "mount-stalled" && id == "n-waiter"),
-        s"waiting on a running upstream must NOT emit mount-stalled, got: ${auditAfterSweep.map((t, id, _) => (t, id))}")
-      assert(!auditFinal.exists((t, id, _) => t == "mount-stalled" && id == "n-waiter"),
-        "no mount-stalled may appear for the legal waiter even after completion")
+      assertEquals(
+        postSweep.status,
+        NodeLifecycle.Wiring,
+        "waiter must stay un-started right after the sweep (running upstream = legal wait, not stalled)"
+      )
+      assert(
+        !auditAfterSweep.exists((t, id, _) => t == "mount-stalled" && id == "n-waiter"),
+        s"waiting on a running upstream must NOT emit mount-stalled, got: ${auditAfterSweep.map((t, id, _) => (t, id))}"
+      )
+      assert(
+        !auditFinal.exists((t, id, _) => t == "mount-stalled" && id == "n-waiter"),
+        "no mount-stalled may appear for the legal waiter even after completion"
+      )
       assertEquals(postSweep.createdAt, now - 600_000L, "precondition: waiter is far past 60s")
+    end for
   }
 
   // ── M⑦ 停滞留痕（barrier 永不可清形态）+ 每停滞期单发 ────────
 
-  test("M7: pending downstream whose upstream already FAILED (barrier unclearable) → mount-stalled naming the failed upstream; single emission per stall episode") {
+  test(
+    "M7: pending downstream whose upstream already FAILED (barrier unclearable) → mount-stalled naming the failed upstream; single emission per stall episode"
+  ) {
     val ws = tempRoot / "ws-m7"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m7-${scala.util.Random.nextInt(100000)}")
@@ -422,14 +583,29 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m7", ws, system, res)
       // 播种：failed 上游（终态、completedAt 老旧）+ pending 下游（in=[failed 上游]）
-      _ <- seedNode(rt, NodeDef(
-        id = "n-failed-up", name = "failed-up", agent = "general",
-        status = NodeLifecycle.Failed, result = Some("boom"),
-        createdAt = now - 300_000L, completedAt = Some(now - 290_000L)))
-      _ <- seedNode(rt, NodeDef(
-        id = "n-stuck", name = "stuck", agent = "general",
-        in = List("n-failed-up"), status = NodeLifecycle.Pending,
-        createdAt = now - 280_000L))
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-failed-up",
+          name = "failed-up",
+          agent = "general",
+          status = NodeLifecycle.Failed,
+          result = Some("boom"),
+          createdAt = now - 300_000L,
+          completedAt = Some(now - 290_000L)
+        )
+      )
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-stuck",
+          name = "stuck",
+          agent = "general",
+          in = List("n-failed-up"),
+          status = NodeLifecycle.Pending,
+          createdAt = now - 280_000L
+        )
+      )
       _ <- rt.engine.settleRunnableSweep()
       _ <- IO.sleep(100.millis)
       _ <- rt.engine.settleRunnableSweep() // 第二轮回扫：单发纪律（不刷屏）
@@ -438,14 +614,17 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val events = audit.filter((t, id, _) => t == "mount-stalled" && id == "n-stuck")
-      assertEquals(events.size, 1,
-        s"mount-stalled must fire exactly once per stall episode (two sweeps), got ${events.size}: ${audit.map((t, id, _) => (t, id))}")
+      assertEquals(events.size, 1, s"mount-stalled must fire exactly once per stall episode (two sweeps), got ${events.size}: ${audit.map((t, id, _) => (t, id))}")
       val (_, _, summary) = events.head
       assert(summary.contains("failed"), s"summary must name the upstream terminal state, got: $summary")
       assert(summary.contains("failed-up"), s"summary must identify the blocking upstream, got: $summary")
-      assertEquals(stuck.status, NodeLifecycle.Pending,
-        "stuck node must NOT have been started (failed upstream barrier cannot clear; event is the visibility carrier)")
+      assertEquals(
+        stuck.status,
+        NodeLifecycle.Pending,
+        "stuck node must NOT have been started (failed upstream barrier cannot clear; event is the visibility carrier)"
+      )
       assert(stuck.startedAt.isEmpty, "stuck node must have no session")
+    end for
   }
 
   // ── M⑧ engine-defects 批 #85：告警**有界升级**（把「静默死锁」变成持续可见）──
@@ -460,55 +639,86 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
   //  - RED：越过 `nebflow.stall.reNotifyMs` 后**必发第二条**且带 `escalation=#2`
   //    + `ACTION REQUIRED`，并**点名** hold 它的终态上游（`cancelled`）。
 
-  test("M8 (#85): a barrier held for a whole alert window re-alerts — the second mount-stalled carries escalation=#2 + ACTION REQUIRED and names the cancelled upstream (in-window sweeps stay single-shot)") {
+  test(
+    "M8 (#85): a barrier held for a whole alert window re-alerts — the second mount-stalled carries escalation=#2 + ACTION REQUIRED and names the cancelled upstream (in-window sweeps stay single-shot)"
+  ) {
     val ws = tempRoot / "ws-m8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"me-m8-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     val now = System.currentTimeMillis()
     for
-        res <- mkResources(system, tempRoot, llm.handle)
-        // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
-        // 写入后同进程读回为空（`Obtained: None`）⇒ prop 注入口会静默失效）
-        rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))
-        _ = assertEquals(rt.engine.stallReNotifyWindowMs, 300L,
-          "precondition: the escalation window must reach the engine through the constructor seam")
-        // 夹具形态逐字回灌：cancelled 上游已终态 · 下游 in-barrier 清但 pendingSuccession 非空
-        _ <- seedNode(rt, NodeDef(
-          id = "n-cancelled-up", name = "delegate-device-remove-impl", agent = "general",
-          status = NodeLifecycle.Cancelled, result = Some("abandoned"),
-          createdAt = now - 900_000L, completedAt = Some(now - 880_000L)))
-        _ <- seedNode(rt, NodeDef(
-          id = "n-held-downstream", name = "delegate-device-remove-land", agent = "general",
-          in = List("n-cancelled-up"), status = NodeLifecycle.Wiring,
+      res <- mkResources(system, tempRoot, llm.handle)
+      // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
+      // 写入后同进程读回为空（`Obtained: None`）⇒ prop 注入口会静默失效）
+      rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))
+      _ = assertEquals(
+        rt.engine.stallReNotifyWindowMs,
+        300L,
+        "precondition: the escalation window must reach the engine through the constructor seam"
+      )
+      // 夹具形态逐字回灌：cancelled 上游已终态 · 下游 in-barrier 清但 pendingSuccession 非空
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-cancelled-up",
+          name = "delegate-device-remove-impl",
+          agent = "general",
+          status = NodeLifecycle.Cancelled,
+          result = Some("abandoned"),
+          createdAt = now - 900_000L,
+          completedAt = Some(now - 880_000L)
+        )
+      )
+      _ <- seedNode(
+        rt,
+        NodeDef(
+          id = "n-held-downstream",
+          name = "delegate-device-remove-land",
+          agent = "general",
+          in = List("n-cancelled-up"),
+          status = NodeLifecycle.Wiring,
           pendingSuccession = List("n-cancelled-up"),
-          out = List(OutEdge.nebula), createdAt = now - 870_000L))
-        _ <- rt.engine.settleRunnableSweep()
-        _ <- IO.sleep(120.millis)
-        _ <- rt.engine.settleRunnableSweep() // 窗内第二扫：必须仍单发
-        inWindow <- readAudit(ws)
-        _ <- IO.sleep(900.millis) // 越过 300ms 升级窗（留足余量）
-        _ <- rt.engine.settleRunnableSweep()
-        afterWindow <- readAudit(ws)
-        held <- rt.store.getNode("n-held-downstream").map(_.getOrElse(fail("held node must exist")))
-        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield
-        val inWin = inWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
-        assertEquals(inWin.size, 1,
-          s"GREEN: within the alert window two sweeps must stay single-shot, got ${inWin.size}: ${inWindow.map((t, id, _) => (t, id))}")
-        val all = afterWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
-        assertEquals(all.size, 2,
-          s"RED: past the alert window a SECOND alert must fire (bounded escalation, not silent), got ${all.size}: ${afterWindow.map((t, id, _) => (t, id))}")
-        val (_, _, esc) = all(1)
-        assert(esc.startsWith("escalation=#2"), s"the re-alert must be labelled escalation=#2, got: $esc")
-        assert(esc.contains("ACTION REQUIRED"), s"the re-alert must demand action (not read as a mechanism guarantee), got: $esc")
-        assert(esc.contains("cancelled"), s"the re-alert must name the terminal upstream's state, got: $esc")
-        assert(esc.contains("delegate-device-remove-impl"), s"the re-alert must name the blocking upstream, got: $esc")
-        assert(esc.contains("awaiting handover"), s"the re-alert must name the R4 handover hold, got: $esc")
-        // R4 语义**未改**：仍然不放行（事件是可见性载体，不是自动放行）
-        assertEquals(held.status, NodeLifecycle.Wiring,
-          "the R4 succession hold must NOT be auto-released by this batch (alert only)")
-        assert(held.startedAt.isEmpty, "the held node must still have no session")
+          out = List(OutEdge.nebula),
+          createdAt = now - 870_000L
+        )
+      )
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- IO.sleep(120.millis)
+      _ <- rt.engine.settleRunnableSweep() // 窗内第二扫：必须仍单发
+      inWindow <- readAudit(ws)
+      _ <- IO.sleep(900.millis) // 越过 300ms 升级窗（留足余量）
+      _ <- rt.engine.settleRunnableSweep()
+      afterWindow <- readAudit(ws)
+      held <- rt.store.getNode("n-held-downstream").map(_.getOrElse(fail("held node must exist")))
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val inWin = inWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
+      assertEquals(inWin.size, 1, s"GREEN: within the alert window two sweeps must stay single-shot, got ${inWin.size}: ${inWindow.map((t, id, _) => (t, id))}")
+      val all = afterWindow.filter((t, id, _) => t == "mount-stalled" && id == "n-held-downstream")
+      assertEquals(
+        all.size,
+        2,
+        s"RED: past the alert window a SECOND alert must fire (bounded escalation, not silent), got ${all.size}: ${afterWindow
+            .map((t, id, _) => (t, id))}"
+      )
+      val (_, _, esc) = all(1)
+      assert(esc.startsWith("escalation=#2"), s"the re-alert must be labelled escalation=#2, got: $esc")
+      assert(
+        esc.contains("ACTION REQUIRED"),
+        s"the re-alert must demand action (not read as a mechanism guarantee), got: $esc"
+      )
+      assert(esc.contains("cancelled"), s"the re-alert must name the terminal upstream's state, got: $esc")
+      assert(esc.contains("delegate-device-remove-impl"), s"the re-alert must name the blocking upstream, got: $esc")
+      assert(esc.contains("awaiting handover"), s"the re-alert must name the R4 handover hold, got: $esc")
+      // R4 语义**未改**：仍然不放行（事件是可见性载体，不是自动放行）
+      assertEquals(
+        held.status,
+        NodeLifecycle.Wiring,
+        "the R4 succession hold must NOT be auto-released by this batch (alert only)"
+      )
+      assert(held.startedAt.isEmpty, "the held node must still have no session")
+    end for
   }
 
 end NodeMountEnforceSpec

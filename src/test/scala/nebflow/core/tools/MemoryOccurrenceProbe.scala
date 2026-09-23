@@ -64,25 +64,25 @@ object MemoryOccurrenceProbe:
     val o = parse(args)
     PathUtil.setDataRoot(o.root)
 
-    val queueBack  = JsonlLedger.readLines(MemoryQueue.queuePath, MemoryQueue.archivePath)
-    val histsBack  = JsonlLedger.readLines(MemoryHistory.historyPath, MemoryHistory.archivePath)
-    val qState     = MemoryQueue.parseState(queueBack.lines)
-    val hist       = MemoryHistory.readAll()
+    val queueBack = JsonlLedger.readLines(MemoryQueue.queuePath, MemoryQueue.archivePath)
+    val histsBack = JsonlLedger.readLines(MemoryHistory.historyPath, MemoryHistory.archivePath)
+    val qState = MemoryQueue.parseState(queueBack.lines)
+    val hist = MemoryHistory.readAll()
 
-    val noteRefs  = qState.notes.map(_.id).toList
-    val outcRefs  = qState.outcomes.map(_.ref).toList
-    val hQueue    = hist.events.filter(_.kind == MemoryHistory.KindQueue).flatMap(_.ref).toList
-    val hConsume  = hist.events.filter(_.kind == MemoryHistory.KindConsume).flatMap(_.ref).toList
+    val noteRefs = qState.notes.map(_.id).toList
+    val outcRefs = qState.outcomes.map(_.ref).toList
+    val hQueue = hist.events.filter(_.kind == MemoryHistory.KindQueue).flatMap(_.ref).toList
+    val hConsume = hist.events.filter(_.kind == MemoryHistory.KindConsume).flatMap(_.ref).toList
 
-    val noteOcc  = count(noteRefs)
-    val outcOcc  = count(outcRefs)
-    val hqOcc    = count(hQueue)
-    val hcOcc    = count(hConsume)
+    val noteOcc = count(noteRefs)
+    val outcOcc = count(outcRefs)
+    val hqOcc = count(hQueue)
+    val hcOcc = count(hConsume)
 
     val (missQN, missQD) = deficits(noteOcc, hqOcc)
     val (missCN, missCD) = deficits(outcOcc, hcOcc)
-    val (orphN, orphD)   = deficits(hcOcc, outcOcc)
-    val orphanTotal      = missQN + missCN + orphN
+    val (orphN, orphD) = deficits(hcOcc, outcOcc)
+    val orphanTotal = missQN + missCN + orphN
 
     val gaps = MemoryHistory.reconciliation(noteRefs, outcRefs)
 
@@ -99,7 +99,10 @@ object MemoryOccurrenceProbe:
     line("queue ledger", MemoryQueue.queuePath)
     line("history ledger", MemoryHistory.historyPath)
     line("queue raw lines", s"${queueBack.lines.size} (unreadable=${qState.unreadable})")
-    line("history raw lines", s"${histsBack.lines.size} (unreadable=${hist.unreadable}, ioError=${hist.ioError.getOrElse("-")})")
+    line(
+      "history raw lines",
+      s"${histsBack.lines.size} (unreadable=${hist.unreadable}, ioError=${hist.ioError.getOrElse("-")})"
+    )
     println("--- queue side (caller inputs) ---")
     line("notes", s"${noteRefs.size} occurrences / ${noteOcc.size} distinct refs")
     line("outcomes", s"${outcRefs.size} occurrences / ${outcOcc.size} distinct refs")
@@ -129,5 +132,6 @@ object MemoryOccurrenceProbe:
     println(s"EXIT $exit")
     // 真退出码（接线面）：不能只打印 —— 门禁/CI 读的是进程退出码
     if exit != 0 then sys.exit(exit)
+  end main
 
 end MemoryOccurrenceProbe

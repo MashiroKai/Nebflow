@@ -39,8 +39,10 @@ class DeviceMailResultTextSpec extends FunSuite:
   private val dispatcherResource: Dispatcher[IO] =
     Dispatcher.parallel[IO].allocated.unsafeRunSync()._1
 
-  /** 真 NeblinkClient + **罐头**传输（`DeviceMailSpec:249` 同款形态：只桩 `sendRequest`，
-    * 解析/鉴权/投递链全真）。 */
+  /**
+   * 真 NeblinkClient + **罐头**传输（`DeviceMailSpec:249` 同款形态：只桩 `sendRequest`，
+   * 解析/鉴权/投递链全真）。
+   */
   private class CaptureClient(mailResponse: String):
     var calls = List.empty[(String, String, String)] // (method, url, body)
 
@@ -60,6 +62,8 @@ class DeviceMailResultTextSpec extends FunSuite:
             Right("""{"token":"tok-1","networkId":"net","deviceId":"dev-a","peers":[]}""")
           else Right(mailResponse)
         }
+
+  end CaptureClient
 
   /** 与 `MailDeviceImagesSpec` 同款：真 NeblinkService + 名册（本 spec 另接线 relay client）。 */
   private def withResources(ctx0: ToolContext, ns: NeblinkService): ToolContext =
@@ -85,8 +89,12 @@ class DeviceMailResultTextSpec extends FunSuite:
     )
     ctx0.copy(sharedResources = Some(resources))
 
-  /** 真 chain 夹具：名册 dev-b/KAI-MBP + 真 NeblinkClient（罐头响应体）。
-    * 登录腿由罐头传输满足（真 `login`），故 `relayAgentMail` 的 `withSession` 不触网。 */
+  end withResources
+
+  /**
+   * 真 chain 夹具：名册 dev-b/KAI-MBP + 真 NeblinkClient（罐头响应体）。
+   * 登录腿由罐头传输满足（真 `login`），故 `relayAgentMail` 的 `withSession` 不触网。
+   */
   private def fixture(mailResponse: String): (CaptureClient, ToolContext) =
     val ns = NeblinkService.create(0, dispatcherResource).unsafeRunSync()
     ns.upsertPeer(PeerInfo("dev-b", "KAI-MBP", "darwin", "http://127.0.0.1:9")).unsafeRunSync()
@@ -97,10 +105,11 @@ class DeviceMailResultTextSpec extends FunSuite:
     (client, withResources(ToolContext(projectRoot = tempRoot.toString), ns))
 
   private def call(ctx: ToolContext): String =
-    MailTool.call(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson), ctx)
+    MailTool
+      .call(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson), ctx)
       .unsafeRunSync() match
       case Right(text) => text
-      case Left(err)   => fail(s"expected the device leg to succeed, got error: ${err.message}")
+      case Left(err) => fail(s"expected the device leg to succeed, got error: ${err.message}")
 
   override def beforeEach(context: BeforeEach): Unit =
     if os.exists(tempRoot) then os.remove.all(tempRoot)
@@ -185,11 +194,13 @@ class DeviceMailResultTextSpec extends FunSuite:
 
   test("relay 失败（远端 error 面）⇒ 结构化失败文本（类别 + 原因 + 原始错误原文摘录）"):
     val (_, ctx) = fixture("""{"error":"relay: device not enrolled"}""")
-    val err = MailTool.call(
-      JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
-      ctx
-    ).unsafeRunSync() match
-      case Left(e)  => e.message
+    val err = MailTool
+      .call(
+        JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
+        ctx
+      )
+      .unsafeRunSync() match
+      case Left(e) => e.message
       case Right(t) => fail(s"远端 error 面必须如实报错（禁静默成功），实得成功文本：$t")
     assertEquals(
       err,
@@ -208,11 +219,13 @@ class DeviceMailResultTextSpec extends FunSuite:
     ns.upsertPeer(PeerInfo("dev-b", "KAI-MBP", "darwin", "http://127.0.0.1:9")).unsafeRunSync()
     ns.setRelayClient(Some(new CaptureClient("""{"messageId":"m-x"}""").client)) // 未登录 ⇒ 会话面失败
     val ctx = withResources(ToolContext(projectRoot = tempRoot.toString), ns)
-    val err = MailTool.call(
-      JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
-      ctx
-    ).unsafeRunSync() match
-      case Left(e)  => e.message
+    val err = MailTool
+      .call(
+        JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
+        ctx
+      )
+      .unsafeRunSync() match
+      case Left(e) => e.message
       case Right(t) => fail(s"会话面失败必须如实报错（禁静默成功），实得成功文本：$t")
     assert(err.contains("category:") && err.contains("reason:"), s"两类失败都必须结构化 —— $err")
     assert(err.contains("raw error: Not logged in"), s"原文摘录必须来自失败面原文 —— $err")

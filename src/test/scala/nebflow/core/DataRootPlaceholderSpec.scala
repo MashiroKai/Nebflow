@@ -191,6 +191,8 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
       PathUtil.setDataRoot(prevRoot)
       os.remove.all(tempRoot)
 
+    end try
+
   test("Environment 段负控：data.sh 缺 data_root 键 ⇒ 占位符静默留原样（既有语义，不抛异常）"):
     val prevRoot = PathUtil.dataRoot
     val tempRoot = os.pwd / "target" / "test-data-root-envline-nokey"
@@ -230,4 +232,5 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
     finally
       PathUtil.setDataRoot(prevRoot)
       os.remove.all(tempRoot)
-
+    end try
+end DataRootPlaceholderSpec

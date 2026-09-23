@@ -58,7 +58,8 @@ object UpdateCommand extends CliCommand:
                 if isWindows then
                   """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
                 else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
-              else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
+              else if isWindows then
+                """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
               else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
             val exitCode = script.!
             if exitCode == 0 then CliResult.text("Update completed")
@@ -85,16 +86,21 @@ object UpdateCommand extends CliCommand:
             "beta" -> beta.asJson,
             "clientRequestId" -> clientRequestId.asJson
           )
-          client.post("/api/neblink/remote-update", payload).flatMap { resp =>
-            val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
-            val msg = resp.hcursor.downField("message").as[String]
-              .orElse(resp.hcursor.downField("error").as[String])
-              .getOrElse("Unknown error")
-            if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
-            else IO.pure(CliResult.Error(msg))
-          }.handleErrorWith { e =>
-            IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
-          }
+          client
+            .post("/api/neblink/remote-update", payload)
+            .flatMap { resp =>
+              val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .orElse(resp.hcursor.downField("error").as[String])
+                .getOrElse("Unknown error")
+              if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
+              else IO.pure(CliResult.Error(msg))
+            }
+            .handleErrorWith { e =>
+              IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
+            }
       }
 
   end UpdateRun
@@ -211,8 +217,7 @@ object StatusCommand extends CliCommand:
             )
           else if pidRunning then CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)")
           else if ours.isDefined then CliResult.text(s"✓ Gateway running (port: $port, no pid file)")
-          else if foreign then
-            CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
+          else if foreign then CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
           else CliResult.text("✗ Gateway not running")
         }
       }

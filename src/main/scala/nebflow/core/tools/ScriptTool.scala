@@ -69,6 +69,7 @@ class ScriptTool(config: ExternalToolConfig, val toolDir: os.Path) extends Tool:
               val base = s"Script '${config.name}' exited with code ${process.exitValue()}"
               stdinNotWritable.fold(base)(r => s"$base (stdin not writable: $r)")
           Left(ToolError(msg))
+        end if
       }.handleError(e => Left(ToolError(s"Script execution failed: ${e.getMessage}")))
   end call
 

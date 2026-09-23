@@ -74,16 +74,18 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
       .get
       .id
 
-  /** **对照臂**：改动前的 ref 集合口径（`MemoryHistory.discrepancies` 改前逐字语义：
-    * 三个集合差条件）。只用于并列证明「同一构造下旧口径恒 0」，**不参与判据断言**
-    * ——判据面是被试的 `reconciliation`。 */
+  /**
+   * **对照臂**：改动前的 ref 集合口径（`MemoryHistory.discrepancies` 改前逐字语义：
+   * 三个集合差条件）。只用于并列证明「同一构造下旧口径恒 0」，**不参与判据断言**
+   * ——判据面是被试的 `reconciliation`。
+   */
   private def refSetControlArm(noteRefs: List[String], outcomeRefs: List[String]): List[String] =
-    val events   = MemoryHistory.readAll().events
-    val queued   = events.filter(_.kind == MemoryHistory.KindQueue).flatMap(_.ref).toSet
+    val events = MemoryHistory.readAll().events
+    val queued = events.filter(_.kind == MemoryHistory.KindQueue).flatMap(_.ref).toSet
     val consumed = events.filter(_.kind == MemoryHistory.KindConsume).flatMap(_.ref).toSet
-    val missingQueue   = noteRefs.filterNot(queued.contains).map(r => s"note $r has no history:queue line")
+    val missingQueue = noteRefs.filterNot(queued.contains).map(r => s"note $r has no history:queue line")
     val missingConsume = outcomeRefs.filterNot(consumed.contains).map(r => s"outcome $r has no history:consume line")
-    val orphanConsume  = consumed.filterNot(noteRefs.contains).map(r => s"history:consume $r has no note").toList
+    val orphanConsume = consumed.filterNot(noteRefs.contains).map(r => s"history:consume $r has no note").toList
     missingQueue ++ missingConsume ++ orphanConsume
 
   // ── ① 判红（鉴别力）────────────────────────────────────────────────
@@ -96,7 +98,8 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
       qNote(r, 1000L),
       qOutcome(r, 1001L, "timeout"),
       qOutcome(r, 1002L, "timeout"),
-      qOutcome(r, 1003L, "applied"))
+      qOutcome(r, 1003L, "applied")
+    )
     appendRaw(MemoryHistory.historyPath, hQueue(r, 1000L), hConsume(r, 1001L, "timeout"), hConsume(r, 1002L, "timeout"))
 
     val (notes, outcomes) = queueSide()
@@ -125,7 +128,8 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
       hQueue(r, 1000L),
       hConsume(r, 1001L, "applied"),
       hConsume(r, 1002L, "applied"),
-      hConsume("q-nobody", 1003L, "applied"))
+      hConsume("q-nobody", 1003L, "applied")
+    )
 
     val (notes, outcomes) = queueSide()
     val g = MemoryHistory.reconciliation(notes, outcomes)
@@ -134,10 +138,12 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
     assertEquals(g.orphanConsume.size, 2, s"双向都报（多出 occurrence + 无 note 的 consume）: $g")
     assert(
       g.orphanConsume.exists(m => m.contains(r) && m.contains("occurrence 2 of 2")),
-      s"多出的第 2 条 consume 报出: ${g.orphanConsume}")
+      s"多出的第 2 条 consume 报出: ${g.orphanConsume}"
+    )
     assert(
       g.orphanConsume.exists(m => m.contains("q-nobody") && m.contains("no note on the queue side")),
-      s"无 note 的 consume 报出: ${g.orphanConsume}")
+      s"无 note 的 consume 报出: ${g.orphanConsume}"
+    )
 
   test("①判红/note 侧：note 无 history:queue 行 / 同 ref 列表多重度即 occurrence 数"):
     reset()
@@ -150,7 +156,10 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
     val g = MemoryHistory.reconciliation(notes, outcomes)
     assertEquals(g.total, 1, s"q-b 整条缺 history:queue 行: $g")
     assertEquals(g.missingQueue.size, 1)
-    assert(g.missingQueue.head.contains(b) && g.missingQueue.head.contains("occurrence 1 of 1"), g.missingQueue.toString)
+    assert(
+      g.missingQueue.head.contains(b) && g.missingQueue.head.contains("occurrence 1 of 1"),
+      g.missingQueue.toString
+    )
 
     // 配对是**逐 ref 内的 occurrence 序**：同 ref 在调用方列表出现 2 次 = 2 个 occurrence，
     // 账本只 1 条 ⇒ 缺的正是第 2 个（这是「列表多重度即 occurrence 数」的直接断言）
@@ -158,7 +167,8 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
     assertEquals(
       g2.missingQueue,
       Vector(s"note $a occurrence 2 of 2 on the queue side has no history:queue line (history:queue has 1)"),
-      "同 ref 的重复 occurrence 缺口逐条报出（集合口径看不见）")
+      "同 ref 的重复 occurrence 缺口逐条报出（集合口径看不见）"
+    )
 
   // ── ② 无误报（真写通道）──────────────────────────────────────────
 
@@ -233,7 +243,7 @@ class MemoryHistoryOccurrenceSpec extends FunSuite:
   test("⑤输出顺序 = 调用方列表首次出现序（哈希迭代序会让本断言乱序）"):
     reset()
     val refs = List("q-1789184932788-1", "q-1789180934510-1", "q-1789225515662-1", "q-a", "q-0")
-    val g    = MemoryHistory.reconciliation(refs, refs)
+    val g = MemoryHistory.reconciliation(refs, refs)
     assertEquals(g.missingQueue.size, refs.size)
     assertEquals(g.missingQueue.map(_.split(" ")(1)).toList, refs, "按传入序报出（LinkedHashMap 首现序）")
     assertEquals(g.missingConsume.size, refs.size)

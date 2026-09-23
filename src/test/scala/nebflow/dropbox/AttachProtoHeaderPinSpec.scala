@@ -35,13 +35,13 @@ class AttachProtoHeaderPinSpec extends FunSuite:
     def h(name: String): Option[String] =
       all.find(_._1.equalsIgnoreCase(name)).map(_._2.trim).filter(_.nonEmpty)
     for
-      proto     <- h("x-dropbox-proto").flatMap(_.toIntOption)
+      proto <- h("x-dropbox-proto").flatMap(_.toIntOption)
       if proto == AttachContract.ProtoChunked
-      index     <- h("x-dropbox-index").flatMap(_.toIntOption)
-      total     <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
+      index <- h("x-dropbox-index").flatMap(_.toIntOption)
+      total <- h("x-dropbox-total-bytes").flatMap(_.toLongOption)
       chunkSize <- h("x-dropbox-chunk-size").flatMap(_.toIntOption)
-      chunkSha  <- h("x-dropbox-chunk-sha256")
-      wholeSha  <- h("x-dropbox-whole-sha256")
+      chunkSha <- h("x-dropbox-chunk-sha256")
+      wholeSha <- h("x-dropbox-whole-sha256")
     yield DropboxService.ChunkHeaders(index, total, chunkSize, chunkSha, wholeSha)
 
   private val fullHeaderSet: List[(String, String)] = List(
@@ -98,3 +98,4 @@ class AttachProtoHeaderPinSpec extends FunSuite:
       val missing = fullHeaderSet.patch(i, Nil, 1)
       assertEquals(DropboxChunkHeaderParser.parse(headers(missing)), None, s"缺 ${fullHeaderSet(i)._1} 必须落 legacy")
     }
+end AttachProtoHeaderPinSpec

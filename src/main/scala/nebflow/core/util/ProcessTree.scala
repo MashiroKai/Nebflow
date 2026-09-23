@@ -109,5 +109,6 @@ object ProcessTree:
           val opt = ProcessHandle.of(pid)
           if opt.isPresent then List(opt.get()) else Nil
         }
+      end if
     catch case _: Exception => Nil
 end ProcessTree

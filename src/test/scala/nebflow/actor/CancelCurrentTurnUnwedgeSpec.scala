@@ -47,6 +47,7 @@ class CancelCurrentTurnUnwedgeSpec extends CatsEffectSuite:
     yield
       assert(returned.isRight, s"cancelCurrentTurn must return promptly, got $returned")
       assertEquals(cleared.size, 0, "tracking map must be cleared immediately")
+    end for
   }
 
   private sealed trait Command

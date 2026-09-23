@@ -25,6 +25,7 @@ class InjectionSourceContractSpec extends FunSuite:
 
   private val repoRoot = os.pwd
   private val chatJsPath = repoRoot / "src" / "main" / "resources" / "web" / "js" / "chat.js"
+
   private val persistenceJsPath =
     repoRoot / "src" / "main" / "resources" / "web" / "js" / "persistence.js"
 
@@ -51,13 +52,15 @@ class InjectionSourceContractSpec extends FunSuite:
     val keyRe: Regex = """(?m)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*'[^']*'""".r
     keyRe.findAllMatchIn(sourceLabelTableBody).map(_.group(1)).toSet
 
-  /** `injectedSourceLabel` 函数体里显式分支处理的 source 字面量
-    * （`source === 'node'` 形态：表现格式与通用模板不同，故不走表）。 */
+  /**
+   * `injectedSourceLabel` 函数体里显式分支处理的 source 字面量
+   * （`source === 'node'` 形态：表现格式与通用模板不同，故不走表）。
+   */
   private lazy val explicitBranchSources: Set[String] =
     val fnStart = chatJs.indexOf("export function injectedSourceLabel")
     assert(fnStart >= 0, "chat.js 里找不到 injectedSourceLabel —— 前端呈现入口被搬迁/改名？")
     val fnEnd = chatJs.indexOf("\nexport ", fnStart + 1) match
-      case -1    => chatJs.length
+      case -1 => chatJs.length
       case other => other
     val body = chatJs.substring(fnStart, fnEnd)
     val branchRe: Regex = """source\s*===\s*'([A-Za-z_][A-Za-z0-9_]*)'""".r

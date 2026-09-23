@@ -21,17 +21,21 @@ import nebflow.shared.*
 import java.util.UUID
 import scala.concurrent.duration.*
 
-/** Flow-node LLM supervision P2 (2026-08-26 §5.P2, acceptance #2/#4):
-  * a flow node that dies on a retryable LLM stall is checkpoint-RESTARTED
-  * (same session, persisted messages reloaded, continue instruction) instead
-  * of scrapping the flow; a non-retryable failure with explicit onError=stop
-  * still fails immediately (predefined compatibility). */
+/**
+ * Flow-node LLM supervision P2 (2026-08-26 §5.P2, acceptance #2/#4):
+ * a flow node that dies on a retryable LLM stall is checkpoint-RESTARTED
+ * (same session, persisted messages reloaded, continue instruction) instead
+ * of scrapping the flow; a non-retryable failure with explicit onError=stop
+ * still fails immediately (predefined compatibility).
+ */
 class FlowNodeSupervisionSpec extends CatsEffectSuite:
 
-  /** Stall N times, then succeed with a FlowReport pass. Distinguishes rounds
-    * by per-session request count; captures every request for assertions.
-    * `stamps` records a monotonic timestamp (ms) per request — the P1-backoff
-    * timing lock needs inter-request gaps. */
+  /**
+   * Stall N times, then succeed with a FlowReport pass. Distinguishes rounds
+   * by per-session request count; captures every request for assertions.
+   * `stamps` records a monotonic timestamp (ms) per request — the P1-backoff
+   * timing lock needs inter-request gaps.
+   */
   private class StallLlm(
     stallTimes: Int,
     capture: Ref[IO, Map[String, List[Int]]],
@@ -39,28 +43,44 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
     stamps: Ref[IO, Map[String, List[Long]]] = Ref.unsafe[IO, Map[String, List[Long]]](Map.empty)
   ) extends LlmHandle[IO]:
     private def isFlowNode(req: LlmRequest): Boolean = req.sessionId.startsWith("dag-")
+
     private def isP(req: LlmRequest): Boolean = req.sessionId.split("-").length > 3 &&
       req.sessionId.split("-").apply(2) == "p"
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
-      Stream.eval(IO.monotonic.flatMap(t => stamps.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, Nil) :+ t.toMillis)))) >>
-        Stream.eval(capture.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, Nil) :+ m.getOrElse(req.sessionId, Nil).size + 1))) >>
+      Stream.eval(
+        IO.monotonic.flatMap(t =>
+          stamps.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, Nil) :+ t.toMillis))
+        )
+      ) >>
+        Stream.eval(
+          capture.update(m =>
+            m.updated(req.sessionId, m.getOrElse(req.sessionId, Nil) :+ m.getOrElse(req.sessionId, Nil).size + 1)
+          )
+        ) >>
         Stream.eval(texts.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, Nil) :+ req.messages))) >>
         Stream.eval(IO(isFlowNode(req) && isP(req))).flatMap {
           case true =>
             // Tool-result round (FlowReport already consumed) → plain text done.
             val lastUserIsToolResult = req.messages.reverse
               .find(_.role == MessageRole.User)
-              .exists(_.content.fold(_ => false, bs => bs.exists {
-                case ContentBlock.ToolResult(_, _, _) => true
-                case _                                => false
-              }))
-            if lastUserIsToolResult then
-              Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
+              .exists(
+                _.content.fold(
+                  _ => false,
+                  bs =>
+                    bs.exists {
+                      case ContentBlock.ToolResult(_, _, _) => true
+                      case _ => false
+                    }
+                )
+              )
+            if lastUserIsToolResult then Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
             else
               Stream.eval(capture.get.map(_.getOrElse(req.sessionId, Nil).size)).flatMap { n =>
                 if n <= stallTimes then
@@ -82,6 +102,7 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
                     StreamChunk.Done(Some("tool_use"), None)
                   )
               }
+            end if
           case false =>
             Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
         }
@@ -143,6 +164,8 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         .handleErrorWith(_ => IO.unit)
     }
 
+  end withEnv
+
   private def twoNodeFlow(onError: Option[OnError] = None, maxRetries: Int = 0): FlowDagDef =
     FlowDagDef(
       name = "sflow",
@@ -189,7 +212,11 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         _ = assert(result.isRight, s"flow must complete after checkpoint restart, got: $result")
         _ = assert(pSessions.size == 1, s"P must reuse ONE stable session across restarts, got: $pSessions")
         pRounds = caps.getOrElse(pSessions.head, Nil)
-        _ = assertEquals(pRounds.size, 4, s"P expected 4 LLM requests (stall, retry-stall, resume FlowReport, resume text-done), got ${pRounds.size}")
+        _ = assertEquals(
+          pRounds.size,
+          4,
+          s"P expected 4 LLM requests (stall, retry-stall, resume FlowReport, resume text-done), got ${pRounds.size}"
+        )
         // The resumed request carries the checkpoint history: its messages
         // include the ORIGINAL instruction plus the continue prompt.
         reqs <- texts.get.map(_.getOrElse(pSessions.head, Nil))
@@ -197,16 +224,22 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         // checkpoint (the last request is the FlowReport tool-result round).
         resumed = reqs(reqs.size - 2)
         hasOriginal = resumed.exists { m =>
-          m.role == MessageRole.User && m.content.fold(_.contains("do P"), _.exists {
-            case ContentBlock.Text(t) => t.contains("do P")
-            case _                    => false
-          })
+          m.role == MessageRole.User && m.content.fold(
+            _.contains("do P"),
+            _.exists {
+              case ContentBlock.Text(t) => t.contains("do P")
+              case _ => false
+            }
+          )
         }
         hasContinue = resumed.lastOption.exists { m =>
-          m.role == MessageRole.User && m.content.fold(_.contains("continue your task"), _.exists {
-            case ContentBlock.Text(t) => t.contains("continue your task")
-            case _                    => false
-          })
+          m.role == MessageRole.User && m.content.fold(
+            _.contains("continue your task"),
+            _.exists {
+              case ContentBlock.Text(t) => t.contains("continue your task")
+              case _ => false
+            }
+          )
         }
         _ = assert(hasOriginal, "resumed request must carry the checkpoint history (original instruction)")
         _ = assert(hasContinue, "resumed request must end with the continue instruction")
@@ -254,8 +287,13 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
       entry = "a",
       nodes = Map(
         "a" -> FlowNode(agent = "X", input = "i", onComplete = Goto("b")),
-        "b" -> FlowNode(agent = "X", input = "i", onComplete = NodeRoute.Return,
-          onError = Some(OnError.Stop), maxRetries = 3)
+        "b" -> FlowNode(
+          agent = "X",
+          input = "i",
+          onComplete = NodeRoute.Return,
+          onError = Some(OnError.Stop),
+          maxRetries = 3
+        )
       )
     )
     val compiled = FlowDagCompiler.applyDynamicDefaults(flow)
@@ -268,6 +306,7 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
     // The input flow is not mutated.
     assertEquals(flow.nodes("a").onError, None)
   }
+
   test("P1-backoff: inactivity retry waits the FULL backoff before re-dispatch") {
     // Regression lock for the fake-sleep bug (2026-08-26): the retry path was
     // `ctx.forkTurn(IO.sleep(delay)) *> pipeLlmCall(...)` — forkTurn is
@@ -297,7 +336,10 @@ class FlowNodeSupervisionSpec extends CatsEffectSuite:
         gap = if times.size >= 2 then times(1) - times(0) else -1L
         _ = assert(result.isRight, s"flow must still complete, got: $result")
         _ = assert(times.size >= 2, s"expected ≥2 P requests for a gap, got ${times.size}")
-        _ = assert(gap >= 300, s"retry must wait the backoff floor; gap=${gap}ms (fake-sleep regression: forkTurn sleep is fire-and-forget)")
+        _ = assert(
+          gap >= 300,
+          s"retry must wait the backoff floor; gap=${gap}ms (fake-sleep regression: forkTurn sleep is fire-and-forget)"
+        )
       yield ()
     }.guarantee {
       IO { nebflow.agent.AgentActor.testInactivityBackoffMs = prevBackoff }

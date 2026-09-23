@@ -4,9 +4,11 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 
-/** qa #339 打回防回归：buildNestedJson 末段路径必须作键名（set/get 对称）。
-  * 旧基例返回裸值——`set a.b.c true` 实发 {"b": true}，静默丢层写错位置；
-  * 单段路径旧实现返回裸值（无键），服务端 mergeConfig leaf 分支会整文件替换。 */
+/**
+ * qa #339 打回防回归：buildNestedJson 末段路径必须作键名（set/get 对称）。
+ * 旧基例返回裸值——`set a.b.c true` 实发 {"b": true}，静默丢层写错位置；
+ * 单段路径旧实现返回裸值（无键），服务端 mergeConfig leaf 分支会整文件替换。
+ */
 class ConfigCommandSpec extends FunSuite:
 
   private def parse(s: String): Json = io.circe.parser.parse(s).fold(e => throw e, identity)

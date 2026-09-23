@@ -39,8 +39,10 @@ class OfficialIdentitySpec extends FunSuite:
   private val ThirdPartyFixture = "third-party-fixture"
   private val FixtureRoot = "official-fixtures"
 
-  /** 真内置官方包样本（seed 资源树里带保留前缀的三件；`nebflow-plugin-creator` 同时在
-    * seed manifest 默认预装集内）。 */
+  /**
+   * 真内置官方包样本（seed 资源树里带保留前缀的三件；`nebflow-plugin-creator` 同时在
+   * seed manifest 默认预装集内）。
+   */
   private val BuiltinOfficialSamples =
     List("nebflow-plugin-creator", "nebflow-qa", "nebflow-frontend-dev")
 
@@ -83,12 +85,14 @@ class OfficialIdentitySpec extends FunSuite:
     assert(url != null, s"'$rel' is not on the test classpath")
     Files.readAllBytes(java.nio.file.Paths.get(url.toURI))
 
-  /** 构造**真 jar 形态**资源树：真 `seed/manifest.json` 锚点 + 指定内置包的逐字节副本，
-    * 以 `seed/plugins/<pkg>/…` 写进一个真 jar，并用**只认该 jar** 的 `URLClassLoader` 驱动
-    * `OfficialPackages` 的 jar 分支。
-    *
-    * 🔴 parent = `null` 不是风格选择：本 suite 的父 classpath 上就有一棵 `file:` 形态的 `seed/`
-    * 目录树，parent 非空时锚点会解析成**目录** ⇒ 走 file: 分支 ⇒ jar 臂退化成假绿。 */
+  /**
+   * 构造**真 jar 形态**资源树：真 `seed/manifest.json` 锚点 + 指定内置包的逐字节副本，
+   * 以 `seed/plugins/<pkg>/…` 写进一个真 jar，并用**只认该 jar** 的 `URLClassLoader` 驱动
+   * `OfficialPackages` 的 jar 分支。
+   *
+   * 🔴 parent = `null` 不是风格选择：本 suite 的父 classpath 上就有一棵 `file:` 形态的 `seed/`
+   * 目录树，parent 非空时锚点会解析成**目录** ⇒ 走 file: 分支 ⇒ jar 臂退化成假绿。
+   */
   private def withFixtureJar[A](pkgs: List[String])(body: (os.Path, ClassLoader) => A): A =
     val dir = os.Path(Files.createTempDirectory("nb-official-jarform"))
     val jar = dir / "jarform-fixture.jar"
@@ -112,12 +116,13 @@ class OfficialIdentitySpec extends FunSuite:
       loader.close()
       os.remove.all(dir)
 
+  end withFixtureJar
+
   /** 夹具包安装到隔离 home（**禁落真 `~/.nebflow/plugins/`**）。 */
   private def installFixture(name: String): os.Path =
     val dest = home / "plugins" / name
     os.makeDir.all(dest / os.up)
-    os.copy(resourceDir(s"$FixtureRoot/$name"), dest,
-      createFolders = true, mergeFolders = true, replaceExisting = true)
+    os.copy(resourceDir(s"$FixtureRoot/$name"), dest, createFolders = true, mergeFolders = true, replaceExisting = true)
     PluginRegistry.invalidateCache()
     dest
 
@@ -125,8 +130,7 @@ class OfficialIdentitySpec extends FunSuite:
   private def installBuiltin(name: String): os.Path =
     val dest = home / "plugins" / name
     os.makeDir.all(dest / os.up)
-    os.copy(resourceDir(s"seed/plugins/$name"), dest,
-      createFolders = true, mergeFolders = true, replaceExisting = true)
+    os.copy(resourceDir(s"seed/plugins/$name"), dest, createFolders = true, mergeFolders = true, replaceExisting = true)
     PluginRegistry.invalidateCache()
     dest
 
@@ -138,12 +142,18 @@ class OfficialIdentitySpec extends FunSuite:
     BuiltinOfficialSamples.foreach { name =>
       val dir = resourceDir(s"seed/plugins/$name")
       val authoritative = digestOfDir(dir)
-      assertEquals(table.get(name), Some(authoritative),
-        s"'$name' is a shipped reserved-prefix package but is missing from (or mismatched in) the official allowlist")
+      assertEquals(
+        table.get(name),
+        Some(authoritative),
+        s"'$name' is a shipped reserved-prefix package but is missing from (or mismatched in) the official allowlist"
+      )
       // 算法等价：classpath/jar 侧实现（digestOf）与装载层权威 walker（computeDigest）逐字相等
       val files = os.walk(dir).filter(os.isFile).toList.map(f => f.relativeTo(dir).toString -> os.read.bytes(f))
-      assertEquals(OfficialPackages.digestOf(files), authoritative,
-        s"'$name': OfficialPackages.digestOf drifted from PluginRegistry.computeDigest")
+      assertEquals(
+        OfficialPackages.digestOf(files),
+        authoritative,
+        s"'$name': OfficialPackages.digestOf drifted from PluginRegistry.computeDigest"
+      )
     }
     assert(OfficialPackages.isReserved("nebflow-anything"))
     assert(!OfficialPackages.isReserved("slideblocks"))
@@ -161,21 +171,30 @@ class OfficialIdentitySpec extends FunSuite:
       assertEquals(loaded.map(_.name), Nil, "the impostor package must not load")
       assertEquals(rejected.map(_._1), List(ImpostorFixture))
       val reason = rejected.head._2
-      assert(reason.contains("OFFICIAL_IMPERSONATION"),
-        s"the rejection reason must carry the literal error code OFFICIAL_IMPERSONATION, got: $reason")
+      assert(
+        reason.contains("OFFICIAL_IMPERSONATION"),
+        s"the rejection reason must carry the literal error code OFFICIAL_IMPERSONATION, got: $reason"
+      )
 
       // 拒载后包状态：不可装载（不在 registry）→ 不可分配
       val resolved = PluginRegistry.resolve(ImpostorFixture).unsafeRunSync()
       assert(resolved.isLeft)
-      assert(resolved.swap.toOption.get.contains("PLUGIN_NOT_FOUND"),
-        s"a refused package must be unresolvable (PLUGIN_NOT_FOUND), got: ${resolved.swap.toOption.get}")
+      assert(
+        resolved.swap.toOption.get.contains("PLUGIN_NOT_FOUND"),
+        s"a refused package must be unresolvable (PLUGIN_NOT_FOUND), got: ${resolved.swap.toOption.get}"
+      )
       assert(!PluginRegistry.contentTrusted(ImpostorFixture).unsafeRunSync())
 
       // 错误面 = 既有装载错误面（同一 WARN/缺席注记/健康摘要/拒载清单），不新增第四种
       val health = PluginRegistry.healthSummary().unsafeRunSync()
-      assert(health.exists(_.contains("OFFICIAL_IMPERSONATION")),
-        s"the startup/rescan health summary must surface the refusal, got: $health")
-      assert(health.exists(_.contains("load-failed")), s"refusal must classify as the existing load-failed absence: $health")
+      assert(
+        health.exists(_.contains("OFFICIAL_IMPERSONATION")),
+        s"the startup/rescan health summary must surface the refusal, got: $health"
+      )
+      assert(
+        health.exists(_.contains("load-failed")),
+        s"refusal must classify as the existing load-failed absence: $health"
+      )
       val catalog = PluginRegistry.renderCatalog().unsafeRunSync()
       assert(!catalog.contains(ImpostorFixture), s"a refused package must not appear in the plugin catalog: $catalog")
     }
@@ -253,9 +272,16 @@ class OfficialIdentitySpec extends FunSuite:
     val table = OfficialPackages.allowlist()
     val allowlisted = table.get("nebflow-plugin-creator")
     assert(allowlisted.nonEmpty, "the shipped package must be in the official allowlist")
-    assertEquals(digestOfDir(installed), allowlisted.get, "installed copy must be byte-identical to the shipped package")
-    assertEquals(PluginRegistry.trustRecordDigest("nebflow-plugin-creator"), allowlisted,
-      "the preset Trusted (audit) record must be written and aligned with the allowlist digest")
+    assertEquals(
+      digestOfDir(installed),
+      allowlisted.get,
+      "installed copy must be byte-identical to the shipped package"
+    )
+    assertEquals(
+      PluginRegistry.trustRecordDigest("nebflow-plugin-creator"),
+      allowlisted,
+      "the preset Trusted (audit) record must be written and aligned with the allowlist digest"
+    )
 
     val (loaded, rejected) = scan()
     assert(rejected.isEmpty, s"unexpected refusals after seeding: $rejected")
@@ -279,12 +305,18 @@ class OfficialIdentitySpec extends FunSuite:
       val fileForm = samples.map(n => n -> digestOfDir(resourceDir(s"seed/plugins/$n"))).toMap
       OfficialPackages.withClassLoaderForTest(jarLoader) {
         val table = OfficialPackages.allowlist()
-        assertEquals(table.keySet, fileForm.keySet,
+        assertEquals(
+          table.keySet,
+          fileForm.keySet,
           "the jar-form resource tree must resolve the same package set as the file: tree " +
-            "(an empty table means the jar entry path was assembled twice)")
+            "(an empty table means the jar entry path was assembled twice)"
+        )
         fileForm.foreach { (name, digest) =>
-          assertEquals(table.get(name), Some(digest),
-            s"'$name': jar-form allowlist digest must equal the authoritative file-form digest")
+          assertEquals(
+            table.get(name),
+            Some(digest),
+            s"'$name': jar-form allowlist digest must equal the authoritative file-form digest"
+          )
           assert(OfficialPackages.admits(name, digest), s"'$name' must be admitted in jar form")
         }
         // 非官方（保留前缀 + digest 不在表内）在 jar 形态同样拒载 + 错误码逐字 + 读数非 0
@@ -314,3 +346,4 @@ class OfficialIdentitySpec extends FunSuite:
       }
     }
   }
+end OfficialIdentitySpec

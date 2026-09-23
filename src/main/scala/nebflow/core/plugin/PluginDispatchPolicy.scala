@@ -65,8 +65,10 @@ object PluginDispatchPolicy:
 
   // ── 读面 ──────────────────────────────────────────────────────────
 
-  /** 读 `plugins.dispatch` 表（热读 nebflow.json；缺失/非法 → 空表，fail-open 到
-    * 「跟随 trust」的兼容默认）。 */
+  /**
+   * 读 `plugins.dispatch` 表（热读 nebflow.json；缺失/非法 → 空表，fail-open 到
+   * 「跟随 trust」的兼容默认）。
+   */
   def readTable(): Map[String, Json] =
     val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(configPath) then Map.empty
@@ -117,8 +119,10 @@ object PluginDispatchPolicy:
         t.enabled && !t.cleared && t.expiresAt.forall(_ > now)
       case None => false
 
-  /** 单点纯函数（设计 §3.1）：有效派发许可 = trusted ∧ (authorEnabled ∨ transition)。
-    * `trusted` 由调用方从内容信任面（`PluginRegistry`）取——两面的**唯一耦合点**。 */
+  /**
+   * 单点纯函数（设计 §3.1）：有效派发许可 = trusted ∧ (authorEnabled ∨ transition)。
+   * `trusted` 由调用方从内容信任面（`PluginRegistry`）取——两面的**唯一耦合点**。
+   */
   def effective(name: String, trusted: Boolean, now: Long = System.currentTimeMillis()): Boolean =
     trusted && (authorEnabled(name) || transitionActive(name, now))
 
@@ -128,8 +132,10 @@ object PluginDispatchPolicy:
 
   // ── 写面（两条独立通路，互不覆盖；每次写入落一条 append-only 审计）─────────
 
-  /** 作者开关（durable 意图层）：面板 / REST `enable|disable` / CLI 的唯一写点。
-    * 只动 `authorEnabled` 一族键——`transition` **原样保留**（写侧互不覆盖）。 */
+  /**
+   * 作者开关（durable 意图层）：面板 / REST `enable|disable` / CLI 的唯一写点。
+   * 只动 `authorEnabled` 一族键——`transition` **原样保留**（写侧互不覆盖）。
+   */
   def setAuthorEnabled(name: String, enabled: Boolean, by: String): IO[Either[String, Unit]] =
     val now = System.currentTimeMillis()
     IO.blocking {
@@ -146,11 +152,17 @@ object PluginDispatchPolicy:
       (res match
         case Right(_) =>
           audit("authorEnabled", name, enabled = Some(enabled), by = Some(by), extra = Map.empty) *>
-            IO(logger.infoSync(
-              s"Plugin '$name' dispatch ${if enabled then "enabled" else "disabled"} by $by — " +
-                s"affects FUTURE dispatches only (in-flight nodes keep their plugin grant)"))
-        case Left(e) => IO(logger.warnSync(s"Plugin '$name' dispatch switch refused: $e"))).as(res)
+            IO(
+              logger.infoSync(
+                s"Plugin '$name' dispatch ${if enabled then "enabled" else "disabled"} by $by — " +
+                  s"affects FUTURE dispatches only (in-flight nodes keep their plugin grant)"
+              )
+            )
+        case Left(e) => IO(logger.warnSync(s"Plugin '$name' dispatch switch refused: $e"))
+      ).as(res)
     }
+
+  end setAuthorEnabled
 
   /** 过渡授权（**只放宽**）：带 TTL 兜底；到期自动失效、零人工复关。 */
   def grantTransition(
@@ -179,10 +191,18 @@ object PluginDispatchPolicy:
     }.flatMap { res =>
       (res match
         case Right(_) =>
-          audit("transition-granted", name, enabled = Some(true), by = Some(by),
-            extra = Map("expiresAt" -> expiresAt.map(_.toString).getOrElse("none"), "refs" -> refs.mkString(",")))
-        case Left(e) => IO(logger.warnSync(s"Plugin '$name' transition grant refused: $e"))).as(res)
+          audit(
+            "transition-granted",
+            name,
+            enabled = Some(true),
+            by = Some(by),
+            extra = Map("expiresAt" -> expiresAt.map(_.toString).getOrElse("none"), "refs" -> refs.mkString(","))
+          )
+        case Left(e) => IO(logger.warnSync(s"Plugin '$name' transition grant refused: $e"))
+      ).as(res)
     }
+
+  end grantTransition
 
   /** 显式结束过渡（幂等 no-op 语义：重复调用只是再写一次同样的「已清」态）。 */
   def clearTransition(name: String, by: String): IO[Either[String, Unit]] =
@@ -203,8 +223,10 @@ object PluginDispatchPolicy:
       (res match
         case Right(_) =>
           audit("transition-cleared", name, enabled = Some(false), by = Some(by), extra = Map.empty)
-        case Left(e) => IO(logger.warnSync(s"Plugin '$name' transition clear refused: $e"))).as(res)
+        case Left(e) => IO(logger.warnSync(s"Plugin '$name' transition clear refused: $e"))
+      ).as(res)
     }
+  end clearTransition
 
   // ── 内部：nebflow.json 手术式改写（保留全部其他键；`plugins.dispatch` 独立命名空间）
   // 口径与 `PluginRegistry.mutateNebflowJson` 同款（同文件、不同键族，互不覆盖）。 ──
@@ -235,9 +257,15 @@ object PluginDispatchPolicy:
           AtomicJson.writeSync(configPath, out.noSpaces)
           Right(())
 
-  /** append-only 审计（设计 R8 推荐 C 的落盘面）：每次**写侧**动作一条，含谁/何时/
-  * 何因/是否过渡 —— 「过渡期装载集 vs 作者意图集」可直接从本文件重放。
-  * 路径 `<dataRoot>/logs/plugin-dispatch.jsonl`（与宿主日志同目录，append-only、grep 友好）。 */
+    end if
+
+  end mutateDispatch
+
+  /**
+   * append-only 审计（设计 R8 推荐 C 的落盘面）：每次**写侧**动作一条，含谁/何时/
+   * 何因/是否过渡 —— 「过渡期装载集 vs 作者意图集」可直接从本文件重放。
+   * 路径 `<dataRoot>/logs/plugin-dispatch.jsonl`（与宿主日志同目录，append-only、grep 友好）。
+   */
   private def audit(
     event: String,
     name: String,
@@ -257,7 +285,7 @@ object PluginDispatchPolicy:
         .map { case (k, v) => s""""$k":${Json.fromString(v).noSpaces}""" }
         .mkString("{", ",", "}")
       os.write.append(PathUtil.dataRoot / "logs" / "plugin-dispatch.jsonl", line + "\n", createFolders = true)
-    }.void.handleErrorWith(e =>
-      IO(logger.warnSync(s"plugin dispatch audit append failed ($name/$event): ${e.getMessage}")))
+    }.void
+      .handleErrorWith(e => IO(logger.warnSync(s"plugin dispatch audit append failed ($name/$event): ${e.getMessage}")))
 
 end PluginDispatchPolicy

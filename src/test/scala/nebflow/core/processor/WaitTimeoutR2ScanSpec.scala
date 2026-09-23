@@ -81,19 +81,21 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** 造一条「挂起超阈值」的 registry 记录：status 可参数化，lastActivityMs
-    * 回拨 threshold+1000ms（= 零活动已超阈值，模拟等了 11min+ 的形态）。
-    * rec.ref 自身是记录 actor（Stop 的观察点——TaskStuckWatcher 把 Stop 发给
-    * rec.ref，不是 parentRef），sink 由调用方提供。 */
+  /**
+   * 造一条「挂起超阈值」的 registry 记录：status 可参数化，lastActivityMs
+   * 回拨 threshold+1000ms（= 零活动已超阈值，模拟等了 11min+ 的形态）。
+   * rec.ref 自身是记录 actor（Stop 的观察点——TaskStuckWatcher 把 Stop 发给
+   * rec.ref，不是 parentRef），sink 由调用方提供。
+   */
   private def waitingRecord(
-      system: ActorSystem,
-      resources: SharedResources,
-      sid: String,
-      kind: AgentKind,
-      status: AgentStatus,
-      parentRef: Option[ActorRef[AgentCommand]],
-      threshold: Long,
-      selfSink: Ref[IO, List[AgentCommand]]
+    system: ActorSystem,
+    resources: SharedResources,
+    sid: String,
+    kind: AgentKind,
+    status: AgentStatus,
+    parentRef: Option[ActorRef[AgentCommand]],
+    threshold: Long,
+    selfSink: Ref[IO, List[AgentCommand]]
   ): IO[AgentRecord] =
     for
       ref <- system.spawn(mkRecordingActor(selfSink), s"rec-$sid")
@@ -128,8 +130,16 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       threshold = 10 * 60 * 1000L
       // 审计 116 条/日 的破坏性形态：Delegate（有 parentRef）挂起超阈值。
       // R2 后 status=WaitingForUser（人在环等待）→ 必须零动作。
-      _ <- waitingRecord(system, resources, "r2-waiting-delegate", AgentKind.Delegate,
-        AgentStatus.WaitingForUser, Some(parentRef), threshold, selfReceived)
+      _ <- waitingRecord(
+        system,
+        resources,
+        "r2-waiting-delegate",
+        AgentKind.Delegate,
+        AgentStatus.WaitingForUser,
+        Some(parentRef),
+        threshold,
+        selfReceived
+      )
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
       _ <- IO.sleep(200.millis)
       wsEvents <- receivedWs.get
@@ -138,8 +148,7 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
     yield
       assertEquals(wsEvents.size, 0, s"WaitingForUser 绝不触发 taskStuck 广播，got: $wsEvents")
       assertEquals(selfCmds.size, 0, "WaitingForUser 绝不收 Stop（破坏性链禁止）")
-      assertEquals(registry("r2-waiting-delegate").status, AgentStatus.WaitingForUser,
-        "等待态原样保留（等用户≠卡死，等待不被打扰）")
+      assertEquals(registry("r2-waiting-delegate").status, AgentStatus.WaitingForUser, "等待态原样保留（等用户≠卡死，等待不被打扰）")
     end for
   }
 
@@ -154,13 +163,20 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       threshold = 10 * 60 * 1000L
       // 审计日志的四个会话全是 root（无 parentRef）形态：18:30 起每 30s 一条
       // 「stuck in Processing for Ns — not auto-restarting, broadcast taskStuck」。
-      _ <- waitingRecord(system, resources, "r2-waiting-root", AgentKind.Root,
-        AgentStatus.WaitingForUser, None, threshold, Ref.unsafe(Nil))
+      _ <- waitingRecord(
+        system,
+        resources,
+        "r2-waiting-root",
+        AgentKind.Root,
+        AgentStatus.WaitingForUser,
+        None,
+        threshold,
+        Ref.unsafe(Nil)
+      )
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
       _ <- IO.sleep(200.millis)
       wsEvents <- receivedWs.get
-    yield
-      assertEquals(wsEvents.size, 0, s"root 等待态绝不广播 taskStuck(attention)，got: $wsEvents")
+    yield assertEquals(wsEvents.size, 0, s"root 等待态绝不广播 taskStuck(attention)，got: $wsEvents")
     end for
   }
 
@@ -181,17 +197,26 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       threshold = 10 * 60 * 1000L
       // 与验收 1 唯一差异 = status: Processing（真卡死）vs WaitingForUser（等人）。
       // 铁律：排除等人绝不放走真挂死。
-      _ <- waitingRecord(system, resources, "r2-stuck-processing", AgentKind.Delegate,
-        AgentStatus.Processing, Some(parentRef), threshold, selfReceived)
+      _ <- waitingRecord(
+        system,
+        resources,
+        "r2-stuck-processing",
+        AgentKind.Delegate,
+        AgentStatus.Processing,
+        Some(parentRef),
+        threshold,
+        selfReceived
+      )
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
       _ <- IO.sleep(200.millis)
       wsEvents <- receivedWs.get
       selfCmds <- selfReceived.get
     yield
-      assert(wsEvents.exists(j => j.hcursor.get[String]("type").toOption.contains("taskStuck")),
-        s"Processing 真卡死必须广播 taskStuck，got: $wsEvents")
-      assert(selfCmds.exists(_.isInstanceOf[AgentCommand.Stop]),
-        s"Processing 真卡死必须收到 Stop（监督重启链），got: $selfCmds")
+      assert(
+        wsEvents.exists(j => j.hcursor.get[String]("type").toOption.contains("taskStuck")),
+        s"Processing 真卡死必须广播 taskStuck，got: $wsEvents"
+      )
+      assert(selfCmds.exists(_.isInstanceOf[AgentCommand.Stop]), s"Processing 真卡死必须收到 Stop（监督重启链），got: $selfCmds")
     end for
   }
 
@@ -206,8 +231,16 @@ class WaitTimeoutR2ScanSpec extends CatsEffectSuite:
       receivedWs <- Ref.of[IO, List[io.circe.Json]](Nil)
       _ <- wsHub.register(json => receivedWs.update(_ :+ json))
       threshold = 10 * 60 * 1000L
-      _ <- waitingRecord(system, resources, "r2-waiting-team", AgentKind.Team,
-        AgentStatus.WaitingForUser, Some(parentRef), threshold, Ref.unsafe(Nil))
+      _ <- waitingRecord(
+        system,
+        resources,
+        "r2-waiting-team",
+        AgentKind.Team,
+        AgentStatus.WaitingForUser,
+        Some(parentRef),
+        threshold,
+        Ref.unsafe(Nil)
+      )
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold)
       _ <- IO.sleep(200.millis)
       wsEvents <- receivedWs.get

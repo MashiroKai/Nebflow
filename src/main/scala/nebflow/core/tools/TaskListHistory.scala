@@ -58,50 +58,57 @@ case class TaskListEvent(
   links: List[String] = Nil,
   detail: Option[String] = None
 )
+
 object TaskListEvent:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskListEvent] = ConfiguredCodec.derived
 
-/** `actor` 值域（引擎侧派生，不信客户端参数）。实际可达 = [`Nebula`]、[`System`]；
-  * [`Node`] / [`Author`] 为预留值（当前无写入点，不自造调用点）。 */
+/**
+ * `actor` 值域（引擎侧派生，不信客户端参数）。实际可达 = [`Nebula`]、[`System`]；
+ * [`Node`] / [`Author`] 为预留值（当前无写入点，不自造调用点）。
+ */
 object TaskListActor:
-  val Nebula     = "nebula"
-  val Node       = "node"
-  val Author     = "author"
-  val System     = "system"
+  val Nebula = "nebula"
+  val Node = "node"
+  val Author = "author"
+  val System = "system"
   val Dispatcher = "dispatcher"
-  val Unknown    = "unknown"
+  val Unknown = "unknown"
 
 /** 事件 kind 值域（未知值读取侧照收）。 */
 object TaskListEventKind:
-  val Create     = "create"
-  val Update     = "update"
-  val Close      = "close"
-  val Log        = "log"
+  val Create = "create"
+  val Update = "update"
+  val Close = "close"
+  val Log = "log"
   val Correction = "correction"
-  val Prune      = "prune"
+  val Prune = "prune"
   val Quarantine = "quarantine"
-  val Rotate     = "rotate"
+  val Rotate = "rotate"
 
 object TaskListHistory:
 
   private val logger = NebflowLogger.forName("nebflow.tasklist")
 
-  /** 活动史文件 / 上一代归档（同目录、覆盖式轮转）。`def` 非 `val`：
-    * `PathUtil.dataRoot` 可被测试换根（TaskListStore.file 同款陷阱）。 */
-  val ActiveFileName: String  = "tasks-history.jsonl"
+  /**
+   * 活动史文件 / 上一代归档（同目录、覆盖式轮转）。`def` 非 `val`：
+   * `PathUtil.dataRoot` 可被测试换根（TaskListStore.file 同款陷阱）。
+   */
+  val ActiveFileName: String = "tasks-history.jsonl"
   val ArchiveFileName: String = "tasks-history.1.jsonl"
 
-  def activePath: os.Path  = PathUtil.dataRoot / ActiveFileName
+  def activePath: os.Path = PathUtil.dataRoot / ActiveFileName
   def archivePath: os.Path = PathUtil.dataRoot / ArchiveFileName
 
   /** 轮转阈值（活动文件，先到为准）与磁盘硬顶（活动 + `.1` 两代）。 */
-  val MaxActiveBytes: Long   = 5L * 1024 * 1024
-  val MaxActiveLines: Int    = 20000
+  val MaxActiveBytes: Long = 5L * 1024 * 1024
+  val MaxActiveLines: Int = 20000
   val DiskHardCapBytes: Long = 2 * MaxActiveBytes
 
-  /** 行字节下界：任何一行至少含 `"at":"<20+ 字符 ISO-8601>"` ⇒ ≥ 32 B。文件小于
-    * `MaxActiveLines * MinLineBytes` 时行数必不超阈 ⇒ 免整文件扫描（快路径）。 */
+  /**
+   * 行字节下界：任何一行至少含 `"at":"<20+ 字符 ISO-8601>"` ⇒ ≥ 32 B。文件小于
+   * `MaxActiveLines * MinLineBytes` 时行数必不超阈 ⇒ 免整文件扫描（快路径）。
+   */
   private val MinLineBytes: Long = 32L
 
   private def nowStr: String = Instant.now().toString
@@ -126,8 +133,10 @@ object TaskListHistory:
 
   private def encode(ev: TaskListEvent): String = ev.asJson.noSpaces + "\n"
 
-  /** 追加一条事件。**不抛异常**：append 失败返回 Left（调用方按「不失败主操作 +
-   * 结果行 NOTE + WARN」处置，绝不静默）。轮转检查先于追加（下一次写时惰性触发）。 */
+  /**
+   * 追加一条事件。**不抛异常**：append 失败返回 Left（调用方按「不失败主操作 +
+   * 结果行 NOTE + WARN」处置，绝不静默）。轮转检查先于追加（下一次写时惰性触发）。
+   */
   def appendEvent(ev: TaskListEvent): Either[String, Unit] =
     try
       rotateIfNeeded()
@@ -169,8 +178,15 @@ object TaskListHistory:
         )
         os.write.over(path, encode(rot), createFolders = true)
         logger.warnSync(
-          s"[tasklist] history rotated: $ActiveFileName ($totalLines lines / $bytes bytes) -> $ArchiveFileName (previous generation dropped; disk hard cap ${DiskHardCapBytes} B)")
+          s"[tasklist] history rotated: $ActiveFileName ($totalLines lines / $bytes bytes) -> $ArchiveFileName (previous generation dropped; disk hard cap ${DiskHardCapBytes} B)"
+        )
         Some(s"lines=$totalLines bytes=$bytes")
+
+      end if
+
+    end if
+
+  end rotateIfNeeded
 
   private def countLines(path: os.Path): Int =
     val in = java.nio.file.Files.newInputStream(path.toNIO)
@@ -191,11 +207,13 @@ object TaskListHistory:
   // 读：活动 + `.1`（先归档后活动 ⇒ 行序天然升序）
   // ------------------------------------------------------------------
 
-  /** 读取结果：`events` = 该 id 最近 ≤ limit 条（升序）；`matched` = 该 id 事件
-    * 总数；`matchedNote` = 其中 **note/log 内容事件**数（作者 17:27 口径的史主体；
-    * 其余为状态/结构类事件）；`globalRecent` = 全局事件（无 id）最近 ≤ globalLimit
-    * 条（升序）；`unreadable` = 不可解析行数。计数在整文件范围内统计（不受 limit
-    * 影响）⇒ 渲染侧的「未显示」计数可精确对账。 */
+  /**
+   * 读取结果：`events` = 该 id 最近 ≤ limit 条（升序）；`matched` = 该 id 事件
+   * 总数；`matchedNote` = 其中 **note/log 内容事件**数（作者 17:27 口径的史主体；
+   * 其余为状态/结构类事件）；`globalRecent` = 全局事件（无 id）最近 ≤ globalLimit
+   * 条（升序）；`unreadable` = 不可解析行数。计数在整文件范围内统计（不受 limit
+   * 影响）⇒ 渲染侧的「未显示」计数可精确对账。
+   */
   final case class ReadResult(
     events: List[TaskListEvent],
     matched: Int,
@@ -208,9 +226,11 @@ object TaskListHistory:
   object ReadResult:
     val empty: ReadResult = ReadResult(Nil, 0, 0, Nil, 0)
 
-  /** note/log 内容事件 = 变更史主线（作者 2026-09-11 17:27 口径：史的主体是
-    * **note 内容的变更**，可还原「第 N 次补充把做法从 A 改成 B」）。其余
-    * （create/close/非 note 字段 update/prune/quarantine/rotate）= 状态类，退居次要区。 */
+  /**
+   * note/log 内容事件 = 变更史主线（作者 2026-09-11 17:27 口径：史的主体是
+   * **note 内容的变更**，可还原「第 N 次补充把做法从 A 改成 B」）。其余
+   * （create/close/非 note 字段 update/prune/quarantine/rotate）= 状态类，退居次要区。
+   */
   def isNoteEvent(ev: TaskListEvent): Boolean =
     ev.kind == TaskListEventKind.Log ||
       ev.kind == TaskListEventKind.Correction ||
@@ -246,8 +266,10 @@ object TaskListHistory:
               globals += ev
               if globals.size > globalLimit then globals.remove(0)
             case Some(_) => ()
-            case None    => unreadable += 1
+            case None => unreadable += 1
+        end if
         // 其它：格式良好但属于别的 id —— 跳过（非坏行，零解析开销）
+      end handle
 
       List(archivePath, activePath).foreach { p =>
         if os.exists(p) then os.read(p).split("\n", -1).foreach(handle)
@@ -257,14 +279,16 @@ object TaskListHistory:
 
 end TaskListHistory
 
-/** 史 append 失败的累积器：主操作不因史写失败而失败，但结果行必须附
-  * `NOTE: history append failed (<reason>)`（绝不静默）。 */
+/**
+ * 史 append 失败的累积器：主操作不因史写失败而失败，但结果行必须附
+ * `NOTE: history append failed (<reason>)`（绝不静默）。
+ */
 private[tools] final class HistoryLog:
   private val errors = mutable.ListBuffer[String]()
 
   def append(ev: TaskListEvent): Unit =
     TaskListHistory.appendEvent(ev) match
-      case Right(_)  => ()
+      case Right(_) => ()
       case Left(err) => errors += err
 
   def note: String =

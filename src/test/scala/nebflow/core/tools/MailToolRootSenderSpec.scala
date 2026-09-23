@@ -100,7 +100,10 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-neb-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(
+          JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")),
+          nebulaCtx(system)
+        )
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -126,7 +129,10 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-unk-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(
+          JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")),
+          nebulaCtx(system)
+        )
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -193,7 +199,10 @@ class MailToolRootSenderSpec extends FunSuite:
     res match
       case Left(err) =>
         assert(err.message.contains("Backend"), s"should route within the team: ${err.message}")
-        assert(!err.message.contains("TEAM names only"), s"team-internal short name must not hit the rule: ${err.message}")
+        assert(
+          !err.message.contains("TEAM names only"),
+          s"team-internal short name must not hit the rule: ${err.message}"
+        )
       case Right(_) => fail(s"expected queueToSession outcome, got success: $res")
 
   test("team member: same-team team/agent route unaffected"):

@@ -98,7 +98,10 @@ class RgHelperSpec extends FunSuite:
   test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present") {
     val probeDirs = List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
     val expected = probeDirs.map(d => java.nio.file.Path.of(d, rgName)).find(java.nio.file.Files.isRegularFile(_))
-    assume(expected.isDefined, s"host has no package-manager rg under ${probeDirs.mkString(", ")} - drill not applicable here")
+    assume(
+      expected.isDefined,
+      s"host has no package-manager rg under ${probeDirs.mkString(", ")} - drill not applicable here"
+    )
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-host"))
     try
       val r = RgHelper.resolveRgPathFrom(
@@ -153,6 +156,7 @@ class RgHelperSpec extends FunSuite:
           assertEquals(lines, List("one.txt", "sub/two.txt"), "relative search must list cwd-relative paths")
         case Left(err) => fail(s"unexpected ToolError: ${err.message}")
     finally os.remove.all(tmp)
+    end try
   }
 
   test("runRg truncateOnOverflow=false keeps the hard 500KB ToolError (Grep behavior)") {

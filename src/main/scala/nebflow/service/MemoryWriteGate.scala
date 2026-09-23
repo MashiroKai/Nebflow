@@ -74,6 +74,7 @@ object MemoryWriteGate:
   object Code:
     /** 超硬顶：拒绝。 */
     val Budget: String = "MEMORYSTORE_BUDGET"
+
     /** 写前快照失败：拒绝（fail-closed，零写入）。 */
     val Snapshot: String = "MEMORYSTORE_SNAPSHOT"
 
@@ -84,41 +85,52 @@ object MemoryWriteGate:
   final class Rejected(val code: String, val detail: String)
       extends RuntimeException(s"MemoryWriteGate: rejected [$code] — $detail")
 
-  /** **收缩豁免判据（单源）**：`shrinkChannel` 只声明「本调用方走收缩通道」这一**身份**，
-    * 是否真豁免一律由**字节比**独立裁决（POST-WRITE ≤ PRE-WRITE）——🔴 **不按动作名**，
-    * 适格 + 净增**照过闸**。
-    *
-    * 两个消费方，同一个判据（作者 2026-09-15 裁定 A 的机械形态 = 「满格时放行删除/替换类
-    * 条目落盘，append 类仍拒至回到预算内」，定性 = 把闸对齐其已文档化设计初衷）：
-    *   - 本闸的预算分支（`exempt = shrinkExempt(pre, bytes, shrinkChannel)`）；
-    *   - [[nebflow.core.tools.MemoryQueue]] 的预算停点 + 停点闩（消费侧前置计划）——
-    *     目标超硬顶时，缩容方向（真收缩）条目照旧放行、净增条目照旧被截断。
-    *
-    * 抽成单源的理由：两处若各写一份「收缩」判据，迟早出现「计划面放行、落盘闸拒绝」
-    * （或反之）的判据漂移——那正是「超限文件的自救路径被自己的前置闸掐死」的死锁成因。
-    *
-    * 纯函数、零 IO（供 [[nebflow.core.tools.MemoryQueue]] 的只读计划面共用）。 */
+  /**
+   * **收缩豁免判据（单源）**：`shrinkChannel` 只声明「本调用方走收缩通道」这一**身份**，
+   * 是否真豁免一律由**字节比**独立裁决（POST-WRITE ≤ PRE-WRITE）——🔴 **不按动作名**，
+   * 适格 + 净增**照过闸**。
+   *
+   * 两个消费方，同一个判据（作者 2026-09-15 裁定 A 的机械形态 = 「满格时放行删除/替换类
+   * 条目落盘，append 类仍拒至回到预算内」，定性 = 把闸对齐其已文档化设计初衷）：
+   *   - 本闸的预算分支（`exempt = shrinkExempt(pre, bytes, shrinkChannel)`）；
+   *   - [[nebflow.core.tools.MemoryQueue]] 的预算停点 + 停点闩（消费侧前置计划）——
+   *     目标超硬顶时，缩容方向（真收缩）条目照旧放行、净增条目照旧被截断。
+   *
+   * 抽成单源的理由：两处若各写一份「收缩」判据，迟早出现「计划面放行、落盘闸拒绝」
+   * （或反之）的判据漂移——那正是「超限文件的自救路径被自己的前置闸掐死」的死锁成因。
+   *
+   * 纯函数、零 IO（供 [[nebflow.core.tools.MemoryQueue]] 的只读计划面共用）。
+   */
   def shrinkExempt(preBytes: Long, newBytes: Long, shrinkChannel: Boolean): Boolean =
     shrinkChannel && newBytes <= preBytes
 
-  /** 现文件字节 = 豁免判据的 PRE-WRITE 腿。目标不存在 ⇒ 0（首次写入 ⇒ 任何内容都是净增，
-    * 不豁免）；读元数据失败 ⇒ 也按 0（保守：不豁免；后续预算闸与快照照走，无静默分支）。
-    * 只读元数据，从不写盘。 */
+  /**
+   * 现文件字节 = 豁免判据的 PRE-WRITE 腿。目标不存在 ⇒ 0（首次写入 ⇒ 任何内容都是净增，
+   * 不豁免）；读元数据失败 ⇒ 也按 0（保守：不豁免；后续预算闸与快照照走，无静默分支）。
+   * 只读元数据，从不写盘。
+   */
   private def preSizeBytes(path: os.Path): Long =
     try if os.exists(path) then os.size(path).toLong else 0L
     catch case _: Exception => 0L
 
-  /** **纯收缩豁免判据（单源）**——本闸与消费侧前置计划（[[nebflow.core.tools.MemoryQueue]]
-    * 的预算停点）共用同一个字节比口径，见 [[shrinkExempt]]。
-    *
-    * 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
-    *
-    * `shrinkChannel` = 调用方声明自己走收缩通道（`replace_section`）；是否真豁免由本方法用
-    * **字节比**独立判定（见头注「纯收缩豁免」）——适格 + 净增照过闸。
-    *
-    * 副作用三处（便于 spec 直测）：软线 WARN 日志、PRE-WRITE 字节读（只读元数据）、
-    * 放行路径上的写前快照。**拒绝路径零文件写**：不落目标文件、不落快照。 */
-  def decide(target: String, path: os.Path, newContent: String, shrinkChannel: Boolean = false): Either[Rejected, Unit] =
+  /**
+   * **纯收缩豁免判据（单源）**——本闸与消费侧前置计划（[[nebflow.core.tools.MemoryQueue]]
+   * 的预算停点）共用同一个字节比口径，见 [[shrinkExempt]]。
+   *
+   * 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
+   *
+   * `shrinkChannel` = 调用方声明自己走收缩通道（`replace_section`）；是否真豁免由本方法用
+   * **字节比**独立判定（见头注「纯收缩豁免」）——适格 + 净增照过闸。
+   *
+   * 副作用三处（便于 spec 直测）：软线 WARN 日志、PRE-WRITE 字节读（只读元数据）、
+   * 放行路径上的写前快照。**拒绝路径零文件写**：不落目标文件、不落快照。
+   */
+  def decide(
+    target: String,
+    path: os.Path,
+    newContent: String,
+    shrinkChannel: Boolean = false
+  ): Either[Rejected, Unit] =
     val bytes = newContent.getBytes(StandardCharsets.UTF_8).length.toLong
     val exempt = shrinkExempt(preSizeBytes(path), bytes, shrinkChannel)
     val budget: Either[Rejected, Unit] =
@@ -138,11 +150,15 @@ object MemoryWriteGate:
       // 闸 2（唯一触发点 = 「预算闸放行、即将落盘」）：无快照不落笔（fail-closed）。
       MemorySnapshot.snapshotBeforeWrite(path) match
         case Left(reason) => Left(Rejected(Code.Snapshot, snapshotDetail(target, path, reason)))
-        case Right(_)     => Right(())
+        case Right(_) => Right(())
     }
 
-  /** IO 形态：`Left` ⇒ `raiseError`（错误沿 IO 通道向上；调用方无法在不知不觉中吞掉，
-    * 与旧路径 `Either[ToolError, …]` 的「结构化拒绝」同形）。 */
+  end decide
+
+  /**
+   * IO 形态：`Left` ⇒ `raiseError`（错误沿 IO 通道向上；调用方无法在不知不觉中吞掉，
+   * 与旧路径 `Either[ToolError, …]` 的「结构化拒绝」同形）。
+   */
   def guard(target: String, path: os.Path, newContent: String, shrinkChannel: Boolean = false): IO[Unit] =
     IO.blocking(decide(target, path, newContent, shrinkChannel)).flatMap {
       case Right(()) => IO.unit
@@ -161,9 +177,9 @@ object MemoryWriteGate:
   private def budgetDetail(target: String, path: os.Path, bytes: Long, hard: Long, newContent: String): String =
     val pct = if hard > 0 then f"${bytes * 100.0 / hard}%.0f%%" else "?"
     val label = target match
-      case "user"  => "~/.nebflow/User.md"
+      case "user" => "~/.nebflow/User.md"
       case "agent" => "~/.nebflow/agents/Nebula/memory.md"
-      case other   => path.toString
+      case other => path.toString
     s"""$path would reach $bytes bytes ($pct of the $hard-byte hard budget for target='$target'), so the write was refused; $label is untouched.
        |Budget is enforced on the WRITE side (injection is never truncated — an over-budget memory taxes every future session instead).
        |Consolidate first, then write. Largest sections:

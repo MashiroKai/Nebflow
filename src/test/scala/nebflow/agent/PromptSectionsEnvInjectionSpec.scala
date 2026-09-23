@@ -86,11 +86,13 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       prevPid match
         case Some(v) => System.setProperty("nebflow.gateway.pid", v)
-        case None    => System.clearProperty("nebflow.gateway.pid")
+        case None => System.clearProperty("nebflow.gateway.pid")
       prevPort match
         case Some(v) => System.setProperty("nebflow.gateway.port", v)
-        case None    => System.clearProperty("nebflow.gateway.port")
+        case None => System.clearProperty("nebflow.gateway.port")
       os.remove.all(tempRoot)
+
+    end try
 
   test("scala-level fallback: prop absent → PID row still equals the runtime pid (never a hardcoded value)"):
     // 反向契约钉死：renderWithScript 对 NEBFLOW_PID 有双保险——system prop 缺失时
@@ -131,7 +133,8 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       prevPid match
         case Some(v) => System.setProperty("nebflow.gateway.pid", v)
-        case None    => System.clearProperty("nebflow.gateway.pid")
+        case None => System.clearProperty("nebflow.gateway.pid")
       os.remove.all(tempRoot)
+    end try
 
 end PromptSectionsEnvInjectionSpec

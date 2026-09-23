@@ -112,8 +112,10 @@ object PathUtil:
   // 成功率 0%）；且三方参照系（system.md / NodeList worktrees[] / 校验层）互不
   // 一致。此处收口为单一权威实现，NodeTools 与 NodeEngine 引同一份。
 
-  /** worktree 归一化拒绝文案（轴 2 可行动化）：正例裸名 + 禁形态 + 补救命令 +
-    * 错误码（EMPTY_NODE_CONNECTION 同风格，LLM 可自纠）。 */
+  /**
+   * worktree 归一化拒绝文案（轴 2 可行动化）：正例裸名 + 禁形态 + 补救命令 +
+   * 错误码（EMPTY_NODE_CONNECTION 同风格，LLM 可自纠）。
+   */
   val WorktreeFormatError: String =
     "Worktree must be a bare directory name under the project's .nebflow/worktrees/ — " +
       "e.g. \"micorb-config-hide\". Do NOT include the \"worktrees/\" prefix, path separators, " +
@@ -121,15 +123,16 @@ object PathUtil:
       "git worktree add <workspace>/.nebflow/worktrees/<name> -b <branch>, " +
       "then pass worktree: \"<name>\". (WORKTREE_FORMAT)"
 
-  /** worktree 参数归一化：任意合理形态 → worktrees/ 下裸段名；不可归一 →
-    * Left(可行动报错)。
-    *
-    * 规则：trim → 剥 leading "./" → 剥 ".nebflow/worktrees/" / "worktrees/" /
-    * ".nebflow/" 前缀（各剥一次）。拒绝：绝对路径 / 含 ".." / 剥后仍含 "/" /
-    * 剥后为空（含 "."）。
-    *
-    * 安全边界：只剥已知固定前缀，不做任意路径解析；拒绝面（绝对路径/..）零放宽。
-    */
+  /**
+   * worktree 参数归一化：任意合理形态 → worktrees/ 下裸段名；不可归一 →
+   * Left(可行动报错)。
+   *
+   * 规则：trim → 剥 leading "./" → 剥 ".nebflow/worktrees/" / "worktrees/" /
+   * ".nebflow/" 前缀（各剥一次）。拒绝：绝对路径 / 含 ".." / 剥后仍含 "/" /
+   * 剥后为空（含 "."）。
+   *
+   * 安全边界：只剥已知固定前缀，不做任意路径解析；拒绝面（绝对路径/..）零放宽。
+   */
   def normalizeWorktree(raw: String): Either[String, String] =
     val stripped = raw.trim.stripPrefix("./")
     if isAbsolute(stripped) then Left(WorktreeFormatError)
@@ -145,20 +148,23 @@ object PathUtil:
         Left(WorktreeFormatError)
       else Right(bare)
 
-  /** `.nebflow/` 顶层保留名（QC P1）：worktrees/ 容器 + 项目级系统目录
-    * （skills/ commands/，见 SkillService.projectSkillPaths/projectCommandPaths）。
-    * 顶层 fallback 永不把这些名字解析为 worktree——否则 `worktree: "skills"` 会
-    * 因 `.nebflow/skills` 实存而通过校验、节点在系统目录里运行，且 NodeList 会
-    * 主动把它们列为候选（参照系污染）。权威位置 worktrees/<名> 不受此限。 */
+  /**
+   * `.nebflow/` 顶层保留名（QC P1）：worktrees/ 容器 + 项目级系统目录
+   * （skills/ commands/，见 SkillService.projectSkillPaths/projectCommandPaths）。
+   * 顶层 fallback 永不把这些名字解析为 worktree——否则 `worktree: "skills"` 会
+   * 因 `.nebflow/skills` 实存而通过校验、节点在系统目录里运行，且 NodeList 会
+   * 主动把它们列为候选（参照系污染）。权威位置 worktrees/<名> 不受此限。
+   */
   val ReservedTopLevelNames: Set[String] = Set("worktrees", "skills", "commands")
 
-  /** worktree 目录双位置实存解析：worktrees/<名>（权威位置）优先，
-    * .nebflow/<名>（顶层存量——现网节点全在顶层；今日生产顶层同名条目为指向
-    * 权威位置的软链，两分支产出同物理目录，回归零影响）fallback，但保留名
-    * （ReservedTopLevelNames）不参与 fallback。两处均不存在 → None。NodeTools
-    * 校验与 NodeEngine 运行时 cwd 引同一份（参照系唯一）。os.exists 沿软链
-    * （follow-links）语义与现状一致。
-    */
+  /**
+   * worktree 目录双位置实存解析：worktrees/<名>（权威位置）优先，
+   * .nebflow/<名>（顶层存量——现网节点全在顶层；今日生产顶层同名条目为指向
+   * 权威位置的软链，两分支产出同物理目录，回归零影响）fallback，但保留名
+   * （ReservedTopLevelNames）不参与 fallback。两处均不存在 → None。NodeTools
+   * 校验与 NodeEngine 运行时 cwd 引同一份（参照系唯一）。os.exists 沿软链
+   * （follow-links）语义与现状一致。
+   */
   def resolveWorktreeDir(workspace: os.Path, bareName: String): Option[os.Path] =
     val authoritative = workspace / ".nebflow" / "worktrees" / bareName
     if os.exists(authoritative) then Some(authoritative)
@@ -167,14 +173,15 @@ object PathUtil:
       val legacy = workspace / ".nebflow" / bareName
       if os.exists(legacy) then Some(legacy) else None
 
-  /** 节点运行时 projectRoot（cwd/沙箱根来源）解析——NodeEngine 单一调用点。
-    * 存量裸名 / 新前缀形态均先归一再双位置实存：
-    *   - 命中 → 实存目录（顶层命中 = 与旧公式 `(os.Path(workspace) / ".nebflow" /
-    *     wt).toString` 逐字节一致，回归红线）；
-    *   - 两处均不存在 → 旧公式路径（校验期实存、运行期目录被删窗口的字节等价兜底）；
-    *   - 归一化拒绝（损坏存储值）→ workspace 兜底（旧实现此处 InvalidSegment
-    *     炸 spawn，§5.2 同模式脆点亮）。
-    */
+  /**
+   * 节点运行时 projectRoot（cwd/沙箱根来源）解析——NodeEngine 单一调用点。
+   * 存量裸名 / 新前缀形态均先归一再双位置实存：
+   *   - 命中 → 实存目录（顶层命中 = 与旧公式 `(os.Path(workspace) / ".nebflow" /
+   *     wt).toString` 逐字节一致，回归红线）；
+   *   - 两处均不存在 → 旧公式路径（校验期实存、运行期目录被删窗口的字节等价兜底）；
+   *   - 归一化拒绝（损坏存储值）→ workspace 兜底（旧实现此处 InvalidSegment
+   *     炸 spawn，§5.2 同模式脆点亮）。
+   */
   def resolveNodeProjectRoot(workspace: String, worktree: Option[String]): String =
     worktree match
       case None => workspace
@@ -182,7 +189,8 @@ object PathUtil:
         normalizeWorktree(wt) match
           case Right(bare) =>
             resolveWorktreeDir(os.Path(workspace), bare)
-              .getOrElse(os.Path(workspace) / ".nebflow" / bare).toString
+              .getOrElse(os.Path(workspace) / ".nebflow" / bare)
+              .toString
           case Left(_) => workspace
 
   /**
@@ -211,39 +219,51 @@ object PathUtil:
   // system.md 文本面）、NodeEngine.injectedPluginBlock（<injected-plugins> 注入
   // 块）、DispatcherContextCatalog.render（分发器双目录段）。
 
-  /** 提示词文本里的数据根占位符 —— 与既有 `{{working_dir}}` / `{{pid}}` 同源
-    * 语法（data.sh JSON 替换通道）。 */
+  /**
+   * 提示词文本里的数据根占位符 —— 与既有 `{{working_dir}}` / `{{pid}}` 同源
+   * 语法（data.sh JSON 替换通道）。
+   */
   val DataRootPlaceholder: String = "{{data_root}}"
 
-  /** `{{data_root}}` 渲染值 / 工具描述插值值（P2-b 回归守卫）：
-    *   - 默认 home ⇒ 字面 `~/<homeDirName>`（当前品牌 = `~/.nebflow`）—— 主实例
-    *     输出逐字节不变；
-    *   - 非默认（隔离实例 / `--home` / 测试换根）⇒ dataRoot 绝对路径 —— 渲染出的
-    *     路径指向**本实例自己的** home。
-    * `def` on purpose：dataRoot 可在对象初始化后被换根（setDataRoot / --home）。 */
+  /**
+   * `{{data_root}}` 渲染值 / 工具描述插值值（P2-b 回归守卫）：
+   *   - 默认 home ⇒ 字面 `~/<homeDirName>`（当前品牌 = `~/.nebflow`）—— 主实例
+   *     输出逐字节不变；
+   *   - 非默认（隔离实例 / `--home` / 测试换根）⇒ dataRoot 绝对路径 —— 渲染出的
+   *     路径指向**本实例自己的** home。
+   * `def` on purpose：dataRoot 可在对象初始化后被换根（setDataRoot / --home）。
+   */
   def dataRootRenderValue: String = renderDataRootValue(dataRoot)
 
-  /** Pure core of [[dataRootRenderValue]] — parameterized so the spec can verify
-    * both rendering tiers without swapping the process-wide data root. */
+  /**
+   * Pure core of [[dataRootRenderValue]] — parameterized so the spec can verify
+   * both rendering tiers without swapping the process-wide data root.
+   */
   private[core] def renderDataRootValue(root: os.Path): String =
     if root == os.home / Branding.homeDirName then "~/" + Branding.homeDirName
     else root.toString
 
-  /** 纯文本变换：`{{data_root}}` → [[dataRootRenderValue]]，其余字节原样透传。
-    * 渲染层单点（播种时替换 / 脚本 sed 两条路线已否决——它们改的是磁盘字节，
-    * 会让插件 digest 漂移并触发信任门重审）。 */
+  /**
+   * 纯文本变换：`{{data_root}}` → [[dataRootRenderValue]]，其余字节原样透传。
+   * 渲染层单点（播种时替换 / 脚本 sed 两条路线已否决——它们改的是磁盘字节，
+   * 会让插件 digest 漂移并触发信任门重审）。
+   */
   def substituteDataRoot(text: String): String =
     if text.contains(DataRootPlaceholder) then text.replace(DataRootPlaceholder, dataRootRenderValue)
     else text
 
-  /** Marker file placed in the LEGACY directory after a one-time migration,
-    * so a later "new dir missing + legacy present" state (user deleted the
-    * new dir) resolves to the legacy dir instead of re-migrating. Fixed
-    * name — an internal fact, not a brand value. */
+  /**
+   * Marker file placed in the LEGACY directory after a one-time migration,
+   * so a later "new dir missing + legacy present" state (user deleted the
+   * new dir) resolves to the legacy dir instead of re-migrating. Fixed
+   * name — an internal fact, not a brand value.
+   */
   private val MigrationMarker = ".rebrand-migrated"
 
-  /** Resolved default root — lazy so the (side-effecting) migration runs at
-    * most once per JVM, on first dataRoot access, thread-safely. */
+  /**
+   * Resolved default root — lazy so the (side-effecting) migration runs at
+   * most once per JVM, on first dataRoot access, thread-safely.
+   */
   private lazy val resolvedDefaultRoot: os.Path =
     resolveDefaultDataRoot(os.home, Branding.homeDirName)
 
@@ -298,6 +318,10 @@ object PathUtil:
           )
           legacyDir
 
+    end if
+
+  end resolveDefaultDataRoot
+
   /**
    * Config file path for READS (L3 rebrand compat): prefer the brand name
    * (brand.conf configFileName), fall back to the HARDCODED legacy
@@ -316,9 +340,11 @@ object PathUtil:
     else if os.exists(dir / "nebflow.json") then dir / "nebflow.json"
     else dir / fileName
 
-  /** Config file path for WRITES: always the brand name. A read-modify-write
-    * cycle (existing from configJsonReadPath, output to here) completes the
-    * file rename migration on first write. */
+  /**
+   * Config file path for WRITES: always the brand name. A read-modify-write
+   * cycle (existing from configJsonReadPath, output to here) completes the
+   * file rename migration on first write.
+   */
   def configJsonWritePath(dir: os.Path): os.Path =
     dir / Branding.configFileName
 

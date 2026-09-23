@@ -60,13 +60,17 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     assert(
       mine.exists(l =>
         l.contains("deletePaths: removed '") && l.contains("a.txt") &&
-          l.contains("kind=file") && l.contains("session=sess-audit-1")),
-      mine.toString)
+          l.contains("kind=file") && l.contains("session=sess-audit-1")
+      ),
+      mine.toString
+    )
     assert(
       mine.exists(l =>
         l.contains((root / "sub").toString) && l.contains("kind=dir-recursive") &&
-          l.contains("session=sess-audit-1")),
-      mine.toString)
+          l.contains("session=sess-audit-1")
+      ),
+      mine.toString
+    )
     os.remove.all(root)
   }
 
@@ -79,12 +83,10 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
         .unsafeRunSync()
     }
     val (deleted, failed) = out
-    assertEquals(deleted, List("vanished.txt"),
-      "不存在的路径仍是「no-op 成功」（既有 BatchDeleteSpec 契约，零行为变更）")
+    assertEquals(deleted, List("vanished.txt"), "不存在的路径仍是「no-op 成功」（既有 BatchDeleteSpec 契约，零行为变更）")
     assertEquals(failed.size, 2, s"越界与项目根自身各落一条 failed，实得 $failed")
     assert(failed.map(_._1).toSet == Set("../outside.txt", "."), failed.toString)
-    assert(auditLines(logs).isEmpty,
-      s"失败 / 未实存路径不得写成功日志（不误报），实得 ${auditLines(logs)}")
+    assert(auditLines(logs).isEmpty, s"失败 / 未实存路径不得写成功日志（不误报），实得 ${auditLines(logs)}")
     assert(os.exists(root / "keep.txt"), "被拒绝的删除不得触碰同级文件")
     os.remove.all(root)
   }
@@ -99,3 +101,4 @@ class DeletePathAuditLogSpec extends munit.FunSuite:
     val dir = WebSocketRoutes.deleteAuditLine("deletePath", "/p/d", "s2", isDir = true)
     assert(dir.contains("kind=dir-recursive"), dir)
   }
+end DeletePathAuditLogSpec

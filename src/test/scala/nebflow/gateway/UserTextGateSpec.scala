@@ -32,8 +32,10 @@ import scala.io.Source
 class UserTextGateSpec extends FunSuite:
 
   private val repoRoot = new java.io.File(".").getAbsoluteFile
+
   private val wsRoutesFile =
     new java.io.File(repoRoot, "src/main/scala/nebflow/gateway/WebSocketRoutes.scala")
+
   private val hubFile =
     new java.io.File(repoRoot, "src/main/scala/nebflow/agent/InteractionHub.scala")
   private val mainScalaDir = new java.io.File(repoRoot, "src/main/scala")
@@ -45,8 +47,10 @@ class UserTextGateSpec extends FunSuite:
     try src.mkString
     finally src.close()
 
-  /** 剥掉块注释与 `//` 行注释后的**代码面** —— 判据只认代码：注释里提到符号名
-    * 不得算「还在」，也不得靠注释凑出「已删」的假绿。 */
+  /**
+   * 剥掉块注释与 `//` 行注释后的**代码面** —— 判据只认代码：注释里提到符号名
+   * 不得算「还在」，也不得靠注释凑出「已删」的假绿。
+   */
   private def codeOnly(src: String): String =
     val noBlock = src.replaceAll("(?s)/\\*.*?\\*/", "")
     noBlock.linesIterator.map(l => l.replaceAll("//.*$", "")).mkString("\n")

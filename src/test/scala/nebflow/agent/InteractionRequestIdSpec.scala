@@ -2,21 +2,24 @@ package nebflow.agent
 
 import munit.CatsEffectSuite
 
-/** 多 AskUser 并发批（#250 第⑤项，2026-09-13 作者裁定「6 项全补」）：
-  * requestId 熵加强的**正负控**。
-  *
-  * 改前形态：5 个生成点各自内联 `UUID.randomUUID().toString.take(8)` —— 32 bit
-  * 随机段、无作用域，而 requestId 是 hub `pending` Map 的全局唯一键（四类请求共
-  * 用一个命名空间）。碰撞 ⇒ 后到者覆盖前者槽位、被覆盖的请求方永久等待。
-  *
-  * 证据级别：**单测级**（无运行实例、无并发运行观测）。
-  */
+/**
+ * 多 AskUser 并发批（#250 第⑤项，2026-09-13 作者裁定「6 项全补」）：
+ * requestId 熵加强的**正负控**。
+ *
+ * 改前形态：5 个生成点各自内联 `UUID.randomUUID().toString.take(8)` —— 32 bit
+ * 随机段、无作用域，而 requestId 是 hub `pending` Map 的全局唯一键（四类请求共
+ * 用一个命名空间）。碰撞 ⇒ 后到者覆盖前者槽位、被覆盖的请求方永久等待。
+ *
+ * 证据级别：**单测级**（无运行实例、无并发运行观测）。
+ */
 class InteractionRequestIdSpec extends CatsEffectSuite:
 
   private val HexOnly = "^[0-9a-f]+$".r
 
-  /** 判据（本 spec 的「强 requestId」定义）：`<scope>-<随机段>`，随机段 ≥16 hex。
-    * 负控 = 旧口径形态（8 hex、无前缀）必须**不满足**本判据。 */
+  /**
+   * 判据（本 spec 的「强 requestId」定义）：`<scope>-<随机段>`，随机段 ≥16 hex。
+   * 负控 = 旧口径形态（8 hex、无前缀）必须**不满足**本判据。
+   */
   private def wellFormed(id: String, scope: String): Boolean =
     id.startsWith(s"$scope-") && {
       val rnd = InteractionRequestId.randomPart(id)
@@ -70,11 +73,11 @@ class InteractionRequestIdSpec extends CatsEffectSuite:
     val ids = prefixes.map { p =>
       p -> List.fill(200)(
         p match
-          case "ask"     => InteractionRequestId.forAskUser()
-          case "asknb"   => InteractionRequestId.forAskUserNonBlocking()
-          case "perm"    => InteractionRequestId.forPermission()
+          case "ask" => InteractionRequestId.forAskUser()
+          case "asknb" => InteractionRequestId.forAskUserNonBlocking()
+          case "perm" => InteractionRequestId.forPermission()
           case "confirm" => InteractionRequestId.forSendConfirm()
-          case _         => InteractionRequestId.forDirPanel()
+          case _ => InteractionRequestId.forDirPanel()
       )
     }
     // 跨类零重叠（旧口径下四类共用一个 32 bit 命名空间，这是碰撞的唯一来源）

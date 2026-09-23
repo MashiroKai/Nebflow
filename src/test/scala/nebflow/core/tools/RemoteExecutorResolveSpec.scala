@@ -29,12 +29,18 @@ class RemoteExecutorResolveSpec extends FunSuite:
 
   // ── 模糊多命中（真歧义）：红证 + 绿 ────────────────────────────────
 
-  private val twoCandidates = List(p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"), p("kai-windows-2", "bbbbbbbb-1111-2222-3333-444444444444"))
+  private val twoCandidates = List(
+    p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"),
+    p("kai-windows-2", "bbbbbbbb-1111-2222-3333-444444444444")
+  )
 
   test("RED: legacy find would silently pick the FIRST candidate under the same two-candidate fixture"):
     val picked = legacyResolve("kai-windows", twoCandidates)
-    assertEquals(picked.map(_.deviceId), Some("aaaaaaaa-1111-2222-3333-444444444444"),
-      "old behavior: first match wins silently — the misfire this batch removes")
+    assertEquals(
+      picked.map(_.deviceId),
+      Some("aaaaaaaa-1111-2222-3333-444444444444"),
+      "old behavior: first match wins silently — the misfire this batch removes"
+    )
 
   test("GREEN: new resolvePeer rejects ambiguity with explicit error + full candidate list"):
     // 查 `kai`：精确层零命中 ⇒ 模糊层（contains）命中两台 ⇒ 真歧义 ⇒ 拒绝 + 候选名单。
@@ -51,7 +57,7 @@ class RemoteExecutorResolveSpec extends FunSuite:
   test("RED-side note: same fixture queried by exact name 'kai-windows' resolves to the exact machine (not ambiguous)"):
     RemoteExecutor.resolvePeer("kai-windows", twoCandidates) match
       case Right(peer) => assertEquals(peer.deviceId, "aaaaaaaa-1111-2222-3333-444444444444")
-      case Left(err)   => fail(s"exact unique match must keep working: ${err.message}")
+      case Left(err) => fail(s"exact unique match must keep working: ${err.message}")
 
   test("GREEN: exact-name unique match still works even when another peer contains the name"):
     // `kai` 精确命中 1 台；`kai-windows` contains 命中 2 台 ⇒ 分层判定：精确层
@@ -59,12 +65,13 @@ class RemoteExecutorResolveSpec extends FunSuite:
     val peers = List(p("kai", "cccccccc-1111-2222-3333-444444444444"), twoCandidates(0), twoCandidates(1))
     RemoteExecutor.resolvePeer("kai", peers) match
       case Right(peer) => assertEquals(peer.deviceId, "cccccccc-1111-2222-3333-444444444444")
-      case Left(err)   => fail(s"exact unique match must not be rejected: ${err.message}")
+      case Left(err) => fail(s"exact unique match must not be rejected: ${err.message}")
 
   // ── 精确多命中（真同名设备）：拒绝 ────────────────────────────────
 
   test("exact duplicate names (two machines, same name) are rejected with candidates"):
-    val peers = List(p("lab-box", "dddddddd-1111-2222-3333-444444444444"), p("lab-box", "eeeeeeee-1111-2222-3333-444444444444"))
+    val peers =
+      List(p("lab-box", "dddddddd-1111-2222-3333-444444444444"), p("lab-box", "eeeeeeee-1111-2222-3333-444444444444"))
     RemoteExecutor.resolvePeer("lab-box", peers) match
       case Left(err) =>
         assert(err.message.contains("ambiguous"))
@@ -77,13 +84,14 @@ class RemoteExecutorResolveSpec extends FunSuite:
     val peers = List(p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"))
     RemoteExecutor.resolvePeer("kai-win", peers) match
       case Right(peer) => assertEquals(peer.deviceId, "aaaaaaaa-1111-2222-3333-444444444444")
-      case Left(err)   => fail(s"single fuzzy match must keep working: ${err.message}")
+      case Left(err) => fail(s"single fuzzy match must keep working: ${err.message}")
 
   test("deviceId-prefix targeting still resolves to the exact machine"):
-    val peers = List(p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"), p("other", "bbbbbbbb-2222-2222-3333-444444444444"))
+    val peers =
+      List(p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"), p("other", "bbbbbbbb-2222-2222-3333-444444444444"))
     RemoteExecutor.resolvePeer("aaaaaaaa", peers) match
       case Right(peer) => assertEquals(peer.deviceName, "kai-windows")
-      case Left(err)   => fail(s"deviceId prefix targeting broke: ${err.message}")
+      case Left(err) => fail(s"deviceId prefix targeting broke: ${err.message}")
 
   test("zero-match error text unchanged (carries Available list; empty peers gets the config hint)"):
     val peers = List(p("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444"))
@@ -94,12 +102,12 @@ class RemoteExecutorResolveSpec extends FunSuite:
       case Right(_) => fail("zero match must stay an error")
     RemoteExecutor.resolvePeer("kai", List.empty) match
       case Left(err) => assert(err.message.contains("No peer devices discovered after scan"))
-      case Right(_)  => fail("empty peers must stay an error")
+      case Right(_) => fail("empty peers must stay an error")
 
   test("case-insensitive exact match preserved"):
     val peers = List(p("KAI-Windows", "aaaaaaaa-1111-2222-3333-444444444444"))
     RemoteExecutor.resolvePeer("kai-windows", peers) match
       case Right(peer) => assertEquals(peer.deviceName, "KAI-Windows")
-      case Left(err)   => fail(s"case-insensitive exact match broke: ${err.message}")
+      case Left(err) => fail(s"case-insensitive exact match broke: ${err.message}")
 
 end RemoteExecutorResolveSpec

@@ -6,59 +6,64 @@ import nebflow.core.PathUtil
 import java.net.{ConnectException, HttpURLConnection, InetSocketAddress, ServerSocket, Socket}
 import scala.util.{Try, Using}
 
-/** Single-instance guard (2026-08-27, hard requirement after a real
-  * double-launch incident): before the gateway boots, verify nothing else is
-  * already serving this port.
-  *
-  * The legacy PID-file guard (ProcessManager, `<dataRoot>/.pid`) only catches
-  * same-home relaunches. Tonight's incident class is wider:
-  *  - cross-home collisions (two `--home`s, one port) — different pid files,
-  *    no guard at all today;
-  *  - a lost/stale pid file (crash cleanup raced, or the first instance was
-  *    started by an older build that wrote no pid);
-  *  - desktop .app double-click — stdout is discarded, so the old text-only
-  *    "already running" message was invisible; the user saw a silently dead
-  *    second app.
-  *
-  * Semantics (user ruling): a second launch must NOT boot a second gateway;
-  * it focuses the existing instance (open its URL — the browser IS the app
-  * window until the native shell lands) or, when the port is held by a
-  * foreign program, fails loudly instead of half-booting and dying at bind.
-  */
+/**
+ * Single-instance guard (2026-08-27, hard requirement after a real
+ * double-launch incident): before the gateway boots, verify nothing else is
+ * already serving this port.
+ *
+ * The legacy PID-file guard (ProcessManager, `<dataRoot>/.pid`) only catches
+ * same-home relaunches. Tonight's incident class is wider:
+ *  - cross-home collisions (two `--home`s, one port) — different pid files,
+ *    no guard at all today;
+ *  - a lost/stale pid file (crash cleanup raced, or the first instance was
+ *    started by an older build that wrote no pid);
+ *  - desktop .app double-click — stdout is discarded, so the old text-only
+ *    "already running" message was invisible; the user saw a silently dead
+ *    second app.
+ *
+ * Semantics (user ruling): a second launch must NOT boot a second gateway;
+ * it focuses the existing instance (open its URL — the browser IS the app
+ * window until the native shell lands) or, when the port is held by a
+ * foreign program, fails loudly instead of half-booting and dying at bind.
+ */
 object SingleInstanceGuard:
 
   sealed trait PortState
-  case object PortFree                      extends PortState
+  case object PortFree extends PortState
   final case class NebflowInstance(url: String) extends PortState
   final case class ForeignOccupant(detail: String) extends PortState
 
-  /** Max time checkPort waits for TIME_WAIT sockets to drain before booting
-    * anyway (covers Linux's fixed 60s TW; macOS is 30s). Only burns when a
-    * kill-and-restart actually left TW sockets — free ports and live
-    * occupants classify instantly. */
+  /**
+   * Max time checkPort waits for TIME_WAIT sockets to drain before booting
+   * anyway (covers Linux's fixed 60s TW; macOS is 30s). Only burns when a
+   * kill-and-restart actually left TW sockets — free ports and live
+   * occupants classify instantly.
+   */
   val MaxDrainWaitMs: Long = 65_000L
   private val DrainPollMs: Long = 1_000L
   private val ConnectProbeTimeoutMs: Int = 1500
 
-  /** Sync variant for callers already inside blocking context (Main's
-    * pid-file fast path). None == not a live nebflow port.
-    */
+  /**
+   * Sync variant for callers already inside blocking context (Main's
+   * pid-file fast path). None == not a live nebflow port.
+   */
   def checkPortBlocking(host: String, port: Int): Option[String] =
     probeNebflow(port)
 
-  /** Classifier inputs — host/port mirror exactly what EmberServerBuilder
-    * will bind, so "free here" == "Ember can bind here".
-    *
-    * R1 (2026-08-30, restart-script-stability 设计件):
-    * a failed strict bind no longer implies a foreign occupant — a killed
-    * instance leaves its closed connections in kernel TIME_WAIT (macOS
-    * 2×MSL = 30s, Linux fixed 60s), which blocks bind but has NO listener.
-    * A TCP connect probe disambiguates: refused → TIME_WAIT only → wait out
-    * the drain window and boot (fail-open at the ceiling); accepted → live
-    * occupant → identity probe as before. The single-instance red line is
-    * untouched: real listeners still classify NebflowInstance /
-    * ForeignOccupant and still refuse a double boot.
-    */
+  /**
+   * Classifier inputs — host/port mirror exactly what EmberServerBuilder
+   * will bind, so "free here" == "Ember can bind here".
+   *
+   * R1 (2026-08-30, restart-script-stability 设计件):
+   * a failed strict bind no longer implies a foreign occupant — a killed
+   * instance leaves its closed connections in kernel TIME_WAIT (macOS
+   * 2×MSL = 30s, Linux fixed 60s), which blocks bind but has NO listener.
+   * A TCP connect probe disambiguates: refused → TIME_WAIT only → wait out
+   * the drain window and boot (fail-open at the ceiling); accepted → live
+   * occupant → identity probe as before. The single-instance red line is
+   * untouched: real listeners still classify NebflowInstance /
+   * ForeignOccupant and still refuse a double boot.
+   */
   def checkPort(host: String, port: Int, drainWaitMs: Long = MaxDrainWaitMs): IO[PortState] =
     IO.blocking {
       probeOnce(host, port) match
@@ -81,21 +86,25 @@ object SingleInstanceGuard:
           state.getOrElse(PortFree)
     }
 
-  /** One-shot classification WITHOUT the drain wait. Right(state) = decided
-    * (free or live occupant identified); Left(()) = bind blocked but no live
-    * listener — kernel TIME_WAIT sockets only. */
+  /**
+   * One-shot classification WITHOUT the drain wait. Right(state) = decided
+   * (free or live occupant identified); Left(()) = bind blocked but no live
+   * listener — kernel TIME_WAIT sockets only.
+   */
   private[cli] def probeOnce(host: String, port: Int): Either[Unit, PortState] =
     if strictBindOk(host, port) then Right(PortFree)
     else if connectAccepted(port) then
       Right(
         probeNebflow(port) match
           case Some(url) => NebflowInstance(url)
-          case None      => ForeignOccupant(s"port $port is held by another program")
+          case None => ForeignOccupant(s"port $port is held by another program")
       )
     else Left(())
 
-  /** Strict bind probe — reuse off so a wildcard bind can't pass over a
-    * live specific-address listener (the 2026-08-27 half-boot hole). */
+  /**
+   * Strict bind probe — reuse off so a wildcard bind can't pass over a
+   * live specific-address listener (the 2026-08-27 half-boot hole).
+   */
   private def strictBindOk(host: String, port: Int): Boolean =
     Try {
       val ss = new ServerSocket()
@@ -111,10 +120,12 @@ object SingleInstanceGuard:
       finally ss.close()
     }.isSuccess
 
-  /** TCP connect probe. true = a live listener accepted the connection;
-    * false = refused/timeout → no listener (TIME_WAIT sockets at most,
-    * which refuse connections). Probes the loopback address regardless of
-    * the bind host — that is where any real occupant listens. */
+  /**
+   * TCP connect probe. true = a live listener accepted the connection;
+   * false = refused/timeout → no listener (TIME_WAIT sockets at most,
+   * which refuse connections). Probes the loopback address regardless of
+   * the bind host — that is where any real occupant listens.
+   */
   private def connectAccepted(port: Int): Boolean =
     Try {
       val s = new Socket()
@@ -124,23 +135,28 @@ object SingleInstanceGuard:
       finally s.close()
     }.getOrElse(false)
 
-  /** Hot-restart handover probe (SuccessorGate [s4], hot-restart 批): the live-
-    * listener check for the successor's port-entry gate. TCP connect ONLY —
-    * never binds. true = a listener accepted (foreign-preemption window — the
-    * caller must fall back to ensureSingleInstance semantics); false =
-    * refused/timeout = no live listener even while TIME_WAIT drain is pending
-    * (the real bind and its fail-open ceiling stay owned by the Ember build). */
+  /**
+   * Hot-restart handover probe (SuccessorGate [s4], hot-restart 批): the live-
+   * listener check for the successor's port-entry gate. TCP connect ONLY —
+   * never binds. true = a listener accepted (foreign-preemption window — the
+   * caller must fall back to ensureSingleInstance semantics); false =
+   * refused/timeout = no live listener even while TIME_WAIT drain is pending
+   * (the real bind and its fail-open ceiling stay owned by the Ember build).
+   */
   def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
 
-  /** HTTP probe of the occupant's /api/health. MUST bypass the JVM system
-    * proxy (a local HTTP proxy otherwise swallows localhost, slow-failing the
-    * probe). Identification accepts EITHER the new `product:"nebflow"` marker
-    * OR the legacy `version` field — a running older build (pre-product-field)
-    * is still our instance and must still be focused, not fought.
-    */
+  /**
+   * HTTP probe of the occupant's /api/health. MUST bypass the JVM system
+   * proxy (a local HTTP proxy otherwise swallows localhost, slow-failing the
+   * probe). Identification accepts EITHER the new `product:"nebflow"` marker
+   * OR the legacy `version` field — a running older build (pre-product-field)
+   * is still our instance and must still be focused, not fought.
+   */
   private def probeNebflow(port: Int): Option[String] =
     Try {
-      val conn = java.net.URI.create(s"http://127.0.0.1:$port/api/health").toURL
+      val conn = java.net.URI
+        .create(s"http://127.0.0.1:$port/api/health")
+        .toURL
         .openConnection(java.net.Proxy.NO_PROXY)
         .asInstanceOf[HttpURLConnection]
       conn.setConnectTimeout(1500)
@@ -157,10 +173,11 @@ object SingleInstanceGuard:
       finally conn.disconnect()
     }.toOption.flatten
 
-  /** The focus action for an already-running instance: visible message +
-    * browser open (the current product form — a native window replaces this
-    * when the desktop shell lands). Respect --no-browser / headless.
-    */
+  /**
+   * The focus action for an already-running instance: visible message +
+   * browser open (the current product form — a native window replaces this
+   * when the desktop shell lands). Respect --no-browser / headless.
+   */
   def focusExisting(url: String, reason: String, openBrowser: Boolean): IO[Unit] =
     IO.println(s"nebflow is already running ($reason)") *>
       IO.println(s"focusing existing instance: $url") *>

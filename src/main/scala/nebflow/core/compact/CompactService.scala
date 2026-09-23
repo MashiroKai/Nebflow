@@ -47,15 +47,19 @@ object CompactService:
       case _ => NebulaCompactReminder // Root (also catches Legacy)
     Message(MessageRole.User, Left(prompt))
 
-  /** Head signature shared by every profile reminder (CompactPreamble's first
-    * two lines — stable across profiles because they all prepend the same
-    * preamble). Used to recognize a compact reminder inside a message list. */
+  /**
+   * Head signature shared by every profile reminder (CompactPreamble's first
+   * two lines — stable across profiles because they all prepend the same
+   * preamble). Used to recognize a compact reminder inside a message list.
+   */
   private val ReminderSignature = "<system-reminder>\nContext compaction required"
 
-  /** Is this message a compact reminder injected by [[buildCompactReminder]]?
-    * FullCompact uses this to exclude the trailing reminder from tail-round
-    * preservation — the reminder is the summarization instruction, not
-    * conversation content. */
+  /**
+   * Is this message a compact reminder injected by [[buildCompactReminder]]?
+   * FullCompact uses this to exclude the trailing reminder from tail-round
+   * preservation — the reminder is the summarization instruction, not
+   * conversation content.
+   */
   def isCompactReminder(msg: Message): Boolean =
     msg.content match
       case Left(text) => text.startsWith(ReminderSignature)

@@ -19,25 +19,26 @@ import fs2.Stream
 
 import scala.concurrent.duration.*
 
-/** devoscfix 批（2026-09-17）· **F-C devices 差量基线每轮推进**的双向钉。
-  *
-  * 缺陷形态（诊断 §1 轻档 / §7 F-C）：`[devices] Devices changed:` 的差量基线
-  * **只在 lifecycle 轮推进**（旧 `AgentCore.scala:865-870`）⇒ 一次真 roster 变更
-  * 在其后**每一轮**被重新差量、逐轮复播同一条 ⇒ 诊断实测 09-16 `+KAI` 28 行 /
-  * 23min 逐字相同（把「变更次数」高估达一个数量级）。
-  *
-  * 验收（作者三答② / P2，双向）：
-  *  - (a) **同内容复播归零**：同一设备清单连续 N ≥ 5 轮 ⇒ 提示行计数 **0**
-  *    （改前 = 每轮各重复一遍，本 spec 在基线上必红）；
-  *  - (b) **真实 roster 变更仍提示**：成员增 / 成员删 / 条目文本变更（画像后缀）
-  *    各一例 ⇒ 提示行**仍出**，且行格式逐字不变（`+<entry>` / `-<entry>`）。
-  *
-  * 测法：**真实 `AgentActor` 回合管线** —— 真 `NeblinkService`（peer 表即 roster 真源）
-  * + 真 `RemoteExecutor` 装配 + 捕获真实 `LlmRequest` 的 mock LLM；断言打在
-  * 「模型真正收到的那条 `Devices changed:` 提示行」上，不经任何私有函数。
-  * 🔴 关键取舍：基线**只在提示行真的进了请求**时推进（见 `AgentCore` 实现处注释）
-  * —— 未播报的真变更保持 pending，下一个真用户轮照常提示。
-  */
+/**
+ * devoscfix 批（2026-09-17）· **F-C devices 差量基线每轮推进**的双向钉。
+ *
+ * 缺陷形态（诊断 §1 轻档 / §7 F-C）：`[devices] Devices changed:` 的差量基线
+ * **只在 lifecycle 轮推进**（旧 `AgentCore.scala:865-870`）⇒ 一次真 roster 变更
+ * 在其后**每一轮**被重新差量、逐轮复播同一条 ⇒ 诊断实测 09-16 `+KAI` 28 行 /
+ * 23min 逐字相同（把「变更次数」高估达一个数量级）。
+ *
+ * 验收（作者三答② / P2，双向）：
+ *  - (a) **同内容复播归零**：同一设备清单连续 N ≥ 5 轮 ⇒ 提示行计数 **0**
+ *    （改前 = 每轮各重复一遍，本 spec 在基线上必红）；
+ *  - (b) **真实 roster 变更仍提示**：成员增 / 成员删 / 条目文本变更（画像后缀）
+ *    各一例 ⇒ 提示行**仍出**，且行格式逐字不变（`+<entry>` / `-<entry>`）。
+ *
+ * 测法：**真实 `AgentActor` 回合管线** —— 真 `NeblinkService`（peer 表即 roster 真源）
+ * + 真 `RemoteExecutor` 装配 + 捕获真实 `LlmRequest` 的 mock LLM；断言打在
+ * 「模型真正收到的那条 `Devices changed:` 提示行」上，不经任何私有函数。
+ * 🔴 关键取舍：基线**只在提示行真的进了请求**时推进（见 `AgentCore` 实现处注释）
+ * —— 未播报的真变更保持 pending，下一个真用户轮照常提示。
+ */
 class DevicesDeltaBaselineSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 240.seconds
@@ -48,8 +49,10 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
   private val DeviceMarker = "Devices changed:"
 
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -100,7 +103,7 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -118,27 +121,36 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
       waitUntil(20.seconds)(reqs.get.map(_.size >= n)) *>
       reqs.get.map(_(n - 1))
 
-  /** The devices reminder delta lines exactly as injected (🔴 not a private-fn call:
-    * this reads the rendered request the model sees). Empty = no devices reminder. */
+  /**
+   * The devices reminder delta lines exactly as injected (🔴 not a private-fn call:
+   * this reads the rendered request the model sees). Empty = no devices reminder.
+   */
   private def deviceDeltaLines(req: LlmRequest): List[String] =
     val lines = req.messages.map(_.textContent).mkString("\n").split("\n").toList
-    val idx   = lines.indexWhere(_.contains(DeviceMarker))
+    val idx = lines.indexWhere(_.contains(DeviceMarker))
     if idx < 0 then Nil
     else lines.drop(idx + 1).takeWhile(l => l.startsWith("+") || l.startsWith("-"))
 
-  private val peerY = PeerInfo(deviceId = "dev-y", deviceName = "DEVY", platform = "linux", address = "http://127.0.0.1:9")
-  private val peerZ = PeerInfo(deviceId = "dev-z", deviceName = "DEVZ", platform = "linux", address = "http://127.0.0.1:8")
-  private val peerX = PeerInfo(deviceId = "dev-x", deviceName = "DEVX", platform = "macos", address = "http://127.0.0.1:7")
+  private val peerY =
+    PeerInfo(deviceId = "dev-y", deviceName = "DEVY", platform = "linux", address = "http://127.0.0.1:9")
 
-  /** 画像 store 原文（`<dataRoot>/neblink/device-profiles.json`）——条目文本变更
-    * （画像后缀）的真源，走真 decode + 真渲染路径。
-    *
-    * 🔴 键集必须与 `ProfileField`（`value` + `probedAt`，无 `stale` 键）逐字对齐：
-    * 缺 `probedAt` 会让**整个** `fields` map decode 失败 ⇒ `DeviceProfile.load`
-    * fail-closed 回空 Map ⇒ 后缀永不渲染（本 spec 首轮即踩此坑，读数见
-    * `logs/03_test_fixed.log`：差量只有 `+DEVZ/-DEVY`、无 DEVX 条目）。 */
+  private val peerZ =
+    PeerInfo(deviceId = "dev-z", deviceName = "DEVZ", platform = "linux", address = "http://127.0.0.1:8")
+
+  private val peerX =
+    PeerInfo(deviceId = "dev-x", deviceName = "DEVX", platform = "macos", address = "http://127.0.0.1:7")
+
+  /**
+   * 画像 store 原文（`<dataRoot>/neblink/device-profiles.json`）——条目文本变更
+   * （画像后缀）的真源，走真 decode + 真渲染路径。
+   *
+   * 🔴 键集必须与 `ProfileField`（`value` + `probedAt`，无 `stale` 键）逐字对齐：
+   * 缺 `probedAt` 会让**整个** `fields` map decode 失败 ⇒ `DeviceProfile.load`
+   * fail-closed 回空 Map ⇒ 后缀永不渲染（本 spec 首轮即踩此坑，读数见
+   * `logs/03_test_fixed.log`：差量只有 `+DEVZ/-DEVY`、无 DEVX 条目）。
+   */
   private def writeProfile(dataRoot: os.Path, cwd: String): Unit =
-    val p   = dataRoot / "neblink" / "device-profiles.json"
+    val p = dataRoot / "neblink" / "device-profiles.json"
     val now = System.currentTimeMillis()
     os.makeDir.all(p / os.up)
     os.write.over(
@@ -150,14 +162,14 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
 
   test("P2: 同内容复播归零（N=6 轮）+ 真实变更（成员增/删 + 画像文本）仍提示") {
     val system = ActorSystem("devices-delta")
-    val tmp    = os.temp.dir()
+    val tmp = os.temp.dir()
     seedNebula(tmp)
-    val prevRoot  = PathUtil.dataRoot
+    val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
     PathUtil.setDataRoot(tmp / "data")
     try
-      val sid    = "devices-delta-session"
+      val sid = "devices-delta-session"
       val dataRt = tmp / "data"
       val program = for
         requests <- IO.ref(List.empty[LlmRequest])
@@ -241,13 +253,14 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
       // `logs/07_mutation_M2_fc.log`：报的是清理异常而非断言）。清理失败只留 temp
       // 目录，绝不得掩盖测试结论。
       var attempts = 0
-      var removed  = false
+      var removed = false
       while !removed && attempts < 3 do
         attempts += 1
         try
           os.remove.all(tmp)
           removed = true
         catch case _: Exception => IO.sleep(200.millis).unsafeRunSync()
+    end try
   }
 
   // ==================================================================
@@ -267,6 +280,7 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
   private final class RemindersAppender
       extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val lines = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       lines.add(event.getFormattedMessage)
 
@@ -286,24 +300,25 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
 
   private val peerP1 =
     PeerInfo(deviceId = "dev-m1-p1", deviceName = "PEERP1", platform = "linux", address = "http://127.0.0.1:6")
+
   private val peerP2 =
     PeerInfo(deviceId = "dev-m1-p2", deviceName = "PEERP2", platform = "linux", address = "http://127.0.0.1:5")
 
   test("F-2 M1: 同一设备变化在 2 个会话只计一次（两侧仍各收到差量；改前 = 每会话各一行）") {
     val system = ActorSystem("devices-delta-m1")
-    val tmp    = os.temp.dir()
+    val tmp = os.temp.dir()
     seedNebula(tmp)
-    val prevRoot   = PathUtil.dataRoot
+    val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
     nebflow.core.LlmLogWriter.setEnabled(false)
     PathUtil.setDataRoot(tmp / "data")
     // 计数账本复位 ⇒ 本用例的读数不受同 JVM 内其他 suite/用例已计键影响（🔴 断言确定性）
     SystemReminders.DeviceChangeCount.reset()
     try
-      val sidA   = "devices-m1-a"
-      val sidB   = "devices-m1-b"
+      val sidA = "devices-m1-a"
+      val sidB = "devices-m1-b"
       val program = for
-        requests  <- IO.ref(List.empty[LlmRequest])
+        requests <- IO.ref(List.empty[LlmRequest])
         resources <- mkResources(system, tmp, CaptureLlm(requests))
         dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
         ms <- NeblinkService.create(0, dispatcher)
@@ -360,9 +375,18 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
         case (reqA2, reqB2, captured) =>
           val linesA = deviceDeltaLines(reqA2)
           val linesB = deviceDeltaLines(reqB2)
-          assert(linesA.nonEmpty, s"会话 A 必须被告知这次 roster 变化（注入是每会话的）: ${reqA2.messages.map(_.textContent).mkString("\n")}")
-          assert(linesB.nonEmpty, s"会话 B 必须被告知这次 roster 变化（注入是每会话的）: ${reqB2.messages.map(_.textContent).mkString("\n")}")
-          assert(linesA.exists(_.contains("PEERP2")) && linesB.exists(_.contains("PEERP2")), s"A/B 都必须看到 +PEERP2（A=$linesA B=$linesB）")
+          assert(
+            linesA.nonEmpty,
+            s"会话 A 必须被告知这次 roster 变化（注入是每会话的）: ${reqA2.messages.map(_.textContent).mkString("\n")}"
+          )
+          assert(
+            linesB.nonEmpty,
+            s"会话 B 必须被告知这次 roster 变化（注入是每会话的）: ${reqB2.messages.map(_.textContent).mkString("\n")}"
+          )
+          assert(
+            linesA.exists(_.contains("PEERP2")) && linesB.exists(_.contains("PEERP2")),
+            s"A/B 都必须看到 +PEERP2（A=$linesA B=$linesB）"
+          )
           val deviceLines = captured.filter(_.contains("[devices]"))
           assertEquals(
             deviceLines.size,
@@ -370,18 +394,20 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
             s"同一设备变化在 2 个会话只计一次（改前 = 每个会话各一行）:\n${deviceLines.mkString("\n")}"
           )
           assertEquals(SystemReminders.DeviceChangeCount.total, 1L, "进程内计数 = 1")
+      end match
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       var attempts = 0
-      var removed  = false
+      var removed = false
       while !removed && attempts < 3 do
         attempts += 1
         try
           os.remove.all(tmp)
           removed = true
         catch case _: Exception => IO.sleep(200.millis).unsafeRunSync()
+    end try
   }
 
 end DevicesDeltaBaselineSpec

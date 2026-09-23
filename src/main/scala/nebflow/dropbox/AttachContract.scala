@@ -65,11 +65,13 @@ object AttachContract:
   // 🔴 与附件腿/好友腿的关系：`ChunkSize`（4 MiB）仍是**它们的**缺省值（零回归）；
   // 设备腿（`DropboxService`）改用 `adaptiveChunkSize(...)` 取会话值，上限仍是 4 MiB。
 
-  /** 块大小下限 = 256 KiB（**建议值**，非作者给定数）。
-    *
-    * 依据：relay 腿可等窗口 45 s ÷ 256 KiB ⇒ 容忍 ~5.8 KB/s；实测底座下沿 24.6 KB/s 仍有 ~8× 余量。
-    * 代价：块变小 ⇒ 块数上升、RTT 成本线性上升（严格停等、零并行 —— 方案卡 P-7/P1-1）。
-    * 故下限取「够快能成」的最小档，不再往下压。 */
+  /**
+   * 块大小下限 = 256 KiB（**建议值**，非作者给定数）。
+   *
+   * 依据：relay 腿可等窗口 45 s ÷ 256 KiB ⇒ 容忍 ~5.8 KB/s；实测底座下沿 24.6 KB/s 仍有 ~8× 余量。
+   * 代价：块变小 ⇒ 块数上升、RTT 成本线性上升（严格停等、零并行 —— 方案卡 P-7/P1-1）。
+   * 故下限取「够快能成」的最小档，不再往下压。
+   */
   val MinChunkSize: Int = 256 * 1024
 
   /** 块大小上限 = [[ChunkSize]]（4 MiB）：**不放大**既有线上块长，快链路行为与今天一致。 */
@@ -78,10 +80,12 @@ object AttachContract:
   /** 块大小量化粒度 = 64 KiB：块大小取整数倍，读数/日志可读，免出现 402653.7 这类值。 */
   val ChunkSizeQuantum: Int = 64 * 1024
 
-  /** 无实测读数时的速率假设 = 24 KiB/s（取方案卡实测底座 24.6–30.3 KB/s 的**下沿**）。
-    *
-    * 🔴 方向 = **保守**（假设慢）：假设偏慢 ⇒ 块偏小、死线偏宽 ⇒ 首传不会因「假设过快」而失败；
-    * 稳态靠实测速率纠正（每传一次收敛一次，见 `DropboxService.peerRateRef`）。 */
+  /**
+   * 无实测读数时的速率假设 = 24 KiB/s（取方案卡实测底座 24.6–30.3 KB/s 的**下沿**）。
+   *
+   * 🔴 方向 = **保守**（假设慢）：假设偏慢 ⇒ 块偏小、死线偏宽 ⇒ 首传不会因「假设过快」而失败；
+   * 稳态靠实测速率纠正（每传一次收敛一次，见 `DropboxService.peerRateRef`）。
+   */
   val AssumedMinRateBytesPerSec: Long = 24 * 1024
 
   /** 实测速率的夹取下界 = 4 KiB/s：一次抖动不得把块大小/死线推到无意义区。 */
@@ -94,16 +98,20 @@ object AttachContract:
   val P2PDeadlineFloor: FiniteDuration = 15.seconds
   val P2PDeadlineCeiling: FiniteDuration = 60.seconds
 
-  /** relay 腿单块死线窗口（建议值）：15 s..45 s。
-    *
-    * 🔴 上限从 30 s 提到 45 s（本批唯一「放宽」的数值）：30 s 正是「4 MiB 要在 30 s 内传完」
-    * 那条不可能的要求；块变小后 45 s 对 512 KiB 仍留 2× 余量。纯**本端**超时形参 ——
-    * 不上 wire、不改中继协议（中继侧自身超时属跨项目读数面 C-2，未触碰）。 */
+  /**
+   * relay 腿单块死线窗口（建议值）：15 s..45 s。
+   *
+   * 🔴 上限从 30 s 提到 45 s（本批唯一「放宽」的数值）：30 s 正是「4 MiB 要在 30 s 内传完」
+   * 那条不可能的要求；块变小后 45 s 对 512 KiB 仍留 2× 余量。纯**本端**超时形参 ——
+   * 不上 wire、不改中继协议（中继侧自身超时属跨项目读数面 C-2，未触碰）。
+   */
   val RelayDeadlineFloor: FiniteDuration = 15.seconds
   val RelayDeadlineCeiling: FiniteDuration = 45.seconds
 
-  /** 单块死线预算 = relay 腿上限（**最紧的一条腿**）：块必须在两腿上都能在死线内传完，
-    * 否则「P2P 能过、failover 到 relay 就必死」——那正是现状失败的形状。 */
+  /**
+   * 单块死线预算 = relay 腿上限（**最紧的一条腿**）：块必须在两腿上都能在死线内传完，
+   * 否则「P2P 能过、failover 到 relay 就必死」——那正是现状失败的形状。
+   */
   val ChunkDeadlineBudget: FiniteDuration = RelayDeadlineCeiling
 
   /** 速率读数夹取（≤0 ⇒ 用假设值；>0 ⇒ 夹到 [MinRate, ∞)）。 */
@@ -196,12 +204,14 @@ object AttachContract:
    */
   val ProtoRelayTemp: Int = 3
 
-  /** 协商：双方取 min；min == 0 ⇒ 走整件 legacy 路径 + 大小闸。
-    *
-    * ⚠️ 本判据只在**单调阶梯**（每级含其下各级能力）上等价于能力交集；把两个能力塞进
-    * 同一个号会让「号 → 能力集」从函数退化成关系 ⇒ 协商语义崩塌。调用点：接收端在
-    * `file-offer` 阶段用它判「是否可兑现 `targetDir`」；发送端在 `file-response` 收到
-    * 对端自报等级时用它判「是否可发 `targetDir`」。 */
+  /**
+   * 协商：双方取 min；min == 0 ⇒ 走整件 legacy 路径 + 大小闸。
+   *
+   * ⚠️ 本判据只在**单调阶梯**（每级含其下各级能力）上等价于能力交集；把两个能力塞进
+   * 同一个号会让「号 → 能力集」从函数退化成关系 ⇒ 协商语义崩塌。调用点：接收端在
+   * `file-offer` 阶段用它判「是否可兑现 `targetDir`」；发送端在 `file-response` 收到
+   * 对端自报等级时用它判「是否可发 `targetDir`」。
+   */
   def negotiate(local: Int, peer: Int): Int = math.min(local, peer)
 
   // ===== 错误码（本批最小集）=====
@@ -219,19 +229,23 @@ object AttachContract:
     val UnsupportedProtocol: String = "UNSUPPORTED_PROTOCOL"
     val InvalidArgument: String = "INVALID_ARGUMENT"
 
-    /** 看门狗收口（xferb 批）：会话在某一态停够时间窗且**无字节进展** ⇒ 显式失败。
-      * 与 `PEER_UNREACHABLE` 分轴：后者 = 试着传了、两条腿都不可达；本码 = **压根没进展**
-      * （对端收下 offer 后不上传 / 前端上传腿从未开始）。前端据此可区分「网络不通」与
-      * 「对面没动」两类原因（第二段上屏）。 */
+    /**
+     * 看门狗收口（xferb 批）：会话在某一态停够时间窗且**无字节进展** ⇒ 显式失败。
+     * 与 `PEER_UNREACHABLE` 分轴：后者 = 试着传了、两条腿都不可达；本码 = **压根没进展**
+     * （对端收下 offer 后不上传 / 前端上传腿从未开始）。前端据此可区分「网络不通」与
+     * 「对面没动」两类原因（第二段上屏）。
+     */
     val TransferTimeout: String = "TRANSFER_TIMEOUT"
 
-    /** 收端**永不**覆盖/删除既有件（dropnam 批，作者 2026-09-19 裁定②「取接收侧全保护」）：
-      * 分块 put 的请求**没有**本文件所属 transfer 的 token，而目标路径上已存在非空文件
-      * ⇒ 那不是「本次的续传」，而是**别人的件**（append 会污染它、整件摘要不符时的
-      * `os.remove.all` 会**删掉它**）⇒ 显式拒绝：零写、零删、带结构化原因。
-      *
-      * 代价（已登记）：无 token 的旧发送端 × relay × 目标已存在 ⇒ 该腿续传**显式失败**
-      * （非静默）；目标不存在时行为与今天逐字一致。 */
+    /**
+     * 收端**永不**覆盖/删除既有件（dropnam 批，作者 2026-09-19 裁定②「取接收侧全保护」）：
+     * 分块 put 的请求**没有**本文件所属 transfer 的 token，而目标路径上已存在非空文件
+     * ⇒ 那不是「本次的续传」，而是**别人的件**（append 会污染它、整件摘要不符时的
+     * `os.remove.all` 会**删掉它**）⇒ 显式拒绝：零写、零删、带结构化原因。
+     *
+     * 代价（已登记）：无 token 的旧发送端 × relay × 目标已存在 ⇒ 该腿续传**显式失败**
+     * （非静默）；目标不存在时行为与今天逐字一致。
+     */
     val FileExistsRefusingAppend: String = "FILE_EXISTS_REFUSING_APPEND"
 
     // ===== targetDir 裁定码（契约升版批，2026-09-14）=====
@@ -241,12 +255,16 @@ object AttachContract:
     // 文档的四条禁吞口径同源。被拒目标走既有 `AttachError.path`，允许根清单走 `expected`
     // （不新增字段）。
 
-    /** 形态拒（词法，未触盘）：空串 / 非绝对 POSIX 路径 / 含 `..` 或 `.` 段 / 含 `\u0000` /
-      * 超 1024 字节 / 以 `~` 开头 / Windows 盘符或 UNC 形态。`path` = 原始串（截断回显）。 */
+    /**
+     * 形态拒（词法，未触盘）：空串 / 非绝对 POSIX 路径 / 含 `..` 或 `.` 段 / 含 `\u0000` /
+     * 超 1024 字节 / 以 `~` 开头 / Windows 盘符或 UNC 形态。`path` = 原始串（截断回显）。
+     */
     val TargetDirInvalid: String = "TARGET_DIR_INVALID"
 
-    /** canonicalize 后不落在接收端允许根内（含符号链接逃逸后的结果）。
-      * `path` = canonical 后目标；`expected` = 允许根清单。 */
+    /**
+     * canonicalize 后不落在接收端允许根内（含符号链接逃逸后的结果）。
+     * `path` = canonical 后目标；`expected` = 允许根清单。
+     */
     val TargetDirNotAllowed: String = "TARGET_DIR_NOT_ALLOWED"
 
     /** 目标目录不存在**且**其最深存在祖先不是一个目录。`path` = canonical 目标。 */
@@ -254,6 +272,8 @@ object AttachContract:
 
     /** 目标存在但是文件 / 无写权限 / 只读卷。`path` = canonical 目标。 */
     val TargetDirNotWritable: String = "TARGET_DIR_NOT_WRITABLE"
+
+  end Codes
 
   /**
    * 失败必须自描述（不变量 I3）：错误体一律带机器可解析字段 —— 调用方/模型据此
@@ -305,6 +325,7 @@ object AttachContract:
             ).flatten
           )
         )
+  end AttachError
 
   // ===== 闸位（超限 fail-fast + 回显实际值）=====
 
@@ -332,7 +353,13 @@ object AttachContract:
   /** 单条消息件数闸。超限 ⇒ `ATTACH_TOO_MANY` + `actual`（实际件数）+ `limit`。 */
   def checkAttachmentCount(count: Int): Either[AttachError, Unit] =
     if count < 0 then
-      Left(AttachError(Codes.InvalidArgument, s"Attachment count must be non-negative, got $count", actual = Some(count.toLong)))
+      Left(
+        AttachError(
+          Codes.InvalidArgument,
+          s"Attachment count must be non-negative, got $count",
+          actual = Some(count.toLong)
+        )
+      )
     else if count > MaxAttachmentsPerMessage then
       Left(
         AttachError(

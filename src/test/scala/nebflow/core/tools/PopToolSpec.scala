@@ -46,11 +46,13 @@ class PopToolSpec extends FunSuite:
     val data = Array.fill(bytes)(0x42.toByte)
     os.write.over(p, data)
 
-  /** Capture wsSend messages into a Ref-like buffer.
-    *
-    * 2026-09-10 身份闸批：harness 显式传 Nebula 本体 ctx（agentDef=Some(Nebula)、
-    * depth=0）——闸的 fail-closed 语义下 agentDef=None 会被拒，旧 harness 的
-    * None 不再是合法的内联行为测试上下文。 */
+  /**
+   * Capture wsSend messages into a Ref-like buffer.
+   *
+   * 2026-09-10 身份闸批：harness 显式传 Nebula 本体 ctx（agentDef=Some(Nebula)、
+   * depth=0）——闸的 fail-closed 语义下 agentDef=None 会被拒，旧 harness 的
+   * None 不再是合法的内联行为测试上下文。
+   */
   private def captureCtx(buf: scala.collection.mutable.ListBuffer[Json]): ToolContext =
     ctxWith(buf, agentDef = Some(nebulaDef), depth = 0)
 
@@ -79,7 +81,7 @@ class PopToolSpec extends FunSuite:
     val item = buf.head.hcursor.downField("item")
     item.get[String]("itemType").toOption.getOrElse("") match
       case "html" => item.get[String]("content").toOption.getOrElse("")
-      case other  => fail(s"expected html itemType, got $other")
+      case other => fail(s"expected html itemType, got $other")
 
   test("file:/// absolute image src is inlined as a base64 data URI"):
     val dir = tempDir("file-abs")
@@ -195,12 +197,14 @@ class PopToolSpec extends FunSuite:
 
   private val gateInput = JsonObject("filePath" -> "/nonexistent/pop-gate-probe.html".asJson)
 
-  /** 拒答断言：右值缺席 + 文案命中 + 零副作用。
-    *
-    * 零副作用两点证明：
-    *  - wsSend 缓冲空（无 popFile 消息）；
-    *  - filePath 指向不存在的路径却报闸文案而非 "File not found" ⇒ 闸先于
-    *    resolvePath / Files.exists / 文件读 / HTML 内联（副作用全部未发生）。 */
+  /**
+   * 拒答断言：右值缺席 + 文案命中 + 零副作用。
+   *
+   * 零副作用两点证明：
+   *  - wsSend 缓冲空（无 popFile 消息）；
+   *  - filePath 指向不存在的路径却报闸文案而非 "File not found" ⇒ 闸先于
+   *    resolvePath / Files.exists / 文件读 / HTML 内联（副作用全部未发生）。
+   */
   private def assertDenied(
     label: String,
     agentDef: Option[nebflow.agent.AgentDef],
@@ -211,10 +215,14 @@ class PopToolSpec extends FunSuite:
       case Left(err) =>
         assert(err.message.contains(VerbatimDeny), s"$label: verbatim author text missing in: ${err.message}")
         assert(err.message.contains("POP_NEBULA_ONLY"), s"$label: error code missing in: ${err.message}")
-        assert(!err.message.toLowerCase.contains("not found"),
-          s"$label: gate must run BEFORE path resolution/file read, got: ${err.message}")
+        assert(
+          !err.message.toLowerCase.contains("not found"),
+          s"$label: gate must run BEFORE path resolution/file read, got: ${err.message}"
+        )
         assertEquals(buf.size, 0, s"$label: zero WS side effects expected, got $buf")
       case Right(ok) => fail(s"$label: must be denied, got Right($ok)")
+
+  end assertDenied
 
   test("identity gate: Nebula root session (depth 0) is admitted — feature intact"):
     val dir = tempDir("gate-allow")
@@ -223,7 +231,7 @@ class PopToolSpec extends FunSuite:
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     PopTool.call(JsonObject("filePath" -> html.toString.asJson), ctxWith(buf, Some(nebulaDef), 0)).unsafeRunSync() match
       case Right(msg) => assert(msg.contains("Canvas"), msg)
-      case Left(err)  => fail(s"Nebula root session must be admitted: ${err.message}")
+      case Left(err) => fail(s"Nebula root session must be admitted: ${err.message}")
     assertEquals(buf.size, 1, "exactly one popFile message for the admitted caller")
     assertEquals(buf.head.hcursor.downField("type").as[String].toOption, Some("popFile"))
 
@@ -256,8 +264,10 @@ class PopToolSpec extends FunSuite:
     assert(PopTool.description.contains("Nebula-exclusive"), "exclusivity must be stated")
     assert(PopTool.description.contains("POP_NEBULA_ONLY"), "error code surfaced in the description")
     assert(PopTool.description.contains("out edge"), "node delivery protocol (hand over along the out edge)")
-    assert(!PopTool.description.contains("never hand-draw"),
-      "node-facing 'Pop right after generating' guidance must be gone")
+    assert(
+      !PopTool.description.contains("never hand-draw"),
+      "node-facing 'Pop right after generating' guidance must be gone"
+    )
 
   override def afterEach(context: munit.AfterEach): Unit =
     // test artifacts under target/ are cleaned by sbt; nothing else to do

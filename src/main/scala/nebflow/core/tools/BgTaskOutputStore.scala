@@ -71,10 +71,12 @@ object BgTaskOutputStore:
 
   private val entries: Ref[IO, Map[String, Entry]] = Ref.unsafe(Map.empty)
 
-  /** 任务开启时建缓冲（BashTool 发起后台任务时调用）。幂等：已存在的 jobId
-    * 返回原缓冲（防重复 open 撕出两个缓冲）。返回句柄供调用方造 append sink
-    * （sink 捕获 buffer 直连，append 无需查表）；条目被留存淘汰后 sink 若因
-    * 竞态迟到 append，写入的是孤儿缓冲——无副作用，GC 兜底。 */
+  /**
+   * 任务开启时建缓冲（BashTool 发起后台任务时调用）。幂等：已存在的 jobId
+   * 返回原缓冲（防重复 open 撕出两个缓冲）。返回句柄供调用方造 append sink
+   * （sink 捕获 buffer 直连，append 无需查表）；条目被留存淘汰后 sink 若因
+   * 竞态迟到 append，写入的是孤儿缓冲——无副作用，GC 兜底。
+   */
   def open(jobId: String): IO[BgTaskOutputBuffer] =
     entries.modify { m =>
       m.get(jobId) match
@@ -84,8 +86,10 @@ object BgTaskOutputStore:
           (m + (jobId -> Entry(buf, "running", None, None, None, 0L)), buf)
     }
 
-  /** 读取切片：offset = 字节游标（行粒度，见模块注释）。任务未知 → None
-    * （REST 404：前端详情卡按「不可用」降级）。 */
+  /**
+   * 读取切片：offset = 字节游标（行粒度，见模块注释）。任务未知 → None
+   * （REST 404：前端详情卡按「不可用」降级）。
+   */
   def read(jobId: String, offset: Long): IO[Option[BgTaskOutput]] =
     entries.get.map { m =>
       m.get(jobId).map { e =>
@@ -105,9 +109,11 @@ object BgTaskOutputStore:
       }
     }
 
-  /** 终态化（completed / failed / cancelled）：状态翻转 + 留存淘汰。幂等——
-    * 已终态条目二次 finalize no-op（首个终态语义胜出，防 WS cancel 与完成
-    * 回调竞态双写）。运行中条目永不淘汰。 */
+  /**
+   * 终态化（completed / failed / cancelled）：状态翻转 + 留存淘汰。幂等——
+   * 已终态条目二次 finalize no-op（首个终态语义胜出，防 WS cancel 与完成
+   * 回调竞态双写）。运行中条目永不淘汰。
+   */
   def finalizeTask(
     jobId: String,
     status: String,
@@ -134,8 +140,10 @@ object BgTaskOutputStore:
     }
 end BgTaskOutputStore
 
-/** 见 [[BgTaskOutputStore]]。行粒度字节游标缓冲：每行记账 (起始字节偏移, 文本)，
-  * cap 超限时从头丢行（保末尾窗），totalBytes/totalLines 永远全量。 */
+/**
+ * 见 [[BgTaskOutputStore]]。行粒度字节游标缓冲：每行记账 (起始字节偏移, 文本)，
+ * cap 超限时从头丢行（保末尾窗），totalBytes/totalLines 永远全量。
+ */
 final class BgTaskOutputBuffer(capBytes: Int):
 
   private val lock: Object = new Object()
@@ -144,9 +152,11 @@ final class BgTaskOutputBuffer(capBytes: Int):
   private var totalLines: Long = 0L
   private var droppedHead: Boolean = false
 
-  /** 追加一行（读取线程并发调用，锁内 O(1)；超限从头丢行，至少保一行——单行
-    * 超限也保它，尾窗不空）。行字节记 UTF-8 长度 + 1（换行）——offset /
-    * totalBytes / 切片三处同口径，自洽。 */
+  /**
+   * 追加一行（读取线程并发调用，锁内 O(1)；超限从头丢行，至少保一行——单行
+   * 超限也保它，尾窗不空）。行字节记 UTF-8 长度 + 1（换行）——offset /
+   * totalBytes / 切片三处同口径，自洽。
+   */
   def append(line: String): Unit = lock.synchronized {
     lines.addLast((endOffset, line))
     endOffset += line.getBytes(StandardCharsets.UTF_8).length.toLong + 1L
@@ -159,9 +169,11 @@ final class BgTaskOutputBuffer(capBytes: Int):
   /** 切片快照（独立 case class——项目 Scala 版本未开 named tuples）。 */
   final case class Snapshot(output: String, totalBytes: Long, totalLines: Long, truncated: Boolean)
 
-  /** 切片快照：返回窗口内起始偏移 ≥ offset 的行按行序拼接。
-    * truncated = 头部曾被丢弃（缓冲级属性，与请求 offset 无关——客户端首拍
-    * offset=0 即能据此标注「仅尾窗」）。 */
+  /**
+   * 切片快照：返回窗口内起始偏移 ≥ offset 的行按行序拼接。
+   * truncated = 头部曾被丢弃（缓冲级属性，与请求 offset 无关——客户端首拍
+   * offset=0 即能据此标注「仅尾窗」）。
+   */
   def snapshot(offset: Long): Snapshot =
     lock.synchronized {
       val sb = new StringBuilder

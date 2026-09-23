@@ -3,21 +3,26 @@ package nebflow.gateway
 import munit.FunSuite
 
 /**
-  * Literal scanner of the text-stream search leg (design card §三.1 / §五 step ①).
-  *
-  * The scanner runs over a 100MiB file in 256KiB chunks, so the cases that matter
-  * are the ones a whole-buffer implementation would never hit: a match straddling
-  * a chunk seam, a line break straddling a seam (line/col bookkeeping), a hit list
-  * that is capped (must say `truncated`), and a "line" that is the whole file (the
-  * hit echo must stay bounded). Byte-exact line/col is what R5 compares against
-  * ground truth, so every case pins the exact numbers.
-  */
+ * Literal scanner of the text-stream search leg (design card §三.1 / §五 step ①).
+ *
+ * The scanner runs over a 100MiB file in 256KiB chunks, so the cases that matter
+ * are the ones a whole-buffer implementation would never hit: a match straddling
+ * a chunk seam, a line break straddling a seam (line/col bookkeeping), a hit list
+ * that is capped (must say `truncated`), and a "line" that is the whole file (the
+ * hit echo must stay bounded). Byte-exact line/col is what R5 compares against
+ * ground truth, so every case pins the exact numbers.
+ */
 class TextStreamSearchSpec extends FunSuite:
 
   private def bytes(s: String): Array[Byte] = s.getBytes(TextStream.Utf8)
 
-  private def scanAll(body: String, query: String, caseSensitive: Boolean = true, maxHits: Int = 1000,
-                      chunk: Int = Int.MaxValue): TextStream.SearchOutcome =
+  private def scanAll(
+    body: String,
+    query: String,
+    caseSensitive: Boolean = true,
+    maxHits: Int = 1000,
+    chunk: Int = Int.MaxValue
+  ): TextStream.SearchOutcome =
     val sc = new TextStream.LiteralScanner(query, caseSensitive, maxHits)
     val all = bytes(body)
     var off = 0
@@ -29,8 +34,15 @@ class TextStreamSearchSpec extends FunSuite:
     sc.drainHits()
     sc.outcome
 
-  private def hitsOf(body: String, query: String, caseSensitive: Boolean = true, maxHits: Int = 1000,
-                     chunk: Int = Int.MaxValue): Vector[TextStream.Hit] =
+  end scanAll
+
+  private def hitsOf(
+    body: String,
+    query: String,
+    caseSensitive: Boolean = true,
+    maxHits: Int = 1000,
+    chunk: Int = Int.MaxValue
+  ): Vector[TextStream.Hit] =
     val sc = new TextStream.LiteralScanner(query, caseSensitive, maxHits)
     val all = bytes(body)
     val out = Vector.newBuilder[TextStream.Hit]
@@ -43,6 +55,8 @@ class TextStreamSearchSpec extends FunSuite:
     sc.finish() // end of input: finalize the unterminated last line
     out ++= sc.drainHits()
     out.result()
+
+  end hitsOf
 
   test("hits carry the exact 1-based byte line and column"):
     val body = "alpha\nbeta TOKEN\ngamma TOKEN x\n"
@@ -72,8 +86,11 @@ class TextStreamSearchSpec extends FunSuite:
   test("line numbers stay exact when the newline itself straddles a seam"):
     val body = "aaa\nbbb\nccc TOKEN\n"
     Vector(1, 2, 3, 4, 5, 8, 13).foreach { c =>
-      assertEquals(hitsOf(body, "TOKEN", chunk = c).map(h => (h.line, h.col)), Vector((3L, 5L)),
-        s"chunk=$c split the newlines; line/col must still be exact")
+      assertEquals(
+        hitsOf(body, "TOKEN", chunk = c).map(h => (h.line, h.col)),
+        Vector((3L, 5L)),
+        s"chunk=$c split the newlines; line/col must still be exact"
+      )
     }
 
   test("case folding: insensitive by default, exact when caseSensitive"):
@@ -144,3 +161,4 @@ class TextStreamSearchSpec extends FunSuite:
 
   test("an empty query is rejected at construction (the route layer reports it as an error frame)"):
     intercept[IllegalArgumentException](new TextStream.LiteralScanner(""))
+end TextStreamSearchSpec

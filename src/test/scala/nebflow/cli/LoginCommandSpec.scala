@@ -3,13 +3,14 @@ package nebflow.cli
 import io.circe.Json
 import munit.FunSuite
 
-/** headless 登录三命令的判据面（§16 文案逐字节 + 设备码流三出口 + 稳定码闭集）。
-  *
-  * 本件是**逐字节比对仪器**：H1–H5 的期望值直接取自作者批件逐字（与实现件里的常量
-  * 是两份独立副本 —— 实现漂移即红），故 H 系「逐字含空格对齐」不靠人眼。
-  *
-  * 全部断言为纯函数面：不碰网络、不碰 home、不起进程。
-  */
+/**
+ * headless 登录三命令的判据面（§16 文案逐字节 + 设备码流三出口 + 稳定码闭集）。
+ *
+ * 本件是**逐字节比对仪器**：H1–H5 的期望值直接取自作者批件逐字（与实现件里的常量
+ * 是两份独立副本 —— 实现漂移即红），故 H 系「逐字含空格对齐」不靠人眼。
+ *
+ * 全部断言为纯函数面：不碰网络、不碰 home、不起进程。
+ */
 class LoginCommandSpec extends FunSuite:
 
   private def json(s: String): Json = io.circe.parser.parse(s).fold(e => throw e, identity)
@@ -53,8 +54,7 @@ class LoginCommandSpec extends FunSuite:
   }
 
   test("三命令各恰一个子命令（裸 `nebflow login` 因此可直接执行，不需子命令名）") {
-    for n <- List("login", "logout", "whoami") do
-      assertEquals(CommandRegistry.get(n).map(_.subcommands.size), Some(1))
+    for n <- List("login", "logout", "whoami") do assertEquals(CommandRegistry.get(n).map(_.subcommands.size), Some(1))
   }
 
   // ── C. H2：设备码提示三行逐字 ────────────────────────────────────────────
@@ -109,7 +109,9 @@ class LoginCommandSpec extends FunSuite:
 
   test("parseStart：既有契约形状 → 句柄，interval/expiresIn 原值保留") {
     val got = LoginFlow.parseStart(
-      json("""{"deviceCode":"dc-1","userCode":"ABCD-EFGH","verificationUri":"https://x/device","interval":5,"expiresIn":900}""")
+      json(
+        """{"deviceCode":"dc-1","userCode":"ABCD-EFGH","verificationUri":"https://x/device","interval":5,"expiresIn":900}"""
+      )
     )
     assertEquals(got.map(_.deviceCode), Some("dc-1"))
     assertEquals(got.map(_.userCode), Some("ABCD-EFGH"))
@@ -142,8 +144,10 @@ class LoginCommandSpec extends FunSuite:
 
   // ── G. poll 三出口 ──────────────────────────────────────────────────────
 
-  /** 用实现件自己的包装器造报文 —— 若 `GatewayClient.requestError` 的形态变了，
-    * 本 spec 会同时暴露契约漂移（不是只测一个手抄字符串）。 */
+  /**
+   * 用实现件自己的包装器造报文 —— 若 `GatewayClient.requestError` 的形态变了，
+   * 本 spec 会同时暴露契约漂移（不是只测一个手抄字符串）。
+   */
   private def wrapped(code: Int, body: String): Throwable =
     new RuntimeException(GatewayClient.requestError(code, body))
 
@@ -184,8 +188,14 @@ class LoginCommandSpec extends FunSuite:
   }
 
   test("pollStep：未识别的网关错误 ⇒ Failed(poll_failed)；无包装（传输层）⇒ network_error") {
-    assertEquals(LoginFlow.pollStep(Left(wrapped(500, """{"error":"weird"}"""))), PollStep.Failed(SignInFailure.PollFailed))
-    assertEquals(LoginFlow.pollStep(Left(new java.net.ConnectException("Connection refused"))), PollStep.Failed(SignInFailure.NetworkError))
+    assertEquals(
+      LoginFlow.pollStep(Left(wrapped(500, """{"error":"weird"}"""))),
+      PollStep.Failed(SignInFailure.PollFailed)
+    )
+    assertEquals(
+      LoginFlow.pollStep(Left(new java.net.ConnectException("Connection refused"))),
+      PollStep.Failed(SignInFailure.NetworkError)
+    )
   }
 
   // ── H. 分类面（网关包装剥离 + 语境兜底码） ─────────────────────────────────
@@ -200,14 +210,23 @@ class LoginCommandSpec extends FunSuite:
     val startWrapped = LoginFlow.gatewayDetail(GatewayClient.requestError(400, """{"error":"something new"}"""))
     assertEquals(startWrapped, Some("something new"))
     assertEquals(
-      LoginFlow.failureOfMessage(Some(GatewayClient.requestError(400, """{"error":"something new"}""")), SignInFailure.FlowStartFailed),
+      LoginFlow.failureOfMessage(
+        Some(GatewayClient.requestError(400, """{"error":"something new"}""")),
+        SignInFailure.FlowStartFailed
+      ),
       SignInFailure.FlowStartFailed
     )
     assertEquals(
-      LoginFlow.failureOfMessage(Some(GatewayClient.requestError(400, """{"error":"something new"}""")), SignInFailure.PollFailed),
+      LoginFlow.failureOfMessage(
+        Some(GatewayClient.requestError(400, """{"error":"something new"}""")),
+        SignInFailure.PollFailed
+      ),
       SignInFailure.PollFailed
     )
-    assertEquals(LoginFlow.failureOfMessage(Some("Connection refused"), SignInFailure.FlowStartFailed), SignInFailure.NetworkError)
+    assertEquals(
+      LoginFlow.failureOfMessage(Some("Connection refused"), SignInFailure.FlowStartFailed),
+      SignInFailure.NetworkError
+    )
     assertEquals(LoginFlow.failureOfMessage(None, SignInFailure.FlowStartFailed), SignInFailure.NetworkError)
   }
 

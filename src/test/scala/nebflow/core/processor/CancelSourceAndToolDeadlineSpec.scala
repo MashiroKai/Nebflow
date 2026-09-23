@@ -33,9 +33,12 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
     val saved = kvs.map((k, _) => k -> sys.props.get(k))
     kvs.foreach((k, v) => sys.props.update(k, v))
     try body
-    finally saved.foreach { case (k, v) => v match
-      case Some(old) => sys.props.update(k, old)
-      case None      => sys.props.remove(k) }
+    finally
+      saved.foreach { case (k, v) =>
+        v match
+          case Some(old) => sys.props.update(k, old)
+          case None => sys.props.remove(k)
+      }
 
   private def rec(now: Long, toolAgeMs: Long, deadlineMs: Long): AgentRecord =
     AgentRecord(
@@ -58,10 +61,12 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
     assertEquals(CancelSource.code(CancelSource.Engine), "engine")
     assertEquals(CancelSource.code(CancelSource.User), "user")
     // TaskStuckWatcher 两处桥取消的 reason 尾注（L3 / giveUp）
-    assert(CancelSource.classify(
-      "stuck 25m+ (L3 hard-recovery: released by TaskStuckWatcher)") == CancelSource.Engine)
-    assert(CancelSource.classify(
-      "stuck (L4 giveUp: released by TaskStuckWatcher; consider re-delegating)") == CancelSource.Engine)
+    assert(CancelSource.classify("stuck 25m+ (L3 hard-recovery: released by TaskStuckWatcher)") == CancelSource.Engine)
+    assert(
+      CancelSource.classify(
+        "stuck (L4 giveUp: released by TaskStuckWatcher; consider re-delegating)"
+      ) == CancelSource.Engine
+    )
     // 人/Agent/父会话级联取消
     assertEquals(CancelSource.classify("cancelled by NodeCancel"), CancelSource.User)
     assertEquals(CancelSource.classify("user cancelled from session panel"), CancelSource.User)
@@ -92,12 +97,18 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
     assertEquals(Defaults.declaredToolTimeoutMs(Json.obj("timeout" -> Json.fromString("900000")).asObject.get), 0L)
     // run_in_background 不是授权时长（把后台语义并进前台判死会扩大误杀面）
     assertEquals(
-      Defaults.declaredToolTimeoutMs(Json.obj("run_in_background" -> Json.fromBoolean(true), "command" -> Json.fromString("sleep 1")).asObject.get),
-      0L)
+      Defaults.declaredToolTimeoutMs(
+        Json.obj("run_in_background" -> Json.fromBoolean(true), "command" -> Json.fromString("sleep 1")).asObject.get
+      ),
+      0L
+    )
     // 声明与后台并存 → 仍取 timeout
     assertEquals(
-      Defaults.declaredToolTimeoutMs(Json.obj("timeout" -> Json.fromLong(120_000L), "run_in_background" -> Json.fromBoolean(true)).asObject.get),
-      120_000L)
+      Defaults.declaredToolTimeoutMs(
+        Json.obj("timeout" -> Json.fromLong(120_000L), "run_in_background" -> Json.fromBoolean(true)).asObject.get
+      ),
+      120_000L
+    )
   }
 
   // ── U4 R6：有效阈值口径 ──────────────────────────────────────────
@@ -137,24 +148,33 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
     }
     // 同刻未声明时长 → 仍按 10min 判死（新判据不放走真卡死）
     withProp("nebflow.stuck.toolDeadlineSlackMs" -> "60000") {
-      assert(TaskStuckWatcher.assess(rec(now, elevenMin, 0L), now).isDefined,
-        "undeclared deadline must keep the 10min band")
+      assert(
+        TaskStuckWatcher.assess(rec(now, elevenMin, 0L), now).isDefined,
+        "undeclared deadline must keep the 10min band"
+      )
     }
   }
 
-  test("U5-b R6: no declared timeout + 10min+ elapsed → judged stuck, message wording byte-identical (no deadline note)") {
+  test(
+    "U5-b R6: no declared timeout + 10min+ elapsed → judged stuck, message wording byte-identical (no deadline note)"
+  ) {
     val now = System.currentTimeMillis()
     withProp("nebflow.stuck.toolDeadlineSlackMs" -> "60000") {
       val r = TaskStuckWatcher.assess(rec(now, 700_000L, 0L), now)
       assertEquals(r.isDefined, true, "undeclared >10min must still be judged")
       val (secs, msg) = r.get
       assert(secs >= 700L, s"secs must reflect elapsed tool phase, got $secs")
-      assertEquals(msg, "tool 'Bash' running 700s in an unfinished turn",
-        "undeclared-deadline message must not gain a new note (zero wording drift)")
+      assertEquals(
+        msg,
+        "tool 'Bash' running 700s in an unfinished turn",
+        "undeclared-deadline message must not gain a new note (zero wording drift)"
+      )
     }
   }
 
-  test("U5-c R6: declared timeout exceeded (past declared+slack) → judged stuck, message carries the declared-timeout note") {
+  test(
+    "U5-c R6: declared timeout exceeded (past declared+slack) → judged stuck, message carries the declared-timeout note"
+  ) {
     val now = System.currentTimeMillis()
     withProp("nebflow.stuck.toolDeadlineSlackMs" -> "60000") {
       val r = TaskStuckWatcher.assess(rec(now, 1_200_000L, 900_000L), now) // 20min > 15min+1min
@@ -173,7 +193,10 @@ class CancelSourceAndToolDeadlineSpec extends CatsEffectSuite:
     }
     // 声明时长为 0 时读数与 prop 同步（判据不缓存）
     withProp("nebflow.stuck.toolPhaseMs" -> "1500", "nebflow.stuck.toolDeadlineSlackMs" -> "60000") {
-      assertEquals(ToolStuckJudgment.effectiveToolPhaseMs(Defaults.ToolPhaseStuckMs, 0L, Defaults.ToolDeadlineSlackMs), 1_500L)
+      assertEquals(
+        ToolStuckJudgment.effectiveToolPhaseMs(Defaults.ToolPhaseStuckMs, 0L, Defaults.ToolDeadlineSlackMs),
+        1_500L
+      )
     }
   }
 

@@ -47,8 +47,10 @@ class FileRefsInlineBudgetSpec extends FunSuite:
         .asScala
         .foreach(Files.deleteIfExists)
 
-  /** A file of exactly `size` bytes; only the last byte is written (sparse), so
-    *  `size` is what the budget arithmetic sees. */
+  /**
+   * A file of exactly `size` bytes; only the last byte is written (sparse), so
+   *  `size` is what the budget arithmetic sees.
+   */
   private def writeSized(p: Path, size: Int, fill: Byte = 0x44): Path =
     assert(size >= 1, s"a sized fixture must be at least 1 byte, got $size")
     val ch = Files.newByteChannel(p, SO.CREATE, SO.WRITE, SO.TRUNCATE_EXISTING)
@@ -76,10 +78,11 @@ class FileRefsInlineBudgetSpec extends FunSuite:
     assert(result.startsWith(cardSentinel), s"payload must start with the sentinel: ${result.take(60)}")
     io.circe.parser.parse(result.substring(cardSentinel.length)) match
       case Right(json) => json
-      case Left(err)   => fail(s"everything after the sentinel must be pure JSON: $err")
+      case Left(err) => fail(s"everything after the sentinel must be pure JSON: $err")
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
+
   private def countOf(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
   private def encode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
@@ -107,7 +110,7 @@ class FileRefsInlineBudgetSpec extends FunSuite:
   private def popPath(file: Path): (String, Json) =
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err)   => fail(s"Pop failed: ${err.message}")
+      case Left(err) => fail(s"Pop failed: ${err.message}")
       case Right(text) => (text, buf.head)
 
   private def popHtml(dir: Path, html: String): (String, Json, String) =
@@ -119,8 +122,10 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       case Right(text) =>
         val item = buf.head.hcursor.downField("item")
         (text, buf.head, item.get[String]("content").toOption.getOrElse(""))
+
   private def itemField(msg: Json, field: String): Option[String] =
     msg.hcursor.downField("item").get[String](field).toOption
+
   private def itemCounter(msg: Json, field: String): Int =
     msg.hcursor.downField("item").downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
@@ -137,7 +142,9 @@ class FileRefsInlineBudgetSpec extends FunSuite:
   test("cost: dataUriChars(size, ext) is the EXACT data: URI length (recomputable by hand)") {
     withTempDir { dir =>
       for (size, ext) <- List((0, "png"), (1, "png"), (3, "svg"), (64, "jpg"), (14983, "png"), (29984, "png")) do
-        val f = if size == 0 then Files.createFile(dir.resolve(s"c-$size-$ext.$ext")) else writeSized(dir.resolve(s"c-$size.$ext"), size)
+        val f =
+          if size == 0 then Files.createFile(dir.resolve(s"c-$size-$ext.$ext"))
+          else writeSized(dir.resolve(s"c-$size.$ext"), size)
         val uri = dataUriOf(f)
         assertEquals(
           FileRefs.dataUriChars(Files.size(f), ext),
@@ -299,7 +306,8 @@ class FileRefsInlineBudgetSpec extends FunSuite:
     withTempDir { dir =>
       val a = writeSized(dir.resolve("a.png"), 14983, 0x41)
       val b = writeSized(dir.resolve("b.png"), 14983, 0x42)
-      val (result, msg, content) = popHtml(dir, s"""<html><img src="${a.toString}"/><img src="${b.toString}"/></html>""")
+      val (result, msg, content) =
+        popHtml(dir, s"""<html><img src="${a.toString}"/><img src="${b.toString}"/></html>""")
       // Pop's counter naming is the shipped one: `fileRefsJson(o.inlined, …)` puts
       // the INLINED count in the `proxied` slot (PopTool.refPayload), and
       // `deferred` counts what the reference leg serves instead. Read them as
@@ -309,7 +317,10 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       assertEquals(itemCounter(msg, "deferred"), 1)
       assertEquals(itemCounter(msg, "failed"), 0)
       assert(content.contains(dataUriOf(a)), "the first image is embedded")
-      assert(content.contains(b.toString), "the over-budget image keeps its raw src for the Canvas /api/nf-file rewrite")
+      assert(
+        content.contains(b.toString),
+        "the over-budget image keeps its raw src for the Canvas /api/nf-file rewrite"
+      )
       assert(!content.contains(dataUriOf(b)))
       assert(result.contains("fileRefs:"), "the counters ride in the result line when anything was deferred")
       assert(!result.contains("warnings:"), "a deferred image is not a defect — no warnings section")
@@ -336,3 +347,4 @@ class FileRefsInlineBudgetSpec extends FunSuite:
       assertEquals(msgOver.hcursor.downField("item").get[Long]("size").toOption, Some(29984L))
     }
   }
+end FileRefsInlineBudgetSpec

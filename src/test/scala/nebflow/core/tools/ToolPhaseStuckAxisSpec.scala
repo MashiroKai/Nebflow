@@ -49,6 +49,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
   // （默认 <dataRoot>/logs/watchdog/）必须落到 spec 自己的临时目录，不得写进
   // 真实 ~/.nebflow（与 LlmLogWriter.setLogDirForTest 同款测试缝）。
   private val watchdogLogTmp = os.temp.dir(prefix = "stuck-axis-watchdog-events")
+
   override def beforeAll(): Unit =
     nebflow.core.processor.WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
   override def afterAll(): Unit = nebflow.core.processor.WatchdogEventLog.resetLogDirForTest()
@@ -119,8 +120,10 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
   private def recordOf(registry: Ref[IO, Map[String, AgentRecord]]): IO[AgentRecord] =
     registry.get.map(_.getOrElse(Sid, fail(s"registry lost $Sid")))
 
-  /** 读本 spec 的事件面（按 type 过滤）——供「检出面（stuck-detected）≠ 开火面
-    * （taskStuck / stuck-fire）」的断言。日志目录由 `beforeAll` 重定向到 spec 临时目录。 */
+  /**
+   * 读本 spec 的事件面（按 type 过滤）——供「检出面（stuck-detected）≠ 开火面
+   * （taskStuck / stuck-fire）」的断言。日志目录由 `beforeAll` 重定向到 spec 临时目录。
+   */
   private def eventsOfType(tpe: String): IO[List[Json]] =
     IO.blocking {
       val f = watchdogLogTmp / s"${java.time.LocalDate.now()}_events.jsonl"
@@ -138,7 +141,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
       body.guarantee(IO {
         prev match
           case Some(v) => sys.props.update(ToolPhaseProp, v)
-          case None    => sys.props.remove(ToolPhaseProp)
+          case None => sys.props.remove(ToolPhaseProp)
       })
     }
 
@@ -148,14 +151,16 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
     val sessionKey = "axis-write-side"
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
-        Map(Sid -> AgentRecord(
-          sessionId = Sid,
-          ref = null.asInstanceOf[ActorRef[AgentCommand]],
-          kind = AgentKind.Flow,
-          rootSessionId = "root-1",
-          status = AgentStatus.Processing,
-          lastActivityMs = 123456789L
-        ))
+        Map(
+          Sid -> AgentRecord(
+            sessionId = Sid,
+            ref = null.asInstanceOf[ActorRef[AgentCommand]],
+            kind = AgentKind.Flow,
+            rootSessionId = "root-1",
+            status = AgentStatus.Processing,
+            lastActivityMs = 123456789L
+          )
+        )
       )
       resources = mkResources(registry)
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some(Sid), sharedResources = Some(resources))
@@ -177,6 +182,7 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         )
       )
     yield ()
+    end for
   }
 
   // ── ② 换轴判据（事故形态） ───────────────────────────────────────────────
@@ -203,27 +209,35 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         // AgentActivityWritePathSpec 覆盖），此处按 TaskStuckWatcherSpec 的
         // 既有惯例直接构造 registry 快照。
         _ <- resources.agentRegistry.set(
-          Map(Sid -> AgentRecord(
-            sessionId = Sid,
-            ref = agentRef,
-            kind = AgentKind.Delegate,
-            rootSessionId = "root-1",
-            parentRef = Some(parentRef),
-            startedAt = now - 20 * 60 * 1000L,
-            status = AgentStatus.Processing,
-            lastActivityMs = now,
-            turnStartedAt = now - 3_000L,
-            currentToolName = Some("Bash"),
-            currentToolStartedAt = now - 3_000L
-          ))
+          Map(
+            Sid -> AgentRecord(
+              sessionId = Sid,
+              ref = agentRef,
+              kind = AgentKind.Delegate,
+              rootSessionId = "root-1",
+              parentRef = Some(parentRef),
+              startedAt = now - 20 * 60 * 1000L,
+              status = AgentStatus.Processing,
+              lastActivityMs = now,
+              turnStartedAt = now - 3_000L,
+              currentToolName = Some("Bash"),
+              currentToolStartedAt = now - 3_000L
+            )
+          )
         )
         // 真进程：零输出、CPU 持续动（事故同象限：dev server 形态）
         proc <- startProc("python3 -c 'while True: pass'")
-        _ <- runBridge(proc, ctx = ToolContext(
-          projectRoot = "/tmp",
-          sessionId = Some(Sid),
-          sharedResources = Some(resources)
-        ), sessionKey, "python3 -c 'while True: pass'", ticks = 2)
+        _ <- runBridge(
+          proc,
+          ctx = ToolContext(
+            projectRoot = "/tmp",
+            sessionId = Some(Sid),
+            sharedResources = Some(resources)
+          ),
+          sessionKey,
+          "python3 -c 'while True: pass'",
+          ticks = 2
+        )
           .guarantee(IO(proc.destroyForcibly()))
         liveAfterBridge <- recordOf(registry)
         // agent 侧判据轴（10min）刻意保持不动：只有换轴后的工具相位判据能命中
@@ -251,11 +265,12 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         // 检出面 ≠ 开火面：判据必须**命中**并留一行 stuck-detected（class=false-positive）
         val mine = detected.filter(_.hcursor.get[String]("sessionId").toOption.contains(Sid))
         assertEquals(mine.size, 1, s"判据命中必须留一行 stuck-detected，实得 ${mine.size}")
-        assertEquals(mine.head.hcursor.get[String]("class").toOption,
-          Some(TaskStuckWatcher.ClassFalsePositive))
-        assertEquals(mine.head.hcursor.get[String]("branch").toOption,
+        assertEquals(mine.head.hcursor.get[String]("class").toOption, Some(TaskStuckWatcher.ClassFalsePositive))
+        assertEquals(
+          mine.head.hcursor.get[String]("branch").toOption,
           Some(TaskStuckWatcher.BranchToolOverdue),
-          "本形态只命中工具相位轴（agent 侧戳新鲜）")
+          "本形态只命中工具相位轴（agent 侧戳新鲜）"
+        )
         assertEquals(mine.head.hcursor.get[Boolean]("recoverable").toOption, Some(false))
         assertEquals(mine.head.hcursor.get[Boolean]("destructiveAllowed").toOption, Some(false))
     }.guarantee(system.stopAll.attempt.void)
@@ -279,28 +294,29 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         // 与 ② **同形态**，唯一差异 = 零正信号（该工具从未报过任何进展证据：
         // `lastProgressSignalAt = 0`）⇒ 必须仍落类① 并走既有开火链。
         _ <- resources.agentRegistry.set(
-          Map(Sid -> AgentRecord(
-            sessionId = Sid,
-            ref = agentRef,
-            kind = AgentKind.Delegate,
-            rootSessionId = "root-1",
-            parentRef = Some(parentRef),
-            startedAt = now - 20 * 60 * 1000L,
-            status = AgentStatus.Processing,
-            lastActivityMs = now,
-            turnStartedAt = now - 3_000L,
-            currentToolName = Some("Bash"),
-            currentToolStartedAt = now - 3_000L,
-            lastProgressSignalAt = 0L
-          ))
+          Map(
+            Sid -> AgentRecord(
+              sessionId = Sid,
+              ref = agentRef,
+              kind = AgentKind.Delegate,
+              rootSessionId = "root-1",
+              parentRef = Some(parentRef),
+              startedAt = now - 20 * 60 * 1000L,
+              status = AgentStatus.Processing,
+              lastActivityMs = now,
+              turnStartedAt = now - 3_000L,
+              currentToolName = Some("Bash"),
+              currentToolStartedAt = now - 3_000L,
+              lastProgressSignalAt = 0L
+            )
+          )
         )
         _ <- TaskStuckWatcher.scan(resources, wsHub, thresholdMs = 10 * 60 * 1000L)
         _ <- IO.sleep(300.millis)
         events <- wsEvents.get
         stopMsgs <- received.get
       yield
-        assertEquals(events.size, 1,
-          s"零正信号 + 工具相位超阈 ⇒ 仍须判卡死并广播 taskStuck（红线 1），实得 ${events.size}: $events")
+        assertEquals(events.size, 1, s"零正信号 + 工具相位超阈 ⇒ 仍须判卡死并广播 taskStuck（红线 1），实得 ${events.size}: $events")
         val ev = events.head
         assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
         assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some(Sid))
@@ -339,17 +355,19 @@ class ToolPhaseStuckAxisSpec extends CatsEffectSuite:
         _ <- wsHub.register(json => wsEvents.update(_ :+ json))
         now = System.currentTimeMillis()
         _ <- resources.agentRegistry.set(
-          Map(Sid -> AgentRecord(
-            sessionId = Sid,
-            ref = agentRef,
-            kind = AgentKind.Delegate,
-            rootSessionId = "root-1",
-            parentRef = Some(parentRef),
-            status = AgentStatus.Processing,
-            lastActivityMs = now,
-            currentToolName = Some("Bash"),
-            currentToolStartedAt = now - 1_000L
-          ))
+          Map(
+            Sid -> AgentRecord(
+              sessionId = Sid,
+              ref = agentRef,
+              kind = AgentKind.Delegate,
+              rootSessionId = "root-1",
+              parentRef = Some(parentRef),
+              status = AgentStatus.Processing,
+              lastActivityMs = now,
+              currentToolName = Some("Bash"),
+              currentToolStartedAt = now - 1_000L
+            )
+          )
         )
         _ <- TaskStuckWatcher.scan(resources, wsHub, thresholdMs = 10 * 60 * 1000L)
         _ <- IO.sleep(200.millis)

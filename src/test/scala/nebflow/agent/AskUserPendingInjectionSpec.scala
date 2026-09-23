@@ -34,22 +34,25 @@ class AskUserPendingInjectionSpec extends CatsEffectSuite:
   // —— 事故原文（ui.json [764][765] 的开头片段，消息形态对齐真实链路）——
   private val delegateReport1 =
     "\"分层压缩提示词设计稿\":\n任务完成。\n\n**规格书路径**：`~/.nebflow/docs/Nebflow/20260903_compaction-prompt-by-level.md`"
+
   private val delegateReport2 =
     "\"v3.2：纵排层级+曲线连线+禁emoji\":\n# Flow Map 原型 v3.2 修订汇报（作者 11:08 三点意见）\n\n**结论：PASS**"
 
-  /** Agent 消息到达 hub 答案通道时的负载形态：delegate 汇报是纯文本，
-    * 没有 answers 字段 —— 与 gateway askUserAnswer 帧（answers: List[String]）
-    * 的用户答案形态相区分。 */
+  /**
+   * Agent 消息到达 hub 答案通道时的负载形态：delegate 汇报是纯文本，
+   * 没有 answers 字段 —— 与 gateway askUserAnswer 帧（answers: List[String]）
+   * 的用户答案形态相区分。
+   */
   private def agentMessagePayload(text: String): Json = Json.obj("text" -> Json.fromString(text))
 
   private def userAnswerPayload(answers: String*): Json =
     Json.obj("answers" -> Json.arr(answers.map(Json.fromString)*))
 
   private def askRequest(
-      requestId: String,
-      gotAnswers: Ref[IO, Option[List[String]]],
-      rootSid: String = "root-1",
-      system: nebflow.actor.ActorSystem
+    requestId: String,
+    gotAnswers: Ref[IO, Option[List[String]]],
+    rootSid: String = "root-1",
+    system: nebflow.actor.ActorSystem
   ): IO[InteractionRequest] =
     system
       .spawn(

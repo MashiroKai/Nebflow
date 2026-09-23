@@ -38,6 +38,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -56,11 +57,12 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
   /** 按输入内容响应的 LLM：inputs 记录全部 user 文本（断言 prompt 形态/投递）。 */
   private class FuncLlm(respond: String => IO[String]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -110,7 +112,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -123,7 +125,10 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   /** 引擎挂载（无 ProjectActor：重入走 router 的 warn 降级路径）+ WS 事件捕获。 */
   private def mountEngineOnly(
@@ -148,31 +153,51 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
         // ⇒ 显式关腿 2（生产默认开；腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield (rt, events)
 
   /** 完整挂载（真实 ProjectActor——重入 spawn 路径需要）。 */
   private def mountReal(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
-    val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+    val pd = ProjectDef(
+      name = name,
+      workspace = ws.toString,
+      agentFile = (ws / "AGENTS.md").toString,
+      createdAt = System.currentTimeMillis()
+    )
     ProjectRuntimeRegistry.mount(pd, system, res, None, "nebula-root")
 
   /** Nebula 根会话捕获 actor（deliverToNebula 升级通道的断言点）。 */
-  private def registerNebulaCapture(res: SharedResources, system: ActorSystem): IO[Ref[IO, List[(String, Option[String])]]] =
+  private def registerNebulaCapture(
+    res: SharedResources,
+    system: ActorSystem
+  ): IO[Ref[IO, List[(String, Option[String])]]] =
     Ref.of[IO, List[(String, Option[String])]](Nil).flatMap { captured =>
       // 续存行为：handler 返回自身（本 actor 库无 Behaviors.same——Behavior.scala）
       lazy val captureBehavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receive[AgentCommand] { (_, msg) =>
         msg match
           case im: AgentCommand.ImmediateInput => captured.update(_ :+ (im.text -> im.eventType)).as(captureBehavior)
-          case _                               => IO.pure(captureBehavior)
+          case _ => IO.pure(captureBehavior)
       }
       system.spawn(captureBehavior, s"nebula-capture-${scala.util.Random.nextInt(100000)}").flatMap { ref =>
         val now = System.currentTimeMillis()
         res.agentRegistry
-          .update(_ + ("nebula-root" -> AgentRecord(
-            sessionId = "nebula-root", ref = ref, kind = AgentKind.Root, rootSessionId = "nebula-root",
-            startedAt = now, lastActivityMs = now)))
+          .update(
+            _ + ("nebula-root" -> AgentRecord(
+              sessionId = "nebula-root",
+              ref = ref,
+              kind = AgentKind.Root,
+              rootSessionId = "nebula-root",
+              startedAt = now,
+              lastActivityMs = now
+            ))
+          )
           .as(captured)
       }
     }
@@ -180,7 +205,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[NodeDef] =
@@ -190,15 +215,19 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     waitUntil(20.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAuditTypes(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   // noderpt 批 A 段（2026-09-11）：本 fixture 主题 = blocked/重入协议（文本锚定 +
@@ -219,22 +248,46 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
 
   // ── blocked 数据形态 + 不结算下游 + WS 事件 + 审计（§2.1）──────────
 
-  test("blocked: node terminalized as blocked (ttlExpireAt=None, render result, feedback, count=1), downstream NOT settled, nodeUpdated payload carries blockCount/blockedFeedback") {
+  test(
+    "blocked: node terminalized as blocked (ttlExpireAt=None, render result, feedback, count=1), downstream NOT settled, nodeUpdated payload carries blockCount/blockedFeedback"
+  ) {
     val ws = tempRoot / "ws-shape"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-shape-${scala.util.Random.nextInt(100000)}")
-    val llm = FuncLlm(text => if text.contains("will-block-A") then IO.pure(blockedText("upstream-incomplete", "上游 X 未完成", "需上游先完成")) else IO.pure("ok"))
+    val llm = FuncLlm(text =>
+      if text.contains("will-block-A") then IO.pure(blockedText("upstream-incomplete", "上游 X 未完成", "需上游先完成"))
+      else IO.pure("ok")
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-shape", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // B（wiring，无 task）← A 入口 blocked。down-b store 直种（20260903 创建必带
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput("blk-shape", "blocked-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-down-b" -> NodeDef(
+              id = "n-down-b",
+              name = "down-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-shape",
+          "blocked-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "blocked-a", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "blocked-a")
       a <- nodeById(rt, aId)
@@ -254,43 +307,67 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assertEquals(a.ttlExpireAt, None, "blocked node must never expire (待办语义)")
       assertEquals(a.blockCount, 1)
       assertEquals(a.blockedFeedback, Some(BlockedFeedback("upstream-incomplete", "上游 X 未完成", "需上游先完成")))
-      assert(a.result.exists(_.startsWith("[blocked:upstream-incomplete]")), s"result must be rendered string, got: ${a.result}")
+      assert(
+        a.result.exists(_.startsWith("[blocked:upstream-incomplete]")),
+        s"result must be rendered string, got: ${a.result}"
+      )
       // 不结算下游（§2.1 动作③）：B 未收到投递、未启动
       assertEquals(bAfter.status, NodeLifecycle.Wiring, "downstream must NOT be settled by blocked")
       assertEquals(bAfter.deliveredTo, Nil, "downstream must not receive blocked feedback string")
       assert(!inputs.exists(_.contains("=== Node ")), "no result delivery may happen for blocked")
       // WS：nodeUpdated（复用现有类型，§2.1 动作②），payload 同构 + 新字段
-      val upd = evs.find((t, id, p) => t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked))
+      val upd = evs.find((t, id, p) =>
+        t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
+      )
       assert(upd.isDefined, s"blocked must emit nodeUpdated, got: ${evs.map((t, id, _) => (t, id))}")
       val payload = upd.get._3
       assertEquals(payload.hcursor.get[Int]("blockCount").toOption, Some(1), "payload must carry blockCount")
       val bf = payload.hcursor.downField("blockedFeedback")
-      assertEquals(bf.get[String]("category").toOption, Some("upstream-incomplete"), "payload must carry structured feedback")
+      assertEquals(
+        bf.get[String]("category").toOption,
+        Some("upstream-incomplete"),
+        "payload must carry structured feedback"
+      )
       assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "blocked must NOT emit nodeCompleted")
       // 审计（§4.4）
       assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
       // 「blocked 永不自动归档」负极断言：链 sweep 不得把 blocked 节点移出主图
-      assert(!removedBySweep.contains(aId), s"blocked node '${a.name}' must never be auto-archived by sweep, removed=$removedBySweep")
+      assert(
+        !removedBySweep.contains(aId),
+        s"blocked node '${a.name}' must never be auto-archived by sweep, removed=$removedBySweep"
+      )
       // sweep 后 blocked-a 仍留活动区（主图可见 = 待办语义）
       assert(afterSweepInActive, "blocked node must stay in active area after sweep")
+    end for
   }
 
   // ── 验收③：blocked → ReenterDispatcher → 重入 prompt 形态 spawn ──
 
-  test("reentry: blocked routes ReenterDispatcher → dispatcher spawned with reentry-adjustment prompt (含节点名/id/轮次/三字段/四动作/无需回报；裁定①无快照)") {
+  test(
+    "reentry: blocked routes ReenterDispatcher → dispatcher spawned with reentry-adjustment prompt (含节点名/id/轮次/三字段/四动作/无需回报；裁定①无快照)"
+  ) {
     val ws = tempRoot / "ws-reentry"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-reentry-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text =>
       if text.contains("任务分发器") then IO.pure("ok") // 重入分发器会话：完成即止
       else if text.contains("will-block-R") then IO.pure(blockedText("task-underspecified", "任务缺少交付物定义", "补充验收标准"))
-      else IO.pure("ok"))
+      else IO.pure("ok")
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("blk-reentry", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("blk-reentry", "reentry-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block-R"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-reentry",
+          "reentry-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block-R"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "reentry-node", Set(NodeLifecycle.Blocked))
       // 重入分发器会话 spawn → prompt 经 LLM 捕获
       _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.exists(_.contains("[node-feedback re-entry]"))))
@@ -300,7 +377,8 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      val prompt = prompts.find(_.contains("[node-feedback re-entry]")).getOrElse(fail("reentry prompt must be captured"))
+      val prompt =
+        prompts.find(_.contains("[node-feedback re-entry]")).getOrElse(fail("reentry prompt must be captured"))
       assert(prompt.contains("not a new task"), "reentry prompt must declare reentry nature")
       assert(prompt.contains("reentry-node") && prompt.contains(nodeId), s"prompt must carry node name+id")
       assert(prompt.contains("reported blocked (round 1)"), "prompt must carry blockCount round")
@@ -310,13 +388,20 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       // 裁定①（观测面上下文经济学批 20260907 方向 B）：重入 spawn prompt 不再嵌
       // Flow Map 快照——拓扑由分发器首轮 NodeList 按需拉取（旧实现断言
       // `contains("```json") && contains("Flow Map 快照")`，随快照移除翻转）。
-      assert(!prompt.contains("```json") && !prompt.contains("Flow Map 快照"), "reentry prompt must NOT embed Flow Map snapshot (ctx-econ 裁定①)")
-      assert(!prompt.contains("\"result\":") && !prompt.contains("\"task\":"), "reentry prompt must not carry hydrated result/task JSON fields")
+      assert(
+        !prompt.contains("```json") && !prompt.contains("Flow Map 快照"),
+        "reentry prompt must NOT embed Flow Map snapshot (ctx-econ 裁定①)"
+      )
+      assert(
+        !prompt.contains("\"result\":") && !prompt.contains("\"task\":"),
+        "reentry prompt must not carry hydrated result/task JSON fields"
+      )
       assert(prompt.contains("abandon=true"), "prompt must carry abandon action hint")
       assert(prompt.contains("No report needed"), "prompt must carry no-report note")
       assert(prompt.contains("project=blk-reentry"), "prompt must carry project param note")
       assert(node.blockCount == 1, "first blocked round")
       assert(audit.exists((t, _) => t == "reentry-triggered"), s"reentry-triggered audit line must exist, got: $audit")
+    end for
   }
 
   // ── 验收④：第 3 次 blocked → 升级 Nebula 不再重入 ──────────────
@@ -329,15 +414,24 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       if text.contains("任务分发器") then IO.pure("ok")
       else if text.contains("round-one") || text.contains("round-two") || text.contains("round-three") then
         IO.pure(blockedText("needs-split", "任务应拆分", "拆为子图"))
-      else IO.pure("ok"))
+      else IO.pure("ok")
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("blk-loopcap", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       ctx = mkCtx(res, system, ws.toString)
       // 第 1 轮 blocked（count=1 → 重入）
-      _ <- nodeEdit(nodeInput("blk-loopcap", "loop-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("round-one"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-loopcap",
+          "loop-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("round-one"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "loop-node", Set(NodeLifecycle.Blocked))
       _ <- waitUntil(15.seconds)(llm.inputs.get.map(_.count(_.contains("[node-feedback re-entry]")) >= 1))
       // 第 2 轮：重激活（task 实际变更）→ blocked（count=2 → 重入）
@@ -355,7 +449,9 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       // 终态的 completed 投递（NodeEngine.deliverDispatcherOutputToNebula）——
       // 升级断言按 eventType=blocked 精确过滤（内容断言不变，仅容纳新投递种类）
       escalations = allCaptured.filter(_._2 == Some("blocked"))
-      node <- rt.store.snapshot.map(_.nodes.values.find(_.name == "loop-node")).map(_.getOrElse(fail("node must exist")))
+      node <- rt.store.snapshot
+        .map(_.nodes.values.find(_.name == "loop-node"))
+        .map(_.getOrElse(fail("node must exist")))
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -365,43 +461,78 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       val (text, eventType) = escalations.head
       assertEquals(eventType, Some("blocked"), "escalation eventType must be 'blocked' (前端 label 自动 BLOCKED)")
       assert(text.contains("[Node 'loop-node' blocked]"), s"escalation head, got: $text")
-      assert(text.contains("第 3 次 blocked") && text.contains("上限 2"), s"escalation must carry round count + cap, got: $text")
-      assert(text.contains("历史轮次反馈") && text.contains("needs-split"), s"escalation must carry feedback history, got: $text")
+      assert(
+        text.contains("第 3 次 blocked") && text.contains("上限 2"),
+        s"escalation must carry round count + cap, got: $text"
+      )
+      assert(
+        text.contains("历史轮次反馈") && text.contains("needs-split"),
+        s"escalation must carry feedback history, got: $text"
+      )
       assertEquals(node.status, NodeLifecycle.Blocked, "node stays blocked awaiting disposition")
       assertEquals(node.blockCount, 3)
       assertEquals(node.ttlExpireAt, None, "escalated blocked node stays visible (待办语义)")
       assert(audit.exists((t, _) => t == "escalated"), s"escalated audit line must exist, got: $audit")
+    end for
   }
 
   // ── NodeEdit 重激活：deliveredTo 清空 + blockCount 保留 + D1 重投 ──
 
-  test("reactivation: edit blocked node (task change + in append) → reactivated, upstream results re-delivered, blockCount preserved, reruns to completion") {
+  test(
+    "reactivation: edit blocked node (task change + in append) → reactivated, upstream results re-delivered, blockCount preserved, reruns to completion"
+  ) {
     val ws = tempRoot / "ws-reactivate"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-react-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text =>
       if text.contains("will-block") then IO.pure(blockedText("upstream-incomplete", "缺上游输入", "先等上游完成"))
-      else IO.pure("ok-final"))
+      else IO.pure("ok-final")
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-reactivate", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口 blocked（out=Nebula 仅满足连接下限校验五；blocked 不结算下游，无投递副作用）
-      _ <- nodeEdit(nodeInput("blk-reactivate", "react-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-reactivate",
+          "react-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "react-node", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "react-node")
       // C 悬空完成（重激活时接为上游；out=Nebula 仅满足连接下限）
-      _ <- nodeEdit(nodeInput("blk-reactivate", "late-up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("late-result-C"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-reactivate",
+          "late-up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("late-result-C"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "late-up", Set(NodeLifecycle.Completed))
       cId <- idOf(rt, "late-up")
       // 编辑 blocked 节点：task 实际变更 + in 追加 → 重激活
-      _ <- nodeEdit(nodeInput("blk-reactivate", "react-node", "task" -> Json.fromString("retry-with-input"),
-        "in" -> Json.fromString(cId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-reactivate",
+          "react-node",
+          "task" -> Json.fromString("retry-with-input"),
+          "in" -> Json.fromString(cId)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "react-node", Set(NodeLifecycle.Completed))
       a <- nodeById(rt, aId)
-      secondRunInput <- llm.inputs.get.map(_.find(t => t.contains("retry-with-input") && t.contains("=== Node late-up ===")))
+      secondRunInput <- llm.inputs.get.map(
+        _.find(t => t.contains("retry-with-input") && t.contains("=== Node late-up ==="))
+      )
       audit <- readAuditTypes(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -412,9 +543,13 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assert(a.in.contains(cId), "in append must land")
       assert(a.deliveredTo.contains(cId), "completed upstream re-delivered after deliveredTo cleared")
       assert(a.completedAt.isDefined && a.ttlExpireAt.isDefined, "completed rerun re-arms display TTL")
-      assert(secondRunInput.isDefined, s"second run input must carry re-delivered upstream result, got: ${llm.inputs.get.unsafeRunSync().map(_.take(120))}")
+      assert(
+        secondRunInput.isDefined,
+        s"second run input must carry re-delivered upstream result, got: ${llm.inputs.get.unsafeRunSync().map(_.take(120))}"
+      )
       assert(secondRunInput.exists(_.contains("── Node protocol ──")), "protocol footnote must be injected (§1.5)")
       assert(audit.exists((t, id) => t == "reactivated" && id == aId), s"reactivated audit line, got: $audit")
+    end for
   }
 
   // ── abandon：终态 → cancelled + 审计（无 TTL，2026-09-07 裁定）；running 拒绝 ──
@@ -426,18 +561,35 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     val llm = FuncLlm(text =>
       if text.contains("will-block") then IO.pure(blockedText("other", "无法提出调整", "abandon"))
       else if text.contains("slow-node") then IO.sleep(1500.millis).as("slow-ok")
-      else IO.pure("ok"))
+      else IO.pure("ok")
+    )
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-abandon", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("blk-abandon", "abandon-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-abandon",
+          "abandon-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "abandon-node", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "abandon-node")
       // running 节点 → abandon 拒绝
-      _ <- nodeEdit(nodeInput("blk-abandon", "slow-node", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-node"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-abandon",
+          "slow-node",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-node"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-node", Set(NodeLifecycle.Running))
       refused <- nodeEdit(nodeInput("blk-abandon", "slow-node", "abandon" -> Json.fromBoolean(true)), ctx)
       // blocked → abandon 接受
@@ -456,9 +608,14 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       // 无 TTL 强制清（ttlExpireAt=None），节点留主图由上层裁决——本断言随代码对齐
       // （旧断言 isDefined 系该批漏改，main 基线预存红，合并观测面P0P1引擎批复验时修正）。
       assert(a.ttlExpireAt.isEmpty, "abandoned node retained on map — no display TTL (2026-09-07 ruling)")
-      assert(evs.exists((t, id, p) => t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Cancelled)),
-        "abandon must emit nodeUpdated (cancelled)")
+      assert(
+        evs.exists((t, id, p) =>
+          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Cancelled)
+        ),
+        "abandon must emit nodeUpdated (cancelled)"
+      )
       assert(audit.exists((t, id) => t == "abandoned" && id == aId), s"abandoned audit line, got: $audit")
+    end for
   }
 
   // ── R1：D1 补投递必须排除 blocked（create + edit 两路径）─────────
@@ -467,25 +624,53 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-r1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"blk-r1-${scala.util.Random.nextInt(100000)}")
-    val llm = FuncLlm(text => if text.contains("will-block") then IO.pure(blockedText("other", "反馈串", "")) else IO.pure("ok"))
+    val llm =
+      FuncLlm(text => if text.contains("will-block") then IO.pure(blockedText("other", "反馈串", "")) else IO.pure("ok"))
     for
       res <- mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-r1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A blocked 悬空（out=Nebula 仅满足连接下限校验五；blocked 不结算，投递面无副作用）
-      _ <- nodeEdit(nodeInput("blk-r1", "blk-up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("will-block"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-r1",
+          "blk-up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("will-block"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "blk-up", Set(NodeLifecycle.Blocked))
       aId <- idOf(rt, "blk-up")
       // create 路径：B 接 in=[A] → 不得投递/启动
-      _ <- nodeEdit(nodeInput("blk-r1", "consumer-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("consume-b"), "in" -> Json.fromString(aId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "blk-r1",
+          "consumer-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("consume-b"),
+          "in" -> Json.fromString(aId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // edit 路径：W 追加 in=[A] → 不得投递/启动。W store 直种（20260903 创建必带
       // out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-wiring-w" -> NodeDef(id = "n-wiring-w", name = "wiring-w", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-wiring-w" -> NodeDef(
+              id = "n-wiring-w",
+              name = "wiring-w",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.nebula),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       _ <- nodeEdit(nodeInput("blk-r1", "wiring-w", "in" -> Json.fromString(aId)), ctx)
       _ <- IO.sleep(800.millis) // 给「假如误投递」留窗口
       inputs <- llm.inputs.get
@@ -497,7 +682,11 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       assertEquals(b.deliveredTo, Nil, "no deliveredTo entry from blocked upstream (create path)")
       assertEquals(w.status, NodeLifecycle.Wiring, "edit-path D1 must not deliver/start from blocked upstream")
       assertEquals(w.deliveredTo, Nil, "no deliveredTo entry from blocked upstream (edit path)")
-      assert(!inputs.exists(t => t.contains("=== Node blk-up ===")), s"blocked feedback string must never be delivered, inputs=${inputs.map(_.take(100))}")
+      assert(
+        !inputs.exists(t => t.contains("=== Node blk-up ===")),
+        s"blocked feedback string must never be delivered, inputs=${inputs.map(_.take(100))}"
+      )
+    end for
   }
 
 end NodeBlockedReentrySpec

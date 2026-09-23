@@ -30,8 +30,10 @@ class AskUserDualModeToolSpec extends FunSuite:
   private val generalDef = AgentDef(name = "general", description = "", tools = Nil)
   private val nebulaDef = AgentDef(name = "Nebula", description = "", tools = Nil)
 
-  /** 记录式 stub agent ref：`!` 落 sink；`?` 记录消息后**立即**用 `answers`
-    * 回复（模拟「人在窗口点答」）——阻塞路径因此不挂起、非阻塞路径不受影响。 */
+  /**
+   * 记录式 stub agent ref：`!` 落 sink；`?` 记录消息后**立即**用 `answers`
+   * 回复（模拟「人在窗口点答」）——阻塞路径因此不挂起、非阻塞路径不受影响。
+   */
   private def recordingRef(
     sink: scala.collection.mutable.ListBuffer[AgentCommand],
     answers: List[String] = List("A")
@@ -73,7 +75,8 @@ class AskUserDualModeToolSpec extends FunSuite:
 
   private val twoQuestions = JsonObject(
     "questions" -> io.circe.Json.arr(
-      io.circe.Json.obj("question" -> "picked?".asJson, "options" -> io.circe.Json.arr(io.circe.Json.obj("label" -> "A".asJson)))
+      io.circe.Json
+        .obj("question" -> "picked?".asJson, "options" -> io.circe.Json.arr(io.circe.Json.obj("label" -> "A".asJson)))
     )
   )
 
@@ -83,7 +86,10 @@ class AskUserDualModeToolSpec extends FunSuite:
 
   test("parseMode: 缺席 ⇒ 默认阻塞；两个合法值各归位") {
     assertEquals(AskUserQuestionTool.parseMode(JsonObject.empty), Right(AskMode.Blocking))
-    assertEquals(AskUserQuestionTool.parseMode(JsonObject("mode" -> AskMode.BlockingWire.asJson)), Right(AskMode.Blocking))
+    assertEquals(
+      AskUserQuestionTool.parseMode(JsonObject("mode" -> AskMode.BlockingWire.asJson)),
+      Right(AskMode.Blocking)
+    )
     assertEquals(
       AskUserQuestionTool.parseMode(JsonObject("mode" -> AskMode.NonBlockingWire.asJson)),
       Right(AskMode.NonBlocking)
@@ -92,16 +98,16 @@ class AskUserDualModeToolSpec extends FunSuite:
 
   test("parseMode: 非法值一律显式错误（不静默回落 —— 明禁的伪处理②）") {
     val bads = List(
-      "nonblocking".asJson,          // 拼写
-      "Non-Blocking".asJson,         // 大小写
-      "".asJson,                     // 空串
-      123.asJson,                    // 类型不对
-      io.circe.Json.True             // 布尔（boolean 形态的旧设想）
+      "nonblocking".asJson, // 拼写
+      "Non-Blocking".asJson, // 大小写
+      "".asJson, // 空串
+      123.asJson, // 类型不对
+      io.circe.Json.True // 布尔（boolean 形态的旧设想）
     )
     bads.foreach { bad =>
       AskUserQuestionTool.parseMode(JsonObject("mode" -> bad)) match
         case Left(err) => assert(err.message.contains(AskUserQuestionTool.BadModeCode), s"错误码缺失：${err.message}")
-        case Right(m)  => fail(s"非法 mode $bad 被静默接受为 $m")
+        case Right(m) => fail(s"非法 mode $bad 被静默接受为 $m")
     }
   }
 
@@ -172,7 +178,7 @@ class AskUserDualModeToolSpec extends FunSuite:
     val ctx = ctxFor(generalDef, depth = 1, ref = Some(recordingRef(sink, answers = List("A"))))
     AskUserQuestionTool.call(twoQuestions, ctx).unsafeRunSync() match
       case Right(answer) => assertEquals(answer, "A")
-      case Left(err)     => fail(s"阻塞路径行为漂移：${err.message}")
+      case Left(err) => fail(s"阻塞路径行为漂移：${err.message}")
     sink.toList match
       case List(cmd: AgentCommand.AskUser) =>
         assertEquals(cmd.mode, AskMode.Blocking, "既有调用点（不传 mode）落到非阻塞 —— 默认值失效")
@@ -182,7 +188,13 @@ class AskUserDualModeToolSpec extends FunSuite:
 
   test("ack 文案: 机器可读（requestId + 问题数）+ 明确「不要等待」+ 未答兜底指令") {
     val items = AskUserQuestionTool.parseItems(
-      io.circe.Json.arr(io.circe.Json.obj("question" -> "q1".asJson, "options" -> io.circe.Json.arr(io.circe.Json.obj("label" -> "A".asJson)))).asArray.get
+      io.circe.Json
+        .arr(
+          io.circe.Json
+            .obj("question" -> "q1".asJson, "options" -> io.circe.Json.arr(io.circe.Json.obj("label" -> "A".asJson)))
+        )
+        .asArray
+        .get
     )
     val ack = AskUserQuestionTool.nonBlockingAck(items, "abcdef01")
     assert(ack.contains("requestId=abcdef01"), ack)
@@ -199,7 +211,10 @@ class AskUserDualModeToolSpec extends FunSuite:
       case Some(_) =>
         // 真实 call 路径：headless 由 HeadlessMode.enabled 决定；此处直接钉住顺序语义
         // （askGuard 是 call 的第一顺位 —— AskUserDualModeSchemaSpec 有源码级 pin）。
-        assertEquals(AskUserQuestionTool.askGuard(headless = true).map(_.message), Some(AskUserQuestionTool.HeadlessErrorMessage))
+        assertEquals(
+          AskUserQuestionTool.askGuard(headless = true).map(_.message),
+          Some(AskUserQuestionTool.HeadlessErrorMessage)
+        )
       case None => fail("askGuard(headless=true) 未拒")
     // headless 分支不走模式解析：非 headless 下同输入落到非阻塞预检（可区分）
     assert(

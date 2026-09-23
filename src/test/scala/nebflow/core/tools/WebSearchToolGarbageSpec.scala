@@ -2,11 +2,13 @@ package nebflow.core.tools
 
 import munit.CatsEffectSuite
 
-/** WebSearch P0 (E2-5): anti-scraping garbage fingerprints. The 2026-08-22
-  * Sogou incident: a checkSNUID anti-bot cookie script was extracted by the
-  * generic link fallback and shipped to the agent as the Sogou "results"
-  * (session delegate-Explorer-426be9df, "Search engine: Sogou" success entry
-  * containing `function checkSNUID() { ... document.cookie ... }`). */
+/**
+ * WebSearch P0 (E2-5): anti-scraping garbage fingerprints. The 2026-08-22
+ * Sogou incident: a checkSNUID anti-bot cookie script was extracted by the
+ * generic link fallback and shipped to the agent as the Sogou "results"
+ * (session delegate-Explorer-426be9df, "Search engine: Sogou" success entry
+ * containing `function checkSNUID() { ... document.cookie ... }`).
+ */
 class WebSearchToolGarbageSpec extends CatsEffectSuite:
 
   // Abbreviated from the real evidence sample (structure preserved).

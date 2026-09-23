@@ -11,25 +11,26 @@ import nebflow.core.PathUtil
 import java.nio.file.Files
 import scala.concurrent.duration.*
 
-/** kaiauth 修法批 ①配套（2026-09-16 作者「治本」已批）—— **停摆门的「重登成功可解除」**。
-  *
-  * 缺陷形态（诊断报告 §9③）：停摆位的读侧有三条腿（隧道 connectLoop / `NeblinkClient`
-  * 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而清侧修前只有一条 —— **用户显式
-  * 登录**。于是「自动路径刚铸成有效新凭据、却因为同一次 enroll 踢掉了自己的旧会话而被
-  * 停摆」这一状态**没有任何自动出口**（死循环）。
-  *
-  * 本批新增的那条腿（判据 = 作者口径「新凭据已铸成**且**经一次成功交换证明有效」）：
-  * `NeblinkEnrollment.persist`（**自动路径**，`explicitUserAction = false`）在**已停摆**时，
-  * 用新 client 对新凭据做**一次**证明性会话交换；成功才解除，失败保持。
-  *
-  * 三条钉（可红可绿，全部走未改动的产品代码 + 真 HTTP 夹具）：
-  *  1. **已铸成 + 交换成功 ⇒ 解除**（改前恒保持 ⇒ 本钉在基线上必红）；
-  *  2. **交换失败 ⇒ 保持**（失败路径绝不解锁 = 防风暴回归钉），且**只试一次**；
-  *  3. **未停摆 ⇒ 零额外请求**（wire 面不可观测 ⇒ 「零 wire 新增」的可测形态）。
-  *
-  * 显式路径的语义**逐字未动**（案 C：显式登录是无条件解除口）——
-  * `EnrollGuardExplicitLoginSpec` 的停摆解除钉仍是那条语义的回归钉。
-  */
+/**
+ * kaiauth 修法批 ①配套（2026-09-16 作者「治本」已批）—— **停摆门的「重登成功可解除」**。
+ *
+ * 缺陷形态（诊断报告 §9③）：停摆位的读侧有三条腿（隧道 connectLoop / `NeblinkClient`
+ * 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而清侧修前只有一条 —— **用户显式
+ * 登录**。于是「自动路径刚铸成有效新凭据、却因为同一次 enroll 踢掉了自己的旧会话而被
+ * 停摆」这一状态**没有任何自动出口**（死循环）。
+ *
+ * 本批新增的那条腿（判据 = 作者口径「新凭据已铸成**且**经一次成功交换证明有效」）：
+ * `NeblinkEnrollment.persist`（**自动路径**，`explicitUserAction = false`）在**已停摆**时，
+ * 用新 client 对新凭据做**一次**证明性会话交换；成功才解除，失败保持。
+ *
+ * 三条钉（可红可绿，全部走未改动的产品代码 + 真 HTTP 夹具）：
+ *  1. **已铸成 + 交换成功 ⇒ 解除**（改前恒保持 ⇒ 本钉在基线上必红）；
+ *  2. **交换失败 ⇒ 保持**（失败路径绝不解锁 = 防风暴回归钉），且**只试一次**；
+ *  3. **未停摆 ⇒ 零额外请求**（wire 面不可观测 ⇒ 「零 wire 新增」的可测形态）。
+ *
+ * 显式路径的语义**逐字未动**（案 C：显式登录是无条件解除口）——
+ * `EnrollGuardExplicitLoginSpec` 的停摆解除钉仍是那条语义的回归钉。
+ */
 class NeblinkKickParkReleaseSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: Duration = 120.seconds
@@ -63,8 +64,10 @@ class NeblinkKickParkReleaseSpec extends CatsEffectSuite:
       body(f).guarantee(IO.blocking(f.close()))
     }
 
-  /** 一条生产同形装配：`NeblinkService` + 隧道 + `NeblinkDiscovery`（hot-swap 目标）。
-    * 返回 `(ms, discovery, tunnel, dev)`。 */
+  /**
+   * 一条生产同形装配：`NeblinkService` + 隧道 + `NeblinkDiscovery`（hot-swap 目标）。
+   * 返回 `(ms, discovery, tunnel, dev)`。
+   */
   private def withStack[A](
     fix: RelayAuthFixtureServer
   )(body: (NeblinkService, NeblinkDiscovery, NeblinkRelayTunnel, String) => IO[A]): IO[A] =

@@ -60,11 +60,14 @@ class ProjectCreateRootSessionSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"pc-rs-${scala.util.Random.nextInt(100000)}")
     val res = testResources(ws)
-    val input = Json.obj(
-      "name" -> Json.fromString("root-test"),
-      "workspace" -> Json.fromString(ws.toString),
-      "description" -> Json.fromString("P0 rootSessionId regression")
-    ).asObject.get
+    val input = Json
+      .obj(
+        "name" -> Json.fromString("root-test"),
+        "workspace" -> Json.fromString(ws.toString),
+        "description" -> Json.fromString("P0 rootSessionId regression")
+      )
+      .asObject
+      .get
     // 非顶层会话：sessionId = 执行者（qa-backend），rootSessionId = 真正顶层（Nebula）
     val ctx = ToolContext(
       projectRoot = ws.toString,
@@ -81,7 +84,11 @@ class ProjectCreateRootSessionSpec extends CatsEffectSuite:
     yield
       assert(result.isRight, result.toString)
       assert(rt.isDefined, "project must be mounted")
-      assertEquals(rt.get.engine.rootSessionId, "nebula-root", "engine rootSessionId must be the true top-level root, not the caller session")
+      assertEquals(
+        rt.get.engine.rootSessionId,
+        "nebula-root",
+        "engine rootSessionId must be the true top-level root, not the caller session"
+      )
       assert(rt.get.engine.rootSessionId != "qa-backend-sid", "must NOT anchor to the mounting caller")
   }
 
@@ -90,10 +97,13 @@ class ProjectCreateRootSessionSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"pc-rs2-${scala.util.Random.nextInt(100000)}")
     val res = testResources(ws)
-    val input = Json.obj(
-      "name" -> Json.fromString("root-test-dup"),
-      "workspace" -> Json.fromString(ws.toString)
-    ).asObject.get
+    val input = Json
+      .obj(
+        "name" -> Json.fromString("root-test-dup"),
+        "workspace" -> Json.fromString(ws.toString)
+      )
+      .asObject
+      .get
     val ctx = ToolContext(
       projectRoot = ws.toString,
       sessionId = Some("qa-backend-sid"),
@@ -117,6 +127,7 @@ class ProjectCreateRootSessionSpec extends CatsEffectSuite:
       assert(rt1.isDefined && rt2.isDefined, "project must be mounted after both calls")
       assertEquals(rt1.get.engine.rootSessionId, "nebula-root")
       assertEquals(rt2.get.engine.rootSessionId, "nebula-root")
+    end for
   }
 
 end ProjectCreateRootSessionSpec

@@ -97,9 +97,7 @@ object ModelCommand extends CliCommand:
                           )
                     }
               }
-              .handleErrorWith(e =>
-                IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}"))
-              )
+              .handleErrorWith(e => IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}")))
           else
             // Set session model
             client

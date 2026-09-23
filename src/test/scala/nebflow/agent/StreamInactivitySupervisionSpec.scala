@@ -5,10 +5,12 @@ import nebflow.llm.{Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import scala.concurrent.duration.*
 
-/** Flow-node LLM supervision P1 (2026-08-26 §5.P1, acceptance #1):
-  * stream-inactivity classification split + agent-turn retryable extension.
-  * Red lines asserted here: firstToken/no-progress timeouts stay Permanent;
-  * non-overload non-inactivity Permanent errors stay zero-retry. */
+/**
+ * Flow-node LLM supervision P1 (2026-08-26 §5.P1, acceptance #1):
+ * stream-inactivity classification split + agent-turn retryable extension.
+ * Red lines asserted here: firstToken/no-progress timeouts stay Permanent;
+ * non-overload non-inactivity Permanent errors stay zero-retry.
+ */
 class StreamInactivitySupervisionSpec extends FunSuite:
 
   private def attempt(reason: FailoverReason, perm: ErrorPermanence) =
@@ -49,10 +51,12 @@ class StreamInactivitySupervisionSpec extends FunSuite:
 
   test("retryable: exhausted chain mixing inactivity with a Permanent attempt is NOT retryable") {
     // A permanent failure in the chain means something other than jitter happened.
-    val e = new FallbackExhaustedError(List(
-      attempt(FailoverReason.Timeout, ErrorPermanence.Transient),
-      attempt(FailoverReason.Auth, ErrorPermanence.Permanent)
-    ))
+    val e = new FallbackExhaustedError(
+      List(
+        attempt(FailoverReason.Timeout, ErrorPermanence.Transient),
+        attempt(FailoverReason.Auth, ErrorPermanence.Permanent)
+      )
+    )
     assert(!AgentActor.llmFailureRetryable(e))
     assert(!AgentActor.llmFailureInactivityClass(e))
   }
@@ -67,7 +71,9 @@ class StreamInactivitySupervisionSpec extends FunSuite:
     assert(!AgentActor.llmFailureRetryable(new RuntimeException("Unauthorized 401 auth failed")))
     assert(!AgentActor.llmFailureRetryable(new RuntimeException("invalid request bad request 400")))
     assert(!AgentActor.llmFailureRetryable(new RuntimeException("maximum context length exceeded")))
-    assert(!AgentActor.llmFailureRetryable(new java.util.concurrent.TimeoutException("LLM stream: no response within 90s")))
+    assert(
+      !AgentActor.llmFailureRetryable(new java.util.concurrent.TimeoutException("LLM stream: no response within 90s"))
+    )
     // Connection resets stay fail-fast (messages unchanged; 08-18 ruling).
     assert(!AgentActor.llmFailureRetryable(new RuntimeException("Connection reset by peer")))
     // Unknown transient non-overload stays fail-fast.
@@ -84,7 +90,7 @@ class StreamInactivitySupervisionSpec extends FunSuite:
     // Absent streamTimeouts → None (boot keeps Defaults: 90s / 120s / 600s).
     io.circe.parser.decode[nebflow.llm.NebflowServiceConfig]("""{"llm":{"providers":{}}}""") match
       case Right(cfg) => assert(cfg.llm.streamTimeouts.isEmpty)
-      case Left(e)    => fail(s"config parse failed: $e")
+      case Left(e) => fail(s"config parse failed: $e")
     // Explicit override decodes each window independently.
     io.circe.parser.decode[nebflow.llm.NebflowServiceConfig](
       """{"llm":{"providers":{},"streamTimeouts":{"inactivitySec":45}}}"""

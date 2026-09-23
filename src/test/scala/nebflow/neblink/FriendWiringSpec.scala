@@ -46,8 +46,8 @@ class FriendWiringSpec extends FunSuite:
   test("provider swap: the wired service follows the hot-swapped client") {
     val dead = stubClient("dead-0", deadReply)
     val live = stubClient("live-1", Right(friendsOk))
-    val ref  = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
-    val svc  = NeblinkWiring.friendService(ref.get, AgentMessagingConfig())
+    val ref = Ref.unsafe[IO, Option[NeblinkClient]](Some(dead))
+    val svc = NeblinkWiring.friendService(ref.get, AgentMessagingConfig())
 
     assertEquals(svc.listFriends.unsafeRunSync(), deadReply, "初始 provider")
 
@@ -58,7 +58,7 @@ class FriendWiringSpec extends FunSuite:
 
   test("boot client present does not change anything (slot is unconditional)") {
     val client = stubClient("live-0", Right(friendsOk))
-    val svc    = NeblinkWiring.friendService(IO.pure(Some(client)), AgentMessagingConfig())
+    val svc = NeblinkWiring.friendService(IO.pure(Some(client)), AgentMessagingConfig())
     assertEquals(NeblinkWiring.sharedResourcesSlot(Some(client), svc), Some(svc))
     assertEquals(NeblinkWiring.sharedResourcesSlot(None, svc), Some(svc), "全新 home 也必须是 Some")
   }

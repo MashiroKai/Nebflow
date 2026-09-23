@@ -69,8 +69,10 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     made += d
     d
 
-  /** A REAL, browser-decodable PNG (ImageIO), pseudo-random so its `data:` URI is
-    * far below the 40,000-char inline budget for these sizes. */
+  /**
+   * A REAL, browser-decodable PNG (ImageIO), pseudo-random so its `data:` URI is
+   * far below the 40,000-char inline budget for these sizes.
+   */
   private def writePng(path: Path, w: Int = 32, h: Int = 24, seed: Int = 11): Path =
     Files.createDirectories(path.getParent)
     val img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
@@ -106,10 +108,13 @@ class FileRefsServabilityScopeSpec extends FunSuite:
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
+
   private def refs(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
+
   private def reasons(p: Json): List[String] =
     warningsOf(p).flatMap(_.hcursor.get[String]("reason").toOption)
+
   private def details(p: Json): String =
     warningsOf(p).flatMap(_.hcursor.get[String]("detail").toOption).mkString(" | ")
 
@@ -285,7 +290,11 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       s"[SCOPE-READING] layered=${FileRefs.servableByEndpointLayered(realOf(secretPng)).map(t => (t._1, t._2))} " +
         s"inodeClean=${FileRefs.credentialInodeClean(secretPng)}"
     )
-    assertEquals(FileRefs.credentialInodeClean(secretPng), false, "everything under <dataRoot>/secrets/** is a credential inode")
+    assertEquals(
+      FileRefs.credentialInodeClean(secretPng),
+      false,
+      "everything under <dataRoot>/secrets/** is a credential inode"
+    )
     val p = card(s"""<img src="${realOf(secretPng).toString}"/>""")
     assertEquals(refs(p, "inlined"), 0, "a readable image inside the credential directory is still a credential")
     assertEquals(refs(p, "proxied"), 0)
@@ -300,7 +309,9 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val alias = root.resolve("plots/alias 6.png")
     Files.createSymbolicLink(alias, target)
     PathUtil.setDataRoot(os.Path(root))
-    println(s"[SCOPE-READING] alias=${realOf(alias)} layered=${FileRefs.servableByEndpointLayered(realOf(alias)).map(t => (t._1, t._2))}")
+    println(
+      s"[SCOPE-READING] alias=${realOf(alias)} layered=${FileRefs.servableByEndpointLayered(realOf(alias)).map(t => (t._1, t._2))}"
+    )
     // the reference is the SYMLINK's name (`alias 6.png`): its own extension is a
     // served image, and the refusal comes from the extension of the REAL path —
     // which is exactly the layer this test pins
@@ -310,3 +321,4 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(refs(p, "failed"), 1)
     assertEquals(reasons(p), List("not-servable"))
     assert(details(p).contains("file-type"), s"the refusal quotes the endpoint's own reason: ${details(p)}")
+end FileRefsServabilityScopeSpec

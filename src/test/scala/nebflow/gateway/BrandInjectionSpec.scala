@@ -25,7 +25,7 @@ class BrandInjectionSpec extends FunSuite:
         // frontend's ONLY URL input (activityBar.js builds the profile link).
         assertEquals(
           json.hcursor.get[String]("profileUrl"),
-          Right("https://nebflow.space/profile"),
+          Right("https://nebflow.space/profile")
         )
   }
 
@@ -51,7 +51,7 @@ class BrandInjectionSpec extends FunSuite:
   test("injectBeforeHeadClose: None when the anchor tag is absent") {
     assertEquals(
       WebSocketRoutes.injectBeforeHeadClose("<html><body></body></html>", "<script>1;</script>"),
-      None,
+      None
     )
   }
 
@@ -60,7 +60,7 @@ class BrandInjectionSpec extends FunSuite:
     val snippet = "X"
     assertEquals(
       WebSocketRoutes.injectBeforeHeadClose(html, snippet),
-      Some("<head></head><head>X</head>"),
+      Some("<head></head><head>X</head>")
     )
   }
 
@@ -69,7 +69,7 @@ class BrandInjectionSpec extends FunSuite:
     // dist entry when a webdist build is present (same transform origin).
     val source = scala.io.Source.fromInputStream(
       getClass.getClassLoader.getResourceAsStream("web/index.html"),
-      "UTF-8",
+      "UTF-8"
     )
     val html =
       try source.mkString

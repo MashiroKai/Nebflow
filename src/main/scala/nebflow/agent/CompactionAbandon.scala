@@ -56,10 +56,11 @@ import nebflow.core.compact.{CompactConfig, CompactService}
  */
 object CompactionAbandon:
 
-  /** 放弃压缩作业时应补发的**终局帧**；无 pending 作业 ⇒ `None`（no-op）。
-    *
-    * 只发帧、不改状态：`compactionFailures` 原样带入帧（不 +1），因为中断是用户动作。
-    */
+  /**
+   * 放弃压缩作业时应补发的**终局帧**；无 pending 作业 ⇒ `None`（no-op）。
+   *
+   * 只发帧、不改状态：`compactionFailures` 原样带入帧（不 +1），因为中断是用户动作。
+   */
   def event(state: AgentState): Option[AgentStreamEvent] =
     state.pendingCompaction.map(_ =>
       AgentStreamEvent.CompactFailed(
@@ -69,14 +70,16 @@ object CompactionAbandon:
       )
     )
 
-  /** 放弃压缩作业时摘掉压缩轮的**临时输入**（`CompactService.isCompactReminder` 命中的
-    * 摘要指令消息）。
-    *
-    * 只在**仍有 pending 作业**时摘除：作业正常终局时 `handleCompactResponse` 用自己的
-    * 产物（summary + 尾部保真轮）整体替换消息列，本方法不得介入。
-    * 依据 [[CompactService.isCompactReminder]] 单点判据（`<system-reminder>` +
-    * `Context compaction required` 前缀），不新造判据。
-    */
+  /**
+   * 放弃压缩作业时摘掉压缩轮的**临时输入**（`CompactService.isCompactReminder` 命中的
+   * 摘要指令消息）。
+   *
+   * 只在**仍有 pending 作业**时摘除：作业正常终局时 `handleCompactResponse` 用自己的
+   * 产物（summary + 尾部保真轮）整体替换消息列，本方法不得介入。
+   * 依据 [[CompactService.isCompactReminder]] 单点判据（`<system-reminder>` +
+   * `Context compaction required` 前缀），不新造判据。
+   */
   def dropScratch(state: AgentState): AgentState =
     if state.pendingCompaction.isEmpty then state
     else state.withMessages(state.messages.filterNot(CompactService.isCompactReminder))
+end CompactionAbandon

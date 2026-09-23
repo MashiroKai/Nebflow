@@ -10,21 +10,22 @@ import java.io.ByteArrayOutputStream
 import java.net.{InetSocketAddress, ServerSocket}
 import java.util.concurrent.Executors
 
-/** CLI router / gateway client contract spec (cliaudit-impl).
-  *
-  * Pins the behaviour this batch changed, so each fix has a regression net:
-  *  - argument parsing — long / short / positional / unknown flag (A12)
-  *  - required-parameter validation incl. positional slots (A11)
-  *  - dispatch — unknown subcommand, bare multi-subcommand command (A12/V16)
-  *  - help rendering — top-level lines and the `Parameters:` section (T1/T3/
-  *    T4/T5/T6/T13, A7/A9)
-  *  - gateway error surfacing — non-2xx is a failure (A1/V20), 2xx is not
-  *  - offline classification (A14/A18), config masking (D6), chat frames (A16)
-  *
-  * Hermetic: every HTTP endpoint is a loopback `HttpServer` on an ephemeral
-  * port that is always stopped, and no test reads the live data root (no
-  * `~/.nebflow/auth.json`, no :8080).
-  */
+/**
+ * CLI router / gateway client contract spec (cliaudit-impl).
+ *
+ * Pins the behaviour this batch changed, so each fix has a regression net:
+ *  - argument parsing — long / short / positional / unknown flag (A12)
+ *  - required-parameter validation incl. positional slots (A11)
+ *  - dispatch — unknown subcommand, bare multi-subcommand command (A12/V16)
+ *  - help rendering — top-level lines and the `Parameters:` section (T1/T3/
+ *    T4/T5/T6/T13, A7/A9)
+ *  - gateway error surfacing — non-2xx is a failure (A1/V20), 2xx is not
+ *  - offline classification (A14/A18), config masking (D6), chat frames (A16)
+ *
+ * Hermetic: every HTTP endpoint is a loopback `HttpServer` on an ephemeral
+ * port that is always stopped, and no test reads the live data root (no
+ * `~/.nebflow/auth.json`, no :8080).
+ */
 class CliRouterSpec extends FunSuite:
 
   // ===== helpers =====
@@ -51,39 +52,42 @@ class CliRouterSpec extends FunSuite:
     ss.close()
     p
 
-  /** Loopback mock on an ephemeral port, stopped in a `finally` (a spec-owned
-    * process must not outlive its test).
-    */
+  /**
+   * Loopback mock on an ephemeral port, stopped in a `finally` (a spec-owned
+   * process must not outlive its test).
+   */
   private def withHttpServer(status: Int, body: String)(f: Int => Unit): Unit =
     val port = freePort()
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
     server.setExecutor(Executors.newCachedThreadPool())
     server.createContext(
       "/",
-      (ex: com.sun.net.httpserver.HttpExchange) => {
+      (ex: com.sun.net.httpserver.HttpExchange) =>
         ex.getRequestBody.readAllBytes()
         val bytes = body.getBytes("UTF-8")
         ex.getResponseHeaders.add("Content-Type", "application/json")
         ex.sendResponseHeaders(status, bytes.length)
         ex.getResponseBody.write(bytes)
         ex.close()
-      }
     )
     server.start()
     try f(port)
     finally server.stop(0)
 
+  end withHttpServer
+
   private def json(s: String): Json =
     io.circe.parser.parse(s).fold(e => fail(s"bad fixture: $s ($e)"), identity)
 
-  /** Capture stdout of a router run.
-    *
-    * `scala.Console.withOut` is NOT enough: the router prints through
-    * cats-effect `IO.println` (= `Console[IO]`), which writes to the JVM's
-    * `System.out` when the effect runs, bypassing `scala.Console`. Redirecting
-    * `System.out` is what actually catches those lines (and `System.err` too, so
-    * a stray stack trace cannot leak between assertions).
-    */
+  /**
+   * Capture stdout of a router run.
+   *
+   * `scala.Console.withOut` is NOT enough: the router prints through
+   * cats-effect `IO.println` (= `Console[IO]`), which writes to the JVM's
+   * `System.out` when the effect runs, bypassing `scala.Console`. Redirecting
+   * `System.out` is what actually catches those lines (and `System.err` too, so
+   * a stray stack trace cannot leak between assertions).
+   */
   private def capture(f: => Unit): String =
     val buf = new ByteArrayOutputStream()
     val ps = new java.io.PrintStream(buf, true, "UTF-8")
@@ -265,7 +269,7 @@ class CliRouterSpec extends FunSuite:
     val out = capture {
       HelpCommand.subcommands.head.run(CliContext.offline()).unsafeRunSync() match
         case CliResult.Text(lines) => lines.foreach(println)
-        case other                 => fail(s"unexpected help result: $other")
+        case other => fail(s"unexpected help result: $other")
     }
     assert(!out.contains("without arguments to show help"), out)
     assert(out.contains("--help"), out)
@@ -408,7 +412,8 @@ class CliRouterSpec extends FunSuite:
   }
 
   test("A16: the createSession reply's sessionId is consumed") {
-    val resp = json("""{"type":"sessionList","sessions":[{"id":"new-1","name":"New Session"},{"id":"old","name":"old"}]}""")
+    val resp =
+      json("""{"type":"sessionList","sessions":[{"id":"new-1","name":"New Session"},{"id":"old","name":"old"}]}""")
     assertEquals(ChatCommand.newSessionId(resp, "New Session"), "new-1")
     assertEquals(ChatCommand.newSessionId(json("""{"status":"ok"}"""), "New Session"), "")
   }
@@ -427,6 +432,6 @@ class CliRouterSpec extends FunSuite:
     finally
       prev match
         case Some(v) => sys.props("logback.statusListenerClass") = v
-        case None    => sys.props.remove("logback.statusListenerClass")
+        case None => sys.props.remove("logback.statusListenerClass")
   }
 end CliRouterSpec

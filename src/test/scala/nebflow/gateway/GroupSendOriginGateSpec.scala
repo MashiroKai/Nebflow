@@ -41,7 +41,7 @@ class GroupSendOriginGateSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-123"
 
-  private val seen       = new ConcurrentLinkedQueue[String]()
+  private val seen = new ConcurrentLinkedQueue[String]()
   private val seenBodies = new ConcurrentLinkedQueue[String]()
 
   private def seenList: List[String] = seen.toArray(Array.empty[String]).toList
@@ -74,6 +74,8 @@ class GroupSendOriginGateSpec extends CatsEffectSuite:
     )
     server.start()
     (server, s"http://127.0.0.1:${server.getAddress.getPort}")
+
+  end startMockServer
 
   private def withMockServer[A](use: (String, NeblinkClient, FriendService) => IO[A]): IO[A] =
     IO.delay {

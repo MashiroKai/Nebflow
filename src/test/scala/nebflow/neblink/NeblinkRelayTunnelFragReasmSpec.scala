@@ -60,6 +60,7 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
   private final class RelayLogAppender
       extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val lines = new ConcurrentLinkedQueue[String]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       lines.add(event.getFormattedMessage)
 
@@ -113,10 +114,12 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
         client = mkClient(fix)
         _ = ms.setRelayClient(Some(client))
         _ <- client.login(Device, "qa-host", "macos", Nil)
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          )
+        )
         tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
         fiber <- tunnel.connect().start
@@ -130,8 +133,10 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
   private def up(fix: RelayAuthFixtureServer): IO[Boolean] =
     waitUntil(5.seconds)(IO(fix.attemptCount(101) >= 1))
 
-  /** 未知类型的大载荷帧：`type` 落在 W10 分支（不需要 wire 契约），`pad` 撑到 >4 KB
-    * ⇒ 分片边界可以落在 JSON 内部任意位置。派发面读数 = W10 行的 `len=` 字段。 */
+  /**
+   * 未知类型的大载荷帧：`type` 落在 W10 分支（不需要 wire 契约），`pad` 撑到 >4 KB
+   * ⇒ 分片边界可以落在 JSON 内部任意位置。派发面读数 = W10 行的 `len=` 字段。
+   */
   private def probeFrame(marker: String, padChars: Int): String =
     s"""{"type":"$marker","pad":"${"x" * padChars}"}"""
 
@@ -194,6 +199,7 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
               )
             )
           yield ()
+          end for
         }
       }
     }
@@ -239,8 +245,11 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
                 s"the fragmented payload must be byte-equivalent to the single-frame payload (same length); log=${dispatched.mkString(" | ")}"
               )
             )
-            _ <- IO(assertEquals(countWith(ls, "reason=undecodable_frame"), 0, "no fragment may be parsed as a whole frame"))
+            _ <- IO(
+              assertEquals(countWith(ls, "reason=undecodable_frame"), 0, "no fragment may be parsed as a whole frame")
+            )
           yield ()
+          end for
         }
       }
     }
@@ -277,6 +286,7 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
             )
           )
         yield ()
+        end for
       }
     }
   }
@@ -297,7 +307,9 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
     val parts = threeParts(payload, 4000)
     val r = reassembler()
     val steps = parts.zipWithIndex.map((p, i) => r.accept(p, i == parts.length - 1))
-    println(s"[reading][unit/equiv] parts=${parts.map(_.length).mkString(",")} full=${payload.length} steps=${steps.mkString(",")}")
+    println(
+      s"[reading][unit/equiv] parts=${parts.map(_.length).mkString(",")} full=${payload.length} steps=${steps.mkString(",")}"
+    )
     assertEquals(steps.take(2), List(RelayWsListener.FrameStep.Partial, RelayWsListener.FrameStep.Partial))
     // 逐字符等价（不是「长度相同」而是同一个 String 值）
     assertEquals(steps.last, RelayWsListener.FrameStep.Complete(payload))
@@ -327,13 +339,19 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
     assertEquals(r.droppedMessages, 0)
   }
 
-  test("unit④: the buffer is bounded — an over-cap message is dropped, never dispatched, and the next message is clean") {
+  test(
+    "unit④: the buffer is bounded — an over-cap message is dropped, never dispatched, and the next message is clean"
+  ) {
     val r = reassembler(maxChars = 64)
     val a = "a" * 32
     val b = "b" * 32
     val c = "c" * 32
     assertEquals(r.accept(a, false), RelayWsListener.FrameStep.Partial)
-    assertEquals(r.accept(b, false), RelayWsListener.FrameStep.Partial, "64 chars is exactly at the cap (cap is a strict bound)")
+    assertEquals(
+      r.accept(b, false),
+      RelayWsListener.FrameStep.Partial,
+      "64 chars is exactly at the cap (cap is a strict bound)"
+    )
     assertEquals(r.accept(c, false), RelayWsListener.FrameStep.Dropped("frag_oversize", 96))
     assertEquals(r.pendingChars, 0, "the buffer must be released at the drop decision (bounded)")
     assert(r.isDiscarding, "the rest of the poisoned message must be discarded, never fed in as a new message")
@@ -343,7 +361,9 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
     assertEquals(r.accept("e", true), RelayWsListener.FrameStep.Discarding)
     assertEquals(r.isDiscarding, false, "the message end clears the discard state")
     assertEquals(r.droppedMessages, 1)
-    println(s"[reading][unit/oversize] dropped=${r.droppedMessages} pending=${r.pendingChars} discarding=${r.isDiscarding}")
+    println(
+      s"[reading][unit/oversize] dropped=${r.droppedMessages} pending=${r.pendingChars} discarding=${r.isDiscarding}"
+    )
     // 下一条消息（含整帧）不受影响
     assertEquals(r.accept("""{"type":"ping"}""", true), RelayWsListener.FrameStep.Complete("""{"type":"ping"}"""))
   }
@@ -370,14 +390,20 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
     assertEquals(r.accept(p1 + p2 + """x"}""", true), RelayWsListener.FrameStep.Complete(p1 + p2 + """x"}"""))
   }
 
-  test("unit⑥: completion clears the buffer, consecutive messages never weld, and connection reset discards a half message") {
+  test(
+    "unit⑥: completion clears the buffer, consecutive messages never weld, and connection reset discards a half message"
+  ) {
     val r = reassembler()
     val m1 = """{"type":"qa_weld","n":1}"""
     val m2 = """{"type":"qa_weld","n":2}"""
     assertEquals(r.accept(m1.take(12), false), RelayWsListener.FrameStep.Partial)
     assertEquals(r.accept(m1.drop(12), true), RelayWsListener.FrameStep.Complete(m1), "must not be welded to anything")
     assertEquals(r.pendingChars, 0)
-    assertEquals(r.accept(m2, true), RelayWsListener.FrameStep.Complete(m2), "a one-frame message right after a fragmented one is verbatim")
+    assertEquals(
+      r.accept(m2, true),
+      RelayWsListener.FrameStep.Complete(m2),
+      "a one-frame message right after a fragmented one is verbatim"
+    )
     // 半成品 + 连接关闭（onClose/onError 的收口）⇒ 清空 + 计数；新实例（新连接）不受影响
     assertEquals(r.accept(m1.take(5), false), RelayWsListener.FrameStep.Partial)
     r.reset()
@@ -434,7 +460,13 @@ class NeblinkRelayTunnelFragReasmSpec extends CatsEffectSuite:
     )
     // at-least-once 重放形态（同一完整消息再送一次）：重组层不丢不改，去重仍归**既有**闸
     assertEquals(r.accept(wire, true), RelayWsListener.FrameStep.Complete(wire))
-    assertEquals(r.droppedMessages, 0, "the reassembly layer must neither drop nor duplicate: it is 1:1 with WS messages")
-    println(s"[reading][unit/eventid] eventId=$eventId wire=${wire.length} parts=${parts.map(_.length).mkString(",")} reassembled_equals_wire=true")
+    assertEquals(
+      r.droppedMessages,
+      0,
+      "the reassembly layer must neither drop nor duplicate: it is 1:1 with WS messages"
+    )
+    println(
+      s"[reading][unit/eventid] eventId=$eventId wire=${wire.length} parts=${parts.map(_.length).mkString(",")} reassembled_equals_wire=true"
+    )
   }
 end NeblinkRelayTunnelFragReasmSpec

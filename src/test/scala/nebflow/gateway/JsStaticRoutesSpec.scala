@@ -7,21 +7,21 @@ import org.http4s.{Method, Request, Status, Uri}
 import org.typelevel.ci.CIString
 
 /**
-  * Route-level tests for WebSocketRoutes.jsRoutes: serving ALL of web/js at
-  * any depth. Generalized from the per-path routes (in-class single-segment
-  * /js, the /js/locales case, the viewers-only route) after the same outage
-  * class struck twice — every newly added js subdirectory 404ed all its
-  * dynamic imports because http4s DSL matches single path segments only.
-  *
-  * Contract pinned here:
-  *  - single-segment, two-segment (locales/, viewers/) and arbitrary-depth
-  *    paths are all legal shapes and 200 when the resource exists
-  *  - Cache-Control: no-cache at EVERY depth (this closes the old gap where
-  *    /js/locales shipped without it)
-  *  - traversal is rejected: literal ".." segments never reach the resource
-  *    lookup; encoded "%2e%2e" and backslash forms 404 (no such resource)
-  *  - missing resources 404 at any depth; "/js" (no slash) is declined
-  */
+ * Route-level tests for WebSocketRoutes.jsRoutes: serving ALL of web/js at
+ * any depth. Generalized from the per-path routes (in-class single-segment
+ * /js, the /js/locales case, the viewers-only route) after the same outage
+ * class struck twice — every newly added js subdirectory 404ed all its
+ * dynamic imports because http4s DSL matches single path segments only.
+ *
+ * Contract pinned here:
+ *  - single-segment, two-segment (locales/, viewers/) and arbitrary-depth
+ *    paths are all legal shapes and 200 when the resource exists
+ *  - Cache-Control: no-cache at EVERY depth (this closes the old gap where
+ *    /js/locales shipped without it)
+ *  - traversal is rejected: literal ".." segments never reach the resource
+ *    lookup; encoded "%2e%2e" and backslash forms 404 (no such resource)
+ *  - missing resources 404 at any depth; "/js" (no slash) is declined
+ */
 class JsStaticRoutesSpec extends FunSuite:
 
   private def get(path: String) =
@@ -88,3 +88,4 @@ class JsStaticRoutesSpec extends FunSuite:
     // Trailing slash on a real directory is not a file.
     assertEquals(get("/js/viewers/").map(_.status), Some(Status.NotFound))
   }
+end JsStaticRoutesSpec

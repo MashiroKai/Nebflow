@@ -19,25 +19,25 @@ import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Stre
 import scala.concurrent.duration.*
 
 /**
-  * 记忆轨 actor 身份契约（2026-09-13 面板可见性取证 C-2 判红跑）。
-  *
-  * 契约真源：`WebSocketRoutes.activeAgentEntryJson`（快照行键 `agentId == sessionId`）
-  * ×`NodeRunner.spawnAgentActor:99`（actor 名默认 = sessionId）× 活帧
-  * `agentId = ctx.self.path.name`（`protocol.scala:803`）。三者一致时快照行与活帧行
-  * 落在同一个键空间；不一致时会话在面板上出现「agentDone 清不掉的幽灵行」。
-  *
-  * 本 spec 用**真 `MemoryTrack.run` + 真 ActorSystem + 真注册表**取现场读数
-  * （不是读源码推断）：
-  *   1. 轨内注册表条目的 `rec.ref.path.name` 与 `rec.sessionId` 逐字符对照；
-  *   2. 同一条目走**真 cancel 降级路径**（`AgentControlTool.doCancel`：本轨
-  *      `supervisorRef = None` ⇒ Ephemeral 兜底分支）——断言 Stop 送达、注册表摘键、
-  *      轨的 `Deferred` 由桥的死亡监视完成、`MemoryTrack.run` 收敛（不悬挂）。
-  *
-  * 确定性手段：LLM 桩恒 `Stream.never`（轨内唯一回合永不完成）⇒ 本轮运行的唯一
-  * 终结者就是 cancel；轨内 `wsSend` 是空操作、`parentRef = None`，与生产同参。
-  *
-  * 隔离：`PathUtil.setDataRoot(临时目录)`（TaskListE2ESpec 同款），不触 `~/.nebflow`。
-  */
+ * 记忆轨 actor 身份契约（2026-09-13 面板可见性取证 C-2 判红跑）。
+ *
+ * 契约真源：`WebSocketRoutes.activeAgentEntryJson`（快照行键 `agentId == sessionId`）
+ * ×`NodeRunner.spawnAgentActor:99`（actor 名默认 = sessionId）× 活帧
+ * `agentId = ctx.self.path.name`（`protocol.scala:803`）。三者一致时快照行与活帧行
+ * 落在同一个键空间；不一致时会话在面板上出现「agentDone 清不掉的幽灵行」。
+ *
+ * 本 spec 用**真 `MemoryTrack.run` + 真 ActorSystem + 真注册表**取现场读数
+ * （不是读源码推断）：
+ *   1. 轨内注册表条目的 `rec.ref.path.name` 与 `rec.sessionId` 逐字符对照；
+ *   2. 同一条目走**真 cancel 降级路径**（`AgentControlTool.doCancel`：本轨
+ *      `supervisorRef = None` ⇒ Ephemeral 兜底分支）——断言 Stop 送达、注册表摘键、
+ *      轨的 `Deferred` 由桥的死亡监视完成、`MemoryTrack.run` 收敛（不悬挂）。
+ *
+ * 确定性手段：LLM 桩恒 `Stream.never`（轨内唯一回合永不完成）⇒ 本轮运行的唯一
+ * 终结者就是 cancel；轨内 `wsSend` 是空操作、`parentRef = None`，与生产同参。
+ *
+ * 隔离：`PathUtil.setDataRoot(临时目录)`（TaskListE2ESpec 同款），不触 `~/.nebflow`。
+ */
 class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
@@ -46,11 +46,13 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
 
   /** 恒挂起的 LLM 桩：轨内回合永不完成 ⇒ 唯一终结者 = cancel。 */
   private object HangingLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this spec"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.never[IO]
 
@@ -95,11 +97,11 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
     os.write.over(dir / "system.md", "You are the memory consolidator (spec stub).")
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -114,26 +116,30 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
           case Some(rec) => IO.pure(rec)
           case None =>
             if System.currentTimeMillis() >= deadline then
-              IO.raiseError(new AssertionError(
-                s"track registry entry never appeared; registry keys = ${m.keys.toList.sorted}"
-              ))
+              IO.raiseError(
+                new AssertionError(
+                  s"track registry entry never appeared; registry keys = ${m.keys.toList.sorted}"
+                )
+              )
             else IO.sleep(20.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  end waitForTrackEntry
+
   /** 现场读数（全部来自运行时取值，不是源码推断）。 */
   private final case class Reading(
-      actorName: String,
-      sessionId: String,
-      rootSessionId: String,
-      kind: String,
-      supervisorRefDefined: Boolean,
-      nameEqualsSessionId: Boolean,
-      cancelResult: Either[String, String],
-      registryClearedAfterCancel: Boolean,
-      settleMs: Long,
-      runStatus: String,
-      runDetail: String
+    actorName: String,
+    sessionId: String,
+    rootSessionId: String,
+    kind: String,
+    supervisorRefDefined: Boolean,
+    nameEqualsSessionId: Boolean,
+    cancelResult: Either[String, String],
+    registryClearedAfterCancel: Boolean,
+    settleMs: Long,
+    runStatus: String,
+    runDetail: String
   )
 
   private def observeAndCancel(resources: SharedResources): IO[Reading] =
@@ -142,9 +148,15 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
       rec <- waitForTrackEntry(resources, 20.seconds)
       name = rec.ref.path.name
       _ <- IO(println(s"[C-2 reading] actor name (rec.ref.path.name) = '$name' (len=${name.length})"))
-      _ <- IO(println(s"[C-2 reading] sessionId (registry key)       = '${rec.sessionId}' (len=${rec.sessionId.length})"))
+      _ <- IO(
+        println(s"[C-2 reading] sessionId (registry key)       = '${rec.sessionId}' (len=${rec.sessionId.length})")
+      )
       _ <- IO(println(s"[C-2 reading] name == sessionId              = ${name == rec.sessionId}"))
-      _ <- IO(println(s"[C-2 reading] kind = ${rec.kind}, supervisorRef.isDefined = ${rec.supervisorRef.isDefined}, rootSessionId = '${rec.rootSessionId}'"))
+      _ <- IO(
+        println(
+          s"[C-2 reading] kind = ${rec.kind}, supervisorRef.isDefined = ${rec.supervisorRef.isDefined}, rootSessionId = '${rec.rootSessionId}'"
+        )
+      )
       cancelRes <- AgentControlTool
         .doCancel(resources, rec, reason = "spec-c2", by = "MemoryTrackActorIdContractSpec")
         .map(_.left.map(_.message))
@@ -156,9 +168,11 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
       )
       t1 <- IO.monotonic
       registryAfter <- resources.agentRegistry.get
-      _ <- IO(println(
-        s"[C-2 reading] track run settled in ${(t1 - t0).toMillis}ms: status=${runRes.status} detail='${runRes.detail}'"
-      ))
+      _ <- IO(
+        println(
+          s"[C-2 reading] track run settled in ${(t1 - t0).toMillis}ms: status=${runRes.status} detail='${runRes.detail}'"
+        )
+      )
       _ <- IO(println(s"[C-2 reading] registry entry removed after cancel = ${!registryAfter.contains(rec.sessionId)}"))
     yield Reading(
       actorName = name,
@@ -185,17 +199,22 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp)
     val program =
       for
-        _ <- IO(os.write.over(MemoryStore.userMemoryPath, "# User\n\n## C-2 spec section\n\n- existing\n", createFolders = true))
-        _ <- IO(MemoryQueue.enqueue(
-          "user",
-          "append",
-          Some("## C-2 spec section"),
-          None,
-          Some("- C-2 spec note"),
-          Some("spec"),
-          MemoryQueue.TriggerManual,
-          "Nebula"
-        ))
+        _ <- IO(
+          os.write
+            .over(MemoryStore.userMemoryPath, "# User\n\n## C-2 spec section\n\n- existing\n", createFolders = true)
+        )
+        _ <- IO(
+          MemoryQueue.enqueue(
+            "user",
+            "append",
+            Some("## C-2 spec section"),
+            None,
+            Some("- C-2 spec note"),
+            Some("spec"),
+            MemoryQueue.TriggerManual,
+            "Nebula"
+          )
+        )
         resources <- mkResources(system, tmp)
         reading <- observeAndCancel(resources)
         _ <- body(reading)
@@ -205,6 +224,8 @@ class MemoryTrackActorIdContractSpec extends CatsEffectSuite:
         IO(PathUtil.setDataRoot(prevRoot)) *>
         system.stopAll.attempt.void).attempt.void
     )
+
+  end withReading
 
   test("契约：轨内注册表条目的 actor 名 == sessionId（逐字符；活帧 agentId 与快照行键同键空间）"):
     withReading { reading =>

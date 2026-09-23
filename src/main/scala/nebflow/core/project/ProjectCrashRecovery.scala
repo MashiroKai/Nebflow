@@ -38,53 +38,93 @@ import nebflow.shared.Defaults
 object ProjectCrashRecovery:
   private val logger = NebflowLogger.forName("nebflow.project.crash-recovery")
 
-  /** GatewayMain boot 链挂接入口：对全部已挂载项目跑快段 + fork 慢段。
-    * 返回有恢复动作的项目数（>0 时调用方记 info）。项目级 handleErrorWith——单项目
-    * 异常不拖垮其他项目，该项目残余 Running 由 watchdog 兜底（R4）。 */
+  /**
+   * GatewayMain boot 链挂接入口：对全部已挂载项目跑快段 + fork 慢段。
+   * 返回有恢复动作的项目数（>0 时调用方记 info）。项目级 handleErrorWith——单项目
+   * 异常不拖垮其他项目，该项目残余 Running 由 watchdog 兜底（R4）。
+   */
   def recoverAll(concurrency: Int = Defaults.CrashRecoveryConcurrency): IO[Int] =
     ProjectRuntimeRegistry.all.flatMap { rts =>
-      rts.traverse { rt =>
-        recoverProject(rt, concurrency)
-          .handleErrorWith(e =>
-            logger.error(s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog")
-              .as(0))
-      }.map(_.count(_ > 0))
+      rts
+        .traverse { rt =>
+          recoverProject(rt, concurrency)
+            .handleErrorWith(e =>
+              logger
+                .error(
+                  s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog"
+                )
+                .as(0)
+            )
+        }
+        .map(_.count(_ > 0))
     }
 
-  /** 停机成因标注（hostresume 批 2026-09-22，设计卡 §4 #8 可选增强件，本批实施；
-    * D-5 裁定「仅台账/事件措辞」）：有 Running/Interrupted 残留（`residues > 0`，即本次
-    * sweep 资格集命中）时——shutdown marker 在 ⇒ 上次优雅停机（kind=graceful）；不在 ⇒
-    * 推断 unclean（断电/kill-9/崩溃，无钩子机会）。条目经
-    * `BootDispatcherWake.appendPowerMarker` 进 boot-wake 台账（append-only、恒
-    * blocking=false——与 kind=boot 条目共存，不触碰 duplicate-boot 幂等）。
-    * `residues <= 0` ⇒ 零条目（fresh/干净 boot 不制造噪音）。fail-soft：本函数内
-    * 读/写失败已逐层降级（readShutdownMarker/appendPowerMarker 各自 fail-soft），外层
-    * 再兜一道 WARN——绝不阻断 sweep 认领链。 */
+  /**
+   * 停机成因标注（hostresume 批 2026-09-22，设计卡 §4 #8 可选增强件，本批实施；
+   * D-5 裁定「仅台账/事件措辞」）：有 Running/Interrupted 残留（`residues > 0`，即本次
+   * sweep 资格集命中）时——shutdown marker 在 ⇒ 上次优雅停机（kind=graceful）；不在 ⇒
+   * 推断 unclean（断电/kill-9/崩溃，无钩子机会）。条目经
+   * `BootDispatcherWake.appendPowerMarker` 进 boot-wake 台账（append-only、恒
+   * blocking=false——与 kind=boot 条目共存，不触碰 duplicate-boot 幂等）。
+   * `residues <= 0` ⇒ 零条目（fresh/干净 boot 不制造噪音）。fail-soft：本函数内
+   * 读/写失败已逐层降级（readShutdownMarker/appendPowerMarker 各自 fail-soft），外层
+   * 再兜一道 WARN——绝不阻断 sweep 认领链。
+   */
   private[project] def annotateShutdownCause(pd: ProjectDef, residues: Int, atMs: Long): IO[Unit] =
     if residues <= 0 then IO.unit
     else
-      BootDispatcherWake.readShutdownMarker.flatMap {
-        case Some(m) =>
-          BootDispatcherWake.appendPowerMarker(BootDispatcherWake.markerPath(pd), pd.name,
-            BootDispatcherWake.MarkerEntry(
-              bootId = BootDispatcherWake.instanceId, project = pd.name, at = atMs, result = "noted",
-              reason = s"last shutdown graceful (marker at=${m.at} kind=${m.kind} cause=${m.cause})",
-              blocking = false, nodes = residues, items = Nil,
-              kind = BootDispatcherWake.KindGraceful, sleepAt = None, wakeAt = None))
-        case None =>
-          BootDispatcherWake.appendPowerMarker(BootDispatcherWake.markerPath(pd), pd.name,
-            BootDispatcherWake.MarkerEntry(
-              bootId = BootDispatcherWake.instanceId, project = pd.name, at = atMs, result = "noted",
-              reason = "unclean shutdown inferred (no shutdown marker + Running/Interrupted residue: power-loss / kill-9 / crash)",
-              blocking = false, nodes = residues, items = Nil,
-              kind = BootDispatcherWake.KindUnclean, sleepAt = None, wakeAt = None))
-      }.handleErrorWith(e =>
-        logger.warn(s"[boot-recovery] shutdown-cause annotation failed for project '${pd.name}': ${Option(e.getMessage).getOrElse(e.toString)}"))
+      BootDispatcherWake.readShutdownMarker
+        .flatMap {
+          case Some(m) =>
+            BootDispatcherWake.appendPowerMarker(
+              BootDispatcherWake.markerPath(pd),
+              pd.name,
+              BootDispatcherWake.MarkerEntry(
+                bootId = BootDispatcherWake.instanceId,
+                project = pd.name,
+                at = atMs,
+                result = "noted",
+                reason = s"last shutdown graceful (marker at=${m.at} kind=${m.kind} cause=${m.cause})",
+                blocking = false,
+                nodes = residues,
+                items = Nil,
+                kind = BootDispatcherWake.KindGraceful,
+                sleepAt = None,
+                wakeAt = None
+              )
+            )
+          case None =>
+            BootDispatcherWake.appendPowerMarker(
+              BootDispatcherWake.markerPath(pd),
+              pd.name,
+              BootDispatcherWake.MarkerEntry(
+                bootId = BootDispatcherWake.instanceId,
+                project = pd.name,
+                at = atMs,
+                result = "noted",
+                reason =
+                  "unclean shutdown inferred (no shutdown marker + Running/Interrupted residue: power-loss / kill-9 / crash)",
+                blocking = false,
+                nodes = residues,
+                items = Nil,
+                kind = BootDispatcherWake.KindUnclean,
+                sleepAt = None,
+                wakeAt = None
+              )
+            )
+        }
+        .handleErrorWith(e =>
+          logger.warn(
+            s"[boot-recovery] shutdown-cause annotation failed for project '${pd.name}': ${Option(e.getMessage).getOrElse(e.toString)}"
+          )
+        )
 
-  /** 单项目恢复：快段同步（认领 + 汇总通知）*> 慢段 fork。返回动作总数（认领 +
-    * (c) 处置；0 = 无崩溃残留，零动作零事件零通知）。trigger 注入点供测试捕获，
-    * 默认 = DispatchNotify.defaultTrigger 同款通道（TriggerDispatcher → spawn/注入
-    * 分发器会话，裁定④）。 */
+  /**
+   * 单项目恢复：快段同步（认领 + 汇总通知）*> 慢段 fork。返回动作总数（认领 +
+   * (c) 处置；0 = 无崩溃残留，零动作零事件零通知）。trigger 注入点供测试捕获，
+   * 默认 = DispatchNotify.defaultTrigger 同款通道（TriggerDispatcher → spawn/注入
+   * 分发器会话，裁定④）。
+   */
   def recoverProject(
     rt: ProjectRuntime,
     concurrency: Int = Defaults.CrashRecoveryConcurrency,
@@ -101,7 +141,8 @@ object ProjectCrashRecovery:
       candidates = snap.nodes.values
         .filter(n =>
           n.status == NodeLifecycle.Running ||
-            (Defaults.ShutdownInterruptEnabled && n.status == NodeLifecycle.Interrupted))
+            (Defaults.ShutdownInterruptEnabled && n.status == NodeLifecycle.Interrupted)
+        )
         .toList
       // 停机成因标注（hostresume 批 2026-09-22，设计卡 §4 #8，D-5 仅台账/措辞）：
       // 有 Running/Interrupted 残留（= 本次 sweep 资格集命中）才判读——marker 在 ⇒ 上次
@@ -110,40 +151,63 @@ object ProjectCrashRecovery:
       // `BootDispatcherWake.bootShutdownCause` 消费同一事实源标注 dispatcher-wake 事件
       // 措辞。零残留 ⇒ 零条目（fresh/干净 boot 不制造噪音）。fail-soft：读/写失败只 WARN，
       // 绝不阻断 sweep（认领链零改动）。
-      _ <- IO(System.currentTimeMillis()).flatMap(at =>
-        annotateShutdownCause(rt.project, candidates.size, at))
+      _ <- IO(System.currentTimeMillis()).flatMap(at => annotateShutdownCause(rt.project, candidates.size, at))
       outcomes: List[(String, Option[Either[String, NodeEngine.ResumeContext]])] <- candidates.traverse { n =>
-        rt.engine.bootRecoveryClaim(n).map(out => (n.id, out))
+        rt.engine
+          .bootRecoveryClaim(n)
+          .map(out => (n.id, out))
           .handleErrorWith(e =>
-            logger.error(s"[boot-recovery] claim failed for node '${n.name}' (${n.id}): ${Option(e.getMessage).getOrElse(e.toString)} — left to the dead-session watchdog")
-              .as((n.id, None)))
+            logger
+              .error(
+                s"[boot-recovery] claim failed for node '${n.name}' (${n.id}): ${Option(e.getMessage).getOrElse(e.toString)} — left to the dead-session watchdog"
+              )
+              .as((n.id, None))
+          )
       }
       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
       failedReasons: List[String] = outcomes.collect { case (_, Some(Left(reason))) => reason }
       actions = resumed.size + failedReasons.size
-      _ <- if actions == 0 then IO.unit
-      else
-        // 项目级汇总通知（裁定④）：每 boot 每项目恰一条——本方法每 boot 只被调用
-        // 一次（recoverAll ← GatewayMain boot 链），单点发送即结构性幂等；分发器会话
-        // 忙则 TriggerDispatcher 注入排队（ActiveDispatcher 既有承载）。
-        notify(summaryText(rt, resumed, failedReasons, snap)).handleErrorWith(e =>
-          logger.warn(s"[boot-recovery] summary notify failed for project '${rt.project.name}': ${Option(e.getMessage).getOrElse(e.toString)}"))
+      _ <-
+        if actions == 0 then IO.unit
+        else
+          // 项目级汇总通知（裁定④）：每 boot 每项目恰一条——本方法每 boot 只被调用
+          // 一次（recoverAll ← GatewayMain boot 链），单点发送即结构性幂等；分发器会话
+          // 忙则 TriggerDispatcher 注入排队（ActiveDispatcher 既有承载）。
+          notify(summaryText(rt, resumed, failedReasons, snap)).handleErrorWith(e =>
+            logger.warn(
+              s"[boot-recovery] summary notify failed for project '${rt.project.name}': ${Option(e.getMessage).getOrElse(e.toString)}"
+            )
+          )
       // ── 慢段：fork rehydrate（信号量并发上限；节点会话终态才释放槽位）──
-      _ <- if resumed.isEmpty then IO.unit
-      else
-        Semaphore[IO](math.max(1, concurrency)).flatMap { sem =>
-          resumed.traverse_ { case (nodeId, ctx) =>
-            (sem.permit.use(_ =>
-              rt.engine.bootRecoveryStart(nodeId, ctx)
-                .handleErrorWith(e =>
-                  logger.error(s"[boot-recovery] rehydrate failed for node $nodeId (session=${ctx.sessionId}): ${Option(e.getMessage).getOrElse(e.toString)} — node returned to the pending pool, settle sweep will fresh-start it as degraded fallback"))
-            )).start.void
+      _ <-
+        if resumed.isEmpty then IO.unit
+        else
+          Semaphore[IO](math.max(1, concurrency)).flatMap { sem =>
+            resumed.traverse_ { case (nodeId, ctx) =>
+              (sem.permit
+                .use(_ =>
+                  rt.engine
+                    .bootRecoveryStart(nodeId, ctx)
+                    .handleErrorWith(e =>
+                      logger.error(
+                        s"[boot-recovery] rehydrate failed for node $nodeId (session=${ctx.sessionId}): ${Option(e.getMessage).getOrElse(e.toString)} — node returned to the pending pool, settle sweep will fresh-start it as degraded fallback"
+                      )
+                    )
+                ))
+                .start
+                .void
+            }
           }
-        }
     yield actions
 
-  /** 汇总通知文本（恢复清单 + NodeList 复核指引 +「无需回报」——对齐
-    * DispatchNotify.notifyTaskText 文案族）。 */
+    end for
+
+  end recoverProject
+
+  /**
+   * 汇总通知文本（恢复清单 + NodeList 复核指引 +「无需回报」——对齐
+   * DispatchNotify.notifyTaskText 文案族）。
+   */
   private def summaryText(
     rt: ProjectRuntime,
     resumed: List[(String, NodeEngine.ResumeContext)],
@@ -151,7 +215,9 @@ object ProjectCrashRecovery:
     snap: FlowMapState
   ): String =
     def nameOf(nodeId: String, sid: String): String =
-      snap.nodes.values.find(_.id == nodeId).map(n => s"${n.name}($nodeId)")
+      snap.nodes.values
+        .find(_.id == nodeId)
+        .map(n => s"${n.name}($nodeId)")
         .getOrElse(s"session=$sid")
     val resumeLines = resumed.map { case (nodeId, ctx) =>
       val loopNote = ctx.loopResumeRound match
@@ -164,5 +230,6 @@ object ProjectCrashRecovery:
        |${(resumeLines ++ failLines).mkString("\n")}
        |rehydrate 节点已从磁盘 transcript 断点自动续跑（无需处理）；failed 节点请经 NodeList(project="${rt.project.name}") 复核，
        |按需处置（NodeEdit 换名新建 / 拓扑修补 / abandon / 上报）。无需回报——拓扑与状态已落 Flow Map。""".stripMargin
+  end summaryText
 
 end ProjectCrashRecovery

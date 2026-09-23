@@ -47,9 +47,11 @@ object SchemePolicy:
     GeneralName -> DispatcherName
   )
 
-  /** 读根 agent 的 agent.json 原始 (preset, model) 引用（全局 agents 目录单点）。
-    * 缺文件 / 解析失败 → (None, None)：与根缺失时 Nebula 代码回退同款宽容路径
-    * （回落默认 preset），绝不因继承根缺失而炸装载。每次调用现读 ⇒ 动态跟随。 */
+  /**
+   * 读根 agent 的 agent.json 原始 (preset, model) 引用（全局 agents 目录单点）。
+   * 缺文件 / 解析失败 → (None, None)：与根缺失时 Nebula 代码回退同款宽容路径
+   * （回落默认 preset），绝不因继承根缺失而炸装载。每次调用现读 ⇒ 动态跟随。
+   */
   def rootRefs(root: String): (Option[String], Option[AgentModelConfig]) =
     val jsonPath = PathUtil.dataRoot / "agents" / root / "agent.json"
     if !os.exists(jsonPath) then (None, None)

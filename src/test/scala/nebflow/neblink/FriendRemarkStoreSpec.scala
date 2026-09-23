@@ -87,9 +87,9 @@ class FriendRemarkStoreSpec extends CatsEffectSuite:
       assert(aHasIt, "首次 save 必须落在 root A")
       assertEquals(emptyOnB, Map.empty[String, String], "换根后不得读到 A 根的备注（路径随 dataRoot 走）")
       assert(bFile, "第二次 save 必须落在 root B（若 path 是 val，会写回 A）")
-      assert(aStill.contains("A 根备注") && !aStill.contains("B 根备注"),
-        s"B 根写入不得污染 A 根文件，got: $aStill")
+      assert(aStill.contains("A 根备注") && !aStill.contains("B 根备注"), s"B 根写入不得污染 A 根文件，got: $aStill")
       assertEquals(aReloaded, Map("u1" -> "A 根备注"), "回到 A 根仍读到 A 根值")
+    end for
   }
 
   test("setRemark：trim 后入库，并同步落盘（改 Ref 与 save 同一动作）") {
@@ -115,8 +115,7 @@ class FriendRemarkStoreSpec extends CatsEffectSuite:
     yield
       assertEquals(afterClear, Map.empty[String, String], "空串即清除：键必须消失（不留 \"\" 值）")
       assertEquals(diskAfterClear, Map.empty[String, String], "清除必须落盘（否则重启后备注复活）")
-      assertEquals(afterUnknown, Map("u-not-in-roster" -> "陌生键"),
-        "未知 userId 照存：备注写入零上游校验（不因好友列表读不到而丢用户输入）")
+      assertEquals(afterUnknown, Map("u-not-in-roster" -> "陌生键"), "未知 userId 照存：备注写入零上游校验（不因好友列表读不到而丢用户输入）")
       assertEquals(diskAfterUnknown, afterUnknown)
   }
 
@@ -126,8 +125,7 @@ class FriendRemarkStoreSpec extends CatsEffectSuite:
       _ <- a.setRemark("u1", "老林")
       b = service(FriendRemarkStore.load.unsafeRunSync()) // 启动装配形态（load → Ref）
       seenByB <- b.remarks
-    yield assertEquals(seenByB, Map("u1" -> "老林"),
-      "重启等价路径：启动期 load → Ref 后，备注（含 L0 匹配键）立刻可用")
+    yield assertEquals(seenByB, Map("u1" -> "老林"), "重启等价路径：启动期 load → Ref 后，备注（含 L0 匹配键）立刻可用")
   }
 
 end FriendRemarkStoreSpec

@@ -105,6 +105,7 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
     os.write.over(p, json.spaces2, createFolders = true)
     println(s"[equivalence] ${results.size} comparisons, $failed failures → $p")
     super.afterAll()
+  end afterAll
 
   // ── corpus + query construction ─────────────────────────────────────────────
 
@@ -162,6 +163,8 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
       w <- cross
     yield w.copy(label = s"dim=${d.getOrElse("none")}/${w.label}", dim = d)
 
+  end matrix
+
   /** Reduced matrix for whole-ledger corpora (every reference call re-reads everything). */
   private def reducedMatrix(records: List[LlmUsageRecord]): List[Query] =
     val ts = records.map(_.timestamp)
@@ -186,6 +189,7 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
       Query("dim=day/non-aligned", Some("day"), Some(base + 12 * 60_000L), Some(maxTs - 30 * 60_000L)),
       Query("dim=hour/exact-tail", Some("hour"), Some(maxTs - 60_000L), Some(maxTs + 60_000L))
     )
+  end reducedMatrix
 
   // ── comparison ──────────────────────────────────────────────────────────────
 
@@ -198,16 +202,20 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
       .orElse(f("count", inc.count, full.count))
       .orElse(f("costEquivalent", inc.costEquivalent, full.costEquivalent))
       .orElse {
-        if inc.buckets.size != full.buckets.size then Some(s"bucket count incremental=${inc.buckets.size} full=${full.buckets.size}")
+        if inc.buckets.size != full.buckets.size then
+          Some(s"bucket count incremental=${inc.buckets.size} full=${full.buckets.size}")
         else
           inc.buckets
             .zip(full.buckets)
             .collectFirst { case (x, y) if x != y => s"bucket incremental=$x full=$y" }
             .orElse(
-              if inc.buckets.map(_.key) != full.buckets.map(_.key) then Some(s"bucket order incremental=${inc.buckets.map(_.key)} full=${full.buckets.map(_.key)}")
+              if inc.buckets.map(_.key) != full.buckets.map(_.key) then
+                Some(s"bucket order incremental=${inc.buckets.map(_.key)} full=${full.buckets.map(_.key)}")
               else None
             )
       }
+
+  end diffOf
 
   private def compare(corpus: String, segments: Int, segment: Int, store: UsageRecordStore, q: Query): Unit =
     val t0 = System.nanoTime()
@@ -216,7 +224,18 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
     val full = store.aggregateFull(q.dim, q.from, q.to, q.provider, q.model, q.agent).unsafeRunSync()
     val t2 = System.nanoTime()
     val d = diffOf(inc, full)
-    results += CaseResult(corpus, segments, segment, q.label, d.isEmpty, d.getOrElse("zero difference"), (t2 - t1) / 1e6, (t1 - t0) / 1e6)
+    results += CaseResult(
+      corpus,
+      segments,
+      segment,
+      q.label,
+      d.isEmpty,
+      d.getOrElse("zero difference"),
+      (t2 - t1) / 1e6,
+      (t1 - t0) / 1e6
+    )
+
+  end compare
 
   /**
    * Run one corpus: append in `segments` chunks, and after every chunk compare the
@@ -249,18 +268,32 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
     // Anti-masking: the incremental path must be the one that served the queries.
     val diag = store.cacheDiagnostics.unsafeRunSync()
     val served = diag.rebuilds + diag.increments + diag.hits
-    assert(diag.fallbacks == 0, s"$name: the cache path threw and fell back to full recompute x${diag.fallbacks} — equivalence would be vacuous")
+    assert(
+      diag.fallbacks == 0,
+      s"$name: the cache path threw and fell back to full recompute x${diag.fallbacks} — equivalence would be vacuous"
+    )
     assert(served > 0, s"$name: no cache-path call recorded (diagnostics=$diag)")
     // Dropped-line parity: the reference silently drops undecodable lines; the cache counts them.
     val fileLines = if os.exists(log) then os.read.lines(log).size else 0
     val loaded = store.loadAll().unsafeRunSync().size
     val refDropped = (fileLines - loaded).toLong
     val incDropped = diag.droppedLines
-    results += CaseResult(name, chunks.size, chunks.size, "droppedLines", refDropped == incDropped, s"incremental=$incDropped full=$refDropped (fileLines=$fileLines)", 0.0, 0.0)
+    results += CaseResult(
+      name,
+      chunks.size,
+      chunks.size,
+      "droppedLines",
+      refDropped == incDropped,
+      s"incremental=$incDropped full=$refDropped (fileLines=$fileLines)",
+      0.0,
+      0.0
+    )
     assert(
       refDropped == incDropped,
       s"$name: dropped-line count differs — incremental=$incDropped full=$refDropped"
     )
+
+  end runCorpus
 
   private def assertNoFailures(): Unit =
     val bad = results.filter(!_.ok)
@@ -345,7 +378,15 @@ class UsageAggCacheEquivalenceSpec extends FunSuite:
   test("equivalence: 8-segment append with hour edges") {
     val b = local(2026, 12, 31, 18, 0)
     val rs = (0 until 40).toList.map { i =>
-      rec(b + i * 22 * 60_000L, p = if i % 2 == 0 then "deepseek" else "zhipu", a = if i % 3 == 0 then "Backend" else "Frontend", in = 100 * (i + 1), out = i, cr = (i * 37) % 997, cw = i % 5)
+      rec(
+        b + i * 22 * 60_000L,
+        p = if i % 2 == 0 then "deepseek" else "zhipu",
+        a = if i % 3 == 0 then "Backend" else "Frontend",
+        in = 100 * (i + 1),
+        out = i,
+        cr = (i * 37) % 997,
+        cw = i % 5
+      )
     }
     runCorpus("hour-edges-seg8", rs, 8, matrix(rs), bulk = false)
     assertNoFailures()

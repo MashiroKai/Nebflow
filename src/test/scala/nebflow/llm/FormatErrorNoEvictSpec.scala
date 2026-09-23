@@ -59,8 +59,10 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private def textDelta(t: String) =
     s"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"$t\"}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -89,7 +91,10 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
               exchange.getResponseBody.write(body)
               exchange.close()
             case "401" =>
-              val body = """{"type":"error","error":{"type":"authentication_error","message":"invalid api-key"}}""".getBytes(StandardCharsets.UTF_8)
+              val body =
+                """{"type":"error","error":{"type":"authentication_error","message":"invalid api-key"}}""".getBytes(
+                  StandardCharsets.UTF_8
+                )
               exchange.getResponseHeaders.add("Content-Type", "application/json")
               exchange.sendResponseHeaders(401, body.length.toLong)
               exchange.getResponseBody.write(body)
@@ -103,6 +108,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
               os.flush()
               os.close()
               exchange.close()
+          end match
       )
       server.start()
       server
@@ -129,7 +135,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
     )
 
   private def runTurn(
-      config: NebflowServiceConfig
+    config: NebflowServiceConfig
   ): IO[(Either[Throwable, List[StreamChunk]], Map[String, HealthState], Int)] =
     for
       configRef <- Ref.of[IO, NebflowServiceConfig](config)
@@ -175,6 +181,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
     finally
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)
+    end try
   }
 
   test("T2: classifyError unit — 400 Format evict=false; context-overflow 400 stays Fatal/evict=true") {
@@ -229,5 +236,6 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
     finally
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)
+    end try
   }
 end FormatErrorNoEvictSpec

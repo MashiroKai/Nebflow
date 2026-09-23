@@ -1,12 +1,15 @@
 package nebflow.core.project
 
-/** blocked 声明解析器（设计 §1.3 文法）。独立 object 便于单测。
-  *
-  * - 锚定：trim 后以 BLOCKED 开头（后跟 `:` 或换行/空白/串尾）——只查开头，正文含词不误判。
-  * - JSON 体：首个 `{` 到末个 `}` 之间尝试 circe 解析；category 不在枚举 → other。
-  * - JSON 缺失/畸形 → BlockedFeedback("other", 其余全文截断, "")。
-  * - 非 BLOCKED 开头 → None（调用方走 completed 原路径无损降级）。 */
+/**
+ * blocked 声明解析器（设计 §1.3 文法）。独立 object 便于单测。
+ *
+ * - 锚定：trim 后以 BLOCKED 开头（后跟 `:` 或换行/空白/串尾）——只查开头，正文含词不误判。
+ * - JSON 体：首个 `{` 到末个 `}` 之间尝试 circe 解析；category 不在枚举 → other。
+ * - JSON 缺失/畸形 → BlockedFeedback("other", 其余全文截断, "")。
+ * - 非 BLOCKED 开头 → None（调用方走 completed 原路径无损降级）。
+ */
 object BlockedReader:
+
   val Categories: Set[String] =
     Set("upstream-incomplete", "task-underspecified", "agent-mismatch", "external-dependency", "needs-split", "other")
 
@@ -36,6 +39,8 @@ object BlockedReader:
             case Left(_) => Some(fallback(trimmed))
         case None => Some(fallback(trimmed))
 
+  end parse
+
   /** 落库渲染串（设计 §1.3：result 字段人类可读形态，NodeList 摘要与详情窗共用）。 */
   def render(f: BlockedFeedback): String =
     s"[blocked:${f.category}] ${f.detail} — 建议: ${f.suggestion}"
@@ -61,3 +66,4 @@ object BlockedReader:
   private def fallback(trimmed: String): BlockedFeedback =
     val rest = trimmed.replaceFirst("^BLOCKED\\s*:?\\s*", "").trim
     BlockedFeedback("other", capped(rest, DetailCap), "")
+end BlockedReader

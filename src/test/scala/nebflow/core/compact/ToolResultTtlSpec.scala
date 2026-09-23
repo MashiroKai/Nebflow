@@ -8,7 +8,16 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.agent.{AgentActor, AgentCommand, AgentDef, AgentKind, AgentLibrary, AgentRecord, SharedResources, SubAgentTaskStore}
+import nebflow.agent.{
+  AgentActor,
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentLibrary,
+  AgentRecord,
+  SharedResources,
+  SubAgentTaskStore
+}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.shared.*
 
@@ -59,12 +68,16 @@ class ToolResultTtlSpec extends FunSuite:
     assertEquals(ToolResultTtlConfig.load(Some(Json.obj("enabled" -> "yes".asJson))).enabled, false)
 
   test("config load: valid node decodes and sanitizes (legacy minChars field silently ignored)"):
-    val cfg = ToolResultTtlConfig.load(Some(Json.obj(
-      "enabled" -> true.asJson,
-      "ttlMinutes" -> 30.asJson,
-      "keepRecent" -> (-3).asJson,
-      "minChars" -> 500.asJson // legacy field — must not break decode
-    )))
+    val cfg = ToolResultTtlConfig.load(
+      Some(
+        Json.obj(
+          "enabled" -> true.asJson,
+          "ttlMinutes" -> 30.asJson,
+          "keepRecent" -> (-3).asJson,
+          "minChars" -> 500.asJson // legacy field — must not break decode
+        )
+      )
+    )
     assertEquals(cfg.enabled, true)
     assertEquals(cfg.ttlMinutes, 30)
     assertEquals(cfg.keepRecent, 0, "negative keepRecent sanitizes to 0")
@@ -74,9 +87,8 @@ class ToolResultTtlSpec extends FunSuite:
   test("old, beyond keepRecent, oversized result is replaced with a self-describing placeholder"):
     ToolResultTtl.cleanRequestMessages(history(4), Enabled, Now) match
       case Some(cleaned) =>
-        val results = cleaned.collect {
-          case Message(MessageRole.User, Right(blocks), _, _) =>
-            blocks.collect { case tr: ContentBlock.ToolResult => tr }
+        val results = cleaned.collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          blocks.collect { case tr: ContentBlock.ToolResult => tr }
         }.flatten
         // keepRecent=2 → tu-3/tu-4 kept, tu-1/tu-2 replaced
         val byId = results.map(tr => tr.toolUseId -> tr.content).toMap
@@ -109,9 +121,13 @@ class ToolResultTtlSpec extends FunSuite:
       List(assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now))
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
-        val byId = cleaned.collect {
-          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        val byId = cleaned
+          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+            blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          }
+          .flatten
+          .map(tr => tr.toolUseId -> tr.content)
+          .toMap
         // keepRecent=2: the LAST TWO in message order stay full; every earlier one archived
         uuids.takeRight(2).foreach { id =>
           assertEquals(byId(id), "x" * 5000, s"newest candidate $id must stay full")
@@ -121,15 +137,21 @@ class ToolResultTtlSpec extends FunSuite:
         }
       case None => fail("expected cleanup to fire")
 
+    end match
+
   test("mid-turn safety: the newest N survive even with aggressive ttlMinutes"):
     // ttl=1min with everything older than 1min — the newest N must STILL be
     // kept (keepRecent outranks age); only older-than-window entries archive.
     val aggressive = Enabled.copy(ttlMinutes = 1)
     ToolResultTtl.cleanRequestMessages(history(4), aggressive, Now) match
       case Some(cleaned) =>
-        val byId = cleaned.collect {
-          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        val byId = cleaned
+          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+            blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          }
+          .flatten
+          .map(tr => tr.toolUseId -> tr.content)
+          .toMap
         assertEquals(byId("tu-4"), "x" * 5000, "newest survives aggressive TTL")
         assertEquals(byId("tu-3"), "x" * 5000, "second newest survives aggressive TTL")
         assert(byId("tu-1").startsWith("[Tool output archived:"), "oldest archived")
@@ -138,8 +160,8 @@ class ToolResultTtlSpec extends FunSuite:
   test("original list is not mutated (request-only purity)"):
     val h = history(4)
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now)
-    val results = h.collect {
-      case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr.content }
+    val results = h.collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+      blocks.collect { case tr: ContentBlock.ToolResult => tr.content }
     }.flatten
     assert(results.forall(_ == "x" * 5000), "input list must stay intact")
 
@@ -150,19 +172,28 @@ class ToolResultTtlSpec extends FunSuite:
 
   test("fresh results (within TTL) are kept even beyond keepRecent"):
     val h = List(
-      toolUse("tu-1"), toolResult("tu-1", "x" * 5000, Old),
-      toolUse("tu-2"), toolResult("tu-2", "x" * 5000, Fresh),
-      toolUse("tu-3"), toolResult("tu-3", "x" * 5000, Fresh),
-      toolUse("tu-4"), toolResult("tu-4", "x" * 5000, Fresh),
-      assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now)
+      toolUse("tu-1"),
+      toolResult("tu-1", "x" * 5000, Old),
+      toolUse("tu-2"),
+      toolResult("tu-2", "x" * 5000, Fresh),
+      toolUse("tu-3"),
+      toolResult("tu-3", "x" * 5000, Fresh),
+      toolUse("tu-4"),
+      toolResult("tu-4", "x" * 5000, Fresh),
+      assistant(TwoHoursAgo),
+      Message(MessageRole.User, Left("go"), timestamp = Now)
     )
     // keepRecent=2 keeps tu-3/tu-4; tu-2 is beyond the window but fresh → not replaced;
     // tu-1 is old and beyond the window → replaced
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
-        val byId = cleaned.collect {
-          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        val byId = cleaned
+          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+            blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          }
+          .flatten
+          .map(tr => tr.toolUseId -> tr.content)
+          .toMap
         assert(byId("tu-1").startsWith("[Tool output archived:"), "old beyond window replaced")
         assertEquals(byId("tu-2"), "x" * 5000, "fresh beyond window kept")
       case None => fail("expected tu-1 cleanup")
@@ -179,35 +210,56 @@ class ToolResultTtlSpec extends FunSuite:
     // Author ruling 2026-09-01: minChars removed — an old, out-of-window
     // result is replaced regardless of size.
     val h = List(
-      toolUse("tu-1"), toolResult("tu-1", "tiny", Old),
-      toolUse("tu-2"), toolResult("tu-2", "x" * 5000, Old),
-      toolUse("tu-3"), toolResult("tu-3", "x" * 5000, Old),
-      assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now)
+      toolUse("tu-1"),
+      toolResult("tu-1", "tiny", Old),
+      toolUse("tu-2"),
+      toolResult("tu-2", "x" * 5000, Old),
+      toolUse("tu-3"),
+      toolResult("tu-3", "x" * 5000, Old),
+      assistant(TwoHoursAgo),
+      Message(MessageRole.User, Left("go"), timestamp = Now)
     )
     ToolResultTtl.cleanRequestMessages(h, Enabled, Now) match
       case Some(cleaned) =>
-        val byId = cleaned.collect {
-          case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-        }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+        val byId = cleaned
+          .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+            blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          }
+          .flatten
+          .map(tr => tr.toolUseId -> tr.content)
+          .toMap
         // keepRecent=2 keeps tu-2/tu-3; tu-1 is old AND beyond the window →
         // replaced even though it is only 4 chars (no minChars floor)
-        assert(byId("tu-1").startsWith("[Tool output archived:"), s"tiny old out-of-window result replaced: ${byId("tu-1").take(60)}")
+        assert(
+          byId("tu-1").startsWith("[Tool output archived:"),
+          s"tiny old out-of-window result replaced: ${byId("tu-1").take(60)}"
+        )
         assertEquals(byId("tu-2"), "x" * 5000)
         assertEquals(byId("tu-3"), "x" * 5000)
       case None => fail("expected cleanup to fire")
 
+    end match
+
   test("non-compactable tool results (Mail) are out of scope"):
     val h = List(
-      toolUse("tu-1", "Mail"), toolResult("tu-1", "x" * 5000, Old),
-      toolUse("tu-2"), toolResult("tu-2", "x" * 5000, Old),
-      toolUse("tu-3"), toolResult("tu-3", "x" * 5000, Old),
-      assistant(TwoHoursAgo), Message(MessageRole.User, Left("go"), timestamp = Now)
+      toolUse("tu-1", "Mail"),
+      toolResult("tu-1", "x" * 5000, Old),
+      toolUse("tu-2"),
+      toolResult("tu-2", "x" * 5000, Old),
+      toolUse("tu-3"),
+      toolResult("tu-3", "x" * 5000, Old),
+      assistant(TwoHoursAgo),
+      Message(MessageRole.User, Left("go"), timestamp = Now)
     )
     val cleaned = ToolResultTtl.cleanRequestMessages(h, Enabled, Now)
     cleaned.foreach { c =>
-      val byId = c.collect {
-        case Message(MessageRole.User, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
-      }.flatten.map(tr => tr.toolUseId -> tr.content).toMap
+      val byId = c
+        .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+          blocks.collect { case tr: ContentBlock.ToolResult => tr }
+        }
+        .flatten
+        .map(tr => tr.toolUseId -> tr.content)
+        .toMap
       assertEquals(byId("tu-1"), "x" * 5000, "Mail result untouched")
     }
 
@@ -223,14 +275,21 @@ class ToolResultTtlSpec extends FunSuite:
     val oldTs = System.currentTimeMillis() - 2 * 60 * 60 * 1000L
     val initial = List(
       Message(MessageRole.User, Left("kick"), timestamp = oldTs - 60000),
-      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("tu-old", "Read", io.circe.JsonObject("file_path" -> "/tmp/x".asJson)))), timestamp = oldTs - 30000),
+      Message(
+        MessageRole.Assistant,
+        Right(List(ContentBlock.ToolUse("tu-old", "Read", io.circe.JsonObject("file_path" -> "/tmp/x".asJson)))),
+        timestamp = oldTs - 30000
+      ),
       Message(MessageRole.User, Right(List(ContentBlock.ToolResult("tu-old", bigContent))), timestamp = oldTs),
       Message(MessageRole.Assistant, Left("summarized"), timestamp = oldTs) // last assistant 2h ago → cold
     )
     class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-        Stream.eval(requests.update(_ :+ req)).drain ++ Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+        Stream.eval(requests.update(_ :+ req)).drain ++ Stream(
+          StreamChunk.TextDelta("ok"),
+          StreamChunk.Done(None, None)
+        )
 
     val program = for
       requests <- IO.ref(List.empty[LlmRequest])
@@ -291,7 +350,7 @@ class ToolResultTtlSpec extends FunSuite:
       reqs <- requests.get
       // The finish-turn persist is a forkTurn (async) — poll until the FULL
       // content lands (bounded), instead of a fixed sleep racing it.
-      persisted <- {
+      persisted <-
         // textContent skips ToolResult blocks — check block content directly.
         def hasBig(msgs: List[Message]): Boolean = msgs.exists {
           case Message(_, Right(blocks), _, _) =>
@@ -305,11 +364,12 @@ class ToolResultTtlSpec extends FunSuite:
             else IO.sleep(200.millis) *> resourcesWithLlm.sessionStore.flushPendingMessages *> poll(deadline)
           }
         poll(System.currentTimeMillis() + 10_000L)
-      }
     yield
       assert(reqs.nonEmpty, "at least one LLM request expected")
       val reqText = reqs.map(_.messages.map(_.textContent).mkString("\n")).mkString("\n---\n")
-      val reqBlocks = reqs.flatMap(_.messages.flatMap(_.content.toOption.toList.flatten.collect { case tr: ContentBlock.ToolResult => tr.content }))
+      val reqBlocks = reqs.flatMap(_.messages.flatMap(_.content.toOption.toList.flatten.collect {
+        case tr: ContentBlock.ToolResult => tr.content
+      }))
       // request plane: placeholder present, original gone
       assert(reqBlocks.exists(_.startsWith("[Tool output archived:")), s"request must carry the placeholder:\n$reqText")
       assert(!reqBlocks.contains(bigContent), s"request must NOT carry the full old result:\n$reqText")
@@ -400,14 +460,21 @@ class ToolResultTtlSpec extends FunSuite:
     val oldTs = System.currentTimeMillis() - 2 * 60 * 60 * 1000L
     val initial = List(
       Message(MessageRole.User, Left("kick"), timestamp = oldTs - 60000),
-      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("tu-old", "Read", io.circe.JsonObject("file_path" -> "/tmp/y".asJson)))), timestamp = oldTs - 30000),
+      Message(
+        MessageRole.Assistant,
+        Right(List(ContentBlock.ToolUse("tu-old", "Read", io.circe.JsonObject("file_path" -> "/tmp/y".asJson)))),
+        timestamp = oldTs - 30000
+      ),
       Message(MessageRole.User, Right(List(ContentBlock.ToolResult("tu-old", bigContent))), timestamp = oldTs),
       Message(MessageRole.Assistant, Left("cold"), timestamp = oldTs)
     )
     class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-        Stream.eval(requests.update(_ :+ req)).drain ++ Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+        Stream.eval(requests.update(_ :+ req)).drain ++ Stream(
+          StreamChunk.TextDelta("ok"),
+          StreamChunk.Done(None, None)
+        )
     val program = for
       requests <- IO.ref(List.empty[LlmRequest])
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -476,7 +543,8 @@ class ToolResultTtlSpec extends FunSuite:
       sid2 = sessionMeta2.id
       actorRef2 <- system.spawn(
         AgentActor(
-          agentDef = AgentDef(name = "Nebula", description = "ttl hot update 2", tools = List("Read"), systemPrompt = ""),
+          agentDef =
+            AgentDef(name = "Nebula", description = "ttl hot update 2", tools = List("Read"), systemPrompt = ""),
           resources = resourcesWithLlm,
           wsSend = _ => IO.unit,
           depth = 0,
@@ -498,7 +566,10 @@ class ToolResultTtlSpec extends FunSuite:
       val first = toolResults(reqs(0))
       val later = toolResults(reqs.drop(1).last)
       assert(first.contains(bigContent), "request 1 (disabled) must carry the full result")
-      assert(later.exists(_.startsWith("[Tool output archived:")), s"request 2 (enabled via Ref) must carry the placeholder:\n${later}")
+      assert(
+        later.exists(_.startsWith("[Tool output archived:")),
+        s"request 2 (enabled via Ref) must carry the placeholder:\n${later}"
+      )
       assert(!later.contains(bigContent), "request 2 must NOT carry the full old result")
     program.unsafeRunSync()
     system.stopAll.attempt.void.unsafeRunSync()

@@ -27,6 +27,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
 
   /** protected `buildToolList` 的探针（先例：`AllowedToolSetSpec.CoreProbe`）。 */
   private object CoreProbe extends AgentCore:
+
     def face(defn: AgentDef, depth: Int = 0, flowNodeSession: Boolean = false): List[ToolDefinition] =
       buildToolList(defn, depth, flowNodeSession = flowNodeSession).getOrElse(Nil)
 
@@ -37,12 +38,12 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   private val baseline: ToolDefinition =
     ToolRegistry.ALL_TOOLS.find(_.name == AskUserQuestionTool.Name) match
       case Some(td) => td
-      case None     => fail(s"AskUserQuestion 不在注册表：${ToolRegistry.ALL_TOOLS.map(_.name)}")
+      case None => fail(s"AskUserQuestion 不在注册表：${ToolRegistry.ALL_TOOLS.map(_.name)}")
 
   private def askOf(tds: List[ToolDefinition]): ToolDefinition =
     tds.find(_.name == AskUserQuestionTool.Name) match
       case Some(td) => td
-      case None     => fail(s"AskUserQuestion 不在该会话工具面内：${tds.map(_.name).sorted}")
+      case None => fail(s"AskUserQuestion 不在该会话工具面内：${tds.map(_.name).sorted}")
 
   /** `properties.mode` 的**缺席判据**（① 的判红面）。 */
   private def modeOf(td: ToolDefinition): Option[Json] =
@@ -201,10 +202,10 @@ class AskUserDualModeSchemaSpec extends FunSuite:
 
     val byName = files.map(f => f.last -> os.read(f)).toMap
     val delegating = List(
-      "AgentCore.scala" -> "isNebulaRoot(Some(agentDef), depth)",       // 定义期选变体
-      "types.scala" -> "AgentCore.isNebulaRoot(agentDef, depth)",       // 运行期求值面
+      "AgentCore.scala" -> "isNebulaRoot(Some(agentDef), depth)", // 定义期选变体
+      "types.scala" -> "AgentCore.isNebulaRoot(agentDef, depth)", // 运行期求值面
       "PopTool.scala" -> "AgentCore.isNebulaRoot(ctx.agentDef, ctx.depth)", // Pop 身份闸
-      "AskUserQuestionTool.scala" -> "ctx.isNebulaRoot"                 // 非阻塞兜底闸
+      "AskUserQuestionTool.scala" -> "ctx.isNebulaRoot" // 非阻塞兜底闸
     )
     for (file, needle) <- delegating do
       assert(

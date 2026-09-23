@@ -49,8 +49,11 @@ class AbandonDetachSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"abandon-detach spec agent","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"abandon-detach spec agent","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -61,9 +64,13 @@ class AbandonDetachSpec extends CatsEffectSuite:
   // ── 装配（与 CancelDeadlockFixSpec 同源的最小夹具）───────────────
 
   private class StubLlm:
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+      def sendStream(
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
@@ -105,19 +112,26 @@ class AbandonDetachSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (j: Json) => frames.update(_ :+ j),
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (typ: String, nodeId: String, payload: Json) =>
-          frames.update(_ :+ payload.deepMerge(Json.obj(
-            "type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))),
+          frames.update(
+            _ :+ payload.deepMerge(Json.obj("type" -> Json.fromString(typ), "nodeId" -> Json.fromString(nodeId)))
+          ),
         // 本 spec 主题非 node_report 语义 ⇒ 显式关腿 2（同 CancelDeadlockFixSpec 口径）
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -146,17 +160,27 @@ class AbandonDetachSpec extends CatsEffectSuite:
   private def readAudit(ws: os.Path): IO[List[(String, String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(_.flatMap(l => jsonParse(l).toOption.map(j => (
-        j.hcursor.get[String]("type").getOrElse(""),
-        j.hcursor.get[String]("nodeId").getOrElse(""),
-        j.hcursor.get[String]("summary").getOrElse("")))))
+      .map(
+        _.flatMap(l =>
+          jsonParse(l).toOption.map(j =>
+            (
+              j.hcursor.get[String]("type").getOrElse(""),
+              j.hcursor.get[String]("nodeId").getOrElse(""),
+              j.hcursor.get[String]("summary").getOrElse("")
+            )
+          )
+        )
+      )
       .handleError(_ => Nil)
 
   /** 分量快照（口径单点 = `FlowMapStore.topologicalChains`，与 sweep 同源）。 */
   private def componentOf(rt: ProjectRuntime, id: String): IO[(Int, Boolean)] =
     rt.store.snapshot.map { snap =>
-      val members = FlowMapStore.topologicalChains(snap.nodes.values)
-        .find(_.memberIds.contains(id)).map(_.memberIds).getOrElse(Nil)
+      val members = FlowMapStore
+        .topologicalChains(snap.nodes.values)
+        .find(_.memberIds.contains(id))
+        .map(_.memberIds)
+        .getOrElse(Nil)
       (members.size, FlowMapStore.chainArchivable(members.flatMap(snap.nodes.get)))
     }
 
@@ -164,7 +188,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
   private def stateFile(ws: os.Path): IO[os.Path] =
     IO.blocking(os.walk(ws).filter(_.last == "flow-map.json").toList match
       case h :: _ => h
-      case Nil    => fail(s"flow-map.json not found under $ws"))
+      case Nil => fail(s"flow-map.json not found under $ws"))
 
   private def sha256(p: os.Path): IO[String] =
     IO.blocking(sha256Hex(os.read.bytes(p)))
@@ -180,7 +204,9 @@ class AbandonDetachSpec extends CatsEffectSuite:
 
   // ── 腿 1：摘边语义（改前/改后同测并列读数）──────────────────────
 
-  test("leg1 摘边: abandon severs BOTH sides of every incident edge (in/out/deps + upstream out-refs) so the retired node becomes its own terminal component and chainArchivable flips true; BEFORE: same graph, no detach ⇒ 3-member glue + archivable=false") {
+  test(
+    "leg1 摘边: abandon severs BOTH sides of every incident edge (in/out/deps + upstream out-refs) so the retired node becomes its own terminal component and chainArchivable flips true; BEFORE: same graph, no detach ⇒ 3-member glue + archivable=false"
+  ) {
     val ws = tempRoot / "ws-leg1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-leg1-${scala.util.Random.nextInt(100000)}")
@@ -190,18 +216,59 @@ class AbandonDetachSpec extends CatsEffectSuite:
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-leg1", ws, system, res, frames)
       // 上游 U1：completed + pass 边指向退役节点 —— 现场 2/11 件正是这种「已终态上游的粘边」
-      _ <- seed(rt.store, NodeDef(id = "n-u1", name = "U1", agent = "general", status = NodeLifecycle.Completed,
-        result = Some("u1"), out = List(OutEdge("n-a")), completedAt = Some(now - 90_000), createdAt = now - 90_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-u1",
+          name = "U1",
+          agent = "general",
+          status = NodeLifecycle.Completed,
+          result = Some("u1"),
+          out = List(OutEdge("n-a")),
+          completedAt = Some(now - 90_000),
+          createdAt = now - 90_000
+        )
+      )
       // 退役节点 A：wiring，三类挂线齐备（in / out / deps）
-      _ <- seed(rt.store, NodeDef(id = "n-a", name = "A", agent = "general", task = Some("work-A"),
-        status = NodeLifecycle.Wiring, in = List("n-u1"), out = List(OutEdge("n-d")),
-        deps = List("n-live"), createdAt = now - 60_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-a",
+          name = "A",
+          agent = "general",
+          task = Some("work-A"),
+          status = NodeLifecycle.Wiring,
+          in = List("n-u1"),
+          out = List(OutEdge("n-d")),
+          deps = List("n-live"),
+          createdAt = now - 60_000
+        )
+      )
       // 下游 D：in 镜像引用 A（未消费）
-      _ <- seed(rt.store, NodeDef(id = "n-d", name = "D", agent = "general", task = Some("work-D"),
-        status = NodeLifecycle.Pending, in = List("n-a"), createdAt = now - 50_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-d",
+          name = "D",
+          agent = "general",
+          task = Some("work-D"),
+          status = NodeLifecycle.Pending,
+          in = List("n-a"),
+          createdAt = now - 50_000
+        )
+      )
       // 活节点 LIVE：被 A.deps 粘住（现场机械根因同型：n-aa3382e0.deps=["n-8b21387d"]）
-      _ <- seed(rt.store, NodeDef(id = "n-live", name = "LIVE", agent = "general", task = Some("work-L"),
-        status = NodeLifecycle.Wiring, createdAt = now - 30_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-live",
+          name = "LIVE",
+          agent = "general",
+          task = Some("work-L"),
+          status = NodeLifecycle.Wiring,
+          createdAt = now - 30_000
+        )
+      )
       ctx = mkCtx(res, system, ws.toString)
       before <- componentOf(rt, "n-a")
       r <- nodeEdit(nodeInput("ad-leg1", "A", "abandon" -> Json.fromBoolean(true)), ctx)
@@ -232,19 +299,29 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(live.deps, Nil, "the live node holds no edge to the retired node")
       assertEquals(after._1, 1, "AFTER: the retired node must form its own component")
       assertEquals(after._2, true, "AFTER: chainArchivable must flip true ⇒ the sweep can archive it")
-      assert(audit.exists { case (t, id, s) => t == "abandoned" && id == "n-a" && s.contains("incident edges detached") },
-        s"abandon audit must record the detach, got ${audit.map(_._1).distinct}")
-      assert(wsFrames.exists(j => j.hcursor.get[String]("nodeId").contains("n-d")),
-        "visibility: a nodeUpdated frame for the repaired downstream is expected")
+      assert(
+        audit.exists { case (t, id, s) => t == "abandoned" && id == "n-a" && s.contains("incident edges detached") },
+        s"abandon audit must record the detach, got ${audit.map(_._1).distinct}"
+      )
+      assert(
+        wsFrames.exists(j => j.hcursor.get[String]("nodeId").contains("n-d")),
+        "visibility: a nodeUpdated frame for the repaired downstream is expected"
+      )
       // 小件①（无产出侧）：A 未开工且无结果 ⇒ 回执不得承诺「result retained」
       val receipt = r.toOption.get
-      assert(receipt.contains("no output was produced"), s"receipt must be honest for a never-started node, got: $receipt")
+      assert(
+        receipt.contains("no output was produced"),
+        s"receipt must be honest for a never-started node, got: $receipt"
+      )
       assert(!receipt.contains("result retained"), s"receipt must not promise a retained result, got: $receipt")
+    end for
   }
 
   // ── 腿 2：回填幂等 ─────────────────────────────────────────────
 
-  test("leg2 回填幂等: backfillAbandonedDetach detaches an already-cancelled glued node, and the SECOND run is a true no-op (zero store write / zero frame / zero audit line)") {
+  test(
+    "leg2 回填幂等: backfillAbandonedDetach detaches an already-cancelled glued node, and the SECOND run is a true no-op (zero store write / zero frame / zero audit line)"
+  ) {
     val ws = tempRoot / "ws-leg2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-leg2-${scala.util.Random.nextInt(100000)}")
@@ -253,15 +330,57 @@ class AbandonDetachSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-leg2", ws, system, res, frames)
-      _ <- seed(rt.store, NodeDef(id = "n-u", name = "U", agent = "general", status = NodeLifecycle.Completed,
-        result = Some("u"), out = List(OutEdge("n-c")), completedAt = Some(now - 90_000), createdAt = now - 90_000))
-      _ <- seed(rt.store, NodeDef(id = "n-c", name = "C", agent = "general", task = Some("work-C"),
-        status = NodeLifecycle.Cancelled, in = List("n-u"), out = List(OutEdge("n-d")),
-        deps = List("n-live"), completedAt = Some(now - 60_000), createdAt = now - 60_000))
-      _ <- seed(rt.store, NodeDef(id = "n-d", name = "D", agent = "general", task = Some("work-D"),
-        status = NodeLifecycle.Pending, in = List("n-c"), createdAt = now - 50_000))
-      _ <- seed(rt.store, NodeDef(id = "n-live", name = "LIVE", agent = "general", task = Some("work-L"),
-        status = NodeLifecycle.Wiring, createdAt = now - 30_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-u",
+          name = "U",
+          agent = "general",
+          status = NodeLifecycle.Completed,
+          result = Some("u"),
+          out = List(OutEdge("n-c")),
+          completedAt = Some(now - 90_000),
+          createdAt = now - 90_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-c",
+          name = "C",
+          agent = "general",
+          task = Some("work-C"),
+          status = NodeLifecycle.Cancelled,
+          in = List("n-u"),
+          out = List(OutEdge("n-d")),
+          deps = List("n-live"),
+          completedAt = Some(now - 60_000),
+          createdAt = now - 60_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-d",
+          name = "D",
+          agent = "general",
+          task = Some("work-D"),
+          status = NodeLifecycle.Pending,
+          in = List("n-c"),
+          createdAt = now - 50_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-live",
+          name = "LIVE",
+          agent = "general",
+          task = Some("work-L"),
+          status = NodeLifecycle.Wiring,
+          createdAt = now - 30_000
+        )
+      )
       before <- componentOf(rt, "n-c")
       run1 <- rt.engine.backfillAbandonedDetach()
       frames1 <- frames.get
@@ -277,7 +396,11 @@ class AbandonDetachSpec extends CatsEffectSuite:
       after <- componentOf(rt, "n-c")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(before, (3, false), "BEFORE: C glued to the live node by in/out ⇒ U + C + D share one non-archivable chain (chainmodel 批一 ①: deps is no longer a member edge)")
+      assertEquals(
+        before,
+        (3, false),
+        "BEFORE: C glued to the live node by in/out ⇒ U + C + D share one non-archivable chain (chainmodel 批一 ①: deps is no longer a member edge)"
+      )
       assertEquals(run1, List("n-c"), "first backfill run must report the detached node")
       assertEquals(c.status, NodeLifecycle.Cancelled, "the backfill never touches a non-cancelled node's status")
       assertEquals(c.in, Nil)
@@ -291,13 +414,19 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(frames2.size, frames1.size, "second run must emit zero frames")
       assertEquals(audit2.size, audit1.size, "second run must append zero audit lines")
       assertEquals(sha2, sha1, "second run must not write flow-map.json (byte-identical)")
-      assertEquals(audit1.count { case (t, id, _) => t == "abandoned-detach" && id == "n-c" }, 1,
-        s"exactly one abandoned-detach audit line expected, got ${audit1.map(_._1)}")
+      assertEquals(
+        audit1.count { case (t, id, _) => t == "abandoned-detach" && id == "n-c" },
+        1,
+        s"exactly one abandoned-detach audit line expected, got ${audit1.map(_._1)}"
+      )
+    end for
   }
 
   // ── 腿 2 + sweep 集成 ──────────────────────────────────────────
 
-  test("leg2+sweep 集成: once detached, the retired node leaves the main map on the very next chain sweep and is found in the ARCHIVE (retained, not deleted); the live node stays active") {
+  test(
+    "leg2+sweep 集成: once detached, the retired node leaves the main map on the very next chain sweep and is found in the ARCHIVE (retained, not deleted); the live node stays active"
+  ) {
     val ws = tempRoot / "ws-leg3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-leg3-${scala.util.Random.nextInt(100000)}")
@@ -309,11 +438,31 @@ class AbandonDetachSpec extends CatsEffectSuite:
       // chainmodel 批一 ①（2026-09-19）：粘边由 `deps` 换成 `out`——deps 已不再是成员边
       // （不再是「拖住分量」的边），本用例要的「取消节点被活跃成员拖住 ⇒ 不可归档」形态
       // 只能由 in/out 成员边承载。摘边仍然把 C.out 收敛为 Nebula（out 臂，逐字同前）。
-      _ <- seed(rt.store, NodeDef(id = "n-c", name = "C", agent = "general", task = Some("work-C"),
-        status = NodeLifecycle.Cancelled, out = List(OutEdge("n-live")),
-        result = Some("cancelled[source=user]: reason=spec"), completedAt = Some(now - 60_000), createdAt = now - 60_000))
-      _ <- seed(rt.store, NodeDef(id = "n-live", name = "LIVE", agent = "general", task = Some("work-L"),
-        status = NodeLifecycle.Wiring, createdAt = now - 30_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-c",
+          name = "C",
+          agent = "general",
+          task = Some("work-C"),
+          status = NodeLifecycle.Cancelled,
+          out = List(OutEdge("n-live")),
+          result = Some("cancelled[source=user]: reason=spec"),
+          completedAt = Some(now - 60_000),
+          createdAt = now - 60_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-live",
+          name = "LIVE",
+          agent = "general",
+          task = Some("work-L"),
+          status = NodeLifecycle.Wiring,
+          createdAt = now - 30_000
+        )
+      )
       before <- componentOf(rt, "n-c")
       beforeSweep <- rt.store.sweepCompletedChainsDetailed(now)
       detached <- rt.engine.backfillAbandonedDetach()
@@ -332,11 +481,14 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assert(arch.nodes.contains("n-c"), "the retired node must be found in the ARCHIVE (retained, not deleted)")
       assertEquals(arch.nodes("n-c").status, NodeLifecycle.Cancelled)
       assert(audit.exists { case (t, id, _) => t == "abandoned-detach" && id == "n-c" })
+    end for
   }
 
   // ── NodeCancel 不回退（回归钉）──────────────────────────────────
 
-  test("NodeCancel 不回退: the engine-side cancel leg keeps its R4 detach semantics byte-for-byte and does NOT gain any abandon-only arm (own in/deps untouched, upstream out-refs NOT pruned)") {
+  test(
+    "NodeCancel 不回退: the engine-side cancel leg keeps its R4 detach semantics byte-for-byte and does NOT gain any abandon-only arm (own in/deps untouched, upstream out-refs NOT pruned)"
+  ) {
     val ws = tempRoot / "ws-nc"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-nc-${scala.util.Random.nextInt(100000)}")
@@ -345,15 +497,58 @@ class AbandonDetachSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-nc", ws, system, res, frames)
-      _ <- seed(rt.store, NodeDef(id = "n-u", name = "U", agent = "general", status = NodeLifecycle.Completed,
-        result = Some("u"), out = List(OutEdge("n-a")), completedAt = Some(now - 90_000), createdAt = now - 90_000))
-      _ <- seed(rt.store, NodeDef(id = "n-w", name = "W", agent = "general", status = NodeLifecycle.Completed,
-        result = Some("w"), completedAt = Some(now - 80_000), createdAt = now - 80_000))
-      _ <- seed(rt.store, NodeDef(id = "n-a", name = "A", agent = "general", task = Some("work-A"),
-        status = NodeLifecycle.Running, in = List("n-u"), out = List(OutEdge("n-b")), deps = List("n-w"),
-        startedAt = Some(now - 3_600_000L), createdAt = now - 3_600_000L))
-      _ <- seed(rt.store, NodeDef(id = "n-b", name = "B", agent = "general", task = Some("work-B"),
-        status = NodeLifecycle.Pending, in = List("n-a"), createdAt = now - 600_000L))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-u",
+          name = "U",
+          agent = "general",
+          status = NodeLifecycle.Completed,
+          result = Some("u"),
+          out = List(OutEdge("n-a")),
+          completedAt = Some(now - 90_000),
+          createdAt = now - 90_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-w",
+          name = "W",
+          agent = "general",
+          status = NodeLifecycle.Completed,
+          result = Some("w"),
+          completedAt = Some(now - 80_000),
+          createdAt = now - 80_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-a",
+          name = "A",
+          agent = "general",
+          task = Some("work-A"),
+          status = NodeLifecycle.Running,
+          in = List("n-u"),
+          out = List(OutEdge("n-b")),
+          deps = List("n-w"),
+          startedAt = Some(now - 3_600_000L),
+          createdAt = now - 3_600_000L
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-b",
+          name = "B",
+          agent = "general",
+          task = Some("work-B"),
+          status = NodeLifecycle.Pending,
+          in = List("n-a"),
+          createdAt = now - 600_000L
+        )
+      )
       reap <- rt.engine.reapStaleRunning("n-a")
       a <- node(rt, "n-a")
       b <- node(rt, "n-b")
@@ -367,8 +562,10 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(a.out, List(OutEdge.nebula), "R4: cancelled node out → Nebula (unchanged)")
       assert(!b.in.contains("n-a"), s"R4: downstream in mirror pruned (unchanged), got ${b.in}")
       assertEquals(b.pendingSuccession, List("n-a"), "R4: downstream 待承接 marker (unchanged)")
-      assert(a.result.exists(_.startsWith("cancelled[source=engine]: reason=")),
-        "R2: cancelNode still persists the cancel reason (unchanged)")
+      assert(
+        a.result.exists(_.startsWith("cancelled[source=engine]: reason=")),
+        "R2: cancelNode still persists the cancel reason (unchanged)"
+      )
       // ── abandon 专属臂必须**没有**越界到 NodeCancel ──
       assertEquals(a.in, List("n-u"), "NodeCancel must NOT clear the cancelled node's own in (abandon-only arm)")
       assertEquals(a.deps, List("n-w"), "NodeCancel must NOT clear deps (abandon-only arm)")
@@ -377,11 +574,14 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(audit.count(_._1 == "cancelled"), 1, s"exactly one cancelled audit line, got ${audit.map(_._1)}")
       assertEquals(audit.count(_._1 == "abandoned"), 0, "no abandoned audit line on the NodeCancel path")
       assertEquals(audit.count(_._1 == "abandoned-detach"), 0, "no backfill audit line on the NodeCancel path")
+    end for
   }
 
   // ── 小件①：有产出件文案不回归 ─────────────────────────────────
 
-  test("小件① 文案如实: a node that DID run keeps the legacy 'result retained' receipt verbatim (no regression on the has-output arm)") {
+  test(
+    "小件① 文案如实: a node that DID run keeps the legacy 'result retained' receipt verbatim (no regression on the has-output arm)"
+  ) {
     val ws = tempRoot / "ws-r1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-r1-${scala.util.Random.nextInt(100000)}")
@@ -390,9 +590,19 @@ class AbandonDetachSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-r1", ws, system, res, frames)
-      _ <- seed(rt.store, NodeDef(id = "n-p", name = "P", agent = "general", task = Some("work-P"),
-        status = NodeLifecycle.Wiring, result = Some("half-done output"),
-        startedAt = Some(now - 120_000), createdAt = now - 120_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-p",
+          name = "P",
+          agent = "general",
+          task = Some("work-P"),
+          status = NodeLifecycle.Wiring,
+          result = Some("half-done output"),
+          startedAt = Some(now - 120_000),
+          createdAt = now - 120_000
+        )
+      )
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(nodeInput("ad-r1", "P", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -401,11 +611,14 @@ class AbandonDetachSpec extends CatsEffectSuite:
       val receipt = r.toOption.get
       assert(receipt.contains("result retained"), s"has-output receipt must keep its legacy wording, got: $receipt")
       assert(!receipt.contains("no output was produced"), s"has-output receipt must not claim no output, got: $receipt")
+    end for
   }
 
   // ── 小件②：零提交 worktree 回收（真 git 仓，两侧读数）────────────
 
-  test("小件② worktree 回收: abandon reclaims a ZERO-COMMIT worktree (dir removed + branch -d) and leaves a worktree that HAS commits completely untouched") {
+  test(
+    "小件② worktree 回收: abandon reclaims a ZERO-COMMIT worktree (dir removed + branch -d) and leaves a worktree that HAS commits completely untouched"
+  ) {
     val ws = PathUtil.dataRoot / s"ad-wt-${scala.util.Random.nextInt(100000)}"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-wt-${scala.util.Random.nextInt(100000)}")
@@ -425,10 +638,30 @@ class AbandonDetachSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-wt", ws, system, res, frames)
-      _ <- seed(rt.store, NodeDef(id = "n-z", name = "Z", agent = "general", task = Some("work-Z"),
-        status = NodeLifecycle.Wiring, worktree = Some("zero-wt"), createdAt = now - 60_000))
-      _ <- seed(rt.store, NodeDef(id = "n-o", name = "O", agent = "general", task = Some("work-O"),
-        status = NodeLifecycle.Wiring, worktree = Some("one-wt"), createdAt = now - 50_000))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-z",
+          name = "Z",
+          agent = "general",
+          task = Some("work-Z"),
+          status = NodeLifecycle.Wiring,
+          worktree = Some("zero-wt"),
+          createdAt = now - 60_000
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-o",
+          name = "O",
+          agent = "general",
+          task = Some("work-O"),
+          status = NodeLifecycle.Wiring,
+          worktree = Some("one-wt"),
+          createdAt = now - 50_000
+        )
+      )
       ctx = mkCtx(res, system, ws.toString)
       rz <- nodeEdit(nodeInput("ad-wt", "Z", "abandon" -> Json.fromBoolean(true)), ctx)
       ro <- nodeEdit(nodeInput("ad-wt", "O", "abandon" -> Json.fromBoolean(true)), ctx)
@@ -448,35 +681,52 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assert(oneBranch.nonEmpty, "a branch WITH commits must be left untouched")
       // 回收结果落在 `abandoned` 审计行（回执只讲 abandon 本身：有产出臂必须逐字照旧，
       // 故不把 worktree 结果塞进回执——见 NodeTools.abandonReceipt 头注）。
-      val zAudit = audit.find { case (t, id, _) => t == "abandoned" && id == "n-z" }.map(_._3).getOrElse(
-        fail(s"abandoned audit line for n-z expected, got ${audit.map(_._1)}"))
-      val oAudit = audit.find { case (t, id, _) => t == "abandoned" && id == "n-o" }.map(_._3).getOrElse(
-        fail(s"abandoned audit line for n-o expected, got ${audit.map(_._1)}"))
+      val zAudit = audit
+        .find { case (t, id, _) => t == "abandoned" && id == "n-z" }
+        .map(_._3)
+        .getOrElse(fail(s"abandoned audit line for n-z expected, got ${audit.map(_._1)}"))
+      val oAudit = audit
+        .find { case (t, id, _) => t == "abandoned" && id == "n-o" }
+        .map(_._3)
+        .getOrElse(fail(s"abandoned audit line for n-o expected, got ${audit.map(_._1)}"))
       assert(zAudit.contains("zero-commit worktree 'zero-wt' removed"), s"ZERO side reading in audit, got: $zAudit")
       assert(zAudit.contains("branch deleted (-d)"), s"branch must be deleted with -d, got: $zAudit")
       assert(oAudit.contains("kept — 1 commit"), s"NON-ZERO side reading in audit, got: $oAudit")
       assert(!oAudit.contains("removed"), s"a worktree with commits must not be reclaimed, got: $oAudit")
+    end for
   }
 
   // ── 小件③：契约措辞订正 ───────────────────────────────────────
 
-  test("小件③ 契约措辞: the abandon contract no longer claims 'never auto-archive' (both the tool-description line and the schema property) and states the component-level sweep path instead; the description byte count does not grow") {
+  test(
+    "小件③ 契约措辞: the abandon contract no longer claims 'never auto-archive' (both the tool-description line and the schema property) and states the component-level sweep path instead; the description byte count does not grow"
+  ) {
     val d = NodeEditTool.description
-    val schemaDesc = NodeEditTool.inputSchema("properties")
-      .flatMap(_.asObject).flatMap(_("abandon")).flatMap(_.asObject)
-      .flatMap(_("description")).flatMap(_.asString)
+    val schemaDesc = NodeEditTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("abandon"))
+      .flatMap(_.asObject)
+      .flatMap(_("description"))
+      .flatMap(_.asString)
       .getOrElse(fail("abandon schema property description must exist"))
-    println(s"[ABANDON-DETACH-READING] NodeEditTool.description.length=${d.length} " +
-      s"bytes=${d.getBytes("UTF-8").length} abandonSchema.length=${schemaDesc.length} " +
-      s"bytes=${schemaDesc.getBytes("UTF-8").length}")
+    println(
+      s"[ABANDON-DETACH-READING] NodeEditTool.description.length=${d.length} " +
+        s"bytes=${d.getBytes("UTF-8").length} abandonSchema.length=${schemaDesc.length} " +
+        s"bytes=${schemaDesc.getBytes("UTF-8").length}"
+    )
     for txt <- List(d, schemaDesc) do
       assert(!txt.contains("never auto-archive"), s"the over-strong phrasing must be gone, got: $txt")
       assert(!txt.contains("永不自动归档"), s"the over-strong phrasing must be gone, got: $txt")
     assert(d.contains("cancelled + edges detached"), s"description line must state the detach, got: $d")
-    assert(schemaDesc.contains("edges detached") && schemaDesc.contains("chain sweep archives it"),
-      s"schema wording must state the component-level path, got: $schemaDesc")
-    assert(d.contains("abandon") && d.contains("Nebula") && d.contains("restoreChain"),
-      "semantic anchors of the compressed description must survive")
+    assert(
+      schemaDesc.contains("edges detached") && schemaDesc.contains("chain sweep archives it"),
+      s"schema wording must state the component-level path, got: $schemaDesc"
+    )
+    assert(
+      d.contains("abandon") && d.contains("Nebula") && d.contains("restoreChain"),
+      "semantic anchors of the compressed description must survive"
+    )
   }
 
   // ── 补臂（chain-failroute-guard 批）：**回填腿同款检测** ─────────────
@@ -494,7 +744,9 @@ class AbandonDetachSpec extends CatsEffectSuite:
   //    verifier **同帧落拒绝态**（`verifier-route-lost` 主语 = verifier + 载荷派生键
   //    `verifierRoute="lost"`）——改前此段**全红**（边被静默摘除、零 verifier 侧留痕）。
 
-  test("backfill-leg same-detection (chain-failroute-guard): the 30s backfill leg severs the victim verifier's fail edge — the sync-cancel reading is taken first (edge still there), then the backfill runs and the victim verifier must land in the REJECTION STATE (verifier-route-lost + payload verifierRoute=lost)") {
+  test(
+    "backfill-leg same-detection (chain-failroute-guard): the 30s backfill leg severs the victim verifier's fail edge — the sync-cancel reading is taken first (edge still there), then the backfill runs and the victim verifier must land in the REJECTION STATE (verifier-route-lost + payload verifierRoute=lost)"
+  ) {
     val ws = tempRoot / "ws-fillver"
     os.makeDir.all(ws)
     val system = ActorSystem(s"ad-fillver-${scala.util.Random.nextInt(100000)}")
@@ -504,57 +756,116 @@ class AbandonDetachSpec extends CatsEffectSuite:
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("ad-fillver", ws, system, res, frames)
       // 判据拓扑：worker(被判位, stale running) ← `(fail)worker:loop` ← verifier(role=verifier) → land
-      _ <- seed(rt.store, NodeDef(id = "n-work", name = "WORK", agent = "general", status = NodeLifecycle.Running,
-        task = Some("work"), startedAt = Some(now - 3_600_000L), createdAt = now - 3_600_000L))
-      _ <- seed(rt.store, NodeDef(id = "n-ver", name = "VER", agent = "general", status = NodeLifecycle.Pending,
-        task = Some("judge"), in = List("n-work"), role = NodeRoles.Verifier,
-        out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
-        createdAt = now - 120_000L))
-      _ <- seed(rt.store, NodeDef(id = "n-land", name = "LAND", agent = "general", status = NodeLifecycle.Pending,
-        task = Some("land"), in = List("n-ver"), createdAt = now - 60_000L))
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-work",
+          name = "WORK",
+          agent = "general",
+          status = NodeLifecycle.Running,
+          task = Some("work"),
+          startedAt = Some(now - 3_600_000L),
+          createdAt = now - 3_600_000L
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-ver",
+          name = "VER",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          task = Some("judge"),
+          in = List("n-work"),
+          role = NodeRoles.Verifier,
+          out = List(OutEdge("n-land"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
+          createdAt = now - 120_000L
+        )
+      )
+      _ <- seed(
+        rt.store,
+        NodeDef(
+          id = "n-land",
+          name = "LAND",
+          agent = "general",
+          status = NodeLifecycle.Pending,
+          task = Some("land"),
+          in = List("n-ver"),
+          createdAt = now - 60_000L
+        )
+      )
       // 段 1：同步取消腿（NodeCancel/reap）——`detachCancelledUpstream` 不碰他人 out
       reap <- rt.engine.reapStaleRunning("n-work")
       verAfterCancel <- node(rt, "n-ver")
       keyAfterCancel <- payloadKey(rt, "n-ver")
       auditAfterCancel <- readAudit(ws)
-      _ <- IO(println(s"[spec] backfill-arm segment 1 (sync cancel leg) — verifier.out=${verAfterCancel.out} ; " +
-        s"verifierRoute=$keyAfterCancel ; verifier-route-lost lines=" +
-        s"${auditAfterCancel.count(_._1 == "verifier-route-lost")}"))
+      _ <- IO(
+        println(
+          s"[spec] backfill-arm segment 1 (sync cancel leg) — verifier.out=${verAfterCancel.out} ; " +
+            s"verifierRoute=$keyAfterCancel ; verifier-route-lost lines=" +
+            s"${auditAfterCancel.count(_._1 == "verifier-route-lost")}"
+        )
+      )
       // 段 2：30s 回填腿（等价于 `ProjectActor.TtlTick` 的下一拍）
       detached <- rt.engine.backfillAbandonedDetach()
       verAfterFill <- node(rt, "n-ver")
       keyAfterFill <- payloadKey(rt, "n-ver")
       auditAfterFill <- readAudit(ws)
       lostLines = auditAfterFill.filter(_._1 == "verifier-route-lost")
-      _ <- IO(println(s"[spec] backfill-arm segment 2 (30s backfill leg) — detached=$detached ; " +
-        s"verifier.out=${verAfterFill.out} ; verifierRoute=$keyAfterFill ; " +
-        s"verifier-route-lost=${lostLines.map(l => s"[nodeId=${l._2}] ${l._3}")}"))
+      _ <- IO(
+        println(
+          s"[spec] backfill-arm segment 2 (30s backfill leg) — detached=$detached ; " +
+            s"verifier.out=${verAfterFill.out} ; verifierRoute=$keyAfterFill ; " +
+            s"verifier-route-lost=${lostLines.map(l => s"[nodeId=${l._2}] ${l._3}")}"
+        )
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(reap.isRight, s"reap must succeed: $reap")
       // ── 段 1 读数（`:339` 语义逐字保留：同步腿不摘 upstream out-refs）──
-      assert(verAfterCancel.out.exists(e => e.on.contains(OutEdge.Fail) && OutEdge.isLoopEdge(e)),
-        s"segment 1: the sync cancel leg must NOT prune the referrer's fail edge (unchanged), got ${verAfterCancel.out}")
+      assert(
+        verAfterCancel.out.exists(e => e.on.contains(OutEdge.Fail) && OutEdge.isLoopEdge(e)),
+        s"segment 1: the sync cancel leg must NOT prune the referrer's fail edge (unchanged), got ${verAfterCancel.out}"
+      )
       assertEquals(keyAfterCancel, None, "segment 1: still healthy ⇒ no rejection-state key")
-      assertEquals(auditAfterCancel.count(_._1 == "verifier-route-lost"), 0,
-        "segment 1: the sync cancel leg must log no verifier-route-lost line")
+      assertEquals(
+        auditAfterCancel.count(_._1 == "verifier-route-lost"),
+        0,
+        "segment 1: the sync cancel leg must log no verifier-route-lost line"
+      )
       // ── 段 2 读数（本批新增的检测面：回填腿摘边 ⇒ 同帧落拒绝态）──
       assertEquals(detached, List("n-work"), "segment 2: the backfill leg detaches the cancelled node")
-      assertEquals(verAfterFill.out, List(OutEdge("n-land")),
-        "segment 2: the backfill leg DOES sever the victim verifier's fail edge (the coverage gap this arm closes)")
-      assertEquals(keyAfterFill, Some("lost"),
-        "segment 2: the victim verifier must carry the derived rejection-state key")
-      assertEquals(lostLines.map(_._2).distinct, List("n-ver"),
-        s"segment 2: the audit subject must be the VICTIM VERIFIER, got ${lostLines.map(_._2)}")
-      assert(lostLines.exists(_.last.contains("(fail)")),
-        s"segment 2: the line must carry the actionable restore form, got ${lostLines.map(_.last)}")
+      assertEquals(
+        verAfterFill.out,
+        List(OutEdge("n-land")),
+        "segment 2: the backfill leg DOES sever the victim verifier's fail edge (the coverage gap this arm closes)"
+      )
+      assertEquals(
+        keyAfterFill,
+        Some("lost"),
+        "segment 2: the victim verifier must carry the derived rejection-state key"
+      )
+      assertEquals(
+        lostLines.map(_._2).distinct,
+        List("n-ver"),
+        s"segment 2: the audit subject must be the VICTIM VERIFIER, got ${lostLines.map(_._2)}"
+      )
+      assert(
+        lostLines.exists(_.last.contains("(fail)")),
+        s"segment 2: the line must carry the actionable restore form, got ${lostLines.map(_.last)}"
+      )
+    end for
   }
 
   /** 载荷派生键读数（NodeList 快照载荷 = 工具面/REST 共用序列化点）。 */
   private def payloadKey(rt: ProjectRuntime, id: String): IO[Option[String]] =
     NodeTools.buildNodeListPayload(rt).map { j =>
-      j.hcursor.downField("nodes").as[List[Json]].getOrElse(Nil)
+      j.hcursor
+        .downField("nodes")
+        .as[List[Json]]
+        .getOrElse(Nil)
         .find(_.hcursor.get[String]("id").toOption.contains(id))
         .map(_.hcursor.get[String]("verifierRoute").toOption)
         .getOrElse(fail(s"node '$id' must appear in the NodeList payload"))
     }
+end AbandonDetachSpec

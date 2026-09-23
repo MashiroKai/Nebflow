@@ -19,12 +19,12 @@ import nebflow.agent.InjectionAttribution
 class NotificationHeaderSpec extends FunSuite:
 
   private def h(
-      src: String,
-      intake: Option[String] = None,
-      project: Option[String] = None,
-      sender: Option[String] = None,
-      team: Option[String] = None,
-      et: Option[String] = None
+    src: String,
+    intake: Option[String] = None,
+    project: Option[String] = None,
+    sender: Option[String] = None,
+    team: Option[String] = None,
+    et: Option[String] = None
   ): Option[String] = NotificationHeader.header(src, intake, project, sender, team, et)
 
   // ---------- 0. 分隔符 + 词表覆盖硬门 ----------
@@ -36,12 +36,14 @@ class NotificationHeaderSpec extends FunSuite:
     assert(!s.contains("  · "), "no doubled separator")
     assert(!s.startsWith(" · ") && !s.endsWith(" · "), "no leading/trailing separator")
 
-  /** 「专用分支源」：呈现归**各自批**的前端显式分支，本函数不接管（`h(...) == None`，
-    * 见 §3）。口径与 main `InjectionSourceContractSpec` 的「已登记 = 表项 ∪ 显式分支」
-    * 逐字同款（门 = `frontendRegistered = registeredSourceKeys ∪ explicitBranchSources`）：
-    * device-mail 批（2026-09-15）把 `deviceMail` 定为 i18n 专用分支
-    * 「来自 <from_device> 的 Nebula」（`chat.js:363-365`），故**不纳入 KIND 词表**——
-    * 本函数不替它决定形态，前端回落既有渲染（逐字节不变）。 */
+  /**
+   * 「专用分支源」：呈现归**各自批**的前端显式分支，本函数不接管（`h(...) == None`，
+   * 见 §3）。口径与 main `InjectionSourceContractSpec` 的「已登记 = 表项 ∪ 显式分支」
+   * 逐字同款（门 = `frontendRegistered = registeredSourceKeys ∪ explicitBranchSources`）：
+   * device-mail 批（2026-09-15）把 `deviceMail` 定为 i18n 专用分支
+   * 「来自 <from_device> 的 Nebula」（`chat.js:363-365`），故**不纳入 KIND 词表**——
+   * 本函数不替它决定形态，前端回落既有渲染（逐字节不变）。
+   */
   private val DedicatedBranchSources: Set[String] = Set("deviceMail")
 
   test("KIND 词表键集 == 后端自定名源全集（BackendNamedSources）——其他源一律纳入的硬门"):
@@ -160,3 +162,4 @@ class NotificationHeaderSpec extends FunSuite:
       h("node", None, Some("NEBFLOW"), Some("node"), None, Some("FAILED")),
       Some("NODE · NEBFLOW · FAILED")
     )
+end NotificationHeaderSpec

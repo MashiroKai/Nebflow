@@ -96,23 +96,24 @@ object ModelChainConfig:
 
 end ModelChainConfig
 
-/** One MCP server entry of the `mcpServers` map (mcp.json / nebflow.json).
-  *
-  * R3 (wait-timeout-fix, 2026-09-03 作者裁定②): `timeoutMs` — OPTIONAL
-  * per-server tool-call ceiling in milliseconds, applied to `tools/call` only
-  * (never to `initialize`/`tools/list`, which keep their fixed 30s
-  * infrastructure-probe timeout). Semantics:
-  *   - absent / null  → NO call timeout (default): the tool runs to
-  *     completion like any built-in slow tool (Bash/Read); a truly wedged
-  *     call is caught by the session-level backstops (no-progress ceiling /
-  *     TaskStuckWatcher), replacing the removed blanket 120s client hard top.
-  *   - set (e.g. 45000) → every tool of THIS server is capped at 45s; on
-  *     expiry the call fails with the same error semantics as before
-  *     (TimeoutException → ToolError "Error: timeout…" → next LLM turn).
-  * Field naming follows the existing `stuckThresholdMs` convention
-  * (milliseconds, camelCase). Decoder is derived — fully backward compatible
-  * (existing configs without the field decode unchanged).
-  */
+/**
+ * One MCP server entry of the `mcpServers` map (mcp.json / nebflow.json).
+ *
+ * R3 (wait-timeout-fix, 2026-09-03 作者裁定②): `timeoutMs` — OPTIONAL
+ * per-server tool-call ceiling in milliseconds, applied to `tools/call` only
+ * (never to `initialize`/`tools/list`, which keep their fixed 30s
+ * infrastructure-probe timeout). Semantics:
+ *   - absent / null  → NO call timeout (default): the tool runs to
+ *     completion like any built-in slow tool (Bash/Read); a truly wedged
+ *     call is caught by the session-level backstops (no-progress ceiling /
+ *     TaskStuckWatcher), replacing the removed blanket 120s client hard top.
+ *   - set (e.g. 45000) → every tool of THIS server is capped at 45s; on
+ *     expiry the call fails with the same error semantics as before
+ *     (TimeoutException → ToolError "Error: timeout…" → next LLM turn).
+ * Field naming follows the existing `stuckThresholdMs` convention
+ * (milliseconds, camelCase). Decoder is derived — fully backward compatible
+ * (existing configs without the field decode unchanged).
+ */
 case class McpServerConfig(
   command: Option[String] = None,
   args: Option[List[String]] = None,
@@ -137,21 +138,23 @@ object McpServerConfig:
 
   extension (cfg: McpServerConfig) def isEnabled: Boolean = cfg.enabled.getOrElse(true)
 
-/** Standalone search API config — the top-level `search` block of
-  * nebflow.json (Tier 2a, P2 2026-08-25). The schema existed but was unwired
-  * until P2: a paid search API is billed per call, SEPARATE from model token
-  * quotas, so a model-quota DOWN must not take search down with it.
-  *
-  *   "search": { "provider": "zhipu", "apiKey": "<existing zhipu key>",
-  *               "engine": "search_std", "baseUrl": "<optional override>",
-  *               "enabled": true }
-  *
-  * `provider` selects the adapter (zhipu / bocha); `apiKey` reuses the
-  * provider's existing key (zhipu: zero new key); `engine` picks the search
-  * tier (search_std ¥0.01/call / search_pro …); `baseUrl` overrides the
-  * endpoint (smoke tests point it at a local mock — the reason it exists);
-  * `enabled=false` or a missing/empty apiKey skips Tier 2a entirely (graceful
-  * degrade, existing users need zero migration). */
+/**
+ * Standalone search API config — the top-level `search` block of
+ * nebflow.json (Tier 2a, P2 2026-08-25). The schema existed but was unwired
+ * until P2: a paid search API is billed per call, SEPARATE from model token
+ * quotas, so a model-quota DOWN must not take search down with it.
+ *
+ *   "search": { "provider": "zhipu", "apiKey": "<existing zhipu key>",
+ *               "engine": "search_std", "baseUrl": "<optional override>",
+ *               "enabled": true }
+ *
+ * `provider` selects the adapter (zhipu / bocha); `apiKey` reuses the
+ * provider's existing key (zhipu: zero new key); `engine` picks the search
+ * tier (search_std ¥0.01/call / search_pro …); `baseUrl` overrides the
+ * endpoint (smoke tests point it at a local mock — the reason it exists);
+ * `enabled=false` or a missing/empty apiKey skips Tier 2a entirely (graceful
+ * degrade, existing users need zero migration).
+ */
 case class SearchConfig(
   provider: String,
   apiKey: String,
@@ -164,10 +167,12 @@ case class SearchConfig(
 object SearchConfig:
   given Decoder[SearchConfig] = deriveDecoder[SearchConfig]
 
-/** Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
-  * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
-  * independently optional; None → Defaults. Applied at boot (LlmInterface
-  * .applyStreamTimeouts in GatewayMain); config changes take effect on restart. */
+/**
+ * Stream watchdog thresholds override (flow-node supervision P3, 2026-08-26):
+ * llm.streamTimeouts { firstTokenSec, inactivitySec, noProgressSec } — each
+ * independently optional; None → Defaults. Applied at boot (LlmInterface
+ * .applyStreamTimeouts in GatewayMain); config changes take effect on restart.
+ */
 case class StreamTimeoutsConfig(
   firstTokenSec: Option[Int] = None,
   inactivitySec: Option[Int] = None,
@@ -181,9 +186,11 @@ case class ServiceLlmConfig(
   // provider 缺失 → 空映射 = 未配置 LLM 的合法中间态（种子写 plugins.trust
   // 时可能只落 plugins 键、无 llm 节；解码缺省此处，见 NebflowServiceConfig.llm）。
   providers: Map[String, ProviderConfig] = Map.empty,
-  /** #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
-    * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
-    * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。 */
+  /**
+   * #339 D-b：llm.model 已退役——默认模型唯一来源是 model-presets.json 的
+   * defaultPreset。Option 化的 schema 仅容忍存量文件的 llm.model 节（可解析
+   * 但被忽略；boot 迁移会播种成 preset 后原子剥离）。
+   */
   model: Option[ModelChainConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None
 )
@@ -230,31 +237,41 @@ case class NebflowServiceConfig(
   // P0 阶段 3（2026-08-18）：TaskStuckWatcher 卡死判定阈值（ms）。
   // None → Defaults.StuckThresholdMs（10min）。显式配置可收紧（测试/调试）。
   stuckThresholdMs: Option[Long] = None,
-  /** 冻结调度（freeze-schedule，#337 黑名单语义）：顶层 workSchedule 节原样 JSON
-    * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
-    * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。 */
+  /**
+   * 冻结调度（freeze-schedule，#337 黑名单语义）：顶层 workSchedule 节原样 JSON
+   * （键名保留前端契约，语义=冻结时段，支持跨午夜）——FreezeSchedule.load
+   * fail-safe 解析（非法配置视为关闭）。updateConfig 深合并保留未提及顶层键。
+   */
   workSchedule: Option[io.circe.Json] = None,
-  /** Bash 卡死防护（#26 前台直跑）：bashBackgroundHardTimeoutMs（默认 30min
-    * 硬超时起点）、bashStuckWindowSec（默认 120s 停滞窗口）、
-    * bashHealthCheckIntervalSec（默认 30s 健康检查间隔，测试/冒烟可注入小值
-    * 加速验证）——只服务显式 run_in_background 后台任务。None → Defaults 值。 */
+  /**
+   * Bash 卡死防护（#26 前台直跑）：bashBackgroundHardTimeoutMs（默认 30min
+   * 硬超时起点）、bashStuckWindowSec（默认 120s 停滞窗口）、
+   * bashHealthCheckIntervalSec（默认 30s 健康检查间隔，测试/冒烟可注入小值
+   * 加速验证）——只服务显式 run_in_background 后台任务。None → Defaults 值。
+   */
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
   bashHealthCheckIntervalSec: Option[Int] = None,
-  /** 工具结果 TTL 清理（#341，tool-result-ttl 设计件）：顶层
-    * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
-    * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。 */
+  /**
+   * 工具结果 TTL 清理（#341，tool-result-ttl 设计件）：顶层
+   * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法
+   * 配置视为关闭）。默认关（enabled=false）。request-only 清理，会话文件不动。
+   */
   toolResultTtl: Option[io.circe.Json] = None,
-  /** 执行环境 provider 配置节（§G.1；拆围栏批 S3 起语义 = design §4.2 的
-    * `sandbox.provider`）：顶层 sandbox 节原样 JSON——SandboxConfig.load fail-safe
-    * 解析（absent → 缺省 provider=host / enabled=true）。provider 取值非法或
-    * container/auto 未实现 ⇒ 显式失败（不静默回落宿主执行）；enabled=false 保留为
-    * 旧行为回退点（§4.5）。 */
+  /**
+   * 执行环境 provider 配置节（§G.1；拆围栏批 S3 起语义 = design §4.2 的
+   * `sandbox.provider`）：顶层 sandbox 节原样 JSON——SandboxConfig.load fail-safe
+   * 解析（absent → 缺省 provider=host / enabled=true）。provider 取值非法或
+   * container/auto 未实现 ⇒ 显式失败（不静默回落宿主执行）；enabled=false 保留为
+   * 旧行为回退点（§4.5）。
+   */
   sandbox: Option[io.circe.Json] = None,
-  /** LLM 日志记录开关持久化（2026-09-13「默认关」批，D-A）：顶层 `llmLog` 节
-    * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
-    * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
-    * 仅用户显式开/关（WS `setLlmLog`）才写入本键。 */
+  /**
+   * LLM 日志记录开关持久化（2026-09-13「默认关」批，D-A）：顶层 `llmLog` 节
+   * 原样 JSON——`LlmLogWriter.loadEnabled` fail-safe 解析（缺失 / 非法 ⇒ None
+   * ⇒ 保持默认关）。None（既有安装无落盘值）与 `{"enabled":false}` 行为等价；
+   * 仅用户显式开/关（WS `setLlmLog`）才写入本键。
+   */
   llmLog: Option[io.circe.Json] = None
 )
 
@@ -319,8 +336,12 @@ object Config:
         val path = io.circe.CursorOp.opsToPath(err.history)
         throw new RuntimeException(s"Config parse error at '$path': ${err.message}")
 
-  /** 仅当 llm 节缺席、或 llm 存在但 providers 缺席时补一个空 providers；
-    * 其余字段（含非法形态）原样保留——非法形态仍会正常解码失败，不被掩盖。 */
+  end loadFromJson
+
+  /**
+   * 仅当 llm 节缺席、或 llm 存在但 providers 缺席时补一个空 providers；
+   * 其余字段（含非法形态）原样保留——非法形态仍会正常解码失败，不被掩盖。
+   */
   private def ensureLlmDefaults(json: Json): Json =
     json.asObject match
       case None => json

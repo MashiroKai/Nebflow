@@ -65,7 +65,7 @@ class MailDeviceImagesSpec extends FunSuite:
 
   private def err(ctx: ToolContext, input: JsonObject): String =
     MailTool.call(input, ctx).unsafeRunSync() match
-      case Left(err)  => err.message
+      case Left(err) => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
   override def beforeEach(context: BeforeEach): Unit =

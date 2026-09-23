@@ -142,7 +142,11 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- discovery.heartbeatCycle
         _ <- IO.sleep(testGrace + 300.millis)
         after <- ms.peers
-      yield assertEquals(after.exists(_.deviceId == "kai-ghost"), false, "heartbeat with empty response must evict ghost")
+      yield assertEquals(
+        after.exists(_.deviceId == "kai-ghost"),
+        false,
+        "heartbeat with empty response must evict ghost"
+      )
     }
   }
 
@@ -219,8 +223,10 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         after <- ms.peers
       yield
         val p = after.find(_.deviceId == "dead").getOrElse(fail("offline-flagged peer stays listed"))
-        assert(!NeblinkService.isPeerOnline(p, System.currentTimeMillis(), 45),
-          "a heartbeat response carrying online=false must not mark the peer fresh")
+        assert(
+          !NeblinkService.isPeerOnline(p, System.currentTimeMillis(), 45),
+          "a heartbeat response carrying online=false must not mark the peer fresh"
+        )
     }
   }
 
@@ -230,21 +236,30 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- ms.upsertPeer(peer("camel"))
         _ <- ms.upsertPeer(peer("snake"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"camel","online":false}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"camel","online":false}""").toOption.get
+        )
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","device_id":"snake","online":false}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","device_id":"snake","online":false}""").toOption.get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(!after.exists(p => p.deviceId == "camel" && NeblinkService.isPeerOnline(p, now, 45)), "camelCase frame must apply")
-        assert(!after.exists(p => p.deviceId == "snake" && NeblinkService.isPeerOnline(p, now, 45)), "snake_case frame must apply")
+        assert(
+          !after.exists(p => p.deviceId == "camel" && NeblinkService.isPeerOnline(p, now, 45)),
+          "camelCase frame must apply"
+        )
+        assert(
+          !after.exists(p => p.deviceId == "snake" && NeblinkService.isPeerOnline(p, now, 45)),
+          "snake_case frame must apply"
+        )
     }
   }
 
   test("DeviceStatusUpdate frame without deviceId is ignored, not fatal") {
     withTunnel { (_, tunnel) =>
       tunnel.handleDeviceStatusUpdate(
-        io.circe.parser.parse("""{"type":"device_status_update","online":false}""").toOption.get)
+        io.circe.parser.parse("""{"type":"device_status_update","online":false}""").toOption.get
+      )
     }
   }
 
@@ -255,22 +270,30 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
   // from the upcoming server online-broadcast would have been misread as
   // OFFLINE. These tests pin the dual-field toleration.
 
-  test("DeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)") {
+  test(
+    "DeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)"
+  ) {
     withTunnel { (ms, tunnel) =>
       for
         _ <- ms.upsertPeer(peer("srv"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"online"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"online"}""").toOption.get
+        )
         afterOnline <- ms.peers
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"offline"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"offline"}""").toOption.get
+        )
         afterOffline <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(afterOnline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:online must mark the peer online")
-        assert(!afterOffline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:offline must mark the peer offline")
+        assert(
+          afterOnline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:online must mark the peer online"
+        )
+        assert(
+          !afterOffline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:offline must mark the peer offline"
+        )
     }
   }
 
@@ -279,12 +302,15 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
       for
         _ <- ms.upsertPeer(peer("cs"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"cs","status":"ONLINE"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"cs","status":"ONLINE"}""").toOption.get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(after.exists(p => p.deviceId == "cs" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:ONLINE (upper-case) must still mark online")
+        assert(
+          after.exists(p => p.deviceId == "cs" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:ONLINE (upper-case) must still mark online"
+        )
     }
   }
 
@@ -294,12 +320,18 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- ms.upsertPeer(peer("both"))
         // online:true takes priority over a contradictory status:string
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"both","online":true,"status":"offline"}""").toOption.get)
+          io.circe.parser
+            .parse("""{"type":"device_status_update","deviceId":"both","online":true,"status":"offline"}""")
+            .toOption
+            .get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
-          "online:true must win over status:offline")
+        assert(
+          after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
+          "online:true must win over status:offline"
+        )
     }
   }
 

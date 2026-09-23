@@ -65,10 +65,13 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open("demo", ws)
       _ <- store.mutate(s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "n1" -> node("n1", "scan").copy(status = NodeLifecycle.Completed, result = Some("scanned ok"), ttlExpireAt = Some(now + 100000)),
-          "n2" -> node("n2", "merge", NodeLifecycle.Pending).copy(in = List("n1"))
-        ))
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n1" -> node("n1", "scan")
+              .copy(status = NodeLifecycle.Completed, result = Some("scanned ok"), ttlExpireAt = Some(now + 100000)),
+            "n2" -> node("n2", "merge", NodeLifecycle.Pending).copy(in = List("n1"))
+          )
+        )
       )
       s1 <- store.snapshot
       reopened <- FlowMapStore.open("demo", ws)
@@ -78,6 +81,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(s2.nodes("n1").result, Some("scanned ok"))
       assertEquals(s2.nodes("n1").status, NodeLifecycle.Completed)
       assertEquals(s2.nodes("n2").in, List("n1"))
+    end for
   }
 
   // ── 环检测 ─────────────────────────────────────────────
@@ -86,11 +90,15 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "a" -> node("a", "A"),
-        "b" -> node("b", "B"),
-        "c" -> node("c", "C")
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "a" -> node("a", "A"),
+            "b" -> node("b", "B"),
+            "c" -> node("c", "C")
+          )
+        )
+      )
       _ <- store.mutate(s => s.copy(nodes = s.nodes.updated("a", s.nodes("a").copy(out = List(OutEdge("b"))))))
       // b.out = c：b 的传递下游（c）不达 a → 不环
       noCycle <- store.wouldCreateCycle("b", "c")
@@ -106,22 +114,28 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(cycleAB, true)
       assertEquals(again, true)
       assertEquals(fine, false)
+    end for
   }
 
   test("wouldCreateCycle: Nebula-terminated chain never cycles") {
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "a" -> node("a", "A").copy(out = List(OutEdge.nebula)),
-        "b" -> node("b", "B")
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "a" -> node("a", "A").copy(out = List(OutEdge.nebula)),
+            "b" -> node("b", "B")
+          )
+        )
+      )
       r1 <- store.wouldCreateCycle("b", "a")
       r2 <- store.wouldCreateCycle("a", "Nebula")
     yield
       // a.out=Nebula 被跳过：b→a 不环
       assertEquals(r1, false)
       assertEquals(r2, false)
+    end for
   }
 
   // ── 链级即时归档 sweep（裁定④）─────────────────────────────
@@ -131,14 +145,28 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val batchFile = os.Path(ws) / ".nebflow" / "flow-map-archive" / "chain-n-a1.json"
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        // 同链（n-a1 → n-a2 接线）双节点全部 completed；ttlExpireAt 在未来——
-        // 旧语义下「未到期不移」，新语义(12:29 收窄后)链内全 completed 即整链立即归档
-        "n-a1" -> nodeAt("n-a1", "impl", NodeLifecycle.Completed, now - 60000)
-          .copy(result = Some("full result text"), completedAt = Some(now - 50000), ttlExpireAt = Some(now + 999999), out = List(OutEdge("n-a2"))),
-        "n-a2" -> nodeAt("n-a2", "verify", NodeLifecycle.Completed, now)
-          .copy(result = Some("verify ok detail"), completedAt = Some(now - 10000), ttlExpireAt = Some(now + 999999), in = List("n-a1"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            // 同链（n-a1 → n-a2 接线）双节点全部 completed；ttlExpireAt 在未来——
+            // 旧语义下「未到期不移」，新语义(12:29 收窄后)链内全 completed 即整链立即归档
+            "n-a1" -> nodeAt("n-a1", "impl", NodeLifecycle.Completed, now - 60000)
+              .copy(
+                result = Some("full result text"),
+                completedAt = Some(now - 50000),
+                ttlExpireAt = Some(now + 999999),
+                out = List(OutEdge("n-a2"))
+              ),
+            "n-a2" -> nodeAt("n-a2", "verify", NodeLifecycle.Completed, now)
+              .copy(
+                result = Some("verify ok detail"),
+                completedAt = Some(now - 10000),
+                ttlExpireAt = Some(now + 999999),
+                in = List("n-a1")
+              )
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now).map(_.sorted)
       s <- store.snapshot
       arch <- store.archiveSnapshot
@@ -159,6 +187,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(fileExists, true, "一批一文件")
       assertEquals(monolithExists, false, "不再写单文件 flow-map-archive.json")
       assertEquals(batchNodes.toList.sorted, List("n-a1", "n-a2"))
+    end for
   }
 
   test("sweepCompletedChains: 异常终态已上报（failed notifySentAt 已设；cancelled P1 后无需上报）→ 整批立即归档（2026-09-07 20:38 送达即移）") {
@@ -170,15 +199,29 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        // 同链（n-f1 → n-c1 → n-d1 接线）failed + cancelled 均已被通知（notifySentAt 已设）+ completed
-        "n-f1" -> node("n-f1", "impl-failed", NodeLifecycle.Failed)
-          .copy(result = Some("boom"), completedAt = Some(now - 50000), notifySentAt = Some(now - 40000), out = List(OutEdge("n-c1"))),
-        "n-c1" -> node("n-c1", "verify-cancelled", NodeLifecycle.Cancelled)
-          .copy(completedAt = Some(now - 30000), notifySentAt = Some(now - 20000), in = List("n-f1"), out = List(OutEdge("n-d1"))),
-        "n-d1" -> node("n-d1", "audit-done", NodeLifecycle.Completed)
-          .copy(result = Some("ok"), completedAt = Some(now - 10000), in = List("n-c1"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            // 同链（n-f1 → n-c1 → n-d1 接线）failed + cancelled 均已被通知（notifySentAt 已设）+ completed
+            "n-f1" -> node("n-f1", "impl-failed", NodeLifecycle.Failed)
+              .copy(
+                result = Some("boom"),
+                completedAt = Some(now - 50000),
+                notifySentAt = Some(now - 40000),
+                out = List(OutEdge("n-c1"))
+              ),
+            "n-c1" -> node("n-c1", "verify-cancelled", NodeLifecycle.Cancelled)
+              .copy(
+                completedAt = Some(now - 30000),
+                notifySentAt = Some(now - 20000),
+                in = List("n-f1"),
+                out = List(OutEdge("n-d1"))
+              ),
+            "n-d1" -> node("n-d1", "audit-done", NodeLifecycle.Completed)
+              .copy(result = Some("ok"), completedAt = Some(now - 10000), in = List("n-c1"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now).map(_.sorted)
       s <- store.snapshot
       arch <- store.archiveSnapshot
@@ -189,6 +232,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(arch.nodes.keySet, Set("n-c1", "n-d1", "n-f1"))
       assertEquals(arch.nodes("n-f1").result, Some("boom"), "归档内存保留结果全文")
       assertEquals(fromArchive.map(_.status), Some(NodeLifecycle.Failed), "findNode 归档区兜底可查")
+    end for
   }
 
   test("sweepCompletedChains: failed 未上报（notifySentAt 空）→ 整链保留主图（③ failed 语义不回归）") {
@@ -199,19 +243,28 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-f2" -> node("n-f2", "impl-failed", NodeLifecycle.Failed).copy(result = Some("boom"), out = List(OutEdge("n-c2"))),
-        "n-c2" -> node("n-c2", "verify-cancelled", NodeLifecycle.Cancelled).copy(in = List("n-f2"), out = List(OutEdge("n-d2"))),
-        "n-d2" -> node("n-d2", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"), in = List("n-c2"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-f2" -> node("n-f2", "impl-failed", NodeLifecycle.Failed)
+              .copy(result = Some("boom"), out = List(OutEdge("n-c2"))),
+            "n-c2" -> node("n-c2", "verify-cancelled", NodeLifecycle.Cancelled)
+              .copy(in = List("n-f2"), out = List(OutEdge("n-d2"))),
+            "n-d2" -> node("n-d2", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"), in = List("n-c2"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       arch <- store.archiveSnapshot
     yield
       assertEquals(removed, List.empty, "exception terminal unreported → not chainArchivable → nothing swept")
-      assert(s.nodes.contains("n-f2") && s.nodes.contains("n-c2") && s.nodes.contains("n-d2"),
-        "death scene (incl. completed member in same chain) retained in active area")
+      assert(
+        s.nodes.contains("n-f2") && s.nodes.contains("n-c2") && s.nodes.contains("n-d2"),
+        "death scene (incl. completed member in same chain) retained in active area"
+      )
       assert(arch.nodes.isEmpty, "nothing auto-archived")
+    end for
   }
 
   test("sweepCompletedChains: P1 判据放行——failed 已报 + cancelled 未报（notifySentAt 恒空）→ 整链归档（2026-09-08）") {
@@ -223,11 +276,17 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-f3" -> node("n-f3", "impl-failed", NodeLifecycle.Failed).copy(result = Some("boom"), notifySentAt = Some(now - 40000), out = List(OutEdge("n-c3"))),
-        "n-c3" -> node("n-c3", "verify-cancelled", NodeLifecycle.Cancelled).copy(in = List("n-f3"), out = List(OutEdge("n-d3"))),
-        "n-d3" -> node("n-d3", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"), in = List("n-c3"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-f3" -> node("n-f3", "impl-failed", NodeLifecycle.Failed)
+              .copy(result = Some("boom"), notifySentAt = Some(now - 40000), out = List(OutEdge("n-c3"))),
+            "n-c3" -> node("n-c3", "verify-cancelled", NodeLifecycle.Cancelled)
+              .copy(in = List("n-f3"), out = List(OutEdge("n-d3"))),
+            "n-d3" -> node("n-d3", "audit-done", NodeLifecycle.Completed).copy(result = Some("ok"), in = List("n-c3"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now).map(_.sorted)
       s <- store.snapshot
       arch <- store.archiveSnapshot
@@ -237,6 +296,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(s.nodes.keySet, Set.empty, "整链出库，活动区清空")
       assertEquals(arch.nodes.keySet, Set("n-c3", "n-d3", "n-f3"))
       assertEquals(fromArchive.map(_.status), Some(NodeLifecycle.Cancelled), "findNode 归档兜底可查")
+    end for
   }
 
   test("sweepCompletedChains: P1——cancelled 成员链全终态（notifySentAt 恒空）→ 下个 tick 整链归档（71 死链形态）") {
@@ -247,14 +307,18 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-d4" -> nodeAt("n-d4", "impl-done", NodeLifecycle.Completed, now - 600000)
-          .copy(result = Some("ok"), completedAt = Some(now - 590000), out = List(OutEdge("n-c4"))),
-        "n-c4" -> nodeAt("n-c4", "verify-cancelled", NodeLifecycle.Cancelled, now - 540000)
-          .copy(completedAt = Some(now - 530000), in = List("n-d4")), // notifySentAt 恒空（死链本体）
-        "n-solo" -> nodeAt("n-solo", "solo-cancelled", NodeLifecycle.Cancelled, now - 300000)
-          .copy(result = Some("x"), completedAt = Some(now - 290000))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-d4" -> nodeAt("n-d4", "impl-done", NodeLifecycle.Completed, now - 600000)
+              .copy(result = Some("ok"), completedAt = Some(now - 590000), out = List(OutEdge("n-c4"))),
+            "n-c4" -> nodeAt("n-c4", "verify-cancelled", NodeLifecycle.Cancelled, now - 540000)
+              .copy(completedAt = Some(now - 530000), in = List("n-d4")), // notifySentAt 恒空（死链本体）
+            "n-solo" -> nodeAt("n-solo", "solo-cancelled", NodeLifecycle.Cancelled, now - 300000)
+              .copy(result = Some("x"), completedAt = Some(now - 290000))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now).map(_.sorted)
       s <- store.snapshot
       arch <- store.archiveSnapshot
@@ -268,6 +332,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(bt.keySet, Set("chain-n-d4", "chain-n-solo"), "两链各成归档分文件")
       assertEquals(backC.map(_.status), Some(NodeLifecycle.Cancelled), "归档面板回看可达")
       assertEquals(backSolo.map(_.status), Some(NodeLifecycle.Cancelled))
+    end for
   }
 
   test("sweepCompletedChains: P1 红线——cancelled 与活跃兄弟并存（running/pending/wiring/blocked）→ 整链保留") {
@@ -277,25 +342,36 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-c5r" -> nodeAt("n-c5r", "c-with-running", NodeLifecycle.Cancelled, now - 1200000).copy(out = List(OutEdge("n-a5r"))),
-        "n-a5r" -> nodeAt("n-a5r", "still-running", NodeLifecycle.Running, now - 1140000).copy(in = List("n-c5r")),
-        "n-c5p" -> nodeAt("n-c5p", "c-with-pending", NodeLifecycle.Cancelled, now - 900000).copy(out = List(OutEdge("n-a5p"))),
-        "n-a5p" -> nodeAt("n-a5p", "still-pending", NodeLifecycle.Pending, now - 840000).copy(in = List("n-c5p")),
-        "n-c5w" -> nodeAt("n-c5w", "c-with-wiring", NodeLifecycle.Cancelled, now - 600000).copy(out = List(OutEdge("n-a5w"))),
-        "n-a5w" -> nodeAt("n-a5w", "still-wiring", NodeLifecycle.Wiring, now - 540000).copy(in = List("n-c5w")),
-        "n-c5b" -> nodeAt("n-c5b", "c-with-blocked", NodeLifecycle.Cancelled, now - 300000).copy(out = List(OutEdge("n-a5b"))),
-        "n-a5b" -> nodeAt("n-a5b", "still-blocked", NodeLifecycle.Blocked, now - 240000).copy(in = List("n-c5b"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-c5r" -> nodeAt("n-c5r", "c-with-running", NodeLifecycle.Cancelled, now - 1200000)
+              .copy(out = List(OutEdge("n-a5r"))),
+            "n-a5r" -> nodeAt("n-a5r", "still-running", NodeLifecycle.Running, now - 1140000).copy(in = List("n-c5r")),
+            "n-c5p" -> nodeAt("n-c5p", "c-with-pending", NodeLifecycle.Cancelled, now - 900000)
+              .copy(out = List(OutEdge("n-a5p"))),
+            "n-a5p" -> nodeAt("n-a5p", "still-pending", NodeLifecycle.Pending, now - 840000).copy(in = List("n-c5p")),
+            "n-c5w" -> nodeAt("n-c5w", "c-with-wiring", NodeLifecycle.Cancelled, now - 600000)
+              .copy(out = List(OutEdge("n-a5w"))),
+            "n-a5w" -> nodeAt("n-a5w", "still-wiring", NodeLifecycle.Wiring, now - 540000).copy(in = List("n-c5w")),
+            "n-c5b" -> nodeAt("n-c5b", "c-with-blocked", NodeLifecycle.Cancelled, now - 300000)
+              .copy(out = List(OutEdge("n-a5b"))),
+            "n-a5b" -> nodeAt("n-a5b", "still-blocked", NodeLifecycle.Blocked, now - 240000).copy(in = List("n-c5b"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       arch <- store.archiveSnapshot
     yield
       assertEquals(removed, List.empty, "活跃链（含 blocked 链）任一链都不归档")
-      assertEquals(s.nodes.keySet,
+      assertEquals(
+        s.nodes.keySet,
         Set("n-c5r", "n-a5r", "n-c5p", "n-a5p", "n-c5w", "n-a5w", "n-c5b", "n-a5b"),
-        "cancelled 与活跃兄弟同链 → 全员留主图")
+        "cancelled 与活跃兄弟同链 → 全员留主图"
+      )
       assert(arch.nodes.isEmpty, "nothing auto-archived")
+    end for
   }
 
   test("chainArchivable: P1 判据真值表（④ completed 快轨 / ① cancelled 放行 / ③ failed 上报门 / ② 活跃·blocked 拒）") {
@@ -313,16 +389,24 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     // ③ failed 上报语义不回归
     assertEquals(FlowMapStore.chainArchivable(List(failedNotified)), true)
     assertEquals(FlowMapStore.chainArchivable(List(failedNoNotify)), false, "failed 未上报 → 保留主图待上报")
-    assertEquals(FlowMapStore.chainArchivable(List(failedNoNotify, cancelledNoNotify)), false,
-      "failed 未上报压住整链（cancelled 放行不外溢）")
-    assertEquals(FlowMapStore.chainArchivable(List(failedNotified, cancelledNoNotify)), true,
-      "failed 已报 + cancelled 未报 → 可归档（P1 修复场景）")
+    assertEquals(
+      FlowMapStore.chainArchivable(List(failedNoNotify, cancelledNoNotify)),
+      false,
+      "failed 未上报压住整链（cancelled 放行不外溢）"
+    )
+    assertEquals(
+      FlowMapStore.chainArchivable(List(failedNotified, cancelledNoNotify)),
+      true,
+      "failed 已报 + cancelled 未报 → 可归档（P1 修复场景）"
+    )
     // ② 活跃链兄弟保留 + blocked 永不自动归档
     List(NodeLifecycle.Running, NodeLifecycle.Pending, NodeLifecycle.Wiring, NodeLifecycle.Blocked).foreach { st =>
-      assertEquals(FlowMapStore.chainArchivable(List(cancelledNoNotify, node(s"t-a-$st", "a", st))), false,
-        s"cancelled + $st → 整链保留")
-      assertEquals(FlowMapStore.chainArchivable(List(done, node(s"t-b-$st", "b", st))), false,
-        s"completed + $st → 链未齐")
+      assertEquals(
+        FlowMapStore.chainArchivable(List(cancelledNoNotify, node(s"t-a-$st", "a", st))),
+        false,
+        s"cancelled + $st → 整链保留"
+      )
+      assertEquals(FlowMapStore.chainArchivable(List(done, node(s"t-b-$st", "b", st))), false, s"completed + $st → 链未齐")
     }
   }
 
@@ -330,18 +414,22 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        // 链1：一完成一 running（接线）→ 活跃成员 → 链未齐，整链保留（含已到期终态成员）
-        "n-b1" -> nodeAt("n-b1", "impl", NodeLifecycle.Completed, now - 60000)
-          .copy(ttlExpireAt = Some(now - 1), out = List(OutEdge("n-b2"))),
-        "n-b2" -> nodeAt("n-b2", "verify", NodeLifecycle.Running, now - 30000)
-          .copy(in = List("n-b1")),
-        // 链2：一完成一 blocked（待办非终态，永不自动归档；接线）→ 整链保留
-        "n-c1" -> nodeAt("n-c1", "design", NodeLifecycle.Completed, now + 3600000)
-          .copy(ttlExpireAt = Some(now - 1), out = List(OutEdge("n-c2"))),
-        "n-c2" -> nodeAt("n-c2", "review", NodeLifecycle.Blocked, now + 3660000)
-          .copy(ttlExpireAt = None, in = List("n-c1"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            // 链1：一完成一 running（接线）→ 活跃成员 → 链未齐，整链保留（含已到期终态成员）
+            "n-b1" -> nodeAt("n-b1", "impl", NodeLifecycle.Completed, now - 60000)
+              .copy(ttlExpireAt = Some(now - 1), out = List(OutEdge("n-b2"))),
+            "n-b2" -> nodeAt("n-b2", "verify", NodeLifecycle.Running, now - 30000)
+              .copy(in = List("n-b1")),
+            // 链2：一完成一 blocked（待办非终态，永不自动归档；接线）→ 整链保留
+            "n-c1" -> nodeAt("n-c1", "design", NodeLifecycle.Completed, now + 3600000)
+              .copy(ttlExpireAt = Some(now - 1), out = List(OutEdge("n-c2"))),
+            "n-c2" -> nodeAt("n-c2", "review", NodeLifecycle.Blocked, now + 3660000)
+              .copy(ttlExpireAt = None, in = List("n-c1"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       arch <- store.archiveSnapshot
@@ -349,21 +437,28 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(removed, List.empty)
       assertEquals(s.nodes.keySet, Set("n-b1", "n-b2", "n-c1", "n-c2"))
       assertEquals(arch.nodes.keySet, Set.empty)
+    end for
   }
 
   test("sweepCompletedChains: 拓扑口径（C4 取代时间批）——互不连通各自归档，连通链未齐整链保留") {
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        // 独立节点（旧,全终态，与下链无任何接线）→ 自成单成员链 → 归档
-        // （旧时间批口径下它与 n-new1 间隔 300s 分批；拓扑口径下「间隔」不再存在，
-        //  归档边界只看连通性）
-        "n-old1" -> nodeAt("n-old1", "old-impl", NodeLifecycle.Completed, now - 3600000).copy(completedAt = Some(now - 3500000)),
-        // 连通链（含 pending）→ 整链保留
-        "n-new1" -> nodeAt("n-new1", "new-impl", NodeLifecycle.Completed, now - 300000).copy(completedAt = Some(now - 200000), out = List(OutEdge("n-new2"))),
-        "n-new2" -> nodeAt("n-new2", "new-verify", NodeLifecycle.Pending, now - 240000).copy(in = List("n-new1"))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            // 独立节点（旧,全终态，与下链无任何接线）→ 自成单成员链 → 归档
+            // （旧时间批口径下它与 n-new1 间隔 300s 分批；拓扑口径下「间隔」不再存在，
+            //  归档边界只看连通性）
+            "n-old1" -> nodeAt("n-old1", "old-impl", NodeLifecycle.Completed, now - 3600000)
+              .copy(completedAt = Some(now - 3500000)),
+            // 连通链（含 pending）→ 整链保留
+            "n-new1" -> nodeAt("n-new1", "new-impl", NodeLifecycle.Completed, now - 300000)
+              .copy(completedAt = Some(now - 200000), out = List(OutEdge("n-new2"))),
+            "n-new2" -> nodeAt("n-new2", "new-verify", NodeLifecycle.Pending, now - 240000).copy(in = List("n-new1"))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       s <- store.snapshot
       bt <- store.archiveBatches
@@ -371,15 +466,21 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(removed, List("n-old1"))
       assertEquals(s.nodes.keySet, Set("n-new1", "n-new2"))
       assertEquals(bt.keySet, Set("chain-n-old1"))
+    end for
   }
 
   test("sweepCompletedChains: 归档跨重开（分文件水合 + 结果全文保留）") {
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "done" -> node("done", "done", NodeLifecycle.Completed).copy(result = Some("persisted"), completedAt = Some(now))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "done" -> node("done", "done", NodeLifecycle.Completed)
+              .copy(result = Some("persisted"), completedAt = Some(now))
+          )
+        )
+      )
       _ <- store.sweepCompletedChains(now)
       reopened <- FlowMapStore.open("demo", ws)
       arch <- reopened.archiveSnapshot
@@ -390,6 +491,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(fromArchive.map(_.result), Some(Some("persisted")))
       assertEquals(bt.keySet, Set("chain-done"))
       assertEquals(bt("chain-done").nodeIds, Set("done"))
+    end for
   }
 
   test("mutateArchive: 单点更新只重写所属批文件（diff 落盘）") {
@@ -397,21 +499,29 @@ class FlowMapStoreSpec extends CatsEffectSuite:
     val dir = os.Path(ws) / ".nebflow" / "flow-map-archive"
     for
       store <- FlowMapStore.open("demo", ws)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-x1" -> nodeAt("n-x1", "X1", NodeLifecycle.Completed, now - 3600000).copy(completedAt = Some(now - 3500000)),
-        "n-y1" -> nodeAt("n-y1", "Y1", NodeLifecycle.Completed, now - 300000).copy(completedAt = Some(now - 200000))
-      )))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-x1" -> nodeAt("n-x1", "X1", NodeLifecycle.Completed, now - 3600000)
+              .copy(completedAt = Some(now - 3500000)),
+            "n-y1" -> nodeAt("n-y1", "Y1", NodeLifecycle.Completed, now - 300000).copy(completedAt = Some(now - 200000))
+          )
+        )
+      )
       _ <- store.sweepCompletedChains(now)
       mtimeY0 <- IO.blocking(os.mtime(dir / "chain-n-y1.json"))
       _ <- IO.blocking(Thread.sleep(20)) // mtime 粒度护栏
       // 归档节点 out 改线（NodeTools 同款单点更新路径）
-      _ <- store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith("n-x1")(_.map(_.copy(out = List(OutEdge("n-z")))))))
+      _ <- store.mutateArchive(a =>
+        a.copy(nodes = a.nodes.updatedWith("n-x1")(_.map(_.copy(out = List(OutEdge("n-z"))))))
+      )
       mtimeY1 <- IO.blocking(os.mtime(dir / "chain-n-y1.json"))
       xJson = jsonParse(os.read(dir / "chain-n-x1.json")).toOption.get
       xOut <- IO.fromEither(xJson.hcursor.downField("nodes").downField("n-x1").downField("out").as[List[OutEdge]])
     yield
       assertEquals(xOut, List(OutEdge("n-z")), "archived out round-trips as P1 edge array")
       assertEquals(mtimeY1, mtimeY0, "未受影响批文件不重写")
+    end for
   }
 
   // ── 存量单文件 → 分批迁移（裁定④，零丢失幂等）────────────────
@@ -419,13 +529,19 @@ class FlowMapStoreSpec extends CatsEffectSuite:
   test("legacy single-file archive migrates to per-batch files on open (零丢失 + 幂等 + .split-bak)") {
     val ws = freshWorkspace()
     val wsPath = os.Path(ws)
-    val legacy = FlowMapArchive(project = "demo", nodes = Map(
-      // 同链双节点（m-a1 → m-a2 接线）
-      "m-a1" -> nodeAt("m-a1", "legacy-impl", NodeLifecycle.Completed, now - 7200000).copy(result = Some("r-a1"), completedAt = Some(now - 7100000), out = List(OutEdge("m-a2"))),
-      "m-a2" -> nodeAt("m-a2", "legacy-verify", NodeLifecycle.Completed, now - 7140000).copy(result = Some("r-a2"), completedAt = Some(now - 7000000), in = List("m-a1")),
-      // 独立节点（无接线 → 单成员链）
-      "m-b1" -> nodeAt("m-b1", "legacy-solo", NodeLifecycle.Cancelled, now - 6840000).copy(result = Some("r-b1"), completedAt = Some(now - 6800000))
-    ))
+    val legacy = FlowMapArchive(
+      project = "demo",
+      nodes = Map(
+        // 同链双节点（m-a1 → m-a2 接线）
+        "m-a1" -> nodeAt("m-a1", "legacy-impl", NodeLifecycle.Completed, now - 7200000)
+          .copy(result = Some("r-a1"), completedAt = Some(now - 7100000), out = List(OutEdge("m-a2"))),
+        "m-a2" -> nodeAt("m-a2", "legacy-verify", NodeLifecycle.Completed, now - 7140000)
+          .copy(result = Some("r-a2"), completedAt = Some(now - 7000000), in = List("m-a1")),
+        // 独立节点（无接线 → 单成员链）
+        "m-b1" -> nodeAt("m-b1", "legacy-solo", NodeLifecycle.Cancelled, now - 6840000)
+          .copy(result = Some("r-b1"), completedAt = Some(now - 6800000))
+      )
+    )
     for
       _ <- IO.blocking {
         os.makeDir.all(wsPath / ".nebflow")
@@ -453,6 +569,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       assertEquals(splitBak, true, "原单文件留存 .split-bak 回滚锚点")
       assertEquals(batchFiles, List("chain-m-a1.json", "chain-m-b1.json"))
       assertEquals(mtimes2, mtimes1, "二次 open 幂等零重写")
+    end for
   }
 
 end FlowMapStoreSpec

@@ -34,41 +34,49 @@ object LlmLogWriter:
 
   private val logger = NebflowLogger.forName("nebflow.llm.logger")
 
-  /** **默认态 = 关**（无落盘值时的兜底；2026-09-13 只改默认值批）。
-    * 全仓**单点**定义——禁第二份「默认 true」（boot 读侧 [[loadEnabled]] 返回
-    * None 时即落到本值）。声明序**必须**在 [[enabled]] 之前：object 初始化按
-    * 声明序执行，常量后置会被读到默认 false（前向引用陷阱）。
-    * 钉版：`LlmLogDefaultSpec`（本常量的回归门）。 */
+  /**
+   * **默认态 = 关**（无落盘值时的兜底；2026-09-13 只改默认值批）。
+   * 全仓**单点**定义——禁第二份「默认 true」（boot 读侧 [[loadEnabled]] 返回
+   * None 时即落到本值）。声明序**必须**在 [[enabled]] 之前：object 初始化按
+   * 声明序执行，常量后置会被读到默认 false（前向引用陷阱）。
+   * 钉版：`LlmLogDefaultSpec`（本常量的回归门）。
+   */
   private[nebflow] val DefaultEnabled = false
 
-  /** Runtime toggle. When false, log() is a no-op.
-    *
-    * **默认关（2026-09-13 作者裁定「只改默认值」批）**：能力全保留——
-    * [[setEnabled]] 显式打开后四道门（`:logRequest` / `:logResponse` /
-    * `:logStreamEvent` / `:logIntake`）全开、四个写入面（summary / full /
-    * sse / objects）照写，**开启时仍完整落盘、不降采样**（既有「完整性优先」
-    * 裁定管的是「开启时不得降采样」，与默认态是两件事，未被本批取代）。
-    * 默认关 ≠ 降采样：关态是门控短路，一行不写。
-    *
-    * 本初值只是**无落盘值时的兜底**；落盘值（nebflow.json 顶层 `llmLog` 节，
-    * 见 [[configSection]] / [[loadEnabled]]）在 boot 时覆写（GatewayMain），
-    * WS `setLlmLog` 落盘后热更——故用户显式改动过的值**跨重启保持**
-    * （D-A：旧缺陷「宿主重启回落 true」已修）。 */
+  /**
+   * Runtime toggle. When false, log() is a no-op.
+   *
+   * **默认关（2026-09-13 作者裁定「只改默认值」批）**：能力全保留——
+   * [[setEnabled]] 显式打开后四道门（`:logRequest` / `:logResponse` /
+   * `:logStreamEvent` / `:logIntake`）全开、四个写入面（summary / full /
+   * sse / objects）照写，**开启时仍完整落盘、不降采样**（既有「完整性优先」
+   * 裁定管的是「开启时不得降采样」，与默认态是两件事，未被本批取代）。
+   * 默认关 ≠ 降采样：关态是门控短路，一行不写。
+   *
+   * 本初值只是**无落盘值时的兜底**；落盘值（nebflow.json 顶层 `llmLog` 节，
+   * 见 [[configSection]] / [[loadEnabled]]）在 boot 时覆写（GatewayMain），
+   * WS `setLlmLog` 落盘后热更——故用户显式改动过的值**跨重启保持**
+   * （D-A：旧缺陷「宿主重启回落 true」已修）。
+   */
   private val enabled = java.util.concurrent.atomic.AtomicBoolean(DefaultEnabled)
 
   def setEnabled(v: Boolean): Unit = enabled.set(v)
   def isEnabled: Boolean = enabled.get()
 
-  /** 持久化落点 = nebflow.json **顶层节点名**（读 / 写两侧单源：读 =
-    * [[loadEnabled]]（boot），写 = `nebflow.service.ConfigService.setLlmLogEnabled`
-    * （WS `setLlmLog` 经 ConfigService 的既有配置写锁 + 原子写））。
-    * 复用既有配置存储（同一 nebflow.json，与 `toolResultTtl` / `safety` /
-    * `workSchedule` 同族形态）；**不新增配置文件格式**。 */
+  /**
+   * 持久化落点 = nebflow.json **顶层节点名**（读 / 写两侧单源：读 =
+   * [[loadEnabled]]（boot），写 = `nebflow.service.ConfigService.setLlmLogEnabled`
+   * （WS `setLlmLog` 经 ConfigService 的既有配置写锁 + 原子写））。
+   * 复用既有配置存储（同一 nebflow.json，与 `toolResultTtl` / `safety` /
+   * `workSchedule` 同族形态）；**不新增配置文件格式**。
+   */
   val configSection = "llmLog"
 
-  /** 解析落盘值 → 显式开关态。**fail-safe**：`llmLog` 节缺失 / 非对象 /
-    * `enabled` 非布尔 ⇒ `None`（= 「无落盘值」⇒ 调用方保持默认关）。
-    * 纯函数（无副作用、不读盘），boot 与 spec 共用。 */
+  /**
+   * 解析落盘值 → 显式开关态。**fail-safe**：`llmLog` 节缺失 / 非对象 /
+   * `enabled` 非布尔 ⇒ `None`（= 「无落盘值」⇒ 调用方保持默认关）。
+   * 纯函数（无副作用、不读盘），boot 与 spec 共用。
+   */
   def loadEnabled(config: Option[Json]): Option[Boolean] =
     config.flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
 
@@ -77,34 +85,44 @@ object LlmLogWriter:
 
   private val logDirOverride = AtomicReference[Option[Path]](None)
 
-  /** Test-only redirect of the router log directory (spec harnesses /
-    * isolated instances assert tools↔router requestId alignment without
-    * touching the real ~/.nebflow/logs/router). */
+  /**
+   * Test-only redirect of the router log directory (spec harnesses /
+   * isolated instances assert tools↔router requestId alignment without
+   * touching the real ~/.nebflow/logs/router).
+   */
   private[nebflow] def setLogDirForTest(p: Path): Unit = logDirOverride.set(Some(p))
   private[nebflow] def resetLogDirForTest(): Unit = logDirOverride.set(None)
 
-  /** Artificial write delay (ms) — async non-blocking proof in specs
-    * (ToolsLogWriter 同款注入面). */
+  /**
+   * Artificial write delay (ms) — async non-blocking proof in specs
+   * (ToolsLogWriter 同款注入面).
+   */
   private val writeDelayMsForTest = new java.util.concurrent.atomic.AtomicLong(0)
   private[nebflow] def setWriteDelayMsForTest(ms: Long): Unit = writeDelayMsForTest.set(ms)
 
-  /** Log root follows the instance data root (PathUtil.dataRoot: CLI --home
-    * flag / NEBFLOW_HOME env / default ~/.nebflow) — NEVER a raw user.home
-    * hardcode. P1 defect 20260910 (实测报告 20260910_loopnode新形式实测报告.md):
-    * the previous `Paths.get(user.home, ".nebflow", ...)` hardcode leaked
-    * every isolated instance's LLM request bodies (objects/ 含 messages 全量)
-    * into the production ~/.nebflow/logs/router. logDirOverride stays the
-    * test-only injection point (takes precedence). */
+  /**
+   * Log root follows the instance data root (PathUtil.dataRoot: CLI --home
+   * flag / NEBFLOW_HOME env / default ~/.nebflow) — NEVER a raw user.home
+   * hardcode. P1 defect 20260910 (实测报告 20260910_loopnode新形式实测报告.md):
+   * the previous `Paths.get(user.home, ".nebflow", ...)` hardcode leaked
+   * every isolated instance's LLM request bodies (objects/ 含 messages 全量)
+   * into the production ~/.nebflow/logs/router. logDirOverride stays the
+   * test-only injection point (takes precedence).
+   */
   private def logDir: Path =
     logDirOverride.get().getOrElse((PathUtil.dataRoot / "logs" / "router").toNIO)
 
-  /** Package-visible probe — specs pin the dataRoot-following contract
-    * (isolated home + production-default path) without writing to either. */
+  /**
+   * Package-visible probe — specs pin the dataRoot-following contract
+   * (isolated home + production-default path) without writing to either.
+   */
   private[core] def logDirForTest: Path = logDir
   private def objectsDir: Path = logDir.resolve("objects")
 
-  /** Retention days — shared with ToolsLogWriter (方案 B: tools 日志保留对齐
-    * router 现行默认). */
+  /**
+   * Retention days — shared with ToolsLogWriter (方案 B: tools 日志保留对齐
+   * router 现行默认).
+   */
   private[core] val retentionDays = 3
 
   // Double-checked locking for daily prune
@@ -201,13 +219,15 @@ object LlmLogWriter:
         appendJsonl("full", fullEntry)
       }.handleErrorWith(e => logger.warn(s"LlmLogWriter.logRequest: ${e.getMessage}"))
 
-  /** 流结束时落 response 行（附 request_id；request/response 行序不变，
-    * viewer 按相邻序关联的既有契约保持）。
-    *
-    * **回收腿与写入开关解耦（本批）**：本方法是 `maybePrune` 的既有唯一触发点，
-    * 现将回收 tick 提到 `enabled` 门**之外**——关掉写入 ≠ 关掉占用（旧缺陷：
-    * 门在 `:217` 短路 ⇒ 关态下保留窗执行整条腿停摆、声明 3 天实际 0 天淘汰）。
-    * 写入面（[[writeResponse]]）的门控**原样保留**：关态仍零新增。 */
+  /**
+   * 流结束时落 response 行（附 request_id；request/response 行序不变，
+   * viewer 按相邻序关联的既有契约保持）。
+   *
+   * **回收腿与写入开关解耦（本批）**：本方法是 `maybePrune` 的既有唯一触发点，
+   * 现将回收 tick 提到 `enabled` 门**之外**——关掉写入 ≠ 关掉占用（旧缺陷：
+   * 门在 `:217` 短路 ⇒ 关态下保留窗执行整条腿停摆、声明 3 天实际 0 天淘汰）。
+   * 写入面（[[writeResponse]]）的门控**原样保留**：关态仍零新增。
+   */
   def logResponse(
     requestId: String,
     resultText: String,
@@ -385,10 +405,14 @@ object LlmLogWriter:
           List(start, delta)
 
         case _ => Nil // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
+      end match
+    end encode
   end StreamEventEncoder
 
-  /** 每 chunk 到达即入队（ts 在 encode 时捕获=到达时刻）；后台 fiber 异步写盘，
-    * 吞吐零回归。model 仅 Done 帧可携带（meta.model），其余帧为 null。 */
+  /**
+   * 每 chunk 到达即入队（ts 在 encode 时捕获=到达时刻）；后台 fiber 异步写盘，
+   * 吞吐零回归。model 仅 Done 帧可携带（meta.model），其余帧为 null。
+   */
   def logStreamEvent(encoder: StreamEventEncoder, chunk: StreamChunk): IO[Unit] =
     if !enabled.get() then IO.unit
     else
@@ -425,22 +449,26 @@ object LlmLogWriter:
   private val QueueCapacity = 8192
 
   private val sseQueue: cats.effect.std.Queue[IO, Json] =
-    cats.effect.std.Queue.bounded[IO, Json](QueueCapacity).unsafeRunSync()(using
-      cats.effect.unsafe.implicits.global
-    )
+    cats.effect.std.Queue
+      .bounded[IO, Json](QueueCapacity)
+      .unsafeRunSync()(using
+        cats.effect.unsafe.implicits.global
+      )
 
   private val sseWorkerStarted = new java.util.concurrent.atomic.AtomicBoolean(false)
 
   /** Flush barrier: while true the worker does not take from the queue. */
   private val sseFlushing = new java.util.concurrent.atomic.AtomicBoolean(false)
 
-  /** Offered-but-not-yet-written lines — lets flushSync wait out in-flight writes.
-    * EXACT accounting (never negative): only the queue path touches it
-    * (increment before offer / decrement after the consuming append). The
-    * sync direct-write paths (logRequest/logResponse/logIntake) must NOT
-    * decrement it — pre-fix they did, and the accumulated negative base
-    * cancelled flushSync's in-flight wait entirely ("taken but not yet
-    * appended" window ran bare → T2 flake on loaded CI runners). */
+  /**
+   * Offered-but-not-yet-written lines — lets flushSync wait out in-flight writes.
+   * EXACT accounting (never negative): only the queue path touches it
+   * (increment before offer / decrement after the consuming append). The
+   * sync direct-write paths (logRequest/logResponse/logIntake) must NOT
+   * decrement it — pre-fix they did, and the accumulated negative base
+   * cancelled flushSync's in-flight wait entirely ("taken but not yet
+   * appended" window ran bare → T2 flake on loaded CI runners).
+   */
   private val pendingWrites = new java.util.concurrent.atomic.AtomicLong(0)
 
   /** Test-only probe — specs assert the in-flight counter never drifts. */
@@ -459,10 +487,12 @@ object LlmLogWriter:
   private def ensureWorker: IO[Unit] =
     IO(sseWorkerStarted.compareAndSet(false, true)).ifM(sseWorkerLoop.start.void, IO.unit)
 
-  /** Synchronous drain — specs / shutdown hook make the async write observable:
-    * every line offered BEFORE flushSync started is on disk when it returns.
-    * (Drain covers queued items; writeLock barrier covers in-append items;
-    * pendingWrites wait covers taken-but-not-yet-appended items.) */
+  /**
+   * Synchronous drain — specs / shutdown hook make the async write observable:
+   * every line offered BEFORE flushSync started is on disk when it returns.
+   * (Drain covers queued items; writeLock barrier covers in-append items;
+   * pendingWrites wait covers taken-but-not-yet-appended items.)
+   */
   private[nebflow] def flushSync(): Unit =
     sseFlushing.set(true)
     try
@@ -481,12 +511,20 @@ object LlmLogWriter:
         waits += 1
     finally sseFlushing.set(false)
 
+    end try
+
+  end flushSync
+
   // JVM shutdown: best-effort flush of whatever is still queued.
   locally {
-    Runtime.getRuntime.addShutdownHook(new Thread(
-      () => { try flushSync() catch case _: Throwable => () },
-      "llm-sse-log-flush"
-    ))
+    Runtime.getRuntime.addShutdownHook(
+      new Thread(
+        () =>
+          try flushSync()
+          catch case _: Throwable => (),
+        "llm-sse-log-flush"
+      )
+    )
   }
 
   // ── Content-Addressed Object Store ──────────────────────────────────
@@ -543,15 +581,17 @@ object LlmLogWriter:
 
   // ── 4xx 取证面（案① A5 · 豁免 `enabled`）───────────────────────────────
 
-  /** 常见凭据形态的**防御性**抹除（`apiKey` 回显、Bearer 头、sk- 前缀 key）。
-    *
-    * 本对象**从不接收**请求头 / 凭据参数（结构性保证）；本函数是第二道防线——
-    * provider 有时把收到的凭据回显在错误体里，若原样落盘就等于把密钥写进日志。
-    * 纯函数，供 [[logHttpError]]、`LlmInterface` 的 permanent-error WARN 行
-    * （案① A3，响应体是同一份数据）与回归 spec 三方共用。
-    *
-    * 可见性 `private[nebflow]`（非 `private[core]`）：消费点之一是
-    * `nebflow.llm.interface`（A3 的日志腿），它不在 `nebflow.core` 子树内。 */
+  /**
+   * 常见凭据形态的**防御性**抹除（`apiKey` 回显、Bearer 头、sk- 前缀 key）。
+   *
+   * 本对象**从不接收**请求头 / 凭据参数（结构性保证）；本函数是第二道防线——
+   * provider 有时把收到的凭据回显在错误体里，若原样落盘就等于把密钥写进日志。
+   * 纯函数，供 [[logHttpError]]、`LlmInterface` 的 permanent-error WARN 行
+   * （案① A3，响应体是同一份数据）与回归 spec 三方共用。
+   *
+   * 可见性 `private[nebflow]`（非 `private[core]`）：消费点之一是
+   * `nebflow.llm.interface`（A3 的日志腿），它不在 `nebflow.core` 子树内。
+   */
   private[nebflow] def redactSecrets(s: String): String =
     if s == null || s.isEmpty then s
     else
@@ -560,25 +600,27 @@ object LlmLogWriter:
         .replaceAll("(?i)(authorization|api[_-]?key|x-api-key)(\"?\\s*[:=]\\s*\"?)[^\",\\s}]+", "$1$2<redacted>")
         .replaceAll("sk-[A-Za-z0-9_\\-]{12,}", "sk-<redacted>")
 
-  /** **400/4xx provider 响应体的常驻取证面**（案① A5；作者令「随案① 落地带上」）。
-    *
-    * 与其余四个写入面（summary / full / sse / objects / intake）的关键差异：
-    * **不受 [[enabled]] 门控**（regardless of enabled）。动因（定谳报告
-    * `20260921_182544_llmstall-diag` 核查 3）：事故当日 11,102 条
-    * `permanent error (Format)` 的**响应体原文缺失**——LLM 请求/响应日志器默认关
-    * （见 [[DefaultEnabled]]），一行不写 ⇒「`enable_search` 被 MaaS 端点拒绝」/
-    * 「模型名在端点不存在」/「请求体超端点限制」三条成因无法区分。4xx 是**低成本、
-    * 低频、高信息**的一类，单独留一条常驻腿不会重现「默认开启全量落盘」的体量问题。
-    *
-    * 只落：状态码 + 响应体（[[redactSecrets]] 后）+ 关联 id（requestId / session /
-    * agent / provider / model）。🔴 **禁落 `apiKey` / `Authorization` 头**：本方法
-    * 签名里没有任何头 / 凭据位 ⇒ 凭据在类型层面进不来；响应体里的回显由
-    * [[redactSecrets]] 抹除。与定谳报告「取证件中未记录 API key」同口径。
-    *
-    * 落点 = `<dataRoot>/logs/router/{date}_httperror.jsonl`（与既有写入面同目录 ⇒
-    * 自动落进 [[retentionDays]] 的回收腿，见 [[deleteOutOfWindowJsonl]] 按日期前缀
-    * 删除，无需另加回收逻辑）。非 4xx（含 2xx / 5xx）**不落**——本腿只对「请求形状
-    * vs 契约」类故障负责。绝不抛出（错误降级为 WARN，不污染 LLM 主路径）。 */
+  /**
+   * **400/4xx provider 响应体的常驻取证面**（案① A5；作者令「随案① 落地带上」）。
+   *
+   * 与其余四个写入面（summary / full / sse / objects / intake）的关键差异：
+   * **不受 [[enabled]] 门控**（regardless of enabled）。动因（定谳报告
+   * `20260921_182544_llmstall-diag` 核查 3）：事故当日 11,102 条
+   * `permanent error (Format)` 的**响应体原文缺失**——LLM 请求/响应日志器默认关
+   * （见 [[DefaultEnabled]]），一行不写 ⇒「`enable_search` 被 MaaS 端点拒绝」/
+   * 「模型名在端点不存在」/「请求体超端点限制」三条成因无法区分。4xx 是**低成本、
+   * 低频、高信息**的一类，单独留一条常驻腿不会重现「默认开启全量落盘」的体量问题。
+   *
+   * 只落：状态码 + 响应体（[[redactSecrets]] 后）+ 关联 id（requestId / session /
+   * agent / provider / model）。🔴 **禁落 `apiKey` / `Authorization` 头**：本方法
+   * 签名里没有任何头 / 凭据位 ⇒ 凭据在类型层面进不来；响应体里的回显由
+   * [[redactSecrets]] 抹除。与定谳报告「取证件中未记录 API key」同口径。
+   *
+   * 落点 = `<dataRoot>/logs/router/{date}_httperror.jsonl`（与既有写入面同目录 ⇒
+   * 自动落进 [[retentionDays]] 的回收腿，见 [[deleteOutOfWindowJsonl]] 按日期前缀
+   * 删除，无需另加回收逻辑）。非 4xx（含 2xx / 5xx）**不落**——本腿只对「请求形状
+   * vs 契约」类故障负责。绝不抛出（错误降级为 WARN，不污染 LLM 主路径）。
+   */
   def logHttpError(
     statusCode: Int,
     body: String,
@@ -719,38 +761,46 @@ object LlmLogWriter:
   // **全部超限** ⇒ 孤儿**从不**被清扫（84,989 件 > 3 天仍在盘）。预算常量**值不变**
   // （128 MiB）——变的是「超限之后怎么办」，不是「把上限调大」。
 
-  /** 回收腿**武装位**（默认**关**）：只有「本实例」在启动时显式武装（[[armRetention]]，
-    * 由 GatewayMain boot 调用）之后，[[pruneTick]] 才会真正执行回收。
-    *
-    * 为什么必须有这道闸（与 `enabled` **正交**，不是把写入门挪回来）：
-    * [[logResponse]] 是唯一触发点，但它在**真实 dataRoot** 上也被大量非实例调用者执行过
-    * ——仓内 74 个 spec 引用 AgentCore/AgentActor，其中未隔离 dataRoot 者会走完整轮次
-    * （`AgentCore.scala` 的 `logResponse` 调用点），外加 e2e / 临时脚本。修前这些调用被
-    * 写入开关的默认关**顺带挡住**；本批把回收从写入开关解耦后，这条顺带保护消失 ⇒
-    * 实测后果：一次 `sbt testOnly` 在 2026-09-13 09:54:42 删掉了生产
-    * `logs/router/2026-09-09_{full,sse,summary}.jsonl`（1.7468 GiB，不可恢复；
-    * 详见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档）
-    * 与同目录 incident #2 记录）。武装位把「破坏性回收」绑定到**实例生命周期**这一正确
-    * 轴（谁是实例谁回收），而不是绑定回写入开关。 */
+  /**
+   * 回收腿**武装位**（默认**关**）：只有「本实例」在启动时显式武装（[[armRetention]]，
+   * 由 GatewayMain boot 调用）之后，[[pruneTick]] 才会真正执行回收。
+   *
+   * 为什么必须有这道闸（与 `enabled` **正交**，不是把写入门挪回来）：
+   * [[logResponse]] 是唯一触发点，但它在**真实 dataRoot** 上也被大量非实例调用者执行过
+   * ——仓内 74 个 spec 引用 AgentCore/AgentActor，其中未隔离 dataRoot 者会走完整轮次
+   * （`AgentCore.scala` 的 `logResponse` 调用点），外加 e2e / 临时脚本。修前这些调用被
+   * 写入开关的默认关**顺带挡住**；本批把回收从写入开关解耦后，这条顺带保护消失 ⇒
+   * 实测后果：一次 `sbt testOnly` 在 2026-09-13 09:54:42 删掉了生产
+   * `logs/router/2026-09-09_{full,sse,summary}.jsonl`（1.7468 GiB，不可恢复；
+   * 详见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档）
+   * 与同目录 incident #2 记录）。武装位把「破坏性回收」绑定到**实例生命周期**这一正确
+   * 轴（谁是实例谁回收），而不是绑定回写入开关。
+   */
   private val retentionArmed = java.util.concurrent.atomic.AtomicBoolean(false)
 
-  /** 武装本实例的回收腿（GatewayMain boot 调用；spec / 演武可显式调用）。
-    * 幂等；返回武装前的状态（false = 本次调用完成武装）。 */
+  /**
+   * 武装本实例的回收腿（GatewayMain boot 调用；spec / 演武可显式调用）。
+   * 幂等；返回武装前的状态（false = 本次调用完成武装）。
+   */
   private[nebflow] def armRetention(): Boolean = !retentionArmed.getAndSet(true)
 
   /** Spec 探针 / 复位（默认**关**是刻意设计，见 [[retentionArmed]] 的来历）。 */
   private[core] def isRetentionArmedForTest: Boolean = retentionArmed.get()
   private[core] def disarmRetentionForTest(): Unit = retentionArmed.set(false)
 
-  /** 单轮读取预算（字节）——值与原 `MaxPruneScanBytes` 相同（128 MiB），语义已从
-    * 「单文件大小上限（超限即整体放弃）」改为「单轮预算（超限停在行边界、下一轮续读）」。
-    * 时间上界：每轮读取量 ≤ 预算 + 单行（[[MaxPruneLineBytes]]），与文件大小、窗内
-    * 总字节无关；未完成轮之间有 [[pruneRetryBackoffMs]] 节流。 */
+  /**
+   * 单轮读取预算（字节）——值与原 `MaxPruneScanBytes` 相同（128 MiB），语义已从
+   * 「单文件大小上限（超限即整体放弃）」改为「单轮预算（超限停在行边界、下一轮续读）」。
+   * 时间上界：每轮读取量 ≤ 预算 + 单行（[[MaxPruneLineBytes]]），与文件大小、窗内
+   * 总字节无关；未完成轮之间有 [[pruneRetryBackoffMs]] 节流。
+   */
   private val MaxPruneRoundBytes: Long = 128L * 1024 * 1024
 
-  /** 单行内存上界 = 流式扫描**唯一**的驻留缓冲（读一行、解析一行、随即释放；
-    * 内存 O(1 行)，与文件大小无关）。超限行读不出引用 ⇒ 整窗标记 poisoned（该窗口
-    * **不清扫孤儿**：引用集不完整时宁可不删）。 */
+  /**
+   * 单行内存上界 = 流式扫描**唯一**的驻留缓冲（读一行、解析一行、随即释放；
+   * 内存 O(1 行)，与文件大小无关）。超限行读不出引用 ⇒ 整窗标记 poisoned（该窗口
+   * **不清扫孤儿**：引用集不完整时宁可不删）。
+   */
   private val MaxPruneLineBytes: Int = 8 * 1024 * 1024
 
   /** 未完成轮（预算耗尽）之间的最小间隔——封住重试频率上界；首轮不受限。 */
@@ -759,17 +809,20 @@ object LlmLogWriter:
   private[core] def resetPruneRetryBackoffMsForTest(): Unit = pruneRetryBackoffMs.set(60_000L)
   private val lastIncompleteRoundMs = new java.util.concurrent.atomic.AtomicLong(0L)
 
-  /** 一次保留窗执行（pass）的**跨轮进度**：已扫完的窗内 full 文件集 + 累积引用集
-    * （immutable 快照，容量 ~窗内去重对象数）+ 当前文件的字节游标。`cutoff` 绑定窗口：
-    * 窗口滚动（UTC 日切）即重置——绝不用「比当前窗更小」的引用集去清扫孤儿。 */
+  /**
+   * 一次保留窗执行（pass）的**跨轮进度**：已扫完的窗内 full 文件集 + 累积引用集
+   * （immutable 快照，容量 ~窗内去重对象数）+ 当前文件的字节游标。`cutoff` 绑定窗口：
+   * 窗口滚动（UTC 日切）即重置——绝不用「比当前窗更小」的引用集去清扫孤儿。
+   */
   private[core] final case class ScanState(
-      cutoff: String,
-      done: Set[String],
-      used: Set[String],
-      cursor: Option[(String, Long)],
-      passStartedAtMs: Long,
-      poisoned: Boolean
+    cutoff: String,
+    done: Set[String],
+    used: Set[String],
+    cursor: Option[(String, Long)],
+    passStartedAtMs: Long,
+    poisoned: Boolean
   )
+
   private[core] object ScanState:
     val empty: ScanState = ScanState("", Set.empty, Set.empty, None, 0L, false)
 
@@ -784,16 +837,15 @@ object LlmLogWriter:
     lastIncompleteRoundMs.set(0L)
     scanState.set(ScanState.empty)
 
-  /** 回收 tick —— **无 `enabled` 门**（本批解耦点），但**要求本实例已武装**
-    * （[[retentionArmed]]，boot 时由 GatewayMain 武装）：回收与写入开关正交，
-    * 与「谁是实例」绑定。廉价 + 幂等（日锁内一次原子比较即返回）；绝不抛出
-    * （失败降级为 WARN，不污染 LLM 主路径）。 */
+  /**
+   * 回收 tick —— **无 `enabled` 门**（本批解耦点），但**要求本实例已武装**
+   * （[[retentionArmed]]，boot 时由 GatewayMain 武装）：回收与写入开关正交，
+   * 与「谁是实例」绑定。廉价 + 幂等（日锁内一次原子比较即返回）；绝不抛出
+   * （失败降级为 WARN，不污染 LLM 主路径）。
+   */
   private def pruneTick: IO[Unit] =
     if !retentionArmed.get() then IO.unit
-    else
-      IO.blocking(maybePrune()).handleErrorWith(e =>
-        logger.warn(s"LlmLogWriter.pruneTick: ${e.getMessage}")
-      )
+    else IO.blocking(maybePrune()).handleErrorWith(e => logger.warn(s"LlmLogWriter.pruneTick: ${e.getMessage}"))
 
   private def maybePrune(): Unit =
     val today = Instant.now().toString.take(10)
@@ -816,10 +868,16 @@ object LlmLogWriter:
             else lastIncompleteRoundMs.set(nowMs)
       }
 
-  /** 删除腿（pass 1）——独立路径：删 `dir` 下日期前缀 < `cutoff` 的 jsonl。
-    * **不读内容、不受扫描预算影响**（旧实现把删除腿与扫描腿耦在同一循环里：扫描
-    * 预算一耗尽，两条腿一起停）。包内可见：ToolsLogWriter 复用（tools 文件不携带
-    * 对象引用 ⇒ 只有这一条腿）。 */
+    end if
+
+  end maybePrune
+
+  /**
+   * 删除腿（pass 1）——独立路径：删 `dir` 下日期前缀 < `cutoff` 的 jsonl。
+   * **不读内容、不受扫描预算影响**（旧实现把删除腿与扫描腿耦在同一循环里：扫描
+   * 预算一耗尽，两条腿一起停）。包内可见：ToolsLogWriter 复用（tools 文件不携带
+   * 对象引用 ⇒ 只有这一条腿）。
+   */
   private[core] def deleteOutOfWindowJsonl(dir: Path, cutoff: String): Unit =
     if Files.exists(dir) then
       for
@@ -828,17 +886,19 @@ object LlmLogWriter:
         if f.getFileName.toString.take(10) < cutoff
       do Files.deleteIfExists(f)
 
-  /** 一次保留窗轮次。返回 `(新进度, 本轮是否**跑完整个 pass**)`——`false` 只表示
-    * 「预算耗尽、下轮续读」，**不表示放弃**。
-    *
-    * @param budgetBytes 本轮读取字节预算（[[MaxPruneRoundBytes]]；spec 用极小值模拟多轮）
-    * @param maxLineBytes 单行内存上界（[[MaxPruneLineBytes]]；spec 用极小值模拟超限行） */
+  /**
+   * 一次保留窗轮次。返回 `(新进度, 本轮是否**跑完整个 pass**)`——`false` 只表示
+   * 「预算耗尽、下轮续读」，**不表示放弃**。
+   *
+   * @param budgetBytes 本轮读取字节预算（[[MaxPruneRoundBytes]]；spec 用极小值模拟多轮）
+   * @param maxLineBytes 单行内存上界（[[MaxPruneLineBytes]]；spec 用极小值模拟超限行）
+   */
   private[core] def retentionRound(
-      dir: Path,
-      cutoff: String,
-      prev: ScanState,
-      budgetBytes: Long,
-      maxLineBytes: Int = MaxPruneLineBytes
+    dir: Path,
+    cutoff: String,
+    prev: ScanState,
+    budgetBytes: Long,
+    maxLineBytes: Int = MaxPruneLineBytes
   ): (ScanState, Boolean) =
     try
       val st =
@@ -879,7 +939,7 @@ object LlmLogWriter:
           val name = f.getFileName.toString
           val from = cursor match
             case Some((n, off)) if n == name => off
-            case _                           => 0L
+            case _ => 0L
           val (read, trunc, hitEof) =
             collectReferencedHashes(f, from, used, remaining, maxLineBytes)
           remaining -= math.max(read, 1L) // 空文件也必须推进（否则轮内死循环）
@@ -892,6 +952,7 @@ object LlmLogWriter:
             // 预算耗尽：停在行边界，游标交给下一轮续读（**不是**「整体放弃」）
             cursor = Some((name, from + read))
             budgetStopped = true
+        end while
         val complete = !poisoned && !budgetStopped && i >= todo.size
         val next = ScanState(cutoff, done.toSet, used.toSet, cursor, st.passStartedAtMs, poisoned)
         if complete then
@@ -911,23 +972,27 @@ object LlmLogWriter:
               s"cursor=$cursor → next round resumes)"
           )
           (next, false)
+        end if
+      end if
     catch
       case e: Exception =>
         logger.warnSync(s"Log retention error: ${e.getMessage}")
         (prev, true) // 出错即当日不再重试（与修前口径一致：不把异常变成重试风暴）
 
-  /** 孤儿清扫——**只在整窗引用集完整时**调用（不清扫不完整引用集，宁可少删）。
-    *
-    * `objectsDir` **必须**是调用方传入的那个（与 `retentionRound(dir, …)` 同一目录）：
-    * 一旦写成模块级 `objectsDir`，任何用临时目录驱动本函数的 spec 都会去删**真实
-    * 生产** `~/.nebflow/logs/router/objects`（2026-09-13 09:46:49 实测事故——已完整
-    * 恢复，见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档））。
-    *
-    * `notAfterMs` = 本次 pass 的起始时刻，是**增量扫描的正确性要件**：跨轮扫描期间
-    * 新写入的对象（mtime 晚于 pass 起点）一律留到下一轮/次日——append-only 文件的
-    * 新追加行可能落在「本轮已读区间」之后（读到 EOF 后追加的行本轮看不到），此时它们
-    * 的引用尚未被采集；把这类对象排除在清扫之外，即把「引用晚于扫描」的竞态窗口压回
-    * 与修前同为「分钟级一轮」的量级（修前单发扫描同样存在该竞态）。 */
+  /**
+   * 孤儿清扫——**只在整窗引用集完整时**调用（不清扫不完整引用集，宁可少删）。
+   *
+   * `objectsDir` **必须**是调用方传入的那个（与 `retentionRound(dir, …)` 同一目录）：
+   * 一旦写成模块级 `objectsDir`，任何用临时目录驱动本函数的 spec 都会去删**真实
+   * 生产** `~/.nebflow/logs/router/objects`（2026-09-13 09:46:49 实测事故——已完整
+   * 恢复，见 llmlogprune 批事故取证 INCIDENT-objects-restore（内部留档））。
+   *
+   * `notAfterMs` = 本次 pass 的起始时刻，是**增量扫描的正确性要件**：跨轮扫描期间
+   * 新写入的对象（mtime 晚于 pass 起点）一律留到下一轮/次日——append-only 文件的
+   * 新追加行可能落在「本轮已读区间」之后（读到 EOF 后追加的行本轮看不到），此时它们
+   * 的引用尚未被采集；把这类对象排除在清扫之外，即把「引用晚于扫描」的竞态窗口压回
+   * 与修前同为「分钟级一轮」的量级（修前单发扫描同样存在该竞态）。
+   */
   private def deleteOrphanObjects(objectsDir: Path, used: scala.collection.Set[String], notAfterMs: Long): Int =
     var deleted = 0
     if Files.exists(objectsDir) then
@@ -940,8 +1005,10 @@ object LlmLogWriter:
           if Files.deleteIfExists(file) then deleted += 1
     deleted
 
-  /** 有界内存的按行读取器（字节级切行——UTF-8 多字节序列内不会出现 0x0A，安全）。
-    * 每行返回 `(文本, 行字节数含换行符, 是否因超 maxLineBytes 被截断)`。 */
+  /**
+   * 有界内存的按行读取器（字节级切行——UTF-8 多字节序列内不会出现 0x0A，安全）。
+   * 每行返回 `(文本, 行字节数含换行符, 是否因超 maxLineBytes 被截断)`。
+   */
   private final class CappedLineReader(src: java.io.InputStream, maxLineBytes: Int):
     private val buf = new Array[Byte](64 * 1024)
     private var len = 0
@@ -980,19 +1047,24 @@ object LlmLogWriter:
               pos = i + 1
               doneLine = true
             else pos = len
+        end while
         Some((out.toString("UTF-8"), bytes, truncated))
 
-  /** 流式读一个 `_full.jsonl`（可从 `from` 字节偏移**续读**）并收集对象引用。
-    * 内存上界 = 单行（[[CappedLineReader]]）；读取量上界 = `budgetBytes` + 单行。
-    *
-    * @return `(本次读入字节数, 是否遇到超限行, 是否读到文件尾)`——`false,false` 组合
-    *         即「预算耗尽、停在行边界」，游标 = `from + 读入字节数`。 */
+  end CappedLineReader
+
+  /**
+   * 流式读一个 `_full.jsonl`（可从 `from` 字节偏移**续读**）并收集对象引用。
+   * 内存上界 = 单行（[[CappedLineReader]]）；读取量上界 = `budgetBytes` + 单行。
+   *
+   * @return `(本次读入字节数, 是否遇到超限行, 是否读到文件尾)`——`false,false` 组合
+   *         即「预算耗尽、停在行边界」，游标 = `from + 读入字节数`。
+   */
   private def collectReferencedHashes(
-      file: Path,
-      from: Long,
-      usedHashes: scala.collection.mutable.Set[String],
-      budgetBytes: Long,
-      maxLineBytes: Int
+    file: Path,
+    from: Long,
+    usedHashes: scala.collection.mutable.Set[String],
+    budgetBytes: Long,
+    maxLineBytes: Int
   ): (Long, Boolean, Boolean) =
     var read = 0L
     var truncated = false
@@ -1024,9 +1096,14 @@ object LlmLogWriter:
             // 只在行边界处检查预算：停点永远是行边界（游标可安全续读）
             if read >= budgetBytes then stop = true
             else line = reader.readLine()
+          end if
+        end while
         hitEof = line.isEmpty
       finally reader.close()
+      end try
     finally ch.close()
+    end try
     (read, truncated, hitEof)
+  end collectReferencedHashes
 
 end LlmLogWriter

@@ -67,33 +67,41 @@ object DeviceMailInbox:
   // 事件号去重闸（S1，2026-09-18）
   // ============================================================
 
-  /** 已处理事件号的容量上限（条数）：与同仓先例 `FriendMessagingGuard`
-    * （`FriendService.scala:1532-1538`，`maxSeenEvents = 2048`）同量级、同形态
-    * ——进程内 `Ref` + 按条数裁剪最旧，防无界增长。 */
+  /**
+   * 已处理事件号的容量上限（条数）：与同仓先例 `FriendMessagingGuard`
+   * （`FriendService.scala:1532-1538`，`maxSeenEvents = 2048`）同量级、同形态
+   * ——进程内 `Ref` + 按条数裁剪最旧，防无界增长。
+   */
   val MaxClaimedEvents: Int = 2048
 
-  /** 认领结局（判重三态）：`Fresh` = 首见（已认领，须注入）；`InFlight` = 同一事件号
-    * **正在**注入（并发同帧：跳过注入、**不**提前 ack —— 该事件尚未落地，由在飞的那次
-    * 尝试决定 ack 或撤回）；`Done` = 已注入过（服务端重放：跳过注入 + **补发** ack）。 */
+  /**
+   * 认领结局（判重三态）：`Fresh` = 首见（已认领，须注入）；`InFlight` = 同一事件号
+   * **正在**注入（并发同帧：跳过注入、**不**提前 ack —— 该事件尚未落地，由在飞的那次
+   * 尝试决定 ack 或撤回）；`Done` = 已注入过（服务端重放：跳过注入 + **补发** ack）。
+   */
   enum Claim:
     case Fresh, InFlight, Done
 
-  /** 去重账本（**进程内**；🔴 本批不落盘）。
-    *
-    * 语义 = 「本设备**已处理**该事件」（与 `injectWithRetry` 失败支「未处理 ⇒ 不回执」
-    * 同一判词）——不是「已收到帧」：注入未落地的事件会被 [[releaseEvent]] 撤回，
-    * 使服务端的重放仍能重试注入（禁把「没注入成功」的事件吞成「已处理」而回假 ack）。
-    *
-    * 🔴 存活期 = 本进程：重启即清空 ⇒ 重启后同一条旧事件仍会注入一次（「重登 ≠ 重启」；
-    * 落盘与否 = 作者待裁项 F2，本批不实现）。 */
+  /**
+   * 去重账本（**进程内**；🔴 本批不落盘）。
+   *
+   * 语义 = 「本设备**已处理**该事件」（与 `injectWithRetry` 失败支「未处理 ⇒ 不回执」
+   * 同一判词）——不是「已收到帧」：注入未落地的事件会被 [[releaseEvent]] 撤回，
+   * 使服务端的重放仍能重试注入（禁把「没注入成功」的事件吞成「已处理」而回假 ack）。
+   *
+   * 🔴 存活期 = 本进程：重启即清空 ⇒ 重启后同一条旧事件仍会注入一次（「重登 ≠ 重启」；
+   * 落盘与否 = 作者待裁项 F2，本批不实现）。
+   */
   private final case class Ledger(inFlight: Set[String], done: Queue[String])
 
   private val ledger: Ref[IO, Ledger] = Ref.unsafe(Ledger(Set.empty, Queue.empty))
 
-  /** 事件号判重 + 认领（**单原子** `modify`：并发同帧不会同时判「首见」）。
-    *
-    * `Fresh` 时该事件号已记入在飞集（调用方注入落地后须 [[completeEvent]]、未落地须
-    * [[releaseEvent]]；两条收口都在 [[injectWithDedup]]）。 */
+  /**
+   * 事件号判重 + 认领（**单原子** `modify`：并发同帧不会同时判「首见」）。
+   *
+   * `Fresh` 时该事件号已记入在飞集（调用方注入落地后须 [[completeEvent]]、未落地须
+   * [[releaseEvent]]；两条收口都在 [[injectWithDedup]]）。
+   */
   private[nebflow] def claimEvent(eventId: String): IO[Claim] =
     ledger.modify { l =>
       if l.done.contains(eventId) then (l, Claim.Done)
@@ -108,8 +116,10 @@ object DeviceMailInbox:
       l.copy(inFlight = l.inFlight - eventId, done = done)
     }
 
-  /** 注入**未**落地 ⇒ 撤回认领：该事件按「未处理」记，服务端重放时本闸不拦、
-  * 仍会重试注入（禁静默吞掉一封信）。 */
+  /**
+   * 注入**未**落地 ⇒ 撤回认领：该事件按「未处理」记，服务端重放时本闸不拦、
+   * 仍会重试注入（禁静默吞掉一封信）。
+   */
   private[nebflow] def releaseEvent(eventId: String): IO[Unit] =
     ledger.update(l => l.copy(inFlight = l.inFlight - eventId))
 
@@ -117,32 +127,34 @@ object DeviceMailInbox:
   private[nebflow] def isDone(eventId: String): IO[Boolean] =
     ledger.get.map(_.done.contains(eventId))
 
-  /** 装配缝载荷：本机资源（root 会话解析用）+ 前端广播口 + ack 发送面。
-    *
-    * `resources` 只被用于**读取** live root 会话（`agentRegistry` / `sessionStore`），
-    * 不经任何写面。
-    *
-    * `ackSender`（契约 v2 ④）：本机处理完一封设备邮件后向服务端回 ack 的**唯一**出
-    * 口（生产 = 既有 `NeblinkRelayTunnel.sendAckLive` 的 live 读取，与好友消息 ack
-    * 同缝、**同一实现点**）。缺省 `None` = 未接线 ⇒ **不静默**：审计行写明
-    * `ack-not-sent`。
-    *
-    * 🔴 F4/F5（2026-09-18 回执诚实性批）：返回值 = 可判别的
-    * `NeblinkRelayTunnel.AckOutcome`（修前 `IO[Unit]` ⇒ 「没发出」与「已发出」
-    * 在类型上不可分，本腿因此照打 `ack sent to the server` = 假陈述）。 */
+  /**
+   * 装配缝载荷：本机资源（root 会话解析用）+ 前端广播口 + ack 发送面。
+   *
+   * `resources` 只被用于**读取** live root 会话（`agentRegistry` / `sessionStore`），
+   * 不经任何写面。
+   *
+   * `ackSender`（契约 v2 ④）：本机处理完一封设备邮件后向服务端回 ack 的**唯一**出
+   * 口（生产 = 既有 `NeblinkRelayTunnel.sendAckLive` 的 live 读取，与好友消息 ack
+   * 同缝、**同一实现点**）。缺省 `None` = 未接线 ⇒ **不静默**：审计行写明
+   * `ack-not-sent`。
+   *
+   * 🔴 F4/F5（2026-09-18 回执诚实性批）：返回值 = 可判别的
+   * `NeblinkRelayTunnel.AckOutcome`（修前 `IO[Unit]` ⇒ 「没发出」与「已发出」
+   * 在类型上不可分，本腿因此照打 `ack sent to the server` = 假陈述）。
+   */
   final case class Wiring(
-      resources: SharedResources,
-      wsSend: Json => IO[Unit],
-      ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
+    resources: SharedResources,
+    wsSend: Json => IO[Unit],
+    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   )
 
   @volatile private var wiring: Option[Wiring] = None
 
   /** 生产装配点（`GatewayMain`）。幂等：重复调用以后一次为准（测试可重置）。 */
   def initialize(
-      resources: SharedResources,
-      wsSend: Json => IO[Unit],
-      ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
+    resources: SharedResources,
+    wsSend: Json => IO[Unit],
+    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   ): Unit =
     wiring = Some(Wiring(resources, wsSend, ackSender))
 
@@ -159,21 +171,23 @@ object DeviceMailInbox:
   // 收包入口
   // ============================================================
 
-  /** 设备邮件帧的收包入口（契约 **v2.1**：服务端经本设备**隧道**推设备**事件流**
-    * 信封）。
-    *
-    * 入场形态（逐字，服务端投递实证）：
-    * `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{<五键载荷>},"type":"agent_mail"}}`
-    * ⇒ 挂载点 = `NeblinkRelayTunnel` 的 `friend_event` 分支（`DeviceMail.isAgentMailEnvelope`
-    * 判定后独占该帧）。
-    *
-    * 🔴 **单一入场**（v2.1 ①）：本方法**只**接受事件流信封。
-    *   - 契约 v1 曾按 P2P 设备数据通道（`kind` 面）设计——该面**已弃**，实现与断言零残留；
-    *   - 契约 v2 曾在隧道顶层按 `type == "agent_mail"` 直收——该分支**已删**（否则同一条
-    *     腿会挂成两个入口）；顶层裸 `agent_mail` 帧现在按**非本批形态**记一行可读 WARN 后
-    *     忽略（零注入、零 ack）。
-    *
-    * 本方法对**非**设备邮件帧严格无副作用（普通 `friend_event` / 其它帧原样交回既有路径）。 */
+  /**
+   * 设备邮件帧的收包入口（契约 **v2.1**：服务端经本设备**隧道**推设备**事件流**
+   * 信封）。
+   *
+   * 入场形态（逐字，服务端投递实证）：
+   * `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{<五键载荷>},"type":"agent_mail"}}`
+   * ⇒ 挂载点 = `NeblinkRelayTunnel` 的 `friend_event` 分支（`DeviceMail.isAgentMailEnvelope`
+   * 判定后独占该帧）。
+   *
+   * 🔴 **单一入场**（v2.1 ①）：本方法**只**接受事件流信封。
+   *   - 契约 v1 曾按 P2P 设备数据通道（`kind` 面）设计——该面**已弃**，实现与断言零残留；
+   *   - 契约 v2 曾在隧道顶层按 `type == "agent_mail"` 直收——该分支**已删**（否则同一条
+   *     腿会挂成两个入口）；顶层裸 `agent_mail` 帧现在按**非本批形态**记一行可读 WARN 后
+   *     忽略（零注入、零 ack）。
+   *
+   * 本方法对**非**设备邮件帧严格无副作用（普通 `friend_event` / 其它帧原样交回既有路径）。
+   */
   def handle(frame: Json): IO[Unit] =
     if DeviceMail.isAgentMailEnvelope(frame) then
       DeviceMail.parseEnvelope(frame) match
@@ -207,20 +221,22 @@ object DeviceMailInbox:
   // 注入（既有会话注入 API；重试 + 告警）
   // ============================================================
 
-  /** 事件号去重闸（S1，2026-09-18 第二单缺陷 B）——**注入之前**的第一步：
-    *
-    *   - 帧未带 `eventId` ⇒ 没有判重键（回执面也无从关联）⇒ 按现状注入，**零去重**
-    *     （不假装判过）；
-    *   - 已注入过（服务端 at-least-once 重放）⇒ **跳过注入**（零第二个蓝气泡、零重跑
-    *     模型与工具）+ INFO（`reason=duplicate_eventId`）+ 审计行，**仍补发一次 ack**
-    *     （不 ack ⇒ 服务端永不脱账）；照旧复用 [[sendReceipt]] 的出口与文案（零改动）；
-    *   - 同一事件号**正在**注入（并发同帧）⇒ 同样跳过注入，但**不**补 ack：该事件尚未
-    *     落地，由在飞的那次尝试决定结果（提前 ack 会把未处理事件报成已处理 = 与失败支
-    *     的「不回执」判词冲突）；
-    *   - 首见 ⇒ 认领 + 按现状注入；注入落地 ⇒ 记入账本（之后的重放走重复支）；
-    *     注入**未**落地 ⇒ 撤回认领（重放仍会重试注入，禁把一封信吞成「已处理」）。
-    *
-    * 🔴 账本 = 进程内（见 [[Ledger]]，本批不落盘）。 */
+  /**
+   * 事件号去重闸（S1，2026-09-18 第二单缺陷 B）——**注入之前**的第一步：
+   *
+   *   - 帧未带 `eventId` ⇒ 没有判重键（回执面也无从关联）⇒ 按现状注入，**零去重**
+   *     （不假装判过）；
+   *   - 已注入过（服务端 at-least-once 重放）⇒ **跳过注入**（零第二个蓝气泡、零重跑
+   *     模型与工具）+ INFO（`reason=duplicate_eventId`）+ 审计行，**仍补发一次 ack**
+   *     （不 ack ⇒ 服务端永不脱账）；照旧复用 [[sendReceipt]] 的出口与文案（零改动）；
+   *   - 同一事件号**正在**注入（并发同帧）⇒ 同样跳过注入，但**不**补 ack：该事件尚未
+   *     落地，由在飞的那次尝试决定结果（提前 ack 会把未处理事件报成已处理 = 与失败支
+   *     的「不回执」判词冲突）；
+   *   - 首见 ⇒ 认领 + 按现状注入；注入落地 ⇒ 记入账本（之后的重放走重复支）；
+   *     注入**未**落地 ⇒ 撤回认领（重放仍会重试注入，禁把一封信吞成「已处理」）。
+   *
+   * 🔴 账本 = 进程内（见 [[Ledger]]，本批不落盘）。
+   */
   private def injectWithDedup(incoming: DeviceMail.Incoming, eventId: Option[String]): IO[Unit] =
     eventId match
       case None => injectWithRetry(incoming, None).void
@@ -241,13 +257,15 @@ object DeviceMailInbox:
             )
           case Claim.Fresh =>
             injectWithRetry(incoming, Some(id)).flatMap {
-              case true  => completeEvent(id)
+              case true => completeEvent(id)
               case false => releaseEvent(id)
             }
         }
 
-  /** 单次注入尝试：解析本机**唯一** live Nebula root 会话 → 投 `ImmediateInput`。
-    * 解析不到 / 歧义 / 未接线 ⇒ `Left(可读原因)`（**显式失败**，不静默）。 */
+  /**
+   * 单次注入尝试：解析本机**唯一** live Nebula root 会话 → 投 `ImmediateInput`。
+   * 解析不到 / 歧义 / 未接线 ⇒ `Left(可读原因)`（**显式失败**，不静默）。
+   */
   private def injectOnce(incoming: DeviceMail.Incoming): IO[Either[String, String]] =
     wiring match
       case None =>
@@ -273,10 +291,12 @@ object DeviceMailInbox:
             IO.pure(Left(s"ambiguous: ${many.size} live Nebula root sessions — nothing injected"))
         }
 
-  /** 重试注入（收口两条，**判词逐字不变**）：`true` = 注入落地（调用方把事件号记入
-    * 去重账本）；`false` = 未落地（调用方撤回认领——重放仍可重试注入）。
-    *
-    * 🔴 失败支的「未持久处理 ⇒ 不回 ack」判词与文案本批**零改动**。 */
+  /**
+   * 重试注入（收口两条，**判词逐字不变**）：`true` = 注入落地（调用方把事件号记入
+   * 去重账本）；`false` = 未落地（调用方撤回认领——重放仍可重试注入）。
+   *
+   * 🔴 失败支的「未持久处理 ⇒ 不回 ack」判词与文案本批**零改动**。
+   */
   private def injectWithRetry(incoming: DeviceMail.Incoming, receiptEventId: Option[String]): IO[Boolean] =
     def attempt(n: Int): IO[Either[String, String]] =
       injectOnce(incoming).flatMap {
@@ -301,24 +321,30 @@ object DeviceMailInbox:
           alert(incoming, detail) *>
           audit(incoming, "inject-failed", detail) *>
           // 未持久处理 ⇒ **不回 ack**（回执语义边界），只留可读行：
-          logger.warn(
-            s"[device-mail] ack NOT sent (injection failed, so the event is not processed): " +
-              s"eventId=${receiptEventId.getOrElse("<none>")}"
-          ).as(false)
+          logger
+            .warn(
+              s"[device-mail] ack NOT sent (injection failed, so the event is not processed): " +
+                s"eventId=${receiptEventId.getOrElse("<none>")}"
+            )
+            .as(false)
     }
 
-  /** 收件侧回执（契约 v2 ④；复用既有 ack 出口与帧形状，零新帧、零新字段）。
-    *
-    * 🔴 **F5（2026-09-18 回执诚实性批，作者裁示「回执诚实性修、单列小批」）——按
-    * F3/F4 的可判别结局分支，**真发出才 `ack-sent`**：修前 `send(...)` 恒成功
-    * （`sendAck` 无 socket 也返回成功、装配缝把「隧道不在册」吞成 `IO.unit`）⇒ 本处
-    * 照打 `ack sent to the server` + 审计 `ack-sent`——**线上零帧却报已回执**
-    * （缺陷 B 的放大因：服务端不脱账 ⇒ 重放不退）。现在：
-    *   - `Sent`        ⇒ INFO `ack sent to the server` + 审计 `ack-sent`；
-    *   - `NoLiveSocket`⇒ WARN `ack-not-sent reason=no_live_socket` + 审计
-    *     `ack-not-sent`（**禁**假陈述）；
-    *   - `SendFailed`  ⇒ WARN `ack send FAILED` + 审计 `ack-send-failed`。
-    * 另两个既有**非静默**分支（未接线 / 帧未带 eventId）逐字不变。 */
+  end injectWithRetry
+
+  /**
+   * 收件侧回执（契约 v2 ④；复用既有 ack 出口与帧形状，零新帧、零新字段）。
+   *
+   * 🔴 **F5（2026-09-18 回执诚实性批，作者裁示「回执诚实性修、单列小批」）——按
+   * F3/F4 的可判别结局分支，**真发出才 `ack-sent`**：修前 `send(...)` 恒成功
+   * （`sendAck` 无 socket 也返回成功、装配缝把「隧道不在册」吞成 `IO.unit`）⇒ 本处
+   * 照打 `ack sent to the server` + 审计 `ack-sent`——**线上零帧却报已回执**
+   * （缺陷 B 的放大因：服务端不脱账 ⇒ 重放不退）。现在：
+   *   - `Sent`        ⇒ INFO `ack sent to the server` + 审计 `ack-sent`；
+   *   - `NoLiveSocket`⇒ WARN `ack-not-sent reason=no_live_socket` + 审计
+   *     `ack-not-sent`（**禁**假陈述）；
+   *   - `SendFailed`  ⇒ WARN `ack send FAILED` + 审计 `ack-send-failed`。
+   * 另两个既有**非静默**分支（未接线 / 帧未带 eventId）逐字不变。
+   */
   private def sendReceipt(incoming: DeviceMail.Incoming, receiptEventId: Option[String]): IO[Unit] =
     (wiring.flatMap(_.ackSender), receiptEventId) match
       case (Some(send), Some(eventId)) =>
@@ -369,25 +395,30 @@ object DeviceMailInbox:
           )
         ).handleErrorWith(e => logger.warn(s"[device-mail] alert frame dropped: ${e.getMessage}"))
 
-  /** 审计行（④ 接收腿一条；`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
-    * `sourceDeviceId` = **远端**设备（本事件是它发来的），`targetDeviceId` = 本机。 */
+  /**
+   * 审计行（④ 接收腿一条；`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
+   * `sourceDeviceId` = **远端**设备（本事件是它发来的），`targetDeviceId` = 本机。
+   */
   private def audit(incoming: DeviceMail.Incoming, status: String, detail: String): IO[Unit] =
     val localIo: IO[String] = wiring match
       case None => IO.pure("unknown")
       case Some(w) =>
         w.resources.neblinkService match
-          case None    => IO.pure("unknown")
+          case None => IO.pure("unknown")
           case Some(ns) => ns.identity.map(_.deviceId).handleErrorWith(_ => IO.pure("unknown"))
-    localIo.flatMap { target =>
-      RelayExecAudit.record(
-        sourceDeviceId = incoming.fromDeviceId,
-        targetDeviceId = target,
-        via = "relay",
-        action = s"DeviceMail.inject.$status",
-        command = s"from_device=${incoming.fromDevice}; chars=${incoming.text.length}; $detail",
-        projectRoot = "",
-        cwd = Option(System.getProperty("user.dir")).getOrElse("")
-      )
-    }.handleErrorWith(e => logger.warn(s"[device-mail] audit line dropped: ${e.getMessage}"))
+    localIo
+      .flatMap { target =>
+        RelayExecAudit.record(
+          sourceDeviceId = incoming.fromDeviceId,
+          targetDeviceId = target,
+          via = "relay",
+          action = s"DeviceMail.inject.$status",
+          command = s"from_device=${incoming.fromDevice}; chars=${incoming.text.length}; $detail",
+          projectRoot = "",
+          cwd = Option(System.getProperty("user.dir")).getOrElse("")
+        )
+      }
+      .handleErrorWith(e => logger.warn(s"[device-mail] audit line dropped: ${e.getMessage}"))
+  end audit
 
 end DeviceMailInbox

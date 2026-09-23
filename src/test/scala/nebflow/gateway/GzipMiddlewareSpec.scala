@@ -39,8 +39,7 @@ class GzipMiddlewareSpec extends CatsEffectSuite:
     })
 
   private def get(path: String, headers: Header.ToRaw*): IO[Response[IO]] =
-    fakeRoutes(Request[IO](Method.GET, Uri.unsafeFromString(path), headers = Headers(headers.toList)))
-      .value
+    fakeRoutes(Request[IO](Method.GET, Uri.unsafeFromString(path), headers = Headers(headers.toList))).value
       .map(_.getOrElse(fail("route fell through")))
 
   private def gzipAccepted: `Accept-Encoding` = `Accept-Encoding`(ContentCoding.gzip)
@@ -115,16 +114,21 @@ class GzipMiddlewareSpec extends CatsEffectSuite:
     })
     for
       resp <- conditional(
-        Request[IO](Method.GET, uri"/app.js", headers = Headers(
-          gzipAccepted,
-          `If-None-Match`(EntityTag("v1", EntityTag.Weak)),
-        ))
+        Request[IO](
+          Method.GET,
+          uri"/app.js",
+          headers = Headers(
+            gzipAccepted,
+            `If-None-Match`(EntityTag("v1", EntityTag.Weak))
+          )
+        )
       ).value.map(_.getOrElse(fail("fell through")))
       bytes <- resp.body.compile.toVector
     yield
       assertEquals(resp.status, Status.NotModified)
       assertEquals(resp.headers.get(CIString("Vary")).map(_.head.value), Some("Accept-Encoding"))
       assert(bytes.isEmpty)
+    end for
   }
 
   test("gzip payload is meaningfully smaller (measure-load micro equivalent)") {
@@ -133,64 +137,67 @@ class GzipMiddlewareSpec extends CatsEffectSuite:
       zipped <- get("/app.js", gzipAccepted).flatMap(_.body.compile.toVector)
     yield
       // 46KB of repeated JS text must compress far below half its size
-      assert(zipped.length < plain.length / 4,
-        s"gzipped ${zipped.length} not < quarter of ${plain.length}")
+      assert(zipped.length < plain.length / 4, s"gzipped ${zipped.length} not < quarter of ${plain.length}")
   }
 
   // --- Integration: real StaticFile.fromPath (strong ETag) through the middleware ---
 
-  test("StaticFile integration: gzipped response drops ETag, revalidates to 304 via If-Modified-Since (curl assertion 2)") {
-    Resource.make(
-      IO {
-        val dir = JFiles.createTempDirectory("gzip-mw-spec")
-        val f = dir.resolve("integration.js")
-        JFiles.write(f, jsBody.getBytes("UTF-8"))
-        f
-      }
-    ) { (f: JPath) => IO(JFiles.delete(f)).guarantee(IO(JFiles.delete(f.getParent))) }.use { file =>
-      val staticRoutes = GzipMiddleware(HttpRoutes.of[IO] {
-        case req @ GET -> Root / "integration.js" =>
+  test(
+    "StaticFile integration: gzipped response drops ETag, revalidates to 304 via If-Modified-Since (curl assertion 2)"
+  ) {
+    Resource
+      .make(
+        IO {
+          val dir = JFiles.createTempDirectory("gzip-mw-spec")
+          val f = dir.resolve("integration.js")
+          JFiles.write(f, jsBody.getBytes("UTF-8"))
+          f
+        }
+      ) { (f: JPath) => IO(JFiles.delete(f)).guarantee(IO(JFiles.delete(f.getParent))) }
+      .use { file =>
+        val staticRoutes = GzipMiddleware(HttpRoutes.of[IO] { case req @ GET -> Root / "integration.js" =>
           StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file), Some(req)).getOrElseF(NotFound())
-      })
-      def req(headers: Header.ToRaw*) =
-        staticRoutes(
-          Request[IO](Method.GET, uri"/integration.js", headers = Headers(headers.toList))
-        ).value.map(_.getOrElse(fail("fell through")))
+        })
+        def req(headers: Header.ToRaw*) =
+          staticRoutes(
+            Request[IO](Method.GET, uri"/integration.js", headers = Headers(headers.toList))
+          ).value.map(_.getOrElse(fail("fell through")))
 
-      for
-        first <- req(gzipAccepted)
-        // gzipped variant: compressed, ETag stripped, Last-Modified kept
-        _ = assertEquals(first.headers.get[`Content-Encoding`].map(_.contentCoding), Some(ContentCoding.gzip))
-        _ = assertEquals(first.headers.get[ETag], None, "gzipped variant must not reuse the identity ETag")
-        lastModified = first.headers.get[`Last-Modified`].getOrElse(fail("StaticFile must send Last-Modified"))
-        // revalidate exactly as a client without an ETag would: If-Modified-Since
-        second <- req(gzipAccepted, `If-Modified-Since`(lastModified.date))
-      yield assertEquals(second.status, Status.NotModified)
-    }
+        for
+          first <- req(gzipAccepted)
+          // gzipped variant: compressed, ETag stripped, Last-Modified kept
+          _ = assertEquals(first.headers.get[`Content-Encoding`].map(_.contentCoding), Some(ContentCoding.gzip))
+          _ = assertEquals(first.headers.get[ETag], None, "gzipped variant must not reuse the identity ETag")
+          lastModified = first.headers.get[`Last-Modified`].getOrElse(fail("StaticFile must send Last-Modified"))
+          // revalidate exactly as a client without an ETag would: If-Modified-Since
+          second <- req(gzipAccepted, `If-Modified-Since`(lastModified.date))
+        yield assertEquals(second.status, Status.NotModified)
+      }
   }
 
   test("StaticFile integration: no Accept-Encoding -> identity bytes intact") {
-    Resource.make(
-      IO {
-        val dir = JFiles.createTempDirectory("gzip-mw-spec2")
-        val f = dir.resolve("plain.js")
-        JFiles.write(f, jsBody.getBytes("UTF-8"))
-        f
-      }
-    ) { (f: JPath) => IO(JFiles.delete(f)).guarantee(IO(JFiles.delete(f.getParent))) }.use { file =>
-      val staticRoutes = GzipMiddleware(HttpRoutes.of[IO] {
-        case req @ GET -> Root / "plain.js" =>
+    Resource
+      .make(
+        IO {
+          val dir = JFiles.createTempDirectory("gzip-mw-spec2")
+          val f = dir.resolve("plain.js")
+          JFiles.write(f, jsBody.getBytes("UTF-8"))
+          f
+        }
+      ) { (f: JPath) => IO(JFiles.delete(f)).guarantee(IO(JFiles.delete(f.getParent))) }
+      .use { file =>
+        val staticRoutes = GzipMiddleware(HttpRoutes.of[IO] { case req @ GET -> Root / "plain.js" =>
           StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file), Some(req)).getOrElseF(NotFound())
-      })
-      for
-        resp <- staticRoutes(Request[IO](Method.GET, uri"/plain.js")).value
-          .map(_.getOrElse(fail("fell through")))
-        bytes <- resp.body.compile.toVector
-      yield
-        assertEquals(resp.headers.get[`Content-Encoding`], None)
-        assertEquals(resp.headers.get[ETag].map(_.tag.weakness), Some(EntityTag.Strong))
-        assertEquals(new String(bytes.toArray, "UTF-8"), jsBody)
-    }
+        })
+        for
+          resp <- staticRoutes(Request[IO](Method.GET, uri"/plain.js")).value
+            .map(_.getOrElse(fail("fell through")))
+          bytes <- resp.body.compile.toVector
+        yield
+          assertEquals(resp.headers.get[`Content-Encoding`], None)
+          assertEquals(resp.headers.get[ETag].map(_.tag.weakness), Some(EntityTag.Strong))
+          assertEquals(new String(bytes.toArray, "UTF-8"), jsBody)
+      }
   }
 
 end GzipMiddlewareSpec

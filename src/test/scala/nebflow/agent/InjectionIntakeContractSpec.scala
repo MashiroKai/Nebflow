@@ -82,7 +82,9 @@ class InjectionIntakeContractSpec extends FunSuite:
       s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
     )
     assert(
-      mailTool.contains("private def mailAttribution(\n      mailType: String,\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"),
+      mailTool.contains(
+        "private def mailAttribution(\n      mailType: String,\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"
+      ),
       "mailAttribution 必须保留 `intake: Option[String] = None` 默认参数（默认 None ⇒ 未置位腿零行为变化）"
     )
     // 腿③（sendMail → ImmediateInput，source='mail'）不得被本批碰：仍无 intake 键。
@@ -190,7 +192,9 @@ class InjectionIntakeContractSpec extends FunSuite:
     )
     accountingFaces.foreach { case (path, src) =>
       val offenders = src.linesIterator.zipWithIndex
-        .filter { case (l, _) => l.contains(WireField) && (l.contains("DispatcherInjectedSources") || l.contains("pendingInjected")) }
+        .filter { case (l, _) =>
+          l.contains(WireField) && (l.contains("DispatcherInjectedSources") || l.contains("pendingInjected"))
+        }
         .map { case (l, i) => s"$path:${i + 1}: ${l.trim}" }
         .toList
       assert(offenders.isEmpty, s"intake 混入会计/生命周期判据（必须只做呈现判别）：\n${offenders.mkString("\n")}")

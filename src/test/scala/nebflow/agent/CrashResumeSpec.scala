@@ -158,6 +158,7 @@ class CrashResumeSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("restart falls back to original prompt when no messages persisted") {
@@ -222,6 +223,7 @@ class CrashResumeSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end CrashResumeSpec

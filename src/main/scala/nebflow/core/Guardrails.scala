@@ -40,8 +40,10 @@ object Guardrails:
    */
   val FlowWorkerStrippedTools: Set[String] = Set("Pop", "AskUserQuestion")
 
-  /** Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
-    * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching. */
+  /**
+   * Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
+   * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching.
+   */
   def enabled: IO[Boolean] =
     IO.blocking {
       val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)

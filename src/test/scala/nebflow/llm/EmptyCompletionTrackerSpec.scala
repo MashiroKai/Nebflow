@@ -172,6 +172,7 @@ class EmptyCompletionTrackerSpec extends CatsEffectSuite:
       assertEquals(v1, Some(false))
       assertEquals(v2, None) // effectiveVision falls back to candidate.vision
       assertEquals(v3, None)
+    end for
   }
 
   test("shared instance: REST clearOverride and the LLM pipeline see the same state") {
@@ -218,12 +219,14 @@ class EmptyCompletionTrackerSpec extends CatsEffectSuite:
   }
 
   test("ModelRegistry.persistVision: preserves sibling fields, creates missing entries") {
-    ModelRegistry.save(Map(
-      s"$pid/$mid" -> ModelRegistry.ModelEntry(
-        vision = Some(true),
-        capabilities = List("reasoning", "tools")
+    ModelRegistry.save(
+      Map(
+        s"$pid/$mid" -> ModelRegistry.ModelEntry(
+          vision = Some(true),
+          capabilities = List("reasoning", "tools")
+        )
       )
-    ))
+    )
     ModelRegistry.persistVision(pid, mid, vision = false)
     assertEquals(ModelRegistry.lookup(pid, mid).flatMap(_.vision), Some(false))
     assertEquals(ModelRegistry.lookup(pid, mid).map(_.capabilities), Some(List("reasoning", "tools")))

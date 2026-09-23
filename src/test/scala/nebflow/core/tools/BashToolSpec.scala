@@ -37,8 +37,10 @@ class BashToolSpec extends CatsEffectSuite:
 
   private def absOf(p: String): String = new java.io.File(p).getAbsolutePath
 
-  /** 诊断三件套断言：类型 + 原始入参 + 解析后绝对路径 + 触发点 + 判定依据。
-    * `expectReason` = 期望的 reason 片段（does not exist / not a directory / …）。 */
+  /**
+   * 诊断三件套断言：类型 + 原始入参 + 解析后绝对路径 + 触发点 + 判定依据。
+   * `expectReason` = 期望的 reason 片段（does not exist / not a directory / …）。
+   */
   private def assertDiagnostic(e: Throwable, rawCwd: String, expectReason: String): Unit =
     e match
       case ice: InvalidCwdError =>
@@ -48,8 +50,7 @@ class BashToolSpec extends CatsEffectSuite:
         assert(msg.contains(rawCwd), s"错误文本缺原始入参路径: $msg")
         assert(msg.contains(Site), s"错误文本缺触发点符号: $msg")
         assert(msg.contains(expectReason), s"错误文本缺判定依据（$expectReason）: $msg")
-        if rawCwd.nonEmpty then
-          assert(msg.contains(absOf(rawCwd)), s"错误文本缺解析后绝对路径: $msg")
+        if rawCwd.nonEmpty then assert(msg.contains(absOf(rawCwd)), s"错误文本缺解析后绝对路径: $msg")
       case other =>
         fail(s"期望 InvalidCwdError，实得 ${other.getClass.getName}: ${other.getMessage}")
 
@@ -74,6 +75,7 @@ class BashToolSpec extends CatsEffectSuite:
         }
         .guarantee(ShellSession.destroySession(sid))
     }
+  end assertExplicitFailure
 
   // ── 反例（新增）────────────────────────────────────────────────────────
 

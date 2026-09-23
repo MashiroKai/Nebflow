@@ -48,15 +48,22 @@ class PresetResolverSpec extends FunSuite:
   test("explicit preset overrides the def's own resolved model"):
     // The def's own model (from agent.json preset "general") is replaced by the
     // explicit LowCost chain — explicit > agent.json preset.
-    val store = storeWith("LowCost" -> lowCostPreset, "general" -> ModelPreset("general", "", Some("zhipu/GLM-5.3"), Nil))
+    val store =
+      storeWith("LowCost" -> lowCostPreset, "general" -> ModelPreset("general", "", Some("zhipu/GLM-5.3"), Nil))
     val def0 = defWithModel("zhipu/GLM-5.3")
     val result = PresetResolver.applyPreset(store, def0, Some("LowCost"))
     assert(result.isRight)
     val applied = result.toOption.get
-    assertEquals(applied.model, Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro"))))
+    assertEquals(
+      applied.model,
+      Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")))
+    )
     assertEquals(applied.preset, Some("LowCost"))
     // modelOverride carries the chain across the per-turn def refresh
-    assertEquals(applied.modelOverride, Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro"))))
+    assertEquals(
+      applied.modelOverride,
+      Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")))
+    )
 
   test("explicit preset overrides even when the def has no model"):
     // Default-preset/global fallback would normally apply — explicit still wins.
@@ -64,7 +71,10 @@ class PresetResolverSpec extends FunSuite:
     val bare = AgentDef(name = "agent", description = "test")
     val result = PresetResolver.applyPreset(store, bare, Some("LowCost"))
     assert(result.isRight)
-    assertEquals(result.toOption.get.model, Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro"))))
+    assertEquals(
+      result.toOption.get.model,
+      Some(AgentModelConfig(Some("107/deepseek-v4-flash-ascend"), List("107/deepseek-v4-pro")))
+    )
 
   test("missing preset → Left with available list"):
     val store = storeWith("LowCost" -> lowCostPreset, "Vision" -> ModelPreset("Vision", "", Some("kimi/k3-256k"), Nil))

@@ -25,8 +25,10 @@ import nebflow.agent.AgentCore
  */
 class RemoteableDeviceParamSpec extends FunSuite:
 
-  /** 真漏斗读数：`registry.scala` 的 `ALL_TOOLS` 逐件过 `augmentSchema`，
-    * 即 LLM 实际看到的那份 schema。 */
+  /**
+   * 真漏斗读数：`registry.scala` 的 `ALL_TOOLS` 逐件过 `augmentSchema`，
+   * 即 LLM 实际看到的那份 schema。
+   */
   private def funnelSchema(toolName: String): JsonObject =
     ToolRegistry.ALL_TOOLS
       .find(_.name == toolName)

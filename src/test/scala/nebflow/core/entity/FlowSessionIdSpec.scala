@@ -98,6 +98,8 @@ class FlowSessionIdSpec extends CatsEffectSuite:
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 
+  end withFlowEnv
+
   /** n1 → $return — the minimal DAG. */
   private def sidFlow: FlowDagDef =
     FlowDagDef(

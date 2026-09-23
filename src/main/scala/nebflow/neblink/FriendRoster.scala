@@ -28,22 +28,23 @@ import nebflow.core.tools.ToolError
  */
 object FriendRoster:
 
-  /** 单条名册 / 候选行：`<displayName> (<username>)` + 可选备注 + 可选拉黑标记。
-    *
-    * - `displayName` / `username` 两键必出（`NeblinkModel.scala:611-618` 的
-    *   `FriendSummary`：`username` 即 NL 号 = `resolve` 的 L1 匹配键）。
-    * - `blocked`：`FriendSummary.blocked` 为 `Some(true)` 时追加 ` [blocked]`
-    *   （`NeblinkModel.scala:605-606`：仅 `GET /api/friends` 的 friends 数组携带，
-    *   absent = 未拉黑）。
-    * - `remark`（2026-09-12 ⑦ 落地，⑦-D6）：形参是**覆盖**（测试/seam 用），
-    *   缺省 `None` ⇒ **取 `f.remark`**（数据面 `FriendService.applyRemarks` 供值）
-    *   ⇒ 两个既有调用点形状不变。备注**追加在括号后**、不顶替 `displayName`——
-    *   与显示名**可区分**（方案 §4.5 L4①：模型必须能看出备注键存在，否则永远
-    *   不会去试备注寻址）。空串/全空白备注不渲染（`filter(_.nonEmpty)`）。
-    *
-    * 逐字契约：`blocked` 缺席（`None`/`Some(false)`）且备注缺席时输出恒等于
-    * `s"${f.displayName} (${f.username})"` —— 即 `SendMessage` 失败候选的既有字面。
-    */
+  /**
+   * 单条名册 / 候选行：`<displayName> (<username>)` + 可选备注 + 可选拉黑标记。
+   *
+   * - `displayName` / `username` 两键必出（`NeblinkModel.scala:611-618` 的
+   *   `FriendSummary`：`username` 即 NL 号 = `resolve` 的 L1 匹配键）。
+   * - `blocked`：`FriendSummary.blocked` 为 `Some(true)` 时追加 ` [blocked]`
+   *   （`NeblinkModel.scala:605-606`：仅 `GET /api/friends` 的 friends 数组携带，
+   *   absent = 未拉黑）。
+   * - `remark`（2026-09-12 ⑦ 落地，⑦-D6）：形参是**覆盖**（测试/seam 用），
+   *   缺省 `None` ⇒ **取 `f.remark`**（数据面 `FriendService.applyRemarks` 供值）
+   *   ⇒ 两个既有调用点形状不变。备注**追加在括号后**、不顶替 `displayName`——
+   *   与显示名**可区分**（方案 §4.5 L4①：模型必须能看出备注键存在，否则永远
+   *   不会去试备注寻址）。空串/全空白备注不渲染（`filter(_.nonEmpty)`）。
+   *
+   * 逐字契约：`blocked` 缺席（`None`/`Some(false)`）且备注缺席时输出恒等于
+   * `s"${f.displayName} (${f.username})"` —— 即 `SendMessage` 失败候选的既有字面。
+   */
   def candidateLine(f: FriendSummary, remark: Option[String] = None): String =
     val base = s"${f.displayName} (${f.username})"
     val effective = remark.filter(_.nonEmpty).orElse(f.remark.filter(_.nonEmpty))
@@ -54,37 +55,39 @@ object FriendRoster:
   def candidates(fs: List[FriendSummary]): String =
     fs.map(f => candidateLine(f)).mkString(", ")
 
-  /** 「可用好友」提示句：**空名册与有名册分别报告**——空表不得被写成「找不到此人」
-    * 之外的含糊话，也不得把「读不到」混进来（读不到由取数层显式报错，见
-    * `ListFriendsTool` / `FriendService.listFriends`）。
-    *
-    * 逐字契约：空表输出恒等于 `FriendMessageTool` 改动前的
-    * `"The friend list is empty (no accepted friendships)."`。
-    */
+  /**
+   * 「可用好友」提示句：**空名册与有名册分别报告**——空表不得被写成「找不到此人」
+   * 之外的含糊话，也不得把「读不到」混进来（读不到由取数层显式报错，见
+   * `ListFriendsTool` / `FriendService.listFriends`）。
+   *
+   * 逐字契约：空表输出恒等于 `FriendMessageTool` 改动前的
+   * `"The friend list is empty (no accepted friendships)."`。
+   */
   def availableHint(fs: List[FriendSummary]): String =
     if fs.isEmpty then "The friend list is empty (no accepted friendships)."
     else s"Available friends: ${candidates(fs)}"
 
-  /** 解析链：**L0 `remark`**（NOCASE + trim，2026-09-12 ⑦ 落地）→ L1 `username`
-    * 精确（大小写不敏感）→ L2 `displayName` 精确 → L3 `displayName` 唯一前缀；
-    * 多命中 / 零命中一律返回带候选列表的 `ToolError` 让模型在同 turn 内自行纠错。
-    *
-    * **L0 的两条分支口径（⑦-D5）**：
-    *  - **恰 1 命中** ⇒ 成功（备注是用户自己设的别名，最精确的意图信号，排在 NL 号前）。
-    *  - **多命中（≥2 个好友同一备注）⇒ 立即报错并列候选，不降级继续 L1**
-    *    （「明明写了备注却不生效」的反直觉；继续降级可能命中某个恰好叫该串的
-    *    username，把「备注撞车」静默变成一个别人的发送目标）。
-    *  - **零命中 ⇒ 落下一级 L1**。注：任务书 `⑦-D5` 括注写「多命中 / 零命中」均立即
-    *    报错，但同句的不变量「每级『恰好 1 命中』才成功，**否则落下一级**」以及判据
-    *    「L1–L3 回归零变（既有 spec 绿）」都要求零命中继续降级——零命中若立即报错，
-    *    所有没有备注的既有调用（含 `FriendMessageToolSpec` 的 L1/L2/L3 用例）会全红。
-    *    本实现采「多命中 ⇒ 硬报错、零命中 ⇒ 降级」，两处口径冲突已在实施结果中登记。
-    *
-    * **本函数是 `FriendMessageTool.resolveFriend` 的唯一实现点**（原 `:67-96` 逐字
-    * 搬迁 + 本批 L0 前置）：对外文案（含 `'to' is empty` 的措辞——`to` 是
-    * `SendMessage` 的参数名，本函数由 `SendMessage` 消费，故保留原文）、L1–L3 顺序、
-    * 候选拼接方式均零变更。
-    */
+  /**
+   * 解析链：**L0 `remark`**（NOCASE + trim，2026-09-12 ⑦ 落地）→ L1 `username`
+   * 精确（大小写不敏感）→ L2 `displayName` 精确 → L3 `displayName` 唯一前缀；
+   * 多命中 / 零命中一律返回带候选列表的 `ToolError` 让模型在同 turn 内自行纠错。
+   *
+   * **L0 的两条分支口径（⑦-D5）**：
+   *  - **恰 1 命中** ⇒ 成功（备注是用户自己设的别名，最精确的意图信号，排在 NL 号前）。
+   *  - **多命中（≥2 个好友同一备注）⇒ 立即报错并列候选，不降级继续 L1**
+   *    （「明明写了备注却不生效」的反直觉；继续降级可能命中某个恰好叫该串的
+   *    username，把「备注撞车」静默变成一个别人的发送目标）。
+   *  - **零命中 ⇒ 落下一级 L1**。注：任务书 `⑦-D5` 括注写「多命中 / 零命中」均立即
+   *    报错，但同句的不变量「每级『恰好 1 命中』才成功，**否则落下一级**」以及判据
+   *    「L1–L3 回归零变（既有 spec 绿）」都要求零命中继续降级——零命中若立即报错，
+   *    所有没有备注的既有调用（含 `FriendMessageToolSpec` 的 L1/L2/L3 用例）会全红。
+   *    本实现采「多命中 ⇒ 硬报错、零命中 ⇒ 降级」，两处口径冲突已在实施结果中登记。
+   *
+   * **本函数是 `FriendMessageTool.resolveFriend` 的唯一实现点**（原 `:67-96` 逐字
+   * 搬迁 + 本批 L0 前置）：对外文案（含 `'to' is empty` 的措辞——`to` 是
+   * `SendMessage` 的参数名，本函数由 `SendMessage` 消费，故保留原文）、L1–L3 顺序、
+   * 候选拼接方式均零变更。
+   */
   def resolve(query: String, friends: List[FriendSummary]): Either[ToolError, FriendSummary] =
     val q = query.trim
     val candidatesHint = availableHint(friends)
@@ -115,16 +118,21 @@ object FriendRoster:
                 case single :: Nil => Right(single)
                 case multi =>
                   val byPrefix = friends.filter(_.displayName.toLowerCase.startsWith(q.toLowerCase))
-                  val hits     = (multi ++ byPrefix).distinct
+                  val hits = (multi ++ byPrefix).distinct
                   hits match
                     case single :: Nil => Right(single)
                     case many =>
                       Left(
                         ToolError(
                           if many.isEmpty then s"Friend '$q' not found. $candidatesHint"
-                          else s"Friend '$q' is ambiguous (${many.size} matches). Candidates: ${candidates(many)} — use the exact username."
+                          else
+                            s"Friend '$q' is ambiguous (${many.size} matches). Candidates: ${candidates(many)} — use the exact username."
                         )
                       )
+              end match
+          end match
+      end match
+    end if
   end resolve
 
   // ===== 群面（gmsgsend 批，2026-09-15 · 补充卡 §6.2–§6.4）=====
@@ -148,12 +156,14 @@ object FriendRoster:
   //     而不是让用户拿到一个「找得到但发不出去」的目标。终态判定的权威仍是服务端
   //     （404 `group_not_found` / 403 `group_disbanded`，见 `FriendService.doSendGroup`）。
 
-  /** 单条群名册 / 候选行：`<title> (<groupId>)`。
-    *
-    * 🔴 两键都出、且**必须可区分**：`groupId` 是全局唯一（服务端 `grp-` + UUIDv4，
-    * 与 user id 命名空间不相交），`title` 可重名（服务端只校验非空且 ≤64 字符，
-    * 无唯一性约束）⇒ 候选行必须带 id，模型才有可用的消歧手段（与好友面
-    * `candidateLine` 带 username 同一理由）。 */
+  /**
+   * 单条群名册 / 候选行：`<title> (<groupId>)`。
+   *
+   * 🔴 两键都出、且**必须可区分**：`groupId` 是全局唯一（服务端 `grp-` + UUIDv4，
+   * 与 user id 命名空间不相交），`title` 可重名（服务端只校验非空且 ≤64 字符，
+   * 无唯一性约束）⇒ 候选行必须带 id，模型才有可用的消歧手段（与好友面
+   * `candidateLine` 带 username 同一理由）。
+   */
   def groupCandidateLine(g: GroupSummary): String =
     s"${g.title} (${g.groupId})"
 
@@ -161,23 +171,26 @@ object FriendRoster:
   def groupCandidates(gs: List[GroupSummary]): String =
     gs.map(groupCandidateLine).mkString(", ")
 
-  /** 「可用群」提示句：**空表与有名册分别报告**（与 `availableHint` 同纪律）——
-    * 空表必须说清是「你没有群」，不得含糊成「找不到这个群」，也不得把「读不到」
-    * 混进来（读不到由取数层显式报错，见 `FriendService.listGroups`）。 */
+  /**
+   * 「可用群」提示句：**空表与有名册分别报告**（与 `availableHint` 同纪律）——
+   * 空表必须说清是「你没有群」，不得含糊成「找不到这个群」，也不得把「读不到」
+   * 混进来（读不到由取数层显式报错，见 `FriendService.listGroups`）。
+   */
   def availableGroupsHint(gs: List[GroupSummary]): String =
     if gs.isEmpty then "The group list is empty (you are not a member of any group)."
     else s"Available groups: ${groupCandidates(gs)}"
 
-  /** 群解析链：**L1 `groupId` 精确**（大小写不敏感；`grp-` 前缀形态）→ **L2 `title`
-    * 精确**（大小写不敏感，与好友面 L1 username 同口径）→ **L3 `title` 唯一前缀**；
-    * 多命中 / 零命中一律返回带候选列表的 `ToolError`。
-    *
-    * `query` 为空 ⇒ 与好友面逐字同款的 `'to' is empty.` 收口（`to` 是
-    * `SendMessage` 的参数名）——**正常路径到不了这里**（`group:` 后为空由
-    * `parseToKind` 先拦），本分支是防御性的同词表兜底。
-    */
+  /**
+   * 群解析链：**L1 `groupId` 精确**（大小写不敏感；`grp-` 前缀形态）→ **L2 `title`
+   * 精确**（大小写不敏感，与好友面 L1 username 同口径）→ **L3 `title` 唯一前缀**；
+   * 多命中 / 零命中一律返回带候选列表的 `ToolError`。
+   *
+   * `query` 为空 ⇒ 与好友面逐字同款的 `'to' is empty.` 收口（`to` 是
+   * `SendMessage` 的参数名）——**正常路径到不了这里**（`group:` 后为空由
+   * `parseToKind` 先拦），本分支是防御性的同词表兜底。
+   */
   def resolveGroup(query: String, groups: List[GroupSummary]): Either[ToolError, GroupSummary] =
-    val q              = query.trim
+    val q = query.trim
     val candidatesHint = availableGroupsHint(groups)
 
     if q.isEmpty then Left(ToolError(s"'to' is empty. $candidatesHint"))
@@ -196,7 +209,7 @@ object FriendRoster:
               // L3：群名唯一前缀（与好友面 L3 同形：候选集 = 精确命中 ∪ 前缀命中，
               // `distinct` 去重后仍需恰 1 命中才成功）。
               val byPrefix = groups.filter(_.title.toLowerCase.startsWith(q.toLowerCase))
-              val hits     = (multi ++ byPrefix).distinct
+              val hits = (multi ++ byPrefix).distinct
               hits match
                 case single :: Nil => Right(single)
                 case many =>
@@ -207,6 +220,9 @@ object FriendRoster:
                         s"Group '$q' is ambiguous (${many.size} matches). Candidates: ${groupCandidates(many)} — use the exact group id."
                     )
                   )
+          end match
+      end match
+    end if
   end resolveGroup
 
 end FriendRoster

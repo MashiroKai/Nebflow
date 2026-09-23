@@ -56,6 +56,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   override val munitIOTimeout = 180.seconds
 
   private val RootSid = "root-1"
+
   private val FriendsJson =
     """{"friends":[{"userId":"u1","username":"customNL1","display_name":"林小满"}],"incoming":[],"outgoing":[]}"""
 
@@ -85,9 +86,12 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
         .login("dev-1", "TestMac", "macos", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
         .unsafeRunSync()
 
+  end StubClient
+
   /** 从不被调用的 LLM（本 spec 不跑 agent turn；仅满足 SharedResources 构造）。 */
   private object DeadLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("llm not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -179,6 +183,10 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       cleanup = system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void
     )
 
+    end for
+
+  end setup
+
   private val input: JsonObject =
     JsonObject("to" -> "customNL1".asJson, "message" -> "hi from spec".asJson)
 
@@ -220,7 +228,12 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
           val q = frame.hcursor.downField("items").downArray.downField("question").as[String].toOption.getOrElse("")
           assert(q.contains("林小满（customNL1）"), s"卡面必须点名收件人: $q")
           assert(q.contains("hi from spec"), s"卡面必须带正文预览: $q")
-          val labels = frame.hcursor.downField("items").downArray.downField("options").as[List[Json]].toOption
+          val labels = frame.hcursor
+            .downField("items")
+            .downArray
+            .downField("options")
+            .as[List[Json]]
+            .toOption
             .getOrElse(Nil)
             .flatMap(_.hcursor.downField("label").as[String].toOption)
           assertEquals(labels, List(SendConfirm.ApproveLabel, SendConfirm.DeclineLabel), "两选项卡（批准/拒绝）")
@@ -312,8 +325,10 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
           assertEquals(askFrames, 0, "auto 档零确认帧")
           assertEquals(posts.size, 3, s"三路 auto 直发各一次 POST: $posts")
         }
-        _ <- IO.println(s"[ZERO-REGRESSION-auto] legacy=$legacy counted=$countedRes tool=${res.toOption.get} " +
-          s"confirmCalls=$n askFrames=$askFrames posts=${posts.size}")
+        _ <- IO.println(
+          s"[ZERO-REGRESSION-auto] legacy=$legacy counted=$countedRes tool=${res.toOption.get} " +
+            s"confirmCalls=$n askFrames=$askFrames posts=${posts.size}"
+        )
       yield ()).guarantee(f.cleanup)
     }
   }
@@ -340,8 +355,10 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
           assertEquals(n, 0, "off 档绝不诉诸确认")
           assertEquals(askFrames, 0, "off 档零确认帧")
         }
-        _ <- IO.println(s"[ZERO-REGRESSION-off] a=$a b=$b tool=${res.left.toOption.get.message} " +
-          s"confirmCalls=$n askFrames=$askFrames posts=${f.stub.postedPaths.toList.size}")
+        _ <- IO.println(
+          s"[ZERO-REGRESSION-off] a=$a b=$b tool=${res.left.toOption.get.message} " +
+            s"confirmCalls=$n askFrames=$askFrames posts=${f.stub.postedPaths.toList.size}"
+        )
       yield ()).guarantee(f.cleanup)
     }
   }
@@ -467,8 +484,12 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       assert(wiring.contains("askConfirm: Option[String => IO[Boolean]] = None"), "装配缝参数在（默认 None 保留未接线显式条件）")
       assert(tool.contains("SendConfirm.locally"), "调用侧必须把会话靶挂进 fiber-local（否则 production 读不到靶）")
       assert(tool.contains("SendConfirm.targetFor"), "靶由调用侧按次构造（含收件人标签）")
-    }.as(println("[SEAM-REACHABILITY] GatewayMain:782 askConfirm=Some(SendConfirm.production); " +
-      "FriendMessageTool 挂靶 = SendConfirm.locally(targetFor(...)); NeblinkWiring 透传"))
+    }.as(
+      println(
+        "[SEAM-REACHABILITY] GatewayMain:782 askConfirm=Some(SendConfirm.production); " +
+          "FriendMessageTool 挂靶 = SendConfirm.locally(targetFor(...)); NeblinkWiring 透传"
+      )
+    )
   }
 
 end SendMessageAskConfirmSpec

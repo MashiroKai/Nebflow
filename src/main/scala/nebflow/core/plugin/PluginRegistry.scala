@@ -80,48 +80,89 @@ object PluginRegistry:
   /** 插件根目录（rebrand/测试 setDataRoot 均生效）。 */
   private def pluginsDir: os.Path = PathUtil.dataRoot / "plugins"
 
-  /** §B.6 固定安全集：plugin 只能授予既有 builtin 工具且限于白名单——
-    * 不能发明新工具、不能授予编排类（Mail/NodeEdit 等永不进白名单，
-    * 角色边界由 §C.1 静态矩阵守住）。R2「一个 Mail 统一」（2026-09-12）后
-    * 原举例的 `Task` 已退役、`Mail` 是唯一消息原语——本条覆盖此前相关指令。
-    *
-    * 2026-09-10 作者裁定（Pop 收归 Nebula 专属）：Pop 移出白名单——插件再授予
-    * 通道关闭（否则「第三方包声明 org.nebflow/tools:["Pop"]」可绕过
-    * AgentCore.NebulaExclusiveTools 的剥离面，把 Pop 发回任意节点）。实测对既有
-    * 插件零影响：全部 plugin.json 与 org.nebflow/tools.json 无一授予 builtin
-    * 工具（证据见 pop-nebula-exclusive 批 plugin-tools-scan 留档）。 */
+  /**
+   * §B.6 固定安全集：plugin 只能授予既有 builtin 工具且限于白名单——
+   * 不能发明新工具、不能授予编排类（Mail/NodeEdit 等永不进白名单，
+   * 角色边界由 §C.1 静态矩阵守住）。R2「一个 Mail 统一」（2026-09-12）后
+   * 原举例的 `Task` 已退役、`Mail` 是唯一消息原语——本条覆盖此前相关指令。
+   *
+   * 2026-09-10 作者裁定（Pop 收归 Nebula 专属）：Pop 移出白名单——插件再授予
+   * 通道关闭（否则「第三方包声明 org.nebflow/tools:["Pop"]」可绕过
+   * AgentCore.NebulaExclusiveTools 的剥离面，把 Pop 发回任意节点）。实测对既有
+   * 插件零影响：全部 plugin.json 与 org.nebflow/tools.json 无一授予 builtin
+   * 工具（证据见 pop-nebula-exclusive 批 plugin-tools-scan 留档）。
+   */
   val BuiltinToolWhitelist: Set[String] = Set("WebSearch", "WebFetch", "Curl")
 
-  /** §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical
-    * → 拒载（required + 客户端只识别 canonical 值，§5.2/§5.3）。 */
+  /**
+   * §5.2 canonical manifest $schema（Agent Plugins 1.0.0）。缺失/非 canonical
+   * → 拒载（required + 客户端只识别 canonical 值，§5.2/§5.3）。
+   */
   val CanonicalSchema = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 
-  /** §7.2.1 canonical mcp.json $schema。缺失/非 canonical → MCP 组件 invalid
-    * （插件继续装载其余组件，§6.2 边界）。 */
+  /**
+   * §7.2.1 canonical mcp.json $schema。缺失/非 canonical → MCP 组件 invalid
+   * （插件继续装载其余组件，§6.2 边界）。
+   */
   val CanonicalMcpSchema = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 
-  /** §5.2 闭合 schema 十一字段（capability 系 dispatcher-ctx 批新增后注释未同步，
-    * 2026-09-10 顺手修正；其余能力走 extensions 命名空间）。描述单源批
-    * （作者 2026-09-10 09:30 裁定）：`capability` 键转 deprecated——登记在本集合
-    * 使存量包仍带该键不报错、不触发 unknown-field 告警（向后兼容），但读取/承载/
-    * 渲染逻辑全部退役（PluginDef 无此字段），description 是唯一描述源。 */
+  /**
+   * §5.2 闭合 schema 十一字段（capability 系 dispatcher-ctx 批新增后注释未同步，
+   * 2026-09-10 顺手修正；其余能力走 extensions 命名空间）。描述单源批
+   * （作者 2026-09-10 09:30 裁定）：`capability` 键转 deprecated——登记在本集合
+   * 使存量包仍带该键不报错、不触发 unknown-field 告警（向后兼容），但读取/承载/
+   * 渲染逻辑全部退役（PluginDef 无此字段），description 是唯一描述源。
+   */
   private val KnownManifestKeys = Set(
-    "$schema", "name", "version", "description", "capability", "author",
-    "homepage", "repository", "license", "keywords", "extensions")
+    "$schema",
+    "name",
+    "version",
+    "description",
+    "capability",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "extensions"
+  )
 
-  /** §9.1 客户端必须注入 stdio 子进程的两个占位变量；plugin mcp.json env 声明
-    * 同名键 → entry invalid（schema propertyNames.not）。 */
+  /**
+   * §9.1 客户端必须注入 stdio 子进程的两个占位变量；plugin mcp.json env 声明
+   * 同名键 → entry invalid（schema propertyNames.not）。
+   */
   val PluginPlaceholderEnvKeys: Set[String] = Set("PLUGIN_ROOT", "PLUGIN_DATA")
 
-  /** §B.3 红标启发式：凭据类 env 键名（仅红标提示，不拒载——信任门审批清单的
-    * 「审什么」辅助，非装载规则）。 */
+  /**
+   * §B.3 红标启发式：凭据类 env 键名（仅红标提示，不拒载——信任门审批清单的
+   * 「审什么」辅助，非装载规则）。
+   */
   val CredentialKeyPattern: Regex = "(?i)(passw(or)?d|secret|token|api.?key|access.?key|private.?key|credential|auth)".r
 
-  /** §B.3 红标启发式：command 指向 shell / 网络类可执行（设计文档「command 指向
-    * curl|sh 类」）。 */
+  /**
+   * §B.3 红标启发式：command 指向 shell / 网络类可执行（设计文档「command 指向
+   * curl|sh 类」）。
+   */
   val ShellLikeCommands: Set[String] =
-    Set("sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "pwsh", "powershell", "cmd",
-      "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh")
+    Set(
+      "sh",
+      "bash",
+      "zsh",
+      "dash",
+      "ksh",
+      "csh",
+      "tcsh",
+      "pwsh",
+      "powershell",
+      "cmd",
+      "curl",
+      "wget",
+      "nc",
+      "ncat",
+      "netcat",
+      "telnet",
+      "ssh"
+    )
 
   // ── 数据模型 ──────────────────────────────────────────────
 
@@ -132,27 +173,36 @@ object PluginRegistry:
     path: String // SKILL.md 绝对路径
   )
 
-  /** 内容面可用性（2026-09-13 作者令「装了就是信任」后**唯一**的两个取值）：
-    * - [[TrustStatus.Trusted]] = **在位即信任**（`loadPlugin` 扫到即受信）+ 未被封禁；
-    * - [[TrustStatus.Blocked]] = 命中封禁面（`plugins.revoked.<name>`，deny-list）。
-    * 全部下游闸（A/B/C/E/D）、目录过滤链、面板清单都只问 [[TrustStatus.trusted]]，
-    * 故「在位即信任」与「点名封禁」两件事共用这一条链、零分叉。 */
+  /**
+   * 内容面可用性（2026-09-13 作者令「装了就是信任」后**唯一**的两个取值）：
+   * - [[TrustStatus.Trusted]] = **在位即信任**（`loadPlugin` 扫到即受信）+ 未被封禁；
+   * - [[TrustStatus.Blocked]] = 命中封禁面（`plugins.revoked.<name>`，deny-list）。
+   * 全部下游闸（A/B/C/E/D）、目录过滤链、面板清单都只问 [[TrustStatus.trusted]]，
+   * 故「在位即信任」与「点名封禁」两件事共用这一条链、零分叉。
+   */
   sealed trait TrustStatus extends Product with Serializable:
     def trusted: Boolean
+
   object TrustStatus:
-    /** `approvedAt` = 审批记录时刻（无记录 ⇒ 0——记录**不再决定装载**，只作审计；
-      * seed 覆盖仲裁基准走 `trustRecordDigest`，与这里无关）。 */
+
+    /**
+     * `approvedAt` = 审批记录时刻（无记录 ⇒ 0——记录**不再决定装载**，只作审计；
+     * seed 覆盖仲裁基准走 `trustRecordDigest`，与这里无关）。
+     */
     final case class Trusted(approvedAt: Long, digest: String) extends TrustStatus:
       val trusted = true
+
     /** 封禁（deny-list）：`at`/`by`/`reason` 来自 `plugins.revoked.<name>`。 */
     final case class Blocked(at: Long, by: String, reason: String) extends TrustStatus:
       val trusted = false
 
-  /** 注册表条目（§B.3 产出结构）。author 为渲染字符串（§5.4 author object 的
-    * name/email/url 摘要）；homepage/repository/license/keywords 为 §5.4 元数据
-    * 字段（协议符合度批新增，供审批清单完整渲染）。描述单源批（2026-09-10）：
-    * PluginDef 不再承载 capability（字段退役，manifest 键 deprecated 容忍见
-    * KnownManifestKeys）——description 是唯一描述源。 */
+  /**
+   * 注册表条目（§B.3 产出结构）。author 为渲染字符串（§5.4 author object 的
+   * name/email/url 摘要）；homepage/repository/license/keywords 为 §5.4 元数据
+   * 字段（协议符合度批新增，供审批清单完整渲染）。描述单源批（2026-09-10）：
+   * PluginDef 不再承载 capability（字段退役，manifest 键 deprecated 容忍见
+   * KnownManifestKeys）——description 是唯一描述源。
+   */
   final case class PluginDef(
     name: String,
     version: String,
@@ -170,16 +220,20 @@ object PluginRegistry:
     warnings: List[String],
     trust: TrustStatus,
     dir: String,
-    /** **非拦截可见性**（2026-09-13 无审批批）：目录内容与审批记录 digest 不符
-      * （= 「内容已变更」）。**不拦装载**（在位即信任），只喂三处可见性：API 字段
-      * `contentChanged` / 目录段尾注记 / 启动健康摘要。无审批记录 ⇒ false
-      * （无可比对基准，不是「变更」）。 */
+    /**
+     * **非拦截可见性**（2026-09-13 无审批批）：目录内容与审批记录 digest 不符
+     * （= 「内容已变更」）。**不拦装载**（在位即信任），只喂三处可见性：API 字段
+     * `contentChanged` / 目录段尾注记 / 启动健康摘要。无审批记录 ⇒ false
+     * （无可比对基准，不是「变更」）。
+     */
     contentChanged: Boolean = false
   )
 
-  /** 审批清单条目（§B.3 面板渲染数据源）：元信息 + §5.4 元数据 + skills 摘要 +
-    * mcp（env 键名打码值）+ tools 申请 + 信任状态 + 红标项（flags）+ 变更摘要
-    * （changeSummary，与上次审批版本逐文件 diff——§B.3 审批清单格式表后两行）。 */
+  /**
+   * 审批清单条目（§B.3 面板渲染数据源）：元信息 + §5.4 元数据 + skills 摘要 +
+   * mcp（env 键名打码值）+ tools 申请 + 信任状态 + 红标项（flags）+ 变更摘要
+   * （changeSummary，与上次审批版本逐文件 diff——§B.3 审批清单格式表后两行）。
+   */
   def approvalManifest(p: PluginDef): Json =
     Json.obj(
       "name" -> p.name.asJson,
@@ -199,13 +253,19 @@ object PluginRegistry:
       "trusted" -> p.trust.trusted.asJson,
       "blocked" -> (p.trust match
         case TrustStatus.Blocked(_, _, _) => true
-        case _ => false).asJson,
+        case _ => false
+      ).asJson,
       "contentChanged" -> p.contentChanged.asJson,
       "trust" -> (p.trust match
-        case TrustStatus.Trusted(at, d) => Json.obj("status" -> "trusted".asJson, "approvedAt" -> at.asJson, "digest" -> d.asJson)
+        case TrustStatus.Trusted(at, d) =>
+          Json.obj("status" -> "trusted".asJson, "approvedAt" -> at.asJson, "digest" -> d.asJson)
         case TrustStatus.Blocked(at, by, reason) =>
-          Json.obj("status" -> "blocked".asJson, "blockedAt" -> at.asJson, "blockedBy" -> by.asJson, "reason" -> reason.asJson)
-      ),
+          Json.obj(
+            "status" -> "blocked".asJson,
+            "blockedAt" -> at.asJson,
+            "blockedBy" -> by.asJson,
+            "reason" -> reason.asJson
+          )),
       // 令 1 拆面（2026-09-12）：派发面状态随清单下发——面板开关据此渲染
       // （`enabled=false` 只是「禁未来派发」，不是内容未受信）。
       "dispatch" -> Json.obj(
@@ -215,17 +275,22 @@ object PluginRegistry:
         "reason" -> (if !p.trust.trusted then
                        "Plugin is blocked (deny-list) — unblock it to use it again: POST /api/plugins/" + p.name + "/unblock."
                      else if PluginDispatchPolicy.effective(p.name, trusted = true) then ""
-                     else "Disabled for new dispatches by the author — in-flight nodes keep their plugin grant. " +
-                       s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'nebflow plugin enable ${p.name}'.")
-          .asJson
+                     else
+                       "Disabled for new dispatches by the author — in-flight nodes keep their plugin grant. " +
+                         s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'nebflow plugin enable ${p.name}'."
+        ) .asJson
       ),
       "skills" -> p.skills
-        .map(s => Json.obj("id" -> s.id.asJson, "description" -> s.description.asJson, "preview" -> previewLines(s.path).asJson))
+        .map(s =>
+          Json.obj("id" -> s.id.asJson, "description" -> s.description.asJson, "preview" -> previewLines(s.path).asJson)
+        )
         .asJson,
       "mcpServers" -> p.mcpServers.map { case (n, c) =>
         Json.obj(
           "server" -> n.asJson,
-          "transport" -> (if c.command.isDefined then "stdio" else if c.url.isDefined then "streamable-http" else "none").asJson,
+          "transport" -> (if c.command.isDefined then "stdio"
+                          else if c.url.isDefined then "streamable-http"
+                          else "none") .asJson,
           "command" -> c.command.asJson,
           "args" -> c.args.asJson,
           "url" -> c.url.asJson,
@@ -238,9 +303,11 @@ object PluginRegistry:
       "changeSummary" -> changeSummary(p)
     )
 
-  /** §B.3 审批清单红标项：无 author / 无 version（元信息行）；env 凭据类键名、
-    * command 指向 shell|curl 类（mcp 行）。skills 提示词启发式扫描为设计文档
-    * 「后续可加」项——非 1.0.0 必需，不实现（对照表申报）。 */
+  /**
+   * §B.3 审批清单红标项：无 author / 无 version（元信息行）；env 凭据类键名、
+   * command 指向 shell|curl 类（mcp 行）。skills 提示词启发式扫描为设计文档
+   * 「后续可加」项——非 1.0.0 必需，不实现（对照表申报）。
+   */
   private def approvalFlags(p: PluginDef): List[String] =
     val fs = mutable.ListBuffer[String]()
     if p.version.isEmpty then fs += "manifest has no version field"
@@ -258,9 +325,13 @@ object PluginRegistry:
     }
     fs.toList
 
-  /** §B.3 变更摘要：与上次审批版本的逐文件 diff（首审 = new-install；已审批且
-    * 未变 = unchanged；有变化 = changed + added/removed/modified）。审批记录无
-    * files 快照（协议符合度批之前的旧记录）→ 降级为 digest 级比对并注明。 */
+  end approvalFlags
+
+  /**
+   * §B.3 变更摘要：与上次审批版本的逐文件 diff（首审 = new-install；已审批且
+   * 未变 = unchanged；有变化 = changed + added/removed/modified）。审批记录无
+   * files 快照（协议符合度批之前的旧记录）→ 降级为 digest 级比对并注明。
+   */
   private def changeSummary(p: PluginDef): Json =
     trustRecord(p.name) match
       case None => Json.obj("kind" -> "new-install".asJson)
@@ -271,20 +342,26 @@ object PluginRegistry:
             Json.obj(
               "kind" -> "changed".asJson,
               "note" -> "approval record predates file-level snapshots — digest-level comparison only".asJson,
-              "digestMatches" -> (rec.sha256 == p.digest).asJson)
+              "digestMatches" -> (rec.sha256 == p.digest).asJson
+            )
           case Some(approved) =>
             val added = (current.keySet -- approved.keySet).toList.sorted
             val removed = (approved.keySet -- current.keySet).toList.sorted
-            val modified = approved.keySet.intersect(current.keySet).toList.sorted
+            val modified = approved.keySet
+              .intersect(current.keySet)
+              .toList
+              .sorted
               .filter(k => approved(k) != current(k))
-            if added.isEmpty && removed.isEmpty && modified.isEmpty then
-              Json.obj("kind" -> "unchanged".asJson)
+            if added.isEmpty && removed.isEmpty && modified.isEmpty then Json.obj("kind" -> "unchanged".asJson)
             else
               Json.obj(
                 "kind" -> "changed".asJson,
                 "added" -> added.asJson,
                 "removed" -> removed.asJson,
-                "modified" -> modified.asJson)
+                "modified" -> modified.asJson
+              )
+
+        end match
 
   private def previewLines(path: String, n: Int = 20): String =
     try
@@ -301,9 +378,11 @@ object PluginRegistry:
 
   // ── digest（目录内容树，确定性）────────────────────────────
 
-  /** SHA-256 目录内容树 digest：按相对 POSIX 路径排序，逐文件喂入
-    * "relPath\0<bytes>\0"。路径含文件名字段（manifest name 不参与判定——改
-    * plugin.json 任何字段都会变 digest，version bump 即重审）。 */
+  /**
+   * SHA-256 目录内容树 digest：按相对 POSIX 路径排序，逐文件喂入
+   * "relPath\0<bytes>\0"。路径含文件名字段（manifest name 不参与判定——改
+   * plugin.json 任何字段都会变 digest，version bump 即重审）。
+   */
   def computeDigest(dir: os.Path): Either[String, (String, Int)] =
     if !os.isDir(dir) then Left(s"not a directory: $dir")
     else
@@ -316,16 +395,19 @@ object PluginRegistry:
           md.update("\u0000".getBytes("UTF-8"))
         }
         Right((md.digest().map("%02x".format(_)).mkString, files.size))
-      catch
-        case e: Exception => Left(s"digest computation failed: ${e.getMessage}")
+      catch case e: Exception => Left(s"digest computation failed: ${e.getMessage}")
 
   /** §B.3 变更摘要用的逐文件 sha256 快照（relPath → hex）。 */
   private def fileManifest(dir: os.Path): Map[String, String] =
     try
-      os.walk(dir).filter(os.isFile).toList.flatMap { f =>
-        try Some(relPath(dir, f) -> sha256Hex(os.read.bytes(f)))
-        catch case _: Exception => None
-      }.toMap
+      os.walk(dir)
+        .filter(os.isFile)
+        .toList
+        .flatMap { f =>
+          try Some(relPath(dir, f) -> sha256Hex(os.read.bytes(f)))
+          catch case _: Exception => None
+        }
+        .toMap
     catch case _: Exception => Map.empty
 
   private def sha256Hex(bytes: Array[Byte]): String =
@@ -334,10 +416,12 @@ object PluginRegistry:
   private def relPath(root: os.Path, f: os.Path): String =
     f.relativeTo(root).toString
 
-  /** §4.1 路径围栏：路径解析符号链接后必须仍在插件根内（越界 → false）。
-    * 用于所有「按插件作者提供的路径读文件」的入口。不存在的路径无 symlink
-    * 逃逸面（toRealPath 会 NoSuchFile）→ 降级为词法归一判定（E2E 取证修复：
-    * 声明式 extensions 路径先存在性后围栏，不可把缺失文件误判为逃逸）。 */
+  /**
+   * §4.1 路径围栏：路径解析符号链接后必须仍在插件根内（越界 → false）。
+   * 用于所有「按插件作者提供的路径读文件」的入口。不存在的路径无 symlink
+   * 逃逸面（toRealPath 会 NoSuchFile）→ 降级为词法归一判定（E2E 取证修复：
+   * 声明式 extensions 路径先存在性后围栏，不可把缺失文件误判为逃逸）。
+   */
   private def containedUnder(root: os.Path, p: os.Path): Boolean =
     try
       val real = java.nio.file.Paths.get(p.toString).toRealPath()
@@ -352,8 +436,10 @@ object PluginRegistry:
         catch case _: Exception => false
       case _: Exception => false
 
-  /** §5.5 插件名约束：1-64 字符；a-z 0-9 - . ；首尾必须是字母数字；禁止
-    * 连续 `--` 或 `..`。 */
+  /**
+   * §5.5 插件名约束：1-64 字符；a-z 0-9 - . ；首尾必须是字母数字；禁止
+   * 连续 `--` 或 `..`。
+   */
   def validPluginName(n: String): Boolean =
     n.nonEmpty && n.length <= 64 &&
       n.forall(c => c.isDigit || (c >= 'a' && c <= 'z') || c == '-' || c == '.') &&
@@ -363,17 +449,21 @@ object PluginRegistry:
 
   // ── 扫描 ──────────────────────────────────────────────
 
-  /** mtime 缓存（进程内）：目录树（根 + 子树全部目录**与文件**）的绝对路径 mtime
-    * 快照。文件内容修改只变文件自身 mtime（父目录 mtime 不动）→ 签名必须含文件，
-    * 否则「改动即重审」（§B.8-3）会在缓存命中路径上漏检。键 = 绝对路径。 */
+  /**
+   * mtime 缓存（进程内）：目录树（根 + 子树全部目录**与文件**）的绝对路径 mtime
+   * 快照。文件内容修改只变文件自身 mtime（父目录 mtime 不动）→ 签名必须含文件，
+   * 否则「改动即重审」（§B.8-3）会在缓存命中路径上漏检。键 = 绝对路径。
+   */
   private case class Cache(sig: List[(String, Long)], snapshot: Snapshot)
   private val cache = new java.util.concurrent.atomic.AtomicReference[Option[Cache]](None)
 
-  /** 一次全量扫描的完整产出：可装载条目（含**被封禁**项——面板/审计需要看到 deny-list
-    * 命中者及其 block 元数据；无审批批 2026-09-13 后条目面不再有「待审」形态，受信与否
-    * 只取决于「盘上在位 ∧ 未被封禁」）+ 拒载清单（§B.2 左值）。可见性批（2026-09-10 P1
-    * 静默缩容）：拒载清单与条目同缓存，目录缺席注记 / 启动健康摘要 / 渲染共用同一次扫描
-    * （单点、零重复装载）。 */
+  /**
+   * 一次全量扫描的完整产出：可装载条目（含**被封禁**项——面板/审计需要看到 deny-list
+   * 命中者及其 block 元数据；无审批批 2026-09-13 后条目面不再有「待审」形态，受信与否
+   * 只取决于「盘上在位 ∧ 未被封禁」）+ 拒载清单（§B.2 左值）。可见性批（2026-09-10 P1
+   * 静默缩容）：拒载清单与条目同缓存，目录缺席注记 / 启动健康摘要 / 渲染共用同一次扫描
+   * （单点、零重复装载）。
+   */
   private final case class Snapshot(plugins: List[PluginDef], rejected: List[(String, String)])
 
   private def treeSig(dir: os.Path): List[(String, Long)] =
@@ -395,7 +485,8 @@ object PluginRegistry:
             val loaded = subDirs.map(d => loadPlugin(d))
             val snap = Snapshot(
               plugins = loaded.collect { case Right(p) => p },
-              rejected = loaded.collect { case Left((n, r)) => n -> r })
+              rejected = loaded.collect { case Left((n, r)) => n -> r }
+            )
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
             cache.set(Some(Cache(full, snap)))
             snap
@@ -408,33 +499,41 @@ object PluginRegistry:
   def listWithRejected(): IO[(List[PluginDef], List[(String, String)])] =
     snapshot().map(snap => (snap.plugins, snap.rejected))
 
-  /** 解析单个插件（内容面校验入口）。Left = 拒绝原因（包不存在 / **被封禁**）。
-    *
-    * 无审批批（2026-09-13 作者令「装了就是信任」）：装载不再要求人工审批记录 ⇒ 本方法
-    * 只剩两种 Left。「封禁」（deny-list，`plugins.revoked`）是唯一的点名阻止手段——
-    * 错误文案指向**存在的动作**（unblock），不再出现 `never approved (default-deny)`
-    * 与 approve 指引（无审批下那是死路）。 */
+  /**
+   * 解析单个插件（内容面校验入口）。Left = 拒绝原因（包不存在 / **被封禁**）。
+   *
+   * 无审批批（2026-09-13 作者令「装了就是信任」）：装载不再要求人工审批记录 ⇒ 本方法
+   * 只剩两种 Left。「封禁」（deny-list，`plugins.revoked`）是唯一的点名阻止手段——
+   * 错误文案指向**存在的动作**（unblock），不再出现 `never approved (default-deny)`
+   * 与 approve 指引（无审批下那是死路）。
+   */
   def resolve(name: String): IO[Either[String, PluginDef]] =
     scan().map { all =>
       all.find(_.name == name) match
         case None =>
-          Left(s"Plugin '$name' not found in registry (scan ${all.size} plugin(s)). " +
-            "Check the directory name under ~/.nebflow/plugins/. (PLUGIN_NOT_FOUND)")
+          Left(
+            s"Plugin '$name' not found in registry (scan ${all.size} plugin(s)). " +
+              "Check the directory name under ~/.nebflow/plugins/. (PLUGIN_NOT_FOUND)"
+          )
         case Some(p) if !p.trust.trusted =>
           val reason = p.trust match
             case TrustStatus.Blocked(_, _, r) => r
             case _ => "blocked"
-          Left(s"Plugin '$name' is BLOCKED (deny-list: $reason). " +
-            s"A blocked package is refused everywhere (no load, no dispatch, in-flight MCP stopped). " +
-            s"Unblock it if intended: Plugin panel, REST POST /api/plugins/$name/unblock, " +
-            "or CLI 'nebflow plugin unblock $name'. (PLUGIN_BLOCKED)")
+          Left(
+            s"Plugin '$name' is BLOCKED (deny-list: $reason). " +
+              s"A blocked package is refused everywhere (no load, no dispatch, in-flight MCP stopped). " +
+              s"Unblock it if intended: Plugin panel, REST POST /api/plugins/$name/unblock, " +
+              "or CLI 'nebflow plugin unblock $name'. (PLUGIN_BLOCKED)"
+          )
         case Some(p) => Right(p)
     }
 
-  /** 内容面可用性查询（**令 1 拆面** 2026-09-12 引入，无审批批 2026-09-13 口径更新）：
-    * 该包是否存在且内容面可用（= `resolve` 的正脸，不含任何派发许可判定）。
-    * 在位即信任后 = 「装载成功 ∧ 未被封禁」；派发面单点
-    * `PluginDispatchPolicy.effective(name, trusted)` 以此为唯一输入——两面唯一耦合点。 */
+  /**
+   * 内容面可用性查询（**令 1 拆面** 2026-09-12 引入，无审批批 2026-09-13 口径更新）：
+   * 该包是否存在且内容面可用（= `resolve` 的正脸，不含任何派发许可判定）。
+   * 在位即信任后 = 「装载成功 ∧ 未被封禁」；派发面单点
+   * `PluginDispatchPolicy.effective(name, trusted)` 以此为唯一输入——两面唯一耦合点。
+   */
   def contentTrusted(name: String): IO[Boolean] =
     scan().map(_.find(_.name == name).exists(_.trust.trusted))
 
@@ -450,7 +549,9 @@ object PluginRegistry:
       val n = e.last
       if !known.contains(n) then warnings += s"ignored unknown entry '$n' (forward-compat: skipped)"
       else if n == "org.nebflow" && os.isDir(e) then
-        os.list(e).foreach { f => if f.last != "tools.json" then warnings += s"ignored unknown org.nebflow entry '${f.last}'" }
+        os.list(e).foreach { f =>
+          if f.last != "tools.json" then warnings += s"ignored unknown org.nebflow entry '${f.last}'"
+        }
     }
 
     // manifest（plugin.json 必需，§5.1；路径围栏 §4.1）
@@ -467,30 +568,35 @@ object PluginRegistry:
         val c = json.hcursor
         // 未知 manifest 字段 → 宽容忽略 + 告警（§5.2/§B.8-5 前向兼容：报告且忽略、继续装载）
         json.asObject.foreach { obj =>
-          obj.keys.filterNot(KnownManifestKeys.contains).foreach(k =>
-            warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
+          obj.keys
+            .filterNot(KnownManifestKeys.contains)
+            .foreach(k => warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
         }
 
         // $schema：必填 + canonical（§5.2/§5.3——客户端只识别 canonical 值，
         // 不支持声明的版本 → 拒绝并报告 unsupported version）
         val schema = c.downField("$schema").as[String].toOption.getOrElse("")
-        if schema.isEmpty then
-          return Left(name0 -> "manifest missing required field '$schema' (§5.3)")
+        if schema.isEmpty then return Left(name0 -> "manifest missing required field '$schema' (§5.3)")
         if schema != CanonicalSchema then
-          return Left(name0 ->
-            (s"unsupported Agent Plugins version: '$schema' is not the canonical 1.0.0 identifier " +
-            s"($CanonicalSchema) — client MUST reject (§5.2) (PLUGIN_SCHEMA_UNSUPPORTED)"))
+          return Left(
+            name0 ->
+              (s"unsupported Agent Plugins version: '$schema' is not the canonical 1.0.0 identifier " +
+                s"($CanonicalSchema) — client MUST reject (§5.2) (PLUGIN_SCHEMA_UNSUPPORTED)")
+          )
 
         // name：必填 + §5.5 命名约束（违反 = manifest invalid → 拒载）
         val name = c.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
         if name.isEmpty then return Left(name0 -> "manifest missing required field 'name' (§5.3)")
         val pname = name.get
         if !validPluginName(pname) then
-          return Left(name0 ->
-            (s"manifest name '$pname' violates §5.5 constraints (1-64 chars; a-z 0-9 - .; " +
-            "alphanumeric start/end; no consecutive '--' or '..') (PLUGIN_NAME_ILLEGAL)"))
+          return Left(
+            name0 ->
+              (s"manifest name '$pname' violates §5.5 constraints (1-64 chars; a-z 0-9 - .; " +
+                "alphanumeric start/end; no consecutive '--' or '..') (PLUGIN_NAME_ILLEGAL)")
+          )
         // 目录名 ≠ manifest name → 以 manifest 为准并告警（防止引用歧义）
-        if pname != name0 then warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
+        if pname != name0 then
+          warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
 
         // §5.4 元数据字段：类型校验（违反 = fatal）；version 语义（审计项 2）：
         // 协议明示 MUST NOT 因非 semver 拒载（semver 仅 RECOMMENDED）→ 不做
@@ -518,15 +624,22 @@ object PluginRegistry:
         // §5.4 author object：仅 name/email/url 三个 string 字段（其余字段或
         // 值类型 → manifest invalid → 拒载）；渲染为可读字符串供审批清单。
         val author = c.downField("author").as[Option[Json]] match
-          case Left(_) => return Left(name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)")
+          case Left(_) =>
+            return Left(
+              name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)"
+            )
           case Right(None) => ""
           case Right(Some(a)) =>
             a.asObject match
-              case None => return Left(name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)")
+              case None =>
+                return Left(
+                  name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)"
+                )
               case Some(obj) =>
                 val bad = obj.keys.filterNot(Set("name", "email", "url")).nonEmpty ||
                   obj.toMap.exists { case (k, v) => Set("name", "email", "url")(k) && v.asString.isEmpty }
-                if bad then return Left(name0 -> "manifest field 'author' allows only name/email/url string fields (§5.4)")
+                if bad then
+                  return Left(name0 -> "manifest field 'author' allows only name/email/url string fields (§5.4)")
                 renderAuthor(obj)
 
         // skills/（§7.1：一级子目录含精确命名 SKILL.md 的常规文件 = 一个 skill；
@@ -591,6 +704,8 @@ object PluginRegistry:
                 warnings += s"org.nebflow/tools.json resolves outside the plugin root — tools extension ignored (§4.1)"
                 None
               else Some(d)
+          end match
+        end toolsPath
         val toolsExtension: List[String] = toolsPath match
           case None => Nil
           case Some(p) if !containedUnder(dir, p) =>
@@ -606,14 +721,16 @@ object PluginRegistry:
                   case Right(tools) =>
                     val illegal = tools.filterNot(BuiltinToolWhitelist.contains)
                     if illegal.nonEmpty then
-                      return Left(pname ->
-                        (s"org.nebflow/tools requests non-whitelisted tool(s): ${illegal.mkString(", ")}. " +
-                          s"Allowed builtin tools: ${BuiltinToolWhitelist.toList.sorted.mkString(", ")} (§B.6). (PLUGIN_TOOLS_ILLEGAL)"))
+                      return Left(
+                        pname ->
+                          (s"org.nebflow/tools requests non-whitelisted tool(s): ${illegal.mkString(", ")}. " +
+                            s"Allowed builtin tools: ${BuiltinToolWhitelist.toList.sorted.mkString(", ")} (§B.6). (PLUGIN_TOOLS_ILLEGAL)")
+                      )
                     tools
                   case Left(err) =>
                     warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
                     Nil
-              end match
+            end match
 
         // 装载校验（裁定 12）：skills 与 mcp 至少其一
         if skills.isEmpty && mcpServers.isEmpty then
@@ -645,30 +762,34 @@ object PluginRegistry:
           case Some(b) => TrustStatus.Blocked(at = b.at, by = b.by, reason = b.reason)
           case None => TrustStatus.Trusted(approvedAt = trustRec.map(_.approvedAt).getOrElse(0L), digest = digest)
 
-        Right(PluginDef(
-          name = pname,
-          version = version,
-          description = description,
-          author = author,
-          homepage = homepage,
-          repository = repository,
-          license = license,
-          keywords = keywords,
-          skills = skills,
-          mcpServers = mcpServers,
-          toolsExtension = toolsExtension,
-          digest = digest,
-          fileCount = fileCount,
-          warnings = warnings.toList,
-          trust = trust,
-          dir = dir.toString,
-          contentChanged = contentChanged
-        ))
+        Right(
+          PluginDef(
+            name = pname,
+            version = version,
+            description = description,
+            author = author,
+            homepage = homepage,
+            repository = repository,
+            license = license,
+            keywords = keywords,
+            skills = skills,
+            mcpServers = mcpServers,
+            toolsExtension = toolsExtension,
+            digest = digest,
+            fileCount = fileCount,
+            warnings = warnings.toList,
+            trust = trust,
+            dir = dir.toString,
+            contentChanged = contentChanged
+          )
+        )
     end match
   end loadPlugin
 
-  /** §5.4 string 元数据字段：present 必须是 string（类型违规 = manifest invalid，
-    * fatal）；absent → ""。 */
+  /**
+   * §5.4 string 元数据字段：present 必须是 string（类型违规 = manifest invalid，
+   * fatal）；absent → ""。
+   */
   private def stringField(c: io.circe.HCursor, field: String): Either[String, String] =
     c.downField(field).as[Option[String]] match
       case Right(v) => Right(v.getOrElse(""))
@@ -686,8 +807,10 @@ object PluginRegistry:
       if url.nonEmpty then s"($url)" else ""
     ).filter(_.nonEmpty).mkString(" ")
 
-  /** agentskills.io 一致性门（§7.1 skip+report）：frontmatter 须含非空 name 与
-    * description。 */
+  /**
+   * agentskills.io 一致性门（§7.1 skip+report）：frontmatter 须含非空 name 与
+   * description。
+   */
   private def readConformantSkill(dir: os.Path, f: os.Path): Option[PluginSkill] =
     try
       val fm = frontmatter(os.read(f))
@@ -698,11 +821,17 @@ object PluginRegistry:
         case _ => None
     catch case _: Exception => None
 
-  /** §7.2.1 mcp.json 闭合 schema：{$schema(canonical), mcpServers(object)} 顶层；
-    * 缺失/非 canonical $schema、mcpServers 缺失/非 object → MCP 组件整体 invalid
-    * （告警 + 无 MCP，插件继续装载，§6.2 边界）；未知顶层字段 → 告警 + 忽略
-    * （前向兼容）。server entry 逐条校验（§7.2.2 隔离边界：单条违规只跳该条）。 */
-  private def parseMcpJson(mcpPath: os.Path, dir: os.Path, warnings: mutable.ListBuffer[String]): Map[String, McpServerConfig] =
+  /**
+   * §7.2.1 mcp.json 闭合 schema：{$schema(canonical), mcpServers(object)} 顶层；
+   * 缺失/非 canonical $schema、mcpServers 缺失/非 object → MCP 组件整体 invalid
+   * （告警 + 无 MCP，插件继续装载，§6.2 边界）；未知顶层字段 → 告警 + 忽略
+   * （前向兼容）。server entry 逐条校验（§7.2.2 隔离边界：单条违规只跳该条）。
+   */
+  private def parseMcpJson(
+    mcpPath: os.Path,
+    dir: os.Path,
+    warnings: mutable.ListBuffer[String]
+  ): Map[String, McpServerConfig] =
     io.circe.parser.parse(os.read(mcpPath)) match
       case Left(err) =>
         warnings += s"mcp.json unparseable (${err.message}) — MCP component invalid, skipped (§7.2.1)"
@@ -713,8 +842,9 @@ object PluginRegistry:
       case Right(j) =>
         val c = j.hcursor
         j.asObject.foreach { obj =>
-          obj.keys.filterNot(k => k == "$schema" || k == "mcpServers").foreach(k =>
-            warnings += s"mcp.json unknown top-level field '$k' ignored (forward-compat)")
+          obj.keys
+            .filterNot(k => k == "$schema" || k == "mcpServers")
+            .foreach(k => warnings += s"mcp.json unknown top-level field '$k' ignored (forward-compat)")
         }
         val schema = c.downField("$schema").as[String].toOption.getOrElse("")
         if schema != CanonicalMcpSchema then
@@ -729,14 +859,24 @@ object PluginRegistry:
             case Right(entries) =>
               // §10.1：mcp.json 与 plugin.json 的 $schema 版本须一致（同为
               // canonical 1.0.0 时天然一致——版本不同在此已拦）
-              entries.toList.sortBy(_._1).flatMap { case (sname, sj) =>
-                validateServerEntry(sname, sj, dir, warnings).map(cfg => sname -> cfg)
-              }.toMap
+              entries.toList
+                .sortBy(_._1)
+                .flatMap { case (sname, sj) =>
+                  validateServerEntry(sname, sj, dir, warnings).map(cfg => sname -> cfg)
+                }
+                .toMap
 
-  /** §7.2.2 单 server entry 校验（schema 闭合变体 + 规范语义）。
-    * 违规 → 告警 + 跳过该 entry（其余 entry 与组件继续）。 */
+        end if
+
+  /**
+   * §7.2.2 单 server entry 校验（schema 闭合变体 + 规范语义）。
+   * 违规 → 告警 + 跳过该 entry（其余 entry 与组件继续）。
+   */
   private def validateServerEntry(
-    name: String, sj: Json, dir: os.Path, warnings: mutable.ListBuffer[String]
+    name: String,
+    sj: Json,
+    dir: os.Path,
+    warnings: mutable.ListBuffer[String]
   ): Option[McpServerConfig] =
     def invalid(why: String): Option[McpServerConfig] =
       warnings += s"mcp server '$name' invalid — skipped: $why (§7.2.2)"
@@ -783,7 +923,8 @@ object PluginRegistry:
           case None => ()
           case Some(w) =>
             val ok = w.startsWith("./") || w.startsWith("${PLUGIN_ROOT}") || w.startsWith("${PLUGIN_DATA}")
-            if !ok then return invalid(s"'cwd' '$w' must start with './', '${"$"}{PLUGIN_ROOT}' or '${"$"}{PLUGIN_DATA}'")
+            if !ok then
+              return invalid(s"'cwd' '$w' must start with './', '${"$"}{PLUGIN_ROOT}' or '${"$"}{PLUGIN_DATA}'")
             if w.startsWith("./") then
               if resolvePluginRelative(dir, w).isEmpty then
                 return invalid(s"'cwd' '$w' escapes the plugin root (§4.1 containment)")
@@ -791,14 +932,25 @@ object PluginRegistry:
           case w if w.startsWith("./") => s"${"$"}{PLUGIN_ROOT}/${w.stripPrefix("./")}"
           case w => w
         }
-        Some(McpServerConfig(
-          command = Some(resolvedCommand), args = args, env = env,
-          url = None, headers = None, enabled = None, timeoutMs = None, cwd = cwd))
+        Some(
+          McpServerConfig(
+            command = Some(resolvedCommand),
+            args = args,
+            env = env,
+            url = None,
+            headers = None,
+            enabled = None,
+            timeoutMs = None,
+            cwd = cwd
+          )
+        )
       case Some("streamable-http") | Some("sse") =>
         val url = c.downField("url").as[String].toOption.getOrElse("")
         if url.isEmpty then return invalid(s"'url' required for transport '${tpe.get}'")
         if !validMcpUrl(url) then
-          return invalid(s"'url' must be an absolute http/https URL without userinfo or fragment; non-loopback hosts require https")
+          return invalid(
+            s"'url' must be an absolute http/https URL without userinfo or fragment; non-loopback hosts require https"
+          )
         if tpe.get == "sse" then
           // legacy HTTP+SSE wire protocol 本客户端未实现（OPTIONAL，§7.2.2-4）：
           // MUST skip + report——显式跳过并留告警，非静默。
@@ -808,14 +960,26 @@ object PluginRegistry:
         val headers = c.downField("headers").as[Option[Map[String, String]]] match
           case Right(v) => v
           case Left(_) => return invalid("'headers' must be an object of string values")
-        Some(McpServerConfig(
-          command = None, args = None, env = None,
-          url = Some(url), headers = headers, enabled = None, timeoutMs = None, cwd = None))
+        Some(
+          McpServerConfig(
+            command = None,
+            args = None,
+            env = None,
+            url = Some(url),
+            headers = headers,
+            enabled = None,
+            timeoutMs = None,
+            cwd = None
+          )
+        )
       case Some(other) => invalid(s"unknown transport type '$other' (expected stdio | streamable-http | sse)")
+    end match
   end validateServerEntry
 
-  /** §7.2.2 URL 语义：绝对 http/https；无 userinfo；无 fragment；
-    * 非 loopback host 必须 https。 */
+  /**
+   * §7.2.2 URL 语义：绝对 http/https；无 userinfo；无 fragment；
+   * 非 loopback host 必须 https。
+   */
   private def validMcpUrl(u: String): Boolean =
     try
       val uri = java.net.URI.create(u)
@@ -837,9 +1001,12 @@ object PluginRegistry:
     else ""
 
   private def extractField(fm: String, field: String): Option[String] =
-    fm.split("\n").map(_.trim)
+    fm.split("\n")
+      .map(_.trim)
       .find(l => l.startsWith(s"$field:") || l.startsWith(s"$field :"))
-      .map { l => val i = l.indexOf(':'); l.substring(i + 1).trim }
+      .map { l =>
+        val i = l.indexOf(':'); l.substring(i + 1).trim
+      }
 
   /** 插件相对路径（./ 前缀）→ 插件根内绝对路径；越界/非法形态 → None（§4.1）。 */
   private def resolvePluginRelative(dir: os.Path, rel: String): Option[os.Path] =
@@ -863,10 +1030,12 @@ object PluginRegistry:
       yield TrustRecord(sha, at, files)
     }
 
-  /** 信任记录落库 digest（approve 时刻的目录 fingerprint；之后目录漂移不影响记录本身）。
-    * 与 TrustStatus（现算状态；无审批批 2026-09-13 后在位即受信、漂移只降级为
-    * `contentChanged` 可见性）互补——需要「approve 时刻基准」做对比仲裁的场景
-    * （seed reconcile 判「用户是否改过」）用本方法。 */
+  /**
+   * 信任记录落库 digest（approve 时刻的目录 fingerprint；之后目录漂移不影响记录本身）。
+   * 与 TrustStatus（现算状态；无审批批 2026-09-13 后在位即受信、漂移只降级为
+   * `contentChanged` 可见性）互补——需要「approve 时刻基准」做对比仲裁的场景
+   * （seed reconcile 判「用户是否改过」）用本方法。
+   */
   def trustRecordDigest(name: String): Option[String] =
     trustRecord(name).map(_.sha256)
 
@@ -874,19 +1043,23 @@ object PluginRegistry:
     val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
     if !os.exists(configPath) then Map.empty
     else
-      io.circe.parser.parse(os.read(configPath)).toOption
+      io.circe.parser
+        .parse(os.read(configPath))
+        .toOption
         .flatMap(_.hcursor.downField("plugins").downField("trust").as[Map[String, Json]].toOption)
         .getOrElse(Map.empty)
 
-  /** 审批记录写入（**无审批批后不再决定装载**，2026-09-13）：计算当前 digest +
-    * 逐文件快照写入 trust 表。两个用途：① 审计（面板 `changeSummary` 逐文件 diff 的
-    * 基准）；② **seed 覆盖仲裁基准**（`trustRecordDigest` ⇒ `SeedService.reconcilePlugin`
-    * 的「干净快照」判据）。调用点：seed 首装 / 种子镜像刷新 / 面板 / REST / CLI。
-    *
-    * ⚠️ **已知代价（本批不修，设计 §3.3 ① / C5 登记）**：审批记录 = 仲裁基准 ⇒ 任何
-    * approve 都会把基准前移到当前 digest，从而改变 seed reconcile 的判定结果（面板/CLI
-    * 手动 approve 一个用户改过的默认集包，会让下一次 boot 的种子镜像覆盖视为「干净」）。
-    * 无审批批下 approve 不再是必经动作，此风险面因此收窄但未消失。 */
+  /**
+   * 审批记录写入（**无审批批后不再决定装载**，2026-09-13）：计算当前 digest +
+   * 逐文件快照写入 trust 表。两个用途：① 审计（面板 `changeSummary` 逐文件 diff 的
+   * 基准）；② **seed 覆盖仲裁基准**（`trustRecordDigest` ⇒ `SeedService.reconcilePlugin`
+   * 的「干净快照」判据）。调用点：seed 首装 / 种子镜像刷新 / 面板 / REST / CLI。
+   *
+   * ⚠️ **已知代价（本批不修，设计 §3.3 ① / C5 登记）**：审批记录 = 仲裁基准 ⇒ 任何
+   * approve 都会把基准前移到当前 digest，从而改变 seed reconcile 的判定结果（面板/CLI
+   * 手动 approve 一个用户改过的默认集包，会让下一次 boot 的种子镜像覆盖视为「干净」）。
+   * 无审批批下 approve 不再是必经动作，此风险面因此收窄但未消失。
+   */
   def approve(name: String): IO[Either[String, String]] =
     scan().flatMap { all =>
       all.find(_.name == name) match
@@ -894,15 +1067,24 @@ object PluginRegistry:
         case Some(p) =>
           val now = System.currentTimeMillis() / 1000L
           val files = fileManifest(os.Path(p.dir))
-          writeTrustEntry(name, Json.obj(
-            "sha256" -> p.digest.asJson, "approvedAt" -> now.asJson, "scope" -> "all".asJson,
-            "files" -> files.asJson
-          )).map {
+          writeTrustEntry(
+            name,
+            Json.obj(
+              "sha256" -> p.digest.asJson,
+              "approvedAt" -> now.asJson,
+              "scope" -> "all".asJson,
+              "files" -> files.asJson
+            )
+          ).map {
             case Right(_) =>
               cache.set(None) // 强制下个访问重扫 → contentChanged / changeSummary 刷新
-              logger.infoSync(s"Plugin '$name' audit record refreshed (digest ${p.digest.take(12)}…, ${p.fileCount} file(s), ${files.size} file snapshot(s))")
-              Right(s"Plugin '$name' audit record recorded — digest ${p.digest.take(16)}… (version ${p.version}); " +
-                "loading is not gated by records any more (presence = trust), this record feeds the panel change summary and the seed-reconcile baseline")
+              logger.infoSync(
+                s"Plugin '$name' audit record refreshed (digest ${p.digest.take(12)}…, ${p.fileCount} file(s), ${files.size} file snapshot(s))"
+              )
+              Right(
+                s"Plugin '$name' audit record recorded — digest ${p.digest.take(16)}… (version ${p.version}); " +
+                  "loading is not gated by records any more (presence = trust), this record feeds the panel change summary and the seed-reconcile baseline"
+              )
             case l => l.map(_ => "")
           }
     }
@@ -910,13 +1092,14 @@ object PluginRegistry:
   /** 手动清缓存（测试钩子）。 */
   def invalidateCache(): Unit = cache.set(None)
 
-  /** §B.3 外部导入（协议符合度批补齐；无审批批 2026-09-13 口径更新）：
-    * `nebflow plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
-    * → **落盘即生效**（在位即信任：下个扫描周期即可派发，无需审批动作）。
-    * 同名已存在 → 拒绝（不覆盖）。
-    * git 来源（http(s) 开头、git@ 开头或以 .git 结尾）走 `git clone --depth 1`；
-    * 其余按本地目录 copy。
-    */
+  /**
+   * §B.3 外部导入（协议符合度批补齐；无审批批 2026-09-13 口径更新）：
+   * `nebflow plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
+   * → **落盘即生效**（在位即信任：下个扫描周期即可派发，无需审批动作）。
+   * 同名已存在 → 拒绝（不覆盖）。
+   * git 来源（http(s) 开头、git@ 开头或以 .git 结尾）走 `git clone --depth 1`；
+   * 其余按本地目录 copy。
+   */
   def installFrom(source: String): IO[Either[String, String]] =
     IO.blocking(installFromSync(source))
 
@@ -929,8 +1112,8 @@ object PluginRegistry:
       if isGit then
         val res = os.proc("git", "clone", "--depth", "1", source, staged).call(check = false)
         if res.exitCode != 0 then
-          val errTail = scala.util.Try(res.err.text()).toOption.getOrElse("")
-            .linesIterator.toList.takeRight(3).mkString("; ")
+          val errTail =
+            scala.util.Try(res.err.text()).toOption.getOrElse("").linesIterator.toList.takeRight(3).mkString("; ")
           return Left(s"git clone failed (exit ${res.exitCode}): $errTail")
       else
         val src = os.Path(source, os.pwd)
@@ -943,8 +1126,10 @@ object PluginRegistry:
           return Left(
             s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
               s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
-              s"itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin').")
+              s"itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
+          )
         os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
+      end if
 
       // manifest name 为准（§5.5 校验复用装载规则）
       val manifest = staged / "plugin.json"
@@ -965,23 +1150,33 @@ object PluginRegistry:
                 os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
                 cache.set(None)
                 logger.infoSync(s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)")
-                Right(s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
-                  s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'.")
+                Right(
+                  s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
+                    s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'."
+                )
+          end match
+      end match
     finally
       try os.remove.all(tmp)
       catch case _: Exception => ()
 
-  /** canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。
-    *
-    * 规范化口径（2026-09-13 批，#344）：主判据 = `toRealPath` —— **两侧都先 canonical 化**
-    * （相对基准 = `os.pwd`，因为 `os.Path(source, os.pwd)` 以 cwd 为基准解析），因此
-    * 符号链接（macOS `/tmp` → `/private/tmp`）与 `.`/`..`/重复分隔符都被消除后再比对；
-    * `toRealPath` 失败（权限/竞态等 IO 异常）回落 `normalize`（纯词法，仍消除
-    * `.`/`./`/`..`，不解符号链接）⇒ 退化形态（点路径）仍被拦。两侧都拿不到 canonical
-    * 形态（极端 IO 异常）⇒ **不拦**（保持既有行为：非破坏性拷贝 + `finally` 清理）。
-    * 字符串空判（`source.isEmpty`，CLI 侧既有守卫）与 canonical 比对是两层：点路径非空串。
-    * `os.Path("", os.pwd)`（空串形态，CLI 侧不可达）在规范化后同样命中本判据——那是同一
-    * 判据的自然覆盖面，不是另立的第二道守卫。 */
+    end try
+
+  end installFromSync
+
+  /**
+   * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。
+   *
+   * 规范化口径（2026-09-13 批，#344）：主判据 = `toRealPath` —— **两侧都先 canonical 化**
+   * （相对基准 = `os.pwd`，因为 `os.Path(source, os.pwd)` 以 cwd 为基准解析），因此
+   * 符号链接（macOS `/tmp` → `/private/tmp`）与 `.`/`..`/重复分隔符都被消除后再比对；
+   * `toRealPath` 失败（权限/竞态等 IO 异常）回落 `normalize`（纯词法，仍消除
+   * `.`/`./`/`..`，不解符号链接）⇒ 退化形态（点路径）仍被拦。两侧都拿不到 canonical
+   * 形态（极端 IO 异常）⇒ **不拦**（保持既有行为：非破坏性拷贝 + `finally` 清理）。
+   * 字符串空判（`source.isEmpty`，CLI 侧既有守卫）与 canonical 比对是两层：点路径非空串。
+   * `os.Path("", os.pwd)`（空串形态，CLI 侧不可达）在规范化后同样命中本判据——那是同一
+   * 判据的自然覆盖面，不是另立的第二道守卫。
+   */
   private[plugin] def isCwdOrAncestor(src: os.Path): Boolean =
     (for
       cwd <- canonicalPath(os.pwd)
@@ -1030,19 +1225,24 @@ object PluginRegistry:
   // 缺席（不拦装载）⇒ 从缺席分类移到独立的**非拦截可见性**段（目录段尾注记 +
   // 健康摘要各一行 + API 字段 `contentChanged`）。
 
-  /** 目录缺席分类（可见性口径，不参与任何装载/内容面判定）。无审批批后只剩两类：
-    * 装载失败 + 封禁——「从未审批」「digest 漂移」两个分类随 default-deny 一起消亡。 */
+  /**
+   * 目录缺席分类（可见性口径，不参与任何装载/内容面判定）。无审批批后只剩两类：
+   * 装载失败 + 封禁——「从未审批」「digest 漂移」两个分类随 default-deny 一起消亡。
+   */
   enum AbsenceKind(val label: String):
     /** 装载失败：manifest/校验拒载（§B.2 装载校验）。 */
     case LoadFailed extends AbsenceKind("装载失败")
+
     /** 封禁：命中 `plugins.revoked` deny-list（不进目录 / 拒装载 / 停飞）。 */
     case Blocked extends AbsenceKind("已封禁")
 
   /** 一条缺席记录：包名 + 分类 + 原因（原因文本与注册表/拒载消息同源，不另造文案）。 */
   final case class Absence(name: String, kind: AbsenceKind, reason: String)
 
-  /** 缺席清单 = 在 plugins/ 下存在、但不进 Plugin Catalog 的包：装载失败 + 封禁。
-    * 分类依据权威来源（拒载左值 / 封禁表命中），不做原因字符串匹配。 */
+  /**
+   * 缺席清单 = 在 plugins/ 下存在、但不进 Plugin Catalog 的包：装载失败 + 封禁。
+   * 分类依据权威来源（拒载左值 / 封禁表命中），不做原因字符串匹配。
+   */
   private def absencesOf(snap: Snapshot): List[Absence] =
     val rejected = snap.rejected.sortBy(_._1).map { case (n, r) =>
       Absence(n, AbsenceKind.LoadFailed, r)
@@ -1068,8 +1268,10 @@ object PluginRegistry:
     case AbsenceKind.LoadFailed => "load-failed"
     case AbsenceKind.Blocked => "blocked"
 
-  /** 目录缺席注记（段尾聚合，唯一实现）：只出**非零**分类计数——本注记进分发器
-    * prompt（Token 经济优先），包名+原因清单由启动健康摘要落日志。零缺席 → ""。 */
+  /**
+   * 目录缺席注记（段尾聚合，唯一实现）：只出**非零**分类计数——本注记进分发器
+   * prompt（Token 经济优先），包名+原因清单由启动健康摘要落日志。零缺席 → ""。
+   */
   private def absenceNote(absences: List[Absence]): String =
     if absences.isEmpty then ""
     else
@@ -1078,20 +1280,24 @@ object PluginRegistry:
         .map(k => s"${k.label} ${absences.count(_.kind == k)}")
       s"另有 ${absences.size} 个插件未载入（${counts.mkString(" / ")}）"
 
-  /** 「内容已变更」目录段尾注记（非拦截可见性，C2 ②）：**点名**列出（内容被替换后
-    * 用户/审计需要能指名核对）。无变更 → ""。
-    * （2026-09-14 面板收敛批：原文「与『已关闭·禁派发』注记同款口径」已失效——那条
-    * 注记已删除，被关插件在目录里完全不可见；本注记是段尾**唯一**的点名行。） */
+  /**
+   * 「内容已变更」目录段尾注记（非拦截可见性，C2 ②）：**点名**列出（内容被替换后
+   * 用户/审计需要能指名核对）。无变更 → ""。
+   * （2026-09-14 面板收敛批：原文「与『已关闭·禁派发』注记同款口径」已失效——那条
+   * 注记已删除，被关插件在目录里完全不可见；本注记是段尾**唯一**的点名行。）
+   */
   private def contentChangedNote(changed: List[String]): String =
     if changed.isEmpty then ""
     else
       s"另有 ${changed.size} 个插件内容与上次记录的版本不同（**不拦截装载**，仅提示核对）：" +
         changed.mkString(", ")
 
-  /** 启动/重扫健康摘要（P1 可见性 + 无审批批非拦截可见性）：首行 = 总包数 / 载入数 /
-    * 目录可见数 / 缺席分类计数，随后逐条缺席明细（一行一条 `[分类] 包名: 原因`）与逐条
-    * 内容变更明细（`[content-changed] 包名: 记录 digest → 当前 digest`）。
-    * 零缺席且零内容变更 → None（干净场景零噪音）；`plugins.enabled=false` → None。 */
+  /**
+   * 启动/重扫健康摘要（P1 可见性 + 无审批批非拦截可见性）：首行 = 总包数 / 载入数 /
+   * 目录可见数 / 缺席分类计数，随后逐条缺席明细（一行一条 `[分类] 包名: 原因`）与逐条
+   * 内容变更明细（`[content-changed] 包名: 记录 digest → 当前 digest`）。
+   * 零缺席且零内容变更 → None（干净场景零噪音）；`plugins.enabled=false` → None。
+   */
   def healthSummary(): IO[Option[String]] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure(None)
@@ -1106,7 +1312,8 @@ object PluginRegistry:
       val visible = snap.plugins.count(_.trust.trusted)
       val counts = AbsenceKind.values.toList
         .filter(k => absences.count(_.kind == k) > 0)
-        .map(k => s"${kindSlug(k)} ${absences.count(_.kind == k)}").mkString(" / ")
+        .map(k => s"${kindSlug(k)} ${absences.count(_.kind == k)}")
+        .mkString(" / ")
       val head =
         s"${snap.plugins.size + snap.rejected.size} package(s) on disk, ${snap.plugins.size} loaded, " +
           s"$visible catalog-visible, ${absences.size} absent" +
@@ -1122,14 +1329,22 @@ object PluginRegistry:
       val details = absences.map(a => s"  [${kindSlug(a.kind)}] ${a.name}: ${a.reason}") ++ changedDetails
       Some((head :: details).mkString("\n"))
 
-  /** 健康摘要输出记账：同状态只出一次（重扫 tick 30s 一次，不重复刷屏），状态变化
-    * 后重新输出，回到干净后复位（异常复现可再出）。 */
+    end if
+
+  end healthSummaryOf
+
+  /**
+   * 健康摘要输出记账：同状态只出一次（重扫 tick 30s 一次，不重复刷屏），状态变化
+   * 后重新输出，回到干净后复位（异常复现可再出）。
+   */
   private val healthLogState =
     new java.util.concurrent.atomic.AtomicReference[(Int, Option[String])]((0, None))
 
-  /** 输出健康摘要（有异常才出，WARN 级；best-effort——调用方自担错误兜底）。
-    * 挂接点：GatewayMain 启动（trigger "startup"）与插件信任重扫完成
-    * （NodeEngine.revalidatePluginTrust，TtlTick 30s，trigger "rescan"）。 */
+  /**
+   * 输出健康摘要（有异常才出，WARN 级；best-effort——调用方自担错误兜底）。
+   * 挂接点：GatewayMain 启动（trigger "startup"）与插件信任重扫完成
+   * （NodeEngine.revalidatePluginTrust，TtlTick 30s，trigger "rescan"）。
+   */
   def logHealthSummary(trigger: String): IO[Unit] =
     healthSummary().flatMap {
       case None =>
@@ -1151,15 +1366,19 @@ object PluginRegistry:
 
   // ── 分发器目录注入（§B.4 第 2 步；描述单源批 2026-09-10 双渲染器收敛）─────
 
-  /** Plugin Catalog 段头——双渲染器单点：分发器注入段（DispatcherContextCatalog
-    * 委托本文件）与调试 REST GET /plugins/catalog 同字节输出（creator spec D10
-    * 收敛）；分发器 system.md「Plugin Catalog 认知」按此头部识别目录段。 */
+  /**
+   * Plugin Catalog 段头——双渲染器单点：分发器注入段（DispatcherContextCatalog
+   * 委托本文件）与调试 REST GET /plugins/catalog 同字节输出（creator spec D10
+   * 收敛）；分发器 system.md「Plugin Catalog 认知」按此头部识别目录段。
+   */
   val CatalogHeader =
     "# Plugin Catalog（可分配能力包，NodeEdit 的 plugins 参数按 name 引用；能力句 = 该插件让节点具备什么能力）"
 
-  /** 单插件目录行（渲染规则单点）。描述单源批（作者 2026-09-10 09:30 裁定）：
-    * 内容源 = manifest `description`（缺省回落 name）；`capability` 键已 deprecated，
-    * 渲染层忽略。尾缀保留 [skills | mcp | tools] 结构清单——工具面本身是能力信号。 */
+  /**
+   * 单插件目录行（渲染规则单点）。描述单源批（作者 2026-09-10 09:30 裁定）：
+   * 内容源 = manifest `description`（缺省回落 name）；`capability` 键已 deprecated，
+   * 渲染层忽略。尾缀保留 [skills | mcp | tools] 结构清单——工具面本身是能力信号。
+   */
   def catalogLine(p: PluginDef): String =
     val desc = if p.description.isEmpty then p.name else p.description
     val skills = if p.skills.isEmpty then "-" else p.skills.map(s => s.id.split('/')(1)).mkString(", ")
@@ -1167,17 +1386,19 @@ object PluginRegistry:
     val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
     s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
 
-  /** Plugin Catalog 段（对齐 skillCatalog order 800 先例）。**被封禁**的包不出现
-    * （内容面判定第一段过滤，无审批批 2026-09-13 后 = 「装载成功 ∧ 未被封禁」）。
-    * 空段判定（可见性批改口径）：**无缺席注记时**才可能为空——无可用插件且无缺席包
-    * （盘上无插件）/ flag 关 → ""；若一个插件都没进目录但盘上有缺席包，则只注入段头 +
-    * 缺席注记（目录缩容到 0 也不许无声）。本方法是插件目录渲染的唯一实现（分发器注入与
-    * 调试预览共用，双渲染器重复实现已收敛于此）。
-    *
-    * 段尾注记两类（都不是插件行）：缺席（装载失败/封禁）+ **内容已变更**（非拦截可见性，
-    * 包**仍在本目录**里，只是加一行提示——不得与缺席注记混读）。
-    * 2026-09-14 面板收敛批（作者三裁之批一）：原第三类「已关闭·禁派发」点名注记**删除**
-    * ——关闭的包在目录里**完全不可见**（能力行与点名行皆无）；S5 过滤效果不变。 */
+  /**
+   * Plugin Catalog 段（对齐 skillCatalog order 800 先例）。**被封禁**的包不出现
+   * （内容面判定第一段过滤，无审批批 2026-09-13 后 = 「装载成功 ∧ 未被封禁」）。
+   * 空段判定（可见性批改口径）：**无缺席注记时**才可能为空——无可用插件且无缺席包
+   * （盘上无插件）/ flag 关 → ""；若一个插件都没进目录但盘上有缺席包，则只注入段头 +
+   * 缺席注记（目录缩容到 0 也不许无声）。本方法是插件目录渲染的唯一实现（分发器注入与
+   * 调试预览共用，双渲染器重复实现已收敛于此）。
+   *
+   * 段尾注记两类（都不是插件行）：缺席（装载失败/封禁）+ **内容已变更**（非拦截可见性，
+   * 包**仍在本目录**里，只是加一行提示——不得与缺席注记混读）。
+   * 2026-09-14 面板收敛批（作者三裁之批一）：原第三类「已关闭·禁派发」点名注记**删除**
+   * ——关闭的包在目录里**完全不可见**（能力行与点名行皆无）；S5 过滤效果不变。
+   */
   def renderCatalog(): IO[String] =
     PluginsConfig.enabled.flatMap {
       case false => IO.pure("")
