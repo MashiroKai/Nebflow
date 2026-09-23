@@ -267,7 +267,9 @@ class AnthropicAdapter(
     *     budget, which is precisely what was removed.
     *
     * No per-model output-limit metadata exists to derive a tighter value from:
-    * `ModelRegistry.ModelEntry` carries only `vision` + `capabilities`.
+    * `ModelRegistry.ModelEntry` carries `vision` + `capabilities` (the former is
+    * a human annotation only since visionfix 甲 — it no longer feeds the send
+    * path).
     */
   private[providers] def maxTokensFor(params: SendMessageParams): Int =
     val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)

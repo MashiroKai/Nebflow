@@ -178,11 +178,10 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
             baseUrl = "http://127.0.0.1:19121",
             apiKey = "k",
             protocol = LlmProtocol.Anthropic,
-            models = List(ModelConfig("m1", contextWindow = 8192, vision = Some(false)))
+            models = List(ModelConfig("m1", contextWindow = 8192))
           ),
           model = "m1",
-          contextWindow = 8192,
-          vision = false
+          contextWindow = 8192
         )
         overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map("s1" -> staleCandidate))
         attempts <- Ref.of[IO, List[FallbackAttempt]](Nil)

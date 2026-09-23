@@ -272,27 +272,28 @@ object LlmInterface:
         setAbort(key, abort).as(Some(AttemptTransport(backend, release)))
       }
 
-  // ── Vision PreCheck helpers ────────────────────────────
+  // ── Vision observability helper ────────────────────────
 
-  /** Check if any message in the list contains an Image content block. */
-  private[llm] def hasImage(messages: List[Message]): Boolean =
+  /** True when the request payload carries at least one `ContentBlock.Image`.
+    *
+    * visionfix (甲): this REPLACES the former `hasImage` + `stripImages`
+    * ("Vision PreCheck helpers") pair. Both were deleted with the batch: the
+    * strip mechanism sent a text placeholder instead of the image, and its only
+    * reason to exist was the keyword-heuristic demotion chain, also deleted.
+    *
+    * What survives is the OBSERVABILITY half — a structured marker on the
+    * existing LLM log line so "this turn really carried an image" stays
+    * machine-assertable (author ruling: log-side marker only, zero new
+    * user-facing text). This is a pure predicate; nothing is rewritten.
+    *
+    * Public (not `private[llm]`) because the send-point callers that must report
+    * it live in `nebflow.agent` and `nebflow.gateway`; the former
+    * `private[llm] hasImage` was cross-package invisible (plan card ③-2 (ii)).
+    */
+  def hadImageIn(messages: List[Message]): Boolean =
     messages.exists(_.content match
       case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.Image])
       case Left(_) => false)
-
-  /** Replace all Image blocks with a text placeholder (for non-vision models). */
-  private[llm] def stripImages(messages: List[Message]): List[Message] =
-    messages.map { msg =>
-      msg.content match
-        case Right(blocks) =>
-          val stripped = blocks.map {
-            case ContentBlock.Image(_, _) =>
-              ContentBlock.Text("[image omitted: model does not support vision]")
-            case other => other
-          }
-          msg.copy(content = Right(stripped))
-        case Left(_) => msg
-    }
 
   /**
    * Two-phase stream watchdog:
@@ -431,7 +432,8 @@ object LlmInterface:
         val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
         val registry = ProviderRegistry(cfgRef, backend)
         val healthMonitor = ProviderHealthMonitor(registry)
-        val emptyTracker = EmptyCompletionTracker.shared
+        // visionfix (甲): `EmptyCompletionTracker` was removed with the batch
+        // (keyword heuristic + runtime demotion + models.json write-back).
         val result =
 
           /** WebSearch P0: provider-native search injection for one candidate
@@ -488,19 +490,14 @@ object LlmInterface:
                           )
                         case _ => t
                     }
-                    // PreSendChecker: strip images for non-vision models.
-                    // Also consult the runtime vision override from EmptyCompletionTracker,
-                    // which can demote a config-vision model to non-vision at runtime.
+                    // visionfix (甲): no pre-send rewriting. Images are sent
+                    // verbatim on every candidate — whether the endpoint accepts
+                    // them is decided by the provider, not by a local heuristic.
                     for
-                      runtimeVision <- emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
-                      effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
-                      effectiveMessages =
-                        if !effectiveVision && hasImage(req.messages) then stripImages(req.messages)
-                        else req.messages
                       adapter <- registry.getAdapter(candidate.providerId)
                       resp <- adapter.sendMessage(
                         SendMessageParams(
-                          effectiveMessages,
+                          req.messages,
                           candidate.model,
                           req.tools,
                           cappedThinking,
@@ -510,15 +507,6 @@ object LlmInterface:
                           Some(req.agentId),
                           searchInjectionFor(req, candidate)
                         )
-                      )
-                      // On success, clear the empty-completion counter.
-                      // Oscillation fix: only an image-bearing success lifts
-                      // a vision=false override; after stripImages the
-                      // success proves nothing about vision.
-                      _ <- emptyTracker.resetOnSuccess(
-                        candidate.providerId,
-                        candidate.model,
-                        hadImage = hasImage(effectiveMessages)
                       )
                     yield resp
                     end for
@@ -593,9 +581,11 @@ object LlmInterface:
                   fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
                     fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
                       fs2.Stream.eval(IO.ref(Option.empty[ModelCandidate])).flatMap { winnerRef =>
-                        // PreSendChecker + PostEmptyRecovery state
-                        fs2.Stream.eval(IO.ref(req.messages)).flatMap { messagesRef =>
-                          fs2.Stream.eval(IO.ref(false)).flatMap { imageStrippedRef =>
+                        // visionfix (甲): the `messagesRef` / `imageStrippedRef`
+                        // wrappers that used to sit here existed only for the
+                        // PreSendChecker strip and the PostEmptyRecovery retry.
+                        // Both are gone, so `req.messages` is authoritative and
+                        // constant for the whole attempt chain — no Ref needed.
 
                             /** 案① A1：候选身份键（`providerId/model`）——「本轮已尝试候选集合」
                               * 的元素形态，只用于事实面（日志/终局错误）与空集护栏。 */
@@ -707,7 +697,9 @@ object LlmInterface:
                                             s"[providers attempted: ${failures.size} attempt(s), " +
                                             s"candidates: ${attempted.toList.sorted.mkString(", ")}]"
                                         )
-                                      ) *> fs2.Stream.raiseError[IO](new FallbackExhaustedError(failures))
+                                      ) *> fs2.Stream.raiseError[IO](
+                                        new FallbackExhaustedError(failures, hadImage = hadImageIn(req.messages))
+                                      )
                                     }
                                   else
                                     // 尚有余轮：进健康检查（全员 Down 时阻塞等待恢复），换轮重试。
@@ -745,20 +737,31 @@ object LlmInterface:
                                   fs2.Stream.eval(IO.ref(false)).flatMap { abortedRef =>
                                   val stream = fs2.Stream.force(
                                     (for
-                                      // PreSendChecker: strip images for non-vision models
-                                      // Also check runtime vision override from EmptyCompletionTracker
-                                      msgs <- messagesRef.get
-                                      runtimeVision <- emptyTracker
-                                        .getRuntimeVision(candidate.providerId, candidate.model)
-                                      effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
-                                      effectiveMessages =
-                                        if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
+                                      // visionfix (甲): the pre-send strip gate is gone —
+                                      // `req.messages` goes out verbatim, so the model
+                                      // really receives the image blocks.
+                                      //
+                                      // §6 visible marker (author ruling: log-side only,
+                                      // zero new user-facing text): record that this
+                                      // attempt carried an image, computed from the SAME
+                                      // value handed to the adapter. Placed BEFORE the
+                                      // adapter call and fed `req.messages`, so a strip
+                                      // step reintroduced at the send point would make the
+                                      // marker report hadImage=false (mutation-2 red).
+                                      _ <- nebflow.core.LlmLogWriter.logVisionIntent(
+                                        requestId = key,
+                                        sessionId = req.sessionId,
+                                        agentId = req.agentId,
+                                        providerId = candidate.providerId,
+                                        model = candidate.model,
+                                        hadImage = hadImageIn(req.messages)
+                                      )
                                       adapter <- registry.getAdapter(candidate.providerId)
                                       transportOpt <- makeAttemptTransport(key, req.sessionId, abortedRef)
                                     yield adapter
                                       .sendMessageStream(
                                         SendMessageParams(
-                                          effectiveMessages,
+                                          req.messages,
                                           candidate.model,
                                           req.tools,
                                           cappedThinking,
@@ -812,22 +815,13 @@ object LlmInterface:
                                             // for any OpenAI-compatible provider). Use the actual providerId
                                             // from the candidate so the frontend shows correct provider name.
                                             val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
-                                            // Oscillation fix: only an image-bearing success lifts a
-                                            // vision=false override. messagesRef holds what was actually
-                                            // sent (post-strip if PostEmptyRecovery fired), so a stripped
-                                            // retry success keeps the override in place.
-                                            messagesRef.get.flatMap { sentMsgs =>
-                                              emptyTracker
-                                                .resetOnSuccess(
-                                                  candidate.providerId,
-                                                  candidate.model,
-                                                  hadImage = hasImage(sentMsgs)
-                                                )
-                                                .as(
-                                                  done
-                                                    .copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
-                                                )
-                                            }
+                                            // visionfix (甲): the oscillation-fix bookkeeping
+                                            // (`resetOnSuccess` with `hadImage`) is gone with the
+                                            // tracker — there is no demotion state left to lift.
+                                            IO.pure(
+                                              done
+                                                .copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
+                                            )
                                           else
                                             IO.raiseError(
                                               new RuntimeException(
@@ -855,94 +849,23 @@ object LlmInterface:
                                         }
                                       )
                                       .drain)
-                                    // PostEmptyRecovery: if empty completion with images on non-vision model,
-                                    // strip images and retry same candidate before falling through to normal error handling.
+                                    // visionfix (甲): the former PostEmptyRecovery branch lived
+                                    // here. It detected "empty completion with an image on a model
+                                    // believed non-vision" and answered by stripping the image and
+                                    // retrying the SAME candidate — silently re-sending an
+                                    // image-free request whose result could never be attributed back
+                                    // to the image. With the demotion chain gone there is nothing to
+                                    // recover from and no state to consult: an empty completion is a
+                                    // plain empty completion, handled by the classification block
+                                    // below exactly like any other error.
                                     .handleErrorWith { err =>
-                                      val isEmptyCompletion = err.getMessage != null &&
-                                        err.getMessage.contains("Stream completed with no content")
-                                      if isEmptyCompletion then
-                                        fs2.Stream
-                                          .eval(for
-                                            alreadyStripped <- imageStrippedRef.get
-                                            msgs <- messagesRef.get
-                                          yield (alreadyStripped, msgs))
-                                          .flatMap {
-                                            case (false, msgs) if hasImage(msgs) =>
-                                              // Check both config vision and runtime override
-                                              fs2.Stream
-                                                .eval(
-                                                  emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
-                                                )
-                                                .flatMap { runtimeVision =>
-                                                  val effectiveVision =
-                                                    candidate.vision && runtimeVision.getOrElse(true)
-                                                  if !effectiveVision then
-                                                    // Strip images and retry same candidate
-                                                    fs2.Stream
-                                                      .eval(for
-                                                        _ <- imageStrippedRef.set(true)
-                                                        _ <- messagesRef.set(stripImages(msgs))
-                                                        _ <- lockedRef.set(false)
-                                                        _ <- logger.warn(
-                                                          s"PostEmptyRecovery: empty completion with image on non-vision model " +
-                                                            s"${candidate.providerId}/${candidate.model}, stripping and retrying"
-                                                        )
-                                                      yield ())
-                                                      .drain ++ tryCandidate(
-                                                      candidate :: rest,
-                                                      maxRetries,
-                                                      Fallback.InitialBackoffMs,
-                                                      attempted,
-                                                      round
-                                                    )
-                                                  else fs2.Stream.raiseError[IO](err)
-                                                  end if
-                                                }
-                                            case _ =>
-                                              fs2.Stream.raiseError[IO](err)
-                                          }
-                                      else fs2.Stream.raiseError[IO](err)
-                                      end if
-                                    }
-                                    .handleErrorWith { err =>
-                                      // Phase 2: EmptyCompletionTracker + CapabilityMismatch classification
                                       val rawClassification = Fallback.classifyError(err)
-                                      val isEmptyCompletion = err.getMessage != null &&
-                                        err.getMessage.contains("Stream completed with no content")
-                                      // For empty completions, record in tracker and check for capability mismatch.
-                                      // For other errors, check for explicit vision/multimodal blame in the
-                                      // message (B3 Phase 1: immediate demotion, no threshold wait).
-                                      val trackerIO =
-                                        if isEmptyCompletion then
-                                          for
-                                            msgs <- messagesRef.get
-                                            img = hasImage(msgs)
-                                            _ <- emptyTracker.onEmptyCompletion(
-                                              candidate.providerId,
-                                              candidate.model,
-                                              img
-                                            )
-                                          yield img
-                                        else
-                                          for
-                                            msgs <- messagesRef.get
-                                            img = hasImage(msgs)
-                                            _ <- IO.whenA(img)(
-                                              emptyTracker.onVisionError(
-                                                candidate.providerId,
-                                                candidate.model,
-                                                Option(err.getMessage).getOrElse("")
-                                              )
-                                            )
-                                          yield img
-
-                                      fs2.Stream.eval(trackerIO).flatMap { hadImage =>
-                                        // Override classification: empty completion with image on non-vision model
-                                        // → CapabilityMismatch (Permanent, skip this provider)
-                                        val classification =
-                                          if isEmptyCompletion && hadImage && !candidate.vision then
-                                            rawClassification.copy(reason = FailoverReason.CapabilityMismatch)
-                                          else rawClassification
+                                      // visionfix (甲): the capability-mismatch re-classification
+                                      // lived here — an empty completion on a model whose `vision`
+                                      // said false was re-labelled `CapabilityMismatch` (Permanent,
+                                      // skip this provider). Both the belief and the reason value are
+                                      // gone, so the provider's own classification is used as-is.
+                                      val classification = rawClassification
                                         // Seam guard: content chunks that enter the final
                                         // aggregation (TextDelta / ThinkingDelta /
                                         // ToolCallChunk) were already pulled downstream
@@ -1024,7 +947,10 @@ object LlmInterface:
                                                     *> notify
                                                     *> retain4xx
                                                 ) *> fs2.Stream.raiseError[IO](
-                                                  new FallbackExhaustedError(List(attempt))
+                                                  new FallbackExhaustedError(
+                                                    List(attempt),
+                                                    hadImage = hadImageIn(req.messages)
+                                                  )
                                                 )
                                               case ErrorPermanence.Permanent =>
                                                 // 审计 20260903 子项②③——eviction 分流：
@@ -1161,13 +1087,10 @@ object LlmInterface:
                                           end if
                                         }
                                       }
-                                    }
                                   } // end per-attempt abortedRef flatMap (hard-recovery P1/P6)
 
                             // 入口：轮次从 1 起跑（案① A2 —— wrapper 现在带轮次参数）。
                             attemptWithHealthCheck()
-                          }
-                        }
                       }
                     }
                   }

@@ -133,7 +133,7 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
           baseUrl = baseUrl,
           apiKey = "test",
           protocol = protocol,
-          models = List(ModelConfig("m1", contextWindow = 128000, vision = Some(false)))
+          models = List(ModelConfig("m1", contextWindow = 128000))
         )
     NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> provider)))
 

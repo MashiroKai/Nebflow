@@ -111,7 +111,7 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
             baseUrl = s"http://127.0.0.1:$port",
             apiKey = "test",
             protocol = LlmProtocol.Anthropic,
-            models = models.map(m => ModelConfig(m, vision = Some(false)))
+            models = models.map(m => ModelConfig(m))
           )
         }.toMap
       )

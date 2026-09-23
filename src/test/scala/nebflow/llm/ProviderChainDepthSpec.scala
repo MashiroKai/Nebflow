@@ -33,7 +33,7 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
             baseUrl = "http://127.0.0.1:1",
             apiKey = "k",
             protocol = LlmProtocol.Anthropic,
-            models = models.map(m => ModelConfig(m, vision = Some(false)))
+            models = models.map(m => ModelConfig(m))
           )
         }.toMap
       )

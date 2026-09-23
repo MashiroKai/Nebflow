@@ -14,7 +14,7 @@ final case class StreamInactivityTimeout(lastChunkAgeMs: Long, message: String)
 enum FailoverReason:
 
   case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
-    EmptyStream, CapabilityMismatch, Unknown
+    EmptyStream, Unknown
 
 enum ErrorPermanence:
   case Transient, Permanent, Fatal
