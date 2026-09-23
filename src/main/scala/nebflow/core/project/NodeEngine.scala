@@ -2443,6 +2443,53 @@ class NodeEngine(
       .flatMap(n => MergeMutexPolicy.queuePosOf(n, all).map(p => n.id -> p))
       .toMap
 
+  /** Upstream verifiers holding this node at the verdict gate (IO form). The upstream set is
+    * **verbatim same-source** with [[mergeVerdictHoldersOf]] (`in ++ deps` expansion over the
+    * combined two-zone node map, `.distinct`, resolved through `store.findNode`) — a second
+    * derivation is forbidden here, exactly as in the gate itself. */
+  private def verdictGateHoldersOf(n: NodeDef): IO[List[NodeDef]] =
+    store.combinedNodes.flatMap { combined =>
+      val ups = (n.in ++ FlowMapStore.resolveDepTargets(n.deps, combined).ids).distinct
+      if ups.isEmpty then IO.pure(Nil)
+      else ups.traverse(store.findNode).map(l => mergeVerdictHolders(l.flatten))
+    }
+
+  /** **Verdict-gate visibility slot batch** (mergeverdictvis batch 2026-09-23; payload face
+    * single point; pure mapping over the engine IO face, zero side effects, zero persisted
+    * fields): nodeId → [[MergeMutexPolicy.VerdictGate]], **non-empty entries only** (a
+    * non-merge node and a node whose upstream verifiers all pass are absent from the table ⇒
+    * a missing key means "not verdict-held", and the consumer reads it that way).
+    *
+    * Why this exists: a position held by the verdict gate produces **no** `mergeQueue` slot
+    * at all — [[mergeQueueHolders]] drops candidates that are themselves verdict-held (the
+    * admission narrowing of [[MergeMutexPolicy.holders]]), so its payload carries
+    * `mergeQueuePos.position = 1` with no holder listed anywhere, which reads as "first in
+    * line and nobody blocks me". The real cause is an upstream verifier that carries no pass
+    * verdict; this batch lifts that state onto the payload face.
+    *
+    * 🔴 Zero behaviour change: the gate predicate, the FIFO order, `mergeQueue` /
+    * `mergeQueuePos` and the [[MergeMutexPolicy.holders]] narrowing are byte-level untouched
+    * — this function only reads the same single point and maps it into a slot.
+    *
+    * 🔴 The judging authority is the engine (no frontend/dispatcher re-derivation, no read of
+    * the file ticket layer `.nebflow/locks/main-merge.queue`, no replay from the event stream
+    * — the same discipline as [[mergeQueueHoldersBatch]]). */
+  def mergeVerdictGateBatch(all: Map[String, NodeDef]): IO[Map[String, MergeMutexPolicy.VerdictGate]] =
+    all.valuesIterator
+      .filter(MergeNodePolicy.isMerge)
+      .toList
+      .traverse { n =>
+        verdictGateHoldersOf(n).map { held =>
+          if held.isEmpty then None
+          else
+            Some(n.id -> MergeMutexPolicy.VerdictGate(held.map { u =>
+              MergeMutexPolicy.VerdictGateHolder(u.id, u.name, u.role,
+                u.lastVerdict.map(_.trim).filter(_.nonEmpty).getOrElse(MergeMutexPolicy.VerdictGateNone))
+            }))
+        }
+      }
+      .map(_.flatten.toMap)
+
   /** 闸挡启动时的留痕（三处落点共用单点文案）：`merge-queue` 事件（持有者集合变化时
     * 单发）+ INFO 一行带持有者 id/status——供事后从事件流直接读出**FIFO 次序**（谁在
     * 等谁、等了多久由节点 createdAt/startedAt 与事件 ts 共同给出）。 */
