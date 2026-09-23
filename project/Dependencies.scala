@@ -53,6 +53,17 @@ object Dependencies {
   val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
   val logbackCore    = "ch.qos.logback" % "logback-core" % "1.5.16"
 
+  // Feishu (Lark) official Java SDK — oapi-sdk, long-connection (WebSocket) mode.
+  // Coordinates `com.larksuite.oapi:oapi-sdk` verified against Maven Central
+  // (2.8.5 = latest as of 2026-09-23, release 2026-08-04; bytecode major 52,
+  // below this repo's -release:17 target). The SDK declares slf4j-api 1.7.30,
+  // which cannot bind to logback 1.5.x (2.x ServiceLoader binding) — the
+  // explicit slf4j-api pin below arbitrates that conflict (highest wins).
+  val FeishuOapiSdkVer = "2.8.5"
+  val feishuOapiSdk    = "com.larksuite.oapi" % "oapi-sdk" % FeishuOapiSdkVer
+  val Slf4jApiVer      = "2.0.16"
+  val slf4jApi         = "org.slf4j" % "slf4j-api" % Slf4jApiVer
+
   // Browser automation (optional — "provided" scope, detected at runtime)
   val PlaywrightVer = "1.52.0"
   val playwright = "com.microsoft.playwright" % "playwright" % PlaywrightVer

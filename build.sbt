@@ -60,6 +60,9 @@ lazy val root = (project in file("."))
       // Logging
       logbackClassic,
       logbackCore,
+      // Feishu (Lark) official SDK + slf4j arbitration (see Dependencies.scala)
+      feishuOapiSdk,
+      slf4jApi,
       // Browser automation (optional — not bundled in distribution, detected at runtime)
       playwright % "provided",
       // Diff
