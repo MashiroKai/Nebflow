@@ -195,7 +195,9 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   updateFooterStatus(entry);
 
   popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay || e.target.id === 'bgagent-close') closeStepPopup();
+    const target = e.target;
+    // `id` is declared on Element, not on EventTarget — narrow before reading it.
+    if (target === popupOverlay || (target instanceof Element && target.id === 'bgagent-close')) closeStepPopup();
   });
 
   entry.container.addEventListener('scroll', () => {
@@ -398,7 +400,7 @@ setBgAgentStepInterceptor(interceptBgAgentStep);
  *  before it (SessionStore.getHistoryPage), exactly like the primary window.
  *  Returns false when no frame was sent: nothing older exists, a request is
  *  already in flight, or a page/row ceiling has been reached.
- *  @param opts.budgeted  also apply the wall-clock budget (automatic run). */
+ *  @param {{ budgeted?: boolean }} [opts]  also apply the wall-clock budget (automatic run). */
 function requestOlderPage(entry, opts = {}) {
   const pag = entry.view.pagination;
   const bf = entry.backfill;
@@ -481,7 +483,9 @@ export function handleBgAgentHistory(msg) {
   const fragment = document.createDocumentFragment();
   while (stage.firstChild) {
     const child = stage.firstChild;
-    if (child.classList && child.classList.contains('row')) child.classList.add('prepend-skip-anim');
+    // `classList` lives on Element, not on ChildNode; text nodes keep the old
+    // "no classList ⇒ skip" branch and any Element (incl. SVG) is still tagged.
+    if (child instanceof Element && child.classList.contains('row')) child.classList.add('prepend-skip-anim');
     fragment.appendChild(child);
   }
   entry.container.prepend(fragment);
