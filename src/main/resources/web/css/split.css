@@ -382,6 +382,55 @@ body.canvas-open #canvas-panel {
   opacity: 1;
 }
 
+/* Narrow-window form — the SAME panel, floated over #main (chain narrowwin-impl).
+   The split row must hold activity bar + sidebar + #main + panel + margins. When
+   the window cannot fund that row at both columns' declared minimum widths,
+   there is no side-by-side arrangement left that keeps a usable chat column —
+   and claiming a fixed flex-basis anyway does not shrink the panel (it does not
+   shrink at all: `flex: 0 0 <basis>`), it drains #main instead (flex:1 with
+   min-width:0 shrinks to ZERO width). A zero-width #main is not a narrow layout
+   but a broken one: every bubble collapses to its 28px minimum content box, the
+   column grows ~10^5 px tall and the last message leaves the viewport entirely.
+
+   So the mode is decided before the widths are: canvas.js isNarrowSplit() marks
+   body.canvas-overlay, the panel leaves the flex row (position:fixed) and floats
+   above #main, and #main keeps the full remainder of the row. Both forms are the
+   SAME panel state — tabs, persistence and the close path are untouched. */
+body.canvas-open.canvas-overlay #canvas-panel {
+  position: fixed;
+  /* Top edge = the measured bottom of #main's top band (header + #top-overlays),
+     published by canvas.js as --canvas-overlay-top. That band carries the
+     panel's OWN header toggle: floating the drawer over it would turn the
+     primary toggle into a dead control in exactly the mode where the user has
+     the least other affordances. The 84px value is the FALLBACK for the first
+     paint only (the same figure the band measures at every viewport tested:
+     header bottom 66 + #top-overlays bottom 76 + 8px breathing room). */
+  top: var(--canvas-overlay-top, 84px);
+  right: 10px;
+  bottom: 10px;
+  /* Width = the configured panel width, capped by what the row can actually
+     give the drawer. The cap is DERIVED, not a magic budget: the strip left of
+     the drawer must stay visible and usable (that is where the panel's own
+     toggle lives, so covering it would strand the user inside the drawer),
+     and it is exactly:
+        activity-bar column 48 + its side margins 8 = 56
+      + a 4px gap before the drawer
+      + the drawer's own 10px right margin
+      = 70px
+     Capping at `100vw - 70px` (not a hand-tuned smaller number) also keeps the
+     drawer as wide as the row allows, which matters because panel CONTENT may
+     declare its own minimum width (the flow-map card floor is 300px): a drawer
+     narrower than the content floor would trade the chat-squeeze defect for a
+     content-overflow one. */
+  width: min(var(--canvas-width, 45vw), calc(100vw - 70px));
+  flex: 0 0 auto;
+  margin: 0;
+  /* Above in-page chrome (#header 30, #top-overlays 25, input bar 200), below
+     the modal family (300+) and the context menus (5000). The panel's own
+     z-index:30 header is a child and stays inside this context. */
+  z-index: 240;
+}
+
 /* Slide layer — no transform animation. overflow:hidden on #canvas-panel
    clips content during the flex-basis transition, exactly like sidebar. */
 #canvas-slide {
