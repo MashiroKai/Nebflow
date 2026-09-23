@@ -884,6 +884,13 @@ export default {
   'provider.baseUrlRequired': '请填写 Base URL',
   'provider.modelRequired': '至少需要一个模型',
 
+  // chain-ctxbound：contextWindow 入口上限校验（与引擎侧 clamp 成对防线）
+  'provider.ctxInvalid': '模型 {id}：上下文窗口须为 ≥1 的整数（当前值「{value}」）',
+  'provider.ctxExceedsModel': '模型 {id}：上下文窗口 {value} 超过该模型上报的上限 {max}',
+  'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
+  'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
+  'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
+
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
   'model.contextPlaceholder': '上下文',

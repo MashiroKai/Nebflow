@@ -917,6 +917,13 @@ export default {
   'provider.baseUrlRequired': 'Base URL is required',
   'provider.modelRequired': 'At least one model with a non-empty ID is required',
 
+  // chain-ctxbound: contextWindow entrance bound check (paired with the engine clamp)
+  'provider.ctxInvalid': 'Model {id}: context window must be a whole number ≥ 1 (got "{value}")',
+  'provider.ctxExceedsModel': 'Model {id}: context window {value} exceeds the maximum {max} reported for this model',
+  'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
+  'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
+  'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
+
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
   'model.contextPlaceholder': 'Context',
