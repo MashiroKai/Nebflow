@@ -2,30 +2,24 @@ package nebflow.gateway
 
 import cats.effect.IO
 import cats.effect.std.Queue
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
-import nebflow.agent.AgentCore
-import nebflow.agent.SharedResources
-import nebflow.core.AtomicJson
-import nebflow.core.Branding
-import nebflow.core.CanvasTabs
-import nebflow.core.CanvasTabStore
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentCore, SharedResources}
+import nebflow.core.*
 import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
-import nebflow.core.project.{NodeEngine, NodePayload, ProjectActor, ProjectRuntimeRegistry, ProjectStore}
-import nebflow.core.skill.SkillService
-import nebflow.core.tools.NodeTools
-// FreezeScheduleConfig encoder givens (workSchedule runtime-authoritative PATCH)
+import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.skill.SkillService
 import nebflow.core.task.{FileTaskStore, TaskStore}
-import cats.effect.unsafe.implicits.global
-import nebflow.llm.{HealthState, LlmProtocol, NebflowServiceConfig, SearchApiHealth}
+import nebflow.core.tools.NodeTools
+import nebflow.llm.*
 import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given

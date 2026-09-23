@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, DropboxService}
-import nebflow.neblink.{FriendRoster, FriendService, FriendSummary, GroupSummary, PeerInfo}
+import nebflow.neblink.*
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter

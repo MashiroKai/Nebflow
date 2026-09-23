@@ -2,17 +2,10 @@ package nebflow.neblink
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.NebflowLogger
-// 补拉帧（`dispatchPulled:521`）要对 `attachments` 做 `asJson` ⇒ 需
-// `Encoder[AttachmentSummary]`。该类码与全部 neblink 线上 codec 同在 `FriendCodecs`
-// —— 它是**普通 object**（非 `AttachmentSummary` 伴生对象）⇒ given **不在**隐式域内，
-// 必须显式引入；本文件此前只编原生类型故从未引入（批 A 首次落 `.asJson` 时漏掉）。
-// 形式与同包两个既有消费点逐字一致（`NeblinkClient.scala:96`、`RestApiRoutes.scala:30`）。
-// 🔴 只**引入**既有 given：不新增第二份 codec、不改写既有 given、不遮蔽任何候选。
 import nebflow.neblink.FriendCodecs.given
 
 import scala.collection.immutable.Queue

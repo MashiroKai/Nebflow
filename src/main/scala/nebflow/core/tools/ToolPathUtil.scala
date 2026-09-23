@@ -1,9 +1,9 @@
 package nebflow.core.tools
 
-import java.nio.file.{Path, Paths}
-
 import nebflow.core.PathUtil
 import nebflow.core.sandbox.SandboxPolicy
+
+import java.nio.file.{Path, Paths}
 
 /**
  * 文件工具的路径语义 helper（沙箱拆围栏批 S2 / R5=e2「拆闸保解析」）。

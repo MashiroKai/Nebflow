@@ -3,8 +3,8 @@ package nebflow.agent
 import cats.effect.unsafe.implicits.global
 import cats.effect.{Deferred, IO, IOLocal}
 import nebflow.actor.{ActorPath, ActorRef}
-import nebflow.core.{AskItem, AskOption, NebflowLogger}
 import nebflow.core.tools.ToolContext
+import nebflow.core.{AskItem, AskOption, NebflowLogger}
 
 import scala.concurrent.duration.*
 

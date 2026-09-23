@@ -1,20 +1,21 @@
 package nebflow.core
 
 import cats.effect.IO
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import nebflow.core.NebflowLogger
 
 import java.io.RandomAccessFile
-import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.channels.FileChannel
+import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
 import java.security.MessageDigest
 import java.time.{Instant, ZoneId, ZonedDateTime}
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.locks.ReentrantLock
+
 import scala.util.control.NonFatal
 
 /**

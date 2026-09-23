@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
-
 import nebflow.core.PathUtil
 
 import java.nio.file.{Files, Path}

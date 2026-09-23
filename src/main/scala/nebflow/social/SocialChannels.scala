@@ -3,8 +3,9 @@ package nebflow.social
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.{AtomicJson, CredentialFileAcl, PathUtil}
-import java.nio.file.{Files, Path, StandardOpenOption}
+
 import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.{Files, Path, StandardOpenOption}
 
 /**
  * Social interface channels — domain layer for the REST face (socpanel batch,

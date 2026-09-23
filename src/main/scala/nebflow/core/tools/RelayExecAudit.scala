@@ -8,8 +8,9 @@ import nebflow.core.{NebflowLogger, PathUtil}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.security.MessageDigest
-import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
+import java.time.{Instant, ZoneOffset}
+
 import scala.util.matching.Regex
 
 /**

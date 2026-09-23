@@ -1,13 +1,14 @@
 package nebflow.neblink
 
 import cats.effect.IO
+import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json, JsonObject}
-import nebflow.core.{AtomicJson, Branding, CredentialFileAcl, NebflowLogger, PathUtil}
+import nebflow.core.*
 
 import java.util.UUID
+
 import scala.util.matching.Regex
 
 /**
@@ -842,6 +843,8 @@ case class AttachmentSummary(
    * 禁渲染成「可点但点了报错」的按钮）。
    */
   def downloadable: Boolean = stateKind == AttachmentState.Ready && id.nonEmpty
+
+end AttachmentSummary
 
 /** `AttachmentDto.state` 的客户端口径（唯一映射点，§B.7 ① 的线上枚举 + 越界兜底）。 */
 enum AttachmentState:

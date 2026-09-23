@@ -1,8 +1,8 @@
 package nebflow.core.plugin
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 /**

@@ -8,12 +8,13 @@ import java.math.BigInteger
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
+import java.security.*
 import java.security.interfaces.{ECPublicKey, RSAPublicKey}
-import java.security.spec.{ECGenParameterSpec, ECParameterSpec, ECPoint, ECPublicKeySpec, RSAPublicKeySpec}
-import java.security.{AlgorithmParameters, KeyFactory, PublicKey, Signature}
+import java.security.spec.*
 import java.time.Duration
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.util.control.NonFatal
 
 /**

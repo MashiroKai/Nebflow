@@ -2,8 +2,8 @@ package nebflow.neblink
 
 import cats.effect.IO
 import cats.effect.kernel.Ref
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.RelayExecAudit
 

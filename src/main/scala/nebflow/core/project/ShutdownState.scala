@@ -1,7 +1,5 @@
 package nebflow.core.project
 
-import java.util.concurrent.atomic.AtomicBoolean
-
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -9,6 +7,8 @@ import io.circe.syntax.*
 import nebflow.core.{AtomicJson, NebflowLogger}
 import nebflow.llm.LlmInterface
 import nebflow.shared.Defaults
+
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 优雅关机「排水中」标志（中断恢复语义批 2026-09-13，spec

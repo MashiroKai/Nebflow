@@ -5,10 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import fs2.compression.Compression
 import org.http4s.*
-import org.http4s.headers.`Content-Encoding`
-import org.http4s.headers.`Content-Length`
-import org.http4s.headers.`Accept-Encoding`
-import org.http4s.headers.ETag
+import org.http4s.headers.*
 import org.typelevel.ci.CIString
 
 /**

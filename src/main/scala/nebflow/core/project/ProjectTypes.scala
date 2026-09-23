@@ -1,6 +1,6 @@
 package nebflow.core.project
 
-import io.circe.{Codec, Decoder, Encoder, Json}
+import io.circe.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.syntax.*
 

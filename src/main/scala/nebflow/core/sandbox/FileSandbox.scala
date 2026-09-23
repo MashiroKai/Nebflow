@@ -1,8 +1,8 @@
 package nebflow.core.sandbox
 
-import java.nio.file.Path
-
 import nebflow.core.tools.{ToolContext, ToolError, ToolPathUtil}
+
+import java.nio.file.Path
 
 /**
  * 文件工具层路径接缝（阶段 2a 沙箱 → 沙箱拆围栏批 S2 退役形态）。

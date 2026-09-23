@@ -4,12 +4,13 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.core.plugin.PluginRegistry
 import nebflow.core.project.ProjectStore
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 import java.net.JarURLConnection
 import java.security.MessageDigest
+
 import scala.collection.immutable.SortedMap
 import scala.jdk.CollectionConverters.*
 

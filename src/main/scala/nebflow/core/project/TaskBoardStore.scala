@@ -1,16 +1,15 @@
 package nebflow.core.project
 
 import io.circe.Codec
-import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
+import io.circe.syntax.*
+import nebflow.core.tools.ToolError
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 import java.time.Instant
 
 import scala.collection.mutable
-
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
-import nebflow.core.tools.ToolError
 
 /**
  * TaskBoardStore —— 项目任务板存储（TaskBoard 设计规格 §1f/§1g/§2，2026-09-08，

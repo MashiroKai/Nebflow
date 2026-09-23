@@ -1,8 +1,8 @@
 package nebflow.core.node
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.tools.{FileHistory, ReadTracker}

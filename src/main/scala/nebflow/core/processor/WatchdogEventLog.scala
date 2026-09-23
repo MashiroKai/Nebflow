@@ -5,8 +5,8 @@ import io.circe.Json
 import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.nio.file.Path
-import java.time.{Instant, ZoneId}
 import java.time.format.DateTimeFormatter
+import java.time.{Instant, ZoneId}
 import java.util.concurrent.atomic.AtomicReference
 
 /**

@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import io.circe.JsonObject
 
 /**

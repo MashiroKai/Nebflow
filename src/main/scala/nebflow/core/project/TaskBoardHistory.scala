@@ -1,13 +1,12 @@
 package nebflow.core.project
 
 import io.circe.Codec
-import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
+import io.circe.syntax.*
+import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.time.Instant
-
-import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
  * TaskBoardHistory —— 任务板变更史（TaskBoard 升级批，2026-09-11）。

@@ -1,8 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
-import nebflow.core.tools.RgHelper
-import nebflow.core.tools.ShellSession
+import nebflow.core.tools.{RgHelper, ShellSession}
 
 /**
  * Boot-time dependency probe (Team #11 item ④): say out loud, at startup,

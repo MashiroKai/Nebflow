@@ -1,14 +1,12 @@
 package nebflow.agent
 
-import nebflow.core.AtomicJson
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
-import nebflow.shared.ContentBlock
-import nebflow.shared.given // ContentBlock Encoder/Decoder (protocol.scala top-level)
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.shared.ContentBlock
+import nebflow.shared.given
 
 /**
  * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store for

@@ -3,7 +3,8 @@ package nebflow.cli
 import cats.effect.IO
 import nebflow.core.PathUtil
 
-import java.net.{ConnectException, HttpURLConnection, InetSocketAddress, ServerSocket, Socket}
+import java.net.*
+
 import scala.util.{Try, Using}
 
 /**

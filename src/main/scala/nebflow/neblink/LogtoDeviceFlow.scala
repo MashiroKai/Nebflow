@@ -4,8 +4,8 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 
-import java.net.{URI, URLEncoder}
 import java.net.http.{HttpRequest, HttpResponse}
+import java.net.{URI, URLEncoder}
 
 /**
  * RFC 8628 device-flow client against an external OIDC provider (Logto).

@@ -1,7 +1,7 @@
 package nebflow.core.project
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Mutex
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.parse
@@ -109,6 +109,8 @@ object NodeReportRegistry:
      * 事件与 WARN 双留痕；**禁**静默降级为「无待处理」。
      */
     final case class Degraded(reason: String) extends LoadOutcome
+
+  end LoadOutcome
 
   /** 登记表项 = 申报内容 + 归属键（归属键只服务持久化与审计留痕，不参与既有语义判据）。 */
   private final case class Entry(

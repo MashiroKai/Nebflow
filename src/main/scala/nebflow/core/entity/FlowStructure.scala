@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import nebflow.core.entity.NodeRoute.{Goto, Parallel, ParallelDynamic, Return, Switch}
+import nebflow.core.entity.NodeRoute.*
 
 /**
  * Static structure analysis of a FlowDagDef — single source of truth shared by

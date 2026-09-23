@@ -1,16 +1,9 @@
 package nebflow.core
 
-import java.nio.file.attribute.{
-  AclEntry,
-  AclEntryPermission,
-  AclEntryType,
-  AclFileAttributeView,
-  PosixFilePermission,
-  PosixFilePermissions,
-  UserPrincipal
-}
-import java.nio.file.{Files, LinkOption, Path, StandardCopyOption, StandardOpenOption}
+import java.nio.file.*
+import java.nio.file.attribute.*
 import java.util.EnumSet
+
 import scala.jdk.CollectionConverters.*
 
 /**

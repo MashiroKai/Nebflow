@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import nebflow.core.entity.NodeRoute.{Goto, Parallel, ParallelDynamic, Return, Switch}
+import nebflow.core.entity.NodeRoute.*
 
 /**
  * Flow DAG 编译前端（#424，用户裁定 2026-08-26「以编译器的思想去设计」）。
@@ -38,6 +38,8 @@ object FlowDagCompiler:
         case Some(id) => s"node '$id'"
         case None => s"flow '$flowName'"
       s"[E-$code] $loc: $reason — $fix"
+
+  end Issue
 
   /** 全量收集结果：errors 非空即拒绝（0 spawn）；warnings 不阻塞。 */
   case class CompileResult(flowName: String, issues: List[Issue]):

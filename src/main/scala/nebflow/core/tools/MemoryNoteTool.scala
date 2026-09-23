@@ -2,10 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
-
+import io.circe.{Json, JsonObject}
 import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.MemoryStore

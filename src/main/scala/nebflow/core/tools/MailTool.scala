@@ -6,18 +6,13 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-// mailattach 批（2026-09-17 作者四答 = 路线 A）：`attachments` 的件数/大小上限**只**引用
-// `AttachContract`（单一数值权威面）——本文件零硬编码副本（plan 面 3 判据：grep 应只见单点）。
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.dropbox.AttachContract
-// device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
-// B 批（2026-09-16）：`RelayMailResult` = 设备腿结果文本的 `delivered` 读数来源。
-import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo, RelayMailResult}
-import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
+import nebflow.neblink.*
+import nebflow.shared.*
 
 /**
  * Agent-to-agent communication tool.

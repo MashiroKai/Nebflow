@@ -1,9 +1,9 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.shared.Defaults
 

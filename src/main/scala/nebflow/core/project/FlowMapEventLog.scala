@@ -1,8 +1,8 @@
 package nebflow.core.project
 
 import cats.effect.IO
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.core.PathUtil
 
 /**

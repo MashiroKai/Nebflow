@@ -1,10 +1,10 @@
 package nebflow.neblink
 
 import cats.effect.{Deferred, IO, Ref}
+import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json, JsonObject}
 import nebflow.core.NebflowLogger
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

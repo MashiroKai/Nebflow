@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.agent.SharedResources
 import nebflow.core.scheduler.ScheduledTask
 
-import java.time.{Instant, LocalDate, LocalDateTime, OffsetDateTime, ZoneId, ZonedDateTime}
+import java.time.*
 
 object ScheduleTool extends Tool:
   val name = "Schedule"

@@ -1,9 +1,9 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.sandbox.FileSandbox
 
 object GrepTool extends Tool:
   val DEFAULT_HEAD_LIMIT = 250

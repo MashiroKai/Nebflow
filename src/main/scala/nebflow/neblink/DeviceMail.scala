@@ -1,7 +1,7 @@
 package nebflow.neblink
 
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 
 /**
  * 跨设备 Nebula 邮件（device-mail 批，2026-09-15 作者令 12:04 逐字）：

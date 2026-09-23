@@ -2,9 +2,9 @@ package nebflow.core.tools
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
-import io.circe.{Json, JsonObject}
 import io.circe.parser.decode
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
 import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}

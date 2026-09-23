@@ -3,12 +3,11 @@ package nebflow.core.processor
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, SharedResources}
+import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.gateway.WsHub
 
-import scala.concurrent.duration.*
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{FiniteDuration, *}
 
 /**
  * P0 阶段 3（2026-08-18，设计 §4.4）：卡死识别与恢复扫描器。

@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import io.circe.{Decoder, DecodingFailure, Encoder, HCursor, Json}
+import io.circe.*
 import io.circe.syntax.*
 
 /**

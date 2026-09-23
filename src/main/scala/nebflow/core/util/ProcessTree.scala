@@ -1,8 +1,10 @@
 package nebflow.core.util
 
 import cats.effect.IO
-import scala.jdk.StreamConverters.*
+
 import java.util.concurrent.TimeUnit
+
+import scala.jdk.StreamConverters.*
 
 object ProcessTree:
 

@@ -1,8 +1,8 @@
 package nebflow.neblink
 
 import cats.effect.{IO, Ref}
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.actor.ActorRef
 import nebflow.agent.{AgentCommand, SharedResources}
 import nebflow.core.NebflowLogger

@@ -1,15 +1,15 @@
 package nebflow.core
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import cats.effect.std.Queue
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
 
 import java.nio.file.*
-import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
+import java.time.{Instant, ZoneOffset}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 
 /**
@@ -198,8 +198,7 @@ object ToolsLogWriter:
       new Thread(
         () =>
           try flushSync()
-          catch case _: Throwable => (),
-        "tools-log-flush"
+          catch case _: Throwable => (), "tools-log-flush"
       )
     )
   }

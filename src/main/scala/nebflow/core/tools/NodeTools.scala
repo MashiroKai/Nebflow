@@ -6,9 +6,9 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, NebflowLogger, PathUtil}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
+import nebflow.core.{AskItem, NebflowLogger, PathUtil}
 
 import scala.util.Try
 

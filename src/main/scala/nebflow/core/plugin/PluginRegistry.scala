@@ -2,12 +2,13 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.llm.McpServerConfig
 
 import java.security.MessageDigest
+
 import scala.collection.mutable
 import scala.util.matching.Regex
 

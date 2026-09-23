@@ -2,18 +2,15 @@ package nebflow.gateway
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.NebflowLogger
 
-import java.nio.file.{FileSystems, Path, StandardWatchEventKinds, WatchKey, WatchService}
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
+import java.nio.file.*
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
-
-import nebflow.core.NebflowLogger
 
 /**
  * Per-connection Explorer watch subscriptions (explorer-rt · design card

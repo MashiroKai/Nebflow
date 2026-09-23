@@ -1,16 +1,14 @@
 package nebflow.core.hotupdate
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-
-import java.util.concurrent.atomic.AtomicReference
-
 import nebflow.core.NebflowLogger
 import nebflow.core.hotrestart.{HotRestart, RestartMode}
 import nebflow.neblink.RemoteUpdateAction
+
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 统一更新编排器（hotupdate 批 1 · 设计 §4 设计 A）：所有入口只发「更新请求」，

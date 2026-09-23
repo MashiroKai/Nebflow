@@ -15,7 +15,7 @@ import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.neblink.{NeblinkService, FriendService, AttachUploadRegistry}
+import nebflow.neblink.{AttachUploadRegistry, FriendService, NeblinkService}
 import nebflow.shared.*
 
 /**

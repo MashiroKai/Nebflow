@@ -1,18 +1,18 @@
 package nebflow.neblink
 
-import cats.effect.{Deferred, IO}
 import cats.effect.std.Dispatcher
+import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
 import java.util.concurrent.*
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong, AtomicReference}
+import java.util.concurrent.atomic.*
 
 import scala.concurrent.duration.*
 

@@ -4,15 +4,8 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
-import nebflow.agent.{
-  AgentCommand,
-  AgentStatus,
-  AskMode,
-  AskUserAnswerBridge,
-  InteractionHubCommand,
-  InteractionRequestId
-}
-import nebflow.core.{AskItem, AskOption, AskPreview, HeadlessMode, QuestionDependency}
+import nebflow.agent.*
+import nebflow.core.*
 import nebflow.shared.ToolDefinition
 
 import scala.concurrent.duration.*

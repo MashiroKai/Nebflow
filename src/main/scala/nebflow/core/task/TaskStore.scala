@@ -7,9 +7,9 @@ import io.circe.syntax.*
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 
 import java.time.Instant
-import scala.concurrent.duration.*
 
 import scala.collection.mutable
+import scala.concurrent.duration.*
 
 trait TaskStore:
   def create(sessionId: String, input: TaskCreateInput): IO[String]

@@ -1,8 +1,8 @@
 package nebflow.core.presets
 
 import io.circe.parser.decode
-import nebflow.shared.AgentModelConfig
 import nebflow.core.PathUtil
+import nebflow.shared.AgentModelConfig
 
 /**
  * 面板模型方案收敛策略（panelscheme 批 2026-09-21，作者令）：

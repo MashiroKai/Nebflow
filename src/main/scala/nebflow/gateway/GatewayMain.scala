@@ -1,7 +1,7 @@
 package nebflow.gateway
 
+import cats.effect.*
 import cats.effect.unsafe.implicits.global
-import cats.effect.{ExitCode, IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -11,12 +11,12 @@ import nebflow.core.*
 import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
-import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
-import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
+import nebflow.core.tools.*
 import nebflow.llm.*
 import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}

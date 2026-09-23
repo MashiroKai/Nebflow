@@ -2,11 +2,11 @@ package nebflow.core.project
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
+
 import scala.concurrent.duration.*
 
 /**

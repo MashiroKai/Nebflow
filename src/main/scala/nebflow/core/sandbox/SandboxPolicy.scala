@@ -1,13 +1,11 @@
 package nebflow.core.sandbox
 
-import io.circe.Json
-import io.circe.Decoder
+import io.circe.{Decoder, Json}
+import nebflow.core.PathUtil
 
-import java.nio.file.{Files, LinkOption, Path, Paths}
+import java.nio.file.*
 
 import scala.jdk.CollectionConverters.*
-
-import nebflow.core.PathUtil
 
 /**
  * 阶段 2a 沙箱（设计文档 §A.2）：单一策略源。

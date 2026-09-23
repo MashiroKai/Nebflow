@@ -2,9 +2,8 @@ package nebflow.agent
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.AgentCommand.*
 import nebflow.agent.PromptSections.*

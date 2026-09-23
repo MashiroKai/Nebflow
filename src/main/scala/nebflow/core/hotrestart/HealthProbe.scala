@@ -7,9 +7,10 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
-import java.net.{HttpURLConnection, InetSocketAddress, Proxy, URI}
+import java.net.*
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
+
 import scala.concurrent.duration.*
 import scala.util.Using
 import scala.util.control.NonFatal

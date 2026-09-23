@@ -1,12 +1,11 @@
 package nebflow.core.project
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Codec
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import io.circe.derivation.{Configuration, ConfiguredCodec}
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.shared.Defaults
 

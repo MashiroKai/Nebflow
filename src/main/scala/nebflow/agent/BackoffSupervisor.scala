@@ -2,9 +2,8 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
 import io.circe.syntax.*
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}

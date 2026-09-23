@@ -2,7 +2,6 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-
 import nebflow.core.NebflowLogger
 import nebflow.shared.UiMessage
 
