@@ -243,6 +243,31 @@ object FlowMapEventLog:
     * `chainId`（分发器不属任何链）。 */
   val DispatcherIdleExpiredType = "dispatcher-idle-expired"
 
+  /** 分发器**未消费注入件**审计事件类型（mailack 批 2026-09-23，D 项止损）。
+    *
+    * 写点 = `ProjectActor` 的**每一处分发器会话拆除**（`dispatcherBridge.teardown` 与
+    * `expireIdleDispatcher`）：拆除时若 `pendingTaskTexts` 非空（已注入但 turn 尚未消费
+    * 的件），把这些件**数量 + 逐件首行**落一条事件。
+    *
+    * 动因（2026-09-23 audit 实测）：`cancelAgent` / 空闲到期拆除**不检查**未消费队列，
+    * 队列里的件随会话**静默蒸发**——零审计、零补投（分发器任务不在任何补投扫描内，
+    * `ProjectActor` 的 `redeliver` 只覆盖 dispatch-notify 与节点结果）。实证 18:18:08
+    * 一次 `cancelAgent (panel)` 时 `pending=31`。本事件使该形态**可审计**（不是补投：
+    * 补投需要幂等键，件正文非幂等语义载体，属另批）。
+    *
+    * `nodeId` 字段承载**会话 id**（同 [[DispatcherIdleExpiredType]] 先例）。 */
+  val DispatcherQueueDroppedType = "dispatcher-queue-dropped"
+
+  /** 未消费件审计 summary（`k=v` 单空格分隔，**值不含空白**：首行空白归一为 `_` 并截断，
+    * 防 k=v 解析被破坏；完整正文不落事件行——事件行必须保持单行）。 */
+  def dispatcherQueueDroppedSummary(sessionId: String, dropped: Int, reason: String, firstLines: List[String]): String =
+    def norm(s: String): String =
+      val t = s.replaceAll("\\s+", "_").trim
+      if t.length > 80 then t.take(80) + "…" else t
+    val head = s"session=$sessionId dropped=$dropped reason=${norm(reason)}"
+    if firstLines.isEmpty then head
+    else head + " items=" + firstLines.map(norm).mkString("|")
+
   /** 空闲到期事件结构化 summary（`k=v` 单空格分隔，值不含空白；`session` 值形如
     * `dispatcher-<8hex>`，天然无空白）。 */
   def dispatcherIdleSummary(sessionId: String, idleSecs: Long, windowMs: Long): String =

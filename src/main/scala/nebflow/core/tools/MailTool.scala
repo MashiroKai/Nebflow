@@ -1,7 +1,9 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all.*
+import scala.concurrent.duration.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
@@ -1414,7 +1416,11 @@ There is no urgency flag: an urgent message states the urgency in its own text."
 
   /** 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**（追加条款②，2026-09-12）。
     * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
-    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。 */
+    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。
+    *
+    * mailack 批（2026-09-23）：**分发器身份**（`ctx.isDispatcher`）的回复走
+    * [[enqueueDispatcherReply]] 打包窗（B），窗末注入（C 的背压读数同处）；其余身份
+    * （root / team / 节点）逐字不变。关窗（`≤0`）或 `interrupt` 腿 = 立即注入。 */
   private def deliverToNebulaRoot(
       address: String,
       message: String,
@@ -1428,12 +1434,40 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       case Some(res) =>
         resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some((sid, ref)) =>
-            sendMail(ref, NebulaAgentName, message, blocks, ctx, system).flatMap {
-              case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(Right(
-                  s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
-                ))
-              case Left(err) => IO.pure(Left(err))
-            }
+            // ── 冲突解（mailunify-full 批 × mailack 批，2026-09-23）──────────────
+            // mailack 的**打包窗机制逐字保留**（合窗 / 背压 / 条数上限 / 窗末一次注入，
+            // 见 [[enqueueDispatcherReply]]）：那是另一批已落地的作者裁定，禁回退禁简化。
+            // 唯一随动 = 本批「`type` 参数删净」：原 `mailType` 形参**钉常量**
+            // [[DispatcherReplyPinnedKind]]（`enqueueDispatcherReply` 的第三臂取该值）——
+            // 窗的合窗键 = 时间窗 + 条数上限，**与 type 无关** ⇒ 钉常量零语义变化；
+            // 旧 `interrupt` 旁路面在窗机制内原样保留（其 spec 接缝仍可传任意值，
+            // 主仓 `MailDispatcherReplyBatchSpec` 逐字不变）。`sendMail` 侧本批已无
+            // `mailType` 形参（eventType 恒 `None`，见 [[sendMail]]）。
+            val deliver = (text: String) =>
+              sendMail(ref, NebulaAgentName, text, blocks, ctx, system).flatMap {
+                case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, text, ctx)
+                case Left(err) => logger.warn(s"batched dispatcher reply delivery failed: ${err.message}")
+              }
+            val immediate: IO[Either[ToolError, String]] =
+              sendMail(ref, NebulaAgentName, message, blocks, ctx, system).flatMap {
+                case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(Right(
+                    s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
+                  ))
+                case Left(err) => IO.pure(Left(err))
+              }
+            if !ctx.isDispatcher then immediate
+            else
+              enqueueDispatcherReply(message, DispatcherReplyPinnedKind, deliver).flatMap {
+                case None =>
+                  // 已入窗 ⇒ 窗末由 flushDispatcherReplies 注入。
+                  IO.pure(Right(
+                    s"Message queued for Nebula (root session ${sid.take(8)}); dispatcher replies are coalesced per window " +
+                      s"(${dispatcherMailWindowMs}ms) and injected once at the window's end."
+                  ))
+                case Some(_) =>
+                  // 关窗 / P0 豁免 ⇒ 走立即路径（与旧行为逐字同）。
+                  immediate
+              }
           case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
         }
   end deliverToNebulaRoot
@@ -1447,6 +1481,195 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           }). Check that the gateway's Nebula window session is running, then retry; your legal address face is " +
         s"$dispatcherFace."
     )
+
+  // ============================================================
+  // B/C · dispatcher→root **回复打包窗 + 背压可见化**（mailack 批 2026-09-23；本批止损主体）
+  // ============================================================
+  //
+  // == 问题（2026-09-23 audit；作者令「任务分发器就没停过，一直在收 Mail」）==
+  // 分发器每次回复 root 都是一次**立即注入**（`ref ! ImmediateInput`）⇒ root 醒一轮；
+  // root 再发令又触发分发器 ⇒ 一轮往返。实测级联率 **100%**（root 40 封中 39 封在收执
+  // 后 3 分钟内被再触发）、双向 **20.9 封/小时**，且分发器回执 **73% 是纯 ACK**。
+  // 机制面还有两个放大器：①分发器**不回收**（空闲腿硬前提 `pendingInjected == 0`），
+  // 会话实测存活 11h；②root 通知腿（`NodeEngine.enqueueRootNotify`）早有打包窗，
+  // 而**分发器→root 这条腿没有** ⇒ 同一「同族通知」两腿语义不对称。
+  //
+  // == 方案（对齐既有先例，零新语义）==
+  // 本腿加**生产者侧打包窗**，形态逐字照 `NodeEngine.RootNotifyBatch` 先例：
+  // 首件起算（不随新件延长）滚动窗 + 窗末把 N 件合并为**一次**注入 + 条数上限（溢出
+  // 留队下窗，不丢件）+ `windowMs <= 0` 关窗（回旧行为，运维回滚面/测试接缝）。
+  // P0 豁免档同源：`mailType` 为 `interrupt` 的腿**不进缓冲**（A3/R7 正负对偶守恒）。
+  //
+  // == 作用域（硬边界）==
+  // 只作用 **`ctx.isDispatcher == true` 的发送者**（引擎侧身份判据，非字符串匹配）
+  // —— root / team / 节点会话走 `sendMail` 的其余调用点，**逐字不变**。
+  //
+  // == C · 背压可见化 ==
+  // 窗口排队时长与件数**每次入队出一条 INFO 日志**；排队 >30s 时每件补一条 WARN
+  // （= 「mail 排队」告警，形态对齐既有 mount-stalled 族「只告警不阻断」纪律）。
+  // 积压件数另有只读读数 [[dispatcherMailPendingCount]] 供验收/面板机械核对。
+
+  /** 本腿打包窗条目：正文 + 类型（`mailType` 小写，与 `ImmediateInput.eventType` 同源口径）
+    * + 入队时刻（背压读数用）+ **投递闭包**（窗末注入用；捕获入队时的 ref/ctx，避免
+    * 窗末重解析 root 把件投错会话 —— 语义 = 「回复已定，只是延后注入」）。 */
+  private final case class DispatcherMailEntry(
+      text: String,
+      mailType: String,
+      atMs: Long,
+      deliver: String => IO[Unit]
+  )
+
+  /** 缓冲状态：`entries` = 尚未注入的件（FIFO）；`windowArmed` = 本窗计时在走
+    * （防同窗第二件重复起算 ⇒ 保持「首件起算、不随新件延长」）。 */
+  private final case class DispatcherMailState(
+      entries: Vector[DispatcherMailEntry] = Vector.empty,
+      windowArmed: Boolean = false
+  )
+
+  /** 进程内缓冲（与 `NodeEngine.rootNotifyBatchState` 同款 `Ref.unsafe` 单点；进程重启
+    * 即清空——遗留件**不丢**：入队只发生在注入之前，未注入件只存在于内存，重启窗口内
+    * root 侧本就没有该回复，语义等价于「回复尚未发生」）。 */
+  private val dispatcherMailState: Ref[IO, DispatcherMailState] =
+    Ref.unsafe[IO, DispatcherMailState](DispatcherMailState())
+
+  /** 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。 */
+  private[tools] def dispatcherMailWindowMs: Long =
+    sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
+
+  /** 生效条数上限（现读 prop `nebflow.mail.dispatcherBatchMax`，默认 10；`< 1` 归一到 1，
+    * 防 0/负值把窗口变成永不排空）。 */
+  private[tools] def dispatcherMailBatchMax: Int =
+    math.max(1, sys.props.getOrElse("nebflow.mail.dispatcherBatchMax", "10").trim.toIntOption.getOrElse(10))
+
+  /** 积压件数只读读数（验收/面板机械核对；不写状态、不派发）。 */
+  private[tools] def dispatcherMailPendingCount: IO[Int] =
+    dispatcherMailState.get.map(_.entries.size)
+
+  /** 本窗计时是否在走（只读读数）。 */
+  private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
+    dispatcherMailState.get.map(_.windowArmed)
+
+  /** 🔴 mailunify-full × mailack 批的**唯一形参随动**（2026-09-23）：`type` 参数删净后，
+    * 分发器→root 腿**不再有**邮件类型输入 ⇒ 打包窗的入参**钉常量**本值。
+    *
+    * 为什么钉常量而不是删形参：`enqueueDispatcherReply` 的第三臂（P0 豁免 = `interrupt`
+    * 不进缓冲）与窗末合并件的 tag 取值依赖该形参，且主仓 mailack 批的
+    * `MailDispatcherReplyBatchSpec` 经 spec 接缝直传任意值（含 `"interrupt"` / `"failed"`）
+    * 逐字断言这些分支 ⇒ **删形参 = 破坏另一批已落地裁定**（本批不许）。钉常量后：
+    *   - 合窗键（时间窗 + 条数上限）**与 type 无关** ⇒ 生产行为零变化；
+    *   - 生产入口恒 `"info"` ⇒ P0 豁免面在生产侧不再触发（其判据与 spec 面原样保留）；
+    *   - 合并件的 tag 恒 `info`（`mailType.isEmpty` 回落的既有形态同值）。
+    * 取值 `"info"` = 旧 schema `type` 的默认值（`input("type").getOrElse("INFO")`），
+    * 即「未显式声明类型」的既有语义，非新造字。 */
+  private val DispatcherReplyPinnedKind: String = "info"
+
+  /** P0 豁免档：`interrupt` 腿不进缓冲（与 `NodeEngine.isRootNotifyInterrupt` 同源口径
+    * ——`ImmediateInput.eventType` 即 `mailType.toLowerCase`）。
+    *
+    * 🔴 mailunify-full 批（2026-09-23）：本条判据**原样保留**（另一批裁定 + 其 spec 面
+    * 依据），但生产入口恒定传 `"info"` ⇒ 该档在生产侧为惰性分支（登记：不摘除 = 不
+    * 回退他人机制；其正负对偶仍在 `MailDispatcherReplyBatchSpec` 内被钉）。 */
+  private def isDispatcherMailInterrupt(mailType: String): Boolean =
+    mailType.trim.toLowerCase(java.util.Locale.ROOT) == "interrupt"
+
+  /** 背压告警阈值：排队超过本值即对**该件**补一条 WARN（件不丢、不阻断，只提示）。 */
+  private[tools] val DispatcherMailBackpressureWarnMs: Long = 30000L
+
+  /** **入队 + 首件起算滚动窗**（分发器回复 root 的生产者侧打包入口）。
+    * 返回 `None` = 已入窗（调用方按「已受理、窗末投递」回报）；
+    * 返回 `Some(text)` = 旁路（关窗或 P0 豁免）⇒ 调用方走既有立即注入路径。 */
+  private def enqueueDispatcherReply(
+      text: String,
+      mailType: String,
+      deliver: String => IO[Unit]
+  ): IO[Option[String]] =
+    val windowMs = dispatcherMailWindowMs
+    if windowMs <= 0 || isDispatcherMailInterrupt(mailType) then IO.pure(Some(text))
+    else
+      val nowMs = System.currentTimeMillis()
+      val lowered = mailType.trim.toLowerCase(java.util.Locale.ROOT)
+      dispatcherMailState
+        .modify { s =>
+          val arm = !s.windowArmed
+          (s.copy(entries = s.entries :+ DispatcherMailEntry(text, lowered, nowMs, deliver), windowArmed = true),
+            (arm, s.entries.size + 1))
+        }
+        .flatMap { case (armWindow, depth) =>
+          (if depth >= 5 then
+             logger.warn(
+               s"[mail-backpressure] dispatcher reply queued (pending=$depth, window=${windowMs}ms) — dispatcher replies are coalesced per window; root is NOT woken until the window closes"
+             )
+           else IO.unit) *>
+            (if armWindow then (IO.sleep(windowMs.millis) *> flushDispatcherReplies()).start.void else IO.unit)
+              .as(None)
+        }
+
+  /** **窗口结束的唯一出口**：取队首 ≤N 件 → **一次**注入（N=1 ⇒ 正文逐字不变，走该件
+    * 自带的投递闭包；N≥2 ⇒ 合并正文，走**首件**闭包并在正文内分节）⇒ 溢出件留队、计时
+    * 随之重起（不延续本窗残时，与既有先例同款）。背压读数在注入前出 WARN。 */
+  private[tools] def flushDispatcherReplies(): IO[Unit] =
+    dispatcherMailState
+      .modify { s =>
+        val (drained, rest) = s.entries.splitAt(dispatcherMailBatchMax)
+        (s.copy(entries = rest, windowArmed = rest.nonEmpty), drained.toList)
+      }
+      .flatMap { entries =>
+        if entries.isEmpty then IO.unit
+        else
+          val waitedMs = entries.map(e => System.currentTimeMillis() - e.atMs).max
+          val bpWarn =
+            if waitedMs >= DispatcherMailBackpressureWarnMs then
+              logger.warn(
+                s"[mail-backpressure] dispatcher replies waited up to ${waitedMs / 1000}s before injection (batched=${entries.size})"
+              )
+            else IO.unit
+          val (body, kind) =
+            if entries.size == 1 then (entries.head.text, entries.head.mailType)
+            else (mergedDispatcherReplyText(entries), mergedDispatcherReplyType(entries))
+          bpWarn *> entries.head.deliver(body) *>
+            logger.info(s"dispatcher reply batch flushed (entries=${entries.size}, type=$kind)")
+      }
+
+  /** 合并正文（N≥2）：批头一行 + 逐件分节，**每件正文全文**（不折叠、不摘要、不截断）
+    * ⇒ 机械可核（多重集/保序/不丢）。分节行形如 `── [i/N] [type] ──`。 */
+  private def mergedDispatcherReplyText(entries: List[DispatcherMailEntry]): String =
+    val head = s"[Dispatcher 本窗 ${entries.size} 件回复（分发器→root 打包窗合并）]"
+    val body = entries.zipWithIndex
+      .map((e, i) => s"── [${i + 1}/${entries.size}] [${if e.mailType.isEmpty then "info" else e.mailType}] ──\n${e.text}")
+      .mkString("\n\n")
+    s"$head\n$body"
+
+  /** 合并件的 `eventType`（保守：不新增批级语义；强提醒优先 —— failed > blocked > 首件）。 */
+  private def mergedDispatcherReplyType(entries: List[DispatcherMailEntry]): String =
+    if entries.exists(_.mailType == "failed") then "failed"
+    else if entries.exists(_.mailType == "blocked") then "blocked"
+    else entries.head.mailType
+
+  // ── 测试接缝（`private[tools]`：spec 直调，避开真实窗长等待与 root 会话依赖；
+  //    与 `NodeEngine.flushRootNotify` 的 `private[project]` spec 接缝同款先例）──
+  private[tools] def enqueueDispatcherReplyForTest(
+      text: String,
+      mailType: String,
+      deliver: String => IO[Unit]
+  ): IO[Option[String]] = enqueueDispatcherReply(text, mailType, deliver)
+
+  private[tools] def flushDispatcherRepliesWithMaxForTest(n: Int): IO[Unit] =
+    dispatcherMailState
+      .modify { s =>
+        val (drained, rest) = s.entries.splitAt(math.max(1, n))
+        (s.copy(entries = rest, windowArmed = rest.nonEmpty), drained.toList)
+      }
+      .flatMap { entries =>
+        if entries.isEmpty then IO.unit
+        else
+          val (body, _) =
+            if entries.size == 1 then (entries.head.text, entries.head.mailType)
+            else (mergedDispatcherReplyText(entries), mergedDispatcherReplyType(entries))
+          entries.head.deliver(body)
+      }
+
+  private[tools] def mergedDispatcherReplyTypeForTest(types: List[String]): String =
+    mergedDispatcherReplyType(types.map(t => DispatcherMailEntry("", t, 0L, _ => IO.unit)))
 
 
   // ============================================================
