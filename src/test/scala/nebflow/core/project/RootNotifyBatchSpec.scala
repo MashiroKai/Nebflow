@@ -275,7 +275,112 @@ class RootNotifyBatchSpec extends FunSuite:
     }
   }
 
-  // ── A2 ────────────────────────────────────────────────────────────────────────
+  // ── N1–N6：notifypack 解 b 批（2026-09-23）加法断言面 ──────────────────────────
+  // 载体 = `ImmediateInput.windowItems`（A-ii 路线 ①）。判据前提：**队列元素数不变**
+  // （合并腿仍是一次 offer、一件元素）⇒ A1 的 `after.size == 1` 仍为绿（本批零改写
+  // 既有 12 项断言）。本节只做**加法**：正例 / 恒等负例 / 队列语义守卫 / 压缩守卫 /
+  // 幂等 / 写入点唯一性。
+
+  test("N1/N2/N5 GREEN: the merged carrier carries N windowItems (arrival order, write-point sender) and a plain item is identity") {
+    withFixture("n1", quietMs = 400L, batchMax = 10) { (store, engine, recorded, _) =>
+      val nodes = List(node("n-n1-1", result = "N1_BODY_ONE"), node("n-n1-2", status = NodeLifecycle.Failed, result = "N1_BODY_TWO"))
+      val io = for
+        _ <- seed(store, nodes)
+        // 直走打包入口（与 A5/A6 同款接缝）：文本逐件自带状态段，允许多状态混批
+        _ <- engine.enqueueRootNotify("[Node 'node-n-n1-1' completed]\nN1_BODY_ONE", "node-n-n1-1", NodeLifecycle.Completed, Some("n-n1-1"))
+        _ <- engine.enqueueRootNotify("[Node 'node-n-n1-2' failed]\nN1_BODY_TWO", "node-n-n1-2", NodeLifecycle.Failed, Some("n-n1-2"))
+        ms <- awaitImms(recorded, min = 1)
+        _ <- IO.sleep(600.millis)
+        after <- imms(recorded)
+      yield after
+      val after = io.unsafeRunSync()
+      println(s"[RootNotifyBatchSpec] N1 DIAG injections=${after.size} payloads=${after.flatMap(_.windowItems).map(_.map(w => (w.text.take(20), w.status, w.sender)))}")
+      assertEquals(clue(after.size), 1, "carrier stays ONE queue element (route ① — queue arithmetic untouched)")
+      val carrier = after.head
+      // N1：载荷 = N 件，序 == 到达序，逐件自带身份/状态/项目名前缀
+      assertEquals(clue(carrier.windowItems.map(_.size)), Some(2), "the carrier must carry N payload items")
+      val items = carrier.windowItems.get
+      assertEquals(
+        clue(items.map(_.text)),
+        List("[Node 'node-n-n1-1' completed]\nN1_BODY_ONE", "[Node 'node-n-n1-2' failed]\nN1_BODY_TWO"),
+        "payload order == arrival order; each payload = that item's OWN full body (no truncation, no re-render)"
+      )
+      assertEquals(
+        clue(items.map(_.status)),
+        List(NodeLifecycle.Completed, NodeLifecycle.Failed),
+        "per-item status survives (NOT flattened to the batch's strongest status)"
+      )
+      assertEquals(
+        clue(items.map(_.nodeName)),
+        List("node-n-n1-1", "node-n-n1-2"),
+        "per-item node name survives (bubble SUBJECT source)"
+      )
+      assertEquals(
+        clue(items.map(_.sender)),
+        List("rootnotifyproj/node-n-n1-1", "rootnotifyproj/node-n-n1-2"),
+        "per-item sender is built at the WRITE POINT (project name in scope) — no string surgery at expansion"
+      )
+      // ⑤ 幂等（N5）：展开出的虚拟件不得再带窗标记（防二次展开/递归放大）
+      val expanded = TurnBoundaryDrains.expandWindowFlush(carrier)
+      assertEquals(clue(expanded.size), 2, "expand ⇒ N virtual items on the same turn boundary")
+      assert(expanded.forall(_.windowItems.isEmpty), "expanded items must NOT carry the tag again (idempotence)")
+      assertEquals(
+        clue(expanded.map(_.sender)),
+        List(Some("rootnotifyproj/node-n-n1-1"), Some("rootnotifyproj/node-n-n1-2")),
+        "each virtual item keeps its own identity (N distinct bubbles)"
+      )
+      assertEquals(
+        clue(expanded.map(_.eventType)),
+        List(Some(NodeLifecycle.Completed), Some(NodeLifecycle.Failed)),
+        "each virtual item keeps its OWN state (per-item bubble STATE segment)"
+      )
+      // N2：恒等负例 —— 非窗腿的件（无标记）展开恒等 1→1
+      val plain = AgentCommand.ImmediateInput("plain-user-text", source = None, fromUser = true)
+      assertEquals(clue(TurnBoundaryDrains.expandWindowFlush(plain)), List(plain), "untagged ⇒ identity (no leak)")
+    }
+  }
+
+  test("N3/N4 GREEN: queue semantics + compaction guard cover the carrier (队列层一字未动)") {
+    val carrier = AgentCommand.ImmediateInput(
+      "carrier",
+      source = Some("node"),
+      windowItems = Some(List(AgentCommand.WindowItem("a", "node-a", "completed", "p/node-a")))
+    )
+    val tailItem = AgentCommand.ImmediateInput("tail", source = None, fromUser = true)
+    // 展开器与实现位同一形态（`AgentActor.expandRootNotify` 的判据）：非窗件恒等 1→1。
+    val expand: AgentCommand.ImmediateInput => List[AgentCommand.ImmediateInput] =
+      TurnBoundaryDrains.expandWindowFlush
+    // N3：队列只移除 1 个元素（载体不论载荷多少件，都只占 1 槽）
+    val (taken, tail) =
+      TurnBoundaryDrains.drainHeadExpanded(List[AgentCommand.ImmediateInput](carrier, tailItem), compactionPending = false)(expand)
+    assertEquals(clue(taken.size), 1, "one payload item ⇒ one virtual item (payload count, not queue count)")
+    assertEquals(clue(tail), List(tailItem), "queue arithmetic: exactly ONE element removed")
+    // N4：压缩挂起 ⇒ 载体一件都不展开（guard 覆盖载体，语义与 drainHead 逐字同形）
+    val (held, stillQueued) =
+      TurnBoundaryDrains
+        .drainHeadExpanded(List[AgentCommand.ImmediateInput](carrier, tailItem), compactionPending = true)(expand)
+    assertEquals(clue(held), Nil, "mid-compaction: nothing may be expanded/injected")
+    assertEquals(clue(stillQueued), List(carrier, tailItem), "the queue stays intact")
+  }
+
+  test("N6 GREEN (静态判据): windowItems is written at EXACTLY ONE point in the whole source tree") {
+    // 判据 = 源码现读计数（禁语义判断）：`windowItems = Some(` 的写入点全仓恰 1 处，
+    // 且必须落在 `NodeEngine.flushRootNotify` 的 `case many` 分支内。
+    val mainRoot = os.pwd / "src" / "main" / "scala"
+    val writeSites = os.walk(mainRoot).filter(os.isFile).filter(_.ext == "scala").flatMap { f =>
+      os.read(f).linesIterator.zipWithIndex.collect {
+        case (line, i) if line.contains("windowItems = Some(") && !line.trim.startsWith("//") =>
+          s"${f.relativeTo(mainRoot)}:${i + 1}"
+      }
+    }.toList
+    assertEquals(
+      clue(writeSites).map(_.replaceAll(":\\d+$", "")).distinct,
+      List("nebflow/core/project/NodeEngine.scala"),
+      s"the only write point must be NodeEngine.flushRootNotify's `case many`; found: $writeSites"
+    )
+    assertEquals(clue(writeSites.size), 1, s"exactly ONE write site (mechanical count): $writeSites")
+  }
+
 
   test("A2 GREEN: single item zero drift — windowed single is BYTE-IDENTICAL to the window-off (legacy) single") {
     def capture(quiet: Long): AgentCommand.ImmediateInput =

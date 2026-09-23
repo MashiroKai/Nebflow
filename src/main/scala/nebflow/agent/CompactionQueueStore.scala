@@ -40,6 +40,28 @@ object CompactionQueueStore:
 
   // ── Codecs (hand-written, few fields; ContentBlock codec reused) ──
 
+  /** notifypack 解 b 批 (2026-09-23): codec for the window-flush payload element
+    * (`ImmediateInput.windowItems`). Hand-written like its siblings — four plain
+    * String fields, all required (the decoder is only reached for entries the
+    * encoder itself wrote). */
+  given Encoder[AgentCommand.WindowItem] = Encoder.instance { w =>
+    Json.obj(
+      "text" -> w.text.asJson,
+      "nodeName" -> w.nodeName.asJson,
+      "status" -> w.status.asJson,
+      "sender" -> w.sender.asJson
+    )
+  }
+
+  given Decoder[AgentCommand.WindowItem] = Decoder.instance { c =>
+    for
+      text <- c.downField("text").as[String]
+      nodeName <- c.downField("nodeName").as[String]
+      status <- c.downField("status").as[String]
+      sender <- c.downField("sender").as[String]
+    yield AgentCommand.WindowItem(text, nodeName, status, sender)
+  }
+
   given Encoder[AgentCommand.ImmediateInput] = Encoder.instance { imm =>
     val base = Json.obj("text" -> imm.text.asJson)
     val withBlocks = imm.blocks.fold(base)(b => base.deepMerge(Json.obj("blocks" -> b.asJson)))
@@ -54,6 +76,13 @@ object CompactionQueueStore:
       // TOOL card again after a restart. Written only when true → all older
       // snapshots decode as fromUser=false (backward compatible).
       .deepMerge(if imm.fromUser then Json.obj("fromUser" -> true.asJson) else Json.obj())
+      // notifypack 解 b 批 (2026-09-23): the notification-window flush payload must
+      // survive "enqueued → crash recovery" too — without it a recovered carrier
+      // degrades to "one bubble holding all sections" (the merged `text` is still
+      // there, so nothing is lost — degraded semantics, not data loss). Written
+      // only when defined → all older snapshots decode as windowItems=None
+      // (backward compatible, zero drift for every non-window leg).
+      .deepMerge(imm.windowItems.fold(Json.obj())(v => Json.obj("windowItems" -> v.asJson)))
   }
 
   given Decoder[AgentCommand.ImmediateInput] = Decoder.instance { c =>
@@ -67,7 +96,23 @@ object CompactionQueueStore:
       delivery <- c.downField("delivery").as[Option[String]]
       // Missing field (pre-② snapshot) → false = legacy behaviour.
       fromUser <- c.downField("fromUser").as[Option[Boolean]]
-    yield AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser.getOrElse(false))
+      // notifypack 解 b 批 (2026-09-23): missing key on an older snapshot →
+      // None ⇒ the recovered carrier expands identically to a plain input
+      // (1→1); the merged `text` still carries every section (no loss).
+      windowItems <- c.downField("windowItems").as[Option[List[AgentCommand.WindowItem]]]
+    yield AgentCommand.ImmediateInput(
+      text,
+      blocks,
+      source,
+      eventType,
+      sender,
+      senderTeam,
+      delivery,
+      fromUser.getOrElse(false),
+      // notifypack 解 b 批：原有 **8 位置实参逐字保留**（`project` 与改前一样不落盘
+      // ——本批零触碰该面），新字段走**具名**实参 ⇒ 位置面零漂移。
+      windowItems = windowItems
+    )
   }
 
   given Encoder[AgentCommand.ExternalEvent] = Encoder.instance { e =>
