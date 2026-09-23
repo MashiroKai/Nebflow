@@ -22,7 +22,7 @@ import java.nio.charset.StandardCharsets
  */
 class IndexWithBrandServeSpec extends FunSuite:
 
-  private val response = WebSocketRoutes.indexWithBrand("web/index.html").unsafeRunSync()
+  private val response = StaticRoutes.indexWithBrand("web/index.html").unsafeRunSync()
   private val bytes = response.body.compile.toList.unsafeRunSync().toArray
   private val body = new String(bytes, StandardCharsets.UTF_8)
 
@@ -57,7 +57,7 @@ class IndexWithBrandServeSpec extends FunSuite:
   }
 
   test("missing resource degrades to NotFound") {
-    val resp = WebSocketRoutes.indexWithBrand("web/definitely-missing.html").unsafeRunSync()
+    val resp = StaticRoutes.indexWithBrand("web/definitely-missing.html").unsafeRunSync()
     assertEquals(resp.status, Status.NotFound)
   }
 

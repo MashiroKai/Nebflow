@@ -625,7 +625,7 @@ private[tools] object FileRefs:
 
   /**
    * Every prefix the gateway serves itself (never from disk through
-   * `/api/nf-file`): `WebSocketRoutes.jsRoutes:5218` (`/js/`), `assetsRoutes:5139`
+   * `/api/nf-file`): `StaticRoutes.jsRoutes:5218` (`/js/`), `assetsRoutes:5139`
    * (`/assets/`), `uploadsRoutes:5174`, `GET -> Root / "css" / file` (`/css/`),
    * the vendor cases `:719-755`, `agents:782`, `voice-models:805`.
    */

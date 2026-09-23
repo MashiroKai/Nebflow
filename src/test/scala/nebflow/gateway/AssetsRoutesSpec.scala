@@ -8,7 +8,7 @@ import org.http4s.dsl.io.*
 import org.http4s.headers.*
 
 /**
- * Route-level tests for WebSocketRoutes.assetsRoutes (P1: the /assets
+ * Route-level tests for StaticRoutes.assetsRoutes (P1: the /assets
  * wildcard for the esbuild dist tree) and the hasBundledDist probe.
  *
  * Fixtures: src/test/resources/web-dist/assets/ contains real classpath
@@ -18,7 +18,7 @@ import org.http4s.headers.*
  */
 class AssetsRoutesSpec extends CatsEffectSuite:
 
-  private val routes: HttpRoutes[IO] = WebSocketRoutes.assetsRoutes
+  private val routes: HttpRoutes[IO] = StaticRoutes.assetsRoutes
 
   private def get(path: String): IO[Option[Response[IO]]] =
     routes(Request[IO](Method.GET, Uri.unsafeFromString(path))).value
@@ -87,7 +87,7 @@ class AssetsRoutesSpec extends CatsEffectSuite:
   test("hasBundledDist is false without web-dist/index.html on the classpath") {
     // The test classpath packs web-dist/assets fixtures but NOT the dist
     // index.html — the probe must stay on the dev branch.
-    assertEquals(WebSocketRoutes.hasBundledDist, false)
+    assertEquals(StaticRoutes.hasBundledDist, false)
   }
 
 end AssetsRoutesSpec

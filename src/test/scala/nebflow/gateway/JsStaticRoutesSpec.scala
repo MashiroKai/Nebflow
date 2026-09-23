@@ -7,7 +7,7 @@ import org.http4s.{Method, Request, Status, Uri}
 import org.typelevel.ci.CIString
 
 /**
- * Route-level tests for WebSocketRoutes.jsRoutes: serving ALL of web/js at
+ * Route-level tests for StaticRoutes.jsRoutes: serving ALL of web/js at
  * any depth. Generalized from the per-path routes (in-class single-segment
  * /js, the /js/locales case, the viewers-only route) after the same outage
  * class struck twice — every newly added js subdirectory 404ed all its
@@ -26,7 +26,7 @@ class JsStaticRoutesSpec extends FunSuite:
 
   private def get(path: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
-    WebSocketRoutes.jsRoutes(req).value.unsafeRunSync()
+    StaticRoutes.jsRoutes(req).value.unsafeRunSync()
 
   private def assertServed(path: String): Unit =
     val resp = get(path).get
