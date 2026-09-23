@@ -60,8 +60,13 @@ private[tools] class JobHealth(
   val lastActivityMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   val outputLineCount: AtomicInteger = new AtomicInteger(0),
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
-  /** Whether a "process dead" notification has already been sent — prevents spam. */
+  /** Whether a "process dead" notification has already been sent — prevents spam.
+    * 🔴 killruling 批（#1+#14+#15 改造）后本旗**只剩 B2 消费**（B1 已降为只提醒腿）。
+    */
   val deadNotified: AtomicBoolean = new AtomicBoolean(false),
+  /** B1「只提醒」腿的单发旗（killruling 批 2026-09-23）：提醒**不杀** ⇒ 不得再与 B2
+    * 共用 [[deadNotified]]（那会把 B2 的单发预算提前烧掉）。CAS 单发，防 30s 节拍刷屏。 */
+  val slowNotified: AtomicBoolean = new AtomicBoolean(false),
   /** 后台任务输出查看批（2026-09-09）：逐行输出汇聚口——runProcess 的 stdout/
     * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
     * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。 */
@@ -183,7 +188,10 @@ final class ShellSession private (
     persistent: Boolean = false,
     // 输出查看批（2026-09-09）：逐行输出汇聚口（BgTaskOutputStore 缓冲 sink，
     // BashTool 后台路径注入）。None = 无缓冲（默认，兼容既有调用方/测试）。
-    outputSink: Option[String => Unit] = None
+    outputSink: Option[String => Unit] = None,
+    /** B1「只提醒」腿的审计出口（killruling 批 2026-09-23；见 [[startJobHealthCheck]]
+      * 同名参数）：None = 无项目上下文 / spec 直调 ⇒ 只留 `logger.warn`。 */
+    onSlowDetected: Option[String => IO[Unit]] = None
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
@@ -210,7 +218,8 @@ final class ShellSession private (
             command = command,
             hardTimeoutMs = hardTimeoutMs,
             stuckWindowSec = stuckWindowSec,
-            checkIntervalSec = healthCheckIntervalSec
+            checkIntervalSec = healthCheckIntervalSec,
+            onSlowDetected = onSlowDetected
           )
         job = BackgroundJob(
           fiber,
@@ -420,16 +429,6 @@ final class ShellSession private (
 
   private[tools] val SleepCommandRe = """\bsleep\s+\d+""".r
 
-  /** Grace period before checking if a quiet background process is stuck.
-    *
-    * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T6**）：取值收敛到**唯一取数点**
-    * `Defaults.StuckDetectionGraceSec`（system prop `nebflow.shell.stuckDetectionGraceSec`，
-    * 默认 `30` = **旧行为现行取值**，每次调用现读）——本名降为 delegating def，
-    * **零调用点改动**（下方 `IO.sleep` 与错误文案两处消费点逐字不变）。
-    * 🔴 本处**禁再出现独立字面量**（阈值唯一取值点纪律，§1.3）。
-    */
-  private def StuckDetectionGracePeriod: FiniteDuration = Defaults.StuckDetectionGraceSec.seconds
-
   /**
    * #22 (2026-08-19): foreground no-progress ceiling. A foreground command
    * that makes NO progress — no new output AND no CPU progress within a
@@ -451,9 +450,6 @@ final class ShellSession private (
   private def ForegroundNoProgressTimeout: FiniteDuration = Defaults.ForegroundNoProgressTimeoutMs.millis
 
   private val shellLogger = NebflowLogger.forName("nebflow.shell")
-
-  /** CPU sampling window to distinguish slow builds from idle prompts. */
-  private val CpuSampleInterval: FiniteDuration = 2.seconds
 
   /**
    * Minimum CPU delta (nanos) during sampling to consider a process "active".
@@ -627,23 +623,24 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      // ── Stuck process detection (background tasks only) ──────────────
-      // Foreground commands run to completion (#319) — their safety nets are
-      // the explicit timeout watchdog and the no-progress ceiling below.
+      // ── Stuck process detection (REMOVED — killruling 批 2026-09-23 作者裁定 #3）──
+      // 原 M3「后台 30 s 停滞探测杀」（grace 30s + 2s CPU 采样窗 → killProcessTree）
+      // 已按作者裁定**整块删除**，零新增替代机制：挂死反馈时延 30s → 300s，由 B1
+      // （`startJobHealthCheck` 的 idle 判据）承担；`#1` 的 300s 兜为**现读既有行为**，
+      // 非本批新增。详见 `.nebflow/Spec/20260907_bash-timeout-mechanism-audit.md`
+      // 的同批改判与 `.nebflow/evidence/20260923_killruling-impl/` 的三态读数。
       //
-      // Background tasks have no time limit, so a command waiting for stdin
-      // (ssh, sudo, telnet…) would hang forever. After the grace period
-      // (30s), if the process has zero output AND zero CPU activity, we
-      // kill it with an informative error so the LLM can retry differently.
+      // 🔴 覆盖带代价（本批实测，见 result 内 R-B 节）：M3 删后存在两条**无自动接手者**
+      // 的带——①「前 30s 零输出 ∧ CPU 率 ∈ (0.333, 5] ms/s」；② `persistent=true`
+      // 服务型（B1/B2 整条跳过，M3 是其现读唯一杀器）。二者均为作者已知情接受项。
       //
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
       val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
-      val enableStuckDetection = isBackground && !isSleepLike
 
-      // Shared by the background stuck detector and the foreground no-progress
-      // ceiling: set when WE killed the tree (vs. natural exit) so the result
-      // carries the informative TimeoutException instead of a bare exit code.
+      // Set when WE killed the tree (vs. natural exit) so the result carries the
+      // informative TimeoutException instead of a bare exit code.
+      // （#3 删后唯一写点 = 前台 no-progress ceiling 下方 `stuckFlag.set(true)`。）
       val stuckFlag = Ref.unsafe[IO, Boolean](false)
 
       // ── Foreground no-progress ceiling (#22, 2026-08-19) ────────────────
@@ -712,39 +709,7 @@ final class ShellSession private (
         _ <- registerActive
         _ <- writeStdin
 
-        // Stuck detector fiber: after the grace period, if the process is
-        // quiet, sample CPU over a short window before deciding to kill.
-        stuckFiber <- (
-          if enableStuckDetection then
-            IO.sleep(StuckDetectionGracePeriod) *>
-              IO {
-                val alive = proc.isAlive()
-                val hasOutput = h.outputLineCount.get() > 0
-                alive && !hasOutput
-              }.flatMap { possiblyStuck =>
-                if !possiblyStuck then IO.unit
-                else
-                  // Quiet but alive — sample CPU to distinguish slow builds
-                  // from interactive prompts waiting for input.
-                  for
-                    cpu1 <- IO(sampleProcessCpuTime(proc))
-                    _ <- IO.sleep(CpuSampleInterval)
-                    cpu2 <- IO(sampleProcessCpuTime(proc))
-                    // Strictly-greater — same ps-quantum equality rationale as
-                    // the foreground watch above (one 10ms quantum ≠ activity).
-                    cpuActive = (cpu2 - cpu1) > CpuActiveThresholdNanos
-                    _ <-
-                      if !cpuActive then
-                        IO(proc.isAlive()).flatMap { stillAlive =>
-                          if stillAlive then stuckFlag.set(true) *> ProcessTree.killProcessTree(proc)
-                          else IO.unit
-                        }
-                      else IO.unit
-                  yield ()
-              }
-          else IO.unit
-        ).start
-
+        // (#3 删) 原 M3 停滞探测 fiber 已整块移除——此处无 detector fiber。
         noProgressFiber <- (if !isBackground && !isSleepLike then foregroundNoProgressWatch else IO.unit).start
         watchdogFiber <- timeoutWatchdog.start
 
@@ -755,23 +720,19 @@ final class ShellSession private (
           }
           .timeout(timeout)
 
-        // Cleanup: cancel the watchdog / detector fibers
+        // Cleanup: cancel the watchdog / ceiling fibers
         _ <- watchdogFiber.cancel
         _ <- noProgressFiber.cancel
-        _ <- stuckFiber.cancel
 
-        // Check if the process was killed by the stuck detector / no-progress ceiling
+        // Check if the process was killed by the foreground no-progress ceiling
+        // （#3 删后 `stuckFlag` 的唯一写点 = 前台 ceiling ⇒ `wasStuck` 恒为前台语义）。
         wasStuck <- stuckFlag.get
         finalResult <-
           if wasStuck then
             IO.raiseError(
               new TimeoutException(
-                (if isBackground then
-                   "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
-                     " seconds and no CPU activity was detected."
-                 else
-                  "Command produced no output and no CPU progress for " +
-                    ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling).") +
+                "Command produced no output and no CPU progress for " +
+                  ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling)." +
                   " This command likely requires interactive terminal input (or is hung). " +
                   "Use a non-interactive alternative, pass an explicit timeout, or run it " +
                   "manually in your terminal."
@@ -889,7 +850,13 @@ final class ShellSession private (
     command: String = "",
     hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
     stuckWindowSec: Int = Defaults.BashStuckWindowSec,
-    checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
+    checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
+    /** B1「只提醒」腿的审计出口（killruling 批 2026-09-23；作者裁定 #1+#14+#15
+      * 「判据留作读数传感器、动作换只提醒」）：命中 idle 判据时以 summary 回调一次，
+      * 由挂载面（BashTool，持有 project/workspace/节点身份）写 `bg-slow` 事件。
+      * `None`（无项目上下文 / spec 直调）⇒ 只留 `logger.warn`。
+      * 🔴 与 #27 mount-stalled 同族：**只写事件、不终态化、不杀进程**。 */
+    onSlowDetected: Option[String => IO[Unit]] = None
   ): IO[Option[Fiber[IO, Throwable, Unit]]] =
     val intervalSec = checkIntervalSec
     val idleTimeoutMs = Defaults.BgIdleTimeoutSec.toLong * 1000L
@@ -933,16 +900,31 @@ final class ShellSession private (
 
               if !isSleepLike && idleMs > idleTimeoutMs && !progress then
                 // B1：idle timeout（300s 无输出）——CPU 豁免已并入 progress 判断
-                //（CPU 忙 → progress=true → 不进入此分支，不杀）。
-                if health.deadNotified.compareAndSet(false, true) then
-                  killWith(
-                    s"Background command was idle (no output) for ${idleMs / 1000}s " +
-                      s"and was automatically cancelled. The command may be stuck " +
-                      s"or waiting for interactive input. Consider using a non-interactive " +
-                      s"alternative or running it manually.",
-                    s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — auto-cancelling"
-                  )
-                else IO.unit
+                //（CPU 忙 → progress=true → 不进入此分支）。
+                // 🔴 killruling 批（2026-09-23 作者裁定 #1+#14+#15「改造」）：本支从
+                // **杀**降为 **只提醒**——判据（上方 `if`，逐字未变）继续作为**读数
+                // 传感器**；动作换为「写 `bg-slow` 审计事件（经 `onSlowDetected`，
+                // 挂载面注入）+ `logger.warn`」，**不杀进程、不 complete deferred、
+                // 不写失败台账**。⇒ 被掐进程改为**存活**（挂到 #17 的 2h 帽或人工）；
+                // 节点由「后台腿被掐 ⇒ 必 failed」改为可**正常 completed**。
+                // 单发旗 = `slowNotified`（B1 专用）——🔴 不再消费 `deadNotified`，
+                // 该旗只剩 B2 消费（旧写法会提前烧掉 B2 的单发预算）。
+                // `killWith` 函数体**保留**——B2（下方）仍调用它（死路径核：B2 仍经
+                // `killWith` 产生 `Left(TimeoutException)`，见方案卡 §2.2）。
+                if health.slowNotified.compareAndSet(false, true) then
+                  val summary =
+                    s"background job $jobId idle ${idleMs / 1000}s >= ${idleTimeoutMs / 1000}s " +
+                      "(no output, no CPU progress) — sensor only, no kill, no node failure (killruling ruling)"
+                  logger.warn(
+                    s"Background job $jobId idle for ${idleMs / 1000}s (timeout ${Defaults.BgIdleTimeoutSec}s) — " +
+                      "sensor only, NOT auto-cancelling (killruling ruling #1+#14+#15)"
+                  ) *> onSlowDetected.fold(IO.unit)(_(summary)).handleErrorWith(e =>
+                    logger.warn(s"bg-slow audit append failed for job $jobId: ${e.getMessage}")) *>
+                    // 🔴 提醒腿**必须继续循环**（旧写法是杀 = 终止，故无递归）：不杀 ⇒
+                    // 进程仍活着 ⇒ B2（硬超时后停滞观察）仍须有开火机会，且 `bg-slow`
+                    // 之外再无其它出口守卫。（`slowNotified` 已置位 ⇒ 不再重复提醒。）
+                    loop(lines, cpu, stuckStartMs)
+                else loop(lines, cpu, stuckStartMs)
               else if hardTimeoutHit && !progress then
                 // B2：硬超时后停滞观察——零输出零 CPU 连续 ≥ stuckWindowSec 才杀
                 if stuckStartMs == 0L then loop(lines, cpu, now)

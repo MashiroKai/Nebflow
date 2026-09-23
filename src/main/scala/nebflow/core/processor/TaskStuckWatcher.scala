@@ -983,11 +983,30 @@ object TaskStuckWatcher:
           else
             attempts match
               case 1 =>
-                // L1 软恢复：halt 在飞 LLM——turn 若卡死在 LLM 流上，StuckAbort 浮出
-                // → 有界重试 / turn-end 注入接管。action=halt（真实动作，P7 诚实帧）。
+                // L1 **已退役**（killruling 批 2026-09-23 作者裁定 #28「删」）：原动作 =
+                // `halt 在飞 LLM`（`LlmInterface.cancelInflightFor`：只完成 halt
+                // Deferred，不 shutdownNow、不杀进程），删因 = 假阳性 **95.4%**
+                // （E 面 16 227 : 785）。
+                //
+                // 🔴 **占位不重编号**（方案卡 1.4(b) 推荐路径）：`case 1 =>` 与
+                // `recordFire("L1", …)` **保留**——否则 `StuckJudgementOrderSpec`
+                // 「L1→L3 逐拍升」与 `WatchdogSelfMonitorSpec:460`「三拍 = 三条
+                // stuck-fire」连带改（占位保留 ⇒ 二者零改动）。
+                // `action` 仍为 `"halt"`（逐字不变）而**动作零**（不再完成任何在飞
+                // 请求）⇒ 本批采「占位保留」路径，故 WS `taskStuck` 的 `action="halt"`
+                // **不消失**（方案卡 §1.4(c) 两读之一，逐字在此写清）。
+                // 🔴 flow 分支的 `hardCancel()` 定义**保留**——L2 的 `transportAbort()`、
+                // 回滚形态（`if !hard`，`:963`）仍消费它；`cancelInflightFor` 原语本身
+                // 保留（子 agent 分支 `:1075` 仍消费）。
+                //
+                // 🔴 代价（令第 4 条，显式记录）：删后「Flow/root 会话 Processing ∧
+                // agent 侧零进展 ≥ 10 min ∧ 在飞 LLM ≥ 1」（= S-B / 类④
+                // `ClassProviderHang`）在引擎侧**无任何自动接手者**——作者已知情接受。
+                // 逐字风险条目见 impl 节点 result 的 R-A 节。
                 logger.warn(
-                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — halting in-flight LLM"
-                ) *> recordFire("L1", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "halt", reason)) *> act(hardCancel())
+                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — retired: the flow-branch " +
+                    "LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); sensor-only tick"
+                ) *> recordFire("L1", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "halt", reason))
               case 2 =>
                 // L2 硬中断（action=hard-abort）：transport abort + reclaimSession（见
                 // transportAbort 的 evidence #5 护栏——非 LLM 楔死形态收回进程 kill）。
@@ -1176,11 +1195,18 @@ object TaskStuckWatcher:
             }.flatMap { attempts =>
               val (action, io) = attempts match
                 case 1 =>
+                  // L1 **已退役**（killruling 批 2026-09-23 作者裁定 #28「删」）：原动作 =
+                  // `halt 在飞 LLM`（`LlmInterface.cancelInflightFor`），删因 = 假阳性
+                  // **95.4%**（E 面 16 227 : 785）。
+                  // 🔴 占位不重编号：`case 1 =>` 与 `recordFire("L1", …)` 保留（见 flow
+                  // 分支同款注释）；`action="halt"` 逐字不变、**动作零**。
+                  // `hardCancel()` / `cancelInflightFor` 原语保留（L2 与子 agent 分支仍消费）。
                   ("halt",
                     logger.warn(
-                      s"TaskStuckWatcher: root agent ${rec.sessionId} stuck for ${idleSecs}s — L1: halting in-flight LLM"
-                    ) *> nebflow.llm.LlmInterface.cancelInflightFor(rec.sessionId).void
-                      .handleErrorWith(e => logger.warn(s"TaskStuckWatcher: L1 halt for ${rec.sessionId} failed: ${e.getMessage}")))
+                      s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck for ${idleSecs}s — L1 retired: " +
+                        "the LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); " +
+                        "sensor-only tick, upgrading to L2 on the next scan"
+                    ))
                 case 2 =>
                   ("hard-abort",
                     logger.warn(

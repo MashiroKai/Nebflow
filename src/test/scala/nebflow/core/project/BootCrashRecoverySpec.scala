@@ -398,9 +398,9 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       assert(trigTexts.head.contains("failed"))
   }
 
-  // ── C4 降级兜底：未被认领的 running 残留仍由 watchdog 收敛 ─────────────
+  // ── C4 降级兜底：未被认领的 running 残留仍由 watchdog **接手（提醒腿）** ──────
 
-  test("C4: unclaimed running residue still converges via dead-session watchdog (degraded fallback intact)") {
+  test("C4: unclaimed running residue is still picked up by the dead-session watchdog (degraded fallback = reminder leg)") {
     val ws = tempRoot / "ws-c4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bcr-c4-${scala.util.Random.nextInt(1000000)}")
@@ -409,15 +409,28 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       _ <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bcr-c4", ws, system, res)
-      // 不跑 sweep（模拟 sweep 整体失败/关闭）：watchdog 必须仍能收敛（R4 兜底）
+      // 不跑 sweep（模拟 sweep 整体失败/关闭）：watchdog 必须仍能接住（R4 兜底）
       _ <- seedRunning(rt, "n-c4", "residue-a", "residue task")
       _ <- rt.engine.settleStaleRunningNodes()
       n <- byName(rt, "residue-a")
+      // 提醒腿的 LLM 注入面不需要（节点留 Running、无会话），只读审计面
       events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(n.status, NodeLifecycle.Failed, "unclaimed running residue must converge to failed via watchdog")
-      assert(events.exists(_.contains("dead-session-reaped")), "watchdog audit event expected")
+      // 🔴 killruling 批（2026-09-23 裁定 #19）改判：原断言 = 「未被认领的 running 残留
+      // 必须收敛 failed」（`:419`）——已随降档作废（该腿**不再写终态**）。改后判据 =
+      // 兜底**没有消失、只是换了形态**：节点保持 `Running`（不再自动判死），可见性由
+      // 两条审计（`dead-session-reaped` 文案改 + 新增 `node-session-dead-reminder`）承载，
+      // 处置交人工/分发器面。本用例的主题（「sweep 整体失败时 watchdog 仍接得住」）
+      // 逐字保留——接住的事实从「写 failed」改为「写提醒」，**断言数不减**（2 → 3，多出
+      // 的一条正是降档新增的 reminder 覆盖腿，它证明「先补提醒覆盖再降档」的顺序义务）。
+      assertEquals(n.status, NodeLifecycle.Running,
+        "the degraded fallback must NOT converge the residue to failed any more (killruling ruling #19: reminder only)")
+      assertEquals(n.result, None, "the reminder leg writes no result (no terminal write)")
+      assert(events.exists(_.contains("dead-session-reaped")),
+        "the downgraded watchdog must still leave its audit trace (dead-session-reaped, wording updated)")
+      assert(events.exists(_.contains("node-session-dead-reminder")),
+        "the reminder-coverage leg must fire (ordering duty: coverage added BEFORE the downgrade)")
   }
 
   // ── C6 bgWait：认领清空 + 死亡告知 ─────────────────────────────────

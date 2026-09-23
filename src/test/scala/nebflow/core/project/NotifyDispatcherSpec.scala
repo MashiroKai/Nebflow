@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.{IO, Ref}
+import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
@@ -251,8 +252,18 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       )
     yield (store, dn, triggered, escalated, ws)
 
-  /** 种一个死会话 running 节点（僵尸收敛路径——settleStaleRunningNodes 驱动自动
-    * failed，2026-09-07 批 failed 通知的集成触发源；NodeDeadSessionAutoReapSpec 同款）。 */
+  /** 种一个 running 节点（**纯播种，不驱动**——驱动点由各用例显式放，见下）。
+    *
+    * 🔴 killruling 批（2026-09-23 裁定 #19）**改驱动源**：原驱动 = 死会话僵尸收敛
+    * （`settleStaleRunningNodes → autoFailDeadRunning → failNode/deliverFailed`），该腿
+    * 已降档为只提醒（节点留 Running、不写 failed）⇒ 原驱动不再产生 failed。新驱动 =
+    * [[convergeFailedDeadSession]]（**boot-recovery (c) 类**：Running 且无 `sessionRef`
+    * ⇒ `failClaim` → **同一个 `failNode` 全链** → `deliverFailed` +
+    * `checkBarriersNow(cause="failed")`）——本 spec 主题是 **failed 通知链**（通知文本 /
+    * 预算 / 去重 / 重投 / 停等等待者清单），该链与「谁造出 failed」正交 ⇒ 断言语义零
+    * 漂移。**播种与驱动拆开**是必要的：⑮ 的下游等待者清单在 `deliverFailed` 时刻由
+    * store 现读派生 ⇒ 下游必须先播种、后驱动（原 `settleStaleRunningNodes()` 的位置即
+    * 该顺序的事实来源，此处逐字对齐）。 */
   private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String,
       out: List[OutEdge], in: List[String] = Nil): IO[Unit] =
     rt.store.mutate { s =>
@@ -262,6 +273,12 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         startedAt = Some(System.currentTimeMillis() - 3_600_000),
         createdAt = System.currentTimeMillis() - 3_600_000)))
     }.void
+
+  /** failed 终态驱动（killruling 批 #19 后的触发源，逐字替代原用例里的
+    * `rt.engine.settleStaleRunningNodes()`）：boot-recovery (c) 类——无 `sessionRef`
+    * ⇒ transcript lost ⇒ `failNode` 全链（与本 spec 主题同一 `deliverFailed` 投递面）。 */
+  private def convergeFailedDeadSession(rt: ProjectRuntime, id: String): IO[Unit] =
+    rt.store.getNode(id).flatMap(_.traverse_(n => rt.engine.bootRecoveryClaim(n).void))
 
   /** 种一个节点（可指定终态/标志/结果）。 */
   private def seed(store: FlowMapStore, id: String, name: String, status: String,
@@ -737,7 +754,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       // 字面同落边形态）——⑬ 断言的正是 **failed 腿** 投递（:717），故绝不可写成 bare
       // "Nebula"（批 A 后 = 出口标记 {pass}/signal ⇒ 零投递 ⇒ 该断言恒不可满足）。
       _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", List(OutEdge.nebula))
-      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- convergeFailedDeadSession(rt, "n-fn1") // #19 后：boot-recovery (c) 类驱动 failed
       // out=Nebula 投递（eventType=failed）零回归
       _ <- waitUntil(20.seconds)(nebula.get.map(_.exists((t, ev) =>
         t.contains("[Node 'fail-nebula' failed]") && ev.contains("failed"))))
@@ -755,7 +772,9 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assert(prompt.contains(s"($nodeId)"), s"prompt must carry node id, got: ${prompt.take(200)}")
       assert(prompt.contains("reason=failed"), "prompt must carry failed reason code")
       assert(prompt.contains("错误摘要"), "prompt must carry err summary section")
-      assert(prompt.contains("no live session"), "prompt must carry the actual error text")
+      assert(prompt.contains("crash recovery: session transcript lost"),
+        s"prompt must carry the actual error text (killruling #19: the driver is now the boot-recovery class-c claim, " +
+          s"whose err text is the transcript-lost one), got: ${prompt.take(400)}")
       assert(prompt.contains("NodeList(detail=") && prompt.contains(nodeId), "prompt must carry result read hint (NodeList detail)")
       assert(prompt.contains("reactivate"), "prompt must teach reactivate rerun (ruling ③: failed IS reactivatable)")
       assert(prompt.contains("承接节点"), "prompt must teach rename-new fallback action")
@@ -778,7 +797,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       rt <- mountReal("ntf-fd", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       _ <- seedZombie(rt, "n-fd1", "fail-dangling", "dead task", Nil)
-      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- convergeFailedDeadSession(rt, "n-fd1") // #19 后：boot-recovery (c) 类驱动 failed
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-dangling"))))
       nodeId <- idOf(rt, "fail-dangling")
       node <- rt.store.snapshot.map(_.nodes(nodeId))
@@ -808,7 +827,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
           id = "n-ft-dn", name = "down-node", agent = "general",
           task = Some("downstream work"), out = List(OutEdge.nebula), in = List("n-ft-up"),
           status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
-      _ <- rt.engine.settleStaleRunningNodes()
+      _ <- convergeFailedDeadSession(rt, "n-ft-up") // #19 后：boot-recovery (c) 类驱动 failed
       // D5 零结算：下游停等不启动；分发器通知照发（settle-then-notify 顺序不变）
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.exists(p => p.contains("[dispatch-notify]") && p.contains("fail-up"))))
       _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动下游」留观察窗口

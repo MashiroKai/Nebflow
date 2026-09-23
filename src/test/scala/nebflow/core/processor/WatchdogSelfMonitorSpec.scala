@@ -399,8 +399,15 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
 
   // ── ③ 影子模式守门 ─────────────────────────────────────────────────────
 
-  /** 单臂：3 次扫描（L1/L2/L3）于同一输入；返回（事件行数、桥事件、AgentCommand、inflight 是否被硬取消）。 */
-  private def driveShadowArm(tag: String, shadow: Boolean): IO[(Int, List[AgentEvent], List[AgentCommand], Boolean)] =
+  /** 单臂：4 次扫描（L1/L2/L3 + 复查拍）于同一输入；返回（事件行数、桥事件、AgentCommand、
+    * **L1 拍后在飞是否被硬取消**、**L2 拍后在飞是否被硬取消**）。
+    *
+    * 🔴 killruling 批（2026-09-23 裁定 #28）改读数点：L1 的 LLM-halt 动作已删 ⇒ 原
+    * 单点 `abortedAfterL1` 改为双点——`l1Aborted`（**必假**：第 1 拍零动作）与
+    * `l2Aborted`（**必真**：第 2 拍 L2 transport abort 接管）。两点合起来 = 「升级链
+    * 未被本批关掉」的同一强度读数（第 1 拍不动 / 第 2 拍动），且把「删 L1 动作」这件事
+    * 本身变成可断言的事实（不是靠注释）。 */
+  private def driveShadowArm(tag: String, shadow: Boolean): IO[(Int, List[AgentEvent], List[AgentCommand], Boolean, Boolean)] =
     val sid = s"node-$tag"
     val rootSid = s"root-$tag"
     val system = ActorSystem(s"wd-shadow-$tag")
@@ -422,25 +429,26 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
       abortedAfterL1 <- halt.tryGet
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
+      abortedAfterL2 <- halt.tryGet
       _ <- TaskStuckWatcher.scan(res, wsHub, threshold, stopCounts)
       rows <- fires(sid)
       bridgeEvts <- bridgeReceived.get
       cmds <- agentReceived.get
       ws <- receivedWs.get
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
-    yield (rows.size, bridgeEvts, cmds, abortedAfterL1.isDefined)
+    yield (rows.size, bridgeEvts, cmds, abortedAfterL1.isDefined, abortedAfterL2.isDefined)
     io.guaranteeCase(_ => IO(sys.props.remove(ShadowProp)))
 
   test("R8-③ shadow 守门: 0 AgentCommand / 0 AgentEvent / inflight 不变 / 0 WS 帧，且事件行数与 shadow=false 相等") {
     // 对照臂（shadow=false）：仍真实动作
     val control = driveShadowArm("ctl", shadow = false).unsafeRunSync()
     val shadow = driveShadowArm("shd", shadow = true).unsafeRunSync()
-    val (cRows, cBridge, cCmds, cAborted) = control
-    val (sRows, sBridge, sCmds, sAborted) = shadow
-    // 对照：生产链未被误关（L1 真硬取消在飞 LLM）
+    val (cRows, cBridge, cCmds, cL1Aborted, cL2Aborted) = control
+    val (sRows, sBridge, sCmds, sL1Aborted, sL2Aborted) = shadow
+    // 对照：生产链未被误关（**L1 拍零动作 / L2 拍真硬取消在飞 LLM**）
     //
     // ⚠ 2026-09-11 判据序改造（stuck 自动恢复批 P1，作者裁定 R-3）后的口径更新：
-    // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作 L1 硬取消的可观测量）⇒ 按
+    // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作硬取消的可观测量）⇒ 按
     // 新判据序 [[TaskStuckWatcher.classify]] 的第一档，该会话三拍**全部**归**类④
     // provider hang**（`inflightFor > 0`）。类④ 的硬约束（任务书负控③）=
     // 「不执行 L2 进程 kill / L3」⇒ 本臂**不应**再出现 L3 的桥 Cancelled——这正是
@@ -448,16 +456,25 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     // L2/L3 腿本身的覆盖不受影响：`l3-ineffective` 用例与本 spec 外的
     // `node-l3ok/node-l3fail` 用例都是**无在飞请求**的类① 会话，L3 腿照常开火；
     // 本用例保留的三条 `stuck-fire` 行（L1/L2/L3 三拍）亦证明升级链未被关掉。
-    assert(cAborted, "shadow=false 臂：L1 必须真实硬取消在飞 LLM（证明开关边界正确）")
+    //
+    // 🔴 2026-09-23 killruling 批（裁定 #28「删」L1 动作）后的口径更新：
+    // L1 的 LLM-halt 动作**已删** ⇒ 第 1 拍**零动作**（`StuckAbort` 不再出现）；
+    // 「破坏性动作真的会开火」的证据改由**第 2 拍**（L2 `transportAbortFor` ⇒
+    // `RecoverableAbort`）承担。两条断言（第 1 拍不动 / 第 2 拍动）**断言数不减**，
+    // 且比原单点更强：它逐字锁住「L1 退役」这件事本身。
+    assert(!cL1Aborted,
+      "shadow=false 臂：第 1 拍（L1）必须**零动作**（killruling 批 #28 已删 LLM-halt 动作）")
+    assert(cL2Aborted,
+      "shadow=false 臂：第 2 拍（L2）必须真实硬取消在飞 LLM（证明开关边界正确、升级链未关）")
     assert(!cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]),
       s"shadow=false 臂：类④（inflight>0）不得发桥 Cancelled——节点级 L3 腿对类④ 被结构性跳过，得 $cBridge")
     // 守门：shadow=true 全部破坏性动作被禁
     assertEquals(sBridge, Nil, "shadow=true 不得发任何 AgentEvent（含 bridgeCancelled）")
     assertEquals(sCmds, Nil, "shadow=true 不得发任何 AgentCommand")
-    assert(!sAborted, "shadow=true 不得硬取消在飞 LLM（inflight 计数不变）")
+    assert(!sL1Aborted && !sL2Aborted, "shadow=true 不得硬取消在飞 LLM（inflight 计数不变）")
     // 防「shadow = 关掉监测」：同一输入下事件行数相等
     assertEquals(sRows, cRows, "shadow=true 与 false 在同一输入下事件行数必须相等（shadow 只关动作、不关监测）")
-    assertEquals(cRows, 3, s"三次扫描 = 三条 stuck-fire（L1/L2/L3），得 $cRows")
+    assertEquals(cRows, 3, s"三次扫描 = 三条 stuck-fire（L1/L2/L3，L1 为占位腿），得 $cRows")
   }
 
 end WatchdogSelfMonitorSpec

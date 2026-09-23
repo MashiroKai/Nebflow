@@ -709,7 +709,9 @@ class NodeEngine(
     * 状态写点与计时字段同事务清零，持久层不残留「终态节点带待申报计时」的误导态。
     * 为什么不能只靠 [[clearReportPending]]（run fiber 收尾的 `cleanupRunTables`）：
     * 存在**不经 run fiber** 的终态写点——boot 期 `reapStaleRunning`（死会话收殓）、
-    * `autoFailDeadRunning`、`mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
+    * ~~`autoFailDeadRunning`~~（🔴 killruling 批 2026-09-23 裁定 #19 后**已不是终态写点**：
+    * 降档为只提醒腿、节点留 Running ⇒ 本清单里该项已失效，留名对照）、
+    * `mergeBlockedByUpstreamFailure`、NodeCancel 收殓等，
     * 它们的节点从没有 fiber 可跑 finalizer ⇒ 计时会随节点进归档（隔离实例实跑读
     * 数：reap 后归档的 cancelled 节点仍带 `reportPendingSince`/`reportReminderCount`）。
     * 值已清 ⇒ 原样返回（零漂移，不发生无谓写）。
@@ -749,54 +751,90 @@ class NodeEngine(
       // （挂起恢复后按新会话重新起表；sessionId 守卫防误清 resume 后新会话的计时）。
       clearReportPending(nodeId, Some(sessionId))
 
-  /** 死会话 running 节点的自动收敛（僵尸收敛批 2026-09-06；与 NodeCancel-stale /
-    * abandon 的人力收殓区分——本方法走**自动** watchdog 路径）。收敛目标取 **failed**
-    * 而非 reapStaleRunning 的 cancelled：cancelled 不投递不通知（cancelNode 不调
-    * deliverFailed/settleDeps）且不可重激活——无人知情、无人可修；failed 沿
-    * deliverFailed 触发分发器通知（附停等等待者清单，wf1cde E-③）且可 reactivate
-    * 修复重跑——D5 零结算下下游停等可见，上游修好后等待者自动续跑。fresh 守卫
-    * （R2）：只在 `status==Running` 时收敛——节点已终态/状态已变 → 拒写（并发
-    * 完成/取消不被本路径覆盖成 failed）。审计事件独立（dead-session-reaped），
-    * 与既有 reaped/abandoned 区分。 */
+  /** 🔴 **历史头注（已改判 · 留档对照）**：死会话 running 节点的自动收敛（僵尸收敛批
+    * 2026-09-06）——收敛目标取 **failed** 而非 reapStaleRunning 的 cancelled：cancelled
+    * 不投递不通知（cancelNode 不调 deliverFailed/settleDeps）且不可重激活——无人知情、
+    * 无人可修；failed 沿 deliverFailed 触发分发器通知（附停等等待者清单，wf1cde E-③）
+    * 且可 reactivate 修复重跑——D5 零结算下下游停等可见，上游修好后等待者自动续跑。
+    *
+    * 🔴 **本口径已被 killruling 批（2026-09-23 作者裁定 #19）改判**：「判 failed」降档为
+    * 「只提醒、节点留 Running」⇒ 「沿 `deliverFailed` 触发分发器通知」与「可 reactivate
+    * 修复重跑」两条语义**同时消失**（不再有 failed 写点，故不再有失败驱动）。**代价显式
+    * 在册**：该形态改由 [[deadSessionReminder]] / [[remindDeadSession]] 的提醒腿 +
+    * [[checkBarriersNow]] 的告警腿承载，处置交人工。 */
+  /** 死会话 running 节点的**提醒腿**（killruling 批 2026-09-23 作者裁定 **#19**「降档」）。
+    *
+    * 改判前：`autoFailDeadRunning` 把死会话 running 节点收敛成 `failed` 终态 + 投递失败
+    * 通知（`deliverFailed`）。作者裁定降档：**不写终态**（复用 #30 L3 挂起腿形态 = 停旧
+    * 会话 / 节点留 `Running`）、`deliverFailed` 同删、`checkBarriersNow` 改**告警腿**
+    * （只告警不终态化，与 #27 mount-stalled 同族）。
+    *
+    * 🔴 顺序义务（令第 6 条「**先补提醒覆盖再降档**」，裸降档 ⇒ dead-session 节点永久挂）：
+    * 本腿 = 降档后的**覆盖补齐件**——写 `node-session-dead-reminder` 事件 + `logger.warn`，
+    * 与既有 `fireQuiescentEvent`（提醒阶梯的只写事件档）同款形态：**只提醒、永不判死、
+    * 永不上报失败、永不杀进程或会话**（节点保持 Running 等人工处置）。 */
+  private def remindDeadSession(node: NodeDef, sessionId: String, err: String): IO[Unit] =
+    FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+      s"dead-session node kept Running (session '$sessionId' has no live session) — needs human supervision; " +
+        s"no auto-fail, no delivery (killruling ruling #19 downgrade): ${err.take(160)}") *>
+      logger.warn(
+        s"Node '${node.name}' (${node.id}) session '$sessionId' is dead — kept Running, reminder only " +
+          "(no failed convergence, no failed delivery — killruling ruling #19)")
+
+  /** 死会话 running 节点的降档处置（killruling 批 2026-09-23 作者裁定 #19）。
+    *
+    * 🔴 **已降档**：本方法**不再写任何终态**。历史口径（僵尸收敛批 2026-09-06）为
+    * 「收敛目标取 failed 而非 cancelled：failed 沿 `deliverFailed` 触发分发器通知
+    * （附停等等待者清单，wf1cde E-③）且可 reactivate 修复重跑；cancelled 不投递不通知
+    * 且不可重激活」——🔴 **降档后该语义消失**（不再有 failed ⇒ 无分发器 failed 通知、
+    * 无「reactivate 修复重跑」的失败驱动）。这正是本批要显式登记的**代价**：
+    * 「死会话」这一形态改由 [[remindDeadSession]] 的提醒腿 + barrier 告警腿承载，
+    * 处置交人工（或分发器面）。
+    *
+    * barrier 面（同批处置）：`deliverFailed` 被删 ⇒ 下游不再收 failed ⇒ **barrier 永挂**；
+    * 出口 = [[checkBarriersNow]] 的**告警腿**（只写 `barrier-blocked` 事件 + WARN，
+    * **不**终态化下游，与 #27 mount-stalled 同族）。
+    *
+    * fresh 守卫（R2）保留：只在 `status==Running` 时提醒——节点已终态/状态已变 ⇒ 拒写
+    * （并发完成/取消不被本路径覆盖）。draining 守卫（中断恢复语义批）逐字保留。
+    * 审计事件独立（`dead-session-reaped` **改文案**：不再说 converged-to-failed）。 */
   private def autoFailDeadRunning(nodeId: String, err: String): IO[Unit] =
     // draining 守卫（中断恢复语义批 2026-09-13，spec §2.3-3，与 failNode 头部同款）：
     // 优雅关机窗口内 watchdog 若把「内存态已蒸发」误读成死会话，会把节点的中断现场
-    // 收敛成 failed 终态 + 失败通知（方案 B 的噪音链复发形态）。置位时拒绝。
+    // 误报成失败链（方案 B 的噪音链复发形态）。置位时拒绝。
     if ShutdownState.draining then
       FlowMapEventLog.append(workspace, projectName, nodeId, NodeEngine.InterruptedEventType,
-        s"dead-session failed write suppressed while draining (graceful shutdown): ${err.take(200)}") *>
-        logger.warn(s"Node $nodeId dead-session convergence suppressed while draining (graceful shutdown): ${err.take(200)}")
+        s"dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}") *>
+        logger.warn(s"Node $nodeId dead-session reminder suppressed while draining (graceful shutdown): ${err.take(200)}")
     else
       for
         now <- IO(System.currentTimeMillis())
-        s <- store.mutate { st =>
-          st.nodes.get(nodeId) match
-            case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-              st.copy(nodes = st.nodes.updated(nodeId, withoutReportPending(fresh.copy(
-                status = NodeLifecycle.Failed,
-                result = Some(err),
-                completedAt = Some(now),
-                // 2026-09-07 作者裁定：failed/cancelled 无 TTL 强制清（同 blocked 既
-                // 有语义）——死亡现场保留主图待上层裁决取消/重跑，不静默消失。
-                ttlExpireAt = None))))
-            case _ => st // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
-        }
+        s <- store.snapshot
         _ <- s.nodes.get(nodeId) match
-          case Some(failed) if failed.status == NodeLifecycle.Failed =>
-            emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(failed, now)) *>
-              logger.warn(s"Node '${failed.name}' auto-finalized failed (dead session): ${err.take(200)}") *>
-              FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
-                s"dead-session node auto-converged to failed: ${err.take(220)}") *>
-              deliverFailed(failed, err) *>
-              // R3：与 failNode 同款的终态写点即时 barrier 告警（failed 侧仅此新增）。
-              checkBarriersNow(failed.id, cause = "failed")
-          case _ => IO.unit
+          case Some(n) if n.status == NodeLifecycle.Running =>
+            // 会话 id：内存映射优先、持久 sessionRef 兜底（candidates 解析序同
+            // `remindUnreportedNode`）。
+            nodeSessions.get.map(_.get(nodeId).orElse(n.sessionRef)).flatMap { sid =>
+              emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(n, now)) *>
+                FlowMapEventLog.append(workspace, projectName, nodeId, "dead-session-reaped",
+                  s"dead-session node kept Running (no auto-fail, no delivery — killruling ruling #19 downgrade): ${err.take(220)}") *>
+                remindDeadSession(n, sid.getOrElse("<session-gone>"), err) *>
+                // R3 保留：下游 barrier **告警腿**（只告警、不终态化——`deliverFailed`
+                // 已删，下游不再有 failed 结算，此处即其唯一出口）。
+                checkBarriersNow(n.id, cause = "dead-session")
+            }
+          case _ => IO.unit // 已终态/消失/状态已变 → 拒写（R2 竞态纪律）
       yield ()
 
   /** 死会话 running 周期对账（僵尸收敛批 2026-09-06；ProjectActor.TtlTick 30s 驱动
     * ——复用既有心跳点零新调度器，与 settleRunnableSweep 同族）。对每个 status=Running
-    * 节点做死会话判定，死者自动收敛 failed（autoFailDeadRunning）。判定口径（作者
-    * 2026-09-06 裁定：收敛必须以「可证明无活会话 且 无在途后台任务」触发）：
+    * 节点做死会话判定。
+    *
+    * 🔴 **killruling 批（2026-09-23 作者裁定 #19）改判**：命中的死者**不再自动收敛
+    * failed**——改走 [[autoFailDeadRunning]] 的**降档处置**（只提醒：写
+    * `dead-session-reaped` + `node-session-dead-reminder` + barrier 告警腿；节点保持
+    * `Running`，处置交人工）。判定口径（作者 2026-09-06 裁定：收敛必须以「可证明无活会话
+    * 且 无在途后台任务」触发）**逐字未变**——变的是命中后的动作（判死 → 提醒）。
     *   - 活会话 = nodeSessions(sessionId) 在 agentRegistry 有记录（agent 已 spawn 且
     *     未清理）——有记录即视为活（保守，宁可漏一期不可误杀）；
     *   - nodeSessions 无映射 = 会话未登记/登记已清（重启内存清空 / 翻转即崩溃於登记
@@ -844,7 +882,12 @@ class NodeEngine(
         .flatMap { zombies =>
           zombies.traverse_ { z =>
             autoFailDeadRunning(z.id,
-              "node session dead (no live session, no in-flight background task) — auto-converged to failed by dead-session watchdog")
+              // 🔴 killruling 批（2026-09-23 裁定 #19）：本 err 文案**同批改**——原为
+              // 「auto-converged to failed by dead-session watchdog」，降档后该腿**不再
+              // 写终态**，留着会与 `dead-session-reaped` 的新文案自相矛盾（判据面：
+              // 「无自动判定 ⇒ 文案不得声称已判定」）。改后只陈述事实（会话死 + 无在飞
+              // 后台任务 = 判定输入），处置由 `autoFailDeadRunning` 的降档腿表达。
+              "node session dead (no live session, no in-flight background task) — dead-session watchdog reminder leg (killruling ruling #19: no auto-fail, node kept Running)")
           }
         }
     }
@@ -947,13 +990,56 @@ class NodeEngine(
                     if ladderStage then
                       resources.agentRegistry.get.flatMap { reg =>
                         candidates.find(reg.contains) match
-                          case None => IO.unit // 会话非活 ⇒ 跳过（注入不可达）
+                          case None =>
+                            // 🔴 killruling 批（2026-09-23 作者裁定 #19「**先补提醒覆盖**再降档」）：
+                            // 改前 = `IO.unit`（会话非活 ⇒ 注入不可达 ⇒ 静默跳过）——那会让
+                            // 「会话已死」的节点在提醒阶梯上**零可见性**，而降档后
+                            // `autoFailDeadRunning` 也不再判死 ⇒ 该形态将**完全无人管**。
+                            // 故此处改走**只写事件的提醒腿**（复用 `fireQuiescentEvent`
+                            // 同款形态：只写事件、不注入、永不判死），新增
+                            // `node-session-dead-reminder` 事件——这就是「先补后降」的
+                            // 覆盖补齐件，其断言同时守住顺序义务（撤掉本腿 ⇒ 新断言转红）。
+                            deadSessionReminder(node, since, elapsed, target, reg.contains, candidates)
                           case Some(sid) =>
                             fireReminderRung(node, sid, since, elapsed, target, maxRungs, ladder(target - 1))
                       }
                     else fireQuiescentEvent(node, since, elapsed, maxRungs, ladder(maxRungs - 1))
               }
         }
+    }
+
+  /** 会话已死提醒腿（killruling 批 2026-09-23，作者裁定 #19「先补提醒覆盖再降档」）。
+    *
+    * 触发点 = 提醒阶梯的 `candidates.find(reg.contains) == None`（改前为 `IO.unit`
+    * 「注入不可达 ⇒ 跳过」）。语义与 [[fireQuiescentEvent]] 同款——**只写事件不注入**：
+    * 会话已死 ⇒ 注入物理不可达，但「该节点该拍仍未申报且会话已死」这一事实必须可见。
+    * 单发节流复用 [[quiescentNotified]]（与 quiescent 档同键记账）：
+    * `NodeReportReminderQuiescentMs`（现读默认 4h）一拍，防 30s 节拍刷屏——与
+    * quiescent 档「每拍一次事件」的纪律同源；`≤0` 亦同款（关闭节流 = 每拍都写）。
+    * 判据强度：`reportPendingSince` 已置 + 过了第 N 拍 + 无活会话 ⇒ 提醒**永不停**
+    * （节点保持 Running，处置交人工）。 */
+  private def deadSessionReminder(
+    node: NodeDef,
+    since: Long,
+    elapsed: Long,
+    rung: Int,
+    aliveProbe: String => Boolean,
+    candidates: List[String]
+  ): IO[Unit] =
+    val intervalMs = nebflow.shared.Defaults.NodeReportReminderQuiescentMs
+    IO(System.currentTimeMillis()).flatMap { now =>
+      quiescentNotified.get.map(_.getOrElse(node.id, 0L)).flatMap { last =>
+        if intervalMs > 0 && last > 0 && now - last < intervalMs then IO.unit
+        else
+          quiescentNotified.update(_ + (node.id -> now)) *>
+            FlowMapEventLog.append(workspace, projectName, node.id, NodeEngine.NodeSessionDeadReminderEventType,
+              s"node_report still missing at reminder rung $rung and NO live session is registered " +
+                s"(candidates=[${candidates.mkString(",")}], alive=[${candidates.filter(aliveProbe).mkString(",")}]) — " +
+                s"waited ${elapsed / 1000}s since $since: reminder only, node stays Running (never failed, never killed)") *>
+            logger.warn(
+              s"Node '${node.name}' (${node.id}) has no live session at reminder rung $rung " +
+                s"(waited ${elapsed / 1000}s) — dead-session reminder written, node kept Running (killruling ruling #19)")
+      }
     }
 
   /** 发第 N 拍（阶梯期）：`reportReminderCount` CAS 单发 ⇒ 注入提醒轮 + 写
@@ -3133,31 +3219,90 @@ class NodeEngine(
                 disarmCap *>
                   {
                     // 兜底计时器：等待期内无任何后台完成复检达 bgWaitCapMs →
-                    // failed 注明。措辞注意：completeNode 以 message.contains
+                    // 🔴 **转挂起**（killruling 批 2026-09-23 作者裁定 **#17**「转挂起」；
+                    // 改前 = `complete(Left(FailOutcome(… finalizing failed)))`）。
+                    // 措辞注意：completeNode 以 message.contains
                     // ("cancelled") 分流 cancelNode，本文案不得含该词。
                     val capBody: IO[Unit] =
                       IO.sleep(bgWaitCapMs.millis) *>
                         FlowMapEventLog.append(
                           workspace, projectName, nodeId, "bg-wait-timeout",
-                          s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — finalizing failed") *>
+                          s"background wait cap (${bgWaitCapMs / 1000}s) hit with ${waiting.size} task(s) pending — " +
+                            "suspending the session (node stays Running, NOT finalizing failed); " +
+                            "the cooling-off gate re-evaluates once, then it needs human action") *>
                         waitCapFiber.set(None) *>
                         // ⑤ 残留字段收口（noderpt 批 B 段实测缺陷：`n-0931699e` status=completed
                         // 而 `bgWait` 非空）：本出口此前只 complete deferred、**不写
                         // `setNodeBgWait(Nil)`** ⇒ 首个 hold 期置位的 bgWait 随节点进终态/归档
                         // 永久残留（与 `setNodeBgWait` 头注「flow-map.json 不残留过期 bgWait」
                         // 的契约相悖，也让前端把终态节点误标「等待后台任务」）。此处补写——
-                        // fresh 守卫要求 status==Running，此刻节点仍 Running（终态化在后），
-                        // 故写点有效；幂等（值未变不写不 event）。
+                        // fresh 守卫要求 status==Running，此刻节点仍 Running（挂起后仍是
+                        // Running，语义更强），故写点有效；幂等（值未变不写不 event）。
+                        // 🔴 #17 转挂起后**本行必须保留在最前**（顺序零改动）——否则前端
+                        // 会把「挂起中」的节点误标「等待后台任务」。
                         setNodeBgWait(nodeId, Nil) *>
-                        resultDeferred
-                          .complete(Left(FailOutcome(
-                            s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): still waiting for " +
-                              waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ") +
-                              " — node finalized as failed by the background-completion gate; " +
-                              "the background job(s) keep running and their completion notification may arrive at a finalized session"
-                          ))).attempt.void
+                        // 🔴 #17 改判点（逐字）：`complete(Left(FailOutcome(...)))` ⇒ **删**，
+                        // 改调 `suspendNode`（复用 L3 挂起腿形态：只停 actor、节点留 Running、
+                        // 本代次的中断点，**不**写 status/result/ttl、不投递失败）。
+                        // ⇒ 节点终态从 `failed` 改「保持 `Running`」（挂起中）；actor 停。
+                        // 🔴 二级上限（root 裁：技术项由分发器给**最小候选**+报备）=
+                        // **复用 `StuckRecoveryCooldownMs`（20 min）作冷却闸**：挂起后到冷却点
+                        // **二次评估一次**；仍等不到 ⇒ 转人工（不再自行终态化，也不再自行
+                        // `hardResumeNode` 复活）。见 `recheckSuspendedBgWait`。
+                        suspendNode(sessionId, s"background task wait cap exceeded (${bgWaitCapMs / 1000}s): " +
+                          s"still waiting for ${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}") *>
+                        armBgWaitRecheck(nodeId, sessionId, waiting)
                     capBody.start.flatMap(f => waitCapFiber.set(Some(f)))
                   }
+              // 🔴 #17 二级上限最小候选（**待 root/作者核 · 本批已落码**）：转挂起后
+              // **一次**冷却点二次评估——仍挂起无人接手 ⇒ 只写事件转人工（零终态化、
+              // 零复活）。复用 `StuckRecoveryCooldownMs`（20 min，`Defaults.scala:976`）
+              // 作冷却闸的算术，**不新增 prop**（最小候选纪律）。
+              //
+              // 判据（幂等、不依赖 `bgWait`）：冷却点到时
+              //   ① 节点仍 `Running`（已终态/已归档/已重激活 ⇒ no-op），且
+              //   ② 该节点名下有活会话（`nodeSessions` 映射 ∨ `agentRegistry` 记录）
+              //      ⇒ 已被 `hardResumeNode` 复活、恢复链在跑 ⇒ **no-op**（交出控制权）。
+              //      🔴 判据 ② 不能写成「`bgWait` 仍非空」：本出口的 `setNodeBgWait(nodeId, Nil)`
+              //      是**前置步骤**（防前端误标，见上），挂起时 `bgWait` 恒空 ⇒ 该写法恒
+              //      no-op（死判据）。同理 `BgTaskRegistry.waitingFor` 也不可用：挂起腿的
+              //      既有语义是**即时收殓**该会话的后台表（`runWithAgent` 的 `isSuspendOutcome`
+              //      分支），到点时恒空。
+              //   两条都不满足 ⇒ 「挂起中且无任何接手者」= 本批 #17 要显式登记的形态 ⇒
+              //   写事件 + WARN 转人工（**不**再自行终态化、**不**自行复活）。
+              def armBgWaitRecheck(
+                nodeId: String,
+                sessionId: String,
+                waiting: List[BgTaskRegistry.ActiveTask]
+              ): IO[Unit] =
+                val cooldownMs = nebflow.shared.Defaults.StuckRecoveryCooldownMs
+                IO.sleep(cooldownMs.millis) *>
+                  store.getNode(nodeId).flatMap {
+                    case Some(n) if n.status == NodeLifecycle.Running =>
+                      for
+                        mapped <- nodeSessions.get.map(_.get(nodeId))
+                        reg <- resources.agentRegistry.get
+                        resumed = mapped.exists(reg.contains)
+                        _ <-
+                          if resumed then IO.unit // 已被恢复链复活 ⇒ 交出控制权（零写）
+                          else
+                            FlowMapEventLog.append(
+                              workspace, projectName, nodeId, "bg-wait-timeout",
+                              s"background wait cap recheck after ${cooldownMs / 1000}s cooling-off: the node is still " +
+                                s"suspended with no live session and no recovery leg took it over " +
+                                s"(${waiting.size} task(s) were pending at suspension: " +
+                                s"${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — " +
+                                "handing over to human supervision (no further auto-finalize, no auto-resume; " +
+                                "the node stays Running)"
+                            ) *>
+                              logger.warn(
+                                s"Node '$nodeName' ($nodeId) background wait cap recheck: still suspended after the " +
+                                  s"${cooldownMs / 1000}s cooling-off with no auto-resume — needs human action " +
+                                  "(node kept Running)")
+                      yield ()
+                    case _ => IO.unit // 已终态/已归档/状态已变 ⇒ no-op（幂等）
+                  }.handleErrorWith(e =>
+                    logger.warn(s"bg-wait cap recheck for node $nodeId failed: ${e.getMessage}")).start.void
               // 终局记账 → failed 注明文案（含 agent 消化失败通知后的最终输出，
               // 截断防串膨胀；杀因原文净化同上）。
               def bgFailureMessage(
@@ -6627,6 +6772,14 @@ object NodeEngine:
   /** 事件 `stage` 取值：阶梯期（有注入） / quiescent（只留痕不注入）。 */
   val NodeReportStageActive: String = "active"
   val NodeReportStageQuiescent: String = "quiescent"
+
+  /** **会话已死提醒事件类型**（killruling 批 2026-09-23 作者裁定 **#19**「先补提醒覆盖
+    * 再降档」）：提醒阶梯碰上「节点 Running 且过了第 N 拍，但候会话在 `agentRegistry`
+    * 里**全无活记录**」时，改前是 `IO.unit`（注入不可达 ⇒ 静默跳过）⇒ 该形态在阶梯面
+    * **零可见性**。降档后 `autoFailDeadRunning` 也不再判死 ⇒ 若不补本腿，该形态将完全
+    * 无人管。本事件即覆盖补齐件（与 `fireQuiescentEvent` 同款：只写事件、不注入、
+    * 永不判死、永不杀）。 */
+  val NodeSessionDeadReminderEventType: String = "node-session-dead-reminder"
 
   // ── 释放唤醒常量（noderpt 批 F2，2026-09-11 复核 D2 修复）──────────────────────
   //

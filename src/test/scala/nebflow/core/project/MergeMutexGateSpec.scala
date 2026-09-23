@@ -415,8 +415,16 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       _ <- rt.engine.settleRunnableSweep()
       _ <- settleWindow
       held <- node(rt, "n-b")
-      // 失败终态写点（真实入口：死会话收敛 → failed）
-      _ <- rt.engine.settleStaleRunningNodes()
+      // 失败终态写点（真实入口：**boot-recovery (c) 类**——Running 且无 sessionRef
+      // ⇒ transcript lost ⇒ `failNode` 全链）
+      // 🔴 killruling 批（2026-09-23 裁定 #19）改驱动源：原入口 = 死会话僵尸收敛
+      // （`settleStaleRunningNodes → autoFailDeadRunning → failNode`），该腿已降档为
+      // 只提醒（节点留 Running、**不再写 failed**）⇒ 原入口**不再产生 failed**、
+      // 本用例的「持有者失败释放队列」前置不可达。本用例主题（**终态写点自动释放
+      // 临界区**，三条收尾 = 完成/取消/失败）未被本批改动，变的只是**怎么造出一个
+      // failed 持有者**——新驱动取同一 `failNode` 全链（同 `completedAt` 写点、
+      // 同 `settleRunnableSweep` 释放面），故断言零漂移。
+      _ <- rt.store.getNode("n-a").flatMap(_.traverse_(n => rt.engine.bootRecoveryClaim(n).void))
       a <- node(rt, "n-a")
       _ <- rt.engine.settleRunnableSweep()
       _ <- waitStatus(rt, "n-b", Set(NodeLifecycle.Completed))

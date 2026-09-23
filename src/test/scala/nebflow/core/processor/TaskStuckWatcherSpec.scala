@@ -536,7 +536,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       supervisorRef = Some(bridgeRef)
     )
 
-  test("Project dispatcher 会话卡死 → 广播 restart + 第 1 次即硬取消在飞 LLM，绝不发 raw Stop") {
+  test("Project dispatcher 会话卡死 → 广播 halt（第 1 拍只提醒、在飞不动），绝不发 raw Stop") {
     val system = ActorSystem("test-dispatcher-stuck")
     for
       _ <- IO(system)
@@ -566,23 +566,39 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       (_, halt) <- nebflow.llm.LlmInterface.registerInflight(Some("dispatcher-ab12cd34"))
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts)
-      aborted <- halt.get.timeoutTo(1.second, IO.pure(Left(new RuntimeException("not aborted"))))
+      // L1 拍（第 1 拍）：只提醒、**不动**在飞请求（killruling 批裁定 #28 删 L1 动作）
+      afterL1 <- halt.tryGet
+      _ <- IO.sleep(200.millis)
+      wsAfterL1 <- receivedWs.get
+      // 第 2 拍：L2 transport abort 真动在飞请求（用 `RecoverableAbort` 与 L1 的
+      // `StuckAbort` 相区别——判据从「第 1 拍被 StuckAbort」改为「[第 1 拍零动作 /
+      // 第 2 拍被 RecoverableAbort]」，「升级链第 2 拍开始发力」的强度不减）。
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts)
+      afterL2 <- halt.get.timeoutTo(1.second, IO.pure(Left(new RuntimeException("not aborted"))))
       _ <- IO.sleep(200.millis)
       wsEvents <- receivedWs.get
       agentCmds <- agentReceived.get
       bridgeEvts <- bridgeReceived.get
     yield
-      // 广播：action=halt（L1 软恢复——真实动作是 halt 在飞 LLM，尚未 restart；P7 诚实帧）
-      assert(wsEvents.size == 1, s"expected one taskStuck broadcast, got $wsEvents")
-      val ev = wsEvents.head
-      assertEquals(ev.hcursor.get[String]("type").toOption, Some("taskStuck"))
-      assertEquals(ev.hcursor.get[String]("kind").toOption, Some("Flow"))
-      assertEquals(ev.hcursor.get[String]("action").toOption, Some("halt"))
-      assertEquals(ev.hcursor.get[String]("sessionId").toOption, Some("dispatcher-ab12cd34"))
-      // 第 1 次扫描即硬取消（flow 会话无 supervisor 重启预算可消耗）
-      aborted match
-        case Left(e: nebflow.llm.StuckAbort) => assert(e.sessionId == "dispatcher-ab12cd34")
-        case other => fail(s"expected Left(StuckAbort), got $other")
+      // 第 1 拍广播：action=halt（占位保留——判据档名不重编号，但本拍**动作零**：
+      // L1 的 LLM-halt 动作已被 killruling 批裁定 #28 删除，`bg-slow`/`stuck-fire`
+      // 事件仍留痕 ⇒ 读数传感器保留、自动接手者消失）。
+      assert(wsAfterL1.size == 1, s"expected one taskStuck broadcast at L1, got $wsAfterL1")
+      val evL1 = wsAfterL1.head
+      assertEquals(evL1.hcursor.get[String]("type").toOption, Some("taskStuck"))
+      assertEquals(evL1.hcursor.get[String]("kind").toOption, Some("Flow"))
+      assertEquals(evL1.hcursor.get[String]("action").toOption, Some("halt"))
+      assertEquals(evL1.hcursor.get[String]("sessionId").toOption, Some("dispatcher-ab12cd34"))
+      // L1**零动作**：在飞请求未被完成（L1 起不再有自动接手者——本批要显式登记的代价）
+      assertEquals(afterL1, None,
+        s"L1 must take NO action on in-flight requests (retired by killruling ruling #28), got $afterL1")
+      // 两拍各一帧（L1 halt / L2 hard-abort）——升级链真实的逐拍推进。
+      assert(wsEvents.size == 2, s"expected two taskStuck broadcasts (L1 + L2), got $wsEvents")
+      assertEquals(wsEvents.last.hcursor.get[String]("action").toOption, Some("hard-abort"))
+      // 第 2 拍（L2）真硬取消在飞 LLM——升级链未被本批关掉
+      afterL2 match
+        case Left(e: nebflow.llm.RecoverableAbort) => assert(e.sessionId == "dispatcher-ab12cd34")
+        case other => fail(s"expected Left(RecoverableAbort) at L2, got $other")
       // 铁律：不发 raw Stop——单次会话 Stop 杀 actor 而不发终态事件（桥收不到）
       assert(agentCmds.isEmpty, s"flow session must NOT receive raw Stop, got $agentCmds")
       // 未到 giveUp 阈值：桥不收 Cancelled
@@ -604,7 +620,7 @@ class TaskStuckWatcherSpec extends CatsEffectSuite:
       stuck <- stuckProjectFlow(system, "node-aaaa1111", bridgeRef, threshold)
       _ <- resources.agentRegistry.set(Map("node-aaaa1111" -> stuck))
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map.empty)
-      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 1 → L1 halt
+      _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 1 → L1 halt（动作零：动作已退役，仅广播 + 留痕）
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 2 → L2 hard-abort
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 3 → L3 restart（桥 Cancelled 释放）
       _ <- TaskStuckWatcher.scan(resources, wsHub, threshold, stopCounts) // 4 → L4 failed（resume 失败计数保留）

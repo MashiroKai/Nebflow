@@ -288,4 +288,31 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
     }
   }
 
+  // ── ⑥ killruling 批 #63：默认阈值抬到小时级（4 h）+ `≤0` 回退语义在册 ──────────
+
+  test("⑥ killruling #63：默认空闲窗已抬到 4 h 小时级；`≤0` 回退语义不变（判据 = 常量现读 + 判据点短路）") {
+    // 判据面：本条只读**默认值**与**回退短路的存在性**——注入路径（`Some(v)`）与
+    // 默认值解耦是既有设计的承重面（①–⑤ 用例全部走构造注入，本批未动一行）⇒
+    // 抬默认值**结构性地**不改变任何压缩尺度上的行为读数。
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "shared" / "Defaults.scala")
+    assert(
+      src.contains("""getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString)"""),
+      "DispatcherIdleWindowMs 默认必须 = 4 h 小时级（killruling 批 #63：原 30 min）"
+    )
+    val actor = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "ProjectActor.scala")
+    assert(
+      actor.contains("if windowMs <= 0 then IO.unit"),
+      "`≤0` = 关闭保活（回到 turn 级即拆的旧行为）= 零风险回退开关，判据点必须逐字在册"
+    )
+    // 读数上界护栏：不是把默认值抬成「等效关闭」（≥ 0 且非负——抬到小时级而不是关掉）
+    val flipped = sys.props.get("nebflow.dispatcher.idleWindowMs")
+    try
+      sys.props.remove("nebflow.dispatcher.idleWindowMs")
+      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs >= 3_600_000L,
+        s"默认窗必须 ≥ 1 h（现读 ${nebflow.shared.Defaults.DispatcherIdleWindowMs}）")
+      assert(nebflow.shared.Defaults.DispatcherIdleWindowMs > 0L,
+        "抬阈值 ≠ 关闭保活（`> 0` 才走保活腿；`≤0` 是回退档，两者不得混为一谈）")
+    finally flipped.foreach(v => sys.props("nebflow.dispatcher.idleWindowMs") = v)
+  }
+
 end DispatcherIdleWindowSpec

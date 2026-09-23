@@ -37,11 +37,16 @@ import scala.concurrent.duration.*
  *    guarantee 三表对称清理（防泄漏假活 canary）。
  *
  * 用例（独立 spec，避免污染 flaky 的 NodeSessionDeathFinalizeSpec 复验区间）：
- *  - Z1 僵尸收敛：播种 status=Running 且无活会话/fiber → settle → failed + 投递达
- *    根会话 + dead-session-reaped 审计。
- *  - Z2 下游停等可见（D5 零结算，20260908 wf1cde §3 翻转原 collect 断言）：上游 A
- *    僵尸自动失败 → 下游 B 停等 pending/wiring 保持可见（零结算零启动），处置靠
- *    failed 通知；上游修复重跑后自动续跑。
+ *  🔴 **killruling 批（2026-09-23 作者裁定 #19）改判**：本 spec 主题从「自动收敛 failed」
+ *  降档为「**只提醒**（节点留 Running）」——下列用例的期望值已同批更新（原口径留档
+ *  在每例注释里）。**降档前的代价已显式登记**：不再有 failed ⇒ 无分发器 failed 通知、
+ *  无「reactivate 修复重跑」的失败驱动；可见性改由 `node-session-dead-reminder` 事件 +
+ *  barrier 告警腿承载。**顺序义务**：提醒覆盖腿（本 spec Z1 的 reminder 断言）先于
+ *  降档落地——撤掉该腿只做裸降档 ⇒ Z1 的 reminder 断言转红（变异复红判据）。
+ *  - Z1 僵尸**提醒**：播种 status=Running 且无活会话/fiber → settle → **仍 Running**
+ *    + `dead-session-reaped`（文案改）+ `node-session-dead-reminder` 双审计、**零投递**。
+ *  - Z2 下游停等可见：上游 A 死会话**保持 Running**（既未结算也未终态）→ 下游 B
+ *    停等 pending/wiring 保持可见，处置靠 reminder 事件 + barrier 告警腿。
  *  - Z3 不误杀活会话：真实 spawn + 挂死 LLM → settle → 节点保持 Running（registry
  *    有活记录）。
  *  - Z4 不动等待后台任务：死会话但有在途 bg 任务（waitingFor 非空）→ settle → 节点
@@ -243,9 +248,9 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
-  // ── Z1 僵尸收敛：无活会话/fiber 的运行中节点 → failed + 投递 + 审计 ──
+  // ── Z1 僵尸**提醒**（killruling 批 #19 降档：不判 failed、节点留 Running + 双事件）──
 
-  test("Z1: dead-session running node auto-converged to FAILED with delivery + audit (not cancelled)") {
+  test("Z1: dead-session running node stays RUNNING with reminder + audit (killruling #19 downgrade)") {
     val ws = tempRoot / "ws-z1"
     os.makeDir.all(ws)
     val system = ActorSystem(s"drs-z1-${scala.util.Random.nextInt(100000)}")
@@ -264,29 +269,31 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
           createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
       z <- byName(rt, "zombie-a")
-      // 确定性同步：投递是异步 tell（root 会话 mailbox）——等投递实际到达 recorder
-      //（等副作用本身，而非等 Failed 状态后立即读，NodeSessionDeathFinalizeSpec 同款）。
-      _ <- waitUntil(15.seconds)(recorded.get.map(_.collectFirst {
-        case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'zombie-a' failed]") => m
-      }.isDefined))
+      // 确定性同步：改判后**无投递**（不判 failed）——同步点改为等审计事件落盘
+      //（等副作用本身；killruling 批 #19：`dead-session-reaped` 文案改 + 新增
+      // `node-session-dead-reminder`）。
+      _ <- waitUntil(15.seconds)(readEvents(ws).map(_.exists(_.contains("\"node-session-dead-reminder\""))))
+      _ <- IO.sleep(300.millis) // 给「假如仍有 failed 投递」留观察窗口（护栏）
       imms <- recordedImmediate(recorded)
       events <- readEvents(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(z.status, NodeLifecycle.Failed, "dead-session running must auto-converge to failed")
-      assert(z.result.exists(_.contains("no live session, no in-flight background task")),
-        s"failure reason must record the dead-session trigger: ${z.result}")
-      assert(z.ttlExpireAt.isEmpty,
-        "converged node must NOT get a display TTL (2026-09-07 ruling: failed retained on map, no forced cleanup)")
-      assert(imms.exists(_.text.contains("[Node 'zombie-a' failed]")),
-        s"failed delivery must reach the root session, got: ${imms.map(_.text).mkString("|")}")
+      // 🔴 改后断言（原 5 条 :276-284 ⇒ 改后 5 条，断言数不减；killruling 批 #19 降档）
+      assertEquals(z.status, NodeLifecycle.Running,
+        "dead-session running node must KEEP Running after the ruling — no auto-fail (killruling ruling #19)")
+      assert(z.result.isEmpty, s"no failure result may be written any more: ${z.result}")
+      assert(z.ttlExpireAt.isEmpty, "no display TTL must be written (nothing auto-converges)")
+      assert(!imms.exists(_.text.contains("[Node 'zombie-a' failed]")),
+        s"no failed delivery may reach the root session any more, got: ${imms.map(_.text).mkString("|")}")
       assert(events.exists(_.contains("\"dead-session-reaped\"")),
-        s"dead-session-reaped audit event expected, got: ${events.mkString("|").take(300)}")
+        s"dead-session-reaped audit event expected (wording updated), got: ${events.mkString("|").take(300)}")
+      assert(events.exists(_.contains("\"node-session-dead-reminder\"")),
+        s"node-session-dead-reminder audit event expected (the coverage leg added before the downgrade), got: ${events.mkString("|").take(300)}")
   }
 
   // ── Z2 下游停等可见（D5 零结算，原 collect settlement 翻转）────────────
 
-  test("Z2: downstream stays waiting (visible) when upstream zombie auto-fails (D5 zero-settlement); failed delivery + notify unchanged") {
+  test("Z2: downstream stays waiting (visible) when the upstream dead-session node is kept Running (killruling #19; no settlement, no delivery)") {
     val ws = tempRoot / "ws-z2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"drs-z2-${scala.util.Random.nextInt(100000)}")
@@ -306,21 +313,22 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
             task = Some("process downstream"), out = List(OutEdge.nebula), in = List("n-up"),
             status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
       _ <- rt.engine.settleStaleRunningNodes()
-      // A failed via deliverFailed → D5 零结算：B 停等（不启动）；up out=节点（非
-      // Nebula）→ 无 root 结果投递（分发器处置走 dispatch-notify 通道，⑮ 锁）
-      _ <- waitUntil(20.seconds)(byName(rt, "up-a").map(_.status == NodeLifecycle.Failed))
+      // 改判后上游**保持 Running**（不再 failed）⇒ 无 D5 零结算，下游按「有 running
+      // 上游」正常停等（比 failed 形态**更强**成立：上游既没结算也没终态）。
+      _ <- waitUntil(20.seconds)(byName(rt, "up-a").map(_.status == NodeLifecycle.Running))
       _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动 B」留观察窗口
       up <- byName(rt, "up-a")
       dn <- byName(rt, "down-b")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(up.status, NodeLifecycle.Failed, "zombie upstream must be failed")
-      // D5 翻转（原 collect 断言）：下游停等可见（声明语义，非意外悬挂）——处置靠
-      // failed 通知（附等待者清单）；上游 reactivate 修复重跑后自动续跑
+      assertEquals(up.status, NodeLifecycle.Running,
+        "dead-session upstream must be KEPT Running after the ruling (no auto-fail)")
+      // 下游停等可见（合法等待，比 failed 形态更强）——处置靠 node-session-dead-reminder
+      // 事件 + barrier 告警腿（killruling 批 #19；此前靠 failed 通知附等待者清单）。
       assert(dn.status == NodeLifecycle.Wiring || dn.status == NodeLifecycle.Pending,
-        s"downstream must stay waiting and visible (D5 zero-settlement), got ${dn.status}")
+        s"downstream must stay waiting and visible, got ${dn.status}")
       assertEquals(dn.deliveredTo, Nil,
-        "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)")
+        "no settlement may write deliveredTo into downstream (the upstream never terminates)")
       assertEquals(dn.result, None, "downstream never started (no session run)")
   }
 
