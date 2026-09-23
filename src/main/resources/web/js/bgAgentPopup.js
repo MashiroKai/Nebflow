@@ -135,17 +135,43 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
     }
   }
 
-  // Events were skipped while hidden → DOM is stale or empty. Force a full
-  // refresh from backend history (same pipeline as first open) and seed
-  // in-flight stream text so the current turn's tail renders live.
+  // A panel that was CLOSED has no stream anchor to continue into: nothing
+  // renders into this container while the panel is away, so the bubble left
+  // behind belongs to the previous display cycle. Continuing it as-is is not
+  // merely stale — `aiText` keeps accumulating across the cycle, so the next
+  // live delta would re-render the PREVIOUS cycle's text plus the new tail.
+  //
+  // Two things must hold at once, and they pull in opposite directions:
+  //   · the accumulated text must start from a clean slate (no cross-cycle /
+  //     cross-turn concatenation), which is what resetStream gives;
+  //   · the visible row must NOT be duplicated — resetStream drops the anchor,
+  //     and a re-seeded `aiText` with no anchor would make chat.js open a
+  //     SECOND bubble holding the same text again.
+  // So the anchor is captured before the reset and re-adopted when it is still
+  // attached: the same row keeps streaming the restored tail. When it is gone
+  // (a terminal/tool boundary finalized that turn while the panel was closed)
+  // there is nothing to continue, and the restored tail correctly opens a new
+  // row — the same shape the primary window's history restore produces.
+  // The tail itself is never lost either way: state.js accumulates per-session
+  // buffers for EVERY session, the channel the primary window re-seeds from.
   if (entry.view.dirtyWhileHidden) {
     entry.view.dirtyWhileHidden = false;
+    const anchor = entry.view.stream.currentAiBubble;
+    const adopt = !!(anchor && anchor.isConnected);
     entry.view.resetStream();
-    entry.container.innerHTML = '';
-    entry.historyLoaded = false;
     const sid = entry.view.sessionId;
-    if (state.sessionTexts[sid]) entry.view.stream.aiText = state.sessionTexts[sid];
-    if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+    const buf = state.sessionTexts[sid];
+    if (adopt) {
+      // The buffer is the fuller of the two (it kept accumulating while the
+      // panel was closed), so it wins; the anchor's own text is the fallback
+      // when that buffer was already drained by a terminal.
+      entry.view.stream.currentAiBubble = anchor;
+      entry.view.stream.aiText = buf || anchor._nfText || anchor.textContent || '';
+      if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+    } else {
+      if (buf) entry.view.stream.aiText = buf;
+      if (state.sessionThinkingBuffers[sid]) entry.view.stream.thinkingText = state.sessionThinkingBuffers[sid];
+    }
   }
 
   popupOverlay = document.createElement('div');
@@ -226,8 +252,22 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   });
   popupResizeObs.observe(modal);
 
-  // Load session history from backend
-  if (nodeSessionId && !entry.historyLoaded && entry.container.children.length === 0) {
+  // Load session history from backend. UNCONDITIONAL re-pull on open — the same
+  // shape the sister popup has always used (flowAgentPopup.js: "always re-pull on
+  // open"). Both channels must be merged on every open because they carry
+  // DIFFERENT content for this session family: the injected rows (task dispatch /
+  // mail / node notifications) exist ONLY in the persisted history, while the
+  // dispatcher/node sessions' assistant text and tool rows are streamed live and
+  // never reach .ui.json at all.
+  //
+  // The removed conjunction `entry.container.children.length === 0` was the
+  // defect: ws.js renders bg-agent live frames into the HIDDEN container even
+  // while the popup is closed (the "Gating EXEMPT" branch), so any single live
+  // row made the container non-empty and the history leg was then skipped
+  // forever — the panel showed exactly the live rows and not one injected
+  // bubble. `historyLoaded` stays assigned (it still records "a load cycle has
+  // been started" for callers/readers of the entry), it just no longer gates.
+  if (nodeSessionId) {
     entry.historyLoaded = true;
     setActiveView(entry.view);
     entry.view.pagination.pendingInitialLoad = true;
@@ -241,6 +281,19 @@ export function closeStepPopup() {
     const entry = stepViews.get(currentStepId);
     if (entry) {
       entry.view.visible = false; // hidden — ws.js gates DOM rendering again
+      // Mark the view dirty on EVERY close, so the next open runs the existing
+      // refresh branch above (resetStream + clear the stale container +
+      // re-seed the in-flight live tail). Without this the container keeps its
+      // old DOM and the view keeps its old stream state across a close/reopen
+      // cycle — state that cannot heal on its own (stream text would keep
+      // concatenating across turns, and rows rendered from the previous cycle
+      // would survive into the next one).
+      //
+      // Note this is the *same* flag ws.js sets for skipped-while-hidden events;
+      // for bg-agent sessions that branch is gating-EXEMPT (ws.js "Gating
+      // EXEMPT"), so nothing else ever set it here — which is exactly why the
+      // reopen case was broken.
+      entry.view.dirtyWhileHidden = true;
       getHiddenRoot().appendChild(entry.container);
       entry.footerEl = null;
       if (entry.meta.status === 'done') cleanupBgAgentView(currentStepId);
@@ -416,6 +469,22 @@ function requestOlderPage(entry, opts = {}) {
   return true;
 }
 
+/** Does a historyPage payload carry rows that `restoreFromBackendHistory`
+ *  renders in their own right (i.e. not the injected-bubble channel)?
+ *  Those are exactly the ui.json row kinds that another writer — the WS
+ *  recording layer wired to the engine's own wsSendFn — persists for the
+ *  session families whose engines are bound to a per-session send, so a panel
+ *  may safely rebuild its container from the frame.
+ *  When NO such row is present the panel must NOT treat the frame as the whole
+ *  timeline: for the dispatcher/node family the assistant text and tool rows
+ *  never reach .ui.json at all and this container is their only copy.
+ *  Read-only and conservative — an unknown/future row kind simply falls into
+ *  "not reproducible", which keeps the container rather than dropping it. */
+function historyCarriesRenderedRows(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some((m) => m && (m.type === 'ai' || m.type === 'tool' || m.type === 'agent'));
+}
+
 export function handleBgAgentHistory(msg) {
   const entry = stepViews.get(msg.sessionId);
   if (!entry) return false;
@@ -426,7 +495,78 @@ export function handleBgAgentHistory(msg) {
   const isInitialLoad = view.pagination.pendingInitialLoad;
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
+    // ── Container reconciliation (rework round 1) ───────────────────────
+    // This branch used to wipe the container unconditionally and rebuild it
+    // from the frame alone. That is sound only when the frame can reproduce
+    // what the container holds. It is true for the families whose live rows
+    // the backend persists too (delegate/subtask/dag — their .ui.json carries
+    // the ai/tool rows), and FALSE for the dispatcher/node family: a
+    // launch-mounted engine broadcasts through a bare wsHub.broadcast, so for
+    // it only injected user rows ever reach .ui.json (see
+    // AgentActor#emitInjectedUserEvent and the /sessions census). For that
+    // family this container is the ONLY copy of the assistant text and tool
+    // rows, so the wipe destroyed them unrecoverably, and it also orphaned
+    // view.stream.currentAiBubble — chat.js then reuses the detached node
+    // (no new row) and drops the render on its `isConnected` guard, so even
+    // the in-flight tail stopped rendering.
+    //
+    // The discriminator is the FRAME's own content — never a session-id
+    // prefix: if the payload carries rows this view renders from history as
+    // non-injected content, the frame fully reproduces the container and the
+    // proven wipe + re-seed shape is kept; otherwise history is the
+    // injected-row channel only, and every row the frame cannot re-provide
+    // stays in place.
+    const preserveLive = !historyCarriesRenderedRows(msg.messages);
+    if (preserveLive) {
+      // Detach the rows first (they are the LATER part of the timeline), then
+      // let history render into the emptied container, then re-attach. Moving
+      // nodes preserves identity and listeners, so a still-open stream bubble
+      // stays attached and keeps rendering, and a closed round keeps its rows.
+      // Injected rows are the one kind the frame re-provides (they are
+      // persisted before they are broadcast), so they are dropped here to keep
+      // the bubble count exact — the history copy is byte-identical.
+      const keptLive = document.createDocumentFragment();
+      for (const child of Array.from(entry.container.children)) {
+        if (child.querySelector && child.querySelector('.bubble.injected')) continue;
+        keptLive.appendChild(child);
+      }
+      entry.container.innerHTML = '';
+      view.pagination.offset = msg.offset;
+      view.pagination.total = msg.total;
+      view.pagination.hasMore = msg.hasMore;
+      // Fresh load cycle → fresh (bounded) back-fill budget.
+      entry.backfill.pages = 0;
+      entry.backfill.rows = 0;
+      entry.backfill.startedAt = Date.now();
+      entry.backfill.active = !!msg.hasMore;
+
+      setActiveView(view);
+      // #346 boundary fix: mid-turn tail stays flat when the agent is still
+      // active (running/thinking/tool/frozen/stuck) — terminal event gathers it.
+      const busyTail = ['running', 'thinking', 'tool', 'frozen', 'stuck'].includes(entry.meta.status);
+      restoreFromBackendHistory(msg.messages, { busyTail });
+      entry.container.appendChild(keptLive);
+
+      requestAnimationFrame(() => {
+        entry.container.scrollTop = entry.container.scrollHeight;
+      });
+      // Bounded head-seek: the injected task prompt — and any other early row —
+      // sits at index 0, which the tail page never reached.
+      if (entry.backfill.active && !requestOlderPage(entry, { budgeted: true })) {
+        entry.backfill.active = false;
+      }
+      return true;
+    }
+    // Frame reproduces the container (its rows are persisted live): keep the
+    // pre-existing wipe shape, and re-seed the in-flight tail from the
+    // per-session buffers, which state.js accumulates for EVERY session — so
+    // the stream state broken by the wipe is restored, not dropped.
+    cleanupCardIframes(entry.container);
     entry.container.innerHTML = '';
+    view.resetStream();
+    const sid = view.sessionId;
+    if (state.sessionTexts[sid]) view.stream.aiText = state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) view.stream.thinkingText = state.sessionThinkingBuffers[sid];
     view.pagination.offset = msg.offset;
     view.pagination.total = msg.total;
     view.pagination.hasMore = msg.hasMore;
