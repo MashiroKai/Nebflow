@@ -82,8 +82,9 @@ class InjectionIntakeContractSpec extends FunSuite:
       s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
     )
     assert(
+      // 2026-09-24:钉死文本更新为 scalafmt 全树重排后的形态(续行 4 空格;判据语义不变)。
       mailTool.contains(
-        "private def mailAttribution(\n      mailType: String,\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"
+        "private def mailAttribution(\n    mailType: String,\n    ctx: ToolContext,\n    intake: Option[String] = None\n  )"
       ),
       "mailAttribution 必须保留 `intake: Option[String] = None` 默认参数（默认 None ⇒ 未置位腿零行为变化）"
     )

@@ -421,8 +421,9 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     assert(detachCancelled.contains("suppressTargets"), "the cancel-family detach keeps its suppressTargets 取代面")
     assert(detachCancelled.contains("cascadeCancelledIds"), "and keeps consulting the cross-call suppress set")
     // ③ 本批判据（#675(a)）：目标集前向腿排除 `:loop`
+    // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变)。
     assert(
-      detachCancelled.contains("from.out.filterNot(OutEdge.isLoopEdge)"),
+      detachCancelled.contains("val forward = from.out\n                .filterNot(OutEdge.isLoopEdge)"),
       "the marking leg's forward scan must skip ':loop' back-edges (the whole point of #675(a))"
     )
   }

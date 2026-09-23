@@ -654,7 +654,8 @@ class ChainCascadeSpec extends CatsEffectSuite:
           val start = lines.indexWhere(_.contains(sig))
           assert(start >= 0, s"anchor not found: $sig")
           lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
-        val legs = window("private def cancelNodes(ids: List[String], chainId", 130) +
+        // 2026-09-24:锚点更新为 scalafmt 重排后的签名形态(签名折行;窗口语义不变)。
+        val legs = window("private def cancelNodes(", 130) +
           window("private def cancelNode(", 40) +
           window("private def detachCancelledUpstream", 70)
         assert(
