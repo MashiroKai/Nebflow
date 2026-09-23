@@ -215,7 +215,7 @@ object AgentCommand:
   ) extends AgentCommand
 
   /** 窗冲刷载荷的单件（`ImmediateInput.windowItems` 的元素）。字段与既有
-    * `RootNotifyEntry`（`NodeEngine.scala:6236`）同源 ⇒ 合并腿构造时直接映射、
+    * `RootNotifyEntry`（`NodeEngine.scala:6247`）同源 ⇒ 合并腿构造时直接映射、
     * 零二次转换；`nodeName`/`status` 即逐件气泡的身份与状态段来源，`sender` = 逐件
     * 完整身份 `"<项目名>/<节点名>"`（**写入点**用 `projectName` 构造，展开点零字符串
     * 手术 ⇒ 与 `NotificationHeader.split` 的「首个 `/`」切分口径结构同源）。 */
@@ -255,7 +255,7 @@ object AgentCommand:
       * [[InjectionAttribution.project]] 的取值链。`None` ⇒ 发射点走 ②/③ 回落。
       *
       * **位置刻意置末**（`fromUser` 之后）：本仓存在**位置参数**构造点
-      * （`CompactionQueueStore:70`），插在中间会把 `fromUser` 实参错位到本字段
+      * （`CompactionQueueStore:103`），插在中间会把 `fromUser` 实参错位到本字段
       * ⇒ 置末使既有位置调用逐字保持可编译。 */
     project: Option[String] = None,
     /** **通知窗冲刷载荷（notifypack 解 b 批 · 作者裁定 A · 载体 A-ii）**：
@@ -265,15 +265,20 @@ object AgentCommand:
       *
       * **取值域**：`None`（默认；全部非窗腿与单件腿）｜`Some(items)`（仅 N≥2 的窗冲刷件）。
       * **写入点（唯一）**：`NodeEngine.flushRootNotify` 的 `case many` 分支
-      *   （现读 `NodeEngine.scala:6338-6344`）——该分支现读是 N≥2 的唯一合并出口。
-      * **读取点（唯一）**：`TurnBoundaryDrains.expandWindowFlush`。
+      *   （现读 `NodeEngine.scala:6349`）——该分支现读是 N≥2 的唯一合并出口。
+      * **读取点（判据唯一）**：`TurnBoundaryDrains.expandWindowFlush`（`AgentActor:109`）
+      *   ——它是谓词与幂等性的**唯一定义处**；接线点共 **6** 处，全部经它，无一自造谓词：
+      *   三个 turn 边界（`AgentActor:1884` / `:2191` / `:3510`）、压缩后恢复
+      *   （`AgentActor:504`，经 `expandRootNotify` 单点绑定 `:444`）、以及 **idle 直投腿**
+      *   （`AgentActor:1497`——节点终态通知在上一个 turn 结束后才到 = 本链的生产常态
+      *   到达路径）。
       * **语义边界**：本字段**零会计/零去重/零生命周期**参与面——`text` / `sender` /
       *   `eventType` / 60s 去重键 / `markNebulaDelivered` 记账序**全部逐字不变**；
       *   本字段只决定「消费侧把这一件展开成几条」。
       *
       * **位置刻意置末**（`project` 之后 · 与 `project` 自身的置末纪律同源）：本仓存在
-      *   **位置实参**构造点（`CompactionQueueStore:70`）与两处**位置模式解构点**
-      *   （`AgentActor:1405`、`DeviceMailSpec:408`）。置末使位置实参构造点逐字保持可
+      *   **位置实参**构造点（`CompactionQueueStore:103`）与两处**位置模式解构点**
+      *   （`AgentActor:1497`、`DeviceMailSpec:410`）。置末使位置实参构造点逐字保持可
       *   编译；两处解构点须各追加一个 `_` 槽位（否则 arity 不匹配编译失败——即
       *   「向后兼容」的机械判据：编译器保证无一处被静默漏改）。 */
     windowItems: Option[List[WindowItem]] = None

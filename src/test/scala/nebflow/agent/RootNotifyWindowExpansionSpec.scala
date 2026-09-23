@@ -20,24 +20,28 @@ import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Stre
 import scala.concurrent.duration.*
 
 /**
- * 通知打包「解 b」批 · 红验面（notifypack-b · 实施位 r3，2026-09-23）。
+ * 通知打包「解 b」批 · 红验面（notifypack-b · 实施位 r3，2026-09-23；r4 rework 补 R5）。
  *
  * 主题 = **「气泡逐件」与「唤醒 N→1」同时成立**（作者裁定 A：改消费侧，真达 N→1）。
  * 载体 = `ImmediateInput.windowItems`（生产侧唯一写入点 = `NodeEngine.flushRootNotify`
- * 的 `case many`）；消费侧唯一读取点 = `TurnBoundaryDrains.expandWindowFlush`。
+ * 的 `case many`）；消费侧判据唯一定义处 = `TurnBoundaryDrains.expandWindowFlush`。
  *
  * 全部读数为**真投递**（真 `AgentActor` + 真队列 + 真持久化快照 + 真 WS 帧），**禁 mock**：
  * 唯一被替换的是 `LlmHandle`（进程内 LLM 是外部网络面）——它同时充当**唤醒计数器**与
  * **闸门**（`Semaphore` 每放行一个许可才结束一个 turn ⇒ 可在 turn 中途观测队列）。
  *
- * 四条红验（对应任务书 §8）：
+ * 五条红验：
  *  - **R1 队列层（载体占 1 槽）**：窗冲刷载体在队列里恒 **1 个元素**（载荷 N 件不改变
  *    元素数）⇒ 逐条语义的队列算术未被豁免动过；
  *  - **R2 展开（气泡逐件）**：同一 turn 内注入 N 条上下文消息 + N 个注入帧（逐件
- *    `sender`/`eventType` 各自保留 ⇒ 前端零改动下 N 气泡）；
+ *    `sender`/`eventType` 各自保留 ⇒ 前端零改动下 N 气泡）——**mid-turn 到达态**；
  *  - **R3 唤醒 N→1**：N 件载荷只开**一个** turn（一次 `sendStream`），不是 N 次；
- *  - **R4 负对照（最关键）**：**无标记的用户消息腿仍逐条逐 turn**（每件各开一个 turn），
+ *  - **R4 负对照**：**无标记的用户消息腿仍逐条逐 turn**（每件各开一个 turn），
  *    且不产注入气泡（`fromUser=true` 既有语义）⇒ 例外**被限定在窗冲刷件**，未外溢。
+ *  - **R5 idle 到达（生产常态时序）**：agent 跑完一轮**回 idle** 后载体才到 ⇒ 同样
+ *    N 气泡 / 1 次唤醒；负对照绑在**带标记载体的 idle 态**（无标记件在该态仍逐条）。
+ *    本条为 r4 rework 新增——R1–R4 的闸门编排把 LLM 卡在 turn 中途，只覆盖 mid-turn
+ *    到达态，idle 到达态在 r3 是**零覆盖**（判词位据此判 fail）。
  *
  * 变异复红（证据目录 `20-mutation-*.txt`）：把 `expandWindowFlush` 退回恒等 ⇒
  * 本 spec 的 R2 转红（1 个气泡含全部分节、无逐件消息）⇒ 证明该限定是**承力件**。
@@ -121,6 +125,16 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
       val hc = j.hcursor
       hc.downField("type").as[String].toOption.contains("user") &&
       hc.downField("injected").as[Boolean].toOption.contains(true)
+    }
+
+  /** turn 收尾帧（`{type:"sessionBusy", busy:false}`）——**确定性**的「已回 idle」判据。
+    * 不用 registry `status`：`AgentRecord.status` 注册时默认 `Idle`，用它会在 turn 1
+    * 开跑**之前**就为真（首轮实测踩到）。 */
+  private def idleFrames(frames: List[Json]): List[Json] =
+    frames.filter { j =>
+      val hc = j.hcursor
+      hc.downField("type").as[String].toOption.contains("sessionBusy") &&
+      hc.downField("busy").as[Boolean].toOption.contains(false)
     }
 
   private def field(j: Json, k: String): Option[String] =
@@ -317,6 +331,182 @@ class RootNotifyWindowExpansionSpec extends CatsEffectSuite:
         List(("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"))
       ))
       assert(expanded.forall(_.windowItems.isEmpty), "expanded items must not carry the tag again (idempotence)")
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
+  /* ── R5 · IDLE 到达（**生产常态时序**）──────────────────────────────────────────
+   *
+   * 判词位 r3 判 fail 的那条路：agent 跑完一轮、**已回 idle**，载 体才到（节点终态通知的
+   * 普通到达态）。r3 的 R1–R4 把 LLM 卡在闸门后（mid-turn 到达）⇒ 该路径**零覆盖**，
+   * 于是「带标记 ⇒ 展开」这条全称断言在缺口下假绿。
+   *
+   * 本用例 = 精确生产时序：真人 kickoff → turn 1 **跑完**（闸门放开、agent 回 idle）→
+   * 载体到达 → 断言 N 气泡 / 1 次唤醒。**无闸门编排**——idle 是 LLM 自然跑完后的状态，
+   * 不是被卡出来的状态。
+   *
+   * 负对照（本用例下半段）：**带标记载体 + 无标记件**投在 **idle** 态 ⇒ 无标记件仍
+   * 逐条（一件一次唤醒）、且**不得**被展开/重复注入；r3 的负对照只覆盖 mid-turn 的
+   * 无标记件，本用例把同一判据补到 idle 到达态。
+   */
+  test("R5 (production-nominal): a carrier arriving while the agent is IDLE injects N bubbles in ONE wake; untagged items keep item-by-item semantics") {
+    val system = ActorSystem("notifypack-idle-arrival")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    val sid = "notifypack-idle-root"
+    try
+      val program = for
+        requests <- Ref.of[IO, List[LlmRequest]](Nil)
+        frames <- Ref.of[IO, List[Json]](Nil)
+        // Gate pre-loaded with permits: every turn runs to completion on its own ⇒
+        // the agent genuinely RETURNS TO IDLE (no choreography masking the state).
+        gate <- Semaphore[IO](20)
+        resources <- mkResources(system, tmp, new GatedLlm(requests, gate))
+        nebulaDef = AgentDef(name = "Nebula", description = "idle arrival root", tools = List("Read"), systemPrompt = "")
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = nebulaDef,
+            resources = resources,
+            wsSend = j => frames.update(_ :+ j),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("notifypack-idle")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+
+        // phase 1: a real user turn, allowed to FINISH (agent is back to Idle).
+        // 🔴 Sequencing discipline: `AgentRecord.status` DEFAULTS to Idle at
+        // registration, so "wait for Idle" alone fires BEFORE turn 1 ever starts
+        // (observed: wakesAfterTurn1 read as 0). The deterministic completion
+        // signal is the `sessionBusy(busy=false)` frame emitted by returnToIdle.
+        _ <- ref ! AgentCommand.ImmediateInput("human-kickoff", fromUser = true)
+        _ <- waitUntil(30.seconds, 25.millis)("turn 1 started")(requests.get.map(_.size >= 1))
+        _ <- waitUntil(30.seconds, 25.millis)("turn 1 finished (idle frame #1)")(
+          frames.get.map(f => idleFrames(f).size >= 1)
+        )
+        wakesAfterTurn1 <- requests.get.map(_.size)
+        _ <- IO(assert(wakesAfterTurn1 == 1, s"precondition: exactly ONE wake for the human turn, got $wakesAfterTurn1"))
+
+        // phase 2: the window-flush carrier arrives while the agent is IDLE
+        // (the production-nominal arrival for node notifications).
+        _ <- ref ! carrierPayload(
+          List(
+            ("BODY_ONE", "node-1", "completed", "rootnotifyproj/node-1"),
+            ("BODY_TWO", "node-2", "failed", "rootnotifyproj/node-2")
+          )
+        )
+        _ <- waitUntil(30.seconds, 25.millis)("carrier turn started")(
+          requests.get.map(_.size >= wakesAfterTurn1 + 1)
+        )
+        _ <- waitUntil(30.seconds, 25.millis)("carrier turn finished (idle frame #2)")(
+          frames.get.map(f => idleFrames(f).size >= 2)
+        )
+        _ <- stabilizeCounts(frames.get.map(f => injectedFrames(f).size), 20.seconds)
+        _ <- IO.sleep(700.millis)
+        afterCarrier <- requests.get
+        framesAfterCarrier <- frames.get
+        // phase 3: NEGATIVE CONTROL bound to the TAGGED-carrier IDLE case —
+        // an untagged item arriving while idle must keep item-by-item semantics.
+        // Form matches r3's control object (`fromUser = true`, `source = None`) so
+        // the two arrival states are compared on the SAME negative-control item:
+        // a real-human-origin untagged input, which by pre-existing semantics
+        // emits no injected bubble (fromUser wins over the inferred source).
+        _ <- ref ! AgentCommand.ImmediateInput("plain-user-text", source = None, fromUser = true)
+        _ <- waitUntil(30.seconds, 25.millis)("plain turn started")(
+          requests.get.map(_.size >= wakesAfterTurn1 + 2)
+        )
+        _ <- waitUntil(30.seconds, 25.millis)("plain turn finished (idle frame #3)")(
+          frames.get.map(f => idleFrames(f).size >= 3)
+        )
+        _ <- IO.sleep(700.millis)
+        afterPlain <- requests.get
+        framesAfterPlain <- frames.get
+      yield (wakesAfterTurn1, afterCarrier, framesAfterCarrier, afterPlain, framesAfterPlain)
+
+      val (wakesAfterTurn1, afterCarrier, framesAfterCarrier, afterPlain, framesAfterPlain) =
+        program.unsafeRunSync()
+
+      // ── R5a · 唤醒 N→1：载体（2 件载荷）只开一个 turn ────────────────────────
+      assertEquals(
+        afterCarrier.size,
+        wakesAfterTurn1 + 1,
+        s"the 2-item carrier opens ONE turn while idle (not N): ${afterCarrier.size}"
+      )
+      val carrierReq = afterCarrier(wakesAfterTurn1)
+      val carrierUserTexts = carrierReq.messages.filter(_.role == nebflow.shared.MessageRole.User).map(_.textContent)
+      // 逐件：每件正文各自成为**独立**上下文消息
+      assert(carrierUserTexts.contains("BODY_ONE"), s"item 1 body must be its OWN context message (idle path):\n$carrierUserTexts")
+      assert(carrierUserTexts.contains("BODY_TWO"), s"item 2 body must be its OWN context message (idle path):\n$carrierUserTexts")
+      // 🔴 变异判别（永久保留）：idle 路径**绝不**能只带合并摘要本体
+      assert(
+        !carrierUserTexts.exists(t => t.contains("BODY_ONE") && t.contains("BODY_TWO")),
+        s"no idle-turn message may carry BOTH items merged (that is the unexpanded regression):\n$carrierUserTexts"
+      )
+      assert(
+        !carrierUserTexts.exists(_.contains("── [1/2]")),
+        s"the merged digest must never reach the request on the idle path:\n$carrierUserTexts"
+      )
+
+      // ── R5b · 气泡逐件：2 件载荷 ⇒ 2 个注入帧（各带自身身份/状态/正文）─────────
+      val idleCarrierFrames = injectedFrames(framesAfterCarrier)
+      assertEquals(
+        idleCarrierFrames.size,
+        2,
+        s"idle arrival must still deliver one frame = one bubble per payload item: $idleCarrierFrames"
+      )
+      assertEquals(
+        idleCarrierFrames.flatMap(f => field(f, "sender")).sorted,
+        List("rootnotifyproj/node-1", "rootnotifyproj/node-2"),
+        "each idle-path bubble carries its own identity"
+      )
+      assertEquals(
+        idleCarrierFrames.flatMap(f => field(f, "eventType")).sorted,
+        List("completed", "failed"),
+        "each idle-path bubble carries its OWN state (not flattened)"
+      )
+      assertEquals(
+        idleCarrierFrames.map(f => (field(f, "sender").getOrElse("<none>"), field(f, "text").getOrElse("<none>"))).sorted,
+        List(("rootnotifyproj/node-1", "BODY_ONE"), ("rootnotifyproj/node-2", "BODY_TWO")),
+        "per-item pairing on the idle path: identity and body come from the SAME payload item"
+      )
+      assert(
+        !idleCarrierFrames.exists(f => field(f, "text").exists(_.contains("── [1/2]"))),
+        s"NEVER one merged-digest bubble on the idle path: $idleCarrierFrames"
+      )
+
+      // ── R5c · 负对照（idle 态、无标记件）：仍逐条、一件一次唤醒、零重复注入 ────
+      assertEquals(
+        afterPlain.size,
+        wakesAfterTurn1 + 2,
+        "the untagged item opens its OWN turn even in the idle arrival state"
+      )
+      val plainTurnUserTexts = afterPlain(wakesAfterTurn1 + 1).messages
+        .filter(_.role == nebflow.shared.MessageRole.User)
+        .map(_.textContent)
+      assert(
+        plainTurnUserTexts.exists(_.contains("plain-user-text")),
+        s"that turn carries the plain text itself:\n$plainTurnUserTexts"
+      )
+      val timesInjected = (needle: String) => plainTurnUserTexts.count(_.contains(needle))
+      assertEquals(
+        List("BODY_ONE", "BODY_TWO", "plain-user-text").map(timesInjected),
+        List(1, 1, 1),
+        s"no re-injection: every item appears exactly ONCE in the untagged turn's request:\n$plainTurnUserTexts"
+      )
+      // 气泡面不变：载体已发 2 个；无标记件（fromUser=true 既有语义）不产新气泡
+      assertEquals(
+        injectedFrames(framesAfterPlain).size,
+        2,
+        "the untagged idle item adds no bubble (fromUser=true semantics unchanged) ⇒ still the carrier's 2"
+      )
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
