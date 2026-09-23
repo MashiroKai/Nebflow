@@ -298,6 +298,101 @@
   white-space: nowrap;
 }
 
+/* ── 右下角「+」钮 + 让位规则（projcreate 批 · 乙案）──────────────────────────
+   材质**零新造**：逐值照 `.canvas-ref-select`（split.css:770-792）——同 40×40 圆、
+   同 `--glass-control-*` 玻璃族、同 hover scale(1.05)、同 opacity .6 静息档；
+   档位 `right:64px`（作者三裁 (a)：语境独立——本仓唯一「同角两枚 40px 玻璃圆钮并存」
+   的落地件即 `.canvas-ref-select` 与 `.canvas-source-toggle` 的 8px seat 做法）。
+   🔴 不改 `split.css:739-766`（那会同时动到 md/html 查看器）。
+   z-index 沿既有浮层档 45（flowMap.css `.fm-fab` 同档；本 pane 现读零竞争件）。 */
+.proj-create-fab {
+  position: absolute;
+  bottom: 16px;
+  right: 64px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 45;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+.proj-create-fab:hover {
+  background: var(--glass-control-bg-hover);
+  opacity: 1;
+  transform: scale(1.05);
+}
+/* 焦点环沿本文件既有范式（`:focus-visible` + `--glass-control-border`，见 :69）。 */
+.proj-create-fab:focus { outline: none; }
+.proj-create-fab:focus-visible {
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 0 0 2px var(--glass-control-border);
+  opacity: 1;
+}
+
+/* 让位：列表底部为「+」钮留空，防遮挡末行卡。
+   🔴 判据（上游 §三.5 实算）：`.team-scroll` 内容盒底边 = 12 + 24 = 36（距面板底），
+   落在钮的纵向带 [16, 56] 内；取 P = 72 = 16 + 40 + 16（4px 基数）⇒ 内容盒底边
+   = 12 + 72 = 84 > 钮顶 56 ⇒ 纵向间隙 28px，两轴全不相交（可机械断言）。
+   🔴 为什么作用域限定而不是直接改 `.team-scroll`：`.team-scroll` 是
+   teams / flow 面板**共用**类（flowCss.js:17）⇒ 直接改会外溢。
+   选择器用 `[data-type="projects"]` 而**不新建 JS class**：pane 上现读已有该属性
+   （canvas.js:580 设；:1339-1346 持久化 `t.type`、:1455-1456 恢复时回传 ⇒ 刷新后仍
+   成立），且沿本仓既有 `[data-type="flow"]` 惯例（flowCss.js:8-11）——零 JS 造类。
+   特异度 (0,3,0) > `.team-scroll` (0,1,0) ⇒ 按特异度胜出，与样式表顺序无关。 */
+.canvas-tab-pane[data-type="projects"] .team-scroll { padding-bottom: 72px; }
+
+/* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
+   `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */
+.proj-create-panel { width: 520px; }
+.proj-create-label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-frame-text-dim);
+  margin-bottom: 6px;
+}
+.proj-create-desc {
+  font-family: inherit;
+  line-height: 1.5;
+  min-height: 96px;
+}
+.proj-create-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  min-height: 16px;
+}
+/* 错误行占满左侧，计数器固定右侧。 */
+.proj-create-error {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--color-danger);
+}
+.proj-create-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-frame-text-muted);
+}
+/* 超 500 时染色（既有 `--color-danger`，零新色值）。 */
+.proj-create-count.is-over { color: var(--color-danger); }
+.proj-create-hint { flex: 1; min-width: 0; }
+
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
      「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；
@@ -314,4 +409,9 @@
     animation: none;
     opacity: 0.5;
   }
+  /* projcreate 批：弹层入场动画（modalIn 0.2s）与「+」钮过渡在减动效下关闭
+     （断言 animation-duration ≤ 0.01s）。 */
+  .proj-create-panel { animation-duration: 0.01s; }
+  .proj-create-fab { transition-duration: 0.01s; }
+  .proj-create-fab:hover { transform: none; }
 }
