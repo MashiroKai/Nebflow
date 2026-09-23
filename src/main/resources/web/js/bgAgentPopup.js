@@ -226,8 +226,22 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   });
   popupResizeObs.observe(modal);
 
-  // Load session history from backend
-  if (nodeSessionId && !entry.historyLoaded && entry.container.children.length === 0) {
+  // Load session history from backend. UNCONDITIONAL re-pull on open — the same
+  // shape the sister popup has always used (flowAgentPopup.js: "always re-pull on
+  // open"). Both channels must be merged on every open because they carry
+  // DIFFERENT content for this session family: the injected rows (task dispatch /
+  // mail / node notifications) exist ONLY in the persisted history, while the
+  // dispatcher/node sessions' assistant text and tool rows are streamed live and
+  // never reach .ui.json at all.
+  //
+  // The removed conjunction `entry.container.children.length === 0` was the
+  // defect: ws.js renders bg-agent live frames into the HIDDEN container even
+  // while the popup is closed (the "Gating EXEMPT" branch), so any single live
+  // row made the container non-empty and the history leg was then skipped
+  // forever — the panel showed exactly the live rows and not one injected
+  // bubble. `historyLoaded` stays assigned (it still records "a load cycle has
+  // been started" for callers/readers of the entry), it just no longer gates.
+  if (nodeSessionId) {
     entry.historyLoaded = true;
     setActiveView(entry.view);
     entry.view.pagination.pendingInitialLoad = true;
@@ -241,6 +255,19 @@ export function closeStepPopup() {
     const entry = stepViews.get(currentStepId);
     if (entry) {
       entry.view.visible = false; // hidden — ws.js gates DOM rendering again
+      // Mark the view dirty on EVERY close, so the next open runs the existing
+      // refresh branch above (resetStream + clear the stale container +
+      // re-seed the in-flight live tail). Without this the container keeps its
+      // old DOM and the view keeps its old stream state across a close/reopen
+      // cycle — state that cannot heal on its own (stream text would keep
+      // concatenating across turns, and rows rendered from the previous cycle
+      // would survive into the next one).
+      //
+      // Note this is the *same* flag ws.js sets for skipped-while-hidden events;
+      // for bg-agent sessions that branch is gating-EXEMPT (ws.js "Gating
+      // EXEMPT"), so nothing else ever set it here — which is exactly why the
+      // reopen case was broken.
+      entry.view.dirtyWhileHidden = true;
       getHiddenRoot().appendChild(entry.container);
       entry.footerEl = null;
       if (entry.meta.status === 'done') cleanupBgAgentView(currentStepId);
