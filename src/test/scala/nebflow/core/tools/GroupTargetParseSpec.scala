@@ -5,81 +5,97 @@ import io.circe.syntax.*
 import munit.FunSuite
 
 /**
- * SendMessage `to` 参数的**群寻址面**（gmsgsend 批，2026-09-15 · 补充卡 §6.1/§6.3）。
+ * `Mail` 单 `to` 参数的**群寻址面**（原 `SendMessage` 的群支，mailunify-full 批
+ * 2026-09-23 并入 `Mail`）；本文件原钉 `SendMessage.parseToKind` 的五形态分派，
+ * 现按合面后的**统一目标分类谓词** `MailTool.classifyTarget` 重钉（纯函数）。
  *
  * 本 spec 只钉两件**纯函数/静态**判据（端到端判据在
  * `nebflow.neblink.GroupSendMessageSpec`）：
- *  ① `parseToKind` 的五形态分派 + **既有四形态回归零变**（`friend:`/`device:`/裸串/
- *     `local`），以及 `group:` 的**遮蔽边界**（§6.3：`group:xxx` 不再按好友解析，
- *     逃生口 = 显式 `friend:` 前缀）；
- *  ② `inputSchema.properties.to.description` **显式**声明 `group:`（作者令：能力必须
- *     落在 schema/描述层——字段说明 + 合法前缀 + 错误语义逐面写清，禁靠运行时错误兜）。
+ *  ① `classifyTarget` 的分派 + **既有四形态回归零变**（`friend:`/`device:`/裸串/
+ *     `local`），以及 `group:` 的**遮蔽边界**（逃生口 = 显式 `friend:` 前缀）；
+ *     🔴 **新增判据**（合面硬要求 §B-1.4）：**未知 scheme 必须 fail-closed** ——
+ *     旧 `SendMessage.parseToKind` 对未知前缀**静默按好友解析**，分类学扩面后
+ *     该兜底即静默重定向风险 ⇒ 已废（`a:b` 由 `Right(Friend)` 反转为 `Left`）。
+ *  ② `inputSchema.properties.to.description` **显式**声明合法 scheme 面（作者令：
+ *     能力必须落在 schema/描述层——字段说明 + 合法前缀 + 错误语义逐面写清，
+ *     禁靠运行时错误兜）。
  *
- * 为什么本 spec 在 `nebflow.core.tools` 包：`ToKind` / `parseToKind` 是
+ * 为什么本 spec 在 `nebflow.core.tools` 包：`Target` / `classifyTarget` 是
  * `private[tools]`（工具内部文法，不外泄）⇒ 只有同包可见。
  */
 class GroupTargetParseSpec extends FunSuite:
 
-  import FriendMessageTool.ToKind
+  import MailTool.Target
+
+  private def kind(raw: String): Either[ToolError, Target] = MailTool.classifyTarget(raw)
 
   // ── ① 分派与遮蔽边界 ─────────────────────────────────────
 
-  test("parseToKind: `group:<名|id>` 分派到群支，rest = 前缀后的原始串") {
-    assertEquals(FriendMessageTool.parseToKind("group:团队"), Right(ToKind.Group("团队")))
-    assertEquals(FriendMessageTool.parseToKind("group:grp-1"), Right(ToKind.Group("grp-1")))
+  test("classifyTarget: `group:<名|id>` 分派到群支，rest = 前缀后的原始串") {
+    assertEquals(kind("group:团队"), Right(Target.Group("团队")))
+    assertEquals(kind("group:grp-1"), Right(Target.Group("grp-1")))
     // scheme 大小写不敏感 + 两侧空白 trim（与 `friend:`/`device:` 同一条既有口径）
-    assertEquals(FriendMessageTool.parseToKind("  GROUP : 团队  "), Right(ToKind.Group("团队")))
-    // rest 里的冒号原样保留（群名可含冒号；与好友支「冒号合法」口径同族）
-    assertEquals(FriendMessageTool.parseToKind("group:team:prod"), Right(ToKind.Group("team:prod")))
+    assertEquals(kind("  GROUP : 团队  "), Right(Target.Group("团队")))
+    // rest 里的冒号原样保留（群名可含冒号）
+    assertEquals(kind("group:team:prod"), Right(Target.Group("team:prod")))
   }
 
-  test("parseToKind: `group:` 残缺前缀 ⇒ 显式错误（与 friend:/device: 文案同构，不回落好友）") {
-    val emptyGroup = FriendMessageTool.parseToKind("group:").left.toOption
+  test("classifyTarget: `group:` 残缺前缀 ⇒ 显式错误（与 friend:/device: 文案同构，不回落好友）") {
+    val emptyGroup = kind("group:").left.toOption
     assert(emptyGroup.isDefined, "`group:` 必须报错，不得静默按好友解析")
     assert(
-      emptyGroup.get.contains("missing the group name/id after `group:`"),
-      s"文案必须是同族残缺前缀错误，实际 = ${emptyGroup.get}"
+      emptyGroup.get.message.contains("missing the group name/id after `group:`"),
+      s"文案必须是同族残缺前缀错误，实际 = ${emptyGroup.get.message}"
     )
-    assert(FriendMessageTool.parseToKind("group:   ").isLeft, "全空白 rest 同为空")
+    assert(kind("group:   ").isLeft, "全空白 rest 同为空")
     // 同族既有两形态的文案未变（回归基线）
-    assertEquals(
-      FriendMessageTool.parseToKind("friend:").left.toOption.map(_.nonEmpty),
-      Some(true)
-    )
-    assertEquals(
-      FriendMessageTool.parseToKind("device:").left.toOption.map(_.nonEmpty),
-      Some(true)
-    )
+    assertEquals(kind("friend:").left.toOption.map(_.message.nonEmpty), Some(true))
+    assertEquals(kind("device:").left.toOption.map(_.message.nonEmpty), Some(true))
   }
 
   test("回归零变：既有四形态（裸串 / friend: / device: / local）解析逐字不动") {
-    assertEquals(FriendMessageTool.parseToKind("local"), Right(ToKind.Local))
-    assertEquals(FriendMessageTool.parseToKind("LOCAL"), Right(ToKind.Local)) // :223 整串忽略大小写
-    assertEquals(FriendMessageTool.parseToKind("林小满"), Right(ToKind.Friend("林小满")))
-    assertEquals(FriendMessageTool.parseToKind("lin@example.com"), Right(ToKind.Friend("lin@example.com")))
-    assertEquals(FriendMessageTool.parseToKind("friend:林小满"), Right(ToKind.Friend("林小满")))
-    assertEquals(FriendMessageTool.parseToKind("FRiend:林小满"), Right(ToKind.Friend("林小满")))
-    assertEquals(FriendMessageTool.parseToKind("device:MacBook"), Right(ToKind.Device("MacBook")))
-    // 🔴 既有遮蔽边界之一：未知 scheme 带冒号 ⇒ 原样按好友解析（备注/邮箱可能含冒号）
-    assertEquals(FriendMessageTool.parseToKind("a:b"), Right(ToKind.Friend("a:b")))
-    assert(FriendMessageTool.parseToKind("").isLeft, "空串仍是 'to' is empty")
+    assertEquals(kind("local"), Right(Target.Local))
+    assertEquals(kind("LOCAL"), Right(Target.Local)) // 整串忽略大小写
+    assertEquals(kind("林小满"), Right(Target.Face("林小满")))
+    assertEquals(kind("lin@example.com"), Right(Target.Face("lin@example.com")))
+    assertEquals(kind("friend:林小满"), Right(Target.Friend("林小满")))
+    assertEquals(kind("FRiend:林小满"), Right(Target.Friend("林小满")))
+    assertEquals(kind("device:MacBook"), Right(Target.Device("MacBook")))
+    assert(kind("").isLeft, "空串仍是 target missing")
   }
 
-  test("§6.3 遮蔽边界：`group:` 前缀加入后，字面 `group:xxx` 不再寻址好友——逃生口 = 显式 friend:") {
-    // 新增的遮蔽：字面以 `group:` 开头的好友备注/用户名，裸串寻址已被本批遮蔽。
-    assertEquals(FriendMessageTool.parseToKind("group:同事").isRight, true)
-    assertEquals(FriendMessageTool.parseToKind("group:同事").map(_.getClass.getSimpleName), Right("Group"))
+  test("🔴 §B-1.4 反转：未知 scheme 必须 fail-closed（旧 `a:b` 静默按好友解析 ⇒ 现已废）") {
+    // 旧形态（已废）：`parseToKind("a:b")` = Right(Friend("a:b"))（静默重定向）。
+    // 新形态：显式错误 + 列出合法 scheme 面。
+    val err = kind("a:b").left.toOption
+    assert(err.isDefined, "未知 scheme 必须显式报错，不得按好友解析")
+    assert(err.get.message.contains("unknown target scheme 'a:'"), s"文案须指明未知 scheme：${err.get.message}")
+    assert(err.get.message.contains("project:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    assert(err.get.message.contains("node:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    assert(err.get.message.contains("device:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    assert(err.get.message.contains("friend:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    assert(err.get.message.contains("group:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    assert(err.get.message.contains("`local`"), s"文案须列出保留字面量：${err.get.message}")
+    // 含冒号的裸地址（`project:` / `node:`）不受影响 —— 走角色地址面。
+    assertEquals(kind("project:x"), Right(Target.Face("project:x")))
+    assertEquals(kind("node:n-1"), Right(Target.Face("node:n-1")))
+  }
+
+  test("遮蔽边界：`group:` 前缀下字面 `group:xxx` 不再寻址好友——逃生口 = 显式 friend:") {
+    // 新增的遮蔽：字面以 `group:` 开头的好友备注/用户名，裸串寻址已被遮蔽。
+    assertEquals(kind("group:同事").isRight, true)
+    assertEquals(kind("group:同事").map(_.getClass.getSimpleName), Right("Group"))
     // 逃生口（回归面）：显式 `friend:` 前缀仍原样取 rest ⇒ 该好友仍可达。
-    assertEquals(FriendMessageTool.parseToKind("friend:group:同事"), Right(ToKind.Friend("group:同事")))
+    assertEquals(kind("friend:group:同事"), Right(Target.Friend("group:同事")))
     // 既有遮蔽（`local` 整串）未被本批改变——两条遮蔽并列存在、互不影响。
-    assertEquals(FriendMessageTool.parseToKind("Local"), Right(ToKind.Local))
-    assertEquals(FriendMessageTool.parseToKind("friend:local"), Right(ToKind.Friend("local")))
+    assertEquals(kind("Local"), Right(Target.Local))
+    assertEquals(kind("friend:local"), Right(Target.Friend("local")))
   }
 
   // ── ② schema / 描述层（作者令：能力落在 schema 面，不靠运行时错误兜）──
 
   private def toDescription: String =
-    FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
+    MailTool.inputSchema("properties").flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
       .getOrElse(fail("inputSchema.properties.to.description 缺席"))
 
   test("schema: `to.description` 显式声明四个合法前缀（含 `group:`）") {
@@ -100,32 +116,38 @@ class GroupTargetParseSpec extends FunSuite:
     assert(d.contains("not a member"), s"缺「非成员」错误语义: $d")
     assert(d.contains("candidate list"), s"缺多命中/零命中的候选列表语义: $d")
     assert(d.contains("no `attachments`"), s"缺一期纯文本声明（群 + 附件 ⇒ 不静默丢弃）: $d")
-    assert(d.contains("case-insensitive") || d.contains("case-insensitive"), s"缺前缀大小写口径: $d")
+    assert(d.contains("case-insensitive"), s"缺前缀大小写口径: $d")
   }
 
-  test("schema: description 面声明四类目标 + `group:` 的遮蔽后果（§6.3 变更说明）") {
-    val d = FriendMessageTool.description
-    assert(d.contains("Four target kinds"), s"目标类数必须是 Four（本批加性扩面）: ${d.take(120)}")
-    assert(d.contains("`group:<groupName|groupId>`"), "description 缺第 4 类目标声明")
-    assert(d.contains("MUST be one of `friend:`, `device:`, `group:`"), s"缺合法前缀集声明: $d")
+  test("schema: `to.description` 声明未知 scheme 的 fail-closed 语义（§B-1.4 落点）") {
+    val d = toDescription
+    assert(d.contains("unknown scheme is an explicit error"), s"缺未知 scheme fail-closed 声明: $d")
+    assert(d.contains("silent reinterpretation"), s"缺「禁静默重定向」声明: $d")
+    assert(d.contains("escape hatch"), s"缺含冒号好友名的逃生口声明: $d")
+  }
+
+  test("schema: description 面声明目标类 + `group:` 的遮蔽后果（§6.3 变更说明）") {
+    val d = MailTool.description
+    assert(d.contains("`group:<groupName|groupId>`"), "description 缺群类目标声明")
+    assert(d.contains("`friend:` / `group:`"), "description 缺 friend/group 目标面段")
     assert(
-      d.contains("explicit `friend:` prefix"),
+      d.contains("escape hatch") || d.contains("`friend:` prefix"),
       "🔴 §6.3 要求把 `group:` 的遮蔽后果写进描述面（否则模型永远试不出逃生口）"
     )
-    assert(d.contains("local` has shadowed a friend of that name"), "既有 local 遮蔽作为同类先例同句声明")
+    assert(d.contains("local"), "`local` 保留字面量须在描述面在册")
   }
 
-  test("schema: required 面零变更（to + message；本批不新增必填键）") {
-    val req = FriendMessageTool.inputSchema("required").flatMap(_.asArray).getOrElse(Vector.empty)
+  test("schema: required 面 = to + message（合面后必填面）") {
+    val req = MailTool.inputSchema("required").flatMap(_.asArray).getOrElse(Vector.empty)
       .map(_.asString.getOrElse("")).toSet
     assertEquals(req, Set("to", "message"))
   }
 
   test("schema: `message` 描述补上群支空文本口径（群总是要正文）") {
-    val d = FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
+    val d = MailTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
       .getOrElse(fail("message description 缺席"))
-    assert(d.contains("friend/device/group targets"), s"message 描述未覆盖群支: $d")
-    assert(d.contains("a group target always requires non-empty text"), s"缺群支空文本口径: $d")
+    assert(d.contains("friend/device/group"), s"message 描述未覆盖群支: $d")
+    assert(d.contains("ignored for `local`"), s"缺 local 忽略正文口径: $d")
   }
 
 end GroupTargetParseSpec

@@ -202,15 +202,10 @@ export async function openRules(teamName) {
 let mailboxCtx = null; // { flowName, team }
 
 function pendingRowHtml(it) {
-  // Mail type tag is display-localized; protocol field values stay English.
-  // Unknown values fall back to the raw type.
-  let typeLabel = it.type;
-  if (it.type) {
-    const key = 'mailType.' + it.type;
-    const translated = t(key);
-    if (translated !== key) typeLabel = translated;
-  }
-  const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(typeLabel)}</span>` : '';
+  // mailunify-full batch (2026-09-23): the Mail `type` parameter and its five labels
+  // were removed platform-wide (author ruling). The queued-item row no longer renders a
+  // per-item type tag; the `flow-mail-queue-tag` class itself is KEPT (a shared class —
+  // the delivery chip on the next line still uses it).
   return `
     <div class="flow-mail-row pending" data-item-id="${esc(it.id || '')}" data-sid="${esc(it.toSession || '')}">
       <div class="flow-mail-meta">
@@ -219,7 +214,6 @@ function pendingRowHtml(it) {
         <span class="flow-mail-arrow">${FV_ARROW_SVG}</span>
         <span class="flow-mail-to">${esc(it.to || '?')}</span>
         <span class="flow-mail-queue-tag" title="${esc(t('mailDelivery.queueTitle'))}">${esc(t('mailDelivery.queue'))}</span>
-        ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
         <span class="flow-mail-expand">${FV_EXPAND_HTML}</span>
         <button class="flow-mail-cancel" title="${t('flowViewers.removeFromQueue')}">${t('flows.cancel')}</button>

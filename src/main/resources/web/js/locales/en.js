@@ -968,12 +968,10 @@ export default {
   // {device} = the peer's from_device display name).
   'deviceMail.fromDevice': 'Nebula from {device}',
   'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
-  // Mail type tag labels (protocol values stay English)
-  'mailType.INFO': 'Info',
-  'mailType.FOLLOW_UP': 'Follow-up',
-  'mailType.PARALLEL': 'Parallel',
-  'mailType.INTERRUPT': 'Interrupt',
-  'mailType.RESULT': 'Result',
+  // mailunify-full batch (2026-09-23): the Mail `type` parameter (INFO / FOLLOW_UP /
+  // PARALLEL / INTERRUPT / RESULT) was removed platform-wide by author ruling, so its
+  // five display keys are gone too. NOTE: the `[INTERRUPT]` label seen on node terminal
+  // notifications is a DIFFERENT face (see chat.js EVENT_TYPE_LABELS) and is untouched.
   'mailFlow.noBody': '(no body)',
   'mailFlow.renderFailed': '(render failed: {msg})',
 

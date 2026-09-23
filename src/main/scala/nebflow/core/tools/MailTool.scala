@@ -68,37 +68,35 @@ object MailTool extends Tool:
   private val NebulaAgentName = "Nebula"
 
   // ============================================================
-  // device-mail 批（2026-09-15）——`device` 目标的校验词表（**唯一来源**；
-  // 报告、spec、描述三处同源引用，禁第二份字面量）。四类 + 设备面不可得：
-  //   MAIL_TARGET_EXCLUSIVE  互斥：`address` 与 `device` 同填
-  //   MAIL_TARGET_MISSING    双缺：两个目标都没填
-  //   MAIL_DEVICE_NOT_FOUND  未知设备（含**歧义**多命中：沿用先例的候选清单文案，
-  //                          判据在 `FriendMessageTool.resolveDevice`，本处只加码）
-  //   MAIL_DEVICE_MALFORMED  非法形态（URL / 带 `device:` 前缀 / 空值）
+  // mailunify-full 批（2026-09-23 作者裁定）——统一目标面 `to` 的校验词表
+  // （**唯一来源**；报告、spec、描述三处同源引用，禁第二份字面量）。
+  // 本批之前目标面是 `address` XOR `device` 的**互斥双轨** ⇒ `device` 只是
+  // `to="device:<…>"` 的一个 scheme，双轨结构上消失，故：
+  //   MAIL_TARGET_EXCLUSIVE  🔴 **整条删除**（互斥不可能 ⇒ 该码失去对象）。
+  //                          作者裁「强制删」：不是自由裁量。
+  //   MAIL_TARGET_MISSING    保留，但**必改写**：旧文案要求「二选一填一个」
+  //                          （fill exactly one of 'address' … or 'device'），
+  //                          单字段后失实。
+  //   MAIL_DEVICE_NOT_FOUND  保留原样（未知 / 歧义设备 → 候选清单）。
+  //   MAIL_DEVICE_MALFORMED  保留，但**必改写**：旧文案的修法句指向
+  //                          `SendMessage` 的 `to`（该工具本批退役）⇒ 失实。
   // ============================================================
-  val ErrTargetExclusive: String = "MAIL_TARGET_EXCLUSIVE"
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
   val ErrDeviceNotFound: String = "MAIL_DEVICE_NOT_FOUND"
   val ErrDeviceMalformed: String = "MAIL_DEVICE_MALFORMED"
 
-  /** 互斥报错（逐字词表；`address` 与 `device` 各自可空、**禁双填**）。 */
-  private def targetExclusiveError(address: String, device: String): ToolError =
-    ToolError(
-      s"[$ErrTargetExclusive] 'address' and 'device' are mutually exclusive — fill exactly one. " +
-        s"Got address='$address', device='$device'. Use 'address' for agent/team/project targets " +
-        "and 'device' for another machine's Nebula."
-    )
-
-  /** 双缺报错（逐字词表）。 */
+  /** 目标缺失报错（逐字词表）。单字段 `to` 面：缺席 / 空白 ⇒ 本码。 */
   private[tools] val targetMissingMessage: String =
-    s"[$ErrTargetMissing] Missing target: fill exactly one of 'address' (agent/team/project) or " +
-      "'device' (another machine's Nebula). 'address' is required only when 'device' is absent."
+    s"[$ErrTargetMissing] Missing target: 'to' is required and must not be blank. " +
+      "Pass one target — e.g. \"project:<name>\", \"node:<nodeId>\", \"Nebula\", \"kernel\", " +
+      "a team/agent short name, \"friend:<…>\", \"group:<…>\", \"device:<name|id>\", or \"local\"."
 
   /** 非法形态报错（逐字词表；判据见 [[deviceMalformedReason]]）。 */
   private def deviceMalformedError(raw: String, reason: String): ToolError =
     ToolError(
-      s"[$ErrDeviceMalformed] Malformed 'device' value '$raw' — $reason. Pass the device NAME or " +
-        "device id alone (e.g. \"macbook-pro\" or the id); the \"device:\" prefix belongs to SendMessage's 'to'."
+      s"[$ErrDeviceMalformed] Malformed device name inside 'to' '$raw' — $reason. Pass the device NAME or " +
+        "device id alone after the prefix (e.g. \"device:macbook-pro\" or \"device:<id>\") — the prefix " +
+        "itself is the scheme, not part of the name."
     )
 
   /** 非法形态判据（纯函数，供 spec 直测）。返回 `Some(可读原因)` = 形态非法。 */
@@ -157,54 +155,20 @@ object MailTool extends Tool:
         "NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
         "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
         "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
-        "that can carry them: address=\"Nebula\", a team/agent short name, or device=<name>."
+        "that can carry them: `to=\"Nebula\"`, a team/agent short name, or `to=\"device:<name>\"`."
     )
 
-  private[tools] def deliveryQueueRetiredMessage(address: String): String =
-    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
+  private[tools] def deliveryQueueRetiredMessage(target: String): String =
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$target'."""
 
   val name: String = "Mail"
 
   val description: String =
     """Send a message to another agent — the platform's **only message primitive**
-(2026-09-12 「一个 Mail 统一」；the former `Task` and `NodeMessage` tools are retired —
-this note supersedes all earlier instructions naming them as entry points).
-
-Required: message, plus **exactly one** of `address` / `device` (mutually exclusive — both
-filled is an explicit error, both empty is an explicit error)
-
-## Device target (`device` parameter — cross-device Nebula mail, 2026-09-15)
-`device` = another machine of the same NebLink account, given as a device NAME or device
-id (same resolution as `SendMessage`'s `device:` target: exact id → exact name → id prefix
-→ name prefix → name contains; unknown **or ambiguous** ⇒ explicit error listing the
-candidates, never a silent first hit). The mail is handed to the NebLink server
-(`POST /api/relay/{target_device_id}/mail`, target in the path — no broadcast, no fan-out)
-with the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
-and is pushed to that device as event-stream `agent_mail`; it lands **directly in that device's
-Nebula session** — injected at its next turn boundary with the header line
-`[DEVICE-MAIL · from <from_device>]` (type INFO), shown in the peer's message stream as a blue
-injected bubble. It does NOT go to the peer's user chat inbox, and **no confirmation card is
-raised** (the Mail gate is unchanged — this is not a friend send).
-
-**The peer's agent receives it directly.** `Mail(device=…)` delivers *into the peer's
-Nebula session* — that device's AGENT reads the mail and can act on it. It is not a
-message for the peer's user chat: Mail is the way to make another machine's agent aware
-of something — including a **file**, which that agent can then `Read` (see Attachments
-below).
-
-## `Mail` vs `SendMessage` — who receives it? (same NebLink account, opposite semantics)
-- **`Mail(device=…)` — the peer's AGENT receives it directly**: delivered into the peer's
-  Nebula session, injected at its next turn boundary with the header line
-  `[DEVICE-MAIL · from <from_device>]` (type INFO, rendered as a blue injected bubble).
-  That device's agent reads it and handles it.
-- **`SendMessage(to="device:…")` — pure transport; the peer's agent is NOT aware of it**:
-  files land in the peer's Downloads and the text appears in the peer's device panel;
-  nothing enters the peer's agent session or its LLM context. `SendMessage` moves files
-  for the **machine and its user**; `Mail` moves them **for the peer's agent** — and tells
-  that agent where they landed.
-
-**If the peer's agent must be told, use `Mail`.** Reach for `SendMessage` only when the
-bytes or text are meant for the machine and its user-facing surface, not for an agent.
+(2026-09-12 「一个 Mail 统一」；the former `Task`, `NodeMessage` and `SendMessage` tools are
+retired — this note supersedes all earlier instructions naming them as entry points).
+One tool, one target field: `to` selects the target by an explicit prefix
+(case-insensitive). Required: `to`, plus `message`.
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
@@ -218,6 +182,13 @@ bytes or text are meant for the machine and its user-facing surface, not for an 
 
 An address that is not recognizable in your face is an **explicit error** — there
 is no silent fallback and no fuzzy matching.
+
+**Scheme resolution (mechanical, fail-closed).** A `to` value with no colon is an
+address in the face above (and, for a sender with a friend list, a bare friend
+remark/username/email/displayName). A `to` value that contains a colon must use one of
+the explicit schemes — `project:`, `node:`, `device:`, `friend:`, `group:` — or the
+reserved literal `local`. **An unknown scheme is an explicit error listing the legal
+schemes** — it is never silently reinterpreted as a friend name.
 
 ## `node:<id>` routing semantics (by target node status; same engine as the retired
 `NodeMessage` tool — `NodeEngine.sendNodeMessage`)
@@ -234,33 +205,107 @@ is no silent fallback and no fuzzy matching.
 - `node:` routing takes no delivery-mode choice — the engine decides inject-at-turn-boundary
   vs append-to-task.
 
+## `friend:` / `group:` — the user's NebLink contacts (delivered AS THE USER)
+`friend:<remark|username|email|displayName>` (a bare remark/username/email/displayName
+works too, when it contains no colon) is one NebLink friend — a **person**, delivered as
+the user over established friend relationships, text and/or files. `group:<groupName|groupId>`
+is a group conversation the user is a member of; every member sees it (the sender is never
+counted as a new message for themselves). Resolved by exact group id (`grp-…`), then exact
+group name, then a unique group-name prefix; several/none matching come back as a candidate
+list; a group that does not exist, was disbanded, or that the user is not a member of fails
+with a readable reason. Subject to permission tiers and rate limits and (depending on
+configuration) a confirmation card (see Confirmation below). Text only in this phase for
+`group:` (see Attachments).
+
+## Device target (`device:` — cross-device Nebula mail, 2026-09-15)
+`device:<deviceName|deviceId>` — another machine of the same NebLink account, given as a
+device NAME or device id (resolution: exact id → exact name → id prefix → name prefix →
+name contains; unknown **or ambiguous** ⇒ explicit error listing the candidates, never a
+silent first hit). The mail is handed to the NebLink server
+(`POST /api/relay/{target_device_id}/mail`, target in the path — no broadcast, no fan-out)
+with the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
+and is pushed to that device as event-stream `agent_mail`; it lands **directly in that device's
+Nebula session** — injected at its next turn boundary with the header line
+`[DEVICE-MAIL · from <from_device>]`, shown in the peer's message stream as a blue
+injected bubble. It does NOT go to the peer's user chat inbox, and **no confirmation card is
+raised** (this is not a friend send).
+
+**The peer's agent receives it directly.** `device:` delivers *into the peer's
+Nebula session* — that device's AGENT reads the mail and can act on it. It is not a
+message for the peer's user chat: this is the way to make another machine's agent aware
+of something — including a **file**, which that agent can then `Read` (see Attachments
+below).
+
+Two facts changed when the former `SendMessage(to="device:…")` leg was retired
+(mailunify-full batch, 2026-09-23):
+1. **LOST CAPABILITY — no directory request on this leg.** The former leg could ASK the
+   receiver to place the files in a directory of its choosing (the receiver accepted only
+   its own allow-listed directories; if the peer did not support the request, the files
+   fell back to the peer's Downloads). On this leg the files always land in the peer's
+   default receive directory `~/Downloads` and the injected mail text names them. There
+   is no way to request a directory on a `device:` target.
+2. **REVERSED SEMANTICS.** The former leg was PURE TRANSPORT: files and text reached the
+   peer MACHINE and the peer's agent was NOT aware of either (nothing entered its session
+   or its LLM context; only the machine and its device panel showed it). This leg is the
+   exact opposite: the mail enters the peer's Nebula session and that device's agent
+   receives it directly. If you meant "move bytes without telling anyone", that option no
+   longer exists — pick the target by who should end up KNOWING about it, not by where
+   the bytes go.
+
+## `local` (reserved literal)
+Nothing is delivered: the files in `attachments` are copied into a destination directory on
+this machine (zero network; see Attachments).
+
 Images (optional `images` parameter — up to 5 absolute local image paths,
-PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
-that reach a chat turn** (Nebula / a team or agent short name): the recipient sees the
-images directly (vision models) plus their paths as text. **`project:` / `node:` targets
+PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Targets that reach a chat
+turn** (`Nebula` / a team or agent short name): the recipient sees the images directly
+(vision models) plus their paths as text. **`project:` / `node:` targets
 are text-only** — those legs hand a plain string to an engine-side session, so `images`
-there is an **explicit error** and nothing is sent; use `attachments` (path mode)
-instead, or target `Nebula` / a team agent / a device. **Device target (`device=`)**:
-the bytes ride the existing device file channel (chunked, sha256-verified) into that
-device's default receive directory (`~/Downloads`) and the injected mail text names them
-so that device's agent can `Read` them; a failed or unavailable transfer is reported
-explicitly, never dropped silently (an unavailable channel refuses the send before
-anything goes out).
+there is an **explicit error** and nothing is sent. **`friend:` / `group:` / `local` legs
+have no vision channel** — `images` there is likewise an **explicit error** (never a
+silent drop); send the image as an `attachments` file on those targets. **Device target
+(`device:`)** — the bytes ride the existing device file channel (chunked, sha256-verified)
+into that device's default receive directory (`~/Downloads`) and the injected mail text
+names them so that device's agent can `Read` them; a failed or unavailable transfer is
+reported explicitly, never dropped silently (an unavailable channel refuses the send
+before anything goes out).
 
 Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
-type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
-the model to *see* — reaches the recipient. **Device target (`device=`)**: the bytes ride
-the same device file channel (chunked, sha256-verified) into that device's default
-receive directory (`~/Downloads`), and the injected mail text names them — that device's
-agent can then `Read` them. **Same-machine targets** (`address` = `project:…` / `node:…` /
-`Nebula` / a team or agent short name): nothing is copied — the mail text carries each
-file's **absolute path, byte size and sha256**, because the recipient shares your disk
-and reads the original. So the file must still exist when the recipient reads it: do not
-point `attachments` at temporary or worktree paths that may be cleaned up before then.
-The device mail body (message + the attachment note appended to it) must stay within
-**4000 characters** — an over-budget device Mail is rejected before anything is sent.
+type, each up to 1024 MB = 1 GiB) are how files move. Where the bytes land, by target:
+- **Same-machine targets** (`project:` / `node:` / `Nebula` / team or agent short name):
+  nothing is copied — the mail text carries each file's **absolute path, byte
+  size and sha256**, because the recipient shares your disk and reads the original. So the
+  file must still exist when the recipient reads it: do not point `attachments` at
+  temporary or worktree paths that may be cleaned up before then.
+- **`friend:`**: files ride the server's attachment channel — create session → 4 MiB
+  chunked upload (per-chunk checksum + whole-file SHA-256) → sent as attachment ids; the
+  receiver downloads them over an authenticated in-app route. The client probes the
+  attachment route before uploading: unsupported or unverifiable ⇒ the whole send is
+  refused with a readable reason and nothing is uploaded — attachments are never dropped
+  silently.
+- **`device:`**: the bytes ride the same device file channel (chunked, sha256-verified)
+  into that device's default receive directory (`~/Downloads`), and the injected mail text
+  names them — that device's agent can then `Read` them. The device mail body (message +
+  the attachment note appended to it) must stay within **4000 characters** — an over-budget
+  device Mail is rejected before anything is sent.
+- **`group:`**: TEXT ONLY in this phase — `attachments` is an **explicit error** and
+  nothing is sent; use a `friend:` or `device:` target for files.
+- **`local`**: required — the files are copied into a destination directory on this
+  machine (created if missing; an existing file there is replaced only when the
+  overwrite flag is set). Zero network, zero message delivered.
+
 `attachments` does NOT put bytes into the recipient's LLM context: for an image the
-model should see, use `images`.
+model should see, use `images`. A `friend:` target may carry an empty `message` only when
+`attachments` is non-empty (the receiving client then shows a placeholder line); a
+`group:` target always requires non-empty text.
+
+## Confirmation (ask tier — friend and group targets)
+When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the
+friend or group send first raises a confirmation card in the chat, naming the recipient
+(a friend's label, or the group name). The message is sent ONLY after the user approves
+it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back
+as an error saying so. Device sends and local copies are not gated by this tier. Wait
+for the tool result — do not assume anything went out.
 
 Delivery — every Mail is immediate (there is no delivery parameter to set):
   Async send, injected at the target's next turn boundary (an idle target starts
@@ -273,16 +318,24 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target — it is
   NEVER silently downgraded to immediate.
 
-Message type (optional, default "INFO"):
-  Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
+There is no urgency flag: an urgent message states the urgency in its own text."""
 
-  1. **[INFO]** — supplementary context for your current task. Keep working. Incorporate silently.
-  2. **[FOLLOW_UP]** — additional task to start AFTER your current one finishes. Finish current work first. Then start the new task.
-  3. **[PARALLEL]** — independent work that doesn't depend on your current task. Delegate it in parallel. Keep going.
-  4. **[INTERRUPT]** — urgent, requires immediate attention. Pause current work and handle this now.
-  5. **[RESULT]** — work results or status report from another agent. Acknowledge if needed. Continue your own work unless this changes your task.
-
-  Default: Mail supplements your work, not replaces it. Switch tasks only on [INTERRUPT] or when your current task is complete."""
+  // ============================================================
+  // mailunify-full 批（2026-09-23 作者裁定）——`type` 五标签**整块删净**的落点。
+  //
+  // 该信令曾存在于三处（schema `:358-363` 的 enum + `default`、描述面的
+  // 「Message type」五条清单、54 处 `mailType` 形参，以及前端 `flowViewers.js:209`
+  // 消费的 `mailType.*` 十键）。作者已裁：**参数面整块删净、承载不补** ⇒ 本文件
+  // 的 `type` 键、五条清单与全部 `mailType` 形参一并消失。
+  //
+  // 🔴 留痕（≠ 墓碑式拒绝）：本节只**记录该信令曾存在且已被作者裁删**，不保留
+  // 任何按键值分派的活代码、也不新增「该键已退役」的拒绝分支。理由：`type` 的
+  // 语义是「提示收件方如何处理这封邮件」，不是「投递形态」（后者已有
+  // `MAIL_DELIVERY_QUEUE_RETIRED` 这种**必须显式拒绝**的先例——静默改投会丢语义）。
+  // 删掉一个纯提示性标签不丢任何投递语义 ⇒ 静默忽略即可，多一条墓碑反而会把
+  // 一个死键升格成受支持的表面。旧调用方传来的 `type` 键由引擎的零 JSON-Schema
+  // 校验静默丢弃（`protocol.scala` 自陈），与「键缺席」逐字同一结果。
+  // ============================================================
 
   // ============================================================
   // Q5（2026-09-13 作者裁定 = (b)）：地址面**只分化 `description`**，`inputSchema`
@@ -339,27 +392,67 @@ Message type (optional, default "INFO"):
     else if dispatcher then base.copy(description = descriptionDispatcher)
     else base
 
+  // ============================================================
+  // mailunify-full 批（2026-09-23 作者裁定）——统一参数面 `to`（**5 键**）。
+  //
+  // 逐键理由（键集由本席现读 + 已裁项推导，**非照抄**上游方案卡的 A 侧红线）：
+  //   1. `to`          —— 🔴 本批核心：`address` XOR `device` 双轨合并为**单字段**，
+  //                       值域 = scheme 前缀（`project:` / `node:` / `device:` /
+  //                       `friend:` / `group:`）+ 保留字面量（`local`）+ 裸名
+  //                       （Nebula / team / 短名 / 裸项目名 / 裸好友名）。
+  //                       判定顺序 = [[classifyTarget]]（单一谓词，可机械判定）。
+  //   2. `message`     —— 保留（两工具共有名，语义零变更）。
+  //   3. `chainId`     —— 保留原样（Mail 侧既有面；SendMessage 无此键 ⇒ 并入后
+  //                       对 friend/group/device/local 腿为「只校验不带出」，逐腿登记）。
+  //   4. `images`      —— 保留（Mail 侧既有面）。新增两处**显式拒绝**：`friend:` /
+  //                       `group:` / `local` 三条腿无 vision 通道 ⇒ 收到 `images`
+  //                       即显式报错（旧 `SendMessage` 无该键 + 引擎零 schema 校验
+  //                       = 静默丢；fail-closed > silent drop）。
+  //   5. `attachments` —— 保留（Mail 侧既有面；并入 `SendMessage` 的四落点语义）。
+  //
+  // 🔴 **`targetDir` / `overwrite` 两个键不在本集合内**（分发器补充 · 2026-09-23 两封
+  //    逐字重申「本批不引入 `targetDir`/`overwrite`」）——与上游计划卡 §7.3 的 A 侧
+  //    红线（`Set("to","message","attachments","images","targetDir","overwrite","chainId")`）
+  //    **不一致**，本席按补充处置并**如实登记差异**（不判卡片错、不静默改）。
+  //
+  //    🔴 **该差异的机械后果（如实登记，不静默）**：`to="local"` 腿（原 `SendMessage`
+  //    的 `local` 支，本批并入 `Mail`）在**代码层**读 `targetDir`（必填）与 `overwrite`
+  //    （缺省 false）——`MailTool.call` 的 `Target.Local` 分支逐字保留该读取。两键不在
+  //    schema ⇒ 模型看不到「`local` 需要一个目标目录」这一前提，而 `local` 腿仍会以
+  //    「requires `targetDir`」显式报错（**不是**静默失败）。⇒ 属**须作者确认**项：
+  //    候选 A = 补入两键（键集 ⇒ 7，与卡片一致，代价 = 参数面 +2）；候选 B = 保持 5 键
+  //    并把 `local` 腿的落点改为固定缺省目录（代价 = 一个既有能力的默认化）。本席**不自行
+  //    择一**（两向都要作者裁），本批只执行补充字面。
+  //
+  // 🔴 **`type` 不在本集合内**（作者裁：五标签整块删净）。🔴 **`delivery` 亦不在**
+  // （mailparams 批已退役出 schema，本批不动其墓碑读取）。
+  // 🔴 **`address` / `device` 两个键消失**（合并为 `to`）。
+  // ============================================================
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "address" -> Json.obj(
+        "to" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent). Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
-        ),
-        "device" -> Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Cross-device Nebula mail (device-mail, 2026-09-15): another machine of the same NebLink account, by device NAME or device id. MUTUALLY EXCLUSIVE with `address` — fill exactly one of the two (both ⇒ MAIL_TARGET_EXCLUSIVE, neither ⇒ MAIL_TARGET_MISSING). Unknown/ambiguous device ⇒ MAIL_DEVICE_NOT_FOUND with the candidate list; a malformed value (URL, or a \"device:\" prefix — the prefix belongs to SendMessage's `to`) ⇒ MAIL_DEVICE_MALFORMED. The message goes to the NebLink server (`POST /api/relay/{target_device_id}/mail` — the addressed device only, never a broadcast) and is pushed to it as an event-stream `agent_mail` event; it is injected into that device's Nebula session at its next turn boundary (header line `[DEVICE-MAIL · from <from_device>]`, type INFO); the peer sees it as a blue injected bubble. The peer's AGENT receives this mail directly — that device's agent reads it and can act on it (unlike `SendMessage`'s `device:` leg, which is pure transport and leaves the peer's agent unaware: if the peer's agent must know, use `Mail`). No confirmation card.".asJson
+          "description" -> ("The target, selected by an explicit scheme prefix (case-insensitive). Legal targets are " +
+            "role-scoped — see the Address face in the tool description; a target outside your face is an explicit " +
+            "error that lists the legal targets. Schemes: `project:<name>` (a bare mounted project name is " +
+            "equivalent), `node:<nodeId>`, `device:<deviceName|deviceId>`, `friend:<remark|username|email|" +
+            "displayName>`, `group:<groupName|groupId>`; reserved literals `Nebula` and `local`. A bare string with " +
+            "no colon is an address in your face (Nebula / a team or agent short name / a mounted project name) and, " +
+            "for a sender with a friend list, a bare friend remark/username/email/displayName. A value that contains " +
+            "a colon MUST use one of those schemes — an unknown scheme is an explicit error listing them, never a " +
+            "silent reinterpretation; the escape hatch for a friend whose own name contains a colon is the explicit " +
+            "`friend:` prefix (the reserved literal `local` has shadowed a friend of that name since the beginning). " +
+            "A `group:` target is a group conversation the user is a member of, resolved by exact group id " +
+            "(`grp-…`), then exact group name, then a unique group-name prefix; several or none matching come back " +
+            "as a candidate list, and a group that does not exist, has been disbanded, or that the user is not a " +
+            "member of fails with a readable reason. A `group:` target is TEXT ONLY in this phase — pass no " +
+            "`attachments` there (an explicit error, nothing sent; use `friend:` or `device:` for files).").asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "The message or question to send".asJson
-        ),
-        "type" -> Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> Json.arr("INFO".asJson, "FOLLOW_UP".asJson, "PARALLEL".asJson, "INTERRUPT".asJson, "RESULT".asJson),
-          "description" -> """Message type tag. "INFO" = supplementary context (default); "FOLLOW_UP" = new task after current finishes; "PARALLEL" = delegate independently; "INTERRUPT" = urgent, handle now; "RESULT" = work results from another agent.""".asJson,
-          "default" -> "INFO".asJson
+          "description" -> "The message or task text to send (max 4000 characters on friend/device/group legs). Required; ignored for `local`.".asJson
         ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
@@ -370,13 +463,14 @@ Message type (optional, default "INFO"):
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
           "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
-            "vision blocks. For `address` targets that reach a chat turn (Nebula / team / agent short name) the " +
-            "recipient sees the images directly plus their paths as text. NOT supported on `project:` / `node:` " +
-            "— those legs are text-only, so passing `images` there is an explicit error and nothing is sent; " +
-            "pass those paths as `attachments` instead. DEVICE targets (`device=`): the files ride the existing " +
-            "device file channel (chunked FileTransfer, sha256-verified) and land in THAT device's default " +
-            "receive dir (~/Downloads); the injected mail text names them so that device can Read them — a " +
-            "failed or unavailable transfer is reported explicitly, never dropped silently.").asJson,
+            "vision blocks. For targets that reach a chat turn (Nebula / team / agent short name) the recipient sees " +
+            "the images directly plus their paths as text. NOT supported on `project:` / `node:` (text-only legs, " +
+            "which hand a plain string to an engine-side session) and NOT on `friend:` / `group:` / `local` (no " +
+            "vision channel on those legs): passing `images` there is an explicit error and nothing is sent — pass " +
+            "those paths as `attachments` instead. DEVICE targets (`device:`): the files ride the existing device " +
+            "file channel (chunked FileTransfer, sha256-verified) and land in THAT device's default receive dir " +
+            "(~/Downloads); the injected mail text names them so that device can Read them — a failed or " +
+            "unavailable transfer is reported explicitly, never dropped silently.").asJson,
           "default" -> Json.arr()
         ),
         "attachments" -> Json.obj(
@@ -385,142 +479,261 @@ Message type (optional, default "INFO"):
           "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
           "description" -> ("Optional ABSOLUTE local paths of files to attach — any file type, up to " +
             s"${AttachContract.MaxAttachmentsPerMessage} files, each up to ${AttachContract.MaxFileBytesLabel}. " +
-            "PATH MODE vs BYTES — on SAME-MACHINE targets (`address` = `project:…` / `node:…` / `Nebula` / a team " +
-            "or agent short name) nothing is copied: the mail text carries each file's absolute path, byte size " +
-            "and sha256, because the recipient shares your disk and reads the original — so the file must still " +
-            "exist when the recipient reads it. On a DEVICE target (`device=`) the bytes ride the existing device " +
-            "file channel (chunked FileTransfer, sha256-verified) into THAT device's default receive dir " +
-            "(~/Downloads), and the injected mail text names them so that device's agent can Read them — a failed " +
-            "or unavailable transfer is reported explicitly, never dropped silently. This is NOT the vision " +
-            "channel: an image the recipient's model should SEE belongs in `images`.").asJson,
+            "Where the bytes land, by target: SAME-MACHINE targets (`project:` / `node:` / `Nebula` / a team or " +
+            "agent short name) get a path note (absolute path, byte size, sha256) and read the original — nothing " +
+            "is copied, so the file must still exist when it is read. `friend:` rides the server attachment " +
+            "channel (4 MiB chunks, per-chunk checksum + whole-file SHA-256; authenticated in-app download; " +
+            "permission tiers / rate limits / confirmation card; the send is refused outright when the attachment " +
+            "route is unsupported or unverifiable). `device:` rides the device file channel " +
+            "(chunked FileTransfer, sha256-verified) into THAT device's default receive dir (~/Downloads). " +
+            "`group:` is TEXT ONLY in this phase — `attachments` there is an explicit error. `local` requires it: " +
+            "the files are copied into `targetDir`. This is NOT the vision channel: an image the recipient's " +
+            "model should SEE belongs in `images`.").asJson,
           "default" -> Json.arr()
         )
       ),
-      "required" -> Json.arr("message".asJson)
+      "required" -> Json.arr("to".asJson, "message".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
-    val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    val target = device match
-      case Some(d) => s"device:$d"
-      case None    => addr
-    val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
-    val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
-    // delivery 退役批（2026-09-15）：标签面不再有 `, queue` 形态 —— queue 模式退役后
-    // 该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递（描述面清理的连带面）。
-    s"Mail(→$target)$typeStr"
+    val target = input("to").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("?")
+    // mailunify-full 批：`type` 五标签删净 ⇒ 摘要不再有 `[TYPE]` 后缀；
+    // delivery 退役批（2026-09-15）的「不再有 `, queue` 形态」口径照旧成立
+    // （queue 模式退役后该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递）。
+    s"Mail(→$target)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
+  // ============================================================
+  // mailunify-full 批（2026-09-23）——`to` 的**目标分类谓词**（纯函数，供 spec 直测）。
+  //
+  // 判定顺序（**单一谓词、可机械判定**，禁模糊匹配、禁静默兜底）：
+  //   ① `to` 缺席 / 去空白后为空                      ⇒ `targetMissingMessage`（MAIL_TARGET_MISSING）
+  //   ② `to` 等于保留字面量 `local`（大小写不敏感）    ⇒ Local（本机搬运腿）
+  //   ③ `to` **不含冒号**                              ⇒ Face（角色地址面，落既有瀑布）
+  //   ④ `to` 含冒号 ⇒ 取**首个**冒号前的 scheme（trim + 小写，大小写不敏感）：
+  //        `device`  → Device(rest)   —— 设备腿（rest 空 ⇒ MAIL_DEVICE_MALFORMED，见 [[deviceMalformedReason]]）
+  //        `project` → Face(整串)     —— 既有分层地址面单点（`layeredRoute` 判前缀）
+  //        `node`    → Face(整串)     —— 同上
+  //        `friend`  → Friend(rest)（rest 空 ⇒ 残缺前缀错误）
+  //        `group`   → Group(rest)（rest 空 ⇒ 残缺前缀错误）
+  //        **其它**  → 显式错误「未知 scheme + 列合法 scheme 面」🔴 **绝不**回落成好友名解析
+  //                    （旧 `SendMessage.parseToKind` 的未知前缀兜底 = 静默重定向，
+  //                     分类学扩面后必须废；见 [[unknownSchemeError]]）。
+  // ============================================================
+  private[tools] enum Target:
+    case Local
+    case Device(raw: String)
+    case Friend(query: String)
+    case Group(query: String)
+    /** 角色地址面（`project:` / `node:` / 裸名）——交由 [[layeredRoute]] + 既有瀑布。 */
+    case Face(raw: String)
+
+  /** 合法 scheme 面（错误文案的**唯一来源**；与 [[classifyTarget]] 的分派表同源）。 */
+  private val KnownSchemes: List[String] = List("project:", "node:", "device:", "friend:", "group:")
+
+  /** 未知 scheme 的显式报错（列合法面 + 给修法；禁静默按好友解析）。 */
+  private def unknownSchemeError(raw: String, scheme: String): ToolError =
+    ToolError(
+      s"'$raw' uses an unknown target scheme '$scheme:'. Legal schemes are ${KnownSchemes.mkString(", ")} " +
+        "plus the reserved literal `local`; a value with no colon is an address in your role's address face " +
+        "(a bare friend remark/username/email/displayName is addressable as `friend:<that value>`). " +
+        "Nothing was sent — fix the prefix."
+    )
+
+  private[tools] def classifyTarget(raw: String): Either[ToolError, Target] =
+    val s = raw.trim
+    if s.isEmpty then Left(ToolError(targetMissingMessage))
+    else if s.equalsIgnoreCase("local") then Right(Target.Local)
+    else
+      val colon = s.indexOf(':')
+      if colon <= 0 then Right(Target.Face(s))
+      else
+        val scheme = s.take(colon).trim.toLowerCase
+        val rest   = s.drop(colon + 1).trim
+        scheme match
+          // rest 空 ⇒ 与 `friend:` / `group:` **逐字同构**的残缺前缀错误（同族文案，
+          // 不同目标域名词）。回归基线（`main` 的 `SendMessage.parseToKind`）：`device:`
+          // 空参原为 `Left`（本批前的既有形态）⇒ 本谓词**不得**因分类学重写把它变成
+          // `Device("")` 而把红推迟到下游形态判（那会让「残缺前缀」这一族判据失去同构性）。
+          case "device" =>
+            if rest.isEmpty then Left(ToolError(s"'$s' is missing the device name/id after `device:`."))
+            else Right(Target.Device(rest))
+          case "project" => Right(Target.Face(s))
+          case "node"    => Right(Target.Face(s))
+          case "friend" =>
+            if rest.isEmpty then Left(ToolError(s"'$s' is missing the friend after `friend:`."))
+            else Right(Target.Friend(rest))
+          case "group" =>
+            // rest 空 ⇒ 与 `friend:` / `device:` **逐字同构**的残缺前缀错误（同族文案，
+            // 不同目标域名词）——不得回落成「按好友解析」：那会把一次参数残缺静默
+            // 变成一次对好友的寻址（正是本仓「静默不达」缺陷族）。
+            if rest.isEmpty then Left(ToolError(s"'$s' is missing the group name/id after `group:`."))
+            else Right(Target.Group(rest))
+          case _ => Left(unknownSchemeError(s, scheme))
+
+  /** 好友腿 / 群腿的**授权面**（mailunify-full 批）：作者口径 = 这两条腿（以**用户身份**
+    * 对外发消息、带权限档与确认卡）**仅 root Nebula** 可达。依据 = 退役前唯一持件者
+    * 是 Nebula 的机制固定集（`NebulaOrchestrationTools`）⇒ 本闸**保持旧可达面**，
+    * 不扩面。越界 ⇒ 显式报错并列出本角色合法面（fail-closed，无静默兜底）。 */
+  private def friendGroupOutOfFace(raw: String, role: SenderRole): ToolError =
+    val face = role match
+      case SenderRole.NebulaRoot => nebulaFace
+      case SenderRole.Dispatcher => dispatcherFace
+      case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
+    ToolError(
+      s"Target '$raw' is outside your address face. Your role may only mail: $face. " +
+        "There is no silent fallback and no fuzzy matching — use one of the listed forms."
+    )
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val address = input("address").flatMap(_.asString).getOrElse("").trim
-    val deviceRaw = input("device").flatMap(_.asString).getOrElse("").trim
+    val toRaw = input("to").flatMap(_.asString).getOrElse("").trim
     val message = input("message").flatMap(_.asString).getOrElse("")
-    val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
+    val role = roleOf(ctx)
 
     // ------------------------------------------------------------
     // 🔴 墓碑读取（mailparams 批，2026-09-17 案 C「清死面」）——**该键已退役出 schema**，
     // 本行仅作**退役墓碑**，不是活参数：唯一用途 = 判旧调用方送来的 `"queue"` 并报
-    // `MAIL_DELIVERY_QUEUE_RETIRED`（非设备腿见下方单点闸，设备腿见 [[deliverToDevice]]
-    // 自有字面量）。其余值一律不再需要分支（投递形态只剩 immediate）。
+    // `MAIL_DELIVERY_QUEUE_RETIRED`。其余值一律不再需要分支（投递形态只剩 immediate）。
     // 为什么删了 schema 键还要读它：引擎**零 JSON-Schema 校验**（`protocol.scala:140`
     // 自陈「面外参数会被静默忽略」）⇒ 旧键照样到达此处 ⇒ 读一行即可把 2026-09-15 刻意
     // 建立的「显式拒绝、禁静默降级」口径原样维持（删净本行 = 静默立即化 = 判例反向）。
+    // mailunify-full 批（2026-09-23）：本墓碑**照旧保留、判据与文案逐字不变**。
     // ------------------------------------------------------------
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
 
-    // device-mail 批（2026-09-15）：目标面 = `address` XOR `device`（各自可空、禁双填）。
-    // 校验前置于一切投递副作用（与既有 fail-fast 纪律同序）。
-    if address.nonEmpty && deviceRaw.nonEmpty then
-      IO.pure(Left(targetExclusiveError(address, deviceRaw)))
-    else if address.isEmpty && deviceRaw.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
-    else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-    else if deviceRaw.nonEmpty then
-      // 设备腿：形态先判（非法形态零副作用），再走先例的设备解析。
-      deviceMalformedReason(deviceRaw) match
-        case Some(reason) => IO.pure(Left(deviceMalformedError(deviceRaw, reason)))
-        case None         => validateChainId(chainIdRaw, ctx).flatMap {
-            case Left(err) => IO.pure(Left(err))
-            // chainId 于设备腿**只校验不带出**（链集是本项目派生的，对端 Nebula 的
-            // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
-            // 同根族第三件（2026-09-16 A1 批）：`images` 的判据**前置于一切投递副作用**
-            // （与非设备腿 `:341-351` 的 fail-fast 同序）——旧行为是设备腿**静默吞掉**
-            // `images`（零报错、零投递），本闸把它变成显式处置。
-            // mailattach 批（2026-09-17）：`attachments` 的判据与 `images` 同序 —— 同样
-            // **前置于一切投递副作用**（旧缺陷方向 = 静默丢；本批不让新参数继承该方向）。
-            case Right(_) =>
-              deviceImagesPlan(input, ctx).flatMap {
-                case Left(err) => IO.pure(Left(err))
-                case Right(imagePaths) =>
-                  attachmentsPlan(input, ctx).flatMap {
-                    case Left(err) => IO.pure(Left(err))
-                    case Right(attachmentPaths) =>
-                      deliverToDevice(deviceRaw, message, mailType, deliveryTombstone, imagePaths, attachmentPaths, ctx)
-                  }
-              }
-          }
-    // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
-    // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
-    // mailparams 批（2026-09-17 案 C）后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
-    // 该键已不在 schema）——判据与文案**逐字不变**：这是「删 schema 键、不删拒绝」的落点。
-    // 位置**必须在设备腿分支之后**：设备腿的 v2.1「显式拒 queue」契约自有字面量，
-    // 逐字保持、不得被本文案顶替（[[deliverToDevice]]）；`address`≠设备腿在这里兜住
-    // 其余全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——单点，
-    // 结构性保证「本工具面零 queue 入口」。
-    else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
-    else
-      // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
-      validateChainId(chainIdRaw, ctx).flatMap {
-        case Left(err) => IO.pure(Left(err))
-        case Right(chainId) =>
+    // mailunify-full 批：目标面 = **单字段 `to`**（`address` XOR `device` 的双轨结构上消失
+    // ⇒ MAIL_TARGET_EXCLUSIVE 整条删除）。校验前置于一切投递副作用（既有 fail-fast 纪律）。
+    classifyTarget(toRaw) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(Target.Local) =>
+        // 本机搬运腿（原 `SendMessage` 的 `local` 腿整条保留 ⇒ [[FriendMessageTool.copyLocalTo]]）。
+        // `images`：本腿**无 vision 通道** ⇒ 显式拒绝（旧行为是静默丢，见件③）。
+        // `delivery="queue"`：本腿零投递 ⇒ 与「非设备腿」同一拒绝口径（禁静默忽略）。
+        if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
+        else
           ImageInject.parseImagesParam(input) match
             case Left(err) => IO.pure(Left(err))
-            case Right(imagePaths) =>
-              // G3: resolve attachments BEFORE any delivery side effect (fail fast
-              // at the point of action — actor activation / queue persist must not
-              // happen for an invalid attachment). Queue mode persists the paths
-              // and re-reads at drain time (D6), so only the validation result is
-              // used there.
-              ImageInject.resolveImages(imagePaths).flatMap {
+            case Right(Nil) =>
+              FriendMessageTool.copyLocalTo(
+                input("attachments").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList,
+                input("targetDir").flatMap(_.asString),
+                input("overwrite").flatMap(_.asBoolean).getOrElse(false)
+              )
+            case Right(paths) =>
+              IO.pure(Left(sameMachineVisionUnsupportedError("local", paths.size)))
+      case Right(Target.Device(raw)) =>
+        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+        else
+          // 设备腿：形态先判（非法形态零副作用），再走先例的设备解析。
+          deviceMalformedReason(raw) match
+            case Some(reason) => IO.pure(Left(deviceMalformedError(raw, reason)))
+            case None =>
+              validateChainId(chainIdRaw, ctx).flatMap {
                 case Left(err) => IO.pure(Left(err))
-                case Right(attachments) =>
-                  // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
-                  // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
-                  // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
-                  // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
-                  // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
-                  attachmentsPlan(input, ctx).flatMap {
+                // chainId 于设备腿**只校验不带出**（链集是本项目派生的，对端 Nebula 的
+                // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
+                // 同根族第三件（2026-09-16 A1 批）：`images` 的判据**前置于一切投递副作用**
+                // ——旧行为是设备腿**静默吞掉** `images`（零报错、零投递），本闸把它变成显式处置。
+                // mailattach 批（2026-09-17）：`attachments` 的判据与 `images` 同序 —— 同样
+                // **前置于一切投递副作用**（旧缺陷方向 = 静默丢；本批不让新参数继承该方向）。
+                case Right(_) =>
+                  deviceImagesPlan(input, ctx).flatMap {
                     case Left(err) => IO.pure(Left(err))
-                    case Right(attachmentPaths) =>
-                      val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
-                      val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
-                      ctx.actorSystem match
-                        case None =>
-                          IO.pure(Left(ToolError("No actor system available")))
-                        case Some(system) =>
-                          // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
-                          // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
-                          // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
-                          // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
-                          // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
-                          // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
-                          layeredRoute(address, effectiveMessage, blocks, imagePaths, mailType, chainId, ctx, system) match
-                            case Some(action) => action
-                            case None =>
-                              // mailparams 批（2026-09-17 案 C）：本层原有一个 `delivery match`
-                              // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
-                              // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
-                              // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
-                              // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
-                              // **逐字同一结果**（残差读数见交付报告）。
-                              if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, mailType, ctx, system)
-                              else deliverToShortName(address, effectiveMessage, blocks, mailType, ctx, system)
+                    case Right(imagePaths) =>
+                      attachmentsPlan(input, ctx).flatMap {
+                        case Left(err) => IO.pure(Left(err))
+                        case Right(attachmentPaths) =>
+                          deliverToDevice(raw, message, deliveryTombstone, imagePaths, attachmentPaths, ctx)
+                      }
                   }
               }
-      }
+      case Right(Target.Friend(query)) =>
+        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+        else if role != SenderRole.NebulaRoot then IO.pure(Left(friendGroupOutOfFace(toRaw, role)))
+        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
+        else
+          // `images`：好友腿无 vision 通道 ⇒ 显式拒绝（禁静默丢）。
+          ImageInject.parseImagesParam(input) match
+            case Left(err)   => IO.pure(Left(err))
+            case Right(Nil)  =>
+              FriendMessageTool.deliverToFriend(
+                query,
+                message,
+                input("attachments").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList,
+                ctx
+              )
+            case Right(paths) =>
+              IO.pure(Left(sameMachineVisionUnsupportedError(s"friend:$query", paths.size)))
+      case Right(Target.Group(query)) =>
+        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+        else if role != SenderRole.NebulaRoot then IO.pure(Left(friendGroupOutOfFace(toRaw, role)))
+        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
+        else if input("attachments").flatMap(_.asArray).exists(_.nonEmpty) then
+          // 群支一期**纯文本**：带附件 = 显式拒绝（禁静默丢弃）——与 `images` 同族口径。
+          IO.pure(Left(ToolError(
+            "A `group:` target is TEXT ONLY in this phase — pass no `attachments` " +
+              "(nothing was sent; re-send the text without attachments, or use a `friend:`/`device:` target for files)."
+          )))
+        else
+          ImageInject.parseImagesParam(input) match
+            case Left(err)   => IO.pure(Left(err))
+            case Right(Nil)  => FriendMessageTool.deliverToGroup(query, message, ctx)
+            case Right(paths) =>
+              IO.pure(Left(sameMachineVisionUnsupportedError(s"group:$query", paths.size)))
+      // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
+      // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+      // 位置**必须在设备腿分支之后**：设备腿的 v2.1「显式拒 queue」契约自有字面量，
+      // 逐字保持、不得被本文案顶替（[[deliverToDevice]]）；地址面腿在这里兜住
+      // 其余全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——单点，
+      // 结构性保证「本工具面零 queue 入口」。
+      case Right(Target.Face(raw)) =>
+        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(raw))))
+        else
+          // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
+          validateChainId(chainIdRaw, ctx).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(chainId) =>
+              ImageInject.parseImagesParam(input) match
+                case Left(err) => IO.pure(Left(err))
+                case Right(imagePaths) =>
+                  // G3: resolve attachments BEFORE any delivery side effect (fail fast
+                  // at the point of action — actor activation / queue persist must not
+                  // happen for an invalid attachment).
+                  ImageInject.resolveImages(imagePaths).flatMap {
+                    case Left(err) => IO.pure(Left(err))
+                    case Right(attachments) =>
+                      // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
+                      // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
+                      // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
+                      // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
+                      // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
+                      attachmentsPlan(input, ctx).flatMap {
+                        case Left(err) => IO.pure(Left(err))
+                        case Right(attachmentPaths) =>
+                          val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
+                          val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
+                          ctx.actorSystem match
+                            case None =>
+                              IO.pure(Left(ToolError("No actor system available")))
+                            case Some(system) =>
+                              // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
+                              // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                              // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                              // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                              // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
+                              // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
+                              layeredRoute(raw, effectiveMessage, blocks, imagePaths, chainId, ctx, system) match
+                                case Some(action) => action
+                                case None =>
+                                  if raw.contains("://") then deliverToAddress(raw, effectiveMessage, blocks, ctx, system)
+                                  else deliverToShortName(raw, effectiveMessage, blocks, ctx, system)
+                      }
+                  }
+          }
   end call
 
   // ============================================================
@@ -574,7 +787,6 @@ Message type (optional, default "INFO"):
       message: String,
       blocks: Option[List[ContentBlock]],
       imagePaths: List[String],
-      mailType: String,
       chainId: Option[String],
       ctx: ToolContext,
       system: ActorSystem
@@ -585,14 +797,14 @@ Message type (optional, default "INFO"):
       Some(
         if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
         else if role != SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else countMailUsage(deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, mailType, ctx), chainId, ctx)
+        else countMailUsage(deliverToNode(nodeId, withChainAnnotation(message, chainId), imagePaths, ctx), chainId, ctx)
       )
     else if address.startsWith(ProjectPrefix) then
       val pname = address.stripPrefix(ProjectPrefix).trim
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToProject(pname, message, imagePaths, mailType, ctx)
+        else deliverToProject(pname, message, imagePaths, ctx)
       )
     else if address == MailTool.NebulaAgentName then
       role match
@@ -602,14 +814,14 @@ Message type (optional, default "INFO"):
           ))))
         case SenderRole.Dispatcher =>
           Some(countMailUsage(
-            deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system),
+            deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, ctx, system),
             chainId, ctx))
         case SenderRole.Teamish => None // 既有 canMailNebula 闸不变
     else if role == SenderRole.NebulaRoot then
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, imagePaths, mailType, ctx)
+          case Some(_) => deliverToProject(address, message, imagePaths, ctx)
           case None    => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -725,7 +937,6 @@ Message type (optional, default "INFO"):
     * 越面调用）由此从 **收件方**项目**纠正为发送方项目**。`None`（本会话无项目上下文，
     * 如 Nebula root / 团队会话）⇒ 发射面回落根域 `NEBULA`（`leg1SenderProject`）。 */
   private def mailAttribution(
-      mailType: String,
       ctx: ToolContext,
       intake: Option[String] = None
   ): IO[InjectionAttribution] =
@@ -734,7 +945,12 @@ Message type (optional, default "INFO"):
       InjectionAttribution(
         sender = Some(senderName),
         senderTeam = team,
-        eventType = Some(mailType.toLowerCase),
+        // mailunify-full 批（2026-09-23）：`type` 五标签删净 ⇒ 本字段**不再有来源**
+        // （旧值 = 被删参数 `mailType` 的小写形）。置 `None` = 「无 EVENT_TYPE 段」，
+        // 与「键缺席」逐字同一呈现（前端 `injectedSourceLabel` 对缺席 eventType 不追加段）。
+        // 🔴 不改 `InjectionAttribution.eventType` 字段本身、不动 `[INTERRUPT]` 字面面
+        // （`chat.js:417` / `NotificationHeader.scala:98` 属**另一面**的同源标签）。
+        eventType = None,
         intake = intake,
         project = ctx.projectName
       )
@@ -748,7 +964,6 @@ Message type (optional, default "INFO"):
       nodeId: String,
       message: String,
       imagePaths: List[String],
-      mailType: String,
       ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     // B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
@@ -764,7 +979,7 @@ Message type (optional, default "INFO"):
         case Some(projectName) =>
           ProjectRuntimeRegistry.get(projectName).flatMap {
             case Some(rt) =>
-              mailAttribution(mailType, ctx).flatMap { attribution =>
+              mailAttribution(ctx).flatMap { attribution =>
                 rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
               }
             case None =>
@@ -796,8 +1011,10 @@ Message type (optional, default "INFO"):
     * A2A/团队权限面。
     *
     * 两条**显式拒绝**（禁静默丢语义）：设备腿恒 immediate（`delivery=queue` 拒绝，
-    * 与 `node:` 腿同一先例）；契约载荷无邮件类型字段 ⇒ 仅 INFO（其它类型拒绝，
-    * 不静默降级成 INFO）。同根族第三件（2026-09-16 A1 批）：`images` 不再被静默吞掉
+    * 与 `node:` 腿同一先例）。🔴 mailunify-full 批（2026-09-23）：旧「仅 INFO 类型」闸
+    * **随 `type` 参数一并删除** —— 该闸的判据来源（`mailType`）已不存在，且冻结载荷
+    * 本无邮件类型字段 ⇒ 新形态下**零承载**（与「参数面整块删净、承载不补」同向）。
+    * 同根族第三件（2026-09-16 A1 批）：`images` 不再被静默吞掉
     * ——投递前判据见 [[deviceImagesPlan]]，投递后经**既有**设备文件通道推送见
     * [[pushDeviceAttachments]]（失败只显式回显，不回滚已投递的文本）。
     *
@@ -808,7 +1025,6 @@ Message type (optional, default "INFO"):
   private def deliverToDevice(
       device: String,
       message: String,
-      mailType: String,
       delivery: String,
       imagePaths: List[String],
       attachmentPaths: List[String],
@@ -821,11 +1037,6 @@ Message type (optional, default "INFO"):
       IO.pure(Left(ToolError(
         "Device targets are always immediate — the peer's Nebula session is injected at its next turn " +
           "boundary, so a serialized FIFO queue would only delay it. Drop delivery=queue."
-      )))
-    else if mailType != "INFO" then
-      IO.pure(Left(ToolError(
-        s"Device targets carry the frozen 'agent_mail' payload, which has no mail-type field — " +
-          s"only type \"INFO\" is supported (got \"$mailType\"). Send an INFO Mail and put the urgency in the text."
       )))
     else if bodyText.length > MaxDeviceMailTextChars then
       IO.pure(Left(ToolError(
@@ -1188,12 +1399,11 @@ Message type (optional, default "INFO"):
       name: String,
       message: String,
       imagePaths: List[String],
-      mailType: String,
       ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
     else
-      routeToProject(name, message, mailType, ctx).flatMap {
+      routeToProject(name, message, ctx).flatMap {
         case Some(r) => IO.pure(r)
         case None =>
           IO.pure(Left(ToolError(
@@ -1209,7 +1419,6 @@ Message type (optional, default "INFO"):
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
-      mailType: String,
       ctx: ToolContext,
       system: ActorSystem
   ): IO[Either[ToolError, String]] =
@@ -1219,7 +1428,7 @@ Message type (optional, default "INFO"):
       case Some(res) =>
         resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some((sid, ref)) =>
-            sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system).flatMap {
+            sendMail(ref, NebulaAgentName, message, blocks, ctx, system).flatMap {
               case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(Right(
                   s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
                 ))
@@ -1261,7 +1470,6 @@ Message type (optional, default "INFO"):
   private def routeToProject(
       address: String,
       message: String,
-      mailType: String,
       ctx: ToolContext
     ): IO[Option[Either[ToolError, String]]] =
     ProjectRuntimeRegistry.get(address).flatMap {
@@ -1278,7 +1486,7 @@ Message type (optional, default "INFO"):
             // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
             // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
             // 30 min 空闲窗逐行不变）。
-            mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
+            mailAttribution(ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
               (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid, ProjectActor.SourceTask, Some(attribution))).void
                 .as(Some(Right(s"Project '$address' dispatcher triggered")))
             }
@@ -1287,7 +1495,6 @@ Message type (optional, default "INFO"):
   private[tools] def deliverQueue(
       address: String,
       message: String,
-      mailType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem
@@ -1299,14 +1506,14 @@ Message type (optional, default "INFO"):
       case None =>
         if address == NebulaAgentName && senderName != NebulaAgentName then
           canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
-            if canMail then resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
+            if canMail then resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
             else IO.pure(Left(nebulaDeniedError(senderName)))
           }
-        else resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
+        else resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
-          case None        => resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
+          case None        => resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
         }
     }
   end deliverQueue
@@ -1315,7 +1522,6 @@ Message type (optional, default "INFO"):
   private def resolveAndQueue(
       address: String,
       message: String,
-      mailType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1328,7 +1534,7 @@ Message type (optional, default "INFO"):
           for
             leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
             r <- leadSidOpt match
-              case Some(targetSid) => queueToSession(targetSid, team.lead, message, mailType, imagePaths, ctx, system, senderSessionId)
+              case Some(targetSid) => queueToSession(targetSid, team.lead, message, imagePaths, ctx, system, senderSessionId)
               case None =>
                 IO.pure(Left(ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")))
           yield r
@@ -1338,7 +1544,7 @@ Message type (optional, default "INFO"):
             // project 名 → ProjectActor.TriggerDispatcher（触发分发器会话）。
             // 团队名路由优先（旧体系照常）；project 名兜底（新体系试点）。
             // Mail 仅做触发、无回报——节点结果沿 out 边投递（§2.7），不靠 Mail。
-            pr <- routeToProject(address, message, mailType, ctx).flatMap {
+            pr <- routeToProject(address, message, ctx).flatMap {
               case Some(r) => IO.pure(r)
               case None =>
                 for
@@ -1354,9 +1560,9 @@ Message type (optional, default "INFO"):
                         sr2 <- targetRes match
                           case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                           case Right(Some(targetSid)) =>
-                            queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
+                            queueToSession(targetSid, address, message, imagePaths, ctx, system, senderSessionId)
                           case Right(None) if address == NebulaAgentName =>
-                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address, None)
+                            queueToNebula(message, imagePaths, ctx, system, senderSessionId, address, None)
                           case Right(None) => mailNotFound(address)
                       yield sr2
                 yield sr
@@ -1380,7 +1586,6 @@ Message type (optional, default "INFO"):
    */
   private[tools] def queueToNebula(
       message: String,
-      mailType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1392,7 +1597,7 @@ Message type (optional, default "INFO"):
       case Some(res) =>
         resolveNebulaRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some(nebulaSid) =>
-            queueToSession(nebulaSid, address, withChainAnnotation(message, chainId), mailType, imagePaths, ctx, system, senderSessionId)
+            queueToSession(nebulaSid, address, withChainAnnotation(message, chainId), imagePaths, ctx, system, senderSessionId)
           case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
         }
       case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
@@ -1457,7 +1662,6 @@ Message type (optional, default "INFO"):
       sessionId: String,
       shortName: String,
       message: String,
-      mailType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1469,7 +1673,11 @@ Message type (optional, default "INFO"):
       from = senderName,
       fromSession = senderSessionId,
       message = message,
-      `type` = mailType,
+      // mailunify-full 批（2026-09-23）：`type` 参数删净后本字段**无来源**。该字段属
+      // 队列层（`MailQueueStore.MailQueueItem`，本批**零改动**、存储形状照旧），其
+      // doc 自陈取值域 = 旧 MailTool 类型词表；词表既已删净，写中性字面量 `"INFO"`
+      // （= 该字段的既有缺省语义），不臆造新值、不改队列 JSONL 形状。
+      `type` = "INFO",
       timestamp = System.currentTimeMillis(),
       // D6: persist paths (not base64) — re-read + re-compress at drain time
       imagePaths = imagePaths
@@ -1533,12 +1741,11 @@ Message type (optional, default "INFO"):
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
-      mailType: String,
       ctx: ToolContext,
       system: ActorSystem
     ): IO[Either[ToolError, String]] =
     system.resolve[AgentCommand](address).attempt.flatMap {
-      case Right(ref) => sendMail(ref, address, message, blocks, mailType, ctx, system)
+      case Right(ref) => sendMail(ref, address, message, blocks, ctx, system)
       case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
     }
 
@@ -1546,7 +1753,6 @@ Message type (optional, default "INFO"):
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
-      mailType: String,
       ctx: ToolContext,
       system: ActorSystem
     ): IO[Either[ToolError, String]] =
@@ -1557,15 +1763,15 @@ Message type (optional, default "INFO"):
       case None =>
         if address == NebulaAgentName && senderName != NebulaAgentName then
           canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
-            if canMail then deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
+            if canMail then deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
             else IO.pure(Left(nebulaDeniedError(senderName)))
           }
-        else deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
+        else deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
-            deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
+            deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
         }
     }
   end deliverToShortName
@@ -1607,7 +1813,6 @@ Message type (optional, default "INFO"):
     address: String,
     message: String,
     blocks: Option[List[ContentBlock]],
-    mailType: String,
     ctx: ToolContext,
     system: ActorSystem,
     senderSessionId: String
@@ -1621,7 +1826,7 @@ Message type (optional, default "INFO"):
             r <- leadSidOpt match
               case Some(targetSid) =>
                 for
-                  res <- deliverToSession(targetSid, team.lead, message, blocks, mailType, ctx, system)
+                  res <- deliverToSession(targetSid, team.lead, message, blocks, ctx, system)
                   _ <- res match
                     case Right(_) => onMailDelivered(senderSessionId, targetSid, team.lead, message, ctx)
                     case Left(_) => IO.unit
@@ -1639,7 +1844,7 @@ Message type (optional, default "INFO"):
         case None =>
           // Mail(→project) 路由（§3.2，immediate 路径对称）——先于旧 short-name 解析。
           for
-            pr <- routeToProject(address, message, mailType, ctx).flatMap {
+            pr <- routeToProject(address, message, ctx).flatMap {
               case Some(r) => IO.pure(r)
               case None =>
                 // Not a team name — short agent name. Routable only for senders
@@ -1660,7 +1865,7 @@ Message type (optional, default "INFO"):
                           case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                           case Right(Some(targetSid)) =>
                             for
-                              res <- deliverToSession(targetSid, address, message, blocks, mailType, ctx, system)
+                              res <- deliverToSession(targetSid, address, message, blocks, ctx, system)
                               _ <- res match
                                 case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
                                 case Left(_) => IO.unit
@@ -1679,7 +1884,7 @@ Message type (optional, default "INFO"):
                                   resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
                                     case Some((sid, ref)) =>
                                       for
-                                        res <- sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system)
+                                        res <- sendMail(ref, NebulaAgentName, message, blocks, ctx, system)
                                         _ <- res match
                                           case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx)
                                           case Left(_)  => IO.unit
@@ -1759,7 +1964,6 @@ Message type (optional, default "INFO"):
     shortName: String,
     message: String,
     blocks: Option[List[ContentBlock]],
-    mailType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
@@ -1770,10 +1974,10 @@ Message type (optional, default "INFO"):
           // ref would swallow ImmediateInput into an unconsumed queue)
           refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
           result <- refOpt match
-            case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
+            case Some(ref) => sendMail(ref, shortName, message, blocks, ctx, system)
             case None =>
               TeamSessionRegistry.getParentActor(sessionId).flatMap {
-                case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
+                case Some(ref) => sendMail(ref, shortName, message, blocks, ctx, system)
                 case None => mailNotFound(shortName)
               }
         yield result
@@ -2026,7 +2230,6 @@ Message type (optional, default "INFO"):
     label: String,
     message: String,
     blocks: Option[List[ContentBlock]],
-    mailType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
@@ -2041,7 +2244,10 @@ Message type (optional, default "INFO"):
         // Text block (AgentActor drops `text` when blocks are present).
         blocks = blocks,
         source = Some("mail"),
-        eventType = Some(mailType.toLowerCase),
+        // mailunify-full 批（2026-09-23）：`type` 参数删净 ⇒ eventType 无来源，置 `None`
+        // （= 帧不带 `eventType` 键，前端 `injectedSourceLabel` 不追加 EVENT_TYPE 段）。
+        // 🔴 不动该字段本身、不动 `[INTERRUPT]` 字面面（属另一面，见 [[mailAttribution]]）。
+        eventType = None,
         sender = Some(senderName),
         senderTeam = teamOpt,
         delivery = Some("immediate"),

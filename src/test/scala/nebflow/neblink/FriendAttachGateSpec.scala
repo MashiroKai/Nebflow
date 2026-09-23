@@ -7,7 +7,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import java.net.InetSocketAddress
 import munit.FunSuite
-import nebflow.core.tools.{FriendMessageTool, ToolContext}
+import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
 
 /**
  * 4b 腿 A-5：**「无自报字段下判读对方能力」的三态实测钉**（裁定④）。
@@ -193,16 +193,19 @@ class FriendAttachGateSpec extends FunSuite:
       // 这一夹具面的已知竞态），断言本身不变。
       def attempt(): Either[nebflow.core.tools.ToolError, String] =
         FriendMessageTool.initialize(fs)
-        FriendMessageTool
-          .call(
-            JsonObject(
-              "to"          -> "alice".asJson,
-              "message"     -> "".asJson,
-              "attachments" -> io.circe.Json.arr(file.toString.asJson)
-            ),
-            ToolContext(projectRoot = "/tmp")
+        // mailunify-full 批：好友腿唯一入口 = `Mail`（显式 `friend:` 前缀）+ **root 身份**夹具
+        // （`friend:` 授权面 = 仅 root Nebula；否则先撞越界闸，本件测的面就到不了）。
+        MailTool.call(
+          JsonObject(
+            "to"          -> "friend:alice".asJson,
+            "message"     -> "".asJson,
+            "attachments" -> io.circe.Json.arr(file.toString.asJson)
+          ),
+          ToolContext(
+            projectRoot = "/tmp",
+            agentDef = Some(nebflow.agent.AgentDef(name = "Nebula", description = "friend-attach spec fixture"))
           )
-          .unsafeRunSync()
+        ).unsafeRunSync()
       val out = attempt() match
         case Left(e) if e.message.contains("unavailable") || e.message.contains("not found") => attempt()
         case other                                                                            => other

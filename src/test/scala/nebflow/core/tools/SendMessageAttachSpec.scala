@@ -15,34 +15,42 @@ import nebflow.neblink.{NeblinkService, PeerInfo}
 import scala.concurrent.duration.*
 
 /**
- * SendMessage 附件腿 + TransferFile 退役批（#145，2026-09-14）的判据面。
+ * 附件腿 + 目标面合面（mailunify-full 批，2026-09-23 作者裁定）的判据面。
+ *
+ * 🔴 **本件的载体已换**（合面后 `SendMessage` 退役、`Mail` 参数合并为单 `to`）：
+ * 全部工具级调用由 `FriendMessageTool.call` 迁到 [[MailTool.call]]，工具级 schema
+ * 面由 `FriendMessageTool.inputSchema` 迁到 `MailTool.inputSchema`。本件名保留
+ * （历史可检索性 + 上游登记名），**判据强度不降**：逐条断言保留原文关切面，
+ * 仅把「双轨 `address`/`device`」的旧形态改写为单 `to` 的新形态。
  *
  * 覆盖（对应任务书验证面，全部**通道内可判定**；真实设备往返 = 未端到端验证，
  * peers 名册为空，禁写「可用」）：
- *   - `to` 三分类语法（device:/friend:/local/裸名）；
+ *   - `to` 四分类语法（device:/friend:/local/裸名）；
  *   - 设备解析负控：未知设备列可用名册、歧义列逐条命中依据（**禁静默首命中**）；
- *   - 非设备前置拒：`targetDir`+device（冻结契约面，归作者）、NebLink/Dropbox 服务缺席（禁静默）；
+ *   - 非设备前置拒：NebLink/Dropbox 服务缺席（禁静默）；
  *     🔴 friend+attachments 的**旧前置拒已由 4b 腿 A 解除**（本件改为断言「解除后仍不静默」：
  *     相对路径 fail-fast + 服务缺席显式报错）；
  *   - 服务级闸位复用：>9 件 / 非法路径 ⇒ fail-fast 回显实际值（offer 之前，零网络）；
  *   - 对端不可达 ⇒ 显式失败（零静默本地执行、零半投递）；
  *   - `local` 显式分支（R3=3b）：复制/覆盖闸/必填 targetDir；
- *   - 退役读数：注册表无 TransferFile、迁移指引、件数常量、量纲（十进制）。
+ *   - 退役读数：注册表无 TransferFile、`SendMessage` 亦已退役、⑧ fail-closed 指引面、
+ *     件数常量、量纲（十进制）。
  */
 class SendMessageAttachSpec extends CatsEffectSuite:
 
-  // ===== to 语法（纯） =====
+  // ===== to 语法（纯；扩展面见 GroupTargetParseSpec） =====
 
-  test("to grammar: device:/friend:/local/bare 分派正确"):
-    assertEquals(FriendMessageTool.parseToKind("device:KAI"), Right(FriendMessageTool.ToKind.Device("KAI")))
-    assertEquals(FriendMessageTool.parseToKind("DEVICE:kai"), Right(FriendMessageTool.ToKind.Device("kai")))
-    assertEquals(FriendMessageTool.parseToKind("friend:alice"), Right(FriendMessageTool.ToKind.Friend("alice")))
-    assertEquals(FriendMessageTool.parseToKind("alice"), Right(FriendMessageTool.ToKind.Friend("alice")))
-    assertEquals(FriendMessageTool.parseToKind("local"), Right(FriendMessageTool.ToKind.Local))
-    assertEquals(FriendMessageTool.parseToKind("Local"), Right(FriendMessageTool.ToKind.Local))
-    assert(FriendMessageTool.parseToKind("device:").isLeft, "device: 空参必须显式报错")
-    assert(FriendMessageTool.parseToKind("friend:").isLeft, "friend: 空参必须显式报错")
-    assert(FriendMessageTool.parseToKind("").isLeft)
+  test("to grammar: `Mail` 统一谓词的既有四形态分派（device:/friend:/local/裸名）"):
+    import MailTool.Target
+    assertEquals(MailTool.classifyTarget("device:KAI"), Right(Target.Device("KAI")))
+    assertEquals(MailTool.classifyTarget("DEVICE:kai"), Right(Target.Device("kai")))
+    assertEquals(MailTool.classifyTarget("friend:alice"), Right(Target.Friend("alice")))
+    assertEquals(MailTool.classifyTarget("alice"), Right(Target.Face("alice")))
+    assertEquals(MailTool.classifyTarget("local"), Right(Target.Local))
+    assertEquals(MailTool.classifyTarget("Local"), Right(Target.Local))
+    assert(MailTool.classifyTarget("device:").isLeft, "device: 空参必须显式报错（设备腿 MAIL_DEVICE_MALFORMED）")
+    assert(MailTool.classifyTarget("friend:").isLeft, "friend: 空参必须显式报错")
+    assert(MailTool.classifyTarget("").isLeft)
 
   // ===== 设备解析（纯，peers 显式传入——原 TransferFileToolSpec 同款口径） =====
 
@@ -73,7 +81,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   // ===== 工具级负控（无 sharedResources ⇒ 服务缺席显式报错；前置拒在零网络处） =====
 
   private def callTool(input: JsonObject): IO[Either[ToolError, String]] =
-    FriendMessageTool.call(input, ToolContext(projectRoot = "/tmp"))
+    MailTool.call(input, ToolContext(projectRoot = "/tmp"))
 
   private def obj(fields: (String, Json)*): JsonObject = JsonObject.fromIterable(fields)
 
@@ -98,7 +106,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   test("friend 目标 + attachments ⇒ **不再**前置拒绝（4b 腿 A 解除该缺口）；服务缺席走既有显式报错"):
     val res = callTool(
       obj(
-        "to"          -> Json.fromString("alice"),
+        "to"          -> Json.fromString("friend:alice"),
         "message"     -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
       )
@@ -106,19 +114,18 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(res.isLeft)
     val msg = res.left.toOption.get.message
     assert(!msg.contains("not supported for friend targets"), s"该前置拒绝已被 4b 腿 A 取代，got: $msg")
-    // 该 spec **不** initialize FriendMessageTool（`service` 是全局装配缝，其它并行 suite
-    // 可能已装配）⇒ 可接受的失败面有两种，但都必须是**可判读**的显式错误：
-    //   ① 服务缺席（未装配）⇒ "Friend messaging is unavailable"；
-    //   ② 已装配 ⇒ 走好友解析，本 spec 无名册 ⇒ "not found" + 候选。
+    // 合面后另有**授权面**闸：`friend:` / `group:` 腿仅 root Nebula 可达（本 ctx 无
+    // agentDef ⇒ 非 root）⇒ 除「服务缺席」外还有这一条合法显式失败面，但都必须**可判读**。
     assert(
-      msg.contains("Friend messaging is unavailable") || msg.contains("not found"),
-      s"失败必须可判读（服务缺席或解析失败二选一），got: $msg"
+      msg.contains("Friend messaging is unavailable") || msg.contains("not found") ||
+        msg.contains("outside your address face"),
+      s"失败必须可判读（服务缺席 / 解析失败 / 越界三选一），got: $msg"
     )
 
   test("friend 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（与设备支同判据，服务访问之前）"):
     val res = callTool(
       obj(
-        "to"          -> Json.fromString("alice"),
+        "to"          -> Json.fromString("friend:alice"),
         "message"     -> Json.fromString("hi"),
         "attachments" -> Json.arr(Json.fromString("relative.bin"))
       )
@@ -128,10 +135,13 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(msg.contains("must be absolute"), msg)
     assert(msg.contains("relative.bin"), msg)
 
-  test("device 目标 + targetDir ⇒ 受控支持：不再走冻结契约拒绝（服务缺席时落到设备腿自己的报错）"):
-    // 契约升版批（2026-09-14，spec §⑥①）：原显式拒绝已被作者「现在升版」取代 ⇒ 本钉
-    // 断言**拒绝已解除**且**真的进入设备腿**；显式回显/落点裁定见
-    // `FriendMessageToolTargetDirSpec` A2（真服务栈 + level-1 桩）与 `TargetDirGuardSpec`。
+  test("device 目标 + targetDir ⇒ 受控支持已随退役腿消失：单 `to` 面不再有该参数（静默忽略，零拒绝面）"):
+    // 契约升版批（2026-09-14）在**旧** `SendMessage(to="device:…")` 上建立了
+    // device + targetDir 的受控支持；合面后该腿退役（设备面统一到 `Mail` 的 `device:`，
+    // 语义反转为「投进对端会话」），`targetDir` **不再是设备腿的参数** ⇒ 本件改成
+    // 断言「服务缺席时落到设备腿自己的报错」，即该键**不产生任何新的拒绝面**
+    // （引擎零 JSON-Schema 校验 ⇒ 面外键静默丢弃）。🔴 `targetDir` / `overwrite`
+    // 的**能力丧失**属 §16 迁移说明的如实写明项（见 MailTool schema 的差异登记）。
     val res = callTool(
       obj(
         "to"        -> Json.fromString("device:KAI"),
@@ -182,7 +192,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     withStack { (_, svc) =>
       IO.blocking(os.temp.dir(prefix = "nb-sendmsg-attach-dir-")).flatMap { dir =>
         // 注：os.Path 构造会把相对段绝对化，Path 类型 API 下「相对」分支不可达；
-        // 相对串的拒绝在工具边界（FriendMessageTool，见下方工具级负控）。
+        // 相对串的拒绝在工具边界（MailTool，见下方工具级负控）。
         val ghost = dir / "no-such-file.bin"
         val rel = svc.sendLocalFiles("d", List(ghost)).map {
           case Left(err) =>
@@ -234,7 +244,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       }
     }
 
-  // ===== local 显式分支（R3=3b） =====
+  // ===== local 显式分支（R3=3b；合面后为 `Mail` 的保留字面量腿） =====
 
   test("local: 复制进 targetDir（零网络；message 缺席也成立）"):
     IO.blocking {
@@ -300,21 +310,32 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
   // ===== 退役读数 =====
 
-  test("registry: TransferFile 已摘除；SendMessage 在册（工具面 −1 行为读数）"):
+  test("registry: TransferFile 与 SendMessage 均已摘除（工具面 −2 行为读数）"):
     assert(!ToolRegistry.TOOL_MAP.contains("TransferFile"), "TransferFile must be unregistered")
-    assert(ToolRegistry.TOOL_MAP.contains("SendMessage"))
+    assert(!ToolRegistry.TOOL_MAP.contains("SendMessage"), "SendMessage retired (mailunify-full 2026-09-23) — 存活名 = Mail")
     assert(!ToolRegistry.ALL_TOOLS.exists(_.name == "TransferFile"))
+    assert(!ToolRegistry.ALL_TOOLS.exists(_.name == "SendMessage"))
+    assert(ToolRegistry.TOOL_MAP.contains("Mail"), "Mail must stay registered (single message primitive)")
 
-  test("migration guide: RetiredToolGuides 含 TransferFile 且指向 SendMessage"):
+  test("TransferFile is fail-closed — no guide, and the stale SendMessage pointer is gone (⑧ 2026-09-23)"):
+    // 改前判据 = 「指引存在 ∧ 指向 SendMessage ∧ 含 device:」。
+    // ⑧ 全表摘空后该指引整条消失 ⇒ 判据反转为「零指引 ∧ 表内无任何残留指向已退役 SendMessage 的正文」。
     val guide = AgentCore.RetiredToolGuides.get("TransferFile")
-    assert(guide.isDefined, "TransferFile migration guide missing")
-    assert(guide.get.contains("SendMessage"), guide.get)
-    assert(guide.get.contains("device:"), guide.get)
+    assert(guide.isEmpty, s"TransferFile must carry NO guide (fail-closed); got: $guide")
+    assert(
+      AgentCore.RetiredToolGuides.isEmpty,
+      s"the whole table must be empty; got keys: ${AgentCore.RetiredToolGuides.keys.toList.sorted}"
+    )
+    assert(
+      !AgentCore.RetiredToolGuides.values.exists(_.contains("SendMessage")),
+      "no surviving guide may still point at the retired `SendMessage` tool (the stale-pointer defect must stay closed)"
+    )
 
-  test("orchestration set: Nebula 面不再含 TransferFile（−1 后 15 件）"):
+  test("orchestration set: Nebula 面既无 TransferFile 也无 SendMessage（−2 后 16 件；Mail 在册）"):
     val fixed = AgentCore.fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil))
     assert(!fixed.contains("TransferFile"))
-    assert(fixed.contains("SendMessage"))
+    assert(!fixed.contains("SendMessage"), "SendMessage 已随本批退役出 Nebula 编排集（NebulaOrchestrationTools）")
+    assert(fixed.contains("Mail"), "Mail 是唯一存活的消息原语")
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize)
 
   test("dimension guard: 1024 MB = 1 GiB = 1,073,741,824 B / ≤9 件 / 标签含 1,073,741,824（量纲写死）"):
@@ -324,14 +345,20 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assertEquals(AttachContract.MaxAttachmentsPerMessage, 9)
     assert(AttachContract.MaxFileBytesLabel.contains("1,073,741,824"), AttachContract.MaxFileBytesLabel)
 
-  test("schema surface: attachments/targetDir/overwrite 参数在面；to+message 必填"):
-    val schema = FriendMessageTool.inputSchema
+  test("schema surface（re-pin 单 `to` 面）：`attachments` 在册；`to`+`message` 必填；`targetDir`/`overwrite` **不在**键集"):
+    val schema = MailTool.inputSchema
     val props  = schema("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
     assert(props.contains("attachments"))
-    assert(props.contains("targetDir"))
-    assert(props.contains("overwrite"))
+    // 🔴 **差异登记**（不判卡片错、不静默改）：上游计划卡 §7.3 的红线键集含
+    // `targetDir` / `overwrite`，而分发器补充（2026-09-23，两封）逐字重申「本批不引入
+    // `targetDir`/`overwrite`」。本席按补充执行 ⇒ 5 键。后果 = `to="local"` 腿仍以
+    // 「requires `targetDir`」显式报错而模型看不到该前提 ⇒ 已登记为**须作者确认**项
+    // （见 MailTool.inputSchema 上方注释的候选 A / B）。
+    assert(!props.contains("targetDir"), "本批不引入 targetDir（按分发器补充；与上游卡片 §7.3 的差异已登记）")
+    assert(!props.contains("overwrite"), "本批不引入 overwrite（同上）")
+    assert(!props.contains("address") && !props.contains("device") && !props.contains("type"))
+    assertEquals(props.keys.toSet, Set("to", "message", "chainId", "images", "attachments"))
     val required = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
-    assert(required.contains("to"))
-    assert(required.contains("message"))
+    assertEquals(required.toList, List("to", "message"))
 
 end SendMessageAttachSpec

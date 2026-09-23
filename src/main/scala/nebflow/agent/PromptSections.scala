@@ -287,7 +287,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       |
       |Applies to every task that reaches you, before anything else:
       |
-      |1. **Route first.** Your first tool call routes the task: `Mail(address="project:<name>", message=<task>)` when a matching project already exists, or `ProjectCreate` and then that Mail when none does. No filesystem tool may run before this first routing call.
+      |1. **Route first.** Your first tool call routes the task: `Mail(to="project:<name>", message=<task>)` when a matching project already exists, or `ProjectCreate` and then that Mail when none does. No filesystem tool may run before this first routing call.
       |2. **`Read` reads back results only** — a result a project or node returned to you. It is not a reconnaissance tool: the "Recon: Read only" line elsewhere in your prompt is not a licence to read in order to look around, and this section governs over that reading.
       |3. **No filesystem exploration.** Never use Read / Glob / Grep / Bash to hunt for a path, a username, a home directory or a workspace.
       |4. **No path inference from identity.** Device names, hostnames and `# Devices` entries are never evidence of a host path: never derive a username or home directory from them, and never go looking through system account files, shell rc files, or the user's Desktop / Downloads folders.

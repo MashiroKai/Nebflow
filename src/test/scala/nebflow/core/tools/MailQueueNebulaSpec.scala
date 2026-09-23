@@ -123,7 +123,7 @@ class MailQueueNebulaSpec extends FunSuite:
       isDispatcher = true
     )
     val res = MailTool
-      .queueToNebula("hello Nebula", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", None)
+      .queueToNebula("hello Nebula", Nil, ctx, null, "dispatcher-sid", "Nebula", None)
       .unsafeRunSync()
     assert(res.isLeft, "must fail when the root agent is not in the registry")
     assert(res.swap.toOption.get.message.contains("NEBULA_ROOT_UNRESOLVED"), s"unexpected message: $res")
@@ -169,7 +169,7 @@ class MailQueueNebulaSpec extends FunSuite:
     )
     val before = MailQueueStore.size("nebula-root-absent").unsafeRunSync()
     val res = MailTool
-      .queueToNebula("批级回传", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", Some("chain-n-q1"))
+      .queueToNebula("批级回传", Nil, ctx, null, "dispatcher-sid", "Nebula", Some("chain-n-q1"))
       .unsafeRunSync()
     assert(res.isLeft, s"解析不出必须失败：$res")
     assert(res.swap.toOption.get.message.contains("NEBULA_ROOT_UNRESOLVED"), s"unexpected: $res")

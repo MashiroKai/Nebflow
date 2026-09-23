@@ -120,12 +120,21 @@ class DeviceMailSpec extends FunSuite:
       case Left(err)  => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
-  test("schema: `device` 入册；address 不再 required（两目标各自可空、禁双填）"):
-    assert(props.contains("device"), s"schema 缺 device 参数：$props")
-    assertEquals(requiredOf, List("message"), "required 只应剩 message（address/device 由运行期互斥闸判）")
-    assert(!requiredOf.contains("address"), "address 必须离开 required（否则「双缺」与 schema 自相矛盾）")
+  test("schema（mailunify-full 批 re-pin）：统一单 `to` 面 —— 恰 5 键、`to` 与 `message` 同在 required"):
+    assertEquals(
+      props,
+      Set("to", "message", "chainId", "images", "attachments"),
+      "schema 键集必须恰为合并后的 5 键（`address` / `device` / `type` 三键消失）"
+    )
+    assert(!props.contains("address") && !props.contains("device"), s"双轨目标键必须消失：$props")
+    assert(!props.contains("type"), "`type` 五标签面已删净 ⇒ 该键必须离开 schema")
+    assertEquals(requiredOf, List("to", "message"), "required = to + message（双轨互斥结构消失）")
 
-  test("校验词表 ①互斥：address + device 同填 ⇒ MAIL_TARGET_EXCLUSIVE"):
+  test("校验词表 ①（re-pin）互斥闸整条退役：旧双键输入 ⇒ 不再是 MAIL_TARGET_EXCLUSIVE 而是目标缺失"):
+    // 旧形态：`address` + `device` 同填 ⇒ MAIL_TARGET_EXCLUSIVE。
+    // mailunify-full 批：互斥结构（`address` XOR `device`）**结构上消失** ⇒ 该错误码
+    // 连常量一并删除（见 MailTool 词表注释）。旧调用方送来的两个键在**面外**
+    // （引擎零 JSON-Schema 校验 ⇒ 到得了 call()，但 `to` 缺席）⇒ 走目标缺失词表。
     val msg = callErr(
       JsonObject(
         "address" -> "project:x".asJson,
@@ -133,39 +142,44 @@ class DeviceMailSpec extends FunSuite:
         "message" -> "hi".asJson
       )
     )
-    assert(msg.contains(s"[${MailTool.ErrTargetExclusive}]"), msg)
-    assert(msg.contains("mutually exclusive"), msg)
+    assert(!msg.contains("MAIL_TARGET_EXCLUSIVE"), s"互斥码必须整条退役（不得残留）：$msg")
+    assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
+    assert(msg.contains("'to'"), s"单字段面必须在文案里点名 `to`：$msg")
 
-  test("校验词表 ②双缺：两个目标都没填 ⇒ MAIL_TARGET_MISSING"):
+  test("校验词表 ②双缺 ⇒ MAIL_TARGET_MISSING（逐字 re-pin：点名单字段 `to`）"):
     val msg = callErr(JsonObject("message" -> "hi".asJson))
     assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
-    assert(msg.contains("'address' (agent/team/project)"), msg)
+    assert(msg.contains("'to' is required"), s"文案须点名单字段 `to`：$msg")
+    assert(!msg.contains("'address'"), s"旧字段面不得残留在文案里：$msg")
 
-  test("校验词表 ③非法形态：device: 前缀 / URL ⇒ MAIL_DEVICE_MALFORMED（零副作用，先于任何解析）"):
-    val prefixed = callErr(JsonObject("device" -> "device:dev-b".asJson, "message" -> "hi".asJson))
+  test("校验词表 ③非法形态：`device:` 空参 / URL ⇒ MAIL_DEVICE_MALFORMED（零副作用，先于任何解析）"):
+    val prefixed = callErr(JsonObject("to" -> "device:".asJson, "message" -> "hi".asJson))
     assert(prefixed.contains(s"[${MailTool.ErrDeviceMalformed}]"), prefixed)
     assert(prefixed.contains("device:"), prefixed)
-    val url = callErr(JsonObject("device" -> "http://127.0.0.1:8080".asJson, "message" -> "hi".asJson))
+    val url = callErr(JsonObject("to" -> "device:http://127.0.0.1:8080".asJson, "message" -> "hi".asJson))
     assert(url.contains(s"[${MailTool.ErrDeviceMalformed}]"), url)
-    // 空白 device 经 trim 等价于「没填」⇒ 落双缺词表（与 address 缺席同判，不是 MALFORMED）
-    val blank = callErr(JsonObject("device" -> "   ".asJson, "message" -> "hi".asJson))
+    // 空白 `to` 经 trim 等价于「没填」⇒ 落目标缺失词表（不是 MALFORMED）
+    val blank = callErr(JsonObject("to" -> "   ".asJson, "message" -> "hi".asJson))
     assert(blank.contains(s"[${MailTool.ErrTargetMissing}]"), blank)
 
-  test("设备腿两条显式拒绝：delivery=queue 与 非 INFO 类型（禁静默丢语义）"):
-    val q = callErr(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson, "delivery" -> "queue".asJson))
+  test("设备腿显式拒 queue（逐字 v2.1 契约保留）；`type` 死键 ⇒ 零拒绝面（静默忽略）"):
+    val q = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson, "delivery" -> "queue".asJson))
     assert(q.contains("always immediate"), q)
-    val t = callErr(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson, "type" -> "INTERRUPT".asJson))
-    assert(t.contains("only type \"INFO\" is supported"), t)
+    // `type` 五标签已删净 ⇒ 设备腿**不再**有「only type \"INFO\" is supported」这一拒绝；
+    // 旧键由引擎零 schema 校验静默丢弃 ⇒ 本腿照常走到设备解析（服务缺席 ⇒ 设备腿自有报错）。
+    val t = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson, "type" -> "INTERRUPT".asJson))
+    assert(!t.contains("only type"), s"`type` 拒绝面必须随五标签删净一并消失：$t")
+    assert(t.contains("Device messaging is unavailable"), s"死键不得阻断设备腿：$t")
 
-  test("message 仍必填（两种目标面一致）"):
-    val a = callErr(JsonObject("address" -> "project:x".asJson))
+  test("message 仍必填（单字段 `to` 面一致）"):
+    val a = callErr(JsonObject("to" -> "project:x".asJson))
     assertEquals(a, "Missing required parameter: message")
-    val d = callErr(JsonObject("device" -> "KAI-MBP".asJson))
+    val d = callErr(JsonObject("to" -> "device:KAI-MBP".asJson))
     assertEquals(d, "Missing required parameter: message")
 
-  test("summarize 回显 device 目标（工具调用摘要可见设备面）"):
-    assertEquals(MailTool.summarize(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson)), "Mail(→device:KAI-MBP)")
-    assertEquals(MailTool.summarize(JsonObject("address" -> "Nebula".asJson, "message" -> "hi".asJson)), "Mail(→Nebula)")
+  test("summarize 回显单字段目标（设备面经 scheme 前缀可见）"):
+    assertEquals(MailTool.summarize(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson)), "Mail(→device:KAI-MBP)")
+    assertEquals(MailTool.summarize(JsonObject("to" -> "Nebula".asJson, "message" -> "hi".asJson)), "Mail(→Nebula)")
 
   // ============================================================
   // ③ 校验词表 ④未知设备（名册夹具：多设备注册表）
@@ -204,7 +218,7 @@ class DeviceMailSpec extends FunSuite:
     )
 
   private def deviceErr(ns: NeblinkService, device: String): String =
-    MailTool.call(JsonObject("device" -> device.asJson, "message" -> "hi".asJson), deviceCtx(ns)).unsafeRunSync() match
+    MailTool.call(JsonObject("to" -> s"device:$device".asJson, "message" -> "hi".asJson), deviceCtx(ns)).unsafeRunSync() match
       case Left(err)  => err.message
       case Right(msg) => fail(s"expected an explicit error for device='$device', got success: $msg")
 
@@ -556,7 +570,7 @@ class DeviceMailSpec extends FunSuite:
     assert(capture.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync().isRight, "夹具登录必须成功")
     ns.setRelayClient(Some(capture.client))
 
-    val out = MailTool.call(JsonObject("device" -> "KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns)).unsafeRunSync()
+    val out = MailTool.call(JsonObject("to" -> "device:KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns)).unsafeRunSync()
     assert(out.isRight, s"device 邮件应成功下发：$out")
 
     // ① 发送面：**恰一次**、目标走路径、body = 契约五键本体、定向（其余设备零流量）

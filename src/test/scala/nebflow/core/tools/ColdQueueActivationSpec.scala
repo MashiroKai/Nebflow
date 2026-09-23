@@ -138,7 +138,7 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
-        meta.id, "member", "COLD_TASK_MARKER_S1", "INFO", Nil,
+        meta.id, "member", "COLD_TASK_MARKER_S1", Nil,
         ctxFor(resources, system, "sender-s1"), system, "sender-s1"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
@@ -176,7 +176,7 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- IO.sleep(200.millis) // let the fiber cancel complete
       // The mail under test
       res <- MailTool.queueToSession(
-        meta.id, "member", "COLD_TASK_MARKER_S2", "INFO", Nil,
+        meta.id, "member", "COLD_TASK_MARKER_S2", Nil,
         ctxFor(resources, system, "sender-s2"), system, "sender-s2"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
@@ -206,7 +206,7 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("ghost", "ghost", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
-        meta.id, "ghost", "GHOST_TASK", "INFO", Nil,
+        meta.id, "ghost", "GHOST_TASK", Nil,
         ctxFor(resources, system, "sender-s3"), system, "sender-s3"
       )
     yield res

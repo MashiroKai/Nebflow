@@ -3379,7 +3379,7 @@ object ProjectCreateTool extends Tool:
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog (2026-09-06 裁定), no candidate chips (2026-09-09 裁定)). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend; retiring that free input is a separate S3 order that has not landed. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
-- Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
+- Dispatch work with Mail(to="project:<name>", message=...) — the project is mounted and triggerable immediately.
 ## Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
@@ -3474,8 +3474,10 @@ object ProjectCreateTool extends Tool:
           scaffold: Option[ProjectStore.ScaffoldReport] = None
       ): IO[Either[ToolError, String]] =
         // ③-9 逐件报告（作者 2026-09-17 12:09 裁定单）：成功/幂等两态的结果句统一带
-        // 本次补缺读数（有 created 时含一行摘要）。既有 contains 子串（`Mail(address='project:`、
-        // `already exists`）保持不变，只在句尾追加。
+        // 本次补缺读数（有 created 时含一行摘要）。既有 contains 子串（`Mail(to='project:`、
+        // `already exists`）保持不变，只在句尾追加。🔴 mailunify-full 批（2026-09-23）：
+        // 该子串随 `Mail` 单 `to` 参数面同批改为 `Mail(to='project:`（消费者
+        // `ProjectCreatePanelSpec` 同步 re-pin）。
         val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
         (ctx.actorSystem, ctx.sharedResources) match
           case (Some(system), Some(res)) =>
@@ -3508,7 +3510,7 @@ object ProjectCreateTool extends Tool:
                     val verb = if created then "created" else "already exists"
                     Right(
                       s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                        s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
+                        s"Dispatch work with Mail(to='project:${pd.name}', message=...).$scaffoldSuffix"
                     )
                   }
                 // 新建成功 → 先发帧再返回结果（挂载成功 ⇒ mounted=true）。
@@ -3612,7 +3614,7 @@ object ProjectCreateTool extends Tool:
       "on an occupied workspace — a second project on the same workspace would silently share its " +
       "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
       s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
-      s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
+      s"Mail(to='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."
 
   /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */

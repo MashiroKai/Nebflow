@@ -2915,10 +2915,13 @@ object AgentCore:
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
     "TaskList",
-    // 通信（好友功能非旧体系）
-    "SendMessage",
-    // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
-    // 名册取代「靠报错反推」。与 SendMessage 同组（通信）、同一好友数据面与词表
+    // 通信 —— 🔴 `SendMessage` 已**退役**（mailunify-full 批，2026-09-23 作者裁定）：
+    // 四腿（好友 / 群 / 本机复制 / 设备）整体并入 `Mail` 的单 `to` 承载 ⇒ **摘本集行**
+    // （本集成员 −1 ⇒ `NebulaOrchestrationToolsExpectedSize` 17 → 16）。
+    // 🔴 fail-closed：旧名离册后，打到它的调用按未知工具报错，**零迁移指引**
+    // （`RetiredToolGuides` 整表摘空 = 本批政策）。
+    // ListFriends（好友消息改造批 ⑩，2026-09-12）：`Mail` 的**只读**好友名册前置——
+    // 名册取代「靠报错反推」。同一好友数据面与词表
     // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
     // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
     "ListFriends",
@@ -3007,26 +3010,27 @@ object AgentCore:
     * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 17
+  val NebulaOrchestrationToolsExpectedSize: Int = 16
 
-  /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
+  /** 退役工具迁移指引表 —— 🔴 **全表 fail-closed**（mailunify-full 批，2026-09-23
+    * 作者裁定 ⑧）。
     *
-    * **本表只产错误文案，零执行面**——不是兼容壳、不是别名、不做任何转发
-    * （B5-c 硬禁静默 no-op 与悄悄转发）。消费点 = [[executeToolInner]] 的
-    * `case None`（注册表查不到该名时）：给出「它退役了 + 改用哪个工具、怎么构造
-    * 调用」。打在未注册名上的调用**只能**来自存量提示词 / 外部客户端 / 幻觉——
-    * 恰恰是最需要指引的场景；现状兜底文案 `No such tool available: <name>`
-    * 不含迁移指引，不满足「显式报错并指明改用 Mail」的要求。
+    * **政策变更（本表的存在理由已反转）**：本表原先按「退役即配迁移指引」的旧政策
+    * 逐键登记（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1 的三键
+    * `Task` / `NodeMessage` / `TransferFile`）。作者 2026-09-21 的 `Delegate` 令把政策
+    * 反转为「改名退役工具**不需要**任何退役提醒」——退役件应当**像它从未存在过**。
+    * 本批因此把**整表摘空**（三老键一并摘除），`SendMessage`（本批退役）**不加键**；
+    * 表定义与 doc 保留（地标区间与类型不变，右值 = `Map.empty`）。
     *
-    * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。 */
-  val RetiredToolGuides: Map[String, String] = Map(
-    "Task" ->
-      """Project triggering is now Mail — use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
-    "NodeMessage" ->
-      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
-    "TransferFile" ->
-      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
-  )
+    * 🔴 **零执行面、本批零行为变化**：本表只产错误文案。真实 agent turn 下未注册名的
+    * 调用走的是**允许集过滤**路径（`allowedTools.contains` 未命中 ⇒
+    * `Tool not available: <name>`），早于 [[executeToolInner]] 的注册表未命中腿 ⇒
+    * **摘空前后行为完全一致**（该腿在现读树上结构性不可达 —— 任何 allowed set 成员
+    * 都已在注册表内）。⇒ 旧名与杜撰名一律得到**同一句**「没有这个工具」。
+    *
+    * **表零膨胀纪律（保留）**：即便政策将来再变，也只收「本批删净且必须给出迁移路径」
+    * 的名字，不预收未来退役项。 */
+  val RetiredToolGuides: Map[String, String] = Map.empty
 
   /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只

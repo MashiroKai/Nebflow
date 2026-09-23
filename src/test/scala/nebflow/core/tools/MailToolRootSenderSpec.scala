@@ -64,24 +64,24 @@ class MailToolRootSenderSpec extends FunSuite:
   // ── root sender + team/agent explicit address: rejected in ALL modes ──
 
   test("queue: root sender + team/agent address rejected"):
-    val res = MailTool.deliverQueue("myteam/Frontend", "hi", "INFO", Nil, rootCtx, null).unsafeRunSync()
+    val res = MailTool.deliverQueue("myteam/Frontend", "hi", Nil, rootCtx, null).unsafeRunSync()
     assertRejected(res, "queue team/agent")
 
   test("immediate: root sender + team/agent address rejected"):
     val res = MailTool
-      .deliverShortNameUnscoped("myteam/Frontend", "hi", None, "INFO", rootCtx, null, rootSid)
+      .deliverShortNameUnscoped("myteam/Frontend", "hi", None, rootCtx, null, rootSid)
       .unsafeRunSync()
     assertRejected(res, "immediate team/agent")
 
   // ── root sender + bare short name: still rejected (b9d427c6 regression) ──
 
   test("queue: root sender + bare short name still rejected"):
-    val res = MailTool.deliverQueue("Backend", "hi", "INFO", Nil, rootCtx, null).unsafeRunSync()
+    val res = MailTool.deliverQueue("Backend", "hi", Nil, rootCtx, null).unsafeRunSync()
     assertRejected(res, "queue short name")
 
   test("immediate: root sender + bare short name still rejected"):
     val res = MailTool
-      .deliverShortNameUnscoped("Backend", "hi", None, "INFO", rootCtx, null, rootSid)
+      .deliverShortNameUnscoped("Backend", "hi", None, rootCtx, null, rootSid)
       .unsafeRunSync()
     assertRejected(res, "immediate short name")
 
@@ -146,7 +146,6 @@ class MailToolRootSenderSpec extends FunSuite:
       .deliverQueue(
         "myteam",
         "hello team",
-        "INFO",
         Nil,
         rootCtx.copy(
           actorSystem = Some(sys),
@@ -189,7 +188,7 @@ class MailToolRootSenderSpec extends FunSuite:
   test("team member: short name routing unaffected"):
     TeamSessionRegistry.registerSession("myteam", "worker", "worker-sid").unsafeRunSync()
     TeamSessionRegistry.registerSession("myteam", "Backend", "backend-sid").unsafeRunSync()
-    val res = MailTool.deliverQueue("Backend", "hi", "INFO", Nil, teamMemberCtx("worker-sid"), null).unsafeRunSync()
+    val res = MailTool.deliverQueue("Backend", "hi", Nil, teamMemberCtx("worker-sid"), null).unsafeRunSync()
     res match
       case Left(err) =>
         assert(err.message.contains("Backend"), s"should route within the team: ${err.message}")
@@ -200,7 +199,7 @@ class MailToolRootSenderSpec extends FunSuite:
     TeamSessionRegistry.registerSession("myteam", "worker", "worker-sid").unsafeRunSync()
     TeamSessionRegistry.registerSession("myteam", "Frontend", "frontend-sid").unsafeRunSync()
     val res = MailTool
-      .deliverQueue("myteam/Frontend", "hi", "INFO", Nil, teamMemberCtx("worker-sid"), null)
+      .deliverQueue("myteam/Frontend", "hi", Nil, teamMemberCtx("worker-sid"), null)
       .unsafeRunSync()
     res match
       case Left(err) =>

@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import nebflow.core.tools.{FriendMessageTool, ToolContext, ToolError, ToolRegistry}
+import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext, ToolError, ToolRegistry}
 
 import cats.effect.{IO, Ref}
 import io.circe.JsonObject
@@ -143,12 +143,21 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   private def callTool(fs: FriendService, input: JsonObject): IO[Either[ToolError, String]] = {
     FriendMessageTool.initialize(fs)
-    FriendMessageTool.call(input, ToolContext(projectRoot = "/tmp"))
+    // mailunify-full 批：好友腿的**唯一入口** = `Mail`，且该腿**仅 root Nebula 可达**
+    // （设计卡 A.15：`friend:` / `group:` 授权面 = root）。⇒ 夹具 ctx 必须带 root 身份，
+    // 否则本 spec 全部用例会先撞越界闸（那不是本件要测的面）。
+    MailTool.call(
+      input,
+      ToolContext(
+        projectRoot = "/tmp",
+        agentDef = Some(nebflow.agent.AgentDef(name = "Nebula", description = "friend-leg spec fixture"))
+      )
+    )
   }
 
   test("mode=off: tool reports the user has disabled agent messaging") {
     withFs("off") { fs =>
-      callTool(fs, JsonObject("to" -> "林小满".asJson, "message" -> "hi".asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:林小满".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isLeft)
         assert(res.left.toOption.get.message.toLowerCase.contains("disabled"))
       }
@@ -157,7 +166,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   test("mode=auto: sends via friend addressing and returns the delivery confirmation") {
     withFs("auto") { fs =>
-      callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight, s"expected success, got ${res.left.toOption.map(_.message)}")
         assert(res.toOption.get.contains("已发送给 林小满"))
       }
@@ -167,7 +176,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   test("message longer than 4000 chars rejected before any network call") {
     withFs("auto") { fs =>
       val long = "a" * 4001
-      callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> long.asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> long.asJson)).map { res =>
         assert(res.isLeft)
         assert(res.left.toOption.get.message.contains("too long"))
       }
@@ -192,10 +201,10 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     }
   }
 
-  // ── schema 契约 ──────────────────────────────────────────
+  // ── schema 契约（mailunify-full 批 re-pin：工具面 = `Mail` 单 `to`） ──────
 
-  test("schema: required = to + message, both typed string") {
-    val schema = FriendMessageTool.inputSchema
+  test("schema（re-pin）：`Mail.inputSchema` required = to + message，两键均为 string") {
+    val schema = MailTool.inputSchema
     val req    = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
     assertEquals(req.toSet, Set("to", "message"))
     assert(schema("properties").isDefined)
@@ -203,14 +212,17 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     assert(schema("properties").get.asObject.get("message").isDefined)
   }
 
-  test("description carries the established-friendship + user-identity semantics") {
-    val d = FriendMessageTool.description
-    assert(d.contains("established friend relationships"))
-    assert(d.contains("delivered as the user"))
+  test("description（re-pin）：`Mail` 面携带「既有好友关系 + 以用户身份送达」语义") {
+    val d = MailTool.description
+    assert(d.contains("established friend relationships"), "缺「既有好友关系」口径")
+    // 合面后该语义落在 `## friend: / group:` 段（标题大写形态 `delivered AS THE USER`）
+    // ⇒ 判据按大小写归一（判的是语义在位，不是排版大小写）。
+    assert(d.toLowerCase.contains("delivered as the user"), s"缺「以用户身份送达」口径：${d.take(200)}")
   }
 
-  test("tool registered under the exact name SendMessage") {
-    assert(ToolRegistry.TOOL_MAP.contains("SendMessage"))
+  test("registry（re-pin）：存活名 = `Mail`；`SendMessage` 已退役（不得在册）") {
+    assert(ToolRegistry.TOOL_MAP.contains("Mail"), "Mail 是唯一存活的消息原语")
+    assert(!ToolRegistry.TOOL_MAP.contains("SendMessage"), "SendMessage retired (mailunify-full 2026-09-23)")
   }
 
   // ══════════ ⑦（2026-09-12）：L0 备注层 / 候选含备注 / 回执 / L4 邮箱 α ══════════
@@ -268,7 +280,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
 
   test("回执形态 ⑦-D6：命中备注 ⇒ 「备注（username）」；数据面备注经 refreshFriends 注入工具") {
     withFs("auto", remarks = Map("u1" -> "老林")) { fs =>
-      callTool(fs, JsonObject("to" -> "老林".asJson, "message" -> "hi".asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:老林".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight, s"expected success, got ${res.left.toOption.map(_.message)}")
         val receipt = res.toOption.get
         assert(receipt.contains("已发送给 老林（lin@example.com）"),
@@ -286,7 +298,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
       // ⇒ L0–L3 必全未命中（正是 α 要补的洞）。
       assertEquals(FriendRoster.resolve("lin@example.com", List(FriendSummary("u1", "customNL1", "林小满"))).isLeft, true,
         "前提：邮箱不是 username/昵称 ⇒ 本地链必然 miss")
-      callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight, s"α 命中必须送达，got ${res.left.toOption.map(_.message)}")
         assertEquals(stub.searchedPaths.toList,
           List("http://stub.local/api/users/search?q=lin%40example.com"),
@@ -303,15 +315,15 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     for
       res429 <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = Left("HTTP 429: rate_limited")
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
       res5xx <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = Left("HTTP 503: upstream unavailable")
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
       resNet <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = Left("connection refused")
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
     yield
       List(res429, res5xx, resNet).foreach { res =>
@@ -334,19 +346,19 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     for
       a <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = miss
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
       b <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = stranger
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
       c <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) =>
         stub.searchReply = noIdCard
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson))
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson))
       }
       after <- withStubFs("auto", friendsJson = FriendMessageToolSpec.CustomIdRoster) { (fs, stub) => // 零发送断言需要 stub 的快照
         stub.searchReply = stranger
-        callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map(r => r -> stub.postedPaths.toList)
+        callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson)).map(r => r -> stub.postedPaths.toList)
       }
     yield
       List(a, b, c).zip(List("miss", "命中非好友", "命中卡无 userId")).foreach { (res, label) =>
@@ -359,15 +371,15 @@ class FriendMessageToolSpec extends CatsEffectSuite:
   test("α 仅失败路径触发：L1/L2 命中的发送不产生任何搜索往返（零额外上游开销）") {
     withStubFs("auto") { (fs, stub) =>
       stub.searchReply = Right("""{"found":false}""")
-      callTool(fs, JsonObject("to" -> "lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
+      callTool(fs, JsonObject("to" -> "friend:lin@example.com".asJson, "message" -> "hi".asJson)).map { res =>
         assert(res.isRight)
         assertEquals(stub.searchedPaths.toList, Nil, "成功解析路径不得调 search")
       }
     }
   }
 
-  test("⑦ 文本面：description / schema 的 to 文案 = 备注 / 用户名 / 邮箱三选一口径") {
-    val d = FriendMessageTool.description
+  test("⑦ 文本面（re-pin 到 `Mail`）：description / schema 的 `to` 文案 = 备注 / 用户名 / 邮箱三选一口径") {
+    val d = MailTool.description
     assert(d.contains("remark"), "description 必须点名备注（模型据此知道备注可寻址）")
     assert(d.contains("username") && d.contains("email"), "description 必须点名 username + email")
     // 4b 腿 A 更新：旧事实句「Plain text only.」**已不成立**（好友腿现支持附件）——
@@ -375,7 +387,7 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     assert(!d.contains("Plain text only."), "陈旧事实句必须消失（好友腿已支持附件）")
     assert(!d.contains("NOT supported"), "不得再声明好友附件不支持")
     assert(d.contains("Files") || d.contains("files"), "description 必须说明附件可用")
-    val toDesc = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
+    val toDesc = MailTool.inputSchema("properties").flatMap(_.asObject)
       .flatMap(_("to")).flatMap(_.hcursor.get[String]("description").toOption).getOrElse("")
     assert(toDesc.contains("remark") && toDesc.contains("username") && toDesc.contains("email"),
       s"schema to 文案必须三选一（旧字面「Friend's username or display name.」已过时），got: $toDesc")
