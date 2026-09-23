@@ -22,6 +22,11 @@ import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAut
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
+// Minimum usable width for the CHAT column while the panel is open. Same
+// number as colResizer.js MIN_WIDTHS.main (the column minimum enforced while
+// dragging a resizer): both answer the question "when is a side-by-side split
+// still possible?", so the threshold below and the drag clamp agree.
+const MIN_CHAT_WIDTH = 320;
 const LS_KEY = key('col_widths');
 const LS_TABS_KEY = key('canvas_tabs');
 // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端作为权威标签存档，localStorage 仅作降级缓存。
@@ -269,9 +274,33 @@ function moveTab(dragId, targetId, after) {
   newOrder.forEach(([k, v]) => tabs.set(k, v));
 }
 
+/** Is the window too narrow for a side-by-side chat + canvas split?
+ *
+ *  The split needs, in the flex row: activity bar + sidebar + #main + panel +
+ *  margins. Below that budget no side-by-side arrangement exists — the panel
+ *  switches to its overlay form (body.canvas-overlay, see split.css) and
+ *  #main keeps its full width.
+ *  @returns {boolean} */
+function isNarrowSplit() {
+  const sidebar = document.getElementById('sidebar');
+  const activityBar = document.getElementById('activity-bar');
+  const sidebarW = sidebar ? sidebar.getBoundingClientRect().width : 0;
+  const activityW = activityBar ? activityBar.getBoundingClientRect().width + 8 : 0;
+  const edgeBarW = 3;
+  // Both panels have margin:0 10px = 20px each = 40px total margins
+  const totalMargins = 40;
+  const available = window.innerWidth - sidebarW - activityW - edgeBarW - totalMargins;
+  return available < MIN_CANVAS_WIDTH + MIN_CHAT_WIDTH;
+}
+
 /** Compute the target open width so Canvas matches Chat panel width.
  *  Both panels share the remaining space 50/50 after fixed elements
- *  (sidebar, activity bar) and margins are accounted for. */
+ *  (sidebar, activity bar) and margins are accounted for.
+ *
+ *  In the narrow range (see isNarrowSplit) the split cannot hold both columns,
+ *  so the side-by-side width is no longer meaningful — return the smallest
+ *  legal side-by-side width and let CSS drive the overlay form instead of
+ *  letting this value claim space the row does not have. */
 function computeOpenWidth() {
   const sidebar = document.getElementById('sidebar');
   const activityBar = document.getElementById('activity-bar');
@@ -283,6 +312,46 @@ function computeOpenWidth() {
   const available = window.innerWidth - sidebarW - activityW - edgeBarW - totalMargins;
   const half = Math.floor(available / 2);
   return Math.max(MIN_CANVAS_WIDTH, Math.min(MAX_CANVAS_WIDTH, half));
+}
+
+/** Apply the current window's layout mode to the body class list.
+ *
+ *  Layout mode is a single decision point: 「panel open」 has two forms —
+ *  side-by-side (wide window) and overlay (window too narrow to hold both
+ *  columns at their minimum widths). Both are the SAME panel state: tabs,
+ *  persistence and the close path are untouched — only the box model differs.
+ *
+ *  The overlay form floats over #main, and #main's top band (the glass header
+ *  plus #top-overlays) carries the panel's OWN header toggle — covering it
+ *  would turn the primary toggle into a dead control exactly where the user
+ *  needs it. So the drawer's top edge is taken from the measured band bottom
+ *  and published as a CSS variable; split.css consumes it and never guesses.
+ *  @returns {boolean} true when the overlay form is active. */
+function applyCanvasLayoutMode() {
+  const overlay = isNarrowSplit();
+  document.body.classList.toggle('canvas-overlay', overlay);
+  if (overlay) {
+    const header = document.getElementById('header');
+    const overlays = document.getElementById('top-overlays');
+    const bottom = Math.max(
+      header ? header.getBoundingClientRect().bottom : 0,
+      overlays ? overlays.getBoundingClientRect().bottom : 0,
+    );
+    if (bottom > 0) document.documentElement.style.setProperty('--canvas-overlay-top', Math.ceil(bottom) + 'px');
+  }
+  return overlay;
+}
+
+/** Re-evaluate the layout mode for the current window width.
+ *  Called from the panel's own resize / resize-adjacent signals: the mode
+ *  depends on the Side Bar's rendered width, which changes on window resize,
+ *  on the sidebar collapse toggle (a body-class change) and on a resizer drag
+ *  (an inline flex change that dispatches `nebflow-col-resize`) — all three
+ *  must be able to flip the panel back to side-by-side on the same beat.
+ *  No-op while the panel is closed: the open path evaluates the mode again. */
+function refreshCanvasLayoutMode() {
+  if (!isCanvasOpen()) return;
+  applyCanvasLayoutMode();
 }
 
 /** Open the canvas panel.
@@ -302,6 +371,7 @@ export function openCanvas(title = '') {
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
   document.body.classList.add('canvas-open');
+  applyCanvasLayoutMode();
   syncCanvasPanelButtons();
 }
 
@@ -328,6 +398,9 @@ export function closeCanvas() {
 
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
+  // The overlay form is a property of the OPEN panel only; drop it with the
+  // panel so a closed panel carries no layout mode into the next open.
+  document.body.classList.remove('canvas-overlay');
   syncCanvasPanelButtons();
 
   // Tabs are preserved — closing Canvas just hides the panel visually.
@@ -1190,15 +1263,50 @@ export function initCanvas() {
     });
   });
 
-  // Responsive: maintain equal panel widths on resize.
+  // Responsive: maintain equal panel widths on resize, and re-decide the
+  // layout form (side-by-side vs. overlay) — a resize can cross the threshold
+  // in either direction, so the mode is evaluated BEFORE the width early-return
+  // (a user-pinned width must not freeze the mode).
   window.addEventListener('resize', () => {
     if (!isCanvasOpen()) return;
+    refreshCanvasLayoutMode();
     // Skip if user has manually pinned a specific width via col-resizer
     const panel = document.getElementById('canvas-panel');
     if (panel && panel.style.flex) return; // inline flex = user resized
     const target = computeOpenWidth();
     document.documentElement.style.setProperty('--canvas-width', target + 'px');
   });
+
+  // The layout form also depends on the Side Bar's own width: collapsing it
+  // frees exactly the room the side-by-side split needs, so the panel must be
+  // able to flip back without a window resize. body class changes are the one
+  // signal the sidebar toggle and the ⌘B shortcut funnel through, and a
+  // resizer drag on the sidebar|main handle announces itself with
+  // `nebflow-col-resize` (colResizer.js).
+  // classList.toggle(name, force) only mutates on an actual state change, so
+  // this observer cannot loop on its own write.
+  const moLayout = new MutationObserver(() => {
+    if (!isCanvasOpen()) return;
+    if (document.body.classList.contains('canvas-overlay') !== isNarrowSplit()) {
+      refreshCanvasLayoutMode();
+    }
+  });
+  moLayout.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('nebflow-col-resize', refreshCanvasLayoutMode);
+
+  // The overlay form's top edge is derived from the top band's measured height,
+  // and that band grows on its own (a task list with cards, a notification
+  // banner, the pending-ask bar). Re-derive when the band resizes so the
+  // published variable never goes stale against it.
+  if (window.ResizeObserver) {
+    const header = document.getElementById('header');
+    const overlays = document.getElementById('top-overlays');
+    const roBand = new ResizeObserver(() => {
+      if (document.body.classList.contains('canvas-overlay')) applyCanvasLayoutMode();
+    });
+    if (header) roBand.observe(header);
+    if (overlays) roBand.observe(overlays);
+  }
 }
 
 // ── Tab persistence ─────────────────────────────────────────
