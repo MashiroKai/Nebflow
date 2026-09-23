@@ -671,12 +671,16 @@ class ChainCascadeSpec extends CatsEffectSuite:
   test(
     "V8-guard: the gateway chainCancel leg never re-derives chain membership — the single point stays FlowMapStore.chainMembersOf"
   ) {
-    val ws = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala"))
+    // 2026-09-24 F 步重钉:chainCancel 臂自 WebSocketRoutes 的 msgType match 迁至
+    // 域文件 WsSessionChatHandlers(注册表分发,键一字不差),判据语义不变——
+    // 门禁仍钉「网关腿不得二次派生链成员、必须汇入 cancelChain」。
+    val ws =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WsSessionChatHandlers.scala"))
     val lines = ws.linesIterator.toList
-    val start = lines.indexWhere(_.contains("case \"chainCancel\""))
-    assert(start >= 0, "the panel entry leg must exist in WebSocketRoutes.scala")
-    val end = lines.indexWhere(_.contains("case \"parentRestart\""), start)
-    assert(end > start, "chainCancel block must be bounded by the next case arm")
+    val start = lines.indexWhere(_.contains("private def handleChainCancel("))
+    assert(start >= 0, "the panel entry leg must exist in WsSessionChatHandlers.scala")
+    val end = lines.indexWhere(_.contains("private def handleParentRestart("), start)
+    assert(end > start, "chainCancel block must be bounded by the next handler")
     val block = lines.slice(start, end).mkString("\n")
     // 🔴 二次派生禁令（V8）：网关只发 chainId，成员/状态/闭包全在后端单点解析
     for forbidden <- List("topologicalChains", "combinedNodes", "chainAttrsOf", "memberIds", "ChainInfo") do
