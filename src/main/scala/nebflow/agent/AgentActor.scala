@@ -53,15 +53,84 @@ object TurnBoundaryDrains:
     if compactionPending then (None, queue)
     else (queue.headOption, if queue.isEmpty then queue else queue.tail)
 
-  // ── 2026-09-15 用户消息队列 burst 缺陷批（root 裁定）────────────────────────
-  // 裁定逐字：**排队消息按序逐条注入、每条独立成 turn，保序、禁合并语义、禁全量
-  // burst；错误恢复路径与正常路径同规。**
+  // ── 2026-09-15 用户消息队列 burst 缺陷批（root 裁定 · 2026-09-23 收窄）────────
+  // 裁定（2026-09-15 原文，本批**原样保留**其适用面）逐字：**排队消息按序逐条注入、
+  // 每条独立成 turn，保序、禁合并语义、禁全量 burst；错误恢复路径与正常路径同规。**
   // 本 object 原有的两个合批消费器（`drainAll` = 整队、`drainUserBatch` = 可内联
-  // 件整批，缺陷⑥ 2026-09-07 设计 §8）已删除：合批把 N 件排队消息塞进**一次**请求，
-  // 用户侧观测即「一报错，队列里的消息一次全发过来」（作者 2026-09-15 12:59 报告，
-  // 取证：Nebula-5cc7590a 12:56:49 `batch=11` + `batch=2` 同一次 tools-complete
-  // 续轮）。唯一合法形态 = [[drainHead]]（一次边界只消费队首一件，其余留队，到达
-  // 顺序不变）；token 放大（N 件 = N 次全上下文往返）是裁定显式接受的代价。
+  // 件整批，缺陷⑥ 2026-09-07 设计 §8）已删除且**不得复活**：整队合批把 N 件**排队
+  // 用户消息**塞进**一次**请求，用户侧观测即「一报错，队列里的消息一次全发过来」
+  // （作者 2026-09-15 12:59 报告，取证：Nebula-5cc7590a 12:56:49 `batch=11` +
+  // `batch=2` 同一次 tools-complete 续轮）。token 放大（N 件 = N 次全上下文往返）
+  // 是该面裁定显式接受的代价。
+  //
+  // == 2026-09-23 收窄（作者裁定 A「改消费侧」；notifypack 解 b 批）==
+  // 上述「禁合并语义」的**规范面**收窄为可机械判定的谓词：**队列层恒「一次边界只消费
+  // 队首一个元素」**（[[drainHead]] 语义不变、队列消费点不变——现读仍为 4 处，另一处
+  // `RecoverPersistedQueues` 只做重放、不消费）；**唯一豁免 = 该元素自带
+  // `ImmediateInput.windowItems`（root 通道通知打包窗冲刷件，唯一写入点 =
+  // `NodeEngine.flushRootNotify` 的 `case many`）**——其**载荷**在同一边界展开为 N 个
+  // 虚拟件、于**同一 turn** 内逐件注入（N 气泡 / 1 次唤醒，[[drainHeadExpanded]]）。
+  // 🔴 豁免**不外溢**：`windowItems = None` 的件展开恒等（1→1）⇒ 排队用户消息、
+  // Mail / deviceMail / flow / askUser / 节点单件 / >24h 欠账汇总等**全部腿逐条逐
+  // turn 不变**；「整队消费」（`drainAll`）与「可内联件整批」（`drainUserBatch`）
+  // **仍在禁列**，不因本豁免而解禁。判据非语义判断，是可现读的字段缺席。
+  //
+  // r4 rework 补正（判词位 r3 判 fail 的那条路）：**「idle 到达」不是边角，是本链的
+  // 生产常态**——节点终态通知在上一个 turn 结束之后才到，故载体到达时 agent 往往已回
+  // idle。原实现只把展开接在 **turn 边界**消费点上（idle 直投腿不进队列、不走边界）
+  // ⇒ 该路径把 `windowItems` 静默丢弃、只剩一条合并摘要气泡（未展开形态 = 本批要消灭
+  // 的形态）。现 idle 直投腿（`AgentActor:1497`）同样经 [[expandRootNotify]] 展开
+  // （同一判据、同一幂等性），故「凡带标记的件 ⇒ 展开」这条全称断言在**两条到达态**
+  // （mid-turn 入队 / idle 直投）上都成立。
+  //
+  // == 既有例外先例（本批非开先例，是把**已存在的**边界显式化）==
+  // [[drainBarrier]]（下方，2026-08-18）在并行子代理批完成时把**全部 held 件一并注入**
+  // （其注自陈「drained together for one batched injection」）⇒「唯一合法形态 =
+  // drainHead」在现树上**已非字面真值**；本批只是把另一条（root 通知窗）补上可机械
+  // 判定的谓词，且**边界更窄**（要求元素自带字段，而非按事件来源分类）。
+
+  /** 窗冲刷载荷的展开（notifypack 解 b 批 · 载体 A-ii）。
+    *
+    * 队列语义不变：本函数**不改** [[drainHead]]——它只把元素**内部**携带的
+    * N 件载荷展开为 N 个虚拟件，供同一 turn 内逐件注入（N 气泡 / 1 次唤醒）。
+    * 判据 = 元素自带 [[AgentCommand.ImmediateInput.windowItems]]（唯一写入点 =
+    * `NodeEngine.flushRootNotify` 的 `case many`）⇒ 作用域非模糊判断，是可机械
+    * 验定的谓词。缺席（用户消息腿 / Mail / deviceMail / flow / askUser 等）⇒
+    * **恒等返回**（1→1），逐条逐 turn 语义逐字不变。
+    *
+    * 🔴 本函数 = 谓词与幂等性的**唯一定义处**；接线点共 6 处（turn 边界三处
+    * `AgentActor:1884`/`:2191`/`:3510`、压缩后恢复 `:504`、**idle 直投腿 `:1497`**）
+    * 全部经它，无一自造谓词 ⇒ 「带标记 ⇒ 展开」在 mid-turn 与 idle 两条到达态上同源。
+    *
+    * 幂等：展开出的虚拟件 `windowItems = None` ⇒ 不可二次展开（防递归放大）。
+    * 逐件 `sender` 来自**写入点**（该处 `projectName` 在作用域内）⇒ 此处零字符串
+    * 手术（后缀反推会在项目名含 `/` 时截断 PROJECT 段——`NotificationHeader.split`
+    * 按**首个** `/` 切分）。 */
+  def expandWindowFlush(imm: AgentCommand.ImmediateInput): List[AgentCommand.ImmediateInput] =
+    imm.windowItems match
+      case Some(items) if items.nonEmpty =>
+        items.map(w =>
+          imm.copy(
+            text = w.text,
+            eventType = Some(w.status),
+            sender = Some(w.sender),
+            windowItems = None
+          )
+        )
+      case _ => List(imm)
+
+  /** [[drainHead]] 的载荷展开包装：队列层语义 = `drainHead`（逐字不动），
+    * 返回值在**队首恰有窗冲刷载荷**时展开为 N 个虚拟件。空队 / compaction 挂起
+    * （`drainHead` 返回 `None`）⇒ `Nil`，与改前逐字同形。
+    *
+    * `A => List[A]` 形参使本函数**对元素类型无假设**（本 object 现为纯决策层、零业务
+    * 依赖）；root 通知语义只经 `expand = windowItems 判据` 注入。 */
+  def drainHeadExpanded[A](queue: List[A], compactionPending: Boolean)(
+      expand: A => List[A]
+  ): (List[A], List[A]) =
+    drainHead(queue, compactionPending) match
+      case (Some(head), tail) => (expand(head), tail)
+      case (None, tail)       => (Nil, tail)
 
   /** True for ExternalEvents carrying a Delegate/SubTask result. */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
@@ -363,6 +432,18 @@ object AgentActor extends AgentCore with AgentSession:
       case _ => Message(MessageRole.User, Left(ui.text))
     ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
 
+  /** root 通知窗载荷展开的**单点绑定**（notifypack 解 b 批 · 作者裁定 A）：全部消费侧
+    * 接线点共用同一个展开器 ⇒ 语义只有一处定义（与仓内「单一来源」纪律同源）。
+    * 判据（`windowItems.isDefined`）与幂等性全在
+    * [[TurnBoundaryDrains.expandWindowFlush]] 内（唯一定义处），此处不做任何额外判断：
+    * `windowItems = None` 的件恒等返回（1→1）⇒ 用户消息腿与其余全部注入腿零影响。
+    *
+    * 接线点（6）＝turn 边界三处（`AgentActor:1884` / `:2191` / `:3510`）、压缩后恢复
+    * （`:504`，经 `expandRootNotify` 单点绑定 `:444`）与 **idle 直投腿**（`:1497` ——
+    * 本链的生产常态到达路径）。 */
+  private def expandRootNotify(imm: AgentCommand.ImmediateInput): List[AgentCommand.ImmediateInput] =
+    TurnBoundaryDrains.expandWindowFlush(imm)
+
   /**
    * F1 (2026-08-30): drain the queues that were held back during the
    * compaction window (ToolsComplete guard keeps pendingImmediateInputs and
@@ -420,7 +501,7 @@ object AgentActor extends AgentCore with AgentSession:
     // replyTo-bearing UserInput / 非 UserInput 命令（SkillActivate / AskQuestion）
     // 依旧只走全元数据路径（turn 末 head-forward），完成目标不搁浅。
     val (imms, immTail) = exec.pendingImmediateInputs match
-      case head :: tail => (List(head), tail)
+      case head :: tail => (expandRootNotify(head), tail)
       case Nil          => (Nil, Nil)
     val (injectedUsers, userTail): (List[AgentCommand.UserInput], List[AgentCommand]) =
       if imms.nonEmpty then (Nil, exec.pendingUserInputs)
@@ -1402,9 +1483,83 @@ object AgentActor extends AgentCore with AgentSession:
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
       // here is exactly what made a real human text land in the
       // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
-      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser, project)
-        yield idle(agentDef, resources, depth, parentRef, state)
+      // notifypack 解 b 批（2026-09-23 · r4 rework）：idle 到达是本链的**生产常态**
+      // （节点终态通知在上一个 turn 结束之后才到）⇒ 本分支不再是「逐字忽略第 10 槽」，
+      // 而是**同一个判据的第二处接线点**：带窗标记的 carrier 在此走 [[expandRootNotify]]
+      // 展开为 N 件，于**同一 turn** 内逐件注入（N 气泡 / 1 次唤醒）；无标记件（`None`
+      // 与空载荷 `Some(Nil)` —— 与 `expandWindowFlush` 的恒等分支同口径）走下方**逐字
+      // 未变**的旧路径（`ctx.self ! UserInput` ⇒ 一次唤醒一件）。
+      //
+      // 🔴 展开器仍是唯一判据源（本分支不自造谓词）：载体识别 = 元素自带
+      // `ImmediateInput.windowItems`，与其余各接线点共用 [[expandRootNotify]]。
+      // 🔴 唤醒数：N 件载荷共享**同一次** `pipeLlmCall`（一次 sendStream）——把 N 件各自
+      // 转成 `UserInput` 再回投 self 会开 N 个 turn（正是本批要消灭的形态）。
+      case imm @ AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project, windowItems) =>
+        windowItems match
+          case Some(items) if items.nonEmpty =>
+            val expanded = expandRootNotify(imm)
+            // Per-item context messages (each carries its OWN body — never the merged digest).
+            val carrierMessages = expanded.map(item =>
+              (item.blocks match
+                case Some(b) if b.nonEmpty => Message(MessageRole.User, Right(b))
+                case _                     => Message(MessageRole.User, Left(item.text))
+              ).copy(source = injectionSourceFor(item.fromUser, item.source)))
+            for
+              _ <- IO(
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "window-carrier-expanded-in-idle",
+                  s"batch=${expanded.size} texts=${expanded.map(_.text.take(40)).mkString(" | ").take(200)}"
+                )
+              )
+              _ <-
+                if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+                else IO.unit
+              // One injected frame per payload item — each carries its own text / sender /
+              // status, so the frontend renders N bubbles with zero frontend change
+              // (same single emission point as every other injected leg).
+              _ <- expanded.traverse_ { item =>
+                injectionSourceFor(item.fromUser, item.source) match
+                  case Some(src) =>
+                    emitInjectedUserEvent(
+                      resources,
+                      state.wsSend,
+                      state.sessionId,
+                      item.text,
+                      src,
+                      item.eventType,
+                      item.sender,
+                      item.senderTeam,
+                      item.delivery,
+                      project = item.project,
+                      sessionProject = state.projectName
+                    )
+                  case None => IO.unit
+              }
+              // ONE wake for the whole payload (same state preparation as the idle
+              // UserInput leg / the turn-boundary immediate-input drain).
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state
+                  .withMessages(state.messages ++ carrierMessages)
+                  .withEmptyResponseRetries(0)
+                  .withMailUsedThisTurn(false)
+                  .withNextLoopTurn,
+                None,
+                // Same cause as the legacy forward below: an ImmediateInput carries no
+                // clientMessageId ⇒ system injection ⇒ Gated (freeze window still applies).
+                DispatchCause.Gated
+              )
+            yield result
+          case _ =>
+            for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser, project)
+            yield idle(agentDef, resources, depth, parentRef, state)
 
       // Queued mail arriving in idle — drain immediately as a new turn.
       // Idempotent guard (#22): activation sends a head-trigger MailQueued AND
@@ -1726,11 +1881,10 @@ object AgentActor extends AgentCore with AgentSession:
             // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
             // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
             // agent 直接 idle、队列滞留）。
-            val (immHeadAfterAbort, remainingImmAfterAbort) = TurnBoundaryDrains.drainHead(
+            val (immInputs, remainingImmAfterAbort) = TurnBoundaryDrains.drainHeadExpanded(
               state.execution.pendingImmediateInputs,
               compactionPending = false
-            )
-            val immInputs = immHeadAfterAbort.toList
+            )(expandRootNotify)
             val immMessages = immInputs.map(imm =>
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
@@ -2045,9 +2199,11 @@ object AgentActor extends AgentCore with AgentSession:
         // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immHeadInput, remainingImmInputs) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
-        val immInputs = immHeadInput.toList
+        val (immInputs, remainingImmInputs) =
+          TurnBoundaryDrains.drainHeadExpanded(
+            state.execution.pendingImmediateInputs,
+            state.pendingCompaction.isDefined
+          )(expandRootNotify)
         val immediateMessages = immInputs match
           case Nil => Nil
           case inputs =>
@@ -3363,11 +3519,10 @@ object AgentActor extends AgentCore with AgentSession:
       // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
       // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
       // 原缺陷⑥「整批塞进一个新 turn」已删除。
-      val (immHead, remainingInputs) = TurnBoundaryDrains.drainHead(
+      val (immInputs, remainingInputs) = TurnBoundaryDrains.drainHeadExpanded(
         state.execution.pendingImmediateInputs,
         compactionPending = false
-      )
-      val immInputs = immHead.toList
+      )(expandRootNotify)
       logAgentEvent(
         agentDef,
         depth,

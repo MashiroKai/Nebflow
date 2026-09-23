@@ -419,7 +419,9 @@ class DeviceMailSpec extends FunSuite:
     got.head match
       // 「气泡四段式统一」批（2026-09-15）连带修订：`ImmediateInput` 解构元数 +1
       // （新增末位 `project`，main 侧 device-mail 批新增本 spec 时该批尚未落基线）。
-      case AgentCommand.ImmediateInput(text, _, source, eventType, sender, _, _, fromUser, _) =>
+      // notifypack 解 b 批（2026-09-23）：末位再 +1（`windowItems`，逐字忽略——device-mail
+      // 腿恒非窗冲刷件，字段恒 `None`）。
+      case AgentCommand.ImmediateInput(text, _, source, eventType, sender, _, _, fromUser, _, _) =>
         assertEquals(text, "[DEVICE-MAIL · from KAI-MBP]\nhello B")
         assertEquals(source, Some(DeviceMail.SourceDeviceMail))
         assertEquals(eventType, Some(DeviceMail.EventTypeInfo))
