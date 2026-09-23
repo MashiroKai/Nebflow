@@ -61,12 +61,24 @@ export const NODE_STATUS_CLS = {
 };
 
 // ── 数据访问层（真实 REST，契约 §1/§3）───────────────────
-/** 项目列表。GET /api/projects（需 auth）→ {projects:[...]} */
-export async function fetchProjects() {
+/** 项目列表**线上原样**（GET /api/projects 需 auth）。
+ *  A 波②（2026-09-22）：项目面板「源码」态要显示的是**线上载荷本身**（wire 保真），
+ *  不是本地复序列化——故与 `fetchProjects` 共用同一次请求，把 response text 一并带回。
+ *  单一请求点：`fetchProjects` 现在只是本函数的薄包装，两侧**不可能**读到不同载荷。
+ *  @returns {Promise<{projects: Array<any>, raw: string}>} */
+export async function fetchProjectsRaw() {
   const r = await fetch(API.projects, { headers: authHeaders() });
   if (!r.ok) throw new Error(`projects ${r.status}`);
-  const data = await r.json();
-  return Array.isArray(data?.projects) ? data.projects : [];
+  const raw = await r.text();
+  let data = null;
+  try { data = JSON.parse(raw); } catch (_) { data = null; }
+  return { projects: Array.isArray(data?.projects) ? data.projects : [], raw };
+}
+
+/** 项目列表。GET /api/projects（需 auth）→ {projects:[...]} */
+export async function fetchProjects() {
+  const { projects } = await fetchProjectsRaw();
+  return projects;
 }
 
 /** 某项目 Flow Map 快照。GET /api/projects/<name>/flow-map（需 auth）→ NodeList 载荷。

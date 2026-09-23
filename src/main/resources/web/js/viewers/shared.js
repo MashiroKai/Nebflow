@@ -539,6 +539,12 @@ export function addSourceToggle(pane, renderFn, ctx) {
           path: ctx.absPath || ctx.fileName,
           content: ctx.content || '',
           fileName: ctx.fileName,
+          // Optional, opt-in only (2026-09-22, A-wave ②): a source view whose
+          // backing payload has NO write channel must mount read-only — an
+          // editable buffer would let ⌘S emit a `writeFile` frame for a path
+          // that has no file behind it. Existing callers (markdown/html) pass
+          // no `readOnly` ⇒ `false` ⇒ their behaviour is byte-identical.
+          readOnly: ctx.readOnly === true,
         });
         container.querySelector('.canvas-loading')?.remove();
         pane._editorHandle = handle;
