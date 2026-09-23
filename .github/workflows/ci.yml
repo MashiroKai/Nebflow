@@ -133,6 +133,36 @@ jobs:
       - name: Assert JDK 21 across every declaration surface (+ bytecode target below the floor)
         run: bash scripts/check-jdk-baseline.sh
 
+  lint:
+    name: Lint (scalafmt)
+    # Format gate: `make lint` / `make check` existed but were never wired into
+    # CI — only -Xfatal-warnings compile was enforced. This job runs the same
+    # scalafmtCheckAll as the Makefile quality targets so a formatting
+    # regression fails the build instead of relying on contributor discipline.
+    # scalafmt only for now: `scalafix --check` is still red on main —
+    # 43 [DisableSyntax.return] violations that need case-by-case rewrites
+    # (non-local return semantics). Wire `"scalafix --check"` into this
+    # command once that debt is cleared.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: scalafmt check
+        shell: bash
+        run: sbt scalafmtCheckAll
+
   compile:
     name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -4,11 +4,8 @@ import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.neblink.PeerInfo
-
-import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
 
 import scala.util.matching.Regex
 
@@ -180,24 +177,13 @@ object DeviceProfile:
   /**
    * 原子写（tmp + rename）。并发写策略：单进程内 `writeLock` 串行；跨进程无锁
    * （与同族先例 peer-descriptions.json 同口径——单写者 = 网关进程）。
+   * 落盘序列统一到 AtomicJson.writeSyncDurable（fsync + ATOMIC_MOVE 优先、
+   * AtomicMoveNotSupportedException 降级替换式 move，原口径不变）。
    */
   private def save(entries: Map[String, DeviceProfileEntry]): IO[Unit] = IO.blocking {
-    val file = storePath
     val payload = DeviceProfilesFile(SchemaVersion, entries).asJson.spaces2
     writeLock.synchronized {
-      Files.createDirectories(file.toNIO.getParent)
-      val tmp = file.toNIO.resolveSibling(file.toNIO.getFileName.toString + s".tmp-${System.nanoTime()}")
-      Files.write(
-        tmp,
-        payload.getBytes(StandardCharsets.UTF_8),
-        StandardOpenOption.CREATE,
-        StandardOpenOption.TRUNCATE_EXISTING,
-        StandardOpenOption.WRITE
-      )
-      try Files.move(tmp, file.toNIO, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-      catch
-        case _: java.nio.file.AtomicMoveNotSupportedException =>
-          Files.move(tmp, file.toNIO, StandardCopyOption.REPLACE_EXISTING)
+      AtomicJson.writeSyncDurable(storePath, payload)
     }
   }
 

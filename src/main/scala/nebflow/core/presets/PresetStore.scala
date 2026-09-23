@@ -4,9 +4,9 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.llm.{Config, NebflowServiceConfig}
+import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
 import nebflow.shared.AgentModelConfig
+import nebflow.llm.{Config, NebflowServiceConfig}
 
 /**
  * A named model preset — a reusable `{preferred, fallbacks}` chain stored in
@@ -149,27 +149,16 @@ class PresetStore(
 
   end loadExisting
 
-  /** Atomically write the preset file (temp + rename). */
+  /**
+   * Atomically write the preset file (temp + rename).
+   *
+   * 原实现为 nanoTime tmp + `os.move.over` + FileAlreadyExistsException 短退避重试
+   * （trigger-chain-fix，含阻塞 `Thread.sleep`）——`os.move.over` 的 delete-then-rename
+   * 形态是碰撞根源。现统一走 `AtomicJson.writeSync`（UUID tmp + `Files.move`
+   * REPLACE_EXISTING|ATOMIC_MOVE），碰撞形态从机制上不存在，重试与阻塞一并退役。
+   */
   def save(f: PresetFile): Unit =
-    os.makeDir.all(configPath / os.up)
-    val tmp = configPath / os.up / s".model-presets.${System.nanoTime()}.tmp"
-    os.write(tmp, f.asJson.noSpaces)
-    // 并发 save 换名碰撞重试（trigger-chain-fix）：并发 repair/init 双写时
-    // move.over 对已出现的目标抛 FileAlreadyExistsException——tmp 名含 nanoTime
-    // 互不覆盖，短退避重试即收敛；重试耗尽后原样上抛（真异常不留观感）。
-    var attempt = 0
-    var done = false
-    while !done && attempt < 5 do
-      try
-        os.move.over(tmp, configPath)
-        done = true
-      catch
-        case _: java.nio.file.FileAlreadyExistsException =>
-          attempt += 1
-          Thread.sleep(5L * attempt)
-    if !done then os.move.over(tmp, configPath)
-
-  end save
+    AtomicJson.writeSync(configPath, f.asJson.noSpaces)
 
   /**
    * Resolve an agent's model configuration given its preset reference and
