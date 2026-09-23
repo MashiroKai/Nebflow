@@ -31,6 +31,14 @@ object LlmProtocol:
  * is derived, so circe silently ignores a legacy `maxTokens` key still present
  * in an existing `nebflow.json` (no error, no migration needed).
  *
+ * visionfix batch (2026-09-23, author ruling): the `vision` key was REMOVED on
+ * the same terms — it fed a per-candidate vision bit whose consumers are all
+ * deleted, and the capability face is now pessimistic-free (images are always
+ * sent). Because the decoder is derived, a legacy inline `"vision"` key in an
+ * existing `nebflow.json` is silently ignored: no error, no migration, and the
+ * on-disk format stays valid (there is no Encoder for these types — the config
+ * is written by raw-JSON deep merge, so nothing re-serializes the field back).
+ *
  * @param modelMaxContext
  *   案② B3（`chain-llmstall-fix`，2026-09-21）：provider 侧**真值上界**（该 model 实际
  *   可受理的上下文长度）。持久化字段，由模型列举端点上报的 `context_length` /
@@ -47,7 +55,6 @@ case class ModelConfig(
   id: String,
   contextWindow: Int = Defaults.ContextWindow,
   description: Option[String] = None,
-  vision: Option[Boolean] = None,
   capabilities: Option[List[String]] = None,
   modelMaxContext: Option[Int] = None
 )

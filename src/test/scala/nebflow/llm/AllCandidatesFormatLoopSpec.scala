@@ -88,13 +88,13 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
             baseUrl = s"http://127.0.0.1:$PortLoopA",
             apiKey = "test",
             protocol = LlmProtocol.Anthropic,
-            models = List(ModelConfig("m1", vision = Some(false)))
+            models = List(ModelConfig("m1"))
           ),
           "b" -> ProviderConfig(
             baseUrl = s"http://127.0.0.1:$PortLoopB",
             apiKey = "test",
             protocol = LlmProtocol.Anthropic,
-            models = List(ModelConfig("m1", vision = Some(false)))
+            models = List(ModelConfig("m1"))
           )
         )
       )

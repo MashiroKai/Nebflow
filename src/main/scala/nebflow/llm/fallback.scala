@@ -7,7 +7,14 @@ import nebflow.shared.*
 import scala.concurrent.duration.*
 import scala.util.Random
 
-class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
+class FallbackExhaustedError(
+    val attempts: List[FallbackAttempt],
+    /** visionfix (甲): did the failed request carry image content? Threaded to
+      * the user-facing error so "the images could not be delivered" can be told
+      * apart from a generic chain failure. Default false keeps every existing
+      * construction site source-compatible. */
+    val hadImage: Boolean = false
+) extends Exception:
 
   override def getMessage: String =
     val summary = attempts

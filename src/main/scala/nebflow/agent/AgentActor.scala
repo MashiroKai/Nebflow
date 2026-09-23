@@ -1851,7 +1851,19 @@ object AgentActor extends AgentCore with AgentSession:
                 case e: FallbackExhaustedError =>
                   val attemptSummaries =
                     e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                  NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
+                  // visionfix (甲): the user-facing "images could not be sent"
+                  // text is gated on whether THIS turn carried images, so the
+                  // predicate must be fed the very message list the failed call
+                  // sent. `FallbackExhaustedError.hadImage` already carries it
+                  // (set at the LlmInterface send point, llm/interface.scala);
+                  // fall back to the state's messages for error instances built
+                  // elsewhere (e.g. rethrown wrappers) so the flag is never
+                  // silently lost. `hadImageIn` is the single predicate.
+                  val turnHadImage =
+                    e.hadImage || nebflow.llm.LlmInterface.hadImageIn(cleanedState.messages)
+                  NebflowError.toUserMessage(
+                    NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = turnHadImage)
+                  )
                 case e: ToolPipelineError =>
                   e.message
                 case e: LoopDetectedError =>

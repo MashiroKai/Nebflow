@@ -40,58 +40,75 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
       checkAuth(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(_) =>
-          req
-            .as[LlmRequest]
-            .flatMap { llmReq =>
-              handle.send(llmReq).flatMap(resp => Ok(resp.asJson))
-            }
-            .handleErrorWith {
-              case e: FallbackExhaustedError =>
-                val attemptSummaries =
-                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-                BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
-              case other =>
-                val msg = NebflowError.toUserMessage(
-                  NebflowError.Internal(
-                    Option(other.getMessage).getOrElse("internalError")
-                  )
-                )
-                InternalServerError(Json.obj("error" -> msg.asJson))
-            }
+          // visionfix (甲): the failure mapping needs the REQUEST (to know
+          // whether it carried images), and the request only exists inside the
+          // decode continuation — so the decode result is bound explicitly
+          // instead of letting the outer `handleErrorWith` reach back for a
+          // variable it cannot see. Decode failures take the no-request branch,
+          // which reproduces the previous mapping verbatim (generic "Internal"
+          // wording); no other observable behaviour changes.
+          req.as[LlmRequest].attempt.flatMap {
+            case Right(llmReq) =>
+              handle
+                .send(llmReq)
+                .flatMap(resp => Ok(resp.asJson))
+                .handleErrorWith(llmFailureResponse(Some(llmReq)))
+            case Left(decodeErr) =>
+              llmFailureResponse(None)(decodeErr)
+          }
       }
 
     case req @ POST -> Root / "v1" / "chat" / "stream" =>
       checkAuth(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(_) =>
-          req
-            .as[LlmRequest]
-            .flatMap { llmReq =>
+          req.as[LlmRequest].attempt.flatMap {
+            case Right(llmReq) =>
               val sseStream = handle
                 .sendStream(llmReq)
                 .map(toSse)
                 .handleErrorWith { err =>
                   fs2.Stream.emit(errorSse(err))
                 }
-              Ok(sseStream)
-            }
-            .handleErrorWith {
-              case e: FallbackExhaustedError =>
-                val attemptSummaries =
-                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-                BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
-              case other =>
-                val msg = NebflowError.toUserMessage(
-                  NebflowError.Internal(
-                    Option(other.getMessage).getOrElse("internalError")
-                  )
-                )
-                InternalServerError(Json.obj("error" -> msg.asJson))
-            }
+              Ok(sseStream).handleErrorWith(llmFailureResponse(Some(llmReq)))
+            case Left(decodeErr) =>
+              llmFailureResponse(None)(decodeErr)
+          }
       }
   }
+
+  /** visionfix (甲): shared failure mapping for both chat faces. `llmReq` is
+    * `None` only on a decode failure, where there is no request to inspect.
+    * The "images could not be delivered" wording is chosen from
+    * `FallbackExhaustedError.hadImage` (set at the send point in
+    * `LlmInterface`) or, as a fallback, from the request body — `hadImageIn` is
+    * the single predicate. */
+  private def llmFailureResponse(
+    llmReq: Option[LlmRequest]
+  ): Throwable => IO[org.http4s.Response[IO]] = {
+    case e: FallbackExhaustedError =>
+      val attemptSummaries =
+        e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
+      val hadImg = e.hadImage || llmReq.exists(nabflowHadImage)
+      val msg = NebflowError.toUserMessage(
+        NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = hadImg)
+      )
+      BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
+    case other =>
+      val msg = NebflowError.toUserMessage(
+        NebflowError.Internal(
+          Option(other.getMessage).getOrElse("internalError")
+        )
+      )
+      InternalServerError(Json.obj("error" -> msg.asJson))
+  }
+
+  /** visionfix (甲): did this REST request carry image content? Used to pick the
+    * "images could not be delivered" wording instead of a generic chain failure.
+    * `LlmInterface.hadImageIn` is the single predicate (public for exactly this
+    * cross-package use). */
+  private def nabflowHadImage(req: LlmRequest): Boolean =
+    nebflow.llm.LlmInterface.hadImageIn(req.messages)
 
   private def toSse(chunk: StreamChunk): ServerSentEvent =
     ServerSentEvent(data = Some(chunk.asJson.noSpaces))
