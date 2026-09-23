@@ -51,6 +51,27 @@ export default {
   'project.new': 'New project',
   'project.createdAnnounce': '"{name}" created',
   'project.archivedAnnounce': '"{name}" archived',
+  // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
+  // submit = prefill the main chat input + focus; zero new endpoints, zero new write
+  // face). The description box is the ONLY field — no path/name field: plan B never
+  // writes to disk from the front end, so a path field the front end cannot validate
+  // would be a fake control; the path is resolved by the Nebula-side ProjectCreate
+  // path panel.
+  'project.createOpen': 'New project',
+  'project.createTitle': 'New project',
+  'project.createDescLabel': 'Project description',
+  'project.createDescPlaceholder': 'Describe what this project is for — the Agent assigns tasks to the project based on this description.',
+  'project.createDescCount': '{n}/500',
+  'project.createSubmit': 'Create project',
+  'project.createCancel': 'Cancel',
+  'project.createDescRequired': 'Enter a project description (the Agent assigns tasks from it)',
+  'project.createDescTooLong': 'Description is over 500 characters — please shorten it to 500 or fewer.',
+  'project.createInputUnavailable': 'Chat input not found — the description was not filled in.',
+  'project.createPrefill': 'Create a project for me. Project description: {desc}',
+  // Submit-success hint: registered but deliberately NOT enabled in this batch (same
+  // semantics as the existing empty-state CTA — filling the value + focusing is the
+  // feedback; the key stays reserved for a later enablement). No call site by design.
+  'project.createPrefilled': 'Description placed in the input — press send to create.',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset

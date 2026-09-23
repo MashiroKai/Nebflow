@@ -51,6 +51,23 @@ export default {
   'project.new': '新项目',
   'project.createdAnnounce': '「{name}」已创建',
   'project.archivedAnnounce': '「{name}」已归档',
+  // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
+  // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
+  // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。
+  'project.createOpen': '新建项目',
+  'project.createTitle': '新建项目',
+  'project.createDescLabel': '项目描述',
+  'project.createDescPlaceholder': '描述这个项目要做什么——Agent会根据这段描述来分配任务到项目。',
+  'project.createDescCount': '{n}/500',
+  'project.createSubmit': '创建项目',
+  'project.createCancel': '取消',
+  'project.createDescRequired': '请填写项目描述（Agent 会根据它分配任务）',
+  'project.createDescTooLong': '描述超过 500 字，请缩短到 500 字以内。',
+  'project.createInputUnavailable': '没找到聊天输入框，描述未能填入。',
+  'project.createPrefill': '帮我创建一个项目。项目描述：{desc}',
+  // 提交成功提示：**已登记但本批默认不启用**（沿既有空态 CTA 语义——填进去 + 聚焦
+  // 本身就是反馈；键位先留着，日后确无反馈感再启用）。故本文件无该键的调用点。
+  'project.createPrefilled': '描述已填入输入框，按发送即可创建。',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
