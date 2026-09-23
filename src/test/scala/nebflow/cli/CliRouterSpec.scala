@@ -113,6 +113,8 @@ class CliRouterSpec extends FunSuite:
     }
     buf.toString("UTF-8")
 
+  end capture
+
   private def runCaptured(args: String*): (String, Int) =
     var code = 0
     val out = capture {

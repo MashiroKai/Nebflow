@@ -99,6 +99,8 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
         Stream.eval(waitGate >> inputs.update(_ :+ req.messages.map(_.textContent).mkString("\n"))) >>
           Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
+  end EchoLlm
+
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)

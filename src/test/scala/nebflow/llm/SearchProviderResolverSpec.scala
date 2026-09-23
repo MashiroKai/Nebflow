@@ -214,6 +214,8 @@ class SearchProviderResolverSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream.raiseError[IO](new RuntimeException("sendStream not expected here"))
 
+  end ScriptedLlm
+
   private def meta(providerId: String) =
     LlmMeta(sessionId = "s", agentId = "a", providerId = providerId, model = "m", durationMs = 1)
 

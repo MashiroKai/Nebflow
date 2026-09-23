@@ -991,6 +991,8 @@ class FreezeGateSpec extends CatsEffectSuite:
         else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
       }
 
+  end TransientFailNThenOkLlm
+
   /** 恒抛 Timeout（classifyError → Permanent）——不冻结直接 fatal 的对照 mock。 */
   private class PermanentFailLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
 

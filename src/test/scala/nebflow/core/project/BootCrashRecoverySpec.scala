@@ -125,6 +125,8 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
           .eval(fullReqs.update(_ :+ text) >> lastTurns.update(_ :+ last))
           .flatMap(_ => Stream(StreamChunk.TextDelta(respond(last)), StreamChunk.Done(None, None)))
 
+  end ScriptLlm
+
   /** 闩门 LLM（C11 并发上限）：请求到达即计数并阻塞在门上，开门后放行。 */
   private class LatchLlm(gate: Deferred[IO, Unit]):
     val inFlight: Ref[IO, Int] = Ref.unsafe[IO, Int](0)

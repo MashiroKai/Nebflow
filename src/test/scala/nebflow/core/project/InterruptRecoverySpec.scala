@@ -130,6 +130,8 @@ class InterruptRecoverySpec extends CatsEffectSuite:
           .eval(fullReqs.update(_ :+ text) >> lastTurns.update(_ :+ last))
           .flatMap(_ => Stream(StreamChunk.TextDelta(respond(last)), StreamChunk.Done(None, None)))
 
+  end ScriptLlm
+
   private def registerRecorder(
     res: SharedResources,
     system: ActorSystem,

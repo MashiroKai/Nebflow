@@ -10,7 +10,7 @@ import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
 /**
- * Route-level tests for WebSocketRoutes.nfFileRoutes — GET /api/nf-file,
+ * Route-level tests for NfFileRoutes.nfFileRoutes — GET /api/nf-file,
  * the local-file endpoint behind the Canvas HTML viewer's resolveLocalFiles
  * rewrite (viewers/shared.js turns src/href attributes on opened HTML files
  * into /api/nf-file?path=... URLs).
@@ -98,7 +98,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
 
   private def get(path: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
-    WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+    NfFileRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
 
   private def bodyOf(resp: org.http4s.Response[IO]): String =
     resp.bodyText.compile.string.unsafeRunSync()

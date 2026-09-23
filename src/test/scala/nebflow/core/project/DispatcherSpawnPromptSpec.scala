@@ -75,6 +75,8 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
           .flatMap(_ => Stream.eval(gates.take.flatMap(_.get)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
 
+  end GatedLlm
+
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)

@@ -4,17 +4,19 @@ import cats.effect.IO
 import nebflow.core.PathUtil
 import org.http4s.Status
 
-/** The `/api/nf-file` credential-namespace policy engine (C1/R1/R2 batch,
-  * design plan §3.3) — extension whitelist, namespace tables, the path
-  * verdict ladder and its layered projections.
-  *
-  * Extracted verbatim from the `WebSocketRoutes` companion (behavior-
-  * preserving move): members keep their exact names and nesting shape,
-  * one level deeper — `WebSocketRoutes.X` becomes `NfFilePolicy.X`. The
-  * read endpoint, the ticket endpoint and the tool-side pre-flight gate
-  * (`core.tools.FileRefs`) all ask their questions through THIS object, so
-  * a path that cannot be read can never be ticketed (C1-5 single
-  * authority). */
+/**
+ * The `/api/nf-file` credential-namespace policy engine (C1/R1/R2 batch,
+ * design plan §3.3) — extension whitelist, namespace tables, the path
+ * verdict ladder and its layered projections.
+ *
+ * Extracted verbatim from the `WebSocketRoutes` companion (behavior-
+ * preserving move): members keep their exact names and nesting shape,
+ * one level deeper — `WebSocketRoutes.X` becomes `NfFilePolicy.X`. The
+ * read endpoint, the ticket endpoint and the tool-side pre-flight gate
+ * (`core.tools.FileRefs`) all ask their questions through THIS object, so
+ * a path that cannot be read can never be ticketed (C1-5 single
+ * authority).
+ */
 object NfFilePolicy:
 
   /**

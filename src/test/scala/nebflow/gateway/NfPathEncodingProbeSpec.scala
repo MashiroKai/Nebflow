@@ -83,8 +83,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   private def server(policy: NfFilePolicy.NfPathPolicy): IO[(Int, IO[Unit])] =
     val app = Router(
-      "/" -> (WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
-        WebSocketRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
+      "/" -> (NfFileRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
+        NfFileRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
     ).orNotFound
     EmberServerBuilder
       .default[IO]

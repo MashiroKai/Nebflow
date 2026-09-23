@@ -48,9 +48,13 @@ class PasteAttachmentGuardSpec extends FunSuite:
     // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变)。
     val idxFlag = src.indexOf("val isFrontendBlob")
     val idxWalk =
-      src.indexOf("if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then\n                              findLocalFile")
+      src.indexOf(
+        "if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then\n                              findLocalFile"
+      )
     val idxSpot =
-      src.indexOf("case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>\n                              spotlightSearch")
+      src.indexOf(
+        "case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>\n                              spotlightSearch"
+      )
     assert(idxWalk > idxFlag, "findLocalFile no longer gated by isFrontendBlob")
     assert(idxSpot > idxFlag, "spotlightSearch no longer gated by isFrontendBlob")
   }

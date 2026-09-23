@@ -198,7 +198,8 @@ object ToolsLogWriter:
       new Thread(
         () =>
           try flushSync()
-          catch case _: Throwable => (), "tools-log-flush"
+          catch case _: Throwable => (),
+        "tools-log-flush"
       )
     )
   }

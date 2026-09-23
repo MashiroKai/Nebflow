@@ -84,6 +84,8 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
             Stream.eval(streamsDone.update(_ + 1)).drain
         }
 
+  end RecordingLlm
+
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)

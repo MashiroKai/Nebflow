@@ -195,3 +195,4 @@ enum UpdateAdmission:
 
   /** 同步拒绝（缺确认位 / 能力缺失）：`reason` = 冻结原因字面，`detail` = 可行动错误。 */
   case Refused(reason: UpdateReason, detail: String)
+end UpdateAdmission

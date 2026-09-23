@@ -52,6 +52,8 @@ class TurnEndpointSpec extends CatsEffectSuite:
           scripts.lift(idx).getOrElse(Stream.raiseError[IO](new RuntimeException(s"unexpected LLM call #$idx")))
         )
 
+  end RecordingLlm
+
   private def mkResources(
     system: ActorSystem,
     tmp: os.Path,

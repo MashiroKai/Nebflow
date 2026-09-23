@@ -24,6 +24,7 @@ case class SystemReminder(
   countKey: Option[String] = None
 ):
   def render: String = s"<system-reminder>\n$content\n</system-reminder>"
+end SystemReminder
 
 /**
  * Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered

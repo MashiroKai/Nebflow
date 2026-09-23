@@ -52,7 +52,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
     def read(query: String) =
       val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-file?$query"))
-      WebSocketRoutes
+      NfFileRoutes
         .nfFileRoutes(gatewayToken, store, policy)(req)
         .value
         .unsafeRunSync()
@@ -60,7 +60,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     def issue(body: Json) =
       val req = Request[IO](Method.POST, Uri.unsafeFromString(s"/api/nf-ticket?token=$gatewayToken"))
         .withEntity(body)
-      WebSocketRoutes.nfTicketRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+      NfFileRoutes.nfTicketRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
 
     /** Seed `dataRoot/projects/demo/reports/plot.svg` (allowlisted) + credential files. */
     def seed(): Unit =
@@ -140,7 +140,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
             Method.GET,
             Uri.unsafeFromString(s"/api/nf-file?path=${url(env.outside.resolve("x.json"))}&ticket=$token")
           )
-          val resp = WebSocketRoutes
+          val resp = NfFileRoutes
             .nfFileRoutes(gatewayToken, shortStore, env.policy)(req)
             .value
             .unsafeRunSync()
@@ -303,7 +303,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       IO {
         val req = Request[IO](Method.POST, Uri.unsafeFromString("/api/nf-ticket"))
           .withEntity(Json.obj("sessionId" -> Json.fromString("s"), "paths" -> Json.arr()))
-        val resp = WebSocketRoutes
+        val resp = NfFileRoutes
           .nfTicketRoutes(gatewayToken, env.store, env.policy)(req)
           .value
           .unsafeRunSync()
@@ -319,7 +319,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       IO {
         def probe(query: String) =
           val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query"))
-          WebSocketRoutes.nfAuthcheckRoutes(gatewayToken)(req).value.unsafeRunSync().get
+          NfFileRoutes.nfAuthcheckRoutes(gatewayToken)(req).value.unsafeRunSync().get
         assertEquals(probe(s"?token=$gatewayToken").status, Status.NoContent)
         assertEquals(probe("").status, Status.Forbidden)
         assertEquals(probe("?token=wrong").status, Status.Forbidden)

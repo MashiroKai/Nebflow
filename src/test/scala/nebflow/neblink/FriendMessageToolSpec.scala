@@ -42,6 +42,8 @@ object FriendMessageToolSpec:
   val CustomIdRoster: String =
     """{"friends":[{"userId":"u1","username":"customNL1","display_name":"林小满","avatar":null}],"incoming":[],"outgoing":[]}"""
 
+end FriendMessageToolSpec
+
 class FriendMessageToolSpec extends CatsEffectSuite:
   // ── 解析三态（纯函数，直接测 resolveFriend） ─────────────
 

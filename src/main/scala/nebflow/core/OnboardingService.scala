@@ -48,6 +48,7 @@ object OnboardingService:
       case "done" => Some(Done)
       case "skipped" => Some(Skipped)
       case _ => None
+  end OnboardingState
 
   /** Full persisted record. probeOkAt = epoch millis of the last successful LLM probe. */
   final case class StoredState(state: OnboardingState, probeOkAt: Option[Long])

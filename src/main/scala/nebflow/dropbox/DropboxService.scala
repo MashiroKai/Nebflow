@@ -41,6 +41,7 @@ private[dropbox] enum TempPathDecision:
    * the process working directory. No filesystem change.
    */
   case Refused(reason: String)
+end TempPathDecision
 
 /**
  * 提交/删除 temp 的结果 —— **判据**与**落点名**分开两格。
