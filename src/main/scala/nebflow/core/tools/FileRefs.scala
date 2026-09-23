@@ -35,7 +35,7 @@ private[tools] object FileRefs:
    * Allowed extensions for /api/nf-file proxy — prevents reading arbitrary
    * files via src=.
    *
-   * 2026-09-05 恢复批对齐（以现行端点为准）：与 WebSocketRoutes.NfFileAllowedExt
+   * 2026-09-05 恢复批对齐（以现行端点为准）：与 NfFilePolicy.NfFileAllowedExt
    * （2026-09-03 Canvas interactive-HTML fix 版）逐项一致——删除了端点已不收的
    * avi/eot/wasm/obj/stl/gltf/glb（避免生成必然 400 的死链），补齐端点已放行的
    * docx/xlsx/xlsm/pptx/epub（此前 src 引用不会被转成代理 URL）。若端点白名单
@@ -98,7 +98,7 @@ private[tools] object FileRefs:
 
   /**
    * Tool-side MIRROR of the endpoint's data-root namespace allowlist
-   * (`WebSocketRoutes.NfDataRootAllowlist`, consumed by the pure judge
+   * (`NfFilePolicy.NfDataRootAllowlist`, consumed by the pure judge
    * `nfCredentialDeny` — the namespace step of `nfVerdictForReal`; the tool's own
    * pre-flight gate calls that same function, never this table).
    *
@@ -213,7 +213,7 @@ private[tools] object FileRefs:
      * [[inlineMayTakeOver]] so the inline leg can honour the identity layers
      * while not honouring the endpoint's reach layer.
      */
-    layer: Option[nebflow.gateway.WebSocketRoutes.NfDenyLayer] = None
+    layer: Option[nebflow.gateway.NfFilePolicy.NfDenyLayer] = None
   )
 
   /** What to do with one reference value. */
@@ -232,6 +232,8 @@ private[tools] object FileRefs:
 
     /** unservable — reported in `warnings` */
     case Reject(rejected: RejectedRef)
+
+  end RefDecision
 
   /**
    * Reference kinds that are never local disk files: inline data, remote URLs,
@@ -468,7 +470,7 @@ private[tools] object FileRefs:
   // 任务书 7(a)：`proxied` 不得再由「URL 字符串已发出」满足。判据四段：
   //   ① 解析成功（`probeFile` 既有：存在 + regular + 扩展名 + ≤200MB）；
   //   ② servability = **与端点同一份判据** —— 直接调**端点完整阶梯**的同一函数
-  //      `WebSocketRoutes.nfVerdictForReal`（= `nfFileVerdict` 在 `toRealPath` 之后的
+  //      `NfFilePolicy.nfVerdictForReal`（= `nfFileVerdict` 在 `toRealPath` 之后的
   //      全部步骤：credential namespace → R2 (dev,ino) 硬链接 → realpath 上的扩展名）
   //      + 同一份 `NfPathPolicy.memoized()`（同一 JVM、同一 data root、同一
   //      workspace），**零复制、零旁路**；判据抛异常时 fail-closed（当成不可服务），
@@ -518,22 +520,22 @@ private[tools] object FileRefs:
 
   /**
    * [[servableByEndpoint]] with the refusing layer — see
-   * [[nebflow.gateway.WebSocketRoutes.NfDenyLayer]]. The URL leg reads the
+   * [[nebflow.gateway.NfFilePolicy.NfDenyLayer]]. The URL leg reads the
    * two-tuple above; the one caller that must honour some layers and not others
    * (the inline leg) reads this.
    */
   def servableByEndpointLayered(
     real: Path
-  ): Option[(nebflow.gateway.WebSocketRoutes.NfDenyLayer, String, String)] =
+  ): Option[(nebflow.gateway.NfFilePolicy.NfDenyLayer, String, String)] =
     try
-      nebflow.gateway.WebSocketRoutes
-        .nfVerdictForRealLayer(real, nebflow.gateway.WebSocketRoutes.NfPathPolicy.current())
+      nebflow.gateway.NfFilePolicy
+        .nfVerdictForRealLayer(real, nebflow.gateway.NfFilePolicy.NfPathPolicy.current())
         .map((layer, denied) => (layer, denied.reason, denied.message))
     catch
       case e: Throwable =>
         Some(
           (
-            nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace,
+            nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace,
             "servability-judge-unavailable",
             s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
               "the reference is treated as unservable rather than assumed servable"
@@ -564,20 +566,20 @@ private[tools] object FileRefs:
    */
   def inlineMayTakeOver(path: Path, rejected: RejectedRef): Boolean =
     rejected.failure == FileRefFailure.NotServable &&
-      rejected.layer.contains(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace) &&
+      rejected.layer.contains(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace) &&
       credentialInodeClean(path)
 
   /**
    * `true` = this file's inode is NOT one of the endpoint policy's credential
    * inodes (R2). Fail-closed: anything that cannot be established answers `false`,
    * i.e. "do not take the refusal over". Asks the endpoint's own helper
-   * (`WebSocketRoutes.nfCredentialInode`) with the endpoint's own policy — no
+   * (`NfFilePolicy.nfCredentialInode`) with the endpoint's own policy — no
    * second inode scan, no copied snapshot.
    */
   def credentialInodeClean(path: Path): Boolean =
     try
-      val policy = nebflow.gateway.WebSocketRoutes.NfPathPolicy.current()
-      !nebflow.gateway.WebSocketRoutes.nfCredentialInode(path.toRealPath(), policy)
+      val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
+      !nebflow.gateway.NfFilePolicy.nfCredentialInode(path.toRealPath(), policy)
     catch case _: Throwable => false
 
   /**
@@ -818,7 +820,7 @@ private[tools] object FileRefs:
   //
   // Why the reference leg is not enough (author case, both faces):
   //   - a ticket is minted only for paths the read endpoint's namespace judge
-  //     allows (`WebSocketRoutes.nfCredentialDeny`): the data root served ONLY
+  //     allows (`NfFilePolicy.nfCredentialDeny`): the data root served ONLY
   //     `projects/uploads/plots/workspace-items/voice-models`, so a screenshot
   //     under `<dataRoot>/docs/**` was refused (`credential-path`) → no ticket
   //     → the credential-free URL answered 401 → placeholder / error panel.
@@ -902,6 +904,7 @@ private[tools] object FileRefs:
      * reports the same `other` rejection it used to).
      */
     case Unreadable(detail: String)
+  end InlineSkip
 
   /** Image extensions that can be embedded as data URIs. */
   val EmbeddableImageExtensions: Set[String] = Set("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp")

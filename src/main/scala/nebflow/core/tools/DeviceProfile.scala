@@ -459,7 +459,7 @@ end XdevRewrite
 
 /**
  * ② ④ 回拉件落盘 + TTL 清扫。落位：`<dataRoot>/neblink/captures/<deviceId>/`
- * （root 令指定；不在 [[nebflow.gateway.WebSocketRoutes.NfDataRootAllowlist]]
+ * （root 令指定；不在 [[nebflow.gateway.NfFilePolicy.NfDataRootAllowlist]]
  * ⇒ 网关 HTTP fail-closed 拒服务）。TTL 7 天（作者裁定 A）；清扫逐件 INFO
  * 留痕（`[captures-ttl]` 可 grep，🔴 禁静默删）。
  */

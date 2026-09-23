@@ -81,7 +81,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     Ok(s"queryString=$raw\nparam=[$seen]")
   }
 
-  private def server(policy: WebSocketRoutes.NfPathPolicy): IO[(Int, IO[Unit])] =
+  private def server(policy: NfFilePolicy.NfPathPolicy): IO[(Int, IO[Unit])] =
     val app = Router(
       "/" -> (WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
         WebSocketRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
@@ -144,13 +144,13 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
     test(root, file).guarantee(cleanup)
 
-  private def policyFor(dataRoot: Path, workspaceRoot: Path): WebSocketRoutes.NfPathPolicy =
+  private def policyFor(dataRoot: Path, workspaceRoot: Path): NfFilePolicy.NfPathPolicy =
     val ws =
       if workspaceRoot.toString.startsWith("/nonexistent") then workspaceRoot
       else
         Files.createDirectories(workspaceRoot)
         workspaceRoot.toRealPath()
-    WebSocketRoutes.NfPathPolicy(dataRoot.toRealPath(), ws, Set.empty)
+    NfFilePolicy.NfPathPolicy(dataRoot.toRealPath(), ws, Set.empty)
 
   /**
    * Four wire forms of ONE real path containing two spaces. A browser sends the
@@ -255,7 +255,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     // a spec cannot assume which data root the process was launched with; deriving
     // it keeps this spec correct under `NEBFLOW_HOME` / `setDataRoot` redirection
     // too (rework r1, verifier item C4).
-    val policy = WebSocketRoutes.NfPathPolicy.memoized() // the tool reads the same value
+    val policy = NfFilePolicy.NfPathPolicy.memoized() // the tool reads the same value
     val root = policy.dataRoot.resolve("plots/imgref-spec")
     val image = root.resolve("space dir/tool shot.png")
     Files.createDirectories(image.getParent)
@@ -380,7 +380,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // 判据），漏掉 `nfFileVerdict` 在该步**之后**的两步 —— **R2 (dev,ino) 硬链接判据**
   // 与**按 realpath 取扩展名** ⇒ 真件被计 `proxied` 而端点必然拒（真取回 401），
   // 即「计数绿而取回红」在本批修好的树上仍可发生。修法 = 两侧调同一个
-  // `WebSocketRoutes.nfVerdictForReal`（端点阶梯 `toRealPath` 之后的全部步骤）。
+  // `NfFilePolicy.nfVerdictForReal`（端点阶梯 `toRealPath` 之后的全部步骤）。
   //
   // 🔴 **收编申报（返工令 B②）**：G/H 的判据与夹具形态**收编自复核位第 1 轮的判词
   // spec**：`ImgrefVerifyR1Spec.scala` 的
@@ -406,7 +406,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
    * 数据根 `secrets/` 子树、`~/.ssh/` 子树中确实在快照里的那一件。
    * （注意：Scala 块注释里不能出现「斜杠 + 双星号」的通配写法，那会开一个嵌套注释。）
    */
-  private def snapshotCredential(policy: WebSocketRoutes.NfPathPolicy): Path =
+  private def snapshotCredential(policy: NfFilePolicy.NfPathPolicy): Path =
     val home = Paths.get(sys.props.getOrElse("user.home", "/"))
     def filesUnder(dir: Path): List[Path] =
       if !Files.isDirectory(dir) then Nil
@@ -420,7 +420,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         filesUnder(home.resolve(".ssh"))
     seeds
       .filter(p => Files.isRegularFile(p))
-      .find(p => WebSocketRoutes.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
+      .find(p => NfFilePolicy.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
       .getOrElse(
         fail(
           "no seeded credential file (data-root auth.json / nebflow.json, <dataRoot>/secrets/**, " +
@@ -500,9 +500,9 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   end mintAndFetch
 
-  private def endpointReason(path: String, policy: WebSocketRoutes.NfPathPolicy): String =
-    WebSocketRoutes.nfFileVerdict(path, policy).unsafeRunSync() match
-      case WebSocketRoutes.NfVerdict.Denied(_, r, _) => r
+  private def endpointReason(path: String, policy: NfFilePolicy.NfPathPolicy): String =
+    NfFilePolicy.nfFileVerdict(path, policy).unsafeRunSync() match
+      case NfFilePolicy.NfVerdict.Denied(_, r, _) => r
       case _ => "allowed"
 
   /**
@@ -547,7 +547,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     dir: Path,
     build: (Path, Path) => Unit,
     port: Int,
-    policy: WebSocketRoutes.NfPathPolicy,
+    policy: NfFilePolicy.NfPathPolicy,
     expectReason: String,
     expectHint: String,
     expectEndpointStatus: Int
@@ -600,7 +600,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("G. equivalence (leg 1/2): a HARD LINK to a credential inode — tool gate and endpoint agree"):
-    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val policy = NfFilePolicy.NfPathPolicy.memoized()
     val target = snapshotCredential(policy)
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
     val dir = subtree.resolve("space dir")
@@ -610,8 +610,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         Files.createDirectories(dir)
         println(
           s"PROBE[leg-inode] target=$target size=${Files.size(target)} inode=" +
-            s"${WebSocketRoutes.NfPathPolicy.inodeKey(target)} snapshot=" +
-            s"${WebSocketRoutes.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}"
+            s"${NfFilePolicy.NfPathPolicy.inodeKey(target)} snapshot=" +
+            s"${NfFilePolicy.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}"
         )
         assertLegRefused(
           leg = "leg-inode",
@@ -629,7 +629,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("H. equivalence (leg 2/2): a symlink refused by its REAL extension — tool gate and endpoint agree"):
-    val policy = WebSocketRoutes.NfPathPolicy.memoized()
+    val policy = NfFilePolicy.NfPathPolicy.memoized()
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-symlink")
     val dir = subtree.resolve("space dir")
     val cleanup = IO { deleteTree(subtree); () }

@@ -20,7 +20,7 @@ import scala.jdk.CollectionConverters.*
  * Before the fix a companion `<script src="./snapshot-data.js">` 400'd, the
  * page boot script died on the missing global before binding any listeners,
  * and nothing in the Canvas tab was clickable (see the header of
- * WebSocketRoutes.NfFileAllowedExt for the full chain).
+ * NfFilePolicy.NfFileAllowedExt for the full chain).
  *
  * 2026-09-11 (C batch, R5 = ticket-only): the credential leg is a per-path
  * short-lived ticket, not the global gateway token. The 11 behavioural
@@ -48,7 +48,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
    * inode set is empty — the subject here is the ticket leg, not the
    * credential namespace (that is NfTicketRoutesSpec's job).
    */
-  private val policy = WebSocketRoutes.NfPathPolicy(
+  private val policy = NfFilePolicy.NfPathPolicy(
     java.nio.file.Paths.get("/nonexistent-nebflow-data-root"),
     java.nio.file.Paths.get("/nonexistent-nebflow-workspace"),
     Set.empty
@@ -197,10 +197,10 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   }
 
   test("whitelist: js/css/json present (the fix)") {
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("js"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("mjs"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("css"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("json"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("js"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("mjs"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("css"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("json"))
   }
 
   test("whitelist: pre-fix media types intact (no silent narrowing)") {
@@ -238,12 +238,12 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       "pptx",
       "epub"
     )
-    assert(preFix.subsetOf(WebSocketRoutes.NfFileAllowedExt))
+    assert(preFix.subsetOf(NfFilePolicy.NfFileAllowedExt))
   }
 
   test("whitelist: script/server-code extensions stay excluded") {
     val excluded = Set("sh", "bash", "exe", "bat", "py", "rb", "pl", "php", "html", "htm")
-    assert(excluded.forall(ext => !WebSocketRoutes.NfFileAllowedExt.contains(ext)))
+    assert(excluded.forall(ext => !NfFilePolicy.NfFileAllowedExt.contains(ext)))
   }
 
   // ── 2026-09-17 nfext batch: `.doc` / `.ppt` / `.xls` (legacy binary Office) ──
@@ -261,9 +261,9 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   // verdict chain never consults would pass the set check and fail the route one.
 
   test("whitelist: legacy binary Office types joined (nfext batch)") {
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("doc"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("ppt"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("xls"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("doc"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("ppt"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("xls"))
   }
 
   test("whitelist: census — the batch adds exactly doc/ppt/xls, deletes and renames nothing") {
@@ -311,7 +311,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     )
     assertEquals(atBranchBase.size, 36, "the base census must stay the documented 36 entries")
     assertEquals(
-      WebSocketRoutes.NfFileAllowedExt,
+      NfFilePolicy.NfFileAllowedExt,
       atBranchBase ++ Set("doc", "ppt", "xls"),
       "the nfext batch changes this table by exactly three additions"
     )

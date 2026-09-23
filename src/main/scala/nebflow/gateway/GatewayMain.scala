@@ -516,8 +516,8 @@ object GatewayMain extends IOApp:
                         // 构造并注入，使读端点与签发端点共用同一份权威判据。
                         val nfTicketStore: NfTicketStore =
                           NfTicketStore.unsafeCreate(NfTicketStore.loadTtlSeconds())
-                        val nfPathPolicy: WebSocketRoutes.NfPathPolicy =
-                          WebSocketRoutes.NfPathPolicy.standard()
+                        val nfPathPolicy: NfFilePolicy.NfPathPolicy =
+                          NfFilePolicy.NfPathPolicy.standard()
                         // 执行环境 provider（拆围栏批 S3 / design §4.2）：fail-safe
                         // 加载 + 按 provider 装配执行面一次缓存（provider=host 缺省
                         // = 宿主直跑不 probe；local-process 才 probe，阻塞 <1s；取值

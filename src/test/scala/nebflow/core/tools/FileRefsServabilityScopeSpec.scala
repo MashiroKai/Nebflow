@@ -136,7 +136,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val aTop = FileRefs.servableByEndpointLayered(topReal)
     val aServed = FileRefs.servableByEndpointLayered(servedReal)
     println(s"[SCOPE-READING] rootA top=${aTop.map(t => (t._1, t._2))} served=${aServed.map(t => (t._1, t._2))}")
-    assertEquals(aTop.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(aTop.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
     assertEquals(aTop.map(_._2), Some("credential-path"))
     assertEquals(aServed, None, "plots/** is served from this data root")
 
@@ -155,7 +155,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     PathUtil.setDataRoot(os.Path(rootA))
     val again = FileRefs.servableByEndpointLayered(topReal)
     println(s"[SCOPE-READING] rootA again top=${again.map(t => (t._1, t._2))}")
-    assertEquals(again.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(again.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
 
   // ── single source: the gate IS the endpoint's own ladder ──────────────────
 
@@ -177,18 +177,18 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     val sshPng = writePng(sshDir.resolve("shot 2.png"))
 
     PathUtil.setDataRoot(os.Path(root))
-    val policy = nebflow.gateway.WebSocketRoutes.NfPathPolicy.current()
+    val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
     println(
       s"[SCOPE-READING] policy dataRoot=${policy.dataRoot} workspaceRoot=${policy.workspaceRoot} " +
         s"credentialInodes=${policy.credentialInodes.size}"
     )
 
-    val expectations: List[(Path, Option[(nebflow.gateway.WebSocketRoutes.NfDenyLayer, String)])] = List(
+    val expectations: List[(Path, Option[(nebflow.gateway.NfFilePolicy.NfDenyLayer, String)])] = List(
       realOf(servedPng) -> None,
-      realOf(topPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace, "credential-path")),
-      realOf(secretPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace, "credential-path")),
-      realOf(alias) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.FileType, "file-type")),
-      realOf(sshPng) -> Some((nebflow.gateway.WebSocketRoutes.NfDenyLayer.Credential, "credential-path"))
+      realOf(topPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
+      realOf(secretPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace, "credential-path")),
+      realOf(alias) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.FileType, "file-type")),
+      realOf(sshPng) -> Some((nebflow.gateway.NfFilePolicy.NfDenyLayer.Credential, "credential-path"))
     )
 
     expectations.foreach { (path, expected) =>
@@ -196,7 +196,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
       // the endpoint's own function, with the policy the tool itself reads:
       // one judgement, two readers (`nfVerdictForReal` is the projection of
       // `nfVerdictForRealLayer`, so this equality also pins that neither drifts)
-      val endpoint = nebflow.gateway.WebSocketRoutes
+      val endpoint = nebflow.gateway.NfFilePolicy
         .nfVerdictForRealLayer(path, policy)
         .map((layer, denied) => (layer, denied.reason))
       // the two-tuple projection the URL leg reads must agree as well
@@ -265,7 +265,7 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     // The endpoint's credential step runs FIRST and reports the NAMESPACE layer for
     // this path, so the layer alone says "reach" — the inode answer is the one that
     // says "credential", and the inline leg must ask it separately.
-    assertEquals(layered.map(_._1), Some(nebflow.gateway.WebSocketRoutes.NfDenyLayer.Namespace))
+    assertEquals(layered.map(_._1), Some(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace))
     assertEquals(FileRefs.credentialInodeClean(link), false, "the inode layer must be consulted independently")
 
     // the reference is the LINK's own name (`shot link 4.png`): the endpoint

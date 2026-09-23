@@ -25,7 +25,7 @@ package nebflow.core
  *
  * 🔴 **解码不参与任何权限判定**。它只回答「去问哪个字符串」：工具侧每个候选形态仍
  * 原样过 `FileRefs.probeFile`（扩展名 / 存在性 / 大小 / 真可读 / 可服务），端点侧每个
- * 候选形态仍原样过 `WebSocketRoutes.nfFileVerdict`（词法归一 → `exists`/`isRegularFile`
+ * 候选形态仍原样过 `NfFilePolicy.nfFileVerdict`（词法归一 → `exists`/`isRegularFile`
  * → `toRealPath` → R2 inode → credential namespace → realpath 上的扩展名）。判据全部
  * 作用在 **realpath** 上，与字符串形态无关 ⇒ 变形形态**造不出**「原串判不住、变形后
  * 判得住」的穿透：`%2e%2e` / `%2F` 解出来只是 `..` / `/`，与直接写 `..` / `/` 得到

@@ -38,11 +38,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     val outside: Path
   ):
 
-    lazy val policy: WebSocketRoutes.NfPathPolicy =
-      WebSocketRoutes.NfPathPolicy(
+    lazy val policy: NfFilePolicy.NfPathPolicy =
+      NfFilePolicy.NfPathPolicy(
         dataRoot,
         workspaceRoot,
-        WebSocketRoutes.NfPathPolicy.scanCredentialInodes(dataRoot)
+        NfFilePolicy.NfPathPolicy.scanCredentialInodes(dataRoot)
       )
 
     val store: NfTicketStore = NfTicketStore.unsafeCreate(1800)
@@ -231,7 +231,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         Files.createLink(hard, env.pathOf("auth.json"))
         // Sanity: the alias is NOT under the data root, so only the inode
         // guard can catch it (realpath sees a completely unrelated path).
-        assertEquals(WebSocketRoutes.nfCredentialDeny(hard.toRealPath(), env.policy), None)
+        assertEquals(NfFilePolicy.nfCredentialDeny(hard.toRealPath(), env.policy), None)
         val resp = env.read(s"path=${url(hard)}&ticket=${env.ticketFor(hard)}").get
         assertEquals(resp.status, Status.Forbidden)
         assertEquals(reasonOf(resp), "credential-hardlink")
@@ -451,8 +451,8 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     // holds whether or not the directory currently exists: the policy root is
     // `canonicalOrSelf` of the live data root.
     val live = Paths.get(PathUtil.dataRoot.toString)
-    val policy = WebSocketRoutes.NfPathPolicy.standard()
-    assertEquals(policy.dataRoot, WebSocketRoutes.NfPathPolicy.canonicalOrSelf(live))
+    val policy = NfFilePolicy.NfPathPolicy.standard()
+    assertEquals(policy.dataRoot, NfFilePolicy.NfPathPolicy.canonicalOrSelf(live))
     // "never a hardcoded home directory": when the live root is not the default
     // `~/.nebflow`, the policy must NOT have fallen back to it.
     val hardcoded =
@@ -493,17 +493,17 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       val evidenceDir = Files.createDirectories(projNf.resolve("evidence"))
       val evidence =
         Files.write(evidenceDir.resolve("plot.svg"), "<svg/>".getBytes(StandardCharsets.UTF_8))
-      val policy = WebSocketRoutes.NfPathPolicy(
+      val policy = NfFilePolicy.NfPathPolicy(
         Files.createDirectories(ws.resolve("data-root")),
         projNf,
         Set.empty
       )
-      assertEquals(WebSocketRoutes.nfCredentialDeny(repoFile.toRealPath(), policy), None)
+      assertEquals(NfFilePolicy.nfCredentialDeny(repoFile.toRealPath(), policy), None)
       assert(
-        WebSocketRoutes.nfCredentialDeny(denied.toRealPath(), policy).isDefined,
+        NfFilePolicy.nfCredentialDeny(denied.toRealPath(), policy).isDefined,
         "a file in the project .nebflow dir must be refused (P3)"
       )
-      assertEquals(WebSocketRoutes.nfCredentialDeny(evidence.toRealPath(), policy), None)
+      assertEquals(NfFilePolicy.nfCredentialDeny(evidence.toRealPath(), policy), None)
     finally
       Files
         .walk(ws)
@@ -516,9 +516,9 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   test("policy: production P3 root is <cwd>/.nebflow (R1), not the workspace root") {
     val cwd = Paths.get(System.getProperty("user.dir"))
-    val expected = WebSocketRoutes.NfPathPolicy.canonicalOrSelf(cwd.resolve(".nebflow"))
-    val actual = WebSocketRoutes.NfPathPolicy.standard().workspaceRoot
+    val expected = NfFilePolicy.NfPathPolicy.canonicalOrSelf(cwd.resolve(".nebflow"))
+    val actual = NfFilePolicy.NfPathPolicy.standard().workspaceRoot
     assertEquals(actual, expected)
-    assertNotEquals(actual, WebSocketRoutes.NfPathPolicy.canonicalOrSelf(cwd))
+    assertNotEquals(actual, NfFilePolicy.NfPathPolicy.canonicalOrSelf(cwd))
   }
 end NfTicketRoutesSpec
