@@ -1345,6 +1345,23 @@ class WebSocketRoutes(
     // for watch frames instead of silently leaking a WatchService.
     handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))
 
+  /**
+   * 入站消息信封(行为保持重构,2026-09-24):收敛两类完全同形的重复惯用法——
+   * parse(text) 后取字段(parse 失败回退 io.circe.Json.Null,见 parsedJson)与
+   * downField("sessionId") 取会话 id(缺失/非串回退空串,Either.getOrElse 与
+   * toOption.getOrElse 同果,统一走 inboundEnvelope(text).sessionId)。边界:
+   * 仅覆盖这两族;先绑定 json/hcursor 再取多字段的站点、字段级 Option 链、直接
+   * 产出 HCursor 等近形不收敛(见各站点一行注释),回退与错误响应逐处保持原状。
+   */
+  private case class InboundEnvelope(json: Json):
+    def sessionId: String = json.hcursor.downField("sessionId").as[String].getOrElse("")
+
+  private def parsedJson(text: String): Json =
+    parse(text).toOption.getOrElse(io.circe.Json.Null)
+
+  private def inboundEnvelope(text: String): InboundEnvelope =
+    InboundEnvelope(parsedJson(text))
+
   private def handleMessage(
     text: String,
     wsSend: io.circe.Json => IO[Unit],
@@ -1352,7 +1369,9 @@ class WebSocketRoutes(
   ): IO[Unit] =
     if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
     else
-      val parsed = parse(text).toOption.getOrElse(io.circe.Json.Null)
+      val parsed = parsedJson(text)
+      // 未走信封助手:parsed 绑定同时供 type 等多字段使用(全文件「先绑定 json/hcursor
+      // 再取多字段」的 sessionId 站点均按此边界保持原样,2026-09-24)
       val sessionIdForTracking = parsed.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
       val msgType = parsed.hcursor.downField("type").as[String].getOrElse("")
       for
@@ -1360,8 +1379,9 @@ class WebSocketRoutes(
         _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
         _ <- msgType match
           case "askUserAnswer" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
+            // 未走信封助手:sessionId 与 answers 组成 Either 元组匹配(分支语义逐处保持),非单值空串回退同形,保持原样(2026-09-24)
             (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
               case (Right(answers), Right(askSessionId)) =>
                 val answerText = answers.mkString("\n")
@@ -1386,7 +1406,8 @@ class WebSocketRoutes(
           // 关键：WS 帧串行（evalMap），对话框阻塞必须 `.start` 独立 fiber，
           // 否则冻结整条连接（卡片后续 askUserAnswer 无法处理）。
           case "pickWorkspaceDir" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val hc = parsedJson(text).hcursor
+            // 未走信封助手:sessionId/requestId 组成 Option 元组匹配(缺席走显式回退分支),非单值空串回退同形,保持原样(2026-09-24)
             (hc.downField("sessionId").as[String].toOption, hc.downField("requestId").as[String].toOption) match
               case (Some(sid), Some(rid)) =>
                 WorkspaceDirPicker.pick(sid, rid, wsSend).start.void
@@ -1394,7 +1415,7 @@ class WebSocketRoutes(
                 logger.warn(s"pickWorkspaceDir: missing sessionId/requestId — dropped")
 
           case "wsBrowse.list" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val hc = parsedJson(text).hcursor
             hc.downField("path").as[String].toOption.filter(_.nonEmpty) match
               case None => IO.unit
               case Some(raw) =>
@@ -1423,7 +1444,7 @@ class WebSocketRoutes(
             end match
 
           case "wsBrowse.mkdir" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val hc = parsedJson(text).hcursor
             (hc.downField("path").as[String].toOption, hc.downField("name").as[String].toOption.map(_.trim)) match
               case (Some(raw), Some(name))
                   if name.nonEmpty && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') =>
@@ -1453,7 +1474,7 @@ class WebSocketRoutes(
             end match
 
           case "permissionAnswer" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
             val upgradeRaw = json.hcursor.downField("upgradeMode").as[String].toOption
@@ -1501,7 +1522,7 @@ class WebSocketRoutes(
             end match
 
           case "interrupt" =>
-            val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+            val intSessionId = inboundEnvelope(text).sessionId
             // Hard-recovery P4: an interrupt aimed at a wedged turn cannot be
             // consumed (P3 keeps the actor alive, but the parked read survives
             // fiber cancellation) — kick the transport so the turn actually dies.
@@ -1509,7 +1530,7 @@ class WebSocketRoutes(
               logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
 
           case "restartAgent" =>
-            val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val rJson = parsedJson(text)
             val rSessionId = rJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val rLevel = rJson.hcursor.downField("level").as[String].toOption.getOrElse("soft") match
               case "rollback" => nebflow.agent.RestartLevel.Rollback
@@ -1527,7 +1548,7 @@ class WebSocketRoutes(
             // 释放 + taskStore cancelled + Stop；无 supervisor 走降级兜底）。
             // 区别于 interrupt（只停当前 turn，任务可继续）。用户面板路径无
             // caller 概念（工具层的自杀/同桶守卫不适用），仅保留 kind 白名单。
-            val cJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val cJson = parsedJson(text)
             val cSessionId = cJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             val cReason = cJson.hcursor.downField("reason").as[String].toOption.getOrElse("")
             def cancelReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
@@ -1577,7 +1598,7 @@ class WebSocketRoutes(
             // 链解析唯一单点 = `FlowMapStore.chainMembersOf`）。项目由注册表反查：
             // chainId 只作**查找键**（同一 chainId 同时在两个项目里 = 节点 id 碰撞，
             // 概率可忽略但**不静默**——报可行动歧义错误）。
-            val chJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val chJson = parsedJson(text)
             val chChainId = chJson.hcursor.downField("chainId").as[String].toOption.getOrElse("").trim
             val chReason = chJson.hcursor.downField("reason").as[String].toOption.getOrElse("")
             def entryJson(e: ChainCancelEntry): Json =
@@ -1651,7 +1672,7 @@ class WebSocketRoutes(
             // 不可父重启）。按 kind 路由：有 supervisor（Delegate/SubTask）→ Stop →
             // BackoffSupervisor respawn；Team 成员 → Stop + Mail 激活（history 重建）；
             // Root → restartAgent soft（现有重启语义）。
-            val prJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val prJson = parsedJson(text)
             val prSessionId = prJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
             def prReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
               wsSend(
@@ -1724,7 +1745,7 @@ class WebSocketRoutes(
             end if
 
           case "immediateInput" =>
-            val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val immJson = parsedJson(text)
             val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
             admitWorkOrRefuse(wsSend)(
@@ -1741,7 +1762,7 @@ class WebSocketRoutes(
           // through routeToAgent directly) — it never enters handleMessage
           // and is unaffected by this case.
           case "userMessage" =>
-            val umJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val umJson = parsedJson(text)
             val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
             val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
             admitWorkOrRefuse(wsSend)(
@@ -1757,7 +1778,7 @@ class WebSocketRoutes(
           // （quiesce/draining/spawning/handing-over/completed/failed）。编排器与
           // 触发源解耦——桌面菜单/REST API（P2）后续接同一 HotRestart.requestRestart。
           case "restart" =>
-            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val rc = parsedJson(text).hcursor
             val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
             val waitIdle = rc.downField("waitIdle").as[Boolean].getOrElse(true)
             val waitTimeoutMs = rc.downField("waitTimeoutMs").as[Long].getOrElse(600000L)
@@ -1803,7 +1824,7 @@ class WebSocketRoutes(
             command match
               case "clear" =>
                 val clearSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                  inboundEnvelope(text).sessionId
                 logger.info("Session cleared") *>
                   sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
                   sessionStore.appendUiMessages(
@@ -1821,7 +1842,7 @@ class WebSocketRoutes(
                   ensureAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
               case "compact" =>
                 val compactSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                  inboundEnvelope(text).sessionId
                 val instruction =
                   parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
                 logger.info("Manual compaction triggered") *>
@@ -1830,7 +1851,7 @@ class WebSocketRoutes(
                   )
               case "fork" =>
                 val forkSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+                  inboundEnvelope(text).sessionId
                 for
                   sourceMetaOpt <- sessionStore.getSessionMeta(forkSessionId)
                   sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
@@ -1865,7 +1886,7 @@ class WebSocketRoutes(
 
           case "recallMessage" =>
             val recallSessionId =
-              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              inboundEnvelope(text).sessionId
             if recallSessionId.nonEmpty then
               for
                 deleted <- sessionStore.deleteLastUserMessage(recallSessionId)
@@ -1880,7 +1901,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "setThinking" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
             // null/absent means toggled off; {enabled: false} also means off; otherwise default true
@@ -1911,7 +1932,7 @@ class WebSocketRoutes(
             // 重置；显式 segments:[] 仍可清空）。校验失败拒绝保存（配置不变）
             // 并回 configUpdateFailed；成功 → ref 热更 + targeted write + 广播 +
             // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val payload = json.hcursor
               .downField("workSchedule")
               .as[Option[io.circe.Json]]
@@ -1960,6 +1981,7 @@ class WebSocketRoutes(
             // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走
             // AtomicJson 原子写；写后 SttService.create() 重建热更
             // （transcribe 立即走新配置）。
+            // 未走信封助手:字段级 Option 链(parse 后即取 sttConfig,回退 Json.obj()),非裸 parse-or-Null 同形,保持原样(2026-09-24)
             val payload = parse(text).toOption
               .flatMap(_.hcursor.downField("sttConfig").as[Option[Json]].toOption.flatten)
               .getOrElse(Json.obj())
@@ -2014,6 +2036,7 @@ class WebSocketRoutes(
             // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
             // 原子写 + Ref 热更（下个 LLM 请求生效，镜像 freezeScheduleRef）
             // → 回 toolResultTtlSaved。
+            // 未走信封助手:字段级 Option 链(parse 后即取 config,回退 Json.Null),非裸 parse-or-Null 同形,保持原样(2026-09-24)
             val payload = parse(text).toOption
               .flatMap(_.hcursor.downField("config").as[Option[Json]].toOption.flatten)
               .getOrElse(Json.Null)
@@ -2062,6 +2085,7 @@ class WebSocketRoutes(
             end match
 
           case "setVoiceMuted" =>
+            // 未走信封助手:字段级 Option 链(parse 后即取 muted,回退 false),非裸 parse-or-Null 同形,保持原样(2026-09-24)
             val muted = parse(text).toOption
               .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
               .getOrElse(false)
@@ -2070,6 +2094,7 @@ class WebSocketRoutes(
           case "setLlmLog" =>
             // 默认关批（2026-09-13）：缺字段不再视为「开」——与新默认态一致
             // （fail-safe：无明确指令不改状态；UI 恒带 enabled，见 sidebar.js）。
+            // 未走信封助手:字段级 Option 链(parse 后即取 enabled,回退 false),非裸 parse-or-Null 同形,保持原样(2026-09-24)
             val enabled = parse(text).toOption
               .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
               .getOrElse(false)
@@ -2097,7 +2122,7 @@ class WebSocketRoutes(
             wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
 
           case "getModelOptions" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val sessionId = inboundEnvelope(text).sessionId
             sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
               sharedResources.sessionModelOverrides.get.flatMap { overrides =>
                 val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
@@ -2119,7 +2144,7 @@ class WebSocketRoutes(
             }
 
           case "setSessionModel" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
             if sessionId.nonEmpty then
@@ -2156,6 +2181,7 @@ class WebSocketRoutes(
           case "getCompactThreshold" =>
             // ctxthresh 批（2026-09-15 方案 A）：面板打开时读**权威值**——Ref 含未
             // 重启的热更值，盘上 meta 含跨重启保留值（先例 getToolResultTtl）。
+            // 未走信封助手:回退写法为非限定 Json.Null,与 io.circe.Json.Null 家族形态不一致,按边界保持原样(2026-09-24)
             val json = parse(text).toOption.getOrElse(Json.Null)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             if sid.nonEmpty then compactThresholdInfo(sid).flatMap(wsSend) else IO.unit
@@ -2171,6 +2197,7 @@ class WebSocketRoutes(
             // 🔴 作用域闸（首行）= fail-closed + Nebula 身份门（2026-09-15 返工，见
             // `isRootScopeSession`）——非 Nebula 会话 / 幽灵 id / 未注册且非活跃者
             // 一律走 reject 分支，**绝不落盘**。
+            // 未走信封助手:回退写法为非限定 Json.Null,与 io.circe.Json.Null 家族形态不一致,按边界保持原样(2026-09-24)
             val json = parse(text).toOption.getOrElse(Json.Null)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val rawRatio = json.hcursor.downField("ratio").as[Option[Double]].toOption.flatten
@@ -2211,7 +2238,7 @@ class WebSocketRoutes(
             end if
 
           case "switchSession" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val sessionId = inboundEnvelope(text).sessionId
             if sessionId.nonEmpty then
               sessionService
                 .switchSession(sessionId)
@@ -2226,7 +2253,7 @@ class WebSocketRoutes(
             end if
 
           case "createSession" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
             val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
             val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
@@ -2246,7 +2273,7 @@ class WebSocketRoutes(
               }
 
           case "deleteSession" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val sessionId = inboundEnvelope(text).sessionId
             if sessionId.nonEmpty then
               // Get agent name before deleting so we can send filtered list
               sessionStore
@@ -2299,7 +2326,7 @@ class WebSocketRoutes(
             end if
 
           case "renameSession" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val newName = json.hcursor.downField("name").as[String].getOrElse("")
             if sessionId.nonEmpty && newName.nonEmpty then
@@ -2325,7 +2352,7 @@ class WebSocketRoutes(
             // （所有客户端同步），再推本连接会话列表。
             // 🔴 旧行为「本会话临时覆盖、不落盘」**已消失**：档位不再有会话维度。
             // `sessionId` 仅用于回推列表（档位本身是应用级的，对所有会话一致）。
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val rawMode = json.hcursor.downField("safetyMode").as[String].toOption
             // 三档显式白名单：未知值**拒绝**（旧行为是静默 `getOrElse("confirm-edits")`
@@ -2361,7 +2388,7 @@ class WebSocketRoutes(
             // setSafetyMode 的两档特例）——permshield S1 起同样**写全局持久**；
             // 该帧已无任何前端调用点（`grep -rn setBypass src/main/resources/web` = 0），
             // 保留仅因 wire 向后兼容（老客户端 / 外部脚本）。
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
             val mode = if bypass then "auto-all" else "confirm-edits"
@@ -2380,7 +2407,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "ask" =>
-            val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val askJson = parsedJson(text)
             val question = askJson.hcursor.downField("question").as[String].getOrElse("")
             val askSessionId = askJson.hcursor.downField("sessionId").as[String].getOrElse("")
             if question.nonEmpty && askSessionId.nonEmpty then
@@ -2433,7 +2460,7 @@ class WebSocketRoutes(
             yield ()
 
           case "skill" =>
-            val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val skillJson = parsedJson(text)
             val skillName = skillJson.hcursor.downField("skillName").as[String].getOrElse("")
             val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
             val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -2465,7 +2492,7 @@ class WebSocketRoutes(
             end if
 
           case "deleteSkill" =>
-            val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val delJson = parsedJson(text)
             val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
             if delName.nonEmpty then
               SkillService.deleteSkill(delName).flatMap { success =>
@@ -2491,7 +2518,7 @@ class WebSocketRoutes(
           // ===== Scheduled Task Management =====
 
           case "createScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val crContent = hc.downField("content").as[String].getOrElse("")
@@ -2551,7 +2578,7 @@ class WebSocketRoutes(
             end if
 
           case "listScheduledTasks" =>
-            val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val lrSessionId = inboundEnvelope(text).sessionId
             if lrSessionId.nonEmpty then
               sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { allTasks =>
                 // Only return pending (untriggered) tasks — triggered tasks are
@@ -2582,7 +2609,7 @@ class WebSocketRoutes(
             end if
 
           case "deleteScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val drId = json.hcursor.downField("id").as[String].getOrElse("")
             if drSessionId.nonEmpty && drId.nonEmpty then
@@ -2599,7 +2626,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "toggleScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val tgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val tgId = json.hcursor.downField("id").as[String].getOrElse("")
             if tgSessionId.nonEmpty && tgId.nonEmpty then
@@ -2619,7 +2646,7 @@ class WebSocketRoutes(
           // ===== Task List (fetch on session switch / reconnect) =====
 
           case "getTaskList" =>
-            val tlsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val tlsSessionId = inboundEnvelope(text).sessionId
             if tlsSessionId.nonEmpty then
               sharedResources.taskStore.listVisible(tlsSessionId).flatMap { tasks =>
                 wsSend(
@@ -2635,7 +2662,7 @@ class WebSocketRoutes(
           // ===== Complete Task (user clicks the todos-panel circle, todo-panel §7.1) =====
 
           case "completeTask" =>
-            val ctSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val ctSessionId = inboundEnvelope(text).sessionId
             val ctTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
             if ctSessionId.nonEmpty && ctTaskId.nonEmpty then
               sharedResources.taskStore.complete(ctSessionId, ctTaskId, by = "user").attempt.flatMap {
@@ -2670,7 +2697,7 @@ class WebSocketRoutes(
           // ===== Workspace Knowledge =====
 
           case "listWorkspaceItems" =>
-            val wsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+            val wsSessionId = inboundEnvelope(text).sessionId
             if wsSessionId.nonEmpty then
               sharedResources.knowledgeStore.loadItems(wsSessionId).flatMap { items =>
                 val itemJsons = items.map { it =>
@@ -2695,7 +2722,7 @@ class WebSocketRoutes(
             end if
 
           case "deleteWorkspaceItem" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val delSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val delId = json.hcursor.downField("id").as[String].getOrElse("")
             if delSessionId.nonEmpty && delId.nonEmpty then
@@ -2713,7 +2740,7 @@ class WebSocketRoutes(
           // ===== Explorer (File Tree) =====
 
           case "listDir" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val exSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val subPath = hc.downField("path").as[String].getOrElse("")
@@ -2757,7 +2784,7 @@ class WebSocketRoutes(
           // new cases, zero changes to existing frame shapes.
 
           case "watchSubscribe" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val wtSessionId = hc.downField("sessionId").as[String].getOrElse("")
             if wtSessionId.nonEmpty then
@@ -2792,7 +2819,7 @@ class WebSocketRoutes(
             // open; a sessionId-gated no-op there would keep a WatchService
             // polling the old root until the socket dies. Unknown key is an
             // idempotent no-op server-side.
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val rootOverride = hc.downField("rootPath").as[Option[String]].toOption.flatten
             watchSession.unsubscribe(rootOverride.getOrElse("")).handleErrorWith { e =>
@@ -2806,7 +2833,7 @@ class WebSocketRoutes(
             }
 
           case "readFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val filePath = hc.downField("path").as[String].getOrElse("")
@@ -2904,7 +2931,7 @@ class WebSocketRoutes(
           case "pop.readFile" =>
             // Pop re-open: reads any absolute path without project root restriction.
             // Agent-created files (e.g. /tmp/output.svg) should always be readable.
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
             // Expand a leading `~` (home shorthand: `~`, `~/`, `~\`) to the
@@ -3018,7 +3045,7 @@ class WebSocketRoutes(
           // outbound trap, §二.3 ②).
 
           case "textWindow" =>
-            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val thc = parsedJson(text).hcursor
             val twReqId = thc.downField("reqId").as[String].getOrElse("")
             val twTabId = thc.downField("tabId").as[String].getOrElse("")
             val twPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
@@ -3084,7 +3111,7 @@ class WebSocketRoutes(
             end if
 
           case "textIndex" =>
-            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val thc = parsedJson(text).hcursor
             val tiReqId = thc.downField("reqId").as[String].getOrElse("")
             val tiTabId = thc.downField("tabId").as[String].getOrElse("")
             val tiPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
@@ -3134,7 +3161,7 @@ class WebSocketRoutes(
             end if
 
           case "textSearch" =>
-            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val thc = parsedJson(text).hcursor
             val tsReqId = thc.downField("reqId").as[String].getOrElse("")
             val tsTabId = thc.downField("tabId").as[String].getOrElse("")
             val tsPath = PathUtil.expandTilde(thc.downField("path").as[String].getOrElse(""))
@@ -3198,14 +3225,14 @@ class WebSocketRoutes(
           case "textCancel" =>
             // tab 关闭 / 卸载 ⇒ 释放服务端 per-stream 状态并中断在跑扫描（卡 §三.5：
             // 不做跨会话续传，重开 = 重建索引 + 重取可见窗，成本有界）。
-            val thc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val thc = parsedJson(text).hcursor
             val tcReqId = thc.downField("reqId").as[String].getOrElse("")
             if tcReqId.nonEmpty then textSearch.cancel(tcReqId)
             else IO.unit
             end if
 
           case "transcribe" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val audioB64 = hc.downField("audio").as[String].getOrElse("")
             val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
@@ -3255,7 +3282,7 @@ class WebSocketRoutes(
           case "ping" => wsSend(io.circe.Json.obj("type" -> "pong".asJson))
 
           case "createFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val cfSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val cfPath = hc.downField("path").as[String].getOrElse("")
@@ -3293,7 +3320,7 @@ class WebSocketRoutes(
             end if
 
           case "createDir" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val cdSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val cdPath = hc.downField("path").as[String].getOrElse("")
@@ -3327,7 +3354,7 @@ class WebSocketRoutes(
             end if
 
           case "deletePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val dpSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val dpPath = hc.downField("path").as[String].getOrElse("")
@@ -3386,7 +3413,7 @@ class WebSocketRoutes(
           // F1 file-explorer single-item move: relocate a file/dir into a
           // target directory within the same project root (rename semantics).
           case "movePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val mpSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val mpPath = hc.downField("path").as[String].getOrElse("")
@@ -3432,7 +3459,7 @@ class WebSocketRoutes(
           // Per-path guards identical to deletePath; failures are aggregated
           // per item so a partial failure never blocks the rest.
           case "deletePaths" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val dpsSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val dpsPaths = hc.downField("paths").as[List[String]].getOrElse(Nil)
@@ -3468,7 +3495,7 @@ class WebSocketRoutes(
             end if
 
           case "writeFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val hc = json.hcursor
             val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
             val wrFilePath = hc.downField("path").as[String].getOrElse("")
@@ -3574,7 +3601,7 @@ class WebSocketRoutes(
             }
 
           case "cancelBackgroundJob" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
             if cancelSessionId.nonEmpty && jobId.nonEmpty then
@@ -3641,7 +3668,7 @@ class WebSocketRoutes(
             end if
 
           case "cancelFlow" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val flowName = json.hcursor.downField("name").as[String].getOrElse("")
             val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val instanceId = json.hcursor.downField("instanceId").as[String].getOrElse("")
@@ -3677,7 +3704,7 @@ class WebSocketRoutes(
             listAllPendingAsks(wsSend)
 
           case "getHistory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
             val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
@@ -3769,7 +3796,7 @@ class WebSocketRoutes(
           // ===== Folder Management =====
 
           case "createFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val name = json.hcursor.downField("name").as[String].getOrElse("New Folder")
             val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
             val agentNameFromMsg = json.hcursor.downField("agentName").as[String].getOrElse("")
@@ -3789,7 +3816,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "renameFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             val newName = json.hcursor.downField("name").as[String].getOrElse("")
             if folderId.nonEmpty && newName.nonEmpty then
@@ -3823,7 +3850,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "moveSessionToFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
             val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
             if sessionId.nonEmpty then
@@ -3838,7 +3865,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "moveFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
             if folderId.nonEmpty then
@@ -3856,7 +3883,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "setFolderProjectRoot" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             val projectRoot = json.hcursor.downField("projectRoot").as[Option[String]].getOrElse(None)
             if folderId.nonEmpty then
@@ -3881,7 +3908,7 @@ class WebSocketRoutes(
 
           // Directory browser for project root selection
           case "browsePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val path = json.hcursor.downField("path").as[String].getOrElse("~")
             val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
             IO.blocking {
@@ -3918,7 +3945,7 @@ class WebSocketRoutes(
           // ===== Folder Rules Management =====
 
           case "getRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             if folderId.nonEmpty then
               val content = RulesStore.loadFolderRules(folderId).getOrElse("")
@@ -3932,7 +3959,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "saveRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             val content = json.hcursor.downField("content").as[String].getOrElse("")
             if folderId.nonEmpty then
@@ -3941,7 +3968,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "deleteRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             if folderId.nonEmpty then
               RulesStore.deleteFolderRules(folderId) *>
@@ -3949,7 +3976,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "rulesStatus" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
             if folderId.nonEmpty then
               wsSend(
@@ -3977,7 +4004,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "updateAgentSystemPrompt" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val agentName = json.hcursor.downField("name").as[String].getOrElse("")
             val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
             if agentName.nonEmpty then
@@ -3989,6 +4016,7 @@ class WebSocketRoutes(
             // Retired 2026-09-06 (tool-face batch): agent.json tools write-back
             // is closed. Loud rejection (no silent no-op) so any stale client
             // sees the retirement instead of assuming the edit landed.
+            // 未走信封助手:字段级 Option 链(parse 后即取 name,回退空串),非裸 parse-or-Null 同形,保持原样(2026-09-24)
             val agentName = parse(text).toOption
               .flatMap(_.hcursor.downField("name").as[String].toOption)
               .getOrElse("")
@@ -4020,8 +4048,9 @@ class WebSocketRoutes(
             else IO.unit
 
           case "getMemory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
+            // 未走信封助手:toOption.filter(_.nonEmpty) 把空串归一为 None(缺席走活跃会话回退),非空串回退同形,保持原样(2026-09-24)
             val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
             val metaIO = sessionIdParam match
               case Some(sid) => sessionStore.getSessionMeta(sid)
@@ -4053,9 +4082,10 @@ class WebSocketRoutes(
               }
 
           case "saveMemory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
             val content = json.hcursor.downField("content").as[String].getOrElse("")
+            // 未走信封助手:toOption.filter(_.nonEmpty) 把空串归一为 None(缺席走活跃会话回退),非空串回退同形,保持原样(2026-09-24)
             val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
             val metaIO = sessionIdParam match
               case Some(sid) => sessionStore.getSessionMeta(sid)
@@ -4161,7 +4191,7 @@ class WebSocketRoutes(
           // onInstallOutcome 发出，形状与字段语义不变）；相位进度走统一 updateProgress 帧。
           // 确认位：沿用既有 restart 命令的强制位语义——缺 confirm 直接拒绝 + 可行动错误。
           case "doUpdate" =>
-            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
+            val rc = parsedJson(text).hcursor
             val beta = rc.downField("beta").as[Boolean].getOrElse(false)
             val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
             val idemKey = rc.downField("idempotencyKey").as[String].toOption
@@ -4219,6 +4249,7 @@ class WebSocketRoutes(
             //     `remoteUpdateResult` 里**回显**该键，使界面能把结果对回它那一次点击。
             //   · 中继腿的隧道参数面保持 `{beta}`：动作 `RemoteUpdate` 的参数集由跨仓
             //     契约钉死（契约 §B.1.3），本批零越仓。
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val targetDevice = hc.downField("device").as[String].getOrElse("")
             val beta = hc.downField("beta").as[Boolean].getOrElse(false)
@@ -4373,7 +4404,7 @@ class WebSocketRoutes(
             // HARD GATE (server-side, user ruling 2026-08-15): done is
             // rejected unless a successful probeLlm is on record — the WS
             // surface can no longer bypass the gate the frontend enforces.
-            val stJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val stJson = parsedJson(text)
             val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
             nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
               case Some(st) =>
@@ -4425,7 +4456,7 @@ class WebSocketRoutes(
             }
 
           case "autostartSet" =>
-            val asJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val asJson = parsedJson(text)
             val enable = asJson.hcursor.downField("enabled").as[Boolean].getOrElse(false)
             val op = if enable then nebflow.core.AutoStartService.enable() else nebflow.core.AutoStartService.disable()
             op.flatMap { res =>
@@ -4495,6 +4526,7 @@ class WebSocketRoutes(
             end if
 
           case "toggleMcpServer" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val serverId = hc.downField("serverId").as[String].getOrElse("")
             val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
@@ -4530,6 +4562,7 @@ class WebSocketRoutes(
           // ===== Dropbox: cross-device messaging & file transfer =====
 
           case "dropbox-send-text" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val deviceId = hc.downField("deviceId").as[String].getOrElse("")
             val msgText = hc.downField("text").as[String].getOrElse("")
@@ -4546,6 +4579,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "dropbox-file-offer" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val deviceId = hc.downField("deviceId").as[String].getOrElse("")
             val fileName = hc.downField("fileName").as[String].getOrElse("")
@@ -4598,6 +4632,7 @@ class WebSocketRoutes(
             end if
 
           case "dropbox-file-probe" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val transferId = hc.downField("transferId").as[String].getOrElse("")
             if transferId.nonEmpty then
@@ -4629,6 +4664,7 @@ class WebSocketRoutes(
             end if
 
           case "dropbox-file-respond" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val deviceId = hc.downField("deviceId").as[String].getOrElse("")
             val transferId = hc.downField("transferId").as[String].getOrElse("")
@@ -4640,6 +4676,7 @@ class WebSocketRoutes(
             else IO.unit
 
           case "dropbox-get-history" =>
+            // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
             val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
             val deviceId = hc.downField("deviceId").as[String].getOrElse("")
             if deviceId.nonEmpty then
@@ -4660,7 +4697,7 @@ class WebSocketRoutes(
             end if
 
           case _ =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val json = parsedJson(text)
             val content = json.hcursor.downField("content").as[String].getOrElse("")
             val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
             val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
@@ -5663,6 +5700,7 @@ class WebSocketRoutes(
   private def handleInject(req: org.http4s.Request[IO]): IO[org.http4s.Response[IO]] =
     req.bodyText.compile.string
       .flatMap { text =>
+        // 未走信封助手:REST 注入体的 Option 匹配(parse 失败显式回 BadRequest),非 Null 回退同形,保持原样(2026-09-24)
         parse(text).toOption match
           case None => BadRequest("Invalid JSON body")
           case Some(json) =>
