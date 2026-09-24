@@ -55,8 +55,25 @@ log_i()    { echo "[i] $*"; }
 log_ok()   { echo "[ok] $*"; }
 log_warn() { echo "[warn] $*"; }
 log_err()  { echo "[err] $*" >&2; }
-log_v()    { [ "$VERBOSE" = "1" ] && echo "[v] $*" || true; }
+# log_v writes to stderr: verbose traces must never pollute stdout captured
+# via command substitution (under VERBOSE=1 a stdout log_v inside
+# $(fetch_checksum_for ...) corrupted the expected-hash capture and forced
+# checksum verdicts off - an integrity-relevant capture bug).
+log_v()    { if [ "$VERBOSE" = "1" ]; then echo "[v] $*" >&2; fi; }
 stage_hdr(){ echo ""; echo "==> [$1/6] $2"; }
+
+# Integrity-verification policy for third-party deps (NEBFLOW_VERIFY env,
+# default warn):
+#   strict = refuse unverified artifacts (the download fails when no usable
+#            checksum can be obtained from deps/checksums.txt)
+#   warn   = proceed, but print a VISIBLE warning for every unverified
+#            artifact - degraded verification is never silent
+#   off    = skip verification entirely (a one-time notice is still printed)
+VERIFY_MODE=$(printf '%s' "${NEBFLOW_VERIFY:-warn}" | tr '[:upper:]' '[:lower:]')
+case "$VERIFY_MODE" in
+    strict|warn|off) : ;;
+    *) VERIFY_MODE="warn" ;;
+esac
 
 # Parse flags
 CHANNEL="stable"
@@ -413,20 +430,34 @@ detect_region() {
             ;;
     esac
 
-    # Method 3: try a quick connectivity test (COS is fast in China, slow elsewhere)
-    # Test latency to COS vs GitHub — pick whichever responds first
-    local cos_ms=99999 gh_ms=99999
+    # Method 3: probe an ACTUAL mirror object, not just the bucket root.
+    # Latency alone cannot distinguish "fast bucket, empty prefix" from a
+    # working mirror - that exact blind spot is how an empty deps/ prefix
+    # went unnoticed for 18 days while installs quietly fell back overseas.
+    # The cn verdict now requires the mirror to (a) answer HTTP 200/206,
+    # (b) actually deliver the probed byte, and (c) still be fast vs GitHub.
+    local cos_ms=99999 gh_ms=99999 cos_code=000 cos_bytes=0 probe_out=""
     if command -v curl > /dev/null 2>&1; then
-        cos_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
-            "${COS_BASE_CN}/" 2>/dev/null | \
-            awk '{printf "%d", $1 * 1000}')
+        probe_out=$(curl -o /dev/null -s -r 0-0 \
+            -w '%{http_code} %{time_total} %{size_download}' \
+            --connect-timeout 2 --max-time 4 \
+            "${COS_DEPS_BASE}/checksums.txt" 2>/dev/null || true)
+        cos_code=$(printf '%s' "$probe_out" | awk '{print $1}')
+        cos_ms=$(printf '%s' "$probe_out" | awk '{printf "%d", $2 * 1000}')
+        cos_bytes=$(printf '%s' "$probe_out" | awk '{print $3}')
+        cos_code=${cos_code:-000}; cos_ms=${cos_ms:-99999}; cos_bytes=${cos_bytes:-0}
         gh_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
             "https://github.com/favicon.ico" 2>/dev/null | \
             awk '{printf "%d", $1 * 1000}')
+        gh_ms=${gh_ms:-99999}
     fi
 
-    # If COS is significantly faster (> 2x), user is likely in China
-    if [ "$cos_ms" -lt 500 ] && [ "$cos_ms" -lt $((gh_ms / 2)) ]; then
+    # cn requires the probed object byte to be actually fetchable AND fast:
+    # a fast but 404 prefix must read as global so installs go straight to
+    # the upstream sources instead of probing a dead mirror first.
+    if { [ "$cos_code" = "200" ] || [ "$cos_code" = "206" ]; } \
+        && [ "$cos_bytes" -ge 1 ] 2>/dev/null \
+        && [ "$cos_ms" -lt 500 ] && [ "$cos_ms" -lt $((gh_ms / 2)) ]; then
         REGION="cn"
     else
         REGION="global"
@@ -485,6 +516,12 @@ java_manual_hint() {
 # step 1 (bootstrap); brew's own git repos are pinned to the official
 # upstreams, and the bottle domain redirects package payloads. All three are
 # environment variables consumed by brew at runtime.
+# macOS brew mirror switch is DEFERRED by author ruling (2026-09-25,
+# installmirror batch): domestic bottle mirrors serve their roots (200) but
+# the standard openjdk@21 bottle names all 404 and none of them offers a
+# sha256 surface - switching without a verifiable checksum source would break
+# the integrity-no-compromise rule. Unlock condition: a usable bottle
+# checksum source (separate batch).
 configure_homebrew_mirrors() {
     if [ "$REGION" = "cn" ]; then
         export HOMEBREW_BREW_GIT_REMOTE="https://github.com/Homebrew/brew.git"
@@ -614,9 +651,11 @@ ensure_java_mac() {
 }
 
 ensure_java_linux_tarball() {
-    # Fallback when distro packages are unavailable/failed:
-    # 1) COS-mirrored Temurin 21 tarball (domestic-friendly)
-    # 2) Adoptium API (overseas last resort)
+    # Fallback when distro packages are unavailable/failed. Source chain:
+    # 1) our own deps/ mirror (same Temurin build, sha256 via checksums.txt)
+    # 2) TUNA Adoptium mirror (domestic direct, fast; no sidecar checksum -
+    #    integrity rides on the manifest + the byte-identical upstream build)
+    # 3) Adoptium API (overseas last resort)
     local jdk_arch="x64"
     [ "$ARCH" = "arm64" ] && jdk_arch="aarch64"
     local jdk_ver="21.0.12.1_1"
@@ -625,9 +664,10 @@ ensure_java_linux_tarball() {
     mkdir -p "${HOME}/${HOME_DIR}"
     local tmp_tar
     tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
+    local tuna_url="https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/${jdk_arch}/linux/${tarball_name}"
     local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
     if download_file "$tmp_tar" "$tarball_name" "$tarball_name" \
-        "${COS_DEPS_BASE}/${tarball_name}" "$jdk_url"; then
+        "${COS_DEPS_BASE}/${tarball_name}" "$tuna_url" "$jdk_url"; then
         tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
         rm -f "$tmp_tar"
         local extracted
@@ -646,6 +686,17 @@ ensure_java_linux_tarball() {
 
 ensure_java_linux() {
     local installed_any=0
+    # cn order (installmirror batch, recon R5.3): the TUNA-mirrored tarball
+    # goes BEFORE the distro packager - packagers need sudo and their sources
+    # are outside our control; global keeps the packager-first order.
+    if [ "$REGION" = "cn" ]; then
+        log_i "Installing OpenJDK 21 from the TUNA Adoptium mirror (cn)..."
+        if ensure_java_linux_tarball; then
+            log_ok "Java installed (TUNA mirror tarball)."
+            return 0
+        fi
+        log_v "TUNA tarball unavailable - falling back to the distro package manager."
+    fi
     case "$PKG_MGR" in
         apt-get)
             log_i "Installing OpenJDK 21 via apt..."
@@ -752,9 +803,13 @@ _install_rg_tarball() {
     tmp_archive=$(mktemp)
     tmp_dir=$(mktemp -d)
     log_i "Downloading rg ${RG_VERSION} (${1})..."
-    # Source chain: COS mirror -> GitHub -> ghproxy (batch 2)
+    # Source chain: our deps/ mirror -> ghproxy -> GitHub upstream.
+    # ghproxy (~16 KB/s measured) and upstream (~14 KB/s) are both slow - the
+    # real fix is the populated deps/ mirror (restored 2026-09-25); ghproxy is
+    # promoted over upstream only because upstream is slower AND unreachable
+    # on some domestic networks.
     if ! download_file "$tmp_archive" "$tarball_name" "$tarball_name" \
-        "${COS_DEPS_BASE}/${tarball_name}" "$gh_url" "https://ghproxy.net/${gh_url}"; then
+        "${COS_DEPS_BASE}/${tarball_name}" "https://ghproxy.net/${gh_url}" "$gh_url"; then
         rm -rf "$tmp_archive" "$tmp_dir"
         return 1
     fi
@@ -996,6 +1051,7 @@ _download() {
 
 CHECKSUMS_LOADED=""
 CHECKSUMS_CONTENT=""
+CHECKSUMS_STATE=""   # ok | unreachable | unparseable (set once, on first load)
 
 sha256_of() {  # <file> -> hash (or empty when no tool available)
     if command -v shasum > /dev/null 2>&1; then
@@ -1007,11 +1063,27 @@ sha256_of() {  # <file> -> hash (or empty when no tool available)
 
 fetch_checksum_for() {  # <filename> -> expected sha256 (or empty = unknown)
     if [ -z "$CHECKSUMS_LOADED" ]; then
-        CHECKSUMS_CONTENT=$(curl -fsSL --connect-timeout 5 --max-time 15 \
-            "${COS_DEPS_BASE}/checksums.txt" 2>/dev/null || true)
         CHECKSUMS_LOADED=1
-        [ -n "$CHECKSUMS_CONTENT" ] && log_v "Loaded deps/checksums.txt from COS." \
-            || log_v "deps/checksums.txt unreachable - checksum verification degraded."
+        local raw
+        raw=$(curl -fsSL --connect-timeout 5 --max-time 15 \
+            "${COS_DEPS_BASE}/checksums.txt" 2>/dev/null || true)
+        if [ -n "$raw" ]; then
+            # Keep only well-formed "sha256  name" rows: a fetched-but-garbage
+            # body must degrade as "unparseable" (a visible warning), never as
+            # a working manifest that silently verifies nothing.
+            CHECKSUMS_CONTENT=$(printf '%s\n' "$raw" | \
+                grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' || true)
+            if [ -n "$CHECKSUMS_CONTENT" ]; then
+                CHECKSUMS_STATE="ok"
+                log_v "Loaded deps/checksums.txt from the mirror."
+            else
+                CHECKSUMS_STATE="unparseable"
+                log_v "deps/checksums.txt fetched but unparseable - checksum verification degraded."
+            fi
+        else
+            CHECKSUMS_STATE="unreachable"
+            log_v "deps/checksums.txt unreachable - checksum verification degraded."
+        fi
     fi
     [ -n "$CHECKSUMS_CONTENT" ] || return 0
     # POSIX: no here-strings in dash; printf '%s\n' reproduces the exact
@@ -1025,10 +1097,50 @@ expected_checksum_hint() {  # <filename> -> "sha256: <hash>" line (or empty)
     [ -n "$h" ] && echo "       sha256: ${h}"
 }
 
+# Policy gate for "no verification possible" verdicts (NEBFLOW_VERIFY:
+# strict|warn|off, default warn). Returns 0 when the install may proceed
+# despite the unverified artifact; 1 = refuse it (strict). Degraded
+# verification is NEVER silent: warn prints a visible [warn] line (once per
+# manifest-level cause, per artifact otherwise); off still prints a one-time
+# notice; strict rejects so download_file falls through to the next source.
+accept_unverified() {  # <name> ; reads VERIFY_REASON
+    case "$VERIFY_MODE" in
+        off)
+            if [ -z "${VERIFY_OFF_NOTED:-}" ]; then
+                log_warn "Integrity verification disabled by NEBFLOW_VERIFY=off - downloads are NOT checksum-verified."
+                VERIFY_OFF_NOTED=1
+            fi
+            return 0 ;;
+        strict) return 1 ;;
+    esac
+    case "$VERIFY_REASON" in
+        manifest-unreachable|manifest-unparseable)
+            if [ -z "${VERIFY_WARN_MANIFEST_NOTED:-}" ]; then
+                if [ "$VERIFY_REASON" = "manifest-unreachable" ]; then
+                    log_warn "Checksum manifest unreachable (${COS_DEPS_BASE}/checksums.txt) => this install performs NO integrity verification on third-party deps."
+                else
+                    log_warn "Checksum manifest fetched but unparseable (${COS_DEPS_BASE}/checksums.txt) => this install performs NO integrity verification on third-party deps."
+                fi
+                log_warn "Fix the mirror and re-run, or set NEBFLOW_VERIFY=strict to refuse unverified installs."
+                VERIFY_WARN_MANIFEST_NOTED=1
+            fi
+            ;;
+        no-sha-tool)
+            log_warn "No sha256 tool (shasum/sha256sum) found - cannot verify ${1}; installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+            ;;
+        *)
+            log_warn "${1} has no entry in deps/checksums.txt - installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+            ;;
+    esac
+    return 0
+}
+
 # Multi-source download with checksum verification. Every candidate source
-# (COS first by convention) is verified against deps/checksums.txt when the
-# manifest is reachable; a mismatched source is discarded and the next one
-# is tried. Unknown checksum (manifest unreachable) degrades to accept.
+# (mirror first by convention) is verified against deps/checksums.txt; a
+# mismatched source is discarded and the next one is tried. "No verification
+# possible" is a policy decision (NEBFLOW_VERIFY), never a silent default:
+# warn = visible warning + accept, strict = reject and try the next source,
+# off = skip with a one-time notice.
 #   download_file <target> <filename-in-manifest> <label> <url1> [url2] ...
 download_file() {
     local target="$1" name="$2" label="$3"; shift 3
@@ -1040,7 +1152,9 @@ download_file() {
             case "$verdict" in
                 ok)      return 0 ;;
                 bad)     rm -f "$target"; continue ;;
-                unknown) return 0 ;;
+                unknown)
+                    if accept_unverified "$name"; then return 0; fi
+                    rm -f "$target"; continue ;;
             esac
         else
             rm -f "$target"
@@ -1050,14 +1164,24 @@ download_file() {
 }
 
 verify_checksum() {  # <file> <filename-in-manifest> -> echoes ok|bad|unknown
+    # On "unknown" also sets VERIFY_REASON (machine-readable cause:
+    # manifest-unreachable | manifest-unparseable | no-sha-tool |
+    # not-in-manifest) so the policy gate can warn precisely.
     local file="$1" name="$2" expected actual
+    VERIFY_REASON=""
     expected=$(fetch_checksum_for "$name")
     if [ -z "$expected" ]; then
+        case "$CHECKSUMS_STATE" in
+            ok)          VERIFY_REASON="not-in-manifest" ;;
+            unparseable) VERIFY_REASON="manifest-unparseable" ;;
+            *)           VERIFY_REASON="manifest-unreachable" ;;
+        esac
         echo "unknown"
         return 0
     fi
     actual=$(sha256_of "$file")
     if [ -z "$actual" ]; then
+        VERIFY_REASON="no-sha-tool"
         echo "unknown"   # no sha256 tool available - degrade, don't misjudge
         return 0
     fi
