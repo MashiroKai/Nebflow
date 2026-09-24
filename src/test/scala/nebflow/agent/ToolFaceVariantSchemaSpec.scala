@@ -366,4 +366,23 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     for v <- List(NodeReportToolDef.descriptionTask, NodeReportToolDef.descriptionVerifier) do
       assert(isOrderedSubseq(v.split("\n", -1).toList, lines), "变体出现基础里没有的行（新造字）")
   }
+
+  // node-output contract（2026-09-24）：输出契约只在**公共段**（角色行之外的那两行）
+  // 承载 ⇒ 两个角色都看得到，行级删段关系不受影响（新句子不得落进 (1)/(2) 角色行）。
+  test("⑥ 输出契约写在公共段：两角色变体都看到两条要求，且角色行未承载它"):
+    val base = NodeReportToolDef.descriptionBase
+    val sharedLines = base.split("\n", -1).filterNot(l => l.startsWith("(1) role=task") || l.startsWith("(2) role=verifier"))
+    val carries = (s: String) => sharedLines.exists(_.contains(s))
+    assert(carries("final assistant text is the node result"), s"要求 1 必须落在公共段（两角色都该看到）:\n$base")
+    assert(carries("self-contained"), "要求 2 必须落在公共段")
+    for (label, v) <- List("task" -> NodeReportToolDef.descriptionTask, "verifier" -> NodeReportToolDef.descriptionVerifier) do
+      assert(v.contains("final assistant text is the node result"), s"$label 变体必须看到要求 1")
+      assert(v.contains("\"see above\""), s"$label 变体必须看到要求 2（点名 see above）")
+      assert(v.contains("declaration, NOT your deliverable"), s"$label 变体必须看到「申报 ≠ 汇报」")
+    // 角色行本身不含输出契约字面（否则行级删段会让一个角色看不到）
+    val taskLine = base.split("\n", -1).find(_.startsWith("(1) role=task")).getOrElse(fail("no task line"))
+    val verLine = base.split("\n", -1).find(_.startsWith("(2) role=verifier")).getOrElse(fail("no verifier line"))
+    for l <- List(taskLine, verLine) do
+      assert(!l.contains("self-contained") && !l.contains("final assistant text"),
+        s"输出契约不得写进角色行（会破坏行级删段的两角色可达性）：${l.take(80)}")
 end ToolFaceVariantSchemaSpec

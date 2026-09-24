@@ -81,6 +81,22 @@ class TaskBoardInjectionSpec extends FunSuite:
     assert(fn.contains("No tool ⇒ first line exactly `BLOCKED`"), s"文本通道降级定位:\n$fn")
     assert(fn.contains("first line exactly `BLOCKED`"), s"裸形态强调（6 例 markdown 形态侵蚀实证）:\n$fn")
 
+  // node-output contract（2026-09-24）：末条输出 = 自身完成汇报、结果自包含（禁指代收尾）
+  // 两条要求是**新钉**（非既有断言措辞同步——本批未触发 §五 的同步条件：末行全等钉与
+  // `still write your wrap-up report` / `No tool ⇒ first line exactly \`BLOCKED\`` 等子串
+  // 全部逐字保持，无需改写任何既有断言字面量）。
+  test("ProtocolFootnote 输出契约（node-output contract）：末条输出 = 自身完成汇报（申报 ≠ 汇报）、结果自包含（禁 see above 指代）"):
+    val fn = NodeEngine.ProtocolFootnote
+    assert(fn.contains("Your last output is the deliverable"), s"末条输出 = 交付物（引擎取最后一条 assistant 文本）:\n$fn")
+    assert(fn.contains("completion report for this node"), s"内容 = 自身完成汇报:\n$fn")
+    assert(fn.contains("terminal declaration, not that report"), s"申报（node_report）≠ 汇报，两者是两件事:\n$fn")
+    assert(fn.contains("Keep it self-contained"), s"要求 2 的抬头句:\n$fn")
+    assert(fn.contains("\"see above\""), s"指代收尾必须点名禁用:\n$fn")
+    assert(fn.contains("restate the conclusion, the artifact paths and the numbers in full"),
+      s"自包含的可操作判据（写全结论/路径/数字）:\n$fn")
+    // 末行锚不受新行影响（新行只能插在它之前）
+    assertEquals(fn.linesIterator.toList.last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
+
   // ===== 身份透传链（§1d-2）=====
 
   test("AgentState 三字段往返：flowNodeId/isDispatcher/projectName 落 SessionContext 可读"):
