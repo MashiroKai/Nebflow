@@ -161,11 +161,19 @@ object PromptSections:
     * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
     * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
     * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
-    * node LLM 调用，token 是经常性成本）。 */
+    * node LLM 调用，token 是经常性成本）。
+    * node-output contract 批（2026-09-24）：末句加**输出契约最短形态**——末条输出 =
+    * 节点结果（自身完成汇报）、须自包含（禁「see above」指代）。两条要求进本段的
+    * 代价受段长门约束，故同批把既有指针句压缩为近义 ASCII 串（
+    * `The single authoritative protocol is the … tool description plus the …` 172 B
+    * → `Single authoritative protocol = the … description + the injected …` 133 B，
+    * 省 39 B；指针目标与「单一权威」语义不变），全段 327 B → 388 B（门内 ≤400 B）。
+    * 本段文本无逐字钉子（钉子 = 段名存在 + 段长门，见 `PromptSectionsSpec`
+    * 「order-360 段」用例与 `ColdRouteDisciplineSpec` 的 360/370 共存用例）。 */
   val NodeSessionAlwaysOnSection: String =
     """## Node terminal report (Flow Map node sessions)
 
-Before wrapping up call `node_report` — reporting IS the wrap-up action, not a blocked-only exception. The single authoritative protocol is the `node_report` tool description plus the Node protocol footnote injected with node task input; this line is only the always-on belt."""
+Before wrapping up call `node_report` — reporting IS the wrap-up action, not a blocked-only exception. Your last output is the node result: your own completion report, self-contained; never "see above". Single authoritative protocol = the `node_report` description + the injected Node protocol footnote; this line is the always-on belt."""
 
   /** 段长门阈值（字节）：段正文 UTF-8 字节数必须 ≤ 本值。 */
   val NodeSessionAlwaysOnSectionMaxBytes: Int = 400

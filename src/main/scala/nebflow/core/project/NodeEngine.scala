@@ -7168,12 +7168,20 @@ object NodeEngine:
     * 完整协议。
     * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
     * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
+  // node-output contract 批（2026-09-24）：在既有末行**之前**插入两行输出契约
+  // （① 末条输出 = 自身完成汇报／申报≠汇报；② 结果自包含、禁「see above」指代）。
+  // 末行 `TaskBoard work order ⇒ close = done, blocked = stuck.` 逐字仍是最后一行
+  // （`TaskBoardInjectionSpec` 的 `linesIterator.last` 全等钉保持），`endsWith`
+  // 身份钉天然保持（本 val 整体仍是注入输入的最后一块）。既有「still write your
+  // wrap-up report」句与新行同向（申报后照常收尾），未改动。
   val ProtocolFootnote: String =
     """── Node protocol ──
       |**Call `node_report` before wrapping up** — reporting IS the wrap-up action, not a blocked-only channel.
       |Values by role: task = `finish` / `blocked`; verifier = `pass` / `fail` (verdict — evidence in `detail`) / `blocked`; a wrong value is rejected with your role's legal list.
       |Cannot finish (upstream not ready / brief incomplete / capability mismatch / missing external condition)? Never fabricate: `blocked`, category ∈ upstream-incomplete | task-underspecified | agent-mismatch | external-dependency | needs-split | other | blocked — then still write your wrap-up report; a normal result is no substitute.
       |Unreported ⇒ stays running, result undelivered, reminders only — never auto-failed. No tool ⇒ first line exactly `BLOCKED` + JSON {"category":"…","detail":"…","suggestion":"…"}.
+      |**Your last output is the deliverable** (the engine takes your last assistant text and hands it downstream): it must be your own completion report for this node — what you did, the result, where the artifacts are, what is still open. `node_report` is the terminal declaration, not that report: declare first, then write this one.
+      |**Keep it self-contained — no pointing**: downstream receives only this last text, none of your earlier messages, tool output or history. Never close with "see above" / "same as above" / "as mentioned above" — restate the conclusion, the artifact paths and the numbers in full.
       |TaskBoard work order ⇒ close = done, blocked = stuck.""".stripMargin
 
   /** verifier 专属附录段（nrloop 一期 B9；设计 §3.1 纪律③「verdict ≠ 节点状态」+
