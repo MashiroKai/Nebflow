@@ -104,20 +104,23 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  test("schema（mailparams 批 re-pin）：`delivery` 键已退役出 schema —— 参数集合恰为 7 件且不含该键"):
+  test("schema（mailparams 批 re-pin + taskunify 批）：`delivery` 键已退役出 schema；参数集合恰为 8 件（7 + task）且不含该键"):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
     assert(
       !propsOf.keys.toSet.contains("delivery"),
       s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams 批：参数面 8 → 7), got: ${propsOf.keys.toList.sorted}"
     )
+    // taskunify 合一批（2026-09-24）：+ `task`（可选；**不做地址语法扩展**）——Mail
+    // 打到 project 目标时自动建任务 / 续接既有 open 任务，参数面 7 → 8。🔴 属**行为
+    // 可见变更**（已在交付结果申报）；除该键外其余 7 件逐字不变。
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "chainId", "images", "attachments"),
-      "the property set must be exactly the 7 surviving parameters (the other 7 are untouched by this batch)"
+      Set("address", "device", "message", "type", "chainId", "images", "attachments", "task"),
+      "the property set must be exactly the surviving parameters (mailparams 批后 7 件 + taskunify 批的 `task`)"
     )
     // 活能力面**必须在场**（禁顺带删活面：device / images / attachments 是当日刚落地的能力；
     // 判据 = 仍是**对象形态**的已声明属性，不是仅名字在场）。
-    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments") do
+    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments", "task") do
       assert(
         propsOf(k).flatMap(_.asObject).nonEmpty,
         s"`$k` must still be a declared object property with its own face (live capability, untouched)"
