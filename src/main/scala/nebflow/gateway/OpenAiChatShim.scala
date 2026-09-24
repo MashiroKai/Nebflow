@@ -3,6 +3,7 @@ package nebflow.gateway
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.{
+  AgentModelConfig,
   ContentBlock,
   LlmRequest,
   LlmResponse,
@@ -89,7 +90,7 @@ object OpenAiChatShim:
   def toLlmRequest(body: Json): Either[Rejected, LlmRequest] =
     val cur = body.hcursor
     for
-      model <- readModel(cur)
+      modelRef <- readModel(cur)
       messages <- readMessages(cur)
       sessionId <- readExtension(cur, "session_id")
       agentId <- readExtension(cur, "agent_id")
@@ -98,14 +99,26 @@ object OpenAiChatShim:
       messages = messages,
       sessionId = sessionId,
       agentId = agentId,
-      tools = None
+      tools = None,
+      // `model` IS carried — as the request's own agent-model config, which is
+      // the in-tree carrier for "which model should serve this request"
+      // (`LlmRequest.agentModel`, protocol.scala:109 → consumed at
+      // `registry.getCandidatesForAgent`, registry.scala:189, reached from
+      // interface.scala:461 / :568). Setting it here means a caller-supplied
+      // model actually decides the candidate chain instead of being dropped
+      // after validation. With no `model` on the wire this field stays `None`
+      // and the global default preset serves the request, exactly as before.
+      agentModel = Some(AgentModelConfig(preferred = Some(modelRef), fallbacks = Nil))
     )
 
-  /** `model` is required by the OpenAI contract and is honored, not ignored:
-    * the in-tree registry resolves a model ref as `<provider>/<model>`
-    * (`registry.scala:157` `Config.parseModelRef`), so that is the accepted
-    * form. A bare OpenAI model name cannot be resolved without inventing a
-    * mapping ⇒ refused. */
+  /** `model` is required by the OpenAI contract and is **carried**, not ignored:
+    * [[toLlmRequest]] puts it into `LlmRequest.agentModel`, the in-tree carrier
+    * for "which model serves this request" (the same field the in-tree agents
+    * populate — `AgentCore.scala:946`), so the registry builds the candidate
+    * chain from it (`registry.scala:189`) instead of the global preset. The form
+    * accepted is the in-tree model ref `<provider>/<model>`; a bare OpenAI model
+    * name cannot be resolved without inventing a mapping ⇒ refused (declared, see
+    * the batch report's field table), never silently substituted. */
   private def readModel(cur: io.circe.ACursor): Either[Rejected, String] =
     cur.downField("model").as[String] match
       case Right(m) if m.trim.nonEmpty =>
