@@ -33,9 +33,10 @@ import scala.concurrent.duration.*
  *  - D3 短窗内两次独立触发 → 两次各自投递（绕过 60s 去重窗口——分发器投递是
  *    新投递种类，同项目短窗多次触发是合法独立投递）+ 注入 turn 也带各自摘要。
  *    忙时排队断言层次：投递命令类型 = AgentCommand.ImmediateInput——产品代码
- *    AgentActor processing 态将其入 pendingImmediateInputs（AgentActor.scala
- *    "immediate-input-queued" 分支）、turn 边界串行 drain，不打断不丢；本 spec
- *    验证投递侧发出的命令契约与多次投递零丢失。
+ *    processing 态将其入 pendingImmediateInputs（re-pin 2026-09-25 processing 域
+ *    迁移：该分支自 AgentActor 迁至 AgentProcessing.scala 的 processing 行为
+ *    ImmediateInput case，"immediate-input-queued" 分支）、turn 边界串行 drain，
+ *    不打断不丢；本 spec 验证投递侧发出的命令契约与多次投递零丢失。
  *  - D4 占位/跳过类极简输出（单行短文本）→ 照常投递（无特殊抑制）
  */
 class DispatcherOutputDeliverySpec extends CatsEffectSuite:

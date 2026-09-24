@@ -6,8 +6,10 @@ import nebflow.core.AskItem
 /**
  * 测试面桥（S3 批 r4 返工；作者 2026-09-17 裁定 R3 帧级红因 = **(甲) 测试面缺陷**）：
  * 把测试桩的 askUser 载荷接到**生产序列化单点**
- * `AgentActor.buildAskUserJson`（`AgentActor.scala:834`；生产调用点
- * `AgentActor.scala:2554` 与 `SendConfirm.scala:141`）。
+ * `AgentActor.buildAskUserJson`（def 留驻 `AgentActor.scala`；生产调用点
+ * `AgentProcessing.scala` processing 的 AskUser 分支与 `SendConfirm.scala`——
+ * re-pin 2026-09-25 processing 域迁移：原 `AgentActor.scala:2554` 调用点随
+ * processing 行为迁至 AgentProcessing.scala，行号引用改为文件+成员名）。
  *
  * 存在理由：该单点为 `private[agent]`，而调用方
  * `ProjectCreatePanelSpec` 位于包 `nebflow.core.project` ⇒ 包外不可见。帧级断言若要
@@ -22,7 +24,7 @@ import nebflow.core.AskItem
 object AskUserFrameBridge:
 
   /**
-   * 与生产调用点 `AgentActor.scala:2554` 同参形态：首参 `Some(rootSid)` 即
+   * 与生产调用点（AgentProcessing.scala processing 的 AskUser 分支）同参形态：首参 `Some(rootSid)` 即
    * `state.session.rootSessionId`、`sourceSession` 同源；本测试面无
    * project/nodeName（与 panel 链一致）。
    */

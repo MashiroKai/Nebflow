@@ -225,10 +225,13 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(iGuard > 0 && iGuard < iParse, "askGuard 不再是 call() 的第一顺位（headless 守卫被降级）")
   }
 
-  test("B4 分支结构 pin: AgentActor 的等待态标记（WaitingForUser + 预算 pause）只在阻塞模式发生") {
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "AgentActor.scala")
+  test("B4 分支结构 pin: AgentProcessing 的等待态标记（WaitingForUser + 预算 pause）只在阻塞模式发生") {
+    // re-pin（2026-09-25 processing 域迁移）：AskUser 分支随 processing 行为自
+    // AgentActor 迁至 AgentProcessing.scala，读取目标改为新文件（分支文本逐字
+    // 未动，判据语义不变）。
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "AgentProcessing.scala")
     val iBranch = src.indexOf("case AgentCommand.AskUser(requestId, items, replyToOpt, askMode) =>")
-    assert(iBranch > 0, "AgentActor 的 AskUser 分支未接收 mode（B4 未接线）")
+    assert(iBranch > 0, "AgentProcessing 的 AskUser 分支未接收 mode（B4 未接线）")
     val iCond = src.indexOf("if AskMode.parksTurn(askMode) then", iBranch)
     val iTouch = src.indexOf("touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)", iBranch)
     val iPause = src.indexOf("DelegateBudget.pause(srcSession)", iBranch)

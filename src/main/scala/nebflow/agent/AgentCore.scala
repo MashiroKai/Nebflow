@@ -217,7 +217,9 @@ private[agent] trait AgentCore:
     val logCtx = lifecycleLog.ctxPrefix(who, s"$sname/$sid")
     lifecycleLog.infoSync(if detail.nonEmpty then s"$logCtx event=$event detail=$detail" else s"$logCtx event=$event")
 
-  protected def persistIfSession(resources: SharedResources, state: AgentState): IO[Unit] =
+  // processing 域迁移(2026-09-25):AgentProcessing 经 import AgentActor.* 调用,
+  // protected 对包内非子类不可见 ⇒ 放宽为 private[agent](trait 仅包内可见,外延不变)。
+  private[agent] def persistIfSession(resources: SharedResources, state: AgentState): IO[Unit] =
     state.sessionId match
       case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
       case None => IO.unit
