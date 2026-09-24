@@ -3033,11 +3033,13 @@ object AgentCore:
     * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。 */
   val RetiredToolGuides: Map[String, String] = Map(
     "Task" ->
-      """`Task` was retired in 2026-09-12 and REINTRODUCED 2026-09-24 as the single ledger tool (one ledger, one id space, one change-history file) — it is the write face for tasks and is Nebula-exclusive. The old meaning ("trigger a project") is now Mail: use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
+      """`Task` was retired 2026-09-12 and REINTRODUCED 2026-09-24 as the single work-item ledger — one ledger, one id space, one change-history file. It is the write face for tasks and is Nebula-exclusive; the retired project-entry meaning of this name is carried by the separate row below.""",
+    "ProjectTrigger" ->
+      """Project triggering is now Mail — use `Mail(to="project:<project name>", message=<task text>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
     "TaskList" ->
-      """`TaskList` retired 2026-09-24 — it was merged into `Task` together with `TaskBoard`: one ledger (`~/.nebflow/tasks-v2.json`), one id space, one change-history file. Use `Task` with action=create/update/complete/close/list/show. `note` is NO LONGER a parameter: the timeline is written automatically by the engine whenever you Mail the task's dispatcher. Read it with `TaskInfo`. The old ledger `~/.nebflow/tasks.json` is a frozen read-only archive — nothing was migrated and its ids are not reused.""",
+      """The task ledger is now `Task` — one ledger for both the orchestration backlog and the project board. Use Task(action=...) with the three states open / closed / completed; ids come from the new ledger's own space.""",
     "TaskBoard" ->
-      """`TaskBoard` retired 2026-09-24 — it was merged into `Task` and is Nebula-exclusive; a project session now only gets the read-only `TaskInfo` (no parameters: it shows the ONE task you are attached to). The old per-project board file is a frozen read-only archive — nothing was migrated and its ids are not reused.""",
+      """The project board is now `Task` (Nebula writes) / `TaskInfo` (you read). You keep read access to your own task only; creation and state changes belong to Nebula.""",
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->

@@ -355,6 +355,89 @@ object Defaults:
   def DispatcherIdleWindowMs: Long =
     sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString).toLong
 
+  /** Dispatcher session lifetime **anchor** (taskunify merge batch 2026-09-24, ruling d①
+    * "pure task-terminal anchor").
+    *
+    * `true` (**new production default**) = the criterion becomes "the task this dispatcher
+    * is bound to reached a terminal state (`completed` / `closed`)" — task terminal ⇒ the
+    * session is torn down + one distinguishable `dispatcher-task-terminal` event; the 4 h
+    * idle window is no longer consulted. `false` = **fallback** to the current idle-window
+    * behaviour (byte-for-byte as today).
+    *
+    * 🔴 **Fallback switch shape (ruling T wording "explicit switch `<=0`/`off`" + current
+    * convention)**: this key is read from `sys.props`; `off` / `false` / `0` / a negative
+    * value all mean **off** (back to the idle window). It is in the same family as
+    * [[DispatcherIdleWindowMs]]'s "`<=0` = keep-alive off", but this key is boolean, so
+    * `off` is accepted too. **Enablement is never silent**: the startup line
+    * `TASKLEDGER_LIFECYCLE_ANCHOR` lands in the gateway log (mechanically greppable).
+    *
+    * 🔴 **Quantitative cap (design §4d / risk table "session leak · unbounded growth" —
+    * mandatory)**: once the criterion is "destroy only on task terminal", a task that never
+    * reaches a terminal state means unbounded session residency (measured baseline: under
+    * the 4 h window `~/.nebflow/sessions/` already holds 1,817 dispatcher sessions / 4.6 GB).
+    * ⇒ the concurrency cap lives in [[DispatcherMaxConcurrentSessions]]; exceeding it is an
+    * **explicit refusal + alert** (never a silent over-spawn).
+    */
+  def DispatcherLifecycleAnchorTaskTerminal: Boolean =
+    val raw = sys.props.getOrElse("nebflow.dispatcher.lifecycleAnchor", "task-terminal").trim.toLowerCase
+    raw match
+      case "off" | "false" | "0" | "no" | "idle" => false
+      case _                                     => true
+
+  /** **Concurrency cap on dispatcher sessions per project** (taskunify merge batch
+    * 2026-09-24; design §4d mandatory anti-leak item).
+    *
+    * After the anchor change, "a task that never reaches a terminal state ⇒ unbounded
+    * session residency" is this batch's largest resource risk ⇒ this key sets a hard upper
+    * bound: **when the cap is reached a new spawn is explicitly refused + alerted** (not a
+    * silent over-spawn, not a silent drop — the refusal text names the project, the current
+    * concurrency, the cap and the way out). `<= 0` = **gate off** (fallback).
+    *
+    * Value rationale: the current convention is "exactly one active dispatcher per project"
+    * (`activeRef` singleton + the singleton ruling) ⇒ the default `1` **preserves the
+    * current singleton semantics** (zero behavioural drift). Raising it is the multi-task
+    * concurrency shape, which also requires picking the session by task at the injection
+    * face (not done in this batch — see implplan §5 "the heaviest structural conflict",
+    * already registered as a structural precondition).
+    */
+  def DispatcherMaxConcurrentSessions: Int =
+    sys.props.getOrElse("nebflow.dispatcher.maxConcurrentSessions", "1").toInt
+
+  /** 🔴 **Unified-ledger enable switch + uplink fail-closed gate** (taskunify merge batch
+    * 2026-09-24; author Q2ⓐ "strict fail-closed" + implplan §10.3 hard requirement 3).
+    *
+    * `false` (**production default = legacy behaviour**) = the uplink circuit **does not
+    * check attribution** (byte-for-byte as today: node failed / completed / landing /
+    * reentry / cancel / redelivery are all delivered as before). `true` = fail-closed is
+    * enabled: the uplink checks the node's attribution fingerprint `taskId`;
+    * **no fingerprint (or not registered in the ledger) ⇒ refused**, with the ruling-T
+    * **double trace** (event face [[FlowMapEventLog.UplinkRefusedType]] + WARN log face),
+    * the text carrying "node id + refusal reason + way out".
+    *
+    * 🔴 **Why the default is off (it is not an oversight)**: implplan §10.3 criterion ①
+    * states "started without the switch ⇒ behaviour byte-for-byte as today"; and the Q2ⓐ
+    * legacy cost is registered (all existing nodes have zero fingerprints ⇒ everything
+    * refused). ⇒ default off means **the fallback path IS the default state**, and enabling
+    * the gate is **one explicit action** (the `TASKLEDGER_ENABLED` startup line is
+    * mechanically greppable, criterion 10.3②).
+    *
+    * Accepted values: `false`/`off`/`0`/`no` ⇒ off (same family as
+    * [[DispatcherLifecycleAnchorTaskTerminal]]).
+    */
+  def TaskLedgerUplinkFailClosed: Boolean =
+    val raw = sys.props.getOrElse("nebflow.taskledger.enabled", "false").trim.toLowerCase
+    raw match
+      case "true" | "on" | "1" | "yes" => true
+      case _                           => false
+
+  /** Loud-alert window for the **first N** refusals after enablement (ruling T: "the first
+    * N refusals after enablement alert loudly"). A refusal inside the window also emits an
+    * ALERT-level log line (prefix `[UPLINK-REFUSED]`), so the known cost — "every existing
+    * node is refused the moment the gate turns on" — is **immediately visible** instead of
+    * drowning in routine WARNs. `<= 0` = no extra alert. */
+  def TaskLedgerUplinkLoudAlertFirstN: Int =
+    sys.props.getOrElse("nebflow.taskledger.loudAlertFirstN", "10").toInt
+
   // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
   //
   // 两维独立、**任一命中即熔断**（额度帽不做——一期范围 OUT，设计 §3.6 作者裁定 R6
