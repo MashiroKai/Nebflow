@@ -66,6 +66,22 @@ export default {
   'project.createCancel': 'Cancel',
   'project.createDescRequired': 'Enter a project description (the Agent assigns tasks from it)',
   'project.createDescTooLong': 'Description is over 500 characters — please shorten it to 500 or fewer.',
+  // C1 ADDITION CANDIDATES (projcreate-redesign batch, author ruling 2026-09-24
+  // D2(b)+D4): the workspace slot (picker form) and the new direct-submit failure
+  // states. Pending the author's review; the sink freezes the wording.
+  'project.createWorkspaceLabel': 'Workspace path',
+  'project.createWorkspacePick': 'Choose path…',
+  'project.createWorkspaceNone': 'No path selected',
+  'project.createWorkspaceRequired': 'Choose a workspace path first.',
+  'project.createWorkspacePickFail': 'The folder browser failed to load — please try again.',
+  'project.createPending': 'Creating…',
+  'project.createFailGeneric': 'Creation failed — please try again.',
+  // SUPERSEDED (author ruling 2026-09-24 D2(b)): once direct creation landed,
+  // these two keys lost their call sites — `createPrefill` existed to build the
+  // "one sentence sent to the agent" payload, and `createInputUnavailable` was
+  // the forward path's "chat input not found" state. This batch KEEPS the keys
+  // byte-identical and only records call sites = 0 (key-face cleanup is out of
+  // this batch's write face).
   'project.createInputUnavailable': 'Chat input not found — the description was not filled in.',
   'project.createPrefill': 'Create a project for me. Project description: {desc}',
   // Submit-success hint: registered but deliberately NOT enabled in this batch (same
