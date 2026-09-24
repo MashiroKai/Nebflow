@@ -61,10 +61,17 @@ export const NODE_STATUS_CLS = {
 };
 
 // ── 数据访问层（真实 REST，契约 §1/§3）───────────────────
-/** 项目列表**线上原样**（GET /api/projects 需 auth）。
- *  A 波②（2026-09-22）：项目面板「源码」态要显示的是**线上载荷本身**（wire 保真），
- *  不是本地复序列化——故与 `fetchProjects` 共用同一次请求，把 response text 一并带回。
- *  单一请求点：`fetchProjects` 现在只是本函数的薄包装，两侧**不可能**读到不同载荷。
+/** Project list, wire-verbatim (GET /api/projects, needs auth) — returns the
+ *  response text alongside the parsed rows; `raw` is the raw wire payload (not
+ *  a local re-serialization).
+ *  Retention note (projcreate-redesign batch, 2026-09-24): this function's
+ *  original consumer was the Projects panel "source" view (A-wave ②), which the
+ *  author's ruling (a) removed entirely. The function is KEPT because
+ *  `fetchProjects` — its only live consumer (taskList.js) — still uses it as the
+ *  single request point; `fetchProjects` now discards the `raw` field. The
+ *  earlier batch's claim that "both sides can never read different payloads" no
+ *  longer applies to any UI surface (keeping this function leaves taskList's
+ *  fetch leg untouched).
  *  @returns {Promise<{projects: Array<any>, raw: string}>} */
 export async function fetchProjectsRaw() {
   const r = await fetch(API.projects, { headers: authHeaders() });

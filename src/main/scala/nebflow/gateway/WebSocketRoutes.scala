@@ -15,7 +15,7 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.project.{CancelSource as ChainCancelSource, ChainCancelEntry, ChainCancelReport, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{CancelSource as ChainCancelSource, ChainCancelEntry, ChainCancelReport, ProjectCreateService, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.{PathUtil, *}
 import nebflow.llm.*
 import nebflow.service.*
@@ -3404,6 +3404,93 @@ class WebSocketRoutes(
                   wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
                 }
             else IO.unit
+            end if
+
+          // ── Direct project creation (author ruling 2026-09-24, D2 = option (b)) ──
+          // The Projects-panel "+" dialog submits HERE instead of pre-filling the
+          // chat box. This face is a THIN adapter over ProjectCreateService — the
+          // very same create core the ProjectCreate tool uses, so the occupancy
+          // gate, the idempotent re-mount semantics, the archive refusal and the
+          // scaffold report are one implementation (no drift between faces).
+          //
+          // IDENTITY IS VERIFIED, NEVER FABRICATED. Mounting needs a delivery
+          // root (ProjectRuntimeRegistry.mount), and the root decides where a
+          // node's out="Nebula" messages land. The frame's `sessionId` is only
+          // accepted after the server-side session index confirms it exists
+          // (fail-closed: unknown => refused, exactly like ensureAgent's
+          // "Dropping message to unknown session"), and the root then comes from
+          // the server-side agent registry via resolveRootSessionId — the same
+          // channel askUserAnswer/forwardInteractionAnswer uses. No placeholder
+          // root is ever invented; a session-less call is refused with the
+          // service's own error string.
+          case "projectCreate" =>
+            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+            val hc = json.hcursor
+            val pcSessionId = hc.downField("sessionId").as[String].getOrElse("")
+            val pcWorkspaceRaw = hc.downField("workspace").as[String].getOrElse("").trim
+            val pcName = hc.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val pcDesc = hc.downField("description").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val pcWs = PathUtil.expandTilde(pcWorkspaceRaw)
+            if pcSessionId.nonEmpty && pcWs.nonEmpty then
+              (for
+                // Fail-closed identity check (the session must really exist).
+                metaOpt <- sharedResources.sessionStore.getSessionMeta(pcSessionId)
+                _ <- IO.raiseUnless(metaOpt.isDefined)(
+                  new RuntimeException(
+                    s"unknown session '$pcSessionId' — refusing to attribute the project's delivery root"
+                  )
+                )
+                // Absolute-path check mirrors the tool face / the panel answer
+                // parser (PathUtil.isAbsolute: POSIX, Windows drive, UNC). A
+                // project workspace is by design unrestricted in location — the
+                // frontend picker hands back an absolute directory — so the
+                // only shape that is rejected here is "not an absolute path".
+                _ <- IO.raiseUnless(PathUtil.isAbsolute(pcWs))(
+                  new RuntimeException(s"workspace must be an absolute path (got '$pcWorkspaceRaw')")
+                )
+                root <- resolveRootSessionId(pcSessionId)
+                outcome <- ProjectCreateService.create(
+                  pcName,
+                  pcWs,
+                  pcDesc,
+                  ProjectCreateService.CreateIdentity(
+                    actorSystem = Some(sharedResources.actorSystem),
+                    sharedResources = Some(sharedResources),
+                    // The server-resolved root, not the raw frame field: the
+                    // same upline-root semantics the tool face has.
+                    rootSessionId = Some(root),
+                    sessionId = Some(pcSessionId),
+                    wsSend = Some((j: io.circe.Json) => wsHub.broadcast(j))
+                  )
+                )
+                _ <- outcome match
+                  case Right(msg) =>
+                    wsSend(io.circe.Json.obj(
+                      "type" -> "projectCreateResult".asJson,
+                      "ok" -> true.asJson,
+                      "message" -> msg.asJson
+                    ))
+                  case Left(err) =>
+                    wsSend(io.circe.Json.obj(
+                      "type" -> "projectCreateResult".asJson,
+                      "ok" -> false.asJson,
+                      "error" -> err.message.asJson
+                    ))
+              yield ())
+                .handleErrorWith { e =>
+                  logger.warn(s"projectCreate failed: ${e.getMessage}")
+                  wsSend(io.circe.Json.obj(
+                    "type" -> "projectCreateResult".asJson,
+                    "ok" -> false.asJson,
+                    "error" -> e.getMessage.asJson
+                  ))
+                }
+            else
+              logger.warn(
+                "projectCreate: dropped frame missing sessionId or workspace " +
+                  s"(sessionId=${if pcSessionId.nonEmpty then "present" else "absent"}, " +
+                  s"workspace=${if pcWorkspaceRaw.nonEmpty then "present" else "absent"})"
+              ) *> IO.unit
             end if
 
           case "deletePath" =>

@@ -393,6 +393,43 @@
 .proj-create-count.is-over { color: var(--color-danger); }
 .proj-create-hint { flex: 1; min-width: 0; }
 
+/* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather
+   than relying on the user typing a path") ──
+   Two pieces: the picker entry button + the chosen-path echo.
+   🔴 Zero new material: the button reuses `.glass-control` (sapphire.css:147 base,
+   light/dark tokens); the echo is a text-only display face (no input box => no
+   "takes input but does nothing" fake control).
+   🔴 The echo uses `min-width:0` + `text-overflow:ellipsis` so a long absolute path
+   cannot push the panel into horizontal overflow (the T6 criterion "the dialog
+   subtree itself has no horizontal overflow" would surface any inner overflow). */
+.proj-create-path-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.proj-create-pick {
+  flex: 0 0 auto;
+  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text);
+  padding: 7px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.proj-create-pick:hover { background: var(--glass-control-bg-hover); }
+.proj-create-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--color-frame-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Chosen state: the path is a real value, so it is lifted to body text colour
+   (distinguishing it from the "no path selected" placeholder state). */
+.proj-create-path[data-picked="1"] { color: var(--color-text); }
+
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
      「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；
