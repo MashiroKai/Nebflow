@@ -203,7 +203,7 @@ private[agent] trait AgentCore:
     else if id == "-" || id == "system" then id
     else id.take(8)
 
-  protected def logAgentEvent(
+  private[agent] def logAgentEvent(
     agentDef: AgentDef,
     depth: Int,
     sessionId: Option[String],
@@ -2397,7 +2397,7 @@ private[agent] trait AgentCore:
 
   end buildToolList
 
-  protected def emitStream(
+  private[agent] def emitStream(
     wsSend: io.circe.Json => IO[Unit],
     event: AgentStreamEvent,
     isSubagent: Boolean = true,
@@ -2415,7 +2415,7 @@ private[agent] trait AgentCore:
    * Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
    * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper).
    */
-  protected def emitStreamIO(
+  private[agent] def emitStreamIO(
     wsSend: io.circe.Json => IO[Unit],
     event: AgentStreamEvent,
     isSubagent: Boolean = true,
@@ -2636,7 +2636,7 @@ private[agent] trait AgentCore:
    *     无意义，留着会让下一次 turn 继承过期相位）。
    * 幂等且仅在记录存在时更新（registry 无该 session 时 no-op——不创建幽灵条目）。
    */
-  protected def touchRegistryActivity(
+  private[agent] def touchRegistryActivity(
     resources: SharedResources,
     sessionId: Option[String],
     status: AgentStatus,

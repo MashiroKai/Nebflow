@@ -28,7 +28,7 @@ private[agent] trait AgentSession:
         (false, state.withRecentMessageIds(newIds))
 
   /** Emit a sessionBusy event to the frontend. */
-  protected def emitSessionBusy(
+  private[agent] def emitSessionBusy(
     wsSend: Json => IO[Unit],
     sessionId: String,
     busy: Boolean
