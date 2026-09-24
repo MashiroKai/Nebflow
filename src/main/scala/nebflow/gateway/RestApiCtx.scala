@@ -46,7 +46,16 @@ final class RestApiCtx(
   socialErrorResponseImpl: nebflow.social.SocialChannels.Failure => IO[Response[IO]],
   presencePeerDeviceIdImpl: Request[IO] => String,
   isKnownNetworkDeviceImpl: (NeblinkService, String, String) => IO[Boolean],
-  checkHttpBaseUrlImpl: String => Either[String, String]
+  checkHttpBaseUrlImpl: String => Either[String, String],
+  neblinkServerUrlImpl: Option[String] => IO[Option[String]],
+  completeDeviceEnrollmentDetailedImpl: (
+    NeblinkService,
+    String,
+    Json,
+    Option[String],
+    Option[String],
+    Boolean
+  ) => IO[Either[String, String]]
 ):
 
   def scanAgentPresets(): Map[String, Option[String]] = scanAgentPresetsImpl()
@@ -70,4 +79,19 @@ final class RestApiCtx(
   ): IO[Boolean] =
     isKnownNetworkDeviceImpl(ms, claimedDeviceId, remoteIp)
   def checkHttpBaseUrl(baseUrl: String): Either[String, String] = checkHttpBaseUrlImpl(baseUrl)
+
+  // 登录回调域(AuthRoutes)所需的两条委托(2026-09-24 C 步起):实现留守
+  // RestApiRoutes 类内(单一实现);后续 neblink 域迁出实现时,本委托保留不动。
+  def neblinkServerUrl(explicit: Option[String] = None): IO[Option[String]] =
+    neblinkServerUrlImpl(explicit)
+
+  def completeDeviceEnrollmentDetailed(
+    ms: NeblinkService,
+    resolvedUrl: String,
+    json: Json,
+    logtoRefresh: Option[String] = None,
+    logtoIdToken: Option[String] = None,
+    explicitUserAction: Boolean = false
+  ): IO[Either[String, String]] =
+    completeDeviceEnrollmentDetailedImpl(ms, resolvedUrl, json, logtoRefresh, logtoIdToken, explicitUserAction)
 end RestApiCtx
