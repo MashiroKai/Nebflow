@@ -78,6 +78,20 @@ case class ToolContext(
     * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）；
     * 挂载面过滤是另一道保险（`node_report` 仅 flowNodeSession 注入）。 */
   flowNodeRole: Option[String] = None,
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+    * field, the same shape as `chainId`): the task id this session is attributed to (a
+    * dispatcher = the task it was created to serve; a project node = the task recorded as
+    * its origin). Passed through by AgentCore from SessionContext (**engine-side identity,
+    * never a client parameter**) -- the resolution source of `TaskInfo`'s read-only
+    * attributed single entry (zero parameters ⇒ attribution can only come from here) and the
+    * criterion of the engine-side uplink refusal face (no fingerprint ⇒ a fail-closed
+    * refusal + a double trace).
+    * 🔴 **Value discipline**: it must **not** be taken from `NodeEditTool`'s `project`
+    * parameter (that parameter can override `ctx.projectName` ⇒ client-forgeable); it must
+    * take `ctx`'s engine-side identity.
+    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+    * direct REST calls). */
+  taskId: Option[String] = None,
   /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 1）：本节点
     * 所属链 id = `chain-<分量最早 createdAt 节点 id>`（FlowMapStore.chainIdOf 判据
     * 单点，分量成员数 ≥2 才带值——孤立单节点链不带，与 payload chainId 条件键
@@ -113,6 +127,17 @@ case class ToolContext(
     * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
     * fail-closed 为 false。 */
   def isNebulaRoot: Boolean = AgentCore.isNebulaRoot(agentDef, depth)
+
+  /** **The symmetric identity gate** (taskunify batch 2026-09-24): the Nebula root session
+    * may write the task ledger.
+    * The criterion is [[ToolContext.isNebulaRoot]] (**a delegated single point**; never
+    * re-write the expression here); `agentDef=None` (direct REST calls / a spec harness / a
+    * non-agent context) is fail-closed false -- the same discipline as "a direct REST call
+    * never writes the ledger", and **not** "nobody can write".
+    * This is the `Task` tool's second (runtime) identity gate; the first = the mount face
+    * (neither the dispatcher's fixed set nor a node session sees `Task`, and a non-Nebula
+    * agent.json declaration grants nothing). */
+  def isNebulaWriter: Boolean = isNebulaRoot
 
 case class ToolError(message: String)
 case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)

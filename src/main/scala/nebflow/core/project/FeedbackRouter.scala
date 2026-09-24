@@ -60,6 +60,17 @@ final class FeedbackRouter(
     * BLOCKED）。None = 回退 blocked 通道（既有测试/构造零改动——事件文本自辨）。
     * 置于参数列末位带默认值——既有位置构造（FeedbackRouterSpec）零破坏。 */
   escalateFailed: Option[(String, String) => IO[Unit]] = None,
+  /** 🔴 **Uplink attribution gate** (taskunify merge batch 2026-09-24 · ruling T ·
+    * **U4 = blocked feedback reentry**): `true` = this node's uplink is **allowed**,
+    * `false` = already refused (the double trace is written by the injector [[NodeEngine]]).
+    *
+    * Why this seam is needed: U4 is the `ReenterDispatcher` sent by [[reenter]] in this file
+    * (implplan §10.4 lists `FeedbackRouter.scala:97`), and it goes through **none** of
+    * [[NodeEngine]]'s delivery legs ⇒ gating only at the engine's delivery points would
+    * structurally miss U4 (the only one of the seven that is not inside the engine). The
+    * default `_ => IO.pure(true)` = **allow** (existing constructions / unit tests unchanged;
+    * NodeEngine injects the real gate explicitly). */
+  uplinkGate: NodeDef => IO[Boolean] = _ => IO.pure(true)
 ):
   private val logger = NebflowLogger.forName("nebflow.feedback.router")
 
@@ -126,19 +137,31 @@ final class FeedbackRouter(
     s"[Node '${node.name}' failed]\n项目「$projectName」节点「${node.name}」(${node.id}) 回跳重试 ${max} 次" +
       s"（upstream=$upstream，gen=${node.gen}）后仍 failed——已停止自动回跳，等待处置。\n最后失败：${lastErr.take(600)}"
 
-  /** 档位 A：自动重入 → ProjectActor.ReenterDispatcher（§2.2）。 */
+  /** Tier A: automatic reentry → ProjectActor.ReenterDispatcher (§2.2).
+    *
+    * 🔴 taskunify (2026-09-24 · **U4**): this leg is the **only one of the seven uplinks that
+    * does not go through [[NodeEngine]]'s delivery functions** (`ReenterDispatcher` is an
+    * actor command) ⇒ the uplink attribution gate must stop it here first, otherwise an
+    * unattributed node's blocked reentry would bypass every engine-side gate. Refused ⇒ not
+    * dispatched, named in the WARN (the event face is written by the injected gate's
+    * [[NodeEngine.uplinkAllowed]]). */
   private def reenter(node: NodeDef, feedback: BlockedFeedback): IO[Unit] =
-    ProjectRuntimeRegistry.get(projectName).flatMap {
-      case Some(rt) =>
-        rt.actorRef match
-          case Some(ref) =>
-            FlowMapEventLog.append(workspace, projectName, node.id, "reentry-triggered",
-              s"round ${node.blockCount}: dispatcher reentry for [${feedback.category}] ${feedback.detail.take(120)}") *>
-              (ref ! ProjectActor.ProjectCommand.ReenterDispatcher(node.id, feedback, node.blockCount)).void
+    uplinkGate(node).flatMap {
+      case false =>
+        logger.warn(s"Project '$projectName' node '${node.name}' (${node.id}) blocked reentry NOT dispatched — uplink refused (no task attribution)")
+      case true =>
+        ProjectRuntimeRegistry.get(projectName).flatMap {
+          case Some(rt) =>
+            rt.actorRef match
+              case Some(ref) =>
+                FlowMapEventLog.append(workspace, projectName, node.id, "reentry-triggered",
+                  s"round ${node.blockCount}: dispatcher reentry for [${feedback.category}] ${feedback.detail.take(120)}") *>
+                  (ref ! ProjectActor.ProjectCommand.ReenterDispatcher(node.id, feedback, node.blockCount)).void
+              case None =>
+                logger.warn(s"Project '$projectName' has no actorRef — reentry for node '${node.name}' skipped")
           case None =>
-            logger.warn(s"Project '$projectName' has no actorRef — reentry for node '${node.name}' skipped")
-      case None =>
-        logger.warn(s"Project '$projectName' not mounted — reentry for node '${node.name}' skipped")
+            logger.warn(s"Project '$projectName' not mounted — reentry for node '${node.name}' skipped")
+        }
     }
 
   /** 档位 B：升级 Nebula（§2.3）。仅 cooldown-on 时合并为单条（§7.4：其余即时投）。 */

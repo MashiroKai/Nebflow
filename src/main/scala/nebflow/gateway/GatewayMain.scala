@@ -505,6 +505,19 @@ object GatewayMain extends IOApp:
                           val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                           nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                       logger.info(s"nebflow ${nebflow.Version.string}") *>
+                        // taskunify merge batch (2026-09-24): **enablement must never happen
+                        // silently** (implplan §10.3 hard requirement 3③) — each switch state
+                        // gets one **mechanically greppable** startup log line:
+                        // `TASKLEDGER_LIFECYCLE_ANCHOR` (session lifetime anchor) and
+                        // `TASKLEDGER_CONCURRENCY_CAP` (concurrency cap). Criterion = starting
+                        // with the switch ⇒ exactly one such line; after falling back the
+                        // refusal-event grep count = 0.
+                        logger.info(
+                          s"TASKLEDGER_LIFECYCLE_ANCHOR=${if nebflow.shared.Defaults.DispatcherLifecycleAnchorTaskTerminal then "task-terminal" else "idle-window(fallback)"} (nebflow.dispatcher.lifecycleAnchor)") *>
+                        logger.info(
+                          s"TASKLEDGER_CONCURRENCY_CAP=${nebflow.shared.Defaults.DispatcherMaxConcurrentSessions} (nebflow.dispatcher.maxConcurrentSessions; <=0 = gate off)") *>
+                        logger.info(
+                          s"TASKLEDGER_ENABLED=${nebflow.shared.Defaults.TaskLedgerUplinkFailClosed} (nebflow.taskledger.enabled; fail-closed uplink attribution gate — false = legacy behaviour byte-for-byte)") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
                            case Some((name, ref)) =>

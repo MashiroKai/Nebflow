@@ -782,6 +782,14 @@ object AgentActor extends AgentCore with AgentSession:
       * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+      * id this session is attributed to (a dispatcher = the task it was created to serve; a
+      * project node = the task recorded as its origin). Injected at NodeEngine / ProjectActor
+      * spawn -> passed through AgentCore into `ToolContext.taskId` -- the only source of
+      * `TaskInfo`'s zero-parameter attribution resolution (engine-side identity, never a
+      * client parameter). Default None = no attribution (pre-existing nodes / the Nebula
+      * root / team / dual-track flow / direct REST calls). */
+    taskId: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
       * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
     flowNodeName: Option[String] = None,
@@ -863,6 +871,7 @@ object AgentActor extends AgentCore with AgentSession:
             isDispatcher = isDispatcher,
             flowNodeRole = flowNodeRole,
             projectName = projectName,
+            taskId = taskId,
             flowNodeName = flowNodeName,
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,

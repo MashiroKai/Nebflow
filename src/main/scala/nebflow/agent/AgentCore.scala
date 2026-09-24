@@ -1246,6 +1246,13 @@ private[agent] trait AgentCore:
         // 角色分支的引擎侧判据来源（不信客户端参数，与 flowNodeId 同款纪律）。
         flowNodeRole = state.session.flowNodeRole,
         projectName = state.session.projectName,
+        // taskunify batch (2026-09-24, B1 pass-through chain, third segment): the task
+        // attribution fingerprint SessionContext.taskId -> ToolContext.taskId -- the only
+        // source of `TaskInfo`'s zero-parameter attribution resolution (engine-side
+        // identity, never a client parameter). None = no attribution (pre-existing nodes /
+        // the Nebula root / team / dual-track flow / direct REST calls) ⇒ `TaskInfo`
+        // refuses fail-closed.
+        taskId = state.session.taskId,
         // 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 3）：
         // 链身份随身份三元组同路透传——节点会话内的产出据此在过程文档**文件名
         // 尾段**写链归属 `__<chainId>`（值 = spawn 时刻快照；正文零元数据头，
@@ -2212,12 +2219,19 @@ private[agent] trait AgentCore:
     // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
     // §C.1 静态矩阵不被 plugin 授予绕过。
     val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
-    // TaskBoard（20260908 任务板批 2，规格 §1c）：project 会话按身份挂载——
-    // projectBoardSession = isDispatcher || flowNodeId.isDefined（分发器/项目节点）。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】：分发器固定面
-    // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
-    // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
-    val withBoard = if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
+    // TaskInfo (taskunify batch 2026-09-24, replacing the mount point of TaskBoard batch 2):
+    // project sessions mount it by identity -- projectBoardSession = isDispatcher ||
+    // flowNodeId.isDefined (dispatcher / project node). The append point comes **after** all
+    // role filtering and the NebulaExclusiveTools strip: the dispatcher's nine fixed items
+    // are stripped first by nebulaFiltered and re-mounted here by session identity, so the
+    // two stages do not conflict; dual-track flow / team / Nebula sessions always have
+    // flag=false and never mount it (a tool-face AND an in-tool identity refusal as a double
+    // safeguard).
+    // 🔴 **Capability inversion** (taskunify §16 P6): the mounted item changes from
+    // `TaskBoard` (full rights) to `TaskInfo` (**zero parameters, read-only**) -- the
+    // dispatcher's write right over the task ledger has been taken back by Nebula (the
+    // `Task` tool); this point only grants "see the one you are attached to".
+    val withBoard = if projectBoardSession then pluginGranted + "TaskInfo" else pluginGranted
     // node_report（blocked 结构化信号批 20260909，设计 spec §5.2 #4；同日作者
     // 裁定泛化更名 NodeReport 统一三语义）：flow 节点会话专属挂载——编排层专属
     // 工具族（Pop/AskUser/Schedule 同类），不进通用 agent 工具面。判据 =
@@ -2747,15 +2761,18 @@ object AgentCore:
     "Delegate",
     "AgentControl",
     "MemoryNote",
-    // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
-    // 存储（~/.nebflow/tasks.json），与 MemoryNote 同域隔离（非 Nebula 声明即剥）。
-    "TaskList",
-    // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
-    // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
-    // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
-    // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
-    // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
-    "TaskBoard",
+    // The two items TaskList/TaskBoard were unified by taskunify (2026-09-24) ⇒ this set's
+    // members are renamed: `TaskList` -> `Task` (the unified ledger's **only write face**,
+    // Nebula-exclusive) and `TaskBoard` -> `TaskInfo` (the project domain's **read-only**
+    // item -- not Nebula-exclusive: mounted on the dispatcher's fixed set + on project node
+    // sessions by identity; but it shares this set's [declaration-escape prevention]
+    // channel: an agent.json declaration (including "*") grants nothing to any non-Nebula
+    // identity). A project session's real authorization is appended at the end of
+    // buildAllowedToolSet by session identity (after this set's strip point), so the strip
+    // and the grant never interfere. **The item count is unchanged** (a one-to-one rename,
+    // net 0).
+    "Task",
+    "TaskInfo",
     // Pop（2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）：Pop 收归
     // Nebula 专属——Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染的入口，
     // 靠纪律不如靠工具面收口。本集同时是【防声明逃逸】通道：agent.json 声明
@@ -2913,8 +2930,13 @@ object AgentCore:
     // NebulaOrchestrationToolsExpectedSize——该常量现读值 = 17）。
     // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
-    // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
-    "TaskList",
+    // The two items TaskList/TaskBoard were unified by taskunify (2026-09-24) ⇒ this set's
+    // members are renamed: `TaskList` -> `Task` (Nebula's exclusive **only write face**: one
+    // ledger, one id space, one change-history file). **The item count is unchanged** (a
+    // one-to-one rename, net 0) ⇒ `NebulaOrchestrationToolsExpectedSize` is still 17. The
+    // old name `TaskList` is retired and removed; calling it hits the retirement guide in
+    // AgentCore.RetiredToolGuides (error text only, zero execution surface).
+    "Task",
     // 通信（好友功能非旧体系）
     "SendMessage",
     // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
@@ -3021,7 +3043,13 @@ object AgentCore:
     * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。 */
   val RetiredToolGuides: Map[String, String] = Map(
     "Task" ->
-      """Project triggering is now Mail — use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
+      """`Task` was retired 2026-09-12 and REINTRODUCED 2026-09-24 as the single work-item ledger — one ledger, one id space, one change-history file. It is the write face for tasks and is Nebula-exclusive; the retired project-entry meaning of this name is carried by the separate row below.""",
+    "ProjectTrigger" ->
+      """Project triggering is now Mail — use `Mail(to="project:<project name>", message=<task text>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
+    "TaskList" ->
+      """The task ledger is now `Task` — one ledger for both the orchestration backlog and the project board. Use Task(action=...) with the three states open / closed / completed; ids come from the new ledger's own space.""",
+    "TaskBoard" ->
+      """The project board is now `Task` (Nebula writes) / `TaskInfo` (you read). You keep read access to your own task only; creation and state changes belong to Nebula.""",
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->
@@ -3049,7 +3077,7 @@ object AgentCore:
     "Glob",
     "Grep",
     "Bash",
-    "TaskBoard"
+    "TaskInfo"
   )
 
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入

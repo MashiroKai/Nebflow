@@ -114,7 +114,14 @@ object ProjectRuntimeRegistry:
     skipStaleReap: Boolean = false,
     /** 分发器空闲保活窗覆盖（令 3）：None = 现读 `Defaults.DispatcherIdleWindowMs`；
       * Some(v) = spec 注入（`≤0` = 关闭保活 = 旧行为，供回退开关/零回归验收）。 */
-    dispatcherIdleWindowMs: Option[Long] = None
+    dispatcherIdleWindowMs: Option[Long] = None,
+    /** Dispatcher session-lifetime **anchor** override (taskunify merge batch 2026-09-24 ·
+      * landing point 5 · ruling d①); `None` = read through
+      * `Defaults.DispatcherLifecycleAnchorTaskTerminal` every tick. */
+    dispatcherLifecycleAnchorTaskTerminal: Option[Boolean] = None,
+    /** Per-project concurrent-dispatcher-session cap override (same batch · design §4d);
+      * `None` = read through the default every tick. */
+    dispatcherMaxConcurrentSessions: Option[Int] = None
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
       case Some(rt) => IO.pure(rt)
@@ -167,7 +174,9 @@ object ProjectRuntimeRegistry:
                 ttlDisplayMs = ttlDisplayMs,
                 ttlCheckIntervalSec = ttlCheckIntervalSec,
                 board = board,
-                dispatcherIdleWindowMs = dispatcherIdleWindowMs
+                dispatcherIdleWindowMs = dispatcherIdleWindowMs,
+                dispatcherLifecycleAnchorTaskTerminal = dispatcherLifecycleAnchorTaskTerminal,
+                dispatcherMaxConcurrentSessions = dispatcherMaxConcurrentSessions
               )
             ),
             s"project-${project.name.take(20)}"
@@ -270,7 +279,11 @@ object ProjectActor:
       taskText: String,
       rootSessionId: String,
       source: String = ProjectActor.SourceTask,
-      attribution: Option[InjectionAttribution] = None
+      attribution: Option[InjectionAttribution] = None,
+      /** **Task id** (taskunify batch 2026-09-24, ruling c②): the task this leg continues.
+        * `None` = no attribution (legacy call sites / not wired) ⇒ no task is created and
+        * the injection section is omitted. */
+      taskId: Option[String] = None
     )
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
       * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
@@ -322,6 +335,13 @@ object ProjectActor:
     bridgeRef: ActorRef[AgentEvent],
     pendingInjected: Int = 0,
     pendingTaskTexts: List[String] = Nil,
+    /** **Task attribution** (taskunify batch 2026-09-24, ruling e①/c): the **one** task id
+      * this dispatcher was created to serve. Set at spawn; the injection face uses it to
+      * pick the session and to render the attributed single entry (`dispatcherBoardText`),
+      * and the session's `ToolContext.taskId` takes this value too.
+      * `None` = no attribution (fallback / not wired) ⇒ the injection section is omitted and
+      * `TaskInfo` refuses fail-closed. */
+    taskId: Option[String] = None,
     /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
       * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
     consumedTaskMsgs: Int = 0,
@@ -359,7 +379,19 @@ object ProjectActor:
       * `NodeDestroyWindowMs` 同款先例）；`Some(v)` = 测试注入固定值——spec 不碰
       * 全局 prop（避跨 suite 污染；`NodeEngine(destroyWindowMs)` / `ttlCheckIntervalSec`
       * 同款先例）。`≤ 0` = **关闭保活**（回退到 turn 级即拆的今天行为）。 */
-    dispatcherIdleWindowMs: Option[Long] = None
+    dispatcherIdleWindowMs: Option[Long] = None,
+    /** Dispatcher session-lifetime **anchor** override (taskunify merge batch 2026-09-24 ·
+      * landing point 5 · ruling d①):
+      * `None` (**production default**) = read through
+      * `Defaults.DispatcherLifecycleAnchorTaskTerminal` every tick (`sys.props` hot-read
+      * semantics); `Some(true)` = task-terminal anchor; `Some(false)` = **fall back** to the
+      * idle-window anchor (spec injection, avoiding cross-suite prop pollution — same
+      * precedent as `dispatcherIdleWindowMs`). */
+    dispatcherLifecycleAnchorTaskTerminal: Option[Boolean] = None,
+    /** Per-project concurrent-dispatcher-session cap override (taskunify merge batch ·
+      * design §4d mandatory anti-leak item): `None` = read through
+      * `Defaults.DispatcherMaxConcurrentSessions` every tick; `≤ 0` = disable this gate. */
+    dispatcherMaxConcurrentSessions: Option[Int] = None
   )
 
   /** 全局 TTL 扫描：周期给所有已挂载 ProjectActor 发 TtlTick（GatewayMain 启动）。
@@ -386,13 +418,13 @@ object ProjectActor:
       Ref.of[IO, Option[ActiveDispatcher]](None).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
-            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution) =>
+            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId) =>
               // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
               // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
               // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
               // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution)
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution, taskId)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
               }
@@ -445,14 +477,20 @@ object ProjectActor:
                 // 幂等（字段已清 ⇒ 不再入选）；best-effort 同款（失败不影响后续 sweep）。
                 cfg.engine.sweepDestroyWindows()
                 .handleErrorWith(e => logger.warn(s"node destroy-window sweep failed: ${e.getMessage}")) *>
-                // 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4）：`idleSince`
-                // 有值且 `now - idleSince ≥ Defaults.DispatcherIdleWindowMs` ⇒ 走既有
-                // teardown 语义拆除（registry 注销 + AgentCommand.Stop + 桥停），下一个
-                // 派发重新 spawn 新会话。硬护栏双条件（`pendingInjected == 0` ∧
-                // registry `status == Idle`）防误杀；窗口 ≤0 = 关闭保活（零成本短路）。
-                // best-effort 同款（失败仅 WARN，不影响后续 sweep）。
-                sweepIdleDispatchers(cfg, active)
-                .handleErrorWith(e => logger.warn(s"dispatcher idle sweep failed: ${e.getMessage}")) *>
+                // Dispatcher expiry sweep (order 3 dispatcher lifetime, design §3.1-4;
+                // taskunify merge batch 2026-09-24 re-anchor · ruling d①): the **criterion is
+                // dispatched by the anchor** — anchor = task terminal ⇒ once the bound task
+                // reaches `completed`/`closed`, tear the session down with teardown semantics
+                // (registry deregister + AgentCommand.Stop + bridge stop) + one
+                // `dispatcher-task-terminal` event (**distinguishable** from
+                // `dispatcher-idle-expired`); anchor = idle window (**fallback**) ⇒ the
+                // existing `idleSince` criterion is **byte-for-byte unchanged** (`≤0` = keep-alive
+                // disabled). Both legs share the same hard double guardrail
+                // (`pendingInjected == 0` ∧ registry `status == Idle`) against false kills;
+                // they are mutually exclusive (one tick runs exactly one leg).
+                // best-effort alike (a failure only WARNs and does not affect later sweeps).
+                sweepDispatchers(cfg, active)
+                .handleErrorWith(e => logger.warn(s"dispatcher lifecycle sweep failed: ${e.getMessage}")) *>
                 // loop 时间帽扫描（nrloop 一期 2026-09-12，设计 §3.6 时间维）：对
                 // 「非终态 ∧ loopStartedAt 已置位 ∧ now-loopStartedAt ≥ maxWallClockMs」
                 // 的重跑目标熔断——反查到活 verifier 驱动方 ⇒ 该 verifier 终态化 failed +
@@ -651,21 +689,29 @@ object ProjectActor:
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
-  /** 分发器任务板注入段（TaskBoard 批 2 §3a）：renderDispatcher 全板紧凑行
-    * （≤1200 字符/20 行，超限整行丢弃+尾注——降级纪律在 renderer 单点）。
-    * 无板/空板 → ""（调用方不注空段，项目记忆先例同款）。⚠node-done join 数据
-    * 从 Flow Map 快照现读（§2d 真实终态映射，TaskBoardStore.nodeTerminalMap 单点），
-    * 不缓存——分发器每次 spawn/reentry 拿当下漂移面。 */
-  private def dispatcherBoardText(cfg: ProjectConfig): IO[String] =
-    cfg.board match
+  /** The dispatcher's task injection section (taskunify batch 2026-09-24, replacing
+    * TaskBoard batch 2 §3a): **the single attributed entry** (ruling b① / ruling F) -- only
+    * the **one** task the dispatcher was created to serve is injected; the old
+    * "whole-board compact lines" was an unauthorized read face and has been narrowed. The
+    * data source is the **new ledger** (tasks-v2.json) -- 🔴 the old board face
+    * (task-board.json) is **no longer read or written** by new code (ruling L: read-only
+    * archive; keeping it queryable is not the same as continuing to read/write it). No
+    * attribution / no such entry in the ledger → "" (the caller injects no empty section). */
+  private def dispatcherBoardText(cfg: ProjectConfig, taskId: Option[String]): IO[String] =
+    taskId match
       case None => IO.pure("")
-      case Some(board) =>
+      case Some(tid) =>
         cfg.engine.store.snapshot.flatMap { snap =>
           val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
-          IO.blocking(board.entriesSync())
-            .map(entries => TaskBoardRenderer.renderDispatcher(entries, terminal))
-            .handleErrorWith(e =>
-              logger.warn(s"Project '${cfg.project.name}' task-board injection skipped: ${e.getMessage}").as(""))
+          IO.blocking {
+            val ledger = TaskLedgerStore.open()
+            ledger.findSync(tid) match
+              case Some(entry) =>
+                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal) +
+                  s"\n(read the full note timeline with TaskInfo)"
+              case None => ""
+          }.handleErrorWith(e =>
+            logger.warn(s"Project '${cfg.project.name}' task injection skipped: ${e.getMessage}").as(""))
         }
 
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
@@ -867,7 +913,11 @@ object ProjectActor:
     taskText: String,
     rootSessionId: String,
     source: String = SourceTask,
-    attribution: Option[InjectionAttribution] = None
+    attribution: Option[InjectionAttribution] = None,
+    /** **Task id** (taskunify batch 2026-09-24, ruling c①/c②): the task this leg delivers
+      * to. `None` = no attribution (fallback / not wired) ⇒ the injection section is omitted
+      * and the session's `taskId` is None (`TaskInfo` refuses fail-closed). */
+    taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
     // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
@@ -876,12 +926,19 @@ object ProjectActor:
     // ——main 的 bluebubble 批在 inline 形态上做过同一处改动，本批把该处抽成
     // `spawnFresh` 复用点，故此处等价承接，功能零丢失）。
     def spawnFresh: IO[Behavior[ProjectCommand]] =
-      pluginCatalogText().flatMap { catalog =>
-        projectMemoryText(cfg.project).flatMap { memory =>
-          dispatcherBoardText(cfg).flatMap { boardText =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
+      // Concurrency cap gate (taskunify merge batch · design §4d): at the cap ⇒ refuse
+      // explicitly + leave a trace, **do not spawn** (no silent over-spawn / silent drop).
+      // With the gate off (`≤0`) this is a zero-cost bypass (`underConcurrencyCap` returns true).
+      underConcurrencyCap(cfg).flatMap {
+        case false => refuseSpawnOnCap(cfg, s"task dispatch (source=$source)").as(same)
+        case true =>
+          pluginCatalogText().flatMap { catalog =>
+            projectMemoryText(cfg.project).flatMap { memory =>
+              dispatcherBoardText(cfg, taskId).flatMap { boardText =>
+                spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution, taskId)
+              }
+            }
           }
-        }
       }
     // 单例化裁定：先经 modify 原子占位（占位与桥终态清理在全序 Ref 操作上不可
     // 交错——占位成功则桥必见 pendingInjected>0 而延迟拆除）——有活跃会话 →
@@ -891,7 +948,7 @@ object ProjectActor:
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
     active.modify {
       case Some(a) =>
-        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
+        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None, taskId = taskId.orElse(a.taskId))), Some(a))
       case None => (None, None)
     }.flatMap {
       case Some(a) =>
@@ -947,13 +1004,21 @@ object ProjectActor:
       case Some(node) =>
         // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
         def spawnFresh: IO[Behavior[ProjectCommand]] =
-          pluginCatalogText().flatMap { catalog =>
-            projectMemoryText(cfg.project).flatMap { memory =>
-              dispatcherBoardText(cfg).flatMap { boardText =>
-                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+          // Concurrency cap gate (taskunify merge batch · design §4d): same single point as dispatchTask.
+          underConcurrencyCap(cfg).flatMap {
+            case false => refuseSpawnOnCap(cfg, s"reentry spawn (node ${node.id}, round $blockCount)").as(same)
+            case true =>
+              pluginCatalogText().flatMap { catalog =>
+                projectMemoryText(cfg.project).flatMap { memory =>
+                  active.get.flatMap { cur =>
+                    val tid = cur.flatMap(_.taskId)
+                    dispatcherBoardText(cfg, tid).flatMap { boardText =>
+                      spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
+                        s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount), taskId = tid)
+                    }
+                  }
+                }
               }
-            }
           }
         // 单例化裁定 × 反馈协议（§2.2 修订）：重入调整请求同样优先投递活跃
         // 分发器会话（不并行 spawn 重入会话）；会话已不活跃才走 spawn 路径。
@@ -1005,6 +1070,70 @@ object ProjectActor:
     active.update(_.filterNot(_.sessionId == sessionId)) *>
       cfg.resources.agentRegistry.update(_ - sessionId)
 
+  /** **Concurrency cap gate** (taskunify merge batch 2026-09-24 · design §4d mandatory
+    * anti-leak item).
+    *
+    * Motivation: once the anchor is the task terminal state, "a task that never reaches
+    * terminal ⇒ sessions live with no upper bound" (empirical baseline: within a 4 h window
+    * `~/.nebflow/sessions/` already holds 1,817 files / 4.6 GB, directory 4.6 GB) ⇒ a hard
+    * upper bound is a **mandatory item** of this batch, not an option.
+    *
+    * Criterion: this project's live dispatcher sessions (registry entries with
+    * `kind = Flow` ∧ `project = Some(<this project>)` ∧ a sessionId carrying
+    * [[DispatcherSessionPrefix]]) ≥ the cap ⇒ **explicit refusal** (return `false`); the call
+    * site then runs [[refuseSpawnOnCap]]: one `dispatcher-concurrency-refused` event + a WARN
+    * (project name / live count / cap / way out) ⇒ **no silent over-spawn, no silent drop**
+    * (same family of wording as the dispatcher's supplementary hard requirement 1).
+    *
+    * `≤ 0` = **disable this gate** (fallback; same family of wording as
+    * `DispatcherIdleWindowMs ≤ 0`).
+    *
+    * 🔴 Counting basis stated as-is: the registry is the **single point** of session
+    * registration (teardown / idle expiry / task-terminal expiry / abnormal reaping all
+    * deregister here — see the [[liveRegistration]] comment), so the registry is the
+    * authoritative face for the concurrency count; **no second counter** (no second
+    * criterion). */
+  /** This project's live dispatcher session count (registry single-point basis, see the
+    * [[underConcurrencyCap]] notes). */
+  private def activeDispatcherCount(cfg: ProjectConfig): IO[Int] =
+    cfg.resources.agentRegistry.get.map { reg =>
+      reg.values.count(r =>
+        r.kind == AgentKind.Flow &&
+          r.project.contains(cfg.project.name) &&
+          r.sessionId.startsWith(DispatcherSessionPrefix))
+    }
+
+  private def underConcurrencyCap(cfg: ProjectConfig): IO[Boolean] =
+    val cap = cfg.dispatcherMaxConcurrentSessions.getOrElse(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions)
+    if cap <= 0 then IO.pure(true)
+    else activeDispatcherCount(cfg).map(_ < cap)
+
+  /** Refusal trace + alert for exceeding the concurrency cap (**double face**: event face +
+    * WARN log face).
+    *
+    * 🔴 **No silent over-spawn, no silent drop** (same family of wording as implplan §10.4):
+    * a refusal must be **visible + locatable** — the event line carries project name / current
+    * live count / cap / way out, and the WARN carries the same text. */
+  private def refuseSpawnOnCap(cfg: ProjectConfig, who: String): IO[Unit] =
+    val cap = cfg.dispatcherMaxConcurrentSessions.getOrElse(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions)
+    activeDispatcherCount(cfg).flatMap { active =>
+      val reason = s"concurrency-cap: $who refused, active dispatcher session(s) >= cap"
+      val wayOut = FlowMapEventLog.DispatcherConcurrencyCapWayOut
+      logger.warn(
+          s"Project '${cfg.project.name}' dispatcher spawn REFUSED — $who: $active active dispatcher session(s) >= cap $cap " +
+            s"($wayOut). " +
+            s"Nothing was spawned and nothing was silently dropped.") *>
+        FlowMapEventLog
+          .append(
+            cfg.project.workspace,
+            cfg.project.name,
+            cfg.project.name,
+            FlowMapEventLog.DispatcherConcurrencyRefusedType,
+            FlowMapEventLog.dispatcherConcurrencyRefusedSummary(cfg.project.name, active, cap, reason, wayOut)
+          )
+          .handleErrorWith(e => logger.warn(s"dispatcher-concurrency-refused audit append failed: ${e.getMessage}"))
+    }
+
   /** 分发器空闲到期扫描（令 3 分发器生命周期，设计 §3.1-4 / §3.2）：挂在既有 30 s
     * `TtlTick` 上的新增扫描腿（R2-(a)：零新 fiber，崩溃即无残留）。
     *
@@ -1054,6 +1183,135 @@ object ProjectActor:
           }
         case _ => IO.unit
       }
+
+  // ------------------------------------------------------------------
+  // Dispatcher session-lifetime anchor (taskunify merge batch 2026-09-24 · landing point 5 ·
+  // ruling d①)
+  // ------------------------------------------------------------------
+
+  /** Effective session-lifetime anchor: spec injection wins, otherwise read through
+    * [[nebflow.shared.Defaults.DispatcherLifecycleAnchorTaskTerminal]] (`sys.props` hot-read
+    * semantics, same as [[idleWindowMs]]). `true` = task-terminal anchor; `false` =
+    * **fallback** to the existing idle window (byte-for-byte as today). */
+  private def lifecycleAnchorTaskTerminal(cfg: ProjectConfig): Boolean =
+    cfg.dispatcherLifecycleAnchorTaskTerminal
+      .getOrElse(nebflow.shared.Defaults.DispatcherLifecycleAnchorTaskTerminal)
+
+  /** Dispatcher expiry sweep (**criterion dispatched by the anchor**): anchor = task terminal
+    * ⇒ [[sweepTaskTerminalDispatchers]]; anchor = idle window (**fallback**) ⇒ the existing
+    * [[sweepIdleDispatchers]] (**byte-for-byte unchanged** — the fallback path must stay
+    * byte-identical to today).
+    *
+    * Mounted on the existing 30 s `TtlTick` (the `ProjectActor` TtlTick call site). The two
+    * legs are **mutually exclusive**: one tick runs exactly one of them, so the "timeout +
+    * task-terminal" criteria never race for the same CAS. */
+  private def sweepDispatchers(
+    cfg: ProjectConfig,
+    active: Ref[IO, Option[ActiveDispatcher]]
+  ): IO[Unit] =
+    if lifecycleAnchorTaskTerminal(cfg) then sweepTaskTerminalDispatchers(cfg, active)
+    else sweepIdleDispatchers(cfg, active)
+
+  /** **Task-terminal anchor sweep** (ruling d①): once the task bound to a dispatcher has
+    * reached a terminal state (`closed` / `completed`), that session is torn down.
+    *
+    * 🔴 **Hard guardrails kept byte-for-byte (implplan §5 explicitly: "must be kept")**:
+    *   ① `pendingInjected == 0` (injected items still in flight ⇒ do not tear down — prevents
+    *      "task already terminal but a turn is running" from taking unconsumed items with it);
+    *   ② registry `status == Idle` (prevents false kills when "the bridge count drifted but a
+    *      turn is running").
+    * Either one failing ⇒ no teardown this tick, wait for the next (same semantics as the
+    * idle leg).
+    *
+    * Idempotent: `active.modify` re-checks the CAS on "same session + same criterion" (shape
+    * kept byte-for-byte from [[sweepIdleDispatchers]]) — repeated ticks / races leave exactly
+    * one winner.
+    *
+    * **Unowned sessions** (`taskId = None`, the fallback / unwired shape) ⇒ **this leg does
+    * not reap them**: with no task there is no "task terminal" to judge, and reaping it would
+    * be killing on `None`. That shape is left to the idle-window semantics (covered by
+    * [[sweepIdleDispatchers]] when the fallback switch is on) — an **honestly labelled upper
+    * bound**, not faked.
+    *
+    * **Only this session is reaped** (R8-(a) kept byte-for-byte): `AgentCommand.Stop` kills
+    * only the process tree registered to this session; already dispatched nodes are separate
+    * `node-*` sessions, **zero touch**. */
+  private def sweepTaskTerminalDispatchers(
+    cfg: ProjectConfig,
+    active: Ref[IO, Option[ActiveDispatcher]]
+  ): IO[Unit] =
+    active.get.flatMap {
+      case Some(a) if a.pendingInjected == 0 && a.taskId.exists(_.trim.nonEmpty) =>
+        terminalStateOf(a.taskId.get).flatMap {
+          case None => IO.unit // not terminal (or no such entry in the ledger) ⇒ session stays
+          case Some(state) =>
+            cfg.resources.agentRegistry.get.flatMap { reg =>
+              reg.get(a.sessionId).map(_.status) match
+                case Some(AgentStatus.Idle) =>
+                  active.modify {
+                    case Some(cur) if cur.sessionId == a.sessionId && cur.pendingInjected == 0 &&
+                        cur.taskId == a.taskId => (None, true)
+                    case other => (other, false)
+                  }.flatMap { expired =>
+                    if expired then expireTaskTerminalDispatcher(cfg, a, state) else IO.unit
+                  }
+                // no registry row = the session was already torn down elsewhere (ghost) ⇒ clear
+                // the registration only, do not tear down twice.
+                case None =>
+                  logger.warn(
+                    s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by task-terminal sweep — registry entry already gone") *>
+                    active.update(_.filterNot(_.sessionId == a.sessionId))
+                // not Idle (a turn is in flight) ⇒ no teardown this tick (guardrail ②).
+                case Some(_) => IO.unit
+            }
+        }
+      case _ => IO.unit
+    }
+
+  /** The task's current state (returns `Some(state)` only when terminal): reads the unified
+    * ledger (`TaskLedgerStore`).
+    *
+    * 🔴 **Zero silence**: a read failure (corrupt file / permissions) is **not** swallowed as
+    * "not terminal" — a WARN is left AND no teardown happens this tick (rather keep the
+    * session than kill a live one because of a read fault). */
+  private def terminalStateOf(taskId: String): IO[Option[String]] =
+    IO.blocking {
+      val e = nebflow.core.project.TaskLedgerStore.open().findSync(taskId.stripPrefix("#").trim)
+      e.filter(t => nebflow.core.project.TaskLedgerStore.Status.isTerminal(t.status)).map(_.status)
+    }.handleErrorWith { err =>
+      logger.warn(s"dispatcher task-terminal sweep could not read the ledger for task #$taskId: ${err.getMessage} — session kept (no teardown on a read failure)") *> IO.pure(None)
+    }
+
+  /** The actual teardown for a task-terminal dispatcher (action set **kept byte-for-byte**
+    * from [[expireIdleDispatcher]]: registry deregister + `AgentCommand.Stop` + bridge stop;
+    * the only difference is the **cause**):
+    * ① info log (names the task id + the terminal state value);
+    * ② unconsumed-item trace same as [[auditDispatcherQueueDrop]], cause string `task-terminal`;
+    * ③ audit event = [[FlowMapEventLog.DispatcherTaskTerminalType]] (**distinguishable** from
+    *    `dispatcher-idle-expired` — this is the landing point of criterion 5.2). */
+  private def expireTaskTerminalDispatcher(
+    cfg: ProjectConfig,
+    a: ActiveDispatcher,
+    state: String
+  ): IO[Unit] =
+    val taskId = a.taskId.getOrElse("")
+    auditDispatcherQueueDrop(cfg, a.sessionId, "task-terminal", a.pendingTaskTexts) *>
+      cfg.resources.agentRegistry.update(_ - a.sessionId) *>
+      (a.agentRef ! AgentCommand.Stop(s"dispatcher task #$taskId reached '$state'")).void *>
+      cfg.system.stop(a.bridgeRef).handleErrorWith(_ => IO.unit) *>
+      logger
+        .info(
+          s"Project '${cfg.project.name}' dispatcher session ${a.sessionId} destroyed — its task #$taskId reached '$state' (next dispatch spawns a fresh session)"
+        ) *>
+      FlowMapEventLog
+        .append(
+          cfg.project.workspace,
+          cfg.project.name,
+          a.sessionId,
+          FlowMapEventLog.DispatcherTaskTerminalType,
+          FlowMapEventLog.dispatcherTaskTerminalSummary(a.sessionId, taskId, state, "task-terminal")
+        )
+        .handleErrorWith(e => logger.warn(s"dispatcher-task-terminal audit append failed: ${e.getMessage}"))
 
   /** 空闲到期的实际拆除（设计 R3-(a)：逐字复用 `teardown` 动作集——registry 注销 +
     * `AgentCommand.Stop` + 桥停；唯一新增 = 一条 info 日志 + 一条 `dispatcher-idle-expired`
@@ -1131,7 +1389,12 @@ object ProjectActor:
     tag: String,
     firstTaskText: String,
     source: String = SourceTask,
-    attribution: Option[InjectionAttribution] = None
+    attribution: Option[InjectionAttribution] = None,
+    /** **Task id** (taskunify batch 2026-09-24): the task this dispatcher was created to
+      * serve -- it lands in `ActiveDispatcher.taskId` and `SpawnParams.taskId` (→
+      * SessionContext → ToolContext, feeding `TaskInfo`'s zero-parameter attribution
+      * resolution). */
+    taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
@@ -1176,7 +1439,12 @@ object ProjectActor:
               sandboxEnabled = true,
               // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：分发器 = 项目作用域会话
               // ⇒ AGENTS.md 注入判据置位（接收面 = 项目分发器 + 节点会话不变）。
-              projectSession = true
+              projectSession = true,
+              // taskunify batch (2026-09-24, ruling e①): the dispatcher task attribution
+              // fingerprint is injected at spawn → SessionContext.taskId →
+              // ToolContext.taskId, feeding `TaskInfo`'s zero-parameter attribution
+              // resolution (a dispatcher resolves to "the task it was created to serve").
+              taskId = taskId
             )
           )
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +
@@ -1225,7 +1493,7 @@ object ProjectActor:
           // pendingTaskTexts.size**（桥的消费计数 k 直接同减两者）；且首条 prompt
           // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
           // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))))
+          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText), taskId = taskId)))
           _ <- (ref ! AgentCommand.UserInput(
             text = prompt,
             replyTo = Some(bridgeRef),

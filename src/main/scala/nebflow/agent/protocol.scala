@@ -1269,6 +1269,16 @@ case class SessionContext(
     * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
     * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。 */
   flowNodeRole: Option[String] = None,
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①): the task id
+    * this session is attributed to (a dispatcher = the task it was created to serve; a
+    * project node = the task recorded as its origin). Set at the NodeEngine / ProjectActor
+    * spawn points -> passed through AgentCore into `ToolContext.taskId` -- the **only
+    * source** of `TaskInfo`'s zero-parameter attribution resolution (engine-side identity,
+    * never a client parameter), and the criterion of the engine-side uplink refusal face
+    * (no fingerprint ⇒ fail-closed).
+    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+    * direct REST calls). */
+  taskId: Option[String] = None,
   /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
     * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
     * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
@@ -1553,6 +1563,10 @@ object AgentState:
     /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): set on the
+      * spawn side, see SessionContext.taskId. Default None = no attribution (pre-existing
+      * nodes / the Nebula root / team / dual-track flow / direct REST calls). */
+    taskId: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
     flowChainId: Option[String] = None,
@@ -1599,6 +1613,7 @@ object AgentState:
         isDispatcher = isDispatcher,
         flowNodeRole = flowNodeRole,
         projectName = projectName,
+        taskId = taskId,
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
@@ -1747,6 +1762,11 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24): the task id this
+    * session is attributed to, see SessionContext.taskId. The single consumer chain =
+    * AgentCore → ToolContext.taskId → `TaskInfo`'s zero-parameter attribution
+    * resolution. */
+  def taskId: Option[String] = s.session.taskId
   def flowNodeName: Option[String] = s.session.flowNodeName
   /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */
   def flowChainId: Option[String] = s.session.flowChainId

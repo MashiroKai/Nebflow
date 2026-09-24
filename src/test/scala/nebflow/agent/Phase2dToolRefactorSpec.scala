@@ -40,12 +40,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   // ===== D.1-1：三角色静态集收口，工具面逐件不变 =====
 
-  test("D.1-1: Nebula fixed set == §C.1 清单（在飞 17 件 = 2026-09-18 18:18 令 +5 后值）、零 Issue、零 NodeList（逐件不变）"):
+  test("D.1-1: Nebula fixed set == the §C.1 list (in flight 17 = the 2026-09-18 18:18 order +5; taskunify batch TaskList/TaskBoard -> Task, net 0), zero Issue, zero NodeList, zero TaskList/TaskBoard (entry by entry unchanged)"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
       Set("Mail", "ProjectCreate", "AgentControl",
         // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
-        "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
+        "Task",                                                // task orchestration (taskunify merge batch 2026-09-24: TaskList + TaskBoard merged into Task, net count 0)
         "SendMessage",
         "ListFriends",                                         // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
         "Read",                                                // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
@@ -56,7 +56,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
       "Glob", "Grep", "Bash", "Write", "Edit")
     assertEquals(fixed, expected,
-      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）")
+      "the Nebula static set size == the single-point constant AgentCore.NebulaOrchestrationToolsExpectedSize (in flight 17 = the value after the 2026-09-18 18:18 order +Bash/Edit/Write/Glob/Grep; history: root face -Glob -Grep => 13 and -Delegate => 12 are both prior facts; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal -- node results are delivered automatically along the out edge, so actively querying the graph overlaps with the adjudication duty, and the dispatcher's own face is unaffected; +Card unblocked, the legacy set -Mail/Delegate/FlowTrigger/FlowExecute retired; Issue/CheckIssues retired; taskunify merge batch 2026-09-24: TaskList + TaskBoard => the single Task (net 0, still 17))")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
@@ -69,9 +69,13 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // 史实 16→16 净 0；史实 13（搜索件摘除后）与 12（−Delegate 后）；当前 = 17）；
     // 旧「Mail 不在 Nebula 面」的反向断言就此反转——本集改为断言**已删净退役**件缺席。
     // #145 附件腿批（2026-09-14）：+ "TransferFile"（退役，能力并入 SendMessage 设备附件腿）。
-    Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
-      assert(!fixed.contains(t), s"已退役/维持退役件不得在 Nebula 面（R2 2026-09-12 / #145 2026-09-14）: $t")
+    // taskunify merge batch (2026-09-24): `Task` is **moved out** of this set (it comes
+    // back as the unified ledger's only write face); the newly retired entries are
+    // `TaskList` / `TaskBoard`.
+    Set("TaskList", "TaskBoard", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
+      assert(!fixed.contains(t), s"a retired / kept-retired entry must not appear on the Nebula face (R2 2026-09-12 / #145 2026-09-14 / taskunify 2026-09-24): $t")
     }
+    assert(fixed.contains("Task"), "the Nebula face contains Task (the unified ledger's only write face, replacing TaskList + TaskBoard)")
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
       "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）")
     assert(!fixed.contains("Delegate"),
@@ -83,11 +87,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(fixed.contains("Write"), "Nebula 机制集含 Write（2026-09-18 18:18 令恢复）")
     assert(fixed.contains("Edit"), "Nebula 机制集含 Edit（2026-09-18 18:18 令恢复）")
 
-  test("D.1-1（R2 后）: dispatcher fixed set == Node 三件 + Mail + 读四件 + TaskBoard（−NodeMessage +Mail，9→9）"):
+  test("D.1-1 (post-R2 / post-taskunify): dispatcher fixed set == the three Node tools + Mail + the four read tools + TaskInfo (-NodeMessage +Mail, 9->9; TaskBoard -> TaskInfo capability reversal)"):
     assertEquals(
       AgentCore.fixedToolsFor(mkDef("project-dispatcher")),
-      Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash", "TaskBoard"),
-      "R2（2026-09-12）：分发器面 −NodeMessage +Mail（9→9）——Mail 的 node: 腿承载 NodeMessage 三态语义；TaskBoard（20260908 任务板批 2，规格 §1c）第九件：项目任务板全权面（权限判定引擎侧身份=isDispatcher，工具内不信客户端参数）"
+      Set("NodeList", "NodeEdit", "NodeCancel", "Mail", "Read", "Glob", "Grep", "Bash", "TaskInfo"),
+      "R2 (2026-09-12): dispatcher face -NodeMessage +Mail (9->9) -- Mail's node: leg carries the three-state NodeMessage semantics; the ninth entry = `TaskInfo` (taskunify merge batch 2026-09-24, spec §1c capability reversal): the former full-power `TaskBoard` face becomes a **read-only** single-entry attribution lookup (zero parameters; the dispatcher's write authority over the task ledger is taken back by Nebula -- the permission decision lives in the engine-side identity, the tool never trusts client parameters)"
     )
 
   test("D.1-1: general fixed set == 七件（2026-09-08 恢复 AskUser；2026-09-10 裁定摘 Pop）"):
@@ -136,29 +140,31 @@ class Phase2dToolRefactorSpec extends FunSuite:
       "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）")
     assert(!generalDelivered.contains("Mail"), "Mail 不进 general/节点面（R2 细则：节点不挂消息工具）")
     val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
-    assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project 会话交付面 == 静态 9 件（含 Mail + TaskBoard）")
+    assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project-session delivered face == the static 9 entries (including Mail + TaskInfo)")
     assert(dispatcherDelivered.contains("Mail"), "Mail 机制固定进分发器交付面（R2 唯一消息原语）")
     assert(!dispatcherDelivered.contains("NodeMessage"), "NodeMessage 已删净退役（R2，−NodeMessage +Mail）")
-    assert(dispatcherDelivered.contains("TaskBoard"), "TaskBoard 随 project 会话身份进分发器交付面（任务板批 2 §1c）")
+    assert(dispatcherDelivered.contains("TaskInfo"), "TaskInfo reaches the dispatcher delivered face with the project-session identity (taskunify batch: capability reversal, read-only)")
+    assert(!dispatcherDelivered.contains("TaskBoard"), "TaskBoard is deleted-retired (taskunify batch: merged into Task/TaskInfo)")
     // 边界（R2）：Nebula 面不加 NodeMessage（工具已删净退役）
     assert(!CoreProbe.allowed(mkDef("Nebula")).contains("NodeMessage"), "NodeMessage 已退役（Nebula 面不加）")
 
-  // ===== TaskBoard：project 会话按身份挂载（任务板批 2 §1c/§1d-4）=====
+  // ===== TaskInfo: mounted per identity in a project session (task board batch 2 §1c/§1d-4 -> reversed by the taskunify batch) =====
 
-  test("TaskBoard: projectBoardSession 旗标是唯一挂载闸——分发器/flow 节点 project 会话挂，双轨会话恒不挂"):
-    // 挂载表 §1c：projectBoardSession = isDispatcher || flowNodeId.isDefined。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】（末段重挂）。
-    assert(CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskBoard"),
-      "分发器 project 会话（isDispatcher 置位）挂 TaskBoard")
-    assert(CoreProbe.allowed(mkDef("general"), isFlowNode = true, projectBoardSession = true).contains("TaskBoard"),
-      "flow 节点 project 会话（flowNodeId 置位）挂 TaskBoard（§1d：节点身份同面）")
+  test("TaskInfo: the projectBoardSession flag is the only mounting gate -- dispatcher/flow-node project sessions mount it, dual-track sessions never do"):
+    // Mount table §1c: projectBoardSession = isDispatcher || flowNodeId.isDefined.
+    // The append point is **after** all role filtering and the NebulaExclusiveTools strip
+    // (re-mounted in the final segment).
+    assert(CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskInfo"),
+      "a dispatcher project session (isDispatcher set) mounts TaskInfo (read-only)")
+    assert(CoreProbe.allowed(mkDef("general"), isFlowNode = true, projectBoardSession = true).contains("TaskInfo"),
+      "a flow-node project session (flowNodeId set) mounts TaskInfo (§1d: node identity shares the face)")
     // 双保险（§1d-4）：非 project 会话 flag=false 恒不挂——声明（含 "*"）不授能
     // （nebulaFiltered 先剥、末段不挂），工具面 + 工具内身份判定两层独立。
-    assert(!CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
-      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，NebulaExclusiveTools）")
-    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"),
+    assert(!CoreProbe.allowed(mkDef("sneaky", List("TaskInfo"))).contains("TaskInfo"),
+      "an explicit TaskInfo declaration in a non-project session grants nothing (blocks the declaration-escape channel, NebulaExclusiveTools)")
+    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskInfo"),
       "wildcard 声明同样不授能")
-    assert(!CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
+    assert(!CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskInfo"),
       "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）")
 
   // ===== D.1-11：SendMessage 声明通道删除 =====

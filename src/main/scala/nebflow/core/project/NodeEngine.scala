@@ -102,9 +102,89 @@ class NodeEngine(
   rootNotifyQuietMs: Option[Long] = None,
   /** root 通道打包条数上限生效值（同上接缝形态）：None = 现读
     * [[nebflow.shared.Defaults.RootNotifyBatchMax]]（生产默认 10）。 */
-  rootNotifyBatchMax: Option[Int] = None
+  rootNotifyBatchMax: Option[Int] = None,
+  /** 🔴 **Uplink fail-closed gate** (taskunify merge batch 2026-09-24 · ruling T ·
+    * implplan §10.4): `None` = read
+    * [[nebflow.shared.Defaults.TaskLedgerUplinkFailClosed]] (**production default false =
+    * legacy behaviour byte-for-byte**); `Some(true)` = enabled (every uplink without an
+    * attribution fingerprint is refused + double trace). Specs inject through this
+    * constructor seam — same reason as `stallReNotifyMs` (in this project's test JVM a
+    * `sys.props` write reads back as empty within the same process, so a prop-based
+    * injection point would fail silently). */
+  taskLedgerUplinkFailClosed: Option[Boolean] = None,
+  /** Loud-alert window effective value (same seam): None = read
+    * [[nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN]]. */
+  taskLedgerUplinkLoudAlertFirstN: Option[Int] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.node.engine")
+
+  /** Uplink fail-closed effective value (re-read on every check; there is no online flip
+    * route ⇒ changing the prop in production requires a host restart). */
+  private def uplinkFailClosedEnabled: Boolean =
+    taskLedgerUplinkFailClosed.getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkFailClosed)
+
+  /** In-process count of uplink refusals (used **only** for the "first N loud alerts"
+    * window; the persistent criterion face is the event file, which does not depend on this
+    * counter). */
+  private val uplinkRefusals: java.util.concurrent.atomic.AtomicLong =
+    new java.util.concurrent.atomic.AtomicLong(0L)
+
+  /** 🔴 **Uplink attribution gate (the common precondition of U1–U7; ruling T's single
+    * mechanism point)**.
+    *
+    * Semantics: when a node's **attribution cannot be resolved** (no `taskId` fingerprint),
+    * that node's uplink notifications are **all refused** (Q2ⓐ strict fail-closed, no grace
+    * period, no exemption). Returns `true` = **allowed**, `false` = already refused.
+    *
+    * 🔴 **Double trace + the three text elements (criteria 10.4.4/10.4.5 · ruling T ⓑ)**:
+    *   ① **event face** = one [[FlowMapEventLog.UplinkRefusedType]] (`grep uplink-refused`);
+    *   ② **log face** = one WARN (plus an extra ALERT inside the window, prefix
+    *      `[UPLINK-REFUSED]`);
+    *   ③ that same text carries the **node id** ∧ the **refusal reason**
+    *      (`no-attribution`) ∧ the **way out** (`register-attribution` / `node_report` /
+    *      `Flow Map` / `manual`).
+    * **Silence is forbidden, and a log line alone is forbidden** — criterion 10.4.5 states
+    * plainly "log only, no event face = red".
+    *
+    * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no same-key window
+    * suppression, no merging** ("two in a row ⇒ two events" is a hard criterion; this is
+    * **deliberately different** from `enqueueRootNotify`'s merging semantics).
+    *
+    * `kind` = the uplink class (`failed` / `completed` / `landing` / `reentry` / `escalate` /
+    * `cancelled` / `redelivery`). 🔴 **The landing/merge class must carry `landing`** (the
+    * core of criterion 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`).
+    *
+    * 🔴 **U8 (`node_report`) is unaffected**: this gate only intercepts the **engine-side
+    * uplink circuit** (delivery of node notifications). A node's own terminal declaration
+    * goes through `NodeReportRegistry` (keyed by sessionId) and **never passes through this
+    * function**. */
+  private def uplinkAllowed(node: NodeDef, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else if node.taskId.exists(_.trim.nonEmpty) then IO.pure(true)
+    else
+      val n = uplinkRefusals.incrementAndGet()
+      val reason = "no-attribution"
+      val way = "register-attribution/fix the node's taskId, or report through node_report; visibility stays via the Flow Map"
+      val loud = taskLedgerUplinkLoudAlertFirstN
+        .getOrElse(nebflow.shared.Defaults.TaskLedgerUplinkLoudAlertFirstN)
+      val text =
+        s"Node '${node.name}' (${node.id}) uplink REFUSED [kind=$kind reason=$reason] — this node has no task " +
+          s"attribution fingerprint (taskId), so its $kind notification cannot be attributed to a task and was not delivered. " +
+          s"Way out: $way."
+      FlowMapEventLog
+        .append(
+          workspace,
+          projectName,
+          node.id,
+          FlowMapEventLog.UplinkRefusedType,
+          FlowMapEventLog.uplinkRefusedSummary(node.id, node.name, kind, reason, way),
+          chainId = node.chainId
+        )
+        .handleErrorWith(e => logger.warn(s"uplink-refused audit append failed: ${e.getMessage}")) *>
+        (if loud > 0 && n <= loud then
+           logger.warn(s"[UPLINK-REFUSED] $text (refusal #$n of the first $loud — significant alert window)")
+         else logger.warn(text)) *>
+        IO.pure(false)
 
   /** 完成门腿 1 生效值（每次判定现读；无在线翻转路由 ⇒ 生产侧改 prop 需重启宿主）。 */
   private def bgGateHoldEnabled: Boolean =
@@ -125,12 +205,44 @@ class NodeEngine(
     * ⚠ notifybatch 批（2026-09-18）：两条通道改走**打包入口**（决策②「异常类一并合并、
     * 不单列」）——`nodeId=None`（fire-and-forget，不记账）语义逐字未变，只是投递节拍
     * 由 root 通道打包窗统一（单件场景文本逐字不变）。 */
+  /** Name-resolving wrapper for the U5 uplink gate (implplan §10.4 U5 "the three escalate
+    * channels"): those three escalate seams only have the signature `(text, nodeName)` (the
+    * injection face of `FeedbackRouter` / `DispatchNotify`) ⇒ resolve the node by name first,
+    * then go through [[uplinkAllowed]] (**the same single-point gate**, no second criterion).
+    * Unresolvable (the node was pruned or renamed) ⇒ **allowed**: this gate targets "a node
+    * exists but has no attribution", not "the node cannot be found" (the latter is the
+    * existing chain's own alert face, which this gate does not take over). */
+  private def uplinkAllowedByName(nodeName: String, kind: String): IO[Boolean] =
+    if !uplinkFailClosedEnabled then IO.pure(true)
+    else
+      store.snapshot.map(_.nodes.values.find(_.name == nodeName)).flatMap {
+        case Some(n) => uplinkAllowed(n, kind)
+        case None    => IO.pure(true)
+      }
+
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
     feedbackMode = feedbackMode,
-    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
-    escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
+    // taskunify (2026-09-24 · U5-a): the escalate channel (blocked escalation) passes the
+    // uplink attribution gate.
+    escalate = (text, nodeName) =>
+      uplinkAllowedByName(nodeName, "escalate-blocked").flatMap {
+        case false => IO.unit
+        case true  => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked)
+      },
+    // taskunify (2026-09-24 · U5-b): escalateFailed (RetryCap escalation) passes the same
+    // gate.
+    escalateFailed = Some((text, nodeName) =>
+      uplinkAllowedByName(nodeName, "escalate-failed").flatMap {
+        case false => IO.unit
+        case true  => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed)
+      }),
+    // taskunify (2026-09-24 · **U4**): injection point of the attribution gate for the
+    // blocked-feedback reentry leg (the only uplink that does not go through this engine's
+    // delivery functions) — the same single-point gate [[uplinkAllowed]], no second
+    // criterion.
+    uplinkGate = node => uplinkAllowed(node, "reentry")
   )
 
   /** dispatch-notify 通道（2026-09-05 批接线 completion；2026-09-07 批接线 failed；
@@ -143,7 +255,13 @@ class NodeEngine(
     store, workspace, projectName, rootSessionId,
     // notice 语义（非 blocked）：预算耗尽时节点保持 completed，前端不可标 BLOCKED。
     // notifybatch 批（2026-09-18）：改走 root 打包入口（异常/监督通报同窗打包，决策②）。
-    escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
+    // taskunify (2026-09-24 · U5-c): the notice escalation leg (DispatchNotify budget
+    // exhausted) passes the same gate.
+    escalate = (text, nodeName) =>
+      uplinkAllowedByName(nodeName, "escalate-notice").flatMap {
+        case false => IO.unit
+        case true  => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType)
+      },
     emitUpdated = emitUpdated,
     triggerOverride = notifyTriggerOverride,
     // M4（b64 批）：`notify.quietMs` → 打包/静默窗口（缺省 5s，上界 60s 由挂载面校验）。
@@ -2701,16 +2819,28 @@ class NodeEngine(
     * renderer）。工单归属按 assignee=自身 node.id（§1d 权限矩阵的身份同源）；
     * ⚠node-done join 用 Flow Map 真实终态映射（store.snapshot 现读，nodeTerminalMap
     * 单点过滤）。无板 → ""（调用方不注空段）。 */
+  /** The node's task block (taskunify batch 2026-09-24, replacing TaskBoard batch 2 §3a):
+    * **the single attributed entry** (ruling b① / ruling F) -- a node sees only **the one
+    * task it is attached to** (attribution = the `NodeDef.taskId` fingerprint, **not** the
+    * old assignee match, and **no longer** a whole-board overview section -- a whole board is
+    * an unauthorized read face and has been narrowed). The data source is the **new ledger**
+    * (tasks-v2.json) -- 🔴 the old board face is **no longer read or written** by new code
+    * (ruling L: read-only archive).
+    * No attribution fingerprint / no such entry in the ledger → "" (the caller injects no
+    * empty section). */
   private def taskBoardNodeBlock(node: NodeDef): IO[String] =
-    board match
+    node.taskId match
       case None => IO.pure("")
-      case Some(b) =>
+      case Some(tid) =>
         store.snapshot.flatMap { snap =>
           val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
           IO.blocking {
-            val entries = b.entriesSync()
-            val mine = entries.filter(_.assignee.contains(node.id))
-            TaskBoardRenderer.renderNodeInject(projectGoal, mine, entries, terminal)
+            val ledger = TaskLedgerStore.open()
+            ledger.findSync(tid) match
+              case Some(entry) =>
+                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal) +
+                  s"\n(read the full note timeline with TaskInfo)"
+              case None => ""
           }
         }
 
@@ -2894,13 +3024,18 @@ class NodeEngine(
                         flowNodeName = Some(node.name),
                         // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
                         // 节点 → 同一条链的同一快照（startNode 单点算出）。
-                        flowChainId = chain.map(_.chainId))
+                        flowChainId = chain.map(_.chainId),
+                        // taskunify batch (2026-09-24): the loop dual-session task
+                        // attribution fingerprint = that loop node's NodeDef.taskId (the same
+                        // source as an ordinary node).
+                        taskId = node.taskId)
                       verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                         initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
                         flowNodeId = Some(nodeId),
                         flowNodeRole = Some(node.role),
                         flowNodeName = Some(node.name),
-                        flowChainId = chain.map(_.chainId))
+                        flowChainId = chain.map(_.chainId),
+                        taskId = node.taskId)
                       _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                         .guarantee(
                           destroyLoopSessions(nodeId, worker, verify) *>
@@ -3185,6 +3320,15 @@ class NodeEngine(
           // 引擎侧判据来源。task 也显式带值（判据侧 normalize 宽容，但显式 = 可审计）。
           flowNodeRole = Some(node.role),
           projectName = Some(projectName),
+          // taskunify batch (2026-09-24, ruling e①): the node task attribution fingerprint
+          // is injected at spawn -- its source is the `NodeDef.taskId` persisted at node
+          // creation (the single construction point NodeTools writes it from the engine-side
+          // `ctx.taskId`) → AgentCore passes it through `ToolContext.taskId` → `TaskInfo`'s
+          // zero-parameter attribution resolution.
+          // 🔴 Pre-existing nodes have this field as None (zero migration) ⇒ this session has
+          // **no attribution** ⇒ `TaskInfo` refuses fail-closed (TASKINFO_NO_ATTACHMENT),
+          // **with no fallback to the whole board** (ruling e, continuation ⓑ).
+          taskId = node.taskId,
           // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
           // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
           flowNodeName = Some(nodeName),
@@ -3719,6 +3863,11 @@ class NodeEngine(
     /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
       * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
     flowNodeId: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): a loop
+      * session's task attribution -- the worker/verify sessions both belong to that loop
+      * node's `NodeDef.taskId` (the same-source discipline as an ordinary node). See
+      * SessionContext.taskId for details. */
+    taskId: Option[String] = None,
     /** 节点角色（nrloop 一期 2026-09-12，B1 透传链第一段 loop 支）：所属
       * `NodeDef.role`——worker/verify 同属该 loop 节点（设计 §3.2 表：旧 loop
       * 双会话置 `Some(node.role)`，与普通节点同源口径）。详见
@@ -3756,6 +3905,10 @@ class NodeEngine(
           flowNodeId = flowNodeId,
           flowNodeRole = flowNodeRole,
           projectName = Some(projectName),
+          // taskunify batch (2026-09-24): a loop worker/verify session's task attribution
+          // fingerprint shares the loop node's `NodeDef.taskId` source (the same spawn-time
+          // snapshot) -- the same pass-through chain as an ordinary node's runWithAgent.
+          taskId = taskId,
           flowNodeName = flowNodeName,
           // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源
           // （同一 spawn 时刻快照）——工具面/文件名尾溯源归属口径与普通节点恒同。
@@ -5307,7 +5460,17 @@ class NodeEngine(
         // 故逐节点腿即使跑到也结构性不发）。**只影响本通知分支**：状态写、摘除、
         // 审计事件、barrier 检查、L3 占位（notify=false 分支）全部逐字不变。
         if !notify then dispatchNotify.holdTerminalNotify(nodeId)
-        else if emitNotify then s.nodes.get(nodeId).traverse_(n => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled))
+        // 🔴 taskunify (2026-09-24 · **U6 = cancelled terminal notification**): uplink
+        // attribution gate. This leg is the "unsubscribed abnormal terminal state" feedback
+        // (R1 semantics) and is one of the seven uplinks too ⇒ with no fingerprint it is
+        // refused per Q2␐ + double trace (**not delivered**, rather than delivered and
+        // reconciled afterwards).
+        else if emitNotify then
+          s.nodes.get(nodeId).traverse_(n =>
+            uplinkAllowed(n, "cancelled").flatMap {
+              case false => IO.unit
+              case true  => dispatchNotify.notifyTerminal(n, NotifyReason.Cancelled)
+            })
         else IO.unit
     yield ()
 
@@ -5910,7 +6073,14 @@ class NodeEngine(
     else if nebulaEdges.exists(_.mode == OutEdge.Result) then
       // notifybatch 批（2026-09-18，M-2）：改走 root 打包入口（决策①生产者侧合并）；
       // R5 抑制分支（上一支）与 `markNebulaDelivered` 记账口径**一字未动**。
-      enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+      // taskunify (2026-09-24 · U2): uplink attribution gate — no `taskId` fingerprint ⇒
+      // refused + double trace (**replacing** the notification, not adding to it; a refusal
+      // leaves `nebulaDeliveredAt` unset, but the redelivery scan itself passes the gate at
+      // U7, so it cannot revive the node by bypassing this gate).
+      uplinkAllowed(node, "completed").flatMap {
+        case false => IO.unit
+        case true  => enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
+      }
     else markNebulaDelivered(node.id)
 
   /** 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
@@ -5948,7 +6118,12 @@ class NodeEngine(
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
         // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
-        enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        // taskunify (2026-09-24 · U1): uplink attribution gate — no fingerprint ⇒ refused +
+        // double trace.
+        uplinkAllowed(node, "failed").flatMap {
+          case false => IO.unit
+          case true  => enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
+        }
       case _ => markNebulaDelivered(node.id)
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
@@ -6171,9 +6346,21 @@ class NodeEngine(
             FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
             // notifybatch 批（2026-09-18）：走 root 打包入口（blocked 通报同窗打包，
             // 决策②「异常类一并合并、不单列」）；`nodeId=None` fire-and-forget 口径不变。
-            enqueueRootNotify(
-              s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
-              bn.name, NodeLifecycle.Blocked)
+            // 🔴 taskunify (2026-09-24 · **U3 = landing / merge-class uplink**): uplink
+            // attribution gate; the class **must** be `landing` (the core of criterion
+            // 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`). This is exactly the
+            // face implplan §10.4 marks "easiest to miss" — the sink is allowed through,
+            // actually lands, then fails, and the failure "cannot be sent out"; U1/U2's
+            // no-loss argument does not cover it. ⇒ this item is **listed separately** and
+            // must never be counted together with U1/U2 (mutation red-anchor: commenting out
+            // this gate ⇒ 10.4.3 must go red).
+            uplinkAllowed(bn, "landing").flatMap {
+              case false => IO.unit
+              case true =>
+                enqueueRootNotify(
+                  s"[Node '${bn.name}' blocked — upstream '${failed.name}' failed, merge not executed]\n${err.take(800)}",
+                  bn.name, NodeLifecycle.Blocked)
+            }
         case _ => IO.unit
     yield ()
 
@@ -6583,7 +6770,17 @@ class NodeEngine(
             // notifybatch 批（2026-09-18，M-4）：fresh 腿改走**同一打包入口**（与实时腿
             // 同窗同 digest 形态 ⇒ 补投扫描撞窗时合并而非逐件补投）；stale 腿
             // [[deliverStaleSummary]]（>24h 合并摘要，唯一现存合并点）**零行为改动**。
-            enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id)))
+            // 🔴 taskunify (2026-09-24 · **U7 = manual redelivery / redelivery scan**):
+            // uplink attribution gate. The gate must be on the **scan leg** too (not just the
+            // real-time leg) — otherwise, after the real-time leg refuses and leaves
+            // `nebulaDeliveredAt` unset, the 30 s scan would **revive and deliver** the very
+            // same unattributed node, which amounts to bypassing the U1/U2/U3 gates.
+            // Refused ⇒ not delivered and **not marked** (same semantics as the real-time
+            // leg: a refusal is not a delivery — leave the trace rather than drop silently).
+            uplinkAllowed(n, "redelivery").flatMap {
+              case false => IO.unit
+              case true  => enqueueRootNotify(s"[Node '${n.name}' ${n.status}]\n${n.result.get}", n.name, n.status, Some(n.id))
+            })
           _ <- if stale.nonEmpty then deliverStaleSummary(stale) else IO.unit
           _ <- if pending.nonEmpty then
             logger.info(s"Node redelivery scan: re-delivered ${pending.size} unconsumed out=Nebula result(s) to root '$rootSessionId' (fresh=${fresh.size} stale-merged=${stale.size} fixture-excluded=${fixtures.size})")

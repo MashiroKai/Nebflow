@@ -107,19 +107,33 @@ object ToolRegistry:
       // 动作面限修订动作（remove/update/replace_section），append 由
       // MemoryNoteTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
       "MemoryNote" -> MemoryNoteTool,
-      // TaskList（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：Nebula
-      // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
-      // 授能面 = NebulaOrchestrationTools 单一来源（当前/终态 = 15，作者 2026-09-14
-      // 拍板；史实 2026-09-06 时点恰十四件，TaskList 批 +1）；
-      // NebulaExclusiveTools 防声明逃逸（dispatcher/general/"*" 一律剥离）。
-      "TaskList" -> TaskListTool,
-      // TaskBoard（20260908 任务板批 2，规格 §1b/§1c）：项目域共享工作项看板
-      // ——Flow Map 管节点，TaskBoard 管任务（TaskList 同族四态 + blocks 闸 +
-      // close 幂等）。授能面 = 会话身份机制挂载（分发器 DispatcherFixedTools
-      // 第九件 + project 节点/分发器会话 buildAllowedToolSet 末段按身份追加），
-      // plugins 声明不授能（NebulaExclusiveTools 同享防逃逸通道）；权限矩阵在
-      // 工具内按引擎侧身份判定（TaskBoardTool.dispatchSync）。
-      "TaskBoard" -> TaskBoardToolDef,
+      // Task (taskunify batch 2026-09-24): `TaskList` + `TaskBoard` are merged into **one**
+      // item -- the persistent task ledger (`~/.nebflow/tasks-v2.json`, a single global
+      // file, the runtime data layer). The authorization face = the single source
+      // `NebulaOrchestrationTools` (members renamed, item count unchanged = 17);
+      // `NebulaExclusiveTools` prevents declaration escape (dispatcher/general/"*" are all
+      // stripped).
+      // 🔴 A single write right: the dispatcher and project nodes **never see** this item at
+      // all (the mount face), and inside the tool the engine-side identity
+      // (ctx.isDispatcher / ctx.flowNodeId) refuses fail-closed (the second safeguard).
+      // `note` is not a parameter -- the timeline is auto-appended by the engine when Nebula
+      // Mails that task's dispatcher.
+      "Task" -> TaskToolDef,
+      // TaskInfo (taskunify batch 2026-09-24): the project domain's **read-only** item --
+      // zero parameters, showing "the one task your session is attached to" + the note
+      // timeline. Authorization face = mounted by the session-identity mechanism (the
+      // dispatcher's ninth DispatcherFixedTools item + appended by identity at the end of
+      // buildAllowedToolSet for project nodes / dispatcher sessions); a plugin declaration
+      // grants nothing (it shares NebulaExclusiveTools' escape-prevention channel).
+      // Attribution is resolved from the session identity (ctx.taskId); no attribution ⇒ a
+      // fail-closed refusal (TASKINFO_NO_ATTACHMENT, with no fallback to the whole board).
+      "TaskInfo" -> TaskInfoToolDef,
+      // 🔴 `TaskList` / `TaskBoard` are **not registered** (retired and removed): the
+      // registry has no such name ⇒ `case None` in AgentCore.executeToolInner hits
+      // AgentCore.RetiredToolGuides and yields the retirement guide (**error text only, zero
+      // execution surface**). Registering the old names as aliases would mean the retirement
+      // guide never fires AND a second path to the write face would exist -- hence the
+      // **deliberate absence** here.
       // node_report（blocked 结构化信号批 20260909，设计 spec 方案 A 改造点
       // #2/#3；同日作者裁定泛化更名：ReportBlockedTool → NodeReport——Blocked/
       // Pass/Failed 同为「类似的语义判断」，迁移一起迁移）：Flow Map 节点专属

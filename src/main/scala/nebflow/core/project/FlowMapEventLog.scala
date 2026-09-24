@@ -243,6 +243,112 @@ object FlowMapEventLog:
     * `chainId`（分发器不属任何链）。 */
   val DispatcherIdleExpiredType = "dispatcher-idle-expired"
 
+  /** Dispatcher **task-terminal teardown** event type (taskunify merge batch 2026-09-24,
+    * landing point 5 / ruling d①).
+    *
+    * Write point = `ProjectActor.expireTaskTerminalDispatcher` (the 30 s `TtlTick` sweep leg
+    * finds that "the task this dispatcher is bound to reached a terminal state" and tears
+    * the session down).
+    *
+    * 🔴 **Why this needs its own type (implplan §5 "new audit face")**: the semantics of
+    * `dispatcher-idle-expired` is "the keep-alive window ended (a **time** criterion)";
+    * this type's semantics is "**the task is finished** (a **business** criterion)". Sharing
+    * one type name would make the two causes **indistinguishable** in the event stream, and
+    * nobody could answer afterwards "was this teardown a timeout or a task terminal state".
+    * ⇒ Criteria 5.1/5.2 use it to verify the two paths separately.
+    *
+    * The `nodeId` field carries the **session id** (same precedent as
+    * [[DispatcherIdleExpiredType]] — a dispatcher is not a Flow node and has no
+    * `NodeDef.id`); `taskId` is this change's **business key** (written into the summary so
+    * "which finished task caused the teardown" is mechanically greppable — deliberately not
+    * stuffed into `nodeId`, which would clash with the precedent's semantics).
+    * `chainId` is not written (a dispatcher belongs to no chain). */
+  val DispatcherTaskTerminalType = "dispatcher-task-terminal"
+
+  /** Task-terminal teardown structured summary (`k=v`, single-space separated, **values
+    * carry no whitespace**). */
+  def dispatcherTaskTerminalSummary(sessionId: String, taskId: String, state: String, reason: String): String =
+    s"session=$sessionId task=$taskId state=$state reason=$reason"
+
+  /** Concurrency-cap refusal event type (taskunify merge batch 2026-09-24; design §4d
+    * mandatory anti-leak item).
+    *
+    * Write point = the pre-spawn gate in `ProjectActor.dispatchTask`: the dispatcher session
+    * count has reached [[nebflow.shared.Defaults.DispatcherMaxConcurrentSessions]] ⇒
+    * **explicit refusal + alert** (never a silent over-spawn). 🔴 Division of labour with
+    * the `TASK_*` family: that family is the **tool-call-level** refusal text; this type is
+    * the **engine-side** gate's trace face (the "event face" of the double-trace rule).
+    *
+    * `nodeId` carries the **project name** (there is no session to point at — the refusal
+    * happens before any session exists; same precedent as [[DispatcherWakeType]] carrying a
+    * project name in this field). */
+  val DispatcherConcurrencyRefusedType = "dispatcher-concurrency-refused"
+
+  /** Concurrency-cap refusal structured summary (`k=v`, single-space separated, **values
+    * carry no whitespace**).
+    *
+    * 🔴 **All four elements must live in this one summary line** (project name ∧ current live
+    * count ∧ cap ∧ **way out**) — the hard requirement is "visible + locatable, not silent",
+    * so the mechanical criterion has to be assertable **on the event line alone** (the WARN
+    * face carries the same text but must not be needed to complete the four elements).
+    * [[wayOut]] is passed in rather than inlined so the event face and the WARN face state
+    * exactly the same remedy wording. */
+  def dispatcherConcurrencyRefusedSummary(project: String, active: Int, cap: Int, reason: String, way: String): String =
+    s"project=${project.replaceAll("\\s+", "_")} active=$active cap=$cap reason=${reason.replaceAll("\\s+", "_")} way=${way.replaceAll("\\s+", "_")}"
+
+  /** The single source of the cap-refusal way-out wording (shared by the event summary's
+    * `way=` field and the WARN text). */
+  val DispatcherConcurrencyCapWayOut: String =
+    "raise nebflow.dispatcher.maxConcurrentSessions, or let the running dispatcher finish / cancel it"
+
+  /** 🔴 **Uplink-refused trace event type** (taskunify merge batch 2026-09-24 · ruling T ·
+    * implplan §8/§10.4).
+    *
+    * Semantics = "one uplink notification whose **attribution cannot be resolved** (the node
+    * has no `taskId` fingerprint) was **refused fail-closed**". Write point = the single
+    * engine-side uplink circuit [[NodeEngine.uplinkAllowed]] (the common precondition of all
+    * seven uplink paths U1–U7).
+    *
+    * 🔴 **Why this event must exist (ruling T = ⓑ double trace)**: the `TASK_*` error-code
+    * family covers only the **tool-call-level** refusal text (the `Task` / `TaskInfo`
+    * returns). The **engine-side uplinks** (node completed/failed notification, blocked
+    * reentry, landing/merge uplink, cancel notification, manual redelivery) go through no
+    * tool at all ⇒ without a dedicated event face here, "the landing failed but could not be
+    * sent out" would be **silent** — exactly the case implplan §10.4 marks as "easiest to
+    * miss" (U3's no-loss argument happens not to cover it).
+    *
+    * 🔴 **One refusal ⇒ exactly one event** (criteria 10.4.1/10.4.2): **no merging, no
+    * suppression** (no same-key window suppression — "two in a row ⇒ two events" is a hard
+    * criterion). **A log line alone is forbidden** (criterion 10.4.5: a missing event face
+    * is a red).
+    *
+    * `nodeId` carries the **refused node's id** (that node is this event's subject — same
+    * family as [[DispatcherIdleExpiredType]] carrying a session id in this field: the field
+    * carries the subject's identifier). `chainId` is passed through from the call site when
+    * present, for chain-based lookback. */
+  val UplinkRefusedType = "uplink-refused"
+
+  /** Structured summary for an uplink refusal (`k=v`, single-space separated, **values carry
+    * no whitespace** — whitespace inside the text is normalised to `_` so that class-counting
+    * criteria such as `grep 'uplink-refused' | grep -c 'landing'` are not broken by spaces).
+    *
+    * 🔴 **The three text elements must all be present (criterion 10.4.4)**: one single line
+    * carrying ① the **node id** (`node=<id>`) ② the **refusal reason**
+    * (`reason=no-attribution` — the reason face is "no attribution fingerprint" / "not
+    * registered in the ledger") ③ the **way out** (`way=<...>` — `register-attribution` /
+    * `node_report` / `Flow Map` / `manual`). `kind` is the uplink class, and the
+    * **landing/merge class must be distinguishable** (`kind=landing`, the core of criterion
+    * 10.4.3). */
+  def uplinkRefusedSummary(
+    nodeId: String,
+    nodeName: String,
+    kind: String,
+    reason: String,
+    way: String
+  ): String =
+    def norm(s: String): String = s.replaceAll("\\s+", "_").trim
+    s"node=${norm(nodeId)} name=${norm(nodeName)} kind=${norm(kind)} reason=${norm(reason)} way=${norm(way)}"
+
   /** 分发器**未消费注入件**审计事件类型（mailack 批 2026-09-23，D 项止损）。
     *
     * 写点 = `ProjectActor` 的**每一处分发器会话拆除**（`dispatcherBridge.teardown` 与
