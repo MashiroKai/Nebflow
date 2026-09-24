@@ -43,6 +43,7 @@ final class RestApiCtx(
   isValidAgentNameImpl: String => Boolean,
   dispatchSwitchImpl: (String, Boolean) => IO[Response[IO]],
   withAuthImpl: Request[IO] => IO[Response[IO]] => IO[Response[IO]],
+  checkAuthImpl: Request[IO] => Boolean,
   socialErrorResponseImpl: nebflow.social.SocialChannels.Failure => IO[Response[IO]],
   presencePeerDeviceIdImpl: Request[IO] => String,
   isKnownNetworkDeviceImpl: (NeblinkService, String, String) => IO[Boolean],
@@ -73,6 +74,11 @@ final class RestApiCtx(
   def isValidAgentName(name: String): Boolean = isValidAgentNameImpl(name)
   def dispatchSwitch(name: String, enable: Boolean): IO[Response[IO]] = dispatchSwitchImpl(name, enable)
   def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] = withAuthImpl(req)(f)
+
+  // 设备互联域(NeblinkRoutes,E 步 2026-09-24)所需的鉴权判据委托:checkAuth 同时
+  // 服务类内 /models 等面与 withAuth/withNeblink,实现留守 RestApiRoutes 类内
+  // (单一实现),迁出的 neblink 域经本委托调用。
+  def checkAuth(req: Request[IO]): Boolean = checkAuthImpl(req)
   def socialErrorResponse(err: nebflow.social.SocialChannels.Failure): IO[Response[IO]] = socialErrorResponseImpl(err)
   def presencePeerDeviceId(req: Request[IO]): String = presencePeerDeviceIdImpl(req)
 
