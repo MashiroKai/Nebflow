@@ -11,17 +11,22 @@ import nebflow.core.PathUtil
 import nebflow.core.tools.{TaskTool, ToolContext}
 
 /**
- * TaskLedgerStore spec —— taskunify 合一批（2026-09-24）**七块验收点**的核心单测层。
+ * TaskLedgerStore spec -- the core unit-test layer for the **seven acceptance blocks** of the
+ * taskunify merge batch (2026-09-24).
  *
- * 覆盖任务书 §7「验收（可机械执行）」的五条 + §1/§2 的结构判据：
- *  - 三态机新边：`create → close → complete` = `Right`（`closed→completed` 合法）；
- *  - `completed` 无出边：`create → complete → close` = `Left`（终态无出边）；
- *  - **依赖闸双终态**（**变异验红锚**）：A `blocks`=B，B `close`（**非** complete）
- *    后 `complete A` = `Right` —— 若闸仍判「== done/单一终态」，本用例必红；
- *  - 旧账本零写：新旧 mtime 对照（读写新账本前后，旧两本 mtime 不变）；
- *  - `grep -c '"status"'`（新 `Task` schema）= 0（键面判据，另见 schema 断言）。
+ * It covers the five clauses of the task brief's §7 "acceptance (mechanically executable)"
+ * plus the structural criteria of §1/§2:
+ *  - new three-state machine edge: `create -> close -> complete` = `Right` (`closed->completed` is legal);
+ *  - `completed` has no out edge: `create -> complete -> close` = `Left` (a terminal state has no out edge);
+ *  - **dependency gate accepts both terminal states** (**mutation red-anchor**): with A
+ *    `blocks`=B and B `close` (**not** complete), `complete A` = `Right` -- if the gate still
+ *    judged "== done / a single terminal state", this case must go red;
+ *  - zero writes to the old ledger: old-vs-new mtime comparison (the old two files' mtime is
+ *    unchanged around reads and writes of the new ledger);
+ *  - `grep -c '"status"'` (the new `Task` schema) = 0 (key-face criterion, see also the schema assertions).
  *
- * 每用例空库起（临时 dataRoot，无内存态 ⇒ 删文件即全新 ledger）。
+ * Every case starts on an empty store (temporary dataRoot, no in-memory state => deleting the
+ * file gives a brand-new ledger).
  */
 class TaskLedgerStoreSpec extends FunSuite:
 
@@ -49,7 +54,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   private def statusOf(id: String): String = store.findSync(id).map(_.status).getOrElse("(missing)")
 
   // ------------------------------------------------------------------
-  // §2 · 三态状态机
+  // §2 · the three-state machine
   // ------------------------------------------------------------------
 
   test("three-state: create → close → complete = Right, and the entry ends `completed`") {
@@ -117,7 +122,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §2 · 依赖闸（**变异验红锚**）
+  // §2 · the dependency gate (**mutation red-anchor**)
   // ------------------------------------------------------------------
 
   test("dep guard DOUBLE-TERMINAL: a `closed` (not `completed`) dependency satisfies the guard (MUTATION ANCHOR)") {
@@ -180,7 +185,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §1 · 存储：单一水位键 / 编号空间单调 / 零迁移
+  // §1 · storage: a single watermark key / monotonic id space / zero migration
   // ------------------------------------------------------------------
 
   test("storage: the ledger envelope has exactly {tasks, nextId, version} keys") {
@@ -224,7 +229,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §2 · 旧账本零写（mtime 对照）
+  // §2 · zero writes to the old ledger (mtime comparison)
   // ------------------------------------------------------------------
 
   test("zero-write: creating/reading the NEW ledger never touches the OLD ledgers' mtime") {
@@ -247,7 +252,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §7 · note 时间线（引擎侧唯一写入路径）+ 16,000 上限
+  // §7 · the note timeline (the engine-side only write path) + the 16,000 cap
   // ------------------------------------------------------------------
 
   test("note timeline: appendNoteSync records `from` + timestamp + body, and is readable via show") {
@@ -287,7 +292,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §1/§9 · prune + 归档命中
+  // §1/§9 · prune + archive hit
   // ------------------------------------------------------------------
 
   test("prune: terminal entries older than 30d are pruned on create, and their history survives") {
@@ -329,7 +334,7 @@ class TaskLedgerStoreSpec extends FunSuite:
   }
 
   // ------------------------------------------------------------------
-  // §3 · 写权单一（fail-closed）
+  // §3 · a single write authority (fail-closed)
   // ------------------------------------------------------------------
 
   test("write authority: only a Nebula root session may write; dispatcher/node are refused") {

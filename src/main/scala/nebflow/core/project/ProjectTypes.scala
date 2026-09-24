@@ -798,20 +798,26 @@ case class NodeDef(
     * = 批二**，本批只落「声明 + 派生兜底收窄」定义层（届时台账挂在本字段之上）。
     * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
   chainId: Option[String] = None,
-  /** **任务归属指纹**（taskunify 合一批 2026-09-24；裁定 e① 单字段 `taskId:
-    * Option[String]`，与 `chainId` 同款形态）：本节点归属其**任务号**（合一账本
-    * `~/.nebflow/tasks-v2.json` 的条目 id）。
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+    * field `taskId: Option[String]`, the same shape as `chainId`): this node is attributed
+    * to its **task id** (an entry id in the unified ledger
+    * `~/.nebflow/tasks-v2.json`).
     *
-    * 写入点 = 节点**唯一构造点**（[[NodeTools]] 的 create），取**引擎侧身份**
-    * `ctx.taskId`——🔴 **不得**从 `NodeEditTool` 的 `project` 形参取（该形参**可覆盖**
-    * `ctx.projectName` ⇒ 可被客户端伪造；取值纪律与 `BoardCaller.fromContext` 同款
-    * 「引擎侧身份，不信客户端参数」）。
+    * Write point = the node's **single construction point** ([[NodeTools]]'s create),
+    * taking the **engine-side identity** `ctx.taskId` -- 🔴 it must **not** be taken from
+    * `NodeEditTool`'s `project` parameter (that parameter **can override**
+    * `ctx.projectName` ⇒ client-forgeable; the value discipline is the same as
+    * `BoardCaller.fromContext`'s "engine-side identity, never a client parameter").
     *
-    * 语义 = 「归属即隐式寻址」（不传任务号）：节点读面（`TaskInfo`）按本指纹解析归属；
-    * 上行被拒时本指纹是判据（**无指纹 ⇒ fail-closed 拒**，裁定 e续ⓑ / Q2ⓐ 不设豁免）。
+    * Semantics = "attribution is implicit addressing" (no task id is passed): the node read
+    * face (`TaskInfo`) resolves attribution from this fingerprint; when an uplink is refused
+    * this fingerprint is the criterion (**no fingerprint ⇒ fail-closed refusal**, ruling e
+    * continuation ⓑ / Q2ⓐ grants no exemption).
     *
-    * 旧 flow-map.json 无此键 → withDefaults 解码 `None`（**零迁移**）⇒ 存量节点指纹
-    * 现读为 **0**，其上行**一律被拒**（代价与替代通道见实施任务书 §10.2）。 */
+    * A legacy flow-map.json without this key → withDefaults decodes `None` (**zero
+    * migration**) ⇒ the current count of pre-existing nodes with a fingerprint reads **0**,
+    * and their uplinks are **all refused** (the cost and the alternative channel are in the
+    * implementation task book §10.2). */
   taskId: Option[String] = None
 )
 

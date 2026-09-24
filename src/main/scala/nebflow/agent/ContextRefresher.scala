@@ -294,9 +294,10 @@ object ContextRefresher:
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      // taskunify 合一批（2026-09-24）：数据源改指向**合一账本**
-      // （`~/.nebflow/tasks-v2.json`）——旧 `TaskListStore.openSummaryLine()` 读的是
-      // 已退役的 `~/.nebflow/tasks.json`，新代码不再读它（裁定 L：只读归档）。
+      // taskunify batch (2026-09-24): the data source now points at the **unified ledger**
+      // (`~/.nebflow/tasks-v2.json`) -- the legacy `TaskListStore.openSummaryLine()` read
+      // the retired `~/.nebflow/tasks.json`, which new code no longer reads (ruling L:
+      // read-only archive).
       nebflow.core.project.TaskLedgerStore.open().openSummaryLine(),
       // 记忆队列 pending 计数（记忆改造批 2026-09-12，spec §5 R2）：一行注入，
       // 复用本注入点先例（TaskList open 摘要同款）——队列为空时返回空串

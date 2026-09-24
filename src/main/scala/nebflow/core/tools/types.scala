@@ -78,14 +78,19 @@ case class ToolContext(
     * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）；
     * 挂载面过滤是另一道保险（`node_report` 仅 flowNodeSession 注入）。 */
   flowNodeRole: Option[String] = None,
-  /** **任务归属指纹**（taskunify 合一批 2026-09-24；裁定 e① 单字段，`chainId` 同款
-    * 形态）：本会话所归属的任务号（分发器 = 它被创建来服务的任务；项目节点 = 记录
-    * 为其来源的任务）。由 AgentCore 从 SessionContext 透传（**引擎侧身份，不信客户端
-    * 参数**）——`TaskInfo` 只读归属单条的解析来源（零形参 ⇒ 归属唯一来自此处），
-    * 以及引擎侧上行拒绝面（无指纹 ⇒ fail-closed 拒 + 双留痕）的判据。
-    * 🔴 **取值纪律**：**不得**从 `NodeEditTool` 的 `project` 参数取（该参数可覆盖
-    * `ctx.projectName` ⇒ 可被客户端伪造），必须取 `ctx` 引擎侧身份。
-    * None = 无归属（旧存量节点 / Nebula 根 / team / flow 双轨 / REST 直调）。 */
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+    * field, the same shape as `chainId`): the task id this session is attributed to (a
+    * dispatcher = the task it was created to serve; a project node = the task recorded as
+    * its origin). Passed through by AgentCore from SessionContext (**engine-side identity,
+    * never a client parameter**) -- the resolution source of `TaskInfo`'s read-only
+    * attributed single entry (zero parameters ⇒ attribution can only come from here) and the
+    * criterion of the engine-side uplink refusal face (no fingerprint ⇒ a fail-closed
+    * refusal + a double trace).
+    * 🔴 **Value discipline**: it must **not** be taken from `NodeEditTool`'s `project`
+    * parameter (that parameter can override `ctx.projectName` ⇒ client-forgeable); it must
+    * take `ctx`'s engine-side identity.
+    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+    * direct REST calls). */
   taskId: Option[String] = None,
   /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 1）：本节点
     * 所属链 id = `chain-<分量最早 createdAt 节点 id>`（FlowMapStore.chainIdOf 判据
@@ -123,12 +128,15 @@ case class ToolContext(
     * fail-closed 为 false。 */
   def isNebulaRoot: Boolean = AgentCore.isNebulaRoot(agentDef, depth)
 
-  /** **对称身份闸**（taskunify 合一批 2026-09-24）：Nebula 根会话可写任务账本。
-    * 判据 = [[ToolContext.isNebulaRoot]]（**委托单点**，禁在此重写表达式）；
-    * `agentDef=None`（REST 直调 / spec harness / 非 agent 上下文）fail-closed
-    * 为 false —— 与「REST 直调不写账本」同口径，而**不**是「谁都写不了」。
-    * `Task` 工具的第二道（运行期）身份闸；第一道 = 挂载面（分发器固定面与节点
-    * 会话均看不到 `Task`，非 Nebula 的 agent.json 声明亦不授能）。 */
+  /** **The symmetric identity gate** (taskunify batch 2026-09-24): the Nebula root session
+    * may write the task ledger.
+    * The criterion is [[ToolContext.isNebulaRoot]] (**a delegated single point**; never
+    * re-write the expression here); `agentDef=None` (direct REST calls / a spec harness / a
+    * non-agent context) is fail-closed false -- the same discipline as "a direct REST call
+    * never writes the ledger", and **not** "nobody can write".
+    * This is the `Task` tool's second (runtime) identity gate; the first = the mount face
+    * (neither the dispatcher's fixed set nor a node session sees `Task`, and a non-Nebula
+    * agent.json declaration grants nothing). */
   def isNebulaWriter: Boolean = isNebulaRoot
 
 case class ToolError(message: String)

@@ -443,9 +443,11 @@ Message type (optional, default "INFO"):
     // ------------------------------------------------------------
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
-    // taskunify 合一批（2026-09-24，裁定 c①）：**显式任务号形参**（不做地址语法扩展
-    // ——`address`/`to` 面正被在飞链重构，本批只碰 schema 新增键）。只在 `project:`
-    // 腿上有意义（其余腿按地址面收口）。空串/null 与缺省同义（不指定）。
+    // taskunify batch (2026-09-24, ruling c①): the **explicit task-id parameter** (no
+    // address-syntax extension -- the `address`/`to` face is being refactored by an
+    // in-flight chain, so this batch only adds a schema key). It is meaningful only on the
+    // `project:` leg (other legs are closed by the address face). An empty string / null is
+    // synonymous with omitting it (not specified).
     val taskRaw = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
     // device-mail 批（2026-09-15）：目标面 = `address` XOR `device`（各自可空、禁双填）。
@@ -594,10 +596,11 @@ Message type (optional, default "INFO"):
       chainId: Option[String],
       ctx: ToolContext,
       system: ActorSystem,
-      /** **显式任务号形参**（taskunify 合一批 2026-09-24，裁定 c①）：只在
-        * `project:`（含裸项目名等价形态）腿上有意义——不带 ⇒ 引擎自动建任务；
-        * 带 ⇒ 续接该任务。其余腿按地址面收口（本参数在非 project 腿被忽略，
-        * 因为那些腿不触任务账本）。 */
+      /** **Explicit task-id parameter** (taskunify batch 2026-09-24, ruling c①):
+        * meaningful only on the `project:` leg (including the bare-project-name equivalent
+        * shape) -- omitted ⇒ the engine creates a task automatically; supplied ⇒ continue
+        * that task. Other legs are closed by the address face (this parameter is ignored on
+        * non-project legs, because those legs never touch the task ledger). */
       task: Option[String] = None
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
@@ -1211,7 +1214,7 @@ Message type (optional, default "INFO"):
       imagePaths: List[String],
       mailType: String,
       ctx: ToolContext,
-      /** **任务号**（taskunify 合一批 2026-09-24）：见 [[layeredRoute]]。 */
+      /** **Task id** (taskunify batch 2026-09-24): see [[layeredRoute]]. */
       task: Option[String] = None
   ): IO[Either[ToolError, String]] =
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
@@ -1474,17 +1477,21 @@ Message type (optional, default "INFO"):
     * queue/immediate 两个入口共用——address 是已挂载 project → 返回
     * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
     * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。
+    * Node results are delivered along out edges (§2.7), never back through Mail.
     *
-    * ── taskunify 合一批（2026-09-24，裁定 c①：**显式形参，不做地址语法扩展**）──
-    * 语义（「首封」概念已取消）：
-    *   ① **不带** `task` ⇒ 视同创建分发器：引擎**自动建任务**并 spawn，回执头部
-    *      返回**任务编号**（调用方据此续接）；
-    *   ② **带** `task` ⇒ **续接**该任务的分发器（活跃 ⇒ 注入 / 非活跃 ⇒ 按节点
-    *      消息同款追加），🔴 **禁新建**；
-    *   ③ `task` 指向**不存在 / 已终态** ⇒ **拒** + 可读原因（fail-closed）。
-    * 另：投递成功后引擎把 Mail 正文 **append 为该任务的 note 时间线一条记录**
-    * （结构化：`from` + 时间戳 + 正文；唯一写入路径，工具层无 note 参数）。 */
+    * -- taskunify batch (2026-09-24, ruling c①: **an explicit parameter, no address-syntax
+    * extension**) --
+    * Semantics (the "first Mail" concept is gone):
+    *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
+    *      automatically** and spawns it, and the receipt header returns the **task number**
+    *      (the caller continues from it);
+    *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
+    *      append in the same way as a node message), 🔴 **never create a new one**;
+    *   ③ `task` pointing at a **non-existent / already terminal** task ⇒ **refused** + a
+    *      readable reason (fail-closed).
+    * Also: after a successful delivery the engine **appends the Mail body as one record on
+    * that task's note timeline** (structured: `from` + timestamp + body; the only write
+    * path, and the tool layer has no note parameter). */
   private def routeToProject(
       address: String,
       message: String,
@@ -1500,10 +1507,14 @@ Message type (optional, default "INFO"):
             IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
           case Some(ref) =>
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            // 归属解析（裁定 c：显式形参为主，地址语法不扩展）。
-            // ① 不带 task ⇒ 引擎自动建任务（新水位；首封概念取消）。
-            // ② 带 task ⇒ 续接（须存在且非终态；否则拒，fail-closed）。
-            // ③ 带 task 且不存在/已终态 ⇒ 拒 + 可读原因。
+            // Attribution resolution (ruling c: the explicit parameter is primary, the
+            // address syntax is not extended).
+            // ① without task ⇒ the engine creates a task automatically (new watermark; the
+            //    "first Mail" concept is gone).
+            // ② with task ⇒ continue it (it must exist and not be terminal; otherwise
+            //    refused, fail-closed).
+            // ③ with task pointing at a non-existent / terminal task ⇒ refused + a readable
+            //    reason.
             val ledger = nebflow.core.project.TaskLedgerStore.open()
             val resolved: IO[Either[ToolError, String]] = task match
               case None =>
@@ -1525,18 +1536,22 @@ Message type (optional, default "INFO"):
             resolved.flatMap {
               case Left(err) => IO.pure(Some(Left(err)))
               case Right(taskIdStr) =>
-                // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
-                // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
-                // mailbadge 批（2026-09-13，选项 C）：**只有本腿**置 `intake` ——
-                // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
-                // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
-                // 30 min 空闲窗逐行不变）。
+                // Leg ① source annotation (bluebubble batch 2026-09-12): the sender travels
+                // with the trigger message into the dispatcher session's injection bubble
+                // header (source stays = task, ruling D-5: the value is not renamed).
+                // mailbadge batch (2026-09-13, option C): **only this leg** sets `intake` --
+                // the dispatcher intake face is the landing point of the author's "annotate
+                // Mail with a blue bubble" ruling; `source` stays `"task"` untouched (the
+                // bridge's single consumption-count point `ProjectActor:622` and the
+                // `idleSince` 30 min idle window are unchanged line by line).
                 mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
                   (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
                     message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr))).void *>
-                    // note 自动 append（裁定 n：唯一写入路径 = 引擎侧，不经工具层）：
-                    // Mail 正文成为该任务 note 时间线的一条记录。史 append 失败不失败
-                    // 主投递（Mail 已发出）但**必须显式告知**（绝不静默）。
+                    // Automatic note append (ruling n: the only write path is engine-side,
+                    // never through the tool layer): the Mail body becomes one record on that
+                    // task's note timeline. A history-append failure does not fail the main
+                    // delivery (the Mail is already sent) but it **must be stated explicitly**
+                    // (never silently).
                     IO.blocking(ledger.appendNoteSync(
                       taskIdStr, message,
                       from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,

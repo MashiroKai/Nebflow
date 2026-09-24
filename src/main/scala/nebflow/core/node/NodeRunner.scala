@@ -65,11 +65,13 @@ object NodeRunner:
       * 回落 `NodeRoles.Task`（缺省语义）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
-    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：本会话归属的任务号
-      * ——NodeEngine 节点 spawn 置 `node.taskId`（节点创建时从引擎侧 `ctx.taskId`
-      * 落到 `NodeDef.taskId`）；ProjectActor 分发器 spawn 置其被创建来服务的任务号。
-      * 经 SessionContext → AgentCore → ToolContext.taskId 全链透传，是 `TaskInfo`
-      * 零形参归属解析与上行拒绝面的来源。默认 None = 无归属（零变化）。 */
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+      * id this session is attributed to -- a NodeEngine node spawn sets `node.taskId` (at
+      * creation time it lands in `NodeDef.taskId` from the engine-side `ctx.taskId`); a
+      * ProjectActor dispatcher spawn sets the task it was created to serve. Passed through
+      * the whole chain SessionContext → AgentCore → ToolContext.taskId, it is the source of
+      * `TaskInfo`'s zero-parameter attribution resolution and of the uplink refusal face.
+      * Default None = no attribution (zero change). */
     taskId: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
       * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。 */

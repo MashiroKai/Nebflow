@@ -30,7 +30,31 @@ import scala.concurrent.duration.*
  *  ③ **5.3 hard guardrail**: with `pendingInjected > 0` ⇒ **no teardown** (guardrail holds);
  *  ④ **5.5 concurrency cap**: once the live dispatcher count reaches the cap, a new spawn is
  *     **explicitly refused + alerted** (a `dispatcher-concurrency-refused` event; **not** a
- *     silent over-spawn).
+ *     silent over-spawn); the refusal summary must carry **all four elements** (project name ∧
+ *     current live count ∧ cap ∧ way out) on the event line alone;
+ *  ⑤ **5.5 the PASSING side**: 0 active ∧ cap = 1 ⇒ the first spawn is **allowed** (the
+ *     session is really registered, its first turn really ran, and the live count reads 1);
+ *  ⑥ the **default-value leg**: with no override (`maxConcurrent = None` ⇒ read-through to
+ *     `Defaults.DispatcherMaxConcurrentSessions`) the passing side still holds, and the default
+ *     is **pinned to 1** (the "keep the current singleton semantics" guard — without this
+ *     assertion a silent change of the default to 2/0 would never turn any test red);
+ *  ⑦ the **`≤0` zero-cost bypass** (behaviour face of "gate off"): `maxConcurrent = Some(0)` ⇒
+ *     **zero** `dispatcher-concurrency-refused` events and the session **really spawns**.
+ *
+ * **Counting-point causality (pinned, author's wording)**: the gate is checked **before** the
+ * spawn and this spawn is **not counted in its own judgment** (`spawnFresh`'s first statement
+ * is `underConcurrencyCap` — `ProjectActor.scala` dispatchTask leg and the reentry leg hit the
+ * same single point). **If someone later moves the gate to after the spawn, `count < cap`
+ * becomes semantically `cap-1`, and this spec's (5)/(6) turn red.**
+ *
+ * **Proxy criterion declaration (hard declaration)**: the WARN face is not directly observable
+ * from this spec (the logger is a process-global side channel), so case (4) asserts the four
+ * elements on the **event line alone** — the summary now carries `way=` (the way out), which
+ * makes the event face self-sufficient. That the WARN carries the same text is guaranteed by
+ * construction (both read the single constant `FlowMapEventLog.DispatcherConcurrencyCapWayOut`);
+ * the spec's "zero events / zero WARN" style judgments for the bypass case are **proxy
+ * criteria** (declared as such): zero `dispatcher-concurrency-refused` events + a really
+ * spawned session stand in for "no WARN fired".
  *
  * **Speed-up equivalence (hard declaration)**: this spec uses `ttlCheckIntervalSec = 1` to
  * compress the `TtlTick` beat from the production 30 s to 1 s. **Only the beat constant is
@@ -296,6 +320,12 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
   }
 
   // ── ④ concurrency cap: at the cap ⇒ explicit refusal + alert ──
+  //
+  // Counting-point causality (pinned, author's wording): the gate is checked BEFORE the spawn
+  // and this spawn is NOT counted in its own judgment (spawnFresh's first statement is
+  // underConcurrencyCap; the reentry leg hits the same single point). If someone later moves
+  // the gate to after the spawn, `count < cap` becomes semantically `cap-1`, and this spec's
+  // (5)/(5b)/(6) turn red.
 
   test("(4) concurrency cap: active >= cap ⇒ a new spawn is explicitly refused + dispatcher-concurrency-refused event (no silent over-spawn)") {
     val ws = tempRoot / "ws-cap"
@@ -340,6 +370,141 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
         val line = refused.last
         assert(line.contains("cap=1"), s"the event must carry the cap value, got:\n$line")
         assert(line.contains("active=1"), s"the event must carry the current live count, got:\n$line")
+        // 🔴 four elements on the event line ALONE (visible + locatable, not silent):
+        // ① project name ② current live count ③ cap ④ way out. Splitting the four elements
+        // across "the summary + the WARN" and calling that done is forbidden — the event face
+        // is self-sufficient because the summary now carries `way=`.
+        assert(line.contains("project=anchor-cap-proj"), s"four-element check ①: the event must carry the project name, got:\n$line")
+        assert(line.contains("active=1") && line.contains("cap=1"), s"four-element checks ②③: live count and cap, got:\n$line")
+        assert(line.contains("way="), s"four-element check ④: the event must carry the way out, got:\n$line")
+        assert(line.contains("maxConcurrentSessions"), s"the way out must name the actionable knob, got:\n$line")
         assertEquals(turns.size, 0, "the refusal must happen before spawn — zero LLM turns (no session started despite the silent over-spawn being forbidden)")
     }
+  }
+
+  // ── (5) the PASSING side of the cap: 0 active ∧ cap=1 ⇒ the first spawn is allowed ──
+
+  test("(5) concurrency cap boundary — the PASSING side: 0 active ∧ cap=1 ⇒ the first spawn is allowed (exactly one; the session is really registered and really ran its first turn; the live count reads 1)") {
+    val ws = tempRoot / "ws-cap-pass"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"anchor-cappass-${scala.util.Random.nextInt(100000)}")
+    withScanner {
+      for
+        llm <- IO.pure(new RecordingLlm)
+        resources <- mkResources(system, tempRoot, llm.handle)
+        // cap = 1 explicitly, and the registry is EMPTY (0 active) ⇒ strictly below the cap
+        rt <- mount("anchor-cappass-proj", ws, system, resources, Some(3600_000L), Some(true), Some(1))
+        actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
+        tid = newTask("task-E")
+        _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("task-E", "nebula-root", ProjectActor.SourceTask, None, Some(tid))).void
+        _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
+        sid1 <- dispatcherEntries(resources).map(_.head)
+        // the spawn really ran: at least one LLM turn happened inside the new session
+        _ <- waitUntil(20.seconds)(llm.streamsDone.get.map(_ >= 1))
+        // the count basis reads 1 after the spawn (the registry is the single counting point)
+        activeAfter <- resources.agentRegistry.get.map(
+          _.values.count(r => r.kind == nebflow.agent.AgentKind.Flow && r.project.contains("anchor-cappass-proj")))
+        events <- eventLines(ws)
+        sidAfter <- dispatcherEntries(resources)
+        streamsDone <- llm.streamsDone.get
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        // the explicit live-count reading (criterion ② of the passing side): the registry is
+        // the single counting point ⇒ after an allowed first spawn it must read exactly 1
+        assertEquals(activeAfter, 1, "after an allowed first spawn the project's live dispatcher count must read exactly 1")
+        // the spawned session is really registered under the dispatcher prefix (exactly one)
+        assertEquals(sidAfter.filter(_ == sid1), List(sid1),
+          "the spawned session must be really registered under the dispatcher prefix")
+        assert(streamsDone >= 1, "the allowed spawn must have really run its first LLM turn")
+        // the passing side must NOT leave a refusal trace (refusal traces belong to the refusing side only)
+        assertEquals(events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")), 0,
+          s"0 active ∧ cap=1 ⇒ allowed ⇒ zero refusal events, got:\n${events.filter(_.contains("dispatcher-concurrency-refused")).mkString("\n")}")
+    }
+  }
+
+  // ── (5b) the default-value leg: no override ⇒ read-through default, pinned to 1 ──
+
+  test("(5b) default-value leg: maxConcurrent = None (no helper override) ⇒ the read-through default applies to the passing side, and the default itself is pinned to 1 (the singleton-semantics guard)") {
+    // the pin: `1` is the implementation's chosen value with no explicit author order on
+    // record; without this assertion, silently changing the default to 2/0 would never turn
+    // any test red ⇒ the "keep the current singleton semantics" basis loses its guard.
+    assertEquals(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions, 1,
+      "Defaults.DispatcherMaxConcurrentSessions must stay 1 (one active dispatcher per project — the current singleton semantics; changing this default is a behaviour-visible change that must be declared)")
+    val ws = tempRoot / "ws-cap-default"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"anchor-capdef-${scala.util.Random.nextInt(100000)}")
+    withScanner {
+      for
+        llm <- IO.pure(new RecordingLlm)
+        resources <- mkResources(system, tempRoot, llm.handle)
+        // maxConcurrent = None ⇒ underConcurrencyCap reads through Defaults (== 1, asserted above)
+        rt <- mount("anchor-capdef-proj", ws, system, resources, Some(3600_000L), Some(true), None)
+        actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
+        tid = newTask("task-F")
+        _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("task-F", "nebula-root", ProjectActor.SourceTask, None, Some(tid))).void
+        _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
+        sid1 <- dispatcherEntries(resources).map(_.head)
+        _ <- waitUntil(20.seconds)(llm.streamsDone.get.map(_ >= 1))
+        sidAfter <- dispatcherEntries(resources)
+        events <- eventLines(ws)
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        // gate off ⇒ the first spawn is allowed; exactly one session lives afterwards
+        assertEquals(sidAfter, List(sid1),
+          "under the read-through default (1) with 0 active, the first spawn is allowed and exactly one session lives")
+        assertEquals(events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")), 0,
+          "under the read-through default (1) with 0 active there must be zero refusal events")
+    }
+  }
+
+  // ── (6) the ≤0 zero-cost bypass: gate off ⇒ zero refusals AND the session really spawns ──
+
+  test("(6) gate-off bypass: maxConcurrent = Some(0) (≤0 = gate disabled) ⇒ zero dispatcher-concurrency-refused events AND the session really spawns (the only behaviour-face evidence of the off state)") {
+    val ws = tempRoot / "ws-cap-off"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"anchor-capoff-${scala.util.Random.nextInt(100000)}")
+    withScanner {
+      for
+        llm <- IO.pure(new RecordingLlm)
+        resources <- mkResources(system, tempRoot, llm.handle)
+        // cap = Some(0) ⇒ underConcurrencyCap short-circuits IO.pure(true) WITHOUT touching
+        // the activeDispatcherCount face (the source-face zero-cost bypass; asserted below)
+        rt <- mount("anchor-capoff-proj", ws, system, resources, Some(3600_000L), Some(true), Some(0))
+        actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
+        tid = newTask("task-G")
+        _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("task-G", "nebula-root", ProjectActor.SourceTask, None, Some(tid))).void
+        _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
+        sid1 <- dispatcherEntries(resources).map(_.head)
+        _ <- waitUntil(20.seconds)(llm.streamsDone.get.map(_ >= 1))
+        sidAfter <- dispatcherEntries(resources)
+        streamsDone <- llm.streamsDone.get
+        events <- eventLines(ws)
+        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      yield
+        // the gate-off semantics: the spawn goes through even though a count gate would
+        // otherwise be in place — the session is really registered and really ran a turn
+        assertEquals(sidAfter, List(sid1),
+          "cap=0 (gate off) ⇒ the spawn must go through: the session is really registered")
+        assert(streamsDone >= 1, "cap=0 (gate off) ⇒ the spawned session really ran its first turn")
+        // 🔴 PROXY criterion (declared as a proxy): the WARN face is not observable from this
+        // spec, so "zero refusal events AND a really spawned session" stands in for "no
+        // refusal happened at all". 0 here means "did not happen", which is the EXPECTED
+        // value — 0 is not a defect (and event-family counts are judged by exact `type`
+        // matching, never by whole-line substring).
+        assertEquals(events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")), 0,
+          s"cap=0 (gate off) ⇒ zero refusal events (expected 0 = did not happen, not a defect), got:\n${events.filter(_.contains("dispatcher-concurrency-refused")).mkString("\n")}")
+    }
+  }
+
+  // ── (7) source face: the ≤0 branch is a zero-cost bypass that does not touch the count ──
+
+  test("(7) source-face criterion of the zero-cost bypass: the cap<=0 branch returns without reading activeDispatcherCount") {
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "ProjectActor.scala")
+    val body = src.slice(src.indexOf("private def underConcurrencyCap"), src.indexOf("private def refuseSpawnOnCap"))
+    assert(body.contains("if cap <= 0 then IO.pure(true)"),
+      "the cap<=0 leg must short-circuit with IO.pure(true) — a zero-cost bypass that never reads the live count")
+    assert(!body.split("if cap <= 0 then IO.pure(true)")(1).contains("activeDispatcherCount(cfg)"),
+      "the cap<=0 leg must not fall through to the counting face (the bypass must be zero-cost)")
+    assert(body.contains("activeDispatcherCount(cfg).map(_ < cap)"),
+      "the gated leg compares the registry count against the cap (the single counting point)")
   }

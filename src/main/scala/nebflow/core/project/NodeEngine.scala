@@ -2819,12 +2819,15 @@ class NodeEngine(
     * renderer）。工单归属按 assignee=自身 node.id（§1d 权限矩阵的身份同源）；
     * ⚠node-done join 用 Flow Map 真实终态映射（store.snapshot 现读，nodeTerminalMap
     * 单点过滤）。无板 → ""（调用方不注空段）。 */
-  /** 节点任务块（taskunify 合一批 2026-09-24，取代 TaskBoard 批 2 §3a）：
-    * **归属单条**（裁定 b①/裁定 F）——节点只看见**自己被挂上的那一条**任务
-    * （归属 = `NodeDef.taskId` 指纹，**不是**旧 assignee 匹配、也**不再**注入全板
-    * 速览段——全板 = 越权读面，已收窄）。数据源 = **新账本**（tasks-v2.json）——
-    * 🔴 旧板面新代码**不再读写**（裁定 L：只读归档）。
-    * 无归属指纹 / 账本无该条目 → ""（调用方不注空段）。 */
+  /** The node's task block (taskunify batch 2026-09-24, replacing TaskBoard batch 2 §3a):
+    * **the single attributed entry** (ruling b① / ruling F) -- a node sees only **the one
+    * task it is attached to** (attribution = the `NodeDef.taskId` fingerprint, **not** the
+    * old assignee match, and **no longer** a whole-board overview section -- a whole board is
+    * an unauthorized read face and has been narrowed). The data source is the **new ledger**
+    * (tasks-v2.json) -- 🔴 the old board face is **no longer read or written** by new code
+    * (ruling L: read-only archive).
+    * No attribution fingerprint / no such entry in the ledger → "" (the caller injects no
+    * empty section). */
   private def taskBoardNodeBlock(node: NodeDef): IO[String] =
     node.taskId match
       case None => IO.pure("")
@@ -3022,8 +3025,9 @@ class NodeEngine(
                         // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
                         // 节点 → 同一条链的同一快照（startNode 单点算出）。
                         flowChainId = chain.map(_.chainId),
-                        // taskunify 合一批（2026-09-24）：loop 双会话任务归属指纹 =
-                        // 该 loop 节点的 NodeDef.taskId（与普通节点同源）。
+                        // taskunify batch (2026-09-24): the loop dual-session task
+                        // attribution fingerprint = that loop node's NodeDef.taskId (the same
+                        // source as an ordinary node).
                         taskId = node.taskId)
                       verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                         initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
@@ -3316,12 +3320,14 @@ class NodeEngine(
           // 引擎侧判据来源。task 也显式带值（判据侧 normalize 宽容，但显式 = 可审计）。
           flowNodeRole = Some(node.role),
           projectName = Some(projectName),
-          // taskunify 合一批（2026-09-24，裁定 e①）：节点任务归属指纹随 spawn 注入
-          // ——来源 = 节点创建时落盘的 `NodeDef.taskId`（唯一构造点 NodeTools 取
-          // 引擎侧 `ctx.taskId` 写入）→ AgentCore 透传 `ToolContext.taskId` →
-          // `TaskInfo` 零形参归属解析。
-          // 🔴 存量节点该字段为 None（零迁移）⇒ 本会话**无归属** ⇒ `TaskInfo`
-          // fail-closed 拒（TASKINFO_NO_ATTACHMENT），**不回落全板**（裁定 e续ⓑ）。
+          // taskunify batch (2026-09-24, ruling e①): the node task attribution fingerprint
+          // is injected at spawn -- its source is the `NodeDef.taskId` persisted at node
+          // creation (the single construction point NodeTools writes it from the engine-side
+          // `ctx.taskId`) → AgentCore passes it through `ToolContext.taskId` → `TaskInfo`'s
+          // zero-parameter attribution resolution.
+          // 🔴 Pre-existing nodes have this field as None (zero migration) ⇒ this session has
+          // **no attribution** ⇒ `TaskInfo` refuses fail-closed (TASKINFO_NO_ATTACHMENT),
+          // **with no fallback to the whole board** (ruling e, continuation ⓑ).
           taskId = node.taskId,
           // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
           // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
@@ -3857,9 +3863,10 @@ class NodeEngine(
     /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
       * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
     flowNodeId: Option[String] = None,
-    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：loop 会话的任务归属
-      * ——worker/verify 同属该 loop 节点的 `NodeDef.taskId`（与普通节点同源口径）。
-      * 详见 SessionContext.taskId。 */
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): a loop
+      * session's task attribution -- the worker/verify sessions both belong to that loop
+      * node's `NodeDef.taskId` (the same-source discipline as an ordinary node). See
+      * SessionContext.taskId for details. */
     taskId: Option[String] = None,
     /** 节点角色（nrloop 一期 2026-09-12，B1 透传链第一段 loop 支）：所属
       * `NodeDef.role`——worker/verify 同属该 loop 节点（设计 §3.2 表：旧 loop
@@ -3898,9 +3905,9 @@ class NodeEngine(
           flowNodeId = flowNodeId,
           flowNodeRole = flowNodeRole,
           projectName = Some(projectName),
-          // taskunify 合一批（2026-09-24）：loop worker/verify 会话任务归属指纹与
-          // loop 节点的 `NodeDef.taskId` 同源（同一 spawn 时刻快照）——与普通节点
-          // runWithAgent 同款透传链。
+          // taskunify batch (2026-09-24): a loop worker/verify session's task attribution
+          // fingerprint shares the loop node's `NodeDef.taskId` source (the same spawn-time
+          // snapshot) -- the same pass-through chain as an ordinary node's runWithAgent.
           taskId = taskId,
           flowNodeName = flowNodeName,
           // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源

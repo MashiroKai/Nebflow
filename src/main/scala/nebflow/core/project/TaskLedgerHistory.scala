@@ -10,37 +10,48 @@ import java.time.Instant
 import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
- * TaskLedgerHistory —— 合一账本的变更史（taskunify 实施批，2026-09-24）。
+ * TaskLedgerHistory -- the change history of the unified ledger (taskunify batch,
+ * 2026-09-24).
  *
- * 定位：`Task` 工具（Nebula 独占写面）的**变更史数据面**——append-only JSONL，
- * **单全局文件** `~/.nebflow/tasks-v2-history.jsonl`（与账本同层同目录，非
- * per-workspace：合一账本 = 单编号空间 + 单水位 ⇒ 单一史文件，按条目 id 过滤）。
+ * Role: the **change-history data face** of the `Task` tool (Nebula's exclusive write
+ * face) -- append-only JSONL in a **single global file**
+ * `~/.nebflow/tasks-v2-history.jsonl` (same directory as the ledger, not per-workspace:
+ * a unified ledger = one id space + one watermark ⇒ one history file, filtered by entry
+ * id).
  *
- * 与旧两史的差别（合一，非别名）：旧面 = `TaskListHistory`（`tasks-history.jsonl`
- * per-home）+ `TaskBoardHistory`（`task-history.jsonl` per-workspace）两套并存；
- * 本件 = **一套**，落 `<dataRoot>/tasks-v2-history.jsonl`。旧两史**原地不动、零删
- * 零覆写**（只读归档），新代码不再读写它们。
+ * Difference from the two legacy histories (unified, not an alias): the legacy face had
+ * `TaskListHistory` (`tasks-history.jsonl`, per home) AND `TaskBoardHistory`
+ * (`task-history.jsonl`, per workspace) side by side; this file is **one** history at
+ * `<dataRoot>/tasks-v2-history.jsonl`. Both legacy histories stay **untouched, zero
+ * deletion, zero overwrite** (read-only archive); new code neither reads nor writes them.
  *
- * 行 schema（注册式扩展：未知 kind / 未知键读取侧照收不拒）：`at`（ISO-8601 UTC）/
- * `kind` / `id`（条目 id；全局事件省略）/ `actor`（`nebula` | `dispatcher` |
- * `node` | `system`；**引擎侧派生，不信客户端参数**）/ `from`（note 类事件的来源
- * 域，见 [[TaskLedgerHistory.Origins]]）/ `text`（note 类事件正文全文）/ `prev`·
- * `next`（note 覆盖类事件两侧全文）/ `links` / `detail`（自由文本）。**无 seq**：
- * 排序键 = 文件行序（append-only 天然时序），`at` 仅用于显示。
+ * Row schema (registry-style extension: unknown kind / unknown keys are accepted, not
+ * rejected, on the read side): `at` (ISO-8601 UTC) / `kind` / `id` (entry id; omitted for
+ * global events) / `actor` (`nebula` | `dispatcher` | `node` | `system`; **derived
+ * engine-side, never from client parameters**) / `from` (the origin domain of note-class
+ * events, see [[TaskLedgerHistory.Origins]]) / `text` (the full body of a note-class
+ * event) / `prev` / `next` (both sides' full text for note-overwrite events) / `links` /
+ * `detail` (free text). **No seq**: the ordering key is file line order (append-only gives
+ * natural chronology); `at` is for display only.
  *
- * **主体 = note 时间线**（作者裁定 n 项：结构化 = `from` + 时间戳 + 正文摘录）：
- * note 的唯一写入路径 = 引擎在 Nebula 每次 Mail 到该任务分发器时自动 append
- * （工具层**无** note 参数 ⇒ 结构上做不到）。每次 append 落一条 `kind=note` 行，
- * 带 `from`（来源域）+ `at`（时间戳）+ `text`（正文）。单条上限 16,000 字符
- * （见 [[TaskLedgerStore.NoteCapChars]]）；**超长分段而非截断**（🔴 禁「截断丢弃」
- * ——分段后全文仍在史里）。
+ * **The main body is the note timeline** (author ruling n: structured = `from` +
+ * timestamp + body excerpt): the only write path for a note is the engine appending
+ * automatically on every Mail from Nebula to that task's dispatcher (the tool layer has
+ * **no** note parameter ⇒ structurally impossible). Each append writes one `kind=note`
+ * row carrying `from` (origin domain) + `at` (timestamp) + `text` (body). The per-item cap
+ * is 16,000 characters (see [[TaskLedgerStore.NoteCapChars]]); **over-long bodies are
+ * chunked, never truncated** (🔴 "truncate and drop" is forbidden -- after chunking the
+ * full text is still in the history).
  *
- * 轮转（沿用现读参数）：活动文件 > 5 MiB 或 > 20,000 行（先到为准）⇒ **下一次写**
- * 惰性触发；活动 → `.1`（**覆盖上一代**），新活动文件首行写一条 `rotate` 事件
- * （含被归档行数与字节数）。磁盘硬顶 ≈ 10 MiB。读路径零写盘（不轮转）。
+ * Rotation (same parameters as the current code): the active file exceeding 5 MiB or
+ * 20,000 lines (whichever comes first) ⇒ triggered lazily on the **next write**; active →
+ * `.1` (**overwriting the previous generation**), and the new active file's first line is
+ * a `rotate` event (carrying the archived line count and byte size). On-disk hard cap ≈
+ * 10 MiB. The read path never writes (no rotation).
  *
- * 锁口径：本模块**零自有锁**——所有 append 都发生在 `TaskLedgerStore.fileLock`
- * 临界区内（写路径），与状态写同临界区天然串行。本模块不持有任务状态。
+ * Locking: this module has **no lock of its own** -- every append happens inside the
+ * `TaskLedgerStore.fileLock` critical section (the write path), naturally serialized with
+ * the state writes in the same critical section. This module holds no task state.
  */
 case class TaskLedgerEvent(
   at: String,
@@ -61,17 +72,18 @@ object TaskLedgerEvent:
 class TaskLedgerHistory private ():
   import TaskLedgerHistory.*
 
-  /** `def` 非 `val`：`PathUtil.dataRoot` 可被测试换根（`setDataRoot`）——同族陷阱。 */
+  /** `def` not `val`: `PathUtil.dataRoot` can be re-rooted by tests (`setDataRoot`) --
+    * the same family of trap. */
   def file: os.Path = PathUtil.dataRoot / FileName
 
   def archiveFile: os.Path = PathUtil.dataRoot / ArchiveFileName
 
   // ------------------------------------------------------------------
-  // 写：追加（轮转检查 → 尾换行补齐 → append）
+  // Write: append (rotation check -> trailing-newline fix -> append)
   // ------------------------------------------------------------------
 
-  /** 追加一条事件；`None` = 成功，`Some(reason)` = 失败（调用方据此在结果行附加
-    * NOTE 或报错，**绝不静默**）。 */
+  /** Append one event; `None` = success, `Some(reason)` = failure (the caller then
+    * attaches a NOTE to the result line or reports an error -- **never silently**). */
   def appendSync(ev: TaskLedgerEvent): Option[String] =
     try
       val rotated = rotateIfNeeded()
@@ -84,7 +96,8 @@ class TaskLedgerHistory private ():
         logger.warnSync(s"[taskledger] history append failed ($reason) — path=$file")
         Some(reason)
 
-  /** 活动文件尾字节非 `\n` → 先补一个（crash 半行与下一条粘连的防线）。 */
+  /** If the active file's last byte is not `\n`, append one first (a safeguard against a
+    * crash's half-written line gluing onto the next one). */
   private def ensureTrailingNewline(): Unit =
     if os.exists(file) then
       val raf = new java.io.RandomAccessFile(file.toIO, "r")
@@ -95,8 +108,9 @@ class TaskLedgerHistory private ():
           if raf.read() != '\n' then os.write.append(file, "\n", createFolders = true)
       finally raf.close()
 
-  /** 惰性轮转（只在写路径调用）：活动文件越阈值 → 改名覆盖 `.1` 代 + 新活动文件
-    * 首行写 `rotate` 事件。返回是否发生轮转。 */
+  /** Lazy rotation (called only on the write path): the active file crossing a threshold
+    * ⇒ rename to overwrite generation `.1` + write a `rotate` event as the new active
+    * file's first line. Returns whether a rotation happened. */
   private def rotateIfNeeded(): Boolean =
     if !os.exists(file) then false
     else
@@ -125,12 +139,14 @@ class TaskLedgerHistory private ():
     catch case _: Exception => 0
 
   // ------------------------------------------------------------------
-  // 读：`.1` 代 + 活动（先归档后活动 ⇒ 天然升序）
+  // Read: generation `.1` + active (archive before active ⇒ naturally ascending)
   // ------------------------------------------------------------------
 
-  /** 读某条目的事件：按行序升序返回最近 `limit` 条（`only` = 分类过滤，用于
-    * 「note 主线」与「状态类次区」各自独立的读取窗口）；`total` = 命中该 id 且
-    * 通过 `only` 的行数；`skipped` = 预筛命中但不可解析的行数。读路径零写入。 */
+  /** Read one entry's events: return the most recent `limit` in ascending line order
+    * (`only` = class filter, used for the independent read windows of "the note mainline"
+    * and "the state-class secondary section"); `total` = the number of rows matching this
+    * id that also pass `only`; `skipped` = the number of rows that matched the prefilter
+    * but could not be parsed. The read path never writes. */
   def readFor(id: String, limit: Int = Int.MaxValue, only: TaskLedgerEvent => Boolean = _ => true): ReadResult =
     val needle = s""""id":"$id""""
     val buf = scala.collection.mutable.ListBuffer[TaskLedgerEvent]()
@@ -161,7 +177,8 @@ class TaskLedgerHistory private ():
     scan(file)
     ReadResult(events = buf.toList, total = total, skipped = skipped)
 
-  /** 廉价探针（不解析 JSON）：史文件里是否出现过该 id —— 归档命中判定用。 */
+  /** Cheap probe (no JSON parsing): whether this id ever appeared in the history files --
+    * used to decide an archive hit. */
   def countLinesFor(id: String): Int =
     val needle = s""""id":"$id""""
     def count(path: os.Path): Int =
@@ -177,31 +194,37 @@ object TaskLedgerHistory:
   val FileName        = "tasks-v2-history.jsonl"
   val ArchiveFileName = "tasks-v2-history.1.jsonl"
 
-  /** 活动文件轮转阈值（> 5 MiB 或 > 20,000 行，先到为准）⇒ 全盘硬顶 ≤ 2 代 ≈ 10 MiB。
-    * 取值 = 沿用现读（任务书 §② 定值：「轮转参数沿用现读 = 5 MiB / 20,000 行」）。 */
+  /** Active-file rotation thresholds (> 5 MiB or > 20,000 lines, whichever comes first) ⇒
+    * on-disk hard cap ≤ 2 generations ≈ 10 MiB. The values follow the current code (the
+    * task book's §② ruling: "rotation parameters follow the current code = 5 MiB /
+    * 20,000 lines"). */
   val RotationMaxBytes: Long = 5L * 1024 * 1024
   val RotationMaxLines: Int  = 20_000
 
-  /** 行数探测门槛：不足 1 MiB 的文件不可能越 2 万行阈值（轮转检查常态 O(1)）。 */
+  /** Line-count probe threshold: a file under 1 MiB cannot exceed the 20,000-line
+    * threshold (the rotation check is O(1) in the normal case). */
   val LineCountProbeBytes: Long = 1L * 1024 * 1024
 
-  /** actor 值域：引擎侧派生（Nebula / 分发器 / 流节点 / 工具内建 system）。 */
+  /** actor value domain: derived engine-side (Nebula / dispatcher / flow node / the
+    * tool's built-in system). */
   object Actors:
     val Nebula     = "nebula"
     val Dispatcher = "dispatcher"
     val Node       = "node"
     val System     = "system"
 
-  /** note 类事件的**来源域**（`from` 字段值；裁定 n：结构化 = `from` + 时间戳 + 正文摘录）。 */
+  /** The **origin domain** of note-class events (the `from` field value; ruling n:
+    * structured = `from` + timestamp + body excerpt). */
   object Origins:
-    /** Nebula 的 Mail 自动 append（唯一正常写入路径）。 */
+    /** Nebula's Mail-driven automatic append (the only normal write path). */
     val Nebula = "nebula"
-    /** 引擎侧系统事件（归属修复 / 迁移类）。 */
+    /** Engine-side system events (attribution repair / migration class). */
     val Engine = "engine"
 
-  /** 事件 kind 值域（注册式扩展：新 kind = 本清单加一词 + 写入点调用，读侧零改）。 */
+  /** Event kind value domain (registry-style extension: a new kind = add one word here +
+    * call it at the write point; the read side needs no change). */
   object Kinds:
-    val Note       = "note"       // note 时间线条目（引擎在 Mail 时自动 append）
+    val Note       = "note"       // note-timeline entry (auto-appended by the engine on Mail)
     val Create     = "create"
     val Update     = "update"
     val Complete   = "complete"
@@ -210,18 +233,20 @@ object TaskLedgerHistory:
     val Quarantine = "quarantine"
     val Rotate     = "rotate"
 
-  /** note 主线判定（`show` 主区）：note 类事件 = 时间线主体，状态类退居次区。 */
+  /** Note-mainline test (the `show` main section): note-class events form the timeline
+    * body; state-class events fall back to the secondary section. */
   def isNoteEvent(ev: TaskLedgerEvent): Boolean =
     ev.kind == Kinds.Note || (ev.kind == Kinds.Update && ev.next.isDefined)
 
   private[project] val logger = NebflowLogger.forName("nebflow.taskledger.history")
 
-  /** 单例（全局文件，非 per-workspace）。 */
+  /** Singleton (a global file, not per-workspace). */
   val instance: TaskLedgerHistory = new TaskLedgerHistory()
 
   def open(): TaskLedgerHistory = instance
 
-  /** 读取结果：`events` 升序（最近 `limit` 条）；`total` 命中总数；`skipped` 坏行数。 */
+  /** Read result: `events` ascending (the most recent `limit`); `total` = total matches;
+    * `skipped` = number of bad rows. */
   final case class ReadResult(
     events: List[TaskLedgerEvent] = Nil,
     total: Int = 0,

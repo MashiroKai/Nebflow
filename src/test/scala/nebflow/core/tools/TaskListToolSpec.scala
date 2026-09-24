@@ -338,21 +338,24 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 已删净退役（taskunify 合一批 2026-09-24）：注册表不挂旧名，新名 Task/TaskInfo 已挂——schema 旧面留在类上仅供本 spec 参考"):
-    // taskunify 合一批（2026-09-24）：`TaskList` 与 `TaskBoard` 合并为 `Task`（唯一
-    // 写面）+ Nblula 账本读取面；旧名**刻意不注册**（注册层查不到 ⇒
-    // AgentCore.RetiredToolGuides 的迁移指引才会触发），且「旧名注册为别名」会造出
-    // 第二条通往写面的路径 ⇒ 双禁。工具类本体保留（既有 spec 直调它验证旧数据结构），
-    // 但**生产路径不可达**。
-    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 刻意不挂 TaskList（删净退役）")
-    assert(!ToolRegistry.TOOL_MAP.contains("TaskBoard"), "registry 刻意不挂 TaskBoard（删净退役）")
-    assert(ToolRegistry.TOOL_MAP.contains("Task"), "registry 挂 Task（合一账本唯一写面）")
-    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "registry 挂 TaskInfo（只读归属单条）")
-    // 类本体仍可直调（本 spec 其余用例即证），schema 面保持既有形态
+  test("TaskList is deleted-retired (taskunify merge batch 2026-09-24): the registry does not mount the old name, the new names Task/TaskInfo are mounted -- the legacy schema face stays on the class for this spec's reference only"):
+    // taskunify merge batch (2026-09-24): `TaskList` and `TaskBoard` were merged into `Task`
+    // (the only write face) + the Nebula ledger read face; the old names are deliberately
+    // **not registered** (the registry layer cannot find them => the
+    // AgentCore.RetiredToolGuides migration guide fires), and "registering the old name as an
+    // alias" would create a second path to the write face => both are forbidden. The tool
+    // class body is kept (the other cases in this spec call it directly to verify the old
+    // data structure), but the **production path is unreachable**.
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "the registry deliberately does not mount TaskList (deleted-retired)")
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskBoard"), "the registry deliberately does not mount TaskBoard (deleted-retired)")
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "the registry mounts Task (the unified ledger's only write face)")
+    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "the registry mounts TaskInfo (the read-only single-entry attribution view)")
+    // the class body can still be called directly (proven by the rest of this spec), and the
+    // schema face keeps its existing shape
     val schema = TaskListTool.inputSchema
     val actions = schema("properties").get.asObject.get("action").get
       .asObject.get("enum").get.asArray.get.map(j => j.asString.get).toList
-    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "旧 schema 恰六 action（历史形态，仅本 spec 参考）")
+    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "the legacy schema has exactly six actions (historical shape, referenced by this spec only)")
     // 新增字段进 schema（模型可见面）
     val props = schema("properties").get.asObject.get
     assert(props.contains("text"), "log 的 text 参数必须可见")

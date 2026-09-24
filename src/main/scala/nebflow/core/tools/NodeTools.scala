@@ -1737,11 +1737,14 @@ object NodeEditTool extends Tool:
     verifierRoutePending: Boolean = false,
     /** P1 已过闸的旁证（plugins 键在本次调用出现）——驱动 P2a flag-off 警告面。 */
     pluginsDeclared: Boolean = false,
-    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：新建节点归属的任务号。
-      * 调用方必须传**引擎侧身份** `ctx.taskId`（🔴 **不得**从 `project` 形参取——该形参
-      * 可覆盖 `ctx.projectName`）⇒ 经 [[proceed]] 落进 `NodeDef.taskId`，供 `TaskInfo`
-      * 零形参归属解析。⚠ 命名：不能叫 `taskId`——与形参 `task`（任务正文）视觉相邻且
-      * 方法体内有 `task` 作用域，用 `owningTaskId` 显式区分「归属任务」与「任务正文」。 */
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task id
+      * a new node is attributed to. The caller must pass the **engine-side identity**
+      * `ctx.taskId` (🔴 it must **not** be taken from the `project` parameter -- that
+      * parameter can override `ctx.projectName`) ⇒ via [[proceed]] it lands in
+      * `NodeDef.taskId`, feeding `TaskInfo`'s zero-parameter attribution resolution. ⚠ Naming:
+      * it cannot be called `taskId` -- that sits visually next to the `task` parameter (the
+      * task body) and the method body has a `task` scope, so `owningTaskId` explicitly
+      * distinguishes "the attributed task" from "the task body". */
     owningTaskId: Option[String] = None
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
       roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
@@ -1866,9 +1869,11 @@ object NodeEditTool extends Tool:
     dangling: Boolean = false,
     verifierRoutePending: Boolean = false,
     pluginsDeclared: Boolean = false,
-    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：见 [[createNode]] 同名参数
-      * ——本处是它落进 `NodeDef.taskId` 的最后一跳（唯一构造点在此 [[proceed]]）。
-      * ⚠ 命名回避 `taskId`：本方法有形参 `task`（任务正文），两者视觉相邻。 */
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): see the
+      * same-named parameter of [[createNode]] -- this is the last hop before it lands in
+      * `NodeDef.taskId` (the single construction point is [[proceed]]).
+      * ⚠ The naming avoids `taskId`: this method has a `task` parameter (the task body) and
+      * the two sit visually next to each other. */
     owningTaskId: Option[String] = None
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
       roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
@@ -2052,12 +2057,16 @@ object NodeEditTool extends Tool:
             // 此路 ⇒ 零迁移）。值域已在 call() 前置闸拒非法值（NODE_CHAIN_ID_INVALID）。
             // 🔴 纯元数据：不参与任何调度判据（deps 才是闸），无「创建即运行」影响。
             chainId = chainDecl.decl,
-            // **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：节点归属其任务号
-            // ——取值 = **引擎侧身份** `ctx.taskId`（**唯一构造点**，由调用方传入）。
-            // 🔴 防错：**不得**从 `project` 形参取——该形参可覆盖 `ctx.projectName`
-            // （见 `resolveProject`），是可被客户端伪造的客户面值；本字段是归属与
-            // 上行拒绝面的判据，必须取引擎侧身份（与 `BoardCaller.fromContext` 同款纪律）。
-            // 无归属会话（如分发器直接 NodeEdit）⇒ None（fail-closed）。
+            // **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): a
+            // node is attributed to its task id -- the value = the **engine-side identity**
+            // `ctx.taskId` (the **single construction point**, passed in by the caller).
+            // 🔴 Mistake prevention: it must **not** be taken from the `project` parameter --
+            // that parameter can override `ctx.projectName` (see `resolveProject`) and is a
+            // client-face value clients can forge; this field is the criterion of attribution
+            // and of the uplink refusal face, so it must take the engine-side identity (the
+            // same discipline as `BoardCaller.fromContext`).
+            // A session with no attribution (e.g. a dispatcher calling NodeEdit directly) ⇒
+            // None (fail-closed).
             taskId = owningTaskId
           )
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）

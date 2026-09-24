@@ -8,27 +8,34 @@ import nebflow.core.PathUtil
 import nebflow.core.project.{TaskLedgerHistory, TaskLedgerRenderer, TaskLedgerStore}
 
 /**
- * `Task` 工具 —— **合一账本的唯一写面**（Nebula 独占；taskunify 实施批 2026-09-24）。
+ * The `Task` tool -- the **single write face of the unified ledger** (Nebula-exclusive;
+ * taskunify batch 2026-09-24).
  *
- * 一件取代退役的 `TaskList` + `TaskBoard`：**一个账本、一个编号空间、一个变更史
- * 文件**。分发器与项目节点只能通过独立的只读 `TaskInfo` 看**自己被挂上的那一条**
- * 任务——它们**永不在此写入**。
+ * One tool replaces the retired `TaskList` + `TaskBoard`: **one ledger, one id space, one
+ * change-history file**. The dispatcher and project nodes can only look at **the one task
+ * they are attached to** through the separate read-only `TaskInfo` -- they **never write
+ * here**.
  *
- * 身份（引擎侧，**不信客户端参数**——安全红线）：`ctx.isDispatcher` ⇒ 拒
- * （分发器无写权，权限反转）；`ctx.flowNodeId` ⇒ 拒（节点无写权）；两者皆空
- * （Nebula 根会话 / REST 直调）⇒ 放行。第二道保险 = 挂载面（分发器固定面与节点
- * 会话均**看不到**本工具名）。越权一律 `TASK_FORBIDDEN`（**不是**静默 no-op）。
+ * Identity (engine-side, **never from client parameters** -- a security red line):
+ * `ctx.isDispatcher` ⇒ refused (a dispatcher has no write right; this is the capability
+ * inversion); `ctx.flowNodeId` ⇒ refused (a node has no write right); both empty (a Nebula
+ * root session / a direct REST call) ⇒ allowed. The second safeguard = the mount face
+ * (neither the dispatcher's fixed set nor a node session **ever sees** this tool's name).
+ * Any privilege violation is `TASK_FORBIDDEN` (**not** a silent no-op).
  *
- * 动作面（六动词）与 `status` 参数的整体删除见 description；`note` 时间线**不在本
- * 工具面**（唯一写入路径 = 引擎在 Nebula 每次 Mail 到该任务分发器时自动 append）。
+ * The six-verb action face and the deletion of the `status` parameter are documented in the
+ * description; the `note` timeline is **not on this tool's face** (its only write path is
+ * the engine appending automatically on every Mail from Nebula to that task's dispatcher).
  */
 object TaskTool:
 
-  /** 权限拒绝（可行动文案：说身份、说越权点、给出路）。 */
+  /** Permission refusal (actionable text: names the identity, the violation point, and a
+    * way out). */
   private def forbidden(reason: String): ToolError = ToolError(
     s"Task: permission denied — $reason (${TaskLedgerStore.Codes.Forbidden})")
 
-  /** 越权读（无归属）拒绝：`TaskInfo` 的 fail-closed 文案（含出路）。 */
+  /** Unauthorized read (no attachment) refusal: `TaskInfo`'s fail-closed text (with a way
+    * out). */
   private def noAttachment(session: String): ToolError = ToolError(
     s"TaskInfo: this session has no task attachment — no origin task is recorded for session '$session'. " +
       s"It never falls back to the whole ledger and never shows another task's data. " +
@@ -36,22 +43,28 @@ object TaskTool:
       s"(${TaskLedgerStore.Codes.NoAttachment})")
 
   // ------------------------------------------------------------------
-  // Task（写面）
+  // Task (the write face)
   // ------------------------------------------------------------------
 
-  /** 引擎侧写权判定：**Nebula 根会话独占**（裁定 §3「写权单一」）。
+  /** Engine-side write-right test: **exclusively the Nebula root session** (ruling §3,
+    * "a single write right").
     *
-    * 判据 = `ctx.isNebulaWriter`（委托 `AgentCore.isNebulaRoot` 单点，禁重写表达式）
-    * ——即「`agentDef.name == "Nebula"` ∧ `depth == 0`」。分发器、项目节点、team、
-    * flow 双轨、REST 直调（`agentDef=None` ⇒ fail-closed false）一律**拒**。
+    * The criterion is `ctx.isNebulaWriter` (delegating to the single point
+    * `AgentCore.isNebulaRoot`; never re-writing the expression) -- that is, `agentDef.name
+    * == "Nebula"` AND `depth == 0`. The dispatcher, project nodes, team, dual-track flow
+    * sessions and direct REST calls (`agentDef=None` ⇒ fail-closed false) are all
+    * **refused**.
     *
-    * 为何不用「非分发器且非节点 ⇒ 放行」的补集式判据：那会把**任何无身份的旁支
-    * 会话**（REST 直调 / harness / 未来新增形态）静默放行到写面上——写权单一是
-    * **授权面**，必须 fail-closed（只有明确身份能进），不能是「没被排除就能进」。
-    * 这是 `buildAllowedToolSet` 的 fail-closed 纪律在运行期的同款落实。 */
+    * Why not the complement-style criterion "not a dispatcher and not a node ⇒ allowed":
+    * that would silently let **any unidentified side session** (direct REST calls, a
+    * harness, a future new shape) onto the write face -- a single write right is an
+    * **authorization face** and must be fail-closed (only an explicit identity gets in),
+    * never "everything not excluded gets in". This is
+    * `buildAllowedToolSet`'s fail-closed discipline applied at runtime. */
   def writableBy(ctx: ToolContext): Boolean = ctx.isNebulaWriter
 
-  /** 六动词分派（同步核心；call 在 IO.blocking 内调用——可单测）。 */
+  /** The six-verb dispatch (the synchronous core; `call` invokes it inside
+    * IO.blocking -- unit-testable). */
   def dispatchSync(
     ledger: TaskLedgerStore,
     nodeTerminal: Map[String, String],
@@ -100,17 +113,19 @@ object TaskTool:
             s"Task: unknown action '$other' — one of create/update/list/complete/close/show. (${TaskLedgerStore.Codes.Param})"))
 
   // ------------------------------------------------------------------
-  // TaskInfo（只读归属单条）
+  // TaskInfo (the read-only attributed single entry)
   // ------------------------------------------------------------------
 
-  /** 归属解析（**零形参**；裁定 F：显式 `id` 形参已否决）——从**会话身份**解析，
-    * 绝不从客户端参数。无归属 ⇒ `Left(TASKINFO_NO_ATTACHMENT)`（**不回落全板**）。 */
+  /** Attachment resolution (**zero parameters**; ruling F: an explicit `id` parameter was
+    * rejected) -- resolved from the **session identity**, never from client parameters. No
+    * attachment ⇒ `Left(TASKINFO_NO_ATTACHMENT)` (**no fallback to the whole ledger**). */
   def attachedTaskId(ctx: ToolContext): Either[ToolError, String] =
     ctx.taskId.filter(_.trim.nonEmpty) match
       case Some(t) => Right(t)
       case None    => Left(noAttachment(ctx.sessionId.getOrElse("(unknown)")))
 
-  /** 只读渲染归属单条。归属解析成功但账本无该条目 ⇒ 显式报错（**不**回落、**不**猜）。 */
+  /** Read-only rendering of the attributed single entry. If resolution succeeds but the
+    * ledger has no such entry ⇒ an explicit error (**no** fallback, **no** guessing). */
   def infoSync(
     ledger: TaskLedgerStore,
     ctx: ToolContext
@@ -134,8 +149,9 @@ object TaskTool:
 end TaskTool
 
 /**
- * `Task` 工具实体（挂载面：NebulaOrchestrationTools 授能；分发器固定面与节点会话
- * **均不挂载**——权限反转 §16 P6）。第二道保险 = [[TaskTool.writableBy]] 运行期身份闸。
+ * The `Task` tool entity (mount face: authorized by NebulaOrchestrationTools; neither the
+ * dispatcher's fixed set nor a node session **mounts** it -- the capability inversion of
+ * §16 P6). The second safeguard = the runtime identity gate [[TaskTool.writableBy]].
  */
 object TaskToolDef extends Tool:
 
@@ -183,7 +199,8 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
 - There is no `project` WALL here: unlike the retired per-project board, this is one ledger shared by the whole instance. A `project` field is a free-form tag, not a storage location.
 - Cross-process writers are not locked. A corrupted ledger degrades reads to an empty view (never a crash); the first write after corruption quarantines the file under a `.corrupt-<millis>` name — nothing is silently overwritten, and the quarantine is recorded in the history."""
 
-  /** 路径字面量（与 store/history 的常量同源；本地私有别名避免长限定名）。 */
+  /** Path literals (same source as the store/history constants; local private aliases to
+    * avoid long qualified names). */
   private def tasksV2File: String = TaskLedgerStore.FileName
   private def historyFile: String = TaskLedgerHistory.FileName
 
@@ -260,16 +277,20 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
         blocks = blocks, parentId = parentId, project = project)
     }
 
-  /** ⚠node-done join 的映射：从本会话所属项目工作区的 Flow Map 现读（无则空映射）。 */
+  /** The mapping for the ⚠node-done join: read live from the Flow Map of the workspace
+    * this session's project belongs to (empty when there is none). */
   private def nodeTerminalMapOf(): Map[String, String] = Map.empty
 end TaskToolDef
 
 /**
- * `TaskInfo` 工具实体 —— **零参数、只读**归属单条（裁定 b①/裁定 F）。
+ * The `TaskInfo` tool entity -- **zero parameters, read-only** view of the attributed
+ * single entry (ruling b① / ruling F).
  *
- * 挂载面：分发器固定面第九件（**能力反转**：`TaskBoard` 全权 → `TaskInfo` 只读）+
- * project 节点/分发器会话按身份追加。归属由**会话身份**解析（`ctx.taskId`），
- * **零形参**——显式 id 形参已否决。无归属 ⇒ 显式拒绝（**不回落全板**）。
+ * Mount face: the ninth item of the dispatcher's fixed set (**capability inversion**:
+ * `TaskBoard` with full rights → `TaskInfo` read-only) + appended by identity for project
+ * nodes / dispatcher sessions. The attachment is resolved from the **session identity**
+ * (`ctx.taskId`), **zero parameters** -- an explicit id parameter was rejected. No
+ * attachment ⇒ an explicit refusal (**no fallback to the whole ledger**).
  */
 object TaskInfoToolDef extends Tool:
 
@@ -284,9 +305,10 @@ What it returns: the task's id, title, state (`open` / `closed` / `completed`), 
 
 If your session carries no task attachment (no origin task recorded), this tool FAILS with an explicit error naming your session and the reason — it never falls back to showing the whole ledger, and it never shows another task's data. That failure is deliberate policy: a session with no accountable task may not read task data. Report the missing attachment through your normal report channel instead."""
 
-  /** 🔴 **零参数**：`properties` = 空对象，`required` = 空数组。归属写在 description
-    * 里，**不得**出现 `id`/`taskId`/`project` 等寻址键——一旦出现模型就会尝试填它，
-    * 越权读面即被客户端参数打开。 */
+  /** 🔴 **Zero parameters**: `properties` = an empty object, `required` = an empty array.
+    * The attachment is described in the description; addressing keys such as
+    * `id`/`taskId`/`project` **must not** appear -- as soon as one does, the model tries to
+    * fill it and the unauthorized read face is opened up by a client parameter. */
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(),

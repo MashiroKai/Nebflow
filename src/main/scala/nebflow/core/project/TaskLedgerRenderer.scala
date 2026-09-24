@@ -1,45 +1,53 @@
 package nebflow.core.project
 
 /**
- * TaskLedgerRenderer —— 合一本渲染单点（taskunify 实施批，2026-09-24）。
+ * TaskLedgerRenderer -- the single rendering point of the unified ledger (taskunify
+ * batch, 2026-09-24).
  *
- * 两个消费者共用：`Task` 工具的 `list`/`show` 行文（Nebula 写面）与 `TaskInfo`
- * 的只读归属单条渲染（分发器/节点读面）。纯函数——零 IO、零 store 访问。
+ * Shared by two consumers: the `Task` tool's `list`/`show` line text (Nebula's write
+ * face) and `TaskInfo`'s read-only rendering of the attributed single entry (the
+ * dispatcher / node read face). Pure functions -- zero IO, zero store access.
  *
- * 字段面（裁定 F）：输出沿用现读 show 字段集（`TaskBoardTool.scala:160-166`）
- * **去掉板面专属字段**（无 `note` 字段——note 走时间线；无板面 per-project 语境）。
- * note 按 [[NoteShowMaxChars]] 截断 + 「还有 N 条」尾标；终态走 [[renderArchived]]。
+ * Field face (ruling F): the output follows the current `show` field set
+ * (`TaskBoardTool.scala:160-166`) with the **board-only fields removed** (no `note`
+ * field -- notes live on the timeline; no per-project board context). A note is truncated
+ * per [[NoteShowMaxChars]] with an "N more" tail marker; terminal entries go through
+ * [[renderArchived]].
  *
- * 降级纪律：超限 = 整行丢弃 + 计数尾注，**不截半行、不静默丢**（可见截断）。
+ * Degradation discipline: over budget = drop whole lines + a counted tail note, **never
+ * cut a line in half, never drop silently** (visibly truncated).
  */
 object TaskLedgerRenderer:
 
-  // ---- 上限常量（集中一处）----
-  val TitleMaxChars = 40 // 紧凑行标题截断
+  // ---- Cap constants (centralized in one place) ----
+  val TitleMaxChars = 40 // compact-line title truncation
 
-  // ---- show 渲染预算 ----
-  val NoteShowMaxChars        = 16_000 // 当前 note（时间线单条）渲染上限 = 写入侧 NoteCapChars
-  val TimelineNoteMaxVersions = 50     // note 主线区读取窗口（**note 类事件条数**）
-  val TimelineNoteMaxChars    = 24_000 // note 主线区字符预算（超出从最旧的整条丢，绝不截半条）
-  val TimelineContentMaxChars = 10_000 // 单侧内容渲染上限（超出明示截断）
-  val TimelineStateMaxLines   = 30     // 状态类次区条数（极简行）
-  val TimelineStateMaxChars   = 3_000  // 状态类次区字符预算
-  val ReverseDepsShowMax      = 20     // 依赖反查（谁依赖我）条数
-  val ShowHardCapChars        = 48_000 // show 最终硬截断（< 工具结果硬顶 50,000）
+  // ---- show rendering budgets ----
+  val NoteShowMaxChars        = 16_000 // current note (one timeline entry) render cap = writer-side NoteCapChars
+  val TimelineNoteMaxVersions = 50     // note-mainline read window (**number of note-class events**)
+  val TimelineNoteMaxChars    = 24_000 // note-mainline char budget (over budget drops whole oldest entries, never half an entry)
+  val TimelineContentMaxChars = 10_000 // per-side content render cap (over cap = explicit truncation)
+  val TimelineStateMaxLines   = 30     // state-class secondary section line count (minimal lines)
+  val TimelineStateMaxChars   = 3_000  // state-class secondary section char budget
+  val ReverseDepsShowMax      = 20     // reverse-dependency lookup (who depends on me) count
+  val ShowHardCapChars        = 48_000 // final hard truncation for show (< the tool result hard cap of 50,000)
 
-  /** 时间线窗口尾标：还有 N 条未展示（**明示**，绝不静默丢）。 */
+  /** Timeline-window tail marker: N more entries not shown (**explicit**, never dropped
+    * silently). */
   def moreTail(n: Int, what: String): String = s"(+$n more $what not shown)"
 
   def truncate(s: String, max: Int): String =
     if s.length <= max then s else s.take(math.max(0, max - 1)) + "…"
 
-  /** 依赖未闭环判定：blocks 内任一【已知】条目未抵终态（未知 id 不计——写入侧已拒）。
-    * 判据 = [[TaskLedgerStore.Status.isTerminal]]（**两个终态都算闭环**）。 */
+  /** Dependency-not-closed test: any **known** entry inside `blocks` has not reached a
+    * terminal state (unknown ids do not count -- the write side already rejected them).
+    * The criterion is [[TaskLedgerStore.Status.isTerminal]] (**both terminal states count
+    * as closed**). */
   def depsOpen(e: TaskEntry, tasks: List[TaskEntry]): Boolean =
     e.blocks.exists(dep => tasks.find(_.id == dep).exists(t => !TaskLedgerStore.Status.isTerminal(t.status)))
 
-  /** 紧凑行文法：`#<id>[<status> @<assignee>] <title截40>` + (→node <id>) + ⚠deps-open
-    * + (parent #N)。 */
+  /** Compact-line grammar: `#<id>[<status> @<assignee>] <title truncated to 40>` +
+    * (→node <id>) + ⚠deps-open + (parent #N). */
   def compactLine(
     e: TaskEntry,
     tasks: List[TaskEntry],
@@ -52,8 +60,9 @@ object TaskLedgerRenderer:
     val proj = e.project.map(p => s" [project:$p]").getOrElse("")
     s"#${e.id}[${e.status}$asg] ${truncate(e.title, TitleMaxChars)}$proj$node$parent$deps"
 
-  /** 单条条目详情块：全字段 + links + 依赖当前态 + **依赖反查**（谁依赖我）+
-    * 父链/直接子条目 + note 时间线（主区）+ 状态类次区。 */
+  /** One entry's detail block: all fields + links + current dependency state +
+    * **reverse dependencies** (who depends on me) + parent chain / direct sub-entries +
+    * the note timeline (main section) + the state-class secondary section. */
   def renderShow(
     e: TaskEntry,
     tasks: List[TaskEntry],
@@ -98,7 +107,7 @@ object TaskLedgerRenderer:
       b.mkString("\n"),
       s"\n… (show truncated at $ShowHardCapChars chars — the full note timeline stays in ${TaskLedgerHistory.FileName})")
 
-  /** 父链（沿 parent 边上溯，最多 5 跳 + 深度提示）。 */
+  /** Parent chain (walking up the parent edges, at most 5 hops + a depth hint). */
   private def renderParentChain(e: TaskEntry, tasks: List[TaskEntry]): Option[String] =
     e.parentId.filter(_.nonEmpty).map { p =>
       val chain = scala.collection.mutable.ListBuffer[String]()
@@ -119,8 +128,10 @@ object TaskLedgerRenderer:
       else s"  parent chain: ${chain.mkString(" ← ")}"
     }
 
-  /** 归档命中（降级路径）：主库已无该 id（30 天 prune），但史文件仍有它的记录
-    * ⇒ 降级渲染时间线，**不报错退出**；主库字段如实标「已清理，不可得」。 */
+  /** Archive hit (the degraded path): the main ledger no longer has this id (pruned after
+    * 30 days) but the history file still holds its records ⇒ render the timeline in
+    * degraded mode, **do not error out**; the ledger fields are honestly marked as
+    * "cleaned up, unavailable". */
   def renderArchived(
     id: String,
     tasks: List[TaskEntry],
@@ -138,8 +149,9 @@ object TaskLedgerRenderer:
       b.mkString("\n"),
       s"\n… (show truncated at $ShowHardCapChars chars — see ${TaskLedgerHistory.FileName} for the rest)")
 
-  /** `TaskInfo` 只读归属单条渲染（裁定 F）：**同一颗粒度**（分发器与节点同文），
-    * 无板面专属字段；note 按 [[NoteShowMaxChars]] 截断 + 「还有 N 条」尾标。 */
+  /** `TaskInfo`'s read-only rendering of the attributed single entry (ruling F): **the
+    * same granularity** (the dispatcher and a node see identical text), no board-only
+    * fields; a note is truncated per [[NoteShowMaxChars]] with an "N more" tail marker. */
   def renderInfo(
     e: TaskEntry,
     tasks: List[TaskEntry],
@@ -168,11 +180,12 @@ object TaskLedgerRenderer:
       s"\n… (truncated at $ShowHardCapChars chars — see ${TaskLedgerHistory.FileName} for the rest)")
 
   // ------------------------------------------------------------------
-  // note 时间线两区渲染：主区 = note 类（可还原），次区 = 状态类极简行
+  // Note timeline rendered in two sections: main = note-class (restorable), secondary = minimal state-class lines
   // ------------------------------------------------------------------
 
-  /** **主区（note 时间线）**：时间序升序；每条渲染 `from`（来源域）+ 时间戳 + 正文。
-    * 逐条整块装配，超出字符预算从最旧的整条丢（**明示**）。 */
+  /** **Main section (the note timeline)**: ascending time order; each entry renders
+    * `from` (origin domain) + timestamp + body. Assembled entry-by-entry as whole blocks;
+    * over the char budget the oldest whole blocks are dropped (**explicitly**). */
   private def renderNoteTimeline(t: TaskLedgerHistory.ReadResult): List[String] =
     if t.events.isEmpty then
       List("  note timeline: (none yet — an entry is written automatically when Nebula Mails this task's dispatcher)")
@@ -196,7 +209,7 @@ object TaskLedgerRenderer:
       ).flatten
       (s"  note timeline (${blocks.size} shown of ${t.total}, oldest first):" :: blocks.toList.flatten) ++ notes
 
-  /** 单条 note 条目块（1 行头 + 正文行）。 */
+  /** One note entry's block (1 header line + body lines). */
   private def noteBlock(ev: TaskLedgerEvent): List[String] =
     if ev.kind == TaskLedgerHistory.Kinds.Note then
       val body = ev.text.getOrElse("")
@@ -211,7 +224,8 @@ object TaskLedgerRenderer:
       head :: (ev.prev.map(p => contentLines("before", p, Some(p.length))).getOrElse(Nil) ++
         ev.next.map(n => contentLines("after", n, Some(n.length))).getOrElse(Nil))
 
-  /** 单侧内容行（多行缩进；超限**明示**截断——绝不静默丢）。 */
+  /** One side's content lines (multi-line indented; over the cap = **explicit**
+    * truncation -- never dropped silently). */
   private def contentLines(label: String, body: String, fullLen: Option[Int]): List[String] =
     val cut = body.length > TimelineContentMaxChars
     val shown = if cut then body.take(TimelineContentMaxChars) else body
@@ -220,8 +234,9 @@ object TaskLedgerRenderer:
     else s"      $label:"
     head :: shown.split("\n", -1).toList.map(ln => s"        $ln")
 
-  /** **次区（状态类事件）**：极简行、条数与字符双预算、暂新的优先，从最旧的整行丢
-    * ——note 主线永不被状态类淹没。 */
+  /** **Secondary section (state-class events)**: minimal lines, a dual budget on line
+    * count and characters, newest preferred, dropping whole oldest lines -- the note
+    * mainline is never drowned out by state-class events. */
   private def renderStateEvents(t: TaskLedgerHistory.ReadResult): List[String] =
     if t.events.isEmpty then Nil
     else
@@ -241,7 +256,7 @@ object TaskLedgerRenderer:
       ).flatten
       (s"  state events (${lines.size} shown of ${t.total}, minimal, oldest first):" :: lines.toList) ++ notes
 
-  /** 状态类极简行：`<at> <kind> [detail] actor=…`。 */
+  /** Minimal state-class line: `<at> <kind> [detail] actor=...`. */
   def minimalLine(ev: TaskLedgerEvent): String =
     List(
       Some(s"${ev.at} ${ev.kind}"),
@@ -252,7 +267,8 @@ object TaskLedgerRenderer:
 
   private def short(s: String): String = truncate(s.replace("\n", " ⏎ "), 120)
 
-  /** 最终硬截断：在字符上限前的最后一个换行处切（不产生半行），尾附可见截断说明。 */
+  /** Final hard truncation: cut at the last newline before the char cap (never producing a
+    * half line) and append a visible truncation note. */
   private def hardCap(out: String, tail: String): String =
     if out.length + tail.length <= ShowHardCapChars then out
     else
@@ -261,8 +277,10 @@ object TaskLedgerRenderer:
       val at = cut.lastIndexOf('\n')
       (if at > 0 then cut.take(at) else cut) + tail
 
-  /** 通用整行装配（降级纪律单点）：header + 尽可能多整行（≤maxLines）+（有丢弃时）
-    * 尾注 + footer；总输出 ≤ maxChars；行要么完整装入要么整体丢弃。 */
+  /** Generic whole-line assembly (the single point of the degradation discipline):
+    * header + as many whole lines as fit (≤ maxLines) + (when anything was dropped) a tail
+    * note + footer; total output ≤ maxChars; a line is either taken whole or dropped
+    * whole. */
   def assemble(
     header: Option[String],
     lines: List[String],
@@ -274,7 +292,7 @@ object TaskLedgerRenderer:
     val footLen = footer.map(l => 1 + l.length).getOrElse(0)
     var taken = lines.take(maxLines)
     var dropped = lines.length - taken.length
-    def tail(d: Int): String = s"+$d more — 用 list 查看 · show 看单条全文"
+    def tail(d: Int): String = s"+$d more -- use list to browse, show for one entry's full text"
     def total(ts: List[String], d: Int): Int =
       headLen + (if ts.isEmpty then 0 else ts.mkString("\n").length) +
         (if d > 0 then 1 + tail(d).length else 0) + footLen

@@ -42,7 +42,7 @@ class AgentConvergenceSpec extends FunSuite:
     val expected = Set(
       "Mail", "ProjectCreate", "AgentControl",
       // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
-      "Task",                                               // 任务编排（taskunify 合一批 2026-09-24：TaskList + TaskBoard 合并为 Task，件数净 0）
+      "Task",                                               // task orchestration (taskunify merge batch 2026-09-24: TaskList + TaskBoard merged into Task, net count 0)
       "SendMessage",
       "ListFriends",                                        // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read",                                               // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
@@ -54,7 +54,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Glob", "Grep", "Bash", "Write", "Edit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；任务板批 2 +TaskBoard；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；taskunify 合一批 2026-09-24 把 TaskList + TaskBoard 合并为 Task 一件 ⇒ 件数净 0 仍 17；零 Issue）")
+      "the tool list Nebula exposes to the LLM must equal the fixed §C.1 matrix entry by entry (the count is single-sourced from AgentCore.NebulaOrchestrationToolsExpectedSize: in flight 17 = the value after the 2026-09-18 18:18 author order +Bash/Edit/Write/Glob/Grep; history: friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal; the two patches -Glob -Grep and -Delegate are prior facts; taskunify merge batch 2026-09-24 merged TaskList + TaskBoard into the single Task => net count 0, still 17; zero Issue)")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
     // Grep——取代 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面
@@ -69,7 +69,7 @@ class AgentConvergenceSpec extends FunSuite:
     assert(delivered.contains("Write"), "Nebula 含 Write（2026-09-18 18:18 令恢复）")
     assert(delivered.contains("Edit"), "Nebula 含 Edit（2026-09-18 18:18 令恢复）")
 
-  test("Nebula 清单含文件面六件（Read/Glob/Grep/Bash/Write/Edit 均在，2026-09-18 18:18 令）；零 NodeList、零 MultiEdit、零 Web 系、零旧体系三件、零 TeamTask/SubTask/NodeEdit/NodeCancel、零 TaskList/TaskBoard"):
+  test("the Nebula list contains the six file-face tools (Read/Glob/Grep/Bash/Write/Edit all present, 2026-09-18 18:18 order); zero NodeList, zero MultiEdit, zero Web family, zero legacy-set three, zero TeamTask/SubTask/NodeEdit/NodeCancel, zero TaskList/TaskBoard"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     // 2026-09-18 18:18 作者令：root 面恢复 Bash/Edit/Write/Glob/Grep（+既有的 Read
     // ⇒ 文件面六件在场）；取代 2026-09-16 18:41 与 2026-09-05 23:34 两笔摘除令之
@@ -81,10 +81,11 @@ class AgentConvergenceSpec extends FunSuite:
     // 合法，留在 forbidden 里 leaked 必红）——与上方在场锚同批同源。
     val forbidden = Set("MultiEdit", "NodeList",  // NodeList（00:48 裁定摘除，dispatcher 面不受影响）
       // R2 反转（2026-09-12）："Mail" 从本集**摘除**——Mail 已翻案为唯一消息原语并进入
-      // Nebula 面（−Task +Mail；史实 16→16 净 0；史实 2026-09-16 18:41 令后 −2 ⇒ 13）。
-      // taskunify 合一批（2026-09-24）：`Task` 从本集**摘除**——它已复活为合一账本
-      // 唯一写面（取代 TaskList + TaskBoard，件数净 0）；新退役件 = `TaskList` / `TaskBoard`。
-      "TaskList", "TaskBoard", "NodeMessage", "FlowTrigger", "FlowExecute",  // 已删净退役
+      // Nebula face (-Task +Mail; history 16->16 net 0; history: after the 2026-09-16 18:41 order -2 => 13).
+      // taskunify merge batch (2026-09-24): `Task` is **removed** from this set -- it has come
+      // back as the unified ledger's only write face (replacing TaskList + TaskBoard, net count
+      // 0); the newly retired entries are `TaskList` / `TaskBoard`.
+      "TaskList", "TaskBoard", "NodeMessage", "FlowTrigger", "FlowExecute",  // deleted-retired
       "Delegate",                                           // 退役批（史实 −1 ⇒ 12）：一次性执行任务改路由 general 项目
       "TransferFile",                                       // #145 附件腿批退役（2026-09-14）：能力并入 SendMessage 设备附件腿
       "WebSearch", "WebFetch", "Curl",
@@ -140,17 +141,17 @@ class AgentConvergenceSpec extends FunSuite:
     assert(declared.contains("MemoryNote"), "dream 声明 MemoryNote → 授能（exclusiveToolsFor 豁免剥离）")
     val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
     assert(wildcard.contains("MemoryNote"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/Task/TaskInfo/node_report/Pop/ListFriends 对 dream 不得放开
+    // the exemption is exactly one entry, MemoryNote -- Schedule/Delegate/AgentControl/Task/TaskInfo/node_report/Pop/ListFriends must not be opened to dream
     assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
       Set("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo", "node_report", "Pop", "ListFriends"),
-      "dream 豁免面 = 仅 MemoryNote（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends；taskunify 批 2026-09-24：TaskList/TaskBoard → Task/TaskInfo，仍八件——Task/TaskInfo/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）")
+      "dream exemption face = MemoryNote only (six entries stripped by the NodeReport generalisation batch + 2026-09-10 Pop + 2026-09-12 (10) ListFriends; taskunify batch 2026-09-24: TaskList/TaskBoard -> Task/TaskInfo, still eight -- Task/TaskInfo/node_report/Pop/ListFriends are likewise stripped from dream, the real grant is appended in the project-session identity's final segment / Pop is Nebula only / ListFriends is Nebula only)")
 
     val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
     assert(!sneakyDream.contains("AgentControl"), "dream 对 AgentControl 仍被剥（机制层 controlGrant 也只给 Nebula/lead）")
-    assert(!sneakyDream.contains("Task"), "dream 对 Task 仍被剥（taskunify 批：非 DreamAdmittedTools）")
-    assert(!sneakyDream.contains("TaskInfo"), "dream 对 TaskInfo 仍被剥（只读件同样非 DreamAdmittedTools，声明不授能）")
+    assert(!sneakyDream.contains("Task"), "dream is still stripped of Task (taskunify batch: not in DreamAdmittedTools)")
+    assert(!sneakyDream.contains("TaskInfo"), "dream is still stripped of TaskInfo (a read-only entry is likewise not in DreamAdmittedTools; declaring it grants nothing)")
     // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
     assertEquals(AgentCore.exclusiveToolsFor("dream"),

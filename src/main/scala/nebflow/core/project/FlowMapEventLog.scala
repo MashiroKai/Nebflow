@@ -284,9 +284,22 @@ object FlowMapEventLog:
     * project name in this field). */
   val DispatcherConcurrencyRefusedType = "dispatcher-concurrency-refused"
 
-  /** Concurrency-cap refusal structured summary (values carry no whitespace). */
-  def dispatcherConcurrencyRefusedSummary(project: String, active: Int, cap: Int, reason: String): String =
-    s"project=${project.replaceAll("\\s+", "_")} active=$active cap=$cap reason=${reason.replaceAll("\\s+", "_")}"
+  /** Concurrency-cap refusal structured summary (`k=v`, single-space separated, **values
+    * carry no whitespace**).
+    *
+    * 🔴 **All four elements must live in this one summary line** (project name ∧ current live
+    * count ∧ cap ∧ **way out**) — the hard requirement is "visible + locatable, not silent",
+    * so the mechanical criterion has to be assertable **on the event line alone** (the WARN
+    * face carries the same text but must not be needed to complete the four elements).
+    * [[wayOut]] is passed in rather than inlined so the event face and the WARN face state
+    * exactly the same remedy wording. */
+  def dispatcherConcurrencyRefusedSummary(project: String, active: Int, cap: Int, reason: String, way: String): String =
+    s"project=${project.replaceAll("\\s+", "_")} active=$active cap=$cap reason=${reason.replaceAll("\\s+", "_")} way=${way.replaceAll("\\s+", "_")}"
+
+  /** The single source of the cap-refusal way-out wording (shared by the event summary's
+    * `way=` field and the WARN text). */
+  val DispatcherConcurrencyCapWayOut: String =
+    "raise nebflow.dispatcher.maxConcurrentSessions, or let the running dispatcher finish / cancel it"
 
   /** 🔴 **Uplink-refused trace event type** (taskunify merge batch 2026-09-24 · ruling T ·
     * implplan §8/§10.4).

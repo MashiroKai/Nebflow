@@ -280,8 +280,9 @@ object ProjectActor:
       rootSessionId: String,
       source: String = ProjectActor.SourceTask,
       attribution: Option[InjectionAttribution] = None,
-      /** **任务号**（taskunify 合一批 2026-09-24，裁定 c②）：本腿要续接的那条任务。
-        * `None` = 无归属（旧调用点 / 未接线）⇒ 不建任务、注入段省略。 */
+      /** **Task id** (taskunify batch 2026-09-24, ruling c②): the task this leg continues.
+        * `None` = no attribution (legacy call sites / not wired) ⇒ no task is created and
+        * the injection section is omitted. */
       taskId: Option[String] = None
     )
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
@@ -334,10 +335,12 @@ object ProjectActor:
     bridgeRef: ActorRef[AgentEvent],
     pendingInjected: Int = 0,
     pendingTaskTexts: List[String] = Nil,
-    /** **任务归属**（taskunify 合一批 2026-09-24，裁定 e①/c）：本分发器被创建来
-      * 服务的那**一条**任务号。spawn 时置位；注入面据此选会话与渲染归属单条
-      * （`dispatcherBoardText`），会话内 `ToolContext.taskId` 亦取此值。
-      * `None` = 无归属（回退/未接线）⇒ 注入段省略、`TaskInfo` fail-closed 拒。 */
+    /** **Task attribution** (taskunify batch 2026-09-24, ruling e①/c): the **one** task id
+      * this dispatcher was created to serve. Set at spawn; the injection face uses it to
+      * pick the session and to render the attributed single entry (`dispatcherBoardText`),
+      * and the session's `ToolContext.taskId` takes this value too.
+      * `None` = no attribution (fallback / not wired) ⇒ the injection section is omitted and
+      * `TaskInfo` refuses fail-closed. */
     taskId: Option[String] = None,
     /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
       * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
@@ -686,11 +689,14 @@ object ProjectActor:
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
-  /** 分发器任务注入段（taskunify 合一批 2026-09-24，取代 TaskBoard 批 2 §3a）：
-    * **归属单条**（裁定 b①/裁定 F）——只注入分发器被创建来服务的那**一条**任务；
-    * 旧「全板紧凑行」= 越权读面，已收窄。数据源 = **新账本**（tasks-v2.json）——
-    * 🔴 旧板面（task-board.json）新代码**不再读写**（裁定 L：只读归档，保留可查
-    * 能力 ≠ 继续读写）。无归属 / 账本无该条目 → ""（调用方不注空段）。 */
+  /** The dispatcher's task injection section (taskunify batch 2026-09-24, replacing
+    * TaskBoard batch 2 §3a): **the single attributed entry** (ruling b① / ruling F) -- only
+    * the **one** task the dispatcher was created to serve is injected; the old
+    * "whole-board compact lines" was an unauthorized read face and has been narrowed. The
+    * data source is the **new ledger** (tasks-v2.json) -- 🔴 the old board face
+    * (task-board.json) is **no longer read or written** by new code (ruling L: read-only
+    * archive; keeping it queryable is not the same as continuing to read/write it). No
+    * attribution / no such entry in the ledger → "" (the caller injects no empty section). */
   private def dispatcherBoardText(cfg: ProjectConfig, taskId: Option[String]): IO[String] =
     taskId match
       case None => IO.pure("")
@@ -908,9 +914,9 @@ object ProjectActor:
     rootSessionId: String,
     source: String = SourceTask,
     attribution: Option[InjectionAttribution] = None,
-    /** **任务号**（taskunify 合一批 2026-09-24，裁定 c①/c②）：本腿要投递到的那条任务。
-      * `None` = 无归属（回退 / 未接线）⇒ 注入段省略、会话 `taskId` 为 None
-      * （`TaskInfo` fail-closed 拒）。 */
+    /** **Task id** (taskunify batch 2026-09-24, ruling c①/c②): the task this leg delivers
+      * to. `None` = no attribution (fallback / not wired) ⇒ the injection section is omitted
+      * and the session's `taskId` is None (`TaskInfo` refuses fail-closed). */
     taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
@@ -1112,9 +1118,10 @@ object ProjectActor:
     val cap = cfg.dispatcherMaxConcurrentSessions.getOrElse(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions)
     activeDispatcherCount(cfg).flatMap { active =>
       val reason = s"concurrency-cap: $who refused, active dispatcher session(s) >= cap"
+      val wayOut = FlowMapEventLog.DispatcherConcurrencyCapWayOut
       logger.warn(
           s"Project '${cfg.project.name}' dispatcher spawn REFUSED — $who: $active active dispatcher session(s) >= cap $cap " +
-            s"(raise nebflow.dispatcher.maxConcurrentSessions, or let the running dispatcher finish / cancel it). " +
+            s"($wayOut). " +
             s"Nothing was spawned and nothing was silently dropped.") *>
         FlowMapEventLog
           .append(
@@ -1122,7 +1129,7 @@ object ProjectActor:
             cfg.project.name,
             cfg.project.name,
             FlowMapEventLog.DispatcherConcurrencyRefusedType,
-            FlowMapEventLog.dispatcherConcurrencyRefusedSummary(cfg.project.name, active, cap, reason)
+            FlowMapEventLog.dispatcherConcurrencyRefusedSummary(cfg.project.name, active, cap, reason, wayOut)
           )
           .handleErrorWith(e => logger.warn(s"dispatcher-concurrency-refused audit append failed: ${e.getMessage}"))
     }
@@ -1383,9 +1390,10 @@ object ProjectActor:
     firstTaskText: String,
     source: String = SourceTask,
     attribution: Option[InjectionAttribution] = None,
-    /** **任务号**（taskunify 合一批 2026-09-24）：本分发器被创建来服务的那条任务
-      * ——落进 `ActiveDispatcher.taskId` 与 `SpawnParams.taskId`（→ SessionContext →
-      * ToolContext，供 `TaskInfo` 零形参归属解析）。 */
+    /** **Task id** (taskunify batch 2026-09-24): the task this dispatcher was created to
+      * serve -- it lands in `ActiveDispatcher.taskId` and `SpawnParams.taskId` (→
+      * SessionContext → ToolContext, feeding `TaskInfo`'s zero-parameter attribution
+      * resolution). */
     taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
@@ -1432,9 +1440,10 @@ object ProjectActor:
               // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：分发器 = 项目作用域会话
               // ⇒ AGENTS.md 注入判据置位（接收面 = 项目分发器 + 节点会话不变）。
               projectSession = true,
-              // taskunify 合一批（2026-09-24，裁定 e①）：分发器任务归属指纹随 spawn
-              // 注入 → SessionContext.taskId → ToolContext.taskId，供 `TaskInfo`
-              // 零形参归属解析（分发器解析到「它被创建来服务的任务」）。
+              // taskunify batch (2026-09-24, ruling e①): the dispatcher task attribution
+              // fingerprint is injected at spawn → SessionContext.taskId →
+              // ToolContext.taskId, feeding `TaskInfo`'s zero-parameter attribution
+              // resolution (a dispatcher resolves to "the task it was created to serve").
               taskId = taskId
             )
           )

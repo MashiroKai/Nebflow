@@ -46,7 +46,7 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   // ===== ① 文件面六件 ⊆ Nebula 机制集 ∧ NodeList ∅ ∧ TaskList ∈（变异验红锚点）=====
 
-  test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ Task 在——再摘文件面任一件或摘掉 Task、计数漂移即红"):
+  test("(1) the six file-face tools ⊆ Nebula mechanism set (two layers: static set + delivered face, restored by the 2026-09-18 18:18 order) ∧ NodeList absent ∧ Task present — dropping any file-face tool, removing Task, or a count drift turns this red"):
     val six = AgentCore.BaseTools
     assert(six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
       "前置：BaseTools 即基础六件（全体默认不变）——2026-09-18 令只动 root 面，本行即反向钉")
@@ -63,20 +63,22 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // NodeList——节点结果沿 out 边自动投递，主动查图与裁定职责重叠
     // （dispatcher 面不受影响）
     assert(!fixed.contains("NodeList"), "Nebula 机制集不含 NodeList（00:48 裁定摘除）")
-    // 钉死断言（2026-09-06 TaskList 批 → taskunify 合一批 2026-09-24）：合一账本件
-    // ∈ Nebula 机制集——`TaskList` + `TaskBoard` 合并为 `Task` 一件（件数净 0），
-    // 摘掉或改名即红。
-    assert(fixed.contains("Task"), "Nebula 机制集含 Task（合一账本唯一写面；变异验红锚）")
-    // 旧两件删净退役——机制集零出现（调用走 RetiredToolGuides 迁移指引）
+    // Pinned assertion (2026-09-06 TaskList batch → taskunify merge batch 2026-09-24):
+    // the unified-ledger tool ∈ the Nebula mechanism set — `TaskList` + `TaskBoard`
+    // merged into the single `Task` (net count 0); removing or renaming it turns red.
+    assert(fixed.contains("Task"), "the Nebula mechanism set contains Task (the unified ledger's only write face; mutation red-anchor)")
+    // The old two are deleted-retired — zero occurrences in the mechanism set (callers
+    // go through the RetiredToolGuides migration guidance)
     assert(!fixed.contains("TaskList") && !fixed.contains("TaskBoard"),
-      "Nebula 机制集零 TaskList / TaskBoard（taskunify 批删净退役）")
-    // 交付面（buildAllowedToolSet，注册表过滤后）同样文件面六件在、NodeList 零、Task 在
+      "the Nebula mechanism set has zero TaskList / TaskBoard (deleted-retired by the taskunify batch)")
+    // The delivered face (buildAllowedToolSet, after registry filtering) likewise has the
+    // six file-face tools, zero NodeList and Task present
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(delivered.contains(t), s"Nebula 交付面缺文件面件（2026-09-18 18:18 令）: $t")
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
-    assert(delivered.contains("Task"), "Nebula 交付面含 Task（注册层已挂）")
+    assert(delivered.contains("Task"), "the Nebula delivered face contains Task (mounted at the registry layer)")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
     // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
