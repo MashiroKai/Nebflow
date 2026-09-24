@@ -1061,30 +1061,39 @@ sha256_of() {  # <file> -> hash (or empty when no tool available)
     fi
 }
 
-fetch_checksum_for() {  # <filename> -> expected sha256 (or empty = unknown)
-    if [ -z "$CHECKSUMS_LOADED" ]; then
-        CHECKSUMS_LOADED=1
-        local raw
-        raw=$(curl -fsSL --connect-timeout 5 --max-time 15 \
-            "${COS_DEPS_BASE}/checksums.txt" 2>/dev/null || true)
-        if [ -n "$raw" ]; then
-            # Keep only well-formed "sha256  name" rows: a fetched-but-garbage
-            # body must degrade as "unparseable" (a visible warning), never as
-            # a working manifest that silently verifies nothing.
-            CHECKSUMS_CONTENT=$(printf '%s\n' "$raw" | \
-                grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' || true)
-            if [ -n "$CHECKSUMS_CONTENT" ]; then
-                CHECKSUMS_STATE="ok"
-                log_v "Loaded deps/checksums.txt from the mirror."
-            else
-                CHECKSUMS_STATE="unparseable"
-                log_v "deps/checksums.txt fetched but unparseable - checksum verification degraded."
-            fi
+# Load deps/checksums.txt ONCE, in the CALLER's shell: subshell semantics
+# mean assignments made inside $( fetch_checksum_for ... ) die with the
+# subshell, so the load must happen before any command substitution (the
+# subshell then inherits the loaded state). Callers: download_file and
+# expected_checksum_hint (both run where the cache must live).
+load_checksums_once() {
+    [ -n "$CHECKSUMS_LOADED" ] && return 0
+    CHECKSUMS_LOADED=1
+    local raw
+    raw=$(curl -fsSL --connect-timeout 5 --max-time 15 \
+        "${COS_DEPS_BASE}/checksums.txt" 2>/dev/null || true)
+    if [ -n "$raw" ]; then
+        # Keep only well-formed "sha256  name" rows: a fetched-but-garbage
+        # body must degrade as "unparseable" (a visible warning), never as
+        # a working manifest that silently verifies nothing.
+        CHECKSUMS_CONTENT=$(printf '%s\n' "$raw" | \
+            grep -E '^[0-9a-fA-F]{64}[[:space:]]+[^[:space:]]+$' || true)
+        if [ -n "$CHECKSUMS_CONTENT" ]; then
+            CHECKSUMS_STATE="ok"
+            log_v "Loaded deps/checksums.txt from the mirror."
         else
-            CHECKSUMS_STATE="unreachable"
-            log_v "deps/checksums.txt unreachable - checksum verification degraded."
+            CHECKSUMS_STATE="unparseable"
+            log_v "deps/checksums.txt fetched but unparseable - checksum verification degraded."
         fi
+    else
+        CHECKSUMS_STATE="unreachable"
+        log_v "deps/checksums.txt unreachable - checksum verification degraded."
     fi
+}
+
+# Pure lookup over the loaded manifest (safe inside $():
+# <filename> -> expected sha256 (or empty = unknown)
+fetch_checksum_for() {
     [ -n "$CHECKSUMS_CONTENT" ] || return 0
     # POSIX: no here-strings in dash; printf '%s\n' reproduces the exact
     # here-string payload (value + one trailing newline) for awk on stdin.
@@ -1093,6 +1102,7 @@ fetch_checksum_for() {  # <filename> -> expected sha256 (or empty = unknown)
 
 expected_checksum_hint() {  # <filename> -> "sha256: <hash>" line (or empty)
     local h
+    load_checksums_once
     h=$(fetch_checksum_for "$1")
     [ -n "$h" ] && echo "       sha256: ${h}"
 }
@@ -1103,7 +1113,10 @@ expected_checksum_hint() {  # <filename> -> "sha256: <hash>" line (or empty)
 # verification is NEVER silent: warn prints a visible [warn] line (once per
 # manifest-level cause, per artifact otherwise); off still prints a one-time
 # notice; strict rejects so download_file falls through to the next source.
-accept_unverified() {  # <name> ; reads VERIFY_REASON
+# The reason travels as an argument (stdout protocol of verify_checksum):
+# globals set inside $( verify_checksum ... ) would die with the subshell.
+accept_unverified() {  # <name> <reason>
+    local name="$1" reason="$2"
     case "$VERIFY_MODE" in
         off)
             if [ -z "${VERIFY_OFF_NOTED:-}" ]; then
@@ -1113,10 +1126,10 @@ accept_unverified() {  # <name> ; reads VERIFY_REASON
             return 0 ;;
         strict) return 1 ;;
     esac
-    case "$VERIFY_REASON" in
+    case "$reason" in
         manifest-unreachable|manifest-unparseable)
             if [ -z "${VERIFY_WARN_MANIFEST_NOTED:-}" ]; then
-                if [ "$VERIFY_REASON" = "manifest-unreachable" ]; then
+                if [ "$reason" = "manifest-unreachable" ]; then
                     log_warn "Checksum manifest unreachable (${COS_DEPS_BASE}/checksums.txt) => this install performs NO integrity verification on third-party deps."
                 else
                     log_warn "Checksum manifest fetched but unparseable (${COS_DEPS_BASE}/checksums.txt) => this install performs NO integrity verification on third-party deps."
@@ -1126,10 +1139,10 @@ accept_unverified() {  # <name> ; reads VERIFY_REASON
             fi
             ;;
         no-sha-tool)
-            log_warn "No sha256 tool (shasum/sha256sum) found - cannot verify ${1}; installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+            log_warn "No sha256 tool (shasum/sha256sum) found - cannot verify ${name}; installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
             ;;
         *)
-            log_warn "${1} has no entry in deps/checksums.txt - installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+            log_warn "${name} has no entry in deps/checksums.txt - installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
             ;;
     esac
     return 0
@@ -1144,7 +1157,9 @@ accept_unverified() {  # <name> ; reads VERIFY_REASON
 #   download_file <target> <filename-in-manifest> <label> <url1> [url2] ...
 download_file() {
     local target="$1" name="$2" label="$3"; shift 3
-    local url verdict
+    local url verdict reason
+    load_checksums_once   # in THIS shell, so every $( verify_checksum )
+                          # subshell below inherits the loaded manifest
     for url in "$@"; do
         log_v "Trying source: ${url}"
         if _download "$url" "$target" "$label"; then
@@ -1152,8 +1167,9 @@ download_file() {
             case "$verdict" in
                 ok)      return 0 ;;
                 bad)     rm -f "$target"; continue ;;
-                unknown)
-                    if accept_unverified "$name"; then return 0; fi
+                unknown*)
+                    reason=${verdict#unknown }
+                    if accept_unverified "$name" "$reason"; then return 0; fi
                     rm -f "$target"; continue ;;
             esac
         else
@@ -1163,26 +1179,26 @@ download_file() {
     return 1
 }
 
-verify_checksum() {  # <file> <filename-in-manifest> -> echoes ok|bad|unknown
-    # On "unknown" also sets VERIFY_REASON (machine-readable cause:
-    # manifest-unreachable | manifest-unparseable | no-sha-tool |
-    # not-in-manifest) so the policy gate can warn precisely.
+verify_checksum() {  # <file> <filename-in-manifest> -> echoes "ok" | "bad"
+                     # | "unknown <reason>" where <reason> is one of:
+                     # manifest-unreachable | manifest-unparseable |
+                     # no-sha-tool | not-in-manifest
+    # The reason rides on stdout (not a global): this function is consumed
+    # via $( ), and assignments inside a subshell cannot reach the caller.
     local file="$1" name="$2" expected actual
-    VERIFY_REASON=""
+    load_checksums_once
     expected=$(fetch_checksum_for "$name")
     if [ -z "$expected" ]; then
         case "$CHECKSUMS_STATE" in
-            ok)          VERIFY_REASON="not-in-manifest" ;;
-            unparseable) VERIFY_REASON="manifest-unparseable" ;;
-            *)           VERIFY_REASON="manifest-unreachable" ;;
+            ok)          echo "unknown not-in-manifest" ;;
+            unparseable) echo "unknown manifest-unparseable" ;;
+            *)           echo "unknown manifest-unreachable" ;;
         esac
-        echo "unknown"
         return 0
     fi
     actual=$(sha256_of "$file")
     if [ -z "$actual" ]; then
-        VERIFY_REASON="no-sha-tool"
-        echo "unknown"   # no sha256 tool available - degrade, don't misjudge
+        echo "unknown no-sha-tool"   # no sha256 tool - degrade, don't misjudge
         return 0
     fi
     if [ "$actual" = "$expected" ]; then
