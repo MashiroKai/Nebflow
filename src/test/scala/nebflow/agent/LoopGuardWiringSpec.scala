@@ -264,8 +264,10 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
   /**
    * A 轨（2026-09-10 冻结缺陷收尾）：frozen 态三条「用户动作唤醒」入口的到达形态。
    * UserMessage = `AgentCommand.UserInput(clientMessageId.isDefined)`（R1 已修）；
-   * AskQuestion / SkillActivate = 本批两条同族路径（`/ask` WS 帧 → AgentActor.scala
-   * 冻结态 AskQuestion 分支；skill 激活帧 → 冻结态 SkillActivate 分支）。
+   * AskQuestion / SkillActivate = 本批两条同族路径（`/ask` WS 帧 → AgentFrozen.scala
+   * 冻结态 AskQuestion 分支；skill 激活帧 → 冻结态 SkillActivate 分支）。re-pin
+   * （2026-09-25 冻结域迁移）：frozen 行为自 AgentActor 迁至 AgentFrozen.scala，
+   * 分支文本逐字未动。
    */
   private enum WakeEntry:
     case UserMessage, AskQuestion, SkillActivate

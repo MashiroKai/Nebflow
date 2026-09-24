@@ -532,3 +532,4 @@ private[agent] object AgentCompactionHandlers:
       end if
     end if
   end handleEmptyResponse
+end AgentCompactionHandlers

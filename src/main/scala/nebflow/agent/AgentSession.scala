@@ -14,7 +14,7 @@ private[agent] trait AgentSession:
    * Check for duplicate clientMessageId and update recentMessageIds.
    *  Returns (isDuplicate, updatedState).
    */
-  protected def checkDuplicate(
+  private[agent] def checkDuplicate(
     clientMessageId: Option[String],
     state: AgentState
   ): (Boolean, AgentState) =

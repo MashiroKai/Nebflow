@@ -44,6 +44,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 连同其 2 处 emitInjectedUserEvent
   // 调用点迁至 AgentFinishTurn.scala —— ③-2 的计数判据改为跨文件聚合（见该测试内注释）。
   private lazy val agentFinishTurn: String = read("src/main/scala/nebflow/agent/AgentFinishTurn.scala")
+  // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支连同其 1 处
+  // emitInjectedUserEvent 调用点迁至 AgentFrozen.scala —— ③-2 的计数判据再扩一文件。
+  private lazy val agentFrozen: String = read("src/main/scala/nebflow/agent/AgentFrozen.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
   private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
   private lazy val chatJs: String = read("src/main/resources/web/js/chat.js")
@@ -310,11 +313,15 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // AgentFinishTurn.scala，计数改为 AgentActor + AgentFinishTurn 两文件聚合
     // （合计仍 12 = 11 处调用 + 1 处 def，调用点文本逐字未动）；def 前缀随
     // private → private[agent] 放宽同步改写，def 本体仍留驻 AgentActor。
+    // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支 1 处调用
+    // 随实现迁至 AgentFrozen.scala，聚合再扩该文件（合计仍 12 = 11 处调用 +
+    // 1 处 def，调用点文本逐字未动）。
     assertEquals(
       "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
-        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size,
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
+        "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size,
       12,
-      "`emitInjectedUserEvent(` 命中数漂移（应为 11 处调用 + 1 处 def，跨 AgentActor + AgentFinishTurn 聚合）——本批禁改调用点"
+      "`emitInjectedUserEvent(` 命中数漂移（应为 11 处调用 + 1 处 def，跨 AgentActor + AgentFinishTurn + AgentFrozen 聚合）——本批禁改调用点"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
