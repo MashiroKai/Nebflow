@@ -503,8 +503,12 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
     val body = src.slice(src.indexOf("private def underConcurrencyCap"), src.indexOf("private def refuseSpawnOnCap"))
     assert(body.contains("if cap <= 0 then IO.pure(true)"),
       "the cap<=0 leg must short-circuit with IO.pure(true) — a zero-cost bypass that never reads the live count")
-    assert(!body.split("if cap <= 0 then IO.pure(true)")(1).contains("activeDispatcherCount(cfg)"),
-      "the cap<=0 leg must not fall through to the counting face (the bypass must be zero-cost)")
+    // the cap<=0 leg is the LAST statement of the body: everything AFTER the bypass leg is the
+    // gated leg, and it must not be reachable from inside the bypass (a split-based check:
+    // the segment before the bypass must contain no counting face at all)
+    val beforeBypass = body.take(body.indexOf("if cap <= 0 then IO.pure(true)"))
+    assert(!beforeBypass.contains("activeDispatcherCount(cfg)"),
+      "the zero-cost bypass must not evaluate the counting face before short-circuiting")
     assert(body.contains("activeDispatcherCount(cfg).map(_ < cap)"),
       "the gated leg compares the registry count against the cap (the single counting point)")
   }
