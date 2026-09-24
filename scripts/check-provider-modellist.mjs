@@ -106,6 +106,10 @@ function record(layer, name, verdict, detail) {
 // ------------------------------------------------------------- source readers
 
 const GATEWAY = 'src/main/scala/nebflow/gateway/RestApiRoutes.scala';
+// re-pin (2026-09-24): the pseudo-200 / transport classifiers moved out of
+// RestApiRoutes into ProviderProbe (behavior-preserving split, gate semantics
+// unchanged) — the two arms that pin those messages scan both files.
+const PROBE = 'src/main/scala/nebflow/gateway/ProviderProbe.scala';
 const FACES = 'src/main/scala/nebflow/llm/providers/ModelListFaces.scala';
 const ANTHROPIC = 'src/main/scala/nebflow/llm/providers/AnthropicAdapter.scala';
 const OPENAI = 'src/main/scala/nebflow/llm/providers/OpenAiAdapter.scala';
@@ -166,9 +170,10 @@ const STRUCTURAL = [
     what: 'a 2xx body carrying the provider\'s own error envelope is a failure, not "no models"',
     run: (src) => {
       const out = [];
-      if (!/isErrorEnvelope/.test(src)) out.push(`${GATEWAY}: no error-envelope classification (zhipu answers HTTP 200 with a body 404)`);
-      if (!/error body/.test(src)) out.push(`${GATEWAY}: the error-envelope branch has no distinct message (it would read as "no models" again)`);
-      if (!/saysNoEndpoint/.test(src)) out.push(`${GATEWAY}: no "endpoint missing" verdict (a declared alternate could never be reached)`);
+      const both = `${src}\n${read(PROBE)}`;
+      if (!/isErrorEnvelope/.test(both)) out.push(`${GATEWAY}: no error-envelope classification (zhipu answers HTTP 200 with a body 404)`);
+      if (!/error body/.test(both)) out.push(`${GATEWAY}: the error-envelope branch has no distinct message (it would read as "no models" again)`);
+      if (!/saysNoEndpoint/.test(both)) out.push(`${GATEWAY}: no "endpoint missing" verdict (a declared alternate could never be reached)`);
       return out;
     },
     fix: 'classify a 2xx-with-error-body as a failure and only "endpoint missing" as a candidate advance'
@@ -178,8 +183,9 @@ const STRUCTURAL = [
     what: 'a transport failure is reported as an error state, never as a silent empty list',
     run: (src) => {
       const out = [];
-      if (!/Provider unreachable/.test(src)) out.push(`${GATEWAY}: transport failures have no readable classification`);
-      if (!/Provider returned no models/.test(src)) out.push(`${GATEWAY}: the genuine empty-list case lost its message`);
+      const both = `${src}\n${read(PROBE)}`;
+      if (!/Provider unreachable/.test(both)) out.push(`${GATEWAY}: transport failures have no readable classification`);
+      if (!/Provider returned no models/.test(both)) out.push(`${GATEWAY}: the genuine empty-list case lost its message`);
       return out;
     },
     fix: 'keep "unreachable" and "no models" as two distinct messages (they are different user actions)'
