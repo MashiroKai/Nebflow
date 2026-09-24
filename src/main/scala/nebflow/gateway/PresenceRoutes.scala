@@ -1018,4 +1018,333 @@ private[gateway] object PresenceRoutes:
     }
   end routes
 
+  // 以下助手(F 步 2026-09-24 自 RestApiRoutes 类内逐字迁入,调用面全部在本
+  // object 的 routes 内):preset/teams/plugins 校验与写回族 + social 渠道错误
+  // 映射 + provider baseUrl SSRF 闸。可见性 private 原样(迁入 object 后仅本
+  // 域可见,与原类内 private 等价)。
+
+  // ── Preset helpers ──────────────────────────────────────
+
+  /** All agent.json paths across the three layers. */
+  private def allAgentJsonFiles(): List[os.Path] =
+    val root = PathUtil.dataRoot
+    def agentJsons(parent: os.Path): List[os.Path] =
+      if !os.exists(parent) then Nil
+      else os.list(parent).filter(os.isDir).map(_ / "agent.json").filter(os.exists).toList
+    val standalone = agentJsons(root / "agents")
+    val teamAgents =
+      if !os.exists(root / "teams") then Nil
+      else os.list(root / "teams").filter(os.isDir).flatMap(t => agentJsons(t / "agents")).toList
+    val flowAgents =
+      if !os.exists(root / "flows") then Nil
+      else os.list(root / "flows").filter(os.isDir).flatMap(f => agentJsons(f / "agents")).toList
+    standalone ++ teamAgents ++ flowAgents
+
+  /**
+   * Scan all agent.json files and build a map of agentName → presetName (or null
+   * if no preset field). Used by GET /presets to show which agents reference
+   * which presets.
+   *
+   * panelscheme 批（2026-09-21）：映射的是**有效**引用（SchemePolicy 名称策略）——
+   * 可设两类（Nebula/任务分发器）= 自有原始引用；kernel/general = 继承根
+   * （Nebula/project-dispatcher）的当前引用；其余 agent 引擎已忽略其存储引用 →
+   * null（usedBy 计数不再把「死数据」算进引用者）。
+   */
+  private def scanAgentPresets(): Map[String, Option[String]] =
+    val raw: Map[String, Option[String]] = allAgentJsonFiles().flatMap { path =>
+      parser.parse(os.read(path)).toOption.flatMap { json =>
+        val name = json.hcursor
+          .downField("name")
+          .as[String]
+          .toOption
+          .getOrElse((path / os.up).last) // fall back to directory name
+        val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
+        Some(name -> preset)
+      }
+    }.toMap
+    raw.map { (name, own) =>
+      val (effPreset, _) = nebflow.core.presets.SchemePolicy.effectiveRefs(name, own, None)
+      name -> effPreset
+    }
+
+  end scanAgentPresets
+
+  /**
+   * Determine the resolvedFrom value for an agent by reading the raw agent.json.
+   * Returns "preset" | "legacy-model" | "default-preset" | "global".
+   *
+   * panelscheme 批（2026-09-21）名称策略感知：非可设两类（kernel/general/其余）
+   * 的存储 preset/model 引用引擎已忽略——kernel/general 的 AgentDef.preset 携带
+   * 继承根（Nebula/project-dispatcher）的引用名，按引用是否存在如实报告；其余
+   * 不再做 legacy-model 探测（那会把「已忽略的死数据」误报为生效来源，误触发
+   * 前端迁移横幅）。可设两类走既有逻辑逐字不变（回归红线）。
+   */
+  private def computeResolvedFrom(preset: Option[String], agentName: String): String =
+    val store = new PresetStore()
+    def defaultOrGlobal: String =
+      val file = store.load()
+      if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
+        "default-preset"
+      else "global"
+    if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
+      preset match
+        case Some(p) =>
+          if store.load().presets.contains(p) then "preset" else defaultOrGlobal
+        case None => defaultOrGlobal
+    else
+      // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
+      if preset.isDefined then
+        val file = store.load()
+        if file.presets.contains(preset.get) then "preset"
+        else
+          // Dangling preset — check if there's a legacy model
+          EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+            case Some(dir) =>
+              val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+              else defaultOrGlobal
+            case None => "global"
+      else
+        // No preset — check legacy model
+        EntityLoader.findAgentDir(agentName).unsafeRunSync() match
+          case Some(dir) =>
+            val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
+            val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+            if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
+            else defaultOrGlobal
+          case None => "global"
+
+    end if
+
+  end computeResolvedFrom
+
+  /**
+   * Remove the `preset` field from all agent.json files that reference the given
+   * preset name. Called when a preset is deleted so agents fall back to the
+   * default preset instead of holding a dangling reference.
+   */
+  private def scrubPresetRefs(presetName: String): IO[Unit] =
+    IO.blocking {
+      allAgentJsonFiles().foreach { path =>
+        val content = os.read(path)
+        parser.parse(content) match
+          case Right(json) =>
+            json.hcursor.downField("preset").as[Option[String]].toOption.flatten match
+              case Some(p) if p == presetName =>
+                val updated = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("preset")))
+                  .getOrElse(json)
+                if updated != json then AtomicJson.writeSync(path, updated.noSpaces)
+              case _ => ()
+          case Left(_) => () // skip unparseable file
+      }
+    }
+
+  /**
+   * Migrate per-agent legacy model configs to named presets.
+   * Groups agents by model-config fingerprint, creates a preset per group
+   * (mig-<n>), writes the preset reference, and removes the legacy model field.
+   * Agents with empty model configs ({preferred: null, fallbacks: []}) are
+   * skipped (treated as "no config" — they already use the default preset).
+   */
+  private def migrateLegacyModels(agentNames: List[String]): IO[Response[IO]] =
+    IO.blocking {
+      val store = new PresetStore()
+      val file = store.load()
+      // Load each agent's raw model config
+      val agentsWithConfig = agentNames.flatMap { name =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case None => None
+          case Some(dir) =>
+            parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
+              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
+              // Only migrate non-empty configs
+              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then Some((name, dir, model.get))
+              else None
+            }
+      }
+      // Group by fingerprint (preferred + fallbacks)
+      def fingerprint(m: nebflow.shared.AgentModelConfig): String =
+        s"${m.preferred.getOrElse("")}|${m.fallbacks.mkString(",")}"
+      val groups = agentsWithConfig.groupBy { case (_, _, m) => fingerprint(m) }
+      // Generate preset names (mig-<n>, avoiding collisions with existing)
+      var migN = 1
+      val existingNames = file.presets.keySet
+      val newPresets = scala.collection.mutable.Map.empty[String, ModelPreset]
+      val agentToPreset = scala.collection.mutable.Map.empty[String, String]
+      groups.toList.sortBy(_._1).foreach { (fp, agents) =>
+        val model = agents.head._3
+        // Skip if this fingerprint already matches an existing preset
+        val existingMatch =
+          file.presets.values.find(p => p.preferred == model.preferred && p.fallbacks == model.fallbacks)
+        val presetName = existingMatch match
+          case Some(p) => p.name
+          case None =>
+            var name = s"mig-$migN"
+            while existingNames.contains(name) || newPresets.contains(name) do
+              migN += 1
+              name = s"mig-$migN"
+            migN += 1
+            val agentList = agents.map(_._1).mkString(", ")
+            val preset = ModelPreset(
+              name = name,
+              description = s"Auto-migrated from: $agentList",
+              preferred = model.preferred,
+              fallbacks = model.fallbacks
+            )
+            newPresets += (name -> preset)
+            name
+        agents.foreach { (name, _, _) => agentToPreset += (name -> presetName) }
+      }
+      // Write: update presets file + update each agent.json
+      val updatedFile = file.copy(presets = file.presets ++ newPresets)
+      store.save(updatedFile)
+      agentToPreset.toList.foreach { (name, presetName) =>
+        EntityLoader.findAgentDir(name).unsafeRunSync() match
+          case Some(dir) =>
+            val jsonPath = dir / "agent.json"
+            parser.parse(os.read(jsonPath)) match
+              case Right(json) =>
+                // Remove model, add preset
+                val withoutModel = json.asObject
+                  .map(obj => Json.fromFields(obj.toMap.removed("model")))
+                  .getOrElse(json)
+                val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
+                AtomicJson.writeSync(jsonPath, updated.noSpaces)
+              case Left(_) => ()
+          case None => ()
+      }
+      // Build response data (plain values, not IO)
+      (agentToPreset.toList, newPresets.values.toList)
+    }.flatMap { (migrated, createdPresets) =>
+      val migratedAgents = migrated.map { (name, preset) =>
+        Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
+      }
+      Ok(
+        Json.obj(
+          "migratedAgents" -> migratedAgents.asJson,
+          "createdPresets" -> createdPresets.map(_.asJson).asJson
+        )
+      )
+    }.handleErrorWith(e => InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson)))
+
+  /**
+   * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
+   *  Reads from live TeamSessionRegistry runtime state. Each team is a card with
+   *  agent tiles showing status.
+   */
+  private def buildMountedTeamsJson(): IO[Json] =
+    for
+      teamsMap <- nebflow.core.flow.TeamSessionRegistry.listMountedTeams
+      teams <- EntityLoader.listTeams()
+      teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
+        val teamDefOpt = teams.get(instanceName)
+        // Only render agents declared in team.json (lead + members). Delegate /
+        // SubTask sub-agents are no longer registered in TeamSessionRegistry
+        // (no Mail identity), so no ghost tiles can appear here; the filter
+        // remains as defense-in-depth. Fall back to all agents when the team
+        // definition is missing (legacy behavior).
+        val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
+        for
+          agentsJson <- agents
+            .filter((name, _) => memberNames.forall(_.contains(name)))
+            .traverse { (agentName, sid) =>
+              nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
+                Json.obj(
+                  "name" -> agentName.asJson,
+                  "sessionId" -> sid.asJson,
+                  "status" -> (if busy then "running" else "idle").asJson,
+                  "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+                )
+              }
+            }
+          // Team Manager task tool (#D 2026-08-25): the team panel renders a
+          // Tasks section from this array (flowTeams.js buildTasksSection,
+          // frontend phase-2 contract A1: id/subject/status/blockedBy/blocks).
+          // Read straight from the team task store directory (scope key
+          // "team:<name>") — empty array for teams with no tasks yet.
+          tasks <- FileTaskStore.list(TaskStore.teamScopeKey(instanceName))
+        yield Json.obj(
+          "name" -> instanceName.asJson,
+          "type" -> "team".asJson,
+          "agents" -> agentsJson.asJson,
+          "tasks" -> tasks.asJson
+        )
+        end for
+      }
+    yield teamsList.asJson
+
+  // ── Flow editor helpers ──────────────────────────────────
+
+  private def isValidFlowName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  private def isValidAgentName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  /**
+   * 令 1 派发开关的 REST 实现单点（`/plugins/:name/enable|disable`）。写 `plugins
+   * .dispatch.<name>.authorEnabled`（作者意图层，durable）+ 一条 append-only 审计；
+   * **不影响内容信任面** ⇒ 在飞节点零影响。
+   */
+  private def dispatchSwitch(name: String, enable: Boolean): IO[Response[IO]] =
+    if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+    else
+      nebflow.core.plugin.PluginDispatchPolicy.setAuthorEnabled(name, enable, "panel/rest").flatMap {
+        case Right(_) =>
+          Ok(
+            Json.obj(
+              "ok" -> true.asJson,
+              "message" -> (s"Plugin '$name' dispatch ${if enable then "enabled" else "disabled"} — " +
+                "affects FUTURE dispatches only; nodes already dispatched keep their plugin grant " +
+                "(content trust is untouched; use /revoke to withdraw content trust).").asJson
+            )
+          )
+        case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+      }
+
+  /**
+   * Error-code mapping for the social-channel endpoints (arch §7.3):
+   * `400 invalid_field` / `400 unknown_channel` / `403 secret_mode` / `500 io`.
+   * A credential-storage failure is a 403 with the field named — it is never
+   * folded into a generic 500, and never reported as a success.
+   *
+   * Returns the response in effect (`IO`), not a bare value: the http4s dsl
+   * constructors already produce `F[Response[F]]`, so wrapping them here and
+   * de-wrapping at the call site would be a pointless round trip.
+   */
+  private def socialErrorResponse(err: nebflow.social.SocialChannels.Failure): IO[Response[IO]] =
+    import nebflow.social.SocialChannels.Failure
+    err match
+      case Failure.UnknownChannel(id) =>
+        BadRequest(Json.obj("error" -> "unknown_channel".asJson, "channel" -> id.asJson))
+      case Failure.InvalidField(field, reason) =>
+        BadRequest(Json.obj("error" -> "invalid_field".asJson, "field" -> field.asJson, "reason" -> reason.asJson))
+      case Failure.SecretMode(field, reason) =>
+        Forbidden(Json.obj("error" -> "secret_mode".asJson, "field" -> field.asJson, "reason" -> reason.asJson))
+      case Failure.Io(reason) =>
+        InternalServerError(Json.obj("error" -> "io".asJson, "reason" -> reason.asJson))
+
+  /**
+   * SSRF guard for provider model discovery: only absolute http(s) URLs with a
+   * non-empty host are fetchable. Blocks other schemes (file:, jar:, ftp:...)
+   * and URLs the JDK client would resolve to something unexpected. Returns the
+   * validated base URL with trailing slashes trimmed.
+   *
+   * The model-list PATH is deliberately NOT built here: `baseUrl` is a chat
+   * prefix and the two protocol faces place the version segment differently, so
+   * each face declares its own list endpoint (`ModelListFaces`, whose
+   * declarations carry the measurements that pin the paths).
+   */
+  private def checkHttpBaseUrl(baseUrl: String): Either[String, String] =
+    try
+      val normalized = baseUrl.trim.replaceAll("/+$", "")
+      val uri = java.net.URI.create(normalized)
+      val scheme = Option(uri.getScheme).map(_.toLowerCase).getOrElse("")
+      val host = Option(uri.getHost).map(_.trim).getOrElse("")
+      if (scheme == "http" || scheme == "https") && host.nonEmpty then Right(normalized)
+      else Left("baseUrl must be an absolute http(s) URL with a host")
+    catch case _: Exception => Left("Invalid baseUrl")
+
 end PresenceRoutes

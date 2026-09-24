@@ -1063,6 +1063,8 @@ private[gateway] object NeblinkRoutes:
         }
     }
 
+  end routes
+
   /**
    * Shared remote-update logic: P2P HTTP first, relay fallback. Used by REST + WS handlers.
    *
@@ -1110,6 +1112,8 @@ private[gateway] object NeblinkRoutes:
               }
     }
 
+  end doRemoteUpdate
+
   private def relayUpdateFallback(
     ns: nebflow.neblink.NeblinkService,
     peer: nebflow.neblink.PeerInfo,
@@ -1125,7 +1129,9 @@ private[gateway] object NeblinkRoutes:
       case None => IO.pure(Left(p2pError))
 
   /** Run block only if NeblinkService is available and request is authenticated. */
-  private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]])(using ctx: RestApiCtx): IO[Response[IO]] =
+  private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]])(using
+    ctx: RestApiCtx
+  ): IO[Response[IO]] =
     import ctx.*
 
     if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
@@ -1156,29 +1162,33 @@ private[gateway] object NeblinkRoutes:
     import ctx.*
 
     neblinkService match
-    case None =>
-      IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
-    case Some(ms) =>
-      val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-      if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
-      else
-        val callerDeviceId =
-          req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
-        isKnownNetworkDevice(ms, callerDeviceId, remoteIp).flatMap {
-          case true =>
-            logger.info(
-              s"Peer $callerDeviceId trusted by device-ID membership (IP $remoteIp not in trusted list)"
-            ) *> IO.pure(Right(ms))
-          case false =>
-            IO.pure(
-              Left(
-                Response[IO](Status.Forbidden)
-                  .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
+      case None =>
+        IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
+      case Some(ms) =>
+        val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+        if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
+        else
+          val callerDeviceId =
+            req.headers.get(CIString("x-neblink-device")).map(_.head.value).getOrElse("")
+          isKnownNetworkDevice(ms, callerDeviceId, remoteIp).flatMap {
+            case true =>
+              logger.info(
+                s"Peer $callerDeviceId trusted by device-ID membership (IP $remoteIp not in trusted list)"
+              ) *> IO.pure(Right(ms))
+            case false =>
+              IO.pure(
+                Left(
+                  Response[IO](Status.Forbidden)
+                    .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
+                )
               )
-            )
-        }
+          }
 
-      end if
+        end if
+
+    end match
+
+  end verifyPeerAccess
 
   /**
    * 解析 Dropbox 分块头。**只有** `X-Dropbox-Proto` 明确为 1（且其余必需头齐备）时才
@@ -1258,6 +1268,8 @@ private[gateway] object NeblinkRoutes:
         // `EnrollGuard` 的 reason）走调用方的渲染面。
         case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
       }
+
+  end completeDeviceEnrollment
 
   /**
    * Generic POST proxy to the NebLink Server. Returns the parsed JSON on

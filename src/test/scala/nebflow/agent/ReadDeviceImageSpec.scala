@@ -58,8 +58,8 @@ class ReadDeviceImageSpec extends CatsEffectSuite:
   /**
    * 桩对端（`POST /api/neblink/remote-exec`，报文契约与 `RemoteExecutor.p2pExecuteAt`
    * 一致）：`readOutput` 是 Read 动作的 `output`；`transferJson` 是 FileTransfer 动作
-   * 返回的**工具结果字符串**（外层再包 `output` —— 与 `RestApiRoutes.scala:1256`
-   * 的既有信封同形）。
+   * 返回的**工具结果字符串**（外层再包 `output` —— 与 `NeblinkRoutes.scala`
+   * remote-exec 出口 `Json.obj("output" -> …)` 的既有信封同形）。
    */
   private final class StubPeerServer(readOutput: String, transferJson: String):
     private val pool = Executors.newFixedThreadPool(4)

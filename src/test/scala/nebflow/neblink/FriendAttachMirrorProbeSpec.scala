@@ -14,7 +14,7 @@ import nebflow.neblink.FriendCodecs.given
  * 基线 `MessageSummary`（5 字段 + `deriveEncoder`）会把服务端已下发的 `attachments`
  * 键在网关 re-encode 处**静默丢弃**，①组断言失败。
  *
- * 断言面 = REST 出口实际走的那两步（`RestApiRoutes.scala` 的 `r.map(_.asJson)` /
+ * 断言面 = REST 出口实际走的那两步（`SocialRoutes.scala` 的 `r.map(_.asJson)` /
  * `convs.asJson`）：先 `Decoder[MessageSummary]` 解码，再 `Encoder[MessageSummary]` 编码。
  */
 class FriendAttachMirrorProbeSpec extends FunSuite:

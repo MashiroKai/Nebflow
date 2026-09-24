@@ -710,7 +710,7 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
 
   // ── 缺陷 A 返工 round 1 / 判词 D1：换号续登失败页（switchNoticePage）的文案负控 ──
   //
-  // 判 fail 的主因：`RestApiRoutes.scala:4244-4249` 把 `e.getMessage` 原样送进这一页
+  // 判 fail 的主因：`AuthRoutes.scala` 的 `renderLoggedOutLanding` 续登失败支把 `e.getMessage` 原样送进这一页
   // ⇒ 同一屏泄漏「文件系统路径 + 整条 authorize URL + PKCE state」（判词探针 P7 原文，
   // 判据正则命中 2）。修法 = 走同文件既有的分类通道（三段式进页面、原文只进 WARN）。
   // 本用例把**改后**读数钉在三支可达分支上：① 续登失败支（就是泄漏那一支）；

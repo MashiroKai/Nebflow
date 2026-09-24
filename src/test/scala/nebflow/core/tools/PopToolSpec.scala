@@ -249,7 +249,8 @@ class PopToolSpec extends FunSuite:
   test("identity gate: agentDef=None (REST direct / spec harness) fails closed"):
     // 决策：fail-closed。实测无合法非 agent 调用面被误伤——Pop 不在
     // RemoteExecutor.remoteableTools（RemoteExecutor.scala:658），remote-exec
-    // 接收侧（RestApiRoutes.scala:1154）不传 agentDef 也不传 wsSend。
+    // 接收侧（NeblinkRoutes.scala 的 remote-exec `ToolContext(projectRoot, isRemoteExec = true)`）
+    // 不传 agentDef 也不传 wsSend。
     assertDenied("agentDef=None", None, 0)
 
   test("identity gate: denial precedes even input validation (no filePath still POP_NEBULA_ONLY)"):
