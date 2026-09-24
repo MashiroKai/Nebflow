@@ -437,45 +437,51 @@ object FlowDagCompiler:
     report: (String, String, String) => Unit
   ): Unit =
     var idx = 0
-    while idx < input.length do
+    // 无 return 的早退(DisableSyntax.noReturns):start<0 / 未闭合 ⇒ 置 scanning=false 结束扫描
+    var scanning = true
+    while scanning && idx < input.length do
       val start = input.indexOf("{{", idx)
-      if start < 0 then return
-      val end = input.indexOf("}}", start + 2)
-      if end < 0 then
-        report(
-          "103",
-          s"malformed placeholder '${input.substring(start).take(40)}' — every {{ must close with }}",
-          "close the placeholder or remove it"
-        )
-        return
-      val inner = input.substring(start + 2, end)
-      if inner.isEmpty then
-        report(
-          "103",
-          "malformed placeholder '{{}}' — empty variable",
-          "name a variable ({{item}}/{{index}}/{{len}} on templates)"
-        )
-      else if !inner.matches("[a-zA-Z0-9_-]+") then
-        report(
-          "103",
-          s"malformed placeholder '{{$inner}}' — variable name has invalid characters",
-          "use plain identifiers ({{item}}/{{index}}/{{len}} on templates)"
-        )
-      else if isTemplate then
-        if inner != "item" && inner != "index" && inner != "len" then
-          report(
-            "102",
-            s"template variable '{{$inner}}' is not supported",
-            "only {{item}} {{index}} {{len}} are substituted on dynamic instances; check the spelling or remove it"
-          )
+      if start < 0 then scanning = false
       else
-        report(
-          "101",
-          s"contains '{{$inner}}' but this node is NOT a dynamic-fanout template",
-          "static routes substitute no {{}} placeholders — reference the upstream slot instead ($<node>.slots.<field> / $<template>.all.slots.<field>), or make this node a dynamic fanout template"
-        )
+        val end = input.indexOf("}}", start + 2)
+        if end < 0 then
+          report(
+            "103",
+            s"malformed placeholder '${input.substring(start).take(40)}' — every {{ must close with }}",
+            "close the placeholder or remove it"
+          )
+          scanning = false
+        else
+          val inner = input.substring(start + 2, end)
+          if inner.isEmpty then
+            report(
+              "103",
+              "malformed placeholder '{{}}' — empty variable",
+              "name a variable ({{item}}/{{index}}/{{len}} on templates)"
+            )
+          else if !inner.matches("[a-zA-Z0-9_-]+") then
+            report(
+              "103",
+              s"malformed placeholder '{{$inner}}' — variable name has invalid characters",
+              "use plain identifiers ({{item}}/{{index}}/{{len}} on templates)"
+            )
+          else if isTemplate then
+            if inner != "item" && inner != "index" && inner != "len" then
+              report(
+                "102",
+                s"template variable '{{$inner}}' is not supported",
+                "only {{item}} {{index}} {{len}} are substituted on dynamic instances; check the spelling or remove it"
+              )
+          else
+            report(
+              "101",
+              s"contains '{{$inner}}' but this node is NOT a dynamic-fanout template",
+              "static routes substitute no {{}} placeholders — reference the upstream slot instead ($<node>.slots.<field> / $<template>.all.slots.<field>), or make this node a dynamic fanout template"
+            )
+          end if
+          idx = end + 2
+        end if
       end if
-      idx = end + 2
     end while
 
   end scanPlaceholders

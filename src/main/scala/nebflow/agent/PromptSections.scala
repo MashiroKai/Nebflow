@@ -623,15 +623,18 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       // 语义不同：这里是**本实例**数据根的绝对路径）。
       "NEBFLOW_DATA_ROOT" -> nebflow.core.PathUtil.dataRoot.toString
     )
+    // 无 return 的早退(DisableSyntax.noReturns):脚本异常 ⇒ None ⇒ 与解析失败同样回落 template
     val result =
       try
-        os.proc("bash", script.toString)
-          .call(cwd = os.pwd, env = envVars, check = false)
-          .out
-          .text()
-          .trim
-      catch case _: Exception => return template
-    parser.parse(result).toOption match
+        Some(
+          os.proc("bash", script.toString)
+            .call(cwd = os.pwd, env = envVars, check = false)
+            .out
+            .text()
+            .trim
+        )
+      catch case _: Exception => None
+    result.flatMap(parser.parse(_).toOption) match
       case Some(json) =>
         json.asObject
           .map(_.toMap)

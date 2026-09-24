@@ -13,32 +13,25 @@ import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
+import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.project.{
-  CancelSource as ChainCancelSource,
-  ChainCancelEntry,
-  ChainCancelReport,
-  ProjectRuntime,
-  ProjectRuntimeRegistry
-}
 import nebflow.core.{PathUtil, *}
 import nebflow.gateway.NfFilePolicy.*
+import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
 import nebflow.service.*
 import nebflow.shared.*
+import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.{Charset, HttpRoutes, MediaType, Response, Status, StaticFile}
 
 import scala.concurrent.duration.*
 import scala.io.Source
-
-import WsDispatch.{parsedJson, inboundEnvelope}
 
 /** 系统域(system):ping/转写/热重启/更新/自启/后台任务/智能体提示词等。 */
 private[gateway] object WsSystemHandlers:

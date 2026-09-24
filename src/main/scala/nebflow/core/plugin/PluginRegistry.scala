@@ -558,233 +558,228 @@ object PluginRegistry:
     // manifest（plugin.json 必需，§5.1；路径围栏 §4.1）
     val nsDir = dir / "org.nebflow"
     val manifestPath = dir / "plugin.json"
-    if !os.isFile(manifestPath) then return Left(name0 -> "missing plugin.json manifest")
-    if !containedUnder(dir, manifestPath) then
-      return Left(name0 -> "plugin.json resolves outside the plugin root (symlink escape, §4.1 containment)")
-    io.circe.parser.parse(os.read(manifestPath)) match
-      case Left(err) => return Left(name0 -> s"plugin.json unparseable: ${err.message}")
-      case Right(json) if !json.isObject =>
-        return Left(name0 -> "plugin.json must contain a top-level object (§5.2)")
-      case Right(json) =>
-        val c = json.hcursor
-        // 未知 manifest 字段 → 宽容忽略 + 告警（§5.2/§B.8-5 前向兼容：报告且忽略、继续装载）
-        json.asObject.foreach { obj =>
-          obj.keys
-            .filterNot(KnownManifestKeys.contains)
-            .foreach(k => warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
-        }
+    // 无 return 的早退守卫（DisableSyntax.noReturns，2026-09-25）：err 按名传递，
+    // 守卫不通过才求值——与原 `if ... then return Left(...)` 的求值时序一致。
+    def pass(ok: Boolean, err: => (String, String)): Either[(String, String), Unit] =
+      if ok then Right(()) else Left(err)
 
-        // $schema：必填 + canonical（§5.2/§5.3——客户端只识别 canonical 值，
-        // 不支持声明的版本 → 拒绝并报告 unsupported version）
-        val schema = c.downField("$schema").as[String].toOption.getOrElse("")
-        if schema.isEmpty then return Left(name0 -> "manifest missing required field '$schema' (§5.3)")
-        if schema != CanonicalSchema then
-          return Left(
-            name0 ->
-              (s"unsupported Agent Plugins version: '$schema' is not the canonical 1.0.0 identifier " +
-                s"($CanonicalSchema) — client MUST reject (§5.2) (PLUGIN_SCHEMA_UNSUPPORTED)")
-          )
+    for
+      _ <- pass(os.isFile(manifestPath), name0 -> "missing plugin.json manifest")
+      _ <- pass(
+        containedUnder(dir, manifestPath),
+        name0 -> "plugin.json resolves outside the plugin root (symlink escape, §4.1 containment)"
+      )
+      json <- io.circe.parser
+        .parse(os.read(manifestPath))
+        .left
+        .map(err => name0 -> s"plugin.json unparseable: ${err.message}")
+      _ <- pass(json.isObject, name0 -> "plugin.json must contain a top-level object (§5.2)")
+      c = json.hcursor
+      // 未知 manifest 字段 → 宽容忽略 + 告警（§5.2/§B.8-5 前向兼容：报告且忽略、继续装载）
+      _ = json.asObject.foreach { obj =>
+        obj.keys
+          .filterNot(KnownManifestKeys.contains)
+          .foreach(k => warnings += s"ignored unknown manifest field '$k' (forward-compat: skipped)")
+      }
 
-        // name：必填 + §5.5 命名约束（违反 = manifest invalid → 拒载）
-        val name = c.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-        if name.isEmpty then return Left(name0 -> "manifest missing required field 'name' (§5.3)")
-        val pname = name.get
-        if !validPluginName(pname) then
-          return Left(
-            name0 ->
-              (s"manifest name '$pname' violates §5.5 constraints (1-64 chars; a-z 0-9 - .; " +
-                "alphanumeric start/end; no consecutive '--' or '..') (PLUGIN_NAME_ILLEGAL)")
-          )
-        // 目录名 ≠ manifest name → 以 manifest 为准并告警（防止引用歧义）
-        if pname != name0 then
-          warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
+      // $schema：必填 + canonical（§5.2/§5.3——客户端只识别 canonical 值，
+      // 不支持声明的版本 → 拒绝并报告 unsupported version）
+      schema = c.downField("$schema").as[String].toOption.getOrElse("")
+      _ <- pass(schema.nonEmpty, name0 -> "manifest missing required field '$schema' (§5.3)")
+      _ <- pass(
+        schema == CanonicalSchema,
+        name0 ->
+          (s"unsupported Agent Plugins version: '$schema' is not the canonical 1.0.0 identifier " +
+            s"($CanonicalSchema) — client MUST reject (§5.2) (PLUGIN_SCHEMA_UNSUPPORTED)")
+      )
 
-        // §5.4 元数据字段：类型校验（违反 = fatal）；version 语义（审计项 2）：
-        // 协议明示 MUST NOT 因非 semver 拒载（semver 仅 RECOMMENDED）→ 不做
-        // 格式约束，仅经 digest 纳入信任摘要（version bump 即重审）。
-        val version = stringField(c, "version") match
-          case Right(v) => v
-          case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        val description = stringField(c, "description") match
-          case Right(v) => v
-          case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        // capability：描述单源批（2026-09-10）退役——不再读取不再承载（deprecated
-        // 键经 KnownManifestKeys 登记而宽容装载，见集合注释）
-        val homepage = stringField(c, "homepage") match
-          case Right(v) => v
-          case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        val repository = stringField(c, "repository") match
-          case Right(v) => v
-          case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        val license = stringField(c, "license") match
-          case Right(v) => v
-          case l @ Left(_) => return Left(name0 -> l.swap.toOption.getOrElse(""))
-        val keywords = c.downField("keywords").as[Option[List[String]]] match
-          case Right(k) => k.getOrElse(Nil)
-          case Left(_) => return Left(name0 -> "manifest field 'keywords' must be an array of strings (§5.4)")
-        // §5.4 author object：仅 name/email/url 三个 string 字段（其余字段或
-        // 值类型 → manifest invalid → 拒载）；渲染为可读字符串供审批清单。
-        val author = c.downField("author").as[Option[Json]] match
-          case Left(_) =>
-            return Left(
-              name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)"
-            )
-          case Right(None) => ""
-          case Right(Some(a)) =>
-            a.asObject match
-              case None =>
-                return Left(
-                  name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)"
-                )
-              case Some(obj) =>
-                val bad = obj.keys.filterNot(Set("name", "email", "url")).nonEmpty ||
-                  obj.toMap.exists { case (k, v) => Set("name", "email", "url")(k) && v.asString.isEmpty }
-                if bad then
-                  return Left(name0 -> "manifest field 'author' allows only name/email/url string fields (§5.4)")
-                renderAuthor(obj)
+      // name：必填 + §5.5 命名约束（违反 = manifest invalid → 拒载）
+      nameOpt = c.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+      _ <- pass(nameOpt.nonEmpty, name0 -> "manifest missing required field 'name' (§5.3)")
+      pname = nameOpt.get
+      _ <- pass(
+        validPluginName(pname),
+        name0 ->
+          (s"manifest name '$pname' violates §5.5 constraints (1-64 chars; a-z 0-9 - .; " +
+            "alphanumeric start/end; no consecutive '--' or '..') (PLUGIN_NAME_ILLEGAL)")
+      )
+      // 目录名 ≠ manifest name → 以 manifest 为准并告警（防止引用歧义）
+      _ = if pname != name0 then
+        warnings += s"manifest name '$pname' differs from directory name '$name0' — using manifest name"
 
-        // skills/（§7.1：一级子目录含精确命名 SKILL.md 的常规文件 = 一个 skill；
-        // 缺失 → 非错误；存在但非目录 → 组件 invalid + 继续（§6.2））
-        val skillsDir = dir / "skills"
-        val skills: List[PluginSkill] =
-          if !os.exists(skillsDir) then Nil
-          else if !os.isDir(skillsDir) then
-            warnings += s"component location 'skills' is not a directory — component invalid, skipped (§6.2)"
-            Nil
-          else
-            os.list(skillsDir).filter(os.isDir).toList.sortBy(_.last).flatMap { sd =>
-              val f = sd / "SKILL.md"
-              if !os.isFile(f) then
-                warnings += s"skills/${sd.last} has no SKILL.md — skipped (§7.1)"
-                None
-              else if !containedUnder(dir, f) then
-                warnings += s"skills/${sd.last}/SKILL.md resolves outside the plugin root — skill skipped (§4.1 containment)"
-                None
-              else
-                readConformantSkill(sd, f) match
-                  case Some(s) => Some(s.copy(id = s"$pname/${sd.last}"))
-                  case None =>
-                    warnings += s"skills/${sd.last} skipped — SKILL.md frontmatter missing required 'name'/'description' (agentskills.io via §7.1)"
-                    None
-            }
-
-        // mcp.json（§7.2.1 闭合 schema；组件级违规 → MCP 组件 invalid，插件继续）
-        val mcpServers: Map[String, McpServerConfig] =
-          val mcpPath = dir / "mcp.json"
-          if !os.exists(mcpPath) then Map.empty
-          else if !os.isFile(mcpPath) then
-            warnings += s"component location 'mcp.json' is not a regular file — component invalid, skipped (§6.2)"
-            Map.empty
-          else if !containedUnder(dir, mcpPath) then
-            warnings += s"mcp.json resolves outside the plugin root — component invalid, skipped (§4.1)"
-            Map.empty
-          else parseMcpJson(mcpPath, dir, warnings)
-
-        // org.nebflow/tools.json（或 manifest extensions 声明的文件名。声明值语义
-        // 按 §B.2/§8：相对 org.nebflow/ 命名空间目录解析为主（扩展目录内容归命名
-        // 空间自有），兼容插件根相对形态；两处均围栏校验（§4.1））
-        val toolsPath =
-          val declared = c.downField("extensions").downField("org.nebflow/tools").as[String].toOption
-          declared match
-            case Some(rel) =>
-              val nsRel =
-                try Some(nsDir / os.SubPath(rel))
-                catch case _: Exception => None
-              val rootRel =
-                if rel.startsWith("./") then resolvePluginRelative(dir, rel)
-                else resolvePluginRelative(dir, s"./$rel")
-              List(nsRel, rootRel).flatten.find(p => os.isFile(p) && containedUnder(dir, p)) match
-                case Some(p) => Some(p)
-                case None =>
-                  warnings += s"extensions 'org.nebflow/tools' declared '$rel' but no readable file under org.nebflow/ or plugin root — tools extension ignored"
-                  None
+      // §5.4 元数据字段：类型校验（违反 = fatal）；version 语义（审计项 2）：
+      // 协议明示 MUST NOT 因非 semver 拒载（semver 仅 RECOMMENDED）→ 不做
+      // 格式约束，仅经 digest 纳入信任摘要（version bump 即重审）。
+      version <- stringField(c, "version").left.map(err => name0 -> err)
+      description <- stringField(c, "description").left.map(err => name0 -> err)
+      // capability：描述单源批（2026-09-10）退役——不再读取不再承载（deprecated
+      // 键经 KnownManifestKeys 登记而宽容装载，见集合注释）
+      homepage <- stringField(c, "homepage").left.map(err => name0 -> err)
+      repository <- stringField(c, "repository").left.map(err => name0 -> err)
+      license <- stringField(c, "license").left.map(err => name0 -> err)
+      keywordsOpt <- c
+        .downField("keywords")
+        .as[Option[List[String]]]
+        .left
+        .map(_ => name0 -> "manifest field 'keywords' must be an array of strings (§5.4)")
+      keywords = keywordsOpt.getOrElse(Nil)
+      // §5.4 author object：仅 name/email/url 三个 string 字段（其余字段或
+      // 值类型 → manifest invalid → 拒载）；渲染为可读字符串供审批清单。
+      author <- c.downField("author").as[Option[Json]] match
+        case Left(_) =>
+          Left(name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)")
+        case Right(None) => Right("")
+        case Right(Some(a)) =>
+          a.asObject match
             case None =>
-              val d = nsDir / "tools.json"
-              if !os.isFile(d) then None
-              else if !containedUnder(dir, d) then
-                warnings += s"org.nebflow/tools.json resolves outside the plugin root — tools extension ignored (§4.1)"
+              Left(name0 -> "manifest field 'author' must be an object with optional name/email/url strings (§5.4)")
+            case Some(obj) =>
+              val bad = obj.keys.filterNot(Set("name", "email", "url")).nonEmpty ||
+                obj.toMap.exists { case (k, v) => Set("name", "email", "url")(k) && v.asString.isEmpty }
+              if bad then Left(name0 -> "manifest field 'author' allows only name/email/url string fields (§5.4)")
+              else Right(renderAuthor(obj))
+
+      // skills/（§7.1：一级子目录含精确命名 SKILL.md 的常规文件 = 一个 skill；
+      // 缺失 → 非错误；存在但非目录 → 组件 invalid + 继续（§6.2））
+      skillsDir = dir / "skills"
+      skills =
+        if !os.exists(skillsDir) then Nil
+        else if !os.isDir(skillsDir) then
+          warnings += s"component location 'skills' is not a directory — component invalid, skipped (§6.2)"
+          Nil
+        else
+          os.list(skillsDir).filter(os.isDir).toList.sortBy(_.last).flatMap { sd =>
+            val f = sd / "SKILL.md"
+            if !os.isFile(f) then
+              warnings += s"skills/${sd.last} has no SKILL.md — skipped (§7.1)"
+              None
+            else if !containedUnder(dir, f) then
+              warnings += s"skills/${sd.last}/SKILL.md resolves outside the plugin root — skill skipped (§4.1 containment)"
+              None
+            else
+              readConformantSkill(sd, f) match
+                case Some(s) => Some(s.copy(id = s"$pname/${sd.last}"))
+                case None =>
+                  warnings += s"skills/${sd.last} skipped — SKILL.md frontmatter missing required 'name'/'description' (agentskills.io via §7.1)"
+                  None
+          }
+
+      // mcp.json（§7.2.1 闭合 schema；组件级违规 → MCP 组件 invalid，插件继续）
+      mcpServers =
+        val mcpPath = dir / "mcp.json"
+        if !os.exists(mcpPath) then Map.empty
+        else if !os.isFile(mcpPath) then
+          warnings += s"component location 'mcp.json' is not a regular file — component invalid, skipped (§6.2)"
+          Map.empty
+        else if !containedUnder(dir, mcpPath) then
+          warnings += s"mcp.json resolves outside the plugin root — component invalid, skipped (§4.1)"
+          Map.empty
+        else parseMcpJson(mcpPath, dir, warnings)
+
+      // org.nebflow/tools.json（或 manifest extensions 声明的文件名。声明值语义
+      // 按 §B.2/§8：相对 org.nebflow/ 命名空间目录解析为主（扩展目录内容归命名
+      // 空间自有），兼容插件根相对形态；两处均围栏校验（§4.1））
+      toolsPath =
+        val declared = c.downField("extensions").downField("org.nebflow/tools").as[String].toOption
+        declared match
+          case Some(rel) =>
+            val nsRel =
+              try Some(nsDir / os.SubPath(rel))
+              catch case _: Exception => None
+            val rootRel =
+              if rel.startsWith("./") then resolvePluginRelative(dir, rel)
+              else resolvePluginRelative(dir, s"./$rel")
+            List(nsRel, rootRel).flatten.find(p => os.isFile(p) && containedUnder(dir, p)) match
+              case Some(p) => Some(p)
+              case None =>
+                warnings += s"extensions 'org.nebflow/tools' declared '$rel' but no readable file under org.nebflow/ or plugin root — tools extension ignored"
                 None
-              else Some(d)
-          end match
-        end toolsPath
-        val toolsExtension: List[String] = toolsPath match
-          case None => Nil
-          case Some(p) if !containedUnder(dir, p) =>
-            warnings += s"tools.json resolves outside the plugin root — tools extension ignored (§4.1)"
-            Nil
-          case Some(p) =>
-            io.circe.parser.parse(os.read(p)) match
-              case Left(err) =>
-                warnings += s"tools.json unparseable (${err.message}) — tools extension ignored"
-                Nil
-              case Right(tjson) =>
-                tjson.hcursor.downField("tools").as[List[String]] match
-                  case Right(tools) =>
-                    val illegal = tools.filterNot(BuiltinToolWhitelist.contains)
-                    if illegal.nonEmpty then
-                      return Left(
-                        pname ->
-                          (s"org.nebflow/tools requests non-whitelisted tool(s): ${illegal.mkString(", ")}. " +
-                            s"Allowed builtin tools: ${BuiltinToolWhitelist.toList.sorted.mkString(", ")} (§B.6). (PLUGIN_TOOLS_ILLEGAL)")
-                      )
-                    tools
-                  case Left(err) =>
-                    warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
-                    Nil
-            end match
+          case None =>
+            val d = nsDir / "tools.json"
+            if !os.isFile(d) then None
+            else if !containedUnder(dir, d) then
+              warnings += s"org.nebflow/tools.json resolves outside the plugin root — tools extension ignored (§4.1)"
+              None
+            else Some(d)
+        end match
+      toolsExtension <- toolsPath match
+        case None => (Right(Nil): Either[(String, String), List[String]])
+        case Some(p) if !containedUnder(dir, p) =>
+          warnings += s"tools.json resolves outside the plugin root — tools extension ignored (§4.1)"
+          (Right(Nil): Either[(String, String), List[String]])
+        case Some(p) =>
+          io.circe.parser.parse(os.read(p)) match
+            case Left(err) =>
+              warnings += s"tools.json unparseable (${err.message}) — tools extension ignored"
+              (Right(Nil): Either[(String, String), List[String]])
+            case Right(tjson) =>
+              tjson.hcursor.downField("tools").as[List[String]] match
+                case Right(tools) =>
+                  val illegal = tools.filterNot(BuiltinToolWhitelist.contains)
+                  if illegal.nonEmpty then
+                    Left(
+                      pname ->
+                        (s"org.nebflow/tools requests non-whitelisted tool(s): ${illegal.mkString(", ")}. " +
+                          s"Allowed builtin tools: ${BuiltinToolWhitelist.toList.sorted.mkString(", ")} (§B.6). (PLUGIN_TOOLS_ILLEGAL)")
+                    )
+                  else (Right(tools): Either[(String, String), List[String]])
+                case Left(err) =>
+                  warnings += s"tools.json decode failed (${err.getMessage}) — tools extension ignored"
+                  (Right(Nil): Either[(String, String), List[String]])
 
-        // 装载校验（裁定 12）：skills 与 mcp 至少其一
-        if skills.isEmpty && mcpServers.isEmpty then
-          return Left(pname -> "plugin has neither skills/ nor mcp.json — nothing to allocate (refused at load)")
+      // 装载校验（裁定 12）：skills 与 mcp 至少其一
+      _ <- pass(
+        skills.nonEmpty || mcpServers.nonEmpty,
+        pname -> "plugin has neither skills/ nor mcp.json — nothing to allocate (refused at load)"
+      )
 
-        val (digest, fileCount) = computeDigest(dir) match
-          case Right(d) => d
-          case Left(err) => return Left(pname -> err)
+      digested <- computeDigest(dir).left.map(err => pname -> err)
+      digest = digested._1
+      fileCount = digested._2
 
-        // 官方身份装载层闸（P0-3 官方包身份脚手架；基线 §2.4；验收 BU A3）：
-        // `nebflow-` 前缀 = 官方保留 namespace —— 前缀匹配但 digest ∉ 分发内置官方允许列表
-        // ⇒ 拒载（`OFFICIAL_IMPERSONATION`）。本闸**必须在装载层**：拒绝先于可用（拒载的包
-        // 不进 registry ⇒ 不可分配、不可装载、resolve ⇒ PLUGIN_NOT_FOUND）。
-        // 非保留前缀的包不经本闸 ⇒ 第三方包判定路径逐字不变（对照臂）。
-        // 位置在 digest 之后：判定输入 = **目录内容 digest**（不是名字本身），故必须在
-        // `computeDigest` 之后；拒载理由里带上两个短 digest 供人工核对。
-        if !OfficialPackages.admits(pname, digest) then
-          return Left(pname -> OfficialPackages.rejectionReason(pname, digest))
+      // 官方身份装载层闸（P0-3 官方包身份脚手架；基线 §2.4；验收 BU A3）：
+      // `nebflow-` 前缀 = 官方保留 namespace —— 前缀匹配但 digest ∉ 分发内置官方允许列表
+      // ⇒ 拒载（`OFFICIAL_IMPERSONATION`）。本闸**必须在装载层**：拒绝先于可用（拒载的包
+      // 不进 registry ⇒ 不可分配、不可装载、resolve ⇒ PLUGIN_NOT_FOUND）。
+      // 非保留前缀的包不经本闸 ⇒ 第三方包判定路径逐字不变（对照臂）。
+      // 位置在 digest 之后：判定输入 = **目录内容 digest**（不是名字本身），故必须在
+      // `computeDigest` 之后；拒载理由里带上两个短 digest 供人工核对。
+      _ <- pass(
+        OfficialPackages.admits(pname, digest),
+        pname -> OfficialPackages.rejectionReason(pname, digest)
+      )
 
-        // 内容面判定（无审批批，2026-09-13 作者令「装了就是信任」）：
-        //   ① **先查封禁（deny）**：`plugins.revoked.<name>` 命中 ⇒ Blocked（指名阻止）；
-        //   ② **再默认受信（allow）**：扫到即 Trusted —— 审批记录**不再决定装载**
-        //      （`plugins.trust` 只作审计 + seed 覆盖仲裁基准 `trustRecordDigest`）。
-        // 顺序不可交换（设计硬约束 R4：封禁是 default-allow 下唯一的点名止损手段）。
-        // 内容变更（digest 漂移）= **非拦截可见性**（`contentChanged`），不改变 trust。
-        val trustRec = trustRecord(pname)
-        val contentChanged = trustRec.exists(_.sha256 != digest)
-        val trust = PluginBlockPolicy.entryFor(pname) match
-          case Some(b) => TrustStatus.Blocked(at = b.at, by = b.by, reason = b.reason)
-          case None => TrustStatus.Trusted(approvedAt = trustRec.map(_.approvedAt).getOrElse(0L), digest = digest)
-
-        Right(
-          PluginDef(
-            name = pname,
-            version = version,
-            description = description,
-            author = author,
-            homepage = homepage,
-            repository = repository,
-            license = license,
-            keywords = keywords,
-            skills = skills,
-            mcpServers = mcpServers,
-            toolsExtension = toolsExtension,
-            digest = digest,
-            fileCount = fileCount,
-            warnings = warnings.toList,
-            trust = trust,
-            dir = dir.toString,
-            contentChanged = contentChanged
-          )
-        )
-    end match
+      // 内容面判定（无审批批，2026-09-13 作者令「装了就是信任」）：
+      //   ① **先查封禁（deny）**：`plugins.revoked.<name>` 命中 ⇒ Blocked（指名阻止）；
+      //   ② **再默认受信（allow）**：扫到即 Trusted —— 审批记录**不再决定装载**
+      //      （`plugins.trust` 只作审计 + seed 覆盖仲裁基准 `trustRecordDigest`）。
+      // 顺序不可交换（设计硬约束 R4：封禁是 default-allow 下唯一的点名止损手段）。
+      // 内容变更（digest 漂移）= **非拦截可见性**（`contentChanged`），不改变 trust。
+      trustRec = trustRecord(pname)
+      contentChanged = trustRec.exists(_.sha256 != digest)
+      trust = PluginBlockPolicy.entryFor(pname) match
+        case Some(b) => TrustStatus.Blocked(at = b.at, by = b.by, reason = b.reason)
+        case None => TrustStatus.Trusted(approvedAt = trustRec.map(_.approvedAt).getOrElse(0L), digest = digest)
+    yield PluginDef(
+      name = pname,
+      version = version,
+      description = description,
+      author = author,
+      homepage = homepage,
+      repository = repository,
+      license = license,
+      keywords = keywords,
+      skills = skills,
+      mcpServers = mcpServers,
+      toolsExtension = toolsExtension,
+      digest = digest,
+      fileCount = fileCount,
+      warnings = warnings.toList,
+      trust = trust,
+      dir = dir.toString,
+      contentChanged = contentChanged
+    )
+    end for
   end loadPlugin
 
   /**
@@ -882,59 +877,74 @@ object PluginRegistry:
     def invalid(why: String): Option[McpServerConfig] =
       warnings += s"mcp server '$name' invalid — skipped: $why (§7.2.2)"
       None
-    if !sj.isObject then return invalid("entry is not an object")
-    val c = sj.hcursor
-    // entry 内未知字段 → 告警 + 忽略（前向兼容，§7.2.2 report-and-ignore 语义）
-    sj.asObject.foreach(_.keys.foreach { k =>
-      if !Set("type", "command", "args", "env", "cwd", "url", "headers").contains(k) then
-        warnings += s"mcp server '$name' unknown field '$k' ignored (forward-compat)"
-    })
-    val tpe = c.downField("type").as[String].toOption
-    tpe match
-      case None => invalid("missing required 'type'")
-      case Some("stdio") =>
-        val cmd = c.downField("command").as[String].toOption.getOrElse("")
-        if cmd.isEmpty then return invalid("'command' required for stdio")
-        if cmd.exists(_.isWhitespace) then
-          return invalid("'command' must be a single executable token (no whitespace/shell strings)")
-        // ./ 相对命令 → 按插件根解析为绝对路径 + 围栏（§4.1/§7.2.2）；裸名 → PATH 搜索原样保留
-        val resolvedCommand =
-          if cmd.startsWith("./") then
-            resolvePluginRelative(dir, cmd) match
-              case None => return invalid(s"'command' '$cmd' escapes the plugin root (§4.1 containment)")
-              case Some(p) => p.toString
-          else cmd
-        val args = c.downField("args").as[Option[List[String]]] match
-          case Right(v) => v
-          case Left(_) => return invalid("'args' must be an array of strings")
-        val env = c.downField("env").as[Option[Map[String, String]]] match
-          case Right(v) => v
-          case Left(_) => return invalid("'env' must be an object of string values")
-        env.foreach(_.keySet.foreach { k =>
-          if PluginPlaceholderEnvKeys.contains(k) then
-            warnings += s"mcp server '$name' invalid — skipped: env must not declare '${k}' (§9.1) (§7.2.2)"
-        })
-        if env.exists(_.keySet.exists(PluginPlaceholderEnvKeys.contains)) then return None
-        // cwd：须为 ./ 前缀（插件相对）或 ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位
-        // （官方 schema pattern）；归一为占位形式，运行期（acquire）展开为绝对路径。
-        val cwdRaw = c.downField("cwd").as[Option[String]] match
-          case Right(v) => v
-          case Left(_) => return invalid("'cwd' must be a string")
-        cwdRaw match
-          case None => ()
-          case Some(w) =>
-            val ok = w.startsWith("./") || w.startsWith("${PLUGIN_ROOT}") || w.startsWith("${PLUGIN_DATA}")
-            if !ok then
-              return invalid(s"'cwd' '$w' must start with './', '${"$"}{PLUGIN_ROOT}' or '${"$"}{PLUGIN_DATA}'")
-            if w.startsWith("./") then
-              if resolvePluginRelative(dir, w).isEmpty then
-                return invalid(s"'cwd' '$w' escapes the plugin root (§4.1 containment)")
-        val cwd = cwdRaw.map {
-          case w if w.startsWith("./") => s"${"$"}{PLUGIN_ROOT}/${w.stripPrefix("./")}"
-          case w => w
-        }
-        Some(
-          McpServerConfig(
+    // 无 return 的早退守卫（DisableSyntax.noReturns，2026-09-25）：why 按名传递，
+    // 守卫不通过才触发 invalid（记告警 + None）。
+    def pass(ok: Boolean, why: => String): Option[Unit] =
+      if ok then Some(()) else invalid(why).map(_ => ())
+
+    /** 值绑定形态的拒绝：与 invalid 同告警、恒 None，类型随调用处显式指定。 */
+    def reject[A](why: => String): Option[A] =
+      invalid(why)
+      None
+
+    if !sj.isObject then invalid("entry is not an object")
+    else
+      val c = sj.hcursor
+      // entry 内未知字段 → 告警 + 忽略（前向兼容，§7.2.2 report-and-ignore 语义）
+      sj.asObject.foreach(_.keys.foreach { k =>
+        if !Set("type", "command", "args", "env", "cwd", "url", "headers").contains(k) then
+          warnings += s"mcp server '$name' unknown field '$k' ignored (forward-compat)"
+      })
+      val tpe = c.downField("type").as[String].toOption
+      tpe match
+        case None => invalid("missing required 'type'")
+        case Some("stdio") =>
+          val cmd = c.downField("command").as[String].toOption.getOrElse("")
+          for
+            _ <- pass(cmd.nonEmpty, "'command' required for stdio")
+            _ <- pass(
+              !cmd.exists(_.isWhitespace),
+              "'command' must be a single executable token (no whitespace/shell strings)"
+            )
+            // ./ 相对命令 → 按插件根解析为绝对路径 + 围栏（§4.1/§7.2.2）；裸名 → PATH 搜索原样保留
+            resolvedCommand <-
+              if !cmd.startsWith("./") then Some(cmd)
+              else
+                resolvePluginRelative(dir, cmd) match
+                  case None => reject[String](s"'command' '$cmd' escapes the plugin root (§4.1 containment)")
+                  case Some(p) => Some(p.toString)
+            args <- c.downField("args").as[Option[List[String]]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[List[String]]]("'args' must be an array of strings")
+            env <- c.downField("env").as[Option[Map[String, String]]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[Map[String, String]]]("'env' must be an object of string values")
+            _ = env.foreach(_.keySet.foreach { k =>
+              if PluginPlaceholderEnvKeys.contains(k) then
+                warnings += s"mcp server '$name' invalid — skipped: env must not declare '${k}' (§9.1) (§7.2.2)"
+            })
+            _ <- if env.exists(_.keySet.exists(PluginPlaceholderEnvKeys.contains)) then None else Some(())
+            // cwd：须为 ./ 前缀（插件相对）或 ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位
+            // （官方 schema pattern）；归一为占位形式，运行期（acquire）展开为绝对路径。
+            cwdRaw <- c.downField("cwd").as[Option[String]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[String]]("'cwd' must be a string")
+            _ <- cwdRaw match
+              case None => Some(())
+              case Some(w) =>
+                val ok = w.startsWith("./") || w.startsWith("${PLUGIN_ROOT}") || w.startsWith("${PLUGIN_DATA}")
+                if !ok then
+                  invalid(s"'cwd' '$w' must start with './', '${"$"}{PLUGIN_ROOT}' or '${"$"}{PLUGIN_DATA}'"); None
+                else if w.startsWith("./") then
+                  resolvePluginRelative(dir, w) match
+                    case None => invalid(s"'cwd' '$w' escapes the plugin root (§4.1 containment)"); None
+                    case Some(_) => Some(())
+                else Some(())
+            cwd = cwdRaw.map {
+              case w if w.startsWith("./") => s"${"$"}{PLUGIN_ROOT}/${w.stripPrefix("./")}"
+              case w => w
+            }
+          yield McpServerConfig(
             command = Some(resolvedCommand),
             args = args,
             env = env,
@@ -944,25 +954,27 @@ object PluginRegistry:
             timeoutMs = None,
             cwd = cwd
           )
-        )
-      case Some("streamable-http") | Some("sse") =>
-        val url = c.downField("url").as[String].toOption.getOrElse("")
-        if url.isEmpty then return invalid(s"'url' required for transport '${tpe.get}'")
-        if !validMcpUrl(url) then
-          return invalid(
-            s"'url' must be an absolute http/https URL without userinfo or fragment; non-loopback hosts require https"
-          )
-        if tpe.get == "sse" then
-          // legacy HTTP+SSE wire protocol 本客户端未实现（OPTIONAL，§7.2.2-4）：
-          // MUST skip + report——显式跳过并留告警，非静默。
-          warnings += s"mcp server '$name' uses transport 'sse' — not supported by this client " +
-            "(supports stdio, streamable-http); entry skipped (§7.2.2-4)"
-          return None
-        val headers = c.downField("headers").as[Option[Map[String, String]]] match
-          case Right(v) => v
-          case Left(_) => return invalid("'headers' must be an object of string values")
-        Some(
-          McpServerConfig(
+          end for
+        case Some("streamable-http") | Some("sse") =>
+          val url = c.downField("url").as[String].toOption.getOrElse("")
+          for
+            _ <- pass(url.nonEmpty, s"'url' required for transport '${tpe.get}'")
+            _ <- pass(
+              validMcpUrl(url),
+              "'url' must be an absolute http/https URL without userinfo or fragment; non-loopback hosts require https"
+            )
+            _ <-
+              if tpe.get == "sse" then
+                // legacy HTTP+SSE wire protocol 本客户端未实现（OPTIONAL，§7.2.2-4）：
+                // MUST skip + report——显式跳过并留告警，非静默。
+                warnings += s"mcp server '$name' uses transport 'sse' — not supported by this client " +
+                  "(supports stdio, streamable-http); entry skipped (§7.2.2-4)"
+                None
+              else Some(())
+            headers <- c.downField("headers").as[Option[Map[String, String]]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[Map[String, String]]]("'headers' must be an object of string values")
+          yield McpServerConfig(
             command = None,
             args = None,
             env = None,
@@ -972,9 +984,10 @@ object PluginRegistry:
             timeoutMs = None,
             cwd = None
           )
-        )
-      case Some(other) => invalid(s"unknown transport type '$other' (expected stdio | streamable-http | sse)")
-    end match
+          end for
+        case Some(other) => invalid(s"unknown transport type '$other' (expected stdio | streamable-http | sse)")
+      end match
+    end if
   end validateServerEntry
 
   /**
@@ -1110,53 +1123,65 @@ object PluginRegistry:
       val isGit = source.startsWith("https://") || source.startsWith("http://") ||
         source.startsWith("git@") || source.endsWith(".git")
       val staged = tmp / "repo"
-      if isGit then
-        val res = os.proc("git", "clone", "--depth", "1", source, staged).call(check = false)
-        if res.exitCode != 0 then
-          val errTail =
-            scala.util.Try(res.err.text()).toOption.getOrElse("").linesIterator.toList.takeRight(3).mkString("; ")
-          return Left(s"git clone failed (exit ${res.exitCode}): $errTail")
-      else
-        val src = os.Path(source, os.pwd)
-        if !os.isDir(src) then return Left(s"source is not a directory: $source")
-        // ── 点路径 / 祖先路径守卫（2026-09-13 批，#344 点路径）────────────────
-        // 规范化后源 == cwd 自身（`.`、`./`、cwd 的绝对形式）或为 cwd 的祖先 ⇒ os.copy
-        // 会把**整个工作目录**递归拷进临时目录（磁盘/耗时放大；非破坏性且 finally 清理，
-        // 但退化）。字符串空判（CLI 侧 isEmpty）盖不住点路径 ⇒ 判据 = canonical 路径比对。
-        if isCwdOrAncestor(src) then
-          return Left(
-            s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
-              s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
-              s"itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
-          )
-        os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
-      end if
+      // 无 return 的早退（DisableSyntax.noReturns，2026-09-25）：取源守卫（克隆失败/
+      // 非目录/点路径）折为 Either，后续步骤 flatMap；finally 清理语义不变。
+      val sourced: Either[String, Unit] =
+        if isGit then
+          val res = os.proc("git", "clone", "--depth", "1", source, staged).call(check = false)
+          if res.exitCode != 0 then
+            val errTail =
+              scala.util.Try(res.err.text()).toOption.getOrElse("").linesIterator.toList.takeRight(3).mkString("; ")
+            Left(s"git clone failed (exit ${res.exitCode}): $errTail")
+          else Right(())
+        else
+          val src = os.Path(source, os.pwd)
+          if !os.isDir(src) then Left(s"source is not a directory: $source")
+          else
+            // ── 点路径 / 祖先路径守卫（2026-09-13 批，#344 点路径）────────────────
+            // 规范化后源 == cwd 自身（`.`、`./`、cwd 的绝对形式）或为 cwd 的祖先 ⇒ os.copy
+            // 会把**整个工作目录**递归拷进临时目录（磁盘/耗时放大；非破坏性且 finally 清理，
+            // 但退化）。字符串空判（CLI 侧 isEmpty）盖不住点路径 ⇒ 判据 = canonical 路径比对。
+            if isCwdOrAncestor(src) then
+              Left(
+                s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
+                  s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
+                  "itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
+              )
+            else
+              os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
+              Right(())
+          end if
 
-      // manifest name 为准（§5.5 校验复用装载规则）
-      val manifest = staged / "plugin.json"
-      if !os.isFile(manifest) then return Left("source has no plugin.json manifest — not a plugin package")
-      io.circe.parser.parse(os.read(manifest)) match
-        case Left(err) => Left(s"source plugin.json unparseable: ${err.message}")
-        case Right(json) =>
-          val name = json.hcursor.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-          name.filter(validPluginName) match
-            case None =>
-              Left("source manifest 'name' missing or violates §5.5 constraints — refusing to install")
-            case Some(pname) =>
-              val target = pluginsDir / pname
-              if os.exists(target) then
-                Left(s"Plugin '$pname' already exists at $target — refusing to overwrite (remove it first)")
-              else
-                os.makeDir.all(pluginsDir)
-                os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
-                cache.set(None)
-                logger.infoSync(s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)")
-                Right(
-                  s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
-                    s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'."
-                )
-          end match
-      end match
+      sourced.flatMap { _ =>
+        // manifest name 为准（§5.5 校验复用装载规则）
+        val manifest = staged / "plugin.json"
+        if !os.isFile(manifest) then Left("source has no plugin.json manifest — not a plugin package")
+        else
+          io.circe.parser.parse(os.read(manifest)) match
+            case Left(err) => Left(s"source plugin.json unparseable: ${err.message}")
+            case Right(json) =>
+              val name = json.hcursor.downField("name").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              name.filter(validPluginName) match
+                case None =>
+                  Left("source manifest 'name' missing or violates §5.5 constraints — refusing to install")
+                case Some(pname) =>
+                  val target = pluginsDir / pname
+                  if os.exists(target) then
+                    Left(s"Plugin '$pname' already exists at $target — refusing to overwrite (remove it first)")
+                  else
+                    os.makeDir.all(pluginsDir)
+                    os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
+                    cache.set(None)
+                    logger.infoSync(
+                      s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"
+                    )
+                    Right(
+                      s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
+                        s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'."
+                    )
+              end match
+        end if
+      }
     finally
       try os.remove.all(tmp)
       catch case _: Exception => ()

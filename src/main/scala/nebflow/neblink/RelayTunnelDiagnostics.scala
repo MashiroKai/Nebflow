@@ -65,14 +65,16 @@ private[neblink] object RelayTunnelDiagnostics:
    * cycle-safe.
    */
   private def handshakeOf(t: Throwable): Option[WebSocketHandshakeException] =
+    // 无 return 的早退(DisableSyntax.noReturns):命中即置 found,循环条件短路退出
     var cur: Throwable = t
     var depth = 0
-    while cur != null && depth < 10 do
+    var found: Option[WebSocketHandshakeException] = None
+    while found.isEmpty && cur != null && depth < 10 do
       cur match
-        case hs: WebSocketHandshakeException => return Some(hs)
+        case hs: WebSocketHandshakeException => found = Some(hs)
         case other => cur = other.getCause
       depth += 1
-    None
+    found
 
   /** Deepest cause — the most specific description of what went wrong. */
   private def rootCause(t: Throwable): Throwable =

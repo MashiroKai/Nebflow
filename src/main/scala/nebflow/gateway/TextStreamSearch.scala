@@ -2,8 +2,8 @@ package nebflow.gateway
 
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.core.PathUtil
 
 /**

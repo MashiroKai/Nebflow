@@ -6,10 +6,10 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.gateway.NfFilePolicy.*
+import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
-import org.http4s.{Charset, HttpRoutes, MediaType, Response, Status, StaticFile}
 
 object NfFileRoutes:
 

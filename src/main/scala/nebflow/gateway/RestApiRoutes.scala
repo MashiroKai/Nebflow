@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import nebflow.agent.SharedResources
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.{NeblinkService, PeerInfo}
-import org.http4s.{HttpRoutes, Request}
 import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.{HttpRoutes, Request}
 
 /**
  * REST API routes for CLI consumption.

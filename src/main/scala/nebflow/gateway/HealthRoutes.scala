@@ -3,8 +3,8 @@ package nebflow.gateway
 
 import cats.effect.IO
 import fs2.Stream
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.core.hotrestart.HealthPayload
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

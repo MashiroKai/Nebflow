@@ -134,15 +134,16 @@ jobs:
         run: bash scripts/check-jdk-baseline.sh
 
   lint:
-    name: Lint (scalafmt)
+    name: Lint (scalafmt + scalafix)
     # Format gate: `make lint` / `make check` existed but were never wired into
     # CI — only -Xfatal-warnings compile was enforced. This job runs the same
     # scalafmtCheckAll as the Makefile quality targets so a formatting
     # regression fails the build instead of relying on contributor discipline.
-    # scalafmt only for now: `scalafix --check` is still red on main —
-    # 43 [DisableSyntax.return] violations that need case-by-case rewrites
-    # (non-local return semantics). Wire `"scalafix --check"` into this
-    # command once that debt is cleared.
+    # scalafix gate wired 2026-09-25: the 43 [DisableSyntax.return] violations
+    # were rewritten case-by-case (guard chains → Either/Option
+    # for-comprehensions with by-name guard helpers) and the residual
+    # OrganizeImports drift was auto-fixed with `sbt scalafix`, so
+    # `scalafix --check` now holds at green on this branch.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,9 +160,9 @@ jobs:
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
-      - name: scalafmt check
+      - name: scalafmt + scalafix check
         shell: bash
-        run: sbt scalafmtCheckAll
+        run: sbt scalafmtCheckAll "scalafix --check"
 
   compile:
     name: Compile (${{ matrix.os }})
