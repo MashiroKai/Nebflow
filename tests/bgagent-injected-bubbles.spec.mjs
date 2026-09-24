@@ -95,7 +95,12 @@ const base = () => ({
 /** Start a fresh app page with the WS handshake mocked and every getHistory
  *  frame recorded. Returns the live `historyRequests` array (mutated in place
  *  by the route handler). */
-async function bootApp(page, { historyRows = ROWS } = {}) {
+/** `payloadQueue` (T7's per-frame leg only, optional and additive): when given,
+ *  each `getHistory` request for the panel session consumes the NEXT payload
+ *  shape, so ONE session can be driven through alternating frame forms. With
+ *  no queue every request answers `historyRows` — i.e. T1–T6 read exactly as
+ *  before, this parameter changes nothing for them. */
+async function bootApp(page, { historyRows = ROWS, payloadQueue = null } = {}) {
   const historyRequests = [];
   await page.addInitScript(() => localStorage.setItem('nebflow_token', 'e2e-token'));
 
@@ -138,7 +143,9 @@ async function bootApp(page, { historyRows = ROWS } = {}) {
       else if (msg.type === 'getActiveAgents') ws.send(JSON.stringify({ type: 'activeAgents', agents: [] }));
       else if (msg.type === 'getHistory') {
         historyRequests.push(msg.sessionId);
-        const msgs = msg.sessionId === DISP_SID ? historyRows : [];
+        const msgs = msg.sessionId === DISP_SID
+          ? (payloadQueue && payloadQueue.length ? payloadQueue.shift() : historyRows)
+          : [];
         // Backend contract (SessionStore.getHistoryPage): the tail page when
         // no beforeIndex is given — offset 0, hasMore only when more exists.
         ws.send(JSON.stringify({
@@ -496,6 +503,297 @@ test('T4 first open with a CLOSED round and a tool row: both survive the history
     .toContain('NEXT-ROUND-TEXT.');
   expect((await probe(page)).open.toolRows, 'tool rows still intact after a later round')
     .toBe(beforeOpen.toolRows);
+
+  expect(pageErrors).toEqual([]);
+});
+
+// ── F-2 increment (chain `bluebubble-diag`): the cell T3 left unmeasured ──
+// T3 pins "turn in flight" — but it feeds ZERO tool frames. T4 pins tool rows —
+// but only on a round that has already CLOSED. The combination,
+//
+//     (the round is STILL IN FLIGHT)  ∧  (it has ALREADY rendered a tool row)
+//
+// is a reachable state on its own (a tool is mid-execution: toolStart with no
+// toolEnd yet, which is exactly what a long Bash/NodeEdit call looks like) and
+// nothing pinned it. It is also the sharpest form of the survival question:
+// with the round open, `historyCarriesRenderedRows` still reads the frame as
+// "does not reproduce the container", so the preserve branch must carry the
+// tool row over — and unlike T3's text-only stream, a tool row is NOT re-seeded
+// from `state.sessionTexts`, so if the branch dropped it there is no second
+// channel to bring it back.
+
+const IN_FLIGHT_TOOL = 'NodeEdit(create)';
+
+/** T7b's own renderable payload — a separate constant so T5's fixture reading
+ *  is untouched. Its tool row is distinguishable from the live one by BODY. */
+const T7B_RENDERABLE_ROWS = [
+  { type: 'user', injected: true, source: 'delegate', eventType: 'result', sender: 'Explorer', header: 'DELEGATE · NEBFLOW · EXPLORER · RESULT', timestamp: 1790176939643, text: 'PAIR injected body', attachments: [] },
+  { type: 'ai', text: 'PERSISTED-ASSISTANT-TEXT', timestamp: 1790180000000 },
+  { type: 'tool', label: 'Bash\n(cd /tmp && ls)', summary: 'list dir', content: 'PERSISTED-TOOL-BODY', isError: false, input: '{"command":"ls"}' },
+];
+
+/** T7c's payload: injected rows plus a TOOL row but NO `ai`/`agent` row. This is
+ *  a real on-disk form, not a contrivance — a census over `~/.nebflow/sessions/
+ *  *.ui.json` (4436 files) finds 17 sessions whose persisted rows include `tool`
+ *  and no `ai`/`agent` at all (e.g. `dag-release-be-coder-733469.ui.json`,
+ *  `delegate-Explorer-272ea669.ui.json`). It is the ONLY shape that makes the
+ *  `tool` term of the discriminator load-bearing: drop that term and such a
+ *  payload flips from "reproducible" to "not reproducible". */
+const T7C_TOOL_ONLY_ROWS = [
+  { type: 'user', injected: true, source: 'delegate', eventType: 'result', sender: 'Explorer', header: 'DELEGATE · NEBFLOW · EXPLORER · RESULT', timestamp: 1790176939643, text: 'PAIR injected body', attachments: [] },
+  { type: 'tool', label: 'Bash\n(cd /tmp && ls)', summary: 'list dir', content: 'TOOL-ONLY-PAYLOAD-BODY', isError: false, input: '{"command":"ls"}' },
+];
+
+/** Text → toolStart, WITHOUT toolEnd: the round is still open when the panel
+ *  opens. Distinct from `feedLiveWhileClosed({closeRound:true})`, which closes
+ *  the round with toolEnd (T4's shape). */
+async function feedInFlightWithToolRow(page) {
+  await inject(page, { type: 'agentStart', ...base(), taskDescription: 'dispatcher/nebflow' });
+  await page.waitForTimeout(150);
+  await inject(page, { type: 'agentThinking', ...base(), delta: 'planning the batch…' });
+  await inject(page, { type: 'agentTextDelta', ...base(), delta: 'Dispatching the batch now.' });
+  // toolStart with NO toolEnd ⇒ the turn stays in flight across the open.
+  await inject(page, { type: 'agentToolStart', ...base(), label: IN_FLIGHT_TOOL });
+  await page.waitForTimeout(500);
+}
+
+/** Tag every live row so "the row survived" can be told apart from "a lookalike
+ *  row was rebuilt": a wipe + rebuild yields fresh nodes carrying no tag. */
+function tagLiveRows(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('.flow-agent-hidden .flow-agent-chat');
+    if (!c) return [];
+    const rows = [...c.querySelectorAll('.row.ai, .row.tool')];
+    rows.forEach((r, i) => { r.dataset.f2Tag = 'f2-' + i; });
+    return rows.map((r) => r.dataset.f2Tag);
+  });
+}
+
+/** Row readings for T7 — self-contained (the shared `probe` helper is left
+ *  untouched, so T1–T6 keep their exact reading surface). */
+function probeInFlightRows(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('.flow-agent-overlay .flow-agent-chat');
+    if (!c) return null;
+    return {
+      toolRows: c.querySelectorAll('.row.tool').length,
+      toolCards: [...c.querySelectorAll('.row.tool .tool-card')]
+        .map((el) => (el.dataset.toolLabel || '')),
+      // The tool BODY (label + summary + content), the reading that works for a
+      // history-rendered card too — those carry no dataset.toolLabel.
+      toolBody: [...c.querySelectorAll('.row.tool .tool-card')]
+        .map((el) => el.textContent || ''),
+      pendingTools: c.querySelectorAll('.row.tool .tool-card--pending').length,
+      // Survival evidence by NODE IDENTITY: tags were stamped on the live rows
+      // before the open, so their presence here means those very nodes were
+      // re-attached, not re-created.
+      tags: [...c.querySelectorAll('.row.ai, .row.tool')].map((r) => r.dataset.f2Tag || null),
+      aiRows: c.querySelectorAll('.row.ai').length,
+      aiText: [...c.querySelectorAll('.row.ai .bubble.ai')].map((b) => b.textContent).join('\n'),
+      injected: c.querySelectorAll('.bubble.injected').length,
+      children: c.children.length,
+    };
+  });
+}
+
+/** Tag the rows of the OPEN container, so a LATER frame's reading can prove the
+ *  same nodes are still there (moved) rather than rebuilt. */
+function tagOpenRows(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('.flow-agent-overlay .flow-agent-chat');
+    if (!c) return [];
+    const rows = [...c.querySelectorAll('.row.ai, .row.tool')];
+    rows.forEach((r, i) => { r.dataset.f2OpenTag = 'open-' + i; });
+    return rows.map((r) => r.dataset.f2OpenTag);
+  });
+}
+
+/** Same as `probeInFlightRows` but reading the OPEN-tag namespace. */
+function probeOpenTags(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('.flow-agent-overlay .flow-agent-chat');
+    if (!c) return null;
+    return {
+      openTags: [...c.querySelectorAll('.row.ai, .row.tool')].map((r) => r.dataset.f2OpenTag || null),
+      children: c.children.length,
+    };
+  });
+}
+
+test('T7 first open while a tool call is STILL RUNNING: the in-flight tool row survives', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+
+  await feedInFlightWithToolRow(page);
+  const beforeOpen = (await probe(page)).hidden;
+  const tagsBefore = await tagLiveRows(page);
+  expect(beforeOpen.toolRows, 'a tool row was rendered before the open').toBeGreaterThan(0);
+  expect(beforeOpen.aiRows, 'and the open round that owns it').toBeGreaterThan(0);
+  expect(tagsBefore.length, 'both live rows got an identity tag').toBe(beforeOpen.toolRows + beforeOpen.aiRows);
+
+  await openPanel(page);
+  await expect
+    .poll(async () => (await probe(page)).open?.injected ?? -1, { timeout: 8000 })
+    .toBe(ROWS.length);
+
+  const open = await probeInFlightRows(page);
+  expect(open.toolRows, 'the in-flight tool row survives the history merge')
+    .toBe(beforeOpen.toolRows);
+  expect(open.toolRows, 'and `toolRows > 0` holds').toBeGreaterThan(0);
+  expect(open.toolCards, 'still the SAME tool — not a rebuilt lookalike').toEqual([IN_FLIGHT_TOOL]);
+  expect(open.aiText, 'the open round\'s text comes along').toContain('Dispatching the batch now.');
+  expect(open.tags, 'every pre-open row is the SAME node (moved, not destroyed)')
+    .toEqual(expect.arrayContaining(tagsBefore));
+  const plainProbe = (await probe(page)).open;
+  expect(plainProbe.injected, 'history channel merged in alongside, not instead')
+    .toBe(ROWS.length);
+  expect(plainProbe.headers, 'and its labels stay verbatim').toEqual(HEADERS);
+
+  // The row must still be LIVE: the toolEnd that closes THIS call arrives after
+  // the merge, and the panel must complete that same row (a detached node would
+  // keep the spinner forever).
+  await inject(page, {
+    type: 'agentToolEnd', ...base(), label: IN_FLIGHT_TOOL,
+    summary: 'ok', content: 'FINAL-TOOL-BODY', isError: false,
+  });
+  await expect
+    .poll(async () => (await probeInFlightRows(page))?.pendingTools ?? -1, { timeout: 8000 })
+    .toBe(0);
+  const closed = await probeInFlightRows(page);
+  expect(closed.toolBody.join(' '), 'the completion landed in the surviving row')
+    .toContain('FINAL-TOOL-BODY');
+  expect(closed.toolRows, 'still exactly the one tool row — no duplicate').toBe(beforeOpen.toolRows);
+  expect(closed.tags, 'and it is still the same node').toEqual(expect.arrayContaining(tagsBefore));
+  expect(closed.injected, 'injected rows intact after the tool completes').toBe(ROWS.length);
+
+  expect(pageErrors).toEqual([]);
+});
+
+// ── T7's second leg: the NEGATIVE form, read PER FRAME ───────────────────
+// "The tool row always survives" would be the wrong rule — and a single-frame
+// test cannot tell the rule apart from that. The merge decision is taken per
+// FRAME from the payload's own content, so the same session must branch
+// DIFFERENTLY on consecutive opens. Driving the alternating shapes through ONE
+// session pins that (three opens, so a session-level snapshot read at the first
+// open is provably wrong by the third), and supplies the failing counterpart
+// the positive leg needs:
+//
+//   open#1  INJECTED_ONLY  → preserve branch → the live in-flight tool row SURVIVES
+//   open#2  RENDERABLE     → wipe branch     → it is GONE, history's row is the one shown
+//   open#3  INJECTED_ONLY  → preserve branch → back to the surviving live row
+//
+// Every frame carries its own readings; none is inferred from a session snapshot.
+
+test('T7b per-frame: the in-flight tool row survives ONLY while the frame cannot reproduce it', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  // One session, one live turn, three opens with ALTERNATING payload shapes.
+  const historyRequests = await bootApp(page, { payloadQueue: [ROWS, T7B_RENDERABLE_ROWS, ROWS] });
+
+  await feedInFlightWithToolRow(page);
+  const tagsBefore = await tagLiveRows(page);
+  expect(tagsBefore.length, 'the live rows carry identity tags before any open').toBeGreaterThan(1);
+
+  // ── frame #1: payload CANNOT reproduce the container ⇒ keep the live row ──
+  await openPanel(page);
+  await expect
+    .poll(async () => (await probe(page)).open?.injected ?? -1, { timeout: 8000 })
+    .toBe(ROWS.length);
+  const f1 = await probeInFlightRows(page);
+  expect(f1.toolCards, 'frame #1 keeps the LIVE tool row').toEqual([IN_FLIGHT_TOOL]);
+  expect(f1.toolBody.join(' '), 'and it is the live one, not history\'s')
+    .not.toContain('PERSISTED-TOOL-BODY');
+  expect(f1.tags, 'and it is one of the tagged pre-open nodes').toEqual(expect.arrayContaining(tagsBefore));
+  expect(f1.aiText, 'frame #1 also keeps the open round\'s text').toContain('Dispatching the batch now.');
+
+  await closePanel(page);
+
+  // ── frame #2: payload DOES reproduce the container ⇒ the live row is dropped ──
+  await openPanel(page);
+  await expect
+    .poll(async () => (await probe(page)).open?.injected ?? -1, { timeout: 8000 })
+    .toBe(1);
+  const f2 = await probeInFlightRows(page);
+  expect(f2.toolCards, 'so the live in-flight tool row is gone here — the failing counterpart')
+    .not.toEqual([IN_FLIGHT_TOOL]);
+  expect(f2.toolBody.join(' '), 'frame #2 renders HISTORY\'s tool row instead')
+    .toContain('PERSISTED-TOOL-BODY');
+  expect(f2.tags, 'none of the pre-open live nodes survived frame #2')
+    .not.toEqual(expect.arrayContaining(tagsBefore));
+  expect(f2.aiText, 'and the assistant text is history\'s').toContain('PERSISTED-ASSISTANT-TEXT');
+  expect(f2.aiText, 'the superseded live text is not carried in').not.toContain('Dispatching the batch now.');
+  expect(f2.toolRows, 'still exactly one tool row — swapped, not duplicated').toBe(1);
+  const tagsFromF2 = await tagOpenRows(page);
+  expect(tagsFromF2.length, 'frame #2\'s rows got identity tags').toBe(f2.toolRows + f2.aiRows);
+
+  await closePanel(page);
+
+  // ── frame #3: INJECTED_ONLY again ⇒ the branch follows the FRAME, not the
+  //    session's accumulated state. The container still holds frame #2's rows
+  //    (history's ai + tool), so this frame must MERGE into them rather than
+  //    rebuild: the row count grows by the injected rows and the existing nodes
+  //    are the very same ones. A session-level snapshot taken at #1/#2 would
+  //    read this frame wrong; an unconditional-wipe rule fails both readings.
+  await openPanel(page);
+  await expect
+    .poll(async () => (await probe(page)).open?.injected ?? -1, { timeout: 8000 })
+    .toBe(ROWS.length);
+  const f3 = await probeInFlightRows(page);
+  expect(f3.injected, 'frame #3 is the INJECTED_ONLY shape again').toBe(ROWS.length);
+  expect(f3.children, 'and it grows frame #2\'s container instead of replacing it')
+    .toBeGreaterThan(f2.children);
+  const f3tags = await probeOpenTags(page);
+  expect(f3tags.openTags, 'frame #2\'s nodes are the SAME nodes after frame #3 (moved, not rebuilt)')
+    .toEqual(expect.arrayContaining(tagsFromF2));
+  expect(f3.toolBody, 'and frame #3\'s tool row is the one frame #2 left there')
+    .toEqual(f2.toolBody);
+
+  // Three opens ⇒ three independent frames, each judged on its own payload.
+  expect(historyRequests.filter((s) => s === DISP_SID).length,
+    'one getHistory per open — each frame judged on its own payload').toBe(3);
+
+  expect(pageErrors).toEqual([]);
+});
+
+// ── T7c: the `tool` term of the discriminator, on its own ────────────────
+// `historyCarriesRenderedRows` admits `ai` OR `tool` OR `agent`. Every payload
+// above that exercises the "reproducible" side also carries an `ai` row, so on
+// those readings the `tool` term alone is never what decides — a classifier
+// with the `tool` term REMOVED still routes them correctly (measured: the
+// mutant `H_classify_tool_as_renderable` leaves the rest of this file green).
+// The payload form that isolates the term is injected + `tool` with NO
+// `ai`/`agent`, which really occurs on disk (17 of 4436 `.ui.json` files, e.g.
+// `dag-release-be-coder-733469.ui.json`). Here history CAN re-provide the tool
+// row, so the live one must be superseded — the opposite of T7's outcome on the
+// same live scenario. That contrast is what makes the term load-bearing.
+
+test('T7c a payload carrying only a TOOL row still reproduces the container', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page, { historyRows: T7C_TOOL_ONLY_ROWS });
+
+  // Same live shape as T7: an in-flight round that already owns a tool row.
+  await feedInFlightWithToolRow(page);
+  const tagsBefore = await tagLiveRows(page);
+  const beforeOpen = (await probe(page)).hidden;
+  expect(beforeOpen.toolRows, 'the live tool row is there before the open').toBeGreaterThan(0);
+
+  await openPanel(page);
+  await expect
+    .poll(async () => (await probe(page)).open?.injected ?? -1, { timeout: 8000 })
+    .toBe(1);
+
+  const open = await probeInFlightRows(page);
+  expect(open.toolBody.join(' '), 'the payload\'s OWN tool row is what shows')
+    .toContain('TOOL-ONLY-PAYLOAD-BODY');
+  expect(open.toolCards, 'so the live tool row was superseded, exactly as in T5')
+    .not.toEqual([IN_FLIGHT_TOOL]);
+  expect(open.tags, 'none of the live pre-open tool nodes survived')
+    .not.toEqual(expect.arrayContaining(tagsBefore));
+  expect(open.toolRows, 'exactly one tool row — the payload\'s').toBe(1);
+  expect(open.aiText, 'no live assistant text is carried in either')
+    .not.toContain('Dispatching the batch now.');
 
   expect(pageErrors).toEqual([]);
 });
