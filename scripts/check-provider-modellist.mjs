@@ -110,6 +110,10 @@ const GATEWAY = 'src/main/scala/nebflow/gateway/RestApiRoutes.scala';
 // RestApiRoutes into ProviderProbe (behavior-preserving split, gate semantics
 // unchanged) — the two arms that pin those messages scan both files.
 const PROBE = 'src/main/scala/nebflow/gateway/ProviderProbe.scala';
+// re-pin (2026-09-24): the /provider/models route (the caller this gate pins)
+// moved out of RestApiRoutes into PresenceRoutes (behavior-preserving split,
+// gate semantics unchanged) — the two caller arms scan both files.
+const PRESENCE = 'src/main/scala/nebflow/gateway/PresenceRoutes.scala';
 const FACES = 'src/main/scala/nebflow/llm/providers/ModelListFaces.scala';
 const ANTHROPIC = 'src/main/scala/nebflow/llm/providers/AnthropicAdapter.scala';
 const OPENAI = 'src/main/scala/nebflow/llm/providers/OpenAiAdapter.scala';
@@ -127,11 +131,14 @@ const STRUCTURAL = [
     name: 'no-global-concat',
     what: 'the gateway must not append a "models" path to a raw baseUrl',
     run: (src) => {
-      const hits = src
-        .split('\n')
-        .map((line, i) => [i + 1, line])
-        .filter(([, line]) => /\+\s*"models"/.test(line) || /"models"\s*\+/.test(line));
-      return hits.map(([ln, line]) => `${GATEWAY}:${ln} concatenates a models path: ${line.trim()}`);
+      const files = [[GATEWAY, src], [PRESENCE, read(PRESENCE)]];
+      const hits = files.flatMap(([file, text]) =>
+        text
+          .split('\n')
+          .map((line, i) => [file, i + 1, line])
+          .filter(([, , line]) => /\+\s*"models"/.test(line) || /"models"\s*\+/.test(line))
+      );
+      return hits.map(([file, ln, line]) => `${file}:${ln} concatenates a models path: ${line.trim()}`);
     },
     fix: 'declare the list endpoint per protocol face (`ModelListFaces` / the adapters) and build no path here'
   },
@@ -158,9 +165,10 @@ const STRUCTURAL = [
     what: 'the route asks the declaration instead of building a URL, and handles the unsupported state',
     run: (src) => {
       const out = [];
-      if (!/ModelListFaces\.models\s*\(/.test(src)) out.push(`${GATEWAY}: route does not call ModelListFaces.models`);
-      if (!/ModelListFaces\.noEndpointMessage\s*\(/.test(src)) out.push(`${GATEWAY}: no explicit refusal for a face that declares no list endpoint`);
-      if (!/case\s+Nil\s*=>/.test(src)) out.push(`${GATEWAY}: the empty-declaration (unsupported) branch is gone`);
+      const both = `${src}\n${read(PRESENCE)}`;
+      if (!/ModelListFaces\.models\s*\(/.test(both)) out.push(`${GATEWAY}: route does not call ModelListFaces.models`);
+      if (!/ModelListFaces\.noEndpointMessage\s*\(/.test(both)) out.push(`${GATEWAY}: no explicit refusal for a face that declares no list endpoint`);
+      if (!/case\s+Nil\s*=>/.test(both)) out.push(`${GATEWAY}: the empty-declaration (unsupported) branch is gone`);
       return out;
     },
     fix: 'a face with no list endpoint must be refused with a readable message, never reported as an empty success'
