@@ -1,5 +1,7 @@
 package nebflow.core.project
 
+import nebflow.core.tools.MailToolTestAccess
+
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import fs2.Stream
@@ -26,7 +28,7 @@ import scala.concurrent.duration.*
  * ## 被判缺陷（R-A 登记，来源 = `20260915_evfmt-verify.md` §r3-3 R-A 实测 T6）
  * 取值链 ①「构造点显式置位」**未落位**（`MailTool` 侧不置 `InjectionAttribution.project`）⇒
  * 腿① 走 `ProjectActor.leg1SenderProject` 的根域兜底 ⇒ 项目上下文发送方落帧
- * `MAIL · NEBULA · WORKER-A · INFO`，发送方项目 `PROJ-P6-SRC` 丢失。
+ * `MAIL · NEBULA · WORKER-A`，发送方项目 `PROJ-P6-SRC` 丢失。
  * 本 spec 用**生产构造点**（`MailTool.call`，非喂参直调）触发，故修复前为红。
  *
  * ## 本 spec 钉的三段（每条都走真实引擎路径，非纯函数喂参）
@@ -41,6 +43,16 @@ import scala.concurrent.duration.*
  * （T3 止于 `ImmediateInput.project` 字段 + 发射点回落链的逐字复刻，root 会话非真 AgentActor）。
  */
 class MailSenderProjectSegmentSpec extends CatsEffectSuite:
+
+  /** 🔴 mailunify-full 批 × mailack 打包窗（2026-09-24）：本 spec 的腿③ / 腿① 的**分发器身份**
+    * 发送者走 `MailTool.deliverToNebulaRoot` 的**打包窗**路径（mailack 已落地裁定，
+    * `enqueueDispatcherReply`：首件起算滚动窗、窗末一次性注入）⇒ 注入**不在** `call` 返回前发生。
+    * 关窗（`nebflow.mail.dispatcherBatchMs <= 0` ⇒ 走 `immediate` 路径）是本 spec 读
+    * `ImmediateInput` / 注入帧的**前提**，否则只能读到「已入窗」而读不到置位字段。
+    * 复用主仓既有接缝（`MailDispatcherReplyBatchSpec` 的 `MailToolTestAccess.withWindowMs`，
+    * 同款 prop 保存/还原），本 spec 不另造第二套 prop 读写。
+    * 🔴 断言强度零放宽：仍断言 `ImmediateInput.project` 逐字 = 发送方项目 / 根域 `None`。 */
+  private def withWindowClosed[A](body: => A): A = MailToolTestAccess.withWindowMs(0L)(body)
 
   override def munitIOTimeout: FiniteDuration = 240.seconds
 
@@ -193,7 +205,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       assert(out.startsWith("RIGHT:"), s"生产构造点必须放行（非 dispatcher 自带的项目会话可发 project: 腿）：$out")
       assertEquals(
         h,
-        Some("MAIL · PROJ-P6-SRC · WORKER-A · INFO"),
+        Some("MAIL · PROJ-P6-SRC · WORKER-A"),
         "发送方项目未取到 ⇒ PROJECT 段落到根域 NEBULA（R-A 缺陷形态）"
       )
     }
@@ -203,13 +215,19 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       assert(out.startsWith("RIGHT:"), s"根域发送方发 project: 腿必须放行：$out")
       assertEquals(
         h,
-        Some("MAIL · NEBULA · NEBULA · INFO"),
+        Some("MAIL · NEBULA · NEBULA"),
         "根域场景被改动 ⇒ 过度修正（判据要求跨 root 直投件 PROJECT = NEBULA 逐字不变）"
       )
     }
 
   /** 发射点 `AgentActor#emitInjectedUserEvent` 的 PROJECT 段回落链**逐字复刻**
-    * （`project.orElse(sessionProject).orElse(RootProject)`）。 */
+    * （`project.orElse(sessionProject).orElse(RootProject)`）。
+    *
+    * 🔴 mailunify-full 批（2026-09-24 re-pin）：`type` 五标签**整块删净** ⇒
+    * `MailTool.sendMail` 现读置 `eventType = None`（= 帧不带 `eventType` 键，
+    * `NotificationHeader.render` 略去 EVENT_TYPE 段）⇒ 本 spec 原先钉的 `· INFO`
+    * 收尾段**随信令删净而消失**。故本函数与三处期望串同批 re-pin 为**无 EVENT_TYPE 段**
+    * 形态（断言条数与判据强度不降：PROJECT/SUBJECT 两段仍逐字钉死）。 */
   private def emitReduction(project: Option[String], sessionProject: Option[String]): String =
     NotificationHeader
       .header(
@@ -218,7 +236,8 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
         project.orElse(sessionProject).orElse(Some(NotificationHeader.RootProject)),
         Some("project-dispatcher"),
         None,
-        Some("info")
+        // `type` 删净 ⇒ eventType 恒 None（与生产 `sendMail` 逐字同源）
+        None
       )
       .getOrElse("<absent>")
 
@@ -278,16 +297,16 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
 
   test("T3 同源置位：腿③（分发器 → root）`ImmediateInput.project` = 发送方项目 / 根域回落 None"):
     for
-      withProject <- runLeg3("t3a", Some("PROJ-P6-SRC"))
-      rootDomain <- runLeg3("t3b", None)
+      withProject <- IO(withWindowClosed { runLeg3("t3a", Some("PROJ-P6-SRC")).unsafeRunSync() })
+      rootDomain <- IO(withWindowClosed { runLeg3("t3b", None).unsafeRunSync() })
     yield
       val (outA, gotA, emittedA) = withProject
       assert(outA.startsWith("RIGHT:"), s"腿③ 投递必须成功（可解析 root）：$outA")
       assertEquals(gotA, Some("PROJ-P6-SRC"), "腿③ 未置位发送方项目 ⇒ 气泡 PROJECT 段落到 root 会话侧")
-      assertEquals(emittedA, "MAIL · PROJ-P6-SRC · PROJECT-DISPATCHER · INFO", "发射点回落链复刻成串")
+      assertEquals(emittedA, "MAIL · PROJ-P6-SRC · PROJECT-DISPATCHER", "发射点回落链复刻成串")
       val (outB, gotB, emittedB) = rootDomain
       assert(outB.startsWith("RIGHT:"), s"腿③ 根域发送方投递必须成功：$outB")
       assertEquals(gotB, None, "无项目上下文时不得臆造项目名（禁静默填空）")
-      assertEquals(emittedB, "MAIL · NEBULA · PROJECT-DISPATCHER · INFO", "根域场景第二段 = NEBULA 逐字不变")
+      assertEquals(emittedB, "MAIL · NEBULA · PROJECT-DISPATCHER", "根域场景第二段 = NEBULA 逐字不变")
 
 end MailSenderProjectSegmentSpec
