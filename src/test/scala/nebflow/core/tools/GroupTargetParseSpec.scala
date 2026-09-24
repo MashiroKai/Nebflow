@@ -130,9 +130,19 @@ class GroupTargetParseSpec extends FunSuite:
     val d = MailTool.description
     assert(d.contains("`group:<groupName|groupId>`"), "description 缺群类目标声明")
     assert(d.contains("`friend:` / `group:`"), "description 缺 friend/group 目标面段")
+    // 🔴 §6.3 的落点：遮蔽后果与逃生口语义必须落在**工具级 `description`**（模型读的第一面），
+    // 不能只写在 `to` 参数的 schema description 里。本批已把该句补进工具级描述
+    // （「Scheme resolution (mechanical, fail-closed).」段）——断言指向工具级面。
     assert(
-      d.contains("escape hatch") || d.contains("`friend:` prefix"),
-      "🔴 §6.3 要求把 `group:` 的遮蔽后果写进描述面（否则模型永远试不出逃生口）"
+      d.contains("escape hatch"),
+      s"🔴 §6.3 要求把 `group:` 的遮蔽后果写进工具级描述面（否则模型永远试不出逃生口）"
+    )
+    assert(
+      d.contains("`friend:` prefix"),
+      "🔴 逃生口的具体形态（显式 `friend:` 前缀）必须在工具级描述面在册"
+    )
+    assert(d.contains("no longer addressable as a bare string") || d.contains("shadowed"),
+      "🔴 遮蔽后果必须显式写明（字面以 `group:` 开头的好友名不再可作裸串寻址）"
     )
     assert(d.contains("local"), "`local` 保留字面量须在描述面在册")
   }

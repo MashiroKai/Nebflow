@@ -556,9 +556,11 @@ class AllowedToolSetSpec extends FunSuite:
     // 读三件+写手三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16；mailunify-full 批：−SendMessage ⇒ 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；2026-09-18 18:18 令 +5 后曾为 17；NodeList 摘除）
       "TaskList",                                          // 任务编排（TaskList 批：快变状态出记忆）
-      "SendMessage",                                       // 通信（好友功能非旧体系，保留）
+      // mailunify-full 批（2026-09-23 作者裁定）：`SendMessage` **整件退役**（合面到 `Mail` 单
+      // `to`）⇒ 该行摘除、名册 17 → 16，与 `AgentCore.NebulaOrchestrationToolsExpectedSize`
+      // （现读 = 16）逐值一致。
       "Read",                                              // 读件（08:40 解禁四件）
       "Glob", "Grep",                                      // 搜索件（2026-09-18 18:18 令恢复：+2）
       "Bash", "Write", "Edit",                             // 写手三件（2026-09-18 18:18 令恢复：+3）
@@ -573,8 +575,8 @@ class AllowedToolSetSpec extends FunSuite:
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
     assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
-    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
+    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 16 = 2026-09-18 18:18 令 +5 后、再 −SendMessage（mailunify-full 批）值）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 16 = 2026-09-18 18:18 令 +5 后、再 −SendMessage（mailunify-full 批）值）")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
     // 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面不变）。
     // 🔴 依据只有 09-18 18:18 令本身（0913 旧裁定不因本批复活）。变异验红锚：摘掉即红。

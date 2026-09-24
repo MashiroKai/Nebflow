@@ -76,7 +76,7 @@ class MailDeviceImagesSpec extends FunSuite:
     val msg = err(
       bareCtx,
       JsonObject(
-        "device" -> "KAI-MBP".asJson,
+        "to" -> "device:KAI-MBP".asJson,
         "message" -> "hi".asJson,
         "images" -> Json.arr("shot.png".asJson)
       )
@@ -89,7 +89,7 @@ class MailDeviceImagesSpec extends FunSuite:
     val msg = err(
       bareCtx,
       JsonObject(
-        "device" -> "KAI-MBP".asJson,
+        "to" -> "device:KAI-MBP".asJson,
         "message" -> "hi".asJson,
         "images" -> Json.arr(six*)
       )
@@ -103,7 +103,7 @@ class MailDeviceImagesSpec extends FunSuite:
     val msg = err(
       rosterCtx("KAI-MBP"),
       JsonObject(
-        "device" -> "KAI-MBP".asJson,
+        "to" -> "device:KAI-MBP".asJson,
         "message" -> "hi".asJson,
         "images" -> Json.arr(png.toString.asJson)
       )
@@ -120,7 +120,7 @@ class MailDeviceImagesSpec extends FunSuite:
   test("负控：设备腿**不带** images ⇒ 行为不变（既有投递腿判定逐字保留）"):
     val noImages = err(
       rosterCtx("KAI-MBP"),
-      JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson)
+      JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson)
     )
     assert(
       noImages.contains("relay client is not initialized"),

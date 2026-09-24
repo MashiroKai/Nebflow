@@ -682,12 +682,12 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ctx = mkCtx(res, system, ws.toString)
       // 已挂载 project（无 actorRef）→ 命中 project 分支：明确错误提示
       r <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("acc-mail-route"),
+        "to" -> Json.fromString("acc-mail-route"),
         "message" -> Json.fromString("do research")
       ).asObject.get, ctx)
       // 未挂载名字 → 不命中 project 分支，落到原逻辑（sender 无 team → TeamOnlyRoutingError）
       r2 <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("no-such-project"),
+        "to" -> Json.fromString("no-such-project"),
         "message" -> Json.fromString("x")
       ).asObject.get, ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -856,7 +856,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
         ctx = mkCtx(res, system, ws.toString)
         r <- MailTool.call(Json.obj(
-          "address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X")).asObject.get, ctx)
+          "to" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X")).asObject.get, ctx)
         // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
         //    注册条目稳定存在，轮询必命中。
         seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
@@ -929,7 +929,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       res <- mkResources(system, tempRoot, new RecordingLlm)
       ctx = mkCtx(res, system, tempRoot.toString)
       r <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("project:no-such"), "message" -> Json.fromString("x")).asObject.get, ctx)
+        "to" -> Json.fromString("project:no-such"), "message" -> Json.fromString("x")).asObject.get, ctx)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isLeft, s"must fail, got: $r")
@@ -954,10 +954,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rootCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
       // Mail(address="project:slideblocks") → project dispatcher（新渠道；旧 Task 工具已删净退役）
       rTask <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("project:slideblocks"), "message" -> Json.fromString("做 PPT")).asObject.get, rootCtx)
+        "to" -> Json.fromString("project:slideblocks"), "message" -> Json.fromString("做 PPT")).asObject.get, rootCtx)
       // Mail(→slideblocks) → team（Mail 保持团队优先不翻转——immediate 全链）
       rMail <- MailTool.call(Json.obj(
-        "address" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get, rootCtx)
+        "to" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get, rootCtx)
       leadSid <- TeamSessionRegistry.findTeamAgent("slideblocks", "boss")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

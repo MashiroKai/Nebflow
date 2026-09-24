@@ -386,7 +386,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
           toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
         )
         triggered <- MailTool.call(
-          Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
+          Json.obj("to" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
           toolCtx(ws, system, res)
         )
         // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*

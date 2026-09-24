@@ -396,16 +396,16 @@ class NodeMessageSpec extends CatsEffectSuite:
       // 调用；project 由 ctx.projectName 解析（旧 NodeMessage 的显式 project 参数已退役）。
       dispCtx = ctx.copy(isDispatcher = true, projectName = Some("nmsg-s6"))
       eNotFound <- MailTool.call(
-        Json.obj("address" -> "node:n-missing".asJson, "message" -> "x".asJson).asObject.get, dispCtx)
+        Json.obj("to" -> "node:n-missing".asJson, "message" -> "x".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
       eEmpty <- MailTool.call(
-        Json.obj("address" -> "node:n-t".asJson, "message" -> "  ".asJson).asObject.get, dispCtx)
+        Json.obj("to" -> "node:n-t".asJson, "message" -> "  ".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
       eTerminal <- MailTool.call(
-        Json.obj("address" -> "node:n-t-term".asJson, "message" -> "late".asJson).asObject.get, dispCtx)
+        Json.obj("to" -> "node:n-t-term".asJson, "message" -> "late".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
       ok <- MailTool.call(
-        Json.obj("address" -> "node:n-t".asJson, "message" -> "工具面追加".asJson).asObject.get, dispCtx)
+        Json.obj("to" -> "node:n-t".asJson, "message" -> "工具面追加".asJson).asObject.get, dispCtx)
         .map(_.left.map(_.message))
       after <- rt.store.getNode("n-t")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -454,7 +454,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       realId = ids.headOption.getOrElse(fail("project must have ≥1 derived chain after seeding a node"))
       r <- MailTool.call(
         Json.obj(
-          "address" -> Json.fromString("node:n-c7"),
+          "to" -> Json.fromString("node:n-c7"),
           "message" -> Json.fromString("chainId 探针"),
           "chainId" -> Json.fromString(realId)
         ).asObject.get,
@@ -488,7 +488,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       recorded <- registerNodeSession(rt, system, "n-c7b", "node-chainsess-b")
       r <- MailTool.call(
         Json.obj(
-          "address" -> Json.fromString("node:n-c7b"),
+          "to" -> Json.fromString("node:n-c7b"),
           "message" -> Json.fromString("不该到达"),
           "chainId" -> Json.fromString("chain-n-does-not-exist")
         ).asObject.get,
@@ -534,7 +534,7 @@ class NodeMessageSpec extends CatsEffectSuite:
       known <- rt.engine.mailChainIds
       r <- MailTool.call(
         Json.obj(
-          "address" -> Json.fromString("node:n-c7c"),
+          "to" -> Json.fromString("node:n-c7c"),
           "message" -> Json.fromString("旧号别名探针"),
           "chainId" -> Json.fromString(legacy)
         ).asObject.get,

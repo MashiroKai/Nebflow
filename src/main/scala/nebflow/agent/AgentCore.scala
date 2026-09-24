@@ -2893,8 +2893,9 @@ object AgentCore:
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
-    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
-    // NebulaOrchestrationToolsExpectedSize。本条覆盖此前「Task = 唯一项目触发入口」的
+    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；该时点后沿革见
+    // NebulaOrchestrationToolsExpectedSize——**现读值 = 16**（mailunify-full 批
+    // 2026-09-23 −`SendMessage` 后）。本条覆盖此前「Task = 唯一项目触发入口」的
     // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
     // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
@@ -2909,8 +2910,10 @@ object AgentCore:
     // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
     // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
     // 改由插件面授予。
-    // 本集件数 13 → 12（史实，时点 = Delegate 退役批；见
-    // NebulaOrchestrationToolsExpectedSize——该常量现读值 = 17）。
+    // 本集件数 13 → 12（史实，时点 = Delegate 退役批）。
+    // 🔴 常量 `NebulaOrchestrationToolsExpectedSize` 的**现读值 = 16**（见本文件定义处，
+    // mailunify-full 批 2026-09-23 −SendMessage 后；上游旧注释曾写「现读值 = 17」= 史实残留，
+    // 已于本批订正措辞）。
     // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
     // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
@@ -2982,14 +2985,15 @@ object AgentCore:
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = **17** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+    * 值 = **16** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
     * 2026-09-16 18:41 令 root 面摘除 Glob/Grep −2 ⇒ 13；
     * Delegate 退役批 −1 ⇒ 12；
     * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
-    * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17（在飞值）**。
+    * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17；
+    * **mailunify-full 批（2026-09-23 作者裁定）`SendMessage` 整件退役 −1 ⇒ 16（在飞值）**。
     *
     * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
     * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话

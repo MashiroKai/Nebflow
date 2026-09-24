@@ -43,7 +43,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Mail", "ProjectCreate", "AgentControl",
       // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
       "TaskList",                                           // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
-      "SendMessage",
+      // mailunify-full 批（2026-09-23 作者裁定）：`SendMessage` 整件退役（合面到 `Mail` 单 `to`）。
       "ListFriends",                                        // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read",                                               // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
@@ -54,7 +54,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Glob", "Grep", "Bash", "Write", "Edit"
     )
     assertEquals(delivered, expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 16 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值、再经 mailunify-full 批 −SendMessage；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
     // Grep——取代 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面

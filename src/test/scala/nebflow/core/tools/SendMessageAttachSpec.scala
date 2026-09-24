@@ -83,6 +83,21 @@ class SendMessageAttachSpec extends CatsEffectSuite:
   private def callTool(input: JsonObject): IO[Either[ToolError, String]] =
     MailTool.call(input, ToolContext(projectRoot = "/tmp"))
 
+  /** 同 `callTool`，但带上 **root Nebula 身份**。
+    *
+    * mailunify-full 批（2026-09-23）：`friend:` / `group:` 两条腿新增**授权面**闸
+    * （仅 root Nebula 可达，保持退役前的旧可达面、不扩面）⇒ 该闸**先于**附件面的
+    * 「相对串 fail-fast」闸。凡要测**附件腿自身**判据的用例必须用本夹具，
+    * 否则会先撞越界闸、测不到目标面（禁用「三选一」放宽断言来掩盖）。 */
+  private def callToolAsRoot(input: JsonObject): IO[Either[ToolError, String]] =
+    MailTool.call(
+      input,
+      ToolContext(
+        projectRoot = "/tmp",
+        agentDef = Some(AgentDef(name = "Nebula", description = "attachment-leg spec root fixture"))
+      )
+    )
+
   private def obj(fields: (String, Json)*): JsonObject = JsonObject.fromIterable(fields)
 
   test("device 目标 + 服务缺席 ⇒ 显式报错（禁静默成功/本地执行）"):
@@ -123,7 +138,12 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     )
 
   test("friend 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（与设备支同判据，服务访问之前）"):
-    val res = callTool(
+    // 🔴 R-1（判词位 do-1）：本件原用裸 `ToolContext`（无 `agentDef`）⇒ 合面新增的
+    // friend/group **授权面**闸（仅 root）会**先于**附件相对串闸咬合，断言落空。
+    // 修法 = **补 root 身份夹具**（R-1 期望态给出的两支之一），使判据回到**原判对象**
+    // （原始串闸本身）⇒ `must be absolute` ∧ `relative.bin` 两条断言**原强度保留**
+    // （不删、不放宽、不改向「三选一」）。
+    val res = callToolAsRoot(
       obj(
         "to"          -> Json.fromString("friend:alice"),
         "message"     -> Json.fromString("hi"),

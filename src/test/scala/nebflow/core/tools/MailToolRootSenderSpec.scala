@@ -100,7 +100,7 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-neb-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(JsonObject("to" -> Json.fromString("node:n-1"), "message" -> Json.fromString("hi")), nebulaCtx(system))
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -113,7 +113,7 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-self-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("Nebula"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(JsonObject("to" -> Json.fromString("Nebula"), "message" -> Json.fromString("hi")), nebulaCtx(system))
         .unsafeRunSync()
       res match
         case Left(err) =>
@@ -126,7 +126,7 @@ class MailToolRootSenderSpec extends FunSuite:
     val system = ActorSystem(s"mail-r2-unk-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
-        .call(JsonObject("address" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")), nebulaCtx(system))
+        .call(JsonObject("to" -> Json.fromString("no-such-project-xyz"), "message" -> Json.fromString("hi")), nebulaCtx(system))
         .unsafeRunSync()
       res match
         case Left(err) =>

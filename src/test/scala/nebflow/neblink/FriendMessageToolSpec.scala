@@ -196,7 +196,14 @@ class FriendMessageToolSpec extends CatsEffectSuite:
     withFs("auto") { fs =>
       callTool(fs, JsonObject("to" -> "林小满".asJson)).map { res =>
         assert(res.isLeft)
-        assert(res.left.toOption.get.message.contains("'message'"))
+        val msg = res.left.toOption.get.message
+        // re-pin（mailunify-full 合面）：单 `to` 面下目标解析成功、`message` 缺席 ⇒ 由
+        // `Mail` 的既有必填面闸先报 `Missing required parameter: message`（实现现读文案，
+        // 见 `MailTool.scala:630/656/673/695`；非旧 `SendMessage` 的 `'message'` 引号形）。
+        // 断言强度不降：仍要求「报错且点明缺的是 message」。
+        assert(msg.contains("message"), s"报错必须点明缺 `message`：$msg")
+        assert(msg.toLowerCase.contains("missing") || msg.contains("'message'"), s"报错必须是缺失语义：$msg")
+        assertEquals(msg, "Missing required parameter: message")
       }
     }
   }

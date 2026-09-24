@@ -141,7 +141,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
     MailTool
       .call(
         Json
-          .obj("address" -> Json.fromString(address), "message" -> Json.fromString(message))
+          .obj("to" -> Json.fromString(address), "message" -> Json.fromString(message))
           .asObject
           .get,
         ctx

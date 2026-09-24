@@ -97,7 +97,7 @@ class DeviceMailResultTextSpec extends FunSuite:
     (client, withResources(ToolContext(projectRoot = tempRoot.toString), ns))
 
   private def call(ctx: ToolContext): String =
-    MailTool.call(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson), ctx)
+    MailTool.call(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson), ctx)
       .unsafeRunSync() match
       case Right(text) => text
       case Left(err)   => fail(s"expected the device leg to succeed, got error: ${err.message}")
@@ -186,7 +186,7 @@ class DeviceMailResultTextSpec extends FunSuite:
   test("relay 失败（远端 error 面）⇒ 结构化失败文本（类别 + 原因 + 原始错误原文摘录）"):
     val (_, ctx) = fixture("""{"error":"relay: device not enrolled"}""")
     val err = MailTool.call(
-      JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
+      JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson),
       ctx
     ).unsafeRunSync() match
       case Left(e)  => e.message
@@ -209,7 +209,7 @@ class DeviceMailResultTextSpec extends FunSuite:
     ns.setRelayClient(Some(new CaptureClient("""{"messageId":"m-x"}""").client)) // 未登录 ⇒ 会话面失败
     val ctx = withResources(ToolContext(projectRoot = tempRoot.toString), ns)
     val err = MailTool.call(
-      JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson),
+      JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson),
       ctx
     ).unsafeRunSync() match
       case Left(e)  => e.message

@@ -104,28 +104,31 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  test("schema（mailparams 批 re-pin）：`delivery` 键已退役出 schema —— 参数集合恰为 7 件且不含该键"):
+  test("schema（mailunify-full 批 re-pin）：`delivery` 仍是退役键 —— 参数集合恰为 5 件（单 `to` 面）且不含该键"):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
+    // mailunify-full（2026-09-23）：合面后键集 7 → 5（`address`/`device` 并为 `to`、`type` 删净）。
+    // 🔴 `targetDir` / `overwrite` **不在**本支键集：与上游卡 §7.3 的 7 键红线的差异
+    // 已如实登记为**须作者裁**项（见 MailTool.inputSchema 注释的候选 A / B），非静默改动。
     assert(
       !propsOf.keys.toSet.contains("delivery"),
       s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams 批：参数面 8 → 7), got: ${propsOf.keys.toList.sorted}"
     )
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "chainId", "images", "attachments"),
-      "the property set must be exactly the 7 surviving parameters (the other 7 are untouched by this batch)"
+      Set("to", "message", "chainId", "images", "attachments"),
+      "the property set must be exactly the 5 surviving parameters of the unified single-`to` face"
     )
     // 活能力面**必须在场**（禁顺带删活面：device / images / attachments 是当日刚落地的能力；
     // 判据 = 仍是**对象形态**的已声明属性，不是仅名字在场）。
-    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments") do
+    for k <- List("to", "message", "chainId", "images", "attachments") do
       assert(
         propsOf(k).flatMap(_.asObject).nonEmpty,
         s"`$k` must still be a declared object property with its own face (live capability, untouched)"
       )
     assertEquals(
       MailTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil),
-      List("message"),
-      "required face unchanged"
+      List("to", "message"),
+      "required face = the unified single `to` + `message`"
     )
     assertEquals(MailTool.name, "Mail")
 
@@ -180,7 +183,7 @@ class MailDeliveryRetireSpec extends FunSuite:
     )
     for (label, addr, c) <- legs do
       val msg = rejectedMsg(
-        MailTool.call(qJson("address" -> addr, "message" -> "hi", "delivery" -> "queue"), c).unsafeRunSync(),
+        MailTool.call(qJson("to" -> addr, "message" -> "hi", "delivery" -> "queue"), c).unsafeRunSync(),
         label
       )
       assert(clue(msg).contains(MailTool.ErrDeliveryQueueRetired), s"$label: must carry the retirement code")
@@ -200,7 +203,7 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   test("非设备腿 delivery=queue（同 target）：拒绝文案与地址无关地一致 —— 不含任何旧 queue 专属文案"):
     val msg = rejectedMsg(
-      MailTool.call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "queue"), ctx(dispatcher = true))
+      MailTool.call(qJson("to" -> "node:n-9", "message" -> "hi", "delivery" -> "queue"), ctx(dispatcher = true))
         .unsafeRunSync(),
       "node: 腿"
     )
@@ -219,7 +222,7 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   test("设备腿：v2.1「显式拒 queue」契约逐字保持 —— 自有字面量，不走退役文案"):
     val msg = rejectedMsg(
-      MailTool.call(qJson("device" -> "KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
+      MailTool.call(qJson("to" -> "device:KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
       "设备腿"
     )
     // 逐字相等（不是 contains）：本批对设备腿**零改动**，故契约文本逐字节钉死。
@@ -240,11 +243,11 @@ class MailDeliveryRetireSpec extends FunSuite:
   test("对照腿 / 残差读数：非 queue 的 delivery 值（immediate / 陌生值）与「键缺席」逐字同一结果"):
     val c = ctx(dispatcher = true)
     val withImmediate = MailTool
-      .call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "immediate"), c)
+      .call(qJson("to" -> "node:n-9", "message" -> "hi", "delivery" -> "immediate"), c)
       .unsafeRunSync()
-    val withoutDelivery = MailTool.call(qJson("address" -> "node:n-9", "message" -> "hi"), c).unsafeRunSync()
+    val withoutDelivery = MailTool.call(qJson("to" -> "node:n-9", "message" -> "hi"), c).unsafeRunSync()
     val withAsk = MailTool
-      .call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "ask"), c)
+      .call(qJson("to" -> "node:n-9", "message" -> "hi", "delivery" -> "ask"), c)
       .unsafeRunSync()
     assert(!isRetired(withImmediate), s"immediate must not hit the retirement guard, got: $withImmediate")
     assert(!isRetired(withoutDelivery), s"an absent delivery must not hit the retirement guard, got: $withoutDelivery")
@@ -373,7 +376,7 @@ class MailDeliveryRetireSpec extends FunSuite:
       // 目标活着（真 fixture：若 queue 路径被走到，它会落盘并 drain —— 红侧即此形态）
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       resQueue <- MailTool.call(
-        qJson("address" -> "member", "message" -> "EVFMTB_QUEUE_MARKER", "delivery" -> "queue"),
+        qJson("to" -> "member", "message" -> "EVFMTB_QUEUE_MARKER", "delivery" -> "queue"),
         ctxFor(resources, system, bossMeta.id)
       )
       queuedItems <- MailQueueStore.load(memberMeta.id)
@@ -382,7 +385,7 @@ class MailDeliveryRetireSpec extends FunSuite:
       // 对照腿：同 target、同发送者，仅把 delivery 换成 immediate
       t0 <- IO(System.currentTimeMillis())
       resImmediate <- MailTool.call(
-        qJson("address" -> "member", "message" -> "EVFMTB_IMMEDIATE_MARKER", "delivery" -> "immediate"),
+        qJson("to" -> "member", "message" -> "EVFMTB_IMMEDIATE_MARKER", "delivery" -> "immediate"),
         ctxFor(resources, system, bossMeta.id)
       )
       // 观测窗（本批更正，逐字登记）：原为固定 `IO.sleep(500.millis)`。本宿主当前负载下

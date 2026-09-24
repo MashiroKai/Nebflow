@@ -262,7 +262,7 @@ class MailActivateLifecycleSpec extends FunSuite:
       // 未注册任何 Root 会话（无 Nebula 窗口）⇒ 档①/档② 双双落空
       res <- MailTool.call(
         JsonObject(
-          "address" -> Json.fromString("Nebula"),
+          "to" -> Json.fromString("Nebula"),
           "message" -> Json.fromString("批级回传"),
           "chainId" -> Json.fromString("chain-n-m3")
         ),

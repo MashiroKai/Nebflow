@@ -127,7 +127,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val msg = input.hcursor.get[String]("message").toOption.getOrElse("")
     MailTool
       .call(
-        Json.obj("address" -> s"node:$nodeId".asJson, "message" -> msg.asJson).asObject.get,
+        Json.obj("to" -> s"node:$nodeId".asJson, "message" -> msg.asJson).asObject.get,
         ctx.copy(isDispatcher = true, projectName = input.hcursor.get[String]("project").toOption)
       )
       .map(_.left.map(_.message))
