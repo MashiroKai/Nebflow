@@ -2701,16 +2701,25 @@ class NodeEngine(
     * renderer）。工单归属按 assignee=自身 node.id（§1d 权限矩阵的身份同源）；
     * ⚠node-done join 用 Flow Map 真实终态映射（store.snapshot 现读，nodeTerminalMap
     * 单点过滤）。无板 → ""（调用方不注空段）。 */
+  /** 节点任务块（taskunify 合一批 2026-09-24，取代 TaskBoard 批 2 §3a）：
+    * **归属单条**（裁定 b①/裁定 F）——节点只看见**自己被挂上的那一条**任务
+    * （归属 = `NodeDef.taskId` 指纹，**不是**旧 assignee 匹配、也**不再**注入全板
+    * 速览段——全板 = 越权读面，已收窄）。数据源 = **新账本**（tasks-v2.json）——
+    * 🔴 旧板面新代码**不再读写**（裁定 L：只读归档）。
+    * 无归属指纹 / 账本无该条目 → ""（调用方不注空段）。 */
   private def taskBoardNodeBlock(node: NodeDef): IO[String] =
-    board match
+    node.taskId match
       case None => IO.pure("")
-      case Some(b) =>
+      case Some(tid) =>
         store.snapshot.flatMap { snap =>
           val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
           IO.blocking {
-            val entries = b.entriesSync()
-            val mine = entries.filter(_.assignee.contains(node.id))
-            TaskBoardRenderer.renderNodeInject(projectGoal, mine, entries, terminal)
+            val ledger = TaskLedgerStore.open()
+            ledger.findSync(tid) match
+              case Some(entry) =>
+                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal) +
+                  s"\n(read the full note timeline with TaskInfo)"
+              case None => ""
           }
         }
 
@@ -2894,13 +2903,17 @@ class NodeEngine(
                         flowNodeName = Some(node.name),
                         // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
                         // 节点 → 同一条链的同一快照（startNode 单点算出）。
-                        flowChainId = chain.map(_.chainId))
+                        flowChainId = chain.map(_.chainId),
+                        // taskunify 合一批（2026-09-24）：loop 双会话任务归属指纹 =
+                        // 该 loop 节点的 NodeDef.taskId（与普通节点同源）。
+                        taskId = node.taskId)
                       verify <- spawnLoopSession(verifyBase, prepared, vGrant, verifySessionId, s"${node.name}-verify", projectRoot,
                         initialMessages = resume.fold(List.empty[Message])(_.verifyMessages),
                         flowNodeId = Some(nodeId),
                         flowNodeRole = Some(node.role),
                         flowNodeName = Some(node.name),
-                        flowChainId = chain.map(_.chainId))
+                        flowChainId = chain.map(_.chainId),
+                        taskId = node.taskId)
                       _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                         .guarantee(
                           destroyLoopSessions(nodeId, worker, verify) *>
@@ -3185,6 +3198,13 @@ class NodeEngine(
           // 引擎侧判据来源。task 也显式带值（判据侧 normalize 宽容，但显式 = 可审计）。
           flowNodeRole = Some(node.role),
           projectName = Some(projectName),
+          // taskunify 合一批（2026-09-24，裁定 e①）：节点任务归属指纹随 spawn 注入
+          // ——来源 = 节点创建时落盘的 `NodeDef.taskId`（唯一构造点 NodeTools 取
+          // 引擎侧 `ctx.taskId` 写入）→ AgentCore 透传 `ToolContext.taskId` →
+          // `TaskInfo` 零形参归属解析。
+          // 🔴 存量节点该字段为 None（零迁移）⇒ 本会话**无归属** ⇒ `TaskInfo`
+          // fail-closed 拒（TASKINFO_NO_ATTACHMENT），**不回落全板**（裁定 e续ⓑ）。
+          taskId = node.taskId,
           // D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
           // nodeName 字段来源（badge「project · nodeName」+ node-ask 留痕事件）。
           flowNodeName = Some(nodeName),
@@ -3719,6 +3739,10 @@ class NodeEngine(
     /** TaskBoard 批 2（§1d）：loop 会话引擎侧节点身份（所属 NodeDef.id——worker/
       * verify 同属该 loop 节点，TaskBoard 权限矩阵与普通节点同面）。 */
     flowNodeId: Option[String] = None,
+    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：loop 会话的任务归属
+      * ——worker/verify 同属该 loop 节点的 `NodeDef.taskId`（与普通节点同源口径）。
+      * 详见 SessionContext.taskId。 */
+    taskId: Option[String] = None,
     /** 节点角色（nrloop 一期 2026-09-12，B1 透传链第一段 loop 支）：所属
       * `NodeDef.role`——worker/verify 同属该 loop 节点（设计 §3.2 表：旧 loop
       * 双会话置 `Some(node.role)`，与普通节点同源口径）。详见
@@ -3756,6 +3780,10 @@ class NodeEngine(
           flowNodeId = flowNodeId,
           flowNodeRole = flowNodeRole,
           projectName = Some(projectName),
+          // taskunify 合一批（2026-09-24）：loop worker/verify 会话任务归属指纹与
+          // loop 节点的 `NodeDef.taskId` 同源（同一 spawn 时刻快照）——与普通节点
+          // runWithAgent 同款透传链。
+          taskId = taskId,
           flowNodeName = flowNodeName,
           // 链级抽象 P2（§9.2 项 5）：loop worker/verify 会话链身份与 loop 节点同源
           // （同一 spawn 时刻快照）——工具面/文件名尾溯源归属口径与普通节点恒同。

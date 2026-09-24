@@ -782,6 +782,12 @@ object AgentActor extends AgentCore with AgentSession:
       * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：本会话归属的任务号
+      * （分发器 = 它被创建来服务的任务；项目节点 = 记录为其来源的任务）。NodeEngine /
+      * ProjectActor spawn 注入 → 经 AgentCore 透传 `ToolContext.taskId`——
+      * `TaskInfo` 零形参归属解析的唯一来源（引擎侧身份，不信客户端参数）。
+      * 默认 None = 无归属（旧存量节点 / Nebula 根 / team / flow 双轨 / REST 直调）。 */
+    taskId: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
       * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
     flowNodeName: Option[String] = None,
@@ -863,6 +869,7 @@ object AgentActor extends AgentCore with AgentSession:
             isDispatcher = isDispatcher,
             flowNodeRole = flowNodeRole,
             projectName = projectName,
+            taskId = taskId,
             flowNodeName = flowNodeName,
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,

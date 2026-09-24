@@ -78,6 +78,15 @@ case class ToolContext(
     * None / 非项目会话 = 回落 `NodeRoles.Task`（与 `NodeDef` 解码缺省同口径）；
     * 挂载面过滤是另一道保险（`node_report` 仅 flowNodeSession 注入）。 */
   flowNodeRole: Option[String] = None,
+  /** **任务归属指纹**（taskunify 合一批 2026-09-24；裁定 e① 单字段，`chainId` 同款
+    * 形态）：本会话所归属的任务号（分发器 = 它被创建来服务的任务；项目节点 = 记录
+    * 为其来源的任务）。由 AgentCore 从 SessionContext 透传（**引擎侧身份，不信客户端
+    * 参数**）——`TaskInfo` 只读归属单条的解析来源（零形参 ⇒ 归属唯一来自此处），
+    * 以及引擎侧上行拒绝面（无指纹 ⇒ fail-closed 拒 + 双留痕）的判据。
+    * 🔴 **取值纪律**：**不得**从 `NodeEditTool` 的 `project` 参数取（该参数可覆盖
+    * `ctx.projectName` ⇒ 可被客户端伪造），必须取 `ctx` 引擎侧身份。
+    * None = 无归属（旧存量节点 / Nebula 根 / team / flow 双轨 / REST 直调）。 */
+  taskId: Option[String] = None,
   /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 1）：本节点
     * 所属链 id = `chain-<分量最早 createdAt 节点 id>`（FlowMapStore.chainIdOf 判据
     * 单点，分量成员数 ≥2 才带值——孤立单节点链不带，与 payload chainId 条件键
@@ -113,6 +122,14 @@ case class ToolContext(
     * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
     * fail-closed 为 false。 */
   def isNebulaRoot: Boolean = AgentCore.isNebulaRoot(agentDef, depth)
+
+  /** **对称身份闸**（taskunify 合一批 2026-09-24）：Nebula 根会话可写任务账本。
+    * 判据 = [[ToolContext.isNebulaRoot]]（**委托单点**，禁在此重写表达式）；
+    * `agentDef=None`（REST 直调 / spec harness / 非 agent 上下文）fail-closed
+    * 为 false —— 与「REST 直调不写账本」同口径，而**不**是「谁都写不了」。
+    * `Task` 工具的第二道（运行期）身份闸；第一道 = 挂载面（分发器固定面与节点
+    * 会话均看不到 `Task`，非 Nebula 的 agent.json 声明亦不授能）。 */
+  def isNebulaWriter: Boolean = isNebulaRoot
 
 case class ToolError(message: String)
 case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)

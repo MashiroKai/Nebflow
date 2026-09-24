@@ -1621,7 +1621,7 @@ object NodeEditTool extends Tool:
                             else
                               dispatchFaceCheck(pluginsForCall).flatMap {
                                 case Left(err) => IO.pure(Left(ToolError(err)))
-                                case Right(_) => createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), pluginsForCall, inJson, depsJson, outJson, merge, dangling, verifierRoutePending, pluginsProvided)
+                                case Right(_) => createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), pluginsForCall, inJson, depsJson, outJson, merge, dangling, verifierRoutePending, pluginsProvided, ctx.taskId)
                               }
                       }
                   }
@@ -1736,7 +1736,13 @@ object NodeEditTool extends Tool:
       * （create-only；非空 out 不豁免；编辑/镜像面不豁免）。 */
     verifierRoutePending: Boolean = false,
     /** P1 已过闸的旁证（plugins 键在本次调用出现）——驱动 P2a flag-off 警告面。 */
-    pluginsDeclared: Boolean = false
+    pluginsDeclared: Boolean = false,
+    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：新建节点归属的任务号。
+      * 调用方必须传**引擎侧身份** `ctx.taskId`（🔴 **不得**从 `project` 形参取——该形参
+      * 可覆盖 `ctx.projectName`）⇒ 经 [[proceed]] 落进 `NodeDef.taskId`，供 `TaskInfo`
+      * 零形参归属解析。⚠ 命名：不能叫 `taskId`——与形参 `task`（任务正文）视觉相邻且
+      * 方法体内有 `task` 作用域，用 `owningTaskId` 显式区分「归属任务」与「任务正文」。 */
+    owningTaskId: Option[String] = None
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
       roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
     // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
@@ -1829,9 +1835,9 @@ object NodeEditTool extends Tool:
                           IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
                             case Left(err) => IO.pure(Left(ToolError(
                               s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                            case Right(bare) => proceed(rt, nodename, agentName, task, description, descriptionLong, Some(bare), plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
+                            case Right(bare) => proceed(rt, nodename, agentName, task, description, descriptionLong, Some(bare), plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared, owningTaskId)
                           }
-                      case _ => proceed(rt, nodename, agentName, task, description, descriptionLong, None, plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared)
+                      case _ => proceed(rt, nodename, agentName, task, description, descriptionLong, None, plugins, ins, deps, out, merge, dangling, verifierRoutePending, pluginsDeclared, owningTaskId)
                   // loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
                   // verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
                   loopFlag.config match
@@ -1859,7 +1865,11 @@ object NodeEditTool extends Tool:
     merge: Boolean = false,
     dangling: Boolean = false,
     verifierRoutePending: Boolean = false,
-    pluginsDeclared: Boolean = false
+    pluginsDeclared: Boolean = false,
+    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：见 [[createNode]] 同名参数
+      * ——本处是它落进 `NodeDef.taskId` 的最后一跳（唯一构造点在此 [[proceed]]）。
+      * ⚠ 命名回避 `taskId`：本方法有形参 `task`（任务正文），两者视觉相邻。 */
+    owningTaskId: Option[String] = None
   )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry,
       roleFlag: NodeEditRole, chainDecl: NodeEditChainDecl): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
@@ -2041,7 +2051,14 @@ object NodeEditTool extends Tool:
             // 被谁汇聚无关）；未传 = None = 未声明 ⇒ 归属走派生兜底轨（存量数据全走
             // 此路 ⇒ 零迁移）。值域已在 call() 前置闸拒非法值（NODE_CHAIN_ID_INVALID）。
             // 🔴 纯元数据：不参与任何调度判据（deps 才是闸），无「创建即运行」影响。
-            chainId = chainDecl.decl
+            chainId = chainDecl.decl,
+            // **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：节点归属其任务号
+            // ——取值 = **引擎侧身份** `ctx.taskId`（**唯一构造点**，由调用方传入）。
+            // 🔴 防错：**不得**从 `project` 形参取——该形参可覆盖 `ctx.projectName`
+            // （见 `resolveProject`），是可被客户端伪造的客户面值；本字段是归属与
+            // 上行拒绝面的判据，必须取引擎侧身份（与 `BoardCaller.fromContext` 同款纪律）。
+            // 无归属会话（如分发器直接 NodeEdit）⇒ None（fail-closed）。
+            taskId = owningTaskId
           )
           // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
           // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**

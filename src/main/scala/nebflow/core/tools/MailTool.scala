@@ -367,6 +367,16 @@ Message type (optional, default "INFO"):
           "type" -> "string".asJson,
           "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
+        "task" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> ("Optional task id — continue THAT task's dispatcher instead of starting a new one. " +
+            "OMIT it to have the engine CREATE a task for this Mail and return its number in the result header " +
+            "(`[task #N] …`): pass that number on subsequent Mails about the same work so they continue the same " +
+            "task instead of spawning a parallel one. A `task` that does not exist, or is already terminal " +
+            "(`closed` / `completed`), is an explicit error and nothing is sent. " +
+            "Only meaningful on the `project:<name>` leg. The Mail body is automatically appended " +
+            "to that task's note timeline by the engine — there is no note parameter anywhere.").asJson
+        ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
@@ -433,6 +443,10 @@ Message type (optional, default "INFO"):
     // ------------------------------------------------------------
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
+    // taskunify 合一批（2026-09-24，裁定 c①）：**显式任务号形参**（不做地址语法扩展
+    // ——`address`/`to` 面正被在飞链重构，本批只碰 schema 新增键）。只在 `project:`
+    // 腿上有意义（其余腿按地址面收口）。空串/null 与缺省同义（不指定）。
+    val taskRaw = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
     // device-mail 批（2026-09-15）：目标面 = `address` XOR `device`（各自可空、禁双填）。
     // 校验前置于一切投递副作用（与既有 fail-fast 纪律同序）。
@@ -509,7 +523,7 @@ Message type (optional, default "INFO"):
                           // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
                           // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
                           // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
-                          layeredRoute(address, effectiveMessage, blocks, imagePaths, mailType, chainId, ctx, system) match
+                          layeredRoute(address, effectiveMessage, blocks, imagePaths, mailType, chainId, ctx, system, taskRaw) match
                             case Some(action) => action
                             case None =>
                               // mailparams 批（2026-09-17 案 C）：本层原有一个 `delivery match`
@@ -579,7 +593,12 @@ Message type (optional, default "INFO"):
       mailType: String,
       chainId: Option[String],
       ctx: ToolContext,
-      system: ActorSystem
+      system: ActorSystem,
+      /** **显式任务号形参**（taskunify 合一批 2026-09-24，裁定 c①）：只在
+        * `project:`（含裸项目名等价形态）腿上有意义——不带 ⇒ 引擎自动建任务；
+        * 带 ⇒ 续接该任务。其余腿按地址面收口（本参数在非 project 腿被忽略，
+        * 因为那些腿不触任务账本）。 */
+      task: Option[String] = None
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
     if address.startsWith(NodePrefix) then
@@ -594,7 +613,7 @@ Message type (optional, default "INFO"):
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToProject(pname, message, imagePaths, mailType, ctx)
+        else deliverToProject(pname, message, imagePaths, mailType, ctx, task)
       )
     else if address == MailTool.NebulaAgentName then
       role match
@@ -611,7 +630,7 @@ Message type (optional, default "INFO"):
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, imagePaths, mailType, ctx)
+          case Some(_) => deliverToProject(address, message, imagePaths, mailType, ctx, task)
           case None    => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -1191,11 +1210,13 @@ Message type (optional, default "INFO"):
       message: String,
       imagePaths: List[String],
       mailType: String,
-      ctx: ToolContext
+      ctx: ToolContext,
+      /** **任务号**（taskunify 合一批 2026-09-24）：见 [[layeredRoute]]。 */
+      task: Option[String] = None
   ): IO[Either[ToolError, String]] =
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
     else
-      routeToProject(name, message, mailType, ctx).flatMap {
+      routeToProject(name, message, mailType, ctx, task).flatMap {
         case Some(r) => IO.pure(r)
         case None =>
           IO.pure(Left(ToolError(
@@ -1453,12 +1474,23 @@ Message type (optional, default "INFO"):
     * queue/immediate 两个入口共用——address 是已挂载 project → 返回
     * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
     * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。 */
+    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。
+    *
+    * ── taskunify 合一批（2026-09-24，裁定 c①：**显式形参，不做地址语法扩展**）──
+    * 语义（「首封」概念已取消）：
+    *   ① **不带** `task` ⇒ 视同创建分发器：引擎**自动建任务**并 spawn，回执头部
+    *      返回**任务编号**（调用方据此续接）；
+    *   ② **带** `task` ⇒ **续接**该任务的分发器（活跃 ⇒ 注入 / 非活跃 ⇒ 按节点
+    *      消息同款追加），🔴 **禁新建**；
+    *   ③ `task` 指向**不存在 / 已终态** ⇒ **拒** + 可读原因（fail-closed）。
+    * 另：投递成功后引擎把 Mail 正文 **append 为该任务的 note 时间线一条记录**
+    * （结构化：`from` + 时间戳 + 正文；唯一写入路径，工具层无 note 参数）。 */
   private def routeToProject(
       address: String,
       message: String,
       mailType: String,
-      ctx: ToolContext
+      ctx: ToolContext,
+      task: Option[String] = None
     ): IO[Option[Either[ToolError, String]]] =
     ProjectRuntimeRegistry.get(address).flatMap {
       case None => IO.pure(None)
@@ -1468,15 +1500,49 @@ Message type (optional, default "INFO"):
             IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
           case Some(ref) =>
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
-            // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
-            // mailbadge 批（2026-09-13，选项 C）：**只有本腿**置 `intake` ——
-            // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
-            // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
-            // 30 min 空闲窗逐行不变）。
-            mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
-              (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid, ProjectActor.SourceTask, Some(attribution))).void
-                .as(Some(Right(s"Project '$address' dispatcher triggered")))
+            // 归属解析（裁定 c：显式形参为主，地址语法不扩展）。
+            // ① 不带 task ⇒ 引擎自动建任务（新水位；首封概念取消）。
+            // ② 带 task ⇒ 续接（须存在且非终态；否则拒，fail-closed）。
+            // ③ 带 task 且不存在/已终态 ⇒ 拒 + 可读原因。
+            val ledger = nebflow.core.project.TaskLedgerStore.open()
+            val resolved: IO[Either[ToolError, String]] = task match
+              case None =>
+                IO.blocking(ledger.createSync(
+                  title = s"$address — ${message.take(120).replace("\n", " ")}",
+                  actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher))
+              case Some(tid) =>
+                IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).map {
+                  case None =>
+                    Left(ToolError(
+                      s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
+                        s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})"))
+                  case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
+                    Left(ToolError(
+                      s"Mail: task '#${entry.id}' is '${entry.status}' (terminal) — a terminal task cannot be continued. " +
+                        s"Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.Status})"))
+                  case Some(entry) => Right(entry.id)
+                }
+            resolved.flatMap {
+              case Left(err) => IO.pure(Some(Left(err)))
+              case Right(taskIdStr) =>
+                // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
+                // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
+                // mailbadge 批（2026-09-13，选项 C）：**只有本腿**置 `intake` ——
+                // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
+                // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
+                // 30 min 空闲窗逐行不变）。
+                mailAttribution(mailType, ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
+                  (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
+                    message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr))).void *>
+                    // note 自动 append（裁定 n：唯一写入路径 = 引擎侧，不经工具层）：
+                    // Mail 正文成为该任务 note 时间线的一条记录。史 append 失败不失败
+                    // 主投递（Mail 已发出）但**必须显式告知**（绝不静默）。
+                    IO.blocking(ledger.appendNoteSync(
+                      taskIdStr, message,
+                      from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
+                      actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula)) *>
+                    IO.pure(Some(Right(s"[task #$taskIdStr] Project '$address' dispatcher triggered")))
+                }
             }
     }
 

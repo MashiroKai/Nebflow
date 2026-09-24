@@ -797,7 +797,22 @@ case class NodeDef(
     * 🔴 批界（第 14 条反过度设计）：**链号台账 / 永不改号保证 / 旧号别名表 / 退出机制三轴
     * = 批二**，本批只落「声明 + 派生兜底收窄」定义层（届时台账挂在本字段之上）。
     * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
-  chainId: Option[String] = None
+  chainId: Option[String] = None,
+  /** **任务归属指纹**（taskunify 合一批 2026-09-24；裁定 e① 单字段 `taskId:
+    * Option[String]`，与 `chainId` 同款形态）：本节点归属其**任务号**（合一账本
+    * `~/.nebflow/tasks-v2.json` 的条目 id）。
+    *
+    * 写入点 = 节点**唯一构造点**（[[NodeTools]] 的 create），取**引擎侧身份**
+    * `ctx.taskId`——🔴 **不得**从 `NodeEditTool` 的 `project` 形参取（该形参**可覆盖**
+    * `ctx.projectName` ⇒ 可被客户端伪造；取值纪律与 `BoardCaller.fromContext` 同款
+    * 「引擎侧身份，不信客户端参数」）。
+    *
+    * 语义 = 「归属即隐式寻址」（不传任务号）：节点读面（`TaskInfo`）按本指纹解析归属；
+    * 上行被拒时本指纹是判据（**无指纹 ⇒ fail-closed 拒**，裁定 e续ⓑ / Q2ⓐ 不设豁免）。
+    *
+    * 旧 flow-map.json 无此键 → withDefaults 解码 `None`（**零迁移**）⇒ 存量节点指纹
+    * 现读为 **0**，其上行**一律被拒**（代价与替代通道见实施任务书 §10.2）。 */
+  taskId: Option[String] = None
 )
 
 object NodeDef:

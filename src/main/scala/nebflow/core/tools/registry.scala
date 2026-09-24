@@ -107,19 +107,25 @@ object ToolRegistry:
       // 动作面限修订动作（remove/update/replace_section），append 由
       // MemoryNoteTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
       "MemoryNote" -> MemoryNoteTool,
-      // TaskList（2026-09-06 作者 00:07 提议 + 00:11 首期无前端拍板）：Nebula
-      // 专属编排件——持久任务清单（~/.nebflow/tasks.json 运行时数据层）。
-      // 授能面 = NebulaOrchestrationTools 单一来源（当前/终态 = 15，作者 2026-09-14
-      // 拍板；史实 2026-09-06 时点恰十四件，TaskList 批 +1）；
-      // NebulaExclusiveTools 防声明逃逸（dispatcher/general/"*" 一律剥离）。
-      "TaskList" -> TaskListTool,
-      // TaskBoard（20260908 任务板批 2，规格 §1b/§1c）：项目域共享工作项看板
-      // ——Flow Map 管节点，TaskBoard 管任务（TaskList 同族四态 + blocks 闸 +
-      // close 幂等）。授能面 = 会话身份机制挂载（分发器 DispatcherFixedTools
-      // 第九件 + project 节点/分发器会话 buildAllowedToolSet 末段按身份追加），
-      // plugins 声明不授能（NebulaExclusiveTools 同享防逃逸通道）；权限矩阵在
-      // 工具内按引擎侧身份判定（TaskBoardTool.dispatchSync）。
-      "TaskBoard" -> TaskBoardToolDef,
+      // Task（taskunify 合一批 2026-09-24）：`TaskList` + `TaskBoard` 两件合并为
+      // **一件**——持久任务账本（`~/.nebflow/tasks-v2.json` 单全局文件，运行时数据层）。
+      // 授能面 = `NebulaOrchestrationTools` 单一来源（成员改名，件数不变 = 17）；
+      // `NebulaExclusiveTools` 防声明逃逸（dispatcher/general/"*" 一律剥离）。
+      // 🔴 写权单一：分发器与项目节点**根本看不到**本件（挂载面），且工具内按
+      // 引擎侧身份（ctx.isDispatcher / ctx.flowNodeId）fail-closed 拒（第二道保险）。
+      // `note` 不是参数——时间线由引擎在 Nebula Mail 到该任务分发器时自动 append。
+      "Task" -> TaskToolDef,
+      // TaskInfo（taskunify 合一批 2026-09-24）：项目域**只读**件——零参数，显示
+      // 「你会话被挂上的那一条任务」+ note 时间线。授能面 = 会话身份机制挂载
+      // （分发器 DispatcherFixedTools 第九件 + project 节点/分发器会话
+      // buildAllowedToolSet 末段按身份追加）；plugins 声明不授能
+      // （NebulaExclusiveTools 同享防逃逸通道）。归属由会话身份解析
+      // （ctx.taskId），无归属 ⇒ fail-closed 拒（TASKINFO_NO_ATTACHMENT，不回落全板）。
+      "TaskInfo" -> TaskInfoToolDef,
+      // 🔴 `TaskList` / `TaskBoard` **不注册**（删净退役）：注册表查不到该名 ⇒
+      // AgentCore.executeToolInner 的 `case None` 命中 AgentCore.RetiredToolGuides
+      // 给出退役指引（**只产错误文案、零执行面**）。若把旧名注册为别名，退役指引
+      // 永不触发、且会有第二条通往写面的路径——故此处**刻意缺名**。
       // node_report（blocked 结构化信号批 20260909，设计 spec 方案 A 改造点
       // #2/#3；同日作者裁定泛化更名：ReportBlockedTool → NodeReport——Blocked/
       // Pass/Failed 同为「类似的语义判断」，迁移一起迁移）：Flow Map 节点专属

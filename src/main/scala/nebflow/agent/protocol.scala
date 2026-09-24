@@ -1269,6 +1269,13 @@ case class SessionContext(
     * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
     * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。 */
   flowNodeRole: Option[String] = None,
+  /** **任务归属指纹**（taskunify 合一批 2026-09-24；裁定 e①）：本会话所归属的任务号
+    * （分发器 = 它被创建来服务的任务；项目节点 = 记录为其来源的任务）。NodeEngine /
+    * ProjectActor spawn 点置位 → 经 AgentCore 透传进 `ToolContext.taskId`——
+    * `TaskInfo` 零形参归属解析的**唯一来源**（引擎侧身份，不信客户端参数），以及
+    * 引擎侧上行拒绝面（无指纹 ⇒ fail-closed）的判据。
+    * None = 无归属（旧存量节点 / Nebula 根 / team / flow 双轨 / REST 直调）。 */
+  taskId: Option[String] = None,
   /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
     * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
     * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
@@ -1553,6 +1560,10 @@ object AgentState:
     /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **任务归属指纹**（taskunify 合一批 2026-09-24，裁定 e①）：spawn 侧置位，见
+      * SessionContext.taskId。默认 None = 无归属（旧存量节点 / Nebula 根 / team /
+      * flow 双轨 / REST 直调）。 */
+    taskId: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
     flowChainId: Option[String] = None,
@@ -1599,6 +1610,7 @@ object AgentState:
         isDispatcher = isDispatcher,
         flowNodeRole = flowNodeRole,
         projectName = projectName,
+        taskId = taskId,
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
@@ -1747,6 +1759,10 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
+  /** **任务归属指纹**（taskunify 合一批 2026-09-24）：本会话归属的任务号，见
+    * SessionContext.taskId。消费单点 = AgentCore → ToolContext.taskId → `TaskInfo`
+    * 零形参归属解析。 */
+  def taskId: Option[String] = s.session.taskId
   def flowNodeName: Option[String] = s.session.flowNodeName
   /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */
   def flowChainId: Option[String] = s.session.flowChainId

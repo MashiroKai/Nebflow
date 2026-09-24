@@ -270,7 +270,10 @@ object ProjectActor:
       taskText: String,
       rootSessionId: String,
       source: String = ProjectActor.SourceTask,
-      attribution: Option[InjectionAttribution] = None
+      attribution: Option[InjectionAttribution] = None,
+      /** **任务号**（taskunify 合一批 2026-09-24，裁定 c②）：本腿要续接的那条任务。
+        * `None` = 无归属（旧调用点 / 未接线）⇒ 不建任务、注入段省略。 */
+      taskId: Option[String] = None
     )
     /** blocked 反馈重入（设计 §2.2）：FeedbackRouter 裁决通过 → spawn 全新分发器会话
       * 注入重入 prompt。无 rootSessionId 参数——重入是系统发起，用挂载时的 root。 */
@@ -322,6 +325,11 @@ object ProjectActor:
     bridgeRef: ActorRef[AgentEvent],
     pendingInjected: Int = 0,
     pendingTaskTexts: List[String] = Nil,
+    /** **任务归属**（taskunify 合一批 2026-09-24，裁定 e①/c）：本分发器被创建来
+      * 服务的那**一条**任务号。spawn 时置位；注入面据此选会话与渲染归属单条
+      * （`dispatcherBoardText`），会话内 `ToolContext.taskId` 亦取此值。
+      * `None` = 无归属（回退/未接线）⇒ 注入段省略、`TaskInfo` fail-closed 拒。 */
+    taskId: Option[String] = None,
     /** 已计入消费的注入来源消息条数（`source ∈ {task, dispatch}`）——桥跨
       * Completed 事件累计，用于算出本 turn 消费了几件（增量 ≤ 0 时降级为 1）。 */
     consumedTaskMsgs: Int = 0,
@@ -386,13 +394,13 @@ object ProjectActor:
       Ref.of[IO, Option[ActiveDispatcher]](None).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
-            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution) =>
+            case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId) =>
               // 热重启 draining 准入闸（hot-restart 批设计 §3.3 choke 点清单）：
               // draining 期间拒绝新分发器会话/新节点派发（新工作准入关闭）；
               // completion/failed 回流被拒时 notifySentAt 未标记 → 重启后
               // redeliver 扫描补投（延迟触发非丢失）。非 draining 零开销旁路。
               nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
-                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution)
+                case Right(()) => dispatchTask(cfg, active, behavior, taskText, rootSessionId, source, attribution, taskId)
                 case Left(reason) =>
                   logger.warn(s"[hot-restart] dispatcher trigger refused during draining: $reason").as(behavior)
               }
@@ -651,21 +659,26 @@ object ProjectActor:
   private def projectMemoryText(project: ProjectDef): IO[String] =
     ProjectMemory.injectionBlock(project.workspace, project.name)
 
-  /** 分发器任务板注入段（TaskBoard 批 2 §3a）：renderDispatcher 全板紧凑行
-    * （≤1200 字符/20 行，超限整行丢弃+尾注——降级纪律在 renderer 单点）。
-    * 无板/空板 → ""（调用方不注空段，项目记忆先例同款）。⚠node-done join 数据
-    * 从 Flow Map 快照现读（§2d 真实终态映射，TaskBoardStore.nodeTerminalMap 单点），
-    * 不缓存——分发器每次 spawn/reentry 拿当下漂移面。 */
-  private def dispatcherBoardText(cfg: ProjectConfig): IO[String] =
-    cfg.board match
+  /** 分发器任务注入段（taskunify 合一批 2026-09-24，取代 TaskBoard 批 2 §3a）：
+    * **归属单条**（裁定 b①/裁定 F）——只注入分发器被创建来服务的那**一条**任务；
+    * 旧「全板紧凑行」= 越权读面，已收窄。数据源 = **新账本**（tasks-v2.json）——
+    * 🔴 旧板面（task-board.json）新代码**不再读写**（裁定 L：只读归档，保留可查
+    * 能力 ≠ 继续读写）。无归属 / 账本无该条目 → ""（调用方不注空段）。 */
+  private def dispatcherBoardText(cfg: ProjectConfig, taskId: Option[String]): IO[String] =
+    taskId match
       case None => IO.pure("")
-      case Some(board) =>
+      case Some(tid) =>
         cfg.engine.store.snapshot.flatMap { snap =>
           val terminal = TaskBoardStore.nodeTerminalMap(snap.nodes.values)
-          IO.blocking(board.entriesSync())
-            .map(entries => TaskBoardRenderer.renderDispatcher(entries, terminal))
-            .handleErrorWith(e =>
-              logger.warn(s"Project '${cfg.project.name}' task-board injection skipped: ${e.getMessage}").as(""))
+          IO.blocking {
+            val ledger = TaskLedgerStore.open()
+            ledger.findSync(tid) match
+              case Some(entry) =>
+                TaskLedgerRenderer.compactLine(entry, ledger.entriesSync(), terminal) +
+                  s"\n(read the full note timeline with TaskInfo)"
+              case None => ""
+          }.handleErrorWith(e =>
+            logger.warn(s"Project '${cfg.project.name}' task injection skipped: ${e.getMessage}").as(""))
         }
 
   /** 新任务形态 prompt（spawnDispatcher 双形态之一，现状文案保留）。
@@ -867,7 +880,11 @@ object ProjectActor:
     taskText: String,
     rootSessionId: String,
     source: String = SourceTask,
-    attribution: Option[InjectionAttribution] = None
+    attribution: Option[InjectionAttribution] = None,
+    /** **任务号**（taskunify 合一批 2026-09-24，裁定 c①/c②）：本腿要投递到的那条任务。
+      * `None` = 无归属（回退 / 未接线）⇒ 注入段省略、会话 `taskId` 为 None
+      * （`TaskInfo` fail-closed 拒）。 */
+    taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     // 裁定①（20260907 方向 B）：无快照获取——spawn prompt 只组任务文本+目录+记忆
     // TaskBoard 批 2（§3a）：spawn 形态追加任务板块（注入活跃会话形态
@@ -878,8 +895,8 @@ object ProjectActor:
     def spawnFresh: IO[Behavior[ProjectCommand]] =
       pluginCatalogText().flatMap { catalog =>
         projectMemoryText(cfg.project).flatMap { memory =>
-          dispatcherBoardText(cfg).flatMap { boardText =>
-            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution)
+          dispatcherBoardText(cfg, taskId).flatMap { boardText =>
+            spawnDispatcher(cfg, active, same, newTaskPrompt(cfg.project, taskText, catalog, memory, boardText), rootSessionId, "", taskText, source, attribution, taskId)
           }
         }
       }
@@ -891,7 +908,7 @@ object ProjectActor:
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
     active.modify {
       case Some(a) =>
-        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
+        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None, taskId = taskId.orElse(a.taskId))), Some(a))
       case None => (None, None)
     }.flatMap {
       case Some(a) =>
@@ -949,9 +966,12 @@ object ProjectActor:
         def spawnFresh: IO[Behavior[ProjectCommand]] =
           pluginCatalogText().flatMap { catalog =>
             projectMemoryText(cfg.project).flatMap { memory =>
-              dispatcherBoardText(cfg).flatMap { boardText =>
-                spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
-                  s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount))
+              active.get.flatMap { cur =>
+                val tid = cur.flatMap(_.taskId)
+                dispatcherBoardText(cfg, tid).flatMap { boardText =>
+                  spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
+                    s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount), taskId = tid)
+                }
               }
             }
           }
@@ -1131,7 +1151,11 @@ object ProjectActor:
     tag: String,
     firstTaskText: String,
     source: String = SourceTask,
-    attribution: Option[InjectionAttribution] = None
+    attribution: Option[InjectionAttribution] = None,
+    /** **任务号**（taskunify 合一批 2026-09-24）：本分发器被创建来服务的那条任务
+      * ——落进 `ActiveDispatcher.taskId` 与 `SpawnParams.taskId`（→ SessionContext →
+      * ToolContext，供 `TaskInfo` 零形参归属解析）。 */
+    taskId: Option[String] = None
   ): IO[Behavior[ProjectCommand]] =
     val project = cfg.project
     EntityLoader.loadAgent(DispatcherAgentName).flatMap {
@@ -1176,7 +1200,11 @@ object ProjectActor:
               sandboxEnabled = true,
               // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：分发器 = 项目作用域会话
               // ⇒ AGENTS.md 注入判据置位（接收面 = 项目分发器 + 节点会话不变）。
-              projectSession = true
+              projectSession = true,
+              // taskunify 合一批（2026-09-24，裁定 e①）：分发器任务归属指纹随 spawn
+              // 注入 → SessionContext.taskId → ToolContext.taskId，供 `TaskInfo`
+              // 零形参归属解析（分发器解析到「它被创建来服务的任务」）。
+              taskId = taskId
             )
           )
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +
@@ -1225,7 +1253,7 @@ object ProjectActor:
           // pendingTaskTexts.size**（桥的消费计数 k 直接同减两者）；且首条 prompt
           // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
           // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText))))
+          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText), taskId = taskId)))
           _ <- (ref ! AgentCommand.UserInput(
             text = prompt,
             replyTo = Some(bridgeRef),

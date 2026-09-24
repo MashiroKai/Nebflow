@@ -338,12 +338,21 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 进注册表；schema 恰六 action（升级批：+log/show —— 本断言是既有面唯一被授权的改动，见交付申报）"):
-    assert(ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 挂 TaskList（Nebula 注入源）")
+  test("TaskList 已删净退役（taskunify 合一批 2026-09-24）：注册表不挂旧名，新名 Task/TaskInfo 已挂——schema 旧面留在类上仅供本 spec 参考"):
+    // taskunify 合一批（2026-09-24）：`TaskList` 与 `TaskBoard` 合并为 `Task`（唯一
+    // 写面）+ Nblula 账本读取面；旧名**刻意不注册**（注册层查不到 ⇒
+    // AgentCore.RetiredToolGuides 的迁移指引才会触发），且「旧名注册为别名」会造出
+    // 第二条通往写面的路径 ⇒ 双禁。工具类本体保留（既有 spec 直调它验证旧数据结构），
+    // 但**生产路径不可达**。
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 刻意不挂 TaskList（删净退役）")
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskBoard"), "registry 刻意不挂 TaskBoard（删净退役）")
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "registry 挂 Task（合一账本唯一写面）")
+    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "registry 挂 TaskInfo（只读归属单条）")
+    // 类本体仍可直调（本 spec 其余用例即证），schema 面保持既有形态
     val schema = TaskListTool.inputSchema
     val actions = schema("properties").get.asObject.get("action").get
       .asObject.get("enum").get.asArray.get.map(j => j.asString.get).toList
-    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "恰六 action")
+    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "旧 schema 恰六 action（历史形态，仅本 spec 参考）")
     // 新增字段进 schema（模型可见面）
     val props = schema("properties").get.asObject.get
     assert(props.contains("text"), "log 的 text 参数必须可见")
