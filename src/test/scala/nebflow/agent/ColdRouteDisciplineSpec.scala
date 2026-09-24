@@ -145,7 +145,7 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
       assert(body.contains("first tool call routes the task"), "① 首动作 = 路由 未落地")
       // ② 已有项目 ⇒ Mail(project:<name>)
       assert(
-        body.contains("""Mail(address="project:<name>", message=<task>)"""),
+        body.contains("""Mail(to="project:<name>", message=<task>)"""),
         "② 已有项目 ⇒ Mail 未落地"
       )
       // ③ 没有 ⇒ ProjectCreate 再转发
