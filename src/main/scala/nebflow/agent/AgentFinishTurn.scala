@@ -753,3 +753,4 @@ private[agent] object AgentFinishTurn:
         ).handleErrorWith(_ => IO.unit)
       }
     else IO.unit
+end AgentFinishTurn

@@ -430,7 +430,7 @@ private[agent] trait AgentCore:
       case Some(sid) => nebflow.core.flow.TeamSessionRegistry.isManager(sid)
       case None => IO.pure(false)
 
-  protected def startDirectCompaction(
+  private[agent] def startDirectCompaction(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
