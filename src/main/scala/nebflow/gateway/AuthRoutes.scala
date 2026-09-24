@@ -87,6 +87,8 @@ private[gateway] object AuthRoutes:
       case _ => IO.pure(None)
     }
 
+  end beginPkceLogin
+
   def callbackRoutes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
     given RestApiCtx = ctx
@@ -109,6 +111,8 @@ private[gateway] object AuthRoutes:
       case GET -> Root / "logged-out" =>
         renderLoggedOutLanding
     }
+
+  end callbackRoutes
 
   /**
    * The `/auth/logged-out` landing page (see the route comment above for the
@@ -189,6 +193,8 @@ private[gateway] object AuthRoutes:
               }
     }
 
+  end renderLoggedOutLanding
+
   /**
    * The 8-step local teardown shared by POST /neblink/logout and the
    * RP-initiated end-session endpoint. Always completes locally — every
@@ -240,6 +246,10 @@ private[gateway] object AuthRoutes:
       // 8. Clear all discovered peers.
       _ <- ms.clearPeers
     yield ()
+
+    end for
+
+  end performLocalLogout
 
   private def handleAuthCallback(query: Map[String, String])(using ctx: RestApiCtx): IO[org.http4s.Response[IO]] =
     import ctx.*
@@ -443,6 +453,10 @@ private[gateway] object AuthRoutes:
                           htmlResponse(callbackPage(ok = false, diagnostic.message), Status.NotFound)
                 yield resp
         }
+
+    end match
+
+  end handleAuthCallback
 
   /**
    * 案 C ①(a)（2026-09-14）语义的**分类化**承接（缺陷 A / 上游 §8.2 第 4 项）：

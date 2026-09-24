@@ -55,7 +55,11 @@ final class RestApiCtx(
     Option[String],
     Option[String],
     Boolean
-  ) => IO[Either[String, String]]
+  ) => IO[Either[String, String]],
+  friendErrImpl: String => IO[Response[IO]],
+  groupProxyResultImpl: Either[String, (Int, String)] => IO[Response[IO]],
+  rawBodyImpl: Request[IO] => IO[String],
+  encSegImpl: String => String
 ):
 
   def scanAgentPresets(): Map[String, Option[String]] = scanAgentPresetsImpl()
@@ -79,6 +83,16 @@ final class RestApiCtx(
   ): IO[Boolean] =
     isKnownNetworkDeviceImpl(ms, claimedDeviceId, remoteIp)
   def checkHttpBaseUrl(baseUrl: String): Either[String, String] = checkHttpBaseUrlImpl(baseUrl)
+
+  // 社交域(SocialRoutes,D 步 2026-09-24)所需的四条跨域共用助手委托:类内
+  // /avatars、/devices 面仍直接调用同名实现,故实现留守 RestApiRoutes 类内
+  // (单一实现);后续 neblink 域迁出相关 case 时,本委托保留不动。
+  def friendErr(err: String): IO[Response[IO]] = friendErrImpl(err)
+
+  def groupProxyResult(result: Either[String, (Int, String)]): IO[Response[IO]] =
+    groupProxyResultImpl(result)
+  def rawBody(req: Request[IO]): IO[String] = rawBodyImpl(req)
+  def encSeg(s: String): String = encSegImpl(s)
 
   // 登录回调域(AuthRoutes)所需的两条委托(2026-09-24 C 步起):实现留守
   // RestApiRoutes 类内(单一实现);后续 neblink 域迁出实现时,本委托保留不动。
