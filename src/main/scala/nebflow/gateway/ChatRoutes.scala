@@ -74,7 +74,54 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
               llmFailureResponse(None)(decodeErr)
           }
       }
+
+    // OpenAI wire-format alias (batch B2, "立项（最小形态）" — author ruling
+    // 2026-09-24). ONE extra path on the SAME routes value, behind the SAME
+    // `checkAuth` gate: no second auth face, no `/v1/models`, no SSE semantics,
+    // no new dependency. `OpenAiChatShim` owns the whole line-format
+    // conversion; this case only does auth → parse → convert → send → convert,
+    // so the two in-tree paths above keep their existing semantics.
+    //
+    // The body is read as RAW TEXT (`bodyText.compile.string` — the same idiom
+    // as RestApiRoutes.scala:2463 / WebSocketRoutes.scala:5704) and parsed
+    // explicitly with `io.circe.parser`: this face must own its parse-failure
+    // path (the OpenAI error envelope), and `req.as[Json]` / `req.as[String]`
+    // resolve through the ambient implicit EntityEncoders (with this file's
+    // circe imports they are the JSON-aware decoders), so neither is a stable
+    // carrier for a wire-format contract. Raw stream → String removes that
+    // coupling.
+    case req @ POST -> Root / "v1" / "chat" / "completions" =>
+      checkAuth(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          req.bodyText.compile.string.attempt.flatMap {
+            case Left(_) => openAiRejected(OpenAiChatShim.malformedBody)
+            case Right(raw) =>
+              io.circe.parser.parse(raw) match
+                case Left(_) => openAiRejected(OpenAiChatShim.malformedBody)
+                case Right(body) =>
+                  OpenAiChatShim.toLlmRequest(body) match
+                    case Left(rejected) => openAiRejected(rejected)
+                    case Right(llmReq) =>
+                      handle
+                        .send(llmReq)
+                        .flatMap(resp => Ok(OpenAiChatShim.toOpenAiResponse(resp)))
+                        .handleErrorWith(llmFailureResponse(Some(llmReq)))
+          }
+      }
   }
+
+  /** OpenAI-shaped refusal: the same 4xx status the shim declares plus the
+    * OpenAI error envelope (`type`/`param`/`code`), so a caller that parses the
+    * OpenAI error shape gets usable feedback instead of a bare status. */
+  private def openAiRejected(
+    rejected: OpenAiChatShim.Rejected
+  ): IO[org.http4s.Response[IO]] =
+    IO.pure(
+      org.http4s
+        .Response[IO](status = org.http4s.Status.fromInt(rejected.status).getOrElse(org.http4s.Status.BadRequest))
+        .withEntity(OpenAiChatShim.errorEnvelope(rejected))
+    )
 
   /** visionfix (甲): shared failure mapping for both chat faces. `llmReq` is
     * `None` only on a decode failure, where there is no request to inspect.
