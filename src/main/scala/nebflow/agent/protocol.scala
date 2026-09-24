@@ -116,7 +116,8 @@ object InjectionAttribution:
    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
    *   node                NodeEngine#deliverToNebula（节点完成通报）
    *   skill               AgentActor SkillActivate 分支
-   *   delegate / subtask / flow / tool   AgentActor#inferInjectionSource
+   *   delegate / subtask / flow / tool   AgentIdle#inferInjectionSource（re-pin
+   *                       2026-09-25：随 idle 态自 AgentActor 迁至 AgentIdle.scala）
    *   background          AgentActor#visibleExternalEventSource（源名 background-task）
    *   chain               **已退役（不再发射）**：原出处 = NodeEngine#deliverChainSummary
    *                       （链级聚合摘要投根，b64 批 2026-09-13）。全降级列表态批
