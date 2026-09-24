@@ -451,16 +451,9 @@ private[agent] object AgentFrozen:
 
       case AgentCommand.Retry(reason) =>
         // 镜像 processing 的 Retry：从 checkpoint 重派——Gated，冻结时段再次冻结
-        // （不烧 token，spec §5.4）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
-        ctx.cancelCurrentTurn() *> (state.lastDispatch match
-          case Some(LastDispatch(false, _)) =>
-            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
-          case Some(LastDispatch(true, Some(cr))) =>
-            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
-          case _ =>
-            markTeamIdle(agentDef, state.sessionId) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+        // （不烧 token，spec §5.4）。F（2026-09-25 命令消重）：两态逐字同形,
+        // 收敛至 AgentActor.retryFromCheckpoint。
+        retryFromCheckpoint(agentDef, resources, depth, parentRef, state, reason)
 
       case AgentCommand.Escalate =>
         // v2 升级链到期（§5.2）：FreezeScheduler.scan 发现 escalation.escalateAt
@@ -615,128 +608,52 @@ private[agent] object AgentFrozen:
 
       case AgentCommand.UpdateContextWindow(window) =>
         // 轻量存储：恢复后下一次 dispatch 的 autoCompact 自会按新窗口评估溢出。
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withContextWindow(window),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        updateContextWindowStay(state, window)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withGitBranch(branch),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        updateGitBranchStay(state, branch)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       // ctxthresh 批：frozen 态同 UpdateContextWindow 的轻量存储语义——解冻后
       // 下一次 dispatch 自会按新的生效门限评估溢出。
       case AgentCommand.SetCompactThresholdRatio(ratio) =>
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withCompactThresholdRatio(ratio),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        setCompactThresholdRatioStay(state, ratio)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case n: AgentCommand.BackgroundTaskNotification =>
         // 转成 ExternalEvent 走上面的排队分支（同 processing 的处理方式）。
-        (ctx.self ! n.toExternalEvent) *>
+        forwardBackgroundTaskNotification(n)(
           IO.pure(
             frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
           )
+        )
 
       case AgentCommand.SetPermissionDeferred(deferred) =>
         // 镜像 processing：持有 deferred，防子 agent 权限应答悬空。
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withPendingPermission(Some(deferred)),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        setPermissionDeferredStay(state, deferred)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withAgentSessions(state.agentSessions :+ session),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        agentSessionsStay(state, state.agentSessions :+ session)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case AgentCommand.SessionUpdate(address, status) =>
         val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withAgentSessions(updated),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        agentSessionsStay(state, updated)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case AgentCommand.SessionClosed(address) =>
         val updated = state.agentSessions.filterNot(_.address == address)
-        IO.pure(
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withAgentSessions(updated),
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            escalation
-          )
+        agentSessionsStay(state, updated)(s =>
+          IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
       case AgentCommand.CompactionComplete(result) =>
@@ -790,28 +707,16 @@ private[agent] object AgentFrozen:
         end match
 
       case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
+        clearReadTrackerStay(state)(
           IO.pure(
             frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
           )
+        )
 
+      // F（2026-09-25 命令消重）：与 processing 态逐字同形,收敛至
+      // AgentActor.resetSessionHandler。
       case AgentCommand.ResetSession =>
-        for
-
-          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-        yield
-          val resetState = state
-            .withMessages(Nil)
-            .withLatestUsage(None)
-            .withPendingCompaction(None)
-            .withCompactionFailures(0)
-            .withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil)
-            .invalidateSystemStableCache
-            .resetToIdle(Nil)
-          idle(agentDef, resources, depth, parentRef, resetState)
+        resetSessionHandler(agentDef, resources, depth, parentRef, state)
 
       case _ =>
         // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃

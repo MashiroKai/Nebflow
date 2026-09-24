@@ -1391,4 +1391,156 @@ object AgentActor extends AgentCore with AgentSession:
       result
     )
 
+  // ============================================================
+  // F (2026-09-25 命令消重): idle/processing/frozen 三行为里**逐字同形**的
+  // 日常命令 handler 收敛为共享助手。判据 = case 体逐字同形（Retry/ResetSession,
+  // 两态一致、仅注释差异），或除返回的行为变换外逐字同形（此时以 `stay` 续参
+  // 注入各态的「留在本态」构造——语义与返回行为变换逐字保持）。不同形的分支
+  // （Stop/Interrupt/RestartAgent/MailQueued/CompactionComplete/ImmediateInput/
+  // AskQuestion/SkillActivate/ExternalEvent/UserInput 及 idle 态特有形态）保留在
+  // 各行为文件,不收敛。实现体自 AgentIdle/AgentProcessing/AgentFrozen 的对应
+  // case 原样收敛（带日期裁定注释随行）。
+  // ============================================================
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 Retry case 体逐字同形
+   * （仅注释差异）——原样收敛。cancel 当前 turn 后按 lastDispatch checkpoint
+   * 重派;无 checkpoint 则回 idle。
+   */
+  private[agent] def retryFromCheckpoint(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    reason: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
+    ctx.cancelCurrentTurn() *> (state.lastDispatch match
+      case Some(LastDispatch(false, _)) =>
+        // Re-dispatch LLM call with same messages. 6-arg call goes through
+        // the AgentActor shadow (freeze gate) — retry must not bypass the
+        // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
+        pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
+      case Some(LastDispatch(true, Some(cr))) =>
+        // Re-dispatch tool execution with same LLM result
+        pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
+      case _ =>
+        // No checkpoint — go to idle
+        markTeamIdle(agentDef, state.sessionId) *>
+          IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+  end retryFromCheckpoint
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 ResetSession case 体逐字
+   * 同形（仅 processing 侧多一段 R2 注释,随行迁入）——原样收敛,重置后统一回
+   * idle 态。idle 态的 ResetSession 不同形（cancelCurrentTurn 起手 / 无
+   * Interrupted 事件与 registry 回写 / 无 resetToIdle）,保留在 AgentIdle。
+   */
+  private[agent] def resetSessionHandler(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    for
+
+      _ <- state.readTracker.fold(IO.unit)(t => t.clear())
+      _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+      // R2 closure (wait-timeout-fix): ResetSession discards a turn that
+      // may be parked on a pending AskUser/permission wait — un-mark
+      // WaitingForUser (mirror of the Interrupt handler), the registry row
+      // must never keep a waiting status for a turn that no longer exists.
+      _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+    yield
+      val resetState = state
+        .withMessages(Nil)
+        .withLatestUsage(None)
+        .withPendingCompaction(None)
+        .withCompactionFailures(0)
+        .withLastCompactionFailureAt(0L)
+        .withRecentMessageIds(Nil)
+        .invalidateSystemStableCache
+        .resetToIdle(Nil)
+      idle(agentDef, resources, depth, parentRef, resetState)
+  end resetSessionHandler
+
+  /**
+   * F (2026-09-25 命令消重): 三态 UpdateGitBranch case 体除返回的行为变换外
+   * 逐字同形——状态更新 `withGitBranch` 单点化,`stay` 注入各态的「留在本态」
+   * 构造（调用点语义与返回行为逐字保持）。
+   */
+  private[agent] def updateGitBranchStay(
+    state: AgentState,
+    branch: Option[String]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withGitBranch(branch))
+
+  /**
+   * F (2026-09-25 命令消重): 三态 ClearReadTracker case 体除返回的行为变换外
+   * 逐字同形——清空读取跟踪器后原 state 留在本态。
+   */
+  private[agent] def clearReadTrackerStay(
+    state: AgentState
+  )(stay: IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    state.readTracker.fold(IO.unit)(t => t.clear()) *> stay
+
+  /**
+   * F (2026-09-25 命令消重): 三态 BackgroundTaskNotification case 体除返回的
+   * 行为变换外逐字同形——转成 ExternalEvent 重新投递自身（各态由对应分支
+   * 排队/注入）,原 state 留在本态。
+   */
+  private[agent] def forwardBackgroundTaskNotification(
+    n: AgentCommand.BackgroundTaskNotification
+  )(stay: IO[Behavior[AgentCommand]])(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    (ctx.self ! n.toExternalEvent) *> stay
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SetPermissionDeferred
+   * case 体除返回的行为变换外逐字同形——持有 deferred,防子 agent 权限应答
+   * 悬空。idle 态不同形（并入 stale-LLM 族 no-op case,不落 pendingPermission）,
+   * 保留在 AgentIdle。
+   */
+  private[agent] def setPermissionDeferredStay(
+    state: AgentState,
+    deferred: cats.effect.Deferred[IO, Boolean]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withPendingPermission(Some(deferred)))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 UpdateContextWindow
+   * case 体除返回的行为变换外逐字同形——轻量存储,下一次 dispatch 自会按新
+   * 窗口评估溢出。idle 态不同形（含 model-switch-compact 触发判定）,保留在
+   * AgentIdle。
+   */
+  private[agent] def updateContextWindowStay(
+    state: AgentState,
+    window: Int
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withContextWindow(window))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SetCompactThresholdRatio
+   * case 体除返回的行为变换外逐字同形——轻量存储,下一回合边界起用新值。idle
+   * 态不同形（多 compact-threshold-set 日志）,保留在 AgentIdle。
+   */
+  private[agent] def setCompactThresholdRatioStay(
+    state: AgentState,
+    ratio: Option[Double]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withCompactThresholdRatio(ratio))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SessionStarted/
+   * SessionUpdate/SessionClosed case 体除返回的行为变换外逐字同形——会话表
+   * 更新单点化（追加/改状态/删除由各调用点先算好新表）。idle 态无此三分支
+   * （catch-all 兜底）。
+   */
+  private[agent] def agentSessionsStay(
+    state: AgentState,
+    sessions: List[AgentSessionInfo]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withAgentSessions(sessions))
+
 end AgentActor

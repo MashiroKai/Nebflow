@@ -210,8 +210,7 @@ private[agent] object AgentIdle:
         yield Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        clearReadTrackerStay(state)(IO.pure(idle(agentDef, resources, depth, parentRef, state)))
 
       case AgentCommand.ResetSession =>
         for
@@ -287,7 +286,7 @@ private[agent] object AgentIdle:
         IO.pure(idle(agentDef, resources, depth, parentRef, state.withCompactThresholdRatio(ratio)))
 
       case n: AgentCommand.BackgroundTaskNotification =>
-        (ctx.self ! n.toExternalEvent) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        forwardBackgroundTaskNotification(n)(IO.pure(idle(agentDef, resources, depth, parentRef, state)))
 
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
         logAgentEvent(
@@ -468,7 +467,7 @@ private[agent] object AgentIdle:
         end if
 
       case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withGitBranch(branch)))
+        updateGitBranchStay(state, branch)(s => IO.pure(idle(agentDef, resources, depth, parentRef, s)))
 
       case AgentCommand.CompactionComplete(result) =>
         logAgentEvent(

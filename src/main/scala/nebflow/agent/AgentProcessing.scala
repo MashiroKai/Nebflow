@@ -47,7 +47,7 @@ private[agent] object AgentProcessing:
     val base = Behaviors.receiveMessage[AgentCommand]:
 
       case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
+        updateGitBranchStay(state, branch)(s => IO.pure(processing(agentDef, resources, depth, parentRef, s, pending)))
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
@@ -471,10 +471,14 @@ private[agent] object AgentProcessing:
                 // status=Processing (written by the crashed round's loop-counter
                 // touch), so TaskStuckWatcher flagged a zombie every 30s until a
                 // human restarted the actor. Every other terminal path
-                // (turn-done :2859 / Interrupt :3638 / Stop :3650 / ResetSession
-                // :3927 / ErrorFrozen :3474) writes the registry; this was the
+                // (turn-done AgentFinishTurn.finishTurnCont / Interrupt
+                // processing·frozen 的 Interrupt 分支 / Stop frozen 的 Stop 分支 /
+                // ResetSession AgentActor.resetSessionHandler / ErrorFrozen
+                // AgentFrozen.enterFrozen) writes the registry; this was the
                 // last one missing. Idle = "no active turn" (the behavior state
                 // keeps the Error detail; the watcher only flags Processing).
+                // （2026-09-25 行号引用修正：原单文件行号已随行为域拆分漂移,
+                //   改指文件+成员名。）
                 _ <- touchRegistryActivity(resources, cleanedState.sessionId, AgentStatus.Idle)
               yield
                 val compactionWasPending = state.pendingCompaction.isDefined
@@ -772,7 +776,8 @@ private[agent] object AgentProcessing:
           // abandoned turn fiber may still complete and send a late
           // LlmComplete/LlmFailed. Bump currentTurnId so the stale-turnId
           // guard discards them (turnId is monotonic; the next dispatch takes
-          // +1 from here with no collision — AgentCore.scala:449).
+          // +1 from here with no collision — AgentCore.pipeLlmCall 的
+          // `currentTurnId + 1` 取号处；2026-09-25 行号引用修正)。
           // compactui 批（2026-09-15 事故 ②）：dropCompactionScratch 必须在
           // withPendingCompaction(None) **之前**应用（判据依赖作业仍在）。
           val interruptedState = dropCompactionScratch(state).resetForInterrupt
@@ -782,21 +787,10 @@ private[agent] object AgentProcessing:
         end for
 
       // --- Retry: cancel current work, re-dispatch from last checkpoint ---
+      // F (2026-09-25 命令消重): 与 frozen 态逐字同形,收敛至
+      // AgentActor.retryFromCheckpoint（实现体原样迁入,注释随行）。
       case AgentCommand.Retry(reason) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
-        ctx.cancelCurrentTurn() *> (state.lastDispatch match
-          case Some(LastDispatch(false, _)) =>
-            // Re-dispatch LLM call with same messages. 6-arg call goes through
-            // the AgentActor shadow (freeze gate) — retry must not bypass the
-            // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
-            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
-          case Some(LastDispatch(true, Some(cr))) =>
-            // Re-dispatch tool execution with same LLM result
-            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
-          case _ =>
-            // No checkpoint — go to idle
-            markTeamIdle(agentDef, state.sessionId) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+        retryFromCheckpoint(agentDef, resources, depth, parentRef, state, reason)
 
       // --- Supervisor restart ---
       case AgentCommand.RestartAgent(level) =>
@@ -832,30 +826,12 @@ private[agent] object AgentProcessing:
         yield Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        clearReadTrackerStay(state)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
 
+      // F (2026-09-25 命令消重): 与 frozen 态逐字同形,收敛至
+      // AgentActor.resetSessionHandler（实现体原样迁入,R2 注释随行）。
       case AgentCommand.ResetSession =>
-        for
-
-          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          // R2 closure (wait-timeout-fix): ResetSession discards a turn that
-          // may be parked on a pending AskUser/permission wait — un-mark
-          // WaitingForUser (mirror of the Interrupt handler), the registry row
-          // must never keep a waiting status for a turn that no longer exists.
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-        yield
-          val resetState = state
-            .withMessages(Nil)
-            .withLatestUsage(None)
-            .withPendingCompaction(None)
-            .withCompactionFailures(0)
-            .withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil)
-            .invalidateSystemStableCache
-            .resetToIdle(Nil)
-          idle(agentDef, resources, depth, parentRef, resetState)
+        resetSessionHandler(agentDef, resources, depth, parentRef, state)
 
       // --- Compaction completed ---
       case AgentCommand.CompactionComplete(result) =>
@@ -1060,7 +1036,7 @@ private[agent] object AgentProcessing:
 
       // --- Background task completed while processing ---
       case n: AgentCommand.BackgroundTaskNotification =>
-        (ctx.self ! n.toExternalEvent) *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        forwardBackgroundTaskNotification(n)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
 
       // --- External event while processing ---
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
@@ -1217,35 +1193,23 @@ private[agent] object AgentProcessing:
 
       // --- Set permission deferred while processing (P1 fallback, hub absent) ---
       case AgentCommand.SetPermissionDeferred(deferred) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
+        setPermissionDeferredStay(state, deferred)(s =>
+          IO.pure(processing(agentDef, resources, depth, parentRef, s, pending))
+        )
 
       // --- Bypass toggled while processing（permshield S1：命令已退役，catch-all 兜底）---
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withContextWindow(window),
-            pending
-          )
+        updateContextWindowStay(state, window)(s =>
+          IO.pure(processing(agentDef, resources, depth, parentRef, s, pending))
         )
 
       // ctxthresh 批：processing 态收到阈值热更 ⇒ 轻量存储（无压缩副作用）。
       // 在飞 turn 用旧值、下一回合边界起用新值（口径 §8.3-E7 的时序语义）。
       case AgentCommand.SetCompactThresholdRatio(ratio) =>
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withCompactThresholdRatio(ratio),
-            pending
-          )
+        setCompactThresholdRatioStay(state, ratio)(s =>
+          IO.pure(processing(agentDef, resources, depth, parentRef, s, pending))
         )
 
       // --- Buffer user-initiated messages during processing ---
@@ -1309,24 +1273,17 @@ private[agent] object AgentProcessing:
       // --- Session management (persistent sub-agents) ---
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withAgentSessions(state.agentSessions :+ session),
-            pending
-          )
+        agentSessionsStay(state, state.agentSessions :+ session)(s =>
+          IO.pure(processing(agentDef, resources, depth, parentRef, s, pending))
         )
 
       case AgentCommand.SessionUpdate(address, status) =>
         val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
+        agentSessionsStay(state, updated)(s => IO.pure(processing(agentDef, resources, depth, parentRef, s, pending)))
 
       case AgentCommand.SessionClosed(address) =>
         val updated = state.agentSessions.filterNot(_.address == address)
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
+        agentSessionsStay(state, updated)(s => IO.pure(processing(agentDef, resources, depth, parentRef, s, pending)))
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
