@@ -23,7 +23,7 @@ import scala.concurrent.duration.*
  *  - P1：判据②（30 分钟窗口口径）**第四分量** —— `BgTaskOutputStore` 终态翻转
  *    （窗口内 running 且可读 → 到点翻 cancelled）。交付 spec R7 只断言了进程/registry/
  *    WS 帧三个分量。
- *  - P2（→ 复核 **D3**，批 F3 修）：`NodeEdit abandon`（NodeTools.scala#abandonNode）
+ *  - P2（→ 复核 **D3**，批 F3 修）：`NodeEdit abandon`（NodeEditTool.scala#abandonNode）
  *    也是**不经 run fiber 的终态写点**，是否与 A 段补的 6 个写点同口径清 `reportPendingSince`。
  *  - P3（→ 复核 **D2**，批 F2 修）：负例审计「`NodeMessage` 重入是否重置计时（应『不重置』）」
  *    的**下游后果** —— 重入轮不唤醒观察桥（⑧-1 同根因）时，申报只被阶梯 `peek` 见到，

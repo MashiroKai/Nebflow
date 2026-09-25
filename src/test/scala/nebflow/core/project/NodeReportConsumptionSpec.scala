@@ -188,7 +188,7 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   // 建位期声明闸（nodegate 批 0accce90e「四项④」NODE_PLUGINS_UNDECLARED，判据源
-  // NodeTools.scala:1424）：本 spec 三处调用**全为建位**（`nrc-vanish` / `nrc-status` /
+  // NodeEditTool.scala:115）：本 spec 三处调用**全为建位**（`nrc-vanish` / `nrc-status` /
   // `nrc-landed`）⇒ 补 `plugins=[]`（显式「无需能力面」），与同批 18 个既有 spec 同形
   // （先例：NodeEdgeRepairSpec.scala:146 / NodeBlockedToolSignalSpec.scala:174）。
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =

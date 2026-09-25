@@ -460,7 +460,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
       // ⇒ `notifyPolicyWarnings` 的 M3/R14 两条**如实**开火（"silent on a CHAIN-END node"
       // + "silent does NOT exempt failures"）。即：调整的是**夹具**（让「健康拓扑」在
       // B-3 口径下真正无噪音），不是断言强度。依据 = 本任务书裁定三项之 B-3
-      // （缺键 = 未声明的唯一表达）+ `NodeTools.scala` 创建期警告面落点。
+      // （缺键 = 未声明的唯一表达）+ `NodeEditTool.scala` 创建期警告面落点。
       _ <- nodeEdit(
         nodeInput(
           "gating-warn",

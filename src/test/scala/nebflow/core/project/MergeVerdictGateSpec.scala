@@ -713,7 +713,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
   // 🔧 flake 根因修复（p547b 2026-09-15，#547 队首 ④/⑥ 同源）：本用例修后曾在
   // 轻载环境绿、合跑/本机红（`MergeVerdictGateSpec.scala:593 … got running`）。
   // 机制 = **裸竞速**，与跨 suite 共享态无关（单跑单独跑也红，本批实测 3/3）：
-  // 重激活写点（NodeTools.scala 重激活 mutate）之后 `NodeTools.runDetached` 在
+  // 重激活写点（NodeEditTool.scala 重激活 mutate）之后 `NodeTools.runDetached` 在
   // 后台 fiber 里做「重投递 + barrier 结算 + startNode」，而 runWithAgent 在调
   // LLM **之前**就把节点 CAS 翻成 `running` ⇒ 修前测试在 edit 返回后立刻
   // `node(rt,…)` 读中间态，读到 Wiring/Pending 才绿、读到 running 即 ：593 红

@@ -708,7 +708,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       giAfter <- IO(sha256Of(gi))
       nbAfter <- IO(nebflowEntries(ws))
       // 新语义（作者 2026-09-18 令：「AGENTS.md 应该默认是空的，用户去写，我们只是创建」；
-      // popt W3 已把模板置空 = `NodeTools.scala:3200` `agentMdTemplate = ""`）。
+      // popt W3 已把模板置空 = `ProjectCreateTool.scala:108` `agentMdTemplate = ""`）。
       // 判据随之改为：**文件本体仍被创建**（存在）+ **内容为空**（0 字节），两者缺一即红。
       restoredExists <- IO(os.exists(ws / "AGENTS.md"))
       restoredText <- IO(if os.exists(ws / "AGENTS.md") then os.read(ws / "AGENTS.md") else "<missing>")

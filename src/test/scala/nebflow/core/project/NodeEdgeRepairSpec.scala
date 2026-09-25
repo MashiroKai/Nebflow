@@ -158,10 +158,10 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
   /**
    * **编辑面**输入（不带 `plugins` 键）——键的语义面是分开的：
    *  - 建位（create）：必须**显式声明**能力面，省略键 ⇒ `NODE_PLUGINS_UNDECLARED`
-   *    （NodeTools.scala:1424）；
+   *    （NodeEditTool.scala:115）；
    *  - 编辑（edit）：`plugins` 是 replace-on-provide 的**可选**键，省略 = 不改动能力面
-   *    （NodeTools.scala:2596）；而**归档**节点编辑分支把「带 plugins 键」列入
-   *    forbidden（NodeTools.scala:1396 `pluginsProvided`），带键的归档 out 改接会落进
+   *    （NodeEditTool.scala:1287）；而**归档**节点编辑分支把「带 plugins 键」列入
+   *    forbidden（NodeEditTool.scala:87 `pluginsProvided`），带键的归档 out 改接会落进
    *    通用「只放行 out 改接」拒 ⇒ 只改 out 的归档编辑调用一律按编辑形态发。
    */
   private def editInput(project: String, nodename: String, extra: (String, Json)*): Json =

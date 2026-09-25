@@ -119,7 +119,7 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
                     JsonObject(
                       "project" -> Json.fromString("closed-loop"),
                       "nodename" -> Json.fromString("闭环-执行A"),
-                      // 建位期声明闸（nodegate 批 0accce90e 四项④，NodeTools.scala:1424）：
+                      // 建位期声明闸（nodegate 批 0accce90e 四项④，NodeEditTool.scala:115）：
                       // mock 发出的建位调用必须与真实调用方同形——省略 `plugins` 键一律拒
                       // （§6.4「mock 序列必须符合产品工具校验语义」同款坑）。本夹具节点零插件
                       // ⇒ `plugins=[]`（显式「无需能力面」）。
