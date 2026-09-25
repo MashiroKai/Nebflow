@@ -345,6 +345,11 @@ object GatewayMain extends IOApp:
     // resolved at boot — missing pieces must be loud up front, not discovered
     // later inside a failing tool call. No-op off Windows.
     nebflow.core.WindowsDepProbe.warnIfMissing *>
+      // friendseal batch (2026-09-25): latch the `features.friends` flag ONCE
+      // per boot (startup-latch semantics — a config edit takes effect on
+      // restart; mirrors the frontend's per-boot decision in featureFlags.js).
+      // One read, before any tool face is assembled.
+      IO(nebflow.core.FriendsSeal.initFromDisk()) *>
       // Read port from config first, then run the boot entry gate on that port
       GatewayConfig.load.flatMap { cfg =>
         entryGate(cfg) *> GatewayConfig.load.flatMap { cfg =>

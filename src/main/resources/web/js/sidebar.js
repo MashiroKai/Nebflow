@@ -792,6 +792,7 @@ export function renderSettings() {
         </span>
       </button>
       ${neblinkSettingsHTML()}
+      <div id="settings-devices-slot"></div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.runtime')}</div>
@@ -898,6 +899,16 @@ export function renderSettings() {
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
 
+  // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
+  // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:
+  // the builder lives in messages.js (the device chat's owner face, which
+  // statically imports neblink.js), so a static import here would create a
+  // new cycle. Idempotent mount; the refresh tick below re-mounts it.
+  const devicesSlot = document.getElementById('settings-devices-slot');
+  if (devicesSlot) {
+    import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
+  }
+
   // Async-load the preset management section (non-blocking)
   loadPresetsSection();
 
@@ -926,6 +937,12 @@ export function renderSettings() {
       }
       // Keep the avatar section in lockstep with login/avatar changes.
       renderSettingsAvatar();
+      // friendseal (2026-09-25 ①-A): keep the device expansion area in
+      // lockstep with peer/presence/login changes on the same tick.
+      const devicesSlot = document.getElementById('settings-devices-slot');
+      if (devicesSlot) {
+        import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
+      }
     });
   };
   refreshNeblink();

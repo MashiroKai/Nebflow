@@ -3,7 +3,7 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { createIconsIn, markCopyFailed } from './utils.js';
+import { createIconsIn, markCopyFailed, escapeHtml } from './utils.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
@@ -4980,6 +4980,37 @@ async function wakeResync() {
 // ── Wiring ───────────────────────────────────────────────
 let initialized = false;
 
+// ── Device chat face wiring (device leg only — NOT gated by the friends seal) ──
+// friendseal batch (2026-09-25): the settings-page device expansion area opens
+// device chat windows while the friend panels stay detached (author ruling ①:
+// the device face moves back to the settings page; "Relay-only use is
+// shippable" — featureFlags.js). The three subscriptions below are the device
+// window's live half (arrival → window re-render, transfer display state,
+// presence badge refresh). They are pure DEVICE-face wiring: zero friend
+// polling, zero friend_event handler, zero REST call — arming them in the
+// sealed posture adds no live friend code. Idempotent: initMessages calls it
+// at its old spot, the settings entry arms it before opening a window; the
+// latch makes both orders a single registration (never two consumers).
+let deviceChatWired = false;
+export function ensureDeviceChatWiring() {
+  if (deviceChatWired) return;
+  deviceChatWired = true;
+  // ① 设备腿消息变更（`dropbox-message` / `dropbox-history` / 传输态 / 闸位提示）——
+  //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
+  //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
+  onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
+  // ①-b 设备腿**传输生命周期**（uxconsist Phase B · §3.3）：通知源 = dropbox.js 的
+  //     `onDeviceTransfer` 单点（入队 / 受理 / 块级进度 / 完成 / 失败 / 取消）。
+  //     本模块据此**登记显示态**（附件的动作面上屏）—— 只共享显示，传输链一行不碰：
+  //     设备腿的反馈面因此**与数据面选路解耦**（`onDeviceMessageChanged` 里
+  //     `sourceServer` 的早退只挡 legacy 数据面重渲，不再连带挡掉附件反馈）。
+  onDeviceTransfer((evt) => { onDeviceTransferEvent(evt); });
+  // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
+  //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
+  //    自行订阅同一源（禁第二份轮询）。
+  onNeblinkStatus(() => { refreshOpenDevicePresence(); });
+}
+
 export function initMessages() {
   if (initialized) return;
   initialized = true;
@@ -5079,20 +5110,11 @@ export function initMessages() {
   }
 
   // ── 设备面（MVP-1）：数据面订阅 ────────────────────────────────────────
-  // ① 设备腿消息变更（`dropbox-message` / `dropbox-history` / 传输态 / 闸位提示）——
-  //    通知源 = dropbox.js 的 `afterDeviceMessageChange` 单点（不在本模块重挂 WS 帧
-  //    监听：否则新旧两窗各消费一次 ⇒ 两套时序判断）。
-  onDeviceMessageChange((deviceId) => { onDeviceMessageChanged(deviceId); });
-  // ①-b 设备腿**传输生命周期**（uxconsist Phase B · §3.3）：通知源 = dropbox.js 的
-  //     `onDeviceTransfer` 单点（入队 / 受理 / 块级进度 / 完成 / 失败 / 取消）。
-  //     本模块据此**登记显示态**（附件的动作面上屏）—— 只共享显示，传输链一行不碰：
-  //     设备腿的反馈面因此**与数据面选路解耦**（`onDeviceMessageChanged` 里
-  //     `sourceServer` 的早退只挡 legacy 数据面重渲，不再连带挡掉附件反馈）。
-  onDeviceTransfer((evt) => { onDeviceTransferEvent(evt); });
-  // ② 在线态推送（O10）：唯一推送源 = `/api/neblink/status` 落地拍（WS `peerListChanged`
-  //    已在其上游汇流）⇒ 开着的设备窗副行徽章就地刷新。联系人面板设备段由 contacts.js
-  //    自行订阅同一源（禁第二份轮询）。
-  onNeblinkStatus(() => { refreshOpenDevicePresence(); });
+  // friendseal (2026-09-25): the three device-face subscriptions moved verbatim
+  // into ensureDeviceChatWiring() (see above) — one idempotent latch — so the
+  // settings-page device entry can arm the device chat WITHOUT flipping any
+  // friend-face wiring (initMessages' polling/handlers stay sealed out).
+  ensureDeviceChatWiring();
 
   renderList();
   if (loggedIn()) refreshConversations();
@@ -5248,6 +5270,102 @@ export function devicePeers() {
   const rel = getNeblinkState();
   if (!rel || !rel.loggedIn) return [];
   return dedupeDevices(rel.peers);
+}
+
+// ── Settings-page device expansion area (friendseal batch ①-A, 2026-09-25) ──
+// The device face's way back to the settings page (author ruling ①: the
+// expansion area under the settings avatar; the 2026-09-15 order that had
+// moved the device entry to the contacts panel is archived by the same
+// ruling). Form = reuse the contacts host's device block classes verbatim
+// (`.fm-nf-entry` entry row + `.neblink-peer` rows; friends.css /
+// neblink.css load unconditionally — zero new CSS, zero new view), with ONE
+// implementation: this module owns devicePeers / deviceLabel / openDeviceChat
+// and renders from them; contacts.js keeps its own host copy untouched
+// (zero diff — with the friends seal as the default that host simply never
+// renders). Rows carry NO remote-update entry (the settings area is the chat
+// entry face: click a row → openDeviceChat; the hotupdate entry stays owned
+// by the contacts host). sidebar.js mounts the slot via a lazy import (no new
+// static cycle) and the settings refresh tick re-mounts it, so peer/presence
+// changes keep the area current while settings is open.
+let settingsDevicesExpanded = true; // one click into a chat is the point (ruling ①)
+let settingsDevicesBound = false;
+
+/** The area's HTML ('' when logged out — the neblink logged-out hint above
+ *  owns that face). Dataset attributes are the QA assertion face (same
+ *  contract family as the contacts device block). */
+export function settingsDevicesHTML() {
+  if (!getNeblinkState().loggedIn) return '';
+  const devs = devicePeers();
+  const chevron = settingsDevicesExpanded ? 'chevron-down' : 'chevron-right';
+  const entry =
+    `<div class="fm-nf-entry fm-devices-entry" data-settings-devices-entry="1" role="button" tabindex="0"` +
+    ` aria-expanded="${settingsDevicesExpanded}">` +
+    `<span class="fm-nf-icon"><i data-lucide="laptop"></i></span>` +
+    `<span class="fm-nf-label">${escapeHtml(t('contacts.sectionDevices'))}</span>` +
+    `<span class="fm-nf-chevron"><i data-lucide="${chevron}"></i></span>` +
+    `</div>`;
+  let rows = '';
+  if (settingsDevicesExpanded) {
+    const list = devs.length === 0
+      ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
+      : devs.map(settingsDeviceRowHTML).join('');
+    rows = `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
+  }
+  return entry + rows;
+}
+
+function settingsDeviceRowHTML(d) {
+  const icon = platformDisplay(d.platform).icon;
+  const statusText = escapeHtml(platformDisplay(d.platform).text || '');
+  const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
+  return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
+    `<span class="neblink-peer-icon">${icon}</span>` +
+    `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
+    presenceBadgeHTML({ ...d, isLocal: false }) +
+    `<span class="neblink-peer-status">${statusText}</span>` +
+    `</div>`;
+}
+
+/** Mount (idempotent) the settings device area into the sidebar slot. */
+export function mountSettingsDevices(slot) {
+  if (!slot) return;
+  bindSettingsDevicesOnce();
+  slot.innerHTML = settingsDevicesHTML();
+  createIconsIn(slot);
+}
+
+function bindSettingsDevicesOnce() {
+  if (settingsDevicesBound) return;
+  settingsDevicesBound = true;
+  // Document-level delegation (the bindSettingsAccountEntry precedent in
+  // activityBar.js): the settings refresh tick replaces this area's DOM on
+  // every beat, so binding per-mount would stack listeners; one delegated
+  // pair follows re-renders for free.
+  document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    const row = target.closest('[data-settings-device-row]');
+    if (row) {
+      const d = devicePeers().find((p) => String(p.deviceId || '') === row.dataset.deviceId);
+      if (!d) return;
+      ensureDeviceChatWiring();
+      openDeviceChat(d);
+      return;
+    }
+    if (target.closest('[data-settings-devices-entry]')) {
+      settingsDevicesExpanded = !settingsDevicesExpanded;
+      mountSettingsDevices(document.getElementById('settings-devices-slot'));
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    if (target.closest('[data-settings-device-row]') || target.closest('[data-settings-devices-entry]')) {
+      e.preventDefault();
+      target.click();
+    }
+  });
 }
 
 /** 本机设备 id（MVP-2 方向重算 P2 的**比对基准**）。

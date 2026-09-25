@@ -474,10 +474,10 @@ export default {
   'login.openPage': '打开登录页',
   // 登录入口 / 登录面板（2026-09-16 登录入口批）：面板文案此前是 activityBar.js
   // 注入样式一族的硬编码中文字面量，本批整体搬进 i18n（zh/en 成对，禁死键）。
-  'login.title': '登录 nebflow 账号',
+  'login.title': '登录 nebflow，连接你的其他设备',
   'login.starting': '正在启动登录…',
-  'login.hintBrowser': '在浏览器中登录 nebflow 账号以连接此设备',
-  'login.hintAuthorize': '在浏览器中完成授权以连接此设备',
+  'login.hintBrowser': '在浏览器中登录 nebflow 账号，此设备即与账号下的其他设备互联',
+  'login.hintAuthorize': '在浏览器中完成授权，此设备即与账号下的其他设备互联',
   'login.reopenAuthPage': '重新打开登录页面',
   'login.openAuthPage': '打开授权页面',
   'login.switchAccount': '使用其他账号登录',

@@ -53,7 +53,12 @@ class AgentConvergenceSpec extends FunSuite:
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
       "Glob", "Grep", "Bash", "Write", "Edit"
     )
-    assertEquals(delivered, expected,
+    // friendseal (2026-09-25): flag-aware expectation — the literal above stays
+    // UNTOUCHED; the sealed default strips ListFriends at the single delivery point
+    // (AgentCore.friendsSealedStrip), so the expected face removes the same entry
+    // only when the latch reads sealed on this snapshot. Never a bare number.
+    val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
+    assertEquals(delivered, expected -- sealStrip,
       "the tool list Nebula exposes to the LLM must equal the fixed §C.1 matrix entry by entry (the count is single-sourced from AgentCore.NebulaOrchestrationToolsExpectedSize: in flight 17 = the value after the 2026-09-18 18:18 author order +Bash/Edit/Write/Glob/Grep; history: friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal; the two patches -Glob -Grep and -Delegate are prior facts; taskunify merge batch 2026-09-24 merged TaskList + TaskBoard into the single Task => net count 0, still 17; zero Issue)")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含

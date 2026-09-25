@@ -85,8 +85,10 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
-    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）")
+    // friendseal (2026-09-25): flag-aware via the single derivation point —
+    // constant − (sealed ? 1 : 0), computed from this same fixed-set snapshot.
+    assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed),
+      "Nebula 机制集件数 == 单点常量按 friendseal 封存态派生（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值，封存期交付面 = 17 − 1）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(AgentCore.NebulaOrchestrationTools.size, 17,

@@ -50,6 +50,19 @@ class GroupSendMessageSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 120.seconds
 
+  // friendseal flag injection (2026-09-25): this suite pins the GROUP-LEG behavior
+  // face (group addressing/error vocabulary/ask-confirm chain), which the seal
+  // closes by default. Lift the latch for the whole suite with the ref-counted kit
+  // primitives; suites run sequentially (Test / parallelExecution := false), so this
+  // lift never races the sealed-default assertions elsewhere.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    nebflow.core.FriendsSeal.testUnseal()
+
+  override def afterAll(): Unit =
+    try super.afterAll()
+    finally nebflow.core.FriendsSeal.testReseal()
+
   // ── 群表 / 群发的标准应答（形态逐字取自跨仓 `model.rs` / `groups.rs`）─────
 
   private val GroupsJson: String =

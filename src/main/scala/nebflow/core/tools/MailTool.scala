@@ -109,11 +109,26 @@ object MailTool extends Tool:
   val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
 
-  /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only). */
-  private[tools] val targetMissingMessage: String =
+  /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
+    *
+    * friendseal batch (2026-09-25): the tail pointer is SEAL-AWARE. With the
+    * friends feature sealed (the default posture), SendMessage's friend/group/
+    * local targets — including the this-machine local copy — answer
+    * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
+    * explicitly; unsealed, the original sentence is kept verbatim (zero
+    * behavior change while the flag is on). `def` (not `val`): the latch is a
+    * boot-time constant, but this word table must follow it without a second
+    * source. */
+  private[tools] def targetMissingMessage: String =
     s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team/project target — e.g. " +
       "\"project:<name>\", a team name, or a member short name). The former 'device' parameter is " +
-      "retired (MAIL_DEVICE_RETIRED); files for another machine's user go via SendMessage."
+      "retired (MAIL_DEVICE_RETIRED); " +
+      (if nebflow.core.FriendsSeal.isSealed then
+         "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
+           "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
+           "feature is unsealed."
+       else
+         "files for another machine's user go via SendMessage.")
 
   /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */
   private[tools] def deviceLegRetiredError(device: String): ToolError =
