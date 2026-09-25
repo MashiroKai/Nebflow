@@ -7,6 +7,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.util.ProcessTree
 import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.shared.Retry
 
 import java.io.{BufferedReader, InputStreamReader}
 import java.util.concurrent.locks.ReentrantLock
@@ -495,11 +496,25 @@ final class DaemonService(
           end if
     }
 
-  /** Exponential backoff: base * 2^(attempt-1), capped at MaxBackoffDelay. */
-  private def backoffDelay(attempt: Int, baseSec: Int): FiniteDuration =
+  /**
+   * Exponential backoff: base * 2^(attempt-1), capped at MaxBackoffDelay.
+   *
+   * Phase 3 去重(行为保持重构,2026-09-25):延迟计算复用 shared Retry.delayAfter
+   * (初值 base、×2、上限封顶、无抖动)。原式的指数封顶 32× base
+   * (min(attempt-1, 5),cap exponential growth at 32x base)在公共层无独立轴,
+   * 等价表达为把 maxDelay 收紧到 min(MaxBackoffDelay, 32×base):attempt-1 ≤ 5
+   * 时 base×2^(attempt-1) ≤ 32×base 不触收紧;attempt-1 > 5 时公共层同样钳在
+   * 32×base——与原式逐值相等(DaemonBackoffDelaySpec 钉住)。可见性放宽到
+   * private[daemon] 供该 spec 直测;监督/轮询循环本体不动。
+   */
+  private[daemon] def backoffDelay(attempt: Int, baseSec: Int): FiniteDuration =
     val base = math.max(1, baseSec)
-    val exp = math.min(attempt - 1, 5) // cap exponential growth at 32x base
-    (base.toLong * math.pow(2, exp).toLong).seconds.min(MaxBackoffDelay)
+    Retry.delayAfter(
+      initialDelay = base.seconds,
+      failedAttemptNo = attempt,
+      multiplier = 2.0,
+      maxDelay = (base.toLong * 32L).seconds.min(MaxBackoffDelay)
+    )
 
   /** Start the active health-check fiber for a daemon with a configured port. */
   private def startHealthMonitor(config: DaemonConfig, process: Process): IO[Unit] =

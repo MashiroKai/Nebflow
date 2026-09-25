@@ -30,9 +30,19 @@ import scala.concurrent.duration.*
  *    (multiplier=1.0)。
  *  - gateway/TurnEndpoint.scala:144-159 readTurnResult —— 固定 200ms 轮询 ×25、
  *    耗尽降级返回空值不抛;值轮询模型(isSuccess 谓词)。**可表达**。
- *  - core/daemon/DaemonService.scala:499-502 backoffDelay —— 纯延迟函数
- *    base×2^(attempt-1) cap 60s,监督循环用;循环本体是监督/轮询形状非请求重试,
- *    迁移时只可复用延迟参数面,不动循环。
+ *  - core/daemon/DaemonService.scala backoffDelay —— 纯延迟函数
+ *    base×2^(attempt-1)(base=max(1,restartBackoffSec)),指数封顶 32×base、延迟
+ *    封顶 60s,无抖动。**已迁**:延迟计算走 [[delayAfter]](指数封顶在公共层无
+ *    独立轴,等价表达为 maxDelay=min(60s, 32×base),逐值相等);监督/轮询循环
+ *    本体(lowRateTakeover / maybeAutoRestart / monitorHealth)非请求重试形状,
+ *    保留原样。DaemonBackoffDelaySpec 钉住(DaemonSpec 生命周期测试全 .ignore,
+ *    该纯函数此前零活跃覆盖)。
+ *  - agent/BackoffSupervisor.scala restartDelayMs —— crash 重启退避:指数部分
+ *    min(minBackoff×2^n) 封顶 maxBackoff 走 [[delayAfter]];抖动 [0,1000)ms 在
+ *    封顶**之后**相加(总延迟可超 maxBackoff 至多 999ms,与 Additive「先加抖动
+ *    再封顶」不同)留站点;监督循环本体(actor watch/Terminated、重启计数、
+ *    消息重注入、maxRestarts 放弃)是 IO 重试组合子的超集,保留原样。
+ *    BackoffSupervisorRestartDelaySpec 钉住。
  *
  * 两轴约定:失败模型上,IO 异常模型走 [[AttemptFailure.Errored]],Either/值轮询
  * 模型走 [[AttemptFailure.Unsuccessful]](isSuccess 谓词判失败);预算语义上,
@@ -158,15 +168,31 @@ object Retry:
   end retryWithBackoff
 
   /**
+   * 第 n 次尝试失败后的退避延迟(纯函数)——监督/轮询循环**只复用延迟参数面**时
+   * 的公共入口(DaemonService.backoffDelay / BackoffSupervisor.restartDelayMs;
+   * 循环本体不迁,见 object Retry 站点表):
+   * min(initialDelay × multiplier^(failedAttemptNo-1) + 抖动, maxDelay),钳 ≥0。
+   * 与 retryWithBackoff 内部同一实现(私有 backoffDelay 委托到此)。
+   */
+  def delayAfter(
+    initialDelay: FiniteDuration,
+    failedAttemptNo: Int,
+    multiplier: Double = 1.0,
+    maxDelay: FiniteDuration = 1.day,
+    jitter: Jitter = Jitter.Disabled
+  ): FiniteDuration =
+    val baseNanos = initialDelay.toNanos.toDouble * math.pow(multiplier, failedAttemptNo - 1)
+    val withJitterNanos = jitter match
+      case Jitter.Disabled => baseNanos
+      case Jitter.Additive(bound, nextDouble) => baseNanos + bound.toNanos.toDouble * nextDouble()
+    val cappedNanos = math.min(withJitterNanos, maxDelay.toNanos.toDouble)
+    math.max(0.0, cappedNanos).toLong.nanos
+
+  /**
    * 第 n 次尝试失败后的退避延迟(纯函数):
    * min(initialDelay × multiplier^(n-1) + 抖动, maxDelay),钳 ≥0。
    */
   private def backoffDelay(policy: Policy[?], failedAttemptNo: Int): FiniteDuration =
-    val baseNanos = policy.initialDelay.toNanos.toDouble * math.pow(policy.multiplier, failedAttemptNo - 1)
-    val withJitterNanos = policy.jitter match
-      case Jitter.Disabled => baseNanos
-      case Jitter.Additive(bound, nextDouble) => baseNanos + bound.toNanos.toDouble * nextDouble()
-    val cappedNanos = math.min(withJitterNanos, policy.maxDelay.toNanos.toDouble)
-    math.max(0.0, cappedNanos).toLong.nanos
+    delayAfter(policy.initialDelay, failedAttemptNo, policy.multiplier, policy.maxDelay, policy.jitter)
 
 end Retry
