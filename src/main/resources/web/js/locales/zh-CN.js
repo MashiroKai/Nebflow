@@ -944,12 +944,9 @@ export default {
   // from_device 显示名）。
   'deviceMail.fromDevice': '来自 {device} 的 Nebula',
   'deviceMail.injectFailed': '来自 {device} 的跨设备 Nebula 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
-  // Mail 类型角标（显示层中文化；协议字段值保持英文）
-  'mailType.INFO': '信息',
-  'mailType.FOLLOW_UP': '后续任务',
-  'mailType.PARALLEL': '并行',
-  'mailType.INTERRUPT': '打断',
-  'mailType.RESULT': '结果',
+  // mailmodel batch (2026-09-25): the mailType.* label table is removed — the Mail
+  // tool's `type` parameter is retired, and pending-mail badges render the protocol
+  // raw value directly (flowViewers.js).
   'mailFlow.noBody': '（无正文）',
   'mailFlow.renderFailed': '（正文渲染失败：{msg}）',
 

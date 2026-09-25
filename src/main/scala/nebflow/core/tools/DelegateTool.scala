@@ -278,7 +278,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
                   parentSessionId = ctx.sessionId,
                   safetyMode = safetyMode,
                   rootSessionId = rootSid
-                )
+                ).map(_.map(_._2))
               }
         yield result
         end for
@@ -286,6 +286,70 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
         IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
   end spawnKernel
 
+  // ============================================================
+  // mailmodel batch (2026-09-25, author ruling (b) "Kernel is Nebula-exclusive; Mail
+  // triggers Kernel via the Nebula-only address leg; the dispatch receipt carries a
+  // follow-up address"): the Delegate dispatch path is opened for reuse by the
+  // engine-side Mail leg. This entry shares the SAME spawn chain as [[call]] (same
+  // kernel def resolution, same R9 concurrency gate, same BackoffSupervisor adapter
+  // and budget); the only two differences: (1) the caller is MailTool (Nebula's Mail
+  // `kernel` leg); (2) the return value is the **subagentId** (the receipt must carry
+  // the follow-up address `kernel:<id>`, which Delegate's ack text does not include).
+  // Rejecting non-Nebula callers happens at MailTool's address gate — this layer does
+  // not re-check the role (single-point discipline: SenderRole is decided only in
+  // MailTool.roleOf).
+  // ============================================================
+
+  /** Engine-side entry of the Mail -> Kernel trigger leg: spawns one kernel instance
+    * and returns its session id (`delegate-kernel-<8hex>`). The result-return chain is
+    * unchanged: BackoffSupervisor (source="delegate") delivers the instance's result
+    * to the parent session (= Nebula root) at terminal state. */
+  private[tools] def spawnKernelForMail(
+      task: String,
+      description: String,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    (ctx.actorSystem, ctx.sharedResources) match
+      case (Some(system), Some(resources)) =>
+        val callerRootIO = ctx.sessionId match
+          case Some(sid) =>
+            resources.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+          case None => IO.pure("")
+        resolveKernelDef(ctx).flatMap {
+          case Left(err) => IO.pure(Left(err))
+          case Right(defn) =>
+            for
+              rootSid <- callerRootIO
+              safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
+              quota <- concurrencyCheck(resources, rootSid)
+              spawned <- quota match
+                case Left(err) => IO.pure(Left(err))
+                case Right(_) =>
+                  IO.blocking(java.nio.file.Files.createTempDirectory("nb-kernel-")).flatMap { workRoot =>
+                    spawnBackground(
+                      agentDef = defn,
+                      task = task,
+                      description = description,
+                      workRoot = workRoot.toString,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode,
+                      rootSessionId = rootSid
+                    ).map(_.map(_._1))
+                  }
+            yield spawned
+            end for
+        }
+      case _ =>
+        IO.pure(Left(ToolError("Cannot start a kernel instance: ActorSystem / SharedResources unavailable.")))
+
+  /** Spawn one background kernel instance. Returns `(subagentId, ack)` — the id is the
+    * continuation-address payload for the Mail `kernel:` leg (mailmodel batch 2026-09-25,
+    * ruling (b): the receipt carries the address a later Mail continues from). */
   private def spawnBackground(
     agentDef: AgentDef,
     task: String,
@@ -299,7 +363,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
     parentSessionId: Option[String] = None,
     safetyMode: String = "confirm-edits",
     rootSessionId: String = ""
-  ): IO[Either[ToolError, String]] =
+  ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
     val subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
@@ -382,6 +446,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         )
         .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
       _ <- subagentRef ! AgentCommand.UserInput(brief, Some(adapterRef))
-    yield Right(ack)
+    yield Right((subagentId, ack))
 
 end DelegateTool

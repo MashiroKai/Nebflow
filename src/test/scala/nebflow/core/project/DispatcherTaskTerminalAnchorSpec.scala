@@ -36,8 +36,10 @@ import scala.concurrent.duration.*
  *     session is really registered, its first turn really ran, and the live count reads 1);
  *  ⑥ the **default-value leg**: with no override (`maxConcurrent = None` ⇒ read-through to
  *     `Defaults.DispatcherMaxConcurrentSessions`) the passing side still holds, and the default
- *     is **pinned to 1** (the "keep the current singleton semantics" guard — without this
- *     assertion a silent change of the default to 2/0 would never turn any test red);
+ *     is **pinned to 0** (the "one task one dispatcher" guard — mailmodel batch 2026-09-25
+ *     ruling (a) moved the default 1 → 0: with per-task dispatcher slots a project-wide cap
+ *     would refuse the second task's dispatcher; 0 = gate off; without this assertion a
+ *     silent change of the default would never turn any test red);
  *  ⑦ the **`≤0` zero-cost bypass** (behaviour face of "gate off"): `maxConcurrent = Some(0)` ⇒
  *     **zero** `dispatcher-concurrency-refused` events and the session **really spawns**.
  *
@@ -422,14 +424,16 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
     }
   }
 
-  // ── (5b) the default-value leg: no override ⇒ read-through default, pinned to 1 ──
+  // ── (5b) the default-value leg: no override ⇒ read-through default, pinned to 0 ──
 
-  test("(5b) default-value leg: maxConcurrent = None (no helper override) ⇒ the read-through default applies to the passing side, and the default itself is pinned to 1 (the singleton-semantics guard)") {
-    // the pin: `1` is the implementation's chosen value with no explicit author order on
-    // record; without this assertion, silently changing the default to 2/0 would never turn
-    // any test red ⇒ the "keep the current singleton semantics" basis loses its guard.
-    assertEquals(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions, 1,
-      "Defaults.DispatcherMaxConcurrentSessions must stay 1 (one active dispatcher per project — the current singleton semantics; changing this default is a behaviour-visible change that must be declared)")
+  test("(5b) default-value leg: maxConcurrent = None (no helper override) ⇒ the read-through default applies to the passing side, and the default itself is pinned to 0 (the one-task-one-dispatcher guard)") {
+    // the pin (mailmodel batch 2026-09-25, ruling (a)): the default moved 1 → 0 — with the
+    // per-task slot model landed, the old project-wide singleton cap would refuse the second
+    // task's dispatcher, which contradicts "one task gets its own dispatcher session". 0 =
+    // gate off = unlimited; the prop override stays the explicit-cap escape hatch. Without
+    // this assertion, silently moving the default again would never turn any test red.
+    assertEquals(nebflow.shared.Defaults.DispatcherMaxConcurrentSessions, 0,
+      "Defaults.DispatcherMaxConcurrentSessions must stay 0 (one task one dispatcher — the per-task slot model made the project-wide cap a wrong-task refusal; changing this default is a behaviour-visible change that must be declared)")
     val ws = tempRoot / "ws-cap-default"
     os.makeDir.all(ws)
     val system = ActorSystem(s"anchor-capdef-${scala.util.Random.nextInt(100000)}")
@@ -437,7 +441,7 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
       for
         llm <- IO.pure(new RecordingLlm)
         resources <- mkResources(system, tempRoot, llm.handle)
-        // maxConcurrent = None ⇒ underConcurrencyCap reads through Defaults (== 1, asserted above)
+        // maxConcurrent = None ⇒ underConcurrencyCap reads through Defaults (== 0, asserted above)
         rt <- mount("anchor-capdef-proj", ws, system, resources, Some(3600_000L), Some(true), None)
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         tid = newTask("task-F")
@@ -451,9 +455,9 @@ class DispatcherTaskTerminalAnchorSpec extends CatsEffectSuite:
       yield
         // gate off ⇒ the first spawn is allowed; exactly one session lives afterwards
         assertEquals(sidAfter, List(sid1),
-          "under the read-through default (1) with 0 active, the first spawn is allowed and exactly one session lives")
+          "under the read-through default (0 = gate off) the first spawn is allowed and exactly one session lives")
         assertEquals(events.count(_.contains("\"type\":\"dispatcher-concurrency-refused\"")), 0,
-          "under the read-through default (1) with 0 active there must be zero refusal events")
+          "under the read-through default (0 = gate off) there must be zero refusal events")
     }
   }
 

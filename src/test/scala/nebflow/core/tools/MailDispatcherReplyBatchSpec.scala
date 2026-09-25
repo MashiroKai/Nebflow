@@ -5,104 +5,108 @@ import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 
 /**
- * mailack 批（2026-09-23 作者令「任务分发器就没停过，一直在收 Mail」）· **B/C 面判据**。
+ * mailack batch (2026-09-23, author order "the task dispatcher never stopped, it kept
+ * receiving Mail") - the B/C face criteria. Re-pinned by the mailmodel batch (2026-09-25):
+ * the `type` parameter of the Mail tool is retired, so the dispatcher-reply batching
+ * window no longer carries a per-entry mail type. The P0 (dispatcher-to-root) packing-window
+ * exemption is now judged on the **body's first-line `[INTERRUPT]` literal**
+ * (`MailTool.isDispatcherMailInterrupt`) — a mechanism, not a message type; the merged
+ * entry is always injected with eventType `info`.
  *
- * 审计结论（`.nebflow` 外件 `20260923_184500_mail-behavior-audit.md`）：分发器→root 的
- * 回复是**逐件立即注入** ⇒ root 醒一轮、再发令又触发分发器 ⇒ **级联率实测 100%**
- * （root 40 封中 39 封在收执后 3 分钟内被再触发）、双向 20.9 封/小时、分发器回执
- * **73% 纯 ACK**。本批给**这条腿**加生产者侧打包窗（形态照 `NodeEngine.RootNotifyBatch`
- * 既有先例），并加背压可见化。
+ * This file pins (each mechanically decidable and able to turn red):
+ *   1. **Merge**: N entries into the window => exactly ONE injection (N>=2 sections the
+ *      body, every entry's full text still present);
+ *   2. **Order + no loss**: FIFO within a batch, cross-batch order == enqueue order;
+ *      overflow (beyond `max`) stays queued for the next window;
+ *   3. **Exemption + closed window**: a first-line `[INTERRUPT]` literal and `windowMs <= 0`
+ *      both bypass the window (Some) => the old behaviour stays reachable;
+ *   4. **Literal polarity**: only the FIRST non-empty line, exact-case `[INTERRUPT]`
+ *      triggers the exemption — a later line or a lowercase variant must NOT.
  *
- * 本文件钉三条（每条都机械可判、且能红）：
- *   1. **合并**：N 件入窗 ⇒ **一次**注入（N≥2 时正文分节、每件全文仍在）；
- *   2. **保序 + 不丢**：批内 FIFO、批间拼接序 == 入队顺序；溢出（超 `max`）留队下窗；
- *   3. **豁免 + 关窗**：`interrupt` 腿与 `windowMs <= 0` **不进窗**（= 旧行为可回滚）。
- *
- * 红侧（变异）：把 `flushDispatcherReplies` 的 `splitAt` 上限改成 1（等于永不合并）⇒
- * 面 1 的「一次注入」当场红；把 `isDispatcherMailInterrupt` 判据去掉 ⇒ 面 3 红。
+ * Red side (mutation): change `flushDispatcherReplies`'s `splitAt` cap to 1 (= never merge)
+ * => face 1 turns red; drop the `isDispatcherMailInterrupt` check => faces 3/4 turn red.
  */
 class MailDispatcherReplyBatchSpec extends FunSuite:
 
-  private def drain(): IO[List[String]] =
-    MailTool.dispatcherMailPendingCount.map(_ => Nil)
-
   override def beforeEach(context: munit.BeforeEach): Unit =
-    // 每用例前清空缓冲（进程内 Ref 单点，跨 suite 会污染）
+    // clear the in-process buffer before each case (single Ref, shared across suites)
     MailTool.flushDispatcherReplies().unsafeRunSync()
 
-  test("A · 空窗 flush 是零动作（不注入、不报错）"):
+  test("A · empty-window flush is a no-op (no injection, no error)"):
     MailTool.flushDispatcherReplies().unsafeRunSync()
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0)
 
-  test("B · 入窗后件在缓冲中、窗口未闭合前不注入（pending 计数可见）"):
+  test("B · entry sits in the buffer and is NOT injected before the window closes (pending count visible)"):
     val captured = scala.collection.mutable.ListBuffer.empty[String]
     val deliver: String => IO[Unit] = t => IO { captured += t; () }
-    val r = MailToolTestAccess.enqueue("hello-1", "info", deliver).unsafeRunSync()
-    assertEquals(r, None, "入窗 ⇒ None（调用方按「已受理、窗末投递」回报）")
+    val r = MailToolTestAccess.enqueue("hello-1", deliver).unsafeRunSync()
+    assertEquals(r, None, "queued => None (the caller reports accepted, delivered at window end)")
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 1)
     assert(MailTool.dispatcherMailWindowArmed.unsafeRunSync())
-    assertEquals(captured.toList, Nil, "窗未闭合 ⇒ 尚未注入")
+    assertEquals(captured.toList, Nil, "window still open => not yet injected")
     MailTool.flushDispatcherReplies().unsafeRunSync()
-    assertEquals(captured.toList, List("hello-1"), "窗末 ⇒ 恰一次注入，正文逐字不变（N=1）")
+    assertEquals(captured.toList, List("hello-1"), "window end => exactly one injection, body verbatim (N=1)")
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0)
 
-  test("C · N 件合并为一次注入 + 每件全文仍在 + 保序"):
+  test("C · N entries merge into ONE injection + every entry's full text present + order kept"):
     val captured = scala.collection.mutable.ListBuffer.empty[String]
     val deliver: String => IO[Unit] = t => IO { captured += t; () }
     (1 to 3).foreach { i =>
-      MailToolTestAccess.enqueue(s"body-$i", if i == 2 then "failed" else "info", deliver).unsafeRunSync()
+      MailToolTestAccess.enqueue(s"body-$i", deliver).unsafeRunSync()
     }
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 3)
     MailTool.flushDispatcherReplies().unsafeRunSync()
-    assertEquals(captured.size, 1, "N 件 ⇒ 一次注入（本批核心读数）")
+    assertEquals(captured.size, 1, "N entries => one injection (the core reading of this batch)")
     val merged = captured.head
-    assert(merged.contains("body-1") && merged.contains("body-2") && merged.contains("body-3"), "每件正文全文仍在（不折叠不丢）")
-    assert(merged.indexOf("body-1") < merged.indexOf("body-2"), "批内保序")
-    assert(merged.indexOf("body-2") < merged.indexOf("body-3"), "批内保序")
+    assert(merged.contains("body-1") && merged.contains("body-2") && merged.contains("body-3"), "every entry's full text survives (no folding, no loss)")
+    assert(merged.indexOf("body-1") < merged.indexOf("body-2"), "in-batch order kept")
+    assert(merged.indexOf("body-2") < merged.indexOf("body-3"), "in-batch order kept")
 
-  test("D · 溢出留队下窗（不丢件）——上限 1 时逐窗各注入一件"):
+  test("D · overflow stays queued for the next window (no entry lost) — max=2 injects two per window"):
     val captured = scala.collection.mutable.ListBuffer.empty[String]
     val deliver: String => IO[Unit] = t => IO { captured += t; () }
-    (1 to 3).foreach(i => MailToolTestAccess.enqueue(s"x$i", "info", deliver).unsafeRunSync())
+    (1 to 3).foreach(i => MailToolTestAccess.enqueue(s"x$i", deliver).unsafeRunSync())
     MailToolTestAccess.flushWithMax(2).unsafeRunSync()
-    assertEquals(captured.size, 1, "第一窗一次注入")
+    assertEquals(captured.size, 1, "first window: one injection")
     assert(captured.head.contains("x1") && captured.head.contains("x2"))
-    assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 1, "溢出件留队")
+    assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 1, "the overflow entry stays queued")
     MailTool.flushDispatcherReplies().unsafeRunSync()
-    assertEquals(captured.size, 2, "第二窗取剩余件")
-    assert(captured.last.contains("x3"), "溢出件未丢")
+    assertEquals(captured.size, 2, "second window takes the remainder")
+    assert(captured.last.contains("x3"), "the overflow entry was not lost")
     assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0)
 
-  test("E · P0 豁免：interrupt 腿不进缓冲（旁路 ⇒ Some，立即注入路径）"):
+  test("E · P0 exemption: a first-line [INTERRUPT] literal bypasses the buffer (Some => immediate-injection path)"):
     val captured = scala.collection.mutable.ListBuffer.empty[String]
     val deliver: String => IO[Unit] = t => IO { captured += t; () }
-    val r = MailToolTestAccess.enqueue("urgent", "interrupt", deliver).unsafeRunSync()
-    assertEquals(r, Some("urgent"), "interrupt ⇒ 旁路（调用方走立即注入）")
-    assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0, "不进缓冲")
-    assertEquals(captured.toList, Nil, "本层不注入（由调用点立即路径负责）")
+    val r = MailToolTestAccess.enqueue("[INTERRUPT]\nurgent body", deliver).unsafeRunSync()
+    assertEquals(r, Some("[INTERRUPT]\nurgent body"), "first-line [INTERRUPT] => bypass (the caller walks the immediate path)")
+    assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0, "never enters the buffer")
+    assertEquals(captured.toList, Nil, "this layer does not inject (the call site's immediate path is responsible)")
 
-  test("F · 关窗（windowMs <= 0）⇒ 全部旁路，等同旧行为"):
+  test("F · closed window (windowMs <= 0) => everything bypasses, equal to the old behaviour"):
     MailToolTestAccess.withWindowMs(0L) {
       val captured = scala.collection.mutable.ListBuffer.empty[String]
       val deliver: String => IO[Unit] = t => IO { captured += t; () }
-      val r = MailToolTestAccess.enqueue("legacy", "info", deliver).unsafeRunSync()
-      assertEquals(r, Some("legacy"), "关窗 ⇒ 旁路（回滚面）")
+      val r = MailToolTestAccess.enqueue("legacy", deliver).unsafeRunSync()
+      assertEquals(r, Some("legacy"), "closed window => bypass (the rollback face)")
       assertEquals(MailTool.dispatcherMailPendingCount.unsafeRunSync(), 0)
     }
 
-  test("G · 合并件 eventType 保守（强提醒优先 failed > blocked > 首件）"):
-    val deliver: String => IO[Unit] = _ => IO.unit
-    MailToolTestAccess.enqueue("a", "info", deliver).unsafeRunSync()
-    MailToolTestAccess.enqueue("b", "failed", deliver).unsafeRunSync()
-    assertEquals(MailToolTestAccess.mergedType(List("info", "failed")), "failed")
-    assertEquals(MailToolTestAccess.mergedType(List("info", "blocked")), "blocked")
-    assertEquals(MailToolTestAccess.mergedType(List("info", "info")), "info")
-    MailTool.flushDispatcherReplies().unsafeRunSync()
+  test("G · [INTERRUPT] literal polarity: first non-empty line only, exact case — later lines and lowercase do NOT bypass"):
+    // positive: the first non-empty line, trimmed, exact
+    assert(MailTool.isDispatcherMailInterrupt("[INTERRUPT]\nbody"), "exact first line must match")
+    assert(MailTool.isDispatcherMailInterrupt("\n  [INTERRUPT]  \nbody"), "blank leading lines are skipped; trim applies")
+    // negative: the literal on a LATER line is ordinary text (never bypasses)
+    assert(!MailTool.isDispatcherMailInterrupt("plain reply\n[INTERRUPT]"), "a later line must NOT trigger the exemption")
+    // negative: case-sensitive — the lowercase variant is ordinary text
+    assert(!MailTool.isDispatcherMailInterrupt("[interrupt]\nbody"), "lowercase must NOT trigger the exemption")
+    // negative: not a prefix/suffix match — adjacent characters break the literal
+    assert(!MailTool.isDispatcherMailInterrupt("[INTERRUPT] now"), "adjacent text breaks the literal")
 
-/** 测试接缝：`private[tools]` 面直调（与 `MailQueueNebulaSpec` 等既有先例同款）。 */
+/** Test seam: direct `private[tools]` face calls (same precedent as `MailQueueNebulaSpec`). */
 object MailToolTestAccess:
-  def enqueue(text: String, mailType: String, deliver: String => IO[Unit]): IO[Option[String]] =
-    MailTool.enqueueDispatcherReplyForTest(text, mailType, deliver)
+  def enqueue(text: String, deliver: String => IO[Unit]): IO[Option[String]] =
+    MailTool.enqueueDispatcherReplyForTest(text, deliver)
 
   def flushWithMax(n: Int): IO[Unit] =
     MailTool.flushDispatcherRepliesWithMaxForTest(n)
@@ -115,5 +119,19 @@ object MailToolTestAccess:
       if old == null then System.clearProperty("nebflow.mail.dispatcherBatchMs")
       else System.setProperty("nebflow.mail.dispatcherBatchMs", old)
 
-  def mergedType(types: List[String]): String =
-    MailTool.mergedDispatcherReplyTypeForTest(types)
+  /** IO-level bracket of `withWindowMs`: the prop is set before `io` RUNS and restored
+    * after it completes (the window length is read at enqueue time, so specs that drive
+    * the production `MailTool.call` with a dispatcher identity must close the window on
+    * the RUN, not around the IO construction). Absorbed from the mailunify branch's
+    * `withWindowClosed` technique (read-only inventory, mailmodel batch 2026-09-25). */
+  def withWindowMsIO[A](ms: Long)(io: IO[A]): IO[A] =
+    IO {
+      val old = System.getProperty("nebflow.mail.dispatcherBatchMs")
+      System.setProperty("nebflow.mail.dispatcherBatchMs", ms.toString)
+      old
+    }.flatMap { old =>
+      io.guarantee(IO {
+        if old == null then System.clearProperty("nebflow.mail.dispatcherBatchMs")
+        else System.setProperty("nebflow.mail.dispatcherBatchMs", old)
+      })
+    }

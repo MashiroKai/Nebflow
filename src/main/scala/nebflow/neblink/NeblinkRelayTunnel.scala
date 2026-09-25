@@ -1064,16 +1064,25 @@ private final class RelayWsListener(
               // 丢弃**（零日志）。这是「事件到了网关却什么都不发生」的最短路径，
               // 归因不可跳过 ⇒ 显式 WARN。
               //
-              // 跨设备 Nebula 邮件（device-mail 批，2026-09-15；契约 **v2.1**，12:57
-              // root 裁定）：设备邮件的收件**唯一入口** = 本事件流信封内
-              // `event.type == "agent_mail"` 的帧（实证形态：
-              // `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{…},"type":"agent_mail"}}`）。
-              // 它**不进** `FriendService`——那不是好友消息事件（进它会被当好友消息
-              // 解析/入账）⇒ 独占路由，单一入场、零双消费。载荷仍是同一份五键契约
-              // （`DeviceMail.parse` 逐字校验，fail-closed）。
-              // 契约 v2 时期的隧道顶层 `case "agent_mail"` 分支**已删**（禁双入口）。
+              // Cross-device Nebula mail (device-mail batch, 2026-09-15; contract
+              // **v2.1**): the sole intake entry used to be the `event.type ==
+              // "agent_mail"` frame inside this event-stream envelope.
+              // mailmodel batch (2026-09-25, ruling (e-1)): this intake leg is retired
+              // on BOTH ends in the same batch — the send side (the Mail tool's
+              // `device` parameter, refused by the MAIL_DEVICE_RETIRED tombstone) and
+              // this injection side go offline together. This branch stays as a
+              // retirement tombstone: an `agent_mail` frame => log WARN and ignore
+              // (it must NOT fall into `FriendService` — that would parse/credit it
+              // as a friend message; double consumption is worse than dropping);
+              // the payload is no longer parsed and no session is injected.
+              // `nebflow.neblink.DeviceMail*` objects remain only as tombstones (zero
+              // production callers).
               if DeviceMail.isAgentMailEnvelope(json) then
-                dispatcher.unsafeRunAndForget(DeviceMailInbox.handle(json))
+                logger.warnSync(
+                  "agent_mail frame ignored: the cross-device agent-mail intake leg was retired " +
+                    "on 2026-09-25 (mailmodel batch) — the sender side refuses with MAIL_DEVICE_RETIRED; " +
+                    f"frame dropped branch=agent_mail_retired conversationId=${conversationIdOfFrame(json).getOrElse("<none>")}"
+                )
               else
                 tunnel.friendService match
                   case Some(fs) =>

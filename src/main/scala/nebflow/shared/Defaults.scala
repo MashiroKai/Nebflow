@@ -393,15 +393,15 @@ object Defaults:
     * silent over-spawn, not a silent drop — the refusal text names the project, the current
     * concurrency, the cap and the way out). `<= 0` = **gate off** (fallback).
     *
-    * Value rationale: the current convention is "exactly one active dispatcher per project"
-    * (`activeRef` singleton + the singleton ruling) ⇒ the default `1` **preserves the
-    * current singleton semantics** (zero behavioural drift). Raising it is the multi-task
-    * concurrency shape, which also requires picking the session by task at the injection
-    * face (not done in this batch — see implplan §5 "the heaviest structural conflict",
-    * already registered as a structural precondition).
-    */
+    * Value rationale (mailmodel batch 2026-09-25, author ruling (a) "no upper limit,
+    * concurrency allowed"): the trigger model is now **one dispatcher per task** (per-taskId
+    * slot table — the old singleton precondition for raising the cap is gone), so the
+    * default moves **1 → 0**: `0` is the gate-off semantics = **unbounded** concurrency,
+    * bounded instead by the task-terminal anchor (teardown on terminal). The `sys.props`
+    * override (`nebflow.dispatcher.maxConcurrentSessions`) stays available as the anti-leak
+    * lever when a deployment needs a hard bound. */
   def DispatcherMaxConcurrentSessions: Int =
-    sys.props.getOrElse("nebflow.dispatcher.maxConcurrentSessions", "1").toInt
+    sys.props.getOrElse("nebflow.dispatcher.maxConcurrentSessions", "0").toInt
 
   /** 🔴 **Unified-ledger enable switch + uplink fail-closed gate** (taskunify merge batch
     * 2026-09-24; author Q2ⓐ "strict fail-closed" + implplan §10.3 hard requirement 3).
