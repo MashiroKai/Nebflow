@@ -43,6 +43,13 @@ import scala.concurrent.duration.*
  *      本文件以**三值逐字相等**钉住该读数（原始读数见交付报告与
  *      `.nebflow/evidence/20260917_mailparams/impl/`）。
  *
+ * mailmodel batch re-pin (2026-09-25, rulings (d)/(e)): the property set the schema
+ * test pins went 8 -> 6 (`device` and `type` keys retired), and the old "device leg
+ * keeps its own v2.1 queue contract" test is REPLACED: the whole device leg is retired,
+ * so a stale `device=` call now hits the MAIL_DEVICE_RETIRED tombstone BEFORE the
+ * delivery tombstone and before every routing gate (the tombstone order itself is
+ * the pin). Everything this file pinned about the `delivery` tombstone is unchanged.
+ *
  * 双向钉（改前 / 改后）：
  *   · **改前红侧** = mailparams 批落地**前**的树跑本文件 ⇒ 红（schema 里 `delivery` 键仍在、
  *     参数集合是 8 件 —— 本体 schema 面的两条断言当场红）；
@@ -104,25 +111,32 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def propsOf: JsonObject =
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
-  test("schema (mailparams batch re-pin + taskunify batch): the `delivery` key is retired from the schema; the property set is exactly 8 entries (7 + task) and excludes that key"):
+  test("schema (mailparams re-pin + taskunify `task` + mailmodel re-pin): the `delivery` key is retired from the schema; the property set is exactly 6 entries and excludes the retired keys"):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
     assert(
       !propsOf.keys.toSet.contains("delivery"),
-      s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams 批：参数面 8 → 7), got: ${propsOf.keys.toList.sorted}"
+      s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams batch), got: ${propsOf.keys.toList.sorted}"
     )
     // taskunify merge batch (2026-09-24): + `task` (optional; **no address-syntax
     // extension**) — when Mail targets a project it auto-creates a task / continues an
-    // existing open task, so the property face goes 7 → 8. This is a
-    // **behaviour-visible** change (already declared in the delivery result); apart
-    // from that key the other 7 entries are byte-for-byte unchanged.
+    // existing open task, so the property face grew by one.
+    // mailmodel batch (2026-09-25, rulings (d)/(e)): - `device` and - `type` — the
+    // cross-device leg and the five mail-type tags are retired both ways; the property
+    // face goes 8 → 6. This is a **behaviour-visible** change (declared: a stale
+    // `device=` call refuses with MAIL_DEVICE_RETIRED, a stale `type=` is ignored).
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "device", "message", "type", "chainId", "images", "attachments", "task"),
-      "the property set must be exactly the surviving parameters (7 after the mailparams batch + `task` from the taskunify batch)"
+      Set("address", "message", "chainId", "task", "images", "attachments"),
+      "the property set must be exactly the surviving parameters (6 after the mailmodel batch)"
     )
-    // 活能力面**必须在场**（禁顺带删活面：device / images / attachments 是当日刚落地的能力；
-    // 判据 = 仍是**对象形态**的已声明属性，不是仅名字在场）。
-    for k <- List("address", "device", "message", "type", "chainId", "images", "attachments", "task") do
+    assert(
+      !propsOf.keys.toSet.contains("device") && !propsOf.keys.toSet.contains("type"),
+      s"the `device` / `type` keys must be GONE from the schema (2026-09-25 mailmodel batch), got: ${propsOf.keys.toList.sorted}"
+    )
+    // The live capability faces MUST stay present (never delete live faces in
+    // passing: all six surviving keys are live capabilities; the criterion is that
+    // each is still a declared property in **object form**, not merely a name).
+    for k <- List("address", "message", "chainId", "task", "images", "attachments") do
       assert(
         propsOf(k).flatMap(_.asObject).nonEmpty,
         s"`$k` must still be a declared object property with its own face (live capability, untouched)"
@@ -218,25 +232,25 @@ class MailDeliveryRetireSpec extends FunSuite:
     assert(msg.contains("every Mail is delivered immediately"), s"the replacement semantics must be stated, got: $msg")
 
   // ============================================================
-  // 3. 设备腿：v2.1 拒 queue 契约逐字保持（禁为退役而翻已落契约）
-  //    mailparams 批对该腿**零改动**：它收到的仍是同一个旧值（现由墓碑读取转交）。
+  // 3. device leg (mailmodel batch 2026-09-25 re-pin): the whole leg is retired =>
+  //    the tombstone precedes everything; the old v2.1 "explicitly refuse queue"
+  //    contract died with the leg; the only possible read of `device=` now is
+  //    MAIL_DEVICE_RETIRED (fail-closed tombstone, ahead of the delivery tombstone
+  //    and every routing gate).
   // ============================================================
 
-  test("设备腿：v2.1「显式拒 queue」契约逐字保持 —— 自有字面量，不走退役文案"):
+  test("device leg (retired): a stale `device=` call refuses with MAIL_DEVICE_RETIRED — the device tombstone outranks the delivery tombstone and every routing gate"):
     val msg = rejectedMsg(
       MailTool.call(qJson("device" -> "KAI", "message" -> "hi", "delivery" -> "queue"), ctx()).unsafeRunSync(),
-      "设备腿"
+      "device leg"
     )
-    // 逐字相等（不是 contains）：本批对设备腿**零改动**，故契约文本逐字节钉死。
-    assertEquals(
-      msg,
-      "Device targets are always immediate — the peer's Nebula session is injected at its next turn boundary, " +
-        "so a serialized FIFO queue would only delay it. Drop delivery=queue."
-    )
-    assert(
-      !msg.contains(MailTool.ErrDeliveryQueueRetired),
-      "the device leg must keep its OWN contract text (the retirement guard sits AFTER the device branch)"
-    )
+    // The DEVICE tombstone fires first: the error carries the device retirement code,
+    // NOT the queue retirement code (even though delivery="queue" was also present).
+    assert(msg.contains(MailTool.ErrDeviceLegRetired), s"the stale device= call must hit the device tombstone, got: $msg")
+    assert(!msg.contains(MailTool.ErrDeliveryQueueRetired), s"the device tombstone sits BEFORE the delivery tombstone, got: $msg")
+    assert(msg.contains("retired"), s"the error must state the retirement, got: $msg")
+    assert(msg.contains("KAI"), s"the error must echo the offending device value, got: $msg")
+    assert(msg.contains("nothing was sent"), s"fail-closed: must declare zero side effects, got: $msg")
 
   // ============================================================
   // 4. 对照腿 + 残差读数：本闸只咬 queue 一个值；其余旧值 = 键被静默忽略

@@ -984,12 +984,9 @@ export default {
   // {device} = the peer's from_device display name).
   'deviceMail.fromDevice': 'Nebula from {device}',
   'deviceMail.injectFailed': 'Cross-device Nebula mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
-  // Mail type tag labels (protocol values stay English)
-  'mailType.INFO': 'Info',
-  'mailType.FOLLOW_UP': 'Follow-up',
-  'mailType.PARALLEL': 'Parallel',
-  'mailType.INTERRUPT': 'Interrupt',
-  'mailType.RESULT': 'Result',
+  // mailmodel batch (2026-09-25): the mailType.* label table was removed — the
+  // Mail tool's `type` parameter is retired; pending-mail tags render the raw
+  // protocol type (flowViewers.js).
   'mailFlow.noBody': '(no body)',
   'mailFlow.renderFailed': '(render failed: {msg})',
 

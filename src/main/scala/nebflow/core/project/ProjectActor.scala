@@ -314,7 +314,9 @@ object ProjectActor:
     * 同款跨层契约；前端 utils.isBgAgentId 硬编码同值）。 */
   val DispatcherSessionPrefix = "dispatcher-"
 
-  /** 活跃分发器会话登记（单例化裁定 2026-09-02）。spawn 时置位、观察桥终态时
+  /** Active dispatcher registration (mailmodel batch 2026-09-25: a **per-taskId slot
+    * table**, superseding the 2026-09-02 singleton ruling - one task one dispatcher).
+    * Set at spawn; cleared by the observer bridge at terminal state.
     * 清除（与 agentRegistry 同点清理）。pendingInjected = 已注入本会话但 turn
     * 尚未终结的件数：注入任务以 UserInput(replyTo=观察桥) 进入，**spawn 首条
     * prompt 也计 1 件**。
@@ -357,6 +359,41 @@ object ProjectActor:
 
   /** 桥侧消费计数只认后端定名的注入来源（Q2-B2 三分中的两个分发器入口源）。 */
   private val DispatcherInjectedSources: Set[String] = Set(SourceTask, SourceDispatch)
+
+  // ============================================================
+  // mailmodel batch (2026-09-25, plan 2 + the author's four rulings): **one task one
+  // dispatcher**. The active dispatcher registration moved from the singleton
+  // `Option[ActiveDispatcher]` to a **per-taskId slot table**
+  // `Map[String, ActiveDispatcher]` (plan card section 2.1):
+  //   - slot key = [[slotKey]] (a bound session = the bare task id; the transition keeps
+  //     **at most one** `taskId=None` slot keyed by the empty string - the landing slot
+  //     for unnumbered call faces such as the DispatchNotify return leg);
+  //   - session pick = look up the slot by taskId: hit => inject into THAT session;
+  //     miss => the existing spawn path (`spawnDispatcher` already takes taskId) creates
+  //     a fresh **bound** session = the empty-slot rebuild from the ledger (ledger
+  //     existence/terminal checks live in MailTool.routeToProject; the engine never
+  //     re-delivers on its own and never touches nodes);
+  //   - lifecycle = the task-terminal anchor applies per slot (task terminal => tear
+  //     down THAT slot); the idle window stays as the fallback leg;
+  //   - the concurrency-cap criterion keeps the **registry as its single counting
+  //     point** (see [[activeDispatcherCount]] - the "no second criterion" discipline:
+  //     slots and the registry correspond one-to-one in steady state, so recomputing
+  //     map.size would create a second counting source, and
+  //     DispatcherTaskTerminalAnchorSpec (4) already pins the registry single point as
+  //     the criterion's cause). Default = 0 (gate off = unlimited, ruling (a)).
+  // **Behaviour change (declared, not silent)**: an unnumbered `Mail(project:)` used to
+  // squeeze into the existing session under the singleton model; now it always creates
+  // a task + a session. Mitigation = the prompt-face receipt discipline (claim the task
+  // number on the first mail, carry it on continuations). The reentry leg picks its
+  // slot by `node.taskId` - task A's blocked reentry is never injected into task B's slot.
+  // ============================================================
+
+  /** Slot-key single point: a bound session = the bare task id (strip the `#` prefix,
+    * trim); unnumbered = the empty string (the transition's only None slot). EVERY
+    * slot-table read/write in this file MUST take its key through this function
+    * (no second key derivation - two copies always drift). */
+  private def slotKey(taskId: Option[String]): String =
+    taskId.map(_.stripPrefix("#").trim).filter(_.nonEmpty).getOrElse("")
 
   // `taskSummaryLine` / `batchSummaryLine` 同批删净（R2「一个 Mail 统一」批
   // 2026-09-12，R7-b）：二者唯一消费点 = 桥侧 turn 级自动投递的标注行，随
@@ -408,14 +445,17 @@ object ProjectActor:
     loop
 
   def apply(cfg: ProjectConfig): Behavior[ProjectCommand] =
-    // 单例化裁定（2026-09-02）：每项目同时至多一个活跃分发器会话。会话登记在
-    // activeRef（spawn 置位、观察桥终态清除）；TriggerDispatcher /
-    // ReenterDispatcher 到达时经 active.modify 原子 check-and-inject——有活跃
-    // 会话 → 注入排队（turn 边界消费），无 → spawn。check-then-spawn 在本单
-    // actor 内串行化（LocalActorRef 逐条处理，上一条 handler IO 跑完才取下一
-    // 条）+ modify 原子占位，双 spawn 竞态关闭。
+    // mailmodel batch (2026-09-25): singleton activeRef -> a **per-taskId slot table**
+    // (one task one dispatcher). Sessions register in the slot table (set at spawn,
+    // cleared by the observer bridge at terminal state); TriggerDispatcher /
+    // ReenterDispatcher do an atomic per-slot check-and-inject through active.modify -
+    // a live session in the task's slot => queue the injection (consumed at the turn
+    // boundary), none => spawn a fresh bound session. check-then-spawn is serialized
+    // inside this single actor (LocalActorRef processes one message at a time - the
+    // previous handler IO completes before the next) + the atomic modify claim, so the
+    // same-slot double-spawn race is closed.
     Behaviors.setup { _ =>
-      Ref.of[IO, Option[ActiveDispatcher]](None).map { active =>
+      Ref.of[IO, Map[String, ActiveDispatcher]](Map.empty).map { active =>
         lazy val behavior: Behavior[ProjectCommand] =
           Behaviors.receiveMessage {
             case ProjectCommand.TriggerDispatcher(taskText, rootSessionId, source, attribution, taskId) =>
@@ -800,7 +840,7 @@ object ProjectActor:
     */
   private def dispatcherBridge(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]],
+    active: Ref[IO, Map[String, ActiveDispatcher]],
     ref: ActorRef[AgentCommand],
     rootSessionId: String,
     sessionId: String
@@ -820,7 +860,7 @@ object ProjectActor:
           // 已于 2026-09-15 ub 缺陷批删除：排队消息逐条注入 ⇒ 增量恒为 1）。
           // 增量 ≤0（会话中期历史被压缩等）降级为「一 Completed 一件」：
           // 宁多消费不滞留。pendingInjected 与 pendingTaskTexts 恒等长（spawn 首条
-          // prompt 也计 1 件，见 spawnDispatcher 的 active.set），故两者同减 k。
+          // prompt also counts as one, see spawnDispatcher's active placement), so both drop by k.
           // 裁决：k 件消费后仍有余件（未跑完的注入件）→ 保活（有件在飞）；
           // 归零 → **进入空闲窗**（令 3：改前是立即拆除）。
           // **R7-b 桥收敛（R2「一个 Mail 统一」批 2026-09-12，作者裁定 D-4）**：
@@ -831,37 +871,45 @@ object ProjectActor:
           // 本桥职责 = ① 消费计数裁决（在飞 ⇒ 保活；归零 ⇒ 记 `idleSince` 进入
           // 空闲窗）② Failed/Cancelled 的即时拆除 + 面板终态帧；turn 级自动摘要消失。
           // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。
+          // mailmodel batch (2026-09-25): the adjudication runs **per slot** - this
+          // session's slot = the slot-table entry whose sessionId matches (key =
+          // slotKey(its taskId); the invariant is guaranteed at the write points).
           val seenInjectedMsgs =
             messages.count(m => m.source.exists(DispatcherInjectedSources.contains))
-          active.modify {
-            case Some(a) if a.sessionId == sessionId =>
-              val consumed =
-                if seenInjectedMsgs > a.consumedTaskMsgs then seenInjectedMsgs - a.consumedTaskMsgs
-                else if a.pendingInjected > 0 then 1
-                else 0
-              val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
-              val remaining = a.pendingInjected - k
-              if remaining > 0 then
-                (Some(a.copy(
-                  pendingInjected = remaining,
-                  pendingTaskTexts = a.pendingTaskTexts.drop(k),
-                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
-                  idleSince = None // 仍在飞（有未跑完的注入件）——不计空闲
-                )), false)
-              else if idleWindowMs(cfg) > 0 then
-                // 令 3 保活：本 turn 把所有注入件消费干净 ⇒ 记空闲起点，**不拆**，
-                // 拆除移交 30 s 扫描腿（空闲窗内新任务复用同一会话）。
-                (Some(a.copy(
-                  pendingInjected = 0,
-                  pendingTaskTexts = Nil,
-                  consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
-                  idleSince = Some(System.currentTimeMillis())
-                )), false)
-              // 窗口 ≤0 = 关闭保活 ⇒ 逐字保留今天的 turn 级即拆（回退开关）。
-              else (None, true)
-            case _ => (None, true)
+          active.modify { m =>
+            m.values.find(_.sessionId == sessionId) match
+              case Some(a) =>
+                val consumed =
+                  if seenInjectedMsgs > a.consumedTaskMsgs then seenInjectedMsgs - a.consumedTaskMsgs
+                  else if a.pendingInjected > 0 then 1
+                  else 0
+                val k = math.max(0, math.min(consumed, math.min(a.pendingInjected, a.pendingTaskTexts.size)))
+                val remaining = a.pendingInjected - k
+                val key = slotKey(a.taskId)
+                if remaining > 0 then
+                  (m.updated(key, a.copy(
+                    pendingInjected = remaining,
+                    pendingTaskTexts = a.pendingTaskTexts.drop(k),
+                    consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                    idleSince = None // still in flight (unconsumed injected items) - no idle counting
+                  )), false)
+                else if idleWindowMs(cfg) > 0 then
+                  // keep-alive (order 3): this turn consumed every injected item => record
+                  // the idle start, do NOT tear down - teardown is handed to the sweep leg
+                  // (new tasks within the window reuse the same session).
+                  (m.updated(key, a.copy(
+                    pendingInjected = 0,
+                    pendingTaskTexts = Nil,
+                    consumedTaskMsgs = math.max(a.consumedTaskMsgs, seenInjectedMsgs),
+                    idleSince = Some(System.currentTimeMillis())
+                  )), false)
+                // window <= 0 = keep-alive off => keep today's turn-level teardown verbatim (rollback switch).
+                else (m - key, true)
+              // the slot table no longer holds this session (a late Completed of an old
+              // session, e.g. left over from cancel/fail) => tear down as before, unchanged.
+              case None => (m, true)
           }.flatMap { teardownNow =>
-            // `teardownNow` 仅剩「activeRef 里已不是本会话」一支（旧会话的迟到
+            // `teardownNow` now only covers "the slot table no longer holds this session" (a late
             // Completed，如取消/失败后残留）——照旧拆，语义不变。
             if teardownNow then teardown
             else IO.pure(dispatcherBridge(cfg, active, ref, rootSessionId, sessionId))
@@ -875,7 +923,7 @@ object ProjectActor:
           NodeRunner
             .emitSubagentPanelDone(cfg.engine.wsSendFn, sessionId, rootSessionId)
             .handleErrorWith(_ => IO.unit) *>
-            active.update(_.filterNot(_.sessionId == sessionId)) *> teardown
+            active.update(_.filterNot(_._2.sessionId == sessionId)) *> teardown
     }
 
   /** 腿①（Mail → 项目分发器）**四段式 header PROJECT 段的发射面取值**（「气泡四段式
@@ -908,7 +956,7 @@ object ProjectActor:
 
   private def dispatchTask(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]],
+    active: Ref[IO, Map[String, ActiveDispatcher]],
     same: Behavior[ProjectCommand],
     taskText: String,
     rootSessionId: String,
@@ -928,7 +976,7 @@ object ProjectActor:
     def spawnFresh: IO[Behavior[ProjectCommand]] =
       // Concurrency cap gate (taskunify merge batch · design §4d): at the cap ⇒ refuse
       // explicitly + leave a trace, **do not spawn** (no silent over-spawn / silent drop).
-      // With the gate off (`≤0`) this is a zero-cost bypass (`underConcurrencyCap` returns true).
+      // With the gate off (`≤0`; **the 2026-09-25 default**) this is a zero-cost bypass.
       underConcurrencyCap(cfg).flatMap {
         case false => refuseSpawnOnCap(cfg, s"task dispatch (source=$source)").as(same)
         case true =>
@@ -940,19 +988,29 @@ object ProjectActor:
             }
           }
       }
-    // 单例化裁定：先经 modify 原子占位（占位与桥终态清理在全序 Ref 操作上不可
-    // 交错——占位成功则桥必见 pendingInjected>0 而延迟拆除）——有活跃会话 →
-    // 任务注入现有会话（turn 边界生效：处理中排 pendingUserInputs，idle 直接
-    // 开新 turn）；无（含占位瞬间会话刚终结）→ spawn 新实例。
+    // mailmodel batch (2026-09-25) **per-slot session pick**: first claim the slot for
+    // `taskId` atomically via modify (the claim and the bridge's terminal cleanup cannot
+    // interleave on the totally ordered Ref - once claimed, the bridge necessarily sees
+    // pendingInjected>0 and defers the teardown) - a live session in the task's slot =>
+    // the task text is injected into that session (turn-boundary: queued while busy, a
+    // new turn when idle); none (including the slot's session having just ended) =>
+    // spawn a fresh **bound** instance = the empty-slot rebuild from the ledger (the
+    // ledger existence/terminal checks live in MailTool.routeToProject; the engine never
+    // re-delivers on its own).
     // 令 3：注入命中即 `idleSince = None`（**新任务到达 = 重置空闲计时**，设计 §3.1-3）。
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。
-    active.modify {
-      case Some(a) =>
-        (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None, taskId = taskId.orElse(a.taskId))), Some(a))
-      case None => (None, None)
+    // the in-slot `taskId` is NEVER re-labelled (the key IS the attribution; the old
+    // singleton's `taskId.orElse(a.taskId)` "relabel without re-picking" shape retired
+    // together with the singleton).
+    active.modify { m =>
+      val key = slotKey(taskId)
+      m.get(key) match
+        case Some(a) =>
+          (m.updated(key, a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ taskText, idleSince = None)), Some(a))
+        case None => (m, None)
     }.flatMap {
       case Some(a) =>
-        // R7-(c) 注入前活性前置校验（令 3）：registry 无该会话行 ⇒ activeRef 是残影
+        // R7-(c) liveness pre-check before injecting (order 3): no registry row for the
         // （会话已被拆除/收殓），本次派发改走 spawn 新会话，绝不把任务投进死 actor
         // 的邮箱（静默丢弃）。
         // 合并口径（merge main be16e748，2026-09-12）：main 侧的 `attribution` 链
@@ -979,7 +1037,7 @@ object ProjectActor:
             )).void *>
               logger
                 .info(
-                  s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source)"
+                  s"Project '${cfg.project.name}' task injected into active dispatcher ${a.sessionId} (pending=${a.pendingInjected}, source=$source, task=${slotKey(taskId)})"
                 )
                 .as(same)
           case false =>
@@ -991,7 +1049,7 @@ object ProjectActor:
 
   private def dispatchReentry(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]],
+    active: Ref[IO, Map[String, ActiveDispatcher]],
     same: Behavior[ProjectCommand],
     nodeId: String,
     feedback: BlockedFeedback,
@@ -1003,6 +1061,12 @@ object ProjectActor:
         logger.warn(s"Project '${cfg.project.name}' reentry skipped — node '$nodeId' not found").as(same)
       case Some(node) =>
         // 裁定①（20260907 方向 B）：重入 spawn 同样不嵌快照（reentryActions 自带先 NodeList）
+        // mailmodel batch (2026-09-25): the reentry target slot = the slot of the task
+        // the node belongs to (`node.taskId` -> [[slotKey]]) - in the multi-task model,
+        // task A's blocked reentry is never injected into task B's session. A node with
+        // no fingerprint (legacy stock) lands in the transition's None slot (semantics =
+        // the old singleton's "inject if present" narrowed to the unnumbered slot; if
+        // absent, spawn an unnumbered session, same as the old spawn leg).
         def spawnFresh: IO[Behavior[ProjectCommand]] =
           // Concurrency cap gate (taskunify merge batch · design §4d): same single point as dispatchTask.
           underConcurrencyCap(cfg).flatMap {
@@ -1010,24 +1074,25 @@ object ProjectActor:
             case true =>
               pluginCatalogText().flatMap { catalog =>
                 projectMemoryText(cfg.project).flatMap { memory =>
-                  active.get.flatMap { cur =>
-                    val tid = cur.flatMap(_.taskId)
-                    dispatcherBoardText(cfg, tid).flatMap { boardText =>
-                      spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
-                        s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount), taskId = tid)
-                    }
+                  dispatcherBoardText(cfg, node.taskId).flatMap { boardText =>
+                    spawnDispatcher(cfg, active, same, reentryPrompt(cfg.project, node, feedback, blockCount, catalog, memory, boardText), rootSessionId,
+                      s" (reentry round $blockCount: ${node.name})", reentryTaskText(node, feedback, blockCount), taskId = node.taskId)
                   }
                 }
               }
           }
-        // 单例化裁定 × 反馈协议（§2.2 修订）：重入调整请求同样优先投递活跃
-        // 分发器会话（不并行 spawn 重入会话）；会话已不活跃才走 spawn 路径。
+        // singleton ruling x feedback protocol (section 2.2 rev) -> per-slot under the
+        // mailmodel batch: a reentry adjustment request goes FIRST to the owning task's
+        // live dispatcher session (never a parallel reentry spawn); the spawn path runs
+        // only when that task's session is no longer active.
         // 令 3：重入同属「新任务到达」⇒ 重置空闲计时（`idleSince = None`，
         // 设计 §2.1 重置条件逐类结论表：blocked 升级/反馈重入 = **是**）。
-        active.modify {
-          case Some(a) =>
-            (Some(a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount), idleSince = None)), Some(a))
-          case None => (None, None)
+        active.modify { m =>
+          val key = slotKey(node.taskId)
+          m.get(key) match
+            case Some(a) =>
+              (m.updated(key, a.copy(pendingInjected = a.pendingInjected + 1, pendingTaskTexts = a.pendingTaskTexts :+ reentryTaskText(node, feedback, blockCount), idleSince = None)), Some(a))
+            case None => (m, None)
         }.flatMap {
           case Some(a) =>
             // R7-(c) 同款前置校验（与 dispatchTask 单点一致）。
@@ -1064,10 +1129,11 @@ object ProjectActor:
   private def liveRegistration(cfg: ProjectConfig, sessionId: String): IO[Boolean] =
     cfg.resources.agentRegistry.get.map(_.contains(sessionId))
 
-  /** 丢弃残影登记（仅当 activeRef 里仍是该会话——ProjectActor 单 actor 串行处理，
+  /** Drop a ghost registration (only while the slot table still holds that session -
+    * ProjectActor processes messages serially in one actor,
     * 本调用与紧随的 spawn 在同一 handler IO 内，无并发交错窗口）。 */
-  private def dropStale(cfg: ProjectConfig, active: Ref[IO, Option[ActiveDispatcher]], sessionId: String): IO[Unit] =
-    active.update(_.filterNot(_.sessionId == sessionId)) *>
+  private def dropStale(cfg: ProjectConfig, active: Ref[IO, Map[String, ActiveDispatcher]], sessionId: String): IO[Unit] =
+    active.update(_.filterNot(_._2.sessionId == sessionId)) *>
       cfg.resources.agentRegistry.update(_ - sessionId)
 
   /** **Concurrency cap gate** (taskunify merge batch 2026-09-24 · design §4d mandatory
@@ -1151,7 +1217,7 @@ object ProjectActor:
     * 会话，**零触碰**。 */
   private def sweepIdleDispatchers(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]]
+    active: Ref[IO, Map[String, ActiveDispatcher]]
   ): IO[Unit] =
     val windowMs = idleWindowMs(cfg)
     if windowMs <= 0 then IO.unit
@@ -1159,14 +1225,18 @@ object ProjectActor:
       val now = System.currentTimeMillis()
       def due(a: ActiveDispatcher): Boolean =
         a.pendingInjected == 0 && a.idleSince.exists(t => now - t >= windowMs)
-      active.get.flatMap {
-        case Some(a) if due(a) =>
+      // mailmodel batch (2026-09-25): runs **per slot** - one tick can tear down
+      // several independent slots (each slot CASes independently; idempotency holds per
+      // slot - repeated ticks / races leave exactly one winner each).
+      active.get.flatMap { m =>
+        m.values.filter(due).toList.traverse_ { a =>
           cfg.resources.agentRegistry.get.flatMap { reg =>
             reg.get(a.sessionId).map(_.status) match
               case Some(AgentStatus.Idle) =>
-                active.modify {
-                  case Some(cur) if cur.sessionId == a.sessionId && due(cur) => (None, true)
-                  case other => (other, false)
+                active.modify { cur =>
+                  cur.get(slotKey(a.taskId)) match
+                    case Some(c) if c.sessionId == a.sessionId && due(c) => (cur - slotKey(a.taskId), true)
+                    case _ => (cur, false)
                 }.flatMap { expired =>
                   if expired then
                     val idleSecs = a.idleSince.map(t => (now - t) / 1000L).getOrElse(0L)
@@ -1177,11 +1247,11 @@ object ProjectActor:
               case None =>
                 logger.warn(
                   s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by idle sweep — registry entry already gone") *>
-                  active.update(_.filterNot(_.sessionId == a.sessionId))
+                  active.update(_.filterNot(_._2.sessionId == a.sessionId))
               // 非 Idle（turn 在飞）⇒ 本拍不拆（等下一拍，护栏生效）。
               case Some(_) => IO.unit
           }
-        case _ => IO.unit
+        }
       }
 
   // ------------------------------------------------------------------
@@ -1199,15 +1269,15 @@ object ProjectActor:
 
   /** Dispatcher expiry sweep (**criterion dispatched by the anchor**): anchor = task terminal
     * ⇒ [[sweepTaskTerminalDispatchers]]; anchor = idle window (**fallback**) ⇒ the existing
-    * [[sweepIdleDispatchers]] (**byte-for-byte unchanged** — the fallback path must stay
-    * byte-identical to today).
+    * [[sweepIdleDispatchers]] (criterion byte-for-byte as today, running **per slot** since
+    * the mailmodel batch).
     *
     * Mounted on the existing 30 s `TtlTick` (the `ProjectActor` TtlTick call site). The two
     * legs are **mutually exclusive**: one tick runs exactly one of them, so the "timeout +
     * task-terminal" criteria never race for the same CAS. */
   private def sweepDispatchers(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]]
+    active: Ref[IO, Map[String, ActiveDispatcher]]
   ): IO[Unit] =
     if lifecycleAnchorTaskTerminal(cfg) then sweepTaskTerminalDispatchers(cfg, active)
     else sweepIdleDispatchers(cfg, active)
@@ -1238,34 +1308,41 @@ object ProjectActor:
     * `node-*` sessions, **zero touch**. */
   private def sweepTaskTerminalDispatchers(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]]
+    active: Ref[IO, Map[String, ActiveDispatcher]]
   ): IO[Unit] =
-    active.get.flatMap {
-      case Some(a) if a.pendingInjected == 0 && a.taskId.exists(_.trim.nonEmpty) =>
-        terminalStateOf(a.taskId.get).flatMap {
-          case None => IO.unit // not terminal (or no such entry in the ledger) ⇒ session stays
-          case Some(state) =>
-            cfg.resources.agentRegistry.get.flatMap { reg =>
-              reg.get(a.sessionId).map(_.status) match
-                case Some(AgentStatus.Idle) =>
-                  active.modify {
-                    case Some(cur) if cur.sessionId == a.sessionId && cur.pendingInjected == 0 &&
-                        cur.taskId == a.taskId => (None, true)
-                    case other => (other, false)
-                  }.flatMap { expired =>
-                    if expired then expireTaskTerminalDispatcher(cfg, a, state) else IO.unit
-                  }
-                // no registry row = the session was already torn down elsewhere (ghost) ⇒ clear
-                // the registration only, do not tear down twice.
-                case None =>
-                  logger.warn(
-                    s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by task-terminal sweep — registry entry already gone") *>
-                    active.update(_.filterNot(_.sessionId == a.sessionId))
-                // not Idle (a turn is in flight) ⇒ no teardown this tick (guardrail ②).
-                case Some(_) => IO.unit
-            }
+    // mailmodel batch (2026-09-25): runs **per slot** (the slot key IS the bound task -
+    // "task terminal tears down its slot" applies slot-natively); one tick can tear down
+    // several terminal-task slots (per-slot CAS, idempotency per slot).
+    active.get.flatMap { m =>
+      m.values
+        .filter(a => a.pendingInjected == 0 && a.taskId.exists(_.trim.nonEmpty))
+        .toList
+        .traverse_ { a =>
+          terminalStateOf(a.taskId.get).flatMap {
+            case None => IO.unit // not terminal (or no such entry in the ledger) ⇒ session stays
+            case Some(state) =>
+              cfg.resources.agentRegistry.get.flatMap { reg =>
+                reg.get(a.sessionId).map(_.status) match
+                  case Some(AgentStatus.Idle) =>
+                    active.modify { cur =>
+                      cur.get(slotKey(a.taskId)) match
+                        case Some(c) if c.sessionId == a.sessionId && c.pendingInjected == 0 &&
+                            c.taskId == a.taskId => (cur - slotKey(a.taskId), true)
+                        case _ => (cur, false)
+                    }.flatMap { expired =>
+                      if expired then expireTaskTerminalDispatcher(cfg, a, state) else IO.unit
+                    }
+                  // no registry row = the session was already torn down elsewhere (ghost) ⇒ clear
+                  // the registration only, do not tear down twice.
+                  case None =>
+                    logger.warn(
+                      s"Project '${cfg.project.name}' dispatcher ${a.sessionId} registration cleared by task-terminal sweep — registry entry already gone") *>
+                      active.update(_.filterNot(_._2.sessionId == a.sessionId))
+                  // not Idle (a turn is in flight) ⇒ no teardown this tick (guardrail ②).
+                  case Some(_) => IO.unit
+              }
+          }
         }
-      case _ => IO.unit
     }
 
   /** The task's current state (returns `Some(state)` only when terminal): reads the unified
@@ -1372,9 +1449,10 @@ object ProjectActor:
             s"${pending.size} unconsumed injected item(s) — recorded as ${FlowMapEventLog.DispatcherQueueDroppedType} (no replay; see the event)"
         )).handleErrorWith(e => logger.warn(s"dispatcher queue-drop audit failed: ${e.getMessage}"))
 
-  /** 拆除点现读未消费件（唯一真源 = `activeRef` 内该会话的 `pendingTaskTexts`）。 */
-  private def pendingFor(active: Ref[IO, Option[ActiveDispatcher]], sessionId: String): IO[List[String]] =
-    active.get.map(_.filter(_.sessionId == sessionId).map(_.pendingTaskTexts).getOrElse(Nil))
+  /** The teardown point reads the unconsumed items live (single truth = that session's
+    * `pendingTaskTexts` in the slot table). */
+  private def pendingFor(active: Ref[IO, Map[String, ActiveDispatcher]], sessionId: String): IO[List[String]] =
+    active.get.map(_.values.find(_.sessionId == sessionId).map(_.pendingTaskTexts).getOrElse(Nil))
 
 
   private def reentryTaskText(node: NodeDef, feedback: BlockedFeedback, blockCount: Int): String =
@@ -1382,7 +1460,7 @@ object ProjectActor:
 
   private def spawnDispatcher(
     cfg: ProjectConfig,
-    active: Ref[IO, Option[ActiveDispatcher]],
+    active: Ref[IO, Map[String, ActiveDispatcher]],
     same: Behavior[ProjectCommand],
     prompt: String,
     rootSessionId: String,
@@ -1483,9 +1561,11 @@ object ProjectActor:
               )
             )
           )
-          // 单例化登记（顺序铁律）：先占位 activeRef 再发首条 prompt——占位在本
-          // actor handler IO 内完成，此后到达的 TriggerDispatcher /
-          // ReenterDispatcher 一律注入本会话，无 spawn 竞态窗口。
+          // mailmodel batch (2026-09-25) registration (the ordering iron law unchanged):
+          // claim the slot BEFORE sending the first prompt - the claim completes inside
+          // this actor's handler IO, so any same-numbered TriggerDispatcher /
+          // ReenterDispatcher arriving afterwards injects into this session; there is no
+          // spawn-race window.
           // pendingTaskTexts 初始化为 [firstTaskText]：首 turn（spawn prompt）
           // 终态时投递标注用（2026-09-05 接线）。
           // Q3-a（2026-09-11）：pendingInjected 同置 1——「已注入本会话但 turn 尚未
@@ -1493,7 +1573,7 @@ object ProjectActor:
           // pendingTaskTexts.size**（桥的消费计数 k 直接同减两者）；且首条 prompt
           // 也打同源标签（source）：桥的消费增量按「历史里带源消息条数」判定，
           // 首条缺标签会让增量恒差 1（批量场景下演变成少消费 → 会话滞留）。
-          _ <- active.set(Some(ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText), taskId = taskId)))
+          _ <- active.update(m => m.updated(slotKey(taskId), ActiveDispatcher(sessionId, ref, bridgeRef, pendingInjected = 1, pendingTaskTexts = List(firstTaskText), taskId = taskId)))
           _ <- (ref ! AgentCommand.UserInput(
             text = prompt,
             replyTo = Some(bridgeRef),

@@ -95,9 +95,12 @@ object NotificationHeader:
     "inject" -> "INJECTED",
     "info" -> "INFO",
     "result" -> "RESULT",
-    "interrupt" -> "INTERRUPT",
-    "follow_up" -> "FOLLOW-UP",
-    "parallel" -> "PARALLEL"
+    "interrupt" -> "INTERRUPT"
+    // mailmodel batch (2026-09-25, ruling (e)): the `follow_up` / `parallel` keys are
+    // removed along with the retired `type` key — no engine path emits these two
+    // eventTypes anymore (the type enum is down to info/interrupt/result, all three
+    // of which still have live legs). The fallback for off-table eventTypes (verbatim
+    // upper-case) is kept word-for-word; these 2 of 5 are the only removals.
   )
 
   private def up(s: String): String = s.trim.toUpperCase(Locale.ROOT)
