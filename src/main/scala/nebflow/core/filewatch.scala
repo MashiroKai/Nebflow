@@ -18,30 +18,7 @@ class FileChangeTracker private (
   private val DebounceMs: Long = 5 * 1000L // 5 seconds
 
   private def scanFiles(): Map[String, Long] =
-    try
-      val stream = Files.walk(rootPath)
-      try
-        stream
-          .iterator()
-          .asScala
-          .filter(Files.isRegularFile(_))
-          .filter { p =>
-            val rel = rootPath.relativize(p).toString
-            val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
-            !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
-            !FileChangeTracker.ExcludedFiles.contains(segments.last)
-          }
-          .map { p =>
-            val rel = rootPath.relativize(p).toString
-            val modTime =
-              try Files.getLastModifiedTime(p).toMillis
-              catch case _: Exception => 0L
-            rel -> modTime
-          }
-          .toMap
-      finally stream.close()
-      end try
-    catch case _: Exception => Map.empty
+    FileChangeTracker.scanTree(rootPath)
 
   /** Stat only files present in the previous snapshot. O(n) where n = snapshot size. */
   private def statKnown(known: Map[String, Long]): Map[String, Long] =
@@ -159,35 +136,54 @@ object FileChangeTracker:
   )
   val ExcludedFiles = Set(".DS_Store")
 
-  def scanProject(projectRoot: String): Map[String, Long] =
-    val rootPath = Paths.get(projectRoot).toAbsolutePath.normalize
+  /**
+   * Full scan of the project tree with excluded directories PRUNED from the
+   * traversal itself (walkFileTree + SKIP_SUBTREE), not filtered afterwards.
+   * This is the load-bearing difference vs the previous Files.walk form:
+   * Files.walk descends into every directory and post-filters entries, so a
+   * name exclusion alone never saved the walk cost — on a real deployment the
+   * .nebflow subtree alone accounted for 96% of entries and ~16s per scan.
+   *
+   * Result-set semantics are unchanged from the pre-prune filter form: a file
+   * is kept iff it is a regular file, no path segment is in ExcludedDirs
+   * (file-level check retained for non-directory matches such as a worktree's
+   * `.git` file), and its name is not in ExcludedFiles. Any traversal error
+   * discards the whole scan (Map.empty), same fail-soft contract as before.
+   */
+  private[core] def scanTree(rootPath: Path): Map[String, Long] =
     try
-      val stream = Files.walk(rootPath)
-      try
-        stream
-          .iterator()
-          .asScala
-          .filter(Files.isRegularFile(_))
-          .filter { p =>
-            val rel = rootPath.relativize(p).toString
-            val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
+      val collected = scala.collection.mutable.LinkedHashMap.empty[String, Long]
+      val visitor = new java.nio.file.SimpleFileVisitor[Path]:
+        override def preVisitDirectory(
+          dir: Path,
+          attrs: java.nio.file.attribute.BasicFileAttributes
+        ): java.nio.file.FileVisitResult =
+          // The start root itself is never subject to its own exclusion list.
+          if dir == rootPath || !ExcludedDirs.contains(dir.getFileName.toString) then
+            java.nio.file.FileVisitResult.CONTINUE
+          else java.nio.file.FileVisitResult.SKIP_SUBTREE
+        override def visitFile(
+          file: Path,
+          attrs: java.nio.file.attribute.BasicFileAttributes
+        ): java.nio.file.FileVisitResult =
+          val rel = rootPath.relativize(file).toString
+          val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
+          if
+            Files.isRegularFile(file) &&
             !segments.exists(ExcludedDirs.contains) &&
             !ExcludedFiles.contains(segments.last)
-          }
-          .map { p =>
-            val rel = rootPath.relativize(p).toString
+          then
             val modTime =
-              try Files.getLastModifiedTime(p).toMillis
+              try Files.getLastModifiedTime(file).toMillis
               catch case _: Exception => 0L
-            rel -> modTime
-          }
-          .toMap
-      finally stream.close()
-      end try
+            collected.update(rel, modTime)
+          java.nio.file.FileVisitResult.CONTINUE
+      Files.walkFileTree(rootPath, visitor)
+      collected.toMap
     catch case _: Exception => Map.empty
-    end try
 
-  end scanProject
+  def scanProject(projectRoot: String): Map[String, Long] =
+    scanTree(Paths.get(projectRoot).toAbsolutePath.normalize)
 
   def create(projectRoot: String): IO[FileChangeTracker] =
     for

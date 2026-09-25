@@ -15,15 +15,21 @@ import java.nio.file.{Files, Path}
  * watchdogs (TurnEndpointSpec 1s-timeout case ran 21.3-23.1s; RootNotify A2
  * 33.8s TimeoutException; DynamicFanout D8/D12/D15 31.0s watchdogs).
  *
- * The fix adds `.nebflow` to `ExcludedDirs` (name-based, any depth). Both
- * `scanProject` (used by `create` for the initial snapshot) and the instance
- * `scanFiles` (periodic full scan) read that same set, so one entry covers
- * both walk sites.
+ * The fix adds `.nebflow` to `ExcludedDirs` (name-based, any depth) AND prunes
+ * excluded directories from the traversal itself (`Files.walkFileTree` +
+ * `SKIP_SUBTREE`), shared by `scanProject` (used by `create` for the initial
+ * snapshot) and the instance `scanFiles` (periodic full scan). Both halves are
+ * load-bearing: `Files.walk` descends into every directory and only post-
+ * filters entries, so a name exclusion alone never saved the walk cost — the
+ * probe measured `FileChangeTracker.create` at 16.4s in a tree whose `.nebflow`
+ * held 169k files even with `.nebflow` added to `ExcludedDirs`.
  *
  * Red/green: without the fix the exact-set assertion fails (`.nebflow` keys
- * present in the scan); with it the walk returns exactly the tracked project
- * file. The positive control (tracked file must stay in the scan) keeps the
- * exact-set assertion from passing vacuously on an over-broad exclusion.
+ * present in the scan); with exclusion-but-no-pruning the canary test fails
+ * (the walk opens the unreadable dir inside `.nebflow`, the fail-soft catch
+ * discards the whole scan, and the tracked file goes missing); with pruning
+ * both pass. The positive control keeps the exact-set assertion from passing
+ * vacuously on an over-broad exclusion.
  */
 class FileChangeTrackerNebflowExcludeSpec extends CatsEffectSuite:
 
@@ -66,3 +72,33 @@ class FileChangeTrackerNebflowExcludeSpec extends CatsEffectSuite:
         assertIO(tracker.checkChanges(), None)
       }
     }
+
+  test("the walk prunes .nebflow: an unreadable dir inside it cannot break the scan"):
+    // Traversal observer: if the walker DESCENDS into .nebflow it will try to
+    // open this unreadable directory, the fail-soft catch then discards the
+    // whole scan (Map.empty), and the positive control below fails. A pruned
+    // walk never opens it, so the tracked file survives. This is what makes
+    // "excluded but still walked" observable — the plain result-set test
+    // cannot distinguish pruning from post-filtering (both return the same
+    // keys; only the cost differs).
+    IO.blocking {
+      val root: Path = Files.createTempDirectory("fct-nebflow-prune")
+      val src = root.resolve("src")
+      Files.createDirectories(src)
+      Files.writeString(src.resolve("Demo.scala"), "object Demo")
+      val locked = root.resolve(".nebflow/evidence/locked")
+      Files.createDirectories(locked)
+      (1 to 500).foreach(i => Files.writeString(locked.resolve(s"f$i.log"), "x"))
+      root -> locked
+    }.flatMap { case (root, locked) =>
+      val lockedPerms = java.nio.file.attribute.PosixFilePermissions.fromString("---------")
+      val restorePerms = java.nio.file.attribute.PosixFilePermissions.fromString("rwx------")
+      val scan =
+        IO.blocking {
+          Files.setPosixFilePermissions(locked, lockedPerms)
+          try FileChangeTracker.scanProject(root.toString)
+          finally Files.setPosixFilePermissions(locked, restorePerms)
+        }
+      assertIO(scan.map(_.keySet), Set("src/Demo.scala"))
+    }
+
