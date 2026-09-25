@@ -11,7 +11,7 @@ import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.agent.{AgentCommand, AgentDef, AgentKind, AgentLibrary, AgentRecord, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, MailTool, MailToolTestAccess, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -285,7 +285,15 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
         projectName = senderProject,
         isDispatcher = true
       )
-      out <- callMail(ctx, "Nebula", s"R-A 补 leg3 $tag")
+      // mailmodel batch (2026-09-25) spec absorption (read-only inventory conclusion
+      // from the old mailunify-impl branch 4d5dbd2f4; plan unchanged, only its
+      // window-closing technique absorbed): with dispatcher identity, leg 3 goes
+      // through the mailack batching window => injection does not happen before
+      // `call` returns => this case would never see ImmediateInput. Close the window
+      // inside this case (`dispatcherBatchMs=0` => immediate path); the IO-level
+      // bracket sets the prop at runtime and restores it afterwards
+      // (`MailToolTestAccess.withWindowMsIO`). Assertions are not relaxed.
+      out <- MailToolTestAccess.withWindowMsIO(0L)(callMail(ctx, "Nebula", s"R-A leg3 $tag"))
       cmds <- record.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

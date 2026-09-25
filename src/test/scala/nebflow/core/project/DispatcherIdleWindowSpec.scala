@@ -134,7 +134,14 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
     ws: os.Path,
     system: ActorSystem,
     res: SharedResources,
-    idleWindowMs: Option[Long]
+    idleWindowMs: Option[Long],
+    // mailmodel batch (2026-09-25) absorbed fix for a PRE-EXISTING baseline red (the
+    // taskunify merge 7b7f4d7a4 made the anchor default to task-terminal, which routes
+    // sweepDispatchers away from the idle-window leg entirely; this spec never pinned
+    // the switch, so its None-taskId dispatcher is reaped by neither leg). Case 3's
+    // premise IS the idle-window leg = the fallback anchor, so it mounts with the
+    // anchor explicitly off; the production code is untouched.
+    anchorTaskTerminal: Option[Boolean] = None
   ): IO[ProjectRuntime] =
     val pd = ProjectDef(
       name = name,
@@ -150,7 +157,8 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
       rootSessionId = "nebula-root",
       // 节拍压到 1 s（生产 = GatewayMain 的 30 s 广播，同一 ttlScanner 函数）
       ttlCheckIntervalSec = 1,
-      dispatcherIdleWindowMs = idleWindowMs
+      dispatcherIdleWindowMs = idleWindowMs,
+      dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal
     )
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -218,7 +226,7 @@ class DispatcherIdleWindowSpec extends CatsEffectSuite:
       for
         llm <- IO.pure(new RecordingLlm)
         resources <- mkResources(system, tempRoot, llm.handle)
-        rt <- mount("idle-expire", ws, system, resources, Some(2000L))
+        rt <- mount("idle-expire", ws, system, resources, Some(2000L), anchorTaskTerminal = Some(false))
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("任务甲", "nebula-root")).void
         _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))

@@ -187,8 +187,7 @@ private[agent] trait AgentCore:
   // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
   // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
 
-  // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
-  // （2026-09-05 dream 准入例外：MemoryNote 对 dream 放开，动作面仍限修订）。
+  // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点。
   // 消费点：buildAllowedToolSet 的 nebulaFiltered 与 AgentLibrary 保存侧 strip。
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
@@ -1246,6 +1245,13 @@ private[agent] trait AgentCore:
         // 角色分支的引擎侧判据来源（不信客户端参数，与 flowNodeId 同款纪律）。
         flowNodeRole = state.session.flowNodeRole,
         projectName = state.session.projectName,
+        // taskunify batch (2026-09-24, B1 pass-through chain, third segment): the task
+        // attribution fingerprint SessionContext.taskId -> ToolContext.taskId -- the only
+        // source of `TaskInfo`'s zero-parameter attribution resolution (engine-side
+        // identity, never a client parameter). None = no attribution (pre-existing nodes /
+        // the Nebula root / team / dual-track flow / direct REST calls) ⇒ `TaskInfo`
+        // refuses fail-closed.
+        taskId = state.session.taskId,
         // 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 3）：
         // 链身份随身份三元组同路透传——节点会话内的产出据此在过程文档**文件名
         // 尾段**写链归属 `__<chainId>`（值 = spawn 时刻快照；正文零元数据头，
@@ -2106,9 +2112,7 @@ private[agent] trait AgentCore:
     // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
     val isNebula = agentDef.name == "Nebula"
     // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
-    // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面仍受
-    // MemoryNoteTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
-    // 剥全集，行为零变化。
+    // （空集）；其余身份剥全集，行为零变化。
     val nebulaFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
@@ -2212,12 +2216,19 @@ private[agent] trait AgentCore:
     // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
     // §C.1 静态矩阵不被 plugin 授予绕过。
     val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
-    // TaskBoard（20260908 任务板批 2，规格 §1c）：project 会话按身份挂载——
-    // projectBoardSession = isDispatcher || flowNodeId.isDefined（分发器/项目节点）。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】：分发器固定面
-    // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
-    // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
-    val withBoard = if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
+    // TaskInfo (taskunify batch 2026-09-24, replacing the mount point of TaskBoard batch 2):
+    // project sessions mount it by identity -- projectBoardSession = isDispatcher ||
+    // flowNodeId.isDefined (dispatcher / project node). The append point comes **after** all
+    // role filtering and the NebulaExclusiveTools strip: the dispatcher's nine fixed items
+    // are stripped first by nebulaFiltered and re-mounted here by session identity, so the
+    // two stages do not conflict; dual-track flow / team / Nebula sessions always have
+    // flag=false and never mount it (a tool-face AND an in-tool identity refusal as a double
+    // safeguard).
+    // 🔴 **Capability inversion** (taskunify §16 P6): the mounted item changes from
+    // `TaskBoard` (full rights) to `TaskInfo` (**zero parameters, read-only**) -- the
+    // dispatcher's write right over the task ledger has been taken back by Nebula (the
+    // `Task` tool); this point only grants "see the one you are attached to".
+    val withBoard = if projectBoardSession then pluginGranted + "TaskInfo" else pluginGranted
     // node_report（blocked 结构化信号批 20260909，设计 spec §5.2 #4；同日作者
     // 裁定泛化更名 NodeReport 统一三语义）：flow 节点会话专属挂载——编排层专属
     // 工具族（Pop/AskUser/Schedule 同类），不进通用 agent 工具面。判据 =
@@ -2365,7 +2376,10 @@ private[agent] trait AgentCore:
     // SubTask workers inherit the parent's system.md for domain knowledge but
     // team interaction content is stripped (no team / no Mail / no reporting).
     val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
-    val cleanedPrompt = PromptSections.stripAllMigrated(base)
+    // stripCommentOnlyLines（govmemory 批 2026-09-25）：seed 批源注记 = 单行 HTML
+    // 注释——方案 §1.2 步骤 1 明定注记「避免进入模型上下文」，本行即机械保证
+    // （整行注释剥除，零注释文本逐字节透传）。
+    val cleanedPrompt = PromptSections.stripCommentOnlyLines(PromptSections.stripAllMigrated(base))
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
     // 数据根占位符渲染（home 硬编码 → 运行时动态化批 2026-09-11）：插在
     // stripAllMigrated 之后、assembleSystemPrompt 之前 —— 默认 home 下渲染值
@@ -2718,8 +2732,7 @@ object AgentCore:
 
   /**
    * Nebula-exclusive tools: stripped from every identity except per
-   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryNote only —
-   * see DreamAdmittedTools below).
+   * exclusiveToolsFor (Nebula keeps all).
    * - Delegate: 极简内核入口（曾以新形态回归 Nebula 面；**本批已从
    *   `NebulaOrchestrationTools` 摘除退役** ⇒ 本集条目保留为**防声明逃逸的惰性
    *   剥离项**：该名对一切身份都不授能，本集保证 agent.json/`"*"` 声明也授不了）。
@@ -2735,27 +2748,23 @@ object AgentCore:
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
    *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
    *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
-   * - MemoryNote（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
-   *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
-   *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
-   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryNoteTool 强制）。
-   *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
-   *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
   val NebulaExclusiveTools = Set(
     "Schedule",
     "Delegate",
     "AgentControl",
-    "MemoryNote",
-    // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
-    // 存储（~/.nebflow/tasks.json），与 MemoryNote 同域隔离（非 Nebula 声明即剥）。
-    "TaskList",
-    // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
-    // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
-    // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
-    // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
-    // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
-    "TaskBoard",
+    // The two items TaskList/TaskBoard were unified by taskunify (2026-09-24) ⇒ this set's
+    // members are renamed: `TaskList` -> `Task` (the unified ledger's **only write face**,
+    // Nebula-exclusive) and `TaskBoard` -> `TaskInfo` (the project domain's **read-only**
+    // item -- not Nebula-exclusive: mounted on the dispatcher's fixed set + on project node
+    // sessions by identity; but it shares this set's [declaration-escape prevention]
+    // channel: an agent.json declaration (including "*") grants nothing to any non-Nebula
+    // identity). A project session's real authorization is appended at the end of
+    // buildAllowedToolSet by session identity (after this set's strip point), so the strip
+    // and the grant never interfere. **The item count is unchanged** (a one-to-one rename,
+    // net 0).
+    "Task",
+    "TaskInfo",
     // Pop（2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）：Pop 收归
     // Nebula 专属——Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染的入口，
     // 靠纪律不如靠工具面收口。本集同时是【防声明逃逸】通道：agent.json 声明
@@ -2771,7 +2780,7 @@ object AgentCore:
     nebflow.core.tools.NodeReportToolDef.Name,
     // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
     // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
-    // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryNote 同域隔离纪律一致；
+    // （一次性给出「你是谁的好友」全集），与 Task 同域隔离纪律一致；
     // 且本集同时是【防声明逃逸】通道：agent.json 声明（含 "*"）对一切非 Nebula
     // 身份不授能。本单点被两消费点共用（`buildAllowedToolSet` 的 runtime 剥离 +
     // `AgentLibrary` 面板/定义保存侧 strip —— 见 `exclusiveToolsFor` 注释）。
@@ -2780,23 +2789,17 @@ object AgentCore:
     "ListFriends"
   )
 
-  /** dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
-    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
-    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
-    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryNoteTool（两道闸独立，
-    * 摘任一道 spec 即红）。 */
-  val DreamAdmittedTools = Set("MemoryNote")
-
   /** 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
-    * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
-    * MemoryNote 准入）；其余身份 → 原集（行为零变化）。
+    * Nebula → 空（专属集全保留）；其余身份 → 原集（行为零变化）。
+    * (The former dream admission exception -- DreamAdmittedTools, whose only
+    * member was the retired memory bookkeeping tool -- was removed together
+    * with that tool's retirement in the govmemory batch; a "dream" identity
+    * now falls through to the default branch like any other non-Nebula name.)
     * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
-    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryNote 保存时不再
-    * 被剥掉（否则准入形同虚设）。 */
+    * AgentLibrary 面板/定义保存侧 strip。 */
   def exclusiveToolsFor(name: String): Set[String] =
     name match
       case "Nebula" => Set.empty[String]
-      case "dream"  => NebulaExclusiveTools -- DreamAdmittedTools
       case _        => NebulaExclusiveTools
 
   /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
@@ -2809,14 +2812,14 @@ object AgentCore:
     * legacyFixedTools 对成员仍授能，零触碰）。**本条覆盖此前相关指令**：
     * 2026-09-12「一个 Mail 统一」批（B4 取代条款）已把「`Task` = 唯一项目触发
     * 入口」**作废**——新口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 经
-    * `Mail(address="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
+    * `Mail(to="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
     * `ProjectActor.TriggerDispatcher`）。2026-09-05 13:11 作者裁定曾把
     * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
     * （Nebula 补齐 Write/Edit 至恰十七件——史实，时点 2026-09-05）；同日
     * 23:34 作者裁定
     * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
     * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
-    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryNote，恰十四件——史实，时点 2026-09-05；
+    * 不变，Nebula 是唯一例外（编排件+读三件+记忆件，恰十四件——史实，时点 2026-09-05；
     * 其中「读三件」= 当日形态；2026-09-16 18:41 令后曾收窄为**读一件 Read**，
     * 该形态已被 2026-09-18 18:18 令取代 ⇒ **读三件在场恢复，史实归档**）。
     * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
@@ -2875,7 +2878,8 @@ object AgentCore:
     *     双保险——节点交付物沿 out 边交链末端/Nebula，由 Nebula 决定是否展示）；
     *     平台：Schedule（TransferFile 已退役 2026-09-14，能力并入 SendMessage 的
     *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
-    *   - 记忆：MemoryNote（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
+    *   - 记忆：Edit/Write 直写三层记忆文件（govmemory 批；旧记账工具已退役，
+    *     预算判据仍单源 MemoryBudget——写前检查/超限提醒见 MemoryDirectWriteGuard）
     * 显式不含：NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
     * dispatcher 自身面 DispatcherFixedTools 不受影响）、
     * Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
@@ -2887,15 +2891,16 @@ object AgentCore:
     * 后再 −Delegate）、零 Issue、零旧体系
     * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
     * Mail 从「旧体系退役件」成为唯一消息原语）。
-    * **反向指路**：`AgentLibrary.Seeds.Nebula`（代码 fallback 定义）的工具字段
-    * **恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
+    * **反向指路**：`AgentLibrary.loadAll` 的代码 fallback 定义（盘上无定义时的兜底）
+    * 的工具字段**恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
     * 了任何件；要找 Nebula 的工具清单，只有本集。 */
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
     // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；该时点后沿革见
-    // NebulaOrchestrationToolsExpectedSize——**现读值 = 16**（mailunify-full 批
-    // 2026-09-23 −`SendMessage` 后）。本条覆盖此前「Task = 唯一项目触发入口」的
+    // NebulaOrchestrationToolsExpectedSize——**合并后现读值 = 15**（mailunify-full 批
+    // 2026-09-23 −`SendMessage`、taskunify 批改名净 0、govmemory 批 −`MemoryNote`）。
+    // 本条覆盖此前「Task = 唯一项目触发入口」的
     // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
     // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
@@ -2906,23 +2911,25 @@ object AgentCore:
     // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
     // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
     // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
-    // （`Mail(address="project:general", ...)`，按**注册表 name** 解析；工作区路径的
+    // （`Mail(to="project:general", ...)`，按**注册表 name** 解析；工作区路径的
     // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
     // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
     // 改由插件面授予。
     // 本集件数 13 → 12（史实，时点 = Delegate 退役批）。
-    // 🔴 常量 `NebulaOrchestrationToolsExpectedSize` 的**现读值 = 16**（见本文件定义处，
-    // mailunify-full 批 2026-09-23 −SendMessage 后；上游旧注释曾写「现读值 = 17」= 史实残留，
-    // 已于本批订正措辞）。
+    // 🔴 常量 `NebulaOrchestrationToolsExpectedSize` 的**合并后现读值 = 15**（见本文件定义处，
+    // mailunify-full 批 2026-09-23 −SendMessage、taskunify 批改名净 0、govmemory 批 −MemoryNote；
+    // 上游旧注释曾写「现读值 = 17」= 史实残留，已于本批订正措辞）。
     // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
-    // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
-    "TaskList",
+    // 任务编排 —— taskunify 批（2026-09-24，main 侧结构演进收编）：TaskList/TaskBoard
+    // 两件统一为 `Task`（Nebula 专属**唯一写面**：一本账、一套 id 空间、一份变更史
+    // 文件；一对一改名净 0，旧名 `TaskList` 退役零执行面）。2026-09-06 TaskList 批
+    // （快变状态出记忆；首期无前端）的史实由本更名承接。
+    "Task",
     // 通信 —— 🔴 `SendMessage` 已**退役**（mailunify-full 批，2026-09-23 作者裁定）：
     // 四腿（好友 / 群 / 本机复制 / 设备）整体并入 `Mail` 的单 `to` 承载 ⇒ **摘本集行**
-    // （本集成员 −1 ⇒ `NebulaOrchestrationToolsExpectedSize` 17 → 16）。
-    // 🔴 fail-closed：旧名离册后，打到它的调用按未知工具报错，**零迁移指引**
-    // （`RetiredToolGuides` 整表摘空 = 本批政策）。
+    // （本集成员 −1）。🔴 fail-closed：旧名离册后，打到它的调用按未知工具报错，
+    // **零迁移指引**（`RetiredToolGuides` 整表摘空 = 本批政策）。
     // ListFriends（好友消息改造批 ⑩，2026-09-12）：`Mail` 的**只读**好友名册前置——
     // 名册取代「靠报错反推」。同一好友数据面与词表
     // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
@@ -2960,9 +2967,7 @@ object AgentCore:
     "AskUserQuestion",
     "Pop",
     // 平台
-    "Schedule",
-    // 记忆（§C.2 MemoryNote）
-    "MemoryNote"
+    "Schedule"
   )
 
   /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
@@ -2970,22 +2975,16 @@ object AgentCore:
     * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
     * Edit）自动变 no-op，无需定义层先行迁移。
     *
-    * 2026-09-12 记忆改造批（memq）：+ `memory-consolidator` —— 压缩双轨的**记忆
-    * 整理 agent**（spec §5 R5 O-A）。工具面 = `KernelFixedTools` 恰七件（与 Delegate
-    * 内核同集合，作者第④条口径）；category 锁 standalone、`effectiveMcpServers=Nil`
-    * 由本集自动生效。它**不是**「唯一记忆写入者」——机制层不设该闸（作者 2026-09-12
-    * 00:19 裁定：用通用 `Edit`/`Write` 直写记忆文件，属有意为之的设计）。 */
-  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel", "memory-consolidator")
-
-  /** 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
-    * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
-    * def（[[MemoryTrack]]）——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。 */
-  val MemoryConsolidatorName = "memory-consolidator"
+    * (The former memory-consolidator member -- added by the 2026-09-12 memq
+    * batch as the compaction dual-track's second rail with KernelFixedTools as
+    * its fixed face -- was removed together with that mechanism's retirement in
+    * the govmemory batch.) */
+  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel")
 
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = **16** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+    * 值 = **15** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
@@ -2993,7 +2992,11 @@ object AgentCore:
     * Delegate 退役批 −1 ⇒ 12；
     * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
     * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17；
-    * **mailunify-full 批（2026-09-23 作者裁定）`SendMessage` 整件退役 −1 ⇒ 16（在飞值）**。
+    * **mailunify-full 批（2026-09-23 作者裁定）`SendMessage` 整件退役 −1 ⇒ 16；
+    * 支上对账重算批（2026-09-26 调和）收编 main 侧两笔：taskunify（2026-09-24）
+    * `TaskList`→`Task` 一对一改名净 0；govmemory（2026-09-25）−`MemoryNote`
+    * （tool + registry entry + set membership retired; memory is now written via
+    * Edit/Write directly with the budget guard）−1 ⇒ **15（合并后在飞值）**。
     *
     * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
     * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话
@@ -3014,7 +3017,7 @@ object AgentCore:
     * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 16
+  val NebulaOrchestrationToolsExpectedSize: Int = 15
 
   /** 退役工具迁移指引表 —— 🔴 **全表 fail-closed**（mailunify-full 批，2026-09-23
     * 作者裁定 ⑧）。
@@ -3032,6 +3035,14 @@ object AgentCore:
     * **摘空前后行为完全一致**（该腿在现读树上结构性不可达 —— 任何 allowed set 成员
     * 都已在注册表内）。⇒ 旧名与杜撰名一律得到**同一句**「没有这个工具」。
     *
+    * **支上对账重算批（2026-09-26 调和）**：main 侧（本表政策未被 main 知悉的语境下）
+    * 又按旧政策新增了 7 键（MemoryNote / Task / ProjectTrigger / TaskList / TaskBoard /
+    * NodeMessage / TransferFile）——本调和**不收**：其中 TransferFile 指向
+    * `SendMessage(to="device:…")`、NodeMessage 写 `address=` 形态，均已是合并树上的
+    * 退役面（SendMessage 整件退役 + 设备腿退役 + `to=` 单承载），照搬 = 交付明知失效
+    * 的指引；改写其文案属自创内容，禁。按 09-21 政策维持整表摘空（fail-closed），
+    * 逐键处置在调和报告登记，待作者定夺是否重授指引。
+    *
     * **表零膨胀纪律（保留）**：即便政策将来再变，也只收「本批删净且必须给出迁移路径」
     * 的名字，不预收未来退役项。 */
   val RetiredToolGuides: Map[String, String] = Map.empty
@@ -3044,7 +3055,7 @@ object AgentCore:
     * + `node:<id>`**：不给自己项目发（`project:<name>` 形态对分发器非法 ⇒
     * 显式报错并指明合法地址面）。旧 `NodeMessage` 已删净退役，其三态语义
     * （running=turn 边界注入 / wiring·pending=任务追加 / 终态拒绝）整体并入
-    * `Mail(address="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
+    * `Mail(to="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
     * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
     * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
     * 身份=isDispatcher，工具内不信客户端参数）。 */
@@ -3057,7 +3068,7 @@ object AgentCore:
     "Glob",
     "Grep",
     "Bash",
-    "TaskBoard"
+    "TaskInfo"
   )
 
   /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
@@ -3093,7 +3104,7 @@ object AgentCore:
     *   来源标注 `subagent · <任务摘要>`（U3）。
     * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
     *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
-    *   node_report/Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
+    *   node_report/Node 系工具/TaskList/Schedule（项目与编排面）、
     *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
     *
     * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
@@ -3178,8 +3189,8 @@ object AgentCore:
             // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集（**该裁定之
             // root 面部分已被 2026-09-18 18:18 令取代 ⇒ 三件在飞在场；史实归档**）；
             // general/BaseTools 六件默认注入不变
-            // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit+MemoryNote，
-            // 在飞恰十七件）——本集即 Nebula 工具面唯一来源。
+            // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit，
+            // 合并后在飞恰十五件——SendMessage 随 mailunify-full 批、MemoryNote 已随 govmemory 批退役）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
@@ -3187,10 +3198,6 @@ object AgentCore:
           // 先例；不经 legacyFixedTools 的 catch-all（该路径注释自陈「随阶段
           // 2e/3 归档一并退役」，依赖它有漂移风险）。
           case "kernel"             => AgentCore.KernelFixedTools
-          // 记忆整理 agent（2026-09-12 记忆改造批）:与内核同集合恰七件——作者第④条
-          // 「与 Delegate 内核相同的工具面」字面成立；因为它是收敛名，`base=∅`、
-          // `NebulaExclusiveTools` 全剥（交集 ∅）、MCP 面 Nil ⇒ 零配置面。
-          case n if n == AgentCore.MemoryConsolidatorName => AgentCore.KernelFixedTools
           case _                    => legacyFixedTools(agentDef)
 
   /** 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。

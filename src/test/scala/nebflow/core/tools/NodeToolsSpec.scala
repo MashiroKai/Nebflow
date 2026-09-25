@@ -192,6 +192,9 @@ class NodeToolsSpec extends FunSuite:
     // 互斥双轨（required 只剩 message）；mailunify-full 批（2026-09-23 作者裁定）双轨
     // **结构上消失** ⇒ 合并为单字段 `to`，required = `to` + `message`。本断言同批 re-pin：
     // 仍钉「退役参数不得回流」与「目标面恰为单 `to`」，未放宽任何既有约束。
+    // （支上对账重算批 2026-09-26 调和：main 侧 mailmodel 批 ruling (e) 的设备腿整腿退役
+    // 已收编——`device` 键在合并树上 = 墓碑读 MAIL_DEVICE_RETIRED，schema 面不复活任何
+    // 旧目标键；`address` 同批退役。）
     val mailReq = requiredOf(MailTool)
     assertEquals(
       mailReq,

@@ -46,7 +46,7 @@ class NebulaSixBaseToolsSpec extends FunSuite:
 
   // ===== ① 文件面六件 ⊆ Nebula 机制集 ∧ NodeList ∅ ∧ TaskList ∈（变异验红锚点）=====
 
-  test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ TaskList 在——再摘文件面任一件或摘掉 TaskList、计数漂移即红"):
+  test("(1) the six file-face tools ⊆ Nebula mechanism set (two layers: static set + delivered face, restored by the 2026-09-18 18:18 order) ∧ NodeList absent ∧ Task present — dropping any file-face tool, removing Task, or a count drift turns this red"):
     val six = AgentCore.BaseTools
     assert(six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
       "前置：BaseTools 即基础六件（全体默认不变）——2026-09-18 令只动 root 面，本行即反向钉")
@@ -63,29 +63,36 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // NodeList——节点结果沿 out 边自动投递，主动查图与裁定职责重叠
     // （dispatcher 面不受影响）
     assert(!fixed.contains("NodeList"), "Nebula 机制集不含 NodeList（00:48 裁定摘除）")
-    // 钉死断言（2026-09-06 TaskList 批）：TaskList ∈ Nebula 机制集——
-    // 快变状态出记忆的专属编排件（摘掉或改名即红）
-    assert(fixed.contains("TaskList"), "Nebula 机制集含 TaskList（TaskList 批 +1）")
-    // 交付面（buildAllowedToolSet，注册表过滤后）同样文件面六件在、NodeList 零、TaskList 在
+    // Pinned assertion (2026-09-06 TaskList batch → taskunify merge batch 2026-09-24):
+    // the unified-ledger tool ∈ the Nebula mechanism set — `TaskList` + `TaskBoard`
+    // merged into the single `Task` (net count 0); removing or renaming it turns red.
+    assert(fixed.contains("Task"), "the Nebula mechanism set contains Task (the unified ledger's only write face; mutation red-anchor)")
+    // The old two are deleted-retired — zero occurrences in the mechanism set (callers
+    // go through the RetiredToolGuides migration guidance)
+    assert(!fixed.contains("TaskList") && !fixed.contains("TaskBoard"),
+      "the Nebula mechanism set has zero TaskList / TaskBoard (deleted-retired by the taskunify batch)")
+    // The delivered face (buildAllowedToolSet, after registry filtering) likewise has the
+    // six file-face tools, zero NodeList and Task present
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(delivered.contains(t), s"Nebula 交付面缺文件面件（2026-09-18 18:18 令）: $t")
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
-    assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
+    assert(delivered.contains("Task"), "the Nebula delivered face contains Task (mounted at the registry layer)")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 16（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后为 17；mailunify-full 批
-    // −SendMessage ⇒ 16）；
+    // 15（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后为 17；mailunify-full 批
+    // −SendMessage；taskunify 合并批 2026-09-24 改名净 0；govmemory 批 2026-09-25
+    // −MemoryNote ⇒ 15，支上对账重算批 2026-09-26 调和）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 16 = 2026-09-18 18:18 令后、再经 mailunify-full 批 −SendMessage 实测值）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；合并后在飞 15 = 2026-09-18 18:18 令后 17、mailunify-full 批 −SendMessage、taskunify 改名净 0、govmemory 批 −MemoryNote 实测值）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
-    assertEquals(AgentCore.NebulaOrchestrationTools.size, 16,
-      "NebulaOrchestrationTools 实测恰 16 件（2026-09-18 18:18 令 +5 后为 17、mailunify-full 批 −SendMessage；变异验红锚：再摘任一件即红）")
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, 15,
+      "NebulaOrchestrationTools 实测恰 15 件（mailunify-full 批 −SendMessage + govmemory 批 2026-09-25 −MemoryNote；此前 17 = 2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

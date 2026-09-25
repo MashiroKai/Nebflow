@@ -428,20 +428,22 @@ export function renderPlugins() {
     const summaries = await loadAgentSummaries(agents);
     if (!content.isConnected) return;
 
+    // Agents section first (author directive 2026-09-25: agent roster on top
+    // of the plugins tab); blocks are order-swapped verbatim, internals untouched.
     const listHtml = `
-      <div class="plugins-section" id="plugins-section-plugins">
-        <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
-        <div class="plugins-card-list">${(plugins.length || rejected.length)
-          ? plugins.map(renderPluginCard).join('') + rejected.map(renderRejectedCard).join('')
-          : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
-      </div>
       <div class="plugins-section" id="plugins-section-agents">
         <div class="plugins-section-title">${esc(t('plugins.agents'))}</div>
         <div class="plugins-section-hint">${esc(t('plugins.agentsHint'))}</div>
         <div class="plugins-agent-list">${summaries.length
           ? summaries.map(renderAgentRow).join('')
           : `<span class="plugins-none">${esc(t('plugins.noAgents'))}</span>`}</div>
+      </div>
+      <div class="plugins-section" id="plugins-section-plugins">
+        <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
+        <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
+        <div class="plugins-card-list">${(plugins.length || rejected.length)
+          ? plugins.map(renderPluginCard).join('') + rejected.map(renderRejectedCard).join('')
+          : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
       </div>`;
 
     content.innerHTML = `

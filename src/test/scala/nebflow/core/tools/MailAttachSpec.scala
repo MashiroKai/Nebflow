@@ -15,29 +15,32 @@ import nebflow.core.task.FileTaskStore
 import nebflow.dropbox.AttachContract
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.neblink.DeviceMail
 import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 import fs2.Stream
 import scala.concurrent.duration.*
 
 /**
- * mailattach 批（2026-09-17 作者四答 = 路线 A）· 落地断言。
+ * mailattach batch (2026-09-17, author's four answers = route A) - landing assertions.
+ * Re-pinned by the mailmodel batch (2026-09-25, ruling (e)): the cross-device `device`
+ * leg of the Mail tool is retired, so the device-leg faces of the original batch are
+ * gone with it - A2 (device-leg transport via the device file channel), B7 (the 4000-char
+ * device-text gate) and A5 (the five-key relay payload, now covered by the tombstone-only
+ * `DeviceMailSpec` in neblink) are deleted from this file, and the schema/description
+ * assertions below pin the SAME-MACHINE-only wording.
  *
- * 本批的**范围真源** = `.nebflow/reports/20260917_mailattach-plan.md`（§1 面 1–6 /
- * §2 方案 A / §3 改动面清单）与任务书 §范围。逐条对应：
- *   - **A1** `attachments` 进 schema（件数/大小上限**只**引用 `AttachContract`）——§①②；
- *   - **A2** 设备腿承载（复用既有设备文件通道）+ 附注泛化 —— §⑥（附注进正文且计入 4000 预算）；
- *   - **A3** 同机腿附注 = 绝对路径 + 字节数 + sha256、**零搬字节** —— §⑤（端到端：附注真的
- *     到达接受方会话，读数取自真 LLM 请求体）；
- *   - **A4** `images` 面零改动（≤5 / 10 MiB）—— §①（逐读数钉住未改）；
- *   - **A5** relay 五键载荷一字不动 —— §⑦（键序 + 归一化逐字节）；
- *   - **B6** `project:` / `node:` 收到 `images` ⇒ **显式拒绝**（治「加载/base64 后不使用」的
- *     静默丢）—— §④；
- *   - **B7** 设备腿正文 4000 闸（含附注预算，前置于载荷构造）—— §⑥。
+ * Scope of record = `.nebflow/reports/20260917_mailattach-plan.md` (faces 1-6 / route A /
+ * the change list) with the mailmodel retirement applied. Surviving pins:
+ *   - **A1** `attachments` in the schema (count/size caps reference `AttachContract` ONLY) - faces (1)(2);
+ *   - **A3** same-machine note = absolute path + byte size + sha256, ZERO bytes moved - face (5)
+ *     (end-to-end: the note really reaches the recipient session, read from the real LLM request body);
+ *   - **A4** `images` face untouched (<=5 / 10 MiB) - face (1) (pinned reading by reading);
+ *   - **B6** `project:` / `node:` + `images` => explicit refusal (cures the silent
+ *     "load/base64 then never use") - face (4).
  *
- * 🔴 每个断言都**只**读模型可见面或可观察行为（描述文本、schema、`call` 的 `Either`、
- * 真 LLM 请求体），不含「实现细节快照」；§⑤ 的端到端夹具复用 `MailDeliveryRetireSpec`
- * 的既有手法（真 ActorSystem + 真 team fixture + RecordingLlm），零网络、零真实投递。
+ * Every assertion reads ONLY the model-visible face or observable behaviour (description
+ * text, schema, `call`'s `Either`, the real LLM request body) - no implementation-detail
+ * snapshots; the face-(5) end-to-end fixture reuses the `MailDeliveryRetireSpec` technique
+ * (real ActorSystem + real team fixture + RecordingLlm), zero network, zero real delivery.
  */
 class MailAttachSpec extends FunSuite:
 
@@ -119,18 +122,20 @@ class MailAttachSpec extends FunSuite:
       Some(Nil),
       "attachments 缺省 = 空数组（既有调用方零漂移）"
     )
-    // 参数级描述必须把两条腿的语义分开写全（A2 设备腿 / A3 同机腿）。
+    // The parameter description must state the (now single) same-machine leg in full
+    // (mailmodel batch: the DEVICE leg is retired, so its wording must be GONE).
     val d = n(propDesc(MailTool.inputSchema, "attachments"))
     assert(d.contains("ABSOLUTE"), s"缺「绝对路径」硬要求: $d")
     assert(d.contains("any file type"), s"缺「任意类型」: $d")
-    // 🔴 re-pin（mailunify-full 合面）：现读描述用「SAME-MACHINE targets」+「`device:` rides the
-    // device file channel」分写两条腿（旧文的裸 `DEVICE` 大写标签已随合面重写而消失）。
-    // 断言强度不降：仍要求**两条腿分开写全**，并额外钉死设备腿的落点读数（`~/Downloads`）。
+    // 🔴 支上对账重算批（2026-09-26 调和）：设备腿已随 main 侧 mailmodel 批 (e) 整腿退役
+    // ⇒ 支侧原「device file channel / ~/Downloads」两读数随腿消亡（不再断言）；main 侧的
+    // 退役极性断言（DEVICE 措辞必须消失）**收编**；「SAME-MACHINE」大写措辞 = 合并树
+    // 现读形态（支侧合面重写后的腿分写），断言强度不降。
     assert(
-      d.contains("SAME-MACHINE") && d.contains("device file channel"),
-      s"两条腿语义必须分开写全（SAME-MACHINE 腿 + device 文件通道腿）: $d"
+      d.contains("SAME-MACHINE"),
+      s"缺「SAME-MACHINE targets」同机腿措辞（合并树现读）: $d"
     )
-    assert(d.contains("~/Downloads"), s"缺设备腿落点读数（对端缺省接收目录）: $d")
+    assert(!d.contains("DEVICE"), s"the DEVICE leg is retired - its wording must be gone: $d")
     assert(d.contains("sha256"), s"缺同机腿的 sha256 读数声明: $d")
     assert(d.contains(AttachContract.MaxFileBytesLabel), s"缺作者给定的大小上限读数: $d")
 
@@ -165,8 +170,12 @@ class MailAttachSpec extends FunSuite:
       assert(!f.contains("no `attachments` parameter"),
         s"$label: 仍自称「没有 `attachments` 参数」= 与 schema 互斥")
       assert(!f.contains("`SendMessage`'s `attachments` — pure transport"),
-        s"$label: 仍把通用附件落点指向 SendMessage（本工具已有该参数，落点过期）")
-      assert(f.contains("4000"), s"$label: 缺设备腿正文 4000 字符预算（B7 闸的模型可见面）")
+        s"$label: still points the general-attachment landing at SendMessage (the tool has the parameter; the pointer is stale)")
+      // mailmodel batch (2026-09-25): the device leg (and its 4000-char budget sentence)
+      // is retired - the description must no longer advertise the gate. (The one-line
+      // retirement NOTE that names MAIL_DEVICE_RETIRED stays by design; only the
+      // advertisement of the live device faces dies.)
+      assert(!f.contains("4000"), s"$label: the device-leg 4000-char budget is retired and must be gone")
     // 反向：`images` 的参数级描述不得再宣称无通用附件，且必须声明两条腿不支持 vision。
     val img = n(propDesc(MailTool.inputSchema, "images"))
     assert(!img.contains("NO general attachments"), s"images 参数级描述仍宣称无通用附件: $img")
@@ -306,61 +315,15 @@ class MailAttachSpec extends FunSuite:
     assert(proj.contains("is not mounted"), s"既有判定须逐字保留: $proj")
 
   // ============================================================
-  // ⑥ B7：设备腿正文 4000 闸（含附注预算，前置于载荷构造）
+  // (6)(7) REMOVED by the mailmodel batch (2026-09-25, ruling (e)): the device
+  // leg they pinned is retired. The B7 device-text gate (MaxDeviceMailTextChars /
+  // MAIL_DEVICE_TEXT_TOO_LONG) and the device file-channel face are deleted from
+  // MailTool; a stale `device=` call now refuses with MAIL_DEVICE_RETIRED before
+  // any of these faces could run (pinned in MailModelRetiredSpec). The five-key
+  // relay payload contract remains covered by `DeviceMailSpec` in
+  // `src/test/scala/nebflow/neblink/` (the DeviceMail* objects stay in-tree as
+  // tombstones; the Mail TOOL face no longer reaches them).
   // ============================================================
-
-  test("⑥ B7 边界：4000 字符过闸、4001 字符被拒（文案带实际长度与上限）"):
-    assertEquals(MailTool.MaxDeviceMailTextChars, 4000, "服务端契约 MAX_TEXT_CHARS = 4000（唯一来源常量）")
-    val atLimit = "x" * MailTool.MaxDeviceMailTextChars
-    val over = "x" * (MailTool.MaxDeviceMailTextChars + 1)
-    val passMsg = callErr(qIn("to" -> "device:KAI", "message" -> atLimit), ctx())
-    assert(!passMsg.contains(MailTool.ErrDeviceMailTextTooLong), s"4000 恰在上限内，不得被拒: $passMsg")
-    assert(passMsg.contains("Device messaging is unavailable"), s"过闸后应落到既有判定: $passMsg")
-    val overMsg = callErr(qIn("to" -> "device:KAI", "message" -> over), ctx())
-    assert(overMsg.contains(MailTool.ErrDeviceMailTextTooLong), s"4001 必须被拒: $overMsg")
-    assert(overMsg.contains("4001"), s"必须回显实际长度: $overMsg")
-    assert(overMsg.contains("4000"), s"必须回显上限: $overMsg")
-    assert(overMsg.contains("Nothing was sent"), s"fail-fast 必须自陈零投递: $overMsg")
-
-  test("⑥ B7 机制（plan 风险 2）：接近上限的正文 + 1 件附件 ⇒ 附注计入预算后即被拒"):
-    val tmp = os.temp.dir(prefix = "mailattach-b7")
-    val f = tmp / "note.bin"
-    os.write(f, Array[Byte](1, 2, 3, 4))
-    try
-      val near = "x" * 3900
-      val withoutAttach = callErr(qIn("to" -> "device:KAI", "message" -> near), ctx())
-      assert(!withoutAttach.contains(MailTool.ErrDeviceMailTextTooLong),
-        s"3900 无附件必须过闸（否则本判据的对照面不成立）: $withoutAttach")
-      val withAttach = callErr(withArr(qIn("to" -> "device:KAI", "message" -> near), "attachments", f.toString), ctx())
-      assert(withAttach.contains(MailTool.ErrDeviceMailTextTooLong),
-        s"加附注后必须超预算即被拒（不得留到服务端 422）: $withAttach")
-      assert(withAttach.contains("attachment note"), s"拒绝文案必须说明附注计入预算: $withAttach")
-    finally os.remove.all(tmp)
-
-  test("⑥ 设备腿承载通道不在场 ⇒ 显式拒绝（零字节；A-2 判据 ③「通道在场」）"):
-    val tmp = os.temp.dir(prefix = "mailattach-chan")
-    val f = tmp / "c.bin"
-    os.write(f, Array[Byte](9))
-    try
-      val msg = callErr(withArr(qIn("to" -> "device:KAI", "message" -> "hi"), "attachments", f.toString), ctx())
-      assert(msg.contains("file channel") && msg.contains("attachments"),
-        s"通道不在场必须显式指名且先于任何投递: $msg")
-      assert(!msg.contains("relay client is not initialized"), s"通道闸必须先于投递腿判定: $msg")
-    finally os.remove.all(tmp)
-
-  // ============================================================
-  // ⑦ A5：relay 五键载荷一字不动
-  // ============================================================
-
-  test("⑦ A5：`DeviceMail` 契约恰五键、键序不变、同输入归一化逐字节相等"):
-    assertEquals(DeviceMail.PayloadKeys.size, 5, "契约五键不可增删")
-    val p = DeviceMail.payload("body", "devA", "idA")
-    assertEquals(p.asObject.map(_.keys.toList), Some(DeviceMail.PayloadKeys), "键序须与契约书写顺序一致")
-    assertEquals(
-      p.noSpaces,
-      """{"type":"agent_mail","from_device":"devA","from_device_id":"idA","to_nebula":true,"text":"body"}""",
-      "四键取值 + 第五键名与值必须逐字节不变（本批零 wire 改动）"
-    )
 
   // ============================================================
   // ⑤ A3：同机腿附注端到端（真 team fixture + RecordingLlm）

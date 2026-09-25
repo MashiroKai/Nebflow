@@ -797,7 +797,28 @@ case class NodeDef(
     * 🔴 批界（第 14 条反过度设计）：**链号台账 / 永不改号保证 / 旧号别名表 / 退出机制三轴
     * = 批二**，本批只落「声明 + 派生兜底收窄」定义层（届时台账挂在本字段之上）。
     * 旧 flow-map.json 无此键 → withDefaults 解码 None（零迁移）。 */
-  chainId: Option[String] = None
+  chainId: Option[String] = None,
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①, a single
+    * field `taskId: Option[String]`, the same shape as `chainId`): this node is attributed
+    * to its **task id** (an entry id in the unified ledger
+    * `~/.nebflow/tasks-v2.json`).
+    *
+    * Write point = the node's **single construction point** ([[NodeTools]]'s create),
+    * taking the **engine-side identity** `ctx.taskId` -- 🔴 it must **not** be taken from
+    * `NodeEditTool`'s `project` parameter (that parameter **can override**
+    * `ctx.projectName` ⇒ client-forgeable; the value discipline is the same as
+    * `BoardCaller.fromContext`'s "engine-side identity, never a client parameter").
+    *
+    * Semantics = "attribution is implicit addressing" (no task id is passed): the node read
+    * face (`TaskInfo`) resolves attribution from this fingerprint; when an uplink is refused
+    * this fingerprint is the criterion (**no fingerprint ⇒ fail-closed refusal**, ruling e
+    * continuation ⓑ / Q2ⓐ grants no exemption).
+    *
+    * A legacy flow-map.json without this key → withDefaults decodes `None` (**zero
+    * migration**) ⇒ the current count of pre-existing nodes with a fingerprint reads **0**,
+    * and their uplinks are **all refused** (the cost and the alternative channel are in the
+    * implementation task book §10.2). */
+  taskId: Option[String] = None
 )
 
 object NodeDef:

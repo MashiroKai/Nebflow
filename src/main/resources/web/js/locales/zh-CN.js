@@ -63,6 +63,19 @@ export default {
   'project.createCancel': '取消',
   'project.createDescRequired': '请填写项目描述（Agent 会根据它分配任务）',
   'project.createDescTooLong': '描述超过 500 字，请缩短到 500 字以内。',
+  // 🔴 以下 6 条 = projcreate-redesign 批（作者 2026-09-24 裁定 D2(b)+D4）的 **C1 增补候选**：
+  //    路径槽（选择器形态）+ 直连提交的新失败态。**待作者过目后由 sink 定稿**。
+  'project.createWorkspaceLabel': '工作区路径',
+  'project.createWorkspacePick': '选择路径…',
+  'project.createWorkspaceNone': '未选择路径',
+  'project.createWorkspaceRequired': '请先选择工作区路径。',
+  'project.createWorkspacePickFail': '目录浏览器加载失败，请重试。',
+  'project.createPending': '正在创建…',
+  'project.createFailGeneric': '创建失败，请重试。',
+  // 🔴 以下两条**被取代**（作者 2026-09-24 裁定 D2(b) 直连落地后调用点归零：
+  //    `createPrefill` 的用途是「把描述拼成一句发给管家的话」；`createInputUnavailable`
+  //    是转发路径独有的「没找到聊天输入框」失败态）。本批**保留键位、不动字节**，
+  //    仅登记调用点 = 0（键面清理不在本批写面）。
   'project.createInputUnavailable': '没找到聊天输入框，描述未能填入。',
   'project.createPrefill': '帮我创建一个项目。项目描述：{desc}',
   // 提交成功提示：**已登记但本批默认不启用**（沿既有空态 CTA 语义——填进去 + 聚焦
@@ -931,10 +944,9 @@ export default {
   // from_device 显示名）。
   'deviceMail.fromDevice': '来自 {device} 的 Nebula',
   'deviceMail.injectFailed': '来自 {device} 的跨设备 Nebula 邮件注入失败（已重试 {attempts} 次）——未注入任何内容（详见日志）。',
-  // mailunify-full 批（2026-09-23）：Mail 的 `type` 参数（INFO / FOLLOW_UP /
-  // PARALLEL / INTERRUPT / RESULT）已按作者裁定整体删净，五个显示键随之删除。
-  // 注：节点终态通知上的 `[INTERRUPT]` 标签属**另一面**（见 chat.js
-  // EVENT_TYPE_LABELS），本批零改动。
+  // mailmodel batch (2026-09-25): the mailType.* label table is removed — the Mail
+  // tool's `type` parameter is retired, and pending-mail badges render the protocol
+  // raw value directly (flowViewers.js).
   'mailFlow.noBody': '（无正文）',
   'mailFlow.renderFailed': '（正文渲染失败：{msg}）',
 

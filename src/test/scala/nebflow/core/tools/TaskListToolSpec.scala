@@ -338,19 +338,31 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 进注册表；schema 恰六 action（升级批：+log/show —— 本断言是既有面唯一被授权的改动，见交付申报）"):
-    assert(ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 挂 TaskList（Nebula 注入源）")
+  test("TaskList is deleted-retired (taskunify merge batch 2026-09-24): the registry does not mount the old name, the new names Task/TaskInfo are mounted -- the legacy schema face stays on the class for this spec's reference only"):
+    // taskunify merge batch (2026-09-24): `TaskList` and `TaskBoard` were merged into `Task`
+    // (the only write face) + the Nebula ledger read face; the old names are deliberately
+    // **not registered** (the registry layer cannot find them => the
+    // AgentCore.RetiredToolGuides migration guide fires), and "registering the old name as an
+    // alias" would create a second path to the write face => both are forbidden. The tool
+    // class body is kept (the other cases in this spec call it directly to verify the old
+    // data structure), but the **production path is unreachable**.
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "the registry deliberately does not mount TaskList (deleted-retired)")
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskBoard"), "the registry deliberately does not mount TaskBoard (deleted-retired)")
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "the registry mounts Task (the unified ledger's only write face)")
+    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "the registry mounts TaskInfo (the read-only single-entry attribution view)")
+    // the class body can still be called directly (proven by the rest of this spec), and the
+    // schema face keeps its existing shape
     val schema = TaskListTool.inputSchema
     val actions = schema("properties").get.asObject.get("action").get
       .asObject.get("enum").get.asArray.get.map(j => j.asString.get).toList
-    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "恰六 action")
+    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "the legacy schema has exactly six actions (historical shape, referenced by this spec only)")
     // 新增字段进 schema（模型可见面）
     val props = schema("properties").get.asObject.get
     assert(props.contains("text"), "log 的 text 参数必须可见")
     assert(props.contains("links"), "links 参数必须可见")
     assert(props.contains("parentId"), "parentId 参数必须可见")
     // id 在 update/close/log/show 的必填校验在工具层（schema required 仅 action——与
-    // MemoryNoteTool 同款：参数组合校验在 call 内做结构化报错）
+    // 通用工具惯例同款：参数组合校验在 call 内做结构化报错）
 
   // ===== ⑧ 升级批新增 action（R1 log / R2 show / R3 提示更新）=====
 

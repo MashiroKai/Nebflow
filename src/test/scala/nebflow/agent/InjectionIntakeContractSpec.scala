@@ -68,8 +68,11 @@ class InjectionIntakeContractSpec extends FunSuite:
     if needle.isEmpty then 0 else hay.sliding(needle.length).count(_ == needle)
 
   test("② 置位侧单点：intake 只在腿①（→project）置位，腿②（→node）/腿③（非 project 面）不置位"):
-    val leg1Call = "mailAttribution(ctx, Some(InjectionAttribution.IntakeMail))"
-    val bareCall = "mailAttribution(ctx)"
+    // mailmodel 批（2026-09-25，main 侧结构演进收编）：`type` 键退役 ⇒ mailAttribution
+    // 首参由 `mailType` 改为 eventType；腿① 钉 "info"（P0 豁免改由根注入侧的
+    // 前导 [INTERRUPT] 字面判定）。
+    val leg1Call = "mailAttribution(\"info\", ctx, Some(InjectionAttribution.IntakeMail))"
+    val bareCall = "mailAttribution(\"info\", ctx)"
     assertEquals(
       countLiteral(mailTool, leg1Call),
       1,
@@ -82,9 +85,9 @@ class InjectionIntakeContractSpec extends FunSuite:
       s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
     )
     assert(
-      mailTool.contains("private def mailAttribution(\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"),
+      mailTool.contains("private def mailAttribution(\n      eventType: String,\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"),
       "mailAttribution 必须保留 `intake: Option[String] = None` 默认参数（默认 None ⇒ 未置位腿零行为变化）；" +
-        "🔴 re-pin（mailunify-full 合面）：`type` 五标签删净 ⇒ 旧 `mailType: String` 形参已从签名消失，本处同批跟上"
+        "🔴 re-pin（mailunify-full 合面 + mailmodel 收编）：`type` 五标签删净 ⇒ 旧 `mailType: String` 形参已从签名消失（改为 eventType 首参），本处同批跟上"
     )
     // 腿③（sendMail → ImmediateInput，source='mail'）不得被本批碰：仍无 intake 键。
     val sendMailBody = mailTool.substring(

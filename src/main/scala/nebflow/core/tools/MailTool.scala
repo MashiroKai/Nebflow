@@ -16,9 +16,10 @@ import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
 // mailattach 批（2026-09-17 作者四答 = 路线 A）：`attachments` 的件数/大小上限**只**引用
 // `AttachContract`（单一数值权威面）——本文件零硬编码副本（plan 面 3 判据：grep 应只见单点）。
 import nebflow.dropbox.AttachContract
-// device-mail 批（2026-09-15）：契约单点 + 本机 NebLink 身份面（设备腿）。
-// B 批（2026-09-16）：`RelayMailResult` = 设备腿结果文本的 `delivered` 读数来源。
-import nebflow.neblink.{DeviceMail, DeviceMailAck, NeblinkService, PeerInfo, RelayMailResult}
+// mailmodel batch (2026-09-25, ruling e-1): the device-mail CLIENT contract is retired —
+// the Mail `device` leg (outbound) and the tunnel `agent_mail` intake (inbound) are both
+// gone from this tool face; `nebflow.neblink.DeviceMail*` objects remain in-tree only as
+// tombstones (zero production callers from this file).
 import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
 
 
@@ -32,14 +33,12 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
  * The former `queue` mode (serialized FIFO persisted to disk, one mail per turn —
  * for serial task chains: "do this, then that") was **retired** (delivery 退役批,
  * 2026-09-15 作者裁定 (b)):
- * - **every non-device leg** (team short name / `project:` / `node:` / Nebula) that
+ * - **every leg** (team short name / `project:` / `node:` / Nebula / `kernel`) that
  *   still sends `delivery="queue"` is an **explicit error**
  *   (`MAIL_DELIVERY_QUEUE_RETIRED`) — **never** a silent downgrade to immediate
  *   (a declared serial-chain intent cannot be honoured by immediate delivery, so
  *   silently ignoring it would be a silent semantic loss — same direction as the
- *   landed `node:` / device-leg explicit refusals);
- * - the **device leg** keeps its own landed v2.1 refusal verbatim
- *   ([[deliverToDevice]]) — not rewritten by this batch;
+ *   landed `node:` explicit refusals);
  * - the legacy queue layer below (`MailQueueStore` / `deliverQueue` / `queueTo*`)
  *   is **retained**: it has consumers on other faces (session queue drain, REST
  *   queue endpoints) and specs call it directly — it now has **zero production
@@ -55,6 +54,26 @@ import nebflow.shared.{ContentBlock, Message, MessageRole, ToolDefinition}
  * This works because the engine performs **no JSON-Schema validation** — a stale
  * caller's key still reaches the tool and is judged there, which is exactly why the
  * tombstone is the fail-closed side of this change.
+ *
+ * mailmodel batch (2026-09-25, rulings (b)/(d)/(e)):
+ * - the `device` **key is removed from `inputSchema`** (parameter face **8 → 7**):
+ *   the cross-device agent-mail leg is retired both ways (outbound leg deleted; the
+ *   relay-tunnel `agent_mail` intake no longer injects). A stale caller that still
+ *   passes `device=` gets the explicit `MAIL_DEVICE_RETIRED` error (tombstone read —
+ *   same fail-closed shape as the `delivery` tombstone above), never a silent ignore.
+ * - the `type` **key is removed from `inputSchema`** (parameter face **7 → 6**):
+ *   the five mail-type tags were prompt-level semantics with only two engine branches,
+ *   both re-homed (the device-leg INFO-only branch died with the leg; the
+ *   dispatcher-to-root P0 window exemption is now judged on the **body's first-line
+ *   `[INTERRUPT]` literal**, keeping the A3/R7 bypass pair intact — mechanism, not a
+ *   message type).
+ * - the **`kernel` address leg** is added (Nebula-exclusive, ruling (b)):
+ *   `address="kernel"` starts a Kernel instance (the Delegate inner-core sub-agent)
+ *   and the receipt carries the continuation address `kernel:<id>`; a later Mail to
+ *   `kernel:<id>` continues that live instance. Non-Nebula callers are refused
+ *   (`MAIL_KERNEL_EXCLUSIVE`) — the kernel trigger face belongs to the Nebula root
+ *   only. The result of a kernel instance is delivered back to the Nebula session by
+ *   the existing `source="delegate"` uplink (zero tool-face change on the return leg).
  *
  * The former `ask` mode (synchronous context fork) was removed entirely
  * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
@@ -72,82 +91,102 @@ object MailTool extends Tool:
   // ============================================================
   // mailunify-full 批（2026-09-23 作者裁定）——统一目标面 `to` 的校验词表
   // （**唯一来源**；报告、spec、描述三处同源引用，禁第二份字面量）。
-  // 本批之前目标面是 `address` XOR `device` 的**互斥双轨** ⇒ `device` 只是
-  // `to="device:<…>"` 的一个 scheme，双轨结构上消失，故：
-  //   MAIL_TARGET_EXCLUSIVE  🔴 **整条删除**（互斥不可能 ⇒ 该码失去对象）。
-  //                          作者裁「强制删」：不是自由裁量。
-  //   MAIL_TARGET_MISSING    保留，但**必改写**：旧文案要求「二选一填一个」
-  //                          （fill exactly one of 'address' … or 'device'），
-  //                          单字段后失实。
-  //   MAIL_DEVICE_NOT_FOUND  保留原样（未知 / 歧义设备 → 候选清单）。
-  //   MAIL_DEVICE_MALFORMED  保留，但**必改写**：旧文案的修法句指向
-  //                          `SendMessage` 的 `to`（该工具本批退役）⇒ 失实。
+  // ＋ 支上对账重算批（2026-09-26 调和）收编的 mailmodel 批（2026-09-25,
+  //    rulings (b)/(d)/(e)）落点——**后落地的主干裁定成立，支侧让位**：
+  //   · `device` 参数（ruling (e)）**与** `to="device:…"` scheme **双双退役**：
+  //     跨设备 agent-mail 腿两端同批消亡（收端停注 `agent_mail` 信封）⇒ 两形态
+  //     共用同一墓碑码 MAIL_DEVICE_RETIRED（fail-closed 墓碑，同 `delivery`
+  //     墓碑形态——schema 键已删、引擎零 JSON-Schema 校验 ⇒ 旧键仍到 call()，
+  //     一行读取即拒）。
+  //   · `kernel` / `kernel:<id>` 地址腿（ruling (b)）**收编进 `to` 单字段**：
+  //     Nebula 专属，非 root 调用方显式拒绝（MAIL_KERNEL_EXCLUSIVE）；
+  //     `kernel:<id>` 实例不在生 ⇒ 显式拒绝（MAIL_KERNEL_NOT_LIVE）。
+  // 词表现状（本调和批后）：
+  //   MAIL_TARGET_MISSING    保留（`to` 面改写文案，缺席 / 空白 ⇒ 本码）。
+  //   MAIL_DEVICE_RETIRED    新增（mailmodel (e) 收编；stale `device=` 参数 **或**
+  //                          `to="device:…"` target ⇒ 显式拒绝）。
+  //   MAIL_KERNEL_EXCLUSIVE  新增（mailmodel (b) 收编）。
+  //   MAIL_KERNEL_NOT_LIVE   新增（mailmodel (b) 收编）。
+  //   MAIL_TARGET_EXCLUSIVE  🔴 删（mailunify-full：互斥双轨结构上消失，该码失去对象）。
+  //   MAIL_DEVICE_NOT_FOUND / MAIL_DEVICE_MALFORMED  🔴 删（设备解析随机腿一同消亡——
+  //                          mailunify-full 原拟「保留/改写」的落点被 mailmodel (e)
+  //                          的**整腿退役**取代；解析器 `resolveDevice` 不再有本工具
+  //                          调用方，两码失去对象）。
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
-  val ErrDeviceNotFound: String = "MAIL_DEVICE_NOT_FOUND"
-  val ErrDeviceMalformed: String = "MAIL_DEVICE_MALFORMED"
+  val ErrDeviceLegRetired: String = "MAIL_DEVICE_RETIRED"
+  val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
+  val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
 
   /** 目标缺失报错（逐字词表）。单字段 `to` 面：缺席 / 空白 ⇒ 本码。 */
   private[tools] val targetMissingMessage: String =
     s"[$ErrTargetMissing] Missing target: 'to' is required and must not be blank. " +
       "Pass one target — e.g. \"project:<name>\", \"node:<nodeId>\", \"Nebula\", \"kernel\", " +
-      "a team/agent short name, \"friend:<…>\", \"group:<…>\", \"device:<name|id>\", or \"local\"."
+      "a team/agent short name, \"friend:<…>\", \"group:<…>\", or \"local\"."
 
-  /** 非法形态报错（逐字词表；判据见 [[deviceMalformedReason]]）。 */
-  private def deviceMalformedError(raw: String, reason: String): ToolError =
+  /** Retirement refusal for a stale caller's `device=` parameter **or** a stale
+    * `to="device:…"` target（mailmodel 2026-09-25 ruling (e) 收编到统一单 `to` 面；
+    * 纯构造器，供 spec 直测。`device` 形参 = 调用方格式化好的回显片段）。
+    * 唯一来源：spec 与描述面引用本构造器，禁第二份字面量。 */
+  private[tools] def deviceLegRetiredError(device: String): ToolError =
     ToolError(
-      s"[$ErrDeviceMalformed] Malformed device name inside 'to' '$raw' — $reason. Pass the device NAME or " +
-        "device id alone after the prefix (e.g. \"device:macbook-pro\" or \"device:<id>\") — the prefix " +
-        "itself is the scheme, not part of the name."
+      s"[$ErrDeviceLegRetired] The device leg was retired on 2026-09-25 — the cross-device " +
+        "agent-mail leg no longer exists (the receiving end stopped injecting agent_mail envelopes in the " +
+        "same batch), so nothing was sent and nothing is queued. Got " + device + ". The former " +
+        "SendMessage transport tool was retired on 2026-09-23 (its friend/group/local-copy legs live on as " +
+        "this tool's `friend:` / `group:` / `local` targets). To reach an AGENT use `to`: \"project:<name>\" " +
+        "(or a bare mounted project name), a team name or member short name, or — Nebula root only — " +
+        "\"kernel\" / \"kernel:<id>\"."
     )
 
-  /** 非法形态判据（纯函数，供 spec 直测）。返回 `Some(可读原因)` = 形态非法。 */
-  private[tools] def deviceMalformedReason(raw: String): Option[String] =
-    val v = raw.trim
-    if v.isEmpty then Some("it is empty")
-    else if v.startsWith("device:") then Some("it carries the \"device:\" prefix")
-    else if v.contains("://") then Some("it looks like a URL, not a device name/id")
-    else None
+  /** Kernel-leg unauthorized-caller refusal (ruling (b): Nebula-exclusive; the refusal text ships as a §16 candidate deliverable). */
+  private[tools] def kernelExclusiveError(address: String, role: String): ToolError =
+    ToolError(
+      s"[$ErrKernelExclusive] The kernel address leg is EXCLUSIVE to the Nebula root session (ruling " +
+        "2026-09-25 (b)): dispatchers, team agents and nodes cannot start or continue a kernel instance. " +
+        s"Nothing was sent (address='$address', your role: $role). Route the work through Nebula instead — " +
+        "mail your report to Nebula and let it dispatch."
+    )
+
+  /** Explicit refusal when the `kernel:<id>` instance is not live (fail-closed: a finished kernel instance's address is unroutable). */
+  private[tools] def kernelNotLiveError(id: String): ToolError =
+    ToolError(
+      s"[$ErrKernelNotLive] No live kernel instance 'kernel:$id' — kernel instances are one-shot Delegate " +
+        "sessions: when an instance finishes, its result is delivered back to your session and its address " +
+        "stops being routable. Nothing was sent. Start a new instance with address=\"kernel\"."
+    )
 
   // ============================================================
   // delivery 退役批（2026-09-15 作者裁定 (b)「保留字段、退役 queue 模式语义」）
   //   ＋ mailparams 批（2026-09-17 作者裁定 = 案 C「清死面」）——
-  // **非设备腿** `delivery="queue"` 的统一显式拒绝文案（**唯一来源**；spec 与此处同源）。
+  // The unified explicit-refusal text for `delivery="queue"` on **every leg** (**single source**; specs cite this same source).
   //   · 语义 = `delivery` 字段已**退役出 schema**（mailparams 批：参数面 8 → 7，该键
   //     不再对模型可见），但 `call()` 内**保留一行墓碑读取**（`deliveryTombstone`）
-  //     —— 一切非设备腿收到 `"queue"` 仍**立即显式拒绝**：零投递副作用、零队列落盘。
+  //     —— every leg receiving `"queue"` is still **immediately and explicitly refused**: zero delivery side effects, zero queue persistence.
   //   · 选「显式拒绝」而非「立即化」的理由：调用方声明的**串行链语义**无法被立即投递
-  //     满足 —— 静默改投 = 静默丢语义（禁用面），且与既有 `node:` / 设备腿的
+  //     honoured by immediate delivery —— a silent switch = a silent semantic loss (forbidden face), same direction as the existing `node:` leg's
   //     「显式拒绝，禁静默降级」先例同向；调用方拿到可读错误即可自纠。
   //   · 墓碑读取成立的判据（不是权宜）：引擎**零 JSON-Schema 校验**（`protocol.scala`
   //     自陈「面外参数会被静默忽略」）⇒ 删 schema 键**不会**让旧键到不了 `call()`；
   //     故「删键 + 墓碑判」= fail-closed，而「删键 + 删判」才是静默降级。
-  //   · 设备腿**不走本文案**：其 v2.1 拒 queue 契约自有字面量、逐字不动（见
-  //     [[deliverToDevice]]）——两处字面量不同是**有意**的（禁为退役而翻已落契约）。
+  //   · (mailmodel 2026-09-25: the device leg's own v2.1 queue-refusal literal died with
+  //     the leg itself — the single gate below now structurally covers every leg.)
   // ============================================================
   val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_RETIRED"
 
   // ============================================================
   // mailattach 批（2026-09-17 作者四答 = 路线 A）——「静默丢」修 B6 的**唯一来源**词表。
-  //   MAIL_VISION_UNSUPPORTED_LEG  `project:` / `node:` 两条腿收到 `images` ⇒ 显式拒绝。
-  // 判据：这两条腿**结构上只能收字符串**（`ProjectActor.TriggerDispatcher(message)` /
-  // `NodeEngine.sendNodeMessage(nodeId, message, _)` 均无 blocks 形参）⇒ 旧行为是
-  // 「加载 + base64 之后不使用」= 静默丢（plan 风险 1）。本批改为显式拒绝，文案给
-  // **类别 + 原因 + 替代路径**（照 :684-690 设备腿失败面形态），并指名两条能承载的腿。
+  //   MAIL_VISION_UNSUPPORTED_LEG  `project:` / `node:` / `kernel` (the spawn leg)
+  //                                receiving `images` => explicit refusal.
+  // Rationale: these legs are **structurally string-only** (`ProjectActor.TriggerDispatcher(message)` /
+  // `NodeEngine.sendNodeMessage(nodeId, message, _)` and the kernel spawn brief all lack a blocks
+  // parameter) => the old behavior was "load + base64, then never use it" = silent drop (plan risk 1).
+  // Now an explicit refusal, with the message giving **category + reason + alternative path** and
+  // naming the legs that can carry images.
+  // (mailmodel batch 2026-09-25: the device leg retired whole with (e) => its B7 4000-char body
+  // gate (`MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG`) is deleted with it.)
   // ============================================================
   val ErrVisionUnsupportedLeg: String = "MAIL_VISION_UNSUPPORTED_LEG"
-
-  // ============================================================
-  // mailattach 批（2026-09-17）——「静默丢」修 B7 的**唯一来源**常量。
-  //   设备腿正文（`message` + 附件附注）上限 = **4000 字符**。
-  // 依据（plan 面 3 / 风险 2 逐字）：服务端契约 `agentmail.rs:60 MAX_TEXT_CHARS = 4000`
-  // （跨仓只读判读），`:181-183` 超限即 422。本仓先例 = `FriendMessageTool.scala:73`
-  // `private val MaxMessageLength = 4000`（**private**，不可跨工具引用 ⇒ 本处另立同名值，
-  // 出处同源、量纲同值）。旧行为零闸 ⇒ 加附注会把「接近上限的邮件」从成功变 422
-  // （plan 风险 2 的机制），故本闸**前置于载荷构造**。
-  // ============================================================
-  val MaxDeviceMailTextChars: Int = 4000
-  val ErrDeviceMailTextTooLong: String = "MAIL_DEVICE_TEXT_TOO_LONG"
 
   /** B6 显式拒绝文案（纯函数，供 spec 直测；词表与文案同源）。 */
   private[tools] def sameMachineVisionUnsupportedError(target: String, count: Int): ToolError =
@@ -157,7 +196,7 @@ object MailTool extends Tool:
         "NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
         "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
         "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
-        "that can carry them: `to=\"Nebula\"`, a team/agent short name, or `to=\"device:<name>\"`."
+        "that can carry them: `to=\"Nebula\"`, a team/agent short name, or a live `kernel:<id>` instance."
     )
 
   private[tools] def deliveryQueueRetiredMessage(target: String): String =
@@ -171,11 +210,31 @@ object MailTool extends Tool:
 retired — this note supersedes all earlier instructions naming them as entry points).
 One tool, one target field: `to` selects the target by an explicit prefix
 (case-insensitive). Required: `to`, plus `message`.
+`SendMessage` (the former pure-transport tool, retired 2026-09-23) lives on only as this
+tool's `friend:` / `group:` / `local` targets: a `friend:` target reaches the peer as a
+PERSON (the user's voice), never as that peer's agent session. The former cross-device
+`device` leg was retired on 2026-09-25 — a stale `device=` call or `to="device:…"` target
+is an explicit MAIL_DEVICE_RETIRED error, never a silent send.
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
-  mounted project name is accepted as an equivalent form). You have no `node:`
+  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel
+  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live
+  instance. You have no `node:`
   address and no self-address.
+
+## Kernel leg (Nebula-exclusive, 2026-09-25)
+Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
+mails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.
+`to="kernel"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/
+Grep/Bash + AskUserQuestion), no project context, no memory — the message must be a
+fully self-contained brief. The instance runs in the background; its result is delivered
+back to your session when it finishes, and the tool result header carries its
+continuation address (`kernel:<id>`). `to="kernel:<id>"` continues THAT live
+instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
+already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already
+delivered; start a new one with `kernel`.
+
 - **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in
   your current project (from NodeList). You do not mail your own project.
 - **Team context (legacy)**: a team name (e.g. "nebflow-project") routed to its
@@ -188,9 +247,13 @@ is no silent fallback and no fuzzy matching.
 **Scheme resolution (mechanical, fail-closed).** A `to` value with no colon is an
 address in the face above (and, for a sender with a friend list, a bare friend
 remark/username/email/displayName). A `to` value that contains a colon must use one of
-the explicit schemes — `project:`, `node:`, `device:`, `friend:`, `group:` — or the
+the explicit schemes — `project:`, `node:`, `kernel:`, `friend:`, `group:` — or the
 reserved literal `local`. **An unknown scheme is an explicit error listing the legal
-schemes** — it is never silently reinterpreted as a friend name.
+schemes** — it is never silently reinterpreted as a friend name. The former
+`device:` scheme was RETIRED on 2026-09-25 (cross-device agent-mail leg removed on both
+ends in the same batch — the receiving devices stopped injecting `agent_mail` envelopes):
+`to="device:…"` is an explicit MAIL_DEVICE_RETIRED error — nothing is sent and nothing
+is queued.
 
 ## `node:<id>` routing semantics (by target node status; same engine as the retired
 `NodeMessage` tool — `NodeEngine.sendNodeMessage`)
@@ -219,40 +282,14 @@ with a readable reason. Subject to permission tiers and rate limits and (dependi
 configuration) a confirmation card (see Confirmation below). Text only in this phase for
 `group:` (see Attachments).
 
-## Device target (`device:` — cross-device Nebula mail, 2026-09-15)
-`device:<deviceName|deviceId>` — another machine of the same NebLink account, given as a
-device NAME or device id (resolution: exact id → exact name → id prefix → name prefix →
-name contains; unknown **or ambiguous** ⇒ explicit error listing the candidates, never a
-silent first hit). The mail is handed to the NebLink server
-(`POST /api/relay/{target_device_id}/mail`, target in the path — no broadcast, no fan-out)
-with the frozen payload `{"type":"agent_mail","from_device":…,"from_device_id":…,"to_nebula":true,"text":…}`
-and is pushed to that device as event-stream `agent_mail`; it lands **directly in that device's
-Nebula session** — injected at its next turn boundary with the header line
-`[DEVICE-MAIL · from <from_device>]`, shown in the peer's message stream as a blue
-injected bubble. It does NOT go to the peer's user chat inbox, and **no confirmation card is
-raised** (this is not a friend send).
-
-**The peer's agent receives it directly.** `device:` delivers *into the peer's
-Nebula session* — that device's AGENT reads the mail and can act on it. It is not a
-message for the peer's user chat: this is the way to make another machine's agent aware
-of something — including a **file**, which that agent can then `Read` (see Attachments
-below).
-
-Two facts changed when the former `SendMessage(to="device:…")` leg was retired
-(mailunify-full batch, 2026-09-23):
-1. **LOST CAPABILITY — no directory request on this leg.** The former leg could ASK the
-   receiver to place the files in a directory of its choosing (the receiver accepted only
-   its own allow-listed directories; if the peer did not support the request, the files
-   fell back to the peer's Downloads). On this leg the files always land in the peer's
-   default receive directory `~/Downloads` and the injected mail text names them. There
-   is no way to request a directory on a `device:` target.
-2. **REVERSED SEMANTICS.** The former leg was PURE TRANSPORT: files and text reached the
-   peer MACHINE and the peer's agent was NOT aware of either (nothing entered its session
-   or its LLM context; only the machine and its device panel showed it). This leg is the
-   exact opposite: the mail enters the peer's Nebula session and that device's agent
-   receives it directly. If you meant "move bytes without telling anyone", that option no
-   longer exists — pick the target by who should end up KNOWING about it, not by where
-   the bytes go.
+## Device targets — retired (2026-09-25)
+The cross-device Nebula mail leg no longer exists (mailmodel batch, ruling (e)): the
+receiving end stopped injecting `agent_mail` envelopes in the same batch, so a
+`to="device:…"` target (or a stale `device=` parameter) is an explicit
+MAIL_DEVICE_RETIRED error — nothing is sent, nothing is queued. There is no
+machine-transport target on this tool any more: the former `SendMessage` transport tool
+was retired on 2026-09-23 (mailunify-full), and its friend / group / local-copy legs
+live on as this tool's `friend:` / `group:` / `local` targets above.
 
 ## `local` (reserved literal)
 Nothing is delivered: the files in `attachments` are copied into a destination directory on
@@ -260,42 +297,32 @@ this machine (zero network; see Attachments).
 
 Images (optional `images` parameter — up to 5 absolute local image paths,
 PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Targets that reach a chat
-turn** (`Nebula` / a team or agent short name): the recipient sees the images directly
-(vision models) plus their paths as text. **`project:` / `node:` targets
-are text-only** — those legs hand a plain string to an engine-side session, so `images`
-there is an **explicit error** and nothing is sent. **`friend:` / `group:` / `local` legs
-have no vision channel** — `images` there is likewise an **explicit error** (never a
-silent drop); send the image as an `attachments` file on those targets. **Device target
-(`device:`)** — the bytes ride the existing device file channel (chunked, sha256-verified)
-into that device's default receive directory (`~/Downloads`) and the injected mail text
-names them so that device's agent can `Read` them; a failed or unavailable transfer is
-reported explicitly, never dropped silently (an unavailable channel refuses the send
-before anything goes out).
+turn** (`Nebula` / a team or agent short name / a live `kernel:<id>` instance): the
+recipient sees the images directly (vision models) plus their paths as text.
+**`project:` / `node:` targets (and the kernel START leg) are text-only** — those legs
+hand a plain string to an engine-side session, so `images` there is an **explicit
+error** and nothing is sent. **`friend:` / `group:` / `local` legs have no vision
+channel** — `images` there is likewise an **explicit error** (never a silent drop);
+send the image as an `attachments` file on those targets.
 
 Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
 type, each up to 1024 MB = 1 GiB) are how files move. Where the bytes land, by target:
-- **Same-machine targets** (`project:` / `node:` / `Nebula` / team or agent short name):
-  nothing is copied — the mail text carries each file's **absolute path, byte
-  size and sha256**, because the recipient shares your disk and reads the original. So the
-  file must still exist when the recipient reads it: do not point `attachments` at
-  temporary or worktree paths that may be cleaned up before then.
+- **Same-machine targets** (`project:` / `node:` / `kernel…` / `Nebula` / team or agent
+  short name): nothing is copied — the mail text carries each file's **absolute path,
+  byte size and sha256**, because the recipient shares your disk and reads the original.
+  So the file must still exist when the recipient reads it: do not point `attachments`
+  at temporary or worktree paths that may be cleaned up before then.
 - **`friend:`**: files ride the server's attachment channel — create session → 4 MiB
   chunked upload (per-chunk checksum + whole-file SHA-256) → sent as attachment ids; the
   receiver downloads them over an authenticated in-app route. The client probes the
   attachment route before uploading: unsupported or unverifiable ⇒ the whole send is
   refused with a readable reason and nothing is uploaded — attachments are never dropped
   silently.
-- **`device:`**: the bytes ride the same device file channel (chunked, sha256-verified)
-  into that device's default receive directory (`~/Downloads`), and the injected mail text
-  names them — that device's agent can then `Read` them. The device mail body (message +
-  the attachment note appended to it) must stay within **4000 characters** — an over-budget
-  device Mail is rejected before anything is sent.
 - **`group:`**: TEXT ONLY in this phase — `attachments` is an **explicit error** and
-  nothing is sent; use a `friend:` or `device:` target for files.
+  nothing is sent; use a `friend:` target for files.
 - **`local`**: required — the files are copied into a destination directory on this
   machine (created if missing; an existing file there is replaced only when the
   overwrite flag is set). Zero network, zero message delivered.
-
 `attachments` does NOT put bytes into the recipient's LLM context: for an image the
 model should see, use `images`. A `friend:` target may carry an empty `message` only when
 `attachments` is non-empty (the receiving client then shows a placeholder line); a
@@ -306,7 +333,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
 friend or group send first raises a confirmation card in the chat, naming the recipient
 (a friend's label, or the group name). The message is sent ONLY after the user approves
 it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back
-as an error saying so. Device sends and local copies are not gated by this tier. Wait
+as an error saying so. Local copies are not gated by this tier. Wait
 for the tool result — do not assume anything went out.
 
 Delivery — every Mail is immediate (there is no delivery parameter to set):
@@ -317,8 +344,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   one Mail per turn — for "do this, then that" serial chains) was RETIRED on
   2026-09-15, and the `delivery` parameter itself was removed from this tool's
   schema on 2026-09-17. A stale caller that still passes `delivery="queue"` is an
-  explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every non-device target — it is
+  explicit error (MAIL_DELIVERY_QUEUE_RETIRED) on every target — it is
   NEVER silently downgraded to immediate.
+  Dispatcher-to-root replies are coalesced into ONE injection per 5-second window;
+  a reply that must bypass the window leads its body with the literal token
+  [INTERRUPT] on the first line.
 
 There is no urgency flag: an urgent message states the urgency in its own text."""
 
@@ -337,6 +367,11 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   // 删掉一个纯提示性标签不丢任何投递语义 ⇒ 静默忽略即可，多一条墓碑反而会把
   // 一个死键升格成受支持的表面。旧调用方传来的 `type` 键由引擎的零 JSON-Schema
   // 校验静默丢弃（`protocol.scala` 自陈），与「键缺席」逐字同一结果。
+  //
+  // 支上对账重算批（2026-09-26 调和）注：mailmodel 批（2026-09-25, ruling d）已把
+  // P0 窗豁免改判在**正文首行 `[INTERRUPT]` 字面量**上（机制、非消息类型，见
+  // [[isDispatcherMailInterrupt]]）——本调和批按主干裁定收编该机制，`type` 键本身
+  // 的「静默忽略」处置两侧一致、不变。
   // ============================================================
 
   // ============================================================
@@ -363,7 +398,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   private[nebflow] val AddressFaceHeader: String =
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
   private[nebflow] val AddressFaceNebulaRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). You have no `node:`\n  address and no self-address.\n"
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel\n  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live\n  instance. You have no `node:`\n  address and no self-address.\n\n## Kernel leg (Nebula-exclusive, 2026-09-25)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.\n`to=\"kernel\"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/\nGrep/Bash + AskUserQuestion), no project context, no memory — the message must be a\nfully self-contained brief. The instance runs in the background; its result is delivered\nback to your session when it finishes, and the tool result header carries its\ncontinuation address (`kernel:<id>`). `to=\"kernel:<id>\"` continues THAT live\ninstance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with `kernel`.\n\n"
   private[nebflow] val AddressFaceDispatcher: String =
     "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
   private[nebflow] val AddressFaceTeam: String =
@@ -439,40 +474,50 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           "description" -> ("The target, selected by an explicit scheme prefix (case-insensitive). Legal targets are " +
             "role-scoped — see the Address face in the tool description; a target outside your face is an explicit " +
             "error that lists the legal targets. Schemes: `project:<name>` (a bare mounted project name is " +
-            "equivalent), `node:<nodeId>`, `device:<deviceName|deviceId>`, `friend:<remark|username|email|" +
-            "displayName>`, `group:<groupName|groupId>`; reserved literals `Nebula` and `local`. A bare string with " +
-            "no colon is an address in your face (Nebula / a team or agent short name / a mounted project name) and, " +
-            "for a sender with a friend list, a bare friend remark/username/email/displayName. A value that contains " +
-            "a colon MUST use one of those schemes — an unknown scheme is an explicit error listing them, never a " +
-            "silent reinterpretation; the escape hatch for a friend whose own name contains a colon is the explicit " +
-            "`friend:` prefix (the reserved literal `local` has shadowed a friend of that name since the beginning). " +
+            "equivalent), `node:<nodeId>`, `kernel` / `kernel:<id>` (Nebula-exclusive kernel leg), " +
+            "`friend:<remark|username|email|displayName>`, `group:<groupName|groupId>`; reserved literals `Nebula` " +
+            "and `local`. A bare string with no colon is an address in your face (Nebula / a team or agent short " +
+            "name / a mounted project name) and, for a sender with a friend list, a bare friend " +
+            "remark/username/email/displayName. A value that contains a colon MUST use one of those schemes — an " +
+            "unknown scheme is an explicit error listing them, never a silent reinterpretation; the escape hatch " +
+            "for a friend whose own name contains a colon is the explicit `friend:` prefix (the reserved literal " +
+            "`local` has shadowed a friend of that name since the beginning). The former `device:` scheme is " +
+            "RETIRED (2026-09-25): `device:…` is an explicit MAIL_DEVICE_RETIRED error, nothing is sent. " +
             "A `group:` target is a group conversation the user is a member of, resolved by exact group id " +
             "(`grp-…`), then exact group name, then a unique group-name prefix; several or none matching come back " +
             "as a candidate list, and a group that does not exist, has been disbanded, or that the user is not a " +
             "member of fails with a readable reason. A `group:` target is TEXT ONLY in this phase — pass no " +
-            "`attachments` there (an explicit error, nothing sent; use `friend:` or `device:` for files).").asJson
+            "`attachments` there (an explicit error, nothing sent; use `friend:` for files).").asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "The message or task text to send (max 4000 characters on friend/device/group legs). Required; ignored for `local`.".asJson
+          "description" -> "The message or task text to send (max 4000 characters on friend/group legs). Required; ignored for `local`.".asJson
         ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
+        ),
+        "task" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> ("Optional task id — continue THAT task's dispatcher instead of starting a new one. " +
+            "OMIT it to have the engine CREATE a task for this Mail and return its number in the result header " +
+            "(`[task #N] …`): pass that number on subsequent Mails about the same work so they continue the same " +
+            "task instead of spawning a parallel one. A `task` that does not exist, or is already terminal " +
+            "(`closed` / `completed`), is an explicit error and nothing is sent. " +
+            "Only meaningful on the `project:<name>` leg. The Mail body is automatically appended " +
+            "to that task's note timeline by the engine — there is no note parameter anywhere.").asJson
         ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
           "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
-            "vision blocks. For targets that reach a chat turn (Nebula / team / agent short name) the recipient sees " +
-            "the images directly plus their paths as text. NOT supported on `project:` / `node:` (text-only legs, " +
+            "vision blocks. For targets that reach a chat turn (Nebula / team / agent short name / a live " +
+            "`kernel:<id>` instance) the recipient sees the images directly plus their paths as text. NOT " +
+            "supported on `project:` / `node:` (or the kernel START leg — text-only legs, " +
             "which hand a plain string to an engine-side session) and NOT on `friend:` / `group:` / `local` (no " +
             "vision channel on those legs): passing `images` there is an explicit error and nothing is sent — pass " +
-            "those paths as `attachments` instead. DEVICE targets (`device:`): the files ride the existing device " +
-            "file channel (chunked FileTransfer, sha256-verified) and land in THAT device's default receive dir " +
-            "(~/Downloads); the injected mail text names them so that device can Read them — a failed or " +
-            "unavailable transfer is reported explicitly, never dropped silently.").asJson,
+            "those paths as `attachments` instead.").asJson,
           "default" -> Json.arr()
         ),
         "attachments" -> Json.obj(
@@ -481,13 +526,12 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
           "description" -> ("Optional ABSOLUTE local paths of files to attach — any file type, up to " +
             s"${AttachContract.MaxAttachmentsPerMessage} files, each up to ${AttachContract.MaxFileBytesLabel}. " +
-            "Where the bytes land, by target: SAME-MACHINE targets (`project:` / `node:` / `Nebula` / a team or " +
-            "agent short name) get a path note (absolute path, byte size, sha256) and read the original — nothing " +
-            "is copied, so the file must still exist when it is read. `friend:` rides the server attachment " +
+            "Where the bytes land, by target: SAME-MACHINE targets (`project:` / `node:` / `kernel…` / `Nebula` / " +
+            "a team or agent short name) get a path note (absolute path, byte size, sha256) and read the original — " +
+            "nothing is copied, so the file must still exist when it is read. `friend:` rides the server attachment " +
             "channel (4 MiB chunks, per-chunk checksum + whole-file SHA-256; authenticated in-app download; " +
             "permission tiers / rate limits / confirmation card; the send is refused outright when the attachment " +
-            "route is unsupported or unverifiable). `device:` rides the device file channel " +
-            "(chunked FileTransfer, sha256-verified) into THAT device's default receive dir (~/Downloads). " +
+            "route is unsupported or unverifiable). " +
             "`group:` is TEXT ONLY in this phase — `attachments` there is an explicit error. `local` requires it: " +
             "the files are copied into `targetDir`. This is NOT the vision channel: an image the recipient's " +
             "model should SEE belongs in `images`.").asJson,
@@ -503,6 +547,8 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     // mailunify-full 批：`type` 五标签删净 ⇒ 摘要不再有 `[TYPE]` 后缀；
     // delivery 退役批（2026-09-15）的「不再有 `, queue` 形态」口径照旧成立
     // （queue 模式退役后该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递）。
+    // 支上对账重算批（2026-09-26 调和）：mailmodel 批 (e) 的 device/type 键退役收编后，
+    // `device:` 前缀同样从标签面消失（该值只可能是**已拒绝**的旧调用方）。
     s"Mail(→$target)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
@@ -515,7 +561,10 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   //   ② `to` 等于保留字面量 `local`（大小写不敏感）    ⇒ Local（本机搬运腿）
   //   ③ `to` **不含冒号**                              ⇒ Face（角色地址面，落既有瀑布）
   //   ④ `to` 含冒号 ⇒ 取**首个**冒号前的 scheme（trim + 小写，大小写不敏感）：
-  //        `device`  → Device(rest)   —— 设备腿（rest 空 ⇒ MAIL_DEVICE_MALFORMED，见 [[deviceMalformedReason]]）
+  //        `device`  → 🔴 **MAIL_DEVICE_RETIRED**（mailmodel (e) 收编：整腿退役，
+  //                     任何 `device:…` 形态一律显式拒绝——含残缺前缀，不再区分形态）
+  //        `kernel`  → Face(整串)     —— mailmodel (b) 收编：kernel 腿在
+  //                     [[layeredRoute]] 判（裸 `kernel` 无冒号 ⇒ ③ 即 Face）
   //        `project` → Face(整串)     —— 既有分层地址面单点（`layeredRoute` 判前缀）
   //        `node`    → Face(整串)     —— 同上
   //        `friend`  → Friend(rest)（rest 空 ⇒ 残缺前缀错误）
@@ -526,14 +575,14 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   // ============================================================
   private[tools] enum Target:
     case Local
-    case Device(raw: String)
     case Friend(query: String)
     case Group(query: String)
-    /** 角色地址面（`project:` / `node:` / 裸名）——交由 [[layeredRoute]] + 既有瀑布。 */
+    /** 角色地址面（`project:` / `node:` / `kernel`系 / 裸名）——交由 [[layeredRoute]] + 既有瀑布。 */
     case Face(raw: String)
 
-  /** 合法 scheme 面（错误文案的**唯一来源**；与 [[classifyTarget]] 的分派表同源）。 */
-  private val KnownSchemes: List[String] = List("project:", "node:", "device:", "friend:", "group:")
+  /** 合法 scheme 面（错误文案的**唯一来源**；与 [[classifyTarget]] 的分派表同源）。
+    * `device:` 不在集合内（mailmodel (e) 退役，`classifyTarget` 单独拒绝）。 */
+  private val KnownSchemes: List[String] = List("project:", "node:", "kernel:", "friend:", "group:")
 
   /** 未知 scheme 的显式报错（列合法面 + 给修法；禁静默按好友解析）。 */
   private def unknownSchemeError(raw: String, scheme: String): ToolError =
@@ -555,20 +604,18 @@ There is no urgency flag: an urgent message states the urgency in its own text."
         val scheme = s.take(colon).trim.toLowerCase
         val rest   = s.drop(colon + 1).trim
         scheme match
-          // rest 空 ⇒ 与 `friend:` / `group:` **逐字同构**的残缺前缀错误（同族文案，
-          // 不同目标域名词）。回归基线（`main` 的 `SendMessage.parseToKind`）：`device:`
-          // 空参原为 `Left`（本批前的既有形态）⇒ 本谓词**不得**因分类学重写把它变成
-          // `Device("")` 而把红推迟到下游形态判（那会让「残缺前缀」这一族判据失去同构性）。
-          case "device" =>
-            if rest.isEmpty then Left(ToolError(s"'$s' is missing the device name/id after `device:`."))
-            else Right(Target.Device(rest))
+          // mailmodel (e) 收编（支上对账重算批）：`device:` scheme 整腿退役 ⇒ 任何
+          // `device:…` 形态（含残缺前缀）一律 MAIL_DEVICE_RETIRED——单一墓碑码，
+          // 不再区分「残缺 / 未知设备 / 形态非法」（那些判据随机腿一同消亡）。
+          case "device" => Left(deviceLegRetiredError(s"target '$s'"))
           case "project" => Right(Target.Face(s))
           case "node"    => Right(Target.Face(s))
+          case "kernel"  => Right(Target.Face(s))
           case "friend" =>
             if rest.isEmpty then Left(ToolError(s"'$s' is missing the friend after `friend:`."))
             else Right(Target.Friend(rest))
           case "group" =>
-            // rest 空 ⇒ 与 `friend:` / `device:` **逐字同构**的残缺前缀错误（同族文案，
+            // rest 空 ⇒ 与 `friend:` **逐字同构**的残缺前缀错误（同族文案，
             // 不同目标域名词）——不得回落成「按好友解析」：那会把一次参数残缺静默
             // 变成一次对好友的寻址（正是本仓「静默不达」缺陷族）。
             if rest.isEmpty then Left(ToolError(s"'$s' is missing the group name/id after `group:`."))
@@ -595,20 +642,47 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     val role = roleOf(ctx)
 
     // ------------------------------------------------------------
-    // 🔴 墓碑读取（mailparams 批，2026-09-17 案 C「清死面」）——**该键已退役出 schema**，
-    // 本行仅作**退役墓碑**，不是活参数：唯一用途 = 判旧调用方送来的 `"queue"` 并报
-    // `MAIL_DELIVERY_QUEUE_RETIRED`。其余值一律不再需要分支（投递形态只剩 immediate）。
-    // 为什么删了 schema 键还要读它：引擎**零 JSON-Schema 校验**（`protocol.scala:140`
-    // 自陈「面外参数会被静默忽略」）⇒ 旧键照样到达此处 ⇒ 读一行即可把 2026-09-15 刻意
-    // 建立的「显式拒绝、禁静默降级」口径原样维持（删净本行 = 静默立即化 = 判例反向）。
-    // mailunify-full 批（2026-09-23）：本墓碑**照旧保留、判据与文案逐字不变**。
+    // 🔴 Tombstone reads (mailparams batch, 2026-09-17 case C "clear the dead face";
+    // mailmodel batch 2026-09-25 adds one device tombstone in the same shape) — both
+    // keys are **retired out of the schema**; these reads exist only as **retirement
+    // tombstones**, not live parameters:
+    //   · `delivery` tombstone: sole purpose = detect a stale caller's `"queue"` and
+    //     raise `MAIL_DELIVERY_QUEUE_RETIRED` (per-leg single-point gates below). Every
+    //     other value needs no branch anymore (immediate is the only delivery form left).
+    //   · `device` tombstone (ruling (e), carried onto the unified single-`to` face by
+    //     the 支上对账重算 reconcile batch): sole purpose = detect a stale caller still
+    //     sending `device=` (the retired `to="device:…"` scheme is refused with the same
+    //     code in [[classifyTarget]]) and raise `MAIL_DEVICE_RETIRED` (the cross-device
+    //     agent-mail leg retired on both ends in the same batch; the message gives a
+    //     way out: `friend:` / `group:` / `local` targets for files, `to=` agent faces
+    //     for agents).
+    // Why read keys that are gone from the schema: the engine does **zero JSON-Schema
+    // validation** (`protocol.scala` itself says out-of-face parameters are silently
+    // ignored) => stale keys still arrive here => one read line preserves the
+    // "explicit refusal, never silent downgrade" stance exactly (deleting the read
+    // line = silent ignore = the opposite ruling).
     // ------------------------------------------------------------
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
+    val deviceTombstone = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
+    // taskunify batch (2026-09-24, ruling c①): the **explicit task-id parameter** (no
+    // address-syntax extension -- the `address`/`to` face is being refactored by an
+    // in-flight chain, so this batch only adds a schema key). It is meaningful only on the
+    // `project:` leg (other legs are closed by the address face). An empty string / null is
+    // synonymous with omitting it (not specified).
+    val taskRaw = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
+    // mailmodel batch (2026-09-25, ruling e): the `device` tombstone gate — **ahead of
+    // every other judgment and delivery side effect** (same order as the existing
+    // fail-fast discipline; the key is no longer in the schema, only stale callers send
+    // it). 支上对账重算批：门收编到统一单 `to` 面上——`classifyTarget` 对
+    // `to="device:…"` 的拒绝与本门同源同码（[[deviceLegRetiredError]]），门序保持
+    // main 的「先于一切判定」口径（含 `to` 缺席判定）。
+    if deviceTombstone.isDefined then
+      IO.pure(Left(deviceLegRetiredError(s"device='${deviceTombstone.get}'")))
     // mailunify-full 批：目标面 = **单字段 `to`**（`address` XOR `device` 的双轨结构上消失
     // ⇒ MAIL_TARGET_EXCLUSIVE 整条删除）。校验前置于一切投递副作用（既有 fail-fast 纪律）。
-    classifyTarget(toRaw) match
+    else classifyTarget(toRaw) match
       case Left(err) => IO.pure(Left(err))
       case Right(Target.Local) =>
         // 本机搬运腿（原 `SendMessage` 的 `local` 腿整条保留 ⇒ [[FriendMessageTool.copyLocalTo]]）。
@@ -626,32 +700,6 @@ There is no urgency flag: an urgent message states the urgency in its own text."
               )
             case Right(paths) =>
               IO.pure(Left(sameMachineVisionUnsupportedError("local", paths.size)))
-      case Right(Target.Device(raw)) =>
-        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-        else
-          // 设备腿：形态先判（非法形态零副作用），再走先例的设备解析。
-          deviceMalformedReason(raw) match
-            case Some(reason) => IO.pure(Left(deviceMalformedError(raw, reason)))
-            case None =>
-              validateChainId(chainIdRaw, ctx).flatMap {
-                case Left(err) => IO.pure(Left(err))
-                // chainId 于设备腿**只校验不带出**（链集是本项目派生的，对端 Nebula 的
-                // 项目链不同源 ⇒ 塞进对端注入体会误导）；登记在交付说明。
-                // 同根族第三件（2026-09-16 A1 批）：`images` 的判据**前置于一切投递副作用**
-                // ——旧行为是设备腿**静默吞掉** `images`（零报错、零投递），本闸把它变成显式处置。
-                // mailattach 批（2026-09-17）：`attachments` 的判据与 `images` 同序 —— 同样
-                // **前置于一切投递副作用**（旧缺陷方向 = 静默丢；本批不让新参数继承该方向）。
-                case Right(_) =>
-                  deviceImagesPlan(input, ctx).flatMap {
-                    case Left(err) => IO.pure(Left(err))
-                    case Right(imagePaths) =>
-                      attachmentsPlan(input, ctx).flatMap {
-                        case Left(err) => IO.pure(Left(err))
-                        case Right(attachmentPaths) =>
-                          deliverToDevice(raw, message, deliveryTombstone, imagePaths, attachmentPaths, ctx)
-                      }
-                  }
-              }
       case Right(Target.Friend(query)) =>
         if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
         else if role != SenderRole.NebulaRoot then IO.pure(Left(friendGroupOutOfFace(toRaw, role)))
@@ -677,7 +725,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           // 群支一期**纯文本**：带附件 = 显式拒绝（禁静默丢弃）——与 `images` 同族口径。
           IO.pure(Left(ToolError(
             "A `group:` target is TEXT ONLY in this phase — pass no `attachments` " +
-              "(nothing was sent; re-send the text without attachments, or use a `friend:`/`device:` target for files)."
+              "(nothing was sent; re-send the text without attachments, or use a `friend:` target for files)."
           )))
         else
           ImageInject.parseImagesParam(input) match
@@ -687,9 +735,11 @@ There is no urgency flag: an urgent message states the urgency in its own text."
               IO.pure(Left(sameMachineVisionUnsupportedError(s"group:$query", paths.size)))
       // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
       // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
-      // 位置**必须在设备腿分支之后**：设备腿的 v2.1「显式拒 queue」契约自有字面量，
-      // 逐字保持、不得被本文案顶替（[[deliverToDevice]]）；地址面腿在这里兜住
-      // 其余全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——单点，
+      // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
+      // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+      // 支上对账重算批注：设备腿已随 mailmodel (e) 整腿退役（`classifyTarget` 单点拒绝）
+      // ⇒ 本闸现在的覆盖面 = 除 Local / Friend / Group 之外的**全部地址面腿**
+      // （`node:` / `project:` / `kernel`系 / Nebula / team 短名 / 裸项目名）——单点，
       // 结构性保证「本工具面零 queue 入口」。
       case Right(Target.Face(raw)) =>
         if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
@@ -728,11 +778,22 @@ There is no urgency flag: an urgent message states the urgency in its own text."
                               // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
                               // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
                               // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
-                              layeredRoute(raw, effectiveMessage, blocks, imagePaths, chainId, ctx, system) match
+                              // mailmodel batch (2026-09-25): the mailType parameter is retired with
+                              // the `type` key —— eventType is now judged by the **leading `[INTERRUPT]`
+                              // literal of the body** (same single-point criterion as deliverToNebulaRoot):
+                              // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
+                              // leg's batching-window exemption uses the same judgment (see
+                              // deliverToNebulaRoot / isDispatcherMailInterrupt).
+                              // （`taskRaw` 随下：taskunify c① 的显式 task 参数，仅 `project:` 腿消费。）
+                              layeredRoute(raw, effectiveMessage, blocks, imagePaths, chainId, ctx, system, taskRaw) match
                                 case Some(action) => action
                                 case None =>
-                                  if raw.contains("://") then deliverToAddress(raw, effectiveMessage, blocks, ctx, system)
-                                  else deliverToShortName(raw, effectiveMessage, blocks, ctx, system)
+                                  // mailparams 批（2026-09-17 案 C）：schema 键删除后只剩一条
+                                  // 投递路径（immediate），无按键值分派逻辑；非 `queue` 的旧值
+                                  // 与「键缺席」逐字同一结果。
+                                  val legacyEventType = if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
+                                  if raw.contains("://") then deliverToAddress(raw, effectiveMessage, blocks, legacyEventType, ctx, system)
+                                  else deliverToShortName(raw, effectiveMessage, blocks, legacyEventType, ctx, system)
                       }
                   }
           }
@@ -753,6 +814,11 @@ There is no urgency flag: an urgent message states the urgency in its own text."
 
   private val NodePrefix = "node:"
   private val ProjectPrefix = "project:"
+  /** kernel leg (mailmodel batch 2026-09-25, ruling (b)): the `kernel:<id>` continuation
+    * form's prefix (the bare `kernel` form = start a new instance, judged in
+    * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
+    * key, unambiguous). */
+  private val KernelPrefix = "kernel:"
 
   private def nebulaFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id>\""
@@ -791,10 +857,26 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       imagePaths: List[String],
       chainId: Option[String],
       ctx: ToolContext,
-      system: ActorSystem
+      system: ActorSystem,
+      /** **Explicit task-id parameter** (taskunify batch 2026-09-24, ruling c①):
+        * meaningful only on the `project:` leg (including the bare-project-name equivalent
+        * shape) -- omitted ⇒ the engine creates a task automatically; supplied ⇒ continue
+        * that task. Other legs are closed by the address face (this parameter is ignored on
+        * non-project legs, because those legs never touch the task ledger). */
+      task: Option[String] = None
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
-    if address.startsWith(NodePrefix) then
+    // ── kernel leg (mailmodel batch 2026-09-25, ruling (b)): the Nebula-exclusive
+    // address leg ── `kernel` = start one kernel instance; `kernel:<id>` = continue that
+    // live instance. Every non-Nebula caller is explicitly refused ([[kernelExclusiveError]];
+    // the refusal text ships as a §16 candidate deliverable).
+    if address == "kernel" || address.startsWith(KernelPrefix) then
+      Some(
+        if role != SenderRole.NebulaRoot then
+          IO.pure(Left(kernelExclusiveError(address, role.toString)))
+        else deliverToKernel(address, message, blocks, ctx, system)
+      )
+    else if address.startsWith(NodePrefix) then
       val nodeId = address.stripPrefix(NodePrefix).trim
       Some(
         if nodeId.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id>\".")))
@@ -806,7 +888,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       Some(
         if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToProject(pname, message, imagePaths, ctx)
+        else deliverToProject(pname, message, imagePaths, ctx, task)
       )
     else if address == MailTool.NebulaAgentName then
       role match
@@ -823,7 +905,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, imagePaths, ctx)
+          case Some(_) => deliverToProject(address, message, imagePaths, ctx, task)
           case None    => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -939,6 +1021,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     * 越面调用）由此从 **收件方**项目**纠正为发送方项目**。`None`（本会话无项目上下文，
     * 如 Nebula root / 团队会话）⇒ 发射面回落根域 `NEBULA`（`leg1SenderProject`）。 */
   private def mailAttribution(
+      eventType: String,
       ctx: ToolContext,
       intake: Option[String] = None
   ): IO[InjectionAttribution] =
@@ -947,12 +1030,13 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       InjectionAttribution(
         sender = Some(senderName),
         senderTeam = team,
-        // mailunify-full 批（2026-09-23）：`type` 五标签删净 ⇒ 本字段**不再有来源**
-        // （旧值 = 被删参数 `mailType` 的小写形）。置 `None` = 「无 EVENT_TYPE 段」，
-        // 与「键缺席」逐字同一呈现（前端 `injectedSourceLabel` 对缺席 eventType 不追加段）。
-        // 🔴 不改 `InjectionAttribution.eventType` 字段本身、不动 `[INTERRUPT]` 字面面
-        // （`chat.js:417` / `NotificationHeader.scala:98` 属**另一面**的同源标签）。
-        eventType = None,
+        // 支上对账重算批（2026-09-26 调和）：mailunify-full 曾因 `type` 参数删净把本字段
+        // 置 `None`；mailmodel 批（2026-09-25, ruling d）把 eventType 的来源改判到正文
+        // 首行 `[INTERRUPT]` 字面量（interrupt/info 对偶保留为呈现面机制）⇒ 按后落地
+        // 的主干裁定收编：本字段恢复来源 = 调用方传入的判果（恒 "info" 或 "interrupt"）。
+        // 🔴 不改 `InjectionAttribution.eventType` 字段本身（`chat.js:417` /
+        // `NotificationHeader.scala:98` 属另一面的同源标签）。
+        eventType = Some(eventType.toLowerCase),
         intake = intake,
         project = ctx.projectName
       )
@@ -981,7 +1065,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
         case Some(projectName) =>
           ProjectRuntimeRegistry.get(projectName).flatMap {
             case Some(rt) =>
-              mailAttribution(ctx).flatMap { attribution =>
+              mailAttribution("info", ctx).flatMap { attribution =>
                 rt.engine.sendNodeMessage(nodeId, message, Some(attribution)).map(_.left.map(ToolError(_)))
               }
             case None =>
@@ -990,182 +1074,106 @@ There is no urgency flag: an urgent message states the urgency in its own text."
               )))
           }
 
-  /** 腿④（device-mail 批，2026-09-15 作者令）：`Mail(device:X)` → 本机网关 →
-    * NebLink 服务端（契约端点 `POST /api/relay/{target_device_id}/mail`，**契约 v2 ①**）
-    * → 对端设备隧道推送 `agent_mail` 载荷 → 对端 Nebula 会话注入。
-    *
-    * 委托面（**零重复实现**）：
-    *   - 设备解析 = [[FriendMessageTool.resolveDevice]]（Root 令「沿用 SendMessage 的
-    *     device 解析先例」的**现取落点**：deviceId 精确 → deviceName 精确 → deviceId
-    *     前缀 → deviceName 前缀 → deviceName 包含，唯一候选才成功；零命中/多命中一律
-    *     列可用设备，**禁静默首命中**）；
-    *   - 传输 = `NeblinkClient.relayAgentMail`（**目标走路径**；鉴权/自愈走既有
-    *     `withSession` + `dispatchRequest` 缝；无 fan-out、无广播兜底——解析出的
-    *     deviceId 是路径上的唯一目标，v2 ②）；
-    *   - 载荷构造 = [[nebflow.neblink.DeviceMail.payload]]（唯一构造点，恰契约五键）；
-    *   - 回执 = [[nebflow.neblink.DeviceMailAck]]（eventId 关联 + 超时腿，v2 ④）。
-    *
-    * `from_device`/`from_device_id` = **本机自报值，仅供初始展示**：服务端以鉴权
-    * 身份覆盖 `from_device_id`（v2 ③），本腿**不**把它用于任何逻辑判定。
-    *
-    * **零新增闸/卡**：Mail 现状（Nebula 发 Mail 无需确认卡）逐字沿用——本腿只做设备
-    * 解析 + 形态/语义闸 + 载荷上通道 + 诚实结果转写 + 一条审计行（④）；不触碰
-    * A2A/团队权限面。
-    *
-    * 两条**显式拒绝**（禁静默丢语义）：设备腿恒 immediate（`delivery=queue` 拒绝，
-    * 与 `node:` 腿同一先例）。🔴 mailunify-full 批（2026-09-23）：旧「仅 INFO 类型」闸
-    * **随 `type` 参数一并删除** —— 该闸的判据来源（`mailType`）已不存在，且冻结载荷
-    * 本无邮件类型字段 ⇒ 新形态下**零承载**（与「参数面整块删净、承载不补」同向）。
-    * 同根族第三件（2026-09-16 A1 批）：`images` 不再被静默吞掉
-    * ——投递前判据见 [[deviceImagesPlan]]，投递后经**既有**设备文件通道推送见
-    * [[pushDeviceAttachments]]（失败只显式回显，不回滚已投递的文本）。
-    *
-    * mailattach 批（2026-09-17）：本腿多一条**显式拒绝**（B7 静默丢修）——正文
-    * （message + 附件附注）超 `MaxDeviceMailTextChars` 时**在载荷构造之前**拒绝。
-    * 理由：服务端硬限 4000 字符（`neblink-server` 契约 `MAX_TEXT_CHARS`），而旧代码
-    * 零闸 ⇒ 加附注会把「接近上限的邮件」从成功变成 422（静默型的失败面）。 */
-  private def deliverToDevice(
-      device: String,
-      message: String,
-      delivery: String,
-      imagePaths: List[String],
-      attachmentPaths: List[String],
-      ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
-    // 正文附注（图片 + 通用件同一条附注）在**判据之前**构造：B7 的闸判的正是
-    // 「message + 附注」的组合长度（附注预算已计入）。
-    val bodyText = deviceMailText(message, imagePaths, attachmentPaths)
-    if delivery == "queue" then
-      IO.pure(Left(ToolError(
-        "Device targets are always immediate — the peer's Nebula session is injected at its next turn " +
-          "boundary, so a serialized FIFO queue would only delay it. Drop delivery=queue."
-      )))
-    else if bodyText.length > MaxDeviceMailTextChars then
-      IO.pure(Left(ToolError(
-        s"[$ErrDeviceMailTextTooLong] The device mail body is ${bodyText.length} characters, over the " +
-          s"$MaxDeviceMailTextChars-character limit the relay enforces on the frozen agent_mail payload " +
-          "(message text plus the attachment note appended to it count together). Nothing was sent — shorten " +
-          "the message, or attach fewer files (each attached file adds its name to the note)."
-      )))
-    // A-2 判据 ③「承载通道在场」（与 [[deviceImagesPlan]] 的第 ③ 条同款、同序）：
-    // 本腿的通用件**只能**走设备文件通道 ⇒ 通道不在场即拒绝，禁「邮件发了、文件没走」。
-    // 位置仍在一切投递副作用之前（relay 调用在其后），故零字节、零半投递。
-    else if attachmentPaths.nonEmpty && ctx.sharedResources.flatMap(_.dropboxService).isEmpty then
-      IO.pure(Left(ToolError(
-        s"Device targets carry `attachments` over the existing device file channel (chunked FileTransfer), which is " +
-          "unavailable here: the Dropbox file channel is not initialized (is NebLink enabled?). Nothing was sent — " +
-          "retry once the channel is up, or reference the path in the message text."
-      )))
-    else
-      (ctx.sharedResources.flatMap(_.neblinkService), ctx.sharedResources.flatMap(_.dropboxService)) match
-        case (Some(ns), dbxOpt) =>
-          for
-            id <- ns.identity
-            peers <- ns.peers
-            result <- FriendMessageTool.resolveDevice(device, peers) match
-              case Left(err) =>
-                IO.pure(Left(ToolError(
-                  s"[$ErrDeviceNotFound] ${err.message}\n${FriendMessageTool.deviceCandidates(peers)}"
-                )))
-              case Right(peer) =>
-                // 契约 v2 ①：目标走**路径**（`POST /api/relay/{target_device_id}/mail`），
-                // body = 契约五键载荷本体。解析出的对端 **deviceId** 是唯一目标 ⇒ 本腿
-                // 天然定向（无 fan-out、无「找不到就广播」兜底分支，v2 ②）。
-                ns.relayClientOpt match
-                  case None =>
-                    IO.pure(Left(ToolError(
-                      "Cannot send device mail: the NebLink relay client is not initialized (not logged in to a NebLink server?)."
-                    )))
-                  case Some(client) =>
-                    // 同根族第三件（A1 批）：**正文先行**（文本不可达 ⇒ fail-fast，不烧
-                    // 传输超时、不产生半投递——与 `SendMessage.sendDevice` 同款次序）；
-                    // 附件附注写进正文，因为对端 agent 只能从注入文本得知文件落在它自己的盘上。
-                    // mailattach 批：`bodyText` 在方法入口已构造并过 B7 闸（零重复构造）。
-                    val payload = DeviceMail.payload(bodyText, id.deviceName, id.deviceId)
-                    client.relayAgentMail(peer.deviceId, payload).flatMap {
-                      case Right(RelayMailResult(serverId, delivered)) =>
-                        // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
-                        // 帧关联；超时腿在 DeviceMailAck 内（WARN + 审计行，禁静默）。
-                        DeviceMailAck.await(peer.deviceId, serverId).flatMap { eventId =>
-                          // B 批（2026-09-16 作者裁定「路径 B」一步到位）：上面这行 `await`
-                          // 调用与入参**逐字不变**，但其返回值（eventId）**不再进结果文本**
-                          // —— 「Awaiting ack」直接删（eventId 对账手柄随之消失，作者知悉
-                          // 代价、不保留）。结果文本改读服务端 `delivered`：
-                          //   `true`  ⇒ 载荷已推进对端活体通道（🔴 推送被隧道接受 ≠ 对端已
-                          //             注入 ⇒ 收窄口径，禁「acknowledged / 已注入」类措辞）；
-                          //   `false` ⇒ 服务端已接受、对端设备离线 ⇒ 在队待上线（**非错误**）。
-                          val sent = if delivered then
-                            s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
-                              s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
-                              s"/api/relay/${peer.deviceId}/mail: pushed to the peer's live channel — " +
-                              s"the peer's Nebula session will be injected at its next turn boundary."
-                          else
-                            s"Message sent to device '${peer.deviceName}' — the frozen agent_mail payload " +
-                              s"(type=${DeviceMail.TypeAgentMail}, to_nebula=true) is on the relay route " +
-                              s"/api/relay/${peer.deviceId}/mail: server accepted; peer device offline — " +
-                              s"queued until it comes online (not an error). It will be readable on that " +
-                              s"device once it comes online."
-                          auditDeviceMailSend(ns, peer.deviceId, bodyText, ctx) *>
-                            pushDeviceAttachments(ns, dbxOpt, peer, imagePaths, attachmentPaths, ctx).map {
-                              case Left(attachNote) => Left(ToolError(s"$sent $attachNote"))
-                              case Right(notes)     => Right(if notes.isEmpty then sent else s"$sent ${notes.mkString(" ")}")
-                            }
-                        }
-                      case Left(err) =>
-                        // B 批：失败面**结构化**（类别 + 原因 + 原始错误面原文摘录），
-                        // 🔴 禁只写「失败」（失败类别细分见交付报告「须作者裁项」）。
-                        IO.pure(Left(ToolError(
-                          s"Device mail to '${peer.deviceName}' FAILED — category: relay-route-refused; " +
-                            s"reason: the NebLink relay did not accept the agent_mail payload " +
-                            s"(HTTP/session/transport failure, or a remote error from the relay), so nothing " +
-                            s"was sent and nothing is queued — fix the cause and retry; " +
-                            s"raw error: $err"
-                        )))
-                    }
-          yield result
-        case _ =>
-          IO.pure(Left(ToolError(
-            "Device messaging is unavailable: NebLink/Dropbox services are not initialized (is NebLink enabled?)."
-          )))
+  // ============================================================
+  // kernel leg (mailmodel batch 2026-09-25, author ruling (b) "only Nebula may use it; Nebula dispatches it"):
+  // Mail-triggered Kernel = the **Nebula-exclusive address leg**; the dispatch receipt carries the
+  // continuation address (the follow-up-by-address family).
+  //   - `kernel`   = spawn one kernel instance (the SAME spawn chain as Delegate.call: same
+  //                  kernel def resolution, same R9 <=4-per-root-session concurrency gate, same
+  //                  BackoffSupervisor adapter and 3600s budget — zero second implementation);
+  //   - `kernel:<id>` = inject into that **live** instance (registry kind=Delegate with session-id match);
+  //     after the instance goes terminal (one-shot Delegate semantics: the result has already been
+  //     returned to root along source="delegate") the address is **unroutable** => explicit refusal
+  //     ([[kernelNotLiveError]]), same family as the `node:` leg's three-state judgment
+  //     ("running injectable / terminal refused").
+  // Unauthorized callers are refused in [[layeredRoute]] (SenderRole != NebulaRoot => MAIL_KERNEL_EXCLUSIVE);
+  // this layer only delivers. The result-return chain has zero tool-face change (the existing
+  // BackoffSupervisor parent uplink).
+  //
+  // 支上对账重算批（2026-09-26 调和）：本调和批**删除** mailunify-full 曾并入 `to` 面的
+  // 设备腿整套实现（`deliverToDevice` / `deviceImagesPlan` / `deviceMailText` /
+  // `pushDeviceAttachments` / `auditDeviceAttachmentsSend` / `auditDeviceMailSend` /
+  // `MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG` / `MAIL_DEVICE_NOT_FOUND` /
+  // `MAIL_DEVICE_MALFORMED` / `deviceMalformedError` / `deviceMalformedReason`）——
+  // 依据 = mailmodel 批 (e)（2026-09-25，后落地的主干裁定）：跨设备 agent-mail 腿两端
+  // 同批消亡（收端停注 `agent_mail` 信封），`to="device:…"` 与 `device=` 一律
+  // MAIL_DEVICE_RETIRED 显式拒绝；其 `delivery=queue` v2.1 专属字面量随腿消亡，
+  // delivery 拒绝由既有单点闸结构覆盖（见 [[deliveryQueueRetiredMessage]] 注）。
+  // ============================================================
 
-  /** 设备腿 `images` 的**投递前判据**（同根族第三件，2026-09-16 A1 批）。
-    *
-    * 判据（任一不过 ⇒ 显式错误、**零投递副作用**）：
-    *   ① 形态/件数 = [[ImageInject.parseImagesParam]]（**同一单点**，词表逐字一致）；
-    *   ② 绝对路径形态：对**原始串**判（`os.Path` 构造会把相对段绝对化 ⇒ 构造后再判恒真；
-    *      与 `SendMessage` 设备支 `:506-513` 同款硬闸）；
-    *   ③ 承载通道在场 = `sharedResources.dropboxService`（设备文件通道 = 既有分块
-    *      FileTransfer 腿）——不在场即拒绝，禁「发了但没人接」的静默面。
-    *
-    * 返回 = 通过判据的本地绝对路径串（`Nil` = 本次未带附件，投递腿零改动）。 */
-  private def deviceImagesPlan(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, List[String]]] =
-    ImageInject.parseImagesParam(input) match
-      case Left(err)  => IO.pure(Left(err))
-      case Right(Nil) => IO.pure(Right(Nil))
-      case Right(paths) =>
-        val relative = paths.filter(p => !java.nio.file.Paths.get(p.trim).isAbsolute)
-        if relative.nonEmpty then
-          IO.pure(Left(ToolError(
-            "images paths must be absolute, got: " + relative.map(p => s"'$p'").mkString(", ") +
-              ". The peer cannot read this machine's relative paths — pass ABSOLUTE paths of files on this machine."
-          )))
-        else if ctx.sharedResources.flatMap(_.dropboxService).isEmpty then
-          IO.pure(Left(ToolError(
-            "Device targets carry `images` over the existing device file channel (chunked FileTransfer), which is " +
-              "unavailable here: the Dropbox file channel is not initialized (is NebLink enabled?). Nothing was " +
-              "sent — reference the path in the message text instead, or retry once the channel is up."
-          )))
-        else IO.pure(Right(paths))
+  /** Kernel-leg delivery (the caller's NebulaRoot identity has already been verified in [[layeredRoute]]). */
+  private def deliverToKernel(
+      address: String,
+      message: String,
+      blocks: Option[List[ContentBlock]],
+      ctx: ToolContext,
+      system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    (ctx.sharedResources, ctx.actorSystem) match
+      case (Some(res), Some(sys)) =>
+        if address == "kernel" then
+          // New instance: the kernel spawn brief is plain-text only
+          // ([[DelegateTool.spawnBackground]]'s initialPrompt has no blocks parameter)
+          // => `images` is explicitly refused on this leg (same family as B6).
+          if blocks.exists(_.exists {
+                case _: nebflow.shared.ContentBlock.Image => true
+                case _                                    => false
+              }) then
+            IO.pure(Left(sameMachineVisionUnsupportedError("kernel", blocks.get.collect {
+              case _: nebflow.shared.ContentBlock.Image => ()
+            }.size)))
+          else
+            DelegateTool.spawnKernelForMail(message, "mail-triggered kernel task", ctx).map {
+              case Left(err) => Left(err)
+              case Right(id) =>
+                Right(
+                  s"[kernel #$id] Kernel instance started (Delegate inner-core: seven fixed tools, " +
+                    "no project context, no memory). Continuation address: \"kernel:" + id +
+                    "\" — later Mails about THIS instance must carry address=\"kernel:" + id +
+                    "\". Its result will be delivered back to your session when the instance finishes."
+                )
+            }
+        else
+          // Continuation leg: `kernel:<id>` -> the registry single point looks up the **live**
+          // instance (kind=Delegate with id match with kernel session prefix); a hit => UserInput
+          // injection (consumed at the turn boundary, replyTo = the supervisor adapter —— the
+          // turn's terminal state still follows the source="delegate" return chain); a miss => fail-closed.
+          val id = address.stripPrefix(KernelPrefix).trim
+          if id.isEmpty then
+            IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"kernel:<instanceId>\" (the id the start receipt carried).")))
+          else
+            res.agentRegistry.get.flatMap { reg =>
+              reg.get(id) match
+                case Some(rec) if rec.kind == AgentKind.Delegate && id.startsWith("delegate-kernel-") =>
+                  (rec.ref ! AgentCommand.UserInput(
+                    text = message,
+                    replyTo = rec.supervisorRef,
+                    source = Some("mail"),
+                    sender = ctx.agentDef.map(_.name),
+                    eventType = Some("info"),
+                    blocks = blocks,
+                    // (2) server-side injection (agent-to-agent mail), NOT human input — stated explicitly.
+                    fromUser = false
+                  )).void *>
+                    nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
+                    IO.pure(Right(
+                      s"[kernel #$id] Message injected into the live kernel instance — it will process it " +
+                        "at its next turn boundary; its next result is delivered back to your session."
+                    ))
+                case _ => IO.pure(Left(kernelNotLiveError(id)))
+            }
+      case _ =>
+        IO.pure(Left(ToolError("Cannot deliver to the kernel leg: missing resources.")))
 
   // ============================================================
   // mailattach 批（2026-09-17 作者四答 = 路线 A）——`attachments` 通用附件面
   //   设计要点（plan §2 方案 A / §1 面 3）：
   //   ① **上限只引用 `AttachContract`**（件数 9 / 单件 1 GiB，作者给定数）——本文件
   //      零硬编码副本（判据：`grep` 只见 `AttachContract` 单点）；
-  //   ② 校验**前置于一切投递副作用**（与 `deviceImagesPlan` / G3 同序）；
-  //   ③ 两条腿两种语义，**同一参数**：
-  //      · 设备腿 = 字节经既有设备文件通道（[[pushDeviceAttachments]]）；
-  //      · 同机腿 = **零搬字节**，正文附注「绝对路径 + 字节数 + sha256」（[[withAttachmentsNote]]）
+  //   (2) validation **precedes every delivery side effect** (same order as the existing images judgment G3);
+  //   (3) same-machine leg semantics (mailmodel batch 2026-09-25: the device leg is retired => only
+  //       this one remains): **zero bytes are moved**; the body gets a note with "absolute path +
+  //       byte count + sha256" ([[withAttachmentsNote]])
   //        —— 接收方与发送方共享同一磁盘，路径即取件；
   //   ④ 🔴 附件**不进 LLM 上下文**（与 `FriendMessageTool.scala:85` 逐字口径一致）。
   // ============================================================
@@ -1207,8 +1215,8 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           if relative.nonEmpty then
             Left(ToolError(
               "attachments paths must be absolute, got: " + relative.map(p => s"'$p'").mkString(", ") +
-                ". Relative paths are not readable by a peer device, and the path note for same-machine " +
-                "targets must be resolvable as-is — pass ABSOLUTE paths of files on this machine. Nothing was sent."
+                ". The recipient resolves the path note as-is on this machine, so the paths must be " +
+                "resolvable as-is — pass ABSOLUTE paths of files on this machine. Nothing was sent."
             ))
           else
             val missing = paths.filter(p => !java.nio.file.Files.exists(java.nio.file.Paths.get(p)))
@@ -1262,137 +1270,6 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       md.digest(java.nio.file.Files.readAllBytes(path)).map("%02x".format(_)).mkString
     catch case _: Exception => "unreadable"
 
-  /** 设备腿正文的附件附注（🔴 **禁静默**：对端 agent 只能从注入文本知道文件落在它自己的盘上）。
-    *
-    * 落点 = 对端**缺省接收目录** `~/Downloads/<name>`（本腿**不发** `targetDir` 请求 ⇒
-    * 接收端缺省；承载腿 `RelayChunkTransport.put` 写的就是对端 `~/Downloads/${fileName}`，
-    * 并与既有 `targetDirEcho` 的用户可见口径一致）。**不谎报**：发送端只知道文件名与
-    * 该缺省落点，故只点文件名 + 落点语义，不编造对端绝对路径。
-    *
-    * mailattach 批（2026-09-17）：附注**泛化**到通用件 —— 图片件（vision 面）与
-    * `attachments` 通用件（任意类型）在本腿走**同一条**设备文件通道，故共用同一方法；
-    * 两段各自独立成句（`[Mail 附件图片]` / `[Mail 附件]`，与既有词表同族），
-    * 通用件段额外说明「非图片件不进 LLM 上下文 ⇒ 必须先 Read」。 */
-  private def deviceMailText(message: String, imagePaths: List[String], attachmentPaths: List[String]): String =
-    val imageNote =
-      if imagePaths.isEmpty then ""
-      else
-        val names = imagePaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
-        s"\n[Mail 附件图片] ${imagePaths.size} 件随本邮件经设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
-          s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径即可看到图像。"
-    val fileNote =
-      if attachmentPaths.isEmpty then ""
-      else
-        val names = attachmentPaths.map(p => os.Path(java.nio.file.Paths.get(p)).last).mkString(", ")
-        s"\n[Mail 附件] ${attachmentPaths.size} 件通用文件随本邮件经同一设备文件通道（分块 FileTransfer，双侧 sha256 校验）" +
-          s"传输到本机缺省接收目录（~/Downloads）: $names —— 用 Read 读对应的绝对路径取内容" +
-          "（非图片件不进 LLM 上下文，必须先 Read 才能看内容）。"
-    message + imageNote + fileNote
-
-  /** 附件经**既有**设备文件通道推送（A1 同族：复用承载，🔴 零 wire 字段、零新 action、
-    * 零服务端配合）。承载 = [[nebflow.dropbox.DropboxService.sendLocalFiles]]（闸位 +
-    * 分块 + 双侧 sha256 + 续传单点；`SendMessage` 设备腿 `:372` 同款先例）。
-    *
-    * mailattach 批（2026-09-17）：本单点承载**两类件**（`images` 的图片件 + `attachments`
-    * 的通用件）——合并成一次传输（`distinct` 保序去重：同一路径同时出现在两个参数里
-    * 不该发两遍），结果文本改用中性词「attachment(s)」（不再只说 image）。
-    *
-    * 返回语义（🔴 失败**不中断、不回滚**已投递的邮件；逐件结果显式回显）：
-    *   - `Left(detail)` = 有件失败 / 通道抛错 ⇒ 调用方把 detail 附在**已投递**的成功文案后
-    *     （与 `SendMessage.sendDevice:374-390` 的「Text was delivered, but …」同族口径）；
-    *   - `Right(Nil)` = 本次无附件；`Right(notes)` = 完成回显。 */
-  private def pushDeviceAttachments(
-      ns: nebflow.neblink.NeblinkService,
-      dbxOpt: Option[nebflow.dropbox.DropboxService],
-      peer: PeerInfo,
-      imagePaths: List[String],
-      attachmentPaths: List[String],
-      ctx: ToolContext
-  ): IO[Either[String, List[String]]] =
-    val allPaths = (imagePaths ++ attachmentPaths).distinct
-    if allPaths.isEmpty then IO.pure(Right(Nil))
-    else
-      dbxOpt match
-        case None =>
-          IO.pure(Left("The attachments were NOT transferred: the device file channel is not initialized."))
-        case Some(dbx) =>
-          val paths = allPaths.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd))
-          auditDeviceAttachmentsSend(ns, peer, paths, ctx) *>
-            dbx
-              .sendLocalFiles(peer.deviceId, paths, None, origin = nebflow.dropbox.DropboxMessage.OriginAgent)
-              .map {
-                case Left(err) =>
-                  Left(s"The attachments were NOT transferred: ${err.render}.")
-                case Right(outcomes) =>
-                  val failed = outcomes.filterNot(_.delivered)
-                  if failed.isEmpty then
-                    Right(List(
-                      s"${outcomes.size} attachment(s) transferred over the device file channel " +
-                        s"(chunked FileTransfer, sha256 verified): ${outcomes.map(_.fileName).mkString(", ")}."
-                    ))
-                  else
-                    Left(
-                      s"Message was delivered, but ${failed.size}/${outcomes.size} attachment(s) failed — " +
-                        failed.map(o => s"${o.fileName}: ${o.error.getOrElse("unknown error")}").mkString("; ") +
-                        ". Retrying reuses the chunked channel's resume (completed chunks are not re-sent)."
-                    )
-              }
-              .handleErrorWith(e =>
-                IO.pure(Left(
-                  s"The attachments were NOT transferred: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}."
-                ))
-              )
-
-  /** 设备腿附件审计（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN——审计失败绝不影响投递）。
-    * mailattach 批：`action` 从 `Mail.device.images` 泛化为 `Mail.device.attachments`
-    * （本单点现在同时承载图片件与通用件；`via=dropbox-chunk` 与字段形状零变更）。 */
-  private def auditDeviceAttachmentsSend(
-      ns: nebflow.neblink.NeblinkService,
-      peer: PeerInfo,
-      paths: List[os.Path],
-      ctx: ToolContext
-  ): IO[Unit] =
-    ns.identity
-      .flatMap(src =>
-        RelayExecAudit.record(
-          sourceDeviceId = src.deviceId,
-          targetDeviceId = peer.deviceId,
-          via = "dropbox-chunk",
-          action = "Mail.device.attachments",
-          command = s"→ device:${peer.deviceName}; files: ${paths.map(p => s"${p.last}(${os.stat(p).size} B)").mkString(", ")}",
-          projectRoot = ctx.projectRoot,
-          cwd = Option(System.getProperty("user.dir")).getOrElse("")
-        )
-      )
-      .handleErrorWith(_ => IO.unit)
-
-  /** ④ 发送腿审计（一条一行，`RelayExecAudit` 同族 = 设备通道审计的既有落面）。
-    * `sourceDeviceId` = 本机（下发方），`targetDeviceId` = 对端设备。审计失败不影响
-    * 发送（`RelayExecAudit.record` 既有语义：吞异常 + WARN）。
-    * mailattach 批（2026-09-17）：`chars` 的读数从 `message` 改为**实际上 wire 的正文**
-    * （`message` + 附件附注）——审计行是与载荷对账的读数，附注已进载荷 ⇒ 旧读数会低报。 */
-  private def auditDeviceMailSend(
-      ns: NeblinkService,
-      targetDeviceId: String,
-      bodyText: String,
-      ctx: ToolContext
-  ): IO[Unit] =
-    ns.identity
-      .flatMap(src =>
-        RelayExecAudit.record(
-          sourceDeviceId = src.deviceId,
-          targetDeviceId = targetDeviceId,
-          // 契约 v2.1：本腿已无「设备数据通道」形态（v1 面已弃）——出站走服务端
-          // relay 端点（`POST /api/relay/{target}/mail`），故 `via` 与既有 relay 审计同值。
-          via = "relay",
-          action = "Mail.device.send",
-          command = s"type=${DeviceMail.TypeAgentMail}; to_nebula=true; chars=${bodyText.length}",
-          projectRoot = ctx.projectRoot,
-          cwd = Option(System.getProperty("user.dir")).getOrElse("")
-        )
-      )
-      .handleErrorWith(_ => IO.unit)
-
   /** 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。
     * B6（静默丢修，mailattach 2026-09-17）：本腿结构上只能收字符串
     * （`TriggerDispatcher(message: String, …)` 无 blocks 形参）⇒ `images` 无承载面，
@@ -1401,11 +1278,13 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       name: String,
       message: String,
       imagePaths: List[String],
-      ctx: ToolContext
+      ctx: ToolContext,
+      /** **Task id** (taskunify batch 2026-09-24): see [[layeredRoute]]. */
+      task: Option[String] = None
   ): IO[Either[ToolError, String]] =
     if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
     else
-      routeToProject(name, message, ctx).flatMap {
+      routeToProject(name, message, ctx, task).flatMap {
         case Some(r) => IO.pure(r)
         case None =>
           IO.pure(Left(ToolError(
@@ -1420,7 +1299,13 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     *
     * mailack 批（2026-09-23）：**分发器身份**（`ctx.isDispatcher`）的回复走
     * [[enqueueDispatcherReply]] 打包窗（B），窗末注入（C 的背压读数同处）；其余身份
-    * （root / team / 节点）逐字不变。关窗（`≤0`）或 `interrupt` 腿 = 立即注入。 */
+    * (root / team / node) verbatim unchanged. Window closed (`≤0`) or a P0 leg = inject immediately.
+    *
+    * mailmodel batch (2026-09-25, ruling (d)): the `type` key is retired => the P0 exemption is
+    * now judged on the **body's leading `[INTERRUPT]` literal** ([[isDispatcherMailInterrupt]],
+    * a mechanism, not a message type — the A3/R7 bypass pair stays intact); the exempt leg's
+    * injected eventType is always `interrupt` (the presentation-side pair is preserved), all
+    * other legs always `info`. */
   private def deliverToNebulaRoot(
       address: String,
       message: String,
@@ -1429,27 +1314,27 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       system: ActorSystem
   ): IO[Either[ToolError, String]] =
     val senderSessionId = ctx.sessionId.getOrElse("")
+    val eventType = if isDispatcherMailInterrupt(message) then "interrupt" else "info"
     ctx.sharedResources match
       case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
       case Some(res) =>
         resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some((sid, ref)) =>
-            // ── 冲突解（mailunify-full 批 × mailack 批，2026-09-23）──────────────
+            // ── 冲突解（mailunify-full 批 × mailack 批 × mailmodel 批，2026-09-26 调和）──
             // mailack 的**打包窗机制逐字保留**（合窗 / 背压 / 条数上限 / 窗末一次注入，
             // 见 [[enqueueDispatcherReply]]）：那是另一批已落地的作者裁定，禁回退禁简化。
-            // 唯一随动 = 本批「`type` 参数删净」：原 `mailType` 形参**钉常量**
-            // [[DispatcherReplyPinnedKind]]（`enqueueDispatcherReply` 的第三臂取该值）——
-            // 窗的合窗键 = 时间窗 + 条数上限，**与 type 无关** ⇒ 钉常量零语义变化；
-            // 旧 `interrupt` 旁路面在窗机制内原样保留（其 spec 接缝仍可传任意值，
-            // 主仓 `MailDispatcherReplyBatchSpec` 逐字不变）。`sendMail` 侧本批已无
-            // `mailType` 形参（eventType 恒 `None`，见 [[sendMail]]）。
+            // mailunify-full 曾把 mailType **钉常量**（DispatcherReplyPinnedKind）；
+            // mailmodel 批（2026-09-25, ruling d）改判 P0 豁免判据 = **正文首行
+            // `[INTERRUPT]` 字面量**（机制、非消息类型，A3/R7 对偶保留）⇒ 本调和批按
+            // 后落地的主干裁定收编：豁免判据走 [[isDispatcherMailInterrupt]](text)，
+            // 注入 eventType = 豁免腿恒 `interrupt`、其余恒 `info`（呈现面对偶保留）。
             val deliver = (text: String) =>
-              sendMail(ref, NebulaAgentName, text, blocks, ctx, system).flatMap {
+              sendMail(ref, NebulaAgentName, text, blocks, eventType, ctx, system).flatMap {
                 case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, text, ctx)
                 case Left(err) => logger.warn(s"batched dispatcher reply delivery failed: ${err.message}")
               }
             val immediate: IO[Either[ToolError, String]] =
-              sendMail(ref, NebulaAgentName, message, blocks, ctx, system).flatMap {
+              sendMail(ref, NebulaAgentName, message, blocks, eventType, ctx, system).flatMap {
                 case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(Right(
                     s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
                   ))
@@ -1457,7 +1342,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
               }
             if !ctx.isDispatcher then immediate
             else
-              enqueueDispatcherReply(message, DispatcherReplyPinnedKind, deliver).flatMap {
+              enqueueDispatcherReply(message, deliver).flatMap {
                 case None =>
                   // 已入窗 ⇒ 窗末由 flushDispatcherReplies 注入。
                   IO.pure(Right(
@@ -1498,7 +1383,8 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   // 本腿加**生产者侧打包窗**，形态逐字照 `NodeEngine.RootNotifyBatch` 先例：
   // 首件起算（不随新件延长）滚动窗 + 窗末把 N 件合并为**一次**注入 + 条数上限（溢出
   // 留队下窗，不丢件）+ `windowMs <= 0` 关窗（回旧行为，运维回滚面/测试接缝）。
-  // P0 豁免档同源：`mailType` 为 `interrupt` 的腿**不进缓冲**（A3/R7 正负对偶守恒）。
+  // (mailmodel 2026-09-25: the P0 window exemption is judged on the BODY's first-line
+  // [INTERRUPT] literal — mechanism, not a message type; see isDispatcherMailInterrupt.)
   //
   // == 作用域（硬边界）==
   // 只作用 **`ctx.isDispatcher == true` 的发送者**（引擎侧身份判据，非字符串匹配）
@@ -1509,12 +1395,17 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   // （= 「mail 排队」告警，形态对齐既有 mount-stalled 族「只告警不阻断」纪律）。
   // 积压件数另有只读读数 [[dispatcherMailPendingCount]] 供验收/面板机械核对。
 
-  /** 本腿打包窗条目：正文 + 类型（`mailType` 小写，与 `ImmediateInput.eventType` 同源口径）
-    * + 入队时刻（背压读数用）+ **投递闭包**（窗末注入用；捕获入队时的 ref/ctx，避免
-    * 窗末重解析 root 把件投错会话 —— 语义 = 「回复已定，只是延后注入」）。 */
+  /** One batching-window entry of this leg: body + enqueue time (for backpressure
+    * readings) + the **delivery closure** (used for end-of-window injection; captures
+    * the ref/ctx and eventType at enqueue time — the closure is bound to this item's
+    * `info`/`interrupt` grade when constructed inside [[deliverToNebulaRoot]], so the
+    * end-of-window root re-resolution cannot deliver the item to the wrong session.
+    * Semantics = "the reply is decided, only its injection is deferred"). mailmodel
+    * batch (2026-09-25): the `mailType` field is deleted with the retired `type` key
+    * (every in-window item is a non-exempt leg => eventType is always `info`; nothing
+    * needs to be carried per item). */
   private final case class DispatcherMailEntry(
       text: String,
-      mailType: String,
       atMs: Long,
       deliver: String => IO[Unit]
   )
@@ -1549,28 +1440,16 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
     dispatcherMailState.get.map(_.windowArmed)
 
-  /** 🔴 mailunify-full × mailack 批的**唯一形参随动**（2026-09-23）：`type` 参数删净后，
-    * 分发器→root 腿**不再有**邮件类型输入 ⇒ 打包窗的入参**钉常量**本值。
-    *
-    * 为什么钉常量而不是删形参：`enqueueDispatcherReply` 的第三臂（P0 豁免 = `interrupt`
-    * 不进缓冲）与窗末合并件的 tag 取值依赖该形参，且主仓 mailack 批的
-    * `MailDispatcherReplyBatchSpec` 经 spec 接缝直传任意值（含 `"interrupt"` / `"failed"`）
-    * 逐字断言这些分支 ⇒ **删形参 = 破坏另一批已落地裁定**（本批不许）。钉常量后：
-    *   - 合窗键（时间窗 + 条数上限）**与 type 无关** ⇒ 生产行为零变化；
-    *   - 生产入口恒 `"info"` ⇒ P0 豁免面在生产侧不再触发（其判据与 spec 面原样保留）；
-    *   - 合并件的 tag 恒 `info`（`mailType.isEmpty` 回落的既有形态同值）。
-    * 取值 `"info"` = 旧 schema `type` 的默认值（`input("type").getOrElse("INFO")`），
-    * 即「未显式声明类型」的既有语义，非新造字。 */
-  private val DispatcherReplyPinnedKind: String = "info"
-
-  /** P0 豁免档：`interrupt` 腿不进缓冲（与 `NodeEngine.isRootNotifyInterrupt` 同源口径
-    * ——`ImmediateInput.eventType` 即 `mailType.toLowerCase`）。
-    *
-    * 🔴 mailunify-full 批（2026-09-23）：本条判据**原样保留**（另一批裁定 + 其 spec 面
-    * 依据），但生产入口恒定传 `"info"` ⇒ 该档在生产侧为惰性分支（登记：不摘除 = 不
-    * 回退他人机制；其正负对偶仍在 `MailDispatcherReplyBatchSpec` 内被钉）。 */
-  private def isDispatcherMailInterrupt(mailType: String): Boolean =
-    mailType.trim.toLowerCase(java.util.Locale.ROOT) == "interrupt"
+  /** P0 exemption grade (mailmodel batch 2026-09-25, ruling (d) form d-1; 支上对账重算批
+    * 2026-09-26 收编——mailunify-full 曾钉常量 `DispatcherReplyPinnedKind`，被本主干
+    * 裁定取代后随批删除): a leg whose body's **first line is the `[INTERRUPT]` literal**
+    * does not enter the buffer — mechanism-based judgment, not a message type (the
+    * `type` key is retired). Criterion = the first **non-empty** line, trimmed, is
+    * **verbatim-equal** to `[INTERRUPT]`; the A3/R7 bypass pair stays intact (exempt =>
+    * inject immediately with eventType always `interrupt`; non-exempt => always enters
+    * the window). */
+  private[tools] def isDispatcherMailInterrupt(text: String): Boolean =
+    text.linesIterator.find(_.trim.nonEmpty).exists(_.trim == "[INTERRUPT]")
 
   /** 背压告警阈值：排队超过本值即对**该件**补一条 WARN（件不丢、不阻断，只提示）。 */
   private[tools] val DispatcherMailBackpressureWarnMs: Long = 30000L
@@ -1580,18 +1459,16 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     * 返回 `Some(text)` = 旁路（关窗或 P0 豁免）⇒ 调用方走既有立即注入路径。 */
   private def enqueueDispatcherReply(
       text: String,
-      mailType: String,
       deliver: String => IO[Unit]
   ): IO[Option[String]] =
     val windowMs = dispatcherMailWindowMs
-    if windowMs <= 0 || isDispatcherMailInterrupt(mailType) then IO.pure(Some(text))
+    if windowMs <= 0 || isDispatcherMailInterrupt(text) then IO.pure(Some(text))
     else
       val nowMs = System.currentTimeMillis()
-      val lowered = mailType.trim.toLowerCase(java.util.Locale.ROOT)
       dispatcherMailState
         .modify { s =>
           val arm = !s.windowArmed
-          (s.copy(entries = s.entries :+ DispatcherMailEntry(text, lowered, nowMs, deliver), windowArmed = true),
+          (s.copy(entries = s.entries :+ DispatcherMailEntry(text, nowMs, deliver), windowArmed = true),
             (arm, s.entries.size + 1))
         }
         .flatMap { case (armWindow, depth) =>
@@ -1606,7 +1483,12 @@ There is no urgency flag: an urgent message states the urgency in its own text."
 
   /** **窗口结束的唯一出口**：取队首 ≤N 件 → **一次**注入（N=1 ⇒ 正文逐字不变，走该件
     * 自带的投递闭包；N≥2 ⇒ 合并正文，走**首件**闭包并在正文内分节）⇒ 溢出件留队、计时
-    * 随之重起（不延续本窗残时，与既有先例同款）。背压读数在注入前出 WARN。 */
+    * restarts with it (the previous window's remaining time is not carried over, same as the
+    * existing precedent). The backpressure reading emits its WARN before injection.
+    * mailmodel batch: merged items' eventType is always `info` (every in-window item is a
+    * non-exempt leg — exempt items never enter the window; after the `type` key's retirement
+    * there is no failed/blocked grade left to tell apart => conservative normalization, no new
+    * batch-level semantics). */
   private[tools] def flushDispatcherReplies(): IO[Unit] =
     dispatcherMailState
       .modify { s =>
@@ -1623,35 +1505,27 @@ There is no urgency flag: an urgent message states the urgency in its own text."
                 s"[mail-backpressure] dispatcher replies waited up to ${waitedMs / 1000}s before injection (batched=${entries.size})"
               )
             else IO.unit
-          val (body, kind) =
-            if entries.size == 1 then (entries.head.text, entries.head.mailType)
-            else (mergedDispatcherReplyText(entries), mergedDispatcherReplyType(entries))
+          val body = if entries.size == 1 then entries.head.text else mergedDispatcherReplyText(entries)
           bpWarn *> entries.head.deliver(body) *>
-            logger.info(s"dispatcher reply batch flushed (entries=${entries.size}, type=$kind)")
+            logger.info(s"dispatcher reply batch flushed (entries=${entries.size}, type=info)")
       }
 
   /** 合并正文（N≥2）：批头一行 + 逐件分节，**每件正文全文**（不折叠、不摘要、不截断）
-    * ⇒ 机械可核（多重集/保序/不丢）。分节行形如 `── [i/N] [type] ──`。 */
+    * => mechanically verifiable (multiset / order-preserving / lossless). Section lines look like `── [i/N] ──`
+    * (mailmodel batch: the `[type]` segment is deleted with the retired `type` key). */
   private def mergedDispatcherReplyText(entries: List[DispatcherMailEntry]): String =
     val head = s"[Dispatcher 本窗 ${entries.size} 件回复（分发器→root 打包窗合并）]"
     val body = entries.zipWithIndex
-      .map((e, i) => s"── [${i + 1}/${entries.size}] [${if e.mailType.isEmpty then "info" else e.mailType}] ──\n${e.text}")
+      .map((e, i) => s"── [${i + 1}/${entries.size}] ──\n${e.text}")
       .mkString("\n\n")
     s"$head\n$body"
-
-  /** 合并件的 `eventType`（保守：不新增批级语义；强提醒优先 —— failed > blocked > 首件）。 */
-  private def mergedDispatcherReplyType(entries: List[DispatcherMailEntry]): String =
-    if entries.exists(_.mailType == "failed") then "failed"
-    else if entries.exists(_.mailType == "blocked") then "blocked"
-    else entries.head.mailType
 
   // ── 测试接缝（`private[tools]`：spec 直调，避开真实窗长等待与 root 会话依赖；
   //    与 `NodeEngine.flushRootNotify` 的 `private[project]` spec 接缝同款先例）──
   private[tools] def enqueueDispatcherReplyForTest(
       text: String,
-      mailType: String,
       deliver: String => IO[Unit]
-  ): IO[Option[String]] = enqueueDispatcherReply(text, mailType, deliver)
+  ): IO[Option[String]] = enqueueDispatcherReply(text, deliver)
 
   private[tools] def flushDispatcherRepliesWithMaxForTest(n: Int): IO[Unit] =
     dispatcherMailState
@@ -1662,14 +1536,9 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       .flatMap { entries =>
         if entries.isEmpty then IO.unit
         else
-          val (body, _) =
-            if entries.size == 1 then (entries.head.text, entries.head.mailType)
-            else (mergedDispatcherReplyText(entries), mergedDispatcherReplyType(entries))
+          val body = if entries.size == 1 then entries.head.text else mergedDispatcherReplyText(entries)
           entries.head.deliver(body)
       }
-
-  private[tools] def mergedDispatcherReplyTypeForTest(types: List[String]): String =
-    mergedDispatcherReplyType(types.map(t => DispatcherMailEntry("", t, 0L, _ => IO.unit)))
 
 
   // ============================================================
@@ -1689,11 +1558,26 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     * queue/immediate 两个入口共用——address 是已挂载 project → 返回
     * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
     * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。 */
+    * Node results are delivered along out edges (§2.7), never back through Mail.
+    *
+    * -- taskunify batch (2026-09-24, ruling c①: **an explicit parameter, no address-syntax
+    * extension**) --
+    * Semantics (the "first Mail" concept is gone):
+    *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
+    *      automatically** and spawns it, and the receipt header returns the **task number**
+    *      (the caller continues from it);
+    *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
+    *      append in the same way as a node message), 🔴 **never create a new one**;
+    *   ③ `task` pointing at a **non-existent / already terminal** task ⇒ **refused** + a
+    *      readable reason (fail-closed).
+    * Also: after a successful delivery the engine **appends the Mail body as one record on
+    * that task's note timeline** (structured: `from` + timestamp + body; the only write
+    * path, and the tool layer has no note parameter). */
   private def routeToProject(
       address: String,
       message: String,
-      ctx: ToolContext
+      ctx: ToolContext,
+      task: Option[String] = None
     ): IO[Option[Either[ToolError, String]]] =
     ProjectRuntimeRegistry.get(address).flatMap {
       case None => IO.pure(None)
@@ -1703,21 +1587,76 @@ There is no urgency flag: an urgent message states the urgency in its own text."
             IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
           case Some(ref) =>
             val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            // 腿① 来源标注（bluebubble 批 2026-09-12）：发信方随触发消息落到分发器
-            // 会话的注入气泡顶栏（source 仍 = task，D-5 裁定：值不改名）。
-            // mailbadge 批（2026-09-13，选项 C）：**只有本腿**置 `intake` ——
-            // 分发器收件面是作者口径「蓝色气泡标注 Mail」的落点；`source` 保持
-            // `"task"` 不动（桥的消费计数单点 `ProjectActor:622` 与 `idleSince`
-            // 30 min 空闲窗逐行不变）。
-            mailAttribution(ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
-              (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid, ProjectActor.SourceTask, Some(attribution))).void
-                .as(Some(Right(s"Project '$address' dispatcher triggered")))
+            // Attribution resolution (ruling c: the explicit parameter is primary, the
+            // address syntax is not extended).
+            // ① without task ⇒ the engine creates a task automatically (new watermark; the
+            //    "first Mail" concept is gone).
+            // ② with task ⇒ continue it (it must exist and not be terminal; otherwise
+            //    refused, fail-closed).
+            // ③ with task pointing at a non-existent / terminal task ⇒ refused + a readable
+            //    reason.
+            val ledger = nebflow.core.project.TaskLedgerStore.open()
+            val resolved: IO[Either[ToolError, String]] = task match
+              case None =>
+                // r2 P0 fix (2026-09-25): the auto-create consumes the PURE ledger id
+                // (`createSyncReturningId`) -- never the rendered `[OK] ...` banner. The
+                // id travels below into the slot binding (TriggerDispatcher), the note
+                // append and the `[task #N]` receipt header; the banner stays the `Task`
+                // tool's display face only. (Pre-fix flow: the whole banner string
+                // traveled as the task id -- slot keys poisoned, appendNoteSync missed,
+                // and every session attached from the receipt got a TaskInfo
+                // TASK_NOT_FOUND.)
+                IO.blocking(ledger.createSyncReturningId(
+                  title = s"$address — ${message.take(120).replace("\n", " ")}",
+                  actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher))
+              case Some(tid) =>
+                IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).map {
+                  case None =>
+                    Left(ToolError(
+                      s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
+                        s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})"))
+                  case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
+                    Left(ToolError(
+                      s"Mail: task '#${entry.id}' is '${entry.status}' (terminal) — a terminal task cannot be continued. " +
+                        s"Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.Status})"))
+                  case Some(entry) => Right(entry.id)
+                }
+            resolved.flatMap {
+              case Left(err) => IO.pure(Some(Left(err)))
+              case Right(taskIdStr) =>
+                // Leg ① source annotation (bluebubble batch 2026-09-12): the sender travels
+                // with the trigger message into the dispatcher session's injection bubble
+                // header (source stays = task, ruling D-5: the value is not renamed).
+                // mailbadge batch (2026-09-13, option C): **only this leg** sets `intake` --
+                // the dispatcher intake face is the landing point of the author's "annotate
+                // Mail with a blue bubble" ruling; `source` stays `"task"` untouched (the
+                // bridge's single consumption-count point `ProjectActor:622` and the
+                // `idleSince` 30 min idle window are unchanged line by line).
+                // mailmodel batch (2026-09-25): the `type` key is retired — the
+                // dispatcher-intake attribution is pinned to `info` (the P0 window
+                // exemption is judged on the body's first-line [INTERRUPT] literal at
+                // the root-injection side, not on a message type here).
+                mailAttribution("info", ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
+                  (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
+                    message, rootSid, ProjectActor.SourceTask, Some(attribution), Some(taskIdStr))).void *>
+                    // Automatic note append (ruling n: the only write path is engine-side,
+                    // never through the tool layer): the Mail body becomes one record on that
+                    // task's note timeline. A history-append failure does not fail the main
+                    // delivery (the Mail is already sent) but it **must be stated explicitly**
+                    // (never silently).
+                    IO.blocking(ledger.appendNoteSync(
+                      taskIdStr, message,
+                      from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
+                      actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula)) *>
+                    IO.pure(Some(Right(s"[task #$taskIdStr] Project '$address' dispatcher triggered")))
+                }
             }
     }
 
   private[tools] def deliverQueue(
       address: String,
       message: String,
+      eventType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem
@@ -1729,14 +1668,14 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       case None =>
         if address == NebulaAgentName && senderName != NebulaAgentName then
           canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
-            if canMail then resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
+            if canMail then resolveAndQueue(address, message, eventType, imagePaths, ctx, system, senderSessionId)
             else IO.pure(Left(nebulaDeniedError(senderName)))
           }
-        else resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
+        else resolveAndQueue(address, message, eventType, imagePaths, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
-          case None        => resolveAndQueue(address, message, imagePaths, ctx, system, senderSessionId)
+          case None        => resolveAndQueue(address, message, eventType, imagePaths, ctx, system, senderSessionId)
         }
     }
   end deliverQueue
@@ -1745,6 +1684,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   private def resolveAndQueue(
       address: String,
       message: String,
+      eventType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1757,7 +1697,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           for
             leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
             r <- leadSidOpt match
-              case Some(targetSid) => queueToSession(targetSid, team.lead, message, imagePaths, ctx, system, senderSessionId)
+              case Some(targetSid) => queueToSession(targetSid, team.lead, message, eventType, imagePaths, ctx, system, senderSessionId)
               case None =>
                 IO.pure(Left(ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")))
           yield r
@@ -1783,9 +1723,9 @@ There is no urgency flag: an urgent message states the urgency in its own text."
                         sr2 <- targetRes match
                           case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                           case Right(Some(targetSid)) =>
-                            queueToSession(targetSid, address, message, imagePaths, ctx, system, senderSessionId)
+                            queueToSession(targetSid, address, message, eventType, imagePaths, ctx, system, senderSessionId)
                           case Right(None) if address == NebulaAgentName =>
-                            queueToNebula(message, imagePaths, ctx, system, senderSessionId, address, None)
+                            queueToNebula(message, eventType, imagePaths, ctx, system, senderSessionId, address, None)
                           case Right(None) => mailNotFound(address)
                       yield sr2
                 yield sr
@@ -1809,6 +1749,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
    */
   private[tools] def queueToNebula(
       message: String,
+      eventType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1820,7 +1761,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       case Some(res) =>
         resolveNebulaRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some(nebulaSid) =>
-            queueToSession(nebulaSid, address, withChainAnnotation(message, chainId), imagePaths, ctx, system, senderSessionId)
+            queueToSession(nebulaSid, address, withChainAnnotation(message, chainId), eventType, imagePaths, ctx, system, senderSessionId)
           case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
         }
       case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
@@ -1841,9 +1782,14 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   /** Root records eligible as "the Nebula root"（判据见 [[resolveNebulaRootSession]] 文档）。
     * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
     *
-    * 可见性（device-mail 批，2026-09-15）：`private` → `private[nebflow]` —— 设备邮件
-    * 收件腿（`nebflow.neblink.DeviceMailInbox`）注入**本机 Nebula 会话**时必须走本
-    * **唯一解析单点**（禁第二份同表达式：两份必然漂移）。零语义改动、零授权面改动。 */
+    * Visibility (device-mail batch, 2026-09-15): `private` -> `private[nebflow]` —— the former
+    * device-mail intake leg (`nebflow.neblink.DeviceMailInbox`) injected into this machine's
+    * Nebula session through this **single resolution point**.
+    * mailmodel batch (2026-09-25, ruling (e-1)): that intake leg is retired with the tunnel face
+    * (the tunnel side logs WARN and ignores `agent_mail` frames), but the **visibility is not
+    * reverted** — the same-machine injection path and the specs still go through this single
+    * point (a second copy of the same expression is forbidden: two copies always drift). Zero
+    * semantic change, zero authorization-face change. */
   private[nebflow] def resolveNebulaRoots(
       res: SharedResources,
       senderSessionId: String,
@@ -1885,6 +1831,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       sessionId: String,
       shortName: String,
       message: String,
+      eventType: String,
       imagePaths: List[String],
       ctx: ToolContext,
       system: ActorSystem,
@@ -1896,11 +1843,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       from = senderName,
       fromSession = senderSessionId,
       message = message,
-      // mailunify-full 批（2026-09-23）：`type` 参数删净后本字段**无来源**。该字段属
-      // 队列层（`MailQueueStore.MailQueueItem`，本批**零改动**、存储形状照旧），其
-      // doc 自陈取值域 = 旧 MailTool 类型词表；词表既已删净，写中性字面量 `"INFO"`
-      // （= 该字段的既有缺省语义），不臆造新值、不改队列 JSONL 形状。
-      `type` = "INFO",
+      `type` = eventType,
       timestamp = System.currentTimeMillis(),
       // D6: persist paths (not base64) — re-read + re-compress at drain time
       imagePaths = imagePaths
@@ -1964,11 +1907,12 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
+      eventType: String,
       ctx: ToolContext,
       system: ActorSystem
     ): IO[Either[ToolError, String]] =
     system.resolve[AgentCommand](address).attempt.flatMap {
-      case Right(ref) => sendMail(ref, address, message, blocks, ctx, system)
+      case Right(ref) => sendMail(ref, address, message, blocks, eventType, ctx, system)
       case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
     }
 
@@ -1976,6 +1920,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       address: String,
       message: String,
       blocks: Option[List[ContentBlock]],
+      eventType: String,
       ctx: ToolContext,
       system: ActorSystem
     ): IO[Either[ToolError, String]] =
@@ -1986,15 +1931,15 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       case None =>
         if address == NebulaAgentName && senderName != NebulaAgentName then
           canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
-            if canMail then deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
+            if canMail then deliverShortNameUnscoped(address, message, blocks, eventType, ctx, system, senderSessionId)
             else IO.pure(Left(nebulaDeniedError(senderName)))
           }
-        else deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
+        else deliverShortNameUnscoped(address, message, blocks, eventType, ctx, system, senderSessionId)
       case Some(teamName) =>
         checkTeamScope(address, teamName, senderSessionId, senderName, ctx).flatMap {
           case Some(error) => IO.pure(Left(ToolError(error)))
           case None =>
-            deliverShortNameUnscoped(address, message, blocks, ctx, system, senderSessionId)
+            deliverShortNameUnscoped(address, message, blocks, eventType, ctx, system, senderSessionId)
         }
     }
   end deliverToShortName
@@ -2036,6 +1981,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     address: String,
     message: String,
     blocks: Option[List[ContentBlock]],
+    eventType: String,
     ctx: ToolContext,
     system: ActorSystem,
     senderSessionId: String
@@ -2049,7 +1995,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
             r <- leadSidOpt match
               case Some(targetSid) =>
                 for
-                  res <- deliverToSession(targetSid, team.lead, message, blocks, ctx, system)
+                  res <- deliverToSession(targetSid, team.lead, message, blocks, eventType, ctx, system)
                   _ <- res match
                     case Right(_) => onMailDelivered(senderSessionId, targetSid, team.lead, message, ctx)
                     case Left(_) => IO.unit
@@ -2088,7 +2034,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
                           case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
                           case Right(Some(targetSid)) =>
                             for
-                              res <- deliverToSession(targetSid, address, message, blocks, ctx, system)
+                              res <- deliverToSession(targetSid, address, message, blocks, eventType, ctx, system)
                               _ <- res match
                                 case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
                                 case Left(_) => IO.unit
@@ -2107,7 +2053,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
                                   resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
                                     case Some((sid, ref)) =>
                                       for
-                                        res <- sendMail(ref, NebulaAgentName, message, blocks, ctx, system)
+                                        res <- sendMail(ref, NebulaAgentName, message, blocks, eventType, ctx, system)
                                         _ <- res match
                                           case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx)
                                           case Left(_)  => IO.unit
@@ -2187,6 +2133,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     shortName: String,
     message: String,
     blocks: Option[List[ContentBlock]],
+    eventType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
@@ -2197,10 +2144,10 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           // ref would swallow ImmediateInput into an unconsumed queue)
           refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
           result <- refOpt match
-            case Some(ref) => sendMail(ref, shortName, message, blocks, ctx, system)
+            case Some(ref) => sendMail(ref, shortName, message, blocks, eventType, ctx, system)
             case None =>
               TeamSessionRegistry.getParentActor(sessionId).flatMap {
-                case Some(ref) => sendMail(ref, shortName, message, blocks, ctx, system)
+                case Some(ref) => sendMail(ref, shortName, message, blocks, eventType, ctx, system)
                 case None => mailNotFound(shortName)
               }
         yield result
@@ -2453,6 +2400,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     label: String,
     message: String,
     blocks: Option[List[ContentBlock]],
+    eventType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
@@ -2467,10 +2415,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
         // Text block (AgentActor drops `text` when blocks are present).
         blocks = blocks,
         source = Some("mail"),
-        // mailunify-full 批（2026-09-23）：`type` 参数删净 ⇒ eventType 无来源，置 `None`
-        // （= 帧不带 `eventType` 键，前端 `injectedSourceLabel` 不追加 EVENT_TYPE 段）。
-        // 🔴 不动该字段本身、不动 `[INTERRUPT]` 字面面（属另一面，见 [[mailAttribution]]）。
-        eventType = None,
+        eventType = Some(eventType.toLowerCase),
         sender = Some(senderName),
         senderTeam = teamOpt,
         delivery = Some("immediate"),

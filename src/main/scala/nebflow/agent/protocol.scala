@@ -79,7 +79,7 @@ object InjectionAttribution:
   val SourceSystem: String = "system"
 
   /** 收件通道判别定名（mailbadge 批 2026-09-13，选项 C）：`MailTool` 腿①
-    * （`Mail(address="project:<name>")`）——本件是**收件方视角的 Mail**。
+    * （`Mail(to="project:<name>")`）——本件是**收件方视角的 Mail**。
     * **只置位在腿①**：腿②（`node:<id>`，source 保持 `"system"` ⇒ 标签 `System`）
     * 与腿③（非 project 面，source 已是 `"mail"` ⇒ 标签 `Mail`）**不置位**——
     * 节点收件面不在本批（已单独立项），非 project 面呈现不得漂移。 */
@@ -1269,6 +1269,16 @@ case class SessionContext(
     * None = 非项目节点会话（分发器/Nebula/team/flow 双轨/REST）或旧会话——判据侧
     * 回落 `NodeRoles.Task`（缺省语义，与 `NodeDef` 解码缺省同口径）。 */
   flowNodeRole: Option[String] = None,
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24; ruling e①): the task id
+    * this session is attributed to (a dispatcher = the task it was created to serve; a
+    * project node = the task recorded as its origin). Set at the NodeEngine / ProjectActor
+    * spawn points -> passed through AgentCore into `ToolContext.taskId` -- the **only
+    * source** of `TaskInfo`'s zero-parameter attribution resolution (engine-side identity,
+    * never a client parameter), and the criterion of the engine-side uplink refusal face
+    * (no fingerprint ⇒ fail-closed).
+    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
+    * direct REST calls). */
+  taskId: Option[String] = None,
   /** 所属项目名（TaskBoard 批 2 身份链随路接通）：分发器/节点 spawn 注入 →
     * AgentCore 透传 ToolContext.projectName——该字段此前存在但生产代码从未赋值
     * （证据 §6-2），本批接通后 Node 系工具的 project 缺省解析（NodeTools.
@@ -1304,7 +1314,7 @@ case class SessionContext(
     *
     * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
     * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
+    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MailTool` /
     * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
     * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
     * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
@@ -1553,6 +1563,10 @@ object AgentState:
     /** 节点角色（nrloop 一期，详见 SessionContext.flowNodeRole）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): set on the
+      * spawn side, see SessionContext.taskId. Default None = no attribution (pre-existing
+      * nodes / the Nebula root / team / dual-track flow / direct REST calls). */
+    taskId: Option[String] = None,
     flowNodeName: Option[String] = None,
     /** 链级抽象 P2（§9.2 项 2）：节点所属链 id 快照（None = 无链/非项目会话）。 */
     flowChainId: Option[String] = None,
@@ -1599,6 +1613,7 @@ object AgentState:
         isDispatcher = isDispatcher,
         flowNodeRole = flowNodeRole,
         projectName = projectName,
+        taskId = taskId,
         flowNodeName = flowNodeName,
         flowChainId = flowChainId,
         sandboxEnabled = sandboxEnabled,
@@ -1747,6 +1762,11 @@ extension (s: AgentState)
   def flowNodeId: Option[String] = s.session.flowNodeId
   def isDispatcher: Boolean = s.session.isDispatcher
   def projectName: Option[String] = s.session.projectName
+  /** **Task attribution fingerprint** (taskunify batch 2026-09-24): the task id this
+    * session is attributed to, see SessionContext.taskId. The single consumer chain =
+    * AgentCore → ToolContext.taskId → `TaskInfo`'s zero-parameter attribution
+    * resolution. */
+  def taskId: Option[String] = s.session.taskId
   def flowNodeName: Option[String] = s.session.flowNodeName
   /** 链级抽象 P2（§9.2 项 2）：本节点所属链 id 快照（None = 无链/非项目会话）。 */
   def flowChainId: Option[String] = s.session.flowChainId

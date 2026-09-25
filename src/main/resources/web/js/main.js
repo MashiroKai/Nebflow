@@ -2319,10 +2319,10 @@ function renderBgAgentDropdown() {
 // Snapshot-on-open (2026-09-13 memory-track visibility forensics, fix B).
 // The registry snapshot used to be fetched ONCE per WS (re)connect (the
 // getActiveAgents send inside onReconnect below) — enough for every sub-agent
-// whose live frames reach the client, but NOT for the memory-consolidation
-// track: the backend silences that track's frames on purpose (MemoryTrack.scala
-// passes a no-op wsSend — track events must not pollute the parent view), so a
-// run is invisible unless the browser happens to refresh inside its window.
+// whose live frames reach the client, but NOT for the (now retired, govmemory
+// batch) memory-consolidation track: the backend silenced that track's frames
+// on purpose (track events must not pollute the parent view), so a run was
+// invisible unless the browser happened to refresh inside its window.
 // Fetch on open instead: user-driven, reuses the existing getActiveAgents
 // request and the existing activeAgents consumer (since 批 snapmerge-impl that
 // consumer MERGES the snapshot into the rendered row set instead of rebuilding
@@ -3556,14 +3556,9 @@ onMessage('memoryData', (msg, view) => handleMemoryData(msg));
 onMessage('memoryChanged', (msg, view) => handleMemoryChanged(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg, view) => showMemoryButton());
-// Memory-queue alert (2026-09-13 memory-pipeline self-heal batch): the memory
-// queue has no consumer / the track refused to run — persistent banner instead
-// of a lifecycle-log-only failure. Text comes from the engine (English, same
-// wording as the injected memory-queue line); no auto-dismiss: the user must
-// see that recorded memory changes are NOT being applied.
-onMessage('memoryQueueAlert', (msg) => {
-  if (msg && msg.text) addNotification('memory', msg.text, { dismissAfter: 0 });
-});
+// Memory-queue alert handler retired 2026-09-25 (govmemory batch): the memory
+// queue / consolidation track are gone, so the engine no longer emits the
+// `memoryQueueAlert` frame (see ws.js).
 
 // --- Rules ---
 onMessage('rulesData', (msg, view) => handleRulesData(msg));

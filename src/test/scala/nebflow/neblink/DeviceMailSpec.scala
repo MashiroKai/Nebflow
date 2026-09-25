@@ -26,8 +26,10 @@ import scala.concurrent.duration.*
  *   - 注入头行逐字 + source/eventType/sender 取值域（蓝气泡标签的数据源）；
  *   - 注入失败**禁静默**（告警帧 + 不误 ack）；
  *   - 收件回执（ack）关联与 eventId 前缀单点；
- *   - MailTool 目标面：schema（件数不变、required 只剩 message）+ 四类校验词表；
- *   - 发送端点形态（契约 v2 ①：目标走路径）与**定向**（v2 ②：无 fan-out）。
+ *   - MailTool 目标面（mailunify-full 合面 + mailmodel 收编后）：单 `to` 面 schema
+ *     （6 键，required = to + message）+ 设备腿**整腿退役**的墓碑读（`device=` 键与
+ *     `to="device:…"` 形态一律 MAIL_DEVICE_RETIRED，先于一切目标面闸）；
+ *   - 发送端点形态（契约 v2 ①：目标走路径）——契约单点保留（tombstone 自有钉面）。
  */
 class DeviceMailSpec extends FunSuite:
 
@@ -104,14 +106,23 @@ class DeviceMailSpec extends FunSuite:
     assertEquals(DeviceMail.ackEventId(parse("""{"type":"ack"}""").toOption.get), None)
 
   // ============================================================
-  // ② MailTool 目标面：schema + 四类校验词表
+  // ② MailTool device face — RETIRED (mailmodel batch 2026-09-25, ruling (e-1))
   // ============================================================
-
-  private def requiredOf: List[String] =
-    MailTool.inputSchema("required").flatMap(_.asArray).toList.flatten.flatMap(_.asString)
+  // The old section pinned the Mail TOOL's `device` parameter face (schema key,
+  // MAIL_TARGET_EXCLUSIVE / MAIL_DEVICE_MALFORMED / MAIL_DEVICE_NOT_FOUND vocabulary,
+  // roster resolution quality, the device-leg queue/type refusals). That whole leg is
+  // retired BOTH ways in the mailmodel batch: the tool side refuses a stale `device=`
+  // with MAIL_DEVICE_RETIRED before any roster/transport face could run, and the tunnel
+  // intake side ignores `agent_mail` frames with a WARN. These pins replace them:
+  // the tombstone behaviour of the tool face, viewed from this (neblink) spec side.
+  // The DeviceMail* OBJECTS below (payload contract, relay endpoints, inbox, acks) stay
+  // in-tree as tombstones and keep their own pins.
 
   private def props: Set[String] =
     MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+
+  private def requiredOf: List[String] =
+    MailTool.inputSchema("required").flatMap(_.asArray).toList.flatten.flatMap(_.asString)
 
   private def bareCtx: ToolContext = ToolContext(projectRoot = tempRoot.toString)
 
@@ -120,134 +131,60 @@ class DeviceMailSpec extends FunSuite:
       case Left(err)  => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
-  test("schema（mailunify-full 批 re-pin）：统一单 `to` 面 —— 恰 5 键、`to` 与 `message` 同在 required"):
+  test("schema（mailunify-full 批 re-pin + mailmodel 收编）：统一单 `to` 面 —— 恰 6 键、`to` 与 `message` 同在 required"):
     assertEquals(
       props,
-      Set("to", "message", "chainId", "images", "attachments"),
-      "schema 键集必须恰为合并后的 5 键（`address` / `device` / `type` 三键消失）"
+      Set("to", "message", "chainId", "task", "images", "attachments"),
+      "schema 键集必须恰为合并后的 6 键（`address` / `device` / `type` 三键消失；`task` = taskunify 批收编）"
     )
     assert(!props.contains("address") && !props.contains("device"), s"双轨目标键必须消失：$props")
     assert(!props.contains("type"), "`type` 五标签面已删净 ⇒ 该键必须离开 schema")
     assertEquals(requiredOf, List("to", "message"), "required = to + message（双轨互斥结构消失）")
 
-  test("校验词表 ①（re-pin）互斥闸整条退役：旧双键输入 ⇒ 不再是 MAIL_TARGET_EXCLUSIVE 而是目标缺失"):
-    // 旧形态：`address` + `device` 同填 ⇒ MAIL_TARGET_EXCLUSIVE。
-    // mailunify-full 批：互斥结构（`address` XOR `device`）**结构上消失** ⇒ 该错误码
-    // 连常量一并删除（见 MailTool 词表注释）。旧调用方送来的两个键在**面外**
-    // （引擎零 JSON-Schema 校验 ⇒ 到得了 call()，但 `to` 缺席）⇒ 走目标缺失词表。
-    val msg = callErr(
+  test("retired: a stale `device=` KEY refuses with MAIL_DEVICE_RETIRED（墓碑先于一切目标面闸，含 to+device 双填）"):
+    // main 侧 mailmodel 批 (e) 收编：`device=` 键的墓碑读（引擎零 schema 校验 ⇒ 键到得了
+    // call()），文案点名已退役的 SendMessage（改用 `to` 面）。
+    val alone = callErr(JsonObject("device" -> "dev-b".asJson, "message" -> "hi".asJson))
+    assert(alone.contains(s"[${MailTool.ErrDeviceLegRetired}]"), alone)
+    assert(alone.contains("SendMessage"), s"the error must name the retired transport tool (SendMessage): $alone")
+    val both = callErr(
       JsonObject(
-        "address" -> "project:x".asJson,
+        "to" -> "project:x".asJson,
         "device" -> "dev-b".asJson,
         "message" -> "hi".asJson
       )
     )
-    assert(!msg.contains("MAIL_TARGET_EXCLUSIVE"), s"互斥码必须整条退役（不得残留）：$msg")
-    assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
-    assert(msg.contains("'to'"), s"单字段面必须在文案里点名 `to`：$msg")
+    assert(both.contains(s"[${MailTool.ErrDeviceLegRetired}]"), both)
 
-  test("校验词表 ②双缺 ⇒ MAIL_TARGET_MISSING（逐字 re-pin：点名单字段 `to`）"):
+  test("retired: a stale `to=\"device:…\"` target refuses with MAIL_DEVICE_RETIRED（先于任何解析/名册/投递闸）"):
+    // 设备腿整腿退役 ⇒ 旧「设备解析词表」（MAIL_DEVICE_MALFORMED / _NOT_FOUND / 歧义候选）
+    // 整条随腿消失（MailTool 词表注释登记）——一切 `to="device:…"` 形态只可能是墓碑读。
+    val named = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson))
+    assert(named.contains(s"[${MailTool.ErrDeviceLegRetired}]"), named)
+    assert(named.contains("SendMessage"), named)
+    val empty = callErr(JsonObject("to" -> "device:".asJson, "message" -> "hi".asJson))
+    assert(empty.contains(s"[${MailTool.ErrDeviceLegRetired}]"), empty)
+    val url = callErr(JsonObject("to" -> "device:http://127.0.0.1:8080".asJson, "message" -> "hi".asJson))
+    assert(url.contains(s"[${MailTool.ErrDeviceLegRetired}]"), url)
+
+  test("retired: the target face is single-`to` — double-missing still reads MAIL_TARGET_MISSING and names `to`"):
     val msg = callErr(JsonObject("message" -> "hi".asJson))
     assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
-    assert(msg.contains("'to' is required"), s"文案须点名单字段 `to`：$msg")
-    assert(!msg.contains("'address'"), s"旧字段面不得残留在文案里：$msg")
-
-  test("校验词表 ③非法形态：`device:` 空参 / URL ⇒ MAIL_DEVICE_MALFORMED（零副作用，先于任何解析）"):
-    val prefixed = callErr(JsonObject("to" -> "device:".asJson, "message" -> "hi".asJson))
-    assert(prefixed.contains(s"[${MailTool.ErrDeviceMalformed}]"), prefixed)
-    assert(prefixed.contains("device:"), prefixed)
-    val url = callErr(JsonObject("to" -> "device:http://127.0.0.1:8080".asJson, "message" -> "hi".asJson))
-    assert(url.contains(s"[${MailTool.ErrDeviceMalformed}]"), url)
-    // 空白 `to` 经 trim 等价于「没填」⇒ 落目标缺失词表（不是 MALFORMED）
+    assert(msg.contains("'to' is required"), msg)
+    assert(!msg.contains("'address'"), "旧 address 字段面不得残留在文案里")
+    assert(msg.contains("retired") || msg.contains("Pass one target"),
+      s"the message must point at the live target face: $msg")
+    // 空白 `to` 经 trim 等价于「没填」⇒ 同走目标缺失（不是任何设备词表）
     val blank = callErr(JsonObject("to" -> "   ".asJson, "message" -> "hi".asJson))
     assert(blank.contains(s"[${MailTool.ErrTargetMissing}]"), blank)
-
-  test("设备腿显式拒 queue（逐字 v2.1 契约保留）；`type` 死键 ⇒ 零拒绝面（静默忽略）"):
-    val q = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson, "delivery" -> "queue".asJson))
-    assert(q.contains("always immediate"), q)
-    // `type` 五标签已删净 ⇒ 设备腿**不再**有「only type \"INFO\" is supported」这一拒绝；
-    // 旧键由引擎零 schema 校验静默丢弃 ⇒ 本腿照常走到设备解析（服务缺席 ⇒ 设备腿自有报错）。
-    val t = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson, "type" -> "INTERRUPT".asJson))
-    assert(!t.contains("only type"), s"`type` 拒绝面必须随五标签删净一并消失：$t")
-    assert(t.contains("Device messaging is unavailable"), s"死键不得阻断设备腿：$t")
 
   test("message 仍必填（单字段 `to` 面一致）"):
     val a = callErr(JsonObject("to" -> "project:x".asJson))
     assertEquals(a, "Missing required parameter: message")
-    val d = callErr(JsonObject("to" -> "device:KAI-MBP".asJson))
-    assertEquals(d, "Missing required parameter: message")
 
-  test("summarize 回显单字段目标（设备面经 scheme 前缀可见）"):
-    assertEquals(MailTool.summarize(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson)), "Mail(→device:KAI-MBP)")
+  test("summarize 回显单字段目标"):
     assertEquals(MailTool.summarize(JsonObject("to" -> "Nebula".asJson, "message" -> "hi".asJson)), "Mail(→Nebula)")
-
-  // ============================================================
-  // ③ 校验词表 ④未知设备（名册夹具：多设备注册表）
-  // ============================================================
-
-  private val dispatcherResource: Dispatcher[IO] =
-    Dispatcher.parallel[IO].allocated.unsafeRunSync()._1
-
-  private def neblineService: NeblinkService =
-    NeblinkService.createForTest(serverPort = 8099, dispatcher = dispatcherResource, gracePeriod = 1.second)
-      .unsafeRunSync()
-
-  /** 多设备名册夹具（v2 ②：只投被寻址设备，不广播）。 */
-  private val multiDeviceRoster: List[PeerInfo] = List(
-    PeerInfo("dev-b", "KAI-MBP", "darwin", "http://127.0.0.1:8096"),
-    PeerInfo("dev-c", "KAI-Air", "darwin", "http://127.0.0.1:8097"),
-    PeerInfo("dev-d", "KAI-Studio", "darwin", "http://127.0.0.1:8098")
-  )
-
-  /** 真 NeblinkService + 名册夹具（`upsertPeer` 是公开面）。 */
-  private def serviceWithPeers(peers: List[PeerInfo]): NeblinkService =
-    val ns = neblineService
-    peers.foreach(p => ns.upsertPeer(p).unsafeRunSync())
-    ns
-
-  private def deviceCtx(ns: NeblinkService): ToolContext =
-    ToolContext(
-      projectRoot = tempRoot.toString,
-      sharedResources = Some(
-        resourcesWith(
-          registry = Map.empty,
-          store = SessionStore(tempRoot / "sessions", tempRoot / "tasks"),
-          ns = Some(ns)
-        )
-      )
-    )
-
-  private def deviceErr(ns: NeblinkService, device: String): String =
-    MailTool.call(JsonObject("to" -> s"device:$device".asJson, "message" -> "hi".asJson), deviceCtx(ns)).unsafeRunSync() match
-      case Left(err)  => err.message
-      case Right(msg) => fail(s"expected an explicit error for device='$device', got success: $msg")
-
-  test("校验词表 ④未知设备：名册无该设备 ⇒ MAIL_DEVICE_NOT_FOUND + 候选清单（禁静默首命中）"):
-    val msg = deviceErr(serviceWithPeers(multiDeviceRoster), "no-such-device")
-    assert(msg.contains(s"[${MailTool.ErrDeviceNotFound}]"), msg)
-    assert(msg.contains("not found among 3 peer(s)"), msg)
-    assert(msg.contains("KAI-MBP") && msg.contains("KAI-Air"), s"候选清单必须列出可用设备：$msg")
-
-  test("校验词表 ④歧义：多命中 ⇒ MAIL_DEVICE_NOT_FOUND + 逐条命中依据（禁静默首命中）"):
-    val msg = deviceErr(serviceWithPeers(multiDeviceRoster), "KAI")
-    assert(msg.contains(s"[${MailTool.ErrDeviceNotFound}]"), msg)
-    assert(msg.contains("ambiguous"), msg)
-    assert(msg.contains("matched by"), s"歧义必须逐条给区分依据：$msg")
-
-  test("定向（v2 ②）：多设备名册下只有被寻址设备被解析为目标（其余零投递面）"):
-    val ns = serviceWithPeers(multiDeviceRoster)
-    // 精确 id / 精确名两种寻址形态都命中，且**不**广播：命中后只走单目标发送链
-    // （此处 relay client 未接线 ⇒ 显式失败，正是「已定向到单目标、未做任何 fan-out」
-    //  的可判读数：错误文案指向 relay client，而非「多设备」或候选清单）。
-    val byId = deviceErr(ns, "dev-b")
-    val byName = deviceErr(ns, "KAI-Air")
-    assert(byId.contains("relay client is not initialized"), byId)
-    assert(byName.contains("relay client is not initialized"), byName)
-    assert(!byId.contains("ambiguous") && !byName.contains("ambiguous"), "唯一命中不得报歧义")
-    assert(!byId.contains("not found among"), byId)
-    // 歧义形态在**任何副作用之前**就被拒（零投递）
-    val ambiguous = deviceErr(ns, "KAI")
-    assert(ambiguous.contains("ambiguous") && !ambiguous.contains("relay client"), ambiguous)
+    assertEquals(MailTool.summarize(JsonObject("to" -> "project:p-x".asJson, "message" -> "hi".asJson)), "Mail(→project:p-x)")
 
   // ============================================================
   // ④ 发送端点形态（契约 v2 ①：目标走路径）
@@ -561,43 +498,19 @@ class DeviceMailSpec extends FunSuite:
     assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "迟到 ack 不得复活已终结的发送")
 
   // ============================================================
-  // ⑧ 端到端（服务端腿 = 契约转发桩）：发送腿 ⇄ 收件腿 ⇄ ack 闭环
+  // Section 8 (end-to-end) — REMOVED (mailmodel batch 2026-09-25, ruling (e-1))
   // ============================================================
-
-  test("端到端（服务端腿以契约转发桩替代）：Mail(device:KAI-Air) → 真发送链（恰一次 POST /api/relay/dev-c/mail）→ 事件流信封 → 对端注入 + ack 关联闭环"):
-    DeviceMailAck.resetForTest().unsafeRunSync()
-    val (_, msgs, frames, acks) = inboxFixture() // 收件侧 = 真 inbox 装配（真 sessionStore + root 记录 + 记录型 ack 出口）
-    val ns = serviceWithPeers(multiDeviceRoster)
-    val capture = new CaptureClient
-    assert(capture.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync().isRight, "夹具登录必须成功")
-    ns.setRelayClient(Some(capture.client))
-
-    val out = MailTool.call(JsonObject("to" -> "device:KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns)).unsafeRunSync()
-    assert(out.isRight, s"device 邮件应成功下发：$out")
-
-    // ① 发送面：**恰一次**、目标走路径、body = 契约五键本体、定向（其余设备零流量）
-    val relayCalls = capture.calls.filter(_._2.contains("/api/relay/"))
-    assertEquals(relayCalls.size, 1, s"禁 fan-out：恰一次 relay 邮件请求，实得 ${capture.calls.map(_._2)}")
-    val (method, url, body) = relayCalls.head
-    assertEquals(method, "POST")
-    assertEquals(url, "http://127.0.0.1:9/api/relay/dev-c/mail", "目标（KAI-Air → dev-c）走路径")
-    val sent = parse(body).toOption.getOrElse(fail("body 必须是 JSON"))
-    assertEquals(sent.asObject.map(_.keys.toList.sorted).getOrElse(Nil), DeviceMail.PayloadKeys.sorted, "恰契约五键")
-    assertEquals(sent.hcursor.get[String]("text").toOption, Some("hello B"))
-    assertEquals(sent.hcursor.get[Boolean]("to_nebula").toOption, Some(true))
-    assert(sent.hcursor.get[String]("from_device").toOption.exists(_.nonEmpty), "from_device = 本机自报展示名")
-    assert(!body.contains("dev-b") && !body.contains("dev-d"), "body 内不得夹带其它设备（其余零投递）")
-
-    // ② 服务端腿（外部依赖，本测试以**契约转发桩**替代）：把发出的载荷按 v2.1 事件流信封投给收件侧
-    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 1, "发送侧已登记 pending（eventId=message-<服务端 id>）")
-    DeviceMailInbox.handle(envelope("message-m-77", sent)).unsafeRunSync()
-    IO.sleep(300.millis).unsafeRunSync()
-    assertEquals(msgs.get.unsafeRunSync().size, 1, "对端注入恰好一条 ImmediateInput")
-    assertEquals(frames.get.unsafeRunSync(), Nil, "成功路径零告警帧")
-    assertEquals(acks.get.unsafeRunSync(), List("message-m-77"), "对端按**帧级** eventId 回 ack")
-
-    // ③ 回执回投（v2.1 ②）：同 eventId 的 ack 回到发送侧 ⇒ pending 归零（发送链 ack 闭环）
-    DeviceMailAck.handle(parse("""{"type":"ack","eventId":"message-m-77"}""").toOption.get).unsafeRunSync()
-    assertEquals(DeviceMailAck.pendingCount.unsafeRunSync(), 0, "ack 命中 ⇒ 出队（闭环）")
+  // The old end-to-end test drove the full device-mail loop through the MAIL TOOL
+  // (Mail(device=KAI-Air) -> real send chain -> event-stream envelope -> peer injection
+  // + ack closure). The tool-side send leg is retired (the tombstone now refuses the
+  // call before any send), so the loop is unreachable from the tool face and the test
+  // has no premise. The surviving halves keep their own pins above:
+  //   - the send/relay ENDPOINT mechanics (CaptureClient, login + relayAgentMail, the
+  //     five-key payload body) in section 4;
+  //   - the INBOX side (DeviceMailInbox.handle on an `agent_mail` envelope -> peer
+  //     injection -> frame-level ack closure) in the inbox/ack sections;
+  //   - the ack bookkeeping (DeviceMailAck await/handle/timeout/race) in the ack sections.
+  // The tunnel intake itself now WARNs and ignores `agent_mail` frames
+  // (NeblinkRelayTunnel, branch=agent_mail_retired).
 
 end DeviceMailSpec

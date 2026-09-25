@@ -42,13 +42,18 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
   test("to grammar: `Mail` 统一谓词的既有四形态分派（device:/friend:/local/裸名）"):
     import MailTool.Target
-    assertEquals(MailTool.classifyTarget("device:KAI"), Right(Target.Device("KAI")))
-    assertEquals(MailTool.classifyTarget("DEVICE:kai"), Right(Target.Device("kai")))
+    // 🔴 支上对账重算批（2026-09-26 调和）re-pin：`device:` scheme 已随 main 侧
+    // mailmodel 批 (e) 整腿退役 —— 原 `Right(Target.Device(...))` 两读改钉为统一
+    // 墓碑读 MAIL_DEVICE_RETIRED（大小写均然，classifyTarget case "device"）。
+    val dev1 = MailTool.classifyTarget("device:KAI").left.toOption
+    assert(dev1.isDefined && dev1.get.message.contains(MailTool.ErrDeviceLegRetired), s"device:KAI 必须落墓碑: $dev1")
+    val dev2 = MailTool.classifyTarget("DEVICE:kai").left.toOption
+    assert(dev2.isDefined && dev2.get.message.contains(MailTool.ErrDeviceLegRetired), s"DEVICE:kai 必须落墓碑（大小写不敏感）: $dev2")
     assertEquals(MailTool.classifyTarget("friend:alice"), Right(Target.Friend("alice")))
     assertEquals(MailTool.classifyTarget("alice"), Right(Target.Face("alice")))
     assertEquals(MailTool.classifyTarget("local"), Right(Target.Local))
     assertEquals(MailTool.classifyTarget("Local"), Right(Target.Local))
-    assert(MailTool.classifyTarget("device:").isLeft, "device: 空参必须显式报错（设备腿 MAIL_DEVICE_MALFORMED）")
+    assert(MailTool.classifyTarget("device:").isLeft, "device: 空参必须显式报错（腿退役墓碑，同码）")
     assert(MailTool.classifyTarget("friend:").isLeft, "friend: 空参必须显式报错")
     assert(MailTool.classifyTarget("").isLeft)
 

@@ -31,6 +31,9 @@ const MIME = {
 };
 const ROOT_SID = 'pc-root-session';
 const T0 = Date.now();
+/** 目录选择器夹具（projcreate-redesign 批 D4 后，提交前须先选路径）。 */
+const PICK_HOME = '/tmp/pc-pick-home';
+const PICK_CHILD = `${PICK_HOME}/ws-alpha`;
 
 // 卡片名单：3 个项目 ⇒ 末行卡在窄档也稳定存在（供遮挡判据用）。
 const PROJECTS = ['alpha', 'beta', 'gamma'].map((n, i) => ({
@@ -52,6 +55,8 @@ const FM = (name) => ({
 test.setTimeout(120_000);
 
 async function bootApp(page) {
+  const outbox = [];
+  let reply = null;
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
@@ -87,12 +92,23 @@ async function bootApp(page) {
     }));
     sendConfig();
     sendSessions();
+    reply = (msg) => ws.send(JSON.stringify(msg));
     ws.onMessage((raw) => {
       let msg; try { msg = JSON.parse(raw); } catch { return; }
+      outbox.push(msg);
       if (msg.type === 'getConfig') sendConfig();
       else if (msg.type === 'getSessions' || msg.type === 'listSessions') sendSessions();
       else if (msg.type === 'getHistory') {
         ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: [], hasMore: false, offset: 0 }));
+      } else if (msg.type === 'wsBrowse.list') {
+        // 目录浏览器取数列（D4 后提交前须先选路径）—— 确定性夹具。
+        const path = msg.path || '';
+        const resolved = path === '~' ? PICK_HOME : path;
+        const entries = resolved === PICK_HOME ? ['ws-alpha'] : [];
+        ws.send(JSON.stringify({
+          type: 'wsBrowseList', path: resolved, home: PICK_HOME,
+          parent: resolved === PICK_HOME ? '/' : undefined, entries,
+        }));
       }
     });
   });
@@ -102,6 +118,23 @@ async function bootApp(page) {
     return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
   }, ROOT_SID, { timeout: 15000 });
   await page.waitForTimeout(300);
+  return {
+    outbox,
+    reply: (msg) => reply && reply(msg),
+    projectCreateFrames: () => outbox.filter((m) => m.type === 'projectCreate'),
+  };
+}
+
+/** 走去真目录选择器选 PICK_CHILD（D4 路径必选闸 ⇒ 任何「提交成功」用例都需先选）。
+ *  🔴 行定位必须用夹具名（`.wsp-row.wsp-dir` 的首个匹配是 `..` 上级项，
+ *  workspacePicker.js:211 同样给它 `wsp-dir` ⇒ 会点进上级、落点漂移 —— 实测踩过）。 */
+async function pickPath(page) {
+  await page.click('.proj-create-overlay .proj-create-pick');
+  await page.waitForSelector('.wsp-list', { timeout: 5000 });
+  await page.click('.wsp-list .wsp-row:has(.wsp-row-name:text-is("ws-alpha"))');
+  await page.waitForTimeout(350);
+  await page.click('.wsp-foot .wsp-pick');
+  await page.waitForTimeout(350);
 }
 
 /** 打开 projects 标签页并等列表就绪。
@@ -147,6 +180,27 @@ test('T1 钮存在（真渲染证）+ 仅列表视图', async ({ page }) => {
   expect(fab.w, '补正①-2：getBoundingClientRect 宽度非零').toBeGreaterThan(0);
   expect(fab.h, '补正①-2：getBoundingClientRect 高度非零').toBeGreaterThan(0);
 
+  // Seat check (projfab-ui-impl batch, 2026-09-25 author order): the FAB anchors
+  // to the pane's bottom-right corner with a 16px inset on BOTH axes. Basis:
+  // symmetric with the untouched bottom:16px on the 4px grid, and it matches the
+  // sibling corner FAB of this very pane (.fm-fab = top:16px/right:16px,
+  // flowMap.css:723). Geometric readout against the live pane rect (not just the
+  // computed style) so the assertion carries weight: mutation-verified to FAIL
+  // against the old right:64px seat.
+  const paneRect = await page.evaluate(() => {
+    const p = document.querySelector('.canvas-tab-pane[data-type="projects"]');
+    const r = p.getBoundingClientRect();
+    return { right: r.right, bottom: r.bottom };
+  });
+  const seat = {
+    rightInset: paneRect.right - fab.right,
+    bottomInset: paneRect.bottom - fab.bottom,
+    computedRight: await page.evaluate(() => getComputedStyle(document.querySelector('.proj-create-fab')).right),
+  };
+  expect(Math.abs(seat.rightInset - 16), 'seat: FAB right edge inset from pane = 16px (edge-anchored)').toBeLessThan(0.5);
+  expect(Math.abs(seat.bottomInset - 16), 'seat: FAB bottom edge inset from pane = 16px (unchanged axis)').toBeLessThan(0.5);
+  expect(seat.computedRight, 'seat: computed style right = 16px').toBe('16px');
+
   const aria = await page.evaluate(() => {
     const b = document.querySelector('.proj-create-fab');
     return { title: b.getAttribute('title'), ariaLabel: b.getAttribute('aria-label'), tag: b.tagName,
@@ -167,7 +221,7 @@ test('T1 钮存在（真渲染证）+ 仅列表视图', async ({ page }) => {
     return { w: r.width, h: r.height, count: document.querySelectorAll('.proj-create-fab').length };
   });
 
-  write('40-T1-fab-existence.json', { fab, aria, fabInFlowMap, fabBack, pageErrors });
+  write('40-T1-fab-existence.json', { fab, seat, aria, fabInFlowMap, fabBack, pageErrors });
   expect(fabInFlowMap, 'R10：就地 Flow Map 视图不得显示「+」钮').toBe(false);
   expect(fabBack, 'R4：回列表后钮必须回归').not.toBeNull();
   expect(fabBack.count, '幂等：列表视图内「+」钮恰好 1 枚').toBe(1);
@@ -281,9 +335,16 @@ test('T3 弹层只有描述框 + 可达性串', async ({ page }) => {
 // T4 · 提交路径（R6）+ 必填（R11）+ 上限（R12）—— 500 边界
 // ════════════════════════════════════════════════════════════════════════════
 test('T4 提交路径 + 必填 + 500 字边界', async ({ page }) => {
+  // 🔴 本用例两处断言被作者 2026-09-24 裁定 D2(b)+D4 **取代**（旧语义 = 乙案「预填
+  //    聊天框 + 用户按发送」；新语义 = WS `projectCreate` 直连创建 + 路径必选闸）：
+  //      · 旧 `after_submit_499/500.dialogOpen === false`（提交即关层）⇒ 新语义下
+  //        未选路径时提交被拒、层保持打开。本用例改为显式选路径后再断言成功面。
+  //      · 旧 `after_submit_499.value` 含 `createPrefill` 模板（#input 被写入）⇒
+  //        新语义**零预填**（#input 不得被写入）；改判「#input 保持为空」。
+  //    取代后的完整直连/选择器判据见 tests/projcreate-redesign.spec.mjs（R-D2/R-D4）。
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
-  await bootApp(page);
+  const h = await bootApp(page);
   await openProjects(page);
 
   const snapshot = () => page.evaluate(() => {
@@ -308,6 +369,9 @@ test('T4 提交路径 + 必填 + 500 字边界', async ({ page }) => {
   const emptySubmit = await snapshot();
 
   // 边界 499 / 500 / 501（逐档给读数）
+  // 🆕 D4 路径必选闸：先选好路径，本用例余下断言才落在「描述长度」这一维上
+  //    （否则每档都会因缺路径被拒，长度判据就无从测）。
+  await pickPath(page);
   const bounds = {};
   for (const n of [499, 500, 501]) {
     await page.evaluate((len) => {
@@ -318,41 +382,31 @@ test('T4 提交路径 + 必填 + 500 字边界', async ({ page }) => {
     bounds[`count_at_${n}`] = (await snapshot()).countText;
     const over = await page.evaluate(() => document.querySelector('.proj-create-count').classList.contains('is-over'));
     bounds[`is_over_at_${n}`] = over;
+    await page.evaluate(() => { document.getElementById('input').value = ''; });
     await page.click('.proj-create-overlay .wsp-pick');
-    await page.waitForTimeout(120);
+    await page.waitForTimeout(150);
     const s = await snapshot();
     bounds[`after_submit_${n}`] = { value: s.value, dialogOpen: s.dialogOpen, errorText: s.errorText };
-    if (s.dialogOpen) {
-      // 被拒 ⇒ 层仍开，复原以便下一档
-      await page.evaluate(() => {
-        const inp = document.getElementById('input');
-        if (inp) inp.value = '';
-      });
-    } else {
-      // 通过 ⇒ 层已关，重开继续测下一档
-      await page.click('.proj-create-fab');
-      await page.waitForSelector('.proj-create-overlay', { timeout: 4000 });
-    }
+    // 提交后 = 已发出 projectCreate 帧、等应答；注入应答复位到确定态继续下一档
+    h.reply({ type: 'projectCreateResult', ok: false, error: 'superseded-bound-probe' });
+    await page.waitForTimeout(120);
   }
 
-  // R6：正常提交（短文本）⇒ 描述进主输入框 + 聚焦
+  // R6（**取代**：旧 = 描述进主输入框 + 聚焦；新 = 零预填 + 真发帧）
   await page.evaluate(() => {
+    document.getElementById('input').value = '';
     const ta = document.querySelector('.proj-create-desc');
     ta.value = '一个用于测试的项目描述';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
-    document.getElementById('input').value = '';
   });
   await page.click('.proj-create-overlay .wsp-pick');
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(250);
   const okSubmit = await snapshot();
+  const frames = h.projectCreateFrames();
 
-  // R9 负对照①：空态 CTA 仍工作（⑧ 保留既有空态 CTA）—— 直接调其行为面
-  await page.evaluate(() => {
-    const inp = document.getElementById('input');
-    if (inp) inp.value = '';
+  write('43-T4-submit-and-bounds.json', {
+    baseline, emptySubmit, bounds, okSubmit, frames: frames.slice(-1), pageErrors,
   });
-
-  write('43-T4-submit-and-bounds.json', { baseline, emptySubmit, bounds, okSubmit, pageErrors });
   expect(baseline.value, '改前：#input 为空').toBe('');
   expect(emptySubmit.dialogOpen, 'R11：空描述提交后层仍开（未通过）').toBe(true);
   expect(emptySubmit.errorText, 'R11：错误行可见且命中「必填」文案').toBe('请填写项目描述（Agent 会根据它分配任务）');
@@ -363,14 +417,14 @@ test('T4 提交路径 + 必填 + 500 字边界', async ({ page }) => {
   expect(bounds.is_over_at_499, '499 不染色').toBe(false);
   expect(bounds.is_over_at_500, '500 不染色（含于上限）').toBe(false);
   expect(bounds.is_over_at_501, '501 染色').toBe(true);
-  expect(bounds.after_submit_499.dialogOpen, '499 通过 ⇒ 层关闭').toBe(false);
-  expect(bounds.after_submit_499.value, '499 通过 ⇒ #input 收到预填模板').toContain('x'.repeat(20));
-  expect(bounds.after_submit_500.dialogOpen, '500 通过（边界内）⇒ 层关闭').toBe(false);
-  expect(bounds.after_submit_501.dialogOpen, '501 被拒 ⇒ 层仍开').toBe(true);
+  expect(bounds.after_submit_501.value, '501 被拒 ⇒ #input 仍未写入（零预填，取代旧判据）').toBe('');
   expect(bounds.after_submit_501.errorText, '501 错误行命中「超 500 字」文案').toBe('描述超过 500 字，请缩短到 500 字以内。');
-  expect(okSubmit.dialogOpen, 'R6：正常提交后层关闭').toBe(false);
-  expect(okSubmit.value, 'R6：描述进主输入框（含逐字模板）').toBe('帮我创建一个项目。项目描述：一个用于测试的项目描述');
-  expect(okSubmit.activeIsInput, 'R6：document.activeElement === #input').toBe(true);
+  // 🔴 取代判据（D2(b)）：提交不再写 #input —— 成功路径的唯一硬读数是「真发出帧」。
+  expect(okSubmit.value, 'R6 取代：零预填 —— #input 未被写入（旧判据为「含 createPrefill 模板」）').toBe('');
+  expect(okSubmit.dialogOpen, 'R6 取代：提交已发出、等应答 ⇒ 层暂不自行关闭（应答到达才关）').toBe(true);
+  expect(frames.length, 'R6 取代：确实发出 projectCreate 帧（直连创建唯一硬判据）').toBeGreaterThan(0);
+  expect(frames.at(-1)?.workspace, 'R6 取代：帧带已选路径').toBe(PICK_CHILD);
+  expect(frames.at(-1)?.description, 'R6 取代：帧带描述').toBe('一个用于测试的项目描述');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -538,6 +592,8 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
     expect(g.fabVsLastCardOverlap, `[${tag}] R13：钮与末行卡两轴均不相交`).toBe(false);
     expect(g.scrollPaddingBottom, `[${tag}] 让位规则生效 padding-bottom=72px`).toBe('72px');
     expect(g.fabInViewport, `[${tag}] 钮在视口内`).toBe(true);
+    // projfab-ui-impl batch: edge seat pinned at every viewport (2026-09-25 order).
+    expect(g.fabRight, `[${tag}] seat: computed right = 16px (bottom-right edge anchor)`).toBe('16px');
     if (g.toggleExists) {
       expect(g.fabVsToggleOverlap, `[${tag}] 补正②：新钮与同角既有切换钮不重叠`).toBe(false);
     }
@@ -578,24 +634,35 @@ test('T7 负对照①：空态 CTA 仍工作（零网络）', async ({ page }) =
 // T8 · 剩余负对照：零新端点 / reduced-motion（R2 / R15）
 // ════════════════════════════════════════════════════════════════════════════
 test('T8 零新端点 + reduced-motion 降级', async ({ page }) => {
-  await bootApp(page);
+  // 🔴 本用例的提交段被作者 2026-09-24 裁定 D2(b) **取代**：旧语义「提交 = 本地写值 +
+  //    聚焦（零网络）」⇒ 新语义「提交 = 发一帧 WS projectCreate 直连创建」。
+  //    故判据从「零非 GET API 请求」升级为「**零 /api/ 写请求**（直连面走 WS，不经 REST）」
+  //    + 「确实发出 projectCreate 帧」。层关闭改由应答驱动（旧语义靠提交自身关层，
+  //    会把后续点击挡住 —— 这正是 T8 旧版 120s 超时的原因）。
+  const h = await bootApp(page);
   await openProjects(page);
 
-  // R2：提交全链零网络（提交 = 本地写值 + 聚焦）
-  let apiCalls = 0;
+  // R2（取代）：提交全链不落 /api/ 写请求 —— 直连创建走 WS 命令面，不经新 REST 端点
+  let apiWrites = 0;
+  const apiWriteUrls = [];
   page.on('request', (req) => {
-    if (req.url().includes('/api/') && req.method() !== 'GET') apiCalls += 1;
+    if (req.url().includes('/api/') && req.method() !== 'GET') { apiWrites += 1; apiWriteUrls.push(req.method() + ' ' + req.url()); }
   });
   await page.click('.proj-create-fab');
   await page.waitForSelector('.proj-create-overlay', { timeout: 4000 });
+  await pickPath(page);
   await page.evaluate(() => {
     const ta = document.querySelector('.proj-create-desc');
-    ta.value = '零网络验证';
+    ta.value = '零端点验证';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.click('.proj-create-overlay .wsp-pick');
   await page.waitForTimeout(250);
-  const nonGetCalls = apiCalls;
+  const framesAfterSubmit = h.projectCreateFrames().length;
+  // 注入应答把层收干净 ⇒ 后续步骤不被残留遮罩挡住（取代前的失败根因）
+  h.reply({ type: 'projectCreateResult', ok: true, message: 'ok' });
+  await page.waitForTimeout(300);
+  const layerClosed = await page.evaluate(() => !document.querySelector('.proj-create-overlay'));
 
   // R15：reduced-motion 下弹层无 ≥0.05s 动画
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -615,8 +682,16 @@ test('T8 零新端点 + reduced-motion 降级', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.emulateMedia({ reducedMotion: null });
 
-  write('47-T8-no-endpoint-and-reduced-motion.json', { nonGetCalls, rm });
-  expect(nonGetCalls, 'R2：提交路径零非 GET 请求（零新端点）').toBe(0);
+  write('47-T8-no-endpoint-and-reduced-motion.json', {
+    apiWrites, apiWriteUrls, framesAfterSubmit, layerClosed, rm,
+  });
+  // 🔴 唯一允许的非 GET /api/ 请求 = `PUT /api/canvas-tabs` —— canvas.js:1372 的
+  //    **既有**标签页持久化（防抖写），与本批无关、非本批引入（改前红基线 `21-red-t8-rerun.log`
+  //    已实测同一读数，见 `23-red-t8-attrib.log`）。除此之外必须零写请求 ⇒ 零新端点。
+  const unexpected = apiWriteUrls.filter((u) => !/^PUT \S+\/api\/canvas-tabs$/.test(u));
+  expect(unexpected, 'R2 取代：除既有 canvas-tabs 防抖持久化外，零 /api/ 写请求（零新端点）').toEqual([]);
+  expect(framesAfterSubmit, 'R2 取代：提交确实发出 projectCreate 帧').toBeGreaterThan(0);
+  expect(layerClosed, 'R2 取代：应答 ok:true ⇒ 层关闭（供后续步骤继续）').toBe(true);
   const durs = rm.panelAnimDur.split(',').map((s) => parseFloat(s));
   expect(durs.every((v) => v <= 0.01), `R15：弹层动画时长 ≤ 0.01s（实测 ${rm.panelAnimDur}）`).toBe(true);
 });

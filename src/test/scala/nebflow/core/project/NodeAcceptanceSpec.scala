@@ -816,12 +816,19 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       system: ActorSystem,
       res: SharedResources,
       name: String,
-      idleWindowMs: Option[Long] = None
+      idleWindowMs: Option[Long] = None,
+      // mailmodel batch (2026-09-25) absorbed fix for a PRE-EXISTING baseline red: the
+      // taskunify merge (7b7f4d7a4) defaulted the lifecycle anchor to task-terminal,
+      // which routes sweepDispatchers away from the idle-window leg — tests that pin
+      // idle-window expiry (with an OPEN task) must mount with the anchor off. The
+      // production code is untouched.
+      anchorTaskTerminal: Option[Boolean] = None
     ): IO[ActorRef[ProjectActor.ProjectCommand]] =
     system.spawn(
       ProjectActor(
         ProjectActor.ProjectConfig(rt.project, rt.engine, system, res, "nebula-root",
-          dispatcherIdleWindowMs = idleWindowMs)
+          dispatcherIdleWindowMs = idleWindowMs,
+          dispatcherLifecycleAnchorTaskTerminal = anchorTaskTerminal)
       ),
       name
     )
@@ -852,7 +859,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         gate <- cats.effect.Deferred[IO, Unit]
         res <- mkResources(system, tempRoot, new GatedLlm(gate))
         rt0 <- mountProject("acc-task1", ws, system, res)
-        ref <- spawnProjectActor(rt0, system, res, "proj-task1", idleWindowMs = Some(2000L))
+        ref <- spawnProjectActor(rt0, system, res, "proj-task1", idleWindowMs = Some(2000L), anchorTaskTerminal = Some(false))
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
         ctx = mkCtx(res, system, ws.toString)
         r <- MailTool.call(Json.obj(

@@ -211,6 +211,31 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(stripped, prompt)
 
   // ============================================================
+  // stripCommentOnlyLines（govmemory 批：seed 批源注记 = 单行 HTML 注释，
+  // 方案 §1.2 步骤 1「避免进入模型上下文」的机械保证）
+  // ============================================================
+
+  test("stripCommentOnlyLines removes whole-line HTML comments, keeps all other bytes"):
+    val prompt =
+      """<!-- cold-start authority note -->
+        |<!-- batch source: dual-track batch -->
+        |Deliver in two parts.
+        |
+        |You are a task node.""".stripMargin
+    val stripped = stripCommentOnlyLines(prompt)
+    assert(!stripped.contains("authority note"), "annotation line stripped")
+    assert(!stripped.contains("batch source"), "annotation line stripped")
+    assertEquals(stripped, "Deliver in two parts.\n\nYou are a task node.")
+
+  test("stripCommentOnlyLines is byte-identical for comment-free input (trailing newline survives)"):
+    val prompt = "Line one.\n\nLine two.\n"
+    assertEquals(stripCommentOnlyLines(prompt), prompt)
+
+  test("stripCommentOnlyLines keeps inline comments inside a content line (conservative)"):
+    val prompt = "HTML example: <!-- not an annotation line --> stays."
+    assertEquals(stripCommentOnlyLines(prompt), prompt)
+
+  // ============================================================
   // requiresTools helper
   // ============================================================
 
@@ -433,6 +458,32 @@ class PromptSectionsSpec extends munit.FunSuite:
       assert(!subtaskPrompt.contains("你的团队 Lead 汇报"), "对照组：团队交互行应已剥离")
       assert(!subtaskPrompt.contains("## Teams & Flows"), "对照组：Teams & Flows 块应已剥离")
       assert(!rawSystemMd.equals(cleanedForWorker), "对照组：剥离确有差异")
+    }
+
+  // node-output contract（2026-09-24）：order-360 段是「末条输出 = 自身完成汇报 +
+  // 结果自包含、禁 see above 指代」在系统提示词面的最短兜底。本段进每次 node LLM
+  // 调用 ⇒ 段长门（UTF-8 ≤ NodeSessionAlwaysOnSectionMaxBytes）是本用例的第一判据：
+  // 加内容必须压进门内（本批 327 B → 388 B，门内 ≤400 B）。
+  test("order-360 段：段长门 ≤400 B（实测 388 B）+ 输出契约两要求各有一句"):
+    withIsolatedDataRoot {
+      val bytes = NodeSessionAlwaysOnSection.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+      assert(bytes <= NodeSessionAlwaysOnSectionMaxBytes,
+        s"段长门：$bytes B 超 ${NodeSessionAlwaysOnSectionMaxBytes} B（本段进每次 node LLM 调用）")
+      // 要求 1：末条输出 = 节点结果 / 自身完成汇报
+      assert(NodeSessionAlwaysOnSection.contains("Your last output is the node result"),
+        s"要求 1（末条输出 = 节点结果）:\n$NodeSessionAlwaysOnSection")
+      assert(NodeSessionAlwaysOnSection.contains("your own completion report"),
+        s"要求 1（= 自身完成汇报）:\n$NodeSessionAlwaysOnSection")
+      // 要求 2：自包含、禁指代收尾
+      assert(NodeSessionAlwaysOnSection.contains("self-contained"), "要求 2（自包含）")
+      assert(NodeSessionAlwaysOnSection.contains("\"see above\""), "要求 2（点名禁 see above）")
+      // 段仍是指针：权威位不变（node_report description + 协议脚注）
+      assert(NodeSessionAlwaysOnSection.contains("`node_report` description")
+        && NodeSessionAlwaysOnSection.contains("Node protocol footnote"), "指针目标不得悬空")
+      // order-360 段在节点身份下仍注入（条件维度不变）
+      val blocks = buildConditionalBlocks(PromptContext(availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name)))
+      assert(blocks.contains("## Node terminal report"), s"order-360 段注入丢失：$blocks")
+      assert(blocks.contains("Your last output is the node result"), s"段正文注入丢失：$blocks")
     }
 
 end PromptSectionsSpec

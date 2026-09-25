@@ -202,10 +202,11 @@ export async function openRules(teamName) {
 let mailboxCtx = null; // { flowName, team }
 
 function pendingRowHtml(it) {
-  // mailunify-full batch (2026-09-23): the Mail `type` parameter and its five labels
-  // were removed platform-wide (author ruling). The queued-item row no longer renders a
-  // per-item type tag; the `flow-mail-queue-tag` class itself is KEPT (a shared class —
-  // the delivery chip on the next line still uses it).
+  // mailmodel batch (2026-09-25): the mail type-tag localization table is retired
+  // (the `type` parameter was removed from the Mail tool; the queue layer no longer
+  // carries follow_up/parallel). The raw protocol type renders as-is.
+  const typeLabel = it.type;
+  const typeTag = it.type ? `<span class="flow-mail-queue-tag">${esc(typeLabel)}</span>` : '';
   return `
     <div class="flow-mail-row pending" data-item-id="${esc(it.id || '')}" data-sid="${esc(it.toSession || '')}">
       <div class="flow-mail-meta">

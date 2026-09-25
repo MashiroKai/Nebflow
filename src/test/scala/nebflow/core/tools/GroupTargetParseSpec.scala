@@ -60,7 +60,12 @@ class GroupTargetParseSpec extends FunSuite:
     assertEquals(kind("lin@example.com"), Right(Target.Face("lin@example.com")))
     assertEquals(kind("friend:林小满"), Right(Target.Friend("林小满")))
     assertEquals(kind("FRiend:林小满"), Right(Target.Friend("林小满")))
-    assertEquals(kind("device:MacBook"), Right(Target.Device("MacBook")))
+    // 🔴 支上对账重算批（2026-09-26 调和）re-pin：`device:` scheme 已随 main 侧
+    // mailmodel 批 (e) 整腿退役 —— 原 `Right(Target.Device("MacBook"))` 改钉为
+    // 统一墓碑读 MAIL_DEVICE_RETIRED（classifyTarget case "device"，先于一切解析）。
+    val dev = kind("device:MacBook").left.toOption
+    assert(dev.isDefined, "device: 形态必须显式报错（腿已退役，禁静默投递）")
+    assert(dev.get.message.contains(MailTool.ErrDeviceLegRetired), s"墓碑码必须命中: ${dev.get.message}")
     assert(kind("").isLeft, "空串仍是 target missing")
   }
 
@@ -72,7 +77,11 @@ class GroupTargetParseSpec extends FunSuite:
     assert(err.get.message.contains("unknown target scheme 'a:'"), s"文案须指明未知 scheme：${err.get.message}")
     assert(err.get.message.contains("project:"), s"文案须列出合法 scheme 面：${err.get.message}")
     assert(err.get.message.contains("node:"), s"文案须列出合法 scheme 面：${err.get.message}")
-    assert(err.get.message.contains("device:"), s"文案须列出合法 scheme 面：${err.get.message}")
+    // 🔴 支上对账重算批（2026-09-26 调和）：合法 scheme 词表已随设备腿退役去 "device:"
+    // 并入 "kernel:"（KnownSchemes 单点）——原 `contains("device:")` 判据随词表消亡，
+    // 改钉新词表的 kernel 项与 device 的退役去留（退役说明在 schema/描述层，不在本报错）。
+    assert(err.get.message.contains("kernel:"), s"文案须列出合法 scheme 面（kernel）: ${err.get.message}")
+    assert(!err.get.message.contains("device:"), "退役 scheme 不得再出现在合法面词表: ${err.get.message}")
     assert(err.get.message.contains("friend:"), s"文案须列出合法 scheme 面：${err.get.message}")
     assert(err.get.message.contains("group:"), s"文案须列出合法 scheme 面：${err.get.message}")
     assert(err.get.message.contains("`local`"), s"文案须列出保留字面量：${err.get.message}")
@@ -98,10 +107,14 @@ class GroupTargetParseSpec extends FunSuite:
     MailTool.inputSchema("properties").flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
       .getOrElse(fail("inputSchema.properties.to.description 缺席"))
 
-  test("schema: `to.description` 显式声明四个合法前缀（含 `group:`）") {
+  test("schema: `to.description` 显式声明合法前缀（含 `group:`）与 device: 的退役声明") {
     val d = toDescription
     assert(d.contains("`friend:<remark|username|email|displayName>`"), s"缺 friend 前缀声明: $d")
-    assert(d.contains("`device:<deviceName|deviceId>`"), s"缺 device 前缀声明: $d")
+    // 🔴 支上对账重算批（2026-09-26 调和）re-pin：`device:` 已退役 —— schema 面不再
+    // 声明其参数形态，改为**显式退役声明**（RETIRED + MAIL_DEVICE_RETIRED，禁静默）。
+    assert(!d.contains("`device:<deviceName|deviceId>`"), s"退役前缀的参数形态声明必须移除: $d")
+    assert(d.contains("RETIRED"), s"缺 device: 退役声明: $d")
+    assert(d.contains(MailTool.ErrDeviceLegRetired), s"缺墓碑码声明: $d")
     assert(d.contains("`group:<groupName|groupId>`"), s"🔴 缺 group 前缀声明（本批判据②）: $d")
     assert(d.contains("`local`"), s"缺 local 形态声明: $d")
   }
@@ -156,7 +169,10 @@ class GroupTargetParseSpec extends FunSuite:
   test("schema: `message` 描述补上群支空文本口径（群总是要正文）") {
     val d = MailTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
       .getOrElse(fail("message description 缺席"))
-    assert(d.contains("friend/device/group"), s"message 描述未覆盖群支: $d")
+    // 🔴 支上对账重算批（2026-09-26 调和）：设备腿退役 ⇒ 原 "friend/device/group"
+    // 三腿措辞改钉为 "friend/group"（合并树现读）。
+    assert(d.contains("friend/group"), s"message 描述未覆盖群支: $d")
+    assert(!d.contains("friend/device/group"), "退役设备腿不得残留在 message 描述判据: $d")
     assert(d.contains("ignored for `local`"), s"缺 local 忽略正文口径: $d")
   }
 

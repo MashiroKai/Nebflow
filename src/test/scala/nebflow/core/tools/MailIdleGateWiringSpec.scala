@@ -172,7 +172,7 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- injectChild(resources, "member-child", memberRef)
       // root → boss queue mail：Manager 自身+子树空闲 → 应当立即投递
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A6_TEAM_BUSY_MARKER", Nil,
+        bossMeta.id, "boss", "A6_TEAM_BUSY_MARKER", "INFO", Nil,
         ctxFor(resources, system, "root-sid"), system, "root-sid"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
@@ -209,7 +209,7 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A7_SELF_BUSY_MARKER", Nil,
+        memberMeta.id, "member", "A7_SELF_BUSY_MARKER", "INFO", Nil,
         ctxFor(resources, system, bossMeta.id), system, bossMeta.id
       )
       _ <- IO.sleep(600.millis)
@@ -249,7 +249,7 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A7B_SIBLING_BUSY_OK", Nil,
+        bossMeta.id, "boss", "A7B_SIBLING_BUSY_OK", "INFO", Nil,
         ctxFor(resources, system, memberMeta.id), system, memberMeta.id
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
@@ -291,7 +291,7 @@ class MailIdleGateWiringSpec extends FunSuite:
         sessionId = Some(bossMeta.id)
       ))
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A8_FLOW_BUSY_MARKER", Nil,
+        bossMeta.id, "boss", "A8_FLOW_BUSY_MARKER", "INFO", Nil,
         ctxFor(resources, system, "root-sid"), system, "root-sid"
       )
       _ <- IO.sleep(600.millis)
@@ -441,7 +441,7 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A12_WEDGE_MARKER", Nil,
+        memberMeta.id, "member", "A12_WEDGE_MARKER", "INFO", Nil,
         ctxFor(resources, system, bossMeta.id), system, bossMeta.id
       )
       _ <- IO.sleep(600.millis) // let the deferral land (count=1, queue retained)
@@ -494,12 +494,12 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- injectChild(resources, "member-child", memberRef)
       // 两封 queue mail 在 idle+子树忙时相继到达（各走一次 idle gate 拦截）
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_FIRST_MARKER", Nil,
+        memberMeta.id, "member", "A13_FIRST_MARKER", "INFO", Nil,
         ctxFor(resources, system, bossMeta.id), system, bossMeta.id
       )
       _ <- IO.sleep(300.millis)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_SECOND_MARKER", Nil,
+        memberMeta.id, "member", "A13_SECOND_MARKER", "INFO", Nil,
         ctxFor(resources, system, bossMeta.id), system, bossMeta.id
       )
       _ <- IO.sleep(600.millis) // both deferrals land; count must be 2, not 1

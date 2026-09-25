@@ -236,6 +236,100 @@ final class ShellSession private (
       yield jobId
     }
 
+  /** bashautobg batch (2026-09-25 author order: "no hard cap; auto-background at
+    * 60min; backgrounded commands have no limit"): adopt an ALREADY-RUNNING
+    * foreground execution as a background job. Isomorphic to the registration
+    * half of executeBackground (BackgroundJob entry + heartbeat + B1 sensor +
+    * on_complete callback), with two differences:
+    *   1. No spawn — the process is already running; its fiber (started by the
+    *      caller via `start`) is passed in and wrapped by a watcher fiber that
+    *      completes the deferred and fires on_complete, mirroring
+    *      backgroundExecute (including its prefer-existing-error semantics).
+    *   2. B2 hard timeout is exempted by construction — the production face
+    *      passes `Defaults.BashBackgroundNoHardTimeoutMs`, so the B2 stall kill
+    *      is unreachable and the job runs to completion (background has no time
+    *      limit). B1 stays alert-only; persistent semantics are not applicable
+    *      (an adopted job is always a waiting-type task).
+    * The adopted process was registered into session activeProcesses by
+    * runProcess's bracket from the start, so restart/Stop killSessionProcesses
+    * coverage and cancelBackgroundJob / getBackgroundResult /
+    * getBackgroundJobHealth work identically to native background jobs.
+    */
+  def adoptAsBackgroundJob(
+    jobId: String,
+    fiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
+    health: JobHealth,
+    command: String,
+    description: Option[String] = None,
+    on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
+    on_heartbeat: Option[(String, JobHealth) => IO[Unit]] = None,
+    checkIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
+    onSlowDetected: Option[String => IO[Unit]] = None
+  ): IO[Unit] =
+    lifecycleMutex.lock.surround {
+      for
+        _ <- checkAlive *> touch
+        deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
+        watcher <- fiber.join
+          .flatMap {
+            // Pattern match on the join Outcome: Succeeded -> the attempted
+            // result IO, Errored -> rethrow, Canceled -> render as a cancelled
+            // job downstream (deferred completes Left(InterruptedException)).
+            case cats.effect.kernel.Outcome.Succeeded(fa) => fa
+            case cats.effect.kernel.Outcome.Errored(e) =>
+              IO.raiseError[Either[Throwable, ProcessResult]](e)
+            case cats.effect.kernel.Outcome.Canceled() =>
+              IO.raiseError[Either[Throwable, ProcessResult]](new InterruptedException("Cancelled"))
+          }
+          .flatMap { result =>
+            deferred.tryGet.flatMap {
+              case Some(existing) if existing.isLeft =>
+                // Deferred already completed with an error (explicit cancel etc.) —
+                // same prefer-existing-error semantics as backgroundExecute.
+                deferred.complete(result).attempt.void *>
+                  on_complete.fold(IO.unit) { cb =>
+                    IO.delay(cb(existing))
+                      .flatten
+                      .handleErrorWith(e =>
+                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
+                  }
+              case _ =>
+                deferred.complete(result).attempt.void *>
+                  on_complete.fold(IO.unit) { cb =>
+                    IO.delay(cb(result))
+                      .flatten
+                      .handleErrorWith(e =>
+                        NebflowLogger.forName("nebflow.shell").warn(s"Background job callback failed: ${e.getMessage}"))
+                  }
+            }
+          }.start
+        hbFiber <- on_heartbeat match
+          case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
+          case None => IO.pure(None)
+        hcFiber <- startJobHealthCheck(
+          jobId,
+          deferred,
+          health,
+          command = command,
+          hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs,
+          checkIntervalSec = checkIntervalSec,
+          onSlowDetected = onSlowDetected
+        )
+        job = BackgroundJob(
+          watcher,
+          hbFiber,
+          hcFiber,
+          deferred,
+          command,
+          description,
+          on_complete,
+          health.startedAtMs.get(),
+          health
+        )
+        _ <- backgroundJobs.update(_ + (jobId -> job))
+      yield ()
+    }
+
   /** Query a background job. If complete, remove it and return the result. */
   def getBackgroundResult(jobId: String): IO[Option[Either[Throwable, ProcessResult]]] =
     lifecycleMutex.lock.surround {

@@ -35,8 +35,8 @@ import nebflow.service.{MemoryBudget, MemoryWriteGate}
  *     统计+整理指引（不注正文——超限文件的内容质量已不可信，全文注入是税）。
  *
  * Nebula 本人在场处理项目事务时**不自动注入**（全局上下文珍贵），按需
- * `Read <workspace>/.nebflow/memory.md` 单文件即可；写入口 = MemoryNote
- * `target=project:<name>`（预算闸与全局同纪律、常量独立）。
+ * `Read <workspace>/.nebflow/memory.md` 单文件即可；写入口 = Edit/Write 直写本文件
+ * （预算闸与全局同纪律、常量独立——govmemory 批起直写为唯一写法）。
  */
 object ProjectMemory:
 
@@ -66,11 +66,11 @@ object ProjectMemory:
     * （含备份面）；快照唯一触发点 = 预算放行、即将落盘。
     * 拒绝/快照失败 ⇒ `MemoryWriteGate.Rejected`（IO 错误通道）+ **零写入**。
     *
-    * 🔴 现场读数（2026-09-13，作者项 ①③ 的如实登记）：**本方法今天零生产调用方**
-    * （2026-09-12 记忆改造批后 MemoryNote 改为「只入队、零落盘」，最后一个调用方随之消失）
-    * ⇒ 本闸对其**当前覆盖为空**。项目记忆文件今天的实际写入者 = 整理会话经 Write/Edit
-    * 直写（**不在** M4 边界内，见 MemoryWriteGate 头注）。本方法保留闸是为了让「未来的
-    * 调用方」天然过闸，而不是宣称今天已覆盖。 */
+    * 🔴 现场读数（2026-09-13，作者项 ①③ 的如实登记）：**本方法零生产调用方**
+    * （2026-09-12 记忆改造批后旧记账工具改为「只入队、零落盘」，最后一个调用方随之消失；
+    * govmemory 批（2026-09-25）起直写为唯一写法，本方法保留闸是为了让「未来的
+    * 调用方」天然过闸，而不是宣称今天已覆盖）。项目记忆文件的实际写入者 = Nebula
+    * 会话经 Write/Edit 直写（预算判据同源 MemoryBudget，经 MemoryDirectWriteGuard）。 */
   def save(p: os.Path, content: String): IO[Unit] =
     MemoryWriteGate.guard("project", p, content) *> IO.blocking(os.write.over(p, content, createFolders = true))
 
@@ -87,11 +87,11 @@ object ProjectMemory:
           val bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong
           MemoryBudget.verdict("project", bytes) match
             case MemoryBudget.Within =>
-              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，MemoryNote target=project:$projectName 维护）
+              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，Edit/Write 直写维护）
                  |
                  |$content""".stripMargin
             case MemoryBudget.Warn(_, _, _) =>
-              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，MemoryNote target=project:$projectName 维护）
+              s"""# Project Memory — $projectName（<$p>；项目状态/口径/教训，Edit/Write 直写维护）
                  |
                  |$content
                  |
@@ -102,6 +102,6 @@ object ProjectMemory:
                  |
                  |（file OVER the ${hard}-byte hard budget: $bytes bytes, $entries entries — full text NOT inlined this session. Largest sections:
                  |${MemoryBudget.topSections(content)}
-                 |Consolidate first via MemoryNote target=project:$projectName remove/replace_section.）"""
+                 |Consolidate first with an in-place shrink: delete stale `- ` entries or rewrite the largest `## ` section down (the append and the remove/update are paired in the same round).）"""
   }
 end ProjectMemory

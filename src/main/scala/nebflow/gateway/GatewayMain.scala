@@ -243,7 +243,8 @@ object GatewayMain extends IOApp:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      _ <- agentLibrary.seedDefaults()
+      // seedDefaults() call retired 2026-09-25 (govmemory batch): seeding runs
+      // through SeedService.ensureSeeded (manifest tree seeds) in the boot chain.
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
@@ -505,6 +506,19 @@ object GatewayMain extends IOApp:
                           val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                           nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                       logger.info(s"nebflow ${nebflow.Version.string}") *>
+                        // taskunify merge batch (2026-09-24): **enablement must never happen
+                        // silently** (implplan §10.3 hard requirement 3③) — each switch state
+                        // gets one **mechanically greppable** startup log line:
+                        // `TASKLEDGER_LIFECYCLE_ANCHOR` (session lifetime anchor) and
+                        // `TASKLEDGER_CONCURRENCY_CAP` (concurrency cap). Criterion = starting
+                        // with the switch ⇒ exactly one such line; after falling back the
+                        // refusal-event grep count = 0.
+                        logger.info(
+                          s"TASKLEDGER_LIFECYCLE_ANCHOR=${if nebflow.shared.Defaults.DispatcherLifecycleAnchorTaskTerminal then "task-terminal" else "idle-window(fallback)"} (nebflow.dispatcher.lifecycleAnchor)") *>
+                        logger.info(
+                          s"TASKLEDGER_CONCURRENCY_CAP=${nebflow.shared.Defaults.DispatcherMaxConcurrentSessions} (nebflow.dispatcher.maxConcurrentSessions; <=0 = gate off)") *>
+                        logger.info(
+                          s"TASKLEDGER_ENABLED=${nebflow.shared.Defaults.TaskLedgerUplinkFailClosed} (nebflow.taskledger.enabled; fail-closed uplink attribution gate — false = legacy behaviour byte-for-byte)") *>
                         (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                          else presetLabel match
                            case Some((name, ref)) =>
@@ -702,13 +716,13 @@ object GatewayMain extends IOApp:
                                 val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
                                 // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                 // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                // general / memory-consolidator agents + 4 系统插件 +
+                                // general / Nebula agents + 4 系统插件 +
                                 // projects/general）——通用项目需于挂载前存在，干净 home
-                                // 启动即自动挂载、Mail(address="project:general") 直达分发器
+                                // 启动即自动挂载、Mail(to="project:general") 直达分发器
                                 // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general
                                 // 项目」令；裁定②：既有 home 亦 add-only 补种——缺目录才建、绝不改既有内容）。
                                 // 幂等 + fail-soft（见 SeedService
-                                // 注释），失败仅告警不阻塞启动（与 seedDefaults/startupMount 同构）。
+                                // 注释），失败仅告警不阻塞启动（与 startupMount 同构）。
                                 val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
                                 // 热重启编排器（hot-restart 批）：触发器无关——WS restart
                                 // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单

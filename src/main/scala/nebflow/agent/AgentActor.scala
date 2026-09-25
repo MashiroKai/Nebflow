@@ -782,6 +782,14 @@ object AgentActor extends AgentCore with AgentSession:
       * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。 */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
+    /** **Task attribution fingerprint** (taskunify batch 2026-09-24, ruling e①): the task
+      * id this session is attributed to (a dispatcher = the task it was created to serve; a
+      * project node = the task recorded as its origin). Injected at NodeEngine / ProjectActor
+      * spawn -> passed through AgentCore into `ToolContext.taskId` -- the only source of
+      * `TaskInfo`'s zero-parameter attribution resolution (engine-side identity, never a
+      * client parameter). Default None = no attribution (pre-existing nodes / the Nebula
+      * root / team / dual-track flow / direct REST calls). */
+    taskId: Option[String] = None,
     /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
       * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
     flowNodeName: Option[String] = None,
@@ -863,6 +871,7 @@ object AgentActor extends AgentCore with AgentSession:
             isDispatcher = isDispatcher,
             flowNodeRole = flowNodeRole,
             projectName = projectName,
+            taskId = taskId,
             flowNodeName = flowNodeName,
             flowChainId = flowChainId,
             sandboxEnabled = sandboxEnabled,
@@ -4552,93 +4561,13 @@ object AgentActor extends AgentCore with AgentSession:
                     val postHookIO = CompactService
                       .runPostCompactHook(state.messages.size, outcome.messages.size, resources, sessionId)
                       .handleErrorWith(_ => IO.unit)
-                    // 记忆轨（压缩双轨第二轨，2026-09-12 记忆改造批 / spec §5 R3 O-A）：
-                    // 在本 fork 内、CompactionComplete **之前** join ⇒ 装机点
-                    // （processing 的 CompactionComplete(Right) → state.withMessages）
-                    // 天然晚于两轨完成，零新增状态位（复用 pendingCompaction 作窗口守卫）。
-                    // 硬超时在 MemoryTrack 内（IO.timeoutTo，无 timeout 的 join 已被 spec
-                    // 明文否决）；失败/超时 = fail-open 降级：照常装机（用旧记忆）+ 队列
-                    // 条目保留 + 事件 memory-track-failed / memory-track-timeout。
-                    // 口径只对根会话（depth 0）生效——与前置 hook 的 Root profile 同域
-                    // （子会话压缩没有记忆面，跑轨即纯浪费；空队列时轨内谓词亦会跳过）。
-                    //
-                    // B 腿（2026-09-15）：把本会话的 wsSend 交给轨 ⇒ 轨内整理的 subagent
-                    // 走标准子代理事件契约（NodeRunner.routeSubagentWsSend）进 subagent
-                    // 面板（`agentStart` 建行 / `agentDone` 收行）。改动前轨内 wsSend 恒
-                    // `IO.unit` ⇒ 面板永不建行（作者现场疑问的解）。wsSend 不可得时轨内
-                    // 自动回落恒 no-op（见 MemoryTrack.panelWsSend），零行为漂移。
-                    val memoryTrackIO: IO[Unit] =
-                      if depth != 0 then IO.unit
-                      else
-                        MemoryTrack
-                          .run(resources, state.sessionId, depth, parentWsSend = Some(state.wsSend))
-                          .handleErrorWith { e =>
-                            IO {
-                              logAgentEvent(
-                                agentDef, depth, state.sessionId, state.sessionName,
-                                "memory-track-failed", s"err=${e.getMessage}")
-                              MemoryTrack.Result(
-                                MemoryTrack.Status.Failed,
-                                e.getMessage,
-                                0,
-                                alert = Some(
-                                  s"Memory queue is NOT being consumed: the memory-track run crashed (${e.getClass.getSimpleName}: ${e.getMessage}) — no note was marked rejected, everything stays pending and will be retried on the next compaction."))
-                            }
-                          }
-                          .flatMap { r =>
-                            // 告警面（2026-09-13 缺失自愈批 / 方案 D「响亮失败」）：infra
-                            // 失败/拒绝不再只躺在 lifecycle 日志里等着被 grep——同一句推进
-                            // 前端（`memoryQueueAlert` → 常驻通知条，前端 main.js 订阅）。
-                            val alertIO: IO[Unit] = r.alert match
-                              case None => IO.unit
-                              case Some(text) =>
-                                state.wsSend(io.circe.Json.obj(
-                                  "type" -> "memoryQueueAlert".asJson,
-                                  "sessionId" -> state.sessionId.asJson,
-                                  "level" -> "warn".asJson,
-                                  "text" -> text.asJson
-                                ))
-                            val logIO: IO[Unit] = r.status match
-                              case MemoryTrack.Status.Failed =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-failed",
-                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} detail=${r.detail.take(200)}"))
-                              case MemoryTrack.Status.Timeout =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-timeout",
-                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} reconciled=${r.reconciled} drift=${r.reconcileDrift} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"))
-                              case MemoryTrack.Status.Completed =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-completed",
-                                  s"pendingAtStart=${r.pendingAtStart} changed=${r.changed}"))
-                              case MemoryTrack.Status.Refused =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-refused",
-                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
-                              case MemoryTrack.Status.DryRun =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-dry-run",
-                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
-                              case MemoryTrack.Status.Skipped => IO.unit
-                              // 暂停轮（#440 ①）：跳过是**有意为之**、不是空转 ⇒ 必须有
-                              // 事件行（与兄弟事件同族同处落；`Status.Skipped` 保持
-                              // IO.unit 不动——它是「无触发」的静默轮）。
-                              // 行形：`… event=memory-track-skipped detail=reason=paused: …`
-                              case MemoryTrack.Status.Paused =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-skipped",
-                                  s"${r.detail.take(300)} pendingAtStart=${r.pendingAtStart}"))
-                            logIO *> alertIO
-                          }
+                    // The compaction dual-track memory rail (MemoryTrack run + its
+                    // memoryQueueAlert WS emission + memory-track-* lifecycle events) was
+                    // retired with the memory-queue mechanism (govmemory batch). Compaction
+                    // now proceeds straight to re-arming the session; memory upkeep is
+                    // direct-write with the budget pre-check / system-reminder guard.
                     for
                       _ <- ctx.forkTurn(postHookIO)
-                      _ <- memoryTrackIO
                       _ <- ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages))
                     yield ()
           }
