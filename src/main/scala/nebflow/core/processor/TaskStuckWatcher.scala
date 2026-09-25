@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
-import nebflow.gateway.WsHub
+import nebflow.core.{EventSink, NebflowLogger}
 
 import scala.concurrent.duration.{FiniteDuration, *}
 
@@ -512,7 +511,7 @@ object TaskStuckWatcher:
    * 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动
    * （.start），错误被 handleErrorWith 吞掉防止 fiber 崩溃——扫描器必须自愈。
    */
-  def run(resources: SharedResources, wsHub: WsHub, interval: FiniteDuration, thresholdMs: Long): IO[Unit] =
+  def run(resources: SharedResources, wsHub: EventSink, interval: FiniteDuration, thresholdMs: Long): IO[Unit] =
     // NOTE: must use `>>` (by-name) for the recursion, NOT `*>` — `*>` evaluates
     // its right operand strictly, so `*> loop` would recurse infinitely while
     // BUILDING the IO description (StackOverflowError at startup, caught by
@@ -684,7 +683,7 @@ object TaskStuckWatcher:
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */
   def scan(
     resources: SharedResources,
-    wsHub: WsHub,
+    wsHub: EventSink,
     thresholdMs: Long,
     stopCounts: cats.effect.Ref[IO, Map[String, Int]] = cats.effect.Ref.unsafe(Map.empty),
     /** R8 ②：L3 待复查登记（默认空 Ref = 单测一次驱动不留状态）。 */
@@ -817,7 +816,13 @@ object TaskStuckWatcher:
   end scan
 
   /** taskStuck WS 广播（统一 payload：sessionId/kind/idleSecs/action/reason）。 */
-  private def broadcastStuck(wsHub: WsHub, rec: AgentRecord, idleSecs: Long, action: String, reason: String): IO[Unit] =
+  private def broadcastStuck(
+    wsHub: EventSink,
+    rec: AgentRecord,
+    idleSecs: Long,
+    action: String,
+    reason: String
+  ): IO[Unit] =
     wsHub
       .broadcast(
         io.circe.Json.obj(
@@ -856,7 +861,7 @@ object TaskStuckWatcher:
    */
   private def recover(
     resources: SharedResources,
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
@@ -914,7 +919,7 @@ object TaskStuckWatcher:
    * 自己缓过来，误报是噪声）。
    */
   private def gateActions(
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
@@ -971,7 +976,7 @@ object TaskStuckWatcher:
   /** 判据序未命中闸门时的**既有全部分支**（P1/P2 行为逐字保留）。 */
   private def recoverUngated(
     resources: SharedResources,
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
@@ -1873,7 +1878,7 @@ object TaskStuckWatcher:
    */
   private def runRecoveryLeg(
     resources: SharedResources,
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
@@ -1916,7 +1921,7 @@ object TaskStuckWatcher:
 
   private def runRecoveryLegInner(
     resources: SharedResources,
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,
@@ -2085,7 +2090,7 @@ object TaskStuckWatcher:
    * `actions` = 已尝试的恢复动作清单（进 result / 事件 / 通知文本，回答「引擎试过什么」）。
    */
   private def reportExhausted(
-    wsHub: WsHub,
+    wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
     cls: StuckClassification,

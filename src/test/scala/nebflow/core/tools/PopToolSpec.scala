@@ -29,6 +29,9 @@ import munit.FunSuite
  */
 class PopToolSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   /** Nebula 本体根会话身份（正常放行面）。 */
   private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
 

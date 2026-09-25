@@ -32,6 +32,9 @@ import scala.jdk.CollectionConverters.*
  */
 class FileRefsInlineBudgetSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   // ── 夹具 ────────────────────────────────────────────────────────────────
 
   private val PngPrefix = "data:image/png;base64,"

@@ -2,6 +2,7 @@ package nebflow.core.tools
 
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.FilePolicyPort
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -213,7 +214,7 @@ private[tools] object FileRefs:
      * [[inlineMayTakeOver]] so the inline leg can honour the identity layers
      * while not honouring the endpoint's reach layer.
      */
-    layer: Option[nebflow.gateway.NfFilePolicy.NfDenyLayer] = None
+    layer: Option[FilePolicyPort.NfDenyLayer] = None
   )
 
   /** What to do with one reference value. */
@@ -486,11 +487,11 @@ private[tools] object FileRefs:
   // 「绿」而端点必然拒（真取回腿 401）——「计数绿而取回红」在本批修好的树上仍可
   // 发生。现在两侧调同一个函数，缺一条腿都不可能：判据的形状只有一份。
   //
-  // 依赖方向说明：`core` 引用 `gateway` 在本树有先例（`core/processor/
-  // TaskStuckWatcher.scala:8` 引 `gateway.WsHub`；`core/scheduler/
-  // ScheduledTaskActor.scala:10` 引 `gateway.SessionStore`），且任务书 7(a) 明文要求
-  // 「与端点同一份判据（🔴 复用，禁复制）」。复制一份白名单/判据才是本批明令禁止
-  // 的旁路，所以这里调同一个函数而不镜像它。
+  // 依赖方向说明（Phase 5 解耦更新）：判据本体仍在 `gateway.NfFilePolicy`（任务书
+  // 7(a) 明文要求「与端点同一份判据（🔴 复用，禁复制）」，复制一份白名单/判据是
+  // 明令禁止的旁路）；core 经窄端口 `nebflow.core.FilePolicyPort` 调**同一个函数**
+  // 而不镜像它（gateway 侧适配、GatewayMain 装配接线），不再直接引用
+  // `nebflow.gateway` 任何符号。
 
   // ── the two legs ask different questions (返工 r2, 2026-09-18 · 复核位 F1) ────
   //
@@ -526,16 +527,13 @@ private[tools] object FileRefs:
    */
   def servableByEndpointLayered(
     real: Path
-  ): Option[(nebflow.gateway.NfFilePolicy.NfDenyLayer, String, String)] =
-    try
-      nebflow.gateway.NfFilePolicy
-        .nfVerdictForRealLayer(real, nebflow.gateway.NfFilePolicy.NfPathPolicy.current())
-        .map((layer, denied) => (layer, denied.reason, denied.message))
+  ): Option[(FilePolicyPort.NfDenyLayer, String, String)] =
+    try FilePolicyPort.port.endpointVerdictLayer(real)
     catch
       case e: Throwable =>
         Some(
           (
-            nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace,
+            FilePolicyPort.NfDenyLayer.Namespace,
             "servability-judge-unavailable",
             s"the servability judge could not be consulted (${e.getClass.getSimpleName}) — " +
               "the reference is treated as unservable rather than assumed servable"
@@ -566,7 +564,7 @@ private[tools] object FileRefs:
    */
   def inlineMayTakeOver(path: Path, rejected: RejectedRef): Boolean =
     rejected.failure == FileRefFailure.NotServable &&
-      rejected.layer.contains(nebflow.gateway.NfFilePolicy.NfDenyLayer.Namespace) &&
+      rejected.layer.contains(FilePolicyPort.NfDenyLayer.Namespace) &&
       credentialInodeClean(path)
 
   /**
@@ -577,9 +575,7 @@ private[tools] object FileRefs:
    * second inode scan, no copied snapshot.
    */
   def credentialInodeClean(path: Path): Boolean =
-    try
-      val policy = nebflow.gateway.NfFilePolicy.NfPathPolicy.current()
-      !nebflow.gateway.NfFilePolicy.nfCredentialInode(path.toRealPath(), policy)
+    try !FilePolicyPort.port.credentialInodeHit(path.toRealPath())
     catch case _: Throwable => false
 
   /**

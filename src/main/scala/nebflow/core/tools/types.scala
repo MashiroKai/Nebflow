@@ -13,7 +13,7 @@ import nebflow.shared.*
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  sessionStore: Option[nebflow.gateway.SessionStore] = None,
+  sessionStore: Option[nebflow.core.SessionStorePort] = None,
   agentActorRef: Option[ActorRef[AgentCommand]] = None,
   contextWindow: Int = Defaults.ContextWindow,
   sessionId: Option[String] = None,

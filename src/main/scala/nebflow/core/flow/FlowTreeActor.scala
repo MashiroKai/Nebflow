@@ -150,7 +150,7 @@ object TeamSessionRegistry:
   def resolveSessionId(
     senderSid: String,
     address: String,
-    sessionStore: nebflow.gateway.SessionStore
+    sessionStore: nebflow.core.SessionStorePort
   ): IO[Either[String, Option[String]]] =
     // "team/agent" scoped format — exact match, no ambiguity.
     val slashIdx = address.indexOf('/')

@@ -51,6 +51,9 @@ import scala.jdk.CollectionConverters.*
  */
 class CardModelFaceSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val sentinel = "___CARD_HTML___"
 
   /** 只可能出现在卡片 HTML **正文本体**里的串——模型面出现它即判红。 */

@@ -61,6 +61,9 @@ import scala.jdk.CollectionConverters.*
  */
 class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   import NfPathEncodingProbeSpec.*
 
   private val gatewayToken = "probe-gateway-token"

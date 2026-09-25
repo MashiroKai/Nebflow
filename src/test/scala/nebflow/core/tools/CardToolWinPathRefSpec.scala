@@ -39,6 +39,9 @@ import scala.jdk.CollectionConverters.*
  */
 class CardToolWinPathRefSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
 

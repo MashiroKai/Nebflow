@@ -20,6 +20,9 @@ import scala.jdk.CollectionConverters.*
  */
 class CardToolScanFaceSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val sentinel = "___CARD_HTML___"
 

@@ -3,13 +3,16 @@ package nebflow.gateway
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
+import nebflow.core.EventSink
 
 /**
  * WebSocket multicast hub — decouples root agents from individual connections.
  * All WebSocket connections register their per-connection send callback here;
  * root agents broadcast events to every registered connection.
  */
-class WsHub:
+// Phase 5 解耦:混入 core 窄端口(实现原地不搬;core 的 TaskStuckWatcher 只面向
+// broadcast 这一个成员编程)。
+class WsHub extends EventSink:
 
   private val connsRef: Ref[IO, Map[String, Json => IO[Unit]]] =
     Ref.unsafe[IO, Map[String, Json => IO[Unit]]](Map.empty)

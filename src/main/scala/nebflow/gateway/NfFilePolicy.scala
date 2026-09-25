@@ -1,7 +1,7 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import nebflow.core.PathUtil
+import nebflow.core.{FilePolicyPort, PathUtil}
 import org.http4s.Status
 
 /**
@@ -17,7 +17,11 @@ import org.http4s.Status
  * a path that cannot be read can never be ticketed (C1-5 single
  * authority).
  */
-object NfFilePolicy:
+// Phase 5 解耦(行为保持重构,2026-09-25):本对象混入 core 窄端口
+// `nebflow.core.FilePolicyPort`——判据阶梯/白名单表全部留在原地(实现不搬),
+// core 的 FileRefs 只经端口问两个问题;接线 = GatewayMain 装配时
+// FilePolicyPort.install(NfFilePolicy)。
+object NfFilePolicy extends FilePolicyPort:
 
   /**
    * Extension whitelist for GET /api/nf-file (local files served to
@@ -329,29 +333,14 @@ object NfFilePolicy:
     case Denied(status: Status, reason: String, message: String)
 
   /**
-   * Which layer of the C1 ladder refused a path (imgref rework r2, 2026-09-18).
-   *
-   * The layers answer DIFFERENT questions, and exactly one caller has to tell
-   * them apart (the tool-side inline leg — see `FileRefs.inlineMayTakeOver`):
-   *
-   *   - `Namespace` = "the endpoint only serves some subtrees of the data
-   *     directory / of the project `.nebflow`". A statement about the
-   *     ENDPOINT's REACH: meaningful only to a caller that asks `/api/nf-file`
-   *     for bytes.
-   *   - `Credential` = "this path's own IDENTITY is a credential" — a known
-   *     credential entry (`NfExternalCredentialEntries`), a credential-holding
-   *     directory (`NfCredentialPathSegments`) or a credential-shaped basename
-   *     (`NfCredentialNamePattern`). A statement about the FILE: meaningful to
-   *     any caller that would copy its bytes somewhere else.
-   *   - `CredentialInode` = R2: a hard link to a credential file's inode.
-   *   - `FileType` = the extension of the REAL path is not served.
-   *
-   * 🔴 This enum only NAMES a decision the shipped ladder already made: the
-   * tables, the branch order and every message are byte-identical to the
-   * pre-rework judge ([[nfCredentialDeny]] is this function's projection).
+   * Phase 5 解耦(行为保持重构,2026-09-25):enum 原样迁
+   * `nebflow.core.FilePolicyPort.NfDenyLayer`(core 窄端口签名需要该词汇类型;
+   * 文档随行)。此处双别名(type + companion term)保持既有引用路径
+   * `NfFilePolicy.NfDenyLayer.*`(含通配 import 侧)与逐字行为不变——
+   * 判据阶梯本体全部留在本对象,实现不搬。
    */
-  enum NfDenyLayer:
-    case Namespace, Credential, CredentialInode, FileType
+  type NfDenyLayer = FilePolicyPort.NfDenyLayer
+  val NfDenyLayer = FilePolicyPort.NfDenyLayer
 
   /**
    * C1-4: pure credential-namespace judge. `Some(reason)` = refuse with 403.
@@ -583,5 +572,19 @@ object NfFilePolicy:
     go(nebflow.core.PathParamCodec.candidates(rawPath), None)
 
   end nfFileVerdictTolerant
+
+  /**
+   * Phase 5 窄端口实现(core ← gateway 倒置):core 工具面(FileRefs)经
+   * `nebflow.core.FilePolicyPort` 问的两个问题,判据 = 本对象的同一套函数
+   * (零复制、零旁路);policy 自取 `NfPathPolicy.current()`(在役根,不冻结)。
+   */
+  override def endpointVerdictLayer(
+    real: java.nio.file.Path
+  ): Option[(NfDenyLayer, String, String)] =
+    nfVerdictForRealLayer(real, NfPathPolicy.current())
+      .map((layer, denied) => (layer, denied.reason, denied.message))
+
+  override def credentialInodeHit(real: java.nio.file.Path): Boolean =
+    nfCredentialInode(real, NfPathPolicy.current())
 
 end NfFilePolicy

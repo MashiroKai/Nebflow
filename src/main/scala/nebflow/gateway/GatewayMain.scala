@@ -433,6 +433,10 @@ object GatewayMain extends IOApp:
               // Global session state shared across all connections
               val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
               val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
+              // Phase 5 解耦接线:core 工具面(FileRefs)经窄端口 FilePolicyPort 读端点
+              // 判据(判据本体仍在 NfFilePolicy,实现不搬)。生产唯一装配点,早于一切
+              // 工具执行;未接线的消费方按既有语义 fail-closed。
+              FilePolicyPort.install(NfFilePolicy)
               sessionStore.load
                 .flatMap { _ =>
                   // Single-session architecture: guarantee the primary agent Nebula
