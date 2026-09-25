@@ -7,7 +7,7 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorSystem as NebulaActorSystem
+import nebflow.actor.ActorSystem as RootActorSystem
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
@@ -71,7 +71,7 @@ class WebSocketRoutes(
    * 走新配置，无需重启。构造参数保留为初始值（GatewayMain 启动时装载）。
    */
   private val sttServiceRef: Ref[IO, Option[SttService]] = Ref.unsafe(sttService)
-  private val nebulaSystem = sharedResources.actorSystem
+  private val rootSystem = sharedResources.actorSystem
 
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
@@ -101,9 +101,9 @@ class WebSocketRoutes(
               case Some(fn) =>
                 nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
                   case Some(entry) => IO.pure(entry.toAgentDef)
-                  case None => nebulaFallback(agentName)
+                  case None => rootFallback(agentName)
                 }
-              case None => nebulaFallback(agentName)
+              case None => rootFallback(agentName)
         }
       case None =>
         sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
@@ -111,7 +111,7 @@ class WebSocketRoutes(
           case None => IO.raiseError(new RuntimeException("No default agent available"))
         }
 
-  private def nebulaFallback(agentName: String): IO[AgentDef] =
+  private def rootFallback(agentName: String): IO[AgentDef] =
     sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
       case Some(d) => IO.pure(d)
       case None => IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
@@ -205,7 +205,7 @@ class WebSocketRoutes(
           id => sharedResources.sessionStore.getFolderParentId(id)
         )
       }.flatten
-      ref <- nebulaSystem.spawn(
+      ref <- rootSystem.spawn(
         AgentActor(
           agentDef,
           sharedResources,
@@ -428,7 +428,7 @@ class WebSocketRoutes(
       // actor setup, even for a zero-team home), so the wait is bounded to
       // the restore itself — no fixed stall.
       _ <- FlowTreeRegistry.markRestoreStarted
-      treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
+      treeRef <- rootSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
       _ <- FlowTreeRegistry.register(sessionId, treeRef)
       _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
     yield ()
@@ -580,7 +580,7 @@ class WebSocketRoutes(
    * 无 `SessionMeta` 的 id（`node-*` / `dag-*` / 已删会话等幽灵 id）⇒ **身份不可立
    * ⇒ 拒**（fail-closed；它们既不在会话索引里，也不该有阈值覆盖可写）。
    */
-  private def isNebulaIdentitySession(sessionId: String): IO[Boolean] =
+  private def isRootIdentitySession(sessionId: String): IO[Boolean] =
     sessionStore.getSessionMeta(sessionId).map {
       case Some(meta) => meta.agentName.getOrElse(RootAgentIdentity.Name) == RootAgentIdentity.Name
       case None => false
@@ -613,8 +613,8 @@ class WebSocketRoutes(
   private def isRootScopeSession(sessionId: String): IO[Boolean] =
     if sessionId.isEmpty then IO.pure(false)
     else
-      isNebulaIdentitySession(sessionId).flatMap { isNebula =>
-        if !isNebula then IO.pure(false)
+      isRootIdentitySession(sessionId).flatMap { isRoot =>
+        if !isRoot then IO.pure(false)
         else
           sharedResources.agentRegistry.get.flatMap { registry =>
             registry.get(sessionId) match

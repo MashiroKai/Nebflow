@@ -51,14 +51,14 @@ object DeviceMail:
   val KeyType: String = "type"
   val KeyFromDevice: String = "from_device"
   val KeyFromDeviceId: String = "from_device_id"
-  val KeyToNebula: String = "to_nebula"
+  val KeyToRoot: String = "to_nebula"
   val KeyText: String = "text"
   val KeyEventId: String = "eventId"
   val KeyEvent: String = "event"
   val KeyPayload: String = "payload"
 
   /** 契约不变量：`to_nebula` 恒为真（本批唯一目标形态 = 对端 Nebula 会话）。 */
-  val ToNebulaValue: Boolean = true
+  val ToRootValue: Boolean = true
 
   /**
    * 注入来源定名（后端唯一定名源 = `InjectionAttribution.BackendNamedSources` 的
@@ -88,13 +88,13 @@ object DeviceMail:
       KeyType -> TypeAgentMail.asJson,
       KeyFromDevice -> fromDevice.asJson,
       KeyFromDeviceId -> fromDeviceId.asJson,
-      KeyToNebula -> ToNebulaValue.asJson,
+      KeyToRoot -> ToRootValue.asJson,
       KeyText -> text.asJson
     )
 
   /** 载荷键全集（契约逐字对照用；顺序 = 契约书写顺序）。 */
   val PayloadKeys: List[String] =
-    List(KeyType, KeyFromDevice, KeyFromDeviceId, KeyToNebula, KeyText)
+    List(KeyType, KeyFromDevice, KeyFromDeviceId, KeyToRoot, KeyText)
 
   // ===== 消费端 =====
 
@@ -196,7 +196,7 @@ object DeviceMail:
     else
       val fromDevice = hc.get[String](KeyFromDevice).toOption.map(_.trim).filter(_.nonEmpty)
       val fromDeviceId = hc.get[String](KeyFromDeviceId).toOption.map(_.trim).filter(_.nonEmpty)
-      val toNebula = hc.get[Boolean](KeyToNebula).toOption
+      val toRoot = hc.get[Boolean](KeyToRoot).toOption
       val text = hc.get[String](KeyText).toOption.filter(_.nonEmpty)
       fromDevice match
         case None => Left(s"missing/blank '$KeyFromDevice'")
@@ -204,13 +204,13 @@ object DeviceMail:
           fromDeviceId match
             case None => Left(s"missing/blank '$KeyFromDeviceId'")
             case Some(_) =>
-              toNebula match
+              toRoot match
                 case Some(true) =>
                   text match
                     case Some(t) => Right(Incoming(t, fromDevice.get, fromDeviceId.get))
                     case None => Left(s"missing/blank '$KeyText'")
-                case Some(other) => Left(s"'$KeyToNebula' must be true (got $other)")
-                case None => Left(s"missing/non-boolean '$KeyToNebula'")
+                case Some(other) => Left(s"'$KeyToRoot' must be true (got $other)")
+                case None => Left(s"missing/non-boolean '$KeyToRoot'")
     end if
   end parse
 

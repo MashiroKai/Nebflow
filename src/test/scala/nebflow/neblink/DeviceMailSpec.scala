@@ -58,7 +58,7 @@ class DeviceMailSpec extends FunSuite:
 
   test("payload: to_nebula 恒 true（契约不变量）"):
     val built = DeviceMail.payload("x", "d", "i")
-    assertEquals(built.hcursor.get[Boolean](DeviceMail.KeyToNebula).toOption, Some(true))
+    assertEquals(built.hcursor.get[Boolean](DeviceMail.KeyToRoot).toOption, Some(true))
 
   test("parse: 契约原文 ⇒ Right（from_device 展示名 / from_device_id / 正文）"):
     assertEquals(
@@ -77,11 +77,11 @@ class DeviceMailSpec extends FunSuite:
     assert(DeviceMail.parse(withKv(contractPayload, "from_device")).isLeft, "缺 from_device")
     assert(DeviceMail.parse(withKv(contractPayload, "from_device_id")).isLeft, "缺 from_device_id")
     assert(
-      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToNebula -> false.asJson)).isLeft,
+      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToRoot -> false.asJson)).isLeft,
       "to_nebula=false 必须被拒（本批唯一目标形态）"
     )
     assert(
-      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToNebula -> "true".asJson)).isLeft,
+      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToRoot -> "true".asJson)).isLeft,
       "to_nebula 非布尔同样被拒"
     )
     assert(DeviceMail.parse(withKv(contractPayload, "text", "text" -> "".asJson)).isLeft, "空正文")
