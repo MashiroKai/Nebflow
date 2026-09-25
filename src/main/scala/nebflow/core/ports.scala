@@ -15,10 +15,12 @@ import nebflow.shared.{SessionMeta, UiMessage}
 import java.nio.file.Path
 
 /**
- * `gateway.SessionStore` 的窄投影(C 步倒置)。core 的消费面只有四个成员:
- * 会话元数据与活跃会话 id(scheduler/ScheduledTaskActor)、UI 消息追加
- * (ScheduledTaskActor)、目录名(flow/FlowTreeRegistry 经 ToolContext.sessionStore)。
- * gateway 的 `SessionStore` 原地混入本端口(四个签名与既有定义逐字一致,零行为差),
+ * `gateway.SessionStore` 的窄投影(C 步倒置;D 步增补落盘 flush 两成员)。core 的
+ * 消费面:会话元数据与活跃会话 id(scheduler/ScheduledTaskActor)、UI 消息追加
+ * (ScheduledTaskActor)、目录名(flow/FlowTreeRegistry 经 ToolContext.sessionStore)、
+ * 热重启 [3] 状态落盘核验的两条 flush(hotrestart/HotRestart,D 步由整只
+ * SharedResources 改经本端口注入)。
+ * gateway 的 `SessionStore` 原地混入本端口(签名与既有定义逐字一致,零行为差),
  * 既有构造/传参点(GatewayMain、SharedResources 字段、TeamSessionRegistry 调用)
  * 经子类型继续编译,接线零改动。
  */
@@ -27,6 +29,8 @@ trait SessionStorePort:
   def getActiveId: IO[String]
   def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit]
   def getFolderName(folderId: String): Option[String]
+  def flushPendingUiWrites: IO[Unit]
+  def flushPendingMessages: IO[Unit]
 end SessionStorePort
 
 /**

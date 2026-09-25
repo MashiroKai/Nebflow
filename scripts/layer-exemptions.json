@@ -23,19 +23,9 @@
       "reason": "校准豁免:与 gateway→agent(16 文件)互引,择小边(2)豁免;方向裁定属后续批次"
     },
     {
-      "from": "src/main/scala/nebflow/core/compact/CompactService.scala",
-      "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
-    },
-    {
-      "from": "src/main/scala/nebflow/core/compact/PreCompactionHook.scala",
-      "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
-    },
-    {
       "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):RootAgentIdentity/MemoryHygieneSignal 身份与信号面残留(D 步已删其未消费的 SharedResources 形参)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
@@ -45,57 +35,52 @@
     {
       "from": "src/main/scala/nebflow/core/entity/EntityLoader.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/entity/EntityTypes.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/entity/FlowDagExecutor.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/entity/TeamCatalog.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/flow/EphemeralAgentRunner.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/flow/FlowDagRunner.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/flow/FlowTreeActor.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/flow/FlowTreeTypes.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/flow/MailIdleGate.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/hotrestart/HealthProbe.scala",
       "to": "llm",
       "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
-    },
-    {
-      "from": "src/main/scala/nebflow/core/hotrestart/HotRestart.scala",
-      "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
     },
     {
       "from": "src/main/scala/nebflow/core/hotrestart/HotRestart.scala",
@@ -120,7 +105,7 @@
     {
       "from": "src/main/scala/nebflow/core/node/NodeRunner.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/OnboardingService.scala",
@@ -145,17 +130,17 @@
     {
       "from": "src/main/scala/nebflow/core/presets/SchemePolicy.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/processor/FreezeScheduler.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
@@ -165,42 +150,42 @@
     {
       "from": "src/main/scala/nebflow/core/project/NodeCompletion.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeDelivery.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeEngine.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeEngineContract.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeLoopRunner.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeRecovery.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/NodeStarter.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/ProjectActor.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/ProjectMemory.scala",
@@ -210,7 +195,7 @@
     {
       "from": "src/main/scala/nebflow/core/project/ProjectStore.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/project/ShutdownState.scala",
@@ -220,47 +205,47 @@
     {
       "from": "src/main/scala/nebflow/core/repl.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/sandbox/SandboxPolicy.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/scheduler/ScheduledTaskActor.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/seed/SeedService.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/AgentControlTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/BashTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/BgTaskRegistry.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/DelegateTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/DeviceProfile.scala",
@@ -270,7 +255,7 @@
     {
       "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
@@ -290,7 +275,7 @@
     {
       "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
@@ -305,7 +290,7 @@
     {
       "from": "src/main/scala/nebflow/core/tools/MemoryNoteTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/MemoryNoteTool.scala",
@@ -315,7 +300,7 @@
     {
       "from": "src/main/scala/nebflow/core/tools/MemoryQueue.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):仅 RootAgentIdentity 身份常量残留(候选:迁 shared)——单独批次"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/MemoryQueue.scala",
@@ -325,27 +310,27 @@
     {
       "from": "src/main/scala/nebflow/core/tools/NodeTools.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/PopTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/PresetResolver.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/ProjectCreateTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/RemoteExecutor.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/RemoteExecutor.scala",
@@ -353,19 +338,14 @@
       "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
     },
     {
-      "from": "src/main/scala/nebflow/core/tools/ScheduleTool.scala",
-      "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
-    },
-    {
       "from": "src/main/scala/nebflow/core/tools/SubTaskTool.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/core/tools/types.scala",
       "to": "agent",
-      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
       "from": "src/main/scala/nebflow/dropbox/DropboxChunkTransports.scala",

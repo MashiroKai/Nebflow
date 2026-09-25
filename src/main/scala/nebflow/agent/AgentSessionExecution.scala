@@ -265,7 +265,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
       // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
       preHookIO = hook
-        .run(state.messages, agentDef.name, state.sessionId, None, resources)
+        .run(state.messages, agentDef.name, state.sessionId, None)
         .handleErrorWith(e =>
           // 2026-09-10 死日志修复：去掉外层 IO(...)（内层 IO 永不执行）。
           lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}").void

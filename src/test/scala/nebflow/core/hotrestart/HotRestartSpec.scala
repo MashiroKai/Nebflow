@@ -310,7 +310,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(q.isIdle, s"expected idle, got: ${q.detail}")
     yield ()
@@ -346,7 +346,7 @@ class HotRestartSpec extends CatsEffectSuite:
         None
       )
       _ <- ProjectRuntimeRegistry.register(rt)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(!q.isIdle, s"F1 running node must be busy: ${q.detail}")
       _ = assert(q.runningNodes.exists(_.contains("hot-restart-f1/runner")), q.runningNodes.toString)
@@ -364,7 +364,7 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       _ <- IO(os.makeDir.all(tasksDir))
       _ <- IO(os.write.over(tasksDir / "parent-1.json", taskJson.replaceAll("\\n\\s*", "")))
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(!q.isIdle, s"F2 running subtask must be busy: ${q.detail}")
       _ = assert(q.subtasks.exists(_.contains("task-1")), q.subtasks.toString)
@@ -375,7 +375,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q0 <- hr.quiesceReport
       _ = assert(q0.isIdle)
       // F4: 在飞 LLM
@@ -405,7 +405,7 @@ class HotRestartSpec extends CatsEffectSuite:
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", broadcast, tinyTiming)
       (key, _) <- LlmInterface.registerInflight(None)
       result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ <- LlmInterface.cancelAllInflight()
@@ -429,7 +429,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       // 模拟后继 Zone A 完成回执：intent 出现后回写 readyToBind
@@ -455,7 +465,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = false)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       _ <- waitUntil("intent marked failed") { readIntentPhase.map(_ == Some("failed")) }
@@ -479,7 +499,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming.copy(c2DeadlineMs = 400), spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming.copy(c2DeadlineMs = 400),
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       _ <- waitUntil("intent marked failed") { readIntentPhase.map(_ == Some("failed")) }
@@ -500,7 +530,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       (key, _) <- LlmInterface.registerInflight(None)
       accepted <- hr.requestRestart("web-ui", RestartMode.WaitIdle(timeoutMs = 5000))
       _ = assertEquals(accepted, Right(()), "WaitIdle accepts while busy")
@@ -521,7 +561,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       (key, _) <- LlmInterface.registerInflight(None)
       accepted <- hr.requestRestart("web-ui", RestartMode.WaitIdle(timeoutMs = 300))
       _ = assertEquals(accepted, Right(()))
@@ -538,7 +588,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       _ <- HotRestart.noteRestartCompleted() // [s7] 等价：冷却锚点刚置位
       result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assert(result.isLeft)
@@ -556,7 +606,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       r1 <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(r1, Right(()))
       r2 <- hr.requestRestart("other-ui", RestartMode.RejectIfBusy)
@@ -574,7 +634,7 @@ class HotRestartSpec extends CatsEffectSuite:
       for
         shutdownD <- Deferred[IO, Unit]
         res <- mkResources(shutdownD)
-        hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+        hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
         result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
         _ = assert(result.isLeft)
         _ = assert(result.left.toOption.get.contains("disabled"), result.left.toOption.get)

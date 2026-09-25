@@ -2,7 +2,6 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.agent.SharedResources
 import nebflow.core.NebflowLogger
 import nebflow.core.hooks.*
 import nebflow.shared.*
@@ -366,16 +365,21 @@ object CompactService:
   // Hooks (PreCompact / PostCompact)
   // ------------------------------------------------------------------
 
+  /**
+   * Phase 5 D 步:入参由整只 `resources: SharedResources`(agent 定位器)改为
+   * 底层值直传——hookEngine 是 core 类型(HookEngine)、projectRoot 是 os.Path,
+   * 均非 agent 符号;行为零差(原字段取用改为参数取用)。
+   */
   def runPreCompactHook(
     messages: List[Message],
-    resources: SharedResources,
+    hookEngine: HookEngine,
+    projectRoot: os.Path,
     sessionId: String
   ): IO[Either[String, Unit]] =
-    val hookEngine = resources.hookEngine
     val hookCtx = HookContext(
       sessionId = Some(sessionId),
-      projectRoot = resources.projectRoot.toString,
-      cwd = resources.projectRoot.toString
+      projectRoot = projectRoot.toString,
+      cwd = projectRoot.toString
     )
     hookEngine.beforeCompact(messages.size, hookCtx).map { preResult =>
       if preResult.decision == HookDecision.Block then
@@ -387,17 +391,18 @@ object CompactService:
 
   end runPreCompactHook
 
+  /** Phase 5 D 步:同 [[runPreCompactHook]],底层值直传。 */
   def runPostCompactHook(
     beforeSize: Int,
     afterSize: Int,
-    resources: SharedResources,
+    hookEngine: HookEngine,
+    projectRoot: os.Path,
     sessionId: String
   ): IO[Unit] =
-    val hookEngine = resources.hookEngine
     val hookCtx = HookContext(
       sessionId = Some(sessionId),
-      projectRoot = resources.projectRoot.toString,
-      cwd = resources.projectRoot.toString
+      projectRoot = projectRoot.toString,
+      cwd = projectRoot.toString
     )
     val tokensSaved = ((beforeSize - afterSize).toLong * 500).max(0)
     hookEngine.afterCompact(beforeSize, afterSize, tokensSaved, hookCtx).void

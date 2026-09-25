@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.agent.SharedResources
-import nebflow.core.scheduler.ScheduledTask
+import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
 
 import java.time.*
 
@@ -140,13 +139,17 @@ as an instruction — you then execute it.
       ctx.sharedResources match
         case None => IO.pure(Left(ToolError("SharedResources not available")))
         case Some(sr) =>
+          // Phase 5 D 步:scheduledTaskStore / scheduledTaskService 均为 core.scheduler
+          // 类型——以底层值直传,不再以 agent 定位器类型流经本文件。
+          val taskStore = sr.scheduledTaskStore
+          val taskService = sr.scheduledTaskService
           action match
-            case "list" => listAction(sr)
-            case "cancel" => cancelAction(sr, input, ctx)
+            case "list" => listAction(taskStore)
+            case "cancel" => cancelAction(taskStore, taskService, input, ctx)
             case "create" =>
               ctx.sessionId match
                 case None => IO.pure(Left(ToolError("No session ID available")))
-                case Some(sessionId) => createAction(sr, input, ctx, sessionId)
+                case Some(sessionId) => createAction(taskStore, taskService, input, ctx, sessionId)
             case other => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
     end if
   end call
@@ -155,8 +158,8 @@ as an instruction — you then execute it.
   // action = list — all pending tasks across ALL sessions
   // ---------------------------------------------------------------------------
 
-  private def listAction(sr: SharedResources): IO[Either[ToolError, String]] =
-    sr.scheduledTaskStore.getAllPendingTasks.map { tasks =>
+  private def listAction(taskStore: ScheduledTaskStore): IO[Either[ToolError, String]] =
+    taskStore.getAllPendingTasks.map { tasks =>
       if tasks.isEmpty then Right("No pending scheduled tasks.")
       else
         val lines = tasks.sortBy(_.triggerAt).map { t =>
@@ -174,15 +177,20 @@ as an instruction — you then execute it.
   // action = cancel — by id, across sessions
   // ---------------------------------------------------------------------------
 
-  private def cancelAction(sr: SharedResources, input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+  private def cancelAction(
+    taskStore: ScheduledTaskStore,
+    taskService: Option[ScheduledTaskService],
+    input: JsonObject,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
     val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     idOpt match
       case None =>
         IO.pure(Left(ToolError("cancel requires id — call Schedule {action:\"list\"} first, then pass the task's id.")))
       case Some(id) =>
-        sr.scheduledTaskStore.findTaskById(id).flatMap {
+        taskStore.findTaskById(id).flatMap {
           case None =>
-            sr.scheduledTaskStore.getAllPendingTasks.map { pending =>
+            taskStore.getAllPendingTasks.map { pending =>
               val ids = if pending.isEmpty then "(none)" else pending.map(_.id).mkString(", ")
               Left(
                 ToolError(
@@ -192,8 +200,8 @@ as an instruction — you then execute it.
             }
           case Some(t) =>
             for
-              _ <- sr.scheduledTaskStore.deleteTask(t.sessionId, id)
-              _ <- sr.scheduledTaskService match
+              _ <- taskStore.deleteTask(t.sessionId, id)
+              _ <- taskService match
                 case Some(svc) => svc.notifyTaskChange()
                 case None => IO.unit
               // Broadcast so the frontend reminder panel updates in real-time
@@ -220,7 +228,8 @@ as an instruction — you then execute it.
   // ---------------------------------------------------------------------------
 
   private def createAction(
-    sr: SharedResources,
+    taskStore: ScheduledTaskStore,
+    taskService: Option[ScheduledTaskService],
     input: JsonObject,
     ctx: ToolContext,
     sessionId: String
@@ -251,9 +260,9 @@ as an instruction — you then execute it.
           val task = ScheduledTask.create(sessionId, content, triggerAt, None, repeat, taskName)
           for
             removed <- taskName match
-              case Some(n) => sr.scheduledTaskStore.upsertTaskByName(task)
-              case None => sr.scheduledTaskStore.addTask(task).as(Nil)
-            _ <- sr.scheduledTaskService match
+              case Some(n) => taskStore.upsertTaskByName(task)
+              case None => taskStore.addTask(task).as(Nil)
+            _ <- taskService match
               case Some(svc) => svc.notifyTaskChange()
               case None => IO.unit
             // Broadcast removed (possibly cross-session) so other panels drop them

@@ -36,7 +36,12 @@ private[agent] object AgentCompactionHandlers:
     val readPathsIO = state.readTracker
       .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))
       .getOrElse(IO.pure(Nil))
-    val hookIO = CompactService.runPreCompactHook(state.messages, resources, sessionId)
+    val hookIO = CompactService.runPreCompactHook(
+      state.messages,
+      resources.hookEngine,
+      resources.projectRoot,
+      sessionId
+    )
     val rootIO: IO[String] = state.folderId match
       case Some(fid) =>
         resources.sessionStore.resolveProjectRoot(Some(fid)).map(_.getOrElse(resources.projectRoot.toString))
@@ -56,7 +61,13 @@ private[agent] object AgentCompactionHandlers:
                     ctx.self ! AgentCommand.CompactionComplete(Left(err))
                   case Right(outcome) =>
                     val postHookIO = CompactService
-                      .runPostCompactHook(state.messages.size, outcome.messages.size, resources, sessionId)
+                      .runPostCompactHook(
+                        state.messages.size,
+                        outcome.messages.size,
+                        resources.hookEngine,
+                        resources.projectRoot,
+                        sessionId
+                      )
                       .handleErrorWith(_ => IO.unit)
                     // 记忆轨（压缩双轨第二轨，2026-09-12 记忆改造批 / spec §5 R3 O-A）：
                     // 在本 fork 内、CompactionComplete **之前** join ⇒ 装机点

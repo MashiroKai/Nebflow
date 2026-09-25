@@ -4,6 +4,7 @@ import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
+import nebflow.core.*
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
@@ -11,7 +12,6 @@ import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.workspace.KnowledgeStore
-import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
@@ -168,7 +168,8 @@ case class SharedResources(
    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）。
    */
   sessionCompactThreshold: Ref[IO, Map[String, Double]] = Ref.unsafe[IO, Map[String, Double]](Map.empty)
-):
+) extends AgentRegistryPort,
+      SubAgentTaskPort:
 
   /**
    * **唯一解析入口**（permshield S1 / 2026-09-13 作者重裁「候选 B」）：有效档位
@@ -196,4 +197,16 @@ case class SharedResources(
     effectiveSafetyMode.map { global =>
       nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, nebflow.core.SafetyMode.toString(global))
     }
+
+  // ── Phase 5 D 步窄能力面(core ← agent 倒置,见 core/capabilities.scala)──────
+  // 方法体 = core(hotrestart/HotRestart.quiesceReport)原内联逻辑逐字迁移,零行为差;
+  // 签名零 agent 符号(AgentRecord/AgentStatus/SubAgentTask 不外泄)。
+
+  /** hot-restart 五域判定 F3 的读数(原 HotRestart 内联过滤)。 */
+  def processingSessionIds: IO[List[String]] =
+    agentRegistry.get.map(_.values.filter(_.status == AgentStatus.Processing).map(r => r.sessionId).toList)
+
+  /** hot-restart 五域判定 F2 的读数(原 HotRestart 直读;映射为 core 瘦视图)。 */
+  def findRunningTasks: IO[List[RunningSubAgentTask]] =
+    subAgentTaskStore.findRunningTasks.map(_.map(t => RunningSubAgentTask(t.taskId, t.parentSessionId, t.source)))
 end SharedResources

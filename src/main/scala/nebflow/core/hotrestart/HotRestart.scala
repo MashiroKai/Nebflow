@@ -1,10 +1,9 @@
 package nebflow.core.hotrestart
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.{AgentStatus, SharedResources}
 import nebflow.core.*
 import nebflow.core.project.{NodeLifecycle, ProjectRuntimeRegistry}
 import nebflow.core.tools.BgTaskRegistry
@@ -46,7 +45,18 @@ import scala.util.control.NonFatal
  * 与 ProjectActor 在无实例引用处读取，故放全局；cooldown / in-progress 合并同理。
  */
 class HotRestart(
-  resources: SharedResources,
+  /**
+   * Phase 5 D 步窄能力注入(替代原 `resources: SharedResources` 整只定位器):
+   * 在飞 sub-agent 任务读数(F2 域)。实现 = agent.SharedResources 混入
+   * core.SubAgentTaskPort;接线 = 装配点按窄类型传入。
+   */
+  subAgentTasks: SubAgentTaskPort,
+  /** D 步窄能力注入:统一注册表活跃读数(F3 域,原内联过滤迁 SharedResources 侧)。 */
+  agentRegistry: AgentRegistryPort,
+  /** D 步窄能力注入:会话落盘 flush([3] 状态落盘核验)。 */
+  sessionStore: SessionStorePort,
+  /** 优雅让渡闸([8];Deferred 是 cats 类型,以底层值直传,不经 agent 定位器)。 */
+  gatewayShutdown: Deferred[IO, Unit],
   port: Int,
   host: String,
   /** 进度广播（GatewayMain 接 wsHub.broadcast——restartStatus 帧到所有 WS 连接）。 */
@@ -109,11 +119,10 @@ class HotRestart(
           .map(_.flatten)
       }
       .handleErrorWith(e => IO.pure(List(s"<project registry read error: ${e.getMessage}>")))
-    val f2: IO[List[String]] = resources.subAgentTaskStore.findRunningTasks
+    val f2: IO[List[String]] = subAgentTasks.findRunningTasks
       .map(_.map(t => s"${t.source}:${t.taskId}@${t.parentSessionId}"))
       .handleErrorWith(e => IO.pure(List(s"<subtask store read error: ${e.getMessage}>")))
-    val f3: IO[List[String]] = resources.agentRegistry.get
-      .map(_.values.filter(_.status == AgentStatus.Processing).map(r => r.sessionId).toList)
+    val f3: IO[List[String]] = agentRegistry.processingSessionIds
       .handleErrorWith(e => IO.pure(List(s"<agent registry read error: ${e.getMessage}>")))
     val f4: IO[Int] = LlmInterface.inflightCount.handleErrorWith(_ => IO.pure(Int.MaxValue))
     val f5: IO[List[String]] = BgTaskRegistry.waitingTasks
@@ -321,8 +330,8 @@ class HotRestart(
           // [3] 状态落盘核验：既有持久面 flush（2s debounce 尾巴清零）。
           //     flow-map/results/tasks/F2 队列/freeze skip/配置均为 write-through
           //     或变更即持久——零动作（设计 §3.4 落盘清单）。
-          resources.sessionStore.flushPendingUiWrites *>
-            resources.sessionStore.flushPendingMessages *>
+          sessionStore.flushPendingUiWrites *>
+            sessionStore.flushPendingMessages *>
             logger.info("[hot-restart] state flushed (dirty session UI + message writes drained)") *>
             // [4] intent write-ahead
             writeIntent(source).flatMap {
@@ -386,7 +395,7 @@ class HotRestart(
                                             s"[hot-restart] handover: graceful shutdown triggered (successor pid ${proc.pid} ready; health ${report.detail}; old pid ${intent.oldPid} exiting via the graceful chain)"
                                           ) *>
                                           signal(outcome, Right(())) *>
-                                          resources.gatewayShutdown.complete(()).attempt.void *>
+                                          gatewayShutdown.complete(()).attempt.void *>
                                           IO.pure(Right(()))
                                     }
                                 }

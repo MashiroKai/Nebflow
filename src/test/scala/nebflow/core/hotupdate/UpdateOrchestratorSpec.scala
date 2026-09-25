@@ -236,7 +236,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       legacy <- Ref.of[IO, List[String]](Nil)
@@ -279,7 +289,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       (key, _) <- LlmInterface.registerInflight(None) // F4 域在飞 ⇒ 排空无法收敛
@@ -316,7 +336,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter, Left("Install script failed (exit code: 13)")))
       legacy <- Ref.of[IO, List[String]](Nil)
@@ -345,7 +375,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       gate <- Deferred[IO, Either[String, String]]
       gatedInstall = (_: UpdateChannel) => counter.update(_ + 1) *> gate.get
@@ -384,7 +424,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       gate <- Deferred[IO, Either[String, String]]
       gatedInstall = (_: UpdateChannel) => counter.update(_ + 1) *> gate.get
@@ -421,7 +471,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       admission <- orch.request(settingsReq(confirm = false))
@@ -475,7 +535,7 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         None
       )
       _ <- ProjectRuntimeRegistry.register(rt)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", noopBroadcast, tinyTiming)
       // 忙（F1：一个 Running 节点）⇒ 排队模式也拒绝，且**绝无**强制档可走
       drainResult <- hr.drainForUpdate(RestartMode.RejectIfBusy)
       _ = assert(drainResult.isLeft, s"busy must never be forced: $drainResult")
@@ -571,7 +631,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       // 窗口 100ms（经构造参数注入，不动冻结默认值）
       orch = new UpdateOrchestrator(
@@ -617,7 +687,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter, Left("Install script failed (exit code: 13)")))
       _ <- orch.request(settingsReq())
@@ -646,7 +726,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
       // 既有编排器也接到同一广播通道 ⇒ 它的 restartStatus 帧（子集保留不删）在同一
       // 捕获面里可读（向后兼容读数；语义/形状未被本批改动）。
-      hr = new HotRestart(res, 8080, "0.0.0.0", capture(frames), tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        capture(frames),
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter))
       _ <- orch.request(settingsReq(channel = UpdateChannel.Beta))
@@ -738,7 +828,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       frames <- mkFrames
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", noopBroadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        noopBroadcast,
+        tinyTiming,
+        spawnFn
+      )
       counter <- Ref.of[IO, Int](0)
       orch = mkOrchestrator(hr, frames, countingInstall(counter), latest = None)
       _ <- orch.request(settingsReq(mode = RestartMode.RejectIfBusy))
@@ -776,7 +876,12 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
         p
       }
       hr = new HotRestart(
+        // Phase 5 D 步窄能力接线:res(SharedResources)按 SubAgentTaskPort/
+        // AgentRegistryPort 窄类型传入;sessionStore/gatewayShutdown 底层值直传。
         res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
         8080,
         "0.0.0.0",
         noopBroadcast,
@@ -853,7 +958,12 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
       // 交给 HotRestart 与 UpdateOrchestrator，故交接帧（restartStatus/handing-over，含四档
       // 读数）与进度帧落在同一观测面；测试若给 HotRestart 一个 noop，交接帧永远看不到。
       hr = new HotRestart(
+        // Phase 5 D 步窄能力接线:res(SharedResources)按 SubAgentTaskPort/
+        // AgentRegistryPort 窄类型传入;sessionStore/gatewayShutdown 底层值直传。
         res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
         8080,
         "0.0.0.0",
         capture(frames),

@@ -745,7 +745,13 @@ object GatewayMain extends IOApp:
                                   // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单
                                   // 后续批次接同一入口。broadcast 接 wsHub（restartStatus 帧）。
                                   val hotRestart = new nebflow.core.hotrestart.HotRestart(
+                                    // Phase 5 D 步窄能力接线:sharedResources 已混入 core 窄端口
+                                    // (AgentRegistryPort/SubAgentTaskPort);sessionStore/gatewayShutdown
+                                    // 以底层值直传——core 侧不再引 agent 定位器类型。
                                     sharedResources,
+                                    sharedResources,
+                                    sharedResources.sessionStore,
+                                    sharedResources.gatewayShutdown,
                                     cfg.port.value,
                                     cfg.host.toString,
                                     wsHub.broadcast,

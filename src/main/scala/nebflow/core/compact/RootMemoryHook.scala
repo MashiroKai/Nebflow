@@ -1,7 +1,7 @@
 package nebflow.core.compact
 
 import cats.effect.IO
-import nebflow.agent.{RootAgentIdentity, SharedResources}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.MemoryQueue
 import nebflow.service.{MemoryBudget, MemoryStore}
@@ -205,12 +205,13 @@ object RootMemoryHook extends PreCompactionHook:
 
   // ── 入队 ────────────────────────────────────────────────────────────────
 
+  // Phase 5 D 步:删除未消费的 `resources: SharedResources` 形参(抽取轮停用后
+  // 本 hook 仅剩置位信号,不读定位器);签名与 PreCompactionHook 同步。
   def run(
     messages: List[Message],
     agentName: String,
     sessionId: Option[String],
-    teamName: Option[String],
-    resources: SharedResources
+    teamName: Option[String]
   ): IO[Unit] =
     if messages.size < 20 then IO.unit
     else
