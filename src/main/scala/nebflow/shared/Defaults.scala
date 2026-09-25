@@ -142,8 +142,21 @@ object Defaults:
    */
   val QuotaAvoidWindowMs: Long = 300_000L
 
-  /** Bash tool max timeout in ms. */
-  val BashMaxTimeoutMs: Long = 3_600_000L
+  /**
+   * Bash tool foreground auto-background threshold in ms (default 60 minutes).
+   *
+   * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
+   * auto-move to background at 60min; backgrounded commands have no limit"):
+   * this value is no longer a kill line. A foreground command still running when
+   * this threshold (or an explicit `timeout`, clamped to it) is reached is
+   * adopted into the session's background registry and the tool returns a
+   * background receipt immediately; the process keeps running and the result is
+   * delivered on completion. I2-style prop face: system prop
+   * `nebflow.bash.maxTimeoutMs`, read at every call so specs can compress the
+   * threshold (kill-switch precedent: ForegroundSampleIntervalMs).
+   */
+  def BashMaxTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -198,6 +211,20 @@ object Defaults:
 
   /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
   val BashStuckWindowSec: Int = 120
+
+  /**
+   * bashautobg batch (2026-09-25 author order: "backgrounded commands have no
+   * limit"): sentinel for NO hard timeout on waiting-type background tasks —
+   * `runningMs > hardTimeoutMs` is never true against this value, so the B2
+   * hard-timeout stall kill becomes unreachable. The production face (BashTool:
+   * both explicit `run_in_background` and foreground auto-backgrounding) passes
+   * this value unconditionally — full-class exemption, one unified semantics
+   * "background has no time limit". The ShellSession parameter face keeps
+   * accepting finite values for spec injection (mechanism testability).
+   * NOT covered by this exemption: the B1 alert-only sensor and the foreground
+   * no-progress ceiling (the stall watchdog is not a time limit).
+   */
+  val BashBackgroundNoHardTimeoutMs: Long = Long.MaxValue
 
   // ---- 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）----
   // 节点完成判定不仅要求 turn 完成，还要求其等待型后台任务全部完成才投递。
