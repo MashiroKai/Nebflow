@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -100,35 +100,6 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
           Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   end EchoLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mountProject(
     name: String,
@@ -264,7 +235,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v1", ws, system, res)
       _ <- seed(
         rt,
@@ -335,7 +306,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v2", ws, system, res)
       _ <- seed(
         rt,
@@ -368,7 +339,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v3", ws, system, res)
       _ <- seed(
         rt,
@@ -399,7 +370,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v4", ws, system, res)
       _ <- seed(
         rt,
@@ -437,7 +408,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v5", ws, system, res)
       _ <- seed(
         rt,
@@ -500,7 +471,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v6", ws, system, res)
       _ <- seed(
         rt,
@@ -568,7 +539,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v6b", ws, system, res)
       _ <- seed(
         rt,
@@ -605,7 +576,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v6c", ws, system, res)
       _ <- seed(
         rt,
@@ -642,7 +613,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v7", ws, system, res)
       _ <- seed(
         rt,
@@ -672,7 +643,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v8", ws, system, res)
       _ <- seed(
         rt,
@@ -750,7 +721,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       // 中间态读取从竞速窗口变成确定态（flake 根因修复，见上方注释块）。
       gate <- Deferred[IO, Unit]
       llm = new EchoLlm(Some(gate))
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v9", ws, system, res)
       _ <- seed(
         rt,
@@ -850,7 +821,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
     val llm = new EchoLlm
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mvg-v10", ws, system, res)
       // role=task（缺省）承载一个合成判词：本用例只验「非 verifier 的字段集零漂移」
       _ <- seed(

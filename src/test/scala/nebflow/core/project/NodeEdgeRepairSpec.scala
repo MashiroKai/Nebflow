@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -94,35 +94,6 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -296,7 +267,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-apa-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-r") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-append", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）先建，R 入口 out→W（R 运行 2.5s → W 的 barrier 挂起等 R）
@@ -378,7 +349,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-apd-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-x") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-deps", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）+ X（deps 等待对象，运行 2.5s）。W store 直种（20260903 创建必带
@@ -468,7 +439,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-aw-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
@@ -535,7 +506,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-acw-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-active-wire", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
@@ -590,7 +561,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-pe-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-preedge", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
@@ -656,7 +627,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-cu-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-catchup", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
@@ -728,7 +699,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
     val system = ActorSystem(s"edge-ag-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("edge-arch-guard", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(

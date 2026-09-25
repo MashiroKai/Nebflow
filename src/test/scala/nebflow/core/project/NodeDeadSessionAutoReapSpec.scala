@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
@@ -127,35 +127,6 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
     def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
       fs2.Stream.eval(IO.never)
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def registerRecorder(
     res: SharedResources,
@@ -282,7 +253,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z1", ws, system, res)
@@ -341,7 +312,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z2", ws, system, res)
@@ -404,7 +375,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z3-${scala.util.Random.nextInt(100000)}")
     val llm = hangingLlm
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z3", ws, system, res)
       _ <- createNode("drs-z3", ws, "live-a", "live task", res = res, system = system)
@@ -436,7 +407,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val llm = BgStubLlm(registerTask = false)
     val sid = "node-dead-reap-bgw"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z4", ws, system, res)
@@ -477,7 +448,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z5-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z5", ws, system, res)

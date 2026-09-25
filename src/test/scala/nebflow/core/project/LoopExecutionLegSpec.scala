@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, ToolContext}
@@ -191,35 +191,6 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
 
   end ReentryLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   /** 引擎挂载（无 ProjectActor：所有扫描腿由本 spec 显式点名调用，零后台竞态）。 */
   private def mountEngineOnly(
     name: String,
@@ -365,7 +336,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     val llm = new FailReportLlm(closing = "被判定对象不合格，正式给出 fail verdict。本节点收尾。")
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountEngineOnly("lexec", ws, system, res)
         // 真实形态：worker 已跑完并把结果投给了 verifier（deliveredTo 有记录）。
         _ <- seed(
@@ -438,7 +409,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
       for
         gate <- cats.effect.Deferred[IO, Unit]
         llm = new ReentryLlm(gate)
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountEngineOnly("lreentry", ws, system, res)
         _ <- seed(
           rt,
@@ -522,7 +493,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     val llm = new FailReportLlm(closing = "再次判 fail。本节点收尾。")
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountEngineOnly("lround", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxRounds", "3"))
         // loopRound=2 ⇒ 本次判词消费的是**第 3 轮** = 预算上限 ⇒ 必须熔断而非再派发。
@@ -610,7 +581,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     val llm = new FailReportLlm(closing = "判 fail。本节点收尾。")
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountEngineOnly("lnotimer", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxRounds", "3"))
         // 起点缺失（= 已被孤儿扫描清掉的真实形态）⇒ 旧口径 clearLoopStartedAt 返回 false
@@ -659,7 +630,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     val llm = new FailReportLlm(closing = "unused")
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountEngineOnly("lwall", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxWallClockMs", "1"))
         now = System.currentTimeMillis()
@@ -737,7 +708,7 @@ class LoopExecutionLegSpec extends CatsEffectSuite:
     val system = ActorSystem(s"lsweep-${scala.util.Random.nextInt(100000)}")
     val llm = new FailReportLlm(closing = "unused")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountEngineOnly("lsweep", ws, system, res)
       _ <- seed(
         rt,

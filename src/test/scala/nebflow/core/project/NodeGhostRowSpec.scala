@@ -6,7 +6,7 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -59,42 +59,13 @@ class NodeGhostRowSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   test("node run: agentStart agentId has node- prefix + nodeCompleted emitted + NO agentDone (ghost-row contract)") {
     val ws = tempRoot / "ws"
     os.makeDir.all(ws)
     val llm = new RecordingLlm
     for
       system <- IO.pure(ActorSystem(s"ghost-${scala.util.Random.nextInt(100000)}"))
-      resources <- mkResources(system, tempRoot, llm)
+      resources <- SpecResources.mkResources(system, tempRoot, llm)
       store <- FlowMapStore.open("ghost-test", ws.toString)
       wsEvents <- Ref.of[IO, List[Json]](Nil)
       engineEvents <- Ref.of[IO, List[(String, String)]](Nil)

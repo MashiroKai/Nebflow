@@ -13,7 +13,8 @@ import nebflow.agent.{
   InteractionKind,
   InteractionReply,
   InteractionRequest,
-  SharedResources
+  SharedResources,
+  SpecResources
 }
 
 import nebflow.core.PathUtil
@@ -99,35 +100,6 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
 
     def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
       Stream.eval(IO.sleep(delay)) >> Stream(StreamChunk.TextDelta("late"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -235,7 +207,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
       }
     )
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-ok", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口（延迟 600ms 跑），B 随后建（in=[A] + retry 策略，创建期校验走 in 邻居）
@@ -336,7 +308,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
       }
     )
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-cap", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -415,7 +387,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
       }
     )
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-stay", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -485,7 +457,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
     val system = ActorSystem(s"retry-nb-${scala.util.Random.nextInt(100000)}")
     val llm = new RetryLlm(Nil, { case (_, _) => Right("ok") })
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-nb", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -564,7 +536,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
     val system = ActorSystem(s"retry-cy-${scala.util.Random.nextInt(100000)}")
     val llm = new RetryLlm(Nil, { case (_, _) => Right("ok") })
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-cy", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // C 入口；B 挂 in=[C]（单条交付边 C→B，DAG 合法，两节点先后跑完）
@@ -629,7 +601,7 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
     // 常驻延迟 LLM：节点停在 running 等取消
     val llm = new HangingLlm(60.seconds)
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("retry-ask", ws, system, res)
       // 真实 hub actor：注册进 SharedResources + root wsSend 帧捕获
       hub <- system.spawn(InteractionHub(), "retry-spec-hub")

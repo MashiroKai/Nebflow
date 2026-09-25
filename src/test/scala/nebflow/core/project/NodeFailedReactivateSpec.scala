@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, ToolContext}
@@ -73,35 +73,6 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -280,7 +251,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       else IO.pure("unexpected-run")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountGateOff("fr1", ws, system, res) // 腿 2 关闭面挂载（FR1 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.nebula))
@@ -333,7 +304,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr2-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.nebula))
@@ -374,7 +345,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr3-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -430,7 +401,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr4-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.nebula))
@@ -463,7 +434,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr5-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.nebula), description = Some("fr5-desc"))
@@ -505,7 +476,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       else IO.pure("ok")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountGateOff("fr6", ws, system, res) // 腿 2 关闭面挂载（FR6 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()

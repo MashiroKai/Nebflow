@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -82,35 +82,6 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -360,7 +331,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ntf-hit-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("ok-final-result"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-hit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -411,7 +382,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ntf-off-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("plain-result"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-off", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       ctx = mkCtx(res, system, ws.toString)
@@ -657,7 +628,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       else IO.pure("ok-final")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-flag", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // create 显式开启
@@ -947,7 +918,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ntf-fn-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("x"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-fn", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       // 显式双通报边（`OutEdge.nebula` = {pass,failed}/result，与迁移后的 "(pass,failed)Nebula"
@@ -1004,7 +975,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ntf-fd-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("x"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-fd", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       _ <- seedZombie(rt, "n-fd1", "fail-dangling", "dead task", Nil)
@@ -1035,7 +1006,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ntf-ft-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => if text.contains("任务分发器") then IO.pure("ok") else IO.pure("dn-done"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("ntf-ft", ws, system, res)
       _ <- seedZombie(rt, "n-ft-up", "fail-up", "dead upstream task", List(OutEdge("n-ft-dn")))
       _ <- rt.store.mutate { s =>

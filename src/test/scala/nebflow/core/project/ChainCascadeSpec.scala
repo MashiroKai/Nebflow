@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources, StubLlm}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -59,45 +59,6 @@ class ChainCascadeSpec extends CatsEffectSuite:
 
   // ── 装配（与 ChainCancelSpec 同款骨架；两个 spec 各自独立的临时工作区）──
 
-  private class StubLlm:
-
-    def handle: LlmHandle[IO] = new LlmHandle[IO]:
-      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-      ): Stream[IO, StreamChunk] =
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   private final case class Rig(
     rt: ProjectRuntime,
     ws: os.Path,
@@ -144,7 +105,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
   private def withRig[A](name: String)(f: Rig => IO[A]): IO[A] =
     val system = ActorSystem(s"chain-cascade-$name-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       rig <- mount(name, system, res)
       a <- f(rig)
     yield a

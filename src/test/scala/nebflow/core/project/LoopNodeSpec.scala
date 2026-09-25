@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
@@ -84,35 +84,6 @@ class LoopNodeSpec extends CatsEffectSuite:
           .flatMap(_ => Stream(StreamChunk.TextDelta(respond(last)), StreamChunk.Done(None, None)))
 
   end LoopLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -260,7 +231,7 @@ class LoopNodeSpec extends CatsEffectSuite:
     // verify 一律 PASS；worker 产 "ok"
     val llm = LoopLlm(t => if t.contains("[LoopNode verification") then "VERDICT: PASS" else "ok")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-pass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- createLoop("loop-pass", "loop-a", "produce-X", 5, ctx)
@@ -301,7 +272,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       else WorkerAnswer
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-failpass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- createLoop("loop-failpass", "loop-b", "produce-Y", 5, ctx)
@@ -354,7 +325,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       else "ok"
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-kcap", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- createLoop("loop-kcap", "loop-c", "produce-Z", K, ctx)
@@ -390,7 +361,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       else "ok"
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-destroy", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- createLoop("loop-destroy", "l-fail", "produce-F", K, ctx)
@@ -446,7 +417,7 @@ class LoopNodeSpec extends CatsEffectSuite:
         }
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO { resRef = res }
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("loop-window", ws, system, res, wsFrames = Some(frames))
@@ -526,7 +497,7 @@ class LoopNodeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"loop-pl-${scala.util.Random.nextInt(100000)}")
     val llm = LoopLlm(_ => "ok")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-pl", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -571,7 +542,7 @@ class LoopNodeSpec extends CatsEffectSuite:
         createdAt = System.currentTimeMillis()
       )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("loop-gate", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // (a) loop + bare "Nebula"（今日 = 单腿 {pass}/signal 出口标记）→ 拒

@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskOutputStore, BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
@@ -118,35 +118,6 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
           }
 
   end StubLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mountProject(
     name: String,
@@ -276,7 +247,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     val jobId = "probe-p1-job"
     val pidFile = tempRoot / s"p1-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("probe-p1", ws, system, res, frames, destroyWindowMs = 0L)
       shell <- ShellSession.forSession(sid)
@@ -345,7 +316,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"probe-p2-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("probe-p2", ws, system, res, destroyWindowMs = 0L)
       // 与 NodeReportReminderSpec R8 同构的种子：Running + 无活 fiber（死会话），带计时
       _ <- rt.store.mutate { s =>
@@ -406,7 +377,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     val system = ActorSystem(s"probe-p3-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm(declareOnTurn = 2)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       rt <- mountProject("probe-p3", ws, system, res, reportGateHold = true, destroyWindowMs = 60000L)
       _ <- createNode("probe-p3", ws, "reentry-a", "result-REENTRY", res, system)
@@ -466,7 +437,7 @@ class NoderptVerifyProbeSpec extends CatsEffectSuite:
     val jobId = "probe-p4-job"
     val pidFile = tempRoot / s"p4-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("probe-p4", ws, system, res, destroyWindowMs = 1800000L)
       shell <- ShellSession.forSession(sid)
       _ <- shell.executeBackground(s"""echo $$$$ > "$pidFile"; sleep 120""", jobIdOverride = Some(jobId))

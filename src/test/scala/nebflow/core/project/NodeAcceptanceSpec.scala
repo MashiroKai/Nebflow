@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
@@ -76,35 +76,6 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.raiseError[IO](new RuntimeException("boom"))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -187,7 +158,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-ttla-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-ttl-a", ws, system, res)
       now = System.currentTimeMillis()
       _ <- rt.store.mutate(s =>
@@ -237,7 +208,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-ttlb-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-ttl-b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -297,7 +268,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"acc-rst-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       store1 <- FlowMapStore.open("acc-restart", ws.toString)
       _ <- store1.mutate(s =>
         s.copy(nodes =
@@ -368,7 +339,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-rwa-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-rw-a", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -407,7 +378,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-rwb-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-rw-b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -455,7 +426,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-rwc-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-rw-c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -515,7 +486,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-entry-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-entry", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -570,7 +541,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ): Stream[IO, StreamChunk] =
         Stream.eval(IO.sleep(nodeDelay)).drain ++ Stream(StreamChunk.TextDelta("slow ok"), StreamChunk.Done(None, None))
     for
-      res <- mkResources(system, tempRoot, new SlowLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new SlowLlm)
       rt <- mountProject("acc-entry-async", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       t0 = System.currentTimeMillis()
@@ -614,7 +585,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-res-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-result", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -649,7 +620,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-dng-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-dangle", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 入口节点（out=Nebula 仅满足连接下限校验五；完成后再改接 → 悬空投递语义不变）
@@ -715,7 +686,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-disc-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-disc", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -775,7 +746,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-cyc-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-cycle", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -820,7 +791,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-1n-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-1n", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -874,7 +845,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-bar-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-barrier", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -956,7 +927,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-loop-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-loop", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 第一次派发：入口节点跑起来（RecordingLlm 立即完成 → completed）
@@ -1007,7 +978,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-mail-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-mail-route", ws, system, res) // actorRef = None
       ctx = mkCtx(res, system, ws.toString)
       // 已挂载 project（无 actorRef）→ 命中 project 分支：明确错误提示
@@ -1056,7 +1027,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(nebflowDir)
     val system = ActorSystem(s"acc-0w-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-0write", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 基线：open 后 .nebflow/ 只有 store 首写的 flow-map.json
@@ -1129,7 +1100,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-nl-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-nodelist", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -1251,7 +1222,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     ProjectActor.ttlScanner(1.second).background.use { _ =>
       for
         gate <- cats.effect.Deferred[IO, Unit]
-        res <- mkResources(system, tempRoot, new GatedLlm(gate))
+        res <- SpecResources.mkResources(system, tempRoot, new GatedLlm(gate))
         rt0 <- mountProject("acc-task1", ws, system, res)
         ref <- spawnProjectActor(rt0, system, res, "proj-task1", idleWindowMs = Some(2000L))
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
@@ -1338,7 +1309,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
   test("Task②: unmounted project → explicit error (no registry entry)") {
     val system = ActorSystem(s"acc-task2-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       ctx = mkCtx(res, system, tempRoot.toString)
       r <- MailTool.call(
         Json.obj("address" -> Json.fromString("project:no-such"), "message" -> Json.fromString("x")).asObject.get,
@@ -1363,7 +1334,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       """{"name":"slideblocks","description":"legacy team","lead":"boss","members":[]}"""
     )
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt0 <- mountProject("slideblocks", ws, system, res)
       ref <- spawnProjectActor(rt0, system, res, "proj-slide")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
@@ -1453,7 +1424,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-bubc-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-bubble-c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -1490,7 +1461,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-bubf-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new FailStreamLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new FailStreamLlm)
       rt <- mountProject("acc-bubble-f", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       rec <- Ref.of[IO, List[AgentCommand]](Nil)
@@ -1534,7 +1505,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.proc("git", "-C", ws.toString, "config", "user.name", "spec").call(check = true)
     os.proc("git", "-C", ws.toString, "commit", "--allow-empty", "-m", "init").call(check = true)
     val system = ActorSystem(s"acc-wt-$tag-${scala.util.Random.nextInt(100000)}")
-    val res = mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
+    val res = SpecResources.mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
     val rt = mountProject(s"acc-wt-$tag", ws, system, res).unsafeRunSync()
     (ws, system, res, rt, mkCtx(res, system, ws.toString))
 
@@ -1678,7 +1649,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     val ws = tempRoot / s"ws-wt-nogit"
     os.makeDir.all(ws) // 非 git 目录（tempRoot 在仓库树内但 ws 自身无 .git 且 show-toplevel ≠ ws）
     val system = ActorSystem(s"acc-wt-nogit-${scala.util.Random.nextInt(100000)}")
-    val res = mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
+    val res = SpecResources.mkResources(system, tempRoot, new RecordingLlm).unsafeRunSync()
     val rt = mountProject("acc-wt-nogit", ws, system, res).unsafeRunSync()
     val ctx = mkCtx(res, system, ws.toString)
     for
@@ -1729,7 +1700,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-wtnl-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       _ <- mountProject("acc-wt-nodelist", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 权威位置两个 + 顶层一个 + 顶层软链别名（指向权威同名——生产孤儿清理形态）

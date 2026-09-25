@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.agent.flowChainId // AgentState extension accessor（§9.2 项 2 第三处）
 import nebflow.core.PathUtil
 import nebflow.core.node.NodeRunner
@@ -168,35 +168,6 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
 
   end ProbeLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   private def mountEngine(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -305,7 +276,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     val system = ActorSystem(s"chain-hdr-${scala.util.Random.nextInt(100000)}")
     val llm = new ProbeLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountEngine("chain-header", ws, system, res)
       _ <- seedChain(rt)
       a <- rt.store.getNode("n-ca").map(_.getOrElse(fail("n-ca must exist")))
@@ -382,7 +353,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     val system = ActorSystem(s"chain-absent-${scala.util.Random.nextInt(100000)}")
     val llm = new ProbeLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountEngine("chain-absent", ws, system, res)
       _ <- seedIsolated(rt, "n-iso")
       iso <- rt.store.getNode("n-iso").map(_.getOrElse(fail("n-iso must exist")))
@@ -411,7 +382,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     val system = ActorSystem(s"chain-pass-${scala.util.Random.nextInt(100000)}")
     val llm = new ProbeLlm
     val body = for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountEngine("chain-pass", ws, system, res)
       _ <- seedChain(rt)
       _ <- rt.engine.startNode("n-ca")
@@ -453,7 +424,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
     val system = ActorSystem(s"disp-gate-${scala.util.Random.nextInt(100000)}")
     val llm = new ProbeLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       // 分发器 spawn 形态（ProjectActor :600-628 同参：isDispatcher=true + projectName + 显式 None）
       params = NodeRunner.SpawnParams(
         agentDef = nebflow.agent

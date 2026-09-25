@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -95,35 +95,6 @@ class MergeMutexGateSpec extends CatsEffectSuite:
         ) >> Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   end GatedLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mountProject(
     name: String,
@@ -325,7 +296,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       gate1 <- Deferred[IO, Unit]
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(gate1))
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q1", ws, system, res)
       // 到达序（rank）: A(createdAt now-3000) 先于 B(now-2000)——两个都在同一 tick 就绪
       _ <- seed(rt, mergeEntry("n-a", "merge-a", now - 3000L), mergeEntry("n-b", "merge-b", now - 2000L))
@@ -386,7 +357,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       g1 <- Deferred[IO, Unit]; g2 <- Deferred[IO, Unit]; g3 <- Deferred[IO, Unit]
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(g1, g2, g3))
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q2", ws, system, res)
       // 到达序（readyAt = 最晚上游 completedAt）: m3(now-5000) < m2(now-3000) < m1(now-1000)
       // createdAt 反序: m1 最老、m3 最新 ⇒ 只有按 readyAt 排序才会得到 m3,m2,m1
@@ -483,7 +454,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       g1 <- Deferred[IO, Unit]; g2 <- Deferred[IO, Unit]
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(g1, g2))
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q3", ws, system, res)
       _ <- seed(rt, mergeEntry("n-a", "merge-a", now - 3000L), mergeEntry("n-b", "merge-b", now - 2000L))
       _ <- rt.engine.settleRunnableSweep()
@@ -526,7 +497,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
     for
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](Nil)
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q3f", ws, system, res)
       // 持有者：种子 running（无活会话/无在飞 fiber）——判据面等价于「已进临界区」
       _ <- seed(
@@ -589,7 +560,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
         g1 <- Deferred[IO, Unit]; g2 <- Deferred[IO, Unit]
         gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(g1, g2))
         llm = new GatedLlm(gates)
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rtA <- mountProject("mm-q4-a", repoA, system, res)
         rtB <- mountProject("mm-q4-b", repoB, system, res)
         kA <- MergeMutexPolicy.keyOf(repoA.toString)
@@ -642,7 +613,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
         g <- Deferred[IO, Unit]
         gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(g))
         llm = new GatedLlm(gates)
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rtA <- mountProject("mm-o1-a", repo, system, res)
         rtB <- mountProject("mm-o1-b", wt, system, res)
         kA <- MergeMutexPolicy.keyOf(repo.toString)
@@ -716,7 +687,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       gate <- Deferred[IO, Unit]
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(gate))
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q6", ws, system, res)
       _ <- seed(
         rt,
@@ -783,7 +754,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       g1 <- Deferred[IO, Unit]; g2 <- Deferred[IO, Unit]
       gates <- Ref.of[IO, List[Deferred[IO, Unit]]](List(g1, g2))
       llm = new GatedLlm(gates)
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("mm-q7", ws, system, res)
       _ <- seed(
         rt,

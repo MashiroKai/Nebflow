@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeListTool, NodeTools, ToolContext}
@@ -102,35 +102,6 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta(ResultText), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -278,7 +249,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = plainWorkspace("desc")
     val system = ActorSystem(s"slim-desc-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-desc", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       missing <- nodeEdit(
@@ -373,7 +344,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = plainWorkspace("desc-edit")
     val system = ActorSystem(s"slim-de-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-de", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -433,7 +404,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = plainWorkspace("retired")
     val system = ActorSystem(s"slim-ret-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-ret", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       withAgent <- nodeEdit(
@@ -489,7 +460,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = gitWorkspace("wtnb")
     val system = ActorSystem(s"slim-wtnb-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wtnb", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -515,7 +486,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = plainWorkspace("nogit")
     val system = ActorSystem(s"slim-nogit-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-nogit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -544,7 +515,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = gitWorkspace("wtyes")
     val system = ActorSystem(s"slim-wtyes-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wtyes", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -581,7 +552,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
     val ws = plainWorkspace("wtedit")
     val system = ActorSystem(s"slim-wte-${Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-wte", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -615,7 +586,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
         case Right(_) => IO.unit
         case Left(e) => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
       }
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("slim-e2e", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       created <- nodeEdit(

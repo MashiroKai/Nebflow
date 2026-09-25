@@ -8,7 +8,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources, StubLlm}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
@@ -64,17 +64,6 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
 
   // ── 装配 ────────────────────────────────────────────────────────
 
-  /** 静默桩（工具腿/载荷面用例零 spawn）。 */
-  private class StubLlm:
-
-    def handle: LlmHandle[IO] = new LlmHandle[IO]:
-      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-      ): Stream[IO, StreamChunk] =
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
   /**
    * 工具申报状态机（`LoopExecutionLegSpec.FailReportLlm` 同款）：首 turn 发
    * `node_report(fail)`，见回执后收尾 ⇒ 判词由**真实引擎路径**产生（`verifierFailR`）。
@@ -126,35 +115,6 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
       end sendStream
 
   end FailReportLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mountProject(
     name: String,
@@ -363,7 +323,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-r1-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-r1", ws, system, res, frames)
       _ <- verifierFixture(rt.store, now)
@@ -419,7 +379,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-r3-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new FailReportLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new FailReportLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-r3", ws, system, res, frames)
       // 存量 route-less 形态（#7 `llmstallfix-verify` / #8 `xferpreview-e2e` 同形）：
@@ -517,7 +477,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-g2-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-g2", ws, system, res, frames)
       _ <- verifierFixture(rt.store, now)
@@ -568,7 +528,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-g3-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-g3", ws, system, res, frames)
       _ <- verifierFixture(rt.store, now)
@@ -648,7 +608,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-bound-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-bound", ws, system, res, frames)
       _ <- seed(
@@ -772,7 +732,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrg-g4-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("vrg-g4", ws, system, res, frames)
       _ <- verifierFixture(rt.store, now)

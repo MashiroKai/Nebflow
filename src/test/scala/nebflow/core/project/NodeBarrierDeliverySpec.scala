@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -75,35 +75,6 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -197,7 +168,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-chain-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-chain", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 先建 B（wiring，无 task），再建入口 A 且 out → B。
@@ -254,7 +225,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-par-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(_ => 300.millis) // 轻微延迟制造并行窗口
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-parallel", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // merge-c store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
@@ -325,7 +296,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-d1c-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-d1-create", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口（悬空完成：out=Nebula 仅满足连接下限，Nebula 通知在测试环境无根会话，无断言影响）
@@ -375,7 +346,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-d1e-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-d1-edit", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 悬空完成（out=Nebula 仅满足连接下限，校验五——测试环境无 Nebula 根会话无副作用）
@@ -434,7 +405,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-race-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(_ => 1500.millis) // A 运行窗口
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-race", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口运行中（out 仅满足连接下限；启动时捕获的快照 out 将被运行中接线改写为 C）。
@@ -514,7 +485,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-append", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // W（wiring）+ R 入口 out→W（R 运行中 → W 的 barrier 挂起等 R）。
@@ -596,7 +567,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
     val system = ActorSystem(s"bar-ttl-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("bar-ttl", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(

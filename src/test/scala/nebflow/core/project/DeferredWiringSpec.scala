@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -73,35 +73,6 @@ class DeferredWiringSpec extends CatsEffectSuite:
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream.eval(inputs.update(_ :+ text)) >>
           Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -231,7 +202,7 @@ class DeferredWiringSpec extends CatsEffectSuite:
     val system = ActorSystem(s"b5defer-a-${Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("defer-a", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(
@@ -286,7 +257,7 @@ class DeferredWiringSpec extends CatsEffectSuite:
     val system = ActorSystem(s"b5defer-b-${Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("defer-b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(rt, mkNode("n-run", "n-run", NodeLifecycle.Running))
@@ -325,7 +296,7 @@ class DeferredWiringSpec extends CatsEffectSuite:
     val system = ActorSystem(s"b5defer-c-${Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("defer-c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(rt, mkNode("n-x", "x", NodeLifecycle.Wiring), mkNode("n-w", "w", NodeLifecycle.Wiring))
@@ -356,7 +327,7 @@ class DeferredWiringSpec extends CatsEffectSuite:
     val system = ActorSystem(s"b5defer-d-${Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("defer-d", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(
@@ -431,7 +402,7 @@ class DeferredWiringSpec extends CatsEffectSuite:
     val system = ActorSystem(s"b5defer-e-${Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("defer-e", ws, system, res)
       _ <- seed(rt, mkNode("n-plain", "plain", NodeLifecycle.Running))
       snap0 <- rt.store.snapshot

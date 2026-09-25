@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -77,35 +77,6 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -195,7 +166,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c1-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 变体 A：有 task 无 out ⇒ 合法（悬空入口节点，创建即运行）
@@ -258,7 +229,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c2-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -292,7 +263,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c3-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -346,7 +317,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c4-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 已完成上游
@@ -398,7 +369,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c5-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(nodeInput("connp-c5", "empty", "description" -> Json.fromString("test node purpose")), ctx)
@@ -418,7 +389,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c6-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 全员 Wiring 种子（确定性：src 未完成 → rewire 不触发投递链，dst 不被启动——
@@ -486,7 +457,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c7-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c7", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // legacy 节点合法创建（带 out）→ 完成 → store 直种 out=None 模拟存量悬空形态
@@ -546,7 +517,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c8-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(

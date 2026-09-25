@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources, StubLlm}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -66,45 +66,6 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
   // ── 装配 ──────────────────────────────────────────────────────────
-
-  private class StubLlm:
-
-    def handle: LlmHandle[IO] = new LlmHandle[IO]:
-      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-      ): Stream[IO, StreamChunk] =
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   /**
    * 挂载真实 NodeEngine（triggerOverride = R1 测试接缝，捕获通知文本原文；
@@ -440,7 +401,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-reap-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       frames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("cd-reap", ws, system, res, triggered, frames)
@@ -549,7 +510,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-dedupb-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-dedup-b", ws, system, res, triggered)
       // U：L3 中间态被取消（未摘除）→ settleFailedHardResume 改判 failed → 触发即时检查；E：仍在 running = 合法等待（不得告警）
@@ -641,7 +602,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-l3-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-l3fail", ws, system, res, triggered)
       // L3 中间态现场：节点被 bridge Cancelled（out **未摘除**）+ 回流占位已写
@@ -814,7 +775,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-l3noop-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-l3noop", ws, system, res, triggered)
       // resume 已复活（running）→ 不得摘除/不得告警
@@ -886,7 +847,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-dedup-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-dedup", ws, system, res, triggered)
       // B：被取消上游（L3 未摘除）→ settleFailedHardResume 走即时告警（checkBarriersNow）
@@ -962,7 +923,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-failed-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-failed", ws, system, res, triggered)
       _ <- seed(
@@ -1028,7 +989,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cd-unlock-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, new StubLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, new StubLlm().handle)
       triggered <- Ref.of[IO, List[String]](Nil)
       rt <- mountProject("cd-unlock", ws, system, res, triggered)
       _ <- seed(

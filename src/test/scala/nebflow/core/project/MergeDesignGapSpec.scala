@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, StubLlm}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -75,16 +75,6 @@ class MergeDesignGapSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
   // ── 装配（与 CancelDeadlockFixSpec 同款，零 LLM 调用）─────────────
-
-  private class StubLlm:
-
-    def handle: LlmHandle[IO] = new LlmHandle[IO]:
-      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-      ): Stream[IO, StreamChunk] =
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
     for

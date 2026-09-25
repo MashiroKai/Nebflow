@@ -8,7 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeTools, ToolContext}
@@ -343,41 +343,12 @@ class FlowMapChainSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   test("T⑪ 载荷契约: chainId 条件键（≥2 带/孤立不带）+ chains 旁挂（title 三级推导，前端零派生）") {
     val ws = tempRoot / "ws-t11"
     os.makeDir.all(ws)
     val system = ActorSystem(s"chain-t11-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, new RecordingLlm)
+      res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       store <- FlowMapStore.open("chain-t11", ws.toString)
       engine = new NodeEngine(
         store,

@@ -127,35 +127,6 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
 
   end BgStubLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   private def mountProject(
     name: String,
     ws: os.Path,
@@ -306,7 +277,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r1", ws, system, res, wsFrames)
@@ -396,7 +367,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r2", ws, system, res, wsFrames, bgWaitCapMs = 1200L)
@@ -533,7 +504,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val llm = BgStubLlm()
     val sid = s"withdraw-${scala.util.Random.nextInt(100000)}"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r5", ws, system, res, wsFrames, destroyWindowMs = 0L)
       // 直种不一致态：Running 节点却带着过期的 destroyAt（重激活后残留的极端形态）
@@ -605,7 +576,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val sid = s"pid-probe-${scala.util.Random.nextInt(100000)}"
     val pidFile = tempRoot / s"r7-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r7", ws, system, res, wsFrames, destroyWindowMs = 0L)
       shell <- ShellSession.forSession(sid)
@@ -685,7 +656,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val jobId = "archive-probe-job"
     val pidFile = tempRoot / s"r8-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r8", ws, system, res, wsFrames, destroyWindowMs = 1_800_000L)
       shell <- ShellSession.forSession(sid)
@@ -810,7 +781,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r9-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       // 腿 1 封存（生产 ① 口径）；腿 2 开（未申报 hold）⇒ 节点停在「Running + 活 fiber +

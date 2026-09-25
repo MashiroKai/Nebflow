@@ -7,7 +7,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -69,35 +69,6 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -259,7 +230,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       else IO.pure("ok")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-shape", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // B（wiring，无 task）← A 入口 blocked。down-b store 直种（20260903 创建必带
@@ -355,7 +326,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       else IO.pure("ok")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("blk-reentry", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -417,7 +388,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       else IO.pure("ok")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("blk-loopcap", ws, system, res)
       nebula <- registerNebulaCapture(res, system)
       ctx = mkCtx(res, system, ws.toString)
@@ -489,7 +460,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       else IO.pure("ok-final")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-reactivate", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口 blocked（out=Nebula 仅满足连接下限校验五；blocked 不结算下游，无投递副作用）
@@ -564,7 +535,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
       else IO.pure("ok")
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-abandon", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -627,7 +598,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
     val llm =
       FuncLlm(text => if text.contains("will-block") then IO.pure(blockedText("other", "反馈串", "")) else IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("blk-r1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A blocked 悬空（out=Nebula 仅满足连接下限校验五；blocked 不结算，投递面无副作用）

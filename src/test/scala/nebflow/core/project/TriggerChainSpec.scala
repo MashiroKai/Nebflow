@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -80,35 +80,6 @@ class TriggerChainSpec extends CatsEffectSuite:
           .flatMap(_ => Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None)))
 
   end DispatchLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -219,7 +190,7 @@ class TriggerChainSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("slow-up-ta") then 1200.millis else 600.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-ta", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -287,7 +258,7 @@ class TriggerChainSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("up-tb") then 800.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-tb", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -400,7 +371,7 @@ class TriggerChainSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("up-tc") then 800.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("tc-tc", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -470,7 +441,7 @@ class TriggerChainSpec extends CatsEffectSuite:
     )
     os.write.over(ws / ".nebflow" / "flow-map.json", stateJson.noSpaces)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       pd = ProjectDef(name = "tc-td", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = now)
       // ProjectRuntimeRegistry.mount（含僵尸对账）——非 mountProject 直挂路径
       rt <- ProjectRuntimeRegistry.mount(pd, system, res, None, "nebula-root")

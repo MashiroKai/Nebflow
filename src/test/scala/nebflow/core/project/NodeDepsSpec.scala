@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
@@ -125,35 +125,6 @@ class NodeDepsSpec extends CatsEffectSuite:
 
   end FailOnLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
       projectRoot = ws,
@@ -260,7 +231,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       gateOf = t => if t.contains("produce-A") then Some(aGate) else None
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口运行中（out=Nebula 仅满足连接下限；deps 单侧持有，A 不知道被 B 依赖）
@@ -339,7 +310,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("dep-b-slow") then 2000.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // B：deps 上游（entry，慢——制造 running 窗口；out=Nebula，deps 单侧持有不回写）
@@ -423,7 +394,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t3-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
@@ -496,7 +467,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t4-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm(replyOf = t => if t.contains("done-a") then "RESULT-OF-A" else "ok")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       // ── 变体 1：活动区接线（上游 completed 仍在活动区）──
       rt1 <- mountProject("deps-t4-active", ws1, system, res)
       ctx1 = mkCtx(res, system, ws1.toString)
@@ -596,7 +567,7 @@ class NodeDepsSpec extends CatsEffectSuite:
       delayBeforeFail = 800.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 对照组：C2（wiring, out=Nebula）← A2（entry, boom-a2, out→C2）——in 边。
@@ -702,7 +673,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val llm =
       FailOnLlm(failWhen = _.contains("flaky-a"), replyOf = _ => "REAL-RESULT-FROM-A", delayBeforeFail = 100.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t5b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 B 直种（wiring, out=Nebula）；nodeEdit 接线时 src-a.id 自动写进 B.in
@@ -788,7 +759,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t6-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // task-only（无 out）→ **合法**（2026-09-12 裁定：out 可空置，悬空创建恢复；空 out =
@@ -891,7 +862,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     // 排除「D1-deps 先启动节点 → 撞上 running 冻结而非零连接拒绝」的竞态
     val llm = DispatchLlm(delayOf = t => if t.contains("slow-up") then 8000.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t7", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 慢上游（7b/7c 的 deps 目标，测试窗口内保持 running）
@@ -1003,7 +974,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t8-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm(delayOf = t => if t.contains("slow-a") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // slow-a 入口运行中（制造 running 窗口）
@@ -1119,7 +1090,7 @@ class NodeDepsSpec extends CatsEffectSuite:
         createdAt = now + at
       )
     for
-      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
       rt <- mountProject("deps-t9c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 声明面直种（链号声明 = NodeDef.chainId）：x-chain 两成员、y-chain 单成员，
@@ -1240,7 +1211,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t10c-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
       rt <- mountProject("deps-t10c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 派生兜底轨对照组（存量形态：未声明的 in/out 连线）——兜底判据逐字不变（零停机）

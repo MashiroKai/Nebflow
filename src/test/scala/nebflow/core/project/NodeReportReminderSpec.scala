@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -142,35 +142,6 @@ class NodeReportReminderSpec extends CatsEffectSuite:
           }
 
   end StubLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def registerRecorder(
     res: SharedResources,
@@ -336,7 +307,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r1-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r1", ws, system, res)
@@ -376,7 +347,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r2-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r2", ws, system, res)
@@ -421,7 +392,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r3-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r3", ws, system, res)
@@ -465,7 +436,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r4-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm(declareOnTurn = 2)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r4", ws, system, res)
@@ -503,7 +474,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r5-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r5", ws, system, res)
@@ -556,7 +527,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r7-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       _ <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r7", ws, system, res)
@@ -602,7 +573,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r8-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       rt <- mountProject("nrr-r8", ws, system, res)
       // store 直种一个 running 且带计时的节点（无活 fiber = boot 期僵尸形态）
@@ -640,7 +611,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r6-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r6", ws, system, res, reportGateHold = false)
@@ -676,7 +647,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     val system = ActorSystem(s"nrr-r9-${scala.util.Random.nextInt(100000)}")
     val llm = StubLlm(replyOverride = Some("BLOCKED: spec exemption probe — 需要人工裁决"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r9", ws, system, res)
@@ -723,7 +694,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     // 非锚定（不在行首 + 非 `:`/空白 后继）⇒ `BlockedReader.parse` 必不命中 ⇒ 必须 hold。
     val llm = StubLlm(replyOverride = Some("nothing is BLOCKED here — silent finish: result-SILENT"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r10", ws, system, res)
@@ -776,7 +747,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     // declareOnTurn = 2：第 1 轮（首轮）不申报 ⇒ hold；第 2 轮 = NodeMessage 重入轮申报 pass
     val llm = StubLlm(declareOnTurn = 2)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("nrr-r11", ws, system, res)

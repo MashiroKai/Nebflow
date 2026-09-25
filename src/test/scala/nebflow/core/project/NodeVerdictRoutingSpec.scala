@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
@@ -67,35 +67,6 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream.eval(inputs.update(_ :+ text)) >>
           Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -238,7 +209,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vfam-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vfam", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(rt, mkNode("n-w1", "w1", NodeLifecycle.Wiring), mkNode("n-w2", "w2", NodeLifecycle.Wiring))
@@ -320,7 +291,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vfam3-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vfam3", ws, system, res)
       _ <- seed(rt, mkNode("n-w1", "w1", NodeLifecycle.Wiring))
       dangling <- NodeTools.verdictRouteGate(
@@ -345,7 +316,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vfam2-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vfam2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(
@@ -375,7 +346,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vmir-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vmir", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(rt, mkNode("n-w1", "w1", NodeLifecycle.Wiring), mkNode("n-w2", "w2", NodeLifecycle.Wiring))
@@ -411,7 +382,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val llm = new QuietLlm
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountProject("vbud", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxWallClockMs", "1"))
         now = System.currentTimeMillis()
@@ -460,7 +431,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val llm = new QuietLlm
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountProject("vbud2", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxWallClockMs", "1"))
         now = System.currentTimeMillis()
@@ -501,7 +472,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val llm = new QuietLlm
     try
       for
-        res <- mkResources(system, tempRoot, llm.handle)
+        res <- SpecResources.mkResources(system, tempRoot, llm.handle)
         rt <- mountProject("vorp", ws, system, res)
         _ <- IO(System.setProperty("nebflow.nrloop.maxWallClockMs", "1"))
         now = System.currentTimeMillis()
@@ -555,7 +526,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vrole-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vrole", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       badRole <- nodeEdit(
@@ -592,7 +563,7 @@ class NodeVerdictRoutingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"vreact-${scala.util.Random.nextInt(100000)}")
     val llm = new QuietLlm
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("vreact", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seed(

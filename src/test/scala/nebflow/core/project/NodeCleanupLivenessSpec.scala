@@ -7,7 +7,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeCancelTool, NodeEditTool, NodeTools, ToolContext}
@@ -78,35 +78,6 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -244,7 +215,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cln-dead-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-dead", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedDeadRunning(rt, "n-deadseed", "dead-running")
@@ -293,7 +264,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cln-live-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-live") then 1500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-live", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // wiring 节点（无存活概念）。w-wire store 直种（20260903 创建必带 out 新规范下
@@ -354,7 +325,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cln-prot-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm(text => if text.contains("slow-p") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-protect", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -407,7 +378,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cln-abd-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-abandon-dead", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedDeadRunning(rt, "n-deadabd", "dead-abandon")
@@ -440,7 +411,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
     val system = ActorSystem(s"cln-prec-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("cln-precision", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- seedDeadRunning(rt, "n-deadp", "dead-target")

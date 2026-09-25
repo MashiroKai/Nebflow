@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -139,35 +139,6 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
 
   end ToolCallLlm
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
       projectRoot = ws,
@@ -280,7 +251,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
       closing = closing
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-tool", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 wiring（blocked 零结算断言面；store 直种——20260903 out 规范下
@@ -373,7 +344,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     val tricky = "上游节点曾申报 **BLOCKED**（现已恢复），我方据其产出完成交付。"
     val llm = FuncLlm(text => if text.contains("will-finish-with-word") then IO.pure(tricky) else IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-mis", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -429,7 +400,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     val closing = "验收条件逐条核对通过，正式声明完成。本节点收尾。"
     val llm = new ToolCallLlm(category = "finish", detail = "验收条件逐条核对通过", suggestion = "", closing = closing)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-pass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 wiring（completed 链 → out 结算断言面；store 直种同上）
@@ -498,7 +469,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     val closing = "被判定对象合格，正式给出 pass verdict。本节点收尾。"
     val llm = new ToolCallLlm(category = "pass", detail = "验收条件逐条核对通过", suggestion = "", closing = closing)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-vpass", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 回边目标（worker，待二期执行腿驱动重跑）+ 落点（pass 边下游）
@@ -571,7 +542,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
     val closing = "被判定对象不合格，正式给出 fail verdict。本节点收尾。"
     val llm = new ToolCallLlm(category = "fail", detail = "产物编译红", suggestion = "回滚上游依赖后重派", closing = closing)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly("bts-fail", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- rt.store.mutate(s =>

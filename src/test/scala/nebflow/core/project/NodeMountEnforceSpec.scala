@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -71,35 +71,6 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -218,7 +189,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"me-m1-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 事故形态复刻：merge=true、in 缺省（=[] 等价）、task+out 在、零 in
@@ -286,7 +257,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"me-m1b-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m1b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 事故形态逐字复刻：merge=true、显式空数组 in=[]、task+out 在（entry 直跑形态）
@@ -325,7 +296,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"me-m2-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(
@@ -358,7 +329,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"me-m3-${scala.util.Random.nextInt(100000)}")
     val llm = EchoLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -397,7 +368,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     // 上游慢 1.2s：合并节点创建时上游仍 running（barrier 等待语义可见）
     val llm = EchoLlm(delayOf = t => if t.contains("slow-up") then 1200.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -470,7 +441,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val llm = EchoLlm()
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m5", ws, system, res)
       // 历史遗留形态播种：入口 pending、createdAt 回拨 61s（= fork 启动从未生效）
       _ <- seedNode(
@@ -513,7 +484,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val llm = EchoLlm(delayOf = t => if t.contains("slow-up-m6") then 2500.millis else 0.millis)
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -580,7 +551,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val llm = EchoLlm()
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("me-m7", ws, system, res)
       // 播种：failed 上游（终态、completedAt 老旧）+ pending 下游（in=[failed 上游]）
       _ <- seedNode(
@@ -648,7 +619,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
     val llm = EchoLlm()
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       // 窗口压到 300ms（spec 档，**构造器接缝**——本工程测试 JVM 下 system property
       // 写入后同进程读回为空（`Obtained: None`）⇒ prop 注入口会静默失效）
       rt <- mountProject("me-m8", ws, system, res, stallReNotifyMs = Some(300L))

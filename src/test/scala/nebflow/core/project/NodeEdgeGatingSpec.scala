@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -73,35 +73,6 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
             .flatMap(_ => Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None)))
 
   end GateLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -198,7 +169,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("seed-fan-a") then 1200.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("gating-fanout", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口（task + out=Nebula）创建即运行（延迟窗口）
@@ -280,7 +251,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("seed-sig-fail") then 800.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("gating-signal", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(
@@ -349,7 +320,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"gating-merge-${scala.util.Random.nextInt(100000)}")
     val llm = new GateLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("gating-mergegate", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 上游先建（merge 校验②要求 in ≥1），merge 节点随后
@@ -424,7 +395,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
     val system = ActorSystem(s"gating-warn-${scala.util.Random.nextInt(100000)}")
     val llm = new GateLlm(failWhen = t => t.contains("seed-warn-fail"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("gating-warn", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(

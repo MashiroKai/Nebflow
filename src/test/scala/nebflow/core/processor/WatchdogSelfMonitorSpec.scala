@@ -16,6 +16,7 @@ import nebflow.agent.{
   AgentRecord,
   AgentStatus,
   SharedResources,
+  StubLlm,
   SubAgentTaskStore
 }
 import nebflow.core.{FileChangeTracker, PathUtil}
@@ -93,13 +94,6 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
   private val threshold = 10 * 60 * 1000L
 
   // ── 夹具 ────────────────────────────────────────────────────────────────
-
-  private class StubLlm:
-
-    def handle: LlmHandle[IO] = new LlmHandle[IO]:
-      def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
-      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(system: ActorSystem): IO[SharedResources] =
     for

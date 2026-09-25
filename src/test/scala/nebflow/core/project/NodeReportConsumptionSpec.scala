@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -132,35 +132,6 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
       end sendStream
 
   end RefusalLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -295,7 +266,7 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     val vanishedId = Ref.unsafe[IO, Option[String]](None)
     val llm = new RefusalLlm("external-dependency", detail, suggestion, closing, hook, hookRan)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, _) <- mountEngineOnly("nrc-vanish", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 拒写前置条件（在**申报已登记之后、桥终态写之前**执行）：把本节点从 flow-map 删除
@@ -369,7 +340,7 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     val hookRan = Ref.unsafe[IO, Boolean](false)
     val llm = new RefusalLlm("upstream-incomplete", detail, suggestion, closing, hook, hookRan)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, _) <- mountEngineOnly("nrc-status", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 拒写前置条件：把状态从 Running 改成 Cancelled（模拟并发取消 / NodeEdit 竞态）
@@ -440,7 +411,7 @@ class NodeReportConsumptionSpec extends CatsEffectSuite:
     val hookRan = Ref.unsafe[IO, Boolean](false)
     val llm = new RefusalLlm("external-dependency", detail, suggestion, closing, hook, hookRan)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, _) <- mountEngineOnly("nrc-landed", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       _ <- nodeEdit(

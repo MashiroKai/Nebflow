@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
@@ -132,35 +132,6 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
           }
 
   end BgStubLlm
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   /** 根会话记录器：deliverToNebula 投递终点记账。 */
   private def registerRecorder(
@@ -381,7 +352,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g1", ws, system, res)
@@ -410,7 +381,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g2", ws, system, res)
@@ -470,7 +441,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g3-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(persistent = true)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g3", ws, system, res)
@@ -506,7 +477,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g4-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g4", ws, system, res)
@@ -561,7 +532,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g5-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g5", ws, system, res, bgWaitCapMs = 1200L)
@@ -590,7 +561,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g6-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g6", ws, system, res)
@@ -642,7 +613,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g7-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g7", ws, system, res)
@@ -674,7 +645,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g8-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g8", ws, system, res)
@@ -708,7 +679,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g9-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       // 本用例 = 封存档（生产默认）：bgGateCompletionHold=false

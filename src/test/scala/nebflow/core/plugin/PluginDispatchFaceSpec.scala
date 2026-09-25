@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.project.{
   FlowMapStore,
@@ -107,35 +107,6 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
         val body = Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
         if text.contains("GATE-UP") then Stream.eval(gate.get).flatMap(_ => body) else body
       }
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -316,7 +287,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       _ <- approveFixture
       gate <- Deferred[IO, Unit]
       llm = new GatedLlm(gate)
-      resources <- mkResources(system, tempRoot, llm)
+      resources <- SpecResources.mkResources(system, tempRoot, llm)
       rt <- mountProject("dispatch-face", ws, system, resources)
       ctx = mkCtx(resources, system, ws.toString)
       // 上游节点（GATE-UP 任务）→ 挂在 gate 上，保持 Running ⇒ 下游 barrier 未归零
