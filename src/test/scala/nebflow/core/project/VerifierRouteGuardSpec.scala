@@ -350,7 +350,7 @@ class VerifierRouteGuardSpec extends CatsEffectSuite:
       assertEquals(work.status, NodeLifecycle.Cancelled, "the retire semantics are untouched (still cancelled)")
       assertEquals(
         work.out,
-        List(OutEdge.nebula),
+        List(OutEdge.root),
         "the retiring node's own out still collapses to the Nebula exit marker"
       )
       // ② 摘边照摘（本批不改这个退场语义）：受害 verifier 的 fail 边被摘除，pass 边保留

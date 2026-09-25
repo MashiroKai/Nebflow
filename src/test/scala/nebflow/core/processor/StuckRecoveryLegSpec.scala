@@ -137,7 +137,7 @@ class StuckRecoveryLegSpec extends CatsEffectSuite:
       status = status,
       sessionRef = Some(sid),
       startedAt = Some(System.currentTimeMillis() - 60_000L),
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = System.currentTimeMillis() - 60_000L
     )
 

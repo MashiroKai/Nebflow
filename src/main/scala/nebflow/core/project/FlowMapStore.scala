@@ -1472,7 +1472,7 @@ object FlowMapStore:
     nodeMap.values.foreach { n =>
       n.in.foreach(up => link(up, n.id, "in", memberEdge = true))
       n.out.foreach { e =>
-        if e.to != OutEdge.NebulaTarget then
+        if e.to != OutEdge.RootTarget then
           // via 按 mode 细化（nrloop 一期 2026-09-12，设计 §3.3 #16）：`:loop` 控制边
           // 标 "loop"，与普通 out 边区分——谱系/取证侧据此辨「这条边是回边，图上不连、
           // barrier 不认」；链口径不变（弱连通分量本来就是无向的，回边不破坏它）。
@@ -1485,7 +1485,7 @@ object FlowMapStore:
       n.deps.foreach(up => link(up, n.id, "deps", memberEdge = false))
     }
     def hasNodeTarget(n: NodeDef): Boolean =
-      n.out.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(nodeMap, e.to).isDefined)
+      n.out.exists(e => e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(nodeMap, e.to).isDefined)
     // ── ① 声明分组：声明值 → 成员（保持 (createdAt, id) 组内序）──────────────
     val declaredGroups: List[(String, List[NodeDef])] =
       nodeMap.values.toList
@@ -1739,7 +1739,7 @@ object FlowMapStore:
               .get(cur)
               .toList
               .flatMap(_.out)
-              .filter(_.to != OutEdge.NebulaTarget)
+              .filter(_.to != OutEdge.RootTarget)
               .flatMap(e => OutEdge.resolveTargetId(nodeMap, e.to))
             val viaDeps = nodeMap.get(cur).toList.flatMap(_.deps).filter(nodeMap.contains)
             val viaIn = inRev.getOrElse(cur, Nil)

@@ -253,7 +253,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(a.status, NodeLifecycle.Cancelled, "abandon finalizes as cancelled")
       assertEquals(a.in, Nil, "own in must be severed (abandon-only arm)")
       assertEquals(a.deps, Nil, "own deps must be severed (abandon-only arm)")
-      assertEquals(a.out, List(OutEdge.nebula), "out must collapse to the Nebula exit marker (R4-parity form)")
+      assertEquals(a.out, List(OutEdge.root), "out must collapse to the Nebula exit marker (R4-parity form)")
       assert(!d.in.contains("n-a"), s"downstream in-mirror must be pruned, got ${d.in}")
       assertEquals(d.pendingSuccession, List("n-a"), "unconsumed rail ⇒ 待承接 marker registered")
       assert(!u1.out.exists(e => e.to == "n-a"), s"upstream out-ref must be pruned, got ${u1.out}")
@@ -366,7 +366,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assertEquals(c.status, NodeLifecycle.Cancelled, "the backfill never touches a non-cancelled node's status")
       assertEquals(c.in, Nil)
       assertEquals(c.deps, Nil)
-      assertEquals(c.out, List(OutEdge.nebula))
+      assertEquals(c.out, List(OutEdge.root))
       assert(!d.in.contains("n-c"), s"D.in must be pruned, got ${d.in}")
       assertEquals(d.pendingSuccession, List("n-c"))
       assertEquals(after, (1, true), "AFTER: n-c alone in its own all-terminal component")
@@ -520,7 +520,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
       assert(reap.isRight, s"reap must succeed: $reap")
       assertEquals(a.status, NodeLifecycle.Cancelled, "reap finalizes as cancelled")
       // ── R4 摘除语义：逐字保留 ──
-      assertEquals(a.out, List(OutEdge.nebula), "R4: cancelled node out → Nebula (unchanged)")
+      assertEquals(a.out, List(OutEdge.root), "R4: cancelled node out → Nebula (unchanged)")
       assert(!b.in.contains("n-a"), s"R4: downstream in mirror pruned (unchanged), got ${b.in}")
       assertEquals(b.pendingSuccession, List("n-a"), "R4: downstream 待承接 marker (unchanged)")
       assert(

@@ -431,7 +431,7 @@ class CompletionGateSpec extends CatsEffectSuite:
               name = "down-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

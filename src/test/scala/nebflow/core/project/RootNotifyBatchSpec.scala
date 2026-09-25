@@ -75,7 +75,7 @@ class RootNotifyBatchSpec extends FunSuite:
       id = id,
       name = s"node-$id",
       agent = "worker",
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       status = status,
       result = Some(result),
       createdAt = System.currentTimeMillis() - 60_000L,
@@ -267,7 +267,7 @@ class RootNotifyBatchSpec extends FunSuite:
       )
       val io = for
         _ <- seed(store, nodes)
-        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, s"${n.result.get}"))
+        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.RootTarget, s"${n.result.get}"))
         // 窗内读数：**未**逐件注入（证明缓冲真生效，而非「恰好只发了一次」）
         pending <- engine.rootNotifyPendingCount
         before <- imms(recorded)
@@ -308,7 +308,7 @@ class RootNotifyBatchSpec extends FunSuite:
         val n = node("n-a2", result = "A2_RESULT_BODY")
         val io = for
           _ <- seed(store, List(n))
-          _ <- engine.deliverOutTo(n, OutEdge.NebulaTarget, "A2_RESULT_BODY")
+          _ <- engine.deliverOutTo(n, OutEdge.RootTarget, "A2_RESULT_BODY")
           ms <- awaitImms(recorded, min = 1)
           _ <- IO.sleep(400.millis)
           all <- imms(recorded)
@@ -350,7 +350,7 @@ class RootNotifyBatchSpec extends FunSuite:
           "interrupt",
           Some("n-p0")
         )
-        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, "P1 body"))
+        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.RootTarget, "P1 body"))
         ms <- awaitImms(recorded, min = 2)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
@@ -440,7 +440,7 @@ class RootNotifyBatchSpec extends FunSuite:
       )
       val io = for
         _ <- seed(store, stale)
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         // 长窗（30s）+ 零等待：既有 deliverStaleSummary 不经过打包窗 ⇒ 即时一条汇总
         ms <- imms(recorded)
         pending <- engine.rootNotifyPendingCount
@@ -506,7 +506,7 @@ class RootNotifyBatchSpec extends FunSuite:
       val nodes = ids.map(id => node(id, result = s"body-$id"))
       val io = for
         _ <- seed(store, nodes)
-        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, s"body-${n.id}"))
+        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.RootTarget, s"body-${n.id}"))
         ms <- awaitImms(recorded, min = 3)
         _ <- IO.sleep(600.millis)
         after <- imms(recorded)
@@ -557,7 +557,7 @@ class RootNotifyBatchSpec extends FunSuite:
         marked <- store.snapshot.map(
           _.nodes.values.filter(n => mixed.exists(_._1 == n.id)).map(n => n.id -> n.nebulaDeliveredAt.isDefined).toMap
         )
-        rescan <- engine.redeliverUnconsumedNebulaResults()
+        rescan <- engine.redeliverUnconsumedRootResults()
         _ <- IO.sleep(200.millis)
         afterRescan <- imms(recorded)
         leftover <- engine.rootNotifyPendingCount
@@ -605,7 +605,7 @@ class RootNotifyBatchSpec extends FunSuite:
           pendingAfterFlush <- engine.rootNotifyPendingCount
           // 相 2：根 ref 回归 ⇒ 补投扫描（fresh 腿）重新入队 ⇒ 下一窗合并重投
           _ <- attachRoot
-          rescan <- engine.redeliverUnconsumedNebulaResults()
+          rescan <- engine.redeliverUnconsumedRootResults()
           requeued <- engine.rootNotifyPendingCount
           _ <- awaitImms(recorded, min = 1)
           _ <- IO.sleep(500.millis)
@@ -675,7 +675,7 @@ class RootNotifyBatchSpec extends FunSuite:
         List(node("n-r1-1", result = "R1_ONE"), node("n-r1-2", result = "R1_TWO"), node("n-r1-3", result = "R1_THREE"))
       val io = for
         _ <- seed(store, nodes)
-        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.NebulaTarget, s"${n.result.get}"))
+        _ <- nodes.traverse_(n => engine.deliverOutTo(n, OutEdge.RootTarget, s"${n.result.get}"))
         ms <- awaitImms(recorded, min = 3)
         _ <- IO.sleep(400.millis)
         after <- imms(recorded)

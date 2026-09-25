@@ -230,7 +230,7 @@ object SandboxPolicy:
    * 公开供 spec 断言（agentsMdEnabledFor 同文件先例）；AgentCore root 推导与
    * 本函数是 Nebula 沙箱根的唯一裁决点。
    */
-  def isNebulaRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
+  def isSandboxRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
     sandboxEnabled && depth == 0 && agentName == RootAgentIdentity.Name
 
   /**
@@ -260,7 +260,7 @@ object SandboxPolicy:
     fallbackProjectRoot: String,
     sandboxRoot: Option[String] = None
   ): String =
-    if isNebulaRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
+    if isSandboxRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
     else
       sandboxRoot
         .filter(_.nonEmpty)

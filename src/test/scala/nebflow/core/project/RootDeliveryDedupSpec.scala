@@ -33,7 +33,7 @@ import scala.concurrent.duration.*
  *  - P3 窗口过期：61s 前投过的 (id,status) → 再次投递不被抑制
  *  - 变异红基线：去掉去重 → P1 三连投复现红（1→3 条）
  */
-class NebulaDeliveryDedupSpec extends FunSuite:
+class RootDeliveryDedupSpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
   private val Hour = 3600_000L
@@ -49,7 +49,7 @@ class NebulaDeliveryDedupSpec extends FunSuite:
       id = id,
       name = name,
       agent = "worker",
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       status = status,
       result = Some(result),
       createdAt = System.currentTimeMillis() - 2 * Hour,
@@ -182,7 +182,7 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         // 同节点状态翻转为 failed（结果更新）——(id,failed) 是另一窗口
         failed = n.copy(status = NodeLifecycle.Failed, result = Some("DUAL_FAILED_RESULT"))
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-dual" -> failed)))
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
       yield msgs
       val msgs = io.unsafeRunSync()
@@ -199,7 +199,7 @@ class NebulaDeliveryDedupSpec extends FunSuite:
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-expired" -> n)))
         // 预置窗口外旧投递记录（61s 前——超过 60s 窗口，顺路验证时间窗淘汰）
         now <- IO(System.currentTimeMillis())
-        _ <- engine.recentNebulaDeliveries.update(
+        _ <- engine.recentRootDeliveries.update(
           _ + (("n-expired", "completed") -> (now - NodeEngine.NebulaDedupWindowMs - 1000L))
         )
         _ <- engine.deliverOutTo(n, "Nebula", n.result.get)
@@ -211,4 +211,4 @@ class NebulaDeliveryDedupSpec extends FunSuite:
     }
   }
 
-end NebulaDeliveryDedupSpec
+end RootDeliveryDedupSpec

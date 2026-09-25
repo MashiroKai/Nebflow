@@ -332,7 +332,7 @@ Example: {"filePath": "https://example.com"}"""
    * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`，同 TaskBoardTool.forbidden /
    * MemoryNoteTool DREAM_APPEND_DENIED）。
    */
-  private val NebulaOnlyError: ToolError = ToolError(
+  private val RootOnlyError: ToolError = ToolError(
     "Pop: permission denied — Pop 已收归 Nebula 专属；交付物请沿 out 边交给链末端 / Nebula，由 Nebula 决定是否展示 (POP_NEBULA_ONLY)"
   )
 
@@ -362,13 +362,13 @@ Example: {"filePath": "https://example.com"}"""
    * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
    * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
    */
-  private def isNebulaRootSession(ctx: ToolContext): Boolean =
+  private def isRootAgentSession(ctx: ToolContext): Boolean =
     nebflow.agent.AgentCore.isRootAgent(ctx.agentDef, ctx.depth)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /
     // WS 发送）。非 Nebula 身份（含 agentDef=None）在此短路，零副作用。
-    if !isNebulaRootSession(ctx) then IO.pure(Left(NebulaOnlyError))
+    if !isRootAgentSession(ctx) then IO.pure(Left(RootOnlyError))
     else doCall(input, ctx)
 
   /** Nebula 本体根会话的 Pop 实现（身份已过闸；语义与本批前逐字节一致）。 */

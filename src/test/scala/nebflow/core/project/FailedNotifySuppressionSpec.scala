@@ -128,7 +128,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
                 result = Some(
                   "cancelled[source=engine]: reason=dead-session reap: status=running but no live execution fiber"
                 ),
-                out = List(OutEdge.nebula),
+                out = List(OutEdge.root),
                 createdAt = now - 9000L,
                 completedAt = Some(now - 8000L)
               ),
@@ -138,7 +138,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
                 agent = "general",
                 status = NodeLifecycle.Cancelled,
                 result = Some("cancelled by NodeCancel (legacy data, no source prefix)"),
-                out = List(OutEdge.nebula),
+                out = List(OutEdge.root),
                 createdAt = now - 9000L,
                 completedAt = Some(now - 8000L)
               ),
@@ -148,7 +148,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
                 agent = "general",
                 status = NodeLifecycle.Cancelled,
                 result = Some("cancelled[source=user]: reason=cancelled from panel"),
-                out = List(OutEdge.nebula),
+                out = List(OutEdge.root),
                 createdAt = now - 9000L,
                 completedAt = Some(now - 8000L)
               ),
@@ -158,7 +158,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
                 agent = "general",
                 status = NodeLifecycle.Completed,
                 result = Some("done"),
-                out = List(OutEdge.nebula),
+                out = List(OutEdge.root),
                 createdAt = now - 9000L,
                 completedAt = Some(now - 8000L)
               )
@@ -226,7 +226,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
             status = NodeLifecycle.Pending,
             task = Some("waiting"),
             in = List(f.id),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             createdAt = now - 500L
           )
         }.toMap
@@ -473,7 +473,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
             agent = "test-agent",
             status = NodeLifecycle.Cancelled,
             result = Some(upstreamResult),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             createdAt = now - 5000L,
             completedAt = Some(now - 4000L)
           ))
@@ -487,7 +487,7 @@ class FailedNotifySuppressionSpec extends FunSuite:
             agent = "test-agent",
             task = Some("FAIL-B work"),
             status = NodeLifecycle.Pending,
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             retry = Some(RetryPolicy(upstream = "n-u", max = 3)),
             createdAt = now - 1000L
           ))

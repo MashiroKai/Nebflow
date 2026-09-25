@@ -251,8 +251,8 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       nebulaDeliveredAt = delivered
     )
 
-  private val nebulaResult = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result)
-  private val nebulaSignal = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)
+  private val nebulaResult = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)
+  private val nebulaSignal = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
   private val toDown = OutEdge("n-b", Set(OutEdge.Pass), OutEdge.Result)
 
   // ── ① 三值 + legacy 解析（R1/R2/R3/R5）────────────────────────────────
@@ -415,10 +415,10 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
           )
         )
       )
-      _ <- engine.redeliverUnconsumedNebulaResults()
+      _ <- engine.redeliverUnconsumedRootResults()
       after1 <- store.snapshot
       capturedTexts1 <- captured.get
-      _ <- engine.redeliverUnconsumedNebulaResults() // 第二轮（记账后不应再投）
+      _ <- engine.redeliverUnconsumedRootResults() // 第二轮（记账后不应再投）
       capturedTexts2 <- captured.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -546,7 +546,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
           )
         )
       )
-      pending <- engine.redeliverUnconsumedNebulaResults()
+      pending <- engine.redeliverUnconsumedRootResults()
       texts <- captured.get
       after <- store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)

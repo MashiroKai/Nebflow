@@ -56,7 +56,7 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
       id = id,
       name = name,
       agent = "worker",
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       status = NodeLifecycle.Completed,
       task = Some(task),
       result = Some(result),
@@ -171,11 +171,11 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
             )
           )
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
         all <- store.snapshot.map(_.nodes)
         // 二次扫描：已记账 → 不再进入 pending → 无重复 WARN 来源
-        n2 <- engine.redeliverUnconsumedNebulaResults()
+        n2 <- engine.redeliverUnconsumedRootResults()
         msgs2 <- imms(recorded)
       yield (n, msgs, all, n2, msgs2)
       val (n, msgs, all, n2, msgs2) = io.unsafeRunSync()
@@ -203,7 +203,7 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
             ))
           )
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
         msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)
@@ -226,7 +226,7 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
             )
           )
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
         msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)

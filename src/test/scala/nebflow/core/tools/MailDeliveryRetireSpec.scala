@@ -132,7 +132,7 @@ class MailDeliveryRetireSpec extends FunSuite:
   test("描述面（mailparams 批 re-pin）：三面描述不再宣称存在 `delivery` 参数，且墓碑拒绝面仍然可见"):
     val faces = List(
       "descriptionBase" -> MailTool.descriptionBase,
-      "descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+      "descriptionNebulaRoot" -> MailTool.descriptionRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, face) <- faces do

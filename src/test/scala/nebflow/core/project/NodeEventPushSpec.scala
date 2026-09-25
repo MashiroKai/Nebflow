@@ -463,7 +463,7 @@ class NodeEventPushSpec extends CatsEffectSuite:
           status = NodeLifecycle.Completed,
           result = Some("expired result"),
           in = List.empty,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 300000,
           completedAt = Some(now - 60000),
           ttlExpireAt = Some(now - 1000)

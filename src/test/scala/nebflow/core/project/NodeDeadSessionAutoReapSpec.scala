@@ -264,7 +264,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
             name = "zombie-a",
             agent = "general",
             task = Some("long running task"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Running,
             startedAt = Some(System.currentTimeMillis() - 3_600_000),
             createdAt = System.currentTimeMillis() - 3_600_000
@@ -334,7 +334,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
               name = "down-b",
               agent = "test-agent",
               task = Some("process downstream"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               in = List("n-up"),
               status = NodeLifecycle.Wiring,
               createdAt = System.currentTimeMillis() - 3_600_000
@@ -418,7 +418,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
             name = "wait-bg",
             agent = "general",
             task = Some("long task"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Running,
             startedAt = Some(System.currentTimeMillis() - 3_600_000),
             createdAt = System.currentTimeMillis() - 3_600_000

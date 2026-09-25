@@ -122,9 +122,9 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assertEquals(NodeReportToolDef.description, baseOf(NodeReportToolDef.Name).description)
 
     // 分化变体存在且与基础面不同、且更短（纯删段 ⇒ 不可能更长）
-    assert(MailTool.descriptionNebulaRoot != MailTool.descriptionBase, "Mail root 分化变体与基础面相同（机制空转）")
+    assert(MailTool.descriptionRoot != MailTool.descriptionBase, "Mail root 分化变体与基础面相同（机制空转）")
     assert(MailTool.descriptionDispatcher != MailTool.descriptionBase, "Mail dispatcher 分化变体与基础面相同（机制空转）")
-    assert(MailTool.descriptionNebulaRoot.length < MailTool.descriptionBase.length, "root 变体未变短")
+    assert(MailTool.descriptionRoot.length < MailTool.descriptionBase.length, "root 变体未变短")
     assert(MailTool.descriptionDispatcher.length < MailTool.descriptionBase.length, "dispatcher 变体未变短")
     assert(NodeReportToolDef.descriptionTask != NodeReportToolDef.descriptionBase, "task 变体与基础面相同")
     assert(NodeReportToolDef.descriptionVerifier != NodeReportToolDef.descriptionBase, "verifier 变体与基础面相同")
@@ -137,7 +137,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity()), mail, "基础身份未恒等映射")
     assertEquals(
       AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isRootAgent = true)).description,
-      MailTool.descriptionNebulaRoot
+      MailTool.descriptionRoot
     )
     assertEquals(
       AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isDispatcher = true)).description,
@@ -167,7 +167,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val mainSrc = root / "src" / "main" / "scala"
     assert(os.exists(mainSrc), s"源码根不存在：$mainSrc（本 spec 必须在仓根运行）")
     val callers = Map(
-      "nebulaRootVariant(" -> "AgentCore.scala",
+      "rootVariant(" -> "AgentCore.scala",
       "roleVariant(" -> "AgentCore.scala",
       "addressFaceVariant(" -> "AgentCore.scala"
     )
@@ -177,7 +177,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
         .filter(p => p.ext == "scala")
         .filter { p =>
           val src = os.read(p)
-          // 定义行（`def nebulaRootVariant(`）不算调用；其余出现处必须是单点文件。
+          // 定义行（`def rootVariant(`）不算调用；其余出现处必须是单点文件。
           src.linesIterator.exists(l => l.contains(needle) && !l.contains("def " + needle))
         }
         .map(_.last)
@@ -302,7 +302,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val rootMail = find(nebulaRootFace, "Mail").getOrElse(fail("Nebula 面丢了 Mail"))
     val dispMail = find(dispatcherFace, "Mail").getOrElse(fail("dispatcher 面丢了 Mail"))
     val taskMail = find(taskNodeFace, "Mail")
-    assertEquals(rootMail.description, MailTool.descriptionNebulaRoot, "root 未拿到地址面变体")
+    assertEquals(rootMail.description, MailTool.descriptionRoot, "root 未拿到地址面变体")
     assertEquals(dispMail.description, MailTool.descriptionDispatcher, "dispatcher 未拿到地址面变体")
     assertEquals(rootMail.inputSchema, baseOf("Mail").inputSchema, "root 变体改了 inputSchema（Q5 判据）")
     assertEquals(dispMail.inputSchema, baseOf("Mail").inputSchema, "dispatcher 变体改了 inputSchema（Q5 判据）")
@@ -382,7 +382,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val base = MailTool.descriptionBase
     for seg <- List(
         MailTool.AddressFaceHeader,
-        MailTool.AddressFaceNebulaRoot,
+        MailTool.AddressFaceRoot,
         MailTool.AddressFaceDispatcher,
         MailTool.AddressFaceTeam,
         MailTool.AddressFaceClosing
@@ -390,12 +390,12 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     do assert(base.contains(seg), s"地址面段常量不是基础文本的逐字子串（含新造字）：${seg.take(60)}…")
     assertEquals(
       base.replace(MailTool.AddressFaceDispatcher + MailTool.AddressFaceTeam, ""),
-      MailTool.descriptionNebulaRoot,
+      MailTool.descriptionRoot,
       "root 变体 ≠ 基础删去另两段（出现了改写/新造字）"
     )
     // dispatcher 变体：基础里两段**不相邻**（Nebula 段在题首、team 段在题尾）⇒ 两次定点删除
     assertEquals(
-      base.replace(MailTool.AddressFaceNebulaRoot, "").replace(MailTool.AddressFaceTeam, ""),
+      base.replace(MailTool.AddressFaceRoot, "").replace(MailTool.AddressFaceTeam, ""),
       MailTool.descriptionDispatcher,
       "dispatcher 变体 ≠ 基础删去另两段（出现了改写/新造字）"
     )

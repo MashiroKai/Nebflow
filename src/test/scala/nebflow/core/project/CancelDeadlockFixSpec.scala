@@ -447,7 +447,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
       val r = a.result.getOrElse(fail("R2: cancelled result must be persisted"))
       assert(r.startsWith("cancelled[source=engine]: reason="), s"R2/R7 result format, got: $r")
       assert(r.contains("dead-session reap"), s"R2 reason text must carry the read-cause, got: $r")
-      assertEquals(a.out, List(OutEdge.nebula), "R4: cancelled node out must be detached to Nebula")
+      assertEquals(a.out, List(OutEdge.root), "R4: cancelled node out must be detached to Nebula")
       assert(!b.in.contains("n-a"), s"R4: downstream in mirror must be pruned, got ${b.in}")
       assertEquals(b.pendingSuccession, List("n-a"), "R4: downstream must register the 待承接 marker")
       assertEquals(
@@ -1013,7 +1013,7 @@ class CancelDeadlockFixSpec extends CatsEffectSuite:
           task = Some("t-succ"),
           status = NodeLifecycle.Pending,
           in = Nil,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           pendingSuccession = List("n-up"),
           createdAt = now - 700_000L
         )

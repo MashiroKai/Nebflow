@@ -505,7 +505,7 @@ private[project] trait NodeDelivery:
             logger.warn(
               s"[fixture-guard] excluded fixture envelope from manual redelivery: node '${node.name}' (${node.id}) status=${node.status} — name matches fixture family and task carries fixture marker"
             )
-          else if edge.exists(_.mode == OutEdge.Signal) then markNebulaDelivered(node.id)
+          else if edge.exists(_.mode == OutEdge.Signal) then markRootDelivered(node.id)
           // M1（U9-b，2026-09-12 批）：Nebula 腿直投前查**持久**去重锚 `nebulaDeliveredAt`
           // ——本分支旧口径只查 mode、不查账本 ⇒ 已投过的节点被改接/重复声明时会再投一次
           // （deliverToNebula 的 60s 窗是进程内抖动抑制，不承担持久幂等）。signal 出口
@@ -607,10 +607,10 @@ private[project] trait NodeDelivery:
       )
     else
       val passEdges = OutEdge.canonical(node.out).filter(_.on.contains(OutEdge.Pass)).filterNot(OutEdge.isLoopEdge)
-      nebulaDelivery(node, resultText, passEdges.partition(_.to == OutEdge.NebulaTarget)._1) *>
-        passEdges.filterNot(_.to == OutEdge.NebulaTarget).traverse_(e => settleTo(node, e.to))
+      rootDelivery(node, resultText, passEdges.partition(_.to == OutEdge.RootTarget)._1) *>
+        passEdges.filterNot(_.to == OutEdge.RootTarget).traverse_(e => settleTo(node, e.to))
 
-  private def nebulaDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
+  private def rootDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
     if nebulaEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
     // ── R5（唯一语义变更点，作者裁定；b64 批 2026-09-13）：Nebula 边**保留声明**，
     // 运行时按通知策略裁决。策略 ≠ root ⇒ 完成通报被**抑制**（不投根）但仍
@@ -624,12 +624,12 @@ private[project] trait NodeDelivery:
         s"Node '${node.name}' (${node.id}) has Nebula out-edge(s) but notify=${node.notifyPolicy.getOrElse("<legacy>")} " +
           "— completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it."
       ) *>
-        markNebulaDelivered(node.id)
+        markRootDelivered(node.id)
     else if nebulaEdges.exists(_.mode == OutEdge.Result) then
       // notifybatch 批（2026-09-18，M-2）：改走 root 打包入口（决策①生产者侧合并）；
       // R5 抑制分支（上一支）与 `markNebulaDelivered` 记账口径**一字未动**。
       enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
-    else markNebulaDelivered(node.id)
+    else markRootDelivered(node.id)
 
   /**
    * out=Nebula：ImmediateInput 投 Nebula 根会话（source="node"，复用 flow 气泡语义）。
@@ -652,7 +652,7 @@ private[project] trait NodeDelivery:
    * ⇒ 生产路径上本方法只被 [[flushRootNotify]] 与两条旁路（`windowMs<=0` / P0 INTERRUPT）
    * 调用；「一条 = 一个 turn」的消费侧观感由此在**生产者侧**归零。
    */
-  private[project] def deliverToNebula(
+  private[project] def deliverToRoot(
     text: String,
     nodeName: String,
     status: String,
@@ -693,12 +693,12 @@ private[project] trait NodeDelivery:
         // 根会话队列），仍刷新账本（账本与通知解耦：本表只压秒级抖动，V8
         // at-least-once 语义不变）。不同 status 天然独立窗口（running→completed
         // 互不挡）。
-        dedupeNebulaDelivery(nodeId.getOrElse(nodeName), status).flatMap {
+        dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
           case true =>
             logger.warn(
               s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.NebulaDedupWindowMs}ms, rootSession=$rootSessionId)"
             ) *>
-              nodeId.traverse_(id => markNebulaDelivered(id)) *>
+              nodeId.traverse_(id => markRootDelivered(id)) *>
               IO.pure(RootNotifyOffer.Suppressed)
           case false =>
             (ref ! AgentCommand.ImmediateInput(
@@ -707,7 +707,7 @@ private[project] trait NodeDelivery:
               eventType = Some(status),
               sender = Some(s"$projectName/$nodeName"),
               fromUser = false // ② 服务端注入（节点状态），不是真人输入
-            )) *> nodeId.traverse_(id => markNebulaDelivered(id)) *>
+            )) *> nodeId.traverse_(id => markRootDelivered(id)) *>
               IO.pure(RootNotifyOffer.Offered)
         }
       case None =>
@@ -800,7 +800,7 @@ private[project] trait NodeDelivery:
     nodeId: Option[String] = None
   ): IO[Unit] =
     val windowMs = rootNotifyQuietMsValue
-    if windowMs <= 0 || isRootNotifyInterrupt(status) then deliverToNebula(text, nodeName, status, nodeId)
+    if windowMs <= 0 || isRootNotifyInterrupt(status) then deliverToRoot(text, nodeName, status, nodeId)
     else
       val entry = RootNotifyEntry(text, nodeName, status, nodeId)
       rootNotifyBatchState
@@ -845,7 +845,7 @@ private[project] trait NodeDelivery:
           val entries = drained.toList
           val offer = entries match
             // 单件：文本 / header / 去重键 / 记账**逐字同今天**（A2 单件零漂移）
-            case one :: Nil => deliverToNebula(one.text, one.nodeName, one.status, one.nodeId)
+            case one :: Nil => deliverToRoot(one.text, one.nodeName, one.status, one.nodeId)
             // 多件：正文分节 + header 保守（T-6(a)：不新增 header 语义 ⇒ `NotificationHeader`
             // 与前端 `chat.js` **零改动**；去重键 = 首件身份 × 合并状态）；**落地才**逐件记账
             case many =>
@@ -858,7 +858,7 @@ private[project] trait NodeDelivery:
                 // F-1（作者裁定 (a)）：`Offered` = 交付事实成立 ⇒ 逐件记账；`Parked`/`Suppressed`
                 // = 本批**没发出去** ⇒ 一件都不记（否则件被标已发却未发、补投判据
                 // `n.nebulaDeliveredAt.isEmpty` 永不命中 ⇒ 整窗永久丢失，宁重复不丢失）。
-                case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markNebulaDelivered)
+                case RootNotifyOffer.Offered => many.flatMap(_.nodeId).distinct.traverse_(markRootDelivered)
                 case _ => IO.unit
               }
           offer *>

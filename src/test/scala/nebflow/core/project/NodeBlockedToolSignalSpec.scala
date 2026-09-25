@@ -264,7 +264,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "down-d",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -412,7 +412,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "down-p",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -481,7 +481,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "work-vp",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             ),
             "n-land-vp" -> NodeDef(
@@ -489,7 +489,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "land-vp",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -553,7 +553,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "work-f",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             ),
             "n-land-f" -> NodeDef(
@@ -561,7 +561,7 @@ class NodeBlockedToolSignalSpec extends CatsEffectSuite:
               name = "land-f",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

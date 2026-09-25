@@ -28,7 +28,7 @@ import scala.jdk.CollectionConverters.*
  * 现场真实记忆文件（`~/.nebflow/User.md`、`agents/Nebula/memory.md`）与 `queue.jsonl`
  * **零接触**（本 spec 全程只写临时根内的副本）。
  */
-class NebulaMemoryHookRouteSpec extends FunSuite:
+class RootMemoryHookRouteSpec extends FunSuite:
 
   private var prevRoot: os.Path = os.Path("/tmp")
   private var home: os.Path = os.Path("/tmp")
@@ -57,36 +57,36 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
   // ===== ① 纯函数：三支 + fail-open =====
 
   test("decideRoute：user 有余量 ⇒ 仍投 user（首选面，无落点节）"):
-    val d = NebulaMemoryHook.decideRoute(100L, _ => Some(1000L))
+    val d = RootMemoryHook.decideRoute(100L, _ => Some(1000L))
     assertEquals(
       d,
-      NebulaMemoryHook.RouteDecision.Send(
+      RootMemoryHook.RouteDecision.Send(
         "user",
-        NebulaMemoryHook.RouteCode.Preferred,
+        RootMemoryHook.RouteCode.Preferred,
         true
       )
     )
 
   test("decideRoute：user 无余量、agent 有余量 ⇒ 改投 agent 面"):
     val rooms = Map("user" -> -5L, "agent" -> 500L)
-    val d = NebulaMemoryHook.decideRoute(100L, f => rooms.get(f))
+    val d = RootMemoryHook.decideRoute(100L, f => rooms.get(f))
     assertEquals(
       d,
-      NebulaMemoryHook.RouteDecision.Send("agent", NebulaMemoryHook.RouteCode.Reroute, false)
+      RootMemoryHook.RouteDecision.Send("agent", RootMemoryHook.RouteCode.Reroute, false)
     )
 
   test("decideRoute：两面皆无余量 ⇒ 停投（带两面余量读数）"):
     val rooms = Map("user" -> -11L, "agent" -> -3L)
-    val d = NebulaMemoryHook.decideRoute(100L, f => rooms.get(f))
-    assertEquals(d, NebulaMemoryHook.RouteDecision.Drop(NebulaMemoryHook.RouteCode.Drop, -11L, -3L))
+    val d = RootMemoryHook.decideRoute(100L, f => rooms.get(f))
+    assertEquals(d, RootMemoryHook.RouteDecision.Drop(RootMemoryHook.RouteCode.Drop, -11L, -3L))
 
   test("decideRoute：余量读数不可得 ⇒ 不丢（fail-open 到首选面）"):
-    val d = NebulaMemoryHook.decideRoute(100L, _ => None)
+    val d = RootMemoryHook.decideRoute(100L, _ => None)
     assertEquals(
       d,
-      NebulaMemoryHook.RouteDecision.Send(
+      RootMemoryHook.RouteDecision.Send(
         "user",
-        NebulaMemoryHook.RouteCode.FailOpen,
+        RootMemoryHook.RouteCode.FailOpen,
         false
       )
     )
@@ -96,7 +96,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
   test("正控-仍投 user：user 面有余量 ⇒ target 与既有行为逐字一致、无落点节"):
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n- 既有条目\n", createFolders = true)
-    NebulaMemoryHook.enqueueFacts(List("FACT 1: [PATTERN] 正常事实"), Some("sess-1")).unsafeRunSync()
+    RootMemoryHook.enqueueFacts(List("FACT 1: [PATTERN] 正常事实"), Some("sess-1")).unsafeRunSync()
     val notes = MemoryQueue.readState().notes
     assertEquals(notes.size, 1)
     assertEquals(notes.map(_.target).distinct, Vector("user"))
@@ -111,7 +111,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
     fill(MemoryStore.userMemoryPath, MemoryBudget.UserHardBytes)
     os.write.over(MemoryStore.agentMemoryPath("Nebula"), "# agent\n\n- 既有\n", createFolders = true)
     val before = os.read(MemoryStore.userMemoryPath)
-    NebulaMemoryHook
+    RootMemoryHook
       .enqueueFacts(List("FACT 1: [PATTERN] 事实甲", "FACT 2: [DECISION] 裁定乙"), Some("sess-1"))
       .unsafeRunSync()
     assertEquals(os.read(MemoryStore.userMemoryPath), before, "User.md 零写（直写通道保持关闭）")
@@ -135,7 +135,7 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
     appender.start()
     lbLogger.addAppender(appender)
     try
-      NebulaMemoryHook
+      RootMemoryHook
         .enqueueFacts(List("FACT 1: [PATTERN] 无处可落的事实"), Some("sess-1"))
         .unsafeRunSync()
       assertEquals(MemoryQueue.readState().notes.size, 0, "两面皆无余量 ⇒ 停投：不灌队列")
@@ -145,10 +145,10 @@ class NebulaMemoryHookRouteSpec extends FunSuite:
         .filter(_.contains("[memory-route]"))
       assertEquals(warns.size, 1, s"停投必逐条留痕（禁静默丢）；实际 WARN 行：$warns")
       val line = warns.head
-      assert(line.contains(NebulaMemoryHook.RouteCode.Drop), s"机读码在场：$line")
-      assert(line.contains(NebulaMemoryHook.refOf("无处可落的事实")), s"识别子在场：$line")
+      assert(line.contains(RootMemoryHook.RouteCode.Drop), s"机读码在场：$line")
+      assert(line.contains(RootMemoryHook.refOf("无处可落的事实")), s"识别子在场：$line")
       assert(line.contains("无处可落的事实"), s"条目全文在场（能逐条回答「为什么没落」）：$line")
     finally lbLogger.detachAppender(appender)
     end try
 
-end NebulaMemoryHookRouteSpec
+end RootMemoryHookRouteSpec

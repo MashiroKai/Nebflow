@@ -277,7 +277,7 @@ class NodeCleanupLivenessSpec extends CatsEffectSuite:
               name = "w-wire",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

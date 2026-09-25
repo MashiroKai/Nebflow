@@ -44,7 +44,7 @@ object CompactService:
       case CompactionProfile.Dispatcher => DispatcherCompactReminder
       case CompactionProfile.Worker => WorkerCompactReminder
       case CompactionProfile.Manager => ManagerCompactReminder
-      case _ => NebulaCompactReminder // Root (also catches Legacy)
+      case _ => RootCompactReminder // Root (also catches Legacy)
     Message(MessageRole.User, Left(prompt))
 
   /**
@@ -135,7 +135,7 @@ object CompactService:
    * template; durable user facts are extracted separately by NebulaMemoryHook
    * before compaction, so the summary must NOT duplicate them.
    */
-  private val NebulaCompactReminder = CompactPreamble +
+  private val RootCompactReminder = CompactPreamble +
     """You are NEBULA — the global orchestrator. Your session is long-lived and
       |spans every project, team and task line. After compaction you resume
       |steering ALL of them from this summary alone (your durable user facts are

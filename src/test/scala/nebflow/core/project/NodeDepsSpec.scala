@@ -42,7 +42,7 @@ class NodeDepsSpec extends CatsEffectSuite:
    * A1（2026-09-12 批）：bare `"Nebula"` = 纯出口标记（`{pass}/signal`）——
    * 与存量读路径的 `OutEdge.nebula`（`{pass,failed}/result`）自此分叉。
    */
-  private val nebulaMarker = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)
+  private val nebulaMarker = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
@@ -421,7 +421,7 @@ class NodeDepsSpec extends CatsEffectSuite:
               name = "node-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -580,7 +580,7 @@ class NodeDepsSpec extends CatsEffectSuite:
               name = "in-waiter",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -685,7 +685,7 @@ class NodeDepsSpec extends CatsEffectSuite:
               name = "recovery-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -1000,7 +1000,7 @@ class NodeDepsSpec extends CatsEffectSuite:
               name = "w-wire",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

@@ -198,7 +198,7 @@ class OutNullableDeliverySpec extends CatsEffectSuite:
       assert(r.isRight, s"exit-marker create must pass, got: $r")
       assertEquals(
         node.map(_.out),
-        Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal))),
+        Some(List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal))),
         "bare \"Nebula\" must persist as {pass}/signal"
       )
       assert(msgs.isEmpty, s"exit marker must deliver NOTHING to root (默认不升根), got: ${msgs.map(_.text)}")

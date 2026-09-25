@@ -162,7 +162,7 @@ class NodeMessageSpec extends CatsEffectSuite:
               task = task,
               result = result,
               status = status,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

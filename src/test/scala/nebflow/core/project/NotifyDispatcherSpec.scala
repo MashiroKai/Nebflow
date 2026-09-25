@@ -299,7 +299,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
     status: String,
     notify: Boolean,
     result: Option[String],
-    out: List[OutEdge] = List(OutEdge.nebula)
+    out: List[OutEdge] = List(OutEdge.root)
   ): IO[Unit] =
     store
       .mutate(s =>
@@ -576,7 +576,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
         NodeLifecycle.Completed,
         notify = true,
         result = Some("R"),
-        out = List(OutEdge.nebula)
+        out = List(OutEdge.root)
       ) // 显式双通报边（与缺省同形，可读性）
       _ <- store
         .mutate(s =>
@@ -667,7 +667,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
               name = "wiring-w",
               agent = "general",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -924,7 +924,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       // 显式双通报边（`OutEdge.nebula` = {pass,failed}/result，与迁移后的 "(pass,failed)Nebula"
       // 字面同落边形态）——⑬ 断言的正是 **failed 腿** 投递（:717），故绝不可写成 bare
       // "Nebula"（批 A 后 = 出口标记 {pass}/signal ⇒ 零投递 ⇒ 该断言恒不可满足）。
-      _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fn1", "fail-nebula", "dead task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       // out=Nebula 投递（eventType=failed）零回归
       _ <- waitUntil(20.seconds)(
@@ -1016,7 +1016,7 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
             name = "down-node",
             agent = "general",
             task = Some("downstream work"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             in = List("n-ft-up"),
             status = NodeLifecycle.Wiring,
             createdAt = System.currentTimeMillis() - 3_600_000

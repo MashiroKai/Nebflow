@@ -92,7 +92,7 @@ class DreamModeSpec extends FunSuite:
   test("生产者：facts 入队条目 section 恒 None（引擎不再拥有具名节）"):
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n## 工作风格\n\n- 早睡早起\n", createFolders = true)
-    NebulaMemoryHook
+    RootMemoryHook
       .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙"), Some("sess-1"))
       .unsafeRunSync()
     val notes = MemoryQueue.readState().notes
@@ -106,7 +106,7 @@ class DreamModeSpec extends FunSuite:
   test("无具名节的文件上照旧可落：两条 pending 判 would-apply（文件尾追加），零缺节重试族"):
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n## 工作风格\n\n- 早睡早起\n", createFolders = true)
-    NebulaMemoryHook
+    RootMemoryHook
       .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙"), Some("sess-1"))
       .unsafeRunSync()
     val path = MemoryStore.userMemoryPath

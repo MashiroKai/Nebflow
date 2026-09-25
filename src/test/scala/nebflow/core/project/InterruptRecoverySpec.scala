@@ -225,7 +225,7 @@ class InterruptRecoverySpec extends CatsEffectSuite:
     name: String,
     task: String,
     status: String = NodeLifecycle.Running,
-    out: List[OutEdge] = List(OutEdge.nebula),
+    out: List[OutEdge] = List(OutEdge.root),
     sessionRef: Option[String] = None,
     bgWait: Option[String] = None,
     deliveredTo: List[String] = Nil,
@@ -554,7 +554,7 @@ class InterruptRecoverySpec extends CatsEffectSuite:
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- rt.engine.settleRunnableSweep()
-      _ <- rt.engine.redeliverUnconsumedNebulaResults()
+      _ <- rt.engine.redeliverUnconsumedRootResults()
       _ <- rt.engine.sweepDestroyWindows()
       n <- byName(rt, "degraded-a")
       events <- readEvents(ws)

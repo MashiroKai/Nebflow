@@ -59,7 +59,7 @@ object MailTool extends Tool:
     "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
 
   /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点；值单源于 RootAgentIdentity.Name）。 */
-  private val NebulaAgentName = RootAgentIdentity.Name
+  private val RootAgentName = RootAgentIdentity.Name
 
   // ============================================================
   // device-mail 批（2026-09-15）——`device` 目标的校验词表（**唯一来源**；
@@ -304,7 +304,7 @@ Message type (optional, default "INFO"):
   private[nebflow] val AddressFaceHeader: String =
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
-  private[nebflow] val AddressFaceNebulaRoot: String =
+  private[nebflow] val AddressFaceRoot: String =
     "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). You have no `node:`\n  address and no self-address.\n"
 
   private[nebflow] val AddressFaceDispatcher: String =
@@ -331,7 +331,7 @@ Message type (optional, default "INFO"):
   /**
    * **分化变体 · Nebula root**：地址面只留 root 自己的那一面（`project:<name>`）。
    */
-  val descriptionNebulaRoot: String = addressFaceProjection(AddressFaceNebulaRoot)
+  val descriptionRoot: String = addressFaceProjection(AddressFaceRoot)
 
   /**
    * **分化变体 · project dispatcher**：地址面只留分发器自己的面（`Nebula` / `node:<id>`）。
@@ -343,7 +343,7 @@ Message type (optional, default "INFO"):
    * `description`**——`inputSchema` 逐字节不变（Q5 判据）。身份未知 ⇒ 基础面。
    */
   def addressFaceVariant(base: ToolDefinition, nebulaRoot: Boolean, dispatcher: Boolean): ToolDefinition =
-    if nebulaRoot then base.copy(description = descriptionNebulaRoot)
+    if nebulaRoot then base.copy(description = descriptionRoot)
     else if dispatcher then base.copy(description = descriptionDispatcher)
     else base
 
@@ -553,19 +553,19 @@ Message type (optional, default "INFO"):
 
   private def roleOf(ctx: ToolContext): SenderRole =
     if ctx.isDispatcher then SenderRole.Dispatcher
-    else if ctx.agentDef.exists(_.name == MailTool.NebulaAgentName) then SenderRole.NebulaRoot
+    else if ctx.agentDef.exists(_.name == MailTool.RootAgentName) then SenderRole.NebulaRoot
     else SenderRole.Teamish
 
   private val NodePrefix = "node:"
   private val ProjectPrefix = "project:"
 
-  private def nebulaFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
+  private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id>\""
 
   /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
   private def outOfFaceError(address: String, role: SenderRole): ToolError =
     val face = role match
-      case SenderRole.NebulaRoot => nebulaFace
+      case SenderRole.NebulaRoot => rootFace
       case SenderRole.Dispatcher => dispatcherFace
       case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
     ToolError(
@@ -576,7 +576,7 @@ Message type (optional, default "INFO"):
   private def unresolvableError(address: String, role: SenderRole): ToolError =
     ToolError(
       s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${role match
-          case SenderRole.NebulaRoot => nebulaFace
+          case SenderRole.NebulaRoot => rootFace
           case SenderRole.Dispatcher => dispatcherFace
           case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
         }). No fallback was applied."
@@ -620,14 +620,14 @@ Message type (optional, default "INFO"):
         else if role == SenderRole.Dispatcher then IO.pure(Left(outOfFaceError(address, role)))
         else deliverToProject(pname, message, imagePaths, mailType, ctx)
       )
-    else if address == MailTool.NebulaAgentName then
+    else if address == MailTool.RootAgentName then
       role match
         case SenderRole.NebulaRoot =>
           Some(
             IO.pure(
               Left(
                 ToolError(
-                  s"Address \"Nebula\" is your own (self) address — it is not in your address face ($nebulaFace)."
+                  s"Address \"Nebula\" is your own (self) address — it is not in your address face ($rootFace)."
                 )
               )
             )
@@ -635,7 +635,7 @@ Message type (optional, default "INFO"):
         case SenderRole.Dispatcher =>
           Some(
             countMailUsage(
-              deliverToNebulaRoot(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system),
+              deliverToRootAgent(address, withChainAnnotation(message, chainId), blocks, mailType, ctx, system),
               chainId,
               ctx
             )
@@ -780,7 +780,7 @@ Message type (optional, default "INFO"):
     ctx: ToolContext,
     intake: Option[String] = None
   ): IO[InjectionAttribution] =
-    val senderName = ctx.agentDef.map(_.name).getOrElse(MailTool.NebulaAgentName)
+    val senderName = ctx.agentDef.map(_.name).getOrElse(MailTool.RootAgentName)
     TeamSessionRegistry.teamOfSession(ctx.sessionId.getOrElse("")).map { team =>
       InjectionAttribution(
         sender = Some(senderName),
@@ -1374,7 +1374,7 @@ Message type (optional, default "INFO"):
    * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。
    */
-  private def deliverToNebulaRoot(
+  private def deliverToRootAgent(
     address: String,
     message: String,
     blocks: Option[List[ContentBlock]],
@@ -1386,23 +1386,23 @@ Message type (optional, default "INFO"):
     ctx.sharedResources match
       case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
       case Some(res) =>
-        resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+        resolveRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some((sid, ref)) =>
-            sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system).flatMap {
+            sendMail(ref, RootAgentName, message, blocks, mailType, ctx, system).flatMap {
               case Right(_) =>
-                onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx).as(
+                onMailDelivered(senderSessionId, sid, RootAgentName, message, ctx).as(
                   Right(
                     s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
                   )
                 )
               case Left(err) => IO.pure(Left(err))
             }
-          case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
+          case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
         }
     end match
-  end deliverToNebulaRoot
+  end deliverToRootAgent
 
-  private def nebulaUnresolvedError(senderSessionId: String): ToolError =
+  private def rootUnresolvedError(senderSessionId: String): ToolError =
     ToolError(
       "Cannot resolve the Nebula root session (NEBULA_ROOT_UNRESOLVED). No Mail was delivered — this is an explicit " +
         "failure, not a silent success. Expected: exactly one live Root session whose session meta names agent 'Nebula' " +
@@ -1476,10 +1476,10 @@ Message type (optional, default "INFO"):
 
     TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
-        if address == NebulaAgentName && senderName != NebulaAgentName then
-          canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
+        if address == RootAgentName && senderName != RootAgentName then
+          canMailRoot(ctx, senderName, senderSessionId).flatMap { canMail =>
             if canMail then resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
-            else IO.pure(Left(nebulaDeniedError(senderName)))
+            else IO.pure(Left(rootDeniedError(senderName)))
           }
         else resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
       case Some(teamName) =>
@@ -1528,7 +1528,7 @@ Message type (optional, default "INFO"):
                 for
                   senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
                   sr <- senderTeamOpt match
-                    case None if address != NebulaAgentName =>
+                    case None if address != RootAgentName =>
                       IO.pure(Left(ToolError(TeamOnlyRoutingError)))
                     case _ =>
                       for
@@ -1549,8 +1549,8 @@ Message type (optional, default "INFO"):
                               system,
                               senderSessionId
                             )
-                          case Right(None) if address == NebulaAgentName =>
-                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address, None)
+                          case Right(None) if address == RootAgentName =>
+                            queueToRoot(message, mailType, imagePaths, ctx, system, senderSessionId, address, None)
                           case Right(None) => mailNotFound(address)
                       yield sr2
                 yield sr
@@ -1572,7 +1572,7 @@ Message type (optional, default "INFO"):
    * enforced upstream: deliverQueue runs checkTeamScope first, so only
    * canMailNebula senders reach here with address == "Nebula".
    */
-  private[tools] def queueToNebula(
+  private[tools] def queueToRoot(
     message: String,
     mailType: String,
     imagePaths: List[String],
@@ -1584,10 +1584,10 @@ Message type (optional, default "INFO"):
   ): IO[Either[ToolError, String]] =
     ctx.sharedResources match
       case Some(res) =>
-        resolveNebulaRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
-          case Some(nebulaSid) =>
+        resolveRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
+          case Some(rootSid) =>
             queueToSession(
-              nebulaSid,
+              rootSid,
               address,
               withChainAnnotation(message, chainId),
               mailType,
@@ -1596,7 +1596,7 @@ Message type (optional, default "INFO"):
               system,
               senderSessionId
             )
-          case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
+          case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
         }
       case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
 
@@ -1608,12 +1608,12 @@ Message type (optional, default "INFO"):
    *   ② 无 preferred 时按 **session meta**（`agentName == "Nebula"`）判定，且必须唯一。
    * 两档都**排除发信者自身**（硬禁「回落成发信者自身」）。
    */
-  private[tools] def resolveNebulaRootSession(
+  private[tools] def resolveRootSession(
     res: SharedResources,
     senderSessionId: String,
     preferredRootSid: Option[String] = None
   ): IO[Option[String]] =
-    resolveNebulaRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
+    resolveRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
 
   /**
    * Root records eligible as "the Nebula root"（判据见 [[resolveNebulaRootSession]] 文档）。
@@ -1623,7 +1623,7 @@ Message type (optional, default "INFO"):
    * 收件腿（`nebflow.neblink.DeviceMailInbox`）注入**本机 Nebula 会话**时必须走本
    * **唯一解析单点**（禁第二份同表达式：两份必然漂移）。零语义改动、零授权面改动。
    */
-  private[nebflow] def resolveNebulaRoots(
+  private[nebflow] def resolveRoots(
     res: SharedResources,
     senderSessionId: String,
     preferredRootSid: Option[String]
@@ -1643,17 +1643,17 @@ Message type (optional, default "INFO"):
           else
             rootRecs.flatTraverse { rec =>
               store.getSessionMeta(rec.sessionId).map { meta =>
-                if meta.flatMap(_.agentName).contains(NebulaAgentName) then List((rec.sessionId, rec.ref)) else Nil
+                if meta.flatMap(_.agentName).contains(RootAgentName) then List((rec.sessionId, rec.ref)) else Nil
               }
             }
     }
 
-  private def resolveNebulaRootRef(
+  private def resolveRootRef(
     res: SharedResources,
     senderSessionId: String,
     preferredRootSid: Option[String]
   ): IO[Option[(String, ActorRef[AgentCommand])]] =
-    resolveNebulaRoots(res, senderSessionId, preferredRootSid).map {
+    resolveRoots(res, senderSessionId, preferredRootSid).map {
       case List(one) => Some(one)
       case _ => None // 0 命中或 ≥2 命中（歧义）都算解析不出 → 显式报错
     }
@@ -1772,10 +1772,10 @@ Message type (optional, default "INFO"):
 
     TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
       case None =>
-        if address == NebulaAgentName && senderName != NebulaAgentName then
-          canMailNebula(ctx, senderName, senderSessionId).flatMap { canMail =>
+        if address == RootAgentName && senderName != RootAgentName then
+          canMailRoot(ctx, senderName, senderSessionId).flatMap { canMail =>
             if canMail then deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
-            else IO.pure(Left(nebulaDeniedError(senderName)))
+            else IO.pure(Left(rootDeniedError(senderName)))
           }
         else deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
       case Some(teamName) =>
@@ -1800,7 +1800,7 @@ Message type (optional, default "INFO"):
    * `senderName` string match (a name-based judge breaks the moment an agent is
    * renamed, and can be bypassed).
    */
-  private[tools] def canMailNebula(ctx: ToolContext, senderName: String, senderSessionId: String): IO[Boolean] =
+  private[tools] def canMailRoot(ctx: ToolContext, senderName: String, senderSessionId: String): IO[Boolean] =
     if ctx.isDispatcher then IO.pure(true)
     else
       TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
@@ -1814,7 +1814,7 @@ Message type (optional, default "INFO"):
    * 「You are a team worker」是错误归因（它不是 team worker）——分发器走
    * `ctx.isDispatcher` 判据本就不会命中本分支；此处文案按身份分档。
    */
-  private def nebulaDeniedError(senderName: String): ToolError =
+  private def rootDeniedError(senderName: String): ToolError =
     val who = if senderName.isEmpty then "This sender" else s"'$senderName'"
     ToolError(
       s"Cannot mail Nebula directly: $who is not a project dispatcher and not a team lead. " +
@@ -1867,7 +1867,7 @@ Message type (optional, default "INFO"):
                 for
                   senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
                   sr <- senderTeamOpt match
-                    case None if address != NebulaAgentName =>
+                    case None if address != RootAgentName =>
                       IO.pure(Left(ToolError(TeamOnlyRoutingError)))
                     case _ =>
                       for
@@ -1885,8 +1885,8 @@ Message type (optional, default "INFO"):
                                 case Left(_) => IO.unit
                             yield res
                           case Right(None) =>
-                            val isNebulaTarget = address == NebulaAgentName || address.endsWith(s"/$NebulaAgentName")
-                            if isNebulaTarget then
+                            val isRootTarget = address == RootAgentName || address.endsWith(s"/$RootAgentName")
+                            if isRootTarget then
                               // 追加条款②（2026-09-12）：**必须**落到真正的 Nebula root 会话。
                               // 旧实现取 `getParentActor(senderSessionId)`（last-writer-wins 注册）
                               // 并在缺失时取「第一条 Root 记录」——两条都可能落到发信者自身或
@@ -1895,16 +1895,16 @@ Message type (optional, default "INFO"):
                               // 发信者自身 ∧ 唯一），解析不到即**显式报错**，不投递。
                               ctx.sharedResources match
                                 case Some(res) =>
-                                  resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+                                  resolveRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
                                     case Some((sid, ref)) =>
                                       for
-                                        res <- sendMail(ref, NebulaAgentName, message, blocks, mailType, ctx, system)
+                                        res <- sendMail(ref, RootAgentName, message, blocks, mailType, ctx, system)
                                         _ <- res match
                                           case Right(_) =>
-                                            onMailDelivered(senderSessionId, sid, NebulaAgentName, message, ctx)
+                                            onMailDelivered(senderSessionId, sid, RootAgentName, message, ctx)
                                           case Left(_) => IO.unit
                                       yield res
-                                    case None => IO.pure(Left(nebulaUnresolvedError(senderSessionId)))
+                                    case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
                                   }
                                 case None =>
                                   IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
@@ -1959,16 +1959,16 @@ Message type (optional, default "INFO"):
   ): IO[Option[String]] =
     for
       teamOpt <- EntityLoader.loadTeam(address)
-      canNebula <- canMailNebula(ctx, senderName, senderSessionId)
-      crossTeam <- checkCrossTeamExplicitRoute(address, teamName, canNebula)
+      canRoot <- canMailRoot(ctx, senderName, senderSessionId)
+      crossTeam <- checkCrossTeamExplicitRoute(address, teamName, canRoot)
     yield teamOpt match
       case Some(_) if address == teamName =>
         None
       case Some(_) =>
         Some(s"Cannot mail outside your team. You are in team '$teamName'. Use your Manager to escalate to Nebula.")
-      case None if address == NebulaAgentName && canNebula =>
+      case None if address == RootAgentName && canRoot =>
         None
-      case None if address == NebulaAgentName =>
+      case None if address == RootAgentName =>
         Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
       case None =>
         crossTeam
@@ -2289,8 +2289,8 @@ Message type (optional, default "INFO"):
 
   private def mailNotFound(address: String): IO[Either[ToolError, String]] =
     val msg =
-      if address == NebulaAgentName then
-        s"Cannot deliver to '$NebulaAgentName': no Nebula root session could be resolved (NEBULA_ROOT_UNRESOLVED). " +
+      if address == RootAgentName then
+        s"Cannot deliver to '$RootAgentName': no Nebula root session could be resolved (NEBULA_ROOT_UNRESOLVED). " +
           "Legacy gate: only a project dispatcher or a team lead may mail root. Use Mail(\"manager\", ...) to report to your Team Lead."
       else s"Cannot deliver to '$address'. Use a team name or agent short name."
     IO.pure(Left(ToolError(msg)))

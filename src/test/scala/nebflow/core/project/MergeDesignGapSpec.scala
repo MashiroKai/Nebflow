@@ -296,7 +296,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
           status = NodeLifecycle.Cancelled,
           sessionRef = Some("node-sess-x"),
           result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: …)"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           notifySentAt = Some(now - 1_000L),
           createdAt = now - 900_000L,
           completedAt = Some(now - 800_000L)
@@ -442,7 +442,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
           name = "C",
           agent = "general",
           status = NodeLifecycle.Running,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           startedAt = Some(now - 60_000L),
           createdAt = now - 60_000L
         )
@@ -456,7 +456,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
           merge = true,
           status = NodeLifecycle.Pending,
           in = List(nid("c")),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 50_000L
         )
       )
@@ -538,7 +538,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
           merge = true,
           status = NodeLifecycle.Wiring,
           in = List(ids(0), ids(1), ids(2)),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 1_000L
         )
       )
@@ -583,7 +583,7 @@ class MergeDesignGapSpec extends CatsEffectSuite:
         merge = merge,
         status = status,
         in = in,
-        out = List(OutEdge.nebula),
+        out = List(OutEdge.root),
         createdAt = now - 1_000L
       )
     for

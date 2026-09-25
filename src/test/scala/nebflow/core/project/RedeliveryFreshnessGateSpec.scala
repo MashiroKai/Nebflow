@@ -51,7 +51,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
       id = id,
       name = name,
       agent = "worker",
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       status = status,
       result = Some(result),
       createdAt = System.currentTimeMillis() - 2 * Hour,
@@ -180,7 +180,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
             )
           )
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
         all <- store.snapshot.map(_.nodes)
       yield (n, msgs, all)
@@ -239,7 +239,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
             )
           )
         )
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
       yield msgs
       val msgs = io.unsafeRunSync()
@@ -273,7 +273,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
             )
           )
         )
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
       yield msgs
       val msgs = io.unsafeRunSync()

@@ -119,8 +119,7 @@ object AgentCore:
     td: ToolDefinition,
     identity: ToolFaceIdentity
   ): ToolDefinition =
-    if AskUserQuestionTool.Name == td.name then
-      if identity.isRootAgent then AskUserQuestionTool.nebulaRootVariant(td) else td
+    if AskUserQuestionTool.Name == td.name then if identity.isRootAgent then AskUserQuestionTool.rootVariant(td) else td
     else if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
     else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td

@@ -124,7 +124,7 @@ class FlowMapStoreSpec extends CatsEffectSuite:
       _ <- store.mutate(s =>
         s.copy(nodes =
           s.nodes ++ Map(
-            "a" -> node("a", "A").copy(out = List(OutEdge.nebula)),
+            "a" -> node("a", "A").copy(out = List(OutEdge.root)),
             "b" -> node("b", "B")
           )
         )

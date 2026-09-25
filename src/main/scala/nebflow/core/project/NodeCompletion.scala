@@ -979,7 +979,7 @@ private[project] trait NodeCompletion:
               val forward = from.out
                 .filterNot(OutEdge.isLoopEdge)
                 .map(_.to)
-                .filterNot(_ == OutEdge.NebulaTarget)
+                .filterNot(_ == OutEdge.RootTarget)
                 .distinct
                 .flatMap(OutEdge.resolveTargetId(s.nodes, _))
                 .distinct
@@ -1004,7 +1004,7 @@ private[project] trait NodeCompletion:
                       )
                     case None => acc
                 }
-                (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.nebula)))), targets)
+                (s.copy(nodes = pruned.updated(nodeId, from.copy(out = List(OutEdge.root)))), targets)
               end if
             case None => (s, Nil)
         }
@@ -1053,7 +1053,7 @@ private[project] trait NodeCompletion:
       case Some(from) =>
         val forward = from.out.iterator
           .filterNot(OutEdge.isLoopEdge) // 三答 3：:loop 回边不作传导边
-          .filterNot(_.to == OutEdge.NebulaTarget)
+          .filterNot(_.to == OutEdge.RootTarget)
           .flatMap(e => OutEdge.resolveTargetId(nodes, e.to))
           .filter(_ != nodeId)
           .toSet
@@ -1110,7 +1110,7 @@ private[project] trait NodeCompletion:
       case None => false
       case Some(from) =>
         val selfGap = from.in.nonEmpty || from.deps.nonEmpty ||
-          from.out.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(nodes, e.to).isDefined)
+          from.out.exists(e => e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(nodes, e.to).isDefined)
         selfGap || nodes.values.exists { n =>
           n.id != nodeId && (n.in.contains(nodeId) || n.deps.contains(nodeId) ||
             n.out.exists(e => OutEdge.resolveTargetId(nodes, e.to).contains(nodeId)))
@@ -1191,7 +1191,7 @@ private[project] trait NodeCompletion:
               case None => (s, NodeEngine.RetireDetach())
               case Some(from) =>
                 def resolvable(e: OutEdge): Boolean =
-                  e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined
+                  e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined
                 val selfHasGap = from.in.nonEmpty || from.deps.nonEmpty || from.out.exists(resolvable)
                 val others = s.nodes.values.filter(_.id != nodeId).toList
                 val inMirrors = others.filter(_.in.contains(nodeId)).map(_.id).sorted
@@ -1209,7 +1209,7 @@ private[project] trait NodeCompletion:
                   val depsSet = depsRefs.toSet
                   val depSatisfied = priorStatus == NodeLifecycle.Completed
                   val rewired: Map[String, NodeDef] = s.nodes.map { case (id, n) =>
-                    if id == nodeId then id -> n.copy(in = Nil, deps = Nil, out = List(OutEdge.nebula))
+                    if id == nodeId then id -> n.copy(in = Nil, deps = Nil, out = List(OutEdge.root))
                     else
                       val byIn =
                         if inSet.contains(id) then
@@ -1353,7 +1353,7 @@ private[project] trait NodeCompletion:
                   .canonical(v.out)
                   .filter(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e))
                   .map(_.to)
-                  .filterNot(_ == OutEdge.NebulaTarget)
+                  .filterNot(_ == OutEdge.RootTarget)
                   .distinct
               )
               .sorted

@@ -192,7 +192,7 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
               task = task,
               result = None,
               status = status,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

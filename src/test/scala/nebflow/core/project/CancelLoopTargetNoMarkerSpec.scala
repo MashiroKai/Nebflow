@@ -311,7 +311,7 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
         assertEquals(landStatus, NodeLifecycle.Pending, "no cascade ⇒ the sink is not cancelled")
         assertEquals(landMarker, List("n-ver"), "保留面：非回边前向目标照旧收「待承接」便签（逐字今日行为）")
         assertEquals(landFrames.length, 1, "保留面：非回边目标照旧收那 1 帧 nodeUpdated")
-        assertEquals(verOut, List(OutEdge.nebula), "保留面：被取消节点 out 改接 Nebula（该节点 out 里还有非回边目标 ⇒ 仍走改接腿）")
+        assertEquals(verOut, List(OutEdge.root), "保留面：被取消节点 out 改接 Nebula（该节点 out 里还有非回边目标 ⇒ 仍走改接腿）")
     }
   }
 
@@ -344,7 +344,7 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
               2000L,
               in = List("n-work"),
               role = NodeRoles.Verifier,
-              out = List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop))
+              out = List(OutEdge.root, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop))
             )
           )
         )
@@ -357,7 +357,7 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
       yield
         assertEquals(
           verOut,
-          List(OutEdge.nebula, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
+          List(OutEdge.root, OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
           "declared collateral (#697 范围外)：targets 全被排除 ⇒ 早退零写 ⇒ ':loop' 声明边保留"
         )
         assert(

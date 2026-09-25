@@ -274,7 +274,7 @@ object DeviceMailInbox:
       case Some(w) =>
         // 复用 MailTool 的**唯一** root 解析单点（session meta agentName == "Nebula"
         // ∧ 排除发信者自身 ∧ 唯一；0 或 ≥2 命中一律判为解析不出，禁静默挑一条）。
-        MailTool.resolveNebulaRoots(w.resources, senderSessionId = "", preferredRootSid = None).flatMap {
+        MailTool.resolveRoots(w.resources, senderSessionId = "", preferredRootSid = None).flatMap {
           case List((sid, ref)) =>
             // 🔴 `ref ! msg` **本身是 IO**（tell = 把消息投进信箱的副作用）——必须被
             // 执行；`map` 里丢弃它就是「零投递的静默成功」（DeviceMailSpec 的注入

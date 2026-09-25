@@ -145,7 +145,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
     status: String,
     in: List[String] = Nil,
     deps: List[String] = Nil,
-    out: List[OutEdge] = List(OutEdge.nebula),
+    out: List[OutEdge] = List(OutEdge.root),
     task: Option[String] = None,
     result: Option[String] = None,
     sessionRef: Option[String] = None,
@@ -411,7 +411,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       _ <- rt.engine.settleRunnableSweep().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.settleStaleRunningNodes().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.sweepDestroyWindows().handleErrorWith(_ => IO.unit)
-      _ <- rt.engine.redeliverUnconsumedNebulaResults().handleErrorWith(_ => IO.unit)
+      _ <- rt.engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
       _ <- rt.engine.dispatchNotify.redeliver().handleErrorWith(_ => IO.unit)
       // 会话层：真实起一个节点会话（AgentActor spawn 路径）
       _ <- rt.engine.startNode("n-fresh").handleErrorWith(_ => IO.unit)

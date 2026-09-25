@@ -24,12 +24,12 @@ class NodeToolsSpec extends FunSuite:
     // `ProjectTypes.NebulaDefaultOn` 常量注释。
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("Nebula"))),
-      Right(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)))
+      Right(List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)))
     )
   }
 
   test("parseOut: explicit-gate \"(pass,failed)Nebula\" keeps the notify form ({pass,failed}/result)") {
-    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass,failed)Nebula"))), Right(List(OutEdge.nebula)))
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass,failed)Nebula"))), Right(List(OutEdge.root)))
   }
 
   test("parseOut: null → disconnect (Right(Nil))") {

@@ -311,7 +311,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
         _ <- seed(
           rig,
           List(
-            n("n-a", NodeLifecycle.Pending, 1000L, out = List(OutEdge.nebula)), // 前向恒空
+            n("n-a", NodeLifecycle.Pending, 1000L, out = List(OutEdge.root)), // 前向恒空
             n("n-b", NodeLifecycle.Pending, 2000L, in = List("n-a"))
           )
         )

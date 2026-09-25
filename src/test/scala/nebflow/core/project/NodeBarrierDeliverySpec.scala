@@ -181,7 +181,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
               name = "node-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -237,7 +237,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
               name = "merge-c",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -372,7 +372,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
               name = "wiring-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -433,7 +433,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
               name = "race-c",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -455,7 +455,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
       // P1 追加语义：in 声明给上游 out 追加指向本节点的边，不再切断既有 Nebula 汇报边
       assertEquals(
         aAfter.out,
-        List(OutEdge.nebula, OutEdge(cId)),
+        List(OutEdge.root, OutEdge(cId)),
         "A.out must keep the mid-run rewiring (no stale snapshot overwrite)"
       )
       // 核心断言 2：C 收到 A 的结果并启动（修复前 deliveredTo 空 + 永久 wiring）
@@ -499,7 +499,7 @@ class NodeBarrierDeliverySpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

@@ -268,7 +268,7 @@ class NodeOutTargetResolveSpec extends CatsEffectSuite:
               name = "收集批",
               agent = "general",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

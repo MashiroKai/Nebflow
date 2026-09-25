@@ -207,7 +207,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       task = Some(s"$name landing task"),
       status = NodeLifecycle.Pending,
       in = in,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = now - 100_000L
     )
 
@@ -459,7 +459,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       task = Some(s"$name sink task"),
       status = NodeLifecycle.Pending,
       in = in,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = now - 100_000L
     )
 
@@ -734,7 +734,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
           List(OutEdge("n-merge"), OutEdge("n-work", Set(OutEdge.Fail), OutEdge.Loop)),
           now
         ),
-        taskUpstream("n-work", "work", List(OutEdge.nebula), now),
+        taskUpstream("n-work", "work", List(OutEdge.root), now),
         mergeNode("n-merge", "merge-v9", List("n-ver"), now)
       )
       // barrier 记账人为置齐（等价于「投递早已发生」的存量形态，同 V8）——只留判据面：
@@ -826,7 +826,7 @@ class MergeVerdictGateSpec extends CatsEffectSuite:
       // role=task（缺省）承载一个合成判词：本用例只验「非 verifier 的字段集零漂移」
       _ <- seed(
         rt,
-        taskUpstream("n-work", "work", List(OutEdge.nebula), now)
+        taskUpstream("n-work", "work", List(OutEdge.root), now)
           .copy(status = NodeLifecycle.Completed, lastVerdict = Some("fail"))
       )
       ctx = mkCtx(res, system, ws)

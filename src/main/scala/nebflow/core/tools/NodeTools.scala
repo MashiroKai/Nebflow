@@ -84,7 +84,7 @@ object NodeTools:
    * 原始串形态只留在存储层（边 to 字段，前端/审计可读）。
    */
   def resolveOutTarget(rt: ProjectRuntime, target: String): IO[Option[String]] =
-    if target == OutEdge.NebulaTarget then IO.pure(None)
+    if target == OutEdge.RootTarget then IO.pure(None)
     else rt.store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, target))
 
   /**
@@ -261,8 +261,8 @@ object NodeTools:
         //     （缺省 result）真投递 = 通知声明。
         // NebulaDefaultOn 不再经本路径：它只服务存量读路径（fromLegacyString /
         // OutEdge.nebula）——两处语义自此分叉（见 ProjectTypes.OutEdge.NebulaDefaultOn 注释）。
-        if target == OutEdge.NebulaTarget && gatesImplicit then
-          Right(OutEdge(OutEdge.NebulaTarget, OutEdge.DefaultOn, OutEdge.Signal))
+        if target == OutEdge.RootTarget && gatesImplicit then
+          Right(OutEdge(OutEdge.RootTarget, OutEdge.DefaultOn, OutEdge.Signal))
         else Right(OutEdge(target, declaredGates, mode))
       end if
     }
@@ -456,14 +456,14 @@ object NodeTools:
       val oldIds = from.out
         .filterNot(OutEdge.isLoopEdge)
         .map(_.to)
-        .filterNot(_ == OutEdge.NebulaTarget)
+        .filterNot(_ == OutEdge.RootTarget)
         .distinct
         .flatMap(OutEdge.resolveTargetId(nodes, _))
         .distinct
       val newIds = newEdges
         .filterNot(OutEdge.isLoopEdge)
         .map(_.to)
-        .filterNot(_ == OutEdge.NebulaTarget)
+        .filterNot(_ == OutEdge.RootTarget)
         .distinct
         .flatMap(OutEdge.resolveTargetId(nodes, _))
         .distinct
@@ -536,7 +536,7 @@ object NodeTools:
    */
   def ensureMergePassOnly(rt: ProjectRuntime, edges: List[OutEdge]): IO[Option[String]] =
     edges
-      .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.NebulaTarget)
+      .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.RootTarget)
       .toList
       .traverse { e =>
         // 目标按解析后 id 查（20260909 修复面：名字形态的 failed 边不再绕过本门控）
@@ -657,7 +657,7 @@ object NodeTools:
       case None if failEdges.isEmpty => IO.pure(None)
       case None =>
         val raw = failEdges.map(_.to)
-        if raw.exists(_ == OutEdge.NebulaTarget) then
+        if raw.exists(_ == OutEdge.RootTarget) then
           IO.pure(
             Some(
               s"node '$nodeName' routes its 'fail' verdict to \"Nebula\" — a fail route is an inter-node CONTROL edge (the target " +
@@ -697,7 +697,7 @@ object NodeTools:
                   val passIds = edges
                     .filter(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e))
                     .map(_.to)
-                    .filterNot(_ == OutEdge.NebulaTarget)
+                    .filterNot(_ == OutEdge.RootTarget)
                     .distinct
                   passIds.traverse(t => resolveOutTarget(rt, t).map(o => o.getOrElse(t))).flatMap { pids =>
                     if pids.exists(ids.contains) then
@@ -786,12 +786,12 @@ object NodeTools:
     rt.store.snapshot.map { s =>
       val edges = OutEdge.canonical(finalOut).filterNot(OutEdge.isLoopEdge)
       val hasNodeTarget =
-        edges.exists(e => e.to != OutEdge.NebulaTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined)
-      val nebulaRootEdge =
-        edges.exists(e => e.to == OutEdge.NebulaTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
+        edges.exists(e => e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined)
+      val rootEdge =
+        edges.exists(e => e.to == OutEdge.RootTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
       // 生效策略（缺键 ⇒ legacy 三态：投根 ⇒ root / flag ⇒ dispatcher / else silent）
       val effective = policy.getOrElse(
-        if nebulaRootEdge then NotifyPolicy.Root
+        if rootEdge then NotifyPolicy.Root
         else if legacyFlag then NotifyPolicy.Dispatcher
         else NotifyPolicy.Silent
       )
@@ -807,7 +807,7 @@ object NodeTools:
             s"⚠ notify=silent does NOT exempt failures ('$nodeName'): a failed node always notifies the dispatcher (and an explicit '(failed)Nebula' edge still reports to the root). silent suppresses COMPLETED events only."
           )
         else None,
-        if effective == NotifyPolicy.Root && !nebulaRootEdge then
+        if effective == NotifyPolicy.Root && !rootEdge then
           Some(
             s"⚠ notify=root but no root outlet declared ('$nodeName': no '(pass)Nebula' :result edge) — the node itself will not post to the root; chain-level visibility still arrives with the archived chain summary. Add an explicit '(pass)Nebula' out-edge if a per-node root bubble is required."
           )

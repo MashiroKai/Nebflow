@@ -244,7 +244,7 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
             name = name,
             agent = "test-agent",
             task = Some(task),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Wiring,
             createdAt = System.currentTimeMillis()
           ))
@@ -350,7 +350,7 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
                 agent = "test-agent",
                 task = Some("downstream"),
                 in = List("n-l3"),
-                out = List(OutEdge.nebula),
+                out = List(OutEdge.root),
                 status = NodeLifecycle.Pending,
                 createdAt = System.currentTimeMillis()
               ))

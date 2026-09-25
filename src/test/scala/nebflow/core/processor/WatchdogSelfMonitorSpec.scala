@@ -414,7 +414,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
           status = NodeLifecycle.Cancelled,
           result = Some("cancelled[source=engine]: reason=stuck (L3 hard-recovery: x)"),
           sessionRef = Some(sid),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = System.currentTimeMillis() - 60_000L
         )
       )

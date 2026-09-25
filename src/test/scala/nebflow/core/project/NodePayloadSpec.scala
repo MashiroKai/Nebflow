@@ -100,7 +100,7 @@ class NodePayloadSpec extends FunSuite:
       Some(expected),
       "key set must be exactly the no-out base set (no skill/mcp/preset; out omitted when Nil)"
     )
-    val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.nebula)), now = 2000L)
+    val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.root)), now = 2000L)
     assertEquals(
       withOut.asObject.map(_.keys.toSet),
       Some(base + "out"),

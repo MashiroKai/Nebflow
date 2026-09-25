@@ -196,7 +196,7 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
               status = NodeLifecycle.Completed,
               createdAt = base,
               completedAt = Some(base + 1),
-              out = List(OutEdge.nebula)
+              out = List(OutEdge.root)
             ),
             "n2" -> NodeDef(
               id = "n2",
@@ -206,7 +206,7 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
               createdAt = base + 10,
               completedAt = Some(base + 20),
               in = List("n1"),
-              out = List(OutEdge.nebula)
+              out = List(OutEdge.root)
             )
           )
         )

@@ -97,7 +97,7 @@ import java.nio.charset.StandardCharsets
  * （`User.md` / `agents/<agent>/memory.md` / 项目 memory）、`queue.jsonl`（读写口径仍在
  * [[MemoryQueue]]，本 hook 只调它的公开 `enqueue`）。
  */
-object NebulaMemoryHook extends PreCompactionHook:
+object RootMemoryHook extends PreCompactionHook:
   private val logger = NebflowLogger.forName("nebflow.prehook.nebula")
 
   /** 入队 actor 标识（引擎侧派生：抽取者身份）。 */
@@ -281,4 +281,4 @@ object NebulaMemoryHook extends PreCompactionHook:
       }
     }
 
-end NebulaMemoryHook
+end RootMemoryHook

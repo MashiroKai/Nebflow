@@ -236,7 +236,7 @@ class MergeQueuePositionSpec extends CatsEffectSuite:
       merge = true,
       task = Some(s"landing $name"),
       status = status,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = createdAt
     )
 
@@ -249,7 +249,7 @@ class MergeQueuePositionSpec extends CatsEffectSuite:
       merge = true,
       task = Some(s"landing $name"),
       status = NodeLifecycle.Running,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       startedAt = Some(createdAt + 10L),
       createdAt = createdAt
     )
@@ -467,7 +467,7 @@ class MergeQueuePositionSpec extends CatsEffectSuite:
           agent = "coder",
           task = Some("work"),
           status = NodeLifecycle.Pending,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 3_000L
         ),
         runningHolder("n-hold", "hold-merge", now - 9_000L),

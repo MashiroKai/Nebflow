@@ -328,7 +328,7 @@ object OutEdge:
     canonical(edges)
       .filter(e => isLoopEdge(e) && e.on.contains(Fail))
       .map(_.to)
-      .filterNot(_ == NebulaTarget)
+      .filterNot(_ == RootTarget)
       .distinct
 
   /**
@@ -345,7 +345,7 @@ object OutEdge:
    * 二者对同一字面 `"Nebula"` 给出**不同**落边 ⇒ 任何新增消费方必须显式声明自己属哪一侧。
    */
   val NebulaDefaultOn: Set[String] = Set(Pass, Failed)
-  val NebulaTarget = "Nebula"
+  val RootTarget = "Nebula"
 
   given Configuration = Configuration.default.withDefaults
   given Codec[OutEdge] = ConfiguredCodec.derived
@@ -354,7 +354,7 @@ object OutEdge:
    * 旧拓扑 "Nebula" 边的等价构造（completed+failed 双通报，零漂移）——NodeDef
    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。
    */
-  def nebula: OutEdge = OutEdge(NebulaTarget, NebulaDefaultOn)
+  def root: OutEdge = OutEdge(RootTarget, NebulaDefaultOn)
 
   /**
    * 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
@@ -363,7 +363,7 @@ object OutEdge:
   def fromLegacyString(s: String): Option[OutEdge] =
     val t = s.trim
     if t.isEmpty || t.equalsIgnoreCase("null") then None
-    else Some(if t == NebulaTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
+    else Some(if t == RootTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
 
   /**
    * out 边目标串 → 节点 id 解析（标识符二元性收敛单点，2026-09-09 in 落盘丢失事故）：
@@ -523,7 +523,7 @@ object NotifyPolicy:
    * N3 收窄：`mode == Result` 合取项），bare `Nebula`（`:signal` 出口标记）不算投根声明。
    */
   def legacyRootVisible(node: NodeDef): Boolean =
-    node.out.exists(e => e.to == OutEdge.NebulaTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
+    node.out.exists(e => e.to == OutEdge.RootTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
 
   /**
    * completed 事件是否回流分发器（DispatchNotify completion 腿的判定，R2/R3）。

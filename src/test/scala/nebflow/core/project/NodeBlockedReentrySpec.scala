@@ -243,7 +243,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
               name = "down-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -636,7 +636,7 @@ class NodeBlockedReentrySpec extends CatsEffectSuite:
               name = "wiring-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

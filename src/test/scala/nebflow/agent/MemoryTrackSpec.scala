@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.PathUtil
-import nebflow.core.compact.NebulaMemoryHook
+import nebflow.core.compact.RootMemoryHook
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
 import nebflow.service.{MemoryBudget, MemoryStore}
 
@@ -233,7 +233,7 @@ class MemoryTrackSpec extends FunSuite:
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n- 既有条目\n", createFolders = true)
     val before = os.read(MemoryStore.userMemoryPath)
-    NebulaMemoryHook
+    RootMemoryHook
       .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙", "不是 FACT 格式"), Some("sess-1"))
       .unsafeRunSync()
     assertEquals(os.read(MemoryStore.userMemoryPath), before, "关闭 User.md 直写（W2 绕过通道）")
@@ -244,7 +244,7 @@ class MemoryTrackSpec extends FunSuite:
     assertEquals(st.notes.map(_.action).distinct, Vector("append"))
     assert(st.notes.forall(_.section.isEmpty), "无具名节（`## Dream Extract` 已随 DreamMode 停用退役 ⇒ 恒文件尾追加）")
     assert(st.notes.map(_.content.getOrElse("")).exists(_.contains("[PATTERN]")), "类别 in-band 保留")
-    assertEquals(MemoryHistory.ofKind(MemoryHistory.KindQueue).head.actor, NebulaMemoryHook.Actor, "actor 引擎代写")
+    assertEquals(MemoryHistory.ofKind(MemoryHistory.KindQueue).head.actor, RootMemoryHook.Actor, "actor 引擎代写")
 
   // ===== 注入（IMPL-1）=====
 

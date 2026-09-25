@@ -30,7 +30,7 @@ class DeviceMailFaceContractSpec extends FunSuite:
   /** Mail 的三个模型可见工具面（基础 + root 变体 + dispatcher 变体）。 */
   private val mailFaces: List[(String, String)] = List(
     "Mail.descriptionBase" -> MailTool.descriptionBase,
-    "Mail.descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+    "Mail.descriptionNebulaRoot" -> MailTool.descriptionRoot,
     "Mail.descriptionDispatcher" -> MailTool.descriptionDispatcher
   )
 

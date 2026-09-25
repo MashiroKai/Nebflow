@@ -578,7 +578,7 @@ class LoopNodeSpec extends CatsEffectSuite:
             "n-legacy-loop" -> legacyLoop(
               "n-legacy-loop",
               "legacy-loop",
-              List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))
+              List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result))
             )
           )
         )
@@ -601,7 +601,7 @@ class LoopNodeSpec extends CatsEffectSuite:
             "n-up-ok" -> legacyLoop(
               "n-up-ok",
               "up-ok",
-              List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result))
+              List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result))
             )
           )
         )
@@ -659,7 +659,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       )
       assertEquals(
         editAfter.out,
-        List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
+        List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
         "(e) the rejected edit must leave the previous edge set untouched"
       )
       assert(
@@ -669,7 +669,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       assert(sMirror.nodes.values.forall(_.name != "down-1"), "(f) the rejected call must not land the downstream node")
       assertEquals(
         legacyAfter.map(_.out),
-        Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))),
+        Some(List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result))),
         "(f) zero residue: the legacy upstream edge set must stay untouched"
       )
       assert(rMirrorOk.isRight, s"(g) mirror append onto a two-leg loop upstream must pass, got: $rMirrorOk")
@@ -686,7 +686,7 @@ class LoopNodeSpec extends CatsEffectSuite:
       )
       assertEquals(
         legacyAfter2.map(_.out),
-        Some(List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Result))),
+        Some(List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result))),
         "(h) zero residue: the legacy upstream edge set must stay untouched"
       )
     end for

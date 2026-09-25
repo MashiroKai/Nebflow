@@ -45,7 +45,7 @@ object PreCompactionHooks:
    */
   def forProfile(profile: CompactionProfile): PreCompactionHook =
     profile match
-      case CompactionProfile.Root => NebulaMemoryHook
+      case CompactionProfile.Root => RootMemoryHook
       case _ => NoOpHook
 
 /** No-op hook for Legacy/unprofiled agents. */

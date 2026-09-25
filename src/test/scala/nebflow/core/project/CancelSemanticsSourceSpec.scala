@@ -334,7 +334,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
             task = Some("downstream-E"),
             status = NodeLifecycle.Pending,
             in = List("n-d"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             createdAt = now - 1000L
           )
         )
@@ -404,7 +404,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
       // ── C2：恰一条（第二次入口零新增）──
       assertEquals(texts2.size, 1, s"a second cancel-path entry must not add a notification, got ${texts2.size}")
       // R4 摘除面零回归（既有语义）＋ 待承接标记
-      assertEquals(u.out, List(OutEdge.nebula), "R4: out still detached to Nebula (unchanged)")
+      assertEquals(u.out, List(OutEdge.root), "R4: out still detached to Nebula (unchanged)")
       assert(
         !d.in.contains("n-u") && d.pendingSuccession == List("n-u"),
         s"R4: downstream mirror still pruned + 待承接 registered, got in=${d.in} ps=${d.pendingSuccession}"
@@ -425,7 +425,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
           agent = "test-agent",
           status = NodeLifecycle.Cancelled,
           result = Some(upstreamResult),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 5000L,
           completedAt = Some(now - 4000L)
         )
@@ -438,7 +438,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
           agent = "test-agent",
           task = Some("FAIL-B work"),
           status = NodeLifecycle.Pending,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           retry = Some(RetryPolicy(upstream = "n-u", max = 3)),
           createdAt = now - 1000L
         )
@@ -537,7 +537,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
           agent = "test-agent",
           status = NodeLifecycle.Cancelled,
           result = Some(upstreamResult),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 900_000L,
           completedAt = Some(now - 600_000L)
         ),
@@ -548,7 +548,7 @@ class CancelSemanticsSourceSpec extends FunSuite:
           task = Some("downstream"),
           status = NodeLifecycle.Pending,
           in = List("n-u"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 900_000L
         )
       )

@@ -87,8 +87,8 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(!AskUserQuestionTool.baseHasModeProperty, "基础 inputSchema 里出现了 mode —— 非 root 会话可见性被破坏")
     val rootVariant = ToolDefinition(
       AskUserQuestionTool.Name,
-      AskUserQuestionTool.descriptionNebulaRoot,
-      AskUserQuestionTool.schemaNebulaRoot(AskUserQuestionTool.inputSchema)
+      AskUserQuestionTool.descriptionRoot,
+      AskUserQuestionTool.schemaRoot(AskUserQuestionTool.inputSchema)
     )
     assert(
       modeOf(rootVariant).isDefined,
@@ -96,11 +96,11 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     )
     assertEquals(AskUserQuestionTool.descriptionBase, AskUserQuestionTool.description)
     assert(
-      AskUserQuestionTool.descriptionNebulaRoot.startsWith(AskUserQuestionTool.description),
+      AskUserQuestionTool.descriptionRoot.startsWith(AskUserQuestionTool.description),
       "root 变体 description 必须以基础 description 原样开头（基础段零改动）"
     )
     assert(
-      AskUserQuestionTool.descriptionNebulaRoot.length > AskUserQuestionTool.description.length,
+      AskUserQuestionTool.descriptionRoot.length > AskUserQuestionTool.description.length,
       "root 变体 description 未增加非阻塞说明"
     )
   }

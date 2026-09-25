@@ -650,7 +650,7 @@ class NodeMountEnforceSpec extends CatsEffectSuite:
           in = List("n-cancelled-up"),
           status = NodeLifecycle.Wiring,
           pendingSuccession = List("n-cancelled-up"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 870_000L
         )
       )

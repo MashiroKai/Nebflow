@@ -180,7 +180,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
       merge = true,
       task = Some(s"landing task for $name"),
       status = NodeLifecycle.Pending,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = createdAt
     )
 
@@ -374,7 +374,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           task = Some("landing m1"),
           status = NodeLifecycle.Pending,
           in = List("u1"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 90_000L
         ),
         NodeDef(
@@ -385,7 +385,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           task = Some("landing m2"),
           status = NodeLifecycle.Pending,
           in = List("u2"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 80_000L
         ),
         NodeDef(
@@ -396,7 +396,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           task = Some("landing m3"),
           status = NodeLifecycle.Pending,
           in = List("u3"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 70_000L
         )
       )
@@ -509,7 +509,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           merge = true,
           task = Some("landing a"),
           status = NodeLifecycle.Running,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           startedAt = Some(now - 3_600_000L),
           createdAt = now - 3000L
         ),
@@ -628,7 +628,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
             merge = true,
             task = Some("landing a"),
             status = NodeLifecycle.Running,
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             startedAt = Some(now - 60_000L),
             createdAt = now - 3000L
           )
@@ -700,7 +700,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           task = Some("landing via deps"),
           status = NodeLifecycle.Pending,
           deps = List("n-ver"),
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 100_000L
         )
       )
@@ -764,7 +764,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           agent = "general",
           task = Some("work 1"),
           status = NodeLifecycle.Pending,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 3000L
         ),
         NodeDef(
@@ -773,7 +773,7 @@ class MergeMutexGateSpec extends CatsEffectSuite:
           agent = "general",
           task = Some("work 2"),
           status = NodeLifecycle.Pending,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 1000L
         )
       )

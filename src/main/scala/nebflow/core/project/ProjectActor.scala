@@ -206,7 +206,7 @@ object ProjectRuntimeRegistry:
           // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（ProjectCreate 路径）且根
           // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
           // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
-          _ <- engine.redeliverUnconsumedNebulaResults().handleErrorWith(_ => IO.unit)
+          _ <- engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
           rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef), board)
           _ <- register(rt)
         yield rt
@@ -467,7 +467,7 @@ object ProjectActor:
                   .revalidatePluginTrust()
                   .handleErrorWith(e => logger.warn(s"plugin trust revalidation failed: ${e.getMessage}")) *>
                 cfg.engine
-                  .redeliverUnconsumedNebulaResults()
+                  .redeliverUnconsumedRootResults()
                   .handleErrorWith(e => logger.warn(s"Node redelivery scan failed: ${e.getMessage}").as(0))
                   .void *>
                 // 资格回扫（trigger-chain-fix §6.2）：pending/wiring 启动资格周期

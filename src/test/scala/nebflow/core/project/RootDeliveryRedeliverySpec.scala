@@ -39,7 +39,7 @@ import scala.concurrent.duration.*
  *  - R5 改接手动投递（deliverOutTo）投递 + 刷账（人工意图通道保持）
  *  - 红基线见报告 §V8（变异 = deliverToNebula 去记账 + 扫描桩返回 0 → R1 红）
  */
-class NebulaDeliveryRedeliverySpec extends FunSuite:
+class RootDeliveryRedeliverySpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
 
@@ -54,7 +54,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
       id = id,
       name = s"node-$id",
       agent = "worker",
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       status = status,
       result = Some(result),
       createdAt = System.currentTimeMillis() - 60_000L
@@ -240,7 +240,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
             s.nodes + ("n-done" -> completedNode("n-done", NodeLifecycle.Completed, "V8_CRASH_WINDOW_RESULT"))
           )
         )
-        n1 <- engine.redeliverUnconsumedNebulaResults()
+        n1 <- engine.redeliverUnconsumedRootResults()
         msgs <- awaitImms(recorded, min = 1)
         node <- store.getNode("n-done")
       yield (n1, msgs, node)
@@ -264,9 +264,9 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- store.mutate(s =>
           s.copy(nodes = s.nodes + ("n-a" -> completedNode("n-a", NodeLifecycle.Completed, "r2 result")))
         )
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- engine.redeliverUnconsumedRootResults()
         countAfterFirst <- awaitImms(recorded, min = 1).map(_.size)
-        n2 <- engine.redeliverUnconsumedNebulaResults()
+        n2 <- engine.redeliverUnconsumedRootResults()
         _ <- IO.sleep(200.millis)
         countAfterSecond <- recorded.get.map(_.size)
       yield (countAfterFirst, n2, countAfterSecond)
@@ -284,7 +284,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- store.mutate(s =>
           s.copy(nodes = s.nodes + ("n-park" -> completedNode("n-park", NodeLifecycle.Completed, "r3 parked")))
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- recorded.get
         node <- store.getNode("n-park")
       yield (n, msgs, node)
@@ -303,7 +303,7 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- store.mutate(s =>
           s.copy(nodes = s.nodes + ("n-fail" -> completedNode("n-fail", NodeLifecycle.Failed, "r4 failure detail")))
         )
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- awaitImms(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
@@ -361,11 +361,11 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
         _ <- registerRoot(resources, rootSid, rootRef)
         // bare "Nebula" 落边形态：{pass}/signal 出口标记 —— 崩溃/重启窗口内扫描不得补投
         exitMarker = completedNode("n-exit", NodeLifecycle.Completed, "R6_EXIT_MARKER_RESULT")
-          .copy(out = List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)))
+          .copy(out = List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)))
         // 对照：显式门集 {pass,failed}/result 通知声明仍须被扫描补投
         notifyEdge = completedNode("n-notify", NodeLifecycle.Completed, "R6_NOTIFY_RESULT")
         _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-exit" -> exitMarker) + ("n-notify" -> notifyEdge)))
-        n <- engine.redeliverUnconsumedNebulaResults()
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- awaitImms(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
@@ -456,4 +456,4 @@ class NebulaDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-end NebulaDeliveryRedeliverySpec
+end RootDeliveryRedeliverySpec

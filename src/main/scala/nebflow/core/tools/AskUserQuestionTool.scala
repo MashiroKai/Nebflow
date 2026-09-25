@@ -63,13 +63,13 @@ Behavior:
    * 语义（发起即返回 + 答复稍后以消息到达 + 未答按最佳判断继续）、② 默认值、
    * ③ 适用面声明（本形态仅本会话可见）。
    */
-  private val nebulaRootExtraDescription =
+  private val rootExtraDescription =
     """
 - Non-blocking mode (`mode` = "non-blocking", default "blocking"): the tool returns immediately with an acknowledgement instead of waiting. Your turn does NOT pause; the question card is shown to the user exactly as in blocking mode, and the answer arrives later as a new user message in this session (it wakes a new turn when you are idle, or lands at the next turn boundary). The acknowledgement carries the requestId — match the incoming answer to it. If no answer arrives and you cannot decide, proceed with your best judgment and say so in your wrap-up.
 - `mode` is available to this session only (Nebula root); every other session sees the blocking form alone."""
 
   /** root 变体 description（B1/L5）：基础变体 + 增量段（基础文本一字不改）。 */
-  val descriptionNebulaRoot: String = description + nebulaRootExtraDescription
+  val descriptionRoot: String = description + rootExtraDescription
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -171,7 +171,7 @@ Behavior:
    * root 变体 schema：基础 schema + `properties.mode`（从传入的基础定义派生 ⇒
    * 与基础变体的字节一致性由构造方式保证）。
    */
-  def schemaNebulaRoot(base: JsonObject): JsonObject =
+  def schemaRoot(base: JsonObject): JsonObject =
     val props = base("properties").flatMap(_.asObject).getOrElse(JsonObject.empty)
     base.add("properties", io.circe.Json.fromJsonObject(props.add("mode", modePropertySchema)))
 
@@ -184,10 +184,10 @@ Behavior:
    * 已经过 `RemoteExecutor.augmentSchema`）派生 ⇒ 变体只多一个属性 + 一段描述，
    * 基础面逐字节不受影响；工具名不变（成员资格与权限边界零变化）。
    */
-  def nebulaRootVariant(base: ToolDefinition): ToolDefinition =
+  def rootVariant(base: ToolDefinition): ToolDefinition =
     base.copy(
-      description = descriptionNebulaRoot,
-      inputSchema = schemaNebulaRoot(base.inputSchema)
+      description = descriptionRoot,
+      inputSchema = schemaRoot(base.inputSchema)
     )
 
   def summarize(input: JsonObject): String =

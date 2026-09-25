@@ -296,14 +296,14 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(r.isRight, s"bare Nebula create must pass, got: $r")
       assertEquals(
         n.out,
-        List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)),
+        List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)),
         "bare \"Nebula\" must land as the EXIT MARKER edge ({pass}, signal) — zero delivery, no root notify"
       )
       assertEquals(n.status, NodeLifecycle.Completed, "exit-marker node still runs to completion")
       assert(rNotify.isRight, s"explicit-gate Nebula create must pass, got: $rNotify")
       assertEquals(
         n2.out,
-        List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
+        List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
         "explicit gate set must keep the notify form ({pass,failed}, result)"
       )
     end for
@@ -402,7 +402,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
               name = "src",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             ),
             "n-dst-a" -> NodeDef(
@@ -410,7 +410,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
               name = "dst-a",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             ),
             "n-dst-b" -> NodeDef(
@@ -418,7 +418,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
               name = "dst-b",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )

@@ -219,7 +219,7 @@ class NodeEngine(
    * 时仍 markNebulaDelivered，账本一致性不破坏。identity = nodeId（无 nodeId
    * 的 fire-and-forget 通道用 nodeName——escalate 各节点独立窗口）。
    */
-  private[project] val recentNebulaDeliveries: Ref[IO, Map[(String, String), Long]] =
+  private[project] val recentRootDeliveries: Ref[IO, Map[(String, String), Long]] =
     Ref.unsafe[IO, Map[(String, String), Long]](Map.empty)
 
   /**
@@ -587,9 +587,9 @@ class NodeEngine(
     // 边是 verdict 选通的控制边（`on={fail}`，与 `failed` 门正交），不进任何 failed
     // 结算面——否则 vera 的 loop 目标会被误当「失败下游」做 merge 兜底/停等留痕
     // （无 failed 门覆盖 ⇒ 恒落 waiting 分支，每轮刷一条误导日志）。
-    val nodeTargets = edges.filterNot(OutEdge.isLoopEdge).map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+    val nodeTargets = edges.filterNot(OutEdge.isLoopEdge).map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
     val signalTargets = failedEdges
-      .filter(e => e.to != OutEdge.NebulaTarget && e.mode == OutEdge.Signal)
+      .filter(e => e.to != OutEdge.RootTarget && e.mode == OutEdge.Signal)
       .map(_.to)
       .distinct
     val mergeFallback: IO[Unit] = nodeTargets.traverse_(t =>
@@ -599,12 +599,12 @@ class NodeEngine(
         case _ => IO.unit
       }
     )
-    val nebulaIO = failedEdges.filter(_.to == OutEdge.NebulaTarget) match
+    val rootIO = failedEdges.filter(_.to == OutEdge.RootTarget) match
       case Nil => IO.unit
       case nes if nes.exists(_.mode == OutEdge.Result) =>
         // notifybatch 批（2026-09-18，M-2）：失败腿同走打包入口（决策②异常类一并合并）。
         enqueueRootNotify(s"[Node '${node.name}' failed]\n$err", node.name, "failed", Some(node.id))
-      case _ => markNebulaDelivered(node.id)
+      case _ => markRootDelivered(node.id)
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
       val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等（merge 兜底者已转 blocked）
@@ -615,7 +615,7 @@ class NodeEngine(
       else IO.unit
     for
       _ <- mergeFallback
-      _ <- nebulaIO
+      _ <- rootIO
       _ <- signalIO
       _ <- waitLog
       // P2 retry 单点触发（spec §2.3，wf3 §8-2）：retry 命中（gen < max）→ 自动回跳
@@ -941,9 +941,9 @@ class NodeEngine(
    * 缺口4：去重判定+登记（固定窗：首投时间戳起算 60s，不滑动；过期条目顺路
    * 淘汰=时间窗淘汰）。true = 窗口内重复（应抑制 offer）。
    */
-  private[project] def dedupeNebulaDelivery(identity: String, status: String): IO[Boolean] =
+  private[project] def dedupeRootDelivery(identity: String, status: String): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
-      recentNebulaDeliveries.modify { m =>
+      recentRootDeliveries.modify { m =>
         val live = m.view.filter { case (_, ts) => now - ts < NodeEngine.NebulaDedupWindowMs }.toMap
         live.get((identity, status)) match
           case Some(_) => (live, true)
@@ -955,7 +955,7 @@ class NodeEngine(
    * V8: 写 nebulaDeliveredAt 记账（活动区优先，归档区兜底——TTL 归档的
    * 未投递节点同样要记账，否则扫描每次重启都重投）。
    */
-  private[project] def markNebulaDelivered(nodeId: String): IO[Unit] =
+  private[project] def markRootDelivered(nodeId: String): IO[Unit] =
     store.getNode(nodeId).flatMap {
       case Some(_) =>
         store.mutate { s =>
@@ -981,7 +981,7 @@ class NodeEngine(
    * 扫描保证根会话可用后的 30s 内补投。根 ref 缺失时静默跳过（结果滞留 map，
    * 不消费不记账，下个 tick 再试）。返回本次补投的节点数（>0 时 actor 记 info）。
    */
-  def redeliverUnconsumedNebulaResults(): IO[Int] =
+  def redeliverUnconsumedRootResults(): IO[Int] =
     resources.agentRegistry.get.flatMap { registry =>
       if !registry.contains(rootSessionId) then IO.pure(0)
       else
@@ -1001,7 +1001,7 @@ class NodeEngine(
                 // "Nebula" 出口标记节点若在 markNebulaDelivered 之前崩溃/重启，30s 扫描
                 // 就把它投到 root，绕过「默认不升根」）。补 e.mode == Result 这一合取项。
                 n.out.exists(e =>
-                  e.to == OutEdge.NebulaTarget &&
+                  e.to == OutEdge.RootTarget &&
                     e.mode == OutEdge.Result &&
                     e.on.contains(if n.status == NodeLifecycle.Completed then OutEdge.Pass else OutEdge.Failed)
                 ) &&
@@ -1023,7 +1023,7 @@ class NodeEngine(
             logger.warn(
               s"[fixture-guard] excluded fixture envelope from redelivery scan: node '${n.name}' (${n.id}) status=${n.status} — name matches fixture family and task carries fixture marker"
             )
-              *> markNebulaDelivered(n.id)
+              *> markRootDelivered(n.id)
           )
           pending = unpaid.filterNot(NodeEngine.isFixtureEnvelope).toList
           // 缺口2（2026-09-04 补投新鲜度门控）：completedAt 距今 ≤24h（与节点显示
@@ -1076,7 +1076,7 @@ class NodeEngine(
           eventType = Some(eventType),
           sender = Some(s"$projectName/stale-redelivery-summary"),
           fromUser = false // ② 服务端注入（重投汇总），不是真人输入
-        )) *> stale.traverse_(n => markNebulaDelivered(n.id))
+        )) *> stale.traverse_(n => markRootDelivered(n.id))
       case None => IO.unit // 根不可达 → 不记账不丢账，下轮扫描重汇总
     }
   end deliverStaleSummary

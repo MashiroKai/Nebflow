@@ -200,7 +200,7 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
       merge = true,
       task = Some(s"landing $name"),
       status = status,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       createdAt = createdAt
     )
 
@@ -213,7 +213,7 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
       merge = true,
       task = Some(s"landing $name"),
       status = NodeLifecycle.Running,
-      out = List(OutEdge.nebula),
+      out = List(OutEdge.root),
       startedAt = Some(createdAt + 10L),
       createdAt = createdAt
     )
@@ -532,7 +532,7 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
           agent = "coder",
           task = Some("work"),
           status = NodeLifecycle.Pending,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 3000L
         ),
         NodeDef(
@@ -541,7 +541,7 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
           agent = "coder",
           task = Some("work"),
           status = NodeLifecycle.Running,
-          out = List(OutEdge.nebula),
+          out = List(OutEdge.root),
           createdAt = now - 2000L
         ),
         mergeNode("n-alone", "solo-merge", NodeLifecycle.Pending, now - 1000L)
@@ -684,7 +684,7 @@ class MergeQueueVisibilitySpec extends CatsEffectSuite:
         task = Some("landing"),
         status = NodeLifecycle.Pending,
         in = List("n-ver"),
-        out = List(OutEdge.nebula),
+        out = List(OutEdge.root),
         createdAt = now - 80_000L
       )
       _ <- seed(

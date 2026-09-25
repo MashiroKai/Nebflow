@@ -95,7 +95,7 @@ class NodeGhostRowSpec extends CatsEffectSuite:
             preset = None,
             task = Some("跑一轮"),
             in = Nil,
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Pending,
             createdAt = now
           ))

@@ -241,7 +241,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     id: String,
     name: String,
     task: String,
-    out: List[OutEdge] = List(OutEdge.nebula),
+    out: List[OutEdge] = List(OutEdge.root),
     sessionRef: Option[String] = None,
     sessionRefVerify: Option[String] = None,
     bgWait: Option[String] = None,
@@ -378,7 +378,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               agent = "test-agent",
               task = Some("下游处理"),
               in = List("n-c2up"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Wiring,
               createdAt = System.currentTimeMillis() - 3_600_000
             )
@@ -438,7 +438,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               agent = "test-agent",
               task = Some("collect work"),
               in = List("n-c3a"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Wiring,
               createdAt = System.currentTimeMillis() - 3_600_000
             ),
@@ -448,7 +448,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               agent = "general",
               task = Some("merge work"),
               in = List("n-c3b"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               merge = true,
               status = NodeLifecycle.Wiring,
               createdAt = System.currentTimeMillis() - 3_600_000
@@ -811,7 +811,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               agent = "general",
               task = Some("pending task"),
               in = List("n-never"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Wiring,
               createdAt = System.currentTimeMillis()
             )
@@ -893,7 +893,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               name = "crash-a",
               agent = "general",
               task = Some("m1 task"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Running,
               startedAt = Some(System.currentTimeMillis() - 3_600_000),
               createdAt = System.currentTimeMillis() - 3_600_000
@@ -948,7 +948,7 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
               name = "crash-b",
               agent = "general",
               task = Some("m2 task"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Running,
               startedAt = Some(System.currentTimeMillis() - 3_600_000),
               createdAt = System.currentTimeMillis() - 3_600_000

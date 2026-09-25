@@ -285,10 +285,10 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       assert(b.in.contains(a.id), s"B.in must contain A (${a.id}), got: ${b.in}")
       assertEquals(
         a.out,
-        List(OutEdge.nebula, OutEdge(b.id)),
+        List(OutEdge.root, OutEdge(b.id)),
         "A.out must keep Nebula + append B edge (in-declaration append semantics)"
       )
-      assertEquals(b.out, List(OutEdge.nebula), "B.out must be Nebula")
+      assertEquals(b.out, List(OutEdge.root), "B.out must be Nebula")
       // 注：B→Nebula 投递记账（nebulaDeliveredAt）在本 harness 不可观测——无真实
       // root 会话，deliverToNebula 按设计 WARN 不落账（同 ProjectDispatcher*Spec
       // 先例日志）；Nebula 投递链回归由 NebulaDeliveryDedupSpec/RedeliverySpec 覆盖。

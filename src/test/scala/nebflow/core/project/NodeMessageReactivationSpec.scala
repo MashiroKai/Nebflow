@@ -128,7 +128,7 @@ class NodeMessageReactivationSpec extends CatsEffectSuite:
             name = "react-a",
             agent = "general",
             task = Some("原任务（已被 NodeEdit 重激活改写）"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Running,
             startedAt = Some(System.currentTimeMillis()),
             createdAt = System.currentTimeMillis(),

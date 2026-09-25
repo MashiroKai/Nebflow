@@ -666,16 +666,16 @@ class SandboxSpec extends CatsEffectSuite:
 
   test("Nebula 根会话判据：sandboxEnabled ∧ depth==0 ∧ name==Nebula 三分量缺一不可") {
     // Nebula WS 根会话（唯一命中形态）
-    assert(SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Nebula"))
+    assert(SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "Nebula"))
     // 其余 WS 根会话（standalone 非 Nebula 聊天 / team Manager / flow 入口）不命中
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "general"))
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Manager"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "general"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "Manager"))
     // NodeDef.agent="Nebula" 声明的节点会话（depth=1）不命中——root 必须留在
     // projectRoot/worktree（§A.6 节点写根语义零回归）
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "Nebula"))
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 1, agentName = "Nebula"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher"))
     // 未启用（feature flag / 未置位）不命中
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = false, depth = 0, agentName = "Nebula"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = false, depth = 0, agentName = "Nebula"))
   }
 
   test("Nebula 会话沙箱 root==PathUtil.dataRoot（数据根）且跟随 setDataRoot 重定向——隔离安全机制证明") {

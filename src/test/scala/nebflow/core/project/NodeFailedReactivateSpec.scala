@@ -254,7 +254,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountGateOff("fr1", ws, system, res) // 腿 2 关闭面挂载（FR1 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr-node", Set(NodeLifecycle.Failed))
       // failed 通知接线：marker 必须已落（重激活清零的前置事实）
@@ -307,7 +307,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr2-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr2-node").map(_.notifySentAt.isDefined))
@@ -357,7 +357,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
               name = "fr3-completed",
               agent = "general",
               task = Some("t1"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Completed,
               result = Some("done"),
               completedAt = Some(now),
@@ -368,7 +368,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
               name = "fr3-cancelled",
               agent = "general",
               task = Some("t1"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               status = NodeLifecycle.Cancelled,
               completedAt = Some(now),
               createdAt = now
@@ -404,7 +404,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr4-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr4-node").map(_.notifySentAt.isDefined))
@@ -437,7 +437,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.nebula), description = Some("fr5-desc"))
+      _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.root), description = Some("fr5-desc"))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr5-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr5-node").map(_.notifySentAt.isDefined))
@@ -489,13 +489,13 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
             name = "fr6-sink",
             agent = "general",
             task = Some("fr6 sink task"),
-            out = List(OutEdge.nebula),
+            out = List(OutEdge.root),
             status = NodeLifecycle.Wiring,
             createdAt = now
           ))
         )
       }.void
-      _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr6-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr6-node").map(_.notifySentAt.isDefined))

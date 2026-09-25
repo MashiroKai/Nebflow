@@ -1127,7 +1127,7 @@ object NodeEditTool extends Tool:
     chainDecl: NodeEditChainDecl
   ): IO[Either[ToolError, String]] =
     val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
-    val outTargets = out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+    val outTargets = out.map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
     for
       // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
       // wouldCreateCycle 已含 deps 反向边（deps 设计 §1.2 校验二：混合图单点覆盖）——
@@ -1349,7 +1349,7 @@ object NodeEditTool extends Tool:
               // **不写 in 镜像**——与 `setOut` 同款过滤（此处是第三个镜像写点；漏掉它
               // 会让 `(fail)<worker>:loop` 在创建期把 verifier 记进 worker 的 in ⇒
               // worker 等 verifier、verifier 等 worker 的 round-1 barrier 死锁）。
-              if e.to != OutEdge.NebulaTarget && !OutEdge.isLoopEdge(e) then
+              if e.to != OutEdge.RootTarget && !OutEdge.isLoopEdge(e) then
                 // in 镜像按解析后 id 记账（同 setOut——20260909 事故修复）：目标串可能是名字
                 OutEdge.resolveTargetId(acc, e.to) match
                   case Some(tid) =>
@@ -1406,7 +1406,7 @@ object NodeEditTool extends Tool:
                       rt.engine.emitCreated(s.nodes(nodeId)) *>
                       // wiring 变更事件（barrier 合并接线 §2.3）：上游 out 追加指向本节点 +
                       // out 目标 in 追加——此前只有 nodeCreated，改写的节点无事件（缺失补齐）
-                      NodeTools.emitWiringUpdates(rt, ins ++ out.map(_.to).filterNot(_ == OutEdge.NebulaTarget)) *>
+                      NodeTools.emitWiringUpdates(rt, ins ++ out.map(_.to).filterNot(_ == OutEdge.RootTarget)) *>
                       // D1 修复（验收④b，@a4b5d184 spec 实证）：in 引用已完成上游（活动区
                       // 或归档区——findNode 兜底）→ 立即投递其结果，等同 §2.3「悬空节点
                       // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
@@ -1789,8 +1789,8 @@ object NodeEditTool extends Tool:
               val depsProvided = depsJson.isDefined
               // P1: out 变更判定与目标集（canonical 比较消歧「(pass)B」与既有单边等价）
               val outProvided = outJson.isDefined
-              val newTargets = newOut.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-              val oldTargets = node.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
+              val newTargets = newOut.map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
+              val oldTargets = node.out.map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
               val outChanged = outProvided && OutEdge.canonical(newOut) != OutEdge.canonical(node.out)
               // out 目标解析 + 存在性闸（20260909 in 丢失事故修复面）：新目标接受节点 id
               // 或节点名，统一解析为 id 后再过状态守卫/环检测/merge 门控——原实现按原始
@@ -1885,7 +1885,7 @@ object NodeEditTool extends Tool:
                   val cycleTargets = newOut
                     .filterNot(OutEdge.isLoopEdge)
                     .map(_.to)
-                    .filterNot(_ == OutEdge.NebulaTarget)
+                    .filterNot(_ == OutEdge.RootTarget)
                     .distinct
                   val cycle: IO[List[Boolean]] = resolvedIds.flatMap {
                     case Left(_) => IO.pure(Nil) // guard 已拒，不可达
@@ -2611,11 +2611,11 @@ object NodeEditTool extends Tool:
                                               ) match
                                                 case true =>
                                                   val res = node.result.get
-                                                  val hadNebula = node.out.exists(_.to == OutEdge.NebulaTarget)
+                                                  val hadRoot = node.out.exists(_.to == OutEdge.RootTarget)
                                                   val newlyWired = newOut
                                                     .filterNot(OutEdge.isLoopEdge)
                                                     .filter(e =>
-                                                      if e.to == OutEdge.NebulaTarget then !hadNebula
+                                                      if e.to == OutEdge.RootTarget then !hadRoot
                                                       else !oldTargets.contains(e.to)
                                                     )
                                                   if newlyWired.isEmpty then IO.unit

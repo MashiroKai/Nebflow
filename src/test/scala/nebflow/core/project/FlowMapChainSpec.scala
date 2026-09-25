@@ -93,7 +93,7 @@ class FlowMapChainSpec extends CatsEffectSuite:
   test("T① 弱连通分量: in∪out 无向并集成一条链（D1；chainmodel 批一 ① 起 deps **不再是成员边**）+ 名字形态 out 边解析命中才连（D9 正路）") {
     // a --out--> b --out=Nebula--> ×；c --deps--> b（纯调度闸，不再并链）；d --out("name-b")--> b（名字形态）
     val a = def0("a", t0, out = List(OutEdge("b")))
-    val b = def0("b", t0 + 1000, in = List("a"), out = List(OutEdge.nebula))
+    val b = def0("b", t0 + 1000, in = List("a"), out = List(OutEdge.root))
     val c = def0("c", t0 + 2000, deps = List("b"))
     val d = def0("d", t0 + 3000, out = List(OutEdge("name-b"))) // "name-b" = b 的 name
     val all = List(a, b, c, d)
@@ -221,8 +221,8 @@ class FlowMapChainSpec extends CatsEffectSuite:
   // ── T⑦ 终点判定（D7）─────────────────────────────────
 
   test("T⑦ 终点判定: Nebula-only / 悬空 / out=Nil 皆终点；有节点目标非终点（D7）") {
-    val n1 = def0("n1", t0, out = List(OutEdge.nebula)) // Nebula-only → end
-    val n2 = def0("n2", t0 + 1000, out = List(OutEdge.nebula, OutEdge("m"))) // 有节点目标 → not end
+    val n1 = def0("n1", t0, out = List(OutEdge.root)) // Nebula-only → end
+    val n2 = def0("n2", t0 + 1000, out = List(OutEdge.root, OutEdge("m"))) // 有节点目标 → not end
     val m = def0("m", t0 + 2000, in = List("n2")) // out=Nil → end
     val n3 = def0("n3", t0 + 3000).copy(notifyDispatcher = true) // dispatcher-only（不占边）→ end
     val n4 = def0("n4", t0 + 4000, out = List(OutEdge("ghost"))) // 悬空 → end

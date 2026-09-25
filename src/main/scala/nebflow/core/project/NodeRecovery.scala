@@ -967,7 +967,7 @@ private[project] trait NodeRecovery:
               "the on-disk transcript breakpoint (no readable transcript / resume CAS rejected); " +
               "node re-judged as failed by the L3 hard-recovery chain. Downstream keeps waiting (D5 zero-settlement): " +
               "reactivate the upstream (NodeEdit) or rewire the graph to recover."
-          val keptTargets = n.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget)
+          val keptTargets = n.out.map(_.to).filterNot(_ == OutEdge.RootTarget)
           dispatchNotify.releaseTerminalNotify(n.id) *>
             FlowMapEventLog.append(
               workspace,

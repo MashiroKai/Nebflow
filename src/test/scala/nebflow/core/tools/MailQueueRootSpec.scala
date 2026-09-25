@@ -23,7 +23,7 @@ import nebflow.llm.{ModelCandidate, ThinkingConfig}
  * Fix: resolveAndQueue now routes "Nebula" through queueToNebula, which
  * locates the root session in the agent registry and queues there.
  */
-class MailQueueNebulaSpec extends FunSuite:
+class MailQueueRootSpec extends FunSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-mail-queue-nebula"
   PathUtil.setDataRoot(tempRoot)
 
@@ -84,7 +84,7 @@ class MailQueueNebulaSpec extends FunSuite:
     )
     assertEquals(
       MailTool
-        .resolveNebulaRootSession(res, senderSessionId = "", preferredRootSid = Some("nebula-root-sid"))
+        .resolveRootSession(res, senderSessionId = "", preferredRootSid = Some("nebula-root-sid"))
         .unsafeRunSync(),
       Some("nebula-root-sid")
     )
@@ -98,7 +98,7 @@ class MailQueueNebulaSpec extends FunSuite:
     )
     assertEquals(
       MailTool
-        .resolveNebulaRootSession(res, senderSessionId = "", preferredRootSid = Some("does-not-exist"))
+        .resolveRootSession(res, senderSessionId = "", preferredRootSid = Some("does-not-exist"))
         .unsafeRunSync(),
       None,
       "preferred 找不到时不得回落到注册表里的任意 Root 记录（旧实现正是这一条导致落到非 Nebula 的 Root 会话）"
@@ -108,7 +108,7 @@ class MailQueueNebulaSpec extends FunSuite:
     val res = resourcesWith(Map("agent-1" -> record("dispatcher-me", AgentKind.Root)))
     assertEquals(
       MailTool
-        .resolveNebulaRootSession(res, senderSessionId = "dispatcher-me", preferredRootSid = Some("dispatcher-me"))
+        .resolveRootSession(res, senderSessionId = "dispatcher-me", preferredRootSid = Some("dispatcher-me"))
         .unsafeRunSync(),
       None,
       "preferred == 发信者自身 ⇒ 解析不出（不是「发给自己」）"
@@ -116,11 +116,11 @@ class MailQueueNebulaSpec extends FunSuite:
 
   test("resolveNebulaRootSession（档② meta）no Root record ⇒ None"):
     val res = resourcesWith(Map("agent-2" -> record("team-sid", AgentKind.Team)))
-    assertEquals(MailTool.resolveNebulaRootSession(res, senderSessionId = "").unsafeRunSync(), None)
+    assertEquals(MailTool.resolveRootSession(res, senderSessionId = "").unsafeRunSync(), None)
 
   test("resolveNebulaRootSession（档② meta）empty registry ⇒ None"):
     assertEquals(
-      MailTool.resolveNebulaRootSession(resourcesWith(Map.empty), senderSessionId = "").unsafeRunSync(),
+      MailTool.resolveRootSession(resourcesWith(Map.empty), senderSessionId = "").unsafeRunSync(),
       None
     )
 
@@ -133,7 +133,7 @@ class MailQueueNebulaSpec extends FunSuite:
       isDispatcher = true
     )
     val res = MailTool
-      .queueToNebula("hello Nebula", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", None)
+      .queueToRoot("hello Nebula", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", None)
       .unsafeRunSync()
     assert(res.isLeft, "must fail when the root agent is not in the registry")
     assert(res.swap.toOption.get.message.contains("NEBULA_ROOT_UNRESOLVED"), s"unexpected message: $res")
@@ -150,7 +150,7 @@ class MailQueueNebulaSpec extends FunSuite:
     // **解析档**成功（不再落入 NEBULA_ROOT_UNRESOLVED）：解析可达即腿③ 的结构前提成立，
     // 端到端可达由隔离实例三条腿验证（见本批交付⑦/⑧）。
     val resolved = MailTool
-      .resolveNebulaRootSession(ctx.sharedResources.get, ctx.sessionId.getOrElse(""), ctx.rootSessionId)
+      .resolveRootSession(ctx.sharedResources.get, ctx.sessionId.getOrElse(""), ctx.rootSessionId)
       .unsafeRunSync()
     assertEquals(resolved, Some("nebula-root-sid"))
 
@@ -161,12 +161,12 @@ class MailQueueNebulaSpec extends FunSuite:
     val res = resourcesWith(Map("agent-1" -> deadRecord("nebula-root-sid", AgentKind.Root)))
     assertEquals(
       MailTool
-        .resolveNebulaRootSession(res, senderSessionId = "", preferredRootSid = Some("nebula-root-sid"))
+        .resolveRootSession(res, senderSessionId = "", preferredRootSid = Some("nebula-root-sid"))
         .unsafeRunSync(),
       None
     )
     assertEquals(
-      MailTool.resolveNebulaRootSession(res, senderSessionId = "").unsafeRunSync(),
+      MailTool.resolveRootSession(res, senderSessionId = "").unsafeRunSync(),
       None,
       "档②（无 preferred）同样落空——不得因记录存在就报成功"
     )
@@ -181,7 +181,7 @@ class MailQueueNebulaSpec extends FunSuite:
     )
     val before = MailQueueStore.size("nebula-root-absent").unsafeRunSync()
     val res = MailTool
-      .queueToNebula("批级回传", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", Some("chain-n-q1"))
+      .queueToRoot("批级回传", "RESULT", Nil, ctx, null, "dispatcher-sid", "Nebula", Some("chain-n-q1"))
       .unsafeRunSync()
     assert(res.isLeft, s"解析不出必须失败：$res")
     assert(res.swap.toOption.get.message.contains("NEBULA_ROOT_UNRESOLVED"), s"unexpected: $res")
@@ -190,4 +190,4 @@ class MailQueueNebulaSpec extends FunSuite:
       before,
       "解析不出 ⇒ 零队列落库（chainId 不落库、投递不发生）"
     )
-end MailQueueNebulaSpec
+end MailQueueRootSpec

@@ -82,7 +82,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn, depth, flowNodeSession, projectBoardSession)
     ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowed.contains(td.name) then None
-      else if root && td.name == AskUserQuestionTool.Name then Some(AskUserQuestionTool.nebulaRootVariant(td))
+      else if root && td.name == AskUserQuestionTool.Name then Some(AskUserQuestionTool.rootVariant(td))
       else Some(td)
     }
 
@@ -126,7 +126,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
         val b = before.find(_.name == t.name).getOrElse(fail("改前面丢了目标工具")).description
         val variant =
           if t.name == "Mail" then
-            if t.description == MailTool.descriptionNebulaRoot then "Mail.descriptionNebulaRoot"
+            if t.description == MailTool.descriptionRoot then "Mail.descriptionNebulaRoot"
             else if t.description == MailTool.descriptionDispatcher then "Mail.descriptionDispatcher"
             else "Mail.descriptionBase(并集面)"
           else if t.description == NodeReportToolDef.descriptionTask then "NodeReport.descriptionTask"
@@ -148,7 +148,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
       s"NodeReport.descriptionBase sha256=${sha(NodeReportToolDef.descriptionBase)} bytes=${NodeReportToolDef.descriptionBase.getBytes("UTF-8").length}"
     )
     p(
-      s"Mail.descriptionNebulaRoot sha256=${sha(MailTool.descriptionNebulaRoot)} bytes=${MailTool.descriptionNebulaRoot.getBytes("UTF-8").length}"
+      s"Mail.descriptionNebulaRoot sha256=${sha(MailTool.descriptionRoot)} bytes=${MailTool.descriptionRoot.getBytes("UTF-8").length}"
     )
     p(
       s"Mail.descriptionDispatcher sha256=${sha(MailTool.descriptionDispatcher)} bytes=${MailTool.descriptionDispatcher.getBytes("UTF-8").length}"

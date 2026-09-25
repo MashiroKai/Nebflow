@@ -149,7 +149,7 @@ class MailAttachSpec extends FunSuite:
   test("② P1：三面描述都宣称 `attachments` 参数存在，且零「没有该参数」类反向断言"):
     val faces = List(
       "descriptionBase" -> MailTool.descriptionBase,
-      "descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+      "descriptionNebulaRoot" -> MailTool.descriptionRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, raw) <- faces do

@@ -34,17 +34,17 @@ import nebflow.shared.AgentModelConfig
  */
 object SchemePolicy:
 
-  val NebulaName = RootAgentIdentity.Name
+  val RootName = RootAgentIdentity.Name
   val DispatcherName = "project-dispatcher"
   val KernelName = "kernel"
   val GeneralName = "general"
 
   /** 面板可设模型方案的 agent 全集（作者令 2026-09-21：仅这两类）。 */
-  val SettableAgents: Set[String] = Set(NebulaName, DispatcherName)
+  val SettableAgents: Set[String] = Set(RootName, DispatcherName)
 
   /** 动态继承表：agent → 它跟随其**当前**方案的根 agent。 */
   val InheritsFrom: Map[String, String] = Map(
-    KernelName -> NebulaName,
+    KernelName -> RootName,
     GeneralName -> DispatcherName
   )
 

@@ -503,7 +503,7 @@ class NodeEdgeGatingSpec extends CatsEffectSuite:
       // "Nebula" → 双通报门 {pass,failed}（旧拓扑零漂移——completed/failed 双通知形态）
       assertEquals(
         c.map(_.out),
-        Some(List(OutEdge.nebula)),
+        Some(List(OutEdge.root)),
         "legacy Nebula must decode to the dual-gate reporting edge"
       )
       // 缺键 → Nil（withDefaults）

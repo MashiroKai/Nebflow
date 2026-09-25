@@ -218,7 +218,7 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
         createdAt = base + 10,
         completedAt = Some(base + 20),
         in = List("n-dg-a"),
-        out = List(OutEdge.nebula),
+        out = List(OutEdge.root),
         result = Some("tail result line")
       ),
       // 单成员孤立链（M2 负控）：不得产生任何投递
@@ -304,7 +304,7 @@ class ChainSummaryDowngradeSpec extends CatsEffectSuite:
               createdAt = base + 10,
               completedAt = Some(base + 20),
               in = List("n-cx-a"),
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               result = Some("cancelled b")
             )
           )

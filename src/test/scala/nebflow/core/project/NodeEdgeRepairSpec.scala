@@ -280,7 +280,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -362,7 +362,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -451,7 +451,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -518,7 +518,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -573,7 +573,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
@@ -639,7 +639,7 @@ class NodeEdgeRepairSpec extends CatsEffectSuite:
               name = "w-w",
               agent = "test-agent",
               status = NodeLifecycle.Wiring,
-              out = List(OutEdge.nebula),
+              out = List(OutEdge.root),
               createdAt = System.currentTimeMillis()
             )
           )
