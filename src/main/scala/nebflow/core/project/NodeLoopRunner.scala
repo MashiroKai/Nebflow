@@ -999,3 +999,4 @@ private[project] trait NodeLoopRunner:
             (e.to == targetId || nodes.find(_.id == targetId).exists(t => t.name == e.to))
         )
     }
+end NodeLoopRunner

@@ -239,10 +239,15 @@ class CancelSemanticsSourceSpec extends FunSuite:
       .mkString("\n")
 
   private def engineSrcWindow(sig: String, n: Int): String =
-    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
+    // 2026-09-25 G 步重钉:detachCancelledUpstream / referencesOf 随终态化簇自 NodeEngine
+    // 迁至 NodeCompletion(self-type trait,行为保持重构)——源读数扩为跨文件聚合(先例
+    // SubAgentInboxMirrorSpec 2.3 增补),锚文本不变、窗口语义不变。
+    val src =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala")) +
+        codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCompletion.scala"))
     val lines = src.linesIterator.toList
     val start = lines.indexWhere(_.contains(sig))
-    assert(start >= 0, s"anchor not found in NodeEngine.scala: $sig")
+    assert(start >= 0, s"anchor not found in NodeEngine.scala(+NodeCompletion.scala): $sig")
     lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
 
   // ── C6（#675(a) / #697 机械钉点）：打标面排除 `:loop` 回边目标 ────────────
@@ -264,9 +269,11 @@ class CancelSemanticsSourceSpec extends FunSuite:
       "the cascade 取代面 (suppressTargets + cascadeCancelledIds) must stay in place"
     )
     // ③ 传导面（三答 3 的具名钉点）：`referencesOf` 的两条方向扫描俱在 —— **另一处**，本批零改动
-    // 2026-09-25 B 步重钉:referencesOf 留守 NodeEngine,仅因取消/销毁窗簇迁出的
+    // 2026-09-25 B 步重钉:referencesOf 曾留守 NodeEngine,仅因取消/销毁窗簇迁出的
     // NodeCanceller(self-type trait)经 cascadeClosure 引用它而加宽 private[project]。
-    // 锚文本同步更新,窗口语义不变。
+    // 2026-09-25 G 步重钉:referencesOf 随终态化簇自 NodeEngine 迁至 NodeCompletion
+    // (self-type trait,行为保持重构)——读数经 engineSrcWindow 跨文件聚合解析,锚文本
+    // 不变。判据语义不变。
     val conduction = engineSrcWindow("private[project] def referencesOf", 30)
     assert(
       conduction.contains("filterNot(OutEdge.isLoopEdge)") && conduction.contains("!OutEdge.isLoopEdge(e)"),

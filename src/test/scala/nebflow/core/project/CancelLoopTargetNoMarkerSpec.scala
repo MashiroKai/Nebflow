@@ -223,13 +223,16 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
       }
       .mkString("\n")
 
-  private def nodeEngineSrc: String =
-    codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
-
   // 2026-09-25 D 步重钉:reversePruneReferences 随投递段迁至 NodeDelivery(self-type trait,
   // 行为保持重构)——P2 的该窗口改读新文件(锚文本不变),本读数器随之成对提供。
   private def nodeDeliverySrc: String =
     codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeDelivery.scala"))
+
+  // 2026-09-25 G 步重钉:detachCancelledUpstream / detachAbandonedNode / referencesOf 随终态
+  // 化簇自 NodeEngine 迁至 NodeCompletion(self-type trait,行为保持重构)——P2/L6 的相关
+  // 窗口改读新文件(锚文本不变),本读数器随之成对提供。
+  private def nodeCompletionSrc: String =
+    codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCompletion.scala"))
 
   /** 源码窗口（**有界**：签名行起 N 行——方法间相隔数百行，`substring(A, B)` 会圈进无关腿）。 */
   private def window(src: String, sig: String, n: Int): String =
@@ -408,9 +411,11 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   test(
     "P2 machine: the non-cancel-family marker legs stay free of cascade flags (comment-stripped source windows), and the cancel-family window keeps the exclusion + its 取代面"
   ) {
-    val src = nodeEngineSrc
-    val detachCancelled = window(src, "private def detachCancelledUpstream", 60)
-    val abandon = window(src, "def detachAbandonedNode", 60)
+    // 2026-09-25 G 步重钉:detachCancelledUpstream / detachAbandonedNode 随终态化簇自
+    // NodeEngine 迁至 NodeCompletion(self-type trait,行为保持重构)——两窗口改读新
+    // 文件,锚文本不变(trait 内保持原可见性 private def)。判据语义不变。
+    val detachCancelled = window(nodeCompletionSrc, "private def detachCancelledUpstream", 60)
+    val abandon = window(nodeCompletionSrc, "def detachAbandonedNode", 60)
     // 2026-09-25 D 步重钉:reversePruneReferences 已随投递段迁至 NodeDelivery——窗口改读
     // 新文件,锚文本不变(private def 留 trait 内私有),窗口语义不变。
     val reversePrune = window(nodeDeliverySrc, "private def reversePruneReferences", 20)
@@ -463,11 +468,11 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   test(
     "L6: the conduction exclusion stays pinned at referencesOf — both :loop scan faces are present there and absent as a *behaviour* change in this batch"
   ) {
-    val src = nodeEngineSrc
-    // 2026-09-25 B 步重钉:referencesOf 留守 NodeEngine,仅因取消/销毁窗簇迁出的
+    // 2026-09-25 B 步重钉:referencesOf 曾留守 NodeEngine,仅因取消/销毁窗簇迁出的
     // NodeCanceller(self-type trait)经 cascadeClosure 引用它而加宽 private[project]。
-    // 锚文本同步更新,窗口语义不变。
-    val refs = window(src, "private[project] def referencesOf", 30)
+    // 2026-09-25 G 步重钉:referencesOf 随终态化簇自 NodeEngine 迁至 NodeCompletion
+    // (self-type trait,行为保持重构)——窗口改读新文件,锚文本不变。判据语义不变。
+    val refs = window(nodeCompletionSrc, "private[project] def referencesOf", 30)
     assert(
       refs.contains("filterNot(OutEdge.isLoopEdge)"),
       "the forward conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)"

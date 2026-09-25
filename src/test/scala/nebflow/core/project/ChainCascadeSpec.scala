@@ -592,7 +592,11 @@ class ChainCascadeSpec extends CatsEffectSuite:
   // ── M11（取代面 / 保留面）─────────────────────────────────────────
 
   test("M11: the non-cancel-family pendingSuccession writers are structurally decoupled from the cascade flag") {
-    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
+    // 2026-09-25 G 步重钉:detachAbandonedNode / detachCancelledUpstream 随终态化簇自
+    // NodeEngine 迁至 NodeCompletion(self-type trait,行为保持重构)——两窗口改读新
+    // 文件,锚文本不变(trait 内保持原可见性)。判据语义不变。
+    val src =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCompletion.scala"))
     // 源码窗口提取（**有界**：从签名行起取 N 行——本文件里方法之间相隔数百行，用
     // `substring(签名A, 签名B)` 会把无关方法与新取消族一起圈进来，判据随即失真）。
     def window(src: String, sig: String, n: Int): String =
@@ -602,8 +606,7 @@ class ChainCascadeSpec extends CatsEffectSuite:
       lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
     // ① 保留面：反向 prune 腿与 abandon 摘边腿**零** cascade 耦合（源码级机械判据）
     // 2026-09-25 D 步重钉:reversePruneReferences 随投递段迁至 NodeDelivery(self-type
-    // trait,行为保持重构)——该窗口改读新文件,锚文本不变(trait 内保持 private def);
-    // detachAbandonedNode / detachCancelledUpstream 留守 NodeEngine,窗口不动。
+    // trait,行为保持重构)——该窗口改读新文件,锚文本不变(trait 内保持 private def)。
     val deliverySrc =
       codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeDelivery.scala"))
     val reversePrune = window(deliverySrc, "private def reversePruneReferences", 20)
@@ -660,11 +663,13 @@ class ChainCascadeSpec extends CatsEffectSuite:
         assertEquals(report.cancelled.map(_.nodeId), List("n-a", "n-b"))
         assertEquals(archAfter, archBefore, "archive region state identical (Z5)")
         // 源码级：取消族四条腿**零** archive 写面（归档只由 sweep/TTL 与显式归档入口驱动）
-        val src =
-          codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
         // 2026-09-25 B 步重钉:cancelNodes(私有重载)随取消/销毁窗簇迁至 NodeCanceller,窗口扩为
-        // 跨文件聚合(先例 SubAgentInboxMirrorSpec 2.3 增补);cancelNode 留守 NodeEngine,仅因
-        // self-type trait 引用而加宽 private[project]。锚文本同步更新,窗口语义不变。
+        // 跨文件聚合(先例 SubAgentInboxMirrorSpec 2.3 增补);锚文本同步更新,窗口语义不变。
+        // 2026-09-25 G 步重钉:cancelNode / detachCancelledUpstream 随终态化簇自 NodeEngine 迁至
+        // NodeCompletion(self-type trait,行为保持重构)——这两窗改读新文件,锚文本不变
+        // (cancelNode 保持 private[project])。判据语义不变。
+        val src =
+          codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCompletion.scala"))
         val cancellerSrc =
           codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCanceller.scala"))
         def window(src: String, sig: String, n: Int): String =
