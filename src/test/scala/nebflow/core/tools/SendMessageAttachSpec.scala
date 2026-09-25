@@ -105,12 +105,19 @@ class SendMessageAttachSpec extends CatsEffectSuite:
 
   private def obj(fields: (String, Json)*): JsonObject = JsonObject.fromIterable(fields)
 
-  test("device 目标 + 服务缺席 ⇒ 显式报错（禁静默成功/本地执行）"):
+  test("device 目标 ⇒ 整腿退役墓碑（MAIL_DEVICE_RETIRED，fail-closed，零投递）"):
+    // 🔴 支上对账重算批（2026-09-26 调和）re-pin：main 侧 mailmodel 批 (e) 把设备腿
+    // **整腿退役**（合面树上 `to="device:…"` 只可能是墓碑读）——原「服务缺席 ⇒ 设备腿
+    // 自有报错」的钉面随腿消亡；fail-closed（禁静默成功/本地执行）的关切由墓碑承接。
     val res = callTool(obj("to" -> Json.fromString("device:KAI"), "message" -> Json.fromString("hi"))).unsafeRunSync()
     assert(res.isLeft)
-    assert(res.left.toOption.get.message.contains("Device messaging is unavailable"), res.left.toOption.get.message)
+    val msg = res.left.toOption.get.message
+    assert(msg.contains(MailTool.ErrDeviceLegRetired), msg)
+    assert(msg.contains("nothing was sent"), msg)
 
-  test("device 目标 + 相对附件串 ⇒ 原始串闸 fail-fast（服务访问之前，零网络）"):
+  test("device 目标 + 相对附件串 ⇒ 墓碑先于附件闸（腿退役，原始串闸不再可达）"):
+    // 🔴 调和 re-pin：设备腿退役后墓碑在最前置闸——相对串闸（`must be absolute`）
+    // 的**原判对象**只在活腿上存在；该判据对 `friend:` 支逐字保留（见下一 test）。
     val res = callTool(
       obj(
         "to"          -> Json.fromString("device:KAI"),
@@ -120,8 +127,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     ).unsafeRunSync()
     assert(res.isLeft)
     val msg = res.left.toOption.get.message
-    assert(msg.contains("must be absolute"), msg)
-    assert(msg.contains("relative.bin"), msg)
+    assert(msg.contains(MailTool.ErrDeviceLegRetired), msg)
 
   test("friend 目标 + attachments ⇒ **不再**前置拒绝（4b 腿 A 解除该缺口）；服务缺席走既有显式报错"):
     val res = callTool(
@@ -160,12 +166,11 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(msg.contains("must be absolute"), msg)
     assert(msg.contains("relative.bin"), msg)
 
-  test("device 目标 + targetDir ⇒ 受控支持已随退役腿消失：单 `to` 面不再有该参数（静默忽略，零拒绝面）"):
+  test("device 目标 + targetDir ⇒ 受控支持已随退役腿消失：整腿墓碑（MAIL_DEVICE_RETIRED）"):
     // 契约升版批（2026-09-14）在**旧** `SendMessage(to="device:…")` 上建立了
-    // device + targetDir 的受控支持；合面后该腿退役（设备面统一到 `Mail` 的 `device:`，
-    // 语义反转为「投进对端会话」），`targetDir` **不再是设备腿的参数** ⇒ 本件改成
-    // 断言「服务缺席时落到设备腿自己的报错」，即该键**不产生任何新的拒绝面**
-    // （引擎零 JSON-Schema 校验 ⇒ 面外键静默丢弃）。🔴 `targetDir` / `overwrite`
+    // device + targetDir 的受控支持；main 侧 mailmodel 批 (e)（支上对账重算批收编）
+    // 把设备腿**整腿退役** ⇒ 面外键 `targetDir` 的「静默忽略」读数随腿消亡——
+    // 现读 = 墓碑先于一切（含任何参数面判读）。🔴 `targetDir` / `overwrite`
     // 的**能力丧失**属 §16 迁移说明的如实写明项（见 MailTool schema 的差异登记）。
     val res = callTool(
       obj(
@@ -177,7 +182,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     val msg = res.fold(_.message, identity)
     assert(!msg.contains("not supported for device targets"), msg)
     assert(!msg.contains("frozen-contract"), msg)
-    assert(msg.contains("Device messaging is unavailable"), msg)
+    assert(msg.contains(MailTool.ErrDeviceLegRetired), msg)
 
   // ===== 服务级：闸位/校验/不可达（AttachGateServiceSpec 同款 harness） =====
 
@@ -356,11 +361,15 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       "no surviving guide may still point at the retired `SendMessage` tool (the stale-pointer defect must stay closed)"
     )
 
-  test("orchestration set: Nebula 面既无 TransferFile 也无 SendMessage（−2 后 16 件；Mail 在册）"):
+  test("orchestration set: Nebula 面既无 TransferFile 也无 SendMessage（件数以 NebulaOrchestrationToolsExpectedSize 单点；Mail 在册）"):
     val fixed = AgentCore.fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil))
     assert(!fixed.contains("TransferFile"))
     assert(!fixed.contains("SendMessage"), "SendMessage 已随本批退役出 Nebula 编排集（NebulaOrchestrationTools）")
     assert(fixed.contains("Mail"), "Mail 是唯一存活的消息原语")
+    // 🔴 支上对账重算批（2026-09-26 调和）：件数锚改单点常量（合并后 = 15），
+    // 原「−2 后 16 件」裸数措辞随 govmemory/taskunify 收编失效——防双源漂移。
+    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
+      "Nebula 面件数必须恰等于单点常量（不得写裸数字）")
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize)
 
   test("dimension guard: 1024 MB = 1 GiB = 1,073,741,824 B / ≤9 件 / 标签含 1,073,741,824（量纲写死）"):
@@ -382,7 +391,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     assert(!props.contains("targetDir"), "本批不引入 targetDir（按分发器补充；与上游卡片 §7.3 的差异已登记）")
     assert(!props.contains("overwrite"), "本批不引入 overwrite（同上）")
     assert(!props.contains("address") && !props.contains("device") && !props.contains("type"))
-    assertEquals(props.keys.toSet, Set("to", "message", "chainId", "images", "attachments"))
+    // 🔴 支上对账重算批（2026-09-26 调和）：键集收编 taskunify 批的 `task` 槽 ⇒ 5 → 6。
+    assertEquals(props.keys.toSet, Set("to", "message", "chainId", "task", "images", "attachments"))
     val required = schema("required").flatMap(_.asArray).getOrElse(Vector.empty).map(_.asString.getOrElse(""))
     assertEquals(required.toList, List("to", "message"))
 

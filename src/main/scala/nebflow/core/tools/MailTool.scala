@@ -249,7 +249,9 @@ address in the face above (and, for a sender with a friend list, a bare friend
 remark/username/email/displayName). A `to` value that contains a colon must use one of
 the explicit schemes — `project:`, `node:`, `kernel:`, `friend:`, `group:` — or the
 reserved literal `local`. **An unknown scheme is an explicit error listing the legal
-schemes** — it is never silently reinterpreted as a friend name. The former
+schemes** — it is never silently reinterpreted as a friend name; the escape hatch for a
+friend whose own name contains a colon is the explicit `friend:` prefix (the reserved
+literal `local` has shadowed a friend of that name since the beginning). The former
 `device:` scheme was RETIRED on 2026-09-25 (cross-device agent-mail leg removed on both
 ends in the same batch — the receiving devices stopped injecting `agent_mail` envelopes):
 `to="device:…"` is an explicit MAIL_DEVICE_RETIRED error — nothing is sent and nothing
