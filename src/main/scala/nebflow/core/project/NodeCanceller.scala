@@ -5,7 +5,8 @@ import cats.effect.*
 import cats.syntax.all.*
 import nebflow.core.tools.BgTaskRegistry
 
-private[project] trait NodeCanceller { self: NodeEngine =>
+private[project] trait NodeCanceller:
+  self: NodeEngine =>
 
   private[project] def markCascadeCancelled(ids: Iterable[String]): IO[Unit] =
     cascadeCancelledIds.update { cur =>
@@ -766,5 +767,4 @@ private[project] trait NodeCanceller { self: NodeEngine =>
               checkBarriersNow(failed.id, cause = "failed")
           case _ => IO.unit
       yield ()
-
-}
+end NodeCanceller
