@@ -1314,7 +1314,7 @@ case class SessionContext(
     *
     * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
     * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MemoryTrack` / `MailTool` /
+    * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MailTool` /
     * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
     * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
     * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见

@@ -298,23 +298,20 @@ object ContextRefresher:
       // (`~/.nebflow/tasks-v2.json`) -- the legacy `TaskListStore.openSummaryLine()` read
       // the retired `~/.nebflow/tasks.json`, which new code no longer reads (ruling L:
       // read-only archive).
-      nebflow.core.project.TaskLedgerStore.open().openSummaryLine(),
-      // 记忆队列 pending 计数（记忆改造批 2026-09-12，spec §5 R2）：一行注入，
-      // 复用本注入点先例（TaskList open 摘要同款）——队列为空时返回空串
-      // （不留常驻噪声行）。不新增只读回看工具。
-      nebflow.core.tools.MemoryQueue.summaryLine()
+      nebflow.core.project.TaskLedgerStore.open().openSummaryLine()
     )
   end buildMemoryBlock
 
   /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
-    * TaskList open 摘要行 + 记忆队列 pending 行 → 记忆块全文。文件字节直接由已加载
-    * 内容计算（无第二次读盘）。空串段不渲染；非空段以 --- 分隔。 */
+    * Task open 摘要行 → 记忆块全文。文件字节直接由已加载
+    * 内容计算（无第二次读盘）。空串段不渲染；非空段以 --- 分隔。
+    * (The memory-queue pending line parameter was removed with the queue
+    * mechanism's retirement - govmemory batch.) */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
     lifecycleSignal: (Boolean, Boolean),
-    openTasksLine: String = "",
-    memoryQueueLine: String = ""
+    openTasksLine: String = ""
   ): String =
     val sections = List(
       userContent.map(content => s"## User Memory\n\n$content"),
@@ -331,7 +328,7 @@ object ContextRefresher:
            |${sections.mkString("\n\n")}""".stripMargin
 
     val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
-    List(base, memoryQueueLine, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
+    List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
   /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
@@ -361,7 +358,7 @@ object ContextRefresher:
          |A memory file is over the 80% budget line:
          |${lines.mkString("\n")}
          |
-         |Schedule a consolidation pass THIS TURN (memory-consolidation skill), do not wait for the weekly audit: over-budget memory taxes every future session, and the write-side gate will start rejecting appends at the hard line. Trim stale T2 batch sections, superseded rulings and unpromoted Dream entries first (取代而非追加; replace_section for section-level cleanup).""".stripMargin
+         |Schedule a consolidation pass THIS TURN (memory-consolidation skill), do not wait for the weekly audit: over-budget memory taxes every future session, and the write-side budget guard will start refusing writes that grow the file at the hard line. Trim stale T2 batch sections and superseded rulings first (replace in place - never append a correction beside the old line; rewrite the largest `## ` section down for section-level cleanup).""".stripMargin
     else if restartPending || compactPending then
       val cause = (restartPending, compactPending) match
         case (true, true)  => "The host just restarted AND your memory was just compacted"
@@ -369,7 +366,7 @@ object ContextRefresher:
         case _             => "Your memory was just compacted"
       s"""## Memory hygiene
          |
-         |$cause. Restart/compaction closes out T2 status entries (pending-reboot lists, batch ledgers) and ages T3 Dream entries. If you noticed stale state while resuming, run a quick consolidation pass (memory-consolidation skill) — trim closed-out entries instead of letting them accumulate to the budget line.""".stripMargin
+         |$cause. Restart/compaction closes out T2 status entries (pending-reboot lists, batch ledgers) and ages stale long-lived entries. If you noticed stale state while resuming, run a quick consolidation pass (memory-consolidation skill) — trim closed-out entries instead of letting them accumulate to the budget line.""".stripMargin
     else ""
   end memoryHygieneNotice
 

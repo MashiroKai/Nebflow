@@ -270,18 +270,16 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   // ============================================================
   // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
   //
-  // 存在理由：Nebula 的提示词字面量（AgentLibrary.Seeds.Nebula）里作者六句
-  // spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有一句定义
-  // Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或由
-  // 设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
+  // 存在理由：Nebula 的提示词（现 = seed 树文件 seed/agents/Nebula/system.md）
+  // 里作者六句 spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有
+  // 一句定义 Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或
+  // 由设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
   // 文件、按主机名猜出的用户名目录、Desktop/Downloads、数据根下的 tasks.json
   // 等），0 次 Mail —— 见诊断件 .nebflow/reports/20260917_coldroute-diag.md。
   //
-  // 落点理由：AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
-  // add-only（只在文件不存在时补写），既有 home 重启不刷新 ⇒ 改字面量对作者
-  // 现有实例无效（诊断件已用隔离实例实测：加标记后重启，标记存活）。本段由
-  // **引擎编译**注入、与盘面无关（先例 order 350 / order 360），重启同一 home
-  // 即生效。
+  // 落点理由：本段由**引擎编译**注入、与盘面无关（先例 order 350 / order 360），
+  // 重启同一 home 即生效（原 AgentLibrary.seedDefaults 的 add-only 落点理由已随
+  // 该方法退役——govmemory 批起 seed 树 + reconcile 每次启动均可刷新运行面）。
   //
   // 文本纪律：纯静态、零用户数据、零绝对路径、零 hostname。本段进每次根会话
   // LLM 调用，且**不得**把任何本机标识写回请求面（「设备名被当作用户名」正是
@@ -721,6 +719,19 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   /** Strip all sections that have been migrated to conditional injection. */
   def stripAllMigrated(prompt: String): String =
     stripSection(prompt, "Voice Output")
+
+  /** Strip comment-only single lines (a trimmed line that starts with `<!--` and
+    * ends with `-->`) — the mechanical guarantee behind the seed batch-source
+    * annotations (govmemory batch, plan §1.2 step 1: 标注放 HTML 注释，避免进入
+    * 模型上下文). Conservative by design: only whole-line comments are removed;
+    * inline comments inside a content line, multi-line comments and every other
+    * byte are passed through unchanged (byte-identical for comment-free input —
+    * the trailing newline survives via the split("\n", -1) empty tail element). */
+  def stripCommentOnlyLines(prompt: String): String =
+    prompt.split("\n", -1).filterNot { l =>
+      val t = l.trim
+      t.startsWith("<!--") && t.endsWith("-->")
+    }.mkString("\n")
 
 end PromptSections
 

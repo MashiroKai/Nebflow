@@ -100,13 +100,11 @@ object ToolRegistry:
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,
       "ProjectCreate" -> ProjectCreateTool,
-      // 阶段 2c（§C.2）：记忆维护工具——target 白名单硬编码 User.md +
-      // agents/Nebula/memory.md（H-1①：工具内建路径校验，非沙箱对象）。
-      // 授能面：Nebula 固定携带；dream 经 2026-09-05 作者签准备入
-      // （AgentCore.DreamAdmittedTools + exclusiveToolsFor 单点剥离豁免），
-      // 动作面限修订动作（remove/update/replace_section），append 由
-      // MemoryNoteTool 拒绝（DREAM_APPEND_DENIED——dream 禁写新记忆铁律）。
-      "MemoryNote" -> MemoryNoteTool,
+      // MemoryNote registration retired 2026-09-25 (govmemory batch): the tool
+      // was pure queue bookkeeping (zero disk writes since 2026-09-12) and the
+      // queue is retired with it. Memory is written directly with Edit/Write on
+      // the three memory layers (budget guard: MemoryDirectWriteGuard); calling
+      // the retired name hits AgentCore.RetiredToolGuides (error text only).
       // Task (taskunify batch 2026-09-24): `TaskList` + `TaskBoard` are merged into **one**
       // item -- the persistent task ledger (`~/.nebflow/tasks-v2.json`, a single global
       // file, the runtime data layer). The authorization face = the single source

@@ -89,8 +89,8 @@ class NebulaSixBaseToolsSpec extends FunSuite:
       "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
-    assertEquals(AgentCore.NebulaOrchestrationTools.size, 17,
-      "NebulaOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, 16,
+      "NebulaOrchestrationTools 实测恰 16 件（govmemory 批 2026-09-25 −MemoryNote；此前 17 = 2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

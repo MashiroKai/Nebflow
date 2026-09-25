@@ -5,17 +5,20 @@ package nebflow.service
  *
  * 预算现行裁定（50KB/30KB 硬顶）+ 80% 软触发（40KB/24KB）。执行位置在【写入侧】：
  * 注入侧不加截断（§3.3 裁定——截断=静默丢记忆，比超预算更危险且不可观测；该裁定
- * 随本对象固化进 MemoryNote 工具 description）。
+ * 现由注入侧渲染与 MemoryDirectWriteGuard 的提醒/拒绝文案共同承载）。
  *
- * 消费方（两处写面，同一判据防绕过）：
- *   - MemoryNoteTool append/update：落盘前校验【新文件总字节】——超硬顶=结构化拒绝
- *     （MEMORYEDIT_BUDGET，附 top-3 最大节+整理指引）；超 80%=放行+结果文本附 WARN。
- *     replace_section 不闸——它是超限后的整理通道，闸掉它就断了收缩路径。
+ * 消费方（同一判据防绕过）：
+ *   - MemoryDirectWriteGuard（govmemory 批 2026-09-25）：Edit/Write 直写三层
+ *     记忆文件的写前检查——超硬顶且净增 ⇒ 结构化拒绝（附 top-3 最大节+整理指引）；
+ *     超 80% 软线 ⇒ 放行 + 结果附 system-reminder（24h 防骚扰）。真收缩豁免
+ *     （判据单源 [[MemoryWriteGate.shrinkExempt]]）——收缩是超限后的自救通道，
+ *     闸掉它就断了整理路径。
+ *   - [[MemoryWriteGate.decide]]（M4 单点闸）：WS `saveMemory` 旁路的落盘前校验。
  *   - ProjectMemory.injectionBlock（project-memory 批 2026-09-05）：项目记忆
  *     注入渲染共用三态判据——预算内全文、软警区全文+WARN 脚注、超硬顶头部+统计。
  *     project 维度常量独立（10KB/8KB，见常量处定值依据）。
- *     （第三处旧消费方 DreamMode.updateMemory 的 hook 自动写入合并已随 DreamMode
- *     机制停用退役 ⇒ 现盘干消费方 = 下面两条写面。）
+ *     （旧消费方 MemoryNoteTool 与 DreamMode.updateMemory 已随各自机制退役——
+ *     govmemory 批 / DreamMode 停用批。）
  *
  * 纯函数、零 IO、零 ToolError 依赖（service 不反向依赖 core.tools——错误包装由
  * 调用方完成），供两侧与 spec 共享同一判据。
@@ -68,7 +71,7 @@ object MemoryBudget:
   /** 超硬顶 —— 拒绝。 */
   final case class Exceeded(override val bytes: Long, hardCap: Long) extends Verdict
 
-  /** target 标识（MemoryNote 的 "user"/"agent"/"project"）。project 维度
+  /** target 标识（"user" / "agent" / "project"）。project 维度
     * （project-memory 批）：单个项目的 `<workspace>/.nebflow/memory.md`，
     * 常量独立于全局两级。 */
   def verdict(target: String, newSizeBytes: Long): Verdict =
@@ -125,9 +128,9 @@ object MemoryBudget:
   // 文案（调用方包装成 ToolError / 结果附录）
   // ---------------------------------------------------------------
 
-  /** 超限拒绝消息体（MemoryNote 包装为 MEMORYEDIT_BUDGET）。
-    * project 维度的真实路径由调用方经 targetPath 传入（各项目 workspace 不同，
-    * 无法从 target 常量推出）。 */
+  /** 超限拒绝消息体（MemoryDirectWriteGuard / MemoryWriteGate 预算拒绝共用文案基底；
+    * govmemory 批起为直写口径）。project 维度的真实路径由调用方经 targetPath 传入
+    * （各项目 workspace 不同，无法从 target 常量推出）。 */
   def exceededMessage(action: String, target: String, targetPath: String, newSizeBytes: Long, newContent: String): String =
     val (label, hard) = target match
       case "user"    => ("~/.nebflow/User.md", UserHardBytes)
@@ -135,22 +138,11 @@ object MemoryBudget:
       case "project" => (targetPath, ProjectHardBytes)
       case other     => (other, -1L)
     val pct = if hard > 0 then f"${newSizeBytes * 100.0 / hard}%.0f%%" else "?"
-    s"""MemoryNote: $action rejected — $label would reach $newSizeBytes bytes ($pct of the $hard-byte hard budget).
+    s"""Memory write ($action) rejected — $label would reach $newSizeBytes bytes ($pct of the $hard-byte hard budget).
        |Budget is enforced on the WRITE side (injection is never truncated — over-budget memory silently degrades every future session instead).
        |Consolidate first, then write. Largest sections:
        |${topSections(newContent)}
-       |Trim stale/duplicate entries via remove/replace_section (memory-consolidation skill), or demote detail into ~/.nebflow/memory/<id>.md files.
-       |(MEMORYEDIT_BUDGET)""".stripMargin
-
-  /** 80% 软警文案（追加在成功结果之后，放行不拦截）。project 维度真实路径由
-    * targetPath 传入（缺省空串仅兼容旧调用方——全局侧不受影响）。 */
-  def warnNotice(target: String, newSizeBytes: Long, targetPath: String = ""): String =
-    val (label, soft, hard) = target match
-      case "user"    => ("~/.nebflow/User.md", UserSoftBytes, UserHardBytes)
-      case "agent"   => ("~/.nebflow/agents/Nebula/memory.md", AgentSoftBytes, AgentHardBytes)
-      case "project" => (targetPath, ProjectSoftBytes, ProjectHardBytes)
-      case other     => (other, -1L, -1L)
-    s"""WARN: $label is now $newSizeBytes bytes (over the 80% soft line of $soft bytes; hard budget $hard).
-       |Schedule a consolidation pass this turn or at the next lifecycle node — do not wait for the weekly audit. (MEMORYEDIT_BUDGET_WARN)"""
+       |Trim stale/duplicate entries in place (the append and the remove/update are paired in the same round; memory-consolidation skill), or demote detail into ~/.nebflow/memory/<id>.md files.
+       |A write that shrinks the file stays exempt from the hard cap. (MEMORYEDIT_BUDGET)""".stripMargin
 
 end MemoryBudget
