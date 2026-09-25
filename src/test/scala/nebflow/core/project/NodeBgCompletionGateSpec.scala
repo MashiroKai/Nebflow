@@ -194,8 +194,10 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
    * 换成「有界等它到」；等待上限沿用既有 15s（未加大 timeout）。
    *
    * 同时（任务书选项之①）[[mountProject]] 注入 `notifyQuietMs = Some(1L)`：关掉
-   * `notify.quietMs` 的 5s 去抖/打包窗（`ProjectTypes.scala:409` /
-   *   `NodeEngine.scala:138`），使 dispatch-notify 腿在用例内**确定性**地不引入 5s 延迟。
+   * `notify.quietMs` 的 5s 去抖/打包窗（2026-09-25 行号漂移重锚，成员未迁移：
+   * `ProjectTypes.scala` 的 `NotifyPolicy.NotifyQuietMsDefaultMs`（原 `:409`） /
+   * `NodeEngine` 构造器接缝 `notifyQuietMs` → `dispatchNotify` 装配（原
+   * `NodeEngine.scala:138`）），使 dispatch-notify 腿在用例内**确定性**地不引入 5s 延迟。
    */
   private def awaitDelivery(
     recorded: Ref[IO, List[AgentCommand]],

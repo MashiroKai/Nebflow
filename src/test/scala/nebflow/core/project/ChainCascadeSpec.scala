@@ -533,7 +533,11 @@ class ChainCascadeSpec extends CatsEffectSuite:
   test(
     "M8: the L3 hard-recovery intermediate state is hard-bound to cascade=false (structural assertion + semantic equivalence)"
   ) {
-    val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
+    // 2026-09-25 H 步重钉：L3 腿硬守卫（`val deferDetach = …` / `l3CascadeAllowed(deferDetach)`）
+    // 随启动簇 runWithAgent 自 NodeEngine 迁至 NodeStarter（self-type trait，行为保持重构）
+    // ——守卫窗口改读新文件，锚文本不变、窗口语义不变。判据语义不变。
+    val src =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeStarter.scala"))
     // ① 判据函数本身：deferDetach=true ⇒ 级联权限 false
     assert(!NodeEngine.l3CascadeAllowed(deferDetach = true), "L3 intermediate state must forbid cascading (§6-M8)")
     assert(NodeEngine.l3CascadeAllowed(deferDetach = false), "non-L3 legs keep their own default")

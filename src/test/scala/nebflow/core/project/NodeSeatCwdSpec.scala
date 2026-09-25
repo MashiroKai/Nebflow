@@ -119,12 +119,16 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
     // 2026-09-25 F 步重钉：loop 会话 spawn 点（spawnLoopSession）随 loop 簇自 NodeEngine
     // 迁至 NodeLoopRunner（self-type trait，行为保持重构）——计数扩为跨文件聚合（先例
     // SubAgentInboxMirrorSpec 2.3 增补），合计仍 2，判据语义不变。
+    // 2026-09-25 H 步重钉：普通节点 spawn 点（runWithAgent）随启动簇自 NodeEngine 迁至
+    // NodeStarter（self-type trait，行为保持重构）——聚合再纳入 NodeStarter.scala，合计
+    // 仍 2，判据语义不变。
     val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala") +
-      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeLoopRunner.scala")
+      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeLoopRunner.scala") +
+      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeStarter.scala")
     assertEquals(
       "sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size,
       2,
-      "both NodeEngine spawn points (normal node / loop session) must pass the seat signal"
+      "both spawn points (normal node in NodeStarter / loop session in NodeLoopRunner) must pass the seat signal"
     )
   }
 end NodeSeatCwdSpec

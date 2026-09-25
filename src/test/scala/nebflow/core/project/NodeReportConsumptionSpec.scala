@@ -20,7 +20,9 @@ import scala.concurrent.duration.*
 
 /**
  * 申报消费的原子化/补偿（engine-defects 批 #239①，2026-09-15）——**面②** 的回归钉：
- * `NodeEngine.scala` 桥终态点 `drain(sessionId) → completeNode(...)`，`drain` 取走即移除
+ * `NodeStarter.scala` 桥终态点 `drain(sessionId) → completeNode(...)`（2026-09-25 H 步
+ * 重钉：随启动簇 runWithAgent 自 `NodeEngine.scala` 迁至 NodeStarter，行为保持重构），
+ * `drain` 取走即移除
  * （`NodeReportRegistry` 头注「drain 即移除」），而终态写有多条**拒写**路径（节点已消失 /
  * 状态已变＝R2 fresh-read 竞态纪律）⇒ 旧口径下**拒写即申报永久丢失、无补偿写回**。
  *

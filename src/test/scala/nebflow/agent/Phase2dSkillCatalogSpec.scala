@@ -131,10 +131,12 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段（2026-09-11）：**完成门腿 2** 生产默认 **开**
-        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeEngine.scala:2948`
-        // `case None if reportGateHoldEnabled && !anchoredBlocked`）——节点交棒
-        // （桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时**不终态化**，
-        // 节点保持 Running（`NodeEngine.scala:2883-2886` 逐字）。本 spec 的主题是
+        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeStarter.scala` 的
+        // `case None if reportGateHoldEnabled && !anchoredBlocked`——2026-09-25 H 步重钉：
+        // 随启动簇 runWithAgent 自 `NodeEngine.scala` 迁至 NodeStarter，行为保持重构）
+        // ——节点交棒（桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时
+        // **不**终态化**，节点保持 Running（`NodeStarter.scala` 桥 hold 分支
+        // `markReportPendingIfAbsent(...).as(bridge)` 逐字）。本 spec 的主题是
         // 「skill 目录停注 / wire 层工具描述」，`waitUntil(status == Completed)`
         // （`:183-184`，载体 `:158/:154`）只是取首条 `LlmRequest` 的**前置**——腿 2
         // 开着 ⇒ 该条件永不满足 ⇒ 60s 到点必假红。
