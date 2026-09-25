@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.entity.EntityLoader
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -122,7 +123,7 @@ private[gateway] object RegistryRoutes:
       // Folders
       case req @ GET -> Root / "folders" =>
         withAuth(req) {
-          val agentName = req.params.get("agent").getOrElse("Nebula")
+          val agentName = req.params.get("agent").getOrElse(RootAgentIdentity.Name)
           sessionStore.listFolders(agentName).flatMap { folders =>
             Ok(Json.obj("folders" -> folders.asJson))
           }
@@ -150,7 +151,7 @@ private[gateway] object RegistryRoutes:
         withAuth(req) {
           val scope = req.params.get("scope").getOrElse("agent")
           sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
             val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
             val content = scope match
               case "user" => nebflow.service.MemoryStore.loadUserMemory.getOrElse("")

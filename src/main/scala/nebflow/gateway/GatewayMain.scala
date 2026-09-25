@@ -442,7 +442,7 @@ object GatewayMain extends IOApp:
                   // freshinstall-rootsessionid 批 M1：返回值**不再丢弃**——它就是
                   // 「开机补建」的产物，是启动挂载根的唯一真源（此前 startupMount
                   // 另起一次 listSessionsByAgent 现查 + `getOrElse("")`）。
-                  sessionStore.ensureActiveAgentSession("Nebula")
+                  sessionStore.ensureActiveAgentSession(RootAgentIdentity.Name)
                 }
                 .flatMap { bootRoot =>
                   // Flow-node supervision P3: llm.streamTimeouts watchdog overrides

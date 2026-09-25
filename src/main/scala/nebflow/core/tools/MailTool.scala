@@ -58,8 +58,8 @@ object MailTool extends Tool:
   private val TeamOnlyRoutingError =
     "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
 
-  /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点）。 */
-  private val NebulaAgentName = "Nebula"
+  /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点；值单源于 RootAgentIdentity.Name）。 */
+  private val NebulaAgentName = RootAgentIdentity.Name
 
   // ============================================================
   // device-mail 批（2026-09-15）——`device` 目标的校验词表（**唯一来源**；
@@ -1672,7 +1672,7 @@ Message type (optional, default "INFO"):
     system: ActorSystem,
     senderSessionId: String
   ): IO[Either[ToolError, String]] =
-    val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
+    val senderName = ctx.agentDef.map(_.name).getOrElse(RootAgentIdentity.Name)
     val item = MailQueueStore.MailQueueItem(
       id = s"mail-q-${java.util.UUID.randomUUID().toString.take(8)}",
       from = senderName,
@@ -2258,7 +2258,7 @@ Message type (optional, default "INFO"):
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
-    val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
+    val senderName = ctx.agentDef.map(_.name).getOrElse(RootAgentIdentity.Name)
     val senderSid = ctx.sessionId.getOrElse("")
     for
       // Resolve the sender's team so the injected bubble can show "team/agent" attribution.
@@ -2306,7 +2306,7 @@ Message type (optional, default "INFO"):
     for
       fromOpt <- TeamSessionRegistry.agentOfSession(fromSid)
       toInfo <- TeamSessionRegistry.instanceAndAgentOfSession(toSid)
-      senderName = fromOpt.orElse(ctx.agentDef.map(_.name)).getOrElse("Nebula")
+      senderName = fromOpt.orElse(ctx.agentDef.map(_.name)).getOrElse(RootAgentIdentity.Name)
       (teamName, fromName) = toInfo match
         case Some((inst, _)) => (inst, senderName)
         case None => ("", fromOpt.getOrElse(fromSid.take(8)))

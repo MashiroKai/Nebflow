@@ -357,13 +357,13 @@ Example: {"filePath": "https://example.com"}"""
    * harness 显式传 Nebula ctx（PopToolSpec.captureCtx）。
    *
    * **工具面按角色分化批（2026-09-13）**：谓词本体已上移为全仓唯一单点
-   * [[nebflow.agent.AgentCore.isNebulaRoot]]（同批新增：定义期 schema 分组的
+   * [[nebflow.agent.AgentCore.isRootAgent]]（同批新增：定义期 schema 分组的
    * 分组依据 + AskUserQuestion 非阻塞兜底闸——三消费点一处实现）。本方法退化为
    * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
    * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
    */
   private def isNebulaRootSession(ctx: ToolContext): Boolean =
-    nebflow.agent.AgentCore.isNebulaRoot(ctx.agentDef, ctx.depth)
+    nebflow.agent.AgentCore.isRootAgent(ctx.agentDef, ctx.depth)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /

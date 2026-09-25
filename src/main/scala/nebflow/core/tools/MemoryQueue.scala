@@ -3,6 +3,7 @@ package nebflow.core.tools
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.project.{ProjectDef, ProjectMemory, ProjectStore}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.service.{MemoryBudget, MemoryStore, MemoryWriteGate}
@@ -1193,7 +1194,7 @@ object MemoryQueue:
     try
       target match
         case "user" => os.exists(MemoryStore.userMemoryPath)
-        case "agent" => os.exists(MemoryStore.agentMemoryPath("Nebula"))
+        case "agent" => os.exists(MemoryStore.agentMemoryPath(RootAgentIdentity.Name))
         case p if p.startsWith("project:") =>
           val name = p.stripPrefix("project:")
           val named =

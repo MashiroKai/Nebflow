@@ -171,7 +171,7 @@ end InjectionAttribution
  * ③ 第三道 = description（仅描述性，不承担机制）。**schema 分化不替代授权判定**：
  * 引擎无 JSON-Schema 校验器 ⇒ 面外参数会被静默忽略，故 ② 不得删除。
  *
- * 判据单点 = [[AgentCore.isNebulaRoot]]（`name=="Nebula" && depth==0`），
+ * 判据单点 = [[AgentCore.isRootAgent]]（`name=="Nebula" && depth==0`），
  * 定义期（挑变体）与运行期（兜底闸）**同一份实现**，禁第二份同表达式。
  */
 enum AskMode:

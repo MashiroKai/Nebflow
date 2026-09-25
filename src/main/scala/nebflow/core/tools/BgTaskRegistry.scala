@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.NebflowLogger
 
 /**
@@ -89,7 +90,7 @@ object BgTaskRegistry:
     val name = sessionName.getOrElse("")
     if sessionId.startsWith("node-") then ("node", if name.nonEmpty then name else sessionId)
     else if sessionId.startsWith("dispatcher-") then ("dispatcher", if name.nonEmpty then name else "dispatcher")
-    else ("nebula", "Nebula")
+    else ("nebula", RootAgentIdentity.Name)
 
   def register(
     jobId: String,

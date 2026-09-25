@@ -534,7 +534,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
           }
           isRealUserTurn = isUserTurn && lastMsgOpt.exists(_.source.isEmpty)
-          isRootAgent = freshDef.name == "Nebula"
+          isRootAgent = freshDef.name == RootAgentIdentity.Name
           // Mounted-project list (progressive disclosure 2026-09-07): Nebula
           // only — dispatcher/node sessions skip the registry read (text stays
           // "" → section not injected, no reminder). Root agent always gets an
@@ -2039,7 +2039,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 阶段 2d 子集）：agent.json flows 声明解析保留（决策 A①——legacy 授能中
     // 声明字段活到阶段 3），但不再驱动任何工具注入；FlowTrigger 工具本身已从
     // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
-    val isNebula = agentDef.name == "Nebula"
+    val isNebula = agentDef.name == RootAgentIdentity.Name
     // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
     // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面仍受
     // MemoryNoteTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
@@ -2200,7 +2200,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
     // spawn 注入路径零触碰）。
     // 工具面按角色分化批 B2（2026-09-13）+ Q4/Q5 批（同日）：定义期分组——**第一性
-    // 机制**。判据 = 身份装配单点 [[toolFaceIdentity]]（内部委托 [[isNebulaRoot]] /
+    // 机制**。判据 = 身份装配单点 [[toolFaceIdentity]]（内部委托 [[isRootAgent]] /
     // `NodeRoles`；禁在此内联第二份表达式），默认分支恒基础变体（fail-closed）。
     // 成员资格逐位不变，只有目标工具那一段 `description` 因身份不同。
     val identity = AgentCore.toolFaceIdentity(agentDef, depth, flowNodeRole, isDispatcher)

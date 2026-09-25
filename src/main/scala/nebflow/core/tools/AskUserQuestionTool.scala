@@ -332,7 +332,7 @@ Behavior:
           case Left(err) => IO.pure(Left(err))
           case Right(AskMode.Blocking) => askUser(input, ctx)
           case Right(AskMode.NonBlocking) =>
-            if !ctx.isNebulaRoot then IO.pure(Left(nonBlockingNotRootError(ctx)))
+            if !ctx.isRootAgent then IO.pure(Left(nonBlockingNotRootError(ctx)))
             else askUserNonBlocking(input, ctx)
 
   /** 入参校验（阻塞/非阻塞共用；错误文案与历史逐字节一致）。 */

@@ -136,7 +136,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     val mail = baseOf("Mail")
     assertEquals(AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity()), mail, "基础身份未恒等映射")
     assertEquals(
-      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)).description,
+      AgentCore.schemaVariantFor(mail, AgentCore.ToolFaceIdentity(isRootAgent = true)).description,
       MailTool.descriptionNebulaRoot
     )
     assertEquals(
@@ -154,7 +154,7 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     )
     // 变体选择**只**动 description（Q5 判据 + 试点口径）
     for (td, id) <- List(
-        (mail, AgentCore.ToolFaceIdentity(isNebulaRoot = true)),
+        (mail, AgentCore.ToolFaceIdentity(isRootAgent = true)),
         (mail, AgentCore.ToolFaceIdentity(isDispatcher = true)),
         (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("task"))),
         (nr, AgentCore.ToolFaceIdentity(nodeRole = Some("verifier")))
@@ -195,8 +195,10 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
       .toList
     assertEquals(roleFilterFiles, Nil, "节点角色判据出现了第二份表达式（规格：一处实现、单点消费）")
 
-    // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）
-    val pred = """(?s)name\s*==\s*"Nebula"\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
+    // 既有 root 判据仍单点（与 AskUser 批同一纪律；此处复验不回归）。
+    // re-pin（2026-09-25 身份谓词单点化批）：判据名分字面量 "Nebula" 收敛为常量
+    // RootAgentIdentity.Name（值不变），正则同步钉常量形态。
+    val pred = """(?s)name\s*==\s*RootAgentIdentity\.Name\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
     val holders = os
       .walk(mainSrc)
       .filter(p => p.ext == "scala")

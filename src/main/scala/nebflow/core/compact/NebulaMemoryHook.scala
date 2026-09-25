@@ -1,7 +1,7 @@
 package nebflow.core.compact
 
 import cats.effect.IO
-import nebflow.agent.SharedResources
+import nebflow.agent.{RootAgentIdentity, SharedResources}
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.MemoryQueue
 import nebflow.service.{MemoryBudget, MemoryStore}
@@ -173,7 +173,7 @@ object NebulaMemoryHook extends PreCompactionHook:
     try
       val path =
         if face == UserFace then MemoryStore.userMemoryPath
-        else MemoryStore.agentMemoryPath("Nebula")
+        else MemoryStore.agentMemoryPath(RootAgentIdentity.Name)
       val hard =
         if face == UserFace then MemoryBudget.UserHardBytes
         else MemoryBudget.AgentHardBytes

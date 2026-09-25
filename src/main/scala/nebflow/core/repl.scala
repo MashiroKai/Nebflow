@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.agent.RootAgentIdentity
 import nebflow.shared.*
 
 import java.nio.file.{Files, Paths}
@@ -88,6 +89,6 @@ object Repl:
   }
 
   def loadSystemPrompt(): String = // public for AgentActor
-    val path = PathUtil.dataRoot / "agents" / "Nebula" / "system.md"
+    val path = PathUtil.dataRoot / "agents" / RootAgentIdentity.Name / "system.md"
     if os.exists(path) then os.read(path) else ""
 end Repl

@@ -575,7 +575,7 @@ private[gateway] object WsSessionChatHandlers:
           case Some(an) =>
             sendAgentSessionListByName(wsSend, an)
           case None =>
-            sessionService.sendSessionList(wsSend, "Nebula")
+            sessionService.sendSessionList(wsSend, RootAgentIdentity.Name)
         sendList
       }
       .handleErrorWith { e =>
@@ -596,7 +596,7 @@ private[gateway] object WsSessionChatHandlers:
       sessionStore
         .getSessionMeta(sessionId)
         .flatMap { metaOpt =>
-          val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+          val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
           // Clean up text buffers for deleted session to prevent memory leak
           sessionTextBuffers.update(_ - sessionId) *>
             sessionThinkingBuffers.update(_ - sessionId) *>
@@ -628,7 +628,7 @@ private[gateway] object WsSessionChatHandlers:
       sessionStore
         .getSessionMeta(sessionIds.head)
         .flatMap { metaOpt =>
-          val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+          val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
           sessionIds
             .traverse_ { sid =>
               sessionTextBuffers.update(_ - sid) *>
@@ -828,7 +828,7 @@ private[gateway] object WsSessionChatHandlers:
     // Manual trigger for re-fetching the unified session list on WS
     // reconnect (sessions may have been created/removed while the
     // frontend was disconnected). Same payload as the initial push.
-    sessionService.sendSessionList(wsSend, "Nebula")
+    sessionService.sendSessionList(wsSend, RootAgentIdentity.Name)
 
   private def handleCreateAgentSession(
     ctx: WsDispatchCtx,

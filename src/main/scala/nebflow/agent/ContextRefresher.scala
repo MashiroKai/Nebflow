@@ -78,7 +78,7 @@ object ContextRefresher:
    * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。
    */
   def agentsMdEnabledFor(projectSession: Boolean, projectRoot: Option[String], agentName: String = ""): Boolean =
-    projectSession && projectRoot.exists(_.nonEmpty) && agentName != "Nebula"
+    projectSession && projectRoot.exists(_.nonEmpty) && agentName != RootAgentIdentity.Name
 
   /**
    * E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
@@ -260,7 +260,7 @@ object ContextRefresher:
     agentName: String,
     headless: Boolean = HeadlessMode.enabled
   ): Boolean =
-    !headless && !isWorker && agentName == "Nebula"
+    !headless && !isWorker && agentName == RootAgentIdentity.Name
 
   /**
    * Build a memory block string for system prompt injection.
@@ -558,7 +558,7 @@ object ContextRefresher:
    * 裁定 8/9）；legacy agent 保留至阶段 3。公开供 spec 断言。
    */
   def skillCatalogEnabledFor(agentName: String): Boolean =
-    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == "Nebula"
+    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == RootAgentIdentity.Name
 
   /**
    * Build Team catalog for system prompt injection.

@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.MemoryStore
@@ -142,7 +143,7 @@ object MemoryNoteTool extends Tool:
   private def validateTarget(target: String): Either[ToolError, Target] =
     target match
       case "user" => Right(Target("user", MemoryStore.userMemoryPath))
-      case "agent" => Right(Target("agent", MemoryStore.agentMemoryPath("Nebula")))
+      case "agent" => Right(Target("agent", MemoryStore.agentMemoryPath(RootAgentIdentity.Name)))
       case p if p.startsWith("project:") =>
         val projectName = p.stripPrefix("project:")
         // 项目名校验与注册表同规（ProjectStore：禁 / \ . .. 空名——路径穿越在

@@ -126,7 +126,7 @@ A task with 2+ independent parts — different file domains, or different nature
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-task depth ($MaxDepth) reached. Cannot delegate further.")))
-    else if ctx.agentDef.exists(_.name == "Nebula") then
+    else if ctx.agentDef.exists(_.name == RootAgentIdentity.Name) then
       // #28 (2026-08-20): Nebula's toolset has no SubTask, but guard
       // structurally — the root orchestrator exists exactly once and must not
       // spawn copies of itself, even if a custom agent.json lists the tool.

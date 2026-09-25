@@ -127,14 +127,14 @@ case class ToolContext(
 ):
   /**
    * 「Nebula 本体根会话」身份判据的**运行期求值面**（工具面按角色分化批 B1，
-   * 2026-09-13）——**纯委托**给单点 [[nebflow.agent.AgentCore.isNebulaRoot]]
+   * 2026-09-13）——**纯委托**给单点 [[nebflow.agent.AgentCore.isRootAgent]]
    * （同一份实现的第二个求值面；第一个 = 定义期挑 schema 变体）。**禁**在此
    * 重写 `name=="Nebula" && depth==0`（判红：spec 的静态断言）。
    *
    * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
    * fail-closed 为 false。
    */
-  def isNebulaRoot: Boolean = AgentCore.isNebulaRoot(agentDef, depth)
+  def isRootAgent: Boolean = AgentCore.isRootAgent(agentDef, depth)
 end ToolContext
 
 case class ToolError(message: String)

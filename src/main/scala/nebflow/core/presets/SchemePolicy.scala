@@ -1,6 +1,7 @@
 package nebflow.core.presets
 
 import io.circe.parser.decode
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.PathUtil
 import nebflow.shared.AgentModelConfig
 
@@ -33,7 +34,7 @@ import nebflow.shared.AgentModelConfig
  */
 object SchemePolicy:
 
-  val NebulaName = "Nebula"
+  val NebulaName = RootAgentIdentity.Name
   val DispatcherName = "project-dispatcher"
   val KernelName = "kernel"
   val GeneralName = "general"

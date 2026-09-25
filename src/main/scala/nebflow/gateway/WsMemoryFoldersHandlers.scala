@@ -68,7 +68,7 @@ private[gateway] object WsMemoryFoldersHandlers:
     if name.nonEmpty then
       val agentNameIO =
         if agentNameFromMsg.nonEmpty then IO.pure(agentNameFromMsg)
-        else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse("Nebula"))
+        else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name))
       agentNameIO
         .flatMap { agentName =>
           sessionService.createFolder(name, parentId, agentName).flatMap { _ =>
@@ -96,7 +96,7 @@ private[gateway] object WsMemoryFoldersHandlers:
         .renameFolder(folderId, newName)
         .flatMap { _ =>
           sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
             sendAgentSessionListByName(wsSend, agentName)
           }
         }
@@ -119,7 +119,7 @@ private[gateway] object WsMemoryFoldersHandlers:
         .deleteFolder(folderId)
         .flatMap { _ =>
           sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
             sendAgentSessionListByName(wsSend, agentName)
           }
         }
@@ -166,7 +166,7 @@ private[gateway] object WsMemoryFoldersHandlers:
         .moveFolder(folderId, parentId)
         .flatMap { _ =>
           sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
             sendAgentSessionListByName(wsSend, agentName)
           }
         }
@@ -194,7 +194,7 @@ private[gateway] object WsMemoryFoldersHandlers:
             // Use the folder's own agent name, not the active session's,
             // to ensure the frontend receives the update regardless of which agent tab is active.
             sessionStore.getFolderAgentName(folderId).flatMap { agentOpt =>
-              val agentName = agentOpt.getOrElse("Nebula")
+              val agentName = agentOpt.getOrElse(RootAgentIdentity.Name)
               sendAgentSessionListByName(wsSend, agentName)
             }
           case Left(err) =>
@@ -296,7 +296,7 @@ private[gateway] object WsMemoryFoldersHandlers:
       case None => sessionStore.getActiveMeta
     (metaIO
       .flatMap { metaOpt =>
-        val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+        val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
         val teamName = metaOpt.flatMap(_.flowName)
         val content = scope match
           case "user" => MemoryStore.loadUserMemory.getOrElse("")
@@ -338,7 +338,7 @@ private[gateway] object WsMemoryFoldersHandlers:
       case None => sessionStore.getActiveMeta
     (metaIO
       .flatMap { metaOpt =>
-        val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+        val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
         val teamName = metaOpt.flatMap(_.flowName)
         val save = scope match
           case "user" => MemoryStore.saveUserMemory(content)
@@ -381,7 +381,7 @@ private[gateway] object WsMemoryFoldersHandlers:
   ): IO[Unit] =
     import ctx.*
     sessionStore.getActiveMeta.flatMap { metaOpt =>
-      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       val teamName = metaOpt.flatMap(_.flowName)
       val (agentExists, agentPreview) = teamName match
         case Some(tn) =>

@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.flow.TurnStateStore
 import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.{*, given}
@@ -384,7 +385,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     // Nebula-owned session on first run (and as a fallback during recovery).
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, "Nebula", now, now, hasUnread = false, agentName = Some("Nebula"))
+    val meta =
+      SessionMeta(id, RootAgentIdentity.Name, now, now, hasUnread = false, agentName = Some(RootAgentIdentity.Name))
     indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(Nil) *>
       AtomicJson.write(sessionFile(id), "[]") *> saveIndex
 
@@ -582,7 +584,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def listFolders(agentName: String): IO[List[Folder]] =
     indexRef.get.map { case (_, _, folders) =>
       folders.filter { f =>
-        f.agentName == agentName || (f.agentName.isEmpty && agentName == "Nebula")
+        f.agentName == agentName || (f.agentName.isEmpty && agentName == RootAgentIdentity.Name)
       }
     }
 
@@ -607,7 +609,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     indexRef.get.map { case (_, sessions, _) =>
       sessions
         .filter { s =>
-          val effective = s.agentName.getOrElse("Nebula")
+          val effective = s.agentName.getOrElse(RootAgentIdentity.Name)
           effective == agentName
         }
         .sortBy(-_.updatedAt)

@@ -162,7 +162,7 @@ object TeamSessionRegistry:
           case None =>
             // "team/Nebula" — Nebula is the top-level root agent, never a team
             // session; Right(None) lets the caller route it to Nebula directly.
-            if agent == "Nebula" then Right(None)
+            if agent == RootAgentIdentity.Name then Right(None)
             else if m.keys.exists(_._1 == team) then Right(None)
             else Left(s"Team '$team' not found or not mounted. Use Load(type: \"team\", name: \"$team\") first.")
       }
@@ -185,7 +185,7 @@ object TeamSessionRegistry:
             // team — a global pick is non-deterministic. Only team names
             // (handled by callers before reaching here), "Nebula", and
             // explicit "team/agent" are valid from outside.
-            if address == "Nebula" then IO.pure(Right(None))
+            if address == RootAgentIdentity.Name then IO.pure(Right(None))
             else
               IO.pure(
                 Left(

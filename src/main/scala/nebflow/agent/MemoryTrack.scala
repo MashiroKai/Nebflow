@@ -135,7 +135,7 @@ object MemoryTrack:
     def bytesOf(p: os.Path): Long = if os.exists(p) && os.isFile(p) then os.size(p) else 0L
     (
       bytesOf(nebflow.service.MemoryStore.userMemoryPath),
-      bytesOf(nebflow.service.MemoryStore.agentMemoryPath("Nebula"))
+      bytesOf(nebflow.service.MemoryStore.agentMemoryPath(RootAgentIdentity.Name))
     )
 
   // ── 暂停标记（#440 ①，引擎面） ──────────────────────────────────
@@ -450,7 +450,7 @@ object MemoryTrack:
   private[agent] def memoryFilesOf(notes: Vector[MemoryQueue.Note]): IO[Vector[FileTarget]] =
     val base = Vector(
       nebflow.service.MemoryStore.userMemoryPath -> "user",
-      nebflow.service.MemoryStore.agentMemoryPath("Nebula") -> "agent"
+      nebflow.service.MemoryStore.agentMemoryPath(RootAgentIdentity.Name) -> "agent"
     )
     val projects = notes
       .flatMap(n => if n.target.startsWith("project:") then Some(n.target.stripPrefix("project:")) else None)

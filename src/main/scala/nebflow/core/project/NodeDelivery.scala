@@ -499,6 +499,7 @@ private[project] trait NodeDelivery:
       )
     else
       target match
+        // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
         case "Nebula" =>
           if NodeEngine.isFixtureEnvelope(node) then
             logger.warn(

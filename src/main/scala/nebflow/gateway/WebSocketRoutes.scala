@@ -106,13 +106,13 @@ class WebSocketRoutes(
               case None => nebulaFallback(agentName)
         }
       case None =>
-        sharedResources.agentLibrary.get("Nebula").flatMap {
+        sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
           case Some(d) => IO.pure(d)
           case None => IO.raiseError(new RuntimeException("No default agent available"))
         }
 
   private def nebulaFallback(agentName: String): IO[AgentDef] =
-    sharedResources.agentLibrary.get("Nebula").flatMap {
+    sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
       case Some(d) => IO.pure(d)
       case None => IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
     }
@@ -183,7 +183,7 @@ class WebSocketRoutes(
       // Resolve folder-level projectRoot and inherited rules
       folderId = metaOpt.flatMap(_.folderId)
       resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
-      agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
       effectiveProjectRoot <- resolvedProjectRoot match
         case Some(pr) => IO.pure(Some(pr))
@@ -231,7 +231,7 @@ class WebSocketRoutes(
           // （metaOpt.agentName 是可缺省的会话元数据）。其余 WS 根会话
           // （standalone 非 Nebula 聊天 / team Manager / flow 入口）保持
           // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
-          sandboxEnabled = agentDef.name == "Nebula",
+          sandboxEnabled = agentDef.name == RootAgentIdentity.Name,
           // ctxthresh 批：会话级压缩阈值比例覆盖（仅本 root spawn 注入，见上方注释）。
           compactThresholdRatio = compactThresholdRatio
         ),
@@ -582,7 +582,7 @@ class WebSocketRoutes(
    */
   private def isNebulaIdentitySession(sessionId: String): IO[Boolean] =
     sessionStore.getSessionMeta(sessionId).map {
-      case Some(meta) => meta.agentName.getOrElse("Nebula") == "Nebula"
+      case Some(meta) => meta.agentName.getOrElse(RootAgentIdentity.Name) == RootAgentIdentity.Name
       case None => false
     }
 
@@ -889,7 +889,7 @@ class WebSocketRoutes(
                   )
                 )
                 activeMeta <- sessionStore.getActiveMeta
-                agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
+                agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
                 // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
                 // only on first user message. Team mount recovery lives in
                 // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
@@ -1231,7 +1231,7 @@ class WebSocketRoutes(
   /** Send unified session list by looking up the session's agent name (for agentName field only). */
   private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
-      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       sendAgentSessionListByName(wsSend, agentName)
     }
 
@@ -1258,7 +1258,7 @@ class WebSocketRoutes(
   /** Push memory status for the current session to the frontend. */
   private def sendMemoryStatus(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
-      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       wsSend(
         io.circe.Json.obj(
           "type" -> "memoryStatus".asJson,

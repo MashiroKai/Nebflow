@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.agent.RootAgentIdentity
 import nebflow.gateway.{Folder, SessionMeta, SessionStore}
 import nebflow.shared.Message
 
@@ -89,7 +90,7 @@ class SessionService(
   def listFolders(agentName: String): IO[List[Folder]] =
     store.listFolders(agentName)
 
-  def sendSessionList(wsSend: Json => IO[Unit], agentName: String = "Nebula"): IO[Unit] =
+  def sendSessionList(wsSend: Json => IO[Unit], agentName: String = RootAgentIdentity.Name): IO[Unit] =
     for
       sessions <- store.listSessions
       folders <- store.listFolders(agentName)

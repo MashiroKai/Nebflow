@@ -311,8 +311,8 @@ private object Seeds:
   // Do not reintroduce a list here: it would read as authoritative while being
   // dead data that silently drifts from the real tool surface.
   val Nebula = SeedAgent(
-    "Nebula",
-    Some("Nebula"),
+    RootAgentIdentity.Name,
+    Some(RootAgentIdentity.Name),
     "Orchestrator — delegates all execution to specialized Teams and Flows",
     Nil,
     """You are Nebula, the AI assistant in Nebflow. Your job is to understand the user's intent and help the user get the work done.

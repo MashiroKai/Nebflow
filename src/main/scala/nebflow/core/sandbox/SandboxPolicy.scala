@@ -1,6 +1,7 @@
 package nebflow.core.sandbox
 
 import io.circe.{Decoder, Json}
+import nebflow.agent.RootAgentIdentity
 import nebflow.core.PathUtil
 
 import java.nio.file.*
@@ -175,7 +176,7 @@ object SandboxPolicy:
   def auditReadableFiles: List[os.Path] =
     List(
       PathUtil.dataRoot / "User.md",
-      PathUtil.dataRoot / "agents" / "Nebula" / "memory.md"
+      PathUtil.dataRoot / "agents" / RootAgentIdentity.Name / "memory.md"
     )
 
   /** agents 子树根（负向规则锚点）。 */
@@ -230,7 +231,7 @@ object SandboxPolicy:
    * 本函数是 Nebula 沙箱根的唯一裁决点。
    */
   def isNebulaRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
-    sandboxEnabled && depth == 0 && agentName == "Nebula"
+    sandboxEnabled && depth == 0 && agentName == RootAgentIdentity.Name
 
   /**
    * 会话沙箱根推导（AgentCore sandboxPolicy 构造唯一调用点）：Nebula 根会话 →

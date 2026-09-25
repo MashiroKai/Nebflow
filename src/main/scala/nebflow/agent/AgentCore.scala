@@ -47,7 +47,7 @@ object AgentCore:
    *
    * **三个消费点，一处实现**：
    *  ① 定义期 schema 分组（[[buildToolList]]，第一性机制）；
-   *  ② 运行期兜底闸（`ToolContext.isNebulaRoot` → `AskUserQuestionTool.call`）；
+   *  ② 运行期兜底闸（`ToolContext.isRootAgent` → `AskUserQuestionTool.call`）；
    *  ③ PopTool 身份闸（同批改为委托本单点）。
    * ⇒ **禁第二份同表达式**（含在 buildToolList 内联手写一份）；spec
    * `AskUserDualModeSpec` 有 grep 级静态断言。
@@ -62,14 +62,14 @@ object AgentCore:
    * AgentKind.Root` 与 `rootSessionId == sessionId`（需 registry 查询 = IO + 依赖注册
    * 时序，且 kind 口径更宽：standalone 根会话也置 kind=Root）。
    */
-  def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
-    agentDef.exists(_.name == "Nebula") && depth == 0
+  def isRootAgent(agentDef: Option[AgentDef], depth: Int): Boolean =
+    agentDef.exists(_.name == RootAgentIdentity.Name) && depth == 0
 
   /**
    * 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
    *
    * 三个分量各有**既有单点**来源（禁在任何消费点重写判据表达式）：
-   *   - `isNebulaRoot` ⟵ [[isNebulaRoot]]（含 `depth` 分量）；
+   *   - `isRootAgent` ⟵ [[isRootAgent]]（含 `depth` 分量）；
    *   - `isDispatcher` ⟵ `AgentState/session.isDispatcher`（`ProjectActor` spawn 置位）；
    *   - `nodeRole` ⟵ `SessionContext.flowNodeRole`，经 `NodeRoles` **归一 + 白名单校验**；
    *     **缺省 / 非法 / 未登记 ⇒ `None`**（= 基础面，fail-closed）——定义层**不**
@@ -77,7 +77,7 @@ object AgentCore:
    *     运行期口径，定义层据此分化会让「无身份的旁支会话」静默落到 task 变体。
    */
   private[agent] final case class ToolFaceIdentity(
-    isNebulaRoot: Boolean = false,
+    isRootAgent: Boolean = false,
     isDispatcher: Boolean = false,
     nodeRole: Option[String] = None
   )
@@ -96,7 +96,7 @@ object AgentCore:
     isDispatcher: Boolean
   ): ToolFaceIdentity =
     ToolFaceIdentity(
-      isNebulaRoot = isNebulaRoot(Some(agentDef), depth),
+      isRootAgent = isRootAgent(Some(agentDef), depth),
       isDispatcher = isDispatcher,
       nodeRole = flowNodeRole.filter(NodeRoles.isValid).map(NodeRoles.normalize)
     )
@@ -120,9 +120,9 @@ object AgentCore:
     identity: ToolFaceIdentity
   ): ToolDefinition =
     if AskUserQuestionTool.Name == td.name then
-      if identity.isNebulaRoot then AskUserQuestionTool.nebulaRootVariant(td) else td
+      if identity.isRootAgent then AskUserQuestionTool.nebulaRootVariant(td) else td
     else if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
-    else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isNebulaRoot, identity.isDispatcher)
+    else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td
 
   /**
@@ -292,6 +292,7 @@ object AgentCore:
    */
   def exclusiveToolsFor(name: String): Set[String] =
     name match
+      // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
       case "dream" => NebulaExclusiveTools -- DreamAdmittedTools
       case _ => NebulaExclusiveTools
@@ -470,7 +471,8 @@ object AgentCore:
    * 由本集自动生效。它**不是**「唯一记忆写入者」——机制层不设该闸（作者 2026-09-12
    * 00:19 裁定：用通用 `Edit`/`Write` 直写记忆文件，属有意为之的设计）。
    */
-  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general", "kernel", "memory-consolidator")
+  val ConvergedAgentNames =
+    Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel", "memory-consolidator")
 
   /**
    * 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
@@ -669,6 +671,7 @@ object AgentCore:
       case "team" | "flow" if !converged => legacyFixedTools(agentDef)
       case _ =>
         agentDef.name match
+          // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
           case "Nebula" =>
             // 静态集收口（史实时点：恰十四件；**当前 = 17** = 2026-09-18 18:18
             // 作者令 +Bash/Edit/Write/Glob/Grep 后值；此前 12 = −Delegate 批、
