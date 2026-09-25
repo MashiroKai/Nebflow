@@ -371,7 +371,11 @@ class DeferredWiringSpec extends CatsEffectSuite:
       w2 <- rt.store.getNode("n-w2").map(_.getOrElse(fail("n-w2 must exist")))
       evs <- readAudit(ws)
       _ <- stop(system)
-      src = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala")
+      // 2026-09-25 F 步重钉：reloopTo/verifierFailR/sweepLoopBudgets 等 loop 簇自
+      // NodeEngine 迁至 NodeLoopRunner（self-type trait，行为保持重构）——源读数扩为
+      // 跨文件聚合（先例 SubAgentInboxMirrorSpec 2.3 增补），锚文本不变、判据语义不变。
+      src = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala") +
+        os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeLoopRunner.scala")
     yield
       // ── 面①：编辑期（NodeTools 守卫侧）────────────────────────────────
       assert(r.isRight, s"edit face: a new control edge to a running target is queued, not rejected, got: $r")
@@ -385,7 +389,8 @@ class DeferredWiringSpec extends CatsEffectSuite:
         evs.exists((t, _, _) => t == FlowMapEventLog.WiringDeferredType),
         "edit face must leave a trace (the queue's visibility condition)"
       )
-      // ── 面②：运行期（NodeEngine:4324-4328 回边腿）─────────────────────
+      // ── 面②：运行期（NodeLoopRunner 回边腿 reloopTo；2026-09-25 F 步迁出，原
+      //    NodeEngine:4324-4328）────────────────────────────────────────
       assert(
         NodeEngine.loopReworkAdmission(NodeLifecycle.Running).isLeft,
         "runtime face: the same judgement — a running target is excluded from the loop re-run reset"
@@ -409,7 +414,10 @@ class DeferredWiringSpec extends CatsEffectSuite:
       )
       val reloopIdx = src.indexOf("private def reloopTo(")
       val callIdx = src.indexOf("NodeEngine.loopReworkAdmission(")
-      val bodyEnd = src.indexOf("**待接线队列扫描腿", reloopIdx)
+      // 2026-09-25 F 步重钉：原边界锚「**待接线队列扫描腿」属 applyDeferredWiring
+      // （留守 NodeEngine，聚合源中位于 reloopTo 之前）——改锚紧随 reloopTo 之后的
+      // sweepLoopBudgets 段注，窗口语义不变（判定调用仍须落在 reloopTo 体内）。
+      val bodyEnd = src.indexOf("loop 时间帽扫描腿", reloopIdx)
       assert(
         reloopIdx > 0 && callIdx > reloopIdx && bodyEnd > callIdx,
         s"the admission call must live inside the reloopTo body (reloop=$reloopIdx call=$callIdx end=$bodyEnd)"

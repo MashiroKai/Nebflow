@@ -116,7 +116,11 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
       coreSrc.contains("sessionCwd = state.session.sessionCwd"),
       "AgentCore must thread SessionContext.sessionCwd into ToolContext"
     )
-    val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala")
+    // 2026-09-25 F 步重钉：loop 会话 spawn 点（spawnLoopSession）随 loop 簇自 NodeEngine
+    // 迁至 NodeLoopRunner（self-type trait，行为保持重构）——计数扩为跨文件聚合（先例
+    // SubAgentInboxMirrorSpec 2.3 增补），合计仍 2，判据语义不变。
+    val engineSrc = os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeEngine.scala") +
+      os.read(os.pwd / "src/main/scala/nebflow/core/project/NodeLoopRunner.scala")
     assertEquals(
       "sessionCwd = Some\\(projectRoot\\),".r.findAllIn(engineSrc).size,
       2,
