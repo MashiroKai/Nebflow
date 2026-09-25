@@ -551,7 +551,15 @@ class ChainCascadeSpec extends CatsEffectSuite:
     // ②b 判据统计语义（防极性写反——2026-09-17 实测踩到过一次：写成「允许级联即抛」会让
     //     **全部非 L3 取消路径**静默失败，节点滞留 running，零终态；Z1 的
     //     NodeSessionDeathFinalizeSpec D2 是这条的机械哨兵）
-    val guard = src.substring(src.indexOf("private def cancelNodeGuarded"), src.indexOf("private def setNodeBgWait"))
+    // 2026-09-25 B 步重钉:cancelNodeGuarded/setNodeBgWait 随取消/销毁窗簇自 NodeEngine 迁至
+    // NodeCanceller(self-type trait,行为保持重构)——守卫窗口改读新文件,锚文本同步加宽为
+    // private[project](trait 经 self 引用类构造期状态所需)。判据语义不变。
+    val cancelSrc =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCanceller.scala"))
+    val guard = cancelSrc.substring(
+      cancelSrc.indexOf("private[project] def cancelNodeGuarded"),
+      cancelSrc.indexOf("private[project] def setNodeBgWait")
+    )
     assert(
       guard.contains("cascadeRequested && l3Intermediate"),
       s"the guard must fire on (requested ∧ L3-intermediate), not on a single flag:\n$guard"
@@ -649,15 +657,20 @@ class ChainCascadeSpec extends CatsEffectSuite:
         // 源码级：取消族四条腿**零** archive 写面（归档只由 sweep/TTL 与显式归档入口驱动）
         val src =
           codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
-        def window(sig: String, n: Int): String =
+        // 2026-09-25 B 步重钉:cancelNodes(私有重载)随取消/销毁窗簇迁至 NodeCanceller,窗口扩为
+        // 跨文件聚合(先例 SubAgentInboxMirrorSpec 2.3 增补);cancelNode 留守 NodeEngine,仅因
+        // self-type trait 引用而加宽 private[project]。锚文本同步更新,窗口语义不变。
+        val cancellerSrc =
+          codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeCanceller.scala"))
+        def window(src: String, sig: String, n: Int): String =
           val lines = src.linesIterator.toList
           val start = lines.indexWhere(_.contains(sig))
           assert(start >= 0, s"anchor not found: $sig")
           lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
         // 2026-09-24:锚点更新为 scalafmt 重排后的签名形态(签名折行;窗口语义不变)。
-        val legs = window("private def cancelNodes(", 130) +
-          window("private def cancelNode(", 40) +
-          window("private def detachCancelledUpstream", 70)
+        val legs = window(cancellerSrc, "private[project] def cancelNodes(", 130) +
+          window(src, "private[project] def cancelNode(", 40) +
+          window(src, "private def detachCancelledUpstream", 70)
         assert(
           !legs.contains("mutateArchive") && !legs.contains("mutateArchiveWithResult"),
           "no archive write API may appear on the cancel legs (Z5)"

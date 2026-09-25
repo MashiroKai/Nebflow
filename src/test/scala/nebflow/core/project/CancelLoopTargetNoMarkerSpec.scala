@@ -457,7 +457,10 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     "L6: the conduction exclusion stays pinned at referencesOf — both :loop scan faces are present there and absent as a *behaviour* change in this batch"
   ) {
     val src = nodeEngineSrc
-    val refs = window(src, "private def referencesOf", 30)
+    // 2026-09-25 B 步重钉:referencesOf 留守 NodeEngine,仅因取消/销毁窗簇迁出的
+    // NodeCanceller(self-type trait)经 cascadeClosure 引用它而加宽 private[project]。
+    // 锚文本同步更新,窗口语义不变。
+    val refs = window(src, "private[project] def referencesOf", 30)
     assert(
       refs.contains("filterNot(OutEdge.isLoopEdge)"),
       "the forward conduction scan must keep skipping ':loop' back-edges (pinned at referencesOf, untouched)"

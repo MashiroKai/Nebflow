@@ -264,7 +264,10 @@ class CancelSemanticsSourceSpec extends FunSuite:
       "the cascade 取代面 (suppressTargets + cascadeCancelledIds) must stay in place"
     )
     // ③ 传导面（三答 3 的具名钉点）：`referencesOf` 的两条方向扫描俱在 —— **另一处**，本批零改动
-    val conduction = engineSrcWindow("private def referencesOf", 30)
+    // 2026-09-25 B 步重钉:referencesOf 留守 NodeEngine,仅因取消/销毁窗簇迁出的
+    // NodeCanceller(self-type trait)经 cascadeClosure 引用它而加宽 private[project]。
+    // 锚文本同步更新,窗口语义不变。
+    val conduction = engineSrcWindow("private[project] def referencesOf", 30)
     assert(
       conduction.contains("filterNot(OutEdge.isLoopEdge)") && conduction.contains("!OutEdge.isLoopEdge(e)"),
       "the conduction exclusion stays pinned at referencesOf (forward + reverse scans) — a DIFFERENT site from the marking face"
