@@ -307,7 +307,7 @@ private object Seeds:
   // Nebula is a converged agent name, so `buildToolList` short-circuits any
   // `tools` declaration to the empty set (AgentCore.ConvergedAgentNames branch)
   // and the field grants nothing. The single source of truth is
-  // AgentCore.NebulaOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
+  // AgentCore.RootOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
   // Do not reintroduce a list here: it would read as authoritative while being
   // dead data that silently drifts from the real tool surface.
   val RootAgent = SeedAgent(

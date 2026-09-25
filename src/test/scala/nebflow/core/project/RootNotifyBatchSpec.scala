@@ -86,7 +86,7 @@ class RootNotifyBatchSpec extends FunSuite:
   /**
    * fixture：quietMs = 打包窗长（0 = 关窗）；batchMax = 条数上限。
    * 夹具树不删除（临时目录由 OS 回收）——本 spec 的窗长均为毫秒级或关窗，且末尾一律
-   * 显式等待/排空，避免删除与晚到写入者竞态（`NebulaDeliveryRedeliverySpec` 头注同源教训）。
+   * 显式等待/排空，避免删除与晚到写入者竞态（`RootDeliveryRedeliverySpec` 头注同源教训）。
    */
   private def withFixture(name: String, quietMs: Long, batchMax: Int)(
     body: (FlowMapStore, NodeEngine, Ref[IO, List[AgentCommand]], String) => Unit

@@ -32,7 +32,7 @@ class MailQueueRootSpec extends FunSuite:
     os.makeDir.all(tempRoot)
 
   /**
-   * 真 actor ref：R2 起 `resolveNebulaRoots` 的口径是「可投递的 Root 记录」
+   * 真 actor ref：R2 起 `resolveRoots` 的口径是「可投递的 Root 记录」
    * （`ref != null`）——记录存在但 ref 空 = 投不出去 = 判解析不出（显式报错，禁静默）。
    */
   private val system = nebflow.actor.ActorSystem("mail-queue-nebula-spec")
@@ -155,7 +155,7 @@ class MailQueueRootSpec extends FunSuite:
     assertEquals(resolved, Some("nebula-root-sid"))
 
   test("R2 腿③ 解析判据：Root 记录存在但 ref 空 ⇒ 判解析不出（不可投递，禁静默落到别的会话）"):
-    // R2 起判据 = 「**可投递**的 Root 记录」（resolveNebulaRoots 过滤 ref != null）：
+    // R2 起判据 = 「**可投递**的 Root 记录」（resolveRoots 过滤 ref != null）：
     // 记录在册但 ref 空（会话已死/未起）不是可投递目标 ⇒ 归入「解析不出」显式报错，
     // 硬禁静默改选别的 Root 会话或回落发信者自身（追加条款② 三种静默）。
     val res = resourcesWith(Map("agent-1" -> deadRecord("nebula-root-sid", AgentKind.Root)))

@@ -26,9 +26,9 @@ import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
  *    （L4①：模型必须看得出备注键存在，否则永远不去试备注寻址）。
  *  - 只读、零副作用：一次读，不刷本地态、不动未读游标、不触发任何写。
  *
- * 授能面（方案 §4.5 #2/#5 定稿）：**仅** `AgentCore.NebulaOrchestrationTools` 单点
+ * 授能面（方案 §4.5 #2/#5 定稿）：**仅** `AgentCore.RootOrchestrationTools` 单点
  * 携带；`DispatcherFixedTools` / `BaseTools` / 全 agent 面均不携带；agent.json 声明
- * （含 `"*"`）不授能 —— 名字进 `AgentCore.NebulaExclusiveTools`（防声明逃逸单点，
+ * （含 `"*"`）不授能 —— 名字进 `AgentCore.RootExclusiveTools`（防声明逃逸单点，
  * 同时覆盖 `AgentLibrary` 定义保存侧 strip）。插件白名单（
  * `PluginRegistry.BuiltinToolWhitelist`）不含；`RemoteExecutor.remoteableTools` 不含
  * （零参数 schema，**不得**被注入 `device` 参数）。

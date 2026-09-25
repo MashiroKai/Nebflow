@@ -549,11 +549,11 @@ Message type (optional, default "INFO"):
 
   /** 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。 */
   private enum SenderRole:
-    case NebulaRoot, Dispatcher, Teamish
+    case Root, Dispatcher, Teamish
 
   private def roleOf(ctx: ToolContext): SenderRole =
     if ctx.isDispatcher then SenderRole.Dispatcher
-    else if ctx.agentDef.exists(_.name == MailTool.RootAgentName) then SenderRole.NebulaRoot
+    else if ctx.agentDef.exists(_.name == MailTool.RootAgentName) then SenderRole.Root
     else SenderRole.Teamish
 
   private val NodePrefix = "node:"
@@ -565,7 +565,7 @@ Message type (optional, default "INFO"):
   /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
   private def outOfFaceError(address: String, role: SenderRole): ToolError =
     val face = role match
-      case SenderRole.NebulaRoot => rootFace
+      case SenderRole.Root => rootFace
       case SenderRole.Dispatcher => dispatcherFace
       case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
     ToolError(
@@ -576,7 +576,7 @@ Message type (optional, default "INFO"):
   private def unresolvableError(address: String, role: SenderRole): ToolError =
     ToolError(
       s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${role match
-          case SenderRole.NebulaRoot => rootFace
+          case SenderRole.Root => rootFace
           case SenderRole.Dispatcher => dispatcherFace
           case SenderRole.Teamish => "a team name, a member short name, or \"team/agent\""
         }). No fallback was applied."
@@ -622,7 +622,7 @@ Message type (optional, default "INFO"):
       )
     else if address == MailTool.RootAgentName then
       role match
-        case SenderRole.NebulaRoot =>
+        case SenderRole.Root =>
           Some(
             IO.pure(
               Left(
@@ -640,8 +640,8 @@ Message type (optional, default "INFO"):
               ctx
             )
           )
-        case SenderRole.Teamish => None // 既有 canMailNebula 闸不变
-    else if role == SenderRole.NebulaRoot then
+        case SenderRole.Teamish => None // 既有 canMailRoot 闸不变
+    else if role == SenderRole.Root then
       // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
@@ -1570,7 +1570,7 @@ Message type (optional, default "INFO"):
    * (Manager→Nebula queue rejected; immediate mode was fine because it
    * resolves the actor by name via system.resolve). Permission is already
    * enforced upstream: deliverQueue runs checkTeamScope first, so only
-   * canMailNebula senders reach here with address == "Nebula".
+   * canMailRoot senders reach here with address == "Nebula".
    */
   private[tools] def queueToRoot(
     message: String,
@@ -1616,7 +1616,7 @@ Message type (optional, default "INFO"):
     resolveRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
 
   /**
-   * Root records eligible as "the Nebula root"（判据见 [[resolveNebulaRootSession]] 文档）。
+   * Root records eligible as "the Nebula root"（判据见 [[resolveRootSession]] 文档）。
    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
    *
    * 可见性（device-mail 批，2026-09-15）：`private` → `private[nebflow]` —— 设备邮件
@@ -1924,7 +1924,7 @@ Message type (optional, default "INFO"):
    * default for non-lead senders (decision 20) — the escalation path is
    * Manager → Nebula. A team opts in by writing
    * `<!-- allow-cross-team-mail: true -->` in its rules.md. Leads (any team
-   * Manager / lead — same judgment as canMailNebula) always pass.
+   * Manager / lead — same judgment as canMailRoot) always pass.
    *
    * Unaffected: same-team explicit routes, short names, and the Nebula root
    * (no team context — it never reaches checkTeamScope).

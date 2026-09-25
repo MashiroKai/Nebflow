@@ -142,7 +142,7 @@ class TaskListE2ESpec extends CatsEffectSuite:
 
   /**
    * loadCurrentDef 每 turn 从磁盘重载 Nebula——显式 agent.json 钉住（空目录
-   * 会回落 Seeds.Nebula；converged 名单固定面不受声明影响，但 seed 保持与
+   * 会回落 Seeds.RootAgent；converged 名单固定面不受声明影响，但 seed 保持与
    * AgentControlE2ESpec 线束同构）。
    */
   private def seedNebula(tmp: os.Path): Unit =

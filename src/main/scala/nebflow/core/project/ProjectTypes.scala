@@ -344,7 +344,7 @@ object OutEdge:
    *     写**显式门集**字面（`"(pass)Nebula"` / `"(pass,failed)Nebula"`，mode=result）。
    * 二者对同一字面 `"Nebula"` 给出**不同**落边 ⇒ 任何新增消费方必须显式声明自己属哪一侧。
    */
-  val NebulaDefaultOn: Set[String] = Set(Pass, Failed)
+  val RootDefaultOn: Set[String] = Set(Pass, Failed)
   val RootTarget = "Nebula"
 
   given Configuration = Configuration.default.withDefaults
@@ -354,7 +354,7 @@ object OutEdge:
    * 旧拓扑 "Nebula" 边的等价构造（completed+failed 双通报，零漂移）——NodeDef
    * 字面构造（测试/工具直建）用；与 fromLegacyString("Nebula") 同形。
    */
-  def root: OutEdge = OutEdge(RootTarget, NebulaDefaultOn)
+  def root: OutEdge = OutEdge(RootTarget, RootDefaultOn)
 
   /**
    * 旧字符串单边解码（codec 双读与表面语法共用单点）："A"→OutEdge("A",{pass},result)；
@@ -363,7 +363,7 @@ object OutEdge:
   def fromLegacyString(s: String): Option[OutEdge] =
     val t = s.trim
     if t.isEmpty || t.equalsIgnoreCase("null") then None
-    else Some(if t == RootTarget then OutEdge(t, NebulaDefaultOn) else OutEdge(t))
+    else Some(if t == RootTarget then OutEdge(t, RootDefaultOn) else OutEdge(t))
 
   /**
    * out 边目标串 → 节点 id 解析（标识符二元性收敛单点，2026-09-09 in 落盘丢失事故）：
@@ -517,9 +517,9 @@ object NotifyPolicy:
     legacyRootVisible(node)
 
   /**
-   * legacy 根可见性（存量读路径，逐字 = 今天 `deliverOut`/`nebulaDelivery` 的判据）：
+   * legacy 根可见性（存量读路径，逐字 = 今天 `deliverOut`/`rootDelivery` 的判据）：
    * out 中存在指向 `Nebula` 且 `mode=result` 且门含 `pass` 的边。
-   * ⚠ 与「补投扫描」的口径同源（`NodeEngine.redeliverUnconsumedNebulaResults` 的
+   * ⚠ 与「补投扫描」的口径同源（`NodeEngine.redeliverUnconsumedRootResults` 的
    * N3 收窄：`mode == Result` 合取项），bare `Nebula`（`:signal` 出口标记）不算投根声明。
    */
   def legacyRootVisible(node: NodeDef): Boolean =

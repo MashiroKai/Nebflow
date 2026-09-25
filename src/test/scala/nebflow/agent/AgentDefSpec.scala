@@ -13,9 +13,9 @@ class AgentDefSpec extends CatsEffectSuite:
     val result = lib.loadAll().unsafeRunSync()
     assert(result.contains("Nebula"), "Nebula must always exist")
     // The code-fallback def declares no tools: Nebula is a converged agent name,
-    // so its tool surface is mechanism-fixed (AgentCore.NebulaOrchestrationTools,
+    // so its tool surface is mechanism-fixed (AgentCore.RootOrchestrationTools,
     // auto-injected) and any `tools` value here grants nothing — see
-    // AgentLibrary.Seeds.Nebula.
+    // AgentLibrary.Seeds.RootAgent.
     assertEquals(result("Nebula").tools, List.empty[String], "Nebula's seed def must declare no tools")
 
   test("loadAll reads agents from disk agent.json"):

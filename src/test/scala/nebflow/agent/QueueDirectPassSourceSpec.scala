@@ -87,7 +87,7 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.Nebula). */
+  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.RootAgent). */
   private def seedNebula(tmp: os.Path): Unit =
     val dir = tmp / "agents" / "Nebula"
     os.makeDir.all(dir)

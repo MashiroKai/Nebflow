@@ -12,7 +12,7 @@ object FeedbackDecision:
   case object Reenter extends FeedbackDecision
 
   /**
-   * 升级 Nebula（deliverToNebula 通道，eventType="blocked"）：escalate-only 档 /
+   * 升级 Nebula（deliverToRoot 通道，eventType="blocked"）：escalate-only 档 /
    * 节点循环超限（§3.1）/ 项目 cooldown 触发（§3.2，合并单条）。
    */
   final case class Escalate(reason: EscalateReason) extends FeedbackDecision
@@ -57,21 +57,21 @@ end FeedbackDecision
  * （只收 ReenterDispatcher），路由器可独立实例化单测（tiny 窗口/cooldown 时长注入）；
  * ③ 重启丢窗口计数可接受——限流器是成本保护不是安全机制（设计 §3.2 原文）。
  *
- * 每项目一个实例（NodeEngine 持有）；escalate 通道由构造方注入（= engine.deliverToNebula）。
+ * 每项目一个实例（NodeEngine 持有）；escalate 通道由构造方注入（= engine.deliverToRoot）。
  */
 final class FeedbackRouter(
   projectName: String,
   workspace: String,
   /** auto（默认，自动重入）| escalate-only（blocked 直接升级 Nebula）。 */
   val feedbackMode: String,
-  /** 升级投递通道 (text, nodeName) => IO[Unit]——NodeEngine 注入 deliverToNebula(_, _, "blocked")。 */
+  /** 升级投递通道 (text, nodeName) => IO[Unit]——NodeEngine 注入 deliverToRoot(_, _, "blocked")。 */
   escalate: (String, String) => IO[Unit],
   /** 滚动窗口/冷却时长（默认 10min/30min；测试注入 tiny 值验证状态机）。 */
   windowMs: Long = FeedbackRouter.WindowMs,
   cooldownMs: Long = FeedbackRouter.CooldownMs,
   /**
    * failed 态升级通道（P2 RetryCap 用，spec §2.3 G12）：NodeEngine 注入
-   * deliverToNebula(_, _, "failed")（前端 label 按真实终态显示 FAILED 而非
+   * deliverToRoot(_, _, "failed")（前端 label 按真实终态显示 FAILED 而非
    * BLOCKED）。None = 回退 blocked 通道（既有测试/构造零改动——事件文本自辨）。
    * 置于参数列末位带默认值——既有位置构造（FeedbackRouterSpec）零破坏。
    */
@@ -152,7 +152,7 @@ final class FeedbackRouter(
 
   end routeRetryCap
 
-  /** RetryCap 升级消息文本（deliverToNebula 调用方习惯：自带 [Node '<name>' failed] 头）。 */
+  /** RetryCap 升级消息文本（deliverToRoot 调用方习惯：自带 [Node '<name>' failed] 头）。 */
   private def retryCapText(node: NodeDef, lastErr: String): String =
     val max = node.retry.map(_.max).getOrElse(0)
     val upstream = node.retry.map(_.upstream).getOrElse("-")
@@ -212,7 +212,7 @@ final class FeedbackRouter(
       )
     yield ()
 
-  /** 升级消息文本（deliverToNebula 调用方习惯：自带 [Node '<name>' blocked] 头）。 */
+  /** 升级消息文本（deliverToRoot 调用方习惯：自带 [Node '<name>' blocked] 头）。 */
   private def escalateText(
     node: NodeDef,
     feedback: BlockedFeedback,

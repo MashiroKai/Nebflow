@@ -71,8 +71,8 @@ object ToolRegistry:
       // /api/neblink/transfer / NeblinkService.receiveFile|sendFile — the Dropbox
       // relay fallback depends on them): we retired the tool, not the channel.
       // A2A 一期: agent sends a message to one of the user's NebLink friends
-      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
-      // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
+      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Root
+      // only (RootOrchestrationTools, 2c 起) — agent.json declaration
       // channel removed (buildAllowedToolSet strips the name from base).
       "SendMessage" -> FriendMessageTool,
       // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 定稿）：Nebula

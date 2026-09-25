@@ -369,7 +369,7 @@ class OutNullableDeliverySpec extends CatsEffectSuite:
     val llm = new CaptureLlm("retained upstream result")
     for
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
-      // root 会话**故意缺席**（A 完成时）⇒ deliverToNebula 走 root-ref 缺失分支：零投递 +
+      // root 会话**故意缺席**（A 完成时）⇒ deliverToRoot 走 root-ref 缺失分支：零投递 +
       // **不落 M1 持久锚**（`nebulaDeliveredAt` 保持空）。这正是 A10/N4 的**承重窗口**——
       // 锚未置位时若口径回退为「投 newOut」，被保留的旧 Nebula 边会漏出第二条投递。
       rt <- mountProject("outnull-a10", ws, system, res)

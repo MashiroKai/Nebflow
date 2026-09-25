@@ -114,7 +114,7 @@ object InjectionAttribution:
    *   mail                MailTool#sendMail（腿③ / team 腿）
    *   task / dispatch     ProjectActor.SourceTask / SourceDispatch（腿①）
    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
-   *   node                NodeEngine#deliverToNebula（节点完成通报）
+   *   node                NodeEngine#deliverToRoot（节点完成通报）
    *   skill               AgentActor SkillActivate 分支
    *   delegate / subtask / flow / tool   AgentIdle#inferInjectionSource（re-pin
    *                       2026-09-25：随 idle 态自 AgentActor 迁至 AgentIdle.scala）

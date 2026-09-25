@@ -830,7 +830,7 @@ class NodeEngine(
    * wiring/pending）→ status=Blocked / result=渲染串 / blockedFeedback=合成反馈 /
    * completedAt=now / ttlExpireAt=None（待办语义）。blockCount 不增（非节点自报
    * 轮次，重入主责在失败上游侧，MergeNodePolicy.upstreamFailureFeedback）。
-   * ② emitEvent nodeUpdated + FlowMapEventLog "merge-blocked" + deliverToNebula
+   * ② emitEvent nodeUpdated + FlowMapEventLog "merge-blocked" + deliverToRoot
    * 通报（无 nodeId=fire-and-forget，对齐 escalate 通道：状态通报不是结果投递）。
    * 语义收益：不触发合并（占位结算被旁路）+ 不永久 pending 悬挂（blocked 可见
    * 终态，分发器 NodeList 可巡检）+ 已完成上游的结算保留（修复上游 → 重激活合并
@@ -944,7 +944,7 @@ class NodeEngine(
   private[project] def dedupeRootDelivery(identity: String, status: String): IO[Boolean] =
     IO(System.currentTimeMillis()).flatMap { now =>
       recentRootDeliveries.modify { m =>
-        val live = m.view.filter { case (_, ts) => now - ts < NodeEngine.NebulaDedupWindowMs }.toMap
+        val live = m.view.filter { case (_, ts) => now - ts < NodeEngine.RootDedupWindowMs }.toMap
         live.get((identity, status)) match
           case Some(_) => (live, true)
           case None => (live.updated((identity, status), now), false)
@@ -1054,7 +1054,7 @@ class NodeEngine(
    * 纯后端立即生效，不依赖前端改动——形态 (b) 载荷打标记需后续前端批才可见）。
    * 一条文本含 N 条 nodeId+状态+结果摘要（160 字/条）。eventType：混含 failed →
    * "failed"（强提醒），全 completed → "completed"。**绕过缺口4 去重直投**——
-   * 汇总文本每批唯一，若走 deliverToNebula 会与 60s 前一批汇总同 key 相撞被
+   * 汇总文本每批唯一，若走 deliverToRoot 会与 60s 前一批汇总同 key 相撞被
    * 误抑制（节点已被记账=通知丢失）。offer 后逐节点记账（at-least-once：offer
    * 与记账间崩溃 → 下轮扫描重汇总，宁重复不丢失）。
    */
@@ -1144,7 +1144,7 @@ object NodeEngine:
 
   def isFixtureEnvelope(node: NodeDef): Boolean = NodeEngineContract.isFixtureEnvelope(node)
 
-  val NebulaDedupWindowMs: Long = NodeEngineContract.NebulaDedupWindowMs
+  val RootDedupWindowMs: Long = NodeEngineContract.RootDedupWindowMs
 
   type PluginPreparation = NodeEngineContract.PluginPreparation
   val PluginPreparation: NodeEngineContract.PluginPreparation.type = NodeEngineContract.PluginPreparation

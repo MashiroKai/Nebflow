@@ -290,8 +290,8 @@ class DispatcherClosedLoopSmokeSpec extends CatsEffectSuite:
       )
       assertEquals(b.out, List(OutEdge.root), "B.out must be Nebula")
       // 注：B→Nebula 投递记账（nebulaDeliveredAt）在本 harness 不可观测——无真实
-      // root 会话，deliverToNebula 按设计 WARN 不落账（同 ProjectDispatcher*Spec
-      // 先例日志）；Nebula 投递链回归由 NebulaDeliveryDedupSpec/RedeliverySpec 覆盖。
+      // root 会话，deliverToRoot 按设计 WARN 不落账（同 ProjectDispatcher*Spec
+      // 先例日志）；Nebula 投递链回归由 RootDeliveryDedupSpec/RootDeliveryRedeliverySpec 覆盖。
       // 分发器恰好 4 个分发器 turn + ≥2 个节点 turn
       assertEquals(ins.count(!_.startsWith("[node]")), 4, "dispatcher turns: NodeList → createA → createB → wrap-up")
       assert(ins.count(_.startsWith("[node]")) >= 2, "both nodes must have executed a session")

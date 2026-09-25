@@ -202,7 +202,7 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
   /**
    * loadCurrentDef reloads defs from disk every turn — seed explicit agent.json
    * files pinning the tool sets the chain needs (empty dirs fall back to
-   * Seeds.Nebula whose toolset lacks Delegate → toolcalls silently filtered).
+   * Seeds.RootAgent whose toolset lacks Delegate → toolcalls silently filtered).
    */
   private def seedAgents(tmp: os.Path): Unit =
     val nebulaDir = tmp / "agents" / "Nebula"

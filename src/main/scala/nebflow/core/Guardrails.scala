@@ -29,7 +29,7 @@ object Guardrails:
 
   /**
    * T1 flow-node leaf workers 默认剥离的用户向工具集。即使 agent.json 显式
-   * 声明也不生效（同 NebulaExclusiveTools 的机制层语义）。
+   * 声明也不生效（同 RootExclusiveTools 的机制层语义）。
    *
    * Pop 保留（2026-09-10 作者裁定——Pop 收归 Nebula 专属后本集与其叠加，
    * 不是被取代）：本集是 guardrails 开关驱动（dedicatedAgents.enabled）的

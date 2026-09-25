@@ -107,7 +107,7 @@ final class DispatchNotify(
   workspace: String,
   projectName: String,
   /**
-   * 预算耗尽/窗口熔断升级通道（NodeEngine 注入 deliverToNebula(_, _, "notice")
+   * 预算耗尽/窗口熔断升级通道（NodeEngine 注入 deliverToRoot(_, _, "notice")
    * ——notice 语义非 blocked：节点保持终态，前端不可标 BLOCKED）。
    */
   escalate: (String, String) => IO[Unit],
@@ -787,7 +787,7 @@ final class DispatchNotify(
           case _ => a
       }.void
 
-  /** notifySentAt 持久标记（活动区优先，归档区兜底——与 markNebulaDelivered 同款双区）。 */
+  /** notifySentAt 持久标记（活动区优先，归档区兜底——与 markRootDelivered 同款双区）。 */
   private def markSent(nodeId: String): IO[Unit] =
     store.getNode(nodeId).flatMap {
       case Some(_) =>
@@ -1237,7 +1237,7 @@ object DispatchNotify:
   /**
    * 预算耗尽/窗口熔断监督通知的 eventType（notice 语义，非 blocked——eventType=blocked
    * 会让前端标 BLOCKED，作者看到「终态节点被标阻塞」）。NodeEngine 注入 escalate
-   * 闭包按本常量送 deliverToNebula。
+   * 闭包按本常量送 deliverToRoot。
    */
   val NoticeEventType: String = "notice"
 

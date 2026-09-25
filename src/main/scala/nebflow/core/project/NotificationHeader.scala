@@ -153,7 +153,7 @@ object NotificationHeader:
 
   /**
    * NODE/CHAIN 腿：`sender` 是路径约定 `"<项目名>/<节点名|链id>"`（`NodeEngine`
-   * `deliverToNebula` / `deliverChainSummary`）⇒ 切分即得 PROJECT + SUBJECT；
+   * `deliverToRoot` / `deliverChainSummary`）⇒ 切分即得 PROJECT + SUBJECT；
    * 无 `/` 的旧形态（缺段）⇒ PROJECT 走回落链、**SUBJECT 省略**（旧前端
    * `chat.js:410-411` 记录的降级口径 `NODE · <状态>` 逐字保持）。
    * 其余腿：SUBJECT = Team 组合名（`team/agent`，旧呈现逐字）或 sender。

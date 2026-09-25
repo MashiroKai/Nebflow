@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 死日志门禁（v2，2026-09-10 收紧）：src/main 的 Scala 源码禁止 NebulaLogger 双包装形态。
+# 死日志门禁（v2，2026-09-10 收紧）：src/main 的 Scala 源码禁止 NebflowLogger 双包装形态。
 #
 # ── 病根 ────────────────────────────────────────────────────────────────
-# NebulaLogger 的 info/warn/error/debug 返回 IO[Unit]——再包一层
+# NebflowLogger 的 info/warn/error/debug 返回 IO[Unit]——再包一层
 # IO(...) / IO.delay(...) 得到 IO[IO[Unit]]，外层运行后内层被丢弃，
 # 日志永不执行（编译仍通过：期望型 Unit 处的值丢弃 / handleErrorWith 的
 # B 型擦除吞掉类型错位）。全部出现在错误恢复与看护路径 = 出问题时静默无日志。
@@ -30,7 +30,7 @@
 # 充要位置；同一括号内更深处的调用不属于本门禁（见「已知边界」）。
 #
 # ── 豁免（不报）──────────────────────────────────────────────────────
-#   - NebulaLogger 定义处：`class/object/trait NebflowLogger` 所在文件
+#   - NebflowLogger 定义处：`class/object/trait NebflowLogger` 所在文件
 #     （内容判定）∪ src/main/scala/nebflow/core/logging.scala（路径判定）。
 #     定义体内 `IO.delay(logger.info(...))` 的 `logger` 是 slf4j Logger（返回
 #     Unit），IO 包装是正确用法——不是死日志。
@@ -280,13 +280,13 @@ PY
 
 case "$RC" in
   0)
-    echo "✓ dead-logging gate clean: no NebulaLogger double-wrap under ${ROOTS[*]}"
+    echo "✓ dead-logging gate clean: no NebflowLogger double-wrap under ${ROOTS[*]}"
     ;;
   1)
-    echo "✗ dead-logging gate FAILED — NebulaLogger double-wrap (IO[IO[Unit]]) under ${ROOTS[*]}:"
+    echo "✗ dead-logging gate FAILED — NebflowLogger double-wrap (IO[IO[Unit]]) under ${ROOTS[*]}:"
     echo "$REPORT"
     echo ""
-    echo "NebulaLogger.info/warn/... already return IO[Unit] — wrapping them in"
+    echo "NebflowLogger.info/warn/... already return IO[Unit] — wrapping them in"
     echo "IO(...) / IO.delay(...) builds IO[IO[Unit]] and the inner IO is never"
     echo "run (dead log). Drop the outer wrapper and chain the call into the IO"
     echo "chain (*> / .as / handleErrorWith fallback), or use the *Sync variant"

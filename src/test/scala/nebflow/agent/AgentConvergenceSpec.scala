@@ -13,11 +13,11 @@ import java.nio.file.Files
 /**
  * 阶段 2c agent 收敛 spec（设计文档 §C.1/§C.5 + §G.3 验收点①③）。
  *
- * - §G.3-①：Nebula 工具清单 = §C.1 NebulaSet 逐项断言（buildToolList 层——
+ * - §G.3-①：Root 工具清单 = §C.1 NebulaSet 逐项断言（buildToolList 层——
  *   LLM 实际收到的工具定义列表，未注册名自然缺席，比 allowedSet 更接近交付面）。
  * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 七件）。
  * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖），
- *   MemoryNote 注册且 Nebula 专属（§C.1 记忆行 + NebulaExclusiveTools）；
+ *   MemoryNote 注册且 Root 专属（§C.1 记忆行 + RootExclusiveTools）；
  *   dream 受限准入例外（2026-09-05 作者签准，DreamAdmittedTools——动作面
  *   append 仍由 MemoryNoteTool 拒绝，见 MemoryNoteToolSpec）。
  * - §C.5：Glob/Grep 缺省根 = node root（沙箱开时 = sandbox.root =

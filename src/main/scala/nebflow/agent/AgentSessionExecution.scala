@@ -213,7 +213,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   /**
    * B5: whether this depth-1 agent is a team lead — a registered Manager
    * session, or name-based lead of any defined team (covers fork/temporary
-   * sessions, same fallback as MailTool.canMailNebula). Non-lead depth-1
+   * sessions, same fallback as MailTool.canMailRoot). Non-lead depth-1
    * agents (team members, flow agents, delegate sub-agents) compact with
    * the Worker profile instead of Manager.
    */
@@ -2026,9 +2026,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
           case names => names.toSet
     // 阶段 2d（D.1-11）：SendMessage 声明式注入通道删除——机制固定唯一
-    // 授权（NebulaOrchestrationTools，2c 起）。任何 agent.json 声明（含 "*"）
+    // 授权（RootOrchestrationTools，2c 起）。任何 agent.json 声明（含 "*"）
     // 不再授能（TeamTaskTools 防逃逸先例：the tool name IS the permission
-    // boundary）。Nebula 的静态集照常携带该工具，行为零变化。
+    // boundary）。Root 的静态集照常携带该工具，行为零变化。
     val declaredBase = base - "SendMessage"
     // Fixed tools are auto-injected based on agent category — they don't
     // need to be listed in agent.json. Mail is team-only. 阶段 2d（D.1-1）：

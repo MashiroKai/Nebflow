@@ -183,7 +183,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("TaskBoard: projectBoardSession 旗标是唯一挂载闸——分发器/flow 节点 project 会话挂，双轨会话恒不挂"):
     // 挂载表 §1c：projectBoardSession = isDispatcher || flowNodeId.isDefined。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】（末段重挂）。
+    // 追加点在全部角色过滤与 RootExclusiveTools 剥离【之后】（末段重挂）。
     assert(
       CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskBoard"),
       "分发器 project 会话（isDispatcher 置位）挂 TaskBoard"

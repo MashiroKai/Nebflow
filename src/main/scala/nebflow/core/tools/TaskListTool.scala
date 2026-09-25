@@ -16,8 +16,8 @@ import scala.collection.mutable
  *
  * 动机（设计文档 ~/.nebflow/memory/tasklist-design.md）：「Nebula 把记忆当任务
  * 工具用」根因 = 记忆是唯一持久外部存储。三边界：记忆 = T1 慢变事实（永久）；
- * 任务 = 快变状态（闭环即退役）；Flow Map = 单次派发执行。本工具是 Nebula 专属
- * 编排件（工具面隔离：仅 NebulaOrchestrationTools 携带 + NebulaExclusiveTools
+ * 任务 = 快变状态（闭环即退役）；Flow Map = 单次派发执行。本工具是 Root 专属
+ * 编排件（工具面隔离：仅 RootOrchestrationTools 携带 + RootExclusiveTools
  * 防声明逃逸剥离，dispatcher/general 面零出现），首期纯工具面、零 web/ 改动。
  *
  * 存储：`<dataRoot>/tasks.json`（~/.nebflow/tasks.json）——运行时数据层：

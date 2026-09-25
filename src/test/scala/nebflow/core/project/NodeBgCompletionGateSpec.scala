@@ -133,7 +133,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
 
   end BgStubLlm
 
-  /** 根会话记录器：deliverToNebula 投递终点记账。 */
+  /** 根会话记录器：deliverToRoot 投递终点记账。 */
   private def registerRecorder(
     res: SharedResources,
     system: ActorSystem,

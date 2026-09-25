@@ -31,7 +31,7 @@ import java.nio.charset.StandardCharsets
  * **待决（如实登记，本批未自选一边）**：生产者（抽取轮）停止后，本文件的
  * 入队辅助（`enqueueFacts`）与面余量分流（`decideRoute` / `faceRoom` /
  * `pendingBytesByFace`）在生产链路上**已无调用方**；它们连同其 spec
- * （[[nebflow.core.compact.NebulaMemoryHookRouteSpec]]）作为「队列写入面 + 面分流
+ * （[[nebflow.core.compact.RootMemoryHookRouteSpec]]）作为「队列写入面 + 面分流
  * 判据」的既有断言面保留，删除与否留待后续批（禁删既有测试文件的批次纪律之下，
  * 单方删除会把两枚 spec 一并架空）。
  *

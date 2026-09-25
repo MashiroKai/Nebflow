@@ -241,7 +241,7 @@ class PopToolSpec extends FunSuite:
     assertDenied("dream", Some(defNamed("dream")), 0)
 
   test("identity gate: Nebula-derived sessions are denied — node session (depth 1) never counts as Nebula itself"):
-    // NodeDef.agent="Nebula" 的节点会话 = depth 1（SandboxPolicy.isNebulaRootSession
+    // NodeDef.agent="Nebula" 的节点会话 = depth 1（SandboxPolicy.isSandboxRootSession
     // 同款判据）；SubTask worker / 子 agent 同理 —— 「Nebula 自己」只在 depth==0。
     assertDenied("Nebula node session (depth 1)", Some(nebulaDef), 1)
     assertDenied("Nebula sub-agent (depth 2)", Some(nebulaDef), 2)

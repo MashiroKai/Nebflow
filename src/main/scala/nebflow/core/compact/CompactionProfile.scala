@@ -17,7 +17,7 @@ package nebflow.core.compact
  * NoOpHook via PreCompactionHooks' default case — dispatcher/node sessions
  * have no memory (2026-08-31 ruling).
  *
- *  - Root:        NebulaMemoryHook (fact extraction → User.md)
+ *  - Root:        RootMemoryHook (fact extraction → User.md)
  *  - Manager:     NoOpHook
  *  - Worker:      NoOpHook
  *  - Dispatcher:  NoOpHook (project dispatcher session, dispatcher-*)

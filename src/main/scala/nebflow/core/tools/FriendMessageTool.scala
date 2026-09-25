@@ -61,8 +61,8 @@ import java.time.format.DateTimeFormatter
  * fiber-local（`SendConfirm.locally`），装配缝实现 `SendConfirm.production`
  * 在本次调用内读它并发确认卡（#147 接线段 2026-09-12）。**确认链只覆盖好友支**
  * ——设备支/本机支零治理（U-2 裁定：不套好友档位，闸位=大小/件数 + 审计行）。
- * 授权（阶段 2d，设计 D.1-11）：机制固定唯一——仅 Nebula 的静态集
- * NebulaOrchestrationTools 携带（2c 起从声明制迁机制固定）；agent.json tools
+ * 授权（阶段 2d，设计 D.1-11）：机制固定唯一——仅 Root 的静态集
+ * RootOrchestrationTools 携带（2c 起从声明制迁机制固定）；agent.json tools
  * 声明不再授能（buildAllowedToolSet 对 base 一律剥离本工具名，"*" 亦然——the
  * tool name IS the permission boundary）。
  * （本工具扩面后，**跨设备文件搬运工具**于 2026-09-14 同批退役——其**已退役工具名**与

@@ -24,7 +24,7 @@ import scala.concurrent.duration.*
  * AgentControl spec §6 C1/C2：cancel / restart 全链路 E2E。
  *
  * 真 parent AgentActor（name="Nebula"——AgentControl/Delegate 是
- * NebulaExclusiveTools，非 Nebula 名字会被 buildAllowedToolSet 剥离）驱动真
+ * RootExclusiveTools，非 Root 名字会被 buildAllowedToolSet 剥离）驱动真
  * DelegateTool spawn 真 child + BackoffSupervisor；mock LLM 按 req.sessionId
  * 路由：
  *  - parent：#1 Delegate toolcall / #2 text / #3+ ExternalEvent 唤醒轮
@@ -197,7 +197,7 @@ class AgentControlE2ESpec extends CatsEffectSuite:
 
   /**
    * loadCurrentDef 每 turn 从 agentLibrary 磁盘重载 "Nebula"——空目录时回落到
-   * Seeds.Nebula（tools 无 Delegate/AgentControl），toolcall 会被 allowed-set
+   * Seeds.RootAgent（tools 无 Delegate/AgentControl），toolcall 会被 allowed-set
    * 过滤掉。写入显式 agent.json 钉住测试所需的工具集。
    */
   private def seedNebula(tmp: os.Path): Unit =

@@ -166,7 +166,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
    *
    * @param senderProject 发送方的**项目上下文**（`ToolContext.projectName` = 会话实际项目域，
    *                      `None` = 无项目上下文 / 根域会话）
-   * @param senderAgent   发送方 agent 名（`Nebula` ⇒ `roleOf` 判 NebulaRoot）
+   * @param senderAgent   发送方 agent 名（`Nebula` ⇒ `roleOf` 判 Root）
    */
   private def runLeg1(
     tag: String,

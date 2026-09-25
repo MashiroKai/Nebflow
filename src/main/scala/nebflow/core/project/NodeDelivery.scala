@@ -610,8 +610,8 @@ private[project] trait NodeDelivery:
       rootDelivery(node, resultText, passEdges.partition(_.to == OutEdge.RootTarget)._1) *>
         passEdges.filterNot(_.to == OutEdge.RootTarget).traverse_(e => settleTo(node, e.to))
 
-  private def rootDelivery(node: NodeDef, resultText: String, nebulaEdges: List[OutEdge]): IO[Unit] =
-    if nebulaEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
+  private def rootDelivery(node: NodeDef, resultText: String, rootEdges: List[OutEdge]): IO[Unit] =
+    if rootEdges.isEmpty then IO.unit // 悬空/无 pass 边：结果保留在 result（持久化）
     // ── R5（唯一语义变更点，作者裁定；b64 批 2026-09-13）：Nebula 边**保留声明**，
     // 运行时按通知策略裁决。策略 ≠ root ⇒ 完成通报被**抑制**（不投根）但仍
     // `markNebulaDelivered` 记账——否则 30s 补投扫描会把它复活（spec §5 表尾推论 2）。
@@ -625,7 +625,7 @@ private[project] trait NodeDelivery:
           "— completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it."
       ) *>
         markRootDelivered(node.id)
-    else if nebulaEdges.exists(_.mode == OutEdge.Result) then
+    else if rootEdges.exists(_.mode == OutEdge.Result) then
       // notifybatch 批（2026-09-18，M-2）：改走 root 打包入口（决策①生产者侧合并）；
       // R5 抑制分支（上一支）与 `markNebulaDelivered` 记账口径**一字未动**。
       enqueueRootNotify(s"[Node '${node.name}' completed]\n$resultText", node.name, "completed", Some(node.id))
@@ -678,7 +678,7 @@ private[project] trait NodeDelivery:
     case Parked
 
   /**
-   * root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToNebula]]
+   * root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToRoot]]
    * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。
    */
   private def offerRootNotify(
@@ -696,7 +696,7 @@ private[project] trait NodeDelivery:
         dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
           case true =>
             logger.warn(
-              s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.NebulaDedupWindowMs}ms, rootSession=$rootSessionId)"
+              s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
             ) *>
               nodeId.traverse_(id => markRootDelivered(id)) *>
               IO.pure(RootNotifyOffer.Suppressed)
@@ -770,7 +770,7 @@ private[project] trait NodeDelivery:
    *
    * 机械判据（零新字段、零 schema 变更）：`status ∈ {"interrupt", "immediate"}`
    * （大小写不敏感）。本通道的 `status` 形参即 `ImmediateInput.eventType`
-   * （`deliverToNebula` 第 3 参）——`"interrupt"` 是 `NotificationHeader.StateLabels`
+   * （`deliverToRoot` 第 3 参）——`"interrupt"` 是 `NotificationHeader.StateLabels`
    * 既有词表项（`NotificationHeader.scala:98`），`"immediate"` 是 `delivery=immediate`
    * 在本通道的同义机械载体（本方法无 `delivery` 形参，而 `delivery` 只挂在
    * `ImmediateInput`/`UserInput` 上、其生产者为 Mail/deviceMail 腿——**本批零触碰**）。
@@ -783,9 +783,9 @@ private[project] trait NodeDelivery:
 
   /**
    * **root 通知打包入口（生产者侧合并，决策①）**：节点终态投根的**唯一入口**
-   * （`nebulaDelivery` / `deliverFailed` / `mergeBlockedByUpstreamFailure` /
+   * （`rootDelivery` / `deliverFailed` / `mergeBlockedByUpstreamFailure` /
    * `deliverOutTo` 手动重投腿 / 补投扫描 fresh 腿 / FeedbackRouter·DispatchNotify
-   * escalate 腿**六路同入口**）——offer 单点 [[deliverToNebula]] 前插入本层。
+   * escalate 腿**六路同入口**）——offer 单点 [[deliverToRoot]] 前插入本层。
    *
    * 三条旁路（不进缓冲、直接 offer = 逐字旧行为）：
    *   ① `windowMs <= 0`（关窗 = 回滚面/测试接缝）；
@@ -828,7 +828,7 @@ private[project] trait NodeDelivery:
    *   ① 根 ref 缺失（`Parked`——`deliverToNebula` 只 WARN + 不记账，`:5789` 语义原样）；
    *   ② 60s 同键窗抑制（`Suppressed`——**未**发出；合并腿的键 = 首件 nodeName × 合并
    *      状态，不代表该批其余件已交付）。
-   * 单件腿（`case one :: Nil`）走 [[deliverToNebula]] 原路径**逐字保留**（抑制/落地两态
+   * 单件腿（`case one :: Nil`）走 [[deliverToRoot]] 原路径**逐字保留**（抑制/落地两态
    * 均记账，键 = 件自身身份）；`private[project]`：spec 可显式驱动（上限/保序用例无需等
    * 真实窗长）。
    */

@@ -127,7 +127,7 @@ class WebSearchWiringSpec extends CatsEffectSuite:
 
   /**
    * NOT named Nebula — an empty agents dir makes the per-turn def reload
-   * fall back to Seeds.Nebula for that name (different model/tools); a
+   * fall back to Seeds.RootAgent for that name (different model/tools); a
    * non-seed name keeps OUR def (with model + WebSearch tool).
    */
   private def probeDef(model: Option[AgentModelConfig]): AgentDef =

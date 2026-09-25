@@ -83,7 +83,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
     )
 
   /**
-   * Pin the Nebula def on disk (empty agents dir falls back to Seeds.Nebula
+   * Pin the Nebula def on disk (empty agents dir falls back to Seeds.RootAgent
    * with a different toolset — harness trap, see memory).
    */
   private def seedNebula(tmp: os.Path): Unit =

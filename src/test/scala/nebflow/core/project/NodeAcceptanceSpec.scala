@@ -1373,7 +1373,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
   // ── Node 完成通知蓝气泡 header（NODE · 项目 · 节点 · 状态）──────
 
   /**
-   * 注册一个记录根会话 actor（agentRegistry["nebula-root"]）——deliverToNebula
+   * 注册一个记录根会话 actor（agentRegistry["nebula-root"]）——deliverToRoot
    * 会把 ImmediateInput 投给它；测试断言该命令携带的 source/eventType/sender。
    */
   private def registerRecordingRoot(

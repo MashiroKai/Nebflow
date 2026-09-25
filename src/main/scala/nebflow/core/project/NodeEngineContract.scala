@@ -181,7 +181,7 @@ private[project] object NodeEngineContract:
    * 扫描与周期扫描竞态、ProjectCreate 合并回报三连投实证 09-03）。进程内
    * 内存窗，与 V8 nebulaDeliveredAt 持久账本正交（账本管跨重启 at-least-once）。
    */
-  val NebulaDedupWindowMs: Long = 60_000L
+  val RootDedupWindowMs: Long = 60_000L
 
   // `DispatcherSourceMarker`（`"dispatcher"`）与 `DispatcherTaskSummaryChars` 同批删净
   // （R2「一个 Mail 统一」批 2026-09-12，R7-b）：桥收敛后 source=="dispatcher" 族

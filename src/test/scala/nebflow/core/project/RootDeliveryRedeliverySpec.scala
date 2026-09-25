@@ -37,7 +37,7 @@ import scala.concurrent.duration.*
  *  - R3 根 ref 缺失：扫描静默跳过（滞留不丢弃，不误标记）
  *  - R4 failed 节点同样补投
  *  - R5 改接手动投递（deliverOutTo）投递 + 刷账（人工意图通道保持）
- *  - 红基线见报告 §V8（变异 = deliverToNebula 去记账 + 扫描桩返回 0 → R1 红）
+ *  - 红基线见报告 §V8（变异 = deliverToRoot 去记账 + 扫描桩返回 0 → R1 红）
  */
 class RootDeliveryRedeliverySpec extends FunSuite:
 
@@ -211,7 +211,7 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     b
 
   /**
-   * 有界轮询等待投递消息记账（ad0a50ad awaitMsgs 模式）：deliverToNebula 是
+   * 有界轮询等待投递消息记账（ad0a50ad awaitMsgs 模式）：deliverToRoot 是
    * `ref ! ImmediateInput` fire-and-forget——扫描返回时消息可能仍在 recorder
    * 邮箱里未处理，立即直读 recorded 有竞态（R4 CI 偶发 NoSuchElementException
    * head of empty list @:200；R1@:147 / R5@:218 同根因偶发 size 断言红）。

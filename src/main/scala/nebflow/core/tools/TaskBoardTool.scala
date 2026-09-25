@@ -259,7 +259,7 @@ end TaskBoardTool
 
 /**
  * TaskBoard 工具实体（挂载面 §1c：分发器 DispatcherFixedTools 第九件 + project
- * 节点会话按身份追加；Nebula 一期不挂、plugins 声明不授能——NebulaExclusiveTools
+ * 节点会话按身份追加；Root 一期不挂、plugins 声明不授能——RootExclusiveTools
  * 防声明逃逸，双保险见 TaskBoardTool.dispatchSync 的 Other 拒绝）。
  */
 object TaskBoardToolDef extends Tool:

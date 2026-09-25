@@ -573,7 +573,7 @@ class WebSocketRoutes(
    * Nebula 聊天 / team Manager / flow 入口等**其余 root 会话**一并排除（双保险）。
    *
    * 🔴 **判据取「声明的名字」而非 spawn 期解析出的 `AgentDef.name`**：`resolveAgentDef`
-   * 对库里不存在的名字会 `nebulaFallback` 回落成 Nebula（本文件 :98-102）⇒ 用解析结果
+   * 对库里不存在的名字会 `rootFallback` 回落成 Nebula（本文件 :98-102）⇒ 用解析结果
    * 判会让 `agentName="general"` 这类会话**误判成 Nebula**（复核位探针的第 1 例正是它）。
    * spawn 期身份另有 `agentDef.name == "Nebula"`（:216 `sandboxEnabled`），二者不冲突。
    *
@@ -591,7 +591,7 @@ class WebSocketRoutes(
    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）——本功能**仅对 Nebula 的
    * root 会话开放**。判据 = 下列合取（全部为真才放行）：
    *
-   *   ① **身份面**：`isNebulaIdentitySession`（上）——排除主窗口切过去的 standalone
+   *   ① **身份面**：`isRootIdentitySession`（上）——排除主窗口切过去的 standalone
    *      非 Nebula 会话 / 节点形态 id。
    *   ② **注册面**：已注册活体 agent 的会话，`AgentRecord.kind` 必须 == `Root`
    *      （`kind = Root` 的唯一置位点 = `doSpawnRootAgent`，本文件 :246）。节点 /

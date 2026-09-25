@@ -15,7 +15,7 @@ import java.nio.file.Files
  * `promotedTexts` / sidecar 时钟）——那些 API 已随 DreamMode 机制整体删除 ⇒ 本文件
  * **按新语义改写**（不删文件、不放宽断言、不 skip），钉四条现在成立的事实：
  *
- *   ① 引擎不再拥有具名节：生产者（`NebulaMemoryHook.enqueueFacts`）入队的条目
+ *   ① 引擎不再拥有具名节：生产者（`RootMemoryHook.enqueueFacts`）入队的条目
  *      `section` 恒 `None`；
  *   ② 该条在**不含** `## Dream Extract` 的文件上照旧可落（文件尾追加）——「缺具名节
  *      ⇒ 永不能落」这一旧约束不再适用于生产者；
@@ -24,7 +24,7 @@ import java.nio.file.Files
  *      时也不要有这个 section」的机械面）；
  *   ④ 仍在用（生产者/队列识别子）的两件纯函数 `parseFact` / `entryHash` 语义直测。
  *
- * dataRoot 经 `PathUtil.setDataRoot` 钉临时目录（NebulaMemoryHookRouteSpec / MemoryTrackSpec
+ * dataRoot 经 `PathUtil.setDataRoot` 钉临时目录（RootMemoryHookRouteSpec / MemoryTrackSpec
  * 先例）⇒ 现场真实记忆文件与 `queue.jsonl` **零接触**。
  */
 class DreamModeSpec extends FunSuite:

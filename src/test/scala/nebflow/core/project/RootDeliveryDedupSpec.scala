@@ -200,7 +200,7 @@ class RootDeliveryDedupSpec extends FunSuite:
         // 预置窗口外旧投递记录（61s 前——超过 60s 窗口，顺路验证时间窗淘汰）
         now <- IO(System.currentTimeMillis())
         _ <- engine.recentRootDeliveries.update(
-          _ + (("n-expired", "completed") -> (now - NodeEngine.NebulaDedupWindowMs - 1000L))
+          _ + (("n-expired", "completed") -> (now - NodeEngine.RootDedupWindowMs - 1000L))
         )
         _ <- engine.deliverOutTo(n, "Nebula", n.result.get)
         msgs <- awaitMsgs(recorded, min = 1)

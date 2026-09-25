@@ -196,7 +196,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assert(AgentCore.exclusiveToolsFor("general").contains("ListFriends"), "其余身份剥全集 ⇒ general 声明无效")
     assert(AgentCore.exclusiveToolsFor("dream").contains("ListFriends"), "dream 无豁免（豁免面恰 MemoryNote 一件）⇒ dream 声明无效")
     assert(!AgentCore.DreamAdmittedTools.contains("ListFriends"), "DreamAdmittedTools 不含 ListFriends")
-    // legacy 面（team / flow / catch-all）同样零 ListFriends：机制固定集 = NebulaOrchestrationTools 单点
+    // legacy 面（team / flow / catch-all）同样零 ListFriends：机制固定集 = RootOrchestrationTools 单点
     assert(
       !AgentCore.fixedToolsFor(mkDef("member", List("*")).copy(category = "team")).contains("ListFriends"),
       "legacy team 成员不携带"

@@ -26,7 +26,7 @@ import scala.concurrent.duration.*
  * 覆盖：
  *  - ① 三值语义 + legacy 解析（R1/R2/R3/R5；含存量两条腿 channel-additive 零漂移）
  *  - ② 值域校验可行动错误（NODE_NOTIFY_INVALID）+ 未声明 ⇒ 缺键 + 载荷条件键 `notify`
- *  - ③ R5 抑制实测（补投扫描腿：不投根 + 记账；**主路径腿**：真实引擎 nebulaDelivery）
+ *  - ③ R5 抑制实测（补投扫描腿：不投根 + 记账；**主路径腿**：真实引擎 rootDelivery）
  *  - ④ M1 signal 边不受策略影响（只记账不通报，策略不得升根）
  *  - ⑤ R14 failed 不豁免（silent 节点 failed 仍回流分发器）
  *  - ⑥ M2 链摘要 ≥2 成员（正控发 / 负控单成员链不发且不下发 chainId）
@@ -436,7 +436,7 @@ class NodeNotifyPolicySpec extends CatsEffectSuite:
       assertEquals(capturedTexts2.size, 3, "记账后第二轮零新增（记账防补投复活，判据恒同源）")
       // 扫描腿的抑制 = **结构性排除**（候选判据内裁决，根本不上投）：被抑制节点既不被投、
       // 也不被扫描「记账」——二者都靠同一策略判据，故「不复活」恒成立（判据恒同源）。
-      // 扫描腿记账的不变量：投递成功的节点必有账（legacy）。主路径（nebulaDelivery）的
+      // 扫描腿记账的不变量：投递成功的节点必有账（legacy）。主路径（rootDelivery）的
       // 「抑制 + 同时记账」由本 spec ③b 覆盖（spec §5 表尾推论 2）。
       assert(after1.nodes("n-disp").nebulaDeliveredAt.isDefined, "disp 投递后记账（防补投复活）")
       assert(after1.nodes("n-silent").nebulaDeliveredAt.isDefined, "silent 同上")
