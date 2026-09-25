@@ -9,22 +9,20 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 /**
-  * Retry.retryWithBackoff 组合子的行为钉(RetryWithBackoffSpec 与 retry.scala
-  * 同步新增,零调用点改动)。时间全部走 TestControl 虚拟时钟,零真实等待
-  * (手法同 McpCallTimeoutSpec)。
-  *
-  * 覆盖:① 成功直通 ② 耗尽后抛最后错误 ③ 分类谓词短路(异常/值两模型)
-  * ④ 退避序列(含上限与注入抖动) ⑤ 中断语义(取消令牌 + fiber 取消)
-  * ⑥ 值轮询模型(isSuccess 谓词,补钉 ChunkTransport/TurnEndpoint 的
-  * Either/值失败模型轴)。
-  */
+ * Retry.retryWithBackoff 组合子的行为钉(RetryWithBackoffSpec 与 retry.scala
+ * 同步新增,零调用点改动)。时间全部走 TestControl 虚拟时钟,零真实等待
+ * (手法同 McpCallTimeoutSpec)。
+ *
+ * 覆盖:① 成功直通 ② 耗尽后抛最后错误 ③ 分类谓词短路(异常/值两模型)
+ * ④ 退避序列(含上限与注入抖动) ⑤ 中断语义(取消令牌 + fiber 取消)
+ * ⑥ 值轮询模型(isSuccess 谓词,补钉 ChunkTransport/TurnEndpoint 的
+ * Either/值失败模型轴)。
+ */
 class RetryWithBackoffSpec extends CatsEffectSuite:
 
-  private final case class Boom(n: Int)
-      extends RuntimeException(s"boom-$n") with scala.util.control.NoStackTrace
+  private final case class Boom(n: Int) extends RuntimeException(s"boom-$n") with scala.util.control.NoStackTrace
 
-  private final case class NonRetryable(msg: String)
-      extends RuntimeException(msg) with scala.util.control.NoStackTrace
+  private final case class NonRetryable(msg: String) extends RuntimeException(msg) with scala.util.control.NoStackTrace
 
   // ============================================================
   // ① 成功直通:首试即成 → 原值返回,恰好一次尝试、零延迟
@@ -34,9 +32,11 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
     for
       attempts <- IO.ref(0)
       timed <- TestControl.executeEmbed(
-        Retry.retryWithBackoff(attempts.update(_ + 1).as("ok"))(
-          Policy(maxAttempts = 3, initialDelay = 1.second)
-        ).timed
+        Retry
+          .retryWithBackoff(attempts.update(_ + 1).as("ok"))(
+            Policy(maxAttempts = 3, initialDelay = 1.second)
+          )
+          .timed
       )
       (elapsed, result) = timed
       n <- attempts.get
@@ -55,9 +55,12 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
       attempts <- IO.ref(0)
       action = attempts.updateAndGet(_ + 1).flatMap(n => IO.raiseError[String](Boom(n)))
       timed <- TestControl.executeEmbed(
-        Retry.retryWithBackoff(action)(
-          Policy(maxAttempts = 3, initialDelay = 1.second, multiplier = 2.0)
-        ).attempt.timed
+        Retry
+          .retryWithBackoff(action)(
+            Policy(maxAttempts = 3, initialDelay = 1.second, multiplier = 2.0)
+          )
+          .attempt
+          .timed
       )
       (elapsed, outcome) = timed
       n <- attempts.get
@@ -74,15 +77,18 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
   test("③ 分类谓词短路: 不可重试异常 → 首次即抛原异常,零退避零重试") {
     val classifier: AttemptFailure[Unit] => Boolean = {
       case AttemptFailure.Errored(_: NonRetryable) => false
-      case _                                       => true
+      case _ => true
     }
     for
       attempts <- IO.ref(0)
       action = attempts.update(_ + 1).flatMap(_ => IO.raiseError[Unit](NonRetryable("fatal")))
       timed <- TestControl.executeEmbed(
-        Retry.retryWithBackoff(action)(
-          Policy(maxAttempts = 5, initialDelay = 1.second, isRetryable = classifier)
-        ).attempt.timed
+        Retry
+          .retryWithBackoff(action)(
+            Policy(maxAttempts = 5, initialDelay = 1.second, isRetryable = classifier)
+          )
+          .attempt
+          .timed
       )
       (elapsed, outcome) = timed
       n <- attempts.get
@@ -90,12 +96,13 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
       assertEquals(n, 1, "不可重试分类不得发起第二次尝试")
       assertEquals(outcome, Left(NonRetryable("fatal")): Either[Throwable, Unit], "直接抛原异常,非包装")
       assertEquals(elapsed, Duration.Zero, "短路不得支付任何退避")
+    end for
   }
 
   test("③b 值模型分类短路: 不可重试失败值 → 立即返回原值不耗尝试(ChunkTransport 口径)") {
     val classifier: AttemptFailure[Either[String, Int]] => Boolean = {
       case AttemptFailure.Unsuccessful(Left("fatal")) => false
-      case _                                          => true
+      case _ => true
     }
     for
       attempts <- IO.ref(0)
@@ -114,6 +121,7 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
     yield
       assertEquals(result, Left("fatal"), "不可重试失败值原样返回(对齐 sendWithRetry 的立即 Left)")
       assertEquals(n, 1)
+    end for
   }
 
   // ============================================================
@@ -156,12 +164,11 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
       )
       v <- stamps.get
       deltas = v.sliding(2).map(w => w(1) - w(0)).toVector
-    yield
-      assertEquals(
-        deltas,
-        Vector(1.5.seconds, 2.5.seconds, 4.5.seconds, 8.5.seconds),
-        "加性抖动 = min(base + 0.5×bound, maxDelay),先加再封顶(对齐 retryDelayMs 形状)"
-      )
+    yield assertEquals(
+      deltas,
+      Vector(1.5.seconds, 2.5.seconds, 4.5.seconds, 8.5.seconds),
+      "加性抖动 = min(base + 0.5×bound, maxDelay),先加再封顶(对齐 retryDelayMs 形状)"
+    )
   }
 
   // ============================================================
@@ -177,9 +184,12 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
         else IO.raiseError[Unit](Boom(n))
       }
       timed <- TestControl.executeEmbed(
-        Retry.retryWithBackoff(action)(
-          Policy(maxAttempts = 5, initialDelay = 1.second, shouldCancel = token.get)
-        ).attempt.timed
+        Retry
+          .retryWithBackoff(action)(
+            Policy(maxAttempts = 5, initialDelay = 1.second, shouldCancel = token.get)
+          )
+          .attempt
+          .timed
       )
       (elapsed, outcome) = timed
       n <- attempts.get
@@ -215,14 +225,16 @@ class RetryWithBackoffSpec extends CatsEffectSuite:
         IO.pure((if n >= 3 then Right(42) else Left(s"e$n")): Either[String, Int])
       }
       timed <- TestControl.executeEmbed(
-        Retry.retryWithBackoff(action)(
-          Policy(
-            maxAttempts = 5,
-            initialDelay = 1.second,
-            multiplier = 2.0,
-            isSuccess = (_.isRight)
+        Retry
+          .retryWithBackoff(action)(
+            Policy(
+              maxAttempts = 5,
+              initialDelay = 1.second,
+              multiplier = 2.0,
+              isSuccess = (_.isRight)
+            )
           )
-        ).timed
+          .timed
       )
       (elapsed, result) = timed
       n <- attempts.get

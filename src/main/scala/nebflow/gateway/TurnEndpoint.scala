@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.shared.Retry
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -141,7 +142,7 @@ object TurnEndpoint:
     totalBefore: Int,
     sessionStore: SessionStore
   ): IO[(String, List[Json])] =
-    def attempt(remaining: Int): IO[(String, List[Json])] =
+    def poll(): IO[Option[(String, List[Json])]] =
       sessionStore.getUiMessages(sessionId, 0, 0).flatMap { case (msgs, _) =>
         val window = msgs.drop(totalBefore)
         window.collectFirst { case a: nebflow.shared.UiMessage.Ai => a } match
@@ -151,12 +152,25 @@ object TurnEndpoint:
             val toolCalls = window.collect { case t: nebflow.shared.UiMessage.Tool =>
               Json.obj("label" -> t.label.asJson, "summary" -> t.summary.asJson, "isError" -> t.isError.asJson)
             }
-            IO.pure((finalMessage, toolCalls))
-          case None =>
-            if remaining > 0 then IO.sleep(200.millis) *> attempt(remaining - 1)
-            else IO.pure(("", Nil))
+            IO.pure(Some((finalMessage, toolCalls)))
+          case None => IO.pure(None)
       }
-    attempt(25)
+    // Phase 3 去重:200ms × 25 次重试(共 26 次读)→ shared retryWithBackoff 值轮询
+    // 模型;耗尽返回 None → ("", Nil) 降级(lagging persist 不算 turn 失败,见上);
+    // 异常不在重试面——原实现 flatMap 直通抛出,Errored 判否保持该口径。
+    Retry
+      .retryWithBackoff(poll())(
+        Retry.Policy(
+          maxAttempts = 26, // 首读 + 25 次重试(原 attempt(25) 口径)
+          initialDelay = 200.millis,
+          isSuccess = (_.isDefined),
+          isRetryable = {
+            case Retry.AttemptFailure.Errored(_) => false
+            case _ => true
+          }
+        )
+      )
+      .map(_.getOrElse(("", Nil)))
   end readTurnResult
 
 end TurnEndpoint

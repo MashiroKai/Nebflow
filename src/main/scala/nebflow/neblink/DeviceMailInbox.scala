@@ -7,6 +7,7 @@ import nebflow.actor.ActorRef
 import nebflow.agent.{AgentCommand, SharedResources}
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{MailTool, RelayExecAudit}
+import nebflow.shared.Retry
 
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*
@@ -298,36 +299,48 @@ object DeviceMailInbox:
    * 🔴 失败支的「未持久处理 ⇒ 不回 ack」判词与文案本批**零改动**。
    */
   private def injectWithRetry(incoming: DeviceMail.Incoming, receiptEventId: Option[String]): IO[Boolean] =
-    def attempt(n: Int): IO[Either[String, String]] =
-      injectOnce(incoming).flatMap {
-        case ok @ Right(_) => IO.pure(ok)
-        case left @ Left(_) =>
-          if n < InjectAttempts then
-            logger.warn(
-              s"[device-mail] injection attempt $n/$InjectAttempts failed — retrying in ${InjectRetryDelay.toSeconds}s"
-            ) *> IO.sleep(InjectRetryDelay) *> attempt(n + 1)
-          else IO.pure(left)
+    // Phase 3 去重:手写 attempt 递归 → shared Retry.retryWithBackoff(固定 2s × 总尝试
+    // InjectAttempts 次;warn 文案与级别逐字保留,且只在「还将重试」时打;异常不在
+    // 重试面——原实现 flatMap 直通抛出,Errored 判否保持该口径)。
+    Retry
+      .retryWithBackoff(injectOnce(incoming))(
+        Retry.Policy(
+          maxAttempts = InjectAttempts,
+          initialDelay = InjectRetryDelay,
+          isSuccess = (_.isRight),
+          isRetryable = {
+            case Retry.AttemptFailure.Errored(_) => false
+            case _ => true
+          },
+          onAttempt = (n, raw) =>
+            raw match
+              case Right(Left(_)) if n < InjectAttempts =>
+                logger.warn(
+                  s"[device-mail] injection attempt $n/$InjectAttempts failed — retrying in ${InjectRetryDelay.toSeconds}s"
+                )
+              case _ => IO.unit
+        )
+      )
+      .flatMap {
+        case Right(sid) =>
+          logger.info(
+            s"[device-mail] injected into Nebula root session ${sid.take(8)} " +
+              s"(from_device=${incoming.fromDevice}, source=${DeviceMail.SourceDeviceMail}, type=${DeviceMail.EventTypeInfo.toUpperCase})"
+          ) *> audit(incoming, "injected", s"root=${sid.take(8)} attempts<=$InjectAttempts") *>
+            sendReceipt(incoming, receiptEventId).as(true)
+        case Left(reason) =>
+          val detail = s"$reason (attempts=$InjectAttempts)"
+          logger.warn(s"[device-mail] injection FAILED and is NOT silent: $detail") *>
+            alert(incoming, detail) *>
+            audit(incoming, "inject-failed", detail) *>
+            // 未持久处理 ⇒ **不回 ack**（回执语义边界），只留可读行：
+            logger
+              .warn(
+                s"[device-mail] ack NOT sent (injection failed, so the event is not processed): " +
+                  s"eventId=${receiptEventId.getOrElse("<none>")}"
+              )
+              .as(false)
       }
-    attempt(1).flatMap {
-      case Right(sid) =>
-        logger.info(
-          s"[device-mail] injected into Nebula root session ${sid.take(8)} " +
-            s"(from_device=${incoming.fromDevice}, source=${DeviceMail.SourceDeviceMail}, type=${DeviceMail.EventTypeInfo.toUpperCase})"
-        ) *> audit(incoming, "injected", s"root=${sid.take(8)} attempts<=$InjectAttempts") *>
-          sendReceipt(incoming, receiptEventId).as(true)
-      case Left(reason) =>
-        val detail = s"$reason (attempts=$InjectAttempts)"
-        logger.warn(s"[device-mail] injection FAILED and is NOT silent: $detail") *>
-          alert(incoming, detail) *>
-          audit(incoming, "inject-failed", detail) *>
-          // 未持久处理 ⇒ **不回 ack**（回执语义边界），只留可读行：
-          logger
-            .warn(
-              s"[device-mail] ack NOT sent (injection failed, so the event is not processed): " +
-                s"eventId=${receiptEventId.getOrElse("<none>")}"
-            )
-            .as(false)
-    }
 
   end injectWithRetry
 
