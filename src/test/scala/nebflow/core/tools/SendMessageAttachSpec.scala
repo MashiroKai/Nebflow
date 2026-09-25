@@ -323,7 +323,7 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     val fixed = AgentCore.fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil))
     assert(!fixed.contains("TransferFile"))
     assert(fixed.contains("SendMessage"))
-    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize)
+    assertEquals(fixed.size, AgentCore.RootOrchestrationToolsExpectedSize)
 
   test("dimension guard: 1024 MB = 1 GiB = 1,073,741,824 B / ≤9 件 / 标签含 1,073,741,824（量纲写死）"):
     assertEquals(AttachContract.MaxFileBytes, 1_073_741_824L)

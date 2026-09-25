@@ -79,7 +79,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assertEquals(
       fixed,
       expected,
-      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）"
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）"
     )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
@@ -98,7 +98,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     }
     assertEquals(
       fixed.size,
-      AgentCore.NebulaOrchestrationToolsExpectedSize,
+      AgentCore.RootOrchestrationToolsExpectedSize,
       "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）"
     )
     assert(!fixed.contains("Delegate"), "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
@@ -196,7 +196,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // （nebulaFiltered 先剥、末段不挂），工具面 + 工具内身份判定两层独立。
     assert(
       !CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
-      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，NebulaExclusiveTools）"
+      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，RootExclusiveTools）"
     )
     assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"), "wildcard 声明同样不授能")
     assert(
@@ -217,12 +217,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     assertEquals(
       delivered.size,
-      AgentCore.NebulaOrchestrationToolsExpectedSize,
+      AgentCore.RootOrchestrationToolsExpectedSize,
       "交付面件数与机制集单点常量一致（在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）"
     )
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
-    assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)), "旧名零残留（Nebula 机制固定集）")
+    assert(!AgentCore.RootOrchestrationTools.exists(_.contains(LegacyToolName)), "旧名零残留（Nebula 机制固定集）")
     assert(!ToolRegistry.TOOL_MAP.contains(LegacyToolName), "旧名零残留（注册表——旧调用名解析失败，按未知工具明确报错，不静默）")
 
   test("D.1-11: standalone 显式声明 SendMessage 不再授能"):

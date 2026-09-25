@@ -658,8 +658,8 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!AgentCore.GeneralFixedTools.contains("TaskList"), "general 固定集零 TaskList")
     assert(!CoreProbe.allowed(mkDef("general", Nil), isFlowNode = true).contains("TaskList"), "general 交付面零 TaskList")
 
-  test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（NebulaExclusiveTools）"):
-    assert(AgentCore.NebulaExclusiveTools.contains("TaskList"), "TaskList 进 NebulaExclusiveTools（剥离语义单点）")
+  test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（RootExclusiveTools）"):
+    assert(AgentCore.RootExclusiveTools.contains("TaskList"), "TaskList 进 RootExclusiveTools（剥离语义单点）")
     val declared = CoreProbe.allowed(mkDef("sneaky", List("Read", "TaskList")))
     assert(!declared.contains("TaskList"), "standalone 显式声明无效")
     val wildcard = CoreProbe.allowed(mkDef("omni", List("*")))
@@ -682,7 +682,7 @@ class AllowedToolSetSpec extends FunSuite:
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
     // 声明整体失效的**结构证明**：交付面逐项 == 机制集（改写声明不改结果）
-    assertEquals(allowed, AgentCore.NebulaOrchestrationTools, "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量，与声明无关")
+    assertEquals(allowed, AgentCore.RootOrchestrationTools, "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量，与声明无关")
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(allowed.contains(t), s"Nebula 文件面六件因**机制集**而在场（2026-09-18 18:18 令；非因声明）: $t")
     }

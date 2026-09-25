@@ -30,7 +30,7 @@ object AgentDefCategoryBackdoorProbe:
 
   /** 收敛名 → 机制固定集（**只引 AgentCore 常量**，零裸清单/零裸数字）。 */
   private val ExpectedFixed: Map[String, Set[String]] = Map(
-    "Nebula" -> AgentCore.NebulaOrchestrationTools,
+    "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
     "kernel" -> AgentCore.KernelFixedTools
@@ -121,7 +121,7 @@ object AgentDefCategoryBackdoorProbe:
       println("")
     }
 
-    println("PROBE NebulaOrchestrationToolsExpectedSize = " + AgentCore.NebulaOrchestrationToolsExpectedSize)
+    println("PROBE RootOrchestrationToolsExpectedSize = " + AgentCore.RootOrchestrationToolsExpectedSize)
     println("PROBE VERDICT = " + (if red then "RED (category 后门可达)" else "GREEN (收敛名无视 JSON category，非收敛 parity 保持)"))
 
     os.remove.all(Home)

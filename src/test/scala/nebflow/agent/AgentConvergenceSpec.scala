@@ -65,7 +65,7 @@ class AgentConvergenceSpec extends FunSuite:
     assertEquals(
       delivered,
       expected,
-      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）"
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.RootOrchestrationToolsExpectedSize 为单点来源：在飞 17 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值；沿革：好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）"
     )
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
@@ -164,7 +164,7 @@ class AgentConvergenceSpec extends FunSuite:
     val legacyMemoryTool = "Memory" + "Edit"
     assert(!ToolRegistry.TOOL_MAP.contains(legacyMemoryTool), "旧名记忆工具必须已从注册表消失（更名零残留键）")
     val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List("MemoryNote")))
-    assert(!sneakyStandalone.contains("MemoryNote"), "standalone 声明无效（NebulaExclusiveTools；dream 除外）")
+    assert(!sneakyStandalone.contains("MemoryNote"), "standalone 声明无效（RootExclusiveTools；dream 除外）")
     val sneakyWildcard = CoreProbe.allowed(mkDef("omni", List("*")))
     assert(!sneakyWildcard.contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream，其余身份零变化）")
     val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryNote")))
@@ -177,7 +177,7 @@ class AgentConvergenceSpec extends FunSuite:
     assert(wildcard.contains("MemoryNote"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
     // 豁免恰为 MemoryNote 一件——Schedule/Delegate/AgentControl/TaskList/TaskBoard/node_report/Pop/ListFriends 对 dream 不得放开
     assertEquals(
-      AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
+      AgentCore.RootExclusiveTools -- AgentCore.DreamAdmittedTools,
       Set("Schedule", "Delegate", "AgentControl", "TaskList", "TaskBoard", "node_report", "Pop", "ListFriends"),
       "dream 豁免面 = 仅 MemoryNote（NodeReport 泛化批后剥离面六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends——TaskBoard/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula）"
     )
@@ -202,7 +202,7 @@ class AgentConvergenceSpec extends FunSuite:
       !CoreProbe.allowed(mkDef("dream", List("Pop"))).contains("Pop"),
       "dream 声明 Pop 无效（非 DreamAdmittedTools；Pop 仅 Nebula）"
     )
-    assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.NebulaExclusiveTools, "其余身份剥全集")
+    assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.RootExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====
 

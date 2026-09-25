@@ -166,10 +166,10 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
 
   // ══════════ 2. 不越界面（L3） ══════════
 
-  test("L3：插件白名单不含 ListFriends（否则绕过 NebulaExclusiveTools 剥离面）"):
+  test("L3：插件白名单不含 ListFriends（否则绕过 RootExclusiveTools 剥离面）"):
     assert(
       !nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist.contains("ListFriends"),
-      "插件通道不得授 ListFriends（授能面仅 NebulaOrchestrationTools 单点）"
+      "插件通道不得授 ListFriends（授能面仅 RootOrchestrationTools 单点）"
     )
 
   test("L3：RemoteExecutor.remoteableTools 不含 ListFriends，augmentSchema 不注入 device"):
@@ -187,10 +187,10 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assert(!AgentCore.DispatcherFixedTools.contains("ListFriends"), "DispatcherFixedTools 零 ListFriends")
     assert(!AgentCore.BaseTools.contains("ListFriends"), "BaseTools 零 ListFriends（不得进全 agent 面）")
 
-  test("L2：防声明逃逸单点——NebulaExclusiveTools 含之，dream 无豁免，其余身份剥全集"):
+  test("L2：防声明逃逸单点——RootExclusiveTools 含之，dream 无豁免，其余身份剥全集"):
     assert(
-      AgentCore.NebulaExclusiveTools.contains("ListFriends"),
-      "ListFriends 进 NebulaExclusiveTools（runtime 剥离 + AgentLibrary 面板/保存侧 strip 共用单点）"
+      AgentCore.RootExclusiveTools.contains("ListFriends"),
+      "ListFriends 进 RootExclusiveTools（runtime 剥离 + AgentLibrary 面板/保存侧 strip 共用单点）"
     )
     assert(!AgentCore.exclusiveToolsFor("Nebula").contains("ListFriends"), "Nebula 自身无剥离（静态集单点授能）")
     assert(AgentCore.exclusiveToolsFor("general").contains("ListFriends"), "其余身份剥全集 ⇒ general 声明无效")

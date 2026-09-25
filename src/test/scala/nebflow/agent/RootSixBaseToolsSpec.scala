@@ -35,7 +35,7 @@ import munit.FunSuite
  *   SandboxSpec 既有覆盖（写根放行/SANDBOX_DENIED 闸层断言），读面缺省根语义由
  *   AgentConvergenceSpec 用例覆盖，本文件不重复。
  */
-class NebulaSixBaseToolsSpec extends FunSuite:
+class RootSixBaseToolsSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:
 
@@ -84,15 +84,15 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     assertEquals(
       fixed.size,
-      AgentCore.NebulaOrchestrationToolsExpectedSize,
+      AgentCore.RootOrchestrationToolsExpectedSize,
       "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）"
     )
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
     assertEquals(
-      AgentCore.NebulaOrchestrationTools.size,
+      AgentCore.RootOrchestrationTools.size,
       17,
-      "NebulaOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）"
+      "RootOrchestrationTools 实测恰 17 件（2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）"
     )
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
@@ -116,4 +116,4 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     val delivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
     six.foreach(t => assert(delivered.contains(t), s"general 交付面缺基础六件之一: $t"))
 
-end NebulaSixBaseToolsSpec
+end RootSixBaseToolsSpec

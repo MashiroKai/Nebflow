@@ -234,7 +234,7 @@ object AgentCore:
    *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
-  val NebulaExclusiveTools = Set(
+  val RootExclusiveTools = Set(
     "Schedule",
     "Delegate",
     "AgentControl",
@@ -293,8 +293,8 @@ object AgentCore:
     name match
       // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
-      case "dream" => NebulaExclusiveTools -- DreamAdmittedTools
-      case _ => NebulaExclusiveTools
+      case "dream" => RootExclusiveTools -- DreamAdmittedTools
+      case _ => RootExclusiveTools
 
   /**
    * Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
@@ -389,7 +389,7 @@ object AgentCore:
    * **恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
    * 了任何件；要找 Nebula 的工具清单，只有本集。
    */
-  val NebulaOrchestrationTools = Set(
+  val RootOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
     // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
@@ -513,7 +513,7 @@ object AgentCore:
    * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
    * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。
    */
-  val NebulaOrchestrationToolsExpectedSize: Int = 17
+  val RootOrchestrationToolsExpectedSize: Int = 17
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -689,7 +689,7 @@ object AgentCore:
             // general/BaseTools 六件默认注入不变
             // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit+MemoryNote，
             // 在飞恰十七件）——本集即 Nebula 工具面唯一来源。
-            AgentCore.NebulaOrchestrationTools
+            AgentCore.RootOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general" => AgentCore.GeneralFixedTools
           // 极简内核（2026-09-11 恢复批）：机制固定单点，与 general/Nebula 同款

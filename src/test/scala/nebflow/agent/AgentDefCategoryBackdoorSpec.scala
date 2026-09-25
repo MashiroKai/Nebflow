@@ -27,7 +27,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   /** 收敛名 → 机制固定集（**只引 AgentCore 常量**，零裸清单 / 零裸数字）。 */
   private val MechanismFixed: Map[String, Set[String]] = Map(
-    "Nebula" -> AgentCore.NebulaOrchestrationTools,
+    "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
     "kernel" -> AgentCore.KernelFixedTools,

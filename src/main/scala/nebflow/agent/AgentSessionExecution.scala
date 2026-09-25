@@ -2039,26 +2039,26 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 阶段 2d 子集）：agent.json flows 声明解析保留（决策 A①——legacy 授能中
     // 声明字段活到阶段 3），但不再驱动任何工具注入；FlowTrigger 工具本身已从
     // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
-    val isNebula = agentDef.name == RootAgentIdentity.Name
+    val isRoot = agentDef.name == RootAgentIdentity.Name
     // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
     // （空集）；dream 豁免 MemoryNote（2026-09-05 作者签准——动作面仍受
     // MemoryNoteTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
     // 剥全集，行为零变化。
-    val nebulaFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
+    val rootFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
     // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
     // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
     // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
     // 显式列出也不给（the tool name IS the permission boundary）。
     val teamTaskFiltered =
-      if agentDef.category == "team" then nebulaFiltered
-      else nebulaFiltered -- AgentCore.TeamTaskTools
+      if agentDef.category == "team" then rootFiltered
+      else rootFiltered -- AgentCore.TeamTaskTools
     // Block 1 (supervision trio §C2, 2026-08-27): AgentControl mechanism-layer
     // grant — a team lead (Manager) gains subtree-scoped control over its own
     // team (members + their sub-agents; the subtree guard in AgentControlTool
     // enforces the scope), Nebula keeps global authority. The grant is the
     // ONLY source: declaring AgentControl in agent.json grants nothing
     // (TeamTaskTools precedent — the tool name IS the permission boundary).
-    val controlGrant = if isNebula || isTeamLead then Set("AgentControl") else Set.empty[String]
+    val controlGrant = if isRoot || isTeamLead then Set("AgentControl") else Set.empty[String]
     val withControl = (teamTaskFiltered -- Set("AgentControl")) ++ controlGrant
     // Task tools: Nebula/lead 专属的 session 域 TaskCreate/TaskUpdate 已退役
     // （任务工具重做 2026-08-30）；depth≥2 的 "*" 代理仍剥离 TeamTask*（叶子

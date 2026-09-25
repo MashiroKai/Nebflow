@@ -55,10 +55,10 @@ class AgentLibrary(
     val diskAgents = scanDisk()
 
     // Ensure Nebula always exists (system survival guarantee)
-    if diskAgents.contains(Seeds.Nebula.name) then diskAgents
+    if diskAgents.contains(Seeds.RootAgent.name) then diskAgents
     else
       logger.warnSync("Nebula not found on disk — using code fallback")
-      diskAgents + (Seeds.Nebula.name -> Seeds.Nebula.toAgentDef)
+      diskAgents + (Seeds.RootAgent.name -> Seeds.RootAgent.toAgentDef)
   }
 
   /** Get a single agent by name. */
@@ -310,7 +310,7 @@ private object Seeds:
   // AgentCore.NebulaOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
   // Do not reintroduce a list here: it would read as authoritative while being
   // dead data that silently drifts from the real tool surface.
-  val Nebula = SeedAgent(
+  val RootAgent = SeedAgent(
     RootAgentIdentity.Name,
     Some(RootAgentIdentity.Name),
     "Orchestrator — delegates all execution to specialized Teams and Flows",
@@ -341,7 +341,7 @@ Memory: record only what cannot be obtained from the project's code and helps fu
    * agent.json, so keeping retired names out of this list is what keeps them
    * retired across restarts (GatewayMain calls seedDefaults() on startup).
    */
-  val all = List(Nebula)
+  val all = List(RootAgent)
 
 end Seeds
 
