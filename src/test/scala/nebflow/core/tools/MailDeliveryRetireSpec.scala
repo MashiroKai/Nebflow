@@ -32,9 +32,9 @@ import scala.concurrent.duration.*
  *      （调用方声明的串行链语义无法被立即投递满足 ⇒ 静默改投 = 静默丢语义）；
  *      拒绝闸位置 = `call` 里**设备腿分支之后**、`layeredRoute` 之前 —— 单点兜住
  *      `node:` / `project:` / Nebula / team 短名 / 裸项目名**全部非设备腿**。
- *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`protocol.scala`
- *      自陈）⇒ 旧键照样到达 `call()`，故「删 schema 键 + 墓碑判」是 fail-closed 一侧，
- *      而「删键 + 删判」才是静默降级。
+ *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`AgentCommand.scala`
+ *      自陈；re-pin 2026-09-25：该自陈随 AskMode 自 protocol.scala 迁入）⇒ 旧键照样到达 `call()`，
+ *      故「删 schema 键 + 墓碑判」是 fail-closed 一侧，而「删键 + 删判」才是静默降级。
  *   3. **设备腿零改动**：`deliverToDevice` 的 v2.1「显式拒 queue」契约**逐字保持**
  *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）。
  *   4. **残差面（本批如实登记）**：非 `queue` 的旧值（`"immediate"` / 陌生值如 `"ask"`）

@@ -23,7 +23,9 @@ import scala.concurrent.duration.*
  *
  * 契约真源：`WebSocketRoutes.activeAgentEntryJson`（快照行键 `agentId == sessionId`）
  * ×`NodeRunner.spawnAgentActor:99`（actor 名默认 = sessionId）× 活帧
- * `agentId = ctx.self.path.name`（`protocol.scala:803`）。三者一致时快照行与活帧行
+ * `agentId = ctx.self.path.name`（`AgentCore.emitStream`/`emitStreamIO`；re-pin
+ * 2026-09-25：protocol.scala 三拆删除，原 `protocol.scala:803` 行号锚已漂移，
+ * 改指现行发射单点）。三者一致时快照行与活帧行
  * 落在同一个键空间；不一致时会话在面板上出现「agentDone 清不掉的幽灵行」。
  *
  * 本 spec 用**真 `MemoryTrack.run` + 真 ActorSystem + 真注册表**取现场读数

@@ -263,7 +263,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
    *     那个 jobId）⇒ 走 hold 分支静默重 hold（`holdEmitted` 已置位 ⇒ 无新事件、无留痕）
    *     ⇒ 节点挂到 `bgWaitCapMs`（本 spec 注入 1h）⇒ 30s/20s 等待红。
    *
-   * 为什么等待集没排空：`AgentRecord.status` **出生即 `Idle`**（`protocol.scala:480`），而
+   * 为什么等待集没排空：`AgentRecord.status` **出生即 `Idle`**（`AgentState.scala:45`，
+   * re-pin 2026-09-25：随 protocol.scala 三拆迁入，字段逐字未动），而
    * [[waitIdle]] 的判据恰是 `status == Idle` ⇒ 负载下 [[waitIdle]] 可在**首轮 LLM 调用之前**
    * 返回（会话刚 spawn、agent 尚未执行 UserInput）；而后台任务是在**首个 `sendStream` 内**
    * 登记的（桩的 `BgStubLlm`）⇒ 那一刻 `llm.jobIds` 仍是空表 ⇒ 后面

@@ -1175,3 +1175,4 @@ private[project] trait NodeStarter:
       }
     }
   end runWithAgent
+end NodeStarter

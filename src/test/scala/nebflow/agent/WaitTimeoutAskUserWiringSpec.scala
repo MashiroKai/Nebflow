@@ -24,7 +24,7 @@ import scala.concurrent.duration.*
  * 真实 AgentActor + 真实 InteractionHub + 真实 AskUserQuestionTool 驱动
  * AskUser pending 全生命周期，钉住「标记与解除成对，等待态绝不滞留」：
  *
- *   1. AskUser 派发 → registry 标 WaitingForUser（protocol.scala AgentStatus
+ *   1. AskUser 派发 → registry 标 WaitingForUser（AgentState.scala AgentStatus
  *      死代码首次接线；此前残留 Processing → TaskStuckWatcher 每 30s 误报，
  *      审计 20260903 当日 116 条）；
  *   2. 挂起超阈值（缩阈模拟 11min：回拨 lastActivityMs）→ scan 零动作——
