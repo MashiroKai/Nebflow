@@ -5564,6 +5564,47 @@ class NodeEngine(
         }.as(pruned)
       }
     }
+    // (cancelfailroute batch 2026-09-25, #380 mode-3 fix) Cancel-path route-loss
+    // visibility: the cancel detach previously had ZERO emission points, so a
+    // route-less verifier touched by a cancel was invisible to the system (no
+    // immediate alert, the 30s backfill leg's candidate filter can miss it, and no
+    // persistent trace - report 20260925_002749_nodeedit-failure-modes, mode 3 /
+    // n-5d9070a3). Immediately after the detach transaction commits, re-derive the
+    // victim set over the detached downstream ids and emit ONE batched
+    // `verifier-route-lost` (scope="cancel detach") + one WARN; zero victims => zero
+    // write, zero log (same idempotent exit as emitVerifierRouteLost). This is a
+    // pure addition: read + emit only, the detach semantics above stay untouched.
+    .flatMap(pruned => emitCancelDetachRouteLost(pruned).as(pruned))
+
+  /** Cancel-path victim-verifier alert closeout (cancelfailroute batch 2026-09-25;
+    * #380 mode-3 fix). Victim criterion = judgement D, single source
+    * [[NodePayload.verifierRouteInvalid]]: role = verifier AND declaredOut =
+    * canonical(out) ++ pendingOut non-empty AND [[OutEdge.failRouteTargets]] yields
+    * no resolvable target - the exact same derived reading the NodeList visible face
+    * uses, so the alert face and the visible face can no longer disagree. Boundary
+    * (i) of that judgement is preserved verbatim: an empty-out two-phase-token
+    * verifier stays legal and is never a victim.
+    *
+    * Read timing = right after the detach transaction commits. The criterion is a
+    * property of each detached node's own declared face (out/pendingOut + active-map
+    * resolvability); this detach only prunes targets' `in` mirrors, never touches a
+    * target's own out/pendingOut, and never removes a node from the active map, so
+    * the criterion is pointwise invariant across the transaction (the "computed at
+    * detach time" reading) - and the existing transaction body stays byte-identical.
+    * The "" lost-target form means "no route was severed - the fail face is
+    * structurally gone" (cancel severs in-mirrors only; the victim's declared edges
+    * are not removed by this leg).
+    *
+    * Idempotent: empty detached set => zero snapshot, zero write, zero log; zero
+    * victims => the emitter's own empty-set exit. */
+  private def emitCancelDetachRouteLost(detached: List[String]): IO[Unit] =
+    if detached.isEmpty then IO.unit
+    else
+      store.snapshot.flatMap { s =>
+        val victims = detached.filter(tid =>
+          s.nodes.get(tid).exists(tn => NodePayload.verifierRouteInvalid(tn, s.nodes)))
+        emitVerifierRouteLost(victims.map(_ -> ""), "cancel detach")
+      }
 
   /** **级联传导引用并集单点**（R3，chaincancel 批 2026-09-17 —— 作者三答 3 逐字落地）。
     *
