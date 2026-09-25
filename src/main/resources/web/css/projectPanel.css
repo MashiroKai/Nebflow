@@ -301,14 +301,18 @@
 /* ── 右下角「+」钮 + 让位规则（projcreate 批 · 乙案）──────────────────────────
    材质**零新造**：逐值照 `.canvas-ref-select`（split.css:770-792）——同 40×40 圆、
    同 `--glass-control-*` 玻璃族、同 hover scale(1.05)、同 opacity .6 静息档；
-   档位 `right:64px`（作者三裁 (a)：语境独立——本仓唯一「同角两枚 40px 玻璃圆钮并存」
-   的落地件即 `.canvas-ref-select` 与 `.canvas-source-toggle` 的 8px seat 做法）。
+   Seat `right:16px` (projfab-ui-impl batch, 2026-09-25 author order: anchor the
+   FAB against the pane's bottom-right edge; supersedes the earlier `right:64px`
+   inset). Alignment basis for the value: symmetric with the untouched
+   `bottom:16px` on the 4px grid, and it matches the sibling corner FAB in this
+   very pane — `.fm-fab` seats at `top:16px; right:16px` (flowMap.css:723), same
+   40x40 `--glass-control-*` circle family.
    🔴 不改 `split.css:739-766`（那会同时动到 md/html 查看器）。
    z-index 沿既有浮层档 45（flowMap.css `.fm-fab` 同档；本 pane 现读零竞争件）。 */
 .proj-create-fab {
   position: absolute;
   bottom: 16px;
-  right: 64px;
+  right: 16px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
