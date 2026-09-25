@@ -99,7 +99,11 @@ class FeishuChannelSpec extends FunSuite:
     val in = FeishuMessage.inboundFrom(Some("evt"), Some("om_3"), Some("oc_3"), Some("text"),
       Some("""{"text":"hello"}"""), Some("1700000000000")).toOption.get
     val keys = in.toJson.asObject.get.keys.toSet
-    assertEquals(keys, Set("eventId", "messageId", "chatId", "messageType", "content", "text", "createTime"))
+    // feishubridge: `senderId` joined the wire shape (tenant-scoped sender
+    // identity for the member-allowlist gate — not a credential). Absent stays
+    // Json.Null, so the rendered form is additive, never credential-bearing.
+    assertEquals(keys, Set("eventId", "messageId", "chatId", "messageType", "content", "text", "createTime", "senderId"))
+    assertEquals(in.toJson.hcursor.downField("senderId").focus, Some(io.circe.Json.Null))
     // The rendered JSON must never contain a secret-ish key.
     val rendered = in.toJson.noSpaces
     assert(!rendered.contains("Secret") && !rendered.contains("secret") && !rendered.contains("appSecret"))
