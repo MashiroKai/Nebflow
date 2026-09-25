@@ -111,7 +111,10 @@ class NodeSeatCwdSpec extends CatsEffectSuite:
       bashSrc.contains("ctx.sessionCwd.orElse(sandboxOpt.map(_.root.toString))"),
       "BashTool must derive the shell initialDir from ctx.sessionCwd (fallback = sandbox root)"
     )
-    val coreSrc = os.read(os.pwd / "src/main/scala/nebflow/agent/AgentCore.scala")
+    // 2026-09-25 拆分重钉：AgentCore 拆为合成层后，该接线（pipeToolExecutions 内
+    // sessionCwd 透传）随会话与工具执行族迁至 AgentSessionExecution.scala（行为保持
+    // 重构）——读取目标改为新文件（接线文本逐字未动，判据语义不变）。
+    val coreSrc = os.read(os.pwd / "src/main/scala/nebflow/agent/AgentSessionExecution.scala")
     assert(
       coreSrc.contains("sessionCwd = state.session.sessionCwd"),
       "AgentCore must thread SessionContext.sessionCwd into ToolContext"
