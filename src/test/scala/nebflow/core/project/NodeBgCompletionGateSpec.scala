@@ -187,8 +187,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
    * 批 4 · 同族小批 2026-09-16 起 G4/G9 亦改用本 helper——两处与 G1/G2 逐字同款，无第二形态）：
    *
    * 完成通知是**异步**投递——`completedNodeR` 先落 store（`status=Completed` 在此刻
-   * 可见），随后同一 fiber 才走 `deliverOut` → `deliverToNebula`（`NodeEngine.scala:1805`）
-   * → 根会话 `ImmediateInput`。故「状态读到 Completed 后**立刻**读通知队列」是天然竞态：
+   * 可见），随后同一 fiber 才走 `deliverOut` → `deliverToNebula`（2026-09-25 D 步随投递段
+   * 迁至 `NodeDelivery.scala`，原 `NodeEngine.scala:1805`）→ 根会话 `ImmediateInput`。故「状态读到 Completed 后**立刻**读通知队列」是天然竞态：
    * 读方（测试线程）可能先于投递方（完成 fiber）被调度 ⇒ CI 慢机器/换页压力下即红。
    * 判据本体「节点完成必须投递」**逐字不变**（等不到 ⇒ 仍然红），只是把「读一次」
    * 换成「有界等它到」；等待上限沿用既有 15s（未加大 timeout）。

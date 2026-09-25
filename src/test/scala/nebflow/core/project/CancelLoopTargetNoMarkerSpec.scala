@@ -226,11 +226,16 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
   private def nodeEngineSrc: String =
     codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
 
+  // 2026-09-25 D 步重钉:reversePruneReferences 随投递段迁至 NodeDelivery(self-type trait,
+  // 行为保持重构)——P2 的该窗口改读新文件(锚文本不变),本读数器随之成对提供。
+  private def nodeDeliverySrc: String =
+    codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeDelivery.scala"))
+
   /** 源码窗口（**有界**：签名行起 N 行——方法间相隔数百行，`substring(A, B)` 会圈进无关腿）。 */
   private def window(src: String, sig: String, n: Int): String =
     val lines = src.linesIterator.toList
     val start = lines.indexWhere(_.contains(sig))
-    assert(start >= 0, s"anchor not found in NodeEngine.scala: $sig")
+    assert(start >= 0, s"anchor not found: $sig")
     lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
 
   /**
@@ -406,7 +411,9 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     val src = nodeEngineSrc
     val detachCancelled = window(src, "private def detachCancelledUpstream", 60)
     val abandon = window(src, "def detachAbandonedNode", 60)
-    val reversePrune = window(src, "private def reversePruneReferences", 20)
+    // 2026-09-25 D 步重钉:reversePruneReferences 已随投递段迁至 NodeDelivery——窗口改读
+    // 新文件,锚文本不变(private def 留 trait 内私有),窗口语义不变。
+    val reversePrune = window(nodeDeliverySrc, "private def reversePruneReferences", 20)
     println(
       s"[spec] P2 machine windows — detachCancelledUpstream=${detachCancelled.linesIterator.size} lines, " +
         s"detachAbandonedNode=${abandon.linesIterator.size}, reversePruneReferences=${reversePrune.linesIterator.size} lines"

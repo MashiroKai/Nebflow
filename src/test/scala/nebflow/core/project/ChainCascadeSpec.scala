@@ -595,21 +595,26 @@ class ChainCascadeSpec extends CatsEffectSuite:
     val src = codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeEngine.scala"))
     // 源码窗口提取（**有界**：从签名行起取 N 行——本文件里方法之间相隔数百行，用
     // `substring(签名A, 签名B)` 会把无关方法与新取消族一起圈进来，判据随即失真）。
-    def window(sig: String, n: Int): String =
+    def window(src: String, sig: String, n: Int): String =
       val lines = src.linesIterator.toList
       val start = lines.indexWhere(_.contains(sig))
-      assert(start >= 0, s"anchor not found in NodeEngine.scala: $sig")
+      assert(start >= 0, s"anchor not found: $sig")
       lines.slice(start, math.min(start + n, lines.size)).mkString("\n")
     // ① 保留面：反向 prune 腿与 abandon 摘边腿**零** cascade 耦合（源码级机械判据）
-    val reversePrune = window("private def reversePruneReferences", 20)
+    // 2026-09-25 D 步重钉:reversePruneReferences 随投递段迁至 NodeDelivery(self-type
+    // trait,行为保持重构)——该窗口改读新文件,锚文本不变(trait 内保持 private def);
+    // detachAbandonedNode / detachCancelledUpstream 留守 NodeEngine,窗口不动。
+    val deliverySrc =
+      codeOnly(os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "project" / "NodeDelivery.scala"))
+    val reversePrune = window(deliverySrc, "private def reversePruneReferences", 20)
     assert(!reversePrune.contains("cascade"), "reversePruneReferences must stay cascade-agnostic")
     assert(!reversePrune.contains("suppressTargets"), "reversePruneReferences must not take suppressTargets")
-    val abandon = window("def detachAbandonedNode", 60)
+    val abandon = window(src, "def detachAbandonedNode", 60)
     assert(!abandon.contains("cascade"), "detachAbandonedNode must stay cascade-agnostic")
     assert(!abandon.contains("suppressTargets"), "detachAbandonedNode must not take suppressTargets")
     assert(!abandon.contains("cascadeCancelledIds"), "detachAbandonedNode must not consult the cascade suppress set")
     // ② 取代面：取消族写点**确实**由 cascade 决定（否则取代面无从谈起）
-    val detachCancelled = window("private def detachCancelledUpstream", 70)
+    val detachCancelled = window(src, "private def detachCancelledUpstream", 70)
     assert(detachCancelled.contains("suppressTargets"), "the cancel-family detach takes suppressTargets (取代面)")
     assert(detachCancelled.contains("cascadeCancelledIds"), "and consults the cross-call suppress set")
     // ③ 行为读数：abandon 摘边腿在 cascade 前后**逐字相同**
