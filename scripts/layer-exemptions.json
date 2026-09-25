@@ -1,0 +1,421 @@
+{
+  "_header": "Phase 5 解耦(行为保持重构,2026-09-25)。分层豁免基线:门禁断言『实测 (文件,目标包) 反向边集合 ⊆ 本基线』,基线只减不增;PR 减边须同步缩基线(node scripts/check-scala-layers.mjs --update 可重播种,既有 reason 按同 (from,to) 保留)。",
+  "generatedBy": "scripts/check-scala-layers.mjs --update",
+  "entries": [
+    {
+      "from": "src/main/scala/nebflow/agent/ContextRefresher.scala",
+      "to": "service",
+      "reason": "校准豁免:与 service→agent(2 文件)互引,两侧同数,择 agent 出向豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/agent/MemoryTrack.scala",
+      "to": "service",
+      "reason": "校准豁免:与 service→agent(2 文件)互引,两侧同数,择 agent 出向豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/agent/SharedResources.scala",
+      "to": "gateway",
+      "reason": "校准豁免:与 gateway→agent(16 文件)互引,择小边(2)豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala",
+      "to": "gateway",
+      "reason": "校准豁免:与 gateway→agent(16 文件)互引,择小边(2)豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/compact/CompactService.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/compact/PreCompactionHook.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
+      "to": "service",
+      "reason": "后续批次:与 service→core(8 文件)互引,择小边(4)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/entity/EntityLoader.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/entity/EntityTypes.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/entity/FlowDagExecutor.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/entity/TeamCatalog.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/EphemeralAgentRunner.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowDagRunner.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowTreeActor.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowTreeActor.scala",
+      "to": "gateway",
+      "reason": "C 步:core→gateway 窄边倒置(FileRefs/WsHub 窄边、TaskStuckWatcher/FlowTreeActor/ScheduledTaskActor、tools-types ToolContext)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowTreeTypes.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/MailIdleGate.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/hotrestart/HealthProbe.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/hotrestart/HotRestart.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/hotrestart/HotRestart.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/hotupdate/UpdateOrchestrator.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/mcp/AgentMcpLoader.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/mcp/McpManager.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/node/NodeRunner.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/OnboardingService.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/plugin/PluginMcpManager.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/plugin/PluginRegistry.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/presets/PresetStore.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/presets/SchemePolicy.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/FreezeScheduler.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
+      "to": "gateway",
+      "reason": "C 步:core→gateway 窄边倒置(FileRefs/WsHub 窄边、TaskStuckWatcher/FlowTreeActor/ScheduledTaskActor、tools-types ToolContext)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeCompletion.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeDelivery.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeEngine.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeEngineContract.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeLoopRunner.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeRecovery.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeStarter.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/ProjectActor.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/ProjectMemory.scala",
+      "to": "service",
+      "reason": "后续批次:与 service→core(8 文件)互引,择小边(4)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/ProjectStore.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/ShutdownState.scala",
+      "to": "llm",
+      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/repl.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/sandbox/SandboxPolicy.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/scheduler/ScheduledTaskActor.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/scheduler/ScheduledTaskActor.scala",
+      "to": "gateway",
+      "reason": "C 步:core→gateway 窄边倒置(FileRefs/WsHub 窄边、TaskStuckWatcher/FlowTreeActor/ScheduledTaskActor、tools-types ToolContext)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/seed/SeedService.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/AgentControlTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/BashTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/BgTaskRegistry.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/DelegateTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/DeviceProfile.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/FileRefs.scala",
+      "to": "gateway",
+      "reason": "C 步:core→gateway 窄边倒置(FileRefs/WsHub 窄边、TaskStuckWatcher/FlowTreeActor/ScheduledTaskActor、tools-types ToolContext)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
+      "to": "dropbox",
+      "reason": "后续批次:与 dropbox→core(4 文件)互引,择小边(2)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/ListFriendsTool.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
+      "to": "dropbox",
+      "reason": "后续批次:与 dropbox→core(4 文件)互引,择小边(2)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MemoryNoteTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MemoryNoteTool.scala",
+      "to": "service",
+      "reason": "后续批次:与 service→core(8 文件)互引,择小边(4)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MemoryQueue.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MemoryQueue.scala",
+      "to": "service",
+      "reason": "后续批次:与 service→core(8 文件)互引,择小边(4)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/NodeTools.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/PopTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/PresetResolver.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/ProjectCreateTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/RemoteExecutor.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/RemoteExecutor.scala",
+      "to": "neblink",
+      "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/ScheduleTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/SubTaskTool.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/types.scala",
+      "to": "agent",
+      "reason": "D 步:SharedResources 传递依赖以窄 trait 倒置(agentRegistry/sessionStore,签名零 agent/gateway 类型)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/types.scala",
+      "to": "gateway",
+      "reason": "C 步:core→gateway 窄边倒置(FileRefs/WsHub 窄边、TaskStuckWatcher/FlowTreeActor/ScheduledTaskActor、tools-types ToolContext)后清除"
+    },
+    {
+      "from": "src/main/scala/nebflow/dropbox/DropboxChunkTransports.scala",
+      "to": "neblink",
+      "reason": "校准豁免:与 neblink→dropbox(3 文件)互引,择小边(2)豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/dropbox/DropboxService.scala",
+      "to": "gateway",
+      "reason": "校准豁免:与 gateway→dropbox(4 文件)互引,择小边(1)豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/dropbox/DropboxService.scala",
+      "to": "neblink",
+      "reason": "校准豁免:与 neblink→dropbox(3 文件)互引,择小边(2)豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/neblink/DeviceMailInbox.scala",
+      "to": "agent",
+      "reason": "校准豁免:与 agent→neblink(1 文件)互引,两侧同数,择 neblink 出向豁免;方向裁定属后续批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/service/SessionService.scala",
+      "to": "gateway",
+      "reason": "校准豁免:与 gateway→service(14 文件)互引,择小边(1)豁免;方向裁定属后续批次"
+    }
+  ]
+}

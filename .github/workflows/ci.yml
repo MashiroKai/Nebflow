@@ -163,6 +163,19 @@ jobs:
       - name: scalafmt + scalafix check
         shell: bash
         run: sbt scalafmtCheckAll "scalafix --check"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Scala layering gate (Phase 5 ratchet)
+        # Phase 5 分层门禁(2026-09-25):src/main/scala 的 (文件,目标包) 粒度
+        # 反向边集合 ⊆ scripts/layer-exemptions.json 基线,基线只减不增;
+        # shared/actor 底层零反向(现状已达成),豁免边出图后包图必须无环
+        # (Tarjan)。非纯 import 正则:含 Scala 3 通配/{A,B} import、剥注释与
+        # 字符串后的 FQN 裸引用(内插 ${...} 是代码,保留),否则会对
+        # core→gateway 的 FQN 用点报假绿。Exit 1 = 违规未豁免。
+        # Same logic locally: node scripts/check-scala-layers.mjs
+        run: node scripts/check-scala-layers.mjs
 
   compile:
     name: Compile (${{ matrix.os }})
