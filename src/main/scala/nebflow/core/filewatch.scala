@@ -137,6 +137,13 @@ end FileChangeTracker
 
 object FileChangeTracker:
 
+  // .nebflow is Nebflow's own process directory (task state, evidence,
+  // worktrees, logs) that lives inside project roots; on a real deployment it
+  // can hold hundreds of thousands of files, turning every full walk below
+  // into seconds of synchronous stat work on the calling thread. Process
+  // material is not user project content, so external-change reminders do not
+  // cover it. Read by both scanProject (initial snapshot) and the instance
+  // scanFiles (periodic full scan).
   val ExcludedDirs = Set(
     ".git",
     "target",
@@ -147,7 +154,8 @@ object FileChangeTracker:
     ".vscode",
     "node_modules",
     ".claude",
-    "dist"
+    "dist",
+    ".nebflow"
   )
   val ExcludedFiles = Set(".DS_Store")
 
