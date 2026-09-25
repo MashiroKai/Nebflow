@@ -180,6 +180,27 @@ test('T1 钮存在（真渲染证）+ 仅列表视图', async ({ page }) => {
   expect(fab.w, '补正①-2：getBoundingClientRect 宽度非零').toBeGreaterThan(0);
   expect(fab.h, '补正①-2：getBoundingClientRect 高度非零').toBeGreaterThan(0);
 
+  // Seat check (projfab-ui-impl batch, 2026-09-25 author order): the FAB anchors
+  // to the pane's bottom-right corner with a 16px inset on BOTH axes. Basis:
+  // symmetric with the untouched bottom:16px on the 4px grid, and it matches the
+  // sibling corner FAB of this very pane (.fm-fab = top:16px/right:16px,
+  // flowMap.css:723). Geometric readout against the live pane rect (not just the
+  // computed style) so the assertion carries weight: mutation-verified to FAIL
+  // against the old right:64px seat.
+  const paneRect = await page.evaluate(() => {
+    const p = document.querySelector('.canvas-tab-pane[data-type="projects"]');
+    const r = p.getBoundingClientRect();
+    return { right: r.right, bottom: r.bottom };
+  });
+  const seat = {
+    rightInset: paneRect.right - fab.right,
+    bottomInset: paneRect.bottom - fab.bottom,
+    computedRight: await page.evaluate(() => getComputedStyle(document.querySelector('.proj-create-fab')).right),
+  };
+  expect(Math.abs(seat.rightInset - 16), 'seat: FAB right edge inset from pane = 16px (edge-anchored)').toBeLessThan(0.5);
+  expect(Math.abs(seat.bottomInset - 16), 'seat: FAB bottom edge inset from pane = 16px (unchanged axis)').toBeLessThan(0.5);
+  expect(seat.computedRight, 'seat: computed style right = 16px').toBe('16px');
+
   const aria = await page.evaluate(() => {
     const b = document.querySelector('.proj-create-fab');
     return { title: b.getAttribute('title'), ariaLabel: b.getAttribute('aria-label'), tag: b.tagName,
@@ -200,7 +221,7 @@ test('T1 钮存在（真渲染证）+ 仅列表视图', async ({ page }) => {
     return { w: r.width, h: r.height, count: document.querySelectorAll('.proj-create-fab').length };
   });
 
-  write('40-T1-fab-existence.json', { fab, aria, fabInFlowMap, fabBack, pageErrors });
+  write('40-T1-fab-existence.json', { fab, seat, aria, fabInFlowMap, fabBack, pageErrors });
   expect(fabInFlowMap, 'R10：就地 Flow Map 视图不得显示「+」钮').toBe(false);
   expect(fabBack, 'R4：回列表后钮必须回归').not.toBeNull();
   expect(fabBack.count, '幂等：列表视图内「+」钮恰好 1 枚').toBe(1);
@@ -571,6 +592,8 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
     expect(g.fabVsLastCardOverlap, `[${tag}] R13：钮与末行卡两轴均不相交`).toBe(false);
     expect(g.scrollPaddingBottom, `[${tag}] 让位规则生效 padding-bottom=72px`).toBe('72px');
     expect(g.fabInViewport, `[${tag}] 钮在视口内`).toBe(true);
+    // projfab-ui-impl batch: edge seat pinned at every viewport (2026-09-25 order).
+    expect(g.fabRight, `[${tag}] seat: computed right = 16px (bottom-right edge anchor)`).toBe('16px');
     if (g.toggleExists) {
       expect(g.fabVsToggleOverlap, `[${tag}] 补正②：新钮与同角既有切换钮不重叠`).toBe(false);
     }
