@@ -96,10 +96,7 @@ private[gateway] object WsConfigHandlers:
       nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
         case Left(e) =>
           logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
-            wsSend(
-              io.circe.Json
-                .obj("type" -> "configUpdateFailed".asJson, "message" -> s"思考模式保存失败: ${e.getMessage}".asJson)
-            )
+            wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
         case Right(_) =>
           sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
       }
@@ -137,12 +134,7 @@ private[gateway] object WsConfigHandlers:
             nebflow.service.ConfigService.writeLocked(persistWorkSchedule(cfg)).attempt.flatMap {
               case Left(e) =>
                 logger.warn(s"Failed to persist work schedule: ${e.getMessage}") *>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "configUpdateFailed".asJson,
-                      "message" -> s"冻结配置保存失败: ${e.getMessage}".asJson
-                    )
-                  )
+                  wsSend(ApiJson.configUpdateFailed(s"冻结配置保存失败: ${e.getMessage}"))
               case Right(_) =>
                 sharedResources.freezeScheduleRef.set(cfg) *>
                   broadcastServerConfig *>
@@ -152,7 +144,7 @@ private[gateway] object WsConfigHandlers:
             }
         case Left(err) =>
           logger.warn(s"Invalid workSchedule payload rejected: $err") *>
-            wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+            wsSend(ApiJson.configUpdateFailed(err))
     yield ()
     end for
   end handleSetWorkSchedule
@@ -181,7 +173,7 @@ private[gateway] object WsConfigHandlers:
     SttService.parsePatch(payload) match
       case Left(err) =>
         logger.warn(s"Invalid sttConfig payload rejected: $err") *>
-          wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+          wsSend(ApiJson.configUpdateFailed(err))
       case Right(patch) =>
         val oldCfgOpt = IO.blocking {
           if os.exists(SttService.configPath) then parse(os.read(SttService.configPath)).toOption
@@ -250,7 +242,7 @@ private[gateway] object WsConfigHandlers:
     nebflow.core.compact.ToolResultTtlConfig.parseStrict(payload) match
       case Left(err) =>
         logger.warn(s"Invalid toolResultTtl payload rejected: $err") *>
-          wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
+          wsSend(ApiJson.configUpdateFailed(err))
       case Right(cfg) =>
         val persist = IO.blocking {
           val existing =
@@ -269,12 +261,7 @@ private[gateway] object WsConfigHandlers:
         nebflow.service.ConfigService.writeLocked(persist).attempt.flatMap {
           case Left(e) =>
             logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}") *>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "configUpdateFailed".asJson,
-                  "message" -> s"TTL 配置保存失败: ${e.getMessage}".asJson
-                )
-              )
+              wsSend(ApiJson.configUpdateFailed(s"TTL 配置保存失败: ${e.getMessage}"))
           case Right(_) =>
             sharedResources.toolResultTtlRef.set(cfg) *>
               logger.info(
@@ -328,12 +315,7 @@ private[gateway] object WsConfigHandlers:
           wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
       case Left(e) =>
         logger.warn(s"Failed to persist llmLog.enabled=$enabled: ${e.getMessage}") *>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "configUpdateFailed".asJson,
-              "message" -> s"LLM 日志开关保存失败: ${e.getMessage}".asJson
-            )
-          ) *>
+          wsSend(ApiJson.configUpdateFailed(s"LLM 日志开关保存失败: ${e.getMessage}")) *>
           wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
     }
   end handleSetLlmLog
@@ -412,6 +394,7 @@ private[gateway] object WsConfigHandlers:
           }
           notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
         case Left(err) =>
+          // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族(type 值不同,不与 configUpdateFailed 收敛集混并),保持手写(2026-09-25)
           wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
       }
     else IO.unit
@@ -517,6 +500,7 @@ private[gateway] object WsConfigHandlers:
     if sid.nonEmpty then
       modeOpt match
         case None =>
+          // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
           wsSend(
             io.circe.Json.obj(
               "type" -> "error".asJson,
@@ -529,6 +513,7 @@ private[gateway] object WsConfigHandlers:
             .handleErrorWith { e =>
               // 落盘失败 = 档位**没有**改变（fail-loud，不静默回滚）
               logger.error(s"setSafetyMode persist failed: ${e.getMessage}", e) *>
+                // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "error".asJson,
@@ -560,6 +545,7 @@ private[gateway] object WsConfigHandlers:
         .flatMap(_ => sendAgentSessionList(wsSend, sid))
         .handleErrorWith { e =>
           logger.error(s"setBypass persist failed: ${e.getMessage}", e) *>
+            // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
             wsSend(
               io.circe.Json.obj(
                 "type" -> "error".asJson,
@@ -613,6 +599,7 @@ private[gateway] object WsConfigHandlers:
           case Right(applied) =>
             wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> applied.name.asJson))
           case Left(reason) =>
+            // 未走 ApiJson 信封助手:{type:error,code,message} 三键(带 code),按 ok+code 族同款裁定单列,保持手写(2026-09-25)
             wsSend(
               io.circe.Json.obj(
                 "type" -> "error".asJson,
@@ -622,6 +609,7 @@ private[gateway] object WsConfigHandlers:
             )
         }
       case None =>
+        // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
         wsSend(
           io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson)
         )
@@ -675,6 +663,7 @@ private[gateway] object WsConfigHandlers:
       }.flatMap { runtimeOverrides =>
         configService.updateConfig(cfg, runtimeOverrides).flatMap {
           case Left(err) =>
+            // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
             wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
           case Right(_) =>
             // #311: the first provider/model save seeds/repairs the default
@@ -732,12 +721,7 @@ private[gateway] object WsConfigHandlers:
                 .flatMap {
                   case Left(e) =>
                     logger.warn(s"Failed to persist MCP server state: ${e.getMessage}") *>
-                      wsSend(
-                        io.circe.Json.obj(
-                          "type" -> "configUpdateFailed".asJson,
-                          "message" -> s"MCP 状态保存失败: ${e.getMessage}".asJson
-                        )
-                      ) *>
+                      wsSend(ApiJson.configUpdateFailed(s"MCP 状态保存失败: ${e.getMessage}")) *>
                       broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
                   case Right(_) => broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
                 }

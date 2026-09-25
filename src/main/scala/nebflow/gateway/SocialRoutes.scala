@@ -46,7 +46,7 @@ private[gateway] object SocialRoutes:
         case Right(body) =>
           parser.parse(body) match
             case Right(json) => Ok(json)
-            case Left(_) => Ok(Json.obj("ok" -> true.asJson, "message" -> body.asJson))
+            case Left(_) => Ok(ApiJson.okMessage(body))
         case Left(err) => friendErr(err)
 
     // ===== 群代理腿的单一实现（gwroutes 批，2026-09-15）=====
@@ -303,7 +303,7 @@ private[gateway] object SocialRoutes:
               req.as[Json].flatMap { body =>
                 body.hcursor.downField("remark").as[String].toOption match
                   case Some(remark) =>
-                    fs.setRemark(friendUserId, remark) *> Ok(Json.obj("ok" -> true.asJson))
+                    fs.setRemark(friendUserId, remark) *> Ok(ApiJson.ok)
                   case None => BadRequest(Json.obj("error" -> "Missing remark".asJson))
               }
         }
@@ -428,6 +428,7 @@ private[gateway] object SocialRoutes:
                 .map(_.head.value.trim.toLongOption)
                 .getOrElse(req.contentLength)
               if conversationId.trim.isEmpty then
+                // 未走 ApiJson 信封助手:ok+code 族({ok:false,code,error})按裁定单列不合并,code 键属客户端可见契约,保持手写(2026-09-25)
                 BadRequest(
                   Json.obj(
                     "ok" -> false.asJson,
@@ -436,6 +437,7 @@ private[gateway] object SocialRoutes:
                   )
                 )
               else if name.trim.isEmpty then
+                // 未走 ApiJson 信封助手:ok+code 族({ok:false,code,error})按裁定单列不合并,code 键属客户端可见契约,保持手写(2026-09-25)
                 BadRequest(
                   Json.obj("ok" -> false.asJson, "code" -> "invalid_argument".asJson, "error" -> "Missing name".asJson)
                 )
@@ -443,6 +445,7 @@ private[gateway] object SocialRoutes:
                 // 与相邻两条 400 **逐字同形**（`{ok:false, code:"invalid_argument", error}`）：
                 // 网关既有 4xx 信封先例就在本路由，**不新造第二套错误形状**；`error` 文案由闸
                 // 单点给出（自描述 + 实际值回显）。
+                // 未走 ApiJson 信封助手:ok+code 族按裁定单列不合并,保持手写(2026-09-25)
                 BadRequest(
                   Json.obj(
                     "ok" -> false.asJson,
@@ -454,6 +457,7 @@ private[gateway] object SocialRoutes:
                 // 早拒三段（全部**先于**读请求体）：声明超限 / 声明非正 / 无声明但 Content-Length 超限。
                 declared match
                   case Some(size) if size > nebflow.dropbox.AttachContract.MaxFileBytes =>
+                    // 未走 ApiJson 信封助手:{ok:false,code,actual,limit,error} 五键结构化拒因,非 ok 信封同形,保持手写(2026-09-25)
                     IO.pure(
                       Response[IO](Status.PayloadTooLarge).withEntity(
                         Json.obj(
@@ -466,6 +470,7 @@ private[gateway] object SocialRoutes:
                       )
                     )
                   case Some(size) if size <= 0L =>
+                    // 未走 ApiJson 信封助手:ok+code 族({ok:false,code,error})按裁定单列不合并,保持手写(2026-09-25)
                     IO.pure(
                       Response[IO](Status.UnprocessableEntity).withEntity(
                         Json.obj(
@@ -524,6 +529,7 @@ private[gateway] object SocialRoutes:
                             )
                           ) *>
                             IO.pure(
+                              // 未走 ApiJson 信封助手:{ok:true,attachmentId,name,size,sha256} 带业务字段,非裸 ok 信封同形,保持手写(2026-09-25)
                               Response[IO](Status.Created).withEntity(
                                 Json.obj(
                                   "ok" -> true.asJson,
@@ -562,6 +568,7 @@ private[gateway] object SocialRoutes:
                               )
                             )
                           ) *> IO.pure(
+                            // 未走 ApiJson 信封助手:ok+code 族({ok:false,code,error})按裁定单列不合并,code 键属客户端可见契约,保持手写(2026-09-25)
                             Response[IO](status).withEntity(
                               Json.obj("ok" -> false.asJson, "code" -> code.asJson, "error" -> message.asJson)
                             )
@@ -587,6 +594,7 @@ private[gateway] object SocialRoutes:
           // 4xx + 非空体、零落盘、零上游调用、零临时件。
           AttachUploadId.validate(uploadId) match
             case Left(reason) =>
+              // 未走 ApiJson 信封助手:ok+code 族({ok:false,code,error})按裁定单列不合并,保持手写(2026-09-25)
               BadRequest(
                 Json.obj(
                   "ok" -> false.asJson,
@@ -598,6 +606,7 @@ private[gateway] object SocialRoutes:
               // 形态合法 ⇒ 既有语义**逐字不变**：未登记过 ⇒ `200 {cancelled:false}`
               // （不新造位、不谎报成功）；已登记 ⇒ `{cancelled:true}`。
               sharedResources.attachUploads.cancel(id).flatMap { flipped =>
+                // 未走 ApiJson 信封助手:{ok:true,cancelled,uploadId} 带业务字段,非 {ok,message} 同形,保持手写(2026-09-25)
                 Ok(Json.obj("ok" -> true.asJson, "cancelled" -> flipped.asJson, "uploadId" -> id.asJson))
               }
         }

@@ -124,7 +124,7 @@ private[gateway] object ConfigRoutes:
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
               case Right(json) =>
                 new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .save(json) *> Ok(Json.obj("ok" -> true.asJson))
+                  .save(json) *> Ok(ApiJson.ok)
                   .handleErrorWith { e =>
                     logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
                       IO.pure(

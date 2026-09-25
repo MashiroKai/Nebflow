@@ -87,7 +87,7 @@ private[gateway] object NeblinkRoutes:
                   isKnownNetworkDevice(ms, info.deviceId, remoteIp).flatMap { known =>
                     if ms.isTrustedPeer(remoteIp) || known then
                       ms.handleAnnounce(info, remoteIp, port) *>
-                        Ok(Json.obj("ok" -> true.asJson))
+                        Ok(ApiJson.ok)
                     else Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
                   }
                 case Left(_) =>
@@ -347,7 +347,7 @@ private[gateway] object NeblinkRoutes:
               cfg.copy(
                 syncIntervalSec = syncInterval.getOrElse(cfg.syncIntervalSec)
               )
-            } *> Ok(Json.obj("ok" -> true.asJson))
+            } *> Ok(ApiJson.ok)
           }
         }
 
@@ -364,7 +364,7 @@ private[gateway] object NeblinkRoutes:
       // drives that one. This endpoint stays for API compatibility and scripted use.
       case req @ POST -> Root / "neblink" / "logout" =>
         withNeblink(req) { ms =>
-          AuthRoutes.performLocalLogout(ms) *> Ok(Json.obj("ok" -> true.asJson))
+          AuthRoutes.performLocalLogout(ms) *> Ok(ApiJson.ok)
         }
 
       // RP-initiated logout (OIDC Session Management, RP-logout fix
@@ -536,6 +536,7 @@ private[gateway] object NeblinkRoutes:
                                 current <- NeblinkConfig.load
                                 updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
                                 _ <- NeblinkConfig.save(updated)
+                                // 未走 ApiJson 信封助手:{ok:true,message,networkId} 三键,非 {ok,message} 同形,保持手写(2026-09-25)
                                 r <- Ok(
                                   Json.obj(
                                     "ok" -> true.asJson,
@@ -771,7 +772,7 @@ private[gateway] object NeblinkRoutes:
             val userDesc = body.hcursor.downField("userDescription").as[Option[String]].toOption.flatten
             val caps = body.hcursor.downField("capabilities").as[Option[Map[String, String]]].toOption.flatten
             ms.updateDeviceInfo(userDescription = userDesc, capabilities = caps) *>
-              Ok(Json.obj("ok" -> true.asJson))
+              Ok(ApiJson.ok)
           }
         }
 
@@ -782,7 +783,7 @@ private[gateway] object NeblinkRoutes:
             val deviceId = body.hcursor.downField("deviceId").as[String].toOption
             val desc = body.hcursor.downField("userDescription").as[String].toOption.getOrElse("")
             deviceId match
-              case Some(did) => ms.updatePeerDescription(did, desc) *> Ok(Json.obj("ok" -> true.asJson))
+              case Some(did) => ms.updatePeerDescription(did, desc) *> Ok(ApiJson.ok)
               case None => BadRequest(Json.obj("error" -> "missing deviceId".asJson))
           }
         }
@@ -854,8 +855,9 @@ private[gateway] object NeblinkRoutes:
                           IO.sleep(1.second) *> IO(System.exit(0))
                         )
                       } *>
-                      Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+                      Ok(ApiJson.okMessage(msg))
                   case Left(err) =>
+                    // 未走 ApiJson 信封助手:此处为 Ok(200)+{ok:false,error}(无 message 键),与 ok 信封族不同形且状态码属客户端可见契约,保持手写(2026-09-25)
                     Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
                 }
             }
@@ -877,6 +879,7 @@ private[gateway] object NeblinkRoutes:
               else
                 val content = java.util.Base64.getDecoder.decode(contentB64)
                 ms.receiveFile(path, content, overwrite)
+                  // 未走 ApiJson 信封助手:成功/失败腿均带业务字段({ok:true,path,size} / {ok:false,error}),非裸 ok 信封同形,保持手写(2026-09-25)
                   .flatMap(size => Ok(Json.obj("ok" -> true.asJson, "path" -> path.asJson, "size" -> size.asJson)))
                   .handleErrorWith(e => Ok(Json.obj("ok" -> false.asJson, "error" -> e.getMessage.asJson)))
             }
@@ -913,11 +916,12 @@ private[gateway] object NeblinkRoutes:
             case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
             case Some(svc) =>
               svc.uploadAndRelay(transferId, req.body).flatMap {
-                case Right(_) => Ok(Json.obj("ok" -> true.asJson))
+                case Right(_) => Ok(ApiJson.ok)
                 case Left(err) =>
                   // xferb 批（P0-3）：失败响应带**结构化原因**（code + errorDetail 全文），
                   // 与 `dropboxError` / `dropbox-file-complete` 事件同形态 —— 前端据此回显
                   // 可判读原因，而不是一句人读文本（第二段上屏消费本字段）。
+                  // 未走 ApiJson 信封助手:{ok:false,error,errorCode,errorDetail} 结构化四键,非裸 ok 信封同形,保持手写(2026-09-25)
                   Ok(
                     Json.obj(
                       "ok" -> false.asJson,
@@ -949,6 +953,7 @@ private[gateway] object NeblinkRoutes:
                     // 分块模式：回执 = **接收端自算**的块摘要 + 权威 offset（R4：不是请求头回显
                     // —— 回显会让发送端 `ack.chunkSha256 == frame.chunkSha256` 的比对恒真）。
                     // 末块的 `wholeSha256` 同样只由接收端自算后写入（`ChunkAck.wholeSha256`）。
+                    // 未走 ApiJson 信封助手:{ok:true,chunkSha256,bytesReceived,wholeSha256} 为分块回执载荷,非裸 ok 信封同形,保持手写(2026-09-25)
                     svc.receiveChunkFromPeer(transferId, req.body, h).map {
                       case Right(ack) =>
                         Response[IO](Status.Ok).withEntity(
@@ -967,6 +972,7 @@ private[gateway] object NeblinkRoutes:
                       case Left(err) => chunkErrorResponse(err)
                     }
                 receive.handleErrorWith(e =>
+                  // 未走 ApiJson 信封助手:500+{ok:false,error},状态码与 ok=false 形态均为客户端可见契约,保持手写(2026-09-25)
                   IO.pure(
                     Response[IO](Status.InternalServerError)
                       .withEntity(Json.obj("ok" -> false.asJson, "error" -> e.getMessage.asJson))
@@ -999,6 +1005,7 @@ private[gateway] object NeblinkRoutes:
       case req @ POST -> Root / "neblink" / "remote-update" =>
         withAuth(req) {
           neblinkService match
+            // 未走 ApiJson 信封助手:remote-update 族用 success 键(非 ok),字段名属跨端契约,保持手写(2026-09-25)
             case None => Ok(Json.obj("success" -> false.asJson, "error" -> "NebLink not enabled".asJson))
             case Some(ns) =>
               req.as[Json].flatMap { body =>
@@ -1013,6 +1020,7 @@ private[gateway] object NeblinkRoutes:
                   .map(_.trim)
                   .filter(_.nonEmpty)
                 doRemoteUpdate(ns, targetDevice, beta, clientRequestId).flatMap {
+                  // 未走 ApiJson 信封助手:remote-update 族用 success 键(非 ok),字段名属跨端契约,保持手写(2026-09-25)
                   case Right(msg) => Ok(Json.obj("success" -> true.asJson, "message" -> msg.asJson))
                   case Left(err) => Ok(Json.obj("success" -> false.asJson, "error" -> err.asJson))
                 }
@@ -1258,6 +1266,7 @@ private[gateway] object NeblinkRoutes:
     completeDeviceEnrollmentDetailed(ms, resolvedUrl, json, logtoRefresh, logtoIdToken, explicitUserAction)
       .flatMap {
         case Right(networkId) =>
+          // 未走 ApiJson 信封助手:{ok:true,networkId} 两键但非 message,与 {ok,message} 族不同形,保持手写(2026-09-25)
           Ok(
             Json.obj(
               "ok" -> true.asJson,

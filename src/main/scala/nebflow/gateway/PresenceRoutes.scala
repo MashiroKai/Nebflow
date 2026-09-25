@@ -502,7 +502,7 @@ private[gateway] object PresenceRoutes:
           if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
           else
             nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
-              case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+              case Right(msg) => Ok(ApiJson.okMessage(msg))
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
             }
         }
@@ -521,11 +521,10 @@ private[gateway] object PresenceRoutes:
               nebflow.core.plugin.PluginBlockPolicy.block(name, reason, "panel/rest").flatMap {
                 case Right(_) =>
                   Ok(
-                    Json.obj(
-                      "ok" -> true.asJson,
-                      "message" -> (s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
+                    ApiJson.okMessage(
+                      s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
                         "new dispatches and at node start, and its in-flight MCP servers are stopped within 30s. " +
-                        s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'.").asJson
+                        s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'."
                     )
                   )
                 case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
@@ -542,10 +541,9 @@ private[gateway] object PresenceRoutes:
             nebflow.core.plugin.PluginBlockPolicy.unblock(name, "panel/rest").flatMap {
               case Right(_) =>
                 Ok(
-                  Json.obj(
-                    "ok" -> true.asJson,
-                    "message" -> (s"Plugin '$name' unblocked — back to presence trust: it re-enters the catalog and is " +
-                      "available for new dispatches on the next scan.").asJson
+                  ApiJson.okMessage(
+                    s"Plugin '$name' unblocked — back to presence trust: it re-enters the catalog and is " +
+                      "available for new dispatches on the next scan."
                   )
                 )
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
@@ -581,9 +579,8 @@ private[gateway] object PresenceRoutes:
               nebflow.core.plugin.PluginDispatchPolicy.grantTransition(name, ttl, refs, reason, "rest").flatMap {
                 case Right(_) =>
                   Ok(
-                    Json.obj(
-                      "ok" -> true.asJson,
-                      "message" -> s"Plugin '$name' temporary dispatch grant recorded (ttlSecs=$ttl, refs=${refs.mkString(",")}) — new dispatches may use it until it expires; the author's intent is untouched".asJson
+                    ApiJson.okMessage(
+                      s"Plugin '$name' temporary dispatch grant recorded (ttlSecs=$ttl, refs=${refs.mkString(",")}) — new dispatches may use it until it expires; the author's intent is untouched"
                     )
                   )
                 case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
@@ -1294,11 +1291,10 @@ private[gateway] object PresenceRoutes:
       nebflow.core.plugin.PluginDispatchPolicy.setAuthorEnabled(name, enable, "panel/rest").flatMap {
         case Right(_) =>
           Ok(
-            Json.obj(
-              "ok" -> true.asJson,
-              "message" -> (s"Plugin '$name' dispatch ${if enable then "enabled" else "disabled"} — " +
+            ApiJson.okMessage(
+              s"Plugin '$name' dispatch ${if enable then "enabled" else "disabled"} — " +
                 "affects FUTURE dispatches only; nodes already dispatched keep their plugin grant " +
-                "(content trust is untouched; use /revoke to withdraw content trust).").asJson
+                "(content trust is untouched; use /revoke to withdraw content trust)."
             )
           )
         case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
