@@ -222,8 +222,14 @@ class TaskLedgerStore private ():
   // The six actions
   // ------------------------------------------------------------------
 
-  /** create: a new entry (status = `open`). Returns the entry's number. */
-  def createSync(
+  /** Shared create core (validation + write). Returns the created entry plus the banner
+    * fragments (`depsNote + parentNote + extra`, in render order) that only the rendered
+    * banner consumes. The pure id face for engine-side callers is `entry.id` -- read
+    * straight off the entry, never parsed back out of the rendered banner (r2 P0 fix,
+    * 2026-09-25: the banner string traveling as a task id poisoned slot keys, note
+    * appends, receipt headers and session attachments -- the all-day TASK_NOT_FOUND of
+    * that date). */
+  private def createCore(
     title: String,
     assignee: Option[String] = None,
     nodeId: Option[String] = None,
@@ -232,7 +238,7 @@ class TaskLedgerStore private ():
     parentId: Option[String] = None,
     project: Option[String] = None,
     actor: String = TaskLedgerHistory.Actors.Nebula
-  ): Either[ToolError, String] = fileLock.synchronized {
+  ): Either[ToolError, (Entry, String)] = fileLock.synchronized {
     val links = linksRaw.map(normalizeLinks).getOrElse(Nil)
     val invalid =
       if title.trim.isEmpty then Some(ToolError(s"Task: create requires a non-empty `title`. (${Codes.Param})"))
@@ -274,9 +280,50 @@ class TaskLedgerStore private ():
             appendHistory(TaskLedgerEvent(
               at = now, kind = TaskLedgerHistory.Kinds.Create, id = Some(entry.id), actor = actor,
               links = links, detail = Some(s"title=${truncate(entry.title, 120)}"))) + histNoteFor(entry.id)
-          s"""[OK] Task created #$nextId [open @${entry.assignee.getOrElse("?")}] ${truncate(entry.title, 60)}$depsNote$parentNote$extra
-             |Reach `completed` with action=complete; `closed` (voided) with action=close.""".stripMargin
+          (entry, depsNote + parentNote + extra)
   }
+
+  /** create: a new entry (status = `open`). Returns the RENDERED tool-face banner
+    * (`[OK] Task created #N ...`) -- the human display string the `Task` tool hands its
+    * caller, byte-identical to the pre-r2 form (author-approved face; changing it trips
+    * the §16 gate). Engine-side callers that need the id use [[createSyncReturningId]]. */
+  def createSync(
+    title: String,
+    assignee: Option[String] = None,
+    nodeId: Option[String] = None,
+    blocksRaw: Option[List[String]] = None,
+    linksRaw: Option[List[String]] = None,
+    parentId: Option[String] = None,
+    project: Option[String] = None,
+    actor: String = TaskLedgerHistory.Actors.Nebula
+  ): Either[ToolError, String] =
+    createCore(title, assignee, nodeId, blocksRaw, linksRaw, parentId, project, actor).map {
+      case (entry, bannerNotes) => renderedCreateBanner(entry, bannerNotes)
+    }
+
+  /** create returning the PURE ledger id (engine face; r2 P0 fix, 2026-09-25). The
+    * machine-facing counterpart of [[createSync]]: this id flows into dispatcher slot
+    * bindings, note appends and receipt headers, so it must be `entry.id` alone -- never
+    * the rendered banner (the banner stays the `Task` tool's display face only). */
+  def createSyncReturningId(
+    title: String,
+    assignee: Option[String] = None,
+    nodeId: Option[String] = None,
+    blocksRaw: Option[List[String]] = None,
+    linksRaw: Option[List[String]] = None,
+    parentId: Option[String] = None,
+    project: Option[String] = None,
+    actor: String = TaskLedgerHistory.Actors.Nebula
+  ): Either[ToolError, String] =
+    createCore(title, assignee, nodeId, blocksRaw, linksRaw, parentId, project, actor).map(_._1.id)
+
+  /** The `[OK] Task created ...` banner, interpolation preserved verbatim from the
+    * pre-r2 createSync body (`entry.id == nextId.toString`; `bannerNotes` is the
+    * `depsNote + parentNote + extra` concatenation in the original render order, so the
+    * rendered bytes are unchanged). */
+  private def renderedCreateBanner(entry: Entry, bannerNotes: String): String =
+    s"""[OK] Task created #${entry.id} [open @${entry.assignee.getOrElse("?")}] ${truncate(entry.title, 60)}$bannerNotes
+       |Reach `completed` with action=complete; `closed` (voided) with action=close.""".stripMargin
 
   /** update: **non-state fields only** (a state is reachable only through
     * `complete`/`close`; the `status` parameter was deleted entirely). An empty string =

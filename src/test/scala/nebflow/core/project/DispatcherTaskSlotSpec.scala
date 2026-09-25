@@ -157,12 +157,13 @@ class DispatcherTaskSlotSpec extends CatsEffectSuite:
   private def withScanner[A](body: IO[A]): IO[A] =
     ProjectActor.ttlScanner(1.second).background.use(_ => body)
 
-  /** Create one task through the unified ledger's real write face and return the bare id. */
+  /** Create one task through the unified ledger's real write face and return the bare id.
+    * (r2 P0 fix, 2026-09-25: reads the PURE id via `createSyncReturningId` -- the old
+    * regex scrape of the rendered `[OK] ...` banner was the same smell the fix removes.) */
   private def newTask(title: String): String =
-    val msg = TaskLedgerStore.open()
-      .createSync(title = title, actor = TaskLedgerHistory.Actors.Dispatcher)
+    TaskLedgerStore.open()
+      .createSyncReturningId(title = title, actor = TaskLedgerHistory.Actors.Dispatcher)
       .getOrElse(sys.error("create must succeed"))
-    "#(\\d+)".r.findFirstMatchIn(msg).map(_.group(1)).getOrElse(sys.error(s"cannot parse task id from: $msg"))
 
   private type ActorRefT = nebflow.actor.ActorRef[ProjectActor.ProjectCommand]
 

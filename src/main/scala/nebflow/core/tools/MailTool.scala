@@ -1283,7 +1283,15 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
             val ledger = nebflow.core.project.TaskLedgerStore.open()
             val resolved: IO[Either[ToolError, String]] = task match
               case None =>
-                IO.blocking(ledger.createSync(
+                // r2 P0 fix (2026-09-25): the auto-create consumes the PURE ledger id
+                // (`createSyncReturningId`) -- never the rendered `[OK] ...` banner. The
+                // id travels below into the slot binding (TriggerDispatcher), the note
+                // append and the `[task #N]` receipt header; the banner stays the `Task`
+                // tool's display face only. (Pre-fix flow: the whole banner string
+                // traveled as the task id -- slot keys poisoned, appendNoteSync missed,
+                // and every session attached from the receipt got a TaskInfo
+                // TASK_NOT_FOUND.)
+                IO.blocking(ledger.createSyncReturningId(
                   title = s"$address — ${message.take(120).replace("\n", " ")}",
                   actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher))
               case Some(tid) =>
