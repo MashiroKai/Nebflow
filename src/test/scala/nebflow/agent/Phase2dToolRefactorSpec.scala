@@ -52,11 +52,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Card",                                               // 可视化（2026-09-05 解封恢复）
         "AskUserQuestion", "Pop",
         "Schedule",
-        "MemoryNote",
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
+      // 旧记忆记账件已随 govmemory 批（2026-09-25）退役摘除：记忆 = Edit/Write 直写
       "Glob", "Grep", "Bash", "Write", "Edit")
     assertEquals(fixed, expected,
-      "the Nebula static set size == the single-point constant AgentCore.NebulaOrchestrationToolsExpectedSize (in flight 17 = the value after the 2026-09-18 18:18 order +Bash/Edit/Write/Glob/Grep; history: root face -Glob -Grep => 13 and -Delegate => 12 are both prior facts; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal -- node results are delivered automatically along the out edge, so actively querying the graph overlaps with the adjudication duty, and the dispatcher's own face is unaffected; +Card unblocked, the legacy set -Mail/Delegate/FlowTrigger/FlowExecute retired; Issue/CheckIssues retired; taskunify merge batch 2026-09-24: TaskList + TaskBoard => the single Task (net 0, still 17))")
+      "the Nebula static set size == the single-point constant AgentCore.NebulaOrchestrationToolsExpectedSize (in flight 16 = the value after the govmemory batch 2026-09-25 -MemoryNote; history: the 2026-09-18 18:18 order +Bash/Edit/Write/Glob/Grep => 17; root face -Glob -Grep => 13 and -Delegate => 12 are both prior facts; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal -- node results are delivered automatically along the out edge, so actively querying the graph overlaps with the adjudication duty, and the dispatcher's own face is unaffected; +Card unblocked, the legacy set -Mail/Delegate/FlowTrigger/FlowExecute retired; Issue/CheckIssues retired; taskunify merge batch 2026-09-24: TaskList + TaskBoard => the single Task (net 0, still 17))")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
@@ -125,9 +125,10 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
-    // 2026-09-06 00:48 作者裁定：NodeList 摘除——MemoryNote 在、NodeList 不在
-    // 交付面（out 边自动投递取代主动查图）。
-    assert(nebulaDelivered.contains("MemoryNote"))
+    // 2026-09-06 00:48 作者裁定：NodeList 摘除——交付面零 NodeList（out 边自动投递
+    // 取代主动查图）。govmemory 批（2026-09-25）：旧记忆记账件亦零挂。
+    val retiredMemoryTool = "Memory" + "Note"
+    assert(!nebulaDelivered.contains(retiredMemoryTool), "govmemory batch: retired memory bookkeeping tool gone from the delivered face")
     assert(!nebulaDelivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定）")
     // 2026-09-18 18:18 作者令：root 面恢复 Bash/Edit/Write/Glob/Grep（+既有 Read
     // ⇒ 文件面六件在手）；取代 2026-09-16 18:41 与 2026-09-05 23:34 两笔摘除令之

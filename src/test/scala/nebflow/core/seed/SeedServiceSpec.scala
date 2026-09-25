@@ -10,8 +10,9 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（3 keeper agent + 4 默认预装插件 + projects/general，
- * Nebula 由 seedDefaults 管、不在本 spec 断言面）、② 幂等 / 不覆盖用户编辑、
+ * 覆盖定稿四项：① fresh home 完整播种（3 manifest agent + 4 默认预装插件 + projects/general，
+ * Nebula 由 manifest 种子树下发，govmemory 批 2026-09-25 起 memory agent 退役）、
+ * ② 幂等 / 不覆盖用户编辑、
  * ③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）；
  * ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①恢复内置 general 项目播种：
@@ -42,13 +43,16 @@ class SeedServiceSpec extends FunSuite:
   test("fresh home seeds four keepers + plugins + project:general"):
     ensure()
 
-    // 四 keeper：Nebula 由 seedDefaults 管（本测不触发）；补的两个在此断言
+    // 三个 manifest agent：Nebula / project-dispatcher / general 全部由种子树下发
     val pdAgentJson = home / "agents" / "project-dispatcher" / "agent.json"
     val genAgentJson = home / "agents" / "general" / "agent.json"
+    val nbAgentJson = home / "agents" / "Nebula" / "agent.json"
     assert(os.exists(pdAgentJson), "project-dispatcher/agent.json seeded")
     assert(os.exists(home / "agents" / "project-dispatcher" / "system.md"), "project-dispatcher/system.md seeded")
     assert(os.exists(genAgentJson), "general/agent.json seeded")
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
+    assert(os.exists(nbAgentJson), "Nebula/agent.json seeded")
+    assert(os.exists(home / "agents" / "Nebula" / "system.md"), "Nebula/system.md seeded")
 
     // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
     // preset/skills 字段合法入 seed——project-dispatcher（**可设两类之一**）: preset=general, skills=[]。
@@ -129,7 +133,7 @@ class SeedServiceSpec extends FunSuite:
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
     // marker 记录 = 本轮实际写入 item 数 = **8** = 现行 manifest items 全量：3 agents
-    // （project-dispatcher / general / memory-consolidator）+ 4 默认插件（visual-report /
+    // （project-dispatcher / general / Nebula）+ 4 默认插件（visual-report /
     // slideblocks / nebflow-plugin-creator / web-search-toolkit）+ 1 project（general，
     // 作者 2026-09-17 裁定①恢复播种）。S1 前 = 7（同集去 project 条目）。
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
@@ -184,10 +188,10 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("items").as[List[String]].toOption.contains(Nil), "no items for existing-user-data run")
     // 2026-09-13 语义变更（作者令「改成缺失自愈」，取代 D-8「缺失不新装」）：默认集 agent
-    // 在既有 home 也要自愈补装——否则消费链（memory-consolidator）在既有 home 永不可能
-    // 就位，记忆队列只进不出。原断言「no dispatcher seeded when user data present」已按
-    // 新口径改写（这是预期的判红样例：改测试，不改守卫）。
-    for name <- List("project-dispatcher", "memory-consolidator")
+    // 在既有 home 也要自愈补装。原断言「no dispatcher seeded when user data present」已按
+    // 新口径改写（这是预期的判红样例：改测试，不改守卫）。govmemory 批（2026-09-25）：
+    // memory 消费 agent 退役，默认集第三席 = Nebula（manifest 种子树下发）。
+    for name <- List("project-dispatcher", "Nebula")
     do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
 
     // ── 项目面（本批新口径，作者 2026-09-17 裁定②：既有 home 亦 add-only 补种）──

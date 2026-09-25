@@ -161,7 +161,13 @@ Edit patterns:
                 val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
                   ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
                   MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
-                record.as(Right(result))
+                // Memory-layer over-budget reminder (govmemory batch): append a
+                // <system-reminder> to the tool result when the file sits over
+                // its soft line (24h anti-harassment window per file).
+                record *> IO.blocking {
+                  val reminder = MemoryDirectWriteGuard.postWriteReminder(filePath.toString)
+                  Right(if reminder.isEmpty then result else result + "\n" + reminder)
+                }
               case left => IO.pure(left)
             }
     end match
@@ -224,13 +230,21 @@ Edit patterns:
         validateInLock(filePath, content, oldString) match
           case Left(err) => Left(err)
           case Right(()) =>
-            DiffUtil.writeFile(filePath, newString, "\n")
-            Right(DiffUtil.renderCreatedResult(filePath, newString))
+            // Memory-layer budget pre-check (govmemory batch, read-only).
+            MemoryDirectWriteGuard.preCheck(filePath.toString, newString) match
+              case Left(err) => Left(err)
+              case Right(()) =>
+                DiffUtil.writeFile(filePath, newString, "\n")
+                Right(DiffUtil.renderCreatedResult(filePath, newString))
       else
         val parent = filePath.getParent
         if parent != null && !Files.exists(parent) then Files.createDirectories(parent)
-        DiffUtil.writeFile(filePath, newString, "\n")
-        Right(DiffUtil.renderCreatedResult(filePath, newString))
+        // Memory-layer budget pre-check (govmemory batch, read-only).
+        MemoryDirectWriteGuard.preCheck(filePath.toString, newString) match
+          case Left(err) => Left(err)
+          case Right(()) =>
+            DiffUtil.writeFile(filePath, newString, "\n")
+            Right(DiffUtil.renderCreatedResult(filePath, newString))
     else
       // --- Existing file edit branch ---
       if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
@@ -264,15 +278,21 @@ Edit patterns:
               // Unreachable here — the creation branch above handles empty old_string.
               Left(ToolError("old_string must not be empty."))
             case Right(updated) =>
-              // Double-check concurrency: mtime + content comparison
-              val currentMtime = Files.getLastModifiedTime(filePath)
-              if currentMtime != mtime then
-                val currentContent = DiffUtil.readFile(filePath).replace("\r\n", "\n")
-                if currentContent != content then
-                  Left(ToolError("File was modified externally. Please re-read and retry."))
-                else performReplace(filePath.toString, content, updated, lineSep)
-              else performReplace(filePath.toString, content, updated, lineSep)
-              end if
+              // Memory-layer budget pre-check (govmemory batch, read-only):
+              // refuse net-growth writes past the hard cap on the three layers.
+              MemoryDirectWriteGuard.preCheck(filePath.toString, updated) match
+                case Left(err) => Left(err)
+                case Right(()) =>
+                  // Double-check concurrency: mtime + content comparison
+                  val currentMtime = Files.getLastModifiedTime(filePath)
+                  if currentMtime != mtime then
+                    val currentContent = DiffUtil.readFile(filePath).replace("\r\n", "\n")
+                    if currentContent != content then
+                      Left(ToolError("File was modified externally. Please re-read and retry."))
+                    else performReplace(filePath.toString, content, updated, lineSep)
+                  else performReplace(filePath.toString, content, updated, lineSep)
+                  end if
+              end match
           end match
         end if
 

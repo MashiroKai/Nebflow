@@ -46,9 +46,9 @@ import nebflow.core.tools.ToolRegistry
  *   - SubTask is team-only (user ruling 2026-08-24: auto-injected at the
  *     mechanism layer — manual agent.json declarations are error-prone)
  *   - non-Nebula agents never get Nebula-exclusive tools (Schedule, Delegate,
- *     MemoryNote, TaskList) — exception: dream is admitted for MemoryNote (2026-09-05
- *     author ruling, AgentCore.DreamAdmittedTools; append still denied at the
- *     tool's action layer, DREAM_APPEND_DENIED)
+ *     TaskList) — the former dream admission for the retired memory bookkeeping
+ *     tool is gone too (govmemory batch 2026-09-25: tool deregistered,
+ *     exemption face removed; memory is written via direct Edit/Write)
  *   - SubTask workers (isSubTaskWorker=true) are leaf agents: no Mail /
  *     SubTask / Delegate regardless of their tools list
  */
@@ -567,17 +567,19 @@ class AllowedToolSetSpec extends FunSuite:
       "Bash", "Write", "Edit",                             // 写手三件（2026-09-18 18:18 令恢复：+3）
       "Card",                                              // 可视化（2026-09-05 解封恢复）
       "Pop", "AskUserQuestion",                            // 用户面
-      "Schedule",                                          // 平台（TransferFile 退役 2026-09-14 #145）
-      "MemoryNote"                                         // 记忆（§C.2 新工具）
+      "Schedule"                                           // 平台（TransferFile 退役 2026-09-14 #145）
     )
     val bare = mkDef("Nebula", Nil)
     val allowed = CoreProbe.allowed(bare)
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
-    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 17 = 2026-09-18 18:18 令 +5 后值）")
+    assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-14 (#145) — must not be in the Nebula face")
+    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 16 = govmemory 批 −记忆记账件后值）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 16 = govmemory 批 −记忆记账件后值）")
+    // govmemory 批（2026-09-25）：旧记忆记账件整体退役——交付面零挂 + 迁移指引表带直写口径
+    val retiredMemoryTool = "Memory" + "Note"
+    assert(!allowed.contains(retiredMemoryTool), "retired memory bookkeeping tool must be gone from the Nebula face (govmemory batch)")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
     // 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面不变）。
     // 🔴 依据只有 09-18 18:18 令本身（0913 旧裁定不因本批复活）。变异验红锚：摘掉即红。
@@ -645,10 +647,10 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!worker.contains("Task"), "SubTask worker stripped")
     val flow = CoreProbe.allowed(mkDef("f", List("*")).copy(category = "flow"))
     assert(!flow.contains("Task"), "flow node stripped")
-    // no dream exemption (the exemption face is exactly one entry, MemoryNote; Task is
-    // stripped from dream as usual)
+    // no dream exemption (govmemory batch: the former exemption face -- the retired
+    // memory bookkeeping tool -- is gone; dream falls through to the default branch)
     val dream = CoreProbe.allowed(mkDef("dream", List("Task")))
-    assert(!dream.contains("Task"), "a dream declaration of Task is void (not in DreamAdmittedTools)")
+    assert(!dream.contains("Task"), "a dream declaration of Task is void (strip-all branch)")
     // `TaskInfo` is a project-domain **read-only** entry: it is likewise listed in
     // NebulaExclusiveTools (strip semantics) and every agent-side declaration is void --
     // the real mounting is injected only in the project-session identity's final segment

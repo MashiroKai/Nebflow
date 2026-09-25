@@ -211,6 +211,31 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(stripped, prompt)
 
   // ============================================================
+  // stripCommentOnlyLines（govmemory 批：seed 批源注记 = 单行 HTML 注释，
+  // 方案 §1.2 步骤 1「避免进入模型上下文」的机械保证）
+  // ============================================================
+
+  test("stripCommentOnlyLines removes whole-line HTML comments, keeps all other bytes"):
+    val prompt =
+      """<!-- cold-start authority note -->
+        |<!-- batch source: dual-track batch -->
+        |Deliver in two parts.
+        |
+        |You are a task node.""".stripMargin
+    val stripped = stripCommentOnlyLines(prompt)
+    assert(!stripped.contains("authority note"), "annotation line stripped")
+    assert(!stripped.contains("batch source"), "annotation line stripped")
+    assertEquals(stripped, "Deliver in two parts.\n\nYou are a task node.")
+
+  test("stripCommentOnlyLines is byte-identical for comment-free input (trailing newline survives)"):
+    val prompt = "Line one.\n\nLine two.\n"
+    assertEquals(stripCommentOnlyLines(prompt), prompt)
+
+  test("stripCommentOnlyLines keeps inline comments inside a content line (conservative)"):
+    val prompt = "HTML example: <!-- not an annotation line --> stays."
+    assertEquals(stripCommentOnlyLines(prompt), prompt)
+
+  // ============================================================
   // requiresTools helper
   // ============================================================
 

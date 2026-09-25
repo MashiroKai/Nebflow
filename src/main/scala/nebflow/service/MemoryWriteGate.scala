@@ -16,10 +16,11 @@ import java.nio.charset.StandardCharsets
  * 本对象把两道闸下沉到落盘单点，使「过闸」成为**落盘的必要条件**，而不是调用方的自觉。
  *
  * 边界（写死，越界即不合）：
- *   - **不覆盖** Write / Edit / Bash 直写路径（Bash 完备 ⇒ 无机械封堵；本对象**不声称**
- *     覆盖它们，也不为此加壳、不改工具面）；
- *   - **不退役** MemoryNote（Q2 组已落「保留」）；
+ *   - Write / Edit 直写路径由 [[nebflow.core.tools.MemoryDirectWriteGuard]] 的
+ *     前置预算检查覆盖（govmemory 批 2026-09-25）；Bash 直写仍无机械封堵
+ *     （完备性理由不变，不为它加壳、不改工具面）；
  *   - **不动**授能面 / 静态集 / 注册表（非本项范围）。
+ *   （旧边界注记「不退役 MemoryNote」已随该工具退役作废——govmemory 批。）
  *
  * ## 闸序 = 预算 → 快照 → 落盘（作者 2026-09-14 两处裁定；**取代** 09-13 任务书旧序）
  *
@@ -36,21 +37,21 @@ import java.nio.charset.StandardCharsets
  * ## 纯收缩豁免（作者 2026-09-14 裁定 (b)，边界写死）
  *
  *   - 豁免判据 = **字节比**（新内容字节 ≤ 现文件字节；逐文件 POST-WRITE vs PRE-WRITE），
- *     🔴 **不按动作名豁免**；适格面 = 收缩通道（`replace_section`，工具契约原文
- *     「`replace_section` stays exempt — it is the shrinking channel」，`MemoryNoteTool:92`）
- *     ⇒ 调用方以 `shrinkChannel = true` 声明**适格身份**，闸再用字节比拦「夹带净增」；
+ *     🔴 **不按动作名豁免**；适格面 = 收缩通道（govmemory 批起 = Edit/Write 直写收缩，
+ *     由 MemoryDirectWriteGuard 以 `shrinkChannel = true` 声明适格身份；旧
+ *     `replace_section` 工具契约已随该工具退役）⇒ 调用方声明**适格身份**后，
+ *     闸再用字节比拦「夹带净增」；
  *   - 适格 + 真收缩 ⇒ 只豁免**预算闸**：路径白名单 / 条目格式校验（工具层职责）、快照前置
  *     （按 ① 新序）、「闸不过 ⇒ 零写」不变式 **全部照旧**；
  *   - 适格 + 实际净增 ⇒ **照过闸**（判据是字节比，不是动作名）；
- *   - `shrinkChannel = false`（缺省 = 现全部生产调用方）⇒ **永不豁免**（WS `saveMemory`
- *     的整文件覆盖不是收缩通道：超限文件的自救路径是 `replace_section`）。
- *   - 🔴 现场读数：本闸**自身**的落盘调用面（[[MemoryStore.saveFile]] / `ProjectMemory.save`）
- *     仍是**零 `true` 调用方**——`MemoryNote` 已零落盘（只入队）；WS `saveMemory` 的整文件
- *     覆盖**不是**收缩通道（本文件 :45-46），超限文件的自救路径必须是 `replace_section`。
- *     **队列消费侧的适格声明（2026-09-15 memshrinkgate 批）落在这道闸之外**：消费落地由
- *     整理会话经通用 `Edit`/`Write` 完成（本对象**不覆盖**直写路径，见边界 :19-21），故
- *     消费侧的前置闸 = [[nebflow.core.tools.MemoryQueue]] 的预算停点，由它传
- *     `shrinkChannel = true` 并用同一 [[shrinkExempt]] 独立裁决（判据单源，防两面漂移）。
+ *   - `shrinkChannel = false`（缺省 = WS `saveMemory` 生产调用方）⇒ **永不豁免**
+ *     （整文件覆盖不是收缩通道：超限文件的自救路径 = Edit/Write 直写收缩）。
+ *   - 🔴 govmemory 批后现场读数：本闸**自身**的落盘调用面（[[MemoryStore.saveFile]] /
+ *     `ProjectMemory.save`）**零生产调用方**（原调用方 MemoryNoteTool 已随队列退役）；
+ *     WS `saveMemory` 的整文件覆盖**不是**收缩通道（缺省 `shrinkChannel = false`）。
+ *     直写侧的前置检查 = [[nebflow.core.tools.MemoryDirectWriteGuard]]，它以
+ *     `shrinkChannel = true` 声明收缩通道身份并共用本判据（判据单源，防两面漂移）。
+ *     原消费侧前置计划（MemoryQueue plan）已随队列机制整体退役。
  *
  * 判据来源（零新语义）：硬顶 / 软线一律取自 [[MemoryBudget]]（唯一常量源），本对象
  * 不复制数值、不新增阈值、不改判据函数。
@@ -90,14 +91,14 @@ object MemoryWriteGate:
     *
     * 两个消费方，同一个判据（作者 2026-09-15 裁定 A 的机械形态 = 「满格时放行删除/替换类
     * 条目落盘，append 类仍拒至回到预算内」，定性 = 把闸对齐其已文档化设计初衷）：
-    *   - 本闸的预算分支（`exempt = shrinkExempt(pre, bytes, shrinkChannel)`）；
-    *   - [[nebflow.core.tools.MemoryQueue]] 的预算停点 + 停点闩（消费侧前置计划）——
-    *     目标超硬顶时，缩容方向（真收缩）条目照旧放行、净增条目照旧被截断。
-    *
-    * 抽成单源的理由：两处若各写一份「收缩」判据，迟早出现「计划面放行、落盘闸拒绝」
-    * （或反之）的判据漂移——那正是「超限文件的自救路径被自己的前置闸掐死」的死锁成因。
-    *
-    * 纯函数、零 IO（供 [[nebflow.core.tools.MemoryQueue]] 的只读计划面共用）。 */
+ *   - 本闸的预算分支（`exempt = shrinkExempt(pre, bytes, shrinkChannel)`）；
+ *   - [[nebflow.core.tools.MemoryDirectWriteGuard]] 的写前预算检查（直写收缩侧声明）——
+ *     目标超硬顶时，缩容方向（真收缩）写入照旧放行、净增写入照旧被拒。
+ *
+ * 抽成单源的理由：两处若各写一份「收缩」判据，迟早出现「检查面放行、落盘闸拒绝」
+ * （或反之）的判据漂移——那正是「超限文件的自救路径被自己的前置闸掐死」的死锁成因。
+ *
+ * 纯函数、零 IO（供 [[nebflow.core.tools.MemoryDirectWriteGuard]] 的只读检查面共用）。 */
   def shrinkExempt(preBytes: Long, newBytes: Long, shrinkChannel: Boolean): Boolean =
     shrinkChannel && newBytes <= preBytes
 
@@ -108,12 +109,13 @@ object MemoryWriteGate:
     try if os.exists(path) then os.size(path).toLong else 0L
     catch case _: Exception => 0L
 
-  /** **纯收缩豁免判据（单源）**——本闸与消费侧前置计划（[[nebflow.core.tools.MemoryQueue]]
-    * 的预算停点）共用同一个字节比口径，见 [[shrinkExempt]]。
+  /** **纯收缩豁免判据（单源）**——本闸与直写侧前置检查
+    * （[[nebflow.core.tools.MemoryDirectWriteGuard]]）共用同一个字节比口径，
+    * 见 [[shrinkExempt]]。
     *
     * 过闸判定（fail-closed）。`Right` = 允许落盘；`Left` = 调用方**必须中止**（零写入）。
     *
-    * `shrinkChannel` = 调用方声明自己走收缩通道（`replace_section`）；是否真豁免由本方法用
+    * `shrinkChannel` = 调用方声明自己走收缩通道（直写收缩）；是否真豁免由本方法用
     * **字节比**独立判定（见头注「纯收缩豁免」）——适格 + 净增照过闸。
     *
     * 副作用三处（便于 spec 直测）：软线 WARN 日志、PRE-WRITE 字节读（只读元数据）、
@@ -169,7 +171,7 @@ object MemoryWriteGate:
        |Consolidate first, then write. Largest sections:
        |${MemoryBudget.topSections(newContent)}
        |Trim stale/duplicate entries, or demote detail into ~/.nebflow/memory/<id>.md files.
-       |If this write only shrinks the file, use the shrinking channel (MemoryNote replace_section) — it is exempt from the hard cap. (${Code.Budget})""".stripMargin
+       |If this write only shrinks the file, it stays exempt from the hard cap — retry as an in-place shrink (delete stale `- ` entries or rewrite the largest `## ` section down). (${Code.Budget})""".stripMargin
 
   private def warnDetail(target: String, path: os.Path, bytes: Long, soft: Long, hard: Long): String =
     s"$WarnMarker target='$target' $path is now $bytes bytes (over the 80% soft line of $soft bytes; hard budget $hard) — " +

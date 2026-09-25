@@ -128,8 +128,10 @@ object CompactService:
    * LEDGER — every project/task line, in-flight dispatches, verbatim facts and
    * rulings. Process detail of finished sub-tasks is discarded aggressively.
    * 2026-09-03 (per-level compaction): replaces the generic coding-assistant
-   * template; durable user facts are extracted separately by NebulaMemoryHook
-   * before compaction, so the summary must NOT duplicate them.
+   * template; durable user facts used to be extracted separately by
+   * NebulaMemoryHook before compaction (that production face is retired,
+   * govmemory batch — the hook now only raises the post-compaction hygiene
+   * signal), so the summary must NOT duplicate them.
    */
   private val NebulaCompactReminder = CompactPreamble +
     """You are NEBULA — the global orchestrator. Your session is long-lived and
