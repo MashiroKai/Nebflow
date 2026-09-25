@@ -99,7 +99,8 @@ class SessionService(
       // （permshield S1：已无会话覆盖面），与 SharedResources 的列表出口共用同一
       // helper（键恒存在，不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约）。
       global <- nebflow.core.GlobalSafety.defaultMode
-      sessionsJson = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
+      globalMode = nebflow.core.SafetyMode.toString(global)
+      sessionsJson = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, globalMode)
       rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
       _ <- wsSend(
         Json.obj(

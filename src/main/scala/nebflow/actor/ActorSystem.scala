@@ -3,7 +3,7 @@ package nebflow.actor
 import cats.effect.std.Queue
 import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 

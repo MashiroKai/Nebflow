@@ -1,7 +1,7 @@
 package nebflow.actor
 
 import cats.effect.IO
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * System signals — delivered via a separate channel from regular messages.

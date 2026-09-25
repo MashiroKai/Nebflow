@@ -146,7 +146,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
       //    变异（出口 overlay 改读 meta.safetyMode / 塞回 R-1=A 撤销形态）⇒ 红。
       val exitModes: Map[String, Option[String]] =
         SessionMeta
-          .withEffectiveSafetyModes(loaded, global)
+          .withEffectiveSafetyModes(loaded, SafetyMode.toString(global))
           .asArray
           .getOrElse(Vector.empty)
           .map(j => j.hcursor.get[String]("id").toOption.getOrElse("") -> j.hcursor.get[String]("safetyMode").toOption)

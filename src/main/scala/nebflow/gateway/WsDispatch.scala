@@ -21,7 +21,7 @@ import nebflow.core.{PathUtil, *}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.llm.*
 import nebflow.service.*
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

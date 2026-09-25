@@ -194,6 +194,6 @@ case class SharedResources(
    */
   def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
     effectiveSafetyMode.map { global =>
-      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
+      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, nebflow.core.SafetyMode.toString(global))
     }
 end SharedResources

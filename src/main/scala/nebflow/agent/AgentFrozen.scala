@@ -8,7 +8,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 
 /**
  * 冻结域:原 object AgentActor 内 enterErrorFrozen / enterFrozen / frozen 的实现

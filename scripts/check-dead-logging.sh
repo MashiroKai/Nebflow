@@ -31,7 +31,8 @@
 #
 # ── 豁免（不报）──────────────────────────────────────────────────────
 #   - NebflowLogger 定义处：`class/object/trait NebflowLogger` 所在文件
-#     （内容判定）∪ src/main/scala/nebflow/core/logging.scala（路径判定）。
+#     （内容判定）∪ src/main/scala/nebflow/shared/logging.scala（路径判定；2026-09-25
+#     Phase 5 上移自 core/logging.scala，转发桩不再需要路径豁免）。
 #     定义体内 `IO.delay(logger.info(...))` 的 `logger` 是 slf4j Logger（返回
 #     Unit），IO 包装是正确用法——不是死日志。
 #   - `*Sync(...)` 变体：info/warn/error/debug **Sync** 返回 Unit，
@@ -92,7 +93,7 @@ INLINE_RE = re.compile(
 IO_PAREN = ("IO(", "IO.delay(", "IO.blocking(")          # 形参形态 IO 构造子
 CONSUMED = re.compile(r"^\s*\.\s*(?:flatten|unsafeRunSync|unsafeRunAndForget)\s*\(")
 DEF_FILE = re.compile(r"\b(?:class|object|trait)\s+NebflowLogger\b")
-EXEMPT_PATHS = ("src/main/scala/nebflow/core/logging.scala",)
+EXEMPT_PATHS = ("src/main/scala/nebflow/shared/logging.scala",)
 
 
 def strip_source(text):

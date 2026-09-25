@@ -20,7 +20,7 @@ import nebflow.core.tools.*
 import nebflow.llm.*
 import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 

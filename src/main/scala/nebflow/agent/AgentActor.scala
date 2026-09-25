@@ -13,8 +13,8 @@ import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.project.NotificationHeader
 import nebflow.core.tools.{AskUserQuestionTool, BgTaskRegistry}
 import nebflow.llm.*
-import nebflow.shared.*
 import nebflow.shared.given
+import nebflow.shared.{NebflowLogger, *}
 
 import scala.concurrent.duration.*
 

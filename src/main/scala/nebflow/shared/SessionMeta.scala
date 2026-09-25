@@ -59,10 +59,10 @@ object SessionMeta:
    */
   def withEffectiveSafetyModes(
     sessions: List[SessionMeta],
-    global: nebflow.core.SafetyMode
+    global: String
   ): Json =
     import io.circe.syntax.*
-    val modeJson = nebflow.core.SafetyMode.toString(global).asJson
+    val modeJson = global.asJson
     sessions
       .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson
