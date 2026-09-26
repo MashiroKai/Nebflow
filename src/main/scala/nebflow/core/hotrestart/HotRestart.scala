@@ -7,7 +7,6 @@ import io.circe.syntax.*
 import nebflow.core.*
 import nebflow.core.project.{NodeLifecycle, ProjectRuntimeRegistry}
 import nebflow.core.tools.BgTaskRegistry
-import nebflow.llm.LlmInterface
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.io.File
@@ -125,7 +124,7 @@ class HotRestart(
       .handleErrorWith(e => IO.pure(List(s"<subtask store read error: ${e.getMessage}>")))
     val f3: IO[List[String]] = agentRegistry.processingSessionIds
       .handleErrorWith(e => IO.pure(List(s"<agent registry read error: ${e.getMessage}>")))
-    val f4: IO[Int] = LlmInterface.inflightCount.handleErrorWith(_ => IO.pure(Int.MaxValue))
+    val f4: IO[Int] = LlmRuntimePort.inflightCount.handleErrorWith(_ => IO.pure(Int.MaxValue))
     val f5: IO[List[String]] = BgTaskRegistry.waitingTasks
       .map(_.map(t => s"${t.jobId}:${t.description.take(60)}"))
       .handleErrorWith(e => IO.pure(List(s"<bg registry read error: ${e.getMessage}>")))

@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.ProviderHealthPort
 import nebflow.shared.NebflowLogger
 
 import java.net.*
@@ -28,20 +29,20 @@ import scala.util.control.NonFatal
  */
 object HealthPayload:
 
-  def build(monitor: nebflow.llm.ProviderHealthMonitor): IO[Json] =
+  def build(monitor: ProviderHealthPort): IO[Json] =
     for
       modelStates <- monitor.getStates
       searchHealth <- monitor.getSearchHealth
     yield
       val providers = modelStates.map { case (k, st) =>
         k -> (st match
-          case nebflow.llm.HealthState.Up => "up"
-          case nebflow.llm.HealthState.Down(reason, _) => s"down: $reason")
+          case nebflow.shared.HealthState.Up => "up"
+          case nebflow.shared.HealthState.Down(reason, _) => s"down: $reason")
       }
       val search = searchHealth match
-        case nebflow.llm.SearchApiHealth.Unconfigured => Json.obj("status" -> "unconfigured".asJson)
-        case nebflow.llm.SearchApiHealth.Up => Json.obj("status" -> "up".asJson)
-        case nebflow.llm.SearchApiHealth.Down(reason, since) =>
+        case nebflow.shared.SearchApiHealth.Unconfigured => Json.obj("status" -> "unconfigured".asJson)
+        case nebflow.shared.SearchApiHealth.Up => Json.obj("status" -> "up".asJson)
+        case nebflow.shared.SearchApiHealth.Down(reason, since) =>
           Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
       Json.obj(
         "product" -> "nebflow".asJson, // single-instance guard identification
@@ -98,7 +99,7 @@ object ProbeEndpoint:
   val Path: String = "/api/health"
 
   /** 起探针端点。Left = 起不来（fail-open：调用方记 WARN 并继续既有交接链）。 */
-  def start(monitor: nebflow.llm.ProviderHealthMonitor): IO[Either[String, ProbeEndpoint]] =
+  def start(monitor: ProviderHealthPort): IO[Either[String, ProbeEndpoint]] =
     IO.blocking {
       val server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
       server.setExecutor(Executors.newSingleThreadExecutor(r =>
@@ -504,7 +505,7 @@ object HealthCheck:
    */
   def afterBind(
     port: Int,
-    monitor: nebflow.llm.ProviderHealthMonitor,
+    monitor: ProviderHealthPort,
     expected: Option[String],
     t3DeadlineMs: Long,
     t4DeadlineMs: Long,

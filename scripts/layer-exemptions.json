@@ -43,16 +43,6 @@
       "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
-      "from": "src/main/scala/nebflow/core/hotrestart/HealthProbe.scala",
-      "to": "llm",
-      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
-    },
-    {
-      "from": "src/main/scala/nebflow/core/hotrestart/HotRestart.scala",
-      "to": "llm",
-      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
-    },
-    {
       "from": "src/main/scala/nebflow/core/hotupdate/UpdateOrchestrator.scala",
       "to": "neblink",
       "reason": "后续批次:与 neblink→core(20 文件)互引,择小边(6)豁免;倒置路径待 C/D 后裁定"
@@ -73,11 +63,6 @@
       "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
     },
     {
-      "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
-      "to": "llm",
-      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
-    },
-    {
       "from": "src/main/scala/nebflow/core/project/NodeCompletion.scala",
       "to": "agent",
       "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
@@ -91,11 +76,6 @@
       "from": "src/main/scala/nebflow/core/project/ProjectActor.scala",
       "to": "agent",
       "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
-    },
-    {
-      "from": "src/main/scala/nebflow/core/project/ShutdownState.scala",
-      "to": "llm",
-      "reason": "后续批次:与 llm→core(10 文件)互引,两侧同数,择 core 出向豁免;倒置路径待 C/D 后裁定"
     },
     {
       "from": "src/main/scala/nebflow/core/seed/SeedService.scala",
@@ -186,16 +166,6 @@
       "from": "src/main/scala/nebflow/core/tools/types.scala",
       "to": "agent",
       "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
-    },
-    {
-      "from": "src/main/scala/nebflow/dropbox/DropboxChunkTransports.scala",
-      "to": "neblink",
-      "reason": "校准豁免:与 neblink→dropbox(3 文件)互引,择小边(2)豁免;方向裁定属后续批次"
-    },
-    {
-      "from": "src/main/scala/nebflow/dropbox/DropboxService.scala",
-      "to": "gateway",
-      "reason": "校准豁免:与 gateway→dropbox(4 文件)互引,择小边(1)豁免;方向裁定属后续批次"
     },
     {
       "from": "src/main/scala/nebflow/dropbox/DropboxService.scala",

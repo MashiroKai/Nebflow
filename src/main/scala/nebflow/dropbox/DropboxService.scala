@@ -7,8 +7,8 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkClient, NeblinkService}
+import nebflow.core.{NeblinkClientPort, WsHubPort}
+import nebflow.neblink.NeblinkService
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.net.URI
@@ -69,7 +69,7 @@ private[dropbox] final case class CommitOutcome(decision: TempPathDecision, land
  */
 final class DropboxService private (
   neblinkService: NeblinkService,
-  wsHub: WsHub,
+  wsHub: WsHubPort,
   /**
    * Signaling timeouts (diag-transfer-stuck R4): a message parked in one of
    * the watched statuses past its window is marked failed instead of sitting
@@ -93,7 +93,7 @@ final class DropboxService private (
   /** 可注入落名时钟的构造器（测试面）：`createForTest` 走这条路。 */
   private[nebflow] def this(
     neblinkService: NeblinkService,
-    wsHub: WsHub,
+    wsHub: WsHubPort,
     offerTimeout: FiniteDuration,
     acceptedTimeout: FiniteDuration,
     transferTimeout: FiniteDuration,
@@ -366,7 +366,7 @@ final class DropboxService private (
       case true => IO.pure(true)
       case false =>
         neblinkService.relayClientOpt match
-          case Some(client) =>
+          case Some(client: NeblinkClientPort) =>
             client
               .relayNotify(deviceId, channel, payload)
               .map(_.isRight)
@@ -1365,7 +1365,7 @@ final class DropboxService private (
   private def productionTransport(t: FileTransfer, rateHintBytesPerSec: Long = 0L): ChunkTransport =
     val p2p = new P2PChunkTransport(t.peerAddress, AttachContract.P2PDeadlineCeiling, rateHintBytesPerSec)
     neblinkService.relayClientOpt match
-      case Some(client) =>
+      case Some(client: NeblinkClientPort) =>
         ChunkTransport.failover(
           p2p,
           new RelayChunkTransport(client, AttachContract.RelayDeadlineCeiling, rateHintBytesPerSec)
@@ -2066,14 +2066,14 @@ object DropboxService:
         try if s.startsWith("/") then os.Path(java.nio.file.Paths.get(s)) else DropboxUtil.downloadsDir
         catch case _: Exception => DropboxUtil.downloadsDir
 
-  def create(neblinkService: NeblinkService, wsHub: WsHub): IO[DropboxService] =
+  def create(neblinkService: NeblinkService, wsHub: WsHubPort): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)
     svc.init.as(svc)
 
   /** Test factory with injectable signaling timeouts (+ injectable landing clock, dropnam A4). */
   private[nebflow] def createForTest(
     neblinkService: NeblinkService,
-    wsHub: WsHub,
+    wsHub: WsHubPort,
     offerTimeout: FiniteDuration,
     acceptedTimeout: FiniteDuration,
     transferTimeout: FiniteDuration,

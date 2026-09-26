@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.neblink.NeblinkClient
+import nebflow.core.NeblinkClientPort
 import nebflow.shared.NebflowLogger
 
 import java.net.URI
@@ -266,7 +266,7 @@ end P2PChunkTransport
  * 其码与字段，解析不出才退化为 `PEER_UNREACHABLE`（禁静默吞、禁丢字段）。
  */
 final class RelayChunkTransport(
-  client: NeblinkClient,
+  client: NeblinkClientPort,
   chunkTimeout: FiniteDuration = AttachContract.RelayDeadlineCeiling,
   rateHintBytesPerSec: Long = 0L
 ) extends ChunkTransport:

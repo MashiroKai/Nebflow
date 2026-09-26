@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
+import nebflow.core.{LlmRuntime, LlmRuntimePort}
 import nebflow.shared.{NebflowLogger, *}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
@@ -43,7 +44,14 @@ final class RecoverableAbort(val sessionId: String)
       s"transport abort: LLM request of session $sessionId force-aborted (recoverable — turn will be re-sent)"
     )
 
-object LlmInterface:
+object LlmInterface extends LlmRuntime:
+  // 严格DAG第⑥步第一批裁定(2026-09-26):core 的在飞查询/取消面改经 core.LlmRuntimePort
+  // 注册器取本对象。注册点 = 对象初始化:生产 boot(GatewayMain 经 createLlm)与测试
+  // (registerInflight 直接触发本初始化,不经 createLlm/GatewayMain/SharedResources——
+  // 三个候选点位都盖不住这类 spec)共用的必经最早一点;未注册时注册器按空注册表语义
+  // 零回归兜底(见 core/LlmRuntimePort.scala)。
+  LlmRuntimePort.set(this)
+
   private val logger = NebflowLogger.forName("nebflow.llm")
 
   /**

@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.core.AtomicJson
-import nebflow.llm.LlmInterface
+import nebflow.core.{AtomicJson, LlmRuntimePort}
 import nebflow.shared.{Defaults, NebflowLogger}
 
 import java.util.concurrent.atomic.AtomicBoolean
@@ -82,7 +81,7 @@ object GracefulInterruptHook:
   def run(timeoutMs: Long = Defaults.ShutdownInterruptTimeoutMs): Unit =
     if !Defaults.ShutdownInterruptEnabled then
       // 回滚形态：无翻态、无守卫、无 draining——只有本批前既有的 abort 在飞 LLM。
-      LlmInterface.cancelAllInflightSync()
+      LlmRuntimePort.cancelAllInflightSync()
     else
       try
         ShutdownState.beginDraining()
@@ -103,7 +102,7 @@ object GracefulInterruptHook:
           logger.warn(s"graceful shutdown: interrupt sweep failed: ${Option(e.getMessage).getOrElse(e.toString)}")
       finally
         // token 燃烧防线（2026-08-19 P0）：原样保留，顺序恒在翻态之后。
-        LlmInterface.cancelAllInflightSync()
+        LlmRuntimePort.cancelAllInflightSync()
 
   /**
    * 停机留痕（hostresume 批 2026-09-22，设计卡 §4 #7，C2 双向 fail-soft 之写半边）：

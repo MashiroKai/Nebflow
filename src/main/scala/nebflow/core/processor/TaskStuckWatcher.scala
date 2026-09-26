@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.EventSink
+import nebflow.core.{EventSink, LlmRuntimePort}
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.{FiniteDuration, *}
@@ -765,7 +765,7 @@ object TaskStuckWatcher:
                 // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
                 // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
                 // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
-                nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
+                LlmRuntimePort.inflightFor(rec.sessionId).flatMap { inflight =>
                   recover(
                     resources,
                     wsHub,
@@ -787,7 +787,7 @@ object TaskStuckWatcher:
               silent
                 .filter(rec => !stuckIds.contains(rec.sessionId) && aliveOf(rec).contains(false))
                 .traverse_ { rec =>
-                  nebflow.llm.LlmInterface.inflightFor(rec.sessionId).flatMap { inflight =>
+                  LlmRuntimePort.inflightFor(rec.sessionId).flatMap { inflight =>
                     val idleMs = now - rec.lastActivityMs
                     val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
                     val assessment = StuckAssessment(
@@ -1087,7 +1087,7 @@ object TaskStuckWatcher:
           }
           .flatMap { attempts =>
             def hardCancel() =
-              nebflow.llm.LlmInterface
+              LlmRuntimePort
                 .cancelInflightFor(rec.sessionId)
                 .flatMap { n =>
                   logger.warn(
@@ -1119,7 +1119,7 @@ object TaskStuckWatcher:
                     "[design §3.4 mutex 1b: a session-level primitive must not touch a frozen/other-state session]"
                 )
               else
-                nebflow.llm.LlmInterface
+                LlmRuntimePort
                   .transportAbortFor(rec.sessionId)
                   .flatMap { n =>
                     logger.warn(
@@ -1301,7 +1301,7 @@ object TaskStuckWatcher:
               .flatMap { attempts =>
                 val escalate =
                   if attempts >= StopAttempts then
-                    nebflow.llm.LlmInterface
+                    LlmRuntimePort
                       .cancelInflightFor(rec.sessionId)
                       .flatMap { n =>
                         logger.warn(
@@ -1328,7 +1328,7 @@ object TaskStuckWatcher:
                           s"(transport abort / reclaim): session status is ${rec.status}, not Processing [design §3.4 mutex 1b]"
                       )
                     else
-                      nebflow.llm.LlmInterface
+                      LlmRuntimePort
                         .transportAbortFor(rec.sessionId)
                         .flatMap { n =>
                           logger.warn(
@@ -1430,7 +1430,7 @@ object TaskStuckWatcher:
                       "halt",
                       logger.warn(
                         s"TaskStuckWatcher: root agent ${rec.sessionId} stuck for ${idleSecs}s — L1: halting in-flight LLM"
-                      ) *> nebflow.llm.LlmInterface
+                      ) *> LlmRuntimePort
                         .cancelInflightFor(rec.sessionId)
                         .void
                         .handleErrorWith(e =>
@@ -1450,7 +1450,7 @@ object TaskStuckWatcher:
                                s"(transport abort / reclaim): session status is ${rec.status}, not Processing [design §3.4 mutex 1b]"
                            )
                          else
-                           nebflow.llm.LlmInterface
+                           LlmRuntimePort
                              .transportAbortFor(rec.sessionId)
                              .flatMap { n =>
                                logger.warn(

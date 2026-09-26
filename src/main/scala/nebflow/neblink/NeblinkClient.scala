@@ -5,6 +5,7 @@ import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.core.NeblinkClientPort
 import nebflow.shared.NebflowLogger
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -174,7 +175,7 @@ class NeblinkClient(
   onDeviceTokenRejected: Option[IO[Option[String]]] = None,
   identity: Option[IO[DeviceIdentity]] = None,
   autoLoginParked: IO[Boolean] = IO.pure(false)
-):
+) extends NeblinkClientPort:
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
   // HTTP client: force HTTP/1.1 and bypass system proxy (direct LAN/WAN access).

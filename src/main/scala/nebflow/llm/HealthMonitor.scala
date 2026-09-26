@@ -3,24 +3,10 @@ package nebflow.llm
 import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.syntax.all.*
-import nebflow.shared.{NebflowLogger, *}
+import nebflow.core.ProviderHealthPort
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
-
-/** Health state of a single provider+model combination. */
-enum HealthState:
-  case Up
-  case Down(reason: String, since: Long)
-
-/**
- * Health of the Tier 2a standalone search API (P2, 2026-08-25) — tracked
- * INDEPENDENTLY of model-provider health so layered health output can show
- * the decoupling the user asked for ("模型配额 DOWN ≠ 搜索 DOWN").
- */
-enum SearchApiHealth:
-  case Unconfigured
-  case Up
-  case Down(reason: String, since: Long)
 
 object ProviderHealthMonitor:
   /** Interval between background probe cycles for Down providers (2 minutes). */
@@ -57,7 +43,7 @@ object ProviderHealthMonitor:
  * Up providers are never probed proactively — the first real request after
  * a provider comes back online will naturally discover if it is still healthy.
  */
-final class ProviderHealthMonitor(registry: ProviderRegistry):
+final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHealthPort:
   private val logger = NebflowLogger.forName("nebflow.llm.health")
 
   private val statesRef: Ref[IO, Map[String, HealthState]] = Ref.unsafe(Map.empty)
