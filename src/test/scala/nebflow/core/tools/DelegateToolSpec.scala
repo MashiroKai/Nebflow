@@ -15,7 +15,12 @@ import nebflow.core.PathUtil
  *  1. schema 面：恰两参数 `task`/`description`（旧 `agent`/`lifecycle`/
  *     `taskDescription`/`images`/`preset`/`prompt` 全部退役——旧断言在本文件里
  *     逐条反向钉死；`device` 亦于 2026-09-14 作者裁定 U1/U2 随 schema 摘除）。
- *  2. 目标解析：内置 `kernel` def；缺失给自描述错误（不再有 standalone 目录）。
+ *  2. Target resolution: the built-in `kernel` def. kernelgen-ext batch (2026-09-26): a missing disk
+ *     def no longer refuses to start — resolveKernelDef synthesizes the built-in
+ *     fail-safe def, prompt = runtime mirror system.md -> classpath seed
+ *     (`seed/agents/kernel/system.md`, prompt-only manifest item `agents:kernel`)
+ *     -> the embedded default. Availability first; the former "definition not
+ *     found" refusal is retired (its negative is re-pinned below).
  *  3. R9 并发：每根会话 ≤ 4（U4=D1：等待答复占额度；错误含在飞清单 + 等待标注）。
  *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
  *     本文件反向钉死该摘除：stray `device` 键**不被消费**（无预检、不拦、不出现在
@@ -119,23 +124,56 @@ class DelegateToolSpec extends CatsEffectSuite:
       case Left(err) => assert(err.message.contains("Missing required parameter: task"), err.message)
       case Right(v)  => fail(s"expected failure for empty task, got: $v")
 
-  test("kernel definition missing → self-describing error (no standalone catalog any more)"):
+  test("kernel definition missing => fail-safe built-in def, NOT a refusal (kernelgen-ext 2026-09-26)"):
     for
       _ <- reset()
       input = JsonObject("task" -> "do work".asJson, "description" -> "x".asJson)
       res <- DelegateTool.call(input, ctxWith())
     yield res match
       case Left(err) =>
-        assert(err.message.contains("Kernel agent definition 'kernel' not found"), err.message)
-        // 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：期望路径由运行期
-        // 数据根插值 —— 本 suite 已 setDataRoot(tempRoot)，故断言取渲染值（默认 home
-        // 下恰为旧字面 `~/.nebflow/agents/kernel`）。
-        assert(
-          err.message.contains(s"${PathUtil.dataRootRenderValue}/agents/kernel"),
-          err.message
-        )
-        assert(!err.message.contains("Targetable standalone agents"), "standalone catalog must be gone")
-      case Right(v) => fail(s"expected kernel-missing failure, got: $v")
+        // The engine never refuses to start a kernel because the disk def is
+        // missing: resolveKernelDef synthesizes the built-in def (prompt chain:
+        // runtime mirror -> classpath seed -> embedded default) and the call
+        // reaches the spawn prerequisites — here failing only on the absent
+        // ActorSystem (suite runs without one by design).
+        assert(err.message.contains("requires ActorSystem"), err.message)
+        assert(!err.message.contains("Kernel agent definition"),
+          "the old kernel-missing refusal must be retired, got: " + err.message)
+        assert(!err.message.contains("Restore the definition and retry"),
+          "the old restore-and-retry refusal must be retired, got: " + err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  test("fail-safe tier 1: a mirror system.md without agent.json drives the synthesized def's prompt"):
+    for
+      _ <- reset()
+      _ = os.write.over(agentsDir / "kernel" / "system.md", "MIRROR-PROMPT-MARKER", createFolders = true)
+      res <- DelegateTool.resolveKernelDef(ctxWith())
+    yield res match
+      case Right(defn) =>
+        assertEquals(defn.name, "kernel")
+        assert(defn.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
+          "tier 1 = the seed-managed runtime mirror file (what the prompt editor reads/writes)")
+        assertEquals(defn.tools.toSet, nebflow.agent.AgentCore.KernelFixedTools,
+          "the synthesized def carries the mechanism-fixed tool face")
+        assertEquals(defn.category, "standalone", "converged name pins the category")
+      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
+
+  test("fail-safe tier 2: no mirror => the classpath seed text drives the prompt (contract + plugin pointer present)"):
+    for
+      _ <- reset() // empty agents dir: no disk def, no mirror file
+      res <- DelegateTool.resolveKernelDef(ctxWith())
+    yield res match
+      case Right(defn) =>
+        assertEquals(defn.name, "kernel")
+        assert(defn.systemPrompt.contains("## ⑤ Creating plugins"),
+          "the seed text (with the author-directed plugin pointer) reached the prompt")
+        assert(defn.systemPrompt.contains("**Capability boundary (hard):**"),
+          "the verbatim migrated contract section reached the prompt")
+        // Note: like the three agents' mirrors, the seed file travels verbatim — its
+        // leading HTML comment (cold-start authority note) stays part of the file the
+        // prompt is read from. Only the embedded default tier (code constant) is
+        // comment-free by construction.
+      case Left(err) => fail(s"fail-safe def expected, got: ${err.message}")
 
   test("no agent library → self-describing error"):
     for res <- DelegateTool.call(JsonObject("task" -> "t".asJson), ctxWith(libOpt = None))

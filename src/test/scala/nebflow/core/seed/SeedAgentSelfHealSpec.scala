@@ -22,6 +22,14 @@ import java.nio.file.Files
  *  ⑤ manifest 组成：含 agents:Nebula；不含已退役的 memory agent
  *     （消费链校验 verifyMemoryConsumptionChain 已随其唯一守护对象退役）
  *
+ * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
+ * the manifest gains a fourth agent item `agents:kernel` as a PROMPT-ONLY seed
+ * (system.md, no seed agent.json). The self-heal anchor is agent.json, so kernel
+ * is NOT directory-self-healed; its availability in an existing home is carried by
+ * the spawn-time fail-safe def (DelegateTool.resolveKernelDef: runtime mirror ->
+ * classpath seed -> embedded default). The composition assertions below pin both
+ * the presence of the kernel item and the absence of a seed agent.json.
+ *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，种子读取走真实链路。
  */
 class SeedAgentSelfHealSpec extends FunSuite:
@@ -74,17 +82,26 @@ class SeedAgentSelfHealSpec extends FunSuite:
     os.write.over(home / ".seed-state.json", s"""{"version":"$manifestVersion","seededAt":1,"items":[]}""")
 
   // ── ① 缺失 ⇒ 自愈补装 ├────────────────────────────────────
-  test("existing home + 默认集 agent 缺失 ⇒ 从种子自愈补装（三个默认集就位，general 逐字节==种子树）"):
+  test("existing home + default-set agents missing => self-healed from seed (double-file default set in place, general byte-identical to the seed tree; kernel is prompt-only and is NOT healed)"):
     existingHome()
     // 前置：不预种任何 agent（agents/ 整面缺席 = 本条的自愈触发形态）
     assert(!os.exists(home / "agents"), "前置：agents 面整体缺席")
 
     ensure()
 
-    // 三个默认集 agent 全部就位（agent.json + system.md 双件）
-    for name <- manifestAgentNames do
+    // Full-deck default-set agents land with BOTH files (agent.json + system.md).
+    // kernelgen-ext 2026-09-26: kernel is excluded from this loop on purpose — it is
+    // a prompt-only seed item with NO seed agent.json, and agent.json is the
+    // self-heal anchor (installAgentFromSeed lists resources by that anchor), so the
+    // reconcile pass writes NOTHING for kernel (loud WARN, zero files): pinned by
+    // the negative right below.
+    for name <- manifestAgentNames.filter(_ != "kernel") do
       assert(os.exists(home / "agents" / name / "agent.json"), s"默认集 agent '$name' 就位")
       assert(os.exists(home / "agents" / name / "system.md"), s"默认集 agent '$name' 提示词就位")
+    assert(manifestAgentNames.contains("kernel"),
+      "kernel is a manifest agent item (kernelgen-ext 2026-09-26: prompt-only seed)")
+    assert(!os.exists(home / "agents" / "kernel"),
+      "kernel is NOT directory-self-healed (no seed agent.json anchor; the spawn-time fail-safe def covers availability, kernelgen-ext 2026-09-26)")
     // 自愈内容 == 种子树（逐字节）
     assertEquals(treeAsText(home / "agents" / "general"), treeAsText(seedDirOf("general")),
       "自愈内容 == 种子树（逐字节）")
@@ -132,5 +149,15 @@ class SeedAgentSelfHealSpec extends FunSuite:
     assert(os.exists(seedDirOf("Nebula") / "system.md"), "Nebula 种子实件在位")
     assert(getClass.getClassLoader.getResource("seed/agents/memory-" + "consolidator/agent.json") == null,
       "已退役 agent 的种子资源已从 classpath 移除")
+    // kernelgen-ext 2026-09-26: kernel joins the manifest as a PROMPT-ONLY item —
+    // the seed ships system.md and deliberately NO agent.json (the def face is
+    // mechanism-fixed via KernelFixedTools + ConvergedAgentNames; the spawn-time
+    // fail-safe def needs no agent.json). Adding a seed agent.json for kernel is a
+    // contract change and must land consciously (this negative goes red).
+    assert(manifestAgentNames.contains("kernel"), "manifest carries the agents:kernel item (kernelgen-ext 2026-09-26)")
+    assert(getClass.getClassLoader.getResource("seed/agents/kernel/system.md") != null,
+      "kernel seed prompt artifact is on the classpath")
+    assert(getClass.getClassLoader.getResource("seed/agents/kernel/agent.json") == null,
+      "kernel ships NO seed agent.json (prompt-only item; def face is mechanism-fixed, kernelgen-ext 2026-09-26)")
 
 end SeedAgentSelfHealSpec

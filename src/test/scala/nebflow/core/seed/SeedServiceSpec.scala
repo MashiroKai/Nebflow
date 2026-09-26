@@ -24,6 +24,16 @@ import java.nio.file.Files
  * `seed/projects/general/` template tree stays in the repo as a dormant piece
  * (rollback-friendly).
  *
+ * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
+ * the manifest gains a FOURTH agent item `agents:kernel` as a PROMPT-ONLY seed
+ * (seed/agents/kernel/system.md, no seed agent.json — the kernel def face is
+ * mechanism-fixed via AgentCore.KernelFixedTools + ConvergedAgentNames). Marker
+ * count 7 -> 8; the fresh-home mirror for kernel is system.md-only; kernel
+ * availability in homes without a full disk def is carried by the spawn-time
+ * fail-safe def (DelegateTool.resolveKernelDef: runtime mirror -> classpath seed
+ * -> embedded default), verified here through the seed-reader utility contract
+ * (SeedService.readAgentSeedPrompt).
+ *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，`getResourceAsStream`
  * 直接命中——即「载体 A = 资源打包」在测试环境下被真实走通。
  */
@@ -46,10 +56,12 @@ class SeedServiceSpec extends FunSuite:
   private def dataRoot: os.Path = PathUtil.dataRoot
 
   // ── ① fresh home：完整播种（agent + plugin + project）├────────
-  test("fresh home seeds three agents + four plugins, and NO project (general retired from cold start)"):
+  test("fresh home seeds four agents (kernel = prompt-only item) + four plugins, and NO project (general retired from cold start)"):
     ensure()
 
-    // 三个 manifest agent：Nebula / project-dispatcher / general 全部由种子树下发
+    // The four manifest agents: kernel / Nebula / project-dispatcher / general all
+    // land from the seed tree (kernel as a PROMPT-ONLY item: system.md without any
+    // agent.json, kernelgen-ext 2026-09-26).
     val pdAgentJson = home / "agents" / "project-dispatcher" / "agent.json"
     val genAgentJson = home / "agents" / "general" / "agent.json"
     val nbAgentJson = home / "agents" / "Nebula" / "agent.json"
@@ -59,6 +71,14 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "agents" / "general" / "system.md"), "general/system.md seeded")
     assert(os.exists(nbAgentJson), "Nebula/agent.json seeded")
     assert(os.exists(home / "agents" / "Nebula" / "system.md"), "Nebula/system.md seeded")
+    // kernelgen-ext 2026-09-26: kernel is a prompt-only seed item — the mirror is
+    // system.md only. The def face is mechanism-fixed (KernelFixedTools +
+    // ConvergedAgentNames make agent.json declarations dead letters for kernel), so
+    // no seed agent.json ships; the spawn-time fail-safe def covers availability.
+    assert(os.exists(home / "agents" / "kernel" / "system.md"),
+      "kernel/system.md seeded (prompt-only item, kernelgen-ext 2026-09-26)")
+    assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
+      "kernel ships NO seed agent.json (prompt-only item; def face is mechanism-fixed, kernelgen-ext 2026-09-26)")
 
     // agent.json 基线锚定（TB #20 基线对齐 2026-09-09）：种子以 runtime trusted 形态为准，
     // preset/skills 字段合法入 seed——project-dispatcher（**可设两类之一**）: preset=general, skills=[]。
@@ -127,13 +147,16 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // Marker count = items actually written this run = **7** = the full current
-    // manifest: 3 agents (project-dispatcher / general / Nebula) + 4 default plugins
-    // (visual-report / slideblocks / nebflow-plugin-creator / web-search-toolkit),
-    // ZERO project items (kernelgen 2026-09-26: the general `project:` entry was
-    // removed; pre-kernelgen = 8 with it).
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
-      "marker records 7 items (3 agents + 4 plugins, zero project items)")
+    // Marker count = items actually written this run = **8** = the full current
+    // manifest: 4 agents (project-dispatcher / general / Nebula / kernel) + 4
+    // default plugins (visual-report / slideblocks / nebflow-plugin-creator /
+    // web-search-toolkit), ZERO project items (kernelgen 2026-09-26: the general
+    // `project:` entry was removed; pre-kernelgen = 8 with it). kernelgen-ext
+    // 2026-09-26: the prompt-only agents:kernel item took the count from 7 to 8.
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
+      "marker records 8 items (4 agents + 4 plugins, zero project items)")
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.contains("agents:kernel")),
+      "marker records the agents:kernel item (kernelgen-ext 2026-09-26)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -183,6 +206,14 @@ class SeedServiceSpec extends FunSuite:
     // memory 消费 agent 退役，默认集第三席 = Nebula（manifest 种子树下发）。
     for name <- List("project-dispatcher", "Nebula")
     do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
+
+    // kernelgen-ext 2026-09-26: kernel is a PROMPT-ONLY seed item (no seed
+    // agent.json), so the self-heal anchor (agent.json) is absent and the agents
+    // reconcile pass writes NOTHING for kernel here (loud WARN, zero files on
+    // disk). Kernel availability in such a home is carried by the spawn-time
+    // fail-safe def (DelegateTool.resolveKernelDef), not by a mirror directory.
+    assert(!os.exists(home / "agents" / "kernel"),
+      "kernel is NOT self-healed into an existing home (prompt-only item, no agent.json anchor; the spawn-time fail-safe def covers availability)")
 
     // ── Project face (kernelgen 2026-09-26, flipped again — full circle): the manifest
     // carries zero `project:` items ⇒ reconcileProjects is dormant ⇒ an existing home
@@ -239,6 +270,12 @@ class SeedServiceSpec extends FunSuite:
     assert(agentContent.contains("preUpgrade"), "pre-existing agent.json not rewritten (user wins)")
     // 缺失的补齐：project-dispatcher、插件（补种集 = 现行 manifest 默认集，manifest 驱动 SeedService.runSeed）
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"), "missing dispatcher added")
+    // kernelgen-ext 2026-09-26: the upgrade run plants the kernel prompt mirror too
+    // (prompt-only item: the full-seeding pass writes system.md; agent.json stays absent).
+    assert(os.exists(home / "agents" / "kernel" / "system.md"),
+      "upgrade run plants the kernel prompt mirror (prompt-only item, kernelgen-ext 2026-09-26)")
+    assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
+      "kernel still ships no agent.json on the upgrade run (prompt-only item)")
     assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
     assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
     assert(os.exists(home / "plugins" / "nebflow-plugin-creator" / "plugin.json"), "missing plugin added")
@@ -330,6 +367,23 @@ class SeedServiceSpec extends FunSuite:
       val after = os.read(handGeneral / name)
       s"$name sha256 before=${shasBefore(name)} after=${sha256(after)} identical=${sha256(after) == shasBefore(name)}"
     }.mkString("; "))
+
+  // ── ⑦ kernel seed prompt face (kernelgen-ext 2026-09-26) ──────────
+  // The spawn-side fail-safe chain (DelegateTool.resolveKernelDef) reads the kernel
+  // prompt through SeedService.readAgentSeedPrompt; this pins the reader contract:
+  // seed present => the seed text (carrying the verbatim contract + the plugin
+  // pointer); seed absent => None => the caller's embedded default. The tier that
+  // picks the embedded constant is a DelegateTool concern and is pinned over there
+  // (DelegateToolSpec, fail-safe resolution tests).
+  test("readAgentSeedPrompt: seed present => text, absent => None (spawn falls back to the embedded default)"):
+    val kernelPrompt = SeedService.readAgentSeedPrompt("kernel")
+    assert(kernelPrompt.exists(_.contains("## ⑤ Creating plugins")),
+      "kernel seed prompt is on the classpath and carries the author-directed plugin-creation pointer")
+    assert(kernelPrompt.exists(_.contains("**Capability boundary (hard):**")),
+      "kernel seed prompt carries the verbatim migrated contract section")
+    assert(kernelPrompt.exists(!_.trim.isEmpty), "blank seed text must read as absent (corrupt-face fallback)")
+    assert(SeedService.readAgentSeedPrompt("no-such-agent-in-seed").isEmpty,
+      "missing seed prompt => None (caller falls back to its embedded default — fail-safe tier 3)")
 
   private def sha256(text: String): String =
     java.security.MessageDigest.getInstance("SHA-256")
