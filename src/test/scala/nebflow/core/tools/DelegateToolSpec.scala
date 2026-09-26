@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary, AgentStatus}
+import nebflow.agent.{AgentDef, AgentLibrary}
 import nebflow.core.PathUtil
 
 /**
@@ -21,11 +21,13 @@ import nebflow.core.PathUtil
  *     (`seed/agents/kernel/system.md`, prompt-only manifest item `agents:kernel`)
  *     -> the embedded default. Availability first; the former "definition not
  *     found" refusal is retired (its negative is re-pinned below).
- *  3. R9 并发：每根会话 ≤ 4（U4=D1：等待答复占额度；错误含在飞清单 + 等待标注）。
+ *  3. Concurrency: NO cap (author decision 2026-09-26 — the former R9 gate U4=D1,
+ *     limit 4 per root session, is retired; pinned at the source face below).
  *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
  *     本文件反向钉死该摘除：stray `device` 键**不被消费**（无预检、不拦、不出现在
  *     摘要），调用照常走到 spawn 前置检查。
- *  5. description 硬事实：绝对路径 / Bash cwd 不保证 / 4 并发 / 3600s 预算。
+ *  5. description hard facts: absolute paths / Bash cwd not guaranteed / no
+ *     concurrency cap / 3600s budget.
  *
  * 无 ActorSystem 的用例停在「requires ActorSystem and SharedResources」——spawn
  * 链本身由隔离实例 e2e 覆盖（见交付结果 §②）。
@@ -94,11 +96,12 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(!props.contains("device"), s"device must be gone from the Delegate schema, got: $props")
     assertEquals(DelegateTool.name, "Delegate")
 
-  test("description carries the hard facts (absolute paths / cwd / 4 in flight / 3600s budget)"):
+  test("description carries the hard facts (absolute paths / cwd / no concurrency cap / 3600s budget)"):
     val d = DelegateTool.description
     assert(d.contains("ABSOLUTE paths"), "description must state the absolute-path fact")
     assert(d.toLowerCase.contains("working directory is not guaranteed"), "description must state the cwd fact")
-    assert(d.contains("4 kernel sessions in flight"), "description must state the R9 limit")
+    assert(d.contains("No hard concurrency limit"), "description must state the author-directed no-limit face (2026-09-26)")
+    assert(!d.contains("at most 4"), "the retired 4-cap wording must be gone from the description")
     assert(d.contains("3600s"), "description must state the wall-clock budget")
     // 旧语义残留守护：不再有 standalone 目标 / persistent 模式 / images 参数
     assert(!d.contains("standalone agent"), "standalone-target wording must be gone")
@@ -198,29 +201,41 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(JsonObject("task" -> "t".asJson, "description" -> "x".asJson), deep)
     yield assert(res.left.exists(_.message.contains("Maximum sub-agent depth")), res.toString)
 
-  // ---------- 3. R9 并发（U4=D1） ----------
+  // ---------- 3. Concurrency cap retired (author decision 2026-09-26: no hard limit) ----------
+  // The former R9 gate (ruling U4=D1, limit 4 per root session) is gone: InFlight /
+  // concurrencyError / concurrencyCheck were removed from DelegateTool and nothing
+  // replaced them. The two tests below pin the retirement: the prompt faces carry the
+  // no-limit wording (three copies kept in sync), and the spawn-path source carries no
+  // cap code - re-adding a gate turns the source-face test red (consciousness gate for
+  // a cap comeback; the 2026-08 rate-limit incident note stays on the object comment).
 
-  test("R9: the 5th concurrent call is rejected with the in-flight list (4 already in flight)"):
-    val three = (1 to 3).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
-    assert(DelegateTool.concurrencyError(three, now = 1000L).isEmpty, "3 in flight ⇒ the 4th call is admitted")
-    val four = three :+ DelegateTool.InFlight("delegate-kernel-00000004", AgentStatus.Processing, 1000L)
-    val err = DelegateTool.concurrencyError(four, now = 61_000L).getOrElse(fail("the 5th call must be rejected"))
-    assert(err.message.contains("Delegate concurrency limit reached"), err.message)
-    assertEquals(err.message.linesIterator.count(_.trim.startsWith("- delegate-kernel-")), 4)
-    assert(err.message.contains("status=Processing"), err.message)
+  test("no hard concurrency limit: description, embedded default and classpath seed carry the no-limit wording in sync"):
+    val d = DelegateTool.description
+    val seed = new String(
+      java.util.Objects.requireNonNull(
+        getClass.getClassLoader.getResourceAsStream("seed/agents/kernel/system.md")
+      ).readAllBytes(),
+      java.nio.charset.StandardCharsets.UTF_8
+    )
+    val seedBody = seed.linesIterator.dropWhile(_.startsWith("<!--")).mkString("\n").trim
+    val faces = List(
+      "description" -> d,
+      "embedded default" -> DelegateTool.BuiltinKernelSystemPrompt,
+      "classpath seed body" -> seedBody
+    )
+    for (name, text) <- faces do
+      assert(text.contains("No hard concurrency limit"),
+        s"$name must promise no hard concurrency limit (author 2026-09-26)")
+      assert(!text.contains("at most 4"), s"$name must not carry the retired 4-cap wording: $name")
+    assertEquals(DelegateTool.BuiltinKernelSystemPrompt.trim, seedBody,
+      "the embedded default (fail-safe tier 3) must stay verbatim-identical to the seed body")
 
-  test("R9/U4=D1: sessions waiting for an answer count toward the limit and are flagged"):
-    val waiting = DelegateTool.InFlight("delegate-kernel-wait0001", AgentStatus.WaitingForUser, 1000L)
-    val inFlight = waiting :: (2 to 4).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
-    val err = DelegateTool.concurrencyError(inFlight, now = 5000L).getOrElse(fail("limit must be enforced"))
-    assert(err.message.contains("delegate-kernel-wait0001"), err.message)
-    assert(err.message.contains("WAITING for the user's answer"), err.message)
-    assert(err.message.contains("ruling U4=D1"), err.message)
-
-  test("R9 负控: after one finishes (2 in flight) delegation is allowed again"):
-    val two = (1 to 2).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 0L))
-    assert(DelegateTool.concurrencyError(two, now = 0L).isEmpty)
-    assertEquals(DelegateTool.MaxConcurrentPerRoot, 4)
+  test("the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"):
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "DelegateTool.scala")
+    assert(!src.contains("MaxConcurrentPerRoot"), "the retired cap constant must stay out of the spawn-path source")
+    assert(!src.contains("concurrencyCheck"), "the retired gate check must stay out of the spawn-path source")
+    assert(!src.contains("concurrencyError"), "the retired gate error must stay out of the spawn-path source")
+    assert(!src.contains("case class InFlight"), "the retired in-flight snapshot type must stay out of the spawn-path source")
 
   // ---------- 4. 设备面摘除后的行为（2026-09-14 作者裁定 U1/U2） ----------
   // 摘除前本段 = 「设备预检 fail-fast 正控 + 负控」两条（预检函数已随 S1b 全删）。

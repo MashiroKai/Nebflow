@@ -54,10 +54,16 @@ object DelegateTool extends Tool:
   /** 内核 agent 定义名（作者裁定 U6=沿用 kernel）：会话 id `delegate-kernel-<8hex>`。 */
   val KernelAgentName = "kernel"
 
-  /** 每根会话的 Delegate 并发上限（R9，作者裁定 U4=D1）。依据是事故记录而非理论：
-    * 2026-08-xx 12:39 现场 7 个并发 Delegate 撞 API 限流后各自进入 retry/fallback
-    * 循环（`TaskStuckWatcher.scala` 头注释在案）。 */
-  val MaxConcurrentPerRoot: Int = 4
+  /** Concurrency cap RETIRED (author decision 2026-09-26: "at most 4 kernel sessions -
+    * no concurrency limit"). There is deliberately NO per-root-session cap on kernel
+    * spawns; in-flight kernels run concurrently. Knowledge retention (the gate was not
+    * removed out of ignorance): the old cap (R9, ruling U4=D1, limit 4 per root
+    * session) guarded against a real incident - on 2026-08-xx 12:39 seven concurrent
+    * Delegates hit the API rate limit and each fell into retry/fallback loops
+    * (`TaskStuckWatcher.scala` header note on record). Cap removed by author decision
+    * 2026-09-26; the rate-limit risk is accepted by the author (own API key).
+    * Reintroducing any cap needs a fresh author ruling (DelegateToolSpec pins the
+    * retirement at the source face). */
 
   /** Sub-agent 深度上限（与 `AgentCore.MaxDepth` 同值；内核是叶子，恒 depth=1）。 */
   val MaxDepth: Int = 5
@@ -87,7 +93,7 @@ object DelegateTool extends Tool:
 - Each kernel session gets a throwaway work root (temp directory), written on the first line of its brief. If the task names its own absolute directory, the task wins.
 - Remote (device=) paths are paths on THAT machine and must be absolute.
 
-**Limits:** at most 4 kernel sessions in flight per root session (sessions waiting for your answer count too); the 5th is rejected with the in-flight list. Each kernel has a 3600s wall-clock budget that EXCLUDES user-wait time.
+**Limits:** No hard concurrency limit — in-flight kernels run concurrently. Each kernel has a 3600s wall-clock budget that EXCLUDES user-wait time.
 
 **Rules:**
 - Do NOT duplicate the kernel's work — work on something else and let the result arrive as a system message.
@@ -195,7 +201,7 @@ object DelegateTool extends Tool:
 
 ## ④ Limits and rules
 
-**Limits:** at most 4 kernel sessions in flight per root session (sessions waiting for your answer count too); the 5th is rejected with the in-flight list. Each kernel has a 3600s wall-clock budget that EXCLUDES user-wait time.
+**Limits:** No hard concurrency limit — in-flight kernels run concurrently. Each kernel has a 3600s wall-clock budget that EXCLUDES user-wait time.
 
 **Rules:**
 - Do NOT duplicate the kernel's work — work on something else and let the result arrive as a system message.
@@ -282,40 +288,12 @@ If the task involves creating a Nebflow plugin, first read `~/.nebflow/plugins/n
         IO.pure(Left(ToolError("No agent library available — Delegate cannot resolve the kernel definition.")))
   end resolveKernelDef
 
-  /** 在飞快照（R9 判据的最小输入——把 registry 记录投影成可测的纯数据）。 */
-  private[tools] final case class InFlight(sessionId: String, status: AgentStatus, startedAt: Long)
-
-  /** R9 判据（**纯函数**，单点来源）：`None` = 放行；`Some(err)` = 拒绝（自描述
-    * 错误含在飞清单 + 哪些在等待答复）。U4=D1：等待答复中的内核同样占额度。 */
-  private[tools] def concurrencyError(inFlight: List[InFlight], now: Long): Option[ToolError] =
-    if inFlight.size < MaxConcurrentPerRoot then None
-    else
-      val lines = inFlight.sortBy(_.startedAt).map { r =>
-        val age = if r.startedAt > 0 then s" (up ${math.max(0L, now - r.startedAt) / 1000}s)" else ""
-        val waiting =
-          if r.status == AgentStatus.WaitingForUser then
-            " — WAITING for the user's answer (still counts toward the limit: ruling U4=D1)"
-          else ""
-        s"  - ${r.sessionId} status=${r.status}$age$waiting"
-      }
-      Some(
-        ToolError(
-          s"""Delegate concurrency limit reached: $MaxConcurrentPerRoot kernel sessions are already in flight under this root session (limit $MaxConcurrentPerRoot).
-In flight:
-${lines.mkString("\n")}
-Wait for one to finish, or cancel one with AgentControl(cancel) before delegating again. Do not retry blindly — a blind retry is rejected the same way."""
-        )
-      )
-
-  /** R9 并发校验（U4=D1：等待答复中的内核同样占额度）。 */
-  private def concurrencyCheck(resources: SharedResources, rootSid: String): IO[Either[ToolError, Unit]] =
-    resources.agentRegistry.get.map { registry =>
-      val inFlight = registry.values
-        .filter(r => r.kind == AgentKind.Delegate && (rootSid.isEmpty || r.rootSessionId == rootSid))
-        .map(r => InFlight(r.sessionId, r.status, r.startedAt))
-        .toList
-      concurrencyError(inFlight, System.currentTimeMillis()).toLeft(())
-    }
+  // Concurrency check RETIRED (author decision 2026-09-26: no hard concurrency limit).
+  // The former R9 gate trio - the in-flight snapshot type, the pure rejection
+  // criterion and the registry-count read (limit 4 per root session, waiting sessions
+  // counted) - was removed from this single point, which both the Delegate tool leg and
+  // the Mail->kernel leg shared. The 2026-08 rate-limit incident note stays on the
+  // object-level comment at the top of this object (knowledge kept, gate gone).
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val task = input("task").flatMap(_.asString).getOrElse("")
@@ -363,11 +341,10 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
           // `store.getSafetyMode` 的盘上遗留值（那会让全局 confirm-edits 时 fork 出的
           // 子代理继承盘上 auto-all），也不再有"本会话覆盖"可继承——档位对全应用一致。
           safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-          quota <- concurrencyCheck(resources, rootSid)
-          result <- quota match
-            case Left(err) => IO.pure(Left(err))
-            case Right(_) =>
-              IO.blocking(java.nio.file.Files.createTempDirectory("nb-kernel-")).flatMap { workRoot =>
+          // No concurrency gate (retired 2026-09-26, author decision: no hard limit) -
+          // every spawn proceeds; see the retirement note at the top of this object.
+          result <-
+            IO.blocking(java.nio.file.Files.createTempDirectory("nb-kernel-")).flatMap { workRoot =>
                 spawnBackground(
                   agentDef = kernelDef,
                   task = task,
@@ -394,7 +371,8 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
   // triggers Kernel via the Nebula-only address leg; the dispatch receipt carries a
   // follow-up address"): the Delegate dispatch path is opened for reuse by the
   // engine-side Mail leg. This entry shares the SAME spawn chain as [[call]] (same
-  // kernel def resolution, same R9 concurrency gate, same BackoffSupervisor adapter
+  // kernel def resolution, no concurrency gate - retired 2026-09-26 by author
+  // decision, same BackoffSupervisor adapter
   // and budget); the only two differences: (1) the caller is MailTool (Nebula's Mail
   // `kernel` leg); (2) the return value is the **subagentId** (the receipt must carry
   // the follow-up address `kernel:<id>`, which Delegate's ack text does not include).
@@ -424,11 +402,9 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
             for
               rootSid <- callerRootIO
               safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-              quota <- concurrencyCheck(resources, rootSid)
-              spawned <- quota match
-                case Left(err) => IO.pure(Left(err))
-                case Right(_) =>
-                  IO.blocking(java.nio.file.Files.createTempDirectory("nb-kernel-")).flatMap { workRoot =>
+              // No concurrency gate (retired 2026-09-26, author decision: no hard limit).
+              spawned <-
+                IO.blocking(java.nio.file.Files.createTempDirectory("nb-kernel-")).flatMap { workRoot =>
                     spawnBackground(
                       agentDef = defn,
                       task = task,
