@@ -58,18 +58,44 @@ $CosDepsBase = "$CosBaseCn/deps"
 
 # ---- checksum machinery (deps/ integrity, batch 2) ------------------------
 $script:ChecksumsContent = $null
+$script:ChecksumsState = ""      # "ok" | "unreachable" | "unparseable"
+$script:LastUnknownReason = ""   # manifest-unreachable|manifest-unparseable|no-sha-tool|not-in-manifest
+
+# Integrity-verification policy for third-party deps (NEBFLOW_VERIFY env,
+# default warn):
+#   strict = refuse unverified artifacts (the download fails when no usable
+#            checksum can be obtained from deps/checksums.txt)
+#   warn   = proceed, but print a VISIBLE warning for every unverified
+#            artifact - degraded verification is never silent
+#   off    = skip verification entirely (a one-time notice is still printed)
+$script:VerifyMode = if ($env:NEBFLOW_VERIFY) { "$env:NEBFLOW_VERIFY".ToLowerInvariant() } else { "warn" }
+if ($script:VerifyMode -ne "strict" -and $script:VerifyMode -ne "warn" -and $script:VerifyMode -ne "off") {
+    $script:VerifyMode = "warn"
+}
 
 function Get-ExpectedChecksum($name) {
     if ($null -eq $script:ChecksumsContent) {
+        $script:ChecksumsContent = ""
         try {
-            $script:ChecksumsContent = (Invoke-WebRequest -Uri "$CosDepsBase/checksums.txt" -UseBasicParsing -TimeoutSec 15).Content
-            Write-V "Loaded deps/checksums.txt from COS."
+            $raw = (Invoke-WebRequest -Uri "$CosDepsBase/checksums.txt" -UseBasicParsing -TimeoutSec 15).Content
+            # Keep only well-formed "sha256  name" rows: a fetched-but-garbage
+            # body must degrade as "unparseable" (a visible warning), never as
+            # a working manifest that silently verifies nothing.
+            $rows = @("$raw" -split "`n" | Where-Object { $_ -match '^[0-9a-fA-F]{64}\s+\S+$' })
+            if ($rows.Count -gt 0) {
+                $script:ChecksumsContent = $rows -join "`n"
+                $script:ChecksumsState = "ok"
+                Write-V "Loaded deps/checksums.txt from the mirror."
+            } else {
+                $script:ChecksumsState = "unparseable"
+                Write-V "deps/checksums.txt fetched but unparseable - checksum verification degraded."
+            }
         } catch {
-            $script:ChecksumsContent = ""
+            $script:ChecksumsState = "unreachable"
             Write-V "deps/checksums.txt unreachable - checksum verification degraded."
         }
     }
-    if (-not $script:ChecksumsContent) { return $null }
+    if ($script:ChecksumsState -ne "ok") { return $null }
     foreach ($line in ($script:ChecksumsContent -split "`n")) {
         $parts = $line.Trim() -split '\s+', 2
         if ($parts.Count -eq 2 -and $parts[1] -eq $name) { return $parts[0].ToLower() }
@@ -77,14 +103,62 @@ function Get-ExpectedChecksum($name) {
     return $null
 }
 
-# Returns "ok" | "bad" | "unknown"
+# Returns "ok" | "bad" | "unknown" (on "unknown" also sets
+# $script:LastUnknownReason so the policy gate can warn precisely)
 function Test-FileChecksum($path, $name) {
     $expected = Get-ExpectedChecksum $name
-    if (-not $expected) { return "unknown" }
-    $actual = (Get-FileHash -Path $path -Algorithm SHA256).Hash.ToLower()
+    if (-not $expected) {
+        if ($script:ChecksumsState -eq "ok") { $script:LastUnknownReason = "not-in-manifest" }
+        elseif ($script:ChecksumsState -eq "unparseable") { $script:LastUnknownReason = "manifest-unparseable" }
+        else { $script:LastUnknownReason = "manifest-unreachable" }
+        return "unknown"
+    }
+    try {
+        $actual = (Get-FileHash -Path $path -Algorithm SHA256).Hash.ToLower()
+    } catch {
+        $script:LastUnknownReason = "no-sha-tool"
+        return "unknown"
+    }
     if ($actual -eq $expected) { Write-V "Checksum OK: $name"; return "ok" }
     Write-Warn2 "Checksum mismatch for $name (expected $expected, got $actual)"
     return "bad"
+}
+
+# Policy gate for "no verification possible" verdicts (NEBFLOW_VERIFY).
+# Returns $true when the install may proceed despite the unverified file;
+# $false = refuse it (strict), so Get-FileFromSources tries the next source.
+function Accept-Unverified($name) {
+    if ($script:VerifyMode -eq "off") {
+        if (-not $script:VerifyOffNoted) {
+            Write-Warn2 "Integrity verification disabled by NEBFLOW_VERIFY=off - downloads are NOT checksum-verified."
+            $script:VerifyOffNoted = $true
+        }
+        return $true
+    }
+    if ($script:VerifyMode -eq "strict") { return $false }
+    switch ($script:LastUnknownReason) {
+        "manifest-unreachable" {
+            if (-not $script:VerifyWarnManifestNoted) {
+                Write-Warn2 "Checksum manifest unreachable ($CosDepsBase/checksums.txt) => this install performs NO integrity verification on third-party deps."
+                Write-Warn2 "Fix the mirror and re-run, or set NEBFLOW_VERIFY=strict to refuse unverified installs."
+                $script:VerifyWarnManifestNoted = $true
+            }
+        }
+        "manifest-unparseable" {
+            if (-not $script:VerifyWarnManifestNoted) {
+                Write-Warn2 "Checksum manifest fetched but unparseable ($CosDepsBase/checksums.txt) => this install performs NO integrity verification on third-party deps."
+                Write-Warn2 "Fix the mirror and re-run, or set NEBFLOW_VERIFY=strict to refuse unverified installs."
+                $script:VerifyWarnManifestNoted = $true
+            }
+        }
+        "no-sha-tool" {
+            Write-Warn2 "No SHA-256 support available - cannot verify $name; installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+        }
+        default {
+            Write-Warn2 "$name has no entry in deps/checksums.txt - installed unverified. Set NEBFLOW_VERIFY=strict to refuse unverified installs."
+        }
+    }
+    return $true
 }
 
 function Write-ChecksumHint($name) {
@@ -106,6 +180,11 @@ function Save-WithProgress {
     $req.Timeout = 600000
     $req.ReadWriteTimeout = 600000
     $req.UserAgent = "$ProductName-installer/$ScriptVersion"
+    # Some sources (npmmirror) answer with 302s pointing at their CDN:
+    # redirects must be followed explicitly - a bare redirect page is NOT
+    # the artifact (108-byte HTML would otherwise pass as a download).
+    $req.AllowAutoRedirect = $true
+    $req.MaximumAutomaticRedirections = 8
     $resp = $req.GetResponse()
     try {
         $total = $resp.ContentLength
@@ -156,6 +235,11 @@ function Get-FileFromSources {
         if (-not (Test-Path $Path)) { continue }
         $verdict = Test-FileChecksum $Path $Name
         if ($verdict -eq "bad") {
+            Remove-Item $Path -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        if ($verdict -eq "unknown" -and -not (Accept-Unverified $Name)) {
+            # strict policy: refuse the unverified artifact, try the next source
             Remove-Item $Path -Force -ErrorAction SilentlyContinue
             continue
         }
@@ -371,38 +455,77 @@ if ($javaVer -ge $JdkMajorRequired) {
 } else {
     Write-Info "Java $JdkMajorRequired+ not found. Installing OpenJDK 21..."
 
-    $jdkInstalled = $false
+    # Region is needed now to pick the source order; the timezone/locale test
+    # is instant (same rule as the Git stage below; no network probe).
+    if (-not $Region) {
+        $tz = [TimeZoneInfo]::Local.Id
+        if ($tz -match "China|Shanghai|Chongqing|Hong_Kong|Taipei|Macau|Urumqi") {
+            $Region = "cn"
+        } elseif ($env:LANG -match "zh_CN|zh_TW|zh_HK" -or $env:LC_ALL -match "zh_CN|zh_TW|zh_HK") {
+            $Region = "cn"
+        } else {
+            $Region = "global"
+        }
+    }
 
-    # Method 1: winget (cleanest if available)
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
+    $jdkInstalled = $false
+    $jdkMsiName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.msi"
+    $jdkMsiPath = "$env:TEMP\$jdkMsiName"
+    # TUNA Adoptium mirror (domestic direct, ~4.3 MB/s measured, first 100 KB
+    # byte-identical to the pinned msi) and the Adoptium API (overseas).
+    $tunaJdkUrl = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/windows/$jdkMsiName"
+    $adoptiumJdkUrl = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse"
+
+    function Install-JdkFromMsi([string[]]$Urls) {
+        Write-Info "Downloading Temurin JDK 21 msi..."
+        if (-not (Get-FileFromSources -Path $jdkMsiPath -Name $jdkMsiName -Urls $Urls)) {
+            Write-Warn2 "JDK download failed from the given sources."
+            return $false
+        }
+        Write-Info "Installing JDK 21..."
+        $proc = Start-Process msiexec.exe -ArgumentList "/i", $jdkMsiPath, "/quiet", "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith" -Wait -PassThru
+        Remove-Item $jdkMsiPath -Force -ErrorAction SilentlyContinue
+        if ($proc.ExitCode -eq 0) { return $true }
+        Write-Err2 "JDK msi install failed (exit code $($proc.ExitCode))."
+        return $false
+    }
+
+    function Install-JdkFromWinget {
+        $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+        if (-not $wingetCmd) { return $false }
         Write-Info "Trying winget (EclipseAdoptium.Temurin.21.JDK)..."
         try {
             $proc = Start-Process winget -ArgumentList @(
                 "install", "--id", "EclipseAdoptium.Temurin.21.JDK", "-e", "--source", "winget",
                 "--silent", "--accept-package-agreements", "--accept-source-agreements"
             ) -Wait -PassThru -NoNewWindow 2>&1
-            if ($LASTEXITCODE -eq 0) { $jdkInstalled = $true }
+            if ($LASTEXITCODE -eq 0) { return $true }
         } catch {}
+        return $false
     }
 
-    # Method 2: direct Temurin 21 msi (COS mirror first, Adoptium API fallback)
-    if (-not $jdkInstalled) {
-        $jdkName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.msi"
-        $jdkPath = "$env:TEMP\$jdkName"
-        $jdkUrls = @(
-            "$CosDepsBase/$jdkName",
-            "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse"
-        )
-        Write-Info "Downloading Temurin JDK 21 msi (COS/Adoptium)..."
-        if (Get-FileFromSources -Path $jdkPath -Name $jdkName -Urls $jdkUrls) {
-            Write-Info "Installing JDK 21..."
-            $proc = Start-Process msiexec.exe -ArgumentList "/i", $jdkPath, "/quiet", "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith" -Wait -PassThru
-            Remove-Item $jdkPath -Force -ErrorAction SilentlyContinue
-            if ($proc.ExitCode -eq 0) { $jdkInstalled = $true }
-            else { Write-Err2 "JDK msi install failed (exit code $($proc.ExitCode))." }
-        } else {
-            Write-Warn2 "JDK download failed from all sources."
+    # Source order per region (recon R5.3):
+    #   cn     = direct msi (deps mirror -> TUNA) -> winget -> Adoptium API
+    #   global = winget -> direct msi (deps mirror -> TUNA -> Adoptium API)
+    if ($Region -eq "cn") {
+        if (-not $jdkInstalled) {
+            Write-Info "Trying direct Temurin 21 msi (deps mirror / TUNA, cn)..."
+            if (Install-JdkFromMsi @("$CosDepsBase/$jdkMsiName", $tunaJdkUrl)) { $jdkInstalled = $true }
+        }
+        if (-not $jdkInstalled) {
+            if (Install-JdkFromWinget) { $jdkInstalled = $true }
+        }
+        if (-not $jdkInstalled) {
+            Write-Info "Trying Adoptium API msi (overseas last resort, cn)..."
+            if (Install-JdkFromMsi @($adoptiumJdkUrl)) { $jdkInstalled = $true }
+        }
+    } else {
+        if (-not $jdkInstalled) {
+            if (Install-JdkFromWinget) { $jdkInstalled = $true }
+        }
+        if (-not $jdkInstalled) {
+            Write-Info "Trying direct Temurin 21 msi (deps mirror / TUNA / Adoptium API)..."
+            if (Install-JdkFromMsi @("$CosDepsBase/$jdkMsiName", $tunaJdkUrl, $adoptiumJdkUrl)) { $jdkInstalled = $true }
         }
     }
 
@@ -487,16 +610,20 @@ if (Test-GitBash) {
         $gitInstaller = "Git-$gitVer-64-bit.exe"
         $gitPath = "$env:TEMP\$gitInstaller"
 
-        # COS mirror is the primary source for every region (batch 2)
+        # deps/ mirror is the primary source for every region (batch 2)
         if ($Region -eq "cn") {
-            # China: COS, then proxied GitHub, then GitHub
+            # China: mirror, then npmmirror CDN (~2 MB/s measured; it answers
+            # 302 -> cdn.npmmirror.com and the downloader follows redirects by
+            # design - a bare redirect page must never pass as the artifact),
+            # then proxied GitHub, then GitHub
             $gitMirrors = @(
                 "$CosDepsBase/$gitInstaller",
+                "https://registry.npmmirror.com/-/binary/git-for-windows/$gitTag/$gitInstaller",
                 "https://ghproxy.net/https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller",
                 "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller"
             )
         } else {
-            # Global: COS, then GitHub
+            # Global: mirror, then GitHub
             $gitMirrors = @(
                 "$CosDepsBase/$gitInstaller",
                 "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller"
@@ -598,10 +725,14 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     $rgZip = Join-Path $InstallDir "rg.zip"
     try {
         Write-Info "Downloading rg $RgVersion..."
+        # Source chain: deps/ mirror -> ghproxy -> upstream. ghproxy (~16 KB/s)
+        # and upstream (~14 KB/s) are both slow - the real fix is the populated
+        # deps/ mirror; ghproxy sits above upstream because upstream is slower
+        # AND unreachable on some domestic networks.
         $rgUrls = @(
             "$CosDepsBase/$rgName",
-            "https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/$rgName",
-            "https://ghproxy.net/https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/$rgName"
+            "https://ghproxy.net/https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/$rgName",
+            "https://github.com/BurntSushi/ripgrep/releases/download/$RgVersion/$rgName"
         )
         if (-not (Get-FileFromSources -Path $rgZip -Name $rgName -Urls $rgUrls)) {
             throw "all sources failed"

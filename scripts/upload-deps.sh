@@ -1,25 +1,39 @@
 #!/usr/bin/env bash
-# upload-deps.sh — one-shot uploader for third-party installer deps -> COS deps/
+# upload-deps.sh — one-shot uploader for third-party installer deps -> OSS deps/
 #
 # Batch 2 of script-install-release v2 (.nebflow/Spec/script-install-release-v2.md):
 # every platform dependency (ripgrep / JDK 21 msi / Git for Windows / Homebrew
-# installer snapshot / Temurin linux tarballs) is mirrored on the release COS
+# installer snapshot / Temurin linux tarballs) is mirrored on the release
 # bucket under the `deps/` prefix, with a deps/checksums.txt manifest (sha256)
 # generated at upload time. Install scripts (release/install.sh, release/
-# install.ps1) try COS first, then demoted upstream sources.
+# install.ps1) try the mirror first, then demoted upstream sources.
 #
-# deps are LOW-FREQUENCY assets: this script is run manually (local or CI
-# workflow_dispatch) when a dep version changes — it is intentionally NOT part
-# of the release CI (D4).
+# Endpoint (installmirror batch, 2026-09-25): the write end is now the SAME
+# bucket + prefix the installers read (release/install.sh:30 COS_BASE_CN,
+# release/install.ps1:39 $CosBaseCn -> oss-cn-hangzhou.aliyuncs.com). Between
+# 2026-09-06 and 2026-09-25 this script uploaded to a Tencent COS endpoint
+# whose bucket did not even exist (<Code>NoSuchBucket</Code>): the deps/
+# prefix stayed empty for 18 days and both installers silently degraded to
+# unverified installs. The COS_ bucket-variable name stays (brand.conf key is
+# `cosBucket`, name kept by ruling; only the value face changed).
+#
+# deps are LOW-FREQUENCY assets: run manually or from the release workflow
+# when a dep version changes. release.yml now re-runs --fetch && --upload on
+# every release and then asserts public availability of every object, so the
+# prefix can no longer rot silently.
 #
 # Bucket comes from brand.conf (cosBucket) — single source of truth.
-# Upload goes through the accelerate endpoint, mirroring release.yml's COS job.
+# Credentials come from the environment (OSS_ACCESS_KEY_ID /
+# OSS_ACCESS_KEY_SECRET — same names release.yml maps from repo secrets).
+# ossutil is invoked with per-command -i/-k/-e flags, so no credential ever
+# touches a config file on disk.
 #
 # Usage:
-#   scripts/upload-deps.sh --list       # print the dependency manifest table
-#   scripts/upload-deps.sh --fetch      # download upstream -> deps-staging/ + checksums.txt
-#   scripts/upload-deps.sh --dry-run    # validate manifest + staging + report upstream reachability (no credentials needed)
-#   scripts/upload-deps.sh --upload     # upload staging -> COS deps/ (needs coscmd + COS_SECRET_ID/COS_SECRET_KEY), then HEAD-verifies each object
+#   scripts/upload-deps.sh --list              # print the dependency manifest table
+#   scripts/upload-deps.sh --fetch             # download upstream -> deps-staging/ + checksums.txt
+#   scripts/upload-deps.sh --fetch-one <name>  # fetch a single object (batched-leg mode)
+#   scripts/upload-deps.sh --dry-run           # validate manifest + staging + upstream reachability (no credentials needed)
+#   scripts/upload-deps.sh --upload            # upload staging -> OSS deps/ (needs OSS_ACCESS_KEY_ID/OSS_ACCESS_KEY_SECRET), then GET-verifies every object
 #
 # Notes:
 # - homebrew-install.sh is a SNAPSHOT of Homebrew/install HEAD; re-run
@@ -27,11 +41,13 @@
 # - No linux aarch64 ripgrep entry: upstream ships no aarch64-linux-musl
 #   tarball (verified 404, 2026-09-06); the installer uses the distro package
 #   manager on that platform instead.
+# - Staging directory override: DEPS_STAGING=<dir> (default <repo>/deps-staging).
+#   Useful for a fresh re-fetch that must not touch an existing staging tree.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STAGING="${ROOT}/deps-staging"
+STAGING="${DEPS_STAGING:-${ROOT}/deps-staging}"
 MODE="${1:-}"
 
 # Bucket from brand.conf (parser parity with scripts/render-brand.sh)
@@ -41,8 +57,9 @@ brand_value() {
 COS_BUCKET="$(brand_value cosBucket)"
 [[ -n "$COS_BUCKET" ]] || { echo "ERROR: cannot read cosBucket from brand.conf" >&2; exit 2; }
 
-COS_CLIENT_BASE="https://${COS_BUCKET}.cos.ap-nanjing.myqcloud.com"   # what installers fetch
-COS_UPLOAD_ENDPOINT="cos.accelerate.myqcloud.com"                      # what CI uploads through (release.yml precedent)
+# Same bucket + endpoint the installers read (single mirror, both faces).
+OSS_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
+OSS_CLIENT_BASE="https://${COS_BUCKET}.${OSS_ENDPOINT}"
 
 # name|upstream_url
 DEPS=(
@@ -65,15 +82,53 @@ sha256_of() {
   else die "need shasum or sha256sum to build checksums.txt"; fi
 }
 
+ossutil_bin() {
+  # Pinned ossutil 1.7.19 (same version release.yml installs for the jar
+  # upload). Zip sha256: linux value is the one release.yml has pinned since
+  # the 2026-09-14 bucket switch; mac-arm64 value measured at pinning time
+  # (installmirror batch). Unmatched platforms must bring their own ossutil.
+  if command -v ossutil >/dev/null 2>&1; then printf 'ossutil'; return 0; fi
+  local os arch url want dir zip bin
+  os="$(uname -s)"; arch="$(uname -m)"
+  case "${os}/${arch}" in
+    Linux/x86_64)
+      url="https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip"
+      want="dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343" ;;
+    Darwin/arm64)
+      url="https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-mac-arm64.zip"
+      want="10ece4d328c5d2440833adc5f4167168e9b2a4c5d364f673b0c45bcc4fd02ec5" ;;
+    *)
+      die "no pinned ossutil build for ${os}/${arch} - install ossutil on PATH and re-run" ;;
+  esac
+  dir="${TMPDIR:-/tmp}/upload-deps-ossutil-1.7.19-${arch}"
+  bin="${dir}/ossutil"
+  if [ ! -x "$bin" ]; then
+    mkdir -p "$dir"
+    zip="${dir}/ossutil.zip"
+    # Progress note goes to stderr: the caller captures this function's stdout
+    # via command substitution, so a stdout echo would corrupt the binary path.
+    echo "[i] downloading pinned ossutil 1.7.19 (${os}/${arch})" >&2
+    curl -fL --connect-timeout 15 --max-time 300 --retry 2 -o "$zip" "$url" \
+      || die "pinned ossutil download failed: ${url}"
+    [ "$(sha256_of "$zip")" = "$want" ] || die "pinned ossutil zip sha256 mismatch - refusing to run"
+    unzip -q -j -o "$zip" -d "$dir" || die "unzip failed for the pinned ossutil archive"
+    bin="$(find "$dir" -type f -name 'ossutil*' ! -name '*.zip' | head -1)"
+    [ -n "$bin" ] || die "ossutil binary not found inside the pinned archive"
+    chmod +x "$bin" 2>/dev/null || true
+    [ -x "$bin" ] || die "ossutil binary is not executable: ${bin}"
+  fi
+  printf '%s' "$bin"
+}
+
 cmd_list() {
-  printf "%-58s %s\n" "FILE (COS key: deps/<name>)" "UPSTREAM"
+  printf "%-58s %s\n" "FILE (mirror key: deps/<name>)" "UPSTREAM"
   for entry in "${DEPS[@]}"; do
     local name="${entry%%|*}" url="${entry#*|}"
     printf "%-58s %s\n" "$name" "$url"
   done
   echo ""
-  echo "COS client base : ${COS_CLIENT_BASE}/deps/"
-  echo "COS upload via  : ${COS_UPLOAD_ENDPOINT} (bucket ${COS_BUCKET}, from brand.conf)"
+  echo "Mirror base (what installers fetch): ${OSS_CLIENT_BASE}/deps/"
+  echo "Write target: oss://${COS_BUCKET}/deps/ via ${OSS_ENDPOINT}"
 }
 
 fetch_one() {
@@ -104,6 +159,17 @@ cmd_fetch() {
   [ "$failed" = "0" ] || die "some downloads failed - fix the table or network and re-run"
   build_checksums
   echo "[ok] staging complete: ${STAGING}"
+}
+
+cmd_fetch_one() {
+  local name="$1" entry found=""
+  for entry in "${DEPS[@]}"; do
+    if [ "${entry%%|*}" = "$name" ]; then found="${entry#*|}"; break; fi
+  done
+  [ -n "$found" ] || die "unknown dep name: ${name} (see --list)"
+  mkdir -p "$STAGING"
+  fetch_one "$name" "$found" || die "fetch failed: ${name}"
+  echo "[ok] ${name} staged ($(stat -f%z "${STAGING}/${name}" 2>/dev/null || stat -c%s "${STAGING}/${name}")B sha256 $(sha256_of "${STAGING}/${name}"))"
 }
 
 build_checksums() {
@@ -156,7 +222,7 @@ cmd_dry_run() {
     echo "[warn] no staging yet (${STAGING}/checksums.txt absent) - run --fetch first; only manifest validated"
   fi
   # 3) upstream reachability report (informational; github may be unreachable
-  #    on domestic networks - that is exactly why the COS mirror exists)
+  #    on domestic networks - that is exactly why the mirror exists)
   for entry in "${DEPS[@]}"; do
     name="${entry%%|*}" url="${entry#*|}"
     if curl -sIL --connect-timeout 8 --max-time 20 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null | grep -qE '^(200|302)'; then
@@ -165,44 +231,82 @@ cmd_dry_run() {
       echo "[net] upstream NOT verified (may be network-dependent): ${name}"
     fi
   done
-  # 4) target COS keys report
-  echo "[i] upload would publish to: ${COS_CLIENT_BASE}/deps/<name> + deps/checksums.txt"
+  # 4) target mirror keys report
+  echo "[i] upload would publish to: ${OSS_CLIENT_BASE}/deps/<name> + deps/checksums.txt"
   exit $rc
 }
 
 cmd_upload() {
-  command -v coscmd >/dev/null 2>&1 || die "coscmd not installed (pip install coscmd)"
-  : "${COS_SECRET_ID:?COS_SECRET_ID env required}" 
-  : "${COS_SECRET_KEY:?COS_SECRET_KEY env required}"
+  : "${OSS_ACCESS_KEY_ID:?OSS_ACCESS_KEY_ID env required}"
+  : "${OSS_ACCESS_KEY_SECRET:?OSS_ACCESS_KEY_SECRET env required}"
   [ -f "${STAGING}/checksums.txt" ] || die "no checksums.txt in staging - run --fetch first"
   build_checksums   # regenerate so staging and manifest are guaranteed consistent
-  coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e "$COS_UPLOAD_ENDPOINT"
+  local util
+  util="$(ossutil_bin)"
+  # Target-bucket existence precheck (2026-09-25 root-cause addendum): the
+  # old write end pointed at a bucket that did not exist at all
+  # (<Code>NoSuchBucket</Code>), so a "successful" upload was impossible.
+  # Refuse to write when the target bucket root answers NoSuchBucket.
+  local precheck body_code
+  precheck="$(curl -sS --connect-timeout 6 --max-time 15 "${OSS_CLIENT_BASE}/" 2>/dev/null || true)"
+  if [ -z "$precheck" ]; then
+    die "target bucket root unreachable (${OSS_CLIENT_BASE}/) - precheck inconclusive, refusing to upload"
+  fi
+  body_code="$(printf '%s' "$precheck" | grep -oE '<Code>[^<]+' | head -1 | cut -d'>' -f2 || true)"
+  if [ "$body_code" = "NoSuchBucket" ]; then
+    die "target bucket ${COS_BUCKET} does not exist (NoSuchBucket) - fix bucket/endpoint before uploading"
+  fi
+  echo "[ok] target bucket precheck passed (${OSS_CLIENT_BASE}/ root code: ${body_code:-none})"
   local entry name
   for entry in "${DEPS[@]}"; do
     name="${entry%%|*}"
     echo "[upload] deps/${name}"
-    coscmd upload "${STAGING}/${name}" "deps/${name}" -f
+    "$util" cp "${STAGING}/${name}" "oss://${COS_BUCKET}/deps/${name}" -f \
+      -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET" -e "$OSS_ENDPOINT"
   done
   echo "[upload] deps/checksums.txt"
-  coscmd upload "${STAGING}/checksums.txt" "deps/checksums.txt" -f
-  # Post-upload verification: every object must be publicly fetchable (200)
-  local rc=0
+  "$util" cp "${STAGING}/checksums.txt" "oss://${COS_BUCKET}/deps/checksums.txt" -f \
+    -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET" -e "$OSS_ENDPOINT"
+  # Post-upload verification is a GET, not a HEAD: every object must come
+  # back byte-for-byte (HTTP 200 AND full sha256 equal to the freshly staged
+  # manifest). "The upload command exited 0" is NOT acceptance - that is
+  # exactly how the 2026-09 emptiness went unnoticed for 18 days.
+  local rc=0 code expected actual got
   for entry in "${DEPS[@]}"; do
     name="${entry%%|*}"
-    local code
-    code="$(curl -sIL -o /dev/null -w '%{http_code}' --max-time 30 "${COS_CLIENT_BASE}/deps/${name}")"
-    if [ "$code" = "200" ]; then echo "[ok] ${COS_CLIENT_BASE}/deps/${name}"
-    else echo "[FAIL] ${COS_CLIENT_BASE}/deps/${name} -> HTTP ${code}"; rc=1; fi
+    got="$(mktemp "${TMPDIR:-/tmp}/upload-deps-verify-XXXXXX")"
+    code="$(curl -fsSL -o "$got" -w '%{http_code}' --connect-timeout 8 --max-time 900 \
+      "${OSS_CLIENT_BASE}/deps/${name}" 2>/dev/null || true)"
+    expected="$(awk -v f="$name" '$2 == f { print $1; exit }' "${STAGING}/checksums.txt")"
+    actual="$(sha256_of "$got" 2>/dev/null || true)"
+    rm -f "$got"
+    if [ "$code" = "200" ] && [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
+      echo "[ok] GET sha256 match: deps/${name}"
+    else
+      echo "[FAIL] deps/${name} -> HTTP ${code:-none} sha256 ${actual:-none} (expected ${expected:-none})"; rc=1
+    fi
   done
-  code="$(curl -sIL -o /dev/null -w '%{http_code}' --max-time 30 "${COS_CLIENT_BASE}/deps/checksums.txt")"
-  [ "$code" = "200" ] && echo "[ok] ${COS_CLIENT_BASE}/deps/checksums.txt" || { echo "[FAIL] checksums.txt -> HTTP ${code}"; rc=1; }
-  [ $rc = 0 ] && echo "[done] all deps live on COS." || die "post-upload verification failed"
+  got="$(mktemp "${TMPDIR:-/tmp}/upload-deps-verify-XXXXXX")"
+  code="$(curl -fsSL -o "$got" -w '%{http_code}' --connect-timeout 8 --max-time 120 \
+    "${OSS_CLIENT_BASE}/deps/checksums.txt" 2>/dev/null || true)"
+  if [ "$code" = "200" ] && cmp -s "$got" "${STAGING}/checksums.txt"; then
+    echo "[ok] GET byte-identical: deps/checksums.txt"
+  else
+    echo "[FAIL] deps/checksums.txt -> HTTP ${code:-none} or bytes differ from staging"; rc=1
+  fi
+  rm -f "$got"
+  if [ "$rc" = "0" ]; then
+    echo "[done] all deps live on ${OSS_CLIENT_BASE}/deps/ and sha256-verified."
+  else
+    die "post-upload verification failed"
+  fi
 }
 
 case "$MODE" in
-  --list)    cmd_list ;;
-  --fetch)   cmd_fetch ;;
-  --dry-run) cmd_dry_run ;;
-  --upload)  cmd_upload ;;
-  *)         cmd_list >&2; die "usage: $0 --list | --fetch | --dry-run | --upload" ;;
+  --list)       cmd_list ;;
+  --fetch)      cmd_fetch ;;
+  --fetch-one)  shift; cmd_fetch_one "${1:-}";;
+  --dry-run)    cmd_dry_run ;;
+  --upload)     cmd_upload ;;
+  *)            cmd_list >&2; die "usage: $0 --list | --fetch | --fetch-one <name> | --dry-run | --upload" ;;
 esac
