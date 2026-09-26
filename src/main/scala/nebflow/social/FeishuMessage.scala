@@ -24,7 +24,12 @@ import io.circe.Json
  */
 object FeishuMessage:
 
-  /** One inbound message, reduced to the fields the channel actually needs. */
+  /** One inbound message, reduced to the fields the channel actually needs.
+    *
+    * `senderId` (feishubridge batch, 2026-09-25) = the sender's `open_id` when
+    * the event carried one. It exists so the bridge layer can run a member
+    * allowlist gate; it is appended LAST with a default so every pre-existing
+    * positional/named construction stays source-compatible. */
   final case class Inbound(
     eventId: Option[String],
     messageId: String,
@@ -32,10 +37,12 @@ object FeishuMessage:
     messageType: String,
     contentRaw: String,
     text: Option[String],
-    createTime: Option[String]
+    createTime: Option[String],
+    senderId: Option[String] = None
   ):
     /** The wire-shaped JSON a consumer reads. Carries NO credential material:
-      *  the message body is the sender's own content, not ours. */
+      *  the message body is the sender's own content, not ours. An open_id is
+      *  the tenant-scoped sender identity, not a credential. */
     def toJson: Json =
       Json.obj(
         "eventId" -> (eventId match { case Some(v) => Json.fromString(v); case None => Json.Null }),
@@ -44,7 +51,8 @@ object FeishuMessage:
         "messageType" -> Json.fromString(messageType),
         "content" -> Json.fromString(contentRaw),
         "text" -> (text match { case Some(v) => Json.fromString(v); case None => Json.Null }),
-        "createTime" -> (createTime match { case Some(v) => Json.fromString(v); case None => Json.Null })
+        "createTime" -> (createTime match { case Some(v) => Json.fromString(v); case None => Json.Null }),
+        "senderId" -> (senderId match { case Some(v) => Json.fromString(v); case None => Json.Null })
       )
 
   /** Extract the human-readable text when (and only when) the content shape is a
@@ -69,13 +77,16 @@ object FeishuMessage:
     chatId: Option[String],
     messageType: Option[String],
     contentRaw: Option[String],
-    createTime: Option[String]
+    createTime: Option[String],
+    senderId: Option[String] = None
   ): Either[String, Inbound] =
     val mt = messageType.getOrElse("")
     (messageId.filter(_.nonEmpty), chatId.filter(_.nonEmpty)) match
       case (Some(mid), Some(cid)) =>
         val raw = contentRaw.getOrElse("")
-        Right(Inbound(eventId.filter(_.nonEmpty), mid, cid, mt, raw, textOf(mt, raw), createTime.filter(_.nonEmpty)))
+        Right(Inbound(
+          eventId.filter(_.nonEmpty), mid, cid, mt, raw, textOf(mt, raw),
+          createTime.filter(_.nonEmpty), senderId.filter(_.nonEmpty)))
       case (mid, cid) =>
         Left(
           "im.message.receive_v1 payload is missing " +

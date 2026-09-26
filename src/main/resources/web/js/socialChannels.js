@@ -11,13 +11,23 @@
 //           (REMOTE_ACCESS below), kept out of SOCIAL_CHANNELS.
 //   · §D.2  per-card field list, required flags and patterns.
 //
-// 🔴 PHASE 1 (this batch) — no channel is really connected:
+// 🔴 PHASE 1 (socpanel batch) — no channel is really connected:
 //   `adapterRegistered` is `false` on every channel and there is exactly ONE
 //   place that can ever flip the status to `connected` (the branch inside
 //   channelStatus below). Nothing in the render layer decides "connected" on
 //   its own, so a fake "connected" pill is unreachable by construction.
 //   tests/social-panel.spec.mjs pins both directions (W6 production = 0,
 //   W7 fixture = the same probe turns red).
+//
+// 🔴 PHASE 2 (feishubridge batch, 2026-09-25) — the runtime flip comes from the
+//   BACKEND probe face, never from this file: the panel reads
+//   `adapterRegistered` off GET /api/social/probe (live BridgeManager truth)
+//   and hands it to channelStatus as the `registered` argument. This definition
+//   layer keeps the literal false everywhere (W6③ still greps for it), so the
+//   W7 fixture path (flip the definition flag ⇒ connected pill) keeps proving
+//   the state machine is total. Lark is HIDDEN, NOT DELETED (same sealed family
+//   as the remote-access section): its region entry stays in the data with
+//   `hidden: true`; restoring = dropping one flag.
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'} SocialStatus
@@ -47,7 +57,8 @@
  * @property {SocialField[]} fields
  * @property {boolean} adapterRegistered  phase 1: always false
  * @property {string} [regionKey]  config key holding the region choice
- * @property {{key: string, base: string}[]} [regions]  the ONLY region source
+ * @property {{key: string, base: string, hidden?: boolean}[]} [regions]  the ONLY region source
+ *   (feishubridge: `hidden: true` = sealed data, never rendered — hide ≠ delete)
  * @property {string} [regionDefault]
  */
 
@@ -82,6 +93,12 @@ export const SOCIAL_CHANNELS = [
   {
     // ★ merged card (author ruling): Feishu + Lark, region choice in-card.
     //   `regions` is the ONLY data source for the region select (§F.2 ③).
+    // ★ feishubridge (author ruling 2026-09-25 ④: hide lark, ship feishu only):
+    //   the lark entry is HIDDEN, NOT DELETED (sealed-family discipline —
+    //   restoring the international option = dropping `hidden: true`). The
+    //   render layer filters hidden regions; the stored config and the backend
+    //   schema (`^(feishu|lark)$`) are untouched, so an existing lark config
+    //   keeps parsing. The region default is hardcoded feishu.
     id: 'feishu',
     icon: 'send',
     nameKey: 'social.feishu.name',
@@ -91,7 +108,7 @@ export const SOCIAL_CHANNELS = [
     regionDefault: 'feishu',
     regions: [
       { key: 'feishu', base: 'open.feishu.cn' },
-      { key: 'lark', base: 'open.larksuite.com' },
+      { key: 'lark', base: 'open.larksuite.com', hidden: true },
     ],
     fields: [
       { key: 'app_id', kind: 'text', required: true, pattern: '^cli_[0-9a-zA-Z]{16,}$',
@@ -104,6 +121,11 @@ export const SOCIAL_CHANNELS = [
         i18n: 'social.feishu.field.encryptKey', secretName: 'social-feishu-encrypt-key' },
       { key: 'region', kind: 'select', required: true,
         i18n: 'social.feishu.field.region', default: 'feishu' },
+      // feishubridge: member allowlist SLOT (default empty = every tenant
+      // member can reach the gateway; filling it turns the bridge gate
+      // fail-closed). Whether to enable is the author's call.
+      { key: 'allowed_open_ids', kind: 'text', required: false,
+        i18n: 'social.feishu.field.allowedOpenIds' },
     ],
   },
   {
@@ -208,16 +230,20 @@ export function channelProblem(channel, cfg, probe) {
  * @param {SocialChannel} channel
  * @param {{enabled?: boolean, fields?: Record<string, string>}|null|undefined} cfg
  * @param {Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>|null|undefined} probe
+ * @param {boolean} [registered]  runtime registration truth from the probe face
+ *   (feishubridge): the backend answers `adapterRegistered` off the live
+ *   BridgeManager. The definition-layer flag stays the fixture path.
  * @returns {SocialStatus}
  */
-export function channelStatus(channel, cfg, probe) {
+export function channelStatus(channel, cfg, probe, registered) {
   if (channelProblem(channel, cfg, probe)) return 'configInvalid';
   const values = fieldValues(channel, cfg);
   if (channel.fields.some((f) => f.required && !String(values[storedKey(f)] ?? '').trim())) {
     return 'notConfigured';
   }
-  // 🔴 the single change point — phase 2 flips this flag, nothing else.
-  if (channel.adapterRegistered === true) return 'connected';
+  // 🔴 the single change point — the definition-layer fixture flag (W7) OR the
+  // runtime probe flag (phase 2) can reach `connected`; nothing else can.
+  if (channel.adapterRegistered === true || registered === true) return 'connected';
   return 'configuredNotLinked';
 }
 

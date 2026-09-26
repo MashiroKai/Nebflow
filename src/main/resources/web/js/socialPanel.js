@@ -52,6 +52,11 @@ let configByChannel = {};
 /** Last probe triples (exists / modeOk / readable), keyed by channel id.
  *  @type {Record<string, Record<string, {exists?: boolean, modeOk?: boolean, readable?: boolean}>>} */
 let probeByChannel = {};
+/** Live adapter registration truth per channel id, read off the probe face's
+ *  `adapterRegistered` (feishubridge). A failed probe fetch leaves the last
+ *  reading in place — a transient backend hiccup must not fake-unlink a card.
+ *  @type {Record<string, boolean>} */
+let registeredByChannel = {};
 /** Focusable-element trap state. */
 let lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (null);
 let initialized = false;
@@ -92,12 +97,15 @@ async function fetchConfig() {
   return data && data.channels ? data.channels : {};
 }
 
-/** GET /api/social/probe?channel=<id> — mechanical triple, no content. */
+/** GET /api/social/probe?channel=<id> — mechanical triple, no content. Also
+ *  records the live `adapterRegistered` flag (phase 2) next to the triples. */
 async function fetchProbe(id) {
   const resp = await api(`/api/social/probe?channel=${encodeURIComponent(id)}`);
   if (!resp.ok) throw new Error(`GET /api/social/probe ${resp.status}`);
   const data = await resp.json();
-  return data && data.secrets ? data.secrets : {};
+  probeByChannel[id] = data && data.secrets ? data.secrets : {};
+  registeredByChannel[id] = !!(data && data.adapterRegistered === true);
+  return probeByChannel[id];
 }
 
 // ── Selection helpers ────────────────────────────────────────────────────
@@ -189,7 +197,7 @@ function cardHint(ch, status) {
  */
 function cardHTML(ch) {
   const cfg = configByChannel[ch.id];
-  const status = channelStatus(ch, cfg, probeByChannel[ch.id]);
+  const status = channelStatus(ch, cfg, probeByChannel[ch.id], registeredByChannel[ch.id]);
   const hint = cardHint(ch, status);
   const fields = ch.fields.map((f) => fieldHTML(ch, f)).join('');
   const on = !!(cfg && cfg.enabled);
@@ -237,7 +245,11 @@ function fieldHTML(ch, f) {
       </label>`;
   }
   if (f.kind === 'select') {
+    // feishubridge: hidden regions are data, not choices — the sealed lark
+    // entry stays in the definition layer but never renders (HIDE, NOT DELETE;
+    // restoring = dropping its `hidden` flag).
     const opts = (ch.regions || [])
+      .filter((r) => !r.hidden)
       .map((r) => {
         const sel = (stored || f.default) === r.key ? ' selected' : '';
         return `<option value="${escapeHtml(r.key)}"${sel}>${escapeHtml(t(`social.${ch.id}.region.${r.key}`))}</option>`;
@@ -272,7 +284,7 @@ function refreshCard(channelId) {
   const ch = channelById(channelId);
   const card = cardEl(channelId);
   if (!ch || !card) return;
-  const status = channelStatus(ch, configByChannel[ch.id], probeByChannel[ch.id]);
+  const status = channelStatus(ch, configByChannel[ch.id], probeByChannel[ch.id], registeredByChannel[ch.id]);
   const pill = card.querySelector('.social-status-pill');
   if (pill) {
     pill.setAttribute('data-status', status);
