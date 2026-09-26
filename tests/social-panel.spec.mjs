@@ -5,7 +5,7 @@
 // mocks; the browser is closed in `finally`; no port is ever taken from the
 // host. Zero dependency on the running gateway.
 //
-// FOUR MODES (all offline):
+// FIVE MODES (all offline):
 //   · AFTER (default)         — serves src/main/resources/web; every anchor this
 //                               batch implements is expected GREEN.
 //   · BEFORE (SOCIAL_WEB_ROOT=<baseline web/>) — serves a pre-change tree; the
@@ -15,6 +15,12 @@
 //                               to true (in memory, byte change reported). The
 //                               W7 red-proof: the SAME assertion that is 0 in
 //                               the production tree must fire here.
+//   · RED-FILTER (SOCIAL_MUTATE=card-filter-off) — serves the same tree with
+//                               the definition layer's ONE visible-filter
+//                               dropped (in memory, byte change reported). The
+//                               socialhide red-proof: the SAME visible-card
+//                               probes that read {feishu} in production must
+//                               read all three cards here, in array order.
 //   · API (SOCIAL_API_BASE=<url>[, <token>]) — optional extra leg that drives
 //                               the REAL /api/social/* endpoints of an isolated
 //                               instance (config round-trip + "no secret
@@ -42,10 +48,25 @@
 //    unchanged — they keep holding on the hidden subtree. Nothing about the
 //    O1–O5 suspension changes: hiding the section does not decide it.
 //
+// 🔴 CHANNEL SEAL (socialhide batch, author ruling 2026-09-26, merged order
+//    ③): wechat + telegram are SEALED — `hidden: true` at the CHANNEL level,
+//    data retained. W4's count now reads the VISIBLE single source
+//    (socialChannelCount() = 1); SH1–SH3 pin the visible set = {feishu}, the
+//    sealed data face (3 entries, both flags in place, feishu unflagged) and
+//    the DOM absence of the sealed ids. The red leg is MUTATION-SAFE
+//    (SOCIAL_MUTATE=card-filter-off): the served definition layer loses its
+//    one visible filter and the SAME probes must read 3 cards. W6 (production
+//    = 0 connected) and W7 (fixture flip ⇒ connected) keep their original
+//    judgement; W9 / W14 / W16-B6 keep their state-machine coverage by moving
+//    onto the feishu card — the only production-visible face (the state
+//    machine is definition-driven and channel-agnostic; the REAL apiSuite leg
+//    still POSTs telegram, proving sealed ≠ deleted on the server face too).
+//
 // Run:
 //   node tests/social-panel.spec.mjs
 //   SOCIAL_WEB_ROOT=/tmp/nb-socpanel-baseline/web node tests/social-panel.spec.mjs
 //   SOCIAL_MUTATE=adapter-true node tests/social-panel.spec.mjs
+//   SOCIAL_MUTATE=card-filter-off node tests/social-panel.spec.mjs
 //   SOCIAL_API_BASE=http://127.0.0.1:8155 SOCIAL_API_TOKEN=<token> node tests/social-panel.spec.mjs
 //
 //   🔴 RED leg for an assertion this batch FLIPPED (hide ruling 2026-09-23) —
@@ -80,16 +101,24 @@ const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) :
 // about them. SOCIAL_SUITE only SELECTS the suite; it never changes which tree
 // is served (the `web=` reading on the mode line below states the tree).
 const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
-const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture'
+const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture' || SUITE_ENV === 'redfilter'
   ? SUITE_ENV.toUpperCase()
-  : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE' : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE' : 'AFTER'));
+  : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
+    : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
+      : (process.env.SOCIAL_MUTATE === 'card-filter-off' ? 'REDFILTER' : 'AFTER')));
 const SHOTS = process.env.SOCIAL_SHOT_DIR || '/tmp/nb-socpanel';
 const API_BASE = process.env.SOCIAL_API_BASE || '';
 const API_TOKEN = process.env.SOCIAL_API_TOKEN || '';
 
 // ── Fixed references taken from THIS repo (independent of the served tree) ──
 const CHANNELS_MOD = await import(pathToFileURL(join(REPO_WEB, 'js', 'socialChannels.js')).href);
-const EXPECTED_CARDS = CHANNELS_MOD.SOCIAL_CHANNELS.length;
+// socialhide: the two §F.2 faces are pinned SEPARATELY — the sealed data set
+// (3 entries, hide ≠ delete) and the visible single source (count = 1).
+const EXPECTED_DEFINITION_CHANNELS = CHANNELS_MOD.SOCIAL_CHANNELS.length;
+const EXPECTED_CARDS = CHANNELS_MOD.socialChannelCount();
+// Over the FULL set on purpose: W11 keeps proving that the sealed channels'
+// name/desc locale keys are still enumerated (and W11 itself proves they
+// exist in both tables) — sealing must not orphan keys. (SH2 pins the length.)
 const SOCIAL_KEYS = CHANNELS_MOD.SOCIAL_CHANNELS.flatMap((c) => [c.nameKey, c.descKey]);
 const ZH = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'zh-CN.js')).href)).default;
 const EN = (await import(pathToFileURL(join(REPO_WEB, 'js', 'locales', 'en.js')).href)).default;
@@ -148,11 +177,22 @@ const MIME = {
 let mutationHits = 0;
 /** The fixture copy: served in memory, never written to the tree. */
 function mutate(rel, body) {
-  if (process.env.SOCIAL_MUTATE !== 'adapter-true') return body;
-  if (rel !== '/js/socialChannels.js') return body;
-  const hits = (body.match(/adapterRegistered: false/g) || []).length;
-  mutationHits += hits;
-  return body.replace(/adapterRegistered: false/g, 'adapterRegistered: true');
+  const mode = process.env.SOCIAL_MUTATE;
+  if (mode === 'adapter-true') {
+    if (rel !== '/js/socialChannels.js') return body;
+    const hits = (body.match(/adapterRegistered: false/g) || []).length;
+    mutationHits += hits;
+    return body.replace(/adapterRegistered: false/g, 'adapterRegistered: true');
+  }
+  if (mode === 'card-filter-off') {
+    // Drops the ONE visible filter ([[visibleChannels]] in the definition
+    // layer) — the exact inverse of the seal: every sealed card renders again.
+    if (rel !== '/js/socialChannels.js') return body;
+    const hits = (body.match(/\.filter\(\(c\) => !c\.hidden\)/g) || []).length;
+    mutationHits += hits;
+    return body.replace(/\.filter\(\(c\) => !c\.hidden\)/g, '.slice()');
+  }
+  return body;
 }
 
 async function startServer() {
@@ -355,6 +395,37 @@ async function afterSuite(browser, base) {
   const enabledFlags = (src.match(/adapterRegistered: *true/g) || []).length;
   check('W6③ adapterRegistered:true in definition layer = 0', enabledFlags === 0, `grep -c = ${enabledFlags}`);
 
+  // socialhide SH1 — the seal at the definition face: the visible single
+  // source answers feishu-only. Read off the REAL repo module (not the served
+  // tree): the production truth itself.
+  const visIds = CHANNELS_MOD.visibleChannels().map((c) => c.id);
+  check('SH1 visible single source = {feishu} (socialChannelCount = 1)',
+    EXPECTED_CARDS === 1 && CHANNELS_MOD.socialChannelCount() === 1
+    && JSON.stringify(visIds) === JSON.stringify(['feishu']),
+    `count=${CHANNELS_MOD.socialChannelCount()} visible=[${visIds.join(',')}]`);
+
+  // socialhide SH2 — sealed ≠ deleted: the full data set stays 3 entries, the
+  // two sealed flags are in place, feishu stays unflagged, and the sealed
+  // channels' name/desc keys are still enumerated (W11 below proves those
+  // keys exist in both locale tables — no orphans).
+  const sealFlags = CHANNELS_MOD.SOCIAL_CHANNELS.map((c) => `${c.id}=${c.hidden === true ? 'hidden' : 'visible'}`);
+  check('SH2 sealed ≠ deleted: 3 entries in data, wechat+telegram flagged, feishu unflagged',
+    EXPECTED_DEFINITION_CHANNELS === 3
+    && CHANNELS_MOD.channelById('wechat')?.hidden === true
+    && CHANNELS_MOD.channelById('telegram')?.hidden === true
+    && CHANNELS_MOD.channelById('feishu')?.hidden !== true
+    && SOCIAL_KEYS.length === EXPECTED_DEFINITION_CHANNELS * 2,
+    `entries=${EXPECTED_DEFINITION_CHANNELS} flags=[${sealFlags.join(' ')}] channelLocaleKeys=${SOCIAL_KEYS.length}`);
+
+  // socialhide SH2b — the raw-source grep face of the acceptance: with
+  // comments stripped (headers document the flag too), the CODE carries
+  // exactly 3 `hidden: true` literals — the wechat + telegram channel entries
+  // plus the lark region entry. The sealed-data shape on the bytes themselves.
+  const srcCode = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const hiddenFlags = (srcCode.match(/hidden: true/g) || []).length;
+  check('SH2b code-level `hidden: true` literals = 3 (wechat + telegram + lark region)',
+    hiddenFlags === 3, `grep -c (comments stripped) = ${hiddenFlags}`);
+
   // W6① + W2/W4 family in both themes and both locales
   for (const theme of ['light', 'dark']) {
     for (const locale of ['zh-CN', 'en']) {
@@ -382,6 +453,7 @@ async function afterSuite(browser, base) {
         const all = [...document.querySelectorAll('#social-modal .social-card[data-channel]')];
         return {
           count: all.length,
+          ids: all.map((c) => c.dataset.channel),
           heads: all.map((c) => {
             const h = c.querySelector('.social-card-head');
             return h ? {
@@ -394,8 +466,15 @@ async function afterSuite(browser, base) {
         };
       });
       const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.toggle);
-      check(`W4 card shape (count = definition length) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
-        `cards=${cards.count} expected=${EXPECTED_CARDS} headsOk=${headsOk}`);
+      check(`W4 card shape (count = visible single source) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
+        `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk}`);
+      // socialhide SH3 — the DOM face of the seal: exactly the feishu card
+      // renders (in definition order) and the sealed ids are ABSENT, not
+      // merely invisible.
+      check(`SH3 DOM: visible cards = [feishu], sealed ids absent (${tag})`,
+        JSON.stringify(cards.ids) === JSON.stringify(['feishu'])
+        && !cards.ids.includes('wechat') && !cards.ids.includes('telegram'),
+        `ids=[${cards.ids.join(',')}]`);
       // 🔴 W4 flipped to HIDE semantics (author ruling 2026-09-23, Part A).
       //
       // JUDGEMENT — why this assertion is RED on the pre-change tree: before the
@@ -493,15 +572,17 @@ async function afterSuite(browser, base) {
     () => getComputedStyle(document.querySelector('#social-modal .social-status-pill')).color));
   check('V4 pill colour is token-driven (light ≠ dark)', lightColor !== darkColor, `light=${lightColor} dark=${darkColor}`);
 
-  // W9 configInvalid: pattern violation and a missing referenced file
+  // W9 configInvalid: pattern violation and a missing referenced file.
+  // (socialhide: exercised on the FEISHU card — the only production-visible
+  // face; the state machine is definition-driven and channel-agnostic.)
   await withPanel(browser, base, 'light', async (page) => {
-    apiState.channels = { wechat: { enabled: false, fields: { app_id: 'not-a-wx-id' } } };
+    apiState.channels = { feishu: { enabled: false, fields: { app_id: 'not-a-cli-id' } } };
     apiState.probes = {};
     await page.reload();
     await openPanel(page);
     let st = await statuses(page);
     let pill = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       const p = c.querySelector('.social-status-pill');
       const d = document.createElement('div');
       d.style.color = 'var(--color-danger)';
@@ -514,46 +595,44 @@ async function afterSuite(browser, base) {
       pill.status === 'configInvalid' && pill.color === pill.danger && !pill.hidden && /应用 ID|App ID/.test(pill.hint),
       JSON.stringify(pill));
 
-    apiState.channels = { wechat: { enabled: true, fields: {
-      app_id: 'wx0123456789abcdef',
-      app_secret_ref: '~/.nebflow/secrets/social-wechat-app-secret',
-      token_ref: '~/.nebflow/secrets/social-wechat-token',
-      aes_key_ref: '~/.nebflow/secrets/social-wechat-aes-key',
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
     } } };
-    apiState.probes = { wechat: {
+    apiState.probes = { feishu: {
       app_secret: { exists: false, modeOk: false, readable: false },
-      token: { exists: true, modeOk: true, readable: true },
-      aes_key: { exists: true, modeOk: true, readable: true },
+      verification_token: { exists: true, modeOk: true, readable: true },
     } };
     await page.reload();
     await openPanel(page);
     st = await statuses(page);
     pill = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       return { status: c.querySelector('.social-status-pill').dataset.status, hint: c.querySelector('.social-card-hint').textContent };
     });
     check('W9 missing referenced file ⇒ configInvalid + path in hint',
-      pill.status === 'configInvalid' && pill.hint.includes('~/.nebflow/secrets/social-wechat-app-secret'),
+      pill.status === 'configInvalid' && pill.hint.includes('~/.nebflow/secrets/social-feishu-app-secret'),
       JSON.stringify(pill));
 
     // W14 the full "fill → save → probe re-read" flow (令④), incl. the negative
     // assertion: no "go edit the file" step anywhere in the panel.
+    // (socialhide: driven on the FEISHU card — the only production-visible face.)
     apiState.channels = {};
     apiState.probes = {};
     apiState.posts = [];
     await page.reload();
     await openPanel(page);
-    await page.fill('.social-card[data-channel="wechat"] [data-field="app_id"]', 'wx0123456789abcdef');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="app_secret"]', 'PLAINTEXT-SECRET-MARKER');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="token"]', 'PLAINTEXT-TOKEN-MARKER');
-    await page.fill('.social-card[data-channel="wechat"] [data-field="aes_key"]', 'PLAINTEXT-AES-MARKER');
-    await page.click('.social-card[data-channel="wechat"] [data-save]');
+    await page.fill('.social-card[data-channel="feishu"] [data-field="app_id"]', 'cli_0123456789abcdef');
+    await page.fill('.social-card[data-channel="feishu"] [data-field="app_secret"]', 'PLAINTEXT-SECRET-MARKER');
+    await page.fill('.social-card[data-channel="feishu"] [data-field="verification_token"]', 'PLAINTEXT-TOKEN-MARKER');
+    await page.click('.social-card[data-channel="feishu"] [data-save]');
     await page.waitForFunction(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       return c && c.querySelector('.social-status-pill').dataset.status === 'configuredNotLinked';
     }, undefined, { timeout: 6000 });
     const step3 = await page.evaluate(() => {
-      const c = document.querySelector('.social-card[data-channel="wechat"]');
+      const c = document.querySelector('.social-card[data-channel="feishu"]');
       return {
         status: c.querySelector('.social-status-pill').dataset.status,
         hint: c.querySelector('.social-card-hint').textContent,
@@ -765,7 +844,9 @@ async function afterSuite(browser, base) {
       const fields = [...document.querySelectorAll('#social-modal input, #social-modal select')]
         .map((el) => el.getBoundingClientRect());
       const cards = [...document.querySelectorAll('.social-card')].map((c) => ({ sw: c.scrollWidth, cw: c.clientWidth }));
-      const card = document.querySelector('.social-card[data-channel="telegram"]');
+      // socialhide: read on the FEISHU card (the only production-visible one;
+      // the sealed telegram card no longer has a DOM face).
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
       const labels = [...card.querySelectorAll('.social-field')].map((l) => Math.round(l.getBoundingClientRect().left));
       const panel = document.getElementById('social-modal');
       const overlay = document.getElementById('social-overlay');
@@ -831,28 +912,29 @@ async function fixtureSuite(browser, base) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await ctx.newPage();
   // Every required field present + probes clean ⇒ the ONLY remaining variable is
-  // the flapped flag.
+  // the flapped flag. (socialhide: the fixture drives the FEISHU card — the
+  // only production-visible face, so the flipped state is observable in DOM.)
   apiState.channels = {
-    wechat: { enabled: true, fields: {
-      app_id: 'wx0123456789abcdef',
-      app_secret_ref: '~/.nebflow/secrets/social-wechat-app-secret',
-      token_ref: '~/.nebflow/secrets/social-wechat-token',
-      aes_key_ref: '~/.nebflow/secrets/social-wechat-aes-key',
+    feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      region: 'feishu',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
     } },
   };
-  apiState.probes = { wechat: {
+  apiState.probes = { feishu: {
     app_secret: { exists: true, modeOk: true, readable: true },
-    token: { exists: true, modeOk: true, readable: true },
-    aes_key: { exists: true, modeOk: true, readable: true },
+    verification_token: { exists: true, modeOk: true, readable: true },
   } };
   await boot(page, { locale: 'zh-CN' }); // explicit: the caption assertion below is zh-only, so pin the locale instead of relying on the default
   await page.goto(base);
   await openPanel(page);
   // Kept AFTER the load on purpose: the served bytes are mutated lazily as they
   // are requested, so a check placed before `goto` would always read 0 and
-  // would silently stop proving anything.
+  // would silently stop proving anything. The hit count is against the SEALED
+  // data set (3 definition entries), not the visible count.
   check('FIXTURE mutation applied to the served definition layer',
-    mutationHits === EXPECTED_CARDS, `adapterRegistered:false → true hits = ${mutationHits} (expected ${EXPECTED_CARDS})`);
+    mutationHits === EXPECTED_DEFINITION_CHANNELS, `adapterRegistered:false → true hits = ${mutationHits} (expected ${EXPECTED_DEFINITION_CHANNELS})`);
   const st = await statuses(page);
   const text = await page.evaluate(() => {
     const m = document.getElementById('social-modal');
@@ -867,6 +949,36 @@ async function fixtureSuite(browser, base) {
   check('W7 fixture: the SAME banned-vocabulary probe goes red here (proves W6① has teeth)',
     banned.length > 0, `hits=[${banned.join(', ')}]`);
   await shot(page, 'fixture-1440-light');
+  await ctx.close();
+}
+
+// ── RED-FILTER: socialhide red proof (drop the ONE visible filter ⇒ the seal
+//    opens; the SAME probes that read {feishu} in production must read all
+//    three cards here) ────────────────────────────────────────────────────────
+async function redFilterSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  await boot(page, { locale: 'zh-CN' });
+  await page.goto(base);
+  await openPanel(page);
+  // Byte-change proof first (see fixtureSuite: kept after the load on purpose).
+  check('SH-R mutation applied to the served definition layer',
+    mutationHits === 1, `visible-filter .filter((c) => !c.hidden) → .slice() hits = ${mutationHits} (expected 1)`);
+  // The pin probe, re-read on the mutated tree: in-page import sees the SAME
+  // mutated module instance the app rendered from, so module and DOM must agree.
+  const vis = await page.evaluate(() => import('/js/socialChannels.js').then((m) => ({
+    rendered: [...document.querySelectorAll('#social-modal .social-card[data-channel]')].map((e) => e.dataset.channel),
+    inModule: m.visibleChannels().map((c) => c.id),
+    count: m.socialChannelCount(),
+  })));
+  check('SH-R red proof: dropping the filter unseals all three cards (SH1/SH3 fire)',
+    vis.rendered.length === 3 && vis.rendered.join(',') === 'wechat,feishu,telegram'
+    && vis.inModule.length === 3 && vis.count === 3,
+    `rendered=[${vis.rendered.join(',')}] module=[${vis.inModule.join(',')}] count=${vis.count} — production pins (visible=1, {feishu}) are RED on this tree`);
+  await shot(page, 'redfilter-1440-light');
   await ctx.close();
 }
 
@@ -966,12 +1078,13 @@ async function apiSuite() {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-console.log(`# social-panel.spec.mjs mode=${MODE} web=${WEB} cards=${EXPECTED_CARDS} api=${API_BASE || '(mock only)'}`);
+console.log(`# social-panel.spec.mjs mode=${MODE} web=${WEB} visibleCards=${EXPECTED_CARDS} sealedEntries=${EXPECTED_DEFINITION_CHANNELS} api=${API_BASE || '(mock only)'}`);
 const { server, base } = await startServer();
 const browser = await chromium.launch();
 try {
   if (MODE === 'BEFORE') await beforeSuite(browser, base);
   else if (MODE === 'FIXTURE') await fixtureSuite(browser, base);
+  else if (MODE === 'REDFILTER') await redFilterSuite(browser, base);
   else { await afterSuite(browser, base); await apiSuite(); }
 } finally {
   await browser.close();
