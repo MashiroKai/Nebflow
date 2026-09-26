@@ -14,8 +14,8 @@ import nebflow.core.FileChangeTracker
 import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

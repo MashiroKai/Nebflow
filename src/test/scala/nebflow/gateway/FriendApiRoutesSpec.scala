@@ -11,9 +11,9 @@ import nebflow.agent.SharedResources
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelChainConfig, ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
 import nebflow.neblink.{AgentMessagingConfig, FriendService, NeblinkClient, NeblinkServerConfig, NeblinkService}
-import nebflow.shared.PathUtil
+import nebflow.shared.{ModelChainConfig, NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

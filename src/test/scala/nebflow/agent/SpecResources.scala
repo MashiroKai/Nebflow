@@ -6,8 +6,8 @@ import nebflow.actor.ActorSystem
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.LlmHandle
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, ThinkingConfig}
 
 /**
  * SharedResources 测试工厂——原 43 份逐字节相同的

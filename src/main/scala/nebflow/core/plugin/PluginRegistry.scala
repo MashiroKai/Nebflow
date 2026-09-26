@@ -5,8 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.llm.McpServerConfig
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{McpServerConfig, NebflowLogger, PathUtil}
 
 import java.security.MessageDigest
 

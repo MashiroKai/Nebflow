@@ -11,8 +11,8 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

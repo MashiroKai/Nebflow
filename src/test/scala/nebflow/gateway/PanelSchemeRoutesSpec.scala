@@ -5,8 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.llm.{NebflowServiceConfig, ServiceLlmConfig}
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.{Headers, HttpRoutes, Method, Request, Response, Status, Uri}
 import java.nio.file.Files

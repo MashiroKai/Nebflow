@@ -2,7 +2,8 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.{AgentState, AgentStatus, ToolPipelineError, llmFailRetries, withLlmFailRetries}
-import nebflow.llm.{Fallback, FallbackExhaustedError, TurnBudgetExceeded}
+import nebflow.llm.{Fallback, TurnBudgetExceeded}
+import nebflow.shared.FallbackExhaustedError
 import nebflow.shared.*
 import nebflow.shared.FailoverReason.*
 import nebflow.shared.ErrorPermanence.*

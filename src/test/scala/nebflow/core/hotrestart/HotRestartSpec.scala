@@ -6,8 +6,8 @@ import munit.CatsEffectSuite
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.project.{FlowMapStore, NodeDef, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{LlmInterface, ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, PathUtil}
+import nebflow.llm.{LlmInterface, ModelCandidate}
+import nebflow.shared.{LlmHandle, PathUtil, ThinkingConfig}
 import nebflow.core.tools.BgTaskRegistry
 
 import scala.concurrent.duration.*

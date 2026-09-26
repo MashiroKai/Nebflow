@@ -12,8 +12,8 @@ import nebflow.agent.{AgentLibrary, InteractionHub, InteractionHubCommand, Share
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

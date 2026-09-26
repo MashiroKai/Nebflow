@@ -2,20 +2,10 @@ package nebflow.llm
 
 import cats.effect.{IO, Temporal}
 import cats.syntax.all.*
-import nebflow.shared.*
+import nebflow.shared.{FallbackExhaustedError, *}
 
 import scala.concurrent.duration.*
 import scala.util.Random
-
-class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
-
-  override def getMessage: String =
-    val summary = attempts
-      .map { a =>
-        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-      }
-      .mkString("\n")
-    s"All providers failed:\n$summary"
 
 /**
  * Raised when the all-Down gate ([[ProviderHealthMonitor.waitForAnyUp]]) timed

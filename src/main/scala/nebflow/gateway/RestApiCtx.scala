@@ -7,9 +7,8 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, NebflowServiceConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

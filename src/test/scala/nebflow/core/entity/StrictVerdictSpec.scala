@@ -18,7 +18,7 @@ import nebflow.core.flow.RunningFlowRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, FlowReportStore, FlowReportData, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
   ContentBlock,
   LlmHandle,
@@ -28,6 +28,7 @@ import nebflow.shared.{
   MessageRole,
   PathUtil,
   StreamChunk,
+  ThinkingConfig,
   ToolCall
 }
 

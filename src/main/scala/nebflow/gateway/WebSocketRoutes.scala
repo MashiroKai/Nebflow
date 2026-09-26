@@ -1164,7 +1164,8 @@ class WebSocketRoutes(
       // Read through the dual-read path (legacy fallback), write the brand
       // name — the first write completes the config-file rename migration.
       val existing =
-        if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
@@ -1183,7 +1184,8 @@ class WebSocketRoutes(
   private def persistWorkSchedule(cfg: nebflow.core.schedule.FreezeScheduleConfig): IO[Unit] =
     IO.blocking {
       val existing =
-        if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = nebflow.core.schedule.FreezeSchedule.mergeIntoConfig(json, cfg)
@@ -1200,7 +1202,8 @@ class WebSocketRoutes(
       // Read through the dual-read path (legacy fallback), write the brand
       // name — the first write completes the config-file rename migration.
       val existing =
-        if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>

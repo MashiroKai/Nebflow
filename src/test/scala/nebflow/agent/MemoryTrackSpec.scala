@@ -57,7 +57,7 @@ class MemoryTrackSpec extends FunSuite:
       dispatcher = null,
       sessionStore = null,
       projectRoot = os.pwd,
-      thinkingConfigRef = Ref.unsafe[IO, nebflow.llm.ThinkingConfig](nebflow.llm.ThinkingConfig()),
+      thinkingConfigRef = Ref.unsafe[IO, nebflow.shared.ThinkingConfig](nebflow.shared.ThinkingConfig()),
       rateLimiter = null,
       fileChangeTracker = null,
       contextWindow = 0,

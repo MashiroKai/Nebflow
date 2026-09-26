@@ -453,7 +453,7 @@ object GatewayMain extends IOApp:
                   // Flow-node supervision P3: llm.streamTimeouts watchdog overrides
                   // (boot-time; config changes take effect on restart).
                   configRef.get.flatMap { bootCfg =>
-                    val st = bootCfg.llm.streamTimeouts.getOrElse(nebflow.llm.StreamTimeoutsConfig())
+                    val st = bootCfg.llm.streamTimeouts.getOrElse(nebflow.shared.StreamTimeoutsConfig())
                     IO(LlmInterface.applyStreamTimeouts(st.firstTokenSec, st.inactivitySec, st.noProgressSec))
                   } *> LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
                     case (handle, registry, healthMonitor, releaseBackend) =>
@@ -498,8 +498,8 @@ object GatewayMain extends IOApp:
                         sys.props.update("nebflow.url", baseUrl)
 
                         // Initialize thinking config from nebflow.json (default enabled=true)
-                        val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
-                        val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
+                        val initialThinking = config.thinkingConfig.getOrElse(nebflow.shared.ThinkingConfig())
+                        val thinkingConfigRef: Ref[IO, nebflow.shared.ThinkingConfig] = Ref.unsafe(initialThinking)
                         // 冻结调度（freeze-schedule，#337 黑名单语义）：从 nebflow.json
                         // workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载
                         // （非法配置视为关闭——恒不冻结，功能旁路）。

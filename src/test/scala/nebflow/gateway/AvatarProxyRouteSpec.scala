@@ -9,9 +9,9 @@ import nebflow.agent.SharedResources
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
 import nebflow.neblink.NeblinkService
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.`Content-Type`

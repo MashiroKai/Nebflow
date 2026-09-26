@@ -9,9 +9,9 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.llm.ModelCandidate
 import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 /**
  * MailTool 设备腿 `images`：**禁静默忽略**（同根族第三件，2026-09-16 A1 批）。

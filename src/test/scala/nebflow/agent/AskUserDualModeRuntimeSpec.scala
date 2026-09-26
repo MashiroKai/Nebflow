@@ -23,8 +23,17 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AskUserQuestionTool, FileLockManager}
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ToolCall}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  ToolCall
+}
 
 import scala.concurrent.duration.*
 

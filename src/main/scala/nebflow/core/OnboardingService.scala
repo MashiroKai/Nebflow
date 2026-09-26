@@ -2,8 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import io.circe.syntax.given
-import nebflow.llm.FallbackExhaustedError
-import nebflow.shared.*
+import nebflow.shared.{FallbackExhaustedError, *}
 
 import scala.concurrent.duration.*
 

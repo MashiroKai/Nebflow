@@ -25,7 +25,7 @@ import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
 import nebflow.service.ConfigService
-import nebflow.shared.PathUtil
+import nebflow.shared.{LlmProtocol, PathUtil}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

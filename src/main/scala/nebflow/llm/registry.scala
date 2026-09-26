@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.Ref
 import cats.syntax.traverse.*
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
-import nebflow.shared.Defaults
+import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 

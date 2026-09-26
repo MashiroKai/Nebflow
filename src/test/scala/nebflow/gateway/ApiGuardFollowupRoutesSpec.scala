@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.llm.{NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 

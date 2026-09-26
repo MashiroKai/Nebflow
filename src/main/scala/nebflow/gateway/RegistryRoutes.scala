@@ -133,7 +133,7 @@ private[gateway] object RegistryRoutes:
       case req @ GET -> Root / "mcp" =>
         withAuth(req) {
           IO.blocking {
-            val configPath = nebflow.llm.Config.DefaultConfigPath
+            val configPath = nebflow.shared.Config.DefaultConfigPath
             if os.exists(configPath) then
               parser
                 .parse(os.read(configPath))

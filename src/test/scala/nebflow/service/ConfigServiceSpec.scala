@@ -180,7 +180,7 @@ class ConfigServiceSpec extends FunSuite:
     // 死字段原样保留（不在 updateConfig 的清理职责内）
     assertEquals(modelHc.downField("default").as[String], Right("Zai/m1"))
     // 整个配置仍可解码（llm.model → Option，Some 容忍）
-    assert(nebflow.llm.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
+    assert(nebflow.shared.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
   }
 
   // ── B2: provider rename → reference rewrite ─────────────

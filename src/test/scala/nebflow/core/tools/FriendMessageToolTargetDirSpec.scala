@@ -15,9 +15,9 @@ import nebflow.core.task.FileTaskStore
 import nebflow.dropbox.DropboxService
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

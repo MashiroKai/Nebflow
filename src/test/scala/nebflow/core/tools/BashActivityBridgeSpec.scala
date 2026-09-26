@@ -5,7 +5,8 @@ import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentKind, AgentRecord}
 import nebflow.agent.SharedResources
-import nebflow.llm.{ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.ProviderHealthMonitor
+import nebflow.shared.ThinkingConfig
 
 import java.io.File
 import scala.concurrent.duration.*

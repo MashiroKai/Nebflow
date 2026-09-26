@@ -246,7 +246,7 @@ private[gateway] object WsConfigHandlers:
       case Right(cfg) =>
         val persist = IO.blocking {
           val existing =
-            if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath)
+            if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
             else "{}"
           val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
           parse(existing).foreach { json =>

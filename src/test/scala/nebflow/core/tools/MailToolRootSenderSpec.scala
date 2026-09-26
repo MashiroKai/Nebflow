@@ -9,8 +9,8 @@ import nebflow.actor.AgentRecord
 import nebflow.agent.SharedResources
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.SessionStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.PathUtil
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 /**
  * User ruling 2026-08-24: root/outside-team senders mail TEAM names only.

@@ -85,7 +85,7 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
       description = s"$name fixture",
       author = "spec",
       skills = Nil,
-      mcpServers = Map(serverName -> nebflow.llm.McpServerConfig(command = Some(command), args = Some(args))),
+      mcpServers = Map(serverName -> nebflow.shared.McpServerConfig(command = Some(command), args = Some(args))),
       toolsExtension = Nil,
       digest = s"digest-$name",
       fileCount = 2,

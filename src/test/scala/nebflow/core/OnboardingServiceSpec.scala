@@ -3,7 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.llm.FallbackExhaustedError
+import nebflow.shared.FallbackExhaustedError
 import nebflow.shared.*
 
 import java.nio.file.Files as JFiles

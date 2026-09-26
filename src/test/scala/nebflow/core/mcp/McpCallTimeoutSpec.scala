@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.llm.McpServerConfig
+import nebflow.shared.McpServerConfig
 
 import scala.concurrent.duration.*
 

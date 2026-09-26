@@ -14,9 +14,9 @@ import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.dropbox.AttachContract
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.neblink.DeviceMail
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
+import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import fs2.Stream
 import scala.concurrent.duration.*
 

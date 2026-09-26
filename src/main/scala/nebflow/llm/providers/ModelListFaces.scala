@@ -1,6 +1,6 @@
 package nebflow.llm.providers
 
-import nebflow.llm.LlmProtocol
+import nebflow.shared.LlmProtocol
 
 /**
  * The model-list endpoint of each protocol face, as declared by the adapter

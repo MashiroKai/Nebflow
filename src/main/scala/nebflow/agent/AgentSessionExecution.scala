@@ -815,7 +815,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
-            thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
+            thinking = Some(nebflow.shared.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable),
             agentModel = freshDef.model,
             // WebSearch P0: housekeeping turns (compact/ask) opt out of

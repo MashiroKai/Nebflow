@@ -289,7 +289,7 @@ class ToolResultTtlSpec extends FunSuite:
       rateLimiter <- RateLimiter.create()
       tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
       fileLocks <- nebflow.core.tools.FileLockManager.create
-      thinkingRef <- IO.ref(nebflow.llm.ThinkingConfig())
+      thinkingRef <- IO.ref(nebflow.shared.ThinkingConfig())
       modelOverrides <- IO.ref(Map.empty[String, nebflow.llm.ModelCandidate])
       voiceMuted <- IO.ref(false)
       sessionStore = SessionStore(tmp / "sessions", tmp / "tasks-ui")
@@ -473,7 +473,7 @@ class ToolResultTtlSpec extends FunSuite:
       rateLimiter <- RateLimiter.create()
       tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
       fileLocks <- nebflow.core.tools.FileLockManager.create
-      thinkingRef <- IO.ref(nebflow.llm.ThinkingConfig())
+      thinkingRef <- IO.ref(nebflow.shared.ThinkingConfig())
       modelOverrides <- IO.ref(Map.empty[String, nebflow.llm.ModelCandidate])
       voiceMuted <- IO.ref(false)
       sessionStore = SessionStore(tmp / "sessions", tmp / "tasks-hot")

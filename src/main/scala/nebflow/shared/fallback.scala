@@ -64,3 +64,14 @@ case class FallbackAttempt(
   timestamp: String,
   message: Option[String] = None
 )
+
+// 严格DAG第⑤步裁定(2026-09-26):错误类型拆至 shared 与 FallbackAttempt 团聚(行为保持;core 的 OnboardingService 引用边随消)
+class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
+
+  override def getMessage: String =
+    val summary = attempts
+      .map { a =>
+        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+      }
+      .mkString("\n")
+    s"All providers failed:\n$summary"

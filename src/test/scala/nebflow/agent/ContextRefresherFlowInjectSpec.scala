@@ -12,8 +12,16 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{AgentModelConfig, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  AgentModelConfig,
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  StreamChunk,
+  ThinkingConfig
+}
 
 /**
  * Regression for #406 flow-node runtime injections surviving the per-turn

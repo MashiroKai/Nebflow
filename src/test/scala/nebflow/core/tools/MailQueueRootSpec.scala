@@ -6,8 +6,8 @@ import munit.FunSuite
 import nebflow.actor.{AgentKind, AgentRecord}
 import nebflow.agent.SharedResources
 import nebflow.core.flow.MailQueueStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.PathUtil
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 /**
  * Issue #312: queue-mode Mail to "Nebula" was rejected with a misleading

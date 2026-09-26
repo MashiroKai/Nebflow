@@ -24,8 +24,17 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 

@@ -13,8 +13,8 @@ import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ToolCall}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, ToolCall}
 
 import scala.concurrent.duration.*
 

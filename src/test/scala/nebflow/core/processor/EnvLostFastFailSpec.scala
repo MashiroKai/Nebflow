@@ -9,7 +9,8 @@ import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.agent.SharedResources
 import nebflow.core.project.NodeEngine
 import nebflow.gateway.WsHub
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig
 
 import scala.concurrent.duration.*
 

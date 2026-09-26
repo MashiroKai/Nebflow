@@ -5,8 +5,8 @@ import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.PathUtil
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

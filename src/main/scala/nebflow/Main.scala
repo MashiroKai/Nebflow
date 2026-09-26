@@ -4,8 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import nebflow.cli.*
 import nebflow.gateway.GatewayConfig
-import nebflow.llm.Config
-import nebflow.shared.PathUtil
+import nebflow.shared.{Config, PathUtil}
 
 import scala.util.Try
 

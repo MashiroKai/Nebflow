@@ -26,11 +26,11 @@ import nebflow.actor.{
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.{CompactConfig, HistoryArchiver}
-import nebflow.shared.{CompactThreshold, PathUtil}
+import nebflow.shared.{CompactThreshold, PathUtil, ThinkingConfig}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
   FallbackAttempt,
   LlmHandle,

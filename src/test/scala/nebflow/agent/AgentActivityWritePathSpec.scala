@@ -4,7 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus, status}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig
 
 /**
  * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）

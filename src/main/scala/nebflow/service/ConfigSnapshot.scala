@@ -25,7 +25,7 @@ object ConfigSnapshot:
 
   /** Save current config as a timestamped snapshot. */
   def save(): IO[Unit] = IO.blocking {
-    val configPath = nebflow.llm.Config.DefaultConfigPath
+    val configPath = nebflow.shared.Config.DefaultConfigPath
     if !os.exists(configPath) then ()
     else
       os.makeDir.all(backupDir)

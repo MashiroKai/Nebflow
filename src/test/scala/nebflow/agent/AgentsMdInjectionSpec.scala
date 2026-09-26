@@ -10,8 +10,8 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.ProjectStore
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.PathUtil
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

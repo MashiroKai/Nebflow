@@ -1,4 +1,4 @@
-package nebflow.llm
+package nebflow.shared
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse

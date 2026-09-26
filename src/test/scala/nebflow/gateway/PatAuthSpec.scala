@@ -7,8 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
-import nebflow.shared.PathUtil
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.dsl.io.*
 

@@ -250,7 +250,7 @@ case class TurnContext(
    * ContextRefresher.agentsMdEnabledFor）。默认 None 保构造点兼容。
    */
   agentsMd: Option[String] = None,
-  thinkingConfig: nebflow.llm.ThinkingConfig,
+  thinkingConfig: nebflow.shared.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
   skillCatalog: String = "",

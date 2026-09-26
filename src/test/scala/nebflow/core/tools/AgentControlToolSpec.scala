@@ -12,7 +12,8 @@ import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ThinkingConfig
 
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*

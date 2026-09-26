@@ -6,8 +6,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.llm.Config
-import nebflow.shared.PathUtil
+import nebflow.shared.{Config, PathUtil}
 
 object ConfigService:
 

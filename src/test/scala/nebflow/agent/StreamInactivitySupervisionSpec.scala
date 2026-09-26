@@ -2,7 +2,8 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.actor.ToolPipelineError
-import nebflow.llm.{Fallback, FallbackExhaustedError}
+import nebflow.llm.Fallback
+import nebflow.shared.FallbackExhaustedError
 import nebflow.shared.*
 import scala.concurrent.duration.*
 
@@ -89,11 +90,11 @@ class StreamInactivitySupervisionSpec extends FunSuite:
 
   test("config: llm.streamTimeouts decodes and boots with Defaults on absence") {
     // Absent streamTimeouts → None (boot keeps Defaults: 90s / 120s / 600s).
-    io.circe.parser.decode[nebflow.llm.NebflowServiceConfig]("""{"llm":{"providers":{}}}""") match
+    io.circe.parser.decode[nebflow.shared.NebflowServiceConfig]("""{"llm":{"providers":{}}}""") match
       case Right(cfg) => assert(cfg.llm.streamTimeouts.isEmpty)
       case Left(e) => fail(s"config parse failed: $e")
     // Explicit override decodes each window independently.
-    io.circe.parser.decode[nebflow.llm.NebflowServiceConfig](
+    io.circe.parser.decode[nebflow.shared.NebflowServiceConfig](
       """{"llm":{"providers":{},"streamTimeouts":{"inactivitySec":45}}}"""
     ) match
       case Right(cfg) =>
