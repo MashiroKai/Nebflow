@@ -23,16 +23,6 @@
       "reason": "严格DAG第②步遗留:协议面字段内联持有 core/llm 类型(LoopGuard.Counters/MailQueueItem/McpPermissionAnswer/ThinkingConfig/ReadTracker/FileHistory)——待类型下沉或端口化专项批次"
     },
     {
-      "from": "src/main/scala/nebflow/agent/SharedResources.scala",
-      "to": "gateway",
-      "reason": "校准豁免:与 gateway→agent(16 文件)互引,择小边(2)豁免;方向裁定属后续批次"
-    },
-    {
-      "from": "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala",
-      "to": "gateway",
-      "reason": "校准豁免:与 gateway→agent(16 文件)互引,择小边(2)豁免;方向裁定属后续批次"
-    },
-    {
       "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
       "to": "agent",
       "reason": "后续批次路径(Phase 5 D 步裁定):RootAgentIdentity/MemoryHygieneSignal 身份与信号面残留(D 步已删其未消费的 SharedResources 形参)——单独批次"
@@ -251,11 +241,6 @@
       "from": "src/main/scala/nebflow/neblink/DeviceMailInbox.scala",
       "to": "agent",
       "reason": "校准豁免:与 agent→neblink(1 文件)互引,两侧同数,择 neblink 出向豁免;方向裁定属后续批次"
-    },
-    {
-      "from": "src/main/scala/nebflow/service/SessionService.scala",
-      "to": "gateway",
-      "reason": "校准豁免:与 gateway→service(14 文件)互引,择小边(1)豁免;方向裁定属后续批次"
     }
   ]
 }

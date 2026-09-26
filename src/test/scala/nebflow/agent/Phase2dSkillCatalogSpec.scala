@@ -11,7 +11,7 @@ import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{FlowMapStore, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.RateLimiter
+import nebflow.core.RateLimiter
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
@@ -101,7 +101,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
-      sessionStore = nebflow.gateway.SessionStore(tmp / "sessions", tmp / "tasks"),
+      sessionStore = nebflow.core.SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
       thinkingConfigRef = thinkingRef,
       rateLimiter = rateLimiter,

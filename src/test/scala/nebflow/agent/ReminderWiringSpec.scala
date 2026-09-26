@@ -11,7 +11,7 @@ import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}

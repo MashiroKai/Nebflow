@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.RootAgentIdentity
-import nebflow.gateway.{Folder, SessionMeta, SessionStore}
-import nebflow.shared.Message
+import nebflow.core.{Folder, SessionStore}
+import nebflow.shared.{Message, SessionMeta}
 
 /**
  * 会话服务层。

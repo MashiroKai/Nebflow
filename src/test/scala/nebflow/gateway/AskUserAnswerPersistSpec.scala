@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.core.SessionStore
 import nebflow.shared.UiMessage
 
 import java.nio.file.Files

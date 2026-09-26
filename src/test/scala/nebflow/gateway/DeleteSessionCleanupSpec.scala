@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
+import nebflow.core.SessionStore
 import nebflow.core.flow.{TeamSessionRegistry, TurnStateStore}
 import nebflow.shared.{Message, MessageRole, PathUtil}
 

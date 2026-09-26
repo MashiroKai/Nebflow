@@ -13,7 +13,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.SharedResources
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory

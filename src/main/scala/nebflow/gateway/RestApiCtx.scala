@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
+import nebflow.core.SessionStore
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
 import nebflow.shared.NebflowLogger

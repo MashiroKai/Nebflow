@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import munit.FunSuite
 
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.shared.UiMessage
 
 import scala.io.Source

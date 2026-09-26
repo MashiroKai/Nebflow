@@ -17,7 +17,7 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectCreateTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 

@@ -1,8 +1,9 @@
 package nebflow.gateway
 
 import munit.CatsEffectSuite
+import nebflow.core.SessionStore
 import nebflow.core.{GlobalSafety, SafetyMode}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, SessionMeta}
 
 import java.nio.file.Files
 

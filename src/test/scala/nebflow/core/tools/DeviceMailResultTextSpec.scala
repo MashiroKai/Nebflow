@@ -8,7 +8,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService, PeerInfo}
 

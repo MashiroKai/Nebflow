@@ -10,7 +10,7 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord}
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.shared.*
 
 import scala.concurrent.duration.*

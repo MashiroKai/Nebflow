@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.SessionStore
 import nebflow.shared.Retry
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

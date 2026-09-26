@@ -188,7 +188,8 @@ class InjectionIntakeContractSpec extends FunSuite:
     // 计数/生命周期面不得出现 intake（禁动面在代码上可 grep 验证）。
     val accountingFaces = List(
       "src/main/scala/nebflow/core/project/ProjectActor.scala" -> projectActor,
-      "src/main/scala/nebflow/gateway/SessionStore.scala" -> read("src/main/scala/nebflow/gateway/SessionStore.scala"),
+      // 严格DAG第④步裁定(2026-09-26):源文件下移,测试路径钉串随迁(先例 1c4cbb0)
+      "src/main/scala/nebflow/core/SessionStore.scala" -> read("src/main/scala/nebflow/core/SessionStore.scala"),
       "src/main/scala/nebflow/core/flow/MailQueueStore.scala" ->
         read("src/main/scala/nebflow/core/flow/MailQueueStore.scala")
     )

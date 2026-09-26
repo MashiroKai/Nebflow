@@ -1,4 +1,4 @@
-package nebflow.gateway
+package nebflow.core
 
 import cats.effect.{IO, Ref}
 

@@ -9,7 +9,7 @@ import scala.concurrent.duration.*
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.hotrestart.{HotRestart, HotRestartIntent, RestartMode, SuccessorGate}
 import nebflow.core.project.{FlowMapStore, NodeDef, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{LlmInterface, ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, PathUtil}
 

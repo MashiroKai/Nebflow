@@ -8,7 +8,7 @@ import nebflow.actor.ActorSystem
 import nebflow.actor.AgentRecord
 import nebflow.agent.SharedResources
 import nebflow.core.flow.TeamSessionRegistry
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.PathUtil
 

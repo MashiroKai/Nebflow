@@ -7,7 +7,7 @@ import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.tools.{FileLockManager, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 import nebflow.shared.given

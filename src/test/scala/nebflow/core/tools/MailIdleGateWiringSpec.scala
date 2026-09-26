@@ -12,7 +12,7 @@ import nebflow.agent.*
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry, TeamSessionRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 import nebflow.core.FileChangeTracker

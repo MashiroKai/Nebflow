@@ -20,7 +20,7 @@ import nebflow.core.project.{
 }
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.RateLimiter
+import nebflow.core.RateLimiter
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
@@ -193,7 +193,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
-      sessionStore = nebflow.gateway.SessionStore(tmp / "sessions", tmp / "tasks"),
+      sessionStore = nebflow.core.SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
       thinkingConfigRef = thinkingRef,
       rateLimiter = rateLimiter,

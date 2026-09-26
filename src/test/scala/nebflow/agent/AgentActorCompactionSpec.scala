@@ -29,7 +29,7 @@ import nebflow.core.compact.{CompactConfig, HistoryArchiver}
 import nebflow.shared.{CompactThreshold, PathUtil}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{
   FallbackAttempt,

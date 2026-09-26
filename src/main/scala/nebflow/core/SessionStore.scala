@@ -1,4 +1,4 @@
-package nebflow.gateway
+package nebflow.core
 
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
@@ -11,11 +11,11 @@ import nebflow.core.flow.TurnStateStore
 import nebflow.core.{AtomicJson, SessionStorePort}
 import nebflow.shared.{*, given}
 
-// Re-export SessionMeta from shared package for backward compatibility
-export nebflow.shared.SessionMeta
-
 import java.util.UUID
+
 import scala.concurrent.duration.*
+
+// 严格DAG第④步裁定(2026-09-26):export shim 随迁即删,SessionMeta 统一改指 nebflow.shared
 
 // ===== Per-session bridge binding config =====
 // Generic: each platform stores its config as a Json object.
@@ -1151,7 +1151,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path) extends SessionStore
    * When two messages have the same fingerprint, keep the one with the earlier timestamp
    * (they contain the same content; earlier timestamp is the original creation time).
    */
-  private[gateway] def mergeMessages(local: List[Message], cloud: List[Message]): List[Message] =
+  private[core] def mergeMessages(local: List[Message], cloud: List[Message]): List[Message] =
     if cloud.isEmpty then local
     else if local.isEmpty then cloud
     else
@@ -1170,7 +1170,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path) extends SessionStore
    * Strategy: take whichever side has more entries (the more complete rendering history).
    * If equal length, prefer local (avoids unnecessary UI changes).
    */
-  private[gateway] def mergeUiMessages(local: List[UiMessage], cloud: List[UiMessage]): List[UiMessage] =
+  private[core] def mergeUiMessages(local: List[UiMessage], cloud: List[UiMessage]): List[UiMessage] =
     if cloud.length > local.length then cloud else local
 
   /**

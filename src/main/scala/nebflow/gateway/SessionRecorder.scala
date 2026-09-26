@@ -3,6 +3,7 @@ package nebflow.gateway
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.SessionStore
 import nebflow.shared.{NebflowLogger, *}
 
 /**

@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
-import nebflow.gateway.SessionStore
+import nebflow.core.SessionStore
 import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 /**

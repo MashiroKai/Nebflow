@@ -3,6 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.agent.SharedResources
+import nebflow.core.SessionStore
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.{NeblinkService, PeerInfo}
 import org.http4s.server.websocket.WebSocketBuilder2

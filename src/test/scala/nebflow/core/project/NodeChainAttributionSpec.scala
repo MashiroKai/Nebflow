@@ -12,7 +12,7 @@ import nebflow.actor.flowChainId // AgentState extension accessor（§9.2 项 2 
 import nebflow.core.node.NodeRunner
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, Tool, ToolContext, ToolError, ToolRegistry}
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ToolCall}
 

@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
+import nebflow.core.SessionStore
 import nebflow.shared.UiMessage
 
 import java.nio.file.{Files, Path}
