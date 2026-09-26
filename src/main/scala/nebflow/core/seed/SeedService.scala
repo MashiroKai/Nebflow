@@ -235,6 +235,20 @@ object SeedService:
         logger.warnSync(s"Seed skipped due to failure: ${e.getMessage}")
   }
 
+  /** Seed-managed agent system prompt (classpath `seed/agents/<name>/system.md`).
+    *
+    * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
+    * single-point classpath reader for spawn-side prompt fail-safe chains. The
+    * `agents:kernel` manifest item is a PROMPT-ONLY seed (system.md, no seed
+    * agent.json — the kernel def face is mechanism-fixed: AgentCore.KernelFixedTools
+    * + ConvergedAgentNames make agent.json declarations dead letters), so the kernel
+    * spawn path ([[nebflow.core.tools.DelegateTool]]) reads this resource directly
+    * instead of relying on a disk def. None = resource missing or blank (caller
+    * falls back to its embedded default); never throws, never touches the data root.
+    */
+  def readAgentSeedPrompt(name: String): Option[String] =
+    readResource(os.SubPath(s"seed/agents/$name/system.md")).filter(_.trim.nonEmpty)
+
   // ── 触发 / fresh-home 守卫 ───────────────────────────────
   /** 判定「已有用户数据」：projects/ 目录存在且含 ≥1 个含 project.json 的子目录。 */
   private def hasExistingProjects(root: os.Path): Boolean =

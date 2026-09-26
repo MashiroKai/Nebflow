@@ -7,6 +7,8 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.node.NodeRunner
+import nebflow.core.presets.{PresetStore, SchemePolicy}
+import nebflow.core.seed.SeedService
 
 /**
  * DelegateTool — Nebula 专属的一次性执行入口（极简内核形态，2026-09-11 恢复批）。
@@ -157,23 +159,124 @@ object DelegateTool extends Tool:
     end match
   end routeWsSend
 
+  /** Embedded default kernel system prompt — the last tier of the fail-safe chain
+    * (kernelgen-ext batch 2026-09-26, author directive "kernel into the seed tree").
+    * Byte-identical to the BODY of `seed/agents/kernel/system.md` (the seed file's
+    * leading HTML comment is seed-machinery metadata and is deliberately not part
+    * of the prompt): opening line + contract sections ①-④ verbatim from the
+    * DelegateTool description (mailmodel batch approved text) + section ⑤ (the
+    * author-directed plugin-creation pointer). Keep the two copies in sync — the
+    * seed file is the reviewable authority, this constant only covers the
+    * seed-resource-missing face (availability first). */
+  val BuiltinKernelSystemPrompt: String =
+    """Delegate a one-shot task to the minimal kernel sub-agent — a throwaway session with Read/Write/Edit/Glob/Grep/Bash (each accepts device= for another machine) plus AskUserQuestion. It has no project context, no memory and no history: the task text must be fully self-contained.
+
+## ① When to use
+
+**When to use — all three must hold:**
+- The target does NOT live in a mounted project workspace, needs no project AGENTS.md / review / merge chain, and will not write a git repo (those go to Mail(address="project:<name>", message=...)).
+- It is a single action ending in one text result (no artifact to review or archive, no multi-step plan).
+- You cannot do it yourself: you have no Bash/Write/Edit.
+
+**When NOT to use:** anything project-owned, anything whose output is a work unit needing review, or anything you can finish yourself — use Mail(address="project:<name>", message=...) or do it directly.
+
+## ② Capability boundary
+
+**Capability boundary (hard):** the kernel has NO plugin surface and NO project context — it cannot mount plugins, read project AGENTS.md, or see the Plugin Catalog. For any deliverable-production task (PPT/decks, cards, diagrams, websites, papers, research reports) use Mail(address="project:<name>", message=...) instead, and never ask the kernel to pick a technology route or to reject an existing capability route.
+
+## ③ Path semantics
+
+**Path semantics (hard facts, measured):**
+- The file tools require ABSOLUTE paths — relative paths are rejected (no sandbox root in this session). `~` is not expanded.
+- Bash's initial working directory is NOT guaranteed (it follows the gateway process, not the session). Use absolute paths or `cd` explicitly.
+- Glob/Grep without an explicit root search from the gateway process cwd — pass an absolute root.
+- Each kernel session gets a throwaway work root (temp directory), written on the first line of its brief. If the task names its own absolute directory, the task wins.
+- Remote (device=) paths are paths on THAT machine and must be absolute.
+
+## ④ Limits and rules
+
+**Limits:** at most 4 kernel sessions in flight per root session (sessions waiting for your answer count too); the 5th is rejected with the in-flight list. Each kernel has a 3600s wall-clock budget that EXCLUDES user-wait time.
+
+**Rules:**
+- Do NOT duplicate the kernel's work — work on something else and let the result arrive as a system message.
+- The ack is not the result: the kernel reports back later via a `source="delegate"` message.
+- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine.
+
+## ⑤ Creating plugins
+
+If the task involves creating a Nebflow plugin, first read `~/.nebflow/plugins/nebflow-plugin-creator/` (SKILL.md and references) and follow its conventions using your file tools — you cannot mount plugins, but you can produce one by reading its docs and writing files."""
+
+  /** Tier-1 prompt source of the fail-safe chain: the seed-managed runtime mirror
+    * `<dataRoot>/agents/kernel/system.md` (what SeedService.seedAgent writes on a
+    * fresh home and what the prompt editor reads/writes). Fail-soft: missing,
+    * blank or unreadable file => None (chain falls through). */
+  private def seedMirrorPrompt(): Option[String] =
+    try
+      val p = PathUtil.dataRoot / "agents" / KernelAgentName / "system.md"
+      if os.exists(p) then
+        val text = os.read(p)
+        if text.trim.nonEmpty then Some(text) else None
+      else None
+    catch case _: Throwable => None
+
+  /** The built-in kernel def used when the disk def is absent (fail-safe face).
+    * Mechanism-fixed zero-config: tools carry the single-source constant
+    * ([[AgentCore.KernelFixedTools]]; the runtime gate is `fixedToolsFor` for a
+    * converged name regardless of this field), category pinned to "standalone"
+    * (ConvergedAgentNames), and preset/model resolved exactly like
+    * [[AgentLibrary.loadFromDir]] resolves a disk kernel without own references
+    * (SchemePolicy: kernel inherits Nebula's current ref; tolerant of a missing
+    * root). */
+  private def builtinKernelDef(systemPrompt: String): AgentDef =
+    val (effPreset, effModel) = SchemePolicy.effectiveRefs(KernelAgentName, None, None)
+    val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+    AgentDef(
+      name = KernelAgentName,
+      description =
+        "Built-in minimal kernel (Delegate / Mail `kernel` leg target): one-shot task executor with " +
+          "Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion; no project context, no memory. " +
+          "Fail-safe definition synthesized at spawn when the disk def is missing (kernelgen-ext batch 2026-09-26).",
+      tools = AgentCore.KernelFixedTools.toList,
+      systemPrompt = systemPrompt,
+      voiceEnabled = false,
+      model = Some(resolvedModel),
+      preset = effPreset,
+      category = "standalone"
+    )
+
   /**
    * 目标解析：内置 `kernel` def（零参数面——调用方无法指定别的 agent）。
-   * 定义缺失给自描述错误（含期望路径与种子来源），不静默失败。
+   *
+   * kernelgen-ext batch (2026-09-26, author directive "kernel into the seed tree"):
+   * the def resolves through a three-tier prompt chain and NEVER refuses to start
+   * a kernel because a def/seed file is missing or bad (fail-safe, availability
+   * first — the former self-describing "definition not found" refusal is gone):
+   *   1. disk def `agents/kernel/{agent.json,system.md}` via the agent library —
+   *      the normal face (full defs on existing homes; user edit > seed);
+   *   2. no disk def => synthesize the built-in def here. Prompt source, in order:
+   *      the seed-managed runtime mirror file (prompt-editor face) -> the classpath
+   *      seed resource `seed/agents/kernel/system.md` (via
+   *      [[SeedService.readAgentSeedPrompt]]) -> [[BuiltinKernelSystemPrompt]].
+   *      The `agents:kernel` seed item is prompt-only (no seed agent.json), so this
+   *      tier is what makes a fresh home spawn-capable before/without a full def.
    */
-  private def resolveKernelDef(ctx: ToolContext): IO[Either[ToolError, AgentDef]] =
+  private[tools] def resolveKernelDef(ctx: ToolContext): IO[Either[ToolError, AgentDef]] =
     ctx.agentLibrary match
       case Some(lib) =>
-        lib.get(KernelAgentName).map {
-          case Some(defn) => Right(defn)
+        lib.get(KernelAgentName).flatMap {
+          case Some(defn) => IO.pure(Right(defn))
           case None =>
-            Left(
-              ToolError(
-                s"Kernel agent definition '$KernelAgentName' not found — Delegate cannot start. Expected " +
-                  s"${PathUtil.dataRootRenderValue}/agents/$KernelAgentName/{agent.json,system.md} (seeded from " +
-                  s"src/main/resources/seed/agents/$KernelAgentName/). Restore the definition and retry."
-              )
-            )
+            IO.blocking {
+              val mirror = seedMirrorPrompt()
+              val seed = if mirror.isDefined then None else SeedService.readAgentSeedPrompt(KernelAgentName)
+              val source =
+                if mirror.isDefined then "runtime mirror system.md"
+                else if seed.isDefined then "classpath seed"
+                else "embedded default"
+              logger.warnSync(
+                s"Kernel def missing on disk — using the built-in fail-safe def (prompt source: $source)")
+              Right(builtinKernelDef(mirror.orElse(seed).getOrElse(BuiltinKernelSystemPrompt)))
+            }
         }
       case None =>
         IO.pure(Left(ToolError("No agent library available — Delegate cannot resolve the kernel definition.")))
