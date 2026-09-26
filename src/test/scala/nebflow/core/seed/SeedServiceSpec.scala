@@ -10,13 +10,19 @@ import java.nio.file.Files
 /**
  * SeedService cold-start 播种引擎验证（cold-start seed 批 2026-09-07）。
  *
- * 覆盖定稿四项：① fresh home 完整播种（3 manifest agent + 4 默认预装插件 + projects/general，
- * Nebula 由 manifest 种子树下发，govmemory 批 2026-09-25 起 memory agent 退役）、
+ * 覆盖定稿四项：① fresh home 完整播种（3 manifest agents + 4 默认预装插件，Nebula 由
+ * manifest 种子树下发，govmemory 批 2026-09-25 起 memory agent 退役；projects/general
+ * is NO LONGER seeded since the kernelgen batch 2026-09-26 — the manifest carries
+ * zero `project:` items）、
  * ② 幂等 / 不覆盖用户编辑、
  * ③ fresh-home 守卫（已有用户数据 → 只写 marker 不播种）、
  * ④ 升级 add-only（低版本 marker + 已有文件 → 只补缺失，不重写）；
- * ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①恢复内置 general 项目播种：
- * manifest 恰一条 `project:general` + 种子资源树在位）。
+ * ⑤ project-face contract (FLIPPED by the kernelgen batch 2026-09-26, superseding the
+ * author's 2026-09-17 rulings ①② seeding posture): the manifest declares ZERO
+ * `project:` items ⇒ a cold start does not create projects/general; an existing home
+ * missing general is NOT backfilled (reconcileProjects dormant); the
+ * `seed/projects/general/` template tree stays in the repo as a dormant piece
+ * (rollback-friendly).
  *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，`getResourceAsStream`
  * 直接命中——即「载体 A = 资源打包」在测试环境下被真实走通。
@@ -40,7 +46,7 @@ class SeedServiceSpec extends FunSuite:
   private def dataRoot: os.Path = PathUtil.dataRoot
 
   // ── ① fresh home：完整播种（agent + plugin + project）├────────
-  test("fresh home seeds four keepers + plugins + project:general"):
+  test("fresh home seeds three agents + four plugins, and NO project (general retired from cold start)"):
     ensure()
 
     // 三个 manifest agent：Nebula / project-dispatcher / general 全部由种子树下发
@@ -107,24 +113,13 @@ class SeedServiceSpec extends FunSuite:
     assert(os.exists(home / "plugins" / "slideblocks" / "skills" / "slideblocks" / "SKILL.md"),
       "slideblocks skill copied")
 
-    // ── 项目面：默认通用项目 general 恢复播种（作者 2026-09-17 裁定①，撤销 09-16 摘除令）──
-    // 正向断言（本批改写面）：干净 home 建 projects/general 脚手架——S1 前是同一位置的
-    // 路径级负向断言（`!os.exists(home / "projects" / "general")`）。**禁恒真**：逐级读
-    // 真值（文件存在 + project.json 的 name/workspace + AGENTS.md 存在且为 **0 字节**——
-    // 作者 2026-09-18 裁定 (A)：种子文本面置空，不再预填/不再带占位），播种面
-    // 被摘掉即红（S5① 变异红证已实测）。
-    val projectJson = home / "projects" / "general" / "project.json"
-    assert(os.exists(projectJson), "project:general scaffolded")
-    val proj = io.circe.parser.parse(os.read(projectJson)).toOption.get
-    assert(proj.hcursor.downField("name").as[String].toOption.contains("general"))
-    assert(proj.hcursor.downField("workspace").as[String].toOption.contains((home / "projects" / "general").toString),
-      "workspace points at projects/general")
-    assert(os.exists(home / "projects" / "general" / "AGENTS.md"), "AGENTS.md scaffolded")
-    // 2026-09-18 作者裁定 (A)（promptopt W3 · L2 = 种子文本置空，取代原「含本工作区路径 /
-    // <DATA_ROOT> 已替换」口径）：种子面不再预填任何内容 ⇒ 判据 = 文件**存在且 0 字节**。
-    // **禁恒真**：把种子资源回填旧预填文本（非空）⇒ 本条必红（回填红轮已实测，报告 round-2 §3）。
-    assert(os.size(home / "projects" / "general" / "AGENTS.md") == 0,
-      "seed project AGENTS.md is empty (0 bytes = no pre-filled template content)")
+    // ── Project face (kernelgen 2026-09-26, flipped contract): a fresh home does NOT
+    // scaffold projects/general — the manifest carries zero `project:` items, so
+    // neither the full-seeding pass nor reconcileProjects ever creates it. Non-vacuous:
+    // under the baseline manifest (one `project:` item for general) this assertion goes RED
+    // (seedProject would scaffold the directory) — that red run is the C4 red-proof.
+    assert(!os.exists(home / "projects" / "general"),
+      "fresh home must NOT scaffold projects/general (general retired from cold start, kernelgen 2026-09-26)")
 
     // marker
     val marker = home / ".seed-state.json"
@@ -132,12 +127,13 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // marker 记录 = 本轮实际写入 item 数 = **8** = 现行 manifest items 全量：3 agents
-    // （project-dispatcher / general / Nebula）+ 4 默认插件（visual-report /
-    // slideblocks / nebflow-plugin-creator / web-search-toolkit）+ 1 project（general，
-    // 作者 2026-09-17 裁定①恢复播种）。S1 前 = 7（同集去 project 条目）。
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
-      "marker records 8 items (3 agents + 4 plugins + 1 project:general)")
+    // Marker count = items actually written this run = **7** = the full current
+    // manifest: 3 agents (project-dispatcher / general / Nebula) + 4 default plugins
+    // (visual-report / slideblocks / nebflow-plugin-creator / web-search-toolkit),
+    // ZERO project items (kernelgen 2026-09-26: the general `project:` entry was
+    // removed; pre-kernelgen = 8 with it).
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
+      "marker records 7 items (3 agents + 4 plugins, zero project items)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -149,23 +145,17 @@ class SeedServiceSpec extends FunSuite:
     ensure()  // re-seed
     assert(os.read(agentPath).contains("customMarker"), "user edit preserved across re-seed")
 
-    // 项目面（本批改写的第二处 + S5② 补钉）：重播既**不重复 create**也**不静默覆盖**
-    // 既有 project.json —— 用户改写的内容逐字存活。本行钉的是**项目面「无静默覆盖」不变量**
-    // （三重守卫：既有 home 门 + marker 门 + seedProject 的「已存在」分支；红证 = 三处全中和
-    // 的朴素播种面，见报告 S5② —— 单独变异 seedProject 分支不可达、恒绿，理由同报告）。
-    val projPath = home / "projects" / "general" / "project.json"
-    assert(os.exists(projPath), "project:general scaffolded on a fresh home")
-    os.write.over(
-      projPath,
-      io.circe.parser.parse(os.read(projPath)).toOption.get
-        .deepMerge(io.circe.Json.obj("customMarker" -> io.circe.Json.True)).noSpaces
-    )
-    ensure()
-    assert(os.read(projPath).contains("customMarker"),
-      "user-edited project.json kept across re-seed (no silent overwrite of an existing project definition)")
+    // Project face (kernelgen 2026-09-26): projects/general no longer exists on a
+    // cold start, so the old "re-seed never silently overwrites an existing
+    // project.json" subject is gone with the retired manifest item — the contract
+    // here flips to the negative: a re-seed on a marker-current home still creates
+    // nothing. The user-edit-preservation invariant stays pinned on the agent face
+    // above (the general AGENT is not retired; its seed tree still ships).
+    assert(!os.exists(home / "projects" / "general"),
+      "re-seed still does not create projects/general (zero backfill, kernelgen 2026-09-26)")
 
   // ── ③ fresh-home 守卫：已有用户数据 → 不完整播种（但默认集 agent + 项目自愈）──
-  test("existing user data skips full seeding, add-only self-heals the default set (agents + project:general)"):
+  test("existing user data skips full seeding, add-only self-heals the default set (agents); general is NOT backfilled"):
     // 模拟已有项目（非 fresh home）
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
@@ -194,46 +184,37 @@ class SeedServiceSpec extends FunSuite:
     for name <- List("project-dispatcher", "Nebula")
     do assert(os.exists(home / "agents" / name / "agent.json"), s"default-set agent '$name' self-healed under the guard")
 
-    // ── 项目面（本批新口径，作者 2026-09-17 裁定②：既有 home 亦 add-only 补种）──
-    // 改前口径为「不补种既有 home」（原断言 = 路径级负向 `!os.exists(home/projects/general)`
-    // + 同块注释「不建 general 项目脚手架」）；后令治前论 ⇒ 该负面陈述作废，随口径翻转为
-    // 正向。判据非恒真：**改前树跑本用例必红**（无 reconcileProjects ⇒ general 不被补出），
-    // 改后绿；且既有一切内容逐字节不变（下两条）。
-    val genDir = home / "projects" / "general"
-    assert(os.exists(genDir / "project.json"),
-      "missing default project 'general' is backfilled in an existing home (add-only reconcile)")
-    assert(os.exists(genDir / "AGENTS.md"), "general/AGENTS.md backfilled in an existing home")
-    val genAgentsText = os.read(genDir / "AGENTS.md")
-    // 同口径改写（2026-09-18 作者裁定 (A)）：原两条同源断言 = 「文本含本工作区绝对路径
-    // （<DATA_ROOT> 占位已替换）」+「无未替换 <DATA_ROOT> 残留」——种子文本置空后二者在空文本上
-    // **恒真**，按变异纪律（断言禁恒真）折入本条的 0 字节读数：回填旧预填文本（非空）⇒ 本条必红。
-    assert(genAgentsText.isEmpty && os.size(genDir / "AGENTS.md") == 0,
-      "seed project AGENTS.md is empty (0 bytes) after add-only backfill — no pre-filled template content")
-    val genProj = io.circe.parser.parse(os.read(genDir / "project.json")).toOption.get
-    assert(genProj.hcursor.downField("workspace").as[String].toOption.contains(genDir.toString),
-      "backfilled project.json points its workspace at projects/general")
+    // ── Project face (kernelgen 2026-09-26, flipped again — full circle): the manifest
+    // carries zero `project:` items ⇒ reconcileProjects is dormant ⇒ an existing home
+    // missing general is NOT backfilled. This re-asserts the negative that the
+    // 2026-09-17 ruling ② had flipped to positive, but this time the flip lives in the
+    // manifest (data), not in a guard change. Non-vacuous: the baseline manifest
+    // (with its general `project:` item) makes this RED (reconcileProjects backfills
+    // the directory) — covered by the C4 red-proof run.
+    assert(!os.exists(home / "projects" / "general"),
+      "missing default project 'general' is NOT backfilled in an existing home (reconcileProjects dormant: zero project: manifest items, kernelgen 2026-09-26)")
 
     // ③ 零覆盖：既有 `projects/myproj/project.json` 内容逐字不变（既有内容零覆盖/零搬移/零删除）
     val myprojAfter = os.read(myprojJson)
     assert(myprojAfter == myprojBefore, "existing project file byte-identical after the add-only reconcile")
-    // ② `projects/` 除预期补种的 `general` 之外零新增目录
-    assert(os.list(home / "projects").map(_.last).sorted == List("general", "myproj"),
-      "no project directory beyond the expected backfilled 'general'")
+    // ② `projects/` 零新增目录（kernelgen 2026-09-26: nothing is backfilled, so the
+    // listing is exactly the pre-existing 'myproj')
+    assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
+      "no project directory beyond the pre-existing 'myproj' (general is not backfilled)")
     println(s"[DIAG-ZERO-OVERWRITE] projects/myproj/project.json sha256 before=${sha256(myprojBefore)} " +
       s"after=${sha256(myprojAfter)} byteIdentical=${myprojAfter == myprojBefore}")
 
-    // ② 幂等：第二次 boot 对该面零写盘（mtime 逐字不变 ⇒ 无写入）
-    val genProjJson = genDir / "project.json"
-    val genProjMtime = os.mtime(genProjJson)
-    val genAgentsMtime = os.mtime(genDir / "AGENTS.md")
+    // ② 幂等（kernelgen 2026-09-26 形态改写：项目面再无 general 可钉 mtime ⇒ 幂等判据
+    // 折到既有 myproj 上——第二次 boot 零新增目录 + 既有文件零写入）
+    val myprojMtime = os.mtime(myprojJson)
     ensure()
-    assert(os.mtime(genProjJson) == genProjMtime,
-      "second boot leaves projects/general/project.json untouched (mtime unchanged ⇒ zero writes)")
-    assert(os.mtime(genDir / "AGENTS.md") == genAgentsMtime,
-      "second boot leaves projects/general/AGENTS.md untouched (mtime unchanged ⇒ zero writes)")
+    assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
+      "second boot still creates no project directory (no backfilled 'general')")
+    assert(os.mtime(myprojJson) == myprojMtime,
+      "second boot leaves the existing project file untouched (mtime unchanged ⇒ zero writes)")
     assert(os.read(myprojJson) == myprojBefore, "existing project file still byte-identical after the second boot")
-    println(s"[DIAG-IDEMPOTENT] projects/general/project.json mtime before=$genProjMtime " +
-      s"after=${os.mtime(genProjJson)} unchanged=${os.mtime(genProjJson) == genProjMtime}")
+    println(s"[DIAG-IDEMPOTENT] projects/myproj/project.json mtime before=$myprojMtime " +
+      s"after=${os.mtime(myprojJson)} unchanged=${os.mtime(myprojJson) == myprojMtime}")
 
   // ── ④ 升级 add-only：低版本 marker + 已有文件 → 只补缺失 ──
   test("upgrade run is add-only: fills missing files, does not rewrite existing"):
@@ -268,17 +249,24 @@ class SeedServiceSpec extends FunSuite:
     do
       assert(!os.exists(home / "plugins" / name / "plugin.json"),
         s"non-default seed plugin '$name' NOT replanted on upgrade run (out of default set)")
-    // 项目面（本批改写）：升级 add-only run 同样补齐缺失的默认集项目——本用例在 run 前
-    // `os.remove.all(home / "projects")`，故此处是「缺失 ⇒ 补建」的正面断言
-    // （S1 前是路径级负向断言「no project scaffold added by the upgrade run」）
-    assert(os.exists(home / "projects" / "general" / "project.json"), "missing project added")
+    // Project face (kernelgen 2026-09-26, flipped): the upgrade add-only run no longer
+    // replants any project — the manifest has zero `project:` items, so after the
+    // pre-run `os.remove.all(home / "projects")` NOTHING is recreated (the old
+    // positive "missing project added" assertion is superseded together with the
+    // retired manifest item). Non-vacuous: the baseline manifest makes this RED
+    // (runSeed would replant general) — covered by the C4 red-proof.
+    assert(!os.exists(home / "projects" / "general"),
+      "upgrade run does NOT replant projects/general (zero project: manifest items, kernelgen 2026-09-26)")
     // marker 升级到当前版本
     val marker = io.circe.parser.parse(os.read(home / ".seed-state.json")).toOption.get
     assert(marker.hcursor.downField("version").as[String].toOption.contains("1.0.0"), "marker bumped to 1.0.0")
 
-  // ── ⑤ 项目面种子在位不变量（作者 2026-09-17 裁定①，撤销 09-16 摘除令）────
-  test("built-in project seed is in place: manifest declares exactly one 'project:general' item and the seed tree ships with it"):
-    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：条目/资源树任一消失，本测红。
+  // ── ⑤ Project-face manifest contract (kernelgen 2026-09-26: zero project items;
+  //    the dormant scaffold tree stays in the repo) ────
+  test("manifest declares ZERO project items (general retired from cold start) and the dormant seed tree stays in the repo"):
+    // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：任一方向漂移即红——
+    // 有人把 `project:*` 项加回 manifest ⇒ 本测红（重入播种 = 产品决策，需作者明示）；
+    // 有人删掉休眠模板树 ⇒ 本测同样红（机械面保留不删 = 回滚友好契约）。
     val manifestText = {
       val in = Option(getClass.getClassLoader.getResourceAsStream("seed/manifest.json")).getOrElse(
         fail("classpath resource 'seed/manifest.json' not found")
@@ -288,15 +276,15 @@ class SeedServiceSpec extends FunSuite:
     val items = io.circe.parser.parse(manifestText).toOption
       .flatMap(_.hcursor.downField("items").as[List[String]].toOption).getOrElse(fail("manifest.items unreadable"))
     val projectItems = items.filter(_.startsWith("project:"))
-    assert(projectItems == List("project:general"),
-      s"seed manifest must declare exactly one 'project:general' item (got ${projectItems.mkString(", ")} of " +
-        s"${items.size} item(s)) — the built-in project seed was restored by the author on 2026-09-17 " +
-        "(reversing the 2026-09-16 removal); dropping it again is a product decision")
-    // 种子资源树在位（缺 `seed/projects/general/AGENTS.md` ⇒ seedProject 只剩 defaultAgentTemplate
-    // 短模板兜底，真实项目指令文本到不了新 home）。判据与兄弟 spec 同口径 = classpath
+    assert(projectItems.isEmpty,
+      s"seed manifest must declare ZERO 'project:' items (got ${projectItems.mkString(", ")} of " +
+        s"${items.size} item(s)) — kernelgen batch 2026-09-26 retired the general project from " +
+        "cold start (kernel replaces general); re-adding a project item is a product decision")
+    // Dormant scaffold tree stays on the classpath（机械面保留不删：种子树模板不随 manifest
+    // 条目删除——回滚友好）。判据与兄弟 spec 同口径 = classpath
     // （sbt test = target/classes 拷贝，assembly = jar）。
     assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
-      "seed project resource tree (seed/projects/general/AGENTS.md) is on the classpath")
+      "dormant seed project resource tree (seed/projects/general/AGENTS.md) is still on the classpath (kept, not deleted)")
 
   // ── ⑥ 零覆盖负控：既有（手工版）projects/general 逐字节不变 ──────────
   test("a pre-existing hand-made projects/general survives boot byte-identical (add-only, zero overwrite)"):
@@ -306,6 +294,10 @@ class SeedServiceSpec extends FunSuite:
     // .gitignore）逐字节钉住。判红面 = 任何「对齐种子 / 镜像覆盖 / 按 workspace 纠正既有定义 /
     // 经 `ProjectStore.ensureScaffold` 打补丁（该路径会**追加** `.gitignore`）」的实现
     // ——本批禁：不得 seed→runtime 覆写既有 general 的任何文件。
+    // kernelgen 2026-09-26: this negative control now doubles as the SEALED-FAMILY
+    // guarantee — with reconcileProjects dormant (zero `project:` manifest items), a
+    // pre-existing hand-made projects/general is untouched on every boot (no seed
+    // pass even iterates it; it is likewise never deleted).
     os.remove.all(home / "projects")
     os.remove.all(home / ".seed-state.json")
     val handGeneral = home / "projects" / "general"

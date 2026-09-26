@@ -239,11 +239,15 @@ class SeedPluginReconcileSpec extends FunSuite:
     // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）；
     // **默认集 agent 自愈补装**（2026-09-13 语义变更：作者令「改成缺失自愈」取代 D-8
     // 「缺失不新装」——原断言「no project-dispatcher agent under guard」已按新口径改写，
-    // 预期判红样例）。项目面自作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由
-    // `reconcileProjects` 补**缺失**的内置项目 ⇒ 本条原负向断言「no general project
-    // planted under guard」已随前令作废，翻转为正向。
-    assert(os.exists(home / "projects" / "general" / "project.json"),
-      "missing default project backfilled under the guard (add-only reconcile, author ruling ②)")
+    // 预期判红样例）。项目面史实两翻：2026-09-17 裁定②曾把本条翻转为正向（补建），
+    // kernelgen 批 2026-09-26（kernel 取代 general）再翻转回负向——这次翻转的载体是
+    // manifest 数据面（零 `project:` 项 ⇒ reconcileProjects 休眠），非守卫改动；
+    // agent 自愈与插件刷新断言不动。
+    // Supersession note (kernelgen 2026-09-26): the manifest no longer carries any
+    // `project:` item, so reconcileProjects is dormant — under the guard the missing
+    // general project is NOT backfilled.
+    assert(!os.exists(home / "projects" / "general"),
+      "missing general project NOT backfilled under the guard (manifest has zero project: items, reconcileProjects dormant, kernelgen 2026-09-26)")
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
       "default-set agent self-healed even under the guard (2026-09-13)")
     // reconcile 穿透守卫：干净旧插件刷新为 seed 形态（2026-09-09 断点的机制解）
