@@ -2,7 +2,7 @@ package nebflow.service
 
 import cats.effect.IO
 import io.circe.parser.parse
-import nebflow.core.{Branding, PathUtil}
+import nebflow.shared.{Branding, PathUtil}
 import os.Path
 
 /**

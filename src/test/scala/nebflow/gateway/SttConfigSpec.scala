@@ -4,7 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * #295 STT 前端可配置——setSttConfig 校验/解析 + A2 部分更新 merge + 配置

@@ -4,7 +4,8 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.core.{PathUtil, ReplUi}
+import nebflow.core.ReplUi
+import nebflow.shared.PathUtil
 
 enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser

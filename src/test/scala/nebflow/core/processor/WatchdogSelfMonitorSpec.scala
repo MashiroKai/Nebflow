@@ -10,7 +10,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus}
 import nebflow.agent.{AgentLibrary, SharedResources, StubLlm, SubAgentTaskStore}
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{
   FlowMapStore,
@@ -26,7 +26,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 

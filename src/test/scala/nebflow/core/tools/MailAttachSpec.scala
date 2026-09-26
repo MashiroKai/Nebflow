@@ -9,7 +9,6 @@ import nebflow.actor.ActorSystem
 import nebflow.actor.{AgentDef, messages}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
@@ -17,7 +16,7 @@ import nebflow.dropbox.AttachContract
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.neblink.DeviceMail
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 import fs2.Stream
 import scala.concurrent.duration.*
 

@@ -7,8 +7,8 @@ import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{RemoteExecutor, ToolError}
+import nebflow.shared.PathUtil
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets

@@ -3,10 +3,9 @@ package nebflow.core.plugin
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.PathUtil
 import nebflow.core.mcp.McpManager
 import nebflow.llm.McpServerConfig
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
 

@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.core.*
 import nebflow.core.project.*
 import nebflow.core.tools.NodeTools
+import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

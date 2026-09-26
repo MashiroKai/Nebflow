@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentDef, AgentStatus}
 import nebflow.agent.AgentLibrary
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：

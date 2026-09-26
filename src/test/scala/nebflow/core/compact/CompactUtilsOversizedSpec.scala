@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
-import nebflow.shared.{ContentBlock, Defaults, Message, MessageRole}
+import nebflow.shared.{ContentBlock, Defaults, Message, MessageRole, PathUtil}
 
 import java.nio.file.Files
 

@@ -4,9 +4,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, DropboxService}
 import nebflow.neblink.*
+import nebflow.shared.PathUtil
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter

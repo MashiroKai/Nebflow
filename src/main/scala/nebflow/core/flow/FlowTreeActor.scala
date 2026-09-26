@@ -737,9 +737,9 @@ object FlowTreeActor:
   // ============================================================
 
   private def startFileWatcher(ctx: ActorContext[TreeCommand], cfg: TreeConfig): IO[Unit] =
-    val flowsDir = (nebflow.core.PathUtil.dataRoot / "flows").toIO.toPath
-    val agentsDir = (nebflow.core.PathUtil.dataRoot / "agents").toIO.toPath
-    val teamsDir = (nebflow.core.PathUtil.dataRoot / "teams").toIO.toPath
+    val flowsDir = (nebflow.shared.PathUtil.dataRoot / "flows").toIO.toPath
+    val agentsDir = (nebflow.shared.PathUtil.dataRoot / "agents").toIO.toPath
+    val teamsDir = (nebflow.shared.PathUtil.dataRoot / "teams").toIO.toPath
     ctx.forkTurn(
       IO.blocking {
         if !java.nio.file.Files.exists(flowsDir) then java.nio.file.Files.createDirectories(flowsDir)

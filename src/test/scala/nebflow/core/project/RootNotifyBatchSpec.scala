@@ -7,13 +7,13 @@ import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

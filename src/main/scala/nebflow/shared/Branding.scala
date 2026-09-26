@@ -1,4 +1,4 @@
-package nebflow.core
+package nebflow.shared
 
 import java.io.InputStream
 
@@ -29,7 +29,7 @@ object Branding:
    * escapes: brand values are plain tokens. Duplicate keys: last one wins.
    * Package-visible for the spec.
    */
-  private[core] def parseBrandConf(text: String): Map[String, String] =
+  private[shared] def parseBrandConf(text: String): Map[String, String] =
     text.linesIterator
       .map(_.trim)
       .filterNot(line => line.isEmpty || line.startsWith("#"))
@@ -143,7 +143,7 @@ object Branding:
    * Pure core of `env` (parameterized for the spec — the live prefix is a
    * compile-time constant baked from brand.conf and cannot be varied).
    */
-  private[core] def dualEnv(env: Map[String, String], prefix: String, name: String): Option[String] =
+  private[shared] def dualEnv(env: Map[String, String], prefix: String, name: String): Option[String] =
     env.get(s"${prefix}_$name").orElse(env.get(s"NEBFLOW_$name"))
 
   /**

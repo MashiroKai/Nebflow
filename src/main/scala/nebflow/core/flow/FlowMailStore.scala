@@ -4,8 +4,8 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Persistent mail history per flow instance.

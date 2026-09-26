@@ -8,11 +8,10 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk}
 import nebflow.shared.given
 
 import scala.concurrent.duration.*

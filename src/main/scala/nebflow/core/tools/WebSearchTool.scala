@@ -4,8 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{JsonObject, parser}
-import nebflow.core.Branding
-import nebflow.shared.{HttpUtils, SharedBackend}
+import nebflow.shared.{Branding, HttpUtils, SharedBackend}
 import sttp.client4.*
 
 import scala.concurrent.duration.*

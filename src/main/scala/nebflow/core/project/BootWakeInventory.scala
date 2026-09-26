@@ -3,7 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * BootWakeInventory —— 宿主启动自动重入的「落盘事实清单」构建器（选项 A 档的输入面，

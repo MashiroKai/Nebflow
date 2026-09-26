@@ -3,7 +3,7 @@ package nebflow.core.entity
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Regression tests for the broken Team catalog injection: team members and

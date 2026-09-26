@@ -2,9 +2,8 @@ package nebflow.core.compact
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.MemoryQueue
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.shared.{MemoryBudget, MemoryStore, PathUtil}
 
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*

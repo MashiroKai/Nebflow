@@ -8,10 +8,10 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.gateway.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
 import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.shared.PathUtil
 
 /**
  * MailTool 设备腿 `images`：**禁静默忽略**（同根族第三件，2026-09-16 A1 批）。

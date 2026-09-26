@@ -9,12 +9,11 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentEvent, AgentKind, messages, sessionId, status}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 

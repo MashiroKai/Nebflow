@@ -1,6 +1,5 @@
-package nebflow.service
+package nebflow.shared
 
-import nebflow.core.PathUtil
 import os.Path
 
 import java.time.format.DateTimeFormatter
@@ -169,5 +168,5 @@ object MemorySnapshot:
       }
 
   /** 测试钩子（spec 直接驱动修剪；生产路径由 snapshotBeforeWrite 内部调用）。 */
-  private[service] def pruneForTest(target: Path, root: Path): Unit = prune(target, root)
+  private[shared] def pruneForTest(target: Path, root: Path): Unit = prune(target, root)
 end MemorySnapshot

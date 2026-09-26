@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.time.Instant
 

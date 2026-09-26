@@ -8,14 +8,13 @@ import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.{AgentRecord, rootSessionId, sessionId, status}
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AgentControlTool, FileLockManager, MemoryQueue, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.service.MemoryStore
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, MemoryStore, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 

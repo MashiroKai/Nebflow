@@ -3,8 +3,8 @@ package nebflow.neblink
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, ChunkedTransfer, DropboxUtil}
+import nebflow.shared.PathUtil
 
 /**
  * Handler for the "FileTransfer" action — direct file IO that bypasses ToolRegistry.

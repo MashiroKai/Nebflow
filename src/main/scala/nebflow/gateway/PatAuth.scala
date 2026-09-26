@@ -1,8 +1,8 @@
 package nebflow.gateway
 
 import io.circe.{HCursor, Json, parser}
-import nebflow.core.PathUtil
 import nebflow.neblink.NeblinkConfig
+import nebflow.shared.PathUtil
 
 import java.math.BigInteger
 import java.net.URI

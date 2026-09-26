@@ -1,4 +1,4 @@
-package nebflow.core
+package nebflow.shared
 
 import io.circe.JsonObject
 import io.circe.syntax.*
@@ -239,7 +239,7 @@ object PathUtil:
    * Pure core of [[dataRootRenderValue]] — parameterized so the spec can verify
    * both rendering tiers without swapping the process-wide data root.
    */
-  private[core] def renderDataRootValue(root: os.Path): String =
+  private[shared] def renderDataRootValue(root: os.Path): String =
     if root == os.home / Branding.homeDirName then "~/" + Branding.homeDirName
     else root.toString
 
@@ -292,7 +292,7 @@ object PathUtil:
    *                               back to the legacy dir (availability over
    *                               migration).
    */
-  private[core] def resolveDefaultDataRoot(home: os.Path, homeDirName: String): os.Path =
+  private[shared] def resolveDefaultDataRoot(home: os.Path, homeDirName: String): os.Path =
     val newDir = home / homeDirName
     val legacyDir = home / ".nebflow"
     if newDir == legacyDir then newDir
@@ -334,7 +334,7 @@ object PathUtil:
     resolveConfigJson(dir, Branding.configFileName)
 
   /** Pure core of configJsonReadPath (parameterized for the spec). */
-  private[core] def resolveConfigJson(dir: os.Path, fileName: String): os.Path =
+  private[shared] def resolveConfigJson(dir: os.Path, fileName: String): os.Path =
     if fileName == "nebflow.json" then dir / fileName
     else if os.exists(dir / fileName) then dir / fileName
     else if os.exists(dir / "nebflow.json") then dir / "nebflow.json"

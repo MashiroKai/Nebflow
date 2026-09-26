@@ -7,9 +7,9 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
 import nebflow.neblink.NeblinkService
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

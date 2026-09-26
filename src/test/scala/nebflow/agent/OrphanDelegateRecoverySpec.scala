@@ -8,14 +8,13 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, status}
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AgentControlTool, FileLockManager, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.MessageRole
+import nebflow.shared.{MessageRole, PathUtil}
 
 import scala.concurrent.duration.*
 

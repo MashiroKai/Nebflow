@@ -10,6 +10,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorSystem as RootActorSystem, RootAgentIdentity}
 import nebflow.agent.*
+import nebflow.core.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
@@ -17,7 +18,6 @@ import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.{PathUtil, *}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
@@ -356,7 +356,7 @@ private[gateway] object WsMemoryFoldersHandlers:
         // 与 infra 失败**可判**区分 —— code 同码进日志与错误帧。拒绝不是 no-op，
         // 也不是静默跳过：前端拿到 error 帧（附 code），日志拿到同一码。
         val (code, detail) = e match
-          case r: nebflow.service.MemoryWriteGate.Rejected =>
+          case r: nebflow.shared.MemoryWriteGate.Rejected =>
             (r.code, r.detail)
           case other =>
             ("SAVEMEMORY_FAILED", Option(other.getMessage).getOrElse(other.getClass.getSimpleName))

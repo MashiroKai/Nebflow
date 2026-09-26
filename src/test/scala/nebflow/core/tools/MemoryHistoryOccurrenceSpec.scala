@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 

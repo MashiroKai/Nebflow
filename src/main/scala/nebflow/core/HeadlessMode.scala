@@ -1,5 +1,7 @@
 package nebflow.core
 
+import nebflow.shared.Branding
+
 /**
  * NEBFLOW_HEADLESS=1 — deterministic benchmark mode, read once at JVM start.
  *

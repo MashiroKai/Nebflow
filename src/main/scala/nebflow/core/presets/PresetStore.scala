@@ -4,9 +4,9 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.core.AtomicJson
 import nebflow.llm.{Config, NebflowServiceConfig}
-import nebflow.shared.{AgentModelConfig, NebflowLogger}
+import nebflow.shared.{AgentModelConfig, NebflowLogger, PathUtil}
 
 /**
  * A named model preset — a reusable `{preferred, fallbacks}` chain stored in

@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Team Manager task store (#D, spec 20260825_team-manager-task-tool-spec.md

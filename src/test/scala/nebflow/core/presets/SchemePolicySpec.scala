@@ -2,8 +2,7 @@ package nebflow.core.presets
 
 import munit.FunSuite
 import nebflow.agent.AgentLibrary
-import nebflow.core.PathUtil
-import nebflow.shared.AgentModelConfig
+import nebflow.shared.{AgentModelConfig, PathUtil}
 
 /**
  * panelscheme 批（2026-09-21，作者令）——SchemePolicy spec：

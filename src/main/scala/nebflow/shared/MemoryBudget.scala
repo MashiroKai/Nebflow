@@ -1,4 +1,4 @@
-package nebflow.service
+package nebflow.shared
 
 /**
  * 记忆预算闸（memory-management-plan §2.2-3 / §3.3 / §6.2-2.2，2026-09-05 第二批机制）。

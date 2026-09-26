@@ -2,9 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 import java.nio.file.Files
 

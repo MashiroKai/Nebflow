@@ -1,7 +1,7 @@
 package nebflow.neblink
 
 import munit.FunSuite
-import nebflow.core.{Branding, PathUtil}
+import nebflow.shared.{Branding, PathUtil}
 
 import java.nio.file.Files
 

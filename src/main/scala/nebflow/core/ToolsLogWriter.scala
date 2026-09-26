@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.*
 import java.time.format.DateTimeFormatter

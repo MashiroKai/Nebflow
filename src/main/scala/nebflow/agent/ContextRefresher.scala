@@ -6,8 +6,7 @@ import nebflow.actor.*
 import nebflow.core.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
 import nebflow.core.skill.SkillService
-import nebflow.service.{MemoryStore, RulesStore}
-import nebflow.shared.SystemReminder
+import nebflow.shared.*
 
 /**
  * Unified context refresh for session-scoped resources.
@@ -353,16 +352,16 @@ object ContextRefresher:
     val agentBytes = bytesOf(agentContent)
     val (restartPending, compactPending) = lifecycleSignal
 
-    val userOver = userBytes > nebflow.service.MemoryBudget.UserSoftBytes
-    val agentOver = agentBytes > nebflow.service.MemoryBudget.AgentSoftBytes
+    val userOver = userBytes > nebflow.shared.MemoryBudget.UserSoftBytes
+    val agentOver = agentBytes > nebflow.shared.MemoryBudget.AgentSoftBytes
 
     if userOver || agentOver then
       val lines = List(
         Option.when(userOver)(
-          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.service.MemoryBudget.UserSoftBytes}, hard ${nebflow.service.MemoryBudget.UserHardBytes})"
+          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.shared.MemoryBudget.UserSoftBytes}, hard ${nebflow.shared.MemoryBudget.UserHardBytes})"
         ),
         Option.when(agentOver)(
-          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.service.MemoryBudget.AgentSoftBytes}, hard ${nebflow.service.MemoryBudget.AgentHardBytes})"
+          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.shared.MemoryBudget.AgentSoftBytes}, hard ${nebflow.shared.MemoryBudget.AgentHardBytes})"
         )
       ).flatten
       s"""## Memory hygiene — IMMEDIATE TASK

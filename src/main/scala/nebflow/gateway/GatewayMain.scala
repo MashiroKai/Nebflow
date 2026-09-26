@@ -1454,7 +1454,7 @@ object GatewayMain extends IOApp:
                                                           // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再
                                                           // 重新冻结；已过期则清理盘上残留（跳过非永久，下一段照常）。
                                                           _ <- nebflow.core.schedule.FreezeSchedule
-                                                            .loadSkipUntil(nebflow.core.PathUtil.dataRoot)
+                                                            .loadSkipUntil(nebflow.shared.PathUtil.dataRoot)
                                                             .flatMap {
                                                               case Some(t) if t > System.currentTimeMillis() =>
                                                                 sharedResourcesWithDaemon.freezeSkipUntilRef.set(
@@ -1465,7 +1465,7 @@ object GatewayMain extends IOApp:
                                                                   )
                                                               case Some(_) =>
                                                                 nebflow.core.schedule.FreezeSchedule
-                                                                  .persistSkip(nebflow.core.PathUtil.dataRoot, None)
+                                                                  .persistSkip(nebflow.shared.PathUtil.dataRoot, None)
                                                                   .handleErrorWith(e =>
                                                                     logger.warn(
                                                                       s"Failed to clean expired freeze skip: ${e.getMessage}"

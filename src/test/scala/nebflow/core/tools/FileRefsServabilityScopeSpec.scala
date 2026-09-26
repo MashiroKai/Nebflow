@@ -1,9 +1,9 @@
 package nebflow.core.tools
 
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Path}
 

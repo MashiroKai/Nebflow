@@ -1,8 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.IO
-import nebflow.core.PathUtil
-import nebflow.service.{MemoryBudget, MemoryWriteGate}
+import nebflow.shared.{MemoryBudget, MemoryWriteGate, PathUtil}
 
 /**
  * ProjectMemory —— 项目级记忆文件（project-memory 批 2026-09-05）单点。

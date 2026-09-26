@@ -12,9 +12,9 @@ import munit.FunSuite
 import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
 import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.gateway.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.duration.*

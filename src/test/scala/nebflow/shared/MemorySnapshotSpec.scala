@@ -1,7 +1,7 @@
-package nebflow.service
+package nebflow.shared
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.{MemorySnapshot, PathUtil}
 
 import java.nio.file.Files
 

@@ -187,7 +187,8 @@ object ImageInject:
 
   /** Load one attachment into dual-channel blocks, or a descriptive error. */
   private def loadOne(path: String): Either[ToolError, List[ContentBlock]] =
-    if !nebflow.core.PathUtil.isAbsolute(path) then Left(ToolError(s"Attachment path must be absolute, got: '$path'."))
+    if !nebflow.shared.PathUtil.isAbsolute(path) then
+      Left(ToolError(s"Attachment path must be absolute, got: '$path'."))
     else
       val filePath = Paths.get(path)
       // Existence/directory first — a missing or wrong-kind path is the more

@@ -4,8 +4,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.entity.{EntityLoader, TeamDef}
+import nebflow.shared.PathUtil
 
 /**
  * LoadTool team validation (loadfix): team-local agents under

@@ -3,7 +3,7 @@ package nebflow.cli
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 object McpCommand extends CliCommand:
   def name = "mcp"

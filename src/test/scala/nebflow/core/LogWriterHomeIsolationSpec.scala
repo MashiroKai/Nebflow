@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Paths}
 import java.time.Instant

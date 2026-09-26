@@ -3,8 +3,8 @@ package nebflow.core.flow
 import cats.effect.IO
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Persists the list of mounted flows per session.

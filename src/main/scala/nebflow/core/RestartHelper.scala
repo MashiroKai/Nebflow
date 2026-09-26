@@ -1,6 +1,6 @@
 package nebflow.core
 
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.io.File
 

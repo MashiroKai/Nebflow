@@ -1,6 +1,6 @@
 package nebflow.neblink
 
-import nebflow.core.Branding
+import nebflow.shared.Branding
 
 import java.net.URI
 

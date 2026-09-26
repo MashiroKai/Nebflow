@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import nebflow.shared.PathUtil
 import os.*
 
 import java.nio.file.Files

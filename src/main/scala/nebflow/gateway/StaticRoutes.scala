@@ -4,7 +4,7 @@ package nebflow.gateway
 import cats.effect.IO
 import fs2.Stream
 import io.circe.Json
-import nebflow.core.{Branding, PathUtil}
+import nebflow.shared.{Branding, PathUtil}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

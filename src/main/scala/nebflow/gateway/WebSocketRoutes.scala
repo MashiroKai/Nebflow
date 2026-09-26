@@ -9,6 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
+import nebflow.core.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
@@ -16,7 +17,6 @@ import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.{PathUtil, *}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.parsedJson
 import nebflow.llm.*
@@ -200,7 +200,7 @@ class WebSocketRoutes(
       effectiveMode <- sharedResources.effectiveSafetyMode
       // Resolve inherited rules from folder chain
       resolvedRules = folderId.map { fid =>
-        nebflow.service.RulesStore.resolveInheritedRules(
+        nebflow.shared.RulesStore.resolveInheritedRules(
           fid,
           id => sharedResources.sessionStore.getFolderParentId(id)
         )
@@ -1238,7 +1238,7 @@ class WebSocketRoutes(
   /** Send unified session list (all agents) — keeps sessions isolated from filtering issues. */
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
     (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-      val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
+      val rulesFolderIds = folders.filter(f => nebflow.shared.RulesStore.exists(f.id)).map(_.id)
       // 出口 overlay（设计 §13 #9）：列表里的逐会话 `safetyMode` = **有效档位**
       // （覆盖 ?? 全局），不再输出盘上遗留值——前端 `state.bypassSessions`
       // 由此只含"有效档位 = 全部放行"的会话（A-14）。
@@ -1748,7 +1748,7 @@ class WebSocketRoutes(
             // （此前仅内存 Ref，后端进程重启即丢 → 输入框重新冻结）。best-effort：
             // 写盘失败不阻塞解冻（scan/broadcast 照常），warn 留痕。
             nebflow.core.schedule.FreezeSchedule
-              .persistSkip(nebflow.core.PathUtil.dataRoot, until)
+              .persistSkip(nebflow.shared.PathUtil.dataRoot, until)
               .handleErrorWith(e => logger.warn(s"Failed to persist freeze skip: ${e.getMessage}")) *>
             nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
             // 现象 2 契约（2026-08-30）：跳过 → 立即广播全局冻结态——前端输入栏

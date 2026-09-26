@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * 变更史对账**只读读数器**（零写盘）——记忆变更史对账判据的可复跑命令面。

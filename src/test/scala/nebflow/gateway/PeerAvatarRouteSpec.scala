@@ -7,7 +7,6 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -20,6 +19,7 @@ import nebflow.neblink.{
   NeblinkServerConfig,
   NeblinkService
 }
+import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.`Content-Type`

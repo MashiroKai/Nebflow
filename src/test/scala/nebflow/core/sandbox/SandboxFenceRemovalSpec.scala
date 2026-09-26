@@ -6,8 +6,8 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.AgentState
 import nebflow.agent.ContextRefresher
-import nebflow.core.PathUtil
 import nebflow.core.tools.{GlobTool, GrepTool, ReadTool, ToolContext, ToolPathUtil}
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Paths}
 

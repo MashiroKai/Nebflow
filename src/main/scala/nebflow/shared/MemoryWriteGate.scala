@@ -1,4 +1,4 @@
-package nebflow.service
+package nebflow.shared
 
 import cats.effect.IO
 import nebflow.shared.NebflowLogger

@@ -1,6 +1,7 @@
 package nebflow.core
 
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 /**
  * NodeEdit worktree 参数修复（20260903，根因报告 20260903_nodeedit-worktree-param-fix.md）

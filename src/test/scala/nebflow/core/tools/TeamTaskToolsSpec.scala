@@ -6,8 +6,8 @@ import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.task.{FileTaskStore, TaskStatus}
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files as JFiles
 

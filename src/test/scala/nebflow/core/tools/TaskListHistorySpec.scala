@@ -6,7 +6,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 

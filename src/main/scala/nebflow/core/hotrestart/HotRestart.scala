@@ -8,7 +8,7 @@ import nebflow.core.*
 import nebflow.core.project.{NodeLifecycle, ProjectRuntimeRegistry}
 import nebflow.core.tools.BgTaskRegistry
 import nebflow.llm.LlmInterface
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.io.File
 

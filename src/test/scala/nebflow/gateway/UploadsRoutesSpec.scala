@@ -3,7 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import org.http4s.{Method, Request, Status, Uri}
 
 import java.nio.file.Files

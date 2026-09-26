@@ -149,10 +149,10 @@ class HistoryArchiverSpec extends CatsEffectSuite:
 
   test("production wiring: sessions root from PathUtil.dataRoot lands under <dataRoot>/sessions/<sid>/compaction") {
     val tmpHome = os.temp.dir()
-    val prevRoot = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(tmpHome)
+    val prevRoot = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(tmpHome)
     // Mirror GatewayMain.scala's wiring expression exactly.
-    val archiver = makeArchiver(nebflow.core.PathUtil.dataRoot / "sessions")
+    val archiver = makeArchiver(nebflow.shared.PathUtil.dataRoot / "sessions")
     archiver
       .archiveCompaction("wiring-session-01", None, "Nebula", sampleMessages, sampleMessages, "full")
       .flatMap {
@@ -166,6 +166,6 @@ class HistoryArchiverSpec extends CatsEffectSuite:
           }
         case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
       }
-      .guarantee(IO(nebflow.core.PathUtil.setDataRoot(prevRoot)))
+      .guarantee(IO(nebflow.shared.PathUtil.setDataRoot(prevRoot)))
   }
 end HistoryArchiverSpec

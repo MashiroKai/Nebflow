@@ -4,11 +4,10 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.project.{FlowMapStore, NodeDef, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{LlmInterface, ModelCandidate, ThinkingConfig}
-import nebflow.shared.LlmHandle
+import nebflow.shared.{LlmHandle, PathUtil}
 import nebflow.core.tools.BgTaskRegistry
 
 import scala.concurrent.duration.*

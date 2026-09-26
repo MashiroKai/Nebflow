@@ -5,6 +5,7 @@ import io.circe.JsonObject
 import io.circe.parser.parse
 import munit.CatsEffectSuite
 import nebflow.core.tools.RelayExecAudit
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*

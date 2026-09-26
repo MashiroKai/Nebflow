@@ -2,7 +2,7 @@ package nebflow.core
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import scala.jdk.CollectionConverters.*
 

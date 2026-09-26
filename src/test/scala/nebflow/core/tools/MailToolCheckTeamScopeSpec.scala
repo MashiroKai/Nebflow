@@ -2,8 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.flow.TeamSessionRegistry
+import nebflow.shared.PathUtil
 
 /**
  * checkTeamScope cross-team tightening (decision 20): explicit

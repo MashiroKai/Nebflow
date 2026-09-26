@@ -2,10 +2,10 @@ package nebflow.service
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.plugin.{PluginBlockPolicy, PluginRegistry}
 import nebflow.core.seed.SeedService
 import nebflow.llm.{Config, NebflowServiceConfig, ProviderConfig}
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 

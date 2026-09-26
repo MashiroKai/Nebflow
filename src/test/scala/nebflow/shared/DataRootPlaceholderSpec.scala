@@ -1,4 +1,4 @@
-package nebflow.core
+package nebflow.shared
 
 import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime

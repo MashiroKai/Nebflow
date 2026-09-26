@@ -5,9 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.flow.MailQueueStore
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil}
 
 import java.nio.file.{Files, Paths}
 import java.util.Base64

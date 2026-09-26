@@ -50,7 +50,7 @@ object DispatcherContextCatalog:
    * spawn 期快照区分开。substituteDataRoot 单点复用，勿复制实现。
    */
   def pluginSectionResolved(): IO[String] =
-    pluginSection().map(nebflow.core.PathUtil.substituteDataRoot)
+    pluginSection().map(nebflow.shared.PathUtil.substituteDataRoot)
 
   /**
    * 目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：原「插件段 + preset 段
@@ -63,6 +63,6 @@ object DispatcherContextCatalog:
    * NodeEngine.injectedPluginBlock 同一实现，勿复制）。
    */
   def render(): IO[String] =
-    pluginSection().map(nebflow.core.PathUtil.substituteDataRoot)
+    pluginSection().map(nebflow.shared.PathUtil.substituteDataRoot)
 
 end DispatcherContextCatalog

@@ -1,7 +1,7 @@
 package nebflow.cli
 
 import cats.effect.IO
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.net.*
 

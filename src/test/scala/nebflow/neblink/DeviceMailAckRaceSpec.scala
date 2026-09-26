@@ -9,7 +9,7 @@ import ch.qos.logback.core.read.ListAppender
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
 import java.util.concurrent.Executors

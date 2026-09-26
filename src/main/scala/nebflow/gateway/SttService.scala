@@ -4,8 +4,7 @@ import cats.effect.IO
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
-import nebflow.shared.{Defaults, NebflowLogger}
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

@@ -5,9 +5,9 @@ import cats.effect.std.Dispatcher
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
 import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

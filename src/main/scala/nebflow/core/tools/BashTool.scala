@@ -165,7 +165,7 @@ Git safety:
    * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。
    */
   private def dataRootWipePatterns: List[scala.util.matching.Regex] =
-    List("~/" + nebflow.core.Branding.homeDirName, nebflow.core.PathUtil.dataRoot.toString).distinct
+    List("~/" + nebflow.shared.Branding.homeDirName, nebflow.shared.PathUtil.dataRoot.toString).distinct
       .map(root => ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r)
 
   private def allDangerousPatterns: List[scala.util.matching.Regex] =

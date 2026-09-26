@@ -338,7 +338,7 @@ class CliRouterSpec extends FunSuite:
 
   test("A4/C1: without an override, env wins, then the 8080 default") {
     GatewayClient.resetPort()
-    val expected = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+    val expected = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
     assertEquals(GatewayClient.readPort.unsafeRunSync(), expected)
   }
 

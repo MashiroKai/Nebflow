@@ -7,12 +7,11 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.hotrestart.{HotRestart, HotRestartIntent, RestartMode, SuccessorGate}
 import nebflow.core.project.{FlowMapStore, NodeDef, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{LlmInterface, ModelCandidate, ThinkingConfig}
-import nebflow.shared.LlmHandle
+import nebflow.shared.{LlmHandle, PathUtil}
 
 /**
  * 统一更新编排器定向验收（hotupdate 批 1 · 设计 §4 / §11 批 1；裁定 2/4/7/9/10）。

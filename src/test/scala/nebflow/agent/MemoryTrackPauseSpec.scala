@@ -4,10 +4,9 @@ import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.actor.{AgentDef, status}
-import nebflow.core.PathUtil
 import nebflow.core.project.ProjectStore
 import nebflow.core.tools.MemoryQueue
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 import java.nio.file.Files
 import java.security.MessageDigest

@@ -101,7 +101,7 @@ class SessionService(
       global <- nebflow.core.GlobalSafety.defaultMode
       globalMode = nebflow.core.SafetyMode.toString(global)
       sessionsJson = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, globalMode)
-      rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
+      rulesFolderIds = folders.filter(f => nebflow.shared.RulesStore.exists(f.id)).map(_.id)
       _ <- wsSend(
         Json.obj(
           "type" -> "sessionList".asJson,

@@ -7,10 +7,10 @@ import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.agent.AgentCore
 import nebflow.actor.AgentDef
-import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, DropboxService}
 import nebflow.gateway.WsHub
 import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

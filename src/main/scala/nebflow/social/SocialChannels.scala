@@ -2,7 +2,8 @@ package nebflow.social
 
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AtomicJson, CredentialFileAcl, PathUtil}
+import nebflow.core.{AtomicJson, CredentialFileAcl}
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path, StandardOpenOption}
@@ -183,7 +184,7 @@ object SocialChannels:
    *  `~/.nebflow`, an isolated instance renders its own absolute root.
    */
   private def renderRoot(root: os.Path): String =
-    if root == os.home / nebflow.core.Branding.homeDirName then s"~/${nebflow.core.Branding.homeDirName}"
+    if root == os.home / nebflow.shared.Branding.homeDirName then s"~/${nebflow.shared.Branding.homeDirName}"
     else root.toString
 
   /** Inverse of [[renderRoot]]: a stored reference back to a real path. */

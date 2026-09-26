@@ -6,13 +6,12 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.BgTaskRegistry
-import nebflow.shared.{Message, NebflowLogger}
+import nebflow.shared.{Message, NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
 

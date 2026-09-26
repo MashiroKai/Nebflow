@@ -2,8 +2,7 @@ package nebflow.core.flow
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.shared.Defaults
+import nebflow.shared.{Defaults, PathUtil}
 
 /**
  * P0 投递层指纹去重 — 组件级五组场景（任务书验收①-⑤）：

@@ -2,7 +2,7 @@ package nebflow.core.sandbox
 
 import io.circe.{Decoder, Json}
 import nebflow.actor.RootAgentIdentity
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.*
 

@@ -1,7 +1,7 @@
 package nebflow.core.hotupdate
 
 import cats.effect.IO
-import nebflow.core.Branding
+import nebflow.shared.Branding
 
 /**
  * 版本指针读取与比对——**单一实现**。

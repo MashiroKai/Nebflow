@@ -2,8 +2,8 @@ package nebflow.core.tools
 
 import io.circe.parser.decode
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.neblink.PeerInfo
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}

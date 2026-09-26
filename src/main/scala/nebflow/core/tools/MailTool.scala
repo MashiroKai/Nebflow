@@ -6,7 +6,6 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
@@ -1116,7 +1115,7 @@ Message type (optional, default "INFO"):
       case Right(Nil) => IO.pure(Right(Nil))
       case Right(paths) =>
         IO.blocking {
-          val relative = paths.filter(p => !nebflow.core.PathUtil.isAbsolute(p))
+          val relative = paths.filter(p => !nebflow.shared.PathUtil.isAbsolute(p))
           if relative.nonEmpty then
             Left(
               ToolError(

@@ -6,11 +6,11 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 import java.time.{Instant, ZoneId}
 

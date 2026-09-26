@@ -3,6 +3,7 @@ package nebflow.core
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 class PathUtilSpec extends FunSuite:
 

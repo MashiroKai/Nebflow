@@ -8,7 +8,6 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior}
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{
   FlowMapStore,
@@ -23,7 +22,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.RateLimiter
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 import scala.collection.concurrent.TrieMap

@@ -9,14 +9,13 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{FlowMapStore, NodeEngine, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 import fs2.Stream
 
 import scala.concurrent.duration.FiniteDuration

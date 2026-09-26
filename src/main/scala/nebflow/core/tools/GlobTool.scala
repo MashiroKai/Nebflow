@@ -111,7 +111,7 @@ object GlobTool extends Tool:
     val (baseFromPattern, relPattern) = extractBaseDir(rawPattern)
     val explicitPath = pathOpt.map { p =>
       if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') then os.Path(p)
-      else nebflow.core.PathUtil.resolvePath(p, baseDir)
+      else nebflow.shared.PathUtil.resolvePath(p, baseDir)
     }
     val workDirPath = baseDir
     // pattern 静态前缀 → 搜索根（20260903 Glob 修复）：静态前缀（首个 glob 字符

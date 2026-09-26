@@ -3,8 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.service.{MemoryBudget, MemoryStore, MemoryWriteGate}
+import nebflow.shared.{MemoryBudget, MemoryStore, MemoryWriteGate, PathUtil}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files

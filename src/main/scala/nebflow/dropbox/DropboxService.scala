@@ -7,10 +7,9 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
 import nebflow.neblink.{NeblinkClient, NeblinkService}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

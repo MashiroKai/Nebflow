@@ -6,8 +6,7 @@ import io.circe.JsonObject
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.PathUtil
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.shared.{MemoryBudget, MemoryStore, PathUtil}
 
 import java.nio.file.Files
 

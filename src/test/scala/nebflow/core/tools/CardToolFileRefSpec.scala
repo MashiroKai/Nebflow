@@ -340,7 +340,7 @@ class CardToolFileRefSpec extends FunSuite:
     // 数据根渲染（home 硬编码 → 运行时动态化批 2026-09-11）：描述里的路径 token
     // 改为运行期插值 —— 断言跟随渲染值（默认 home 下恰为旧字面 `~/.nebflow`；
     // 同 JVM 内其它 suite 换根时描述随之变化，故不再钉死字面）。
-    val dataRoot = nebflow.core.PathUtil.dataRootRenderValue
+    val dataRoot = nebflow.shared.PathUtil.dataRootRenderValue
     assert(d.contains(s"$dataRoot/projects/<name>/"), "the description must teach the workspace path shape")
     assert(d.contains("fileRefs"), "the description must name the fileRefs counters")
 end CardToolFileRefSpec

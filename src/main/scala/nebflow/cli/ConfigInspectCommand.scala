@@ -3,7 +3,7 @@ package nebflow.cli
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * `nebflow config path` + `nebflow config validate` —— **只读**两条子命令。

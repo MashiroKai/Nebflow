@@ -5,10 +5,9 @@ import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import nebflow.core.entity.{EntityLoader, FlowDagDef, TeamDef}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 object LoadTool extends Tool:
   private val logger = NebflowLogger.forName("nebflow.tools.load")

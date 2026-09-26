@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.{CredentialFileAcl, PathUtil}
+import nebflow.core.CredentialFileAcl
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path}

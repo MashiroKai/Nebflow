@@ -7,14 +7,13 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.{sessionId, status}
 import nebflow.agent.PromptSections.PromptContext
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{FlowMapStore, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
 import nebflow.gateway.RateLimiter
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*

@@ -6,8 +6,8 @@ import cats.syntax.all.*
 import fs2.Stream
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
 import nebflow.neblink.*
+import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

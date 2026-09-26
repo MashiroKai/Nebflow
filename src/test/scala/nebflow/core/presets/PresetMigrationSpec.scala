@@ -1,7 +1,7 @@
 package nebflow.core.presets
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * #339 D-a/D-b：种子源语义（llm.model 迁移优先 / providers 推导）与

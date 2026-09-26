@@ -3,11 +3,9 @@ package nebflow.agent
 import cats.effect.{Deferred, IO}
 import io.circe.Json
 import nebflow.actor.*
-import nebflow.core.PathUtil
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
-import nebflow.service.{MemoryBudget, MemorySnapshot}
 import nebflow.shared.*
 
 import java.util.UUID
@@ -134,8 +132,8 @@ object MemoryTrack:
   def memoryBytes(): (Long, Long) =
     def bytesOf(p: os.Path): Long = if os.exists(p) && os.isFile(p) then os.size(p) else 0L
     (
-      bytesOf(nebflow.service.MemoryStore.userMemoryPath),
-      bytesOf(nebflow.service.MemoryStore.agentMemoryPath(RootAgentIdentity.Name))
+      bytesOf(nebflow.shared.MemoryStore.userMemoryPath),
+      bytesOf(nebflow.shared.MemoryStore.agentMemoryPath(RootAgentIdentity.Name))
     )
 
   // ── 暂停标记（#440 ①，引擎面） ──────────────────────────────────
@@ -449,8 +447,8 @@ object MemoryTrack:
    */
   private[agent] def memoryFilesOf(notes: Vector[MemoryQueue.Note]): IO[Vector[FileTarget]] =
     val base = Vector(
-      nebflow.service.MemoryStore.userMemoryPath -> "user",
-      nebflow.service.MemoryStore.agentMemoryPath(RootAgentIdentity.Name) -> "agent"
+      nebflow.shared.MemoryStore.userMemoryPath -> "user",
+      nebflow.shared.MemoryStore.agentMemoryPath(RootAgentIdentity.Name) -> "agent"
     )
     val projects = notes
       .flatMap(n => if n.target.startsWith("project:") then Some(n.target.stripPrefix("project:")) else None)

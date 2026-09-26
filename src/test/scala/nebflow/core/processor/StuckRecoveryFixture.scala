@@ -9,7 +9,6 @@ import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, sessionId}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{
   FeedbackRouter,
@@ -27,7 +26,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
 

@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import sttp.client4.*
 import sttp.model.{StatusCode, Uri}
 
@@ -157,7 +157,7 @@ object GatewayClient:
    */
   def readPort: IO[Int] = IO.blocking {
     portOverride
-      .orElse(nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
+      .orElse(nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
       .getOrElse(8080)
   }
 

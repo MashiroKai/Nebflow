@@ -4,8 +4,8 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Loads and caches model capability metadata from `~/.nebflow/models.json`.

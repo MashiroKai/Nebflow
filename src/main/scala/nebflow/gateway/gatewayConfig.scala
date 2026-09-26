@@ -23,14 +23,14 @@ object GatewayConfig:
   def load: IO[GatewayConfig] = IO.delay {
     // L3 rebrand compat: dual-prefix env read (brand prefix first, legacy
     // NEBFLOW_ fallback) — identical prefixes collapse to one variable.
-    val host = nebflow.core.Branding
+    val host = nebflow.shared.Branding
       .env("GATEWAY_HOST")
       .flatMap(Host.fromString)
       .getOrElse(DefaultHost)
     val port = _portOverride
       .flatMap(p => Port.fromInt(p))
       .getOrElse(
-        nebflow.core.Branding
+        nebflow.shared.Branding
           .env("GATEWAY_PORT")
           .flatMap(s => s.toIntOption.flatMap(Port.fromInt))
           .getOrElse(DefaultPort)

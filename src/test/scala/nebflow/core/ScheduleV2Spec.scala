@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
+import nebflow.shared.PathUtil
 
 /**
  * Schedule engine v2 (2026-08-12):

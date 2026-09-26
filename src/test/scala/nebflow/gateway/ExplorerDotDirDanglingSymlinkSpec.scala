@@ -1,9 +1,9 @@
 package nebflow.gateway
 
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files as JFiles
-import nebflow.core.PathUtil
 
 /**
  * Explorer dot-dir + dangling-symlink regression spec (2026-09-02).

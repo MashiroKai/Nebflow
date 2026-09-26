@@ -5,7 +5,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.Json
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.compiletime.uninitialized
 

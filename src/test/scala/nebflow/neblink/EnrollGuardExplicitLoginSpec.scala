@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.concurrent.duration.*
@@ -182,8 +182,8 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     assertEquals(EnrollGuard.prodDefaultTarget, None, "隔离实例不得拿到生产默认目标")
     // 默认 data root：逐字回到 Branding.serverUrl（零行为变化）
     val isolatedRoot = PathUtil.dataRoot
-    PathUtil.setDataRoot(os.home / nebflow.core.Branding.homeDirName)
-    try assertEquals(EnrollGuard.prodDefaultTarget, Some(nebflow.core.Branding.serverUrl))
+    PathUtil.setDataRoot(os.home / nebflow.shared.Branding.homeDirName)
+    try assertEquals(EnrollGuard.prodDefaultTarget, Some(nebflow.shared.Branding.serverUrl))
     finally PathUtil.setDataRoot(isolatedRoot)
   }
 
@@ -202,7 +202,7 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     assert(CredentialDiagnostics.isCleanVisibleText(EnrollGuard.prodFallbackRefusalReason))
 
     // 负控（防空断言）：把真实生产域名塞进 detail ⇒ 必须被闸门拦下、退回模板原因。
-    val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (${nebflow.core.Branding.serverUrl})"
+    val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (${nebflow.shared.Branding.serverUrl})"
     val degraded = CredentialDiagnostics.diagnosticOf(CredentialFailure.EnrollRefusedIsolatedHome, dirty)
     assert(!degraded.reason.contains("isolated data root"), "含生产域名（`.nebflow` 字面量）的 detail 不得进可见面")
     assertEquals(degraded.detail, dirty, "原文仍须进日志面（可归因）")

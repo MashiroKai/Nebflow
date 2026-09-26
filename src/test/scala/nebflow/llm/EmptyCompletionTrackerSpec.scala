@@ -3,7 +3,7 @@ package nebflow.llm
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * B3 Phase 1+2: vision tri-state + runtime demotion semantics.

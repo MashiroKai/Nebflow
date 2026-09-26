@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import nebflow.agent.PromptSections.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 class PromptSectionsSpec extends munit.FunSuite:
 

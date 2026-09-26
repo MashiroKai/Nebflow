@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * agentdef-tidy 批（2026-09-11）观测面读数探针 —— **raw stdout，零断言**。

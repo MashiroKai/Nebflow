@@ -3,7 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.shared.SessionMeta
+import nebflow.shared.{PathUtil, SessionMeta}
 
 import java.nio.file.Files
 

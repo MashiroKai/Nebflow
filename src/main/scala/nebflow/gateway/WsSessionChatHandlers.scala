@@ -10,6 +10,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
+import nebflow.core.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
@@ -17,7 +18,6 @@ import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.{PathUtil, *}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
@@ -485,7 +485,7 @@ private[gateway] object WsSessionChatHandlers:
           newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
           // 出口 overlay（设计 §13 #9）：fork 帧同样输出有效档位。
           _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-            val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
+            val rulesFolderIds = folders.filter(f => nebflow.shared.RulesStore.exists(f.id)).map(_.id)
             sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
               wsSend(
                 io.circe.Json.obj(

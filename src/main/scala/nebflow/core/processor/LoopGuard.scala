@@ -69,7 +69,7 @@ object LoopGuard:
    */
   def loadConfig: IO[Config] =
     IO.blocking {
-      val configPath = nebflow.core.PathUtil.configJsonReadPath(nebflow.core.PathUtil.dataRoot)
+      val configPath = nebflow.shared.PathUtil.configJsonReadPath(nebflow.shared.PathUtil.dataRoot)
       if !os.exists(configPath) then None
       else
         io.circe.parser.parse(os.read(configPath)).toOption.flatMap { root =>

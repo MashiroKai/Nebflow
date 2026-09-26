@@ -1344,7 +1344,7 @@ final class FriendService(
       case None =>
         IO.pure(Left(("not_logged_in", "Not logged in to the NebLink server — nothing was uploaded.")))
       case Some(cli) =>
-        val tempPath = nebflow.core.PathUtil.dataRoot / "attach-uploads" / s"$uploadId.part"
+        val tempPath = nebflow.shared.PathUtil.dataRoot / "attach-uploads" / s"$uploadId.part"
         val bounded = nebflow.dropbox.AttachContract.MaxFileBytes
         (for
           _ <- IO.blocking(os.makeDir.all(tempPath / os.up))

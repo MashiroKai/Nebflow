@@ -3,7 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Flow Map 调整事件审计日志（blocked 反馈重入设计 §4.4）。

@@ -5,8 +5,8 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.AgentState
-import nebflow.core.PathUtil
 import nebflow.core.tools.{BashTool, GlobTool, GrepTool, ReadTool, ToolContext, WriteTool}
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
@@ -483,8 +483,8 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(
       SandboxPolicy.auditReadableFiles.map(_.toString),
       List(
-        nebflow.service.MemoryStore.userMemoryPath.toString,
-        nebflow.service.MemoryStore.agentMemoryPath("Nebula").toString
+        nebflow.shared.MemoryStore.userMemoryPath.toString,
+        nebflow.shared.MemoryStore.agentMemoryPath("Nebula").toString
       ),
       "audit paths must mirror MemoryStore paths"
     )

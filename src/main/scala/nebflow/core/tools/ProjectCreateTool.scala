@@ -6,9 +6,8 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, AgentCommand}
-import nebflow.core.PathUtil
 import nebflow.core.project.*
-import nebflow.shared.AskItem
+import nebflow.shared.{AskItem, PathUtil}
 
 import scala.util.Try
 

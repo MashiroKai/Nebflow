@@ -5,9 +5,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
+import nebflow.shared.PathUtil
 
 /**
  * notifyDispatcher 参数载体（dispatch-notify 批 2026-09-05）：call() 解析的

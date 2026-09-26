@@ -3,8 +3,8 @@ package nebflow.core.flow
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.entity.{EntityLoader, FlowDagDef, FlowNode, FlowStructure, NodeRoute}
+import nebflow.shared.PathUtil
 
 /**
  * R8-P2 load-time structural validation (FlowStructure.validate, wired into

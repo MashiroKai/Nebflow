@@ -2,7 +2,7 @@ package nebflow.core.seed
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files

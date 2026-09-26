@@ -3,8 +3,8 @@ package nebflow.core.plugin
 import cats.effect.IO
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.ToolRegistry
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

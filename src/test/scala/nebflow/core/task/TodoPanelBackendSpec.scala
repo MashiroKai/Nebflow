@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * todo-panel v1.1 backend contract — adapted for 任务工具重做 (2026-08-30):

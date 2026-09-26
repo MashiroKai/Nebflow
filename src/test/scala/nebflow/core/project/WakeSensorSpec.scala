@@ -5,8 +5,7 @@ import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
-import nebflow.shared.{Defaults, SleepWindow}
+import nebflow.shared.{Defaults, PathUtil, SleepWindow}
 
 /**
  * 宿主睡眠感知单测（hostresume 批 2026-09-22，设计卡 §4 #2/#6/#8 / §6 口径 3、4、5）。

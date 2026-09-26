@@ -3,7 +3,7 @@ package nebflow.core.skill
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Nested skill namespaces (eco task #8-A): `skills/<ns>/<name>/SKILL.md` loads with

@@ -3,9 +3,8 @@ package nebflow.core.mcp
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.decode
-import nebflow.core.PathUtil
 import nebflow.llm.McpServerConfig
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Loads agent-scoped MCP servers from agent directory `tools/mcp/`

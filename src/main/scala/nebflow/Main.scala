@@ -3,9 +3,9 @@ package nebflow
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import nebflow.cli.*
-import nebflow.core.PathUtil
 import nebflow.gateway.GatewayConfig
 import nebflow.llm.Config
+import nebflow.shared.PathUtil
 
 import scala.util.Try
 

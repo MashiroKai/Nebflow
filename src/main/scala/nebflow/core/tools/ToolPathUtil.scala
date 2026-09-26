@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
-import nebflow.core.PathUtil
 import nebflow.core.sandbox.SandboxPolicy
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Path, Paths}
 

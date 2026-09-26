@@ -103,7 +103,7 @@ object FlowTreeRegistry:
               val projectsDir = (ctx.sessionStore, ctx.folderId) match
                 case (Some(store), Some(fid)) =>
                   val folderName = store.getFolderName(fid).getOrElse(fid.take(8))
-                  Some((nebflow.core.PathUtil.dataRoot / "projects" / folderName).toString)
+                  Some((nebflow.shared.PathUtil.dataRoot / "projects" / folderName).toString)
                 case _ => None
 
               val config = FlowTreeActor.TreeConfig(

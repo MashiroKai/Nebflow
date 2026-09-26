@@ -3,7 +3,7 @@ package nebflow.neblink
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 

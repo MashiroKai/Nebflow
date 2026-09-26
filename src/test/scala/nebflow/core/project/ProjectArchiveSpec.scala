@@ -7,8 +7,8 @@ import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

@@ -5,7 +5,6 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.shared.*
 
 import java.net.InetSocketAddress

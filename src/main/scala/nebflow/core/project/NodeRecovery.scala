@@ -5,7 +5,7 @@ import cats.effect.*
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 private[project] trait NodeRecovery:
   self: NodeEngine =>

@@ -5,8 +5,9 @@ import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.core.AtomicJson
 import nebflow.llm.Config
+import nebflow.shared.PathUtil
 
 object ConfigService:
 

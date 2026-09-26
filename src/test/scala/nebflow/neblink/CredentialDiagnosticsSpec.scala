@@ -2,7 +2,7 @@ package nebflow.neblink
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path}

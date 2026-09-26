@@ -6,9 +6,8 @@ import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
 import nebflow.actor.{AgentDef, status}
-import nebflow.core.PathUtil
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files

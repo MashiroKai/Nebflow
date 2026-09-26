@@ -103,7 +103,7 @@ object RgHelper:
   private def notFoundMessage: String =
     val probeNote =
       if curatedProbeDirs.nonEmpty then s", well-known prefixes (${curatedProbeDirs.mkString(", ")})" else ""
-    s"ripgrep (rg) not found (checked bundled app dir, PATH$probeNote, ${nebflow.core.PathUtil.dataRootRenderValue}/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
+    s"ripgrep (rg) not found (checked bundled app dir, PATH$probeNote, ${nebflow.shared.PathUtil.dataRootRenderValue}/bin). Run 'nebflow update' or reinstall to get it: https://github.com/BurntSushi/ripgrep"
 
   /**
    * Resolved rg path — exposed for the boot-time dependency probe

@@ -7,10 +7,10 @@ import munit.FunSuite
 import nebflow.actor.ActorSystem
 import nebflow.actor.AgentRecord
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.gateway.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 /**
  * User ruling 2026-08-24: root/outside-team senders mail TEAM names only.

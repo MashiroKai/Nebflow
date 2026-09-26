@@ -1,7 +1,8 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import nebflow.core.{FilePolicyPort, PathUtil}
+import nebflow.core.FilePolicyPort
+import nebflow.shared.PathUtil
 import org.http4s.Status
 
 /**

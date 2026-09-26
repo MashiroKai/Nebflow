@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

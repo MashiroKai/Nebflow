@@ -5,9 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.RootAgentIdentity
-import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 /**
  * MemoryNote（2026-09-17 作者令更名：旧名尾缀 "Edit" 与本工具真实能力「纯记账、

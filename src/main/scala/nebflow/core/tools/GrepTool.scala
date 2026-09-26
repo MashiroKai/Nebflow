@@ -121,7 +121,7 @@ Usage:
     val baseDir: os.Path = ToolPathUtil.searchBaseDir(ctx.sandbox, workDir)
     val rawSearchRoot = pathOpt match
       case Some(p) if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') => p
-      case Some(p) => nebflow.core.PathUtil.resolvePath(p, baseDir).toString
+      case Some(p) => nebflow.shared.PathUtil.resolvePath(p, baseDir).toString
       case None => baseDir.toString
 
     val mode = input("output_mode").flatMap(_.asString).getOrElse("files_with_matches")

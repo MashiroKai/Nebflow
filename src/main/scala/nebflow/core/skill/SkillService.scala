@@ -4,9 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 // --- Data models ---
 
@@ -331,7 +330,7 @@ object SkillService:
   private def projectSkillPaths: List[os.Path] =
     val cwd = os.pwd
     List(
-      cwd / nebflow.core.Branding.homeDirName / "skills",
+      cwd / nebflow.shared.Branding.homeDirName / "skills",
       cwd / ".nebflow" / "skills",
       cwd / ".claude" / "skills"
     ).distinct
@@ -340,7 +339,7 @@ object SkillService:
   private def projectCommandPaths: List[os.Path] =
     val cwd = os.pwd
     List(
-      cwd / nebflow.core.Branding.homeDirName / "commands",
+      cwd / nebflow.shared.Branding.homeDirName / "commands",
       cwd / ".nebflow" / "commands",
       cwd / ".claude" / "commands"
     ).distinct

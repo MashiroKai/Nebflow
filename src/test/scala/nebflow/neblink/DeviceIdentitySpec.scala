@@ -53,24 +53,24 @@ class DeviceIdentitySpec extends FunSuite:
 
   test("loadOrCreate reads the redirected dataRoot identity (no createNew)") {
     val home = os.temp.dir()
-    val prev = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(home)
+    val prev = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(home)
     try
       os.write(home / "device.json", minimal)
       val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
       assertEquals(id.deviceId, "fb104d44-7438-4e88-845e-c23d44f17b98")
       // valid file with secret+name -> must NOT be rewritten
       assertEquals(os.read(home / "device.json"), minimal)
-    finally nebflow.core.PathUtil.setDataRoot(prev)
+    finally nebflow.shared.PathUtil.setDataRoot(prev)
   }
 
   // ===== 2026-09-11 device_id hardening (machine-code derivation + self-heal) =====
 
   private def withDataRoot[A](home: os.Path)(f: => A): A =
-    val prev = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(home)
+    val prev = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(home)
     try f
-    finally nebflow.core.PathUtil.setDataRoot(prev)
+    finally nebflow.shared.PathUtil.setDataRoot(prev)
 
   test("deriveDeviceId: same (machineCode, scope) -> same value; different inputs differ") {
     val a1 = DeviceIdentity.deriveDeviceId("machine-code-fixture", "default")
@@ -103,7 +103,7 @@ class DeviceIdentitySpec extends FunSuite:
   }
 
   test("scope: default data root -> 'default'; redirected root -> the root path") {
-    withDataRoot(os.home / nebflow.core.Branding.homeDirName) {
+    withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
       assertEquals(DeviceIdentity.isNonDefaultHome, false)
       assertEquals(DeviceIdentity.deviceIdScope, DeviceIdentity.DefaultScope)
     }
@@ -185,7 +185,7 @@ class DeviceIdentitySpec extends FunSuite:
     assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("http://127.0.0.1:8095", true, false), None)
     assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("https://nb.example.com", true, false), None)
     // live read: the default data root must never be refused (author's client)
-    withDataRoot(os.home / nebflow.core.Branding.homeDirName) {
+    withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
       assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod), None)
     }
     // live read: a redirected root is refused for production…

@@ -6,12 +6,12 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentDef, AgentState, agentsMd}
 import nebflow.agent.PromptSections.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.ProjectStore
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

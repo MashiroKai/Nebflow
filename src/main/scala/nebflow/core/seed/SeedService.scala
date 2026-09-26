@@ -4,10 +4,10 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.AtomicJson
 import nebflow.core.plugin.PluginRegistry
 import nebflow.core.project.ProjectStore
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.net.JarURLConnection
 import java.security.MessageDigest

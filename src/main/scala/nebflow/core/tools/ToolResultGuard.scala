@@ -2,7 +2,6 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.PathUtil
 import nebflow.shared.*
 
 /**

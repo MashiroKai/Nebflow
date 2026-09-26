@@ -4,6 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.parser.parse
 import nebflow.service.ConfigService
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*

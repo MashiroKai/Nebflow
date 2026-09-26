@@ -3,10 +3,10 @@ package nebflow.core.tools
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.shared.PathUtil
 
 class ToolLoaderSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-tool-loader"

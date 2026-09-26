@@ -3,9 +3,9 @@ package nebflow.agent
 import munit.FunSuite
 import cats.effect.unsafe.implicits.global
 import nebflow.actor.AgentCommand
-import nebflow.core.PathUtil
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.shared.PathUtil
 import scala.compiletime.uninitialized
 
 /**

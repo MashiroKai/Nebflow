@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime

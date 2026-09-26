@@ -29,10 +29,11 @@ object RemoteUpdateAction:
     val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
     if beta then
       if isWindows then
-        """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
-      else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
-    else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
-    else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
+        """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
+      else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
+    else if isWindows then
+      """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
+    else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
 
   /** Run the install script. Returns Right(msg) on success, Left(error) on failure. */
   def runInstallScript(beta: Boolean): IO[Either[String, String]] =

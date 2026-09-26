@@ -2,7 +2,7 @@ package nebflow.gateway
 
 import cats.effect.{IO, Ref}
 import io.circe.parser.parse
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.security.SecureRandom
 import java.util.Base64

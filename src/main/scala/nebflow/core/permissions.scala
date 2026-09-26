@@ -3,6 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import io.circe.JsonObject
 import nebflow.core.tools.BashTool
+import nebflow.shared.PathUtil
 
 // ============================================================
 // Safety modes — three trust levels controlled by the user

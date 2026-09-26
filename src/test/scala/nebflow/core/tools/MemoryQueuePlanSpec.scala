@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.service.MemoryBudget
+import nebflow.shared.MemoryBudget
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files

@@ -1,6 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
+import nebflow.shared.PathUtil
 
 import scala.sys.process.*
 

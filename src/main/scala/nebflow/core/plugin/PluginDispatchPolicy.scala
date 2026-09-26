@@ -3,8 +3,8 @@ package nebflow.core.plugin
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AtomicJson, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * 插件**派发许可面**（令 1「插件开关语义」单一策略点，2026-09-12 作者 14:14 原话：

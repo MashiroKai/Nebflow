@@ -10,13 +10,13 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 

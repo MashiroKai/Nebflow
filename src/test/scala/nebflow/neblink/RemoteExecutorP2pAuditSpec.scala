@@ -8,8 +8,8 @@ import io.circe.JsonObject
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{RelayExecAudit, RemoteExecutor, ToolContext}
+import nebflow.shared.PathUtil
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets

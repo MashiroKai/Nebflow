@@ -5,12 +5,12 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
 import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.shared.PathUtil
 import org.http4s.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.typelevel.ci.CIString

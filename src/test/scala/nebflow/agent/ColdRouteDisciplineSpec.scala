@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import nebflow.agent.PromptSections.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * 冷启动路由纪律批（2026-09-17）——order-370 根代理段的定向断言。
