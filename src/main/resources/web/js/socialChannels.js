@@ -28,6 +28,15 @@
 //   the state machine is total. Lark is HIDDEN, NOT DELETED (same sealed family
 //   as the remote-access section): its region entry stays in the data with
 //   `hidden: true`; restoring = dropping one flag.
+//
+// 🔴 PHASE 3 (socialhide batch, 2026-09-26) — wechat and telegram join the
+//   sealed family at the CHANNEL level (same semantics as the lark region
+//   entry above): `hidden: true` on the entry, everything retained. HIDDEN,
+//   NOT DELETED — the entries, their fields and their locale keys all stay in
+//   place; restoring a card = dropping one flag. The visible face is
+//   feishu-only, and `socialChannelCount()` now answers the VISIBLE count
+//   through the ONE visible filter ([[visibleChannels]]), so every §F.2
+//   reader (render layer, tests) keeps a single source.
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'} SocialStatus
@@ -56,6 +65,10 @@
  * @property {string} descKey
  * @property {SocialField[]} fields
  * @property {boolean} adapterRegistered  phase 1: always false
+ * @property {boolean} [hidden]  sealed family (PHASE 3): the channel stays in
+ *   the data — fields, locale keys and any stored config all intact — but
+ *   never renders. Hide ≠ delete; restoring = dropping the flag (same
+ *   semantics as `regions[].hidden`).
  * @property {string} [regionKey]  config key holding the region choice
  * @property {{key: string, base: string, hidden?: boolean}[]} [regions]  the ONLY region source
  *   (feishubridge: `hidden: true` = sealed data, never rendered — hide ≠ delete)
@@ -74,6 +87,10 @@
  */
 export const SOCIAL_CHANNELS = [
   {
+    // ★ socialhide (author ruling 2026-09-26, merged order ③): sealed, NOT
+    //   deleted — the entry and its fields stay addressable (backend schema
+    //   and stored config untouched); restoring the card = dropping the flag.
+    hidden: true,
     id: 'wechat',
     icon: 'message-circle',
     nameKey: 'social.wechat.name',
@@ -129,6 +146,10 @@ export const SOCIAL_CHANNELS = [
     ],
   },
   {
+    // ★ socialhide (author ruling 2026-09-26, merged order ③): sealed, NOT
+    //   deleted — same sealed-family discipline as wechat above; restoring
+    //   the card = dropping the flag.
+    hidden: true,
     id: 'telegram',
     icon: 'navigation',
     nameKey: 'social.telegram.name',
@@ -153,12 +174,27 @@ export const SOCIAL_CHANNELS = [
 export const REMOTE_ACCESS = { id: 'webui', kind: 'remote' };
 
 /**
+ * The VISIBLE channel set (§F.2 disciplines ①③): SOCIAL_CHANNELS minus the
+ * sealed (`hidden: true`) entries, order preserved. This is the ONE
+ * visible-filter — the render layer maps THIS, so the filtered order IS the
+ * visible card order (§E.3 X3) and the count can never disagree with the
+ * rendered face. Sealed entries stay in SOCIAL_CHANNELS (hide ≠ delete).
+ * @returns {SocialChannel[]}
+ */
+export function visibleChannels() {
+  return SOCIAL_CHANNELS.filter((c) => !c.hidden);
+}
+
+/**
  * The ONE place a card count comes from (§F.2 discipline ②): tests, docs and
- * the render layer all read this instead of a literal.
+ * the render layer all read this instead of a literal. PHASE 3: the count is
+ * the VISIBLE card count (sealed entries excluded), so it stays in lockstep
+ * with the rendered face; the full sealed data set is still
+ * SOCIAL_CHANNELS.length.
  * @returns {number}
  */
 export function socialChannelCount() {
-  return SOCIAL_CHANNELS.length;
+  return visibleChannels().length;
 }
 
 /**
