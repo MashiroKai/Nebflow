@@ -52,6 +52,8 @@ object AutoStartCommand extends CliCommand:
         else CliResult.text(if st.enabled then "Auto-start: enabled" else "Auto-start: disabled")
       }
 
+  end AutoStartStatus
+
   private def toCliResult(res: AutoStartService.OpResult): CliResult =
     if res.ok then CliResult.text((res.message :: res.detail)*)
     else CliResult.Error(res.message)

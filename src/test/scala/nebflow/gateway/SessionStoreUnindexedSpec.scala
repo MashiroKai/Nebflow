@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
+import nebflow.core.SessionStore
 import nebflow.shared.{SessionMeta, UiMessage}
 
 import java.nio.file.{Files, Path}
@@ -47,8 +48,8 @@ class SessionStoreUnindexedSpec extends CatsEffectSuite:
       writeUnindexedUi(sessionsDir, "subtask-335d582d", mtime = 3000000L)
       writeUnindexedUi(sessionsDir, "dag-git-merge-scanner-405090", mtime = 2000000L)
       for
-        indexed  <- store.listSessions
-        merged   <- store.listSessionsIncludeUnindexed
+        indexed <- store.listSessions
+        merged <- store.listSessionsIncludeUnindexed
         mergedIds = ids(merged)
       yield
         // every indexed session survives the union
@@ -62,17 +63,21 @@ class SessionStoreUnindexedSpec extends CatsEffectSuite:
         // sorted by updatedAt descending (indexed ~now, then 3M/2M/1M)
         assertEquals(merged.map(_.updatedAt), merged.map(_.updatedAt).sorted.reverse)
         val unindexedPart = merged.drop(indexed.length)
-        assertEquals(ids(unindexedPart), List("subtask-335d582d", "dag-git-merge-scanner-405090", "delegate-Explorer-26fb3915"))
+        assertEquals(
+          ids(unindexedPart),
+          List("subtask-335d582d", "dag-git-merge-scanner-405090", "delegate-Explorer-26fb3915")
+        )
+      end for
     }
   }
 
   test("indexed session's own .ui.json is not double-listed (dedup by id)") {
     withStore { (store, _) =>
       for
-        meta      <- store.createSession("Dedup Test")
-        _         <- store.appendUiMessages(meta.id, List(UiMessage.User("hello")))
-        _         <- store.flushPendingUiWrites
-        merged    <- store.listSessionsIncludeUnindexed
+        meta <- store.createSession("Dedup Test")
+        _ <- store.appendUiMessages(meta.id, List(UiMessage.User("hello")))
+        _ <- store.flushPendingUiWrites
+        merged <- store.listSessionsIncludeUnindexed
         occurrences = merged.count(_.id == meta.id)
       yield assertEquals(occurrences, 1, "indexed session with .ui.json on disk must appear exactly once")
     }
@@ -82,9 +87,9 @@ class SessionStoreUnindexedSpec extends CatsEffectSuite:
     withStore { (store, sessionsDir) =>
       for
         before <- store.listSessions
-        _       = writeUnindexedUi(sessionsDir, "delegate-Coder-11111111")
-        _       = writeUnindexedUi(sessionsDir, "whatever-001")
-        after  <- store.listSessions
+        _ = writeUnindexedUi(sessionsDir, "delegate-Coder-11111111")
+        _ = writeUnindexedUi(sessionsDir, "whatever-001")
+        after <- store.listSessions
         merged <- store.listSessionsIncludeUnindexed
       yield
         // strongest regression form: full SessionMeta list unchanged
@@ -122,6 +127,7 @@ class SessionStoreUnindexedSpec extends CatsEffectSuite:
         val unknown = byId("usable-001")
         assertEquals(unknown.name, "usable-001")
         assertEquals(unknown.agentName, Some(""), "unparseable id falls back to empty agentName")
+      end for
     }
   }
 
@@ -130,8 +136,7 @@ class SessionStoreUnindexedSpec extends CatsEffectSuite:
       os.write.over(sessionsDir / "stray.json", "[]", createFolders = true)
       os.write.over(sessionsDir / "deadbeef.meta.json", """{"folderId":"f"}""", createFolders = true)
       os.makeDir.all(sessionsDir / "not-a-session.ui.json")
-      for
-        merged <- store.listSessionsIncludeUnindexed
+      for merged <- store.listSessionsIncludeUnindexed
       yield
         val mergedIds = ids(merged)
         assert(!mergedIds.contains("stray"))

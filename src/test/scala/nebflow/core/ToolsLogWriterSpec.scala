@@ -9,13 +9,27 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters.*
 
-/** 方案 B（审计 20260903 §5）：ToolsLogWriter 单元级验收——写入格式 ①、按天
-  * 滚动 ②、保留 prune ③、异步不阻塞 ④。真链路（真实 AgentCore）见
-  * nebflow.agent.ToolsLogAgentCoreSpec ⑤。 */
+/**
+ * 方案 B（审计 20260903 §5）：ToolsLogWriter 单元级验收——写入格式 ①、按天
+ * 滚动 ②、保留 prune ③、异步不阻塞 ④。真链路（真实 AgentCore）见
+ * nebflow.agent.ToolsLogAgentCoreSpec ⑤。
+ */
 class ToolsLogWriterSpec extends FunSuite:
 
   private val fixedKeys =
-    Set("ts", "tool", "agent", "sessionId", "kind", "isError", "elapsedMs", "errorText", "inputSummary", "resultChars", "requestId")
+    Set(
+      "ts",
+      "tool",
+      "agent",
+      "sessionId",
+      "kind",
+      "isError",
+      "elapsedMs",
+      "errorText",
+      "inputSummary",
+      "resultChars",
+      "requestId"
+    )
 
   private def tmpDir(): Path = Files.createTempDirectory("tools-log-spec-")
 
@@ -141,7 +155,7 @@ class ToolsLogWriterSpec extends FunSuite:
     ToolsLogWriter.setClockForTest(() => Instant.parse("2030-01-10T10:00:00Z"))
     // 预置旧文件（cutoff = T-3d = 2030-01-07）
     Files.writeString(dir.resolve("2030-01-01.jsonl"), "{\"tool\":\"ancient\"}\n") // T-9d → 删
-    Files.writeString(dir.resolve("2030-01-08.jsonl"), "{\"tool\":\"recent\"}\n")  // T-2d → 留
+    Files.writeString(dir.resolve("2030-01-08.jsonl"), "{\"tool\":\"recent\"}\n") // T-2d → 留
     // 触发一次真实写入 → maybePrune 在 append 后运行
     ToolsLogWriter
       .log("Read", None, None, None, isError = false, elapsedMs = 1, "", "Read(x)", 5, None)
@@ -170,8 +184,7 @@ class ToolsLogWriterSpec extends FunSuite:
     assert(!Files.exists(dir.resolve(todayStr)), "line not yet on disk right after enqueue")
     // 随后台完成而出现（证明写入确实发生，只是异步）
     val deadline = System.currentTimeMillis() + 5000
-    while System.currentTimeMillis() < deadline && readLines(dir, todayStr).isEmpty do
-      Thread.sleep(50)
+    while System.currentTimeMillis() < deadline && readLines(dir, todayStr).isEmpty do Thread.sleep(50)
     assertEquals(readLines(dir, todayStr).size, 1, "line lands on disk via background writer")
   }
 
@@ -199,14 +212,21 @@ class ToolsLogWriterSpec extends FunSuite:
       assert(fillMs < 60_000, s"$offered enqueues took ${fillMs}ms — all returned without blocking")
 
       val warns = appender.list.asScala.count(_.getFormattedMessage.contains("queue full"))
-      assert(warns >= 1, s"expected >=1 queue-full WARN, got ${appender.list.asScala.toList.map(_.getFormattedMessage)}")
+      assert(
+        warns >= 1,
+        s"expected >=1 queue-full WARN, got ${appender.list.asScala.toList.map(_.getFormattedMessage)}"
+      )
       lbLogger.detachAppender(appender)
       appender.stop()
 
       ToolsLogWriter.setWriteDelayMsForTest(0)
       ToolsLogWriter.flushSync()
       val onDisk = readLines(dir, todayStr).size
-      assert(onDisk <= ToolsLogWriter.capacityForTest + 1, s"overflow dropped: $onDisk lines on disk (capacity ${ToolsLogWriter.capacityForTest})")
+      assert(
+        onDisk <= ToolsLogWriter.capacityForTest + 1,
+        s"overflow dropped: $onDisk lines on disk (capacity ${ToolsLogWriter.capacityForTest})"
+      )
+    end try
   }
 
 end ToolsLogWriterSpec

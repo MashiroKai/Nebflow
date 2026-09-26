@@ -3,19 +3,19 @@ package nebflow.gateway
 import munit.FunSuite
 
 /**
-  * Window slicing / sparse index / open-leg decision — the pure core of the
-  * text-stream protocol (design card §五 step ①, `TextStream.scala`).
-  *
-  * Why these assertions exist rather than "it compiles":
-  *   · the open-leg decision is the ONE place that routes a file to the streaming
-  *     path; an off-by-one on the threshold silently sends 100MiB through the old
-  *     single-frame leg (the R1/R7 failure mode the card names).
-  *   · `IndexBuilder` is streamed chunk-by-chunk in production but whole-buffer in
-  *     these tests — the equivalence assertion below is what makes the streaming
-  *     form trustworthy.
-  *   · `firstLine` is index-anchor math; a wrong anchor makes every gutter number
-  *     in the read-only view wrong (R4).
-  */
+ * Window slicing / sparse index / open-leg decision — the pure core of the
+ * text-stream protocol (design card §五 step ①, `TextStream.scala`).
+ *
+ * Why these assertions exist rather than "it compiles":
+ *   · the open-leg decision is the ONE place that routes a file to the streaming
+ *     path; an off-by-one on the threshold silently sends 100MiB through the old
+ *     single-frame leg (the R1/R7 failure mode the card names).
+ *   · `IndexBuilder` is streamed chunk-by-chunk in production but whole-buffer in
+ *     these tests — the equivalence assertion below is what makes the streaming
+ *     form trustworthy.
+ *   · `firstLine` is index-anchor math; a wrong anchor makes every gutter number
+ *     in the read-only view wrong (R4).
+ */
 class TextStreamSpec extends FunSuite:
 
   private def bytes(s: String): Array[Byte] = s.getBytes(TextStream.Utf8)
@@ -100,8 +100,11 @@ class TextStreamSpec extends FunSuite:
     assertEquals(idx.anchorForLine(1L), (0L, 1L))
     assertEquals(idx.anchorForLine(4L), (0L, 1L), "line 4 belongs to the anchor-1 interval")
     assertEquals(idx.anchorForLine(5L), (12L, 5L))
-    assertEquals(idx.anchorForLine(99L), (idx.lineStarts.last, idx.anchorLineOf(idx.lineStarts.length - 1)),
-      "a jump past EOF clamps to the last anchor")
+    assertEquals(
+      idx.anchorForLine(99L),
+      (idx.lineStarts.last, idx.anchorLineOf(idx.lineStarts.length - 1)),
+      "a jump past EOF clamps to the last anchor"
+    )
 
   // ── window slicing ─────────────────────────────────────────────────────────
 
@@ -125,7 +128,8 @@ class TextStreamSpec extends FunSuite:
     assertEquals(TextStream.countNewlines(bytes("a\nb\nc")), 2L)
 
   test("window: invalid UTF-8 and a split multi-byte character decode with replacement, never throw"):
-    val raw = Array[Byte](0x61, 0xff.toByte, 0xfe.toByte, 0x0a, 0xe4.toByte, 0xb8.toByte) // "a", bad, bad, \n, partial 中
+    val raw =
+      Array[Byte](0x61, 0xff.toByte, 0xfe.toByte, 0x0a, 0xe4.toByte, 0xb8.toByte) // "a", bad, bad, \n, partial 中
     val w = TextStream.buildWindow(raw, raw.length, raw.length.toLong, raw.length.toLong)
     assert(w.text.contains("\ufffd"), "malformed bytes must surface as the replacement char")
     assert(w.text.startsWith("a"))
@@ -159,3 +163,4 @@ class TextStreamSpec extends FunSuite:
     assertEquals(TextStream.lruGet(entries, k2)._1, None, "k2 was the least recently used")
     assertEquals(TextStream.lruGet(entries, k1)._1, Some(idxA))
     assertEquals(TextStream.lruGet(entries, k3)._1, Some(idxC))
+end TextStreamSpec

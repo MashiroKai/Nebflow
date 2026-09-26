@@ -8,14 +8,14 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages, sessionId, status}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -50,53 +50,76 @@ class DeleteSessionCascadeSpec extends FunSuite:
 
   nebflow.core.LlmLogWriter.setEnabled(false)
 
-  /** parent turn 1 = Delegate toolcall；child 行为按 mode：hang（级联测试）/
-    * delayed（死信丢失形态测试——2s 后完成）。 */
+  /**
+   * parent turn 1 = Delegate toolcall；child 行为按 mode：hang（级联测试）/
+   * delayed（死信丢失形态测试——2s 后完成）。
+   */
   private class RoutingLlm(
-      parentSid: String,
-      counters: Ref[IO, Map[String, Int]],
-      requests: Ref[IO, List[LlmRequest]],
-      childMode: String
+    parentSid: String,
+    counters: Ref[IO, Map[String, Int]],
+    requests: Ref[IO, List[LlmRequest]],
+    childMode: String
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
-      Stream.eval(counters.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, 0) + 1)) *>
-        requests.update(req :: _)) >>
+      Stream.eval(
+        counters.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, 0) + 1)) *>
+          requests.update(req :: _)
+      ) >>
         (if req.sessionId == parentSid then
            Stream.eval(counters.get.map(_.getOrElse(req.sessionId, 0))).flatMap { n =>
              if n == 1 then
-               Stream.emits(Seq(
-                 StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-                   id = "tc-delegate-1",
-                   name = "Delegate",
-                   input = JsonObject(
-                     "prompt" -> "work on the background item".asJson,
-                     "description" -> "v1 cascade target".asJson,
-                     "agent" -> "Worker".asJson
+               Stream
+                 .emits(
+                   Seq(
+                     StreamChunk.ToolCallChunk(
+                       nebflow.shared.ToolCall(
+                         id = "tc-delegate-1",
+                         name = "Delegate",
+                         input = JsonObject(
+                           "prompt" -> "work on the background item".asJson,
+                           "description" -> "v1 cascade target".asJson,
+                           "agent" -> "Worker".asJson
+                         )
+                       )
+                     ),
+                     StreamChunk.Done(None, None)
                    )
-                 )),
-                 StreamChunk.Done(None, None)
-               )).covary[IO]
+                 )
+                 .covary[IO]
              else
-               Stream.emits(Seq(
-                 StreamChunk.TextDelta(s"parent turn $n"), StreamChunk.Done(None, None)
-               )).covary[IO]
+               Stream
+                 .emits(
+                   Seq(
+                     StreamChunk.TextDelta(s"parent turn $n"),
+                     StreamChunk.Done(None, None)
+                   )
+                 )
+                 .covary[IO]
            }
          else if req.sessionId.startsWith("delegate-") then
            childMode match
-             case "hang"     => Stream.never[IO]
-             case "delayed"  => Stream.sleep[IO](2.seconds).drain ++ Stream(StreamChunk.TextDelta("V1_CHILD_RESULT_MARKER"), StreamChunk.Done(None, None))
-             case other      => Stream.raiseError[IO](new RuntimeException(s"bad mode $other"))
+             case "hang" => Stream.never[IO]
+             case "delayed" =>
+               Stream.sleep[IO](2.seconds).drain ++ Stream(
+                 StreamChunk.TextDelta("V1_CHILD_RESULT_MARKER"),
+                 StreamChunk.Done(None, None)
+               )
+             case other => Stream.raiseError[IO](new RuntimeException(s"bad mode $other"))
          else Stream(StreamChunk.TextDelta("unexpected"), StreamChunk.Done(None, None)).covary[IO])
 
+  end RoutingLlm
+
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO]
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -134,21 +157,23 @@ class DeleteSessionCascadeSpec extends FunSuite:
   private def seedAgents(tmp: os.Path): Unit =
     val neb = tmp / "agents" / "Nebula"
     os.makeDir.all(neb)
-    os.write.over(neb / "agent.json",
+    os.write.over(
+      neb / "agent.json",
       """{"name":"Nebula","displayName":"Nebula","description":"v1 root","tools":["Delegate"]}"""
     )
     val worker = tmp / "agents" / "Worker"
     os.makeDir.all(worker)
-    os.write.over(worker / "agent.json",
+    os.write.over(
+      worker / "agent.json",
       """{"name":"Worker","displayName":"Worker","description":"v1 delegate target","tools":[]}"""
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -158,9 +183,9 @@ class DeleteSessionCascadeSpec extends FunSuite:
 
   /** Spawn 真 parent + Delegate 出真 child（挂死或延迟完成），返回 fixture。 */
   private def spawnParentWithChild(
-      system: ActorSystem,
-      tmp: os.Path,
-      childMode: String
+    system: ActorSystem,
+    tmp: os.Path,
+    childMode: String
   ): IO[(SharedResources, String, Ref[IO, List[LlmRequest]])] =
     for
       counters <- Ref.of[IO, Map[String, Int]](Map.empty)
@@ -188,7 +213,9 @@ class DeleteSessionCascadeSpec extends FunSuite:
 
   // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例经真 Delegate spawn 驱动级联停，
   // Delegate 已随架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
-  test("R1 GREEN: cascade cancels the hung child via supervisor, unregisters it, cancels its task, barrier released".ignore) {
+  test(
+    "R1 GREEN: cascade cancels the hung child via supervisor, unregisters it, cancels its task, barrier released".ignore
+  ) {
     val system = ActorSystem("v1-r1")
     val tmp = os.temp.dir(prefix = "v1-r1")
     seedAgents(tmp)
@@ -207,7 +234,10 @@ class DeleteSessionCascadeSpec extends FunSuite:
         _ <- waitUntil(25.seconds)(
           resources.subAgentTaskStore.findByTaskId(childSid).map(t => t.exists(_.status == "cancelled"))
         )
-        _ = assert(taskAfter.flatMap(_.lastError).exists(t => t.contains("deleted") || t.contains("cancelled")), clue(taskAfter).toString)
+        _ = assert(
+          taskAfter.flatMap(_.lastError).exists(t => t.contains("deleted") || t.contains("cancelled")),
+          clue(taskAfter).toString
+        )
         // Supervisor 正路：父收到 cancelled 通知（barrier 正确释放，无 phantom slot），
         // 唤醒轮的 LLM 请求携带 cancelled payload。
         _ <- waitUntil(30.seconds)(
@@ -225,11 +255,14 @@ class DeleteSessionCascadeSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例围绕 Delegate 死信丢失形态，
   // Delegate 已架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
-  test("R2 RED BASELINE (cascade bypassed): child completes after parent death — result vanishes into the dead queue".ignore) {
+  test(
+    "R2 RED BASELINE (cascade bypassed): child completes after parent death — result vanishes into the dead queue".ignore
+  ) {
     val system = ActorSystem("v1-r2")
     val tmp = os.temp.dir(prefix = "v1-r2")
     seedAgents(tmp)
@@ -261,6 +294,7 @@ class DeleteSessionCascadeSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("R3 store: cancelRunningForParent cancels in-flight tasks only, keeps completed records") {
@@ -269,10 +303,18 @@ class DeleteSessionCascadeSpec extends FunSuite:
     try
       val store = new SubAgentTaskStore(tmp / "subagent-tasks")
       val io = for
-        _ <- store.recordTask(SubAgentTask("delegate-a", "p1", "Worker", "x", "d-a", "running", 0, 1L, None, None, "delegate"))
-        _ <- store.recordTask(SubAgentTask("delegate-b", "p1", "Worker", "x", "d-b", "completed", 0, 1L, Some(2L), None, "delegate"))
-        _ <- store.recordTask(SubAgentTask("delegate-c", "p1", "Worker", "x", "d-c", "restarting", 1, 1L, None, None, "delegate"))
-        _ <- store.recordTask(SubAgentTask("delegate-d", "p2", "Worker", "x", "d-d", "running", 0, 1L, None, None, "delegate"))
+        _ <- store.recordTask(
+          SubAgentTask("delegate-a", "p1", "Worker", "x", "d-a", "running", 0, 1L, None, None, "delegate")
+        )
+        _ <- store.recordTask(
+          SubAgentTask("delegate-b", "p1", "Worker", "x", "d-b", "completed", 0, 1L, Some(2L), None, "delegate")
+        )
+        _ <- store.recordTask(
+          SubAgentTask("delegate-c", "p1", "Worker", "x", "d-c", "restarting", 1, 1L, None, None, "delegate")
+        )
+        _ <- store.recordTask(
+          SubAgentTask("delegate-d", "p2", "Worker", "x", "d-d", "running", 0, 1L, None, None, "delegate")
+        )
         cancelled <- store.cancelRunningForParent("p1", "parent deleted")
         tasks <- store.loadTasks("p1")
         other <- store.loadTasks("p2")
@@ -288,6 +330,7 @@ class DeleteSessionCascadeSpec extends FunSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
 end DeleteSessionCascadeSpec

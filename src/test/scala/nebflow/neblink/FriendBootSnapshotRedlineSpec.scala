@@ -8,12 +8,12 @@ import io.circe.Json
 import io.circe.parser.parse
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.RestApiRoutes
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 
@@ -93,11 +93,14 @@ class FriendBootSnapshotRedlineSpec extends CatsEffectSuite:
     server.createContext("/api/device/login", ex => respond(ex, 200, loginBody))
     server.createContext(
       "/api/friends",
-      ex => if ex.getRequestURI.getPath == "/api/friends" then respond(ex, 200, friendsJson)
-            else respond(ex, 404, """{"error":"not found"}""")
+      ex =>
+        if ex.getRequestURI.getPath == "/api/friends" then respond(ex, 200, friendsJson)
+        else respond(ex, 404, """{"error":"not found"}""")
     )
     server.start()
     (server, s"http://127.0.0.1:${server.getAddress.getPort}")
+
+  end startUpstream
 
   private def withUpstream[A](body: String => IO[A]): IO[A] =
     IO.delay(startUpstream).flatMap { (server, url) =>
@@ -146,15 +149,16 @@ class FriendBootSnapshotRedlineSpec extends CatsEffectSuite:
     )
 
   private def get(routes: RestApiRoutes, path: String): IO[Response[IO]] =
-    routes.routes(
-      Request[IO](Method.GET, Uri.unsafeFromString(path))
-        .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-    ).value.map(_.getOrElse(fail(s"route fell through: $path")))
+    routes
+      .routes(
+        Request[IO](Method.GET, Uri.unsafeFromString(path))
+          .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+      )
+      .value
+      .map(_.getOrElse(fail(s"route fell through: $path")))
 
   private def enrollJson(token: String): Json =
-    parse(s"""{"deviceToken":"$token","networkId":"n1","avatarUrl":null,"githubUsername":null}""")
-      .toOption
-      .get
+    parse(s"""{"deviceToken":"$token","networkId":"n1","avatarUrl":null,"githubUsername":null}""").toOption.get
 
   override def munitIOTimeout: FiniteDuration = 60.seconds
 

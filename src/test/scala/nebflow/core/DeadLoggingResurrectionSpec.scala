@@ -2,7 +2,7 @@ package nebflow.core
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import scala.jdk.CollectionConverters.*
 
@@ -52,6 +52,7 @@ class DeadLoggingResurrectionSpec extends FunSuite:
       lbLogger.detachAppender(appender)
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
 end DeadLoggingResurrectionSpec

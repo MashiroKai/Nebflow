@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -44,8 +44,10 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
 
   private def writeConfig(content: String): Unit = os.write.over(configPath, content, createFolders = true)
 
-  /** 最小装配：这两条路由只用到 GlobalSafety（配置文件）/ ConfigService（定向写）/
-    * wsHub（广播），其余槽位为 null（`ProjectAgentFileRoutesSpec` 轻量装配先例）。 */
+  /**
+   * 最小装配：这两条路由只用到 GlobalSafety（配置文件）/ ConfigService（定向写）/
+   * wsHub（广播），其余槽位为 null（`ProjectAgentFileRoutesSpec` 轻量装配先例）。
+   */
   private val resources = SharedResources(
     llm = null,
     dispatcher = null,
@@ -122,10 +124,11 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
       _ <- putMode("auto-all")
       afterAll = io.circe.parser.parse(os.read(configPath)).toOption.get
     yield
-      assertEquals(afterEdits.hcursor.downField("safety").downField("defaultMode").as[String].toOption,
-        Some("auto-edits"))
-      assertEquals(afterAll.hcursor.downField("safety").downField("defaultMode").as[String].toOption,
-        Some("auto-all"))
+      assertEquals(
+        afterEdits.hcursor.downField("safety").downField("defaultMode").as[String].toOption,
+        Some("auto-edits")
+      )
+      assertEquals(afterAll.hcursor.downField("safety").downField("defaultMode").as[String].toOption, Some("auto-all"))
 
   // ── A-2：非法值 400 且不落盘 ────────────────────────────────────────────────
 
@@ -139,8 +142,10 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
       assertEquals(resp.status, Status.BadRequest)
       val err = json.hcursor.downField("error").as[String].toOption.getOrElse("")
       assert(err.contains("unknown mode 'yolo'"), s"error must name the rejected value, got: $err")
-      assert(err.contains("confirm-edits") && err.contains("auto-edits") && err.contains("auto-all"),
-        s"error must list the valid values, got: $err")
+      assert(
+        err.contains("confirm-edits") && err.contains("auto-edits") && err.contains("auto-all"),
+        s"error must list the valid values, got: $err"
+      )
       assertEquals(os.read(configPath), before, "an invalid mode must not touch the config file")
 
   test("A-2: a missing mode field is a 400 too (no silent default)"):
@@ -151,8 +156,10 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
       json <- bodyJson(resp)
     yield
       assertEquals(resp.status, Status.BadRequest)
-      assert(json.hcursor.downField("error").as[String].toOption.exists(_.startsWith("unknown mode ''")),
-        s"got: ${json.noSpaces}")
+      assert(
+        json.hcursor.downField("error").as[String].toOption.exists(_.startsWith("unknown mode ''")),
+        s"got: ${json.noSpaces}"
+      )
       assertEquals(os.read(configPath), before)
 
   // ── A-3：GET 五例表驱动（与 §2.3 三分支表一一对应）────────────────────────
@@ -169,16 +176,14 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
 
   test("A-3: GET /safety — file without a safety key ⇒ auto-all, configured=false"):
     writeConfig("""{"llm": {"providers": {}}}""")
-    for
-      json <- getSafety.flatMap(bodyJson)
+    for json <- getSafety.flatMap(bodyJson)
     yield
       assertEquals(json.hcursor.downField("defaultMode").as[String].toOption, Some("auto-all"))
       assertEquals(json.hcursor.downField("configured").as[Boolean].toOption, Some(false))
 
   test("A-3: GET /safety — an unrecognised value ⇒ confirm-edits, configured=false"):
     writeConfig("""{"safety": {"defaultMode": "yolo"}}""")
-    for
-      json <- getSafety.flatMap(bodyJson)
+    for json <- getSafety.flatMap(bodyJson)
     yield
       assertEquals(json.hcursor.downField("defaultMode").as[String].toOption, Some("confirm-edits"))
       assertEquals(json.hcursor.downField("configured").as[Boolean].toOption, Some(false))
@@ -198,16 +203,14 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
   test("A-3: GET /safety — a truncated file ⇒ auto-all (fail-open per author ruling R-b)"):
     // `permissions.scala` 的自陈：读不到有效值（缺文件/缺键/**文件不可解析**/读盘失败）⇒ AutoAll
     writeConfig("""{"safety": """)
-    for
-      json <- getSafety.flatMap(bodyJson)
+    for json <- getSafety.flatMap(bodyJson)
     yield
       assertEquals(json.hcursor.downField("defaultMode").as[String].toOption, Some("auto-all"))
       assertEquals(json.hcursor.downField("configured").as[Boolean].toOption, Some(false))
 
   test("A-3: GET /safety — a null value ⇒ auto-all, configured=false (null == missing)"):
     writeConfig("""{"safety": {"defaultMode": null}}""")
-    for
-      json <- getSafety.flatMap(bodyJson)
+    for json <- getSafety.flatMap(bodyJson)
     yield
       assertEquals(json.hcursor.downField("defaultMode").as[String].toOption, Some("auto-all"))
       assertEquals(json.hcursor.downField("configured").as[Boolean].toOption, Some(false))

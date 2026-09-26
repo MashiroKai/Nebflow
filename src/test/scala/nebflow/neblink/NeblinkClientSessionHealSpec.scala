@@ -8,27 +8,28 @@ import munit.FunSuite
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** F2 of the 2026-09-10 friend-search incident: API-level session self-heal.
-  *
-  * Failure being nailed: the server's one-live-session-per-(device, network)
-  * policy kicks the current session on every fresh login/enrollment on this
-  * device; the kicked session then 403s "Missing or invalid token" on every
-  * withSession call with NO recovery path (the discover() heartbeat re-login
-  * loop only runs on the discovery-held client) — search folded to a 502 and
-  * lists to silent empty states until a gateway restart.
-  *
-  * Stub state machine mirrors that incident exactly: the client HAS a session
-  * (startup login), the server kicks it (kick flag), the next API call 403s
-  * with the auth-rejection shape, and a fresh login (silent re-login) clears
-  * the kick — the heal either restores the request or surfaces the error.
-  *
-  * Layers, mirroring NeblinkClientReloginSpec:
-  *  - pure gate quadrants (`NeblinkClient.sessionRecoverable`) — the trigger
-  *    must be NARROW: business 403s ("not_blocker") must never trigger a
-  *    re-login, because a re-login kicks our own previous session server-side;
-  *  - full chain (stub transport driving the REAL withSession path) —
-  *    heal → replay, per-request single-shot, concurrent single-flight.
-  */
+/**
+ * F2 of the 2026-09-10 friend-search incident: API-level session self-heal.
+ *
+ * Failure being nailed: the server's one-live-session-per-(device, network)
+ * policy kicks the current session on every fresh login/enrollment on this
+ * device; the kicked session then 403s "Missing or invalid token" on every
+ * withSession call with NO recovery path (the discover() heartbeat re-login
+ * loop only runs on the discovery-held client) — search folded to a 502 and
+ * lists to silent empty states until a gateway restart.
+ *
+ * Stub state machine mirrors that incident exactly: the client HAS a session
+ * (startup login), the server kicks it (kick flag), the next API call 403s
+ * with the auth-rejection shape, and a fresh login (silent re-login) clears
+ * the kick — the heal either restores the request or surfaces the error.
+ *
+ * Layers, mirroring NeblinkClientReloginSpec:
+ *  - pure gate quadrants (`NeblinkClient.sessionRecoverable`) — the trigger
+ *    must be NARROW: business 403s ("not_blocker") must never trigger a
+ *    re-login, because a re-login kicks our own previous session server-side;
+ *  - full chain (stub transport driving the REAL withSession path) —
+ *    heal → replay, per-request single-shot, concurrent single-flight.
+ */
 class NeblinkClientSessionHealSpec extends FunSuite:
 
   private val AuthRej403 = "HTTP 403: {\"error\":\"Missing or invalid token\"}"
@@ -51,20 +52,22 @@ class NeblinkClientSessionHealSpec extends FunSuite:
     """{"token":"fresh-sess","networkId":"net","deviceId":"qa-device","peers":[]}"""
   private val SearchOk = """{"found":false}"""
 
-  /** Stub transport state machine:
-    *  - session endpoint: succeeds (clearing the kick) unless `failHealLogin`
-    *    was armed after the startup login — then it 403s (heal login fails);
-    *  - API endpoint: 403 auth-reject while kicked, else per `apiMode`
-    *    ("ok" | "always403" — auth-reject even with a live session, for the
-    *    replay-fails shape | "business403" — non-token 403 that must NEVER
-    *    trigger a heal). */
+  /**
+   * Stub transport state machine:
+   *  - session endpoint: succeeds (clearing the kick) unless `failHealLogin`
+   *    was armed after the startup login — then it 403s (heal login fails);
+   *  - API endpoint: 403 auth-reject while kicked, else per `apiMode`
+   *    ("ok" | "always403" — auth-reject even with a live session, for the
+   *    replay-fails shape | "business403" — non-token 403 that must NEVER
+   *    trigger a heal).
+   */
   private class HealClient(
     withIdentity: Boolean,
     apiMode: String = "ok"
   ):
-    val logins        = new AtomicInteger(0)
-    val apiCalls      = new AtomicInteger(0)
-    val kicked        = new AtomicBoolean(false)
+    val logins = new AtomicInteger(0)
+    val apiCalls = new AtomicInteger(0)
+    val kicked = new AtomicBoolean(false)
     val failHealLogin = new AtomicBoolean(false)
 
     val client = new NeblinkClient(
@@ -82,7 +85,7 @@ class NeblinkClientSessionHealSpec extends FunSuite:
           IO {
             val n = logins.incrementAndGet()
             if n > 1 && failHealLogin.get() then () // heal login fails
-            else kicked.set(false)                  // fresh session = kick cleared
+            else kicked.set(false) // fresh session = kick cleared
           }.flatMap { _ =>
             val n = logins.get()
             if n > 1 && failHealLogin.get() then IO.pure(Left(AuthRej403))
@@ -95,8 +98,10 @@ class NeblinkClientSessionHealSpec extends FunSuite:
             else IO.pure(Right(SearchOk))
           }
 
-    /** Test-entry: the gateway's startup login (live session), then the
-      * server kicks that session — the incident's pre-request state. */
+    /**
+     * Test-entry: the gateway's startup login (live session), then the
+     * server kicks that session — the incident's pre-request state.
+     */
     def loginThenKick(): Unit =
       client.login("qa-device", "qa-host", "macos", Nil).unsafeRunSync()
       kicked.set(true)

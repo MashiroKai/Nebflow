@@ -9,7 +9,8 @@ import nebflow.agent.SharedResources
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
 import nebflow.neblink.{AgentMessagingConfig, FriendService, NeblinkClient, NeblinkServerConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -41,7 +42,7 @@ class GroupSendOriginGateSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-123"
 
-  private val seen       = new ConcurrentLinkedQueue[String]()
+  private val seen = new ConcurrentLinkedQueue[String]()
   private val seenBodies = new ConcurrentLinkedQueue[String]()
 
   private def seenList: List[String] = seen.toArray(Array.empty[String]).toList
@@ -74,6 +75,8 @@ class GroupSendOriginGateSpec extends CatsEffectSuite:
     )
     server.start()
     (server, s"http://127.0.0.1:${server.getAddress.getPort}")
+
+  end startMockServer
 
   private def withMockServer[A](use: (String, NeblinkClient, FriendService) => IO[A]): IO[A] =
     IO.delay {

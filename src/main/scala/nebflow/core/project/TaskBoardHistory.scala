@@ -1,13 +1,12 @@
 package nebflow.core.project
 
 import io.circe.Codec
-import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
+import io.circe.syntax.*
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.time.Instant
-
-import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
  * TaskBoardHistory —— 任务板变更史（TaskBoard 升级批，2026-09-11）。
@@ -25,7 +24,7 @@ import nebflow.core.{NebflowLogger, PathUtil}
  *
  * 行 schema（一行一事件、JSON object、注册式扩展：未知 kind / 未知键读取侧照收不
  * 拒）：`at`（ISO-8601 UTC，与 `createdAt/updatedAt/closedAt` 同口径）/
-  * `id`（条目 id；全局事件省略）/ `actor`（`dispatcher` | `node` | `system`，
+ * `id`（条目 id；全局事件省略）/ `actor`（`dispatcher` | `node` | `system`，
  * **引擎侧派生，不信客户端参数**）/ `kind` ∈ `create`·`update`·`close`·`log`·
  * `prune`·`quarantine`·`rotate` / `field`（update：本次变更的字段名，**逐字段一行**）
  * / `from`·`to`（status 迁移前后）/ `prev`·`next`（变更前后值：**note 类 = 全文**，
@@ -57,15 +56,17 @@ import nebflow.core.{NebflowLogger, PathUtil}
  * 变更类：不失败主操作但在结果行附 `NOTE: history append failed (...)`；log 类：
  * log 本身就是载荷，直接报 `TBOARD_HISTORY`）。
  */
-/** 变更史事件（JSONL 单行 wire schema）。字段全默认 = 缺键零迁移；未知键容忍
-  *（circe 派生默认忽略未知字段）⇒ 加字段不改旧行解析，注册式扩展。
-  *
-  * **主体 = note 内容变更**（作者 2026-09-11 17:27 口径）：`update` 覆盖 note 时
-  * `old`/`new` 两侧**全文**都记（覆盖动作必须可还原）；`close` 的 `[done] outcome`
-  * 追加同样记 `old`/`new` 两侧；`log` 追加的载荷 = `text`（追加段全文，note 零改写）。
-  * 状态类事件（create / 非 note 字段的 update / 无 outcome 的 close / prune /
-  * quarantine / rotate）只记极简值：`from`/`to`（status 迁移）与截断到 200 字的
-  * `old`/`new`（结构字段前后值）——**不得撑大文件、不得淹没 note 主线**。 */
+/**
+ * 变更史事件（JSONL 单行 wire schema）。字段全默认 = 缺键零迁移；未知键容忍
+ * （circe 派生默认忽略未知字段）⇒ 加字段不改旧行解析，注册式扩展。
+ *
+ * **主体 = note 内容变更**（作者 2026-09-11 17:27 口径）：`update` 覆盖 note 时
+ * `old`/`new` 两侧**全文**都记（覆盖动作必须可还原）；`close` 的 `[done] outcome`
+ * 追加同样记 `old`/`new` 两侧；`log` 追加的载荷 = `text`（追加段全文，note 零改写）。
+ * 状态类事件（create / 非 note 字段的 update / 无 outcome 的 close / prune /
+ * quarantine / rotate）只记极简值：`from`/`to`（status 迁移）与截断到 200 字的
+ * `old`/`new`（结构字段前后值）——**不得撑大文件、不得淹没 note 主线**。
+ */
 case class TaskBoardEvent(
   at: String,
   kind: String,
@@ -80,6 +81,7 @@ case class TaskBoardEvent(
   links: List[String] = Nil,
   detail: Option[String] = None
 )
+
 object TaskBoardEvent:
   given Configuration = Configuration.default.withDefaults
   given Codec[TaskBoardEvent] = ConfiguredCodec.derived
@@ -87,8 +89,10 @@ object TaskBoardEvent:
 class TaskBoardHistory private (workspace: String):
   import TaskBoardHistory.*
 
-  /** `def` 非 `val`：路径由 open 时传入的 workspace 派生（同族惯例）。与
-    * `task-board.json` 同目录同层 ⇒ 同隔离（临时 workspace 一份，生产一项目一份）。 */
+  /**
+   * `def` 非 `val`：路径由 open 时传入的 workspace 派生（同族惯例）。与
+   * `task-board.json` 同目录同层 ⇒ 同隔离（临时 workspace 一份，生产一项目一份）。
+   */
   private def dir: os.Path = os.Path(workspace, PathUtil.dataRoot) / ".nebflow"
 
   def file: os.Path = dir / FileName
@@ -99,8 +103,10 @@ class TaskBoardHistory private (workspace: String):
   // 写：追加（轮转检查 → 尾换行补齐 → append）
   // ------------------------------------------------------------------
 
-  /** 追加一条事件；`None` = 成功，`Some(reason)` = 失败（调用方据此在结果行附加
-    * NOTE 或报错，绝不静默）。 */
+  /**
+   * 追加一条事件；`None` = 成功，`Some(reason)` = 失败（调用方据此在结果行附加
+   * NOTE 或报错，绝不静默）。
+   */
   def appendSync(ev: TaskBoardEvent): Option[String] =
     try
       val rotated = rotateIfNeeded()
@@ -124,8 +130,10 @@ class TaskBoardHistory private (workspace: String):
           if raf.read() != '\n' then os.write.append(file, "\n", createFolders = true)
       finally raf.close()
 
-  /** 惰性轮转（只在写路径调用）：活动文件越阈值 → 改名覆盖 `.1` 代 + 新活动文件
-    * 首行写 `rotate` 事件。返回是否发生轮转。 */
+  /**
+   * 惰性轮转（只在写路径调用）：活动文件越阈值 → 改名覆盖 `.1` 代 + 新活动文件
+   * 首行写 `rotate` 事件。返回是否发生轮转。
+   */
   private def rotateIfNeeded(): Boolean =
     if !os.exists(file) then false
     else
@@ -141,14 +149,19 @@ class TaskBoardHistory private (workspace: String):
             at = Instant.now().toString,
             kind = Kinds.Rotate,
             actor = Actors.System,
-            detail = Some(s"rotated lines=$lines bytes=$size to=$ArchiveFileName (previous generation dropped)"))
+            detail = Some(s"rotated lines=$lines bytes=$size to=$ArchiveFileName (previous generation dropped)")
+          )
           os.write.over(file, ev.asJson.noSpaces + "\n")
           logger.warnSync(s"[taskboard] history rotated: lines=$lines bytes=$size (archive=$ArchiveFileName)")
           true
         catch
           case e: Exception =>
-            logger.warnSync(s"[taskboard] history rotation failed (${e.getMessage}) — appending to active file unchanged")
+            logger.warnSync(
+              s"[taskboard] history rotation failed (${e.getMessage}) — appending to active file unchanged"
+            )
             false
+
+      end if
 
   private def countLines(): Int =
     try os.read.lines(file).count(_.trim.nonEmpty)
@@ -158,10 +171,12 @@ class TaskBoardHistory private (workspace: String):
   // 读：活动文件 + `.1` 代（先 `.1` 后活动 ⇒ 天然升序）
   // ------------------------------------------------------------------
 
-  /** 读某条目的事件：按行序升序返回最近 `limit` 条（`only` = 事件分类过滤，用于
-    * 「note 主线」与「状态类次区」各自独立的读取窗口——避免状态类事件把 note 版本
-    * 挤出窗口）；`total` = 命中该 id 且通过 `only` 的行数；`skipped` = 预筛命中但
-    * 不可解析的行数。读路径零写入（不轮转、不改文件）。 */
+  /**
+   * 读某条目的事件：按行序升序返回最近 `limit` 条（`only` = 事件分类过滤，用于
+   * 「note 主线」与「状态类次区」各自独立的读取窗口——避免状态类事件把 note 版本
+   * 挤出窗口）；`total` = 命中该 id 且通过 `only` 的行数；`skipped` = 预筛命中但
+   * 不可解析的行数。读路径零写入（不轮转、不改文件）。
+   */
   def readFor(id: String, limit: Int = Int.MaxValue, only: TaskBoardEvent => Boolean = _ => true): ReadResult =
     val needle = s""""id":"$id""""
     val buf = scala.collection.mutable.ListBuffer[TaskBoardEvent]()
@@ -192,8 +207,12 @@ class TaskBoardHistory private (workspace: String):
     scan(file)
     ReadResult(events = buf.toList, total = total, skipped = skipped)
 
-  /** 廉价探针（不解析 JSON）：史文件里是否出现过该 id —— 归档命中判定用（`show`
-    * 对主库已无、史里仍有的 id 走降级渲染）。坏行照计（出现即命中）。 */
+  end readFor
+
+  /**
+   * 廉价探针（不解析 JSON）：史文件里是否出现过该 id —— 归档命中判定用（`show`
+   * 对主库已无、史里仍有的 id 走降级渲染）。坏行照计（出现即命中）。
+   */
   def countLinesFor(id: String): Int =
     val needle = s""""id":"$id""""
     def count(path: os.Path): Int =
@@ -206,39 +225,43 @@ end TaskBoardHistory
 
 object TaskBoardHistory:
 
-  val FileName        = "task-history.jsonl"
+  val FileName = "task-history.jsonl"
   val ArchiveFileName = "task-history.1.jsonl"
 
   /** 活动文件轮转阈值（> 5 MiB 或 > 20,000 行，先到为准）⇒ 全盘硬顶 ≤ 2 代 ≈ 10 MiB。 */
   val RotationMaxBytes: Long = 5L * 1024 * 1024
-  val RotationMaxLines: Int  = 20_000
+  val RotationMaxLines: Int = 20_000
 
-  /** 行数探测门槛：单行最小序列化形态 ≈ 70 B ⇒ 2 万行 ≥ 1.4 MiB，故不足 1 MiB 的
-    * 文件不可能越行数阈值——小文件跳过逐行计数（轮转检查常态 O(1)）。 */
+  /**
+   * 行数探测门槛：单行最小序列化形态 ≈ 70 B ⇒ 2 万行 ≥ 1.4 MiB，故不足 1 MiB 的
+   * 文件不可能越行数阈值——小文件跳过逐行计数（轮转检查常态 O(1)）。
+   */
   val LineCountProbeBytes: Long = 1L * 1024 * 1024
 
   /** actor 值域：引擎侧派生（分发器身份 / 流节点身份 / 工具内建 system）。 */
   object Actors:
     val Dispatcher = "dispatcher"
-    val Node       = "node"
-    val System     = "system"
+    val Node = "node"
+    val System = "system"
 
   /** 事件 kind 值域（注册式扩展：新 kind = 本清单加一词 + 写入点调用，读侧零改）。 */
   object Kinds:
-    val Create     = "create"
-    val Update     = "update"
-    val Close      = "close"
-    val Log        = "log"
-    val Prune      = "prune"
+    val Create = "create"
+    val Update = "update"
+    val Close = "close"
+    val Log = "log"
+    val Prune = "prune"
     val Quarantine = "quarantine"
-    val Rotate     = "rotate"
+    val Rotate = "rotate"
 
   private[project] val logger = NebflowLogger.forName("nebflow.taskboard.history")
 
-  /** note 类事件判定（作者口径 2026-09-11 17:27：历史的主体是 **note 内容变更**）：
-    * `update` 覆盖 note / `close` 带 `[done] outcome` 追加 / `log` 补充记录。
-    * 其余（create、非 note 字段的 update、无 outcome 的 close、prune、quarantine、
-    * rotate）= 状态类事件 ⇒ `show` 归入次区（极简行）。写读两侧共用本单点。 */
+  /**
+   * note 类事件判定（作者口径 2026-09-11 17:27：历史的主体是 **note 内容变更**）：
+   * `update` 覆盖 note / `close` 带 `[done] outcome` 追加 / `log` 补充记录。
+   * 其余（create、非 note 字段的 update、无 outcome 的 close、prune、quarantine、
+   * rotate）= 状态类事件 ⇒ `show` 归入次区（极简行）。写读两侧共用本单点。
+   */
   def isNoteChange(ev: TaskBoardEvent): Boolean =
     (ev.kind == Kinds.Update && ev.field.contains("note")) ||
       (ev.kind == Kinds.Close && (ev.prev.isDefined || ev.next.isDefined)) ||

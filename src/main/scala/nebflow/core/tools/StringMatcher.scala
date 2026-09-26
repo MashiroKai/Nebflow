@@ -177,7 +177,10 @@ object StringMatcher:
         end while
         if bestSim >= MinHintSimilarity then Some(LineHint(bestLine, bestSim, bestExcerpt))
         else None
+      end if
     }
+
+  end closestLineHint
 
   /** Levenshtein-based similarity in percent (100 = identical). */
   private def similarityPct(a: String, b: String): Int =

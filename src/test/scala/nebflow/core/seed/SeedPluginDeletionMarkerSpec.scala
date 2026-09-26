@@ -3,8 +3,8 @@ package nebflow.core.seed
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.plugin.PluginRegistry
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -76,16 +76,19 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     val cfg = PathUtil.configJsonReadPath(home)
     if !os.exists(cfg) then None
     else
-      io.circe.parser.parse(os.read(cfg)).toOption.flatMap(
-        _.hcursor.downField("plugins").downField("trust").downField(name).downField("sha256").as[String].toOption)
+      io.circe.parser
+        .parse(os.read(cfg))
+        .toOption
+        .flatMap(
+          _.hcursor.downField("plugins").downField("trust").downField(name).downField("sha256").as[String].toOption
+        )
 
   private def seedDirOf(name: String): os.Path =
     val url = getClass.getClassLoader.getResource(s"seed/plugins/$name/plugin.json")
     os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
 
   private def treeAsText(d: os.Path): Map[String, String] =
-    os.walk(d).filter(os.isFile).map(p =>
-      p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+    os.walk(d).filter(os.isFile).map(p => p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
 
   private def copySeedPlugin(name: String): Unit =
     val src = seedDirOf(name)
@@ -116,7 +119,7 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     assert(seen.contains(Target), "前置：台账记录「曾就位」")
 
     os.remove.all(pluginDir(Target)) // 用户主动删除（等价 rm -rf ~/.nebflow/plugins/<name>）
-    ensure()                         // boot #2：检出「曾就位 → 已消失」⇒ 落标记 + 跳过自愈
+    ensure() // boot #2：检出「曾就位 → 已消失」⇒ 落标记 + 跳过自愈
     assert(!os.exists(pluginDir(Target)), "① 不装回（目录仍缺失）")
     assert(userRemoved.contains(Target), "① 用户删除标记已落盘（userRemoved 记名）")
     assertEquals(trustSha(Target), shaBefore, "① 不得 approve（信任记录零变化）")
@@ -127,8 +130,10 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
 
     // 加强（防「靠 seen 巧合绿」）：把台账改成**只有标记、没有 seen** 的形态 ⇒ 此时若标记
     // 读不回来，缺失就会被现行口径装回 ⇒ 本用例必须判红。标记必须**独立成立**。
-    os.write.over(ledgerPath,
-      s"""{"version":1,"seen":[],"userRemoved":{"$Target":{"at":${System.currentTimeMillis() / 1000L}}}}""")
+    os.write.over(
+      ledgerPath,
+      s"""{"version":1,"seen":[],"userRemoved":{"$Target":{"at":${System.currentTimeMillis() / 1000L}}}}"""
+    )
     ensure() // boot #4：唯一依据 = userRemoved 标记
     assert(!os.exists(pluginDir(Target)), "① 只有标记（无 seen）⇒ 仍不装回（标记独立成立）")
     assertEquals(trustSha(Target), shaBefore, "① 不得 approve（第三轮同样零变化）")
@@ -155,22 +160,22 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
   // ── ③ 标记清理语义（手动装回）⇒ 清标记 ────────────────────
   test("③ 标记在位但插件被手动装回 ⇒ 标记清理（谁清/何时清/依据信号）+ 再删重护"):
     existingHome()
-    ensure()                                    // boot #1：装回
-    os.remove.all(pluginDir(Target))            // 用户删除
-    ensure()                                    // boot #2：落标记
+    ensure() // boot #1：装回
+    os.remove.all(pluginDir(Target)) // 用户删除
+    ensure() // boot #2：落标记
     assert(userRemoved.contains(Target), "前置：标记在位")
 
-    copySeedPlugin(Target)                      // 用户手动装回（整目录拷回）
+    copySeedPlugin(Target) // 用户手动装回（整目录拷回）
     os.write.over(pluginDir(Target) / "USER-NOTES.md", "user note\n") // 用户自己的文件，须保留
     val before = treeAsText(pluginDir(Target))
 
-    ensure()                                    // boot #3：目录再次存在 ⇒ 清标记
+    ensure() // boot #3：目录再次存在 ⇒ 清标记
 
     assert(!userRemoved.contains(Target), "③ 标记被清（依据信号 = <root>/plugins/<name> 再次存在）")
     assert(seen.contains(Target), "③ 台账回到「在位」态")
     assertEquals(treeAsText(pluginDir(Target)), before, "③ 清理不改写内容（用户版本保留）")
 
-    os.remove.all(pluginDir(Target))            // 再删一次（生命周期闭合）
+    os.remove.all(pluginDir(Target)) // 再删一次（生命周期闭合）
     ensure()
     assert(!os.exists(pluginDir(Target)), "③ 再删 ⇒ 仍不装回（重护）")
     assert(userRemoved.contains(Target), "③ 标记重生（seen 仍在 ⇒ 判据再次命中）")
@@ -236,7 +241,6 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     assert(!os.exists(pluginDir(Target)), "⑧ 显式删除标记不随存储重置作废（仍不装回）")
     assert(userRemoved.contains(Target), "⑧ 标记保留")
     for name <- manifestPluginNames.filterNot(_ == Target) do
-      assert(os.exists(pluginDir(name) / "plugin.json"),
-        s"⑧ 存储级重置 ⇒ 无标记的 '$name' 按现行口径补回（粗粒度手势语义不变）")
+      assert(os.exists(pluginDir(name) / "plugin.json"), s"⑧ 存储级重置 ⇒ 无标记的 '$name' 按现行口径补回（粗粒度手势语义不变）")
 
 end SeedPluginDeletionMarkerSpec

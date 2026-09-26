@@ -3,8 +3,8 @@ package nebflow.gateway
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.*
+import nebflow.core.SessionStore
+import nebflow.shared.{NebflowLogger, *}
 
 /**
  * Records streaming events as UiMessages for session history,

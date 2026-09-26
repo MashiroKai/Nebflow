@@ -1,18 +1,18 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
-import io.circe.{Json, JsonObject}
+import cats.effect.{IO, Ref}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{ActorSystem as NebActorSystem, AgentCommand, AgentKind, AgentRecord, Behaviors}
+import nebflow.agent.SharedResources
+import nebflow.core.SessionStore
 import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
-import nebflow.gateway.SessionStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
@@ -58,7 +58,7 @@ class DeviceMailSpec extends FunSuite:
 
   test("payload: to_nebula 恒 true（契约不变量）"):
     val built = DeviceMail.payload("x", "d", "i")
-    assertEquals(built.hcursor.get[Boolean](DeviceMail.KeyToNebula).toOption, Some(true))
+    assertEquals(built.hcursor.get[Boolean](DeviceMail.KeyToRoot).toOption, Some(true))
 
   test("parse: 契约原文 ⇒ Right（from_device 展示名 / from_device_id / 正文）"):
     assertEquals(
@@ -77,11 +77,11 @@ class DeviceMailSpec extends FunSuite:
     assert(DeviceMail.parse(withKv(contractPayload, "from_device")).isLeft, "缺 from_device")
     assert(DeviceMail.parse(withKv(contractPayload, "from_device_id")).isLeft, "缺 from_device_id")
     assert(
-      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToNebula -> false.asJson)).isLeft,
+      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToRoot -> false.asJson)).isLeft,
       "to_nebula=false 必须被拒（本批唯一目标形态）"
     )
     assert(
-      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToNebula -> "true".asJson)).isLeft,
+      DeviceMail.parse(withKv(contractPayload, "to_nebula", DeviceMail.KeyToRoot -> "true".asJson)).isLeft,
       "to_nebula 非布尔同样被拒"
     )
     assert(DeviceMail.parse(withKv(contractPayload, "text", "text" -> "".asJson)).isLeft, "空正文")
@@ -117,7 +117,7 @@ class DeviceMailSpec extends FunSuite:
 
   private def callErr(input: JsonObject): String =
     MailTool.call(input, bareCtx).unsafeRunSync() match
-      case Left(err)  => err.message
+      case Left(err) => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
   test("schema: `device` 入册；address 不再 required（两目标各自可空、禁双填）"):
@@ -164,8 +164,14 @@ class DeviceMailSpec extends FunSuite:
     assertEquals(d, "Missing required parameter: message")
 
   test("summarize 回显 device 目标（工具调用摘要可见设备面）"):
-    assertEquals(MailTool.summarize(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson)), "Mail(→device:KAI-MBP)")
-    assertEquals(MailTool.summarize(JsonObject("address" -> "Nebula".asJson, "message" -> "hi".asJson)), "Mail(→Nebula)")
+    assertEquals(
+      MailTool.summarize(JsonObject("device" -> "KAI-MBP".asJson, "message" -> "hi".asJson)),
+      "Mail(→device:KAI-MBP)"
+    )
+    assertEquals(
+      MailTool.summarize(JsonObject("address" -> "Nebula".asJson, "message" -> "hi".asJson)),
+      "Mail(→Nebula)"
+    )
 
   // ============================================================
   // ③ 校验词表 ④未知设备（名册夹具：多设备注册表）
@@ -175,7 +181,8 @@ class DeviceMailSpec extends FunSuite:
     Dispatcher.parallel[IO].allocated.unsafeRunSync()._1
 
   private def neblineService: NeblinkService =
-    NeblinkService.createForTest(serverPort = 8099, dispatcher = dispatcherResource, gracePeriod = 1.second)
+    NeblinkService
+      .createForTest(serverPort = 8099, dispatcher = dispatcherResource, gracePeriod = 1.second)
       .unsafeRunSync()
 
   /** 多设备名册夹具（v2 ②：只投被寻址设备，不广播）。 */
@@ -205,7 +212,7 @@ class DeviceMailSpec extends FunSuite:
 
   private def deviceErr(ns: NeblinkService, device: String): String =
     MailTool.call(JsonObject("device" -> device.asJson, "message" -> "hi".asJson), deviceCtx(ns)).unsafeRunSync() match
-      case Left(err)  => err.message
+      case Left(err) => err.message
       case Right(msg) => fail(s"expected an explicit error for device='$device', got success: $msg")
 
   test("校验词表 ④未知设备：名册无该设备 ⇒ MAIL_DEVICE_NOT_FOUND + 候选清单（禁静默首命中）"):
@@ -246,11 +253,12 @@ class DeviceMailSpec extends FunSuite:
     deviceToken = None
   )
 
-  /** 真实 NeblinkClient + 罐头传输：驱动**真** login + relayAgentMail 链。
-    *
-    * `mailResponse` = 邮件端点（`/api/relay/.../mail`）的原始响应体，供形态/缺 id
-    * 两态共用同一传输桩（禁为第二个用例另造一套链）。
-    */
+  /**
+   * 真实 NeblinkClient + 罐头传输：驱动**真** login + relayAgentMail 链。
+   *
+   * `mailResponse` = 邮件端点（`/api/relay/.../mail`）的原始响应体，供形态/缺 id
+   * 两态共用同一传输桩（禁为第二个用例另造一套链）。
+   */
   private class CaptureClient(mailResponse: String = """{"messageId":"m-77"}"""):
     var calls = List.empty[(String, String, String)] // (method, url, body)
 
@@ -267,6 +275,8 @@ class DeviceMailSpec extends FunSuite:
             Right("""{"token":"tok-1","networkId":"net","deviceId":"dev-a","peers":[]}""")
           else Right(mailResponse)
         }
+
+  end CaptureClient
 
   test("端点形态：POST {url}/api/relay/{target}/mail，body = 契约五键载荷本体"):
     val c = new CaptureClient
@@ -312,7 +322,7 @@ class DeviceMailSpec extends FunSuite:
       assert(loginOut.isRight, s"夹具登录必须成功：$loginOut")
       c.client.relayAgentMail("dev-b", DeviceMail.payload("x", "KAI-MBP", "dev-a")).unsafeRunSync() match
         case Right(r) => r
-        case Left(e)  => fail(s"夹具响应不得判失败：$e")
+        case Left(e) => fail(s"夹具响应不得判失败：$e")
     assertEquals(read("""{"messageId":"m-90","delivered":true}""").delivered, true)
     assertEquals(read("""{"messageId":"m-91","delivered":false}""").delivered, false)
     assertEquals(
@@ -338,9 +348,9 @@ class DeviceMailSpec extends FunSuite:
       .unsafeRunSync()
 
   private def resourcesWith(
-      registry: Map[String, AgentRecord],
-      store: SessionStore,
-      ns: Option[NeblinkService] = None
+    registry: Map[String, AgentRecord],
+    store: SessionStore,
+    ns: Option[NeblinkService] = None
   ): SharedResources =
     new SharedResources(
       llm = null,
@@ -364,16 +374,26 @@ class DeviceMailSpec extends FunSuite:
       voiceMutedRef = Ref.unsafe[IO, Boolean](false)
     )
 
-  /** 收件腿夹具：真 sessionStore（meta.agentName == "Nebula"）+ 注册表 Root 记录 +
-    * 记录型 wsSend/ackSender。 */
-  private def inboxFixture(): (SharedResources, Ref[IO, List[AgentCommand]], Ref[IO, List[Json]], Ref[IO, List[String]]) =
+  /**
+   * 收件腿夹具：真 sessionStore（meta.agentName == "Nebula"）+ 注册表 Root 记录 +
+   * 记录型 wsSend/ackSender。
+   */
+  private def inboxFixture()
+    : (SharedResources, Ref[IO, List[AgentCommand]], Ref[IO, List[Json]], Ref[IO, List[String]]) =
     val store = SessionStore(tempRoot / "sessions", tempRoot / "tasks")
     val meta = store.createSession("Nebula", agentName = Some("Nebula")).unsafeRunSync()
     val msgs = Ref.unsafe[IO, List[AgentCommand]](Nil)
     val frames = Ref.unsafe[IO, List[Json]](Nil)
     val acks = Ref.unsafe[IO, List[String]](Nil)
     val res = resourcesWith(
-      Map(meta.id -> AgentRecord(sessionId = meta.id, ref = recordingRef(msgs), kind = AgentKind.Root, rootSessionId = meta.id)),
+      Map(
+        meta.id -> AgentRecord(
+          sessionId = meta.id,
+          ref = recordingRef(msgs),
+          kind = AgentKind.Root,
+          rootSessionId = meta.id
+        )
+      ),
       store
     )
     DeviceMailInbox.initialize(
@@ -383,8 +403,12 @@ class DeviceMailSpec extends FunSuite:
     )
     (res, msgs, frames, acks)
 
-  /** v2.1 收件入场信封（**逐字**照服务端投递实证样例的键位/层级构造）：
-    * `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{<五键>},"type":"agent_mail"}}` */
+  end inboxFixture
+
+  /**
+   * v2.1 收件入场信封（**逐字**照服务端投递实证样例的键位/层级构造）：
+   * `{"type":"friend_event","eventId":"message-<id>","event":{"payload":{<五键>},"type":"agent_mail"}}`
+   */
   private def envelope(eventId: String, payload: Json = contractPayload): Json =
     Json.obj(
       "type" -> "friend_event".asJson,
@@ -432,10 +456,15 @@ class DeviceMailSpec extends FunSuite:
 
   test("收件腿（非本批事件）：普通 friend_event / 其它帧 ⇒ 零副作用（原样交回既有路径）"):
     val (_, msgs, frames, acks) = inboxFixture()
-    DeviceMailInbox.handle(
-      Json.obj("type" -> "friend_event".asJson, "eventId" -> "friend-evt-1".asJson,
-        "event" -> Json.obj("type" -> "message".asJson, "payload" -> Json.obj("text" -> "hi".asJson)))
-    ).unsafeRunSync()
+    DeviceMailInbox
+      .handle(
+        Json.obj(
+          "type" -> "friend_event".asJson,
+          "eventId" -> "friend-evt-1".asJson,
+          "event" -> Json.obj("type" -> "message".asJson, "payload" -> Json.obj("text" -> "hi".asJson))
+        )
+      )
+      .unsafeRunSync()
     DeviceMailInbox.handle(Json.obj("type" -> "device_status_update".asJson)).unsafeRunSync()
     IO.sleep(300.millis).unsafeRunSync()
     assertEquals(msgs.get.unsafeRunSync(), Nil)
@@ -453,16 +482,25 @@ class DeviceMailSpec extends FunSuite:
   test("收件腿：畸形载荷（缺字段/未知 event.type/缺 payload）⇒ 忽略 + 不注入 + 不告警（老版本对端降级不崩）"):
     val (_, msgs, frames, _) = inboxFixture()
     // 缺 from_device_id
-    DeviceMailInbox.handle(envelope("message-x", Json.obj("type" -> "agent_mail".asJson, "from_device" -> "X".asJson))).unsafeRunSync()
+    DeviceMailInbox
+      .handle(envelope("message-x", Json.obj("type" -> "agent_mail".asJson, "from_device" -> "X".asJson)))
+      .unsafeRunSync()
     // 未知 event.type（老版本对端 / 新事件类型）
-    DeviceMailInbox.handle(
-      Json.obj("type" -> "friend_event".asJson, "eventId" -> "friend-evt-9".asJson,
-        "event" -> Json.obj("type" -> "brand_new_type".asJson, "payload" -> Json.obj()))
-    ).unsafeRunSync()
+    DeviceMailInbox
+      .handle(
+        Json.obj(
+          "type" -> "friend_event".asJson,
+          "eventId" -> "friend-evt-9".asJson,
+          "event" -> Json.obj("type" -> "brand_new_type".asJson, "payload" -> Json.obj())
+        )
+      )
+      .unsafeRunSync()
     // event.type 对但 payload 缺席
-    DeviceMailInbox.handle(
-      Json.obj("type" -> "friend_event".asJson, "event" -> Json.obj("type" -> "agent_mail".asJson))
-    ).unsafeRunSync()
+    DeviceMailInbox
+      .handle(
+        Json.obj("type" -> "friend_event".asJson, "event" -> Json.obj("type" -> "agent_mail".asJson))
+      )
+      .unsafeRunSync()
     IO.sleep(300.millis).unsafeRunSync()
     assertEquals(msgs.get.unsafeRunSync(), Nil, "畸形载荷不得注入任何内容")
     assertEquals(frames.get.unsafeRunSync(), Nil, "畸形载荷不是「注入失败」：不发告警帧（只落可读 WARN）")
@@ -556,7 +594,9 @@ class DeviceMailSpec extends FunSuite:
     assert(capture.client.login("dev-a", "KAI-MBP", "darwin", Nil).unsafeRunSync().isRight, "夹具登录必须成功")
     ns.setRelayClient(Some(capture.client))
 
-    val out = MailTool.call(JsonObject("device" -> "KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns)).unsafeRunSync()
+    val out = MailTool
+      .call(JsonObject("device" -> "KAI-Air".asJson, "message" -> "hello B".asJson), deviceCtx(ns))
+      .unsafeRunSync()
     assert(out.isRight, s"device 邮件应成功下发：$out")
 
     // ① 发送面：**恰一次**、目标走路径、body = 契约五键本体、定向（其余设备零流量）

@@ -5,10 +5,9 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.*
 
 /**
  * SubTaskTool — team-agent task delegation (Delegate split, 方案 A).
@@ -126,14 +125,16 @@ A task with 2+ independent parts — different file domains, or different nature
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-task depth ($MaxDepth) reached. Cannot delegate further.")))
-    else if ctx.agentDef.exists(_.name == "Nebula") then
+    else if ctx.agentDef.exists(_.name == RootAgentIdentity.Name) then
       // #28 (2026-08-20): Nebula's toolset has no SubTask, but guard
       // structurally — the root orchestrator exists exactly once and must not
       // spawn copies of itself, even if a custom agent.json lists the tool.
       IO.pure(
-        Left(ToolError(
-          "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). For a one-shot executor outside any project use Delegate instead (it targets the built-in kernel sub-agent)."
-        ))
+        Left(
+          ToolError(
+            "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). For a one-shot executor outside any project use Delegate instead (it targets the built-in kernel sub-agent)."
+          )
+        )
       )
     else
       // G3: resolve optional image attachments before spawning — fail fast on
@@ -165,7 +166,9 @@ A task with 2+ independent parts — different file domains, or different nature
                           // permission) render in the parent's window.
                           val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
                             case (Some(res), Some(sid)) =>
-                              res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                              res.agentRegistry.get.map(
+                                _.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid)
+                              )
                             case _ => IO.pure(ctx.sessionId.getOrElse(""))
                           for
                             rootSid <- callerRootIO
@@ -331,6 +334,10 @@ A task with 2+ independent parts — different file domains, or different nature
 You will be notified when it completes via a system message.
 Do NOT duplicate this worker's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
+
+    end for
+
+  end spawnWorker
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse

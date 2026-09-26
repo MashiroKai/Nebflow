@@ -3,10 +3,10 @@ package nebflow.agent
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.core.compact.NebulaMemoryHook
+import nebflow.actor.{AgentDef, status}
+import nebflow.core.compact.RootMemoryHook
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.shared.{MemoryBudget, MemoryStore, PathUtil}
 
 import java.nio.file.Files
 
@@ -41,17 +41,23 @@ class MemoryTrackSpec extends FunSuite:
     MemoryTrackSignal.resetForTest()
 
   private def enqueue(content: String): String =
-    MemoryQueue.enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
+    MemoryQueue
+      .enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
+      .id
 
-  /** 最小 SharedResources 夹具（本 spec 只走到「前置闸拒绝」路径 ⇒ 全程不触资源位；
-    * 形态沿用 ToolPhaseStuckAxisSpec 的同款 null 夹具）。 */
+  /**
+   * 最小 SharedResources 夹具（本 spec 只走到「前置闸拒绝」路径 ⇒ 全程不触资源位；
+   * 形态沿用 ToolPhaseStuckAxisSpec 的同款 null 夹具）。
+   */
   private def mkResources(): SharedResources =
     SharedResources(
       llm = null,
       dispatcher = null,
       sessionStore = null,
       projectRoot = os.pwd,
-      thinkingConfigRef = Ref.unsafe[IO, nebflow.llm.ThinkingConfig](nebflow.llm.ThinkingConfig()),
+      thinkingConfigRef = Ref.unsafe[IO, nebflow.shared.ThinkingConfig](nebflow.shared.ThinkingConfig()),
       rateLimiter = null,
       fileChangeTracker = null,
       contextWindow = 0,
@@ -64,19 +70,16 @@ class MemoryTrackSpec extends FunSuite:
       healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
       actorSystem = null,
       voiceMutedRef = Ref.unsafe[IO, Boolean](false),
-      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.actor.AgentRecord]](Map.empty)
     )
 
   // ===== 触发谓词（spec §5 R4 / R9 VC3）=====
 
   test("谓词三支全否 ⇒ false（空队列 + 未超软线 + 无信号 = 零记忆轨 LLM 请求）"):
     assertEquals(
-      MemoryTrack.shouldRun(
-        userBytes = 1000L,
-        agentBytes = 1000L,
-        pendingCount = 0,
-        unconsumedSignal = false),
-      false)
+      MemoryTrack.shouldRun(userBytes = 1000L, agentBytes = 1000L, pendingCount = 0, unconsumedSignal = false),
+      false
+    )
 
   test("谓词三支任一为真 ⇒ true（字节 ∨ pending 计数 ∨ 未消费信号 的或）"):
     val under = 1000L
@@ -107,7 +110,11 @@ class MemoryTrackSpec extends FunSuite:
     reset()
     // 造一份「再 append 一条必超硬顶」的 User.md，并排一条 append
     val hard = MemoryBudget.UserHardBytes
-    os.write.over(MemoryStore.userMemoryPath, "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n", createFolders = true)
+    os.write.over(
+      MemoryStore.userMemoryPath,
+      "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n",
+      createFolders = true
+    )
     val before = os.read(MemoryStore.userMemoryPath)
     enqueue("- " + ("z" * 30))
     val queueBefore = os.read(MemoryQueue.queuePath)
@@ -169,8 +176,11 @@ class MemoryTrackSpec extends FunSuite:
     }.toList
     assertEquals(
       results,
-      List.fill(MemoryQueue.MaxInfraOutcomesPerRef)(MemoryQueue.ResultNotRun) :+ MemoryQueue.ResultBlocked :+ MemoryQueue.ResultBlocked,
-      "前 N 轮 notrun，随后 blocked（写一次后不再追加）")
+      List.fill(MemoryQueue.MaxInfraOutcomesPerRef)(
+        MemoryQueue.ResultNotRun
+      ) :+ MemoryQueue.ResultBlocked :+ MemoryQueue.ResultBlocked,
+      "前 N 轮 notrun，随后 blocked（写一次后不再追加）"
+    )
     val st = MemoryQueue.readState()
     val infraWrites = st.outcomes.count(o => o.ref == id && MemoryQueue.EngineInfraResults.contains(o.result))
     assertEquals(infraWrites, MemoryQueue.MaxInfraOutcomesPerRef + 1, "infra 结局行数有界（防队列膨胀）")
@@ -215,10 +225,7 @@ class MemoryTrackSpec extends FunSuite:
     assertEquals(tools, Set("Read", "Write", "Edit", "Glob", "Grep", "Bash", "AskUserQuestion"))
     assert(!tools.contains("MemoryNote"), "队列化后它不需要 MemoryNote")
     assert(AgentCore.ConvergedAgentNames.contains(MemoryTrack.AgentName), "收敛名 ⇒ tools/mcp 声明整体失效")
-    assertEquals(
-      AgentCore.fixedToolsFor(defn.copy(category = "team")),
-      tools,
-      "category 短路：team/flow 推不出 legacy 面")
+    assertEquals(AgentCore.fixedToolsFor(defn.copy(category = "team")), tools, "category 短路：team/flow 推不出 legacy 面")
 
   // ===== W2 直写关闭（IMPL-4 / R7(4) O-A）=====
 
@@ -226,7 +233,7 @@ class MemoryTrackSpec extends FunSuite:
     reset()
     os.write.over(MemoryStore.userMemoryPath, "# User\n\n- 既有条目\n", createFolders = true)
     val before = os.read(MemoryStore.userMemoryPath)
-    NebulaMemoryHook
+    RootMemoryHook
       .enqueueFacts(List("FACT 1: [PATTERN] 新事实甲", "FACT 2: [DECISION] 新裁定乙", "不是 FACT 格式"), Some("sess-1"))
       .unsafeRunSync()
     assertEquals(os.read(MemoryStore.userMemoryPath), before, "关闭 User.md 直写（W2 绕过通道）")
@@ -237,7 +244,7 @@ class MemoryTrackSpec extends FunSuite:
     assertEquals(st.notes.map(_.action).distinct, Vector("append"))
     assert(st.notes.forall(_.section.isEmpty), "无具名节（`## Dream Extract` 已随 DreamMode 停用退役 ⇒ 恒文件尾追加）")
     assert(st.notes.map(_.content.getOrElse("")).exists(_.contains("[PATTERN]")), "类别 in-band 保留")
-    assertEquals(MemoryHistory.ofKind(MemoryHistory.KindQueue).head.actor, NebulaMemoryHook.Actor, "actor 引擎代写")
+    assertEquals(MemoryHistory.ofKind(MemoryHistory.KindQueue).head.actor, RootMemoryHook.Actor, "actor 引擎代写")
 
   // ===== 注入（IMPL-1）=====
 
@@ -248,7 +255,12 @@ class MemoryTrackSpec extends FunSuite:
     enqueue("- 条目一")
     assertEquals(MemoryQueue.summaryLine().contains("Memory queue: 1 pending note(s)"), true)
     val withLine = ContextRefresher.renderMemoryBlock(
-      Some("- 记忆内容"), None, (false, false), openTasksLine = "", memoryQueueLine = MemoryQueue.summaryLine())
+      Some("- 记忆内容"),
+      None,
+      (false, false),
+      openTasksLine = "",
+      memoryQueueLine = MemoryQueue.summaryLine()
+    )
     assert(withLine.contains("Memory queue: 1 pending note(s)"), s"注入行在场: $withLine")
     assert(withLine.contains("applied at the next compaction"), "口径：写入推迟到压缩")
 

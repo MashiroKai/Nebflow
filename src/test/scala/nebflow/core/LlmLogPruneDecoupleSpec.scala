@@ -79,8 +79,7 @@ class LlmLogPruneDecoupleSpec extends FunSuite:
     LlmLogWriter.setEnabled(false)
     LlmLogWriter.armRetention() // 实例武装（boot 语义）；写开关保持关
     // 出窗三件（删除腿目标）+ 窗内 full（引用面）+ 引用对象/孤儿对象
-    for s <- List("summary", "full", "sse") do
-      Files.writeString(dir.resolve(s"${outOfWindow}_$s.jsonl"), "{}")
+    for s <- List("summary", "full", "sse") do Files.writeString(dir.resolve(s"${outOfWindow}_$s.jsonl"), "{}")
     Files.writeString(dir.resolve(s"${today}_full.jsonl"), fullEntry("keep"))
     touch(dir, "sys-keep")
     touch(dir, "orphan")
@@ -114,7 +113,6 @@ class LlmLogPruneDecoupleSpec extends FunSuite:
     )
     assert(objNames(dir).contains("orphan.json"), "un-armed ⇒ no orphan sweep")
     assert(!LlmLogWriter.isRetentionArmedForTest, "default state stays disarmed")
-
 
   test("② enabled=false: the write face stays at ZERO new lines/files"):
     val dir = Files.createTempDirectory("llm-decouple-nowrite-")

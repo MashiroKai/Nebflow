@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.entity.{EntityLoader, FlowDagDef, TeamDef}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 object LoadTool extends Tool:
   private val logger = NebflowLogger.forName("nebflow.tools.load")

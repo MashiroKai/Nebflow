@@ -39,14 +39,16 @@ import java.nio.file.{Files, Path, Paths}
  */
 object PopTool extends Tool:
 
-  /** Shared local-reference policy (failure enum, file probe, app-route
-    *  exemption, warning/counter JSON shapes) — the same module Card uses.
-    *  Pop contributes only the resolution policy below (a Pop'd HTML file has
-    *  a containing directory, a Card does not) and inlines instead of
-    *  proxying. */
+  /**
+   * Shared local-reference policy (failure enum, file probe, app-route
+   *  exemption, warning/counter JSON shapes) — the same module Card uses.
+   *  Pop contributes only the resolution policy below (a Pop'd HTML file has
+   *  a containing directory, a Card does not) and inlines instead of
+   *  proxying.
+   */
   import FileRefs.*
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.pop")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.pop")
 
   /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
   private val MaxTextSize = 2 * 1024 * 1024
@@ -68,14 +70,14 @@ object PopTool extends Tool:
   private def isRemoteOrSpecialUrl(src: String): Boolean =
     val lower = src.toLowerCase
     lower.startsWith("http://") || lower.startsWith("https://") ||
-      lower.startsWith("data:") || lower.startsWith("blob:") ||
-      lower.startsWith("#") || lower.startsWith("javascript:") ||
-      lower.startsWith("mailto:") || lower.startsWith("tel:")
+    lower.startsWith("data:") || lower.startsWith("blob:") ||
+    lower.startsWith("#") || lower.startsWith("javascript:") ||
+    lower.startsWith("mailto:") || lower.startsWith("tel:")
 
   /** Resolve an img src (file://, /absolute, ~/, or relative) to a local file Path. */
   private def resolveImgSrc(src: String, htmlDir: Path): Option[Path] =
     val cleaned =
-      if src.startsWith("file:///") then src.stripPrefix("file://")          // file:///path → /path
+      if src.startsWith("file:///") then src.stripPrefix("file://") // file:///path → /path
       else if src.startsWith("file://localhost/") then "/" + src.stripPrefix("file://localhost")
       else if src.startsWith("file://") then "/" + src.stripPrefix("file://") // file://path → /path
       else if src.startsWith("file:") then src.stripPrefix("file:")
@@ -85,18 +87,22 @@ object PopTool extends Tool:
       else htmlDir.resolve(p).normalize()
     )
 
-  /** One HTML image pass: the rewritten HTML plus what happened to every local
-    *  reference (inlined / deferred / exempt / rejected). */
+  /**
+   * One HTML image pass: the rewritten HTML plus what happened to every local
+   *  reference (inlined / deferred / exempt / rejected).
+   */
   private case class PopRefOutcome(
-      html: String,
-      inlined: Int,
-      deferred: Int,
-      exempt: Int,
-      rejects: List[RejectedRef],
-      /** Decoded-form disclosures (imgref batch 2026-09-18): a reference whose
-        *  path was spelled with URL escapes / a bare `+` was resolved as the
-        *  decoded form, and the user-facing result says so. */
-      notes: List[String] = Nil
+    html: String,
+    inlined: Int,
+    deferred: Int,
+    exempt: Int,
+    rejects: List[RejectedRef],
+    /**
+     * Decoded-form disclosures (imgref batch 2026-09-18): a reference whose
+     *  path was spelled with URL escapes / a bare `+` was resolved as the
+     *  decoded form, and the user-facing result says so.
+     */
+    notes: List[String] = Nil
   )
 
   /**
@@ -140,9 +146,9 @@ object PopTool extends Tool:
     val budget = InlineBudget()
 
     def record(decision: RefDecision): Unit = decision match
-      case RefDecision.Exempt(_)        => exempt += 1
+      case RefDecision.Exempt(_) => exempt += 1
       case RefDecision.Reject(rejected) => rejects += rejected
-      case _                            => ()
+      case _ => ()
 
     /** The replacement src value, or None to keep the raw one. */
     def newValueFor(src: String): Option[String] =
@@ -205,17 +211,21 @@ object PopTool extends Tool:
               case other =>
                 record(other)
                 None
+        end match
 
-    val out = ImgSrcPattern.replaceAllIn(html, { m =>
-      val src = m.group(1)
-      newValueFor(src) match
-        case Some(value) =>
-          // Replace only the src value: the regex guarantees group(1) is
-          // immediately before the closing quote at the end of the match.
-          val full = m.group(0)
-          full.dropRight(src.length + 1) + value + full.takeRight(1)
-        case None => m.group(0)
-    })
+    val out = ImgSrcPattern.replaceAllIn(
+      html,
+      { m =>
+        val src = m.group(1)
+        newValueFor(src) match
+          case Some(value) =>
+            // Replace only the src value: the regex guarantees group(1) is
+            // immediately before the closing quote at the end of the match.
+            val full = m.group(0)
+            full.dropRight(src.length + 1) + value + full.takeRight(1)
+          case None => m.group(0)
+      }
+    )
 
     if rejects.nonEmpty || deferred > 0 || exempt > 0 then
       logger.debug(
@@ -224,8 +234,10 @@ object PopTool extends Tool:
     PopRefOutcome(out, inlined, deferred, exempt, rejects.toList, notes.toList.distinct)
   end processLocalImages
 
-  /** The counters + warning list for one Pop pass — the same objects Card puts
-    *  in its payload, so both tools report identically shaped warnings. */
+  /**
+   * The counters + warning list for one Pop pass — the same objects Card puts
+   *  in its payload, so both tools report identically shaped warnings.
+   */
   private def refPayload(o: PopRefOutcome): (Json, Json) =
     val distinct = distinctRejections(o.rejects)
     val listed = distinct.take(MaxListedWarnings)
@@ -234,9 +246,11 @@ object PopTool extends Tool:
       warningsJson(listed)
     )
 
-  /** Tool result text: the summary line, then — only when something needs
-    *  attention — the warnings array and the `fileRefs` counter line. A clean
-    *  Pop is byte-identical to the pre-batch result. */
+  /**
+   * Tool result text: the summary line, then — only when something needs
+   *  attention — the warnings array and the `fileRefs` counter line. A clean
+   *  Pop is byte-identical to the pre-batch result.
+   */
   private def describeResult(summary: String, o: PopRefOutcome, fileRefs: Json, warnings: Json): String =
     val failed = fileRefs.hcursor.get[Int]("failed").toOption.getOrElse(0)
     val sb = new StringBuilder(summary)
@@ -247,14 +261,14 @@ object PopTool extends Tool:
         )
         .append("\nwarnings: ")
         .append(warnings.noSpaces)
-    if failed > 0 || o.deferred > 0 || o.exempt > 0 then
-      sb.append("\n").append(CountsMarker).append(fileRefs.noSpaces)
+    if failed > 0 || o.deferred > 0 || o.exempt > 0 then sb.append("\n").append(CountsMarker).append(fileRefs.noSpaces)
     // imgref batch: a decoded-form hit is DISCLOSED even on an otherwise clean
     // pass — the author's order is explicit that the tool result must say which
     // form of the path was used ("路径含空格，已自动改用解码形态").
-    if o.notes.nonEmpty then
-      sb.append("\nnotes: ").append(o.notes.mkString(" | "))
+    if o.notes.nonEmpty then sb.append("\nnotes: ").append(o.notes.mkString(" | "))
     sb.toString
+
+  end describeResult
 
   /** Extract hostname from a URL string. */
   private def extractHostname(url: String): String =
@@ -313,44 +327,48 @@ Example: {"filePath": "https://example.com"}"""
     )
   )
 
-  /** 拒答文案（2026-09-10 作者裁定，作者原话逐字保留）：前置结构化前缀 + 错误码
-    * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`，同 TaskBoardTool.forbidden /
-    * MemoryNoteTool DREAM_APPEND_DENIED）。 */
-  private val NebulaOnlyError: ToolError = ToolError(
-    "Pop: permission denied — Pop 已收归 Nebula 专属；交付物请沿 out 边交给链末端 / Nebula，由 Nebula 决定是否展示 (POP_NEBULA_ONLY)")
+  /**
+   * 拒答文案（2026-09-10 作者裁定，作者原话逐字保留）：前置结构化前缀 + 错误码
+   * （仓内 ToolError 惯例：`<Tool>: ... (CODE)`，同 TaskBoardTool.forbidden /
+   * MemoryNoteTool DREAM_APPEND_DENIED）。
+   */
+  private val RootOnlyError: ToolError = ToolError(
+    "Pop: permission denied — Pop 已收归 Nebula 专属；交付物请沿 out 边交给链末端 / Nebula，由 Nebula 决定是否展示 (POP_NEBULA_ONLY)"
+  )
 
-  /** 身份闸判据（2026-09-10 作者裁定）：两层同真才放行。
-    *
-    *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef
-    *     （AgentCore toolCtx 构造处注入 effectiveDef）；
-    *     MemoryNoteTool.scala:325-338 的 dream 闸先例同款，禁用全局状态猜身份。
-    *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（depth==0 排除
-    *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。子会话判定口径 =
-    *     depth：Nebula 派生的 SubTask worker / 节点会话 / 子 agent 全部 depth≥1；
-    *     depth==0 只有全仓唯一根会话 spawn 点（WebSocketRoutes.doSpawnRootAgent）
-    *     ——「Nebula 自己」与「Nebula 派生的会话」由此分开。
-    *
-    * `ctx.agentDef == None`（REST 直调 / spec harness）→ **fail-closed**：非
-    * Nebula 身份一律拒。实测无合法非 agent 调用面被误伤：Pop 不在
-    * RemoteExecutor.remoteableTools（RemoteExecutor.scala:658 只有
-    * Bash/Read/Write/Edit/Glob/Grep）⇒ 远程执行链永不带 Pop；remote-exec 接收侧
-    * （RestApiRoutes.scala:1154-1158 / NeblinkRelayTunnel.scala:275）不传
-    * agentDef 也不传 wsSend，那里的 Pop 本来只回声、不发送、无功能面。spec
-    * harness 显式传 Nebula ctx（PopToolSpec.captureCtx）。
-    *
-    * **工具面按角色分化批（2026-09-13）**：谓词本体已上移为全仓唯一单点
-    * [[nebflow.agent.AgentCore.isNebulaRoot]]（同批新增：定义期 schema 分组的
-    * 分组依据 + AskUserQuestion 非阻塞兜底闸——三消费点一处实现）。本方法退化为
-    * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
-    * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
-    */
-  private def isNebulaRootSession(ctx: ToolContext): Boolean =
-    nebflow.agent.AgentCore.isNebulaRoot(ctx.agentDef, ctx.depth)
+  /**
+   * 身份闸判据（2026-09-10 作者裁定）：两层同真才放行。
+   *
+   *  1. `ctx.agentDef.exists(_.name == "Nebula")` —— 身份来源 = ctx.agentDef
+   *     （AgentCore toolCtx 构造处注入 effectiveDef）；
+   *     MemoryNoteTool.scala:325-338 的 dream 闸先例同款，禁用全局状态猜身份。
+   *  2. `ctx.depth == 0` —— 「Nebula 本体根会话」判据（depth==0 排除
+   *     NodeDef.agent="Nebula" 的节点会话，它们的 depth=1）。子会话判定口径 =
+   *     depth：Nebula 派生的 SubTask worker / 节点会话 / 子 agent 全部 depth≥1；
+   *     depth==0 只有全仓唯一根会话 spawn 点（WebSocketRoutes.doSpawnRootAgent）
+   *     ——「Nebula 自己」与「Nebula 派生的会话」由此分开。
+   *
+   * `ctx.agentDef == None`（REST 直调 / spec harness）→ **fail-closed**：非
+   * Nebula 身份一律拒。实测无合法非 agent 调用面被误伤：Pop 不在
+   * RemoteExecutor.remoteableTools（RemoteExecutor.scala:658 只有
+   * Bash/Read/Write/Edit/Glob/Grep）⇒ 远程执行链永不带 Pop；remote-exec 接收侧
+   * （RestApiRoutes.scala:1154-1158 / NeblinkRelayTunnel.scala:275）不传
+   * agentDef 也不传 wsSend，那里的 Pop 本来只回声、不发送、无功能面。spec
+   * harness 显式传 Nebula ctx（PopToolSpec.captureCtx）。
+   *
+   * **工具面按角色分化批（2026-09-13）**：谓词本体已上移为全仓唯一单点
+   * [[nebflow.agent.AgentCore.isRootAgent]]（同批新增：定义期 schema 分组的
+   * 分组依据 + AskUserQuestion 非阻塞兜底闸——三消费点一处实现）。本方法退化为
+   * **纯委托**（行为逐字节不变，PopToolSpec 钉住）；此处**不得**重写
+   * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
+   */
+  private def isRootAgentSession(ctx: ToolContext): Boolean =
+    nebflow.agent.AgentCore.isRootAgent(ctx.agentDef, ctx.depth)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /
     // WS 发送）。非 Nebula 身份（含 agentDef=None）在此短路，零副作用。
-    if !isNebulaRootSession(ctx) then IO.pure(Left(NebulaOnlyError))
+    if !isRootAgentSession(ctx) then IO.pure(Left(RootOnlyError))
     else doCall(input, ctx)
 
   /** Nebula 本体根会话的 Pop 实现（身份已过闸；语义与本批前逐字节一致）。 */

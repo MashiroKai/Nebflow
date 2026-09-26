@@ -1,65 +1,62 @@
 package nebflow.gateway
 
 import io.circe.{HCursor, Json, parser}
-import nebflow.core.PathUtil
 import nebflow.neblink.NeblinkConfig
+import nebflow.shared.PathUtil
 
 import java.math.BigInteger
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
+import java.security.*
 import java.security.interfaces.{ECPublicKey, RSAPublicKey}
-import java.security.spec.{
-  ECGenParameterSpec,
-  ECParameterSpec,
-  ECPoint,
-  ECPublicKeySpec,
-  RSAPublicKeySpec
-}
-import java.security.{AlgorithmParameters, KeyFactory, PublicKey, Signature}
+import java.security.spec.*
 import java.time.Duration
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.util.control.NonFatal
 
-/** 网关接受面 · **轨 2** —— Logto 签发的账号级长期令牌（PAT）的**离线验签**。
-  *
-  * 信任模型（root 2026-09-20 定案，`decision-10-pat-token.md:14` 的 R3）：令牌是 **Logto
-  * 签名的自包含 JWT**，本网关用 Logto 公布的 JWKS 公钥**完全离线**验签 —— 无内省、无每请求
-  * 网络往返；JWKS 获取 = 缓存 + 有界刷新。簿记面（账本 / 一次性显示 / 前缀末四位 / 吊销登记）
-  * 属**站点后端**，不在本文件面内：本文件**不做任何查表式校验**，验签依据**只有** JWKS。
-  *
-  * 硬约束（逐条）：
-  *  - **离线**：验签全在本地；网络只用于 JWKS 文档（缓存 TTL 3600s；陌生 kid 触发的一次强制
-  *    刷新受 30s 下限约束 ⇒ 任意数量的坏令牌都不能把这里变成取数放大器）。
-  *  - **fail-closed**：取不到 / 解析失败 / 密钥不匹配 / 缺必需声明 / 配置缺席 ⇒ **拒**；入口对
-  *    调用方只回 Boolean，且**任何**异常都被吞成 false。
-  *  - **不对外区分**原因（防枚举）：调用方（`RestApiRoutes.checkAuth`）把 false 统一渲染成既有
-  *    `Forbidden({"error":"Unauthorized"})`，与轨 1 的错误形态逐字相同。
-  *  - **零密钥回显**：日志只出现粗粒度原因（HTTP 码 / 异常类名），永不出现令牌明文、签名材料
-  *    或 JWKS 材料。
-  *
-  * 配置面（`<dataRoot>/pat.json`；**文件缺席 / 解析失败 / audience 或 scope 缺一 ⇒ 整面关闭**
-  * ⇒ 网关行为与本批之前逐字一致，轨 1 零影响）：
-  *
-  *   { "audience": "<Logto API resource 标识>", "scope": "<首发单档 scope 字面量>",
-  *     "issuer":   "<可选；缺省 = <logto.endpoint>/oidc>",
-  *     "jwksUrl":  "<可选；缺省 = <issuer>/jwks>" }
-  *
-  * `audience` / `scope` 的**取值**来自 Logto 侧 API resource 定义（身份权威）——本仓不硬编码、
-  * 也不自造权限档名；实现只做**对表断言**。
-  */
+/**
+ * 网关接受面 · **轨 2** —— Logto 签发的账号级长期令牌（PAT）的**离线验签**。
+ *
+ * 信任模型（root 2026-09-20 定案，`decision-10-pat-token.md:14` 的 R3）：令牌是 **Logto
+ * 签名的自包含 JWT**，本网关用 Logto 公布的 JWKS 公钥**完全离线**验签 —— 无内省、无每请求
+ * 网络往返；JWKS 获取 = 缓存 + 有界刷新。簿记面（账本 / 一次性显示 / 前缀末四位 / 吊销登记）
+ * 属**站点后端**，不在本文件面内：本文件**不做任何查表式校验**，验签依据**只有** JWKS。
+ *
+ * 硬约束（逐条）：
+ *  - **离线**：验签全在本地；网络只用于 JWKS 文档（缓存 TTL 3600s；陌生 kid 触发的一次强制
+ *    刷新受 30s 下限约束 ⇒ 任意数量的坏令牌都不能把这里变成取数放大器）。
+ *  - **fail-closed**：取不到 / 解析失败 / 密钥不匹配 / 缺必需声明 / 配置缺席 ⇒ **拒**；入口对
+ *    调用方只回 Boolean，且**任何**异常都被吞成 false。
+ *  - **不对外区分**原因（防枚举）：调用方（`RestApiRoutes.checkAuth`）把 false 统一渲染成既有
+ *    `Forbidden({"error":"Unauthorized"})`，与轨 1 的错误形态逐字相同。
+ *  - **零密钥回显**：日志只出现粗粒度原因（HTTP 码 / 异常类名），永不出现令牌明文、签名材料
+ *    或 JWKS 材料。
+ *
+ * 配置面（`<dataRoot>/pat.json`；**文件缺席 / 解析失败 / audience 或 scope 缺一 ⇒ 整面关闭**
+ * ⇒ 网关行为与本批之前逐字一致，轨 1 零影响）：
+ *
+ *   { "audience": "<Logto API resource 标识>", "scope": "<首发单档 scope 字面量>",
+ *     "issuer":   "<可选；缺省 = <logto.endpoint>/oidc>",
+ *     "jwksUrl":  "<可选；缺省 = <issuer>/jwks>" }
+ *
+ * `audience` / `scope` 的**取值**来自 Logto 侧 API resource 定义（身份权威）——本仓不硬编码、
+ * 也不自造权限档名；实现只做**对表断言**。
+ */
 object PatAuth:
 
   /** 接受面配置：三条声明断言（iss / aud / scope 单档）+ JWKS 位置。 */
   final case class Config(issuer: String, jwksUrl: String, audience: String, scope: String)
 
-  /** 🔴 吊销强制点 —— **候作者裁：A 到期失效 / B 刷新族短访问 / C 吊销名单轮询 ≤1h**。
-    *
-    * 本批（root 定案「只落三案共同件」）**只留此接口面**：默认实现不强制（A/B 两案下确无额外
-    * 机制；C 落地时把 [[noRevocation]] 换成 ≤1h 名单查询即可，调用点已就位）。🔴 **禁**在作者
-    * 回字母前实现任一案（禁轮询、禁名单、禁调短 TTL 参数冒充）。
-    */
+  /**
+   * 🔴 吊销强制点 —— **候作者裁：A 到期失效 / B 刷新族短访问 / C 吊销名单轮询 ≤1h**。
+   *
+   * 本批（root 定案「只落三案共同件」）**只留此接口面**：默认实现不强制（A/B 两案下确无额外
+   * 机制；C 落地时把 [[noRevocation]] 换成 ≤1h 名单查询即可，调用点已就位）。🔴 **禁**在作者
+   * 回字母前实现任一案（禁轮询、禁名单、禁调短 TTL 参数冒充）。
+   */
   trait RevocationGate:
     /** true = 该令牌已被吊销（拒绝）。 */
     def revoked(sub: String, jti: Option[String]): Boolean
@@ -67,10 +64,12 @@ object PatAuth:
   /** 默认 = 不强制（A/B 共同位；C 待裁）。 */
   val noRevocation: RevocationGate = (_, _) => false
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.gateway.pat")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.gateway.pat")
 
-  /** alg 白名单：Logto 现代密钥池是 EC P-384（ES384），旧池是 RSA（RS256）。白名单同时排除
-    * 算法混淆（HS256 永不可能走到这里）——先例 = neblink-server `jwks.rs:99-104`。 */
+  /**
+   * alg 白名单：Logto 现代密钥池是 EC P-384（ES384），旧池是 RSA（RS256）。白名单同时排除
+   * 算法混淆（HS256 永不可能走到这里）——先例 = neblink-server `jwks.rs:99-104`。
+   */
   private val AllowedAlgs = Set("RS256", "ES384")
   private val CacheTtlSec = 3600L
   private val MinRefreshGapSec = 30L
@@ -100,11 +99,12 @@ object PatAuth:
         }
     catch case NonFatal(_) => None
 
-  /** 缺省 issuer = 本机 `<dataRoot>/neblink/config.json` 的 `logto.endpoint` + `/oidc`。
-    *
-    * 单源纪律（先例 = neblink-server `jwks.rs:74-86` 的「一个 URL 决定两者」；其测试把 iss 钉为
-    * `<endpoint>/oidc`）：iss 与 JWKS 位置不可能互相漂移；自托管差异用 `pat.json` 的两个可选键覆盖。
-    */
+  /**
+   * 缺省 issuer = 本机 `<dataRoot>/neblink/config.json` 的 `logto.endpoint` + `/oidc`。
+   *
+   * 单源纪律（先例 = neblink-server `jwks.rs:74-86` 的「一个 URL 决定两者」；其测试把 iss 钉为
+   * `<endpoint>/oidc`）：iss 与 JWKS 位置不可能互相漂移；自托管差异用 `pat.json` 的两个可选键覆盖。
+   */
   private def defaultIssuer: Option[String] =
     loadNeblinkConfig
       .flatMap(_.effectiveLogto)
@@ -209,6 +209,7 @@ object PatAuth:
           signingInput = s"${parts(0)}.${parts(1)}".getBytes(StandardCharsets.UTF_8),
           signature = sb
         )
+      end if
     catch case NonFatal(_) => None
 
   private def audOf(pj: Json): List[String] =
@@ -374,9 +375,11 @@ object PatAuth:
         if fetchedAtSec > 0L && nowSec() - fetchedAtSec <= CacheTtlSec then keys.get(kid) else None
       }
 
-    /** 有界刷新：一次调用最多取数一次；同一 kid 两次取数间隔 ≥ 30s（per-kid 下限，见
-      * [[lastAttemptSec]]；取数在锁内 ⇒ 并发退化为串行等待，上界 = 5s timeout）。失败**保留旧缓存**
-      * 并把本次判定交给调用者 fail-closed。 */
+    /**
+     * 有界刷新：一次调用最多取数一次；同一 kid 两次取数间隔 ≥ 30s（per-kid 下限，见
+     * [[lastAttemptSec]]；取数在锁内 ⇒ 并发退化为串行等待，上界 = 5s timeout）。失败**保留旧缓存**
+     * 并把本次判定交给调用者 fail-closed。
+     */
     private def refresh(kid: String): Unit =
       lock.synchronized {
         val now = nowSec()
@@ -391,4 +394,5 @@ object PatAuth:
                 case None => logger.warn("PAT JWKS document carries no usable signature key; fail-closed")
             case Left(reason) => logger.warn(s"PAT JWKS fetch failed ($reason); fail-closed")
       }
+  end Verifier
 end PatAuth

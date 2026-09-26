@@ -20,6 +20,9 @@ import scala.jdk.CollectionConverters.*
  */
 class CardToolScanFaceSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val sentinel = "___CARD_HTML___"
 
@@ -29,14 +32,17 @@ class CardToolScanFaceSpec extends FunSuite:
     assert(result.startsWith(sentinel), s"result must start with the sentinel, got: ${result.take(60)}")
     io.circe.parser.parse(result.substring(sentinel.length)) match
       case Right(json) => json
-      case Left(err)   => fail(s"everything after the sentinel must be pure JSON: $err")
+      case Left(err) => fail(s"everything after the sentinel must be pure JSON: $err")
 
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
+
   private def refsOf(p: Json): List[String] =
     warningsOf(p).flatMap(_.hcursor.get[String]("ref").toOption)
+
   private def reasonsOf(p: Json): List[String] =
     warningsOf(p).flatMap(_.hcursor.get[String]("reason").toOption)
+
   private def count(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
@@ -68,7 +74,11 @@ class CardToolScanFaceSpec extends FunSuite:
       assertEquals(count(p, "proxied"), 0, "an embedded candidate needs no /api/nf-file URL")
       assertEquals(count(p, "failed"), 1, "the failing candidate is reported")
       assertEquals(reasonsOf(p), List("not-found"))
-      assertEquals(refsOf(p), List("/tmp/cardscan-missing-2x.png"), "the warning carries the candidate URL, not the whole attribute")
+      assertEquals(
+        refsOf(p),
+        List("/tmp/cardscan-missing-2x.png"),
+        "the warning carries the candidate URL, not the whole attribute"
+      )
       assert(htmlOf(p).contains("""srcset="data:image/png;base64,"""), s"rewritten candidate: ${htmlOf(p)}")
       assert(htmlOf(p).contains("1x, /tmp/cardscan-missing-2x.png 2x"), s"descriptors must survive: ${htmlOf(p)}")
     }
@@ -203,8 +213,17 @@ class CardToolScanFaceSpec extends FunSuite:
     assertEquals(htmlOf(p), """<img src="/js/cardscan-missing.png"/><script src="/js/app.js"></script>""")
 
   test("exemption: root-level app files and every served prefix are recognised"):
-    val refs = List("/favicon-512.png", "/style.css", "/favicon.ico", "/assets/index-abc.js", "/css/chat.css",
-      "/vendor/monaco/x.js", "/uploads/s1/a.png", "/agents/x/a.png", "/voice-models/m.bin")
+    val refs = List(
+      "/favicon-512.png",
+      "/style.css",
+      "/favicon.ico",
+      "/assets/index-abc.js",
+      "/css/chat.css",
+      "/vendor/monaco/x.js",
+      "/uploads/s1/a.png",
+      "/agents/x/a.png",
+      "/voice-models/m.bin"
+    )
     val html = refs.map(r => s"""<img src="$r"/>""").mkString
     val p = card(html)
     assertEquals(warningsOf(p), Nil, s"all of these are app routes: $refs")
@@ -235,7 +254,9 @@ class CardToolScanFaceSpec extends FunSuite:
       "a Proxy verdict must pass through untouched"
     )
     assert(
-      FileRefs.applyAppRouteExemption("/js/x.png", FileRefs.unresolvable("/js/x.png", "nope")).isInstanceOf[FileRefs.RefDecision.Exempt],
+      FileRefs
+        .applyAppRouteExemption("/js/x.png", FileRefs.unresolvable("/js/x.png", "nope"))
+        .isInstanceOf[FileRefs.RefDecision.Exempt],
       "only a Reject is downgraded to Exempt"
     )
 
@@ -292,3 +313,4 @@ class CardToolScanFaceSpec extends FunSuite:
     // URIs). Zero on a card with no local image — and never folded into
     // `proxied`, so the two counters cannot mask each other.
     assertEquals(count(p, "inlined"), 0)
+end CardToolScanFaceSpec

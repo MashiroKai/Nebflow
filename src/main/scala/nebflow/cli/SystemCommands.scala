@@ -56,10 +56,11 @@ object UpdateCommand extends CliCommand:
             val script =
               if ctx.args.get("beta").contains("true") then
                 if isWindows then
-                  """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
-                else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
-              else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
-              else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
+                  """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
+                else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
+              else if isWindows then
+                """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
+              else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
             val exitCode = script.!
             if exitCode == 0 then CliResult.text("Update completed")
             else CliResult.Error("Update failed", exitCode)
@@ -85,16 +86,21 @@ object UpdateCommand extends CliCommand:
             "beta" -> beta.asJson,
             "clientRequestId" -> clientRequestId.asJson
           )
-          client.post("/api/neblink/remote-update", payload).flatMap { resp =>
-            val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
-            val msg = resp.hcursor.downField("message").as[String]
-              .orElse(resp.hcursor.downField("error").as[String])
-              .getOrElse("Unknown error")
-            if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
-            else IO.pure(CliResult.Error(msg))
-          }.handleErrorWith { e =>
-            IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
-          }
+          client
+            .post("/api/neblink/remote-update", payload)
+            .flatMap { resp =>
+              val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .orElse(resp.hcursor.downField("error").as[String])
+                .getOrElse("Unknown error")
+              if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
+              else IO.pure(CliResult.Error(msg))
+            }
+            .handleErrorWith { e =>
+              IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
+            }
       }
 
   end UpdateRun
@@ -117,8 +123,8 @@ object UninstallCommand extends CliCommand:
         import sys.process.*
         val script =
           if System.getProperty("os.name").toLowerCase.contains("win") then
-            """powershell -Command "& { iwr """ + nebflow.core.Branding.uninstallPs1Url + """ | iex }" """
-          else "curl -fsSL " + nebflow.core.Branding.uninstallUrl + " | sh"
+            """powershell -Command "& { iwr """ + nebflow.shared.Branding.uninstallPs1Url + """ | iex }" """
+          else "curl -fsSL " + nebflow.shared.Branding.uninstallUrl + " | sh"
         val exitCode = script.!
         if exitCode == 0 then CliResult.text("Uninstall completed")
         else CliResult.Error("Uninstall failed", exitCode)
@@ -211,8 +217,7 @@ object StatusCommand extends CliCommand:
             )
           else if pidRunning then CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)")
           else if ours.isDefined then CliResult.text(s"✓ Gateway running (port: $port, no pid file)")
-          else if foreign then
-            CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
+          else if foreign then CliResult.text(s"✗ Gateway not running (port $port is in use by another program)")
           else CliResult.text("✗ Gateway not running")
         }
       }
@@ -248,7 +253,7 @@ object DoctorCommand extends CliCommand:
         val checks = scala.collection.mutable.ListBuffer.empty[Diagnostic]
         val fixes = scala.collection.mutable.ListBuffer.empty[String]
         val configDir = ctx.configDir
-        val configPath = nebflow.core.PathUtil.configJsonReadPath(configDir)
+        val configPath = nebflow.shared.PathUtil.configJsonReadPath(configDir)
 
         // --- 1. Java ---
         val javaVer = sys.props.getOrElse("java.version", "unknown")
@@ -342,7 +347,7 @@ object DoctorCommand extends CliCommand:
         // --- 5. PID file / Gateway status ---
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
-        val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+        val port = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
         if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?

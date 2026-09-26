@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -40,24 +40,29 @@ class PluginInstallPathGuardSpec extends FunSuite:
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(prevRoot)
-    try os.remove.all(home) catch case _: Exception => ()
-    try os.remove.all(fixtureRoot) catch case _: Exception => ()
+    try os.remove.all(home)
+    catch case _: Exception => ()
+    try os.remove.all(fixtureRoot)
+    catch case _: Exception => ()
 
   private def mkPlugin(dir: os.Path, name: String): os.Path =
     os.makeDir.all(dir / "skills" / "s")
-    os.write.over(dir / "plugin.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0"}""")
+    os.write.over(
+      dir / "plugin.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0"}"""
+    )
     os.write.over(dir / "skills" / "s" / "SKILL.md", "---\nname: s\ndescription: fixture\n---\nbody\n")
     dir
 
   private def installedDir(name: String): os.Path = home / "plugins" / name
 
   private def treeAsText(d: os.Path): Map[String, String] =
-    os.walk(d).filter(os.isFile).map(p =>
-      p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+    os.walk(d).filter(os.isFile).map(p => p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
 
-  /** 临时安装目录残留（`os.temp.dir(prefix = "nb-plugin-install")` 落在 `java.io.tmpdir`）
-    * —— 清理语义（非破坏性 + finally）的证据面。 */
+  /**
+   * 临时安装目录残留（`os.temp.dir(prefix = "nb-plugin-install")` 落在 `java.io.tmpdir`）
+   * —— 清理语义（非破坏性 + finally）的证据面。
+   */
   private def installTmpResidue(): List[String] =
     val tmp = os.Path(System.getProperty("java.io.tmpdir"))
     os.list(tmp).filter(_.last.startsWith("nb-plugin-install")).map(_.last).toList.sorted
@@ -66,8 +71,7 @@ class PluginInstallPathGuardSpec extends FunSuite:
   test("判据: canonical 比对 —— `.`/`./.`/<cwd>/./ 与 cwd 祖先命中；子目录不命中"):
     assert(PluginRegistry.isCwdOrAncestor(os.Path(".", os.pwd)), "`.` 必须命中")
     assert(PluginRegistry.isCwdOrAncestor(os.Path("./.", os.pwd)), "`./.` 必须命中")
-    assert(PluginRegistry.isCwdOrAncestor(os.Path(os.pwd.toString + "/./", os.pwd)),
-      "`<cwd>/./` 必须命中（词法回落也能消除）")
+    assert(PluginRegistry.isCwdOrAncestor(os.Path(os.pwd.toString + "/./", os.pwd)), "`<cwd>/./` 必须命中（词法回落也能消除）")
     assert(PluginRegistry.isCwdOrAncestor(os.pwd / os.up), "cwd 祖先是必须命中")
     assert(!PluginRegistry.isCwdOrAncestor(os.pwd / "target"), "cwd 子目录不得命中（正控）")
     assert(!PluginRegistry.isCwdOrAncestor(os.Path(home.toString)), "home 目录不得命中（正控）")
@@ -88,16 +92,17 @@ class PluginInstallPathGuardSpec extends FunSuite:
       println(s"""[guard-spec] installFrom("$source") [$label] → ${res.fold(identity, identity)} (${ms}ms)""")
       res match
         case Left(err) =>
-          assert(err.contains("current working directory"),
-            s"$label 必须给出「为何拒绝」的可行动文案，got: $err")
-          assert(err.contains("subdirectory") && err.contains("absolute path"),
-            s"$label 文案必须给建议写法（子目录名 / 绝对路径），got: $err")
+          assert(err.contains("current working directory"), s"$label 必须给出「为何拒绝」的可行动文案，got: $err")
+          assert(
+            err.contains("subdirectory") && err.contains("absolute path"),
+            s"$label 文案必须给建议写法（子目录名 / 绝对路径），got: $err"
+          )
           // 旧形态（无守卫）会先 os.copy 整棵 cwd 再在 staged 里找 plugin.json ⇒ 报「no plugin.json」；
           // 本批守卫在 os.copy **之前**返回 ⇒ 报文里不出现该字面（= 拷贝步未执行的取证）
-          assert(!err.contains("plugin.json"),
-            s"$label 必须在拷贝步之前被拒（不得落到 manifest 检查），got: $err")
+          assert(!err.contains("plugin.json"), s"$label 必须在拷贝步之前被拒（不得落到 manifest 检查），got: $err")
         case Right(msg) =>
           fail(s"$label 必须被拒绝（否则把 cwd 递归拷进临时目录），却成功：$msg")
+    end for
 
     // 空串形态：CLI 侧既有守卫（PluginCommand.scala:77）判不可达 ⇒ 本批**不另加守卫**；
     // 同一 canonical 判据天然覆盖它（记录该覆盖面，不作独立防线）
@@ -118,8 +123,7 @@ class PluginInstallPathGuardSpec extends FunSuite:
       val res = PluginRegistry.installFrom(link.toString).unsafeRunSync()
       println(s"""[guard-spec] installFrom("$link") [symlink→cwd] → ${res.fold(identity, identity)}""")
       assert(res.isLeft, s"指向 cwd 的符号链接必须被拒，got: $res")
-      assert(res.swap.toOption.getOrElse("").contains("current working directory"),
-        s"拒绝文案须为同一条可行动文案，got: $res")
+      assert(res.swap.toOption.getOrElse("").contains("current working directory"), s"拒绝文案须为同一条可行动文案，got: $res")
     catch case _: UnsupportedOperationException => println("[guard-spec] SKIP symlink case (FS unsupported)")
 
   // ── 正控：正常相对路径（cwd 子目录）⇒ 行为不变 ─────────────
@@ -130,8 +134,7 @@ class PluginInstallPathGuardSpec extends FunSuite:
     val res = PluginRegistry.installFrom(rel).unsafeRunSync()
     println(s"""[guard-spec] installFrom("$rel") [正常相对子目录] → ${res.fold(identity, identity)}""")
     assert(res.isRight, s"正常相对子目录必须照旧安装，got: $res")
-    assert(res.toOption.exists(_.contains("presence = trust")),
-      "落盘语义：在位即信任（无审批待审步骤）——文案随无审批批更新，落盘行为不变")
+    assert(res.toOption.exists(_.contains("presence = trust")), "落盘语义：在位即信任（无审批待审步骤）——文案随无审批批更新，落盘行为不变")
     assert(os.exists(installedDir("rel-guard-plugin") / "plugin.json"), "落盘到 plugins/<manifest name>")
     assertEquals(treeAsText(installedDir("rel-guard-plugin")), treeAsText(src), "整目录字节一致（拷贝语义不变）")
 

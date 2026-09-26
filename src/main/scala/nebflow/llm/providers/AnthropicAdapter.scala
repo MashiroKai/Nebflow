@@ -125,22 +125,25 @@ class AnthropicAdapter(
       case msg @ Message(MessageRole.Assistant, Right(blocks), _, _) =>
         blocks.foreach {
           case ContentBlock.ToolUse(id, _, _) => seen += id
-          case _                              => ()
+          case _ => ()
         }
         msg
       case msg @ Message(MessageRole.User, Right(blocks), _, _) =>
         val paired = blocks.filter {
           case ContentBlock.ToolResult(toolUseId, _, _) => seen.contains(toolUseId)
-          case _                                        => true
+          case _ => true
         }
         if paired.size == blocks.size then msg
         else
           val newBlocks =
-            if paired.isEmpty then List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use no longer in history]"))
+            if paired.isEmpty then
+              List(ContentBlock.Text("[dropped orphaned tool_result: referenced tool_use no longer in history]"))
             else paired
           msg.copy(content = Right(newBlocks))
       case other => other
     }
+
+  end pairToolResults
 
   /** Merge consecutive messages of the same role to prevent tool_use/tool_result pairing issues. */
   private def mergeConsecutive(messages: List[Message]): List[Message] =
@@ -232,7 +235,7 @@ class AnthropicAdapter(
   private[providers] def effectiveThinking(params: SendMessageParams): Option[Json] =
     params.thinking match
       case Some(t) if requireThinkingPassback && hasAssistantWithoutThinking(params.messages) =>
-        nebflow.core.NebflowLogger
+        nebflow.shared.NebflowLogger
           .forName("nebflow.llm.anthropic")
           .warn(
             s"thinking mode dropped for this request: ${params.model} requires thinking passback but " +
@@ -250,25 +253,26 @@ class AnthropicAdapter(
       case _ => false
     }
 
-  /** `max_tokens` for this face (maxcfg batch 2026-09-16).
-    *
-    * The Anthropic API REQUIRES `max_tokens`, and additionally requires
-    * `budget_tokens < max_tokens`. The output cap is no longer user
-    * configurable (the `models[].maxTokens` config key was removed), so the
-    * value is derived here from the internal constant:
-    *
-    *   - no thinking, or a budget below the cap → `Defaults.MaxTokens` (16384).
-    *     That is exactly the old *default* of the removed key, so installs that
-    *     never set it see the identical value;
-    *   - budget ≥ that cap → raised to leave a full output allowance above the
-    *     budget. Without this, a "high" thinking request (budget 32768) would
-    *     violate `budget_tokens < max_tokens` and be rejected with a 400 — the
-    *     old `maxTokens / 2` clamp used to hide the mismatch by cutting the
-    *     budget, which is precisely what was removed.
-    *
-    * No per-model output-limit metadata exists to derive a tighter value from:
-    * `ModelRegistry.ModelEntry` carries only `vision` + `capabilities`.
-    */
+  /**
+   * `max_tokens` for this face (maxcfg batch 2026-09-16).
+   *
+   * The Anthropic API REQUIRES `max_tokens`, and additionally requires
+   * `budget_tokens < max_tokens`. The output cap is no longer user
+   * configurable (the `models[].maxTokens` config key was removed), so the
+   * value is derived here from the internal constant:
+   *
+   *   - no thinking, or a budget below the cap → `Defaults.MaxTokens` (16384).
+   *     That is exactly the old *default* of the removed key, so installs that
+   *     never set it see the identical value;
+   *   - budget ≥ that cap → raised to leave a full output allowance above the
+   *     budget. Without this, a "high" thinking request (budget 32768) would
+   *     violate `budget_tokens < max_tokens` and be rejected with a 400 — the
+   *     old `maxTokens / 2` clamp used to hide the mismatch by cutting the
+   *     budget, which is precisely what was removed.
+   *
+   * No per-model output-limit metadata exists to derive a tighter value from:
+   * `ModelRegistry.ModelEntry` carries only `vision` + `capabilities`.
+   */
   private[providers] def maxTokensFor(params: SendMessageParams): Int =
     val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
     math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
@@ -344,7 +348,10 @@ class AnthropicAdapter(
       // input goes through the shared marker path instead of silently {}.
       val input = b.hcursor.downField("input").as[JsonObject] match
         case Right(obj) => obj
-        case Left(_)    => ToolInputJson.malformedInput(b.hcursor.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces)
+        case Left(_) =>
+          ToolInputJson.malformedInput(
+            b.hcursor.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+          )
       ToolCall(id, name, input)
     }
 
@@ -464,7 +471,7 @@ class AnthropicAdapter(
         case Left(err) =>
           // Observability (issue #18 follow-up): dropped SSE data used to be
           // invisible; log so malformed provider frames are diagnosable.
-          nebflow.core.NebflowLogger
+          nebflow.shared.NebflowLogger
             .forName("nebflow.llm.anthropic")
             .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
             .as(Nil)
@@ -476,7 +483,7 @@ class AnthropicAdapter(
               val inputTokens = usageObj.downField("input_tokens").as[Int].getOrElse(0)
               val cacheRead = usageObj.downField("cache_read_input_tokens").as[Option[Int]].toOption.flatten
               val cacheWrite = usageObj.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
-              nebflow.core.NebflowLogger
+              nebflow.shared.NebflowLogger
                 .forName("nebflow.llm.anthropic")
                 .infoSync(
                   s"message_start: model=${params.model} usage_json=${usageObj.as[Json].getOrElse(Json.Null).noSpaces} inputTokens=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite"
@@ -530,7 +537,12 @@ class AnthropicAdapter(
                     // unquoted ISO-8601 triggerAt) used to be coerced to {}
                     // here, silently. ToolInputJson repairs what it can and
                     // marks the rest so executeTool reports it to the LLM.
-                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, ToolInputJson.parseToolInput(name, sb.toString)))))
+                    (
+                      m - idx,
+                      List(
+                        StreamChunk.ToolCallChunk(ToolCall(id, name, ToolInputJson.parseToolInput(name, sb.toString)))
+                      )
+                    )
                   case None => (m, Nil)
               }
             case "message_delta" =>
@@ -548,7 +560,7 @@ class AnthropicAdapter(
                 val cacheRead = deltaCacheRead.orElse(t.cacheRead)
                 val cacheWrite = deltaCacheWrite.orElse(t.cacheWrite)
                 val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
-                nebflow.core.NebflowLogger
+                nebflow.shared.NebflowLogger
                   .forName("nebflow.llm.anthropic")
                   .infoSync(
                     s"message_delta: model=${params.model} deltaInput=$deltaInput stored_input=${t.input} final_input=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite totalInput=$totalInput outputTokens=$outputTokens stopReason=$stopReason"
@@ -580,7 +592,7 @@ class AnthropicAdapter(
               // other event type still falls through to `case _ => Nil` below.
               val frameType =
                 json.hcursor.downField("type").as[String].toOption.map(_.take(40)).getOrElse("(absent)")
-              nebflow.core.NebflowLogger
+              nebflow.shared.NebflowLogger
                 .forName("nebflow.llm.anthropic")
                 .warn(
                   "dropped SSE frame with empty event type (data line without a preceding 'event:' line): " +
@@ -591,22 +603,23 @@ class AnthropicAdapter(
             case _ => IO.pure(Nil)
 end AnthropicAdapter
 
-/** Model-list endpoints of the Anthropic face — declared here, not derived by
-  * the gateway from a raw `baseUrl` (see `ModelListFaces` for the rule and
-  * `RestApiRoutes.probeModelList` for how candidates are probed).
-  *
-  *   1. `{base}/v1/models` — this face appends the version segment itself for
-  *      chat (`{base}/v1/messages`, see `endpoint` above), so the list lives
-  *      under the same segment. Measured 200 with the real catalogues on kimi
-  *      and zhipu.
-  *   2. `{origin}/v1/models` — the vendor's version root, declared for hosts
-  *      whose chat prefix carries a non-version segment and serves no list
-  *      under it: measured 200 on deepseek, where `/anthropic/v1/models` is 404
-  *      while `https://api.deepseek.com/v1/models` answers the catalogue.
-  *
-  * A `baseUrl` with no path segment (e.g. `https://api.example.com`) declares
-  * one candidate only — there the two forms coincide.
-  */
+/**
+ * Model-list endpoints of the Anthropic face — declared here, not derived by
+ * the gateway from a raw `baseUrl` (see `ModelListFaces` for the rule and
+ * `RestApiRoutes.probeModelList` for how candidates are probed).
+ *
+ *   1. `{base}/v1/models` — this face appends the version segment itself for
+ *      chat (`{base}/v1/messages`, see `endpoint` above), so the list lives
+ *      under the same segment. Measured 200 with the real catalogues on kimi
+ *      and zhipu.
+ *   2. `{origin}/v1/models` — the vendor's version root, declared for hosts
+ *      whose chat prefix carries a non-version segment and serves no list
+ *      under it: measured 200 on deepseek, where `/anthropic/v1/models` is 404
+ *      while `https://api.deepseek.com/v1/models` answers the catalogue.
+ *
+ * A `baseUrl` with no path segment (e.g. `https://api.example.com`) declares
+ * one candidate only — there the two forms coincide.
+ */
 object AnthropicAdapter:
 
   def modelListUrls(baseUrl: String): List[String] =
@@ -615,9 +628,10 @@ object AnthropicAdapter:
     val origin = originOf(base)
     if origin.isEmpty then List(own) else List(own, s"$origin/v1/models")
 
-  /** `scheme://host[:port]` of an absolute URL, or "" when it carries no path
-    * segment (the second candidate would then duplicate the first).
-    */
+  /**
+   * `scheme://host[:port]` of an absolute URL, or "" when it carries no path
+   * segment (the second candidate would then duplicate the first).
+   */
   private def originOf(baseUrl: String): String =
     val schemeEnd = baseUrl.indexOf("://")
     if schemeEnd < 0 then ""

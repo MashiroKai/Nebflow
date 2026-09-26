@@ -7,22 +7,22 @@ import org.http4s.{MediaType, Status}
 import java.nio.charset.StandardCharsets
 
 /**
-  * Serve-level regression spec for the index brand injection — pinned at
-  * the HTTP RESPONSE layer, not the injected-string layer.
-  *
-  * The original implementation used Ok(served) in a file that imports
-  * org.http4s.circe.CirceEntityCodec.*: that import's String entity encoder
-  * (lexical scope) won over http4s' built-in one (implicit scope), so the
-  * whole HTML went out as a JSON string literal — body starting with '"',
-  * quotes and newlines escaped, the inlined script invalid JS, every module
-  * URL a quoted 404. The page never booted, while string-level greps kept
-  * passing (the window.__BRAND__ substring is present in the corrupted body
-  * too). These assertions read the encoded response bytes and fail on that
-  * entire corruption class.
-  */
+ * Serve-level regression spec for the index brand injection — pinned at
+ * the HTTP RESPONSE layer, not the injected-string layer.
+ *
+ * The original implementation used Ok(served) in a file that imports
+ * org.http4s.circe.CirceEntityCodec.*: that import's String entity encoder
+ * (lexical scope) won over http4s' built-in one (implicit scope), so the
+ * whole HTML went out as a JSON string literal — body starting with '"',
+ * quotes and newlines escaped, the inlined script invalid JS, every module
+ * URL a quoted 404. The page never booted, while string-level greps kept
+ * passing (the window.__BRAND__ substring is present in the corrupted body
+ * too). These assertions read the encoded response bytes and fail on that
+ * entire corruption class.
+ */
 class IndexWithBrandServeSpec extends FunSuite:
 
-  private val response = WebSocketRoutes.indexWithBrand("web/index.html").unsafeRunSync()
+  private val response = StaticRoutes.indexWithBrand("web/index.html").unsafeRunSync()
   private val bytes = response.body.compile.toList.unsafeRunSync().toArray
   private val body = new String(bytes, StandardCharsets.UTF_8)
 
@@ -57,7 +57,7 @@ class IndexWithBrandServeSpec extends FunSuite:
   }
 
   test("missing resource degrades to NotFound") {
-    val resp = WebSocketRoutes.indexWithBrand("web/definitely-missing.html").unsafeRunSync()
+    val resp = StaticRoutes.indexWithBrand("web/definitely-missing.html").unsafeRunSync()
     assertEquals(resp.status, Status.NotFound)
   }
 

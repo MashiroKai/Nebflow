@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.concurrent.duration.*
@@ -66,8 +66,10 @@ class NeblinkRelayTunnelLiveUrlSpec extends CatsEffectSuite:
   private def withFixture[A](body: RelayAuthFixtureServer => IO[A]): IO[A] =
     IO.blocking(new RelayAuthFixtureServer()).flatMap(f => body(f).guarantee(IO.blocking(f.close())))
 
-  /** 与 GatewayMain 等价的最小栈：tunnel + live tokenGetter + starter 登记。
-    * `seedUrl = true` 时按「启动即有配置」时序把 server 址写进 config ref。 */
+  /**
+   * 与 GatewayMain 等价的最小栈：tunnel + live tokenGetter + starter 登记。
+   * `seedUrl = true` 时按「启动即有配置」时序把 server 址写进 config ref。
+   */
   private def withStack[A](fix: RelayAuthFixtureServer, seedUrl: Boolean)(
     body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel, NeblinkDiscovery) => IO[A]
   ): IO[A] =
@@ -88,10 +90,12 @@ class NeblinkRelayTunnelLiveUrlSpec extends CatsEffectSuite:
         _ <- ms.setRelayTunnelStarter(tunnel.ensure())
         _ <-
           if seedUrl then
-            ms.updateConfig(_.copy(
-              enabled = true,
-              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-            ))
+            ms.updateConfig(
+              _.copy(
+                enabled = true,
+                neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+              )
+            )
           else IO.unit
         out <- body(ms, client, tunnel, discovery).guarantee(tunnel.stop())
       yield out
@@ -106,10 +110,12 @@ class NeblinkRelayTunnelLiveUrlSpec extends CatsEffectSuite:
           attemptsWhileUnconfigured <- IO(fix.relayAttempts.size)
           running <- IO(tunnel.isRunning)
           // 运行期配置 + 登录（**不重建 tunnel**）
-          _ <- ms.updateConfig(_.copy(
-            enabled = true,
-            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-          ))
+          _ <- ms.updateConfig(
+            _.copy(
+              enabled = true,
+              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+            )
+          )
           _ <- client.login(Device, "qa-host", "macos", Nil)
           connected <- waitUntil(20.seconds)(IO(fix.attemptCount(101) >= 1))
         yield

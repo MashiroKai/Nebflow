@@ -8,26 +8,26 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeListTool, NodeTools, ToolContext, ToolError}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 import scala.util.Random
 
-/** NodeList status 过滤参数 spec（观测面上下文经济学批 20260907 裁定⑤a）。
-  *
-  * 审计基准：活动区常态 131 节点（96% 终态），默认全量载荷被节点数乘数放大；
-  * 过滤参数让分发器按状态切片读取（如 "running,pending" 只看在飞工作）。
-  * 契约三点：
-  *  1. **缺省全量铁律**：无 status 调用输出字节级等于全量路径（向后兼容——
-  *     REST/前端/既有分发器行为零改动）；
-  *  2. 三形态宽容（单值/逗号串/array）+ 组合过滤返回子集；
-  *  3. 非法值可描述报错（列出全部合法枚举）。
-  */
+/**
+ * NodeList status 过滤参数 spec（观测面上下文经济学批 20260907 裁定⑤a）。
+ *
+ * 审计基准：活动区常态 131 节点（96% 终态），默认全量载荷被节点数乘数放大；
+ * 过滤参数让分发器按状态切片读取（如 "running,pending" 只看在飞工作）。
+ * 契约三点：
+ *  1. **缺省全量铁律**：无 status 调用输出字节级等于全量路径（向后兼容——
+ *     REST/前端/既有分发器行为零改动）；
+ *  2. 三形态宽容（单值/逗号串/array）+ 组合过滤返回子集；
+ *  3. 非法值可描述报错（列出全部合法枚举）。
+ */
 class NodeListStatusFilterSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 60.seconds
@@ -38,8 +38,11 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -47,9 +50,10 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
 
   private class NoLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -86,7 +90,9 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -96,7 +102,12 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -132,7 +143,11 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
     io.circe.parser.parse(r.toOption.getOrElse(fail(s"NodeList failed: $r"))).getOrElse(fail("not json"))
 
   private def statusOf(json: Json): List[String] =
-    json.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
+    json.hcursor
+      .downField("nodes")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(Nil)
       .flatMap(_.hcursor.get[String]("status").toOption)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -152,10 +167,15 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       val toolRaw = viaTool.toOption.getOrElse(fail(s"NodeList failed: $viaTool"))
-      assertEquals(toolRaw, viaDirect, "no-filter NodeList tool output must be byte-identical to the default payload path (裁定⑤a 铁律)")
+      assertEquals(
+        toolRaw,
+        viaDirect,
+        "no-filter NodeList tool output must be byte-identical to the default payload path (裁定⑤a 铁律)"
+      )
       val statuses = statusOf(parseOk(viaTool))
       assertEquals(statuses.size, 6, "all six seeded nodes present without filter")
       assertEquals(statuses.count(_ == NodeLifecycle.Completed), 2)
+    end for
   }
 
   test("F② 组合过滤：三形态（单值/逗号串/array）返回子集；不匹配状态 → 空 nodes") {
@@ -173,12 +193,21 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
       none <- listCall("nsf-f2", ctx, "status" -> Json.fromString("running"))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(statusOf(parseOk(single)), List(NodeLifecycle.Completed, NodeLifecycle.Completed), "single-value filter returns only completed")
-      assertEquals(statusOf(parseOk(csv)).toSet, Set(NodeLifecycle.Failed, NodeLifecycle.Blocked), "comma-separated multi-filter")
+      assertEquals(
+        statusOf(parseOk(single)),
+        List(NodeLifecycle.Completed, NodeLifecycle.Completed),
+        "single-value filter returns only completed"
+      )
+      assertEquals(
+        statusOf(parseOk(csv)).toSet,
+        Set(NodeLifecycle.Failed, NodeLifecycle.Blocked),
+        "comma-separated multi-filter"
+      )
       assertEquals(statusOf(parseOk(arr)).toSet, Set(NodeLifecycle.Wiring, NodeLifecycle.Pending), "array multi-filter")
       assertEquals(statusOf(parseOk(none)), Nil, "no matching status → empty nodes array (still valid payload)")
       // meta 与 worktrees 仍在（载荷骨架不因过滤缺席）
       assertEquals(parseOk(none).hcursor.downField("meta").get[String]("project").toOption, Some("nsf-f2"))
+    end for
   }
 
   test("F③ 非法值可描述报错：列出合法枚举；空串/逗号归一为全量") {
@@ -198,12 +227,15 @@ class NodeListStatusFilterSpec extends CatsEffectSuite:
     yield
       assert(bad.isLeft, "unknown status must be rejected")
       val msg = bad.left.toOption.map(_.message).getOrElse("")
-      assert(msg.contains("done") && msg.contains(NodeLifecycle.Blocked) && msg.contains(NodeLifecycle.Pending),
-        s"error must name the bad value + list valid enums, got: $msg")
+      assert(
+        msg.contains("done") && msg.contains(NodeLifecycle.Blocked) && msg.contains(NodeLifecycle.Pending),
+        s"error must name the bad value + list valid enums, got: $msg"
+      )
       assert(badArr.isLeft, "array containing an invalid value must be rejected wholesale")
       // 空串/null → 宽容归一为全量（不炸、不空列表）
       assertEquals(statusOf(parseOk(blank)).size, 6, "blank string degrades to full listing")
       assertEquals(statusOf(parseOk(nullForm)).size, 6, "explicit null degrades to full listing")
+    end for
   }
 
 end NodeListStatusFilterSpec

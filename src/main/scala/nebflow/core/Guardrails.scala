@@ -1,6 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
+import nebflow.shared.PathUtil
 
 /**
  * 专用化改造·轨道二（引擎护栏）— team task #5（设计基线
@@ -29,7 +30,7 @@ object Guardrails:
 
   /**
    * T1 flow-node leaf workers 默认剥离的用户向工具集。即使 agent.json 显式
-   * 声明也不生效（同 NebulaExclusiveTools 的机制层语义）。
+   * 声明也不生效（同 RootExclusiveTools 的机制层语义）。
    *
    * Pop 保留（2026-09-10 作者裁定——Pop 收归 Nebula 专属后本集与其叠加，
    * 不是被取代）：本集是 guardrails 开关驱动（dedicatedAgents.enabled）的
@@ -40,8 +41,10 @@ object Guardrails:
    */
   val FlowWorkerStrippedTools: Set[String] = Set("Pop", "AskUserQuestion")
 
-  /** Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
-    * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching. */
+  /**
+   * Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
+   * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching.
+   */
   def enabled: IO[Boolean] =
     IO.blocking {
       val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)

@@ -5,9 +5,9 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentDef, status}
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -56,25 +56,37 @@ class MemoryTrackReconcileSpec extends FunSuite:
     os.read(MemoryStore.userMemoryPath)
 
   private def enqueueAppend(content: String): String =
-    MemoryQueue.enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
+    MemoryQueue
+      .enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
+      .id
 
   private def enqueueRemove(matchText: String): String =
-    MemoryQueue.enqueue("user", "remove", None, Some(matchText), None, Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
+    MemoryQueue
+      .enqueue("user", "remove", None, Some(matchText), None, Some("s"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
+      .id
 
-  /** 消费链「挂住」夹具：`AgentLibrary.get` 永不完成 ⇒ `IO.timeoutTo` 到点 ⇒ 确定性 Timeout。
-    * 只覆盖被测挂点，不碰 LLM / actor system / spawn（那三者与本批判据无关）。 */
+  /**
+   * 消费链「挂住」夹具：`AgentLibrary.get` 永不完成 ⇒ `IO.timeoutTo` 到点 ⇒ 确定性 Timeout。
+   * 只覆盖被测挂点，不碰 LLM / actor system / spawn（那三者与本批判据无关）。
+   */
   private class HangLibrary extends AgentLibrary(os.Path("/nonexistent-agents-for-reconcile-spec")):
     override def get(name: String): IO[Option[AgentDef]] = IO.never
 
-  /** 最小 SharedResources 夹具（形态沿用 ToolPhaseStuckAxisSpec / MemoryTrackSpec 的 null 夹具；
-    * 只有 `agentLibrary` 被本 spec 替换成 [[HangLibrary]]）。 */
+  /**
+   * 最小 SharedResources 夹具（形态沿用 ToolPhaseStuckAxisSpec / MemoryTrackSpec 的 null 夹具；
+   * 只有 `agentLibrary` 被本 spec 替换成 [[HangLibrary]]）。
+   */
   private def mkResources(agentLibrary: AgentLibrary): SharedResources =
     SharedResources(
       llm = null,
       dispatcher = null,
       sessionStore = null,
       projectRoot = os.pwd,
-      thinkingConfigRef = cats.effect.Ref.unsafe[IO, nebflow.llm.ThinkingConfig](nebflow.llm.ThinkingConfig()),
+      thinkingConfigRef = cats.effect.Ref.unsafe[IO, nebflow.shared.ThinkingConfig](nebflow.shared.ThinkingConfig()),
       rateLimiter = null,
       fileChangeTracker = null,
       contextWindow = 0,
@@ -87,12 +99,12 @@ class MemoryTrackReconcileSpec extends FunSuite:
       healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
       actorSystem = null,
       voiceMutedRef = cats.effect.Ref.unsafe[IO, Boolean](false),
-      agentRegistry = cats.effect.Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+      agentRegistry = cats.effect.Ref.unsafe[IO, Map[String, nebflow.actor.AgentRecord]](Map.empty)
     )
 
   /** 硬顶 prop 临时压小（`def` 读 ⇒ 当场生效），跑完还原。 */
   private def withHardTimeout[A](ms: Long)(body: => A): A =
-    val key  = "nebflow.memory.track.hardTimeoutMs"
+    val key = "nebflow.memory.track.hardTimeoutMs"
     val prev = sys.props.get(key)
     try
       sys.props.update(key, ms.toString)
@@ -100,7 +112,7 @@ class MemoryTrackReconcileSpec extends FunSuite:
     finally
       prev match
         case Some(v) => sys.props.update(key, v)
-        case None    => sys.props.remove(key)
+        case None => sys.props.remove(key)
 
   private def sha256Hex(s: String): String =
     java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(UTF_8)).map("%02x".format(_)).mkString
@@ -112,13 +124,14 @@ class MemoryTrackReconcileSpec extends FunSuite:
   test("④ 超时先对账再降级（真 run 路径 ⇒ 确定性 Timeout）：3 条夹具跑出 deduped|applied-by-reconcile|timeout 齐全、pending 恰剩 1 条"):
     reset()
     val before = writeUserFile(s"# User\n\n## 节\n\n$existingLine\n")
-    val idDup     = enqueueAppend(existingLine)        // 已落 append（文件里已有同一行）
-    val idPending = enqueueAppend("- 全新条目")         // 未落 append ⇒ 留 pending
-    val idGone    = enqueueRemove("- 已不存在的键")      // 已落 remove（定位键已消失）
+    val idDup = enqueueAppend(existingLine) // 已落 append（文件里已有同一行）
+    val idPending = enqueueAppend("- 全新条目") // 未落 append ⇒ 留 pending
+    val idGone = enqueueRemove("- 已不存在的键") // 已落 remove（定位键已消失）
     assertEquals(MemoryQueue.pendingCount(), 3)
 
     withHardTimeout(50) {
-      val r = MemoryTrack.run(mkResources(new HangLibrary), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
+      val r =
+        MemoryTrack.run(mkResources(new HangLibrary), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
       assertEquals(r.status, MemoryTrack.Status.Timeout, s"必须走到 Timeout 分支: $r")
       assertEquals(r.pendingAtStart, 3, "起跑 3 条")
 
@@ -126,10 +139,23 @@ class MemoryTrackReconcileSpec extends FunSuite:
       assertEquals(
         st.outcomes.map(_.result).toSet,
         Set(MemoryQueue.ResultDeduped, MemoryQueue.ResultAppliedByReconcile, MemoryQueue.ResultTimeout),
-        s"三支齐全（对账终态两支 + 照旧 timeout）: ${st.outcomes.map(o => o.ref -> o.result)}")
-      assertEquals(st.outcomes.find(_.ref == idDup).map(_.result), Some(MemoryQueue.ResultDeduped), "已落 append ⇒ deduped")
-      assertEquals(st.outcomes.find(_.ref == idGone).map(_.result), Some(MemoryQueue.ResultAppliedByReconcile), "已落 remove ⇒ applied-by-reconcile")
-      assertEquals(st.outcomes.find(_.ref == idPending).map(_.result), Some(MemoryQueue.ResultTimeout), "未落 append ⇒ 照旧 timeout（留 pending 重试）")
+        s"三支齐全（对账终态两支 + 照旧 timeout）: ${st.outcomes.map(o => o.ref -> o.result)}"
+      )
+      assertEquals(
+        st.outcomes.find(_.ref == idDup).map(_.result),
+        Some(MemoryQueue.ResultDeduped),
+        "已落 append ⇒ deduped"
+      )
+      assertEquals(
+        st.outcomes.find(_.ref == idGone).map(_.result),
+        Some(MemoryQueue.ResultAppliedByReconcile),
+        "已落 remove ⇒ applied-by-reconcile"
+      )
+      assertEquals(
+        st.outcomes.find(_.ref == idPending).map(_.result),
+        Some(MemoryQueue.ResultTimeout),
+        "未落 append ⇒ 照旧 timeout（留 pending 重试）"
+      )
       assertEquals(st.pending.map(_.id), Vector(idPending), "pending 恰剩 1 条且就是未落地那条")
       assertEquals(r.reconciled, 2, "Result 报出对账闭合条数（生命周期事件可读）")
       assertEquals(r.outcomesWritten, 3, "对账终态 2 + timeout 1")
@@ -143,16 +169,25 @@ class MemoryTrackReconcileSpec extends FunSuite:
       assertEquals(
         MemoryHistory.discrepancies(st.notes.map(_.id).toList, st.outcomes.map(_.ref).toList),
         Nil,
-        "队列 note / outcome / history:consume 三者零缺口（含 reconcile 闭合）")
+        "队列 note / outcome / history:consume 三者零缺口（含 reconcile 闭合）"
+      )
       val byReconcileRows = MemoryHistory
         .ofKind(MemoryHistory.KindConsume)
         .filter(_.result.contains(MemoryQueue.ResultAppliedByReconcile))
       assertEquals(byReconcileRows.map(_.ref.getOrElse("")).sorted, Vector(idGone), "对账终态在变更史里可对账")
-      assert(byReconcileRows.forall(_.detail.getOrElse("").startsWith(MemoryQueue.ReconcileDetailPrefix)), "变更史 detail 同源前缀")
-      assert(byReconcileRows.forall(e => e.actor == MemoryTrack.AgentName && e.by.contains(MemoryTrack.AgentName)), "变更史 actor/by 同源")
+      assert(
+        byReconcileRows.forall(_.detail.getOrElse("").startsWith(MemoryQueue.ReconcileDetailPrefix)),
+        "变更史 detail 同源前缀"
+      )
+      assert(
+        byReconcileRows.forall(e => e.actor == MemoryTrack.AgentName && e.by.contains(MemoryTrack.AgentName)),
+        "变更史 actor/by 同源"
+      )
 
       // 作者硬约束 (i)：审计一眼分清「谁判的」——独立字样 + detail 前缀 + by
-      val engineJudged = st.outcomes.filter(o => o.result == MemoryQueue.ResultDeduped || o.result == MemoryQueue.ResultAppliedByReconcile)
+      val engineJudged = st.outcomes.filter(o =>
+        o.result == MemoryQueue.ResultDeduped || o.result == MemoryQueue.ResultAppliedByReconcile
+      )
       assertEquals(engineJudged.map(_.ref).sorted, Vector(idDup, idGone).sorted)
       engineJudged.foreach { o =>
         assertEquals(o.by, MemoryTrack.AgentName)
@@ -168,9 +203,10 @@ class MemoryTrackReconcileSpec extends FunSuite:
   test("④ 对账只在超时路径生效（失败分支收到报告也不标终态）+ 全部闭合后不再置位重试引线"):
     reset()
     val before = writeUserFile(s"# User\n\n## 节\n\n$existingLine\n")
-    val id     = enqueueAppend(existingLine)
-    val st0    = MemoryQueue.readState()
-    val report = MemoryQueue.reconcile(st0, Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, before)))
+    val id = enqueueAppend(existingLine)
+    val st0 = MemoryQueue.readState()
+    val report =
+      MemoryQueue.reconcile(st0, Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, before)))
     assertEquals(report.count, 1, "夹具：该条的效果已在盘上")
 
     val written = MemoryTrack.degradeOutcomes(isTimeout = false, detail = "boom", reconciled = report).unsafeRunSync()
@@ -178,15 +214,20 @@ class MemoryTrackReconcileSpec extends FunSuite:
     assertEquals(
       MemoryQueue.readState().lastOutcomeByRef.get(id).map(_.result),
       Some(MemoryQueue.ResultNotRun),
-      "失败分支（本轮没动过文件）不得替消费者下裁决 ⇒ 仍写 notrun")
+      "失败分支（本轮没动过文件）不得替消费者下裁决 ⇒ 仍写 notrun"
+    )
 
     reset()
     writeUserFile(s"# User\n\n## 节\n\n$existingLine\n")
-    val id2     = enqueueAppend(existingLine)
+    val id2 = enqueueAppend(existingLine)
     val report2 = MemoryQueue.reconcile(
       MemoryQueue.readState(),
-      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath))))
-    assertEquals(MemoryTrack.degradeOutcomes(isTimeout = true, detail = "hard timeout", reconciled = report2).unsafeRunSync(), 1)
+      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath)))
+    )
+    assertEquals(
+      MemoryTrack.degradeOutcomes(isTimeout = true, detail = "hard timeout", reconciled = report2).unsafeRunSync(),
+      1
+    )
     assertEquals(MemoryQueue.readState().lastOutcomeByRef.get(id2).map(_.result), Some(MemoryQueue.ResultDeduped))
     assertEquals(MemoryQueue.pendingCount(), 0, "该闭合的闭合完 ⇒ pending 清零")
     assertEquals(MemoryTrackSignal.peek(), None, "无剩余 pending ⇒ 不置位（不制造空转重试）")
@@ -201,12 +242,12 @@ class MemoryTrackReconcileSpec extends FunSuite:
 
     // 跑前基准：spec 侧独立复算计划（与引擎同源同输入）
     val preState = MemoryQueue.readState()
-    val plan = MemoryQueue.plan(
-      preState,
-      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, before)))
+    val plan =
+      MemoryQueue.plan(preState, Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, before)))
 
     withHardTimeout(50) {
-      val r = MemoryTrack.run(mkResources(new HangLibrary), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
+      val r =
+        MemoryTrack.run(mkResources(new HangLibrary), parentSessionId = Some("s"), parentDepth = 0).unsafeRunSync()
       assertEquals(r.status, MemoryTrack.Status.Timeout, s"$r")
 
       val ledgerLines = os.read(MemoryHistory.historyPath).linesIterator.toVector.filter(_.contains("\"preflight\""))
@@ -223,7 +264,7 @@ class MemoryTrackReconcileSpec extends FunSuite:
 
       val targets = hc.downField("targets").as[List[Json]].toOption.get
       val userRow = targets.find(_.hcursor.get[String]("label").toOption.contains("user")).get
-      val ledgerSha   = userRow.hcursor.get[String]("sha256").toOption.get
+      val ledgerSha = userRow.hcursor.get[String]("sha256").toOption.get
       val ledgerBytes = userRow.hcursor.get[Long]("bytes").toOption.get
       assertEquals(userRow.hcursor.get[String]("path").toOption, Some(MemoryStore.userMemoryPath.toString))
       assertEquals(ledgerBytes, before.getBytes(UTF_8).length.toLong, "起始 bytes = 起跑线字节")
@@ -231,9 +272,9 @@ class MemoryTrackReconcileSpec extends FunSuite:
 
       // 与 gate-3 快照档案（独立来源：MemorySnapshot 读的是盘上字节）逐字一致
       val snapshotDir = os.list(home / "memory-backups").filter(d => os.exists(d / "SNAPSHOT-SHA256.txt")).last
-      val table       = os.read(snapshotDir / "SNAPSHOT-SHA256.txt")
-      val snapRow     = table.linesIterator.find(_.endsWith(MemoryStore.userMemoryPath.toString)).get
-      val parts       = snapRow.split("\\s+")
+      val table = os.read(snapshotDir / "SNAPSHOT-SHA256.txt")
+      val snapRow = table.linesIterator.find(_.endsWith(MemoryStore.userMemoryPath.toString)).get
+      val parts = snapRow.split("\\s+")
       assertEquals(ledgerSha, parts(0), "台账起始 sha 与快照档案 sha 一致")
       assertEquals(ledgerBytes.toString, parts(1), "台账起始 bytes 与快照档案一致")
       assertEquals(hc.downField("snapshot").get[String]("dir").toOption, Some(snapshotDir.toString), "台账与快照目录互指")
@@ -251,10 +292,11 @@ class MemoryTrackReconcileSpec extends FunSuite:
     writeUserFile(s"# User\n\n## 节\n\n$existingLine\n")
     val idDup = enqueueAppend(existingLine)
     val idNew = enqueueAppend("- 全新条目")
-    val st    = MemoryQueue.readState()
+    val st = MemoryQueue.readState()
     val plan = MemoryQueue.plan(
       st,
-      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath))))
+      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath)))
+    )
 
     val bucket = plan.items
       .filter(i => i.bucket == MemoryQueue.Bucket.WouldObsolete && i.detail.startsWith("already-present"))
@@ -268,9 +310,8 @@ class MemoryTrackReconcileSpec extends FunSuite:
     assert(line.contains("deduped"), s"且给出消费者该写的裁决: $line")
 
     // 无该桶 ⇒ 不出行（简报不引入常驻噪声）
-    val cleanPlan = MemoryQueue.plan(
-      st,
-      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, "# User\n")))
+    val cleanPlan =
+      MemoryQueue.plan(st, Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, "# User\n")))
     assert(cleanPlan.items.forall(i => !i.detail.startsWith("already-present")))
     val cleanText = MemoryTrack.brief("/tmp/wr-reconcile", MemoryQueue.TriggerManual, st.pending, cleanPlan)
     assert(!cleanText.contains("already-present"), s"无重复桶则无该行: $cleanText")
@@ -291,12 +332,16 @@ class MemoryTrackReconcileSpec extends FunSuite:
     val idB = enqueueAppend("- 第二条已落")
     val frozen = MemoryQueue.reconcile(
       MemoryQueue.readState(),
-      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, body)))
+      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, body))
+    )
     assertEquals(frozen.refs, Set(idA, idB), "**写前**固化判据集 = 2 条（判定那一刻的读数）")
 
     // 模拟「判定之后、写入之前」被消费者抢先闭合一条 ⇒ 这是 frozen != written 的唯一来源
-    assert(MemoryQueue.recordOutcome(idA, MemoryQueue.ResultApplied, "memory-consolidator", "consumer won the race").isRight)
-    val rep = MemoryTrack.degradeOutcomesReport(isTimeout = true, detail = "hard timeout", reconciled = frozen).unsafeRunSync()
+    assert(
+      MemoryQueue.recordOutcome(idA, MemoryQueue.ResultApplied, "memory-consolidator", "consumer won the race").isRight
+    )
+    val rep =
+      MemoryTrack.degradeOutcomesReport(isTimeout = true, detail = "hard timeout", reconciled = frozen).unsafeRunSync()
 
     assertEquals(rep.judgedWritten, List(idB), "只写写时仍 pending 的那条（**不从写后状态反推**写入集）")
     assertEquals(rep.written, 1, "本轮实际写入 1 条")
@@ -305,6 +350,7 @@ class MemoryTrackReconcileSpec extends FunSuite:
     assertEquals(
       MemoryQueue.readState().lastOutcomeByRef.get(idA).map(_.result),
       Some(MemoryQueue.ResultApplied),
-      "抢先闭合者不被动过（引擎不覆盖既有终态）")
+      "抢先闭合者不被动过（引擎不覆盖既有终态）"
+    )
 
 end MemoryTrackReconcileSpec

@@ -79,7 +79,9 @@ class GroupTargetParseSpec extends FunSuite:
   // ── ② schema / 描述层（作者令：能力落在 schema 面，不靠运行时错误兜）──
 
   private def toDescription: String =
-    FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
+    FriendMessageTool
+      .inputSchema("properties")
+      .flatMap(_.hcursor.downField("to").downField("description").as[String].toOption)
       .getOrElse(fail("inputSchema.properties.to.description 缺席"))
 
   test("schema: `to.description` 显式声明四个合法前缀（含 `group:`）") {
@@ -116,13 +118,19 @@ class GroupTargetParseSpec extends FunSuite:
   }
 
   test("schema: required 面零变更（to + message；本批不新增必填键）") {
-    val req = FriendMessageTool.inputSchema("required").flatMap(_.asArray).getOrElse(Vector.empty)
-      .map(_.asString.getOrElse("")).toSet
+    val req = FriendMessageTool
+      .inputSchema("required")
+      .flatMap(_.asArray)
+      .getOrElse(Vector.empty)
+      .map(_.asString.getOrElse(""))
+      .toSet
     assertEquals(req, Set("to", "message"))
   }
 
   test("schema: `message` 描述补上群支空文本口径（群总是要正文）") {
-    val d = FriendMessageTool.inputSchema("properties").flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
+    val d = FriendMessageTool
+      .inputSchema("properties")
+      .flatMap(_.hcursor.downField("message").downField("description").as[String].toOption)
       .getOrElse(fail("message description 缺席"))
     assert(d.contains("friend/device/group targets"), s"message 描述未覆盖群支: $d")
     assert(d.contains("a group target always requires non-empty text"), s"缺群支空文本口径: $d")

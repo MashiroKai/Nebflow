@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.concurrent.duration.*
@@ -36,8 +36,10 @@ import scala.concurrent.duration.*
  */
 class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
 
-  /** 观测窗 65s + 装配 ⇒ munit 默认超时必须放宽（否则钉的窗口永远够不到
-    * ~24s 起的自愈腿 —— r1 的钉正是「窗口太短 ⇒ 结构上观测不到该腿」）。 */
+  /**
+   * 观测窗 65s + 装配 ⇒ munit 默认超时必须放宽（否则钉的窗口永远够不到
+   * ~24s 起的自愈腿 —— r1 的钉正是「窗口太短 ⇒ 结构上观测不到该腿」）。
+   */
   override def munitIOTimeout: Duration = 200.seconds
 
   private val Net = "qa-net"
@@ -69,10 +71,12 @@ class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
       loop
     }
 
-  /** 一条完整生产装配（隔离 home + 夹具 + 真隧道）。返回被测算用的 deviceId——
-    * 必须与 `ms.identity.deviceId` **同值**，否则 silent re-login 的 register 会打到
-    * 另一个 (deviceId, network) 维度上，夹具的凭据表就对不上（夹具按真服务端的
-    * (deviceId, networkId) 维度建表）。 */
+  /**
+   * 一条完整生产装配（隔离 home + 夹具 + 真隧道）。返回被测算用的 deviceId——
+   * 必须与 `ms.identity.deviceId` **同值**，否则 silent re-login 的 register 会打到
+   * 另一个 (deviceId, network) 维度上，夹具的凭据表就对不上（夹具按真服务端的
+   * (deviceId, networkId) 维度建表）。
+   */
   private def withStack[A](
     fix: RelayAuthFixtureServer
   )(body: (NeblinkService, NeblinkClient, NeblinkRelayTunnel, String) => IO[A]): IO[A] =
@@ -95,13 +99,15 @@ class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
           identity = Some(IO.pure(DeviceIdentity(dev, "qa-host", "macos")))
         )
         _ = ms.setRelayClient(Some(client))
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(cfg),
-          // refresh 腿的 provider 端点指向夹具：`LogtoAuthCode.refreshTokenRequest` 打
-          // `{endpoint}/oidc/token`（夹具回 200 + access_token）。
-          logto = Some(LogtoConfig(endpoint = fix.url, clientId = "", pkceClientId = Some("mock-pkce")))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(cfg),
+            // refresh 腿的 provider 端点指向夹具：`LogtoAuthCode.refreshTokenRequest` 打
+            // `{endpoint}/oidc/token`（夹具回 200 + access_token）。
+            logto = Some(LogtoConfig(endpoint = fix.url, clientId = "", pkceClientId = Some("mock-pkce")))
+          )
+        )
         // 存量凭据里的 pre-O5 refresh token —— silent re-login 的唯一 token 来源。
         _ <- DeviceCredential.save(
           DeviceCredential(fix.url, Net, dev, dtok, LogtoRefresh.of(Some("mock-refresh"), None))
@@ -120,9 +126,11 @@ class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
       body(f).guarantee(IO.blocking(f.close()))
     }
 
-  /** 自动腿的两个真实入口（= 生产里 `NeblinkDiscovery` 心跳与会话自愈走的同一对）：
-    *   - `discover` = 心跳失败后的 re-login（`NeblinkClient.discover`）；
-    *   - `ensureFreshSession` = API/隧道升级自愈的 single-flight 入口。 */
+  /**
+   * 自动腿的两个真实入口（= 生产里 `NeblinkDiscovery` 心跳与会话自愈走的同一对）：
+   *   - `discover` = 心跳失败后的 re-login（`NeblinkClient.discover`）；
+   *   - `ensureFreshSession` = API/隧道升级自愈的 single-flight 入口。
+   */
   private def driveAutoLeg(client: NeblinkClient, dev: String, tag: String): IO[Unit] =
     client.discover(dev, "qa-host", "macos", Nil).attempt.void *>
       client.ensureFreshSession(s"spec-$tag").attempt.void
@@ -202,7 +210,11 @@ class NeblinkKickAutoReloginParkSpec extends CatsEffectSuite:
               "control: the revoked deviceToken must be rejected with 401 (the chain's entry condition)"
             )
           )
-          _ <- IO(println(s"[kick-nail/control] registers=$regBefore→${fix.registerCount} sessionRejections=${fix.sessionRejections.get()}"))
+          _ <- IO(
+            println(
+              s"[kick-nail/control] registers=$regBefore→${fix.registerCount} sessionRejections=${fix.sessionRejections.get()}"
+            )
+          )
         yield ()
       }
     }

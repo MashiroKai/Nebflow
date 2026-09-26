@@ -4,11 +4,9 @@ import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.neblink.PeerInfo
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil, PeerInfo}
 
-import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
 import scala.util.matching.Regex
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -28,8 +26,10 @@ import scala.util.matching.Regex
 
 /** 单个实测字段的值 + 探测时刻。`source` 恒为 "auto"（结构即声明，不另设键）。 */
 case class ProfileField(value: String, probedAt: Long)
+
 object ProfileField:
   given Encoder[ProfileField] = io.circe.generic.semiauto.deriveEncoder
+
   given Decoder[ProfileField] = Decoder.instance { c =>
     for
       v <- c.downField("value").as[String]
@@ -37,14 +37,18 @@ object ProfileField:
     yield ProfileField(v, t)
   }
 
-/** 用户**手填** capabilities 的单字段留痕。作者口径（逐字）：
-  * 「自动检测**不覆盖**用户手填值；逐字段标 source（hand-filled / auto）+ 时刻；
-  * **冲突以实测为准并标 stale**（实测值生效 + 手填字段标 stale 留痕，
-  * 🔴 禁静默丢弃手填值）」。 ⇒ 手填值**永远保留**在 `value` 里；冲突只是把
-  * `stale` 置真 + 记 `staleAt`。 */
+/**
+ * 用户**手填** capabilities 的单字段留痕。作者口径（逐字）：
+ * 「自动检测**不覆盖**用户手填值；逐字段标 source（hand-filled / auto）+ 时刻；
+ * **冲突以实测为准并标 stale**（实测值生效 + 手填字段标 stale 留痕，
+ * 🔴 禁静默丢弃手填值）」。 ⇒ 手填值**永远保留**在 `value` 里；冲突只是把
+ * `stale` 置真 + 记 `staleAt`。
+ */
 case class HandCapField(value: String, stale: Boolean = false, staleAt: Option[Long] = None)
+
 object HandCapField:
   given Encoder[HandCapField] = io.circe.generic.semiauto.deriveEncoder
+
   given Decoder[HandCapField] = Decoder.instance { c =>
     for
       v <- c.downField("value").as[String]
@@ -53,8 +57,10 @@ object HandCapField:
     yield HandCapField(v, s, t)
   }
 
-/** 一台对端设备的画像条目。**主键 = deviceId**（机器码派生、换机必变——按 id
-  * 存画像不会跨机污染；判红① 的机械基础）。 */
+/**
+ * 一台对端设备的画像条目。**主键 = deviceId**（机器码派生、换机必变——按 id
+ * 存画像不会跨机污染；判红① 的机械基础）。
+ */
 case class DeviceProfileEntry(
   deviceId: String,
   /** 快照，仅人读；与当前 peer.deviceName 不符 ⇒ 强制重探（判红①）。 */
@@ -79,6 +85,7 @@ case class DeviceProfileEntry(
 
 object DeviceProfileEntry:
   given Encoder[DeviceProfileEntry] = io.circe.generic.semiauto.deriveEncoder
+
   // 手写 Decoder：缺字段容错（学 DeviceIdentity 的教训——deriveDecoder 对缺省
   // 字段仍必选，手写文件少一个键就整条 decode 失败 ⇒ fail-closed 语义被架空）。
   given Decoder[DeviceProfileEntry] = Decoder.instance { c =>
@@ -93,13 +100,27 @@ object DeviceProfileEntry:
       fields <- c.downField("fields").as[Option[Map[String, ProfileField]]].map(_.getOrElse(Map.empty))
       handCaps <- c.downField("handCaps").as[Option[Map[String, HandCapField]]].map(_.getOrElse(Map.empty))
       negativeUntil <- c.downField("negativeUntil").as[Option[Option[Long]]].map(_.flatten)
-    yield DeviceProfileEntry(deviceId, deviceName, platform, addressKey, probedAt, probeVersion, available, fields, handCaps, negativeUntil)
+    yield DeviceProfileEntry(
+      deviceId,
+      deviceName,
+      platform,
+      addressKey,
+      probedAt,
+      probeVersion,
+      available,
+      fields,
+      handCaps,
+      negativeUntil
+    )
   }
+end DeviceProfileEntry
 
 /** store 文件外层形态（带 version，schema 演进锚点）。 */
 case class DeviceProfilesFile(version: Int, profiles: Map[String, DeviceProfileEntry])
+
 object DeviceProfilesFile:
   given Encoder[DeviceProfilesFile] = io.circe.generic.semiauto.deriveEncoder
+
   given Decoder[DeviceProfilesFile] = Decoder.instance { c =>
     for
       v <- c.downField("version").as[Option[Int]].map(_.getOrElse(0))
@@ -129,9 +150,11 @@ object DeviceProfile:
 
   // ── store ───────────────────────────────────────────────────────────
 
-  /** 🔴 落位：`<dataRoot>/neblink/device-profiles.json`（root 令指定；方案卡
-    * O-1 按「同族先例」曾荐 dataRoot 顶层，root 令裁定收编进 neblink/ 子目录）。
-    * `def` not `val`：dataRoot 可重定向（f1cd3709 rule），隔离实例测试各自独立。 */
+  /**
+   * 🔴 落位：`<dataRoot>/neblink/device-profiles.json`（root 令指定；方案卡
+   * O-1 按「同族先例」曾荐 dataRoot 顶层，root 令裁定收编进 neblink/ 子目录）。
+   * `def` not `val`：dataRoot 可重定向（f1cd3709 rule），隔离实例测试各自独立。
+   */
   private def storePath = PathUtil.dataRoot / "neblink" / "device-profiles.json"
 
   /** 损坏 ⇒ fail-closed 到空 Map（行为回到「无画像」= 现状），WARN 留痕。 */
@@ -151,17 +174,16 @@ object DeviceProfile:
   /** 单进程内写串行锁（save 用；见下）。 */
   private val writeLock = new Object
 
-  /** 原子写（tmp + rename）。并发写策略：单进程内 `writeLock` 串行；跨进程无锁
-    * （与同族先例 peer-descriptions.json 同口径——单写者 = 网关进程）。 */
+  /**
+   * 原子写（tmp + rename）。并发写策略：单进程内 `writeLock` 串行；跨进程无锁
+   * （与同族先例 peer-descriptions.json 同口径——单写者 = 网关进程）。
+   * 落盘序列统一到 AtomicJson.writeSyncDurable（fsync + ATOMIC_MOVE 优先、
+   * AtomicMoveNotSupportedException 降级替换式 move，原口径不变）。
+   */
   private def save(entries: Map[String, DeviceProfileEntry]): IO[Unit] = IO.blocking {
-    val file = storePath
     val payload = DeviceProfilesFile(SchemaVersion, entries).asJson.spaces2
     writeLock.synchronized {
-      Files.createDirectories(file.toNIO.getParent)
-      val tmp = file.toNIO.resolveSibling(file.toNIO.getFileName.toString + s".tmp-${System.nanoTime()}")
-      Files.write(tmp, payload.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
-      try Files.move(tmp, file.toNIO, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-      catch { case _: java.nio.file.AtomicMoveNotSupportedException => Files.move(tmp, file.toNIO, StandardCopyOption.REPLACE_EXISTING) }
+      AtomicJson.writeSyncDurable(storePath, payload)
     }
   }
 
@@ -184,8 +206,11 @@ object DeviceProfile:
       fields = known,
       handCaps = mergeHandCaps(handCaps, known, now)
     )
-    load.flatMap(m => save(m.updated(peer.deviceId, entry)).as(Some(entry)))
+    load
+      .flatMap(m => save(m.updated(peer.deviceId, entry)).as(Some(entry)))
       .handleErrorWith(e => logger.warn(s"[device-profile] save failed: ${e.getMessage}").as(None))
+
+  end recordProbe
 
   /** 探测失败 ⇒ 负条目（不阻塞原调用， NegativeRetryMs 内不重试）。 */
   def recordProbeFailed(peer: PeerInfo, now: Long): IO[Option[DeviceProfileEntry]] =
@@ -199,15 +224,22 @@ object DeviceProfile:
       available = false,
       negativeUntil = Some(now + NegativeRetryMs)
     )
-    load.flatMap(m => save(m.updated(peer.deviceId, entry)).as(Some(entry)))
+    load
+      .flatMap(m => save(m.updated(peer.deviceId, entry)).as(Some(entry)))
       .handleErrorWith(e => logger.warn(s"[device-profile] save(negative) failed: ${e.getMessage}").as(None))
 
   // ── 手填冲突语义（作者口径） ────────────────────────────────────────
 
-  /** 手填 capabilities ↔ 实测字段合并。手填键无对应实测字段 ⇒ 原样保留
-    * （source=hand-filled，无冲突）；有对应且值一致 ⇒ stale=false；**不一致 ⇒
-    * 实测生效 + 手填标 stale 留痕**（值不丢）。 */
-  def mergeHandCaps(handCaps: Map[String, String], measured: Map[String, ProfileField], now: Long): Map[String, HandCapField] =
+  /**
+   * 手填 capabilities ↔ 实测字段合并。手填键无对应实测字段 ⇒ 原样保留
+   * （source=hand-filled，无冲突）；有对应且值一致 ⇒ stale=false；**不一致 ⇒
+   * 实测生效 + 手填标 stale 留痕**（值不丢）。
+   */
+  def mergeHandCaps(
+    handCaps: Map[String, String],
+    measured: Map[String, ProfileField],
+    now: Long
+  ): Map[String, HandCapField] =
     handCaps.map { (k, hv) =>
       val field =
         if !ComparableHandKeys.contains(k) then HandCapField(hv, stale = false, None)
@@ -227,32 +259,38 @@ object DeviceProfile:
     val trimmed = v.trim.toLowerCase
     if key == "cwd" then trimmed.replaceAll("/+$", "").replaceAll("\\\\+$", "") else trimmed
 
-  /** 宽一致判定：互为包含即视为一致（手填短名 `edge` ↔ 实测注册表串
-    * `...msedge.exe...` 不算冲突——冲突判定禁误报，误报会错误覆盖 stale 语义）。 */
+  /**
+   * 宽一致判定：互为包含即视为一致（手填短名 `edge` ↔ 实测注册表串
+   * `...msedge.exe...` 不算冲突——冲突判定禁误报，误报会错误覆盖 stale 语义）。
+   */
   private def agrees(hand: String, measured: String): Boolean =
     hand.contains(measured) || measured.contains(hand)
 
   // ── 时效判定 ────────────────────────────────────────────────────────
 
-  /** 是否需要（重）探测：缺失 / 负条目静默期已过 / TTL 过期 / probeVersion 落后 /
-    * 地址集变化 / deviceName 变化。 */
+  /**
+   * 是否需要（重）探测：缺失 / 负条目静默期已过 / TTL 过期 / probeVersion 落后 /
+   * 地址集变化 / deviceName 变化。
+   */
   def needsProbe(entryOpt: Option[DeviceProfileEntry], peer: PeerInfo, now: Long): Boolean =
     entryOpt match
       case None => true
       case Some(e) if !e.available => now >= e.negativeUntil.getOrElse(0L)
       case Some(e) =>
         e.probeVersion < SchemaVersion ||
-          e.probedAt < now - ProfileTtlMs ||
-          e.addressKey != P2pPathDecision.addressKey(peer) ||
-          e.deviceName != peer.deviceName
+        e.probedAt < now - ProfileTtlMs ||
+        e.addressKey != P2pPathDecision.addressKey(peer) ||
+        e.deviceName != peer.deviceName
 
   private def isStale(e: DeviceProfileEntry, peer: PeerInfo, now: Long): Boolean =
     needsProbe(Some(e), peer, now) // 同一判据：任一失效轴被触发即 stale（负条目走专门分支，不达此处）
 
   // ── # Devices 摘要渲染（1-2 行/台；只读缓存，绝不在此发起探测） ────
 
-  /** 单台对端的画像摘要（追加在 deviceName 行尾）。画像缺失 ⇒ 空串（覆盖率
-    * 诚实性：未知就显示未知 = 现状形态，不装已知）。 */
+  /**
+   * 单台对端的画像摘要（追加在 deviceName 行尾）。画像缺失 ⇒ 空串（覆盖率
+   * 诚实性：未知就显示未知 = 现状形态，不装已知）。
+   */
   def renderSummary(peer: PeerInfo, profiles: Map[String, DeviceProfileEntry], now: Long): String =
     profiles.get(peer.deviceId) match
       case None => ""
@@ -273,33 +311,41 @@ object DeviceProfile:
         else if parts.isEmpty then s" [profile: minimal$staleMark$handMark]"
         else s" [${parts.mkString(" | ")}$staleMark$handMark]"
 
-  /** 回拉约定提示（仅对「已确证可截图」的对端渲染）：告诉模型
-    * ① 对端截图命令族已探明 ② 打印 NEBFLOW_PULL 标记即可自动回拉。
-    * 🔴 不是工具、不是命令表——一行约定提示。 */
+  /**
+   * 回拉约定提示（仅对「已确证可截图」的对端渲染）：告诉模型
+   * ① 对端截图命令族已探明 ② 打印 NEBFLOW_PULL 标记即可自动回拉。
+   * 🔴 不是工具、不是命令表——一行约定提示。
+   */
   def renderCaptureHint(peer: PeerInfo, profiles: Map[String, DeviceProfileEntry]): String =
     profiles.get(peer.deviceId).flatMap(e => e.fields.get("shot").map(_.value)) match
       case None | Some("none") => ""
       case Some(method) =>
         s"\n  capture: screenshot via Bash(device=...) with the '$method' method on this peer; after saving the PNG, print a line 'NEBFLOW_PULL:<abs-png-path>' and the engine pulls it to local captures/ (Read it there)."
 
-  /** deviceInfoBlock 的同步读入口（deviceInfoBlock 本身已在 unsafeRunSync 语境；
-    * 本地文件读 + 30s 缓存兜底）。失败 ⇒ 空 Map（渲染回现状形态）。 */
+  /**
+   * deviceInfoBlock 的同步读入口（deviceInfoBlock 本身已在 unsafeRunSync 语境；
+   * 本地文件读 + 30s 缓存兜底）。失败 ⇒ 空 Map（渲染回现状形态）。
+   */
   def loadSyncSafe(): Map[String, DeviceProfileEntry] =
     import cats.effect.unsafe.implicits.global
     try load.unsafeRunSync()
-    catch { case _: Exception => Map.empty }
+    catch case _: Exception => Map.empty
 
 end DeviceProfile
 
-/** 探测命令 + 输出解析。命令约束（root 授权边界）：全只读、幂等、
-  * 无副作用（不写盘 / 不改注册表 / 不联网）、单条下发、POSIX-bash 跨平台
-  * （对端 shell = shell.scala 已选定的 bash 家族）。 */
+/**
+ * 探测命令 + 输出解析。命令约束（root 授权边界）：全只读、幂等、
+ * 无副作用（不写盘 / 不改注册表 / 不联网）、单条下发、POSIX-bash 跨平台
+ * （对端 shell = shell.scala 已选定的 bash 家族）。
+ */
 object DeviceProfileProbe:
 
-  /** 单条只读探测命令。分段：cwd / 内核 / 架构 / bash 版本 / MSYS 判定 /
-    * PATH 头 300 字符 / 平台分支（默认浏览器只读查询 + 截图能力探测）。
-    * Windows 浏览器查询 = `reg query`（只读注册表）；`//ve` 双斜杠是 MSYS
-    * 路径转换规避（#275 铁律同源）。 */
+  /**
+   * 单条只读探测命令。分段：cwd / 内核 / 架构 / bash 版本 / MSYS 判定 /
+   * PATH 头 300 字符 / 平台分支（默认浏览器只读查询 + 截图能力探测）。
+   * Windows 浏览器查询 = `reg query`（只读注册表）；`//ve` 双斜杠是 MSYS
+   * 路径转换规避（#275 铁律同源）。
+   */
   val Command: String =
     """echo "cwd=$(pwd)"
       |echo "kernel=$(uname -s 2>/dev/null)"
@@ -331,19 +377,20 @@ object DeviceProfileProbe:
 
 end DeviceProfileProbe
 
-/** ⑤ 自动改写层——**默认关**（root 令；方案卡 O-5(b)）。开关 = 环境变量
-  * `NEBFLOW_XDEV_REWRITE`（无既有配置面 ⇒ env 开关并申报；缺省/0/false ⇒ 关）。
-  *
-  * 开启后的全部行为（白名单式，🔴 禁猜测性改写）：
-  *   - 仅当 ①开关开 ②画像确证对端为 MSYS bash ③命令出现 `cmd /c`（词边界）
-  *     ④命令不含禁改特征 ⇒ `cmd /c` → `cmd //c`（MSYS 路径转换等价）。
-  *   - 命中出现 `cmd /c` 但命中禁改特征 ⇒ **原样透传 + 警告**（警告进工具结果
-  *     尾部 = 模型可见；WARN 日志带 `[xdev-rewrite]` = 可 grep）。
-  *   - 其余命令（白名单形态外）⇒ 原样透传零动作（无警告——对每条普通命令都
-  *     警告 = 噪声；警告只对「已检出的已知错形态」发）。
-  *   - 幂等：已含 `cmd //c`（已改写形态）⇒ 短路不再改。
-  *   - 改写必留痕：返回说明串由调用方拼进工具结果 + INFO 日志（可审计）。
-  */
+/**
+ * ⑤ 自动改写层——**默认关**（root 令；方案卡 O-5(b)）。开关 = 环境变量
+ * `NEBFLOW_XDEV_REWRITE`（无既有配置面 ⇒ env 开关并申报；缺省/0/false ⇒ 关）。
+ *
+ * 开启后的全部行为（白名单式，🔴 禁猜测性改写）：
+ *   - 仅当 ①开关开 ②画像确证对端为 MSYS bash ③命令出现 `cmd /c`（词边界）
+ *     ④命令不含禁改特征 ⇒ `cmd /c` → `cmd //c`（MSYS 路径转换等价）。
+ *   - 命中出现 `cmd /c` 但命中禁改特征 ⇒ **原样透传 + 警告**（警告进工具结果
+ *     尾部 = 模型可见；WARN 日志带 `[xdev-rewrite]` = 可 grep）。
+ *   - 其余命令（白名单形态外）⇒ 原样透传零动作（无警告——对每条普通命令都
+ *     警告 = 噪声；警告只对「已检出的已知错形态」发）。
+ *   - 幂等：已含 `cmd //c`（已改写形态）⇒ 短路不再改。
+ *   - 改写必留痕：返回说明串由调用方拼进工具结果 + INFO 日志（可审计）。
+ */
 object XdevRewrite:
 
   private val logger = NebflowLogger.forName("nebflow.xdev.rewrite")
@@ -353,13 +400,17 @@ object XdevRewrite:
   def enabled: Boolean =
     sys.env.get(EnvFlag).exists(v => v.nonEmpty && v != "0" && !v.equalsIgnoreCase("false"))
 
-  /** `cmd /c` 词边界形态（前置不允许是字母数字或 `/`——排除路径里的 `cmd /c` 误判
-    * 与已改写形态 `cmd //c`）。 */
+  /**
+   * `cmd /c` 词边界形态（前置不允许是字母数字或 `/`——排除路径里的 `cmd /c` 误判
+   * 与已改写形态 `cmd //c`）。
+   */
   private val CmdC: Regex = raw"""(?<![/\w])(cmd\s+)/c\b""".r
 
-  /** 禁改特征：分隔符 / 重定向 / 引号 / 命令替换 / 换行 / cmd 转义字符。
-    * 任一命中 ⇒ MSYS 参数转换的等价性不再有保证 ⇒ 保守不改（fail-closed）。
-    * （普通三引号串：`\$` 转义 dollar，避免 raw 串里 `$(` 触发插值解析。） */
+  /**
+   * 禁改特征：分隔符 / 重定向 / 引号 / 命令替换 / 换行 / cmd 转义字符。
+   * 任一命中 ⇒ MSYS 参数转换的等价性不再有保证 ⇒ 保守不改（fail-closed）。
+   * （普通三引号串：`\$` 转义 dollar，避免 raw 串里 `$(` 触发插值解析。）
+   */
   private val Forbidden: Regex = """[;|&<>`'^%]|\$\(|\"|'|\n""".r
 
   /** 画像确证对端 MSYS（fields.msys 含 Msys/MINGW/MSYS——`uname -o` 输出）。 */
@@ -368,8 +419,10 @@ object XdevRewrite:
       v.contains("Msys") || v.contains("MINGW") || v.contains("MSYS")
     }
 
-  /** (最终命令, 说明)。说明 Some ⇒ 调用方必须留痕（结果回显 + 日志）。
-    * 核心逻辑在 [[rewriteOnce]]（enabled 参数化 ⇒ 纯函数可测）；本入口读 env 开关。 */
+  /**
+   * (最终命令, 说明)。说明 Some ⇒ 调用方必须留痕（结果回显 + 日志）。
+   * 核心逻辑在 [[rewriteOnce]]（enabled 参数化 ⇒ 纯函数可测）；本入口读 env 开关。
+   */
   def apply(command: String, msys: Boolean): (String, Option[String]) =
     rewriteOnce(command, msys, enabled)
 
@@ -380,7 +433,12 @@ object XdevRewrite:
     else if !CmdC.findFirstIn(command).isDefined then (command, None)
     else if Forbidden.findFirstIn(command).isDefined then
       val hit = Forbidden.findFirstIn(command).getOrElse("?")
-      (command, Some(s"NOT rewritten: 'cmd /c' detected but command hits forbidden char (${escapeForLog(hit)}) — under MSYS this may fake-succeed (exit 0 + banner); verify the output"))
+      (
+        command,
+        Some(
+          s"NOT rewritten: 'cmd /c' detected but command hits forbidden char (${escapeForLog(hit)}) — under MSYS this may fake-succeed (exit 0 + banner); verify the output"
+        )
+      )
     else
       val rewritten = CmdC.replaceAllIn(command, m => m.group(1) + "//c")
       (rewritten, Some("rewritten 'cmd /c' -> 'cmd //c' (MSYS whitelist equivalence)"))
@@ -389,7 +447,7 @@ object XdevRewrite:
     s.flatMap {
       case '\n' => "\\n"
       case '\t' => "\\t"
-      case c    => c.toString
+      case c => c.toString
     }
 
   /** 日志辅助：改写/警告落一行（`[xdev-rewrite]` 前缀可 grep）。 */
@@ -399,10 +457,12 @@ object XdevRewrite:
 
 end XdevRewrite
 
-/** ② ④ 回拉件落盘 + TTL 清扫。落位：`<dataRoot>/neblink/captures/<deviceId>/`
-  * （root 令指定；不在 [[nebflow.gateway.WebSocketRoutes.NfDataRootAllowlist]]
-  * ⇒ 网关 HTTP fail-closed 拒服务）。TTL 7 天（作者裁定 A）；清扫逐件 INFO
-  * 留痕（`[captures-ttl]` 可 grep，🔴 禁静默删）。 */
+/**
+ * ② ④ 回拉件落盘 + TTL 清扫。落位：`<dataRoot>/neblink/captures/<deviceId>/`
+ * （root 令指定；不在 [[nebflow.gateway.NfFilePolicy.NfDataRootAllowlist]]
+ * ⇒ 网关 HTTP fail-closed 拒服务）。TTL 7 天（作者裁定 A）；清扫逐件 INFO
+ * 留痕（`[captures-ttl]` 可 grep，🔴 禁静默删）。
+ */
 object CapturePull:
 
   private val logger = NebflowLogger.forName("nebflow.xdev.capture")
@@ -430,8 +490,10 @@ object CapturePull:
 
   def capturesRoot = PathUtil.dataRoot / "neblink" / "captures"
 
-  /** 落盘：`captures/<deviceId>/<yyyymmdd-hhmmss>-<basename>`。basename 取自
-    * 远端路径末段并再消毒（防路径穿越/非法字符进本机文件名）。 */
+  /**
+   * 落盘：`captures/<deviceId>/<yyyymmdd-hhmmss>-<basename>`。basename 取自
+   * 远端路径末段并再消毒（防路径穿越/非法字符进本机文件名）。
+   */
   def saveCapture(deviceId: String, remotePath: String, content: Array[Byte]): os.Path =
     val dir = capturesRoot / deviceId
     os.makeDir.all(dir)
@@ -443,26 +505,30 @@ object CapturePull:
     os.write(f, content, createFolders = true)
     f
 
-  /** TTL 清扫：逐件按 mtime 判过期（过 [[CaptureTtlMs]] 即删），**每删一件落一行
-    * INFO**（`[captures-ttl]`，🔴 禁静默删）。返回删除件数。顺带清空目录。 */
-  def sweepExpired(now: Long = System.currentTimeMillis()): IO[Int] = IO.blocking {
-    val root = capturesRoot
-    if !os.exists(root) then 0
-    else
-      var removed = 0
-      os.walk(root).filter(os.isFile(_)).foreach { f =>
-        val age = now - os.mtime(f)
-        if age > CaptureTtlMs then
-          val device = f.relativeTo(root).segments.headOption.getOrElse("?")
-          os.remove(f)
-          removed += 1
-          logger.info(s"[captures-ttl] removed ${f.last} (age=${age / 86400000L}d > 7d TTL, device=$device)")
-      }
-      // 清掉空掉的设备目录（根目录保留）
-      os.walk(root).foreach(d => if os.isDir(d) && d != root && os.list(d).isEmpty then os.remove(d))
-      removed
-  }.handleErrorWith { e =>
-    logger.warn(s"[captures-ttl] sweep failed: ${e.getMessage}").as(0)
-  }
+  /**
+   * TTL 清扫：逐件按 mtime 判过期（过 [[CaptureTtlMs]] 即删），**每删一件落一行
+   * INFO**（`[captures-ttl]`，🔴 禁静默删）。返回删除件数。顺带清空目录。
+   */
+  def sweepExpired(now: Long = System.currentTimeMillis()): IO[Int] = IO
+    .blocking {
+      val root = capturesRoot
+      if !os.exists(root) then 0
+      else
+        var removed = 0
+        os.walk(root).filter(os.isFile(_)).foreach { f =>
+          val age = now - os.mtime(f)
+          if age > CaptureTtlMs then
+            val device = f.relativeTo(root).segments.headOption.getOrElse("?")
+            os.remove(f)
+            removed += 1
+            logger.info(s"[captures-ttl] removed ${f.last} (age=${age / 86400000L}d > 7d TTL, device=$device)")
+        }
+        // 清掉空掉的设备目录（根目录保留）
+        os.walk(root).foreach(d => if os.isDir(d) && d != root && os.list(d).isEmpty then os.remove(d))
+        removed
+    }
+    .handleErrorWith { e =>
+      logger.warn(s"[captures-ttl] sweep failed: ${e.getMessage}").as(0)
+    }
 
 end CapturePull

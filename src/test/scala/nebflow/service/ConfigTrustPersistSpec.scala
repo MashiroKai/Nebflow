@@ -2,10 +2,9 @@ package nebflow.service
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.plugin.{PluginBlockPolicy, PluginRegistry}
 import nebflow.core.seed.SeedService
-import nebflow.llm.{Config, NebflowServiceConfig, ProviderConfig}
+import nebflow.shared.{Config, NebflowServiceConfig, PathUtil, ProviderConfig}
 
 import java.nio.file.Files
 
@@ -62,7 +61,8 @@ class ConfigTrustPersistSpec extends FunSuite:
     os.makeDir.all(d / "skills" / "s")
     os.write.over(
       d / "plugin.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","author":{"name":"A"}}""")
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","author":{"name":"A"}}"""
+    )
     os.write.over(d / "skills" / "s" / "SKILL.md", "---\nname: s\ndescription: fixture\n---\nbody\n")
 
   // ── P0 主修：无 llm 节的配置可解码（不再抛 'Missing required field .llm'）──
@@ -74,9 +74,16 @@ class ConfigTrustPersistSpec extends FunSuite:
     assert(os.read(configPath).contains("trust"), "on-disk config must remain byte-intact (no rewrite by load)")
 
   test("loadServiceConfig decodes an empty llm block (no providers) without throwing"):
-    os.write.over(configPath, """{"llm":{},"plugins":{"trust":{"demo-plugin":{"sha256":"deadbeef","approvedAt":1,"scope":"all"}}}}""")
+    os.write.over(
+      configPath,
+      """{"llm":{},"plugins":{"trust":{"demo-plugin":{"sha256":"deadbeef","approvedAt":1,"scope":"all"}}}}"""
+    )
     val cfg = Config.loadServiceConfig()
-    assertEquals(cfg.llm.providers, Map.empty[String, ProviderConfig], "empty llm block must default providers to empty")
+    assertEquals(
+      cfg.llm.providers,
+      Map.empty[String, ProviderConfig],
+      "empty llm block must default providers to empty"
+    )
 
   test("loadServiceConfig still decodes a fully configured config unchanged"):
     os.write.over(
@@ -92,7 +99,8 @@ class ConfigTrustPersistSpec extends FunSuite:
   test("restoreLatest does NOT restore over a valid-JSON but incomplete config (trust preserved)"):
     os.write.over(configPath, trustOnlyJson("demo-plugin"))
     // 冷启动期备份下来的 {} 快照（模拟 configRef init 在种子前 save 的 {}）
-    val snap = home / "backups" / s"nebflow.json.${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}"
+    val snap =
+      home / "backups" / s"nebflow.json.${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}"
     os.makeDir.all(home / "backups")
     os.write.over(snap, "{}")
     val restored = ConfigSnapshot.restoreLatest().unsafeRunSync()
@@ -101,7 +109,8 @@ class ConfigTrustPersistSpec extends FunSuite:
 
   test("restoreLatest DOES restore from snapshot when config is invalid JSON"):
     os.write.over(configPath, "this is not json {")
-    val snap = home / "backups" / s"nebflow.json.${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}"
+    val snap =
+      home / "backups" / s"nebflow.json.${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))}"
     os.makeDir.all(home / "backups")
     os.write.over(snap, "{}")
     val restored = ConfigSnapshot.restoreLatest().unsafeRunSync()
@@ -135,8 +144,10 @@ class ConfigTrustPersistSpec extends FunSuite:
     assert(!diskAfterRestart.trim.isEmpty && diskAfterRestart.trim != "{}", "config must not be clobbered to {}")
     // 插件仍 trusted（默认插件集 = 8 包，见 seed/manifest.json:7-14；manifest 扩集后
     // restart 仍不得丢失既有信任面——本条只看 visual-report 一项，不随集合大小漂移）
-    assert(PluginRegistry.resolve("visual-report").unsafeRunSync().isRight,
-      "seeded plugin must still resolve as trusted after restart")
+    assert(
+      PluginRegistry.resolve("visual-report").unsafeRunSync().isRight,
+      "seeded plugin must still resolve as trusted after restart"
+    )
     // 解码出的运行时配置 = 默认 llm（无 provider）
     assertEquals(cfg.llm.providers, Map.empty[String, ProviderConfig])
 
@@ -151,8 +162,10 @@ class ConfigTrustPersistSpec extends FunSuite:
     // 不改写 llm 节。再走一次重启加载路径。
     simulateRestart()
     PluginRegistry.invalidateCache()
-    assert(PluginRegistry.resolve("manual-a").unsafeRunSync().isRight,
-      "manually approved plugin must still be trusted after restart")
+    assert(
+      PluginRegistry.resolve("manual-a").unsafeRunSync().isRight,
+      "manually approved plugin must still be trusted after restart"
+    )
     assert(os.read(configPath).contains("manual-a"), "trust record must be on disk after restart")
 
   test("user manual block persists across restart (still blocked; audit record untouched)"):
@@ -166,13 +179,14 @@ class ConfigTrustPersistSpec extends FunSuite:
     // 重启加载路径不再触发恢复，封禁状态保持
     simulateRestart()
     PluginRegistry.invalidateCache()
-    assert(PluginRegistry.resolve("manual-b").unsafeRunSync().isLeft,
-      "blocked plugin must stay blocked after restart")
+    assert(PluginRegistry.resolve("manual-b").unsafeRunSync().isLeft, "blocked plugin must stay blocked after restart")
     assert(os.read(configPath).contains("revoked"), "the deny-list must survive the restart")
     // 解封后回到「在位即信任」
     assert(PluginBlockPolicy.unblock("manual-b", "spec").unsafeRunSync().isRight, "unblock must succeed")
     PluginRegistry.invalidateCache()
-    assert(PluginRegistry.resolve("manual-b").unsafeRunSync().isRight,
-      "unblocked plugin must be usable again (presence = trust)")
+    assert(
+      PluginRegistry.resolve("manual-b").unsafeRunSync().isRight,
+      "unblocked plugin must be usable again (presence = trust)"
+    )
 
 end ConfigTrustPersistSpec

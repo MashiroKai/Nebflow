@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.shared.{DropboxLedger, DropboxLedgerDecode, DropboxMessage}
 
 /**
  * 台账解码健壮化（作者 2026-09-17 #785 裁定）—— 定向 spec。
@@ -34,7 +35,7 @@ class DropboxLedgerDecodeSpec extends FunSuite:
   private def decode(raw: String): DropboxLedgerDecode =
     DropboxLedger.decode(raw) match
       case Right(d) => d
-      case Left(e)  => fail(s"expected the table to decode, got Left($e)")
+      case Left(e) => fail(s"expected the table to decode, got Left($e)")
 
   private def one(raw: String): DropboxMessage =
     val d = decode(raw)
@@ -163,3 +164,4 @@ class DropboxLedgerDecodeSpec extends FunSuite:
     assertEquals(DropboxMessage.RequiredKeys.size, 4)
     assertEquals(DropboxMessage.OptionalKeys.size, 14)
   }
+end DropboxLedgerDecodeSpec

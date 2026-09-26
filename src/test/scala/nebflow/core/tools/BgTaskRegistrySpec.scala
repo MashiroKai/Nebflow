@@ -71,7 +71,10 @@ class BgTaskRegistrySpec extends FunSuite:
   test("originFor derives category+label from registering session id prefix") {
     assertEquals(BgTaskRegistry.originFor("node-ab12cd34", Some("实施-某节点")), ("node", "实施-某节点"))
     assertEquals(BgTaskRegistry.originFor("node-ab12cd34", None), ("node", "node-ab12cd34")) // 缺名兜底会话 id
-    assertEquals(BgTaskRegistry.originFor("dispatcher-ef56gh78", Some("dispatcher/nebflow")), ("dispatcher", "dispatcher/nebflow"))
+    assertEquals(
+      BgTaskRegistry.originFor("dispatcher-ef56gh78", Some("dispatcher/nebflow")),
+      ("dispatcher", "dispatcher/nebflow")
+    )
     assertEquals(BgTaskRegistry.originFor("dispatcher-ef56gh78", None), ("dispatcher", "dispatcher"))
     assertEquals(BgTaskRegistry.originFor("main-session-1", Some("Nebula")), ("nebula", "Nebula"))
     assertEquals(BgTaskRegistry.originFor("", None), ("nebula", "Nebula")) // REST 直调空会话

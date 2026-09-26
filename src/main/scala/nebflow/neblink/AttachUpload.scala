@@ -41,13 +41,14 @@ object AttachUpload:
   enum Failure:
     /** 调用方取消：后续分块已停止，**未完成**（禁报成完成）。 */
     case Cancelled
+
     /** 真实失败：上游拒绝 / 传输失败 / 缺字段，原因逐字带出。 */
     case Failed(message: String)
 
     /** 人可读文案（两条腿共用同一渲染，禁各处另写一套）。 */
     def render: String = this match
-      case Cancelled  => "Upload cancelled before completion — nothing was completed and no message was sent."
-      case Failed(m)  => m
+      case Cancelled => "Upload cancelled before completion — nothing was completed and no message was sent."
+      case Failed(m) => m
 
   /** 真实分块确认推进一条（`bytesSent` = 该块确认后服务端持有的前缀长度）。 */
   final case class Progress(chunkIndex: Int, bytesSent: Long, totalBytes: Long)
@@ -73,9 +74,9 @@ object AttachUpload:
     hooks: Hooks = Hooks.none
   ): IO[Either[Failure, Uploaded]] =
     for
-      size  <- IO.blocking(os.stat(path).size)
+      size <- IO.blocking(os.stat(path).size)
       whole <- IO.blocking(NeblinkFiles.sha256OfFile(path))
-      out   <- pushFile(cli, conversationId, displayName, size, whole, path, hooks)
+      out <- pushFile(cli, conversationId, displayName, size, whole, path, hooks)
     yield out
 
   /**
@@ -107,7 +108,8 @@ object AttachUpload:
                 )
               )
             )
-          case Some(id) => pushChunks(cli, id, path, size, displayName, hooks).map(_.map(_ => Uploaded(id, displayName, size, whole)))
+          case Some(id) =>
+            pushChunks(cli, id, path, size, displayName, hooks).map(_.map(_ => Uploaded(id, displayName, size, whole)))
     }
 
   /** 分块推送（本批唯一一份；`sent` 只在**服务端确认后**推进）。 */
@@ -119,8 +121,8 @@ object AttachUpload:
     displayName: String,
     hooks: Hooks = Hooks.none
   ): IO[Either[Failure, Unit]] =
-    val plan = nebflow.dropbox.AttachContract.plan(size)
-    def loop(rest: List[nebflow.dropbox.AttachContract.ChunkPlan]): IO[Either[Failure, Unit]] =
+    val plan = nebflow.shared.AttachContract.plan(size)
+    def loop(rest: List[nebflow.shared.AttachContract.ChunkPlan]): IO[Either[Failure, Unit]] =
       rest match
         case Nil => IO.pure(Right(()))
         case chunk :: tail =>
@@ -136,7 +138,7 @@ object AttachUpload:
                 }
               sendOnce
                 .flatMap {
-                  case Right(_)       => IO.pure[Either[String, Unit]](Right(()))
+                  case Right(_) => IO.pure[Either[String, Unit]](Right(()))
                   case Left(firstErr) => sendOnce.map(_.left.map(_ => firstErr)) // 单次重试（同 offset 幂等）
                 }
                 .flatMap {
@@ -153,21 +155,26 @@ object AttachUpload:
           }
     loop(plan)
 
-  /** 上传链失败 → `(code, 可判读文案)`（网关路由按 code 定状态码/前端按 code 分态）。
-    *
-    * `code` 取自失败文本里的上游 HTTP 码（[[AttachmentCapability.httpStatus]]，与
-    * 能力探测**同一**解析点，禁第二套）：403 关系/成员闸、413/422 参数与上限、429
-    * 限速、404 路由缺失（= 服务端不支持附件），其余 = 传输层/未知。 */
+  end pushChunks
+
+  /**
+   * 上传链失败 → `(code, 可判读文案)`（网关路由按 code 定状态码/前端按 code 分态）。
+   *
+   * `code` 取自失败文本里的上游 HTTP 码（[[AttachmentCapability.httpStatus]]，与
+   * 能力探测**同一**解析点，禁第二套）：403 关系/成员闸、413/422 参数与上限、429
+   * 限速、404 路由缺失（= 服务端不支持附件），其余 = 传输层/未知。
+   */
   def errorCode(f: Failure): String = f match
     case Failure.Cancelled => "cancelled"
     case Failure.Failed(msg) =>
       AttachmentCapability.httpStatus(msg) match
-        case Some(404)           => "attachment_unsupported"
-        case Some(403)           => "forbidden"
-        case Some(413)           => "attach_too_large"
-        case Some(422)           => "invalid_attachment"
-        case Some(429)           => "rate_limited"
-        case Some(503)           => "quota_exceeded"
+        case Some(404) => "attachment_unsupported"
+        case Some(403) => "forbidden"
+        case Some(413) => "attach_too_large"
+        case Some(422) => "invalid_attachment"
+        case Some(429) => "rate_limited"
+        case Some(503) => "quota_exceeded"
         case Some(code) if code >= 500 => "upstream_error"
-        case Some(_)             => "upstream_rejected"
-        case None                => "upload_failed"
+        case Some(_) => "upstream_rejected"
+        case None => "upload_failed"
+end AttachUpload

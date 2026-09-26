@@ -5,17 +5,19 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import cats.effect.unsafe.implicits.global
 
-/** DeviceIdentity decode regression (2026-08-30 E2E 403 root cause).
-  *
-  * deriveDecoder does not honor Scala defaults — a device.json written by
-  * hand/backup (no `capabilities` key) silently failed the whole decode and
-  * loadOrCreate fell back to a fresh random identity every boot ("403
-  * Invalid device credential"; the decode-failure path never persists, so
-  * the file stayed pristine and the bug was invisible).
-  */
+/**
+ * DeviceIdentity decode regression (2026-08-30 E2E 403 root cause).
+ *
+ * deriveDecoder does not honor Scala defaults — a device.json written by
+ * hand/backup (no `capabilities` key) silently failed the whole decode and
+ * loadOrCreate fell back to a fresh random identity every boot ("403
+ * Invalid device credential"; the decode-failure path never persists, so
+ * the file stayed pristine and the bug was invisible).
+ */
 class DeviceIdentitySpec extends FunSuite:
 
-  private val minimal = """{"deviceId":"fb104d44-7438-4e88-845e-c23d44f17b98","deviceName":"nb-e2e-gateway","platform":"macos","deviceSecret":"e2e-secret"}"""
+  private val minimal =
+    """{"deviceId":"fb104d44-7438-4e88-845e-c23d44f17b98","deviceName":"nb-e2e-gateway","platform":"macos","deviceSecret":"e2e-secret"}"""
 
   test("minimal heredoc shape (no capabilities) decodes with defaults") {
     val r = decode[DeviceIdentity](minimal)
@@ -30,7 +32,8 @@ class DeviceIdentitySpec extends FunSuite:
   }
 
   test("full gateway-written shape (all fields) still decodes") {
-    val raw = """{"deviceId":"d1","deviceName":"n","platform":"macos","deviceSecret":"s","capabilities":{"stt":"browser"},"userDescription":"hi","avatarUrl":"http://x/a.png","githubLogin":"octocat"}"""
+    val raw =
+      """{"deviceId":"d1","deviceName":"n","platform":"macos","deviceSecret":"s","capabilities":{"stt":"browser"},"userDescription":"hi","avatarUrl":"http://x/a.png","githubLogin":"octocat"}"""
     val r = decode[DeviceIdentity](raw)
     assertEquals(r.isRight, true, s"decode failed: $r")
     r.foreach { id =>
@@ -50,24 +53,24 @@ class DeviceIdentitySpec extends FunSuite:
 
   test("loadOrCreate reads the redirected dataRoot identity (no createNew)") {
     val home = os.temp.dir()
-    val prev = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(home)
+    val prev = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(home)
     try
       os.write(home / "device.json", minimal)
       val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
       assertEquals(id.deviceId, "fb104d44-7438-4e88-845e-c23d44f17b98")
       // valid file with secret+name -> must NOT be rewritten
       assertEquals(os.read(home / "device.json"), minimal)
-    finally nebflow.core.PathUtil.setDataRoot(prev)
+    finally nebflow.shared.PathUtil.setDataRoot(prev)
   }
 
   // ===== 2026-09-11 device_id hardening (machine-code derivation + self-heal) =====
 
   private def withDataRoot[A](home: os.Path)(f: => A): A =
-    val prev = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(home)
+    val prev = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(home)
     try f
-    finally nebflow.core.PathUtil.setDataRoot(prev)
+    finally nebflow.shared.PathUtil.setDataRoot(prev)
 
   test("deriveDeviceId: same (machineCode, scope) -> same value; different inputs differ") {
     val a1 = DeviceIdentity.deriveDeviceId("machine-code-fixture", "default")
@@ -100,7 +103,7 @@ class DeviceIdentitySpec extends FunSuite:
   }
 
   test("scope: default data root -> 'default'; redirected root -> the root path") {
-    withDataRoot(os.home / nebflow.core.Branding.homeDirName) {
+    withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
       assertEquals(DeviceIdentity.isNonDefaultHome, false)
       assertEquals(DeviceIdentity.deviceIdScope, DeviceIdentity.DefaultScope)
     }
@@ -182,7 +185,7 @@ class DeviceIdentitySpec extends FunSuite:
     assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("http://127.0.0.1:8095", true, false), None)
     assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("https://nb.example.com", true, false), None)
     // live read: the default data root must never be refused (author's client)
-    withDataRoot(os.home / nebflow.core.Branding.homeDirName) {
+    withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
       assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod), None)
     }
     // live read: a redirected root is refused for production…
@@ -206,8 +209,11 @@ class DeviceIdentitySpec extends FunSuite:
     val iso = DeviceIdentity.mintedDeviceName("MyBox", nonDefaultHome = true, scope)
     assert(iso.startsWith("MyBox-iso-"), s"隔离后缀形态: $iso")
     assertEquals(iso, DeviceIdentity.mintedDeviceName("MyBox", true, scope), "同一 scope ⇒ 同一后缀（确定性）")
-    assertNotEquals(iso, DeviceIdentity.mintedDeviceName("MyBox", true, "/tmp/nb-iso-other"),
-      "不同隔离 home ⇒ 不同后缀（两台隔离实例可分辨）")
+    assertNotEquals(
+      iso,
+      DeviceIdentity.mintedDeviceName("MyBox", true, "/tmp/nb-iso-other"),
+      "不同隔离 home ⇒ 不同后缀（两台隔离实例可分辨）"
+    )
     assert(!iso.contains("/") && !iso.contains("tmp"), s"名字会随 presence 出网 ⇒ 禁带路径: $iso")
     val fp = DeviceIdentity.scopeFingerprint(scope)
     assertEquals(fp.length, 8)
@@ -230,3 +236,4 @@ class DeviceIdentitySpec extends FunSuite:
       assertEquals(DeviceIdentity.loadOrCreate.unsafeRunSync().deviceName, id.deviceName)
     }
   }
+end DeviceIdentitySpec

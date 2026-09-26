@@ -4,12 +4,13 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.time.Instant
-import scala.concurrent.duration.*
 
 import scala.collection.mutable
+import scala.concurrent.duration.*
 
 trait TaskStore:
   def create(sessionId: String, input: TaskCreateInput): IO[String]
@@ -23,20 +24,24 @@ trait TaskStore:
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
 
-/** Scope-key helpers for the team-domain task tools (spec
-  * 20260825_team-manager-task-tool-spec.md §4.2 方案 A): the store API stays
-  * keyed by a single string; team tasks pass `team:<name>` as the scope key
-  * and FileTaskStore maps it to `tasks/teams/<name>/` (per-team directory +
-  * independent high-water mark). Session keys pass through unchanged. */
+/**
+ * Scope-key helpers for the team-domain task tools (spec
+ * 20260825_team-manager-task-tool-spec.md §4.2 方案 A): the store API stays
+ * keyed by a single string; team tasks pass `team:<name>` as the scope key
+ * and FileTaskStore maps it to `tasks/teams/<name>/` (per-team directory +
+ * independent high-water mark). Session keys pass through unchanged.
+ */
 object TaskStore:
   /** Build the team scope key for a team name (validated by the caller). */
   def teamScopeKey(teamName: String): String = s"team:$teamName"
 
   def isTeamScopeKey(key: String): Boolean = key.startsWith("team:")
 
-  /** Path-safety guard for team names (defense-in-depth — production team
-    * names come from validated team.json mounts, but the store must never
-    * interpret a malicious key as a path traversal). */
+  /**
+   * Path-safety guard for team names (defense-in-depth — production team
+   * names come from validated team.json mounts, but the store must never
+   * interpret a malicious key as a path traversal).
+   */
   def isSafeTeamName(name: String): Boolean =
     name.nonEmpty && !name.contains("/") && !name.contains("\\") &&
       !name.contains("..") && !name.startsWith(".")
@@ -47,9 +52,11 @@ object TaskStore:
   val CompletedTtl: FiniteDuration = 6.hours
   val ActiveTtl: FiniteDuration = 2.days
 
-  /** A task is expired under the TTL rules. Pure — used by both the
-    * read-path visibility filter and the physical purge. Tasks without a
-    * usable timestamp are never expired (conservative). */
+  /**
+   * A task is expired under the TTL rules. Pure — used by both the
+   * read-path visibility filter and the physical purge. Tasks without a
+   * usable timestamp are never expired (conservative).
+   */
   def isExpired(task: Task, now: Instant = Instant.now()): Boolean =
     def parseTs(raw: Option[String]): Option[Instant] =
       raw.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
@@ -57,20 +64,22 @@ object TaskStore:
       case TaskStatus.Completed | TaskStatus.Failed =>
         parseTs(task.completedAt).orElse(parseTs(task.updatedAt)) match
           case Some(ts) => java.time.Duration.between(ts, now).toMillis >= CompletedTtl.toMillis
-          case None     => false
+          case None => false
       case TaskStatus.Pending | TaskStatus.InProgress =>
         parseTs(task.createdAt) match
           case Some(ts) => java.time.Duration.between(ts, now).toMillis >= ActiveTtl.toMillis
-          case None     => false
+          case None => false
   end isExpired
 end TaskStore
 
 object FileTaskStore extends TaskStore:
   private val logger = NebflowLogger.forName("nebflow.taskstore")
 
-  /** `def` on purpose: PathUtil.dataRoot may be swapped after this object's
-    * first use (tests inject a temp root) — a `val` would freeze the path at
-    * class-init time (same trap as UsageTracker, 2026-08-14). */
+  /**
+   * `def` on purpose: PathUtil.dataRoot may be swapped after this object's
+   * first use (tests inject a temp root) — a `val` would freeze the path at
+   * class-init time (same trap as UsageTracker, 2026-08-14).
+   */
   private def root: os.Path = PathUtil.dataRoot / "tasks"
   private val hwmFile = ".highwatermark"
 
@@ -103,12 +112,13 @@ object FileTaskStore extends TaskStore:
   // the product path never needs it (see evaluation report to Manager).
   private val hwmRef: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
 
-  /** Map a scope key to its task directory:
-    *   - "team:<name>"  → tasks/teams/<name>/   (team domain)
-    *   - anything else  → tasks/<sessionId>/    (session domain, legacy path)
-    * Throws IllegalArgumentException on an unsafe team name (defense against
-    * path traversal — callers validate first and surface a ToolError).
-    */
+  /**
+   * Map a scope key to its task directory:
+   *   - "team:<name>"  → tasks/teams/<name>/   (team domain)
+   *   - anything else  → tasks/<sessionId>/    (session domain, legacy path)
+   * Throws IllegalArgumentException on an unsafe team name (defense against
+   * path traversal — callers validate first and surface a ToolError).
+   */
   private def scopePath(scopeKey: String): os.Path =
     if TaskStore.isTeamScopeKey(scopeKey) then
       val name = scopeKey.stripPrefix("team:")
@@ -183,8 +193,7 @@ object FileTaskStore extends TaskStore:
     // Team-domain tasks stamp scope/teamId from the scope key (方案 A — the
     // scope key IS the source of truth; the store API stays unchanged).
     val (scope, teamId) =
-      if TaskStore.isTeamScopeKey(sessionId) then
-        ("team", Some(sessionId.stripPrefix("team:")))
+      if TaskStore.isTeamScopeKey(sessionId) then ("team", Some(sessionId.stripPrefix("team:")))
       else ("session", None)
     for
       _ <- ensureDir(sessionId)
@@ -312,10 +321,11 @@ object FileTaskStore extends TaskStore:
           // Member attribution (2026-08-30): explicit reassignment — a
           // non-blank value sets it, blank string clears it, absent = keep.
           val newAssignee = updates.assignee match
-            case Some(raw) => raw.trim match
-              case ""    => None
-              case value => Some(value)
-            case None      => existing.assignee
+            case Some(raw) =>
+              raw.trim match
+                case "" => None
+                case value => Some(value)
+            case None => existing.assignee
 
           // C2 event stream: append one event per kind of change, cap at MaxEvents
           val evBuilder = List.newBuilder[TaskEvent]
@@ -330,7 +340,11 @@ object FileTaskStore extends TaskStore:
           if updates.description.exists(_ != existing.description) then
             evBuilder += TaskEvent("description", Some(s"was: ${existing.description.take(120)}"), Some(now))
           if newBlocks != existing.blocks || newBlockedBy != existing.blockedBy then
-            evBuilder += TaskEvent("dependency", Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"), Some(now))
+            evBuilder += TaskEvent(
+              "dependency",
+              Some(s"blocks=${newBlocks.mkString(",")} blockedBy=${newBlockedBy.mkString(",")}"),
+              Some(now)
+            )
           if updates.note.exists(_.nonEmpty) then
             evBuilder += TaskEvent("note", updates.note.map(_.take(120)), Some(now))
           if newAssignee != existing.assignee then
@@ -344,7 +358,7 @@ object FileTaskStore extends TaskStore:
           // C2 notes: append-only
           val newNotes = updates.note.filter(_.nonEmpty) match
             case Some(content) => existing.notes :+ TaskNote(content, updates.noteLinks.getOrElse(Nil), Some(now))
-            case None          => existing.notes
+            case None => existing.notes
 
           val updated = existing.copy(
             subject = updates.subject.getOrElse(existing.subject),
@@ -376,22 +390,24 @@ object FileTaskStore extends TaskStore:
 
   /** Active = pending + in_progress（四态世界无 needs_confirmation）。 */
   def listActive(sessionId: String): IO[List[Task]] =
-    list(sessionId).map(_.filter(t =>
-      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress
-    ))
+    list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
 
-  /** Visible = the panel-visible set = pending + in_progress ONLY (任务工具重做
-    * 2026-08-30: 「列表只显 pending+in_progress」——completed/failed vanish from
-    * the panel the moment they finish; the 6h/2d TTL governs DISK purge, not
-    * visibility). Kept distinct from [[listActive]] only for the caller's
-    * intent-readability. */
+  /**
+   * Visible = the panel-visible set = pending + in_progress ONLY (任务工具重做
+   * 2026-08-30: 「列表只显 pending+in_progress」——completed/failed vanish from
+   * the panel the moment they finish; the 6h/2d TTL governs DISK purge, not
+   * visibility). Kept distinct from [[listActive]] only for the caller's
+   * intent-readability.
+   */
   def listVisible(sessionId: String): IO[List[Task]] = listActive(sessionId)
 
-  /** todo-panel §7.1: mark a task completed and record WHO completed it
-    * ("user" = user clicked the circle; "agent" = agent flow). Mirrors
-    * update()'s terminal-state bookkeeping (completedAt + status event).
-    * pending/in_progress -> completed are legal; re-completing a terminal
-    * task raises IllegalStateException (caller turns it into taskError). */
+  /**
+   * todo-panel §7.1: mark a task completed and record WHO completed it
+   * ("user" = user clicked the circle; "agent" = agent flow). Mirrors
+   * update()'s terminal-state bookkeeping (completedAt + status event).
+   * pending/in_progress -> completed are legal; re-completing a terminal
+   * task raises IllegalStateException (caller turns it into taskError).
+   */
   def complete(sessionId: String, taskId: String, by: String): IO[Option[Task]] =
     get(sessionId, taskId).flatMap {
       case None => IO.pure(None)
@@ -422,8 +438,10 @@ object FileTaskStore extends TaskStore:
           writeTask(sessionId, updated).as(Some(updated))
     }
 
-  /** Max rendered subject length (chars) — reminder-refactor 2026-08-20:
-    * full subjects stay available via the TaskList tool. */
+  /**
+   * Max rendered subject length (chars) — reminder-refactor 2026-08-20:
+   * full subjects stay available via the TaskList tool.
+   */
   private val MaxSubjectChars = 30
 
   /** Max pending lines rendered before folding to a count (2026-08-20 ruling). */
@@ -490,25 +508,28 @@ object FileTaskStore extends TaskStore:
           else renderTask(t, depth)
 
         roots.foreach(r => tryRender(r, 0))
-        if foldedCount > 0 then
-          sb.append(s"… +$foldedCount more pending (TaskList shows all)\n")
+        if foldedCount > 0 then sb.append(s"… +$foldedCount more pending (TaskList shows all)\n")
         sb.toString
       end if
     }
 
   // ---- TTL 物理清理（任务工具重做 2026-08-30）----
 
-  /** Physically delete expired task files in one scope. Read-path visibility
-    * already hides them (listVisible); this is the disk-hygiene half. */
+  /**
+   * Physically delete expired task files in one scope. Read-path visibility
+   * already hides them (listVisible); this is the disk-hygiene half.
+   */
   def purgeExpired(scopeKey: String): IO[Int] =
     list(scopeKey).flatMap { tasks =>
       val expired = tasks.filter(TaskStore.isExpired(_))
       expired.traverse_(t => delete(scopeKey, t.id)).as(expired.size)
     }
 
-  /** Startup sweep across every scope directory on disk (session + team).
-    * Called once at gateway boot — the persistence half of the TTL contract
-    * (重启后扫描磁盘数据仍生效). Best-effort: never blocks startup. */
+  /**
+   * Startup sweep across every scope directory on disk (session + team).
+   * Called once at gateway boot — the persistence half of the TTL contract
+   * (重启后扫描磁盘数据仍生效). Best-effort: never blocks startup.
+   */
   def purgeAllExpired(): IO[Int] =
     IO.blocking {
       if !os.exists(root) then Nil
@@ -516,13 +537,13 @@ object FileTaskStore extends TaskStore:
         val sessionScopes =
           os.list(root).filter(p => os.isDir(p) && p.last != "teams").map(p => p.last)
         val teamScopes =
-          if os.exists(root / "teams") then
-            os.list(root / "teams").filter(os.isDir(_)).map(p => s"team:${p.last}")
+          if os.exists(root / "teams") then os.list(root / "teams").filter(os.isDir(_)).map(p => s"team:${p.last}")
           else Nil
         (sessionScopes ++ teamScopes).toList
-    }.handleErrorWith(_ => IO.pure(Nil)).flatMap { scopes =>
-      scopes.traverse(purgeExpired).map(_.sum)
-    }
+    }.handleErrorWith(_ => IO.pure(Nil))
+      .flatMap { scopes =>
+        scopes.traverse(purgeExpired).map(_.sum)
+      }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file
   def delete(sessionId: String, taskId: String): IO[Boolean] =

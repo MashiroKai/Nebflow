@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
+import nebflow.shared.PathUtil
 
 /**
  * Schedule engine v2 (2026-08-12):
@@ -84,8 +85,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
       _ <- reset()
       _ <- taskStore.addTask(ScheduledTask.create("s1", "整理记忆", later))
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = false)
-    yield
-      assert(!reminders.exists(_.category == "schedule"), "Manager/team agents must not get schedule reminders")
+    yield assert(!reminders.exists(_.category == "schedule"), "Manager/team agents must not get schedule reminders")
 
   test("collectAllIO returns Nil on non-user turns"):
     for
@@ -149,8 +149,7 @@ class ScheduleV2Spec extends CatsEffectSuite:
     for
       _ <- reset()
       reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true, injectTime = false)
-    yield
-      assert(!reminders.exists(_.category == "time"), "system-event turns within 1h must not re-inject time")
+    yield assert(!reminders.exists(_.category == "time"), "system-event turns within 1h must not re-inject time")
 
   test("collectAllIO omits reminders when values are empty (time stays)"):
     for

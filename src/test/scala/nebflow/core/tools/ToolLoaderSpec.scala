@@ -3,10 +3,10 @@ package nebflow.core.tools
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.shared.PathUtil
 
 class ToolLoaderSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-tool-loader"
@@ -237,8 +237,7 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- IO(writeToolConfig(tempRoot / "agents" / "myagent" / "tools", "agent-tool", "agent-tool", "agent-desc"))
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield
-      assert(!map.contains("agent-tool"), "agent-dir tool must NOT be registered (per-agent layer retired)")
+    yield assert(!map.contains("agent-tool"), "agent-dir tool must NOT be registered (per-agent layer retired)")
 
   test("nested team/flow agent tools/ subfolders are no longer scanned (retired 2026-09-06)"):
     for
@@ -259,9 +258,10 @@ class ToolLoaderSpec extends CatsEffectSuite:
       }
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield
-      assert(!map.contains("team-agent-tool") && !map.contains("flow-agent-tool"),
-        "nested agent-dir tools must NOT be registered (per-agent layer retired)")
+    yield assert(
+      !map.contains("team-agent-tool") && !map.contains("flow-agent-tool"),
+      "nested agent-dir tools must NOT be registered (per-agent layer retired)"
+    )
 
   test("conflict priority: team scope > agent dir (agent dir retired, team > global)"):
     for
@@ -273,7 +273,11 @@ class ToolLoaderSpec extends CatsEffectSuite:
       }
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield assertEquals(map("dup").description, "team-desc", "Team scope tool should override global (agent-dir layer retired)")
+    yield assertEquals(
+      map("dup").description,
+      "team-desc",
+      "Team scope tool should override global (agent-dir layer retired)"
+    )
 
   test("agent-dir $TOOL_DIR tools are no longer loaded (retired 2026-09-06)"):
     for
@@ -281,9 +285,7 @@ class ToolLoaderSpec extends CatsEffectSuite:
       agentTools = tempRoot / "agents" / "myagent" / "tools"
       _ <- IO(writeToolConfig(agentTools, "deploy", "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
-    yield
-      assert(loaded.forall(_._1.name != "deploy"),
-        "agent-dir tool must NOT be loaded (per-agent layer retired)")
+    yield assert(loaded.forall(_._1.name != "deploy"), "agent-dir tool must NOT be loaded (per-agent layer retired)")
 
   test("global tools still work with $TOOL_DIR replacement"):
     for
@@ -374,7 +376,8 @@ class ToolLoaderSpec extends CatsEffectSuite:
       agentTools = tempRoot / "agents" / "myagent" / "tools"
       _ <- IO(writeSubDirTool(agentTools, "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
-    yield
-      assert(loaded.forall(_._1.name != "deploy"),
-        "agent-dir subdir tool must NOT be loaded (per-agent layer retired)")
+    yield assert(
+      loaded.forall(_._1.name != "deploy"),
+      "agent-dir subdir tool must NOT be loaded (per-agent layer retired)"
+    )
 end ToolLoaderSpec

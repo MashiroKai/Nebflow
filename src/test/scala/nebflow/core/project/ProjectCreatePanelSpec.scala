@@ -5,14 +5,21 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  InteractionAnswered,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest,
+  rootSessionId
+}
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectCreateTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -53,6 +60,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"panel spec dispatcher","tools":[],"category":"standalone"}"""
@@ -93,9 +101,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   /** 正常完成 LLM：一个文本 delta 即收尾（test ④ 分发器 turn 快速终态）。 */
   private class RecordingLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
@@ -129,7 +138,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -141,46 +150,50 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 桩 agent actor：只复刻 AgentActor.AskUser handler 的转发职责——收到
-    * AgentCommand.AskUser → 记录 (requestId, items)（面板载荷断言面）→ 投真实
-    * InteractionHub（pending 槽 + 根窗口渲染帧由此产生）。
-    *
-    * 🔴 S3 批 r4 返工（作者 2026-09-17 裁定 R3 帧级红因 = (甲) 测试面缺陷）：载荷
-    * **不再由本桩自造**——改经 `AskUserFrameBridge` 走生产序列化单点
-    * `AgentActor.buildAskUserJson`（本桩自此只保留转发职责）。原桩硬写
-    * `question`/`options`/`allowOther` 三键 ⇒ 结构性不含 `dirPicker`/`freeInput`，
-    * 帧级断言实际所检 = 测试自造字面量（缺陷本体）。改后帧级断言所检 = 真 `AskItem`
-    * 序列化输出 ⇒ 生产发射面改动可使该断言转红（红锚可分离）。 */
+  /**
+   * 桩 agent actor：只复刻 AgentActor.AskUser handler 的转发职责——收到
+   * AgentCommand.AskUser → 记录 (requestId, items)（面板载荷断言面）→ 投真实
+   * InteractionHub（pending 槽 + 根窗口渲染帧由此产生）。
+   *
+   * 🔴 S3 批 r4 返工（作者 2026-09-17 裁定 R3 帧级红因 = (甲) 测试面缺陷）：载荷
+   * **不再由本桩自造**——改经 `AskUserFrameBridge` 走生产序列化单点
+   * `AgentActor.buildAskUserJson`（本桩自此只保留转发职责）。原桩硬写
+   * `question`/`options`/`allowOther` 三键 ⇒ 结构性不含 `dirPicker`/`freeInput`，
+   * 帧级断言实际所检 = 测试自造字面量（缺陷本体）。改后帧级断言所检 = 真 `AskItem`
+   * 序列化输出 ⇒ 生产发射面改动可使该断言转红（红锚可分离）。
+   */
   private def panelAgentActor(
-      hub: ActorRef[InteractionHubCommand],
-      rootSid: String,
-      gotAsk: Ref[IO, Option[(String, List[nebflow.core.AskItem])]]
+    hub: ActorRef[InteractionHubCommand],
+    rootSid: String,
+    gotAsk: Ref[IO, Option[(String, List[nebflow.shared.AskItem])]]
   )(system: ActorSystem): IO[ActorRef[AgentCommand]] =
     lazy val behavior: Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] {
       case AgentCommand.AskUser(requestId, items, replyToOpt, _askMode) =>
-          gotAsk.set(Some((requestId, items))) *>
-            (hub ! InteractionHubCommand.Request(
-              InteractionRequest(
-                requestId = requestId,
-                kind = InteractionKind.AskUser,
-                // 帧载荷 = 生产序列化单点产出（本桩不自造 item 字面量）
-                payload = AskUserFrameBridge.payload(rootSid, items),
-                reply = InteractionReply.AskUserReply(replyToOpt),
-                rootSessionId = rootSid,
-                sourceAgent = "Nebula",
-                sourceSession = rootSid
-              )
-            )).void.as(behavior)
-        case _ => IO.pure(behavior)
-      }
+        gotAsk.set(Some((requestId, items))) *>
+          (hub ! InteractionHubCommand.Request(
+            InteractionRequest(
+              requestId = requestId,
+              kind = InteractionKind.AskUser,
+              // 帧载荷 = 生产序列化单点产出（本桩不自造 item 字面量）
+              payload = AskUserFrameBridge.payload(rootSid, items),
+              reply = InteractionReply.AskUserReply(replyToOpt),
+              rootSessionId = rootSid,
+              sourceAgent = "Nebula",
+              sourceSession = rootSid
+            )
+          )).void.as(behavior)
+      case _ => IO.pure(behavior)
+    }
     system.spawn(behavior, s"panel-agent-${scala.util.Random.nextInt(100000)}")
 
+  end panelAgentActor
+
   private def toolCtx(
-      ws: os.Path,
-      system: ActorSystem,
-      res: SharedResources,
-      agentRef: Option[ActorRef[AgentCommand]] = None,
-      wsSend: Option[Json => IO[Unit]] = None
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    agentRef: Option[ActorRef[AgentCommand]] = None,
+    wsSend: Option[Json => IO[Unit]] = None
   ): ToolContext =
     ToolContext(
       projectRoot = ws.toString,
@@ -201,10 +214,13 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     os.makeDir.all(ws)
     val system = ActorSystem(s"pcp-1-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
-    val input = Json.obj(
-      "workspace" -> Json.fromString(ws.toString),
-      "description" -> Json.fromString("panel spec direct create")
-    ).asObject.get
+    val input = Json
+      .obj(
+        "workspace" -> Json.fromString(ws.toString),
+        "description" -> Json.fromString("panel spec direct create")
+      )
+      .asObject
+      .get
     for
       result <- ProjectCreateTool.call(input, toolCtx(ws, system, res))
       pd <- ProjectStore.load("ws-alpha")
@@ -253,14 +269,18 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       frames <- Ref.of[IO, List[Json]](Nil)
       hub <- system.spawn(InteractionHub(), "interaction-hub-p2")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (j: Json) => frames.update(_ :+ j))
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fib <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
-        .flatMap(r => done.complete(r).void).start
+      fib <- ProjectCreateTool
+        .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
+        .flatMap(r => done.complete(r).void)
+        .start
       // pending 证据：面板载荷已派发（items 断言面）+ 根窗口渲染帧已发出（hub 状态面）
       _ <- waitUntil(10.seconds)(gotAsk.get.map(_.isDefined))
-      _ <- waitUntil(10.seconds)(frames.get.map(_.exists(_.hcursor.downField("type").as[String].toOption.contains("askUser"))))
+      _ <- waitUntil(10.seconds)(
+        frames.get.map(_.exists(_.hcursor.downField("type").as[String].toOption.contains("askUser")))
+      )
       askOpt <- gotAsk.get
       fs <- frames.get
       // 用户取消收尾（面板不能悬挂测试）
@@ -280,7 +300,11 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       val (ridGot, items) = askOpt.getOrElse(fail("panel items must be dispatched"))
       assertEquals(ridGot, rid)
       assertEquals(items.length, 1, "exactly one question (path selection)")
-      assertEquals(items.head.options, List.empty, "no candidate options — in-app browser is the selection surface (2026-09-09；该条未被 09-17 裁定取代)")
+      assertEquals(
+        items.head.options,
+        List.empty,
+        "no candidate options — in-app browser is the selection surface (2026-09-09；该条未被 09-17 裁定取代)"
+      )
       assert(items.head.dirPicker, "workspace card must carry dirPicker=true (2026-09-05 作者裁定)")
       assert(items.head.question.contains("选择工作区"), "question must guide to the in-app browser")
       // 2026-09-17 作者裁定（S3 ②-5/②-7）：面板文案退役「~ 手输」叙述（改述「选择后即完成创建」），
@@ -291,12 +315,19 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(!items.head.freeInput, "workspace card must carry freeInput=false (2026-09-17 ②-7)")
       val askFrame = fs.find(_.hcursor.downField("type").as[String].toOption.contains("askUser")).get
       val frameItem0 = askFrame.hcursor.downField("items").as[List[Json]].toOption.get.head
-      val frameOptions = frameItem0
-        .hcursor.downField("options").as[List[Json]].toOption.get
+      val frameOptions = frameItem0.hcursor.downField("options").as[List[Json]].toOption.get
       assertEquals(frameOptions, Nil, "rendered frame must carry empty options")
       // 帧级断言（JSON 游标口径：不依赖模型新字段名 ⇒ 改前树同样可编译，红锚可分离）
-      assertEquals(frameItem0.hcursor.downField("dirPicker").as[Boolean], Right(true), "rendered frame must carry dirPicker=true")
-      assertEquals(frameItem0.hcursor.downField("freeInput").as[Boolean], Right(false), "rendered frame must carry freeInput=false (2026-09-17 ②-7)")
+      assertEquals(
+        frameItem0.hcursor.downField("dirPicker").as[Boolean],
+        Right(true),
+        "rendered frame must carry dirPicker=true"
+      )
+      assertEquals(
+        frameItem0.hcursor.downField("freeInput").as[Boolean],
+        Right(false),
+        "rendered frame must carry freeInput=false (2026-09-17 ②-7)"
+      )
       assert(askFrame.hcursor.downField("requestId").as[String].isRight, "frame must carry requestId")
     end for
   }
@@ -316,11 +347,13 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       res <- IO(minimalResources(ws))
       hub <- system.spawn(InteractionHub(), "interaction-hub-p3")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (_: Json) => IO.unit)
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fib <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
-        .flatMap(r => done.complete(r).void).start
+      fib <- ProjectCreateTool
+        .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
+        .flatMap(r => done.complete(r).void)
+        .start
       _ <- waitUntil(10.seconds)(gotAsk.get.map(_.isDefined))
       rid <- gotAsk.get.map(_.map(_._1).getOrElse(fail("requestId missing")))
       // pending 期间 agent 侧消息形态负载到达（delegate 汇报形态：无 answers 字段，
@@ -373,45 +406,57 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
     val restore: IO[Unit] = IO {
       propBefore match
         case Some(v) => System.setProperty(propKey, v)
-        case None    => System.clearProperty(propKey)
+        case None => System.clearProperty(propKey)
       ()
     }
     System.setProperty(propKey, "8000")
-    ProjectActor.ttlScanner(1.second).background.use { _ =>
-      for
-        res <- fullResources(system, new RecordingLlm)
-        frames <- Ref.of[IO, List[Json]](Nil)
-        created <- ProjectCreateTool.call(
-          Json.obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString)).asObject.get,
-          toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
-        )
-        triggered <- MailTool.call(
-          Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
-          toolCtx(ws, system, res)
-        )
-        // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
-        _ <- waitUntil(30.seconds)(frames.get.map { fs =>
-          fs.exists { j =>
-            j.hcursor.get[String]("type").toOption.contains("agentStart") &&
-            j.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))
-          }
-        })
-        // 令 3 保活判据：turn 已由录制 LLM 单 delta 收尾，此刻会话仍须**在场**
-        // （不再「完成即拆」——这正是「连续派发复用同一会话」的结构前提）。
-        heldRegistered <- res.agentRegistry.get.map(_.keys.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
-        // 窗口（8 s）到期 ⇒ TtlTick 扫描腿销毁 ⇒ 注销（链路完整收尾，无幽灵行）
-        _ <- waitUntil(30.seconds)(res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix))))
-        gone <- res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
-        _ <- ProjectRuntimeRegistry.unregister("trigger-proj")
-        _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield
-        assert(created.isRight, s"create must succeed: $created")
-        assert(triggered.isRight, s"Task must trigger: $triggered")
-        assert(triggered.toOption.get.contains("dispatcher triggered"), triggered.toOption.get)
-        assert(heldRegistered, "令 3：turn 完成后（窗口内）分发器会话必须保活，而非即时拆除")
-        assert(gone, "令 3：窗口到期后必须销毁注销（ghost-row 语义保持）")
-      end for
-    }.guarantee(restore)
+    ProjectActor
+      .ttlScanner(1.second)
+      .background
+      .use { _ =>
+        for
+          res <- fullResources(system, new RecordingLlm)
+          frames <- Ref.of[IO, List[Json]](Nil)
+          created <- ProjectCreateTool.call(
+            Json
+              .obj("name" -> Json.fromString("trigger-proj"), "workspace" -> Json.fromString(ws.toString))
+              .asObject
+              .get,
+            toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
+          )
+          triggered <- MailTool.call(
+            Json
+              .obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务"))
+              .asObject
+              .get,
+            toolCtx(ws, system, res)
+          )
+          // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
+          _ <- waitUntil(30.seconds)(frames.get.map { fs =>
+            fs.exists { j =>
+              j.hcursor.get[String]("type").toOption.contains("agentStart") &&
+              j.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))
+            }
+          })
+          // 令 3 保活判据：turn 已由录制 LLM 单 delta 收尾，此刻会话仍须**在场**
+          // （不再「完成即拆」——这正是「连续派发复用同一会话」的结构前提）。
+          heldRegistered <- res.agentRegistry.get.map(_.keys.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+          // 窗口（8 s）到期 ⇒ TtlTick 扫描腿销毁 ⇒ 注销（链路完整收尾，无幽灵行）
+          _ <- waitUntil(30.seconds)(
+            res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+          )
+          gone <- res.agentRegistry.get.map(_.keys.forall(!_.startsWith(ProjectActor.DispatcherSessionPrefix)))
+          _ <- ProjectRuntimeRegistry.unregister("trigger-proj")
+          _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+        yield
+          assert(created.isRight, s"create must succeed: $created")
+          assert(triggered.isRight, s"Task must trigger: $triggered")
+          assert(triggered.toOption.get.contains("dispatcher triggered"), triggered.toOption.get)
+          assert(heldRegistered, "令 3：turn 完成后（窗口内）分发器会话必须保活，而非即时拆除")
+          assert(gone, "令 3：窗口到期后必须销毁注销（ghost-row 语义保持）")
+        end for
+      }
+      .guarantee(restore)
   }
 
   // ============================================================
@@ -458,23 +503,31 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       before <- ProjectStore.list() // 基线（此前用例可能已建项目）
       hub <- system.spawn(InteractionHub(), "interaction-hub-p6")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (_: Json) => IO.unit)
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       // (a) 取消哨兵
       doneA <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibA <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
-        .flatMap(r => doneA.complete(r).void).start
+      fibA <- ProjectCreateTool
+        .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
+        .flatMap(r => doneA.complete(r).void)
+        .start
       _ <- waitUntil(10.seconds)(gotAsk.get.map(_.isDefined))
       ridA <- gotAsk.get.map(_.map(_._1).getOrElse(fail("rid A missing")))
       _ <- hub ! InteractionHubCommand.Answered(
-        InteractionAnswered(ridA, "nebula-root", Json.obj("answers" -> Json.arr(Json.fromString(ProjectCreateTool.CancelSentinel))))
+        InteractionAnswered(
+          ridA,
+          "nebula-root",
+          Json.obj("answers" -> Json.arr(Json.fromString(ProjectCreateTool.CancelSentinel)))
+        )
       )
       resA <- doneA.get
       // (b) 空答案（Other 输入空白即提交）
       _ <- gotAsk.set(None)
       doneB <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibB <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
-        .flatMap(r => doneB.complete(r).void).start
+      fibB <- ProjectCreateTool
+        .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
+        .flatMap(r => doneB.complete(r).void)
+        .start
       _ <- waitUntil(10.seconds)(gotAsk.get.map(_.isDefined))
       ridB <- gotAsk.get.map(_.map(_._1).getOrElse(fail("rid B missing")))
       _ <- hub ! InteractionHubCommand.Answered(
@@ -484,8 +537,10 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       // (c) 非绝对路径自由输入
       _ <- gotAsk.set(None)
       doneC <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
-      fibC <- ProjectCreateTool.call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
-        .flatMap(r => doneC.complete(r).void).start
+      fibC <- ProjectCreateTool
+        .call(Json.obj().asObject.get, toolCtx(ws, system, res, Some(agentRef)))
+        .flatMap(r => doneC.complete(r).void)
+        .start
       _ <- waitUntil(10.seconds)(gotAsk.get.map(_.isDefined))
       ridC <- gotAsk.get.map(_.map(_._1).getOrElse(fail("rid C missing")))
       _ <- hub ! InteractionHubCommand.Answered(
@@ -499,7 +554,11 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(resB.isRight && resB.toOption.get.contains("shelved"), s"empty answer → shelved message: $resB")
       assert(resC.isLeft, "relative free input must be rejected")
       assert(resC.swap.toOption.get.message.contains("absolute"), resC.swap.toOption.get.message)
-      assertEquals(after.map(_.name).toSet, before.map(_.name).toSet, "no project may be created in any of the three branches")
+      assertEquals(
+        after.map(_.name).toSet,
+        before.map(_.name).toSet,
+        "no project may be created in any of the three branches"
+      )
     end for
   }
 
@@ -582,6 +641,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(!newDir, "拒绝路径必须零写盘：projects/occ-two/ 不得出现")
       assertEquals(afterSha, beforeSha, "拒绝路径不得改动 workspace 任何件（逐件 sha256）")
       assertEquals(afterNb, beforeNb, "拒绝路径不得改动 .nebflow/ 内容集合")
+    end for
   }
 
   test("⑨ 归一化变体（尾斜杠 / 大小写差异）→ 同样被拒（占用判据与幂等判据同一归一函数）") {
@@ -608,6 +668,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(rTrailing.swap.toOption.get.message.contains("norm-one"), "尾斜杠变体报错须点名占用者")
       assert(rUpper.swap.toOption.get.message.contains("norm-one"), "大小写变体报错须点名占用者")
       assert(!d2 && !d3, "两个变体都必须零写盘（projects/<name>/ 不得出现）")
+    end for
   }
 
   test("⑩ 占用者含 archived 定义 → 同拒（保守默认「宁误拒不误建」；占用者本体零改动）") {
@@ -635,6 +696,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(!newDir, "拒绝路径零写盘")
       assertEquals(afterSha, beforeSha, "workspace 逐件 sha256 不变")
       assert(occJson.contains("\"archived\""), "占用者（归档）定义本体零改动")
+    end for
   }
 
   test("⑪ 幂等挂载路径补缺脚手架：删 AGENTS.md → 重挂恢复 + 逐件文案；既有件字节不变") {
@@ -653,7 +715,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       giAfter <- IO(sha256Of(gi))
       nbAfter <- IO(nebflowEntries(ws))
       // 新语义（作者 2026-09-18 令：「AGENTS.md 应该默认是空的，用户去写，我们只是创建」；
-      // popt W3 已把模板置空 = `NodeTools.scala:3200` `agentMdTemplate = ""`）。
+      // popt W3 已把模板置空 = `ProjectCreateTool.scala:108` `agentMdTemplate = ""`）。
       // 判据随之改为：**文件本体仍被创建**（存在）+ **内容为空**（0 字节），两者缺一即红。
       restoredExists <- IO(os.exists(ws / "AGENTS.md"))
       restoredText <- IO(if os.exists(ws / "AGENTS.md") then os.read(ws / "AGENTS.md") else "<missing>")
@@ -682,6 +744,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         "不得重复追加 .nebflow/ 行"
       )
       assertEquals(nbAfter, nbBefore, ".nebflow/ 内容集合不变")
+    end for
   }
 
   test("⑫ ④-11(b) NodeList 载荷 meta 增 workspace 权威键（既有键名/类型语义不变）") {
@@ -715,6 +778,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
         s"meta 逐键读数（键名/类型/顺序无关；updatedAt 已 mask）；载荷 meta 原文=$metaRaw"
       )
       assert(payload.hcursor.downField("nodes").as[List[Json]].isRight, "载荷 nodes 骨架不变")
+    end for
   }
 
 end ProjectCreatePanelSpec

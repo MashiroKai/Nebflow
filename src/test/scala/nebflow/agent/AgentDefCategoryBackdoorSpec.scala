@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.actor.AgentDef
 
 /**
  * agentdef-tidy 批（2026-09-11）安全回归：**收敛名无视 agent.json `category`**。
@@ -27,7 +28,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   /** 收敛名 → 机制固定集（**只引 AgentCore 常量**，零裸清单 / 零裸数字）。 */
   private val MechanismFixed: Map[String, Set[String]] = Map(
-    "Nebula" -> AgentCore.NebulaOrchestrationTools,
+    "Nebula" -> AgentCore.RootOrchestrationTools,
     "project-dispatcher" -> AgentCore.DispatcherFixedTools,
     "general" -> AgentCore.GeneralFixedTools,
     "kernel" -> AgentCore.KernelFixedTools,
@@ -35,16 +36,20 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     AgentCore.MemoryConsolidatorName -> AgentCore.KernelFixedTools
   )
 
-  /** legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
-    *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。 */
+  /**
+   * legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
+   *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。
+   */
   private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
 
-  /** team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
-    * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
-    * 零出现」只能按 team 面独有件判定，不能拿整集求交。
-    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
-    * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
-    * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。 */
+  /**
+   * team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
+   * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
+   * 零出现」只能按 team 面独有件判定，不能拿整集求交。
+   * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
+   * （NebulaOrchestrationTools）与分发器（DispatcherFixedTools）机制固定集的
+   * 正当成员，不再标志「team 面遗留件」。SubTask/TeamTask* 维持原判。
+   */
   private val LegacyTeamOnlyTools: Set[String] = Set("SubTask") ++ AgentCore.TeamTaskTools
 
   private def fixture(name: String, json: String): os.Path =
@@ -55,17 +60,22 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   private def loadFromDisk(name: String, json: String): AgentDef =
     val dir = fixture(name, json)
-    try new AgentLibrary(dir / os.up, None).loadFromDir(dir).getOrElse(
-      fail(s"fixture for $name failed to load")
-    )
+    try
+      new AgentLibrary(dir / os.up, None)
+        .loadFromDir(dir)
+        .getOrElse(
+          fail(s"fixture for $name failed to load")
+        )
     finally os.remove.all(dir / os.up)
 
   /** 收敛名 keeper：显式声明 JSON category 的后门形态。 */
   private def keeper(name: String, category: String): AgentDef =
     loadFromDisk(name, s"""{"name":"$name","description":"fixture","category":"$category","tools":[]}""")
 
-  /** order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
-    * 条件 `guardrailsOn && !isSubTaskWorker`（:281）；渲染体内层 `agentCategory == "team"`（:284）。 */
+  /**
+   * order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
+   * 条件 `guardrailsOn && !isSubTaskWorker`（:281）；渲染体内层 `agentCategory == "team"`（:284）。
+   */
   private def identitySectionOutput(defn: AgentDef, guardrailsOn: Boolean = true, isTeamLead: Boolean = false): String =
     val ctx = PromptSections.PromptContext(
       agentCategory = defn.category,

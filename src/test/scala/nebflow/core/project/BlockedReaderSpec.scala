@@ -23,7 +23,8 @@ class BlockedReaderSpec extends FunSuite:
   }
 
   test("parse: BLOCKED with JSON body embedded after prose line") {
-    val text = "BLOCKED\n我无法继续：任务缺少必要的外部条件。\n{\"category\":\"external-dependency\",\"detail\":\"等待 API key\",\"suggestion\":\"请提供凭据后重派\"}"
+    val text =
+      "BLOCKED\n我无法继续：任务缺少必要的外部条件。\n{\"category\":\"external-dependency\",\"detail\":\"等待 API key\",\"suggestion\":\"请提供凭据后重派\"}"
     val f = BlockedReader.parse(text).getOrElse(fail("expected blocked feedback"))
     assertEquals(f.category, "external-dependency")
     assertEquals(f.detail, "等待 API key")
@@ -63,7 +64,14 @@ class BlockedReaderSpec extends FunSuite:
   }
 
   test("parse: all six enum categories accepted verbatim") {
-    val cats = List("upstream-incomplete", "task-underspecified", "agent-mismatch", "external-dependency", "needs-split", "other")
+    val cats = List(
+      "upstream-incomplete",
+      "task-underspecified",
+      "agent-mismatch",
+      "external-dependency",
+      "needs-split",
+      "other"
+    )
     cats.foreach { c =>
       val text = s"""BLOCKED\n{"category":"$c","detail":"d","suggestion":"s"}"""
       assertEquals(BlockedReader.parse(text).map(_.category), Some(c), s"category $c must be accepted")
@@ -97,7 +105,10 @@ class BlockedReaderSpec extends FunSuite:
                   |{"category":"other","detail":"${"d" * 1511}","suggestion":"${"s" * 594}"}""".stripMargin
     val f = BlockedReader.parse(text).getOrElse(fail("expected blocked feedback"))
     assertEquals(f.detail.length, 301, "detail must cap at 300 chars + ellipsis (审计实测最大 1511ch)")
-    assert(f.detail.startsWith("ddd") && f.detail.endsWith("…"), s"capped detail must keep head + ellipsis, got tail: ${f.detail.takeRight(5)}")
+    assert(
+      f.detail.startsWith("ddd") && f.detail.endsWith("…"),
+      s"capped detail must keep head + ellipsis, got tail: ${f.detail.takeRight(5)}"
+    )
     assertEquals(f.suggestion.length, 151, "suggestion must cap at 150 chars + ellipsis")
   }
 
@@ -119,7 +130,8 @@ class BlockedReaderSpec extends FunSuite:
   test("render: 落库渲染串格式 [blocked:<category>] <detail> — 建议: <suggestion>") {
     assertEquals(
       BlockedReader.render(BlockedFeedback("needs-split", "任务过大", "拆为 A+B 两个节点")),
-      "[blocked:needs-split] 任务过大 — 建议: 拆为 A+B 两个节点")
+      "[blocked:needs-split] 任务过大 — 建议: 拆为 A+B 两个节点"
+    )
   }
 
 end BlockedReaderSpec

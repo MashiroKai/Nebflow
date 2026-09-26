@@ -7,14 +7,15 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, sessionId, status}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -63,16 +64,23 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
   private def hangingLlm = new nebflow.shared.LlmHandle[IO]:
     def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
-    def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+    def sendStream(
+      req: nebflow.shared.LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+    ) =
       fs2.Stream.eval(IO.never)
 
-  private def withFixture(name: String, notifySeam: Option[Ref[IO, List[String]]] = None)(body: (FlowMapStore, NodeEngine, SharedResources, ActorSystem, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
+  private def withFixture(name: String, notifySeam: Option[Ref[IO, List[String]]] = None)(
+    body: (FlowMapStore, NodeEngine, SharedResources, ActorSystem, Ref[IO, List[AgentCommand]], String) => Unit
+  ): Unit =
     val tmp = os.temp.dir(prefix = s"nodedeath-$name")
     PathUtil.setDataRoot(tmp / "data")
     // EntityLoader.agentsDir = PathUtil.dataRoot/agents —— agent 库种在 dataRoot 下
     os.makeDir.all(tmp / "data" / "agents" / "test-agent")
-    os.write.over(tmp / "data" / "agents" / "test-agent" / "agent.json",
-      """{"name":"test-agent","description":"session-death spec agent","tools":[],"category":"standalone"}""")
+    os.write.over(
+      tmp / "data" / "agents" / "test-agent" / "agent.json",
+      """{"name":"test-agent","description":"session-death spec agent","tools":[],"category":"standalone"}"""
+    )
     os.write.over(tmp / "data" / "agents" / "test-agent" / "system.md", "# test-agent\n")
     val system = ActorSystem(s"nodedeath-$name")
     try
@@ -145,30 +153,36 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       // 仍在飞」的残余窗口。
       removeTempBounded(tmp)
 
-  /** teardown 竞态治本①：确定性尾链收敛等待（**锚可观测状态，不猜时长**）。
-    *
-    * 收敛判据 = **磁盘级**（不是内存快照）：`<ws>/.nebflow/flow-map.json` 里该终态节点
-    * `notifySentAt` 已落盘。
-    *
-    *   ① 为什么是 `notifySentAt`：cancelNode 尾链顺序 =
-    *      `emitUpdated` → `FlowMapEventLog.append(cancelled)` → `cleanupPendingAsks`
-    *      → `checkBarriersNow` → `notifyTerminal(Cancelled)` → `markSent`
-    *      → `store.mutate`（重写 flow-map.json + results/<id>.md）；failNode 尾链 =
-    *      `store.mutate(failed)` → `emitWithChain` → `deliverFailed`
-    *      （→ `retryOrNotify` → `notifyTerminal(Failed)` → `markSent` → `store.mutate`）
-    *      → `checkBarriersNow`。两条链的 **markSent** 都是最后一步 store 写；其后仅剩
-    *      「可能写事件日志的 checkBarriersNow」，而本 fixture 两个节点 `out` 均为
-    *      Nebula（无下游 barrier）⇒ checkBarriersNow 零写。
-    *   ② 为什么读磁盘而不是读内存快照：`mutate` = **Ref 更新 → persistState 落盘**，
-    *      内存里可见标记时磁盘写**可能仍在飞**（实测：紧轮询抓「status 可见」时刻，
-    *      8/8 次内存 notifySentAt 尚未落库——即本用例 teardown 竞态的窗口本体）。
-    *      磁盘侧 `AtomicJson.writeSync` 为原子写 ⇒ 并发读到「旧内容」或「新内容」，
-    *      永不半截；解析失败/键缺失 = 正在被重写 ⇒ 视为未收敛并重试。
-    *   ③ 覆盖不到的形态（通知被窗口抑制 ⇒ 永不 markSent）：10s 上限 + 打印诊断行后
-    *      继续，删除由 [[removeTempBounded]] 的有限次重试兜底（不静默、不把 fixture
-    *      卫生伪装成断言失败）。
-    *
-    * **不 sleep 猜时长**：等待条件是上述可观测磁盘状态，不是时间。 */
+    end try
+
+  end withFixture
+
+  /**
+   * teardown 竞态治本①：确定性尾链收敛等待（**锚可观测状态，不猜时长**）。
+   *
+   * 收敛判据 = **磁盘级**（不是内存快照）：`<ws>/.nebflow/flow-map.json` 里该终态节点
+   * `notifySentAt` 已落盘。
+   *
+   *   ① 为什么是 `notifySentAt`：cancelNode 尾链顺序 =
+   *      `emitUpdated` → `FlowMapEventLog.append(cancelled)` → `cleanupPendingAsks`
+   *      → `checkBarriersNow` → `notifyTerminal(Cancelled)` → `markSent`
+   *      → `store.mutate`（重写 flow-map.json + results/<id>.md）；failNode 尾链 =
+   *      `store.mutate(failed)` → `emitWithChain` → `deliverFailed`
+   *      （→ `retryOrNotify` → `notifyTerminal(Failed)` → `markSent` → `store.mutate`）
+   *      → `checkBarriersNow`。两条链的 **markSent** 都是最后一步 store 写；其后仅剩
+   *      「可能写事件日志的 checkBarriersNow」，而本 fixture 两个节点 `out` 均为
+   *      Nebula（无下游 barrier）⇒ checkBarriersNow 零写。
+   *   ② 为什么读磁盘而不是读内存快照：`mutate` = **Ref 更新 → persistState 落盘**，
+   *      内存里可见标记时磁盘写**可能仍在飞**（实测：紧轮询抓「status 可见」时刻，
+   *      8/8 次内存 notifySentAt 尚未落库——即本用例 teardown 竞态的窗口本体）。
+   *      磁盘侧 `AtomicJson.writeSync` 为原子写 ⇒ 并发读到「旧内容」或「新内容」，
+   *      永不半截；解析失败/键缺失 = 正在被重写 ⇒ 视为未收敛并重试。
+   *   ③ 覆盖不到的形态（通知被窗口抑制 ⇒ 永不 markSent）：10s 上限 + 打印诊断行后
+   *      继续，删除由 [[removeTempBounded]] 的有限次重试兜底（不静默、不把 fixture
+   *      卫生伪装成断言失败）。
+   *
+   * **不 sleep 猜时长**：等待条件是上述可观测磁盘状态，不是时间。
+   */
   private def awaitTerminalTailDrained(store: FlowMapStore, ws: os.Path): IO[Unit] =
     val stateFile = ws / ".nebflow" / "flow-map.json"
     val startedAt = System.currentTimeMillis()
@@ -176,7 +190,9 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       store.snapshot.map(_.nodes.values.filter(n => NodeLifecycle.Terminal.contains(n.status)).map(_.id).toList)
     def diskHasNotifyStamp(id: String): Boolean =
       try
-        io.circe.parser.parse(os.read(stateFile)).toOption
+        io.circe.parser
+          .parse(os.read(stateFile))
+          .toOption
           .flatMap(_.hcursor.downField("nodes").downField(id).get[Option[Long]]("notifySentAt").toOption.flatten)
           .exists(_ > 0L)
       catch case _: Throwable => false // 正在被原子重写/文件未建 → 未收敛，重试
@@ -185,18 +201,26 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       converged.flatMap {
         case true =>
           if waited then
-            IO.println(s"[spec] awaitTerminalTailDrained: 尾链磁盘写在 status 可见后 " +
-              s"+${System.currentTimeMillis() - startedAt}ms 才收敛（本等待即为覆盖该窗口）")
+            IO.println(
+              s"[spec] awaitTerminalTailDrained: 尾链磁盘写在 status 可见后 " +
+                s"+${System.currentTimeMillis() - startedAt}ms 才收敛（本等待即为覆盖该窗口）"
+            )
           else IO.unit
         case false if System.currentTimeMillis() >= deadline =>
-          IO.println("[spec] awaitTerminalTailDrained: 10s 内未见尾链磁盘收敛信号 —— " +
-            "交由 removeTempBounded 的有限次重试兜底（teardown 卫生，非断言）")
+          IO.println(
+            "[spec] awaitTerminalTailDrained: 10s 内未见尾链磁盘收敛信号 —— " +
+              "交由 removeTempBounded 的有限次重试兜底（teardown 卫生，非断言）"
+          )
         case false => IO.sleep(50.millis) >> go(deadline, waited = true)
       }
     go(startedAt + 10_000L, waited = false)
 
-  /** teardown 竞态治本②：有限次删除重试——仅对 `DirectoryNotEmptyException`
-    * 重试（真实错误照旧上抛，不掩盖）。 */
+  end awaitTerminalTailDrained
+
+  /**
+   * teardown 竞态治本②：有限次删除重试——仅对 `DirectoryNotEmptyException`
+   * 重试（真实错误照旧上抛，不掩盖）。
+   */
   private def removeTempBounded(tmp: os.Path, attempts: Int = 3): Unit =
     def go(n: Int): Unit =
       try os.remove.all(tmp)
@@ -213,9 +237,21 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
     b
 
   private def seedRunningCandidate(store: FlowMapStore, id: String, name: String, task: String): IO[Unit] =
-    store.mutate(s => s.copy(nodes = s.nodes + (id -> NodeDef(
-      id = id, name = name, agent = "test-agent", task = Some(task),
-      out = List(OutEdge.nebula), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis())))).void
+    store
+      .mutate(s =>
+        s.copy(nodes =
+          s.nodes + (id -> NodeDef(
+            id = id,
+            name = name,
+            agent = "test-agent",
+            task = Some(task),
+            out = List(OutEdge.root),
+            status = NodeLifecycle.Wiring,
+            createdAt = System.currentTimeMillis()
+          ))
+        )
+      )
+      .void
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] = cond.flatMap {
@@ -284,19 +320,44 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
     }
   }
 
-  test("R5-方案4 INTEGRATION (real engine + real bridge): the L3 bridge cancel (deferDetach + deferNotify) holds the node with ZERO outward flow; the resume leg fails with 'no readable transcript' and the re-judge lands as failed with exactly ONE failed notification") {
+  test(
+    "R5-方案4 INTEGRATION (real engine + real bridge): the L3 bridge cancel (deferDetach + deferNotify) holds the node with ZERO outward flow; the resume leg fails with 'no readable transcript' and the re-judge lands as failed with exactly ONE failed notification"
+  ) {
     val triggered = Ref.unsafe[IO, List[String]](Nil)
     withFixture("r5-l3", notifySeam = Some(triggered)) { (store, engine, resources, system, recorded, rootSid) =>
       val io = for
         // 上游节点（将被 L3 取消）+ 下游 Pending（D5 停等观察面）
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-l3" -> NodeDef(
-          id = "n-l3", name = "node-l3", agent = "test-agent", task = Some("long running task that will never finish"),
-          out = List(OutEdge("n-l3d")), status = NodeLifecycle.Wiring,
-          createdAt = System.currentTimeMillis())))).void
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-l3d" -> NodeDef(
-          id = "n-l3d", name = "node-l3-downstream", agent = "test-agent", task = Some("downstream"),
-          in = List("n-l3"), out = List(OutEdge.nebula), status = NodeLifecycle.Pending,
-          createdAt = System.currentTimeMillis())))).void
+        _ <- store
+          .mutate(s =>
+            s.copy(nodes =
+              s.nodes + ("n-l3" -> NodeDef(
+                id = "n-l3",
+                name = "node-l3",
+                agent = "test-agent",
+                task = Some("long running task that will never finish"),
+                out = List(OutEdge("n-l3d")),
+                status = NodeLifecycle.Wiring,
+                createdAt = System.currentTimeMillis()
+              ))
+            )
+          )
+          .void
+        _ <- store
+          .mutate(s =>
+            s.copy(nodes =
+              s.nodes + ("n-l3d" -> NodeDef(
+                id = "n-l3d",
+                name = "node-l3-downstream",
+                agent = "test-agent",
+                task = Some("downstream"),
+                in = List("n-l3"),
+                out = List(OutEdge.root),
+                status = NodeLifecycle.Pending,
+                createdAt = System.currentTimeMillis()
+              ))
+            )
+          )
+          .void
         _ <- engine.startNode("n-l3").start
         _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(_.status == NodeLifecycle.Running)))
         _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isDefined))
@@ -311,8 +372,9 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         // 而回流占位（holdTerminalNotify）在取消尾链**末尾**（emit → 审计事件 → cleanupPendingAsks
         // → checkBarriersNow → 占位）——只等 status 会采样到「尾链未走完 ⇒ 无占位」的假象
         // （实测：status 可见后 ~200ms 才见 barrier-blocked 与占位，见 impl-r3/23_r3_ddspec_postfix.log）。
-        _ <- waitUntil(30.seconds)(store.getNode("n-l3").map(_.exists(n =>
-          n.status == NodeLifecycle.Cancelled && n.notifySentAt.isDefined)))
+        _ <- waitUntil(30.seconds)(
+          store.getNode("n-l3").map(_.exists(n => n.status == NodeLifecycle.Cancelled && n.notifySentAt.isDefined))
+        )
         held <- store.getNode("n-l3").map(_.get)
         fires0 <- triggered.get
         // resume 腿：本 fixture 的挂死会话无 transcript ⇒ 引擎侧 "no readable transcript" ⇒ None。
@@ -335,12 +397,20 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       val (held, fires0, returnedInTime, resumed, judged, down, fires1, sid) = io.unsafeRunSync()
       // ① L3 中间态：Cancelled + 回流占位（deferNotify）——**对外零回流**（既不 cancelled 也不 failed）
       assertEquals(clue(held.status), NodeLifecycle.Cancelled, "the L3 bridge cancel must land as cancelled")
-      assert(clue(held.result).exists(_.contains("source=engine")), s"R2: the cancel reason must be recorded: ${held.result}")
-      assert(clue(held.notifySentAt).isDefined, "the L3 intermediate state must hold the notify marker (deferred flow-back)")
+      assert(
+        clue(held.result).exists(_.contains("source=engine")),
+        s"R2: the cancel reason must be recorded: ${held.result}"
+      )
+      assert(
+        clue(held.notifySentAt).isDefined,
+        "the L3 intermediate state must hold the notify marker (deferred flow-back)"
+      )
       assertEquals(clue(fires0), Nil, "the L3 intermediate Cancelled state must produce ZERO outward flow")
       // ② resume 失败形态 = no readable transcript（与隔离实例 e2e 同一条出口）
-      assert(clue(returnedInTime),
-        "hardResumeNode must RETURN within the 30s bound — a timeout means the resume leg hangs (unbounded await on the resumed turn)")
+      assert(
+        clue(returnedInTime),
+        "hardResumeNode must RETURN within the 30s bound — a timeout means the resume leg hangs (unbounded await on the resumed turn)"
+      )
       assertEquals(clue(resumed), None, "resume must fail (the hanging session left no readable transcript)")
       // ③ 改判 failed：状态 / 原因 / 边保留 / D5 停等 / 恰好一条 failed 回流
       assertEquals(clue(judged.status), NodeLifecycle.Failed, "the L3 resume failure must re-judge the node as failed")
@@ -352,7 +422,10 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       assertEquals(clue(fires1).size, 1, s"exactly one dispatcher notification expected, got ${fires1.size}")
       assert(clue(fires1.head).contains("reason=failed"), s"failed wording expected: ${fires1.head.take(200)}")
       assert(clue(fires1.head).contains("L3 hard-recovery resume failed"), "the notification must carry the L3 reason")
-      assert(!clue(fires1.head).contains("已被**取消**"), "the cancelled notification variant must NEVER go out on the L3 leg")
+      assert(
+        !clue(fires1.head).contains("已被**取消**"),
+        "the cancelled notification variant must NEVER go out on the L3 leg"
+      )
     }
   }
 
@@ -368,15 +441,19 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
         rec = rec0.getOrElse(fail("node session must exist"))
         sup = rec.supervisorRef.getOrElse(fail("bridge supervisorRef must be wired"))
         // A1 恢复锚先就位（生产链里 transcript 在判 stuck 之前已由 2s 去抖写出）
-        _ <- resources.sessionStore.saveMessagesForSession(rec.sessionId,
-          List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("resume from breakpoint"))))
+        _ <- resources.sessionStore.saveMessagesForSession(
+          rec.sessionId,
+          List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("resume from breakpoint")))
+        )
         // 挂起腿 = **生产形态**（`NodeEngine.suspendNode` 逐字同源）：带 `(node-suspend` 哨兵
         // 的 `AgentEvent.Cancelled`。⚠ 旧形态（`(L3 hard-recovery:` 文本）已随 R-1=B 退役——
         // 恢复动作改在终态**之前**，watcher 不再产生「先 cancelled 再救援」的中间态；
         // `NodeEngine:1703` 的 `deferDetach/deferNotify` 分支因此无生产调用方（失败腿用例
         // 仍以旧形态覆盖该分支的占位归还，见上一个用例）。
-        _ <- (sup ! AgentEvent.Cancelled(rec.sessionId,
-          s"${NodeEngine.SuspendReasonPrefix}): stuck 1500s (agent-stale)")).void
+        _ <- (sup ! AgentEvent.Cancelled(
+          rec.sessionId,
+          s"${NodeEngine.SuspendReasonPrefix}): stuck 1500s (agent-stale)"
+        )).void
         // 确定性等挂起腿的**可观测写点**：三表清理 = 会话从 agentRegistry 摘除（不猜时长）
         _ <- waitUntil(30.seconds)(nodeSession(resources).map(_.isEmpty))
         suspended <- store.getNode("n-l3sus").map(_.get)
@@ -394,16 +471,27 @@ class NodeSessionDeathFinalizeSpec extends FunSuite:
       yield (suspended, fires0, revived, fires)
       val (suspended, fires0, revived, fires) = io.unsafeRunSync()
       // ① 挂起腿：**不终态化**（节点留 Running）+ **不占回流位**（notifySentAt 为空）
-      assertEquals(clue(suspended.status), NodeLifecycle.Running,
-        "R-1=B: the suspend leg must NOT finalize the node — it never enters Cancelled on this path")
-      assertEquals(clue(suspended.notifySentAt), None,
-        "the suspend leg places NO notify hold — R-1=B removed the Cancelled intermediate state, so there is no marker to hand back")
+      assertEquals(
+        clue(suspended.status),
+        NodeLifecycle.Running,
+        "R-1=B: the suspend leg must NOT finalize the node — it never enters Cancelled on this path"
+      )
+      assertEquals(
+        clue(suspended.notifySentAt),
+        None,
+        "the suspend leg places NO notify hold — R-1=B removed the Cancelled intermediate state, so there is no marker to hand back"
+      )
       assertEquals(clue(fires0), Nil, "the suspend leg must emit ZERO outward flow")
       // ② resume 成功（新会话重新登记 = CAS 之后的 startNode 已跑）：节点复活且**仍未被标记为已通知**
-      assert(clue(revived.status) == NodeLifecycle.Pending || clue(revived.status) == NodeLifecycle.Running,
-        s"the node must be revived into a live state (CAS writes Pending; the resumed run flips it to Running), got ${clue(revived.status)}")
-      assertEquals(clue(revived.notifySentAt), None,
-        "the revived node must NOT be left flagged as already-notified — otherwise its real terminal state would be silenced by dedup")
+      assert(
+        clue(revived.status) == NodeLifecycle.Pending || clue(revived.status) == NodeLifecycle.Running,
+        s"the node must be revived into a live state (CAS writes Pending; the resumed run flips it to Running), got ${clue(revived.status)}"
+      )
+      assertEquals(
+        clue(revived.notifySentAt),
+        None,
+        "the revived node must NOT be left flagged as already-notified — otherwise its real terminal state would be silenced by dedup"
+      )
       assertEquals(clue(fires), Nil, "neither leg may emit an outward flow before the node's real terminal state")
     }
   }

@@ -7,15 +7,36 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord,
+  AgentStatus,
+  InteractionAnswered,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest,
+  status
+}
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk, ToolCall}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  ToolCall
+}
 
 import scala.concurrent.duration.*
 
@@ -24,7 +45,7 @@ import scala.concurrent.duration.*
  * 真实 AgentActor + 真实 InteractionHub + 真实 AskUserQuestionTool 驱动
  * AskUser pending 全生命周期，钉住「标记与解除成对，等待态绝不滞留」：
  *
- *   1. AskUser 派发 → registry 标 WaitingForUser（protocol.scala AgentStatus
+ *   1. AskUser 派发 → registry 标 WaitingForUser（AgentState.scala AgentStatus
  *      死代码首次接线；此前残留 Processing → TaskStuckWatcher 每 30s 误报，
  *      审计 20260903 当日 116 条）；
  *   2. 挂起超阈值（缩阈模拟 11min：回拨 lastActivityMs）→ scan 零动作——
@@ -48,12 +69,16 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
 
   private val StuckThresholdMs = 10 * 60 * 1000L // 与 Defaults.StuckThresholdMs 同值
 
-  /** 首轮返回 AskUserQuestion 工具调用；第二轮阻塞在 secondGate（制造回答
-    * 后的稳定观察窗，断言「恢复 Processing」不被 turn 秒完淹没），放行后
-    * 文本收尾。 */
+  /**
+   * 首轮返回 AskUserQuestion 工具调用；第二轮阻塞在 secondGate（制造回答
+   * 后的稳定观察窗，断言「恢复 Processing」不被 turn 秒完淹没），放行后
+   * 文本收尾。
+   */
   private class AskLlm(requests: Ref[IO, List[LlmRequest]], secondGate: Deferred[IO, Unit]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -63,8 +88,11 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
           if n == 1 then
             Stream(
               StreamChunk.ToolCallChunk(
-                ToolCall("tu-1", "AskUserQuestion",
-                  JsonObject("questions" -> Json.arr(Json.obj("question" -> Json.fromString("R2 wiring check?")))))
+                ToolCall(
+                  "tu-1",
+                  "AskUserQuestion",
+                  JsonObject("questions" -> Json.arr(Json.obj("question" -> Json.fromString("R2 wiring check?"))))
+                )
               ),
               StreamChunk.Done(None, None)
             )
@@ -72,6 +100,8 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
             Stream.eval(secondGate.get.void).drain ++
               Stream(StreamChunk.TextDelta("answered-done"), StreamChunk.Done(None, None))
         }
+
+  end AskLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -108,10 +138,9 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   private def waitFor[A](ref: Ref[IO, A], pred: A => Boolean, msg: String, timeoutMs: Long = 20000): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       ref.get.map(pred).flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
-          if System.currentTimeMillis() >= deadline then
-            IO.raiseError(new AssertionError(s"$msg in time"))
+          if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError(s"$msg in time"))
           else IO.sleep(100.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeoutMs)
@@ -122,8 +151,10 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       Behaviors.receiveMessage[AgentCommand](cmd => sink.update(_ :+ cmd).as(loop))
     loop
 
-  /** 场景装配：hub + agent（Delegate 形态，有 parentRef——审计破坏性链的
-    * 主角）+ 首轮 AskUser 工具调用派发。返回观察点句柄。 */
+  /**
+   * 场景装配：hub + agent（Delegate 形态，有 parentRef——审计破坏性链的
+   * 主角）+ 首轮 AskUser 工具调用派发。返回观察点句柄。
+   */
   private case class Fixture(
     system: ActorSystem,
     resources: SharedResources,
@@ -153,7 +184,12 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       hub <- system.spawn(InteractionHub(), s"hub-$name")
       _ <- resources.interactionHubRef.set(Some(hub))
       _ <- hub ! InteractionHubCommand.RegisterRoot("r2-wiring-sid", (j: Json) => wsEvents.update(_ :+ j))
-      def_ = AgentDef(name = "Worker", description = "r2 wiring fixture", tools = List("AskUserQuestion"), systemPrompt = "")
+      def_ = AgentDef(
+        name = "Worker",
+        description = "r2 wiring fixture",
+        tools = List("AskUserQuestion"),
+        systemPrompt = ""
+      )
       parentSink <- IO.ref(List.empty[AgentCommand])
       parentRef <- system.spawn(mkRecordingActor(parentSink), s"parent-$name")
       actor <- system.spawn(
@@ -170,22 +206,33 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
         s"agent-$name"
       )
       now <- IO(System.currentTimeMillis())
-      _ <- resources.agentRegistry.update(_ + ("r2-wiring-sid" -> AgentRecord(
-        sessionId = "r2-wiring-sid",
-        ref = actor,
-        kind = AgentKind.Delegate,
-        rootSessionId = "r2-wiring-sid",
-        parentRef = Some(parentRef),
-        startedAt = now,
-        status = AgentStatus.Processing,
-        lastActivityMs = now
-      )))
+      _ <- resources.agentRegistry.update(
+        _ + ("r2-wiring-sid" -> AgentRecord(
+          sessionId = "r2-wiring-sid",
+          ref = actor,
+          kind = AgentKind.Delegate,
+          rootSessionId = "r2-wiring-sid",
+          parentRef = Some(parentRef),
+          startedAt = now,
+          status = AgentStatus.Processing,
+          lastActivityMs = now
+        ))
+      )
       _ <- actor ! AgentCommand.UserInput("ask me", None, Some(s"cmid-$name"))
-    yield Fixture(system, resources, hub, actor, "r2-wiring-sid", wsEvents, requests, secondGate,
+    yield Fixture(
+      system,
+      resources,
+      hub,
+      actor,
+      "r2-wiring-sid",
+      wsEvents,
+      requests,
+      secondGate,
       cleanup = IO {
         nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
         PathUtil.setDataRoot(prevRoot)
-      } *> system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void)
+      } *> system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void
+    )
     try program.unsafeRunSync()
     catch
       case e: Throwable =>
@@ -195,18 +242,20 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
         os.remove.all(tmp)
         throw e
 
+  end setup
+
   /** 缩阈模拟「等待 11min+」：把活动戳回拨到阈值之外。 */
   private def backdate(resources: SharedResources, sid: String, minusMs: Long): IO[Unit] =
     IO(System.currentTimeMillis()).flatMap { now =>
       resources.agentRegistry.update { m =>
         m.get(sid) match
           case Some(rec) => m.updated(sid, rec.copy(lastActivityMs = now - minusMs))
-          case None      => m
+          case None => m
       }
     }
 
   private def statusOf(resources: SharedResources, sid: String): IO[AgentStatus] =
-    resources.agentRegistry.get.map(_ (sid).status)
+    resources.agentRegistry.get.map(_(sid).status)
 
   private def taskStuckFrames(evs: List[Json]): List[Json] =
     evs.filter(j => j.hcursor.get[String]("type").toOption.contains("taskStuck"))
@@ -219,10 +268,16 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
     val f = setup("main")
     (for
       // ── 1. 派发：AskUser pending → WaitingForUser 标注 + askUser 卡渲染 ──
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser")
-      _ <- waitFor(f.wsEvents, evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
-        "askUser 卡未渲染")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
+        "AskUser 派发后 registry 未标 WaitingForUser"
+      )
+      _ <- waitFor(
+        f.wsEvents,
+        evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "askUser 卡未渲染"
+      )
 
       // ── 2. 挂起 11min+（回拨模拟）→ scan 零动作：零误报、零 Stop（验收 1）──
       _ <- backdate(f.resources, f.sid, StuckThresholdMs + 60_000)
@@ -241,19 +296,22 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       askFrame = evs.find(j => j.hcursor.get[String]("type").toOption.contains("askUser")).get
       requestId = askFrame.hcursor.get[String]("requestId").toOption.get
       _ <- f.hub ! InteractionHubCommand.Answered(
-        InteractionAnswered(requestId, f.sid, Json.obj("answers" -> Json.arr(Json.fromString("alpha")))))
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Processing),
-        "回答落地后未恢复 Processing")
+        InteractionAnswered(requestId, f.sid, Json.obj("answers" -> Json.arr(Json.fromString("alpha"))))
+      )
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.Processing),
+        "回答落地后未恢复 Processing"
+      )
       st2 <- statusOf(f.resources, f.sid)
       _ <- IO(assertEquals(st2, AgentStatus.Processing, "答案回填后必须恢复 Processing（标记解除成对）"))
       now <- IO(System.currentTimeMillis())
-      stamp <- f.resources.agentRegistry.get.map(_ (f.sid).lastActivityMs)
+      stamp <- f.resources.agentRegistry.get.map(_(f.sid).lastActivityMs)
       _ <- IO(assert(now - stamp < 10_000, s"活动戳必须随回答刷新（watcher 窗口重启），delta=${now - stamp}ms"))
 
       // ── 4. 放行第二轮 LLM → turn 完成 → Idle ──
       _ <- f.secondGate.complete(())
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
-        "turn 未完成回 Idle")
+      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Idle), "turn 未完成回 Idle")
       reqs <- f.requests.get
       _ <- IO(assertEquals(reqs.size, 2, "回答后必须续跑第二轮 LLM"))
 
@@ -262,13 +320,18 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       //    覆盖；此处 Stop 落在 idle actor 上终止其生命周期，无碍断言）──
       _ <- f.resources.agentRegistry.update { m =>
         val rec = m(f.sid)
-        m.updated(f.sid, rec.copy(status = AgentStatus.Processing, lastActivityMs = System.currentTimeMillis() - (StuckThresholdMs + 60_000)))
+        m.updated(
+          f.sid,
+          rec.copy(
+            status = AgentStatus.Processing,
+            lastActivityMs = System.currentTimeMillis() - (StuckThresholdMs + 60_000)
+          )
+        )
       }
       _ <- TaskStuckWatcher.scan(f.resources, wsHub, StuckThresholdMs)
       _ <- IO.sleep(200.millis)
       scanFrames2 <- scanWs.get
-      _ <- IO(assert(taskStuckFrames(scanFrames2).nonEmpty,
-        s"解除等待后 session 必须重新处于 watcher 覆盖下（回拨即开火）: $scanFrames2"))
+      _ <- IO(assert(taskStuckFrames(scanFrames2).nonEmpty, s"解除等待后 session 必须重新处于 watcher 覆盖下（回拨即开火）: $scanFrames2"))
     yield ()).guarantee(f.cleanup)
   }
 
@@ -279,11 +342,17 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   test("R2 闭环: pending 期间用户 Interrupt → 解除为 Idle（取消路径同步解除，真挂死兜底可达）") {
     val f = setup("cancel")
     (for
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
+        "AskUser 派发后 registry 未标 WaitingForUser"
+      )
       _ <- f.actor ! AgentCommand.Interrupt()
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
-        "Interrupt 后 registry 未回 Idle")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
+        "Interrupt 后 registry 未回 Idle"
+      )
       st <- statusOf(f.resources, f.sid)
       _ <- IO(assert(st != AgentStatus.WaitingForUser, "取消后绝不能滞留等待态"))
     yield ()).guarantee(f.cleanup)
@@ -301,10 +370,16 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
   test("#250②: pending 期间 Interrupt → hub 槽位回收 + 广播 askUserClosed(reason=turn-interrupted)，且不误伤别的 sourceSession") {
     val f = setup("interrupt-cleanup")
     (for
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
-        "AskUser 派发后 registry 未标 WaitingForUser")
-      _ <- waitFor(f.wsEvents, evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
-        "askUser 卡未渲染")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.WaitingForUser),
+        "AskUser 派发后 registry 未标 WaitingForUser"
+      )
+      _ <- waitFor(
+        f.wsEvents,
+        evs => evs.exists(j => j.hcursor.get[String]("type").toOption.contains("askUser")),
+        "askUser 卡未渲染"
+      )
       evs0 <- f.wsEvents.get
       askFrame = evs0.find(j => j.hcursor.get[String]("type").toOption.contains("askUser")).get
       requestId = askFrame.hcursor.get[String]("requestId").toOption.get
@@ -312,7 +387,9 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       bystanderGot <- IO.ref(Option.empty[List[String]])
       bystander <- f.system
         .spawn(
-          nebflow.actor.Behaviors.receiveMessage[List[String]] { a => bystanderGot.set(Some(a)).as(nebflow.actor.Behaviors.stopped) },
+          nebflow.actor.Behaviors.receiveMessage[List[String]] { a =>
+            bystanderGot.set(Some(a)).as(nebflow.actor.Behaviors.stopped)
+          },
           "bystander-sink"
         )
         .map(sink =>
@@ -331,14 +408,18 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
 
       // ── 中断 ──
       _ <- f.actor ! AgentCommand.Interrupt()
-      _ <- waitFor(f.resources.agentRegistry, m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
-        "Interrupt 后 registry 未回 Idle")
+      _ <- waitFor(
+        f.resources.agentRegistry,
+        m => m.get(f.sid).exists(_.status == AgentStatus.Idle),
+        "Interrupt 后 registry 未回 Idle"
+      )
       _ <- waitFor(
         f.wsEvents,
-        evs => evs.exists(j =>
-          j.hcursor.get[String]("type").toOption.contains("askUserClosed") &&
-            j.hcursor.get[String]("requestId").toOption.contains(requestId)
-        ),
+        evs =>
+          evs.exists(j =>
+            j.hcursor.get[String]("type").toOption.contains("askUserClosed") &&
+              j.hcursor.get[String]("requestId").toOption.contains(requestId)
+          ),
         "Interrupt 后未广播 askUserClosed（② 的槽位回收未接线）"
       )
       evs <- f.wsEvents.get
@@ -351,11 +432,13 @@ class WaitTimeoutAskUserWiringSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(closed.hcursor.get[String]("reason").toOption, Some("turn-interrupted")))
       // 槽位真的没了（不是只广播）：hub 快照里只剩旁观者
       snap <- f.hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
-      _ <- IO(assertEquals(
-        snap.map(_.hcursor.get[String]("requestId").toOption.get),
-        List("ask-bystander-00000000"),
-        "本会话的槽必须被回收，别的 sourceSession 的槽必须存活"
-      ))
+      _ <- IO(
+        assertEquals(
+          snap.map(_.hcursor.get[String]("requestId").toOption.get),
+          List("ask-bystander-00000000"),
+          "本会话的槽必须被回收，别的 sourceSession 的槽必须存活"
+        )
+      )
     yield ()).guarantee(f.cleanup)
   }
 

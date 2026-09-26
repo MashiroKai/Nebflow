@@ -8,14 +8,14 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{FlowMapStore, NodeEngine, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import fs2.Stream
 
 import scala.concurrent.duration.FiniteDuration
@@ -38,8 +38,10 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 90.seconds
 
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -81,8 +83,10 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** 一次性挂载项目 runtime（NodeAcceptanceSpec mountProject 模式；各项目独立
-    * workspace，避免 FlowMapStore.open 的 <ws>/.nebflow/flow-map.json 互相覆盖）。 */
+  /**
+   * 一次性挂载项目 runtime（NodeAcceptanceSpec mountProject 模式；各项目独立
+   * workspace，避免 FlowMapStore.open 的 <ws>/.nebflow/flow-map.json 互相覆盖）。
+   */
   private def mountProject(
     name: String,
     description: Option[String],
@@ -107,17 +111,27 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, description = description, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        description = description,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
+
+    end for
+
+  end mountProject
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(
     cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -176,7 +190,10 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
         assert(stable1.contains("# Mounted Projects"), s"root systemStable must carry the section:\n$stable1")
         assert(stable1.contains("- nebflow: Scala version"), s"mounted project w/ description present:\n$stable1")
         assert(stable1.contains("- czt-project"), s"mounted project w/o description present:\n$stable1")
-        assert(!stable1.contains("voice-recognition-test"), s"project mounted later must not be in the first systemStable:\n$stable1")
+        assert(
+          !stable1.contains("voice-recognition-test"),
+          s"project mounted later must not be in the first systemStable:\n$stable1"
+        )
         // Mid-session mount → non-lifecycle delta → projects reminder in request messages
         assert(textOf(req2).contains("Mounted projects changed"), s"expected projects reminder:\n${textOf(req2)}")
         assert(textOf(req2).contains("+ voice-recognition-test: STT"), s"expected + delta line:\n${textOf(req2)}")
@@ -187,5 +204,6 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
 
 end MountedProjectsWiringSpec

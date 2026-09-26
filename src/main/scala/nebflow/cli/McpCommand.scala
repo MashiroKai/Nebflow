@@ -3,7 +3,7 @@ package nebflow.cli
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 object McpCommand extends CliCommand:
   def name = "mcp"
@@ -48,12 +48,14 @@ object McpCommand extends CliCommand:
 
   end McpList
 
-  /** T11+A2: these four commands made no wire call at all yet reported success
-    * ("start requested" / "removed (edit nebflow.json to persist)" — a lie: no
-    * request was sent and nothing was persisted). Real start/stop wiring is a
-    * separate batch (the gateway-side behaviour of `toggleMcpServer` has no
-    * runtime evidence yet); until then the answer is honest. Read-only
-    * `mcp list` is unchanged. */
+  /**
+   * T11+A2: these four commands made no wire call at all yet reported success
+   * ("start requested" / "removed (edit nebflow.json to persist)" — a lie: no
+   * request was sent and nothing was persisted). Real start/stop wiring is a
+   * separate batch (the gateway-side behaviour of `toggleMcpServer` has no
+   * runtime evidence yet); until then the answer is honest. Read-only
+   * `mcp list` is unchanged.
+   */
   private def notImplemented(action: String, id: String): IO[CliResult] =
     IO.pure(CliResult.Error(s"MCP server '$id' $action: not implemented — use the desktop panel"))
 

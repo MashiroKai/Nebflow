@@ -4,26 +4,18 @@ import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.agent.{
-  AgentDef,
-  AgentLibrary,
-  InteractionHub,
-  InteractionHubCommand,
-  SendConfirm,
-  SharedResources,
-  SubAgentTaskStore
-}
-import nebflow.core.FileChangeTracker
+import nebflow.actor.AgentDef
+import nebflow.agent.*
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, FriendMessageTool, ToolContext, ToolError}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.tools.*
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.*
 import nebflow.neblink.FriendCodecs.given
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
 
 import scala.concurrent.duration.*
 
@@ -58,7 +50,10 @@ class GroupSendMessageSpec extends CatsEffectSuite:
        |""".stripMargin.replaceAll("\\n\\s*", "")
 
   private val SendOk: (Int, String) =
-    (201, """{"messageId":5,"conversationId":"grp-1","createdAt":1234567899,"createdAtMs":1234567899000,"existing":false}""")
+    (
+      201,
+      """{"messageId":5,"conversationId":"grp-1","createdAt":1234567899,"createdAtMs":1234567899000,"existing":false}"""
+    )
 
   /** 传输缝 stub（零网络）：记录群发请求（方法/URL/体）与群表取数。 */
   private class StubClient(
@@ -67,7 +62,7 @@ class GroupSendMessageSpec extends CatsEffectSuite:
     send: (Int, String) = SendOk
   ):
     val groupSends = scala.collection.mutable.ListBuffer.empty[(String, String, String)]
-    val gets       = scala.collection.mutable.ListBuffer.empty[String]
+    val gets = scala.collection.mutable.ListBuffer.empty[String]
 
     val client = new NeblinkClient(
       NeblinkServerConfig(url = "http://stub.local", networkId = "n1", secret = "s"),
@@ -102,6 +97,8 @@ class GroupSendMessageSpec extends CatsEffectSuite:
       client
         .login("dev-1", "TestMac", "macos", List(NeblinkEndpoint("10.0.0.5", 1, "lan")))
         .unsafeRunSync()
+
+  end StubClient
 
   private def withFs[A](
     stub: StubClient,
@@ -252,8 +249,8 @@ class GroupSendMessageSpec extends CatsEffectSuite:
       callTool(
         fs,
         JsonObject(
-          "to"          -> "group:团队".asJson,
-          "message"     -> "hi".asJson,
+          "to" -> "group:团队".asJson,
+          "message" -> "hi".asJson,
           "attachments" -> List("/tmp/a.txt").asJson
         )
       ).map { res =>
@@ -422,6 +419,7 @@ class GroupSendMessageSpec extends CatsEffectSuite:
   /** 从不被调用的 LLM（仅满足 `SharedResources` 构造）。 */
   private object DeadLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("llm not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -438,17 +436,17 @@ class GroupSendMessageSpec extends CatsEffectSuite:
   /** 真实 hub + 真实装配缝（`askConfirm = SendConfirm.production`，与 `GatewayMain` 同字面）。 */
   private def withHubFixture[A](mode: String, stub: StubClient)(use: Fixture => IO[A]): IO[A] =
     val system = nebflow.actor.ActorSystem(s"gmsgsend-${System.nanoTime()}")
-    val tmp    = os.temp.dir()
+    val tmp = os.temp.dir()
     os.makeDir.all(tmp / "data")
     val program = for
-      dispatcher    <- Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter   <- RateLimiter.create()
-      tracker       <- FileChangeTracker.create(os.pwd.toString)
-      fileLocks     <- FileLockManager.create
-      thinkingRef   <- IO.ref(ThinkingConfig())
+      dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
+      rateLimiter <- RateLimiter.create()
+      tracker <- FileChangeTracker.create(os.pwd.toString)
+      fileLocks <- FileLockManager.create
+      thinkingRef <- IO.ref(ThinkingConfig())
       modelOverrides <- IO.ref(Map.empty[String, ModelCandidate])
-      voiceMuted    <- IO.ref(false)
-      hubRef        <- IO.ref(Option.empty[nebflow.actor.ActorRef[InteractionHubCommand]])
+      voiceMuted <- IO.ref(false)
+      hubRef <- IO.ref(Option.empty[nebflow.actor.ActorRef[InteractionHubCommand]])
       resources = SharedResources(
         llm = DeadLlm,
         dispatcher = dispatcher,
@@ -471,10 +469,10 @@ class GroupSendMessageSpec extends CatsEffectSuite:
         interactionHubRef = hubRef
       )
       frames <- IO.ref(List.empty[Json])
-      hub    <- system.spawn(InteractionHub(), s"hub-${System.nanoTime()}")
-      _      <- hubRef.set(Some(hub))
-      _      <- hub ! InteractionHubCommand.RegisterRoot(RootSid, (j: Json) => frames.update(_ :+ j))
-      _      <- IO(stub.login())
+      hub <- system.spawn(InteractionHub(), s"hub-${System.nanoTime()}")
+      _ <- hubRef.set(Some(hub))
+      _ <- hub ! InteractionHubCommand.RegisterRoot(RootSid, (j: Json) => frames.update(_ :+ j))
+      _ <- IO(stub.login())
       fs = NeblinkWiring.friendService(
         IO.pure(Some(stub.client)),
         AgentMessagingConfig(mode = mode),
@@ -492,6 +490,8 @@ class GroupSendMessageSpec extends CatsEffectSuite:
     yield Fixture(fs, ctx, frames, stub, system.stopAll.attempt.void *> IO(os.remove.all(tmp)).attempt.void)
     program.flatMap(f => use(f).guarantee(f.cleanup))
 
+  end withHubFixture
+
   private def isAskUser(j: Json): Boolean =
     j.hcursor.get[String]("type").toOption.contains("askUser")
 
@@ -506,7 +506,12 @@ class GroupSendMessageSpec extends CatsEffectSuite:
             val asks = evs.filter(isAskUser)
             assertEquals(asks.size, 1, s"群发 ask 档必须出恰一张确认卡（帧面 = $evs）")
             val q = asks.head.hcursor
-              .downField("items").downArray.downField("question").as[String].toOption.getOrElse("")
+              .downField("items")
+              .downArray
+              .downField("question")
+              .as[String]
+              .toOption
+              .getOrElse("")
             assert(q.contains("团队"), s"🔴 卡面目标名必须是群名（A④）: $q")
             assert(q.contains("hi from spec"), s"卡面必须带正文预览: $q")
             assert(res.isLeft, "确认未回（超时）⇒ 必须显式失败")
@@ -514,9 +519,13 @@ class GroupSendMessageSpec extends CatsEffectSuite:
             assertEquals(stub.groupSends.size, 0, "🔴 未确认 ⇒ 零投递（禁静默直发）")
           }
       }
-    }.guarantee(IO.delay(prev.fold(System.clearProperty(SendConfirm.TimeoutProperty))(v =>
-      System.setProperty(SendConfirm.TimeoutProperty, v)
-    )))
+    }.guarantee(
+      IO.delay(
+        prev.fold(System.clearProperty(SendConfirm.TimeoutProperty))(v =>
+          System.setProperty(SendConfirm.TimeoutProperty, v)
+        )
+      )
+    )
   }
 
 end GroupSendMessageSpec

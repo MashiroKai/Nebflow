@@ -2,10 +2,9 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ReadTracker
-import nebflow.shared.*
 import nebflow.shared.given
+import nebflow.shared.{NebflowLogger, *}
 
 import java.nio.file.{Files, Paths}
 
@@ -104,8 +103,10 @@ object FullCompact:
       Right(CompactOutcome(message :: preserved, roundsKept))
   end parseResponseDetailed
 
-  /** Compatibility wrapper — discards the preservedRounds count. The actor
-    * path uses parseResponseDetailed; specs and demos use this. */
+  /**
+   * Compatibility wrapper — discards the preservedRounds count. The actor
+   * path uses parseResponseDetailed; specs and demos use this.
+   */
   def parseResponse(
     text: String,
     originalMessages: List[Message],
@@ -114,10 +115,12 @@ object FullCompact:
   ): Either[String, List[Message]] =
     parseResponseDetailed(text, originalMessages, projectRoot, recentReadPaths).map(_.messages)
 
-  /** Read back the truthful preservedRounds value from the label of the
-    * compact summary message — the label written by parseResponseDetailed is
-    * the single source of truth (kept in sync by FullCompactSpec). Used by
-    * the CompactionComplete archive path, which only sees the message list. */
+  /**
+   * Read back the truthful preservedRounds value from the label of the
+   * compact summary message — the label written by parseResponseDetailed is
+   * the single source of truth (kept in sync by FullCompactSpec). Used by
+   * the CompactionComplete archive path, which only sees the message list.
+   */
   def preservedRoundsOf(messages: List[Message]): Int =
     messages.headOption
       .flatMap(_.content.left.toOption)
@@ -129,18 +132,22 @@ object FullCompact:
   // Tail-fidelity preservation (2026-09-07 压缩摘要尾部保真)
   // ------------------------------------------------------------------
 
-  /** Remove trailing compact reminder(s) — the reminder is the summarization
-    * instruction injected by CompactService.buildCompactReminder, not
-    * conversation content. */
+  /**
+   * Remove trailing compact reminder(s) — the reminder is the summarization
+   * instruction injected by CompactService.buildCompactReminder, not
+   * conversation content.
+   */
   private def dropTrailingCompactReminder(messages: List[Message]): List[Message] =
     messages.reverse.dropWhile(CompactService.isCompactReminder).reverse
 
-  /** A round START is a user message carrying text and NO tool_result blocks:
-    * genuine user input (chat text, Mail, injected instruction). Tool-result
-    * user messages belong to the ongoing round and never start one. Cutting
-    * at a round start is orphan-safe by construction — the region head
-    * references no tool_use outside the region (the OpenAI adapter has no
-    * orphaned-tool_result guard, so this matters beyond Anthropic). */
+  /**
+   * A round START is a user message carrying text and NO tool_result blocks:
+   * genuine user input (chat text, Mail, injected instruction). Tool-result
+   * user messages belong to the ongoing round and never start one. Cutting
+   * at a round start is orphan-safe by construction — the region head
+   * references no tool_use outside the region (the OpenAI adapter has no
+   * orphaned-tool_result guard, so this matters beyond Anthropic).
+   */
   private def isRoundStart(msg: Message): Boolean =
     msg.role == MessageRole.User && !hasToolResultBlocks(msg) && {
       msg.content match
@@ -157,16 +164,18 @@ object FullCompact:
       case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.ToolResult])
       case _ => false
 
-  /** Select the preserved tail: the last `config.preservedRounds` rounds,
-    * verbatim, under two death-loop guardrails:
-    *   1. the cut must summarize at least one message (cutIdx > 0) —
-    *      preserving the entire history would make compaction a no-op;
-    *   2. the tail must fit `preservedRoundsMaxChars` — over budget, drop the
-    *      oldest candidate round and retry; a single round over budget ⇒
-    *      preserve none (fall back to pure summary).
-    * ToolResult content inside the tail is capped per result (defense in
-    * depth — Layer B usually already placeholder-ized oversized results).
-    * User text is NEVER truncated. Returns (messages, roundsKept). */
+  /**
+   * Select the preserved tail: the last `config.preservedRounds` rounds,
+   * verbatim, under two death-loop guardrails:
+   *   1. the cut must summarize at least one message (cutIdx > 0) —
+   *      preserving the entire history would make compaction a no-op;
+   *   2. the tail must fit `preservedRoundsMaxChars` — over budget, drop the
+   *      oldest candidate round and retry; a single round over budget ⇒
+   *      preserve none (fall back to pure summary).
+   * ToolResult content inside the tail is capped per result (defense in
+   * depth — Layer B usually already placeholder-ized oversized results).
+   * User text is NEVER truncated. Returns (messages, roundsKept).
+   */
   private def preservedTail(
     conversation: List[Message],
     config: CompactConfig
@@ -190,8 +199,7 @@ object FullCompact:
     msg.content match
       case Right(blocks) =>
         val capped = blocks.map {
-          case tr @ ContentBlock.ToolResult(_, content, _)
-              if content.length > config.preservedToolResultMaxChars =>
+          case tr @ ContentBlock.ToolResult(_, content, _) if content.length > config.preservedToolResultMaxChars =>
             tr.copy(
               content = content.take(config.preservedToolResultMaxChars) +
                 s"\n... [preserved tail: truncated, ${content.length - config.preservedToolResultMaxChars} more chars]"
@@ -201,8 +209,10 @@ object FullCompact:
         msg.copy(content = Right(capped))
       case _ => msg
 
-  /** Rough char estimate of a message list (mirror of CompactUtils's private
-    * estimator; images counted as ~4k chars of transport cost). */
+  /**
+   * Rough char estimate of a message list (mirror of CompactUtils's private
+   * estimator; images counted as ~4k chars of transport cost).
+   */
   private def estimateChars(messages: List[Message]): Int =
     messages.map { msg =>
       msg.content match

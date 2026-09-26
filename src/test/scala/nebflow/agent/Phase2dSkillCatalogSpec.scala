@@ -5,15 +5,15 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{sessionId, status}
 import nebflow.agent.PromptSections.PromptContext
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{FlowMapStore, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.RateLimiter
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.RateLimiter
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*
@@ -44,6 +44,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   // general 模版：声明 skills:["*"]——停注改造的对象（node 会话模版）
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"2d node template","skills":["*"]}"""
@@ -52,6 +53,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   // legacy agent：同样声明 skills:["*"]——双轨期对照（必须保留注入）
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"legacy contrast agent","skills":["*"]}"""
@@ -60,6 +62,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   // skill 库 fixture（modelInvocable：有 name + description 即可）
   os.makeDir.all(tempRoot / "skills" / "catalog-probe")
+
   os.write.over(
     tempRoot / "skills" / "catalog-probe" / "SKILL.md",
     """---
@@ -78,9 +81,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   private class RecordingLlm(capture: TrieMap[String, LlmRequest]) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO(capture.update(req.sessionId, req))).drain ++
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
@@ -97,7 +101,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
-      sessionStore = nebflow.gateway.SessionStore(tmp / "sessions", tmp / "tasks"),
+      sessionStore = nebflow.core.SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
       thinkingConfigRef = thinkingRef,
       rateLimiter = rateLimiter,
@@ -118,17 +122,21 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new nebflow.core.project.NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: io.circe.Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
         // noderpt 批 A 段（2026-09-11）：**完成门腿 2** 生产默认 **开**
-        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeEngine.scala:2948`
-        // `case None if reportGateHoldEnabled && !anchoredBlocked`）——节点交棒
-        // （桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时**不终态化**，
-        // 节点保持 Running（`NodeEngine.scala:2883-2886` 逐字）。本 spec 的主题是
+        // （`Defaults.NodeReportCompletionHold=true`；判定点 `NodeStarter.scala` 的
+        // `case None if reportGateHoldEnabled && !anchoredBlocked`——2026-09-25 H 步重钉：
+        // 随启动簇 runWithAgent 自 `NodeEngine.scala` 迁至 NodeStarter，行为保持重构）
+        // ——节点交棒（桥收到 `AgentEvent.Completed`）而**未**调 `node_report` 时
+        // **不**终态化**，节点保持 Running（`NodeStarter.scala` 桥 hold 分支
+        // `markReportPendingIfAbsent(...).as(bridge)` 逐字）。本 spec 的主题是
         // 「skill 目录停注 / wire 层工具描述」，`waitUntil(status == Completed)`
         // （`:183-184`，载体 `:158/:154`）只是取首条 `LlmRequest` 的**前置**——腿 2
         // 开着 ⇒ 该条件永不满足 ⇒ 60s 到点必假红。
@@ -137,7 +145,12 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         // 腿 2「默认开」的行为本体验由 `NodeReportReminderSpec` 覆盖。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -174,8 +187,8 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def runNodeAndCapture(
-      systemName: String,
-      agentName: String
+    systemName: String,
+    agentName: String
   ): (TrieMap[String, LlmRequest], IO[Option[LlmRequest]]) =
     val capture = TrieMap[String, LlmRequest]()
     val program =
@@ -187,18 +200,26 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         _ <- IO(os.makeDir.all(ws))
         rt <- mountProject(s"p2d-$tag", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput(s"p2d-$tag", s"n-$tag",
-          // 2026-09-05 agent 退役：节点执行统一 general，无 agent 参数可传。
-          "description" -> io.circe.Json.fromString("catalog probe"),
-          "task" -> io.circe.Json.fromString("catalog probe"),
-          "out" -> io.circe.Json.fromString("Nebula")), ctx)
+        created <- nodeEdit(
+          nodeInput(
+            s"p2d-$tag",
+            s"n-$tag",
+            // 2026-09-05 agent 退役：节点执行统一 general，无 agent 参数可传。
+            "description" -> io.circe.Json.fromString("catalog probe"),
+            "task" -> io.circe.Json.fromString("catalog probe"),
+            "out" -> io.circe.Json.fromString("Nebula")
+          ),
+          ctx
+        )
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
-        _ <- waitUntil(60.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == s"n-$tag" && n.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(60.seconds)(
+          rt.store.snapshot.map(_.nodes.values.exists(n => n.name == s"n-$tag" && n.status == NodeLifecycle.Completed))
+        )
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
         reqOpt = capture.values.headOption
       yield reqOpt
     (capture, program)
+  end runNodeAndCapture
 
   // ── D.1-12：开关与注入断言 ─────────────────────────
 
@@ -218,7 +239,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     val reqOpt = program.unsafeRunSync()
     val req = reqOpt.getOrElse(fail("no LlmRequest captured for general node"))
     val stable = req.systemStable.getOrElse(fail("systemStable missing"))
-    assert(!stable.contains("Skills live at"), s"general node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}")
+    assert(
+      !stable.contains("Skills live at"),
+      s"general node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}"
+    )
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
 
   // 2026-09-05 agent 退役：原「legacy agent 会话保留 per-agent skill 目录（双轨期
@@ -232,20 +256,29 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     val req = reqOpt.getOrElse(fail("no LlmRequest captured"))
     val tools = req.tools.getOrElse(fail("tools missing")).map(td => td.name -> td.description).toMap
     val read = tools.getOrElse("Read", fail("general node must receive Read"))
-    assert(read.contains("Live results") && read.contains("Never re-read"),
-      "Read description carries the order-410 live semantics at the wire level")
+    assert(
+      read.contains("Live results") && read.contains("Never re-read"),
+      "Read description carries the order-410 live semantics at the wire level"
+    )
     // 2026-09-10 作者裁定翻转本断言：Pop 收归 Nebula 专属——general 节点在
     // wire 层（LLM 工具面）收不到 Pop 的 schema（定义层摘除 general 固定面 +
     // NebulaExclusiveTools 剥离；执行面另有 PopTool 身份闸兜底）
-    assert(!tools.contains("Pop"),
-      s"general node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}")
+    assert(
+      !tools.contains("Pop"),
+      s"general node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}"
+    )
     // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：general 节点 wire 层重新
     // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
     // 自包含生效（删段不退化判据恢复钉死）
-    val ask = tools.getOrElse("AskUserQuestion", fail("general node must receive AskUserQuestion (2026-09-08 restored)"))
-    assert(ask.contains("When NOT to use"),
-      "AskUserQuestion description carries the order-400 guidance at the wire level")
-    assert(ask.contains("node-ask trace event") && ask.contains("project · node"),
-      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)")
+    val ask =
+      tools.getOrElse("AskUserQuestion", fail("general node must receive AskUserQuestion (2026-09-08 restored)"))
+    assert(
+      ask.contains("When NOT to use"),
+      "AskUserQuestion description carries the order-400 guidance at the wire level"
+    )
+    assert(
+      ask.contains("node-ask trace event") && ask.contains("project · node"),
+      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
+    )
 
 end Phase2dSkillCatalogSpec

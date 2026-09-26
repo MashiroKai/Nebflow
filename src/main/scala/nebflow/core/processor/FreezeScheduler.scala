@@ -2,8 +2,9 @@ package nebflow.core.processor
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.agent.{AgentCommand, AgentStatus, SharedResources}
-import nebflow.core.NebflowLogger
+import nebflow.actor.{AgentCommand, AgentStatus}
+import nebflow.agent.SharedResources
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -35,9 +36,11 @@ object FreezeScheduler:
       ) *> IO.sleep(interval) >> loop
     loop
 
-  /** 单轮扫描：向所有 Frozen 态 agent 发 CheckFreezeGate；v2 升级链（§5.2）——
-    * escalation.escalateAt 已超时的发 AgentCommand.Escalate（frozen behavior 内
-    * level+1 / 通知上一级 / 用户终态）。独立成函数便于复用与测试。 */
+  /**
+   * 单轮扫描：向所有 Frozen 态 agent 发 CheckFreezeGate；v2 升级链（§5.2）——
+   * escalation.escalateAt 已超时的发 AgentCommand.Escalate（frozen behavior 内
+   * level+1 / 通知上一级 / 用户终态）。独立成函数便于复用与测试。
+   */
   def scan(resources: SharedResources): IO[Unit] =
     resources.agentRegistry.get.flatMap { registry =>
       val now = System.currentTimeMillis()

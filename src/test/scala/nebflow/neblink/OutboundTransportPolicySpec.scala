@@ -14,16 +14,17 @@ import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters.*
 
-/** clientperf 批（2026-09-13）的验收件：
-  *
-  *   - 件 1：`NeblinkClient.sendRequestTimed` 的出网异常分桶仪表 —— 分类正确 +
-  *     真异常真落日志（不是只看代码里有这行）；
-  *   - 件 3：`OutboundHttpClients` 共享策略工厂 —— 身份/构数 + **网络层**复用
-  *     观测（共享 client 两次请求同一源端口；改前的 per-call client 两次请求
-  *     两个源端口）。
-  *
-  * 只用本机 127.0.0.1 与 JDK 自带的 com.sun.net.httpserver：零外部网络、零新进程。
-  */
+/**
+ * clientperf 批（2026-09-13）的验收件：
+ *
+ *   - 件 1：`NeblinkClient.sendRequestTimed` 的出网异常分桶仪表 —— 分类正确 +
+ *     真异常真落日志（不是只看代码里有这行）；
+ *   - 件 3：`OutboundHttpClients` 共享策略工厂 —— 身份/构数 + **网络层**复用
+ *     观测（共享 client 两次请求同一源端口；改前的 per-call client 两次请求
+ *     两个源端口）。
+ *
+ * 只用本机 127.0.0.1 与 JDK 自带的 com.sun.net.httpserver：零外部网络、零新进程。
+ */
 class OutboundTransportPolicySpec extends FunSuite:
 
   // ── 件 1：分桶分类 ────────────────────────────────────────────────────────
@@ -90,7 +91,8 @@ class OutboundTransportPolicySpec extends FunSuite:
     val bareMessage =
       try
         val bare = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
-        val req = HttpRequest.newBuilder(java.net.URI.create(url)).timeout(java.time.Duration.ofSeconds(5)).GET().build()
+        val req =
+          HttpRequest.newBuilder(java.net.URI.create(url)).timeout(java.time.Duration.ofSeconds(5)).GET().build()
         val _ = bare.send(req, HttpResponse.BodyHandlers.ofString())
         "unexpected success"
       catch case e: Exception => Option(e.getMessage).getOrElse(e.toString)
@@ -150,6 +152,7 @@ class OutboundTransportPolicySpec extends FunSuite:
     finally
       blackhole.close()
       holder.interrupt()
+    end try
   }
 
   // ── 件 3：共享工厂（策略单点 + 复用非 0） ─────────────────────────────────
@@ -209,18 +212,22 @@ class OutboundTransportPolicySpec extends FunSuite:
       closeQuietly(call2)
       val perCallPorts = seen.asScala.toList.drop(mark)
 
-      println(s"[reuse] shared-client client ports=$sharedPorts (expect 1 distinct) ; per-call client ports=$perCallPorts (expect 2 distinct)")
+      println(
+        s"[reuse] shared-client client ports=$sharedPorts (expect 1 distinct) ; per-call client ports=$perCallPorts (expect 2 distinct)"
+      )
       assertEquals(sharedPorts.size, 2)
       assertEquals(sharedPorts.distinct.size, 1, s"shared client must reuse its connection, saw $sharedPorts")
       assertEquals(perCallPorts.size, 2)
       assertEquals(perCallPorts.distinct.size, 2, s"per-call clients must NOT reuse, saw $perCallPorts")
     finally server.stop(0)
+    end try
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
   /** 触到真传输面：`sendRequestTimed` 是 protected，子类可暴露它。 */
   private class Probe(config: NeblinkServerConfig) extends NeblinkClient(config, serverPort = 1):
+
     def rawSend(method: String, url: String, body: String, timeoutMs: Long): IO[Either[String, String]] =
       sendRequestTimed(
         method,
@@ -251,9 +258,11 @@ class OutboundTransportPolicySpec extends FunSuite:
       .connectTimeout(java.time.Duration.ofSeconds(15))
       .build()
 
-  /** `HttpClient#close()/shutdownNow()` 是 JDK 21+，`-release:17` 下走反射
-    * （与 llm/interface.scala 的 invokeNoArg 同法）。只用于本 spec 自建的临时
-    * client —— 共享工厂的实例绝不关闭（同 JVM 里其它 suite 还在用）。 */
+  /**
+   * `HttpClient#close()/shutdownNow()` 是 JDK 21+，`-release:17` 下走反射
+   * （与 llm/interface.scala 的 invokeNoArg 同法）。只用于本 spec 自建的临时
+   * client —— 共享工厂的实例绝不关闭（同 JVM 里其它 suite 还在用）。
+   */
   private def closeQuietly(client: HttpClient): Unit =
     try
       classOf[HttpClient].getMethod("shutdownNow").invoke(client)

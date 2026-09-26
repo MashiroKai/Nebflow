@@ -9,13 +9,23 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.actor.{AgentCommand, AgentDef, messages, sessionId, status}
+import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, TaskListTool, ToolError}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  ContentBlock,
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -52,35 +62,40 @@ class TaskListE2ESpec extends CatsEffectSuite:
     scriptedSid: String,
     createTitle: String
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
-      Stream.eval(
-        counters.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, 0) + 1)) *>
-          requests.update(_ :+ req)
-      ).flatMap { _ =>
-        if req.sessionId == scriptedSid && req.tools.exists(_.exists(_.name == "TaskList")) then
-          scriptedTurn(counters.get.map(_.getOrElse(req.sessionId, 0)))
-        else
-          Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-      }
+      Stream
+        .eval(
+          counters.update(m => m.updated(req.sessionId, m.getOrElse(req.sessionId, 0) + 1)) *>
+            requests.update(_ :+ req)
+        )
+        .flatMap { _ =>
+          if req.sessionId == scriptedSid && req.tools.exists(_.exists(_.name == "TaskList")) then
+            scriptedTurn(counters.get.map(_.getOrElse(req.sessionId, 0)))
+          else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+        }
 
     private def scriptedTurn(n: IO[Int]): Stream[IO, StreamChunk] =
       Stream.eval(n).flatMap {
         case 1 =>
           Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-tasklist-1",
-              name = "TaskList",
-              input = JsonObject(
-                "action" -> "create".asJson,
-                "title" -> createTitle.asJson,
-                "project" -> "e2e".asJson
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-tasklist-1",
+                name = "TaskList",
+                input = JsonObject(
+                  "action" -> "create".asJson,
+                  "title" -> createTitle.asJson,
+                  "project" -> "e2e".asJson
+                )
               )
-            )),
+            ),
             StreamChunk.Done(None, None)
           )
         case _ =>
@@ -93,7 +108,7 @@ class TaskListE2ESpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -135,21 +150,29 @@ class TaskListE2ESpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** loadCurrentDef 每 turn 从磁盘重载 Nebula——显式 agent.json 钉住（空目录
-    * 会回落 Seeds.Nebula；converged 名单固定面不受声明影响，但 seed 保持与
-    * AgentControlE2ESpec 线束同构）。 */
+  /**
+   * loadCurrentDef 每 turn 从磁盘重载 Nebula——显式 agent.json 钉住（空目录
+   * 会回落 Seeds.RootAgent；converged 名单固定面不受声明影响，但 seed 保持与
+   * AgentControlE2ESpec 线束同构）。
+   */
   private def seedNebula(tmp: os.Path): Unit =
     val dir = tmp / "agents" / "Nebula"
     os.makeDir.all(dir)
-    os.write.over(dir / "agent.json",
+    os.write.over(
+      dir / "agent.json",
       """{"name":"Nebula","displayName":"Nebula","description":"e2e root","tools":["Read"]}"""
     )
 
-  private def spawnActor(system: ActorSystem, resources: SharedResources, sid: String): IO[nebflow.actor.ActorRef[AgentCommand]] =
+  private def spawnActor(
+    system: ActorSystem,
+    resources: SharedResources,
+    sid: String
+  ): IO[nebflow.actor.ActorRef[AgentCommand]] =
     for
       ref <- system.spawn(
         AgentActor(
-          agentDef = AgentDef(name = "Nebula", description = "e2e tasklist root", tools = List("Read"), systemPrompt = ""),
+          agentDef =
+            AgentDef(name = "Nebula", description = "e2e tasklist root", tools = List("Read"), systemPrompt = ""),
           resources = resources,
           wsSend = _ => IO.unit,
           depth = 0,
@@ -158,12 +181,15 @@ class TaskListE2ESpec extends CatsEffectSuite:
         ),
         sid
       )
-      _ <- resources.agentRegistry.update(_ + (sid -> nebflow.agent.AgentRecord(sid, ref, nebflow.agent.AgentKind.Root, sid, None)))
+      _ <- resources.agentRegistry.update(
+        _ + (sid -> nebflow.actor.AgentRecord(sid, ref, nebflow.actor.AgentKind.Root, sid, None))
+      )
     yield ref
 
   private def diskTasks(home: os.Path): List[nebflow.core.tools.TaskListEntry] =
     val f = home / "tasks.json"
-    if os.exists(f) then io.circe.parser.decode[nebflow.core.tools.TaskListData](os.read(f)).toOption.map(_.tasks).getOrElse(Nil)
+    if os.exists(f) then
+      io.circe.parser.decode[nebflow.core.tools.TaskListData](os.read(f)).toOption.map(_.tasks).getOrElse(Nil)
     else Nil
 
   test("E2E: 重启后 tasks.json 持久 + open 提醒出现 + 真工具执行落盘；全 done 后提醒消失"):
@@ -178,10 +204,16 @@ class TaskListE2ESpec extends CatsEffectSuite:
       val program = for
         // ── 前进程遗留状态：直写一个 open 任务（模拟上一进程落盘）──
         _ <- IO {
-          val seed = nebflow.core.tools.TaskListData(tasks = List(
-            nebflow.core.tools.TaskListEntry(
-              id = "1", title = "写交付报告", status = "open",
-              createdAt = Some("2026-09-06T00:00:00Z"), updatedAt = Some("2026-09-06T00:00:00Z")))
+          val seed = nebflow.core.tools.TaskListData(tasks =
+            List(
+              nebflow.core.tools.TaskListEntry(
+                id = "1",
+                title = "写交付报告",
+                status = "open",
+                createdAt = Some("2026-09-06T00:00:00Z"),
+                updatedAt = Some("2026-09-06T00:00:00Z")
+              )
+            )
           )
           os.write.over(tmp / "tasks.json", seed.asJson.noSpaces)
         }
@@ -197,21 +229,24 @@ class TaskListE2ESpec extends CatsEffectSuite:
         _ <- waitUntil(20.seconds)(counters.get.map(_.getOrElse("e2e-tl-a", 0) >= 2))
         reqsA <- requests.get
         firstA = reqsA.find(_.sessionId == "e2e-tl-a").get
-        _ = assert(firstA.systemStable.exists(_.contains("[TaskList]")),
-          s"重启后首请求 systemStable 必须带 [TaskList] 摘要行:\n${firstA.systemStable.getOrElse("").take(2000)}")
-        _ = assert(firstA.systemStable.exists(_.contains("#1[open] 写交付报告")),
-          "摘要行须含遗留 open 任务")
+        _ = assert(
+          firstA.systemStable.exists(_.contains("[TaskList]")),
+          s"重启后首请求 systemStable 必须带 [TaskList] 摘要行:\n${firstA.systemStable.getOrElse("").take(2000)}"
+        )
+        _ = assert(firstA.systemStable.exists(_.contains("#1[open] 写交付报告")), "摘要行须含遗留 open 任务")
         // 真工具执行：face 过滤（Nebula 17 件含 TaskList；当前 = 17，2026-09-18
         // 18:18 令 +5 后值；史实 12 = −Delegate 后、13 = 搜索件摘除后；史实：该批落地时恰十四件）→ 执行 → 落盘。
         // 证据链：① 第二轮请求携带 ToolResult 块（textContent 不含 ToolResult
         // 文本，按块类型断言——AgentControlE2ESpec 同款 content.fold 手法）；
         // ② stub toolcall 创建的任务落盘（最强执行证据）。
-        _ = assert(reqsA.exists(_.messages.exists(m =>
-          m.content.fold(_ => false, bs => bs.exists(_.isInstanceOf[ContentBlock.ToolResult])))),
-          "toolcall 轮之后的新请求必须携带 TaskList 的 ToolResult 块")
+        _ = assert(
+          reqsA.exists(
+            _.messages.exists(m => m.content.fold(_ => false, bs => bs.exists(_.isInstanceOf[ContentBlock.ToolResult])))
+          ),
+          "toolcall 轮之后的新请求必须携带 TaskList 的 ToolResult 块"
+        )
         diskAfterA = diskTasks(tmp)
-        _ = assert(diskAfterA.exists(t => t.id == "2" && t.title == "写周报"),
-          s"stub toolcall 创建的任务必须落盘: $diskAfterA")
+        _ = assert(diskAfterA.exists(t => t.id == "2" && t.title == "写周报"), s"stub toolcall 创建的任务必须落盘: $diskAfterA")
 
         // ── Phase B：跨 actor 代际持久（新会话，同 home）──
         _ <- IO { MemoryHygieneSignal.resetForTest(restartedV = true, compactedV = false) }
@@ -219,17 +254,22 @@ class TaskListE2ESpec extends CatsEffectSuite:
         _ <- refB ! AgentCommand.UserInput("check tasks", None, Some("tl-b-1"))
         _ <- waitUntil(20.seconds)(requests.get.map(_.exists(_.sessionId == "e2e-tl-b")))
         firstB <- requests.get.map(_.find(_.sessionId == "e2e-tl-b").get)
-        _ = assert(firstB.systemStable.exists(_.contains("[TaskList] 2 open")),
-          s"代际持久：新 actor 首请求须见 A 代创建的任务（2 open）:\n${firstB.systemStable.getOrElse("").take(2000)}")
-        _ = assert(firstB.systemStable.exists(_.contains("#2[open] 写周报")),
-          "A 代 stub 创建的任务跨代可见")
+        _ = assert(
+          firstB.systemStable.exists(_.contains("[TaskList] 2 open")),
+          s"代际持久：新 actor 首请求须见 A 代创建的任务（2 open）:\n${firstB.systemStable.getOrElse("").take(2000)}"
+        )
+        _ = assert(firstB.systemStable.exists(_.contains("#2[open] 写周报")), "A 代 stub 创建的任务跨代可见")
 
         // 闭环全部任务（直调工具——执行路径 Phase A 已全链路验证）
         closeRes <- TaskListTool.call(
-          JsonObject("action" -> "close".asJson, "id" -> "1".asJson), ctxResources(resources, "e2e-tl-b"))
+          JsonObject("action" -> "close".asJson, "id" -> "1".asJson),
+          ctxResources(resources, "e2e-tl-b")
+        )
         _ = assert(closeRes.isRight, closeRes.toString)
         closeRes2 <- TaskListTool.call(
-          JsonObject("action" -> "close".asJson, "id" -> "2".asJson), ctxResources(resources, "e2e-tl-b"))
+          JsonObject("action" -> "close".asJson, "id" -> "2".asJson),
+          ctxResources(resources, "e2e-tl-b")
+        )
         _ = assert(closeRes2.isRight, closeRes2.toString)
         _ = assert(diskTasks(tmp).forall(_.status == "done"), "全部闭环")
 
@@ -239,8 +279,10 @@ class TaskListE2ESpec extends CatsEffectSuite:
         _ <- refC ! AgentCommand.UserInput("all done?", None, Some("tl-c-1"))
         _ <- waitUntil(20.seconds)(requests.get.map(_.exists(_.sessionId == "e2e-tl-c")))
         firstC <- requests.get.map(_.find(_.sessionId == "e2e-tl-c").get)
-        _ = assert(!firstC.systemStable.exists(_.contains("[TaskList]")),
-          s"全 done 后新生命周期注入不得再带 [TaskList]:\n${firstC.systemStable.getOrElse("").take(2000)}")
+        _ = assert(
+          !firstC.systemStable.exists(_.contains("[TaskList]")),
+          s"全 done 后新生命周期注入不得再带 [TaskList]:\n${firstC.systemStable.getOrElse("").take(2000)}"
+        )
       yield ()
       program.unsafeRunSync()
     finally
@@ -249,7 +291,13 @@ class TaskListE2ESpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
 
+    end try
+
   private def ctxResources(resources: SharedResources, sid: String): nebflow.core.tools.ToolContext =
-    nebflow.core.tools.ToolContext(projectRoot = os.pwd.toString, sessionId = Some(sid), sharedResources = Some(resources))
+    nebflow.core.tools.ToolContext(
+      projectRoot = os.pwd.toString,
+      sessionId = Some(sid),
+      sharedResources = Some(resources)
+    )
 
 end TaskListE2ESpec

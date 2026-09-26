@@ -5,15 +5,15 @@ import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.AgentDef
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import fs2.Stream
 import scala.concurrent.duration.*
 
@@ -32,9 +32,9 @@ import scala.concurrent.duration.*
  *      （调用方声明的串行链语义无法被立即投递满足 ⇒ 静默改投 = 静默丢语义）；
  *      拒绝闸位置 = `call` 里**设备腿分支之后**、`layeredRoute` 之前 —— 单点兜住
  *      `node:` / `project:` / Nebula / team 短名 / 裸项目名**全部非设备腿**。
- *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`protocol.scala`
- *      自陈）⇒ 旧键照样到达 `call()`，故「删 schema 键 + 墓碑判」是 fail-closed 一侧，
- *      而「删键 + 删判」才是静默降级。
+ *      该面**成立的前提** = 引擎零 JSON-Schema 校验（面外参数静默忽略，`AgentCommand.scala`
+ *      自陈；re-pin 2026-09-25：该自陈随 AskMode 自 protocol.scala 迁入）⇒ 旧键照样到达 `call()`，
+ *      故「删 schema 键 + 墓碑判」是 fail-closed 一侧，而「删键 + 删判」才是静默降级。
  *   3. **设备腿零改动**：`deliverToDevice` 的 v2.1「显式拒 queue」契约**逐字保持**
  *      （自有字面量，**不**走退役文案；本条以**逐字相等**断言钉死）。
  *   4. **残差面（本批如实登记）**：非 `queue` 的旧值（`"immediate"` / 陌生值如 `"ask"`）
@@ -71,8 +71,8 @@ class MailDeliveryRetireSpec extends FunSuite:
     JsonObject.fromIterable(fields.map((k, v) => k -> Json.fromString(v)))
 
   private def ctx(
-      dispatcher: Boolean = false,
-      nebulaRoot: Boolean = false
+    dispatcher: Boolean = false,
+    nebulaRoot: Boolean = false
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -89,12 +89,12 @@ class MailDeliveryRetireSpec extends FunSuite:
   private def rejectedMsg(res: Either[ToolError, String], label: String): String =
     res match
       case Left(err) => err.message
-      case Right(v)  => fail(s"$label: delivery=queue must be rejected, got: $v")
+      case Right(v) => fail(s"$label: delivery=queue must be rejected, got: $v")
 
   /** 残差读数的渲染器（`Either` 逐字可见，供 println 行） */
   private def render(res: Either[ToolError, String]): String =
     res match
-      case Left(err)  => s"Left(${err.message})"
+      case Left(err) => s"Left(${err.message})"
       case Right(msg) => s"Right($msg)"
 
   // ============================================================
@@ -132,7 +132,7 @@ class MailDeliveryRetireSpec extends FunSuite:
   test("描述面（mailparams 批 re-pin）：三面描述不再宣称存在 `delivery` 参数，且墓碑拒绝面仍然可见"):
     val faces = List(
       "descriptionBase" -> MailTool.descriptionBase,
-      "descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+      "descriptionNebulaRoot" -> MailTool.descriptionRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, face) <- faces do
@@ -153,9 +153,15 @@ class MailDeliveryRetireSpec extends FunSuite:
       )
       // ② 墓碑面必须对模型可见（旧调用方拿到的错误码 + 单一形态的事实）
       assert(!face.contains("Two delivery modes"), s"$label: the two-modes preamble must be gone")
-      assert(!face.contains("Delivery modes (via `delivery` parameter)"), s"$label: the delivery-modes block must be gone")
+      assert(
+        !face.contains("Delivery modes (via `delivery` parameter)"),
+        s"$label: the delivery-modes block must be gone"
+      )
       assert(!face.contains("queue: serialized FIFO"), s"$label: the queue availability claim must be gone")
-      assert(!face.contains("You don't wait for a response.\n  queue"), s"$label: the queue leg must be gone from the block")
+      assert(
+        !face.contains("You don't wait for a response.\n  queue"),
+        s"$label: the queue leg must be gone from the block"
+      )
       assert(face.contains("There is no delivery mode to choose"), s"$label: the single-mode fact must be stated")
       assert(face.contains("RETIRED on"), s"$label: the retirement must be stated")
       assert(face.contains(MailTool.ErrDeliveryQueueRetired), s"$label: the retirement error code must be named")
@@ -163,6 +169,7 @@ class MailDeliveryRetireSpec extends FunSuite:
         !face.contains("or target a team agent in queue mode"),
         s"$label: no face may still advertise queue mode for team agents"
       )
+    end for
 
   // ============================================================
   // 2. 非设备腿：统一显式拒绝（单点闸，位置先于一切路由/资源闸）
@@ -189,7 +196,10 @@ class MailDeliveryRetireSpec extends FunSuite:
         msg.contains("delivery=queue"),
         s"$label: must name the offending value so the caller can self-correct, got: $msg"
       )
-      assert(msg.contains(s"Target: '$addr'"), s"$label: must echo the target (proves the guard fired, not a routing gate)")
+      assert(
+        msg.contains(s"Target: '$addr'"),
+        s"$label: must echo the target (proves the guard fired, not a routing gate)"
+      )
       // 闸位置证明：拒绝先于一切路由/授权/资源闸（这些腿的"自然"错误各不相同）
       assert(
         !msg.contains("outside your address face") && !msg.contains("is not mounted") &&
@@ -198,9 +208,12 @@ class MailDeliveryRetireSpec extends FunSuite:
         s"$label: the retirement guard must fire BEFORE any routing/face gate, got: $msg"
       )
 
+    end for
+
   test("非设备腿 delivery=queue（同 target）：拒绝文案与地址无关地一致 —— 不含任何旧 queue 专属文案"):
     val msg = rejectedMsg(
-      MailTool.call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "queue"), ctx(dispatcher = true))
+      MailTool
+        .call(qJson("address" -> "node:n-9", "message" -> "hi", "delivery" -> "queue"), ctx(dispatcher = true))
         .unsafeRunSync(),
       "node: 腿"
     )
@@ -270,7 +283,7 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   /** 有界等待（本仓既有 idiom：10+ 个 spec 各自持有同款私有副本，如 `MailDedupWiringSpec:87`） */
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -290,20 +303,22 @@ class MailDeliveryRetireSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -366,7 +381,11 @@ class MailDeliveryRetireSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(s"$teamName/member", agentName = Some("member"), flowName = Some(teamName))
+      memberMeta <- sessionStore.createSession(
+        s"$teamName/member",
+        agentName = Some("member"),
+        flowName = Some(teamName)
+      )
       _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
       _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)

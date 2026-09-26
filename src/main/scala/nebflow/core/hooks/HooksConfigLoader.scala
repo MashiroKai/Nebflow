@@ -2,7 +2,7 @@ package nebflow.core.hooks
 
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /** Loads and parses hooks config from nebflow.json. */
 object HooksConfigLoader:
@@ -14,7 +14,7 @@ object HooksConfigLoader:
    * Returns HooksConfig.empty if no hooks are configured or on parse error.
    */
   def load(projectRoot: os.Path): HooksConfig =
-    val configPath = nebflow.core.PathUtil.configJsonReadPath(projectRoot)
+    val configPath = nebflow.shared.PathUtil.configJsonReadPath(projectRoot)
     if !os.exists(configPath) then HooksConfig.empty
     else
       try

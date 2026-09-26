@@ -20,7 +20,7 @@ object MemoryHygieneSignal:
   private val restarted = new AtomicBoolean(true) // 进程启动 = 重启事件待消费
   private val compacted = new AtomicBoolean(false)
 
-  /** NebulaMemoryHook 压缩抽取完成后调用（fire-and-forget，一行置位）。 */
+  /** RootMemoryHook 压缩抽取完成后调用（fire-and-forget，一行置位）。 */
   def markCompacted(): Unit = compacted.set(true)
 
   /** (restartPending, compactPending) —— 取走即清零。 */

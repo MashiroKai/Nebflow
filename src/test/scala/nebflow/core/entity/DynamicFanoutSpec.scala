@@ -12,14 +12,24 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, FlowReportData, FlowReportStore}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ToolCall}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  ContentBlock,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  ToolCall
+}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -73,8 +83,10 @@ class DynamicFanoutSpec extends CatsEffectSuite:
     capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty),
     answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -83,7 +95,11 @@ class DynamicFanoutSpec extends CatsEffectSuite:
         Stream.eval(IO(nodeIdOf(req.sessionId))).flatMap {
           case "p" =>
             Stream
-              .eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)))
+              .eval(
+                answered.get.flatMap(a =>
+                  if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)
+                )
+              )
               .evalTap {
                 case true =>
                   val slotsObj = JsonObject.fromIterable(if emitTopics then List("topics" -> topics.asJson) else Nil)
@@ -97,7 +113,11 @@ class DynamicFanoutSpec extends CatsEffectSuite:
           case inst if inst.startsWith("researcher#") =>
             val idx = inst.split("#").last.toInt
             Stream
-              .eval(answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)))
+              .eval(
+                answered.get.flatMap(a =>
+                  if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)
+                )
+              )
               .evalTap {
                 case true if instanceSlots.nonEmpty =>
                   FlowReportStore.set(
@@ -114,6 +134,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
               }
           case _ => answerAfter(30.millis, "J-DONE")
         }
+
+  end PlannerLlm
 
   private def userTextOf(messages: List[Message]): String =
     messages
@@ -172,6 +194,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
         system.stopAll.attempt.void *>
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
+
+  end withFlowEnv
 
   /** p → ParallelDynamic(topics→researcher) → j ($researcher.all.output) → $return. */
   private def dynFlow(
@@ -290,15 +314,27 @@ class DynamicFanoutSpec extends CatsEffectSuite:
                 val track1 = jUserText.indexOf("=== Track 1 ===\nOUT-1")
                 val track2 = jUserText.indexOf("=== Track 2 ===\nOUT-2")
                 val track3 = jUserText.indexOf("=== Track 3 ===\nOUT-3")
-                assert(track1 >= 0 && track2 > track1 && track3 > track2, s"index-ordered aggregation, got:\n$jUserText")
+                assert(
+                  track1 >= 0 && track2 > track1 && track3 > track2,
+                  s"index-ordered aggregation, got:\n$jUserText"
+                )
                 // {{item}}/{{index}} substitution in instance inputs
                 val instUserTexts = captured.toList
                   .filter { (sid, _) => nodeIdOf(sid).startsWith("researcher#") }
                   .map { (sid, msgs) => nodeIdOf(sid) -> userTextOf(msgs) }
                   .toMap
-                assert(instUserTexts("researcher#1").contains("Track 1: A"), s"#1 got item A: ${instUserTexts("researcher#1")}")
-                assert(instUserTexts("researcher#2").contains("Track 2: B"), s"#2 got item B: ${instUserTexts("researcher#2")}")
-                assert(instUserTexts("researcher#3").contains("Track 3: C"), s"#3 got item C: ${instUserTexts("researcher#3")}")
+                assert(
+                  instUserTexts("researcher#1").contains("Track 1: A"),
+                  s"#1 got item A: ${instUserTexts("researcher#1")}"
+                )
+                assert(
+                  instUserTexts("researcher#2").contains("Track 2: B"),
+                  s"#2 got item B: ${instUserTexts("researcher#2")}"
+                )
+                assert(
+                  instUserTexts("researcher#3").contains("Track 3: C"),
+                  s"#3 got item C: ${instUserTexts("researcher#3")}"
+                )
               }
             }
           }
@@ -326,12 +362,22 @@ class DynamicFanoutSpec extends CatsEffectSuite:
           wsEvents.get.map { ws =>
             assert(result.isRight, s"flow must complete, got: $result")
             val added = ws.filter(_.hcursor.get[String]("type").toOption.contains("flowNodesAdded"))
-            assertEquals(added.size, 1, s"exactly one flowNodesAdded event, got: ${ws.map(_.hcursor.get[String]("type"))}")
+            assertEquals(
+              added.size,
+              1,
+              s"exactly one flowNodesAdded event, got: ${ws.map(_.hcursor.get[String]("type"))}"
+            )
             val nodesArr = added.head.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
-            assertEquals(nodesArr.map(_.hcursor.get[String]("nodeId").toOption.getOrElse("")).toSet, Set("researcher#1", "researcher#2"))
+            assertEquals(
+              nodesArr.map(_.hcursor.get[String]("nodeId").toOption.getOrElse("")).toSet,
+              Set("researcher#1", "researcher#2")
+            )
             val edgesArr = added.head.hcursor.downField("edges").as[List[Json]].toOption.getOrElse(Nil)
             assertEquals(edgesArr.size, 2, s"one edge per instance to the join, got: $edgesArr")
-            assert(edgesArr.forall(_.hcursor.downField("to").as[String].toOption.contains("j")), "edges converge on the join")
+            assert(
+              edgesArr.forall(_.hcursor.downField("to").as[String].toOption.contains("j")),
+              "edges converge on the join"
+            )
           }
         }
     }
@@ -340,7 +386,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
   test("D4 len==0 + abort → flow fails with clear reason") {
     val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
     val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-    val llm = new PlannerLlm(topics = Nil, instanceBehavior = PartialFunction.empty, capture = capture, answered = answered)
+    val llm =
+      new PlannerLlm(topics = Nil, instanceBehavior = PartialFunction.empty, capture = capture, answered = answered)
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"dyn4-${UUID.randomUUID().toString.take(6)}"
       FlowDagExecutor
@@ -357,7 +404,8 @@ class DynamicFanoutSpec extends CatsEffectSuite:
   test("D5 len==0 + collect → continues with empty aggregate, join still runs") {
     val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
     val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-    val llm = new PlannerLlm(topics = Nil, instanceBehavior = PartialFunction.empty, capture = capture, answered = answered)
+    val llm =
+      new PlannerLlm(topics = Nil, instanceBehavior = PartialFunction.empty, capture = capture, answered = answered)
     withFlowEnv(llm) { (resources, system) =>
       val instId = s"dyn5-${UUID.randomUUID().toString.take(6)}"
       FlowDagExecutor
@@ -366,7 +414,11 @@ class DynamicFanoutSpec extends CatsEffectSuite:
         .flatMap { result =>
           RunningFlowRegistry.list.map(_.find(_.instanceId == instId)).map { rfOpt =>
             assert(result.isRight, s"empty topics + collect must carry through, got: $result")
-            assertEquals(rfOpt.flatMap(_.nodes.get("j").map(_.status)), Some(NodeStatus.Completed), "join ran with empty aggregate")
+            assertEquals(
+              rfOpt.flatMap(_.nodes.get("j").map(_.status)),
+              Some(NodeStatus.Completed),
+              "join ran with empty aggregate"
+            )
           }
         }
     }
@@ -439,20 +491,30 @@ class DynamicFanoutSpec extends CatsEffectSuite:
     def run(onFail: NodeRoute.OnFailMode): IO[Either[String, String]] =
       val capture: Ref[IO, Map[String, List[Message]]] = Ref.unsafe(Map.empty)
       val answered: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-      val llm = new PlannerLlm(topics = Nil, instanceBehavior = PartialFunction.empty, emitTopics = false, capture = capture, answered = answered)
+      val llm = new PlannerLlm(
+        topics = Nil,
+        instanceBehavior = PartialFunction.empty,
+        emitTopics = false,
+        capture = capture,
+        answered = answered
+      )
       withFlowEnv(llm) { (resources, system) =>
         val instId = s"dyn8-${UUID.randomUUID().toString.take(6)}"
         FlowDagExecutor
           .execute(dynFlow(onFail = onFail, plannerOutputs = Map.empty), "work", resources, system, None, instId)
           .timeout(30.seconds)
       }
+    end run
     for
       abortResult <- run(NodeRoute.OnFailMode.Abort)
       collectResult <- run(NodeRoute.OnFailMode.Collect)
     yield
       assert(abortResult.isLeft, s"missing slot + abort must fail, got: $abortResult")
       assert(abortResult.swap.toOption.get.contains("not found"), s"clear missing-slot reason: $abortResult")
-      assert(collectResult.isLeft, s"missing slot + collect must ALSO fail clearly (no silent empty aggregate), got: $collectResult")
+      assert(
+        collectResult.isLeft,
+        s"missing slot + collect must ALSO fail clearly (no silent empty aggregate), got: $collectResult"
+      )
       assert(collectResult.swap.toOption.get.contains("not found"), s"clear missing-slot reason: $collectResult")
 
   test("D9 slot value not an array → fails with clear reason") {
@@ -472,7 +534,9 @@ class DynamicFanoutSpec extends CatsEffectSuite:
             case "p" =>
               Stream
                 .eval(
-                  answered.get.flatMap(a => if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true))
+                  answered.get.flatMap(a =>
+                    if a(req.sessionId) then IO.pure(false) else answered.update(_ + req.sessionId).as(true)
+                  )
                 )
                 .evalTap {
                   case true =>
@@ -622,6 +686,7 @@ class DynamicFanoutSpec extends CatsEffectSuite:
             }
           }
       }
+    end run
     for
       provided <- run(Map("fanout" -> Json.fromInt(3), "mode" -> Json.fromString("fast")))
       missing <- run(Map.empty)
@@ -756,6 +821,7 @@ class DynamicFanoutSpec extends CatsEffectSuite:
           .execute(flow, "work", resources, system, None, instId)
           .timeout(30.seconds)
       }
+    end run
     for
       // 引用不存在的 field：无论 abort/collect 都报错
       missAbort <- run("$p.slots.ghost", NodeRoute.OnFailMode.Abort, emitTopics = true)

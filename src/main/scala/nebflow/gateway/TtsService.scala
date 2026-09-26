@@ -3,7 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.Json
 import io.circe.parser.parse
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

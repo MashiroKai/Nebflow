@@ -3,7 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.shared.SessionMeta
+import nebflow.shared.{PathUtil, SessionMeta}
 
 import java.nio.file.Files
 
@@ -72,12 +72,12 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
       meta("s-confirm", "confirm-edits"),
       meta("s-garbage", "yolo")
     )
-    val json = SessionMeta.withEffectiveSafetyModes(sessions, SafetyMode.ConfirmEdits)
+    val json = SessionMeta.withEffectiveSafetyModes(sessions, "confirm-edits")
     assertEquals(modes(json), List("confirm-edits", "confirm-edits", "confirm-edits", "confirm-edits"))
 
   test("A-9: meta=auto-all + global=auto-edits still reads auto-edits (no meta leakage)"):
     writeGlobal("auto-edits")
-    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "auto-all")), SafetyMode.AutoEdits)
+    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "auto-all")), "auto-edits")
     assertEquals(modes(json), List("auto-edits"))
 
   // ── ② 负控（改判据）：会话覆盖面已不存在，旧「覆盖优先」形态不可复现 ─────────
@@ -90,7 +90,7 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
     // 不成立"的负控形态：不是断言它"现在返回别的值"，而是断言它**无法被表达**。）
     writeGlobal("confirm-edits")
     val sessions = List(meta("root-1", "auto-all"), meta("root-2", "auto-all"), meta("root-3", "confirm-edits"))
-    val json = SessionMeta.withEffectiveSafetyModes(sessions, SafetyMode.ConfirmEdits)
+    val json = SessionMeta.withEffectiveSafetyModes(sessions, "confirm-edits")
     assertEquals(modes(json).distinct, List("confirm-edits"))
     // 盘上遗留的 auto-all 不再是任何权威读取点的来源
     assertEquals(sessions.head.safetyMode, "auto-all")
@@ -98,7 +98,7 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
   // ── ③ 出口键恒存在（不依赖 Encoder 省略语义）───────────────────────────────
 
   test("the list exit always carries an explicit safetyMode key, even for confirm-edits"):
-    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "confirm-edits")), SafetyMode.ConfirmEdits)
+    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "confirm-edits")), "confirm-edits")
     // 键必须显式出现 —— 旧契约下 `confirm-edits` 会被 Encoder 省略（前端靠
     // `|| 'confirm-edits'` 兜底），新契约要求三档值在 wire 上恒存在。
     assert(
@@ -109,7 +109,7 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
 
   test("the list exit preserves the other session fields (deepMerge, not replace)"):
     writeGlobal("auto-all")
-    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "auto-all")), SafetyMode.AutoAll)
+    val json = SessionMeta.withEffectiveSafetyModes(List(meta("s1", "auto-all")), "auto-all")
     val head = json.asArray.get.head
     assertEquals(head.hcursor.downField("id").as[String].toOption, Some("s1"))
     assertEquals(head.hcursor.downField("name").as[String].toOption, Some("s1"))
@@ -157,7 +157,7 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
     // 全局 ≠ auto-all 时该集合必为空，**即便盘上逐会话键写着 auto-all**
     // （= 旧"静默放行"的唯一触发形态已被结构性消除）。
     val staleDisk = List(meta("root-1", "auto-all"), meta("root-2", "auto-all"))
-    val json = SessionMeta.withEffectiveSafetyModes(staleDisk, SafetyMode.ConfirmEdits)
+    val json = SessionMeta.withEffectiveSafetyModes(staleDisk, "confirm-edits")
     val bypass = json.asArray
       .getOrElse(Vector.empty)
       .filter(_.hcursor.downField("safetyMode").as[String].toOption.contains("auto-all"))
@@ -167,11 +167,18 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
     // 顶档下 `ToolReversibility` 恒 true ⇒ `permissionDecision` 恒 Allow ⇒ 后端从不
     // 发 `askPermission` 帧 ⇒ 前端那两条静默应答路径**无卡可答**（不是"被抑制"，
     // 而是没有对象）。对照：confirm-edits 下 Write 必须为不可逆（⇒ 出卡）。
-    val write = JsonObject("file_path" -> io.circe.Json.fromString("/tmp/x"), "content" -> io.circe.Json.fromString("y"))
+    val write =
+      JsonObject("file_path" -> io.circe.Json.fromString("/tmp/x"), "content" -> io.circe.Json.fromString("y"))
     val dangerousBash = JsonObject("command" -> io.circe.Json.fromString("rm -rf /tmp/permshield-probe"))
     assert(ToolReversibility.isReversible("Write", write, SafetyMode.AutoAll), "auto-all: Write is auto-approved")
-    assert(ToolReversibility.isReversible("Bash", dangerousBash, SafetyMode.AutoAll), "auto-all: even dangerous Bash is auto-approved")
-    assert(!ToolReversibility.isReversible("Write", write, SafetyMode.ConfirmEdits), "confirm-edits: Write must ask (card)")
+    assert(
+      ToolReversibility.isReversible("Bash", dangerousBash, SafetyMode.AutoAll),
+      "auto-all: even dangerous Bash is auto-approved"
+    )
+    assert(
+      !ToolReversibility.isReversible("Write", write, SafetyMode.ConfirmEdits),
+      "confirm-edits: Write must ask (card)"
+    )
 
   // ── 严格 wire 解析（写入口白名单；禁静默兜底）──────────────────────────────
 

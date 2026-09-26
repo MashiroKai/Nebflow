@@ -45,15 +45,34 @@ class FileTypeRegistrySpec extends FunSuite:
   test("built-in table keeps itemType strings stable (persisted tabs depend on them)") {
     // itemType values are persisted in workspace tabs / ui.json — lock them
     val itemTypes = FileTypeRegistry.BuiltIn.values.map(_.itemType).toSet
-    val expected = Set("markdown", "html", "json", "yaml", "csv", "image", "pdf", "docx", "xlsx", "pptx", "epub", "code")
+    val expected =
+      Set("markdown", "html", "json", "yaml", "csv", "image", "pdf", "docx", "xlsx", "pptx", "epub", "code")
     assertEquals(itemTypes, expected - "code") // code is the fallback, not in table
   }
 
   test("binary set matches the old BinaryExtensions membership exactly") {
     // The deleted PopTool.BinaryExtensions set — membership must be identical
     val oldBinaryExts = Set(
-      "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico", "avif", "tiff", "tif",
-      "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "ppt", "pptx", "epub"
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "bmp",
+      "ico",
+      "avif",
+      "tiff",
+      "tif",
+      "pdf",
+      "doc",
+      "docx",
+      "xls",
+      "xlsx",
+      "xlsm",
+      "ppt",
+      "pptx",
+      "epub"
     )
     val newBinaryExts = FileTypeRegistry.BuiltIn.collect { case (e, entry) if entry.binary => e }.toSet
     assertEquals(newBinaryExts, oldBinaryExts)

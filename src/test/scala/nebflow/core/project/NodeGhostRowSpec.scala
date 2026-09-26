@@ -6,13 +6,12 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -40,6 +39,7 @@ class NodeGhostRowSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"ghost-row regression agent","tools":[],"category":"standalone"}"""
@@ -51,40 +51,12 @@ class NodeGhostRowSpec extends CatsEffectSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   test("node run: agentStart agentId has node- prefix + nodeCompleted emitted + NO agentDone (ghost-row contract)") {
     val ws = tempRoot / "ws"
@@ -92,7 +64,7 @@ class NodeGhostRowSpec extends CatsEffectSuite:
     val llm = new RecordingLlm
     for
       system <- IO.pure(ActorSystem(s"ghost-${scala.util.Random.nextInt(100000)}"))
-      resources <- mkResources(system, tempRoot, llm)
+      resources <- SpecResources.mkResources(system, tempRoot, llm)
       store <- FlowMapStore.open("ghost-test", ws.toString)
       wsEvents <- Ref.of[IO, List[Json]](Nil)
       engineEvents <- Ref.of[IO, List[(String, String)]](Nil)
@@ -111,20 +83,22 @@ class NodeGhostRowSpec extends CatsEffectSuite:
       )
       now = System.currentTimeMillis()
       _ <- store.mutate(s =>
-        s.copy(nodes = s.nodes + ("n-1" -> NodeDef(
-          id = "n-1",
-          name = "调研-幽灵行",
-          agent = "test-agent",
-          skill = None,
-          mcp = None,
-          worktree = None,
-          preset = None,
-          task = Some("跑一轮"),
-          in = Nil,
-          out = List(OutEdge.nebula),
-          status = NodeLifecycle.Pending,
-          createdAt = now
-        )))
+        s.copy(nodes =
+          s.nodes + ("n-1" -> NodeDef(
+            id = "n-1",
+            name = "调研-幽灵行",
+            agent = "test-agent",
+            skill = None,
+            mcp = None,
+            worktree = None,
+            preset = None,
+            task = Some("跑一轮"),
+            in = Nil,
+            out = List(OutEdge.root),
+            status = NodeLifecycle.Pending,
+            createdAt = now
+          ))
+        )
       )
       _ <- engine.startNode("n-1")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -143,6 +117,7 @@ class NodeGhostRowSpec extends CatsEffectSuite:
       // 3. 节点完成不发 agentDone（根因锁定：前端 agentDone 删行对节点永不触发）
       val doneEvents = wsList.filter(j => j.hcursor.get[String]("type").toOption.contains("agentDone"))
       assertEquals(doneEvents.size, 0, "node completion must NOT emit agentDone (session-level done only)")
+    end for
   }
 
 end NodeGhostRowSpec

@@ -4,10 +4,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.gateway.SessionStore
-import nebflow.shared.Message
-import nebflow.shared.MessageRole
+import nebflow.actor.AgentCommand
+import nebflow.core.SessionStore
+import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 /**
  * V2 (2026-09-03, 结果投递链丢失向量修复): startup recovery for orphan
@@ -35,7 +34,7 @@ import nebflow.shared.MessageRole
  *     pendingEvents and the next turn boundary injects it — the exact
  *     durability chain F2 built for compaction-window events.
  *  3. Terminalize: the task record is flipped running → failed with the loss
-     * note, so the sweep is idempotent (next boot finds no running tasks) and
+ * note, so the sweep is idempotent (next boot finds no running tasks) and
  *     AgentControl shows a settled record instead of a phantom running row.
  *
  * Idempotency: BOTH steps are crash-safe without ordering tricks.
@@ -59,9 +58,11 @@ object SubAgentStartupRecovery:
       case orphans =>
         logger.warn(
           s"[startup-recovery] ${orphans.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
-        ) *> orphans.traverse(t => recoverOne(store, sessionStore, t).handleErrorWith { e =>
-          logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
-        })
+        ) *> orphans.traverse(t =>
+          recoverOne(store, sessionStore, t).handleErrorWith { e =>
+            logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
+          }
+        )
     }
 
   private def recoverOne(store: SubAgentTaskStore, sessionStore: SessionStore, task: SubAgentTask): IO[String] =
@@ -108,8 +109,9 @@ object SubAgentStartupRecovery:
         status = "failed",
         lastError = Some(
           partial match
-            case Some(_) => "process restart during in-flight task — partial result salvaged and delivered to parent (startup recovery V2)"
-            case None    => "process restart during in-flight task — result lost, parent notified (startup recovery V2)"
+            case Some(_) =>
+              "process restart during in-flight task — partial result salvaged and delivered to parent (startup recovery V2)"
+            case None => "process restart during in-flight task — result lost, parent notified (startup recovery V2)"
         ),
         completedAt = Some(now)
       )
@@ -119,9 +121,11 @@ object SubAgentStartupRecovery:
       )
     yield task.taskId
 
-  /** Append the event to the parent's persisted injection queue, unless an
-    * event with the same correlationId (taskId) is already queued — the
-    * crash-between-steps guard that keeps notification at-most-once. */
+  /**
+   * Append the event to the parent's persisted injection queue, unless an
+   * event with the same correlationId (taskId) is already queued — the
+   * crash-between-steps guard that keeps notification at-most-once.
+   */
   private def notifyOnce(parentSessionId: String, event: AgentCommand.ExternalEvent): IO[Unit] =
     CompactionQueueStore.load(parentSessionId).flatMap { existing =>
       val already = existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
@@ -131,8 +135,10 @@ object SubAgentStartupRecovery:
         CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
     }
 
-  /** Last non-empty assistant text from the child transcript (same extraction
-    * rule the Delegate adapters use for completion payloads). */
+  /**
+   * Last non-empty assistant text from the child transcript (same extraction
+   * rule the Delegate adapters use for completion payloads).
+   */
   private def extractLastAssistant(messages: List[Message]): Option[String] =
     messages.reverse
       .collectFirst {

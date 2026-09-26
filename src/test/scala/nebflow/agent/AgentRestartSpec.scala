@@ -2,6 +2,7 @@ package nebflow.agent
 
 import io.circe.JsonObject
 import munit.FunSuite
+import nebflow.actor.{AgentCommand, RestartLevel}
 import nebflow.shared.*
 
 class AgentRestartSpec extends FunSuite:

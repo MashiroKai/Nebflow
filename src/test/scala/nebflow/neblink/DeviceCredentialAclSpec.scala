@@ -2,26 +2,28 @@ package nebflow.neblink
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.{CredentialFileAcl, PathUtil}
+import nebflow.core.CredentialFileAcl
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.{AclEntryPermission, PosixFilePermissions}
 import java.nio.file.{Files, Path}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters.*
 
-/** T3 (2026-09-11, Q2 裁定) — device.json 凭据文件 ACL 收窄的验收钉。
-  *
-  * 缺陷形态：`Files.setPosixFilePermissions` 在 Windows 上是静默 no-op（provider
-  * 无 POSIX 视图，抛出的异常被 `catch case _: Exception => ()` 吞掉）——device.json
-  * 因此保留 profile 目录继承来的 DACL，当前用户以外的主体可读 live device token。
-  *
-  * 本 spec 钉三件事（Q7 口径：Windows 机制面不实跑，只钉分支选择）：
-  *  R1/R3 分支选择：os.name 含 win ⇒ Windows ACL 分支；否则 POSIX 分支。用记录型
-  *     Port 双倍断言「命中分支 + 另一分支零调用」——把 Windows 分支改回
-  *     PosixFilePermissions（= 缺陷复现）⇒ R1b/R3 必红。
-  *  R2 POSIX 实测：真实 save 后读回 0600（macOS 实测读数，打印留证）。
-  *  R4 Windows 分支拿不到 ACL 视图时显式失败，禁止静默回退 POSIX。
-  */
+/**
+ * T3 (2026-09-11, Q2 裁定) — device.json 凭据文件 ACL 收窄的验收钉。
+ *
+ * 缺陷形态：`Files.setPosixFilePermissions` 在 Windows 上是静默 no-op（provider
+ * 无 POSIX 视图，抛出的异常被 `catch case _: Exception => ()` 吞掉）——device.json
+ * 因此保留 profile 目录继承来的 DACL，当前用户以外的主体可读 live device token。
+ *
+ * 本 spec 钉三件事（Q7 口径：Windows 机制面不实跑，只钉分支选择）：
+ *  R1/R3 分支选择：os.name 含 win ⇒ Windows ACL 分支；否则 POSIX 分支。用记录型
+ *     Port 双倍断言「命中分支 + 另一分支零调用」——把 Windows 分支改回
+ *     PosixFilePermissions（= 缺陷复现）⇒ R1b/R3 必红。
+ *  R2 POSIX 实测：真实 save 后读回 0600（macOS 实测读数，打印留证）。
+ *  R4 Windows 分支拿不到 ACL 视图时显式失败，禁止静默回退 POSIX。
+ */
 class DeviceCredentialAclSpec extends FunSuite:
 
   /** 记录型 Port：只记录哪条分支被调用，不碰真实文件系统。 */
@@ -45,6 +47,7 @@ class DeviceCredentialAclSpec extends FunSuite:
     super.afterEach(context)
 
   private def credPath: Path = tmpDir.resolve("neblink").resolve("device.json")
+
   private def cred =
     DeviceCredential("https://neblink.example", "net-1", "dev-1", "tok-secret")
 
@@ -95,7 +98,8 @@ class DeviceCredentialAclSpec extends FunSuite:
       !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName),
       "POSIX-only readback assertion"
     )
-    DeviceCredential.save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+    DeviceCredential
+      .save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
       .unsafeRunSync()
     val mode = PosixFilePermissions.toString(Files.getPosixFilePermissions(credPath))
     println(s"[T3-R2] posix readback: device.json mode = $mode (os=${CredentialFileAcl.currentOsName})")
@@ -159,7 +163,8 @@ class DeviceCredentialAclSpec extends FunSuite:
       "Windows-only probe: the ACL branch (and the missing-EA defect) is Windows-specific"
     )
     // 第一跳：真 systemPort 收窄（Windows 分支 = 单条非继承 owner-only ACE）。
-    DeviceCredential.save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+    DeviceCredential
+      .save(cred, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
       .unsafeRunSync()
     // 🔴 核心验证点 1：收窄后属主仍可读回 —— 缺 READ_NAMED_ATTRS 时此处 AccessDeniedException。
     val back1 = DeviceCredential.load.unsafeRunSync()
@@ -170,7 +175,8 @@ class DeviceCredentialAclSpec extends FunSuite:
     // 第二跳：rotation 式写回 —— 轮换后的 credential 覆盖同一已收窄文件。
     // 🔴 核心验证点 2：属主仍可重写 —— 缺 WRITE_NAMED_ATTRS/WRITE_ACL 时此处抛。
     val rotated = cred.copy(deviceToken = "tok-rotated-2")
-    DeviceCredential.save(rotated, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
+    DeviceCredential
+      .save(rotated, CredentialFileAcl.systemPort, CredentialFileAcl.currentOsName)
       .unsafeRunSync()
     val back2 = DeviceCredential.load.unsafeRunSync()
     // 第二次断言与「旋转后的 token」无关：token 已停写、不在盘上，身份面才是可比对的
@@ -213,20 +219,23 @@ class DeviceCredentialAclSpec extends FunSuite:
     val probeCalls = new java.util.concurrent.atomic.AtomicInteger(0)
     val repairCalls = new java.util.concurrent.atomic.AtomicInteger(0)
     val readCalls = new java.util.concurrent.atomic.AtomicInteger(0)
+
     /** 前 N 次探针（真实打开）失败；0 = 永不失败。 */
     var probeFails: Int = 0
+
     /** 结构读数（重建之前）。 */
     var reading: Option[CredentialFileAcl.AclMask] = Some(CredentialFileAcl.AclMask.of(RepairedMask))
+
     /** 结构读数（重建之后）—— 默认已是正确形态。 */
     var readingAfterRepair: Option[CredentialFileAcl.AclMask] =
       Some(CredentialFileAcl.AclMask.of(RepairedMask))
     var repairOutcome: CredentialFileAcl.RepairOutcome = CredentialFileAcl.RepairOutcome.Repaired
+
     /** `Some(msg)` ⇒ 重建本身抛（模拟自锁态下连重建也做不动）。 */
     var repairThrows: Option[String] = None
 
     def proveUsable(path: Path): Unit =
-      if probeCalls.incrementAndGet() <= probeFails then
-        throw new java.nio.file.AccessDeniedException(path.toString)
+      if probeCalls.incrementAndGet() <= probeFails then throw new java.nio.file.AccessDeniedException(path.toString)
 
     def readAcl(path: Path): Option[CredentialFileAcl.AclMask] =
       readCalls.incrementAndGet()
@@ -236,6 +245,8 @@ class DeviceCredentialAclSpec extends FunSuite:
       repairCalls.incrementAndGet()
       repairThrows.foreach(m => throw new java.io.IOException(m))
       repairOutcome
+
+  end FakeWindowsAcl
 
   private def ladderOf(acl: CredentialFileAcl.WindowsAcl): CredentialFileAcl.WindowsLadder =
     new CredentialFileAcl.WindowsLadder(acl, CredentialFileAcl.expectedBits)
@@ -247,8 +258,10 @@ class DeviceCredentialAclSpec extends FunSuite:
   // DACL 掩码是唯一状态：写侧装哪个掩码 ⇒ 探针能不能打开 —— 与实机缺陷**同构**
   // （0x100187 缺位 ⇒ 打开被拒；0x16019f ⇒ 打开通过）。
 
-  /** `installMaskAt(n)` 决定第 n 次安装写入哪个掩码；默认全写正确形态。传
-    * `n => if n == 2 then LockedMask else RepairedMask` 即「首写修好、再写抹回」。 */
+  /**
+   * `installMaskAt(n)` 决定第 n 次安装写入哪个掩码；默认全写正确形态。传
+   * `n => if n == 2 then LockedMask else RepairedMask` 即「首写修好、再写抹回」。
+   */
   private final class MemoryAclBackend(installMaskAt: Int => Long):
     private val expectedMask = CredentialFileAcl.maskOf(CredentialFileAcl.expectedBits)
     var mask: Long = RepairedMask
@@ -266,14 +279,16 @@ class DeviceCredentialAclSpec extends FunSuite:
 
     def render: String = CredentialFileAcl.AclMask.of(mask).render
 
+  end MemoryAclBackend
+
   /** 写侧端口：只走「安装 ACL」这一腿（= 生产 systemPort 的 Windows 分支形态）。 */
   private final class BackendPort(backend: MemoryAclBackend) extends CredentialFileAcl.Port:
     def ownerOnlyPosix(path: Path): Unit = ()
     def ownerOnlyWindows(path: Path): Unit = backend.install()
 
   /** 探针/维修端口：可用性由后端掩码算出 —— 缺位即真打开被拒（缺陷形态同构）。 */
-  private final class BackendWindowsAcl(backend: MemoryAclBackend)
-      extends CredentialFileAcl.WindowsAcl:
+  private final class BackendWindowsAcl(backend: MemoryAclBackend) extends CredentialFileAcl.WindowsAcl:
+
     def proveUsable(path: Path): Unit =
       backend.probes += backend.mask
       if !backend.usable then throw new java.nio.file.AccessDeniedException(path.toString)
@@ -446,7 +461,8 @@ class DeviceCredentialAclSpec extends FunSuite:
     DeviceCredential.save(cred, port, "Windows 11", ladder).unsafeRunSync()
     val after1 = backend.mask
     val load1 = DeviceCredential.load.unsafeRunSync().map(_.deviceId)
-    DeviceCredential.save(cred.copy(logto = LogtoRefresh.of(Some("rt-1"), None)), port, "Windows 11", ladder)
+    DeviceCredential
+      .save(cred.copy(logto = LogtoRefresh.of(Some("rt-1"), None)), port, "Windows 11", ladder)
       .unsafeRunSync()
     val after2 = backend.mask
     val load2 = DeviceCredential.load.unsafeRunSync().map(_.deviceId)
@@ -494,3 +510,4 @@ class DeviceCredentialAclSpec extends FunSuite:
       "自检/重建梯必须只在 Windows 分支生效"
     )
   }
+end DeviceCredentialAclSpec

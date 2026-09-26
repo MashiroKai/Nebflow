@@ -3,7 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.parser
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom

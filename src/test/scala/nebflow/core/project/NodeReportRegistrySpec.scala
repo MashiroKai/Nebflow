@@ -18,10 +18,12 @@ class NodeReportRegistrySpec extends CatsEffectSuite:
   private val fbA = BlockedFeedback("upstream-incomplete", "上游 X 未完成", "需上游先完成")
   private val fbB = BlockedFeedback("external-dependency", "等待 API key", "提供凭据后重派")
 
-  /** #239② 面①：register 现在带持久化归属（workspace/project/nodeId）。本 spec 的**语义
-    * 断言逐字不变**——只把登记点指向本 spec 自己的临时工作区（该工作区下的
-    * `.nebflow/node-reports.jsonl` 就是这条申报的持久化副本；其行为由
-    * `NodeReportJournalSpec` 单独钉死）。 */
+  /**
+   * #239② 面①：register 现在带持久化归属（workspace/project/nodeId）。本 spec 的**语义
+   * 断言逐字不变**——只把登记点指向本 spec 自己的临时工作区（该工作区下的
+   * `.nebflow/node-reports.jsonl` 就是这条申报的持久化副本；其行为由
+   * `NodeReportJournalSpec` 单独钉死）。
+   */
   private val ws = (os.pwd / "target" / "test-node-report-registry").toString
 
   override def munitIOTimeout: FiniteDuration = 30.seconds
@@ -64,8 +66,7 @@ class NodeReportRegistrySpec extends CatsEffectSuite:
   }
 
   test("drain after remove: drain is also an idempotent no-op on empty slot") {
-    for
-      drained <- NodeReportRegistry.drain("never-registered")
+    for drained <- NodeReportRegistry.drain("never-registered")
     yield assertEquals(drained, None)
   }
 end NodeReportRegistrySpec

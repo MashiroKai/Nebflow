@@ -6,6 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * P2 InteractionHub core tests:
@@ -116,14 +117,14 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("askUser request renders question and routes answers back to replyTo") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
       replyTo <- system.spawn(
         nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
-          nebflow.core.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
+          nebflow.shared.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
         },
         "ask-reply-sink"
       )
@@ -166,11 +167,17 @@ class InteractionHubSpec extends CatsEffectSuite:
   // 由 gateway 侧源契约 spec（UserTextGateSpec）钉住；卡片入口作答的正控由本文件
   // 其余用例（Answered / requestId 精确路由 / F4 扇出）覆盖。
 
-  /** 有界轮询同步点（2b93cbe5 / ad0a50ad 加固模式）：hub 的 Request/Answered
-    * 都是 forkTurn 异步 fiber——固定 sleep 后直读观察面（sent / sink Ref）在
-    * 满载调度下有竞态（CI 0.125s 断言竞态先例）。轮询等条件成立（超时清晰红）
-    * 再断言，断言语义不变。 */
-  private def awaitCond(cond: IO[Boolean], timeout: FiniteDuration = 5.seconds, every: FiniteDuration = 25.millis): IO[Unit] =
+  /**
+   * 有界轮询同步点（2b93cbe5 / ad0a50ad 加固模式）：hub 的 Request/Answered
+   * 都是 forkTurn 异步 fiber——固定 sleep 后直读观察面（sent / sink Ref）在
+   * 满载调度下有竞态（CI 0.125s 断言竞态先例）。轮询等条件成立（超时清晰红）
+   * 再断言，断言语义不变。
+   */
+  private def awaitCond(
+    cond: IO[Boolean],
+    timeout: FiniteDuration = 5.seconds,
+    every: FiniteDuration = 25.millis
+  ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
         case true => IO.unit
@@ -181,18 +188,20 @@ class InteractionHubSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 卡片识别（type + requestId 双匹配）——作为「pending 槽已注册」的确定性
-    * 信号：hub 的 handleRequest 先 pending.update 再渲染，卡片进 sent ⟹ 槽在册。 */
+  /**
+   * 卡片识别（type + requestId 双匹配）——作为「pending 槽已注册」的确定性
+   * 信号：hub 的 handleRequest 先 pending.update 再渲染，卡片进 sent ⟹ 槽在册。
+   */
   private def isCard(tpe: String, requestId: String)(j: Json): Boolean =
     j.hcursor.downField("type").as[String].contains(tpe) &&
       j.hcursor.downField("requestId").as[String].contains(requestId)
 
   private def askRequest(
-      requestId: String,
-      gotAnswers: Ref[IO, Option[List[String]]],
-      rootSid: String = "root-1",
-      system: nebflow.actor.ActorSystem,
-      payloadAgentName: Option[String] = None
+    requestId: String,
+    gotAnswers: Ref[IO, Option[List[String]]],
+    rootSid: String = "root-1",
+    system: nebflow.actor.ActorSystem,
+    payloadAgentName: Option[String] = None
   ): IO[InteractionRequest] =
     system
       .spawn(
@@ -218,12 +227,14 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   /** ListPendingAsks 的 reply 通道：收快照后 complete Deferred。 */
   private def awaitReply(
-      d: Deferred[IO, List[Json]],
-      system: nebflow.actor.ActorSystem
+    d: Deferred[IO, List[Json]],
+    system: nebflow.actor.ActorSystem
   ): nebflow.actor.ActorRef[List[Json]] =
     system
       .spawn(
-        nebflow.actor.Behaviors.receiveMessage[List[Json]] { l => d.complete(l).void.as(nebflow.actor.Behaviors.stopped) },
+        nebflow.actor.Behaviors.receiveMessage[List[Json]] { l =>
+          d.complete(l).void.as(nebflow.actor.Behaviors.stopped)
+        },
         s"pending-snapshot-sink-${System.nanoTime()}"
       )
       .unsafeRunSync()
@@ -308,7 +319,7 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("#12 fallback skips kind-incompatible cards — askUser answer never wires into an older permission card") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)

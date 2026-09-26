@@ -44,7 +44,8 @@ object DreamMode:
 
   /** sha256 of the normalized entry text — stable entry identity (rename-stable). */
   def entryHash(text: String): String =
-    MessageDigest.getInstance("SHA-256")
+    MessageDigest
+      .getInstance("SHA-256")
       .digest(text.trim.getBytes(StandardCharsets.UTF_8))
       .map("%02x".format(_))
       .mkString

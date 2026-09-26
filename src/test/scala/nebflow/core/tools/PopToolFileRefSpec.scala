@@ -28,7 +28,10 @@ import munit.FunSuite
  */
 class PopToolFileRefSpec extends FunSuite:
 
-  private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
   private def tempDir(name: String): os.Path =
     val d = os.pwd / "target" / s"test-poprefs-$name-${java.util.UUID.randomUUID().toString.take(6)}"
@@ -50,9 +53,11 @@ class PopToolFileRefSpec extends FunSuite:
       projectRoot = ""
     )
 
-  /** Fresh dir + `report.html` holding `body`; `prepare` may add the files the
-    *  HTML references (relative refs resolve against the HTML's own dir, so the
-    *  two must share one directory). Returns (result, ws message, content). */
+  /**
+   * Fresh dir + `report.html` holding `body`; `prepare` may add the files the
+   *  HTML references (relative refs resolve against the HTML's own dir, so the
+   *  two must share one directory). Returns (result, ws message, content).
+   */
   private def pop(name: String, body: String, prepare: os.Path => Unit = _ => ()): (String, Json, String) =
     val dir = tempDir(name)
     prepare(dir)
@@ -60,20 +65,23 @@ class PopToolFileRefSpec extends FunSuite:
     os.write.over(file, body)
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err)   => fail(s"Pop failed: ${err.message}")
+      case Left(err) => fail(s"Pop failed: ${err.message}")
       case Right(text) =>
         assertEquals(buf.size, 1, s"exactly one popFile message expected: $buf")
         val item = buf.head.hcursor.downField("item")
         val content = item.get[String]("content").toOption.getOrElse("")
         (text, buf.head, content)
 
-  private def itemCounters(msg: Json): Json = msg.hcursor.downField("item").downField("fileRefs").focus.getOrElse(Json.Null)
+  private def itemCounters(msg: Json): Json =
+    msg.hcursor.downField("item").downField("fileRefs").focus.getOrElse(Json.Null)
+
   private def itemWarnings(msg: Json): List[Json] =
     msg.hcursor.downField("item").get[List[Json]]("warnings").toOption.getOrElse(Nil)
   private def counter(p: Json, field: String): Int = p.hcursor.get[Int](field).toOption.getOrElse(-1)
 
   private def resultCounters(result: String): Json =
     FileRefs.countsIn(result).getOrElse(fail(s"no `fileRefs:` line in result:\n$result"))
+
   private def resultWarnings(result: String): List[Json] =
     val i = result.indexOf("warnings: ")
     if i < 0 then Nil
@@ -253,7 +261,7 @@ class PopToolFileRefSpec extends FunSuite:
     os.write.over(file, bytes)
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     PopTool.call(JsonObject("filePath" -> file.toString.asJson), captureCtx(buf)).unsafeRunSync() match
-      case Left(err)   => fail(s"Pop failed: ${err.message}")
+      case Left(err) => fail(s"Pop failed: ${err.message}")
       case Right(text) => (text, buf.head)
 
   test("direct-open: an image ≤5MB rides in the payload as a data: URI (the viewer needs no request)"):
@@ -283,3 +291,4 @@ class PopToolFileRefSpec extends FunSuite:
     assertEquals(item.get[String]("itemType").toOption, Some("pdf"))
     assertEquals(item.get[String]("objectUrl").toOption, None)
     assertEquals(item.get[String]("content").toOption, Some(""))
+end PopToolFileRefSpec

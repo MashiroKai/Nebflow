@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import munit.FunSuite
+import nebflow.shared.AttachContract
 
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
@@ -18,11 +19,11 @@ import java.nio.file.attribute.PosixFilePermissions
  */
 class TargetDirGuardSpec extends FunSuite:
 
-  private var parent: os.Path   = null // 两个允许根候选的父亲
-  private var root: os.Path     = null // 唯一允许根
-  private var outside: os.Path  = null // 允许根外（存在）
-  private var roDir: os.Path    = null // 允许根内、存在、只读
-  private var blocker: os.Path  = null // 允许根内的普通**文件**（用作中间段）
+  private var parent: os.Path = null // 两个允许根候选的父亲
+  private var root: os.Path = null // 唯一允许根
+  private var outside: os.Path = null // 允许根外（存在）
+  private var roDir: os.Path = null // 允许根内、存在、只读
+  private var blocker: os.Path = null // 允许根内的普通**文件**（用作中间段）
 
   override def beforeAll(): Unit =
     parent = os.temp.dir(prefix = "nb-tdguard-")
@@ -73,8 +74,10 @@ class TargetDirGuardSpec extends FunSuite:
 
   // ===== §3.3 样例清单 =====
 
-  /** 允许根的 canonical 形态（macOS 上 `/var/folders/...` 的 realpath 是
-    * `/private/var/folders/...` —— 两侧都走 canonicalize，故断言也用 canonical 面）。 */
+  /**
+   * 允许根的 canonical 形态（macOS 上 `/var/folders/...` 的 realpath 是
+   * `/private/var/folders/...` —— 两侧都走 canonicalize，故断言也用 canonical 面）。
+   */
   private def rootCanonical: String = root.toNIO.toRealPath().toString
 
   private def resolve(s: String): Either[AttachContract.AttachError, os.Path] =
@@ -148,7 +151,7 @@ class TargetDirGuardSpec extends FunSuite:
 
   test("样例 #18：NFD 形态 ⇒ NFC 归一化后判定（同目录不得两套码位表示）"):
     val nfd = s"$root/cafe\u0301" // e + COMBINING ACUTE
-    val nfc = s"$root/caf\u00e9"  // precomposed é
+    val nfc = s"$root/caf\u00e9" // precomposed é
     assert(nfd != nfc, "样例本身必须是两种码位表示")
     assertEquals(TargetDirGuard.normalize(nfd), nfc, "归一化必须落 NFC 形态")
     val r = resolve(nfd)
@@ -164,7 +167,10 @@ class TargetDirGuardSpec extends FunSuite:
   test("边界：空串 / 仅空白 / null ⇒ TARGET_DIR_INVALID"):
     assertEquals(codeOf(""), AttachContract.Codes.TargetDirInvalid)
     assertEquals(codeOf("   "), AttachContract.Codes.TargetDirInvalid)
-    assertEquals(TargetDirGuard.resolve(null, List(root), Set.empty).swap.toOption.map(_.code), Some(AttachContract.Codes.TargetDirInvalid))
+    assertEquals(
+      TargetDirGuard.resolve(null, List(root), Set.empty).swap.toOption.map(_.code),
+      Some(AttachContract.Codes.TargetDirInvalid)
+    )
 
   test("边界：允许根清单为空 ⇒ fail-closed（全拒），不放过"):
     assertEquals(

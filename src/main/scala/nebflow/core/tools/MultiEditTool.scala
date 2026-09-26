@@ -2,10 +2,10 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.sandbox.FileSandbox
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import io.circe.{Json, JsonObject}
+import nebflow.core.sandbox.FileSandbox
+import nebflow.shared.NebflowLogger
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -113,27 +113,39 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
           case Some(arr) =>
             if arr.isEmpty then Left(ToolError("edits must contain at least 1 edit."))
             else if arr.length > MaxEdits then
-              Left(ToolError(s"edits exceeds the maximum of $MaxEdits items (got ${arr.length}). Split into multiple MultiEdit calls."))
+              Left(
+                ToolError(
+                  s"edits exceeds the maximum of $MaxEdits items (got ${arr.length}). Split into multiple MultiEdit calls."
+                )
+              )
             else
-              arr.zipWithIndex.map { (e, i) =>
-                e.asObject match
-                  case None => Left(ToolError(s"edits[$i] must be an object with old_string/new_string."))
-                  case Some(obj) =>
-                    val oldS = obj("old_string").flatMap(_.asString)
-                    val newS = obj("new_string").flatMap(_.asString)
-                    val all = obj("replace_all").flatMap(_.asBoolean).getOrElse(false)
-                    (oldS, newS) match
-                      case (None, _) =>
-                        Left(ToolError(s"edits[$i]: old_string is required and must be a string."))
-                      case (_, None) =>
-                        Left(ToolError(s"edits[$i]: new_string is required and must be a string."))
-                      case (Some(o), Some(n)) =>
-                        if o.isEmpty then
-                          Left(ToolError(s"edits[$i]: old_string must be non-empty — MultiEdit cannot create files; use Write."))
-                        else if o == n then
-                          Left(ToolError(s"edits[$i]: old_string and new_string are identical — remove this edit."))
-                        else Right(MultiEditOp(o, n, all))
-              }.sequence.map(_.toList)
+              arr.zipWithIndex
+                .map { (e, i) =>
+                  e.asObject match
+                    case None => Left(ToolError(s"edits[$i] must be an object with old_string/new_string."))
+                    case Some(obj) =>
+                      val oldS = obj("old_string").flatMap(_.asString)
+                      val newS = obj("new_string").flatMap(_.asString)
+                      val all = obj("replace_all").flatMap(_.asBoolean).getOrElse(false)
+                      (oldS, newS) match
+                        case (None, _) =>
+                          Left(ToolError(s"edits[$i]: old_string is required and must be a string."))
+                        case (_, None) =>
+                          Left(ToolError(s"edits[$i]: new_string is required and must be a string."))
+                        case (Some(o), Some(n)) =>
+                          if o.isEmpty then
+                            Left(
+                              ToolError(
+                                s"edits[$i]: old_string must be non-empty — MultiEdit cannot create files; use Write."
+                              )
+                            )
+                          else if o == n then
+                            Left(ToolError(s"edits[$i]: old_string and new_string are identical — remove this edit."))
+                          else Right(MultiEditOp(o, n, all))
+                      end match
+                }
+                .sequence
+                .map(_.toList)
   end parseEdits
 
   private def typeOf(j: Json): String =
@@ -180,6 +192,7 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
                   record.as(Right(result))
                 case left => IO.pure(left)
               }
+    end match
   end call
 
   // ---------------------------------------------------------------------------
@@ -204,21 +217,22 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
           case Right(updated) =>
             if updated == content then
               Left(ToolError("No changes were produced — every edit matched text identical to its replacement."))
+            else if externallyModified(filePath, content, mtime) then
+              Left(ToolError("File was modified externally. Please re-read and retry."))
             else
-              if externallyModified(filePath, content, mtime) then
-                Left(ToolError("File was modified externally. Please re-read and retry."))
-              else
-                DiffUtil.writeFile(filePath, updated, lineSep)
-                val (added, removed) = DiffUtil.lineStats(content, updated)
-                val hunks = DiffUtil.makeUnifiedDiff(content, updated)
-                val editResult = EditResult(
-                  filePath = filePath.toString,
-                  addedLines = added,
-                  removedLines = removed,
-                  hunks = hunks,
-                  diffText = EditResult.renderHunks(hunks)
-                )
-                Right(editResult.toResultString)
+              DiffUtil.writeFile(filePath, updated, lineSep)
+              val (added, removed) = DiffUtil.lineStats(content, updated)
+              val hunks = DiffUtil.makeUnifiedDiff(content, updated)
+              val editResult = EditResult(
+                filePath = filePath.toString,
+                addedLines = added,
+                removedLines = removed,
+                hunks = hunks,
+                diffText = EditResult.renderHunks(hunks)
+              )
+              Right(editResult.toResultString)
+        end match
+      end if
   end doMultiEdit
 
   /**
@@ -226,7 +240,11 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
    * externally modified only when the mtime changed AND the current content
    * no longer equals the content we based our edits on.
    */
-  private[tools] def externallyModified(filePath: Path, content: String, mtime: java.nio.file.attribute.FileTime): Boolean =
+  private[tools] def externallyModified(
+    filePath: Path,
+    content: String,
+    mtime: java.nio.file.attribute.FileTime
+  ): Boolean =
     val currentMtime = Files.getLastModifiedTime(filePath)
     currentMtime != mtime && {
       DiffUtil.readFile(filePath).replace("\r\n", "\n") != content

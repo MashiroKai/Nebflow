@@ -9,14 +9,13 @@ import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{NodeStatus, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import java.util.UUID
 import scala.concurrent.duration.*
@@ -48,8 +47,10 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
 
   // A fully controllable LLM: each request's answer stream is produced by `body`.
   private class FakeLlm(body: LlmRequest => Stream[IO, StreamChunk]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -131,6 +132,8 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         IO.delay(if os.exists(tmp) then os.remove.all(tmp)).attempt.void
     }
 
+  end withFlowEnv
+
   private def oneNodeFlow: FlowDagDef =
     FlowDagDef(
       name = "tflow",
@@ -202,6 +205,7 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         assertEquals(flowCompletedSuccess(events), Some(true))
         val nodeStatuses = rfOpt.map(_.nodes.values.map(_.status).toList).getOrElse(Nil)
         assertEquals(nodeStatuses.count(_ == NodeStatus.Completed), 3, "all three nodes completed")
+      end for
     }
   }
 
@@ -227,7 +231,7 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         result <- execFiber.join
           .flatMap {
             case Outcome.Succeeded(ioa) => ioa
-            case other                  => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
+            case other => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
           }
           .timeout(6.seconds)
           .attempt
@@ -248,7 +252,11 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         assert(flowResult.swap.exists(_.toLowerCase.contains("cancelled")), s"error mentions cancellation: $flowResult")
         assertEquals(flowCompletedSuccess(events), Some(false), "flowCompleted(success=false) emitted")
         assertEquals(rfOpt.map(_.status), Some(NodeStatus.Cancelled), "flow status cancelled")
-        assertEquals(rfOpt.flatMap(_.nodes.get("n1").map(_.status)), Some(NodeStatus.Cancelled), "node status cancelled")
+        assertEquals(
+          rfOpt.flatMap(_.nodes.get("n1").map(_.status)),
+          Some(NodeStatus.Cancelled),
+          "node status cancelled"
+        )
         assert(
           registry.keys.forall(k => !k.startsWith("dag-")),
           s"agentRegistry cleaned of flow node sessions, found: ${registry.keys.filter(_.startsWith("dag-"))}"
@@ -256,6 +264,7 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         // Note: we deliberately do NOT assert on session FILES here — a cancel
         // mid-turn leaves nothing persisted (the aborted turn never reached
         // finish-turn persist). Preservation itself is covered by UT-6.
+      end for
     }
   }
 
@@ -274,7 +283,7 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         result <- execFiber.join
           .flatMap {
             case Outcome.Succeeded(ioa) => ioa
-            case other                  => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
+            case other => IO.raiseError(new RuntimeException(s"flow fiber ended abnormally: $other"))
           }
           .timeout(6.seconds)
           .attempt
@@ -287,13 +296,16 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         )
         assertEquals(flowCompletedSuccess(events), Some(false))
         assertEquals(rfOpt.flatMap(_.nodes.get("n1").map(_.status)), Some(NodeStatus.Cancelled))
+      end for
     }
   }
 
   // ===== UT-6: success preserves the node session (flow-run observability) =====
 
-  /** Finish-turn persist is forked (fire-and-forget) — the file may land a
-    * moment AFTER execute returns. Poll instead of sleeping blindly. */
+  /**
+   * Finish-turn persist is forked (fire-and-forget) — the file may land a
+   * moment AFTER execute returns. Poll instead of sleeping blindly.
+   */
   private def pollFor[A](cond: IO[Option[A]], tries: Int = 60): IO[Option[A]] =
     cond.flatMap {
       case some @ Some(_) => IO.pure(some)
@@ -310,15 +322,20 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
           .execute(oneNodeFlow, "preserve me", resources, system, wsSink(eventsRef), instId)
           .timeout(20.seconds)
         // Wait for the forked persist to land: any dag-* raw session file.
-        dagFile <- pollFor(IO.delay(
-          if os.exists(sessionsDir)
-          then os.list(sessionsDir).map(_.last).find(f => f.startsWith("dag-") && f.endsWith(".json") && !f.endsWith(".ui.json"))
-          else None
-        ))
+        dagFile <- pollFor(
+          IO.delay(
+            if os.exists(sessionsDir)
+            then
+              os.list(sessionsDir)
+                .map(_.last)
+                .find(f => f.startsWith("dag-") && f.endsWith(".json") && !f.endsWith(".ui.json"))
+            else None
+          )
+        )
         sid = dagFile.map(_.stripSuffix(".json").stripSuffix(".ui"))
         messages <- sid match
           case Some(id) => resources.sessionStore.loadMessagesForSession(id)
-          case None     => IO.pure(Nil)
+          case None => IO.pure(Nil)
       yield
         assert(result.isRight, s"flow must complete, got: $result")
         assert(dagFile.isDefined, "node session .json preserved after SUCCESS terminal (was deleted pre-fix)")
@@ -335,6 +352,7 @@ class FlowDagExecutorCancelSpec extends CatsEffectSuite:
         }
         assert(texts.exists(_.contains("preserve me")), s"user input persisted, texts: $texts")
         assert(texts.exists(_.contains("node output text")), s"assistant output persisted, texts: $texts")
+      end for
     }
   }
 

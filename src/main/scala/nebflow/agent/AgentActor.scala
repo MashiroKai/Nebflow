@@ -5,124 +5,36 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.AgentCommand.*
+import nebflow.actor.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.project.NotificationHeader
-import nebflow.core.tools.AskUserQuestionTool
-import nebflow.core.tools.BgTaskRegistry
-import nebflow.llm.{AllProvidersDownTimeout, Fallback, FallbackExhaustedError, RecoverableAbort}
-import nebflow.shared.*
+import nebflow.core.tools.{AskUserQuestionTool, BgTaskRegistry}
+import nebflow.llm.*
 import nebflow.shared.given
+import nebflow.shared.{NebflowLogger, *}
 
 import scala.concurrent.duration.*
 
-/**
- * Dispatch 发起方分类（freeze-schedule spec D1）：决定 pipeLlmCall gate 的行为。
- * Gated（默认）= 系统续跑（ToolsComplete 续轮 / finishTurnCont / ExternalEvent /
- * CompactionComplete 恢复 / Retry 等）——受冻结时间表约束（#337 黑名单语义）；UserWake = 用户显式
- * 发起（idle UserInput[clientMessageId.isDefined] / AskQuestion / SkillActivate）
- * ——冻结时段也放行（用户输入即唤醒，需求硬指标）。
- */
-sealed trait DispatchCause
-
-object DispatchCause:
-  /** 系统续跑：受冻结调度约束（冻结窗口内进入 frozen behavior）。 */
-  case object Gated extends DispatchCause
-
-  /** 用户显式发起：gate 直接放行（唤醒语义）。 */
-  case object UserWake extends DispatchCause
-
-/**
- * Pure turn-boundary drain decisions shared by ToolsComplete / CompactionComplete.
- * Top-level and side-effect-free so specs can verify the compaction guard
- * directly (queued-inputs-during-compaction bug, 2026-08-14).
- */
-object TurnBoundaryDrains:
-
-  /**
-   * Drain at most the head of a queue at a turn boundary (serial processing,
-   * remainder stays queued). While a compaction job is pending the queue must
-   * NOT be consumed: anything injected into the save/compact turn's history is
-   * discarded when the summary replaces it — consumed from the queue yet lost.
-   * CompactionComplete drains the queues after the summary is in place.
-   */
-  def drainHead[A](queue: List[A], compactionPending: Boolean): (Option[A], List[A]) =
-    if compactionPending then (None, queue)
-    else (queue.headOption, if queue.isEmpty then queue else queue.tail)
-
-  // ── 2026-09-15 用户消息队列 burst 缺陷批（root 裁定）────────────────────────
-  // 裁定逐字：**排队消息按序逐条注入、每条独立成 turn，保序、禁合并语义、禁全量
-  // burst；错误恢复路径与正常路径同规。**
-  // 本 object 原有的两个合批消费器（`drainAll` = 整队、`drainUserBatch` = 可内联
-  // 件整批，缺陷⑥ 2026-09-07 设计 §8）已删除：合批把 N 件排队消息塞进**一次**请求，
-  // 用户侧观测即「一报错，队列里的消息一次全发过来」（作者 2026-09-15 12:59 报告，
-  // 取证：Nebula-5cc7590a 12:56:49 `batch=11` + `batch=2` 同一次 tools-complete
-  // 续轮）。唯一合法形态 = [[drainHead]]（一次边界只消费队首一件，其余留队，到达
-  // 顺序不变）；token 放大（N 件 = N 次全上下文往返）是裁定显式接受的代价。
-
-  /** True for ExternalEvents carrying a Delegate/SubTask result. */
-  def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
-    e.source == "subtask" || e.source == "delegate"
-
-  /**
-   * Count how many sub-agent barrier slots a batch of tool results should add.
-   * Only successful ephemeral Delegates and all SubTasks count — persistent
-   * Delegates send their completion with source=address (not "delegate"), so
-   * isSubagentResult never matches and the counter would never decrement.
-   * (qa-backend 2026-08-19: phantom barrier fix)
-   */
-  def countBarrierIncrements(results: List[(nebflow.shared.ToolCall, nebflow.core.ToolExecResult)]): Int =
-    results.count { (call, r) =>
-      !r.isError && (
-        call.name == "SubTask" ||
-        (call.name == "Delegate" && call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent"))
-      )
-    }
-
-  /**
-   * Barrier-aware drain (2026-08-18, worker blocking semantics): while a
-   * parallel sub-agent batch is outstanding (outstanding > 0), subtask/delegate
-   * result events are HELD in the queue — the agent is not interrupted one
-   * result at a time. The first non-subagent event (if any) may still pass,
-   * so mail/background-task keep their existing serial drain. When the batch
-   * is complete (outstanding == 0), ALL held subtask/delegate results are
-   * drained together for one batched injection; other event types keep the
-   * existing one-at-a-time drain. Compaction guard applies as in [[drainHead]].
-   */
-  def drainBarrier(
-    queue: List[AgentCommand.ExternalEvent],
-    compactionPending: Boolean,
-    outstanding: Int
-  ): (List[AgentCommand.ExternalEvent], List[AgentCommand.ExternalEvent]) =
-    if compactionPending then (Nil, queue)
-    else if outstanding > 0 then
-      queue.indexWhere(e => !isSubagentResult(e)) match
-        case -1 => (Nil, queue) // everything held — wait for the batch
-        case i => (List(queue(i)), queue.patch(i, Nil, 1))
-    else
-      val (subtasks, others) = queue.partition(isSubagentResult)
-      (subtasks ::: others.take(1), others.drop(1))
-
-end TurnBoundaryDrains
-
 object AgentActor extends AgentCore with AgentSession:
 
-  private val MaxEmptyResponseRetries = 5
+  private[agent] val MaxEmptyResponseRetries = 5
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   def isOverloadReason(r: FailoverReason): Boolean =
     r == FailoverReason.Overloaded || r == FailoverReason.RateLimit
 
-  /** Flow-node supervision P1 (2026-08-26): agent-turn-level retryability of an
-    * LLM failure. Retryable = overload-class (saturation may clear during
-    * backoff) OR stream-inactivity stall (phase-2 watchdog — upstream jitter;
-    * a clean-checkpoint re-send within the SAME OverloadRetryMax/MaxTurnLlmCalls
-    * budget, no new quota; NOT a stream-level resume, so the seam guard is never
-    * violated). Everything else fails fast (2026-08-18 token-incident ruling).
-    * Single source: the llm-fail retry branch AND AgentError.retryable (P2). */
+  /**
+   * Flow-node supervision P1 (2026-08-26): agent-turn-level retryability of an
+   * LLM failure. Retryable = overload-class (saturation may clear during
+   * backoff) OR stream-inactivity stall (phase-2 watchdog — upstream jitter;
+   * a clean-checkpoint re-send within the SAME OverloadRetryMax/MaxTurnLlmCalls
+   * budget, no new quota; NOT a stream-level resume, so the seam guard is never
+   * violated). Everything else fails fast (2026-08-18 token-incident ruling).
+   * Single source: the llm-fail retry branch AND AgentError.retryable (P2).
+   */
   def llmFailureRetryable(error: Throwable): Boolean = error match
     case e: FallbackExhaustedError =>
       e.attempts.forall(a =>
@@ -141,18 +53,19 @@ object AgentActor extends AgentCore with AgentSession:
       val cls = Fallback.classifyError(error)
       cls.permanence == ErrorPermanence.Transient && isOverloadReason(cls.reason)
 
-  /** Inactivity-class failure (drives the ≥30s retry backoff): a typed stall,
-    * or every attempt in an exhausted chain was a Transient timeout. */
+  /**
+   * Inactivity-class failure (drives the ≥30s retry backoff): a typed stall,
+   * or every attempt in an exhausted chain was a Transient timeout.
+   */
   def llmFailureInactivityClass(error: Throwable): Boolean = error match
     case _: StreamInactivityTimeout => true
     case e: FallbackExhaustedError =>
-      e.attempts.nonEmpty && e.attempts.forall(a =>
-        a.reason.contains(FailoverReason.Timeout) && a.permanence.contains(ErrorPermanence.Transient)
-      )
+      e.attempts.nonEmpty && e.attempts
+        .forall(a => a.reason.contains(FailoverReason.Timeout) && a.permanence.contains(ErrorPermanence.Transient))
     case _ => false
 
   /** Max "you must call Mail" reminder injections before giving up (initial + retries). */
-  private val MaxMailReminders = 2
+  private[agent] val MaxMailReminders = 2
 
   /**
    * Max llm-fail retries for overload-class failures (429 rate-limit / 529
@@ -162,88 +75,74 @@ object AgentActor extends AgentCore with AgentSession:
    * messages are unchanged between retries (96% cache hit), so retrying them
    * mostly amplifies spend without healing anything.
    */
-  private val OverloadRetryMax = 1
+  private[agent] val OverloadRetryMax = 1
 
-  /** Flow-node supervision P1: stream-inactivity retries back off at least
-    * this long — the upstream stall lasted 60s+ (watchdog window), an
-    * immediate re-send would hit the same stall. */
+  /**
+   * Flow-node supervision P1: stream-inactivity retries back off at least
+   * this long — the upstream stall lasted 60s+ (watchdog window), an
+   * immediate re-send would hit the same stall.
+   */
   private val InactivityRetryBackoffMinMs = 30_000L
 
-  /** Test hook: override the inactivity retry backoff floor (specs inject
-    * ~100ms so checkpoint-restart integration tests don't wait 30s per retry).
-    * Public for cross-package specs (core.entity supervision spec). Global
-    * var — specs MUST reset to None in a finally. */
+  /**
+   * Test hook: override the inactivity retry backoff floor (specs inject
+   * ~100ms so checkpoint-restart integration tests don't wait 30s per retry).
+   * Public for cross-package specs (core.entity supervision spec). Global
+   * var — specs MUST reset to None in a finally.
+   */
   var testInactivityBackoffMs: Option[Long] = None
 
-  private def effectiveInactivityBackoffMinMs: Long =
+  private[agent] def effectiveInactivityBackoffMinMs: Long =
     testInactivityBackoffMs.getOrElse(InactivityRetryBackoffMinMs)
 
   /** Exponential backoff base for LLM fail retries (ms). */
-  private val LlmFailBackoffBaseMs = 2000L
+  private[agent] val LlmFailBackoffBaseMs = 2000L
 
   /** Cap for LLM fail backoff (ms). */
-  private val LlmFailBackoffMaxMs = 10000L
+  private[agent] val LlmFailBackoffMaxMs = 10000L
 
   /** Overload-class failures always back off ≥5s before retrying. */
-  private val OverloadBackoffMinMs = 5000L
+  private[agent] val OverloadBackoffMinMs = 5000L
 
-  /** Cancel-batch debounce window (user ruling 2026-08-26 08:33): task
-    * cancellations arriving while the agent is processing merge into ONE
-    * packaged notice, flushed when the window (measured from the FIRST
-    * buffered cancellation) expires. 45s = mid of the approved 30-60s range.
-    * The timer rides forkTurn — a turn boundary naturally cancels it and the
-    * buffer degrades to the idle-cache semantics (delivered, never lost). */
+  /**
+   * Cancel-batch debounce window (user ruling 2026-08-26 08:33): task
+   * cancellations arriving while the agent is processing merge into ONE
+   * packaged notice, flushed when the window (measured from the FIRST
+   * buffered cancellation) expires. 45s = mid of the approved 30-60s range.
+   * The timer rides forkTurn — a turn boundary naturally cancels it and the
+   * buffer degrades to the idle-cache semantics (delivered, never lost).
+   */
 
   // ── v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §3.3/§5.1）─────
   /** 同 reason 连续 ErrorFrozen ≥ 本值 → 进入升级链（请求父干预，不再直接 fatal）。 */
-  private val ErrorFreezeEscalationThreshold = 3
+  private[agent] val ErrorFreezeEscalationThreshold = 3
 
-  /** Block 3 循环检测器 L2（supervision trio §D3）：Loop 冻结的 resumeAt 偏移
-    * ——语义「永不自动续跑」（1 年），恢复只走人工三路：用户输入唤醒 /
-    * Manager·Nebula AgentControl restart / cancel 终态。 */
-  private val LoopFreezeResumeMs = 365L * 24 * 3600 * 1000
+  /**
+   * Block 3 循环检测器 L2（supervision trio §D3）：Loop 冻结的 resumeAt 偏移
+   * ——语义「永不自动续跑」（1 年），恢复只走人工三路：用户输入唤醒 /
+   * Manager·Nebula AgentControl restart / cancel 终态。
+   */
+  private[agent] val LoopFreezeResumeMs = 365L * 24 * 3600 * 1000
 
   /** Network 类错误的 ErrorFrozen 退避窗口：10-30s（含 jitter），短退避后自动重试 1-2 次。 */
-  private val NetworkErrorFreezeBackoffMs = 10_000L
+  private[agent] val NetworkErrorFreezeBackoffMs = 10_000L
 
   /** ProviderDown 的 ErrorFrozen 退避：≈ 探测周期（120s+jitter），P0 用 R1 轮询兜底。 */
-  private val ProviderDownFreezeBackoffMs = 120_000L
+  private[agent] val ProviderDownFreezeBackoffMs = 120_000L
 
   /** FreezeReason → wire 字符串（与 protocol.toJson 序列化一致，单源映射）。 */
-  private def reasonStr(r: FreezeReason): String = r match
-    case FreezeReason.Schedule        => "schedule"
-    case FreezeReason.LlmTransient    => "llm-transient"
-    case FreezeReason.Network         => "network"
-    case FreezeReason.ProviderDown    => "provider-down"
+  private[agent] def reasonStr(r: FreezeReason): String = r match
+    case FreezeReason.Schedule => "schedule"
+    case FreezeReason.LlmTransient => "llm-transient"
+    case FreezeReason.Network => "network"
+    case FreezeReason.ProviderDown => "provider-down"
     case FreezeReason.RestartRecovery => "restart-recovery"
-    case FreezeReason.Loop            => "loop"
+    case FreezeReason.Loop => "loop"
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   private def isOverloadClass(r: FailoverReason): Boolean = AgentActor.isOverloadReason(r)
 
-  private val logger = NebflowLogger.forName("nebflow.agent")
-
-  /**
-   * Infer the injection source (任务 P) for a tool-originated UserInput that
-   * did not carry an explicit source. Discriminator: clientMessageId is empty
-   * (user WS inputs always carry one). The source is derived from the agent's
-   * own session id prefix, falling back to the fork-adapter replyTo for
-   * Mail ask/fork spawns, and finally the generic "tool".
-   *
-   *   delegate-… → "delegate"   DelegateTool 内核会话（一次性执行件）
-   *   subtask-…  → "subtask"    SubTaskTool worker
-   *   dag-…      → "flow"       FlowDagExecutor node
-   *   otherwise  → "tool"
-   */
-  private def inferInjectionSource(
-    sessionId: Option[String],
-    replyTo: Option[ActorRef[AgentEvent]]
-  ): Option[String] =
-    val sid = sessionId.getOrElse("")
-    if sid.startsWith("delegate-") then Some("delegate")
-    else if sid.startsWith("subtask-") then Some("subtask")
-    else if sid.startsWith("dag-") then Some("flow")
-    else Some("tool")
+  private[agent] val logger = NebflowLogger.forName("nebflow.agent")
 
   /**
    * ② (2026-09-11, queue-direct-pass diagnosis §2 根因): a REAL human input must
@@ -253,16 +152,18 @@ object AgentActor extends AgentCore with AgentSession:
    * sets both `source=Some(...)` and `fromUser=true` still renders as a plain
    * user turn, because 真人性 wins over the label.
    */
-  private def injectionSourceFor(fromUser: Boolean, source: Option[String]): Option[String] =
+  private[agent] def injectionSourceFor(fromUser: Boolean, source: Option[String]): Option[String] =
     if fromUser then None else source
 
-  /** issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
-    * 供 AgentControl list/status 展示——phantom slot（成员 hang / 停止失败时
-    * barrier 永不归还）从日志考古变成一条命令可见。诊断语义：idle 期
-    * outstanding > 0 且无在飞任务 = phantom；outstanding > 0 且 pending > 0 =
-    * 有结果被 HOLD 扣留等批。幂等，registry 无该 session 时 no-op。
-    * 刷新点：spawn 计数（tools-complete）、ExternalEvent 三分支。 */
-  private def touchBarrierSnapshot(
+  /**
+   * issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
+   * 供 AgentControl list/status 展示——phantom slot（成员 hang / 停止失败时
+   * barrier 永不归还）从日志考古变成一条命令可见。诊断语义：idle 期
+   * outstanding > 0 且无在飞任务 = phantom；outstanding > 0 且 pending > 0 =
+   * 有结果被 HOLD 扣留等批。幂等，registry 无该 session 时 no-op。
+   * 刷新点：spawn 计数（tools-complete）、ExternalEvent 三分支。
+   */
+  private[agent] def touchBarrierSnapshot(
     resources: SharedResources,
     sessionId: Option[String],
     outstanding: Int,
@@ -287,7 +188,7 @@ object AgentActor extends AgentCore with AgentSession:
    *   background-task      → B1 background command completion
    *   eventType=="inject"  → B4 API inject (source is user-controlled)
    */
-  private def visibleExternalEventSource(source: String, eventType: String): Option[String] =
+  private[agent] def visibleExternalEventSource(source: String, eventType: String): Option[String] =
     if eventType == "inject" then Some(source)
     else if source == "delegate" then Some("delegate")
     else if source == "subtask" then Some("subtask")
@@ -302,7 +203,7 @@ object AgentActor extends AgentCore with AgentSession:
    * Retryable-failure guidance is appended per event, mirroring the single-event
    * idle path.
    */
-  private def buildEventReminder(events: List[AgentCommand.ExternalEvent]): Message =
+  private[agent] def buildEventReminder(events: List[AgentCommand.ExternalEvent]): Message =
     val parts = events.zipWithIndex.map { (e, i) =>
       val hint =
         if e.eventType == "failed" && e.metadata("retryable").exists(_.asBoolean.getOrElse(false)) then
@@ -318,7 +219,12 @@ object AgentActor extends AgentCore with AgentSession:
     }
     // Reminder refactor (2026-08-20): source marker is the fromUser signal —
     // external-event injections must NOT look like user-typed messages.
-    Message(MessageRole.User, Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"), source = Some("external"))
+    Message(
+      MessageRole.User,
+      Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"),
+      source = Some("external")
+    )
+  end buildEventReminder
 
   // ============================================================
   // F1 (2026-08-30, compact-injection-shield G1): unified post-compaction
@@ -382,7 +288,7 @@ object AgentActor extends AgentCore with AgentSession:
    * injections survive the restart" instead of "silently lost". Failures are
    * logged inside the store and never propagate — enqueue must not block.
    */
-  private def persistQueues(sessionId: Option[String], exec: ExecutionContext): IO[Unit] =
+  private[agent] def persistQueues(sessionId: Option[String], exec: ExecutionContext): IO[Unit] =
     sessionId match
       case Some(sid) =>
         CompactionQueueStore.save(
@@ -402,7 +308,7 @@ object AgentActor extends AgentCore with AgentSession:
    * record / legacy 0 stamp → conservative fallback: dedup active
    * (pre-V13 behavior).
    */
-  private def mailDedupInReplayWindow(sid: String, resources: SharedResources): IO[Boolean] =
+  private[agent] def mailDedupInReplayWindow(sid: String, resources: SharedResources): IO[Boolean] =
     resources.agentRegistry.get.map { reg =>
       reg.get(sid) match
         case Some(rec) if rec.startedAt > 0 =>
@@ -421,13 +327,13 @@ object AgentActor extends AgentCore with AgentSession:
     // 依旧只走全元数据路径（turn 末 head-forward），完成目标不搁浅。
     val (imms, immTail) = exec.pendingImmediateInputs match
       case head :: tail => (List(head), tail)
-      case Nil          => (Nil, Nil)
+      case Nil => (Nil, Nil)
     val (injectedUsers, userTail): (List[AgentCommand.UserInput], List[AgentCommand]) =
       if imms.nonEmpty then (Nil, exec.pendingUserInputs)
       else
         exec.pendingUserInputs match
           case (ui: AgentCommand.UserInput) :: tail if ui.replyTo.isEmpty => (List(ui), tail)
-          case _                                                          => (Nil, exec.pendingUserInputs)
+          case _ => (Nil, exec.pendingUserInputs)
     val immMessages = imms.map(immInputToMessage)
     val userMsgs = injectedUsers.map(userCmdToMessage)
     // Full flush (2026-08-30, G1): EVERY event held during the compaction
@@ -463,9 +369,13 @@ object AgentActor extends AgentCore with AgentSession:
       updatedExec
     )
 
-  /** WS bubble emission for every injected immediate/user input that carries a source.
-    * ② (2026-09-11): fromUser 优先于 source —— 真人输入不产注入气泡。 */
-  private def emitInjectedBubbles(
+  end drainQueuesAfterCompaction
+
+  /**
+   * WS bubble emission for every injected immediate/user input that carries a source.
+   * ② (2026-09-11): fromUser 优先于 source —— 真人输入不产注入气泡。
+   */
+  private[agent] def emitInjectedBubbles(
     resources: SharedResources,
     state: AgentState,
     drain: PostCompactDrain
@@ -475,10 +385,18 @@ object AgentActor extends AgentCore with AgentSession:
         case Some(src) =>
           emitInjectedUserEvent(
             resources,
-            state.wsSend, state.sessionId, imm.text, src, imm.eventType, imm.sender, imm.senderTeam, imm.delivery,
+            state.wsSend,
+            state.sessionId,
+            imm.text,
+            src,
+            imm.eventType,
+            imm.sender,
+            imm.senderTeam,
+            imm.delivery,
             // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级随件转发（发送方所属
             // 项目），② 级 = 本会话所属项目。
-            project = imm.project, sessionProject = state.projectName
+            project = imm.project,
+            sessionProject = state.projectName
           )
         case None => IO.unit
     }
@@ -487,34 +405,46 @@ object AgentActor extends AgentCore with AgentSession:
         case Some(src) =>
           emitInjectedUserEvent(
             resources,
-            state.wsSend, state.sessionId, ui.text, src, ui.eventType, ui.sender, ui.senderTeam, ui.delivery,
+            state.wsSend,
+            state.sessionId,
+            ui.text,
+            src,
+            ui.eventType,
+            ui.sender,
+            ui.senderTeam,
+            ui.delivery,
             // 收件判别字段随 UserInput 同源转发（mailbadge 批 2026-09-13）。
             intake = ui.intake,
             // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级（同上）。
-            project = ui.project, sessionProject = state.projectName
+            project = ui.project,
+            sessionProject = state.projectName
           )
         case None => IO.unit
     }
     immBubbles *> userBubbles
 
+  end emitInjectedBubbles
+
   /** F1/F3: audit log — how many queued injections landed in the continuation round. */
-  private def logPostCompactInjection(
+  private[agent] def logPostCompactInjection(
     agentDef: AgentDef,
     depth: Int,
     state: AgentState,
     drain: PostCompactDrain
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    IO(logAgentEvent(
-      agentDef,
-      depth,
-      state.sessionId,
-      state.sessionName,
-      "queues-injected-after-compaction",
-      s"imm=${drain.immMessages.size} user=${drain.userMessages.size} events=${drain.eventCount} " +
-        s"remainingImm=${drain.exec.pendingImmediateInputs.size} " +
-        s"remainingUser=${drain.exec.pendingUserInputs.size} " +
-        s"remainingEvents=${drain.exec.pendingEvents.size}"
-    ))
+    IO(
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "queues-injected-after-compaction",
+        s"imm=${drain.immMessages.size} user=${drain.userMessages.size} events=${drain.eventCount} " +
+          s"remainingImm=${drain.exec.pendingImmediateInputs.size} " +
+          s"remainingUser=${drain.exec.pendingUserInputs.size} " +
+          s"remainingEvents=${drain.exec.pendingEvents.size}"
+      )
+    )
 
   /**
    * Emit a `user` WS event so the frontend renders an injected-task bubble
@@ -522,7 +452,7 @@ object AgentActor extends AgentCore with AgentSession:
    * Mirrors the `user` event shape the frontend already handles for normal
    * user input (SessionRecorder records it as UiMessage.User with injected=true).
    */
-  private def emitInjectedUserEvent(
+  private[agent] def emitInjectedUserEvent(
     resources: SharedResources,
     wsSend: Json => IO[Unit],
     sessionId: Option[String],
@@ -532,17 +462,23 @@ object AgentActor extends AgentCore with AgentSession:
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
     delivery: Option[String] = None,
-    /** 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与 `senderTeam` /
-      * `delivery` **同款可选帧字段**（缺席即不 merge，帧逐字节不变 ⇒ 向后兼容）。
-      * 只做**呈现判别**：前端标签优先取它、缺席回落 `source` 表；`source` 的
-      * 会计语义（`"task"` = 桥的消费计数口径）不受任何影响。 */
+    /**
+     * 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与 `senderTeam` /
+     * `delivery` **同款可选帧字段**（缺席即不 merge，帧逐字节不变 ⇒ 向后兼容）。
+     * 只做**呈现判别**：前端标签优先取它、缺席回落 `source` 表；`source` 的
+     * 会计语义（`"task"` = 桥的消费计数口径）不受任何影响。
+     */
     intake: Option[String] = None,
-    /** **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：四段式 header 第 2 段的
-      * 链首级（构造点置位）。`None` ⇒ 走 `sessionProject`（本项目）⇒
-      * [[NotificationHeader.RootProject]]（跨 root 直投 / 根域）。 */
+    /**
+     * **发送方所属项目**（「气泡四段式统一」批 2026-09-15）：四段式 header 第 2 段的
+     * 链首级（构造点置位）。`None` ⇒ 走 `sessionProject`（本项目）⇒
+     * [[NotificationHeader.RootProject]]（跨 root 直投 / 根域）。
+     */
     project: Option[String] = None,
-    /** 接收会话所属项目（= `AgentState.projectName`）：PROJECT 段落回链第 ② 级。
-      * 由调用点逐处传入（本方法不读 `state`——沿用既有「state 字段显式传参」纪律）。 */
+    /**
+     * 接收会话所属项目（= `AgentState.projectName`）：PROJECT 段落回链第 ② 级。
+     * 由调用点逐处传入（本方法不读 `state`——沿用既有「state 字段显式传参」纪律）。
+     */
     sessionProject: Option[String] = None,
     waitingForBatch: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
@@ -690,42 +626,60 @@ object AgentActor extends AgentCore with AgentSession:
     isFlowNode: Boolean = false,
     /** 轨道二 #5: 节点 userFacing 白名单声明（详见 SessionContext.userFacingNode）。 */
     userFacingNode: Boolean = false,
-    /** Project 任务板身份（TaskBoard 批 2，详见 SessionContext.flowNodeId/isDispatcher/
-      * projectName）：NodeEngine 置 flowNodeId+projectName，ProjectActor 置
-      * isDispatcher+projectName；经 AgentCore 透传 ToolContext。默认空=非项目会话。 */
+    /**
+     * Project 任务板身份（TaskBoard 批 2，详见 SessionContext.flowNodeId/isDispatcher/
+     * projectName）：NodeEngine 置 flowNodeId+projectName，ProjectActor 置
+     * isDispatcher+projectName；经 AgentCore 透传 ToolContext。默认空=非项目会话。
+     */
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
-    /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role 随
-      * spawn 注入（NodeEngine 节点/loop 会话），经 AgentCore 透传
-      * ToolContext.flowNodeRole——node_report 值域分化 + ProtocolFootnote 角色分支
-      * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。 */
+    /**
+     * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role 随
+     * spawn 注入（NodeEngine 节点/loop 会话），经 AgentCore 透传
+     * ToolContext.flowNodeRole——node_report 值域分化 + ProtocolFootnote 角色分支
+     * 的来源。默认 None = 非项目会话/旧路径（判据回落 NodeRoles.Task）。
+     */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
-    /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
-      * nodeName 字段来源。详见 SessionContext.flowNodeName。 */
+    /**
+     * D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入——AskUser payload
+     * nodeName 字段来源。详见 SessionContext.flowNodeName。
+     */
     flowNodeName: Option[String] = None,
-    /** 链级抽象 P2（20260910 spec §9.2 项 2）：节点所属链 id spawn 时刻快照
-      * （NodeEngine 注入，None = 无链/非项目会话）。详见 SessionContext.flowChainId。 */
+    /**
+     * 链级抽象 P2（20260910 spec §9.2 项 2）：节点所属链 id spawn 时刻快照
+     * （NodeEngine 注入，None = 无链/非项目会话）。详见 SessionContext.flowChainId。
+     */
     flowChainId: Option[String] = None,
-    /** 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
-      * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。 */
+    /**
+     * 阶段 2a 沙箱（§A.6）：project 节点/分发器 spawn 置 true——AgentCore 据此
+     * 从 projectRoot 派生 ToolContext.sandbox。默认 false=旧行为（双轨豁免面）。
+     */
     sandboxEnabled: Boolean = false,
-    /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
-      * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
-      * 沿用 projectRoot 推导（旧行为）。 */
+    /**
+     * 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+     * NodeEngine 传项目工作区根，沙箱 root 不再收窄到 worktree 目录自身。None =
+     * 沿用 projectRoot 推导（旧行为）。
+     */
     sandboxRoot: Option[String] = None,
-    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
-      * 两个 spawn 点传座椅路径（worktree 节点 ⇒ `<ws>/.nebflow/worktrees/<name>`）。
-      * 围栏面（sandboxRoot）不动；座椅缺失 ⇒ 该会话 Bash 显式失败（fail-closed）。
-      * 非项目轨不传 ⇒ None ⇒ 旧行为逐字节不变。详见 SessionContext.sessionCwd。 */
+    /**
+     * **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
+     * 两个 spawn 点传座椅路径（worktree 节点 ⇒ `<ws>/.nebflow/worktrees/<name>`）。
+     * 围栏面（sandboxRoot）不动；座椅缺失 ⇒ 该会话 Bash 显式失败（fail-closed）。
+     * 非项目轨不传 ⇒ None ⇒ 旧行为逐字节不变。详见 SessionContext.sessionCwd。
+     */
     sessionCwd: Option[String] = None,
-    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 / 分发器 spawn 置
-      * true（NodeEngine ×2 + ProjectActor ×1），AGENTS.md 注入判据据此置位——
-      * 不再挂在沙箱总闸上。默认 false = WS 根会话/双轨面不注入（旧行为不变）。 */
+    /**
+     * 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 / 分发器 spawn 置
+     * true（NodeEngine ×2 + ProjectActor ×1），AGENTS.md 注入判据据此置位——
+     * 不再挂在沙箱总闸上。默认 false = WS 根会话/双轨面不注入（旧行为不变）。
+     */
     projectSession: Boolean = false,
-    /** ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖（root 会话专属）。
-      * 🔴 唯一注入点 = `WebSocketRoutes.doSpawnRootAgent`（depth=0）；非 root spawn
-      * 一律不传 ⇒ None ⇒ 走现值函数（口径③ / §5.3 静态泄漏判据）。 */
+    /**
+     * ctxthresh 批（2026-09-15 方案 A）：会话级压缩阈值比例覆盖（root 会话专属）。
+     * 🔴 唯一注入点 = `WebSocketRoutes.doSpawnRootAgent`（depth=0）；非 root spawn
+     * 一律不传 ⇒ None ⇒ 走现值函数（口径③ / §5.3 静态泄漏判据）。
+     */
     compactThresholdRatio: Option[Double] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
@@ -801,7 +755,7 @@ object AgentActor extends AgentCore with AgentSession:
       cwd = state.projectRoot.getOrElse("")
     )
 
-  private def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(using
+  private[agent] def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(using
     ctx: ActorContext[AgentCommand]
   ): IO[Unit] =
     // P0-2（spec §2.5）：会话终态清空 MCP 审批卡的 scope=session 放行记忆 ——
@@ -817,6 +771,8 @@ object AgentActor extends AgentCore with AgentSession:
         ctx.forkTurn(resources.hookEngine.onStop(hookCtx) *> resources.hookEngine.onSessionEnd(hookCtx))
     else clearMcpSessionApprovals
 
+  end fireLifecycleStopHooks
+
   /**
    * #391 机制 E：restart/Stop 联动——杀该 session 全部 shell 进程树（前台 +
    * 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS cancelled 通知。
@@ -827,34 +783,40 @@ object AgentActor extends AgentCore with AgentSession:
    * 需手动 pkill。killSessionProcesses 直接杀注册的进程树，断掉这条链。
    * 不碰：其他 session 的进程、JVM 自身（ProcessTree 只操作注册的 ProcessHandle）。
    */
-  private def killSessionShellProcesses(state: AgentState): IO[Unit] =
+  private[agent] def killSessionShellProcesses(state: AgentState): IO[Unit] =
     // 抽公共收殓函数（孤儿后台任务收割 D1）：杀进程树 + 注销 BgTaskRegistry +
     // WS cancelled 帧三件事合一，与 NodeEngine 终态出口共用（去重）。
     BgTaskRegistry.reclaimSession(state.sessionId, state.wsSend, state.rootSessionId)
 
-  /** Build the "askUser" WS payload for the frontend. When the question comes
-    * from a sub-agent (ForwardAskUser), agentName is set to the source agent
-    * for attribution and sourceAgent/sourceSession carry the origin info.
-    * Pure — `private[agent]` so the #380 passthrough contract (canvas/preview
-    * emitted only when present, byte-identical otherwise) is unit-covered.
-    * D6 批 F1（G9）：project/nodeName 来源标注字段——仅在项目上下文（项目节点
-    * 或分发器会话）时携带，缺省 payload 与恢复前字节一致（AskUserBuildJsonSpec
-    * V11b 防线同款纪律）。 */
-  /** 内核会话判定（单一判据）：会话 id 前缀 `delegate-kernel-`（与 R10 审计行的
-    * 事后过滤口径、`SessionStore.DelegateId` 命名同源）。 */
+  /**
+   * Build the "askUser" WS payload for the frontend. When the question comes
+   * from a sub-agent (ForwardAskUser), agentName is set to the source agent
+   * for attribution and sourceAgent/sourceSession carry the origin info.
+   * Pure — `private[agent]` so the #380 passthrough contract (canvas/preview
+   * emitted only when present, byte-identical otherwise) is unit-covered.
+   * D6 批 F1（G9）：project/nodeName 来源标注字段——仅在项目上下文（项目节点
+   * 或分发器会话）时携带，缺省 payload 与恢复前字节一致（AskUserBuildJsonSpec
+   * V11b 防线同款纪律）。
+   */
+  /**
+   * 内核会话判定（单一判据）：会话 id 前缀 `delegate-kernel-`（与 R10 审计行的
+   * 事后过滤口径、`SessionStore.DelegateId` 命名同源）。
+   */
   private[agent] def isKernelSession(sessionId: String): Boolean =
     sessionId.startsWith("delegate-kernel-")
 
-  /** U3（作者裁定 2026-09-11：自定义答「显示 subagent-任务」，否决裸 `kernel`）：
-    * 内核 ask 的来源标注 = `subagent · <任务摘要>`——一眼看出「这是子代理在问」，
-    * 并带上它正在做的那个任务，使多张卡可区分。摘要来源 = 调用方传入的
-    * `description`（= 会话语义名 `state.sessionName`；缺省回落到会话 id 尾段），
-    * 上限 24 字符（不把整段任务文本灌进标签）。
-    *
-    * 落点仍是**来源标注的回落分支**：payload 的 `agentName` 字段即前端 badge 的
-    * 回落来源（`askPending.js:38-41` / `chat.js:2033`）⇒ 纯后端注入标签文本，
-    * **零 web/ 改动**（读 `askPending.js:35-41` + `main.js:1297-1333` 确认：
-    * `project` 缺省时标签 = `msg.agentName` 原样渲染）。 */
+  /**
+   * U3（作者裁定 2026-09-11：自定义答「显示 subagent-任务」，否决裸 `kernel`）：
+   * 内核 ask 的来源标注 = `subagent · <任务摘要>`——一眼看出「这是子代理在问」，
+   * 并带上它正在做的那个任务，使多张卡可区分。摘要来源 = 调用方传入的
+   * `description`（= 会话语义名 `state.sessionName`；缺省回落到会话 id 尾段），
+   * 上限 24 字符（不把整段任务文本灌进标签）。
+   *
+   * 落点仍是**来源标注的回落分支**：payload 的 `agentName` 字段即前端 badge 的
+   * 回落来源（`askPending.js:38-41` / `chat.js:2033`）⇒ 纯后端注入标签文本，
+   * **零 web/ 改动**（读 `askPending.js:35-41` + `main.js:1297-1333` 确认：
+   * `project` 缺省时标签 = `msg.agentName` 原样渲染）。
+   */
   private[agent] def subagentAskLabel(sessionName: Option[String], sessionId: String): String =
     val raw = sessionName.map(_.trim).filter(_.nonEmpty).getOrElse {
       // 无 description：退回会话 id 尾段（可辨识，且不编造任务语义）
@@ -918,29 +880,31 @@ object AgentActor extends AgentCore with AgentSession:
     Json.obj(fields.toList*)
   end buildAskUserJson
 
-  /** 多 AskUser 并发批（#250 第②项，2026-09-13 作者裁定「6 项全补」）：
-    * turn 被用户 Interrupt 后，回收本会话仍挂在 InteractionHub 的 pending 槽。
-    *
-    * 改前现象（代码判据）：`AgentCommand.Interrupt` 的 processing 分支只做
-    * `cancelCurrentTurn` + `emitStream(Interrupted)` + registry 回 `Idle`
-    * （本文件 Interrupt 分支），**不触发** `CleanupForSession`；而全仓
-    * `CleanupForSession` 只有 2 个调用点（`NodeEngine` 节点 cancel/abandon/死会话回收、
-    * `BackoffSupervisor` 子代理终态）——**root 会话没有清理入口**。后果：turn 没了、
-    * 等待方（工具里的 `.?`）已死，但 hub 槽位与前端卡片仍然挂着；用户点它 =
-    * 对一个没有听众的动作作答（`InteractionHub.handleAnswered` 里 `replyTo` 早已
-    * 无人接收），且 R1 起等待无超时 ⇒ 卡片是永久僵尸。
-    *
-    * 语义边界：中断 = 该 turn 的**全部**人类等待一起作废 —— AskUser 卡与权限卡
-    * 共用同一个槽容器（`InteractionHub` 的 `pending` Map，两种 kind），故按
-    * `sourceSession` 批量回收正是既有 `CleanupForSession` 语义；`reason =
-    * "turn-interrupted"` 让前端把卡片文案从「来源已关闭」改成中断文案。
-    * （相邻但**不同**的 Exit —— `ResetSession` / `Retry` / `Stop` —— 本批按
-    * 「禁扩面」只登记不修，见报告「邻接问题登记」。）
-    *
-    * 无静默路径核证：hub 未装配（早期 boot / 测试）时**无槽可清**——请求在
-    * `AskUser` 分支（本文件）与权限分支（`AgentCore.sendPermissionRequest`）就已
-    * WARN 丢弃；此处仍打一行 info 供归因，绝不静默吞掉一次中断清理意图。 */
-  private def closePendingInteractionsForInterruptedTurn(
+  /**
+   * 多 AskUser 并发批（#250 第②项，2026-09-13 作者裁定「6 项全补」）：
+   * turn 被用户 Interrupt 后，回收本会话仍挂在 InteractionHub 的 pending 槽。
+   *
+   * 改前现象（代码判据）：`AgentCommand.Interrupt` 的 processing 分支只做
+   * `cancelCurrentTurn` + `emitStream(Interrupted)` + registry 回 `Idle`
+   * （本文件 Interrupt 分支），**不触发** `CleanupForSession`；而全仓
+   * `CleanupForSession` 只有 2 个调用点（`NodeEngine` 节点 cancel/abandon/死会话回收、
+   * `BackoffSupervisor` 子代理终态）——**root 会话没有清理入口**。后果：turn 没了、
+   * 等待方（工具里的 `.?`）已死，但 hub 槽位与前端卡片仍然挂着；用户点它 =
+   * 对一个没有听众的动作作答（`InteractionHub.handleAnswered` 里 `replyTo` 早已
+   * 无人接收），且 R1 起等待无超时 ⇒ 卡片是永久僵尸。
+   *
+   * 语义边界：中断 = 该 turn 的**全部**人类等待一起作废 —— AskUser 卡与权限卡
+   * 共用同一个槽容器（`InteractionHub` 的 `pending` Map，两种 kind），故按
+   * `sourceSession` 批量回收正是既有 `CleanupForSession` 语义；`reason =
+   * "turn-interrupted"` 让前端把卡片文案从「来源已关闭」改成中断文案。
+   * （相邻但**不同**的 Exit —— `ResetSession` / `Retry` / `Stop` —— 本批按
+   * 「禁扩面」只登记不修，见报告「邻接问题登记」。）
+   *
+   * 无静默路径核证：hub 未装配（早期 boot / 测试）时**无槽可清**——请求在
+   * `AskUser` 分支（本文件）与权限分支（`AgentCore.sendPermissionRequest`）就已
+   * WARN 丢弃；此处仍打一行 info 供归因，绝不静默吞掉一次中断清理意图。
+   */
+  private[agent] def closePendingInteractionsForInterruptedTurn(
     resources: SharedResources,
     sessionId: String
   ): IO[Unit] =
@@ -961,570 +925,27 @@ object AgentActor extends AgentCore with AgentSession:
   // Idle state
   // ============================================================
 
-  private def idle(
+  // idle 态已整体迁至 agent/AgentIdle.scala(行为保持重构,2026-09-25):idle
+  // 行为及其唯一消费的注入判源助手 inferInjectionSource 的实现都在那边
+  // (方法体逐字未动);此处保留同名委托 def(签名原样),调用点零改动。
+  private[agent] def idle(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
-
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser, project) =>
-        val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
-        if isDuplicate then
-          logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        else
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "start", s"msgs=${state.messages.size}")
-          val stateWithLang =
-            if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
-              LanguageDetector.detect(text) match
-                case Some(lang) =>
-                  NebflowLogger.forName("nebflow.agent").info(s"Auto-detected language: $lang")
-                  dedupedState.withLanguage(Some(lang))
-                case None => dedupedState
-            else dedupedState
-          val stateWithWidth =
-            if chatWidth > 0 then stateWithLang.copy(session = stateWithLang.session.copy(chatWidth = chatWidth))
-            else stateWithLang
-          // Injection source (任务 P): user WS inputs always carry clientMessageId.
-          // Tool-injected inputs (Mail ask/fork, Delegate, SubTask, ImmediateInput
-          // converted from Mail delivery) have clientMessageId=None → emit a user
-          // event so the frontend renders the task prompt as a visible bubble.
-          // ② (2026-09-11): `fromUser` is the second, explicit discriminator —
-          // a real human text that travelled the ImmediateInput leg arrives with
-          // clientMessageId=None and used to be stamped source="tool" (blue TOOL
-          // card + isRealUserTurn=false). 真人 ⇒ no source, never.
-          val injectionSource: Option[String] =
-            if clientMessageId.isDefined then None
-            else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
-          val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
-          val stateWithFlush = stateWithWidth
-          val userMsg = (enrichedBlocks match
-            case Some(bl) => Message(MessageRole.User, Right(bl))
-            case None => Message(MessageRole.User, Left(text))
-          ).copy(source = injectionSource)
-          val newMessages = stateWithFlush.messages :+ userMsg
-          val sessionBusyIO =
-            if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
-            else IO.unit
-          val injectedEventIO = injectionSource match
-            case Some(src) =>
-              emitInjectedUserEvent(
-                resources,
-                stateWithWidth.wsSend,
-                stateWithWidth.sessionId,
-                text,
-                src,
-                eventType,
-                sender = sender,
-                senderTeam = senderTeam,
-                delivery = delivery,
-                // idle 直投腿（mailbadge 批）：收件判别字段随件同源落地。
-                intake = intake,
-                // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级。
-                project = project,
-                sessionProject = stateWithWidth.projectName
-              )
-            case None => IO.unit
-          for
-            _ <- sessionBusyIO
-            _ <- injectedEventIO
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              stateWithFlush.withMessages(newMessages).withEmptyResponseRetries(0).withMailUsedThisTurn(false)
-                // Block 3：新用户/系统 turn 起点——loop 纪元 +1
-                .withNextLoopTurn,
-              replyTo,
-              // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
-              // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
-              if clientMessageId.isDefined then DispatchCause.UserWake else DispatchCause.Gated
-            )
-          yield result
-        end if
-
-      case AgentCommand.AskQuestion(question, askSessionId) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "ask-start", s"q=${question.take(60)}")
-        val askReminder = AskService.buildAskReminder(question)
-        val askState = state
-          .withMessages(state.messages :+ askReminder)
-          .withAskMode(Some(question))
-          .withStatus(AgentStatus.Processing)
-          .withNextLoopTurn
-        pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
-
-      case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "skill-start",
-          s"skill=$skillName input=${input.take(60)}"
-        )
-        val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
-        val processingState = state
-          .withMessages(
-            state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
-          )
-          .withStatus(AgentStatus.Processing)
-          .withNextLoopTurn
-        val sessionBusyIO2 =
-          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-          else IO.unit
-        for
-          _ <- sessionBusyIO2
-          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None, sessionProject = state.projectName)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
-        yield result
-
-      case AgentCommand.Interrupt() =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
-      case AgentCommand.Stop(_) =>
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- killSessionShellProcesses(state)
-          _ <- fireLifecycleStopHooks(resources, state)
-        yield Behaviors.stopped
-
-      case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
-      case AgentCommand.ResetSession =>
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
-        yield
-          val resetState = state
-            .withMessages(Nil)
-            .withLatestUsage(None)
-            .withPendingCompaction(None)
-            .withCompactionFailures(0)
-            .withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil)
-            .invalidateSystemStableCache
-          idle(agentDef, resources, depth, parentRef, resetState)
-
-      case AgentCommand.TriggerCompaction(mode, replyDeferred, postCompactInstruction) =>
-        handleTriggerCompaction(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          mode,
-          replyDeferred,
-          resumeAfterCompact = postCompactInstruction.isDefined,
-          postCompactInstruction = postCompactInstruction
-        )
-
-      case AgentCommand.UpdateContextWindow(window) =>
-        val newState = state.withContextWindow(window)
-        val estimatedTokens = TokenEstimator.estimate(newState.messages)
-        // ctxthresh 批：换模型/换窗口后的立即压缩判定同取**生效门限**——
-        // 本会话有阈值覆盖时覆盖同样适用于新窗口（无覆盖时逐字 = 现值函数）。
-        val threshold = newState.compactThresholdTokens
-        if newState.messages.nonEmpty && estimatedTokens > threshold then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "model-switch-compact",
-            s"newWindow=$window estimated=$estimatedTokens threshold=$threshold msgs=${newState.messages.size}"
-          )
-          handleTriggerCompaction(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            newState,
-            "full",
-            None,
-            resumeAfterCompact = false
-          )
-        else IO.pure(idle(agentDef, resources, depth, parentRef, newState))
-        end if
-
-      case AgentCommand.SetCompactThresholdRatio(ratio) =>
-        // ctxthresh 批：只改存储值（口径④「有会话覆盖用覆盖，无覆盖走现值函数」）。
-        // 🔴 刻意不做任何压缩触发——镜像 UpdateContextWindow 的存储语义但去掉其
-        // 「顺手压缩」副作用（设计 §7 逐字禁止复用该命令的原因）。
-        // 生效时点 = 下一回合边界（判定点 AgentCore 每轮读 state，非启动快照）。
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "compact-threshold-set",
-          s"ratio=${ratio.map(r => f"$r%.4f").getOrElse("default")} " +
-            s"effective=${CompactThresholdOverride.effectiveThreshold(state.contextWindow, ratio)}"
-        )
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withCompactThresholdRatio(ratio)))
-
-      case n: AgentCommand.BackgroundTaskNotification =>
-        (ctx.self ! n.toExternalEvent) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "external-event",
-          s"source=$source type=$eventType"
-        )
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val sessionBusyIO =
-          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-          else IO.unit
-        // 任务 Q: high-value result notifications (sub-agent/flow/background/api
-        // completion) render as a visible injected-user bubble so the user can
-        // see "what result arrived" in the chat stream, not just the LLM history.
-        val visSource = visibleExternalEventSource(source, eventType)
-        // P1.4: When a retryable sub-agent failure arrives, add a structured
-        // system-reminder guiding the LLM to re-delegate — this is more
-        // effective than relying on the LLM noticing the failure text alone.
-        val retryableHint = eventType == "failed" &&
-          metadata("retryable").exists(_.asBoolean.getOrElse(false))
-        val reminderText =
-          if retryableHint then
-            val failureType = metadata("failureType").flatMap(_.asString).getOrElse("unknown")
-            val failedSession = metadata("failedSessionId").flatMap(_.asString).getOrElse("")
-            val agentName = metadata("agentName").flatMap(_.asString).getOrElse("")
-            s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
-              s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
-              s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
-          else ""
-        val injectionText = payload + reminderText
-        // Receive-time visibility (stream event + bubble) — mirrors the
-        // processing-state path so the UI shows each result arriving even when
-        // the LLM injection is held back by the batch barrier.
-        def receiveVisibility(waiting: Boolean): IO[Unit] =
-          emitStream(
-            state.wsSend,
-            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0,
-            state.sessionId
-          ) *> (visSource match
-            case Some(s) =>
-              val agentName = metadata("agentName").flatMap(_.asString)
-              emitInjectedUserEvent(
-                resources,
-                state.wsSend,
-                state.sessionId,
-                payload,
-                s,
-                Some(eventType),
-                agentName,
-                sessionProject = state.projectName,
-                waitingForBatch = waiting
-              )
-            case None => IO.unit
-          )
-        // ── Sub-agent result barrier (worker blocking semantics) ──────────
-        // Delegate/SubTask results arriving while more of the same parallel
-        // batch is still outstanding are HELD in pendingEvents instead of
-        // interrupting the agent one result at a time. When the batch completes
-        // (outstanding hits 0), ALL held results are injected together in a
-        // single turn. Non-subagent events keep the existing immediate path.
-        val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
-        val outstanding = state.execution.outstandingSubagentResults
-        val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
-        val held = state.execution.pendingEvents
-        if isSubagentResult && newOutstanding > 0 then
-          // #418: an idle parent must NEVER hold a sub-agent result back —
-          // there is no in-flight turn to batch into, and holding it here
-          // parks the parent asleep until user input (delegate COMPLETED
-          // never wakes the parent — the reported bug). Inject THIS result
-          // immediately to wake the parent; the rest of the batch stays HELD
-          // in pendingEvents (injected together by the batch-complete branch
-          // when they arrive), and the counter keeps the decremented
-          // newOutstanding so the #25 nested-debt semantics hold.
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .withMessages(
-                  state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
-                )
-                .withOutstandingSubagentResults(newOutstanding)
-                .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
-        else if isSubagentResult && held.nonEmpty then
-          // Batch complete: inject ALL held results (plus this one) together.
-          val batchMessage = buildEventReminder(held :+ event)
-          for
-            _ <- sessionBusyIO
-            _ <- receiveVisibility(waiting = false)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.copy(execution =
-                state.execution.copy(
-                  outstandingSubagentResults = 0,
-                  pendingEvents = Nil
-                )
-              ).withMessages(state.messages :+ batchMessage)
-                .withNextLoopTurn, // Block 3：批次汇聚唤醒 = 新 turn
-              None
-            )
-          yield result
-          end for
-        else
-          // Single immediate result (no batch in flight) or non-subagent event.
-          // ═══ 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）═══
-          // ExternalEvent 唤醒轮此前 replyTo=None → 续跑轮 AgentEvent.Completed
-          // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
-          // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
-          // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
-          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。仅 node- 节点启用：
-          // delegate/subtask（BackoffSupervisor 会把 Completed 当任务终态转投父
-          // 会话=重复通知+停 actor）与 dispatcher 桥（pendingInjected 计数契约，
-          // 意外 Completed 会提前拆除）各有既有 Completed 语义，不并入。
-          val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
-            state.sessionId
-              .filter(sid => state.isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
-              .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
-                resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef)))
-          continuationReplyTo.flatMap { contReplyTo =>
-            for
-              _ <- sessionBusyIO
-              _ <- receiveVisibility(waiting = false)
-              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
-              result <- pipeLlmCall(
-                agentDef,
-                resources,
-                depth,
-                parentRef,
-                state
-                  .withMessages(
-                    // Reminder refactor (2026-08-20): always carry a source marker —
-                    // external-event turns are system events, not real user input
-                    // (fromUser = Message.source.isEmpty).
-                    state.messages :+ Message(MessageRole.User, Left(injectionText), source = visSource.orElse(Some("external")))
-                  )
-                  // #25: apply the barrier decrement. Pre-fix this branch
-                  // computed newOutstanding and dropped it — a single-result
-                  // batch (spawn 1, receive 1, held empty) left the counter
-                  // stuck at 1 forever. Invisible while Completed fired
-                  // unconditionally at turn end; once the completion debt is
-                  // parked (#25) a stuck counter means the debt is NEVER paid
-                  // and the waiting supervisor/bridge hangs.
-                  .withOutstandingSubagentResults(newOutstanding)
-                  .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
-                contReplyTo
-              )
-            yield result
-            end for
-          }
-        end if
-
-      case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withGitBranch(branch)))
-
-      case AgentCommand.CompactionComplete(result) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "stale-compaction-discarded",
-          result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs")
-        )
-        // Compaction finished (even if stale): messages shrank, the cached
-        // systemStable is rebuilt on the next turn.
-        val staleState = state.invalidateSystemStableCache
-        state.pendingCompaction.flatMap(_.replyDeferred) match
-          case Some(d) =>
-            ctx.forkTurn(
-              d.complete(Left("Compaction result arrived after agent returned to idle"))
-                .void
-                .handleErrorWith(_ => IO.unit)
-            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
-          case None => IO.pure(idle(agentDef, resources, depth, parentRef, staleState))
-
-      // 2026-09-13（permshield S1）：`AgentCommand.SetSafetyMode` 已退役（档位 =
-      // 应用级持久值，WS/REST 写入口直接落盘 + 热读，无需通知活 agent 改副本）；
-      // 由下方 catch-all 兜底为状态不变。三处（idle/processing/frozen）同。
-
-      case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state))
-
-      // F2 (2026-08-30): replay persisted injection queues after a crash.
-      // Idempotent: merges disk entries ahead of the in-memory queues (which
-      // are empty at spawn); the disk file is deleted by the drain paths once
-      // the queues are flushed, so a second replay is a no-op.
-      case AgentCommand.RecoverPersistedQueues =>
-        val sid = state.sessionId.getOrElse("")
-        CompactionQueueStore.load(sid).flatMap {
-          case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "queues-recovered",
-              s"imm=${q.imms.size} events=${q.events.size}"
-            )
-            val exec = state.execution.copy(
-              pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
-              pendingEvents = q.events ++ state.execution.pendingEvents
-            )
-            IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
-          case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        }
-
-      // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
-      // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
-      // here is exactly what made a real human text land in the
-      // `clientMessageId=None ⇒ source="tool"` fallback (diagnosis §1.4 idle row).
-      case AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser, project) =>
-        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0, source, sender, senderTeam, delivery, eventType, None, fromUser, project)
-        yield idle(agentDef, resources, depth, parentRef, state)
-
-      // Queued mail arriving in idle — drain immediately as a new turn.
-      // Idempotent guard (#22): activation sends a head-trigger MailQueued AND
-      // the delivering path sends its own for the same item — without the
-      // head-check the duplicate injected the same task as TWO turns (double
-      // LLM calls, double tool work). Only drain when this item is still the
-      // disk head; stale/duplicate triggers are no-ops.
-      case AgentCommand.MailQueued(item, _) =>
-        val sid = state.sessionId.getOrElse("")
-        for
-          items <- nebflow.core.flow.MailQueueStore.load(sid)
-          headOpt = items.headOption
-          // #407 idle gate（08-28 统一裁定）：目标 agent 自身+子树完全空闲才
-          // 投递；不空闲则延迟（不消费队列，pendingMailQueueCount=1 保持「有货
-          // 未投递」状态），由子 agent 完成事件驱动的 turn 结束重检
-          // （finishTurnCont drain 分支的 gate）投递。
-          idleOk <- fullyIdle(sid, state, resources)
-          result <-
-            if !idleOk then
-              IO(
-                logAgentEvent(
-                  agentDef,
-                  depth,
-                  state.sessionId,
-                  state.sessionName,
-                  "mail-queued-deferred",
-                  s"head=${headOpt.map(_.id).getOrElse("-")} sender=${headOpt.map(_.fromSession).getOrElse("-")} subtree-busy, deferred"
-                )
-              ) *>
-                IO.pure(
-                  idle(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    // #10 (2026-08-27 mail-queue wedge): accumulate, don't clamp —
-                    // multiple mails arriving while idle+subtree-busy each take
-                    // this deferral path; `= 1` would lose the earlier count and
-                    // the turn-end drain would deliver only the last one.
-                    state.copy(execution =
-                      state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
-                    )
-                  )
-                )
-            else
-              headOpt match
-                case Some(head) if head.id == item.id =>
-                  // Delivery-layer fingerprint dedup (P0): suppresses the same
-                  // sender+recipient+content within the 30min window — covers the
-                  // restart-replay root cause (MailTool restart recovery re-fires
-                  // MailQueued for the disk head). The persisted fingerprint file
-                  // survives the restart boundary.
-                  // V13 (2026-09-03): the consult is scoped to the replay window
-                  // after this session's activation — outside it a same-content
-                  // re-send is legitimate and delivers unconditionally.
-                  mailDedupInReplayWindow(sid, resources).flatMap { inReplayWindow =>
-                    nebflow.core.flow.MailDeliveryDedup
-                      .tryDeliver(
-                        sid,
-                        nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message),
-                        System.currentTimeMillis(),
-                        inReplayWindow
-                      )
-                      .flatMap {
-                        case false =>
-                          // Duplicate within window: consume the item (queue + WS)
-                          // but inject nothing — sender semantics untouched.
-                          nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
-                            emitDequeuedWs(state.wsSend, sid, item.id)
-                        case true =>
-                          for
-                            _ <- nebflow.core.flow.MailQueueStore.removeHead(sid).void
-                            // G3: re-read attachment paths at drain time (D6 — queue
-                            // persists paths, not base64). Lost files degrade to
-                            // placeholder text.
-                            attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-                            blocks = nebflow.core.tools.ImageInject.messageBlocks(item.message, attBlocks)
-                            _ <- ctx.self ! AgentCommand.UserInput(
-                              item.message,
-                              None,
-                              None,
-                              blocks,
-                              0,
-                              source = Some("mail-queue"),
-                              sender = Some(item.from),
-                              delivery = Some("queue")
-                            )
-                            // Emit WS so frontend removes the pending item
-                            _ <- emitDequeuedWs(state.wsSend, sid, item.id)
-                          yield ()
-                      }
-                  }.map(_ => idle(agentDef, resources, depth, parentRef, state))
-                case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        yield result
-
-      // Supervisor restart in idle state
-      case AgentCommand.RestartAgent(level) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart-idle", s"level=${level.toString}")
-        for
-          restartState <- restartStateFor(level, state, resources)
-          _ <- state
-            .wsSend(
-              Json.obj(
-                "type" -> "agentRestarted".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "level" -> level.toString.asJson
-              )
-            )
-            .handleErrorWith(_ => IO.unit)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
-        yield result
-
-      case _ =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state))
-  end idle
+    AgentIdle.idle(agentDef, resources, depth, parentRef, state)
   // ============================================================
   // Processing state
   // ============================================================
 
-  private def processing(
+  // processing 域已整体迁至 agent/AgentProcessing.scala(行为保持重构,2026-09-25):
+  // processing 行为、mail 检查 / supervisor 重启助手与两枚 dispatch 管道的实现
+  // 都在那边(方法体逐字未动,详见 AgentProcessing.scala 头注);此处保留同名
+  // 委托 def(签名与默认参数原样),调用点零改动。hasUsedMail / rollbackLastToolCall
+  // 为私有单消费助手,随实现迁走、不留委托。
+  private[agent] def processing(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -1532,1298 +953,12 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    val base = Behaviors.receiveMessage[AgentCommand]:
-
-      case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
-
-      // --- LLM completed ---
-      case LlmComplete(result, replyTo, turnId) =>
-        if turnId != state.currentTurnId then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "stale-llm-complete-discarded",
-            s"turnId=$turnId current=${state.currentTurnId}"
-          )
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-        else
-          val updatedState = state
-            .withLatestUsage(result.usage.orElse(state.latestUsage))
-            .withLastModel(result.model.orElse(state.lastModel))
-            .withLlmFailRetries(0)
-            .updateContextWindowIfNeeded(result.contextWindow)
-          val isSubagent = depth > 0
-          // Emit usageUpdate: use provider-reported tokens if available, otherwise
-          // estimate from message history so the UI context bar always updates.
-          val effectiveTokens = updatedState.latestUsage
-            .map(_.inputTokens)
-            .filter(_ > 0)
-            .getOrElse(nebflow.core.compact.TokenEstimator.estimate(updatedState.messages))
-          val usageEvent: IO[Unit] =
-            emitStream(
-              state.wsSend,
-              AgentStreamEvent.UsageUpdate(
-                effectiveTokens,
-                updatedState.contextWindow,
-                updatedState.effectiveCompactThresholdRatio,
-                updatedState.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens)),
-                // #308: per-round actual model (lastModel was just refreshed from
-                // this round's result at withLastModel above) — lets the frontend
-                // live-refresh the popup/tile model badge every LLM round.
-                model = updatedState.lastModel
-              ),
-              isSubagent = isSubagent,
-              state.sessionId
-            )
-          // Structured usage telemetry (token dashboard): record provider/model/
-          // agent/session + token buckets for every successful LLM call. model
-          // arrives as "providerId/modelId" from aggregateChunks.
-          val usageRecordIO: IO[Unit] =
-            (result.usage, result.model) match
-              case (Some(u), Some(modelRef)) =>
-                val idx = modelRef.indexOf('/')
-                val (provider, model) =
-                  if idx > 0 then (modelRef.take(idx), modelRef.drop(idx + 1)) else ("unknown", modelRef)
-                resources.usageRecordStore
-                  .record(
-                    nebflow.core.LlmUsageRecord(
-                      timestamp = System.currentTimeMillis(),
-                      provider = provider,
-                      model = model,
-                      agent = agentDef.name,
-                      sessionId = state.sessionId,
-                      inputTokens = u.inputTokens,
-                      outputTokens = u.outputTokens,
-                      cacheReadTokens = u.cacheReadTokens.getOrElse(0),
-                      cacheWriteTokens = u.cacheWriteTokens.getOrElse(0)
-                    )
-                  )
-                  .handleErrorWith(e =>
-                    // 2026-09-10 死日志修复：warn 已返回 IO[Unit]，再包 IO(...) 得 IO[IO[Unit]]（静默）。
-                    NebflowLogger
-                      .forName("nebflow.agent")
-                      .warn(s"usage record failed: ${e.getMessage}")
-                  )
-              case _ => IO.unit
-          usageEvent *> usageRecordIO *> handleLlmCompleteBranch(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            updatedState,
-            replyTo,
-            result,
-            pending
-          )
-        end if
-
-      case LlmFailed(error, replyTo, turnId, msg) =>
-        if turnId != state.currentTurnId then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "stale-llm-failed-discarded",
-            s"turnId=$turnId current=${state.currentTurnId}"
-          )
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-        else
-          val cleanedState = msg match
-            case Some(cnt) => state.withLoopCounters(cnt) // Block 3：L1 终止的计数器写回
-            case None      => state
-          // P4 (flow-node supervision): provider/attempt/stall-age observability
-          // on llm-fail — the fields needed to tell "upstream jitter" from
-          // "provider dead" in post-mortems without re-reading router logs.
-          val failExtras = error match
-            case e: StreamInactivityTimeout =>
-              s" class=stream-inactivity lastChunkAgeMs=${e.lastChunkAgeMs}"
-            case e: FallbackExhaustedError =>
-              val last = e.attempts.lastOption
-              s" class=exhausted attempts=${e.attempts.size}" +
-                last.map(a => s" last=${a.providerId}/${a.model}:${a.reason.getOrElse("unknown")}").getOrElse("")
-            case _ => ""
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "llm-fail",
-            s"err=${error.getMessage.take(80)}$failExtras"
-          )
-          // Auto-retry overload-class LLM failures (429/529) once with a ≥5s
-          // backoff: the provider is saturated and may recover. Token incident
-          // (2026-08-18): every retry re-dispatches the FULL message history
-          // (~250k tokens, 96% cache read), so anything else — connection
-          // resets, timeouts, unknown transients — fails fast: the messages
-          // haven't changed, retrying mostly burns tokens without healing.
-          // The per-turn budget (Fallback.MaxTurnLlmCalls) is the final
-          // backstop: even legitimate retries are capped per turn.
-          // Flow-node supervision P1 (2026-08-26): stream-inactivity stalls
-          // (phase-2 watchdog, upstream jitter) join the retryable set — a
-          // clean-checkpoint re-send within the SAME OverloadRetryMax budget,
-          // no new quota. Not a stream-level resume: the full turn re-sends,
-          // so the seam guard (no provider switch after partial content) is
-          // never violated. Single source: AgentActor.llmFailureRetryable.
-          val isStreamInactivity = AgentActor.llmFailureInactivityClass(error)
-          val retryable = AgentActor.llmFailureRetryable(error)
-          // Hard-recovery P4 (设计 §2.5「用户意图优先」): a transport-aborted turn
-          // with QUEUED user input must NOT blindly retry — the abort happened
-          // precisely BECAUSE a user message could not get in (wedged turn).
-          // Failing the turn routes to the turn-boundary drain, which batch-
-          // injects the queued inputs (缺陷⑥ 合批) as the next turn. Empty queue
-          // (VPN mid-stream flap) keeps the bounded auto-retry (增量#1 验收).
-          val recoverableAbortYieldsToQueued = error.isInstanceOf[RecoverableAbort] &&
-            state.execution.pendingImmediateInputs.nonEmpty
-          if retryable && !recoverableAbortYieldsToQueued && state.llmFailRetries < OverloadRetryMax then
-            // 方案 C（2026-08-18 误杀修复）：预算只在重试路径递增——llmCallsThisTurn
-            // 与 llmFailRetries 的区别：后者成功即重置（只限连续重试），前者 turn 内
-            // 单调累计（限全 turn 重试总量，正常工具循环的成功调用不计入）。
-            val retryState = state
-              .withLlmFailRetries(state.llmFailRetries + 1)
-              .withLlmCallsThisTurn(state.llmCallsThisTurn + 1)
-            // Inactivity retries back off ≥30s (upstream stall needs a recovery
-            // window — the incident stall was 60s+). Overload retries keep the
-            // existing [OverloadBackoffMinMs, LlmFailBackoffMaxMs] pipeline.
-            val backoffMs =
-              if isStreamInactivity then math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), effectiveInactivityBackoffMinMs)
-              else
-                math.min(
-                  math.max(LlmFailBackoffBaseMs * (1L << (retryState.llmFailRetries - 1)), OverloadBackoffMinMs),
-                  LlmFailBackoffMaxMs
-                )
-            val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
-            val delayMs = backoffMs + jitter
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "llm-fail-retry",
-              s"err=${error.getMessage.take(80)} retry=${retryState.llmFailRetries}/$OverloadRetryMax backoff=${delayMs}ms"
-            )
-            // The failed LLM call produced no content — re-dispatch with the
-            // same messages from the last checkpoint, after a backoff delay.
-            // The sleep must be INLINE: ctx.forkTurn is fire-and-forget
-            // (ActorContext.forkTurn .start), so wrapping the sleep there made
-            // `*>` re-dispatch IMMEDIATELY — the backoff was fake (both the
-            // 08-18 overload retry and the P1 inactivity retry re-sent into a
-            // still-stalled upstream). Inline sleep is consistent with how
-            // pipeLlmCall itself runs (whole turns block the actor loop).
-            IO.sleep(delayMs.millis) *>
-              pipeLlmCall(agentDef, resources, depth, parentRef, retryState, replyTo)
-          else if recoverableAbortYieldsToQueued then
-            // ── Hard-recovery P4「用户意图优先」（2026-09-15 ub 缺陷批改形态）──
-            // transport abort 的目的就是让排队的用户消息进来：失败回合不带内容
-            // （seam guard 弃置部分流），取队首**一件**排队输入开一个**独立** turn
-            // （roundComplete 一次 / 蓝气泡一件 / 单次 LLM 往返）；其余留队，由后续
-            // turn 边界逐条消费。原「整批合并为一个新 turn」（缺陷⑥）已按 root 裁定
-            // 删除——那正是「一报错，队列里的消息一次全发」的 burst 面之一。
-            // 不得落入下方 freeze-or-fail——RecoverableAbort 分类为 Fatal
-            // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
-            // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
-            // agent 直接 idle、队列滞留）。
-            val (immHeadAfterAbort, remainingImmAfterAbort) = TurnBoundaryDrains.drainHead(
-              state.execution.pendingImmediateInputs,
-              compactionPending = false
-            )
-            val immInputs = immHeadAfterAbort.toList
-            val immMessages = immInputs.map(imm =>
-              (imm.blocks match
-                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                case _                               => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "immediate-input-injected-after-recoverable-abort",
-              s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)} remaining=${remainingImmAfterAbort.size}"
-            )
-            val updatedState = state
-              .copy(execution =
-                ExecutionContext
-                  .idle(state.execution.messages ++ immMessages, state.execution.turnIdx, state.execution.currentTurnId)
-                  .copy(pendingImmediateInputs = remainingImmAfterAbort,
-                        pendingMailQueueCount = state.execution.pendingMailQueueCount,
-                        pendingUserInputs = state.execution.pendingUserInputs,
-                        pendingEvents = state.execution.pendingEvents,
-                        outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                        owedCompletion = state.execution.owedCompletion))
-              .withNextLoopTurn
-            for
-              // F2: disk snapshot in sync after the drain (queue emptied).
-              _ <- persistQueues(state.sessionId, updatedState.execution)
-              _ <- state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-              // One blue injected bubble per sourced input — same (new) turn group.
-              // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）。
-              _ <- immInputs.flatMap { imm =>
-                injectionSourceFor(imm.fromUser, imm.source).map(src =>
-                  emitInjectedUserEvent(
-                    resources,
-                    state.wsSend,
-                    state.sessionId,
-                    imm.text,
-                    src,
-                    imm.eventType,
-                    imm.sender,
-                    imm.senderTeam,
-                    project = imm.project,
-                    sessionProject = state.projectName
-                  )
-                )
-              }.sequence_
-              _ <- state.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(
-                  (resources.sessionStore.saveMessagesForSession(sid, updatedState.execution.messages) *>
-                    resources.sessionStore.flushIndex)
-                    .handleErrorWith(e =>
-                      NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-                    )
-                )
-              )
-              _ <- state.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(
-                  state.wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
-                    .handleErrorWith(e => NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
-                ))
-              b <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
-            yield b
-          else
-            // ── v2 冻结式错误恢复（§3.3/§6.1 步骤 3）────────────────────────
-            // transient 类错误不再 fail-fast（原「turn 死亡」语义）→ 进入
-            // ErrorFrozen：退避到期自动续跑（重新过 gate，条件未消除再入冻结，
-            // 天然闭环）；同 reason 连续 ≥3 次 → 升级父干预（不直接 fatal）。
-            // 保留 Permanent/Fatal（Timeout/EmptyStream/Auth/Format/ModelNotFound/
-            // TurnBudgetExceeded/StuckAbort/context overflow）→ 下方 fatal 路径。
-            val errCls = Fallback.classifyError(error)
-            // Flow-node supervision P2: flow nodes are exempt from ErrorFrozen —
-            // a DAG is deterministic execution, there is no "wait for the
-            // condition to clear" semantics. A retryable-exhausted stall fails
-            // the turn (AgentError.retryable=true) so the flow executor's
-            // Restart path checkpoint-resumes the node. Root/team agents keep
-            // the v2 freeze-then-resume semantics for the same error class.
-            val shouldErrorFreeze = !state.isFlowNode && (error match
-              // retryable 预算耗尽（attempts 全 overload/inactivity）：饱和或上游
-              // 抖动可能恢复 → 冻结等待（与 llmFailureRetryable 同判定，单点来源）
-              case _: FallbackExhaustedError => AgentActor.llmFailureRetryable(error)
-              // 工具管道错误：工具链路问题，不是 provider 条件性错误 → 不冻结（原语义）
-              case _: ToolPipelineError => false
-              // Block 3 循环检测器 L1：turn 级终止，非条件性错误 → 不冻结
-              // （L2 冻结走 LoopFreezeDetected 独立路径，不经 LlmFailed）
-              case _: LoopDetectedError => false
-              case _ => errCls.permanence == ErrorPermanence.Transient
-            )
-            if shouldErrorFreeze then
-              val errReason = error match
-                case _: AllProvidersDownTimeout => FreezeReason.ProviderDown
-                case _ =>
-                  errCls.reason match
-                    case FailoverReason.ConnectionReset => FreezeReason.Network
-                    case _                              => FreezeReason.LlmTransient
-              val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 500)
-              val resumeInMs = errReason match
-                case FreezeReason.Network =>
-                  NetworkErrorFreezeBackoffMs + java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 20_000L)
-                case FreezeReason.ProviderDown => ProviderDownFreezeBackoffMs + jitter
-                case _ =>
-                  // LlmTransient：沿用 overload 退避（预算耗尽时 llmFailRetries ≥ Max → ≥60s）
-                  math.min(
-                    math.max(LlmFailBackoffBaseMs * (1L << math.max(state.llmFailRetries, 1) - 1), OverloadBackoffMinMs),
-                    LlmFailBackoffMaxMs
-                  ) + jitter
-              enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
-            else
-              val agentError =
-                AgentError(
-                  ctx.self.path.name,
-                  agentDef.name,
-                  depth,
-                  AgentErrorType.LlmFailed,
-                  error.getMessage,
-                  retryable = Some(AgentActor.llmFailureRetryable(error))
-                )
-              val errMsg = error match
-                case e: FallbackExhaustedError =>
-                  val attemptSummaries =
-                    e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                  NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-                case e: ToolPipelineError =>
-                  e.message
-                case e: LoopDetectedError =>
-                  e.getMessage
-                case _ =>
-                  NebflowError.toUserMessage(
-                    NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
-                  )
-              for
-
-                _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
-                  val doneEvent = AgentStreamEvent.Done(None)
-                  val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
-                  ctx.forkTurn(
-                    (cleanedState
-                      .wsSend(
-                        Json.obj(
-                          "type" -> "error".asJson,
-                          "sessionId" -> cleanedState.sessionId.asJson,
-                          "message" -> errMsg.asJson
-                        )
-                      )
-                      .handleErrorWith(_ => IO.unit)) *>
-                      cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                      emitSessionBusy(cleanedState.wsSend, sid, busy = false)
-                  )
-                }
-                _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
-                  // Persist the conversation before failing so the parent can
-                  // resume from saved history (re-dispatch / fork on this session).
-                  ctx.forkTurn(
-                    (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
-                      resources.sessionStore.flushIndex)
-                      .handleErrorWith(e =>
-                        NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
-                      )
-                  )
-                }
-                // #25: a fatal failure must discharge the completion debt with
-                // Failed — a parked requester (supervisor/bridge waiting for the
-                // post-batch answer) would otherwise hang forever, and the clone
-                // would sit registered as running. Targets = this turn's replyTo
-                // plus any parked debt (deduped).
-                failTargets = (replyTo.toList ++ state.execution.owedCompletion).distinct
-                _ <- failTargets.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
-                // Mail team members have no replyTo (their turns are driven by
-                // UserInput(replyTo=None)), so the notification above is a no-op
-                // for them and a fatal LLM failure evaporated silently — the
-                // Manager kept waiting for a [RESULT] that would never come
-                // (2026-08-15: 53-minute mutual-wait deadlock). Route the same
-                // "failed" external event to the parent (team lead) instead,
-                // mirroring BackoffSupervisor's notifyParentAndStop metadata
-                // contract (failedSessionId / retryable / failureType) so the
-                // parent's re-delegate system-reminder kicks in.
-                // #25: only when NO requester at all (no replyTo AND no parked
-                // debt) — a debt discharge above already reaches the parent via
-                // the supervisor's source="delegate/subtask" failed event (which
-                // also releases the parent's barrier; source="team" would not).
-                _ <- (failTargets, parentRef) match
-                  case (Nil, Some(parent)) =>
-                    val sid = cleanedState.sessionId.getOrElse("")
-                    val sessionInfo = if sid.nonEmpty then s" [session=$sid]" else ""
-                    // ActorRef.! returns IO[Unit] — return it directly.
-                    parent ! AgentCommand.ExternalEvent(
-                      source = "team",
-                      eventType = "failed",
-                      payload =
-                        s""""${agentDef.name}" (team member) hit a fatal LLM failure: """ +
-                          s"${Option(error.getMessage).getOrElse("unknown").take(200)}$sessionInfo",
-                      metadata = JsonObject(
-                        "failedSessionId" -> sid.asJson,
-                        "retryable" -> true.asJson,
-                        "failureType" -> agentError.errorType.toString.asJson,
-                        "agentName" -> agentDef.name.asJson
-                      ),
-                      correlationId = Some(sid).filter(_.nonEmpty)
-                    )
-                  case _ => IO.unit
-                // A pending CompactionJob whose LLM call died fatally must not
-                // survive into idle (zombie): the next normal reply would be
-                // misrouted as the compact summary and replace all messages.
-                // Complete the deferred waiter and record the failure — mirrors
-                // finishTurn's zombie guard and the CompactionComplete(Left) path.
-                _ <- state.pendingCompaction
-                  .flatMap(_.replyDeferred)
-                  .traverse_(d =>
-                    d.complete(Left("Compaction abandoned: LLM failed during compaction")).void
-                      .handleErrorWith(_ => IO.unit)
-                  )
-                // F1 (2026-08-29, loop-detected report §4.1/§6): the fatal path
-                // never wrote the registry back — the last entry stayed
-                // status=Processing (written by the crashed round's loop-counter
-                // touch), so TaskStuckWatcher flagged a zombie every 30s until a
-                // human restarted the actor. Every other terminal path
-                // (turn-done :2859 / Interrupt :3638 / Stop :3650 / ResetSession
-                // :3927 / ErrorFrozen :3474) writes the registry; this was the
-                // last one missing. Idle = "no active turn" (the behavior state
-                // keeps the Error detail; the watcher only flags Processing).
-                _ <- touchRegistryActivity(resources, cleanedState.sessionId, AgentStatus.Idle)
-              yield
-                val compactionWasPending = state.pendingCompaction.isDefined
-                val fatalState = cleanedState
-                  .withStatus(AgentStatus.Error(error.getMessage))
-                  .withPendingCompaction(None)
-                  // #25: the debt was discharged with Failed above — never
-                  // carry it into the idle state.
-                  .withOwedCompletion(Nil)
-                val finalState =
-                  if compactionWasPending then
-                    logAgentEvent(
-                      agentDef,
-                      depth,
-                      state.sessionId,
-                      state.sessionName,
-                      "compaction-abandoned",
-                      s"reason=llm-fatal job=${state.pendingCompaction.map(_.subagentId).getOrElse("")}"
-                    )
-                    fatalState
-                      .withCompactionFailures(state.compactionFailures + 1)
-                      .withLastCompactionFailureAt(System.currentTimeMillis())
-                  else fatalState
-                idle(agentDef, resources, depth, parentRef, finalState)
-              end for
-          end if
-        end if
-
-      // --- Tools completed ---
-      case tc: ToolsComplete =>
-        val toolCalls = tc.results.map((call, _) => call)
-        val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-        tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
-        if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
-        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
-        val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
-        val resultBlocks = tc.results.map { (call, r) =>
-          ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
-        }
-        val resultMsg = Message(MessageRole.User, Right(resultBlocks))
-        // Collect image blocks from tool results and inject as a separate user message.
-        // For Anthropic: mergeConsecutive merges this with resultMsg → single user message
-        //   with tool_result + image blocks (valid Anthropic format).
-        // For OpenAI: resultMsg → {role: "tool"} messages, imageMsg → {role: "user"} message
-        //   with image_url content (correct OpenAI format for tool results + images).
-        val imageBlocks = tc.results.flatMap { (call, r) =>
-          r.imageBlocks.getOrElse(List.empty[ContentBlock.Image])
-        }
-        val imageMsgs =
-          if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks)))
-          else Nil
-        val baseMessages = tc.compactedMessages.getOrElse(state.messages)
-        // Drain queued external events alongside tool results (serial processing,
-        // same as pendingImmediateInputs). While a parallel sub-agent batch is
-        // still outstanding, subtask/delegate results are HELD (barrier, worker
-        // blocking semantics) — they are injected ALL together when the batch
-        // completes; other event types keep the existing one-at-a-time drain.
-        // Guarded against a pending compaction job: the save/compact turn's
-        // history is replaced by the summary, so an event drained here would be
-        // consumed from the queue yet discarded with the pre-compaction
-        // messages. CompactionComplete re-drains afterwards.
-        val (drainedEvents, remainingEvents) =
-          TurnBoundaryDrains.drainBarrier(
-            state.execution.pendingEvents,
-            state.pendingCompaction.isDefined,
-            state.execution.outstandingSubagentResults
-          )
-        val eventMessages = drainedEvents match
-          case Nil => Nil
-          case events =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "pending-events-injected-at-tools-complete",
-              s"events=${events.size} remaining=${remainingEvents.size}"
-            )
-            List(buildEventReminder(events))
-        // 排队消息逐条注入（2026-09-15 ub 缺陷批）：本边界只消费队首**一件**
-        // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
-        // While compaction is in progress, keep inputs queued — injecting mid-compaction
-        // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immHeadInput, remainingImmInputs) =
-          TurnBoundaryDrains.drainHead(state.execution.pendingImmediateInputs, state.pendingCompaction.isDefined)
-        val immInputs = immHeadInput.toList
-        val immediateMessages = immInputs match
-          case Nil => Nil
-          case inputs =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "immediate-input-injected-at-tools-complete",
-              s"batch=${inputs.size} texts=${inputs.map(_.text.take(40)).mkString(" | ").take(200)} remaining=${remainingImmInputs.size}"
-            )
-            inputs.map(imm =>
-              (imm.blocks match
-                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                case _ => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
-        // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）。
-        val immEventIO = immInputs.flatMap { imm =>
-          injectionSourceFor(imm.fromUser, imm.source).map(src =>
-            emitInjectedUserEvent(
-              resources,
-              state.wsSend,
-              state.sessionId,
-              imm.text,
-              src,
-              imm.eventType,
-              imm.sender,
-              imm.senderTeam,
-              imm.delivery,
-              project = imm.project,
-              sessionProject = state.projectName
-            )
-          )
-        }.sequence_
-        // Q1-A2′ 的「本边界整队合批注入 queued UserInput」已于 2026-09-15 ub 缺陷批
-        // 退役（root 裁定：排队消息按序逐条注入、每条独立成 turn、禁合并语义）：
-        // `pendingUserInputs` 在本边界**一律不消费**，全部留在全元数据队列，由 turn
-        // 末完成路径逐条重投给 idle 处理器（head-forward，见 finishTurnCont）——那
-        // 条路径本就是逐条 + 独立 turn + 带全元数据（replyTo 完成结算不搁浅），
-        // 也正是本缺陷的「正常路径同规」形态。
-        // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
-        // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
-        // ——零成本给模型自纠机会；不阻断轮次。
-        val loopReminderMsgs = tc.loopReminder match
-          case Some(rem) => List(Message(MessageRole.User, Left(rem)))
-          case None      => Nil
-        val newMessages =
-          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ loopReminderMsgs
-        // Increment delegate count for Delegate/SubTask calls
-        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
-        val newDelegateCount = state.delegateCount + delegateIncrement
-        // Sub-agent barrier: each SUCCESSFULLY spawned ephemeral Delegate or
-        // any SubTask in this turn adds one outstanding result slot. Failed
-        // spawns (depth limit, invalid agent, missing ActorSystem) return a
-        // ToolError and never produce an ExternalEvent — counting them would
-        // stall the barrier forever, blocking every later result delivery.
-        //
-        // Persistent Delegates are EXCLUDED (qa-backend 2026-08-19): their
-        // completion event carries source=address (the actor path, via
-        // persistentAdapter in DelegateTool:618-626), NOT "delegate" — so
-        // isSubagentResult (:39-40) never matches it, and the counter would
-        // never decrement. Counting them creates a phantom slot that permanently
-        // holds every later ephemeral batch's results.
-        val spawnedIncrement = TurnBoundaryDrains.countBarrierIncrements(tc.results)
-        val newOutstanding = state.execution.outstandingSubagentResults + spawnedIncrement
-        val updatedState0 =
-          state.copy(execution =
-            state.execution
-              .copy(
-                messages = newMessages,
-                // D3: keep a pending permission across the turn boundary — the
-                // root holds the sub-agent's Deferred while waiting for the user
-                // answer; clearing it here would strand the sub-agent until the
-                // 5-minute timeout. Only pendingPermission survives (bounded by
-                // PermissionTimeout), pendingAskUserReplyTo still resets.
-                interaction = state.execution.interaction.filter(_.pendingPermission.isDefined),
-                pendingEvents = remainingEvents,
-                pendingImmediateInputs = remainingImmInputs,
-                // ub 缺陷批：本边界不再消费排队 UserInput（原 Q1-A2′ 内联合批已退役），
-                // 队列原样带过 turn 边界，由 turn 末 head-forward 逐条处理。
-                pendingUserInputs = state.execution.pendingUserInputs,
-                delegateCount = newDelegateCount,
-                outstandingSubagentResults = newOutstanding,
-                mailUsedThisTurn = state.mailUsedThisTurn ||
-                  tc.results.exists((call, r) => call.name == "Mail" && !r.isError)
-              )
-          )
-        // Block 3：LoopGuard 计数器快照写回（pipeToolExecutions 异步 IO 内计算、
-        // 经消息携带——S1/S2 跨轮 + S3 跨 turn 持久化的唯一载体）。
-        val updatedState = tc.loopCounters match
-          case Some(cnt) => updatedState0.withLoopCounters(cnt)
-          case None      => updatedState0
-        tc.freezeAfter match
-          case Some(detail) =>
-            // Block 3 L2（supervision trio §D3）：消息组装/持久化/计数器写回后
-            // 不续轮——WS loopDetected 广播 + 父 ExternalEvent("loop-detected") +
-            // enterFrozen(Loop) 待人工（用户唤醒 / Manager·Nebula AgentControl
-            // restart / cancel 终态；resumeAt=1 年，语义「永不自动续跑」）。
-            for
-              _ <- persistIfSession(resources, updatedState)
-                .handleErrorWith(e =>
-                  NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
-                )
-              // F2@freeze：冻结分支同样在 drain 后落队列快照（崩溃重放禁重复注入已消费队首）
-              _ <- persistQueues(state.sessionId, updatedState.execution)
-              _ <- IO {
-                logAgentEvent(
-                  agentDef,
-                  depth,
-                  state.sessionId,
-                  state.sessionName,
-                  "loop-freeze",
-                  s"detail=${detail.take(120)}"
-                )
-              }
-              _ <- state.sessionId.fold(IO.unit) { sid =>
-                state
-                  .wsSend(
-                    Json.obj(
-                      "type" -> "loopDetected".asJson,
-                      "sessionId" -> sid.asJson,
-                      "detail" -> detail.take(300).asJson
-                    )
-                  )
-                  .handleErrorWith(_ => IO.unit)
-              }
-              _ <- parentRef.fold(IO.unit) { parent =>
-                val sid = state.sessionId.getOrElse("")
-                parent ! AgentCommand.ExternalEvent(
-                  source = "team",
-                  eventType = "loop-detected",
-                  payload =
-                    s""""${agentDef.name}" loop detected and frozen: ${detail.take(200)}""" +
-                      (if sid.nonEmpty then s" [session=$sid]" else ""),
-                  metadata = JsonObject(
-                    "failedSessionId" -> sid.asJson,
-                    "retryable" -> false.asJson,
-                    "failureType" -> "loop".asJson,
-                    "agentName" -> agentDef.name.asJson
-                  ),
-                  correlationId = Some(sid).filter(_.nonEmpty)
-                )
-              }
-              result <- enterErrorFrozen(
-                agentDef,
-                resources,
-                depth,
-                parentRef,
-                updatedState,
-                tc.replyTo,
-                FreezeReason.Loop,
-                LoopFreezeResumeMs,
-                LoopDetectedError(detail)
-              )
-            yield result
-          case None =>
-            for
-              _ <- ctx.forkTurn(
-                persistIfSession(resources, updatedState)
-                  .handleErrorWith(e =>
-                    NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
-                  )
-              )
-              _ <- persistQueues(state.sessionId, updatedState.execution) // F2@tools-complete：drain 后快照队列（崩溃重放禁重复注入已消费队首）
-              _ <- immEventIO
-              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
-              result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
-            yield result
-
-      // --- Interrupt ---
-      case AgentCommand.Interrupt() =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-
-          // compactui 批（2026-09-15 事故，作者 16:45–16:48 实证）：压缩作业被中断
-          // 必须补发**终局帧**——否则客户端 pill 永挂、落盘孤儿 chat.compacting
-          // 每次历史重放复活。详见 emitAbandonedCompaction 文档。
-          _ <- emitAbandonedCompaction(state, depth)
-
-          _ <- state.pendingCompaction
-            .flatMap(_.replyDeferred)
-            .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
-          // Back to idle without finishing the turn — clear the busy mark so a
-          // interrupted team agent isn't stuck "running" in the Teams panel.
-          _ <- markTeamIdle(agentDef, state.sessionId)
-          // R2 closure (wait-timeout-fix): user cancel is the guaranteed exit
-          // from WaitingForUser (AskUser/permission parks the turn fiber on a
-          // deferred — no finishTurnCont runs). Without this touch the registry
-          // would keep the waiting status forever. Idle — NOT Processing — so
-          // the watcher sees a consistent idle row (also fixes the pre-existing
-          // stale-Processing-after-interrupt gap).
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-          // #250 第②项（2026-09-13 作者裁定「6 项全补」）：turn 被中断 ⇒ 回收本会话
-          // 仍挂在 InteractionHub 的 pending 槽（中断前那一问已无人等待）。
-          _ <- closePendingInteractionsForInterruptedTurn(resources, state.sessionId.getOrElse(""))
-        yield
-          // Hard-recovery P3: cancelCurrentTurn is now fire-and-forget — the
-          // abandoned turn fiber may still complete and send a late
-          // LlmComplete/LlmFailed. Bump currentTurnId so the stale-turnId
-          // guard discards them (turnId is monotonic; the next dispatch takes
-          // +1 from here with no collision — AgentCore.scala:449).
-          // compactui 批（2026-09-15 事故 ②）：dropCompactionScratch 必须在
-          // withPendingCompaction(None) **之前**应用（判据依赖作业仍在）。
-          val interruptedState = dropCompactionScratch(state)
-            .resetForInterrupt
-            .withCurrentTurnId(state.execution.currentTurnId + 1)
-            .withPendingCompaction(None)
-          idle(agentDef, resources, depth, parentRef, interruptedState)
-
-      // --- Retry: cancel current work, re-dispatch from last checkpoint ---
-      case AgentCommand.Retry(reason) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
-        ctx.cancelCurrentTurn() *> (state.lastDispatch match
-          case Some(LastDispatch(false, _)) =>
-            // Re-dispatch LLM call with same messages. 6-arg call goes through
-            // the AgentActor shadow (freeze gate) — retry must not bypass the
-            // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
-            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
-          case Some(LastDispatch(true, Some(cr))) =>
-            // Re-dispatch tool execution with same LLM result
-            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
-          case _ =>
-            // No checkpoint — go to idle
-            markTeamIdle(agentDef, state.sessionId) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
-
-      // --- Supervisor restart ---
-      case AgentCommand.RestartAgent(level) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
-        for
-          _ <- ctx.cancelCurrentTurn()
-          _ <- state.pendingCompaction
-            .flatMap(_.replyDeferred)
-            .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          restartState <- restartStateFor(level, state, resources)
-          _ <- state
-            .wsSend(
-              Json.obj(
-                "type" -> "agentRestarted".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "level" -> level.toString.asJson
-              )
-            )
-            .handleErrorWith(_ => IO.unit)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
-        yield result
-        end for
-
-      // --- Stop ---
-      case AgentCommand.Stop(_) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- killSessionShellProcesses(state)
-          _ <- fireLifecycleStopHooks(resources, state)
-        yield Behaviors.stopped
-
-      case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      case AgentCommand.ResetSession =>
-        for
-
-          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          // R2 closure (wait-timeout-fix): ResetSession discards a turn that
-          // may be parked on a pending AskUser/permission wait — un-mark
-          // WaitingForUser (mirror of the Interrupt handler), the registry row
-          // must never keep a waiting status for a turn that no longer exists.
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-        yield
-          val resetState = state
-            .withMessages(Nil)
-            .withLatestUsage(None)
-            .withPendingCompaction(None)
-            .withCompactionFailures(0)
-            .withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil)
-            .invalidateSystemStableCache
-            .resetToIdle(Nil)
-          idle(agentDef, resources, depth, parentRef, resetState)
-
-      // --- Compaction completed ---
-      case AgentCommand.CompactionComplete(result) =>
-        if state.pendingCompaction.isEmpty then
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-        else
-          val compactionPending = state.pendingCompaction
-          result match
-            case Right(compactedMessages) =>
-              logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "compaction-complete",
-                s"before=${state.messages.size} after=${compactedMessages.size}"
-              )
-              val archiveIO = state.sessionId match
-                case Some(sid) =>
-                  resources.historyArchiver.archiveCompaction(
-                    sessionId = sid,
-                    sessionName = state.sessionName,
-                    agentName = agentDef.name,
-                    before = state.messages,
-                    after = compactedMessages,
-                    mode = compactionPending.map(_.mode).getOrElse("full"),
-                    // 尾部保真 (2026-09-07): truthful count read back from the
-                    // summary label written by FullCompact.parseResponseDetailed.
-                    extra = Map("preservedRounds" -> FullCompact.preservedRoundsOf(compactedMessages).toString)
-                  )
-                case None => IO.pure(Left("no sessionId"))
-              val compactEmitIO = archiveIO
-                .flatMap {
-                  // 2026-09-15 作者令：压缩不再落 report ⇒ 不再有 reportPath 可播报，
-                  // 与失败分支一致播报 None（该字段承载的「report: xxx.md」详情已随
-                  // 生成链删除，见 HistoryArchiver 头注）。
-                  case Right(_) =>
-                    emitStreamIO(
-                      state.wsSend,
-                      AgentStreamEvent
-                        .CompactComplete(state.messages.size, compactedMessages.size),
-                      isSubagent = depth > 0,
-                      state.sessionId
-                    )
-                  case Left(err) =>
-                    NebflowLogger.forName("nebflow.agent").warn(s"Compaction archive failed: $err")
-                    emitStreamIO(
-                      state.wsSend,
-                      AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size),
-                      isSubagent = depth > 0,
-                      state.sessionId
-                    )
-                }
-                .handleErrorWith(_ => IO.unit)
-              val compactedState = state
-                .withMessages(compactedMessages)
-                .withPendingCompaction(None)
-                .withCompactionFailures(0)
-                .withEmptyResponseRetries(0)
-                .withLatestUsage(None)
-                // Cache v2: compaction shrinks history; the cached systemStable
-                // is rebuilt on the next turn (lifecycle node).
-                .invalidateSystemStableCache
-              // F1 (2026-08-30, compact-injection-shield G1): BOTH branches now
-              // drain the held-back queues through ONE shared helper. Previously
-              // only the no-resume path drained (and only one injection per
-              // round); the resume=true auto-compaction continuation injected
-              // NOTHING, deferring queued Mail/delegate results to the next turn
-              // boundary — G1, the loss-window this batch closes.
-              val drain = drainQueuesAfterCompaction(compactedState)
-              // F2: persist the post-drain queue state (drained entries removed;
-              // deferred/barrier-held entries survive) before continuing.
-              val persistDrainIO = persistQueues(state.sessionId, drain.exec)
-              if compactionPending.exists(_.resumeAfterCompact) then
-                val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
-                  case Some(instruction) =>
-                    compactedState.withMessages(compactedState.messages :+ Message(MessageRole.User, Left(instruction)))
-                  case None => compactedState
-                val drainedState = stateWithInstruction.copy(execution =
-                  drain.exec.copy(
-                    messages = stateWithInstruction.messages ++ drain.appended
-                  )
-                ).withNextLoopTurn // Block 3：压缩后注入 = 新 turn
-                for
-                  _ <- ctx.forkTurn(compactEmitIO)
-                  _ <- persistDrainIO
-                  _ <- logPostCompactInjection(agentDef, depth, state, drain)
-                  _ <- emitInjectedBubbles(resources, state, drain)
-                  result <- pipeLlmCall(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    drainedState,
-                    compactionPending.flatMap(_.replyTo)
-                  )
-                yield result
-              else
-                for
-                  _ <- ctx.forkTurn(compactEmitIO)
-                  _ <- ctx.forkTurn(
-                    persistIfSession(resources, compactedState)
-                      .handleErrorWith(e =>
-                        // 2026-09-10 死日志修复：去掉外层 IO(...)（内层 IO 永不执行）。
-                        NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}")
-                      )
-                  )
-                  _ <- persistDrainIO
-                  result <- if drain.appended.nonEmpty then
-                    for
-                      _ <- logPostCompactInjection(agentDef, depth, state, drain)
-                      _ <- emitInjectedBubbles(resources, state, drain)
-                      res <- pipeLlmCall(
-                        agentDef,
-                        resources,
-                        depth,
-                        parentRef,
-                        compactedState.copy(execution =
-                          drain.exec.copy(messages = compactedState.messages ++ drain.appended)
-                        ).withNextLoopTurn, // Block 3：压缩后注入 = 新 turn
-                        None
-                      )
-                    yield res
-                  else
-                    // Nothing injected inline — but deferred commands (replyTo-bearing
-                    // UserInputs and non-UserInput commands such as SkillActivate /
-                    // AskQuestion, held for full-metadata forwarding) may
-                    // still be parked in pendingUserInputs. Forward the head to self
-                    // so the idle handler processes it with full metadata — the
-                    // replyTo completion target must NOT be stranded — preserving the
-                    // tail for the next turn boundary drain (mirrors finishTurnCont).
-                    drain.exec.pendingUserInputs.headOption match
-                      case Some(userCmd) =>
-                        (ctx.self ! userCmd) *>
-                          IO.pure(
-                            idle(
-                              agentDef,
-                              resources,
-                              depth,
-                              parentRef,
-                              compactedState.copy(execution =
-                                drain.exec.copy(pendingUserInputs = drain.exec.pendingUserInputs.tail)
-                              )
-                            )
-                          )
-                      case None =>
-                        // Truly nothing queued during the window — the continuation
-                        // state (messages compacted, pendingCompaction cleared) is final.
-                        IO.pure(idle(agentDef, resources, depth, parentRef, compactedState))
-                yield result
-                end for
-              end if
-            case Left(err) =>
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
-              val now = System.currentTimeMillis()
-              val failedState = state
-                .withPendingCompaction(None)
-                .withCompactionFailures(state.compactionFailures + 1)
-                .withLastCompactionFailureAt(now)
-              val baseIO: IO[Unit] = for
-                _ <- ctx.forkTurn(
-                  emitStreamIO(
-                    state.wsSend,
-                    AgentStreamEvent.CompactFailed(
-                      err,
-                      state.compactionFailures + 1,
-                      CompactConfig().circuitBreakerMax
-                    ),
-                    isSubagent = depth > 0,
-                    state.sessionId
-                  ).handleErrorWith(_ => IO.unit)
-                )
-                _ <- compactionPending
-                  .flatMap(_.replyDeferred)
-                  .fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
-              yield ()
-              compactionPending.flatMap(_.replyTo) match
-                case Some(replyTo) =>
-                  baseIO *> finishTurn(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    failedState,
-                    Some(replyTo),
-                    s"Context compaction failed: $err. Please start a new session or use /clear to reset.",
-                    None,
-                    None,
-                    textAlreadyStreamed = false,
-                    None
-                  )
-                case None =>
-                  if compactionPending.exists(!_.resumeAfterCompact) then
-                    baseIO *> IO.pure(idle(agentDef, resources, depth, parentRef, failedState))
-                  else baseIO *> IO.pure(processing(agentDef, resources, depth, parentRef, failedState, pending))
-              end match
-          end match
-        end if
-
-      // --- Background task completed while processing ---
-      case n: AgentCommand.BackgroundTaskNotification =>
-        (ctx.self ! n.toExternalEvent) *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- External event while processing ---
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "external-event-queued",
-          s"source=$source type=$eventType"
-        )
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        // Sub-agent barrier: a Delegate/SubTask result (completed or failed)
-        // satisfies one outstanding slot of the parallel batch. The drain at the
-        // turn boundary only releases subtask/delegate events once the counter
-        // hits 0, so a batch completing mid-turn is still injected together.
-        val updatedOutstanding =
-          if TurnBoundaryDrains.isSubagentResult(event) then
-            math.max(0, state.execution.outstandingSubagentResults - 1)
-          else state.execution.outstandingSubagentResults
-        val updatedExec = state.execution.copy(
-          pendingEvents = state.execution.pendingEvents :+ event,
-          outstandingSubagentResults = updatedOutstanding
-        )
-        // 任务 Q: emit the visible bubble at receive time (the combined
-        // <system-reminder> injected later at finishTurn is for the LLM).
-        val visSource = visibleExternalEventSource(source, eventType)
-        val bubbleIO = visSource match
-          case Some(s) =>
-            val agentName = metadata("agentName").flatMap(_.asString)
-            emitInjectedUserEvent(resources, state.wsSend, state.sessionId, payload, s, Some(eventType), agentName, sessionProject = state.projectName)
-          case None => IO.unit
-        bubbleIO *>
-          emitStream(
-            state.wsSend,
-            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0,
-            state.sessionId
-          ) *> persistQueues(state.sessionId, updatedExec) *> IO.pure(
-            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
-          )
-
-      // --- AskUser from tool ---
-      case AgentCommand.AskUser(requestId, items, replyToOpt, askMode) =>
-        // P2: every agent (root or sub-agent) sends the question straight to
-        // the InteractionHub — no ForwardAskUser relay chain. The hub holds
-        // replyTo, renders the question in the Nebula window (sessionId =
-        // rootSessionId + source attribution) and routes the answers back.
-        val srcAgent = agentDef.name
-        val srcSession = state.sessionId.getOrElse("")
-        val rootSid =
-          Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-        // D6 批 F1（G9 来源标注）：项目上下文随 payload 携带——项目节点=flowNodeName
-        // （spawn 置位路径 a），分发器提问标注 "dispatcher"；非项目会话（Nebula
-        // 自问/REPL）无此两字段，前端 badge 回落 agentName（不回归）。
-        val askProject = state.projectName
-        val askNodeName =
-          if state.isDispatcher then Some("dispatcher") else state.flowNodeName
-        val payload0 = buildAskUserJson(
-          Some(rootSid), srcAgent, items, Some(srcAgent), Some(srcSession),
-          askProject, askNodeName
-        )
-        // U3（2026-09-11 作者裁定）：内核会话的来源标注覆盖为 `subagent · <任务摘要>`
-        // （纯后端注入——落点仍是来源标注的回落分支：payload.agentName 即前端 badge
-        // 回落来源；`project`/`nodeName` 对内核恒空）。非内核会话 payload 逐字节不变
-        // （AskUserBuildJsonSpec V11b 的字节一致性防线不受影响）。
-        val payload =
-          if isKernelSession(srcSession) then
-            payload0.deepMerge(Json.obj("agentName" -> subagentAskLabel(state.sessionName, srcSession).asJson))
-          else payload0
-        // D6 批 F1（方案 A 监督补齐件，spec §3.2/§3.3）：节点提问留痕 node-ask
-        // 事件——分发器监督从实时把关变审计可见（FlowMapEventLog 既有基座，
-        // NodeEngine start-aborted 等写入点先例）。仅项目节点会话留痕（分发器
-        // 提问本就在监督链内）；best-effort——留痕失败绝不阻断提问链。
-        val nodeAskEventIO = (state.flowNodeId, askProject) match
-          case (Some(nodeId), Some(proj)) =>
-            val q0 = items.headOption.map(_.question).getOrElse("")
-            val short = if q0.length > 40 then q0.take(37) + "..." else q0
-            val multi = if items.length > 1 then s" (+${items.length - 1} more)" else ""
-            val summary =
-              s"node=${askNodeName.getOrElse(nodeId)} requestId=$requestId ask: $short$multi"
-            state.sandboxRoot.orElse(state.projectRoot) match
-              case Some(workspace) =>
-                nebflow.core.project.FlowMapEventLog
-                  .append(workspace, proj, nodeId, "node-ask", summary)
-                  .handleErrorWith(e =>
-                    logger.warn(s"node-ask event append failed (node=$nodeId): ${e.getMessage}"))
-              case None =>
-                logger.warn(s"node-ask event skipped: no workspace path (node=$nodeId)")
-          case _ => IO.unit
-        val sendIO = resources.interactionHubRef.get.flatMap {
-          case Some(hub) =>
-            // R2 (wait-timeout-fix, 2026-09-03): the turn parks on a
-            // human-in-the-loop wait — mark WaitingForUser so TaskStuckWatcher
-            // skips the session. Was: status stayed Processing + lastActivityMs
-            // frozen at dispatch → 116 taskStuck false positives/day (audit
-            // 20260903) and, for sub-agents, the destructive Stop→hard-cancel
-            // chain killing a pending question. Paired un-marks (state machine
-            // must never strand WaitingForUser):
-            //   answer → AskUserQuestionTool restore (Processing, fresh stamp)
-            //   user cancel → Interrupt/ResetSession handler touch (Idle)
-            //   turn end → finishTurnCont (Idle) — pre-existing backstop.
-            // True-hang coverage is intact: every exit above re-enters scanned
-            // statuses, and WaitingForUser itself is never a terminal state.
-            // 工具面按角色分化批 B4（2026-09-13）：**只有阻塞模式**才是
-            // human-in-the-loop 等待 —— 非阻塞发起即返回、答复稍后以注入用户输入
-            // 到达（D5），**从未等待** ⇒ 不得标 WaitingForUser，也不得 pause 预算
-            // （无配对物；误标即造出「永不解除的等待」，误 pause 即把没暂停的预算
-            // 重复 resume）。`AskMode.parksTurn` 是单点判据（可独立单测）。
-            // 判据由 `AskUserQuestionTool` 侧的运行期闸（B3）保证：非 root 会话
-            // 根本发不出 NonBlocking（硬造 ⇒ 显式 ToolError，先于本分支）。
-            val waitMarks: IO[Unit] =
-              if AskMode.parksTurn(askMode) then
-                touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser) *>
-                  // R11 第 4 层 / U1=C-a + U8=(ii)：ask **发起单点**发暂停信号——内核
-                  // 的 3600s wall-clock 预算在等待期暂停（等待无界，R1）。非 Delegate
-                  // 会话无预算通道 ⇒ 无害 no-op。配对恢复点 =
-                  // AskUserQuestionTool.restoreRegistryAfterAnswer。
-                  DelegateBudget.pause(srcSession)
-              else IO.unit
-            waitMarks *>
-              (hub ! InteractionHubCommand.Request(
-                InteractionRequest(
-                  requestId = requestId,
-                  kind = InteractionKind.AskUser,
-                  payload = payload,
-                  reply = InteractionReply.AskUserReply(replyToOpt),
-                  rootSessionId = rootSid,
-                  sourceAgent = srcAgent,
-                  sourceSession = srcSession
-                )
-              )).void *> nodeAskEventIO
-          case None =>
-            // Hub not spawned (early boot / tests): cancel the ask so the
-            // caller's AskUserQuestionTool `.?` does not hang forever.
-            logger.warn(
-              s"AskUser dropped: InteractionHub not spawned (requestId=$requestId sourceAgent=$srcAgent)"
-            ) *>
-              replyToOpt.fold(IO.unit)(replyTo => (replyTo ! Nil))
-        }
-        sendIO *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Set permission deferred while processing (P1 fallback, hub absent) ---
-      case AgentCommand.SetPermissionDeferred(deferred) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
-
-      // --- Bypass toggled while processing（permshield S1：命令已退役，catch-all 兜底）---
-
-      // --- Session model switched ---
-      case AgentCommand.UpdateContextWindow(window) =>
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withContextWindow(window),
-            pending
-          )
-        )
-
-      // ctxthresh 批：processing 态收到阈值热更 ⇒ 轻量存储（无压缩副作用）。
-      // 在飞 turn 用旧值、下一回合边界起用新值（口径 §8.3-E7 的时序语义）。
-      case AgentCommand.SetCompactThresholdRatio(ratio) =>
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withCompactThresholdRatio(ratio),
-            pending
-          )
-        )
-
-      // --- Buffer user-initiated messages during processing ---
-      // Stored in ExecutionContext.pendingUserInputs (not the dead-end `pending`
-      // parameter) so they are drained at the next turn boundary — the head is
-      // re-sent to self and processed by the idle handler with full metadata.
-      case msg: AgentCommand.UserInput =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "user-input-queued",
-          s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
-        )
-        val updatedExec = state.execution.copy(
-          pendingUserInputs = state.execution.pendingUserInputs :+ msg
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-      case msg: AgentCommand.SkillActivate =>
-        val updatedExec = state.execution.copy(
-          pendingUserInputs = state.execution.pendingUserInputs :+ msg
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-      case msg: AgentCommand.AskQuestion =>
-        val updatedExec = state.execution.copy(
-          pendingUserInputs = state.execution.pendingUserInputs :+ msg
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-      case msg: AgentCommand.ImmediateInput =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "immediate-input-queued",
-          s"textLen=${msg.text.length}"
-        )
-        val updatedExec = state.execution.copy(
-          pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg
-        )
-        persistQueues(state.sessionId, updatedExec) *> IO.pure(
-          processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
-        )
-
-      // Queued mail arriving while busy — just count; actual content is on disk
-      case AgentCommand.MailQueued(item, _) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "mail-queued",
-          s"from=${item.from} pendingCount=${state.execution.pendingMailQueueCount + 1}"
-        )
-        val updatedExec = state.execution.copy(
-          pendingMailQueueCount = state.execution.pendingMailQueueCount + 1
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
-
-      // --- Session management (persistent sub-agents) ---
-      case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
-        val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(
-          processing(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            state.withAgentSessions(state.agentSessions :+ session),
-            pending
-          )
-        )
-
-      case AgentCommand.SessionUpdate(address, status) =>
-        val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
-
-      case AgentCommand.SessionClosed(address) =>
-        val updated = state.agentSessions.filterNot(_.address == address)
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
-
-      case _ =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-    // Supervision: on unhandled error, return to idle with safe state
-    new Behavior[AgentCommand]:
-      def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
-        base.receive(c, msg)
-      override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
-        for
-          _ <- c.log.error(s"Agent error in processing, returning to idle: ${err.getMessage}")
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          _ <- markTeamIdle(agentDef, state.sessionId)
-        yield idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None))
-  end processing
+    AgentProcessing.processing(agentDef, resources, depth, parentRef, state, pending)
   // ============================================================
   // Mail check — flow agents must call Mail before finishing
   // ============================================================
 
-  /** Check if the conversation contains any SUCCESSFUL Mail tool call. */
-  private def hasUsedMail(messages: List[Message]): Boolean =
-    val mailToolUseIds = messages
-      .flatMap(_.content match
-        case Right(blocks) =>
-          blocks.collect {
-            case ContentBlock.ToolUse(id, name, _) if name == "Mail" => id
-          }
-        case _ => Nil)
-      .toSet
-    if mailToolUseIds.isEmpty then false
-    else
-      // At least one Mail result must NOT be an error
-      messages.exists(_.content match
-        case Right(blocks) =>
-          blocks.exists {
-            case tr: ContentBlock.ToolResult if mailToolUseIds.contains(tr.toolUseId) =>
-              !tr.isError.getOrElse(false)
-            case _ => false
-          }
-        case _ => false)
-
-  end hasUsedMail
-
-  /** Inject a system reminder telling the agent to use Mail, then trigger a new turn. */
-  private def handleMissingMail(
+  private[agent] def handleMissingMail(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -2832,111 +967,25 @@ object AgentActor extends AgentCore with AgentSession:
     replyTo: Option[ActorRef[AgentEvent]],
     result: ConsumeResult
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(
-      agentDef,
-      depth,
-      state.sessionId,
-      state.sessionName,
-      "mail-reminder",
-      s"agent finished without Mail (reminder ${state.mailReminders + 1}/$MaxMailReminders)"
-    )
-    val assistantContent = (result.thinking, result.text) match
-      case (None, _) => Left(result.text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, result.thinkingSignature), ContentBlock.Text(txt)))
-    val assistantMsg = Message(MessageRole.Assistant, assistantContent)
-    val reminderMsg = Message(
-      MessageRole.User,
-      Left(
-        "<system-reminder>\nYou must use the Mail tool to report your result before finishing. Call Mail now with your findings.\n</system-reminder>"
-      )
-    )
-    val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
-    val updatedState =
-      state.copy(execution =
-        state.execution.copy(
-          messages = newMessages,
-          status = AgentStatus.Processing,
-          mailReminders = state.mailReminders + 1
-        )
-      )
-    pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
-  end handleMissingMail
+    AgentProcessing.handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
 
   // ============================================================
   // Supervisor restart helpers
   // ============================================================
 
-  /**
-   * Rollback the last tool call: truncate messages from the last ToolUse
-   *  Assistant message onwards, inject a supervisor error message.
-   *  If no tool call is found, returns state unchanged.
-   */
-  /** Restart state by level (#13). Soft cancels current work keeping
-    * messages; Rollback additionally truncates the last tool pair; Full
-    * rebuilds message state from persisted history (documented "(future)
-    * reset to empty, reload from persisted history" — implemented per issue
-    * #13; it was silently aliased to Soft). Prune stays a Soft alias until
-    * context-prune exists. Disk-load failure degrades to Soft (fail-safe). */
-  private def restartStateFor(
-      level: RestartLevel,
-      state: AgentState,
-      resources: SharedResources
-  ): IO[AgentState] =
-    def base: AgentState = state.resetForInterrupt.withPendingCompaction(None)
-    level match
-      case RestartLevel.Rollback => IO.pure(rollbackLastToolCall(base))
-      case RestartLevel.Full =>
-        val sid = state.sessionId.getOrElse("")
-        if sid.isEmpty then IO.pure(base)
-        else
-          resources.sessionStore.loadMessagesForSession(sid)
-            .map(msgs => base.copy(execution = base.execution.copy(messages = msgs)))
-            .handleErrorWith { e =>
-              logger.warn(
-                s"Full restart: history reload failed for $sid (${e.getMessage}) — degrading to Soft"
-              ) *> IO.pure(base)
-            }
-      case _ => IO.pure(base)
-  end restartStateFor
+  private[agent] def restartStateFor(
+    level: RestartLevel,
+    state: AgentState,
+    resources: SharedResources
+  ): IO[AgentState] = AgentProcessing.restartStateFor(level, state, resources)
 
-  private def rollbackLastToolCall(state: AgentState): AgentState =
-    val messages = state.messages
-    // Find the index of the last Assistant message containing ToolUse blocks
-    val lastToolUseIdx = messages.lastIndexWhere { msg =>
-      msg.role == MessageRole.Assistant && {
-        msg.content match
-          case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.ToolUse])
-          case _ => false
-      }
-    }
-    if lastToolUseIdx < 0 then state // No tool call found — nothing to rollback
-    else
-      // Extract the tool name for the error message
-      val toolName = messages(lastToolUseIdx).content match
-        case Right(blocks) =>
-          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _) => name }.getOrElse("unknown")
-        case _ => "unknown"
-      // Truncate from the tool call onwards
-      val truncated = messages.take(lastToolUseIdx)
-      // Inject supervisor message
-      val supervisorMsg = Message(
-        MessageRole.User,
-        Left(
-          s"[SUPERVISOR] Your last action ($toolName) was rolled back because it caused a problem. " +
-            "Do not repeat the same approach. Try a different strategy."
-        )
-      )
-      state.withMessages(truncated :+ supervisorMsg)
-    end if
-  end rollbackLastToolCall
-
-  // ============================================================
-  // LlmComplete branch selector
-  // ============================================================
-
-  private def handleLlmCompleteBranch(
+  // turn 收尾族已整体迁至 agent/AgentFinishTurn.scala(行为保持重构,2026-09-25):
+  // handleLlmCompleteBranch / finishTurn / finishTurnCont / markTeamBusy /
+  // markTeamIdle / fullyIdle / emitDequeuedWs 的实现都在那边(方法体逐字未动);
+  // 此处保留同名委托 def(签名与默认参数原样),调用点零改动。pipeLlmCall /
+  // pipeToolExecutions 后随 processing 域迁至 agent/AgentProcessing.scala(同日,
+  // 见上方 processing 委托处注释)。
+  private[agent] def handleLlmCompleteBranch(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -2946,72 +995,9 @@ object AgentActor extends AgentCore with AgentSession:
     result: ConsumeResult,
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    // Single-stage compaction (2026-08-31 redesign): the former Save stage is
-    // gone — compaction only compresses. Every pending compaction is a
-    // Compact turn: tools disabled (pipeLlmCall sets tools=Some(Nil)),
-    // text-only summary required.
-    if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
-      handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
-    else if state.pendingCompaction.exists(_.phase == CompactionPhase.Compact) && result.toolCalls.isEmpty && result.text.isEmpty then
-      // F0 (2026-08-30, compact-injection-shield Q1): a Compact-phase response
-      // with EMPTY text (thinking-only) must be treated as a compaction
-      // FAILURE, never allowed to fall through to the mail-check rung. Tools
-      // are disabled during compaction (pipeLlmCall sets tools=Some(Nil)), so
-      // the "you must call Mail" reminder loop is a deterministic dead loop —
-      // production deaths 03:29/03:41/08:45 each burned ~219K input ×2 retries
-      // before compaction-abandoned silently. handleCompactFailure increments
-      // the circuit-breaker counter, emits CompactFailed, completes the
-      // deferred waiter, and (auto-compaction) ends the turn with an honest
-      // failure instead of laundering it through the mail-reminder mechanism.
-      handleCompactFailure(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state,
-        "Compact phase returned no text (thinking-only response) — the summary must be written as text, not reasoning"
-      )
-    else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
-      handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
-    else if state.askMode.isDefined && result.toolCalls.isEmpty then
-      handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
-    else if result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
-    else if result.text.nonEmpty || result.thinking.nonEmpty then
-      // Mail check: team members must call Mail before finishing.
-      // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
-      if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
-        handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
-      else
-        if state.expectsMail && !state.mailUsedThisTurn then
-          logAgentEvent(
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "mail-give-up",
-            s"agent finished without Mail after $MaxMailReminders reminders"
-          )
-        finishTurn(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state.withEmptyResponseRetries(0),
-          replyTo,
-          result.text,
-          result.thinking,
-          result.thinkingSignature,
-          textAlreadyStreamed = true,
-          result.model
-        )
-    else handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
+    AgentFinishTurn.handleLlmCompleteBranch(agentDef, resources, depth, parentRef, state, replyTo, result, pending)
 
-  // ============================================================
-  // Finish turn
-  // ============================================================
-
-  private def finishTurn(
+  private[agent] def finishTurn(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3024,93 +1010,21 @@ object AgentActor extends AgentCore with AgentSession:
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    // ── Zombie-compaction guard ──
-    // A pending CompactionJob must never survive into idle: the next normal
-    // LLM reply would be misrouted by handleLlmCompleteBranch's pendingCompaction
-    // ladder as the compact summary and REPLACE all messages (data loss).
-    // Legitimate compaction flows never reach finishTurn — the ladder
-    // intercepts every LlmComplete while a job is pending — so arriving here
-    // with a job means the attempt died mid-turn (context overflow on the
-    // compact call, max-tokens truncation, …). Complete the deferred waiter,
-    // record the failure. Mirrors CompactionComplete(Left) / handleCompactFailure /
-    // Interrupt. Events queued during the dead compaction are then delivered
-    // normally by finishTurnCont's pendingEvents drain (job now cleared).
-    val (normalizedState, compactionCleanup) = state.pendingCompaction match
-      case Some(job) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "compaction-abandoned",
-          s"reason=turn-ended-before-compact job=${job.subagentId} phase=${job.phase.toString}"
-        )
-        val now = System.currentTimeMillis()
-        (
-          // compactui 批（2026-09-15 事故 ②）：同中断面，先把压缩轮临时输入摘掉。
-          dropCompactionScratch(state)
-            .withPendingCompaction(None)
-            .withCompactionFailures(state.compactionFailures + 1)
-            .withLastCompactionFailureAt(now),
-          job.replyDeferred
-            .fold(IO.unit)(d =>
-              d.complete(Left("Compaction abandoned: turn ended before the compact phase")).void
-                .handleErrorWith(_ => IO.unit)
-            ) *>
-            // compactui 批（2026-09-15 事故 ①）：本路径原先只记 lifecycle 事件，
-            // 前端收不到终局帧 ⇒ pill 永挂（与中断面同一缺陷类，一并补齐）。
-            emitAbandonedCompaction(state, depth)
-        )
-      case None => (state, IO.unit)
-    // #22 (2026-08-19): 空轮必须留痕——thinking-only 响应（text 空、无工具）
-    // 结束 turn 时零输出零事件，从外部（含派工 Manager）看与「turn 静默挂死」
-    // 无法区分（14:40/14:47 Manager 两案实为此形态）。留痕后法证可分。
-    if text.isEmpty then
-      logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "turn-ended-empty",
-        s"model=${model.getOrElse("-")} thinking=${thinking.map(_.length).getOrElse(0)} msgs=${state.messages.size}"
-      )
-    val isSubagent = parentRef.isDefined
-    val sendText = !textAlreadyStreamed && text.nonEmpty
-    val assistantContent = (thinking, text) match
-      case (None, _) => Left(text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
-      case (Some(t), txt) =>
-        Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
-    val newMessages = normalizedState.messages :+ Message(MessageRole.Assistant, assistantContent)
-    val sendTextIO =
-      if sendText then
-        emitStream(state.wsSend, AgentStreamEvent.TextDelta(text), isSubagent = isSubagent, state.sessionId)
-      else IO.unit
-    for
-      _ <- compactionCleanup
-      _ <- sendTextIO
-      result <- finishTurnCont(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        normalizedState,
-        replyTo,
-        newMessages,
-        text,
-        model,
-        thinking,
-        thinkingSignature,
-        textAlreadyStreamed,
-        isSubagent
-      )
-    yield result
+    AgentFinishTurn.finishTurn(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      replyTo,
+      text,
+      thinking,
+      thinkingSignature,
+      textAlreadyStreamed,
+      model
+    )
 
-    end for
-
-  end finishTurn
-
-  private def finishTurnCont(
+  private[agent] def finishTurnCont(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3122,506 +1036,46 @@ object AgentActor extends AgentCore with AgentSession:
     model: Option[String],
     thinking: Option[String],
     thinkingSignature: Option[String],
-    // True when the text was streamed incrementally to the client during the
-    // turn (normal path); false when it is being delivered as a single final
-    // burst at finish (error paths: compaction failed / context exceeded /
-    // max tokens). Logged verbatim as textStreamed — do NOT invert.
     textStreamed: Boolean,
     isSubagent: Boolean
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(
+    AgentFinishTurn.finishTurnCont(
       agentDef,
+      resources,
       depth,
-      state.sessionId,
-      state.sessionName,
-      "turn-complete",
-      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textStreamed " +
-        s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
+      parentRef,
+      state,
+      replyTo,
+      newMessages,
+      text,
+      model,
+      thinking,
+      thinkingSignature,
+      textStreamed,
+      isSubagent
     )
-    // #25 (nested delegation dead-letter): "turn ended" is NOT "task completed"
-    // while spawned sub-agents are still in flight. The completion notification
-    // (supervisor adapter / ask fork / flow bridge) is PARKED in
-    // execution.owedCompletion instead of being sent — BackoffSupervisor would
-    // otherwise stop this actor on Completed and the grandchildren's results
-    // would dead-letter. When a later turn ends with the barrier at 0, every
-    // parked target receives the Completed event carrying the FINAL synthesized
-    // text and the debt clears. Root agents (replyTo=None, no debt) unaffected.
-    val completionTargets: List[ActorRef[AgentEvent]] =
-      (replyTo.toList ++ state.execution.owedCompletion).distinct
-    val subagentsInFlight = state.execution.outstandingSubagentResults > 0
-    val owedAfter: List[ActorRef[AgentEvent]] = if subagentsInFlight then completionTargets else Nil
 
-    // #407: turn 收尾回 idle（原 else 分支提取）。queue drain 分支的 idle-gate
-    // 拦截也复用此收尾——queue 延迟投递但本 turn 正常结束（Done/持久化/debt
-    // 照常；pendingMailQueueCount 保留，子 agent 完成事件驱动的下一次
-    // finishTurnCont 会重检 gate 再 drain）。
-    def returnToIdle: IO[Behavior[AgentCommand]] =
-      val effectiveInputTokens = state.latestUsage
-        .map(_.inputTokens)
-        .filter(_ > 0)
-        .getOrElse(nebflow.core.compact.TokenEstimator.estimate(state.messages))
-      val doneEvent = AgentStreamEvent.Done(
-        model.orElse(state.lastModel),
-        contextWindow = Some(state.contextWindow),
-        inputTokens = Some(effectiveInputTokens),
-        compactThreshold = Some(state.effectiveCompactThresholdRatio),
-        outputTokens = state.latestUsage.flatMap(u => Option.when(u.outputTokens > 0)(u.outputTokens))
-      )
-      val emitDoneIO =
-        if isSubagent then
-          // Synchronous emit to prevent markIdle/markBusy race condition
-          emitStreamIO(state.wsSend, doneEvent, isSubagent = true, state.sessionId)
-            .handleErrorWith(e =>
-              // 2026-09-10 死日志修复：去掉外层 IO(...)（内层日志永不执行）。
-              NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: emitDone (sync) failed: ${e.getMessage}").void
-            )
-        else
-          state.sessionId.fold(IO.unit) { sid =>
-            val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
-            NebflowLogger
-              .forName("nebflow.agent")
-              .info(s"finishTurn: sending Done sessionId=$sid jsonLen=${doneJson.noSpaces.length}")
-            ctx.forkTurn(
-              (state
-                .wsSend(doneJson)
-                .handleErrorWith(e =>
-                  // 2026-09-10 死日志修复：去掉外层 IO(...)。
-                  NebflowLogger
-                    .forName("nebflow.agent")
-                    .warn(s"finishTurn: Done event delivery failed: ${e.getMessage}")
-                ) *>
-                emitSessionBusy(state.wsSend, sid, busy = false))
-                .handleErrorWith(e =>
-                  // 2026-09-10 死日志修复：去掉外层 IO(...)。
-                  NebflowLogger
-                    .forName("nebflow.agent")
-                    .warn(s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}")
-                )
-            )
-          }
-      for
-        _ <- emitDoneIO
-        _ <- state.sessionId.fold(IO.unit)(sid =>
-          ctx.forkTurn(
-            (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-              resources.sessionStore.flushIndex)
-              .handleErrorWith(e =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-              )
-          )
-        )
-        _ <-
-          // #25 (THE fix): the terminal Completed must NOT fire while spawned
-          // sub-agents are in flight — BackoffSupervisor.notifyParentAndStop
-          // would stop this actor and the grandchildren's results would
-          // dead-letter (the root would only ever see the relay text). Park
-          // the debt instead; the batch-completion injection turn re-enters
-          // finishTurnCont with the barrier at 0 and pays it off there.
-          if subagentsInFlight then IO.unit
-          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
-        // Turn fully finished (no pending events / immediate inputs) — back to
-        // idle, so clear the team busy mark. The two earlier branches re-enter
-        // pipeLlmCall which re-marks busy, so they must NOT clear here.
-        _ <- markTeamIdle(agentDef, state.sessionId)
-        // P0 阶段 3：turn 完成回 idle——registry 状态快照置 Idle 并 touch。
-        // Idle 是合法状态（run_in_background 后台命令等待期），TaskStuckWatcher
-        // 只判 Processing——此标记是防误杀铁律的落地。
-        _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-        // Drain pending user inputs: forward head to self (agent is now idle,
-        // so it will be processed with full metadata by the idle handler). The
-        // tail is preserved for the next turn boundary drain.
-        _ <- state.execution.pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)
-      yield
-        // Empty-queue safe tail (same guard style as TurnBoundaryDrains.drainHead):
-        // the REST /api/command turn-end path reaches this branch with an empty
-        // queue on every turn — a bare .tail threw "tail of empty list" there.
-        val remainingUserInputs =
-          val queued = state.execution.pendingUserInputs
-          if queued.isEmpty then queued else queued.tail
-        val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
-        val updatedState = state
-          .copy(execution =
-            ExecutionContext
-              .idle(newMessages, state.execution.turnIdx)
-              .copy(
-                interaction = keptInteraction,
-                // Preserve queue when compaction is in progress — CompactionComplete drains it.
-                pendingImmediateInputs = state.execution.pendingImmediateInputs,
-                pendingUserInputs = remainingUserInputs,
-                // Sub-agent barrier: held subtask/delegate results and the
-                // outstanding count survive the turn boundary (the batch may
-                // still be running — they are injected when it completes).
-                pendingEvents = state.execution.pendingEvents,
-                outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                // #25: parked completion debt survives the turn boundary —
-                // paid off when a later turn ends with the barrier at 0.
-                owedCompletion = owedAfter,
-                // #10 (2026-08-27 mail-queue wedge): ExecutionContext.idle
-                // rebuilds pendingMailQueueCount to 0. This returnToIdle tail
-                // is ALSO reached by the queue drain branch's idle-gate
-                // deferral path (pendingMailQueueCount>0 but subtree busy) —
-                // without carrying the counter, the NEXT turn's drain branch
-                // (`pendingMailQueueCount > 0`) is permanently false and the
-                // disk queue wedges until another MailQueued arrives. The two
-                // earlier injection branches already carry it; this tail must too.
-                pendingMailQueueCount = state.execution.pendingMailQueueCount
-              )
-          )
-          .withMailTurnCount(state.mailTurnCount + 1)
-        idle(agentDef, resources, depth, parentRef, updatedState)
-      end for
-    if subagentsInFlight && completionTargets.nonEmpty then
-      logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "completion-parked",
-        s"outstanding=${state.execution.outstandingSubagentResults} parked=${completionTargets.size}"
-      )
-    // Barrier-aware drain: while a parallel sub-agent batch is outstanding,
-    // subtask/delegate results stay held (worker blocking semantics) — they are
-    // injected ALL together when the batch completes. Other event types keep
-    // the existing serial one-at-a-time drain.
-    val (drainedEvents, remainingEvents) =
-      TurnBoundaryDrains.drainBarrier(
-        state.execution.pendingEvents,
-        compactionPending = false,
-        state.execution.outstandingSubagentResults
-      )
-    if drainedEvents.nonEmpty then
-      val roundCompleteIO: IO[Unit] =
-        if !isSubagent then
-          state.sessionId.fold(IO.unit)(sid =>
-            ctx.forkTurn(
-              state
-                .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
-                .handleErrorWith(e =>
-                  NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}")
-                )
-            )
-          )
-        else IO.unit
-      val eventMessages = List(buildEventReminder(drainedEvents))
-      val messagesWithPending = newMessages ++ eventMessages
-      logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "pending-messages-injected",
-        s"events=${drainedEvents.size} remaining=${remainingEvents.size}"
-      )
-      val updatedState = state.copy(execution =
-        ExecutionContext
-          .idle(messagesWithPending, state.execution.turnIdx)
-          .copy(pendingEvents = remainingEvents, pendingImmediateInputs = state.execution.pendingImmediateInputs,
-                pendingMailQueueCount = state.execution.pendingMailQueueCount,
-                pendingUserInputs = state.execution.pendingUserInputs,
-                outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                // #25: hold/replay the completion debt across this injection.
-                owedCompletion = owedAfter)
-      ).withNextLoopTurn // Block 3：turn 末事件注入 = 新 turn
-      for
-        _ <- roundCompleteIO
-        // F2: keep the disk snapshot in sync after the drain (drained events gone).
-        _ <- persistQueues(state.sessionId, updatedState.execution)
-        _ <-
-          if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-          else IO.unit
-        _ <- state.sessionId.fold(IO.unit)(sid =>
-          ctx.forkTurn(
-            (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
-              resources.sessionStore.flushIndex)
-              .handleErrorWith(e =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-              )
-          )
-        )
-        _ <-
-          // #25: never signal turn-terminal Completed while sub-agents are in
-          // flight — park the debt (owedAfter) and keep the requester waiting.
-          if subagentsInFlight then IO.unit
-          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
-        result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
-      yield result
-      end for
-    else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
-      // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：turn 末只取队首**一件**
-      // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
-      // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
-      // 原缺陷⑥「整批塞进一个新 turn」已删除。
-      val (immHead, remainingInputs) = TurnBoundaryDrains.drainHead(
-        state.execution.pendingImmediateInputs,
-        compactionPending = false
-      )
-      val immInputs = immHead.toList
-      logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "immediate-input-injected-at-turn-end",
-        s"batch=${immInputs.size} texts=${immInputs.map(_.text.take(40)).mkString(" | ").take(200)}"
-      )
-      val roundCompleteIO: IO[Unit] =
-        if !isSubagent then
-          state.sessionId.fold(IO.unit)(sid =>
-            ctx.forkTurn(
-              state
-                .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
-                .handleErrorWith(e =>
-                  NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}")
-                )
-            )
-          )
-        else IO.unit
-      val immMessages = immInputs.map(imm =>
-        (imm.blocks match
-          case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-          case _ => Message(MessageRole.User, Left(imm.text))
-        ).copy(source = injectionSourceFor(imm.fromUser, imm.source)))
-      val messagesWithImmediate = newMessages ++ immMessages
-      val updatedState = state
-        .copy(execution =
-          ExecutionContext
-            .idle(messagesWithImmediate, state.execution.turnIdx)
-            .copy(pendingImmediateInputs = remainingInputs,
-                  pendingMailQueueCount = state.execution.pendingMailQueueCount,
-                  pendingUserInputs = state.execution.pendingUserInputs,
-                  // Sub-agent barrier: held subtask/delegate results and the
-                  // outstanding count survive the turn boundary.
-                  pendingEvents = state.execution.pendingEvents,
-                  outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                  // #25: hold/replay the completion debt across this injection.
-                  owedCompletion = owedAfter)
-        )
-        .withNextLoopTurn // Block 3：turn 末注入 = 新 turn（整批共享同一 turn）
-      for
-        _ <- roundCompleteIO
-        // F2: keep the disk snapshot in sync after the drain (injected input gone).
-        _ <- persistQueues(state.sessionId, updatedState.execution)
-        _ <-
-          if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-          else IO.unit
-        // One blue injected bubble per sourced input — same group, back to back.
-        // ② (2026-09-11): 真人输入没有来源标签 ⇒ 也不产注入气泡（fromUser 优先
-        // 于 source，与 Message 侧的 injectionSourceFor 同一判据）。
-        _ <- immInputs.flatMap { imm =>
-          injectionSourceFor(imm.fromUser, imm.source).map(src =>
-            emitInjectedUserEvent(
-              resources,
-              state.wsSend,
-              state.sessionId,
-              imm.text,
-              src,
-              imm.eventType,
-              imm.sender,
-              imm.senderTeam
-            )
-          )
-        }.sequence_
-        _ <- state.sessionId.fold(IO.unit)(sid =>
-          ctx.forkTurn(
-            (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
-              resources.sessionStore.flushIndex)
-              .handleErrorWith(e =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-              )
-          )
-        )
-        _ <-
-          // #25: park the completion debt while sub-agents are in flight.
-          if subagentsInFlight then IO.unit
-          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
-        result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
-      yield result
-      end for
-    else if state.pendingCompaction.isEmpty && state.execution.pendingMailQueueCount > 0 then
-      // Queue drain: next queued mail (less urgent than immediate inputs).
-      // Load head from disk, remove it, inject as a new user turn.
-      // #407 idle gate: 目标 agent 连同子树（或 root 发送者→全 team）完全空闲才
-      // 投递；不空闲则跳过 drain（保留 count），由子 agent 完成事件驱动的下一次
-      // finishTurnCont 重检（不消费队列、不动 head，FIFO 顺序保持）。
-      val sid = state.sessionId.getOrElse("")
-      for
-        items <- nebflow.core.flow.MailQueueStore.load(sid)
-        headOpt = items.headOption
-        // skipSelfStatus=true：turn 已结束（finishTurnCont 执行中），registry
-        // status 还是 Processing 残留——自身不算忙，只查子树与 flow
-        idleOk <- fullyIdle(sid, state, resources, skipSelfStatus = true)
-        result <-
-          if !idleOk then
-            IO(
-              logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "mail-queued-deferred",
-                s"head=${headOpt.map(_.id).getOrElse("-")} sender=${headOpt.map(_.fromSession).getOrElse("-")} subtree-busy, queue retained"
-              )
-            ) *> returnToIdle
-          else
-            headOpt match
-              case Some(item) =>
-                val deliver =
-                  for
-                    // G3: re-read attachment paths at drain time (D6). Lost files
-                    // degrade to placeholder text instead of failing the turn.
-                    attBlocks <- nebflow.core.tools.ImageInject.drainImagePaths(item.imagePaths)
-                    queueMessage = (attBlocks match
-                      case Nil => Message(MessageRole.User, Left(item.message))
-                      case blocks =>
-                        // Message text MUST be the first Text block — blocks replace
-                        // the string content entirely.
-                        Message(MessageRole.User, Right(ContentBlock.Text(item.message) :: blocks))
-                    ).copy(source = Some("mail-queue"))
-                    messagesWithQueue = newMessages ++ List(queueMessage)
-                    updatedState = state.copy(execution =
-                      ExecutionContext
-                        .idle(messagesWithQueue, state.execution.turnIdx)
-                        .copy(pendingMailQueueCount = state.execution.pendingMailQueueCount - 1,
-                              pendingUserInputs = state.execution.pendingUserInputs,
-                              // Sub-agent barrier: held results survive the turn boundary.
-                              pendingEvents = state.execution.pendingEvents,
-                              outstandingSubagentResults = state.execution.outstandingSubagentResults,
-                              // #25: hold/replay the completion debt across this injection.
-                              owedCompletion = owedAfter)
-                    ).withNextLoopTurn // Block 3：Mail 队列投递 = 新 turn
-                    _ <- nebflow.core.flow.MailQueueStore.removeHead(sid)
-                    _ <-
-                      if !isSubagent then emitSessionBusy(state.wsSend, sid, busy = true)
-                      else IO.unit
-                    _ <- emitInjectedUserEvent(
-                      resources,
-                      state.wsSend, state.sessionId, item.message,
-                      "mail-queue", Some("queue"), Some(item.from), None, Some("queue"),
-                      // 气泡四段式统一批（2026-09-15）：legacy 排空腿的 source =
-                      // `"mail-queue"` 不在 KIND 词表内 ⇒ 本腿恒不产 header（旧呈现
-                      // 逐字保持）。PROJECT 段落回级别照传，未来若纳入词表即生效。
-                      sessionProject = state.projectName
-                    )
-                    _ <- ctx.forkTurn(
-                      (resources.sessionStore.saveMessagesForSession(sid, messagesWithQueue) *>
-                        resources.sessionStore.flushIndex)
-                        .handleErrorWith(e =>
-                          NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-                        )
-                    )
-                    _ <-
-                      // #25: park the completion debt while sub-agents are in flight.
-                      if subagentsInFlight then IO.unit
-                      else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue))
-                    r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
-                  yield r
-                // Delivery-layer fingerprint dedup (P0): same sender+recipient+content
-                // within the 30min window is consumed without injection — the
-                // restart-replay backstop (fingerprints persist across restarts).
-                // V13 (2026-09-03): consult scoped to the replay window after this
-                // session's activation — outside it a same-content re-send is
-                // legitimate and delivers unconditionally.
-                mailDedupInReplayWindow(sid, resources).flatMap { inReplayWindow =>
-                  nebflow.core.flow.MailDeliveryDedup
-                    .tryDeliver(
-                      sid,
-                      nebflow.core.flow.MailDeliveryDedup.fingerprint(item.from, sid, item.message),
-                      System.currentTimeMillis(),
-                      inReplayWindow
-                    )
-                    .flatMap {
-                    case false =>
-                      // Duplicate within window: consume the head, keep draining —
-                      // recurse with count-1 so the next item is tried (or the
-                      // queue settles to the done branch when count hits 0).
-                      nebflow.core.flow.MailQueueStore.removeHead(sid).void *>
-                        finishTurnCont(
-                          agentDef, resources, depth, parentRef,
-                          state.copy(execution = state.execution.copy(
-                            pendingMailQueueCount = state.execution.pendingMailQueueCount - 1)),
-                          replyTo, newMessages, text, model, thinking, thinkingSignature, textStreamed, isSubagent
-                        )
-                    case true => deliver
-                  }
-                }
-              case None =>
-                // Count > 0 but disk queue empty (items cancelled while busy) — reset
-                // count and re-enter finishTurnCont which will hit the idle branch.
-                finishTurnCont(
-                  agentDef, resources, depth, parentRef,
-                  state.copy(execution = state.execution.copy(pendingMailQueueCount = 0)),
-                  replyTo, newMessages, text, model, thinking, thinkingSignature, textStreamed, isSubagent
-                )
-      yield result
-    else returnToIdle
-    end if
-  end finishTurnCont
+  private[agent] def markTeamBusy(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
+    AgentFinishTurn.markTeamBusy(agentDef, sid)
+
+  private[agent] def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
+    AgentFinishTurn.markTeamIdle(agentDef, sid)
+
+  private[agent] def fullyIdle(
+    sid: String,
+    state: AgentState,
+    resources: SharedResources,
+    skipSelfStatus: Boolean = false
+  ): IO[Boolean] = AgentFinishTurn.fullyIdle(sid, state, resources, skipSelfStatus)
+
+  private[agent] def emitDequeuedWs(wsSend: Json => IO[Unit], sessionId: String, itemId: String): IO[Unit] =
+    AgentFinishTurn.emitDequeuedWs(wsSend, sessionId, itemId)
 
   // ============================================================
   // Pipe wrappers
   // ============================================================
 
-  /**
-   * Team busy signal for the /api/teams/mounted status fallback (busyMap).
-   * The frontend prefers realtime agentStart/agentDone events, but on page
-   * load / event loss it falls back to the mounted status field — which stays
-   * idle forever unless something writes the busyMap. Only team agents
-   * (category inferred from `teams/` path by loadAgentFromDir) are shown as
-   * team tiles, so only they need marking.
-   *
-   * Errors are swallowed: a failed status record must never break the turn.
-   */
-  private def markTeamBusy(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    if agentDef.category == "team" then
-      sid.fold(IO.unit)(s => TeamSessionRegistry.markBusy(s).handleErrorWith(_ => IO.unit))
-    else IO.unit
-
-  private def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    if agentDef.category == "team" then
-      sid.fold(IO.unit)(s => TeamSessionRegistry.markIdle(s).handleErrorWith(_ => IO.unit))
-    else IO.unit
-
-  /**
-   * #407: queue Mail 空闲 gate —— 目标 agent 连同子树（root 发送者→整个 team）
-   * 完全空闲才投递（用户裁定 2026-08-25 19:53/19:57）。判定数据：
-   *  - registry 快照（status / outstandingSubagents / 任务型子记录 parentRef）
-   *  - RunningFlowRegistry（Q3：RunningFlow.sessionId 关联触发者）
-   *  - agent 内部权威 barrier（state.execution.outstandingSubagentResults）
-   *
-   * 2026-08-28 01:00 统一裁定：投递判定 = 目标 agent 自身+子树空闲，**与发送者
-   * 无关**——废除 08-25 按发送者区分（root→全 team 停）的语义：无关成员的忙碌
-   * 不再无限期扣住投递（旧 senderIsRoot 分支连同 isTeamTreeIdle 一并退役）。
-   */
-  private def fullyIdle(
-    sid: String,
-    state: AgentState,
-    resources: SharedResources,
-    skipSelfStatus: Boolean = false
-  ): IO[Boolean] =
-    for
-      registry <- resources.agentRegistry.get
-      flows <- nebflow.core.flow.RunningFlowRegistry.list
-      // agent 内部权威 barrier（registry 快照之外的一层防御）
-      internalIdle = state.execution.outstandingSubagentResults == 0
-      selfOk = nebflow.core.flow.MailIdleGate.isAgentTreeIdle(sid, registry, flows, checkStatus = !skipSelfStatus)
-    yield selfOk && internalIdle
-
-  /** Emit a WS event so the frontend removes a pending mail-queue item. */
-  private def emitDequeuedWs(wsSend: Json => IO[Unit], sessionId: String, itemId: String): IO[Unit] =
-    if sessionId.nonEmpty then
-      nebflow.core.flow.MailQueueStore.size(sessionId).flatMap { pendingCount =>
-        wsSend(
-          Json.obj(
-            "type" -> "mailDequeued".asJson,
-            "sessionId" -> sessionId.asJson,
-            "itemId" -> itemId.asJson,
-            "pendingCount" -> pendingCount.asJson
-          )
-        ).handleErrorWith(_ => IO.unit)
-      }
-    else IO.unit
-
-  private def pipeLlmCall(
+  private[agent] def pipeLlmCall(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3630,52 +1084,9 @@ object AgentActor extends AgentCore with AgentSession:
     replyTo: Option[ActorRef[AgentEvent]],
     cause: DispatchCause = DispatchCause.Gated
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    // Turn start: mark team agent busy. Idempotent (Set), so the recursive
-    // multi-tool-call turns that re-enter pipeLlmCall are harmless.
-    // MUST run unconditionally BEFORE the freeze gate (spec 6a / B12): a frozen
-    // team agent must still read busy in the Teams panel — putting this in the
-    // dispatch branch would leave frozen team agents marked idle.
-    markTeamBusy(agentDef, state.sessionId) *>
-      // ── Freeze gate (freeze-schedule spec ⑥, F2 single choke point) ──
-      // 所有 AgentActor 层 dispatch 都经过本 shadow；AgentCore 内部递归
-      // （maybeAutoCompact 等）静态解析不经此处，但只会在 gate 放行后执行。
-      // 冻结期间零 LLM 调用（零 token 硬指标）——拦截后转入 frozen behavior，
-      // 持有完整 state（工具结果已在冻结前持久化，F1）。
-      // #337：黑名单语义——segments 是冻结时间，段内 window.frozen=true。
-      resources.freezeScheduleRef.get.flatMap { cfg =>
-        resources.freezeSkipUntilRef.get.flatMap { skipUntil =>
-          // #337 黑名单语义：segments = 冻结时段（非工作时间），段内 frozen=true。
-          // 2026-08-25 裁定：用户消息全局跳过——skipUntil 未到期（用户消息作废了
-          // 本次冻结窗口）→ evalWithSkip 返回 frozen=false，所有 agent 恢复工作。
-          val now = System.currentTimeMillis()
-          val window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, skipUntil, now)
-          // D11 交互豁免：ask 轮（用户在场等回答）与 freezeExempt 会话
-          // （交互场景）不冻结——冻结它们省的 token 远低于浪费的用户等待。
-          val interactive = state.askMode.isDefined || state.session.freezeExempt
-          if window.frozen && cause == DispatchCause.Gated && !interactive then
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "freeze-enter",
-              s"resumeAt=${window.nextChangeAt.map(_.toString).getOrElse("none")}"
-            )
-            enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt)
-          else
-            super.pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state,
-              replyTo,
-              (ad, r, d, p, s) => processing(ad, r, d, p, s)
-            )
-        }
-      }
+    AgentProcessing.pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo, cause)
 
-  private def pipeToolExecutions(
+  private[agent] def pipeToolExecutions(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3684,26 +1095,45 @@ object AgentActor extends AgentCore with AgentSession:
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeToolExecutions(
-      agentDef,
-      resources,
-      depth,
-      parentRef,
-      state,
-      result,
-      replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s)
-    )
+    AgentProcessing.pipeToolExecutions(agentDef, resources, depth, parentRef, state, result, replyTo)
+
+  // processing 域迁移(2026-09-25)配套:AgentCore 的 pipeLlmCall / pipeToolExecutions
+  // 是 protected,super. 只在本对象(继承 AgentCore)内合法;AgentProcessing 不继承
+  // AgentCore(避免复制 trait 每实例可变状态),其迁移体经此两枚薄桥转发。
+  private[agent] def corePipeLlmCall(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    processing: ProcessingFn
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    super.pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo, processing)
+
+  private[agent] def corePipeToolExecutions(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    result: ConsumeResult,
+    replyTo: Option[ActorRef[AgentEvent]],
+    processing: ProcessingFn
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    super.pipeToolExecutions(agentDef, resources, depth, parentRef, state, result, replyTo, processing)
 
   // ============================================================
   // Frozen state (freeze-schedule spec 6c / D3)
   // ============================================================
 
-  /** v2 升级链通知（§5.1）：父是 agent → ExternalEvent("error-escalated") 注入
-    * 父上下文（排队不唤醒，T_escalate 兜底）；父是用户（无 parentRef）→ WS
-    * errorEscalated 事件 + UI 升级卡片。通知不消耗本 agent LLM token（D2）。
-    * 幂等：由 enterFrozen 的 escalation.isEmpty 守卫保证每轮升级链只通知一次。 */
-  private def notifyEscalation(
+  /**
+   * v2 升级链通知（§5.1）：父是 agent → ExternalEvent("error-escalated") 注入
+   * 父上下文（排队不唤醒，T_escalate 兜底）；父是用户（无 parentRef）→ WS
+   * errorEscalated 事件 + UI 升级卡片。通知不消耗本 agent LLM token（D2）。
+   * 幂等：由 enterFrozen 的 escalation.isEmpty 守卫保证每轮升级链只通知一次。
+   */
+  private[agent] def notifyEscalation(
     agentDef: AgentDef,
     depth: Int,
     state: AgentState,
@@ -3718,7 +1148,9 @@ object AgentActor extends AgentCore with AgentSession:
         parent ! AgentCommand.ExternalEvent(
           source = "team",
           eventType = "error-escalated",
-          payload = s""""${agentDef.name}" auto-recovery failed $count times (reason=${reasonStr(reason)}); awaiting parent decision (restart/cancel/wait)""",
+          payload = s""""${agentDef.name}" auto-recovery failed $count times (reason=${reasonStr(
+              reason
+            )}); awaiting parent decision (restart/cancel/wait)""",
           metadata = JsonObject(
             "reason" -> reasonStr(reason).asJson,
             "retryCount" -> count.asJson,
@@ -3744,9 +1176,15 @@ object AgentActor extends AgentCore with AgentSession:
           )
           .handleErrorWith(_ => IO.unit)
 
-  /** 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。
-    * registry 小（几十条），O(n) 可接受。 */
-  private def sessionIdOfRef(
+    end match
+
+  end notifyEscalation
+
+  /**
+   * 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。
+   * registry 小（几十条），O(n) 可接受。
+   */
+  private[agent] def sessionIdOfRef(
     resources: SharedResources,
     ref: Option[ActorRef[AgentCommand]]
   ): IO[Option[String]] =
@@ -3755,9 +1193,11 @@ object AgentActor extends AgentCore with AgentSession:
       case Some(r) =>
         resources.agentRegistry.get.map(_.collectFirst { case (sid, rec) if rec.ref == r => sid })
 
-  /** registry 的 escalation + frozenReason 快照（FreezeScheduler.scan / WS
-    * parentRestart 只读侧；actor 层为权威）。 */
-  private def updateRegistryEscalation(
+  /**
+   * registry 的 escalation + frozenReason 快照（FreezeScheduler.scan / WS
+   * parentRestart 只读侧；actor 层为权威）。
+   */
+  private[agent] def updateRegistryEscalation(
     resources: SharedResources,
     sessionId: Option[String],
     esc: Option[EscalationInfo]
@@ -3771,9 +1211,11 @@ object AgentActor extends AgentCore with AgentSession:
       }
     }
 
-  /** registry 的 frozenReason 快照（WS parentRestart 区分时间表/错误族冻结）。
-    * 冻结进入时写 Some(reasonStr)，恢复/唤醒/中断时清 None。 */
-  private def updateRegistryFrozenReason(
+  /**
+   * registry 的 frozenReason 快照（WS parentRestart 区分时间表/错误族冻结）。
+   * 冻结进入时写 Some(reasonStr)，恢复/唤醒/中断时清 None。
+   */
+  private[agent] def updateRegistryFrozenReason(
     resources: SharedResources,
     sessionId: Option[String],
     reason: Option[String]
@@ -3786,11 +1228,13 @@ object AgentActor extends AgentCore with AgentSession:
       }
     }
 
-  /** 当前冻结窗口态的下一翻转点（现象 2 契约补全 2026-08-30）：恢复/唤醒路径
-    * 发 Resumed 事件时附带——工作态 = 下一冻结开始时刻（前端展示「下一段 HH:mm
-    * 再冻结」），配置关闭/全天无翻转 = None。错误族恢复（与时间表无关）也带当前
-    * 窗口态，让前端输入栏状态机始终有权威依据。 */
-  private def currentNextChange(resources: SharedResources): IO[Option[Long]] =
+  /**
+   * 当前冻结窗口态的下一翻转点（现象 2 契约补全 2026-08-30）：恢复/唤醒路径
+   * 发 Resumed 事件时附带——工作态 = 下一冻结开始时刻（前端展示「下一段 HH:mm
+   * 再冻结」），配置关闭/全天无翻转 = None。错误族恢复（与时间表无关）也带当前
+   * 窗口态，让前端输入栏状态机始终有权威依据。
+   */
+  private[agent] def currentNextChange(resources: SharedResources): IO[Option[Long]] =
     for
       cfg <- resources.freezeScheduleRef.get
       skipUntil <- resources.freezeSkipUntilRef.get
@@ -3798,10 +1242,13 @@ object AgentActor extends AgentCore with AgentSession:
       .evalWithSkip(cfg, skipUntil, System.currentTimeMillis())
       .nextChangeAt
 
-  /** v2 错误冻结转入辅助（§3.3/§6.1 步骤 3）：transient 类 LLM 失败 → 立即
-    * persist（复用 fatal 路径的 save 模式）→ enterErrorFrozen——冻结期间零 LLM
-    * 调用（D2），退避到期 CheckFreezeGate 续跑（重新过 gate，天然闭环）。 */
-  private def enterErrorFrozen(
+  // 冻结域(enterErrorFrozen / enterFrozen / frozen)已整体迁至 agent/AgentFrozen.scala
+  // (行为保持重构,2026-09-25):方法体逐字未动,frozen 行为内部的 actor 变换与
+  // 自递归(返回下一 frozen behavior)保持原逻辑;notifyEscalation / sessionIdOfRef /
+  // updateRegistryEscalation / updateRegistryFrozenReason / currentNextChange /
+  // reasonStr / ErrorFreezeEscalationThreshold 等冻结域 helper 与常量留守此处;
+  // 此处保留同名委托 def(签名与默认参数原样),调用点零改动。
+  private[agent] def enterErrorFrozen(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3812,44 +1259,9 @@ object AgentActor extends AgentCore with AgentSession:
     resumeInMs: Long,
     error: Throwable
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    for
-      _ <- state.sessionId.fold(IO.unit) { sid =>
-        ctx.forkTurn(
-          (resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
-            resources.sessionStore.flushIndex)
-            .handleErrorWith(e =>
-              NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
-            )
-        )
-      }
-      _ <- IO {
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "error-freeze",
-          s"reason=${reasonStr(reason)} err=${Option(error.getMessage).getOrElse("unknown").take(80)} resumeIn=${resumeInMs}ms"
-        )
-      }
-      result <- enterFrozen(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state,
-        replyTo,
-        Some(System.currentTimeMillis() + resumeInMs),
-        reason,
-        Some(Option(error.getMessage).getOrElse("unknown").take(200))
-      )
-    yield result
+    AgentFrozen.enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, reason, resumeInMs, error)
 
-  /** gate 拦截后的转入辅助：Frozen 事件 + registry 标记 + 进入 frozen behavior。
-    * v2（冻结式错误恢复）：reason 泛化——Schedule=时间表（默认，旧调用点零改动）；
-    * 错误族（LlmTransient/Network/ProviderDown/RestartRecovery）附加连续计数与
-    * 升级链判定（同 reason 连续 ≥3 → 进入升级链，通知父/用户，不再直接 fatal）。 */
-  private def enterFrozen(
+  private[agent] def enterFrozen(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3860,57 +1272,9 @@ object AgentActor extends AgentCore with AgentSession:
     reason: FreezeReason = FreezeReason.Schedule,
     detail: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val isErrorFamily = reason != FreezeReason.Schedule
-    // 连续计数：Schedule 不参与；错误族 reason 相同则 +1（跨恢复累计），变化重置为 1
-    val count =
-      if isErrorFamily then
-        if state.lastErrorFreezeReason.contains(reason) then state.errorFreezeCount + 1 else 1
-      else 0
-    // 升级链进入判定（§5.1）：连续 ≥3 且尚未在升级链中（幂等——不重复通知）
-    val (escalation, escalateNotify): (Option[EscalationInfo], IO[Unit]) =
-      if isErrorFamily && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty then
-        val now = System.currentTimeMillis()
-        val esc = EscalationInfo(
-          level = 1,
-          escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs,
-          awaitedParentSessionId = ""
-        )
-        (Some(esc), notifyEscalation(agentDef, depth, state, parentRef, reason, count, esc))
-      else (state.escalation, IO.unit)
-    escalateNotify *>
-      emitStream(
-        state.wsSend,
-        AgentStreamEvent.Frozen(resumeAt, reason, detail, count, escalation),
-        isSubagent = depth > 0,
-        state.sessionId
-      ) *>
-      touchRegistryActivity(resources, state.sessionId, AgentStatus.Frozen) *>
-      updateRegistryEscalation(resources, state.sessionId, escalation) *>
-      updateRegistryFrozenReason(resources, state.sessionId, Some(reasonStr(reason))) *>
-      // 计数/escalation 写回 state（frozen 闭包参数不持久——LlmFailed 从 state
-      // 读 errorFreezeCount 判定「同 reason 连续」；不写回则每轮都从 0 计数，
-      // 升级链永不触发）。Schedule 冻结不参与计数（原样保留 state）。
-      IO.pure {
-        val frozenState =
-          if isErrorFamily then state.withErrorFreezeCount(count, reason).withEscalation(escalation)
-          else state
-        frozen(agentDef, resources, depth, parentRef, frozenState, replyTo, resumeAt, reason, count, escalation)
-      }
+    AgentFrozen.enterFrozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, detail)
 
-  /**
-   * frozen behavior：冻结中的 agent——持有完整 state（工具结果已组装并持久化，
-   * F1）+ replyTo，等待出冻结段自动恢复或用户唤醒。
-   *
-   * 恢复驱动只有两个：CheckFreezeGate（FreezeScheduler 30s 轮询 / 配置热更即时
-   * scan）重评估时间表；UserInput(clientMessageId.isDefined) 用户唤醒。系统注入
-   * 一律排队不唤醒（零 token 铁律，D2）——BackoffSupervisor 崩溃重启注入的
-   * "continue" 在冻结时段同样不唤醒，出冻结段后续跑（spec §5.3）。
-   *
-   * 独立 behavior 而非 processing 加 flag（D3）：天然隔离 processing 的 20+ 交互
-   * case（重复 ToolsComplete 双 dispatch、stale LlmComplete 等）；catch-all 留在
-   * frozen 态——stale 消息丢弃，但冻结前已持久化的状态不丢。
-   */
-  private def frozen(
+  private[agent] def frozen(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -3922,436 +1286,14 @@ object AgentActor extends AgentCore with AgentSession:
     retryCount: Int = 0,
     escalation: Option[EscalationInfo] = None
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
+    AgentFrozen.frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
 
-      case AgentCommand.CheckFreezeGate =>
-        // 唯一自动恢复驱动：重评估（支持运行中改配置/时钟漂移）。仍冻结 →
-        // 原地留任（静默更新 resumeAt——不重发 Frozen 事件，避免 30s 轮询刷屏）；
-        // 冻结时段已过（段外=工作时段）→ Resumed + 恢复挂起的 dispatch
-        // （cause=Gated，但已不在冻结段 → 通过）。
-        val now = System.currentTimeMillis()
-        reason match
-          case FreezeReason.Schedule =>
-            // 时间表冻结：现有 eval 语义（#337 黑名单——段外=工作时段）+ 2026-08-25
-            // 用户消息全局跳过（skipUntil 未到期 → 视为段外，立即恢复）。
-            for
-              cfg <- resources.freezeScheduleRef.get
-              skipUntil <- resources.freezeSkipUntilRef.get
-              window = nebflow.core.schedule.FreezeSchedule.evalWithSkip(cfg, skipUntil, now)
-              result <-
-                if !window.frozen then
-                  logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-resume", "reason=outside-freeze-segment")
-                  emitStream(state.wsSend, AgentStreamEvent.Resumed(window.nextChangeAt), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                    pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
-                else
-                  IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, window.nextChangeAt, reason, retryCount, escalation))
-            yield result
-          case _ =>
-            // 错误族（LlmTransient/Network/ProviderDown/RestartRecovery）：退避到期
-            // （resumeAt = 进入时计算的退避时刻）→ 续跑——重新过 gate（pipeLlmCall），
-            // 条件未消除再入冻结，天然闭环；ProviderDown 的候选 health 检查 P0 用
-            // 退避到期 + 续跑重试兜底（R1 轮询），P1 接 HealthMonitor markUp 事件。
-            val shouldResume = resumeAt.forall(now >= _)
-            if shouldResume then
-              logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "freeze-resume",
-                s"reason=${reasonStr(reason)} backoff-elapsed"
-              )
-              currentNextChange(resources).flatMap { nextChange =>
-                emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                  pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
-              }
-            else
-              IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.UserInput(text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser, project) =>
-        if clientMessageId.isDefined then
-          // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
-          // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
-          // 重发导致同一条用户消息注入两次（v1.1）。
-          val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
-          if isDuplicate then
-            logger.info(s"[frozen] Dropping duplicate wake message clientMessageId=${clientMessageId.getOrElse("")}")
-            IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
-          else
-            val userMsg = blocks.filter(_.nonEmpty) match
-              case Some(bl) => Message(MessageRole.User, Right(bl))
-              case None => Message(MessageRole.User, Left(text))
-            val stateWithWidth =
-              if chatWidth > 0 then dedupedState.copy(session = dedupedState.session.copy(chatWidth = chatWidth))
-              else dedupedState
-            val wakeState = stateWithWidth
-              .withMessages(stateWithWidth.messages :+ userMsg)
-              .withEmptyResponseRetries(0)
-              .withMailUsedThisTurn(false)
-              .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
-              // R1（2026-09-10 冻结族最小修法）：用户唤醒 = 新 turn 纪元 **且**
-              // 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的同 fp
-              // 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
-              // （实测唤醒后 6.65s / 21.26s 复冻）。terminatedFps 不在此列：
-              // 被 L1 终止过的 fp 复发仍即刻 Freeze（既有语义，冻结不受影响）。
-              .withLoopCounters(stateWithWidth.loopCounters.resetCrossTurn)
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
-            currentNextChange(resources).flatMap { nextChange =>
-              emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
-            }
-        else
-          // 系统注入（Mail/Delegate/BackoffSupervisor continue）：排队不唤醒——
-          // 恢复后的 turn 结束时由 finishTurnCont drain（head 重发，idle 全量处理）。
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-input", s"textLen=${text.length}")
-          val queued = state.copy(execution =
-            state.execution.copy(
-              pendingUserInputs = state.execution.pendingUserInputs :+ AgentCommand.UserInput(
-                text, replyTo2, clientMessageId, blocks, chatWidth, source, sender, senderTeam, delivery, eventType, intake, fromUser
-              )
-            )
-          )
-          IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.AskQuestion(question, _) =>
-        // 用户动作（D2）：唤醒——ask 轮本身也是 gate 豁免路径（askMode.isDefined）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"ask=${question.take(60)}")
-        val askReminder = AskService.buildAskReminder(question)
-        val askState = state
-          .withMessages(state.messages :+ askReminder)
-          .withAskMode(Some(question))
-          .withStatus(AgentStatus.Processing)
-          .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
-          // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：/ask 唤醒同样是新 turn
-          // 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的
-          // 同 fp 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
-          // （LoopGuardWiringSpec 先红实证：唤醒轮即 "failed in 4 separate turns"
-          // 秒冻）。terminatedFps 不在此列：被 L1 终止过的 fp 复发仍即刻 Freeze
-          // （既有语义，冻结不受影响）。
-          .withLoopCounters(state.loopCounters.resetCrossTurn)
-        currentNextChange(resources).flatMap { nextChange =>
-          emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-            pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
-        }
-
-      case AgentCommand.SkillActivate(skillName, input, _, skillContent, _) =>
-        // 用户动作（D2）：唤醒（镜像 idle 的 SkillActivate handler）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"skill=$skillName")
-        val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
-        val processingState = state
-          .withMessages(
-            state.messages :+ Message(MessageRole.User, Left(combinedText), source = Some("skill"))
-          )
-          .withStatus(AgentStatus.Processing)
-          .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
-          // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：skill 激活唤醒同样是新
-          // turn 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前
-          // 累积的同 fp 失败记录把唤醒后的第 1 次失败直接推过
-          // crossTurnFailureTurns（LoopGuardWiringSpec 先红实证：唤醒轮即
-          // "failed in 4 separate turns" 秒冻）。terminatedFps 不在此列（L1 终止过
-          // 的 fp 复发仍即刻 Freeze，既有语义不变）。
-          .withLoopCounters(state.loopCounters.resetCrossTurn)
-        for
-          _ <- currentNextChange(resources).flatMap { nextChange =>
-            emitStream(state.wsSend, AgentStreamEvent.Resumed(nextChange), isSubagent = depth > 0, state.sessionId) *> updateRegistryFrozenReason(resources, state.sessionId, None)
-          }
-          _ <- emitInjectedUserEvent(resources, state.wsSend, state.sessionId, input, "skill", None, sessionProject = state.projectName)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, processingState, None, DispatchCause.UserWake)
-        yield result
-
-      case AgentCommand.Interrupt() =>
-        // D10 放弃续跑：与 processing 的 Interrupt 同语义（cancelCurrentTurn +
-        // Interrupted 事件 + idle，历史含工具结果保留）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user-during-frozen")
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-
-          // compactui 批（2026-09-15 事故）：与 processing 的 Interrupt 同款终局帧
-          // （此处原先同样只清 pendingCompaction 不发帧）。
-          _ <- emitAbandonedCompaction(state, depth)
-
-          _ <- state.pendingCompaction
-            .flatMap(_.replyDeferred)
-            .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
-          // Back to idle without resuming — clear the team busy mark so a
-          // frozen-then-interrupted team agent isn't stuck "running".
-          _ <- markTeamIdle(agentDef, state.sessionId)
-          // frozen 专属：registry 退回 Idle——否则 FreezeScheduler 会持续 ping
-          // 一个已回 idle 的 agent（无害但浪费，且面板显示错误）。
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-          _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
-        yield
-          // Hard-recovery P3: same stale-turnId bump as the processing-state
-          // Interrupt — fire-and-forget cancel admits late turn results.
-          // compactui 批（2026-09-15 事故 ②）：同 processing 面，摘压缩轮临时输入。
-          val interruptedState = dropCompactionScratch(state)
-            .resetForInterrupt
-            .withCurrentTurnId(state.execution.currentTurnId + 1)
-            .withPendingCompaction(None)
-          idle(agentDef, resources, depth, parentRef, interruptedState)
-
-      case AgentCommand.Stop(_) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user-during-frozen")
-        for
-          _ <- ctx.cancelCurrentTurn()
-
-          _ <- killSessionShellProcesses(state)
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-          _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
-          _ <- fireLifecycleStopHooks(resources, state)
-        yield Behaviors.stopped
-
-      case AgentCommand.RestartAgent(level) =>
-        // 镜像 processing 的 RestartAgent；末尾 dispatch 是系统动作（Gated）——
-        // 冻结时段再次进入 frozen（正确语义：supervisor 重启不唤醒）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
-        for
-          _ <- ctx.cancelCurrentTurn()
-          _ <- state.pendingCompaction
-            .flatMap(_.replyDeferred)
-            .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          restartState <- restartStateFor(level, state, resources)
-          _ <- state
-            .wsSend(
-              Json.obj(
-                "type" -> "agentRestarted".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "level" -> level.toString.asJson
-              )
-            )
-            .handleErrorWith(_ => IO.unit)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
-        yield result
-        end for
-
-      case AgentCommand.Retry(reason) =>
-        // 镜像 processing 的 Retry：从 checkpoint 重派——Gated，冻结时段再次冻结
-        // （不烧 token，spec §5.4）。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
-        ctx.cancelCurrentTurn() *> (state.lastDispatch match
-          case Some(LastDispatch(false, _)) =>
-            pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
-          case Some(LastDispatch(true, Some(cr))) =>
-            pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
-          case _ =>
-            markTeamIdle(agentDef, state.sessionId) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
-
-      case AgentCommand.Escalate =>
-        // v2 升级链到期（§5.2）：FreezeScheduler.scan 发现 escalation.escalateAt
-        // 超时 → level+1，通知上一级；父缺失 → 跳级（P0=到达用户终态）；无父 →
-        // 用户终态（WS errorEscalated，不设超时——用户是最终仲裁）。
-        val current = escalation.getOrElse(EscalationInfo(level = 1, escalateAt = 0L, awaitedParentSessionId = ""))
-        val nextLevel = current.level + 1
-        val now = System.currentTimeMillis()
-        for
-          parentSid <- sessionIdOfRef(resources, parentRef)
-          target = Escalation.nextTarget(nextLevel, parentRef.isDefined, parentSid.isDefined)
-          newEsc =
-            if target == Escalation.Target.User then current.copy(level = nextLevel, escalateAt = 0L)
-            else current.copy(level = nextLevel, escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs)
-          _ <- IO {
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "error-escalate",
-              s"level=$nextLevel target=$target retryCount=$retryCount"
-            )
-          }
-          _ <- target match
-            case Escalation.Target.Parent =>
-              parentRef.traverse_ { p =>
-                p ! AgentCommand.ExternalEvent(
-                  source = "team",
-                  eventType = "error-escalated",
-                  payload = s""""${agentDef.name}" auto-recovery escalation level $nextLevel (reason=${reasonStr(reason)})""",
-                  metadata = JsonObject(
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
-                    "failedSessionId" -> state.sessionId.getOrElse("").asJson,
-                    "agentName" -> agentDef.name.asJson
-                  ),
-                  correlationId = state.sessionId.filter(_.nonEmpty)
-                )
-              }
-            case Escalation.Target.Grandparent =>
-              // 父缺失跳级（P0）：视同到达用户终态（无再上级信息），WS 通知 + 不设超时
-              state
-                .wsSend(
-                  Json.obj(
-                    "type" -> "errorEscalated".asJson,
-                    "sessionId" -> state.sessionId.getOrElse("").asJson,
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAt" -> 0L.asJson,
-                    "detail" -> "parent-unavailable-skipped".asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-            case Escalation.Target.User =>
-              state
-                .wsSend(
-                  Json.obj(
-                    "type" -> "errorEscalated".asJson,
-                    "sessionId" -> state.sessionId.getOrElse("").asJson,
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAt" -> 0L.asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-          _ <- updateRegistryEscalation(resources, state.sessionId, Some(newEsc))
-        yield
-          val escalatedState = state.withEscalation(Some(newEsc))
-          frozen(agentDef, resources, depth, parentRef, escalatedState, replyTo, resumeAt, reason, retryCount, Some(newEsc))
-
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
-        // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
-        // ExternalEvent——subagent result 到达即递减 outstanding，否则批次在
-        // 冻结期间全部完成时计数永不清零，恢复后 drainBarrier 永久 hold。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-event", s"source=$source type=$eventType")
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
-        val outstanding = state.execution.outstandingSubagentResults
-        val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
-        val queued = state.copy(execution =
-          state.execution.copy(
-            outstandingSubagentResults = newOutstanding,
-            pendingEvents = state.execution.pendingEvents :+ event
-          )
-        )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case msg: AgentCommand.ImmediateInput =>
-        // 排队 pendingImmediateInputs（不唤醒）——恢复后的 turn 边界 drain。
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-queue-immediate", s"textLen=${msg.text.length}")
-        val queued = state.copy(execution =
-          state.execution.copy(pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg)
-        )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.MailQueued(item, _) =>
-        // 镜像 processing：计数 +1，实际内容在磁盘（MailQueueStore）。
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "mail-queued",
-          s"from=${item.from} pendingCount=${state.execution.pendingMailQueueCount + 1}"
-        )
-        val queued = state.copy(execution =
-          state.execution.copy(pendingMailQueueCount = state.execution.pendingMailQueueCount + 1)
-        )
-        IO.pure(frozen(agentDef, resources, depth, parentRef, queued, replyTo, resumeAt, reason, retryCount, escalation))
-
-      // 2026-09-13（permshield S1）：`SetSafetyMode` 已退役（见 idle 分支注释），
-      // frozen 下由下方 catch-all 兜底（留在 frozen，状态不变）。
-
-      case AgentCommand.UpdateContextWindow(window) =>
-        // 轻量存储：恢复后下一次 dispatch 的 autoCompact 自会按新窗口评估溢出。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withContextWindow(window), replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.UpdateGitBranch(branch) =>
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withGitBranch(branch), replyTo, resumeAt, reason, retryCount, escalation))
-
-      // ctxthresh 批：frozen 态同 UpdateContextWindow 的轻量存储语义——解冻后
-      // 下一次 dispatch 自会按新的生效门限评估溢出。
-      case AgentCommand.SetCompactThresholdRatio(ratio) =>
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withCompactThresholdRatio(ratio), replyTo, resumeAt, reason, retryCount, escalation))
-
-      case n: AgentCommand.BackgroundTaskNotification =>
-        // 转成 ExternalEvent 走上面的排队分支（同 processing 的处理方式）。
-        (ctx.self ! n.toExternalEvent) *>
-          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.SetPermissionDeferred(deferred) =>
-        // 镜像 processing：持有 deferred，防子 agent 权限应答悬空。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
-        val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(
-          frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(state.agentSessions :+ session), replyTo, resumeAt, reason, retryCount, escalation)
-        )
-
-      case AgentCommand.SessionUpdate(address, status) =>
-        val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.SessionClosed(address) =>
-        val updated = state.agentSessions.filterNot(_.address == address)
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.CompactionComplete(result) =>
-        // stale 压缩结果：frozen 不可能由压缩轮直接进入（压缩 dispatch 在
-        // super 内部静态解析，进入 frozen 前已完成）。镜像 idle 的兜底——完成
-        // deferred 防等待方悬空，结果本身丢弃。
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "stale-compaction-discarded",
-          result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs")
-        )
-        val staleState = state.invalidateSystemStableCache
-        state.pendingCompaction.flatMap(_.replyDeferred) match
-          case Some(d) =>
-            ctx.forkTurn(
-              d.complete(Left("Compaction result arrived while agent was frozen"))
-                .void
-                .handleErrorWith(_ => IO.unit)
-            ) *> IO.pure(
-              frozen(agentDef, resources, depth, parentRef, staleState.withPendingCompaction(None), replyTo, resumeAt, reason, retryCount, escalation)
-            )
-          case None =>
-            IO.pure(frozen(agentDef, resources, depth, parentRef, staleState, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => t.clear()) *>
-          IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
-
-      case AgentCommand.ResetSession =>
-        for
-
-          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
-        yield
-          val resetState = state
-            .withMessages(Nil)
-            .withLatestUsage(None)
-            .withPendingCompaction(None)
-            .withCompactionFailures(0)
-            .withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil)
-            .invalidateSystemStableCache
-            .resetToIdle(Nil)
-          idle(agentDef, resources, depth, parentRef, resetState)
-
-      case _ =>
-        // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃
-        // 留在 frozen（这些消息属于被 gate 拦下的 turn，没有 fiber 在等待它们）。
-        IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
-
-  end frozen
-
-  // ============================================================
-  // Compact response handlers
-  // ============================================================
-
-  private def handleCompactResponse(
+  // 压缩/ask 收尾 handler 族已整体迁至 agent/AgentCompactionHandlers.scala(行为保持
+  // 重构,2026-09-25):handleCompactResponse / handleCompactFailure /
+  // emitAbandonedCompaction / dropCompactionScratch / handleAskComplete / isAskReminder /
+  // handleTriggerCompaction / handleEmptyResponse 的实现都在那边(方法体逐字未动);
+  // 此处保留同名委托 def(签名与默认参数原样),调用点零改动。
+  private[agent] def handleCompactResponse(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -4359,129 +1301,16 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     responseText: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
-    val readPathsIO = state.readTracker
-      .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))
-      .getOrElse(IO.pure(Nil))
-    val hookIO = CompactService.runPreCompactHook(state.messages, resources, sessionId)
-    val rootIO: IO[String] = state.folderId match
-      case Some(fid) =>
-        resources.sessionStore.resolveProjectRoot(Some(fid)).map(_.getOrElse(resources.projectRoot.toString))
-      case None => IO.pure(resources.projectRoot.toString)
-    for _ <- ctx.forkTurn(
-        (readPathsIO, hookIO, rootIO)
-          .mapN { (readPaths, hookResult, effectiveRoot) =>
-            (readPaths, hookResult, effectiveRoot)
-          }
-          .flatMap { (readPaths, hookResult, effectiveRoot) =>
-            hookResult match
-              case Left(reason) =>
-                ctx.self ! AgentCommand.CompactionComplete(Left(reason))
-              case Right(_) =>
-                FullCompact.parseResponseDetailed(responseText, state.messages, effectiveRoot, readPaths) match
-                  case Left(err) =>
-                    ctx.self ! AgentCommand.CompactionComplete(Left(err))
-                  case Right(outcome) =>
-                    val postHookIO = CompactService
-                      .runPostCompactHook(state.messages.size, outcome.messages.size, resources, sessionId)
-                      .handleErrorWith(_ => IO.unit)
-                    // 记忆轨（压缩双轨第二轨，2026-09-12 记忆改造批 / spec §5 R3 O-A）：
-                    // 在本 fork 内、CompactionComplete **之前** join ⇒ 装机点
-                    // （processing 的 CompactionComplete(Right) → state.withMessages）
-                    // 天然晚于两轨完成，零新增状态位（复用 pendingCompaction 作窗口守卫）。
-                    // 硬超时在 MemoryTrack 内（IO.timeoutTo，无 timeout 的 join 已被 spec
-                    // 明文否决）；失败/超时 = fail-open 降级：照常装机（用旧记忆）+ 队列
-                    // 条目保留 + 事件 memory-track-failed / memory-track-timeout。
-                    // 口径只对根会话（depth 0）生效——与前置 hook 的 Root profile 同域
-                    // （子会话压缩没有记忆面，跑轨即纯浪费；空队列时轨内谓词亦会跳过）。
-                    //
-                    // B 腿（2026-09-15）：把本会话的 wsSend 交给轨 ⇒ 轨内整理的 subagent
-                    // 走标准子代理事件契约（NodeRunner.routeSubagentWsSend）进 subagent
-                    // 面板（`agentStart` 建行 / `agentDone` 收行）。改动前轨内 wsSend 恒
-                    // `IO.unit` ⇒ 面板永不建行（作者现场疑问的解）。wsSend 不可得时轨内
-                    // 自动回落恒 no-op（见 MemoryTrack.panelWsSend），零行为漂移。
-                    val memoryTrackIO: IO[Unit] =
-                      if depth != 0 then IO.unit
-                      else
-                        MemoryTrack
-                          .run(resources, state.sessionId, depth, parentWsSend = Some(state.wsSend))
-                          .handleErrorWith { e =>
-                            IO {
-                              logAgentEvent(
-                                agentDef, depth, state.sessionId, state.sessionName,
-                                "memory-track-failed", s"err=${e.getMessage}")
-                              MemoryTrack.Result(
-                                MemoryTrack.Status.Failed,
-                                e.getMessage,
-                                0,
-                                alert = Some(
-                                  s"Memory queue is NOT being consumed: the memory-track run crashed (${e.getClass.getSimpleName}: ${e.getMessage}) — no note was marked rejected, everything stays pending and will be retried on the next compaction."))
-                            }
-                          }
-                          .flatMap { r =>
-                            // 告警面（2026-09-13 缺失自愈批 / 方案 D「响亮失败」）：infra
-                            // 失败/拒绝不再只躺在 lifecycle 日志里等着被 grep——同一句推进
-                            // 前端（`memoryQueueAlert` → 常驻通知条，前端 main.js 订阅）。
-                            val alertIO: IO[Unit] = r.alert match
-                              case None => IO.unit
-                              case Some(text) =>
-                                state.wsSend(io.circe.Json.obj(
-                                  "type" -> "memoryQueueAlert".asJson,
-                                  "sessionId" -> state.sessionId.asJson,
-                                  "level" -> "warn".asJson,
-                                  "text" -> text.asJson
-                                ))
-                            val logIO: IO[Unit] = r.status match
-                              case MemoryTrack.Status.Failed =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-failed",
-                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} detail=${r.detail.take(200)}"))
-                              case MemoryTrack.Status.Timeout =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-timeout",
-                                  s"pendingAtStart=${r.pendingAtStart} outcomes=${r.outcomesWritten} reconciled=${r.reconciled} drift=${r.reconcileDrift} hardMs=${MemoryTrack.hardTimeoutMs} detail=${r.detail.take(200)}"))
-                              case MemoryTrack.Status.Completed =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-completed",
-                                  s"pendingAtStart=${r.pendingAtStart} changed=${r.changed}"))
-                              case MemoryTrack.Status.Refused =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-refused",
-                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
-                              case MemoryTrack.Status.DryRun =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-dry-run",
-                                  s"pendingAtStart=${r.pendingAtStart} detail=${r.detail.take(300)}"))
-                              case MemoryTrack.Status.Skipped => IO.unit
-                              // 暂停轮（#440 ①）：跳过是**有意为之**、不是空转 ⇒ 必须有
-                              // 事件行（与兄弟事件同族同处落；`Status.Skipped` 保持
-                              // IO.unit 不动——它是「无触发」的静默轮）。
-                              // 行形：`… event=memory-track-skipped detail=reason=paused: …`
-                              case MemoryTrack.Status.Paused =>
-                                IO(logAgentEvent(
-                                  agentDef, depth, state.sessionId, state.sessionName,
-                                  "memory-track-skipped",
-                                  s"${r.detail.take(300)} pendingAtStart=${r.pendingAtStart}"))
-                            logIO *> alertIO
-                          }
-                    for
-                      _ <- ctx.forkTurn(postHookIO)
-                      _ <- memoryTrackIO
-                      _ <- ctx.self ! AgentCommand.CompactionComplete(Right(outcome.messages))
-                    yield ()
-          }
-          .handleErrorWith(e => ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage)))
-      )
-    yield processing(agentDef, resources, depth, parentRef, state)
+    AgentCompactionHandlers.handleCompactResponse(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      responseText
+    )
 
-  end handleCompactResponse
-
-  private def handleCompactFailure(
+  private[agent] def handleCompactFailure(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -4489,73 +1318,16 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     err: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val pending = state.pendingCompaction
-    val now = System.currentTimeMillis()
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
-    val failedState = state
-      .withPendingCompaction(None)
-      .withCompactionFailures(state.compactionFailures + 1)
-      .withLastCompactionFailureAt(now)
-    for
-      _ <- ctx.forkTurn(
-        emitStreamIO(
-          state.wsSend,
-          AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1, CompactConfig().circuitBreakerMax),
-          isSubagent = depth > 0,
-          state.sessionId
-        ).handleErrorWith(_ => IO.unit)
-      )
-      _ <- pending
-        .flatMap(_.replyDeferred)
-        .fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
-      result <- pending.flatMap(_.replyTo) match
-        case Some(replyTo) =>
-          finishTurn(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            failedState,
-            Some(replyTo),
-            s"Context compaction failed: $err.",
-            None,
-            None,
-            textAlreadyStreamed = false,
-            None
-          )
-        case None =>
-          if pending.exists(!_.resumeAfterCompact) then
-            IO.pure(idle(agentDef, resources, depth, parentRef, failedState))
-          else IO.pure(processing(agentDef, resources, depth, parentRef, failedState))
-    yield result
-    end for
-  end handleCompactFailure
+    AgentCompactionHandlers.handleCompactFailure(agentDef, resources, depth, parentRef, state, err)
 
-  // ============================================================
-  // Compaction abandon face (compactui 批 · 2026-09-15 作者实证)
-  // ============================================================
+  private[agent] def emitAbandonedCompaction(state: AgentState, depth: Int)(using
+    ctx: ActorContext[AgentCommand]
+  ): IO[Unit] = AgentCompactionHandlers.emitAbandonedCompaction(state, depth)
 
-  /** 压缩作业被**放弃**（中断 / turn 提前结束）时的终局帧发射（决策见
-    * [[CompactionAbandon.event]]，无作业 = no-op）。 */
-  private def emitAbandonedCompaction(state: AgentState, depth: Int)(using
-      ctx: ActorContext[AgentCommand]
-  ): IO[Unit] =
-    CompactionAbandon.event(state) match
-      case None     => IO.unit
-      case Some(ev) =>
-        emitStreamIO(state.wsSend, ev, isSubagent = depth > 0, state.sessionId)
-          .handleErrorWith(_ => IO.unit)
+  private[agent] def dropCompactionScratch(state: AgentState): AgentState =
+    AgentCompactionHandlers.dropCompactionScratch(state)
 
-  /** 放弃压缩作业时摘掉压缩轮的**临时输入**（摘要指令 reminder）。
-    * 判据与理由见 [[CompactionAbandon.dropScratch]]。 */
-  private def dropCompactionScratch(state: AgentState): AgentState =
-    CompactionAbandon.dropScratch(state)
-
-  // ============================================================
-  // Ask complete
-  // ============================================================
-
-  private def handleAskComplete(
+  private[agent] def handleAskComplete(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -4564,68 +1336,20 @@ object AgentActor extends AgentCore with AgentSession:
     answerText: String,
     model: Option[String]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val question = state.askMode.getOrElse("")
-    val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
-    logAgentEvent(
+    AgentCompactionHandlers.handleAskComplete(
       agentDef,
+      resources,
       depth,
-      state.sessionId,
-      state.sessionName,
-      "ask-complete",
-      s"q=${question.take(40)} a=${answerText.take(40)}"
+      parentRef,
+      state,
+      answerText,
+      model
     )
-    for
-      _ <- ctx.forkTurn(
-        (state
-          .wsSend(
-            Json.obj(
-              "type" -> "askDone".asJson,
-              "sessionId" -> sessionId.asJson,
-              "durationMs" -> 0L.asJson,
-              "model" -> model.getOrElse("").asJson
-            )
-          )
-          .handleErrorWith(_ => IO.unit)) *>
-          emitSessionBusy(state.wsSend, sessionId, busy = false)
-      )
-      _ <- ctx.forkTurn(
-        resources.sessionStore
-          // R1（footer 统一 · 作者裁定「带时间」，2026-09-14）：落盘真实时刻 ——
-          // 原先不落 timestamp ⇒ 历史行的 footer 时间在刷新后消失（live 传 Date.now）。
-          // 与 `askDone` 帧同一次落盘、同一 tick，故取当前时刻即可。
-          .appendUiMessages(
-            sessionId,
-            List(UiMessage.Ask(question, answerText, Some(0L), model, System.currentTimeMillis()))
-          )
-          .handleErrorWith(e => logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}"))
-      )
-    yield
-      val originalMessages = state.messages.takeWhile(m => !isAskReminder(m))
-      val restoredMessages =
-        if originalMessages.size == state.messages.size then state.messages.dropRight(1)
-        else originalMessages
-      idle(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state.withAskMode(None).withMessages(restoredMessages).resetToIdle(restoredMessages)
-      )
 
-    end for
+  private[agent] def isAskReminder(msg: Message): Boolean =
+    AgentCompactionHandlers.isAskReminder(msg)
 
-  end handleAskComplete
-
-  private def isAskReminder(msg: Message): Boolean =
-    msg.role == MessageRole.User && (msg.content match
-      case Left(text) => text.contains("<system-reminder>") && text.contains("ephemeral follow-up question")
-      case _ => false)
-
-  // ============================================================
-  // Trigger compaction
-  // ============================================================
-
-  private def handleTriggerCompaction(
+  private[agent] def handleTriggerCompaction(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -4636,65 +1360,19 @@ object AgentActor extends AgentCore with AgentSession:
     resumeAfterCompact: Boolean = true,
     postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val config = CompactConfig()
-    if state.pendingCompaction.isDefined then
-      val reason = "Compaction already in progress"
-      for
-        _ <- replyDeferred.fold(IO.unit)(d => d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit))
-        _ <- ctx.forkTurn(
-          emitStreamIO(
-            state.wsSend,
-            AgentStreamEvent.CompactFailed(reason, state.compactionFailures, config.circuitBreakerMax),
-            isSubagent = depth > 0,
-            state.sessionId
-          ).handleErrorWith(_ => IO.unit)
-        )
-      yield idle(agentDef, resources, depth, parentRef, state)
-    else
-      val backoffOk =
-        if state.compactionFailures == 0 then true
-        else
-          val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
-          config.isBackoffSatisfied(state.compactionFailures, elapsed)
-      if !backoffOk then
-        val err = s"Compaction retry backed off (${state.compactionFailures} failures)"
-        replyDeferred.fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)) *>
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
-      else if state.compactionFailures >= config.circuitBreakerMax then
-        val err = s"Compaction circuit breaker open after ${state.compactionFailures} attempts"
-        for
-          _ <- replyDeferred.fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
-          _ <- ctx.forkTurn(
-            emitStreamIO(
-              state.wsSend,
-              AgentStreamEvent.CompactFailed(err, state.compactionFailures, config.circuitBreakerMax),
-              isSubagent = depth > 0,
-              state.sessionId
-            ).handleErrorWith(_ => IO.unit)
-          )
-        yield idle(agentDef, resources, depth, parentRef, state)
-      else
-        startDirectCompaction(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          None,
-          (ad, r, d, p, s) => processing(ad, r, d, p, s),
-          mode,
-          resumeAfterCompact,
-          postCompactInstruction
-        )
-      end if
-    end if
-  end handleTriggerCompaction
+    AgentCompactionHandlers.handleTriggerCompaction(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      mode,
+      replyDeferred,
+      resumeAfterCompact,
+      postCompactInstruction
+    )
 
-  // ============================================================
-  // Empty response handler
-  // ============================================================
-
-  private def handleEmptyResponse(
+  private[agent] def handleEmptyResponse(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
@@ -4703,112 +1381,166 @@ object AgentActor extends AgentCore with AgentSession:
     replyTo: Option[ActorRef[AgentEvent]],
     result: ConsumeResult
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val stopReason = result.stopReason.getOrElse("")
-    val isContextError = stopReason.toLowerCase.contains("context") ||
-      stopReason.toLowerCase.contains("exceeded") || stopReason.toLowerCase.contains("limit") ||
-      stopReason.toLowerCase.contains("too long") || stopReason.toLowerCase.contains("too_long")
-    val isMaxTokens = stopReason.equalsIgnoreCase("max_tokens") ||
-      stopReason.equalsIgnoreCase("length")
-    if isContextError then
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "context-exceeded", s"stopReason=$stopReason")
-      if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
-        finishTurn(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          replyTo,
-          "Context window exceeded and compaction is unavailable. " +
-            "Please start a new session or use /clear to reset.",
-          None,
-          None,
-          textAlreadyStreamed = false,
-          result.model
-        )
-      else
-        startDirectCompaction(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          replyTo,
-          (ad, r, d, p, s) => processing(ad, r, d, p, s),
-          "full"
-        )
-      end if
-    else if isMaxTokens then
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "max-tokens", s"stopReason=$stopReason")
-      for
-        _ <- ctx.forkTurn(
-          state
-            .wsSend(Json.obj("type" -> "maxTokens".asJson, "sessionId" -> state.sessionId.asJson))
-            .handleErrorWith(_ => IO.unit)
-        )
-        result <- finishTurn(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          replyTo,
-          "[Response truncated: max output tokens reached]",
-          None,
-          None,
-          textAlreadyStreamed = false,
-          result.model
-        )
-      yield result
-      end for
-    else
-      val retryCount = state.emptyResponseRetries
-      logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "empty-response",
-        s"stopReason=$stopReason retry=$retryCount/$MaxEmptyResponseRetries " +
-          s"usage=${result.usage.map(u => s"in=${u.inputTokens} out=${u.outputTokens}").getOrElse("none")}"
-      )
-      if retryCount < MaxEmptyResponseRetries then
-        val stateForRetry = state.withEmptyResponseRetries(retryCount + 1)
-        logger.info(s"Empty response, retrying (${retryCount + 1}/$MaxEmptyResponseRetries) stopReason=$stopReason")
-        for
-          _ <- ctx.forkTurn(
-            emitStreamIO(
-              state.wsSend,
-              AgentStreamEvent.RetryStatus(
-                s"Empty response from LLM, retrying (${retryCount + 1}/$MaxEmptyResponseRetries)..."
-              ),
-              isSubagent = depth > 0,
-              state.sessionId
-            ).handleErrorWith(_ => IO.unit)
-          )
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef, stateForRetry, replyTo)
-        yield result
-      else
-        val errMsg =
-          if stopReason.nonEmpty then
-            s"LLM returned empty response after $MaxEmptyResponseRetries retries (stopReason: $stopReason)"
-          else s"LLM returned empty response with no content after $MaxEmptyResponseRetries retries"
-        for _ <- state.sessionId.fold(IO.unit) { sid =>
-            val doneEvent = AgentStreamEvent.Done(result.model)
-            val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
-            ctx.forkTurn(
-              (state
-                .wsSend(
-                  Json.obj("type" -> "error".asJson, "sessionId" -> state.sessionId.asJson, "message" -> errMsg.asJson)
-                )
-                .handleErrorWith(_ => IO.unit)) *>
-                state.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                emitSessionBusy(state.wsSend, sid, busy = false)
-            )
-          }
-        yield idle(agentDef, resources, depth, parentRef, state)
-      end if
-    end if
-  end handleEmptyResponse
+    AgentCompactionHandlers.handleEmptyResponse(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      replyTo,
+      result
+    )
+
+  // ============================================================
+  // F (2026-09-25 命令消重): idle/processing/frozen 三行为里**逐字同形**的
+  // 日常命令 handler 收敛为共享助手。判据 = case 体逐字同形（Retry/ResetSession,
+  // 两态一致、仅注释差异），或除返回的行为变换外逐字同形（此时以 `stay` 续参
+  // 注入各态的「留在本态」构造——语义与返回行为变换逐字保持）。不同形的分支
+  // （Stop/Interrupt/RestartAgent/MailQueued/CompactionComplete/ImmediateInput/
+  // AskQuestion/SkillActivate/ExternalEvent/UserInput 及 idle 态特有形态）保留在
+  // 各行为文件,不收敛。实现体自 AgentIdle/AgentProcessing/AgentFrozen 的对应
+  // case 原样收敛（带日期裁定注释随行）。
+  // ============================================================
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 Retry case 体逐字同形
+   * （仅注释差异）——原样收敛。cancel 当前 turn 后按 lastDispatch checkpoint
+   * 重派;无 checkpoint 则回 idle。
+   */
+  private[agent] def retryFromCheckpoint(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    reason: String
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
+    ctx.cancelCurrentTurn() *> (state.lastDispatch match
+      case Some(LastDispatch(false, _)) =>
+        // Re-dispatch LLM call with same messages. 6-arg call goes through
+        // the AgentActor shadow (freeze gate) — retry must not bypass the
+        // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
+        pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
+      case Some(LastDispatch(true, Some(cr))) =>
+        // Re-dispatch tool execution with same LLM result
+        pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
+      case _ =>
+        // No checkpoint — go to idle
+        markTeamIdle(agentDef, state.sessionId) *>
+          IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+  end retryFromCheckpoint
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 ResetSession case 体逐字
+   * 同形（仅 processing 侧多一段 R2 注释,随行迁入）——原样收敛,重置后统一回
+   * idle 态。idle 态的 ResetSession 不同形（cancelCurrentTurn 起手 / 无
+   * Interrupted 事件与 registry 回写 / 无 resetToIdle）,保留在 AgentIdle。
+   */
+  private[agent] def resetSessionHandler(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    for
+
+      _ <- state.readTracker.fold(IO.unit)(t => t.clear())
+      _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+      // R2 closure (wait-timeout-fix): ResetSession discards a turn that
+      // may be parked on a pending AskUser/permission wait — un-mark
+      // WaitingForUser (mirror of the Interrupt handler), the registry row
+      // must never keep a waiting status for a turn that no longer exists.
+      _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+    yield
+      val resetState = state
+        .withMessages(Nil)
+        .withLatestUsage(None)
+        .withPendingCompaction(None)
+        .withCompactionFailures(0)
+        .withLastCompactionFailureAt(0L)
+        .withRecentMessageIds(Nil)
+        .invalidateSystemStableCache
+        .resetToIdle(Nil)
+      idle(agentDef, resources, depth, parentRef, resetState)
+  end resetSessionHandler
+
+  /**
+   * F (2026-09-25 命令消重): 三态 UpdateGitBranch case 体除返回的行为变换外
+   * 逐字同形——状态更新 `withGitBranch` 单点化,`stay` 注入各态的「留在本态」
+   * 构造（调用点语义与返回行为逐字保持）。
+   */
+  private[agent] def updateGitBranchStay(
+    state: AgentState,
+    branch: Option[String]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withGitBranch(branch))
+
+  /**
+   * F (2026-09-25 命令消重): 三态 ClearReadTracker case 体除返回的行为变换外
+   * 逐字同形——清空读取跟踪器后原 state 留在本态。
+   */
+  private[agent] def clearReadTrackerStay(
+    state: AgentState
+  )(stay: IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    state.readTracker.fold(IO.unit)(t => t.clear()) *> stay
+
+  /**
+   * F (2026-09-25 命令消重): 三态 BackgroundTaskNotification case 体除返回的
+   * 行为变换外逐字同形——转成 ExternalEvent 重新投递自身（各态由对应分支
+   * 排队/注入）,原 state 留在本态。
+   */
+  private[agent] def forwardBackgroundTaskNotification(
+    n: AgentCommand.BackgroundTaskNotification
+  )(stay: IO[Behavior[AgentCommand]])(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    (ctx.self ! n.toExternalEvent) *> stay
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SetPermissionDeferred
+   * case 体除返回的行为变换外逐字同形——持有 deferred,防子 agent 权限应答
+   * 悬空。idle 态不同形（并入 stale-LLM 族 no-op case,不落 pendingPermission）,
+   * 保留在 AgentIdle。
+   */
+  private[agent] def setPermissionDeferredStay(
+    state: AgentState,
+    deferred: cats.effect.Deferred[IO, Boolean]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withPendingPermission(Some(deferred)))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 UpdateContextWindow
+   * case 体除返回的行为变换外逐字同形——轻量存储,下一次 dispatch 自会按新
+   * 窗口评估溢出。idle 态不同形（含 model-switch-compact 触发判定）,保留在
+   * AgentIdle。
+   */
+  private[agent] def updateContextWindowStay(
+    state: AgentState,
+    window: Int
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withContextWindow(window))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SetCompactThresholdRatio
+   * case 体除返回的行为变换外逐字同形——轻量存储,下一回合边界起用新值。idle
+   * 态不同形（多 compact-threshold-set 日志）,保留在 AgentIdle。
+   */
+  private[agent] def setCompactThresholdRatioStay(
+    state: AgentState,
+    ratio: Option[Double]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withCompactThresholdRatio(ratio))
+
+  /**
+   * F (2026-09-25 命令消重): processing/frozen 两态的 SessionStarted/
+   * SessionUpdate/SessionClosed case 体除返回的行为变换外逐字同形——会话表
+   * 更新单点化（追加/改状态/删除由各调用点先算好新表）。idle 态无此三分支
+   * （catch-all 兜底）。
+   */
+  private[agent] def agentSessionsStay(
+    state: AgentState,
+    sessions: List[AgentSessionInfo]
+  )(stay: AgentState => IO[Behavior[AgentCommand]]): IO[Behavior[AgentCommand]] =
+    stay(state.withAgentSessions(sessions))
 
 end AgentActor

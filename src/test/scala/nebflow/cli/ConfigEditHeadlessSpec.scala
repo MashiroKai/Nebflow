@@ -2,10 +2,11 @@ package nebflow.cli
 
 import munit.FunSuite
 
-/** D-H5 案 ⒜（作者 2026-09-23 07:27 批）：`config edit` 的无编辑器 / 非交互兜底
-  * 判据 + H9 文案闸。此处只直测**纯函数面**（真跑形态的红/绿/对照臂读数在实施
-  * 报告里给；非交互判定依赖进程 stdio，不做环境依赖型断言）。
-  */
+/**
+ * D-H5 案 ⒜（作者 2026-09-23 07:27 批）：`config edit` 的无编辑器 / 非交互兜底
+ * 判据 + H9 文案闸。此处只直测**纯函数面**（真跑形态的红/绿/对照臂读数在实施
+ * 报告里给；非交互判定依赖进程 stdio，不做环境依赖型断言）。
+ */
 class ConfigEditHeadlessSpec extends FunSuite:
 
   test("H9 逐字（§16 文案闸：禁改写）") {

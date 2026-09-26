@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Paths}
 import java.time.Instant
@@ -10,27 +11,28 @@ import java.util.UUID
 import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
-/** P1 修复批（20260910 LoopNode 实测批逮到）：日志/数据落盘根必须跟随实例
-  * 数据根（PathUtil.dataRoot：CLI --home 旗标 / NEBFLOW_HOME env / 默认
-  * ~/.nebflow），禁止硬编码 user.home。
-  *
-  * 缺陷原貌（20260910_loopnode新形式实测报告.md P1 节）：LlmLogWriter.logDir
-  * 硬编码 `Paths.get(user.home, ".nebflow", "logs", "router")`——`--home
-  * /tmp/qa-loop-e2e` 的隔离实例把 LLM 请求日志（summary/full/sse + objects/
-  * 正文）全部写进真实 ~/.nebflow/logs/router/（155+ 条 mock 条目实测污染）。
-  * 本批同类修复面：ToolsLogWriter（logs/tools）、FileHistory（history 默认根）。
-  *
-  * 三条契约（每条独立可断言）：
-  *   1. 隔离跟随——setDataRoot(临时目录) 后三类落盘根 = <dataRoot>/logs/router、
-  *      <dataRoot>/logs/tools、<dataRoot>/history（物理写入断言）；
-  *   2. 生产语义不变——dataRoot = os.home/.nebflow（默认解析结果）时路径仍为
-  *      ~/.nebflow/logs/{router,tools}（零行为回归钉子；纯路径断言不写入）；
-  *   3. 不越界——隔离 home 写入后，真实 ~/.nebflow 侧零本测试条目/零触碰。
-  *
-  * 隔离配方仿仓内先例（MemorySnapshotSpec/ConfigServiceSpec 等 30+ 套件的
-  * prevRoot 存取模式）：Test / parallelExecution := false 保证全局重定向安全，
-  * afterAll 恢复原 dataRoot + 清理临时目录。
-  */
+/**
+ * P1 修复批（20260910 LoopNode 实测批逮到）：日志/数据落盘根必须跟随实例
+ * 数据根（PathUtil.dataRoot：CLI --home 旗标 / NEBFLOW_HOME env / 默认
+ * ~/.nebflow），禁止硬编码 user.home。
+ *
+ * 缺陷原貌（20260910_loopnode新形式实测报告.md P1 节）：LlmLogWriter.logDir
+ * 硬编码 `Paths.get(user.home, ".nebflow", "logs", "router")`——`--home
+ * /tmp/qa-loop-e2e` 的隔离实例把 LLM 请求日志（summary/full/sse + objects/
+ * 正文）全部写进真实 ~/.nebflow/logs/router/（155+ 条 mock 条目实测污染）。
+ * 本批同类修复面：ToolsLogWriter（logs/tools）、FileHistory（history 默认根）。
+ *
+ * 三条契约（每条独立可断言）：
+ *   1. 隔离跟随——setDataRoot(临时目录) 后三类落盘根 = <dataRoot>/logs/router、
+ *      <dataRoot>/logs/tools、<dataRoot>/history（物理写入断言）；
+ *   2. 生产语义不变——dataRoot = os.home/.nebflow（默认解析结果）时路径仍为
+ *      ~/.nebflow/logs/{router,tools}（零行为回归钉子；纯路径断言不写入）；
+ *   3. 不越界——隔离 home 写入后，真实 ~/.nebflow 侧零本测试条目/零触碰。
+ *
+ * 隔离配方仿仓内先例（MemorySnapshotSpec/ConfigServiceSpec 等 30+ 套件的
+ * prevRoot 存取模式）：Test / parallelExecution := false 保证全局重定向安全，
+ * afterAll 恢复原 dataRoot + 清理临时目录。
+ */
 class LogWriterHomeIsolationSpec extends CatsEffectSuite:
 
   private var prevRoot: Option[os.Path] = None
@@ -169,15 +171,14 @@ class LogWriterHomeIsolationSpec extends CatsEffectSuite:
     if Files.exists(realSse) then
       // 流式逐行扫描（真实侧文件可达数百 MB，禁 readString 全量载入，#26 教训）。
       // 宿主实例并发追加不影响判定——只查本测试唯一 request_id 是否出现。
-      val leaked = Using(scala.io.Source.fromFile(realSse.toFile, "UTF-8"))(_.getLines().exists(_.contains(id)))
-        .toOption
+      val leaked =
+        Using(scala.io.Source.fromFile(realSse.toFile, "UTF-8"))(_.getLines().exists(_.contains(id))).toOption
       assertEquals(
         leaked,
         Some(false),
         "isolated-instance intake line must NEVER reach the real ~/.nebflow/logs/router"
       )
-    else
-      assert(!Files.exists(realSse)) // 真实侧连当日文件都不存在——天然不越界
+    else assert(!Files.exists(realSse)) // 真实侧连当日文件都不存在——天然不越界
   }
 
   test("隔离写入不越界：真实 ~/.nebflow/history 零触碰") {

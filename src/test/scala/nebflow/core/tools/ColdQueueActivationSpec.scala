@@ -6,31 +6,31 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, messages}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
 import nebflow.core.FileChangeTracker
 
 import scala.concurrent.duration.*
 
 /**
-  * Issue #22: queue 模式 Mail 对冷 agent 的激活链。
-  *
-  * 场景矩阵（覆盖「冷」的三种真实形态）：
-  *  - S1 重启后冷（session 持久化、注册表空、无 actor）→ queueToSession 必须
-  *    冷激活并 drain（与 immediate 同等激活保证）
-  *  - S2 陈旧死 ref（actorMap 缓存了死 actor——deathwatch 失联/未挂的清理缺口）
-  *    → 必须检测死亡并重生，而不是把 MailQueued 送进无人消费的队列静默蒸发
-  *  - S3 激活失败诚实化（agent def / session 缺失）→ 工具结果必须如实报错，
-  *    不能返回「已排队将被处理」的成功谎言（永不 drain）
-  *  - S4 重复 MailQueued（respawn drain 触发器 + 投递方各发一次同一 item）
-  *    → 同一 item 不得双份注入为两个 turn
-  */
+ * Issue #22: queue 模式 Mail 对冷 agent 的激活链。
+ *
+ * 场景矩阵（覆盖「冷」的三种真实形态）：
+ *  - S1 重启后冷（session 持久化、注册表空、无 actor）→ queueToSession 必须
+ *    冷激活并 drain（与 immediate 同等激活保证）
+ *  - S2 陈旧死 ref（actorMap 缓存了死 actor——deathwatch 失联/未挂的清理缺口）
+ *    → 必须检测死亡并重生，而不是把 MailQueued 送进无人消费的队列静默蒸发
+ *  - S3 激活失败诚实化（agent def / session 缺失）→ 工具结果必须如实报错，
+ *    不能返回「已排队将被处理」的成功谎言（永不 drain）
+ *  - S4 重复 MailQueued（respawn drain 触发器 + 投递方各发一次同一 item）
+ *    → 同一 item 不得双份注入为两个 turn
+ */
 class ColdQueueActivationSpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
@@ -43,20 +43,22 @@ class ColdQueueActivationSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -88,11 +90,11 @@ class ColdQueueActivationSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -115,9 +117,9 @@ class ColdQueueActivationSpec extends FunSuite:
     os.write.over(memberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
 
   private def ctxFor(
-      resources: SharedResources,
-      system: ActorSystem,
-      senderSid: String
+    resources: SharedResources,
+    system: ActorSystem,
+    senderSid: String
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -138,8 +140,14 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
-        meta.id, "member", "COLD_TASK_MARKER_S1", "INFO", Nil,
-        ctxFor(resources, system, "sender-s1"), system, "sender-s1"
+        meta.id,
+        "member",
+        "COLD_TASK_MARKER_S1",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "sender-s1"),
+        system,
+        "sender-s1"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -149,7 +157,10 @@ class ColdQueueActivationSpec extends FunSuite:
     val (res, reqs, queueLeft) = io.unsafeRunSync()
     assert(res.isRight, s"queueToSession failed: $res")
     val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
-    assert(clue(texts).exists(_.contains("COLD_TASK_MARKER_S1")), "cold-activated agent never received the mail content")
+    assert(
+      clue(texts).exists(_.contains("COLD_TASK_MARKER_S1")),
+      "cold-activated agent never received the mail content"
+    )
     assert(clue(queueLeft).isEmpty, s"queue not drained: $queueLeft")
   }
 
@@ -176,8 +187,14 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- IO.sleep(200.millis) // let the fiber cancel complete
       // The mail under test
       res <- MailTool.queueToSession(
-        meta.id, "member", "COLD_TASK_MARKER_S2", "INFO", Nil,
-        ctxFor(resources, system, "sender-s2"), system, "sender-s2"
+        meta.id,
+        "member",
+        "COLD_TASK_MARKER_S2",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "sender-s2"),
+        system,
+        "sender-s2"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -206,8 +223,14 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("ghost", "ghost", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
-        meta.id, "ghost", "GHOST_TASK", "INFO", Nil,
-        ctxFor(resources, system, "sender-s3"), system, "sender-s3"
+        meta.id,
+        "ghost",
+        "GHOST_TASK",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "sender-s3"),
+        system,
+        "sender-s3"
       )
     yield res
 
@@ -237,9 +260,13 @@ class ColdQueueActivationSpec extends FunSuite:
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-s4"))
       item = MailQueueStore.MailQueueItem(
-        id = "mail-q-dup1", from = "tester", fromSession = "sender-s4",
-        message = "DUP_TASK_MARKER", `type` = "INFO",
-        timestamp = System.currentTimeMillis(), imagePaths = Nil
+        id = "mail-q-dup1",
+        from = "tester",
+        fromSession = "sender-s4",
+        message = "DUP_TASK_MARKER",
+        `type` = "INFO",
+        timestamp = System.currentTimeMillis(),
+        imagePaths = Nil
       )
       _ <- MailQueueStore.append(meta.id, item) // real contract: item on disk before MailQueued
       _ <- refOpt.traverse_(ref => ref ! AgentCommand.MailQueued(item, "sender-s4"))
@@ -257,7 +284,8 @@ class ColdQueueActivationSpec extends FunSuite:
       _.content.fold(identity, _.mkString).contains("DUP_TASK_MARKER")
     )
     assertEquals(
-      clue(injected), 1,
+      clue(injected),
+      1,
       s"same queue item must be injected exactly once, got $injected messages (persisted=${persisted.size})"
     )
   }

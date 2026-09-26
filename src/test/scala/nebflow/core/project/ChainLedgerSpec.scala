@@ -42,24 +42,45 @@ class ChainLedgerSpec extends CatsEffectSuite:
     ChainInfo(id = id, memberIds = members)
 
   private def entry(
-      id: String,
-      anchor: String,
-      bornAt: Long,
-      members: List[String],
-      status: String = ChainLedger.StatusActive,
-      archivedAt: Option[Long] = None,
-      refCount: Int = 0
+    id: String,
+    anchor: String,
+    bornAt: Long,
+    members: List[String],
+    status: String = ChainLedger.StatusActive,
+    archivedAt: Option[Long] = None,
+    refCount: Int = 0
   ): ChainLedger.Entry =
-    ChainLedger.Entry(chainId = id, anchor = anchor, bornAt = bornAt, members = members,
-      memberCount = members.size, status = status, archivedAt = archivedAt, refCount = refCount)
+    ChainLedger.Entry(
+      chainId = id,
+      anchor = anchor,
+      bornAt = bornAt,
+      members = members,
+      memberCount = members.size,
+      status = status,
+      archivedAt = archivedAt,
+      refCount = refCount
+    )
 
   private def aliasRow(alias: String, canonical: String, refCount: Int = 0): ChainLedger.AliasRow =
     ChainLedger.AliasRow(alias = alias, canonical = canonical, createdAt = t0, refCount = refCount)
 
-  private def nd(id: String, createdAt: Long, status: String = NodeLifecycle.Completed,
-                 in: List[String] = Nil, out: List[OutEdge] = Nil): NodeDef =
-    NodeDef(id = id, name = s"name-$id", agent = "general", status = status,
-      in = in, out = out, deps = Nil, createdAt = createdAt)
+  private def nd(
+    id: String,
+    createdAt: Long,
+    status: String = NodeLifecycle.Completed,
+    in: List[String] = Nil,
+    out: List[OutEdge] = Nil
+  ): NodeDef =
+    NodeDef(
+      id = id,
+      name = s"name-$id",
+      agent = "general",
+      status = status,
+      in = in,
+      out = out,
+      deps = Nil,
+      createdAt = createdAt
+    )
 
   private def changesOf(obs: ChainLedger.Observation): List[(String, Option[String], Option[String], String)] =
     obs.changes.map(c => (c.nodeId, c.from, c.to, c.reason))
@@ -84,10 +105,9 @@ class ChainLedgerSpec extends CatsEffectSuite:
   // ── T2 合并 = 显式改号 + 别名 + 留痕 ───────────────────────
 
   test("T2 合并 = 显式改号 + 旧号保留别名 + 逐节点改号留痕（先出生者保号）") {
-    val s1 = ChainLedger.observe(ChainLedger.State(project = "p"),
-      List(proto("chain-a", List("a", "b"))), t0).state
-    val s2 = ChainLedger.observe(s1,
-      List(proto("chain-a", List("a", "b")), proto("chain-c", List("c", "d"))), t0 + 1000).state
+    val s1 = ChainLedger.observe(ChainLedger.State(project = "p"), List(proto("chain-a", List("a", "b"))), t0).state
+    val s2 =
+      ChainLedger.observe(s1, List(proto("chain-a", List("a", "b")), proto("chain-c", List("c", "d"))), t0 + 1000).state
     assertEquals(s2.entries.keySet, Set("chain-a", "chain-c"))
     // 两分量并成一条：派生原型 id = chain-a，但 chain-c 也在命中集 ⇒ 显式改号（不是静默重归）
     val obs3 = ChainLedger.observe(s2, List(proto("chain-a", List("a", "b", "c", "d"))), t0 + 2000)
@@ -95,10 +115,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
     assertEquals(obs3.state.entries.keySet, Set("chain-a"))
     assertEquals(obs3.state.aliases("chain-c").canonical, "chain-a", "旧号保留别名")
     assertEquals(ChainLedger.resolve(obs3.state, "chain-c"), Some("chain-a"), "旧号永久可达")
-    assertEquals(changesOf(obs3),
-      List(("c", Some("chain-c"), Some("chain-a"), "re-id"),
-        ("d", Some("chain-c"), Some("chain-a"), "re-id")),
-      "改号逐节点留痕（旧号/新号/原因）")
+    assertEquals(
+      changesOf(obs3),
+      List(("c", Some("chain-c"), Some("chain-a"), "re-id"), ("d", Some("chain-c"), Some("chain-a"), "re-id")),
+      "改号逐节点留痕（旧号/新号/原因）"
+    )
     // 生还者链号不被改写（「永不重归」的可执行判据）
     assertEquals(obs3.state.entries("chain-a").bornAt, t0)
   }
@@ -106,24 +127,23 @@ class ChainLedgerSpec extends CatsEffectSuite:
   // ── T3 拆分 = 锚点保号 + 拆出部分新号 ─────────────────────
 
   test("T3 拆分 = 锚点所在分量保号 + 拆出分量出生新号 + 改号留痕") {
-    val s1 = ChainLedger.observe(ChainLedger.State(project = "p"),
-      List(proto("chain-a", List("a", "b", "c"))), t0).state
-    val obs2 = ChainLedger.observe(s1,
-      List(proto("chain-a", List("a")), proto("chain-b", List("b", "c"))), t0 + 1000)
+    val s1 =
+      ChainLedger.observe(ChainLedger.State(project = "p"), List(proto("chain-a", List("a", "b", "c"))), t0).state
+    val obs2 = ChainLedger.observe(s1, List(proto("chain-a", List("a")), proto("chain-b", List("b", "c"))), t0 + 1000)
     assertEquals(obs2.state.entries.keySet, Set("chain-a", "chain-b"), "锚点分量保原号 + 拆出分量新号")
     assertEquals(obs2.born, List("chain-b"))
-    assertEquals(changesOf(obs2),
-      List(("b", Some("chain-a"), Some("chain-b"), "re-id"),
-        ("c", Some("chain-a"), Some("chain-b"), "re-id")),
-      "拆出去的节点各记一条改号留痕")
+    assertEquals(
+      changesOf(obs2),
+      List(("b", Some("chain-a"), Some("chain-b"), "re-id"), ("c", Some("chain-a"), Some("chain-b"), "re-id")),
+      "拆出去的节点各记一条改号留痕"
+    )
     assertEquals(obs2.state.entries("chain-a").members, List("a"))
   }
 
   // ── T4 离场 ⇒ 整行下沉（只归档不删除）─────────────────────
 
   test("T4 离场：链已不在图上 ⇒ 热面移除 + 全行交给冷档（只归档不删除）") {
-    val s1 = ChainLedger.observe(ChainLedger.State(project = "p"),
-      List(proto("chain-a", List("a", "b"))), t0).state
+    val s1 = ChainLedger.observe(ChainLedger.State(project = "p"), List(proto("chain-a", List("a", "b"))), t0).state
     val obs = ChainLedger.observe(s1, Nil, t0 + 1000)
     assertEquals(obs.state.entries.keySet, Set.empty[String], "禁留悬空条目")
     assertEquals(obs.dissolved.map(_.chainId), List("chain-a"))
@@ -134,38 +154,62 @@ class ChainLedgerSpec extends CatsEffectSuite:
 
   test("T5 [轴(a)×(b) 红验] 退役判据 =「已归档/已离场 ∧ 零引用」：改坏任一支 ⇒ 本测试必红") {
     def st(status: String, ref: Int): ChainLedger.State =
-      ChainLedger.State(project = "p",
-        entries = Map("chain-a" -> entry("chain-a", "a", t0, List("a"),
-          status = status, archivedAt = if status == ChainLedger.StatusArchived then Some(t0 + 1) else None,
-          refCount = ref)))
+      ChainLedger.State(
+        project = "p",
+        entries = Map(
+          "chain-a" -> entry(
+            "chain-a",
+            "a",
+            t0,
+            List("a"),
+            status = status,
+            archivedAt = if status == ChainLedger.StatusArchived then Some(t0 + 1) else None,
+            refCount = ref
+          )
+        )
+      )
 
     // 变异: 把 planRetire 的 status 判据删掉（任何行都退）⇒ 下一条断言红
-    assertEquals(ChainLedger.planRetire(st(ChainLedger.StatusArchived, 0), t0 + 9).entries.map(_.chainId),
-      List("chain-a"), "已归档 ∧ 零引用 ⇒ 必须退役")
+    assertEquals(
+      ChainLedger.planRetire(st(ChainLedger.StatusArchived, 0), t0 + 9).entries.map(_.chainId),
+      List("chain-a"),
+      "已归档 ∧ 零引用 ⇒ 必须退役"
+    )
     // 变异: 把 status 判据改成永远成立 ⇒ 本断言红（轴 a：活跃链的行不得退役）
-    assertEquals(ChainLedger.planRetire(st(ChainLedger.StatusActive, 0), t0 + 9).entries, Nil,
-      "轴(a) 生命周期绑定：未归档链的行**不得**退役（归档刻 = 最早退役窗口）")
+    assertEquals(
+      ChainLedger.planRetire(st(ChainLedger.StatusActive, 0), t0 + 9).entries,
+      Nil,
+      "轴(a) 生命周期绑定：未归档链的行**不得**退役（归档刻 = 最早退役窗口）"
+    )
     // 变异: 把 refCount 判据删掉 ⇒ 本断言红（轴 b：有活引用就不退）
-    assertEquals(ChainLedger.planRetire(st(ChainLedger.StatusArchived, 3), t0 + 9).entries, Nil,
-      "轴(b) 引用计数：仍有活引用 ⇒ 不得退役（旧号永久可达）")
+    assertEquals(
+      ChainLedger.planRetire(st(ChainLedger.StatusArchived, 3), t0 + 9).entries,
+      Nil,
+      "轴(b) 引用计数：仍有活引用 ⇒ 不得退役（旧号永久可达）"
+    )
     // 别名行随 canonical 同刻退 + 离场条目的别名行一并退（禁留悬空）
-    val dangling: ChainLedger.State = ChainLedger.State(project = "p",
-      aliases = Map("chain-old" -> aliasRow("chain-old", "chain-gone")))
-    assertEquals(ChainLedger.planRetire(dangling, t0 + 9).aliases.map(_.alias), List("chain-old"),
-      "canonical 已离场 ⇒ 别名行退役（不留悬空）")
+    val dangling: ChainLedger.State =
+      ChainLedger.State(project = "p", aliases = Map("chain-old" -> aliasRow("chain-old", "chain-gone")))
+    assertEquals(
+      ChainLedger.planRetire(dangling, t0 + 9).aliases.map(_.alias),
+      List("chain-old"),
+      "canonical 已离场 ⇒ 别名行退役（不留悬空）"
+    )
   }
 
   // ── T6 轴(b) 引用计数复算（红验）──────────────────────────
 
   test("T6 [轴(b) 红验] 覆盖式复算 + 减到 0 ⇒ 退役：把减计数改坏 ⇒ 本测试必红") {
-    val st0 = ChainLedger.State(project = "p",
-      entries = Map("chain-a" -> entry("chain-a", "a", t0, List("a"),
-        status = ChainLedger.StatusArchived, archivedAt = Some(t0))),
-      aliases = Map("chain-old" -> aliasRow("chain-old", "chain-a")))
+    val st0 = ChainLedger.State(
+      project = "p",
+      entries = Map(
+        "chain-a" -> entry("chain-a", "a", t0, List("a"), status = ChainLedger.StatusArchived, archivedAt = Some(t0))
+      ),
+      aliases = Map("chain-old" -> aliasRow("chain-old", "chain-a"))
+    )
 
     val withBatch = ChainLedger.recomputeRefCounts(st0, ChainLedger.FaceCounts(batchIds = Set("chain-old")))
-    assertEquals(withBatch.aliases("chain-old").refCount, 2,
-      "面：声明 0 + 归档批 1 + 外部 0 + canonical 面 1")
+    assertEquals(withBatch.aliases("chain-old").refCount, 2, "面：声明 0 + 归档批 1 + 外部 0 + canonical 面 1")
     // 变异: 把面计数改成「恒 ≥1」⇒ 本断言红（有活引用不得退役）
     assertEquals(ChainLedger.planRetire(withBatch, t0 + 5).aliases, Nil, "有活引用 ⇒ 不退役")
 
@@ -176,14 +220,17 @@ class ChainLedgerSpec extends CatsEffectSuite:
     val orphan = noBatch.copy(entries = Map.empty) // canonical 条目也退役/离场
     val zeroed = ChainLedger.recomputeRefCounts(orphan, ChainLedger.FaceCounts())
     assertEquals(zeroed.aliases("chain-old").refCount, 0, "全部面归零")
-    assertEquals(ChainLedger.planRetire(zeroed, t0 + 5).aliases.map(_.alias), List("chain-old"),
-      "减到 0 ⇒ 退役动作（轴 b 的判据承重项）")
+    assertEquals(
+      ChainLedger.planRetire(zeroed, t0 + 5).aliases.map(_.alias),
+      List("chain-old"),
+      "减到 0 ⇒ 退役动作（轴 b 的判据承重项）"
+    )
     // 声明面 / 活动区面同为计数面（三个已接线面各自独立可减）
-    val declared = ChainLedger.recomputeRefCounts(st0,
-      ChainLedger.FaceCounts(declarations = Map("chain-old" -> Set("n1", "n2"))))
+    val declared =
+      ChainLedger.recomputeRefCounts(st0, ChainLedger.FaceCounts(declarations = Map("chain-old" -> Set("n1", "n2"))))
     assertEquals(declared.aliases("chain-old").refCount, 3, "声明面按载体数计（2）+ canonical 面 1")
-    val live = ChainLedger.recomputeRefCounts(st0,
-      ChainLedger.FaceCounts(activeMembers = Map("chain-a" -> Set("a", "b"))))
+    val live =
+      ChainLedger.recomputeRefCounts(st0, ChainLedger.FaceCounts(activeMembers = Map("chain-a" -> Set("a", "b"))))
     assertEquals(live.entries("chain-a").refCount, 2, "活动区成员面按载体数计")
   }
 
@@ -191,10 +238,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
 
   test("T7 [轴(b) 面枚举红验] 七面在册 + 各带写点/增减时机；接线状态如实登记（删任一面 / 改 wired 标记 ⇒ 必红）") {
     // 变异: 从 ReferenceFaces 删任一面（或改 wired 标记而不动本断言）⇒ 本断言红
-    assertEquals(ChainLedger.ReferenceFaces.map(_.id),
-      List("live-member", "declaration", "archive-batch", "alias-target",
-        "mail-usage", "board-usage", "report-usage"),
-      "引用面枚举 = 判据正本；删面 = 静默缩小计数口径")
+    assertEquals(
+      ChainLedger.ReferenceFaces.map(_.id),
+      List("live-member", "declaration", "archive-batch", "alias-target", "mail-usage", "board-usage", "report-usage"),
+      "引用面枚举 = 判据正本；删面 = 静默缩小计数口径"
+    )
     ChainLedger.ReferenceFaces.foreach { f =>
       assert(f.writePoint.trim.nonEmpty, s"face ${f.id} 缺「计引用写点」锚点（禁无据计数）")
       assert(f.incWhen.trim.nonEmpty, s"face ${f.id} 缺「何时加计数」")
@@ -203,12 +251,12 @@ class ChainLedgerSpec extends CatsEffectSuite:
     }
     // 批三+ 外部三面（mail/board/report）接线落地 ⇒ 未接线面表必须为空（禁静默省略；
     // 禁以人工判断代替计数）。日后新增面若不接线，本断言随之红。
-    assertEquals(ChainLedger.PendingFaceIds, Nil,
-      "外部三面接线落地 ⇒ 空表（登记在册的缺口清单归零）")
-    assertEquals(ChainLedger.WiredFaceIds,
-      List("live-member", "declaration", "archive-batch", "alias-target",
-        "mail-usage", "board-usage", "report-usage"),
-      "已接线面集合 = 七面（批二四面 + 批三+ 三面；改任一面 wired 标记 ⇒ 本断言红）")
+    assertEquals(ChainLedger.PendingFaceIds, Nil, "外部三面接线落地 ⇒ 空表（登记在册的缺口清单归零）")
+    assertEquals(
+      ChainLedger.WiredFaceIds,
+      List("live-member", "declaration", "archive-batch", "alias-target", "mail-usage", "board-usage", "report-usage"),
+      "已接线面集合 = 七面（批二四面 + 批三+ 三面；改任一面 wired 标记 ⇒ 本断言红）"
+    )
   }
 
   // ── T8 轴(c) 双阈值触发（红验：台账无限增长）──────────────
@@ -216,31 +264,53 @@ class ChainLedgerSpec extends CatsEffectSuite:
   test("T8 [轴(c) 红验 · 台账无限增长] 条数 ∨ 字节越在册阈值 ⇒ 必触发压缩轮；阈值改成永不触发 ⇒ 必红") {
     // ① 条数面：无界增长输入（行数 > MaxHotRows）
     val rows = (0 until (ChainLedger.MaxHotRows + 4)).map { i =>
-      s"chain-n$i" -> entry(s"chain-n$i", s"n$i", t0 + i, List(s"n$i"), status = ChainLedger.StatusArchived,
-        archivedAt = Some(t0 + i))
+      s"chain-n$i" -> entry(
+        s"chain-n$i",
+        s"n$i",
+        t0 + i,
+        List(s"n$i"),
+        status = ChainLedger.StatusArchived,
+        archivedAt = Some(t0 + i)
+      )
     }.toMap
     val many = ChainLedger.State(project = "p", entries = rows)
     val manyBytes = many.asJson.noSpaces.getBytes("UTF-8").length.toLong
-    assert(ChainLedger.needsCompaction(many, manyBytes),
-      s"条数越界必触发（rows=${ChainLedger.hotRows(many)} > ${ChainLedger.MaxHotRows}）")
+    assert(
+      ChainLedger.needsCompaction(many, manyBytes),
+      s"条数越界必触发（rows=${ChainLedger.hotRows(many)} > ${ChainLedger.MaxHotRows}）"
+    )
     // 变异: 把 MaxHotRows 放大到永不触发（如 Int.MaxValue）⇒ 本条断言红
-    assertEquals(ChainLedger.planCompaction(many, manyBytes).compactedEntries.size,
-      ChainLedger.CompactionBatchRows, "有界轮：单轮搬走上限行（不搬空全库 ⇒ 可观测可复跑）")
+    assertEquals(
+      ChainLedger.planCompaction(many, manyBytes).compactedEntries.size,
+      ChainLedger.CompactionBatchRows,
+      "有界轮：单轮搬走上限行（不搬空全库 ⇒ 可观测可复跑）"
+    )
 
     // ② 字节面：行数未越界、字节越界 ⇒ 同样必触发（双阈值是「∨」不是「∧」）
     //    样本量口径：80000 成员 × ~25B ≈ 2MB > MaxHotBytes(1MiB)（2× 余量）
-    val fat = ChainLedger.State(project = "p", entries = Map(
-      "chain-fat" -> entry("chain-fat", "f0", t0,
-        (0 until 80000).map(j => s"fat-node-member-$j").toList, status = ChainLedger.StatusArchived,
-        archivedAt = Some(t0))))
+    val fat = ChainLedger.State(
+      project = "p",
+      entries = Map(
+        "chain-fat" -> entry(
+          "chain-fat",
+          "f0",
+          t0,
+          (0 until 80000).map(j => s"fat-node-member-$j").toList,
+          status = ChainLedger.StatusArchived,
+          archivedAt = Some(t0)
+        )
+      )
+    )
     val fatBytes = fat.asJson.noSpaces.getBytes("UTF-8").length.toLong
     assert(ChainLedger.hotRows(fat) <= ChainLedger.MaxHotRows, "字节面样本：行数未越界")
     assert(fatBytes > ChainLedger.MaxHotBytes, s"字节面样本须越界（$fatBytes > ${ChainLedger.MaxHotBytes}）")
     assert(ChainLedger.needsCompaction(fat, fatBytes), "字节越界必触发")
     // 变异: 把 MaxHotBytes 放大到永不触发 ⇒ 本条断言红
-    assertEquals(ChainLedger.ThresholdsNow,
+    assertEquals(
+      ChainLedger.ThresholdsNow,
       ChainLedger.Thresholds(ChainLedger.MaxHotRows, ChainLedger.MaxHotBytes, ChainLedger.CompactionBatchRows),
-      "阈值在册（随每轮冷档留痕的那组值 = 常量现值）")
+      "阈值在册（随每轮冷档留痕的那组值 = 常量现值）"
+    )
   }
 
   // ── T9 轴(c) 端到端：压缩轮落冷档 + 身份不重归 + 自检 ────────
@@ -276,6 +346,7 @@ class ChainLedgerSpec extends CatsEffectSuite:
       val again = ChainLedger.observe(st, List(comps.head), t0 + 9999)
       assertEquals(again.born, Nil, "压缩不得诱发重新出生")
       assertEquals(again.state.entries(comps.head.id).chainId, comps.head.id)
+    end for
   }
 
   // ── T10 落盘面：原子写 / 载入 / 重启自洽 / 损坏容忍 ──────────
@@ -303,6 +374,7 @@ class ChainLedgerSpec extends CatsEffectSuite:
       assertEquals(st2, st1, "重启后台账逐字一致")
       assertEquals(check2, Right(()): Either[String, Unit], "重启后自检 Right（崩溃/重启后自洽）")
       assertEquals(st3.entries, Map.empty[String, ChainLedger.Entry], "损坏 ⇒ 空账起步")
+    end for
   }
 
   // ── T11 集成：FlowMapStore 拍点接线 ────────────────────────
@@ -311,10 +383,15 @@ class ChainLedgerSpec extends CatsEffectSuite:
     val ws = os.temp.dir(prefix = "nb-chain-ledger-int-", deleteOnExit = false)
     for
       store <- FlowMapStore.open("ledger-int", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "p" -> nd("p", t0, out = List(OutEdge("q"))),
-        "q" -> nd("q", t0 + 1, in = List("p")),
-        "r" -> nd("r", t0 + 2))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "p" -> nd("p", t0, out = List(OutEdge("q"))),
+            "q" -> nd("q", t0 + 1, in = List("p")),
+            "r" -> nd("r", t0 + 2)
+          )
+        )
+      )
       c1 <- store.reconcileChainLedger(t0 + 100)
       st1 <- store.chainLedgerStore.snapshot
       // 接线 p→q→r：两个分量并成一条 ⇒ 台账须显式改号（chain-r 被吸收为别名）
@@ -323,8 +400,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
       st2 <- store.chainLedgerStore.snapshot
       oldId <- store.chainLedgerStore.resolve("chain-r")
       // 全链终态 ⇒ sweep 出库：轴(a) 绑定必须同刻把台账条目翻 archived
-      _ <- store.mutate(s => s.copy(nodes = s.nodes.map { case (k, n) =>
-        k -> n.copy(status = NodeLifecycle.Completed, completedAt = Some(t0 + 300)) }))
+      _ <- store.mutate(s =>
+        s.copy(nodes = s.nodes.map { case (k, n) =>
+          k -> n.copy(status = NodeLifecycle.Completed, completedAt = Some(t0 + 300))
+        })
+      )
       removed <- store.sweepCompletedChains(t0 + 400)
       st3 <- store.chainLedgerStore.snapshot
       _ <- store.reconcileChainLedger(t0 + 500)
@@ -333,8 +413,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
     yield
       assertEquals(c1, Nil, "首次观测 = 出生，无改号留痕")
       assertEquals(st1.entries.keySet, Set("chain-p", "chain-r"), "两条分量各自出生")
-      assertEquals(c2.map(c => (c.nodeId, c.from, c.to, c.reason)),
-        List(("r", Some("chain-r"), Some("chain-p"), "re-id")), "合并 ⇒ 显式改号 + 逐节点留痕")
+      assertEquals(
+        c2.map(c => (c.nodeId, c.from, c.to, c.reason)),
+        List(("r", Some("chain-r"), Some("chain-p"), "re-id")),
+        "合并 ⇒ 显式改号 + 逐节点留痕"
+      )
       assertEquals(st2.aliases.keySet, Set("chain-r"), "旧号保留别名")
       assertEquals(oldId, Some("chain-p"), "旧号永久可达（解析单点）")
       assertEquals(removed.toSet, Set("p", "q", "r"), "整链出库")
@@ -343,15 +426,17 @@ class ChainLedgerSpec extends CatsEffectSuite:
       // 轴(a)×(b)：本形态仍有「归档批面」活引用（批 id = chain-p）⇒ 不退（禁把引用面当噪声）
       assert(st4.entries.contains("chain-p"), "有活引用（归档批）⇒ 条目不得退役")
       assertEquals(check, Right(()): Either[String, Unit], "集成态下台账自检 Right")
+    end for
   }
 
   // ── T12 解析：别名链 + 冷档兜底 ───────────────────────────
 
   test("T12 解析单点：热面别名逐跳解析；冷档下沉行由 resolveDeep 兜底（旧号永久可达）") {
-    val st = ChainLedger.State(project = "p",
+    val st = ChainLedger.State(
+      project = "p",
       entries = Map("chain-b" -> entry("chain-b", "b", t0, List("b"))),
-      aliases = Map("chain-a" -> aliasRow("chain-a", "chain-b"),
-        "chain-a0" -> aliasRow("chain-a0", "chain-a")))
+      aliases = Map("chain-a" -> aliasRow("chain-a", "chain-b"), "chain-a0" -> aliasRow("chain-a0", "chain-a"))
+    )
     assertEquals(ChainLedger.resolve(st, "chain-a0"), Some("chain-b"), "两跳别名解析到现号")
     assertEquals(ChainLedger.resolve(st, "chain-zzz"), None, "无解返回 None（不猜）")
     val dir = os.temp.dir(prefix = "nb-chain-ledger-resolve-", deleteOnExit = false)
@@ -394,22 +479,29 @@ class ChainLedgerSpec extends CatsEffectSuite:
       st3 <- store.snapshot
       check3 <- store.verify
     yield
-      assertEquals(o2.dissolved.map(_.chainId).sorted,
+      assertEquals(
+        o2.dissolved.map(_.chainId).sorted,
         List("chain-n0", "chain-n1", "chain-n2", "chain-n3"),
-        "同拍：4 条链离场（整行下沉）+ 8 条新生 ⇒ 同拍既出 dissolve 又越阈值出 compact")
-      assertEquals(st2.rounds.map(_.kind),
+        "同拍：4 条链离场（整行下沉）+ 8 条新生 ⇒ 同拍既出 dissolve 又越阈值出 compact"
+      )
+      assertEquals(
+        st2.rounds.map(_.kind),
         List(ChainLedger.RoundDissolve, ChainLedger.RoundCompact),
-        "同一拍内两轮（先例 D1-a 形态）")
+        "同一拍内两轮（先例 D1-a 形态）"
+      )
       assert(st2.rounds.forall(_.tick > 0), "每轮必须带拍标识（旧账 tick=0 ⇒ 该查不可判）")
       assertEquals(st2.rounds(0).tick, st2.rounds(1).tick, "同拍各轮同一拍标识")
       // 变异: 把 dissolve 轮坐标改回 `stObs`（计数复算**之前**）⇒ 本条与 check2 立即红
-      assertEquals(st2.rounds(0).hotAfter, st2.rounds(1).hotBefore,
-        "拍内链式承重项：dissolve.hotAfter 必须逐项等于 compact.hotBefore（同源坐标）")
-      assertEquals(check2, Right(()): Either[String, Unit],
-        "同拍多轮 ⇒ 台账自洽（判据 1「崩溃/重启后自洽」+ 判据 5(c) 的**多轮**形态）")
+      assertEquals(
+        st2.rounds(0).hotAfter,
+        st2.rounds(1).hotBefore,
+        "拍内链式承重项：dissolve.hotAfter 必须逐项等于 compact.hotBefore（同源坐标）"
+      )
+      assertEquals(check2, Right(()): Either[String, Unit], "同拍多轮 ⇒ 台账自洽（判据 1「崩溃/重启后自洽」+ 判据 5(c) 的**多轮**形态）")
       assert(st3.rounds.size > st2.rounds.size, "后续拍继续出轮（append-only）")
       // 变异: 把坐标错位改回（或恢复跨拍对账）⇒ check3 必红（先例 D1「假警告永不消解」）
       assertEquals(check3, Right(()): Either[String, Unit], "轮 append-only ⇒ 假链断禁出现且不得留痕")
+    end for
   }
 
   test("T14 [轮间链式红验 · 跨拍] 两拍各出一轮 compact、其间仅有普通出生 ⇒ verify=Right（禁跨拍对账）") {
@@ -427,17 +519,21 @@ class ChainLedgerSpec extends CatsEffectSuite:
       st2 <- store.snapshot
       check2 <- store.verify
     yield
-      assert(o1.compaction.isDefined && o2.compaction.isDefined,
-        "两拍各出一轮压缩（其间仅有普通出生，无 dissolve）")
+      assert(o1.compaction.isDefined && o2.compaction.isDefined, "两拍各出一轮压缩（其间仅有普通出生，无 dissolve）")
       assertEquals(st1.rounds.map(_.kind), List(ChainLedger.RoundCompact), "拍 1 单轮")
       assertEquals(check1, Right(()): Either[String, Unit], "拍 1 自洽（单轮时链式查本不触发）")
-      assertEquals(st2.rounds.map(_.kind),
+      assertEquals(
+        st2.rounds.map(_.kind),
         List(ChainLedger.RoundCompact, ChainLedger.RoundCompact),
-        "两轮皆 compact（先例 D1-c：**无 dissolve 参与**，可达性最强）")
+        "两轮皆 compact（先例 D1-c：**无 dissolve 参与**，可达性最强）"
+      )
       assert(st2.rounds(0).tick < st2.rounds(1).tick, "跨拍 ⇒ 拍标识必异")
       // 变异: 删掉 verifyLedger ② 查的同拍条件（恢复「与上一轮 hotAfter 对账」）⇒ 下两条必红
-      assert(st2.rounds(0).hotAfter != st2.rounds(1).hotBefore,
-        "跨拍读数差（其间出生 10 条 ⇒ entries 5000→5010）—— 这是**合法**变化，禁当链断")
-      assertEquals(check2, Right(()): Either[String, Unit],
-        "跨拍读数差不得判为链断（否则该假警告因轮 append-only 而永不消解）")
+      assert(
+        st2.rounds(0).hotAfter != st2.rounds(1).hotBefore,
+        "跨拍读数差（其间出生 10 条 ⇒ entries 5000→5010）—— 这是**合法**变化，禁当链断"
+      )
+      assertEquals(check2, Right(()): Either[String, Unit], "跨拍读数差不得判为链断（否则该假警告因轮 append-only 而永不消解）")
+    end for
   }
+end ChainLedgerSpec

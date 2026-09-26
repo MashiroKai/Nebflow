@@ -2,9 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
-import nebflow.service.MemoryStore
+import nebflow.shared.{MemoryStore, PathUtil}
 
 import java.nio.file.Files
 
@@ -89,8 +88,10 @@ class MemoryQueueSpec extends FunSuite:
     val b = enqueue("- 同一条").toOption.get
     assert(b.deduped && a.id == b.id, "同 hash 返回既有 q-id")
     assertEquals(queueLines.size, 1, "去重不追加行")
-    val c = MemoryQueue.enqueue("user", "remove", None, Some("同一条"), None,
-      Some("sess-1"), MemoryQueue.TriggerManual, "Nebula").toOption.get
+    val c = MemoryQueue
+      .enqueue("user", "remove", None, Some("同一条"), None, Some("sess-1"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
     assert(!c.deduped && c.id != a.id, "action 参与 hash")
     assertEquals(queueLines.size, 2)
 
@@ -108,16 +109,19 @@ class MemoryQueueSpec extends FunSuite:
   test("折叠谓词（2026-09-13 语义变更）：终态闭合，rejected/timeout/notrun/blocked 保持 pending"):
     reset()
     val ids = (1 to 6).map(i => enqueue(s"- 条目 $i").toOption.get.id)
-    MemoryQueue.recordOutcome(ids(0), MemoryQueue.ResultObsolete, "b", "d")   // 终态
-    MemoryQueue.recordOutcome(ids(1), MemoryQueue.ResultApplied, "b", "d")    // 终态
-    MemoryQueue.recordOutcome(ids(2), MemoryQueue.ResultDeduped, "b", "d")    // 终态
-    MemoryQueue.recordOutcome(ids(3), MemoryQueue.ResultRejected, "b", "d")   // 可重试
-    MemoryQueue.recordOutcome(ids(4), MemoryQueue.ResultTimeout, "b", "d")    // 可重试
-    MemoryQueue.recordOutcome(ids(5), MemoryQueue.ResultNotRun, "b", "d")     // 可重试（infra）
+    MemoryQueue.recordOutcome(ids(0), MemoryQueue.ResultObsolete, "b", "d") // 终态
+    MemoryQueue.recordOutcome(ids(1), MemoryQueue.ResultApplied, "b", "d") // 终态
+    MemoryQueue.recordOutcome(ids(2), MemoryQueue.ResultDeduped, "b", "d") // 终态
+    MemoryQueue.recordOutcome(ids(3), MemoryQueue.ResultRejected, "b", "d") // 可重试
+    MemoryQueue.recordOutcome(ids(4), MemoryQueue.ResultTimeout, "b", "d") // 可重试
+    MemoryQueue.recordOutcome(ids(5), MemoryQueue.ResultNotRun, "b", "d") // 可重试（infra）
     val st = MemoryQueue.readState()
     assertEquals(st.pendingCount, 3, "6 条 - 3 条终态闭合并 = 3 条仍未闭合（rejected/timeout/notrun）")
-    assertEquals(st.pending.map(_.id).toSet, Set(ids(3), ids(4), ids(5)),
-      "rejected / timeout / notrun 三条仍是 pending（spec §5 R3 档 1 的重试引线恢复）")
+    assertEquals(
+      st.pending.map(_.id).toSet,
+      Set(ids(3), ids(4), ids(5)),
+      "rejected / timeout / notrun 三条仍是 pending（spec §5 R3 档 1 的重试引线恢复）"
+    )
     assertEquals(st.notRunPendingCount, 1, "notrun 计入 infra 未跑档（注入行 ALERT 判据）")
 
   test("重试引线真的活：可重试结局后写一条 applied ⇒ 该条闭合（末条结局胜）"):
@@ -190,9 +194,15 @@ class MemoryQueueSpec extends FunSuite:
     val id = enqueue("- 条目一").toOption.get.id
     MemoryQueue.recordOutcome(id, MemoryQueue.ResultApplied, "memory-consolidator", "applied")
     MemoryHistory.appendChange(
-      atMs = 1L, actor = "memory-consolidator", path = "/x/User.md", target = "user",
-      trigger = MemoryQueue.TriggerCompaction, refs = List(id),
-      added = List("- 新条目"), removed = List("- 旧条目"))
+      atMs = 1L,
+      actor = "memory-consolidator",
+      path = "/x/User.md",
+      target = "user",
+      trigger = MemoryQueue.TriggerCompaction,
+      refs = List(id),
+      added = List("- 新条目"),
+      removed = List("- 旧条目")
+    )
     val st = MemoryHistory.stats()
     assertEquals(st.queued, 1)
     assertEquals(st.consumed, 1)

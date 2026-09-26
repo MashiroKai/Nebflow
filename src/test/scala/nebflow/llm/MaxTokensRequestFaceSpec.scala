@@ -48,13 +48,17 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
   override val munitIOTimeout = 60.seconds
 
   private val noThinking: Option[Json] = None
+
   private val thinkingHigh: Option[Json] =
     Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 32768.asJson))
+
   private val thinkingLegacyHuge: Option[Json] =
     Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 100000.asJson))
 
-  /** The Anthropic output cap expected with thinking off (old default of the
-    * removed key) and with a 32768 budget (raised to keep budget < max_tokens). */
+  /**
+   * The Anthropic output cap expected with thinking off (old default of the
+   * removed key) and with a 32768 budget (raised to keep budget < max_tokens).
+   */
   private val ExpectedAnthropicCapNoThinking = 16384
   private val ExpectedAnthropicCapHighThinking = 49152
 
@@ -85,14 +89,16 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
     """{"id":"c1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],""" +
       """"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"""
 
-  /** Capture mock: records every request body on `path`, answers 200 with the
-    * given payload shape. Port 0 → OS-assigned (no cross-suite collisions). */
+  /**
+   * Capture mock: records every request body on `path`, answers 200 with the
+   * given payload shape. Port 0 → OS-assigned (no cross-suite collisions).
+   */
   private def startCaptureMock(
-      path: String,
-      contentType: String,
-      payload: String,
-      streaming: Boolean,
-      captured: ConcurrentLinkedQueue[String]
+    path: String,
+    contentType: String,
+    payload: String,
+    streaming: Boolean,
+    captured: ConcurrentLinkedQueue[String]
   ): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
@@ -122,9 +128,9 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
   private def portOf(server: HttpServer): Int = server.getAddress.getPort
 
   private def mkConfig(
-      protocol: LlmProtocol,
-      baseUrl: String,
-      providerOverride: Option[ProviderConfig] = None
+    protocol: LlmProtocol,
+    baseUrl: String,
+    providerOverride: Option[ProviderConfig] = None
   ): NebflowServiceConfig =
     val provider = providerOverride match
       case Some(p) => p.copy(baseUrl = baseUrl)
@@ -137,10 +143,12 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
         )
     NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> provider)))
 
+  end mkConfig
+
   private def run(
-      config: NebflowServiceConfig,
-      thinking: Option[Json],
-      stream: Boolean
+    config: NebflowServiceConfig,
+    thinking: Option[Json],
+    stream: Boolean
   ): IO[Either[Throwable, Int]] =
     for
       configRef <- Ref.of[IO, NebflowServiceConfig](config)
@@ -166,16 +174,18 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
   private def field(body: String, name: String): Option[Json] =
     io.circe.parser.parse(body).toOption.flatMap(_.hcursor.downField(name).focus).filterNot(_.isNull)
 
-  /** Runs one face (both paths, one thinking config) and returns the captured
-    * bodies plus the call outcome, printing the raw readings. */
+  /**
+   * Runs one face (both paths, one thinking config) and returns the captured
+   * bodies plus the call outcome, printing the raw readings.
+   */
   private def capture(
-      label: String,
-      protocol: LlmProtocol,
-      path: String,
-      ssePayload: String,
-      jsonPayload: String,
-      thinking: Option[Json],
-      providerOverride: Option[ProviderConfig] = None
+    label: String,
+    protocol: LlmProtocol,
+    path: String,
+    ssePayload: String,
+    jsonPayload: String,
+    thinking: Option[Json],
+    providerOverride: Option[ProviderConfig] = None
   ): IO[List[String]] =
     val captured = new ConcurrentLinkedQueue[String]()
     val result = for
@@ -183,30 +193,32 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
       jsonMock <- startCaptureMock(path, "application/json", jsonPayload, streaming = false, captured)
       baseUrl = s"http://127.0.0.1:${portOf(streamMock)}"
       cfg = mkConfig(protocol, baseUrl, providerOverride)
-      cfgJson = cfg.copy(llm =
-        cfg.llm.copy(providers = cfg.llm.providers.map { case (k, p) =>
-          k -> p.copy(baseUrl = s"http://127.0.0.1:${portOf(jsonMock)}")
-        })
-      )
+      cfgJson = cfg.copy(llm = cfg.llm.copy(providers = cfg.llm.providers.map { case (k, p) =>
+        k -> p.copy(baseUrl = s"http://127.0.0.1:${portOf(jsonMock)}")
+      }))
       rStream <- run(cfg, thinking, stream = true)
       rJson <- run(cfgJson, thinking, stream = false)
-      _ = println(s"[MAXCFG-TRACE] $label streamOutcome=${rStream.fold(e => s"ERR:${e.getClass.getSimpleName}", n => s"OK:$n")}")
-      _ = println(s"[MAXCFG-TRACE] $label nonStreamOutcome=${rJson.fold(e => s"ERR:${e.getClass.getSimpleName}", n => s"OK:$n")}")
+      _ = println(
+        s"[MAXCFG-TRACE] $label streamOutcome=${rStream.fold(e => s"ERR:${e.getClass.getSimpleName}", n => s"OK:$n")}"
+      )
+      _ = println(
+        s"[MAXCFG-TRACE] $label nonStreamOutcome=${rJson.fold(e => s"ERR:${e.getClass.getSimpleName}", n => s"OK:$n")}"
+      )
       _ <- IO.blocking(streamMock.stop(0))
       _ <- IO.blocking(jsonMock.stop(0))
     yield ()
     result.flatMap { _ =>
-      val bodies = {
+      val bodies =
         val it = captured.iterator()
         val buf = scala.collection.mutable.ListBuffer[String]()
         while it.hasNext do buf += it.next()
         buf.toList
-      }
       IO.delay {
         trace(label, bodies)
         bodies
       }
     }
+  end capture
 
   // ── P1/P2: OpenAI face must not send `max_tokens` ────────────────────────
 
@@ -310,7 +322,10 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
         assert(anthroBodies.nonEmpty && openAiBodies.nonEmpty, "capture mock recorded no request body")
         anthroBodies.foreach { b =>
           val budget =
-            io.circe.parser.parse(b).toOption.flatMap(_.hcursor.downField("thinking").downField("budget_tokens").as[Int].toOption)
+            io.circe.parser
+              .parse(b)
+              .toOption
+              .flatMap(_.hcursor.downField("thinking").downField("budget_tokens").as[Int].toOption)
           assertEquals(budget, Some(32768), s"pathological budget must still be bounded by the internal ceiling: $b")
         }
         openAiBodies.foreach { b =>
@@ -365,3 +380,4 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
       }
     }
   }
+end MaxTokensRequestFaceSpec

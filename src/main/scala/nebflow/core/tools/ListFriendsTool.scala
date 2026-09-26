@@ -1,9 +1,10 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
+import io.circe.{Json, JsonObject}
+import nebflow.core.{FriendRosterPort, FriendServicePort}
+import nebflow.shared.FriendSummary
 
 /**
  * ListFriends — Nebula 编排面**只读**好友名册（好友消息改造批 ⑩；方案
@@ -26,9 +27,9 @@ import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
  *    （L4①：模型必须看得出备注键存在，否则永远不去试备注寻址）。
  *  - 只读、零副作用：一次读，不刷本地态、不动未读游标、不触发任何写。
  *
- * 授能面（方案 §4.5 #2/#5 定稿）：**仅** `AgentCore.NebulaOrchestrationTools` 单点
+ * 授能面（方案 §4.5 #2/#5 定稿）：**仅** `AgentCore.RootOrchestrationTools` 单点
  * 携带；`DispatcherFixedTools` / `BaseTools` / 全 agent 面均不携带；agent.json 声明
- * （含 `"*"`）不授能 —— 名字进 `AgentCore.NebulaExclusiveTools`（防声明逃逸单点，
+ * （含 `"*"`）不授能 —— 名字进 `AgentCore.RootExclusiveTools`（防声明逃逸单点，
  * 同时覆盖 `AgentLibrary` 定义保存侧 strip）。插件白名单（
  * `PluginRegistry.BuiltinToolWhitelist`）不含；`RemoteExecutor.remoteableTools` 不含
  * （零参数 schema，**不得**被注入 `device` 参数）。
@@ -42,14 +43,16 @@ object ListFriendsTool extends Tool:
 
   val name = "ListFriends"
 
-  /** 名册行封顶（方案 §4.5 `inputSchema` 条定稿）：**不加 `limit` 参数**——静默截断
-    * 会让模型得出「此人不是我好友」的错误结论。超长名册的正确处理 = 代码内封顶 +
-    * 显式尾行 `... N more friends not shown`。
-    *
-    * 取值 = 200：对真实名册（username 多为 NL 号 / 邮箱，displayName 多为短名）
-    * 渲染约 10–20 KB，稳在 `ToolResultGuard` 的单结果阈值（
-    * `Defaults.DefaultMaxResultSizeChars` = 50_000，第 1 层 guard）之下 ⇒ **封顶尾行
-    * 是名册的实际截断点**，不会被 guard 的静默 preview 替换抢先把尾行吃掉。 */
+  /**
+   * 名册行封顶（方案 §4.5 `inputSchema` 条定稿）：**不加 `limit` 参数**——静默截断
+   * 会让模型得出「此人不是我好友」的错误结论。超长名册的正确处理 = 代码内封顶 +
+   * 显式尾行 `... N more friends not shown`。
+   *
+   * 取值 = 200：对真实名册（username 多为 NL 号 / 邮箱，displayName 多为短名）
+   * 渲染约 10–20 KB，稳在 `ToolResultGuard` 的单结果阈值（
+   * `Defaults.DefaultMaxResultSizeChars` = 50_000，第 1 层 guard）之下 ⇒ **封顶尾行
+   * 是名册的实际截断点**，不会被 guard 的静默 preview 替换抢先把尾行吃掉。
+   */
   private[tools] val MaxRows = 200
 
   val description =
@@ -61,28 +64,32 @@ One friend per line: `<display name> (<username>)[ [remark: <remark>]][ [blocked
 ## Notes
 Read-only, zero side effects: a single read of the friend roster — it does not refresh local state, does not move any unread cursor, and triggers no write of any kind. Hand the values from this list to `SendMessage`'s `to` parameter unchanged (the remark, the username, or the display name)."""
 
-  /** 零参数（显式给出，`ToolRegistry.ALL_TOOLS` 会把 schema 交给 LLM）：
-    * 不加 `filter`（会再造一条解析路径，与 `FriendRoster.resolve` 的模糊/唯一前缀
-    * 语义必然分叉）；不加 `limit`（见 `MaxRows`）。 */
+  /**
+   * 零参数（显式给出，`ToolRegistry.ALL_TOOLS` 会把 schema 交给 LLM）：
+   * 不加 `filter`（会再造一条解析路径，与 `FriendRoster.resolve` 的模糊/唯一前缀
+   * 语义必然分叉）；不加 `limit`（见 `MaxRows`）。
+   */
   val inputSchema: JsonObject = JsonObject(
-    "type"       -> "object".asJson,
+    "type" -> "object".asJson,
     "properties" -> Json.obj(),
-    "required"   -> Json.arr()
+    "required" -> Json.arr()
   )
 
-  private[tools] def service(ctx: ToolContext): Either[ToolError, FriendService] =
+  private[tools] def service(ctx: ToolContext): Either[ToolError, FriendServicePort] =
     ctx.sharedResources.flatMap(_.friendService) match
       case Some(fs) => Right(fs)
       case None =>
         Left(ToolError("Friend list is unavailable: NebLink friends service is not initialized."))
 
-  /** 名册 → 平铺文本行（非 JSON）。首行恒为计数行（`Friends: <总数>`，**总数**而非
-    * 显示行数——封顶时也不让模型误判好友总数）。 */
+  /**
+   * 名册 → 平铺文本行（非 JSON）。首行恒为计数行（`Friends: <总数>`，**总数**而非
+   * 显示行数——封顶时也不让模型误判好友总数）。
+   */
   private[tools] def render(friends: List[FriendSummary]): String =
     val count = s"Friends: ${friends.size}"
-    if friends.isEmpty then s"$count\n${FriendRoster.availableHint(friends)}"
+    if friends.isEmpty then s"$count\n${FriendRosterPort.availableHint(friends)}"
     else
-      val rows = friends.take(MaxRows).map(f => FriendRoster.candidateLine(f))
+      val rows = friends.take(MaxRows).map(f => FriendRosterPort.candidateLine(f))
       val tail =
         if friends.size > MaxRows then List(s"... ${friends.size - MaxRows} more friends not shown")
         else Nil

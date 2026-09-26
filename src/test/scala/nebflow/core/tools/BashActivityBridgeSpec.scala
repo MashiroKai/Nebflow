@@ -3,8 +3,10 @@ package nebflow.core.tools
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentKind, AgentRecord, SharedResources}
-import nebflow.llm.{ProviderHealthMonitor, ThinkingConfig}
+import nebflow.actor.{AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
+import nebflow.llm.ProviderHealthMonitor
+import nebflow.shared.ThinkingConfig
 
 import java.io.File
 import scala.concurrent.duration.*
@@ -60,9 +62,11 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       pb.start()
     }
 
-  /** 纯 sleep 进程（不经 bash——bash 启动开销 CPU 累计可能 ≥10ms，首轮采样
-    * lastCpu=0 时误判 cpuActive，污染「零 CPU 不 touch」断言）。sleep 是原生
-    * C 程序，启动开销 <1ms。 */
+  /**
+   * 纯 sleep 进程（不经 bash——bash 启动开销 CPU 累计可能 ≥10ms，首轮采样
+   * lastCpu=0 时误判 cpuActive，污染「零 CPU 不 touch」断言）。sleep 是原生
+   * C 程序，启动开销 <1ms。
+   */
   private def startSleepProc(secs: Int): IO[Process] =
     IO.blocking {
       val pb = new ProcessBuilder("sleep", secs.toString)
@@ -100,13 +104,15 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
   test("D-1: CPU delta < 10ms/窗口 + 零输出 → 两戳都不被 touch（卡死不误判有进展）") {
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
-        Map("bridge-session" -> AgentRecord(
-          sessionId = "bridge-session",
-          ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-          kind = nebflow.agent.AgentKind.Root,
-          lastActivityMs = 123456789L,
-          rootSessionId = "root"
-        ))
+        Map(
+          "bridge-session" -> AgentRecord(
+            sessionId = "bridge-session",
+            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+            kind = nebflow.actor.AgentKind.Root,
+            lastActivityMs = 123456789L,
+            rootSessionId = "root"
+          )
+        )
       )
       resources = mkResources(registry)
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some("bridge-session"), sharedResources = Some(resources))
@@ -125,13 +131,15 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
   test("D-2: CPU delta ≥ 10ms/窗口 → processActivityMs touched，lastActivityMs 不动") {
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
-        Map("bridge-session" -> AgentRecord(
-          sessionId = "bridge-session",
-          ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-          kind = nebflow.agent.AgentKind.Root,
-          lastActivityMs = 123456789L,
-          rootSessionId = "root"
-        ))
+        Map(
+          "bridge-session" -> AgentRecord(
+            sessionId = "bridge-session",
+            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+            kind = nebflow.actor.AgentKind.Root,
+            lastActivityMs = 123456789L,
+            rootSessionId = "root"
+          )
+        )
       )
       resources = mkResources(registry)
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some("bridge-session"), sharedResources = Some(resources))

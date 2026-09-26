@@ -3,8 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.service.{MemoryBudget, MemoryStore, MemoryWriteGate}
+import nebflow.shared.{MemoryBudget, MemoryStore, MemoryWriteGate, PathUtil}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -72,16 +71,18 @@ class MemoryShrinkChannelSpec extends FunSuite:
 
   private def byteLen(s: String): Long = s.getBytes(UTF_8).length.toLong
 
-  /** 精确到字节的内容：`# U` / `## 节` / 两条可定位 marker 条目 / 填充条目，尾补齐到 n 字节。
-    * 两条 marker 落在**不同行**（停点闩用例需要两条互不取代的定位行）。 */
+  /**
+   * 精确到字节的内容：`# U` / `## 节` / 两条可定位 marker 条目 / 填充条目，尾补齐到 n 字节。
+   * 两条 marker 落在**不同行**（停点闩用例需要两条互不取代的定位行）。
+   */
   private def contentOfBytes(n: Int): String =
-    val head   = "# U\n\n## 节\n\n"
+    val head = "# U\n\n## 节\n\n"
     val marker = MarkerA + "\n" + MarkerB + "\n"
-    val line   = "- " + ("y" * 100) + "\n"
-    val fixed  = byteLen(head) + byteLen(marker)
-    val lines  = math.max(0, ((n - fixed) / byteLen(line)).toInt)
-    val sofar  = head + marker + line * lines
-    val pad    = n - byteLen(sofar)
+    val line = "- " + ("y" * 100) + "\n"
+    val fixed = byteLen(head) + byteLen(marker)
+    val lines = math.max(0, ((n - fixed) / byteLen(line)).toInt)
+    val sofar = head + marker + line * lines
+    val pad = n - byteLen(sofar)
     if pad <= 0 then head + marker
     else sofar + ("z" * pad.toInt) + "\n"
 
@@ -89,15 +90,26 @@ class MemoryShrinkChannelSpec extends FunSuite:
   private val MarkerB = "- MARKER-B 第二条 " + ("n" * 40)
 
   private def note(
-      id: String,
-      atMs: Long,
-      action: String,
-      section: Option[String] = None,
-      matchText: Option[String] = None,
-      content: Option[String] = None,
-      target: String = "user"
+    id: String,
+    atMs: Long,
+    action: String,
+    section: Option[String] = None,
+    matchText: Option[String] = None,
+    content: Option[String] = None,
+    target: String = "user"
   ): MemoryQueue.Note =
-    MemoryQueue.Note(id, atMs, "2026-09-15T00:00:00Z", target, action, section, matchText, content, Some("s"), MemoryQueue.TriggerManual)
+    MemoryQueue.Note(
+      id,
+      atMs,
+      "2026-09-15T00:00:00Z",
+      target,
+      action,
+      section,
+      matchText,
+      content,
+      Some("s"),
+      MemoryQueue.TriggerManual
+    )
 
   private def planOf(notes: MemoryQueue.Note*)(base: String): MemoryQueue.Plan =
     MemoryQueue.plan(
@@ -107,14 +119,16 @@ class MemoryShrinkChannelSpec extends FunSuite:
 
   private val userFile = "/tmp/x/User.md"
 
-  /** 与 [[MemoryQueue]] 的 `applyOp` 同规的行删除（`split("\n", -1)` 保行尾空元素 ⇒
-    * `mkString("\n")` 结果与 `lines.patch(ln-1, Nil, 1).mkString("\n")` 逐字同值）。 */
+  /**
+   * 与 [[MemoryQueue]] 的 `applyOp` 同规的行删除（`split("\n", -1)` 保行尾空元素 ⇒
+   * `mkString("\n")` 结果与 `lines.patch(ln-1, Nil, 1).mkString("\n")` 逐字同值）。
+   */
   private def removeLine(s: String, marker: String): String =
     s.split("\n", -1).filterNot(l => l.startsWith("- ") && l.contains(marker)).mkString("\n")
 
-  private def hard        = MemoryBudget.UserHardBytes
+  private def hard = MemoryBudget.UserHardBytes
   private def overCapBase = contentOfBytes(hard.toInt + 300)
-  private def atCapBase   = contentOfBytes(hard.toInt - 28)
+  private def atCapBase = contentOfBytes(hard.toInt - 28)
 
   private def bucketOf(plan: MemoryQueue.Plan, ref: String): MemoryQueue.Bucket =
     plan.items.find(_.ref == ref).map(_.bucket).getOrElse(fail(s"$ref 不在计划里：${plan.items}"))
@@ -143,8 +157,7 @@ class MemoryShrinkChannelSpec extends FunSuite:
     assertEquals(byteLen(shrunk), p.projectedBytes, "夹具复算的收缩结果须与计划投影逐字同值")
     val memPath = home / "User.md"
     os.write.over(memPath, base, createFolders = true)
-    assert(MemoryWriteGate.shrinkExempt(byteLen(base), byteLen(shrunk), shrinkChannel = true),
-      "适格身份 + 字节比 ⇒ 豁免")
+    assert(MemoryWriteGate.shrinkExempt(byteLen(base), byteLen(shrunk), shrinkChannel = true), "适格身份 + 字节比 ⇒ 豁免")
     MemoryWriteGate.guard("user", memPath, shrunk, shrinkChannel = true).unsafeRunSync() // 不抛 = 豁免放行
     os.write.over(memPath, shrunk)
 
@@ -183,7 +196,7 @@ class MemoryShrinkChannelSpec extends FunSuite:
 
     // 落盘闸同判据：适格身份 + 净增 ⇒ 照拒
     val memPath = home / "User.md"
-    val grown   = base + ("g" * 100)
+    val grown = base + ("g" * 100)
     os.write.over(memPath, base, createFolders = true)
     assert(!MemoryWriteGate.shrinkExempt(byteLen(base), byteLen(grown), shrinkChannel = true), "净增不豁免")
     val err = intercept[MemoryWriteGate.Rejected](
@@ -199,13 +212,13 @@ class MemoryShrinkChannelSpec extends FunSuite:
     val atCap = atCapBase
     assert(byteLen(atCap) <= hard && byteLen(atCap) > MemoryBudget.UserSoftBytes, s"前置：顶格（${byteLen(atCap)}）")
     val tooBig = "- " + ("w" * 150) // 单条即超顶（顶格余量仅 ~27 B，净缩 65 B 也装不下它）
-    val stuck  = planOf(note("q-ap", 1L, "append", content = Some(tooBig)))(atCap)
+    val stuck = planOf(note("q-ap", 1L, "append", content = Some(tooBig)))(atCap)
     assertEquals(bucketOf(stuck, "q-ap"), MemoryQueue.Bucket.WouldDefer, "顶格 append ⇒ 拒")
     assert(stuck.refusal.isDefined, "无可落条目 ⇒ refusal")
 
     // 净缩把文件拉回硬顶内 ⇒ 同一条 append 放行（「拒**至**回到预算内」的正腿）
     val shrunkBase = contentOfBytes(hard.toInt - 4000)
-    val freed      = planOf(note("q-ap", 1L, "append", content = Some(tooBig)))(shrunkBase)
+    val freed = planOf(note("q-ap", 1L, "append", content = Some(tooBig)))(shrunkBase)
     assertEquals(bucketOf(freed, "q-ap"), MemoryQueue.Bucket.WouldApply, s"${freed.items}")
     assertEquals(freed.refusal, None)
 
@@ -215,23 +228,29 @@ class MemoryShrinkChannelSpec extends FunSuite:
       note("q-ap", 2L, "append", content = Some(tooBig))
     )(atCap)
     assertEquals(bucketOf(sameRound, "q-rm"), MemoryQueue.Bucket.WouldApply)
-    assertEquals(bucketOf(sameRound, "q-ap"), MemoryQueue.Bucket.WouldDefer,
-      "单条净缩（65 B）不足以装下 153 B 的 append ⇒ 仍拒（回到预算内才放）")
+    assertEquals(
+      bucketOf(sameRound, "q-ap"),
+      MemoryQueue.Bucket.WouldDefer,
+      "单条净缩（65 B）不足以装下 153 B 的 append ⇒ 仍拒（回到预算内才放）"
+    )
   }
 
   // ── 断言 d：停点闩不再吞真收缩 ─────────────────────────────────
 
   test("断言 d：同目标净增条目触发停点后，另一行上的真收缩条目仍应放行（改前被闩吞掉）") {
     val atCap = atCapBase
-    val grow  = "- " + ("G" * 300)
-    val plan  = planOf(
+    val grow = "- " + ("G" * 300)
+    val plan = planOf(
       note("q-up-grow", 10L, "update", matchText = Some("MARKER-A"), content = Some(grow)),
       note("q-up-shrink", 20L, "update", matchText = Some("MARKER-B"), content = Some("- short B"))
     )(atCap)
 
     assertEquals(bucketOf(plan, "q-up-grow"), MemoryQueue.Bucket.WouldDefer, s"净增照旧被截断：${plan.items}")
-    assertEquals(bucketOf(plan, "q-up-shrink"), MemoryQueue.Bucket.WouldApply,
-      s"真收缩不得被「停点闩」吞掉（改前此条 = would-defer: stopped earlier）：${plan.items}")
+    assertEquals(
+      bucketOf(plan, "q-up-shrink"),
+      MemoryQueue.Bucket.WouldApply,
+      s"真收缩不得被「停点闩」吞掉（改前此条 = would-defer: stopped earlier）：${plan.items}"
+    )
     assert(plan.items.find(_.ref == "q-up-shrink").get.deltaBytes < 0)
     assertEquals(plan.authorized, Vector("q-up-shrink"), "授权集非空 ⇒ 本轮可落地（不再零出队）")
     assertEquals(plan.refusal, None)
@@ -247,57 +266,68 @@ class MemoryShrinkChannelSpec extends FunSuite:
     assert(!MemoryWriteGate.shrinkExempt(100L, 90L, shrinkChannel = false), "不适格 ⇒ 永不豁免")
 
     // 计划面与闸同判据：超顶夹具上逐条比对（**动作名不参与** —— 同动作面出现净增时照拒）
-    val base    = overCapBase
+    val base = overCapBase
     val bigBody = "- " + ("q" * (hard.toInt + 500)) // 净增的 replace_section 节体
     val notes = Vector(
-      note("q-rm", 1L, "remove", matchText = Some("MARKER-A")),                            // 净缩（仍超顶）⇒ 放行
-      note("q-rs", 2L, "replace_section", Some("节"), None, Some(bigBody)),                 // 净增 ⇒ 照拒
+      note("q-rm", 1L, "remove", matchText = Some("MARKER-A")), // 净缩（仍超顶）⇒ 放行
+      note("q-rs", 2L, "replace_section", Some("节"), None, Some(bigBody)), // 净增 ⇒ 照拒
       note("q-up", 3L, "update", matchText = Some("MARKER-B"), content = Some("- short B")), // 净缩 ⇒ 放行
-      note("q-ap", 4L, "append", content = Some("- 新条目"))                                // 净增 ⇒ 照拒
+      note("q-ap", 4L, "append", content = Some("- 新条目")) // 净增 ⇒ 照拒
     )
     val plan = planOf(notes*)(base)
-    val p    = projection(plan)
+    val p = projection(plan)
     assertEquals(bucketOf(plan, "q-rm"), MemoryQueue.Bucket.WouldApply, s"${plan.items}")
     assertEquals(bucketOf(plan, "q-up"), MemoryQueue.Bucket.WouldApply, s"${plan.items}")
-    assertEquals(bucketOf(plan, "q-rs"), MemoryQueue.Bucket.WouldDefer,
-      "净增的 replace_section 照拒 ⇒ 裁决依据是字节比，不是动作名")
+    assertEquals(bucketOf(plan, "q-rs"), MemoryQueue.Bucket.WouldDefer, "净增的 replace_section 照拒 ⇒ 裁决依据是字节比，不是动作名")
     assertEquals(bucketOf(plan, "q-ap"), MemoryQueue.Bucket.WouldDefer)
     assertEquals(plan.authorized, Vector("q-rm", "q-up"))
     assertEquals(plan.refusal, None)
     // 分桶不变量：超顶轮里 WouldApply 一律净缩（禁把净增放进来）
-    assert(p.projectedBytes <= hard || plan.items.filter(_.bucket == MemoryQueue.Bucket.WouldApply).forall(_.deltaBytes <= 0),
-      s"超顶轮里 WouldApply 必须净缩：${plan.items}")
-    assertEquals(plan.countOf(MemoryQueue.Bucket.WouldDefer) + plan.countOf(MemoryQueue.Bucket.WouldApply) +
-      plan.countOf(MemoryQueue.Bucket.WouldRetry) + plan.countOf(MemoryQueue.Bucket.WouldObsolete), notes.size)
+    assert(
+      p.projectedBytes <= hard || plan.items
+        .filter(_.bucket == MemoryQueue.Bucket.WouldApply)
+        .forall(_.deltaBytes <= 0),
+      s"超顶轮里 WouldApply 必须净缩：${plan.items}"
+    )
+    assertEquals(
+      plan.countOf(MemoryQueue.Bucket.WouldDefer) + plan.countOf(MemoryQueue.Bucket.WouldApply) +
+        plan.countOf(MemoryQueue.Bucket.WouldRetry) + plan.countOf(MemoryQueue.Bucket.WouldObsolete),
+      notes.size
+    )
 
     // 与闸**逐字同值**的两条腿（可精确复算落笔结果）：
     //   remove（净缩）⇒ 计划面 would-apply ∧ 闸 shrinkExempt = true
     val rmNext = removeLine(base, "MARKER-A")
     assert(byteLen(rmNext) > hard, "腿 1 夹具：净缩后仍超顶（最容易误杀的一档）")
     assert(MemoryWriteGate.shrinkExempt(byteLen(base), byteLen(rmNext), shrinkChannel = true), "闸：适格 + 净缩 ⇒ 豁免")
-    assertEquals(bucketOf(planOf(note("q-rm", 1L, "remove", matchText = Some("MARKER-A")))(base), "q-rm"),
-      MemoryQueue.Bucket.WouldApply, "计划面：同一对字节 ⇒ 同一裁决")
+    assertEquals(
+      bucketOf(planOf(note("q-rm", 1L, "remove", matchText = Some("MARKER-A")))(base), "q-rm"),
+      MemoryQueue.Bucket.WouldApply,
+      "计划面：同一对字节 ⇒ 同一裁决"
+    )
     //   append（净增）⇒ 计划面 would-defer ∧ 闸 shrinkExempt = false
     val apNext = base + "- 新条目" + "\n"
     assert(byteLen(apNext) > hard, "腿 2 夹具：净增后仍超顶")
     assert(!MemoryWriteGate.shrinkExempt(byteLen(base), byteLen(apNext), shrinkChannel = true), "闸：适格 + 净增 ⇒ 不豁免")
-    assertEquals(bucketOf(planOf(note("q-ap", 4L, "append", content = Some("- 新条目")))(base), "q-ap"),
-      MemoryQueue.Bucket.WouldDefer, "计划面：同一对字节 ⇒ 同一裁决")
+    assertEquals(
+      bucketOf(planOf(note("q-ap", 4L, "append", content = Some("- 新条目")))(base), "q-ap"),
+      MemoryQueue.Bucket.WouldDefer,
+      "计划面：同一对字节 ⇒ 同一裁决"
+    )
   }
 
   // ── 断言 e：整文件覆盖路径不享豁免（任务书必给项 ②）──────────
 
   test("断言 e：WS saveMemory 同路径（MemoryStore.saveUserMemory）+ 真收缩 + 仍超顶 ⇒ 照拒（本批未改该路径）") {
     val memPath = home / "User.md"
-    val pre     = contentOfBytes(hard.toInt + 1000)
-    val shrunk  = contentOfBytes(hard.toInt + 500) // 真收缩，但仍超顶
+    val pre = contentOfBytes(hard.toInt + 1000)
+    val shrunk = contentOfBytes(hard.toInt + 500) // 真收缩，但仍超顶
     assert(byteLen(shrunk) < byteLen(pre), "夹具须为真收缩")
     assert(byteLen(shrunk) > hard, "夹具须仍超硬顶")
     os.write.over(memPath, pre, createFolders = true)
 
     val err = intercept[MemoryWriteGate.Rejected](MemoryStore.saveUserMemory(shrunk).unsafeRunSync())
-    assertEquals(err.code, MemoryWriteGate.Code.Budget,
-      "整文件覆盖**不是**收缩通道 ⇒ 不享豁免（超限文件的自救路径必须是 replace_section）")
+    assertEquals(err.code, MemoryWriteGate.Code.Budget, "整文件覆盖**不是**收缩通道 ⇒ 不享豁免（超限文件的自救路径必须是 replace_section）")
     assertEquals(os.read(memPath), pre, "被拒 ⇒ 零写入")
   }
 
@@ -318,7 +348,7 @@ class MemoryShrinkChannelSpec extends FunSuite:
 
     // 落地一步（收缩真的发生）后重算：文件回到硬顶内 ⇒ 后续 append 逐条放行（队列可出队）
     val shrunk = removeLine(base, "MARKER-A")
-    val after  = contentOfBytes(hard.toInt - 1000)
+    val after = contentOfBytes(hard.toInt - 1000)
     val second = planOf(note("q-ap1", 2L, "append", content = Some("- 新条目一")))(after)
     assertEquals(bucketOf(second, "q-ap1"), MemoryQueue.Bucket.WouldApply);
     assert(byteLen(after) < byteLen(base) && byteLen(after) <= hard, s"收缩 ${byteLen(base)} → ${byteLen(after)}B（回到硬顶内）")

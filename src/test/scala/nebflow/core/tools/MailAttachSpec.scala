@@ -2,22 +2,19 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
-import io.circe.{Json, JsonObject}
+import fs2.Stream
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.actor.ActorSystem
+import nebflow.actor.{ActorSystem, AgentDef, messages}
 import nebflow.agent.*
-import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.dropbox.AttachContract
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.neblink.DeviceMail
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
-import fs2.Stream
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.*
+
 import scala.concurrent.duration.*
 
 /**
@@ -59,9 +56,9 @@ class MailAttachSpec extends FunSuite:
     base.add(key, Json.arr(ps.map(_.asJson)*))
 
   private def ctx(
-      dispatcher: Boolean = false,
-      nebulaRoot: Boolean = false,
-      projectName: Option[String] = None
+    dispatcher: Boolean = false,
+    nebulaRoot: Boolean = false,
+    projectName: Option[String] = None
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -75,13 +72,16 @@ class MailAttachSpec extends FunSuite:
   private def rejected(res: Either[ToolError, String], label: String): String =
     res match
       case Left(err) => err.message
-      case Right(v)  => fail(s"$label: must be rejected, got: $v")
+      case Right(v) => fail(s"$label: must be rejected, got: $v")
 
   private def callErr(input: JsonObject, c: ToolContext): String =
     rejected(MailTool.call(input, c).unsafeRunSync(), "call")
 
   private def prop(schema: JsonObject, name: String): JsonObject =
-    schema("properties").flatMap(_.asObject).flatMap(_(name)).flatMap(_.asObject)
+    schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_(name))
+      .flatMap(_.asObject)
       .getOrElse(fail(s"parameter '$name' missing from the Mail schema"))
 
   private def propDesc(schema: JsonObject, name: String): String =
@@ -145,20 +145,19 @@ class MailAttachSpec extends FunSuite:
 
   test("② P1：三面描述都宣称 `attachments` 参数存在，且零「没有该参数」类反向断言"):
     val faces = List(
-      "descriptionBase"       -> MailTool.descriptionBase,
-      "descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+      "descriptionBase" -> MailTool.descriptionBase,
+      "descriptionNebulaRoot" -> MailTool.descriptionRoot,
       "descriptionDispatcher" -> MailTool.descriptionDispatcher
     )
     for (label, raw) <- faces do
       val f = n(raw)
-      assert(f.contains("`attachments` parameter"),
-        s"$label: 必须宣称 `attachments` 参数（模型只读描述/schema ⇒ 不宣称则能力实际不可用）")
-      assert(!f.contains("Mail has no general attachments"),
-        s"$label: 仍自称「无通用附件」= 与 schema 的 `attachments` 互斥")
-      assert(!f.contains("no `attachments` parameter"),
-        s"$label: 仍自称「没有 `attachments` 参数」= 与 schema 互斥")
-      assert(!f.contains("`SendMessage`'s `attachments` — pure transport"),
-        s"$label: 仍把通用附件落点指向 SendMessage（本工具已有该参数，落点过期）")
+      assert(f.contains("`attachments` parameter"), s"$label: 必须宣称 `attachments` 参数（模型只读描述/schema ⇒ 不宣称则能力实际不可用）")
+      assert(!f.contains("Mail has no general attachments"), s"$label: 仍自称「无通用附件」= 与 schema 的 `attachments` 互斥")
+      assert(!f.contains("no `attachments` parameter"), s"$label: 仍自称「没有 `attachments` 参数」= 与 schema 互斥")
+      assert(
+        !f.contains("`SendMessage`'s `attachments` — pure transport"),
+        s"$label: 仍把通用附件落点指向 SendMessage（本工具已有该参数，落点过期）"
+      )
       assert(f.contains("4000"), s"$label: 缺设备腿正文 4000 字符预算（B7 闸的模型可见面）")
     // 反向：`images` 的参数级描述不得再宣称无通用附件，且必须声明两条腿不支持 vision。
     val img = n(propDesc(MailTool.inputSchema, "images"))
@@ -231,13 +230,20 @@ class MailAttachSpec extends FunSuite:
       assert(msg.contains("Nothing was sent"), s"fail-fast 必须自陈零投递: $msg")
     finally os.remove.all(tmp)
 
+    end try
+
   test("③ 闸位先于投递腿：合法件 + 不存在件混合 ⇒ 仍零投递（先于 `no actor system`）"):
     val tmp = os.temp.dir(prefix = "mailattach-mix")
     val ok = tmp / "ok.bin"
     os.write(ok, Array[Byte](1, 2, 3))
     try
       val msg = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", ok.toString, (tmp / "gone.bin").toString),
+        withArr(
+          qIn("address" -> "backend", "message" -> "hi"),
+          "attachments",
+          ok.toString,
+          (tmp / "gone.bin").toString
+        ),
         ctx()
       )
       assert(msg.contains("does not exist"), s"逐件判必须报出坏件: $msg")
@@ -248,8 +254,10 @@ class MailAttachSpec extends FunSuite:
   // ④ B6：同机腿 `images` ⇒ 显式拒绝（治静默丢）
   // ============================================================
 
-  /** `address` 腿的 `images` 走 G3 共用管线（先 `resolveImages` 落盘校验，再路由）⇒
-    * 要真的走到「同机腿拒绝」，图件必须**真实存在**（虚构路径会先被 G3 的存在性判拦下）。 */
+  /**
+   * `address` 腿的 `images` 走 G3 共用管线（先 `resolveImages` 落盘校验，再路由）⇒
+   * 要真的走到「同机腿拒绝」，图件必须**真实存在**（虚构路径会先被 G3 的存在性判拦下）。
+   */
   private def realImage(tmp: os.Path): os.Path =
     val p = tmp / "img-1.png"
     os.write(p, Array[Byte](0x89.toByte, 'P'.toByte, 'N'.toByte, 'G'.toByte, 1, 2, 3))
@@ -322,11 +330,9 @@ class MailAttachSpec extends FunSuite:
     try
       val near = "x" * 3900
       val withoutAttach = callErr(qIn("device" -> "KAI", "message" -> near), ctx())
-      assert(!withoutAttach.contains(MailTool.ErrDeviceMailTextTooLong),
-        s"3900 无附件必须过闸（否则本判据的对照面不成立）: $withoutAttach")
+      assert(!withoutAttach.contains(MailTool.ErrDeviceMailTextTooLong), s"3900 无附件必须过闸（否则本判据的对照面不成立）: $withoutAttach")
       val withAttach = callErr(withArr(qIn("device" -> "KAI", "message" -> near), "attachments", f.toString), ctx())
-      assert(withAttach.contains(MailTool.ErrDeviceMailTextTooLong),
-        s"加附注后必须超预算即被拒（不得留到服务端 422）: $withAttach")
+      assert(withAttach.contains(MailTool.ErrDeviceMailTextTooLong), s"加附注后必须超预算即被拒（不得留到服务端 422）: $withAttach")
       assert(withAttach.contains("attachment note"), s"拒绝文案必须说明附注计入预算: $withAttach")
     finally os.remove.all(tmp)
 
@@ -336,8 +342,7 @@ class MailAttachSpec extends FunSuite:
     os.write(f, Array[Byte](9))
     try
       val msg = callErr(withArr(qIn("device" -> "KAI", "message" -> "hi"), "attachments", f.toString), ctx())
-      assert(msg.contains("file channel") && msg.contains("attachments"),
-        s"通道不在场必须显式指名且先于任何投递: $msg")
+      assert(msg.contains("file channel") && msg.contains("attachments"), s"通道不在场必须显式指名且先于任何投递: $msg")
       assert(!msg.contains("relay client is not initialized"), s"通道闸必须先于投递腿判定: $msg")
     finally os.remove.all(tmp)
 
@@ -361,20 +366,22 @@ class MailAttachSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -432,13 +439,15 @@ class MailAttachSpec extends FunSuite:
     r.messages
       .map { m =>
         m.content match
-          case Left(s)       => s
+          case Left(s) => s
           case Right(blocks) => blocks.collect { case ContentBlock.Text(t) => t }.mkString("\n")
       }
       .mkString("\n")
 
-  /** 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
-    * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。 */
+  /**
+   * 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
+   * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。
+   */
   private def awaitRequests(llm: RecordingLlm, deadlineMs: Long): IO[List[LlmRequest]] =
     IO.defer {
       llm.requests.get.flatMap { rs =>
@@ -462,7 +471,11 @@ class MailAttachSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(s"$teamName/member", agentName = Some("member"), flowName = Some(teamName))
+      memberMeta <- sessionStore.createSession(
+        s"$teamName/member",
+        agentName = Some("member"),
+        flowName = Some(teamName)
+      )
       _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
       _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
@@ -498,7 +511,11 @@ class MailAttachSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(s"$teamName/member", agentName = Some("member"), flowName = Some(teamName))
+      memberMeta <- sessionStore.createSession(
+        s"$teamName/member",
+        agentName = Some("member"),
+        flowName = Some(teamName)
+      )
       _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
       _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)

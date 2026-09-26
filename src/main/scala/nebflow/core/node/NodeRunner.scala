@@ -1,8 +1,8 @@
 package nebflow.core.node
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.tools.{FileHistory, ReadTracker}
@@ -43,60 +43,80 @@ object NodeRunner:
     /** None = 不设置（flow 节点现状：沿用 agent 自身 projectRoot）。 */
     projectRoot: Option[String] = None,
     safetyMode: String = "confirm-edits",
-    /** 已解析的根 session（调用方算好传入：delegate/subtask 用
-      * `if root.nonEmpty then root else parentSessionId.getOrElse(id)`；
-      * flow 用 `if root.nonEmpty then root else sessionId`）。 */
+    /**
+     * 已解析的根 session（调用方算好传入：delegate/subtask 用
+     * `if root.nonEmpty then root else parentSessionId.getOrElse(id)`；
+     * flow 用 `if root.nonEmpty then root else sessionId`）。
+     */
     rootSessionId: String = "",
     initialMessages: List[Message] = Nil,
     isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     expectsMail: Boolean = false,
     userFacingNode: Boolean = false,
-    /** Project 任务板身份（TaskBoard 批 2，详见 SessionContext 同名字段）：
-      * NodeEngine 节点 spawn 置 flowNodeId=Some(node.id)+projectName；ProjectActor
-      * 分发器 spawn 置 isDispatcher=true+projectName。默认空=非项目会话（零变化）。 */
+    /**
+     * Project 任务板身份（TaskBoard 批 2，详见 SessionContext 同名字段）：
+     * NodeEngine 节点 spawn 置 flowNodeId=Some(node.id)+projectName；ProjectActor
+     * 分发器 spawn 置 isDispatcher=true+projectName。默认空=非项目会话（零变化）。
+     */
     flowNodeId: Option[String] = None,
     isDispatcher: Boolean = false,
-    /** 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role
-      * （`task` | `verifier`）随 spawn 注入 —— NodeEngine 节点/loop 会话 spawn 点
-      * 置 `Some(node.role)`；分发器与非项目轨（Delegate/SubTask/flow）保持 None。
-      * 经 SessionContext → AgentCore → ToolContext.flowNodeRole 全链透传，是
-      * `node_report` 值域分化与 ProtocolFootnote 角色分支的来源。None = 判据侧
-      * 回落 `NodeRoles.Task`（缺省语义）。 */
+    /**
+     * 节点角色（nrloop 一期 2026-09-12；设计 §3.2 + B1 透传链）：NodeDef.role
+     * （`task` | `verifier`）随 spawn 注入 —— NodeEngine 节点/loop 会话 spawn 点
+     * 置 `Some(node.role)`；分发器与非项目轨（Delegate/SubTask/flow）保持 None。
+     * 经 SessionContext → AgentCore → ToolContext.flowNodeRole 全链透传，是
+     * `node_report` 值域分化与 ProtocolFootnote 角色分支的来源。None = 判据侧
+     * 回落 `NodeRoles.Task`（缺省语义）。
+     */
     flowNodeRole: Option[String] = None,
     projectName: Option[String] = None,
-    /** D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
-      * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。 */
+    /**
+     * D6 批 F1（G9 路径 a）：节点人类可读名随 spawn 注入（NodeEngine 置
+     * node.name）——AskUser payload nodeName 字段来源。详见 SessionContext。
+     */
     flowNodeName: Option[String] = None,
-    /** 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 4/5）：
-      * 节点所属链 id（spawn 时刻快照）——NodeEngine 节点/loop 会话 spawn 置
-      * NodeEngine.chainContextOf(nodeId) 快照值（与 FlowMapStore.chainIdOf 同口径，
-      * 一次分量重算同时取 id/title/成员数）；分发器 spawn 显式置 None（不属任何链，
-      * ProjectActor 口径）；Delegate/SubTask/flow 轨默认 None = 零变化。
-      * 详见 SessionContext.flowChainId / ToolContext.flowChainId。 */
+    /**
+     * 链级抽象 P2（20260910 process-doc-chain-attribution spec §9.2 项 4/5）：
+     * 节点所属链 id（spawn 时刻快照）——NodeEngine 节点/loop 会话 spawn 置
+     * NodeEngine.chainContextOf(nodeId) 快照值（与 FlowMapStore.chainIdOf 同口径，
+     * 一次分量重算同时取 id/title/成员数）；分发器 spawn 显式置 None（不属任何链，
+     * ProjectActor 口径）；Delegate/SubTask/flow 轨默认 None = 零变化。
+     * 详见 SessionContext.flowChainId / ToolContext.flowChainId。
+     */
     flowChainId: Option[String] = None,
     /** actor 名字（默认 = sessionId；flow 节点用 "dagnode-<nodeId>-<sid>" 前缀）。 */
     actorName: String = "",
-    /** 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
-      * projectRoot 派生 SandboxPolicy（root=worktree 或 workspace）。 */
+    /**
+     * 阶段 2a 沙箱（§A.6）：project 节点/分发器置 true——AgentCore 从
+     * projectRoot 派生 SandboxPolicy（root=worktree 或 workspace）。
+     */
     sandboxEnabled: Boolean = false,
-    /** 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
-      * NodeEngine 传项目工作区根，worktree 节点沙箱 root = 工作区根而非 worktree
-      * 自身（主仓 .git/worktrees/<name>/ 元数据可直写）。None = 沿用 projectRoot
-      * 推导（旧行为）。 */
+    /**
+     * 显式沙箱根（2026-09-05 21:05 作者裁定——worktree 节点继承项目沙箱）：
+     * NodeEngine 传项目工作区根，worktree 节点沙箱 root = 工作区根而非 worktree
+     * 自身（主仓 .git/worktrees/<name>/ 元数据可直写）。None = 沿用 projectRoot
+     * 推导（旧行为）。
+     */
     sandboxRoot: Option[String] = None,
-    /** **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
-      * 两个 spawn 点传座椅路径（worktree 节点 ⇒ 会话 cwd = 座椅，兑现提示词
-      * 「worktree 节点 = worktree 根」）；座椅缺失 ⇒ 该会话 Bash 显式失败
-      * （fail-closed，禁静默回落工作区根）。围栏面（sandboxRoot）语义不动。
-      * 其余 spawn 点不传 ⇒ None ⇒ 旧行为逐字节不变。 */
+    /**
+     * **会话初始 cwd**（B5 缺口② · 作者 2026-09-17 M-1 裁定，选项①）：NodeEngine
+     * 两个 spawn 点传座椅路径（worktree 节点 ⇒ 会话 cwd = 座椅，兑现提示词
+     * 「worktree 节点 = worktree 根」）；座椅缺失 ⇒ 该会话 Bash 显式失败
+     * （fail-closed，禁静默回落工作区根）。围栏面（sandboxRoot）语义不动。
+     * 其余 spawn 点不传 ⇒ None ⇒ 旧行为逐字节不变。
+     */
     sessionCwd: Option[String] = None,
-    /** 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 spawn（NodeEngine
-      * ×2）/ 分发器 spawn（ProjectActor ×1）置 true——AGENTS.md 注入判据来源，
-      * 与沙箱总闸（sandboxEnabled）解耦。默认 false = 旧行为不变。 */
+    /**
+     * 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：project 节点 spawn（NodeEngine
+     * ×2）/ 分发器 spawn（ProjectActor ×1）置 true——AGENTS.md 注入判据来源，
+     * 与沙箱总闸（sandboxEnabled）解耦。默认 false = 旧行为不变。
+     */
     projectSession: Boolean = false,
-    /** restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
-      * readTracker/fileHistory，保持行为零变化）。 */
+    /**
+     * restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
+     * readTracker/fileHistory，保持行为零变化）。
+     */
     withTracking: Boolean = true
   )
 
@@ -141,20 +161,25 @@ object NodeRunner:
       )
     yield ref
 
-  /** 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28
-    * 可观测缺口修复）。
-    *
-    * DelegateTool.routeWsSend 为 Delegate/SubTask 注入 rootSessionId + sessionId
-    * （前端 sessionBgAgents 按 rootSessionId 归桶）+ nodeSessionId（子会话自身
-    * id，popup/历史路由）。node/dispatcher 会话此前直接透传 engine 的 wsSendFn——
-    * 事件要么到不了前端（启动挂载 wsSend=None → no-op），要么缺 rootSessionId
-    * 归属键无法归桶。本包装补齐同一契约：
-    * - rootSessionId：前端 sessionBgAgents 的归桶键（顶层根会话 id）
-    * - sessionId：缺省时注入 rootSessionId（事件路由目标视图；Delegate 同款语义）
-    * - nodeSessionId：已有则保留（toJson 已盖章自身会话），否则补子会话 id
-    * - project（可选）：agentStart 帧注入项目名（Sub-Agents 面板项目徽标，
-    *   2026-09-06 作者裁定）——仅 Project 域调用方（NodeEngine/ProjectActor）传值
-    */
+    end for
+
+  end spawnAgentActor
+
+  /**
+   * 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28
+   * 可观测缺口修复）。
+   *
+   * DelegateTool.routeWsSend 为 Delegate/SubTask 注入 rootSessionId + sessionId
+   * （前端 sessionBgAgents 按 rootSessionId 归桶）+ nodeSessionId（子会话自身
+   * id，popup/历史路由）。node/dispatcher 会话此前直接透传 engine 的 wsSendFn——
+   * 事件要么到不了前端（启动挂载 wsSend=None → no-op），要么缺 rootSessionId
+   * 归属键无法归桶。本包装补齐同一契约：
+   * - rootSessionId：前端 sessionBgAgents 的归桶键（顶层根会话 id）
+   * - sessionId：缺省时注入 rootSessionId（事件路由目标视图；Delegate 同款语义）
+   * - nodeSessionId：已有则保留（toJson 已盖章自身会话），否则补子会话 id
+   * - project（可选）：agentStart 帧注入项目名（Sub-Agents 面板项目徽标，
+   *   2026-09-06 作者裁定）——仅 Project 域调用方（NodeEngine/ProjectActor）传值
+   */
   def routeSubagentWsSend(
     base: Json => IO[Unit],
     rootSessionId: String,
@@ -190,20 +215,21 @@ object NodeRunner:
           base(Json.fromJsonObject(finalObj))
         case None => base(json)
 
-  /** Sub-Agents 面板实时终态帧（取消/终止实时刷新修复，2026-09-03）。
-    *
-    * 缺口：Project flow 会话（node-/dispatcher-）被取消注销（AgentControl
-    * cancel / 面板 cancelAgent / TaskStuckWatcher giveUp / 观察桥 Failed+
-    * Cancelled）时，后端此前不发任何面板可理解的事件——面板行由 agentStart
-    * 创建、只被 agentDone 或会话级 done 清理，取消后 Processing 幽灵行滞留到
-    * 浏览器刷新（activeAgents 快照重拉才消失）。
-    *
-    * 补发 agentDone 同构帧（agentId=会话 id；rootSessionId 归桶键、sessionId
-    * 路由键、nodeSessionId 弹窗键由 routeSubagentWsSend 注入，与活体事件契约
-    * 全同构）：前端零改动复用既有终态管线——agentDone 处理器 done 标记 + 2s
-    * 移除 + cleanupBgAgentView，会话级 done 分支（node-/dispatcher- 前缀）立即
-    * 删行。仅 Project flow 会话终态补发使用；Delegate/SubTask 自有事件链，勿用。
-    */
+  /**
+   * Sub-Agents 面板实时终态帧（取消/终止实时刷新修复，2026-09-03）。
+   *
+   * 缺口：Project flow 会话（node-/dispatcher-）被取消注销（AgentControl
+   * cancel / 面板 cancelAgent / TaskStuckWatcher giveUp / 观察桥 Failed+
+   * Cancelled）时，后端此前不发任何面板可理解的事件——面板行由 agentStart
+   * 创建、只被 agentDone 或会话级 done 清理，取消后 Processing 幽灵行滞留到
+   * 浏览器刷新（activeAgents 快照重拉才消失）。
+   *
+   * 补发 agentDone 同构帧（agentId=会话 id；rootSessionId 归桶键、sessionId
+   * 路由键、nodeSessionId 弹窗键由 routeSubagentWsSend 注入，与活体事件契约
+   * 全同构）：前端零改动复用既有终态管线——agentDone 处理器 done 标记 + 2s
+   * 移除 + cleanupBgAgentView，会话级 done 分支（node-/dispatcher- 前缀）立即
+   * 删行。仅 Project flow 会话终态补发使用；Delegate/SubTask 自有事件链，勿用。
+   */
   def emitSubagentPanelDone(wsSend: Json => IO[Unit], sessionId: String, rootSessionId: String): IO[Unit] =
     routeSubagentWsSend(wsSend, rootSessionId, sessionId)(
       Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
@@ -238,10 +264,12 @@ object NodeRunner:
       )
     )
 
-  /** 共享 BackoffSupervisor adapter spawn（delegate/subtask 共用）。
-    * childSpawnFn 用 spawnAgentActor(withTracking=false) 重建——与旧
-    * childSpawnFn 的 AgentActor 构造逐一对应（recoveredMessages 为空时
-    * 行为与直接传 recovered 等价，两者 Nil 同值）。 */
+  /**
+   * 共享 BackoffSupervisor adapter spawn（delegate/subtask 共用）。
+   * childSpawnFn 用 spawnAgentActor(withTracking=false) 重建——与旧
+   * childSpawnFn 的 AgentActor 构造逐一对应（recoveredMessages 为空时
+   * 行为与直接传 recovered 等价，两者 Nil 同值）。
+   */
   def spawnSupervisedAdapter(
     system: ActorSystem,
     params: SpawnParams,
@@ -281,3 +309,4 @@ object NodeRunner:
       ),
       s"$subagentId-adapter"
     )
+end NodeRunner

@@ -3,7 +3,7 @@ package nebflow.core.daemon
 import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /** File-based persistence for daemon configurations (~/.nebflow/daemons.json). */
 class DaemonStore(configPath: os.Path = PathUtil.dataRoot / "daemons.json"):

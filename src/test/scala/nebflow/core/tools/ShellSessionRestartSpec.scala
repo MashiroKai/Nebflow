@@ -95,3 +95,4 @@ class ShellSessionRestartSpec extends FunSuite:
     val (s1, s2, dead) = program.unsafeRunSync()
     assert(s1 ne s2, "post-destroy forSession must rebuild")
     assert(!dead, "rebuilt session must be alive")
+end ShellSessionRestartSpec

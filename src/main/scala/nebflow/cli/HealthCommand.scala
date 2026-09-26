@@ -4,18 +4,19 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 
-/** `nebflow health` — 健康读数形态（三面：自身 / 网关 / 依赖）。
-  *
-  * 只读：只探端口、只发 GET、只读本机文件与进程表；不起停实例、不改任何状态。
-  * 三面各自独立成节：任一面不可读只降级该节并显式标出，不隐藏其余读数
-  * （fail-visible，不是 fail-silent ——「网关没起」本身就是要读出来的读数）。
-  *
-  * 退出码沿用 CliRouter 顶层已声明给脚本的既有约定
-  * （`Exit codes: 0 ok · 1 error · 2 unreachable/timeout`，CliRouter.scala:327）：
-  *   0 = ok        三面全绿
-  *   1 = degraded  网关可达但某面降级（依赖 DOWN / 自身门槛不过）
-  *   2 = down      网关 API 不可达（与既有 2 = unreachable 同义）
-  */
+/**
+ * `nebflow health` — 健康读数形态（三面：自身 / 网关 / 依赖）。
+ *
+ * 只读：只探端口、只发 GET、只读本机文件与进程表；不起停实例、不改任何状态。
+ * 三面各自独立成节：任一面不可读只降级该节并显式标出，不隐藏其余读数
+ * （fail-visible，不是 fail-silent ——「网关没起」本身就是要读出来的读数）。
+ *
+ * 退出码沿用 CliRouter 顶层已声明给脚本的既有约定
+ * （`Exit codes: 0 ok · 1 error · 2 unreachable/timeout`，CliRouter.scala:327）：
+ *   0 = ok        三面全绿
+ *   1 = degraded  网关可达但某面降级（依赖 DOWN / 自身门槛不过）
+ *   2 = down      网关 API 不可达（与既有 2 = unreachable 同义）
+ */
 object HealthCommand extends CliCommand:
   def name = "health"
   def description = "Show health readings (self / gateway / dependencies)"
@@ -28,8 +29,10 @@ object HealthCommand extends CliCommand:
   private[cli] val StatusDegraded = "degraded"
   private[cli] val StatusDown = "down"
 
-  /** Java 运行时门槛 21 —— 与 `nebflow doctor`（SystemCommands.scala DoctorRun
-    * 「--- 1. Java ---」节）同一常量、同一语义；本命令不新造第二套门槛。 */
+  /**
+   * Java 运行时门槛 21 —— 与 `nebflow doctor`（SystemCommands.scala DoctorRun
+   * 「--- 1. Java ---」节）同一常量、同一语义；本命令不新造第二套门槛。
+   */
   private[cli] val MinJavaMajor = 21
 
   /** `"23.0.1"` → 23；`"1.8.0_301"` → 1（老版本号形态自然落选，与 doctor 同法）。 */
@@ -39,17 +42,21 @@ object HealthCommand extends CliCommand:
 
   private[cli] def javaOk(version: String): Boolean = javaMajor(version) >= MinJavaMajor
 
-  /** provider 读数行：`/api/health` 的 `providers` 是 `{"<provider>/<model>":
-    * "up" | "down: <reason>"}`（RestApiRoutes.scala:71-97）。只有逐字 `up` 算健康
-    * —— 白名单式判定，新增状态不会被静默读成健康。 */
+  /**
+   * provider 读数行：`/api/health` 的 `providers` 是 `{"<provider>/<model>":
+   * "up" | "down: <reason>"}`（RestApiRoutes.scala:71-97）。只有逐字 `up` 算健康
+   * —— 白名单式判定，新增状态不会被静默读成健康。
+   */
   private[cli] def isProviderUp(state: String): Boolean = state.trim == "up"
 
-  /** 三面读数 → 总状态。判据显式列出，不隐式兜底：
-    *   - 网关 API 不可达 ⇒ down（依赖面此时本就不可读）
-    *   - 自身门槛不过 / 数据根不可写 / 任一 provider 非 up / search = down ⇒ degraded
-    *   - 其余 ⇒ ok
-    * 注：`search = unconfigured` **不算**降级（未配置是合法状态，不是故障）；
-    *     网关版本与 CLI 版本不一致只登记读数、不参与判定（热更新窗口的正常形态）。 */
+  /**
+   * 三面读数 → 总状态。判据显式列出，不隐式兜底：
+   *   - 网关 API 不可达 ⇒ down（依赖面此时本就不可读）
+   *   - 自身门槛不过 / 数据根不可写 / 任一 provider 非 up / search = down ⇒ degraded
+   *   - 其余 ⇒ ok
+   * 注：`search = unconfigured` **不算**降级（未配置是合法状态，不是故障）；
+   *     网关版本与 CLI 版本不一致只登记读数、不参与判定（热更新窗口的正常形态）。
+   */
   private[cli] def overallStatus(
     apiReachable: Boolean,
     selfOk: Boolean,
@@ -62,12 +69,14 @@ object HealthCommand extends CliCommand:
     else StatusOk
 
   private[cli] def exitCodeFor(status: String): Int = status match
-    case StatusOk       => 0
+    case StatusOk => 0
     case StatusDegraded => 1
-    case _              => 2
+    case _ => 2
 
-  /** `/api/health` 的 `providers` 对象 → 扁平 `Map[provider/model, state]`。
-    * 缺该键 / 形态不符 ⇒ 空表（读数面不猜，宁可空）。 */
+  /**
+   * `/api/health` 的 `providers` 对象 → 扁平 `Map[provider/model, state]`。
+   * 缺该键 / 形态不符 ⇒ 空表（读数面不猜，宁可空）。
+   */
   private[cli] def providerMap(health: Json): Map[String, String] =
     health.hcursor
       .downField("providers")
@@ -91,7 +100,7 @@ object HealthCommand extends CliCommand:
         clientOpt <- GatewayClient.create
         healthResp <- clientOpt match
           case Some(c) => c.get("/api/health").attempt
-          case None    => IO.pure(Left(new RuntimeException("gateway API not reachable")))
+          case None => IO.pure(Left(new RuntimeException("gateway API not reachable")))
       yield
         val pidOpt = ProcessManager.readPid()
         val pidRunning = pidOpt.exists(ProcessManager.isRunning)
@@ -126,8 +135,7 @@ object HealthCommand extends CliCommand:
               .map(v => s" · api $v" + (if v == cliVersion then "" else s" (cli $cliVersion)"))
               .getOrElse("")
             s"reachable ($who, port $port)$ver"
-          else if pidRunning then
-            s"pid file says running (pid ${pidOpt.get}, port $port) but the API is unreachable"
+          else if pidRunning then s"pid file says running (pid ${pidOpt.get}, port $port) but the API is unreachable"
           else s"not running (port $port)"
 
         val depsDetail =
@@ -184,6 +192,7 @@ object HealthCommand extends CliCommand:
             s"  ${mark(apiReachable && providersDown == 0 && searchStatus != "down")} deps     $depsDetail"
           )
           CliResult.Exit(exitCodeFor(status), lines.mkString("\n"))
+        end if
     end run
   end HealthShow
 end HealthCommand

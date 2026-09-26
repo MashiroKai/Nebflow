@@ -7,13 +7,13 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentEvent, AgentKind, messages, sessionId, status}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -41,18 +41,18 @@ import scala.concurrent.duration.*
  *    WS cancelled 帧（收殓原语本身零改动）
  *  - R4 窗口内禁 spawn（新会话 / 新后台任务各一次被拒读数）
  *  - R5 窗口撤销：带 destroyAt 的节点已非终态 ⇒ 扫描腿撤销窗口 + 解禁 spawn
-  *  - R6 FlowMapEventLog ts 求值时点（构造期 → 执行期修复的回归断言）
-  *  - R7 真实进程：窗口内进程仍在 → 到点被杀 + 会话条目释放
-  *  - R8（批 F1' 修复第 2 轮 = 复核 D1 根治）**归档 ↔ 销毁窗口交互**：归档资格与销毁
-  *    窗口**正交**——带未到期 `destroyAt` 的终态节点所在链**照常出库**（撤销 F1 的前置
-  *    拒收，恢复 `NodeDepsSpec.T4` / `NodeEdgeRepairSpec` 既有判据），而销毁扫描腿的
-  *    **双区读面**（活动区 ∪ 归档区）保证归档成员到点仍被收殓：进程被杀 + 任务注销 +
-  *    恰 1 条 `node-destroyed`；字段清除落在**归档副本**上（不复活进活动区）；
-  *    宿主重启的禁 spawn 表自愈源 = 归档副本。
-  *  - R9（批 D4 追认 + 断言）NodeCancel 腿**不登记**销毁窗口（行为契约断言；复核给出的
-  *    「即时收殓」理由经本批实测不成立 ⇒ 该腿实际无任何收殓路径，登记为 finding D4b
-  *    交作者裁定，读数打印在用例内不作断言）
-  */
+ *  - R6 FlowMapEventLog ts 求值时点（构造期 → 执行期修复的回归断言）
+ *  - R7 真实进程：窗口内进程仍在 → 到点被杀 + 会话条目释放
+ *  - R8（批 F1' 修复第 2 轮 = 复核 D1 根治）**归档 ↔ 销毁窗口交互**：归档资格与销毁
+ *    窗口**正交**——带未到期 `destroyAt` 的终态节点所在链**照常出库**（撤销 F1 的前置
+ *    拒收，恢复 `NodeDepsSpec.T4` / `NodeEdgeRepairSpec` 既有判据），而销毁扫描腿的
+ *    **双区读面**（活动区 ∪ 归档区）保证归档成员到点仍被收殓：进程被杀 + 任务注销 +
+ *    恰 1 条 `node-destroyed`；字段清除落在**归档副本**上（不复活进活动区）；
+ *    宿主重启的禁 spawn 表自愈源 = 归档副本。
+ *  - R9（批 D4 追认 + 断言）NodeCancel 腿**不登记**销毁窗口（行为契约断言；复核给出的
+ *    「即时收殓」理由经本批实测不成立 ⇒ 该腿实际无任何收殓路径，登记为 finding D4b
+ *    交作者裁定，读数打印在用例内不作断言）
+ */
 class NodeBgReclaimSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
@@ -63,14 +63,18 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"bg reclaim regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -78,71 +82,50 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     // 全局单例残留兜底：全量清空（防御——每个用例已各自 guarantee 清理）
     BgTaskRegistry.unregisterSession(None).attempt.void.unsafeRunSync()
 
-  /** 后台任务模拟 stub LLM：首轮请求时在 BgTaskRegistry 登记一个等待型任务。
-    * 登记 jobId/sessionId 记入 Ref 供 spec 断言与清理。 */
+  /**
+   * 后台任务模拟 stub LLM：首轮请求时在 BgTaskRegistry 登记一个等待型任务。
+   * 登记 jobId/sessionId 记入 Ref 供 spec 断言与清理。
+   */
   private class BgStubLlm:
     val jobIds: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        Stream.eval {
-          for
-            turn <- turnCount.updateAndGet(_ + 1)
-            _ <-
-              if turn == 1 then
-                Option(res) match
-                  case None => IO.raiseError(new RuntimeException("spec res not injected"))
-                  case Some(r) =>
-                    r.agentRegistry.get.flatMap { reg =>
-                      reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                        case Some(rec) =>
-                          val jobId = s"bg-reclaim-${java.util.UUID.randomUUID().toString.take(8)}"
-                          BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
-                            jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
-                        case None => IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
-                    }
-              else IO.unit
-          yield turn
-        }.flatMap { turn =>
-          val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
-          Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
-        }
+        Stream
+          .eval {
+            for
+              turn <- turnCount.updateAndGet(_ + 1)
+              _ <-
+                if turn == 1 then
+                  Option(res) match
+                    case None => IO.raiseError(new RuntimeException("spec res not injected"))
+                    case Some(r) =>
+                      r.agentRegistry.get.flatMap { reg =>
+                        reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
+                          case Some(rec) =>
+                            val jobId = s"bg-reclaim-${java.util.UUID.randomUUID().toString.take(8)}"
+                            BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
+                              jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
+                          case None =>
+                            IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
+                      }
+                else IO.unit
+            yield turn
+          }
+          .flatMap { turn =>
+            val text = req.messages.map(_.textContent).mkString("\n")
+            val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
+            Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
+          }
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
+  end BgStubLlm
 
   private def mountProject(
     name: String,
@@ -179,13 +162,18 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         // noderpt 批 B 段：销毁窗口接缝（压 0 = 窗口当期到点）。
         destroyWindowMs = Some(destroyWindowMs)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -198,9 +186,19 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String, res: SharedResources, system: ActorSystem): IO[Unit] =
+  private def createNode(
+    project: String,
+    ws: os.Path,
+    name: String,
+    task: String,
+    res: SharedResources,
+    system: ActorSystem
+  ): IO[Unit] =
     val ctx = ToolContext(
       projectRoot = ws.toString,
       sessionId = Some("spec-sid"),
@@ -209,20 +207,28 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       actorSystem = Some(system)
     )
     NodeEditTool
-      .call(nodeInput(project, name,
-        "description" -> Json.fromString("bg reclaim spec node"),
-        "task" -> Json.fromString(task),
-        "out" -> Json.fromString("Nebula")).asObject.get, ctx)
+      .call(
+        nodeInput(
+          project,
+          name,
+          "description" -> Json.fromString("bg reclaim spec node"),
+          "task" -> Json.fromString(task),
+          "out" -> Json.fromString("Nebula")
+        ).asObject.get,
+        ctx
+      )
       .map(_.left.map(_.message))
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
+
+  end createNode
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   /** 等节点 agent 回 Idle（turn 1 结束，bg 任务已登记、桥进入 hold），返回 nodeSessionId。 */
@@ -230,7 +236,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     def go(deadline: Long): IO[String] =
       res.agentRegistry.get.flatMap { reg =>
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == nebflow.agent.AgentStatus.Idle =>
+          case Some(rec) if rec.status == nebflow.actor.AgentStatus.Idle =>
             IO.pure(rec.sessionId)
           case _ =>
             if System.currentTimeMillis() >= deadline then
@@ -252,8 +258,8 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
   private def hasCancelledFrame(frames: List[Json], sessionId: String): Boolean =
     frames.exists { j =>
       j.hcursor.get[String]("type").contains("backgroundTaskUpdate") &&
-        j.hcursor.get[String]("status").contains("cancelled") &&
-        j.hcursor.get[String]("rootSessionId").contains("nebula-root")
+      j.hcursor.get[String]("status").contains("cancelled") &&
+      j.hcursor.get[String]("rootSessionId").contains("nebula-root")
     }
 
   /** 收殓帧计数（幂等断言用：窗口内必须 0 条、到点后恰 1 条/job、二次扫描不增）。 */
@@ -271,7 +277,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r1", ws, system, res, wsFrames)
@@ -282,8 +288,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       supRef = reg(nodeSid).supervisorRef
       // 模拟 TaskStuckWatcher giveUp / AgentControl cancel（supervisorRef Cancelled 同链）
       _ <- supRef.traverse_(sup => (sup ! AgentEvent.Cancelled(nodeSid, "stuck — cancelled by spec")).void)
-      _ <- waitUntil(20.seconds)(
-        byName(rt, "cancel-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- waitUntil(20.seconds)(byName(rt, "cancel-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "cancel-a")
       // ① 窗口刚开启的读数：任务**仍在册**（窗口内进程/任务照跑 = 作者裁定 (b) 的
       //    可取证窗口），且禁 spawn 表已登记该会话。
@@ -309,29 +314,49 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       assertEquals(done.status, NodeLifecycle.Cancelled, "bridge Cancelled must finalize node as cancelled")
       // 窗口登记（③ 只登记不杀进程）
       assert(done.destroyAt.isDefined, "terminal write must register a destroy window (destroyAt)")
-      assert(done.destroyAt.exists(_ <= System.currentTimeMillis()),
-        s"compressed window must already be due: ${done.destroyAt}")
+      assert(
+        done.destroyAt.exists(_ <= System.currentTimeMillis()),
+        s"compressed window must already be due: ${done.destroyAt}"
+      )
       assert(finalizedAt.isDefined, "the session must be in the spawn-ban ledger while the window is open")
-      assert(eventsInWindow.exists(l => l.contains("\"node-destroy-scheduled\"")),
-        s"node-destroy-scheduled audit expected: ${eventsInWindow.mkString("|").take(500)}")
-      assert(eventsInWindow.exists(l => l.contains("node-destroy-scheduled") && l.contains("cause: cancelled")),
-        s"the scheduled event must carry the terminal cause: ${eventsInWindow.mkString("|").take(500)}")
+      assert(
+        eventsInWindow.exists(l => l.contains("\"node-destroy-scheduled\"")),
+        s"node-destroy-scheduled audit expected: ${eventsInWindow.mkString("|").take(500)}"
+      )
+      assert(
+        eventsInWindow.exists(l => l.contains("node-destroy-scheduled") && l.contains("cause: cancelled")),
+        s"the scheduled event must carry the terminal cause: ${eventsInWindow.mkString("|").take(500)}"
+      )
       // 窗口内进程/任务照跑（= 可取证；未被即时收割）
       assert(tasksAliveInWindow, "inside the window the bg task MUST still be registered (read-only evidence window)")
-      assertEquals(cancelledFrameCount(framesInWindow), 0,
-        s"no reclaim frame may be sent inside the window: ${framesInWindow.map(_.noSpaces.take(80)).mkString("|")}")
+      assertEquals(
+        cancelledFrameCount(framesInWindow),
+        0,
+        s"no reclaim frame may be sent inside the window: ${framesInWindow.map(_.noSpaces.take(80)).mkString("|")}"
+      )
       // 到点收殓
       assert(tasksEmptyAfter, "the sweep must reclaim the bg task when the window expires")
       assert(afterSweep.destroyAt.isEmpty, "the sweeper must clear destroyAt after reclaiming")
-      assert(hasCancelledFrame(framesAfterSweep, nodeSid),
-        s"WS cancelled backgroundTaskUpdate frame expected after the sweep: ${framesAfterSweep.map(_.noSpaces.take(120)).mkString("|")}")
-      assert(eventsAfterSweep.exists(_.contains("\"node-destroyed\"")),
-        s"node-destroyed audit expected: ${eventsAfterSweep.mkString("|").take(500)}")
+      assert(
+        hasCancelledFrame(framesAfterSweep, nodeSid),
+        s"WS cancelled backgroundTaskUpdate frame expected after the sweep: ${framesAfterSweep.map(_.noSpaces.take(120)).mkString("|")}"
+      )
+      assert(
+        eventsAfterSweep.exists(_.contains("\"node-destroyed\"")),
+        s"node-destroyed audit expected: ${eventsAfterSweep.mkString("|").take(500)}"
+      )
       // 幂等
-      assertEquals(cancelledFrameCount(framesAfterSecond), cancelledFrameCount(framesAfterSweep),
-        "a second sweep must be a no-op (idempotent destruction)")
-      assertEquals(eventsAfterSecond.count(_.contains("\"node-destroyed\"")), 1,
-        "exactly one node-destroyed event may exist")
+      assertEquals(
+        cancelledFrameCount(framesAfterSecond),
+        cancelledFrameCount(framesAfterSweep),
+        "a second sweep must be a no-op (idempotent destruction)"
+      )
+      assertEquals(
+        eventsAfterSecond.count(_.contains("\"node-destroyed\"")),
+        1,
+        "exactly one node-destroyed event may exist"
+      )
+    end for
   }
 
   // ── R2 wait-cap failed → 窗口登记 + bgWait 清零（⑤）+ 到点收殓 ──────────
@@ -342,7 +367,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r2", ws, system, res, wsFrames, bgWaitCapMs = 1200L)
@@ -359,12 +384,15 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- createNode("bg-r2", ws, "cap-a", "result-CAP", res = res, system = system)
       nodeSid <- waitNodeIdle(res)
       _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid).map(!_))
-      _ <- waitUntil(20.seconds)(
-        byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       _ <- sampler.cancel
       sampleLog <- samples.get
-      _ <- IO(println(s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
-        s"(true=${sampleLog.count(_ == "true")}/$sampleLog.size polls @20ms)"))
+      _ <- IO(
+        println(
+          s"[R2 sample] hold-period bgWait observed=${sampleLog.contains("true")} " +
+            s"(true=${sampleLog.count(_ == "true")}/$sampleLog.size polls @20ms)"
+        )
+      )
       done <- byName(rt, "cap-a")
       _ <- rt.engine.sweepDestroyWindows()
       _ <- waitUntil(10.seconds)(sessionTasksEmpty(nodeSid)) // 收殓跑完
@@ -378,19 +406,32 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     yield
       assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
       assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
-      assert(sampleLog.contains("true"),
-        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})")
+      assert(
+        sampleLog.contains("true"),
+        s"the hold period must have set bgWait (sampled timeline: true=${sampleLog.count(_ == "true")}/${sampleLog.size})"
+      )
       // ⑤ 残留字段回归断言（实测 n-0931699e：status=completed 而 bgWait 非空）
-      assertEquals(afterSweep.bgWait, None,
-        "the bg-wait-cap exit must clear bgWait (regression: field used to linger forever)")
+      assertEquals(
+        afterSweep.bgWait,
+        None,
+        "the bg-wait-cap exit must clear bgWait (regression: field used to linger forever)"
+      )
       assertEquals(afterSweep.destroyAt, None, "the sweep cleared the window registration")
       assert(done.destroyAt.isDefined, "the failed terminal registered a destroy window")
       assert(tasksEmpty, "pending bg task must be reclaimed once the destroy window expires")
-      assert(events.exists(_.contains("\"node-destroy-scheduled\"")),
-        s"node-destroy-scheduled audit expected: ${events.mkString("|").take(400)}")
-      assert(events.exists(_.contains("\"node-destroyed\"")),
-        s"node-destroyed audit expected: ${events.mkString("|").take(400)}")
-      assert(hasCancelledFrame(frames, nodeSid), s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}")
+      assert(
+        events.exists(_.contains("\"node-destroy-scheduled\"")),
+        s"node-destroy-scheduled audit expected: ${events.mkString("|").take(400)}"
+      )
+      assert(
+        events.exists(_.contains("\"node-destroyed\"")),
+        s"node-destroyed audit expected: ${events.mkString("|").take(400)}"
+      )
+      assert(
+        hasCancelledFrame(frames, nodeSid),
+        s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}"
+      )
+    end for
   }
 
   // ── R3 reclaimSession 直接收殓（组成：registry 清空 + WS 帧）──
@@ -410,7 +451,10 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- shell.cancelBackgroundJob("r3-bg").attempt.void // 防御清理
     yield
       assertEquals(stillWaiting, Nil, "bg task must be cleared from registry after reclaimSession")
-      assert(hasCancelledFrame(frames, "r3-session"), s"WS cancelled frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}")
+      assert(
+        hasCancelledFrame(frames, "r3-session"),
+        s"WS cancelled frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}"
+      )
     ).guarantee(
       ShellSession.killSessionProcesses(Some("r3-session")).attempt.void *>
         ShellSession.destroySession("r3-session").attempt.void *>
@@ -438,12 +482,17 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- shell.cancelBackgroundJob("deny-probe-1").attempt.void
     yield
       assert(newSessionErr.isLeft, "creating a NEW session for a finalized sessionId must be rejected")
-      assert(newSessionErr.left.exists(_.getMessage.contains("read-only evidence window")),
-        s"the rejection must be self-describing: ${newSessionErr.left.map(_.getMessage)}")
+      assert(
+        newSessionErr.left.exists(_.getMessage.contains("read-only evidence window")),
+        s"the rejection must be self-describing: ${newSessionErr.left.map(_.getMessage)}"
+      )
       assert(bgErr.isLeft, "starting a NEW background task in the window must be rejected")
-      assert(bgErr.left.exists(_.getMessage.contains("new background tasks and new sessions are rejected")),
-        s"bg rejection message expected: ${bgErr.left.map(_.getMessage)}")
+      assert(
+        bgErr.left.exists(_.getMessage.contains("new background tasks and new sessions are rejected")),
+        s"bg rejection message expected: ${bgErr.left.map(_.getMessage)}"
+      )
       assertEquals(waiting, Nil, "the rejected spawn must not register anything")
+    end for
   }
 
   // ── R5 窗口撤销（节点已非终态 ⇒ 扫描腿撤销窗口 + 解禁 spawn）──────────────
@@ -455,17 +504,23 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val llm = BgStubLlm()
     val sid = s"withdraw-${scala.util.Random.nextInt(100000)}"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r5", ws, system, res, wsFrames, destroyWindowMs = 0L)
       // 直种不一致态：Running 节点却带着过期的 destroyAt（重激活后残留的极端形态）
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-r5" -> NodeDef(
-          id = "n-r5", name = "withdraw-probe", agent = "general",
-          status = NodeLifecycle.Running, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some(sid),
-          destroyAt = Some(System.currentTimeMillis() - 1000L))))
+        s.copy(nodes =
+          s.nodes + ("n-r5" -> NodeDef(
+            id = "n-r5",
+            name = "withdraw-probe",
+            agent = "general",
+            status = NodeLifecycle.Running,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sid),
+            destroyAt = Some(System.currentTimeMillis() - 1000L)
+          ))
+        )
       }
       _ <- BgTaskRegistry.markSessionFinalized(sid, System.currentTimeMillis() - 1000L)
       _ <- rt.engine.sweepDestroyWindows()
@@ -477,8 +532,11 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     yield
       assertEquals(after.destroyAt, None, "a non-terminal node must have its stale window cleared")
       assertEquals(finalized, None, "the spawn ban must be lifted when the window is withdrawn")
-      assert(events.exists(_.contains("\"node-destroy-withdrawn\"")),
-        s"node-destroy-withdrawn audit expected: ${events.mkString("|").take(400)}")
+      assert(
+        events.exists(_.contains("\"node-destroy-withdrawn\"")),
+        s"node-destroy-withdrawn audit expected: ${events.mkString("|").take(400)}"
+      )
+    end for
   }
 
   // ── R6 FlowMapEventLog ts 求值时点（构造期 → 执行期）──────────────────────
@@ -499,13 +557,18 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         .toOption
         .flatMap(_.hcursor.get[Long]("ts").toOption)
         .getOrElse(fail(s"ts field must be present: $raw"))
-      assert(ts >= execStart,
-        s"ts must be stamped at execution time (>= $execStart), got $ts (delta=${ts - execStart}ms) — construction-time stamping would be ~300ms earlier")
+      assert(
+        ts >= execStart,
+        s"ts must be stamped at execution time (>= $execStart), got $ts (delta=${ts - execStart}ms) — construction-time stamping would be ~300ms earlier"
+      )
+    end for
   }
 
   // ── R7 真实进程：窗口内进程仍在 → 到点被杀 + 会话条目释放 ────────────────
 
-  test("R7 window: a REAL background process survives the window, then the sweep kills it and releases the session entry") {
+  test(
+    "R7 window: a REAL background process survives the window, then the sweep kills it and releases the session entry"
+  ) {
     val ws = tempRoot / "ws-r7"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-r7-${scala.util.Random.nextInt(100000)}")
@@ -513,7 +576,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val sid = s"pid-probe-${scala.util.Random.nextInt(100000)}"
     val pidFile = tempRoot / s"r7-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r7", ws, system, res, wsFrames, destroyWindowMs = 0L)
       shell <- ShellSession.forSession(sid)
@@ -524,20 +587,25 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       pid <- IO.blocking(os.read(pidFile).trim.toLong)
       // 种一个「终态 + 窗口已到点」的节点（等价于终态时刻登记、此刻到点）
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-r7" -> NodeDef(
-          id = "n-r7", name = "pid-probe-node", agent = "general",
-          status = NodeLifecycle.Completed, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some(sid),
-          destroyAt = Some(System.currentTimeMillis() - 1L))))
+        s.copy(nodes =
+          s.nodes + ("n-r7" -> NodeDef(
+            id = "n-r7",
+            name = "pid-probe-node",
+            agent = "general",
+            status = NodeLifecycle.Completed,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sid),
+            destroyAt = Some(System.currentTimeMillis() - 1L)
+          ))
+        )
       }
       aliveInWindow <- IO(java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false))
       tasksInWindow <- BgTaskRegistry.waitingFor(sid)
       framesInWindow <- wsFrames.get
       // 到点
       _ <- rt.engine.sweepDestroyWindows()
-      _ <- waitUntil(15.seconds)(
-        IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))).attempt
+      _ <- waitUntil(15.seconds)(IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))).attempt
       dead <- IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))
       tasksAfter <- BgTaskRegistry.waitingFor(sid)
       framesAfter <- wsFrames.get
@@ -555,9 +623,12 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       assert(dead, s"the sweep must kill the real process tree (pid $pid is still alive)")
       assertEquals(tasksAfter, Nil, "the sweep must unregister the task")
       assertEquals(cancelledFrameCount(framesAfter), 1, "exactly one cancelled frame per reclaimed job")
-      assert(postForSession.isLeft,
-        s"the ShellSession entry must be released (a fresh forSession hits the finalized-session guard): $postForSession")
+      assert(
+        postForSession.isLeft,
+        s"the ShellSession entry must be released (a fresh forSession hits the finalized-session guard): $postForSession"
+      )
       assertEquals(after.destroyAt, None, "destroyAt cleared after the sweep")
+    end for
   }
 
   // ── R8 归档 ↔ 销毁窗口交互（批 F1' 修复第 2 轮 = 复核 D1 根治）──────────────────
@@ -574,7 +645,9 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
   //     上且不复活进活动区（第 ③ 段）。
   // 本用例按生产同拍顺序（销毁扫描 → 链级归档）连续多拍驱动。
 
-  test("R8 (F1'): a chain archived while a member's destroy window is open is STILL reclaimed at expiry (archive-zone sweep)") {
+  test(
+    "R8 (F1'): a chain archived while a member's destroy window is open is STILL reclaimed at expiry (archive-zone sweep)"
+  ) {
     val ws = tempRoot / "ws-r8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-r8-${scala.util.Random.nextInt(100000)}")
@@ -583,7 +656,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val jobId = "archive-probe-job"
     val pidFile = tempRoot / s"r8-$sid.pid"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       rt <- mountProject("bg-r8", ws, system, res, wsFrames, destroyWindowMs = 1_800_000L)
       shell <- ShellSession.forSession(sid)
@@ -594,11 +667,18 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       at = System.currentTimeMillis() + 1500L // 窗口**未到期**（= 生产 `scheduleDestroy` 刚登记的时刻）
       // 终态节点 + 未到期窗口（等价于终态登记后的下一拍）
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-r8" -> NodeDef(
-          id = "n-r8", name = "archive-probe-node", agent = "general",
-          status = NodeLifecycle.Completed, task = Some("probe"),
-          createdAt = System.currentTimeMillis(),
-          sessionRef = Some(sid), destroyAt = Some(at))))
+        s.copy(nodes =
+          s.nodes + ("n-r8" -> NodeDef(
+            id = "n-r8",
+            name = "archive-probe-node",
+            agent = "general",
+            status = NodeLifecycle.Completed,
+            task = Some("probe"),
+            createdAt = System.currentTimeMillis(),
+            sessionRef = Some(sid),
+            destroyAt = Some(at)
+          ))
+        )
       }
       _ <- BgTaskRegistry.markSessionFinalized(sid, at)
       // 生产 TtlTick 同拍顺序：销毁扫描（未到点 ⇒ 零动作）→ 链级归档 sweep。连续两拍。
@@ -617,8 +697,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       // 越过窗口到期：同一拍销毁扫描（**读归档区**）⇒ 收殓
       _ <- IO.sleep(1600.millis)
       _ <- rt.engine.sweepDestroyWindows()
-      _ <- waitUntil(15.seconds)(
-        IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))).attempt
+      _ <- waitUntil(15.seconds)(IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))).attempt
       dead <- IO(java.lang.ProcessHandle.of(pid).map(!_.isAlive).orElse(true))
       tasksAfter <- BgTaskRegistry.waitingFor(sid)
       activeAfter <- rt.store.snapshot.map(_.nodes.keySet.toList)
@@ -635,29 +714,46 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // ① 归档资格与窗口正交：窗口未到期**照常出库**（改前此处为红：F1 的拒收让链永不出库）
-      assert(swept1.exists(_.nodeIds.contains("n-r8")),
-        s"F1': an open destroy window must NOT block the chain sweep: $swept1")
+      assert(
+        swept1.exists(_.nodeIds.contains("n-r8")),
+        s"F1': an open destroy window must NOT block the chain sweep: $swept1"
+      )
       assertEquals(swept2, Nil, "already archived — the next tick must be empty")
-      assert(!activeWhileOpen.contains("n-r8"),
-        s"F1': the node must have left the active map once archived: $activeWhileOpen")
-      assert(archivedWhileOpen.nodes.contains("n-r8"),
-        "F1': the node must sit in the archive with its open window")
+      assert(
+        !activeWhileOpen.contains("n-r8"),
+        s"F1': the node must have left the active map once archived: $activeWhileOpen"
+      )
+      assert(archivedWhileOpen.nodes.contains("n-r8"), "F1': the node must sit in the archive with its open window")
       assert(aliveInWindow, s"inside the window the real process (pid $pid) must stay alive")
-      assertEquals(banRestored, Some(at),
-        s"F1': the spawn-ban self-heal must rebuild from the ARCHIVED copy (table was cleared): $banRestored")
+      assertEquals(
+        banRestored,
+        Some(at),
+        s"F1': the spawn-ban self-heal must rebuild from the ARCHIVED copy (table was cleared): $banRestored"
+      )
       // ② 归档区读面：到点仍被收殓（恰 1 条 node-destroyed）
       assert(dead, s"F1': the sweep must still kill the archived member's process at expiry (pid $pid is alive)")
       assertEquals(tasksAfter, Nil, "at expiry the bg task must be unregistered")
-      assertEquals(events.count(_.contains("\"node-destroyed\"")), 1,
-        s"exactly one node-destroyed event expected: ${events.mkString("|").take(600)}")
+      assertEquals(
+        events.count(_.contains("\"node-destroyed\"")),
+        1,
+        s"exactly one node-destroyed event expected: ${events.mkString("|").take(600)}"
+      )
       assert(hasCancelledFrame(frames, sid), "the reclaim must emit its WS cancelled frame")
-      assertEquals(eventsSecond.count(_.contains("\"node-destroyed\"")), 1,
-        "a second tick must be a no-op (idempotent destruction)")
+      assertEquals(
+        eventsSecond.count(_.contains("\"node-destroyed\"")),
+        1,
+        "a second tick must be a no-op (idempotent destruction)"
+      )
       // ③ 字段清在归档副本上 + 不复活进活动区
-      assert(archivedAfter.nodes.get("n-r8").exists(_.destroyAt.isEmpty),
-        s"the ARCHIVED copy must carry a cleared window: ${archivedAfter.nodes.get("n-r8").map(_.destroyAt)}")
-      assert(!activeAfter.contains("n-r8"),
-        s"clearing the window on the archived copy must NOT revive the node into the active map: $activeAfter")
+      assert(
+        archivedAfter.nodes.get("n-r8").exists(_.destroyAt.isEmpty),
+        s"the ARCHIVED copy must carry a cleared window: ${archivedAfter.nodes.get("n-r8").map(_.destroyAt)}"
+      )
+      assert(
+        !activeAfter.contains("n-r8"),
+        s"clearing the window on the archived copy must NOT revive the node into the active map: $activeAfter"
+      )
+    end for
   }
 
   // ── R9 NodeCancel 腿不登记销毁窗口（批 D4：偏差追认 + 覆盖空白补断言）──────────
@@ -685,7 +781,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-r9-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       // 腿 1 封存（生产 ① 口径）；腿 2 开（未申报 hold）⇒ 节点停在「Running + 活 fiber +
@@ -706,25 +802,41 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       finalized <- BgTaskRegistry.finalizedAt(sid)
       tasksAfter <- BgTaskRegistry.waitingFor(sid)
       events <- readEvents(ws)
-      _ <- IO(println(s"[R9 reading] NodeCancel leg: status=${done.status} destroyAt=${done.destroyAt} " +
-        s"spawnBanEntry=${finalized.isDefined} tasksStillRegistered=${tasksAfter.map(_.jobId)} " +
-        "— D4b: the queued Stop is dropped by the immediately-following system.stop(ref), so this leg " +
-        "reclaims nothing AND registers no window (open finding, reported for adjudication)"))
+      _ <- IO(
+        println(
+          s"[R9 reading] NodeCancel leg: status=${done.status} destroyAt=${done.destroyAt} " +
+            s"spawnBanEntry=${finalized.isDefined} tasksStillRegistered=${tasksAfter.map(_.jobId)} " +
+            "— D4b: the queued Stop is dropped by the immediately-following system.stop(ref), so this leg " +
+            "reclaims nothing AND registers no window (open finding, reported for adjudication)"
+        )
+      )
       _ <- BgTaskRegistry.unregisterSession(Some(sid)).attempt.void
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(held.status, NodeLifecycle.Running, "the held node must be Running with a live fiber before the cancel")
+      assertEquals(
+        held.status,
+        NodeLifecycle.Running,
+        "the held node must be Running with a live fiber before the cancel"
+      )
       assertEquals(done.status, NodeLifecycle.Cancelled, "the NodeCancel leg finalizes the node as cancelled")
-      assertEquals(done.destroyAt, None,
-        "D4: the NodeCancel leg must NOT register a destroy window (ratified deviation — asserted as-is)")
+      assertEquals(
+        done.destroyAt,
+        None,
+        "D4: the NodeCancel leg must NOT register a destroy window (ratified deviation — asserted as-is)"
+      )
       assertEquals(finalized, None, "D4: no spawn-ban ledger entry may be created for this leg")
-      assert(!events.exists(_.contains("\"node-destroy-scheduled\"")),
-        s"no destroy-scheduled event may exist for the NodeCancel leg: ${events.mkString("|").take(400)}")
-      assert(!events.exists(_.contains("\"node-destroyed\"")),
-        "no destroy-window sweep event may exist for this leg")
-      assertEquals(done.reportPendingSince, None,
-        "the NodeCancel terminal write point clears the pending clock (⑧-3 coverage, same as the other 6)")
+      assert(
+        !events.exists(_.contains("\"node-destroy-scheduled\"")),
+        s"no destroy-scheduled event may exist for the NodeCancel leg: ${events.mkString("|").take(400)}"
+      )
+      assert(!events.exists(_.contains("\"node-destroyed\"")), "no destroy-window sweep event may exist for this leg")
+      assertEquals(
+        done.reportPendingSince,
+        None,
+        "the NodeCancel terminal write point clears the pending clock (⑧-3 coverage, same as the other 6)"
+      )
       assertEquals(done.reportReminderCount, 0, "the rung counter is cleared with the clock")
+    end for
   }
 
 end NodeBgReclaimSpec

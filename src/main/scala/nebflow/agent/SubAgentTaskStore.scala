@@ -2,11 +2,11 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder}
-import io.circe.parser.decode
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.actor.status
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Persisted metadata for a sub-agent task (Delegate / SubTask).

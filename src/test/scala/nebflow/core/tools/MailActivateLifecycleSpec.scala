@@ -8,37 +8,37 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, messages, rootSessionId}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
 /**
-  * Lifecycle spec for Mail-activated team agents — the two deep follow-ups
-  * of the 2026-08-17 Teams ghost investigation:
-  *
-  * #2 respawn amnesia: MailTool.activateAgent used to spawn the actor with
-  * initialMessages = Nil even when the session had hundreds of persisted
-  * messages — every respawn was an amnesiac (turn counts reset, prior
-  * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
-  * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
-  * messages through the same pattern as activateAgent's fresh spawn /
-  * ensureRootAgent.
-  *
-  * #1 silent death + busy leak: Mail-spawned team agents lived outside
-  * FlowTreeActor's watch system, so their death left actorMap holding a
-  * dead ref (later Mails vanished), agentRegistry holding the record, and
-  * busyMap holding the last turn's busy flag — getActiveAgents then
-  * reported a running ghost. The fix spawns a death watcher that
-  * unregisters + clears busy + logs.
-  */
+ * Lifecycle spec for Mail-activated team agents — the two deep follow-ups
+ * of the 2026-08-17 Teams ghost investigation:
+ *
+ * #2 respawn amnesia: MailTool.activateAgent used to spawn the actor with
+ * initialMessages = Nil even when the session had hundreds of persisted
+ * messages — every respawn was an amnesiac (turn counts reset, prior
+ * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
+ * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
+ * messages through the same pattern as activateAgent's fresh spawn /
+ * ensureRootAgent.
+ *
+ * #1 silent death + busy leak: Mail-spawned team agents lived outside
+ * FlowTreeActor's watch system, so their death left actorMap holding a
+ * dead ref (later Mails vanished), agentRegistry holding the record, and
+ * busyMap holding the last turn's busy flag — getActiveAgents then
+ * reported a running ghost. The fix spawns a death watcher that
+ * unregisters + clears busy + logs.
+ */
 class MailActivateLifecycleSpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
@@ -53,20 +53,22 @@ class MailActivateLifecycleSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -98,11 +100,11 @@ class MailActivateLifecycleSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -230,7 +232,7 @@ class MailActivateLifecycleSpec extends FunSuite:
       // registerActor 4-arg (resumeInterruptedAgent path): the MANAGER branch
       // of parentForRecord — parent = mounting root.
       probeRef <- system.spawn(
-        Behaviors.receiveMessage[nebflow.agent.AgentCommand](_ => IO.pure(Behaviors.stopped)),
+        Behaviors.receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(Behaviors.stopped)),
         s"mgr-probe-${meta.id.take(6)}"
       )
       _ <- TeamSessionRegistry.registerActor("mgr-1", probeRef, resources, "root-1")

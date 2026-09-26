@@ -9,7 +9,7 @@ import ch.qos.logback.core.read.ListAppender
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
 import java.util.concurrent.Executors
@@ -43,8 +43,10 @@ class DeviceMailAckRaceSpec extends FunSuite:
 
   private val LogName = "nebflow.neblink.devicemail.ack"
 
-  /** munit 默认单测超时 30 s。本 spec 的判据**必须实测整个等待窗/TTL**（最长 = 新增⑤ 的
-    * `EarlyAckTtl`(30 s) + 2 s = 32 s）⇒ 抬到 75 s。仍远低于「挂死」量级，故守卫不放空。 */
+  /**
+   * munit 默认单测超时 30 s。本 spec 的判据**必须实测整个等待窗/TTL**（最长 = 新增⑤ 的
+   * `EarlyAckTtl`(30 s) + 2 s = 32 s）⇒ 抬到 75 s。仍远低于「挂死」量级，故守卫不放空。
+   */
   override def munitTimeout: Duration = 75.seconds
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-device-mail-race"

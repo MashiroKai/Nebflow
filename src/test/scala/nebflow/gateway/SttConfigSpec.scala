@@ -4,14 +4,16 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
-/** #295 STT 前端可配置——setSttConfig 校验/解析 + A2 部分更新 merge + 配置
-  * round-trip + serverConfig 脱敏。语义（2026-08-18 拍板 → 08-20 A2 对齐）：
-  * 字段省略=保留旧值（merge）、字段显式空=清除该字段、合并后空=删文件（回退
-  * 浏览器 Web Speech）、endpoint 设值须 http(s)://、apiKey 原样存（trim 粘贴
-  * 空格）、永不回传。旧「全空=清空 + 整文件替换」语义已废——它让二次保存
-  * （前端空 key 省略字段）覆盖丢失已存 apiKey（#295 A2 根因）。 */
+/**
+ * #295 STT 前端可配置——setSttConfig 校验/解析 + A2 部分更新 merge + 配置
+ * round-trip + serverConfig 脱敏。语义（2026-08-18 拍板 → 08-20 A2 对齐）：
+ * 字段省略=保留旧值（merge）、字段显式空=清除该字段、合并后空=删文件（回退
+ * 浏览器 Web Speech）、endpoint 设值须 http(s)://、apiKey 原样存（trim 粘贴
+ * 空格）、永不回传。旧「全空=清空 + 整文件替换」语义已废——它让二次保存
+ * （前端空 key 省略字段）覆盖丢失已存 apiKey（#295 A2 根因）。
+ */
 class SttConfigSpec extends FunSuite:
 
   private def cfg(json: String): io.circe.Json =
@@ -74,7 +76,10 @@ class SttConfigSpec extends FunSuite:
       None,
       patchOf("""{"endpoint":"https://stt.example.com/t","apiKey":"sk-first","model":"mock-asr"}""")
     )
-    assertEquals(merged, Some(cfg("""{"endpoint":"https://stt.example.com/t","apiKey":"sk-first","model":"mock-asr"}""")))
+    assertEquals(
+      merged,
+      Some(cfg("""{"endpoint":"https://stt.example.com/t","apiKey":"sk-first","model":"mock-asr"}"""))
+    )
   }
 
   test("mergeConfig A2-2 二次保存省略 apiKey（前端空 key 省略字段）：旧 key 保留——根因回归钉死") {
@@ -145,10 +150,12 @@ class SttConfigSpec extends FunSuite:
     os.makeDir.all(tmp)
     PathUtil.setDataRoot(tmp)
     try
-      val cfgJson = SttService.mergeConfig(
-        None,
-        patchOf("""{"endpoint":"https://stt.example.com/t","apiKey":"sk-rt-key","model":"mock-asr"}""")
-      ).get
+      val cfgJson = SttService
+        .mergeConfig(
+          None,
+          patchOf("""{"endpoint":"https://stt.example.com/t","apiKey":"sk-rt-key","model":"mock-asr"}""")
+        )
+        .get
       nebflow.core.AtomicJson.writeSync(SttService.configPath, cfgJson.noSpaces)
       // 热更路径：setSttConfig 写盘后 SttService.create() 重建
       SttService.create().unsafeRunSync() match
@@ -159,6 +166,7 @@ class SttConfigSpec extends FunSuite:
     finally
       PathUtil.setDataRoot(os.Path("/tmp"))
       os.remove.all(tmp)
+    end try
   }
 
   test("config round-trip: missing fields fall back to Defaults") {

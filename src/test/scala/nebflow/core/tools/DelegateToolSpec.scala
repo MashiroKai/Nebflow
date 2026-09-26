@@ -6,8 +6,9 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary, AgentStatus}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentDef, AgentStatus}
+import nebflow.agent.AgentLibrary
+import nebflow.shared.PathUtil
 
 /**
  * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：
@@ -37,9 +38,9 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   /** 写一个 agent 定义（默认写内核；`name` 可换以验证「目标恒为 kernel」）。 */
   private def writeAgent(
-      name: String = "kernel",
-      category: String = "standalone",
-      touchSystemMd: Boolean = true
+    name: String = "kernel",
+    category: String = "standalone",
+    touchSystemMd: Boolean = true
   ): Unit =
     val dir = agentsDir / name
     os.makeDir.all(dir)
@@ -55,6 +56,8 @@ class DelegateToolSpec extends CatsEffectSuite:
         .noSpaces
     )
     if touchSystemMd then os.write(dir / "system.md", s"You are $name.")
+
+  end writeAgent
 
   private def ctxWith(libOpt: Option[AgentLibrary] = Some(lib)): ToolContext =
     ToolContext(
@@ -117,7 +120,7 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(input, ctxWith())
     yield res match
       case Left(err) => assert(err.message.contains("Missing required parameter: task"), err.message)
-      case Right(v)  => fail(s"expected failure for empty task, got: $v")
+      case Right(v) => fail(s"expected failure for empty task, got: $v")
 
   test("kernel definition missing → self-describing error (no standalone catalog any more)"):
     for
@@ -150,7 +153,7 @@ class DelegateToolSpec extends CatsEffectSuite:
       res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "description" -> "x".asJson), ctxWith())
     yield res match
       case Left(err) => assert(err.message.contains("requires ActorSystem"), err.message)
-      case Right(v)  => fail(s"expected spawn-prerequisite failure, got: $v")
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
 
   test("depth limit still applies (kernel is a leaf, depth < MaxDepth required)"):
     for
@@ -163,7 +166,8 @@ class DelegateToolSpec extends CatsEffectSuite:
   // ---------- 3. R9 并发（U4=D1） ----------
 
   test("R9: the 5th concurrent call is rejected with the in-flight list (4 already in flight)"):
-    val three = (1 to 3).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
+    val three =
+      (1 to 3).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
     assert(DelegateTool.concurrencyError(three, now = 1000L).isEmpty, "3 in flight ⇒ the 4th call is admitted")
     val four = three :+ DelegateTool.InFlight("delegate-kernel-00000004", AgentStatus.Processing, 1000L)
     val err = DelegateTool.concurrencyError(four, now = 61_000L).getOrElse(fail("the 5th call must be rejected"))
@@ -173,7 +177,9 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   test("R9/U4=D1: sessions waiting for an answer count toward the limit and are flagged"):
     val waiting = DelegateTool.InFlight("delegate-kernel-wait0001", AgentStatus.WaitingForUser, 1000L)
-    val inFlight = waiting :: (2 to 4).toList.map(i => DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L))
+    val inFlight = waiting :: (2 to 4).toList.map(i =>
+      DelegateTool.InFlight(s"delegate-kernel-0000000$i", AgentStatus.Processing, 1000L)
+    )
     val err = DelegateTool.concurrencyError(inFlight, now = 5000L).getOrElse(fail("limit must be enforced"))
     assert(err.message.contains("delegate-kernel-wait0001"), err.message)
     assert(err.message.contains("WAITING for the user's answer"), err.message)
@@ -228,7 +234,11 @@ class DelegateToolSpec extends CatsEffectSuite:
     Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail").foreach { t =>
       assert(!face.contains(t), s"kernel must not hold: $t")
     }
-    assertEquals(nebflow.agent.AgentCore.fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")), face)
+    assertEquals(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "kernel", description = "", tools = Nil, systemPrompt = "")),
+      face
+    )
 
   test("kernel agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
     assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("kernel"))

@@ -6,13 +6,13 @@ import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -39,6 +39,7 @@ class CompletionGateSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -63,7 +64,8 @@ class CompletionGateSpec extends CatsEffectSuite:
   private def stubRunner(state: Ref[IO, StubGit]): CompletionGate.GitRunner = (_, args) =>
     args match
       case List("status", "--porcelain") =>
-        state.get.map(s => if s.statusFail then Left("stub status failure (exit=128)") else Right(s.status.mkString("\n")))
+        state.get
+          .map(s => if s.statusFail then Left("stub status failure (exit=128)") else Right(s.status.mkString("\n")))
       case List("rev-list", "--count", "main..HEAD") =>
         state.get.map(s => if s.aheadFail then Left("stub rev-list failure") else Right(s.ahead.toString))
       case other => IO.pure(Left(s"stub unexpected args: $other"))
@@ -74,8 +76,10 @@ class CompletionGateSpec extends CatsEffectSuite:
     os.makeDir.all(dir)
     dir
 
-  /** git 仓 workspace fixture：init + 身份 + 初始空提交（NodeEdit worktree=true
-    * 派生需至少一提交；NodeSchemaSlimSpec 同款）。 */
+  /**
+   * git 仓 workspace fixture：init + 身份 + 初始空提交（NodeEdit worktree=true
+   * 派生需至少一提交；NodeSchemaSlimSpec 同款）。
+   */
   private def gitWorkspace(name: String): os.Path =
     val ws = tempRoot / s"ws-$name"
     os.makeDir.all(ws)
@@ -87,46 +91,18 @@ class CompletionGateSpec extends CatsEffectSuite:
 
   private class FuncLlm(respond: String => IO[String]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -141,7 +117,7 @@ class CompletionGateSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -154,7 +130,10 @@ class CompletionGateSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountEngineOnly(
     name: String,
@@ -181,7 +160,12 @@ class CompletionGateSpec extends CatsEffectSuite:
         // pass/reject 分流，必须照常走到终态化。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield (rt, events)
@@ -189,7 +173,7 @@ class CompletionGateSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[NodeDef] =
@@ -199,15 +183,19 @@ class CompletionGateSpec extends CatsEffectSuite:
     waitUntil(20.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAuditTypes(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -223,7 +211,10 @@ class CompletionGateSpec extends CatsEffectSuite:
       verdict <- CompletionGate.check(ws.toString, Some("wt"), "ok", stubRunner(state))
     yield
       val p = verdict.asInstanceOf[CompletionGate.Pass]
-      assert(p.reason.contains("committed") && p.reason.contains("3"), s"reason must mark committed+ahead, got: ${p.reason}")
+      assert(
+        p.reason.contains("committed") && p.reason.contains("3"),
+        s"reason must mark committed+ahead, got: ${p.reason}"
+      )
   }
 
   test("gate 态b: dirty + commit-ready 标记变体 → Pass；「宿主落地命令」单独出现不构成申报（负控）") {
@@ -246,6 +237,7 @@ class CompletionGateSpec extends CatsEffectSuite:
       assert(r3.isInstanceOf[CompletionGate.Pass], s"'commit_ready' variant must pass, got: $r3")
       assert(r4.isInstanceOf[CompletionGate.Pass], s"'COMMITREADY' variant must pass, got: $r4")
       assert(r5.isInstanceOf[CompletionGate.Reject], s"宿主落地命令 alone must NOT pass, got: $r5")
+    end for
   }
 
   test("gate 态c: ahead=0 + clean → Pass(zero-change)；rev-list 失败按 0 仍 Pass") {
@@ -276,14 +268,21 @@ class CompletionGateSpec extends CatsEffectSuite:
       assertEquals(d.dirtyCount, 12)
       assertEquals(d.markerHit, false)
       assertEquals(d.statusSample.size, 10, "status 样本最多前 10 行")
-      assert(d.statusSample.head.contains("untracked-1"), s"sample carries porcelain lines, got: ${d.statusSample.head}")
+      assert(
+        d.statusSample.head.contains("untracked-1"),
+        s"sample carries porcelain lines, got: ${d.statusSample.head}"
+      )
       val fb = CompletionGate.feedback(d)
       assertEquals(fb.category, "artifact-residue")
       assert(fb.detail.contains("产物滞留未申报"), s"detail must carry 滞留标注, got: ${fb.detail}")
       assert(fb.detail.contains("领先 main 2 commit"), s"detail must carry ahead, got: ${fb.detail}")
       assert(fb.detail.contains("12 个未提交改动"), s"detail must carry dirty count, got: ${fb.detail}")
       assert(fb.detail.contains("markerHit=false"), s"detail must carry marker detection, got: ${fb.detail}")
-      assert(fb.suggestion.contains("commit-ready"), s"suggestion must teach the marker contract, got: ${fb.suggestion}")
+      assert(
+        fb.suggestion.contains("commit-ready"),
+        s"suggestion must teach the marker contract, got: ${fb.suggestion}"
+      )
+    end for
   }
 
   test("gate fail-open: runner 抛错 → 放行；git status 非零 → 放行") {
@@ -298,7 +297,10 @@ class CompletionGateSpec extends CatsEffectSuite:
       r2 <- CompletionGate.check(ws.toString, Some("wt"), "no marker", failing)
     yield
       assert(r1.isInstanceOf[CompletionGate.Pass], s"runner raise must fail-open, got: $r1")
-      assert(r1.asInstanceOf[CompletionGate.Pass].reason.contains("fail-open"), s"reason must mark fail-open, got: ${r1.asInstanceOf[CompletionGate.Pass].reason}")
+      assert(
+        r1.asInstanceOf[CompletionGate.Pass].reason.contains("fail-open"),
+        s"reason must mark fail-open, got: ${r1.asInstanceOf[CompletionGate.Pass].reason}"
+      )
       assert(r2.isInstanceOf[CompletionGate.Pass], s"git non-zero must fail-open, got: $r2")
   }
 
@@ -308,13 +310,24 @@ class CompletionGateSpec extends CatsEffectSuite:
     for
       r1 <- CompletionGate.check(ws.toString, None, "no marker", stubRunner(Ref.unsafe[IO, StubGit](StubGit())))
       // 目录缺失：resolveNodeProjectRoot 回退旧公式路径（不存在）→ skip
-      r2 <- CompletionGate.check(ws.toString, Some("no-such-wt"), "no marker", stubRunner(Ref.unsafe[IO, StubGit](StubGit())))
+      r2 <- CompletionGate.check(
+        ws.toString,
+        Some("no-such-wt"),
+        "no marker",
+        stubRunner(Ref.unsafe[IO, StubGit](StubGit()))
+      )
       // 损坏存储值（绝对路径）：归一化拒绝 → 解析回退 workspace 本体 → skip（防误检主仓）
-      r3 <- CompletionGate.check(ws.toString, Some("/elsewhere/evil"), "no marker", stubRunner(Ref.unsafe[IO, StubGit](StubGit())))
+      r3 <- CompletionGate.check(
+        ws.toString,
+        Some("/elsewhere/evil"),
+        "no marker",
+        stubRunner(Ref.unsafe[IO, StubGit](StubGit()))
+      )
     yield
       assert(r1.isInstanceOf[CompletionGate.Pass], s"no worktree must skip, got: $r1")
       assert(r2.isInstanceOf[CompletionGate.Pass], s"missing dir must skip, got: $r2")
       assert(r3.isInstanceOf[CompletionGate.Pass], s"corrupt value must skip, got: $r3")
+    end for
   }
 
   test("gate kill-switch: nebflow.completionGate.disabled=true → 脏且未申报照常放行") {
@@ -327,7 +340,10 @@ class CompletionGateSpec extends CatsEffectSuite:
       _ <- IO(java.lang.System.clearProperty("nebflow.completionGate.disabled"))
     yield
       assert(r.isInstanceOf[CompletionGate.Pass], s"kill-switch must bypass gate, got: $r")
-      assert(r.asInstanceOf[CompletionGate.Pass].reason.contains("kill-switch"), s"reason must mark kill-switch, got: ${r.asInstanceOf[CompletionGate.Pass].reason}")
+      assert(
+        r.asInstanceOf[CompletionGate.Pass].reason.contains("kill-switch"),
+        s"reason must mark kill-switch, got: ${r.asInstanceOf[CompletionGate.Pass].reason}"
+      )
   }
 
   // ── 真 git 集成（best effort：git 不可用时跳过断言，仅验证不崩）────────
@@ -369,20 +385,32 @@ class CompletionGateSpec extends CatsEffectSuite:
         }
         rIgnored <- checkReal("no marker")
       yield
-        assert(rClean.asInstanceOf[CompletionGate.Pass].reason.contains("committed"), s"clean+ahead1 → committed, got: $rClean")
+        assert(
+          rClean.asInstanceOf[CompletionGate.Pass].reason.contains("committed"),
+          s"clean+ahead1 → committed, got: $rClean"
+        )
         val rej = rDirty.asInstanceOf[CompletionGate.Reject]
         assertEquals(rej.diagnostic.dirtyCount, 1, "untracked u.txt must count dirty")
-        assert(rej.diagnostic.statusSample.exists(_.contains("u.txt")), s"sample must name the untracked file, got: ${rej.diagnostic.statusSample}")
+        assert(
+          rej.diagnostic.statusSample.exists(_.contains("u.txt")),
+          s"sample must name the untracked file, got: ${rej.diagnostic.statusSample}"
+        )
         assert(rMarked.isInstanceOf[CompletionGate.Pass], s"dirty+marker → pass, got: $rMarked")
-        assert(rIgnored.asInstanceOf[CompletionGate.Pass].reason.contains("committed"), s"gitignored file invisible → clean, got: $rIgnored")
-    else
-      IO(assert(true, "git unavailable — real-git integration skipped (best-effort 口径)"))
+        assert(
+          rIgnored.asInstanceOf[CompletionGate.Pass].reason.contains("committed"),
+          s"gitignored file invisible → clean, got: $rIgnored"
+        )
+      end for
+    else IO(assert(true, "git unavailable — real-git integration skipped (best-effort 口径)"))
+    end if
   }
 
   // ── 引擎级：completeNode 接线（stub runner 注入）────────────────────
 
-  /** 引擎场景基建：B wiring 种子 + A（worktree+out→B）经 NodeEdit 创建并驱动。
-    * 返回 (runtime, WS 事件, actor system——收尾 stopAll 用)。 */
+  /**
+   * 引擎场景基建：B wiring 种子 + A（worktree+out→B）经 NodeEdit 创建并驱动。
+   * 返回 (runtime, WS 事件, actor system——收尾 stopAll 用)。
+   */
   private def engineScenario(
     name: String,
     llm: FuncLlm,
@@ -391,22 +419,45 @@ class CompletionGateSpec extends CatsEffectSuite:
     val ws = gitWorkspace(name)
     val system = ActorSystem(s"gate-$name-${scala.util.Random.nextInt(100000)}")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       (rt, events) <- mountEngineOnly(name, ws, system, res, runner)
       ctx = mkCtx(res, system, ws.toString)
       // B（wiring，无 task）种子——A 的 out 投递断言点（NodeBlockedReentrySpec 同款）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-down-b" -> NodeDef(id = "n-down-b", name = "down-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
-      _ <- nodeEdit(nodeInput(name, "gate-a", "description" -> Json.fromString("gate scenario node"),
-        "task" -> Json.fromString("gate-scenario"), "worktree" -> Json.fromBoolean(true),
-        "out" -> Json.fromString("n-down-b")), ctx)
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-down-b" -> NodeDef(
+              id = "n-down-b",
+              name = "down-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          name,
+          "gate-a",
+          "description" -> Json.fromString("gate scenario node"),
+          "task" -> Json.fromString("gate-scenario"),
+          "worktree" -> Json.fromBoolean(true),
+          "out" -> Json.fromString("n-down-b")
+        ),
+        ctx
+      )
     yield (rt, events, system)
+    end for
+  end engineScenario
 
   private def stop(system: ActorSystem): IO[Unit] = system.stopAll.handleErrorWith(_ => IO.unit)
 
   test("engine ①: 态a（ahead≥1+干净）→ completed + 正常投递下游启动") {
-    val llm = new FuncLlm(text => if text.contains("gate-scenario") then IO.pure("done: committed everything") else IO.pure("ok-b"))
+    val llm = new FuncLlm(text =>
+      if text.contains("gate-scenario") then IO.pure("done: committed everything") else IO.pure("ok-b")
+    )
     for
       state <- Ref.of[IO, StubGit](StubGit(status = Nil, ahead = 2))
       (rt, events, system) <- engineScenario("eng-a", llm, stubRunner(state))
@@ -419,15 +470,27 @@ class CompletionGateSpec extends CatsEffectSuite:
       evs <- events.get
       _ <- stop(system)
     yield
-      assert(inputs.exists(_.contains("=== Node gate-a ===")), s"downstream must receive delivered result, got: ${inputs.map(_.take(80))}")
-      assert(evs.exists((t, id, p) => t == "nodeCompleted" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Completed)),
-        "completed must emit nodeCompleted")
+      assert(
+        inputs.exists(_.contains("=== Node gate-a ===")),
+        s"downstream must receive delivered result, got: ${inputs.map(_.take(80))}"
+      )
+      assert(
+        evs.exists((t, id, p) =>
+          t == "nodeCompleted" && id == aId && p.hcursor
+            .get[String]("status")
+            .toOption
+            .contains(NodeLifecycle.Completed)
+        ),
+        "completed must emit nodeCompleted"
+      )
+    end for
   }
 
   test("engine ②: 态b（脏 + 结果申报 commit-ready）→ completed 正常投递") {
     val llm = new FuncLlm(text =>
       if text.contains("gate-scenario") then IO.pure("沙箱 EPERM 无法 git commit；产出已落 worktree，报告 commit-ready，待宿主落地命令。")
-      else IO.pure("ok-b"))
+      else IO.pure("ok-b")
+    )
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M spec.md", "?? report.md"), ahead = 0))
       (rt, events, system) <- engineScenario("eng-b", llm, stubRunner(state))
@@ -452,13 +515,17 @@ class CompletionGateSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds) {
         rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).flatMap {
           case Some(n) => IO.pure(n.status == NodeLifecycle.Blocked || n.status == NodeLifecycle.Completed)
-          case None    => IO.pure(false)
+          case None => IO.pure(false)
         }
       }
       _ <- rt.store.snapshot.map(_.nodes.values.find(_.name == "gate-a")).map {
-        case Some(n) => assertEquals(n.status, NodeLifecycle.Blocked,
-          s"dirty undeclared must block, not complete (gate mutation red = here; feedback=${n.blockedFeedback}, result=${n.result.map(_.take(80))})")
-        case None    => fail("A must exist")
+        case Some(n) =>
+          assertEquals(
+            n.status,
+            NodeLifecycle.Blocked,
+            s"dirty undeclared must block, not complete (gate mutation red = here; feedback=${n.blockedFeedback}, result=${n.result.map(_.take(80))})"
+          )
+        case None => fail("A must exist")
       }
       _ <- IO.sleep(300.millis) // 给「假如误投递」留窗口
       aId <- idOf(rt, "gate-a")
@@ -472,39 +539,64 @@ class CompletionGateSpec extends CatsEffectSuite:
       // 终态形态：blocked（复用 BLOCKED 反馈协议）
       assertEquals(a.status, NodeLifecycle.Blocked, "dirty undeclared must block, not complete")
       assertEquals(a.blockedFeedback.map(_.category), Some("artifact-residue"))
-      assert(a.blockedFeedback.exists(_.detail.contains("产物滞留未申报")), s"feedback must carry 滞留标注, got: ${a.blockedFeedback}")
-      assert(a.blockedFeedback.exists(_.detail.contains("2 个未提交改动")), s"feedback must carry dirty count, got: ${a.blockedFeedback}")
-      assert(a.blockedFeedback.exists(_.detail.contains("领先 main 1 commit")), s"feedback must carry ahead, got: ${a.blockedFeedback}")
-      assert(a.blockedFeedback.exists(_.suggestion.contains("commit-ready")), s"suggestion must teach marker contract, got: ${a.blockedFeedback}")
-      assert(a.result.exists(_.startsWith("[blocked:artifact-residue]")), s"result is rendered feedback string, got: ${a.result}")
+      assert(
+        a.blockedFeedback.exists(_.detail.contains("产物滞留未申报")),
+        s"feedback must carry 滞留标注, got: ${a.blockedFeedback}"
+      )
+      assert(
+        a.blockedFeedback.exists(_.detail.contains("2 个未提交改动")),
+        s"feedback must carry dirty count, got: ${a.blockedFeedback}"
+      )
+      assert(
+        a.blockedFeedback.exists(_.detail.contains("领先 main 1 commit")),
+        s"feedback must carry ahead, got: ${a.blockedFeedback}"
+      )
+      assert(
+        a.blockedFeedback.exists(_.suggestion.contains("commit-ready")),
+        s"suggestion must teach marker contract, got: ${a.blockedFeedback}"
+      )
+      assert(
+        a.result.exists(_.startsWith("[blocked:artifact-residue]")),
+        s"result is rendered feedback string, got: ${a.result}"
+      )
       // U6/F（2026-09-11，数据丢失类）：闸门 Reject 不得吃掉节点结论文本——旧口径
       // `blockedNode(nodeId, feedback(diag))` 整段替换（今日实测 24 分钟复核结论
       // 不可恢复）。改为并列落盘：反馈在前（保 BLOCKED 锚定），原结论文本以
       // [original-conclusion] 标记并列在后。
-      assert(a.result.exists(_.contains(CompletionGate.OriginalTextMarker)),
-        s"U6/F red: the gate Reject must keep the node's conclusion under the marker, got: ${a.result.map(_.take(400))}")
-      assert(a.result.exists { r =>
-        val i = r.indexOf(CompletionGate.OriginalTextMarker)
-        i >= 0 && r.substring(i + CompletionGate.OriginalTextMarker.length).contains("ok-done")
-      }, s"U6/F red: the original conclusion text must survive the Reject (retrieval = everything after the marker), got: ${a.result.map(_.take(400))}")
+      assert(
+        a.result.exists(_.contains(CompletionGate.OriginalTextMarker)),
+        s"U6/F red: the gate Reject must keep the node's conclusion under the marker, got: ${a.result.map(_.take(400))}"
+      )
+      assert(
+        a.result.exists { r =>
+          val i = r.indexOf(CompletionGate.OriginalTextMarker)
+          i >= 0 && r.substring(i + CompletionGate.OriginalTextMarker.length).contains("ok-done")
+        },
+        s"U6/F red: the original conclusion text must survive the Reject (retrieval = everything after the marker), got: ${a.result.map(_.take(400))}"
+      )
       // 不走 out 投递、结果不丢弃（作者规格）
       assertEquals(b.status, NodeLifecycle.Wiring, "downstream must NOT be settled by gate-blocked")
       assertEquals(b.deliveredTo, Nil, "no delivery to out target")
       assert(!inputs.exists(_.contains("=== Node gate-a ===")), "result string must never be delivered downstream")
       // WS：nodeUpdated（无新事件类型），无 nodeCompleted
       assert(!evs.exists((t, id, _) => t == "nodeCompleted" && id == aId), "gate-blocked must NOT emit nodeCompleted")
-      assert(evs.exists((t, id, p) => t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)),
-        s"gate-blocked must emit nodeUpdated, got: ${evs.map((t, id, _) => (t, id))}")
+      assert(
+        evs.exists((t, id, p) =>
+          t == "nodeUpdated" && id == aId && p.hcursor.get[String]("status").toOption.contains(NodeLifecycle.Blocked)
+        ),
+        s"gate-blocked must emit nodeUpdated, got: ${evs.map((t, id, _) => (t, id))}"
+      )
       // 审计
       assert(audit.exists((t, id) => t == "blocked" && id == aId), s"blocked audit line must exist, got: $audit")
+    end for
   }
 
   test("engine ⑤: 自报 BLOCKED 优先于 gate（脏 worktree + BLOCKED 输出 → agent 的 category，非 artifact-residue）") {
     val llm = new FuncLlm(text =>
-      if text.contains("gate-scenario") then
-        IO.pure("""BLOCKED: 无法继续
+      if text.contains("gate-scenario") then IO.pure("""BLOCKED: 无法继续
 {"category":"task-underspecified","detail":"任务缺验收标准","suggestion":"补验收"}""")
-      else IO.pure("ok-b"))
+      else IO.pure("ok-b")
+    )
     for
       state <- Ref.of[IO, StubGit](StubGit(status = List("M x.scala"), ahead = 0))
       (rt, events, system) <- engineScenario("eng-blk-first", llm, stubRunner(state))
@@ -512,9 +604,11 @@ class CompletionGateSpec extends CatsEffectSuite:
       aId <- idOf(rt, "gate-a")
       a <- nodeById(rt, aId)
       _ <- stop(system)
-    yield
-      assertEquals(a.blockedFeedback.map(_.category), Some("task-underspecified"),
-        "agent-declared blocked must win over gate (gate 后置)")
+    yield assertEquals(
+      a.blockedFeedback.map(_.category),
+      Some("task-underspecified"),
+      "agent-declared blocked must win over gate (gate 后置)"
+    )
   }
 
   test("engine ⑧: kill-switch 生效于引擎（disabled → 脏未申报节点照常 completed）") {

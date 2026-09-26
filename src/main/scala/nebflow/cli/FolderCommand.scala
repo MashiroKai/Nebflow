@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.RootAgentIdentity
 
 object FolderCommand extends CliCommand:
   def name = "folder"
@@ -28,7 +29,7 @@ object FolderCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val agentName = ctx.args.getOrElse("agent", "Nebula")
+          val agentName = ctx.args.getOrElse("agent", RootAgentIdentity.Name)
           client
             .command(
               Json.obj(

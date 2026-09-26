@@ -24,9 +24,11 @@ object EphemeralAgentRunner:
     replyTo: ActorRef[AgentCommand],
     depth: Int,
     projectRoot: String,
-    /** Block 0 registration chain (supervision trio §B2): the caller's
-      * session (parent) and root (permission bucket). Absent → legacy
-      * self-anchored behavior. */
+    /**
+     * Block 0 registration chain (supervision trio §B2): the caller's
+     * session (parent) and root (permission bucket). Absent → legacy
+     * self-anchored behavior.
+     */
     callerSessionId: Option[String] = None,
     callerRootSessionId: Option[String] = None
   )
@@ -88,7 +90,9 @@ object EphemeralAgentRunner:
                     case SystemSignal.Terminated(_) =>
                       // agent 死了（AgentControl cancel 的 Stop / 任何未通知死亡）
                       // ——以 cancelled 完成 deferred，runner 走正常清理返回。
-                      resultDeferred.complete(Left("cancelled")).void
+                      resultDeferred
+                        .complete(Left("cancelled"))
+                        .void
                         .handleErrorWith(_ => IO.unit)
                         .as(Behaviors.stopped)
             )

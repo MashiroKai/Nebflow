@@ -28,37 +28,41 @@ case class SessionMeta(
   safetyMode: String = "auto-all",
   gitBranch: Option[String] = None,
   flowName: Option[String] = None,
-  /** **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键
-    * `compactThresholdRatio` 落 `<dataRoot>/sessions/_index.json`（与 `modelRef`
-    * 同处，`:13`）。`None` = 无覆盖 ⇒ 判定/上报走现值函数
-    * （[[nebflow.agent.CompactThresholdOverride]]，口径②）。
-    *
-    * 跨重启**保留**（作者卡答采纳设计 §9-O4(a)）：**不**照抄
-    * `clearAllSessionModels()` 的启动清零——比例是纯标量、无「旧配置快照」陈旧
-    * 风险；用户显式设定不应每次重启失效。老会话无该键 ⇒ Decoder 得 `None` ⇒
-    * 走现值函数（零格式迁移，向后兼容）。
-    *
-    * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
-    * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
-    * ⇒ 置末使既有位置调用逐字保持可编译。 */
+  /**
+   * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键
+   * `compactThresholdRatio` 落 `<dataRoot>/sessions/_index.json`（与 `modelRef`
+   * 同处，`:13`）。`None` = 无覆盖 ⇒ 判定/上报走现值函数
+   * （[[nebflow.agent.CompactThresholdOverride]]，口径②）。
+   *
+   * 跨重启**保留**（作者卡答采纳设计 §9-O4(a)）：**不**照抄
+   * `clearAllSessionModels()` 的启动清零——比例是纯标量、无「旧配置快照」陈旧
+   * 风险；用户显式设定不应每次重启失效。老会话无该键 ⇒ Decoder 得 `None` ⇒
+   * 走现值函数（零格式迁移，向后兼容）。
+   *
+   * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
+   * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
+   * ⇒ 置末使既有位置调用逐字保持可编译。
+   */
   compactThresholdRatio: Option[Double] = None
 )
 
 object SessionMeta:
 
-  /** 会话列表**出口**的权威 overlay（公共 helper 本体）；调用方经
-    * `SharedResources.overlaySessionList` 取全局档位后落到这里，全仓只此一处
-    * 构造这个 JSON。逐会话 `safetyMode` **显式写出**（三档值在 wire 上恒存在，
-    * 不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约），取值 = 有效档位
-    * = **应用级全局值**（permshield S1：已无会话覆盖面，故无 per-session 入参）。
-    *
-    * ⚠ 线上出口专用，**禁**用于 `SessionStore.saveIndex` 的落盘序列化（盘上零改动）。 */
+  /**
+   * 会话列表**出口**的权威 overlay（公共 helper 本体）；调用方经
+   * `SharedResources.overlaySessionList` 取全局档位后落到这里，全仓只此一处
+   * 构造这个 JSON。逐会话 `safetyMode` **显式写出**（三档值在 wire 上恒存在，
+   * 不再依赖 Encoder「= confirm-edits 时省略键」的隐式契约），取值 = 有效档位
+   * = **应用级全局值**（permshield S1：已无会话覆盖面，故无 per-session 入参）。
+   *
+   * ⚠ 线上出口专用，**禁**用于 `SessionStore.saveIndex` 的落盘序列化（盘上零改动）。
+   */
   def withEffectiveSafetyModes(
     sessions: List[SessionMeta],
-    global: nebflow.core.SafetyMode
+    global: String
   ): Json =
     import io.circe.syntax.*
-    val modeJson = nebflow.core.SafetyMode.toString(global).asJson
+    val modeJson = global.asJson
     sessions
       .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson
@@ -80,9 +84,7 @@ object SessionMeta:
     val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
     val withFlow = m.flowName.fold(withGit)(f => withGit.deepMerge(Json.obj("flowName" -> f.asJson)))
     val withRatio =
-      m.compactThresholdRatio.fold(withFlow)(r =>
-        withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson))
-      )
+      m.compactThresholdRatio.fold(withFlow)(r => withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson)))
     if m.bridges.nonEmpty then withRatio.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withRatio
   }
 

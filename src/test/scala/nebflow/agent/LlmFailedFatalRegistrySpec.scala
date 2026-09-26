@@ -9,44 +9,53 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus, LoopDetectedError, status}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.schedule.FreezeScheduleConfig
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
-/** F1 (2026-08-29, loop-detected report §4.1/§6): the LlmFailed FATAL path
-  * (LoopDetectedError — non-retryable, non-freezable) never wrote the
-  * agentRegistry back — the record stayed status=Processing (the crashed
-  * round's loop-counter touch was the last write), so TaskStuckWatcher
-  * flagged a zombie every 30s until a human restarted the actor (08-28:
-  * qa-frontend 609s / Backend 605s warning chains).
-  *
-  * Acceptance (binary, report §6-F1.1): after a fatal LlmFailed the registry
-  * record's status is NOT Processing.
-  */
+/**
+ * F1 (2026-08-29, loop-detected report §4.1/§6): the LlmFailed FATAL path
+ * (LoopDetectedError — non-retryable, non-freezable) never wrote the
+ * agentRegistry back — the record stayed status=Processing (the crashed
+ * round's loop-counter touch was the last write), so TaskStuckWatcher
+ * flagged a zombie every 30s until a human restarted the actor (08-28:
+ * qa-frontend 609s / Backend 605s warning chains).
+ *
+ * Acceptance (binary, report §6-F1.1): after a fatal LlmFailed the registry
+ * record's status is NOT Processing.
+ */
 class LlmFailedFatalRegistrySpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 90.seconds
 
   /** LLM that always dies with LoopDetectedError — the report's fatal shape. */
   private class LoopLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >>
-        Stream.eval(IO.raiseError(
-          new LoopDetectedError("loop-detected: same tool call repeated 61 rounds")
-        )).drain
+        Stream
+          .eval(
+            IO.raiseError(
+              new LoopDetectedError("loop-detected: same tool call repeated 61 rounds")
+            )
+          )
+          .drain
+
+  end LoopLlm
 
   private def mkResources(
     system: ActorSystem,
@@ -92,8 +101,7 @@ class LlmFailedFatalRegistrySpec extends CatsEffectSuite:
     cond.flatMap {
       case true => IO.unit
       case false =>
-        if System.currentTimeMillis() > deadlineMs then
-          IO.raiseError(new RuntimeException("waitUntil timeout"))
+        if System.currentTimeMillis() > deadlineMs then IO.raiseError(new RuntimeException("waitUntil timeout"))
         else IO.sleep(100.millis) *> waitUntil(deadlineMs)(cond)
     }
 
@@ -148,5 +156,6 @@ class LlmFailedFatalRegistrySpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 end LlmFailedFatalRegistrySpec

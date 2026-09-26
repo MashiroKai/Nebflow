@@ -7,37 +7,41 @@ import nebflow.neblink.FriendCodecs.given
 
 import scala.io.Source
 
-/** 批 D（agent 代发 footer 标识）**本支专属**断言 —— 病灶 = 读路径上三处
-  * 「白名单式字段枚举」把服务端已下发的 `origin` 抹掉：
-  *
-  *   ① 网关会话模型 `MessageSummary`（本仓 Scala）—— REST 出参经
-  *      `RestApiRoutes` 的 `_.asJson` **重编码** ⇒ 模型无该字段 = 前端永远拿不到；
-  *   ② 浏览器 `messages.js#frameMessage`（live 帧路径）—— 逐字段显式枚举 ⇒ 丢键；
-  *   ③ 浏览器 `messages.js` 的徽标可见性门 —— 修前 `out && isAgentSent(m)` 让
-  *      接收侧永不进入分支（作者裁定「双方可见」后放开）。
-  *
-  * 本件钉**本批新增面**：三态解码 / 加性编码（省键纪律）/ 出参键序 / 两侧手写
-  * codec 成对，以及三处读路径的**文本契约门**（源码级，语义谓词而非行号锚）。
-  *
-  * 渲染面（DOM 计数 / 文案 / 缓存两态 / P5 兜底方向）**不在本件**：那些是
-  * `scripts/verify-friendmsg-badge-render.mjs` 的判据（需真浏览器）。
-  * 与 `FriendMessageOriginSpec.scala`（r2 已改，本批**不动**）分工：那份钉**发送侧
-  * 置位**（`sendAsAgent → origin=Some("agent")` 上 wire），本件钉**读路径不丢字段**。 */
+/**
+ * 批 D（agent 代发 footer 标识）**本支专属**断言 —— 病灶 = 读路径上三处
+ * 「白名单式字段枚举」把服务端已下发的 `origin` 抹掉：
+ *
+ *   ① 网关会话模型 `MessageSummary`（本仓 Scala）—— REST 出参经
+ *      `RestApiRoutes` 的 `_.asJson` **重编码** ⇒ 模型无该字段 = 前端永远拿不到；
+ *   ② 浏览器 `messages.js#frameMessage`（live 帧路径）—— 逐字段显式枚举 ⇒ 丢键；
+ *   ③ 浏览器 `messages.js` 的徽标可见性门 —— 修前 `out && isAgentSent(m)` 让
+ *      接收侧永不进入分支（作者裁定「双方可见」后放开）。
+ *
+ * 本件钉**本批新增面**：三态解码 / 加性编码（省键纪律）/ 出参键序 / 两侧手写
+ * codec 成对，以及三处读路径的**文本契约门**（源码级，语义谓词而非行号锚）。
+ *
+ * 渲染面（DOM 计数 / 文案 / 缓存两态 / P5 兜底方向）**不在本件**：那些是
+ * `scripts/verify-friendmsg-badge-render.mjs` 的判据（需真浏览器）。
+ * 与 `FriendMessageOriginSpec.scala`（r2 已改，本批**不动**）分工：那份钉**发送侧
+ * 置位**（`sendAsAgent → origin=Some("agent")` 上 wire），本件钉**读路径不丢字段**。
+ */
 class FriendMessageFooterBadgeSpec extends FunSuite:
 
   private val repoRoot = os.pwd
 
   // ── 夹具 ────────────────────────────────────────────────
 
-  /** 完整 5 键旧形态 + 可注入的 origin 片段（缺键 / null / 取值三态）。
-    * 🔴 片段用**转义双引号**而非三引号字面量：`"""...agent""""` 形态（内容以 `"` 收尾
-    * 再紧跟三引号）在三引号词法下是**歧义面**，判据不该建在词法边角上。 */
+  /**
+   * 完整 5 键旧形态 + 可注入的 origin 片段（缺键 / null / 取值三态）。
+   * 🔴 片段用**转义双引号**而非三引号字面量：`"""...agent""""` 形态（内容以 `"` 收尾
+   * 再紧跟三引号）在三引号词法下是**歧义面**，判据不该建在词法边角上。
+   */
   private def raw(originFragment: String = ""): String =
     s"""{"id":7,"senderId":"u1","kind":"text","body":"hi","createdAt":1700000000$originFragment}"""
 
   private val FragAgent = ",\"origin\":\"agent\""
-  private val FragUser  = ",\"origin\":\"user\""
-  private val FragNull  = ",\"origin\":null"
+  private val FragUser = ",\"origin\":\"user\""
+  private val FragNull = ",\"origin\":null"
 
   private val Legacy5Key = """{"id":1,"senderId":"u1","kind":"text","body":"b","createdAt":1}"""
 
@@ -78,7 +82,7 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
 
   test("D-A5 出参键序：legacy 5 键不动，加性键 origin → attachments 追加在后") {
     val att = AttachmentSummary(id = "a1", name = "n.txt", size = 3L, sha256 = "aa", state = "ready", mime = None)
-    val j   = MessageSummary(2L, "u1", "text", "b", 2L, Some(List(att)), Some("agent")).asJson
+    val j = MessageSummary(2L, "u1", "text", "b", 2L, Some(List(att)), Some("agent")).asJson
     assertEquals(
       j.asObject.map(_.keys.toList),
       Some(List("id", "senderId", "kind", "body", "createdAt", "origin", "attachments")),
@@ -87,7 +91,7 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   }
 
   test("D-A6 往返：agent 来源消息 encode → decode 逐字段等价（两侧手写 codec 成对）") {
-    val m    = MessageSummary(3L, "u1", "text", "b", 3L, None, Some("agent"))
+    val m = MessageSummary(3L, "u1", "text", "b", 3L, None, Some("agent"))
     val back = parse(m.asJson.noSpaces).flatMap(_.as[MessageSummary])
     assertEquals(back, Right(m))
   }
@@ -113,8 +117,10 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
 
   private lazy val messagesJs: String = read("src/main/resources/web/js/messages.js")
 
-  /** 去掉**整行注释**（本文件注释极多且含 `:` / `{` / `//` 形态的引文，会污染
-    * 键集提取与守卫判读）。只丢注释行、不丢代码行 ⇒ 判据仍作用在真实代码上。 */
+  /**
+   * 去掉**整行注释**（本文件注释极多且含 `:` / `{` / `//` 形态的引文，会污染
+   * 键集提取与守卫判读）。只丢注释行、不丢代码行 ⇒ 判据仍作用在真实代码上。
+   */
   private def codeOnly(src: String): String =
     src.linesIterator
       .filterNot { l =>
@@ -126,12 +132,12 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   /** 取顶层 `function <name>(…)` 的函数体（花括号配平扫描）—— **不依赖行号**。 */
   private def functionBody(src: String, name: String): String =
     val marker = s"function $name("
-    val head   = src.indexOf(marker)
+    val head = src.indexOf(marker)
     assert(head >= 0, s"未找到顶层函数 $name（判据锚已漂移）")
     val open = src.indexOf('{', head)
     assert(open > head, s"$name 的函数体起始花括号未找到")
     var depth = 0
-    var i     = open
+    var i = open
     while i < src.length do
       src.charAt(i) match
         case '{' => depth += 1
@@ -141,6 +147,7 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
         case _ => ()
       i += 1
     fail(s"$name 的函数体花括号不配平（判据无法判读）")
+  end functionBody
 
   private lazy val code = codeOnly(messagesJs)
 
@@ -154,53 +161,59 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
     assert(bound.isDefined, s"origin 必须取自帧字段 p.origin（禁硬编码取值）。body=$body")
   }
 
-  /** 取 `if (…)` 的**守卫表达式**（括号配平扫描）。
-    * 🔴 朴素 `[^)]*` 会在 `isAgentSent(m)` 的**内层括号**处截断（实得
-    * `isAgentSent(m`）—— 本件初版的判据即栽在此处（同族缺陷：判据本身写错 ⇒ 假红/假绿）。 */
+  /**
+   * 取 `if (…)` 的**守卫表达式**（括号配平扫描）。
+   * 🔴 朴素 `[^)]*` 会在 `isAgentSent(m)` 的**内层括号**处截断（实得
+   * `isAgentSent(m`）—— 本件初版的判据即栽在此处（同族缺陷：判据本身写错 ⇒ 假红/假绿）。
+   */
   private def guardOf(stmt: String): String =
     val m = """if\s*\(""".r.findFirstMatchIn(stmt).getOrElse(fail(s"该语句缺 if 守卫：$stmt"))
     var depth = 1
-    var i     = m.end
+    var i = m.end
     while i < stmt.length && depth > 0 do
       stmt.charAt(i) match
         case '(' => depth += 1
         case ')' => depth -= 1
-        case _   => ()
+        case _ => ()
       i += 1
     assert(depth == 0, s"守卫括号不配平：$stmt")
     stmt.substring(m.end, i - 1)
 
-  /** 取**含徽标的 if 块**（守卫行 → 花括号配平收尾行），返回 (整块, 守卫行)。
-    *
-    * WHY（2026-09-16 specdrift 批 2 · C10）：JS 侧「守卫行 / 语句行 / 收尾行」是**三行**
-    * （`messages.js:1818 if (isAgentSent(m)) {` → `:1819 appendChild(badge)` → `:1820 }`），
-    * 单行定位器（`linesIterator.find`）只会捞到中间的 appendChild 行 ⇒ `guardOf` 报
-    * 「该语句缺 if 守卫」= **判据假红**（语义从未漂移）。
-    *
-    * 定位法**不依赖行号、也不依赖守卫与语句同行**：自徽标行向上找最近的 `if (` 开块行，
-    * 再向下配平花括号取整块 ⇒ 判据仍作用在**守卫表达式**上，语义与强度逐字不变。 */
+  /**
+   * 取**含徽标的 if 块**（守卫行 → 花括号配平收尾行），返回 (整块, 守卫行)。
+   *
+   * WHY（2026-09-16 specdrift 批 2 · C10）：JS 侧「守卫行 / 语句行 / 收尾行」是**三行**
+   * （`messages.js:1818 if (isAgentSent(m)) {` → `:1819 appendChild(badge)` → `:1820 }`），
+   * 单行定位器（`linesIterator.find`）只会捞到中间的 appendChild 行 ⇒ `guardOf` 报
+   * 「该语句缺 if 守卫」= **判据假红**（语义从未漂移）。
+   *
+   * 定位法**不依赖行号、也不依赖守卫与语句同行**：自徽标行向上找最近的 `if (` 开块行，
+   * 再向下配平花括号取整块 ⇒ 判据仍作用在**守卫表达式**上，语义与强度逐字不变。
+   */
   private def guardedBadgeBlock(src: String): (String, String) =
-    val lines   = src.linesIterator.toIndexedSeq
+    val lines = src.linesIterator.toIndexedSeq
     val badgeAt = lines.indexWhere(_.contains("fm-msg-agent-badge"))
     assert(badgeAt >= 0, "未找到徽标渲染语句（判据锚已漂移）")
     val guardAt = (badgeAt to 0 by -1)
       .find(i => """^\s*if\s*\(""".r.findFirstIn(lines(i)).isDefined)
       .getOrElse(fail(s"徽标语句之上无 if 守卫行（判据锚已漂移）：${lines(badgeAt)}"))
-    var depth  = 0
+    var depth = 0
     var opened = false
-    var end    = -1
-    var i      = guardAt
+    var end = -1
+    var i = guardAt
     while i < lines.length && end < 0 do
       lines(i).foreach { c =>
         c match
           case '{' => depth += 1; opened = true
           case '}' => depth -= 1
-          case _   => ()
+          case _ => ()
       }
       if opened && depth == 0 then end = i
       i += 1
     assert(end > guardAt, s"守卫块花括号不配平（判据无法判读）：${lines(guardAt)}")
     (lines.slice(guardAt, end + 1).mkString("\n"), lines(guardAt))
+
+  end guardedBadgeBlock
 
   test("D-B2 徽标可见性门 = isAgentSent(m)，`out` 不再是条件（作者裁「双方可见」）") {
     // 锚点迁移（C10）：定位面由「含徽标的**单行**」改为「含徽标的 **if 块**」——
@@ -240,3 +253,4 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
     assert(body.contains("conv.friend"), s"证据源须含 conv.friend.userId：$body")
     assert(body.contains("present"), s"缺席定义必须单点收敛为 present 谓词：$body")
   }
+end FriendMessageFooterBadgeSpec

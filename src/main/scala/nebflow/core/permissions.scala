@@ -3,6 +3,7 @@ package nebflow.core
 import cats.effect.IO
 import io.circe.JsonObject
 import nebflow.core.tools.BashTool
+import nebflow.shared.PathUtil
 
 // ============================================================
 // Safety modes — three trust levels controlled by the user
@@ -38,18 +39,20 @@ object SafetyMode:
     case AutoEdits => "auto-edits"
     case AutoAll => "auto-all"
 
-  /** wire 契约的**三档显式值域** —— 写入口（WS `setSafetyMode`、REST
-    * `PUT /api/safety/mode`）的白名单。写入口**不得**用 `fromString` 的静默兜底
-    * （`case _ => ConfirmEdits`）处理用户输入：那会把拼错/缺失的值悄悄变成最严档。
-    * 该兜底只保留给**配置文件**的"写了值却没写对"路径（见 `GlobalSafety` 三分支）。 */
+  /**
+   * wire 契约的**三档显式值域** —— 写入口（WS `setSafetyMode`、REST
+   * `PUT /api/safety/mode`）的白名单。写入口**不得**用 `fromString` 的静默兜底
+   * （`case _ => ConfirmEdits`）处理用户输入：那会把拼错/缺失的值悄悄变成最严档。
+   * 该兜底只保留给**配置文件**的"写了值却没写对"路径（见 `GlobalSafety` 三分支）。
+   */
   val wireValues: Set[String] = Set("confirm-edits", "auto-edits", "auto-all")
 
   /** 严格解析 wire 值：非三档显式值 ⇒ None（调用方回 400 / error 帧）。 */
   def fromWire(s: String): Option[SafetyMode] = s match
     case "confirm-edits" => Some(ConfirmEdits)
-    case "auto-edits"    => Some(AutoEdits)
-    case "auto-all"      => Some(AutoAll)
-    case _               => None
+    case "auto-edits" => Some(AutoEdits)
+    case "auto-all" => Some(AutoAll)
+    case _ => None
 
   given io.circe.Encoder[SafetyMode] =
     io.circe.Encoder.encodeString.contramap(toString)
@@ -78,9 +81,9 @@ object PermissionUpgrade:
   /** Parse an escalation request off a permission-card reply. */
   def parse(approved: Boolean, upgradeMode: Option[String]): Either[String, Option[SafetyMode]] =
     upgradeMode match
-      case None         => Right(None)
+      case None => Right(None)
       case Some("auto-edits") if approved => Right(Some(SafetyMode.AutoEdits))
-      case Some("auto-all")   if approved => Right(Some(SafetyMode.AutoAll))
+      case Some("auto-all") if approved => Right(Some(SafetyMode.AutoAll))
       case Some(raw) if !approved =>
         Left(s"upgradeMode '$raw' requires approved=true — deny replies must not carry an upgrade")
       case Some(other) => Left(s"unknown upgradeMode '$other' — valid targets: auto-edits, auto-all")

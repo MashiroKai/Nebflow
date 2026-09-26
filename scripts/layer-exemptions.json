@@ -1,0 +1,136 @@
+{
+  "_header": "Phase 5 解耦(行为保持重构,2026-09-25)。分层豁免基线:门禁断言『实测 (文件,目标包) 反向边集合 ⊆ 本基线』,基线只减不增;PR 减边须同步缩基线(node scripts/check-scala-layers.mjs --update 可重播种,既有 reason 按同 (from,to) 保留)。",
+  "generatedBy": "scripts/check-scala-layers.mjs --update",
+  "entries": [
+    {
+      "from": "src/main/scala/nebflow/actor/AgentCommand.scala",
+      "to": "core",
+      "reason": "严格DAG第②步遗留:协议面字段内联持有 core/llm 类型(LoopGuard.Counters/MailQueueItem/McpPermissionAnswer/ThinkingConfig/ReadTracker/FileHistory)——待类型下沉或端口化专项批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/actor/AgentEvent.scala",
+      "to": "core",
+      "reason": "严格DAG第②步遗留:协议面字段内联持有 core/llm 类型(LoopGuard.Counters/MailQueueItem/McpPermissionAnswer/ThinkingConfig/ReadTracker/FileHistory)——待类型下沉或端口化专项批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/actor/AgentState.scala",
+      "to": "core",
+      "reason": "严格DAG第②步遗留:协议面字段内联持有 core/llm 类型(LoopGuard.Counters/MailQueueItem/McpPermissionAnswer/ThinkingConfig/ReadTracker/FileHistory)——待类型下沉或端口化专项批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/compact/RootMemoryHook.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):RootAgentIdentity/MemoryHygieneSignal 身份与信号面残留(D 步已删其未消费的 SharedResources 形参)——单独批次"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/entity/FlowDagExecutor.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/EphemeralAgentRunner.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowDagRunner.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/flow/FlowTreeActor.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/node/NodeRunner.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/FreezeScheduler.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeCompletion.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/NodeEngine.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/project/ProjectActor.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/seed/SeedService.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/AgentControlTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/AskUserQuestionTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/BashTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/DelegateTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/FriendMessageTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/MailTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/PopTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/ProjectCreateTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/SubTaskTool.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/core/tools/types.scala",
+      "to": "agent",
+      "reason": "后续批次路径(Phase 5 D 步裁定):AgentCommand/AgentEvent/AgentDef 等协议面符号与 SharedResources 定位器用面残留——窄能力 trait(AgentRegistryPort/SubAgentTaskPort/SessionStorePort)已就位,按文件逐个迁移"
+    },
+    {
+      "from": "src/main/scala/nebflow/neblink/DeviceMailInbox.scala",
+      "to": "agent",
+      "reason": "校准豁免:与 agent→neblink(1 文件)互引,两侧同数,择 neblink 出向豁免;方向裁定属后续批次"
+    }
+  ]
+}

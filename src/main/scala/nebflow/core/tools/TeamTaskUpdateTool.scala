@@ -145,15 +145,18 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
           case Some(store) =>
             val scopeKey = TaskStore.teamScopeKey(teamName)
             val rawTaskId = input("taskId").flatMap(_.asString).getOrElse("").trim
-            if rawTaskId.isEmpty then
-              IO.pure(Left(ToolError("Missing required parameter: taskId")))
+            if rawTaskId.isEmpty then IO.pure(Left(ToolError("Missing required parameter: taskId")))
             else
               // Strict status parsing: the team matrix has exactly four states —
               // an unknown string is an error, NOT a silent no-op (TaskUpdate's
               // lenient parse would silently ignore a typo'd status).
               val statusOpt: Either[String, Option[TaskStatus]] = input("status").flatMap(_.asString) match
                 case None => Right(None)
-                case Some(s) => TeamStatuses.get(s).map(Some(_)).toRight(s"Invalid status for team task: '$s' (use pending | in_progress | completed | failed)")
+                case Some(s) =>
+                  TeamStatuses
+                    .get(s)
+                    .map(Some(_))
+                    .toRight(s"Invalid status for team task: '$s' (use pending | in_progress | completed | failed)")
               statusOpt match
                 case Left(err) => IO.pure(Left(ToolError(err)))
                 case Right(maybeStatus) =>
@@ -183,5 +186,7 @@ Set dependency:  {"taskId": "6", "addBlockedBy": ["7"]}"""
                       case e: IllegalStateException => IO.pure(Left(ToolError(e.getMessage)))
                       case e => IO.raiseError(e)
                     }
+              end match
+            end if
 
 end TeamTaskUpdateTool

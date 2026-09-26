@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 死日志门禁（v2，2026-09-10 收紧）：src/main 的 Scala 源码禁止 NebulaLogger 双包装形态。
+# 死日志门禁（v2，2026-09-10 收紧）：src/main 的 Scala 源码禁止 NebflowLogger 双包装形态。
 #
 # ── 病根 ────────────────────────────────────────────────────────────────
-# NebulaLogger 的 info/warn/error/debug 返回 IO[Unit]——再包一层
+# NebflowLogger 的 info/warn/error/debug 返回 IO[Unit]——再包一层
 # IO(...) / IO.delay(...) 得到 IO[IO[Unit]]，外层运行后内层被丢弃，
 # 日志永不执行（编译仍通过：期望型 Unit 处的值丢弃 / handleErrorWith 的
 # B 型擦除吞掉类型错位）。全部出现在错误恢复与看护路径 = 出问题时静默无日志。
@@ -23,15 +23,16 @@
 #   ① 多行形态：`IO.delay(` / `IO(` 之后换行再出现 logger 调用（v1 漏检）；
 #   ② 任意 logger 接收者：局部 val（如 shellLogger、lifecycleLog）、
 #      成员路径（如 SessionRecorder.logger）、内联链
-#      （NebflowLogger.forName("...").warn(...) / nebflow.core.NebflowLogger...）；
+#      （NebflowLogger.forName("...").warn(...) / nebflow.shared.NebflowLogger...）；
 #   ③ 三种 IO 构造子：`IO(`、`IO.delay(`、`IO.blocking(`（形参形态）。
 # 判定单元：被检出的 logger 调用必须是该 IO 构造子的**直接实参表达式**
 # （相对该括号深度 0，即中间不再嵌套任何括号）——这正是「内层 IO 被丢弃」的
 # 充要位置；同一括号内更深处的调用不属于本门禁（见「已知边界」）。
 #
 # ── 豁免（不报）──────────────────────────────────────────────────────
-#   - NebulaLogger 定义处：`class/object/trait NebflowLogger` 所在文件
-#     （内容判定）∪ src/main/scala/nebflow/core/logging.scala（路径判定）。
+#   - NebflowLogger 定义处：`class/object/trait NebflowLogger` 所在文件
+#     （内容判定）∪ src/main/scala/nebflow/shared/logging.scala（路径判定；2026-09-25
+#     Phase 5 上移自 core/logging.scala，转发桩不再需要路径豁免）。
 #     定义体内 `IO.delay(logger.info(...))` 的 `logger` 是 slf4j Logger（返回
 #     Unit），IO 包装是正确用法——不是死日志。
 #   - `*Sync(...)` 变体：info/warn/error/debug **Sync** 返回 Unit，
@@ -92,7 +93,7 @@ INLINE_RE = re.compile(
 IO_PAREN = ("IO(", "IO.delay(", "IO.blocking(")          # 形参形态 IO 构造子
 CONSUMED = re.compile(r"^\s*\.\s*(?:flatten|unsafeRunSync|unsafeRunAndForget)\s*\(")
 DEF_FILE = re.compile(r"\b(?:class|object|trait)\s+NebflowLogger\b")
-EXEMPT_PATHS = ("src/main/scala/nebflow/core/logging.scala",)
+EXEMPT_PATHS = ("src/main/scala/nebflow/shared/logging.scala",)
 
 
 def strip_source(text):
@@ -280,13 +281,13 @@ PY
 
 case "$RC" in
   0)
-    echo "✓ dead-logging gate clean: no NebulaLogger double-wrap under ${ROOTS[*]}"
+    echo "✓ dead-logging gate clean: no NebflowLogger double-wrap under ${ROOTS[*]}"
     ;;
   1)
-    echo "✗ dead-logging gate FAILED — NebulaLogger double-wrap (IO[IO[Unit]]) under ${ROOTS[*]}:"
+    echo "✗ dead-logging gate FAILED — NebflowLogger double-wrap (IO[IO[Unit]]) under ${ROOTS[*]}:"
     echo "$REPORT"
     echo ""
-    echo "NebulaLogger.info/warn/... already return IO[Unit] — wrapping them in"
+    echo "NebflowLogger.info/warn/... already return IO[Unit] — wrapping them in"
     echo "IO(...) / IO.delay(...) builds IO[IO[Unit]] and the inner IO is never"
     echo "run (dead log). Drop the outer wrapper and chain the call into the IO"
     echo "chain (*> / .as / handleErrorWith fallback), or use the *Sync variant"

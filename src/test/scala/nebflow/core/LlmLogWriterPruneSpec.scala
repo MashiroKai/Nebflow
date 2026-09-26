@@ -136,16 +136,34 @@ class LlmLogWriterPruneSpec extends FunSuite:
   test("negative control: referenced objects survive the sweep, unreferenced ones are removed"):
     val dir = tmpDir()
     writeFile(dir, "2026-08-24_full.jsonl", fullEntry("keep1") + fullEntry("keep2"))
-    for h <- List("sys-keep1", "tools-keep1", "m1-keep1", "m2-keep1", "sys-keep2", "tools-keep2",
-        "m1-keep2", "m2-keep2", "orphan1", "orphan2")
+    for h <- List(
+        "sys-keep1",
+        "tools-keep1",
+        "m1-keep1",
+        "m2-keep1",
+        "sys-keep2",
+        "tools-keep2",
+        "m1-keep2",
+        "m2-keep2",
+        "orphan1",
+        "orphan2"
+      )
     do touchObject(dir, h)
     val (st, complete) = LlmLogWriter.retentionRound(dir, "2026-08-21", fresh, 128L * 1024 * 1024)
     assert(complete)
     val left = objNames(dir).sorted
     assertEquals(
       left,
-      List("m1-keep1.json", "m1-keep2.json", "m2-keep1.json", "m2-keep2.json", "sys-keep1.json",
-        "sys-keep2.json", "tools-keep1.json", "tools-keep2.json"),
+      List(
+        "m1-keep1.json",
+        "m1-keep2.json",
+        "m2-keep1.json",
+        "m2-keep2.json",
+        "sys-keep1.json",
+        "sys-keep2.json",
+        "tools-keep1.json",
+        "tools-keep2.json"
+      ),
       "all 8 in-window referenced objects kept; both unreferenced objects swept"
     )
 

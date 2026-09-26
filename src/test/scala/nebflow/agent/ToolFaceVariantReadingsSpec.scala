@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.{AgentDef, depth, isDispatcher}
 import nebflow.core.tools.{AskUserQuestionTool, MailTool, NodeReportToolDef, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
@@ -18,6 +19,7 @@ import nebflow.shared.ToolDefinition
 class ToolFaceVariantReadingsSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:
+
     def allowed(
       defn: AgentDef,
       depth: Int,
@@ -53,6 +55,8 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
         projectBoardSession = projectBoardSession
       ).getOrElse(Nil)
 
+  end CoreProbe
+
   private def defNamed(name: String, category: String = "standalone"): AgentDef =
     AgentDef(name = name, description = "", tools = Nil, category = category)
 
@@ -79,7 +83,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
     val allowed = CoreProbe.allowed(defn, depth, flowNodeSession, projectBoardSession)
     ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowed.contains(td.name) then None
-      else if root && td.name == AskUserQuestionTool.Name then Some(AskUserQuestionTool.nebulaRootVariant(td))
+      else if root && td.name == AskUserQuestionTool.Name then Some(AskUserQuestionTool.rootVariant(td))
       else Some(td)
     }
 
@@ -123,7 +127,7 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
         val b = before.find(_.name == t.name).getOrElse(fail("改前面丢了目标工具")).description
         val variant =
           if t.name == "Mail" then
-            if t.description == MailTool.descriptionNebulaRoot then "Mail.descriptionNebulaRoot"
+            if t.description == MailTool.descriptionRoot then "Mail.descriptionNebulaRoot"
             else if t.description == MailTool.descriptionDispatcher then "Mail.descriptionDispatcher"
             else "Mail.descriptionBase(并集面)"
           else if t.description == NodeReportToolDef.descriptionTask then "NodeReport.descriptionTask"
@@ -134,19 +138,40 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
             s"before_desc_sha256=${sha(b)} after_desc_sha256=${sha(t.description)} " +
             s"before_desc_bytes=${b.getBytes("UTF-8").length} after_desc_bytes=${t.description.getBytes("UTF-8").length}"
         )
+      end for
+    end for
 
     p("== 基础变体（= 现状）与注册表的字节一致性 ==")
-    p(s"Mail.descriptionBase   sha256=${sha(MailTool.descriptionBase)} bytes=${MailTool.descriptionBase.getBytes("UTF-8").length}")
-    p(s"NodeReport.descriptionBase sha256=${sha(NodeReportToolDef.descriptionBase)} bytes=${NodeReportToolDef.descriptionBase.getBytes("UTF-8").length}")
-    p(s"Mail.descriptionNebulaRoot sha256=${sha(MailTool.descriptionNebulaRoot)} bytes=${MailTool.descriptionNebulaRoot.getBytes("UTF-8").length}")
-    p(s"Mail.descriptionDispatcher sha256=${sha(MailTool.descriptionDispatcher)} bytes=${MailTool.descriptionDispatcher.getBytes("UTF-8").length}")
-    p(s"NodeReport.descriptionTask sha256=${sha(NodeReportToolDef.descriptionTask)} bytes=${NodeReportToolDef.descriptionTask.getBytes("UTF-8").length}")
-    p(s"NodeReport.descriptionVerifier sha256=${sha(NodeReportToolDef.descriptionVerifier)} bytes=${NodeReportToolDef.descriptionVerifier.getBytes("UTF-8").length}")
-    p(s"registry Mail desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == "Mail").map(_.description).getOrElse(""))}")
-    p(s"registry NodeReport desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == NodeReportToolDef.Name).map(_.description).getOrElse(""))}")
+    p(
+      s"Mail.descriptionBase   sha256=${sha(MailTool.descriptionBase)} bytes=${MailTool.descriptionBase.getBytes("UTF-8").length}"
+    )
+    p(
+      s"NodeReport.descriptionBase sha256=${sha(NodeReportToolDef.descriptionBase)} bytes=${NodeReportToolDef.descriptionBase.getBytes("UTF-8").length}"
+    )
+    p(
+      s"Mail.descriptionNebulaRoot sha256=${sha(MailTool.descriptionRoot)} bytes=${MailTool.descriptionRoot.getBytes("UTF-8").length}"
+    )
+    p(
+      s"Mail.descriptionDispatcher sha256=${sha(MailTool.descriptionDispatcher)} bytes=${MailTool.descriptionDispatcher.getBytes("UTF-8").length}"
+    )
+    p(
+      s"NodeReport.descriptionTask sha256=${sha(NodeReportToolDef.descriptionTask)} bytes=${NodeReportToolDef.descriptionTask.getBytes("UTF-8").length}"
+    )
+    p(
+      s"NodeReport.descriptionVerifier sha256=${sha(NodeReportToolDef.descriptionVerifier)} bytes=${NodeReportToolDef.descriptionVerifier.getBytes("UTF-8").length}"
+    )
+    p(
+      s"registry Mail desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == "Mail").map(_.description).getOrElse(""))}"
+    )
+    p(
+      s"registry NodeReport desc sha256=${sha(ToolRegistry.ALL_TOOLS.find(_.name == NodeReportToolDef.Name).map(_.description).getOrElse(""))}"
+    )
 
     // 结构性结论的断言（读数矩阵本身的自洽性）
-    assertEquals(MailTool.descriptionBase, ToolRegistry.ALL_TOOLS.find(_.name == "Mail").map(_.description).getOrElse(""))
+    assertEquals(
+      MailTool.descriptionBase,
+      ToolRegistry.ALL_TOOLS.find(_.name == "Mail").map(_.description).getOrElse("")
+    )
     assert(payload(CoreProbe.face(defNamed("Nebula"), 0)).getBytes("UTF-8").length > 0)
   }
 end ToolFaceVariantReadingsSpec

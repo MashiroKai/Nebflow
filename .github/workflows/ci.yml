@@ -98,13 +98,13 @@ jobs:
 
   dead-logging-gate:
     name: Dead Logging Gate
-    # Fail-fast static gate: NebulaLogger double-wrap (IO(IO[Unit]) — inner
+    # Fail-fast static gate: NebflowLogger double-wrap (IO(IO[Unit]) — inner
     # log never runs; all known instances sat on error-recovery paths).
     # Same logic locally: bash scripts/check-dead-logging.sh
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check src/main for NebulaLogger double-wrap
+      - name: Check src/main for NebflowLogger double-wrap
         run: bash scripts/check-dead-logging.sh
 
   jdk-baseline-gate:
@@ -132,6 +132,50 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assert JDK 21 across every declaration surface (+ bytecode target below the floor)
         run: bash scripts/check-jdk-baseline.sh
+
+  lint:
+    name: Lint (scalafmt + scalafix)
+    # Format gate: `make lint` / `make check` existed but were never wired into
+    # CI — only -Xfatal-warnings compile was enforced. This job runs the same
+    # scalafmtCheckAll as the Makefile quality targets so a formatting
+    # regression fails the build instead of relying on contributor discipline.
+    # scalafix gate wired 2026-09-25: the 43 [DisableSyntax.return] violations
+    # were rewritten case-by-case (guard chains → Either/Option
+    # for-comprehensions with by-name guard helpers) and the residual
+    # OrganizeImports drift was auto-fixed with `sbt scalafix`, so
+    # `scalafix --check` now holds at green on this branch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: scalafmt + scalafix check
+        shell: bash
+        run: sbt scalafmtCheckAll "scalafix --check"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Scala layering gate (Phase 5 ratchet)
+        # Phase 5 分层门禁(2026-09-25):src/main/scala 的 (文件,目标包) 粒度
+        # 反向边集合 ⊆ scripts/layer-exemptions.json 基线,基线只减不增;
+        # shared/actor 底层零反向(现状已达成),豁免边出图后包图必须无环
+        # (Tarjan)。非纯 import 正则:含 Scala 3 通配/{A,B} import、剥注释与
+        # 字符串后的 FQN 裸引用(内插 ${...} 是代码,保留),否则会对
+        # core→gateway 的 FQN 用点报假绿。Exit 1 = 违规未豁免。
+        # Same logic locally: node scripts/check-scala-layers.mjs
+        run: node scripts/check-scala-layers.mjs
 
   compile:
     name: Compile (${{ matrix.os }})

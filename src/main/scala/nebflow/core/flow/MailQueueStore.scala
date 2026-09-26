@@ -1,11 +1,11 @@
 package nebflow.core.flow
 
-import nebflow.core.AtomicJson
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.AtomicJson
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Persistent FIFO queue for **legacy** queue-mode mails.
@@ -95,7 +95,7 @@ object MailQueueStore:
           if os.exists(file) then
             decode[List[MailQueueItem]](os.read(file)) match
               case Right(items) => items
-              case Left(_)      => Nil // corrupt file — start fresh
+              case Left(_) => Nil // corrupt file — start fresh
           else Nil
         val updated = current :+ item
         AtomicJson.writeSync(file, updated.asJson.noSpaces)

@@ -4,7 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Main CLI router. Parses arguments, discovers the command, and dispatches.
@@ -46,15 +46,16 @@ object CliRouter:
 
   end run
 
-  /** A13/V18: logback prints its own configuration-status dump to STDOUT while
-    * it initialises (44 `|-INFO in ch.qos.logback…` lines, triggered by the
-    * duplicate `logback.xml` on the classpath). That dump lands ahead of every
-    * machine-parsed response (`plugin add`, `skill audit`, `autostart status`).
-    * `logback.statusListenerClass` is read by logback at initialisation and no
-    * logger has been used yet on the CLI path, so setting it here is early
-    * enough to suppress the dump. Application logs are unaffected — the FILE
-    * appender still receives them.
-    */
+  /**
+   * A13/V18: logback prints its own configuration-status dump to STDOUT while
+   * it initialises (44 `|-INFO in ch.qos.logback…` lines, triggered by the
+   * duplicate `logback.xml` on the classpath). That dump lands ahead of every
+   * machine-parsed response (`plugin add`, `skill audit`, `autostart status`).
+   * `logback.statusListenerClass` is read by logback at initialisation and no
+   * logger has been used yet on the CLI path, so setting it here is early
+   * enough to suppress the dump. Application logs are unaffected — the FILE
+   * appender still receives them.
+   */
   private def quietLogbackStatus(): Unit =
     if sys.props.get("logback.statusListenerClass").isEmpty then
       sys.props("logback.statusListenerClass") = "ch.qos.logback.core.status.NopStatusListener"
@@ -91,12 +92,10 @@ object CliRouter:
           case Some(sub) =>
             // `--help` / `-h` anywhere in a subcommand's args shows that
             // command's help (and is never parsed as a parameter).
-            if rest.exists(a => a == "--help" || a == "-h") then
-              printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
+            if rest.exists(a => a == "--help" || a == "-h") then printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
             else executeSubcommand(cmd, sub, rest, jsonMode, quietMode)
           case None =>
-            if subName == "--help" || subName == "-h" then
-              printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
+            if subName == "--help" || subName == "-h" then printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
             else if acceptsLeadingPositional(cmd, subName) then
               // The default subcommand takes this token as data: a leading
               // flag (`nebflow run -p "task"`) or free text
@@ -107,10 +106,12 @@ object CliRouter:
               // the first subcommand (`session frobnicate` ran `session list`).
               IO.println(s"Unknown subcommand: $subName").as(ExitCode.Error)
 
-  /** Commands whose declared examples use a bare positional as data rather
-    * than a subcommand name (`chat`: "nebflow chat \"…\"" — ChatCommands.scala:14).
-    * Every other multi-subcommand command treats an unrecognised first token
-    * as an unknown subcommand (A12). */
+  /**
+   * Commands whose declared examples use a bare positional as data rather
+   * than a subcommand name (`chat`: "nebflow chat \"…\"" — ChatCommands.scala:14).
+   * Every other multi-subcommand command treats an unrecognised first token
+   * as an unknown subcommand (A12).
+   */
   private val PositionalFormCommands: Set[String] = Set("chat")
 
   private def acceptsLeadingPositional(cmd: CliCommand, token: String): Boolean =
@@ -197,13 +198,14 @@ object CliRouter:
 
   // ===== Arg parsing =====
 
-  /** Parse a flat list of args into (namedParams, positionalArgs).
-    *
-    * A12: returns Left on an unknown flag instead of silently storing it as a
-    * named parameter. Long flags (`--foo`) are always checked; single-dash
-    * short flags are checked only when alphabetic, so negative values and
-    * `-1`-style data stay positional.
-    */
+  /**
+   * Parse a flat list of args into (namedParams, positionalArgs).
+   *
+   * A12: returns Left on an unknown flag instead of silently storing it as a
+   * named parameter. Long flags (`--foo`) are always checked; single-dash
+   * short flags are checked only when alphabetic, so negative values and
+   * `-1`-style data stay positional.
+   */
   private[cli] def parseArgs(
     args: List[String],
     params: List[CliParam]
@@ -248,18 +250,19 @@ object CliRouter:
     end while
     unknown match
       case Some(flag) => Left(s"Unknown flag: $flag")
-      case None       => Right((named.toMap, positional.toList))
+      case None => Right((named.toMap, positional.toList))
   end parseArgs
 
-  /** Required params satisfied by a NAMED value or by a positional slot.
-    *
-    * A11: the old check was `missing.nonEmpty && positional.isEmpty`, so the
-    * presence of ANY positional exempted every required param — `ask "q"` never
-    * reported the missing `session`. Slots are assigned required-params-first,
-    * in declaration order, then to the remaining value params: that is the
-    * order the command bodies consume positionals in (`config set KEY VALUE`,
-    * `interrupt SESSION`, `memory set CONTENT`).
-    */
+  /**
+   * Required params satisfied by a NAMED value or by a positional slot.
+   *
+   * A11: the old check was `missing.nonEmpty && positional.isEmpty`, so the
+   * presence of ANY positional exempted every required param — `ask "q"` never
+   * reported the missing `session`. Slots are assigned required-params-first,
+   * in declaration order, then to the remaining value params: that is the
+   * order the command bodies consume positionals in (`config set KEY VALUE`,
+   * `interrupt SESSION`, `memory set CONTENT`).
+   */
   private[cli] def missingRequired(
     sub: CliSubcommand,
     named: Map[String, String],
@@ -269,34 +272,52 @@ object CliRouter:
     val slotOrder = valueParams.filter(_.required) ++ valueParams.filterNot(_.required)
     def satisfied(p: CliParam): Boolean =
       named.contains(p.name) ||
-        p.short.exists(s => named.contains(s.toString)) ||
-        { val idx = slotOrder.indexOf(p); idx >= 0 && idx < positional.size }
+        p.short.exists(s => named.contains(s.toString)) || {
+          val idx = slotOrder.indexOf(p); idx >= 0 && idx < positional.size
+        }
     sub.params.filter(_.required).filterNot(satisfied).map(_.name)
   end missingRequired
 
-  /** Single source of "this invocation needs no gateway" (A18 — the set used to
-    * be written out twice, at both the dispatch and the help site, and lacked
-    * `help`/`skill audit`). Keyed by (command, subcommand) because `skill` is
-    * mixed: `audit` is a local file scan (A14) while `list`/`run` are gateway
-    * calls.
-    */
+  /**
+   * Single source of "this invocation needs no gateway" (A18 — the set used to
+   * be written out twice, at both the dispatch and the help site, and lacked
+   * `help`/`skill audit`). Keyed by (command, subcommand) because `skill` is
+   * mixed: `audit` is a local file scan (A14) while `list`/`run` are gateway
+   * calls.
+   */
   private val OfflineCommands: Set[String] =
-    Set("version", "start", "stop", "status", "update", "doctor", "uninstall", "autostart", "help",
+    Set(
+      "version",
+      "start",
+      "stop",
+      "status",
+      "update",
+      "doctor",
+      "uninstall",
+      "autostart",
+      "help",
       // CLI 命令补全批（2026-09-20）：本机读数 / 本机取数 —— 网关不在时恰恰是它们
       // 最该可用的时候（health 的网关面与 logs 的取数面都自己探，不靠 ctx.client）。
-      "health", "logs")
+      "health",
+      "logs"
+    )
 
-  private val OfflineSubcommands: Set[(String, String)] = Set(("skill", "audit"),
+  private val OfflineSubcommands: Set[(String, String)] = Set(
+    ("skill", "audit"),
     // 只读、纯本机，不经网关：配置校验尤其必须在「网关起不来」时可用，否则
     // 配置坏掉的场景下校验器本身就不可达。沿用 T10 的同一分类机制（见
     // isOfflineCmd 注释），不新造第二套「可离线子命令」判据。
-    ("config", "path"), ("config", "validate"))
+    ("config", "path"),
+    ("config", "validate")
+  )
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =
     OfflineCommands.contains(cmdName) || OfflineSubcommands.contains((cmdName, subName))
 
-  /** Help grouping is per command: a command is listed on the offline face when
-    * any of its subcommands is offline (T10 — `skill audit` belongs there). */
+  /**
+   * Help grouping is per command: a command is listed on the offline face when
+   * any of its subcommands is offline (T10 — `skill audit` belongs there).
+   */
   private def isOfflineCmd(cmd: CliCommand): Boolean =
     OfflineCommands.contains(cmd.name) || cmd.subcommands.exists(sc => isOffline(cmd.name, sc.name))
 
@@ -358,9 +379,9 @@ object CliRouter:
       IO.println(s"${cmd.name} — ${cmd.description}") *>
         IO.println("") *> {
           cmd.subcommands.traverse_ { sc =>
-            val offlineMark = if isOffline(cmd.name, sc.name) && !OfflineCommands.contains(cmd.name) then
-              s" (no gateway needed)"
-            else ""
+            val offlineMark =
+              if isOffline(cmd.name, sc.name) && !OfflineCommands.contains(cmd.name) then s" (no gateway needed)"
+              else ""
             IO.println(s"  ${cmd.name} ${sc.name.padTo(16, ' ')}${sc.description}$offlineMark")
           }
         } *> {
@@ -379,8 +400,10 @@ object CliRouter:
           else IO.unit
         }
 
-  /** T5/T6 parameter line: `--session, -s   Session ID`, plus `(required)` for
-    * a missing mandatory param and `(default: X)` when one is declared. */
+  /**
+   * T5/T6 parameter line: `--session, -s   Session ID`, plus `(required)` for
+   * a missing mandatory param and `(default: X)` when one is declared.
+   */
   private[cli] def parameterLine(p: CliParam): String =
     val flag = "--" + p.name + p.short.fold("")(s => s", -$s")
     val annotations =

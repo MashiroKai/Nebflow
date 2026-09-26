@@ -4,36 +4,37 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Decoder
 import io.circe.parser.{decode, parse}
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.Base64
 
-/** O5 配套修法批（2026-09-11, o5fix）— device.json `logto` 块的「身份与 refresh 令牌
-  * 解耦」验收钉。
-  *
-  * 缺陷形态（O5 连带回归，独立复核 n-c77627a2 §2①）：O5 后 authorize 不再请求
-  * `offline_access` ⇒ `LogtoAuthCode.parseTokenResponse` 的 refreshToken 恒 None ⇒
-  * `NeblinkEnrollment.persist` 的 `logtoBlock = logtoRefresh.map(...)` 恒 None ⇒
-  * 「id_token 只在 logto 块内落盘」变成永不落盘 ⇒ `/api/neblink/status` 的
-  * `cred.flatMap(_.logto.flatMap(_.idToken))` 恒空 ⇒ 前端换账号记忆（neblink.js:133
-  * `if (loggedIn && device.email)`）全灭 + logout `id_token_hint` 恒缺。
-  *
-  * 本 spec 钉的契约（每条对应一个可二值读的断言）：
-  *  R1 身份面：无 refresh 令牌时必须能落盘 id_token，且**生产读者的取数表达式**
-  *     （`_.logto.flatMap(_.idToken)`）非空；
-  *  R2 文件形态：identity-only 块仍写出 `refreshToken` 键（空串 = 明确「无令牌」标记）
-  *     —— 该键的存在正是「旧 decoder 仍能读新文件」的前提；
-  *  R3 双向兼容读：pre-fix 的 `LogtoRefresh` / `DeviceCredential` decoder（要求
-  *     `refreshToken` 为 String）读新文件成功（旧读新）；新 decoder 读缺键块成功
-  *     （schema 可选读）；pre-O5 完整块读回两半（新读旧）；
-  *  R4 空块归一：既无 refresh 令牌又无 id_token 的 logto 对象不产生
-  *     `logto.isDefined` 的假信号。
-  *
-  * 红线：本 spec 只落临时 device.json 样本；样本里的 id_token 是**合成串**
-  * （非真实凭据），断言里不打印任何令牌值。
-  */
+/**
+ * O5 配套修法批（2026-09-11, o5fix）— device.json `logto` 块的「身份与 refresh 令牌
+ * 解耦」验收钉。
+ *
+ * 缺陷形态（O5 连带回归，独立复核 n-c77627a2 §2①）：O5 后 authorize 不再请求
+ * `offline_access` ⇒ `LogtoAuthCode.parseTokenResponse` 的 refreshToken 恒 None ⇒
+ * `NeblinkEnrollment.persist` 的 `logtoBlock = logtoRefresh.map(...)` 恒 None ⇒
+ * 「id_token 只在 logto 块内落盘」变成永不落盘 ⇒ `/api/neblink/status` 的
+ * `cred.flatMap(_.logto.flatMap(_.idToken))` 恒空 ⇒ 前端换账号记忆（neblink.js:133
+ * `if (loggedIn && device.email)`）全灭 + logout `id_token_hint` 恒缺。
+ *
+ * 本 spec 钉的契约（每条对应一个可二值读的断言）：
+ *  R1 身份面：无 refresh 令牌时必须能落盘 id_token，且**生产读者的取数表达式**
+ *     （`_.logto.flatMap(_.idToken)`）非空；
+ *  R2 文件形态：identity-only 块仍写出 `refreshToken` 键（空串 = 明确「无令牌」标记）
+ *     —— 该键的存在正是「旧 decoder 仍能读新文件」的前提；
+ *  R3 双向兼容读：pre-fix 的 `LogtoRefresh` / `DeviceCredential` decoder（要求
+ *     `refreshToken` 为 String）读新文件成功（旧读新）；新 decoder 读缺键块成功
+ *     （schema 可选读）；pre-O5 完整块读回两半（新读旧）；
+ *  R4 空块归一：既无 refresh 令牌又无 id_token 的 logto 对象不产生
+ *     `logto.isDefined` 的假信号。
+ *
+ * 红线：本 spec 只落临时 device.json 样本；样本里的 id_token 是**合成串**
+ * （非真实凭据），断言里不打印任何令牌值。
+ */
 class DeviceCredentialIdentitySpec extends FunSuite:
 
   private var tmpDir: java.nio.file.Path = null
@@ -93,24 +94,30 @@ class DeviceCredentialIdentitySpec extends FunSuite:
       networkId <- c.downField("networkId").as[String]
       deviceId <- c.downField("deviceId").as[String]
       deviceToken <- c.downField("deviceToken").as[String]
-      logto <- c.downField("logto").as[Option[LogtoRefresh]](
-        using Decoder.decodeOption(using preFixLogtoRefreshDecoder)
-      )
+      logto <- c
+        .downField("logto")
+        .as[Option[LogtoRefresh]](using
+          Decoder.decodeOption(using preFixLogtoRefreshDecoder)
+        )
     yield DeviceCredential(serverUrl, networkId, deviceId, deviceToken, logto)
   }
 
-  /** 「旧读者，但**不**要求被停写的 `deviceToken`」—— kaiauth 修法批 ②（2026-09-16）
-    * 之后反向兼容建模用：本批只停写该键，身份面/refresh 面的 schema 未动，故这是
-    * 「旧读者 × 新文件」唯一有意义的对照形态（见下面 R3 旧读新 的两段断言）。 */
+  /**
+   * 「旧读者，但**不**要求被停写的 `deviceToken`」—— kaiauth 修法批 ②（2026-09-16）
+   * 之后反向兼容建模用：本批只停写该键，身份面/refresh 面的 schema 未动，故这是
+   * 「旧读者 × 新文件」唯一有意义的对照形态（见下面 R3 旧读新 的两段断言）。
+   */
   private val preFixCredentialDecoderMinusRetiredToken: Decoder[DeviceCredential] =
     Decoder.instance { c =>
       for
         serverUrl <- c.downField("serverUrl").as[String]
         networkId <- c.downField("networkId").as[String]
         deviceId <- c.downField("deviceId").as[String]
-        logto <- c.downField("logto").as[Option[LogtoRefresh]](
-          using Decoder.decodeOption(using preFixLogtoRefreshDecoder)
-        )
+        logto <- c
+          .downField("logto")
+          .as[Option[LogtoRefresh]](using
+            Decoder.decodeOption(using preFixLogtoRefreshDecoder)
+          )
       yield DeviceCredential(serverUrl, networkId, deviceId, "", logto)
     }
 
@@ -186,7 +193,9 @@ class DeviceCredentialIdentitySpec extends FunSuite:
     DeviceCredential
       .save(baseCred(LogtoRefresh.of(None, Some(syntheticIdToken("stage2read@example.invalid")))))
       .unsafeRunSync()
-    val logtoJson = parse(rawOnDisk).toOption.get.hcursor.downField("logto").focus
+    val logtoJson = parse(rawOnDisk).toOption.get.hcursor
+      .downField("logto")
+      .focus
       .getOrElse(fail("logto block missing"))
     assert(preIdTokenLogtoRefreshDecoder.decodeJson(logtoJson).isRight)
   }

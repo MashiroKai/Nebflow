@@ -50,8 +50,10 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
       passback
     )
 
-  /** zhipu/GLM 形态的会话历史：assistant 消息无 thinking 块（OpenAI 协议
-    * adapter 序列化时丢弃）。 */
+  /**
+   * zhipu/GLM 形态的会话历史：assistant 消息无 thinking 块（OpenAI 协议
+   * adapter 序列化时丢弃）。
+   */
   private def historyWithoutThinking: List[Message] =
     List(
       Message(MessageRole.User, Left("hi")),
@@ -105,6 +107,7 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n",
@@ -115,8 +118,8 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
 
   /** mock：捕获出站请求 body（200 应答）。 */
   private def startCaptureMock(
-      port: Int,
-      captured: ConcurrentLinkedQueue[String]
+    port: Int,
+    captured: ConcurrentLinkedQueue[String]
   ): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)

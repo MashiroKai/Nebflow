@@ -24,7 +24,11 @@ class BashBackgroundHardTimeoutSpec extends CatsEffectSuite:
   override def munitIOTimeout: Duration = 90.seconds
 
   /** 轮询 background_job_id 直到完成（消费即移除）。 */
-  private def pollCompleted(shell: ShellSession, jobId: String, deadlineMs: Long): IO[Either[Throwable, ProcessResult]] =
+  private def pollCompleted(
+    shell: ShellSession,
+    jobId: String,
+    deadlineMs: Long
+  ): IO[Either[Throwable, ProcessResult]] =
     def loop: IO[Either[Throwable, ProcessResult]] =
       shell.getBackgroundResult(jobId).flatMap {
         case Some(res) => IO.pure(res)

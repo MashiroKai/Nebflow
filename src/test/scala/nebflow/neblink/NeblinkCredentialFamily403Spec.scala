@@ -7,25 +7,26 @@ import munit.CatsEffectSuite
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 
-/** kaiauth 修法批 ①（2026-09-16 作者「治本」已批）—— **凭据族 403 自愈腿**的真钉。
-  *
-  * 缺陷形态（诊断报告 §1-Q3 / §2 表 1）：修前 `reloginAllowed` 只认 `HTTP 401`，而服务端
-  * 「凭据被新注册覆盖 / 无凭据行」的踢出语义是 `POST /api/device/session` 的 **403**
-  * `{"error":"Invalid device credential"}`（跨仓只读 `neblink-server/src/routes.rs`：
-  * `check_device_credential` 非 Ok ⇒ `forbidden(...)`，`NoRow` 与 `Mismatch` 共用同一字面）
-  * ⇒ 该 403 **落不到任何自愈腿**，`reloginAllowed(...)` 恒 false ⇒ 每拍只剩
-  * `discover → login → 403`。**本钉的判据面 = 进出 hook 的次数**（真服务端语义用夹具复刻，
-  * 请求计数由夹具侧记，不读被测算内部字段）。
-  *
-  * 两侧各自独立（缺一即留盲区）：
-  *  - **纯判据层**：`reloginAllowed` 的（状态码 × 调用面 × budget）三维表；
-  *  - **全链层**：真 `NeblinkClient` + 真 HTTP 夹具，走 `doLoginUnparked` 的**未改动**
-  *    产品代码路径 —— 钉 hook 恰一次、重试的 `allowRelogin=false` 单发不变量、
-  *    以及「API 面业务 403 零触碰」（F2 类回归钉）。
-  *
-  * 边界（作者 2026-09-16 转达 · #685 待裁项① 销项）：**业务类 403 不再自动重登 = 预期
-  * 行为**（矩阵另一半 = devoscfix 批的 F-A 收窄），本批**不**把业务 403 纳入自愈。
-  */
+/**
+ * kaiauth 修法批 ①（2026-09-16 作者「治本」已批）—— **凭据族 403 自愈腿**的真钉。
+ *
+ * 缺陷形态（诊断报告 §1-Q3 / §2 表 1）：修前 `reloginAllowed` 只认 `HTTP 401`，而服务端
+ * 「凭据被新注册覆盖 / 无凭据行」的踢出语义是 `POST /api/device/session` 的 **403**
+ * `{"error":"Invalid device credential"}`（跨仓只读 `neblink-server/src/routes.rs`：
+ * `check_device_credential` 非 Ok ⇒ `forbidden(...)`，`NoRow` 与 `Mismatch` 共用同一字面）
+ * ⇒ 该 403 **落不到任何自愈腿**，`reloginAllowed(...)` 恒 false ⇒ 每拍只剩
+ * `discover → login → 403`。**本钉的判据面 = 进出 hook 的次数**（真服务端语义用夹具复刻，
+ * 请求计数由夹具侧记，不读被测算内部字段）。
+ *
+ * 两侧各自独立（缺一即留盲区）：
+ *  - **纯判据层**：`reloginAllowed` 的（状态码 × 调用面 × budget）三维表；
+ *  - **全链层**：真 `NeblinkClient` + 真 HTTP 夹具，走 `doLoginUnparked` 的**未改动**
+ *    产品代码路径 —— 钉 hook 恰一次、重试的 `allowRelogin=false` 单发不变量、
+ *    以及「API 面业务 403 零触碰」（F2 类回归钉）。
+ *
+ * 边界（作者 2026-09-16 转达 · #685 待裁项① 销项）：**业务类 403 不再自动重登 = 预期
+ * 行为**（矩阵另一半 = devoscfix 批的 F-A 收窄），本批**不**把业务 403 纳入自愈。
+ */
 class NeblinkCredentialFamily403Spec extends CatsEffectSuite:
 
   override def munitIOTimeout: Duration = 60.seconds
@@ -33,8 +34,10 @@ class NeblinkCredentialFamily403Spec extends CatsEffectSuite:
   private val Net = "qa-net"
   private val Dev = "qa-device-1"
 
-  /** 真服务端凭据族拒收原文（跨仓只读 `routes.rs`：403 + 该 JSON；客户端侧的
-    * `HTTP <code>: <body>` 折形与 `sendRequest` 逐字同形）。 */
+  /**
+   * 真服务端凭据族拒收原文（跨仓只读 `routes.rs`：403 + 该 JSON；客户端侧的
+   * `HTTP <code>: <body>` 折形与 `sendRequest` 逐字同形）。
+   */
   private val Credential403 = """HTTP 403: {"error":"Invalid device credential"}"""
 
   // ===== 层 1：纯判据三维表（状态码 × 调用面 × budget）=====
@@ -64,9 +67,8 @@ class NeblinkCredentialFamily403Spec extends CatsEffectSuite:
   }
 
   test("gate: 传输类失败（无 HTTP 前缀 / 5xx）在凭据腿也不通过") {
-    List("request timed out", "HTTP connect timed out", "Connection reset by peer", "HTTP 500: boom").foreach {
-      err =>
-        assert(!NeblinkClient.reloginAllowed(err, allowRelogin = true, credentialLeg = true), s"[$err]")
+    List("request timed out", "HTTP connect timed out", "Connection reset by peer", "HTTP 500: boom").foreach { err =>
+      assert(!NeblinkClient.reloginAllowed(err, allowRelogin = true, credentialLeg = true), s"[$err]")
     }
   }
 
@@ -148,12 +150,15 @@ class NeblinkCredentialFamily403Spec extends CatsEffectSuite:
   private val LoginOk =
     """{"token":"fresh-sess","networkId":"qa-net","deviceId":"qa-device-1","peers":[]}"""
 
-  /** API 面子类：`/api/device/session` 成功；其它（业务面）按注入的错误作答。
-    * 只替换 [[NeblinkClient.sendRequest]] 这一个既有桩点（与 `NeblinkClientSessionHealSpec`
-    * 同手法）⇒ `withSession` / `searchUser` 走**未改动的产品代码**。 */
+  /**
+   * API 面子类：`/api/device/session` 成功；其它（业务面）按注入的错误作答。
+   * 只替换 [[NeblinkClient.sendRequest]] 这一个既有桩点（与 `NeblinkClientSessionHealSpec`
+   * 同手法）⇒ `withSession` / `searchUser` 走**未改动的产品代码**。
+   */
   private final class ApiFaceStub(apiErr: String, hook: AtomicInteger):
     val logins = new AtomicInteger(0)
     val apiCalls = new AtomicInteger(0)
+
     val client: NeblinkClient = new NeblinkClient(
       NeblinkServerConfig(url = "http://127.0.0.1:1", networkId = Net, secret = "s", deviceToken = Some("stale")),
       1,
@@ -174,6 +179,8 @@ class NeblinkCredentialFamily403Spec extends CatsEffectSuite:
             apiCalls.incrementAndGet()
             Left(apiErr)
         }
+
+  end ApiFaceStub
 
   test("N2 chain: API 面业务 403 ⇒ 零 hook、零重登，错误原文如实透出") {
     val hooks = new AtomicInteger(0)

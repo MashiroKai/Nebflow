@@ -39,8 +39,10 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private val oneDelta =
     "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"
+
   private val restOfStream =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -49,12 +51,14 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
       "data: [DONE]\n\n"
     ).mkString
 
-  /** mode: "never" (accept, hold BEFORE response headers) / "ok" (full stream).
-    *
-    * "never" parks the fiber on the async response-header wait — a CANCELLABLE
-    * park, which the outer watchdog must kill within the window. (The
-    * non-cancellable body-read stall is deliberately NOT mocked here — see the
-    * boundary note below the tests.) */
+  /**
+   * mode: "never" (accept, hold BEFORE response headers) / "ok" (full stream).
+   *
+   * "never" parks the fiber on the async response-header wait — a CANCELLABLE
+   * park, which the outer watchdog must kill within the window. (The
+   * non-cancellable body-read stall is deliberately NOT mocked here — see the
+   * boundary note below the tests.)
+   */
   private def startMock(port: Int, mode: String): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -80,6 +84,7 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
               os.flush()
               os.close()
               exchange.close()
+          end match
       )
       server.start()
       server
@@ -134,10 +139,14 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
         case Left(e: java.util.concurrent.TimeoutException) =>
           assert(e.getMessage.contains("no response"), s"first-token message expected, got: ${e.getMessage}")
         case other => fail(s"expected Left(TimeoutException), got $other")
-      assert(elapsed < 10.seconds, s"watchdog fired at ${elapsed.toMillis}ms — the outer guard must bound the blind window")
+      assert(
+        elapsed < 10.seconds,
+        s"watchdog fired at ${elapsed.toMillis}ms — the outer guard must bound the blind window"
+      )
     finally
       LlmInterface.noProgressTimeoutOverride = prev
       if server != null then server.stop(0)
+    end try
   }
 
   // NOTE (boundary, issue #31): a stall INSIDE the streaming body (headers +
@@ -170,6 +179,7 @@ class SendStreamNoProgressSpec extends CatsEffectSuite:
     finally
       LlmInterface.noProgressTimeoutOverride = prev
       if server != null then server.stop(0)
+    end try
   }
 
 end SendStreamNoProgressSpec

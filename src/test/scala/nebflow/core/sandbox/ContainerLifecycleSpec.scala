@@ -24,8 +24,8 @@ class ContainerLifecycleSpec extends munit.FunSuite:
     def advance(ms: Long): Unit = now += ms
 
   private def fixture(
-      idleTtl: Long = ContainerTtl.DefaultIdleTtlMs,
-      hardTtl: Long = ContainerTtl.DefaultHardTtlMs
+    idleTtl: Long = ContainerTtl.DefaultIdleTtlMs,
+    hardTtl: Long = ContainerTtl.DefaultHardTtlMs
   ): (TestClock, ContainerBackend.Fake, InMemoryContainerLifecycle) =
     val clock = new TestClock
     val backend = new ContainerBackend.Fake
@@ -241,3 +241,4 @@ class ContainerLifecycleSpec extends munit.FunSuite:
     assertEquals(lc.live.size, 1, "记录必须保留（零残留断言因此会响）")
     assertEquals(state(lc, key), ContainerState.Active)
   }
+end ContainerLifecycleSpec

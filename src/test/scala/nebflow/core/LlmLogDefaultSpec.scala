@@ -4,6 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.parser.parse
 import nebflow.service.ConfigService
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.jdk.CollectionConverters.*
@@ -73,7 +74,11 @@ class LlmLogDefaultSpec extends munit.FunSuite:
       body(PathUtil.dataRoot)
     finally
       PathUtil.setDataRoot(prevRoot)
-      Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala
+      Files
+        .walk(tmp)
+        .sorted(java.util.Comparator.reverseOrder())
+        .iterator()
+        .asScala
         .foreach(Files.deleteIfExists)
 
   private def readConfigJson(): Json =
@@ -115,7 +120,11 @@ class LlmLogDefaultSpec extends munit.FunSuite:
   test("setLlmLogEnabled(false): 同一节覆写（不新增第二个键、不回滚邻居）；读侧解析 ⇒ Some(false)") {
     withIsolatedHome { root =>
       val cfgPath = PathUtil.configJsonWritePath(root)
-      os.write.over(cfgPath, Json.obj("toolResultTtl" -> Json.obj("enabled" -> Json.True)).spaces2, createFolders = true)
+      os.write.over(
+        cfgPath,
+        Json.obj("toolResultTtl" -> Json.obj("enabled" -> Json.True)).spaces2,
+        createFolders = true
+      )
 
       ConfigService.setLlmLogEnabled(true).unsafeRunSync()
       ConfigService.setLlmLogEnabled(false).unsafeRunSync()

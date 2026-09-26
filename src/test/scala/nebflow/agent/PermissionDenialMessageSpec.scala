@@ -33,8 +33,7 @@ class PermissionDenialMessageSpec extends FunSuite:
     // 2026-09-08 恢复 general 面后口径复查：hint 仍保持工具名中性——被拒
     // 工具可能恰是 AskUserQuestion 本身（点名即劝再问，荒谬）；变异验红锚：
     // hint 文案重新点名工具即红
-    assert(!m.contains("AskUserQuestion"),
-      "denial hint stays tool-name-free (中性文案保留：与工具面组成无关，见类注释)")
+    assert(!m.contains("AskUserQuestion"), "denial hint stays tool-name-free (中性文案保留：与工具面组成无关，见类注释)")
     assert(m.endsWith("</system-reminder>"))
   }
 

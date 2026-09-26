@@ -4,21 +4,22 @@ import munit.FunSuite
 
 import java.net.{InetSocketAddress, ServerSocket}
 
-/** P0 2026-09-06 host-kill hardening — the kill-side policy of
-  * GatewayMain.ensureSingleInstance:
-  *
-  * Pure contract (fake ps):
-  *  - every REAL nebflow launch shape      → stale, killable (restart flows)
-  *  - foreign cmdline (incl. bare "Main"!) → foreign, refuse, kill nothing
-  *  - self excluded; unreadable (dead) skipped; mixed → refuse entirely
-  *
-  * Live pipeline (macOS/Linux + python3): REAL listener processes through the
-  * REAL lsof → ps → classify path:
-  *  - python http.server on the port  → Left(foreign) and the process is
-  *    still ALIVE afterwards (refuse-not-kill — the 09:07 incident contract)
-  *  - a nebflow-marked listener        → Right(exactly that pid), and the
-  *    destroy step (as ensureSingleInstance does) actually clears it
-  */
+/**
+ * P0 2026-09-06 host-kill hardening — the kill-side policy of
+ * GatewayMain.ensureSingleInstance:
+ *
+ * Pure contract (fake ps):
+ *  - every REAL nebflow launch shape      → stale, killable (restart flows)
+ *  - foreign cmdline (incl. bare "Main"!) → foreign, refuse, kill nothing
+ *  - self excluded; unreadable (dead) skipped; mixed → refuse entirely
+ *
+ * Live pipeline (macOS/Linux + python3): REAL listener processes through the
+ * REAL lsof → ps → classify path:
+ *  - python http.server on the port  → Left(foreign) and the process is
+ *    still ALIVE afterwards (refuse-not-kill — the 09:07 incident contract)
+ *  - a nebflow-marked listener        → Right(exactly that pid), and the
+ *    destroy step (as ensureSingleInstance does) actually clears it
+ */
 class StaleProcessGuardSpec extends FunSuite:
 
   // Value = the cmdline ps/ProcessHandle would return; ABSENT key (300L) =
@@ -43,13 +44,13 @@ class StaleProcessGuardSpec extends FunSuite:
     List(100L, 101L, 102L, 103L, 104L).foreach { pid =>
       StaleProcessGuard.classify(List(pid), 1L, fakeReader) match
         case Right(stale) => assertEquals(stale, List(pid))
-        case Left(f)      => fail(s"pid $pid is a nebflow launch shape — must be killable, got foreign: ${f.detail}")
+        case Left(f) => fail(s"pid $pid is a nebflow launch shape — must be killable, got foreign: ${f.detail}")
     }
 
   test("foreign occupants are refused, never classified killable"):
     List(200L, 201L, 202L, 203L).foreach { pid =>
       StaleProcessGuard.classify(List(pid), 1L, fakeReader) match
-        case Left(f)  => assert(f.pid == pid)
+        case Left(f) => assert(f.pid == pid)
         case Right(s) => fail(s"pid $pid is foreign — must refuse, got kill list $s")
     }
 
@@ -62,7 +63,7 @@ class StaleProcessGuardSpec extends FunSuite:
 
   test("mixed stale + foreign occupants → refuse ENTIRELY (kill nothing)"):
     StaleProcessGuard.classify(List(100L, 200L), 1L, fakeReader) match
-      case Left(f)  => assertEquals(f.pid, 200L)
+      case Left(f) => assertEquals(f.pid, 200L)
       case Right(s) => fail(s"mixed occupants must refuse even the stale ones, got $s")
 
   test("empty occupant list is a no-op Right"):
@@ -99,15 +100,18 @@ class StaleProcessGuardSpec extends FunSuite:
         p.waitFor() == 0
       catch case _: Exception => false
 
-  /** The live pipeline needs lsof (see our own in-JVM listener) AND a
-    * readable command line (ProcessHandle sysctl / procfs — exec-restricted
-    * sandboxes that deny `ps` still pass via ProcessHandle). Unavailable →
-    * live tests skip; the classify contract stays covered by the pure tests. */
+  /**
+   * The live pipeline needs lsof (see our own in-JVM listener) AND a
+   * readable command line (ProcessHandle sysctl / procfs — exec-restricted
+   * sandboxes that deny `ps` still pass via ProcessHandle). Unavailable →
+   * live tests skip; the classify contract stays covered by the pure tests.
+   */
   private def pipelineAvailable(): Boolean =
     val ss = new ServerSocket()
     try
       ss.bind(new InetSocketAddress("127.0.0.1", 0), 1)
-      val seesSelf = StaleProcessGuard.portListenerPids(ss.getLocalPort)
+      val seesSelf = StaleProcessGuard
+        .portListenerPids(ss.getLocalPort)
         .contains(ProcessHandle.current.pid)
       val readsSelf = StaleProcessGuard.readCommandLine(ProcessHandle.current.pid).isDefined
       seesSelf && readsSelf

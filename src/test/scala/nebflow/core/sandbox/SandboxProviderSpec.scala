@@ -42,7 +42,10 @@ class SandboxProviderSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     // 还原全局注册表：缺省 provider=host（并清空 providerFailure，防跨 suite 污染）
     SandboxRuntime.init(SandboxConfig())
-    created.foreach(p => try os.remove.all(p) catch case _: Exception => ())
+    created.foreach(p =>
+      try os.remove.all(p)
+      catch case _: Exception => ()
+    )
     created.clear()
     super.afterEach(context)
 
@@ -61,16 +64,18 @@ class SandboxProviderSpec extends CatsEffectSuite:
   private def parse(json: String): SandboxConfig =
     SandboxConfig.load(Some(io.circe.parser.parse(json).toOption.get))
 
-  /** 夹具前提的**显式平台声明**（批 3 · C02 · 2026-09-16）：`Seatbelt.probe` 先按
-    * `os.name` 判 mac（`SandboxBackend.scala:142-144`，非 mac **恒 false**）⇒ 注入的
-    * `sandboxExecPath` 只在 mac 分支被尊重，非 mac 上该注入**整段不被执行**（此即
-    * Linux CI 恒红之根因）。
-    *
-    * 本 helper 在**受控窗口内**把平台前提显式钉住（`f` 求值期间），求值结束立即还原
-    * ——不是平台跳过（无 `assume`、无平台分支、断言同形）、不是放宽（`probe` 走完即
-    * 不读 `os.name`，`Seatbelt` 的 `probeOk` 是构造期 `val`），只是把「靠运行环境猜」
-    * 换成「夹具显式声明」。注入路径 `/usr/bin/true` 在两平台都真实存在且恒 exit 0
-    * （macOS 与 Linux coreutils 同款语义）⇒ 断言结果与平台解耦。 */
+  /**
+   * 夹具前提的**显式平台声明**（批 3 · C02 · 2026-09-16）：`Seatbelt.probe` 先按
+   * `os.name` 判 mac（`SandboxBackend.scala:142-144`，非 mac **恒 false**）⇒ 注入的
+   * `sandboxExecPath` 只在 mac 分支被尊重，非 mac 上该注入**整段不被执行**（此即
+   * Linux CI 恒红之根因）。
+   *
+   * 本 helper 在**受控窗口内**把平台前提显式钉住（`f` 求值期间），求值结束立即还原
+   * ——不是平台跳过（无 `assume`、无平台分支、断言同形）、不是放宽（`probe` 走完即
+   * 不读 `os.name`，`Seatbelt` 的 `probeOk` 是构造期 `val`），只是把「靠运行环境猜」
+   * 换成「夹具显式声明」。注入路径 `/usr/bin/true` 在两平台都真实存在且恒 exit 0
+   * （macOS 与 Linux coreutils 同款语义）⇒ 断言结果与平台解耦。
+   */
   private def withOsName[A](name: String)(f: => A): A =
     val prev = sys.props.get("os.name")
     try
@@ -79,11 +84,13 @@ class SandboxProviderSpec extends CatsEffectSuite:
     finally
       prev match
         case Some(v) => sys.props("os.name") = v
-        case None    => sys.props.remove("os.name")
+        case None => sys.props.remove("os.name")
 
-  /** 只包裹不讲理的假后端：wrap 把 argv 整体替换为一个可辨识的 argv——
-    * 用于证明「wrap 接缝确实会包裹」（等价于 provider=local-process 时 Seatbelt
-    * 产出的 `sandbox-exec -p … -- /bin/bash …` 形态）。 */
+  /**
+   * 只包裹不讲理的假后端：wrap 把 argv 整体替换为一个可辨识的 argv——
+   * 用于证明「wrap 接缝确实会包裹」（等价于 provider=local-process 时 Seatbelt
+   * 产出的 `sandbox-exec -p … -- /bin/bash …` 形态）。
+   */
   private def wrappedStub(marker: String) = new SandboxBackend:
     val name = "stub-wrapped"
     val available = true
@@ -99,8 +106,11 @@ class SandboxProviderSpec extends CatsEffectSuite:
     assertEquals(SandboxConfig.load(None).provider, SandboxProvider.Host, "无 sandbox 节 ⇒ host")
     assertEquals(parse("""{"enabled":true}""").provider, SandboxProvider.Host, "无 provider 键 ⇒ host")
     assertEquals(parse("""{"provider":"host"}""").provider, SandboxProvider.Host)
-    assertEquals(parse("""{"provider":"LOCAL-PROCESS"}""").provider, SandboxProvider.LocalProcess,
-      "取值大小写不敏感（trim + toLowerCase）")
+    assertEquals(
+      parse("""{"provider":"LOCAL-PROCESS"}""").provider,
+      SandboxProvider.LocalProcess,
+      "取值大小写不敏感（trim + toLowerCase）"
+    )
     assertEquals(parse("""{"enabled":true}""").providerError, None, "合法配置不得带 providerError")
   }
 
@@ -134,8 +144,8 @@ class SandboxProviderSpec extends CatsEffectSuite:
   test("S3-a: provider=host 下 backend.available=false 不再拦 Bash（旧判据失去对象）") {
     val tmp = freshDir("failopen")
     val ctx = ctxIn(tmp, "nb-s3-failopen")
-    SandboxRuntime.init(SandboxConfig())                       // provider=host
-    SandboxRuntime.backend = SandboxBackend.Unavailable         // 旧 §A.4-4 的「probe 失败」
+    SandboxRuntime.init(SandboxConfig()) // provider=host
+    SandboxRuntime.backend = SandboxBackend.Unavailable // 旧 §A.4-4 的「probe 失败」
     assertEquals(SandboxRuntime.failureCause, None, "provider=host 不得因后端不可用而失败")
     BashTool.call(JsonObject("command" -> "echo NBX_S3_HOST_RUNS".asJson), ctx).unsafeRunSync() match
       case Right(out) =>
@@ -150,13 +160,12 @@ class SandboxProviderSpec extends CatsEffectSuite:
     // 代码链代理：probe 非 macOS 恒 false（SandboxBackend.Seatbelt.probe 的 isMac 早退）
     // ⇒ 旧判据 `enabled && !current.available` + 缺省 bashFailIfUnavailable=true 会拦掉
     // 全部 Bash；新判据只看 providerFailure，与平台 probe 无关。
-    assert(!SandboxBackend.Seatbelt.probe("definitely-not-a-real-path"),
-      "probe 对不可用路径须 false（fail-safe）")
-    SandboxRuntime.init(SandboxConfig())                        // 缺省 host
+    assert(!SandboxBackend.Seatbelt.probe("definitely-not-a-real-path"), "probe 对不可用路径须 false（fail-safe）")
+    SandboxRuntime.init(SandboxConfig()) // 缺省 host
     assertEquals(SandboxRuntime.failureCause, None, "缺省 host 不依赖任何 probe")
     BashTool.call(JsonObject("command" -> "echo NBX_S3_LINUX_PROXY".asJson), ctx).unsafeRunSync() match
       case Right(out) => assert(out.contains("NBX_S3_LINUX_PROXY"), out)
-      case Left(err)  => fail(s"缺省 host 不得拦 Bash（Linux 实机未验证，此处为代码链代理）: ${err.message}")
+      case Left(err) => fail(s"缺省 host 不得拦 Bash（Linux 实机未验证，此处为代码链代理）: ${err.message}")
   }
 
   // ------------------------------------------------------------------
@@ -166,15 +175,20 @@ class SandboxProviderSpec extends CatsEffectSuite:
   test("S3-b: 接缝承重——provider=host 不包裹；注册会包裹的后端 ⇒ 命令真被包裹（回退机制机械支点）") {
     val tmp = freshDir("seam")
     SandboxRuntime.init(SandboxConfig()) // host：Host.wrap 恒 None ⇒ shell 走 plain
-    assertEquals(SandboxRuntime.current.wrap(List("bash", "-c", "true"), SandboxPolicy.forRoot(tmp, SandboxConfig())), None,
-      "宿主路径下 wrap 必须 None（⇒ shell 走 plain，宿主不再包裹）")
+    assertEquals(
+      SandboxRuntime.current.wrap(List("bash", "-c", "true"), SandboxPolicy.forRoot(tmp, SandboxConfig())),
+      None,
+      "宿主路径下 wrap 必须 None（⇒ shell 走 plain，宿主不再包裹）"
+    )
     // 宿主直跑：命令原文执行
     BashTool.call(JsonObject("command" -> "echo NBX_S3_PLAIN".asJson), ctxIn(tmp, "nb-s3-plain")).unsafeRunSync() match
       case Right(out) => assert(out.contains("NBX_S3_PLAIN"), out)
-      case Left(err)  => fail(s"宿主直跑失败: ${err.message}")
+      case Left(err) => fail(s"宿主直跑失败: ${err.message}")
     // 注册包裹后端（provider=local-process 的形态：wrap 产出包裹 argv）⇒ 同一接缝生效
     SandboxRuntime.backend = wrappedStub("NBX_S3_WRAPPED")
-    BashTool.call(JsonObject("command" -> "echo NBX_S3_PLAIN".asJson), ctxIn(tmp, "nb-s3-wrapped")).unsafeRunSync() match
+    BashTool
+      .call(JsonObject("command" -> "echo NBX_S3_PLAIN".asJson), ctxIn(tmp, "nb-s3-wrapped"))
+      .unsafeRunSync() match
       case Right(out) =>
         assert(out.contains("NBX_S3_WRAPPED"), s"接缝必须把 argv 换成包裹形态: $out")
         assert(!out.contains("NBX_S3_PLAIN"), s"被包裹后原命令不得再直跑: $out")
@@ -190,7 +204,9 @@ class SandboxProviderSpec extends CatsEffectSuite:
     val probeFile = tmp / "container-should-not-exist.txt"
     SandboxRuntime.init(SandboxConfig(provider = SandboxProvider.Container))
     assert(SandboxRuntime.failureCause.exists(_.contains("未实现")), s"须显式失败: ${SandboxRuntime.failureCause}")
-    BashTool.call(JsonObject("command" -> s"echo leaked > ${probeFile.toString}".asJson), ctxIn(tmp, "nb-s3-container")).unsafeRunSync() match
+    BashTool
+      .call(JsonObject("command" -> s"echo leaked > ${probeFile.toString}".asJson), ctxIn(tmp, "nb-s3-container"))
+      .unsafeRunSync() match
       case Left(err) =>
         assert(err.message.startsWith("SANDBOX_UNAVAILABLE"), err.message)
         assert(err.message.contains("NOT silently downgraded"), s"文案须声明未回落到宿主: ${err.message}")
@@ -203,7 +219,9 @@ class SandboxProviderSpec extends CatsEffectSuite:
     val probeFile = tmp / "auto-should-not-exist.txt"
     SandboxRuntime.init(SandboxConfig(provider = SandboxProvider.Auto))
     assert(SandboxRuntime.failureCause.exists(_.contains("auto")), s"须显式失败: ${SandboxRuntime.failureCause}")
-    BashTool.call(JsonObject("command" -> s"echo leaked > ${probeFile.toString}".asJson), ctxIn(tmp, "nb-s3-auto")).unsafeRunSync() match
+    BashTool
+      .call(JsonObject("command" -> s"echo leaked > ${probeFile.toString}".asJson), ctxIn(tmp, "nb-s3-auto"))
+      .unsafeRunSync() match
       case Left(err) => assert(err.message.startsWith("SANDBOX_UNAVAILABLE"), err.message)
       case Right(out) => fail(s"provider=auto 未实现 ⇒ 必须显式失败: $out")
     assert(!os.exists(probeFile), "命令不得在宿主上执行")
@@ -219,7 +237,9 @@ class SandboxProviderSpec extends CatsEffectSuite:
       assertEquals(SandboxRuntime.failureCause, None)
     else
       assert(SandboxRuntime.failureCause.exists(_.contains("local-process")), s"须显式失败: ${SandboxRuntime.failureCause}")
-      BashTool.call(JsonObject("command" -> "echo NBX_S3_NEVER".asJson), ctxIn(tmp, "nb-s3-localproc")).unsafeRunSync() match
+      BashTool
+        .call(JsonObject("command" -> "echo NBX_S3_NEVER".asJson), ctxIn(tmp, "nb-s3-localproc"))
+        .unsafeRunSync() match
         case Left(err) =>
           assert(err.message.startsWith("SANDBOX_UNAVAILABLE"), err.message)
           assert(!err.message.contains("NBX_S3_NEVER"), "拒绝文案不得包含命令执行结果")
@@ -244,8 +264,10 @@ class SandboxProviderSpec extends CatsEffectSuite:
     //   ① 门自证（可判读）：非 mac 前提下同一注入路径**不被尊重**（false = 未执行注入程序）；
     //   ② mac 前提下注入路径被尊重 ⇒ `available` 为真、`wrap` 产出包裹 argv。
     val injected = "/usr/bin/true"
-    assert(!withOsName("Linux")(SandboxBackend.Seatbelt.probe(injected)),
-      "平台门须显式可判：非 mac 分支下 probe 恒 false（这正是「注入路径未被尊重」的形态）")
+    assert(
+      !withOsName("Linux")(SandboxBackend.Seatbelt.probe(injected)),
+      "平台门须显式可判：非 mac 分支下 probe 恒 false（这正是「注入路径未被尊重」的形态）"
+    )
     val seatbelt = withOsName("Mac OS X")(new SandboxBackend.Seatbelt(injected))
     assert(seatbelt.available, "注入恒真 probe 路径后 Seatbelt 须 available")
     assertEquals(
@@ -272,7 +294,7 @@ class SandboxProviderSpec extends CatsEffectSuite:
     assertEquals(SandboxRuntime.current.wrap(List("bash", "-c", "true"), ctx.sandbox), None, "旧行为不包裹")
     BashTool.call(JsonObject("command" -> "echo NBX_S3_LEGACY".asJson), ctx).unsafeRunSync() match
       case Right(out) => assert(out.contains("NBX_S3_LEGACY"), out)
-      case Left(err)  => fail(s"enabled=false 回退态必须直跑（旧行为逐字保留）: ${err.message}")
+      case Left(err) => fail(s"enabled=false 回退态必须直跑（旧行为逐字保留）: ${err.message}")
     // 回退支点本身不删：forRoot 短路 off（无会话根 = 路径语义亦回旧）
     assert(SandboxPolicy.forRoot(tmp, SandboxConfig(enabled = false)).pathRoot.isEmpty)
   }
@@ -285,3 +307,4 @@ class SandboxProviderSpec extends CatsEffectSuite:
     SandboxRuntime.init(SandboxConfig(enabled = true, provider = SandboxProvider.Container))
     assert(SandboxRuntime.failureCause.isDefined)
   }
+end SandboxProviderSpec

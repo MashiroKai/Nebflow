@@ -1,14 +1,13 @@
 package nebflow.agent
 
-import nebflow.core.AtomicJson
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
-import nebflow.shared.ContentBlock
-import nebflow.shared.given // ContentBlock Encoder/Decoder (protocol.scala top-level)
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.actor.AgentCommand
+import nebflow.core.AtomicJson
+import nebflow.shared.given
+import nebflow.shared.{ContentBlock, NebflowLogger, PathUtil}
 
 /**
  * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store for
@@ -43,7 +42,8 @@ object CompactionQueueStore:
   given Encoder[AgentCommand.ImmediateInput] = Encoder.instance { imm =>
     val base = Json.obj("text" -> imm.text.asJson)
     val withBlocks = imm.blocks.fold(base)(b => base.deepMerge(Json.obj("blocks" -> b.asJson)))
-    imm.source.fold(withBlocks)(v => withBlocks.deepMerge(Json.obj("source" -> v.asJson)))
+    imm.source
+      .fold(withBlocks)(v => withBlocks.deepMerge(Json.obj("source" -> v.asJson)))
       .deepMerge(imm.eventType.fold(Json.obj())(v => Json.obj("eventType" -> v.asJson)))
       .deepMerge(imm.sender.fold(Json.obj())(v => Json.obj("sender" -> v.asJson)))
       .deepMerge(imm.senderTeam.fold(Json.obj())(v => Json.obj("senderTeam" -> v.asJson)))
@@ -67,7 +67,16 @@ object CompactionQueueStore:
       delivery <- c.downField("delivery").as[Option[String]]
       // Missing field (pre-② snapshot) → false = legacy behaviour.
       fromUser <- c.downField("fromUser").as[Option[Boolean]]
-    yield AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery, fromUser.getOrElse(false))
+    yield AgentCommand.ImmediateInput(
+      text,
+      blocks,
+      source,
+      eventType,
+      sender,
+      senderTeam,
+      delivery,
+      fromUser.getOrElse(false)
+    )
   }
 
   given Encoder[AgentCommand.ExternalEvent] = Encoder.instance { e =>

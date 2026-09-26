@@ -8,12 +8,12 @@ import cats.syntax.all.*
 import com.comcast.ip4s.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.RestApiRoutes
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.*
 import org.http4s.HttpApp
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
@@ -133,6 +133,7 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
   /** logback 采集器（同 `NeblinkRelayTunnelAuthSpec` 先例）；**带时间戳**（间隔读数需要）。 */
   private final class TapeAppender extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val recs = new ConcurrentLinkedQueue[LogRec]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       recs.add(LogRec(event.getTimeStamp, event.getLevel.toString, event.getFormattedMessage))
 
@@ -156,7 +157,7 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
       body(appender.recs).guarantee(IO {
         saved match
           case Some(l) => lb.setLevel(l)
-          case None    => lb.setLevel(null)
+          case None => lb.setLevel(null)
         lb.detachAppender(appender)
       })
     }
@@ -328,7 +329,8 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
       def loop: IO[Unit] =
         IO.defer {
           if pred then IO.unit
-          else if System.currentTimeMillis() > deadline then IO.raiseError(new AssertionError(s"未在 ${timeoutMs}ms 内满足：$what"))
+          else if System.currentTimeMillis() > deadline then
+            IO.raiseError(new AssertionError(s"未在 ${timeoutMs}ms 内满足：$what"))
           else IO.sleep(20.millis).flatMap(_ => loop)
         }
       loop
@@ -345,7 +347,17 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
 
   // ===== 样本 =====
 
-  private final case class Sample(tag: String, i: Int, tMs: Long, hbPeer: Int, hbAll: Int, conns: Int, gens: String, tape: Tape):
+  private final case class Sample(
+    tag: String,
+    i: Int,
+    tMs: Long,
+    hbPeer: Int,
+    hbAll: Int,
+    conns: Int,
+    gens: String,
+    tape: Tape
+  ):
+
     def json: String =
       s"""{"tag":"$tag","i":$i,"t_ms":$tMs,"hb_peer":$hbPeer,"hb_all":$hbAll,"conns":$conns,"gens":"$gens",""" +
         s""""timeout":${tape.timeout},"disc":${tape.disc},"recon":${tape.recon},"stale":${tape.stale},"dial_fail":${tape.dialFail}}"""
@@ -408,84 +420,88 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
     val deadPort = freePort()
     assert(portA != 8080 && portB != 8080 && portA != portB, s"端口纪律: A=$portA B=$portB")
     evReset("t1_online.jsonl")
-    Dispatcher.parallel[IO].use { d =>
-      for
-        msB <- createInstance("hb-b1", portB, d)
-        psB = mkPresence(msB, portB, d)
-        msA <- createInstance("hb-a1", portA, d)
-        psA = mkPresence(msA, portA, d)
-        _ <- useSharedScratch
-        idA <- msA.identity
-        _ <- seedPeer(msB, idA)
-        out <- serve(msB, psB, portB).use { _ =>
-          capturePresence { recs =>
-            val liveEp = s"http://127.0.0.1:$portB"
-            val deadEp = s"http://127.0.0.2:$deadPort" // 环回别名黑洞：无监听、不回包 ⇒ 拨号窗口 = 预算
-            val p = peer("hb-online-1", PeerNameOnline, List(deadEp, liveEp))
-            for
-              // 预热（**不参与断言**）：把 WS 栈类加载从被测窗口挪出去；随后清场
-              _ <- psA.connect(peer("hb-warmup", "HB-WARMUP", List(liveEp))).attempt.void
-              _ <- awaitConnected(psA, "hb-warmup")
-              _ <- psA.disconnectAll()
-              _ <- awaitQuiet(psA)
-              _ <- IO(println(s"[hb-roster] t1-before ${instanceRoster()}"))
-              // 🔴 并发顶替触发：第 1 次拨号在黑洞候选上耗掉整个预算（拨号窗口），第 2 次在第 1 次
-              // `put` 之前进入 ⇒ 两条**真** conn 同时存在（改前唯一能产生游离心跳线程的形态；
-              // 修复后第 2 次发布必须**先退役**第 1 条）。
-              f1 <- psA.connect(p).start
-              _ <- IO.sleep(400.millis)
-              f2 <- psA.connect(p).start
-              _ <- f1.join.attempt
-              _ <- f2.join.attempt
-              _ <- awaitConnected(psA, "hb-online-1")
-              _ <- IO.sleep(1500.millis) // 让顶替的退役动作落定（shutdownNow + close）
-              samples <- watch(psA, PeerNameOnline, recs, "t1_online", WatchSec)
-              stamps <- IO(timeoutStamps(recs))
-              finalTape <- IO(tape(recs))
-              roster <- IO(instanceRoster())
-              gens <- IO(psA.connectionGens)
-            yield (samples, stamps, finalTape, roster, gens, idA.deviceId)
+    Dispatcher
+      .parallel[IO]
+      .use { d =>
+        for
+          msB <- createInstance("hb-b1", portB, d)
+          psB = mkPresence(msB, portB, d)
+          msA <- createInstance("hb-a1", portA, d)
+          psA = mkPresence(msA, portA, d)
+          _ <- useSharedScratch
+          idA <- msA.identity
+          _ <- seedPeer(msB, idA)
+          out <- serve(msB, psB, portB).use { _ =>
+            capturePresence { recs =>
+              val liveEp = s"http://127.0.0.1:$portB"
+              val deadEp = s"http://127.0.0.2:$deadPort" // 环回别名黑洞：无监听、不回包 ⇒ 拨号窗口 = 预算
+              val p = peer("hb-online-1", PeerNameOnline, List(deadEp, liveEp))
+              for
+                // 预热（**不参与断言**）：把 WS 栈类加载从被测窗口挪出去；随后清场
+                _ <- psA.connect(peer("hb-warmup", "HB-WARMUP", List(liveEp))).attempt.void
+                _ <- awaitConnected(psA, "hb-warmup")
+                _ <- psA.disconnectAll()
+                _ <- awaitQuiet(psA)
+                _ <- IO(println(s"[hb-roster] t1-before ${instanceRoster()}"))
+                // 🔴 并发顶替触发：第 1 次拨号在黑洞候选上耗掉整个预算（拨号窗口），第 2 次在第 1 次
+                // `put` 之前进入 ⇒ 两条**真** conn 同时存在（改前唯一能产生游离心跳线程的形态；
+                // 修复后第 2 次发布必须**先退役**第 1 条）。
+                f1 <- psA.connect(p).start
+                _ <- IO.sleep(400.millis)
+                f2 <- psA.connect(p).start
+                _ <- f1.join.attempt
+                _ <- f2.join.attempt
+                _ <- awaitConnected(psA, "hb-online-1")
+                _ <- IO.sleep(1500.millis) // 让顶替的退役动作落定（shutdownNow + close）
+                samples <- watch(psA, PeerNameOnline, recs, "t1_online", WatchSec)
+                stamps <- IO(timeoutStamps(recs))
+                finalTape <- IO(tape(recs))
+                roster <- IO(instanceRoster())
+                gens <- IO(psA.connectionGens)
+              yield (samples, stamps, finalTape, roster, gens, idA.deviceId)
+              end for
+            }
           }
-        }
-        _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
-        _ <- psB.disconnectAll().handleErrorWith(_ => IO.unit)
-      yield out
-    }.map { case (samples, stamps, finalTape, roster, gens, devIdA) =>
-      val violations = samples.filter(s => s.hbPeer > s.conns)
-      val over = samples.filter(s => s.hbAll > 1)
-      val iv = intervals(stamps)
-      val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
-      val rate = if WatchSec > 0 then stamps.size * 60.0 / WatchSec else -1.0
-      assert(
-        violations.isEmpty,
-        s"🔴 判据①违反：出现 count(presence-hb-*) > count(connections) 的样本 ${violations.size}/${samples.size} 条" +
-          s"（前 3 条：${violations.take(3).map(_.json).mkString(" | ")}）"
-      )
-      assert(
-        over.isEmpty,
-        s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧：" +
-          s"${over.take(3).map(_.json).mkString(" | ")}"
-      )
-      assert(
-        samples.forall(s => s.hbPeer == 1 && s.conns == 1),
-        s"🔴 稳态必须恒为 1 线程 : 1 连接（样本集合 ${samples.map(s => s"${s.hbPeer}/${s.conns}").distinct.mkString(",")}；末样本 ${samples.last.json}）"
-      )
-      assertEquals(
-        finalTape.timeout,
-        0,
-        s"🔴 判据②违反：对端**在线**时窗口内不得出现 `Heartbeat timeout ... auto-reconnecting`（现读 ${finalTape.timeout} 条，" +
-          s"节拍 ${"%.2f".format(rate)} 次/分，p50=${pctl(iv, 0.5)}ms）"
-      )
-      assertEquals(fiveSec, 0, s"🔴 出现 5.000 s 整间隔 ${fiveSec} 次（自激节拍）：${iv.mkString(",")}")
-      assertEquals(finalTape.disc, 0, s"🔴 无真断连却出现掉线行 ${finalTape.disc} 条（迟到事件重复处置）")
-      assertEquals(finalTape.recon, 0, s"🔴 无真断连却出现重连行 ${finalTape.recon} 条（自激重连）")
-      assertEquals(finalTape.stale, 0, s"🔴 出现陈旧拍 ${finalTape.stale} 条（不该有游离心跳线程醒来）")
-      println(
-        s"[hb-evidence] t1 devIdA=$devIdA samples=${samples.size} timeout=${finalTape.timeout} disc=${finalTape.disc} " +
-          s"recon=${finalTape.recon} stale=${finalTape.stale} dial_fail=${finalTape.dialFail} " +
-          s"max_hb=${samples.map(_.hbPeer).max} max_conns=${samples.map(_.conns).max} gens=$gens roster=$roster"
-      )
-    }
+          _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
+          _ <- psB.disconnectAll().handleErrorWith(_ => IO.unit)
+        yield out
+      }
+      .map { case (samples, stamps, finalTape, roster, gens, devIdA) =>
+        val violations = samples.filter(s => s.hbPeer > s.conns)
+        val over = samples.filter(s => s.hbAll > 1)
+        val iv = intervals(stamps)
+        val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
+        val rate = if WatchSec > 0 then stamps.size * 60.0 / WatchSec else -1.0
+        assert(
+          violations.isEmpty,
+          s"🔴 判据①违反：出现 count(presence-hb-*) > count(connections) 的样本 ${violations.size}/${samples.size} 条" +
+            s"（前 3 条：${violations.take(3).map(_.json).mkString(" | ")}）"
+        )
+        assert(
+          over.isEmpty,
+          s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧：" +
+            s"${over.take(3).map(_.json).mkString(" | ")}"
+        )
+        assert(
+          samples.forall(s => s.hbPeer == 1 && s.conns == 1),
+          s"🔴 稳态必须恒为 1 线程 : 1 连接（样本集合 ${samples.map(s => s"${s.hbPeer}/${s.conns}").distinct.mkString(",")}；末样本 ${samples.last.json}）"
+        )
+        assertEquals(
+          finalTape.timeout,
+          0,
+          s"🔴 判据②违反：对端**在线**时窗口内不得出现 `Heartbeat timeout ... auto-reconnecting`（现读 ${finalTape.timeout} 条，" +
+            s"节拍 ${"%.2f".format(rate)} 次/分，p50=${pctl(iv, 0.5)}ms）"
+        )
+        assertEquals(fiveSec, 0, s"🔴 出现 5.000 s 整间隔 ${fiveSec} 次（自激节拍）：${iv.mkString(",")}")
+        assertEquals(finalTape.disc, 0, s"🔴 无真断连却出现掉线行 ${finalTape.disc} 条（迟到事件重复处置）")
+        assertEquals(finalTape.recon, 0, s"🔴 无真断连却出现重连行 ${finalTape.recon} 条（自激重连）")
+        assertEquals(finalTape.stale, 0, s"🔴 出现陈旧拍 ${finalTape.stale} 条（不该有游离心跳线程醒来）")
+        println(
+          s"[hb-evidence] t1 devIdA=$devIdA samples=${samples.size} timeout=${finalTape.timeout} disc=${finalTape.disc} " +
+            s"recon=${finalTape.recon} stale=${finalTape.stale} dial_fail=${finalTape.dialFail} " +
+            s"max_hb=${samples.map(_.hbPeer).max} max_conns=${samples.map(_.conns).max} gens=$gens roster=$roster"
+        )
+      }
   }
 
   // ===== ② 聋对端（不回 pong）⇒ 节拍回到单连接理论带 =====
@@ -495,77 +511,81 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
     assert(portA != 8080, s"端口纪律: A=$portA")
     evReset("t2_deaf.jsonl")
     val deaf = new DeafWsFixture
-    Dispatcher.parallel[IO].use { d =>
-      for
-        msA <- createInstance("hb-a2", portA, d)
-        psA = mkPresence(msA, portA, d)
-        _ <- useSharedScratch
-        _ <- IO(println(s"[hb-roster] t2-before ${instanceRoster()}"))
-        out <- capturePresence { recs =>
-          val p = peer("hb-deaf-1", PeerNameDeaf, List(deaf.endpoint))
-          for
-            // 预热（不参与断言）：首发拨号把 WS 栈类加载吃在窗口外；随后清场
-            _ <- psA.connect(peer("hb-warmup2", "HB-WARMUP2", List(deaf.endpoint))).attempt.void
-            _ <- awaitConnected(psA, "hb-warmup2")
-            _ <- psA.disconnectAll()
-            _ <- awaitQuiet(psA)
-            _ <- psA.connect(p)
-            _ <- awaitConnected(psA, "hb-deaf-1")
-            samples <- watch(psA, PeerNameDeaf, recs, "t2_deaf", DeafSec)
-            stamps <- IO(timeoutStamps(recs))
-            finalTape <- IO(tape(recs))
-            roster <- IO(instanceRoster())
-          yield (samples, stamps, finalTape, roster)
-        }
-        _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
-      yield out
-    }.guarantee(IO(deaf.close())).map { case (samples, stamps, finalTape, roster) =>
-      val iv = intervals(stamps)
-      // 理论周期**从生产源码的同一份公式**取（不抄数）：环回实测握手 ≈50ms
-      val theory = NeblinkPresenceService.singleConnectionSelfCycleMs(LoopbackHandshakeMs)
-      val beat = NeblinkPresenceService.HeartbeatIntervalSec * 1000L
-      val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
-      val offGrid = iv.filter(d => math.abs(d - beat * math.round(d.toDouble / beat.toDouble)) > 600L)
-      val rate = if DeafSec > 0 then stamps.size * 60.0 / DeafSec else -1.0
-      val over = samples.filter(s => s.hbAll > 1)
-      val sustained = samples.zipWithIndex.filter { (s, idx) =>
-        s.hbPeer > s.conns && idx + 1 < samples.size && samples(idx + 1).hbPeer > samples(idx + 1).conns
+    Dispatcher
+      .parallel[IO]
+      .use { d =>
+        for
+          msA <- createInstance("hb-a2", portA, d)
+          psA = mkPresence(msA, portA, d)
+          _ <- useSharedScratch
+          _ <- IO(println(s"[hb-roster] t2-before ${instanceRoster()}"))
+          out <- capturePresence { recs =>
+            val p = peer("hb-deaf-1", PeerNameDeaf, List(deaf.endpoint))
+            for
+              // 预热（不参与断言）：首发拨号把 WS 栈类加载吃在窗口外；随后清场
+              _ <- psA.connect(peer("hb-warmup2", "HB-WARMUP2", List(deaf.endpoint))).attempt.void
+              _ <- awaitConnected(psA, "hb-warmup2")
+              _ <- psA.disconnectAll()
+              _ <- awaitQuiet(psA)
+              _ <- psA.connect(p)
+              _ <- awaitConnected(psA, "hb-deaf-1")
+              samples <- watch(psA, PeerNameDeaf, recs, "t2_deaf", DeafSec)
+              stamps <- IO(timeoutStamps(recs))
+              finalTape <- IO(tape(recs))
+              roster <- IO(instanceRoster())
+            yield (samples, stamps, finalTape, roster)
+          }
+          _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
+        yield out
       }
-      val eqSamples = samples.count(s => s.hbPeer == s.conns)
-      assert(
-        over.isEmpty,
-        s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧 —— 这就是积压签名：" +
-          s"${over.take(3).map(_.json).mkString(" | ")}"
-      )
-      assert(
-        sustained.isEmpty,
-        s"🔴 判据①违反：`线程数 > 连接数` 持续 ≥2 帧（≥1s，超出换连接过渡帧）${sustained.size} 处：" +
-          s"${sustained.take(3).map(_._1.json).mkString(" | ")}"
-      )
-      assert(
-        eqSamples * 100 / math.max(1, samples.size) >= 80,
-        s"🔴 稳态必须 `线程数 = 连接数`（聋对端窗允许换连接的过渡帧）：仅 $eqSamples/${samples.size} 帧相等" +
-          s"（分布 ${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap}）"
-      )
-      assert(finalTape.timeout >= 2, s"聋对端必须触发超时腿（现读 ${finalTape.timeout} 条，窗口 ${DeafSec}s）")
-      assertEquals(fiveSec, 0, s"🔴 判据②违反：出现 5.000 s 整间隔 ${fiveSec} 次（自激节拍复现）；间隔=${iv.mkString(",")}")
-      assert(
-        iv.nonEmpty && pctl(iv, 0.5) >= theory - 2_000L && pctl(iv, 0.5) <= theory + 4_000L,
-        s"🔴 间隔中位数必须落在单连接理论带 [${theory - 2_000}, ${theory + 4_000}]ms" +
-          s"（理论 = 拍间隔×k+h，k=${math.round(theory.toDouble / beat.toDouble)}，h=${LoopbackHandshakeMs}ms；现读 p50=${pctl(iv, 0.5)} n=${iv.size} all=${iv.mkString(",")}）"
-      )
-      assert(
-        offGrid.isEmpty,
-        s"🔴 间隔必须落在心跳拍网格的整数倍上（±600ms）——否则不是「单连接自循环」而是别的泵：${offGrid.mkString(",")}（all=${iv.mkString(",")}）"
-      )
-      assertEquals(finalTape.disc, 0, s"超时腿退出的连接不应再走「掉线」腿（迟到事件重复处置）：${finalTape.disc} 条")
-      println(
-        s"[hb-evidence] t2 n=${stamps.size} rate_per_min=${"%.2f".format(rate)} p50=${pctl(iv, 0.5)} p90=${pctl(iv, 0.9)} " +
-          s"min=${iv.minOption.getOrElse(-1L)} max=${iv.maxOption.getOrElse(-1L)} theory=${theory}ms fiveSecHits=$fiveSec " +
-          s"disc=${finalTape.disc} recon=${finalTape.recon} stale=${finalTape.stale} served=${deaf.served} " +
-          s"eq_samples=$eqSamples/${samples.size} dist=${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap} roster=$roster"
-      )
-    }
+      .guarantee(IO(deaf.close()))
+      .map { case (samples, stamps, finalTape, roster) =>
+        val iv = intervals(stamps)
+        // 理论周期**从生产源码的同一份公式**取（不抄数）：环回实测握手 ≈50ms
+        val theory = NeblinkPresenceService.singleConnectionSelfCycleMs(LoopbackHandshakeMs)
+        val beat = NeblinkPresenceService.HeartbeatIntervalSec * 1000L
+        val fiveSec = iv.count(d => d >= 4_800L && d <= 5_200L)
+        val offGrid = iv.filter(d => math.abs(d - beat * math.round(d.toDouble / beat.toDouble)) > 600L)
+        val rate = if DeafSec > 0 then stamps.size * 60.0 / DeafSec else -1.0
+        val over = samples.filter(s => s.hbAll > 1)
+        val sustained = samples.zipWithIndex.filter { (s, idx) =>
+          s.hbPeer > s.conns && idx + 1 < samples.size && samples(idx + 1).hbPeer > samples(idx + 1).conns
+        }
+        val eqSamples = samples.count(s => s.hbPeer == s.conns)
+        assert(
+          over.isEmpty,
+          s"🔴 判据①违反：出现**并存**心跳线程（同一 peer 的 count(presence-hb-*) > 1）${over.size} 帧 —— 这就是积压签名：" +
+            s"${over.take(3).map(_.json).mkString(" | ")}"
+        )
+        assert(
+          sustained.isEmpty,
+          s"🔴 判据①违反：`线程数 > 连接数` 持续 ≥2 帧（≥1s，超出换连接过渡帧）${sustained.size} 处：" +
+            s"${sustained.take(3).map(_._1.json).mkString(" | ")}"
+        )
+        assert(
+          eqSamples * 100 / math.max(1, samples.size) >= 80,
+          s"🔴 稳态必须 `线程数 = 连接数`（聋对端窗允许换连接的过渡帧）：仅 $eqSamples/${samples.size} 帧相等" +
+            s"（分布 ${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap}）"
+        )
+        assert(finalTape.timeout >= 2, s"聋对端必须触发超时腿（现读 ${finalTape.timeout} 条，窗口 ${DeafSec}s）")
+        assertEquals(fiveSec, 0, s"🔴 判据②违反：出现 5.000 s 整间隔 ${fiveSec} 次（自激节拍复现）；间隔=${iv.mkString(",")}")
+        assert(
+          iv.nonEmpty && pctl(iv, 0.5) >= theory - 2_000L && pctl(iv, 0.5) <= theory + 4_000L,
+          s"🔴 间隔中位数必须落在单连接理论带 [${theory - 2_000}, ${theory + 4_000}]ms" +
+            s"（理论 = 拍间隔×k+h，k=${math.round(theory.toDouble / beat.toDouble)}，h=${LoopbackHandshakeMs}ms；现读 p50=${pctl(iv, 0.5)} n=${iv.size} all=${iv.mkString(",")}）"
+        )
+        assert(
+          offGrid.isEmpty,
+          s"🔴 间隔必须落在心跳拍网格的整数倍上（±600ms）——否则不是「单连接自循环」而是别的泵：${offGrid.mkString(",")}（all=${iv.mkString(",")}）"
+        )
+        assertEquals(finalTape.disc, 0, s"超时腿退出的连接不应再走「掉线」腿（迟到事件重复处置）：${finalTape.disc} 条")
+        println(
+          s"[hb-evidence] t2 n=${stamps.size} rate_per_min=${"%.2f".format(rate)} p50=${pctl(iv, 0.5)} p90=${pctl(iv, 0.9)} " +
+            s"min=${iv.minOption.getOrElse(-1L)} max=${iv.maxOption.getOrElse(-1L)} theory=${theory}ms fiveSecHits=$fiveSec " +
+            s"disc=${finalTape.disc} recon=${finalTape.recon} stale=${finalTape.stale} served=${deaf.served} " +
+            s"eq_samples=$eqSamples/${samples.size} dist=${samples.groupBy(s => s"${s.hbPeer}/${s.conns}").view.mapValues(_.size).toMap} roster=$roster"
+        )
+      }
   }
 
   // ===== ③/④ 真断连 ≥5 轮：每轮恰一次重连序列 + 逐轮采样 =====
@@ -575,95 +595,100 @@ class NeblinkPresenceHeartbeatLifecycleSpec extends CatsEffectSuite:
     val portB = freePort()
     assert(portA != 8080 && portB != 8080 && portA != portB, s"端口纪律: A=$portA B=$portB")
     evReset("t3_rounds.jsonl")
-    Dispatcher.parallel[IO].use { d =>
-      for
-        msB <- createInstance("hb-b3", portB, d)
-        psB = mkPresence(msB, portB, d)
-        msA <- createInstance("hb-a3", portA, d)
-        psA = mkPresence(msA, portA, d)
-        _ <- useSharedScratch
-        idA <- msA.identity
-        _ <- seedPeer(msB, idA)
-        relay = new TcpRelay(portB)
-        out <- serve(msB, psB, portB).use { _ =>
-          capturePresence { recs =>
-            val p = peer("hb-round-1", PeerNameRounds, List(relay.endpoint))
-            val recsOut = scala.collection.mutable.ListBuffer.empty[String]
-            def roundOnce(r: Int, genPrev: Long): IO[Unit] =
-              IO.defer {
-                for
-                  s0 <- sampleOnce(psA, PeerNameRounds, recs, s"t3_r$r-before", r)
-                  t0 = s0.tape
-                  _ <- IO(println(s"[hb-roster] round=$r ${instanceRoster()}"))
-                  _ <- IO(relay.dropAll()) // 真断连：整对 TCP 直接关（无 close 帧 ⇒ EOF/异常路径）
-                  // ④ 真掉线仍须摘除：先等「掉线类」日志出现（⇒ removePeer 已发生）
-                  _ <- awaitCond(15_000L, s"第 $r 轮掉线日志未出现（tape=$t0）") {
-                    val t = tape(recs)
-                    (t.timeout + t.disc) > (t0.timeout + t0.disc)
-                  }
-                  // ③ 再等代际前进（新 conn 发布）且接通：一轮恰一次重连序列
-                  _ <- awaitCond(20_000L, s"第 $r 轮未重连（gen 未前进，prev=$genPrev）") {
-                    psA.isConnected("hb-round-1") && psA.connectionGens.getOrElse("hb-round-1", -1L) != genPrev
-                  }
-                  _ <- IO.sleep(300.millis)
-                  s1 <- sampleOnce(psA, PeerNameRounds, recs, s"t3_r$r-after", r)
-                  t1 = s1.tape
-                  genAfter = psA.connectionGens.getOrElse("hb-round-1", -1L)
-                  rec =
-                    s"""{"round":$r,"gen_before":$genPrev,"gen_after":$genAfter,"hb_before":${s0.hbPeer},""" +
-                      s""""hb_all_before":${s0.hbAll},"conns_before":${s0.conns},"hb_after":${s1.hbPeer},""" +
-                      s""""hb_all_after":${s1.hbAll},"conns_after":${s1.conns},"d_disc":${t1.disc - t0.disc},""" +
-                      s""""d_timeout":${t1.timeout - t0.timeout},"d_recon":${t1.recon - t0.recon},"d_stale":${t1.stale - t0.stale}}"""
-                  _ <- IO(println(s"[hb-round] $rec"))
-                  _ <- IO(recsOut += rec)
-                  _ <- IO(evAppend("t3_rounds.jsonl", List(rec)))
-                  _ <- if r < DropRounds then roundOnce(r + 1, genAfter) else IO.unit
-                yield ()
-              }
-            for
-              _ <- psA.connect(peer("hb-warmup3", "HB-WARMUP3", List(relay.endpoint))).attempt.void
-              _ <- psA.disconnectAll()
-              _ <- awaitQuiet(psA)
-              _ <- msA.upsertPeer(p)
-              _ <- psA.connect(p)
-              _ <- awaitConnected(psA, "hb-round-1")
-              gen0 <- IO(psA.connectionGens.getOrElse("hb-round-1", -1L))
-              _ <- roundOnce(1, gen0)
-              finalTape <- IO(tape(recs))
-              roster <- IO(instanceRoster())
-            yield (recsOut.toList, finalTape, roster)
+    Dispatcher
+      .parallel[IO]
+      .use { d =>
+        for
+          msB <- createInstance("hb-b3", portB, d)
+          psB = mkPresence(msB, portB, d)
+          msA <- createInstance("hb-a3", portA, d)
+          psA = mkPresence(msA, portA, d)
+          _ <- useSharedScratch
+          idA <- msA.identity
+          _ <- seedPeer(msB, idA)
+          relay = new TcpRelay(portB)
+          out <- serve(msB, psB, portB).use { _ =>
+            capturePresence { recs =>
+              val p = peer("hb-round-1", PeerNameRounds, List(relay.endpoint))
+              val recsOut = scala.collection.mutable.ListBuffer.empty[String]
+              def roundOnce(r: Int, genPrev: Long): IO[Unit] =
+                IO.defer {
+                  for
+                    s0 <- sampleOnce(psA, PeerNameRounds, recs, s"t3_r$r-before", r)
+                    t0 = s0.tape
+                    _ <- IO(println(s"[hb-roster] round=$r ${instanceRoster()}"))
+                    _ <- IO(relay.dropAll()) // 真断连：整对 TCP 直接关（无 close 帧 ⇒ EOF/异常路径）
+                    // ④ 真掉线仍须摘除：先等「掉线类」日志出现（⇒ removePeer 已发生）
+                    _ <- awaitCond(15_000L, s"第 $r 轮掉线日志未出现（tape=$t0）") {
+                      val t = tape(recs)
+                      (t.timeout + t.disc) > (t0.timeout + t0.disc)
+                    }
+                    // ③ 再等代际前进（新 conn 发布）且接通：一轮恰一次重连序列
+                    _ <- awaitCond(20_000L, s"第 $r 轮未重连（gen 未前进，prev=$genPrev）") {
+                      psA.isConnected("hb-round-1") && psA.connectionGens.getOrElse("hb-round-1", -1L) != genPrev
+                    }
+                    _ <- IO.sleep(300.millis)
+                    s1 <- sampleOnce(psA, PeerNameRounds, recs, s"t3_r$r-after", r)
+                    t1 = s1.tape
+                    genAfter = psA.connectionGens.getOrElse("hb-round-1", -1L)
+                    rec =
+                      s"""{"round":$r,"gen_before":$genPrev,"gen_after":$genAfter,"hb_before":${s0.hbPeer},""" +
+                        s""""hb_all_before":${s0.hbAll},"conns_before":${s0.conns},"hb_after":${s1.hbPeer},""" +
+                        s""""hb_all_after":${s1.hbAll},"conns_after":${s1.conns},"d_disc":${t1.disc - t0.disc},""" +
+                        s""""d_timeout":${t1.timeout - t0.timeout},"d_recon":${t1.recon - t0.recon},"d_stale":${t1.stale - t0.stale}}"""
+                    _ <- IO(println(s"[hb-round] $rec"))
+                    _ <- IO(recsOut += rec)
+                    _ <- IO(evAppend("t3_rounds.jsonl", List(rec)))
+                    _ <- if r < DropRounds then roundOnce(r + 1, genAfter) else IO.unit
+                  yield ()
+                }
+              for
+                _ <- psA.connect(peer("hb-warmup3", "HB-WARMUP3", List(relay.endpoint))).attempt.void
+                _ <- psA.disconnectAll()
+                _ <- awaitQuiet(psA)
+                _ <- msA.upsertPeer(p)
+                _ <- psA.connect(p)
+                _ <- awaitConnected(psA, "hb-round-1")
+                gen0 <- IO(psA.connectionGens.getOrElse("hb-round-1", -1L))
+                _ <- roundOnce(1, gen0)
+                finalTape <- IO(tape(recs))
+                roster <- IO(instanceRoster())
+              yield (recsOut.toList, finalTape, roster)
+            }
           }
-        }
-        _ <- IO(relay.close())
-        _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
-        _ <- psB.disconnectAll().handleErrorWith(_ => IO.unit)
-      yield out
-    }.map { case (rounds, finalTape, roster) =>
-      assertEquals(rounds.size, DropRounds, s"必须跑满 $DropRounds 轮")
-      val staleGen = rounds.filter(r => numOf(r, "gen_before") < 0 || numOf(r, "gen_after") <= numOf(r, "gen_before"))
-      assert(staleGen.isEmpty, s"每轮都必须有现役连接且代际前进：${staleGen.mkString(" | ")}")
-      rounds.zipWithIndex.foreach { (rec, i) =>
-        val dDisc = numOf(rec, "d_disc")
-        val dTimeout = numOf(rec, "d_timeout")
-        assertEquals(dDisc + dTimeout, 1, s"🔴 第 ${i + 1} 轮掉线类日志必须**恰 1 条**（got disc=$dDisc timeout=$dTimeout）：$rec")
-        assertEquals(numOf(rec, "d_recon"), 1, s"🔴 第 ${i + 1} 轮重连必须**恰 1 次**（got ${numOf(rec, "d_recon")}）：$rec")
-        assert(
-          numOf(rec, "hb_after") <= numOf(rec, "conns_after"),
-          s"🔴 判据①违反（第 ${i + 1} 轮）：线程数 > 连接数：$rec"
-        )
-        assertEquals(numOf(rec, "hb_after"), numOf(rec, "conns_after"), s"🔴 第 ${i + 1} 轮线程数 ≠ 连接数：$rec")
+          _ <- IO(relay.close())
+          _ <- psA.disconnectAll().handleErrorWith(_ => IO.unit)
+          _ <- psB.disconnectAll().handleErrorWith(_ => IO.unit)
+        yield out
       }
-      assert(
-        rounds.map(r => numOf(r, "hb_after")).distinct == List(1) && rounds.map(r => numOf(r, "conns_after")).distinct == List(1),
-        s"🔴 轮间不得堆积（每轮 hb/conns 必须恒为 1）：${rounds.mkString(" | ")}"
-      )
-      assertEquals(finalTape.stale, 0, s"🔴 出现陈旧拍 ${finalTape.stale} 条（游离心跳线程醒来）")
-      println(
-        s"[hb-evidence] t3 rounds=${rounds.size} disc=${finalTape.disc} timeout=${finalTape.timeout} recon=${finalTape.recon} " +
-          s"stale=${finalTape.stale} roster=$roster"
-      )
-      println(rounds.mkString("\n"))
-    }
+      .map { case (rounds, finalTape, roster) =>
+        assertEquals(rounds.size, DropRounds, s"必须跑满 $DropRounds 轮")
+        val staleGen = rounds.filter(r => numOf(r, "gen_before") < 0 || numOf(r, "gen_after") <= numOf(r, "gen_before"))
+        assert(staleGen.isEmpty, s"每轮都必须有现役连接且代际前进：${staleGen.mkString(" | ")}")
+        rounds.zipWithIndex.foreach { (rec, i) =>
+          val dDisc = numOf(rec, "d_disc")
+          val dTimeout = numOf(rec, "d_timeout")
+          assertEquals(dDisc + dTimeout, 1, s"🔴 第 ${i + 1} 轮掉线类日志必须**恰 1 条**（got disc=$dDisc timeout=$dTimeout）：$rec")
+          assertEquals(numOf(rec, "d_recon"), 1, s"🔴 第 ${i + 1} 轮重连必须**恰 1 次**（got ${numOf(rec, "d_recon")}）：$rec")
+          assert(
+            numOf(rec, "hb_after") <= numOf(rec, "conns_after"),
+            s"🔴 判据①违反（第 ${i + 1} 轮）：线程数 > 连接数：$rec"
+          )
+          assertEquals(numOf(rec, "hb_after"), numOf(rec, "conns_after"), s"🔴 第 ${i + 1} 轮线程数 ≠ 连接数：$rec")
+        }
+        assert(
+          rounds
+            .map(r => numOf(r, "hb_after"))
+            .distinct == List(1) && rounds.map(r => numOf(r, "conns_after")).distinct == List(1),
+          s"🔴 轮间不得堆积（每轮 hb/conns 必须恒为 1）：${rounds.mkString(" | ")}"
+        )
+        assertEquals(finalTape.stale, 0, s"🔴 出现陈旧拍 ${finalTape.stale} 条（游离心跳线程醒来）")
+        println(
+          s"[hb-evidence] t3 rounds=${rounds.size} disc=${finalTape.disc} timeout=${finalTape.timeout} recon=${finalTape.recon} " +
+            s"stale=${finalTape.stale} roster=$roster"
+        )
+        println(rounds.mkString("\n"))
+      }
   }
 
   private def numOf(rec: String, key: String): Int =
@@ -719,7 +744,9 @@ private final class TcpRelay(targetPort: Int):
 
   /** 掐断当前所有转发对（客户端随后读到 EOF ⇒ 真掉线，无 close 帧）。 */
   def dropAll(): Unit =
-    pairs.forEach { (c, u) => closeQuietly(c); closeQuietly(u) }
+    pairs.forEach { (c, u) =>
+      closeQuietly(c); closeQuietly(u)
+    }
     pairs.clear()
 
   private def closeQuietly(s: Socket): Unit =
@@ -731,6 +758,8 @@ private final class TcpRelay(targetPort: Int):
     dropAll()
     try server.close()
     catch case _: Throwable => ()
+
+end TcpRelay
 
 /**
  * 聋对端夹具（**只在本机回环**）：完成真 WS 握手（`101 + Sec-WebSocket-Accept`），此后
@@ -792,9 +821,11 @@ private final class DeafWsFixture:
         case (1, '\n') => 2
         case (2, '\r') => 3
         case (3, '\n') => 4
-        case _         => 0
+        case _ => 0
       if state < 4 then b = in.read()
     sb.toString
+
+  end readHeaders
 
   private def handshakeResponse(request: String): String =
     val key = request.linesIterator
@@ -813,4 +844,8 @@ private final class DeafWsFixture:
     stopped = true
     try serverSocket.close()
     catch case _: Throwable => ()
-    clients.forEach(s => try s.close() catch case _: Throwable => ())
+    clients.forEach(s =>
+      try s.close()
+      catch case _: Throwable => ()
+    )
+end DeafWsFixture

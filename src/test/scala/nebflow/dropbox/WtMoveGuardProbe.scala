@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import nebflow.shared.{DropboxMessage, FileTransfer}
 
 import scala.concurrent.duration.*
 
@@ -78,32 +79,36 @@ object WtMoveGuardProbe:
         else null
       }
 
+  end defaultArgOrZero
+
   private def makeTransfer(raw: String): FileTransfer =
     val ps = ftCtor.getParameterTypes
     if ps.length < 11 then sys.error(s"[probe] unexpected FileTransfer arity ${ps.length}")
     val head: Array[AnyRef] = Array[AnyRef](
-      "t-probe",                                     // transferId
-      "in",                                          // direction
-      "peer-probe",                                  // peerDeviceId
-      "",                                            // peerAddress
-      "probe-target",                                // fileName
-      java.lang.Long.valueOf(0L),                    // fileSize
-      "text/plain",                                  // mimeType
-      "m-probe",                                     // msgId
-      "accepted",                                    // status
-      adaptTempPath(ps(9), raw),                     // tempPath
-      ""                                             // receiverHash
+      "t-probe", // transferId
+      "in", // direction
+      "peer-probe", // peerDeviceId
+      "", // peerAddress
+      "probe-target", // fileName
+      java.lang.Long.valueOf(0L), // fileSize
+      "text/plain", // mimeType
+      "m-probe", // msgId
+      "accepted", // status
+      adaptTempPath(ps(9), raw), // tempPath
+      "" // receiverHash
     )
     val tail: Array[AnyRef] = (12 to ps.length).map(i => defaultArgOrZero(i, ps(i - 1))).toArray
     ftCtor.newInstance((head ++ tail)*).asInstanceOf[FileTransfer]
 
+  end makeTransfer
+
   /** Collapses `String` / `Option[String]` / decision values into one vocabulary. */
   private def normalise(v: Any): String = v match
-    case null        => "absent"
+    case null => "absent"
     case Some(inner) => normalise(inner)
-    case None        => "absent"
-    case s: String   => if s.trim.isEmpty then "blank" else s
-    case other       => other.toString
+    case None => "absent"
+    case s: String => if s.trim.isEmpty then "blank" else s
+    case other => other.toString
 
   private def tempPathFieldOf(t: FileTransfer): String = normalise(ftTempPathM.invoke(t))
 
@@ -173,8 +178,7 @@ object WtMoveGuardProbe:
     println(s"[probe] tempArg=${if tempArg.isEmpty then "<empty>" else tempArg}")
     println(s"[probe] ftArity=${ftCtor.getParameterCount} tempParamType=${ftCtor.getParameterTypes()(9).getName}")
 
-    if caseId == "ping" then
-      println("[probe] pong")
+    if caseId == "ping" then println("[probe] pong")
     else if !cwd.startsWith(sandbox) || !home.startsWith(sandbox) then
       // Hard interlock: the pre-fix code really does relocate the working
       // directory, so refuse to drive it unless both cwd and user.home live
@@ -195,7 +199,9 @@ object WtMoveGuardProbe:
       val svc = newService()
       seedMessage(svc, "probe-target", "t-probe")
       println("[probe] invoked=rebuildTransfer")
-      println(s"[probe] rebuildTempPath=${rebuildTransferOf(svc, "t-probe").map(tempPathFieldOf).getOrElse("<no rebuild>")}")
+      println(
+        s"[probe] rebuildTempPath=${rebuildTransferOf(svc, "t-probe").map(tempPathFieldOf).getOrElse("<no rebuild>")}"
+      )
     else if caseId == "r5-rebuild-commit" then
       // The in-repo trigger, reproduced end to end: the exact shape of
       // DropboxServiceSpec's R5 case — a persisted inbound file message named
@@ -213,6 +219,7 @@ object WtMoveGuardProbe:
     else
       println(s"[probe] ABORT unknown case $caseId")
       System.exit(2)
+    end if
 
     println("[probe] done")
   end main

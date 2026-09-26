@@ -126,11 +126,10 @@ object FastMicroCompact:
           blocks.foldLeft(0L) { (bacc, b) =>
             bacc + (b match
               case tr: ContentBlock.ToolResult => tr.content.length.toLong
-              case tu: ContentBlock.ToolUse => (tu.name.length + io.circe.Json.fromJsonObject(tu.input).noSpaces.length).toLong
-              case other => other.toString.length.toLong
-            )
-          }
-      )
+              case tu: ContentBlock.ToolUse =>
+                (tu.name.length + io.circe.Json.fromJsonObject(tu.input).noSpaces.length).toLong
+              case other => other.toString.length.toLong)
+          })
     }
 
 end FastMicroCompact

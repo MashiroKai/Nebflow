@@ -4,7 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.actor.RootAgentIdentity
+import nebflow.shared.NebflowLogger
 
 /**
  * Global registry of active background tasks (local Bash + remote).
@@ -33,28 +34,38 @@ object BgTaskRegistry:
     description: String,
     startedAtMs: Long,
     kind: String, // "local" | "remote"
-    /** 顶层根会话 id（2026-09-05 计数/列表分叉修复）：前端 backgroundTaskUpdate
-      * 信封与 activeBgTasks 快照共用本键分桶。空 = 无 agent 上下文（REST 直调等）
-      * 或旧调用方未传 → activeTasksJson 回退按 sessionId 分组。 */
+    /**
+     * 顶层根会话 id（2026-09-05 计数/列表分叉修复）：前端 backgroundTaskUpdate
+     * 信封与 activeBgTasks 快照共用本键分桶。空 = 无 agent 上下文（REST 直调等）
+     * 或旧调用方未传 → activeTasksJson 回退按 sessionId 分组。
+     */
     rootSessionId: String = "",
-    /** 节点完成闸（bgtask-completion-gate 批）：true = 服务型（长驻 server），
-      * 不纳入节点等待集（节点完成不等它）；false = 等待型，纳入。默认 false
-      * = 等待——绝大多数后台任务是编译/测试/CI，「完成即通知」语义本就要求
-      * 等完再交付；server 是少数派且可显式申报。 */
+    /**
+     * 节点完成闸（bgtask-completion-gate 批）：true = 服务型（长驻 server），
+     * 不纳入节点等待集（节点完成不等它）；false = 等待型，纳入。默认 false
+     * = 等待——绝大多数后台任务是编译/测试/CI，「完成即通知」语义本就要求
+     * 等完再交付；server 是少数派且可显式申报。
+     */
     persistent: Boolean = false,
-    /** 来源类别（2026-09-07 后台任务面板重设计，作者指令②）：每任务标注开启
-      * 它的节点类别——"nebula" / "dispatcher" / "node"。由 originFor 从注册
-      * 会话 id 前缀推导（node-<uuid8> 随机段不含 Flow Map nodeId，故标识取
-      * 会话名=节点名，见 originLabel）。 */
+    /**
+     * 来源类别（2026-09-07 后台任务面板重设计，作者指令②）：每任务标注开启
+     * 它的节点类别——"nebula" / "dispatcher" / "node"。由 originFor 从注册
+     * 会话 id 前缀推导（node-<uuid8> 随机段不含 Flow Map nodeId，故标识取
+     * 会话名=节点名，见 originLabel）。
+     */
     origin: String = "nebula",
-    /** 来源显示名：Nebula / dispatcher/<project>（分发器 sessionName 即此
-      * 形态）/ Flow Map 节点名（节点 sessionName=nodeName）。空 = 调用方未传
-      * → 前端按 origin 类别兜底。 */
+    /**
+     * 来源显示名：Nebula / dispatcher/<project>（分发器 sessionName 即此
+     * 形态）/ Flow Map 节点名（节点 sessionName=nodeName）。空 = 调用方未传
+     * → 前端按 origin 类别兜底。
+     */
     originLabel: String = ""
   )
 
-  /** 节点完成闸：等待集内任务被超时/停滞看护杀掉的终局记账。节点终态化前
-    * drainFailures 检查，命中 → failed+注明（拒绝静默 completed）。 */
+  /**
+   * 节点完成闸：等待集内任务被超时/停滞看护杀掉的终局记账。节点终态化前
+   * drainFailures 检查，命中 → failed+注明（拒绝静默 completed）。
+   */
   case class FailedBgTask(
     jobId: String,
     sessionId: String,
@@ -68,18 +79,18 @@ object BgTaskRegistry:
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
   private val failures: Ref[IO, Map[String, FailedBgTask]] = Ref.unsafe(Map.empty)
 
-  /** 来源推导（2026-09-07 后台任务面板重设计）：从注册会话 id 前缀 + 会话名
-    * 推导 (origin 类别, originLabel 显示名)。node-<uuid8> 的随机段不含 Flow Map
-    * nodeId（NodeEngine 生成），节点标识取 sessionName（NodeEngine 注入 = Flow Map
-    * 节点名）；dispatcher 的 sessionName 恒为 "dispatcher/<project>"。其余一律
-    * nebula（含空 sessionId 的 REST 直调）。 */
+  /**
+   * 来源推导（2026-09-07 后台任务面板重设计）：从注册会话 id 前缀 + 会话名
+   * 推导 (origin 类别, originLabel 显示名)。node-<uuid8> 的随机段不含 Flow Map
+   * nodeId（NodeEngine 生成），节点标识取 sessionName（NodeEngine 注入 = Flow Map
+   * 节点名）；dispatcher 的 sessionName 恒为 "dispatcher/<project>"。其余一律
+   * nebula（含空 sessionId 的 REST 直调）。
+   */
   def originFor(sessionId: String, sessionName: Option[String]): (String, String) =
     val name = sessionName.getOrElse("")
-    if sessionId.startsWith("node-") then
-      ("node", if name.nonEmpty then name else sessionId)
-    else if sessionId.startsWith("dispatcher-") then
-      ("dispatcher", if name.nonEmpty then name else "dispatcher")
-    else ("nebula", "Nebula")
+    if sessionId.startsWith("node-") then ("node", if name.nonEmpty then name else sessionId)
+    else if sessionId.startsWith("dispatcher-") then ("dispatcher", if name.nonEmpty then name else "dispatcher")
+    else ("nebula", RootAgentIdentity.Name)
 
   def register(
     jobId: String,
@@ -91,14 +102,28 @@ object BgTaskRegistry:
     origin: String = "nebula",
     originLabel: String = ""
   ): IO[Unit] =
-    tasks.update(_ + (jobId -> ActiveTask(jobId, sessionId, description, System.currentTimeMillis(), kind, rootSessionId, persistent, origin, originLabel)))
+    tasks.update(
+      _ + (jobId -> ActiveTask(
+        jobId,
+        sessionId,
+        description,
+        System.currentTimeMillis(),
+        kind,
+        rootSessionId,
+        persistent,
+        origin,
+        originLabel
+      ))
+    )
 
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
 
-  /** #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时
-    * 调用方用返回值发 WS backgroundTaskUpdate(status="cancelled") 通知前端
-    * 指示器消失（agent 已死，正常的 completed 通知不会到来）。 */
+  /**
+   * #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时
+   * 调用方用返回值发 WS backgroundTaskUpdate(status="cancelled") 通知前端
+   * 指示器消失（agent 已死，正常的 completed 通知不会到来）。
+   */
   def unregisterSession(sessionId: Option[String]): IO[List[ActiveTask]] =
     sessionId match
       case None => IO.pure(Nil)
@@ -127,8 +152,10 @@ object BgTaskRegistry:
   // `destroyAt` 逐节点重建（每 30s 一拍，重启后一拍内恢复）；重启后到点者直接销毁。
   private val finalizedSessions: Ref[IO, Map[String, Long]] = Ref.unsafe(Map.empty)
 
-  /** 登记「该会话已终态、处于延迟销毁窗口（或已销毁）」——窗口内禁新 spawn。
-    * 幂等：同 sessionId 重复登记只覆盖 destroyAt。空 id no-op。 */
+  /**
+   * 登记「该会话已终态、处于延迟销毁窗口（或已销毁）」——窗口内禁新 spawn。
+   * 幂等：同 sessionId 重复登记只覆盖 destroyAt。空 id no-op。
+   */
   def markSessionFinalized(sessionId: String, destroyAt: Long): IO[Unit] =
     IO.whenA(sessionId.trim.nonEmpty)(finalizedSessions.update(_ + (sessionId -> destroyAt)))
 
@@ -147,8 +174,10 @@ object BgTaskRegistry:
   /** 表项快照（取证 / 测试断言用；键 = sessionId，值 = destroyAt）。 */
   def finalizedSessionsSnapshot: IO[Map[String, Long]] = finalizedSessions.get
 
-  /** 拒绝文案单一构造点（工具面错误消息 / 日志 / 事件同源，措辞禁含 "cancelled"
-    * ——桥侧以 `contains("cancelled")` 分流 cancelNode，避免歧义）。 */
+  /**
+   * 拒绝文案单一构造点（工具面错误消息 / 日志 / 事件同源，措辞禁含 "cancelled"
+   * ——桥侧以 `contains("cancelled")` 分流 cancelNode，避免歧义）。
+   */
   def spawnDeniedMessage(sessionId: String, destroyAt: Option[Long]): String =
     val remaining = destroyAt.map(at => math.max(0L, at - System.currentTimeMillis()) / 1000L)
     s"session '$sessionId' is finalized (terminal state) — read-only evidence window" +
@@ -156,8 +185,10 @@ object BgTaskRegistry:
       ": new background tasks and new sessions are rejected; the session's processes stay " +
       "alive for forensics until the window expires (then reclaimed: processes killed + tasks finalized)"
 
-  /** 禁 spawn 守卫：会话已终态 ⇒ 抛错（调用方 `IO.raiseError` 语义，工具面把它渲染成
-    * 给 LLM 的可读失败消息）。未登记 = `IO.unit`（零行为变化）。 */
+  /**
+   * 禁 spawn 守卫：会话已终态 ⇒ 抛错（调用方 `IO.raiseError` 语义，工具面把它渲染成
+   * 给 LLM 的可读失败消息）。未登记 = `IO.unit`（零行为变化）。
+   */
   def denySpawnIfFinalized(sessionId: String): IO[Unit] =
     finalizedSessions.get.flatMap { m =>
       m.get(sessionId) match
@@ -165,26 +196,27 @@ object BgTaskRegistry:
         case Some(at) => IO.raiseError(new RuntimeException(spawnDeniedMessage(sessionId, Some(at))))
     }
 
-  /** 会话级收殓（孤儿后台任务收割 D1 主钩子）：杀该会话全部 shell 进程树
-    * （前台 + 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS
-    * backgroundTaskUpdate(status="cancelled") 帧。
-    *
-    * 由 NodeEngine 的 failed/cancelled/zombie 终态出口与本引擎 Agent Stop 路径
-    * 共用（抽公共函数——对齐 AgentActor.killSessionShellProcesses 的既有语义，
-    * 避免两处重复；AgentActor 改调本函数）。
-    *
-    * 幂等：会话无进程/无任务时 no-op；已杀/已注销时二次调用无副作用。
-    * 防误杀边界：只做技术收殓，不裁决进程/任务归属语义（persistent/detached 的
-    * 杀否由调用方决策——本函数对在册任务一律注销）。
-    *
-    * sessionId 为 None 时 no-op（对齐 unregisterSession/killSessionProcesses）。
-    */
+  /**
+   * 会话级收殓（孤儿后台任务收割 D1 主钩子）：杀该会话全部 shell 进程树
+   * （前台 + 后台 runProcess 注册的 OS 进程）+ 注销 BgTaskRegistry + WS
+   * backgroundTaskUpdate(status="cancelled") 帧。
+   *
+   * 由 NodeEngine 的 failed/cancelled/zombie 终态出口与本引擎 Agent Stop 路径
+   * 共用（抽公共函数——对齐 AgentActor.killSessionShellProcesses 的既有语义，
+   * 避免两处重复；AgentActor 改调本函数）。
+   *
+   * 幂等：会话无进程/无任务时 no-op；已杀/已注销时二次调用无副作用。
+   * 防误杀边界：只做技术收殓，不裁决进程/任务归属语义（persistent/detached 的
+   * 杀否由调用方决策——本函数对在册任务一律注销）。
+   *
+   * sessionId 为 None 时 no-op（对齐 unregisterSession/killSessionProcesses）。
+   */
   def reclaimSession(
     sessionId: Option[String],
     wsSend: Json => IO[Unit],
     rootSessionId: String
   ): IO[Unit] =
-      ShellSession.killSessionProcesses(sessionId) *>
+    ShellSession.killSessionProcesses(sessionId) *>
       unregisterSession(sessionId).flatMap { removed =>
         removed.traverse_ { t =>
           // 输出查看批（2026-09-09）：收割的挂起任务同为终态——输出留存区翻转
@@ -193,25 +225,27 @@ object BgTaskRegistry:
             .finalizeTask(t.jobId, "cancelled", None, Some("Session reclaimed"))
             .handleError(_ => IO.unit) *>
             wsSend(
-            Json.obj(
-              "type" -> "backgroundTaskUpdate".asJson,
-              "sessionId" -> sessionId.asJson,
-              // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
-              // 发射点一致携带 rootSessionId，收割帧按根会话分桶直达归属视图
-              // （前端已删 bgTaskRootFor 启发式逆向分键）。
-              "rootSessionId" -> rootSessionId.asJson,
-              "taskId" -> t.jobId.asJson,
-              "description" -> t.description.asJson,
-              "status" -> "cancelled".asJson
-            )
-          ).handleErrorWith(_ => IO.unit)
+              Json.obj(
+                "type" -> "backgroundTaskUpdate".asJson,
+                "sessionId" -> sessionId.asJson,
+                // 权威分键（2026-09-05 计数/列表分叉修复）：与 BashTool/RemoteExecutor
+                // 发射点一致携带 rootSessionId，收割帧按根会话分桶直达归属视图
+                // （前端已删 bgTaskRootFor 启发式逆向分键）。
+                "rootSessionId" -> rootSessionId.asJson,
+                "taskId" -> t.jobId.asJson,
+                "description" -> t.description.asJson,
+                "status" -> "cancelled".asJson
+              )
+            ).handleErrorWith(_ => IO.unit)
         }
       }
 
-  /** 节点完成闸等待集查询：某会话名下的活动等待型任务 = 自有任务（sessionId
-    * 相等）+ 以该会话为根的子代理任务（rootSessionId 相等，命名空间不相交：
-    * node-<uuid> 只作为节点自身 sessionId 与其子代理的 rootSessionId 出现）。
-    * persistent=true（服务型）过滤不等待。 */
+  /**
+   * 节点完成闸等待集查询：某会话名下的活动等待型任务 = 自有任务（sessionId
+   * 相等）+ 以该会话为根的子代理任务（rootSessionId 相等，命名空间不相交：
+   * node-<uuid> 只作为节点自身 sessionId 与其子代理的 rootSessionId 出现）。
+   * persistent=true（服务型）过滤不等待。
+   */
   def waitingFor(sessionId: String): IO[List[ActiveTask]] =
     tasks.get.map { m =>
       m.values
@@ -219,27 +253,43 @@ object BgTaskRegistry:
         .toList
     }
 
-  /** 热重启 quiesce（F5 域，hot-restart 批）：全部活动等待型（非 persistent）后台
-    * 任务——等待型任务无持久面（进程内 Ref），重启即亡，故必须纳入空闲判定。 */
+  /**
+   * 热重启 quiesce（F5 域，hot-restart 批）：全部活动等待型（非 persistent）后台
+   * 任务——等待型任务无持久面（进程内 Ref），重启即亡，故必须纳入空闲判定。
+   */
   def waitingTasks: IO[List[ActiveTask]] =
     tasks.get.map(_.values.filter(!_.persistent).toList)
 
-  /** 节点完成闸终局记账：等待型任务被超时/停滞看护杀掉时登记（BashTool 完成回调
-    * Left(TimeoutException) 分支调用；persistent 与显式取消不入账——前者不在等待集，
-    * 后者是 agent 自主决策）。 */
-  def markFailed(jobId: String, sessionId: String, rootSessionId: String, description: String, cause: String): IO[Unit] =
-    failures.update(_ + (jobId -> FailedBgTask(jobId, sessionId, rootSessionId, description, cause, System.currentTimeMillis())))
+  /**
+   * 节点完成闸终局记账：等待型任务被超时/停滞看护杀掉时登记（BashTool 完成回调
+   * Left(TimeoutException) 分支调用；persistent 与显式取消不入账——前者不在等待集，
+   * 后者是 agent 自主决策）。
+   */
+  def markFailed(
+    jobId: String,
+    sessionId: String,
+    rootSessionId: String,
+    description: String,
+    cause: String
+  ): IO[Unit] =
+    failures.update(
+      _ + (jobId -> FailedBgTask(jobId, sessionId, rootSessionId, description, cause, System.currentTimeMillis()))
+    )
 
-  /** 节点终态化前检查（NodeEngine 桥）：取走并清空该会话名下的失败记账
-    * （匹配规则同 waitingFor）。consume-on-read：节点恰好终态化一次。 */
+  /**
+   * 节点终态化前检查（NodeEngine 桥）：取走并清空该会话名下的失败记账
+   * （匹配规则同 waitingFor）。consume-on-read：节点恰好终态化一次。
+   */
   def drainFailures(sessionId: String): IO[List[FailedBgTask]] =
     failures.modify { m =>
       val (hit, kept) = m.partition { case (_, f) => f.sessionId == sessionId || f.rootSessionId == sessionId }
       (kept, hit.values.toList)
     }
 
-  /** Returns active tasks grouped by root session id (rootSessionId, falling
-    * back to sessionId when absent), as JSON for the frontend. */
+  /**
+   * Returns active tasks grouped by root session id (rootSessionId, falling
+   * back to sessionId when absent), as JSON for the frontend.
+   */
   def activeTasksJson: IO[io.circe.Json] =
     tasks.get
       .map { m =>

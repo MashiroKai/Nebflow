@@ -2,10 +2,11 @@ package nebflow.neblink
 
 import cats.effect.IO
 import cats.effect.kernel.Ref
-import io.circe.syntax.*
 import io.circe.Json
-import nebflow.core.NebflowLogger
+import io.circe.syntax.*
+import nebflow.core.DeviceMailAckPort
 import nebflow.core.tools.RelayExecAudit
+import nebflow.shared.{DeviceMail, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -47,6 +48,11 @@ import scala.concurrent.duration.*
  * （真·陌生/迟到 ack），不再为「抢先 ack」误发——抢先前置由 ①-③ 吸收。
  */
 object DeviceMailAck:
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R4):core 侧(MailTool 设备腿的回执登记)改经
+  // core.DeviceMailAckPort 注册器调用本对象的 await;注册点 = 对象初始化(生产 boot 与
+  // 直接引用本对象的测试共用的必经最早一点,先例 = llm/interface.scala 的
+  // LlmRuntimePort.set;另有 NeblinkWiring 统一 boot 段落幂等再注册,见 R12 接线)。
+  DeviceMailAckPort.set(await)
 
   private val logger = NebflowLogger.forName("nebflow.neblink.devicemail.ack")
 
@@ -59,8 +65,10 @@ object DeviceMailAck:
   /** 「抢先 ack」缓冲的**容量上界**（条）——有界内存：超出即丢最旧并留审计行。 */
   val EarlyAckCapacity: Int = 64
 
-  /** 「抢先 ack」缓冲的**存活窗** = 2× 等待窗——覆盖「POST 往返（客户端上限 10 s）
-    * + 超时腿到点」全窗；到期仍未被认领的条目在下次触碰缓冲时留下 `ack-unmatched`。 */
+  /**
+   * 「抢先 ack」缓冲的**存活窗** = 2× 等待窗——覆盖「POST 往返（客户端上限 10 s）
+   * + 超时腿到点」全窗；到期仍未被认领的条目在下次触碰缓冲时留下 `ack-unmatched`。
+   */
   val EarlyAckTtl: FiniteDuration = AckTimeout * 2
 
   /** 一条待回执登记。 */
@@ -68,8 +76,10 @@ object DeviceMailAck:
 
   private val pending: Ref[IO, Map[String, Pending]] = Ref.unsafe[IO, Map[String, Pending]](Map.empty)
 
-  /** 「抢先 ack」缓冲（新 → 旧）：ack 先于登记抵达时暂存，登记到场时用于关联。
-    * **有界**：容量 [[EarlyAckCapacity]]、TTL [[EarlyAckTtl]]，两者都在写入/读取时裁剪。 */
+  /**
+   * 「抢先 ack」缓冲（新 → 旧）：ack 先于登记抵达时暂存，登记到场时用于关联。
+   * **有界**：容量 [[EarlyAckCapacity]]、TTL [[EarlyAckTtl]]，两者都在写入/读取时裁剪。
+   */
   private val earlyAcks: Ref[IO, List[(String, Long)]] = Ref.unsafe[IO, List[(String, Long)]](Nil)
 
   /** 当前 pending 数（读数/测试用）。 */
@@ -97,6 +107,10 @@ object DeviceMailAck:
         else timeoutLeg(eventId, targetDeviceId).start.void
     yield eventId
 
+    end for
+
+  end await
+
   private def timeoutLeg(eventId: String, targetDeviceId: String): IO[Unit] =
     IO.sleep(AckTimeout) *> pending.get.flatMap { m =>
       m.get(eventId) match
@@ -123,9 +137,11 @@ object DeviceMailAck:
           }
     }
 
-  /** 隧道 `type=="ack"` 帧入口。命中 pending ⇒ 出队 + INFO + 审计；未命中 ⇒ 记入
-    * 「抢先 ack」缓冲（INFO + 审计 `ack-buffered`，到期未认领才 `ack-unmatched`），
-    * 其它族 DEBUG（非本批 ack）。 */
+  /**
+   * 隧道 `type=="ack"` 帧入口。命中 pending ⇒ 出队 + INFO + 审计；未命中 ⇒ 记入
+   * 「抢先 ack」缓冲（INFO + 审计 `ack-buffered`，到期未认领才 `ack-unmatched`），
+   * 其它族 DEBUG（非本批 ack）。
+   */
   def handle(frame: Json): IO[Unit] =
     DeviceMail.ackEventId(frame) match
       case None =>
@@ -139,7 +155,12 @@ object DeviceMailAck:
                   s"[device-mail] ack received — eventId=$eventId target=${p.targetDeviceId} " +
                     s"elapsed_ms=${System.currentTimeMillis() - p.registeredAt}"
                 ) *>
-                audit("ack-received", p.targetDeviceId, eventId, s"elapsed_ms=${System.currentTimeMillis() - p.registeredAt}")
+                audit(
+                  "ack-received",
+                  p.targetDeviceId,
+                  eventId,
+                  s"elapsed_ms=${System.currentTimeMillis() - p.registeredAt}"
+                )
             case None =>
               if eventId.startsWith(DeviceMail.AckEventIdPrefix) then
                 // ① 未命中 ⇒ **先记入有界「抢先 ack」缓冲**。此处**不打 WARN**：ack 抢在
@@ -161,8 +182,10 @@ object DeviceMailAck:
   // 「抢先 ack」缓冲：有界 + TTL，两处裁剪（写入 / 读取）
   // ============================================================
 
-  /** 记入缓冲：TTL 裁剪 + 容量上界（超出丢最旧）。被裁掉的**未认领**条目逐条
-    * `ack-unmatched`（禁静默）；溢出另记一条 `ack-buffer-overflow`（只报条数，不刷屏）。 */
+  /**
+   * 记入缓冲：TTL 裁剪 + 容量上界（超出丢最旧）。被裁掉的**未认领**条目逐条
+   * `ack-unmatched`（禁静默）；溢出另记一条 `ack-buffer-overflow`（只报条数，不刷屏）。
+   */
   private def remember(eventId: String): IO[Unit] =
     val now = System.currentTimeMillis()
     earlyAcks
@@ -183,6 +206,8 @@ object DeviceMailAck:
            else IO.unit)
       }
 
+  end remember
+
   /** 从缓冲取走一条（命中 ⇒ 消费掉，避免重复匹配）；顺带做同样的 TTL 裁剪。 */
   private def takeEarly(eventId: String): IO[Boolean] =
     val now = System.currentTimeMillis()
@@ -195,8 +220,10 @@ object DeviceMailAck:
         expired.foldLeft(IO.unit)((acc, id) => acc *> unmatchedWarn(id)) *> IO.pure(hit)
       }
 
-  /** 缓冲条目**到期仍未被任何登记认领** ⇒ 可见告警（禁静默）。措辞与事实一致：
-    * 登记表与缓冲区都是**进程内全局**单例（跨会话/跨 agent 共用），不是 "this session"。 */
+  /**
+   * 缓冲条目**到期仍未被任何登记认领** ⇒ 可见告警（禁静默）。措辞与事实一致：
+   * 登记表与缓冲区都是**进程内全局**单例（跨会话/跨 agent 共用），不是 "this session"。
+   */
   private def unmatchedWarn(eventId: String): IO[Unit] =
     logger.warn(
       s"[device-mail] ack UNMATCHED — eventId=$eventId has no pending send in this process " +
@@ -209,14 +236,16 @@ object DeviceMailAck:
   private[nebflow] def resetForTest(): IO[Unit] = pending.set(Map.empty) *> earlyAcks.set(Nil)
 
   private def audit(status: String, targetDeviceId: String, eventId: String, detail: String): IO[Unit] =
-    RelayExecAudit.record(
-      sourceDeviceId = "device-mail",
-      targetDeviceId = targetDeviceId,
-      via = "relay",
-      action = s"DeviceMail.$status",
-      command = s"eventId=$eventId; $detail",
-      projectRoot = "",
-      cwd = Option(System.getProperty("user.dir")).getOrElse("")
-    ).handleErrorWith(e => logger.warn(s"[device-mail] audit line dropped: ${e.getMessage}"))
+    RelayExecAudit
+      .record(
+        sourceDeviceId = "device-mail",
+        targetDeviceId = targetDeviceId,
+        via = "relay",
+        action = s"DeviceMail.$status",
+        command = s"eventId=$eventId; $detail",
+        projectRoot = "",
+        cwd = Option(System.getProperty("user.dir")).getOrElse("")
+      )
+      .handleErrorWith(e => logger.warn(s"[device-mail] audit line dropped: ${e.getMessage}"))
 
 end DeviceMailAck

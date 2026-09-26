@@ -6,12 +6,12 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.RestApiRoutes
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 
@@ -105,64 +105,72 @@ class NeblinkRelayStatusRouteSpec extends CatsEffectSuite:
 
   test("/neblink/status exposes relay.authRejected with the rejection status code") {
     IO.blocking(new RelayAuthFixtureServer()).flatMap { fix =>
-      Dispatcher.parallel[IO].use { dispatcher =>
-        for
-          ms <- NeblinkService.create(0, dispatcher)
-          client = new NeblinkClient(
-            NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"),
-            0,
-            identity = Some(IO.pure(DeviceIdentity(Device, "qa-host", "macos")))
-          )
-          _ = ms.setRelayClient(Some(client))
-          _ <- client.login(Device, "qa-host", "macos", Nil)
-          // The fixture (Auth403 mode) accepts nothing: once the session is
-          // kicked the upgrade is rejected forever — the incident's shape.
-          _ <- IO { fix.kickSessionOf(Device, Net); () }
-          // 2026-09-11：隧道 URL 改为连接期 live 解析（构造参已移除）⇒
-          // 测试改为把 server 址写进 config ref（= 生产里 updateConfig/enrollment 的等价物）。
-          tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
-          _ = ms.setRelayTunnel(tunnel)
-          ps = new NeblinkPresenceService(ms, 0)(dispatcher)
-          discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
-          _ <- ms.updateConfig(_.copy(
-            enabled = true,
-            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-          ))
-          _ <- DeviceCredential.save(DeviceCredential(fix.url, Net, Device, "dev-tok"))
-          // Keep the session permanently dead: the fixture rejects the upgrade
-          // (403) AND refuses further logins, so the tunnel stays parked on the
-          // auth rejection — the state F7 exists to surface.
-          _ <- IO { fix.failLogins = true; () }
-          fiber <- tunnel.connect().start
-          out <-
-            (
-              for
-                rejected <- waitUntil(10.seconds)(IO(tunnel.authStatus.exists(_.statusCode == 403)))
-                _ <- IO(assert(rejected, s"the tunnel must record the 403 rejection; attempts=${fix.relayAttempts}"))
-                resp <- mkRoutes(ms, discovery).routes(statusRequest).value.map(_.getOrElse(fail("route fell through")))
-                body <- resp.as[Json]
-              yield (resp.status, body.hcursor.downField("relay"))
-            ).guarantee(fiber.cancel *> tunnel.stop())
-        yield
-          val (status, relay) = out
-          assertEquals(status, Status.Ok)
-          assertEquals(relay.downField("available").as[Boolean].toOption, Some(false), "tunnel is not up")
-          assertEquals(
-            relay.downField("authRejected").as[Boolean].toOption,
-            Some(true),
-            "the independent F7 state: down BECAUSE our session was rejected"
-          )
-          assertEquals(relay.downField("lastRejectedStatusCode").as[Int].toOption, Some(403))
-          assert(relay.downField("lastRejectedAt").as[Long].toOption.exists(_ > 0L), "timestamp recorded")
-          assert(
-            relay
-              .downField("selfHeal")
-              .as[String]
-              .toOption
-              .exists(s => s == "ok" || s == "failed" || s == "not-attempted"),
-            s"self-heal outcome must be reported: ${relay.downField("selfHeal").focus}"
-          )
-      }.guarantee(IO.blocking(fix.close()))
+      Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          for
+            ms <- NeblinkService.create(0, dispatcher)
+            client = new NeblinkClient(
+              NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"),
+              0,
+              identity = Some(IO.pure(DeviceIdentity(Device, "qa-host", "macos")))
+            )
+            _ = ms.setRelayClient(Some(client))
+            _ <- client.login(Device, "qa-host", "macos", Nil)
+            // The fixture (Auth403 mode) accepts nothing: once the session is
+            // kicked the upgrade is rejected forever — the incident's shape.
+            _ <- IO { fix.kickSessionOf(Device, Net); () }
+            // 2026-09-11：隧道 URL 改为连接期 live 解析（构造参已移除）⇒
+            // 测试改为把 server 址写进 config ref（= 生产里 updateConfig/enrollment 的等价物）。
+            tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
+            _ = ms.setRelayTunnel(tunnel)
+            ps = new NeblinkPresenceService(ms, 0)(dispatcher)
+            discovery = new NeblinkDiscovery(ms, 0, ps, Some(client))
+            _ <- ms.updateConfig(
+              _.copy(
+                enabled = true,
+                neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+              )
+            )
+            _ <- DeviceCredential.save(DeviceCredential(fix.url, Net, Device, "dev-tok"))
+            // Keep the session permanently dead: the fixture rejects the upgrade
+            // (403) AND refuses further logins, so the tunnel stays parked on the
+            // auth rejection — the state F7 exists to surface.
+            _ <- IO { fix.failLogins = true; () }
+            fiber <- tunnel.connect().start
+            out <-
+              (
+                for
+                  rejected <- waitUntil(10.seconds)(IO(tunnel.authStatus.exists(_.statusCode == 403)))
+                  _ <- IO(assert(rejected, s"the tunnel must record the 403 rejection; attempts=${fix.relayAttempts}"))
+                  resp <- mkRoutes(ms, discovery)
+                    .routes(statusRequest)
+                    .value
+                    .map(_.getOrElse(fail("route fell through")))
+                  body <- resp.as[Json]
+                yield (resp.status, body.hcursor.downField("relay"))
+              ).guarantee(fiber.cancel *> tunnel.stop())
+          yield
+            val (status, relay) = out
+            assertEquals(status, Status.Ok)
+            assertEquals(relay.downField("available").as[Boolean].toOption, Some(false), "tunnel is not up")
+            assertEquals(
+              relay.downField("authRejected").as[Boolean].toOption,
+              Some(true),
+              "the independent F7 state: down BECAUSE our session was rejected"
+            )
+            assertEquals(relay.downField("lastRejectedStatusCode").as[Int].toOption, Some(403))
+            assert(relay.downField("lastRejectedAt").as[Long].toOption.exists(_ > 0L), "timestamp recorded")
+            assert(
+              relay
+                .downField("selfHeal")
+                .as[String]
+                .toOption
+                .exists(s => s == "ok" || s == "failed" || s == "not-attempted"),
+              s"self-heal outcome must be reported: ${relay.downField("selfHeal").focus}"
+            )
+        }
+        .guarantee(IO.blocking(fix.close()))
     }
   }
 

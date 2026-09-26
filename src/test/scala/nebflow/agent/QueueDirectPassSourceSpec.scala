@@ -8,13 +8,13 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import fs2.Stream
 
 import scala.concurrent.duration.FiniteDuration
@@ -42,8 +42,10 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 90.seconds
 
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -85,7 +87,7 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.Nebula). */
+  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.RootAgent). */
   private def seedNebula(tmp: os.Path): Unit =
     val dir = tmp / "agents" / "Nebula"
     os.makeDir.all(dir)
@@ -99,7 +101,7 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -176,6 +178,8 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
 
+    end try
+
   test("② 负对照：idle 下 fromUser=false 且无 source 的服务端注入仍落 tool 兜底 + 注入帧"):
     val system = ActorSystem("qdp-tool-fallback")
     val tmp = os.temp.dir()
@@ -224,6 +228,8 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
 
   test("③ 回归：带 source 的服务端注入（Mail / Node / Dispatcher 形态）仍带 source 且仍发注入气泡"):
     val system = ActorSystem("qdp-inject-regression")
@@ -281,5 +287,6 @@ class QueueDirectPassSourceSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
 
 end QueueDirectPassSourceSpec

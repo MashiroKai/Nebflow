@@ -7,10 +7,11 @@ import io.circe.JsonObject
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{RelayExecAudit, RemoteExecutor, ToolContext}
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.nio.file.Files
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -72,98 +73,100 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
     val secret = "sk-live-SUPERSECRETVALUE123456"
     val cmd = s"export API_TOKEN=$secret; ssh user@10.0.0.9 uptime"
     IO.blocking(new RelayAuthFixtureServer()).flatMap { fix =>
-      Dispatcher.parallel[IO].use { dispatcher =>
-        for
-          ms <- NeblinkService.create(0, dispatcher)
-          client = new NeblinkClient(
-            NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"),
-            0,
-            identity = Some(IO.pure(DeviceIdentity(Device, "qa-host", "macos")))
-          )
-          _ <- client.login(Device, "qa-host", "macos", Nil)
-          _ <- IO(client.currentSessionToken.getOrElse(fail("client must have a session")))
-          // 2026-09-11（隧道常驻批 10ecea1f）：测试树的编译修复——`serverUrl` 构造参
-          // 已从 NeblinkRelayTunnel 移除（URL 改为连接期从 config ref live 解析），
-          // 这里仍按旧签名传 `fix.url` ⇒ main 上 Test/compile 直接失败。接线方式与
-          // RemoteExecutorClientConvergenceSpec 对齐：fixture URL 写进 config。
-          _ <- ms.updateConfig(
-            _.copy(
-              enabled = true,
-              neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+      Dispatcher
+        .parallel[IO]
+        .use { dispatcher =>
+          for
+            ms <- NeblinkService.create(0, dispatcher)
+            client = new NeblinkClient(
+              NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"),
+              0,
+              identity = Some(IO.pure(DeviceIdentity(Device, "qa-host", "macos")))
             )
-          )
-          tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
-          _ = ms.setRelayClient(Some(client))
-          _ = ms.setRelayTunnel(tunnel)
-          fiber <- tunnel.connect().start
-          out <-
-            (
-              for
-                up <- waitUntil(5.seconds)(IO(tunnel.isAlive))
-                _ <- IO(assert(up, s"relay 隧道必须起来才走 relay 路径（${fix.relayAttempts}）"))
-                _ <- IO(RemoteExecutor.initialize(ms, dispatcher, Some(client)))
-                _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", "http://127.0.0.1:9"))
-                srcId <- ms.identity.map(_.deviceId)
-                // ctx.projectRoot 必须在审计行里出现——它决定「哪个项目被控制了」
-                res <- RemoteExecutor.current
-                  .get
-                  .execute(
-                    "peer-one",
-                    "Bash",
-                    JsonObject("command" -> cmd.asJson),
-                    Some(ToolContext(projectRoot = "/tmp/qa-relay-proj"))
-                  )
-                lines <- IO.blocking(auditLines)
-                calls <- IO(fix.relayExecCalls.asScala.toList)
-              yield (res, lines, calls.map(_._2), srcId)
-            ).guarantee(fiber.cancel *> tunnel.stop())
-        yield
-          val (result, lines, accepted, srcId) = out
-          assertEquals(result, Right("remote-ok"), s"relay 下发必须成功: $result")
-          // xdev 批（2026-09-15）：execute 首触新增只读画像探针（kind=probe）——探针
-          // 同走 p2p→relay 链（fixture 直接应答 relay exec ⇒ 探针的 relay 腿成功），
-          // 故 fixture 收到 2 次 relay exec（探针 + 业务）。
-          assertEquals(accepted, List(true, true), "且真的走了 relay（fixture 收到 live session 的 exec ×2：探针 + 业务）")
-          // 2026-09-11 P2P 直连修复批（A）改口径：本用例的 peer 是**真实不可达**地址
-          // (`127.0.0.1:9`)。xdev 批（2026-09-15）后首触形态 = **3 行**：
-          //   [p2p(probe), relay(probe)] 探针成对 + [relay] 业务行——探针的 P2P
-          //   失败留下负证据（p2pFailures, 60s TTL）与 relay 路径记忆 ⇒ 业务下发
-          //   按**既有**负证据机制合理跳过 P2P 直走 relay（A 批「唯一旁路 = 真实
-          //   失败证据」语义的正确联动，非静默）。
-          // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：回退有行。
-          val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
-          assertEquals(
-            vias.map(_.downField("via").as[String].toOption),
-            List(Some("p2p"), Some("relay"), Some("relay")),
-            s"探针 p2p/relay 成对 + 业务 relay（探针负证据 ⇒ 业务跳 P2P），3 行审计: $lines"
-          )
-          assertEquals(
-            vias.map(_.downField("kind").as[String].toOption),
-            List(Some("probe"), Some("probe"), None),
-            "前两行 = 探针（kind=probe），业务行无 kind 键 = 旧形态"
-          )
-          assertEquals(
-            vias.flatMap(_.downField("targetDeviceId").as[String].toOption),
-            List("peer-1", "peer-1", "peer-1"),
-            "三行指向同一对端（探针 + 业务同一次首触）"
-          )
-          // 成功那一行（业务的 relay）的字段与脱敏契约不变
-          val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
-          assertEquals(
-            c.downField("deviceId").as[String].toOption,
-            Some(srcId),
-            "来源 deviceId = 本机 NebLink 身份（下发方）"
-          )
-          assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
-          assertEquals(c.downField("via").as[String].toOption, Some("relay"))
-          assertEquals(c.downField("action").as[String].toOption, Some("Bash"))
-          assertEquals(c.downField("projectRoot").as[String].toOption, Some("/tmp/qa-relay-proj"))
-          val shown = c.downField("command").as[String].toOption.getOrElse(fail("command missing"))
-          assert(!shown.contains(secret), s"明文密钥落盘: $shown")
-          assert(!shown.contains("SUPERSECRET"), s"明文密钥落盘: $shown")
-          assert(shown.contains("ssh user@10.0.0.9"), s"非密钥部分保留可读: $shown")
-          assert(shown.contains("API_TOKEN=[redacted"), s"密钥位已遮蔽: $shown")
-      }.guarantee(IO.blocking(fix.close()))
+            _ <- client.login(Device, "qa-host", "macos", Nil)
+            _ <- IO(client.currentSessionToken.getOrElse(fail("client must have a session")))
+            // 2026-09-11（隧道常驻批 10ecea1f）：测试树的编译修复——`serverUrl` 构造参
+            // 已从 NeblinkRelayTunnel 移除（URL 改为连接期从 config ref live 解析），
+            // 这里仍按旧签名传 `fix.url` ⇒ main 上 Test/compile 直接失败。接线方式与
+            // RemoteExecutorClientConvergenceSpec 对齐：fixture URL 写进 config。
+            _ <- ms.updateConfig(
+              _.copy(
+                enabled = true,
+                neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+              )
+            )
+            tunnel = new NeblinkRelayTunnel(ms, () => IO(client.currentSessionToken))(dispatcher)
+            _ = ms.setRelayClient(Some(client))
+            _ = ms.setRelayTunnel(tunnel)
+            fiber <- tunnel.connect().start
+            out <-
+              (
+                for
+                  up <- waitUntil(5.seconds)(IO(tunnel.isAlive))
+                  _ <- IO(assert(up, s"relay 隧道必须起来才走 relay 路径（${fix.relayAttempts}）"))
+                  _ <- IO(RemoteExecutor.initialize(ms, dispatcher, Some(client)))
+                  _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", "http://127.0.0.1:9"))
+                  srcId <- ms.identity.map(_.deviceId)
+                  // ctx.projectRoot 必须在审计行里出现——它决定「哪个项目被控制了」
+                  res <- RemoteExecutor.current.get
+                    .execute(
+                      "peer-one",
+                      "Bash",
+                      JsonObject("command" -> cmd.asJson),
+                      Some(ToolContext(projectRoot = "/tmp/qa-relay-proj"))
+                    )
+                  lines <- IO.blocking(auditLines)
+                  calls <- IO(fix.relayExecCalls.asScala.toList)
+                yield (res, lines, calls.map(_._2), srcId)
+              ).guarantee(fiber.cancel *> tunnel.stop())
+          yield
+            val (result, lines, accepted, srcId) = out
+            assertEquals(result, Right("remote-ok"), s"relay 下发必须成功: $result")
+            // xdev 批（2026-09-15）：execute 首触新增只读画像探针（kind=probe）——探针
+            // 同走 p2p→relay 链（fixture 直接应答 relay exec ⇒ 探针的 relay 腿成功），
+            // 故 fixture 收到 2 次 relay exec（探针 + 业务）。
+            assertEquals(accepted, List(true, true), "且真的走了 relay（fixture 收到 live session 的 exec ×2：探针 + 业务）")
+            // 2026-09-11 P2P 直连修复批（A）改口径：本用例的 peer 是**真实不可达**地址
+            // (`127.0.0.1:9`)。xdev 批（2026-09-15）后首触形态 = **3 行**：
+            //   [p2p(probe), relay(probe)] 探针成对 + [relay] 业务行——探针的 P2P
+            //   失败留下负证据（p2pFailures, 60s TTL）与 relay 路径记忆 ⇒ 业务下发
+            //   按**既有**负证据机制合理跳过 P2P 直走 relay（A 批「唯一旁路 = 真实
+            //   失败证据」语义的正确联动，非静默）。
+            // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：回退有行。
+            val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+            assertEquals(
+              vias.map(_.downField("via").as[String].toOption),
+              List(Some("p2p"), Some("relay"), Some("relay")),
+              s"探针 p2p/relay 成对 + 业务 relay（探针负证据 ⇒ 业务跳 P2P），3 行审计: $lines"
+            )
+            assertEquals(
+              vias.map(_.downField("kind").as[String].toOption),
+              List(Some("probe"), Some("probe"), None),
+              "前两行 = 探针（kind=probe），业务行无 kind 键 = 旧形态"
+            )
+            assertEquals(
+              vias.flatMap(_.downField("targetDeviceId").as[String].toOption),
+              List("peer-1", "peer-1", "peer-1"),
+              "三行指向同一对端（探针 + 业务同一次首触）"
+            )
+            // 成功那一行（业务的 relay）的字段与脱敏契约不变
+            val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
+            assertEquals(
+              c.downField("deviceId").as[String].toOption,
+              Some(srcId),
+              "来源 deviceId = 本机 NebLink 身份（下发方）"
+            )
+            assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+            assertEquals(c.downField("via").as[String].toOption, Some("relay"))
+            assertEquals(c.downField("action").as[String].toOption, Some("Bash"))
+            assertEquals(c.downField("projectRoot").as[String].toOption, Some("/tmp/qa-relay-proj"))
+            val shown = c.downField("command").as[String].toOption.getOrElse(fail("command missing"))
+            assert(!shown.contains(secret), s"明文密钥落盘: $shown")
+            assert(!shown.contains("SUPERSECRET"), s"明文密钥落盘: $shown")
+            assert(shown.contains("ssh user@10.0.0.9"), s"非密钥部分保留可读: $shown")
+            assert(shown.contains("API_TOKEN=[redacted"), s"密钥位已遮蔽: $shown")
+        }
+        .guarantee(IO.blocking(fix.close()))
     }
   }
 

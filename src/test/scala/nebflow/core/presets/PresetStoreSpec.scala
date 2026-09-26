@@ -3,8 +3,7 @@ package nebflow.core.presets
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.shared.AgentModelConfig
+import nebflow.shared.{AgentModelConfig, PathUtil}
 
 class PresetStoreSpec extends FunSuite:
 

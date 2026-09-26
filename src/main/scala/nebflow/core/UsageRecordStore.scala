@@ -1,20 +1,19 @@
 package nebflow.core
 
 import cats.effect.IO
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.channels.FileChannel
-import java.nio.file.{Files, StandardCopyOption, StandardOpenOption}
 import java.security.MessageDigest
 import java.time.{Instant, ZoneId, ZonedDateTime}
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import java.util.concurrent.locks.ReentrantLock
+
 import scala.util.control.NonFatal
 
 /**
@@ -355,7 +354,10 @@ class UsageRecordStore(baseDir: os.Path):
       .map(Option(_))
       .handleErrorWith { e =>
         IO.delay(
-          logger.warnSync("usage aggregate cache diagnostics degraded", "error" -> s"${e.getClass.getSimpleName}: ${e.getMessage}")
+          logger.warnSync(
+            "usage aggregate cache diagnostics degraded",
+            "error" -> s"${e.getClass.getSimpleName}: ${e.getMessage}"
+          )
         ) *> IO.pure(None)
       }
       .map(c => diagnosticsOf(c.getOrElse(emptyCache(ZoneId.systemDefault().getId))))
@@ -461,8 +463,15 @@ class UsageRecordStore(baseDir: os.Path):
               else line.write(b.toInt)
               i += 1
             pos += n
+          end if
+        end if
+      end while
       (lines, consumedEnd)
     finally raf.close()
+
+    end try
+
+  end scanLines
 
   /** Consume `[start, EOF)` into additive cells + hour spans. */
   private def scanDelta(path: os.Path, start: Long, zone: ZoneId): Delta =
@@ -513,6 +522,8 @@ class UsageRecordStore(baseDir: os.Path):
       hourSpans = UsageAggCache.mergeSpans(base.hourSpans, d.spans)
     )
 
+  end applyDelta
+
   private def emptyCache(zoneId: String): UsageAggCacheFile =
     UsageAggCacheFile(
       schemaVersion = UsageAggCache.SchemaVersion,
@@ -541,14 +552,20 @@ class UsageRecordStore(baseDir: os.Path):
   private def invalidReason(cache: UsageAggCacheFile, size: Long): Option[String] =
     val w = cache.watermark
     val zoneId = ZoneId.systemDefault().getId
-    if cache.schemaVersion != UsageAggCache.SchemaVersion then Some(s"schemaVersion=${cache.schemaVersion} (expected ${UsageAggCache.SchemaVersion})")
+    if cache.schemaVersion != UsageAggCache.SchemaVersion then
+      Some(s"schemaVersion=${cache.schemaVersion} (expected ${UsageAggCache.SchemaVersion})")
     else if cache.timezoneId != zoneId then Some(s"timezoneId=${cache.timezoneId} (current $zoneId)")
     else if w.byteOffset > size then Some(s"source truncated/rotated: watermark=${w.byteOffset} > size=$size")
-    else if w.byteOffset > 0 && !atLineBoundary(w.byteOffset) then Some(s"watermark ${w.byteOffset} is not on a line boundary")
-    else if w.byteOffset > 0 && headDigestOf(logPath, w.byteOffset) != w.headDigest then Some("head digest mismatch (in-place rewrite)")
-    else if w.byteOffset > 0 && tailDigestOf(logPath, w.byteOffset) != w.tailDigest then Some("tail digest mismatch (in-place rewrite)")
+    else if w.byteOffset > 0 && !atLineBoundary(w.byteOffset) then
+      Some(s"watermark ${w.byteOffset} is not on a line boundary")
+    else if w.byteOffset > 0 && headDigestOf(logPath, w.byteOffset) != w.headDigest then
+      Some("head digest mismatch (in-place rewrite)")
+    else if w.byteOffset > 0 && tailDigestOf(logPath, w.byteOffset) != w.tailDigest then
+      Some("tail digest mismatch (in-place rewrite)")
     else if !cellsWellFormed(cache) then Some("cell/hour-span table inconsistent")
     else None
+
+  end invalidReason
 
   private def quarantine(reason: String): Unit =
     try
@@ -577,27 +594,17 @@ class UsageRecordStore(baseDir: os.Path):
     val (exists, size, mtime) = cacheFileStamp
     m.cacheFileExists == exists && (!exists || (m.cacheFileSize == size && m.cacheFileMtime == mtime))
 
-  /** Atomic persist: tmp file → fsync → rename over the target. */
+  /**
+   * Atomic persist: tmp file → fsync → rename over the target.
+   * 落盘序列统一到 AtomicJson.writeSyncDurable（fsync + ATOMIC_MOVE 优先、
+   * 不支持原子换名的 provider 降级为替换式 move）；失败在调用侧 WARN 吞掉
+   * （served result unaffected，原口径）。
+   */
   private def persist(cache: UsageAggCacheFile): Unit =
-    val tmp = baseDir / s"usage-agg-v1.json.tmp-${ProcessHandle.current().pid()}-${System.currentTimeMillis()}"
-    try
-      os.makeDir.all(baseDir)
-      val bytes = cache.asJson.noSpaces.getBytes(UTF_8)
-      Files.write(tmp.toNIO, bytes)
-      val ch = FileChannel.open(tmp.toNIO, StandardOpenOption.WRITE)
-      try ch.force(true)
-      finally ch.close()
-      try Files.move(tmp.toNIO, cachePath.toNIO, StandardCopyOption.ATOMIC_MOVE)
-      catch
-        case NonFatal(_) =>
-          // Providers without atomic move support (e.g. an existing target on Windows):
-          // degrade to a replacing move rather than losing the cache.
-          Files.move(tmp.toNIO, cachePath.toNIO, StandardCopyOption.REPLACE_EXISTING)
+    try AtomicJson.writeSyncDurable(cachePath, cache.asJson.noSpaces)
     catch
       case NonFatal(e) =>
         logger.warnSync("usage aggregate cache persist failed (served result unaffected)", "error" -> e.getMessage)
-        try Files.deleteIfExists(tmp.toNIO)
-        catch case NonFatal(_) => ()
 
   private def setMemo(size: Long, cache: UsageAggCacheFile): Unit =
     val (exists, cSize, cMtime) = cacheFileStamp
@@ -679,6 +686,8 @@ class UsageRecordStore(baseDir: os.Path):
         if delta.lines > 0 then persist(merged)
         setMemo(size, merged)
         merged
+    end match
+  end loadOrRebuild
 
   // ── query: cells + exact re-read of the hours a window edge cuts ────────────
 
@@ -703,6 +712,8 @@ class UsageRecordStore(baseDir: os.Path):
       }
     }
 
+  end aggregateIncremental
+
   /**
    * Records of the (at most two) hours a window edge cuts: their cached cell is
    * discarded and rebuilt from the raw byte span of that hour, filtered by the
@@ -724,8 +735,7 @@ class UsageRecordStore(baseDir: os.Path):
           cache.hourSpans.get(h).foreach { span =>
             scanLines(logPath, span.start, span.end) { (_, _, rec) =>
               rec.foreach { r =>
-                if
-                  UsageAggCache.hourKey(r.timestamp, zone) == h &&
+                if UsageAggCache.hourKey(r.timestamp, zone) == h &&
                   from.forall(r.timestamp >= _) &&
                   to.forall(r.timestamp < _)
                 then out += UsageAggCache.cellOf(r, h)
@@ -735,5 +745,7 @@ class UsageRecordStore(baseDir: os.Path):
         }
         out.result()
       }
+    end if
+  end edgeCells
 
 end UsageRecordStore

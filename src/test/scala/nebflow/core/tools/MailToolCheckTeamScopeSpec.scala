@@ -2,8 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.flow.TeamSessionRegistry
+import nebflow.shared.PathUtil
 
 /**
  * checkTeamScope cross-team tightening (decision 20): explicit
@@ -32,13 +32,15 @@ class MailToolCheckTeamScopeSpec extends FunSuite:
     writeTeam("myteam", lead = "boss") // rules.md absent → marker off
     writeTeam("other", lead = "chief")
 
-  /** R2 后 checkTeamScope 需要 ToolContext（canMailNebula 的角色判据走 `ctx.isDispatcher`）。
-    * 缺省 = 非分发器（team 身份面，既有 6 用例语义逐字不变）。 */
+  /**
+   * R2 后 checkTeamScope 需要 ToolContext（canMailRoot 的角色判据走 `ctx.isDispatcher`）。
+   * 缺省 = 非分发器（team 身份面，既有 6 用例语义逐字不变）。
+   */
   private def check(
-      address: String,
-      senderName: String = "worker",
-      senderSid: String = "worker-sid",
-      isDispatcher: Boolean = false
+    address: String,
+    senderName: String = "worker",
+    senderSid: String = "worker-sid",
+    isDispatcher: Boolean = false
   ) =
     MailTool
       .checkTeamScope(
@@ -72,7 +74,7 @@ class MailToolCheckTeamScopeSpec extends FunSuite:
 
   test("lead by name (team.json lead, unregistered session) passes"):
     // Fork/temporary sessions carry the lead agentDef but an unregistered sid —
-    // name-based fallback (same as canMailNebula).
+    // name-based fallback (same as canMailRoot).
     assertEquals(check("other/Backend", senderName = "boss", senderSid = "fork-sid"), None)
 
   test("mailing another team BY NAME stays blocked (pre-existing behavior)"):

@@ -26,7 +26,7 @@ import nebflow.agent.AgentCore
 class CardToolRegistrationSpec extends FunSuite:
 
   private def mkDef(name: String, tools: List[String] = Nil) =
-    nebflow.agent.AgentDef(name = name, description = "", tools = tools)
+    nebflow.actor.AgentDef(name = name, description = "", tools = tools)
 
   // ── 注册面 ──────────────────────────────────────────────
 
@@ -68,8 +68,13 @@ class CardToolRegistrationSpec extends FunSuite:
     assert(result.swap.toOption.get.message.contains("html"), "error message mentions the html parameter")
 
   test("Card call with html -> ___CARD_HTML___ sentinel payload"):
-    val input = io.circe.JsonObject("html" -> io.circe.Json.fromString("<div>hi</div>"), "title" -> io.circe.Json.fromString("T"))
+    val input =
+      io.circe.JsonObject("html" -> io.circe.Json.fromString("<div>hi</div>"), "title" -> io.circe.Json.fromString("T"))
     val result = CardTool.call(input, emptyCtx).unsafeRunSync()
     val payload = result.getOrElse(fail("expected Right"))
     assert(payload.startsWith("___CARD_HTML___"), s"sentinel prefix, got: ${payload.take(40)}")
-    assert(payload.contains(""""title":"T"""") || payload.contains("""\"title\":\"T\""""), "title round-trips in payload")
+    assert(
+      payload.contains(""""title":"T"""") || payload.contains("""\"title\":\"T\""""),
+      "title round-trips in payload"
+    )
+end CardToolRegistrationSpec

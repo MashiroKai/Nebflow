@@ -26,6 +26,7 @@ object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (installed = trusted; block/unblock a package)"
   def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke, PluginUnblock, PluginEnable, PluginDisable)
+
   def examples = List(
     "nebflow plugin list",
     "nebflow plugin add /path/to/my-plugin",
@@ -59,9 +60,19 @@ object PluginCommand extends CliCommand:
                   Option.when(p.hcursor.downField("contentChanged").as[Boolean].getOrElse(false))("content-changed")
                 ).flatten
                 val mark = if marks.isEmpty then "" else s", ${marks.mkString(", ")}"
-                val skills = p.hcursor.downField("skills").as[List[Json]].getOrElse(Nil).map(_.hcursor.downField("id").as[String].getOrElse("?"))
-                val mcp = p.hcursor.downField("mcpServers").as[List[Json]].getOrElse(Nil).map(_.hcursor.downField("server").as[String].getOrElse("?"))
-                s"  $name  (v$version, $trust$mark)  skills: ${if skills.isEmpty then "-" else skills.mkString(",")}  mcp: ${if mcp.isEmpty then "-" else mcp.mkString(",")}"
+                val skills = p.hcursor
+                  .downField("skills")
+                  .as[List[Json]]
+                  .getOrElse(Nil)
+                  .map(_.hcursor.downField("id").as[String].getOrElse("?"))
+                val mcp = p.hcursor
+                  .downField("mcpServers")
+                  .as[List[Json]]
+                  .getOrElse(Nil)
+                  .map(_.hcursor.downField("server").as[String].getOrElse("?"))
+                s"  $name  (v$version, $trust$mark)  skills: ${
+                    if skills.isEmpty then "-" else skills.mkString(",")
+                  }  mcp: ${if mcp.isEmpty then "-" else mcp.mkString(",")}"
               }
               val rejectedLines = rejected.map { r =>
                 val name = r.hcursor.downField("name").as[String].getOrElse("?")
@@ -87,14 +98,16 @@ object PluginCommand extends CliCommand:
       else
         nebflow.core.plugin.PluginRegistry.installFrom(source).map {
           case Right(msg) => CliResult.text(msg)
-          case Left(err)  => CliResult.Error(err)
+          case Left(err) => CliResult.Error(err)
         }
 
   end PluginAdd
 
   private object PluginApprove extends CliSubcommand:
     def name = "approve"
-    def description = "Record a plugin's current directory digest (audit + seed-reconcile baseline; not a gate any more)"
+
+    def description =
+      "Record a plugin's current directory digest (audit + seed-reconcile baseline; not a gate any more)"
     def params = List(CliParam("name", None, "Plugin name", required = true))
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -105,18 +118,25 @@ object PluginCommand extends CliCommand:
           case None => IO.pure(CliResult.Error("Gateway not running"))
           case Some(client) =>
             client.post("/api/plugins/" + name + "/approve", Json.obj()).map { resp =>
-              val msg = resp.hcursor.downField("message").as[String].toOption
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .toOption
                 .orElse(resp.hcursor.downField("error").as[String].toOption)
                 .getOrElse(resp.noSpaces)
               if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
               else CliResult.Error(msg)
             }
+      end if
+    end run
 
   end PluginApprove
 
   private object PluginRevoke extends CliSubcommand:
     def name = "revoke"
-    def description = "Block a plugin (deny-list): leaves the catalog, refused at dispatch/load, in-flight MCP stopped within 30s"
+
+    def description =
+      "Block a plugin (deny-list): leaves the catalog, refused at dispatch/load, in-flight MCP stopped within 30s"
     def params = List(CliParam("name", None, "Plugin name", required = true))
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -143,15 +163,24 @@ object PluginCommand extends CliCommand:
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
           client.post(path, Json.obj()).map { resp =>
-            val msg = resp.hcursor.downField("message").as[String].toOption
+            val msg = resp.hcursor
+              .downField("message")
+              .as[String]
+              .toOption
               .orElse(resp.hcursor.downField("error").as[String].toOption)
               .getOrElse(resp.noSpaces)
             if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
             else CliResult.Error(msg)
           }
 
-  /** 令 1 派发开关（2026-09-12）：关闭 = 不再把该能力派给新节点（闸 A），
-    * **不影响**已在飞/已派发节点（闸 B/C/E/D 只判内容面）。 */
+    end if
+
+  end postPluginAction
+
+  /**
+   * 令 1 派发开关（2026-09-12）：关闭 = 不再把该能力派给新节点（闸 A），
+   * **不影响**已在飞/已派发节点（闸 B/C/E/D 只判内容面）。
+   */
   private object PluginDisable extends CliSubcommand:
     def name = "disable"
     def description = "Disable dispatch of a plugin to NEW nodes (in-flight nodes are unaffected)"
@@ -181,10 +210,15 @@ object PluginCommand extends CliCommand:
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
           client.post("/api/plugins/" + name + "/" + endpoint, Json.obj()).map { resp =>
-            val msg = resp.hcursor.downField("message").as[String].toOption
+            val msg = resp.hcursor
+              .downField("message")
+              .as[String]
+              .toOption
               .orElse(resp.hcursor.downField("error").as[String].toOption)
               .getOrElse(resp.noSpaces)
             if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
             else CliResult.Error(msg)
           }
+    end if
+  end dispatchSwitch
 end PluginCommand

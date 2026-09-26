@@ -2,20 +2,10 @@ package nebflow.llm
 
 import cats.effect.{IO, Temporal}
 import cats.syntax.all.*
-import nebflow.shared.*
+import nebflow.shared.{FallbackExhaustedError, *}
 
 import scala.concurrent.duration.*
 import scala.util.Random
-
-class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
-
-  override def getMessage: String =
-    val summary = attempts
-      .map { a =>
-        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-      }
-      .mkString("\n")
-    s"All providers failed:\n$summary"
 
 /**
  * Raised when the all-Down gate ([[ProviderHealthMonitor.waitForAnyUp]]) timed
@@ -27,9 +17,10 @@ class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Except
  * case, so [[Fallback.classifyError]] maps it to Transient and the 3-attempt
  * llm-fail-retry backstop fires.
  */
-class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
-  s"all providers down: none recovered within ${waitedMs}ms"
-)
+class AllProvidersDownTimeout(val waitedMs: Long)
+    extends RuntimeException(
+      s"all providers down: none recovered within ${waitedMs}ms"
+    )
 
 /**
  * Raised when a single turn has already made [[Fallback.MaxTurnLlmCalls]]
@@ -41,9 +32,10 @@ class AllProvidersDownTimeout(val waitedMs: Long) extends RuntimeException(
  * defeat the budget). The turn fails fast with an explicit reason instead of
  * silently looping.
  */
-class TurnBudgetExceeded(val turnId: Long, val calls: Int) extends RuntimeException(
-  s"turn LLM budget exceeded: $calls retry calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}) — failing fast to stop retry amplification"
-)
+class TurnBudgetExceeded(val turnId: Long, val calls: Int)
+    extends RuntimeException(
+      s"turn LLM budget exceeded: $calls retry calls in turn $turnId (max ${Fallback.MaxTurnLlmCalls}) — failing fast to stop retry amplification"
+    )
 
 case class FallbackResult[T](
   data: T,
@@ -59,19 +51,21 @@ object Fallback:
   val InitialBackoffMs: Long = 1000L
   val MaxBackoffMs: Long = 10000L
 
-  /** 案①（LLM 硬杀波 · `chain-llmstall-fix`，2026-09-21 作者绿灯）——**全链失败轮次上限**：
-    * 一次 `sendStream` 内，候选链最多被整体重投这么多轮；轮次耗尽 ⇒
-    * `FallbackExhaustedError`（显式终局），不再回到 `attemptWithHealthCheck`。
-    *
-    * 动因（定谳报告 20260921_182544 §一.4）：全链 400（Format ⇒ `evict = false`，见
-    * [[classifyError]]）时无人被 markDown ⇒ health-check 过滤返回**同一全链** ⇒
-    * `tryCandidate ⇄ attemptWithHealthCheck` 无计数 / 无退避 / 无终态地闭环：流不产
-    * chunk 也不抛错 ⇒ agent 无活动信号 ⇒ 600s 后看门狗硬杀。
-    *
-    * 取值 2 的依据（**回归共存硬约束**，非任意）：既有 `FormatErrorNoEvictSpec` T1
-    * 断言「a/m1 命中恰好 1 次 + b 成功」——轮内语义只在「整链试完」时才推进轮次，
-    * 上限 ≥ 2 保证「一次完整候选遍历 + 一次换轮重试」这条既有合法路径零变化。
-    * 单测锚点：`AllCandidatesFormatLoopSpec`（全链 400 必须在该上限内终止）。 */
+  /**
+   * 案①（LLM 硬杀波 · `chain-llmstall-fix`，2026-09-21 作者绿灯）——**全链失败轮次上限**：
+   * 一次 `sendStream` 内，候选链最多被整体重投这么多轮；轮次耗尽 ⇒
+   * `FallbackExhaustedError`（显式终局），不再回到 `attemptWithHealthCheck`。
+   *
+   * 动因（定谳报告 20260921_182544 §一.4）：全链 400（Format ⇒ `evict = false`，见
+   * [[classifyError]]）时无人被 markDown ⇒ health-check 过滤返回**同一全链** ⇒
+   * `tryCandidate ⇄ attemptWithHealthCheck` 无计数 / 无退避 / 无终态地闭环：流不产
+   * chunk 也不抛错 ⇒ agent 无活动信号 ⇒ 600s 后看门狗硬杀。
+   *
+   * 取值 2 的依据（**回归共存硬约束**，非任意）：既有 `FormatErrorNoEvictSpec` T1
+   * 断言「a/m1 命中恰好 1 次 + b 成功」——轮内语义只在「整链试完」时才推进轮次，
+   * 上限 ≥ 2 保证「一次完整候选遍历 + 一次换轮重试」这条既有合法路径零变化。
+   * 单测锚点：`AllCandidatesFormatLoopSpec`（全链 400 必须在该上限内终止）。
+   */
   val MaxChainRounds: Int = 2
 
   /**
@@ -86,11 +80,13 @@ object Fallback:
    */
   val MaxTurnLlmCalls: Int = 4
 
-  /** Overload-class failures (429 rate-limit / 529 overloaded) need a long
+  /**
+   * Overload-class failures (429 rate-limit / 529 overloaded) need a long
    *  backoff before retry — they mean the provider is saturated, not dead.
    *  gate-wedge 止损 (2026-08-20): raised 5s → 60s to match the standard
    *  rate-limit window (litellm-class resolvers refill per 60s). Retrying at
-   *  the window edge just burns another 429 and re-sends the full context. */
+   *  the window edge just burns another 429 and re-sends the full context.
+   */
   val OverloadBackoffMinMs: Long = 60_000L
 
   /**
@@ -109,10 +105,11 @@ object Fallback:
    */
   val QuotaUpstreamCodes: Set[String] = Set("1308")
 
-  /** 错误体是否携带某上游码：JSON 引号形（`"code":"1308"`）/ 上游 message 前缀形
-    * （`[1308]`）。**不认裸数字文本**——request_id 等十六进制串可能偶然含该数字，
-    * 裸匹配会凭空制造配额判定。
-    */
+  /**
+   * 错误体是否携带某上游码：JSON 引号形（`"code":"1308"`）/ 上游 message 前缀形
+   * （`[1308]`）。**不认裸数字文本**——request_id 等十六进制串可能偶然含该数字，
+   * 裸匹配会凭空制造配额判定。
+   */
   private def carriesUpstreamCode(body: String, code: String): Boolean =
     body.contains(s""""code":"$code"""") || body.contains(s"[$code]")
 
@@ -132,16 +129,18 @@ object Fallback:
         c == 403 || (c == 429 && QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code)))
       case _ => QuotaUpstreamCodes.exists(code => carriesUpstreamCode(body, code))
 
-  /** 案① A4（chain-llmstall-fix）：**Format 类失败的终局语义单点定义**——结构化
-    * 400（`HttpError` 分支）与 stringly 400（`invalid request` / `bad request` / `400`
-    * 文本分支）共用本工厂。三元组逐字等于两条路径改造前的取值：
-    * `reason = Format` / `permanence = Permanent` / `evict = false`（400 = provider 解析并
-    * 拒绝了我们的请求 ⇒ 它活着 ⇒ 不驱逐，只跳本次请求）。
-    *
-    * **与案① A1/A2 的关系**：本工厂只定「分类」，不定「终局」——终局由 stream 层的
-    * 轮次上限（`Fallback.MaxChainRounds`）给出（interface.scala `tryCandidate` 的
-    * `case Nil` 出口）。两处 Format 路径都走同一个 `ErrorPermanence.Permanent` 分支 ⇒
-    * 同受该上限约束，这就是 A4 要求的「两处同受约束」。 */
+  /**
+   * 案① A4（chain-llmstall-fix）：**Format 类失败的终局语义单点定义**——结构化
+   * 400（`HttpError` 分支）与 stringly 400（`invalid request` / `bad request` / `400`
+   * 文本分支）共用本工厂。三元组逐字等于两条路径改造前的取值：
+   * `reason = Format` / `permanence = Permanent` / `evict = false`（400 = provider 解析并
+   * 拒绝了我们的请求 ⇒ 它活着 ⇒ 不驱逐，只跳本次请求）。
+   *
+   * **与案① A1/A2 的关系**：本工厂只定「分类」，不定「终局」——终局由 stream 层的
+   * 轮次上限（`Fallback.MaxChainRounds`）给出（interface.scala `tryCandidate` 的
+   * `case Nil` 出口）。两处 Format 路径都走同一个 `ErrorPermanence.Permanent` 分支 ⇒
+   * 同受该上限约束，这就是 A4 要求的「两处同受约束」。
+   */
   private[llm] def formatClassification(
     statusCode: Option[Int],
     message: Option[String]
@@ -361,6 +360,7 @@ object Fallback:
                 IO.sleep(effectiveDelay.millis) *>
                   tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
               else notifyExhausted *> fallback(allFailures)
+          end match
       }
     end tryWithRetry
 

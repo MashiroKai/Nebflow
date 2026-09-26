@@ -7,8 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.dsl.io.*
 
@@ -20,19 +20,20 @@ import java.security.{KeyPair, KeyPairGenerator, PrivateKey, Signature}
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
-/** 接受面 · **轨 2**（Logto 签发 PAT 的 JWKS 离线验签）的验收 spec。
-  *
-  * 证据构造（🔴 不依赖站点后端、不依赖真实 Logto）：自造密钥对 + 本机回环 mock JWKS
-  * （`com.sun.net.httpserver`，先例 `Mvp2DeviceRoutesSpec`）+ 自签 JWT。
-  *
-  * 覆盖：
-  *  A. 合法 PAT（RS256 / ES384）⇒ 放行
-  *  B. 四变异负控：错签 / 过期 / 错 audience / **JWKS 不可达 ⇒ fail-closed 必拒**
-  *  C. 断言面：iss / scope 单档 / nbf / 缺 exp / 缺 kid / alg 混淆（HS256）
-  *  D. 离线硬约束：JWKS 取数**不是**每请求一次（缓存命中 ⇒ 取数计数不变）+ 非 JWS 令牌零取数
-  *  E. 受保护端点级读数：`GET /neblink/status` —— 合法 PAT ⇒ 认证通过（404 = 落到 withNeblink
-  *     的未启用分支），面关闭（无 pat.json）/ JWKS 不可达 / 错 aud ⇒ 403（与轨 1 形态逐字相同）
-  */
+/**
+ * 接受面 · **轨 2**（Logto 签发 PAT 的 JWKS 离线验签）的验收 spec。
+ *
+ * 证据构造（🔴 不依赖站点后端、不依赖真实 Logto）：自造密钥对 + 本机回环 mock JWKS
+ * （`com.sun.net.httpserver`，先例 `Mvp2DeviceRoutesSpec`）+ 自签 JWT。
+ *
+ * 覆盖：
+ *  A. 合法 PAT（RS256 / ES384）⇒ 放行
+ *  B. 四变异负控：错签 / 过期 / 错 audience / **JWKS 不可达 ⇒ fail-closed 必拒**
+ *  C. 断言面：iss / scope 单档 / nbf / 缺 exp / 缺 kid / alg 混淆（HS256）
+ *  D. 离线硬约束：JWKS 取数**不是**每请求一次（缓存命中 ⇒ 取数计数不变）+ 非 JWS 令牌零取数
+ *  E. 受保护端点级读数：`GET /neblink/status` —— 合法 PAT ⇒ 认证通过（404 = 落到 withNeblink
+ *     的未启用分支），面关闭（无 pat.json）/ JWKS 不可达 / 错 aud ⇒ 403（与轨 1 形态逐字相同）
+ */
 class PatAuthSpec extends CatsEffectSuite:
 
   private val Audience = "https://api.nebflow.space/pat"
@@ -84,8 +85,10 @@ class PatAuthSpec extends CatsEffectSuite:
       server.stop(0)
       server = null
 
-  /** 面配置落盘：`<dataRoot>/pat.json` + `<dataRoot>/neblink/config.json` 的 logto.endpoint。
-    * iss 与 JWKS 位置**都**从这一个 endpoint 派生（单源纪律，顺带被本 spec 钉住）。 */
+  /**
+   * 面配置落盘：`<dataRoot>/pat.json` + `<dataRoot>/neblink/config.json` 的 logto.endpoint。
+   * iss 与 JWKS 位置**都**从这一个 endpoint 派生（单源纪律，顺带被本 spec 钉住）。
+   */
   private def writeFace(base: String): Unit =
     os.write.over(
       tmp / "pat.json",
@@ -201,6 +204,7 @@ class PatAuthSpec extends CatsEffectSuite:
       "exp" -> exp.asJson
     )
     nbf.fold(core)(n => core.deepMerge(Json.obj("nbf" -> n.asJson)))
+  end claimsOf
 
   // ── Verifier 级读数（离线：取数函数注入，`http://127.0.0.1:1` 为死端口不产流量） ──
 
@@ -469,3 +473,4 @@ class PatAuthSpec extends CatsEffectSuite:
     val pat = mint("RS256", "kid-1", kp.getPrivate, claimsOf(s"$base/oidc", aud = "https://evil.example/pat"))
     protectedStatus(Some(pat)).map(s => assertEquals(s.code, 403))
   }
+end PatAuthSpec

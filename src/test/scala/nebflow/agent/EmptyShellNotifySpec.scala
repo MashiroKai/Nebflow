@@ -6,14 +6,13 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.*
-import nebflow.core.PathUtil
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -87,11 +86,13 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Run one Completed round-trip: child replies Completed(messages) to the
-    * supervisor; returns the payload the spy parent captured. */
+  /**
+   * Run one Completed round-trip: child replies Completed(messages) to the
+   * supervisor; returns the payload the spy parent captured.
+   */
   private def runCompletedPayload(
-      testName: String,
-      messages: List[Message]
+    testName: String,
+    messages: List[Message]
   ): String =
     val system = ActorSystem(s"empty-shell-$testName")
     val tmp = os.temp.dir()
@@ -134,6 +135,10 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
+
+  end runCompletedPayload
 
   test("whitespace-only tail produces '(no text output)', not an empty shell") {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")

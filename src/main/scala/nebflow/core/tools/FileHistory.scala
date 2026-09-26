@@ -1,8 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
-
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Path}
 import java.security.MessageDigest

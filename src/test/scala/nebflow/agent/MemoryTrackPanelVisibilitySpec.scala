@@ -8,43 +8,54 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.{FileChangeTracker, PathUtil}
+import nebflow.actor.{AgentStreamEvent, sessionId, status}
+import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MemoryQueue}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.service.MemoryStore
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, LlmMeta, StreamChunk, TokenUsage}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmMeta,
+  LlmRequest,
+  LlmResponse,
+  MemoryStore,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  TokenUsage
+}
 
 import scala.concurrent.duration.*
 
 /**
-  * 记忆轨 subagent 面板可见性（B 腿，2026-09-15 压缩管线三件批）。
-  *
-  * **作者规格（逐字）**：「我的期待是 subagent 直接根据队列中的记忆来编辑记忆文件，
-  * 压缩好了之后，正好合成注入新的上下文记忆」+ 现场疑问「我在 subagent 面板里并没有
-  * 看到这样一个 agent 在跑」。
-  *
-  * **考古结论**：本轨本来就是真 subagent（独立 `AgentActor` + `AgentKind.Ephemeral`
-  * 注册），不是 Nebula 内联自干；缺的只是**事件接线**——`spawn` 把 `wsSend` 传成恒
-  * `IO.unit`，于是注册表有条目、前端零活帧，而面板行**由 `agentStart` 活帧创建**
-  * ⇒ 正常会话里这一行从不出现。
-  *
-  * 本 spec 用**真 `MemoryTrack.run` + 真 ActorSystem + 真 wsSend 汇**取现场读数
-  * （不是读源码推断——与 [[MemoryTrackActorIdContractSpec]] 同款取证口径）：
-  *   1. [[MemoryTrack.panelWsSend]] 纯函数面：父 wsSend 可得 ⇒ 三键注入
-  *      （`rootSessionId` 归桶键 / `sessionId` 路由键 / `nodeSessionId` 行键）；
-  *      不可得 ⇒ 恒 no-op（改动前逐字同参，零行为漂移）。
-  *   2. 端到端：真跑一轮 ⇒ 事件流里出现 `agentStart`（建行）与 `agentDone`（收行），
-  *      且 `agentId == nodeSessionId == memconsolidate-*`（行键与快照键同键空间，
-  *      `WebSocketRoutes.activeAgentEntryJson` 契约）。
-  *
-  * **LLM 桩必带 usage chunk（判红 d）**：`StreamChunk.Done(_, Some(TokenUsage(...)))`
-  * ——缺 usage 会让 token 记账走估算路径，`emergency-compact` 可能撕掉本轮历史。
-  *
-  * 隔离：`PathUtil.setDataRoot(临时目录)`，不触 `~/.nebflow`。
-  */
+ * 记忆轨 subagent 面板可见性（B 腿，2026-09-15 压缩管线三件批）。
+ *
+ * **作者规格（逐字）**：「我的期待是 subagent 直接根据队列中的记忆来编辑记忆文件，
+ * 压缩好了之后，正好合成注入新的上下文记忆」+ 现场疑问「我在 subagent 面板里并没有
+ * 看到这样一个 agent 在跑」。
+ *
+ * **考古结论**：本轨本来就是真 subagent（独立 `AgentActor` + `AgentKind.Ephemeral`
+ * 注册），不是 Nebula 内联自干；缺的只是**事件接线**——`spawn` 把 `wsSend` 传成恒
+ * `IO.unit`，于是注册表有条目、前端零活帧，而面板行**由 `agentStart` 活帧创建**
+ * ⇒ 正常会话里这一行从不出现。
+ *
+ * 本 spec 用**真 `MemoryTrack.run` + 真 ActorSystem + 真 wsSend 汇**取现场读数
+ * （不是读源码推断——与 [[MemoryTrackActorIdContractSpec]] 同款取证口径）：
+ *   1. [[MemoryTrack.panelWsSend]] 纯函数面：父 wsSend 可得 ⇒ 三键注入
+ *      （`rootSessionId` 归桶键 / `sessionId` 路由键 / `nodeSessionId` 行键）；
+ *      不可得 ⇒ 恒 no-op（改动前逐字同参，零行为漂移）。
+ *   2. 端到端：真跑一轮 ⇒ 事件流里出现 `agentStart`（建行）与 `agentDone`（收行），
+ *      且 `agentId == nodeSessionId == memconsolidate-*`（行键与快照键同键空间，
+ *      `WebSocketRoutes.activeAgentEntryJson` 契约）。
+ *
+ * **LLM 桩必带 usage chunk（判红 d）**：`StreamChunk.Done(_, Some(TokenUsage(...)))`
+ * ——缺 usage 会让 token 记账走估算路径，`emergency-compact` 可能撕掉本轮历史。
+ *
+ * 隔离：`PathUtil.setDataRoot(临时目录)`，不触 `~/.nebflow`。
+ */
 class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
@@ -53,26 +64,32 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
 
   /** 正常收尾的 LLM 桩：一轮文本 + **带 usage 的 Done**（判红 d）。 */
   private object CompletingLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this spec"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(
         StreamChunk.TextDelta("[panel-visibility spec] consolidation round finished."),
         StreamChunk.Done(
           stopReason = Some("end_turn"),
           usage = Some(TokenUsage(inputTokens = 1200, outputTokens = 40)),
-          meta = Some(LlmMeta(
-            sessionId = req.sessionId,
-            agentId = "memory-consolidator",
-            providerId = "spec",
-            model = "spec-model",
-            durationMs = 5L
-          ))
+          meta = Some(
+            LlmMeta(
+              sessionId = req.sessionId,
+              agentId = "memory-consolidator",
+              providerId = "spec",
+              model = "spec-model",
+              durationMs = 5L
+            )
+          )
         )
       )
+
+  end CompletingLlm
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
     for
@@ -126,7 +143,8 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
     val captured = scala.collection.mutable.ListBuffer.empty[Json]
     val base: Json => IO[Unit] = j => IO { captured += j; () }
     val send = MemoryTrack.panelWsSend(Some(base), rootSessionId = "root-1", sessionId = "memconsolidate-abcd1234")
-    val frame = AgentStreamEvent.AgentStart("memory-consolidator", "desc", Some("memory-consolidation"))
+    val frame = AgentStreamEvent
+      .AgentStart("memory-consolidator", "desc", Some("memory-consolidation"))
       .toJson("memconsolidate-abcd1234", isSubagent = true, Some("memconsolidate-abcd1234"))
     send(frame).unsafeRunSync()
     assertEquals(captured.size, 1, "帧必须透传（不得吞）")
@@ -152,7 +170,8 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
 
   test("panelWsSend: 父 wsSend 不可得 ⇒ 恒 no-op（与改动前逐字同参，零行为漂移）") {
     val send = MemoryTrack.panelWsSend(None, rootSessionId = "root-1", sessionId = "memconsolidate-abcd1234")
-    val frame = AgentStreamEvent.AgentStart("memory-consolidator", "desc", None)
+    val frame = AgentStreamEvent
+      .AgentStart("memory-consolidator", "desc", None)
       .toJson("memconsolidate-abcd1234", isSubagent = true, Some("memconsolidate-abcd1234"))
     // 不抛、不产生任何副作用即为通过
     send(frame).unsafeRunSync()
@@ -177,31 +196,37 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
         events.get.flatMap { evs =>
           if pred(evs) then IO.pure(evs)
           else if System.currentTimeMillis() >= deadline then
-            IO.raiseError(new AssertionError(
-              s"$what never observed within $timeout; observed types = " +
-                s"${evs.flatMap(e => field(e, "type")).distinct.mkString(", ")}"
-            ))
+            IO.raiseError(
+              new AssertionError(
+                s"$what never observed within $timeout; observed types = " +
+                  s"${evs.flatMap(e => field(e, "type")).distinct.mkString(", ")}"
+              )
+            )
           else IO.sleep(100.millis) >> go(deadline)
         }
       go(System.currentTimeMillis() + timeout.toMillis)
 
     val program =
       for
-        _ <- IO(os.write.over(
-          MemoryStore.userMemoryPath,
-          "# User\n\n## Panel Spec Section\n\n- existing line\n",
-          createFolders = true
-        ))
-        _ <- IO(MemoryQueue.enqueue(
-          "user",
-          "append",
-          Some("## Panel Spec Section"),
-          None,
-          Some("- panel-visibility spec note"),
-          Some("spec"),
-          MemoryQueue.TriggerManual,
-          "Nebula"
-        ))
+        _ <- IO(
+          os.write.over(
+            MemoryStore.userMemoryPath,
+            "# User\n\n## Panel Spec Section\n\n- existing line\n",
+            createFolders = true
+          )
+        )
+        _ <- IO(
+          MemoryQueue.enqueue(
+            "user",
+            "append",
+            Some("## Panel Spec Section"),
+            None,
+            Some("- panel-visibility spec note"),
+            Some("spec"),
+            MemoryQueue.TriggerManual,
+            "Nebula"
+          )
+        )
         resources <- mkResources(system, tmp)
         // ── 被测：带父 wsSend 真跑一轮（生产调用面 AgentActor 同参）──
         runFiber <- MemoryTrack
@@ -210,8 +235,12 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
         started <- waitFor(evs => ofType(evs, "agentStart").nonEmpty, "agentStart", 60.seconds)
         startFrame = ofType(started, "agentStart").head
         _ <- IO(println(s"[B-leg reading] agentStart frame = ${startFrame.noSpaces}"))
-        _ <- IO(println(s"[B-leg reading] rootSessionId = ${field(startFrame, "rootSessionId")}  " +
-          s"sessionId = ${field(startFrame, "sessionId")}  nodeSessionId = ${field(startFrame, "nodeSessionId")}"))
+        _ <- IO(
+          println(
+            s"[B-leg reading] rootSessionId = ${field(startFrame, "rootSessionId")}  " +
+              s"sessionId = ${field(startFrame, "sessionId")}  nodeSessionId = ${field(startFrame, "nodeSessionId")}"
+          )
+        )
         runRes <- runFiber.joinWithNever.timeoutTo(
           30.seconds,
           IO.pure(MemoryTrack.Result(MemoryTrack.Status.Failed, "SPEC-TIMEOUT", 0))
@@ -237,18 +266,18 @@ class MemoryTrackPanelVisibilitySpec extends CatsEffectSuite:
           assertEquals(field(doneFrame, "type"), Some("agentDone"), "收行帧类型")
           assertEquals(field(doneFrame, "agentId"), Some(sid), "收行帧必须是同一行键（否则幽灵行）")
           // 会话级生命周期帧必须被滤掉（本轨子会话不是会话）
-          val leaked = settled.filter(e =>
-            Set("done", "sessionBusy").contains(field(e, "type").getOrElse(""))
-          )
+          val leaked = settled.filter(e => Set("done", "sessionBusy").contains(field(e, "type").getOrElse("")))
           assertEquals(leaked, Nil, s"会话级生命周期帧不得泄漏：$leaked")
           assertEquals(runRes.status, MemoryTrack.Status.Completed, s"轨必须正常收敛：'${runRes.detail}'")
         }
       yield ()
-    program.guarantee(
-      (IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>
-        IO(PathUtil.setDataRoot(prevRoot)) *>
-        system.stopAll.attempt.void).attempt.void
-    ).unsafeRunSync()
+    program
+      .guarantee(
+        (IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>
+          IO(PathUtil.setDataRoot(prevRoot)) *>
+          system.stopAll.attempt.void).attempt.void
+      )
+      .unsafeRunSync()
   }
 
 end MemoryTrackPanelVisibilitySpec

@@ -1,18 +1,20 @@
 package nebflow.neblink
 
-import cats.effect.{Deferred, IO}
 import cats.effect.std.Dispatcher
+import cats.effect.{Deferred, IO}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.RelayTunnelPort
+import nebflow.core.hotupdate.RemoteUpdateAction
 import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.shared.{DeviceMail, NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
 import java.util.concurrent.*
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong, AtomicReference}
+import java.util.concurrent.atomic.*
 
 import scala.concurrent.duration.*
 
@@ -48,15 +50,18 @@ import scala.concurrent.duration.*
  */
 final class NeblinkRelayTunnel(
   neblinkService: NeblinkService,
-  /** Live session-token source, evaluated on every (re)connect. F1 (2026-09-10
-    * friend-search batch): GatewayMain wires this to the discovery-held
-    * authoritative client (IO-based, resolved per attempt) so enrollment
-    * hot-swaps are picked up — a constructor-time client closure kept reading
-    * a session the server had kicked. */
+  /**
+   * Live session-token source, evaluated on every (re)connect. F1 (2026-09-10
+   * friend-search batch): GatewayMain wires this to the discovery-held
+   * authoritative client (IO-based, resolved per attempt) so enrollment
+   * hot-swaps are picked up — a constructor-time client closure kept reading
+   * a session the server had kicked.
+   */
   tokenGetter: () => IO[Option[String]],
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
   private[neblink] val friendService: Option[FriendService] = None
-)(dispatcher: Dispatcher[IO]):
+)(dispatcher: Dispatcher[IO])
+    extends RelayTunnelPort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isAlive,RemoteExecutor 选路读数)
   import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
@@ -67,59 +72,71 @@ final class NeblinkRelayTunnel(
   private val lastPong = new AtomicLong(System.currentTimeMillis())
   private var heartbeat: Option[ScheduledExecutorService] = None
 
-  /** F7 (2026-09-10 隧道鉴权自愈批): last relay-ws upgrade auth rejection —
-    * the state `relayAvailable = isAlive` cannot express (see authStatus). */
+  /**
+   * F7 (2026-09-10 隧道鉴权自愈批): last relay-ws upgrade auth rejection —
+   * the state `relayAvailable = isAlive` cannot express (see authStatus).
+   */
   @volatile private var lastAuthRejection: Option[TunnelAuthStatus] = None
 
-  /** Anti-loop counter: consecutive upgrade failures since the last successful
-    * connect. Drives shouldHealAuthFailure. */
+  /**
+   * Anti-loop counter: consecutive upgrade failures since the last successful
+   * connect. Drives shouldHealAuthFailure.
+   */
   private val authFailStreak = new AtomicInteger(0)
 
-  /** clientconn item 1: consecutive SHORT-LIVED connections (each dropped
-    * before `StableConnectionMs`). Drives the stability gate of the backoff
-    * reset — the first short-lived drop retries immediately (pre-fix speed for
-    * a transient blip); a repeated streak means a flap loop and escalates. */
+  /**
+   * clientconn item 1: consecutive SHORT-LIVED connections (each dropped
+   * before `StableConnectionMs`). Drives the stability gate of the backoff
+   * reset — the first short-lived drop retries immediately (pre-fix speed for
+   * a transient blip); a repeated streak means a flap loop and escalates.
+   */
   private val shortLivedStreak = new AtomicInteger(0)
 
   /** When the last self-heal re-login was attempted (0 = never). */
   @volatile private var lastHealAtMs = 0L
 
-  /** 踢下线停摆（案 B 客户端腿，2026-09-14 作者裁定 17:07；零 wire 新增）。
-    *
-    * 服务端在「同 (deviceId, network) 有新会话」时主动断开本隧道并推 `disconnect`
-    * 帧（`relay.rs disconnect_device`）。修前这里只打一行 debug，重连行为「pending
-    * product decision」（见下方 listener 注释）⇒ 两端各自无屏障地自动重连/重登录，
-    * 同账号双实例会互踢成乒乓（`NeblinkClient.reloginGate` / `HealCooldownMs` 只
-    * 覆盖**单实例内**）。
-    *
-    * 现语义：收到 `disconnect` ⇒ 记下时刻 + **停摆**（不再自动重连、不再自动重注册），
-    * 直到**用户显式再登录**（`resumeAfterUserLogin`，唯一调用点 =
-    * `NeblinkEnrollment.persist(explicitUserAction = true)`）。
-    *
-    * ★ r2 订正（2026-09-14，复核位判词 fail 的唯一失败点）：停摆位**不在本类里**了 ——
-    * 它搬到了 `NeblinkService`（`markKickParked` / `kickParked` / `clearKickPark`）。
-    * 理由：r1 把停摆位关在隧道内，而**自动重注册腿根本不经过隧道**（心跳 401 →
-    * `NeblinkClient.doLogin` → `LogtoSilentRelogin` → `register`，且 register 在
-    * persist **之前**）⇒ 隧道腿堵住、重注册腿照样起（r1 实测踢后 ~24s 仍有
-    * `POST /api/device/register` 200）。现在本类只做**停摆位的读/写方之一**：
-    * 写 = `noteServerDisconnect`，读 = `connectLoop`；`NeblinkClient` /
-    * `LogtoSilentRelogin` 读同一真值（register 之前的那道门在后者里）。
-    *
-    * 范围（诚实边界）：停摆是**进程内**状态——重启进程（boot client 用存储的
-    * deviceToken 走 session 交换）会重新入网（该 token 若已被服务端作废则 401，
-    * **不会**重注册：register 只由 `LogtoSilentRelogin` 发，而它被同一停摆位挡住）。
-    * 跨实例语义 = **每个被踢实例各自停摆**，互踢链因此断掉（被踢方不再自动反踢）；
-    * 没有任何中央协调、也没有 wire 协商。0 = 未被踢。 */
+  /**
+   * 踢下线停摆（案 B 客户端腿，2026-09-14 作者裁定 17:07；零 wire 新增）。
+   *
+   * 服务端在「同 (deviceId, network) 有新会话」时主动断开本隧道并推 `disconnect`
+   * 帧（`relay.rs disconnect_device`）。修前这里只打一行 debug，重连行为「pending
+   * product decision」（见下方 listener 注释）⇒ 两端各自无屏障地自动重连/重登录，
+   * 同账号双实例会互踢成乒乓（`NeblinkClient.reloginGate` / `HealCooldownMs` 只
+   * 覆盖**单实例内**）。
+   *
+   * 现语义：收到 `disconnect` ⇒ 记下时刻 + **停摆**（不再自动重连、不再自动重注册），
+   * 直到**用户显式再登录**（`resumeAfterUserLogin`，唯一调用点 =
+   * `NeblinkEnrollment.persist(explicitUserAction = true)`）。
+   *
+   * ★ r2 订正（2026-09-14，复核位判词 fail 的唯一失败点）：停摆位**不在本类里**了 ——
+   * 它搬到了 `NeblinkService`（`markKickParked` / `kickParked` / `clearKickPark`）。
+   * 理由：r1 把停摆位关在隧道内，而**自动重注册腿根本不经过隧道**（心跳 401 →
+   * `NeblinkClient.doLogin` → `LogtoSilentRelogin` → `register`，且 register 在
+   * persist **之前**）⇒ 隧道腿堵住、重注册腿照样起（r1 实测踢后 ~24s 仍有
+   * `POST /api/device/register` 200）。现在本类只做**停摆位的读/写方之一**：
+   * 写 = `noteServerDisconnect`，读 = `connectLoop`；`NeblinkClient` /
+   * `LogtoSilentRelogin` 读同一真值（register 之前的那道门在后者里）。
+   *
+   * 范围（诚实边界）：停摆是**进程内**状态——重启进程（boot client 用存储的
+   * deviceToken 走 session 交换）会重新入网（该 token 若已被服务端作废则 401，
+   * **不会**重注册：register 只由 `LogtoSilentRelogin` 发，而它被同一停摆位挡住）。
+   * 跨实例语义 = **每个被踢实例各自停摆**，互踢链因此断掉（被踢方不再自动反踢）；
+   * 没有任何中央协调、也没有 wire 协商。0 = 未被踢。
+   */
 
-  /** Test/status seam: 本隧道是否处于「被服务端踢下线后的停摆态」。真值源 =
-    * `NeblinkService`（跨腿可读面）。 */
+  /**
+   * Test/status seam: 本隧道是否处于「被服务端踢下线后的停摆态」。真值源 =
+   * `NeblinkService`（跨腿可读面）。
+   */
   def signedOutElsewhereAt: Long = neblinkService.kickParkedAtMs
   def parkedAfterKick: Boolean = neblinkService.kickParked
 
-  /** Server-forced teardown（`disconnect` 帧）落地：记录 + 被动提示 + 停摆。
-    *
-    * 零 wire 新增：帧本身不加字段、不改语义（listener 仍只按既有 `type` 分派），
-    * 提示文案由客户端本地下定。 */
+  /**
+   * Server-forced teardown（`disconnect` 帧）落地：记录 + 被动提示 + 停摆。
+   *
+   * 零 wire 新增：帧本身不加字段、不改语义（listener 仍只按既有 `type` 分派），
+   * 提示文案由客户端本地下定。
+   */
   private[neblink] def noteServerDisconnect(): IO[Unit] =
     IO(neblinkService.markKickParked()) *> logger.warn(
       "Relay tunnel: server sent Disconnect — this device was signed in elsewhere; " +
@@ -134,78 +151,94 @@ final class NeblinkRelayTunnel(
       else IO.unit
     }
 
-  /** **凭据证据式**解除停摆后的隧道腿（kaiauth 修法批 ①配套，2026-09-16）。
-    *
-    * 与 [[resumeAfterUserLogin]] 的差别**只在到达路径**：本腿由「新凭据已铸成且经一次
-    * 成功交换证明有效」触发（调用方 = `NeblinkService.liftKickParkAfterProvenCredential`，
-    * 其唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤），**不是**用户动作 ⇒
-    * 日志字样不得混用（归因必须可判别：现场读日志要能一眼分出「人登的」还是
-    * 「自动证明解除的」）。停摆位的清除由 `NeblinkService` 统一执行；本方法只负责
-    * 掐断当前这一睡（`signalWake`），让 connectLoop 下一轮立即复核停摆位。 */
+  /**
+   * **凭据证据式**解除停摆后的隧道腿（kaiauth 修法批 ①配套，2026-09-16）。
+   *
+   * 与 [[resumeAfterUserLogin]] 的差别**只在到达路径**：本腿由「新凭据已铸成且经一次
+   * 成功交换证明有效」触发（调用方 = `NeblinkService.liftKickParkAfterProvenCredential`，
+   * 其唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤），**不是**用户动作 ⇒
+   * 日志字样不得混用（归因必须可判别：现场读日志要能一眼分出「人登的」还是
+   * 「自动证明解除的」）。停摆位的清除由 `NeblinkService` 统一执行；本方法只负责
+   * 掐断当前这一睡（`signalWake`），让 connectLoop 下一轮立即复核停摆位。
+   */
   private[neblink] def wakeAfterCredentialProven(): IO[Unit] =
     logger.info(
       "Relay tunnel: kick park lifted by a proven fresh credential — reconnecting"
     ) *> signalWake()
 
-  /** Check if the relay tunnel is currently connected (for status reporting).
-    *
-    * ①-2 语义诚实化（2026-09-12 波3，方案 §2.1 ①opt-A1 / §6.2 ①-2）：修前
-    * `alive` 单点——它只在 `closed.get` 返回之后才被清假（:313-317），而闩在
-    * 「abort 不回调 Listener」的僵尸态里永不返回（E3 探针复现）⇒ 通道死了 4 小时
-    * 而 `/api/neblink/status` 仍报 `relay.available:true`（E4 假阳性）。
-    * 现语义 = **连线在册 且 最近一次 pong 在 30s 窗口内**——判据与心跳的僵尸
-    * 判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
-    * status 端点的 `relay.available`（含 per-peer reachable 提示）与
-    * `RemoteExecutor` 的 P2P/relay 选路（僵尸隧道不再被当作可用 relay）。 */
+  /**
+   * Check if the relay tunnel is currently connected (for status reporting).
+   *
+   * ①-2 语义诚实化（2026-09-12 波3，方案 §2.1 ①opt-A1 / §6.2 ①-2）：修前
+   * `alive` 单点——它只在 `closed.get` 返回之后才被清假（:313-317），而闩在
+   * 「abort 不回调 Listener」的僵尸态里永不返回（E3 探针复现）⇒ 通道死了 4 小时
+   * 而 `/api/neblink/status` 仍报 `relay.available:true`（E4 假阳性）。
+   * 现语义 = **连线在册 且 最近一次 pong 在 30s 窗口内**——判据与心跳的僵尸
+   * 判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
+   * status 端点的 `relay.available`（含 per-peer reachable 提示）与
+   * `RemoteExecutor` 的 P2P/relay 选路（僵尸隧道不再被当作可用 relay）。
+   */
   def isAlive: Boolean =
     alive.get() && (System.currentTimeMillis() - lastPong.get()) < NeblinkRelayTunnel.LivenessTimeoutMs
 
-  /** F7: last upgrade auth rejection (status code + self-heal outcome).
-    * Surfaces on /neblink/status as an INDEPENDENT "auth rejected" state —
-    * "tunnel dead" alone hides whether we are waiting on a 403 (our session was
-    * kicked → self-healable) or on a 5xx (server side). */
+  /**
+   * F7: last upgrade auth rejection (status code + self-heal outcome).
+   * Surfaces on /neblink/status as an INDEPENDENT "auth rejected" state —
+   * "tunnel dead" alone hides whether we are waiting on a 403 (our session was
+   * kicked → self-healable) or on a 5xx (server side).
+   */
   def authStatus: Option[TunnelAuthStatus] = lastAuthRejection
 
   /** Test seam: is the reconnect loop still running (false after stop())? */
   private[neblink] def isRunning: Boolean = running.get()
 
-  /** Test seam: how many connection-loop chains have been spawned. Two
-    * `ensure()` calls must spawn ONE chain (no double tunnel) — asserting the
-    * spawn counter is deterministic, unlike inferring it from reconnect
-    * attempt counters. */
+  /**
+   * Test seam: how many connection-loop chains have been spawned. Two
+   * `ensure()` calls must spawn ONE chain (no double tunnel) — asserting the
+   * spawn counter is deterministic, unlike inferring it from reconnect
+   * attempt counters.
+   */
   private val loopSpawns = new AtomicInteger(0)
   private[neblink] def loopSpawnCount: Int = loopSpawns.get()
 
-  /** N3 log-voice latch for the "configured but no session token" state, which
-    * is a STEADY state since logout keeps the server URL: first occurrence
-    * INFO (visibility), the rest DEBUG (no permanent INFO spam). Reset on
-    * every successful connect, so a later outage gets a visible first line. */
+  /**
+   * N3 log-voice latch for the "configured but no session token" state, which
+   * is a STEADY state since logout keeps the server URL: first occurrence
+   * INFO (visibility), the rest DEBUG (no permanent INFO spam). Reset on
+   * every successful connect, so a later outage gets a visible first line.
+   */
   private val noTokenInfoLogged = new AtomicBoolean(false)
 
-  /** Wake latch (clientconn item 1): `start()` / `ensure()` completes it, which
-    * cuts an in-flight idle nap short.
-    *
-    * WHY: `ensure()` used to be a pure no-op whenever `running == true` — so an
-    * enrollment that lands while the loop is idling (no URL ⇒ nap ceiling 300s,
-    * no token ⇒ 30s) could not wake it. The freshly enrolled device therefore
-    * spent minutes unreachable on relay before the tunnel noticed the new
-    * config (worst case = one full 5-minute nap; measured in the item-1 spec).
-    *
-    * Lost-wakeup analysis: the latch is RE-ARMED right before each nap. A wake
-    * that arrives while the loop is awake (between naps) is dropped on purpose —
-    * in that state the loop is about to re-read the config / token anyway, so
-    * the wake is redundant rather than lost. */
+  /**
+   * Wake latch (clientconn item 1): `start()` / `ensure()` completes it, which
+   * cuts an in-flight idle nap short.
+   *
+   * WHY: `ensure()` used to be a pure no-op whenever `running == true` — so an
+   * enrollment that lands while the loop is idling (no URL ⇒ nap ceiling 300s,
+   * no token ⇒ 30s) could not wake it. The freshly enrolled device therefore
+   * spent minutes unreachable on relay before the tunnel noticed the new
+   * config (worst case = one full 5-minute nap; measured in the item-1 spec).
+   *
+   * Lost-wakeup analysis: the latch is RE-ARMED right before each nap. A wake
+   * that arrives while the loop is awake (between naps) is dropped on purpose —
+   * in that state the loop is about to re-read the config / token anyway, so
+   * the wake is redundant rather than lost.
+   */
   private val wakeLatch = new AtomicReference[Deferred[IO, Unit]](null)
 
-  /** A wake that has not been consumed yet. `nap` consumes it at entry: the
-    * first wait after a wake does NOT sleep (the wake's intent is "re-evaluate
-    * now — config / token / connection state just changed"). This is what makes
-    * `ensure()` effective on a two-sleep iteration (retry delay + idle wait):
-    * cutting the in-flight nap alone would still leave the second sleep ahead. */
+  /**
+   * A wake that has not been consumed yet. `nap` consumes it at entry: the
+   * first wait after a wake does NOT sleep (the wake's intent is "re-evaluate
+   * now — config / token / connection state just changed"). This is what makes
+   * `ensure()` effective on a two-sleep iteration (retry delay + idle wait):
+   * cutting the in-flight nap alone would still leave the second sleep ahead.
+   */
   private val wakePending = new AtomicBoolean(false)
 
-  /** Interruptible sleep: returns when `d` elapses OR `signalWake()` fires.
-    * A pending (unconsumed) wake short-circuits the wait entirely. */
+  /**
+   * Interruptible sleep: returns when `d` elapses OR `signalWake()` fires.
+   * A pending (unconsumed) wake short-circuits the wait entirely.
+   */
   private[neblink] def nap(d: FiniteDuration): IO[Unit] =
     if wakePending.getAndSet(false) then IO.unit
     else if d.toMillis <= 0L then IO.unit
@@ -216,19 +249,23 @@ final class NeblinkRelayTunnel(
           IO(wakeLatch.compareAndSet(latch, null)).void
       }
 
-  /** Cut the current nap short (and arm the "do not sleep next time" flag).
-    * Idempotent: a second call while nothing is sleeping only sets the flag. */
+  /**
+   * Cut the current nap short (and arm the "do not sleep next time" flag).
+   * Idempotent: a second call while nothing is sleeping only sets the flag.
+   */
   private[neblink] def signalWake(): IO[Unit] =
     IO(wakePending.set(true)) *> IO(wakeLatch.get()).flatMap {
-      case null  => IO.unit
+      case null => IO.unit
       case latch => latch.complete(()).void
     }
 
   /** Test seam: is a nap currently armed (i.e. the loop is sleeping)? */
   private[neblink] def napArmed: Boolean = wakeLatch.get() != null
 
-  /** Spawn one connection loop chain (fire-and-forget; the loop ends on
-    * running == false). */
+  /**
+   * Spawn one connection loop chain (fire-and-forget; the loop ends on
+   * running == false).
+   */
   private def spawnLoop(): IO[Unit] =
     IO(loopSpawns.incrementAndGet()).void *> IO {
       dispatcher.unsafeRunAndForget(
@@ -238,27 +275,32 @@ final class NeblinkRelayTunnel(
       )
     }
 
-  /** Start the relay tunnel connection loop (boot entry). Returns immediately —
-    * the loop itself runs in the background until stop(). */
+  /**
+   * Start the relay tunnel connection loop (boot entry). Returns immediately —
+   * the loop itself runs in the background until stop().
+   */
   def connect(): IO[Unit] =
     logger.info("Starting relay tunnel to NebLink Server") *>
       IO(running.set(true)) *> spawnLoop()
 
-  /** Idempotent (re)start — revives a tunnel that `stop()` (logout) shut down.
-    *
-    * Single-flight via CAS: concurrent callers (enrollment hot-swap + boot)
-    * cannot spawn a second loop, and there is no bare check-then-act on a
-    * shared flag. `running` starts true (the tunnel is constructed running),
-    * so `ensure()` before any stop() is a no-op.
-    */
+  /**
+   * Idempotent (re)start — revives a tunnel that `stop()` (logout) shut down.
+   *
+   * Single-flight via CAS: concurrent callers (enrollment hot-swap + boot)
+   * cannot spawn a second loop, and there is no bare check-then-act on a
+   * shared flag. `running` starts true (the tunnel is constructed running),
+   * so `ensure()` before any stop() is a no-op.
+   */
   def start(): IO[Unit] =
     IO(running.compareAndSet(false, true)).flatMap {
       case false => signalWake() // already running — the only useful semantics left
-      case true  => logger.info("Relay tunnel (re)starting after stop()") *> spawnLoop()
+      case true => logger.info("Relay tunnel (re)starting after stop()") *> spawnLoop()
     }
 
-  /** Alias of `start()` — the "make sure the tunnel runs" signal used by the
-    * enrollment hot-swap path (`NeblinkService.ensureRelayTunnel`). */
+  /**
+   * Alias of `start()` — the "make sure the tunnel runs" signal used by the
+   * enrollment hot-swap path (`NeblinkService.ensureRelayTunnel`).
+   */
   def ensure(): IO[Unit] = start()
 
   /** Gracefully stop the tunnel. */
@@ -266,16 +308,24 @@ final class NeblinkRelayTunnel(
     signalWake() *> IO.blocking {
       running.set(false)
       alive.set(false)
-      heartbeat.foreach { hb => try hb.shutdownNow() catch case _: Exception => () }
-      wsRef.foreach { w => try w.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown") catch case _: Exception => () }
+      heartbeat.foreach { hb =>
+        try hb.shutdownNow()
+        catch case _: Exception => ()
+      }
+      wsRef.foreach { w =>
+        try w.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown")
+        catch case _: Exception => ()
+      }
     }
 
   // ===== Connection loop =====
 
-  /** Live NebLink Server URL, resolved on EVERY attempt from the config ref
-    * (precedent: `RestApiRoutes.neblinkServerUrl` / `relayTunnelOpt`). Never a
-    * constructor-time snapshot: the tunnel object is installed once at boot and
-    * may be re-pointed by enrollment without being rebuilt. */
+  /**
+   * Live NebLink Server URL, resolved on EVERY attempt from the config ref
+   * (precedent: `RestApiRoutes.neblinkServerUrl` / `relayTunnelOpt`). Never a
+   * constructor-time snapshot: the tunnel object is installed once at boot and
+   * may be re-pointed by enrollment without being rebuilt.
+   */
   private def currentServerUrl: IO[Option[String]] =
     neblinkService.neblinkConfig.map(_.neblinkServer.map(_.url))
 
@@ -322,60 +372,67 @@ final class NeblinkRelayTunnel(
           // （那样会凭空多一次 403 自愈——实测在 R3 上复现过）。
           val pre =
             if attempt == 0 then 0.seconds
-            else NeblinkRelayTunnel.jittered(NeblinkRelayTunnel.backoffSeconds(attempt).seconds, scala.util.Random.nextDouble())
-          nap(pre) *> (if !running.get() then IO.unit else
-          tokenGetter().flatMap {
-            case None =>
-              val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
-              // R2 visibility: this branch used to log at DEBUG only — a login
-              // that never completes left the tunnel dark for hours with zero
-              // trace. INFO keeps the retry loop observable (≤2 lines/min).
-              // N3: this state is STEADY after logout (the server URL is
-              // kept), so only the FIRST occurrence is INFO.
-              val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
-              val voice =
-                if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
-                else logger.debug(line)
-              voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
-            case Some(token) =>
-              val attemptConnect =
-                IO(System.currentTimeMillis()).flatMap { startedAtMs =>
-                  neblinkService.identity
-                    .flatMap(id => connectOnce(id, url, token))
-                    .flatMap { _ =>
-                      if running.get() then
-                        // Backoff RESET is stability-gated (clientconn item 1):
-                        // pre-fix every disconnect went back to `connectLoop(0)` —
-                        // a 0-delay reconnect even for a connection the server
-                        // accepted and dropped immediately (kick-after-upgrade,
-                        // half-open flap) ⇒ unbounded upgrade storm at wire speed.
-                        // Now the FIRST short-lived drop still retries immediately
-                        // (transient blips recover at pre-fix speed), while a
-                        // REPEATED short-lived streak escalates the ladder.
-                        val heldMs = System.currentTimeMillis() - startedAtMs
-                        val streakBefore = shortLivedStreak.get()
-                        val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
-                        if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
-                        else shortLivedStreak.incrementAndGet()
-                        logger
-                          .info(s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)...")
-                          .flatMap { _ => connectLoop(next) }
-                      else IO.unit
-                    }
-                }
-              attemptConnect.handleErrorWith { e =>
-                // F3 (report §3): never log e.getMessage here — it is null for
-                // WebSocketHandshakeException and carries only the class NAME
-                // when wrapped in ExecutionException. describe() extracts the
-                // HTTP status (+ a redacted body snippet) instead.
-                val failure = RelayTunnelDiagnostics.describe(e)
-                if failure.authRejected then handleAuthRejection(failure, attempt)
-                else
-                  logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
-                    if running.get() then connectLoop(attempt + 1) else IO.unit
-                  }
-              }
-          })
+            else
+              NeblinkRelayTunnel.jittered(
+                NeblinkRelayTunnel.backoffSeconds(attempt).seconds,
+                scala.util.Random.nextDouble()
+              )
+          nap(pre) *> (if !running.get() then IO.unit
+                       else
+                         tokenGetter().flatMap {
+                           case None =>
+                             val wait = math.min(30L, 1L << math.min(attempt, 4)).seconds
+                             // R2 visibility: this branch used to log at DEBUG only — a login
+                             // that never completes left the tunnel dark for hours with zero
+                             // trace. INFO keeps the retry loop observable (≤2 lines/min).
+                             // N3: this state is STEADY after logout (the server URL is
+                             // kept), so only the FIRST occurrence is INFO.
+                             val line = s"Relay tunnel: no session token yet, retrying in ${wait.toSeconds}s..."
+                             val voice =
+                               if noTokenInfoLogged.compareAndSet(false, true) then logger.info(line)
+                               else logger.debug(line)
+                             voice.flatMap { _ => nap(wait) *> connectLoop(attempt + 1) }
+                           case Some(token) =>
+                             val attemptConnect =
+                               IO(System.currentTimeMillis()).flatMap { startedAtMs =>
+                                 neblinkService.identity
+                                   .flatMap(id => connectOnce(id, url, token))
+                                   .flatMap { _ =>
+                                     if running.get() then
+                                       // Backoff RESET is stability-gated (clientconn item 1):
+                                       // pre-fix every disconnect went back to `connectLoop(0)` —
+                                       // a 0-delay reconnect even for a connection the server
+                                       // accepted and dropped immediately (kick-after-upgrade,
+                                       // half-open flap) ⇒ unbounded upgrade storm at wire speed.
+                                       // Now the FIRST short-lived drop still retries immediately
+                                       // (transient blips recover at pre-fix speed), while a
+                                       // REPEATED short-lived streak escalates the ladder.
+                                       val heldMs = System.currentTimeMillis() - startedAtMs
+                                       val streakBefore = shortLivedStreak.get()
+                                       val next = NeblinkRelayTunnel.nextAttemptAfterDrop(attempt, heldMs, streakBefore)
+                                       if heldMs >= NeblinkRelayTunnel.StableConnectionMs then shortLivedStreak.set(0)
+                                       else shortLivedStreak.incrementAndGet()
+                                       logger
+                                         .info(
+                                           s"Relay tunnel disconnected after ${heldMs / 1000}s, reconnecting (step $next, short-lived streak $streakBefore)..."
+                                         )
+                                         .flatMap { _ => connectLoop(next) }
+                                     else IO.unit
+                                   }
+                               }
+                             attemptConnect.handleErrorWith { e =>
+                               // F3 (report §3): never log e.getMessage here — it is null for
+                               // WebSocketHandshakeException and carries only the class NAME
+                               // when wrapped in ExecutionException. describe() extracts the
+                               // HTTP status (+ a redacted body snippet) instead.
+                               val failure = RelayTunnelDiagnostics.describe(e)
+                               if failure.authRejected then handleAuthRejection(failure, attempt)
+                               else
+                                 logger.warn(s"Relay tunnel error: ${failure.summary}").flatMap { _ =>
+                                   if running.get() then connectLoop(attempt + 1) else IO.unit
+                                 }
+                             }
+                         })
       }
 
   /**
@@ -399,7 +456,17 @@ final class NeblinkRelayTunnel(
     val nowMs = System.currentTimeMillis()
     val head = s"Relay tunnel upgrade rejected (auth): ${failure.summary}"
     if !shouldHealAuthFailure(streak, nowMs, lastHealAtMs) then
-      IO { lastAuthRejection = Some(TunnelAuthStatus(failure.statusCode.getOrElse(0), nowMs, healAttempted = false, healSucceeded = false, active = true)) } *>
+      IO {
+        lastAuthRejection = Some(
+          TunnelAuthStatus(
+            failure.statusCode.getOrElse(0),
+            nowMs,
+            healAttempted = false,
+            healSucceeded = false,
+            active = true
+          )
+        )
+      } *>
         logger.warn(s"$head — self-heal NOT retried (failure streak #$streak, anti-loop bound); backing off") *>
         (if running.get() then connectLoop(attempt + 1) else IO.unit)
     else
@@ -411,11 +478,25 @@ final class NeblinkRelayTunnel(
           if healed then "Relay tunnel session self-heal: re-login OK — retrying with the refreshed token"
           else "Relay tunnel session self-heal: re-login FAILED — continuing with backoff"
         )
-        _ <- IO { lastAuthRejection = Some(TunnelAuthStatus(failure.statusCode.getOrElse(0), nowMs, healAttempted = true, healSucceeded = healed, active = true)) }
+        _ <- IO {
+          lastAuthRejection = Some(
+            TunnelAuthStatus(
+              failure.statusCode.getOrElse(0),
+              nowMs,
+              healAttempted = true,
+              healSucceeded = healed,
+              active = true
+            )
+          )
+        }
         // The refreshed token is picked up by tokenGetter on the next attempt —
         // it reads the live client, never a cached/snapshotted token.
         _ <- if healed then connectLoop(0) else if running.get() then connectLoop(attempt + 1) else IO.unit
       yield ()
+
+    end if
+
+  end handleAuthRejection
 
   /**
    * Run the shared single-flight re-login on the client the relay path actually
@@ -437,7 +518,9 @@ final class NeblinkRelayTunnel(
       case Some(client) =>
         client
           .ensureFreshSession("relay-upgrade-auth-reject")
-          .handleErrorWith(e => logger.warn(s"Relay tunnel session self-heal errored (${e.getClass.getSimpleName})").as(false))
+          .handleErrorWith(e =>
+            logger.warn(s"Relay tunnel session self-heal errored (${e.getClass.getSimpleName})").as(false)
+          )
     }
 
   /** Establish a single WS connection; returns when the connection ends. */
@@ -511,7 +594,7 @@ final class NeblinkRelayTunnel(
         case "FileTransfer" =>
           FileTransferAction.handle(params).map {
             case Right(json) => (json.noSpaces, "")
-            case Left(err)   => ("", err)
+            case Left(err) => ("", err)
           }
         case "Notify" =>
           val payload = params("payload").getOrElse(Json.Null)
@@ -532,8 +615,8 @@ final class NeblinkRelayTunnel(
               val ctx = ToolContext(projectRoot = projectRoot, isRemoteExec = true)
               tool.call(params, ctx).attempt.map {
                 case Right(Right(result)) => (result, "")
-                case Right(Left(err))     => ("", err.message)
-                case Left(e)              => ("", s"Tool execution failed: ${e.getMessage}")
+                case Right(Left(err)) => ("", err.message)
+                case Left(e) => ("", s"Tool execution failed: ${e.getMessage}")
               }
             case None =>
               IO.pure(("", s"Unknown tool: $action"))
@@ -549,6 +632,10 @@ final class NeblinkRelayTunnel(
         ()
       }
     yield ()
+
+    end for
+
+  end handleRelayRequest
 
   /** Called by WS listener when pong arrives — refreshes heartbeat liveness. */
   private[neblink] def updateLastPong(): Unit =
@@ -628,6 +715,10 @@ final class NeblinkRelayTunnel(
             .as(AckOutcome.SendFailed(NeblinkRelayTunnel.describeErr(e)))
         )
 
+    end match
+
+  end sendAck
+
   /**
    * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame.
    *
@@ -648,14 +739,20 @@ final class NeblinkRelayTunnel(
    */
   private[neblink] def handleDeviceStatusUpdate(msg: Json): IO[Unit] =
     val hc = msg.hcursor
-    val deviceId = hc.downField("deviceId").as[String]
+    val deviceId = hc
+      .downField("deviceId")
+      .as[String]
       .orElse(hc.downField("device_id").as[String])
       .getOrElse("")
-    val online = hc.downField("online").as[Boolean].toOption
+    val online = hc
+      .downField("online")
+      .as[Boolean]
+      .toOption
       .orElse(hc.downField("status").as[String].toOption.map(_.equalsIgnoreCase("online")))
       .getOrElse(false)
     if deviceId.isEmpty then logger.debug("DeviceStatusUpdate frame without deviceId — ignored")
     else neblinkService.applyServerPeerStatus(deviceId, online)
+  end handleDeviceStatusUpdate
 
   // ===== Heartbeat =====
 
@@ -709,13 +806,14 @@ final class NeblinkRelayTunnel(
               armZombieLatchWatchdog(closed)
             else
               try ws.sendText("""{"type":"ping"}""", true)
-              catch case _: Exception =>
-                // send failure on a live-flagged connection means the socket is
-                // already broken — abort now instead of waiting out the pong
-                // window with a dead connection (alive must track reality).
-                logger.debugSync("Relay tunnel ping send failed — aborting broken connection")
-                ws.abort()
-                armZombieLatchWatchdog(closed)
+              catch
+                case _: Exception =>
+                  // send failure on a live-flagged connection means the socket is
+                  // already broken — abort now instead of waiting out the pong
+                  // window with a dead connection (alive must track reality).
+                  logger.debugSync("Relay tunnel ping send failed — aborting broken connection")
+                  ws.abort()
+                  armZombieLatchWatchdog(closed)
         catch case _: Exception => ()
       },
       10,
@@ -723,8 +821,13 @@ final class NeblinkRelayTunnel(
       TimeUnit.SECONDS
     )
 
+  end startHeartbeat
+
   private def stopHeartbeat(): Unit =
-    heartbeat.foreach { hb => try hb.shutdownNow() catch case _: Exception => () }
+    heartbeat.foreach { hb =>
+      try hb.shutdownNow()
+      catch case _: Exception => ()
+    }
     heartbeat = None
 
   // ===== Helpers =====
@@ -734,8 +837,9 @@ final class NeblinkRelayTunnel(
     val wsBase = serverUrl
       .replaceFirst("https://", "wss://")
       .replaceFirst("http://", "ws://")
-    val encodedId = try java.net.URLEncoder.encode(id.deviceId, "UTF-8")
-    catch case _: Exception => id.deviceId
+    val encodedId =
+      try java.net.URLEncoder.encode(id.deviceId, "UTF-8")
+      catch case _: Exception => id.deviceId
     s"$wsBase/api/device/relay-ws?deviceId=$encodedId"
 
 end NeblinkRelayTunnel
@@ -756,8 +860,10 @@ object NeblinkRelayTunnel:
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
-  /** 异常的可读原因（`getMessage` 可为 null：如 `WebSocketHandshakeException`——
-    * 同族口径见本仓 `RelayTunnelDiagnostics`）。禁把 null 写进日志/审计。 */
+  /**
+   * 异常的可读原因（`getMessage` 可为 null：如 `WebSocketHandshakeException`——
+   * 同族口径见本仓 `RelayTunnelDiagnostics`）。禁把 null 写进日志/审计。
+   */
   private[neblink] def describeErr(t: Throwable): String =
     Option(t.getMessage).filter(_.nonEmpty).getOrElse(t.getClass.getSimpleName)
 
@@ -806,9 +912,11 @@ object NeblinkRelayTunnel:
    */
   private[neblink] val LivenessTimeoutMs = 30_000L
 
-  /** Backoff ceiling of the reconnect ladder (unchanged value — the pre-fix
-    * expression also capped at 30s; what changed is that the cap now holds for
-    * every attempt, see [[backoffSeconds]]). */
+  /**
+   * Backoff ceiling of the reconnect ladder (unchanged value — the pre-fix
+   * expression also capped at 30s; what changed is that the cap now holds for
+   * every attempt, see [[backoffSeconds]]).
+   */
   private[neblink] val BackoffCapSeconds = 30L
 
   /**
@@ -967,30 +1075,38 @@ private final class RelayWsListener(
 ) extends WebSocket.Listener:
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
-  /** 帧内会话 id 取值（W9/W10 的 `conversationId=` 字段用）。
-    *
-    * 与 `FriendService.conversationIdOf` **同口径**（`payload` 下钻优先，顶层为旧形状
-    * 容错）——此处是**日志字段**用途、不参与路由，故不跨类依赖该 private 方法；
-    * 两边口径若漂移，症状只是留痕字段缺失，不影响投递正确性。 */
+  /**
+   * 帧内会话 id 取值（W9/W10 的 `conversationId=` 字段用）。
+   *
+   * 与 `FriendService.conversationIdOf` **同口径**（`payload` 下钻优先，顶层为旧形状
+   * 容错）——此处是**日志字段**用途、不参与路由，故不跨类依赖该 private 方法；
+   * 两边口径若漂移，症状只是留痕字段缺失，不影响投递正确性。
+   */
   private def conversationIdOfFrame(json: Json): Option[String] =
-    json.hcursor.downField("payload").get[String]("conversationId").toOption
+    json.hcursor
+      .downField("payload")
+      .get[String]("conversationId")
+      .toOption
       .orElse(json.hcursor.get[String]("conversationId").toOption)
 
   override def onOpen(ws: WebSocket): Unit =
     ws.request(1)
 
-  /** 本连接的分片缓冲（fragreasm-impl，2026-09-19）：**一连接一实例** ⇒ 缓冲按连接
-    * 持有；有界性/生命周期口径见 [[RelayWsListener.FrameReassembler]]。 */
+  /**
+   * 本连接的分片缓冲（fragreasm-impl，2026-09-19）：**一连接一实例** ⇒ 缓冲按连接
+   * 持有；有界性/生命周期口径见 [[RelayWsListener.FrameReassembler]]。
+   */
   private val reassembler = new RelayWsListener.FrameReassembler()
 
-  /** WS 文本帧入口（**分片感知**）。
-    *
-    * 修前（本批缺陷）：`last` 收到但**从不使用** ⇒ 每次调用都把当前片段当整帧
-    * `decode[Json]`（首片残片解析失败 + 后继片各自成帧 ⇒ 大载荷必丢）。修后：分片交给
-    * [[RelayWsListener.FrameReassembler]]，**只有 `last == true` 的完整载荷**才进
-    * [[handleFrame]]（既有分支逻辑**逐字未改**）；单帧消息（缓冲为空 + `last == true`）
-    * 走直通分支 ⇒ 与修前逐字等价。
-    */
+  /**
+   * WS 文本帧入口（**分片感知**）。
+   *
+   * 修前（本批缺陷）：`last` 收到但**从不使用** ⇒ 每次调用都把当前片段当整帧
+   * `decode[Json]`（首片残片解析失败 + 后继片各自成帧 ⇒ 大载荷必丢）。修后：分片交给
+   * [[RelayWsListener.FrameReassembler]]，**只有 `last == true` 的完整载荷**才进
+   * [[handleFrame]]（既有分支逻辑**逐字未改**）；单帧消息（缓冲为空 + `last == true`）
+   * 走直通分支 ⇒ 与修前逐字等价。
+   */
   override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
     reassembler.accept(data, last) match
       case RelayWsListener.FrameStep.Complete(payload) =>
@@ -1008,12 +1124,17 @@ private final class RelayWsListener(
             s"chars=$chars maxChars=${RelayWsListener.MaxAssembledFrameChars} " +
             s"deadlineMs=${RelayWsListener.AssemblyDeadlineMs}"
         )
+    end match
     ws.request(1)
     null
 
-  /** 完整帧上送路径 —— 修前 `onText` 的既有分支逻辑（`type` 分派 + W9..W12 留痕）
-    * **逐字搬运**，唯一变化是载荷来源（`data.toString` → 完整消息字符串；单帧场景下二者
-    * 逐字相同）。🔴 **禁止在本方法内新增/改写分支语义**（本批改动面 = 重组层）。 */
+  end onText
+
+  /**
+   * 完整帧上送路径 —— 修前 `onText` 的既有分支逻辑（`type` 分派 + W9..W12 留痕）
+   * **逐字搬运**，唯一变化是载荷来源（`data.toString` → 完整消息字符串；单帧场景下二者
+   * 逐字相同）。🔴 **禁止在本方法内新增/改写分支语义**（本批改动面 = 重组层）。
+   */
   private def handleFrame(ws: WebSocket, text: String): Unit =
     try
       decode[Json](text) match
@@ -1042,8 +1163,7 @@ private final class RelayWsListener(
               // 解析/入账）⇒ 独占路由，单一入场、零双消费。载荷仍是同一份五键契约
               // （`DeviceMail.parse` 逐字校验，fail-closed）。
               // 契约 v2 时期的隧道顶层 `case "agent_mail"` 分支**已删**（禁双入口）。
-              if DeviceMail.isAgentMailEnvelope(json) then
-                dispatcher.unsafeRunAndForget(DeviceMailInbox.handle(json))
+              if DeviceMail.isAgentMailEnvelope(json) then dispatcher.unsafeRunAndForget(DeviceMailInbox.handle(json))
               else
                 tunnel.friendService match
                   case Some(fs) =>
@@ -1125,11 +1245,13 @@ private final class RelayWsListener(
 end RelayWsListener
 
 object RelayWsListener:
-  /** W10 的**降噪白名单**：本端自己会发/回、语义上不需要动作的帧类型
-    * （`ack` 是 `NeblinkRelayTunnel.sendAck` 的出向形态；`relay_response` 是
-    * `handleRelayRequest` 的出向形态）。若被回授，只留 debug——否则 W10 会退化成
-    * 噪声源，而**噪声化 = 真信号被淹 = 另一种静默**（与修 W10 的初衷相悖）。
-    * 名单之外的未知类型一律 WARN（= 契约漂移信号）。 */
+  /**
+   * W10 的**降噪白名单**：本端自己会发/回、语义上不需要动作的帧类型
+   * （`ack` 是 `NeblinkRelayTunnel.sendAck` 的出向形态；`relay_response` 是
+   * `handleRelayRequest` 的出向形态）。若被回授，只留 debug——否则 W10 会退化成
+   * 噪声源，而**噪声化 = 真信号被淹 = 另一种静默**（与修 W10 的初衷相悖）。
+   * 名单之外的未知类型一律 WARN（= 契约漂移信号）。
+   */
   private[neblink] val BenignUnknownFrameTypes: Set[String] = Set("ack", "relay_response")
 
   // ===== 分片重组（fragreasm-impl，2026-09-19）===============================
@@ -1141,24 +1263,28 @@ object RelayWsListener:
   // `undecodable_frame`）。RFC 6455 §5.4 把分片重组定为**接收方**的责任，本对象即
   // 该责任的最小实现（零 wire 变化、零服务端依赖）。
 
-  /** 重组缓冲的**字符**上限（🔴 显式设计选择，非推导量；有界性腿①）。
-    *
-    * 理由与边界（申报口径，可机械核）：
-    *   - `CharSequence` 的单位是 UTF-16 code unit（本实现按 `length` 计），最坏内存
-    *     ≈ 上限 × 2 B = **16 MiB**；本隧道同时至多一条在连 socket（`connectOnce`
-    *     单飞 + `wsRef` 单槽）⇒ 全进程最坏 ≈ 16 MiB，**有界**；
-    *   - 8 MiB 的量级取自本仓同一用途的既有常量（`NeblinkFiles.scala:23` 的 8 MiB
-    *     读缓冲），远高于任何实测 relay 帧（设备邮件/relay_request 均在 KB 级；大载荷
-    *     走 `FileTransferAction` 的 `chunkSize` 分块）；
-    *   - 🔴 上限**只约束「分片重组」**：单帧消息（`last == true` 且缓冲为空）走直通
-    *     分支、不经缓冲、不受本上限影响 ⇒ 修前能收的单帧大载荷修后照收（零行为漂移）；
-    *     被丢弃的只可能是「分片总长超过上限」的消息。 */
+  /**
+   * 重组缓冲的**字符**上限（🔴 显式设计选择，非推导量；有界性腿①）。
+   *
+   * 理由与边界（申报口径，可机械核）：
+   *   - `CharSequence` 的单位是 UTF-16 code unit（本实现按 `length` 计），最坏内存
+   *     ≈ 上限 × 2 B = **16 MiB**；本隧道同时至多一条在连 socket（`connectOnce`
+   *     单飞 + `wsRef` 单槽）⇒ 全进程最坏 ≈ 16 MiB，**有界**；
+   *   - 8 MiB 的量级取自本仓同一用途的既有常量（`NeblinkFiles.scala:23` 的 8 MiB
+   *     读缓冲），远高于任何实测 relay 帧（设备邮件/relay_request 均在 KB 级；大载荷
+   *     走 `FileTransferAction` 的 `chunkSize` 分块）；
+   *   - 🔴 上限**只约束「分片重组」**：单帧消息（`last == true` 且缓冲为空）走直通
+   *     分支、不经缓冲、不受本上限影响 ⇒ 修前能收的单帧大载荷修后照收（零行为漂移）；
+   *     被丢弃的只可能是「分片总长超过上限」的消息。
+   */
   private[neblink] val MaxAssembledFrameChars: Int = 8 * 1024 * 1024
 
-  /** 半成品缓冲的存活上限（🔴 显式设计选择；有界性腿②，**惰性判定**）。
-    *
-    * 30 s 的锚 = 本隧道自己的存活窗（`NeblinkRelayTunnel.LivenessTimeoutMs`）：一个
-    * 对端在自身存活窗内都发不完的消息，本端不再为它继续占用缓冲。 */
+  /**
+   * 半成品缓冲的存活上限（🔴 显式设计选择；有界性腿②，**惰性判定**）。
+   *
+   * 30 s 的锚 = 本隧道自己的存活窗（`NeblinkRelayTunnel.LivenessTimeoutMs`）：一个
+   * 对端在自身存活窗内都发不完的消息，本端不再为它继续占用缓冲。
+   */
   private[neblink] val AssemblyDeadlineMs: Long = 30_000L
 
   /** 一次 WS 调用的处置结果（`onText` 的唯一分支依据）。 */
@@ -1175,20 +1301,22 @@ object RelayWsListener:
     /** 判废消息的剩余分片（消息终点未知）⇒ 静默丢弃到 `last == true`。 */
     case Discarding
 
-  /** WS 文本帧**分片重组器**（RFC 6455 §5.4 接收方责任）。
-    *
-    * **生命周期（显式）**：每个 WS 连接一个实例（`RelayWsListener` 每连接新建）⇒ 缓冲
-    * 按连接持有；完成即清（`Complete` / `Dropped` 之后缓冲为空）；连接关闭/异常由
-    * `RelayWsListener.onClose` / `onError` 调 [[reset]] 清空 ⇒ **缓冲不跨连接存活**。
-    *
-    * **有界性（显式申报的两条腿）**：① 上限 [[maxChars]]；② 过期 [[deadlineMs]]（惰性）。
-    * 惰性 = 不引入定时线程（本类零 spawn、零额外生命周期），内存最坏保持到「下一帧到达」
-    * 或「连接关闭」，两者都有上界（心跳 10 s 一帧；隧道存活窗 30 s 判僵尸 ⇒ abort）。
-    *
-    * 🔴 **绝不派发非完整载荷**：判废只可能发生在「消息尚未结束」的中间态（`last == false`），
-    * 而按 WS 协议此时**下一条调用必然仍是同一条消息的续片**（消息终点 = `last == true`）
-    * ⇒ 判废后进入 `Discarding` 把剩余续片丢到消息终点为止，绝不把残尾当新消息上送
-    * （否则残尾若恰好可解析 = 派发一条被截断的语义帧）。 */
+  /**
+   * WS 文本帧**分片重组器**（RFC 6455 §5.4 接收方责任）。
+   *
+   * **生命周期（显式）**：每个 WS 连接一个实例（`RelayWsListener` 每连接新建）⇒ 缓冲
+   * 按连接持有；完成即清（`Complete` / `Dropped` 之后缓冲为空）；连接关闭/异常由
+   * `RelayWsListener.onClose` / `onError` 调 [[reset]] 清空 ⇒ **缓冲不跨连接存活**。
+   *
+   * **有界性（显式申报的两条腿）**：① 上限 [[maxChars]]；② 过期 [[deadlineMs]]（惰性）。
+   * 惰性 = 不引入定时线程（本类零 spawn、零额外生命周期），内存最坏保持到「下一帧到达」
+   * 或「连接关闭」，两者都有上界（心跳 10 s 一帧；隧道存活窗 30 s 判僵尸 ⇒ abort）。
+   *
+   * 🔴 **绝不派发非完整载荷**：判废只可能发生在「消息尚未结束」的中间态（`last == false`），
+   * 而按 WS 协议此时**下一条调用必然仍是同一条消息的续片**（消息终点 = `last == true`）
+   * ⇒ 判废后进入 `Discarding` 把剩余续片丢到消息终点为止，绝不把残尾当新消息上送
+   * （否则残尾若恰好可解析 = 派发一条被截断的语义帧）。
+   */
   private[neblink] final class FrameReassembler(
     val maxChars: Int = MaxAssembledFrameChars,
     val deadlineMs: Long = AssemblyDeadlineMs,
@@ -1202,8 +1330,10 @@ object RelayWsListener:
 
     /** 当前缓冲的字符数（判定面读数）。 */
     def pendingChars: Int = chars
+
     /** 是否处于「判废消息的续片静默丢弃」态。 */
     def isDiscarding: Boolean = discarding
+
     /** 累计判废（丢弃）的**消息**数（超限 + 过期 + 连接关闭时的半成品）。 */
     def droppedMessages: Int = dropped
 

@@ -4,22 +4,23 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 
-/** devoscfix 批（2026-09-17）· F-A 会话重交换条件收窄的**双向钉**。
-  *
-  * 缺陷形态（诊断 H-1 结构放大链，`.nebflow/reports/20260917_devosc-diag.md` §1/§2）：
-  * `discover` 对**任何** `Left` 都置空 token + 重做整会话交换 ⇒ 服务端「同设备一活
-  * 会话」kick 旧会话 + 该路由显式拆隧道 + 广播 offline ⇒ 隧道以新 token 重连注册 +
-  * 广播 online ⇒ **一次网络抖动 = 一对「设备 removed/added」**（实测耦合 ≤2s）。
-  *
-  * 验收（作者三答① / P1）：
-  *  - (a) **传输类**失败（超时 / connect 超时 / 非认证非 2xx）⇒ 会话交换次数 **0**、
-  *    token **未**置空（改前 = 1 / 已置空 ⇒ 本 spec 在基线上必红）；
-  *  - (b) **401 / 403 令牌拒收** ⇒ 仍重做会话交换（改前改后一致，不回归）。
-  *
-  * 测法：真实代码路径 —— `NeblinkClient` 子类只替换 [[NeblinkClient.sendRequest]]
-  * 这一个既有测试桩覆写点（与 `NeblinkClientReloginSpec` 同手法），`login` /
-  * `discover` / `heartbeat` 全部走**未改动的产品代码**。
-  */
+/**
+ * devoscfix 批（2026-09-17）· F-A 会话重交换条件收窄的**双向钉**。
+ *
+ * 缺陷形态（诊断 H-1 结构放大链，`.nebflow/reports/20260917_devosc-diag.md` §1/§2）：
+ * `discover` 对**任何** `Left` 都置空 token + 重做整会话交换 ⇒ 服务端「同设备一活
+ * 会话」kick 旧会话 + 该路由显式拆隧道 + 广播 offline ⇒ 隧道以新 token 重连注册 +
+ * 广播 online ⇒ **一次网络抖动 = 一对「设备 removed/added」**（实测耦合 ≤2s）。
+ *
+ * 验收（作者三答① / P1）：
+ *  - (a) **传输类**失败（超时 / connect 超时 / 非认证非 2xx）⇒ 会话交换次数 **0**、
+ *    token **未**置空（改前 = 1 / 已置空 ⇒ 本 spec 在基线上必红）；
+ *  - (b) **401 / 403 令牌拒收** ⇒ 仍重做会话交换（改前改后一致，不回归）。
+ *
+ * 测法：真实代码路径 —— `NeblinkClient` 子类只替换 [[NeblinkClient.sendRequest]]
+ * 这一个既有测试桩覆写点（与 `NeblinkClientReloginSpec` 同手法），`login` /
+ * `discover` / `heartbeat` 全部走**未改动的产品代码**。
+ */
 class NeblinkTransportFailureSessionRetentionSpec extends FunSuite:
 
   private val cfg = NeblinkServerConfig(
@@ -29,15 +30,17 @@ class NeblinkTransportFailureSessionRetentionSpec extends FunSuite:
     deviceToken = Some("device-token")
   )
 
-  private val LoginOk   = """{"token":"tok-1","networkId":"net","deviceId":"dev","peers":[]}"""
-  private val LoginOk2  = """{"token":"tok-2","networkId":"net","deviceId":"dev","peers":[]}"""
+  private val LoginOk = """{"token":"tok-1","networkId":"net","deviceId":"dev","peers":[]}"""
+  private val LoginOk2 = """{"token":"tok-2","networkId":"net","deviceId":"dev","peers":[]}"""
   private val SessionEp = "/api/device/session"
-  private val LoginEp   = "/api/device/login"
-  private val HbEp      = "/api/device/heartbeat"
+  private val LoginEp = "/api/device/login"
+  private val HbEp = "/api/device/heartbeat"
 
-  /** Real NeblinkClient + canned per-URL transport; every request is recorded so
-    * the session-exchange site is countable (that count IS the defect signal:
-    * >1 exchange per heartbeat failure is what kicks the session server-side). */
+  /**
+   * Real NeblinkClient + canned per-URL transport; every request is recorded so
+   * the session-exchange site is countable (that count IS the defect signal:
+   * >1 exchange per heartbeat failure is what kicks the session server-side).
+   */
   private class Stub:
     var calls = List.empty[String]
     var reply: (String, String) => Either[String, String] = (_, _) => Left("unstubbed")
@@ -54,6 +57,8 @@ class NeblinkTransportFailureSessionRetentionSpec extends FunSuite:
     def exchanges: Int = calls.count(u => u.contains(SessionEp) || u.contains(LoginEp))
     def heartbeats: Int = calls.count(_.contains(HbEp))
     def token: Option[String] = client.currentSessionToken
+
+  end Stub
 
   /** Seed a live session through the REAL login path (no field poking). */
   private def seed(s: Stub): Unit =
@@ -112,8 +117,7 @@ class NeblinkTransportFailureSessionRetentionSpec extends FunSuite:
   test("P1(b): 401 ⇒ 仍置空 token + 重做会话交换（一次），并换上服务端新 token") {
     val s = new Stub
     seed(s)
-    s.reply = (_, url) =>
-      if url.contains(HbEp) then Left("HTTP 401: unauthorized") else Right(LoginOk2)
+    s.reply = (_, url) => if url.contains(HbEp) then Left("HTTP 401: unauthorized") else Right(LoginOk2)
 
     val out = discover(s)
 
@@ -140,8 +144,7 @@ class NeblinkTransportFailureSessionRetentionSpec extends FunSuite:
     seed(s)
     // 既有语义（sessionRecoverable 注释自陈）：只有真令牌拒收才准入重登 ——
     // 重登会以「同设备一活会话」踢掉自己的旧会话，业务 403 不该付这个代价。
-    s.reply = (_, url) =>
-      if url.contains(HbEp) then Left("""HTTP 403: {"error":"not_friend"}""") else Right(LoginOk2)
+    s.reply = (_, url) => if url.contains(HbEp) then Left("""HTTP 403: {"error":"not_friend"}""") else Right(LoginOk2)
 
     assertEquals(discover(s), Left("""HTTP 403: {"error":"not_friend"}"""))
     assertEquals(s.exchanges, 1, "业务 403 不得触发会话交换")

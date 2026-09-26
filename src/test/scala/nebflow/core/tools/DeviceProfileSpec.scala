@@ -2,12 +2,12 @@ package nebflow.core.tools
 
 import io.circe.parser.decode
 import munit.FunSuite
-import nebflow.core.PathUtil
-import nebflow.neblink.PeerInfo
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime
+import java.nio.file.{Files, Paths}
+
 import scala.collection.mutable
 
 /**
@@ -35,7 +35,13 @@ class DeviceProfileSpec extends FunSuite:
     p
 
   private def peer(name: String, id: String, caps: Map[String, String] = Map.empty): PeerInfo =
-    PeerInfo(deviceId = id, deviceName = name, platform = "windows", address = "http://127.0.0.1:1", capabilities = caps)
+    PeerInfo(
+      deviceId = id,
+      deviceName = name,
+      platform = "windows",
+      address = "http://127.0.0.1:1",
+      capabilities = caps
+    )
 
   import cats.effect.unsafe.implicits.global
 
@@ -84,11 +90,15 @@ class DeviceProfileSpec extends FunSuite:
     // 写命令；实测值无处落地、冲突无从检出。等价断言：没有 fields/merge 机制时
     // 手填值原样输出（对照 —— 旧形态即 `Map("cwd" -> "/old/path")` 直通渲染）。
     val oldBehaviorDirectRender = Map("cwd" -> "/old/path")
-    assertEquals(oldBehaviorDirectRender("cwd"), "/old/path",
-      "old behavior: hand value rendered as fact with no measured conflict detection — this is what the batch replaces")
+    assertEquals(
+      oldBehaviorDirectRender("cwd"),
+      "/old/path",
+      "old behavior: hand value rendered as fact with no measured conflict detection — this is what the batch replaces"
+    )
     // 新代码下同一场景不再成立：同键存在实测 ⇒ 渲染面以 fields（实测）为准。
     val now = 1_700_000_000_000L
-    val merged = DeviceProfile.mergeHandCaps(Map("cwd" -> "/old/path"), Map("cwd" -> ProfileField("/new/path", now)), now)
+    val merged =
+      DeviceProfile.mergeHandCaps(Map("cwd" -> "/old/path"), Map("cwd" -> ProfileField("/new/path", now)), now)
     assert(merged("cwd").stale, "new code: same scenario is now detected and marked stale")
 
   test("hand-caps agreement: matching or contained values are NOT stale (no false positives)"):
@@ -114,7 +124,8 @@ class DeviceProfileSpec extends FunSuite:
   test("store: recordProbe then load round-trips entry (deviceId primary key)"):
     isolatedRoot()
     val p = peer("kai-windows", "aaaaaaaa-1111-2222-3333-444444444444")
-    val saved = DeviceProfile.recordProbe(p, Map("cwd" -> "D:/x", "msys" -> "Msys"), Map("cwd" -> "D:/old"), 123L).unsafeRunSync()
+    val saved =
+      DeviceProfile.recordProbe(p, Map("cwd" -> "D:/x", "msys" -> "Msys"), Map("cwd" -> "D:/old"), 123L).unsafeRunSync()
     assert(saved.isDefined)
     val loaded = DeviceProfile.load.unsafeRunSync()
     val e = loaded("aaaaaaaa-1111-2222-3333-444444444444")
@@ -133,8 +144,15 @@ class DeviceProfileSpec extends FunSuite:
   test("needsProbe: fresh entry false; expired TTL / address change / rename / version gap / missing all true"):
     val p = peer("kai", "id-fresh-1")
     val now = 1_700_000_000_000L
-    val fresh = DeviceProfileEntry("id-fresh-1", "kai", "windows",
-      P2pPathDecision.addressKey(p), now, DeviceProfile.SchemaVersion, true)
+    val fresh = DeviceProfileEntry(
+      "id-fresh-1",
+      "kai",
+      "windows",
+      P2pPathDecision.addressKey(p),
+      now,
+      DeviceProfile.SchemaVersion,
+      true
+    )
     assertEquals(DeviceProfile.needsProbe(Some(fresh), p, now), false, "fresh entry = no probe")
     assertEquals(DeviceProfile.needsProbe(None, p, now), true, "missing entry = probe")
     val expired = fresh.copy(probedAt = now - DeviceProfile.ProfileTtlMs - 1)
@@ -149,11 +167,22 @@ class DeviceProfileSpec extends FunSuite:
   test("needsProbe: negative entry suppressed within backoff window, retryable after (负控 3)"):
     val p = peer("kai", "id-neg-1")
     val now = 1_700_000_000_000L
-    val negative = DeviceProfileEntry("id-neg-1", "kai", "windows", P2pPathDecision.addressKey(p),
-      now, DeviceProfile.SchemaVersion, false, negativeUntil = Some(now + DeviceProfile.NegativeRetryMs))
+    val negative = DeviceProfileEntry(
+      "id-neg-1",
+      "kai",
+      "windows",
+      P2pPathDecision.addressKey(p),
+      now,
+      DeviceProfile.SchemaVersion,
+      false,
+      negativeUntil = Some(now + DeviceProfile.NegativeRetryMs)
+    )
     assertEquals(DeviceProfile.needsProbe(Some(negative), p, now), false, "within backoff: no re-probe")
-    assertEquals(DeviceProfile.needsProbe(Some(negative), p, now + DeviceProfile.NegativeRetryMs + 1), true,
-      "after backoff: retryable")
+    assertEquals(
+      DeviceProfile.needsProbe(Some(negative), p, now + DeviceProfile.NegativeRetryMs + 1),
+      true,
+      "after backoff: retryable"
+    )
 
   // ── ① # Devices 摘要（1-2 行/台 + stale 标记；缺失 = 现状形态） ────
 
@@ -165,11 +194,22 @@ class DeviceProfileSpec extends FunSuite:
   test("renderSummary: populated profile renders 1 line with fields; stale marks appear"):
     val p = peer("kai", "id-sum-2")
     val now = 1_700_000_000_000L
-    val e = DeviceProfileEntry("id-sum-2", "kai", "windows", P2pPathDecision.addressKey(p), now,
-      DeviceProfile.SchemaVersion, true,
-      fields = Map("cwd" -> ProfileField("D:/x", now), "msys" -> ProfileField("Msys", now),
-        "bash" -> ProfileField("5.2.26", now), "shot" -> ProfileField("powershell-dotnet", now)),
-      handCaps = Map("browser" -> HandCapField("edge", stale = true, Some(now))))
+    val e = DeviceProfileEntry(
+      "id-sum-2",
+      "kai",
+      "windows",
+      P2pPathDecision.addressKey(p),
+      now,
+      DeviceProfile.SchemaVersion,
+      true,
+      fields = Map(
+        "cwd" -> ProfileField("D:/x", now),
+        "msys" -> ProfileField("Msys", now),
+        "bash" -> ProfileField("5.2.26", now),
+        "shot" -> ProfileField("powershell-dotnet", now)
+      ),
+      handCaps = Map("browser" -> HandCapField("edge", stale = true, Some(now)))
+    )
     val s = DeviceProfile.renderSummary(p, Map("id-sum-2" -> e), now)
     assert(s.contains("cwd=D:/x"))
     assert(s.contains("capture=powershell-dotnet"))
@@ -182,8 +222,16 @@ class DeviceProfileSpec extends FunSuite:
   test("renderSummary: expired profile carries ⚠stale marker"):
     val p = peer("kai", "id-sum-3")
     val now = 1_700_000_000_000L
-    val e = DeviceProfileEntry("id-sum-3", "kai", "windows", P2pPathDecision.addressKey(p), now - DeviceProfile.ProfileTtlMs - 5,
-      DeviceProfile.SchemaVersion, true, fields = Map("cwd" -> ProfileField("D:/x", now)))
+    val e = DeviceProfileEntry(
+      "id-sum-3",
+      "kai",
+      "windows",
+      P2pPathDecision.addressKey(p),
+      now - DeviceProfile.ProfileTtlMs - 5,
+      DeviceProfile.SchemaVersion,
+      true,
+      fields = Map("cwd" -> ProfileField("D:/x", now))
+    )
     val s = DeviceProfile.renderSummary(p, Map("id-sum-3" -> e), now)
     assert(s.contains("⚠stale"))
 
@@ -203,10 +251,16 @@ class DeviceProfileSpec extends FunSuite:
     assert(note.exists(_.startsWith("rewritten")))
 
   test("rewriteOnce: disabled / non-MSYS = identity (fail-closed axes)"):
-    assertEquals(XdevRewrite.rewriteOnce("cmd /c start calc", msys = false, enabledFlag = true)._1,
-      "cmd /c start calc", "no MSYS confirmation = no rewrite")
-    assertEquals(XdevRewrite.rewriteOnce("cmd /c start calc", msys = true, enabledFlag = false)._1,
-      "cmd /c start calc", "layer disabled = no rewrite")
+    assertEquals(
+      XdevRewrite.rewriteOnce("cmd /c start calc", msys = false, enabledFlag = true)._1,
+      "cmd /c start calc",
+      "no MSYS confirmation = no rewrite"
+    )
+    assertEquals(
+      XdevRewrite.rewriteOnce("cmd /c start calc", msys = true, enabledFlag = false)._1,
+      "cmd /c start calc",
+      "layer disabled = no rewrite"
+    )
 
   test("rewriteOnce: idempotent — already-rewritten form is never double-rewritten"):
     val (c, note) = XdevRewrite.rewriteOnce("cmd //c start calc", msys = true, enabledFlag = true)
@@ -215,14 +269,14 @@ class DeviceProfileSpec extends FunSuite:
 
   test("rewriteOnce: forbidden chars = pass-through + visible warning (改写错防线)"):
     for cmd <- List(
-      "cmd /c start calc && echo done",      // && 分隔
-      "cmd /c \"start calc\"",               // 引号
-      "echo x | cmd /c start calc",          // 管道
-      "cmd /c start calc; rm -rf build",     // 分号 + 破坏性动词
-      "cmd /c echo %USERPROFILE%",           // cmd 转义字符 %
-      "cmd /c start calc > out.txt",         // 重定向
-      "cmd /c start $(calc)"                 // 命令替换
-    )
+        "cmd /c start calc && echo done", // && 分隔
+        "cmd /c \"start calc\"", // 引号
+        "echo x | cmd /c start calc", // 管道
+        "cmd /c start calc; rm -rf build", // 分号 + 破坏性动词
+        "cmd /c echo %USERPROFILE%", // cmd 转义字符 %
+        "cmd /c start calc > out.txt", // 重定向
+        "cmd /c start $(calc)" // 命令替换
+      )
     do
       val (c, note) = XdevRewrite.rewriteOnce(cmd, msys = true, enabledFlag = true)
       assertEquals(c, cmd, s"pass-through for: $cmd")
@@ -235,8 +289,7 @@ class DeviceProfileSpec extends FunSuite:
 
   test("msysConfirmed: Msys/MINGW variants true; linux/darwin/empty false"):
     def entry(msysVal: String): DeviceProfileEntry =
-      DeviceProfileEntry("d", "n", "p", "a", 0L, 1, true,
-        fields = Map("msys" -> ProfileField(msysVal, 0L)))
+      DeviceProfileEntry("d", "n", "p", "a", 0L, 1, true, fields = Map("msys" -> ProfileField(msysVal, 0L)))
     assert(XdevRewrite.msysConfirmed(Some(entry("Msys"))))
     assert(XdevRewrite.msysConfirmed(Some(entry("MINGW64_NT-10.0"))))
     assert(!XdevRewrite.msysConfirmed(Some(entry("GNU/Linux"))))
@@ -255,8 +308,11 @@ class DeviceProfileSpec extends FunSuite:
         |NEBFLOW_PULL:/tmp/four.png
         |NEBFLOW_PULL:/tmp/five.png""".stripMargin
     val paths = CapturePull.scanPullPaths(out)
-    assertEquals(paths, List("D:/tmp/shot1.png", "C:/Users/x/shot2.png", "/tmp/three.png"),
-      "max 3 pulls per call; extras ignored")
+    assertEquals(
+      paths,
+      List("D:/tmp/shot1.png", "C:/Users/x/shot2.png", "/tmp/three.png"),
+      "max 3 pulls per call; extras ignored"
+    )
     assertEquals(CapturePull.scanPullPaths("no markers here").size, 0)
 
   // ── ④ captures TTL：7 天判定 + 逐件留痕 + 落点不入 git ────────────
@@ -286,8 +342,10 @@ class DeviceProfileSpec extends FunSuite:
     // 而 NfDataRootAllowlist = projects/uploads/plots/workspace-items/voice-models。
     val servedPrefixes = List("projects", "uploads", "plots", "workspace-items", "voice-models")
     val relative = devDir.relativeTo(root).toString
-    assert(!servedPrefixes.exists(p => relative.startsWith(p)),
-      s"captures path '$relative' must not live under any HTTP-served allowlist prefix")
+    assert(
+      !servedPrefixes.exists(p => relative.startsWith(p)),
+      s"captures path '$relative' must not live under any HTTP-served allowlist prefix"
+    )
     // 与 uploads / evidence（workspace 可服务面）零交集：
     assert(!relative.contains("uploads") && !relative.contains("evidence"))
 
@@ -301,8 +359,7 @@ class DeviceProfileSpec extends FunSuite:
     decode[io.circe.Json](good) match
       case Right(json) =>
         assertEquals(json.hcursor.downField("size").as[Long].getOrElse(0L), 3L)
-        val decodedBack = java.util.Base64.getDecoder.decode(
-          json.hcursor.downField("content").as[String].getOrElse(""))
+        val decodedBack = java.util.Base64.getDecoder.decode(json.hcursor.downField("content").as[String].getOrElse(""))
         assert(decodedBack.sameElements(raw), "content round-trips through base64")
       case other => fail(s"shape decode failed: $other")
     // 大小闸在发送端（transferGetToFile）按 size 字段拒绝 > 10 MiB —— 阈值语义此处只钉常量。

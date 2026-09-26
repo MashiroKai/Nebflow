@@ -1,43 +1,45 @@
 package nebflow.core
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import cats.effect.std.Queue
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.nio.file.*
-import java.time.{Instant, ZoneOffset}
 import java.time.format.DateTimeFormatter
+import java.time.{Instant, ZoneOffset}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 
-/** Structured tool-execution JSONL log（审计 20260903 §5 方案 B）.
-  *
-  * Output directory: <dataRoot>/logs/tools/ — dataRoot = PathUtil.dataRoot
-  * (CLI --home flag / NEBFLOW_HOME env / default ~/.nebflow); isolated
-  * instances keep their tool logs inside their own home, the production
-  * default collapses to ~/.nebflow/logs/tools/ (LlmLogWriter 同款契约).
-  *   - {date}.jsonl — one line per tool execution (success AND failure)
-  *
-  * Fixed keys per line (always present; Option values null when absent):
-  *   ts / tool / agent / sessionId / kind / isError / elapsedMs /
-  *   errorText / inputSummary / resultChars / requestId
-  *
-  * Key properties vs the legacy nebflow.log text line (which stays untouched):
-  *   - errorText is the FULL result content (no 100-char truncation)
-  *   - requestId correlates with the router JSONL LLM request entries
-  *   - one JSON object per line → jq-able failure-rate views (方案 C 前置)
-  *
-  * Write path is ASYNC and never blocks tool execution: entries go through a
-  * bounded queue to a background fiber; on overflow the entry is DROPPED with
-  * a WARN (telemetry loss beats blocking the main path). flushSync() drains
-  * synchronously (tests + JVM shutdown hook).
-  *
-  * Retention: aligned with the router logs — same shared constant
-  * ([[LlmLogWriter.retentionDays]], currently 3), same once-per-day prune
-  * cadence, reusing the tested date-prefix deletion scan.
-  */
+/**
+ * Structured tool-execution JSONL log（审计 20260903 §5 方案 B）.
+ *
+ * Output directory: <dataRoot>/logs/tools/ — dataRoot = PathUtil.dataRoot
+ * (CLI --home flag / NEBFLOW_HOME env / default ~/.nebflow); isolated
+ * instances keep their tool logs inside their own home, the production
+ * default collapses to ~/.nebflow/logs/tools/ (LlmLogWriter 同款契约).
+ *   - {date}.jsonl — one line per tool execution (success AND failure)
+ *
+ * Fixed keys per line (always present; Option values null when absent):
+ *   ts / tool / agent / sessionId / kind / isError / elapsedMs /
+ *   errorText / inputSummary / resultChars / requestId
+ *
+ * Key properties vs the legacy nebflow.log text line (which stays untouched):
+ *   - errorText is the FULL result content (no 100-char truncation)
+ *   - requestId correlates with the router JSONL LLM request entries
+ *   - one JSON object per line → jq-able failure-rate views (方案 C 前置)
+ *
+ * Write path is ASYNC and never blocks tool execution: entries go through a
+ * bounded queue to a background fiber; on overflow the entry is DROPPED with
+ * a WARN (telemetry loss beats blocking the main path). flushSync() drains
+ * synchronously (tests + JVM shutdown hook).
+ *
+ * Retention: aligned with the router logs — same shared constant
+ * ([[LlmLogWriter.retentionDays]], currently 3), same once-per-day prune
+ * cadence, reusing the tested date-prefix deletion scan.
+ */
 object ToolsLogWriter:
 
   private val logger = NebflowLogger.forName("nebflow.tools.logger")
@@ -50,8 +52,10 @@ object ToolsLogWriter:
   /** Bounded queue capacity — overflow drops + WARN, never blocks. */
   private val Capacity = 4096
 
-  /** Retention days — SHARED constant with the router logs (方案 B 验收:
-    * 默认值 = router 现行保留天数). */
+  /**
+   * Retention days — SHARED constant with the router logs (方案 B 验收:
+   * 默认值 = router 现行保留天数).
+   */
   private[core] val retentionDays: Int = LlmLogWriter.retentionDays
 
   // ── Test hooks (spec harnesses redirect dir / clock) ─────────────────
@@ -75,10 +79,12 @@ object ToolsLogWriter:
 
   private def clock(): Instant = clockOverride.get().fold(Instant.now())(_())
 
-  /** Log root follows the instance data root (PathUtil.dataRoot) — same
-    * contract as LlmLogWriter (P1 20260910: the user.home hardcode leaked
-    * isolated instances' tool logs into the production ~/.nebflow/logs/tools).
-    * dirOverride stays the test-only injection point (takes precedence). */
+  /**
+   * Log root follows the instance data root (PathUtil.dataRoot) — same
+   * contract as LlmLogWriter (P1 20260910: the user.home hardcode leaked
+   * isolated instances' tool logs into the production ~/.nebflow/logs/tools).
+   * dirOverride stays the test-only injection point (takes precedence).
+   */
   private def logDir: Path =
     dirOverride.get().getOrElse((PathUtil.dataRoot / "logs" / "tools").toNIO)
 
@@ -91,8 +97,10 @@ object ToolsLogWriter:
 
   // ── Public API ───────────────────────────────────────────────────────
 
-  /** Record one tool execution. Called from AgentCore's tool choke points.
-    * NEVER throws and NEVER blocks the caller beyond a queue tryOffer. */
+  /**
+   * Record one tool execution. Called from AgentCore's tool choke points.
+   * NEVER throws and NEVER blocks the caller beyond a queue tryOffer.
+   */
   def log(
     tool: String,
     agent: Option[String],
@@ -127,16 +135,20 @@ object ToolsLogWriter:
         case true => IO.delay(pendingWrites.incrementAndGet()).void
         case false =>
           // Overflow: drop + WARN — telemetry loss never blocks the tool path.
-          IO.delay(logger.warnSync(
-            s"ToolsLogWriter: queue full ($Capacity) — dropping tool log line for $tool"
-          ))
+          IO.delay(
+            logger.warnSync(
+              s"ToolsLogWriter: queue full ($Capacity) — dropping tool log line for $tool"
+            )
+          )
       }
 
-  /** Synchronous drain — best-effort flush on shutdown; specs use it to make
-    * the async write observable before asserting file contents. Pauses the
-    * worker, drains, then waits for any item an in-flight take already pulled —
-    * deterministic: every line offered BEFORE flushSync started is on disk
-    * when it returns. */
+  /**
+   * Synchronous drain — best-effort flush on shutdown; specs use it to make
+   * the async write observable before asserting file contents. Pauses the
+   * worker, drains, then waits for any item an in-flight take already pulled —
+   * deterministic: every line offered BEFORE flushSync started is on disk
+   * when it returns.
+   */
   private[nebflow] def flushSync(): Unit =
     flushing.set(true)
     try
@@ -152,6 +164,7 @@ object ToolsLogWriter:
         Thread.sleep(5)
         waits += 1
     finally flushing.set(false)
+  end flushSync
 
   // ── Async pipeline: bounded queue + background fiber ─────────────────
 
@@ -162,8 +175,10 @@ object ToolsLogWriter:
   /** Flush barrier: while true the worker does not take from the queue. */
   private val flushing = AtomicBoolean(false)
 
-  /** Offered-but-not-yet-written lines — lets flushSync wait out items an
-    * in-flight worker fiber has already taken from the queue. */
+  /**
+   * Offered-but-not-yet-written lines — lets flushSync wait out items an
+   * in-flight worker fiber has already taken from the queue.
+   */
   private val pendingWrites = AtomicLong(0)
 
   private def workerLoop: IO[Unit] =
@@ -171,17 +186,24 @@ object ToolsLogWriter:
       while flushing.get() do Thread.sleep(5)
     } *> queue.take.flatMap(json => IO.blocking(appendJsonl(json)))).foreverM
 
-  /** Start the writer fiber exactly once (fiber runs on the global runtime;
-    * take/append are per-line, so the loop itself never fails). */
+  /**
+   * Start the writer fiber exactly once (fiber runs on the global runtime;
+   * take/append are per-line, so the loop itself never fails).
+   */
   private def ensureWorker: IO[Unit] =
     IO(workerStarted.compareAndSet(false, true)).ifM(workerLoop.start.void, IO.unit)
 
   // JVM shutdown: best-effort flush of whatever is still queued.
   locally {
-    Runtime.getRuntime.addShutdownHook(new Thread(
-      () => { try flushSync() catch case _: Throwable => () },
-      "tools-log-flush"
-    ))
+    // 2026-09-26 编排端裁定(问题 dwfq-3f63d047-1):消歧括号为红线 1 已批准例外;原两行形态依赖换行解析,scalafmt 写模式会合并为不可解析形态
+    Runtime.getRuntime.addShutdownHook(
+      new Thread(
+        () =>
+          (try flushSync()
+          catch case _: Throwable => ()),
+        "tools-log-flush"
+      )
+    )
   }
 
   // ── JSONL append + daily prune (mirrors LlmLogWriter) ────────────────
@@ -217,12 +239,14 @@ object ToolsLogWriter:
           lastPruneDate.set(today)
       }
 
-  /** Delete tools JSONL files older than the shared retention window. Reuses the
-    * router writer's **删除腿**（[[LlmLogWriter.deleteOutOfWindowJsonl]]）——tools
-    * 文件不携带对象引用（system_ref/tools_ref/message_refs），引用扫描腿在这里
-    * 无事可做。2026-09-13 回收解耦批：旧的共享入口 `scanFullLogsForRefs`
-    * （「单文件超 128 MiB ⇒ 整体放弃扫描」语义）已随 D-B 修复移除，删除腿与扫描腿
-    * 从此是两条独立路径。 */
+  /**
+   * Delete tools JSONL files older than the shared retention window. Reuses the
+   * router writer's **删除腿**（[[LlmLogWriter.deleteOutOfWindowJsonl]]）——tools
+   * 文件不携带对象引用（system_ref/tools_ref/message_refs），引用扫描腿在这里
+   * 无事可做。2026-09-13 回收解耦批：旧的共享入口 `scanFullLogsForRefs`
+   * （「单文件超 128 MiB ⇒ 整体放弃扫描」语义）已随 D-B 修复移除，删除腿与扫描腿
+   * 从此是两条独立路径。
+   */
   private def pruneOldLogs(): Unit =
     try
       val cutoff = clock().minusSeconds(retentionDays * 86400L).toString.take(10)

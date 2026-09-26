@@ -6,13 +6,13 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, InjectionAttribution, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.InjectionAttribution
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk, UiMessage}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, UiMessage}
 
 import scala.concurrent.duration.*
 
@@ -44,6 +44,7 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"intake-label test dispatcher","tools":[],"category":"standalone"}"""
@@ -58,11 +59,12 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
   /** 记录型 LLM：immediate 收尾（零工具调用），只计数已结束 stream。 */
   private class QuietLlm:
     val streamsDone: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+
     val handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)) ++
           Stream.eval(streamsDone.update(_ + 1)).drain
@@ -110,7 +112,12 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
   private def dispatcherSid(resources: SharedResources): IO[Option[String]] =
     resources.agentRegistry.get.map(_.keys.toList.filter(_.startsWith(ProjectActor.DispatcherSessionPrefix)).headOption)
 
-  private def mount(name: String, system: ActorSystem, res: SharedResources, frames: Ref[IO, List[Json]]): IO[ProjectRuntime] =
+  private def mount(
+    name: String,
+    system: ActorSystem,
+    res: SharedResources,
+    frames: Ref[IO, List[Json]]
+  ): IO[ProjectRuntime] =
     val ws = tempRoot / name
     os.makeDir.all(ws)
     val pd = ProjectDef(
@@ -131,12 +138,16 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
       dispatcherIdleWindowMs = Some(120_000L)
     )
 
-  /** 驱动一次「Mail → project」收件：与 `MailTool#routeToProject` 逐字同形
-    * （`SourceTask` + attribution；`intake` 由本用例参数决定 = 腿① 置位 / 无置位）。 */
+  end mount
+
+  /**
+   * 驱动一次「Mail → project」收件：与 `MailTool#routeToProject` 逐字同形
+   * （`SourceTask` + attribution；`intake` 由本用例参数决定 = 腿① 置位 / 无置位）。
+   */
   private def dispatchMail(
-      rt: ProjectRuntime,
-      taskText: String,
-      intake: Option[String]
+    rt: ProjectRuntime,
+    taskText: String,
+    intake: Option[String]
   ): IO[Unit] =
     val attribution = Some(
       InjectionAttribution(
@@ -146,7 +157,14 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
         intake = intake
       )
     )
-    (rt.actorRef.get ! ProjectActor.ProjectCommand.TriggerDispatcher(taskText, "nebula-root", ProjectActor.SourceTask, attribution)).void
+    (rt.actorRef.get ! ProjectActor.ProjectCommand.TriggerDispatcher(
+      taskText,
+      "nebula-root",
+      ProjectActor.SourceTask,
+      attribution
+    )).void
+
+  end dispatchMail
 
   private def injectedFrames(frames: Ref[IO, List[Json]]): IO[List[Json]] =
     frames.get.map(_.filter(j => j.hcursor.downField("injected").as[Boolean].getOrElse(false)))
@@ -154,8 +172,10 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
   private def uiRows(res: SharedResources, sid: String): IO[List[UiMessage]] =
     res.sessionStore.getUiMessages(sid, 0, 0).map(_._1)
 
-  /** 落盘面是本 spec 的法证：SessionStore 的写盘是**去抖**的（追加先进缓存 + markDirty），
-    * 故读盘前显式 flush 两条脏队列（公开 API），再等文件出现。 */
+  /**
+   * 落盘面是本 spec 的法证：SessionStore 的写盘是**去抖**的（追加先进缓存 + markDirty），
+   * 故读盘前显式 flush 两条脏队列（公开 API），再等文件出现。
+   */
   private def flushWrites(res: SharedResources, sid: String): IO[Unit] =
     res.sessionStore.flushPendingUiWrites *>
       res.sessionStore.flushPendingMessages *>
@@ -212,6 +232,8 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
         "转录层（Message）被塞入 intake 字段 —— 会计面污染（本批禁：该字段只活在呈现面）"
       )
 
+    end for
+
   test("反向（验收 2）：无 intake 的 task 形态收件 ⇒ 帧/落盘均不带该字段（回落路径 ⇒ 标签仍 Task）"):
     val system = ActorSystem(s"intake-absent-${scala.util.Random.nextInt(100000)}")
     for
@@ -236,5 +258,6 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
       val injected = rows.collect { case u: UiMessage.User if u.injected => u }
       assertEquals(injected.map(_.intake), List(None), "字段缺席时落盘必须为 None ⇒ 前端走回落表（标签仍 Task）")
       assert(!raw.contains("intake"), s"落盘字节混入 intake：${raw.take(300)}")
+    end for
 
 end DispatcherIntakeLabelSpec

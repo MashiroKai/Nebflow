@@ -6,11 +6,10 @@ import io.circe.Json
 import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.node.NodeRunner
 import nebflow.core.tools.FlowReportStore
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -69,7 +68,7 @@ object FlowDagExecutor:
     rawOutcomes: List[Either[Throwable, Either[WalkEnd.Failed, WalkEnd]]]
   ): Either[WalkEnd.Failed, WalkEnd] =
     val outcomes: List[Either[WalkEnd.Failed, WalkEnd]] = rawOutcomes.map {
-      case Right(w)  => w
+      case Right(w) => w
       case Left(err) => Left(WalkEnd.Failed(from, s"branch fiber crashed: ${err.getMessage}"))
     }
     val failures: List[WalkEnd.Failed] = outcomes.collect { case Left(f) => f }
@@ -83,7 +82,7 @@ object FlowDagExecutor:
           case Some(output) =>
             val returns = outcomes.count {
               case Right(WalkEnd.Returned(_)) => true
-              case _                          => false
+              case _ => false
             }
             if returns > 1 then
               logger.warnSync(s"parallel round from '$from' produced $returns returns — taking the first")
@@ -96,22 +95,35 @@ object FlowDagExecutor:
               )
             )
 
+        end match
+
+    end match
+
+  end mergeOutcomes
+
   /** Per-execution shared state. Ref.unsafe is fine: refs are local to one execute() run. */
   private final class ExecState:
     val outputs: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
     val slots: Ref[IO, Map[String, Map[String, Json]]] = Ref.unsafe(Map.empty)
     val loopCounts: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
     val pendingJoins: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
+
     /** Dynamic fan instances: template node id → instantiated ids in creation order (template#1 … template#N). */
     val instances: Ref[IO, Map[String, List[String]]] = Ref.unsafe(Map.empty)
+
     /** Instantiated node definitions (input substituted): instance id → FlowNode. */
     val instanceNodes: Ref[IO, Map[String, FlowNode]] = Ref.unsafe(Map.empty)
-    /** Flow-node supervision P2 (2026-08-26): nodeId → stable dag session id.
-      * Owned here (not inside executeAgent) so a Restart retries the SAME
-      * session — checkpoint recovery loads the persisted messages instead of
-      * re-running the node from scratch (20min of planner context survives a
-      * 60s upstream stall). */
+
+    /**
+     * Flow-node supervision P2 (2026-08-26): nodeId → stable dag session id.
+     * Owned here (not inside executeAgent) so a Restart retries the SAME
+     * session — checkpoint recovery loads the persisted messages instead of
+     * re-running the node from scratch (20min of planner context survives a
+     * 60s upstream stall).
+     */
     val nodeSessions: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
+
+  end ExecState
 
   /**
    * Execute a flow DAG.
@@ -200,8 +212,8 @@ object FlowDagExecutor:
             java.util.regex.Matcher.quoteReplacement(
               params.get(m.group(1)) match
                 case Some(json) if json.isString => json.asString.getOrElse("")
-                case Some(json)                  => json.noSpaces
-                case None                        => s"[param ${m.group(1)} not provided]"
+                case Some(json) => json.noSpaces
+                case None => s"[param ${m.group(1)} not provided]"
             )
         )
         val withTask = withParams.replace("$task", taskInput)
@@ -222,15 +234,14 @@ object FlowDagExecutor:
             .map { id =>
               slotsAll.get(id).flatMap(_.get(field)) match
                 case Some(json) if json.isString => json.asString.getOrElse("")
-                case Some(json)                  => json.noSpaces
+                case Some(json) => json.noSpaces
                 case None => s"[slots.$field of $id not found]"
             }
             .mkString("\n")
         val allSlotsPattern = "\\$([a-zA-Z0-9_-]+)\\.all\\.slots\\.([a-zA-Z0-9_-]+)".r
         val withAllSlots = allSlotsPattern.replaceAllIn(
           withTask,
-          m =>
-            java.util.regex.Matcher.quoteReplacement(aggregateAllSlots(m.group(1), m.group(2)))
+          m => java.util.regex.Matcher.quoteReplacement(aggregateAllSlots(m.group(1), m.group(2)))
         )
         val allOutputPattern = "\\$([a-zA-Z0-9_-]+)\\.all\\.output".r
         val withAll = allOutputPattern.replaceAllIn(
@@ -244,7 +255,7 @@ object FlowDagExecutor:
             java.util.regex.Matcher.quoteReplacement(
               slotsAll.get(m.group(1)).flatMap(_.get(m.group(2))) match
                 case Some(json) if json.isString => json.asString.getOrElse("")
-                case Some(json)                  => json.noSpaces
+                case Some(json) => json.noSpaces
                 case None => s"[slots.${m.group(2)} of ${m.group(1)} not found]"
             )
         )
@@ -265,7 +276,7 @@ object FlowDagExecutor:
     def nodeContract(node: FlowNode): Option[FlowNodeContract] =
       val caseKeys = node.onComplete match
         case NodeRoute.Switch(_, cases, _, _) => cases.keySet
-        case _                                => Set.empty[String]
+        case _ => Set.empty[String]
       if caseKeys.isEmpty && node.outputs.isEmpty then None
       else Some(FlowNodeContract(caseKeys, node.outputs))
 
@@ -273,13 +284,15 @@ object FlowDagExecutor:
     def nodeDefOf(nodeId: String): IO[Option[FlowNode]] =
       flow.nodes.get(nodeId) match
         case Some(node) => IO.pure(Some(node))
-        case None       => st.instanceNodes.get.map(_.get(nodeId))
+        case None => st.instanceNodes.get.map(_.get(nodeId))
 
-    /** P2 supervision: the node's dag session id. Only a checkpoint-resume
-      * re-entry (handleResult Restart after a retryable failure) reuses the
-      * preserved session; every other dispatch (first attempt, loop re-entry
-      * via a revise back-edge, non-retryable Restart) gets a FRESH session —
-      * a revise round is a new review, not a crash recovery. */
+    /**
+     * P2 supervision: the node's dag session id. Only a checkpoint-resume
+     * re-entry (handleResult Restart after a retryable failure) reuses the
+     * preserved session; every other dispatch (first attempt, loop re-entry
+     * via a revise back-edge, non-retryable Restart) gets a FRESH session —
+     * a revise round is a new review, not a crash recovery.
+     */
     def nodeSession(nodeId: String, resumeCheckpoint: Boolean): IO[(Boolean, String)] =
       st.nodeSessions.get.flatMap { m =>
         m.get(nodeId) match
@@ -289,10 +302,12 @@ object FlowDagExecutor:
             st.nodeSessions.update(mm => mm + (nodeId -> fresh)).as((false, fresh))
       }
 
-    /** Execute a single DAG node: spawn agent, send input, collect output.
-      * P2 supervision: resumeCheckpoint=true (Restart after a retryable LLM
-      * failure) resumes the node's preserved session from its persisted
-      * checkpoint; every other dispatch runs fresh. */
+    /**
+     * Execute a single DAG node: spawn agent, send input, collect output.
+     * P2 supervision: resumeCheckpoint=true (Restart after a retryable LLM
+     * failure) resumes the node's preserved session from its persisted
+     * checkpoint; every other dispatch runs fresh.
+     */
     def executeNode(nodeId: String, resumeCheckpoint: Boolean = false): IO[NodeResult] =
       nodeDefOf(nodeId).flatMap {
         case None =>
@@ -321,7 +336,12 @@ object FlowDagExecutor:
                   result <- agentEntryOpt match
                     case None =>
                       IO.pure(
-                        NodeResult(nodeId, "", false, Some(s"Agent '${node.agent}' not found in flow or global library"))
+                        NodeResult(
+                          nodeId,
+                          "",
+                          false,
+                          Some(s"Agent '${node.agent}' not found in flow or global library")
+                        )
                       )
                     case Some(entry) =>
                       // ── P2 supervision: stable session + checkpoint resume ──
@@ -334,7 +354,8 @@ object FlowDagExecutor:
                             resources.sessionStore
                               .loadMessagesForSession(sid)
                               .handleErrorWith(e =>
-                                logger.warn(s"Flow '$flow.name' node '$nodeId': checkpoint load failed: ${e.getMessage}")
+                                logger
+                                  .warn(s"Flow '$flow.name' node '$nodeId': checkpoint load failed: ${e.getMessage}")
                                   .as(Nil)
                               )
                           else IO.pure(Nil: List[Message])
@@ -350,7 +371,9 @@ object FlowDagExecutor:
                           val baseDef = entry.toAgentDef
                           val agentDef = baseDef.copy(
                             flowContract = nodeContract(node),
-                            tools = if baseDef.tools.contains("FlowReport") then baseDef.tools else baseDef.tools :+ "FlowReport"
+                            tools =
+                              if baseDef.tools.contains("FlowReport") then baseDef.tools
+                              else baseDef.tools :+ "FlowReport"
                           )
                           // Resume semantics (BackoffSupervisor :267-274 pattern, prod-
                           // verified): recovered messages already contain the original
@@ -399,25 +422,29 @@ object FlowDagExecutor:
           end for
       }
 
-    /** Terminal bookkeeping for a node's dag session (P2 supervision, updated
-      * P1 deck-v6): drop the FlowReport payload and the executor's
-      * nodeSessions map entry on every terminal outcome — but PRESERVE the
-      * session files. The flow-run panel opens a node's conversation from
-      * these files after the node (or the whole flow) has finished; deleting
-      * them left completed nodes unopenable.
-      *
-      * A preserved checkpoint between a retryable failure and its Restart is
-      * unaffected: the session simply stays until the retry reuses it. */
+    /**
+     * Terminal bookkeeping for a node's dag session (P2 supervision, updated
+     * P1 deck-v6): drop the FlowReport payload and the executor's
+     * nodeSessions map entry on every terminal outcome — but PRESERVE the
+     * session files. The flow-run panel opens a node's conversation from
+     * these files after the node (or the whole flow) has finished; deleting
+     * them left completed nodes unopenable.
+     *
+     * A preserved checkpoint between a retryable failure and its Restart is
+     * unaffected: the session simply stays until the retry reuses it.
+     */
     def cleanupNodeSession(nodeId: String): IO[Unit] =
       st.nodeSessions.get.flatMap(_.get(nodeId).traverse_ { sid =>
         FlowReportStore.remove(sid)
       }) *> st.nodeSessions.update(m => m - nodeId)
 
-    /** Error handling + retry logic.
-      * P2 supervision: the Restart branch retries the SAME node session with
-      * checkpoint recovery (executeNode loads persisted messages + continue
-      * instruction) — not a fresh re-run. attemptCount accounting unchanged
-      * (node.maxRetries remains the single budget). */
+    /**
+     * Error handling + retry logic.
+     * P2 supervision: the Restart branch retries the SAME node session with
+     * checkpoint recovery (executeNode loads persisted messages + continue
+     * instruction) — not a fresh re-run. attemptCount accounting unchanged
+     * (node.maxRetries remains the single budget).
+     */
     def handleResult(nodeId: String, result: NodeResult): IO[Either[WalkEnd.Failed, NodeResult]] =
       if result.success then cleanupNodeSession(nodeId).map(_ => Right(result))
       else
@@ -460,6 +487,7 @@ object FlowDagExecutor:
                       )
                     )
                   )
+                end if
               case OnError.Stop =>
                 cleanupNodeSession(nodeId) *> IO.pure(
                   Left(WalkEnd.Failed(nodeId, s"Node '$nodeId' failed: ${result.error.getOrElse("unknown")}"))
@@ -505,8 +533,7 @@ object FlowDagExecutor:
         aborted <- nebflow.core.flow.RunningFlowRegistry.isAborted(instanceId)
         result <-
           if cancelled then IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(nodeId, "Flow cancelled by user")))
-          else if aborted then
-            IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(nodeId, AbortSentinel)))
+          else if aborted then IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(nodeId, AbortSentinel)))
           else
             for
               _ <- logger.info(s"Flow '${flow.name}': executing node '$nodeId'")
@@ -516,7 +543,7 @@ object FlowDagExecutor:
               result0 <- executeNode(nodeId)
               result = strictVerdictFailure(nodeDef, result0) match
                 case Some(msg) => result0.copy(success = false, error = Some(msg))
-                case None      => result0
+                case None => result0
               // Cancel may have pierced the node mid-run (executeAgent races
               // the cancel signal) — re-check so the node's terminal status
               // reflects "cancelled" instead of a misleading "failed".
@@ -547,7 +574,7 @@ object FlowDagExecutor:
                     emitProgress(nodeId, status, "error" -> result.error.getOrElse("unknown").asJson)
               handled <- handleResult(nodeId, result)
               finalResult <- handled match
-                case Left(f)  => IO.pure(Left(f))
+                case Left(f) => IO.pure(Left(f))
                 case Right(nr) => route(nr)
             yield finalResult
       yield result
@@ -563,8 +590,8 @@ object FlowDagExecutor:
               .modify { m =>
                 m.get(target) match
                   case Some(n) if n > 1 => (m + (target -> (n - 1)), Arrival.Wait)
-                  case Some(_)          => (m - target, Arrival.Activate)
-                  case None             => (m, Arrival.Serial)
+                  case Some(_) => (m - target, Arrival.Activate)
+                  case None => (m, Arrival.Serial)
               }
               .flatMap {
                 case Arrival.Serial =>
@@ -586,16 +613,16 @@ object FlowDagExecutor:
         case Some(node) =>
           def routeTo(r: NodeRoute): IO[Either[WalkEnd.Failed, WalkEnd]] =
             r match
-              case NodeRoute.Return        => IO.pure(Right(WalkEnd.Returned(result.output)))
-              case NodeRoute.Goto(target)  => advance(result.nodeId, target)
-              case p: NodeRoute.Parallel   => parallelDispatch(result.nodeId, p.fan, p.onFail)
+              case NodeRoute.Return => IO.pure(Right(WalkEnd.Returned(result.output)))
+              case NodeRoute.Goto(target) => advance(result.nodeId, target)
+              case p: NodeRoute.Parallel => parallelDispatch(result.nodeId, p.fan, p.onFail)
               case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
               case NodeRoute.Switch(_, _, _, _) =>
                 IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
           node.onComplete match
-            case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
+            case NodeRoute.Return => IO.pure(Right(WalkEnd.Returned(result.output)))
             case NodeRoute.Goto(target) => advance(result.nodeId, target)
-            case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+            case p: NodeRoute.Parallel => parallelDispatch(result.nodeId, p.fan, p.onFail)
             case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
             case NodeRoute.Switch(switchExpr, cases, default, lenient) =>
               // Verdict priority: FlowReport verdict (structured, trustworthy) →
@@ -628,9 +655,9 @@ object FlowDagExecutor:
                     val matchedKey = VerdictFamily.matchCase(rawValue, cases.keySet)
                     def routeTo(r: NodeRoute): IO[Either[WalkEnd.Failed, WalkEnd]] =
                       r match
-                        case NodeRoute.Return       => IO.pure(Right(WalkEnd.Returned(result.output)))
+                        case NodeRoute.Return => IO.pure(Right(WalkEnd.Returned(result.output)))
                         case NodeRoute.Goto(target) => advance(result.nodeId, target)
-                        case p: NodeRoute.Parallel  => parallelDispatch(result.nodeId, p.fan, p.onFail)
+                        case p: NodeRoute.Parallel => parallelDispatch(result.nodeId, p.fan, p.onFail)
                         case pd: NodeRoute.ParallelDynamic => parallelDispatchDynamic(result.nodeId, pd)
                         case NodeRoute.Switch(_, _, _, _) =>
                           IO.pure(Left(WalkEnd.Failed(result.nodeId, "Nested switch not supported in routing")))
@@ -651,8 +678,10 @@ object FlowDagExecutor:
                                 )
                               )
                             )
-                  end match
+                    end match
+                end match
               }
+          end match
       }
 
     /** Settle barriers a dead branch will never arrive at; returns joins to activate now. */
@@ -663,8 +692,8 @@ object FlowDagExecutor:
             .modify { m =>
               m.get(j) match
                 case Some(n) if n > 1 => (m + (j -> (n - 1)), Nil)
-                case Some(_)          => (m - j, j :: Nil)
-                case None             => (m, Nil) // never armed — nothing owed
+                case Some(_) => (m - j, j :: Nil)
+                case None => (m, Nil) // never armed — nothing owed
             }
             .map(fired ++ _)
         }
@@ -674,9 +703,9 @@ object FlowDagExecutor:
     def activateAll(activations: List[String]): IO[Either[WalkEnd.Failed, WalkEnd]] =
       activations.foldLeftM[IO, Either[WalkEnd.Failed, WalkEnd]](Right(WalkEnd.Converged)) { (acc, j) =>
         acc match
-          case Left(_)                  => IO.pure(acc)
+          case Left(_) => IO.pure(acc)
           case Right(WalkEnd.Returned(_)) => IO.pure(acc)
-          case Right(_)                 => walk(j)
+          case Right(_) => walk(j)
       }
 
     /**
@@ -737,9 +766,12 @@ object FlowDagExecutor:
             case None =>
               // Arm barriers: each join gets += (number of branches expected to arrive)
               val armCounts: Map[String, Int] =
-                fan.flatMap(b => expectedJoins.getOrElse(b, Set.empty).toList)
+                fan
+                  .flatMap(b => expectedJoins.getOrElse(b, Set.empty).toList)
                   .groupBy(identity)
-                  .view.mapValues(_.size).toMap
+                  .view
+                  .mapValues(_.size)
+                  .toMap
               st.pendingJoins
                 .update(m => armCounts.foldLeft(m) { case (mm, (j2, c)) => mm.updated(j2, mm.getOrElse(j2, 0) + c) })
                 .flatMap { _ =>
@@ -752,12 +784,10 @@ object FlowDagExecutor:
                     .flatMap { _ =>
                       fan
                         .traverse { target =>
-                          walk(target)
-                            .flatMap {
-                              case Left(failed) => onBranchFailure(failed, target)
-                              case ok           => IO.pure(ok)
-                            }
-                            .start
+                          walk(target).flatMap {
+                            case Left(failed) => onBranchFailure(failed, target)
+                            case ok => IO.pure(ok)
+                          }.start
                         }
                         .flatMap { fibers =>
                           fibers.traverse(f => f.joinWithNever.attempt).map { rawOutcomes =>
@@ -769,6 +799,7 @@ object FlowDagExecutor:
         }
 
       forkJoinMerge()
+    end parallelDispatch
 
     /**
      * Dynamic fan-out: read the owner's slot array, instantiate N copies of
@@ -830,7 +861,7 @@ object FlowDagExecutor:
               s"Flow '${flow.name}': dynamic fanout from '$from' has no instances ($reason) — continuing with empty aggregate"
             ) *> (dynJoin match
               case Some(j) => walk(j)
-              case None    => IO.pure(Right(WalkEnd.Converged)))
+              case None => IO.pure(Right(WalkEnd.Converged)))
 
       st.slots.get.flatMap { slotsAll =>
         // #414 fix 4a：slotField 支持 `$node.slots.field` 全引用语法（resolveInput
@@ -841,7 +872,7 @@ object FlowDagExecutor:
         val refMatch = "\\$([a-zA-Z0-9_-]+)\\.slots\\.([a-zA-Z0-9_-]+)".r.findFirstMatchIn(pd.slotField)
         val (srcNode, field) = refMatch match
           case Some(m) => (m.group(1), m.group(2))
-          case None    => (from, pd.slotField)
+          case None => (from, pd.slotField)
         slotsAll.get(srcNode).flatMap(_.get(field)) match
           case None =>
             val declared = slotsAll.get(srcNode).map(_.keys.mkString(", ")).getOrElse("(node has no slots)")
@@ -871,7 +902,11 @@ object FlowDagExecutor:
                   val instanceIds = (1 to n).map(i => s"$template#$i").toList
                   flow.nodes.get(template) match
                     case None =>
-                      IO.pure(Left[WalkEnd.Failed, WalkEnd](WalkEnd.Failed(from, s"dynamic fan template '$template' not found in flow")))
+                      IO.pure(
+                        Left[WalkEnd.Failed, WalkEnd](
+                          WalkEnd.Failed(from, s"dynamic fan template '$template' not found in flow")
+                        )
+                      )
                     case Some(templateNode) =>
                       for
                         _ <- st.instances.update(m => m.updated(template, m.getOrElse(template, Nil) ++ instanceIds))
@@ -945,16 +980,17 @@ object FlowDagExecutor:
                         )
                         outcomes <- instanceIds
                           .traverse { id =>
-                            walk(id)
-                              .flatMap {
-                                case Left(failed) => onBranchFailure(failed, id)
-                                case ok           => IO.pure(ok)
-                              }
-                              .start
+                            walk(id).flatMap {
+                              case Left(failed) => onBranchFailure(failed, id)
+                              case ok => IO.pure(ok)
+                            }.start
                           }
                           .flatMap(fibers => fibers.traverse(f => f.joinWithNever.attempt))
                       yield mergeOutcomes(from, outcomes)
+                  end match
             yield result
+            end for
+        end match
       }
     end parallelDispatchDynamic
 
@@ -1002,7 +1038,7 @@ object FlowDagExecutor:
         case Right(WalkEnd.Converged) =>
           Left(s"Flow '${flow.name}' ended at a join barrier without reaching $$return (barrier deadlock)")
         case Right(WalkEnd.Failed(n, e)) => Left(s"Node '$n' failed: $e") // defensive — Failed is a Left
-        case Left(f)                      => Left(f.error)
+        case Left(f) => Left(f.error)
       // Update final status (preserve "cancelled" if it was cancelled)
       cancelled <- nebflow.core.flow.RunningFlowRegistry.isCancelled(instanceId)
       _ <-
@@ -1156,7 +1192,10 @@ object FlowDagExecutor:
                 .void
                 .as(Behaviors.stopped)
             case AgentEvent.Cancelled(_, reason) =>
-              resultDeferred.complete(Left(FailOutcome(s"cancelled: $reason", retryable = false))).void.as(Behaviors.stopped)
+              resultDeferred
+                .complete(Left(FailOutcome(s"cancelled: $reason", retryable = false)))
+                .void
+                .as(Behaviors.stopped)
         },
         s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
       )
@@ -1218,8 +1257,8 @@ object FlowDagExecutor:
           (ref ! AgentCommand.Stop(AbortSentinel)).void
         case Left(_) => IO.unit
       eventResult = raceResult match
-        case Left(r)         => r
-        case Right(Left(_))  => Left(FailOutcome("Flow cancelled by user", retryable = false))
+        case Left(r) => r
+        case Right(Left(_)) => Left(FailOutcome("Flow cancelled by user", retryable = false))
         case Right(Right(_)) => Left(FailOutcome(AbortSentinel, retryable = false))
       _ <- resources.agentRegistry.update(_ - sessionId)
       _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)

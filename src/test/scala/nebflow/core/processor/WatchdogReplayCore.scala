@@ -77,20 +77,22 @@ object WatchdogReplayCore:
     note: String
   )
 
-  /** 行的**构建出处**（由 note 文案形态判定，见头注「窗口起点怎么来」）。
-    *   - `Legacy`     = 只可能由**修复前构建**写成（旧文案标记）；
-    *   - `CurrentFix` = 只可能由**修复构建**写成（新文案标记，`, window Ns` 读数）；
-    *   - `Unknown`    = 两构建文案**逐字相同**的分支（无出处信息）⇒ 不参与保真度断言。
-    */
+  /**
+   * 行的**构建出处**（由 note 文案形态判定，见头注「窗口起点怎么来」）。
+   *   - `Legacy`     = 只可能由**修复前构建**写成（旧文案标记）；
+   *   - `CurrentFix` = 只可能由**修复构建**写成（新文案标记，`, window Ns` 读数）；
+   *   - `Unknown`    = 两构建文案**逐字相同**的分支（无出处信息）⇒ 不参与保真度断言。
+   */
   enum Provenance:
     case Legacy, CurrentFix, Unknown
 
   /** 窗口起点（`None` = 语料内无出处标记 ⇒ 起点不可判定）。`source` 逐字读入报告。 */
   final case class Window(start: Option[Long], source: String)
 
-  /** 一个段落的重放读数。`asserted` = 参与该段保真度断言的**行数**（出处已定的行）；
-    * `excluded` = 出处不明、只计数不断言的行数。
-    */
+  /**
+   * 一个段落的重放读数。`asserted` = 参与该段保真度断言的**行数**（出处已定的行）；
+   * `excluded` = 出处不明、只计数不断言的行数。
+   */
   final case class Segment(
     label: String,
     rows: Int,
@@ -119,9 +121,10 @@ object WatchdogReplayCore:
     unknownRows: Vector[String],
     /** 语料自相矛盾的行（旧文案出现在窗口起点之后等；只申报、不断言）。 */
     anomalies: Vector[String],
-    /** **旧形态读数**：全语料（含窗口后行）旧判据重放与日志 class 的不一致条数——
-      * 反向对照用（新形态只看 `pre.legacyMismatch`）。
-      */
+    /**
+     * **旧形态读数**：全语料（含窗口后行）旧判据重放与日志 class 的不一致条数——
+     * 反向对照用（新形态只看 `pre.legacyMismatch`）。
+     */
     allLegacyMismatch: Vector[String],
     fpToTrue: Vector[String],
     leakedTrueStuck: Vector[String],
@@ -134,6 +137,7 @@ object WatchdogReplayCore:
   ):
     /** 修复面读数：`true-stuck` 由日志的 `loggedTrue` 降到的 `newTrue`（负数 = 减少）。 */
     def trueStuckDelta: Int = newTrue - loggedTrue
+  end Result
 
   // ── 2. 解析 / 出处 / 窗口起点 ──────────────────────────────────────────────
 
@@ -141,13 +145,14 @@ object WatchdogReplayCore:
   private val LegacyMarkers: List[String] =
     List("no progress signal (last=", "still inside its authorised window")
 
-  /** 修复构建文案标记（任一命中 ⇒ `CurrentFix`）。
-    *
-    * `window Ns` **机器可读读数**是最一般的判别式：wd-fix 后两条臂的 note 都带该读数
-    * （`(progress signal Ns ago, window Ns)` / `(no fresh …, window Ns)`），而修复前的两条臂
-    * note 写的是 `still inside its authorised window (1617s ≤ 3060s)`——**没有** `window Ns`
-    * 读数（语料实测：153+318 行旧文案命中 0）。前两个标记是逐臂的冗余保险。
-    */
+  /**
+   * 修复构建文案标记（任一命中 ⇒ `CurrentFix`）。
+   *
+   * `window Ns` **机器可读读数**是最一般的判别式：wd-fix 后两条臂的 note 都带该读数
+   * （`(progress signal Ns ago, window Ns)` / `(no fresh …, window Ns)`），而修复前的两条臂
+   * note 写的是 `still inside its authorised window (1617s ≤ 3060s)`——**没有** `window Ns`
+   * 读数（语料实测：153+318 行旧文案命中 0）。前两个标记是逐臂的冗余保险。
+   */
   private val FixMarkers: List[String] =
     List("no fresh progress signal", "over its authorised window")
 
@@ -155,14 +160,14 @@ object WatchdogReplayCore:
 
   def provenanceOf(note: String): Provenance =
     if LegacyMarkers.exists(note.contains) then Provenance.Legacy
-    else if FixMarkers.exists(note.contains) || FixWindowRe.findFirstIn(note).isDefined then
-      Provenance.CurrentFix
+    else if FixMarkers.exists(note.contains) || FixWindowRe.findFirstIn(note).isDefined then Provenance.CurrentFix
     else Provenance.Unknown
 
-  /** 窗口起点参数（`nebflow.watchdog.replayWindowStart`）：纯数字 = epoch 毫秒；
-    * 其余按 ISO-8601 本地时刻（`2026-09-12T20:28:52`）解析。解析失败抛异常（参数写错要炸，
-    * 不许静默回落成「全语料窗口前段」）。
-    */
+  /**
+   * 窗口起点参数（`nebflow.watchdog.replayWindowStart`）：纯数字 = epoch 毫秒；
+   * 其余按 ISO-8601 本地时刻（`2026-09-12T20:28:52`）解析。解析失败抛异常（参数写错要炸，
+   * 不许静默回落成「全语料窗口前段」）。
+   */
   def parseWindowStart(v: String): Long =
     val t = v.trim
     if t.nonEmpty && t.forall(_.isDigit) then t.toLong
@@ -173,11 +178,19 @@ object WatchdogReplayCore:
     val fixRows = rows.filter(r => provenanceOf(r.note) == Provenance.CurrentFix)
     fixRows.headOption match
       case Some(r) =>
-        (Some(r.ts), "corpus: min ts of rows carrying the wd-fix note provenance (" +
-          r.sid + "@" + r.ts + "; " + fixRows.size + " such rows)")
+        (
+          Some(r.ts),
+          "corpus: min ts of rows carrying the wd-fix note provenance (" +
+            r.sid + "@" + r.ts + "; " + fixRows.size + " such rows)"
+        )
       case None =>
-        (None, "corpus: no row carries the wd-fix note provenance ⇒ 窗口起点不可判定" +
-          "（全语料按窗口前段处理；窗口后段段 = 未证）")
+        (
+          None,
+          "corpus: no row carries the wd-fix note provenance ⇒ 窗口起点不可判定" +
+            "（全语料按窗口前段处理；窗口后段段 = 未证）"
+        )
+
+  end deriveWindowStart
 
   /** 事件行 → [[Row]]（非 `stuck-detected` 行或解析失败 ⇒ `None`）。 */
   def rowOf(json: Json): Option[Row] =
@@ -196,9 +209,12 @@ object WatchdogReplayCore:
         )
       }
 
-  /** 注入面①：从**行内容**（JSONL 文本行）取语料——主用例读生产语料、对照用例读 fixture
-    * 走的都是这条路径（同一实现）。
-    */
+  end rowOf
+
+  /**
+   * 注入面①：从**行内容**（JSONL 文本行）取语料——主用例读生产语料、对照用例读 fixture
+   * 走的都是这条路径（同一实现）。
+   */
   def rowsFromLines(lines: Iterable[String]): Vector[Row] =
     lines.iterator.flatMap(l => parser.parse(l).toOption).flatMap(rowOf).toVector
 
@@ -215,26 +231,31 @@ object WatchdogReplayCore:
   private def sl: Long = nebflow.shared.Defaults.ToolDeadlineSlackMs
 
   def authorisedSecs(note: String): Option[Long] =
-    AuthorisedRe.findFirstMatchIn(note).map(_.group(1).toLong)
+    AuthorisedRe
+      .findFirstMatchIn(note)
+      .map(_.group(1).toLong)
       .orElse(AuthorisedLeRe.findFirstMatchIn(note).map(_.group(1).toLong))
 
   def progressAgoMs(note: String): Option[Long] =
-    ProgressRe.findFirstMatchIn(note).map(_.group(1).toLong).map(_ * 1000L)
+    ProgressRe
+      .findFirstMatchIn(note)
+      .map(_.group(1).toLong)
+      .map(_ * 1000L)
       .orElse(LastRe.findFirstMatchIn(note).map(_.group(1).toLong).map(_ * 1000L))
 
   /** 事件行 → `AgentRecord` 重建（口径见头注，逐字沿用 wd-fix 批）。 */
-  def rebuild(r: Row): nebflow.agent.AgentRecord =
+  def rebuild(r: Row): nebflow.actor.AgentRecord =
     val authorisedMs =
       authorisedSecs(r.note).getOrElse(nebflow.shared.Defaults.ToolPhaseStuckMs / 1000L) * 1000L
     val declaredMs =
       if authorisedMs > nebflow.shared.Defaults.ToolPhaseStuckMs then authorisedMs - sl else 0L
-    nebflow.agent.AgentRecord(
+    nebflow.actor.AgentRecord(
       sessionId = "replay",
-      ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-      kind = nebflow.agent.AgentKind.Flow,
+      ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+      kind = nebflow.actor.AgentKind.Flow,
       rootSessionId = "replay-root",
       startedAt = r.ts - 24 * 60 * 60 * 1000L,
-      status = nebflow.agent.AgentStatus.Processing,
+      status = nebflow.actor.AgentStatus.Processing,
       lastActivityMs = if r.agentIdleMs > 0 then r.ts - r.agentIdleMs else 0L,
       currentToolName = Some("Bash"),
       currentToolStartedAt = if r.toolPhaseMs > 0 then r.ts - r.toolPhaseMs else 0L,
@@ -242,22 +263,23 @@ object WatchdogReplayCore:
       lastProgressSignalAt = progressAgoMs(r.note).fold(0L)(age => r.ts - age)
     )
 
+  end rebuild
+
   /** 旧判据（wd-fix 批改动前形态；逐字重实现，仅重放用，不进生产）。 */
-  def legacyClassify(rec: nebflow.agent.AgentRecord,
-                     a: TaskStuckWatcher.StuckAssessment,
-                     now: Long): String =
+  def legacyClassify(rec: nebflow.actor.AgentRecord, a: TaskStuckWatcher.StuckAssessment, now: Long): String =
     val effective = ToolStuckJudgment.effectiveToolPhaseMs(
-      nebflow.shared.Defaults.ToolPhaseStuckMs, rec.currentToolDeadlineMs,
-      nebflow.shared.Defaults.ToolDeadlineSlackMs)
-    val progress = TaskStuckWatcher.hasProgressSignal(
-      rec, now, nebflow.shared.Defaults.StuckProgressSignalWindowMs)
+      nebflow.shared.Defaults.ToolPhaseStuckMs,
+      rec.currentToolDeadlineMs,
+      nebflow.shared.Defaults.ToolDeadlineSlackMs
+    )
+    val progress = TaskStuckWatcher.hasProgressSignal(rec, now, nebflow.shared.Defaults.StuckProgressSignalWindowMs)
     if rec.currentToolStartedAt > 0 then
       if a.toolPhaseMs <= effective && progress then TaskStuckWatcher.ClassFalsePositive
       else TaskStuckWatcher.ClassTrueStuck
     else TaskStuckWatcher.ClassTrueStuck
 
   /** 正信号在**新窗**下是否新鲜 + 新窗实值——「放走真卡死」的机械检查用。 */
-  def freshness(rec: nebflow.agent.AgentRecord, now: Long): (Boolean, Long) =
+  def freshness(rec: nebflow.actor.AgentRecord, now: Long): (Boolean, Long) =
     val w = TaskStuckWatcher.effectiveProgressWindowMs(rec.currentToolDeadlineMs)
     (TaskStuckWatcher.hasProgressSignal(rec, now, w), w)
 
@@ -277,13 +299,17 @@ object WatchdogReplayCore:
     val rec = rebuild(r)
     TaskStuckWatcher.assessDetailed(rec, r.ts) match
       case None =>
-        RowRead(r.loggedClass,
+        RowRead(
+          r.loggedClass,
           None,
           Some(r.sid + "@" + r.ts + ": 重放判据未命中（日志却有 class）——重建口径有误"),
           Some(r.sid + "@" + r.ts + ": 重放判据未命中（日志却有 class）——重建口径有误"),
           TaskStuckWatcher.ClassTrueStuck,
           TaskStuckWatcher.ClassTrueStuck,
-          fresh = false, window = 0L, progressAgo = progressAgoMs(r.note).getOrElse(-1L))
+          fresh = false,
+          window = 0L,
+          progressAgo = progressAgoMs(r.note).getOrElse(-1L)
+        )
       case Some(a) =>
         val oldCls = legacyClassify(rec, a, r.ts)
         val newCls = TaskStuckWatcher.classify(rec, a, r.ts, inflight = 0).cls
@@ -294,18 +320,33 @@ object WatchdogReplayCore:
           else None
         val legacyBad =
           if oldCls != r.loggedClass then
-            Some(r.sid + "@" + r.ts + ": 旧判据重放=" + oldCls + " ≠ 日志 " + r.loggedClass +
-              "（toolPhaseMs=" + r.toolPhaseMs + " authorised=" + authorisedSecs(r.note) +
-              " progressAgo=" + progressAgoMs(r.note) + "）")
+            Some(
+              r.sid + "@" + r.ts + ": 旧判据重放=" + oldCls + " ≠ 日志 " + r.loggedClass +
+                "（toolPhaseMs=" + r.toolPhaseMs + " authorised=" + authorisedSecs(r.note) +
+                " progressAgo=" + progressAgoMs(r.note) + "）"
+            )
           else None
         val newBad =
           if newCls != r.loggedClass then
-            Some(r.sid + "@" + r.ts + ": 新判据重放=" + newCls + " ≠ 日志 " + r.loggedClass +
-              "（toolPhaseMs=" + r.toolPhaseMs + " authorised=" + authorisedSecs(r.note) +
-              " progressAgo=" + progressAgoMs(r.note) + "）")
+            Some(
+              r.sid + "@" + r.ts + ": 新判据重放=" + newCls + " ≠ 日志 " + r.loggedClass +
+                "（toolPhaseMs=" + r.toolPhaseMs + " authorised=" + authorisedSecs(r.note) +
+                " progressAgo=" + progressAgoMs(r.note) + "）"
+            )
           else None
-        RowRead(r.loggedClass, branchBad, legacyBad, newBad, oldCls, newCls, fresh, window,
-          progressAgoMs(r.note).getOrElse(-1L))
+        RowRead(
+          r.loggedClass,
+          branchBad,
+          legacyBad,
+          newBad,
+          oldCls,
+          newCls,
+          fresh,
+          window,
+          progressAgoMs(r.note).getOrElse(-1L)
+        )
+    end match
+  end read
 
   // ── 4. 重放主体（分段）────────────────────────────────────────────────────
 
@@ -368,35 +409,67 @@ object WatchdogReplayCore:
       else
         postRows += 1; postAsserted += 1
         rd.newMismatch.foreach(postNew += _)
+      end if
       // (b) 全语料口径不变式（所有行，含出处不明/异常行——时不变判据不缩段）
       rd.legacyMismatch.foreach(allLegacy += _)
       if rd.loggedClass == TaskStuckWatcher.ClassTrueStuck then loggedTrue += 1 else loggedFalse += 1
       if rd.newCls == TaskStuckWatcher.ClassTrueStuck then newTrue += 1 else newFalse += 1
       if rd.loggedClass == TaskStuckWatcher.ClassTrueStuck && !rd.fresh &&
-        rd.newCls != TaskStuckWatcher.ClassTrueStuck then
+        rd.newCls != TaskStuckWatcher.ClassTrueStuck
+      then
         leaked += (r.sid + "@" + r.ts + "（新窗 " + (rd.window / 1000) + "s 下正信号不新鲜却翻了：" +
           rd.newCls + "）")
       val crossed =
         rd.loggedClass == TaskStuckWatcher.ClassTrueStuck &&
           rd.newCls == TaskStuckWatcher.ClassFalsePositive
-      if crossed then
-        flipped += Flipped(r.sid, r.ts, rd.progressAgo, rd.window)
+      if crossed then flipped += Flipped(r.sid, r.ts, rd.progressAgo, rd.window)
       if rd.loggedClass == TaskStuckWatcher.ClassFalsePositive &&
-        rd.newCls == TaskStuckWatcher.ClassTrueStuck then
-        fpToTrue += (r.sid + "@" + r.ts)
+        rd.newCls == TaskStuckWatcher.ClassTrueStuck
+      then fpToTrue += (r.sid + "@" + r.ts)
       val cur = bySession.getOrElse(r.sid, SessionStat(0, 0, 0, 0))
-      bySession.update(r.sid, SessionStat(cur.n + 1,
-        cur.loggedTrue + (if rd.loggedClass == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
-        cur.newTrue + (if rd.newCls == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
-        cur.flipped + (if crossed then 1 else 0)))
+      bySession.update(
+        r.sid,
+        SessionStat(
+          cur.n + 1,
+          cur.loggedTrue + (if rd.loggedClass == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
+          cur.newTrue + (if rd.newCls == TaskStuckWatcher.ClassTrueStuck then 1 else 0),
+          cur.flipped + (if crossed then 1 else 0)
+        )
+      )
     }
-    val pre = Segment(preLabel, preRows, preAsserted, preExcluded, preBranch.result(), preLegacy.result(),
-      Vector.empty, preOldTrue, preOldFalse, preLoggedTrue, preLoggedFalse)
-    val post = Segment(postLabel, postRows, postAsserted, postExcluded, Vector.empty, Vector.empty,
-      postNew.result(), 0, 0, 0, 0)
-    Result(rows.size, window, pre, post, unknown.result(), anomal.result(), allLegacy.result(),
-      fpToTrue.result(), leaked.result(), flipped.result(), bySession.toMap,
-      loggedTrue, loggedFalse, newTrue, newFalse)
+    val pre = Segment(
+      preLabel,
+      preRows,
+      preAsserted,
+      preExcluded,
+      preBranch.result(),
+      preLegacy.result(),
+      Vector.empty,
+      preOldTrue,
+      preOldFalse,
+      preLoggedTrue,
+      preLoggedFalse
+    )
+    val post =
+      Segment(postLabel, postRows, postAsserted, postExcluded, Vector.empty, Vector.empty, postNew.result(), 0, 0, 0, 0)
+    Result(
+      rows.size,
+      window,
+      pre,
+      post,
+      unknown.result(),
+      anomal.result(),
+      allLegacy.result(),
+      fpToTrue.result(),
+      leaked.result(),
+      flipped.result(),
+      bySession.toMap,
+      loggedTrue,
+      loggedFalse,
+      newTrue,
+      newFalse
+    )
+  end run
 
   // ── 5. 判定层（可复用）：新形态（分段） / 旧形态（反向对照）──────────────────
 
@@ -414,97 +487,119 @@ object WatchdogReplayCore:
 
   private def check(name: String, offenders: Vector[String], why: String): Verdict =
     if offenders.isEmpty then Verdict(name, Status.Ok, "0 条")
-    else
-      Verdict(name, Status.Fail,
-        s"${offenders.size} 条（" + why + "）: " + offenders.take(5).mkString(" | "))
+    else Verdict(name, Status.Fail, s"${offenders.size} 条（" + why + "）: " + offenders.take(5).mkString(" | "))
 
   private def skip(name: String, why: String): Verdict = Verdict(name, Status.Skipped, "未证: " + why)
 
-  /** **口径不变式**（时不变，全语料含窗口后行）+ 命名会话期望。 */
+  /**
+   * **口径不变式**（时不变，全语料含窗口后行）+ 命名会话期望。
+   */
   def invariantVerdicts(r: Result, sessions: Vector[SessionCase] = Vector.empty): Vector[Verdict] =
     val inv = Vector(
-      check("不变量/全语料: false-positive → true-stuck 翻转 = 0", r.fpToTrue,
-        "修法只准减少误判、不准新增真判"),
-      check("不变量/全语料: violations（放走真卡死）= 0", r.leakedTrueStuck,
-        "正信号不新鲜的真卡死一条都不准翻")
+      check("不变量/全语料: false-positive → true-stuck 翻转 = 0", r.fpToTrue, "修法只准减少误判、不准新增真判"),
+      check("不变量/全语料: violations（放走真卡死）= 0", r.leakedTrueStuck, "正信号不新鲜的真卡死一条都不准翻")
     )
     val sess = sessions.map { c =>
       val st = r.bySession.getOrElse(c.sid, SessionStat(0, 0, 0, 0))
-      if st.n == 0 then
-        Verdict("不变量/全语料: 命名会话 " + c.sid, Status.Fail, "0 条（须在语料中——前提不成立）")
+      if st.n == 0 then Verdict("不变量/全语料: 命名会话 " + c.sid, Status.Fail, "0 条（须在语料中——前提不成立）")
       else
         c.expectation match
           case SessionExpectation.NewTrueZero =>
-            Verdict("不变量/全语料: 命名会话 " + c.sid + " newTrue = 0",
+            Verdict(
+              "不变量/全语料: 命名会话 " + c.sid + " newTrue = 0",
               if st.newTrue == 0 then Status.Ok else Status.Fail,
-              "n=" + st.n + " loggedTrue=" + st.loggedTrue + " newTrue=" + st.newTrue)
+              "n=" + st.n + " loggedTrue=" + st.loggedTrue + " newTrue=" + st.newTrue
+            )
           case SessionExpectation.Reduced =>
-            Verdict("不变量/全语料: 命名会话 " + c.sid + " newTrue < loggedTrue（窗联动）",
+            Verdict(
+              "不变量/全语料: 命名会话 " + c.sid + " newTrue < loggedTrue（窗联动）",
               if st.newTrue < st.loggedTrue then Status.Ok else Status.Fail,
               "n=" + st.n + " loggedTrue=" + st.loggedTrue + " newTrue=" + st.newTrue +
-                " flipped=" + st.flipped)
+                " flipped=" + st.flipped
+            )
+      end if
     }
     inv ++ sess
 
-  /** **分段保真度**：窗口前段 = 旧判据自证；窗口后段 = 新判据自证；起点可判定性单列。 */
+  end invariantVerdicts
+
+  /**
+   * **分段保真度**：窗口前段 = 旧判据自证；窗口后段 = 新判据自证；起点可判定性单列。
+   */
   def fidelityVerdicts(r: Result): Vector[Verdict] =
-    val start = Verdict("窗口起点可判定",
-      if r.window.start.isDefined then Status.Ok else Status.Skipped, r.window.source)
+    val start = Verdict("窗口起点可判定", if r.window.start.isDefined then Status.Ok else Status.Skipped, r.window.source)
     val pre =
       if r.pre.asserted == 0 then
         Vector(
-          skip("窗口前段: 旧判据重放复现日志 class",
+          skip(
+            "窗口前段: 旧判据重放复现日志 class",
             "窗口前段无出处已定（旧构建文案）的行 ⇒ 旧判据保真度自证无法判定；缺「窗口前段行」或显式 " +
-              "nebflow.watchdog.replayWindowStart 参数（excluded=" + r.pre.excluded + "）"),
+              "nebflow.watchdog.replayWindowStart 参数（excluded=" + r.pre.excluded + "）"
+          ),
           skip("窗口前段: 重放 branch 与日志一致", "同上（窗口前段无可断言的行）"),
-          skip("窗口前段: 两侧计数相等", "同上（窗口前段无可断言的行）"))
+          skip("窗口前段: 两侧计数相等", "同上（窗口前段无可断言的行）")
+        )
       else
         Vector(
-          check("窗口前段: 旧判据重放复现日志 class", r.pre.legacyMismatch,
-            "窗口前段 " + r.pre.asserted + " 行（旧构建出处）必须逐行复现"),
-          check("窗口前段: 重放 branch 与日志一致", r.pre.branchMismatch,
-            "重建口径自证，窗口前段 " + r.pre.asserted + " 行"),
-          Verdict("窗口前段: 两侧计数相等",
+          check("窗口前段: 旧判据重放复现日志 class", r.pre.legacyMismatch, "窗口前段 " + r.pre.asserted + " 行（旧构建出处）必须逐行复现"),
+          check("窗口前段: 重放 branch 与日志一致", r.pre.branchMismatch, "重建口径自证，窗口前段 " + r.pre.asserted + " 行"),
+          Verdict(
+            "窗口前段: 两侧计数相等",
             if r.pre.oldTrue == r.pre.loggedTrue && r.pre.oldFalse == r.pre.loggedFalse then Status.Ok
             else Status.Fail,
             "旧判据重放 " + r.pre.oldTrue + "/" + r.pre.oldFalse + " vs 日志 " +
-              r.pre.loggedTrue + "/" + r.pre.loggedFalse + "（窗口前段 " + r.pre.asserted + " 行）")
+              r.pre.loggedTrue + "/" + r.pre.loggedFalse + "（窗口前段 " + r.pre.asserted + " 行）"
+          )
         )
     val post =
       if r.post.asserted == 0 then
-        Vector(skip("窗口后段: 新判据重放复现日志 class",
-          "窗口后段无出处已定（修复构建文案）的行 ⇒ 新判据自证无法判定（excluded=" + r.post.excluded + "）"))
+        Vector(skip("窗口后段: 新判据重放复现日志 class", "窗口后段无出处已定（修复构建文案）的行 ⇒ 新判据自证无法判定（excluded=" + r.post.excluded + "）"))
       else
-        Vector(check("窗口后段: 新判据重放复现日志 class", r.post.newMismatch,
-          "窗口后段 " + r.post.asserted + " 行（修复构建出处）必须逐行复现（生产写入 ↔ 离线重放同口径）"))
+        Vector(
+          check(
+            "窗口后段: 新判据重放复现日志 class",
+            r.post.newMismatch,
+            "窗口后段 " + r.post.asserted + " 行（修复构建出处）必须逐行复现（生产写入 ↔ 离线重放同口径）"
+          )
+        )
     start +: (pre ++ post)
 
-  /** **新形态**（分段断言）全集——主用例与对照 fixture 用例共用。 */
+  end fidelityVerdicts
+
+  /**
+   * **新形态**（分段断言）全集——主用例与对照 fixture 用例共用。
+   */
   def segmentedVerdicts(r: Result, sessions: Vector[SessionCase] = Vector.empty): Vector[Verdict] =
     invariantVerdicts(r, sessions) ++ fidelityVerdicts(r)
 
-  /** **修复面**读数（本批目标行为；语料特定，主用例用）。 */
+  /**
+   * **修复面**读数（本批目标行为；语料特定，主用例用）。
+   */
   def fixEffectVerdicts(r: Result): Vector[Verdict] =
     Vector(
       if r.flipped.nonEmpty then
-        Verdict("修复面: 至少一条 true-stuck → false-positive", Status.Ok,
-          s"${r.flipped.size} 条翻走（会话 " + r.flipped.map(_.sid).distinct.size + " 个）")
+        Verdict(
+          "修复面: 至少一条 true-stuck → false-positive",
+          Status.Ok,
+          s"${r.flipped.size} 条翻走（会话 " + r.flipped.map(_.sid).distinct.size + " 个）"
+        )
       else Verdict("修复面: 至少一条 true-stuck → false-positive", Status.Fail, "0 条（修复面为空）"),
       if r.newTrue < r.loggedTrue then
-        Verdict("修复面: 修复后 true-stuck 减少", Status.Ok,
-          "loggedTrue " + r.loggedTrue + " → newTrue " + r.newTrue + "（" + r.trueStuckDelta + "）")
-      else
-        Verdict("修复面: 修复后 true-stuck 减少", Status.Fail,
-          "loggedTrue " + r.loggedTrue + " → newTrue " + r.newTrue),
-      if r.newTrue > 0 then
-        Verdict("修复面: 真卡死仍被捕获（newTrue > 0）", Status.Ok, "newTrue=" + r.newTrue)
+        Verdict(
+          "修复面: 修复后 true-stuck 减少",
+          Status.Ok,
+          "loggedTrue " + r.loggedTrue + " → newTrue " + r.newTrue + "（" + r.trueStuckDelta + "）"
+        )
+      else Verdict("修复面: 修复后 true-stuck 减少", Status.Fail, "loggedTrue " + r.loggedTrue + " → newTrue " + r.newTrue),
+      if r.newTrue > 0 then Verdict("修复面: 真卡死仍被捕获（newTrue > 0）", Status.Ok, "newTrue=" + r.newTrue)
       else Verdict("修复面: 真卡死仍被捕获（newTrue > 0）", Status.Fail, "newTrue=0（真判被清零）")
     )
 
-  /** **旧形态**（反向对照）——「全语料一律断言旧判据保真」的原 spec 断言形态，原样重放其读数。 */
+  /**
+   * **旧形态**（反向对照）——「全语料一律断言旧判据保真」的原 spec 断言形态，原样重放其读数。
+   */
   def wholeCorpusLegacyVerdicts(r: Result): Vector[Verdict] =
-    Vector(check("旧形态/全语料: 旧判据重放复现日志 class（原 spec 断言形态）", r.allLegacyMismatch,
-      "含窗口后行 ⇒ 修复构建写的行必然不复现旧判据"))
+    Vector(check("旧形态/全语料: 旧判据重放复现日志 class（原 spec 断言形态）", r.allLegacyMismatch, "含窗口后行 ⇒ 修复构建写的行必然不复现旧判据"))
 
   /** 供报告与断言失败信息用的短标签。 */
   def label(v: Verdict): String = v.status match

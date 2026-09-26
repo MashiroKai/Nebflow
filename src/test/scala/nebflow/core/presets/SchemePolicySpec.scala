@@ -2,8 +2,7 @@ package nebflow.core.presets
 
 import munit.FunSuite
 import nebflow.agent.AgentLibrary
-import nebflow.core.PathUtil
-import nebflow.shared.AgentModelConfig
+import nebflow.shared.{AgentModelConfig, PathUtil}
 
 /**
  * panelscheme 批（2026-09-21，作者令）——SchemePolicy spec：
@@ -34,11 +33,13 @@ class SchemePolicySpec extends FunSuite:
     os.write.over(tempRoot / "agents" / name / "agent.json", json)
 
   private def writePresets(): Unit =
-    os.write.over(tempRoot / "model-presets.json",
+    os.write.over(
+      tempRoot / "model-presets.json",
       """{"defaultPreset":"general","presets":{""" +
         """"general":{"name":"general","description":"","preferred":"default-model","fallbacks":[]},""" +
         """"fast":{"name":"fast","description":"","preferred":"fast-model","fallbacks":["fb-fallback"]},""" +
-        """"deep":{"name":"deep","description":"","preferred":"deep-model","fallbacks":[]}}}""")
+        """"deep":{"name":"deep","description":"","preferred":"deep-model","fallbacks":[]}}}"""
+    )
 
   private def resetFixtures(): Unit =
     writePresets()
@@ -70,16 +71,17 @@ class SchemePolicySpec extends FunSuite:
     // memory-consolidator 带 preset:"fast"（盘上留审计）——引擎忽略 → None
     assertEquals(SchemePolicy.effectiveRefs("memory-consolidator", Some("fast"), None)._1, None)
     // 自有 legacy model 同样被忽略
-    assertEquals(
-      SchemePolicy.effectiveRefs("custom-agent", None, Some(AgentModelConfig(Some("x/y"), Nil)))._2,
-      None)
+    assertEquals(SchemePolicy.effectiveRefs("custom-agent", None, Some(AgentModelConfig(Some("x/y"), Nil)))._2, None)
 
   test("effectiveRefs: 动态跟随——Nebula 改方案，kernel 重读即随变"):
     resetFixtures()
     assertEquals(SchemePolicy.effectiveRefs("kernel", None, None)._1, Some("fast"))
     writeAgent("Nebula", """{"name":"Nebula","description":"orchestrator","preset":"deep"}""")
-    assertEquals(SchemePolicy.effectiveRefs("kernel", None, None)._1, Some("deep"),
-      "kernel must follow Nebula's changed preset on the next read (dynamic)")
+    assertEquals(
+      SchemePolicy.effectiveRefs("kernel", None, None)._1,
+      Some("deep"),
+      "kernel must follow Nebula's changed preset on the next read (dynamic)"
+    )
 
   test("effectiveRefs: 继承根缺失 → (None, None) 宽容回落（不炸装载）"):
     resetFixtures()
@@ -118,14 +120,16 @@ class SchemePolicySpec extends FunSuite:
     val nebula = lib.loadFromDir(tempRoot / "agents" / "Nebula").getOrElse(fail("Nebula def missing"))
     assertEquals(nebula.model, Some(FastChain))
     assertEquals(nebula.preset, Some("fast"))
-    val dispatcher = lib.loadFromDir(tempRoot / "agents" / "project-dispatcher").getOrElse(fail("dispatcher def missing"))
+    val dispatcher =
+      lib.loadFromDir(tempRoot / "agents" / "project-dispatcher").getOrElse(fail("dispatcher def missing"))
     assertEquals(dispatcher.model, Some(DeepChain))
     assertEquals(dispatcher.preset, Some("deep"))
 
   test("loadFromDir: 其余 agent 存储方案被忽略——回落默认 preset（数据仍留盘）"):
     resetFixtures()
     val lib = new AgentLibrary(tempRoot / "agents")
-    val mem = lib.loadFromDir(tempRoot / "agents" / "memory-consolidator").getOrElse(fail("memory-consolidator def missing"))
+    val mem =
+      lib.loadFromDir(tempRoot / "agents" / "memory-consolidator").getOrElse(fail("memory-consolidator def missing"))
     assertEquals(mem.model, Some(DefaultChain), "ignored refs must fall through to the default preset")
     assertEquals(mem.preset, None, "ignored agents must not advertise a preset name")
     // 数据留盘：盘上 preset 引用原样保留（零删除）

@@ -5,20 +5,22 @@ import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behaviors}
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 import scala.concurrent.duration.*
 
-/** 多 AskUser 并发批（#250，2026-09-13 作者裁定「6 项全补」）——
-  * hub 侧三项（②③⑥）的正负控。
-  *
-  *   ② turn 被用户中断后的 pending 槽回收：`CleanupForSession(sessionId, reason)`；
-  *   ③ 全局快照 `ListAllPendingAsks` ↔ 按会话 `ListPendingAsks` 的口径（清空/重建同源）；
-  *   ⑥ 形态不符 / requestId 未知的答复必须**用户可见**（广播 `interactionAnswerRejected`），
-  *      同时保持 #12 既有语义（不消费卡片）。
-  *
-  * 证据级别：本 spec 是**单测级**证据（真 hub 实例 + 真消息 + 真回复端，无运行实例、
-  * 无运行态观测）——链末报告按此口径标注，禁写成「已实测」。
-  */
+/**
+ * 多 AskUser 并发批（#250，2026-09-13 作者裁定「6 项全补」）——
+ * hub 侧三项（②③⑥）的正负控。
+ *
+ *   ② turn 被用户中断后的 pending 槽回收：`CleanupForSession(sessionId, reason)`；
+ *   ③ 全局快照 `ListAllPendingAsks` ↔ 按会话 `ListPendingAsks` 的口径（清空/重建同源）；
+ *   ⑥ 形态不符 / requestId 未知的答复必须**用户可见**（广播 `interactionAnswerRejected`），
+ *      同时保持 #12 既有语义（不消费卡片）。
+ *
+ * 证据级别：本 spec 是**单测级**证据（真 hub 实例 + 真消息 + 真回复端，无运行实例、
+ * 无运行态观测）——链末报告按此口径标注，禁写成「已实测」。
+ */
 class AskConcurrencyReworkSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 60.seconds
@@ -41,6 +43,8 @@ class AskConcurrencyReworkSpec extends CatsEffectSuite:
           else IO.sleep(every) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
+
+  end awaitCond
 
   private def isCard(tpe: String, requestId: String)(j: Json): Boolean =
     j.hcursor.downField("type").as[String].contains(tpe) &&

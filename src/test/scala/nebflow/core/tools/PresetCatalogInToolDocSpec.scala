@@ -84,9 +84,15 @@ class PresetCatalogInToolDocSpec extends FunSuite:
     os.makeDir.all(dir)
     val path = dir / "model-presets.json"
     val mkStore = () => new PresetStore(path, () => List("prov/model"))
-    os.write.over(path, PresetFile("Old", Map("Old" -> ModelPreset("Old", "old note", Some("prov/model")))).asJson.toString)
+    os.write.over(
+      path,
+      PresetFile("Old", Map("Old" -> ModelPreset("Old", "old note", Some("prov/model")))).asJson.toString
+    )
     assertEquals(PresetStore.catalogLines(mkStore()), List("Old — old note"))
-    os.write.over(path, PresetFile("Old", Map("Old" -> ModelPreset("Old", "NEW note", Some("prov/model")))).asJson.toString)
+    os.write.over(
+      path,
+      PresetFile("Old", Map("Old" -> ModelPreset("Old", "NEW note", Some("prov/model")))).asJson.toString
+    )
     assertEquals(PresetStore.catalogLines(mkStore()), List("Old — NEW note"))
 
 end PresetCatalogInToolDocSpec

@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 
@@ -59,8 +59,8 @@ class TaskListLegacyCompatSpec extends FunSuite:
   /** 升级前（2026-09-06 首发批）的**逐字**条目形态：恰 9 键，无 links / parentId。 */
   private val legacyEntry: String =
     s"""{"id":"1","title":"旧条目甲","status":"open","project":"projOld","note":"旧备注正文",
-       |"blocks":[],"createdAt":"2026-09-07T00:00:00.000Z","updatedAt":"2026-09-07T00:00:00.000Z","closedAt":null}"""
-      .stripMargin.replace("\n", "")
+       |"blocks":[],"createdAt":"2026-09-07T00:00:00.000Z","updatedAt":"2026-09-07T00:00:00.000Z","closedAt":null}""".stripMargin
+      .replace("\n", "")
 
   private val legacyEntry2: String =
     """{"id":"2","title":"旧条目乙","status":"done","project":null,"note":null,
@@ -138,8 +138,7 @@ class TaskListLegacyCompatSpec extends FunSuite:
     assertEquals(data.tasks.head.id, "7")
     assertEquals(data.tasks.head.links, List("p.md"))
     assertEquals(data.tasks.head.parentId, None)
-    assert(call("action" -> str("list")).toOption.get.contains("#7 [in_progress] 未来条目"),
-      "工具侧读视图不受未知键影响")
+    assert(call("action" -> str("list")).toOption.get.contains("#7 [in_progress] 未来条目"), "工具侧读视图不受未知键影响")
 
   test("未知 status 值原样保留（读路径不做状态规范化）；未知 status 迁移按既有闸拒绝"):
     reset()
@@ -147,8 +146,7 @@ class TaskListLegacyCompatSpec extends FunSuite:
       """{"version":1,"tasks":[{"id":"1","title":"异形状态","status":"weird_state",
         |"blocks":[],"createdAt":null,"updatedAt":null,"closedAt":null}]}""".stripMargin.replace("\n", "")
     os.write(file, doc, createFolders = true)
-    assertEquals(decode[TaskListData](os.read(file)).toOption.get.tasks.head.status, "weird_state",
-      "读路径零规范化（存量零影响）")
+    assertEquals(decode[TaskListData](os.read(file)).toOption.get.tasks.head.status, "weird_state", "读路径零规范化（存量零影响）")
     assert(call("action" -> str("list")).isRight, "list 不因异形状态崩")
     val u = call("action" -> str("update"), "id" -> str("1"), "status" -> str("open"))
     assert(u.isLeft && u.swap.toOption.get.message.contains("TASKLIST_STATUS"), u)
@@ -157,26 +155,26 @@ class TaskListLegacyCompatSpec extends FunSuite:
 
   test("真实存量副本只读校验（NEBFLOW_TASKLIST_LEGACY 门控）：可解码 + 指纹前后一致"):
     val legacyPath = sys.env.get("NEBFLOW_TASKLIST_LEGACY").map(_.trim).filter(_.nonEmpty)
-    assume(legacyPath.isDefined,
-      "NEBFLOW_TASKLIST_LEGACY 未设 —— 跳过（不在活任务库上实验；设为本机 tasks.json 的副本路径即可启用）")
+    assume(legacyPath.isDefined, "NEBFLOW_TASKLIST_LEGACY 未设 —— 跳过（不在活任务库上实验；设为本机 tasks.json 的副本路径即可启用）")
     val p = os.Path(legacyPath.get)
     assume(os.exists(p), s"$p 不存在")
     val before = sha(p)
     val histSibling = p / os.up / "tasks-history.jsonl"
-    val histBefore  = os.exists(histSibling)
+    val histBefore = os.exists(histSibling)
     val decoded = decode[TaskListData](os.read(p))
     assert(decoded.isRight, s"真实存量库必须可解码（零迁移）: ${decoded.swap.toOption}")
     val data = decoded.toOption.get
     assert(data.tasks.nonEmpty, "真实副本应含条目")
     assert(data.tasks.forall(t => t.id.nonEmpty && t.title.nonEmpty), "新旧条目共存均可读（id/title 非空）")
-    println(s"[tbu-list][legacy] path=$p entries=${data.tasks.size} " +
-      s"open=${data.tasks.count(_.status == "open")} " +
-      s"done=${data.tasks.count(_.status == "done")} " +
-      s"in_progress=${data.tasks.count(_.status == "in_progress")} " +
-      s"bytes=${os.size(p)} nextId=${data.nextId} " +
-      s"linksPresent=${data.tasks.count(_.links.nonEmpty)} parentPresent=${data.tasks.count(_.parentId.isDefined)}")
+    println(
+      s"[tbu-list][legacy] path=$p entries=${data.tasks.size} " +
+        s"open=${data.tasks.count(_.status == "open")} " +
+        s"done=${data.tasks.count(_.status == "done")} " +
+        s"in_progress=${data.tasks.count(_.status == "in_progress")} " +
+        s"bytes=${os.size(p)} nextId=${data.nextId} " +
+        s"linksPresent=${data.tasks.count(_.links.nonEmpty)} parentPresent=${data.tasks.count(_.parentId.isDefined)}"
+    )
     assertEquals(sha(p), before, "只读校验：副本指纹前后一致（读路径零写副作用）")
-    assertEquals(os.exists(histSibling), histBefore,
-      s"只读校验：不得在副本目录新建史文件（$histSibling）")
+    assertEquals(os.exists(histSibling), histBefore, s"只读校验：不得在副本目录新建史文件（$histSibling）")
 
 end TaskListLegacyCompatSpec

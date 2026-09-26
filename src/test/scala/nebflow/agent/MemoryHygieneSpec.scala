@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.service.MemoryBudget
+import nebflow.shared.MemoryBudget
 
 /**
  * 生命周期记忆整理信号 + 提醒渲染 spec（memory-management-plan §6.2-2.5，

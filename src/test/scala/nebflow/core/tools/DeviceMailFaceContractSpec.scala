@@ -29,8 +29,8 @@ class DeviceMailFaceContractSpec extends FunSuite:
 
   /** Mail 的三个模型可见工具面（基础 + root 变体 + dispatcher 变体）。 */
   private val mailFaces: List[(String, String)] = List(
-    "Mail.descriptionBase"       -> MailTool.descriptionBase,
-    "Mail.descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
+    "Mail.descriptionBase" -> MailTool.descriptionBase,
+    "Mail.descriptionNebulaRoot" -> MailTool.descriptionRoot,
     "Mail.descriptionDispatcher" -> MailTool.descriptionDispatcher
   )
 
@@ -82,38 +82,36 @@ class DeviceMailFaceContractSpec extends FunSuite:
   test("① Mail 面（三变体）：`device=` 语义 = 投递进对端 Nebula 会话 + 对端 agent 直收"):
     for (label, raw) <- mailFaces do
       val face = n(raw)
-      assert(face.contains("**The peer's agent receives it directly.**"),
-        s"$label 缺「对端 agent 直收」独立断言句（作者口径 ①）")
-      assert(face.contains("delivers *into the peer's Nebula session*"),
-        s"$label 缺「投递进对端 Nebula 会话」")
-      assert(face.contains("- **`Mail(device=…)` — the peer's AGENT receives it directly**"),
-        s"$label 对照块缺 Mail 支的直收口径")
-      assert(face.contains("that device's AGENT reads the mail and can act on it"),
-        s"$label 缺「对端 agent 能读到并处理」")
-      assert(face.contains("[DEVICE-MAIL · from <from_device>]"),
-        s"$label 缺既有无头注入体（直收的机制面）")
+      assert(face.contains("**The peer's agent receives it directly.**"), s"$label 缺「对端 agent 直收」独立断言句（作者口径 ①）")
+      assert(face.contains("delivers *into the peer's Nebula session*"), s"$label 缺「投递进对端 Nebula 会话」")
+      assert(
+        face.contains("- **`Mail(device=…)` — the peer's AGENT receives it directly**"),
+        s"$label 对照块缺 Mail 支的直收口径"
+      )
+      assert(face.contains("that device's AGENT reads the mail and can act on it"), s"$label 缺「对端 agent 能读到并处理」")
+      assert(face.contains("[DEVICE-MAIL · from <from_device>]"), s"$label 缺既有无头注入体（直收的机制面）")
 
   // ============================================================
   // ② SendMessage 面：纯传输 + 对端 agent 不感知
   // ============================================================
 
   test("② SendMessage 面：`device:` = 纯传输（Downloads + 设备面板）且 🔴 对端 agent 不感知"):
-    assert(sendDeviceItem.contains("PURE TRANSPORT"),
-      "缺「纯传输」定性（作者口径 ②）")
-    assert(sendDeviceItem.contains("the peer's AGENT is NOT aware of either"),
-      "🔴 缺「对端 agent 不感知」——本批订正的核心")
-    assert(sendDeviceItem.contains("peer's Downloads"),
-      "缺「文件落对端 Downloads」")
-    assert(sendDeviceItem.contains("the message text appears in the peer's device panel"),
-      "缺「文本进设备面板」")
-    assert(sendDeviceItem.contains("nothing is injected into the peer's agent session or its LLM context"),
-      "缺「零注入对端 agent 会话 / LLM 上下文」的机制说明")
+    assert(sendDeviceItem.contains("PURE TRANSPORT"), "缺「纯传输」定性（作者口径 ②）")
+    assert(sendDeviceItem.contains("the peer's AGENT is NOT aware of either"), "🔴 缺「对端 agent 不感知」——本批订正的核心")
+    assert(sendDeviceItem.contains("peer's Downloads"), "缺「文件落对端 Downloads」")
+    assert(sendDeviceItem.contains("the message text appears in the peer's device panel"), "缺「文本进设备面板」")
+    assert(
+      sendDeviceItem.contains("nothing is injected into the peer's agent session or its LLM context"),
+      "缺「零注入对端 agent 会话 / LLM 上下文」的机制说明"
+    )
 
   test("② SendMessage 面：文件传输能力留在本面（attachments 是唯一搬运参数）"):
-    assert(sendDeviceItem.contains("the face that carries file transfer (`attachments`)"),
-      "缺「文件传输能力在本面」的自陈")
-    val keys = FriendMessageTool.inputSchema("properties").flatMap(_.asObject)
-      .map(_.keys.toSet).getOrElse(fail("SendMessage schema has no properties"))
+    assert(sendDeviceItem.contains("the face that carries file transfer (`attachments`)"), "缺「文件传输能力在本面」的自陈")
+    val keys = FriendMessageTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .map(_.keys.toSet)
+      .getOrElse(fail("SendMessage schema has no properties"))
     assert(keys.contains("attachments"), "SendMessage 必须保留 attachments（文件搬运能力所在）")
     assert(n(sendAttachParam).contains("how a file is moved"), "attachments 参数级描述缺搬运定位")
 
@@ -123,21 +121,24 @@ class DeviceMailFaceContractSpec extends FunSuite:
 
   test("③ 指引两面同现：`If the peer's agent must be told, use Mail` 在 Mail 面与 SendMessage 面"):
     for (label, raw) <- mailFaces do
-      assert(n(raw).contains("If the peer's agent must be told, use `Mail`"),
-        s"$label 缺「需要 agent 知道 ⇒ 用 Mail」指引")
-    assert(n(sendFace).contains("If the peer's agent must be told, use `Mail`"),
-      "SendMessage 面缺「需要 agent 知道 ⇒ 用 Mail」指引")
-    assert(sendDeviceItem.contains("use `Mail` with the `device` parameter"),
-      "SendMessage 面必须把落点写全（Mail 的 `device` 参数），否则模型选不出正确形态")
+      assert(n(raw).contains("If the peer's agent must be told, use `Mail`"), s"$label 缺「需要 agent 知道 ⇒ 用 Mail」指引")
+    assert(
+      n(sendFace).contains("If the peer's agent must be told, use `Mail`"),
+      "SendMessage 面缺「需要 agent 知道 ⇒ 用 Mail」指引"
+    )
+    assert(
+      sendDeviceItem.contains("use `Mail` with the `device` parameter"),
+      "SendMessage 面必须把落点写全（Mail 的 `device` 参数），否则模型选不出正确形态"
+    )
 
   test("③ 双向点名：Mail 面点名 SendMessage、SendMessage 面点名 Mail（禁单向口径）"):
     for (label, raw) <- mailFaces do
-      assert(n(raw).contains("""`SendMessage(to="device:…")` — pure transport"""),
-        s"$label 缺对 SendMessage 的对比句")
-    assert(sendDeviceItem.contains("Mail delivers into the peer's Nebula session"),
-      "SendMessage 面缺 Mail 的落点说明")
-    assert(sendDeviceItem.contains("`SendMessage` never reaches the peer's agent"),
-      "SendMessage 面缺「本工具永不达对端 agent」的收束句")
+      assert(n(raw).contains("""`SendMessage(to="device:…")` — pure transport"""), s"$label 缺对 SendMessage 的对比句")
+    assert(sendDeviceItem.contains("Mail delivers into the peer's Nebula session"), "SendMessage 面缺 Mail 的落点说明")
+    assert(
+      sendDeviceItem.contains("`SendMessage` never reaches the peer's agent"),
+      "SendMessage 面缺「本工具永不达对端 agent」的收束句"
+    )
 
   // ============================================================
   // ④ 极性双向断言（禁矛盾）
@@ -145,22 +146,22 @@ class DeviceMailFaceContractSpec extends FunSuite:
 
   test("④ 极性：对照块两支各自只带本支语义（禁互相借用）"):
     assert(mailBulletInCompare.contains("AGENT receives it directly"), "Mail 支缺直收语义")
-    assert(!mailBulletInCompare.contains("NOT aware"),
-      "🔴 Mail 支出现「不感知」= 口径混写")
-    assert(sendBulletInCompare.contains("pure transport") && sendBulletInCompare.contains("NOT aware"),
-      "SendMessage 支缺「纯传输 + 不感知」")
-    assert(!sendBulletInCompare.contains("receives it directly"),
-      "🔴 SendMessage 支出现直收语义 = 口径混写")
-    assert(!mailDeviceSection.contains("NOT aware"),
-      "🔴 Mail 的设备腿正文出现「不感知」= 与直收口径自相矛盾")
+    assert(!mailBulletInCompare.contains("NOT aware"), "🔴 Mail 支出现「不感知」= 口径混写")
+    assert(
+      sendBulletInCompare.contains("pure transport") && sendBulletInCompare.contains("NOT aware"),
+      "SendMessage 支缺「纯传输 + 不感知」"
+    )
+    assert(!sendBulletInCompare.contains("receives it directly"), "🔴 SendMessage 支出现直收语义 = 口径混写")
+    assert(!mailDeviceSection.contains("NOT aware"), "🔴 Mail 的设备腿正文出现「不感知」= 与直收口径自相矛盾")
 
   test("④ 极性：SendMessage 面唯一出现的直收语义必须归属 Mail（带否证句）"):
     val idx = sendDeviceItem.indexOf("receives it directly")
     assert(idx >= 0, "SendMessage 面缺 Mail 直收语义（对比面不完整）")
-    assert(sendDeviceItem.substring(0, idx).contains("use `Mail`"),
-      "直收语义在 SendMessage 面未归属 Mail（禁无主语断言）")
-    assert(sendDeviceItem.substring(idx).contains("`SendMessage` never reaches the peer's agent"),
-      "直收语义后缺本工具的否证句（否则可被读成 SendMessage 也直收）")
+    assert(sendDeviceItem.substring(0, idx).contains("use `Mail`"), "直收语义在 SendMessage 面未归属 Mail（禁无主语断言）")
+    assert(
+      sendDeviceItem.substring(idx).contains("`SendMessage` never reaches the peer's agent"),
+      "直收语义后缺本工具的否证句（否则可被读成 SendMessage 也直收）"
+    )
 
   // ============================================================
   // ⑤ 现状如实（**极性重钉**：mailattach 批 2026-09-17）
@@ -175,31 +176,33 @@ class DeviceMailFaceContractSpec extends FunSuite:
   //    并**新增**「描述与 schema 不再互斥」的机械判据（原 spec 无此断言）。
 
   test("⑤ Mail 附件面现状如实：`attachments` 已批（路线 A）⇒ schema 必须有、描述不得再宣称没有"):
-    val keys = MailTool.inputSchema("properties").flatMap(_.asObject)
-      .map(_.keys.toSet).getOrElse(fail("Mail schema has no properties"))
-    assert(keys.contains("attachments"),
-      "🔴 路线 A 已批（作者 2026-09-17）⇒ Mail 必须声明 `attachments` 参数")
+    val keys = MailTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .map(_.keys.toSet)
+      .getOrElse(fail("Mail schema has no properties"))
+    assert(keys.contains("attachments"), "🔴 路线 A 已批（作者 2026-09-17）⇒ Mail 必须声明 `attachments` 参数")
     assert(keys.contains("images"), "Mail 必须保留 `images`（vision 面，未被 `attachments` 取代）")
-    val maxItems = MailTool.inputSchema("properties").flatMap(_.asObject).flatMap(_("images"))
-      .flatMap(_.asObject).flatMap(_("maxItems")).flatMap(_.asNumber).flatMap(_.toInt)
+    val maxItems = MailTool
+      .inputSchema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("images"))
+      .flatMap(_.asObject)
+      .flatMap(_("maxItems"))
+      .flatMap(_.asNumber)
+      .flatMap(_.toInt)
     assertEquals(maxItems, Some(5), "images 上限必须仍是 5（token 预算是另一个量纲）")
     for (label, raw) <- mailFaces do
-      assert(!n(raw).contains("Mail has no general attachments"),
-        s"$label 仍自称「无通用附件」= 描述与 schema（已有 `attachments`）互斥")
-      assert(!n(raw).contains("no `attachments` parameter"),
-        s"$label 仍自称「没有 `attachments` 参数」= 描述与 schema 互斥")
-      assert(n(raw).contains("up to 5 absolute local image paths"),
-        s"$label 缺 `images` 现状上限（≤5）")
+      assert(!n(raw).contains("Mail has no general attachments"), s"$label 仍自称「无通用附件」= 描述与 schema（已有 `attachments`）互斥")
+      assert(!n(raw).contains("no `attachments` parameter"), s"$label 仍自称「没有 `attachments` 参数」= 描述与 schema 互斥")
+      assert(n(raw).contains("up to 5 absolute local image paths"), s"$label 缺 `images` 现状上限（≤5）")
 
   test("⑤ 描述与 schema 不再互斥（P1 机械判据：两面同契约、零反向断言）"):
     // 判据 ①：三面描述都**宣称**存在 `attachments` 参数（能力可见）。
     for (label, raw) <- mailFaces do
-      assert(n(raw).contains("`attachments` parameter"),
-        s"$label 未宣称 `attachments` 参数（模型读不到该能力 ⇒ 能力实际不可用）")
-      assert(n(raw).contains("Same-machine targets") || n(raw).contains("SAME-MACHINE"),
-        s"$label 缺同机腿（路径模式）语义说明")
-      assert(n(raw).contains("4000"),
-        s"$label 缺设备腿正文 4000 字符预算（B7 闸的模型可见面）")
+      assert(n(raw).contains("`attachments` parameter"), s"$label 未宣称 `attachments` 参数（模型读不到该能力 ⇒ 能力实际不可用）")
+      assert(n(raw).contains("Same-machine targets") || n(raw).contains("SAME-MACHINE"), s"$label 缺同机腿（路径模式）语义说明")
+      assert(n(raw).contains("4000"), s"$label 缺设备腿正文 4000 字符预算（B7 闸的模型可见面）")
     // 判据 ②：参数级描述与 schema 键集合一致 —— `attachments` 的参数级描述不得
     // 反向否认该参数的存在（互斥消除的**逐字**判据）。
     val attachParam = prop(MailTool.inputSchema, "attachments")
@@ -209,10 +212,8 @@ class DeviceMailFaceContractSpec extends FunSuite:
     assert(!na.contains("no `attachments` parameter"), "🔴 参数级描述自相矛盾")
     // 判据 ③：`images` 参数级描述不得再点「其它文件走 SendMessage」——它现在必须
     // 指向本工具自己的 `attachments`（旧落点已过期）。
-    assert(n(mailImagesParam).contains("`project:` / `node:`"),
-      "images 参数级描述缺「project:/node: 两条腿不支持 vision」的现状声明")
-    assert(!n(mailImagesParam).contains("Mail carries NO general attachments"),
-      "🔴 images 参数级描述仍宣称无通用附件 = 与 schema 互斥")
+    assert(n(mailImagesParam).contains("`project:` / `node:`"), "images 参数级描述缺「project:/node: 两条腿不支持 vision」的现状声明")
+    assert(!n(mailImagesParam).contains("Mail carries NO general attachments"), "🔴 images 参数级描述仍宣称无通用附件 = 与 schema 互斥")
 
   // ============================================================
   // ⑥ 参数级描述一致（模型可见契约的第二层）
@@ -220,22 +221,23 @@ class DeviceMailFaceContractSpec extends FunSuite:
 
   test("⑥ 参数级一致：Mail.device / SendMessage.to / SendMessage.attachments 三处同口径"):
     val md = n(mailDeviceParam)
-    assert(md.contains("AGENT receives this mail directly"),
-      "Mail 的 `device` 参数级描述缺直收语义")
-    assert(md.contains("pure transport") && md.contains("use `Mail`"),
-      "Mail 的 `device` 参数级描述缺 SendMessage 对比 + Mail 落点指引")
+    assert(md.contains("AGENT receives this mail directly"), "Mail 的 `device` 参数级描述缺直收语义")
+    assert(
+      md.contains("pure transport") && md.contains("use `Mail`"),
+      "Mail 的 `device` 参数级描述缺 SendMessage 对比 + Mail 落点指引"
+    )
     val st = n(sendToParam)
-    assert(st.contains("pure transport") && st.contains("NOT aware"),
-      "SendMessage 的 `to` 参数级描述缺「纯传输 + 不感知」")
+    assert(st.contains("pure transport") && st.contains("NOT aware"), "SendMessage 的 `to` 参数级描述缺「纯传输 + 不感知」")
     assert(st.contains("use `Mail`"), "SendMessage 的 `to` 参数级描述缺 Mail 指引")
-    assert(n(sendAttachParam).contains("NOT told"),
-      "SendMessage 的 `attachments` 参数级描述缺「对端 agent 不被通知」")
+    assert(n(sendAttachParam).contains("NOT told"), "SendMessage 的 `attachments` 参数级描述缺「对端 agent 不被通知」")
     // mailattach 批（2026-09-17）re-pin：旧断言钉的是「其它文件走 SendMessage」——
     // 该落点已过期（本工具自己有 `attachments` 了）。新判据 = **本工具自陈**两腿语义，
     // 强度不降（仍钉参数级描述的具体落点，且与 ⑤ 的互斥判据互补）。
     val ma = n(prop(MailTool.inputSchema, "attachments"))
-    assert(ma.contains("DEVICE") && ma.contains("SAME-MACHINE"),
-      "Mail 的 `attachments` 参数级描述必须把两条腿的语义分开写全（设备腿=字节 / 同机腿=路径）")
+    assert(
+      ma.contains("DEVICE") && ma.contains("SAME-MACHINE"),
+      "Mail 的 `attachments` 参数级描述必须把两条腿的语义分开写全（设备腿=字节 / 同机腿=路径）"
+    )
     assert(ma.contains("sha256"), "Mail 的 `attachments` 参数级描述缺同机腿的 sha256 读数")
 
   // ============================================================
@@ -243,13 +245,12 @@ class DeviceMailFaceContractSpec extends FunSuite:
   // ============================================================
 
   test("⑦ 已退役工具零命中：两面模型可见面 + 两源文件整体"):
-    for (label, raw) <- mailFaces do
-      assert(!raw.contains("TransferFile"), s"$label 指向已退役工具")
+    for (label, raw) <- mailFaces do assert(!raw.contains("TransferFile"), s"$label 指向已退役工具")
     assert(!sendFace.contains("TransferFile"), "SendMessage 描述面指向已退役工具")
     for (label, text) <- List(
-        "Mail.device"             -> mailDeviceParam,
-        "Mail.images"             -> mailImagesParam,
-        "SendMessage.to"          -> sendToParam,
+        "Mail.device" -> mailDeviceParam,
+        "Mail.images" -> mailImagesParam,
+        "SendMessage.to" -> sendToParam,
         "SendMessage.attachments" -> sendAttachParam
       )
     do assert(!text.contains("TransferFile"), s"$label 参数级描述指向已退役工具")

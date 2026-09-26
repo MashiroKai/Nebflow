@@ -1,14 +1,13 @@
 package nebflow.core.project
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Codec
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import io.circe.derivation.{Configuration, ConfiguredCodec}
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
-import nebflow.shared.Defaults
+import nebflow.core.AtomicJson
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 
 /**
  * BootDispatcherWake —— 宿主启动「自动重入」腿（方案件选项 A 档 A1「控制面唤醒腿」）。
@@ -86,16 +85,20 @@ object BootDispatcherWake:
   /** 落盘标记 + 清单快照文件名（`<workspace>/.nebflow/boot-wake.json`）。 */
   val MarkerFileName: String = "boot-wake.json"
 
-  /** 单 boot 项目数上限（结构上限，非配置项）：超出记 `cap-exceeded` 跳过——防「项目数
-    * 异常膨胀导致一次 boot 唤醒风暴」。 */
+  /**
+   * 单 boot 项目数上限（结构上限，非配置项）：超出记 `cap-exceeded` 跳过——防「项目数
+   * 异常膨胀导致一次 boot 唤醒风暴」。
+   */
   val MaxProjectsPerBoot: Int = 64
 
   /** 标记文件保留的历史条目数（滚动；只留审计窗，不做归档）。 */
   val MarkerKeepEntries: Int = 8
 
-  /** 本 JVM 启动实例 id（**幂等键前缀**）：进程内稳定、跨 boot 必然不同。
-    * 与 `GatewayMain` 的 PID 写入同源（`ProcessHandle`），补 JVM startTime 使
-    * 「同 pid 复用」窗口下仍区分（pid 回绕/容器化场景）。 */
+  /**
+   * 本 JVM 启动实例 id（**幂等键前缀**）：进程内稳定、跨 boot 必然不同。
+   * 与 `GatewayMain` 的 PID 写入同源（`ProcessHandle`），补 JVM startTime 使
+   * 「同 pid 复用」窗口下仍区分（pid 回绕/容器化场景）。
+   */
   lazy val instanceId: String =
     val rt = java.lang.management.ManagementFactory.getRuntimeMXBean
     s"${rt.getStartTime}-${ProcessHandle.current.pid}"
@@ -121,6 +124,7 @@ object BootDispatcherWake:
     def woken: Int = outcomes.count(_.result == ResultWoken)
     def skipped: Int = outcomes.count(_.result == ResultSkipped)
     def failed: Int = outcomes.count(_.result == ResultFailed)
+
     /** 一行汇总（boot 级审计：含零命中形态）。 */
     def summary: String =
       val detail = outcomes
@@ -144,9 +148,11 @@ object BootDispatcherWake:
     result: String,
     recommend: String
   )
+
   object MarkerItem:
     given Configuration = Configuration.default.withDefaults
     given Codec[MarkerItem] = ConfiguredCodec.derived
+
     def of(i: BootWakeInventory.Item): MarkerItem =
       MarkerItem(
         node = i.nodeId,
@@ -162,26 +168,33 @@ object BootDispatcherWake:
         recommend = i.recommend
       )
 
+  end MarkerItem
+
   final case class MarkerEntry(
     bootId: String,
     project: String,
     at: Long,
     result: String,
     reason: String,
-    /** true = 本条目对同一 bootId 的后续调用构成幂等跳过（终态结果）；
-      * false = 仅审计留痕（如 `no-reentry-required`——同 boot 内状态可能再变）。 */
+    /**
+     * true = 本条目对同一 bootId 的后续调用构成幂等跳过（终态结果）；
+     * false = 仅审计留痕（如 `no-reentry-required`——同 boot 内状态可能再变）。
+     */
     blocking: Boolean,
     nodes: Int,
     items: List[MarkerItem],
-    /** 条目类别（hostresume 批 2026-09-22，设计卡 §4 #6，C1 台账扩展）：`boot`（默认，
-      * 既有形态逐字兼容）= boot 唤醒腿；`sleep`/`wake` = 宿主睡眠窗（WakeSensor 写点）；
-      * `graceful`/`unclean` = 上次停机成因标注（crash-sweep 腿写点，D-5 仅台账/措辞）。
-      * 默认值 + withDefaults ⇒ 旧 JSON 可读、新 JSON 老代码可读（双向兼容）。 */
+    /**
+     * 条目类别（hostresume 批 2026-09-22，设计卡 §4 #6，C1 台账扩展）：`boot`（默认，
+     * 既有形态逐字兼容）= boot 唤醒腿；`sleep`/`wake` = 宿主睡眠窗（WakeSensor 写点）；
+     * `graceful`/`unclean` = 上次停机成因标注（crash-sweep 腿写点，D-5 仅台账/措辞）。
+     * 默认值 + withDefaults ⇒ 旧 JSON 可读、新 JSON 老代码可读（双向兼容）。
+     */
     kind: String = KindBoot,
     /** 宿主睡眠窗载荷（仅 kind=sleep/wake 有义；恒 blocking=false 条目）。 */
     sleepAt: Option[Long] = None,
     wakeAt: Option[Long] = None
   )
+
   object MarkerEntry:
     given Configuration = Configuration.default.withDefaults
     given Codec[MarkerEntry] = ConfiguredCodec.derived
@@ -192,6 +205,7 @@ object BootDispatcherWake:
     lastBootId: String = "",
     entries: List[MarkerEntry] = Nil
   )
+
   object MarkerFile:
     given Configuration = Configuration.default.withDefaults
     given Codec[MarkerFile] = ConfiguredCodec.derived
@@ -215,12 +229,13 @@ object BootDispatcherWake:
       else
         jsonParse(os.read(p)).flatMap(_.as[MarkerFile]) match
           case Right(m) => m
-          case Left(_)  => MarkerFile()
-    }.handleErrorWith(e =>
-      logger.warn(s"boot-wake marker read failed at $p: ${e.getMessage}").as(MarkerFile()))
+          case Left(_) => MarkerFile()
+    }.handleErrorWith(e => logger.warn(s"boot-wake marker read failed at $p: ${e.getMessage}").as(MarkerFile()))
 
-  /** 幂等判据：该 bootId 是否已有**终结型**条目（woken/failed/跳过型）。
-    * 落盘面权威——即使进程内 Ref 因再入/重建而空，也不会二次唤醒。 */
+  /**
+   * 幂等判据：该 bootId 是否已有**终结型**条目（woken/failed/跳过型）。
+   * 落盘面权威——即使进程内 Ref 因再入/重建而空，也不会二次唤醒。
+   */
   private[project] def hasBlockingEntry(marker: os.Path, bootId: String, project: String): IO[Boolean] =
     readMarker(marker).map(_.entries.exists(e => e.bootId == bootId && e.project == project && e.blocking))
 
@@ -235,35 +250,42 @@ object BootDispatcherWake:
         .write(p, MarkerFile(project = project, lastBootId = e.bootId, entries = kept).asJson.noSpaces)
         .handleErrorWith(err =>
           // fail-soft：标记写失败不阻断唤醒（幂等的第二道防线退化为进程内 Ref），但必须留痕。
-          logger.warn(s"[boot-wake] marker write failed at $p: ${err.getMessage}"))
+          logger.warn(s"[boot-wake] marker write failed at $p: ${err.getMessage}")
+        )
     }
 
-  /** 电源/停机成因台账 append（hostresume 批 2026-09-22，卡 §4 #6/#8 写点，复用
-    * `appendMarker` 的读-改-写 + AtomicJson + fail-soft 纪律，但**不做 (bootId, project)
-    * 替换**：电源条目 append-only——替换语义若跨 kind，会让 kind=sleep/wake/unclean
-    * 条目顶掉同 boot 的 blocking boot 条目、破坏 duplicate-boot 幂等（卡 §6 口径 3）。
-    * 写点 = `WakeSensor`（kind=sleep/wake）与 `ProjectCrashRecovery.annotateShutdownCause`
-    * （kind=graceful/unclean）；恒 `blocking=false`（调用面约定，本函数不强制）。 */
+  /**
+   * 电源/停机成因台账 append（hostresume 批 2026-09-22，卡 §4 #6/#8 写点，复用
+   * `appendMarker` 的读-改-写 + AtomicJson + fail-soft 纪律，但**不做 (bootId, project)
+   * 替换**：电源条目 append-only——替换语义若跨 kind，会让 kind=sleep/wake/unclean
+   * 条目顶掉同 boot 的 blocking boot 条目、破坏 duplicate-boot 幂等（卡 §6 口径 3）。
+   * 写点 = `WakeSensor`（kind=sleep/wake）与 `ProjectCrashRecovery.annotateShutdownCause`
+   * （kind=graceful/unclean）；恒 `blocking=false`（调用面约定，本函数不强制）。
+   */
   def appendPowerMarker(p: os.Path, project: String, e: MarkerEntry): IO[Unit] =
     readMarker(p).flatMap { f =>
       val kept = (f.entries :+ e).takeRight(MarkerKeepEntries)
       AtomicJson
         .write(p, MarkerFile(project = project, lastBootId = f.lastBootId, entries = kept).asJson.noSpaces)
-        .handleErrorWith(err =>
-          logger.warn(s"[boot-wake] power marker write failed at $p: ${err.getMessage}"))
+        .handleErrorWith(err => logger.warn(s"[boot-wake] power marker write failed at $p: ${err.getMessage}"))
     }
 
   // ── 停机留痕（hostresume 批 2026-09-22，卡 §4 #7/#8，C2 双向 fail-soft）──────
 
-  /** 优雅停机标记（`GracefulInterruptHook` 起步时 fail-soft 写；下次 boot 读之区分
-    * 「优雅停机」与「断电/kill-9/崩溃」——取证开放项①「信号来源无留痕」的闭环面）。 */
+  /**
+   * 优雅停机标记（`GracefulInterruptHook` 起步时 fail-soft 写；下次 boot 读之区分
+   * 「优雅停机」与「断电/kill-9/崩溃」——取证开放项①「信号来源无留痕」的闭环面）。
+   */
   final case class ShutdownMarker(v: Int, kind: String, at: Long, bootId: String, cause: String)
+
   object ShutdownMarker:
     given Configuration = Configuration.default.withDefaults
     given Codec[ShutdownMarker] = ConfiguredCodec.derived
 
-  /** 停机标记文件名（宿主级：`<dataRoot>/shutdown-marker.json`——关机钩子无项目上下文，
-    * 成因是宿主级事实；boot 侧经 [[readShutdownMarker]] 读同一文件）。 */
+  /**
+   * 停机标记文件名（宿主级：`<dataRoot>/shutdown-marker.json`——关机钩子无项目上下文，
+   * 成因是宿主级事实；boot 侧经 [[readShutdownMarker]] 读同一文件）。
+   */
   val ShutdownMarkerFileName: String = "shutdown-marker.json"
 
   def shutdownMarkerPath: os.Path = PathUtil.dataRoot / ShutdownMarkerFileName
@@ -275,33 +297,38 @@ object BootDispatcherWake:
       if !os.exists(p) then None
       else jsonParse(os.read(p)).flatMap(_.as[ShutdownMarker]).toOption
     }.handleErrorWith(e =>
-      logger.warn(s"[boot-wake] shutdown marker read failed at $shutdownMarkerPath: ${e.getMessage}").as(None))
+      logger.warn(s"[boot-wake] shutdown marker read failed at $shutdownMarkerPath: ${e.getMessage}").as(None)
+    )
 
-  /** boot 期停机成因（卡 §4 #8，D-5 仅措辞/台账）：marker 在 ⇒ `Some(kind)`（graceful）；
-    * 不在但台账已有本 boot 的 unclean 条目（crash-sweep 腿在有 Running/Interrupted 残留
-    * 时写）⇒ `Some("unclean")`；都无（fresh home / 干净 boot）⇒ None = 不追加任何字节
-    * （dispatcher-wake summary 逐字不变）。 */
+  /**
+   * boot 期停机成因（卡 §4 #8，D-5 仅措辞/台账）：marker 在 ⇒ `Some(kind)`（graceful）；
+   * 不在但台账已有本 boot 的 unclean 条目（crash-sweep 腿在有 Running/Interrupted 残留
+   * 时写）⇒ `Some("unclean")`；都无（fresh home / 干净 boot）⇒ None = 不追加任何字节
+   * （dispatcher-wake summary 逐字不变）。
+   */
   def bootShutdownCause(pd: ProjectDef, bootId: String = instanceId): IO[Option[String]] =
     readShutdownMarker.flatMap {
       case Some(m) => IO.pure(Some(m.kind))
       case None =>
         readMarker(markerPath(pd)).map { f =>
           if f.entries.exists(e => e.bootId == bootId && e.project == pd.name && e.kind == KindUnclean)
-          then Some(KindUnclean) else None
+          then Some(KindUnclean)
+          else None
         }
     }
 
   // ── 主入口 ────────────────────────────────────────────────────────────
 
-  /** boot 链调用点（生产唯一）。参数全为测试/装配接缝，默认值即生产形态。
-    *
-    * @param trigger      None = 既有通道 `DispatchNotify.defaultTrigger`（TriggerDispatcher
-    *                     → spawn/注入分发器会话）；Some = spec 捕获文本用接缝。
-    * @param bootId       boot 实例 id（幂等键前缀），默认 [[instanceId]]。
-    * @param enabled      开关（`nebflow.boot.dispatcherWake` 热读）——false 时**零动作**。
-    * @param projects     None = `ProjectStore.list()`（磁盘在册项目，含未挂载者——
-    *                     未挂载走 `project-not-mounted` 显式降级面）。
-    */
+  /**
+   * boot 链调用点（生产唯一）。参数全为测试/装配接缝，默认值即生产形态。
+   *
+   * @param trigger      None = 既有通道 `DispatchNotify.defaultTrigger`（TriggerDispatcher
+   *                     → spawn/注入分发器会话）；Some = spec 捕获文本用接缝。
+   * @param bootId       boot 实例 id（幂等键前缀），默认 [[instanceId]]。
+   * @param enabled      开关（`nebflow.boot.dispatcherWake` 热读）——false 时**零动作**。
+   * @param projects     None = `ProjectStore.list()`（磁盘在册项目，含未挂载者——
+   *                     未挂载走 `project-not-mounted` 显式降级面）。
+   */
   def wakeAll(
     trigger: Option[String => IO[Unit]] = None,
     bootId: String = instanceId,
@@ -334,7 +361,9 @@ object BootDispatcherWake:
                     blocking = false,
                     atMs = at,
                     err = Some(e)
-                  ))
+                  )
+                )
+            end if
           }
           .map(outs => WakeReport(bootId, ordered.size, outs))
       }
@@ -360,8 +389,10 @@ object BootDispatcherWake:
       out <-
         if dup || memo then
           logger
-            .info(s"[boot-wake] project '${pd.name}' auto-reentry: result=$ResultSkipped reason=$ReasonDuplicate " +
-              s"(boot=$bootId already woke this project — idempotent skip, no second wake)")
+            .info(
+              s"[boot-wake] project '${pd.name}' auto-reentry: result=$ResultSkipped reason=$ReasonDuplicate " +
+                s"(boot=$bootId already woke this project — idempotent skip, no second wake)"
+            )
             .as(Outcome(pd.name, ResultSkipped, ReasonDuplicate, 0, Nil))
         else
           BootWakeInventory.fromDisk(dir, pd.name, nowMs(), maxItems, sessionsDir).flatMap {
@@ -369,29 +400,61 @@ object BootDispatcherWake:
               // 落盘事实不可读（缺失/损坏）：显式记录 + 跳过（禁当「无工作」静默成功）。
               record(pd, bootId, ResultSkipped, reason, None, blocking = true, atMs = atMs, cause = cause)
             case Right(inv) if !inv.needWake =>
-              record(pd, bootId, ResultSkipped, ReasonNoReentry, Some(inv), blocking = false, atMs = atMs, cause = cause)
+              record(
+                pd,
+                bootId,
+                ResultSkipped,
+                ReasonNoReentry,
+                Some(inv),
+                blocking = false,
+                atMs = atMs,
+                cause = cause
+              )
             case Right(inv) =>
               ProjectRuntimeRegistry.get(pd.name).flatMap {
                 case None =>
-                  record(pd, bootId, ResultSkipped, ReasonNotMounted, Some(inv), blocking = true, atMs = atMs, cause = cause)
+                  record(
+                    pd,
+                    bootId,
+                    ResultSkipped,
+                    ReasonNotMounted,
+                    Some(inv),
+                    blocking = true,
+                    atMs = atMs,
+                    cause = cause
+                  )
                 case Some(rt) =>
-                  val fire = trigger.getOrElse(
-                    DispatchNotify.defaultTrigger(pd.name, rt.engine.rootSessionId))
+                  val fire = trigger.getOrElse(DispatchNotify.defaultTrigger(pd.name, rt.engine.rootSessionId))
                   wokenKeys.update(_ + key) *>
                     fire(wakeText(inv, bootId)).attempt.flatMap {
                       case Right(_) =>
                         record(pd, bootId, ResultWoken, "", Some(inv), blocking = true, atMs = atMs, cause = cause)
                       case Left(e) =>
                         // 触发链失败 = 显式失败 + **零重试**（无定时器、无循环 ⇒ 风暴不可达）。
-                        record(pd, bootId, ResultFailed, ReasonNotifyFailed, Some(inv), blocking = true,
-                          atMs = atMs, err = Some(e), cause = cause)
+                        record(
+                          pd,
+                          bootId,
+                          ResultFailed,
+                          ReasonNotifyFailed,
+                          Some(inv),
+                          blocking = true,
+                          atMs = atMs,
+                          err = Some(e),
+                          cause = cause
+                        )
                     }
               }
           }
     yield out
 
-  /** 落盘（标记）+ 事件 + 日志三面同源记录；任一面失败均 fail-soft（不阻断其余面、
-    * 不抛给 boot 链——boot 永不因本腿失败）。 */
+    end for
+
+  end wakeProject
+
+  /**
+   * 落盘（标记）+ 事件 + 日志三面同源记录；任一面失败均 fail-soft（不阻断其余面、
+   * 不抛给 boot 链——boot 永不因本腿失败）。
+   */
   private def record(
     pd: ProjectDef,
     bootId: String,
@@ -403,40 +466,69 @@ object BootDispatcherWake:
     err: Option[Throwable] = None,
     cause: Option[String] = None
   ): IO[Outcome] =
-    val counts = inv.map { i =>
-      (i.nodes, i.inBucket(BootWakeInventory.BucketLooseRunning).size,
-        i.inBucket(BootWakeInventory.BucketAwaitingHandover).size,
-        i.inBucket(BootWakeInventory.BucketDeadBarrier).size,
-        i.inBucket(BootWakeInventory.BucketBlocked).size)
-    }.getOrElse((0, 0, 0, 0, 0))
+    val counts = inv
+      .map { i =>
+        (
+          i.nodes,
+          i.inBucket(BootWakeInventory.BucketLooseRunning).size,
+          i.inBucket(BootWakeInventory.BucketAwaitingHandover).size,
+          i.inBucket(BootWakeInventory.BucketDeadBarrier).size,
+          i.inBucket(BootWakeInventory.BucketBlocked).size
+        )
+      }
+      .getOrElse((0, 0, 0, 0, 0))
     val items = inv.map(_.items.map(MarkerItem.of)).getOrElse(Nil)
     val entry = MarkerEntry(bootId, pd.name, atMs, result, reason, blocking, counts._1, items)
     val logLine =
       s"[boot-wake] project '${pd.name}' auto-reentry: result=$result" +
         (if reason.isEmpty then "" else s" reason=$reason") +
         s" boot=$bootId nodes=${counts._1} b1=${counts._2} b2=${counts._3} b3=${counts._4} b4=${counts._5}" +
-        inv.map(i => s" items=${i.items.size}${if i.truncated > 0 then s"(+${i.truncated} more)" else ""}" +
-          s" terminalTargets=${i.terminalTargets} upstreamGaps=${i.upstreamGaps}").getOrElse("") +
+        inv
+          .map(i =>
+            s" items=${i.items.size}${if i.truncated > 0 then s"(+${i.truncated} more)" else ""}" +
+              s" terminalTargets=${i.terminalTargets} upstreamGaps=${i.upstreamGaps}"
+          )
+          .getOrElse("") +
         s" at=$atMs dispatcher=(spawn/inject via existing TriggerDispatcher channel)" +
         cause.map(c => s" cause=$c").getOrElse("") +
         err.map(e => s" error=${Option(e.getMessage).getOrElse(e.toString)}").getOrElse("")
     for
       _ <- appendMarker(markerPath(pd), pd.name, entry)
       _ <- FlowMapEventLog
-        .append(pd.workspace, pd.name, pd.name, FlowMapEventLog.DispatcherWakeType,
-          FlowMapEventLog.dispatcherWakeSummary(bootId, atMs, result, reason,
+        .append(
+          pd.workspace,
+          pd.name,
+          pd.name,
+          FlowMapEventLog.DispatcherWakeType,
+          FlowMapEventLog.dispatcherWakeSummary(
+            bootId,
+            atMs,
+            result,
+            reason,
             (counts._1, counts._2, counts._3, counts._4, counts._5),
-            inv.map(_.items.size).getOrElse(0), inv.map(_.truncated).getOrElse(0), cause))
-        .handleErrorWith(e =>
-          logger.warn(s"[boot-wake] event append failed for project '${pd.name}': ${e.getMessage}"))
+            inv.map(_.items.size).getOrElse(0),
+            inv.map(_.truncated).getOrElse(0),
+            cause
+          )
+        )
+        .handleErrorWith(e => logger.warn(s"[boot-wake] event append failed for project '${pd.name}': ${e.getMessage}"))
       _ <- if result == ResultFailed then logger.warn(logLine) else logger.info(logLine)
-    yield Outcome(pd.name, result, reason, inv.map(_.items.size).getOrElse(0),
-      inv.map(_.items.flatMap(_.buckets).distinct).getOrElse(Nil))
+    yield Outcome(
+      pd.name,
+      result,
+      reason,
+      inv.map(_.items.size).getOrElse(0),
+      inv.map(_.items.flatMap(_.buckets).distinct).getOrElse(Nil)
+    )
+    end for
+  end record
 
   // ── 清单正文（= 分发器会话首条输入；方案 §2 B 输出形态）──────────────────
 
-  /** 唤醒文本：B 档格式清单 + **零自动行为声明** + 处置指引（方案判红：清单不得
-    * 缺该声明，否则会被误当授权）。 */
+  /**
+   * 唤醒文本：B 档格式清单 + **零自动行为声明** + 处置指引（方案判红：清单不得
+   * 缺该声明，否则会被误当授权）。
+   */
   def wakeText(inv: BootWakeInventory.Inventory, bootId: String): String =
     val hist = NodeLifecycle.All.toList
       .map(s => s"$s=${inv.histogram.getOrElse(s, 0)}")
@@ -445,7 +537,9 @@ object BootDispatcherWake:
       val xs = inv.inBucket(b)
       if xs.isEmpty then "（无）"
       else xs.map(renderItem).mkString("\n")
-    s"""[boot-wake] 宿主重启自动重入 —— 项目「${inv.project}」需重入清单（${inv.items.size} 项${if inv.truncated > 0 then s" + 另外 ${inv.truncated} 项已省略" else ""}；boot=$bootId）
+    s"""[boot-wake] 宿主重启自动重入 —— 项目「${inv.project}」需重入清单（${inv.items.size} 项${
+        if inv.truncated > 0 then s" + 另外 ${inv.truncated} 项已省略" else ""
+      }；boot=$bootId）
        |
        |本清单**仅供处置，不产生任何自动行为**：引擎未改动任何节点状态、未自动承接、未自动重激活、未重投任何边；无自动重试。
        |成因：宿主重启后分发器会话不续存（方案 §1.4(d)），而 boot 期唯一唤醒源被「零崩溃残留」闸住 ⇒ 「零 running 但有未完成工作」的项目此前无人唤醒，停摆窗无上界。
@@ -455,7 +549,9 @@ object BootDispatcherWake:
        |B0 五态：$hist（活动区节点总数 ${inv.nodes}）
        |B1 落单 running（目标会话已终态，不可续跑）：${inv.inBucket(BootWakeInventory.BucketLooseRunning).size} 项
        |B2 待承接（pendingSuccession 非空）：${inv.inBucket(BootWakeInventory.BucketAwaitingHandover).size} 项
-       |B3 死 barrier（上游全终态 ∧ 超 ${BootWakeInventory.stallMs / 1000L}s 未触发）：${inv.inBucket(BootWakeInventory.BucketDeadBarrier).size} 项
+       |B3 死 barrier（上游全终态 ∧ 超 ${BootWakeInventory.stallMs / 1000L}s 未触发）：${inv
+        .inBucket(BootWakeInventory.BucketDeadBarrier)
+        .size} 项
        |B4 待裁决 blocked：${inv.inBucket(BootWakeInventory.BucketBlocked).size} 项
        |
        |逐条：
@@ -474,13 +570,18 @@ object BootDispatcherWake:
        |merge 节点收口仍须走既有 MergeNodePolicy 与 .nebflow/locks/main-merge.lock 纪律。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
+  end wakeText
+
   private def renderItem(i: BootWakeInventory.Item): String =
     s"""- [${i.bucketLabel}] ${i.nodeId} '${i.name}' status=${i.status}
        |    判据: ${i.reasons.mkString("; ")}
        |    上游: ${i.upstream}${if i.upstreamGap then "  ← 缺轨(禁自动启动)" else ""}
-       |    目标会话: ${if i.sessionRef.isEmpty then "-" else i.sessionRef} sessionState=${i.sessionState} resumable=${i.resumable}${if !i.resumable then " (已终态/不可续跑 — 不自动续)" else ""}
+       |    目标会话: ${
+        if i.sessionRef.isEmpty then "-" else i.sessionRef
+      } sessionState=${i.sessionState} resumable=${i.resumable}${if !i.resumable then " (已终态/不可续跑 — 不自动续)" else ""}
        |    destroyAt: ${i.destroyAt}
        |    任务书: ${i.taskFile}
        |    结果件: ${i.resultFile}
        |    建议: ${i.recommend}
        |    详情: ${i.detail}""".stripMargin
+end BootDispatcherWake

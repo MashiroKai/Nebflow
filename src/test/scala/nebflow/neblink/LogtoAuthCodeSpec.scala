@@ -6,9 +6,9 @@ import io.circe.parser.parse
 import munit.FunSuite
 
 /**
-  * Logto AC+PKCE (stage 2, 2026-08-28) pure builders + scripted transport.
-  * Challenge vectors are RFC 7636 §B ("test vector the Internet Draft").
-  */
+ * Logto AC+PKCE (stage 2, 2026-08-28) pure builders + scripted transport.
+ * Challenge vectors are RFC 7636 §B ("test vector the Internet Draft").
+ */
 class LogtoAuthCodeSpec extends FunSuite:
 
   // ── PKCE primitives ─────────────────────────────────────────────────────
@@ -32,7 +32,9 @@ class LogtoAuthCodeSpec extends FunSuite:
 
   // ── authorize URL ───────────────────────────────────────────────────────
 
-  test("authorizeUrl carries client_id, S256 challenge, state, openid/email/profile scope, prompt=consent and the loopback redirect") {
+  test(
+    "authorizeUrl carries client_id, S256 challenge, state, openid/email/profile scope, prompt=consent and the loopback redirect"
+  ) {
     val url = LogtoAuthCode.authorizeUrl(
       endpoint = "https://auth.example/",
       clientId = "pkce-app",
@@ -40,21 +42,38 @@ class LogtoAuthCodeSpec extends FunSuite:
       codeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       state = "st-123"
     )
-    assertEquals(url, "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123")
+    assertEquals(
+      url,
+      "https://auth.example/oidc/auth?client_id=pkce-app&redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile&prompt=consent&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=st-123"
+    )
     // O5 (2026-09-11, refresh-revoke plan): the client MUST NOT request
     // offline_access — the provider then issues no refresh_token for this
     // grant, which removes the L1 credential at its source (every
     // revocation timing inherits the fix).
-    assert(!url.contains("offline_access"), "O5: authorize must not request offline_access (no refresh_token is to be issued)")
+    assert(
+      !url.contains("offline_access"),
+      "O5: authorize must not request offline_access (no refresh_token is to be issued)"
+    )
     // prompt=consent still ships, but it is NO LONGER a refresh-token
     // guard — that rationale died with the offline_access scope (see the
     // LogtoAuthCode.authorizeUrl scaladoc); it stays for the shipped UX.
-    assert(url.contains("prompt=consent"), "prompt=consent ships on EVERY authorize (UX; no longer a refresh-token guard)")
-    assert(url.contains("email"), "#290 gap 1: email scope is the neblink_id source for pure-Logto accounts — the me endpoint scopes claims to the grant")
-    assert(url.contains("profile"), "C2 (2026-09-01): profile scope carries the id_token picture claim — the Logto-user avatar source")
+    assert(
+      url.contains("prompt=consent"),
+      "prompt=consent ships on EVERY authorize (UX; no longer a refresh-token guard)"
+    )
+    assert(
+      url.contains("email"),
+      "#290 gap 1: email scope is the neblink_id source for pure-Logto accounts — the me endpoint scopes claims to the grant"
+    )
+    assert(
+      url.contains("profile"),
+      "C2 (2026-09-01): profile scope carries the id_token picture claim — the Logto-user avatar source"
+    )
   }
 
-  test("authorizeUrl forceLogin variant ships prompt=login+consent and does NOT request offline_access (RP-logout fix)") {
+  test(
+    "authorizeUrl forceLogin variant ships prompt=login+consent and does NOT request offline_access (RP-logout fix)"
+  ) {
     val url = LogtoAuthCode.authorizeUrl(
       endpoint = "https://auth.example",
       clientId = "pkce-app",
@@ -115,7 +134,10 @@ class LogtoAuthCodeSpec extends FunSuite:
       idTokenHint = Some("tok.abc.sig"),
       postLogoutRedirectUri = Some("http://127.0.0.1:8080/auth/logged-out")
     )
-    assertEquals(url, "https://auth.example/oidc/session/end?id_token_hint=tok.abc.sig&post_logout_redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Flogged-out")
+    assertEquals(
+      url,
+      "https://auth.example/oidc/session/end?id_token_hint=tok.abc.sig&post_logout_redirect_uri=http%3A%2F%2F127.0.0.1%3A8080%2Fauth%2Flogged-out"
+    )
   }
 
   test("endSessionUrl omits absent params and tolerates trailing-slash endpoints") {
@@ -128,7 +150,13 @@ class LogtoAuthCodeSpec extends FunSuite:
   // ── token requests ──────────────────────────────────────────────────────
 
   test("tokenRequest posts the authorization_code grant with the verifier") {
-    val req = LogtoAuthCode.tokenRequest("https://auth.example", "pkce-app", "http://127.0.0.1:8080/auth/callback", "abc", "ver")
+    val req = LogtoAuthCode.tokenRequest(
+      "https://auth.example",
+      "pkce-app",
+      "http://127.0.0.1:8080/auth/callback",
+      "abc",
+      "ver"
+    )
     assertEquals(req.url, "https://auth.example/oidc/token")
     assertEquals(req.contentType, "application/x-www-form-urlencoded")
     assert(req.body.contains("grant_type=authorization_code"))
@@ -162,13 +190,17 @@ class LogtoAuthCodeSpec extends FunSuite:
 
   test("parseTokenResponse extracts picture from id_token (C2)") {
     // JWT payload {"picture":"https://avatars.example/pic.png"} — header/sig are filler.
-    val idToken = "eyJhbGciOiJSUzI1NiJ9.eyJwaWN0dXJlIjoiaHR0cHM6Ly9hdmF0YXJzLmV4YW1wbGUvcGljLnBuZyIsInN1YiI6InVzZXItMSJ9.c2ln"
+    val idToken =
+      "eyJhbGciOiJSUzI1NiJ9.eyJwaWN0dXJlIjoiaHR0cHM6Ly9hdmF0YXJzLmV4YW1wbGUvcGljLnBuZyIsInN1YiI6InVzZXItMSJ9.c2ln"
     val body = s"""{"access_token":"at","refresh_token":"rt","id_token":"$idToken"}"""
     val parsed = LogtoAuthCode.parseTokenResponse(body)
     assertEquals(parsed.map(_.picture), Right(Some("https://avatars.example/pic.png")))
     // id_token missing / malformed → None, token still parsed
     assertEquals(LogtoAuthCode.parseTokenResponse("""{"access_token":"at"}""").map(_.picture), Right(None))
-    assertEquals(LogtoAuthCode.parseTokenResponse("""{"access_token":"at","id_token":"not-a-jwt"}""").map(_.picture), Right(None))
+    assertEquals(
+      LogtoAuthCode.parseTokenResponse("""{"access_token":"at","id_token":"not-a-jwt"}""").map(_.picture),
+      Right(None)
+    )
   }
 
   test("parseTokenResponse carries the RAW id_token through (RP-logout hint source)") {

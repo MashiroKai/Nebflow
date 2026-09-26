@@ -2,9 +2,8 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
-import nebflow.service.{MemoryBudget, MemoryStore}
+import nebflow.shared.{MemoryBudget, MemoryStore, PathUtil}
 
 import java.nio.file.Files
 
@@ -47,7 +46,11 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
     MemoryTrackSignal.resetForTest()
 
   private def enqueue(content: String): String =
-    MemoryQueue.enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula").toOption.get.id
+    MemoryQueue
+      .enqueue("user", "append", None, None, Some(content), Some("s"), MemoryQueue.TriggerManual, "Nebula")
+      .toOption
+      .get
+      .id
 
   private def banner(id: String, what: String): Unit =
     println(s"[evidence-$id][BEGIN] $what")
@@ -60,9 +63,10 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
     enqueue("- 证据条目一")
     enqueue("- 证据条目二")
     val before = os.read(MemoryQueue.queuePath).linesIterator.toVector
-    val written = MemoryTrack.degradeOutcomes(isTimeout = false, detail = "injected infra failure (evidence)").unsafeRunSync()
-    val after  = os.read(MemoryQueue.queuePath).linesIterator.toVector
-    val st     = MemoryQueue.readState()
+    val written =
+      MemoryTrack.degradeOutcomes(isTimeout = false, detail = "injected infra failure (evidence)").unsafeRunSync()
+    val after = os.read(MemoryQueue.queuePath).linesIterator.toVector
+    val st = MemoryQueue.readState()
     val injected = MemoryQueue.summaryLine()
 
     banner("D", "degradeOutcomes(isTimeout=false) 后的队列原始产物")
@@ -88,13 +92,19 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
   test("证据⑤：dry-run 计划 + 预算 fail-closed（原始输出，超顶即停、剩余留 pending）"):
     reset()
     val hard = MemoryBudget.UserHardBytes
-    os.write.over(MemoryStore.userMemoryPath, "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n", createFolders = true)
+    os.write.over(
+      MemoryStore.userMemoryPath,
+      "# U\n\n## 节\n\n- " + ("y" * (hard - 40).toInt) + "\n",
+      createFolders = true
+    )
     // 单条即超顶（剩余空间 < 43B）⇒ 停点即首条
     val q1 = enqueue("- " + ("z" * 40))
     val q2 = enqueue("- " + ("z" * 41))
     val st = MemoryQueue.readState()
-    val plan = MemoryQueue.plan(st, Map(
-      "user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath))))
+    val plan = MemoryQueue.plan(
+      st,
+      Map("user" -> MemoryQueue.TargetFile(MemoryStore.userMemoryPath.toString, os.read(MemoryStore.userMemoryPath)))
+    )
 
     banner("E", "超预算场景 plan.render() 全文")
     println(plan.render())
@@ -113,7 +123,9 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
   test("证据⑥：打了 outcome 的 note —— 旧谓词判「已闭合/永不再 pending」，新谓词恢复可重试"):
     reset()
     val id = enqueue("- 条目一")
-    assert(MemoryQueue.recordOutcome(id, MemoryQueue.ResultRejected, "memory-consolidator", "旧口径：infra 失败写 rejected").isRight)
+    assert(
+      MemoryQueue.recordOutcome(id, MemoryQueue.ResultRejected, "memory-consolidator", "旧口径：infra 失败写 rejected").isRight
+    )
     val st = MemoryQueue.readState()
 
     // 旧谓词（main 基线原文，MemoryQueue.scala:112-113）：任何 outcome 即闭合。
@@ -125,8 +137,12 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
     println(s"[evidence-retry] outcomes = ${st.outcomes.map(o => s"${o.ref}:${o.result}").mkString(", ")}")
     println(s"[evidence-retry] TerminalResults   = ${MemoryQueue.TerminalResults.toList.sorted.mkString(",")}")
     println(s"[evidence-retry] RetryableResults  = ${MemoryQueue.RetryableResults.toList.sorted.mkString(",")}")
-    println(s"[evidence-retry] OLD predicate (main baseline) pending = ${oldPending.map(_.id).mkString(",")} (size ${oldPending.size})")
-    println(s"[evidence-retry] NEW predicate (this batch)    pending = ${newPending.map(_.id).mkString(",")} (size ${newPending.size})")
+    println(
+      s"[evidence-retry] OLD predicate (main baseline) pending = ${oldPending.map(_.id).mkString(",")} (size ${oldPending.size})"
+    )
+    println(
+      s"[evidence-retry] NEW predicate (this batch)    pending = ${newPending.map(_.id).mkString(",")} (size ${newPending.size})"
+    )
     println(s"[evidence-retry] retryable? ${MemoryQueue.RetryableResults.contains(MemoryQueue.ResultRejected)}")
     end("retry")
 
@@ -144,3 +160,4 @@ class MempipeSelfHealEvidenceSpec extends FunSuite:
     println(s"[evidence-hist] consumed=${stats.consumed}")
     end("hist")
     assertEquals(stats.consumed, 1)
+end MempipeSelfHealEvidenceSpec

@@ -3,8 +3,10 @@ package nebflow.neblink
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 import java.nio.file.{Files, Path}
+
 import scala.jdk.CollectionConverters.*
 
 /** Tests for device capabilities and new DeviceIdentity/PeerInfo fields. */

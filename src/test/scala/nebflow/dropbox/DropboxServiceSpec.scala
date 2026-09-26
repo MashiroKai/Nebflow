@@ -1,14 +1,14 @@
 package nebflow.dropbox
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.parse
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService, PeerInfo}
+import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService}
+import nebflow.shared.{DropboxMessage, PathUtil, PeerInfo}
 
 import scala.concurrent.duration.*
 
@@ -25,16 +25,18 @@ import scala.concurrent.duration.*
 class DropboxServiceSpec extends CatsEffectSuite:
 
   // Short signaling windows so timeout tests finish fast.
-  private val OfferT     = 300.millis  // pending → file-response
-  private val AcceptedT  = 400.millis  // accepted → upload starts
-  private val TransferT  = 500.millis  // transferring → done
+  private val OfferT = 300.millis // pending → file-response
+  private val AcceptedT = 400.millis // accepted → upload starts
+  private val TransferT = 500.millis // transferring → done
 
   private def peer(id: String): PeerInfo =
     PeerInfo(deviceId = id, deviceName = s"Device-$id", platform = "macos", address = "http://127.0.0.1:9")
 
   /** Persisted message of the given kind/transfer, or fail. */
   private def msgByTransfer(svc: DropboxService, deviceId: String, transferId: String): IO[DropboxMessage] =
-    svc.getHistory(deviceId).map(_.find(m => m.kind == "file" && m.transferId == transferId))
+    svc
+      .getHistory(deviceId)
+      .map(_.find(m => m.kind == "file" && m.transferId == transferId))
       .map(_.getOrElse(fail(s"no file message with transferId=$transferId for $deviceId")))
 
   /** Events recorded from WsHub broadcasts (type + success fields). */
@@ -42,8 +44,12 @@ class DropboxServiceSpec extends CatsEffectSuite:
     seen.get.map(_.flatMap { j =>
       val hc = j.hcursor
       if hc.downField("type").as[String].toOption.contains("dropbox-file-complete") then
-        Some((hc.downField("msg").downField("success").as[Boolean].getOrElse(true),
-              hc.downField("msg").downField("error").as[String].getOrElse("")))
+        Some(
+          (
+            hc.downField("msg").downField("success").as[Boolean].getOrElse(true),
+            hc.downField("msg").downField("error").as[String].getOrElse("")
+          )
+        )
       else None
     })
 
@@ -84,10 +90,10 @@ class DropboxServiceSpec extends CatsEffectSuite:
 
   test("relay delivery failure propagates through sendDataOrRelay (R3, relay path exercised)") {
     val calls = new java.util.concurrent.atomic.AtomicInteger(0)
-    val failingRelay = new NeblinkClient(
-      NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
-      override def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
-        IO { calls.incrementAndGet() }.as(Left("relay tunnel missing"))
+    val failingRelay =
+      new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
+        override def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]] =
+          IO { calls.incrementAndGet() }.as(Left("relay tunnel missing"))
     withStack { (ms, svc, seen) =>
       for
         _ <- IO(ms.setRelayClient(Some(failingRelay)))
@@ -112,7 +118,8 @@ class DropboxServiceSpec extends CatsEffectSuite:
         pending <- svc.getHistory("peer1").map(_.find(_.kind == "file"))
         transferId = pending.map(_.transferId).getOrElse("")
         _ <- ms.handleDataMessage(
-          parse(s"""{"kind":"file-response","transferId":"$transferId","accepted":true}""").toOption.get)
+          parse(s"""{"kind":"file-response","transferId":"$transferId","accepted":true}""").toOption.get
+        )
         accepted <- msgByTransfer(svc, "peer1", transferId)
       yield
         assertEquals(pending.map(_.status), Some("pending"), "successful offer must be pending")
@@ -145,11 +152,11 @@ class DropboxServiceSpec extends CatsEffectSuite:
   test("file-complete arriving after a restart rebuilds the transfer and completes the message (R5)") {
     withStack { (ms, svc1, seen) =>
       // svc1 (process 1) receives a file-offer: persists an inbound file message.
-      val offer = parse(
-        """{"kind":"file-offer","senderId":"peer1","senderName":"P1","transferId":"t-restart",
+      val offer = parse("""{"kind":"file-offer","senderId":"peer1","senderName":"P1","transferId":"t-restart",
            "msgId":"m-restart","fileName":"a.txt","fileSize":123,"mimeType":"text/plain"}""").toOption.get
       val complete = parse(
-        """{"kind":"file-complete","transferId":"t-restart","msgId":"m-restart","success":true,"sha256":"x"}""").toOption.get
+        """{"kind":"file-complete","transferId":"t-restart","msgId":"m-restart","success":true,"sha256":"x"}"""
+      ).toOption.get
       for
         _ <- ms.handleDataMessage(offer)
         // "restart": a fresh DropboxService loads persisted messages but has an
@@ -161,8 +168,12 @@ class DropboxServiceSpec extends CatsEffectSuite:
         rebuilt = hist2.find(_.transferId == "t-restart")
       yield
         assert(rebuilt.isDefined, "rebuilt instance must hold the persisted message")
-        assertEquals(rebuilt.map(_.status), Some("completed"),
-          "late file-complete must migrate the rebuilt message to completed (no more stuck『传输中…』)")
+        assertEquals(
+          rebuilt.map(_.status),
+          Some("completed"),
+          "late file-complete must migrate the rebuilt message to completed (no more stuck『传输中…』)"
+        )
+      end for
     }
   }
 

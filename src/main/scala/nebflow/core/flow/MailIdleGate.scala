@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import nebflow.agent.{AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**
@@ -51,9 +51,7 @@ object MailIdleGate:
       (!checkStatus || rec.status == AgentStatus.Idle) &&
       rec.outstandingSubagents == 0 &&
       // 无在飞任务型子 agent（一阶；递归由存在性覆盖）
-      !registry.values.exists(c =>
-        c.parentRef.exists(_ == rec.ref) && taskKinds.contains(c.kind)
-      ) &&
+      !registry.values.exists(c => c.parentRef.exists(_ == rec.ref) && taskKinds.contains(c.kind)) &&
       // 无关联 running flow（Q3：RunningFlow.sessionId 关联触发者，补节点间隙窗口）
       !runningFlows.exists(f => f.status == NodeStatus.Running && f.sessionId.contains(sid))
     }

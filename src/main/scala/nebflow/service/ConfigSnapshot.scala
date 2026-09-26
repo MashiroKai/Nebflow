@@ -2,8 +2,7 @@ package nebflow.service
 
 import cats.effect.IO
 import io.circe.parser.parse
-import nebflow.core.Branding
-import nebflow.core.PathUtil
+import nebflow.shared.{Branding, PathUtil}
 import os.Path
 
 /**
@@ -17,14 +16,16 @@ object ConfigSnapshot:
   private def backupDir: Path = PathUtil.dataRoot / "backups"
   private val MaxSnapshots = 5
 
-  /** Snapshot file prefix — matches BOTH the brand config name and the
-    * hardcoded legacy "nebflow.json." so pre-rename snapshots stay
-    * restorable (L3 rebrand compat; identical names collapse to one). */
+  /**
+   * Snapshot file prefix — matches BOTH the brand config name and the
+   * hardcoded legacy "nebflow.json." so pre-rename snapshots stay
+   * restorable (L3 rebrand compat; identical names collapse to one).
+   */
   private def snapshotPrefixes: List[String] = List(Branding.configFileName + ".", "nebflow.json.")
 
   /** Save current config as a timestamped snapshot. */
   def save(): IO[Unit] = IO.blocking {
-    val configPath = nebflow.llm.Config.DefaultConfigPath
+    val configPath = nebflow.shared.Config.DefaultConfigPath
     if !os.exists(configPath) then ()
     else
       os.makeDir.all(backupDir)
@@ -36,15 +37,16 @@ object ConfigSnapshot:
       prune()
   }
 
-  /** Restore the latest valid snapshot to config path. Returns true if restored.
-    *
-    * 2026-09-07 插件信任持久化修复（防御纵深）：收窄触发条件——只在当前配置
-    * **真正损坏（非法 JSON / 不可读）** 时恢复。一个「合法 JSON 但字段不全」的
-    * 配置（如冷启动种子写入的 plugins.trust 对象、无 llm 节）**不是**损坏——用
-    * 陈旧 {} 快照打回会摧毁这段时间的可信写入（信任表 / 已配置 provider 等）。
-    * 该形态现可被 Config.loadServiceConfig 正常解码（llm 缺省），恢复仅兜底真
-    * 损坏文件。
-    */
+  /**
+   * Restore the latest valid snapshot to config path. Returns true if restored.
+   *
+   * 2026-09-07 插件信任持久化修复（防御纵深）：收窄触发条件——只在当前配置
+   * **真正损坏（非法 JSON / 不可读）** 时恢复。一个「合法 JSON 但字段不全」的
+   * 配置（如冷启动种子写入的 plugins.trust 对象、无 llm 节）**不是**损坏——用
+   * 陈旧 {} 快照打回会摧毁这段时间的可信写入（信任表 / 已配置 provider 等）。
+   * 该形态现可被 Config.loadServiceConfig 正常解码（llm 缺省），恢复仅兜底真
+   * 损坏文件。
+   */
   def restoreLatest(): IO[Boolean] = IO.blocking {
     // Write path (brand name) — restoring is a write, and completes the
     // config-file rename migration like any other write.

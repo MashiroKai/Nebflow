@@ -7,16 +7,17 @@ import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
 
-/** WorkspaceDirPicker 三态 + 单飞护栏验收（workspace-picker 批次）。
-  *
-  * 全部走注入 Env（headless 探测 + opener）——spec 层永不构造真实 AWT 对话框
-  * （作者屏幕禁弹真框）。真实 GUI 链路由《作者真机走查清单》人工覆盖；隔离实例
-  * 只实测 isHeadless 值与 Toolkit 初始化，见报告。
-  *
-  * 变异验红锚点：test ① headless → fallback。摘除 pick 的 headless gate 后，
-  * 该用例走 opener 注入路径返回 path 事件（绝不会真开对话框——opener 已注入），
-  * 断言 reason=="headless-jvm" 失败 → 红；恢复 gate → 绿。
-  */
+/**
+ * WorkspaceDirPicker 三态 + 单飞护栏验收（workspace-picker 批次）。
+ *
+ * 全部走注入 Env（headless 探测 + opener）——spec 层永不构造真实 AWT 对话框
+ * （作者屏幕禁弹真框）。真实 GUI 链路由《作者真机走查清单》人工覆盖；隔离实例
+ * 只实测 isHeadless 值与 Toolkit 初始化，见报告。
+ *
+ * 变异验红锚点：test ① headless → fallback。摘除 pick 的 headless gate 后，
+ * 该用例走 opener 注入路径返回 path 事件（绝不会真开对话框——opener 已注入），
+ * 断言 reason=="headless-jvm" 失败 → 红；恢复 gate → 绿。
+ */
 class WorkspaceDirPickerSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 30.seconds
@@ -31,7 +32,7 @@ class WorkspaceDirPickerSpec extends CatsEffectSuite:
     frames.get.map(_.headOption.getOrElse(fail("no frame captured")))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 20.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -57,7 +58,11 @@ class WorkspaceDirPickerSpec extends CatsEffectSuite:
       busy <- IO(WorkspaceDirPicker.busy)
     yield
       assertEquals(f.hcursor.get[String]("type").toOption, Some("workspaceDirPicked"))
-      assertEquals(f.hcursor.get[String]("reason").toOption, Some("headless-jvm"), "mutation anchor: removing the headless gate turns this red (path event instead of fallback)")
+      assertEquals(
+        f.hcursor.get[String]("reason").toOption,
+        Some("headless-jvm"),
+        "mutation anchor: removing the headless gate turns this red (path event instead of fallback)"
+      )
       assertEquals(f.hcursor.get[Boolean]("fallback").toOption, Some(true))
       assertEquals(f.hcursor.get[String]("sessionId").toOption, Some("sid-1"))
       assertEquals(f.hcursor.get[String]("requestId").toOption, Some("rid-1"))
@@ -70,7 +75,10 @@ class WorkspaceDirPickerSpec extends CatsEffectSuite:
   test("② headless=false + opener 选中 → path 事件（sessionId/requestId 透传）") {
     for
       (frames, wsSend) <- capture()
-      env = WorkspaceDirPicker.Env(headless = () => false, opener = Some(() => IO.sleep(10.millis).as(Some("/tmp/ws-chosen"))))
+      env = WorkspaceDirPicker.Env(
+        headless = () => false,
+        opener = Some(() => IO.sleep(10.millis).as(Some("/tmp/ws-chosen")))
+      )
       _ <- WorkspaceDirPicker.pick("sid-2", "rid-2", wsSend, env)
       f <- firstFrame(frames)
       busy <- IO(WorkspaceDirPicker.busy)
@@ -111,7 +119,10 @@ class WorkspaceDirPickerSpec extends CatsEffectSuite:
       busy <- IO(WorkspaceDirPicker.busy)
     yield
       assertEquals(f.hcursor.get[Boolean]("fallback").toOption, Some(true))
-      assert(f.hcursor.get[String]("reason").toOption.exists(_.contains("dialog exploded")), s"reason must carry the failure: $f")
+      assert(
+        f.hcursor.get[String]("reason").toOption.exists(_.contains("dialog exploded")),
+        s"reason must carry the failure: $f"
+      )
       assert(!busy, "gate must release on the error path")
     end for
   }
@@ -125,7 +136,10 @@ class WorkspaceDirPickerSpec extends CatsEffectSuite:
       slowOpener = () => gate.get.as(Some("/in-flight-path"))
       env = WorkspaceDirPicker.Env(headless = () => false, opener = Some(slowOpener))
       // 良性 opener：即便单飞护栏被变异破坏，重复 pick 也绝不触发真对话框
-      benign = WorkspaceDirPicker.Env(headless = () => false, opener = Some(() => IO.pure(Some("/duplicate-must-not-run"))))
+      benign = WorkspaceDirPicker.Env(
+        headless = () => false,
+        opener = Some(() => IO.pure(Some("/duplicate-must-not-run")))
+      )
       fib1 <- WorkspaceDirPicker.pick("sid-5", "rid-A", wsSend1, env).start
       _ <- waitUntil(5.seconds)(IO(WorkspaceDirPicker.busy)) // gate 已被首个占用
       _ <- WorkspaceDirPicker.pick("sid-5", "rid-B", wsSend2, benign) // 重复点击 → 忽略

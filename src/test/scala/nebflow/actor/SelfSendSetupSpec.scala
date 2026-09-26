@@ -5,9 +5,11 @@ import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import scala.concurrent.duration.*
 
-/** Isolation probe (2026-08-30): does a setup-time `ctx.self ! msg` get
-  * processed by the message loop? AgentActor relies on this for
-  * RecoverPersistedQueues (F2) — this spec proves the mechanism itself. */
+/**
+ * Isolation probe (2026-08-30): does a setup-time `ctx.self ! msg` get
+ * processed by the message loop? AgentActor relies on this for
+ * RecoverPersistedQueues (F2) — this spec proves the mechanism itself.
+ */
 class SelfSendSetupSpec extends FunSuite:
 
   private case object Kick
@@ -15,7 +17,7 @@ class SelfSendSetupSpec extends FunSuite:
   private def kickBehavior(seen: cats.effect.Ref[IO, Int]): Behavior[Any] =
     Behaviors.receiveMessage[Any] {
       case Kick => seen.update(_ + 1) *> IO.pure(kickBehavior(seen))
-      case _    => IO.pure(kickBehavior(seen))
+      case _ => IO.pure(kickBehavior(seen))
     }
 
   test("setup-time self-send is processed by the loop") {
@@ -37,6 +39,7 @@ class SelfSendSetupSpec extends FunSuite:
       val n = program.unsafeRunSync()
       assertEquals(n, 1, "setup-time self-send must be processed exactly once")
     finally system.stopAll.attempt.void.unsafeRunSync()
+    end try
   }
 
   test("post-start self-send is processed (control)") {

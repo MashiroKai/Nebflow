@@ -5,7 +5,7 @@ import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 
@@ -35,9 +35,11 @@ final class NeblinkDiscovery(
   def currentDelay: IO[FiniteDuration] =
     failCount.get.map(delayForFailures)
 
-  /** Pure backoff function — testable without IO. 实现收归伴生对象
-    * （`NeblinkDiscovery.delayForFailures`，口径与参数依据见那边），本方法只转发
-    * ——避免「spec 复制一份阈值来测副本」的形态（既有 spec 曾如此，等于没钉住）。 */
+  /**
+   * Pure backoff function — testable without IO. 实现收归伴生对象
+   * （`NeblinkDiscovery.delayForFailures`，口径与参数依据见那边），本方法只转发
+   * ——避免「spec 复制一份阈值来测副本」的形态（既有 spec 曾如此，等于没钉住）。
+   */
   def delayForFailures(n: Int): FiniteDuration =
     NeblinkDiscovery.delayForFailures(n)
 

@@ -44,8 +44,10 @@ class FriendRosterSinglePointSpec extends FunSuite:
 
   private val scalaRoot = os.pwd / "src" / "main" / "scala"
 
-  /** `src/main/scala/nebflow/` 全树 的 .scala 文件（**不含测试**——测试里的
-    * 字面量是断言而非实现，本哨兵只管生产实现面）。 */
+  /**
+   * `src/main/scala/nebflow/` 全树 的 .scala 文件（**不含测试**——测试里的
+   * 字面量是断言而非实现，本哨兵只管生产实现面）。
+   */
   private lazy val sources: List[os.Path] =
     os.walk(scalaRoot / "nebflow")
       .filter(os.isFile)
@@ -56,8 +58,10 @@ class FriendRosterSinglePointSpec extends FunSuite:
   private def relPath(p: os.Path): String =
     p.relativeTo(scalaRoot).toString.replace(java.io.File.separatorChar, '/')
 
-  /** 去注释（块注释 + 行注释）：偏差注释里会**提到** `FriendRoster` 解释口径，
-    * 只有**代码里**的引用才算「已对齐」。仅本 spec 的自检用，不参与生产判定。 */
+  /**
+   * 去注释（块注释 + 行注释）：偏差注释里会**提到** `FriendRoster` 解释口径，
+   * 只有**代码里**的引用才算「已对齐」。仅本 spec 的自检用，不参与生产判定。
+   */
   private def stripComments(src: String): String =
     val noBlocks = src.replaceAll("(?s)/\\*.*?\\*/", "")
     noBlocks.linesIterator.map(l => l.split("//", 2).head).mkString("\n")
@@ -79,14 +83,15 @@ class FriendRosterSinglePointSpec extends FunSuite:
   literals.foreach { literal =>
     test(s"候选文案单点：「$literal」只准出现在 FriendRoster ∪ ⑦-D7 允许清单") {
       val found = hits(literal)
-      assert(found.nonEmpty,
-        s"「$literal」全仓零命中——字面量被抽成常量/改写会让本哨兵静默失效；请同步本 spec 的 literals")
+      assert(found.nonEmpty, s"「$literal」全仓零命中——字面量被抽成常量/改写会让本哨兵静默失效；请同步本 spec 的 literals")
       val files = found.map(_._1).distinct.toSet
       val offenders = files.diff(allowed)
-      assert(offenders.isEmpty,
+      assert(
+        offenders.isEmpty,
         s"新增候选文案实现点（第二个分叉！）：${offenders.toList.sorted.mkString(", ")} —— " +
           s"候选文案/解析必须收归 nebflow.neblink.FriendRoster（命中原样见下）\n" +
-          found.map((f, l) => s"  $f:$l").mkString("\n"))
+          found.map((f, l) => s"  $f:$l").mkString("\n")
+      )
     }
   }
 
@@ -97,13 +102,20 @@ class FriendRosterSinglePointSpec extends FunSuite:
     val p = scalaRoot / "nebflow" / "core" / "tools" / "FriendMessageTool.scala"
     val src = os.read(p)
     val code = stripComments(src)
-    assert(code.contains("FriendRoster.resolve"),
-      "FriendMessageTool 不再委托 FriendRoster.resolve —— 好友面出现第二实现，请回改实现并同步本登记")
-    assert(!code.contains("Available friends: "),
-      "FriendMessageTool 自带了一份好友候选文案 —— 好友面单点被打破（第二分叉），禁；候选文案只准在 FriendRoster")
+    assert(
+      // 严格DAG第⑥步第二批(2026-09-27):委托面改经 core.FriendRosterPort 注册器(实现仍单点
+      // nebflow.neblink.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
+      code.contains("FriendRosterPort.resolve"),
+      "FriendMessageTool 不再委托 FriendRosterPort.resolve(FriendRoster 单点的注册器投影) —— 好友面出现第二实现，请回改实现并同步本登记"
+    )
+    assert(
+      !code.contains("Available friends: "),
+      "FriendMessageTool 自带了一份好友候选文案 —— 好友面单点被打破（第二分叉），禁；候选文案只准在 FriendRoster"
+    )
   }
 
-  test("唯一实现点仍在 FriendRoster（解析与候选文案都在，未搬空）") {    val src = os.read(scalaRoot / "nebflow" / "neblink" / "FriendRoster.scala")
+  test("唯一实现点仍在 FriendRoster（解析与候选文案都在，未搬空）") {
+    val src = os.read(scalaRoot / "nebflow" / "neblink" / "FriendRoster.scala")
     assert(src.contains("def resolve("), "FriendRoster.resolve 不在——解析单点被搬走")
     assert(src.contains("def candidateLine("), "FriendRoster.candidateLine 不在——候选文案单点被搬走")
     assert(src.contains("def availableHint("), "FriendRoster.availableHint 不在")

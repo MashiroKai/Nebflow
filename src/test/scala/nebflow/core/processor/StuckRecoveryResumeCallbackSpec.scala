@@ -47,9 +47,15 @@ class StuckRecoveryResumeCallbackSpec extends StuckRecoveryFixture:
         rejFired <- firedRej.get
         nodeRej <- fx.rt.store.getNode("n-cb-rej")
         casRej <- casLogged(fx.ws, "n-cb-rej")
-        _ <- IO(println(s"[FIX-READING] 回调-接受腿: fired=$okFired resumedAlive=$alive " +
-          s"stillBlockedInStartNode=$stillBlocked casLog=$casOk"))
-        _ <- IO(println(s"[FIX-READING] 回调-拒绝腿: result=$rej fired=$rejFired node=${nodeRej.map(_.status)} casLog=$casRej"))
+        _ <- IO(
+          println(
+            s"[FIX-READING] 回调-接受腿: fired=$okFired resumedAlive=$alive " +
+              s"stillBlockedInStartNode=$stillBlocked casLog=$casOk"
+          )
+        )
+        _ <- IO(
+          println(s"[FIX-READING] 回调-拒绝腿: result=$rej fired=$rejFired node=${nodeRej.map(_.status)} casLog=$casRej")
+        )
       yield
         assert(okFired, "CAS 接受 ⇒ onResumed 必须已触发（写点前移的结构性证明）")
         assert(alive, "回调触发时被恢复会话已重新登记 ⇒ 写点确实早于会话终态")
@@ -59,6 +65,7 @@ class StuckRecoveryResumeCallbackSpec extends StuckRecoveryFixture:
         assertEquals(rejFired, false, "CAS 被拒 ⇒ onResumed **零触发**（零写入的结构性保证）")
         assertEquals(nodeRej.map(_.status), Some(NodeLifecycle.Cancelled), "拒绝不得改动节点状态")
         assert(!casRej, "CAS 被拒 ⇒ 无 'resumed from stuck' 留痕")
+      end for
     }
   }
 
@@ -69,16 +76,23 @@ class StuckRecoveryResumeCallbackSpec extends StuckRecoveryFixture:
         _ <- seedNode(fx.rt.store, "n-cb-boom", sid, NodeLifecycle.Running)
         _ <- seedTranscript(fx.res, sid)
         anchor <- fx.rt.engine.probeRecoveryAnchors(sid)
-        fiber <- fx.rt.engine.hardResumeNode(sid, Some(anchor),
-          IO.raiseError(new RuntimeException("onResumed boom (fixture)"))).start
+        fiber <- fx.rt.engine
+          .hardResumeNode(sid, Some(anchor), IO.raiseError(new RuntimeException("onResumed boom (fixture)")))
+          .start
         casSeen <- waitSoft(15.seconds)(casLogged(fx.ws, "n-cb-boom"))
         alive <- waitSoft(15.seconds)(aliveFlowSession(fx.res, sid))
         stillBlocked <- IO.race(fiber.join, IO.sleep(500.millis)).map(_.isRight)
-        _ <- IO(println(s"[FIX-READING] 回调失败隔离: casLog=$casSeen resumedAlive=$alive " +
-          s"stillBlockedInStartNode=$stillBlocked"))
+        _ <- IO(
+          println(
+            s"[FIX-READING] 回调失败隔离: casLog=$casSeen resumedAlive=$alive " +
+              s"stillBlockedInStartNode=$stillBlocked"
+          )
+        )
       yield
         assert(casSeen, "onResumed 失败不得中断 CAS 留痕（write-failure isolation）")
         assert(alive, "onResumed 失败不得中断恢复启动（被恢复会话仍在运行）")
         assert(stillBlocked, "onResumed 失败后恢复腿仍正常推进到 startNode（阻塞点）")
+      end for
     }
   }
+end StuckRecoveryResumeCallbackSpec

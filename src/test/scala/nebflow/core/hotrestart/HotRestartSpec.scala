@@ -4,11 +4,10 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.project.{FlowMapStore, NodeDef, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{LlmInterface, ModelCandidate, ThinkingConfig}
-import nebflow.shared.LlmHandle
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{LlmInterface, ModelCandidate}
+import nebflow.shared.{LlmHandle, PathUtil, ThinkingConfig}
 import nebflow.core.tools.BgTaskRegistry
 
 import scala.concurrent.duration.*
@@ -120,12 +119,12 @@ class HotRestartSpec extends CatsEffectSuite:
 
   private def waitUntil(desc: String, timeoutMs: Long = 8000)(cond: IO[Boolean]): IO[Unit] =
     def loop: IO[Unit] = cond.flatMap(if _ then IO.unit else IO.sleep(40.millis) *> loop)
-    loop.timeout(timeoutMs.millis)
+    loop
+      .timeout(timeoutMs.millis)
       .handleErrorWith(_ => IO.raiseError(new AssertionError(s"timeout waiting for: $desc")))
 
   /** Fake spawn 注入：进程存亡/destroy 记账全在测试手中（不 spawn 真实进程）。 */
-  private class FakeProcess(aliveAfterGrace: Boolean, destroyed: Ref[IO, Int])
-      extends HotRestart.SpawnedProcess:
+  private class FakeProcess(aliveAfterGrace: Boolean, destroyed: Ref[IO, Int]) extends HotRestart.SpawnedProcess:
     def pid: Long = 424242L
     def isAlive: IO[Boolean] = IO.pure(aliveAfterGrace)
     def destroy: IO[Unit] = destroyed.update(_ + 1)
@@ -163,6 +162,7 @@ class HotRestartSpec extends CatsEffectSuite:
       residue <- IO(os.list(tempRoot / "restart").filter(_.last.contains(".tmp.")).toList)
       _ = assertEquals(residue, List.empty[os.Path])
     yield ()
+    end for
   }
 
   test("missing intent reads as None; archiveIntent moves intent to last-restart.json") {
@@ -199,6 +199,7 @@ class HotRestartSpec extends CatsEffectSuite:
       archived <- SuccessorGate.readIntent(SuccessorGate.lastRestartPath(tempRoot))
       _ = assertEquals(archived.isDefined, true, "stale content preserved for forensics")
     yield ()
+    end for
   }
 
   test("writeSuccessor writes {generation, newPid, version, ts}") {
@@ -206,7 +207,8 @@ class HotRestartSpec extends CatsEffectSuite:
       _ <- SuccessorGate.writeSuccessor(tempRoot, 42, 4242)
       raw <- IO(os.read(SuccessorGate.successorPath(tempRoot)))
       decoded <- IO.fromOption(io.circe.parser.decode[SuccessorRecord](raw).toOption)(
-        new AssertionError("successor.json undecodable"))
+        new AssertionError("successor.json undecodable")
+      )
       _ = assertEquals(decoded.generation, 42L)
       _ = assertEquals(decoded.newPid, 4242L)
       _ = assertEquals(decoded.version, nebflow.Version.string)
@@ -216,27 +218,42 @@ class HotRestartSpec extends CatsEffectSuite:
   // ── [s1] 进场校验（R6）────────────────────────────────────────────
 
   private def mkCtx(port: Int = 8080, home: String = tempRoot.toString, ts: Long = System.currentTimeMillis()) =
-    SuccessorContext(oldPid = 999, host = "0.0.0.0", port = port, home = home, generation = 1, ts = ts, intentPath = intentFile)
+    SuccessorContext(
+      oldPid = 999,
+      host = "0.0.0.0",
+      port = port,
+      home = home,
+      generation = 1,
+      ts = ts,
+      intentPath = intentFile
+    )
 
   test("validate: ok / home mismatch / port mismatch / host mismatch / stale (R6)") {
     val now = System.currentTimeMillis()
     assertEquals(SuccessorGate.validate(mkCtx(), tempRoot, "0.0.0.0", 8080, now), Right(()))
-    assert(SuccessorGate.validate(mkCtx(home = "/other"), tempRoot, "0.0.0.0", 8080, now).isLeft, "home mismatch refuses")
+    assert(
+      SuccessorGate.validate(mkCtx(home = "/other"), tempRoot, "0.0.0.0", 8080, now).isLeft,
+      "home mismatch refuses"
+    )
     assert(SuccessorGate.validate(mkCtx(port = 9999), tempRoot, "0.0.0.0", 8080, now).isLeft, "port mismatch refuses")
     assert(SuccessorGate.validate(mkCtx(), tempRoot, "127.0.0.1", 8080, now).isLeft, "host mismatch refuses")
     assert(
       SuccessorGate.validate(mkCtx(ts = now - 61_000), tempRoot, "0.0.0.0", 8080, now).isLeft,
-      "stale intent (>60s) refuses")
+      "stale intent (>60s) refuses"
+    )
   }
 
   // ── [s4] 端口让渡等待（探测注入）──────────────────────────────────
 
   test("awaitHandover: pid dead + no live listener → proceed") {
-    SuccessorGate.awaitHandover(
-      oldPid = 100, port = 8080,
-      pidAlive = _ => IO.pure(false),
-      liveListener = _ => IO.pure(false)
-    ).map(result => assertEquals(result, Right(())))
+    SuccessorGate
+      .awaitHandover(
+        oldPid = 100,
+        port = 8080,
+        pidAlive = _ => IO.pure(false),
+        liveListener = _ => IO.pure(false)
+      )
+      .map(result => assertEquals(result, Right(())))
   }
 
   test("awaitHandover: TIME_WAIT-only (connect refused) → proceeds without drain wait") {
@@ -245,7 +262,8 @@ class HotRestartSpec extends CatsEffectSuite:
     val start = System.currentTimeMillis()
     for
       result <- SuccessorGate.awaitHandover(
-        oldPid = 100, port = 8080,
+        oldPid = 100,
+        port = 8080,
         pidAlive = _ => IO.pure(false),
         liveListener = _ => IO.pure(false)
       )
@@ -256,26 +274,33 @@ class HotRestartSpec extends CatsEffectSuite:
   }
 
   test("awaitHandover: old pid still alive past deadline → abandon (not foreign)") {
-    SuccessorGate.awaitHandover(
-      oldPid = 100, port = 8080,
-      pidAlive = _ => IO.pure(true),
-      liveListener = _ => IO.pure(false),
-      pidDeadlineMs = 300,
-      pollMs = 40.millis
-    ).map { result =>
-      assert(result.isLeft, "alive old pid past deadline must abandon")
-      assert(
-        result.left.toOption.get != SuccessorGate.ForeignOccupantSignal,
-        "abandon must not be confused with foreign preemption")
-    }
+    SuccessorGate
+      .awaitHandover(
+        oldPid = 100,
+        port = 8080,
+        pidAlive = _ => IO.pure(true),
+        liveListener = _ => IO.pure(false),
+        pidDeadlineMs = 300,
+        pollMs = 40.millis
+      )
+      .map { result =>
+        assert(result.isLeft, "alive old pid past deadline must abandon")
+        assert(
+          result.left.toOption.get != SuccessorGate.ForeignOccupantSignal,
+          "abandon must not be confused with foreign preemption"
+        )
+      }
   }
 
   test("awaitHandover: pid dead but port still served → ForeignOccupantSignal") {
-    SuccessorGate.awaitHandover(
-      oldPid = 100, port = 8080,
-      pidAlive = _ => IO.pure(false),
-      liveListener = _ => IO.pure(true)
-    ).map(result => assertEquals(result, Left(SuccessorGate.ForeignOccupantSignal)))
+    SuccessorGate
+      .awaitHandover(
+        oldPid = 100,
+        port = 8080,
+        pidAlive = _ => IO.pure(false),
+        liveListener = _ => IO.pure(true)
+      )
+      .map(result => assertEquals(result, Left(SuccessorGate.ForeignOccupantSignal)))
   }
 
   // ── quiesceReport 五域（F1/F2/F4/F5）─────────────────────────────
@@ -284,7 +309,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(q.isIdle, s"expected idle, got: ${q.detail}")
     yield ()
@@ -298,20 +323,34 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       store <- FlowMapStore.open("hot-restart-f1", ws.toString)
       _ <- store.mutate { s =>
-        s.copy(nodes = s.nodes.updated(
-          "n-run",
-          NodeDef(id = "n-run", name = "runner", agent = "x", createdAt = System.currentTimeMillis())
-            .copy(status = NodeLifecycle.Running)))
+        s.copy(nodes =
+          s.nodes.updated(
+            "n-run",
+            NodeDef(id = "n-run", name = "runner", agent = "x", createdAt = System.currentTimeMillis())
+              .copy(status = NodeLifecycle.Running)
+          )
+        )
       }
       rt = ProjectRuntime(
-        ProjectDef(name = "hot-restart-f1", workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis()),
-        store, null, null, null, None)
+        ProjectDef(
+          name = "hot-restart-f1",
+          workspace = ws.toString,
+          agentFile = (ws / "AGENTS.md").toString,
+          createdAt = System.currentTimeMillis()
+        ),
+        store,
+        null,
+        null,
+        null,
+        None
+      )
       _ <- ProjectRuntimeRegistry.register(rt)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(!q.isIdle, s"F1 running node must be busy: ${q.detail}")
       _ = assert(q.runningNodes.exists(_.contains("hot-restart-f1/runner")), q.runningNodes.toString)
     yield ()
+    end for
   }
 
   test("quiesceReport F2: running subtask file → busy") {
@@ -324,7 +363,7 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       _ <- IO(os.makeDir.all(tasksDir))
       _ <- IO(os.write.over(tasksDir / "parent-1.json", taskJson.replaceAll("\\n\\s*", "")))
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q <- hr.quiesceReport
       _ = assert(!q.isIdle, s"F2 running subtask must be busy: ${q.detail}")
       _ = assert(q.subtasks.exists(_.contains("task-1")), q.subtasks.toString)
@@ -335,7 +374,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       q0 <- hr.quiesceReport
       _ = assert(q0.isIdle)
       // F4: 在飞 LLM
@@ -365,7 +404,7 @@ class HotRestartSpec extends CatsEffectSuite:
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", broadcast, tinyTiming)
       (key, _) <- LlmInterface.registerInflight(None)
       result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ <- LlmInterface.cancelAllInflight()
@@ -381,13 +420,25 @@ class HotRestartSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("success chain: idle → C1 pass → C2 pass (readyToBind) → gatewayShutdown completed, draining stays on (验收 1 进程内形态)") {
+  test(
+    "success chain: idle → C1 pass → C2 pass (readyToBind) → gatewayShutdown completed, draining stays on (验收 1 进程内形态)"
+  ) {
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       // 模拟后继 Zone A 完成回执：intent 出现后回写 readyToBind
@@ -413,7 +464,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = false)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       _ <- waitUntil("intent marked failed") { readIntentPhase.map(_ == Some("failed")) }
@@ -437,7 +498,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, destroyed) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming.copy(c2DeadlineMs = 400), spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming.copy(c2DeadlineMs = 400),
+        spawnFn
+      )
       accepted <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(accepted, Right(()))
       _ <- waitUntil("intent marked failed") { readIntentPhase.map(_ == Some("failed")) }
@@ -458,7 +529,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       (key, _) <- LlmInterface.registerInflight(None)
       accepted <- hr.requestRestart("web-ui", RestartMode.WaitIdle(timeoutMs = 5000))
       _ = assertEquals(accepted, Right(()), "WaitIdle accepts while busy")
@@ -479,7 +560,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       (key, _) <- LlmInterface.registerInflight(None)
       accepted <- hr.requestRestart("web-ui", RestartMode.WaitIdle(timeoutMs = 300))
       _ = assertEquals(accepted, Right(()))
@@ -496,7 +587,7 @@ class HotRestartSpec extends CatsEffectSuite:
     for
       shutdownD <- Deferred[IO, Unit]
       res <- mkResources(shutdownD)
-      hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+      hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
       _ <- HotRestart.noteRestartCompleted() // [s7] 等价：冷却锚点刚置位
       result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assert(result.isLeft)
@@ -514,7 +605,17 @@ class HotRestartSpec extends CatsEffectSuite:
       res <- mkResources(shutdownD)
       (broadcast, _) <- mkBroadcastCapture
       (spawnFn, _) <- mkFakeSpawn(aliveAfterGrace = true)
-      hr = new HotRestart(res, 8080, "0.0.0.0", broadcast, tinyTiming, spawnFn)
+      hr = new HotRestart(
+        res,
+        res,
+        res.sessionStore,
+        res.gatewayShutdown,
+        8080,
+        "0.0.0.0",
+        broadcast,
+        tinyTiming,
+        spawnFn
+      )
       r1 <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
       _ = assertEquals(r1, Right(()))
       r2 <- hr.requestRestart("other-ui", RestartMode.RejectIfBusy)
@@ -532,7 +633,7 @@ class HotRestartSpec extends CatsEffectSuite:
       for
         shutdownD <- Deferred[IO, Unit]
         res <- mkResources(shutdownD)
-        hr = new HotRestart(res, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
+        hr = new HotRestart(res, res, res.sessionStore, res.gatewayShutdown, 8080, "0.0.0.0", _ => IO.unit, tinyTiming)
         result <- hr.requestRestart("web-ui", RestartMode.RejectIfBusy)
         _ = assert(result.isLeft)
         _ = assert(result.left.toOption.get.contains("disabled"), result.left.toOption.get)
@@ -540,7 +641,7 @@ class HotRestartSpec extends CatsEffectSuite:
     run.guarantee(IO {
       oldVal match
         case Some(v) => sys.props.put("nebflow.hotRestart.enabled", v)
-        case None    => sys.props.remove("nebflow.hotRestart.enabled")
+        case None => sys.props.remove("nebflow.hotRestart.enabled")
     })
   }
 
@@ -548,11 +649,19 @@ class HotRestartSpec extends CatsEffectSuite:
 
   test("buildCommand jar form: java --add-opens -jar start --home/--port belt --succeed --no-browser") {
     val cmd = HotRestart.buildCommand(
-      "jar", "/fake/java", Some("/fake/nebflow-assembly-1.0.jar"),
-      "/fake/intent.json", home = "/fake/home", port = 8095)
+      "jar",
+      "/fake/java",
+      Some("/fake/nebflow-assembly-1.0.jar"),
+      "/fake/intent.json",
+      home = "/fake/home",
+      port = 8095
+    )
     cmd match
       case Right(parts) =>
-        assertEquals(parts.take(5), List("/fake/java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", "/fake/nebflow-assembly-1.0.jar"))
+        assertEquals(
+          parts.take(5),
+          List("/fake/java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", "/fake/nebflow-assembly-1.0.jar")
+        )
         assertEquals(parts(5), "start")
         // argv belt（intent 记录的 home/port 注入 argv）
         val homePos = parts.indexOf("--home")
@@ -563,13 +672,19 @@ class HotRestartSpec extends CatsEffectSuite:
         assertEquals(parts(i + 1), "/fake/intent.json")
         assertEquals(parts.last, "--no-browser")
       case Left(err) => fail(s"jar form must build: $err")
+    end match
   }
 
   test("buildCommand bundled form: bundle executable with belt + --succeed passthrough") {
     val appJar = "/Applications/Nebflow.app/Contents/app/nebflow.jar"
     val cmd = HotRestart.buildCommand(
-      "bundled", "/fake/java", Some(appJar),
-      "/fake/intent.json", home = "/fake/home", port = 8095)
+      "bundled",
+      "/fake/java",
+      Some(appJar),
+      "/fake/intent.json",
+      home = "/fake/home",
+      port = 8095
+    )
     cmd match
       case Right(parts) =>
         assertEquals(parts.head, "/Applications/Nebflow.app/Contents/MacOS/Nebflow")
@@ -589,8 +704,8 @@ class HotRestartSpec extends CatsEffectSuite:
 
   private def mkBroadcastCapture: IO[(io.circe.Json => IO[Unit], Ref[IO, List[String]])] =
     Ref.of[IO, List[String]](Nil).map { frames =>
-      val send: io.circe.Json => IO[Unit] = j =>
-        frames.update(_ :+ j.hcursor.downField("phase").as[String].getOrElse("?")).void
+      val send: io.circe.Json => IO[Unit] =
+        j => frames.update(_ :+ j.hcursor.downField("phase").as[String].getOrElse("?")).void
       (send, frames)
     }
 

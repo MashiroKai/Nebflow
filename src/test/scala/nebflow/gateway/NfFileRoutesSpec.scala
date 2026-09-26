@@ -10,7 +10,7 @@ import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
 /**
- * Route-level tests for WebSocketRoutes.nfFileRoutes — GET /api/nf-file,
+ * Route-level tests for NfFileRoutes.nfFileRoutes — GET /api/nf-file,
  * the local-file endpoint behind the Canvas HTML viewer's resolveLocalFiles
  * rewrite (viewers/shared.js turns src/href attributes on opened HTML files
  * into /api/nf-file?path=... URLs).
@@ -20,7 +20,7 @@ import scala.jdk.CollectionConverters.*
  * Before the fix a companion `<script src="./snapshot-data.js">` 400'd, the
  * page boot script died on the missing global before binding any listeners,
  * and nothing in the Canvas tab was clickable (see the header of
- * WebSocketRoutes.NfFileAllowedExt for the full chain).
+ * NfFilePolicy.NfFileAllowedExt for the full chain).
  *
  * 2026-09-11 (C batch, R5 = ticket-only): the credential leg is a per-path
  * short-lived ticket, not the global gateway token. The 11 behavioural
@@ -43,10 +43,12 @@ class NfFileRoutesSpec extends CatsEffectSuite:
 
   private val store = NfTicketStore.unsafeCreate(1800)
 
-  /** Injected C1-5 policy: nothing under test lives in P1/P3, and the R2
-    * inode set is empty — the subject here is the ticket leg, not the
-    * credential namespace (that is NfTicketRoutesSpec's job). */
-  private val policy = WebSocketRoutes.NfPathPolicy(
+  /**
+   * Injected C1-5 policy: nothing under test lives in P1/P3, and the R2
+   * inode set is empty — the subject here is the ticket leg, not the
+   * credential namespace (that is NfTicketRoutesSpec's job).
+   */
+  private val policy = NfFilePolicy.NfPathPolicy(
     java.nio.file.Paths.get("/nonexistent-nebflow-data-root"),
     java.nio.file.Paths.get("/nonexistent-nebflow-workspace"),
     Set.empty
@@ -62,9 +64,16 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     Files.write(tmp.resolve("evil.sh"), "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8))
     try test(os.Path(tmp)).unsafeRunSync()
     finally
-      Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(
-        Files.deleteIfExists
-      )
+      Files
+        .walk(tmp)
+        .sorted(java.util.Comparator.reverseOrder())
+        .iterator()
+        .asScala
+        .foreach(
+          Files.deleteIfExists
+        )
+
+  end withTempFiles
 
   /** One seeded file in its own temp dir; cleaned up after `test`. */
   private def withSeedFile[A](name: String, bytes: Array[Byte])(test: Path => IO[A]): A =
@@ -80,14 +89,16 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   private def ticketFor(p: String): String =
     store.issue("spec", java.nio.file.Paths.get(p).toRealPath().toString).unsafeRunSync().token
 
-  /** A ticket for a path that need not exist (the read-leg 404 case: the
-    * issuer would never mint one, so the store is called directly). */
+  /**
+   * A ticket for a path that need not exist (the read-leg 404 case: the
+   * issuer would never mint one, so the store is called directly).
+   */
   private def ticketForMissing(p: String): String =
     store.issue("spec", p).unsafeRunSync().token
 
   private def get(path: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
-    WebSocketRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+    NfFileRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
 
   private def bodyOf(resp: org.http4s.Response[IO]): String =
     resp.bodyText.compile.string.unsafeRunSync()
@@ -186,24 +197,53 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   }
 
   test("whitelist: js/css/json present (the fix)") {
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("js"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("mjs"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("css"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("json"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("js"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("mjs"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("css"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("json"))
   }
 
   test("whitelist: pre-fix media types intact (no silent narrowing)") {
     val preFix = Set(
-      "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
-      "mp4", "webm", "ogg", "ogv", "mov", "mp3", "wav", "oga", "flac", "aac", "m4a",
-      "woff", "woff2", "ttf", "otf", "pdf", "docx", "xlsx", "xlsm", "pptx", "epub"
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "ico",
+      "bmp",
+      "avif",
+      "tiff",
+      "tif",
+      "mp4",
+      "webm",
+      "ogg",
+      "ogv",
+      "mov",
+      "mp3",
+      "wav",
+      "oga",
+      "flac",
+      "aac",
+      "m4a",
+      "woff",
+      "woff2",
+      "ttf",
+      "otf",
+      "pdf",
+      "docx",
+      "xlsx",
+      "xlsm",
+      "pptx",
+      "epub"
     )
-    assert(preFix.subsetOf(WebSocketRoutes.NfFileAllowedExt))
+    assert(preFix.subsetOf(NfFilePolicy.NfFileAllowedExt))
   }
 
   test("whitelist: script/server-code extensions stay excluded") {
     val excluded = Set("sh", "bash", "exe", "bat", "py", "rb", "pl", "php", "html", "htm")
-    assert(excluded.forall(ext => !WebSocketRoutes.NfFileAllowedExt.contains(ext)))
+    assert(excluded.forall(ext => !NfFilePolicy.NfFileAllowedExt.contains(ext)))
   }
 
   // ── 2026-09-17 nfext batch: `.doc` / `.ppt` / `.xls` (legacy binary Office) ──
@@ -221,9 +261,9 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   // verdict chain never consults would pass the set check and fail the route one.
 
   test("whitelist: legacy binary Office types joined (nfext batch)") {
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("doc"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("ppt"))
-    assert(WebSocketRoutes.NfFileAllowedExt.contains("xls"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("doc"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("ppt"))
+    assert(NfFilePolicy.NfFileAllowedExt.contains("xls"))
   }
 
   test("whitelist: census — the batch adds exactly doc/ppt/xls, deletes and renames nothing") {
@@ -232,15 +272,46 @@ class NfFileRoutesSpec extends CatsEffectSuite:
     // Equality in BOTH directions is the point: `++` alone would let a silent
     // deletion through, and `subsetOf` would let an unnoticed extra in.
     val atBranchBase = Set(
-      "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
-      "mp4", "webm", "ogg", "ogv", "mov", "mp3", "wav", "oga", "flac", "aac", "m4a",
-      "woff", "woff2", "ttf", "otf",
-      "pdf", "docx", "xlsx", "xlsm", "pptx", "epub",
-      "js", "mjs", "css", "json"
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "ico",
+      "bmp",
+      "avif",
+      "tiff",
+      "tif",
+      "mp4",
+      "webm",
+      "ogg",
+      "ogv",
+      "mov",
+      "mp3",
+      "wav",
+      "oga",
+      "flac",
+      "aac",
+      "m4a",
+      "woff",
+      "woff2",
+      "ttf",
+      "otf",
+      "pdf",
+      "docx",
+      "xlsx",
+      "xlsm",
+      "pptx",
+      "epub",
+      "js",
+      "mjs",
+      "css",
+      "json"
     )
     assertEquals(atBranchBase.size, 36, "the base census must stay the documented 36 entries")
     assertEquals(
-      WebSocketRoutes.NfFileAllowedExt,
+      NfFilePolicy.NfFileAllowedExt,
       atBranchBase ++ Set("doc", "ppt", "xls"),
       "the nfext batch changes this table by exactly three additions"
     )
@@ -289,3 +360,4 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+end NfFileRoutesSpec

@@ -3,10 +3,9 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.actor.{AgentDef, RootAgentIdentity}
 import nebflow.core.presets.{PresetStore, SchemePolicy}
-import nebflow.llm.NebflowServiceConfig
-import nebflow.shared.AgentModelConfig
+import nebflow.shared.*
 
 import scala.util.Try
 
@@ -55,10 +54,10 @@ class AgentLibrary(
     val diskAgents = scanDisk()
 
     // Ensure Nebula always exists (system survival guarantee)
-    if diskAgents.contains(Seeds.Nebula.name) then diskAgents
+    if diskAgents.contains(Seeds.RootAgent.name) then diskAgents
     else
       logger.warnSync("Nebula not found on disk — using code fallback")
-      diskAgents + (Seeds.Nebula.name -> Seeds.Nebula.toAgentDef)
+      diskAgents + (Seeds.RootAgent.name -> Seeds.RootAgent.toAgentDef)
   }
 
   /** Get a single agent by name. */
@@ -307,12 +306,12 @@ private object Seeds:
   // Nebula is a converged agent name, so `buildToolList` short-circuits any
   // `tools` declaration to the empty set (AgentCore.ConvergedAgentNames branch)
   // and the field grants nothing. The single source of truth is
-  // AgentCore.NebulaOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
+  // AgentCore.RootOrchestrationTools, auto-injected by AgentCore.fixedToolsFor.
   // Do not reintroduce a list here: it would read as authoritative while being
   // dead data that silently drifts from the real tool surface.
-  val Nebula = SeedAgent(
-    "Nebula",
-    Some("Nebula"),
+  val RootAgent = SeedAgent(
+    RootAgentIdentity.Name,
+    Some(RootAgentIdentity.Name),
     "Orchestrator — delegates all execution to specialized Teams and Flows",
     Nil,
     """You are Nebula, the AI assistant in Nebflow. Your job is to understand the user's intent and help the user get the work done.
@@ -332,14 +331,16 @@ Memory: record only what cannot be obtained from the project's code and helps fu
 """ + "\n"
   )
 
-  /** Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
-    * Nebula is both the only seed and the runtime fallback; every other agent
-    * is defined on disk only (git-tracked definitions, restorable outside the
-    * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
-    * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
-    * agent.json, so keeping retired names out of this list is what keeps them
-    * retired across restarts (GatewayMain calls seedDefaults() on startup). */
-  val all = List(Nebula)
+  /**
+   * Seeds for initial installation — Nebula only (F.3 convergence, 2026-09-05).
+   * Nebula is both the only seed and the runtime fallback; every other agent
+   * is defined on disk only (git-tracked definitions, restorable outside the
+   * code). Archived agent dirs (agent.json renamed *.archived) must NOT be
+   * resurrected by seeding — seedDefaults() rewrites any in-list dir missing
+   * agent.json, so keeping retired names out of this list is what keeps them
+   * retired across restarts (GatewayMain calls seedDefaults() on startup).
+   */
+  val all = List(RootAgent)
 
 end Seeds
 

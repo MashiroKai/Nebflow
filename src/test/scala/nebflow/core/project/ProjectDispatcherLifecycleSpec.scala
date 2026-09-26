@@ -7,13 +7,13 @@ import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -50,6 +50,7 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+
   os.write.over(
     tempRoot / "agents" / "project-dispatcher" / "agent.json",
     """{"name":"project-dispatcher","description":"lifecycle test dispatcher","tools":[],"category":"standalone"}"""
@@ -62,18 +63,20 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
   /** 正常完成 LLM：一个文本 delta 即收尾。 */
   private class RecordingLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   /** 挂死 LLM：流永不产出（人为卡死场景——分发起 turn 悬在流上，零 chunk）。 */
   private class HungLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO.never)
 
@@ -107,7 +110,7 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -138,10 +141,15 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
       createdAt = System.currentTimeMillis()
     )
     ProjectRuntimeRegistry.mount(
-      pd, system, res, Some(wsSend), rootSessionId = "nebula-root",
+      pd,
+      system,
+      res,
+      Some(wsSend),
+      rootSessionId = "nebula-root",
       ttlCheckIntervalSec = ttlCheckIntervalSec,
       dispatcherIdleWindowMs = idleWindowMs
     )
+  end mount
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -162,10 +170,17 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
         actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
         _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher("建一个调研节点", "nebula-root")).void
         // #28 接线在位：agentStart 经路由包装到达 engine wsSend（nodeSessionId=dispatcher-*）
-        _ <- waitUntil(20.seconds)(wsEvents.get.map(
-          _.filter(_.hcursor.get[String]("type").toOption.contains("agentStart"))
-            .exists(_.hcursor.get[String]("nodeSessionId").toOption.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))
-        ))
+        _ <- waitUntil(20.seconds)(
+          wsEvents.get.map(
+            _.filter(_.hcursor.get[String]("type").toOption.contains("agentStart"))
+              .exists(
+                _.hcursor
+                  .get[String]("nodeSessionId")
+                  .toOption
+                  .exists(_.startsWith(ProjectActor.DispatcherSessionPrefix))
+              )
+          )
+        )
         // 令 3 新契约：turn 终态后会话**保活**（≥1 拍仍在）
         _ <- waitUntil(20.seconds)(dispatcherEntries(resources).map(_.nonEmpty))
         kept <- dispatcherEntries(resources)
@@ -217,6 +232,7 @@ class ProjectDispatcherLifecycleSpec extends CatsEffectSuite:
         broadcasts.exists(_.hcursor.get[String]("action").toOption.contains("restart")),
         s"taskStuck(action=restart) must be broadcast, got: $broadcasts"
       )
+    end for
   }
 
 end ProjectDispatcherLifecycleSpec

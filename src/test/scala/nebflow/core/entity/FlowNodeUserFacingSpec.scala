@@ -4,9 +4,11 @@ import io.circe.parser.*
 import io.circe.syntax.*
 import munit.FunSuite
 
-/** 轨道二 #5: FlowNode.userFacing whitelist field — decode/encode contract.
-  * Default false; encoder omits (null) for default so legacy flows round-trip
-  * byte-compatibly; explicit true survives a re-parse. */
+/**
+ * 轨道二 #5: FlowNode.userFacing whitelist field — decode/encode contract.
+ * Default false; encoder omits (null) for default so legacy flows round-trip
+ * byte-compatibly; explicit true survives a re-parse.
+ */
 class FlowNodeUserFacingSpec extends FunSuite:
 
   test("userFacing defaults to false when the key is absent"):

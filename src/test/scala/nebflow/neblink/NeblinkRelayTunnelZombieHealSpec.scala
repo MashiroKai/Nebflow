@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import scala.concurrent.duration.*
@@ -91,10 +91,12 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
         )(dispatcher)
         _ = ms.setRelayTunnel(tunnel)
         _ <- ms.setRelayTunnelStarter(tunnel.ensure())
-        _ <- ms.updateConfig(_.copy(
-          enabled = true,
-          neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
-        ))
+        _ <- ms.updateConfig(
+          _.copy(
+            enabled = true,
+            neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+          )
+        )
         out <- body(ms, client, tunnel).guarantee(tunnel.stop())
       yield out
     }
@@ -137,7 +139,7 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
           reconnected = samples.exists(_._2 >= 2)
           // 僵尸窗口：仍停在第一条连接（101 = 1）却被诚实判死
           deadWhileFirstConn = samples.exists { case (alive, n) => !alive && n == 1 }
-          // 反例基线（修前形态）：永远不会出现「未重连但已判死」的采样
+        // 反例基线（修前形态）：永远不会出现「未重连但已判死」的采样
         yield
           assertEquals(aliveOnConnect, true, "刚连上（pong 窗内）时 isAlive 必须为真")
           assert(reconnected, s"僵尸态必须在 ≤60s 内重连（实测 ${elapsed}s，101=${fix.attemptCount(101)}）")

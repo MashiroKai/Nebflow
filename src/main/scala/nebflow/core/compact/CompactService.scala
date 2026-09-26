@@ -2,10 +2,8 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.agent.SharedResources
-import nebflow.core.NebflowLogger
 import nebflow.core.hooks.*
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 
 /**
  * Inline context compaction — reuses the agent's own LLM call with cached
@@ -44,18 +42,22 @@ object CompactService:
       case CompactionProfile.Dispatcher => DispatcherCompactReminder
       case CompactionProfile.Worker => WorkerCompactReminder
       case CompactionProfile.Manager => ManagerCompactReminder
-      case _ => NebulaCompactReminder // Root (also catches Legacy)
+      case _ => RootCompactReminder // Root (also catches Legacy)
     Message(MessageRole.User, Left(prompt))
 
-  /** Head signature shared by every profile reminder (CompactPreamble's first
-    * two lines — stable across profiles because they all prepend the same
-    * preamble). Used to recognize a compact reminder inside a message list. */
+  /**
+   * Head signature shared by every profile reminder (CompactPreamble's first
+   * two lines — stable across profiles because they all prepend the same
+   * preamble). Used to recognize a compact reminder inside a message list.
+   */
   private val ReminderSignature = "<system-reminder>\nContext compaction required"
 
-  /** Is this message a compact reminder injected by [[buildCompactReminder]]?
-    * FullCompact uses this to exclude the trailing reminder from tail-round
-    * preservation — the reminder is the summarization instruction, not
-    * conversation content. */
+  /**
+   * Is this message a compact reminder injected by [[buildCompactReminder]]?
+   * FullCompact uses this to exclude the trailing reminder from tail-round
+   * preservation — the reminder is the summarization instruction, not
+   * conversation content.
+   */
   def isCompactReminder(msg: Message): Boolean =
     msg.content match
       case Left(text) => text.startsWith(ReminderSignature)
@@ -131,7 +133,7 @@ object CompactService:
    * template; durable user facts are extracted separately by NebulaMemoryHook
    * before compaction, so the summary must NOT duplicate them.
    */
-  private val NebulaCompactReminder = CompactPreamble +
+  private val RootCompactReminder = CompactPreamble +
     """You are NEBULA — the global orchestrator. Your session is long-lived and
       |spans every project, team and task line. After compaction you resume
       |steering ALL of them from this summary alone (your durable user facts are
@@ -362,16 +364,21 @@ object CompactService:
   // Hooks (PreCompact / PostCompact)
   // ------------------------------------------------------------------
 
+  /**
+   * Phase 5 D 步:入参由整只 `resources: SharedResources`(agent 定位器)改为
+   * 底层值直传——hookEngine 是 core 类型(HookEngine)、projectRoot 是 os.Path,
+   * 均非 agent 符号;行为零差(原字段取用改为参数取用)。
+   */
   def runPreCompactHook(
     messages: List[Message],
-    resources: SharedResources,
+    hookEngine: HookEngine,
+    projectRoot: os.Path,
     sessionId: String
   ): IO[Either[String, Unit]] =
-    val hookEngine = resources.hookEngine
     val hookCtx = HookContext(
       sessionId = Some(sessionId),
-      projectRoot = resources.projectRoot.toString,
-      cwd = resources.projectRoot.toString
+      projectRoot = projectRoot.toString,
+      cwd = projectRoot.toString
     )
     hookEngine.beforeCompact(messages.size, hookCtx).map { preResult =>
       if preResult.decision == HookDecision.Block then
@@ -383,17 +390,18 @@ object CompactService:
 
   end runPreCompactHook
 
+  /** Phase 5 D 步:同 [[runPreCompactHook]],底层值直传。 */
   def runPostCompactHook(
     beforeSize: Int,
     afterSize: Int,
-    resources: SharedResources,
+    hookEngine: HookEngine,
+    projectRoot: os.Path,
     sessionId: String
   ): IO[Unit] =
-    val hookEngine = resources.hookEngine
     val hookCtx = HookContext(
       sessionId = Some(sessionId),
-      projectRoot = resources.projectRoot.toString,
-      cwd = resources.projectRoot.toString
+      projectRoot = projectRoot.toString,
+      cwd = projectRoot.toString
     )
     val tokensSaved = ((beforeSize - afterSize).toLong * 500).max(0)
     hookEngine.afterCompact(beforeSize, afterSize, tokensSaved, hookCtx).void

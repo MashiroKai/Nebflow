@@ -63,11 +63,13 @@ object LoopGuard:
   object Config:
     val Default: Config = Config()
 
-  /** D5 配置热读（nebflow.json supervision.loopGuard；Guardrails.enabled 同款
-    * 模式——无缓存每轮读盘，任意键缺失/解析失败 → Defaults 兜底）。 */
+  /**
+   * D5 配置热读（nebflow.json supervision.loopGuard；Guardrails.enabled 同款
+   * 模式——无缓存每轮读盘，任意键缺失/解析失败 → Defaults 兜底）。
+   */
   def loadConfig: IO[Config] =
     IO.blocking {
-      val configPath = nebflow.core.PathUtil.configJsonReadPath(nebflow.core.PathUtil.dataRoot)
+      val configPath = nebflow.shared.PathUtil.configJsonReadPath(nebflow.shared.PathUtil.dataRoot)
       if !os.exists(configPath) then None
       else
         io.circe.parser.parse(os.read(configPath)).toOption.flatMap { root =>
@@ -85,17 +87,19 @@ object LoopGuard:
     }.handleErrorWith(_ => IO.pure(None))
       .map(_.getOrElse(Config.Default))
 
-  /** 会话级计数器（AgentState 顶层字段——S3 跨 turn，turn 边界只清 S1 与
-    * R 连续计数）。turnKey = state.loopTurnKey.toString（逻辑 turn 纪元：
-    * UserInput/外部事件唤醒/Mail 投递/冻结唤醒等 dispatch 起点 +1；
-    * ToolsComplete 续轮/retry/save-compact 续跑不递增——currentTurnId 每次
-    * LLM dispatch 都 +1，wiring 实证不能当 turn 身份用）。
-    *
-    * turn 语义补充（R1 修正，2026-09-10 冻结缺陷）：**用户唤醒（UserWake）
-    * 不只是新 turn 纪元，同时重新开始跨 turn 观察窗**——挂载点在冻结唤醒的
-    * state 组装链上调用 [[Counters.resetCrossTurn]]，唤醒前累积的 crossTurn
-    * 失败记录作废。否则唤醒后同 fp 只再失败 1 次就被唤醒前的记录推过
-    * crossTurnFailureTurns（实测唤醒后 6.65s / 21.26s 复冻）。 */
+  /**
+   * 会话级计数器（AgentState 顶层字段——S3 跨 turn，turn 边界只清 S1 与
+   * R 连续计数）。turnKey = state.loopTurnKey.toString（逻辑 turn 纪元：
+   * UserInput/外部事件唤醒/Mail 投递/冻结唤醒等 dispatch 起点 +1；
+   * ToolsComplete 续轮/retry/save-compact 续跑不递增——currentTurnId 每次
+   * LLM dispatch 都 +1，wiring 实证不能当 turn 身份用）。
+   *
+   * turn 语义补充（R1 修正，2026-09-10 冻结缺陷）：**用户唤醒（UserWake）
+   * 不只是新 turn 纪元，同时重新开始跨 turn 观察窗**——挂载点在冻结唤醒的
+   * state 组装链上调用 [[Counters.resetCrossTurn]]，唤醒前累积的 crossTurn
+   * 失败记录作废。否则唤醒后同 fp 只再失败 1 次就被唤醒前的记录推过
+   * crossTurnFailureTurns（实测唤醒后 6.65s / 21.26s 复冻）。
+   */
   final case class Counters(
     turnKey: String = "",
     streakFp: String = "",
@@ -116,14 +120,18 @@ object LoopGuard:
     /** AgentControl list 的 loop×N 展示值（两路连续计数的较大者）。 */
     def repeatStreak: Int = math.max(lastCallCount, lastTextCount)
 
-    /** R1（2026-09-10 冻结族最小修法）：清零 S3 跨 turn 观察窗——用户唤醒
-      * （UserWake）重新开始跨 turn 计数，唤醒前累积的同 fp 失败记录作废。
-      *
-      * 只清 crossTurn：terminatedFps（L1 终止记账）与一切阈值/冻结数值不动——
-      * 被 L1 终止过的 fp 在后续 turn 复发仍即刻 Freeze（刻意保留的既有语义）；
-      * turnKey/S1/R 连续计数无需在此清（evaluate 的 turn 边界分支按新 turnKey
-      * 自动归零）。 */
+    /**
+     * R1（2026-09-10 冻结族最小修法）：清零 S3 跨 turn 观察窗——用户唤醒
+     * （UserWake）重新开始跨 turn 计数，唤醒前累积的同 fp 失败记录作废。
+     *
+     * 只清 crossTurn：terminatedFps（L1 终止记账）与一切阈值/冻结数值不动——
+     * 被 L1 终止过的 fp 在后续 turn 复发仍即刻 Freeze（刻意保留的既有语义）；
+     * turnKey/S1/R 连续计数无需在此清（evaluate 的 turn 边界分支按新 turnKey
+     * 自动归零）。
+     */
     def resetCrossTurn: Counters = copy(crossTurn = Map.empty)
+
+  end Counters
 
   object Counters:
     val Empty: Counters = Counters()
@@ -138,11 +146,14 @@ object LoopGuard:
   )
 
   sealed trait Verdict extends Product with Serializable
+
   object Verdict:
     /** L0：向消息流注入提醒（零成本给模型自纠机会）。 */
     final case class Warn(msg: String) extends Verdict
+
     /** L1：终止当前 turn（LoopDetected 失败链）。Root 豁免（挂载点过滤）。 */
     final case class Terminate(msg: String, fp: String) extends Verdict
+
     /** L2：冻结会话待人工（enterFrozen("loop") + 广播 + 父通知）。 */
     final case class Freeze(msg: String) extends Verdict
     case object Pass extends Verdict
@@ -151,20 +162,25 @@ object LoopGuard:
 
   /** fp = sha256(toolName + canonicalJson(args)).take(12) —— 同参判定。 */
   def fingerprint(toolName: String, args: Json): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest((toolName + "|" + canonicalize(args)).getBytes("UTF-8"))
     digest.map(b => f"${b & 0xff}%02x").mkString.take(12)
 
-  /** 错误签名 = sha256(错误文本前 120 字符)——「File does not exist: <同一路径>」
-    * 恒定；「timeout after 30s / 31s」不同（含变化内容的 flaky 天然豁免）。 */
+  /**
+   * 错误签名 = sha256(错误文本前 120 字符)——「File does not exist: <同一路径>」
+   * 恒定；「timeout after 30s / 31s」不同（含变化内容的 flaky 天然豁免）。
+   */
   def errorSignature(errorText: String): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest(errorText.take(120).getBytes("UTF-8"))
     digest.map(b => f"${b & 0xff}%02x").mkString.take(12)
 
   /** R-text 文本指纹 = sha256(整轮助手文本)。 */
   private def textHash(text: String): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = java.security.MessageDigest
+      .getInstance("SHA-256")
       .digest(text.getBytes("UTF-8"))
     digest.map(b => f"${b & 0xff}%02x").mkString.take(12)
 
@@ -181,22 +197,23 @@ object LoopGuard:
         case None =>
           j.asArray match
             case Some(arr) => Json.fromValues(arr.map(norm))
-            case None      => j
+            case None => j
     norm(json).noSpaces
 
   // ── 判定核心（纯函数） ─────────────────────────────────────
 
-  /** 一轮（一个 LLM 响应的工具批）的评估。
-    *
-    * @param events        本轮全部工具结果（含 dropped「Tool not available」形态）
-    * @param turnKey       当前 turn 身份（currentTurnId.toString）——turn 边界自动
-    *                      重置 S1/R 计数，S3 按不同 turnKey 计数
-    * @param counters      会话级计数器（上个状态）
-    * @param cfg           阈值配置
-    * @param assistantText 本轮助手文本输出（R-text 判定；空串不计不刷新）
-    * @return 更新后的计数器 + 处置裁决（一轮至多一条非 Pass 裁决，强度
-    *         Freeze > Terminate > Warn）
-    */
+  /**
+   * 一轮（一个 LLM 响应的工具批）的评估。
+   *
+   * @param events        本轮全部工具结果（含 dropped「Tool not available」形态）
+   * @param turnKey       当前 turn 身份（currentTurnId.toString）——turn 边界自动
+   *                      重置 S1/R 计数，S3 按不同 turnKey 计数
+   * @param counters      会话级计数器（上个状态）
+   * @param cfg           阈值配置
+   * @param assistantText 本轮助手文本输出（R-text 判定；空串不计不刷新）
+   * @return 更新后的计数器 + 处置裁决（一轮至多一条非 Pass 裁决，强度
+   *         Freeze > Terminate > Warn）
+   */
   def evaluate(
     events: List[RoundEvent],
     turnKey: String,
@@ -208,10 +225,18 @@ object LoopGuard:
     else
       // turn 边界：S1/R 归零（新用户消息 = 打断），S3（crossTurn/terminatedFps）跨 turn 保留
       val base =
-        if counters.turnKey != turnKey then counters.copy(turnKey = turnKey,
-          streakFp = "", streakErrHash = "", streakCount = 0,
-          lastCallFp = "", lastCallTool = "", lastCallCount = 0,
-          lastTextHash = "", lastTextCount = 0)
+        if counters.turnKey != turnKey then
+          counters.copy(
+            turnKey = turnKey,
+            streakFp = "",
+            streakErrHash = "",
+            streakCount = 0,
+            lastCallFp = "",
+            lastCallTool = "",
+            lastCallCount = 0,
+            lastTextHash = "",
+            lastTextCount = 0
+          )
         else counters
 
       // 逐事件折叠：S1 streak（仅失败）/ S3 crossTurn / R-call 连续同参（成败皆计）
@@ -229,7 +254,8 @@ object LoopGuard:
         val counted = e.isError && !cfg.exemptTools.contains(e.toolName) && !e.permissionDenied
         if !counted then
           // S1/S3 视角的成功事件：同 fp 的 streak 清零 + crossTurn 整条清除
-          val streakReset = if accR.streakFp == fp then accR.copy(streakFp = "", streakCount = 0, streakErrHash = "") else accR
+          val streakReset =
+            if accR.streakFp == fp then accR.copy(streakFp = "", streakCount = 0, streakErrHash = "") else accR
           streakReset.copy(
             crossTurn = streakReset.crossTurn - fp,
             terminatedFps = streakReset.terminatedFps - fp
@@ -237,12 +263,16 @@ object LoopGuard:
         else
           val sig = errorSignature(e.errorText)
           val (sf, sh, sc) =
-            if accR.streakFp == fp && accR.streakErrHash == sig then (accR.streakFp, accR.streakErrHash, accR.streakCount + 1)
+            if accR.streakFp == fp && accR.streakErrHash == sig then
+              (accR.streakFp, accR.streakErrHash, accR.streakCount + 1)
             else (fp, sig, 1)
           accR.copy(
-            streakFp = sf, streakErrHash = sh, streakCount = sc,
+            streakFp = sf,
+            streakErrHash = sh,
+            streakCount = sc,
             crossTurn = accR.crossTurn.updated(fp, accR.crossTurn.getOrElse(fp, Set.empty) + turnKey)
           )
+        end if
       }
 
       // R-text：空文本不计不刷新；不同文本刷新归零（作者裁定⑤）
@@ -255,8 +285,11 @@ object LoopGuard:
 
       // 裁决（强度序）：S3 冻结 > L1 后复发冻结 > S1 hard 终止 > R-call > R-text > L0 警告
       val crossTurnHit = withText.crossTurn.find { case (_, turns) => turns.size >= cfg.crossTurnFailureTurns }
-      val recurrenceHit = events.filter(e => e.isError && !e.permissionDenied &&
-        !cfg.exemptTools.contains(e.toolName))
+      val recurrenceHit = events
+        .filter(e =>
+          e.isError && !e.permissionDenied &&
+            !cfg.exemptTools.contains(e.toolName)
+        )
         .map(e => fingerprint(e.toolName, e.args))
         .find(withText.terminatedFps.contains)
       val s1Hard = withText.streakCount >= cfg.identicalFailureHard && withText.streakFp.nonEmpty

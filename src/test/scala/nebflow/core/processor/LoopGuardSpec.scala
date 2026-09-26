@@ -2,20 +2,25 @@ package nebflow.core.processor
 
 import munit.FunSuite
 import io.circe.Json
-import io.circe.syntax._
+import io.circe.syntax.*
 
-/** Block 3 循环检测器纯函数测试（supervision trio §D 2026-08-27；简化重构
-  * 2026-08-30 作者拍板：S2 进展判定/轮预算删除，新增 R 精确重复检测）。
-  *
-  * 信号矩阵 × 处置阶梯 × 豁免矩阵。挂载点（AgentCore.pipeToolExecutions）
-  * 的行为验证在 wiring 级 spec；本文件只测判定核心。
-  */
+/**
+ * Block 3 循环检测器纯函数测试（supervision trio §D 2026-08-27；简化重构
+ * 2026-08-30 作者拍板：S2 进展判定/轮预算删除，新增 R 精确重复检测）。
+ *
+ * 信号矩阵 × 处置阶梯 × 豁免矩阵。挂载点（AgentCore.pipeToolExecutions）
+ * 的行为验证在 wiring 级 spec；本文件只测判定核心。
+ */
 class LoopGuardSpec extends FunSuite:
 
   private val cfg = LoopGuard.Config.Default // S1: 3/8, R: 10/10, S3: 3
 
-  private def failed(tool: String, args: Json = Json.obj(), err: String = "boom",
-                     denied: Boolean = false): LoopGuard.RoundEvent =
+  private def failed(
+    tool: String,
+    args: Json = Json.obj(),
+    err: String = "boom",
+    denied: Boolean = false
+  ): LoopGuard.RoundEvent =
     LoopGuard.RoundEvent(tool, args, isError = true, errorText = err, permissionDenied = denied)
 
   private def okEv(tool: String, args: Json = Json.obj()): LoopGuard.RoundEvent =
@@ -34,7 +39,7 @@ class LoopGuardSpec extends FunSuite:
     val (c3, v3) = LoopGuard.evaluate(List(e), "t1", c2, cfg)
     v3 match
       case LoopGuard.Verdict.Warn(msg) => assert(msg.contains("failed 3 times"))
-      case other                       => fail(s"expected Warn, got $other")
+      case other => fail(s"expected Warn, got $other")
     assertEquals(c3.streakCount, 3)
   }
 
@@ -104,7 +109,10 @@ class LoopGuardSpec extends FunSuite:
       case LoopGuard.Verdict.Terminate(msg, fp) =>
         assert(msg.contains("10 times in a row"))
         assert(msg.contains("identical arguments"))
-        assert(fp == LoopGuard.fingerprint("Bash", e.args), "Terminate must record the call fp (recurrence → Freeze chain)")
+        assert(
+          fp == LoopGuard.fingerprint("Bash", e.args),
+          "Terminate must record the call fp (recurrence → Freeze chain)"
+        )
         assert(c10.terminatedFps.contains(fp))
       case other => fail(s"expected Terminate at exactly the 10th, got $other")
   }
@@ -116,11 +124,12 @@ class LoopGuardSpec extends FunSuite:
       case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     v8 match
-      case LoopGuard.Verdict.Terminate(msg, _) => assert(msg.contains("failed 8 times"), "S1 (8) must fire before R-call (10)")
-      case other                               => fail(s"expected S1 Terminate at 8, got $other")
+      case LoopGuard.Verdict.Terminate(msg, _) =>
+        assert(msg.contains("failed 8 times"), "S1 (8) must fire before R-call (10)")
+      case other => fail(s"expected S1 Terminate at 8, got $other")
     // 第 9/10 次：同 fp 再败 → recurrence → Freeze（更强裁决，设计内）
-    val (_, v10) = (1 to 2).foldLeft((c8, v8: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (_, v10) = (1 to 2).foldLeft((c8, v8: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     assert(v10.isInstanceOf[LoopGuard.Verdict.Freeze], s"expected Freeze on recurrence, got $v10")
   }
@@ -136,10 +145,14 @@ class LoopGuardSpec extends FunSuite:
     // 插 1 次 B → A 计数必须从 1 重数
     val (cAfterB, _) = LoopGuard.evaluate(List(b), "t1", c9, cfg)
     val (cA1, _) = LoopGuard.evaluate(List(a), "t1", cAfterB, cfg)
-    assertEquals(cA1.lastCallCount, 1, "interruption must reset the consecutive counter (no cross-interruption accumulation)")
+    assertEquals(
+      cA1.lastCallCount,
+      1,
+      "interruption must reset the consecutive counter (no cross-interruption accumulation)"
+    )
     // 再续 8×A 仍不触发（凑不齐新的一段 10 连）
-    val (c8, v8) = (1 to 8).foldLeft((cA1, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(a), "t1", c, cfg)
+    val (c8, v8) = (1 to 8).foldLeft((cA1, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(a), "t1", c, cfg)
     }
     assertEquals(v8, LoopGuard.Verdict.Pass)
     assertEquals(c8.lastCallCount, 9)
@@ -152,7 +165,7 @@ class LoopGuardSpec extends FunSuite:
     }
     v match
       case LoopGuard.Verdict.Terminate(msg, _) => assert(msg.contains("in a row"))
-      case other                               => fail(s"expected Terminate, got $other")
+      case other => fail(s"expected Terminate, got $other")
   }
 
   test("R-call: verification-style work (varying args) never triggers — mutation-red target (a)") {
@@ -202,11 +215,12 @@ class LoopGuardSpec extends FunSuite:
     val (cReset, _) = LoopGuard.evaluate(Nil, "t1", c5, cfg, assistantText = "换个说法。")
     assertEquals(cReset.lastTextCount, 1)
     // 空文本轮（纯工具轮）→ 不计也不刷新
-    val (cEmpty, _) = LoopGuard.evaluate(List(okEv("Bash", Json.obj("command" -> "x".asJson))), "t1", cReset, cfg, assistantText = "")
+    val (cEmpty, _) =
+      LoopGuard.evaluate(List(okEv("Bash", Json.obj("command" -> "x".asJson))), "t1", cReset, cfg, assistantText = "")
     assertEquals(cEmpty.lastTextCount, 1, "empty text must not reset the streak")
     // 续 4 次同文本 = 5 连（<10 不触发）
-    val (_, v) = (1 to 4).foldLeft((cEmpty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = same)
+    val (_, v) = (1 to 4).foldLeft((cEmpty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = same)
     }
     assertEquals(v, LoopGuard.Verdict.Pass)
   }
@@ -223,7 +237,7 @@ class LoopGuardSpec extends FunSuite:
     val (_, v3) = LoopGuard.evaluate(List(e), "t3", c2, cfg)
     v3 match
       case LoopGuard.Verdict.Freeze(msg) => assert(msg.contains("3 separate turns"))
-      case other                         => fail(s"expected Freeze, got $other")
+      case other => fail(s"expected Freeze, got $other")
   }
 
   test("S3: a success of the same fp in between clears the cross-turn record") {
@@ -243,12 +257,12 @@ class LoopGuardSpec extends FunSuite:
     }
     vt1 match
       case LoopGuard.Verdict.Terminate(_, fp) => assert(ct1.terminatedFps.contains(fp))
-      case other                              => fail(s"expected Terminate, got $other")
+      case other => fail(s"expected Terminate, got $other")
     // 新 turn 同 fp 再败 → 直接 Freeze（不再给第二次 L1）
     val (_, v2) = LoopGuard.evaluate(List(e), "t2", ct1, cfg)
     v2 match
       case LoopGuard.Verdict.Freeze(msg) => assert(msg.contains("terminated earlier"))
-      case other                         => fail(s"expected Freeze on recurrence, got $other")
+      case other => fail(s"expected Freeze on recurrence, got $other")
   }
 
   // ── 豁免矩阵 ─────────────────────────────────────────────
@@ -265,8 +279,12 @@ class LoopGuardSpec extends FunSuite:
   }
 
   test("permissionDenied: policy denials are not loop signals (#12 independent governance)") {
-    val d = failed("Bash", Json.obj("cmd" -> "rm -rf /".asJson),
-      "Tool Bash is denied by the session permission policy", denied = true)
+    val d = failed(
+      "Bash",
+      Json.obj("cmd" -> "rm -rf /".asJson),
+      "Tool Bash is denied by the session permission policy",
+      denied = true
+    )
     val (cnt, v) = (1 to 10).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
       case ((c, _), _) => LoopGuard.evaluate(List(d), "t1", c, cfg)
     }
@@ -308,14 +326,14 @@ class LoopGuardSpec extends FunSuite:
       case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     // t2 凑第二个 turn 记录 + streak 7 次
-    val (c2b, _) = (1 to 7).foldLeft((c2, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t2", c, cfg)
+    val (c2b, _) = (1 to 7).foldLeft((c2, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t2", c, cfg)
     }
     // t3 第一败：crossTurn 3 turns + streak 8 同时成立 → Freeze
     val (_, v3) = LoopGuard.evaluate(List(e), "t3", c2b, cfg)
     v3 match
       case LoopGuard.Verdict.Freeze(_) => // expected — strongest wins
-      case other                       => fail(s"expected Freeze (strongest), got $other")
+      case other => fail(s"expected Freeze (strongest), got $other")
   }
 
   test("R1 resetCrossTurn: 唤醒清零观察窗后同 fp 再失败 1 次不冻；terminatedFps 不受影响") {
@@ -329,12 +347,12 @@ class LoopGuardSpec extends FunSuite:
     val (_, vRaw) = LoopGuard.evaluate(List(e), "t3", c2, cfg)
     vRaw match
       case LoopGuard.Verdict.Freeze(_) => // expected — 缺陷原状（唤醒后秒冻）
-      case other                       => fail(s"expected Freeze without reset, got $other")
+      case other => fail(s"expected Freeze without reset, got $other")
     // 修法：唤醒重置观察窗 → 同一 t3 第 1 败不得 Freeze（只重新记 1 个 turn）
     val (c3, v3) = LoopGuard.evaluate(List(e), "t3", c2.resetCrossTurn, cfg)
     v3 match
       case LoopGuard.Verdict.Freeze(_) => fail("唤醒后第 1 次失败不得冻结（观察窗已清零）")
-      case _                           => // Pass/Warn 均可（turn 边界另按新 turnKey 清 S1/R）
+      case _ => // Pass/Warn 均可（turn 边界另按新 turnKey 清 S1/R）
     assertEquals(c3.crossTurn.get(fp).map(_.size), Some(1))
     // terminatedFps 刻意不随 resetCrossTurn 清（L1 终止过的 fp 复发仍即刻 Freeze）
     assertEquals(c2.copy(terminatedFps = Set(fp)).resetCrossTurn.terminatedFps, Set(fp))

@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import io.circe.{Json, parser}
+import nebflow.shared.NebflowLogger
 
 /**
  * 服务端持久化的 Canvas 标签 v2 存档（F1 根治，2026-08-30）。
@@ -28,7 +29,8 @@ object CanvasTabs:
   /** PUT body 上限（防滥用）——256 KiB。 */
   val MaxBodyBytes: Int = 256 * 1024
 
-  /** 校验 v2 存档 JSON。成功返回规范化后的 Json（原样透传，不做字段裁剪），
+  /**
+   * 校验 v2 存档 JSON。成功返回规范化后的 Json（原样透传，不做字段裁剪），
    * 失败返回人类可读错误信息（HTTP 400 载体）。
    */
   def validate(json: Json): Either[String, Json] =
@@ -40,13 +42,22 @@ object CanvasTabs:
       tabs <- hc.downField("tabs").as[Json].left.map(_ => "missing 'tabs'").flatMap { t =>
         Either.cond(t.isArray, t, "'tabs' must be an array")
       }
-      _ <- tabs.asArray.getOrElse(Vector.empty).zipWithIndex
+      _ <- tabs.asArray
+        .getOrElse(Vector.empty)
+        .zipWithIndex
         .map { case (tab, i) => validateTab(tab).left.map(err => s"tabs[$i]: $err") }
         .collectFirst { case Left(e) => Left(e) }
         .getOrElse(Right(()))
-      _ <- hc.downField("activeTabId").as[Option[String]].left
+      _ <- hc
+        .downField("activeTabId")
+        .as[Option[String]]
+        .left
         .map(_ => "'activeTabId' must be a string or null")
     yield json
+
+    end for
+
+  end validate
 
   private def validateTab(tab: Json): Either[String, Unit] =
     val hc = tab.hcursor
@@ -61,7 +72,8 @@ object CanvasTabs:
       _ <- hc.downField("closable").as[Option[Boolean]].left.map(_ => "'closable' must be a boolean")
     yield ()
 
-  /** PUT body 处理链：长度限制 → UTF-8 解码 → JSON 解析 → schema 校验。
+  /**
+   * PUT body 处理链：长度限制 → UTF-8 解码 → JSON 解析 → schema 校验。
    * 返回 Right(校验通过的 Json) 或 Left((HTTP status, 错误信息))。
    * 纯函数，便于单测；路由层只负责 auth + 读 body + 落盘。
    */
@@ -70,18 +82,22 @@ object CanvasTabs:
     else
       val text = new String(body, java.nio.charset.StandardCharsets.UTF_8)
       parser.parse(text) match
-        case Left(err)    => Left((400, s"invalid JSON: ${err.message}"))
-        case Right(json)  =>
+        case Left(err) => Left((400, s"invalid JSON: ${err.message}"))
+        case Right(json) =>
           validate(json) match
             case Left(msg) => Left((400, msg))
             case Right(ok) => Right(ok)
+
+end CanvasTabs
 
 /** 磁盘存档读写。路径由调用方传入（生产=dataRoot/canvas_tabs.json，测试=temp）。 */
 class CanvasTabStore(path: os.Path):
   import CanvasTabs.*
 
-  /** 读取存档。None = 无存档或存档损坏（损坏时 warn 日志，视同无存档——
-   * 前端 fallback 到 localStorage，下次 PUT 重建）。 */
+  /**
+   * 读取存档。None = 无存档或存档损坏（损坏时 warn 日志，视同无存档——
+   * 前端 fallback 到 localStorage，下次 PUT 重建）。
+   */
   def load(): IO[Option[Json]] = IO.blocking {
     if !os.exists(path) then None
     else
@@ -89,7 +105,8 @@ class CanvasTabStore(path: os.Path):
       parser.parse(text) match
         case Right(json) if validate(json).isRight => Some(json)
         case _ =>
-          NebflowLogger.forName("nebflow.canvas-tabs")
+          NebflowLogger
+            .forName("nebflow.canvas-tabs")
             .warnSync(s"canvas_tabs.json corrupt or invalid — treating as no archive ($path)")
           None
   }
@@ -99,3 +116,4 @@ class CanvasTabStore(path: os.Path):
     IO.blocking {
       AtomicJson.writeSync(path, json.noSpaces)
     }
+end CanvasTabStore

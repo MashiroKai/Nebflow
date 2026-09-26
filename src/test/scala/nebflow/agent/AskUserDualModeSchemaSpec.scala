@@ -2,6 +2,7 @@ package nebflow.agent
 
 import io.circe.Json
 import munit.FunSuite
+import nebflow.actor.{AgentDef, AskMode}
 import nebflow.core.tools.{AskUserQuestionTool, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
@@ -27,6 +28,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
 
   /** protected `buildToolList` 的探针（先例：`AllowedToolSetSpec.CoreProbe`）。 */
   private object CoreProbe extends AgentCore:
+
     def face(defn: AgentDef, depth: Int = 0, flowNodeSession: Boolean = false): List[ToolDefinition] =
       buildToolList(defn, depth, flowNodeSession = flowNodeSession).getOrElse(Nil)
 
@@ -37,12 +39,12 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   private val baseline: ToolDefinition =
     ToolRegistry.ALL_TOOLS.find(_.name == AskUserQuestionTool.Name) match
       case Some(td) => td
-      case None     => fail(s"AskUserQuestion 不在注册表：${ToolRegistry.ALL_TOOLS.map(_.name)}")
+      case None => fail(s"AskUserQuestion 不在注册表：${ToolRegistry.ALL_TOOLS.map(_.name)}")
 
   private def askOf(tds: List[ToolDefinition]): ToolDefinition =
     tds.find(_.name == AskUserQuestionTool.Name) match
       case Some(td) => td
-      case None     => fail(s"AskUserQuestion 不在该会话工具面内：${tds.map(_.name).sorted}")
+      case None => fail(s"AskUserQuestion 不在该会话工具面内：${tds.map(_.name).sorted}")
 
   /** `properties.mode` 的**缺席判据**（① 的判红面）。 */
   private def modeOf(td: ToolDefinition): Option[Json] =
@@ -86,8 +88,8 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(!AskUserQuestionTool.baseHasModeProperty, "基础 inputSchema 里出现了 mode —— 非 root 会话可见性被破坏")
     val rootVariant = ToolDefinition(
       AskUserQuestionTool.Name,
-      AskUserQuestionTool.descriptionNebulaRoot,
-      AskUserQuestionTool.schemaNebulaRoot(AskUserQuestionTool.inputSchema)
+      AskUserQuestionTool.descriptionRoot,
+      AskUserQuestionTool.schemaRoot(AskUserQuestionTool.inputSchema)
     )
     assert(
       modeOf(rootVariant).isDefined,
@@ -95,11 +97,11 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     )
     assertEquals(AskUserQuestionTool.descriptionBase, AskUserQuestionTool.description)
     assert(
-      AskUserQuestionTool.descriptionNebulaRoot.startsWith(AskUserQuestionTool.description),
+      AskUserQuestionTool.descriptionRoot.startsWith(AskUserQuestionTool.description),
       "root 变体 description 必须以基础 description 原样开头（基础段零改动）"
     )
     assert(
-      AskUserQuestionTool.descriptionNebulaRoot.length > AskUserQuestionTool.description.length,
+      AskUserQuestionTool.descriptionRoot.length > AskUserQuestionTool.description.length,
       "root 变体 description 未增加非阻塞说明"
     )
   }
@@ -136,7 +138,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     val unknown = CoreProbe.face(defNamed("some-future-agent", tools = List(AskUserQuestionTool.Name)), depth = 0)
     assert(modeOf(askOf(unknown)).isEmpty, "depth=0 的非 Nebula 会话拿到了 root 变体（T1=(a) 口径被放宽）")
     // 运行期对偶：agentDef=None（REST 直调 / harness）+ depth=0 ⇒ fail-closed false
-    assert(!AgentCore.isNebulaRoot(None, 0), "agentDef=None 时判据必须 fail-closed")
+    assert(!AgentCore.isRootAgent(None, 0), "agentDef=None 时判据必须 fail-closed")
   }
 
   test("分化不改成员资格: 三例的工具面组成与基线一致（只换 schema，不插删元素）") {
@@ -157,17 +159,17 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   test("判据单点: 四个身份组合的真值表（含 depth 分量与 fail-closed）") {
     val nebula = Some(defNamed("Nebula"))
     val general = Some(defNamed("general"))
-    assertEquals(AgentCore.isNebulaRoot(nebula, 0), true, "Nebula+depth=0 必须是 root")
-    assertEquals(AgentCore.isNebulaRoot(nebula, 1), false, "Nebula+depth=1（节点会话）不是 root")
-    assertEquals(AgentCore.isNebulaRoot(general, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
-    assertEquals(AgentCore.isNebulaRoot(None, 0), false, "agentDef=None fail-closed")
+    assertEquals(AgentCore.isRootAgent(nebula, 0), true, "Nebula+depth=0 必须是 root")
+    assertEquals(AgentCore.isRootAgent(nebula, 1), false, "Nebula+depth=1（节点会话）不是 root")
+    assertEquals(AgentCore.isRootAgent(general, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
+    assertEquals(AgentCore.isRootAgent(None, 0), false, "agentDef=None fail-closed")
     // ToolContext 派生 def 委托同一真值（运行期求值面）
     val ctxRoot = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = nebula, depth = 0)
     val ctxNode = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = nebula, depth = 1)
     val ctxNoDef = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = None, depth = 0)
-    assert(ctxRoot.isNebulaRoot, "ToolContext.isNebulaRoot 未委托单点（root 侧）")
-    assert(!ctxNode.isNebulaRoot, "ToolContext.isNebulaRoot 未委托单点（depth 分量丢失）")
-    assert(!ctxNoDef.isNebulaRoot, "ToolContext.isNebulaRoot 未 fail-closed")
+    assert(ctxRoot.isRootAgent, "ToolContext.isRootAgent 未委托单点（root 侧）")
+    assert(!ctxNode.isRootAgent, "ToolContext.isRootAgent 未委托单点（depth 分量丢失）")
+    assert(!ctxNoDef.isRootAgent, "ToolContext.isRootAgent 未 fail-closed")
   }
 
   test("禁第二份表达式: 谓词字面量只许出现在 AgentCore 单点内 + 三消费点均为委托") {
@@ -185,10 +187,12 @@ class AskUserDualModeSchemaSpec extends FunSuite:
           if i < 0 then l else l.take(i)
         }
         .mkString("\n")
-    // `...name == "Nebula"...)` 紧跟 `&&` 再跟 `depth == 0`（同一表达式）——
-    // 这是判据本体；SandboxPolicy 的 `depth == 0 && agentName == "Nebula"`
+    // `...name == RootAgentIdentity.Name...)` 紧跟 `&&` 再跟 `depth == 0`（同一表达式）——
+    // 这是判据本体；SandboxPolicy 的 `depth == 0 && agentName == RootAgentIdentity.Name`
     // 是另一种语义（含 sandboxEnabled 分量，规格 §3.1 明确不合并），不命中。
-    val predicate = """(?s)name\s*==\s*"Nebula"\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
+    // re-pin（2026-09-25 身份谓词单点化批）：判据名分字面量 "Nebula" 收敛为常量
+    // RootAgentIdentity.Name（值不变），正则同步钉常量形态。
+    val predicate = """(?s)name\s*==\s*RootAgentIdentity\.Name\s*\)?\s*&&\s*[^\n]{0,40}depth\s*==\s*0""".r
     val holders = files
       .filter(f => predicate.findFirstIn(stripComments(os.read(f))).isDefined)
       .map(_.last)
@@ -196,15 +200,15 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assertEquals(
       holders,
       List("AgentCore.scala"),
-      "谓词 `name == \"Nebula\" && depth == 0` 出现了第二份实现（规格 §3.1 判红纪律：一处实现、三个消费点）"
+      "谓词 `name == RootAgentIdentity.Name && depth == 0` 出现了第二份实现（规格 §3.1 判红纪律：一处实现、三个消费点）"
     )
 
     val byName = files.map(f => f.last -> os.read(f)).toMap
     val delegating = List(
-      "AgentCore.scala" -> "isNebulaRoot(Some(agentDef), depth)",       // 定义期选变体
-      "types.scala" -> "AgentCore.isNebulaRoot(agentDef, depth)",       // 运行期求值面
-      "PopTool.scala" -> "AgentCore.isNebulaRoot(ctx.agentDef, ctx.depth)", // Pop 身份闸
-      "AskUserQuestionTool.scala" -> "ctx.isNebulaRoot"                 // 非阻塞兜底闸
+      "AgentCore.scala" -> "isRootAgent(Some(agentDef), depth)", // 定义期选变体
+      "types.scala" -> "AgentCore.isRootAgent(agentDef, depth)", // 运行期求值面
+      "PopTool.scala" -> "AgentCore.isRootAgent(ctx.agentDef, ctx.depth)", // Pop 身份闸
+      "AskUserQuestionTool.scala" -> "ctx.isRootAgent" // 非阻塞兜底闸
     )
     for (file, needle) <- delegating do
       assert(
@@ -224,10 +228,13 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     assert(iGuard > 0 && iGuard < iParse, "askGuard 不再是 call() 的第一顺位（headless 守卫被降级）")
   }
 
-  test("B4 分支结构 pin: AgentActor 的等待态标记（WaitingForUser + 预算 pause）只在阻塞模式发生") {
-    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "AgentActor.scala")
+  test("B4 分支结构 pin: AgentProcessing 的等待态标记（WaitingForUser + 预算 pause）只在阻塞模式发生") {
+    // re-pin（2026-09-25 processing 域迁移）：AskUser 分支随 processing 行为自
+    // AgentActor 迁至 AgentProcessing.scala，读取目标改为新文件（分支文本逐字
+    // 未动，判据语义不变）。
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "AgentProcessing.scala")
     val iBranch = src.indexOf("case AgentCommand.AskUser(requestId, items, replyToOpt, askMode) =>")
-    assert(iBranch > 0, "AgentActor 的 AskUser 分支未接收 mode（B4 未接线）")
+    assert(iBranch > 0, "AgentProcessing 的 AskUser 分支未接收 mode（B4 未接线）")
     val iCond = src.indexOf("if AskMode.parksTurn(askMode) then", iBranch)
     val iTouch = src.indexOf("touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)", iBranch)
     val iPause = src.indexOf("DelegateBudget.pause(srcSession)", iBranch)

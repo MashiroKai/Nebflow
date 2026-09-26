@@ -71,8 +71,8 @@ object ToolRegistry:
       // /api/neblink/transfer / NeblinkService.receiveFile|sendFile — the Dropbox
       // relay fallback depends on them): we retired the tool, not the channel.
       // A2A 一期: agent sends a message to one of the user's NebLink friends
-      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
-      // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
+      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Root
+      // only (RootOrchestrationTools, 2c 起) — agent.json declaration
       // channel removed (buildAllowedToolSet strips the name from base).
       "SendMessage" -> FriendMessageTool,
       // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 定稿）：Nebula
@@ -136,8 +136,10 @@ object ToolRegistry:
 
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap
 
-  /** 动态注册名快照（阶段 2b：plugin MCP allowedSet 追加源；轻量——不经
-    * augmentSchema，纯键名）。 */
+  /**
+   * 动态注册名快照（阶段 2b：plugin MCP allowedSet 追加源；轻量——不经
+   * augmentSchema，纯键名）。
+   */
   def registeredToolNames: List[String] = tools.keys.asScala.toList
 
   def ALL_TOOLS: List[ToolDefinition] = tools.asScala.values.map { t =>
@@ -149,19 +151,20 @@ object ToolRegistry:
   def builtinToolNames: List[String] =
     tools.asScala.keys.filterNot(_.startsWith("mcp__")).toList.sorted
 
-  /** 面判定（P0-1 / P-M1，2026-09-20）：该注册名对应的实例是否为**外部工具**
-    * （ScriptTool，`~/.nebflow/tools/<name>/tool.json` 装载）。
-    *
-    * WHY 走注册表身份而不是名字模式：`ScriptTool.name = config.name`（现读
-    * `ScriptTool.scala:16`）是**自由文本**，全仓无「外部工具名前缀/命名空间」——
-    * 名字模式核不到（spec §6 #8 本批现读结论）。注册表身份是唯一可判据的面。
-    *
-    * 只读、不改变任何注册行为（`registerTool` / `unregisterTool` 逐字不动）。
-    */
+  /**
+   * 面判定（P0-1 / P-M1，2026-09-20）：该注册名对应的实例是否为**外部工具**
+   * （ScriptTool，`~/.nebflow/tools/<name>/tool.json` 装载）。
+   *
+   * WHY 走注册表身份而不是名字模式：`ScriptTool.name = config.name`（现读
+   * `ScriptTool.scala:16`）是**自由文本**，全仓无「外部工具名前缀/命名空间」——
+   * 名字模式核不到（spec §6 #8 本批现读结论）。注册表身份是唯一可判据的面。
+   *
+   * 只读、不改变任何注册行为（`registerTool` / `unregisterTool` 逐字不动）。
+   */
   def isExternalTool(name: String): Boolean =
     tools.get(name) match
       case t: ScriptTool => true
-      case _             => false
+      case _ => false
 
   def registerTool(tool: Tool): Unit =
     tools.put(tool.name, tool)

@@ -7,14 +7,14 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, status}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AgentControlTool, FileLockManager, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.MessageRole
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{MessageRole, PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -47,7 +47,12 @@ class OrphanDelegateRecoverySpec extends FunSuite:
 
   nebflow.core.LlmLogWriter.setEnabled(false)
 
-  private def mkTask(id: String, parent: String, status: String = "running", prompt: String = "do the thing"): SubAgentTask =
+  private def mkTask(
+    id: String,
+    parent: String,
+    status: String = "running",
+    prompt: String = "do the thing"
+  ): SubAgentTask =
     SubAgentTask(
       taskId = id,
       parentSessionId = parent,
@@ -82,10 +87,13 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         _ <- store.recordTask(mkTask(childA, parent.id))
         _ <- store.recordTask(mkTask(childB, parent.id))
         // Child A left a partial transcript on disk; child B left nothing.
-        _ <- sessionStore.saveMessagesForSession(childA, List(
-          nebflow.shared.Message(MessageRole.User, Left("start work")),
-          nebflow.shared.Message(MessageRole.Assistant, Left("V2_PARTIAL_RESULT_TEXT"))
-        ))
+        _ <- sessionStore.saveMessagesForSession(
+          childA,
+          List(
+            nebflow.shared.Message(MessageRole.User, Left("start work")),
+            nebflow.shared.Message(MessageRole.Assistant, Left("V2_PARTIAL_RESULT_TEXT"))
+          )
+        )
         recovered <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
         running <- store.findRunningTasks
         events <- CompactionQueueStore.load(parent.id)
@@ -104,7 +112,10 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       assert(evtB.payload.contains("No recoverable result"), s"unsalvageable task must say so: ${evtB.payload}")
       // Terminalized with a loss note.
       val tasks = store.loadTasks(parentSid).unsafeRunSync()
-      assert(tasks.forall(t => t.status == "failed" && t.lastError.exists(_.contains("startup recovery"))), clue(tasks).toString)
+      assert(
+        tasks.forall(t => t.status == "failed" && t.lastError.exists(_.contains("startup recovery"))),
+        clue(tasks).toString
+      )
     }
   }
 
@@ -136,7 +147,9 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         recovered <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
         running <- store.findRunningTasks
         // The queue file must NOT be created for a non-existent parent.
-        queueFileExists <- IO(os.exists(PathUtil.dataRoot / "sessions" / "deleted-parent-sid" / "injection-queues.json"))
+        queueFileExists <- IO(
+          os.exists(PathUtil.dataRoot / "sessions" / "deleted-parent-sid" / "injection-queues.json")
+        )
       yield (recovered, running, queueFileExists)
 
       val (recovered, running, queueFileExists) = io.unsafeRunSync()
@@ -167,9 +180,14 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         llm = new nebflow.shared.LlmHandle[IO]:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
-          def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+          def sendStream(
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ) =
             fs2.Stream.eval(llmRef.update(_ + 1)) >> fs2.Stream(
-              nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
+              nebflow.shared.StreamChunk.TextDelta("ok"),
+              nebflow.shared.StreamChunk.Done(None, None)
+            )
         resources = SharedResources(
           llm = llm,
           dispatcher = dispatcher,
@@ -193,7 +211,9 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         // Root-bucket caller (empty registry otherwise — the crash shape).
         callerRef <- system.spawn(idleBehavior, "v2-caller")
         callerSid = "v2-caller-sid"
-        _ <- resources.agentRegistry.update(_ + (callerSid -> AgentRecord(callerSid, callerRef, AgentKind.Root, callerSid)))
+        _ <- resources.agentRegistry.update(
+          _ + (callerSid -> AgentRecord(callerSid, callerRef, AgentKind.Root, callerSid))
+        )
         // Orphan: running task, NO registry row (previous process crash).
         _ <- store.recordTask(mkTask("delegate-explorer-e5", callerSid))
         listRes <- AgentControlTool.call(
@@ -206,13 +226,15 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       val out = listRes match
         case Right(text) => text
-        case Left(err)   => fail(s"list failed: $err")
+        case Left(err) => fail(s"list failed: $err")
       assert(clue(out).contains("delegate-explorer-e5"), s"orphan task must appear in list:\n$out")
       assert(clue(out).contains("orphan(running)"), s"orphan row must be labeled:\n$out")
     }
   }
 
-  test("R5 RED BASELINE: with the sweep bypassed, the audited loss shape reproduces (task stuck running, no notification)") {
+  test(
+    "R5 RED BASELINE: with the sweep bypassed, the audited loss shape reproduces (task stuck running, no notification)"
+  ) {
     withFixture("r5") { (store, sessionStore, tmp) =>
       val io = for
         parent <- sessionStore.createSession("Nebula", agentName = Some("Nebula"))
