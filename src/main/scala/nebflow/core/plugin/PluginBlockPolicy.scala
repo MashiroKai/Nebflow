@@ -3,7 +3,8 @@ package nebflow.core.plugin
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 /**
  * 插件**封禁面**（deny-list，2026-09-13 作者令「装了就是信任」）——default-allow +

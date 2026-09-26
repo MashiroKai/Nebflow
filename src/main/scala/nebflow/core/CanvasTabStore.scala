@@ -2,6 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import io.circe.{Json, parser}
+import nebflow.shared.NebflowLogger
 
 /**
  * 服务端持久化的 Canvas 标签 v2 存档（F1 根治，2026-08-30）。

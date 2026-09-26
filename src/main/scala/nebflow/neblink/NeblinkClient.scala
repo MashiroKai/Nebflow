@@ -5,7 +5,7 @@ import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.net.{NetworkInterface, URI}

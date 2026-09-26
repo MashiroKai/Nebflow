@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.effect.std.Queue
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*

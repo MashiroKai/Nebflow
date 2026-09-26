@@ -4,7 +4,8 @@ import cats.effect.IO
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.agent.AgentDef
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.PathUtil
+import nebflow.shared.NebflowLogger
 
 /**
  * Loads Team/Flow/Agent definitions from disk.

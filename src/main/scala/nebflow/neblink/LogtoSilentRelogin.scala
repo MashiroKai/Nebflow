@@ -206,13 +206,13 @@ object LogtoSilentRelogin:
 
   /** Production transport — same policy as LogtoDeviceFlow.jdkSend. */
   private def log(message: String): IO[Unit] =
-    nebflow.core.NebflowLogger.forName("nebflow.neblink.relogin").info(s"[logto-ac] $message")
+    nebflow.shared.NebflowLogger.forName("nebflow.neblink.relogin").info(s"[logto-ac] $message")
 
   /**
    * Failure-path logging — warn level so silent-relogin breakage surfaces in
    * instance logs instead of hiding among routine info lines.
    */
   private def warn(message: String): IO[Unit] =
-    nebflow.core.NebflowLogger.forName("nebflow.neblink.relogin").warn(s"[logto-ac] $message")
+    nebflow.shared.NebflowLogger.forName("nebflow.neblink.relogin").warn(s"[logto-ac] $message")
 
 end LogtoSilentRelogin

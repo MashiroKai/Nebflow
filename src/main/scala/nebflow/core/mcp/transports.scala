@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.generic.auto.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.io.{BufferedReader, InputStreamReader, PrintWriter}
 import java.util.concurrent.{ConcurrentHashMap, atomic}

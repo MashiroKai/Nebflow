@@ -2,8 +2,8 @@ package nebflow.core.flow
 
 import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ToolContext
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 

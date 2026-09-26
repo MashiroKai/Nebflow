@@ -235,7 +235,7 @@ class AnthropicAdapter(
   private[providers] def effectiveThinking(params: SendMessageParams): Option[Json] =
     params.thinking match
       case Some(t) if requireThinkingPassback && hasAssistantWithoutThinking(params.messages) =>
-        nebflow.core.NebflowLogger
+        nebflow.shared.NebflowLogger
           .forName("nebflow.llm.anthropic")
           .warn(
             s"thinking mode dropped for this request: ${params.model} requires thinking passback but " +
@@ -471,7 +471,7 @@ class AnthropicAdapter(
         case Left(err) =>
           // Observability (issue #18 follow-up): dropped SSE data used to be
           // invisible; log so malformed provider frames are diagnosable.
-          nebflow.core.NebflowLogger
+          nebflow.shared.NebflowLogger
             .forName("nebflow.llm.anthropic")
             .warn(s"dropped unparseable SSE data (${err.message}): ${data.take(120)}")
             .as(Nil)
@@ -483,7 +483,7 @@ class AnthropicAdapter(
               val inputTokens = usageObj.downField("input_tokens").as[Int].getOrElse(0)
               val cacheRead = usageObj.downField("cache_read_input_tokens").as[Option[Int]].toOption.flatten
               val cacheWrite = usageObj.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
-              nebflow.core.NebflowLogger
+              nebflow.shared.NebflowLogger
                 .forName("nebflow.llm.anthropic")
                 .infoSync(
                   s"message_start: model=${params.model} usage_json=${usageObj.as[Json].getOrElse(Json.Null).noSpaces} inputTokens=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite"
@@ -560,7 +560,7 @@ class AnthropicAdapter(
                 val cacheRead = deltaCacheRead.orElse(t.cacheRead)
                 val cacheWrite = deltaCacheWrite.orElse(t.cacheWrite)
                 val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
-                nebflow.core.NebflowLogger
+                nebflow.shared.NebflowLogger
                   .forName("nebflow.llm.anthropic")
                   .infoSync(
                     s"message_delta: model=${params.model} deltaInput=$deltaInput stored_input=${t.input} final_input=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite totalInput=$totalInput outputTokens=$outputTokens stopReason=$stopReason"
@@ -592,7 +592,7 @@ class AnthropicAdapter(
               // other event type still falls through to `case _ => Nil` below.
               val frameType =
                 json.hcursor.downField("type").as[String].toOption.map(_.take(40)).getOrElse("(absent)")
-              nebflow.core.NebflowLogger
+              nebflow.shared.NebflowLogger
                 .forName("nebflow.llm.anthropic")
                 .warn(
                   "dropped SSE frame with empty event type (data line without a preceding 'event:' line): " +

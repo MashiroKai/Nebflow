@@ -3,8 +3,8 @@ package nebflow.core.compact
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.shared.*
+import nebflow.core.PathUtil
+import nebflow.shared.{NebflowLogger, *}
 
 object CompactUtils:
 

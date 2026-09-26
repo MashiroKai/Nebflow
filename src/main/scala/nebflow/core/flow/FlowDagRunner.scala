@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.entity.{FlowDagDef, FlowDagExecutor}
+import nebflow.shared.NebflowLogger
 
 /**
  * One-shot actor that runs a Flow DAG and delivers the result to the caller.

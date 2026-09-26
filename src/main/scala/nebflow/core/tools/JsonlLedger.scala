@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Append-only JSONL 账本的读写基元（记忆改造批 2026-09-12，IMPL-1）。

@@ -3,7 +3,7 @@ package nebflow.llm.providers
 import io.circe.JsonObject
 import io.circe.parser.parse
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Shared parser for LLM tool-call arguments (accumulated streaming fragments or

@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 

@@ -5,7 +5,8 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.tools.ToolError
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import java.time.Instant
 

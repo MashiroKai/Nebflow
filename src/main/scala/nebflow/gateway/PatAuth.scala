@@ -64,7 +64,7 @@ object PatAuth:
   /** 默认 = 不强制（A/B 共同位；C 待裁）。 */
   val noRevocation: RevocationGate = (_, _) => false
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.gateway.pat")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.gateway.pat")
 
   /**
    * alg 白名单：Logto 现代密钥池是 EC P-384（ES384），旧池是 RSA（RS256）。白名单同时排除

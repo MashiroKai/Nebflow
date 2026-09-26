@@ -6,8 +6,9 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.PathUtil
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}

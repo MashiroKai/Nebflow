@@ -4,9 +4,9 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
-import nebflow.shared.ContentBlock
+import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.given
+import nebflow.shared.{ContentBlock, NebflowLogger}
 
 /**
  * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store for

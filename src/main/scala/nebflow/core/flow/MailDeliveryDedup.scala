@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.effect.kernel.Ref
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
-import nebflow.shared.Defaults
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.{Defaults, NebflowLogger}
 
 /**
  * Fingerprint dedup for the queue-delivery layer (P0 投递层指纹去重).

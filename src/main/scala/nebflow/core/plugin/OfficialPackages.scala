@@ -1,6 +1,6 @@
 package nebflow.core.plugin
 
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.net.JarURLConnection
 import java.security.MessageDigest

@@ -23,7 +23,7 @@
 #   ① 多行形态：`IO.delay(` / `IO(` 之后换行再出现 logger 调用（v1 漏检）；
 #   ② 任意 logger 接收者：局部 val（如 shellLogger、lifecycleLog）、
 #      成员路径（如 SessionRecorder.logger）、内联链
-#      （NebflowLogger.forName("...").warn(...) / nebflow.core.NebflowLogger...）；
+#      （NebflowLogger.forName("...").warn(...) / nebflow.shared.NebflowLogger...）；
 #   ③ 三种 IO 构造子：`IO(`、`IO.delay(`、`IO.blocking(`（形参形态）。
 # 判定单元：被检出的 logger 调用必须是该 IO 构造子的**直接实参表达式**
 # （相对该括号深度 0，即中间不再嵌套任何括号）——这正是「内层 IO 被丢弃」的

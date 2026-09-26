@@ -3,8 +3,7 @@ package nebflow.llm
 import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 
 import scala.concurrent.duration.*
 

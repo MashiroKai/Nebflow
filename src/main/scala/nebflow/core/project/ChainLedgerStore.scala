@@ -4,7 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger}
+import nebflow.core.AtomicJson
+import nebflow.shared.NebflowLogger
 
 import java.security.MessageDigest
 

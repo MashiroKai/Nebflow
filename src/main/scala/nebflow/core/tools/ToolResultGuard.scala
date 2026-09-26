@@ -2,8 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.{NebflowLogger, PathUtil, ToolExecResult}
-import nebflow.shared.{Defaults, ToolCall}
+import nebflow.core.{PathUtil, ToolExecResult}
+import nebflow.shared.{Defaults, NebflowLogger, ToolCall}
 
 /**
  * Guards against oversized tool results that would blow the LLM context window.

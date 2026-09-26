@@ -1,7 +1,7 @@
 package nebflow.core.sandbox
 
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ToolContext
+import nebflow.shared.NebflowLogger
 
 /**
  * per-task 容器生命周期**骨架**（沙箱统一底座设计方案 §2.3 / §4-T6，2026-09-11 实施批）。

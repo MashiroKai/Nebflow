@@ -2,10 +2,9 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import nebflow.agent.RootAgentIdentity
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.MemoryQueue
 import nebflow.service.{MemoryBudget, MemoryStore}
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 
 import java.nio.charset.StandardCharsets
 

@@ -1,6 +1,6 @@
 package nebflow.core.sandbox
 
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.util.concurrent.ConcurrentHashMap
 

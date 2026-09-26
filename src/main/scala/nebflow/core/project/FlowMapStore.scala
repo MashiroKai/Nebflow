@@ -4,7 +4,8 @@ import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 /**
  * FlowMapStore —— 每项目 Flow Map 存储（#28 阶段 0，方案 §2.6）。

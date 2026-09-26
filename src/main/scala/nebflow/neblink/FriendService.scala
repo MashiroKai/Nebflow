@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
 import nebflow.neblink.FriendCodecs.given
+import nebflow.shared.NebflowLogger
 
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*

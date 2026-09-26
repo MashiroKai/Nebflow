@@ -5,7 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.hotrestart.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 /**
  * 指针化回滚（hotupdate 批 2 G4 · 设计 §6②）。

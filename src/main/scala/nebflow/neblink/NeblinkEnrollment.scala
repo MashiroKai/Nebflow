@@ -2,7 +2,7 @@ package nebflow.neblink
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Enrollment persistence shared by every login path (device flow poll,

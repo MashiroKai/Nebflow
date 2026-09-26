@@ -2,7 +2,8 @@ package nebflow.core.project
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.PathUtil
+import nebflow.shared.NebflowLogger
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}

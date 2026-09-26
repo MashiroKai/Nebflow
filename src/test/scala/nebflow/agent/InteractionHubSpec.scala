@@ -123,7 +123,7 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
       replyTo <- system.spawn(
         nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
-          nebflow.core.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
+          nebflow.shared.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
         },
         "ask-reply-sink"
       )

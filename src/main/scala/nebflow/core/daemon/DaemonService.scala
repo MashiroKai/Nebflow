@@ -6,8 +6,8 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.util.ProcessTree
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
-import nebflow.shared.Retry
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.{NebflowLogger, Retry}
 
 import java.io.{BufferedReader, InputStreamReader}
 import java.util.concurrent.locks.ReentrantLock

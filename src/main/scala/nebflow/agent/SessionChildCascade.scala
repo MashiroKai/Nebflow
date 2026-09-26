@@ -2,7 +2,7 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * V1 (2026-09-03, 结果投递链丢失向量修复): session-delete cascade for

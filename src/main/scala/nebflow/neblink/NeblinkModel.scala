@@ -6,6 +6,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
+import nebflow.shared.NebflowLogger
 
 import java.util.UUID
 

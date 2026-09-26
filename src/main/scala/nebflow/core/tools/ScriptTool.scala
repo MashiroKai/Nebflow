@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.util.concurrent.TimeUnit
 

@@ -6,11 +6,10 @@ import io.circe.Json
 import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.node.NodeRunner
 import nebflow.core.tools.FlowReportStore
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 

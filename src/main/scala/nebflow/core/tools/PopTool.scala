@@ -48,7 +48,7 @@ object PopTool extends Tool:
    */
   import FileRefs.*
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.pop")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.pop")
 
   /** Max text file size to send via WS (2 MB). Larger files are read by the frontend via /api/nf-file. */
   private val MaxTextSize = 2 * 1024 * 1024

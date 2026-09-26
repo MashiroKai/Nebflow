@@ -8,7 +8,8 @@ import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
-import nebflow.core.{AskItem, NebflowLogger, PathUtil}
+import nebflow.core.{AskItem, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import scala.util.Try
 

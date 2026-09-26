@@ -1440,7 +1440,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     mode: nebflow.core.SafetyMode,
     sessionId: String
   ): IO[Unit] =
-    nebflow.core.NebflowLogger
+    nebflow.shared.NebflowLogger
       .forName("nebflow.audit")
       .info(nebflow.core.McpToolGate.auditLine(outcome, mode, sessionId))
       .handleErrorWith(_ => IO.unit)

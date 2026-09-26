@@ -5,7 +5,7 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets.UTF_8

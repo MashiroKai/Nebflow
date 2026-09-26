@@ -3,8 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.Defaults
+import nebflow.shared.{Defaults, NebflowLogger}
 
 /**
  * ProjectCrashRecovery —— boot-time 崩溃断点恢复 sweep（crash-recovery 批 2026-09-07，

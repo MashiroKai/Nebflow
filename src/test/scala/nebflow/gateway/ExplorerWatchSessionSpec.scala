@@ -10,7 +10,7 @@ import java.nio.file.Paths
 import scala.concurrent.duration.*
 
 import io.circe.Json
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * explorer-rt backend spec (design card chain-n-1981ce87 §4 anchors R1-R5)

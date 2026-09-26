@@ -285,7 +285,7 @@ object Config:
   def NebflowHome: os.Path = PathUtil.dataRoot
   def DefaultConfigPath: os.Path = PathUtil.configJsonReadPath(NebflowHome)
 
-  private val envVarLogger = nebflow.core.NebflowLogger.forName("nebflow.config")
+  private val envVarLogger = nebflow.shared.NebflowLogger.forName("nebflow.config")
 
   def resolveEnvVars(str: String): String =
     """\$\{([^}]+)\}""".r.replaceAllIn(

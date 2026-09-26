@@ -6,7 +6,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.plugin.PluginRegistry
 import nebflow.core.project.ProjectStore
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import java.net.JarURLConnection
 import java.security.MessageDigest

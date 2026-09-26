@@ -3,7 +3,7 @@ package nebflow.dropbox
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.security.MessageDigest
 import java.time.ZonedDateTime

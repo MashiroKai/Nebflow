@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.agent.*
-import nebflow.core.{EventSink, NebflowLogger}
+import nebflow.core.EventSink
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.{FiniteDuration, *}
 

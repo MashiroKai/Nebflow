@@ -2,9 +2,9 @@ package nebflow.core.mcp
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.McpServerConfig
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 

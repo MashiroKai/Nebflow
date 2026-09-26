@@ -2,8 +2,7 @@ package nebflow.core.project
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.{Defaults, PowerStateTracker, SleepWindow}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 

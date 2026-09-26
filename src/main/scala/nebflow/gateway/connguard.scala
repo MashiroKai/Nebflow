@@ -6,7 +6,8 @@ import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.{Branding, NebflowLogger}
+import nebflow.core.Branding
+import nebflow.shared.NebflowLogger
 import org.http4s.HttpApp
 
 import scala.concurrent.duration.*

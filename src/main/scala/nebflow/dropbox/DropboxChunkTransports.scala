@@ -5,8 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
 import nebflow.neblink.NeblinkClient
+import nebflow.shared.NebflowLogger
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}

@@ -3,9 +3,8 @@ package nebflow.core.tools
 import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.util.ProcessTree
-import nebflow.shared.Defaults
+import nebflow.shared.{Defaults, NebflowLogger}
 
 import java.io.File
 import java.lang.Process

@@ -249,7 +249,7 @@ class WebSocketRoutes(
       sharedResources.hookEngine
         .onSessionStart(hookCtx)
         .handleErrorWith { e =>
-          nebflow.core.NebflowLogger
+          nebflow.shared.NebflowLogger
             .forName("nebflow.hooks")
             .warn(s"SessionStart hook failed: ${e.getMessage}")
             .as(nebflow.core.hooks.HookResult.allow)

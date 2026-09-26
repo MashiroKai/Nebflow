@@ -5,7 +5,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.{AtomicJson, PathUtil}
+import nebflow.shared.NebflowLogger
 
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, OffsetDateTime, ZoneId}

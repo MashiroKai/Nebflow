@@ -2,8 +2,9 @@ package nebflow.agent
 
 import cats.effect.IO
 import nebflow.actor.{ActorPath, ActorRef}
+import nebflow.core.AskItem
 import nebflow.core.tools.{AskUserQuestionTool, ToolContext}
-import nebflow.core.{AskItem, NebflowLogger}
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 

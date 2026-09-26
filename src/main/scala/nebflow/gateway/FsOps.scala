@@ -14,7 +14,7 @@ object FsOps:
    * **纯核**（companion 成员，spec 直接静态调用），其**成功分支的审计留痕**必须
    * 在本层落笔 ⇒ 需要本层自己的 logger（与类侧 `nebflow.ws` 同名，日志面同源）。
    */
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.ws")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.ws")
 
   /**
    * UI 文件浏览器**删除成功分支**的审计行（#159/#176 ④「补盲区」）。

@@ -4,9 +4,10 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.agent.RootAgentIdentity
+import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectDef, ProjectMemory, ProjectStore}
-import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.service.{MemoryBudget, MemoryStore, MemoryWriteGate}
+import nebflow.shared.NebflowLogger
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest

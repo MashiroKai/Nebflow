@@ -98,7 +98,7 @@ end SessionStore
 // Phase 5 解耦:混入 core 窄端口(实现原地不搬;四个成员签名与既有定义逐字一致,
 // core 的 ScheduledTaskActor / FlowTreeActor / ToolContext 面向端口编程)。
 class SessionStore(sessionsDir: os.Path, tasksDir: os.Path) extends SessionStorePort:
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.session")
 
   // (activeId, metas sorted by updatedAt desc, folders)
   private val indexRef: Ref[IO, (String, List[SessionMeta], List[Folder])] =

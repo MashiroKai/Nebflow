@@ -29,7 +29,7 @@ object CardTool extends Tool:
    */
   override val maxResultSizeChars: Int = Int.MaxValue
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.card")
 
   /**
    * The shared local-reference policy (failure enum, file probe, app-route

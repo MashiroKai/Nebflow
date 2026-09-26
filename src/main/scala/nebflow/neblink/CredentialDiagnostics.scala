@@ -240,7 +240,7 @@ object CredentialDiagnostics:
   def isLocalFileCode(code: String): Boolean =
     all.filter(_.isLocalFile).exists(_.code == code)
 
-  private val log = nebflow.core.NebflowLogger.forName("nebflow.neblink.credential")
+  private val log = nebflow.shared.NebflowLogger.forName("nebflow.neblink.credential")
 
   /** 观测面（测试用）：各分类的可见三段式文案全表（负控遍历用）。 */
   def allMessages: List[String] = all.map(f => diagnosticOf(f, detailOf(f)).message)

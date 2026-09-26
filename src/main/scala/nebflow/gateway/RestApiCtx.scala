@@ -6,9 +6,9 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
-import nebflow.core.NebflowLogger
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.*
+import nebflow.shared.NebflowLogger
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*

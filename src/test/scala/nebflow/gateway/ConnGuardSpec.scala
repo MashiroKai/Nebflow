@@ -17,7 +17,7 @@ import munit.CatsEffectSuite
  */
 class ConnGuardSpec extends CatsEffectSuite:
 
-  private val logger = nebflow.core.NebflowLogger.forName("test.conn-guard")
+  private val logger = nebflow.shared.NebflowLogger.forName("test.conn-guard")
 
   private def guard(cfg: ConnGuardConfig): IO[ConnGuard] = ConnGuard.forConfig(cfg, logger)
 

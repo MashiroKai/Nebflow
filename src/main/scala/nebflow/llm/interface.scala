@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 import sttp.client4.httpclient.fs2.HttpClientFs2Backend

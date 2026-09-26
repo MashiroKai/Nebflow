@@ -4,9 +4,9 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger}
+import nebflow.core.AtomicJson
 import nebflow.llm.LlmInterface
-import nebflow.shared.Defaults
+import nebflow.shared.{Defaults, NebflowLogger}
 
 import java.util.concurrent.atomic.AtomicBoolean
 

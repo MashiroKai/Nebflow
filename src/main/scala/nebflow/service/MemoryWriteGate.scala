@@ -1,7 +1,7 @@
 package nebflow.service
 
 import cats.effect.IO
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.nio.charset.StandardCharsets
 

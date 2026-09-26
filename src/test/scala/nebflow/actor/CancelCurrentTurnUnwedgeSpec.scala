@@ -31,7 +31,7 @@ class CancelCurrentTurnUnwedgeSpec extends CatsEffectSuite:
       ctx = LocalActorContext(
         self = ref,
         system = system,
-        log = nebflow.core.NebflowLogger.forName("nebflow.actor"),
+        log = nebflow.shared.NebflowLogger.forName("nebflow.actor"),
         activeTurnFibers = fibers,
         childrenRef = children
       )

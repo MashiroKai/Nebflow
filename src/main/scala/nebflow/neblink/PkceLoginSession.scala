@@ -114,7 +114,7 @@ end PkceLoginSession
 
 object PkceLoginSession:
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.neblink.pkce")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.neblink.pkce")
 
   final case class InFlight(verifier: String, state: String, createdAt: Long)
 

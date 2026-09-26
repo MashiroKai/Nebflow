@@ -4,8 +4,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
+import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.NebflowLogger
 
 // --- Data models ---
 

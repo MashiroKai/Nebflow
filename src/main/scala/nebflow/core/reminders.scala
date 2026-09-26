@@ -2,9 +2,8 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter

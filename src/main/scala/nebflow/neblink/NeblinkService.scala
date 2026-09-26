@@ -5,7 +5,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 import sttp.client4.*
 
 import scala.concurrent.duration.*

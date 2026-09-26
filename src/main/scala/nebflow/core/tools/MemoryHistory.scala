@@ -3,7 +3,8 @@ package nebflow.core.tools
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.PathUtil
+import nebflow.shared.NebflowLogger
 
 import java.time.Instant
 

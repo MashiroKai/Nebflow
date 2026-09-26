@@ -2,7 +2,7 @@ package nebflow.gateway
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.awt.{FileDialog, GraphicsEnvironment}
 import java.util.concurrent.atomic.AtomicBoolean

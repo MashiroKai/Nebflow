@@ -2,7 +2,7 @@ package nebflow.core.hooks
 
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /** Loads and parses hooks config from nebflow.json. */
 object HooksConfigLoader:

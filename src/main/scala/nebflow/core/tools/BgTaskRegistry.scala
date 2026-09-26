@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.agent.RootAgentIdentity
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Global registry of active background tasks (local Bash + remote).

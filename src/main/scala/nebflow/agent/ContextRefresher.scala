@@ -45,7 +45,7 @@ object ContextRefresher:
   // AGENTS.md 注入（§E.2，project-architecture phase2 设计 §E）
   // ============================================================
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.agent")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.agent")
 
   /** E.2 长度护栏：>16KB（16*1024 字节）截断 + 尾注（提示词膨胀防护）。 */
   val AgentsMdMaxBytes: Int = 16 * 1024

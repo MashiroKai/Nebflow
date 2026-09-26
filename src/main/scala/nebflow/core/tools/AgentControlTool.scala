@@ -35,7 +35,7 @@ import scala.concurrent.duration.*
  */
 object AgentControlTool extends Tool:
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.agent-control")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.agent-control")
 
   val name = "AgentControl"
 
@@ -399,7 +399,7 @@ When to use:
    * Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
    * （随 nebflow.log 落盘）。
    */
-  private val auditLogger = nebflow.core.NebflowLogger.forName("nebflow.audit")
+  private val auditLogger = nebflow.shared.NebflowLogger.forName("nebflow.audit")
 
   private def auditTeamAction(
     ctx: ToolContext,

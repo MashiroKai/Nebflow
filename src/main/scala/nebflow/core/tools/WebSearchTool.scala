@@ -15,7 +15,7 @@ object WebSearchTool extends Tool:
   val DEFAULT_MAX_CHARS = 15_000
   val BATCH_SIZE = 3 // race this many engines at a time
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.websearch")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.tools.websearch")
 
   /**
    * Anti-scraping garbage fingerprints (WebSearch P0, C4). A result entry

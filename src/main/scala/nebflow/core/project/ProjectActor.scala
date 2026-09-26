@@ -6,9 +6,9 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 

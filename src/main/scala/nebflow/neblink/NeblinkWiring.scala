@@ -1,7 +1,7 @@
 package nebflow.neblink
 
 import cats.effect.{IO, Ref}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Boot wiring seam for the A2A friend domain (2026-09-11 boot-snapshot fix).

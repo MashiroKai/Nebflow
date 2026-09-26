@@ -5,7 +5,8 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Codec, Decoder, Encoder}
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.PathUtil
+import nebflow.shared.NebflowLogger
 
 /**
  * Persisted metadata for a sub-agent task (Delegate / SubTask).

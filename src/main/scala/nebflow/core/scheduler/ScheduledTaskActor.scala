@@ -6,8 +6,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
-import nebflow.core.{NebflowLogger, SessionStorePort}
-import nebflow.shared.UiMessage
+import nebflow.core.SessionStorePort
+import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}

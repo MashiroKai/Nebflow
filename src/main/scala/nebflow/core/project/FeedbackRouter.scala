@@ -2,7 +2,7 @@ package nebflow.core.project
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /** FeedbackRouter 的路由裁决（设计 §2.2/§2.3/§3）。 */
 sealed trait FeedbackDecision

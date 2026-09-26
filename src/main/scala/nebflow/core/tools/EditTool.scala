@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
 import nebflow.core.sandbox.FileSandbox
+import nebflow.shared.NebflowLogger
 
 import java.nio.file.{Files, Path, Paths}
 

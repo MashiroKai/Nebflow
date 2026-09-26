@@ -37,7 +37,7 @@ class RestApiRoutes(
    */
   connGuard: ConnGuard = ConnGuard.disabled
 ):
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.rest-api")
 
   /**
    * REST 域分发上下文(B 步起,仿 WebSocketRoutes.wsDispatchContext 先例):把各

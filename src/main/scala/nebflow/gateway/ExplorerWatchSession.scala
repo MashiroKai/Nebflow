@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.nio.file.*
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}

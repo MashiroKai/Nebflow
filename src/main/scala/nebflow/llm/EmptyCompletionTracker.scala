@@ -1,7 +1,7 @@
 package nebflow.llm
 
 import cats.effect.{IO, Ref}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Tracks per-model signals that a model cannot actually handle image input,

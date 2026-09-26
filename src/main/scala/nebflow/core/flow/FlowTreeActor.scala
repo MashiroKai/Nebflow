@@ -6,9 +6,8 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.NebflowLogger
 import nebflow.core.entity.{EntityLoader, TeamDef}
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 // ============================================================
 // FlowTreeActor — manages TEAM mounting and session lifecycle

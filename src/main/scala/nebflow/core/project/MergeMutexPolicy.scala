@@ -1,7 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.IO
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import java.util.concurrent.ConcurrentHashMap
 
