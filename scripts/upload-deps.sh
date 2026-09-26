@@ -105,7 +105,9 @@ ossutil_bin() {
   if [ ! -x "$bin" ]; then
     mkdir -p "$dir"
     zip="${dir}/ossutil.zip"
-    echo "[i] downloading pinned ossutil 1.7.19 (${os}/${arch})"
+    # Progress note goes to stderr: the caller captures this function's stdout
+    # via command substitution, so a stdout echo would corrupt the binary path.
+    echo "[i] downloading pinned ossutil 1.7.19 (${os}/${arch})" >&2
     curl -fL --connect-timeout 15 --max-time 300 --retry 2 -o "$zip" "$url" \
       || die "pinned ossutil download failed: ${url}"
     [ "$(sha256_of "$zip")" = "$want" ] || die "pinned ossutil zip sha256 mismatch - refusing to run"
