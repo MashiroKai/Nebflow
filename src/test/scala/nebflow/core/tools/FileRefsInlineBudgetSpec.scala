@@ -93,7 +93,7 @@ class FileRefsInlineBudgetSpec extends FunSuite:
   // ── Pop harness (same shape as PopToolFileRefSpec: the identity gate needs a
   //    Nebula root ctx) ─────────────────────────────────────────────────────
 
-  private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
   private def captureCtx(buf: scala.collection.mutable.ListBuffer[Json]): ToolContext =
     ToolContext(

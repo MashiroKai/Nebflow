@@ -48,7 +48,7 @@ class TeamTaskToolsSpec extends FunSuite:
    * assignee to the caller's name (member self-attribution).
    */
   private def teamCtxAs(memberName: String, teamName: String = "alpha"): ToolContext =
-    teamCtx(teamName).copy(agentDef = Some(nebflow.agent.AgentDef(name = memberName, description = "test member")))
+    teamCtx(teamName).copy(agentDef = Some(nebflow.actor.AgentDef(name = memberName, description = "test member")))
 
   /** Nebula-like context: no teamName — reads must pass `team` explicitly. */
   private def noTeamCtx(): ToolContext =

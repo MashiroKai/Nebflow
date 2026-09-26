@@ -2,7 +2,7 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.shared.*
 
 import java.nio.file.{Files, Paths}

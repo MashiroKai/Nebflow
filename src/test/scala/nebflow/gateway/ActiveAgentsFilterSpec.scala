@@ -3,7 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.actor.ActorRef
 

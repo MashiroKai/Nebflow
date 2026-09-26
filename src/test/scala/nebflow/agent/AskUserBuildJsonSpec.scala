@@ -3,7 +3,7 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.{AskItem, AskOption, AskPreview}
+import nebflow.shared.{AskItem, AskOption, AskPreview}
 
 /**
  * #380 backend passthrough contract (V11): buildAskUserJson emits the optional

@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.shared.NebflowLogger
 
 /**

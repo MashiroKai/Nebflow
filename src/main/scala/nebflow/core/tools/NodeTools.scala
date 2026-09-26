@@ -4,12 +4,11 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorRef
-import nebflow.agent.AgentCommand
+import nebflow.actor.{ActorRef, AgentCommand}
+import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
-import nebflow.core.{AskItem, PathUtil}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{AskItem, NebflowLogger}
 
 import scala.util.Try
 

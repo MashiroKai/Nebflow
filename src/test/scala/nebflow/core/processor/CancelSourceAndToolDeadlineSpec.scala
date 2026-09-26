@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.project.CancelSource
 import nebflow.shared.Defaults
 

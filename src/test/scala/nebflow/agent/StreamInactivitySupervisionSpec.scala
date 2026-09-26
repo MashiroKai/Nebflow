@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.ToolPipelineError
 import nebflow.llm.{Fallback, FallbackExhaustedError}
 import nebflow.shared.*
 import scala.concurrent.duration.*

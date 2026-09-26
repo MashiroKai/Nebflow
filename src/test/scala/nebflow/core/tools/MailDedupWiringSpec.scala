@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.AgentCommand
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

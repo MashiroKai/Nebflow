@@ -7,8 +7,8 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.AgentDef
 import nebflow.agent.{
-  AgentDef,
   AgentLibrary,
   InteractionHub,
   InteractionHubCommand,

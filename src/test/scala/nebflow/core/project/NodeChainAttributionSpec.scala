@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
-import nebflow.agent.flowChainId // AgentState extension accessor（§9.2 项 2 第三处）
+import nebflow.actor.flowChainId // AgentState extension accessor（§9.2 项 2 第三处）
 import nebflow.core.PathUtil
 import nebflow.core.node.NodeRunner
 import nebflow.core.task.FileTaskStore
@@ -427,7 +427,7 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       // 分发器 spawn 形态（ProjectActor :600-628 同参：isDispatcher=true + projectName + 显式 None）
       params = NodeRunner.SpawnParams(
-        agentDef = nebflow.agent
+        agentDef = nebflow.actor
           .AgentDef(name = ProbeAgent, description = "dispatcher-gate", tools = Nil, category = "standalone"),
         resources = res,
         sessionId = "dispatcher-gate-sid",
@@ -444,13 +444,13 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       assertEquals(params.flowChainId, None, "dispatcher belongs to no chain（口径显式 None，不依赖调用方记忆）")
       assertEquals(params.flowNodeId, None, "分发器无 NodeDef.id（对照：节点 spawn 置 Some）")
       assertEquals(
-        nebflow.agent.AgentState(flowChainId = Some("chain-x")).flowChainId,
+        nebflow.actor.AgentState(flowChainId = Some("chain-x")).flowChainId,
         Some("chain-x"),
         "SessionContext 字段/参数/accessor 三处接通（AgentState 透传面 + extension accessor）"
       )
-      assertEquals(nebflow.agent.AgentState().flowChainId, None, "非项目会话默认 None")
+      assertEquals(nebflow.actor.AgentState().flowChainId, None, "非项目会话默认 None")
       assertEquals(
-        nebflow.agent.AgentState(flowChainId = Some("chain-x")).session.flowChainId,
+        nebflow.actor.AgentState(flowChainId = Some("chain-x")).session.flowChainId,
         Some("chain-x"),
         "SessionContext 字段本体承载（扩展 accessor 与字段同源）"
       )

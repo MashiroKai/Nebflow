@@ -3,6 +3,7 @@ package nebflow.core.processor
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.EventSink
 import nebflow.shared.NebflowLogger
@@ -1408,7 +1409,7 @@ object TaskStuckWatcher:
           // 其取消走 cancelFlow / RunningFlowRegistry（TaskStuckWatcherSpec
           // :651 notice-only 铁律）——分级只适用于真 root（General/Team 根会话），
           // 不得对 dag- 施加任何硬取消/kill 动作。
-          if !hard || rec.kind == nebflow.agent.AgentKind.Flow then
+          if !hard || rec.kind == nebflow.actor.AgentKind.Flow then
             logger.warn(
               s"TaskStuckWatcher: root agent ${rec.sessionId} (kind=${rec.kind}) stuck in Processing for ${idleSecs}s " +
                 s"[judge: $reason] — not auto-restarting, broadcast taskStuck for user decision"
@@ -1485,7 +1486,7 @@ object TaskStuckWatcher:
                       logger.warn(
                         s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck — L3: full actor restart " +
                           "(transcript reload from disk, queued injections preserved)"
-                      ) *> (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Full))
+                      ) *> (rec.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Full))
                         .handleErrorWith(e =>
                           logger.warn(s"TaskStuckWatcher: L3 restart for ${rec.sessionId} failed: ${e.getMessage}")
                         )

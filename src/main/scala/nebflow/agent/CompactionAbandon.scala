@@ -1,5 +1,6 @@
 package nebflow.agent
 
+import nebflow.actor.*
 import nebflow.core.compact.{CompactConfig, CompactService}
 
 /**

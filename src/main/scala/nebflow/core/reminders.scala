@@ -3,27 +3,10 @@ package nebflow.core
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
-import nebflow.shared.{Message, MessageRole, NebflowLogger}
+import nebflow.shared.*
 
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-
-case class SystemReminder(
-  category: String,
-  content: String,
-  /**
-   * F-2 计数面（presdial 批 2026-09-19）：本条提醒所宣告的变化**身份** —— device
-   * 通道 = 设备**成员集合**键（deviceId 面，见 [[SystemReminders.deviceMemberKey]]）。
-   * `None`（缺省）= 无计数语义 ⇒ 行为与改前逐字相同。
-   *
-   * 🔴 **不进渲染**（[[render]] 只用 `content`）⇒ 模型可见字面零影响；只被
-   * [[SystemReminders.logAndReturn]] 用来对「同一变化」跨会话去重（M1）与对
-   * 文本轴抖动切零增量（M3）。
-   */
-  countKey: Option[String] = None
-):
-  def render: String = s"<system-reminder>\n$content\n</system-reminder>"
-end SystemReminder
 
 /**
  * Plugin-surface change payload (plugins-live 批 2026-09-12): the rendered
@@ -33,15 +16,6 @@ end SystemReminder
  * consumed by [[SystemReminders.pluginSurfaceReminder]].
  */
 case class PluginSurfaceChange(previous: String, current: String)
-
-object SystemReminder:
-
-  def renderAll(reminders: List[SystemReminder]): String =
-    if reminders.isEmpty then ""
-    else if reminders.length == 1 then reminders.head.render
-    else
-      val body = reminders.map(_.content).mkString("\n\n")
-      s"<system-reminder>\n$body\n</system-reminder>"
 
 object SystemReminders:
 

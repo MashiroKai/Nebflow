@@ -3,6 +3,7 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.actor.AgentDef
 import nebflow.core.tools.ToolRegistry
 
 /**

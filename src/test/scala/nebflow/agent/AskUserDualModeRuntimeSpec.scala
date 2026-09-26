@@ -7,6 +7,17 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord,
+  AgentStatus,
+  AskMode,
+  InteractionAnswered,
+  messages,
+  status
+}
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

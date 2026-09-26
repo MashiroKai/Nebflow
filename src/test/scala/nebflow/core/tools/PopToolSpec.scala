@@ -33,10 +33,10 @@ class PopToolSpec extends FunSuite:
   nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
 
   /** Nebula 本体根会话身份（正常放行面）。 */
-  private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
-  private def defNamed(name: String): nebflow.agent.AgentDef =
-    nebflow.agent.AgentDef(name = name, description = "", tools = Nil)
+  private def defNamed(name: String): nebflow.actor.AgentDef =
+    nebflow.actor.AgentDef(name = name, description = "", tools = Nil)
 
   private def tempDir(name: String): os.Path =
     val d = os.pwd / "target" / s"test-pop-$name-${java.util.UUID.randomUUID().toString.take(6)}"
@@ -62,7 +62,7 @@ class PopToolSpec extends FunSuite:
   /** 身份参数化 harness——闸测试用（同一 wsSend 缓冲，身份/depth 可变）。 */
   private def ctxWith(
     buf: scala.collection.mutable.ListBuffer[Json],
-    agentDef: Option[nebflow.agent.AgentDef],
+    agentDef: Option[nebflow.actor.AgentDef],
     depth: Int
   ): ToolContext =
     ToolContext(
@@ -210,7 +210,7 @@ class PopToolSpec extends FunSuite:
    */
   private def assertDenied(
     label: String,
-    agentDef: Option[nebflow.agent.AgentDef],
+    agentDef: Option[nebflow.actor.AgentDef],
     depth: Int
   ): Unit =
     val buf = scala.collection.mutable.ListBuffer.empty[Json]

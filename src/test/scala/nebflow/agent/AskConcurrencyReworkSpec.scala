@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behaviors}
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 import scala.concurrent.duration.*
 

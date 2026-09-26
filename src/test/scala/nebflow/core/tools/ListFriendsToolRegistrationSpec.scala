@@ -4,7 +4,8 @@ import cats.effect.IO
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentCore, AgentDef, SharedResources}
+import nebflow.actor.AgentDef
+import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.neblink.{
   AgentMessagingConfig,
   ConversationSummary,

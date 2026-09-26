@@ -7,6 +7,7 @@ import fs2.Stream
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, messages}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

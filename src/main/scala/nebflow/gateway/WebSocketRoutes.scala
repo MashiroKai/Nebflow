@@ -7,7 +7,7 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorSystem as RootActorSystem
+import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
@@ -504,7 +504,7 @@ class WebSocketRoutes(
           for
             rootSid <- resolveRootSessionId(sessionId)
             _ <- (hub ! nebflow.agent.InteractionHubCommand.Answered(
-              nebflow.agent.InteractionAnswered(requestId, rootSid, payload)
+              nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
             )).void
           yield ()
         case None =>
@@ -634,7 +634,7 @@ class WebSocketRoutes(
       window <- effectiveContextWindowOf(sessionId)
     yield
       val effective = CompactThresholdOverride.effectiveThreshold(window, ratioOpt)
-      val default = nebflow.core.compact.CompactThreshold.threshold(window)
+      val default = nebflow.shared.CompactThreshold.threshold(window)
       Json.obj(
         "type" -> Json.fromString("compactThresholdInfo"),
         "sessionId" -> Json.fromString(sessionId),
@@ -731,12 +731,12 @@ class WebSocketRoutes(
    *   - 工具相位**自己**超时（> ToolPhaseStuckMs）时护栏解除：让 TaskStuckWatcher
    *     的换轴判据成为唯一接管者（此时 kick 命中 0 在飞请求，无副作用）。
    */
-  private def isKickCandidate(rec: nebflow.agent.AgentRecord, now: Long): Boolean =
+  private def isKickCandidate(rec: nebflow.actor.AgentRecord, now: Long): Boolean =
     val kickIdleMs = nebflow.shared.Defaults.SessionKickIdleSec * 1000L
     val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
     val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
     val toolInFlight = toolPhaseMs > 0 && toolPhaseMs <= nebflow.shared.Defaults.ToolPhaseStuckMs
-    rec.status == nebflow.agent.AgentStatus.Processing &&
+    rec.status == nebflow.actor.AgentStatus.Processing &&
     rec.lastActivityMs > 0 &&
     agentIdleMs > kickIdleMs &&
     !toolInFlight

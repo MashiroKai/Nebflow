@@ -7,6 +7,7 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, messages}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore

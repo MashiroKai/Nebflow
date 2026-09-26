@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.shared.AgentModelConfig
 

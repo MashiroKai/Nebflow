@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import nebflow.core.compact.*
+import nebflow.shared.CompactThreshold
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**

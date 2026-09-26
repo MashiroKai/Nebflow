@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.{AgentCommand, RootAgentIdentity, contextWindow}
 import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*

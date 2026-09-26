@@ -5,6 +5,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.actor.AgentDef
 import nebflow.core.sandbox.{SandboxConfig, SandboxPolicy}
 import nebflow.core.tools.{GlobTool, GrepTool, ToolContext, ToolRegistry}
 

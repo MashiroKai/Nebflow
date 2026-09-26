@@ -2,6 +2,7 @@ package nebflow.agent
 
 import io.circe.Json
 import munit.FunSuite
+import nebflow.actor.{AgentDef, AskMode}
 import nebflow.core.tools.{AskUserQuestionTool, ToolRegistry}
 import nebflow.shared.ToolDefinition
 

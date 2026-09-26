@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.actor.*
 import nebflow.shared.NebflowLogger
 
 /**

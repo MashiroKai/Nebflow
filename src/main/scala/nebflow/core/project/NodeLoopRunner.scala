@@ -4,7 +4,6 @@ package nebflow.core.project
 import cats.effect.*
 import cats.syntax.all.*
 import nebflow.actor.*
-import nebflow.agent.*
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.PluginMcpManager
 import nebflow.core.tools.BgTaskRegistry

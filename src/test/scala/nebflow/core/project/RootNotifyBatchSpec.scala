@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

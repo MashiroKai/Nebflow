@@ -4,7 +4,17 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.Json
 import munit.FunSuite
-import nebflow.core.compact.CompactThreshold
+import nebflow.actor.{
+  AgentState,
+  CompactThresholdOverride,
+  SessionContext,
+  compactThresholdRatioOverride,
+  compactThresholdTokens,
+  effectiveCompactThresholdRatio,
+  withCompactThresholdRatio,
+  withContextWindow
+}
+import nebflow.shared.CompactThreshold
 import nebflow.shared.SessionMeta
 
 /**

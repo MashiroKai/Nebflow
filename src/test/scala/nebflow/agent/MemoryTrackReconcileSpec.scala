@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
+import nebflow.actor.{AgentDef, status}
 import nebflow.core.PathUtil
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
 import nebflow.service.MemoryStore
@@ -99,7 +100,7 @@ class MemoryTrackReconcileSpec extends FunSuite:
       healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
       actorSystem = null,
       voiceMutedRef = cats.effect.Ref.unsafe[IO, Boolean](false),
-      agentRegistry = cats.effect.Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+      agentRegistry = cats.effect.Ref.unsafe[IO, Map[String, nebflow.actor.AgentRecord]](Map.empty)
     )
 
   /** 硬顶 prop 临时压小（`def` 读 ⇒ 当场生效），跑完还原。 */

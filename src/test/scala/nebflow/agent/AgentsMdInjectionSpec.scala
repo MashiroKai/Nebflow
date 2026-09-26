@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.{AgentDef, AgentState, agentsMd}
 import nebflow.agent.PromptSections.*
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

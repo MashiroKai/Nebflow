@@ -2,7 +2,7 @@ package nebflow.core.processor
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.agent.AgentEvent
+import nebflow.actor.AgentEvent
 import nebflow.core.project.NodeLifecycle
 
 import scala.concurrent.duration.*

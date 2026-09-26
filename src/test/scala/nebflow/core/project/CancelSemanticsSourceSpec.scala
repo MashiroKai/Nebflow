@@ -9,6 +9,7 @@ import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, messages, sessionId, status}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.FileChangeTracker

@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.AgentDef
 import nebflow.core.tools.ToolRegistry
 
 /**

@@ -7,7 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
@@ -1261,7 +1262,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   /** 轮询 agentRegistry 直到出现满足 pred 的键或超时。返回每次采样快照。 */
   private def pollRegistryFor(
-    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    registry: cats.effect.Ref[IO, Map[String, nebflow.actor.AgentRecord]],
     pred: String => Boolean,
     attempts: Int,
     interval: FiniteDuration
@@ -1280,7 +1281,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
    * 采样都在场——返回逐次布尔（窗口内不允许出现一次缺席）。
    */
   private def pollRegistryStill(
-    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    registry: cats.effect.Ref[IO, Map[String, nebflow.actor.AgentRecord]],
     pred: String => Boolean,
     attempts: Int,
     interval: FiniteDuration
@@ -1293,7 +1294,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   /** 轮询直到不再存在满足 pred 的键（等待完成注销）。 */
   private def waitRegistryGone(
-    registry: cats.effect.Ref[IO, Map[String, nebflow.agent.AgentRecord]],
+    registry: cats.effect.Ref[IO, Map[String, nebflow.actor.AgentRecord]],
     pred: String => Boolean,
     attempts: Int,
     interval: FiniteDuration

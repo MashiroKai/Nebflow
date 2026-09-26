@@ -8,16 +8,8 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.agent.{
-  AgentActor,
-  AgentCommand,
-  AgentDef,
-  AgentKind,
-  AgentLibrary,
-  AgentRecord,
-  SharedResources,
-  SubAgentTaskStore
-}
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord}
+import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.shared.*
 

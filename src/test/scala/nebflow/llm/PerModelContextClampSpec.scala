@@ -80,8 +80,8 @@ class PerModelContextClampSpec extends CatsEffectSuite:
 
   test("T3: 压缩门限按 clamped 值取（1M→200k 的门限 = 160k，而非 1M 档的 256k）") {
     candidateFor(1000000, Some(200000)).map { c =>
-      val thresholdAt1M = nebflow.core.compact.CompactThreshold.threshold(1000000)
-      val clampedThreshold = nebflow.core.compact.CompactThreshold.threshold(c.contextWindow)
+      val thresholdAt1M = nebflow.shared.CompactThreshold.threshold(1000000)
+      val clampedThreshold = nebflow.shared.CompactThreshold.threshold(c.contextWindow)
       assertEquals(thresholdAt1M, 256000, "1M 档既有读数（回归锚，非本批改动）")
       assertEquals(c.contextWindow, 200000)
       assertEquals(

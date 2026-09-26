@@ -5,7 +5,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.PathUtil
 
 import java.nio.file.Files

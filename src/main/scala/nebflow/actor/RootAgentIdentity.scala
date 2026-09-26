@@ -1,4 +1,4 @@
-package nebflow.agent
+package nebflow.actor
 
 /**
  * 根 agent 身份名的全仓单点（Nebula→Root 重命名 Phase，行为保持）：

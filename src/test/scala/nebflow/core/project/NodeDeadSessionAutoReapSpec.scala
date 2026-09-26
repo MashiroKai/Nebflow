@@ -7,7 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
@@ -456,7 +457,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(
         res.agentRegistry.get.map(
           _.values.exists(r =>
-            r.kind == AgentKind.Flow && r.sessionId.startsWith("node-") && r.status == nebflow.agent.AgentStatus.Idle
+            r.kind == AgentKind.Flow && r.sessionId.startsWith("node-") && r.status == nebflow.actor.AgentStatus.Idle
           )
         )
       )

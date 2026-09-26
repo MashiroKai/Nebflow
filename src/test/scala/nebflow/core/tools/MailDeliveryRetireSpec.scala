@@ -5,6 +5,7 @@ import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.AgentDef
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil

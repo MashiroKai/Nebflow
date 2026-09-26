@@ -5,7 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentRecord, SharedResources}
+import nebflow.actor.AgentRecord
+import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.gateway.SessionStore
@@ -92,7 +93,7 @@ class MailToolRootSenderSpec extends FunSuite:
     ToolContext(
       projectRoot = tempRoot.toString,
       sessionId = Some(rootSid),
-      agentDef = Some(nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)),
+      agentDef = Some(nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)),
       actorSystem = Some(system)
     )
 

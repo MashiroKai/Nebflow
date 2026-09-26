@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.parser
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.shared.ToolExecResult
 import nebflow.core.ToolsLogWriter
 import nebflow.core.LlmLogWriter
 import nebflow.core.tools.ToolContext

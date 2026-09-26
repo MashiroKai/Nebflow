@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.parser.*
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.{AskItem, AskOption, AskPreview}
+import nebflow.shared.{AskItem, AskOption, AskPreview}
 
 /**
  * AskUserQuestion `multiple` support (question-level multi-select):

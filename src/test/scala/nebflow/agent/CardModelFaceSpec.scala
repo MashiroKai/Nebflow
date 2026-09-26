@@ -5,7 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.{PathUtil, ToolExecResult, ToolsLogWriter}
+import nebflow.core.{PathUtil, ToolsLogWriter}
+import nebflow.shared.ToolExecResult
 import nebflow.core.tools.{CardTool, ToolContext, ToolResultGuard}
 import nebflow.shared.ToolCall
 

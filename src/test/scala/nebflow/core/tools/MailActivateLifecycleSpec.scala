@@ -8,6 +8,7 @@ import fs2.Stream
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, messages, rootSessionId}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
@@ -232,7 +233,7 @@ class MailActivateLifecycleSpec extends FunSuite:
       // registerActor 4-arg (resumeInterruptedAgent path): the MANAGER branch
       // of parentForRecord — parent = mounting root.
       probeRef <- system.spawn(
-        Behaviors.receiveMessage[nebflow.agent.AgentCommand](_ => IO.pure(Behaviors.stopped)),
+        Behaviors.receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(Behaviors.stopped)),
         s"mgr-probe-${meta.id.take(6)}"
       )
       _ <- TeamSessionRegistry.registerActor("mgr-1", probeRef, resources, "root-1")

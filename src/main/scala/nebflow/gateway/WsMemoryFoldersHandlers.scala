@@ -8,7 +8,7 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorSystem as RootActorSystem
+import nebflow.actor.{ActorSystem as RootActorSystem, RootAgentIdentity}
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}

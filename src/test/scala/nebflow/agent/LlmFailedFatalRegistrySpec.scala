@@ -9,6 +9,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus, LoopDetectedError, status}
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

@@ -8,7 +8,8 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
 import nebflow.gateway.SessionStore

@@ -11,7 +11,8 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.gateway.SessionStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}

@@ -3,8 +3,8 @@ package nebflow.neblink
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, SharedResources}
+import nebflow.actor.{ActorRef, AgentCommand}
+import nebflow.agent.SharedResources
 import nebflow.core.tools.{MailTool, RelayExecAudit}
 import nebflow.shared.{NebflowLogger, Retry}
 

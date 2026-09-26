@@ -1,7 +1,7 @@
 /* 从 NodeEngine 迁出(行为保持重构,2026-09-25)。 */
 package nebflow.core.project
 
-import nebflow.agent.*
+import nebflow.actor.{AgentRecord, AgentStatus, status}
 import nebflow.core.plugin.PluginRegistry
 import nebflow.shared.Message
 

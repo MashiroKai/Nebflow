@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.actor.AgentCommand
+
 /**
  * Pure turn-boundary drain decisions shared by ToolsComplete / CompactionComplete.
  * Top-level and side-effect-free so specs can verify the compaction guard
@@ -39,7 +41,7 @@ object TurnBoundaryDrains:
    * isSubagentResult never matches and the counter would never decrement.
    * (qa-backend 2026-08-19: phantom barrier fix)
    */
-  def countBarrierIncrements(results: List[(nebflow.shared.ToolCall, nebflow.core.ToolExecResult)]): Int =
+  def countBarrierIncrements(results: List[(nebflow.shared.ToolCall, nebflow.shared.ToolExecResult)]): Int =
     results.count { (call, r) =>
       !r.isError && (
         call.name == "SubTask" ||

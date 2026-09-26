@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.{Fiber, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.agent.AgentCommand
+import nebflow.actor.AgentCommand
 import nebflow.shared.{Defaults, NebflowLogger}
 
 import scala.concurrent.TimeoutException

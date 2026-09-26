@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.PathUtil
 import nebflow.service.{MemoryBudget, MemoryStore}
 

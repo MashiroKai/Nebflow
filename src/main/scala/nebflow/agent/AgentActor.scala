@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.AgentCommand.*
+import nebflow.actor.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*

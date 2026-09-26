@@ -2,6 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 
+import nebflow.actor.{AgentState, AgentStreamEvent, CompactionJob, compactionFailures, messages}
 import nebflow.core.compact.{CompactConfig, CompactService}
 import nebflow.shared.{Message, MessageRole}
 

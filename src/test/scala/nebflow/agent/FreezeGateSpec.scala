@@ -8,6 +8,17 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord,
+  AgentStatus,
+  Escalation,
+  escalation,
+  messages,
+  status
+}
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil

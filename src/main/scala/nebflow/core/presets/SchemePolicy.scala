@@ -1,7 +1,7 @@
 package nebflow.core.presets
 
 import io.circe.parser.decode
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.core.PathUtil
 import nebflow.shared.AgentModelConfig
 

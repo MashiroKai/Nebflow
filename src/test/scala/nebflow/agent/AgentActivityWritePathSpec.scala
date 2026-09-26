@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus, status}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 
 /**

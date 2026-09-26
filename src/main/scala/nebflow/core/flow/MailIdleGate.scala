@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import nebflow.agent.{AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**

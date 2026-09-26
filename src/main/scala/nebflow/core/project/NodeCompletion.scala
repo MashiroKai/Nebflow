@@ -3,6 +3,7 @@ package nebflow.core.project
 
 import cats.effect.*
 import cats.syntax.all.*
+import nebflow.actor.status
 import nebflow.agent.*
 
 private[project] trait NodeCompletion:

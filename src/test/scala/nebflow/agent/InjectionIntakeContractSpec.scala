@@ -5,6 +5,7 @@ import munit.FunSuite
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.actor.InjectionAttribution
 import nebflow.shared.{Message, UiMessage}
 
 import scala.io.Source

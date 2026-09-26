@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, ActorRef, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentError, AgentErrorType, AgentEvent, status}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore

@@ -6,6 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * 刷新存活（2026-09-03，#43 同任务域补充 case）— pending AskUser 在浏览器刷新

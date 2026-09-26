@@ -7,6 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, sessionId, status}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

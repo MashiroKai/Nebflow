@@ -3,7 +3,7 @@ package nebflow.core.entity
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.presets.PresetStore
 import nebflow.shared.AgentModelConfig
 

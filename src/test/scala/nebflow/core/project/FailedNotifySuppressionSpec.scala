@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, messages, status}
 import nebflow.agent.*
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.core.compact.HistoryArchiver

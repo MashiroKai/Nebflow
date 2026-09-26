@@ -7,7 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
@@ -314,7 +315,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     def go(deadline: Long): IO[(String, nebflow.actor.ActorRef[AgentCommand])] =
       res.agentRegistry.get.flatMap { reg =>
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == nebflow.agent.AgentStatus.Idle =>
+          case Some(rec) if rec.status == nebflow.actor.AgentStatus.Idle =>
             IO.pure((rec.sessionId, rec.ref))
           case _ =>
             if System.currentTimeMillis() >= deadline then

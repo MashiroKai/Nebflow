@@ -517,11 +517,12 @@ object LlmLogWriter:
 
   // JVM shutdown: best-effort flush of whatever is still queued.
   locally {
+    // 2026-09-26 编排端裁定(问题 dwfq-3f63d047-1):消歧括号为红线 1 已批准例外;原两行形态依赖换行解析,scalafmt 写模式会合并为不可解析形态
     Runtime.getRuntime.addShutdownHook(
       new Thread(
         () =>
-          try flushSync()
-          catch case _: Throwable => (),
+          (try flushSync()
+          catch case _: Throwable => ()),
         "llm-sse-log-flush"
       )
     )

@@ -9,7 +9,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentDef, FlowNodeContract, SharedResources}
+import nebflow.actor.{AgentDef, FlowNodeContract}
+import nebflow.agent.SharedResources
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

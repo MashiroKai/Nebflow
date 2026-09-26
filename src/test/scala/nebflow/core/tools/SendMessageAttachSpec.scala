@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.agent.AgentCore
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.PathUtil
 import nebflow.dropbox.{AttachContract, DropboxService}
 import nebflow.gateway.WsHub

@@ -4,6 +4,7 @@ import munit.FunSuite
 
 import scala.io.Source
 import scala.util.matching.Regex
+import nebflow.actor.InjectionAttribution
 
 /**
  * bluebubble 批（2026-09-12）：注入来源标注的**单点定义 / 两侧同源**契约门。

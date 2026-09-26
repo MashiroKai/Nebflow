@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.shared.ToolExecResult
 import nebflow.core.hooks.*
 import nebflow.core.tools.ToolContext
 import nebflow.shared.ToolCall

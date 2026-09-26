@@ -6,7 +6,8 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentDef, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, ToolContext}

@@ -2,7 +2,8 @@ package nebflow.core.processor
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.agent.{AgentCommand, AgentStatus, SharedResources}
+import nebflow.actor.{AgentCommand, AgentStatus}
+import nebflow.agent.SharedResources
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration

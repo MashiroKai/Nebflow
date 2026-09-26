@@ -8,6 +8,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, ActorRef, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentDef}
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver

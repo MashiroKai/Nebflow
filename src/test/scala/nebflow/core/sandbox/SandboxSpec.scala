@@ -4,7 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.AgentState
+import nebflow.actor.AgentState
 import nebflow.core.PathUtil
 import nebflow.core.tools.{BashTool, GlobTool, GrepTool, ReadTool, ToolContext, WriteTool}
 

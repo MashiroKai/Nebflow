@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 
 /** Builds Team catalog strings for system prompt injection. */
 object TeamCatalog:

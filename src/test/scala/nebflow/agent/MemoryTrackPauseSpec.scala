@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.actor.{AgentDef, status}
 import nebflow.core.PathUtil
 import nebflow.core.project.ProjectStore
 import nebflow.core.tools.MemoryQueue
@@ -74,7 +75,7 @@ class MemoryTrackPauseSpec extends FunSuite:
       healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
       actorSystem = null,
       voiceMutedRef = Ref.unsafe[IO, Boolean](false),
-      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.actor.AgentRecord]](Map.empty)
     )
 
   /**

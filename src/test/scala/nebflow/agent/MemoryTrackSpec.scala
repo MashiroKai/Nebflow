@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.actor.{AgentDef, status}
 import nebflow.core.PathUtil
 import nebflow.core.compact.RootMemoryHook
 import nebflow.core.tools.{MemoryHistory, MemoryQueue}
@@ -70,7 +71,7 @@ class MemoryTrackSpec extends FunSuite:
       healthMonitor = null.asInstanceOf[nebflow.llm.ProviderHealthMonitor],
       actorSystem = null,
       voiceMutedRef = Ref.unsafe[IO, Boolean](false),
-      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.agent.AgentRecord]](Map.empty)
+      agentRegistry = Ref.unsafe[IO, Map[String, nebflow.actor.AgentRecord]](Map.empty)
     )
 
   // ===== 触发谓词（spec §5 R4 / R9 VC3）=====

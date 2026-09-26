@@ -26,7 +26,7 @@ import nebflow.agent.AgentCore
 class CardToolRegistrationSpec extends FunSuite:
 
   private def mkDef(name: String, tools: List[String] = Nil) =
-    nebflow.agent.AgentDef(name = name, description = "", tools = tools)
+    nebflow.actor.AgentDef(name = name, description = "", tools = tools)
 
   // ── 注册面 ──────────────────────────────────────────────
 

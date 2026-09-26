@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.shared.SessionMeta
 
 /**
@@ -85,7 +85,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
 
   test("panel refresh fields: status/startedAt/retryCount reflect record+taskStore") {
     val r = rec("sid-r2", AgentKind.SubTask).copy(
-      status = nebflow.agent.AgentStatus.Processing,
+      status = nebflow.actor.AgentStatus.Processing,
       startedAt = 1724336000000L
     )
     val json = WebSocketRoutes.activeAgentEntryJson(r, None, retryCount = Some(3))
@@ -96,7 +96,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
 
   test("panel refresh fields: Error status renders with message (toString wire form)") {
     val r = rec("sid-r3", AgentKind.Delegate)
-      .copy(status = nebflow.agent.AgentStatus.Error("boom"))
+      .copy(status = nebflow.actor.AgentStatus.Error("boom"))
     val json = WebSocketRoutes.activeAgentEntryJson(r, None)
     assertEquals(json.hcursor.get[String]("status"), Right("Error(boom)"))
   }

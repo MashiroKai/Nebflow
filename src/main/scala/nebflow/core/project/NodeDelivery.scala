@@ -5,7 +5,7 @@ import cats.effect.*
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.*
+import nebflow.actor.{AgentCommand, InjectionAttribution, status}
 
 import scala.concurrent.duration.*
 

@@ -7,6 +7,7 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentRecord, rootSessionId, sessionId, status}
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore

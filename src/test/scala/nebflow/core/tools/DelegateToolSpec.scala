@@ -6,7 +6,8 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary, AgentStatus}
+import nebflow.actor.{AgentDef, AgentStatus}
+import nebflow.agent.AgentLibrary
 import nebflow.core.PathUtil
 
 /**

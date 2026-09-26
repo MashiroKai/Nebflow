@@ -9,6 +9,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, AgentDef, messages, sessionId, status}
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -172,7 +173,7 @@ class TaskListE2ESpec extends CatsEffectSuite:
         sid
       )
       _ <- resources.agentRegistry.update(
-        _ + (sid -> nebflow.agent.AgentRecord(sid, ref, nebflow.agent.AgentKind.Root, sid, None))
+        _ + (sid -> nebflow.actor.AgentRecord(sid, ref, nebflow.actor.AgentKind.Root, sid, None))
       )
     yield ref
 

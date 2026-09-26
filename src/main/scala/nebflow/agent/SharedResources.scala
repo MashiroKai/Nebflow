@@ -2,7 +2,7 @@ package nebflow.agent
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
-import nebflow.actor.{ActorRef, ActorSystem}
+import nebflow.actor.*
 import nebflow.bridge.BridgeManager
 import nebflow.core.*
 import nebflow.core.compact.HistoryArchiver

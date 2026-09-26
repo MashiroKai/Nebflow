@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.core.{PathUtil, ToolExecResult}
+import nebflow.core.PathUtil
+import nebflow.shared.ToolExecResult
 import nebflow.shared.{Defaults, ToolCall}
 
 import java.nio.file.Files

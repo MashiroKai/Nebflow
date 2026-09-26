@@ -5,7 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentRecord, SharedResources}
+import nebflow.actor.AgentRecord
+import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.tools.{ProjectCreateTool, ToolContext}
 import nebflow.llm.{ModelCandidate, ThinkingConfig}

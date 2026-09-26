@@ -1,4 +1,4 @@
-package nebflow.core.compact
+package nebflow.shared
 
 // ═══════════════════════════════════════════════
 // CompactThreshold — hardcoded, globally unified, non-configurable

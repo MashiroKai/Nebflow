@@ -2,7 +2,7 @@ package nebflow.core.processor
 
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 
 /**
  * TaskStuckWatcher 时间基修正消费面单测（hostresume 批 2026-09-22，设计卡 §4 #4 /

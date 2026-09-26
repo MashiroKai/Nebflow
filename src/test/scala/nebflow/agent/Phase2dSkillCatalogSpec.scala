@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{sessionId, status}
 import nebflow.agent.PromptSections.PromptContext
 import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader

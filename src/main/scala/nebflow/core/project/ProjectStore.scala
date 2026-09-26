@@ -4,8 +4,7 @@ import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import nebflow.actor.ActorRef
-import nebflow.agent.AgentCommand
+import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.NebflowLogger
 

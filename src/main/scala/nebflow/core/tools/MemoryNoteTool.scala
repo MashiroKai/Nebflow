@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.core.PathUtil
 import nebflow.core.project.{ProjectMemory, ProjectStore}
 import nebflow.service.MemoryStore

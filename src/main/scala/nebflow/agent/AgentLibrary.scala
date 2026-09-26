@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
+import nebflow.actor.{AgentDef, RootAgentIdentity}
 import nebflow.core.PathUtil
 import nebflow.core.presets.{PresetStore, SchemePolicy}
 import nebflow.llm.NebflowServiceConfig

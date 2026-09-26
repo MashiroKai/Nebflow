@@ -3,7 +3,8 @@ package nebflow.core.tools
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentKind, AgentRecord, SharedResources}
+import nebflow.actor.{AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
 import nebflow.llm.{ProviderHealthMonitor, ThinkingConfig}
 
 import java.io.File
@@ -105,8 +106,8 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
         Map(
           "bridge-session" -> AgentRecord(
             sessionId = "bridge-session",
-            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-            kind = nebflow.agent.AgentKind.Root,
+            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+            kind = nebflow.actor.AgentKind.Root,
             lastActivityMs = 123456789L,
             rootSessionId = "root"
           )
@@ -132,8 +133,8 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
         Map(
           "bridge-session" -> AgentRecord(
             sessionId = "bridge-session",
-            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-            kind = nebflow.agent.AgentKind.Root,
+            ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+            kind = nebflow.actor.AgentKind.Root,
             lastActivityMs = 123456789L,
             rootSessionId = "root"
           )

@@ -6,7 +6,8 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
+import nebflow.actor.{AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
@@ -188,8 +189,8 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
       // 哑 actor：cmdRef 填 AgentRecord.ref（Some(sup) 路径不触达）；evtRef 作
       // 哑监督者只收 Cancelled（node 桥的引擎侧语义不属本 spec——本轨禁改
       // NodeEngine，帧补发在 doCancel 出口，与桥解耦）
-      cmdRef <- system.spawn(dumbBehavior[nebflow.agent.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
-      evtRef <- system.spawn(dumbBehavior[nebflow.agent.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
+      cmdRef <- system.spawn(dumbBehavior[nebflow.actor.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
+      evtRef <- system.spawn(dumbBehavior[nebflow.actor.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
       sid = "node-abc12345"
       _ <- resources.agentRegistry.update(
         _ + (sid -> AgentRecord(
@@ -232,8 +233,8 @@ class ProjectSessionCancelPanelFrameSpec extends CatsEffectSuite:
     for
       resources <- mkResources(system, tempRoot, new HungLlm)
       _ <- wsHub.register(j => broadcasts.update(j :: _))
-      cmdRef <- system.spawn(dumbBehavior[nebflow.agent.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
-      evtRef <- system.spawn(dumbBehavior[nebflow.agent.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
+      cmdRef <- system.spawn(dumbBehavior[nebflow.actor.AgentCommand], s"dumb-cmd-${scala.util.Random.nextInt(100000)}")
+      evtRef <- system.spawn(dumbBehavior[nebflow.actor.AgentEvent], s"dumb-sup-${scala.util.Random.nextInt(100000)}")
       sid = "node-feedbeef"
       // 卡死形态：Processing + lastActivityMs 远超阈值（scan threshold=300ms）
       _ <- resources.agentRegistry.update(

@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentState, sessionCwd}
+import nebflow.actor.{AgentState, sessionCwd}
 import nebflow.core.tools.{BashTool, ToolContext}
 
 import scala.concurrent.duration.*

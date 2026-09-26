@@ -5,7 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.SharedResources
 import nebflow.core.project.NodeEngine
 import nebflow.gateway.WsHub
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}

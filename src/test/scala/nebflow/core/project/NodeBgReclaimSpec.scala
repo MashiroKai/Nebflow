@@ -7,6 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentEvent, AgentKind, messages, sessionId, status}
 import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
@@ -236,7 +237,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     def go(deadline: Long): IO[String] =
       res.agentRegistry.get.flatMap { reg =>
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == nebflow.agent.AgentStatus.Idle =>
+          case Some(rec) if rec.status == nebflow.actor.AgentStatus.Idle =>
             IO.pure(rec.sessionId)
           case _ =>
             if System.currentTimeMillis() >= deadline then

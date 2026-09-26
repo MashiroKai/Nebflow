@@ -6,9 +6,27 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentEvent,
+  AgentState,
+  AgentStatus,
+  CompactionJob,
+  compactionFailures,
+  latestUsage,
+  messages,
+  pendingCompaction,
+  sessionId,
+  withCompactionFailures,
+  withLatestUsage,
+  withMessages,
+  withPendingCompaction
+}
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.{FileChangeTracker, PathUtil}
-import nebflow.core.compact.{CompactConfig, CompactThreshold, HistoryArchiver}
+import nebflow.core.compact.{CompactConfig, HistoryArchiver}
+import nebflow.shared.CompactThreshold
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}

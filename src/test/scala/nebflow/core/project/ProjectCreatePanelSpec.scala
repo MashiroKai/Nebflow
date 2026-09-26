@@ -5,6 +5,14 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  InteractionAnswered,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest,
+  rootSessionId
+}
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.core.PathUtil
@@ -158,7 +166,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
   private def panelAgentActor(
     hub: ActorRef[InteractionHubCommand],
     rootSid: String,
-    gotAsk: Ref[IO, Option[(String, List[nebflow.core.AskItem])]]
+    gotAsk: Ref[IO, Option[(String, List[nebflow.shared.AskItem])]]
   )(system: ActorSystem): IO[ActorRef[AgentCommand]] =
     lazy val behavior: Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] {
       case AgentCommand.AskUser(requestId, items, replyToOpt, _askMode) =>
@@ -262,7 +270,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       frames <- Ref.of[IO, List[Json]](Nil)
       hub <- system.spawn(InteractionHub(), "interaction-hub-p2")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (j: Json) => frames.update(_ :+ j))
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
       fib <- ProjectCreateTool
@@ -340,7 +348,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       res <- IO(minimalResources(ws))
       hub <- system.spawn(InteractionHub(), "interaction-hub-p3")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (_: Json) => IO.unit)
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       done <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]
       fib <- ProjectCreateTool
@@ -496,7 +504,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       before <- ProjectStore.list() // 基线（此前用例可能已建项目）
       hub <- system.spawn(InteractionHub(), "interaction-hub-p6")
       _ <- hub ! InteractionHubCommand.RegisterRoot("nebula-root", (_: Json) => IO.unit)
-      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.core.AskItem])]](None)
+      gotAsk <- Ref.of[IO, Option[(String, List[nebflow.shared.AskItem])]](None)
       agentRef <- panelAgentActor(hub, "nebula-root", gotAsk)(system)
       // (a) 取消哨兵
       doneA <- Deferred[IO, Either[nebflow.core.tools.ToolError, String]]

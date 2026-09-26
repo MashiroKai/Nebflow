@@ -4,7 +4,7 @@ package nebflow.core.project
 import cats.effect.*
 import cats.syntax.all.*
 import io.circe.syntax.*
-import nebflow.agent.*
+import nebflow.actor.*
 import nebflow.core.PathUtil
 
 private[project] trait NodeRecovery:

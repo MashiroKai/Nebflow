@@ -3,12 +3,12 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
-import nebflow.actor.{ActorRef, ActorSystem}
+import nebflow.actor.*
 import nebflow.agent.*
+import nebflow.core.FileChangeTracker
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
-import nebflow.core.{AskItem, AskOption, FileChangeTracker}
-import nebflow.shared.*
+import nebflow.shared.{AskItem, AskOption, *}
 
 case class ToolContext(
   projectRoot: String,

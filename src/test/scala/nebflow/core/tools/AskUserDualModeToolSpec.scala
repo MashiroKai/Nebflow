@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorPath, ActorRef}
-import nebflow.agent.{AgentCommand, AgentDef, AskMode}
+import nebflow.actor.{AgentCommand, AgentDef, AskMode}
 
 import scala.concurrent.duration.*
 

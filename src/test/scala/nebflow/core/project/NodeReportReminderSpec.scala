@@ -7,7 +7,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources, SpecResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
@@ -265,7 +266,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     def go(deadline: Long): IO[String] =
       res.agentRegistry.get.flatMap { reg =>
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == nebflow.agent.AgentStatus.Idle => IO.pure(rec.sessionId)
+          case Some(rec) if rec.status == nebflow.actor.AgentStatus.Idle => IO.pure(rec.sessionId)
           case _ =>
             if System.currentTimeMillis() >= deadline then
               IO.raiseError(new AssertionError("node agent never went Idle"))
@@ -760,7 +761,7 @@ class NodeReportReminderSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(NodeReportRegistry.peek(sid).map(_.isDefined))
       declared <- NodeReportRegistry.peek(sid)
       _ <- waitUntil(20.seconds)(
-        res.agentRegistry.get.map(_.get(sid).exists(_.status == nebflow.agent.AgentStatus.Idle))
+        res.agentRegistry.get.map(_.get(sid).exists(_.status == nebflow.actor.AgentStatus.Idle))
       )
       _ <- IO.sleep(900.millis) // 越过第 1 档
       _ <- scan(rt) // 第 1 拍：peek 见申报 ⇒ 释放唤醒（桥复检放行）

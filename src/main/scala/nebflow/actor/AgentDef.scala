@@ -1,4 +1,4 @@
-package nebflow.agent
+package nebflow.actor
 
 import nebflow.shared.AgentModelConfig
 

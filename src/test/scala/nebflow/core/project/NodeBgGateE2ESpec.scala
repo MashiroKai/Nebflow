@@ -8,7 +8,8 @@ import io.circe.syntax.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
@@ -208,7 +209,7 @@ class NodeBgGateE2ESpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds) {
         res.agentRegistry.get.map { reg =>
           reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-            case Some(rec) => rec.status == nebflow.agent.AgentStatus.Idle
+            case Some(rec) => rec.status == nebflow.actor.AgentStatus.Idle
             case None => false
         }
       }

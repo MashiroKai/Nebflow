@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
+import nebflow.actor.AgentDef
 
 /**
  * Nebula 工具面恢复 spec（2026-09-18 18:18 作者令「恢复nebula的bash edit write

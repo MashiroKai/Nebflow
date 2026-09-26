@@ -1,5 +1,5 @@
 /* 从 protocol.scala 迁出(行为保持重构,2026-09-25)。 */
-package nebflow.agent
+package nebflow.actor
 
 import cats.effect.IO
 import io.circe.syntax.*

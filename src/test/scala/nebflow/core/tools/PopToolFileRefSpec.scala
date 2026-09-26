@@ -31,7 +31,7 @@ class PopToolFileRefSpec extends FunSuite:
   // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
   nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
 
-  private val nebulaDef = nebflow.agent.AgentDef(name = "Nebula", description = "", tools = Nil)
+  private val nebulaDef = nebflow.actor.AgentDef(name = "Nebula", description = "", tools = Nil)
 
   private def tempDir(name: String): os.Path =
     val d = os.pwd / "target" / s"test-poprefs-$name-${java.util.UUID.randomUUID().toString.take(6)}"

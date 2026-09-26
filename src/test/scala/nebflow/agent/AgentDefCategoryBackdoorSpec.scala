@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
+import nebflow.actor.AgentDef
 
 /**
  * agentdef-tidy 批（2026-09-11）安全回归：**收敛名无视 agent.json `category`**。

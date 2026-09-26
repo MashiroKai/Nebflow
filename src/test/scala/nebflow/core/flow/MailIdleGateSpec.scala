@@ -4,7 +4,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**

@@ -2,7 +2,8 @@ package nebflow.agent
 
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.actor.AgentCommand
+import nebflow.shared.ToolExecResult
 import nebflow.shared.ToolCall
 import munit.FunSuite
 

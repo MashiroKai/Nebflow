@@ -3,7 +3,8 @@ package nebflow.core.tools
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.agent.{AgentKind, AgentRecord, SharedResources}
+import nebflow.actor.{AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
 import nebflow.core.flow.MailQueueStore
 import nebflow.llm.{ModelCandidate, ThinkingConfig}
@@ -37,11 +38,11 @@ class MailQueueRootSpec extends FunSuite:
    */
   private val system = nebflow.actor.ActorSystem("mail-queue-nebula-spec")
 
-  private def liveRef: nebflow.actor.ActorRef[nebflow.agent.AgentCommand] =
+  private def liveRef: nebflow.actor.ActorRef[nebflow.actor.AgentCommand] =
     system
       .spawn(
         nebflow.actor.Behaviors
-          .receiveMessage[nebflow.agent.AgentCommand](_ => IO.pure(nebflow.actor.Behaviors.stopped)),
+          .receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(nebflow.actor.Behaviors.stopped)),
         s"qnb-${java.util.UUID.randomUUID().toString.take(8)}"
       )
       .unsafeRunSync()

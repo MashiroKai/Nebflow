@@ -4,6 +4,7 @@ import cats.effect.{Deferred, IO}
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply}
 
 /**
  * P0-1 / P-M1 卡面侧的验收取值面（A1-5 形状校验 / A1-7 重连重放 / 卡面归属字段）。

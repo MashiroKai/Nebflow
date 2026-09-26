@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.Defaults

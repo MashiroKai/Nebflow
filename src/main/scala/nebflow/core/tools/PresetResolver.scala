@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 import nebflow.core.presets.PresetStore
 
 /**

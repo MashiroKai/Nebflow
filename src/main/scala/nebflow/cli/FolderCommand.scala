@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 
 object FolderCommand extends CliCommand:
   def name = "folder"

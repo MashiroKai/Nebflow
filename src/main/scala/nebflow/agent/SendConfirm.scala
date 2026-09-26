@@ -2,10 +2,9 @@ package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
 import cats.effect.{Deferred, IO, IOLocal}
-import nebflow.actor.{ActorPath, ActorRef}
+import nebflow.actor.*
 import nebflow.core.tools.ToolContext
-import nebflow.core.{AskItem, AskOption}
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{AskItem, AskOption, NebflowLogger}
 
 import scala.concurrent.duration.*
 

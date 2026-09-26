@@ -3,10 +3,10 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.actor.ActorRef
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.*
-import nebflow.shared.ToolDefinition
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 

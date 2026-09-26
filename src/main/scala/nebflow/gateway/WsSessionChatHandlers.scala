@@ -8,7 +8,7 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorSystem as RootActorSystem
+import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
@@ -166,13 +166,13 @@ private[gateway] object WsSessionChatHandlers:
     val rJson = parsedJson(text)
     val rSessionId = rJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
     val rLevel = rJson.hcursor.downField("level").as[String].toOption.getOrElse("soft") match
-      case "rollback" => nebflow.agent.RestartLevel.Rollback
-      case "prune" => nebflow.agent.RestartLevel.Prune
-      case "full" => nebflow.agent.RestartLevel.Full
-      case _ => nebflow.agent.RestartLevel.Soft
+      case "rollback" => nebflow.actor.RestartLevel.Rollback
+      case "prune" => nebflow.actor.RestartLevel.Prune
+      case "full" => nebflow.actor.RestartLevel.Full
+      case _ => nebflow.actor.RestartLevel.Soft
     if rSessionId.nonEmpty then
       logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
-        ensureAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
+        ensureAgent(rSessionId)(ref => ref ! nebflow.actor.AgentCommand.RestartAgent(rLevel))
     else IO.unit
   end handleRestartAgent
 
@@ -350,21 +350,21 @@ private[gateway] object WsSessionChatHandlers:
                   s"No live agent with sessionId='$prSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
               )
             case Some(rec)
-                if rec.status != nebflow.agent.AgentStatus.Frozen ||
+                if rec.status != nebflow.actor.AgentStatus.Frozen ||
                   !rec.frozenReason.exists(_ != "schedule") =>
               val notFrozenErr =
                 s"Session '$prSessionId' is not in error-frozen state (status=${rec.status}, " +
                   s"frozenReason=${rec.frozenReason.getOrElse("none")}) — parentRestart only applies to frozen-error agents"
               prReply(ok = false, "error" -> notFrozenErr.asJson)
-            case Some(rec) if rec.kind == nebflow.agent.AgentKind.Root =>
+            case Some(rec) if rec.kind == nebflow.actor.AgentKind.Root =>
               // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
               // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
-              (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Soft)) *>
+              (rec.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
                 prReply(
                   ok = true,
                   "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson
                 )
-            case Some(rec) if rec.kind == nebflow.agent.AgentKind.Flow =>
+            case Some(rec) if rec.kind == nebflow.actor.AgentKind.Flow =>
               // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
               // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
               // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
@@ -375,7 +375,7 @@ private[gateway] object WsSessionChatHandlers:
               )
             case Some(rec) if rec.supervisorRef.isDefined =>
               // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
-              (rec.ref ! nebflow.agent.AgentCommand.Stop(s"parent-restart")) *>
+              (rec.ref ! nebflow.actor.AgentCommand.Stop(s"parent-restart")) *>
                 prReply(
                   ok = true,
                   "message" ->

@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import io.circe.Json
-import nebflow.core.AskItem
+import nebflow.shared.AskItem
 
 /**
  * 测试面桥（S3 批 r4 返工；作者 2026-09-17 裁定 R3 帧级红因 = **(甲) 测试面缺陷**）：

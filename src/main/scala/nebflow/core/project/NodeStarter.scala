@@ -6,7 +6,6 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
 import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
@@ -527,7 +526,7 @@ private[project] trait NodeStarter:
 
   private def runWithAgent(
     node: NodeDef,
-    baseDef: nebflow.agent.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（继承分发器当前方案）
+    baseDef: nebflow.actor.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（继承分发器当前方案）
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,

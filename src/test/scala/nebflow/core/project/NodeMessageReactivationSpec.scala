@@ -4,7 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.PathUtil
 import nebflow.core.tools.{FileLockManager, ToolContext}
 import nebflow.gateway.{RateLimiter, SessionStore}

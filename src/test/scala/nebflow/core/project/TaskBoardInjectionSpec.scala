@@ -1,7 +1,7 @@
 package nebflow.core.project
 
 import munit.FunSuite
-import nebflow.agent.AgentState
+import nebflow.actor.AgentState
 
 /**
  * TaskBoard 注入拼装 + 身份透传 spec（TaskBoard 批 2：规格 §3a/§3c + §1d-2）。

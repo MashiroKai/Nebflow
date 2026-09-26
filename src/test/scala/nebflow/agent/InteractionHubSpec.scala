@@ -6,6 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
+import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * P2 InteractionHub core tests:
@@ -116,7 +117,7 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("askUser request renders question and routes answers back to replyTo") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
@@ -318,7 +319,7 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("#12 fallback skips kind-incompatible cards — askUser answer never wires into an older permission card") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)

@@ -8,7 +8,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.PathUtil
-import nebflow.core.ToolExecResult
+import nebflow.shared.ToolExecResult
 import nebflow.core.tools.{RemoteExecutor, ToolContext}
 import nebflow.neblink.{NeblinkService, PeerInfo}
 import nebflow.shared.ToolCall

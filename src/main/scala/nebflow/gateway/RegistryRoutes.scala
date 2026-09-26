@@ -5,7 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.core.entity.EntityLoader
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*

@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.actor.AgentCommand
 import nebflow.core.{AtomicJson, PathUtil}
 import nebflow.shared.given
 import nebflow.shared.{ContentBlock, NebflowLogger}

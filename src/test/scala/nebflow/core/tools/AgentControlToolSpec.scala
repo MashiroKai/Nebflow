@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, sessionId, status}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver

@@ -6,6 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
+import nebflow.actor.{AgentCommand, InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * Issue #43 — AskUserQuestion pending 期间 agent 侧注入消息不得被误消费为答案。

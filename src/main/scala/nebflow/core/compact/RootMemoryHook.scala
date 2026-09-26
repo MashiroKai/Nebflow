@@ -1,7 +1,7 @@
 package nebflow.core.compact
 
 import cats.effect.IO
-import nebflow.agent.RootAgentIdentity
+import nebflow.actor.RootAgentIdentity
 import nebflow.core.tools.MemoryQueue
 import nebflow.service.{MemoryBudget, MemoryStore}
 import nebflow.shared.{NebflowLogger, *}

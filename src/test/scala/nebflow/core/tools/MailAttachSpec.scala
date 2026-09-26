@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentDef, messages}
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.PathUtil

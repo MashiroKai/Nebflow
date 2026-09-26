@@ -1,7 +1,7 @@
 package nebflow.core.project
 
 import munit.FunSuite
-import nebflow.agent.InjectionAttribution
+import nebflow.actor.InjectionAttribution
 
 /**
  * 气泡四段式统一批（2026-09-15，作者 12:33 令）· 件① 快照测试：

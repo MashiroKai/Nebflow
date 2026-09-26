@@ -244,18 +244,18 @@ object WatchdogReplayCore:
       .orElse(LastRe.findFirstMatchIn(note).map(_.group(1).toLong).map(_ * 1000L))
 
   /** 事件行 → `AgentRecord` 重建（口径见头注，逐字沿用 wd-fix 批）。 */
-  def rebuild(r: Row): nebflow.agent.AgentRecord =
+  def rebuild(r: Row): nebflow.actor.AgentRecord =
     val authorisedMs =
       authorisedSecs(r.note).getOrElse(nebflow.shared.Defaults.ToolPhaseStuckMs / 1000L) * 1000L
     val declaredMs =
       if authorisedMs > nebflow.shared.Defaults.ToolPhaseStuckMs then authorisedMs - sl else 0L
-    nebflow.agent.AgentRecord(
+    nebflow.actor.AgentRecord(
       sessionId = "replay",
-      ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.agent.AgentCommand]],
-      kind = nebflow.agent.AgentKind.Flow,
+      ref = null.asInstanceOf[nebflow.actor.ActorRef[nebflow.actor.AgentCommand]],
+      kind = nebflow.actor.AgentKind.Flow,
       rootSessionId = "replay-root",
       startedAt = r.ts - 24 * 60 * 60 * 1000L,
-      status = nebflow.agent.AgentStatus.Processing,
+      status = nebflow.actor.AgentStatus.Processing,
       lastActivityMs = if r.agentIdleMs > 0 then r.ts - r.agentIdleMs else 0L,
       currentToolName = Some("Bash"),
       currentToolStartedAt = if r.toolPhaseMs > 0 then r.ts - r.toolPhaseMs else 0L,
@@ -266,7 +266,7 @@ object WatchdogReplayCore:
   end rebuild
 
   /** 旧判据（wd-fix 批改动前形态；逐字重实现，仅重放用，不进生产）。 */
-  def legacyClassify(rec: nebflow.agent.AgentRecord, a: TaskStuckWatcher.StuckAssessment, now: Long): String =
+  def legacyClassify(rec: nebflow.actor.AgentRecord, a: TaskStuckWatcher.StuckAssessment, now: Long): String =
     val effective = ToolStuckJudgment.effectiveToolPhaseMs(
       nebflow.shared.Defaults.ToolPhaseStuckMs,
       rec.currentToolDeadlineMs,
@@ -279,7 +279,7 @@ object WatchdogReplayCore:
     else TaskStuckWatcher.ClassTrueStuck
 
   /** 正信号在**新窗**下是否新鲜 + 新窗实值——「放走真卡死」的机械检查用。 */
-  def freshness(rec: nebflow.agent.AgentRecord, now: Long): (Boolean, Long) =
+  def freshness(rec: nebflow.actor.AgentRecord, now: Long): (Boolean, Long) =
     val w = TaskStuckWatcher.effectiveProgressWindowMs(rec.currentToolDeadlineMs)
     (TaskStuckWatcher.hasProgressSignal(rec, now, w), w)
 
