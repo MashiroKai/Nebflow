@@ -2765,10 +2765,12 @@
   word-break: break-all;
 }
 
-/* Route C：应用内目录浏览器弹窗（workspacePicker.js）
-   设计基准 = path-picker 文件浏览器模态（modal.css #path-picker-* / .pp-item 族）：
-   面板材质挂进 modal.css 共享玻璃卡组（.wsp-panel，含折射线/堆叠阴影/dark 阴影），
-   此处只承载布局与逐值对齐基准的控件样式。 */
+/* Route C: in-app directory picker dialog (workspacePicker.js) — since the
+   pickeruni batch this is the ONE directory-picking face in the app.
+   Panel material rides the modal.css shared glass-card group (.wsp-panel, with
+   refraction line / stacked shadows / dark variants); this section carries the
+   layout and control styles only, on the app's directory-browser baseline
+   values. */
 .wsp-overlay {
   position: fixed;
   inset: 0;
@@ -2796,7 +2798,7 @@
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
 }
-/* 面包屑蚀刻条 —— 逐值对齐 #path-picker-breadcrumb */
+/* Breadcrumb etched strip — app directory-browser baseline values */
 .wsp-crumbs {
   font-size: 12px;
   color: var(--color-frame-text-muted);
@@ -2813,7 +2815,7 @@
   cursor: pointer;
 }
 .wsp-crumb:hover { text-decoration: underline; }
-/* 列表蚀刻容器 —— 逐值对齐 #path-picker-list */
+/* List etched container — app directory-browser baseline values */
 .wsp-list {
   flex: 1;
   min-height: 200px;
@@ -2823,7 +2825,7 @@
   border-radius: 8px;
   background: var(--glass-etched-bg);
 }
-/* 列表行 —— 逐值对齐 .pp-item（hairline 分隔，无圆角悬浮行） */
+/* List row — hairline separators, no rounded hover pills (baseline row shape) */
 .wsp-row {
   display: flex;
   align-items: center;
@@ -2897,8 +2899,8 @@
   padding: 2px 6px;
 }
 .wsp-mkdir-no:hover { color: var(--color-frame-text); }
-/* 底部动作行 —— 逐值对齐 #path-picker-actions 按钮族；
-   新建文件夹入口在左（rules-modal-delete margin-right:auto 模式），取消/选中在右 */
+/* Footer action row — neutral button family; new-folder entry on the left
+   (rules-modal-delete margin-right:auto pattern), cancel/clear/select right */
 .wsp-foot {
   display: flex;
   align-items: center;
@@ -2934,7 +2936,7 @@
     0 0 8px rgba(120, 160, 220, 0.08),
     0 0 20px rgba(120, 160, 220, 0.04);
 }
-/* 主按钮 —— 逐值对齐 #path-picker-select（sapphire 描边系） */
+/* Primary button — sapphire outline family */
 .wsp-pick {
   border-color: rgba(91, 127, 191, 0.35);
   color: rgb(91, 127, 191);
@@ -2949,12 +2951,112 @@
   color: rgb(91, 127, 191);
 }
 
+/* ── pickeruni: goto direct-entry row + server-side search row ────────────
+   Two rows, one each: the jump (locating action) above the filter (narrowing
+   action), full list width, no change to the 520px panel layout. All material
+   sits on existing tokens (--glass-etched-bg / --glass-border / --color-*) —
+   zero new color values. */
+.wsp-goto,
+.wsp-search {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.wsp-goto-input,
+.wsp-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-frame-text);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.wsp-goto-input:focus,
+.wsp-search-input:focus {
+  border-color: rgba(91, 127, 191, 0.5);
+}
+.wsp-goto-btn {
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--glass-border);
+  background: rgba(91, 127, 191, 0.03);
+  color: var(--color-frame-text-dim);
+  transition: all 0.25s ease;
+}
+.wsp-goto-btn:hover {
+  background: rgba(91, 127, 191, 0.08);
+  border-color: var(--sapphire-edge-strong);
+  color: var(--color-frame-text-bright);
+}
+
+/* A: the explicit truncation word (never silent) — same etched strip as the
+   breadcrumb, muted ink, so it reads as a status line not an alert. Second
+   line = the way out (search / direct entry), dimmer than the fact above. */
+.wsp-note {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  line-height: 1.4;
+}
+.wsp-note-hint {
+  color: var(--color-frame-text-dim);
+  margin-top: 2px;
+}
+
+/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
+.wsp-err {
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+/* Empty-state second line (the way out), under the .wsp-empty fact line */
+.wsp-empty-hint {
+  color: var(--color-frame-text-dim);
+  margin-top: 2px;
+}
+
+/* Clear button (project-root mode) — danger family, same values as the
+   destructive buttons in modal.css */
+.wsp-clear {
+  border: 1px solid rgba(220, 60, 60, 0.3) !important;
+  color: rgba(220, 60, 60, 0.85) !important;
+  background: rgba(220, 60, 60, 0.04) !important;
+}
+.wsp-clear:hover {
+  background: rgba(220, 60, 60, 0.08) !important;
+  border-color: rgba(220, 60, 60, 0.5) !important;
+  box-shadow:
+    0 0 12px rgba(220, 60, 60, 0.1),
+    0 0 24px rgba(220, 60, 60, 0.05) !important;
+  color: #e55 !important;
+}
+
 @media (prefers-color-scheme: dark) {
   .ws-pick-target { background: rgba(255,255,255,0.05); border-color: rgba(145,170,210,0.28); }
   .ws-pick-target:hover { box-shadow: 0 0 0 3px rgba(145,170,210,0.10), 0 4px 16px rgba(0,0,0,0.35); }
   .ws-pick-hint { color: rgba(160,185,225,0.55); }
-  /* .wsp-* 无 dark 覆写——面板材质/控件全部 token 驱动（共享玻璃卡组 +
-     path-picker 基准值），亮暗双主题随全局变量自动切换。 */
+  /* .wsp-* has no dark overrides — panel material and controls are fully
+     token-driven (shared glass-card group + directory-browser baseline
+     values); both themes follow the global variables automatically. */
 }
 
 /* ---------- "↓ N new messages" pill (A-branch, 2026-09-11) ----------

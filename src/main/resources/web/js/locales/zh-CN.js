@@ -977,22 +977,6 @@ export default {
   // === Path ===
   'path.root': '根目录',
 
-  // === Path Picker ===
-  'pathPicker.title': '选择项目目录',
-  'pathPicker.select': '选择此目录',
-  'pathPicker.clear': '清除',
-  'pathPicker.empty': '此目录下无子目录',
-  // picker-trunc 批（2026-09-22 作者裁定 A+B+C）
-  'pathPicker.truncated': '还有 {count} 项未显示（共 {total} 项）',
-  'pathPicker.searchPlaceholder': '在此目录中搜索（服务端过滤）',
-  'pathPicker.noMatch': '无匹配「{query}」的子目录',
-  'pathPicker.hint.truncated': '可输入路径直达下方目录，或用搜索过滤',
-  'pathPicker.hint.empty': '可输入路径直达该目录，或回到上级',
-  'pathPicker.hint.noMatch': '清空搜索框可恢复全部；也可输入路径直达',
-  'pathPicker.gotoPlaceholder': '输入路径直达，如 ~/Downloads',
-  'pathPicker.go': '跳转',
-  'pathPicker.error.invalid': '路径无效',
-
   // === Session sidebar ===
   'session.namePlaceholder': '会话名称...',
   'session.delete': '删除此会话',
@@ -1694,6 +1678,19 @@ export default {
   'workspacePicker.empty': '空目录',
   'workspacePicker.readFail': '无法读取目录',
   'workspacePicker.mkdirFail': '新建文件夹失败',
+  // pickeruni batch: the retired project-directory picker's copy keys relocated
+  // into workspacePicker.* (values verbatim unchanged)
+  'workspacePicker.projectTitle': '选择项目目录',
+  'workspacePicker.clear': '清除',
+  'workspacePicker.gotoPlaceholder': '输入路径直达，如 ~/Downloads',
+  'workspacePicker.go': '跳转',
+  'workspacePicker.searchPlaceholder': '在此目录中搜索（服务端过滤）',
+  'workspacePicker.noMatch': '无匹配「{query}」的子目录',
+  'workspacePicker.truncated': '还有 {count} 项未显示（共 {total} 项）',
+  'workspacePicker.hint.truncated': '可输入路径直达下方目录，或用搜索过滤',
+  'workspacePicker.hint.empty': '可输入路径直达该目录，或回到上级',
+  'workspacePicker.hint.noMatch': '清空搜索框可恢复全部；也可输入路径直达',
+  'workspacePicker.error.invalid': '路径无效',
 
   // === 设备会话切服务端数据源，MVP-2（2026-09-15）：设备回执 ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b

@@ -392,33 +392,6 @@
       </div>
     </div>
   </div>
-  <!-- Project Root Picker Modal -->
-  <div id="path-picker-overlay">
-    <div id="path-picker-modal">
-      <div id="path-picker-title">Set Project Directory</div>
-      <!-- C (picker-trunc, 2026-09-22 author ruling): type a path and jump to it.
-           `~` / `~/…` forms are expanded server-side (expandTilde). -->
-      <div id="path-picker-goto">
-        <input id="path-picker-goto-input" type="text" spellcheck="false" autocomplete="off" />
-        <button id="path-picker-goto-btn" type="button">Go</button>
-      </div>
-      <!-- B: the filter runs on the SERVER (over the whole directory), so it can
-           reach entries the frame cap cut. -->
-      <div id="path-picker-search">
-        <input id="path-picker-search-input" type="text" spellcheck="false" autocomplete="off" />
-      </div>
-      <div id="path-picker-breadcrumb"></div>
-      <!-- A: the truncation word — never a silent cut. -->
-      <div id="path-picker-truncated" hidden></div>
-      <div id="path-picker-error" hidden></div>
-      <div id="path-picker-list"></div>
-      <div id="path-picker-actions">
-        <button id="path-picker-cancel">Cancel</button>
-        <button id="path-picker-clear">Clear</button>
-        <button id="path-picker-select">Select This Folder</button>
-      </div>
-    </div>
-  </div>
   <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
   <div id="settings-overlay">
     <div id="settings-modal">
