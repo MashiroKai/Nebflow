@@ -21,19 +21,25 @@ import nebflow.neblink.{NeblinkService, PeerInfo}
 import scala.concurrent.duration.*
 
 /**
- * 🔴 **本件的判据方向已随 mailunify-full 批（2026-09-23 作者裁定）反转**——
- * 原文钉的是「设备腿 `targetDir` **受控支持**」（契约升版批 2026-09-14：解除显式拒绝
- * ／对端未确认支持 ⇒ 请求不上 wire + 落缺省目录 + **显式回显**）。合面后该腿**退役**
- * （`SendMessage(to="device:…")` 的纯传输腿整体消失，设备面统一到 `Mail` 的 `device:`
- * 腿，语义反转为「投进对端会话」）⇒ `targetDir` 的**能力丧失**（作者已裁「接受丧失」）。
+ * 🔴 **本件的判据方向经历两次反转，现钉 = 2026-09-26 支上对账重算批形态**：
  *
- * ⇒ 判据改向（**强度不降**，且不静默）：
- *   - A1 工具边界：单 `to` 面下 `targetDir` **不再是设备腿的参数**——它既不产生拒绝面、
- *     也不产生承诺面（面外键由引擎零 schema 校验静默丢弃）；
- *   - A2 落地面：设备腿**结构上不再发目录请求** ⇒ 单一实现点断言（`None` 实参）
- *     + 运行读数（结果文本不得出现任何「请求目录 / 对端裁定目录」的承诺）；
- *   - A3 不静态面（§16 迁移说明的落面）：**能力丧失 + 语义反转必须逐字写明**在
- *     `Mail` 的模型可见描述里（否则 = 静默丧失，正是作者禁的形态）。
+ *   - 契约升版批（2026-09-14）：钉「设备腿 `targetDir` 受控支持」；
+ *   - mailunify-full 批（2026-09-23）：钉「能力丧失」（A1 面外键零语义 / A2 单一
+ *     实现点 / A3 描述面作者令逐字锚）；
+ *   - **mailmodel 退役令收编（main `6adf76ed5` ruling (e)，2026-09-26 对账调和入支）**：
+ *     `to="device:…"` **整腿退役** ⇒ `MAIL_DEVICE_RETIRED` 墓碑**先于一切**
+ *     （含服务缺席与任何参数面判读）⇒ 按 verify2 判词（20260926_081155）改钉清单 ②：
+ *
+ *     - **A1（re-pin）**：面外键 `targetDir` **零语义**的判据保留、形式升级为
+ *       「带 / 不带 `targetDir` 两次调用产出**逐字同一**的墓碑文本」（控制流不变性）；
+ *     - **A2（re-pin）**：「设备腿结构上不发目录请求」的原机械判据随腿消亡
+ *       （`sendLocalFiles(…, None)` 已不在树上，如实登记）；保留仍活的三个面：
+ *       `targetDir` 全文件唯一读取点（`local` 腿）、模型可见 schema 面在册退役声明、
+ *       真服务栈 + 真附件 + `targetDir` 齐备仍纯墓碑（零承诺零回显）；
+ *     - **A3（退役，登记待裁）**：四条作者令文案锚在调和后描述面不再携带 ⇒
+ *       是否补 / 如何补**归 §16 作者裁决**（🔴 禁自创文案，本件不代拟；锚原文逐字
+ *       引用保留在 A3 注释块供裁决参照）。第二条 A3（`local` 腿目录能力在册 +
+ *       旧设备 targetDir 描述不残留）与退役令无冲突，原样保留。
  *
  * 原文参照（已归档）：契约 `.nebflow/Spec/20260914_162723_devattach-targetdir-contract-upgrade__chain-n-d623bb5b.md`。
  */
@@ -51,23 +57,35 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
 
   // ===== A1：工具边界（零服务；纯前置分支） =====
 
-  test("A1 工具边界：单 `to` 面下 `targetDir` 对设备腿**零语义**（既不拒绝也不承诺）"):
-    val res = callTool(
-      obj(
-        "to"        -> Json.fromString("device:KAI"),
-        "message"   -> Json.fromString("x"),
-        "targetDir" -> Json.fromString("/tmp/nb-targetdir-pin")
-      ),
-      ToolContext(projectRoot = "/tmp")
-    ).unsafeRunSync()
-    val msg = res.fold(_.message, identity)
-    assert(
-      !msg.contains(frozenRefusalFingerprint),
-      s"冻结契约拒绝早已解除，实际文案：$msg"
-    )
-    assert(
-      msg.contains("Device messaging is unavailable"),
-      s"服务缺席时必须落到设备腿自己的显式报错（= 面外键不改变控制流），实际文案：$msg"
+  test("A1 工具边界（2026-09-26 re-pin）：`to=\"device:…\"` 一律 MAIL_DEVICE_RETIRED 墓碑先行，面外键 `targetDir` 零语义（带/不带逐字同一）"):
+    def callWith(targetDir: Option[String]): Either[ToolError, String] =
+      val fields = List(
+        "to"      -> Json.fromString("device:KAI"),
+        "message" -> Json.fromString("x")
+      ) ++ targetDir.map(v => "targetDir" -> Json.fromString(v)).toList
+      callTool(obj(fields*), ToolContext(projectRoot = "/tmp")).unsafeRunSync()
+
+    val withKey    = callWith(Some("/tmp/nb-targetdir-pin"))
+    val withoutKey = callWith(None)
+    List("with targetDir" -> withKey, "without targetDir" -> withoutKey).foreach { (tag, res) =>
+      val msg = res.fold(_.message, identity)
+      assert(
+        !msg.contains(frozenRefusalFingerprint),
+        s"[$tag] 冻结契约拒绝早已解除，实际文案：$msg"
+      )
+      assert(
+        msg.contains(MailTool.ErrDeviceLegRetired),
+        s"[$tag] 退役令收编后 `device:` 一律落 MAIL_DEVICE_RETIRED 墓碑（先于服务缺席与一切参数面判读），实际文案：$msg"
+      )
+      assert(
+        !msg.contains("targetDir"),
+        s"[$tag] 墓碑面不得提及 targetDir（面外键零语义；提及即暗示该键有判读位），实际文案：$msg"
+      )
+    }
+    assertEquals(
+      withKey.fold(_.message, identity),
+      withoutKey.fold(_.message, identity),
+      "面外键 `targetDir` 不得改变控制流：带/不带的墓碑文本必须逐字同一"
     )
 
   // ===== A2：落地面（真服务栈 + level-1 桩对端） =====
@@ -104,27 +122,36 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
       dropboxService = Some(svc)
     )
 
-  test("A2 落地面：设备腿**结构上不再发目录请求**（单一实现点 = `None` 实参），结果文本零承诺"):
-    // ① 单一实现点（静态判据，与 `SendMessageAskConfirmSpec` ⑥ 同款形态）：
-    //    设备文件通道的调用**恒**以 `None` 作 targetDir ⇒ 「目录请求」这一能力
-    //    在本腿**结构上**不存在（不是「可能不发」，而是没有产生它的代码路径）。
+  test("A2 落地面（2026-09-26 re-pin）：目录请求能力随整腿退役消亡——唯一 targetDir 读取点 = `local` 腿，schema 面在册退役声明，真服务栈 + 真附件仍纯墓碑"):
+    // ① 静态判据（保留仍活的面；死者如实登记）：
+    //    a. 🔴 已消亡（登记）：原「设备腿恒以 None 请求落点」的单一实现点判据
+    //       （`src.contains("sendLocalFiles(peer.deviceId, paths, None")`）随 mailmodel
+    //       退役令收编**整腿消亡**——`sendLocalFiles` 在现树 0 命中，断言对象不复存在，
+    //       该面由墓碑（服务栈从不被触达）结构性接管；「设备腿描述面措辞」判据同批
+    //       消亡（`is nothing to request` / `no way to request a directory…` 均 0 命中）。
+    //    b. 保留：`targetDir` 全文件唯一读取点 = `to="local"` 腿——计数若 >1 ⇒
+    //       有任何新腿偷读 `targetDir` = 目录请求能力经侧门回涨（本 spec 防的形态）。
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "MailTool.scala")
     def occurrences(needle: String): Int = src.sliding(needle.length).count(_ == needle)
-    assert(
-      src.contains("sendLocalFiles(peer.deviceId, paths, None"),
-      "🔴 设备腿必须恒以 None 请求落点（能力丧失的机械判据；出现非 None 即能力回涨）"
-    )
     assertEquals(
       occurrences("input(\"targetDir\")"),
       1,
-      "🔴 `targetDir` 在 MailTool 内只允许有 `to=\"local\"` 腿一处读取（设备腿不得读它）"
+      "🔴 `targetDir` 全文件唯一读取点 = `to=\"local\"` 腿（第二读取点 = 能力回涨）"
     )
+    //    c. 保留（不静默丧失的现行形态）：模型可见 schema 面**在册退役声明**——
+    //       `to` 参数描述写明 RETIRED + 墓碑码（2026-09-26 对账调和后的现行文案逐字锚）。
+    val toDesc = MailTool
+      .inputSchema("properties").flatMap(_.asObject)
+      .flatMap(_("to")).flatMap(_.asObject)
+      .flatMap(_("description")).flatMap(_.asString)
+      .getOrElse(fail("Mail schema 的 `to` 参数缺 description"))
     assert(
-      src.contains("is nothing to request") || src.contains("no way to request a directory on a `device:` target"),
-      "🔴 能力丧失必须在源码描述面写明（禁静默）"
+      toDesc.contains("RETIRED (2026-09-25)") && toDesc.contains(MailTool.ErrDeviceLegRetired),
+      s"🔴 模型可见 schema 面必须在册退役声明（RETIRED + 墓碑码，禁静默），实际：$toDesc"
     )
 
-    // ② 运行读数：真服务栈 + level-1 桩对端 —— 结果文本**零目录承诺**。
+    // ② 运行读数（墓碑先行）：真服务栈 + level-1 桩对端 + 真附件 + targetDir 齐备
+    //    ⇒ 仍得纯墓碑（服务面从不被触达；结果文本零目录承诺、零 targetDir 提及）。
     Dispatcher.parallel[IO].use { dispatcher =>
       val system = ActorSystem(s"td-retired-${java.util.UUID.randomUUID().toString.take(6)}")
       for
@@ -150,6 +177,11 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
                    )
         msg = out.fold(_.message, identity)
         _ <- IO {
+          assert(
+            msg.contains(MailTool.ErrDeviceLegRetired),
+            s"真服务栈 + 真附件在册仍必须纯墓碑（服务面不被触达），实际：$msg"
+          )
+          assert(msg.contains("nothing was sent"), s"fail-closed：必须声明零副作用，实际：$msg")
           assert(!msg.contains(frozenRefusalFingerprint), s"冻结契约拒绝必须已解除，实际：$msg")
           // 🔴 能力丧失的两个方向都不得出现：既不得**承诺**目录请求，也不得**回显**请求结果。
           assert(!msg.contains("对端不支持指定目录"), s"退役腿不得再回显目录请求的结果：$msg")
@@ -165,31 +197,20 @@ class FriendMessageToolTargetDirSpec extends CatsEffectSuite:
       yield ()
     }
 
-  // ===== A3：不静态面（§16 迁移说明的机械判据） =====
+  // ===== A3：不静态面 =====
 
-  /** 🔴 作者令（合面 §B-1.3 ① + 件③）：`targetDir` 能力丧失与语义反转**须写明** ——
-    * 「不静默」的机械形态 = 两条事实都在 `Mail` 的模型可见描述里逐字可读。 */
-  private val requiredLossClaims = List(
-    "LOST CAPABILITY",
-    "no directory request on this leg",
-    "REVERSED SEMANTICS",
-    "the peer's agent was NOT aware"
-  )
-
-  test("A3 不静态面：能力丧失 + 语义反转逐字在 `Mail` 描述面（三变体同现）"):
-    val faces = List(
-      "Mail.descriptionBase"       -> MailTool.descriptionBase,
-      "Mail.descriptionNebulaRoot" -> MailTool.descriptionNebulaRoot,
-      "Mail.descriptionDispatcher" -> MailTool.descriptionDispatcher
-    )
-    for
-      (label, text) <- faces
-      claim         <- requiredLossClaims
-    do
-      assert(
-        text.replaceAll("\\s+", " ").contains(claim),
-        s"$label 缺迁移说明锚「$claim」（作者令：丧失与反转须写明，禁静默）"
-      )
+  // 🔴 2026-09-26 登记待裁（verify2 判词改钉清单 ②）：原「能力丧失 + 语义反转逐字在
+  // `Mail` 描述面（三变体同现）」测试**退役**（此为本件唯一的红点销项 = 退役而非改钉）。
+  // 其四条 requiredLossClaims 是 mailunify-full 批**作者令**的文案锚——
+  //     "LOST CAPABILITY"
+  //     "no directory request on this leg"
+  //     "REVERSED SEMANTICS"
+  //     "the peer's agent was NOT aware"
+  // ——对账调和（main `6adf76ed5` 收编）后的描述面不再携带这四锚；是否补、如何补、
+  // 以何种措辞补**归 §16 作者裁决面**（🔴 禁自创文案：本件不代拟、不回插，四锚原文
+  // 逐字引用如上仅供裁决参照）。不静默丧失的**现行**机械形态由两条仍活的判据钉死：
+  // A2①c（模型可见 schema 面在册退役声明 RETIRED + MAIL_DEVICE_RETIRED）与下一条
+  // A3（`local` 腿目录能力在册 + 旧设备 targetDir 描述不残留）。
 
   test("A3 不静态面：`Mail` 唯一 `local` 腿保留目录能力，且面外键不得被描述为设备腿可用"):
     val d = MailTool.description.replaceAll("\\s+", " ")

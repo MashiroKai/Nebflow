@@ -200,12 +200,18 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       println(s"[$tag-HEADER] ${h.getOrElse("<absent>")}")
       (out, h)
 
+  // 🔴 T1/T2 期望串 re-pin（2026-09-26 支上对账重算批，verify2 判词改钉清单 ①）：
+  // 对账合并收编 main 侧 eventType 复活设计 ⇒ dispatcher intake 恒置 `info`
+  // （[INTERRUPT] 豁免腿置 `interrupt`）⇒ 腿① WS 帧气泡头实测回到**四段式**
+  // （`KIND · PROJECT · SUBJECT · INFO`，与 2026-09-15 R-A 立钉时的形态同形）。
+  // 期望串整串逐字改钉为四段（断言强度不降：整串相等断言，PROJECT/SUBJECT
+  // 两段照旧钉死，EVENT_TYPE 段随收编设计一并入钉）。
   test("T1 双向钉 (a)：腿① 发送方**自带项目** ⇒ 气泡第二段 = 其实际项目域"):
     runLeg1("t1", Some("PROJ-P6-SRC"), "worker-a").map { (out, h) =>
       assert(out.startsWith("RIGHT:"), s"生产构造点必须放行（非 dispatcher 自带的项目会话可发 project: 腿）：$out")
       assertEquals(
         h,
-        Some("MAIL · PROJ-P6-SRC · WORKER-A"),
+        Some("MAIL · PROJ-P6-SRC · WORKER-A · INFO"),
         "发送方项目未取到 ⇒ PROJECT 段落到根域 NEBULA（R-A 缺陷形态）"
       )
     }
@@ -215,7 +221,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
       assert(out.startsWith("RIGHT:"), s"根域发送方发 project: 腿必须放行：$out")
       assertEquals(
         h,
-        Some("MAIL · NEBULA · NEBULA"),
+        Some("MAIL · NEBULA · NEBULA · INFO"),
         "根域场景被改动 ⇒ 过度修正（判据要求跨 root 直投件 PROJECT = NEBULA 逐字不变）"
       )
     }
@@ -223,11 +229,15 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
   /** 发射点 `AgentActor#emitInjectedUserEvent` 的 PROJECT 段回落链**逐字复刻**
     * （`project.orElse(sessionProject).orElse(RootProject)`）。
     *
-    * 🔴 mailunify-full 批（2026-09-24 re-pin）：`type` 五标签**整块删净** ⇒
-    * `MailTool.sendMail` 现读置 `eventType = None`（= 帧不带 `eventType` 键，
-    * `NotificationHeader.render` 略去 EVENT_TYPE 段）⇒ 本 spec 原先钉的 `· INFO`
-    * 收尾段**随信令删净而消失**。故本函数与三处期望串同批 re-pin 为**无 EVENT_TYPE 段**
-    * 形态（断言条数与判据强度不降：PROJECT/SUBJECT 两段仍逐字钉死）。 */
+    * 🔴 沿革（两段，注释如实）：mailunify-full 批（2026-09-24）`type` 键删净时，本
+    * helper 曾随生产同批 re-pin 为 `eventType = None`（无 EVENT_TYPE 段形态）；支上
+    * 对账重算批（2026-09-26）**收编 main 侧 eventType 复活设计**——dispatcher intake
+    * 恒置 `info`（`isDispatcherMailInterrupt` 豁免腿置 `interrupt`）、leg③ 链路置
+    * `Some("info")` ⇒ 生产气泡回到**四段式**（`… · INFO`）。本 helper **仍喂
+    * `eventType = None`**：腿③ 的判据对象是 PROJECT 段回落链（`ImmediateInput.project`
+    * 置位 + 发射点复刻），EVENT_TYPE 段不属其判据面——该段由 T1/T2 的端到端四段
+    * 期望串与 `NotificationHeaderSpec`（`… · INFO` 逐字）钉死。T3 期望串因此保持
+    * 无 EVENT_TYPE 段形态（判据强度不降：PROJECT/SUBJECT 两段仍逐字钉死）。 */
   private def emitReduction(project: Option[String], sessionProject: Option[String]): String =
     NotificationHeader
       .header(
@@ -236,7 +246,7 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
         project.orElse(sessionProject).orElse(Some(NotificationHeader.RootProject)),
         Some("project-dispatcher"),
         None,
-        // `type` 删净 ⇒ eventType 恒 None（与生产 `sendMail` 逐字同源）
+        // 判据面隔离：eventType 段不属腿③（见上注），喂 None 只钉 PROJECT/SUBJECT 回落链
         None
       )
       .getOrElse("<absent>")
