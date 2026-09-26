@@ -197,15 +197,17 @@ class SeedServiceSpec extends FunSuite:
     // ③ 零覆盖：既有 `projects/myproj/project.json` 内容逐字不变（既有内容零覆盖/零搬移/零删除）
     val myprojAfter = os.read(myprojJson)
     assert(myprojAfter == myprojBefore, "existing project file byte-identical after the add-only reconcile")
-    // ② `projects/` 零新增目录（kernelgen 2026-09-26: nothing is backfilled, so the
+    // (2) no new directory under `projects/` (kernelgen 2026-09-26: nothing is backfilled, so the
     // listing is exactly the pre-existing 'myproj')
     assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
       "no project directory beyond the pre-existing 'myproj' (general is not backfilled)")
     println(s"[DIAG-ZERO-OVERWRITE] projects/myproj/project.json sha256 before=${sha256(myprojBefore)} " +
       s"after=${sha256(myprojAfter)} byteIdentical=${myprojAfter == myprojBefore}")
 
-    // ② 幂等（kernelgen 2026-09-26 形态改写：项目面再无 general 可钉 mtime ⇒ 幂等判据
-    // 折到既有 myproj 上——第二次 boot 零新增目录 + 既有文件零写入）
+    // (2) Idempotence (kernelgen 2026-09-26 reshaped this check: with general gone from the
+    // project face there is no general mtime left to pin ⇒ the idempotence criterion folds
+    // onto the pre-existing myproj — the second boot adds zero directories and performs
+    // zero writes to existing files)
     val myprojMtime = os.mtime(myprojJson)
     ensure()
     assert(os.list(home / "projects").map(_.last).sorted == List("myproj"),
@@ -265,8 +267,10 @@ class SeedServiceSpec extends FunSuite:
   //    the dormant scaffold tree stays in the repo) ────
   test("manifest declares ZERO project items (general retired from cold start) and the dormant seed tree stays in the repo"):
     // 判据 = 真值读取（classpath 上的同一份资源），**禁恒真**：任一方向漂移即红——
-    // 有人把 `project:*` 项加回 manifest ⇒ 本测红（重入播种 = 产品决策，需作者明示）；
-    // 有人删掉休眠模板树 ⇒ 本测同样红（机械面保留不删 = 回滚友好契约）。
+    // putting a `project:*` item back into the manifest ⇒ this test goes red (re-entering
+    // seeding is a product decision that needs the author's explicit sign-off); deleting
+    // the dormant template tree ⇒ this test goes red all the same (the mechanical face is
+    // kept, not deleted — a rollback-friendly contract).
     val manifestText = {
       val in = Option(getClass.getClassLoader.getResourceAsStream("seed/manifest.json")).getOrElse(
         fail("classpath resource 'seed/manifest.json' not found")
@@ -280,8 +284,9 @@ class SeedServiceSpec extends FunSuite:
       s"seed manifest must declare ZERO 'project:' items (got ${projectItems.mkString(", ")} of " +
         s"${items.size} item(s)) — kernelgen batch 2026-09-26 retired the general project from " +
         "cold start (kernel replaces general); re-adding a project item is a product decision")
-    // Dormant scaffold tree stays on the classpath（机械面保留不删：种子树模板不随 manifest
-    // 条目删除——回滚友好）。判据与兄弟 spec 同口径 = classpath
+    // Dormant scaffold tree stays on the classpath (the mechanical face is kept, not deleted:
+    // the seed-tree template does not travel with the manifest item — rollback-friendly).
+    // Criterion matches the sibling spec = classpath
     // （sbt test = target/classes 拷贝，assembly = jar）。
     assert(getClass.getClassLoader.getResource("seed/projects/general/AGENTS.md") != null,
       "dormant seed project resource tree (seed/projects/general/AGENTS.md) is still on the classpath (kept, not deleted)")

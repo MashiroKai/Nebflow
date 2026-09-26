@@ -239,10 +239,12 @@ class SeedPluginReconcileSpec extends FunSuite:
     // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）；
     // **默认集 agent 自愈补装**（2026-09-13 语义变更：作者令「改成缺失自愈」取代 D-8
     // 「缺失不新装」——原断言「no project-dispatcher agent under guard」已按新口径改写，
-    // 预期判红样例）。项目面史实两翻：2026-09-17 裁定②曾把本条翻转为正向（补建），
-    // kernelgen 批 2026-09-26（kernel 取代 general）再翻转回负向——这次翻转的载体是
-    // manifest 数据面（零 `project:` 项 ⇒ reconcileProjects 休眠），非守卫改动；
-    // agent 自愈与插件刷新断言不动。
+    // (the expected red-proof sample). Project face, a two-step historical reversal:
+    // the 2026-09-17 adjudication item (2) had flipped this assertion to positive
+    // (backfill); the kernelgen batch 2026-09-26 (kernel replaces general) flips it
+    // back to negative — this flip rides the manifest data face (zero `project:`
+    // items ⇒ reconcileProjects dormant), not a guard change; the agent self-heal
+    // and plugin-refresh assertions stay untouched.
     // Supersession note (kernelgen 2026-09-26): the manifest no longer carries any
     // `project:` item, so reconcileProjects is dormant — under the guard the missing
     // general project is NOT backfilled.

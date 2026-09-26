@@ -2908,7 +2908,8 @@ object AgentCore:
     "AgentControl",
     // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
     // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
-    // BaseTools 六件）。退役口径（kernelgen 批 2026-09-26 起以英文重述）：one-off
+    // BaseTools six tools). Retirement note restated in English as of the kernelgen
+    // batch (2026-09-26): one-off
     // execution tasks route to the kernel — `Mail(address="kernel", ...)`, the
     // Nebula-exclusive leg added by the mailmodel batch (2026-09-25), with a fully
     // self-contained brief; the general project is retired from cold start as of
