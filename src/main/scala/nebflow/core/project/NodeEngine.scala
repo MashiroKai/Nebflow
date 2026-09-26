@@ -7403,7 +7403,9 @@ object NodeEngine:
     * `PromptSections` 段序 360 = belt+指针；内置 general 项目脚手架的 AGENTS.md
     * （**符号锚**：按角色描述该文件，不指文件路径——文件路径会随种子面增删漂移）=
     * 一行指针（自陈「本文件不复述」）——后二者只承载指针/短句，不承载
-    * 完整协议。
+    * 完整协议。（kernelgen batch 2026-09-26: the general-project scaffold is DORMANT
+    * since the seed manifest dropped its `project:` item — it no longer ships with a
+    * cold start; existing homes keep their scaffold untouched, sealed family.)
     * 文本逐字冻结——`TaskBoardInjectionSpec` 的末行/`needs-split` 措辞钉
     * 与 `NodeChainAttributionSpec` 的 `endsWith` 身份钉同挂本 val。 */
   // node-output contract 批（2026-09-24）：在既有末行**之前**插入两行输出契约

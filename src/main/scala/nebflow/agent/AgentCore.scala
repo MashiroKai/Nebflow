@@ -2908,9 +2908,13 @@ object AgentCore:
     "AgentControl",
     // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
     // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
-    // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
-    // （`Mail(address="project:general", ...)`，按**注册表 name** 解析；工作区路径的
-    // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
+    // BaseTools 六件）。退役口径（kernelgen 批 2026-09-26 起以英文重述）：one-off
+    // execution tasks route to the kernel — `Mail(address="kernel", ...)`, the
+    // Nebula-exclusive leg added by the mailmodel batch (2026-09-25), with a fully
+    // self-contained brief; the general project is retired from cold start as of
+    // 2026-09-26 (kernel replaces general). Workspace-path rule (unchanged, applies
+    // to any project dispatch): the authoritative workspace source = `NodeList`
+    // `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
     // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
     // 改由插件面授予。
     // 本集件数 13 → 12（史实，时点 = Delegate 退役批；见

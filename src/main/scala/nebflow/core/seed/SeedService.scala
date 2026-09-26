@@ -39,6 +39,15 @@ import scala.jdk.CollectionConverters.*
  * 建成、内容可与种子不同）**绝不被本面改写** ⇒ 存量 `~/.nebflow/projects/general/` 目录下
  * 全部文件逐字节不变。本面**只做「缺失 → 建」**，不做 seed → runtime 内容仲裁（不触发 #304
  * 零覆盖差集纪律）。
+ * kernelgen batch (2026-09-26, kernel replaces general): the seed manifest no longer
+ * carries any `project:` item, so BOTH project seeding paths ([[seedProject]] via the
+ * full-seeding pass and [[reconcileProjects]] via the existing-home pass) are
+ * DORMANT — a cold start does not create `projects/general`, and an existing home's
+ * general project is left byte-identical in place (retired / sealed family, zero
+ * touch). The machinery ([[GeneralProjectName]] / [[seedProject]] /
+ * [[reconcileProjects]] / the `seed/projects/general/` resource tree) is kept in
+ * place as dormant pieces — rollback-friendly: re-adding a `project:` item for
+ * general to the manifest restores the old behavior with zero code change.
  * 前令（**已作废，不得再按此口径复述**）：`961e2cbd3` 提交记录所写「作者裁定否决既有 home
  * 补种」= 前令；后令（裁定②：两面都补、既有严格 add-only，作者对「波及所有缺它的 home
  * （含隔离 home）」明示知情接受）治前论。更早（2026-09-16 ~ 2026-09-17）的「项目面零播种」
@@ -306,7 +315,12 @@ object SeedService:
           logger.warnSync(s"Seed: plugin '$name' $outcome but the trust record write failed: $err")
           true
 
-  /** 项目条目：按 [[ProjectStore.create]] 现行产物搭 general 脚手架（project.json +
+  /** Dormant since the kernelgen batch (2026-09-26, kernel replaces general): the
+    * seed manifest carries no `project:` item any more, so this method is no longer
+    * reached from either call path (full seeding / existing-home reconcile); existing
+    * general projects stay byte-identical in place (sealed family), and the machinery
+    * is kept as a dormant piece — rollback-friendly.
+    * 项目条目：按 [[ProjectStore.create]] 现行产物搭 general 脚手架（project.json +
     * AGENTS.md + .gitignore；flow-map.json 由 FlowMapStore.open 首写）。模板里的
     * `DataRootPlaceholder` 替换为本 home 的数据根（模板随 home 走，禁写死路径）。
     *
@@ -337,7 +351,13 @@ object SeedService:
           false
 
   // ── 项目一致性 reconcile（既有 home 的缺失内置项目 add-only 补种）──
-  /** 每次启动对 manifest 声明的项目做存在性检查 + 缺失补种（与 [[reconcilePlugins]] /
+  /** Dormant since the kernelgen batch (2026-09-26, kernel replaces general): the
+    * seed manifest carries no `project:` item any more, so the iteration set below is
+    * empty and this pass is a structural no-op on every boot; an existing home that
+    * lacks `projects/general` is NOT backfilled (supersedes the 2026-09-17 ruling ②
+    * posture), and an existing general project stays byte-identical (sealed family).
+    * Machinery kept as-is — rollback-friendly.
+    * 每次启动对 manifest 声明的项目做存在性检查 + 缺失补种（与 [[reconcilePlugins]] /
     * [[reconcileAgents]] **同构**：迭代面 = manifest items、逐条 try/catch、失败仅 WARN、
     * 绝不中断启动、digest/内容一致时无操作）。
     *
