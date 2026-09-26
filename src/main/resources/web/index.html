@@ -86,9 +86,10 @@
     <!-- Social interface cards entry (socpanel batch, 2026-09-19; author ruling
          2026-09-19 令③): smartphone icon, directly below the contacts entry,
          before the spacer. No side panel — it opens the config dialog
-         (#social-overlay). Gated together with the contacts anchor: when the
-         friends feature gate detaches the contacts entry, activityBar.js
-         detaches this button on the same beat (no silent drift). -->
+         (#social-overlay). NOT part of the friends seal (friendseal batch,
+         author ruling 2026-09-25 ④: this is a social-channel config panel,
+         unrelated to the friends feature) — the button stays mounted and
+         functional in every friends-flag state. -->
     <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与

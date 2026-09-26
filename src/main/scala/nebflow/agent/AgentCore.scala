@@ -2966,6 +2966,23 @@ object AgentCore:
     "Schedule"
   )
 
+  /** friendseal batch (2026-09-25): names stripped from the Nebula DELIVERY
+    * face while the friends feature is sealed. The static set above is
+    * UNCHANGED — its registry-full-set semantics and the
+    * `NebulaOrchestrationToolsExpectedSize` constant both stay untouched; the
+    * seal is conditionalization at this ONE consumption point (the only
+    * injection point for Nebula's fixed face, `fixedToolsFor`), reading the
+    * same `features.friends` latch as the frontend (`nebflow.core.FriendsSeal`).
+    * Currently exactly one name: `ListFriends` — sealed means the name never
+    * reaches the LLM (no schema, no description), and a hallucinated call is
+    * dropped by the allowed-set partition before any execution. SendMessage
+    * STAYS on the face (its device leg remains): sealing its friend/group/
+    * local arms happens inside the tool (`FRIENDS_SEALED`), and the
+    * `buildAllowedToolSet` base-strip of the name (declaration-escape channel)
+    * is deliberately NOT extended by this batch. */
+  def friendsSealedStrip: Set[String] =
+    if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
+
   /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
     * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
     * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
@@ -3184,7 +3201,10 @@ object AgentCore:
             // general/BaseTools 六件默认注入不变
             // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit，
             // 在飞恰十六件——MemoryNote 已随 govmemory 批退役）——本集即 Nebula 工具面唯一来源。
-            AgentCore.NebulaOrchestrationTools
+            // friendseal (2026-09-25): the static set above stays the single
+            // source; the friends seal strips names at this one consumption
+            // point (see friendsSealedStrip — currently ListFriends only).
+            AgentCore.NebulaOrchestrationTools -- AgentCore.friendsSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools
           // 极简内核（2026-09-11 恢复批）：机制固定单点，与 general/Nebula 同款

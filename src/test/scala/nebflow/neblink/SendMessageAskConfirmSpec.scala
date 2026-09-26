@@ -55,6 +55,19 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 180.seconds
 
+  // friendseal flag injection (2026-09-25): this suite pins the friend-leg ask-confirm
+  // chain, which the seal closes by default (a sealed call refuses before any confirm
+  // card is rendered). Lift the latch for the whole suite with the ref-counted kit
+  // primitives; suites run sequentially (Test / parallelExecution := false), so this
+  // lift never races the sealed-default assertions elsewhere.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    nebflow.core.FriendsSeal.testUnseal()
+
+  override def afterAll(): Unit =
+    try super.afterAll()
+    finally nebflow.core.FriendsSeal.testReseal()
+
   private val RootSid = "root-1"
   private val FriendsJson =
     """{"friends":[{"userId":"u1","username":"customNL1","display_name":"林小满"}],"incoming":[],"outgoing":[]}"""

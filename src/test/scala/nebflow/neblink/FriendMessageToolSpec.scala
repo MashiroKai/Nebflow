@@ -30,6 +30,20 @@ object FriendMessageToolSpec:
     """{"friends":[{"userId":"u1","username":"customNL1","display_name":"林小满","avatar":null}],"incoming":[],"outgoing":[]}"""
 
 class FriendMessageToolSpec extends CatsEffectSuite:
+
+  // friendseal flag injection (2026-09-25): this suite pins the FRIEND-LEG behavior
+  // face (send/receipt/α-fallback/description+schema wording), which the seal closes
+  // by default. Lift the latch for the whole suite with the ref-counted kit
+  // primitives; suites run sequentially (Test / parallelExecution := false), so this
+  // lift never races the sealed-default assertions elsewhere.
+  override def beforeAll(): Unit =
+    super.beforeAll()
+    nebflow.core.FriendsSeal.testUnseal()
+
+  override def afterAll(): Unit =
+    try super.afterAll()
+    finally nebflow.core.FriendsSeal.testReseal()
+
   // ── 解析三态（纯函数，直接测 resolveFriend） ─────────────
 
   private val friends = List(

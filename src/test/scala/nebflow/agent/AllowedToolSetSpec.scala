@@ -667,8 +667,13 @@ class AllowedToolSetSpec extends FunSuite:
     val legacyDeclared = mkDef("Nebula", List("Read", "Write", "Edit", "Glob", "Grep", "Bash"))
     val allowed = CoreProbe.allowed(legacyDeclared)
     // 声明整体失效的**结构证明**：交付面逐项 == 机制集（改写声明不改结果）
-    assertEquals(allowed, AgentCore.NebulaOrchestrationTools,
-      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量，与声明无关")
+    // friendseal (2026-09-25): flag-aware expectation — the mechanism-set constant
+    // stays UNTOUCHED; the sealed default strips ListFriends at the single delivery
+    // point (AgentCore.friendsSealedStrip), so the expected face subtracts the same
+    // strip derived from this snapshot. Never a bare number, never a relaxed assertion.
+    val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
+    assertEquals(allowed, AgentCore.NebulaOrchestrationTools -- sealStrip,
+      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量（friendseal 封存期按单点 strip 派生），与声明无关")
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(allowed.contains(t), s"Nebula 文件面六件因**机制集**而在场（2026-09-18 18:18 令；非因声明）: $t")
     }

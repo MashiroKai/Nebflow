@@ -42,6 +42,11 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("D.1-1: Nebula fixed set == the §C.1 list (in flight 17 = the 2026-09-18 18:18 order +5; taskunify batch TaskList/TaskBoard -> Task, net 0), zero Issue, zero NodeList, zero TaskList/TaskBoard (entry by entry unchanged)"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
+    // friendseal (2026-09-25): flag-aware expectation — the static-set constant
+    // and this literal stay UNTOUCHED; the sealed default strips ListFriends at
+    // the single delivery point (AgentCore.friendsSealedStrip, the ONE
+    // features.friends latch). Never a bare number, never a relaxed assertion.
+    val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
     val expected =
       Set("Mail", "ProjectCreate", "AgentControl",
         // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
@@ -54,7 +59,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
         "Schedule",
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
       // 旧记忆记账件已随 govmemory 批（2026-09-25）退役摘除：记忆 = Edit/Write 直写
-      "Glob", "Grep", "Bash", "Write", "Edit")
+      "Glob", "Grep", "Bash", "Write", "Edit") -- sealStrip
     assertEquals(fixed, expected,
       "the Nebula static set size == the single-point constant AgentCore.NebulaOrchestrationToolsExpectedSize (in flight 16 = the value after the govmemory batch 2026-09-25 -MemoryNote; history: the 2026-09-18 18:18 order +Bash/Edit/Write/Glob/Grep => 17; root face -Glob -Grep => 13 and -Delegate => 12 are both prior facts; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal -- node results are delivered automatically along the out edge, so actively querying the graph overlaps with the adjudication duty, and the dispatcher's own face is unaffected; +Card unblocked, the legacy set -Mail/Delegate/FlowTrigger/FlowExecute retired; Issue/CheckIssues retired; taskunify merge batch 2026-09-24: TaskList + TaskBoard => the single Task (net 0, still 17))")
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
@@ -76,8 +81,8 @@ class Phase2dToolRefactorSpec extends FunSuite:
       assert(!fixed.contains(t), s"a retired / kept-retired entry must not appear on the Nebula face (R2 2026-09-12 / #145 2026-09-14 / taskunify 2026-09-24): $t")
     }
     assert(fixed.contains("Task"), "the Nebula face contains Task (the unified ledger's only write face, replacing TaskList + TaskBoard)")
-    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）")
+    assertEquals(fixed.size, nebflow.FriendsSealKit.expectedNebulaSize(fixed),
+      "件数断言单点来源（同一常量经单一 helper 派生：constant − sealed?1:0，friendseal 2026-09-25）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）")
     assert(!fixed.contains("Delegate"),
       "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
@@ -179,9 +184,14 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("A轨(批①): 改名后三条不变式齐——交付面件数 == 单点常量 ∧ 含 SendMessage ∧ 旧名零残留"):
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
-    assertEquals(delivered.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "交付面件数与机制集单点常量一致（在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）")
+    assertEquals(delivered.size, nebflow.FriendsSealKit.expectedNebulaSize(delivered),
+      "交付面件数与机制集单点常量一致（经单一 helper 派生 constant − sealed?1:0，friendseal 2026-09-25；在飞 17 = 2026-09-18 18:18 令 +5 后值）")
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
+    // friendseal (2026-09-25): the delivery face carries ListFriends iff the
+    // friends feature is unsealed (sealed default strips the name; the device
+    // leg of SendMessage is unaffected).
+    assertEquals(delivered.contains("ListFriends"), !nebflow.core.FriendsSeal.isSealed,
+      "ListFriends rides the delivery face iff unsealed (seal strips the name, never deletes it)")
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
     assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)),
       "旧名零残留（Nebula 机制固定集）")

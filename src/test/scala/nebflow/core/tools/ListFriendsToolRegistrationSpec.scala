@@ -162,8 +162,13 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
 
   // ══════════ 3. 授能面（L2） ══════════
 
-  test("L2：Nebula 固定面携带 ListFriends；dispatcher / general 均不携带"):
-    assert(AgentCore.fixedToolsFor(mkDef("Nebula")).contains("ListFriends"), "Nebula 携带 ListFriends")
+  test("L2：Nebula 固定面携带 ListFriends（flag-aware，friendseal 2026-09-25）；dispatcher / general 均不携带"):
+    // friendseal：交付面随唯一 `features.friends` 闸翻面（单一剥离点
+    // `AgentCore.friendsSealedStrip`）；静态集 `NebulaOrchestrationTools`
+    // 原样不动（注册表=全集语义）。封存 = 摘名（模型不可见），解封 = 复名。
+    val delivered = AgentCore.fixedToolsFor(mkDef("Nebula"))
+    assertEquals(delivered.contains("ListFriends"), !nebflow.core.FriendsSeal.isSealed,
+      "Nebula 交付面：flag 开 ⇒ 携带；flag 关（封存缺省）⇒ 摘名")
     assert(!AgentCore.fixedToolsFor(mkDef("project-dispatcher")).contains("ListFriends"), "dispatcher 不授 ListFriends")
     assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("ListFriends"), "general 不授 ListFriends")
     assert(!AgentCore.DispatcherFixedTools.contains("ListFriends"), "DispatcherFixedTools 零 ListFriends")

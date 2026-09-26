@@ -478,10 +478,10 @@ export default {
   // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
   // used to be hard-coded Chinese literals in activityBar.js's injected style
   // family; this batch moves them into i18n (zh/en paired, no dead keys).
-  'login.title': 'Sign in to nebflow',
+  'login.title': 'Sign in to nebflow — link your devices',
   'login.starting': 'Starting login…',
-  'login.hintBrowser': 'Sign in to your nebflow account in the browser to connect this device',
-  'login.hintAuthorize': 'Complete authorization in the browser to connect this device',
+  'login.hintBrowser': 'Sign in to your nebflow account in the browser; this device then interconnects with your other devices',
+  'login.hintAuthorize': 'Complete authorization in the browser; this device then interconnects with your other devices',
   'login.reopenAuthPage': 'Reopen the login page',
   'login.openAuthPage': 'Open authorization page',
   'login.switchAccount': 'Use another account',
