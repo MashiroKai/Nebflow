@@ -650,7 +650,7 @@ Rule of thumb: **if the card would contain only sentences, do not use Card.** Th
 
 ## Workflow
 
-1. Have the general project create the material you need — a one-off execution task like this is routed there with `Mail(address="project:general", message=...)`.
+1. Have the kernel create the material you need — a simple one-off execution task like this is routed with `Mail(address="kernel", message=...)`: the brief must be fully self-contained, and the kernel produces files via its Bash tool face. Material that needs plugin-backed production still goes to a project with the matching capability.
 2. Embed the material it returns into the Card you show the user.
 3. Embed the SVG in the Card — two options:
    - **Simple:** `<img src="/tmp/output.svg" style="width:100%;height:auto">` (recommended default)
