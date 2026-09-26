@@ -8,6 +8,9 @@
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",
     "plugins:web-search-toolkit",
+    "plugins:browser-use",
+    "plugins:computer-use",
+    "plugins:document-production",
     "project:general"
   ]
 }
