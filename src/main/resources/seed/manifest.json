@@ -7,7 +7,6 @@
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",
-    "plugins:web-search-toolkit",
-    "project:general"
+    "plugins:web-search-toolkit"
   ]
 }
