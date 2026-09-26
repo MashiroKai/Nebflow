@@ -4,6 +4,7 @@
     "agents:project-dispatcher",
     "agents:general",
     "agents:Nebula",
+    "agents:kernel",
     "plugins:visual-report",
     "plugins:slideblocks",
     "plugins:nebflow-plugin-creator",
