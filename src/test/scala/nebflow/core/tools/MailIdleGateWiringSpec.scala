@@ -544,7 +544,7 @@ class MailIdleGateWiringSpec extends FunSuite:
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.call(
         JsonObject(
-          "address" -> Json.fromString("node:n-14"),
+          "to" -> Json.fromString("node:n-14"),
           "message" -> Json.fromString("节点补充"),
           "delivery" -> Json.fromString("queue")
         ),

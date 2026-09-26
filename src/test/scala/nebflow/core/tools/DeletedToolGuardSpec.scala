@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
+import nebflow.agent.AgentCore
 
 /**
  * Guards the tool deletions — no ghost references may resurface in surviving
@@ -25,10 +26,24 @@ class DeletedToolGuardSpec extends FunSuite:
 
   private val ghostNames = List("RemoveUnnecessary", "SaveWorkspaceItem")
 
-  /** R2 retired entries (2026-09-12) -- after the taskunify batch `Task` has come back, hence moved out of this set. */
+  /** R2 退役件（2026-09-12）· ⑧ fail-closed（mailunify-full 批，2026-09-23 作者裁定）。
+    *
+    * 🔴 本名单的语义**已随 ⑧ 反转**：它不再是「必须配指引」的名单，而是
+    * 「必须**零**指引」的名单——载体从「指引存在性」换成「fail-closed 政策本身」。
+    * 名单面照旧保留（非空是本 test 的守卫，不是指引的载体）。
+    *
+    * 支上对账重算批（2026-09-26 调和）：**收编 main 侧 taskunify 结构演进**（2026-09-24
+    * `TaskList` + `TaskBoard` → 单一 `Task`，净 0）⇒ `Task` 已作为统一账本唯一写面**复活并注册**，
+    * 从其 R2 退役名单移出（留在名单内会与本文件「Task must be registered」断言相冲）；
+    * 支侧 ⑧ 交付语义（整表摘空 × 零指引）不变，见下方两条 test。 */
   private val retiredR2Names = List("NodeMessage")
 
-  /** taskunify merge-batch retired entries (2026-09-24): the two were merged into `Task` / `TaskInfo`. */
+  /** taskunify 合并批退役件（2026-09-24）：TaskList / TaskBoard 并入 `Task` / `TaskInfo`。
+    *
+    * 🔴 支上对账重算批（2026-09-26 调和）改钉**方向**：迁移指引表按 ⑧（2026-09-23）
+    * + 作者 2026-09-21「改名退役工具不需任何退役提醒」政策**整表摘空** ⇒ 本名单
+    * 与 `retiredR2Names` **同向** = 「必须零指引」（main 侧原断言「必须配指引」与 ⑧ 相冲，
+    * 调和采支侧交付语义 + main 侧改名结构，报告登记 resolved/rebased）。 */
   private val retiredTaskunifyNames = List("TaskList", "TaskBoard")
 
   test("no surviving tool description references a deleted tool") {
@@ -53,38 +68,49 @@ class DeletedToolGuardSpec extends FunSuite:
     assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "TaskInfo must be registered (read-only attachment view)")
   }
 
-  test("R2 retired tools leave an explicit migration guide (C-1)，禁静默 no-op"):
-    retiredR2Names.foreach { g =>
+  test("R2 retired tools are fail-closed — zero migration guide, shaped like a name that never existed (⑧ 2026-09-23)"):
+    // 🔴 非空守卫（防「空遍历恒真」）：本名单被清空即本 test 失去判据 ⇒ 必须硬红。
+    assert(
+      retiredR2Names.nonEmpty,
+      "retiredR2Names must stay non-empty — emptying it would make this test vacuously true (静默失效)"
+    )
+    // 🔴 政策本体：整表摘空 ⇒ 一切旧名与一切从未存在的名走**同一条**未知工具路径。
+    assert(
+      AgentCore.RetiredToolGuides.isEmpty,
+      s"RetiredToolGuides must be EMPTY (fail-closed, ⑧ 2026-09-23); got keys: ${AgentCore.RetiredToolGuides.keys.toList.sorted}"
+    )
+    assert(
+      AgentCore.RetiredToolGuides.keys.isEmpty,
+      "no retired name may carry a guide entry (the retired-guide practice is reversed)"
+    )
+    // 🔴 先例同向（作者 2026-09-21 `Delegate` 令）：同族改名退役工具亦零指引。
+    assert(
+      !AgentCore.RetiredToolGuides.contains("Delegate"),
+      "Delegate carries no guide (author ruling 2026-09-21) — the table must not regrow one"
+    )
+    for g <- retiredR2Names do
       assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (R2 2026-09-12)")
       assert(
-        nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
-        s"$g must carry a migration guide entry (退役可诊断错误，非兼容壳)"
+        !AgentCore.RetiredToolGuides.contains(g),
+        s"$g must carry NO migration guide (fail-closed) — a surviving entry would re-open the retired-guide practice"
       )
-      val guide = nebflow.agent.AgentCore.RetiredToolGuides(g)
-      assert(guide.trim.nonEmpty, s"$g guide must not be empty")
-      assert(
-        guide.contains("Mail"),
-        s"$g guide must point at Mail (the single message primitive), got: ${guide.take(120)}"
-      )
-    }
 
-  test("taskunify retired tools leave an explicit migration guide (C-1), no silent no-op"):
-    // `TaskList` / `TaskBoard` are deliberately **not registered** (once registered, the
-    // RetiredToolGuides would never fire, and it would create a second path to the write
-    // face) => the table lookup misses => the migration guide takes effect.
+  test("taskunify retired names are fail-closed too — zero migration guide (⑧ 2026-09-23, 支上对账重算批 2026-09-26)"):
+    // 🔴 支上对账重算批改钉：main 侧原断言要求 `TaskList` / `TaskBoard` **必须配**
+    // 迁移指引（C-1 旧政策）；支侧交付语义 = ⑧（2026-09-23 整表摘空 × 零指引）+
+    // 作者 2026-09-21「改名退役工具不需任何退役提醒」⇒ 两条相冲，调和取**支侧交付语义**
+    // + **main 侧改名结构**（名单保留）：退役名的可诊断性由「未注册 + 未知工具路径」承载，
+    // 不由指引表承载。原断言的可诊断面（"$g must be unregistered"）**逐字保留**。
     retiredTaskunifyNames.foreach { g =>
       assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (taskunify 2026-09-24)")
       assert(
-        nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
-        s"$g must carry a migration guide entry (a diagnosable retirement error, not a compatibility shell)"
-      )
-      val guide = nebflow.agent.AgentCore.RetiredToolGuides(g)
-      assert(guide.trim.nonEmpty, s"$g guide must not be empty")
-      assert(
-        guide.contains("Task"),
-        s"$g guide must point at Task (the unified ledger), got: ${guide.take(120)}"
+        !AgentCore.RetiredToolGuides.contains(g),
+        s"$g must carry NO migration guide (fail-closed, ⑧ 2026-09-23) — the retired-guide practice is reversed"
       )
     }
+    // 复活面在场（改名即合并，非能力损失）：统一账本唯一写面 + 只读附件视图。
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "Task must be registered (unified ledger write face)")
+    assert(ToolRegistry.TOOL_MAP.contains("TaskInfo"), "TaskInfo must be registered (read-only attachment view)")
 
   test("registry face is unchanged by the R2 retirement — Mail is registered, ghost names are not"):
     assert(ToolRegistry.TOOL_MAP.contains("Mail"), "Mail must stay registered (single message primitive)")

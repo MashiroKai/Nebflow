@@ -2146,7 +2146,7 @@ class NodeEngine(
                     (record.ref ! AgentCommand.ImmediateInput(
                       text = s"$head\n\n$text",
                       source = Some(InjectionAttribution.SourceSystem),
-                      // bluebubble 批（2026-09-12）腿②：Mail(address="node:<id>") 的发信方
+                      // bluebubble 批（2026-09-12）腿②：Mail(to="node:<id>") 的发信方
                       // 随注入落到节点会话蓝气泡顶栏（sender = 分发器 agent 名）。
                       // source 仍取 "system"（R2 D-3 裁定：保持节点侧既有定名，`mail`
                       // 只出现在真实邮件来源处）。
@@ -6857,7 +6857,7 @@ class NodeEngine(
   // `deliverDispatcherOutputToNebula` 已删净（R2「一个 Mail 统一」批 2026-09-12，
   // R7-b 桥收敛 + D-4 二次裁定）：分发器 turn 终态**不再**无条件把最终 assistant
   // 文本注入 root——root 注入面 100% 由显式载体驱动（分发器显式
-  // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, ...)`）。
+  // `Mail(to="Nebula", chainId=<本批链 id>, ...)`；合面后无 `type=` 键）。
   // 该函数全仓零第三方调用者（唯一调用点 = ProjectActor.dispatcherBridge，同批移除），
   // 按 B5-c 精神删净而不留死代码。观测口径随之而定：source=="dispatcher" 族
   // **生产者归零**（`project-dispatcher/system.md` 的「自动投递」措辞同批改写，

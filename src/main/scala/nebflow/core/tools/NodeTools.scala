@@ -3423,7 +3423,7 @@ object ProjectCreateTool extends Tool:
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog (2026-09-06 裁定), no candidate chips (2026-09-09 裁定)). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend; retiring that free input is a separate S3 order that has not landed. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
-- Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
+- Dispatch work with Mail(to="project:<name>", message=...) — the project is mounted and triggerable immediately.
 ## Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).
@@ -3505,7 +3505,12 @@ object ProjectCreateTool extends Tool:
       )
     )
 
-  /** Path basename (name derivation); see [[ProjectCreateService.baseName]]. */
+  /** Path basename (name derivation); see [[ProjectCreateService.baseName]].
+    * 🔴 支上对账重算批（2026-09-26 调和）：main 侧 pcsys-mech 批已把 ProjectCreate 的
+    * 挂载/占用/幂等/脚手架机制整体抽入 `ProjectCreateService`（本文件只留委托）——
+    * 支侧同名机制（含 `Mail(to='project:` re-pin）随抽取面**一并让位**；`to=` 措辞已
+    * 携入 `ProjectCreateService`（成功句 + 占用报错两处），消费者
+    * `ProjectCreatePanelSpec` 两侧本就同为 `Mail(to='project:`。 */
   private def baseName(workspace: String): String = ProjectCreateService.baseName(workspace)
 
   // ============================================================

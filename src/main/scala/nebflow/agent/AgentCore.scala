@@ -2812,7 +2812,7 @@ object AgentCore:
     * legacyFixedTools 对成员仍授能，零触碰）。**本条覆盖此前相关指令**：
     * 2026-09-12「一个 Mail 统一」批（B4 取代条款）已把「`Task` = 唯一项目触发
     * 入口」**作废**——新口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 经
-    * `Mail(address="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
+    * `Mail(to="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
     * `ProjectActor.TriggerDispatcher`）。2026-09-05 13:11 作者裁定曾把
     * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
     * （Nebula 补齐 Write/Edit 至恰十七件——史实，时点 2026-09-05）；同日
@@ -2897,8 +2897,10 @@ object AgentCore:
   val NebulaOrchestrationTools = Set(
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
-    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
-    // NebulaOrchestrationToolsExpectedSize。本条覆盖此前「Task = 唯一项目触发入口」的
+    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；该时点后沿革见
+    // NebulaOrchestrationToolsExpectedSize——**合并后现读值 = 15**（mailunify-full 批
+    // 2026-09-23 −`SendMessage`、taskunify 批改名净 0、govmemory 批 −`MemoryNote`）。
+    // 本条覆盖此前「Task = 唯一项目触发入口」的
     // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
     // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
     // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
@@ -2909,25 +2911,27 @@ object AgentCore:
     // Delegate（曾以内核形态引入本集；**本批已从本集摘除退役**）：极简内核入口——
     // 无项目归属的单次执行任务。是**编排件**不是能力件（执行能力 = 内核的
     // BaseTools 六件）。退役口径：一次性执行任务改路由到 general 项目
-    // （`Mail(address="project:general", ...)`，按**注册表 name** 解析；工作区路径的
+    // （`Mail(to="project:general", ...)`，按**注册表 name** 解析；工作区路径的
     // 权威来源 = `NodeList` `meta.workspace`，🔴 禁按项目名拼路径猜工作区——name 未命中
     // 且目标工作区已被别的项目占用时 ProjectCreate 默认拒绝，宁拒不误建）；web 系能力
     // 改由插件面授予。
-    // 本集件数 13 → 12（史实，时点 = Delegate 退役批；见
-    // NebulaOrchestrationToolsExpectedSize——该常量现读值 = 17）。
+    // 本集件数 13 → 12（史实，时点 = Delegate 退役批）。
+    // 🔴 常量 `NebulaOrchestrationToolsExpectedSize` 的**合并后现读值 = 15**（见本文件定义处，
+    // mailunify-full 批 2026-09-23 −SendMessage、taskunify 批改名净 0、govmemory 批 −MemoryNote；
+    // 上游旧注释曾写「现读值 = 17」= 史实残留，已于本批订正措辞）。
     // ⚠️ 本批只摘**授能面**：工具本体（DelegateTool）、AgentKind/子会话机制与
     // 内核 def 未动，登记为后续批（工具面摘除后该名对一切身份不可达 ⇒ 惰性）。
-    // The two items TaskList/TaskBoard were unified by taskunify (2026-09-24) ⇒ this set's
-    // members are renamed: `TaskList` -> `Task` (Nebula's exclusive **only write face**: one
-    // ledger, one id space, one change-history file). **The item count is unchanged** (a
-    // one-to-one rename, net 0) ⇒ `NebulaOrchestrationToolsExpectedSize` is still 17. The
-    // old name `TaskList` is retired and removed; calling it hits the retirement guide in
-    // AgentCore.RetiredToolGuides (error text only, zero execution surface).
+    // 任务编排 —— taskunify 批（2026-09-24，main 侧结构演进收编）：TaskList/TaskBoard
+    // 两件统一为 `Task`（Nebula 专属**唯一写面**：一本账、一套 id 空间、一份变更史
+    // 文件；一对一改名净 0，旧名 `TaskList` 退役零执行面）。2026-09-06 TaskList 批
+    // （快变状态出记忆；首期无前端）的史实由本更名承接。
     "Task",
-    // 通信（好友功能非旧体系）
-    "SendMessage",
-    // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
-    // 名册取代「靠报错反推」。与 SendMessage 同组（通信）、同一好友数据面与词表
+    // 通信 —— 🔴 `SendMessage` 已**退役**（mailunify-full 批，2026-09-23 作者裁定）：
+    // 四腿（好友 / 群 / 本机复制 / 设备）整体并入 `Mail` 的单 `to` 承载 ⇒ **摘本集行**
+    // （本集成员 −1）。🔴 fail-closed：旧名离册后，打到它的调用按未知工具报错，
+    // **零迁移指引**（`RetiredToolGuides` 整表摘空 = 本批政策）。
+    // ListFriends（好友消息改造批 ⑩，2026-09-12）：`Mail` 的**只读**好友名册前置——
+    // 名册取代「靠报错反推」。同一好友数据面与词表
     // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
     // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
     "ListFriends",
@@ -2980,7 +2984,7 @@ object AgentCore:
   /** Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
     * 不得各处写裸数字）。
     *
-    * 值 = **17** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+    * 值 = **15** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
     * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
     * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
     * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
@@ -2988,9 +2992,11 @@ object AgentCore:
     * Delegate 退役批 −1 ⇒ 12；
     * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
     * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17；
-    * 2026-09-25 govmemory batch −`MemoryNote`（tool + registry entry + set
-    * membership retired; memory is now written via Edit/Write directly with
-    * the budget guard）⇒ 16（在飞值）**。
+    * **mailunify-full 批（2026-09-23 作者裁定）`SendMessage` 整件退役 −1 ⇒ 16；
+    * 支上对账重算批（2026-09-26 调和）收编 main 侧两笔：taskunify（2026-09-24）
+    * `TaskList`→`Task` 一对一改名净 0；govmemory（2026-09-25）−`MemoryNote`
+    * （tool + registry entry + set membership retired; memory is now written via
+    * Edit/Write directly with the budget guard）−1 ⇒ **15（合并后在飞值）**。
     *
     * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
     * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话
@@ -3011,34 +3017,35 @@ object AgentCore:
     * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
     * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
     * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。 */
-  val NebulaOrchestrationToolsExpectedSize: Int = 16
+  val NebulaOrchestrationToolsExpectedSize: Int = 15
 
-  /** 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
+  /** 退役工具迁移指引表 —— 🔴 **全表 fail-closed**（mailunify-full 批，2026-09-23
+    * 作者裁定 ⑧）。
     *
-    * **本表只产错误文案，零执行面**——不是兼容壳、不是别名、不做任何转发
-    * （B5-c 硬禁静默 no-op 与悄悄转发）。消费点 = [[executeToolInner]] 的
-    * `case None`（注册表查不到该名时）：给出「它退役了 + 改用哪个工具、怎么构造
-    * 调用」。打在未注册名上的调用**只能**来自存量提示词 / 外部客户端 / 幻觉——
-    * 恰恰是最需要指引的场景；现状兜底文案 `No such tool available: <name>`
-    * 不含迁移指引，不满足「显式报错并指明改用 Mail」的要求。
+    * **政策变更（本表的存在理由已反转）**：本表原先按「退役即配迁移指引」的旧政策
+    * 逐键登记（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1 的三键
+    * `Task` / `NodeMessage` / `TransferFile`）。作者 2026-09-21 的 `Delegate` 令把政策
+    * 反转为「改名退役工具**不需要**任何退役提醒」——退役件应当**像它从未存在过**。
+    * 本批因此把**整表摘空**（三老键一并摘除），`SendMessage`（本批退役）**不加键**；
+    * 表定义与 doc 保留（地标区间与类型不变，右值 = `Map.empty`）。
     *
-    * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。 */
-  val RetiredToolGuides: Map[String, String] = Map(
-    "MemoryNote" ->
-      """MemoryNote retired 2026-09-25 (govmemory batch) — memory is now written directly: use Edit/Write on the three memory layers (user `~/.nebflow/User.md`, agent `~/.nebflow/agents/Nebula/memory.md`, project `<workspace>/.nebflow/memory.md`); entries are single `- ` lines under `## ` sections; snapshot the file to `~/.nebflow/memory-backups/<ts>/` before the first write to a memory file in a session; replace in place (the append and the remove/update are paired in the same round), never append a correction beside the old line.""",
-    "Task" ->
-      """`Task` was retired 2026-09-12 and REINTRODUCED 2026-09-24 as the single work-item ledger — one ledger, one id space, one change-history file. It is the write face for tasks and is Nebula-exclusive; the retired project-entry meaning of this name is carried by the separate row below.""",
-    "ProjectTrigger" ->
-      """Project triggering is now Mail — use `Mail(to="project:<project name>", message=<task text>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
-    "TaskList" ->
-      """The task ledger is now `Task` — one ledger for both the orchestration backlog and the project board. Use Task(action=...) with the three states open / closed / completed; ids come from the new ledger's own space.""",
-    "TaskBoard" ->
-      """The project board is now `Task` (Nebula writes) / `TaskInfo` (you read). You keep read access to your own task only; creation and state changes belong to Nebula.""",
-    "NodeMessage" ->
-      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
-    "TransferFile" ->
-      """TransferFile retired 2026-09-14 (#145) — its capabilities moved into SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) are retired with no replacement (0 recorded uses; the author accepted the loss, U-6)."""
-  )
+    * 🔴 **零执行面、本批零行为变化**：本表只产错误文案。真实 agent turn 下未注册名的
+    * 调用走的是**允许集过滤**路径（`allowedTools.contains` 未命中 ⇒
+    * `Tool not available: <name>`），早于 [[executeToolInner]] 的注册表未命中腿 ⇒
+    * **摘空前后行为完全一致**（该腿在现读树上结构性不可达 —— 任何 allowed set 成员
+    * 都已在注册表内）。⇒ 旧名与杜撰名一律得到**同一句**「没有这个工具」。
+    *
+    * **支上对账重算批（2026-09-26 调和）**：main 侧（本表政策未被 main 知悉的语境下）
+    * 又按旧政策新增了 7 键（MemoryNote / Task / ProjectTrigger / TaskList / TaskBoard /
+    * NodeMessage / TransferFile）——本调和**不收**：其中 TransferFile 指向
+    * `SendMessage(to="device:…")`、NodeMessage 写 `address=` 形态，均已是合并树上的
+    * 退役面（SendMessage 整件退役 + 设备腿退役 + `to=` 单承载），照搬 = 交付明知失效
+    * 的指引；改写其文案属自创内容，禁。按 09-21 政策维持整表摘空（fail-closed），
+    * 逐键处置在调和报告登记，待作者定夺是否重授指引。
+    *
+    * **表零膨胀纪律（保留）**：即便政策将来再变，也只收「本批删净且必须给出迁移路径」
+    * 的名字，不预收未来退役项。 */
+  val RetiredToolGuides: Map[String, String] = Map.empty
 
   /** 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件
     * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
@@ -3048,7 +3055,7 @@ object AgentCore:
     * + `node:<id>`**：不给自己项目发（`project:<name>` 形态对分发器非法 ⇒
     * 显式报错并指明合法地址面）。旧 `NodeMessage` 已删净退役，其三态语义
     * （running=turn 边界注入 / wiring·pending=任务追加 / 终态拒绝）整体并入
-    * `Mail(address="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
+    * `Mail(to="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
     * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
     * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
     * 身份=isDispatcher，工具内不信客户端参数）。 */
@@ -3183,7 +3190,7 @@ object AgentCore:
             // root 面部分已被 2026-09-18 18:18 令取代 ⇒ 三件在飞在场；史实归档**）；
             // general/BaseTools 六件默认注入不变
             // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit，
-            // 在飞恰十六件——MemoryNote 已随 govmemory 批退役）——本集即 Nebula 工具面唯一来源。
+            // 合并后在飞恰十五件——SendMessage 随 mailunify-full 批、MemoryNote 已随 govmemory 批退役）——本集即 Nebula 工具面唯一来源。
             AgentCore.NebulaOrchestrationTools
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           case "general"            => AgentCore.GeneralFixedTools

@@ -187,7 +187,7 @@ class MailIdleGateSpec extends FunSuite:
       val res = nebflow.core.tools.MailTool
         .call(
           JsonObject(
-            "address" -> Json.fromString("node:n-1"),
+            "to" -> Json.fromString("node:n-1"),
             "message" -> Json.fromString("补充"),
             "delivery" -> Json.fromString("queue")
           ),

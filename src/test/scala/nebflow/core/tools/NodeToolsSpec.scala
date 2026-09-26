@@ -187,25 +187,27 @@ class NodeToolsSpec extends FunSuite:
     assert(!requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
       s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}")
     // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
-    // `Mail(address="node:<id>", message=...)`。
-    // device-mail 批（2026-09-15）：Mail 的目标面从「address 必填」扩成
-    // **`address` XOR `device`**（两者各自可空、由运行期互斥闸判，见 MailTool 的
-    // MAIL_TARGET_EXCLUSIVE / _MISSING）⇒ required 只剩 message。本断言同批 re-pin：
-    // 仍然钉「address 不再是唯一必填面」与「退役参数不得回流」，未放宽任何既有约束。
-    // mailmodel batch (2026-09-25, ruling (e)): the whole `device` leg is retired =>
-    // the target face returns to the **single `address` target** (the required face
-    // is unchanged, still message only; the address key must stay present).
+    // `Mail(to="node:<id>", message=...)`。
+    // 沿革：device-mail 批（2026-09-15）Mail 的目标面曾扩成 **`address` XOR `device`**
+    // 互斥双轨（required 只剩 message）；mailunify-full 批（2026-09-23 作者裁定）双轨
+    // **结构上消失** ⇒ 合并为单字段 `to`，required = `to` + `message`。本断言同批 re-pin：
+    // 仍钉「退役参数不得回流」与「目标面恰为单 `to`」，未放宽任何既有约束。
+    // （支上对账重算批 2026-09-26 调和：main 侧 mailmodel 批 ruling (e) 的设备腿整腿退役
+    // 已收编——`device` 键在合并树上 = 墓碑读 MAIL_DEVICE_RETIRED，schema 面不复活任何
+    // 旧目标键；`address` 同批退役。）
     val mailReq = requiredOf(MailTool)
     assertEquals(
       mailReq,
-      List("message"),
-      s"Mail required should be message only; got $mailReq"
+      List("to", "message"),
+      s"Mail required should be the single unified `to` plus message; got $mailReq"
     )
     assert(!mailReq.contains("nodeId") && !mailReq.contains("project"),
       s"Mail must not carry the retired NodeMessage params; got $mailReq")
     val mailProps = MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
-    assert(mailProps.contains("address") && !mailProps.contains("device"),
-      s"Mail must declare `address` and must NOT carry the retired `device` key; got ${mailProps.toList.sorted}")
+    // 反向在场断言（禁裸删旧键断言）：新键 `to` 在 ∧ 旧双轨两键**不在**。
+    assert(mailProps.contains("to"), s"Mail must declare the unified single target parameter; got ${mailProps.toList.sorted}")
+    assert(!mailProps.contains("address") && !mailProps.contains("device"),
+      s"Mail must declare NO dual-track target parameters (address/device); got ${mailProps.toList.sorted}")
   }
 
 end NodeToolsSpec

@@ -19,7 +19,7 @@ import nebflow.agent.{
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, FriendMessageTool, ToolContext, ToolError}
+import nebflow.core.tools.{FileLockManager, FriendMessageTool, MailTool, ToolContext, ToolError}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.neblink.FriendCodecs.given
@@ -121,7 +121,15 @@ class GroupSendMessageSpec extends CatsEffectSuite:
 
   private def callTool(fs: FriendService, input: JsonObject): IO[Either[ToolError, String]] =
     FriendMessageTool.initialize(fs)
-    FriendMessageTool.call(input, ToolContext(projectRoot = "/tmp"))
+    // mailunify-full 批：群腿入口 = `Mail`，且 `group:` 授权面 = **仅 root Nebula**
+    // （设计卡 A.15）⇒ 夹具 ctx 必须带 root 身份（与 `callToolWithCtx` 的夹具一致）。
+    MailTool.call(
+      input,
+      ToolContext(
+        projectRoot = "/tmp",
+        agentDef = Some(AgentDef(name = "Nebula", description = "group-leg spec fixture"))
+      )
+    )
 
   private def callToolWithCtx(
     fs: FriendService,
@@ -129,7 +137,7 @@ class GroupSendMessageSpec extends CatsEffectSuite:
     input: JsonObject
   ): IO[Either[ToolError, String]] =
     FriendMessageTool.initialize(fs)
-    FriendMessageTool.call(input, ctx)
+    MailTool.call(input, ctx)
 
   private def groups: List[GroupSummary] = List(
     GroupSummary(groupId = "grp-1", title = "团队", role = "owner", memberCount = 2),

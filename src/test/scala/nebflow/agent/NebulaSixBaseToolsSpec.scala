@@ -22,7 +22,7 @@ import munit.FunSuite
  *
  * - ① 文件面六件（Read/Glob/Grep/Bash/Write/Edit）⊆ Nebula 机制集（fixedToolsFor
  *   静态集 + buildAllowedToolSet 交付面双层）∧ NodeList ∉ Nebula 集 ∧ TaskList ∈
- *   Nebula 集 + 件数计数（史实时点恰十四件，在飞 = 17）——本文件即变异验红锚点：
+ *   Nebula 集 + 件数计数（史实时点恰十四件，在飞 = 16）——本文件即变异验红锚点：
  *   从机制集再摘文件面任一件（或摘掉 TaskList、或计数漂移）即红。
  * - ② 六件基础 ⊆ general 机制集（GeneralFixedTools = BaseTools +
  *   AskUserQuestion 恰七件；2026-09-08 作者修订恢复 AskUser，D6 批D1；
@@ -80,17 +80,19 @@ class NebulaSixBaseToolsSpec extends FunSuite:
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
     assert(delivered.contains("Task"), "the Nebula delivered face contains Task (mounted at the registry layer)")
     // 件数以单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize 为准：
-    // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep）；
+    // 15（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后为 17；mailunify-full 批
+    // −SendMessage；taskunify 合并批 2026-09-24 改名净 0；govmemory 批 2026-09-25
+    // −MemoryNote ⇒ 15，支上对账重算批 2026-09-26 调和）；
     // 沿革（史实）：16 经 #145 附件腿批 −TransferFile 退役 ⇒ 15，
     // 再经 09-16 18:41 令 −2 ⇒ 13，再经 Delegate 退役批 −1 ⇒ 12。
     // 旧「终态 = 15，已定」与「终态 = 13」口径均已被取代 ⇒ 归档。
     // ⑩-9 的「终态待定」悬置口径已被 2026-09-14 拍板取代——归档，不得重提。
     assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；在飞 17 = 2026-09-18 18:18 令后实测值）")
+      "Nebula 机制集件数 == 单点常量（不得各处写裸数字；合并后在飞 15 = 2026-09-18 18:18 令后 17、mailunify-full 批 −SendMessage、taskunify 改名净 0、govmemory 批 −MemoryNote 实测值）")
     // 件数第二锚（防「常量漂移而集合未动」类假绿）——本行**刻意用字面量**（常量引用会
     // 让「常量与集合一起漂移」测不出来，与原 12 行同款结构、非以裸数字替代常量）
-    assertEquals(AgentCore.NebulaOrchestrationTools.size, 16,
-      "NebulaOrchestrationTools 实测恰 16 件（govmemory 批 2026-09-25 −MemoryNote；此前 17 = 2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
+    assertEquals(AgentCore.NebulaOrchestrationTools.size, 15,
+      "NebulaOrchestrationTools 实测恰 15 件（mailunify-full 批 −SendMessage + govmemory 批 2026-09-25 −MemoryNote；此前 17 = 2026-09-18 18:18 令 +5；变异验红锚：再摘任一件即红）")
 
   // ===== ② 六件基础 ⊆ general 机制集（回归钉死）=====
 

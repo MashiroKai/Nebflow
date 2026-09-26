@@ -183,7 +183,7 @@ class MailAutoCreateTaskChainSpec extends FunSuite:
           resources <- mkResources(system)
           _ <- mountWithRecordingActor("chain-fixture", ws, system, resources, record)
           res <- MailTool.call(
-            qIn("address" -> "project:chain-fixture", "message" -> "first mail, no task id -- the engine creates one"),
+            qIn("to" -> "project:chain-fixture", "message" -> "first mail, no task id -- the engine creates one"),
             ctx(system))
           // the send is fire-and-forget: wait for the recording actor to observe the trigger
           _ <- waitUntil(10.seconds)(record.get.map(_.nonEmpty))

@@ -42,8 +42,8 @@ class AgentConvergenceSpec extends FunSuite:
     val expected = Set(
       "Mail", "ProjectCreate", "AgentControl",
       // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
-      "Task",                                               // task orchestration (taskunify merge batch 2026-09-24: TaskList + TaskBoard merged into Task, net count 0)
-      "SendMessage",
+      "Task",                                               // 任务编排（taskunify 合并批 2026-09-24：TaskList + TaskBoard → 单一 `Task`，净 0 —— 支上对账重算批 2026-09-26 收编 main 侧改名结构）
+      // mailunify-full 批（2026-09-23 作者裁定）：`SendMessage` 整件退役（合面到 `Mail` 单 `to`）。
       "ListFriends",                                        // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
       "Read",                                               // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
       "Card",                                               // 可视化（2026-09-05 解封恢复）
@@ -54,7 +54,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Glob", "Grep", "Bash", "Write", "Edit"
     )
     assertEquals(delivered, expected,
-      "the tool list Nebula exposes to the LLM must equal the fixed §C.1 matrix entry by entry (the count is single-sourced from AgentCore.NebulaOrchestrationToolsExpectedSize: in flight 16 = the value after the govmemory batch 2026-09-25 -MemoryNote; history: the 2026-09-18 18:18 author order +Bash/Edit/Write/Glob/Grep => 17; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal; the two patches -Glob -Grep and -Delegate are prior facts; taskunify merge batch 2026-09-24 merged TaskList + TaskBoard into the single Task => net count 0; zero Issue)")
+      "Nebula 面向 LLM 的工具清单必须逐项等于 §C.1 固定矩阵（件数以 AgentCore.NebulaOrchestrationToolsExpectedSize 为单点来源：合并后在飞 15 = 2026-09-18 18:18 作者令 +Bash/Edit/Write/Glob/Grep 后值 17、再经 mailunify-full 批 −SendMessage、taskunify 合并批 2026-09-24 TaskList+TaskBoard→Task 净 0、govmemory 批 2026-09-25 −MemoryNote；沿革：好友消息改造批 ⑩ +ListFriends；NodeList 摘除；−Glob −Grep 与 −Delegate 两批史实；零 Issue）")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
     // Grep——取代 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面
@@ -125,7 +125,9 @@ class AgentConvergenceSpec extends FunSuite:
   test("the retired memory bookkeeping tool is fully deregistered; no identity can summon it (govmemory batch 2026-09-25)"):
     val retiredMemoryTool = "Memory" + "Note"
     assert(!ToolRegistry.TOOL_MAP.contains(retiredMemoryTool), "retired tool must be gone from the registry (govmemory batch)")
-    assert(AgentCore.RetiredToolGuides.contains(retiredMemoryTool), "retired name carries the migration guide (direct Edit/Write wording)")
+    // 支上对账重算批（2026-09-26 调和）改钉：迁移指引表按 ⑧（2026-09-23，整表摘空）
+    // 保持**零指引**——退役名的兜底 = 未知工具路径（fail-closed），不配指引。
+    assert(!AgentCore.RetiredToolGuides.contains(retiredMemoryTool), "retired name carries NO migration guide (fail-closed, ⑧ 2026-09-23; 支上对账重算批 2026-09-26 rebased from main's govmemory wording)")
     // 阴性断言（2026-09-17 更名批）：旧名必须已从注册表彻底消失（无残留注册键 = 更名零悬挂）。
     // 旧名字面按片段拼接：让 tracked 面字面判据（tracked 树内 grep 旧名 = 0 行）成立，
     // 断言语义不受影响（判的是注册表键集，不是源码文本）。
@@ -139,10 +141,10 @@ class AgentConvergenceSpec extends FunSuite:
     val generalDef = CoreProbe.allowed(mkDef("general", List(retiredMemoryTool)))
     assert(!generalDef.contains(retiredMemoryTool), "收敛名无视声明（记忆写入 = Edit/Write 直写）")
     // 裸声明在 allowed 算术层原样透传（已退役名已离开剥离集 NebulaExclusiveTools）——
-    // 零执行面兜底 = 调用命中 RetiredToolGuides 迁移指引（错误文案，零执行路径）
+    // 零执行面兜底 = 调用命中**未知工具路径**（RetiredToolGuides 已按 ⑧ 整表摘空 ⇒ fail-closed）
     val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List(retiredMemoryTool)))
     assert(sneakyStandalone.contains(retiredMemoryTool),
-      "raw declaration passes through the allowed-set arithmetic (the retired name left the strip set); execution returns the retirement guide only")
+      "raw declaration passes through the allowed-set arithmetic (the retired name left the strip set); execution returns the unknown-tool path only")
 
   test("dream admission exemption is gone (govmemory batch): dream falls through to the default strip-all branch"):
     val retiredMemoryTool = "Memory" + "Note"

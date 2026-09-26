@@ -125,12 +125,19 @@ class MailAttachSpec extends FunSuite:
     // The parameter description must state the (now single) same-machine leg in full
     // (mailmodel batch: the DEVICE leg is retired, so its wording must be GONE).
     val d = n(propDesc(MailTool.inputSchema, "attachments"))
-    assert(d.contains("ABSOLUTE"), s"missing the absolute-path hard requirement: $d")
-    assert(d.contains("any file type"), s"missing 'any file type': $d")
-    assert(d.contains("same-machine targets"), s"missing the same-machine leg wording: $d")
+    assert(d.contains("ABSOLUTE"), s"缺「绝对路径」硬要求: $d")
+    assert(d.contains("any file type"), s"缺「任意类型」: $d")
+    // 🔴 支上对账重算批（2026-09-26 调和）：设备腿已随 main 侧 mailmodel 批 (e) 整腿退役
+    // ⇒ 支侧原「device file channel / ~/Downloads」两读数随腿消亡（不再断言）；main 侧的
+    // 退役极性断言（DEVICE 措辞必须消失）**收编**；「SAME-MACHINE」大写措辞 = 合并树
+    // 现读形态（支侧合面重写后的腿分写），断言强度不降。
+    assert(
+      d.contains("SAME-MACHINE"),
+      s"缺「SAME-MACHINE targets」同机腿措辞（合并树现读）: $d"
+    )
     assert(!d.contains("DEVICE"), s"the DEVICE leg is retired - its wording must be gone: $d")
-    assert(d.contains("sha256"), s"missing the same-machine sha256 declaration: $d")
-    assert(d.contains(AttachContract.MaxFileBytesLabel), s"missing the author-given size cap label: $d")
+    assert(d.contains("sha256"), s"缺同机腿的 sha256 读数声明: $d")
+    assert(d.contains(AttachContract.MaxFileBytesLabel), s"缺作者给定的大小上限读数: $d")
 
     // ---- A4 零改动：`images` 面逐读数不动 ----
     val i = prop(MailTool.inputSchema, "images")
@@ -140,8 +147,8 @@ class MailAttachSpec extends FunSuite:
     assertEquals(ImageInject.MAX_IMAGE_BYTES, 10 * 1024 * 1024, "vision 面单件上限 10 MiB 未动")
     assertEquals(
       MailTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil),
-      List("message"),
-      "required 仍只应剩 message（attachments 是可选件）"
+      List("to", "message"),
+      "required = to + message（mailunify-full 合面后单 `to` 面；attachments 仍是可选件）"
     )
 
   // ============================================================
@@ -181,13 +188,13 @@ class MailAttachSpec extends FunSuite:
   // ============================================================
 
   test("③ 闸位：缺省 / 空数组 ⇒ 不触发附件闸（既有调用方零漂移）"):
-    val absent = callErr(qIn("address" -> "backend", "message" -> "hi"), ctx())
+    val absent = callErr(qIn("to" -> "backend", "message" -> "hi"), ctx())
     assertEquals(absent, "No actor system available", "缺省 attachments 不得改变既有判定")
-    val empty = callErr(withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments"), ctx())
+    val empty = callErr(withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments"), ctx())
     assertEquals(empty, "No actor system available", "空数组等价于未带附件")
 
   test("③ 闸位：非绝对路径 ⇒ 显式拒绝并回显问题路径（判在原始串上）"):
-    val msg = callErr(withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", "rel/x.bin"), ctx())
+    val msg = callErr(withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", "rel/x.bin"), ctx())
     assert(msg.contains("must be absolute"), s"相对路径必须显式拒绝: $msg")
     assert(msg.contains("rel/x.bin"), s"必须回显问题路径: $msg")
     assert(msg.contains("Nothing"), s"必须声明零投递意图: $msg")
@@ -198,13 +205,13 @@ class MailAttachSpec extends FunSuite:
     os.makeDir.all(dir)
     try
       val missing = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", (tmp / "nope.bin").toString),
+        withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", (tmp / "nope.bin").toString),
         ctx()
       )
       assert(missing.contains("does not exist"), s"不存在必须显式拒绝: $missing")
       assert(missing.contains("nope.bin"), s"必须回显问题路径: $missing")
       val isDir = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", dir.toString),
+        withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", dir.toString),
         ctx()
       )
       assert(isDir.contains("directory"), s"目录必须显式拒绝: $isDir")
@@ -213,7 +220,7 @@ class MailAttachSpec extends FunSuite:
 
   test("③ 闸位：件数 > 9 ⇒ ATTACH_TOO_MANY，先于一切逐件 IO"):
     val ten = (1 to 10).map(i => s"/nonexistent/part-$i.bin")
-    val msg = callErr(withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", ten*), ctx())
+    val msg = callErr(withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", ten*), ctx())
     assert(msg.contains(AttachContract.Codes.AttachTooMany), s"件数闸必须走 AttachContract 词表: $msg")
     assert(msg.contains("9"), s"必须回显上限: $msg")
     assert(!msg.contains("does not exist"), s"件数闸必须先于逐件存在性判（否则报错面漂移）: $msg")
@@ -231,7 +238,7 @@ class MailAttachSpec extends FunSuite:
         "稀疏夹具的声明长度（只 ftruncate，不写数据）"
       )
       val msg = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", big.toString),
+        withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", big.toString),
         ctx()
       )
       assert(msg.contains(AttachContract.Codes.AttachTooLarge), s"大小闸必须走 AttachContract 词表: $msg")
@@ -246,7 +253,7 @@ class MailAttachSpec extends FunSuite:
     os.write(ok, Array[Byte](1, 2, 3))
     try
       val msg = callErr(
-        withArr(qIn("address" -> "backend", "message" -> "hi"), "attachments", ok.toString, (tmp / "gone.bin").toString),
+        withArr(qIn("to" -> "backend", "message" -> "hi"), "attachments", ok.toString, (tmp / "gone.bin").toString),
         ctx()
       )
       assert(msg.contains("does not exist"), s"逐件判必须报出坏件: $msg")
@@ -270,7 +277,7 @@ class MailAttachSpec extends FunSuite:
     val system = ActorSystem(s"mailattach-b6a-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val msg = callErr(
-        withArr(qIn("message" -> "hi"), "images", img.toString).add("address", Json.fromString("node:n-9")),
+        withArr(qIn("message" -> "hi"), "images", img.toString).add("to", Json.fromString("node:n-9")),
         ctx(dispatcher = true).copy(actorSystem = Some(system))
       )
       assert(msg.contains(MailTool.ErrVisionUnsupportedLeg), s"必须带显式拒码: $msg")
@@ -284,7 +291,7 @@ class MailAttachSpec extends FunSuite:
     val system = ActorSystem(s"mailattach-b6b-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val msg = callErr(
-        withArr(qIn("message" -> "hi"), "images", img.toString).add("address", Json.fromString("project:any")),
+        withArr(qIn("message" -> "hi"), "images", img.toString).add("to", Json.fromString("project:any")),
         ctx().copy(actorSystem = Some(system))
       )
       assert(msg.contains(MailTool.ErrVisionUnsupportedLeg), s"必须带显式拒码: $msg")
@@ -295,13 +302,13 @@ class MailAttachSpec extends FunSuite:
   test("④ B6 对照：同两条腿**不带** images ⇒ 既有判定逐字保留（本闸只咬 images 非空）"):
     val system = ActorSystem(s"mailattach-b6c-${java.util.UUID.randomUUID().toString.take(6)}")
     val node = callErr(
-      qIn("address" -> "node:n-9", "message" -> "hi"),
+      qIn("to" -> "node:n-9", "message" -> "hi"),
       ctx(dispatcher = true).copy(actorSystem = Some(system))
     )
     assert(!node.contains(MailTool.ErrVisionUnsupportedLeg), s"无 images 不得命中本闸: $node")
     assert(node.contains("no project context"), s"既有判定须逐字保留: $node")
     val proj = callErr(
-      qIn("address" -> "project:any", "message" -> "hi"),
+      qIn("to" -> "project:any", "message" -> "hi"),
       ctx().copy(actorSystem = Some(system))
     )
     assert(!proj.contains(MailTool.ErrVisionUnsupportedLeg), s"无 images 不得命中本闸: $proj")
@@ -431,7 +438,7 @@ class MailAttachSpec extends FunSuite:
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       res <- MailTool.call(
-        withArr(qIn("address" -> "member", "message" -> "MAILATTACH_NOTE_MARKER"), "attachments", file.toString),
+        withArr(qIn("to" -> "member", "message" -> "MAILATTACH_NOTE_MARKER"), "attachments", file.toString),
         ctxFor(resources, system, bossMeta.id)
       )
       reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)
@@ -467,7 +474,7 @@ class MailAttachSpec extends FunSuite:
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       res <- MailTool.call(
-        qIn("address" -> "member", "message" -> "MAILATTACH_PLAIN_MARKER"),
+        qIn("to" -> "member", "message" -> "MAILATTACH_PLAIN_MARKER"),
         ctxFor(resources, system, bossMeta.id)
       )
       reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)

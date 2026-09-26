@@ -106,7 +106,7 @@ class MailToolCheckTeamScopeSpec extends FunSuite:
         MailTool
           .call(
             io.circe.JsonObject(
-              "address" -> io.circe.Json.fromString("node:n-1"),
+              "to" -> io.circe.Json.fromString("node:n-1"),
               "message" -> io.circe.Json.fromString("hi")
             ),
             ToolContext(

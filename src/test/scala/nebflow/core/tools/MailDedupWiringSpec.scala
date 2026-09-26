@@ -310,7 +310,7 @@ class MailDedupWiringSpec extends FunSuite:
       // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue；退役批文案单点）
       res <- MailTool.call(
         JsonObject(
-          "address" -> Json.fromString("node:n-w5"),
+          "to" -> Json.fromString("node:n-w5"),
           "message" -> Json.fromString("改写任务书"),
           "delivery" -> Json.fromString("queue"),
           "chainId" -> Json.fromString("chain-n-w5")

@@ -116,15 +116,18 @@ class ImageAttachSpec extends CatsEffectSuite:
       case Right(_) => fail("expected absolute-path error")
     }
 
-  test("resolveImages: remote device path (Windows drive) rejected with SendMessage device-target hint"):
+  test("resolveImages: remote device path (Windows drive) rejected with Mail device-target hint"):
     ImageInject.resolveImages(List("""C:\Users\Kai\shot.png""")).map {
       case Left(err) =>
         // PathUtil.isAbsolute accepts drive letters, so the error surfaces at
         // the existence check — enriched with D2's remote guidance. U-7（#145
-        // 2026-09-14）：指路文案从退役的 TransferFile 改为 SendMessage 设备附件腿。
+        // 2026-09-14）：指路文案从退役的 TransferFile 改为设备附件腿。
+        // mailunify-full 批（2026-09-23）：指路文案的载体名字从 `SendMessage` 改为
+        // `Mail`（`SendMessage` 整件退役 ⇒ 模型可见文本不得再指挥调用已退役工具）。
         assert(err.message.contains("does not exist"))
         assert(err.message.contains("remote device paths are not supported"))
-        assert(err.message.contains("SendMessage"))
+        assert(err.message.contains("Mail"))
+        assert(!err.message.contains("SendMessage"))
         assert(!err.message.contains("TransferFile"))
       case Right(_) => fail("expected remote-path error")
     }
@@ -208,7 +211,7 @@ class ImageAttachSpec extends CatsEffectSuite:
     }
 
   test("MailTool regression: no images param, no actor system → unchanged error"):
-    val input = mailInput("address" -> "backend".asJson, "message" -> "hi".asJson)
+    val input = mailInput("to" -> "backend".asJson, "message" -> "hi".asJson)
     MailTool.call(input, ctx).map {
       case Left(err)  => assertEquals(err.message, "No actor system available")
       case Right(r)   => fail(s"expected error, got $r")
@@ -216,7 +219,7 @@ class ImageAttachSpec extends CatsEffectSuite:
 
   test("MailTool: >5 images rejected before any resolution"):
     val six = io.circe.Json.arr((1 to 6).map(i => s"/tmp/s$i.png".asJson)*)
-    val input = mailInput("address" -> "backend".asJson, "message" -> "hi".asJson, "images" -> six)
+    val input = mailInput("to" -> "backend".asJson, "message" -> "hi".asJson, "images" -> six)
     MailTool.call(input, ctx).map {
       case Left(err)  => assert(err.message.contains("Too many image attachments"))
       case Right(r)   => fail(s"expected error, got $r")
@@ -224,7 +227,7 @@ class ImageAttachSpec extends CatsEffectSuite:
 
   test("MailTool: invalid attachment fails fast even without actor system"):
     val input = mailInput(
-      "address" -> "backend".asJson,
+      "to" -> "backend".asJson,
       "message" -> "hi".asJson,
       "images" -> io.circe.Json.arr("relative.png".asJson)
     )
@@ -237,7 +240,7 @@ class ImageAttachSpec extends CatsEffectSuite:
   test("MailTool: valid attachment resolves, then fails on missing actor system"):
     val path = writePng("mail.png")
     val input = mailInput(
-      "address" -> "backend".asJson,
+      "to" -> "backend".asJson,
       "message" -> "see attachment".asJson,
       "images" -> io.circe.Json.arr(path.asJson)
     )
