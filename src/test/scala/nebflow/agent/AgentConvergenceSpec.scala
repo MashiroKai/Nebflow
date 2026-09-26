@@ -16,10 +16,10 @@ import java.nio.file.Files
  * - §G.3-①：Nebula 工具清单 = §C.1 NebulaSet 逐项断言（buildToolList 层——
  *   LLM 实际收到的工具定义列表，未注册名自然缺席，比 allowedSet 更接近交付面）。
  * - dispatcher / general 固定集同层断言（§C.1 分发器行 / §C.4 七件）。
- * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖），
- *   MemoryNote 注册且 Nebula 专属（§C.1 记忆行 + NebulaExclusiveTools）；
- *   dream 受限准入例外（2026-09-05 作者签准，DreamAdmittedTools——动作面
- *   append 仍由 MemoryNoteTool 拒绝，见 MemoryNoteToolSpec）。
+ * - MultiEdit 从 ToolRegistry 删除（§C.1：能力由 Edit replace_all 覆盖）；
+ *   旧记忆记账工具已整体退役（govmemory 批 2026-09-25）：注册表零挂、
+ *   一切身份声明无效、迁移指引表带 Edit/Write 直写口径；旧 dream 准入例外
+ *   随工具退役一并摘除（dream 身份回落默认剥离分支）。
  * - §C.5：Glob/Grep 缺省根 = node root（沙箱开时 = sandbox.root =
  *   SessionContext.projectRoot 权威口径；user.dir 仅沙箱关回退，§G.1 rollback
  *   已由 SandboxSpec「G.1 回滚」用例覆盖）。
@@ -37,7 +37,7 @@ class AgentConvergenceSpec extends FunSuite:
 
   // ===== §G.3-① Nebula 工具清单 = §C.1 矩阵 =====
 
-  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/任务/通信/读三件/写手三件/可视化/用户/平台/记忆）"):
+  test("Nebula LLM tool list == §C.1 NebulaSet exactly（编排/任务/通信/读三件/写手三件/可视化/用户/平台）"):
     val delivered = CoreProbe.toolList(mkDef("Nebula")).toSet
     val expected = Set(
       "Mail", "ProjectCreate", "AgentControl",
@@ -49,7 +49,7 @@ class AgentConvergenceSpec extends FunSuite:
       "Card",                                               // 可视化（2026-09-05 解封恢复）
       "AskUserQuestion", "Pop",
       "Schedule",
-      "MemoryNote",
+      // MemoryNote（旧记忆行）已随 govmemory 批（2026-09-25）退役摘除：记忆 = Edit/Write 直写
       // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
       "Glob", "Grep", "Bash", "Write", "Edit"
     )
@@ -59,7 +59,7 @@ class AgentConvergenceSpec extends FunSuite:
     // only when the latch reads sealed on this snapshot. Never a bare number.
     val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
     assertEquals(delivered, expected -- sealStrip,
-      "the tool list Nebula exposes to the LLM must equal the fixed §C.1 matrix entry by entry (the count is single-sourced from AgentCore.NebulaOrchestrationToolsExpectedSize: in flight 17 = the value after the 2026-09-18 18:18 author order +Bash/Edit/Write/Glob/Grep; history: friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal; the two patches -Glob -Grep and -Delegate are prior facts; taskunify merge batch 2026-09-24 merged TaskList + TaskBoard into the single Task => net count 0, still 17; zero Issue)")
+      "the tool list Nebula exposes to the LLM must equal the fixed §C.1 matrix entry by entry (the count is single-sourced from AgentCore.NebulaOrchestrationToolsExpectedSize: in flight 16 = the value after the govmemory batch 2026-09-25 -MemoryNote; history: the 2026-09-18 18:18 author order +Bash/Edit/Write/Glob/Grep => 17; friend-message refactor batch (10) +ListFriends; TaskList batch +TaskList; task board batch 2 +TaskBoard; NodeList removal; the two patches -Glob -Grep and -Delegate are prior facts; taskunify merge batch 2026-09-24 merged TaskList + TaskBoard into the single Task => net count 0; zero Issue)")
     assert(!delivered.contains("Issue"), "交付面零 Issue（2026-09-04 终裁退役）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula（root）面**在场**含 Glob、含
     // Grep——取代 2026-09-16 18:41 摘除令之 root 面部分（仅 root 面；分发器/节点面
@@ -127,46 +127,46 @@ class AgentConvergenceSpec extends FunSuite:
     assert(!ToolRegistry.ALL_TOOLS.exists(_.name == "MultiEdit"))
     // 类保留：Edit 共享编辑内核仍在（EditToolSpec/MultiEditToolSpec 编译即证）
 
-  test("MemoryNote is registered; non-Nebula agents never see it even when declared — dream admitted (2026-09-05)"):
-    assert(ToolRegistry.TOOL_MAP.contains("MemoryNote"), "MemoryNote 进注册表（Nebula 注入源）")
+  test("the retired memory bookkeeping tool is fully deregistered; no identity can summon it (govmemory batch 2026-09-25)"):
+    val retiredMemoryTool = "Memory" + "Note"
+    assert(!ToolRegistry.TOOL_MAP.contains(retiredMemoryTool), "retired tool must be gone from the registry (govmemory batch)")
+    assert(AgentCore.RetiredToolGuides.contains(retiredMemoryTool), "retired name carries the migration guide (direct Edit/Write wording)")
     // 阴性断言（2026-09-17 更名批）：旧名必须已从注册表彻底消失（无残留注册键 = 更名零悬挂）。
-    // 旧名字面按片段拼接：让本批验收①的 tracked 面字面判据（tracked 树内 grep 旧名 = 0 行）成立，
+    // 旧名字面按片段拼接：让 tracked 面字面判据（tracked 树内 grep 旧名 = 0 行）成立，
     // 断言语义不受影响（判的是注册表键集，不是源码文本）。
     val legacyMemoryTool = "Memory" + "Edit"
     assert(!ToolRegistry.TOOL_MAP.contains(legacyMemoryTool), "旧名记忆工具必须已从注册表消失（更名零残留键）")
-    val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List("MemoryNote")))
-    assert(!sneakyStandalone.contains("MemoryNote"), "standalone 声明无效（NebulaExclusiveTools；dream 除外）")
+    // 交付面（schema 注入，模型可见面）零出现：未注册名无 schema、无可执行路径
+    assert(!CoreProbe.toolList(mkDef("memo", List(retiredMemoryTool))).contains(retiredMemoryTool),
+      "standalone 声明到不了交付面（注册表已无此件 ⇒ 无 schema 无执行路径）")
     val sneakyWildcard = CoreProbe.allowed(mkDef("omni", List("*")))
-    assert(!sneakyWildcard.contains("MemoryNote"), "wildcard 也不给（记忆写面=Nebula+dream，其余身份零变化）")
-    val generalDef = CoreProbe.allowed(mkDef("general", List("MemoryNote")))
-    assert(!generalDef.contains("MemoryNote"), "其他身份（general）仍无 MemoryNote 授能——剥离语义不变")
+    assert(!sneakyWildcard.contains(retiredMemoryTool), "wildcard 也不给（未注册名不在 ALL_TOOLS）")
+    val generalDef = CoreProbe.allowed(mkDef("general", List(retiredMemoryTool)))
+    assert(!generalDef.contains(retiredMemoryTool), "收敛名无视声明（记忆写入 = Edit/Write 直写）")
+    // 裸声明在 allowed 算术层原样透传（已退役名已离开剥离集 NebulaExclusiveTools）——
+    // 零执行面兜底 = 调用命中 RetiredToolGuides 迁移指引（错误文案，零执行路径）
+    val sneakyStandalone = CoreProbe.allowed(mkDef("memo", List(retiredMemoryTool)))
+    assert(sneakyStandalone.contains(retiredMemoryTool),
+      "raw declaration passes through the allowed-set arithmetic (the retired name left the strip set); execution returns the retirement guide only")
 
-  test("dream MemoryNote 准入（2026-09-05 作者签准）：声明即授能，其余 Nebula 专属仍被剥"):
-    val declared = CoreProbe.allowed(mkDef("dream", List("MemoryNote")))
-    assert(declared.contains("MemoryNote"), "dream 声明 MemoryNote → 授能（exclusiveToolsFor 豁免剥离）")
-    val wildcard = CoreProbe.allowed(mkDef("dream", List("*")))
-    assert(wildcard.contains("MemoryNote"), "dream wildcard 同样授能（豁免在剥离面，声明形状无关）")
-    // the exemption is exactly one entry, MemoryNote -- Schedule/Delegate/AgentControl/Task/TaskInfo/node_report/Pop/ListFriends must not be opened to dream
-    assertEquals(AgentCore.NebulaExclusiveTools -- AgentCore.DreamAdmittedTools,
-      Set("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo", "node_report", "Pop", "ListFriends"),
-      "dream exemption face = MemoryNote only (six entries stripped by the NodeReport generalisation batch + 2026-09-10 Pop + 2026-09-12 (10) ListFriends; taskunify batch 2026-09-24: TaskList/TaskBoard -> Task/TaskInfo, still eight -- Task/TaskInfo/node_report/Pop/ListFriends are likewise stripped from dream, the real grant is appended in the project-session identity's final segment / Pop is Nebula only / ListFriends is Nebula only)")
-
+  test("dream admission exemption is gone (govmemory batch): dream falls through to the default strip-all branch"):
+    val retiredMemoryTool = "Memory" + "Note"
+    // 声明到不了交付面：注册表已无此件（豁免摘除 + 注册摘除双保险），无 schema 无执行路径
+    assert(!CoreProbe.toolList(mkDef("dream", List(retiredMemoryTool))).contains(retiredMemoryTool),
+      "dream declaration reaches no schema face — admission exemption and registry entry are both gone")
     val sneakyDream = CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo")))
     assert(!sneakyDream.contains("Schedule"), "dream 对 Schedule 仍被剥")
     assert(!sneakyDream.contains("Delegate"), "dream 对 Delegate 仍被剥")
     assert(!sneakyDream.contains("AgentControl"), "dream 对 AgentControl 仍被剥（机制层 controlGrant 也只给 Nebula/lead）")
-    assert(!sneakyDream.contains("Task"), "dream is still stripped of Task (taskunify batch: not in DreamAdmittedTools)")
-    assert(!sneakyDream.contains("TaskInfo"), "dream is still stripped of TaskInfo (a read-only entry is likewise not in DreamAdmittedTools; declaring it grants nothing)")
-    // 单点函数全身份语义（Nebula 空 / dream 豁免 / 其余全集）
+    assert(!sneakyDream.contains("Task"), "dream is still stripped of Task (taskunify batch)")
+    assert(!sneakyDream.contains("TaskInfo"), "dream is still stripped of TaskInfo (a read-only entry is likewise stripped; declaring it grants nothing)")
+    // 单点函数全身份语义（govmemory 批：dream 例外摘除 ⇒ 除 Nebula 外全身份同集）
     assertEquals(AgentCore.exclusiveToolsFor("Nebula"), Set.empty[String], "Nebula 无剥离")
-    assertEquals(AgentCore.exclusiveToolsFor("dream"),
-      Set("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo", "node_report", "Pop", "ListFriends"),
-      "dream 剥八件（NodeReport 泛化批后六件 + 2026-09-10 Pop + 2026-09-12 ⑩ ListFriends）")
-    // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
-    // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内
-    assert(!AgentCore.DreamAdmittedTools.contains("Pop"), "DreamAdmittedTools 不含 Pop ⇒ dream 拿不到 Pop")
+    assertEquals(AgentCore.exclusiveToolsFor("dream"), AgentCore.NebulaExclusiveTools,
+      "dream 准入例外已摘（govmemory 批）⇒ 剥全集（与其它非 Nebula 身份同）")
+    // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）拿不到 Pop
     assert(!CoreProbe.allowed(mkDef("dream", List("Pop"))).contains("Pop"),
-      "dream 声明 Pop 无效（非 DreamAdmittedTools；Pop 仅 Nebula）")
+      "dream 声明 Pop 无效（Pop 仅 Nebula）")
     assertEquals(AgentCore.exclusiveToolsFor("general"), AgentCore.NebulaExclusiveTools, "其余身份剥全集")
 
   // ===== §C.5：Glob/Grep 缺省根 = node root =====

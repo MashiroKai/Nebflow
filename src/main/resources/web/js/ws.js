@@ -138,11 +138,9 @@ const GLOBAL_MSG_TYPES = new Set([
   'configData', 'configUpdated', 'configUpdateFailed',
   'toolResultTtl', 'toolResultTtlSaved', 'modelOptions',
   'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
-  // Memory-queue alert (2026-09-13 memory-pipeline self-heal batch): the engine
-  // pushes one frame when the memory-consolidation track fails/refuses, so an
-  // unconsumed queue is visible in the UI instead of only in the lifecycle log.
-  // Global (no per-session view switch); rendered as a persistent notification.
-  'memoryQueueAlert',
+  // memoryQueueAlert retired 2026-09-25 (govmemory batch): the memory-queue
+  // mechanism and its consolidation track are gone; the engine no longer
+  // emits this frame.
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
   'updateCheckResult', 'updateStarted', 'updateCompleted',

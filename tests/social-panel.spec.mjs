@@ -180,6 +180,9 @@ async function startServer() {
 const apiState = {
   channels: {},
   probes: {},
+  /** feishubridge: live adapter registration truth per channel id — the probe
+   *  face's `adapterRegistered` value the panel reads in phase 2. */
+  registered: {},
   posts: [],
   failPost: false,
 };
@@ -199,7 +202,7 @@ function stubApi(page) {
   page.route('**/api/social/probe**', (r) => {
     const url = new URL(r.request().url());
     const id = url.searchParams.get('channel') || '';
-    return r.fulfill({ json: { adapterRegistered: false, secrets: apiState.probes[id] || {} } });
+    return r.fulfill({ json: { adapterRegistered: apiState.registered[id] === true, secrets: apiState.probes[id] || {} } });
   });
   page.route('**/api/social/channels/*', (r) => {
     const req = r.request();
@@ -296,6 +299,7 @@ async function shot(page, name) {
 // ── Checks (AFTER tree) ────────────────────────────────────────────────────
 async function afterSuite(browser, base) {
   // W12 + write-face whitelist: the diff must stay inside the batch's file face
+  // (feishubridge batch added its own face below — the `feishubridge:` entries)
   const WHITELIST = [
     'src/main/resources/web/index.html',
     'src/main/resources/web/js/socialChannels.js',
@@ -306,7 +310,15 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/activityBar.js',
     'src/main/resources/web/js/main.js',
     'src/main/scala/nebflow/gateway/RestApiRoutes.scala',
+    'src/main/scala/nebflow/gateway/GatewayMain.scala',
     'src/main/scala/nebflow/social/SocialChannels.scala',
+    'src/main/scala/nebflow/social/FeishuChannel.scala',       // feishubridge: sender-id extraction
+    'src/main/scala/nebflow/social/FeishuMessage.scala',       // feishubridge: senderId field
+    'src/main/scala/nebflow/social/FeishuBridgePlugin.scala',  // feishubridge: the adapter
+    'src/main/scala/nebflow/bridge/BridgeManager.scala',       // feishubridge: unregister/startOne/registeredNames
+    'src/test/scala/nebflow/social/FeishuBridgePluginSpec.scala',       // feishubridge spec
+    'src/test/scala/nebflow/social/FeishuAdapterActivationSpec.scala',  // feishubridge spec
+    'src/test/scala/nebflow/social/FeishuChannelSpec.scala',  // feishubridge: senderId joined the wire shape (additive)
     'tests/social-panel.spec.mjs',
   ];
   let diff = '';
@@ -619,6 +631,80 @@ async function afterSuite(browser, base) {
     check('W5/W15/W17 not faked in the absence of a ruling',
       absent.remoteUrl === 0 && absent.copyLink === 0 && absent.qr === 0,
       `no fabricated link/QR present: ${JSON.stringify(absent)}`);
+  });
+
+  // ── feishubridge batch (2026-09-25): lark hide + allowlist slot + the
+  //    runtime flip. The flip leg drives the REAL production path — the panel
+  //    reads `adapterRegistered` off the probe face — so both directions below
+  //    are red if the flag never reaches channelStatus.
+  await withPanel(browser, base, 'light', async (page) => {
+    apiState.channels = {};
+    apiState.probes = {};
+    apiState.registered = {};
+    await page.reload();
+    await openPanel(page);
+
+    // FB1 lark hide: the sealed lark entry stays in the data (hidden flag) but
+    // the visible region choice is feishu-only, selected by default.
+    const region = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const sel = card && card.querySelector('select[data-field="region"]');
+      if (!sel) return { present: 0 };
+      return {
+        present: 1,
+        options: [...sel.options].map((o) => o.value),
+        selected: sel.value,
+        larkHiddenInData: true,
+      };
+    });
+    check('FB1 lark option is not rendered; region choice is feishu-only and selected',
+      region.present === 1 && region.options.length === 1 && region.options[0] === 'feishu' && region.selected === 'feishu',
+      JSON.stringify(region));
+    const larkInData = await page.evaluate(() => import('/js/socialChannels.js').then((m) => {
+      const ch = m.channelById('feishu');
+      const lark = (ch.regions || []).find((r) => r.key === 'lark');
+      return { inData: !!lark, hidden: !!(lark && lark.hidden) };
+    }));
+    check('FB1b lark survives in the definition layer as hidden data (sealed ≠ deleted)',
+      larkInData.inData && larkInData.hidden, JSON.stringify(larkInData));
+
+    // FB2 the member allowlist slot renders on the feishu card.
+    const allowlist = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="feishu"]');
+      const input = card && card.querySelector('[data-field="allowed_open_ids"]');
+      return { present: input ? 1 : 0, type: input ? input.type : '', value: input ? input.value : '' };
+    });
+    check('FB2 allowlist slot renders as an empty optional text field',
+      allowlist.present === 1 && allowlist.type === 'text' && allowlist.value === '',
+      JSON.stringify(allowlist));
+
+    // FB3 runtime flip, positive direction: config complete + probes clean +
+    // the probe face answering adapterRegistered=true ⇒ the feishu pill is
+    // `connected` through the LIVE path (not the W7 definition fixture).
+    apiState.channels = { feishu: { enabled: true, fields: {
+      app_id: 'cli_0123456789abcdef',
+      region: 'feishu',
+      app_secret_ref: '~/.nebflow/secrets/social-feishu-app-secret',
+      verification_token_ref: '~/.nebflow/secrets/social-feishu-verification-token',
+    } } };
+    apiState.probes = { feishu: {
+      app_secret: { exists: true, modeOk: true, readable: true },
+      verification_token: { exists: true, modeOk: true, readable: true },
+    } };
+    apiState.registered = { feishu: true };
+    await page.reload();
+    await openPanel(page);
+    let st = await statuses(page);
+    const feishu = (s) => s.find((x) => x.id === 'feishu');
+    check('FB3 probe adapterRegistered=true ⇒ feishu pill reads connected (runtime flip)',
+      feishu(st).status === 'connected', JSON.stringify(st));
+    // ...and the negative direction: the flag going false must unlink again.
+    apiState.registered = { feishu: false };
+    await page.reload();
+    await openPanel(page);
+    st = await statuses(page);
+    check('FB3b probe adapterRegistered=false ⇒ feishu pill reads configuredNotLinked',
+      feishu(st).status === 'configuredNotLinked', JSON.stringify(st));
   });
 
   // W16 / B-1..B-7 — 375×812, both themes.

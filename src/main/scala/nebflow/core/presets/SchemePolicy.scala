@@ -23,7 +23,8 @@ import nebflow.core.PathUtil
  *     动态继承 **project-dispatcher 当前方案**——节点无自有设置，分发器派发时
  *     所选方案 = 唯一路径（节点侧静态覆盖已废止：NodeEdit preset 参数退役、
  *     NodeEngine §E.3 节点存储方案消费移除）。
- *   - **其余 agent**（memory-consolidator / 自定义 standalone / team/flow agent）：
+ *   - **其余 agent**（自定义 standalone / team/flow agent；原 memory 整理 agent
+ *     成员已随其机制退役——govmemory 批）：
  *     引擎**忽略**其存储的 preset/model（数据留盘留审计，零删除），一律回落
  *     默认 preset（resolve level 3 terminal）。
  *

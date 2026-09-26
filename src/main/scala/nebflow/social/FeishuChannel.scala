@@ -105,13 +105,22 @@ object FeishuChannel:
             val data = Option(event).flatMap(e => Option(e.getEvent))
             val msg = data.flatMap(d => Option(d.getMessage))
             val header = Option(event).flatMap(e => Option(e.getHeader))
+            // The sender's open_id (feishubridge batch): the member-allowlist
+            // gate downstream needs a stable per-sender identity. Absent or
+            // blank stays None — an identity we do not have is never invented.
+            val senderId = data
+              .flatMap(d => Option(d.getSender))
+              .flatMap(s => Option(s.getSenderId))
+              .flatMap(u => Option(u.getOpenId))
+              .map(_.trim).filter(_.nonEmpty)
             val reduced = FeishuMessage.inboundFrom(
               eventId = header.flatMap(h => Option(h.getEventId)),
               messageId = msg.flatMap(m => Option(m.getMessageId)),
               chatId = msg.flatMap(m => Option(m.getChatId)),
               messageType = msg.flatMap(m => Option(m.getMessageType)),
               contentRaw = msg.flatMap(m => Option(m.getContent)),
-              createTime = msg.flatMap(m => Option(m.getCreateTime))
+              createTime = msg.flatMap(m => Option(m.getCreateTime)),
+              senderId = senderId
             )
             reduced match
               case Right(inbound) =>

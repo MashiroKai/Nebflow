@@ -10,12 +10,13 @@ import java.time.format.DateTimeFormatter
 /**
  * 记忆写前快照（snapshot-on-write，dream-agent 批 2026-09-05）。
  *
- * 快照先行=硬护栏：记忆白名单写路径（MemoryNoteTool 四动作）在落盘前必须先经过本对象
+ * 快照先行=硬护栏：记忆白名单写路径在落盘前必须先经过本对象
  * ——把【当前磁盘内容】备份到
  * `<dataRoot>/memory-backups/<时间戳>/`，备份失败则写入整体中止（fail-closed）。
- * 「绕不过去」的结构依据：两文件的全部写入面单点（MemoryStore.saveUserMemory /
- * saveAgentMemory 的调用方只有 MemoryNoteTool 与 WS `saveMemory` 旁路；原
- * DreamMode.updateMemory 直写路径已随其机制停用退役——git ls-files 实测
+ * 「绕不过去」的结构依据：两文件的全部写入面单点（原调用方 MemoryNoteTool 已随
+ * govmemory 批退役；现存调用面 = WS `saveMemory` 旁路与 MemoryWriteGate.decide 的
+ * 快照腿；Edit/Write 直写侧的快照纪律 = 提示词成文纪律（先快照后落笔），非机械闸
+ * ——govmemory 批口径）。git 面实测
  * User.md 与 agents/Nebula/memory.md 均不在 ~/.nebflow 跟踪层且被 .gitignore
  * 显式排除（`/*` 白名单 + `**/memory.md`），git 留史不可依赖，快照是唯一回滚锚）。
  *
@@ -115,7 +116,7 @@ object MemorySnapshot:
       }
       val table = dir / "SNAPSHOT-SHA256.txt"
       val header =
-        s"# memory-track pre-landing snapshot  label=$label  at=${LocalDateTime.now(ZoneId.systemDefault())}\n" +
+        s"# memory pre-write snapshot  label=$label  at=${LocalDateTime.now(ZoneId.systemDefault())}\n" +
           s"# files=${rows.count(!_.absent)}  absent=${rows.count(_.absent)}  (absent = nothing to back up: the target does not exist yet)\n"
       os.write.over(
         table,
