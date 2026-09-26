@@ -34,6 +34,14 @@ import java.nio.file.Files
  * -> embedded default), verified here through the seed-reader utility contract
  * (SeedService.readAgentSeedPrompt).
  *
+ * kernelgen-manifestfix batch (2026-09-26, author correction "computer use,
+ * browser-use, document-production are missing"): the manifest face is the UNION
+ * of main's current list with the kernelgen changes (+agents:kernel,
+ * -project:general) = 11 items = 4 agents + 7 plugins, zero project items. The
+ * seed tree already carried the three plugin directories (manually-installable
+ * set, byte-identical to main), so a fresh home installs all seven plugins and
+ * the marker records all 11 items.
+ *
  * classpath 资源（src/main/resources/seed/）在 sbt test classpath 上，`getResourceAsStream`
  * 直接命中——即「载体 A = 资源打包」在测试环境下被真实走通。
  */
@@ -56,7 +64,7 @@ class SeedServiceSpec extends FunSuite:
   private def dataRoot: os.Path = PathUtil.dataRoot
 
   // ── ① fresh home：完整播种（agent + plugin + project）├────────
-  test("fresh home seeds four agents (kernel = prompt-only item) + four plugins, and NO project (general retired from cold start)"):
+  test("fresh home seeds four agents (kernel = prompt-only item) + seven plugins (union manifest), and NO project (general retired from cold start)"):
     ensure()
 
     // The four manifest agents: kernel / Nebula / project-dispatcher / general all
@@ -100,13 +108,18 @@ class SeedServiceSpec extends FunSuite:
       "general must ship no self-owned preset (panelscheme 2026-09-21: nodes inherit the dispatcher's scheme)")
     assert(gen.hcursor.downField("name").as[String].toOption.contains("general"))
 
-    // 现行默认插件集 = 3 包（manifest.json:8-10，作者 2026-09-12 裁定回退）：
-    // c7501470 收缩为 2 包 → nebflow-plugin-creator 批扩为 3 包（09-10）→ seed7 批再扩 5 包
-    // （09-11，非预期扩张）→ 本批回退为 3 包。目录就位 + trusted
+    // Default preinstall set = the manifest's seven plugin items (kernelgen-manifestfix
+    // 2026-09-26 union: main's seven plugin entries incl. browser-use / computer-use /
+    // document-production; the seed tree already carried those three directories,
+    // byte-identical to main). Directory in place + trusted.
     for name <- List(
         "visual-report",
         "slideblocks",
-        "nebflow-plugin-creator")
+        "nebflow-plugin-creator",
+        "web-search-toolkit",
+        "browser-use",
+        "computer-use",
+        "document-production")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
@@ -147,16 +160,21 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // Marker count = items actually written this run = **8** = the full current
-    // manifest: 4 agents (project-dispatcher / general / Nebula / kernel) + 4
-    // default plugins (visual-report / slideblocks / nebflow-plugin-creator /
-    // web-search-toolkit), ZERO project items (kernelgen 2026-09-26: the general
-    // `project:` entry was removed; pre-kernelgen = 8 with it). kernelgen-ext
-    // 2026-09-26: the prompt-only agents:kernel item took the count from 7 to 8.
-    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 8),
-      "marker records 8 items (4 agents + 4 plugins, zero project items)")
+    // Marker count = items actually written this run = **11** = the full current
+    // union manifest (kernelgen-manifestfix 2026-09-26): 4 agents (project-dispatcher
+    // / general / Nebula / kernel) + 7 default plugins (visual-report / slideblocks /
+    // nebflow-plugin-creator / web-search-toolkit / browser-use / computer-use /
+    // document-production), ZERO project items. History: 7 (pre-kernelgen, with the
+    // project:general entry) -> 8 (ext: +agents:kernel -project:general) -> 11
+    // (manifestfix union: + the three plugin items from main's list).
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 11),
+      "marker records 11 items (4 agents + 7 plugins, zero project items)")
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.contains("agents:kernel")),
       "marker records the agents:kernel item (kernelgen-ext 2026-09-26)")
+    assert(state.hcursor.downField("items").as[List[String]].toOption.exists(items =>
+      List("plugins:browser-use", "plugins:computer-use", "plugins:document-production")
+        .forall(items.contains)),
+      "marker records the three union plugins restored from main's list (kernelgen-manifestfix 2026-09-26)")
 
   // ── ② 幂等 / 不覆盖用户编辑 ───────────────────────────────
   test("re-seed is idempotent and never overwrites user edits"):
@@ -276,9 +294,17 @@ class SeedServiceSpec extends FunSuite:
       "upgrade run plants the kernel prompt mirror (prompt-only item, kernelgen-ext 2026-09-26)")
     assert(!os.exists(home / "agents" / "kernel" / "agent.json"),
       "kernel still ships no agent.json on the upgrade run (prompt-only item)")
-    assert(os.exists(home / "plugins" / "visual-report" / "plugin.json"), "missing plugin added")
-    assert(os.exists(home / "plugins" / "slideblocks" / "plugin.json"), "missing plugin added")
-    assert(os.exists(home / "plugins" / "nebflow-plugin-creator" / "plugin.json"), "missing plugin added")
+    // Upgrade add-only replants the full current default set = seven plugins
+    // (kernelgen-manifestfix 2026-09-26 union manifest).
+    for name <- List(
+        "visual-report",
+        "slideblocks",
+        "nebflow-plugin-creator",
+        "web-search-toolkit",
+        "browser-use",
+        "computer-use",
+        "document-production")
+    do assert(os.exists(home / "plugins" / name / "plugin.json"), s"missing plugin '$name' added")
     // 升级 add-only 的语义是「补齐 manifest 全集」，不是「冻结旧集」——但「全集」= 现行
     // **默认预装集**（3 包），不是种子树可手动装全集：seed7 批新入 manifest 的 5 包
     // （nebflow-qa / nebflow-frontend-dev / engineering-methods / explorer-toolkit /
