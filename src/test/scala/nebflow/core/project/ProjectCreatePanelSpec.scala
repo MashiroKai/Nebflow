@@ -216,7 +216,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
       assert(result.isRight, s"direct create must succeed: $result")
       val msg = result.toOption.get
       // R2（2026-09-12）：提示语由 Task(...) 改为 Mail(address="project:...")——旧工具已删净退役
-      assert(msg.contains("Mail(to='project:ws-alpha'"), s"success message must carry the Mail usage hint: $msg")
+      assert(msg.contains("Mail(address='project:ws-alpha'"), s"success message must carry the Mail usage hint: $msg")
       // S2 2026-09-17 12:09 裁定单 ③-9：创建路径同样逐件报 created/skipped
       assert(msg.contains("Scaffold:"), s"create-path message must carry the per-item scaffold report: $msg")
       assert(msg.contains("AGENTS.md created"), s"create-path scaffold report must list 'AGENTS.md created': $msg")
@@ -398,7 +398,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
           toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
         )
         triggered <- MailTool.call(
-          Json.obj("to" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
+          Json.obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务")).asObject.get,
           toolCtx(ws, system, res)
         )
         // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
@@ -588,7 +588,7 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
           "on an occupied workspace — a second project on the same workspace would silently share its " +
           "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
           "(a) reuse the existing project — ProjectCreate(name='occ-one') to re-mount it, or " +
-          "Mail(to='project:occ-one', message=...) to dispatch work; " +
+          "Mail(address='project:occ-one', message=...) to dispatch work; " +
           "(b) pass a different 'workspace' directory for 'occ-two'."
       assertEquals(err, expectedErr, "占用报错原文必须逐字稳定（可行动四点齐备）")
       assert(!newDir, "拒绝路径必须零写盘：projects/occ-two/ 不得出现")

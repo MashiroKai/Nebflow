@@ -215,6 +215,7 @@ function pendingRowHtml(it) {
         <span class="flow-mail-arrow">${FV_ARROW_SVG}</span>
         <span class="flow-mail-to">${esc(it.to || '?')}</span>
         <span class="flow-mail-queue-tag" title="${esc(t('mailDelivery.queueTitle'))}">${esc(t('mailDelivery.queue'))}</span>
+        ${typeTag}
         <span class="flow-mail-time">${esc(fmtRelTime(it.timestamp))}</span>
         <span class="flow-mail-expand">${FV_EXPAND_HTML}</span>
         <button class="flow-mail-cancel" title="${t('flowViewers.removeFromQueue')}">${t('flows.cancel')}</button>

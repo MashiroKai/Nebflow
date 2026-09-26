@@ -293,7 +293,7 @@ object ProjectActor:
     case Shutdown
 
   /** 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
-    *  - [[SourceTask]] = 项目触发入口（`Mail(to="project:<name>")` / 重入 /
+    *  - [[SourceTask]] = 项目触发入口（`Mail(address="project:<name>")` / 重入 /
     *    spawn 首条 prompt；**值不改名**——R2 批 D-5 裁定观测面零断代。
     *    本条覆盖此前相关指令：旧注释里的 `Task` 工具已删净退役，
     *    入口唯一 = Mail）；
@@ -323,7 +323,7 @@ object ProjectActor:
     * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
     * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者。
     * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
-    * 显式 `Mail(to="Nebula", …)` 承担。）
+    * 显式 `Mail(address="Nebula", …)` 承担。）
     *
     * Q3-a（2026-09-11 收件规则批）曾允许 mid-turn 直投让**一个 turn 消费多件**
     * （tools-complete 边界整队合批）；该合批已由 2026-09-15 ub 缺陷批（root 裁定
@@ -398,7 +398,7 @@ object ProjectActor:
   // `taskSummaryLine` / `batchSummaryLine` 同批删净（R2「一个 Mail 统一」批
   // 2026-09-12，R7-b）：二者唯一消费点 = 桥侧 turn 级自动投递的标注行，随
   // `NodeEngine.deliverDispatcherOutputToNebula` 一起移除（D-4 删净，不留死代码）。
-  // 分发器的批级回传改由显式 `Mail(to="Nebula", chainId=…, …)` 承载；合面后无 `type=` 键。
+  // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…, …)` 承载。
 
   case class ProjectConfig(
     project: ProjectDef,
@@ -867,7 +867,7 @@ object ProjectActor:
           // 本桥**不再**每 turn 无条件把最终 assistant 文本投递给 Nebula root
           // （旧路径 `NodeEngine.deliverDispatcherOutputToNebula` 同批删净）。root
           // 注入面 100% 由显式载体驱动——分发器必须自己
-          // `Mail(to="Nebula", chainId=<本批链 id>, …)`；合面后无 `type=` 键。
+          // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, …)`。
           // 本桥职责 = ① 消费计数裁决（在飞 ⇒ 保活；归零 ⇒ 记 `idleSince` 进入
           // 空闲窗）② Failed/Cancelled 的即时拆除 + 面板终态帧；turn 级自动摘要消失。
           // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。

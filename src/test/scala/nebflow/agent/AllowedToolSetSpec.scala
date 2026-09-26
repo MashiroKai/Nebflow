@@ -553,19 +553,15 @@ class AllowedToolSetSpec extends FunSuite:
     // 阶段 2c agent 收敛（§C.1 角色-工具静态矩阵）：Nebula 工具面 = 固定集
     // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排——Bash/Write/Edit 移除；
     // 2026-09-06 00:48 作者裁定：NodeList 摘除——out 边自动投递取代主动查图；
-    // TaskList 批：+TaskList——史实该时点恰十四件（合并后在飞 = 15：
-    // 2026-09-18 18:18 令 +5 后曾为 17 → mailunify-full 批 −SendMessage、taskunify
-    // 批改名净 0 → govmemory 批 −MemoryNote；史实 12 = −Delegate 后、13 = 搜索件摘除后）：
+    // TaskList 批：+TaskList——史实该时点恰十四件（当前 = 17，
+    // 2026-09-18 18:18 令 +5 后值；史实 12 = −Delegate 后、13 = 搜索件摘除后）：
     // 编排触发/任务编排/通信/
-    // 读三件+写手三件/可视化/用户面/平台），机制注入不可配置。裸定义（空 tools）
+    // 读三件+写手三件/可视化/用户面/平台/记忆），机制注入不可配置。裸定义（空 tools）
     // 必须携带完整矩阵——面板编辑/定义失误无法解除调度器武装。
     val orchestration = Set(
-      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16；mailunify-full 批：−SendMessage；史实 13 = 搜索件摘除后、12 = −Delegate 后；2026-09-18 18:18 令 +5 后曾为 17；NodeList 摘除）
-      "Task",                                              // 任务编排（taskunify 合并批 2026-09-24：TaskList + TaskBoard → 单一 `Task`，净 0 —— 支上对账重算批 2026-09-26 收编 main 侧改名结构）
-      // mailunify-full 批（2026-09-23 作者裁定）：`SendMessage` **整件退役**（合面到 `Mail` 单
-      // `to`）⇒ 该行摘除；支上对账重算批（2026-09-26 调和）再收编 main 侧 govmemory 批
-      // −MemoryNote ⇒ 名册 17 −1 −1 = 15，与 `AgentCore.NebulaOrchestrationToolsExpectedSize`
-      // （现读 = 15）逐值一致。
+      "Mail", "ProjectCreate", "AgentControl",              // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
+      "Task",                                              // task orchestration (taskunify merge batch 2026-09-24: `TaskList` + `TaskBoard` merged into the single `Task`, net count 0 => still 17)
+      "SendMessage",                                       // 通信（好友功能非旧体系，保留）
       "Read",                                              // 读件（08:40 解禁四件）
       "Glob", "Grep",                                      // 搜索件（2026-09-18 18:18 令恢复：+2）
       "Bash", "Write", "Edit",                             // 写手三件（2026-09-18 18:18 令恢复：+3）
@@ -578,11 +574,10 @@ class AllowedToolSetSpec extends FunSuite:
     orchestration.foreach(t =>
       assert(allowed.contains(t), s"mechanism-fixed orchestration tool missing: $t")
     )
-    assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-09-14 (#145) — must not be in the Nebula face")
-    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数合并后在飞 15 = 2026-09-18 18:18 令 +5 后 17、−SendMessage（mailunify-full 批）、taskunify 改名净 0、−MemoryNote（govmemory 批））")
-    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数合并后在飞 15 = 2026-09-18 18:18 令 +5 后 17、−SendMessage（mailunify-full 批）、taskunify 改名净 0、−MemoryNote（govmemory 批））")
-    // govmemory 批（2026-09-25，main 侧结构演进收编）：旧记忆记账件整体退役——交付面零挂；
-    // 迁移指引面按 ⑧（2026-09-23）整表摘空 ⇒ 退役名走未知工具路径（fail-closed）。
+    assert(!allowed.contains("TransferFile"), "TransferFile retired 2026-14 (#145) — must not be in the Nebula face")
+    assert(!allowed.contains("Issue"), "零 Issue（Issue/CheckIssues 已退役；件数在飞 16 = govmemory 批 −记忆记账件后值）")
+    assert(!allowed.contains("NodeList"), "零 NodeList（NodeList 已摘除；件数在飞 16 = govmemory 批 −记忆记账件后值）")
+    // govmemory 批（2026-09-25）：旧记忆记账件整体退役——交付面零挂 + 迁移指引表带直写口径
     val retiredMemoryTool = "Memory" + "Note"
     assert(!allowed.contains(retiredMemoryTool), "retired memory bookkeeping tool must be gone from the Nebula face (govmemory batch)")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
@@ -601,8 +596,7 @@ class AllowedToolSetSpec extends FunSuite:
     }
     // taskunify merge batch (2026-09-24): `TaskList` / `TaskBoard` are deleted-retired --
     // `Task` is in flight, the old two are absent from the Nebula face (calls under the old
-    // names go through the unknown-tool path: the guide table is emptied by ⑧ 2026-09-23,
-    // 支上对账重算批 2026-09-26 keeps it empty).
+    // names go through the AgentCore.RetiredToolGuides migration guidance).
     Set("TaskList", "TaskBoard").foreach { t =>
       assert(!allowed.contains(t), s"$t is deleted-retired (taskunify batch 2026-09-24, merged into Task): $t")
     }

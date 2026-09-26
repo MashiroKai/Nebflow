@@ -278,18 +278,10 @@ class ToolFaceVariantSchemaSpec extends FunSuite:
     assert(!rootMail.description.contains("**Team context (legacy)**"), "root 地址面仍含 team 段")
     assert(!dispMail.description.contains("**Nebula (root)**"), "dispatcher 地址面仍含 root 段")
     assert(!dispMail.description.contains("**Team context (legacy)**"), "dispatcher 地址面仍含 team 段")
-    // 参数级 description 属于 inputSchema ⇒ Q5 口径（只分化 `description`，schema 不参与分化）
-    // 仍然成立；🔴 但键名随 mailunify-full 合面而变（`address` XOR `device` ⇒ 单 `to`）⇒
-    // 本断言同批 re-pin 到 `to`（断言数与强度不降：仍要求「参数级面在位 ∧ 三身份逐字节同一份
-    // ⇒ 分化没有偷渡进 schema」）。
+    // 参数级 address description 属于 inputSchema ⇒ 本批按 Q5 口径冻结（登记在交付说明）
     assert(
-      rootMail.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("to")).isDefined,
-      "参数级 `to` description 必须仍在（合面后单 `to` 是唯一目标参数）"
-    )
-    assert(
-      !rootMail.inputSchema("properties").flatMap(_.asObject).exists(_.contains("address")) &&
-        !rootMail.inputSchema("properties").flatMap(_.asObject).exists(_.contains("device")),
-      "双轨目标键必须已离开 schema（本批 = 单 `to` 面）"
+      rootMail.inputSchema("properties").flatMap(_.asObject).flatMap(_.apply("address")).exists(_.noSpaces.contains("Project dispatcher")),
+      "参数级 address description 被改动了 —— Q5 口径 = inputSchema 逐字节不变（若作者要放开须先裁）"
     )
   }
 

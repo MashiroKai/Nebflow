@@ -135,11 +135,8 @@ object ProjectCreateService:
     ): IO[Either[ToolError, String]] =
       // Per-file report (author ruling 2026-09-17 12:09): the success and
       // idempotent result sentences both carry this run's backfill readings.
-      // The substrings existing consumers match on ("Mail(to='project:",
+      // The substrings existing consumers match on ("Mail(address='project:",
       // "already exists") are unchanged — the report is appended at the tail.
-      // 🔴 mailunify-full 批（2026-09-23）+ 支上对账重算批（2026-09-26 调和）：子串随
-      // `Mail` 单 `to` 参数面定为 `Mail(to='project:`（原 `address=` 形态退役；
-      // 消费者 `ProjectCreatePanelSpec` 已同步 re-pin）。
       val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
       (identity.actorSystem, identity.sharedResources) match
         case (Some(system), Some(res)) =>
@@ -180,7 +177,7 @@ object ProjectCreateService:
                   val verb = if created then "created" else "already exists"
                   Right(
                     s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                      s"Dispatch work with Mail(to='project:${pd.name}', message=...).$scaffoldSuffix"
+                      s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
                   )
                 }
               // A fresh create emits BEFORE returning the result (mount succeeded
@@ -305,7 +302,7 @@ object ProjectCreateService:
       "on an occupied workspace — a second project on the same workspace would silently share its " +
       "flow-map / task board / worktrees (2026-09-17 裁定 ④-4). Two ways out: " +
       s"(a) reuse the existing project — ProjectCreate(name='${occupant.name}') to re-mount it, or " +
-      s"Mail(to='project:${occupant.name}', message=...) to dispatch work; " +
+      s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
       s"(b) pass a different 'workspace' directory for '$newName'."
 
   /** Path basename (name derivation); root paths with no basename => "" (the

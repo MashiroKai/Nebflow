@@ -89,54 +89,41 @@ object MailTool extends Tool:
   private val NebulaAgentName = "Nebula"
 
   // ============================================================
-  // mailunify-full 批（2026-09-23 作者裁定）——统一目标面 `to` 的校验词表
-  // （**唯一来源**；报告、spec、描述三处同源引用，禁第二份字面量）。
-  // ＋ 支上对账重算批（2026-09-26 调和）收编的 mailmodel 批（2026-09-25,
-  //    rulings (b)/(d)/(e)）落点——**后落地的主干裁定成立，支侧让位**：
-  //   · `device` 参数（ruling (e)）**与** `to="device:…"` scheme **双双退役**：
-  //     跨设备 agent-mail 腿两端同批消亡（收端停注 `agent_mail` 信封）⇒ 两形态
-  //     共用同一墓碑码 MAIL_DEVICE_RETIRED（fail-closed 墓碑，同 `delivery`
-  //     墓碑形态——schema 键已删、引擎零 JSON-Schema 校验 ⇒ 旧键仍到 call()，
-  //     一行读取即拒）。
-  //   · `kernel` / `kernel:<id>` 地址腿（ruling (b)）**收编进 `to` 单字段**：
-  //     Nebula 专属，非 root 调用方显式拒绝（MAIL_KERNEL_EXCLUSIVE）；
-  //     `kernel:<id>` 实例不在生 ⇒ 显式拒绝（MAIL_KERNEL_NOT_LIVE）。
-  // 词表现状（本调和批后）：
-  //   MAIL_TARGET_MISSING    保留（`to` 面改写文案，缺席 / 空白 ⇒ 本码）。
-  //   MAIL_DEVICE_RETIRED    新增（mailmodel (e) 收编；stale `device=` 参数 **或**
-  //                          `to="device:…"` target ⇒ 显式拒绝）。
-  //   MAIL_KERNEL_EXCLUSIVE  新增（mailmodel (b) 收编）。
-  //   MAIL_KERNEL_NOT_LIVE   新增（mailmodel (b) 收编）。
-  //   MAIL_TARGET_EXCLUSIVE  🔴 删（mailunify-full：互斥双轨结构上消失，该码失去对象）。
-  //   MAIL_DEVICE_NOT_FOUND / MAIL_DEVICE_MALFORMED  🔴 删（设备解析随机腿一同消亡——
-  //                          mailunify-full 原拟「保留/改写」的落点被 mailmodel (e)
-  //                          的**整腿退役**取代；解析器 `resolveDevice` 不再有本工具
-  //                          调用方，两码失去对象）。
+  // mailmodel batch (2026-09-25, rulings (d)/(e)) — target face and retirement word
+  // table (**single source**; the report, specs and descriptions cite this same source;
+  // a second literal copy is forbidden).
+  //   MAIL_TARGET_MISSING    both missing: `address` not filled (the device leg is
+  //                          retired; the target face is address-only)
+  //   MAIL_DEVICE_RETIRED    a stale caller still sends `device=` => explicit refusal
+  //                          (fail-closed tombstone, same shape as the `delivery`
+  //                          tombstone — the schema key is deleted and the engine
+  //                          does zero JSON-Schema validation => the stale key still
+  //                          reaches call(), where one read line refuses it)
+  //   MAIL_KERNEL_EXCLUSIVE  the kernel leg is Nebula-exclusive (ruling (b)): every
+  //                          non-Nebula caller is refused
+  //   MAIL_KERNEL_NOT_LIVE   the `kernel:<id>` instance is not live (terminal state /
+  //                          unknown id) => explicit refusal
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
   val ErrDeviceLegRetired: String = "MAIL_DEVICE_RETIRED"
   val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
 
-  /** 目标缺失报错（逐字词表）。单字段 `to` 面：缺席 / 空白 ⇒ 本码。 */
+  /** Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only). */
   private[tools] val targetMissingMessage: String =
-    s"[$ErrTargetMissing] Missing target: 'to' is required and must not be blank. " +
-      "Pass one target — e.g. \"project:<name>\", \"node:<nodeId>\", \"Nebula\", \"kernel\", " +
-      "a team/agent short name, \"friend:<…>\", \"group:<…>\", or \"local\"."
+    s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team/project target — e.g. " +
+      "\"project:<name>\", a team name, or a member short name). The former 'device' parameter is " +
+      "retired (MAIL_DEVICE_RETIRED); files for another machine's user go via SendMessage."
 
-  /** Retirement refusal for a stale caller's `device=` parameter **or** a stale
-    * `to="device:…"` target（mailmodel 2026-09-25 ruling (e) 收编到统一单 `to` 面；
-    * 纯构造器，供 spec 直测。`device` 形参 = 调用方格式化好的回显片段）。
-    * 唯一来源：spec 与描述面引用本构造器，禁第二份字面量。 */
+  /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */
   private[tools] def deviceLegRetiredError(device: String): ToolError =
     ToolError(
-      s"[$ErrDeviceLegRetired] The device leg was retired on 2026-09-25 — the cross-device " +
+      s"[$ErrDeviceLegRetired] The 'device' parameter was retired on 2026-09-25 — the cross-device " +
         "agent-mail leg no longer exists (the receiving end stopped injecting agent_mail envelopes in the " +
-        "same batch), so nothing was sent and nothing is queued. Got " + device + ". The former " +
-        "SendMessage transport tool was retired on 2026-09-23 (its friend/group/local-copy legs live on as " +
-        "this tool's `friend:` / `group:` / `local` targets). To reach an AGENT use `to`: \"project:<name>\" " +
-        "(or a bare mounted project name), a team name or member short name, or — Nebula root only — " +
-        "\"kernel\" / \"kernel:<id>\"."
+        "same batch), so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
+        "text to another MACHINE use SendMessage (pure transport; that machine's agent is not informed). To " +
+        "reach an AGENT use 'address': \"project:<name>\" (or a bare mounted project name), a team name or " +
+        "member short name, or — Nebula root only — \"kernel\" / \"kernel:<id>\"."
     )
 
   /** Kernel-leg unauthorized-caller refusal (ruling (b): Nebula-exclusive; the refusal text ships as a §16 candidate deliverable). */
@@ -196,25 +183,30 @@ object MailTool extends Tool:
         "NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
         "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
         "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
-        "that can carry them: `to=\"Nebula\"`, a team/agent short name, or a live `kernel:<id>` instance."
+        "that can carry them: address=\"Nebula\" or a team/agent short name."
     )
 
-  private[tools] def deliveryQueueRetiredMessage(target: String): String =
-    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$target'."""
+  private[tools] def deliveryQueueRetiredMessage(address: String): String =
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is retired (2026-09-15) — the serialized FIFO mode no longer exists: every Mail is delivered immediately (injected at the target's next turn boundary; an idle target starts a new turn, a busy target has it merged into the current turn). Drop delivery=queue (or omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
 
   val name: String = "Mail"
 
   val description: String =
     """Send a message to another agent — the platform's **only message primitive**
-(2026-09-12 「一个 Mail 统一」；the former `Task`, `NodeMessage` and `SendMessage` tools are
-retired — this note supersedes all earlier instructions naming them as entry points).
-One tool, one target field: `to` selects the target by an explicit prefix
-(case-insensitive). Required: `to`, plus `message`.
-`SendMessage` (the former pure-transport tool, retired 2026-09-23) lives on only as this
-tool's `friend:` / `group:` / `local` targets: a `friend:` target reaches the peer as a
-PERSON (the user's voice), never as that peer's agent session. The former cross-device
-`device` leg was retired on 2026-09-25 — a stale `device=` call or `to="device:…"` target
-is an explicit MAIL_DEVICE_RETIRED error, never a silent send.
+(2026-09-12 「一个 Mail 统一」；the former `Task` and `NodeMessage` tools are retired —
+this note supersedes all earlier instructions naming them as entry points).
+
+Required: message, plus `address`.
+
+## `Mail` vs `SendMessage` — who receives it?
+- **`Mail` — an AGENT receives it**: the mail is injected into the target agent's
+  session at its next turn boundary; that agent reads it and handles it.
+- **`SendMessage` — pure transport; the peer's agent is NOT aware of it**: files land
+  on the peer MACHINE and the text appears for the machine and its user; nothing
+  enters the peer's agent session or its LLM context. Moving files or text to another
+  machine or its user = `SendMessage`; making another agent aware = `Mail`.
+  (The former cross-device `device` parameter of THIS tool was retired on 2026-09-25 —
+  a stale `device=` call is an explicit MAIL_DEVICE_RETIRED error, never a silent send.)
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
 - **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
@@ -226,11 +218,11 @@ is an explicit MAIL_DEVICE_RETIRED error, never a silent send.
 ## Kernel leg (Nebula-exclusive, 2026-09-25)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
 mails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.
-`to="kernel"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/
+`address="kernel"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/
 Grep/Bash + AskUserQuestion), no project context, no memory — the message must be a
 fully self-contained brief. The instance runs in the background; its result is delivered
 back to your session when it finishes, and the tool result header carries its
-continuation address (`kernel:<id>`). `to="kernel:<id>"` continues THAT live
+continuation address (`kernel:<id>`). `address="kernel:<id>"` continues THAT live
 instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
 already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already
 delivered; start a new one with `kernel`.
@@ -243,19 +235,6 @@ delivered; start a new one with `kernel`.
 
 An address that is not recognizable in your face is an **explicit error** — there
 is no silent fallback and no fuzzy matching.
-
-**Scheme resolution (mechanical, fail-closed).** A `to` value with no colon is an
-address in the face above (and, for a sender with a friend list, a bare friend
-remark/username/email/displayName). A `to` value that contains a colon must use one of
-the explicit schemes — `project:`, `node:`, `kernel:`, `friend:`, `group:` — or the
-reserved literal `local`. **An unknown scheme is an explicit error listing the legal
-schemes** — it is never silently reinterpreted as a friend name; the escape hatch for a
-friend whose own name contains a colon is the explicit `friend:` prefix (the reserved
-literal `local` has shadowed a friend of that name since the beginning). The former
-`device:` scheme was RETIRED on 2026-09-25 (cross-device agent-mail leg removed on both
-ends in the same batch — the receiving devices stopped injecting `agent_mail` envelopes):
-`to="device:…"` is an explicit MAIL_DEVICE_RETIRED error — nothing is sent and nothing
-is queued.
 
 ## `node:<id>` routing semantics (by target node status; same engine as the retired
 `NodeMessage` tool — `NodeEngine.sendNodeMessage`)
@@ -272,71 +251,25 @@ is queued.
 - `node:` routing takes no delivery-mode choice — the engine decides inject-at-turn-boundary
   vs append-to-task.
 
-## `friend:` / `group:` — the user's NebLink contacts (delivered AS THE USER)
-`friend:<remark|username|email|displayName>` (a bare remark/username/email/displayName
-works too, when it contains no colon) is one NebLink friend — a **person**, delivered as
-the user over established friend relationships, text and/or files. `group:<groupName|groupId>`
-is a group conversation the user is a member of; every member sees it (the sender is never
-counted as a new message for themselves). Resolved by exact group id (`grp-…`), then exact
-group name, then a unique group-name prefix; several/none matching come back as a candidate
-list; a group that does not exist, was disbanded, or that the user is not a member of fails
-with a readable reason. Subject to permission tiers and rate limits and (depending on
-configuration) a confirmation card (see Confirmation below). Text only in this phase for
-`group:` (see Attachments).
-
-## Device targets — retired (2026-09-25)
-The cross-device Nebula mail leg no longer exists (mailmodel batch, ruling (e)): the
-receiving end stopped injecting `agent_mail` envelopes in the same batch, so a
-`to="device:…"` target (or a stale `device=` parameter) is an explicit
-MAIL_DEVICE_RETIRED error — nothing is sent, nothing is queued. There is no
-machine-transport target on this tool any more: the former `SendMessage` transport tool
-was retired on 2026-09-23 (mailunify-full), and its friend / group / local-copy legs
-live on as this tool's `friend:` / `group:` / `local` targets above.
-
-## `local` (reserved literal)
-Nothing is delivered: the files in `attachments` are copied into a destination directory on
-this machine (zero network; see Attachments).
-
 Images (optional `images` parameter — up to 5 absolute local image paths,
-PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Targets that reach a chat
-turn** (`Nebula` / a team or agent short name / a live `kernel:<id>` instance): the
-recipient sees the images directly (vision models) plus their paths as text.
-**`project:` / `node:` targets (and the kernel START leg) are text-only** — those legs
-hand a plain string to an engine-side session, so `images` there is an **explicit
-error** and nothing is sent. **`friend:` / `group:` / `local` legs have no vision
-channel** — `images` there is likewise an **explicit error** (never a silent drop);
-send the image as an `attachments` file on those targets.
+PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
+that reach a chat turn** (Nebula / a team or agent short name / a live `kernel:<id>`
+instance): the recipient sees the images directly (vision models) plus their paths as
+text. **`project:` / `node:` targets (and the kernel START leg) are text-only** — those
+legs hand a plain string to an engine-side session, so `images` there is an **explicit
+error** and nothing is sent; use `attachments` (path mode) instead, or target `Nebula` /
+a team agent.
 
 Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
-type, each up to 1024 MB = 1 GiB) are how files move. Where the bytes land, by target:
-- **Same-machine targets** (`project:` / `node:` / `kernel…` / `Nebula` / team or agent
-  short name): nothing is copied — the mail text carries each file's **absolute path,
-  byte size and sha256**, because the recipient shares your disk and reads the original.
-  So the file must still exist when the recipient reads it: do not point `attachments`
-  at temporary or worktree paths that may be cleaned up before then.
-- **`friend:`**: files ride the server's attachment channel — create session → 4 MiB
-  chunked upload (per-chunk checksum + whole-file SHA-256) → sent as attachment ids; the
-  receiver downloads them over an authenticated in-app route. The client probes the
-  attachment route before uploading: unsupported or unverifiable ⇒ the whole send is
-  refused with a readable reason and nothing is uploaded — attachments are never dropped
-  silently.
-- **`group:`**: TEXT ONLY in this phase — `attachments` is an **explicit error** and
-  nothing is sent; use a `friend:` target for files.
-- **`local`**: required — the files are copied into a destination directory on this
-  machine (created if missing; an existing file there is replaced only when the
-  overwrite flag is set). Zero network, zero message delivered.
+type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
+the model to *see* — reaches the recipient. **Same-machine targets** (`address` =
+`project:…` / `node:…` / `kernel…` / `Nebula` / a team or agent short name): nothing is
+copied — the mail text carries each
+file's **absolute path, byte size and sha256**, because the recipient shares your disk
+and reads the original. So the file must still exist when the recipient reads it: do not
+point `attachments` at temporary or worktree paths that may be cleaned up before then.
 `attachments` does NOT put bytes into the recipient's LLM context: for an image the
-model should see, use `images`. A `friend:` target may carry an empty `message` only when
-`attachments` is non-empty (the receiving client then shows a placeholder line); a
-`group:` target always requires non-empty text.
-
-## Confirmation (ask tier — friend and group targets)
-When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), the
-friend or group send first raises a confirmation card in the chat, naming the recipient
-(a friend's label, or the group name). The message is sent ONLY after the user approves
-it on that card; a decline, a cancel, or a timeout (60s) sends nothing and comes back
-as an error saying so. Local copies are not gated by this tier. Wait
-for the tool result — do not assume anything went out.
+model should see, use `images`.
 
 Delivery — every Mail is immediate (there is no delivery parameter to set):
   Async send, injected at the target's next turn boundary (an idle target starts
@@ -350,31 +283,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   NEVER silently downgraded to immediate.
   Dispatcher-to-root replies are coalesced into ONE injection per 5-second window;
   a reply that must bypass the window leads its body with the literal token
-  [INTERRUPT] on the first line.
-
-There is no urgency flag: an urgent message states the urgency in its own text."""
-
-  // ============================================================
-  // mailunify-full 批（2026-09-23 作者裁定）——`type` 五标签**整块删净**的落点。
-  //
-  // 该信令曾存在于三处（schema `:358-363` 的 enum + `default`、描述面的
-  // 「Message type」五条清单、54 处 `mailType` 形参，以及前端 `flowViewers.js:209`
-  // 消费的 `mailType.*` 十键）。作者已裁：**参数面整块删净、承载不补** ⇒ 本文件
-  // 的 `type` 键、五条清单与全部 `mailType` 形参一并消失。
-  //
-  // 🔴 留痕（≠ 墓碑式拒绝）：本节只**记录该信令曾存在且已被作者裁删**，不保留
-  // 任何按键值分派的活代码、也不新增「该键已退役」的拒绝分支。理由：`type` 的
-  // 语义是「提示收件方如何处理这封邮件」，不是「投递形态」（后者已有
-  // `MAIL_DELIVERY_QUEUE_RETIRED` 这种**必须显式拒绝**的先例——静默改投会丢语义）。
-  // 删掉一个纯提示性标签不丢任何投递语义 ⇒ 静默忽略即可，多一条墓碑反而会把
-  // 一个死键升格成受支持的表面。旧调用方传来的 `type` 键由引擎的零 JSON-Schema
-  // 校验静默丢弃（`protocol.scala` 自陈），与「键缺席」逐字同一结果。
-  //
-  // 支上对账重算批（2026-09-26 调和）注：mailmodel 批（2026-09-25, ruling d）已把
-  // P0 窗豁免改判在**正文首行 `[INTERRUPT]` 字面量**上（机制、非消息类型，见
-  // [[isDispatcherMailInterrupt]]）——本调和批按主干裁定收编该机制，`type` 键本身
-  // 的「静默忽略」处置两侧一致、不变。
-  // ============================================================
+  [INTERRUPT] on the first line."""
 
   // ============================================================
   // Q5（2026-09-13 作者裁定 = (b)）：地址面**只分化 `description`**，`inputSchema`
@@ -400,7 +309,7 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   private[nebflow] val AddressFaceHeader: String =
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
   private[nebflow] val AddressFaceNebulaRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel\n  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live\n  instance. You have no `node:`\n  address and no self-address.\n\n## Kernel leg (Nebula-exclusive, 2026-09-25)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.\n`to=\"kernel\"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/\nGrep/Bash + AskUserQuestion), no project context, no memory — the message must be a\nfully self-contained brief. The instance runs in the background; its result is delivered\nback to your session when it finishes, and the tool result header carries its\ncontinuation address (`kernel:<id>`). `to=\"kernel:<id>\"` continues THAT live\ninstance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with `kernel`.\n\n"
+    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel` — start a Kernel\n  instance (the Delegate inner-core sub-agent); `kernel:<id>` — continue THAT live\n  instance. You have no `node:`\n  address and no self-address.\n\n## Kernel leg (Nebula-exclusive, 2026-09-25)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel` / `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent.\n`address=\"kernel\"` starts a Kernel instance: seven fixed tools (Read/Write/Edit/Glob/\nGrep/Bash + AskUserQuestion), no project context, no memory — the message must be a\nfully self-contained brief. The instance runs in the background; its result is delivered\nback to your session when it finishes, and the tool result header carries its\ncontinuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT live\ninstance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with `kernel`.\n\n"
   private[nebflow] val AddressFaceDispatcher: String =
     "- **Project dispatcher**: `Nebula` — the root session; `node:<nodeId>` — a node in\n  your current project (from NodeList). You do not mail your own project.\n"
   private[nebflow] val AddressFaceTeam: String =
@@ -431,69 +340,17 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     else if dispatcher then base.copy(description = descriptionDispatcher)
     else base
 
-  // ============================================================
-  // mailunify-full 批（2026-09-23 作者裁定）——统一参数面 `to`（**5 键**）。
-  //
-  // 逐键理由（键集由本席现读 + 已裁项推导，**非照抄**上游方案卡的 A 侧红线）：
-  //   1. `to`          —— 🔴 本批核心：`address` XOR `device` 双轨合并为**单字段**，
-  //                       值域 = scheme 前缀（`project:` / `node:` / `device:` /
-  //                       `friend:` / `group:`）+ 保留字面量（`local`）+ 裸名
-  //                       （Nebula / team / 短名 / 裸项目名 / 裸好友名）。
-  //                       判定顺序 = [[classifyTarget]]（单一谓词，可机械判定）。
-  //   2. `message`     —— 保留（两工具共有名，语义零变更）。
-  //   3. `chainId`     —— 保留原样（Mail 侧既有面；SendMessage 无此键 ⇒ 并入后
-  //                       对 friend/group/device/local 腿为「只校验不带出」，逐腿登记）。
-  //   4. `images`      —— 保留（Mail 侧既有面）。新增两处**显式拒绝**：`friend:` /
-  //                       `group:` / `local` 三条腿无 vision 通道 ⇒ 收到 `images`
-  //                       即显式报错（旧 `SendMessage` 无该键 + 引擎零 schema 校验
-  //                       = 静默丢；fail-closed > silent drop）。
-  //   5. `attachments` —— 保留（Mail 侧既有面；并入 `SendMessage` 的四落点语义）。
-  //
-  // 🔴 **`targetDir` / `overwrite` 两个键不在本集合内**（分发器补充 · 2026-09-23 两封
-  //    逐字重申「本批不引入 `targetDir`/`overwrite`」）——与上游计划卡 §7.3 的 A 侧
-  //    红线（`Set("to","message","attachments","images","targetDir","overwrite","chainId")`）
-  //    **不一致**，本席按补充处置并**如实登记差异**（不判卡片错、不静默改）。
-  //
-  //    🔴 **该差异的机械后果（如实登记，不静默）**：`to="local"` 腿（原 `SendMessage`
-  //    的 `local` 支，本批并入 `Mail`）在**代码层**读 `targetDir`（必填）与 `overwrite`
-  //    （缺省 false）——`MailTool.call` 的 `Target.Local` 分支逐字保留该读取。两键不在
-  //    schema ⇒ 模型看不到「`local` 需要一个目标目录」这一前提，而 `local` 腿仍会以
-  //    「requires `targetDir`」显式报错（**不是**静默失败）。⇒ 属**须作者确认**项：
-  //    候选 A = 补入两键（键集 ⇒ 7，与卡片一致，代价 = 参数面 +2）；候选 B = 保持 5 键
-  //    并把 `local` 腿的落点改为固定缺省目录（代价 = 一个既有能力的默认化）。本席**不自行
-  //    择一**（两向都要作者裁），本批只执行补充字面。
-  //
-  // 🔴 **`type` 不在本集合内**（作者裁：五标签整块删净）。🔴 **`delivery` 亦不在**
-  // （mailparams 批已退役出 schema，本批不动其墓碑读取）。
-  // 🔴 **`address` / `device` 两个键消失**（合并为 `to`）。
-  // ============================================================
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> Json.obj(
-        "to" -> Json.obj(
+        "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> ("The target, selected by an explicit scheme prefix (case-insensitive). Legal targets are " +
-            "role-scoped — see the Address face in the tool description; a target outside your face is an explicit " +
-            "error that lists the legal targets. Schemes: `project:<name>` (a bare mounted project name is " +
-            "equivalent), `node:<nodeId>`, `kernel` / `kernel:<id>` (Nebula-exclusive kernel leg), " +
-            "`friend:<remark|username|email|displayName>`, `group:<groupName|groupId>`; reserved literals `Nebula` " +
-            "and `local`. A bare string with no colon is an address in your face (Nebula / a team or agent short " +
-            "name / a mounted project name) and, for a sender with a friend list, a bare friend " +
-            "remark/username/email/displayName. A value that contains a colon MUST use one of those schemes — an " +
-            "unknown scheme is an explicit error listing them, never a silent reinterpretation; the escape hatch " +
-            "for a friend whose own name contains a colon is the explicit `friend:` prefix (the reserved literal " +
-            "`local` has shadowed a friend of that name since the beginning). The former `device:` scheme is " +
-            "RETIRED (2026-09-25): `device:…` is an explicit MAIL_DEVICE_RETIRED error, nothing is sent. " +
-            "A `group:` target is a group conversation the user is a member of, resolved by exact group id " +
-            "(`grp-…`), then exact group name, then a unique group-name prefix; several or none matching come back " +
-            "as a candidate list, and a group that does not exist, has been disbanded, or that the user is not a " +
-            "member of fails with a readable reason. A `group:` target is TEXT ONLY in this phase — pass no " +
-            "`attachments` there (an explicit error, nothing sent; use `friend:` for files).").asJson
+          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent), \"kernel\" (start a Kernel instance — the Delegate inner-core sub-agent), or \"kernel:<id>\" (continue THAT live instance; the start receipt carries its id) — the kernel leg is Nebula-exclusive. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "The message or task text to send (max 4000 characters on friend/group legs). Required; ignored for `local`.".asJson
+          "description" -> "The message or question to send".asJson
         ),
         "chainId" -> Json.obj(
           "type" -> "string".asJson,
@@ -514,12 +371,11 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
           "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
-            "vision blocks. For targets that reach a chat turn (Nebula / team / agent short name / a live " +
-            "`kernel:<id>` instance) the recipient sees the images directly plus their paths as text. NOT " +
-            "supported on `project:` / `node:` (or the kernel START leg — text-only legs, " +
-            "which hand a plain string to an engine-side session) and NOT on `friend:` / `group:` / `local` (no " +
-            "vision channel on those legs): passing `images` there is an explicit error and nothing is sent — pass " +
-            "those paths as `attachments` instead.").asJson,
+            "vision blocks. For `address` targets that reach a chat turn (Nebula / team / agent short name / a " +
+            "live `kernel:<id>` instance) the recipient sees the images directly plus their paths as text. NOT " +
+            "supported on `project:` / `node:` (or the kernel START leg) — those legs are text-only, so passing " +
+            "`images` there is an explicit error and nothing is sent; pass those paths as `attachments` " +
+            "instead.").asJson,
           "default" -> Json.arr()
         ),
         "attachments" -> Json.obj(
@@ -528,120 +384,31 @@ There is no urgency flag: an urgent message states the urgency in its own text."
           "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
           "description" -> ("Optional ABSOLUTE local paths of files to attach — any file type, up to " +
             s"${AttachContract.MaxAttachmentsPerMessage} files, each up to ${AttachContract.MaxFileBytesLabel}. " +
-            "Where the bytes land, by target: SAME-MACHINE targets (`project:` / `node:` / `kernel…` / `Nebula` / " +
-            "a team or agent short name) get a path note (absolute path, byte size, sha256) and read the original — " +
-            "nothing is copied, so the file must still exist when it is read. `friend:` rides the server attachment " +
-            "channel (4 MiB chunks, per-chunk checksum + whole-file SHA-256; authenticated in-app download; " +
-            "permission tiers / rate limits / confirmation card; the send is refused outright when the attachment " +
-            "route is unsupported or unverifiable). " +
-            "`group:` is TEXT ONLY in this phase — `attachments` there is an explicit error. `local` requires it: " +
-            "the files are copied into `targetDir`. This is NOT the vision channel: an image the recipient's " +
+            "PATH MODE — on same-machine targets (`address` = `project:…` / `node:…` / `kernel…` / `Nebula` / a " +
+            "team or agent short name) nothing is copied: the mail text carries each file's absolute path, byte " +
+            "size and sha256, because the recipient shares your disk and reads the original — so the file must " +
+            "still exist when the recipient reads it. This is NOT the vision channel: an image the recipient's " +
             "model should SEE belongs in `images`.").asJson,
           "default" -> Json.arr()
         )
       ),
-      "required" -> Json.arr("to".asJson, "message".asJson)
+      "required" -> Json.arr("message".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
-    val target = input("to").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("?")
-    // mailunify-full 批：`type` 五标签删净 ⇒ 摘要不再有 `[TYPE]` 后缀；
-    // delivery 退役批（2026-09-15）的「不再有 `, queue` 形态」口径照旧成立
-    // （queue 模式退役后该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递）。
-    // 支上对账重算批（2026-09-26 调和）：mailmodel 批 (e) 的 device/type 键退役收编后，
-    // `device:` 前缀同样从标签面消失（该值只可能是**已拒绝**的旧调用方）。
-    s"Mail(→$target)"
+    val addr = input("address").flatMap(_.asString).getOrElse("?")
+    // mailmodel batch (2026-09-25): the device/type keys are retired => the label face
+    // is address-only (the old `device:` target prefix and the ` [TYPE]` tag are gone with them).
+    // delivery 退役批（2026-09-15）：标签面不再有 `, queue` 形态 —— queue 模式退役后
+    // 该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递（描述面清理的连带面）。
+    s"Mail(→$addr)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
-  // ============================================================
-  // mailunify-full 批（2026-09-23）——`to` 的**目标分类谓词**（纯函数，供 spec 直测）。
-  //
-  // 判定顺序（**单一谓词、可机械判定**，禁模糊匹配、禁静默兜底）：
-  //   ① `to` 缺席 / 去空白后为空                      ⇒ `targetMissingMessage`（MAIL_TARGET_MISSING）
-  //   ② `to` 等于保留字面量 `local`（大小写不敏感）    ⇒ Local（本机搬运腿）
-  //   ③ `to` **不含冒号**                              ⇒ Face（角色地址面，落既有瀑布）
-  //   ④ `to` 含冒号 ⇒ 取**首个**冒号前的 scheme（trim + 小写，大小写不敏感）：
-  //        `device`  → 🔴 **MAIL_DEVICE_RETIRED**（mailmodel (e) 收编：整腿退役，
-  //                     任何 `device:…` 形态一律显式拒绝——含残缺前缀，不再区分形态）
-  //        `kernel`  → Face(整串)     —— mailmodel (b) 收编：kernel 腿在
-  //                     [[layeredRoute]] 判（裸 `kernel` 无冒号 ⇒ ③ 即 Face）
-  //        `project` → Face(整串)     —— 既有分层地址面单点（`layeredRoute` 判前缀）
-  //        `node`    → Face(整串)     —— 同上
-  //        `friend`  → Friend(rest)（rest 空 ⇒ 残缺前缀错误）
-  //        `group`   → Group(rest)（rest 空 ⇒ 残缺前缀错误）
-  //        **其它**  → 显式错误「未知 scheme + 列合法 scheme 面」🔴 **绝不**回落成好友名解析
-  //                    （旧 `SendMessage.parseToKind` 的未知前缀兜底 = 静默重定向，
-  //                     分类学扩面后必须废；见 [[unknownSchemeError]]）。
-  // ============================================================
-  private[tools] enum Target:
-    case Local
-    case Friend(query: String)
-    case Group(query: String)
-    /** 角色地址面（`project:` / `node:` / `kernel`系 / 裸名）——交由 [[layeredRoute]] + 既有瀑布。 */
-    case Face(raw: String)
-
-  /** 合法 scheme 面（错误文案的**唯一来源**；与 [[classifyTarget]] 的分派表同源）。
-    * `device:` 不在集合内（mailmodel (e) 退役，`classifyTarget` 单独拒绝）。 */
-  private val KnownSchemes: List[String] = List("project:", "node:", "kernel:", "friend:", "group:")
-
-  /** 未知 scheme 的显式报错（列合法面 + 给修法；禁静默按好友解析）。 */
-  private def unknownSchemeError(raw: String, scheme: String): ToolError =
-    ToolError(
-      s"'$raw' uses an unknown target scheme '$scheme:'. Legal schemes are ${KnownSchemes.mkString(", ")} " +
-        "plus the reserved literal `local`; a value with no colon is an address in your role's address face " +
-        "(a bare friend remark/username/email/displayName is addressable as `friend:<that value>`). " +
-        "Nothing was sent — fix the prefix."
-    )
-
-  private[tools] def classifyTarget(raw: String): Either[ToolError, Target] =
-    val s = raw.trim
-    if s.isEmpty then Left(ToolError(targetMissingMessage))
-    else if s.equalsIgnoreCase("local") then Right(Target.Local)
-    else
-      val colon = s.indexOf(':')
-      if colon <= 0 then Right(Target.Face(s))
-      else
-        val scheme = s.take(colon).trim.toLowerCase
-        val rest   = s.drop(colon + 1).trim
-        scheme match
-          // mailmodel (e) 收编（支上对账重算批）：`device:` scheme 整腿退役 ⇒ 任何
-          // `device:…` 形态（含残缺前缀）一律 MAIL_DEVICE_RETIRED——单一墓碑码，
-          // 不再区分「残缺 / 未知设备 / 形态非法」（那些判据随机腿一同消亡）。
-          case "device" => Left(deviceLegRetiredError(s"target '$s'"))
-          case "project" => Right(Target.Face(s))
-          case "node"    => Right(Target.Face(s))
-          case "kernel"  => Right(Target.Face(s))
-          case "friend" =>
-            if rest.isEmpty then Left(ToolError(s"'$s' is missing the friend after `friend:`."))
-            else Right(Target.Friend(rest))
-          case "group" =>
-            // rest 空 ⇒ 与 `friend:` **逐字同构**的残缺前缀错误（同族文案，
-            // 不同目标域名词）——不得回落成「按好友解析」：那会把一次参数残缺静默
-            // 变成一次对好友的寻址（正是本仓「静默不达」缺陷族）。
-            if rest.isEmpty then Left(ToolError(s"'$s' is missing the group name/id after `group:`."))
-            else Right(Target.Group(rest))
-          case _ => Left(unknownSchemeError(s, scheme))
-
-  /** 好友腿 / 群腿的**授权面**（mailunify-full 批）：作者口径 = 这两条腿（以**用户身份**
-    * 对外发消息、带权限档与确认卡）**仅 root Nebula** 可达。依据 = 退役前唯一持件者
-    * 是 Nebula 的机制固定集（`NebulaOrchestrationTools`）⇒ 本闸**保持旧可达面**，
-    * 不扩面。越界 ⇒ 显式报错并列出本角色合法面（fail-closed，无静默兜底）。 */
-  private def friendGroupOutOfFace(raw: String, role: SenderRole): ToolError =
-    val face = role match
-      case SenderRole.NebulaRoot => nebulaFace
-      case SenderRole.Dispatcher => dispatcherFace
-      case SenderRole.Teamish    => "a team name, a member short name, or \"team/agent\""
-    ToolError(
-      s"Target '$raw' is outside your address face. Your role may only mail: $face. " +
-        "There is no silent fallback and no fuzzy matching — use one of the listed forms."
-    )
-
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val toRaw = input("to").flatMap(_.asString).getOrElse("").trim
+    val address = input("address").flatMap(_.asString).getOrElse("").trim
     val message = input("message").flatMap(_.asString).getOrElse("")
-    val role = roleOf(ctx)
 
     // ------------------------------------------------------------
     // 🔴 Tombstone reads (mailparams batch, 2026-09-17 case C "clear the dead face";
@@ -649,15 +416,12 @@ There is no urgency flag: an urgent message states the urgency in its own text."
     // keys are **retired out of the schema**; these reads exist only as **retirement
     // tombstones**, not live parameters:
     //   · `delivery` tombstone: sole purpose = detect a stale caller's `"queue"` and
-    //     raise `MAIL_DELIVERY_QUEUE_RETIRED` (per-leg single-point gates below). Every
-    //     other value needs no branch anymore (immediate is the only delivery form left).
-    //   · `device` tombstone (ruling (e), carried onto the unified single-`to` face by
-    //     the 支上对账重算 reconcile batch): sole purpose = detect a stale caller still
-    //     sending `device=` (the retired `to="device:…"` scheme is refused with the same
-    //     code in [[classifyTarget]]) and raise `MAIL_DEVICE_RETIRED` (the cross-device
+    //     raise `MAIL_DELIVERY_QUEUE_RETIRED` (single-point gate below). Every other
+    //     value needs no branch anymore (immediate is the only delivery form left).
+    //   · `device` tombstone (ruling (e)): sole purpose = detect a stale caller still
+    //     sending `device=` and raise `MAIL_DEVICE_RETIRED` (the cross-device
     //     agent-mail leg retired on both ends in the same batch; the message gives a
-    //     way out: `friend:` / `group:` / `local` targets for files, `to=` agent faces
-    //     for agents).
+    //     way out: SendMessage for machine-facing transport, `address` for agents).
     // Why read keys that are gone from the schema: the engine does **zero JSON-Schema
     // validation** (`protocol.scala` itself says out-of-face parameters are silently
     // ignored) => stale keys still arrive here => one read line preserves the
@@ -676,129 +440,74 @@ There is no urgency flag: an urgent message states the urgency in its own text."
 
     // mailmodel batch (2026-09-25, ruling e): the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
-    // fail-fast discipline; the key is no longer in the schema, only stale callers send
-    // it). 支上对账重算批：门收编到统一单 `to` 面上——`classifyTarget` 对
-    // `to="device:…"` 的拒绝与本门同源同码（[[deviceLegRetiredError]]），门序保持
-    // main 的「先于一切判定」口径（含 `to` 缺席判定）。
+    // fail-fast discipline; the key is no longer in the schema, only stale callers send it).
     if deviceTombstone.isDefined then
-      IO.pure(Left(deviceLegRetiredError(s"device='${deviceTombstone.get}'")))
-    // mailunify-full 批：目标面 = **单字段 `to`**（`address` XOR `device` 的双轨结构上消失
-    // ⇒ MAIL_TARGET_EXCLUSIVE 整条删除）。校验前置于一切投递副作用（既有 fail-fast 纪律）。
-    else classifyTarget(toRaw) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(Target.Local) =>
-        // 本机搬运腿（原 `SendMessage` 的 `local` 腿整条保留 ⇒ [[FriendMessageTool.copyLocalTo]]）。
-        // `images`：本腿**无 vision 通道** ⇒ 显式拒绝（旧行为是静默丢，见件③）。
-        // `delivery="queue"`：本腿零投递 ⇒ 与「非设备腿」同一拒绝口径（禁静默忽略）。
-        if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
-        else
+      IO.pure(Left(deviceLegRetiredError(deviceTombstone.get)))
+    else if address.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
+    else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+    // delivery retirement batch (2026-09-15 author ruling (b)): `delivery="queue"` =>
+    // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+    // mailparams 批（2026-09-17 案 C）后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
+    // 该键已不在 schema）——判据与文案**逐字不变**：这是「删 schema 键、不删拒绝」的落点。
+    // single point — structurally guarantees "zero queue entry on this tool face".
+    else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
+    else
+      // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
+      validateChainId(chainIdRaw, ctx).flatMap {
+        case Left(err) => IO.pure(Left(err))
+        case Right(chainId) =>
           ImageInject.parseImagesParam(input) match
             case Left(err) => IO.pure(Left(err))
-            case Right(Nil) =>
-              FriendMessageTool.copyLocalTo(
-                input("attachments").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList,
-                input("targetDir").flatMap(_.asString),
-                input("overwrite").flatMap(_.asBoolean).getOrElse(false)
-              )
-            case Right(paths) =>
-              IO.pure(Left(sameMachineVisionUnsupportedError("local", paths.size)))
-      case Right(Target.Friend(query)) =>
-        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-        else if role != SenderRole.NebulaRoot then IO.pure(Left(friendGroupOutOfFace(toRaw, role)))
-        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
-        else
-          // `images`：好友腿无 vision 通道 ⇒ 显式拒绝（禁静默丢）。
-          ImageInject.parseImagesParam(input) match
-            case Left(err)   => IO.pure(Left(err))
-            case Right(Nil)  =>
-              FriendMessageTool.deliverToFriend(
-                query,
-                message,
-                input("attachments").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList,
-                ctx
-              )
-            case Right(paths) =>
-              IO.pure(Left(sameMachineVisionUnsupportedError(s"friend:$query", paths.size)))
-      case Right(Target.Group(query)) =>
-        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-        else if role != SenderRole.NebulaRoot then IO.pure(Left(friendGroupOutOfFace(toRaw, role)))
-        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(toRaw))))
-        else if input("attachments").flatMap(_.asArray).exists(_.nonEmpty) then
-          // 群支一期**纯文本**：带附件 = 显式拒绝（禁静默丢弃）——与 `images` 同族口径。
-          IO.pure(Left(ToolError(
-            "A `group:` target is TEXT ONLY in this phase — pass no `attachments` " +
-              "(nothing was sent; re-send the text without attachments, or use a `friend:` target for files)."
-          )))
-        else
-          ImageInject.parseImagesParam(input) match
-            case Left(err)   => IO.pure(Left(err))
-            case Right(Nil)  => FriendMessageTool.deliverToGroup(query, message, ctx)
-            case Right(paths) =>
-              IO.pure(Left(sameMachineVisionUnsupportedError(s"group:$query", paths.size)))
-      // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
-      // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
-      // delivery 退役批（2026-09-15 作者裁定 (b)）：**非设备腿** `delivery="queue"` ⇒
-      // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
-      // 支上对账重算批注：设备腿已随 mailmodel (e) 整腿退役（`classifyTarget` 单点拒绝）
-      // ⇒ 本闸现在的覆盖面 = 除 Local / Friend / Group 之外的**全部地址面腿**
-      // （`node:` / `project:` / `kernel`系 / Nebula / team 短名 / 裸项目名）——单点，
-      // 结构性保证「本工具面零 queue 入口」。
-      case Right(Target.Face(raw)) =>
-        if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
-        else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(raw))))
-        else
-          // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
-          validateChainId(chainIdRaw, ctx).flatMap {
-            case Left(err) => IO.pure(Left(err))
-            case Right(chainId) =>
-              ImageInject.parseImagesParam(input) match
+            case Right(imagePaths) =>
+              // G3: resolve attachments BEFORE any delivery side effect (fail fast
+              // at the point of action — actor activation / queue persist must not
+              // happen for an invalid attachment). Queue mode persists the paths
+              // and re-reads at drain time (D6), so only the validation result is
+              // used there.
+              ImageInject.resolveImages(imagePaths).flatMap {
                 case Left(err) => IO.pure(Left(err))
-                case Right(imagePaths) =>
-                  // G3: resolve attachments BEFORE any delivery side effect (fail fast
-                  // at the point of action — actor activation / queue persist must not
-                  // happen for an invalid attachment).
-                  ImageInject.resolveImages(imagePaths).flatMap {
+                case Right(attachments) =>
+                  // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
+                  // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
+                  // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
+                  // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
+                  // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
+                  attachmentsPlan(input, ctx).flatMap {
                     case Left(err) => IO.pure(Left(err))
-                    case Right(attachments) =>
-                      // mailattach 批（2026-09-17）：同机腿附件 = **附注 + 零搬字节**。
-                      // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
-                      // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
-                      // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
-                      // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
-                      attachmentsPlan(input, ctx).flatMap {
-                        case Left(err) => IO.pure(Left(err))
-                        case Right(attachmentPaths) =>
-                          val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
-                          val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
-                          ctx.actorSystem match
-                            case None =>
-                              IO.pure(Left(ToolError("No actor system available")))
-                            case Some(system) =>
-                              // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
-                              // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
-                              // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
-                              // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
-                              // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
-                              // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
+                    case Right(attachmentPaths) =>
+                      val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
+                      val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
+                      ctx.actorSystem match
+                        case None =>
+                          IO.pure(Left(ToolError("No actor system available")))
+                        case Some(system) =>
+                          // R2 分层地址面（作者 2026-09-12 10:38 细则 + B1-a）：角色专属
+                          // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                          // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                          // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                          // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
+                          // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
                               // mailmodel batch (2026-09-25): the mailType parameter is retired with
                               // the `type` key —— eventType is now judged by the **leading `[INTERRUPT]`
                               // literal of the body** (same single-point criterion as deliverToNebulaRoot):
                               // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
                               // leg's batching-window exemption uses the same judgment (see
                               // deliverToNebulaRoot / isDispatcherMailInterrupt).
-                              // （`taskRaw` 随下：taskunify c① 的显式 task 参数，仅 `project:` 腿消费。）
-                              layeredRoute(raw, effectiveMessage, blocks, imagePaths, chainId, ctx, system, taskRaw) match
-                                case Some(action) => action
-                                case None =>
-                                  // mailparams 批（2026-09-17 案 C）：schema 键删除后只剩一条
-                                  // 投递路径（immediate），无按键值分派逻辑；非 `queue` 的旧值
-                                  // 与「键缺席」逐字同一结果。
-                                  val legacyEventType = if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
-                                  if raw.contains("://") then deliverToAddress(raw, effectiveMessage, blocks, legacyEventType, ctx, system)
-                                  else deliverToShortName(raw, effectiveMessage, blocks, legacyEventType, ctx, system)
-                      }
+                          layeredRoute(address, effectiveMessage, blocks, imagePaths, chainId, ctx, system, taskRaw) match
+                            case Some(action) => action
+                            case None =>
+                              // mailparams 批（2026-09-17 案 C）：本层原有一个 `delivery match`
+                              // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
+                              // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
+                              // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
+                              // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
+                              // **逐字同一结果**（残差读数见交付报告）。
+                              val legacyEventType = if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
+                              if address.contains("://") then deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
+                              else deliverToShortName(address, effectiveMessage, blocks, legacyEventType, ctx, system)
                   }
-          }
+              }
+      }
   end call
 
   // ============================================================
@@ -1032,12 +741,6 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       InjectionAttribution(
         sender = Some(senderName),
         senderTeam = team,
-        // 支上对账重算批（2026-09-26 调和）：mailunify-full 曾因 `type` 参数删净把本字段
-        // 置 `None`；mailmodel 批（2026-09-25, ruling d）把 eventType 的来源改判到正文
-        // 首行 `[INTERRUPT]` 字面量（interrupt/info 对偶保留为呈现面机制）⇒ 按后落地
-        // 的主干裁定收编：本字段恢复来源 = 调用方传入的判果（恒 "info" 或 "interrupt"）。
-        // 🔴 不改 `InjectionAttribution.eventType` 字段本身（`chat.js:417` /
-        // `NotificationHeader.scala:98` 属另一面的同源标签）。
         eventType = Some(eventType.toLowerCase),
         intake = intake,
         project = ctx.projectName
@@ -1091,16 +794,6 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   // Unauthorized callers are refused in [[layeredRoute]] (SenderRole != NebulaRoot => MAIL_KERNEL_EXCLUSIVE);
   // this layer only delivers. The result-return chain has zero tool-face change (the existing
   // BackoffSupervisor parent uplink).
-  //
-  // 支上对账重算批（2026-09-26 调和）：本调和批**删除** mailunify-full 曾并入 `to` 面的
-  // 设备腿整套实现（`deliverToDevice` / `deviceImagesPlan` / `deviceMailText` /
-  // `pushDeviceAttachments` / `auditDeviceAttachmentsSend` / `auditDeviceMailSend` /
-  // `MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG` / `MAIL_DEVICE_NOT_FOUND` /
-  // `MAIL_DEVICE_MALFORMED` / `deviceMalformedError` / `deviceMalformedReason`）——
-  // 依据 = mailmodel 批 (e)（2026-09-25，后落地的主干裁定）：跨设备 agent-mail 腿两端
-  // 同批消亡（收端停注 `agent_mail` 信封），`to="device:…"` 与 `device=` 一律
-  // MAIL_DEVICE_RETIRED 显式拒绝；其 `delivery=queue` v2.1 专属字面量随腿消亡，
-  // delivery 拒绝由既有单点闸结构覆盖（见 [[deliveryQueueRetiredMessage]] 注）。
   // ============================================================
 
   /** Kernel-leg delivery (the caller's NebulaRoot identity has already been verified in [[layeredRoute]]). */
@@ -1322,14 +1015,6 @@ There is no urgency flag: an urgent message states the urgency in its own text."
       case Some(res) =>
         resolveNebulaRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
           case Some((sid, ref)) =>
-            // ── 冲突解（mailunify-full 批 × mailack 批 × mailmodel 批，2026-09-26 调和）──
-            // mailack 的**打包窗机制逐字保留**（合窗 / 背压 / 条数上限 / 窗末一次注入，
-            // 见 [[enqueueDispatcherReply]]）：那是另一批已落地的作者裁定，禁回退禁简化。
-            // mailunify-full 曾把 mailType **钉常量**（DispatcherReplyPinnedKind）；
-            // mailmodel 批（2026-09-25, ruling d）改判 P0 豁免判据 = **正文首行
-            // `[INTERRUPT]` 字面量**（机制、非消息类型，A3/R7 对偶保留）⇒ 本调和批按
-            // 后落地的主干裁定收编：豁免判据走 [[isDispatcherMailInterrupt]](text)，
-            // 注入 eventType = 豁免腿恒 `interrupt`、其余恒 `info`（呈现面对偶保留）。
             val deliver = (text: String) =>
               sendMail(ref, NebulaAgentName, text, blocks, eventType, ctx, system).flatMap {
                 case Right(_) => onMailDelivered(senderSessionId, sid, NebulaAgentName, text, ctx)
@@ -1442,14 +1127,12 @@ There is no urgency flag: an urgent message states the urgency in its own text."
   private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
     dispatcherMailState.get.map(_.windowArmed)
 
-  /** P0 exemption grade (mailmodel batch 2026-09-25, ruling (d) form d-1; 支上对账重算批
-    * 2026-09-26 收编——mailunify-full 曾钉常量 `DispatcherReplyPinnedKind`，被本主干
-    * 裁定取代后随批删除): a leg whose body's **first line is the `[INTERRUPT]` literal**
-    * does not enter the buffer — mechanism-based judgment, not a message type (the
-    * `type` key is retired). Criterion = the first **non-empty** line, trimmed, is
-    * **verbatim-equal** to `[INTERRUPT]`; the A3/R7 bypass pair stays intact (exempt =>
-    * inject immediately with eventType always `interrupt`; non-exempt => always enters
-    * the window). */
+  /** P0 exemption grade (mailmodel batch 2026-09-25, ruling (d) form d-1): a leg whose
+    * body's **first line is the `[INTERRUPT]` literal** does not enter the buffer —
+    * mechanism-based judgment, not a message type (the `type` key is retired).
+    * Criterion = the first **non-empty** line, trimmed, is **verbatim-equal** to
+    * `[INTERRUPT]`; the A3/R7 bypass pair stays intact (exempt => inject immediately
+    * with eventType always `interrupt`; non-exempt => always enters the window). */
   private[tools] def isDispatcherMailInterrupt(text: String): Boolean =
     text.linesIterator.find(_.trim.nonEmpty).exists(_.trim == "[INTERRUPT]")
 

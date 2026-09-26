@@ -79,7 +79,7 @@ object InjectionAttribution:
   val SourceSystem: String = "system"
 
   /** 收件通道判别定名（mailbadge 批 2026-09-13，选项 C）：`MailTool` 腿①
-    * （`Mail(to="project:<name>")`）——本件是**收件方视角的 Mail**。
+    * （`Mail(address="project:<name>")`）——本件是**收件方视角的 Mail**。
     * **只置位在腿①**：腿②（`node:<id>`，source 保持 `"system"` ⇒ 标签 `System`）
     * 与腿③（非 project 面，source 已是 `"mail"` ⇒ 标签 `Mail`）**不置位**——
     * 节点收件面不在本批（已单独立项），非 project 面呈现不得漂移。 */

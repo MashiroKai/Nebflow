@@ -200,24 +200,24 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       st0 <- ledgerOf(rt)
       // ① 投递成功 + 携带链号 ⇒ 计 1
       ok <- MailTool.call(
-        Json.obj("to" -> "node:n-r1".asJson, "message" -> "带链号".asJson,
+        Json.obj("address" -> "node:n-r1".asJson, "message" -> "带链号".asJson,
           "chainId" -> Canon.asJson).asObject.get, dispCtx)
         .map(failMsg)
       st1 <- ledgerOf(rt)
       // ② 不带链号 ⇒ 照常投递、零计数
       okNoChain <- MailTool.call(
-        Json.obj("to" -> "node:n-r1".asJson, "message" -> "无链号".asJson).asObject.get, dispCtx)
+        Json.obj("address" -> "node:n-r1".asJson, "message" -> "无链号".asJson).asObject.get, dispCtx)
         .map(failMsg)
       st2 <- ledgerOf(rt)
       // ③ 带链号但投递失败（终态节点 ⇒ NODE_TERMINAL_NO_MESSAGE）⇒ 零计数
       refused <- MailTool.call(
-        Json.obj("to" -> "node:n-r1-term".asJson, "message" -> "迟到".asJson,
+        Json.obj("address" -> "node:n-r1-term".asJson, "message" -> "迟到".asJson,
           "chainId" -> Canon.asJson).asObject.get, dispCtx)
         .map(failMsg)
       st3 <- ledgerOf(rt)
       // ④ 校验失败（未登记号 ⇒ MAIL_CHAIN_NOT_FOUND）⇒ 零计数（引用没发生）
       rejected <- MailTool.call(
-        Json.obj("to" -> "node:n-r1".asJson, "message" -> "悬空号".asJson,
+        Json.obj("address" -> "node:n-r1".asJson, "message" -> "悬空号".asJson,
           "chainId" -> "chain-n-rf-ghost".asJson).asObject.get, dispCtx)
         .map(failMsg)
       st4 <- ledgerOf(rt)

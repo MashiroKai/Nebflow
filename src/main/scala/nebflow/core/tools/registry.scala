@@ -70,13 +70,11 @@ object ToolRegistry:
       // The transfer CHANNEL stays (FileTransferAction / relayTransfer* /
       // /api/neblink/transfer / NeblinkService.receiveFile|sendFile — the Dropbox
       // relay fallback depends on them): we retired the tool, not the channel.
-      // 🔴 `SendMessage` 已**退役**（mailunify-full 批，2026-09-23 作者裁定）：
-      // 存活名 = `Mail`；好友 / 群 / 本机复制 / 设备四腿改由 `Mail` 的单 `to` 承载
-      // （腿实现单点 = `FriendMessageTool` 的同名方法组，该对象**不再注册为工具**）。
-      // 登记形态 = **摘注册行**（fail-closed：打到旧名者按未知工具报错，与从未存在
-      // 过的名同形；退役指引表整表摘空 ⇒ 零指引，见 `AgentCore.RetiredToolGuides`）。
-      // 授权面（阶段 2d, D.1-11）：旧「机制固定 + 声明通道删除」口径随之作废 ——
-      // 名称本身已离册，`NebulaOrchestrationTools` 不再携带该名。
+      // A2A 一期: agent sends a message to one of the user's NebLink friends
+      // (#290). Authorization (阶段 2d, D.1-11): mechanism-fixed for Nebula
+      // only (NebulaOrchestrationTools, 2c 起) — agent.json declaration
+      // channel removed (buildAllowedToolSet strips the name from base).
+      "SendMessage" -> FriendMessageTool,
       // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 定稿）：Nebula
       // 编排面**只读**好友名册——`SendMessage` 的寻址前置（既有候选文案只在失败
       // 路径出现，且 displayName == username 时零区分力）。授权面 = 机制固定唯一
@@ -94,10 +92,10 @@ object ToolRegistry:
       // ProjectCreate = Nebula 用（建项目 + 工作区脚手架；workspace 缺省/不可用
       // 时弹 AskUser 式路径面板复用 pending 机制）。
       // 本条覆盖此前相关指令：**`Task` 已删净退役**（2026-09-12「一个 Mail
-      // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(to="project:<name>")`；
+      // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(address="project:<name>")`；
       // 打到 `Task` 的调用走 AgentCore 的退役工具迁移指引表（只产错误文案，
       // 非兼容壳，零执行面）。**`NodeMessage` 已删净退役**——并入
-      // `Mail(to="node:<id>")`（三态判据复用引擎侧 NodeEngine.sendNodeMessage）。
+      // `Mail(address="node:<id>")`（三态判据复用引擎侧 NodeEngine.sendNodeMessage）。
       "NodeEdit" -> NodeEditTool,
       "NodeList" -> NodeListTool,
       "NodeCancel" -> NodeCancelTool,

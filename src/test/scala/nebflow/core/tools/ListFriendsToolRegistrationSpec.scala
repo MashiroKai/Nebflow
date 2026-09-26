@@ -26,7 +26,7 @@ import nebflow.neblink.{AgentMessagingConfig, ConversationSummary, FriendListRes
  *  4. **调用面**：服务缺席 / 未登录 / 上游故障（**均不得被报成空名册**）/ 空名册 /
  *     正常名册 / 超长名册封顶 / 零参数可调用（无 filter / limit 参数路径）。
  *  5. **词表与不谎报**（L4③/L5/L7）：名册行逐字 == `FriendRoster.candidateLine`（与
- *     `Mail` 失败候选同一份）；输出与 description 无任何在线/可达字段；只读
+ *     `SendMessage` 失败候选同一份）；输出与 description 无任何在线/可达字段；只读
  *     零副作用（恰一次 `listFriends`，写面/会话面零触碰）。
  */
 class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
@@ -261,7 +261,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
       }
     }
 
-  test("L4③：名册行与 Mail 失败候选文案逐字同形（同 FriendRoster.candidateLine）"):
+  test("L4③：名册行与 SendMessage 失败候选文案逐字同形（同 FriendRoster.candidateLine）"):
     val friends = List(
       FriendSummary("u1", "lin@example.com", "林小满", blocked = Some(true)),
       FriendSummary("u2", "wangxuan", "王选")
@@ -271,13 +271,13 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     val roster = ListFriendsTool.render(friends)
     assert(roster.linesIterator.contains(row), s"名册行必须逐字 == candidateLine，got:\n$roster")
     val sendMsgErr = FriendMessageTool.resolveFriend("不存在", friends).left.toOption.get.message
-    assert(sendMsgErr.contains(row), s"Mail 失败候选必须含同形行，got: $sendMsgErr")
+    assert(sendMsgErr.contains(row), s"SendMessage 失败候选必须含同形行，got: $sendMsgErr")
     // 未拉黑条目（blocked 缺席）：两侧同样是既有无后缀字面（零行为变更）
     val plain = FriendRoster.candidateLine(FriendSummary("u2", "wangxuan", "王选"))
     assertEquals(plain, "王选 (wangxuan)")
 
-  test("L4④：名册行里的键原样作 Mail 的 `to` 即命中同一好友（username / displayName）"):
-    // 名册行 = `candidateLine` ⇒ 行内两个键就是 `Mail` 的 L1/L2 匹配键。
+  test("L4④：名册行里的键原样作 SendMessage.to 即命中同一好友（username / displayName）"):
+    // 名册行 = `candidateLine` ⇒ 行内两个键就是 `SendMessage` 的 L1/L2 匹配键。
     // 完整「发送成功」腿由 `FriendMessageToolSpec`（mode=auto 按 username 发送成功）
     // 覆盖；remark 腿属 ⑦ 待落地欠项（本批无该字段）。
     val f = FriendSummary("u1", "lin@example.com", "林小满", blocked = Some(true))
@@ -293,7 +293,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
 
   test("L4①（⑦ 待落地欠项）：remark 预留槽与 displayName 可区分——本批不加任何模型字段"):
     val f = FriendSummary("u1", "lin@example.com", "林小满")
-    // 本批无模型字段 ⇒ 数据面恒走默认 None（ListFriends / Mail 两侧都不传 remark）
+    // 本批无模型字段 ⇒ 数据面恒走默认 None（ListFriends / SendMessage 两侧都不传 remark）
     assertEquals(FriendRoster.candidateLine(f), "林小满 (lin@example.com)")
     // 预留槽的形状：备注不顶替显示名，两者可区分（⑦ 落地后由此入参供水）
     assertEquals(FriendRoster.candidateLine(f, Some("老林")), "林小满 (lin@example.com) [remark: 老林]")
@@ -341,13 +341,13 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
 
   // ══════════ 5. description 契约 ══════════
 
-  test("description：好友 ≠ 设备 + 用途 + 各段齐 + blocked 语义 + 只读零副作用 + Mail 复用"):
+  test("description：好友 ≠ 设备 + 用途 + 各段齐 + blocked 语义 + 只读零副作用 + SendMessage 复用"):
     val d = ListFriendsTool.description
     assert(d.contains("Friends are NOT devices"), "摘要段必须写清好友 ≠ 设备")
     assert(d.contains("a device is one of the user's own other machines on the same NebLink account"),
       "设备定义（同账号的其它机器）")
     assert(d.contains("this tool never lists"), "明写本工具永不列出设备")
-    assert(d.contains("before calling Mail"), "用途：发消息前先看谁能发")
+    assert(d.contains("before calling SendMessage"), "用途：发消息前先看谁能发")
     assert(d.contains("## Output"), "Output 段在位")
     assert(d.contains("## Notes"), "Notes 段在位")
     assert(d.contains("<display name> (<username>)"), "行形写清")
@@ -357,6 +357,6 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     assert(d.contains("[blocked]"), "blocked 语义位在位")
     assert(d.contains("read-only") && d.contains("does not refresh local state"),
       "只读零副作用（不刷本地态 / 不动未读游标 / 不触发写）")
-    assert(d.contains("`Mail`'s `to`"), "本列表的值原样交给 Mail 的 to")
+    assert(d.contains("`SendMessage`'s `to`") || d.contains("SendMessage"), "本列表的值原样交给 SendMessage 的 to")
 
 end ListFriendsToolRegistrationSpec

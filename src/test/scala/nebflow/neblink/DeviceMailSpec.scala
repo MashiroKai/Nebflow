@@ -26,10 +26,8 @@ import scala.concurrent.duration.*
  *   - 注入头行逐字 + source/eventType/sender 取值域（蓝气泡标签的数据源）；
  *   - 注入失败**禁静默**（告警帧 + 不误 ack）；
  *   - 收件回执（ack）关联与 eventId 前缀单点；
- *   - MailTool 目标面（mailunify-full 合面 + mailmodel 收编后）：单 `to` 面 schema
- *     （6 键，required = to + message）+ 设备腿**整腿退役**的墓碑读（`device=` 键与
- *     `to="device:…"` 形态一律 MAIL_DEVICE_RETIRED，先于一切目标面闸）；
- *   - 发送端点形态（契约 v2 ①：目标走路径）——契约单点保留（tombstone 自有钉面）。
+ *   - MailTool 目标面：schema（件数不变、required 只剩 message）+ 四类校验词表；
+ *   - 发送端点形态（契约 v2 ①：目标走路径）与**定向**（v2 ②：无 fan-out）。
  */
 class DeviceMailSpec extends FunSuite:
 
@@ -131,60 +129,31 @@ class DeviceMailSpec extends FunSuite:
       case Left(err)  => err.message
       case Right(msg) => fail(s"expected an explicit error, got success: $msg")
 
-  test("schema（mailunify-full 批 re-pin + mailmodel 收编）：统一单 `to` 面 —— 恰 6 键、`to` 与 `message` 同在 required"):
-    assertEquals(
-      props,
-      Set("to", "message", "chainId", "task", "images", "attachments"),
-      "schema 键集必须恰为合并后的 6 键（`address` / `device` / `type` 三键消失；`task` = taskunify 批收编）"
-    )
-    assert(!props.contains("address") && !props.contains("device"), s"双轨目标键必须消失：$props")
-    assert(!props.contains("type"), "`type` 五标签面已删净 ⇒ 该键必须离开 schema")
-    assertEquals(requiredOf, List("to", "message"), "required = to + message（双轨互斥结构消失）")
+  test("retired: the Mail schema has NO `device` key (parameter face 6 keys, required stays [message] — address is the only target)"):
+    assert(!props.contains("device"), s"the device key must be GONE from the schema: $props")
+    assertEquals(requiredOf, List("message"), "required must stay exactly [message]")
 
-  test("retired: a stale `device=` KEY refuses with MAIL_DEVICE_RETIRED（墓碑先于一切目标面闸，含 to+device 双填）"):
-    // main 侧 mailmodel 批 (e) 收编：`device=` 键的墓碑读（引擎零 schema 校验 ⇒ 键到得了
-    // call()），文案点名已退役的 SendMessage（改用 `to` 面）。
+  test("retired: any stale `device=` call refuses with MAIL_DEVICE_RETIRED (even address+device double-filled — the tombstone outranks the old exclusivity gate)"):
     val alone = callErr(JsonObject("device" -> "dev-b".asJson, "message" -> "hi".asJson))
     assert(alone.contains(s"[${MailTool.ErrDeviceLegRetired}]"), alone)
-    assert(alone.contains("SendMessage"), s"the error must name the retired transport tool (SendMessage): $alone")
+    assert(alone.contains("SendMessage"), s"the error must give the way out (machine face = SendMessage): $alone")
     val both = callErr(
       JsonObject(
-        "to" -> "project:x".asJson,
+        "address" -> "project:x".asJson,
         "device" -> "dev-b".asJson,
         "message" -> "hi".asJson
       )
     )
     assert(both.contains(s"[${MailTool.ErrDeviceLegRetired}]"), both)
 
-  test("retired: a stale `to=\"device:…\"` target refuses with MAIL_DEVICE_RETIRED（先于任何解析/名册/投递闸）"):
-    // 设备腿整腿退役 ⇒ 旧「设备解析词表」（MAIL_DEVICE_MALFORMED / _NOT_FOUND / 歧义候选）
-    // 整条随腿消失（MailTool 词表注释登记）——一切 `to="device:…"` 形态只可能是墓碑读。
-    val named = callErr(JsonObject("to" -> "device:KAI-MBP".asJson, "message" -> "hi".asJson))
-    assert(named.contains(s"[${MailTool.ErrDeviceLegRetired}]"), named)
-    assert(named.contains("SendMessage"), named)
-    val empty = callErr(JsonObject("to" -> "device:".asJson, "message" -> "hi".asJson))
-    assert(empty.contains(s"[${MailTool.ErrDeviceLegRetired}]"), empty)
-    val url = callErr(JsonObject("to" -> "device:http://127.0.0.1:8080".asJson, "message" -> "hi".asJson))
-    assert(url.contains(s"[${MailTool.ErrDeviceLegRetired}]"), url)
-
-  test("retired: the target face is single-`to` — double-missing still reads MAIL_TARGET_MISSING and names `to`"):
+  test("retired: the target face is address-only — double-missing still reads MAIL_TARGET_MISSING and names the retirement"):
     val msg = callErr(JsonObject("message" -> "hi".asJson))
     assert(msg.contains(s"[${MailTool.ErrTargetMissing}]"), msg)
-    assert(msg.contains("'to' is required"), msg)
-    assert(!msg.contains("'address'"), "旧 address 字段面不得残留在文案里")
-    assert(msg.contains("retired") || msg.contains("Pass one target"),
-      s"the message must point at the live target face: $msg")
-    // 空白 `to` 经 trim 等价于「没填」⇒ 同走目标缺失（不是任何设备词表）
-    val blank = callErr(JsonObject("to" -> "   ".asJson, "message" -> "hi".asJson))
+    assert(msg.contains("'address'"), msg)
+    assert(msg.contains("retired"), s"the message must state the device retirement: $msg")
+    // a blank device trims to absent ⇒ same double-missing reading (never MALFORMED)
+    val blank = callErr(JsonObject("device" -> "   ".asJson, "message" -> "hi".asJson))
     assert(blank.contains(s"[${MailTool.ErrTargetMissing}]"), blank)
-
-  test("message 仍必填（单字段 `to` 面一致）"):
-    val a = callErr(JsonObject("to" -> "project:x".asJson))
-    assertEquals(a, "Missing required parameter: message")
-
-  test("summarize 回显单字段目标"):
-    assertEquals(MailTool.summarize(JsonObject("to" -> "Nebula".asJson, "message" -> "hi".asJson)), "Mail(→Nebula)")
-    assertEquals(MailTool.summarize(JsonObject("to" -> "project:p-x".asJson, "message" -> "hi".asJson)), "Mail(→project:p-x)")
 
   // ============================================================
   // ④ 发送端点形态（契约 v2 ①：目标走路径）

@@ -20,7 +20,7 @@ import nebflow.agent.{
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, FriendMessageTool, MailTool, ToolContext, ToolError}
+import nebflow.core.tools.{FileLockManager, FriendMessageTool, ToolContext, ToolError}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
@@ -39,7 +39,7 @@ import scala.concurrent.duration.*
  *    recordingWsSend，同形）；
  *  - 真实 `FriendService`（经**装配缝** `NeblinkWiring.friendService` 构造，缝上
  *    传的字面值 = `GatewayMain:782` 传的那个 = `SendConfirm.production`）
- *    + 真实 `MailTool.call`（合面后好友腿的唯一入口）；
+ *    + 真实 `FriendMessageTool.call`；
  *  - 真实答复路径 = `InteractionHubCommand.Answered`（`WebSocketRoutes` 把前端
  *    `askUserAnswer{sessionId, answers, requestId}` 翻成的就是它，
  *    `WebSocketRoutes.scala:1066-1076`）；
@@ -180,9 +180,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
     )
 
   private val input: JsonObject =
-    // mailunify-full 批：好友腿入口 = `Mail`，好友必须**显式 `friend:` 前缀**
-    // （裸串含冒号/无冒号的兜底解析已在合面批废；本 spec 走显式前缀 = 稳定形态）。
-    JsonObject("to" -> "friend:customNL1".asJson, "message" -> "hi from spec".asJson)
+    JsonObject("to" -> "customNL1".asJson, "message" -> "hi from spec".asJson)
 
   private def isAskUser(j: Json): Boolean = j.hcursor.get[String]("type").toOption.contains("askUser")
 
@@ -213,7 +211,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   test("① ask 档正向：出确认卡（帧面）→ 用户批准 → 投递（POST 计数 1）；批准前零投递") {
     setup("positive").flatMap { f =>
       (for
-        call <- MailTool.call(input, f.ctx).start
+        call <- FriendMessageTool.call(input, f.ctx).start
         frame <- waitForAsk(f)
         _ <- IO {
           assertEquals(frame.hcursor.get[String]("sessionId"), Right(RootSid), "卡片必须落在提问会话的窗口")
@@ -252,7 +250,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   test("② 负控：用户拒绝 → 零投递，文案 = declined（严禁静默当批准）") {
     setup("negative").flatMap { f =>
       (for
-        call <- MailTool.call(input, f.ctx).start
+        call <- FriendMessageTool.call(input, f.ctx).start
         frame <- waitForAsk(f)
         _ <- answer(f, frame.hcursor.get[String]("requestId").toOption.get, SendConfirm.DeclineLabel)
         res <- call.joinWithNever
@@ -268,12 +266,12 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   test("② 负控（变体）：取消（__cancelled__）与自由文本一律不投递（fail-closed）") {
     setup("negative-cancel").flatMap { f =>
       (for
-        call1 <- MailTool.call(input, f.ctx).start
+        call1 <- FriendMessageTool.call(input, f.ctx).start
         frame1 <- waitForAsk(f, 1)
         _ <- answer(f, frame1.hcursor.get[String]("requestId").toOption.get, "__cancelled__")
         res1 <- call1.joinWithNever
         _ <- IO(assert(res1.isLeft, "取消不得投递"))
-        call2 <- MailTool.call(input, f.ctx).start
+        call2 <- FriendMessageTool.call(input, f.ctx).start
         frame2 <- waitForAsk(f, 2)
         _ <- answer(f, frame2.hcursor.get[String]("requestId").toOption.get, "ok 随便吧")
         res2 <- call2.joinWithNever
@@ -301,7 +299,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
         legacy <- f.fs.sendAsAgent("u1", "legacy")
         postsAfterLegacy <- IO(f.stub.postedPaths.toList)
         countedRes <- counted.sendAsAgent("u1", "counted")
-        res <- MailTool.call(input, f.ctx)
+        res <- FriendMessageTool.call(input, f.ctx)
         n <- calls.get
         askFrames <- frameCount(f, "askUser")
         posts <- IO(f.stub.postedPaths.toList)
@@ -331,7 +329,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
         )
         a <- f.fs.sendAsAgent("u1", "legacy")
         b <- counted.sendAsAgent("u1", "counted")
-        res <- MailTool.call(input, f.ctx)
+        res <- FriendMessageTool.call(input, f.ctx)
         n <- calls.get
         askFrames <- frameCount(f, "askUser")
         _ <- IO {
@@ -351,7 +349,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   test("③ auto 超限降级档：确认链同样接通（改前该档也必失败）") {
     setup("auto-downgrade", mode = "auto", guard = new FriendMessagingGuard(perFriendPerHour = 0)).flatMap { f =>
       (for
-        call <- MailTool.call(input, f.ctx).start
+        call <- FriendMessageTool.call(input, f.ctx).start
         frame <- waitForAsk(f)
         _ <- IO(assertEquals(f.stub.postedPaths.toList, Nil, "降级 ask ⇒ 先确认，后投递"))
         _ <- answer(f, frame.hcursor.get[String]("requestId").toOption.get, SendConfirm.ApproveLabel)
@@ -371,7 +369,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       val prop = SendConfirm.TimeoutProperty
       (for
         _ <- IO(System.setProperty(prop, "300"))
-        call <- MailTool.call(input, f.ctx).start
+        call <- FriendMessageTool.call(input, f.ctx).start
         frame <- waitForAsk(f)
         requestId = frame.hcursor.get[String]("requestId").toOption.get
         res <- call.joinWithNever
@@ -411,7 +409,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
   test("⑤ 无交互面（hub 未起）：ask 档显式失败、零投递、零静默") {
     setup("no-hub", hubPresent = false).flatMap { f =>
       (for
-        res <- MailTool.call(input, f.ctx)
+        res <- FriendMessageTool.call(input, f.ctx)
         _ <- IO {
           assert(res.isLeft, "无交互面必须显式失败")
           val msg = res.left.toOption.get.message
@@ -426,7 +424,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
     setup("no-ctx").flatMap { f =>
       val bare = ToolContext(projectRoot = "/tmp")
       (for
-        res <- MailTool.call(input, bare)
+        res <- FriendMessageTool.call(input, bare)
         _ <- IO {
           assert(res.isLeft, "无交互面必须显式失败")
           val msg = res.left.toOption.get.message

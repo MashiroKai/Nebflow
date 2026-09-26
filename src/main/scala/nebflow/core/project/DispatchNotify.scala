@@ -46,7 +46,7 @@ import scala.concurrent.duration.*
  * == 不占 out 边（设计约束①） ==
  * out 边限 1 条且已被合并节点纪律占用；回流是独立信号通道：
  *  - 信号面 = NodeDef.notifyDispatcher 布尔标志（completion 专用；NodeEdit 按需
- *    开启，默认关）+ ProjectActor.TriggerDispatcher 消息（与 `Mail(to="project:<名>")`
+ *    开启，默认关）+ ProjectActor.TriggerDispatcher 消息（与 `Mail(address="project:<名>")`
  *    同链路）；failed 通知无 per-node 开关（见类头）。
  *  - 结果全文不进通知文本——走既有投递面：全文已持久化于
  *    `<workspace>/.nebflow/results/<nodeId>.md`，通知文本只带节点名/终态/原因码 +
@@ -241,7 +241,7 @@ final class DispatchNotify(
       case List(one) => one
       case many =>
         // 本批 N 件触发 + 各件清单。（桥侧 `batchSummaryLine` 已随 R7-b 删净，
-        // 分发器的批级回传改由显式 `Mail(to="Nebula", chainId=…)` 承载；合面后无 `type=` 键。）
+        // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…)` 承载。）
         s"[dispatch-notify] 本批 ${many.size} 件触发（同打包窗口合并为一次注入）：\n\n" + many.mkString("\n\n---\n\n")
 
   /** Q4 入队（打包窗口唯一入口，替代原来的立即 trigger）。
@@ -1031,7 +1031,7 @@ object DispatchNotify:
   val NoticeEventType: String = "notice"
 
   /** 默认触发通道：ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher
-    * （与 `Mail(to="project:<名>")` 同链路；rootSessionId 用挂载根——系统发起，
+    * （与 `Mail(address="project:<名>")` 同链路；rootSessionId 用挂载根——系统发起，
     * 与 ReenterDispatcher 同规）。best-effort：未挂载/无 actor 只 WARN。 */
   def defaultTrigger(projectName: String, rootSessionId: String): String => IO[Unit] = text =>
     ProjectRuntimeRegistry.get(projectName).flatMap {

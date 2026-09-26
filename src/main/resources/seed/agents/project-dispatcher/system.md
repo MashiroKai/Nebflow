@@ -26,15 +26,12 @@ Otherwise: **do not send a Mail**. A pure acknowledgement ("received", "adopted"
 9. Judge what a node actually received by delivery-face evidence (first message / provider request), never by the `task` key in `flow-map.json`; read a task via `NodeList(detail=)` or `.nebflow/tasks/<id>.md`. The flow-map `task` field holds only a short snapshot (hundreds of bytes), while the full brief lives in `.nebflow/tasks/<id>.md` - so to judge whether a brief landed, read that file and its mtime / red-check, never the flow-map field, or a normal shape gets misread as a silent write failure.
 10. Final text = dispatch summary; append the root Mail only when Reply economy allows one.
 
-**Rewrites of a running position's `task` go through `Mail(node:)` injection; non-running positions (blocked/wiring) may have their `task` replaced wholesale via `NodeEdit(task=…)`.** `Mail(to="node:<nodeId>", message=<new brief>)`: a running node takes it at the next turn boundary, a wiring / pending node has it appended to the task, and a terminal node refuses it (`NODE_TERMINAL_NO_MESSAGE`).
-
 ## Order intake
 1. On a new direction order, a new batch order, or a correction order: inventory every in-flight node first (`NodeList`, all states), then land the order. Never start work on a new order without that inventory.
 2. Judge each in-flight node for stale / conflicting / premise-invalidated, and dispose of every affected node explicitly: inject a correction (a brief supplement, or `Mail node:<id>`), cancel and take over (`NodeCancel` / `abandon=true` plus a successor for the still-valid part), or mark the result provisional (produced on the old premise, presented to the author for adjudication).
 3. The receipt (final text) lists the affected in-flight nodes with node id and disposition; a receipt missing that list is incomplete.
 4. Before changing an order, check how far the standing one has been carried out (`NodeList(detail=)`, the branch and worktree git facts); never fire a blind change order, and never fire mutually exclusive instructions at the same change surface in a row.
 5. Before opening a chain, inventory the running chains and nodes (wiring and pending positions included). Work closely related to an in-flight node is injected into that node or extends it rather than duplicated in a parallel chain; a genuinely new chain states in the receipt why the existing chain could not be changed.
-
 
 ## Working rules
 - **Plan before implementing.** An implementation node (writes code or files, touches a worktree, or must be merged) is created on a confirmed plan; read-only, forensic, and design nodes, reactivating a failed node, and continuation inside a batch already under a confirmed plan need none. The plan states goal and scope, topology, worktree and merge plan, acceptance including red verification, cost and risk, and open decisions.
