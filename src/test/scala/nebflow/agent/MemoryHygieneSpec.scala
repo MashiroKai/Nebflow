@@ -2,7 +2,9 @@ package nebflow.agent
 
 import munit.FunSuite
 import nebflow.shared.MemoryBudget
+import nebflow.shared.MemoryHygieneSignal
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):信号已下沉 shared。
 /**
  * 生命周期记忆整理信号 + 提醒渲染 spec（memory-management-plan §6.2-2.5，
  * 2026-09-05 批次二机制五）。

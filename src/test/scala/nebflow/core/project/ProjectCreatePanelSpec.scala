@@ -8,6 +8,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{
   AgentCommand,
   InteractionAnswered,
+  InteractionHubCommand,
   InteractionKind,
   InteractionReply,
   InteractionRequest,

@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.{PluginMcpManager, PluginRegistry, PluginsConfig}
@@ -15,6 +15,7 @@ import nebflow.shared.{Message, NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器字段窄化
 /**
  * NodeEngine —— 节点执行内核（#28 阶段 0，方案 §2.7 + §3.1）。
  *
@@ -39,7 +40,7 @@ import scala.concurrent.duration.*
 class NodeEngine(
   val store: FlowMapStore,
   private[project] val system: ActorSystem,
-  private[project] val resources: SharedResources,
+  private[project] val resources: AgentRuntimePort,
   val wsSendFn: Json => IO[Unit],
   private[project] val workspace: String,
   val rootSessionId: String,

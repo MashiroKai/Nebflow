@@ -4,11 +4,13 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.actor.{AgentDef, RootAgentIdentity}
+import nebflow.core.AgentLibraryView
 import nebflow.core.presets.{PresetStore, SchemePolicy}
 import nebflow.shared.*
 
 import scala.util.Try
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M3):原地混入 core 窄视图(消费面仅 get,签名镜像,行为保持)
 // Agent definitions loaded from disk (~/.nebflow/agents/<name>/agent.json + system.md).
 //
 // Only Nebula is hardcoded as a fallback — if its disk files are missing or
@@ -17,7 +19,7 @@ import scala.util.Try
 class AgentLibrary(
   agentsDir: os.Path,
   serviceConfig: Option[NebflowServiceConfig] = None
-):
+) extends AgentLibraryView:
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
   // globalMaxTokens was REMOVED here (maxcfg batch 2026-09-16): it read

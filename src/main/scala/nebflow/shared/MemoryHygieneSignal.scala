@@ -1,4 +1,9 @@
-package nebflow.agent
+/* 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1):本信号 object 自 nebflow/agent/
+ * MemoryHygieneSignal.scala 整文件剪出下沉 nebflow.shared(M4:纯 AtomicBoolean 进程内
+ * 一次性信号,零 nebflow 运行时依赖,先例 PeerModels);core/agent 内引用改指本包。
+ * resetForTest 可见性 private[agent]→private[nebflow](shared 不内嵌 agent 包;既有 agent
+ * spec 消费面不变,可见性不外泄 nebflow 命名空间,先例 NeblinkServicePort.httpBackend)。 */
+package nebflow.shared
 
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -31,7 +36,7 @@ object MemoryHygieneSignal:
   def peek(): (Boolean, Boolean) = (restarted.get(), compacted.get())
 
   /** 测试钩子（spec 直接构造信号状态；生产代码禁用）。 */
-  private[agent] def resetForTest(restartedV: Boolean, compactedV: Boolean): Unit =
+  private[nebflow] def resetForTest(restartedV: Boolean, compactedV: Boolean): Unit =
     restarted.set(restartedV)
     compacted.set(compactedV)
 

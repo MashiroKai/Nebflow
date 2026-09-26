@@ -4,10 +4,11 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.node.NodeRunner
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M4/M6):定位器参数窄化,SubAgentTask 已下沉 shared
 /**
  * DelegateTool — Nebula 专属的一次性执行入口（极简内核形态，2026-09-11 恢复批）。
  *
@@ -209,7 +210,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
       )
 
   /** R9 并发校验（U4=D1：等待答复中的内核同样占额度）。 */
-  private def concurrencyCheck(resources: SharedResources, rootSid: String): IO[Either[ToolError, Unit]] =
+  private def concurrencyCheck(resources: AgentRuntimePort, rootSid: String): IO[Either[ToolError, Unit]] =
     resources.agentRegistry.get.map { registry =>
       val inFlight = registry.values
         .filter(r => r.kind == AgentKind.Delegate && (rootSid.isEmpty || r.rootSessionId == rootSid))
@@ -297,7 +298,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
     description: String,
     workRoot: String,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],

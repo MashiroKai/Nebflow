@@ -22,6 +22,7 @@ import nebflow.shared.{
   LlmHandle,
   LlmRequest,
   LlmResponse,
+  MemoryHygieneSignal,
   PathUtil,
   StreamChunk,
   ThinkingConfig
@@ -29,6 +30,7 @@ import nebflow.shared.{
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):信号已下沉 shared。
 /**
  * TaskList e2e（2026-09-06 TaskList 批，stub-LLM 全链路）。
  *

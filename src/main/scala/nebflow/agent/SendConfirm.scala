@@ -3,11 +3,13 @@ package nebflow.agent
 import cats.effect.unsafe.implicits.global
 import cats.effect.{Deferred, IO, IOLocal}
 import nebflow.actor.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.tools.ToolContext
-import nebflow.shared.{AskItem, AskOption, NebflowLogger}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):ctx.sharedResources 字段窄化,retire 形参随迁(仅用 interactionHubRef,零行为差)
 /**
  * 出站代发动作的**用户确认**（#147 接线段，2026-09-12）—— 全仓唯一实现。
  *
@@ -185,7 +187,7 @@ object SendConfirm:
     )
 
   /** 超时路径：撤回卡片（否则用户点得动、点了也没用 = 僵尸卡）+ 上抛可判定错误。 */
-  private def retire(res: SharedResources, requestId: String, wait: FiniteDuration): IO[List[String]] =
+  private def retire(res: AgentRuntimePort, requestId: String, wait: FiniteDuration): IO[List[String]] =
     logger.warn(
       s"confirm timed out after ${wait.toMillis}ms requestId=$requestId — message NOT sent; retiring the card"
     ) *>

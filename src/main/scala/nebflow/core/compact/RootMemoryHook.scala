@@ -217,7 +217,8 @@ object RootMemoryHook extends PreCompactionHook:
       // 生命周期触发（§6.2-2.5）保留：压缩完成后置位整理提醒信号 —— 消费方
       // ContextRefresher.buildMemoryBlock 在压缩后的首个 Nebula 注入里带
       // 「T2/T3 清扫提示」。仅置位一行。
-      IO(nebflow.agent.MemoryHygieneSignal.markCompacted())
+      // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):信号 object 已下沉 nebflow.shared。
+      IO(MemoryHygieneSignal.markCompacted())
 
   /**
    * facts 逐条**先按面余量分流**（P0-c）、再入队：落点 `append` + `- [CATEGORY] text`

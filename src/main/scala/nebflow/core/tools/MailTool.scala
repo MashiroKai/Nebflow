@@ -5,13 +5,13 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-import nebflow.core.{DeviceMailAckPort, DropboxServicePort, NeblinkServicePort}
 import nebflow.shared.{NebflowLogger, *}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
  * Agent-to-agent communication tool.
  *
@@ -1607,7 +1607,7 @@ Message type (optional, default "INFO"):
    * 两档都**排除发信者自身**（硬禁「回落成发信者自身」）。
    */
   private[tools] def resolveRootSession(
-    res: SharedResources,
+    res: AgentRuntimePort,
     senderSessionId: String,
     preferredRootSid: Option[String] = None
   ): IO[Option[String]] =
@@ -1622,7 +1622,7 @@ Message type (optional, default "INFO"):
    * **唯一解析单点**（禁第二份同表达式：两份必然漂移）。零语义改动、零授权面改动。
    */
   private[nebflow] def resolveRoots(
-    res: SharedResources,
+    res: AgentRuntimePort,
     senderSessionId: String,
     preferredRootSid: Option[String]
   ): IO[List[(String, ActorRef[AgentCommand])]] =
@@ -1647,7 +1647,7 @@ Message type (optional, default "INFO"):
     }
 
   private def resolveRootRef(
-    res: SharedResources,
+    res: AgentRuntimePort,
     senderSessionId: String,
     preferredRootSid: Option[String]
   ): IO[Option[(String, ActorRef[AgentCommand])]] =
@@ -2008,7 +2008,7 @@ Message type (optional, default "INFO"):
    */
   private def liveActorOrActivate(
     sessionId: String,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     system: ActorSystem,
     ctx: ToolContext
   ): IO[Option[ActorRef[AgentCommand]]] =
@@ -2044,7 +2044,7 @@ Message type (optional, default "INFO"):
    */
   private[tools] def activateAgent(
     sessionId: String,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     actorSystem: ActorSystem,
     ctx: ToolContext
   ): IO[Option[ActorRef[AgentCommand]]] =
@@ -2141,10 +2141,11 @@ Message type (optional, default "INFO"):
               // session — the Teams panel double-entry ghost. Delegate /
               // SubTask / DAG spawns already name actors by their
               // nodeSessionId; this aligns the Mail path with them.
+              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
+              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
               ref <- actorSystem.spawn(
-                AgentActor(
+                resources.agentActorBehavior(
                   agentDef = agentDef,
-                  resources = resources,
                   wsSend = teamWsSend,
                   depth = 1,
                   parentRef = ctx.agentActorRef,
@@ -2222,7 +2223,7 @@ Message type (optional, default "INFO"):
     sessionId: String,
     agentName: String,
     watched: ActorRef[AgentCommand],
-    resources: SharedResources
+    resources: AgentRuntimePort
   ): Behavior[SystemSignal] =
     Behaviors.setup { wctx =>
       wctx.watch(watched).map { _ =>

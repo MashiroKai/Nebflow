@@ -5,10 +5,11 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.entity.{EntityLoader, TeamDef}
 import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 // ============================================================
 // FlowTreeActor — manages TEAM mounting and session lifecycle
 // ============================================================
@@ -68,7 +69,7 @@ object TeamSessionRegistry:
   def registerActor(
     sid: String,
     ref: ActorRef[AgentCommand],
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     rootSessionId: String
   ): IO[Unit] =
     actorMap.update(_ + (sid -> ref)) *>
@@ -83,7 +84,7 @@ object TeamSessionRegistry:
     actorMap.update(_ - sid)
 
   /** P1: also remove from the unified AgentRegistry. */
-  def unregisterActor(sid: String, resources: SharedResources): IO[Unit] =
+  def unregisterActor(sid: String, resources: AgentRuntimePort): IO[Unit] =
     actorMap.update(_ - sid) *> resources.agentRegistry.update(_ - sid)
 
   def getRunningActor(sid: String): IO[Option[ActorRef[AgentCommand]]] =
@@ -278,7 +279,7 @@ object FlowTreeActor:
     parentAgentRef: ActorRef[AgentCommand],
     wsSend: Option[Json => IO[Unit]],
     sessionId: Option[String],
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     projectRoot: String,
     safetyMode: String,
     gatewayPort: Int = 8080,
@@ -705,10 +706,11 @@ object FlowTreeActor:
               // （`cfg.safetyMode` 仍是建树快照/展示用，非权威；不再作为兜底来源）。
               safetyMode <- cfg.resources.effectiveSafetyMode
                 .map(nebflow.core.SafetyMode.toString)
+              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
+              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
               ref <- cfg.resources.actorSystem.spawn(
-                AgentActor(
+                cfg.resources.agentActorBehavior(
                   agentDef = agentDef,
-                  resources = cfg.resources,
                   wsSend = cfg.wsSend.getOrElse(_ => IO.unit),
                   depth = 1,
                   parentRef = Some(cfg.parentAgentRef),

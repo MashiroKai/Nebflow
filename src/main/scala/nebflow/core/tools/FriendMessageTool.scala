@@ -216,10 +216,10 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     ctx: ToolContext,
     attachments: List[os.Path] = Nil
   ): IO[Either[ToolError, String]] =
-    nebflow.agent.SendConfirm
-      .locally(
-        nebflow.agent.SendConfirm.targetFor(ctx, recipientLabel(friend))
-      )(fs.sendAsAgent(friend.userId, message, attachments))
+    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):挂靶经注册器(agent 实现原地;
+    // locally+targetFor 合并镜像,组合语义逐字等值)。
+    SendConfirmPort
+      .locally(ctx, recipientLabel(friend))(fs.sendAsAgent(friend.userId, message, attachments))
       .map {
         // 回执形态（⑦-D6）：`备注（username）`——让用户/模型能确认「打到的是谁」。
         // 附件腿（4b A-4）：回执里显式带件数，与 `summarize` 的入参摘要同形
@@ -268,10 +268,9 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
     message: String,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    nebflow.agent.SendConfirm
-      .locally(
-        nebflow.agent.SendConfirm.targetFor(ctx, groupLabel(group))
-      )(fs.sendGroupAsAgent(group.groupId, message))
+    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):挂靶经注册器(同好友支合并镜像)。
+    SendConfirmPort
+      .locally(ctx, groupLabel(group))(fs.sendGroupAsAgent(group.groupId, message))
       .map {
         // 回执形态（与好友支同族）：显式带群名，让用户/模型能确认「打到的是哪个群」。
         case Right(_) => Right(s"已发送到群「${groupLabel(group)}」（${LocalTime.now().format(TimeFormat)}）")

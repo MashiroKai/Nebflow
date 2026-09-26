@@ -6,7 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
-import nebflow.actor.{InteractionAnswered, InteractionKind, InteractionReply, InteractionRequest}
+import nebflow.actor.{InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * P2 InteractionHub core tests:

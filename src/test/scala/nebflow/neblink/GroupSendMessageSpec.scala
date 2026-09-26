@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.actor.AgentDef
+import nebflow.actor.{AgentDef, InteractionHubCommand}
 import nebflow.agent.*
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore

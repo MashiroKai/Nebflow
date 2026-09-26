@@ -4,12 +4,12 @@ import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
-import nebflow.core.FileChangeTracker
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
+import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeTracker}
 import nebflow.shared.{AskItem, AskOption, *}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M3/M6):字段类型窄化,agent 定位器类型退出 core
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
@@ -33,14 +33,14 @@ case class ToolContext(
   parentRef: Option[ActorRef[AgentCommand]] = None,
   depth: Int = 0,
   agentDef: Option[AgentDef] = None,
-  agentLibrary: Option[AgentLibrary] = None,
+  agentLibrary: Option[AgentLibraryView] = None,
   fileLockManager: Option[FileLockManager] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
   hookEngine: HookEngine = HookEngine.noop,
   hookContext: HookContext = HookContext(None, "", ""),
   folderId: Option[String] = None,
   mailboxAddress: Option[String] = None,
-  sharedResources: Option[SharedResources] = None,
+  sharedResources: Option[AgentRuntimePort] = None,
   actorSystem: Option[ActorSystem] = None,
   messages: List[Message] = Nil,
   toolCallId: String = "",
@@ -134,7 +134,8 @@ case class ToolContext(
    * 派生 def（不是字段）⇒ 零构造点改动；`agentDef=None`（REST 直调 / harness）
    * fail-closed 为 false。
    */
-  def isRootAgent: Boolean = AgentCore.isRootAgent(agentDef, depth)
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已下沉 actor.RootAgentIdentity(AgentCore 不留转发别名)。
+  def isRootAgent: Boolean = RootAgentIdentity.isRootAgent(agentDef, depth)
 end ToolContext
 
 case class ToolError(message: String)

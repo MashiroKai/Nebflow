@@ -4,10 +4,11 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.shared.Message
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C/M6):spawn 工厂体迁 agent.SharedResources,本文件改委托
 /**
  * NodeRunner 共享执行内核（统一分析方案 A，阶段 0 —— #28）。
  *
@@ -34,7 +35,7 @@ object NodeRunner:
   /** AgentActor spawn 参数（覆盖 Delegate/SubTask/flow 三处差异面）。 */
   final case class SpawnParams(
     agentDef: AgentDef,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     sessionId: String,
     sessionName: String,
     depth: Int,
@@ -120,50 +121,14 @@ object NodeRunner:
     withTracking: Boolean = true
   )
 
-  /** 共享 spawn：readTracker/fileHistory 创建 + AgentActor spawn。 */
+  /**
+   * 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn。
+   * 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):方法体逐字迁
+   * agent.SharedResources.spawnAgentActor(resources 以 this 代入,receiver == p.resources
+   * 由本委托保证);此处一行委托,零行为差。
+   */
   def spawnAgentActor(system: ActorSystem, p: SpawnParams): IO[ActorRef[AgentCommand]] =
-    val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
-    for
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      ref <- system.spawn(
-        AgentActor(
-          agentDef = p.agentDef,
-          resources = p.resources,
-          wsSend = p.wsSend,
-          depth = p.depth,
-          parentRef = p.parentRef,
-          sessionId = Some(p.sessionId),
-          sessionName = Some(p.sessionName),
-          initialMessages = p.initialMessages,
-          readTracker = if p.withTracking then Some(readTracker) else None,
-          fileHistory = if p.withTracking then Some(fileHistory) else None,
-          contextWindow = p.resources.contextWindow,
-          projectRoot = p.projectRoot,
-          safetyMode = p.safetyMode,
-          rootSessionId = p.rootSessionId,
-          isSubTaskWorker = p.isSubTaskWorker,
-          isFlowNode = p.isFlowNode,
-          expectsMail = p.expectsMail,
-          userFacingNode = p.userFacingNode,
-          flowNodeId = p.flowNodeId,
-          isDispatcher = p.isDispatcher,
-          flowNodeRole = p.flowNodeRole,
-          projectName = p.projectName,
-          flowNodeName = p.flowNodeName,
-          flowChainId = p.flowChainId,
-          sandboxEnabled = p.sandboxEnabled,
-          sandboxRoot = p.sandboxRoot,
-          sessionCwd = p.sessionCwd,
-          projectSession = p.projectSession
-        ),
-        actorName
-      )
-    yield ref
-
-    end for
-
-  end spawnAgentActor
+    p.resources.spawnAgentActor(system, p)
 
   /**
    * 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28
@@ -237,7 +202,7 @@ object NodeRunner:
 
   /** 共享 registry 注册（AgentRecord 统一构造；默认值 = AgentRecord 默认）。 */
   def registerAgent(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     id: String,
     ref: ActorRef[AgentCommand],
     kind: AgentKind,
@@ -265,10 +230,11 @@ object NodeRunner:
     )
 
   /**
-   * 共享 BackoffSupervisor adapter spawn（delegate/subtask 共用）。
-   * childSpawnFn 用 spawnAgentActor(withTracking=false) 重建——与旧
-   * childSpawnFn 的 AgentActor 构造逐一对应（recoveredMessages 为空时
-   * 行为与直接传 recovered 等价，两者 Nil 同值）。
+   * 共享 BackoffSupervisor adapter spawn(delegate/subtask 共用)。
+   * 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):方法体逐字迁
+   * agent.SharedResources.spawnSupervisedAdapter(resources 以 this 代入);
+   * 此处一行委托,零行为差。childSpawnFn 用 spawnAgentActor(withTracking=false)
+   * 重建——与旧 childSpawnFn 的 AgentActor 构造逐一对应。
    */
   def spawnSupervisedAdapter(
     system: ActorSystem,
@@ -284,29 +250,19 @@ object NodeRunner:
     extraMetadata: JsonObject = JsonObject.empty,
     wsSend: Option[Json => IO[Unit]] = None
   ): IO[ActorRef[AgentEvent]] =
-    system.spawn(
-      BackoffSupervisor(
-        childRef = childRef,
-        childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
-          spawnAgentActor(
-            sys,
-            params.copy(
-              initialMessages = recoveredMessages,
-              withTracking = false
-            )
-          ),
-        childName = childName,
-        parentRef = params.parentRef,
-        description = description,
-        agentName = agentName,
-        subagentId = subagentId,
-        parentSessionId = parentSessionId,
-        resources = params.resources,
-        initialPrompt = initialPrompt,
-        source = source,
-        extraMetadata = extraMetadata,
-        wsSend = wsSend
-      ),
-      s"$subagentId-adapter"
+    params.resources.spawnSupervisedAdapter(
+      system = system,
+      params = params,
+      childRef = childRef,
+      childName = childName,
+      description = description,
+      agentName = agentName,
+      subagentId = subagentId,
+      parentSessionId = parentSessionId,
+      initialPrompt = initialPrompt,
+      source = source,
+      extraMetadata = extraMetadata,
+      wsSend = wsSend
     )
+  end spawnSupervisedAdapter
 end NodeRunner

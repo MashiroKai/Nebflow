@@ -4,10 +4,11 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.entity.{FlowDagDef, FlowDagExecutor}
 import nebflow.shared.NebflowLogger
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * One-shot actor that runs a Flow DAG and delivers the result to the caller.
  *
@@ -42,7 +43,7 @@ object FlowDagRunner:
     callerSessionId: String = ""
   )
 
-  def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
+  def apply(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): Behavior[RunFlow] =
     Behaviors.receiveMessage:
       case RunFlow(flowDef, taskInput, replyTo, rootSessionId, params, dynamic, callerSessionId) =>
         val instanceId =

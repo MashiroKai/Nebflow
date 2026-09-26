@@ -29,42 +29,9 @@ private[agent] trait AgentCore extends AgentRegistryEmit with AgentStreamPipelin
 
 object AgentCore:
 
-  /**
-   * 「Nebula 本体根会话」身份判据 —— **全仓唯一单点实现**（工具面按角色分化批
-   * B1/B2，2026-09-13 作者裁定 T1=(a)）：
-   *
-   * {{{
-   *   name == "Nebula" && depth == 0
-   * }}}
-   *
-   * 两个分量各自的必要性：
-   *  - `name == "Nebula"`：身份按名判（`AgentLibrary` 以名为唯一键），排除
-   *    standalone 非 Nebula 的 WS 根会话 / team Manager / flow 入口等 depth=0 的
-   *    其余根会话（T1=(a)：它们**不算** root）；
-   *  - `depth == 0`：排除 `NodeDef.agent="Nebula"` 的**节点**会话（depth=1）——
-   *    成员资格面按**名**判（`fixedToolsFor` / `exclusiveToolsFor`）⇒ 该形态照样
-   *    持有 `AskUserQuestion`，只按名判会把它误放行到 root 变体（规格 §3.1 末）。
-   *
-   * **三个消费点，一处实现**：
-   *  ① 定义期 schema 分组（[[buildToolList]]，第一性机制）；
-   *  ② 运行期兜底闸（`ToolContext.isRootAgent` → `AskUserQuestionTool.call`）；
-   *  ③ PopTool 身份闸（同批改为委托本单点）。
-   * ⇒ **禁第二份同表达式**（含在 buildToolList 内联手写一份）；spec
-   * `AskUserDualModeSpec` 有 grep 级静态断言。
-   *
-   * `agentDef = None`（REST 直调 / spec harness / 非 agent 上下文）⇒ **fail-closed**：
-   * 非 Nebula 身份一律 false（与 PopTool 既有取舍同款）。形参取 `Option` 是为了让
-   * 两个求值面（定义期有 `AgentDef`、运行期有 `Option[AgentDef]`）用**同一个**函数，
-   * 而不是各写一份 `exists` 包装。
-   *
-   * **不采用**的同类判据（逐个理由见规格书 §3.1）：`SandboxPolicy.isNebulaRootSession`
-   * （含 `sandboxEnabled` feature flag 分量，非身份分量）、`AgentRecord.kind ==
-   * AgentKind.Root` 与 `rootSessionId == sessionId`（需 registry 查询 = IO + 依赖注册
-   * 时序，且 kind 口径更宽：standalone 根会话也置 kind=Root）。
-   */
-  def isRootAgent(agentDef: Option[AgentDef], depth: Int): Boolean =
-    agentDef.exists(_.name == RootAgentIdentity.Name) && depth == 0
-
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):isRootAgent 下沉 actor.RootAgentIdentity、
+  // markToolProgress 下沉 actor.AgentState、MemoryConsolidatorName 下沉 actor.AgentDef 伴生
+  // (签名零 agent 符号;此处不留转发别名,shim 禁令),本对象内调用点随迁改指。
   /**
    * 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
    *
@@ -96,7 +63,7 @@ object AgentCore:
     isDispatcher: Boolean
   ): ToolFaceIdentity =
     ToolFaceIdentity(
-      isRootAgent = isRootAgent(Some(agentDef), depth),
+      isRootAgent = RootAgentIdentity.isRootAgent(Some(agentDef), depth),
       isDispatcher = isDispatcher,
       nodeRole = flowNodeRole.filter(NodeRoles.isValid).map(NodeRoles.normalize)
     )
@@ -123,26 +90,6 @@ object AgentCore:
     else if NodeReportToolDef.Name == td.name then NodeReportToolDef.roleVariant(td, identity.nodeRole)
     else if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
     else td
-
-  /**
-   * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：**正信号（进展证据）写入语义的
-   * 唯一落点**——把「本采样窗内该会话的在飞工具确有推进」记进
-   * [[nebflow.agent.AgentRecord.lastProgressSignalAt]]。
-   *
-   * 为什么是纯函数 + 独立落点：① 写入语义集中于此，**传感器**（工具活动桥的采样
-   * 循环，`BashTool.startActivityBridge`）只负责在判定出「本窗有进展」时调用它——
-   * 「什么算进展」的口径与被写进哪个字段的口径不分散在两条调用链上；② 纯函数可
-   * 独立单测（给定 rec + now ⇒ 字段推进），不必启 actor。
-   *
-   * **方向性（红线 R6-4 的边界，作者已确认不算放松）**：本字段**只阻止判死、绝不
-   * 促成判死**——消费点唯一 = `TaskStuckWatcher.classify` 的类② 分流（⇒ 本拍零动作、
-   * 只记 `suspect`），绝不进入 `assessDetailed` 的任何判死不等式。
-   *
-   * 与 [[AgentRecord.processActivityMs]] 的区别：后者是「子进程还活着」的旁证且被
-   * 明文禁止被 watcher 读取；本函数写的是语义明确的「有进展」证据通道。
-   */
-  def markToolProgress(rec: AgentRecord, now: Long = System.currentTimeMillis()): AgentRecord =
-    if rec.lastProgressSignalAt >= now then rec else rec.copy(lastProgressSignalAt = now)
 
   /**
    * stuck 自动恢复批 P1：LoopGuard 跨轮指纹的**只读投影**（设计 §3.4 互斥点 2 的
@@ -474,13 +421,6 @@ object AgentCore:
     Set(RootAgentIdentity.Name, "project-dispatcher", "general", "kernel", "memory-consolidator")
 
   /**
-   * 记忆整理 agent 定义名（spec §5 R5 O-A；seed = `src/main/resources/seed/agents/
-   * <name>/`，运行时 `~/.nebflow/agents/<name>/`）。压缩双轨的第二轨按此名解析
-   * def（[[MemoryTrack]]）——名字缺失 ⇒ 轨失败降级（照常装机，队列保留）。
-   */
-  val MemoryConsolidatorName = "memory-consolidator"
-
-  /**
    * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
    * 不得各处写裸数字）。
    *
@@ -699,7 +639,8 @@ object AgentCore:
           // 记忆整理 agent（2026-09-12 记忆改造批）:与内核同集合恰七件——作者第④条
           // 「与 Delegate 内核相同的工具面」字面成立；因为它是收敛名，`base=∅`、
           // `NebulaExclusiveTools` 全剥（交集 ∅）、MCP 面 Nil ⇒ 零配置面。
-          case n if n == AgentCore.MemoryConsolidatorName => AgentCore.KernelFixedTools
+          // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef。
+          case n if n == AgentDef.MemoryConsolidatorName => AgentCore.KernelFixedTools
           case _ => legacyFixedTools(agentDef)
 
     end match

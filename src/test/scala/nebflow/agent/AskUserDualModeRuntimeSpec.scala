@@ -18,6 +18,7 @@ import nebflow.actor.{
   messages,
   status
 }
+import nebflow.actor.InteractionHubCommand
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -26,6 +27,7 @@ import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
   FallbackAttempt,
+  InteractionRequestId,
   LlmHandle,
   LlmRequest,
   LlmResponse,
@@ -38,6 +40,8 @@ import nebflow.shared.{
 import scala.concurrent.duration.*
 
 /**
+ * // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-B/M4):命令 ADT 下沉 actor、requestId 生成器下沉 shared。
+ * // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):生成器已下沉 shared。
  * 工具面按角色分化批（2026-09-13 作者裁定 T1–T9）**真实运行态验收**——
  * 真实 `AgentActor` + 真实 `InteractionHub` + 真实 `AskUserQuestionTool`（脚本化
  * LLM 驱动工具调用，先例 `WaitTimeoutAskUserWiringSpec`）。四条读数：

@@ -2,7 +2,7 @@ package nebflow.agent
 
 import io.circe.Json
 import munit.FunSuite
-import nebflow.actor.{AgentDef, AskMode}
+import nebflow.actor.{AgentDef, AskMode, RootAgentIdentity}
 import nebflow.core.tools.{AskUserQuestionTool, ToolRegistry}
 import nebflow.shared.ToolDefinition
 
@@ -138,7 +138,7 @@ class AskUserDualModeSchemaSpec extends FunSuite:
     val unknown = CoreProbe.face(defNamed("some-future-agent", tools = List(AskUserQuestionTool.Name)), depth = 0)
     assert(modeOf(askOf(unknown)).isEmpty, "depth=0 的非 Nebula 会话拿到了 root 变体（T1=(a) 口径被放宽）")
     // 运行期对偶：agentDef=None（REST 直调 / harness）+ depth=0 ⇒ fail-closed false
-    assert(!AgentCore.isRootAgent(None, 0), "agentDef=None 时判据必须 fail-closed")
+    assert(!RootAgentIdentity.isRootAgent(None, 0), "agentDef=None 时判据必须 fail-closed")
   }
 
   test("分化不改成员资格: 三例的工具面组成与基线一致（只换 schema，不插删元素）") {
@@ -159,10 +159,10 @@ class AskUserDualModeSchemaSpec extends FunSuite:
   test("判据单点: 四个身份组合的真值表（含 depth 分量与 fail-closed）") {
     val nebula = Some(defNamed("Nebula"))
     val general = Some(defNamed("general"))
-    assertEquals(AgentCore.isRootAgent(nebula, 0), true, "Nebula+depth=0 必须是 root")
-    assertEquals(AgentCore.isRootAgent(nebula, 1), false, "Nebula+depth=1（节点会话）不是 root")
-    assertEquals(AgentCore.isRootAgent(general, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
-    assertEquals(AgentCore.isRootAgent(None, 0), false, "agentDef=None fail-closed")
+    assertEquals(RootAgentIdentity.isRootAgent(nebula, 0), true, "Nebula+depth=0 必须是 root")
+    assertEquals(RootAgentIdentity.isRootAgent(nebula, 1), false, "Nebula+depth=1（节点会话）不是 root")
+    assertEquals(RootAgentIdentity.isRootAgent(general, 0), false, "非 Nebula 的 depth=0 根会话不是 root（T1=(a)）")
+    assertEquals(RootAgentIdentity.isRootAgent(None, 0), false, "agentDef=None fail-closed")
     // ToolContext 派生 def 委托同一真值（运行期求值面）
     val ctxRoot = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = nebula, depth = 0)
     val ctxNode = nebflow.core.tools.ToolContext(projectRoot = "", agentDef = nebula, depth = 1)
@@ -197,17 +197,18 @@ class AskUserDualModeSchemaSpec extends FunSuite:
       .filter(f => predicate.findFirstIn(stripComments(os.read(f))).isDefined)
       .map(_.last)
       .sorted
+    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已迁 actor/RootAgentIdentity.scala,断言目标随迁。
     assertEquals(
       holders,
-      List("AgentCore.scala"),
+      List("RootAgentIdentity.scala"),
       "谓词 `name == RootAgentIdentity.Name && depth == 0` 出现了第二份实现（规格 §3.1 判红纪律：一处实现、三个消费点）"
     )
 
     val byName = files.map(f => f.last -> os.read(f)).toMap
     val delegating = List(
       "AgentCore.scala" -> "isRootAgent(Some(agentDef), depth)", // 定义期选变体
-      "types.scala" -> "AgentCore.isRootAgent(agentDef, depth)", // 运行期求值面
-      "PopTool.scala" -> "AgentCore.isRootAgent(ctx.agentDef, ctx.depth)", // Pop 身份闸
+      "types.scala" -> "RootAgentIdentity.isRootAgent(agentDef, depth)", // 运行期求值面
+      "PopTool.scala" -> "RootAgentIdentity.isRootAgent(ctx.agentDef, ctx.depth)", // Pop 身份闸
       "AskUserQuestionTool.scala" -> "ctx.isRootAgent" // 非阻塞兜底闸
     )
     for (file, needle) <- delegating do

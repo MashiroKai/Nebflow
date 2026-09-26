@@ -6,8 +6,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.{InteractionKind, InteractionReply, InteractionRequest}
-import nebflow.agent.{AgentLibrary, InteractionHub, InteractionHubCommand, SharedResources, SpecResources}
+import nebflow.actor.{InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
+import nebflow.agent.{AgentLibrary, InteractionHub, SharedResources, SpecResources}
 
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}

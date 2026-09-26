@@ -87,7 +87,8 @@ object MemoryTrack:
   private val logger = NebflowLogger.forName("nebflow.memory.track")
 
   /** 记忆整理 agent 定义名（单点 = AgentCore 常量）。 */
-  val AgentName: String = AgentCore.MemoryConsolidatorName
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef。
+  val AgentName: String = AgentDef.MemoryConsolidatorName
 
   /** 软超时（超时预警，不降级）。 */
   def softTimeoutMs: Long =

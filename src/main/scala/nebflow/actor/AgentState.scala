@@ -663,6 +663,29 @@ case class AgentState(
 
 object AgentState:
 
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):本纯函数自 agent.AgentCore 下沉
+  // actor(签名零 agent 符号,AgentRecord 本就在 actor;AgentCore 不留转发别名,shim 禁令),
+  // 全仓改指,实现与注释逐字迁移。
+  /**
+   * stuck 自动恢复批 P1（2026-09-11 作者裁定 R-3）：**正信号（进展证据）写入语义的
+   * 唯一落点**——把「本采样窗内该会话的在飞工具确有推进」记进
+   * [[nebflow.agent.AgentRecord.lastProgressSignalAt]]。
+   *
+   * 为什么是纯函数 + 独立落点：① 写入语义集中于此，**传感器**（工具活动桥的采样
+   * 循环，`BashTool.startActivityBridge`）只负责在判定出「本窗有进展」时调用它——
+   * 「什么算进展」的口径与被写进哪个字段的口径不分散在两条调用链上；② 纯函数可
+   * 独立单测（给定 rec + now ⇒ 字段推进），不必启 actor。
+   *
+   * **方向性（红线 R6-4 的边界，作者已确认不算放松）**：本字段**只阻止判死、绝不
+   * 促成判死**——消费点唯一 = `TaskStuckWatcher.classify` 的类② 分流（⇒ 本拍零动作、
+   * 只记 `suspect`），绝不进入 `assessDetailed` 的任何判死不等式。
+   *
+   * 与 [[AgentRecord.processActivityMs]] 的区别：后者是「子进程还活着」的旁证且被
+   * 明文禁止被 watcher 读取；本函数写的是语义明确的「有进展」证据通道。
+   */
+  def markToolProgress(rec: AgentRecord, now: Long = System.currentTimeMillis()): AgentRecord =
+    if rec.lastProgressSignalAt >= now then rec else rec.copy(lastProgressSignalAt = now)
+
   def apply(
     messages: List[Message] = Nil,
     status: AgentStatus = AgentStatus.Idle,

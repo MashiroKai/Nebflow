@@ -180,6 +180,15 @@ end NeblinkClientPort
 trait ProviderHealthPort:
   def getStates: IO[Map[String, HealthState]]
   def getSearchHealth: IO[SearchApiHealth]
+
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-D):搜索健康记录两成员签名镜像扩面
+  // (llm.ProviderHealthMonitor 既有具体实现,零行为差)——agent 侧经窄视图
+  // AgentRuntimePort.healthMonitor 消费时,搜索通道记录面可达。
+  /** 搜索 API 调用成功记帐(Tier 2a P2-6,搜索健康通道)。 */
+  def recordSearchSuccess(): IO[Unit]
+
+  /** 搜索 API 调用失败记帐(Tier 2a P2-6,搜索健康通道)。 */
+  def recordSearchFailure(reason: String): IO[Unit]
 end ProviderHealthPort
 
 /**

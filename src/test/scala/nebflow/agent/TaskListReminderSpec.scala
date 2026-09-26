@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.core.tools.TaskListTool
-import nebflow.shared.PathUtil
+import nebflow.shared.{MemoryHygieneSignal, PathUtil}
 
 import java.nio.file.Files
 

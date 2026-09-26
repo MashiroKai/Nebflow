@@ -5,12 +5,13 @@ import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.Defaults
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * AgentControl — Nebula 专用后台 agent 管控（spec v1.1，2026-08-19）。
  *
@@ -296,7 +297,7 @@ When to use:
    * cancel/restart 留痕）。
    */
   private def withGuardedRecord(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     ctx: ToolContext,
     sessionId: String,
     action: String,
@@ -438,7 +439,7 @@ When to use:
    * 子代），表头附 parent 列辅助辨认层级。
    */
   private def scopeFilterFor(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     ctx: ToolContext
   ): IO[(Map[String, AgentRecord], Option[Set[String]])] =
     val callerSid = ctx.sessionId.getOrElse("")
@@ -449,7 +450,7 @@ When to use:
         else managerAnchors(callerSid)
     yield (registry, pred)
 
-  private def doList(resources: SharedResources, ctx: ToolContext): IO[Either[ToolError, String]] =
+  private def doList(resources: AgentRuntimePort, ctx: ToolContext): IO[Either[ToolError, String]] =
     for
       (registry, anchorsOpt) <- scopeFilterFor(resources, ctx)
       inScope = (sid: String) =>
@@ -583,7 +584,11 @@ When to use:
              |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
-  private def doStatus(resources: SharedResources, ctx: ToolContext, sessionId: String): IO[Either[ToolError, String]] =
+  private def doStatus(
+    resources: AgentRuntimePort,
+    ctx: ToolContext,
+    sessionId: String
+  ): IO[Either[ToolError, String]] =
     resources.agentRegistry.get.flatMap { registry =>
       // Block 1（§B4）：status 同样受 scope 限制——root 全局，Manager 仅子树
       val callerSid = ctx.sessionId.getOrElse("")
@@ -607,7 +612,7 @@ When to use:
     }
 
   private def doStatusBody(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     registry: Map[String, AgentRecord],
     sessionId: String,
     callerIsRoot: Boolean = false
@@ -707,7 +712,7 @@ When to use:
    * （既有测试/无 WS 语境零改动）。
    */
   def doCancel(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     rec: AgentRecord,
     reason: String,
     by: String = "the user panel",
@@ -808,7 +813,7 @@ When to use:
     s"Team member '$sessionId' did not stop within 5s — restart aborted (no respawn to avoid double-activation)."
 
   def doRestart(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     ctx: ToolContext,
     rec: AgentRecord,
     reason: String

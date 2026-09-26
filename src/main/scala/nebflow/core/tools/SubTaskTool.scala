@@ -4,11 +4,12 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
 import nebflow.shared.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M4/M6):定位器参数窄化,SubAgentTask 已下沉 shared
 /**
  * SubTaskTool — team-agent task delegation (Delegate split, 方案 A).
  *
@@ -244,7 +245,7 @@ A task with 2+ independent parts — different file domains, or different nature
     attachments: List[ContentBlock],
     description: String,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],

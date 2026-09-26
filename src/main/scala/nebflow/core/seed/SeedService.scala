@@ -121,7 +121,8 @@ object SeedService:
   private val PluginLedgerVersion = 1
 
   /** 记忆队列的消费者 agent 名（单点引用 `AgentCore` 常量，不复制字面量）。 */
-  private val MemoryConsumptionAgent: String = nebflow.agent.AgentCore.MemoryConsolidatorName
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):常量已下沉 actor.AgentDef(AgentCore 不留转发别名)。
+  private val MemoryConsumptionAgent: String = nebflow.actor.AgentDef.MemoryConsolidatorName
 
   // ── 插件存在台账（#105 P-1「用户主动删除」标记）──────────
   /**

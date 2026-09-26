@@ -2,14 +2,16 @@ package nebflow.agent
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
+import nebflow.core.node.NodeRunner
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.*
 import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
@@ -17,6 +19,8 @@ import nebflow.llm.*
 import nebflow.neblink.{AttachUploadRegistry, FriendService, NeblinkService}
 import nebflow.shared.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A/R-C):本类原地混入 core 窄视图 AgentRuntimePort
+// (AgentRegistryPort 经其继承;签名镜像,行为保持)。extends 子句形状与改前一致。
 /**
  * Shared resources available to all actors in the hierarchy.
  * Created once in GatewayMain and passed down through actor constructors.
@@ -167,7 +171,7 @@ case class SharedResources(
    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）。
    */
   sessionCompactThreshold: Ref[IO, Map[String, Double]] = Ref.unsafe[IO, Map[String, Double]](Map.empty)
-) extends AgentRegistryPort,
+) extends AgentRuntimePort,
       SubAgentTaskPort:
 
   /**
@@ -208,4 +212,195 @@ case class SharedResources(
   /** hot-restart 五域判定 F2 的读数(原 HotRestart 直读;映射为 core 瘦视图)。 */
   def findRunningTasks: IO[List[RunningSubAgentTask]] =
     subAgentTaskStore.findRunningTasks.map(_.map(t => RunningSubAgentTask(t.taskId, t.parentSessionId, t.source)))
+
+  // ── 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):spawn 工厂三镜像。方法体 = core.node
+  //    .NodeRunner 的 spawnAgentActor/spawnSupervisedAdapter 原体逐字迁此(resources 以
+  //    this 代入——NodeRunner 委托式保证 receiver == p.resources,零行为差);
+  //    agentActorBehavior = AgentActor.apply 全参镜像去 resources(this 代入)。──────────
+
+  /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
+  def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
+    val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
+    for
+      readTracker <- ReadTracker.create
+      fileHistory <- FileHistory.create()
+      ref <- system.spawn(
+        AgentActor(
+          agentDef = p.agentDef,
+          resources = this,
+          wsSend = p.wsSend,
+          depth = p.depth,
+          parentRef = p.parentRef,
+          sessionId = Some(p.sessionId),
+          sessionName = Some(p.sessionName),
+          initialMessages = p.initialMessages,
+          readTracker = if p.withTracking then Some(readTracker) else None,
+          fileHistory = if p.withTracking then Some(fileHistory) else None,
+          contextWindow = contextWindow,
+          projectRoot = p.projectRoot,
+          safetyMode = p.safetyMode,
+          rootSessionId = p.rootSessionId,
+          isSubTaskWorker = p.isSubTaskWorker,
+          isFlowNode = p.isFlowNode,
+          expectsMail = p.expectsMail,
+          userFacingNode = p.userFacingNode,
+          flowNodeId = p.flowNodeId,
+          isDispatcher = p.isDispatcher,
+          flowNodeRole = p.flowNodeRole,
+          projectName = p.projectName,
+          flowNodeName = p.flowNodeName,
+          flowChainId = p.flowChainId,
+          sandboxEnabled = p.sandboxEnabled,
+          sandboxRoot = p.sandboxRoot,
+          sessionCwd = p.sessionCwd,
+          projectSession = p.projectSession
+        ),
+        actorName
+      )
+    yield ref
+
+    end for
+
+  end spawnAgentActor
+
+  /** 共享 BackoffSupervisor adapter spawn(NodeRunner 原体;delegate/subtask 共用)。 */
+  def spawnSupervisedAdapter(
+    system: ActorSystem,
+    params: NodeRunner.SpawnParams,
+    childRef: ActorRef[AgentCommand],
+    childName: String,
+    description: String,
+    agentName: String,
+    subagentId: String,
+    parentSessionId: String,
+    initialPrompt: String,
+    source: String,
+    extraMetadata: JsonObject = JsonObject.empty,
+    wsSend: Option[Json => IO[Unit]] = None
+  ): IO[ActorRef[AgentEvent]] =
+    system.spawn(
+      BackoffSupervisor(
+        childRef = childRef,
+        childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
+          spawnAgentActor(
+            sys,
+            params.copy(
+              initialMessages = recoveredMessages,
+              withTracking = false
+            )
+          ),
+        childName = childName,
+        parentRef = params.parentRef,
+        description = description,
+        agentName = agentName,
+        subagentId = subagentId,
+        parentSessionId = parentSessionId,
+        resources = this,
+        initialPrompt = initialPrompt,
+        source = source,
+        extraMetadata = extraMetadata,
+        wsSend = wsSend
+      ),
+      s"$subagentId-adapter"
+    )
+  end spawnSupervisedAdapter
+
+  /** `AgentActor.apply` 的工厂镜像(R-C):全参转发,resources 以 this 代入。 */
+  def agentActorBehavior(
+    agentDef: AgentDef,
+    wsSend: io.circe.Json => IO[Unit],
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]] = None,
+    sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
+    initialMessages: List[Message] = Nil,
+    readTracker: Option[ReadTracker] = None,
+    fileHistory: Option[FileHistory] = None,
+    contextWindow: Int = Defaults.ContextWindow,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
+    agentsMd: Option[String] = None,
+    folderId: Option[String] = None,
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None,
+    expectsMail: Boolean = false,
+    rootSessionId: String = "",
+    isSubTaskWorker: Boolean = false,
+    freezeExempt: Boolean = false,
+    isFlowNode: Boolean = false,
+    userFacingNode: Boolean = false,
+    flowNodeId: Option[String] = None,
+    isDispatcher: Boolean = false,
+    flowNodeRole: Option[String] = None,
+    projectName: Option[String] = None,
+    flowNodeName: Option[String] = None,
+    flowChainId: Option[String] = None,
+    sandboxEnabled: Boolean = false,
+    sandboxRoot: Option[String] = None,
+    sessionCwd: Option[String] = None,
+    projectSession: Boolean = false,
+    compactThresholdRatio: Option[Double] = None
+  ): Behavior[AgentCommand] =
+    AgentActor(
+      agentDef = agentDef,
+      resources = this,
+      wsSend = wsSend,
+      depth = depth,
+      parentRef = parentRef,
+      sessionId = sessionId,
+      sessionName = sessionName,
+      initialMessages = initialMessages,
+      readTracker = readTracker,
+      fileHistory = fileHistory,
+      contextWindow = contextWindow,
+      projectRoot = projectRoot,
+      rulesMd = rulesMd,
+      agentsMd = agentsMd,
+      folderId = folderId,
+      safetyMode = safetyMode,
+      gitBranch = gitBranch,
+      expectsMail = expectsMail,
+      rootSessionId = rootSessionId,
+      isSubTaskWorker = isSubTaskWorker,
+      freezeExempt = freezeExempt,
+      isFlowNode = isFlowNode,
+      userFacingNode = userFacingNode,
+      flowNodeId = flowNodeId,
+      isDispatcher = isDispatcher,
+      flowNodeRole = flowNodeRole,
+      projectName = projectName,
+      flowNodeName = flowNodeName,
+      flowChainId = flowChainId,
+      sandboxEnabled = sandboxEnabled,
+      sandboxRoot = sandboxRoot,
+      sessionCwd = sessionCwd,
+      projectSession = projectSession,
+      compactThresholdRatio = compactThresholdRatio
+    )
+  end agentActorBehavior
+
+  // ── 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):三个静态面注册器的安装行(构造即
+  //    注册,幂等;生产 boot 与测试装配均经本构造——GatewayMain / SpecResources;各注册器
+  //    未注册兜底语义见 core/AgentRuntimePort.scala)。─────────────────────────────
+  DelegateBudgetPort.install(
+    new DelegateBudgetPort.Face:
+      def resume(sessionId: String): IO[Unit] = DelegateBudget.resume(sessionId)
+  )
+
+  SendConfirmPort.install(
+    new SendConfirmPort.Face:
+      def locally[A](ctx: ToolContext, recipientLabel: String)(io: IO[A]): IO[A] =
+        SendConfirm.locally(SendConfirm.targetFor(ctx, recipientLabel))(io)
+  )
+
+  AskUserAnswerPort.install(
+    new AskUserAnswerPort.Face:
+      def ref(
+        target: ActorRef[AgentCommand],
+        items: List[AskItem],
+        requestId: String,
+        ctx: ToolContext
+      ): ActorRef[List[String]] =
+        AskUserAnswerBridge.ref(target, items, requestId, ctx)
+  )
 end SharedResources

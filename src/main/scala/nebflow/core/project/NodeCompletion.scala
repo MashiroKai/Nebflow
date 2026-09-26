@@ -3,9 +3,9 @@ package nebflow.core.project
 
 import cats.effect.*
 import cats.syntax.all.*
-import nebflow.actor.status
-import nebflow.agent.*
+import nebflow.actor.{InteractionHubCommand, status}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-B=B1):命令 ADT 已下沉 actor
 private[project] trait NodeCompletion:
   self: NodeEngine =>
 

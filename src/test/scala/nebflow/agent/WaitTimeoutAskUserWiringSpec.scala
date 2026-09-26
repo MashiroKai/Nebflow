@@ -14,6 +14,7 @@ import nebflow.actor.{
   AgentRecord,
   AgentStatus,
   InteractionAnswered,
+  InteractionHubCommand,
   InteractionKind,
   InteractionReply,
   InteractionRequest,

@@ -14,10 +14,16 @@
 //   同样受此约束(长出 agent 类型签名会被 check-scala-layers 门禁打回)。
 //   actorSystem/projectRoot/contextWindow 等底层类型字段不经本组定位器,由
 //   调用点以原类型直接传参(ActorSystem 本就在底层包 actor)。
+// 2026-09-27 裁定 dwfq-5c7a31ea-1:AgentRecord 已随②移入 actor,本约束前提失效,见该裁定。
+//
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A=A1):AgentRegistryPort 扩成员逐字镜像
+// `agentRegistry: Ref[IO, Map[String, AgentRecord]]`(actor 合法向下依赖;上方 D 步约束
+// 注释为历史记录一字不动,前提失效说明见裁定);core 消费点的 .get/.update/.modify 零改动。
 
 package nebflow.core
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
+import nebflow.actor.AgentRecord
 
 /**
  * 统一注册表(`SharedResources.agentRegistry`)的窄能力投影(D 步)。core 当前只
@@ -29,6 +35,12 @@ trait AgentRegistryPort:
 
   /** status == Processing 的会话 id 清单(hot-restart 五域判定 F3 的唯一读数)。 */
   def processingSessionIds: IO[List[String]]
+
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A=A1):镜像 SharedResources.agentRegistry
+  // 的原样成员(AgentRecord 已在 actor 包,core→actor 合法;行上方法体/字段由 agent 侧
+  // SharedResources 既有字段实现,零行为差)。
+  /** 统一注册表原样镜像(sessionId → AgentRecord;AgentRecord ∈ actor,见裁定)。 */
+  def agentRegistry: Ref[IO, Map[String, AgentRecord]]
 end AgentRegistryPort
 
 /** 在飞 sub-agent 任务的最小视图(D 步 core 侧自建瘦类型,零 agent 符号)。 */

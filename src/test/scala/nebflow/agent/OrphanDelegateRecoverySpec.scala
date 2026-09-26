@@ -14,7 +14,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{AgentControlTool, FileLockManager, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{MessageRole, PathUtil, ThinkingConfig}
+import nebflow.shared.{MessageRole, PathUtil, ThinkingConfig, SubAgentTask}
 
 import scala.concurrent.duration.*
 

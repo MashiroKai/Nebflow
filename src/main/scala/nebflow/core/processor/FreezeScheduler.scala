@@ -3,11 +3,12 @@ package nebflow.core.processor
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.{AgentCommand, AgentStatus}
-import nebflow.agent.SharedResources
+import nebflow.core.AgentRuntimePort
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * 冻结恢复扫描器（freeze-schedule spec v1.1 ⑤，TaskStuckWatcher 的姊妹模式）。
  *
@@ -29,7 +30,7 @@ object FreezeScheduler:
   private val logger = NebflowLogger.forName("nebflow.core.processor.freeze")
 
   /** 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动。 */
-  def run(resources: SharedResources, interval: FiniteDuration): IO[Unit] =
+  def run(resources: AgentRuntimePort, interval: FiniteDuration): IO[Unit] =
     def loop: IO[Unit] =
       scan(resources).handleErrorWith(e =>
         logger.warn(s"FreezeScheduler scan failed (will retry next cycle): ${e.getMessage}")
@@ -41,7 +42,7 @@ object FreezeScheduler:
    * escalation.escalateAt 已超时的发 AgentCommand.Escalate（frozen behavior 内
    * level+1 / 通知上一级 / 用户终态）。独立成函数便于复用与测试。
    */
-  def scan(resources: SharedResources): IO[Unit] =
+  def scan(resources: AgentRuntimePort): IO[Unit] =
     resources.agentRegistry.get.flatMap { registry =>
       val now = System.currentTimeMillis()
       registry.values.toList

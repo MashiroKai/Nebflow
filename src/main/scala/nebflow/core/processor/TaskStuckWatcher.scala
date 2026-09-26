@@ -4,12 +4,12 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
-import nebflow.core.{EventSink, LlmRuntimePort}
+import nebflow.core.{AgentRuntimePort, EventSink, LlmRuntimePort}
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.{FiniteDuration, *}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * P0 阶段 3（2026-08-18，设计 §4.4）：卡死识别与恢复扫描器。
  *
@@ -513,7 +513,7 @@ object TaskStuckWatcher:
    * 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动
    * （.start），错误被 handleErrorWith 吞掉防止 fiber 崩溃——扫描器必须自愈。
    */
-  def run(resources: SharedResources, wsHub: EventSink, interval: FiniteDuration, thresholdMs: Long): IO[Unit] =
+  def run(resources: AgentRuntimePort, wsHub: EventSink, interval: FiniteDuration, thresholdMs: Long): IO[Unit] =
     // NOTE: must use `>>` (by-name) for the recursion, NOT `*>` — `*>` evaluates
     // its right operand strictly, so `*> loop` would recurse infinitely while
     // BUILDING the IO description (StackOverflowError at startup, caught by
@@ -684,7 +684,7 @@ object TaskStuckWatcher:
 
   /** 单轮扫描：识别卡死 agent 并执行恢复动作。独立成函数便于单元测试。 */
   def scan(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsHub: EventSink,
     thresholdMs: Long,
     stopCounts: cats.effect.Ref[IO, Map[String, Int]] = cats.effect.Ref.unsafe(Map.empty),
@@ -862,7 +862,7 @@ object TaskStuckWatcher:
    * 未命中 ⇒ 交 [[recoverUngated]]（既有全部分支，**零改动**）。
    */
   private def recover(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
@@ -977,7 +977,7 @@ object TaskStuckWatcher:
 
   /** 判据序未命中闸门时的**既有全部分支**（P1/P2 行为逐字保留）。 */
   private def recoverUngated(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
@@ -1693,7 +1693,7 @@ object TaskStuckWatcher:
   // ── R8 方向②：L3 有效性自检（T+N 行为面复查）────────────────────────────
   /** 复查到期登记（到期的取出，未到期的留待下一轮）；再逐条裁决。 */
   private def verifyL3Outcomes(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     pendingL3: cats.effect.Ref[IO, List[PendingL3]],
     now: Long,
     l3VerifyDelayMs: Long
@@ -1724,7 +1724,7 @@ object TaskStuckWatcher:
    * 不重试、不改判、不 kill；**一期不回流分发器**（`NotifyReason` 无 stuck 类值，
    * 与 R7 taxonomy 一起做——任务书 ③ 口径）。
    */
-  private def checkL3Outcome(resources: SharedResources, p: PendingL3, l3VerifyDelayMs: Long): IO[Unit] =
+  private def checkL3Outcome(resources: AgentRuntimePort, p: PendingL3, l3VerifyDelayMs: Long): IO[Unit] =
     // P2（硬依赖 2）：定位键从 `rootSessionId`（多项目挂载下歧义）改为「会话属于哪个
     // store」（[[runtimeOwning]]）——复查的对象必须是**真正持有该节点**的那个引擎，
     // 否则复查自己也会落进「命中的是错引擎 ⇒ 节点查无 ⇒ 误判不足」的同一陷阱。
@@ -1879,7 +1879,7 @@ object TaskStuckWatcher:
    * [[reportExhausted]]/日志收口（不再有「静默 None」出口）。
    */
   private def runRecoveryLeg(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
@@ -1922,7 +1922,7 @@ object TaskStuckWatcher:
   end runRecoveryLeg
 
   private def runRecoveryLegInner(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsHub: EventSink,
     rec: AgentRecord,
     assessment: StuckAssessment,
@@ -2060,7 +2060,7 @@ object TaskStuckWatcher:
    * 有界等待「会话已从 registry 摘除」= 引擎 fiber 的清理段已完成（取代固定 sleep 5s）。
    * 轮询步长/上限见 [[nebflow.shared.Defaults.StuckSuspendPollMs]] / `StuckSuspendWaitMs`。
    */
-  private def awaitSessionDrained(resources: SharedResources, sessionId: String, timeoutMs: Long): IO[Boolean] =
+  private def awaitSessionDrained(resources: AgentRuntimePort, sessionId: String, timeoutMs: Long): IO[Boolean] =
     val poll = math.max(1L, nebflow.shared.Defaults.StuckSuspendPollMs)
     val deadline = System.currentTimeMillis() + timeoutMs
     def go: IO[Boolean] =

@@ -1,4 +1,7 @@
-package nebflow.agent
+/* 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-G/M4):本生成器 object 自 nebflow/agent/
+ * InteractionRequestId.scala 整文件剪出下沉 nebflow.shared(纯 UUID 生成器,零 nebflow 运行时
+ * 依赖,先例 PeerModels);core/agent 内引用改指本包。 */
+package nebflow.shared
 
 import java.util.UUID
 

@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.{Fiber, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.actor.AgentCommand
+import nebflow.actor.{AgentCommand, AgentState}
 import nebflow.shared.{Defaults, NebflowLogger}
 
 import scala.concurrent.TimeoutException
@@ -694,7 +694,8 @@ Git safety:
         res.agentRegistry.modify { m =>
           m.get(sid) match
             case Some(rec) =>
-              (m.updated(sid, nebflow.agent.AgentCore.markToolProgress(rec.copy(processActivityMs = now), now)), ())
+              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):纯函数已下沉 actor.AgentState(AgentCore 不留转发别名)。
+              (m.updated(sid, AgentState.markToolProgress(rec.copy(processActivityMs = now), now)), ())
             case None => (m, ())
         }
       case _ => IO.unit

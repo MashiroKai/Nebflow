@@ -534,9 +534,9 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
   test("AgentCore.markToolProgress: 只推进、不回退（写入语义单点）") {
     val ref = null.asInstanceOf[ActorRef[AgentCommand]]
     val base = AgentRecord("s", ref, AgentKind.Flow, "r", lastProgressSignalAt = 500L)
-    val advanced = nebflow.agent.AgentCore.markToolProgress(base, 900L)
-    val regressed = nebflow.agent.AgentCore.markToolProgress(base, 100L)
-    val untouched = nebflow.agent.AgentCore.markToolProgress(base, 500L)
+    val advanced = nebflow.actor.AgentState.markToolProgress(base, 900L)
+    val regressed = nebflow.actor.AgentState.markToolProgress(base, 100L)
+    val untouched = nebflow.actor.AgentState.markToolProgress(base, 500L)
     assertEquals(advanced.lastProgressSignalAt, 900L)
     assertEquals(regressed.lastProgressSignalAt, 500L, "时间戳不得回退（幂等/单调）")
     assertEquals(untouched.lastProgressSignalAt, 500L)

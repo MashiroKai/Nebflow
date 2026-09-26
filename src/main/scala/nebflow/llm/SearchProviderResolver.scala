@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.ProviderHealthPort
 import nebflow.shared.{NebflowLogger, *}
 import sttp.client4.*
 
@@ -394,10 +395,13 @@ object SearchProviderResolver:
    * Tier 2a call + health recording (P2-6: the search API health channel
    * lives in ProviderHealthMonitor, independent of model-provider health).
    */
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-D):health 参数窄化 Option[ProviderHealthMonitor]→
+  // Option[ProviderHealthPort](core 端口,recordSearchSuccess/recordSearchFailure 已镜像扩面;
+  // 方法体仅经端口面调用,零行为差)——agent 侧经窄视图 AgentRuntimePort.healthMonitor 传参同型。
   private def executeStandaloneFor(
     query: String,
     cfg: StandaloneSearchConfig,
-    health: Option[ProviderHealthMonitor]
+    health: Option[ProviderHealthPort]
   ): IO[Either[String, String]] =
     IO.blocking(executeStandaloneSearch(query, cfg)).flatTap {
       case Right(_) => health.traverse_(_.recordSearchSuccess())
@@ -419,7 +423,8 @@ object SearchProviderResolver:
     agentId: String,
     agentModel: Option[AgentModelConfig],
     standalone: Option[StandaloneSearchConfig] = None,
-    health: Option[ProviderHealthMonitor] = None
+    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-D):窄化见 executeStandaloneFor 注释。
+    health: Option[ProviderHealthPort] = None
   ): IO[Option[String]] =
     val cfg = standalone.orElse(loadStandaloneSearchConfig())
     cfg match

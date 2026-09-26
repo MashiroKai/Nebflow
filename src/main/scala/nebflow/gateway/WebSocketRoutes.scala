@@ -290,13 +290,13 @@ class WebSocketRoutes(
    */
   private def registerRootInteraction(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
     sharedResources.interactionHubRef.get.flatMap {
-      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
+      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
       case None => IO.unit
     }
 
   private def unregisterRootInteraction(sessionId: String): IO[Unit] =
     sharedResources.interactionHubRef.get.flatMap {
-      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.UnregisterRoot(sessionId)).void
+      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.UnregisterRoot(sessionId)).void
       case None => IO.unit
     }
 
@@ -316,7 +316,7 @@ class WebSocketRoutes(
       case Some(hub) =>
         resolveRootSessionId(sessionId).flatMap { rootSid =>
           hub
-            .?[List[io.circe.Json]](reply => nebflow.agent.InteractionHubCommand.ListPendingAsks(rootSid, reply))
+            .?[List[io.circe.Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks(rootSid, reply))
             .flatMap(_.traverse_(frame => wsSend(frame)))
             .handleErrorWith { e =>
               logger.warn(s"Pending-ask replay failed for session $sessionId: ${e.getMessage}")
@@ -348,7 +348,7 @@ class WebSocketRoutes(
         )
       case Some(hub) =>
         hub
-          .?[List[io.circe.Json]](reply => nebflow.agent.InteractionHubCommand.ListAllPendingAsks(reply))
+          .?[List[io.circe.Json]](reply => nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply))
           .flatMap(asks =>
             wsSend(
               io.circe.Json.obj(
@@ -503,7 +503,7 @@ class WebSocketRoutes(
         case Some(hub) =>
           for
             rootSid <- resolveRootSessionId(sessionId)
-            _ <- (hub ! nebflow.agent.InteractionHubCommand.Answered(
+            _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
               nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
             )).void
           yield ()

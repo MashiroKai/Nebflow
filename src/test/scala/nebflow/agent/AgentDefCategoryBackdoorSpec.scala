@@ -33,7 +33,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     "general" -> AgentCore.GeneralFixedTools,
     "kernel" -> AgentCore.KernelFixedTools,
     // 2026-09-12 记忆改造批：记忆整理 agent（压缩双轨第二轨）——与内核同集合恰七件
-    AgentCore.MemoryConsolidatorName -> AgentCore.KernelFixedTools
+    AgentDef.MemoryConsolidatorName -> AgentCore.KernelFixedTools
   )
 
   /**

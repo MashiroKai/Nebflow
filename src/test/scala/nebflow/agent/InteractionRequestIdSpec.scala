@@ -1,7 +1,9 @@
 package nebflow.agent
 
 import munit.CatsEffectSuite
+import nebflow.shared.InteractionRequestId
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M4):生成器已下沉 shared。
 /**
  * 多 AskUser 并发批（#250 第⑤项，2026-09-13 作者裁定「6 项全补」）：
  * requestId 熵加强的**正负控**。

@@ -3,9 +3,11 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.actor.RootAgentIdentity
 
 import java.nio.file.{Files, Path, Paths}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已下沉 actor
 /**
  * Pop tool — opens a file or URL in the Canvas panel as a new tab.
  *
@@ -363,7 +365,8 @@ Example: {"filePath": "https://example.com"}"""
    * `name=="Nebula" && depth==0`（可判红：`AskUserDualModeSpec` 的 grep 级静态断言）。
    */
   private def isRootAgentSession(ctx: ToolContext): Boolean =
-    nebflow.agent.AgentCore.isRootAgent(ctx.agentDef, ctx.depth)
+    // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):单点已下沉 actor.RootAgentIdentity(AgentCore 不留转发别名)。
+    RootAgentIdentity.isRootAgent(ctx.agentDef, ctx.depth)
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 身份闸最前——先于任何副作用（filePath 解析 / 文件读 / HTML 图片内联 /

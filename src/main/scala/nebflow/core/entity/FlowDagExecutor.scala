@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.given
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.node.NodeRunner
 import nebflow.core.tools.FlowReportStore
@@ -13,6 +13,7 @@ import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * Executes a Flow DAG deterministically.
  *
@@ -138,7 +139,7 @@ object FlowDagExecutor:
   def execute(
     flow: FlowDagDef,
     taskInput: String,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
     instanceId: String,
@@ -1128,7 +1129,7 @@ object FlowDagExecutor:
     agentName: String,
     agentDef: AgentDef,
     inputText: String,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     actorSystem: ActorSystem,
     wsSend: Option[Json => IO[Unit]],
     flowName: String,

@@ -5,13 +5,14 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
+import nebflow.core.AgentRuntimePort
 import nebflow.core.entity.EntityLoader
 import nebflow.core.node.NodeRunner
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化
 /**
  * ProjectActor —— 每项目一个的常驻 actor（#28 阶段 0，方案 §1.1）。
  *
@@ -37,7 +38,7 @@ case class ProjectRuntime(
   store: FlowMapStore,
   engine: NodeEngine,
   system: ActorSystem,
-  resources: SharedResources,
+  resources: AgentRuntimePort,
   actorRef: Option[ActorRef[ProjectActor.ProjectCommand]] = None,
   /**
    * 项目任务板（TaskBoard 批 2，规格 §1f）：mount 时 TaskBoardStore.open 同位
@@ -91,7 +92,7 @@ object ProjectRuntimeRegistry:
     projects: List[ProjectDef],
     rootSessionId: String,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsSend: Option[Json => IO[Unit]] = None,
     skipStaleReap: Boolean = false
   ): IO[Int] =
@@ -113,7 +114,7 @@ object ProjectRuntimeRegistry:
   def mount(
     project: ProjectDef,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     wsSend: Option[Json => IO[Unit]],
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
@@ -386,7 +387,7 @@ object ProjectActor:
     project: ProjectDef,
     engine: NodeEngine,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     rootSessionId: String,
     ttlDisplayMs: Long = NodeEngine.TtlDisplayMs,
     ttlCheckIntervalSec: Int = 30,

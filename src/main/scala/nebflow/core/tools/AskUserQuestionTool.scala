@@ -4,12 +4,12 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.agent.*
 import nebflow.core.*
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):静态面经注册器倒置
 object AskUserQuestionTool extends Tool:
   /** 工具名（`AgentCore.schemaVariantFor` 与本工具共用此一处字面量）。 */
   val Name = "AskUserQuestion"
@@ -435,7 +435,8 @@ Behavior:
               case Right(_) =>
                 // #250 第⑤项：requestId 熵强化（单点生成器，作用域 asknb-）
                 val requestId = InteractionRequestId.forAskUserNonBlocking()
-                val bridge = AskUserAnswerBridge.ref(agentRef, items, requestId, ctx)
+                // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):桥构造经注册器(agent 实现原地)。
+                val bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
                 (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), AskMode.NonBlocking))
                   .as(Right(nonBlockingAck(items, requestId)))
             }
@@ -460,7 +461,8 @@ Behavior:
         // R11 第 4 层 / U1=C-a + U8=(ii)：ask **答复单点**发恢复信号——内核的
         // 3600s wall-clock 预算从此刻继续累计（等待期不计入）。非 Delegate 会话
         // 无预算通道 ⇒ 无害 no-op。发起侧配对点 = AgentActor 的 AskUser 分支。
-        nebflow.agent.DelegateBudget.resume(sid) *>
+        // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):恢复信号经注册器(agent 实现原地)。
+        DelegateBudgetPort.resume(sid) *>
           res.agentRegistry
             .modify { m =>
               m.get(sid) match

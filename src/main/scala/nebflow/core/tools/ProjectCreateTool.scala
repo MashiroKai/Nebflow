@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.project.*
-import nebflow.shared.{AskItem, PathUtil}
+import nebflow.shared.{AskItem, InteractionRequestId, PathUtil}
 
 import scala.util.Try
 
@@ -424,7 +424,7 @@ object ProjectCreateTool extends Tool:
                 s"（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。"
             val item = AskItem(question, List.empty, dirPicker = true, freeInput = false)
             // #250 第⑤项：requestId 熵强化（单点生成器，作用域 panel-）
-            val requestId = nebflow.agent.InteractionRequestId.forDirPanel()
+            val requestId = InteractionRequestId.forDirPanel()
             for
               answers <- agentRef
                 .?(
