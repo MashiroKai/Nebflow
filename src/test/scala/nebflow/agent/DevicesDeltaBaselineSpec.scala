@@ -1,21 +1,19 @@
 package nebflow.agent
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import fs2.Stream
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorRef, ActorSystem}
-import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
-import nebflow.core.SystemReminders
+import nebflow.actor.*
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, RemoteExecutor}
-import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore, SystemReminders}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
-import fs2.Stream
+import nebflow.neblink.NeblinkService
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 

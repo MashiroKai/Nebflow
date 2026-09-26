@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.agent.SharedResources
 import nebflow.core.tools.{MailTool, RelayExecAudit}
-import nebflow.shared.{NebflowLogger, Retry}
+import nebflow.shared.{DeviceMail, NebflowLogger, Retry}
 
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*

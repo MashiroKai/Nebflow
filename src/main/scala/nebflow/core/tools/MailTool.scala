@@ -9,8 +9,7 @@ import nebflow.agent.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-import nebflow.dropbox.AttachContract
-import nebflow.neblink.*
+import nebflow.core.{DeviceMailAckPort, DropboxServicePort, NeblinkServicePort}
 import nebflow.shared.{NebflowLogger, *}
 
 /**
@@ -961,7 +960,7 @@ Message type (optional, default "INFO"):
                       case Right(RelayMailResult(serverId, delivered)) =>
                         // ④ 回执：登记 pending ack（eventId = "message-<id>"），由隧道 ack
                         // 帧关联；超时腿在 DeviceMailAck 内（WARN + 审计行，禁静默）。
-                        DeviceMailAck.await(peer.deviceId, serverId).flatMap { eventId =>
+                        DeviceMailAckPort.await(peer.deviceId, serverId).flatMap { eventId =>
                           // B 批（2026-09-16 作者裁定「路径 B」一步到位）：上面这行 `await`
                           // 调用与入参**逐字不变**，但其返回值（eventId）**不再进结果文本**
                           // —— 「Awaiting ack」直接删（eventId 对账手柄随之消失，作者知悉
@@ -1236,8 +1235,8 @@ Message type (optional, default "INFO"):
    *   - `Right(Nil)` = 本次无附件；`Right(notes)` = 完成回显。
    */
   private def pushDeviceAttachments(
-    ns: nebflow.neblink.NeblinkService,
-    dbxOpt: Option[nebflow.dropbox.DropboxService],
+    ns: NeblinkServicePort,
+    dbxOpt: Option[DropboxServicePort[?]],
     peer: PeerInfo,
     imagePaths: List[String],
     attachmentPaths: List[String],
@@ -1253,7 +1252,7 @@ Message type (optional, default "INFO"):
           val paths = allPaths.map(p => os.Path(PathUtil.expandTilde(p.trim), os.pwd))
           auditDeviceAttachmentsSend(ns, peer, paths, ctx) *>
             dbx
-              .sendLocalFiles(peer.deviceId, paths, None, origin = nebflow.dropbox.DropboxMessage.OriginAgent)
+              .sendLocalFiles(peer.deviceId, paths, None, origin = DropboxMessage.OriginAgent)
               .map {
                 case Left(err) =>
                   Left(s"The attachments were NOT transferred: ${err.render}.")
@@ -1291,7 +1290,7 @@ Message type (optional, default "INFO"):
    * （本单点现在同时承载图片件与通用件；`via=dropbox-chunk` 与字段形状零变更）。
    */
   private def auditDeviceAttachmentsSend(
-    ns: nebflow.neblink.NeblinkService,
+    ns: NeblinkServicePort,
     peer: PeerInfo,
     paths: List[os.Path],
     ctx: ToolContext
@@ -1319,7 +1318,7 @@ Message type (optional, default "INFO"):
    * （`message` + 附件附注）——审计行是与载荷对账的读数，附注已进载荷 ⇒ 旧读数会低报。
    */
   private def auditDeviceMailSend(
-    ns: NeblinkService,
+    ns: NeblinkServicePort,
     targetDeviceId: String,
     bodyText: String,
     ctx: ToolContext

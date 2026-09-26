@@ -5,7 +5,6 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.hotrestart.{HotRestart, RestartMode}
-import nebflow.neblink.RemoteUpdateAction
 import nebflow.shared.NebflowLogger
 
 import java.util.concurrent.atomic.AtomicReference

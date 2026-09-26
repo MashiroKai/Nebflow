@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import munit.FunSuite
+import nebflow.shared.AttachContract
 import org.http4s.{Header, Headers}
 import org.typelevel.ci.CIString
 

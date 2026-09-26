@@ -1,6 +1,8 @@
 package nebflow.neblink
 
+import nebflow.core.FriendRosterPort
 import nebflow.core.tools.ToolError
+import nebflow.shared.{FriendSummary, GroupSummary}
 
 /**
  * 好友名册共用纯函数（好友消息改造批 ⑩，方案
@@ -26,7 +28,12 @@ import nebflow.core.tools.ToolError
  * #145 退役（2026-09-14），其设备面字面量迁入 `FriendMessageTool`（正交信任域，
  * 好友面单点不变），允许清单由 `FriendRosterSinglePointSpec` 同批修订。
  */
-object FriendRoster:
+object FriendRoster extends FriendRosterPort.Face:
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R10):core 侧(ListFriendsTool/FriendMessageTool)的
+  // 解析/候选文案用面改经 core.FriendRosterPort 注册器调用本对象;注册点 = 对象初始化
+  // (生产 boot 与直接引用本对象的测试共用的必经最早一点,先例 = llm/interface.scala 的
+  // LlmRuntimePort.set;另有 NeblinkWiring 统一 boot 段落幂等再注册,见 R12 接线)。
+  FriendRosterPort.install(this)
 
   /**
    * 单条名册 / 候选行：`<displayName> (<username>)` + 可选备注 + 可选拉黑标记。

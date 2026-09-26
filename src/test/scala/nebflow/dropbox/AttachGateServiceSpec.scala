@@ -1,14 +1,14 @@
 package nebflow.dropbox
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.PathUtil
+import nebflow.neblink.NeblinkService
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 

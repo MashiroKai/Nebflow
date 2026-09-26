@@ -2,7 +2,7 @@ package nebflow.dropbox
 
 import io.circe.parser.decode
 import nebflow.core.sandbox.SandboxPolicy
-import nebflow.shared.PathUtil
+import nebflow.shared.{AttachContract, PathUtil}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.*

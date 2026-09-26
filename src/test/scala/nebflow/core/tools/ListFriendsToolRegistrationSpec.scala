@@ -1,22 +1,13 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.actor.AgentDef
 import nebflow.agent.{AgentCore, SharedResources}
-import nebflow.neblink.{
-  AgentMessagingConfig,
-  ConversationSummary,
-  FriendListResponse,
-  FriendRoster,
-  FriendService,
-  FriendSummary,
-  MessageSummary,
-  NeblinkClient,
-  NeblinkServerConfig
-}
+import nebflow.neblink.*
+import nebflow.shared.{FriendListResponse, FriendSummary}
 
 /**
  * ListFriends 注册 / 授能 / 调用面契约（好友消息改造批 ⑩，方案

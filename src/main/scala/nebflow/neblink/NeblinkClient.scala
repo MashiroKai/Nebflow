@@ -6,7 +6,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NeblinkClientPort
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{DeviceMail, NebflowLogger, RelayMailResult}
 
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.net.{NetworkInterface, URI}
@@ -95,6 +95,7 @@ end NeblinkCodecs
 
 import NeblinkCodecs.{given, *}
 import FriendCodecs.{given, *}
+import nebflow.shared.{FriendListResponse, GroupSummary, PeerInfo}
 
 /**
  * Client for the NebLink Server.
@@ -151,23 +152,9 @@ case class AttachmentFetch(
   sha256Header: Option[String] = None
 )
 
-/**
- * 设备邮件中继的响应读数（B 批，2026-09-16 作者裁定「路径 B」一步到位）。
- *
- *   - `id` = 服务端事件 id（`message-` 前缀已剥；响应未带可判读 id 即**空串** ——
- *     **不伪造 id**，原语义逐字不变）；
- *   - `delivered` = 服务端 `delivered` 键的读数：`true` = 载荷已推进对端的**活体隧道**
- *     （`push_background` 被接受 ⇒ **≠ 对端已注入**）；`false` = 此刻无该设备隧道 ⇒
- *     行已持久、随下一轮隧道注册补齐，**不是错误**（服务端口径逐字见 `neblink-server`
- *     `agentmail.rs:227-259` / `routes.rs:1893-1906`）。
- *
- * **键缺席降级口径（首次选定，加性）**：旧服务端 / 契约外响应不带 `delivered` ⇒ 按
- * `false`（**保守支**）——只在服务端**显式**断言 `true` 时才声称一次活体推送，缺席
- * 一律按「服务端已接受、尚未确认活体推送」处理（**禁冒认**服务端未断言的推送）。
- * 既有语义面（`error` 判读 / id 三候选宽容读取 / `Left` 失败语义 / 请求面 / ack 面）
- * 全部**零变更**。
- */
-final case class RelayMailResult(id: String, delivered: Boolean)
+// 严格DAG第⑥步第二批裁定(2026-09-27,R8):RelayMailResult 整块自本处剪出下沉
+// nebflow.shared(承载件 shared/PeerModels.scala);本包内与 core 侧引用改经
+// import nebflow.shared.RelayMailResult(逐字)。
 
 class NeblinkClient(
   config: NeblinkServerConfig,
@@ -974,7 +961,7 @@ class NeblinkClient(
     url: String,
     body: String,
     token: Option[String],
-    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+    timeout: scala.concurrent.duration.FiniteDuration = nebflow.shared.DefaultRelayTimeout
   ): IO[Either[String, (Int, String)]] =
     IO.blocking {
       try
@@ -1240,7 +1227,7 @@ class NeblinkClient(
     targetDeviceId: String,
     action: String,
     params: JsonObject,
-    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+    timeout: scala.concurrent.duration.FiniteDuration = nebflow.shared.DefaultRelayTimeout
   ): IO[Either[String, String]] =
     val body = Json
       .obj(
@@ -1288,7 +1275,7 @@ class NeblinkClient(
     token: Option[String],
     timeout: scala.concurrent.duration.FiniteDuration
   ): IO[Either[String, String]] =
-    if timeout == NeblinkClient.DefaultRelayTimeout then sendRequest(method, url, body, token)
+    if timeout == nebflow.shared.DefaultRelayTimeout then sendRequest(method, url, body, token)
     else sendRequestTimed(method, url, body, token, timeout)
 
   /**
@@ -1369,7 +1356,7 @@ class NeblinkClient(
   def relayAgentMail(
     targetDeviceId: String,
     payload: Json,
-    timeout: scala.concurrent.duration.FiniteDuration = NeblinkClient.DefaultRelayTimeout
+    timeout: scala.concurrent.duration.FiniteDuration = nebflow.shared.DefaultRelayTimeout
   ): IO[Either[String, RelayMailResult]] =
     withSession(token =>
       dispatchRequest(
@@ -1559,7 +1546,7 @@ class NeblinkClient(
     body: String,
     token: Option[String]
   ): IO[Either[String, String]] =
-    sendRequestTimed(method, url, body, token, NeblinkClient.DefaultRelayTimeout)
+    sendRequestTimed(method, url, body, token, nebflow.shared.DefaultRelayTimeout)
 
   /**
    * 真实 HTTP 传输实现，**超时按调用传**。默认值 = 10 s（与既有行为一致）。
@@ -1607,15 +1594,10 @@ end NeblinkClient
 
 object NeblinkClient:
 
-  /**
-   * Default per-call relay timeout — **保留既有 10 s 语义**作为默认值。
-   *
-   * 附件腿批（2026-09-12）把 `sendRequest` / `relayExec` 的超时改为**按调用可传**：
-   * 分块腿传长超时而**不动全局默认**——`sendRequest` 是全部 relay 调用的共用路径，
-   * 全局放宽会连带改掉工具执行 / 好友消息的既有语义（设计件 §3.5）。
-   */
-  val DefaultRelayTimeout: scala.concurrent.duration.FiniteDuration =
-    scala.concurrent.duration.FiniteDuration(10, scala.concurrent.duration.SECONDS)
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R7):DefaultRelayTimeout 自本处剪出下沉
+  // nebflow.shared(承载件 shared/PeerModels.scala,顶层 val);NeblinkClient 内部与
+  // core.NeblinkClientPort 的 relayExec/relayAgentMail 成员默认参统一引用该 shared
+  // 常量(签名逐字一致因两侧同改指,行为等值)。
 
   /**
    * E2 单块上传超时（工程值，非冻结口径）：一块 ≤ `AttachContract.ChunkSize`

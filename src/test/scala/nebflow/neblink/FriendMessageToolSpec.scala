@@ -1,20 +1,12 @@
 package nebflow.neblink
 
-import nebflow.core.tools.{FriendMessageTool, ToolContext, ToolError, ToolRegistry}
-
 import cats.effect.{IO, Ref}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.neblink.{
-  AgentMessagingConfig,
-  FriendRoster,
-  FriendService,
-  FriendSummary,
-  NeblinkClient,
-  NeblinkEndpoint,
-  NeblinkServerConfig
-}
+import nebflow.core.tools.*
+import nebflow.neblink.*
+import nebflow.shared.FriendSummary
 
 /**
  * SendMessage tool 单测（#290 域 A）。

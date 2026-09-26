@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import nebflow.shared.{AttachContract, FileTransfer}
 
 import java.security.MessageDigest
 

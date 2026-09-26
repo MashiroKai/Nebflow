@@ -8,7 +8,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.tools.{RemoteExecutor, ToolError}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets

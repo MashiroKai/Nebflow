@@ -8,7 +8,7 @@ import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
 import nebflow.neblink.*
-import nebflow.shared.{NebflowLogger, NebflowServiceConfig}
+import nebflow.shared.{NebflowLogger, NebflowServiceConfig, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -167,7 +167,7 @@ final class RestApiCtx(
     // `nebflow.neblink._`) also defines a `Protocol`, so the bare name is
     // ambiguous at this call site.
     req.headers
-      .get(CIString(nebflow.neblink.Protocol.DeviceHeader))
+      .get(CIString(nebflow.shared.DeviceHeader))
       .map(_.head.value)
       .map(_.trim)
       .filter(_.nonEmpty)

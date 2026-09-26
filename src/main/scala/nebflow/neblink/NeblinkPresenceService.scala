@@ -6,7 +6,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.core.PresenceServicePort
+import nebflow.shared.{NebflowLogger, PeerInfo}
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
@@ -229,7 +230,8 @@ final class NeblinkPresenceService(
   serverPort: Int,
   dialBudget: DialBudget = DialBudget.Default,
   eviction: EvictionPolicy = EvictionPolicy.Default
-)(dispatcher: Dispatcher[IO]):
+)(dispatcher: Dispatcher[IO])
+    extends PresenceServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isConnected,RemoteExecutor probe budget 读数)
   private val logger = NebflowLogger.forName("nebflow.neblink.presence")
 
   /**
@@ -1176,7 +1178,7 @@ final class NeblinkPresenceService(
    * for the write side and for the test face, so the two cannot drift.
    */
   private[neblink] def presenceHandshakeHeaders(id: DeviceIdentity): List[(String, String)] =
-    List(Protocol.DeviceHeader -> id.deviceId)
+    List(nebflow.shared.DeviceHeader -> id.deviceId)
 
   private def enc(s: String): String =
     try java.net.URLEncoder.encode(s, "UTF-8")

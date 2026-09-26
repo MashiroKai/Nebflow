@@ -1,17 +1,16 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Ref
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
-import io.circe.{Json, JsonObject}
+import cats.effect.{IO, Ref}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
 import nebflow.llm.ModelCandidate
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.{PathUtil, ThinkingConfig}
+import nebflow.neblink.NeblinkService
+import nebflow.shared.{PathUtil, PeerInfo, ThinkingConfig}
 
 /**
  * MailTool 设备腿 `images`：**禁静默忽略**（同根族第三件，2026-09-16 A1 批）。

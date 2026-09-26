@@ -1,8 +1,9 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import munit.FunSuite
+import nebflow.shared.FriendListResponse
 
 /**
  * 好友域装配缝的结构哨兵（2026-09-11 boot 快照修复，A 案）。

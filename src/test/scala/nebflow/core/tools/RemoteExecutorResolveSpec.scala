@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.neblink.PeerInfo
+import nebflow.shared.PeerInfo
 
 /**
  * xdev 批（2026-09-15）③ 歧义即拒绝（作者裁定 A）：`resolvePeer` 分层匹配 +

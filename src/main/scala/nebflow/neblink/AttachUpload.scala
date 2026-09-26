@@ -121,8 +121,8 @@ object AttachUpload:
     displayName: String,
     hooks: Hooks = Hooks.none
   ): IO[Either[Failure, Unit]] =
-    val plan = nebflow.dropbox.AttachContract.plan(size)
-    def loop(rest: List[nebflow.dropbox.AttachContract.ChunkPlan]): IO[Either[Failure, Unit]] =
+    val plan = nebflow.shared.AttachContract.plan(size)
+    def loop(rest: List[nebflow.shared.AttachContract.ChunkPlan]): IO[Either[Failure, Unit]] =
       rest match
         case Nil => IO.pure(Right(()))
         case chunk :: tail =>

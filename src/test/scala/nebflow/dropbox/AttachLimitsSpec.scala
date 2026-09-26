@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import munit.CatsEffectSuite
+import nebflow.shared.AttachContract
 
 /**
  * 附件闸位（作者数三条）逐条判定 —— 硬判据 ①。

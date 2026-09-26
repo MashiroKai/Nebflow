@@ -2,15 +2,14 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.effect.std.Dispatcher
-import io.circe.Json
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.agent.AgentCore
 import nebflow.actor.AgentDef
-import nebflow.dropbox.{AttachContract, DropboxService}
+import nebflow.agent.AgentCore
+import nebflow.dropbox.DropboxService
 import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.PathUtil
+import nebflow.neblink.NeblinkService
+import nebflow.shared.{AttachContract, PathUtil, PeerInfo}
 
 import scala.concurrent.duration.*
 

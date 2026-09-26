@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.neblink.*
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -165,7 +165,7 @@ private[gateway] object NeblinkRoutes:
             // within the online window (NeblinkService.onlineFreshnessMs), not
             // merely exist in the local list.
             nowMs = System.currentTimeMillis()
-            peerOnline = (p: nebflow.neblink.PeerInfo) => NeblinkService.isPeerOnline(p, nowMs, cfg.syncIntervalSec)
+            peerOnline = (p: nebflow.shared.PeerInfo) => NeblinkService.isPeerOnline(p, nowMs, cfg.syncIntervalSec)
             // Account identity hints (switch-account, 2026-09-10): decoded
             // READ-ONLY from the ALREADY-persisted id_token (no extra I/O —
             // `cred` is loaded right below anyway). Same trust rationale as
@@ -846,7 +846,7 @@ private[gateway] object NeblinkRoutes:
             req.as[Json].flatMap { body =>
               val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
               logger.info(s"[neblink] Remote update requested (beta=$beta), running install script...") *>
-                nebflow.neblink.RemoteUpdateAction.runInstallScript(beta).flatMap {
+                nebflow.core.hotupdate.RemoteUpdateAction.runInstallScript(beta).flatMap {
                   case Right(msg) =>
                     logger.info("[neblink] Install succeeded, spawning restart helper and shutting down...") *>
                       IO.blocking(nebflow.core.RestartHelper.spawnRestart()) *>
@@ -1124,7 +1124,7 @@ private[gateway] object NeblinkRoutes:
 
   private def relayUpdateFallback(
     ns: nebflow.neblink.NeblinkService,
-    peer: nebflow.neblink.PeerInfo,
+    peer: nebflow.shared.PeerInfo,
     beta: Boolean,
     p2pError: String
   )(using ctx: RestApiCtx): IO[Either[String, String]] =
@@ -1214,9 +1214,9 @@ private[gateway] object NeblinkRoutes:
     nebflow.dropbox.DropboxChunkHeaderParser.parse(req.headers)
 
   /** 分块接收失败的结构化回执（会话不存在 ⇒ 404，其余 ⇒ 500）。 */
-  private def chunkErrorResponse(err: nebflow.dropbox.AttachContract.AttachError): Response[IO] =
+  private def chunkErrorResponse(err: nebflow.shared.AttachContract.AttachError): Response[IO] =
     val status =
-      if err.code == nebflow.dropbox.AttachContract.Codes.SessionNotFound then Status.NotFound
+      if err.code == nebflow.shared.AttachContract.Codes.SessionNotFound then Status.NotFound
       else Status.InternalServerError
     Response[IO](status).withEntity(err.toJson)
 

@@ -4,12 +4,12 @@ import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.shared.{PathUtil, ToolCall, ToolExecResult}
 import nebflow.core.tools.{RemoteExecutor, ToolContext}
-import nebflow.neblink.{NeblinkService, PeerInfo}
+import nebflow.neblink.NeblinkService
+import nebflow.shared.*
 
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets

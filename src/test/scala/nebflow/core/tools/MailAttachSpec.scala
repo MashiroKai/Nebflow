@@ -2,22 +2,19 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
-import io.circe.{Json, JsonObject}
+import fs2.Stream
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.actor.ActorSystem
-import nebflow.actor.{AgentDef, messages}
+import nebflow.actor.{ActorSystem, AgentDef, messages}
 import nebflow.agent.*
-import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.dropbox.AttachContract
-import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.neblink.DeviceMail
-import nebflow.shared.{ContentBlock, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
-import fs2.Stream
+import nebflow.shared.*
+
 import scala.concurrent.duration.*
 
 /**

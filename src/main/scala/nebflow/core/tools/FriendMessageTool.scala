@@ -4,9 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.dropbox.{AttachContract, DropboxService}
-import nebflow.neblink.*
-import nebflow.shared.PathUtil
+import nebflow.core.*
+import nebflow.shared.*
 
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -73,10 +72,10 @@ object FriendMessageTool extends Tool:
   private val TimeFormat = DateTimeFormatter.ofPattern("HH:mm:ss")
   private val MaxMessageLength = 4000
 
-  @volatile private var service: Option[FriendService] = None
+  @volatile private var service: Option[FriendServicePort] = None
 
   /** Startup wiring (GatewayMain). No-op safe to call once. */
-  def initialize(fs: FriendService): Unit = service = Some(fs)
+  def initialize(fs: FriendServicePort): Unit = service = Some(fs)
 
   val name = "SendMessage"
 
@@ -142,7 +141,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * 批 ⑦（同日）：`FriendRoster.resolve` 内部前置了 L0 备注层（⑦-D5）。
    */
   def resolveFriend(query: String, friends: List[FriendSummary]): Either[ToolError, FriendSummary] =
-    FriendRoster.resolve(query, friends)
+    FriendRosterPort.resolve(query, friends)
 
   /**
    * L4 邮箱层（α 方案，⑦-D4/⑦-D11，本批唯一邮箱路径）。
@@ -166,7 +165,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    *    （上游对空白输入会消耗一个配额单位，`src/friends.rs:279-283`）。
    */
   private def lookupFriendBySearch(
-    fs: FriendService,
+    fs: FriendServicePort,
     query: String,
     friends: List[FriendSummary]
   ): IO[Option[FriendSummary]] =
@@ -211,7 +210,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * spec harness）⇒ `production` 读到「无靶」显式 fail-closed（绝不静默直发）。
    */
   private def sendTo(
-    fs: FriendService,
+    fs: FriendServicePort,
     friend: FriendSummary,
     message: String,
     ctx: ToolContext,
@@ -243,7 +242,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * 可直接单测（对齐 `resolveFriend` 的既有测法）。
    */
   def resolveGroupTarget(query: String, groups: List[GroupSummary]): Either[ToolError, GroupSummary] =
-    FriendRoster.resolveGroup(query, groups)
+    FriendRosterPort.resolveGroup(query, groups)
 
   /**
    * 确认卡/回执里对「打到哪个群」的称呼（**唯一实现点**，对齐 `recipientLabel` 的
@@ -264,7 +263,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * ctx 无交互面 ⇒ 显式 fail-closed（绝不静默直发）——与好友支逐字同款。
    */
   private def sendToGroup(
-    fs: FriendService,
+    fs: FriendServicePort,
     group: GroupSummary,
     message: String,
     ctx: ToolContext
@@ -381,15 +380,15 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * 分块 + 校验 + 续传单点）。带附件时落一条审计行（U-2）。
    */
   private def sendDevice(
-    dbx: DropboxService,
-    ns: nebflow.neblink.NeblinkService,
+    dbx: DropboxServicePort[?],
+    ns: NeblinkServicePort,
     peer: PeerInfo,
     message: String,
     attachments: List[os.Path],
     targetDir: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    dbx.sendText(peer.deviceId, message, nebflow.dropbox.DropboxMessage.OriginAgent).flatMap { textDelivered =>
+    dbx.sendText(peer.deviceId, message, nebflow.shared.DropboxMessage.OriginAgent).flatMap { textDelivered =>
       if !textDelivered then
         IO.pure(
           Left(
@@ -404,7 +403,7 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
         // U-2：一条审计行（每次逻辑下发一次，首次网络尝试前；失败绝不影响发送）。
         auditAttachSend(ns, peer, attachments, ctx) *>
           dbx
-            .sendLocalFiles(peer.deviceId, attachments, targetDir, origin = nebflow.dropbox.DropboxMessage.OriginAgent)
+            .sendLocalFiles(peer.deviceId, attachments, targetDir, origin = nebflow.shared.DropboxMessage.OriginAgent)
             .map {
               case Left(err) =>
                 Left(ToolError(s"Text was delivered, but the attachments were rejected: ${err.render}"))
@@ -432,13 +431,13 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    * 未回带 `proto >= 2`）⇒ 该请求**未上 wire**，落点 = 对端缺省目录。此结果必须显式
    * 回显给调用方 —— 禁「发了但对方忽略」式的静默不达（`AttachContract` 的四条禁吞口径）。
    */
-  private def targetDirEcho(outcomes: List[DropboxService.LocalFileOutcome]): String =
+  private def targetDirEcho(outcomes: List[LocalFileOutcome]): String =
     if outcomes.exists(_.targetDirDeferred) then " targetDir 请求未上 wire（对端未回带 proto >= 2）—— 对端不支持指定目录，已落对端 Downloads。"
     else ""
 
   /** U-2 审计行（`RelayExecAudit` 同族字段；零阻塞、失败只 WARN）。 */
   private def auditAttachSend(
-    ns: nebflow.neblink.NeblinkService,
+    ns: NeblinkServicePort,
     peer: PeerInfo,
     attachments: List[os.Path],
     ctx: ToolContext

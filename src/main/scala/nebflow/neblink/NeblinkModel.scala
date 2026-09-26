@@ -6,7 +6,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
-import nebflow.shared.{Branding, NebflowLogger, PathUtil}
+import nebflow.shared.*
 
 import java.util.UUID
 
@@ -77,7 +77,7 @@ case class DeviceIdentity(
   userDescription: String = "",
   avatarUrl: Option[String] = None,
   githubLogin: Option[String] = None
-)
+) extends DeviceIdentityView // 严格DAG第⑥步第二批裁定(2026-09-27,R2):原地混入 core 窄视图(字段即成员,签名零变更)
 
 object DeviceIdentity:
   private val logger = NebflowLogger.forName("nebflow.neblink.device")
@@ -473,64 +473,7 @@ object DeviceDiscoveryInfo:
   given Encoder[DeviceDiscoveryInfo] = deriveEncoder
   given Decoder[DeviceDiscoveryInfo] = deriveDecoder
 
-// ===== Peer Info =====
-
-case class PeerInfo(
-  deviceId: String,
-  deviceName: String,
-  platform: String,
-  address: String,
-  deviceSecret: String = "",
-  capabilities: Map[String, String] = Map.empty,
-  userDescription: String = "",
-  lastSeen: Long = System.currentTimeMillis(),
-  /**
-   * C1 (2026-09-11 P2P 直连修复批): **every** endpoint the peer declared to the
-   * NebLink Server, preference-ordered (see [[EndpointPreference]]), `address`
-   * being `endpoints.head`.
-   *
-   * WHY: the namelist drops down to `endpoints.head` on the receiving side
-   * (`NeblinkClient.toNeblinkPeers`) — in the 2026-09-11 incident that head was
-   * an unreachable LAN address while a working Tailscale endpoint sat at index
-   * 1, so P2P could never come up. `address` alone is a single point of failure;
-   * this field is the candidate list the dial / execute sides walk.
-   *
-   * Empty (`Nil`) for peers built by paths that carry no server namelist
-   * (inbound presence route, test fixtures) — those fall back to `address`,
-   * i.e. pre-C1 behaviour. Defaulted ⇒ wire/JSON decoding stays backward
-   * compatible (`NeblinkModelSpec` "endpoints 缺省" 回归).
-   */
-  endpoints: List[String] = Nil
-)
-
-object PeerInfo:
-  given Encoder[PeerInfo] = deriveEncoder
-
-  given Decoder[PeerInfo] = Decoder.instance { c =>
-    for
-      deviceId <- c.downField("deviceId").as[String]
-      deviceName <- c.downField("deviceName").as[String]
-      platform <- c.downField("platform").as[String]
-      address <- c.downField("address").as[String]
-      deviceSecret <- c.downField("deviceSecret").as[Option[String]].map(_.getOrElse(""))
-      capabilities <- c.downField("capabilities").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
-      userDescription <- c.downField("userDescription").as[Option[String]].map(_.getOrElse(""))
-      lastSeen <- c.downField("lastSeen").as[Option[Long]].map(_.getOrElse(System.currentTimeMillis()))
-      // C1: absent (all pre-existing persisted records / API payloads) ⇒ Nil.
-      endpoints <- c.downField("endpoints").as[Option[List[String]]].map(_.getOrElse(Nil))
-    yield PeerInfo(
-      deviceId,
-      deviceName,
-      platform,
-      address,
-      deviceSecret,
-      capabilities,
-      userDescription,
-      lastSeen,
-      endpoints
-    )
-  }
-end PeerInfo
+// 严格DAG第⑥步第二批裁定(2026-09-27):PeerInfo(含伴生 codec)整块剪出下沉 shared/PeerModels.scala(逐字);本包内引用改经 import nebflow.shared.PeerInfo。
 
 /**
  * Endpoint preference ordering (C1, 2026-09-11 P2P 直连修复批) — 方案 §3.3 目标口径.
@@ -764,56 +707,7 @@ end NeblinkConfig
 
 // ===== A2A 好友与消息域类型（spec §6.1 REST 响应，客户端侧解码） =====
 
-/**
- * 好友/搜索结果卡（/api/users/lookup 与 /api/friends 共用形态）。
- * blocked：#290 §1.2 拉黑行透传（仅 GET /api/friends 的 friends 数组携带，
- * absent = 未拉黑）——此前该字段被网关丢弃，web 端只能靠 localStorage 镜像。
- */
-/**
- * 好友/请求/会话共用的档案对象。字段即 friend-search-contract v1.0 契约词汇
- *  （NL 号 = Username，作者 2026-09-05 裁定）：username 可空语义由 String 折叠
- *  ""（未设置 NL 号）；displayName 必填（服务端永不为 null，见 Decoder 镜像
- *  fallback 链）；avatar 可 null。since/blocked 为信封字段（camelCase 维持）。
- *
- *  `remark`（2026-09-12 好友消息改造批 ⑦）：**纯本地字段**——用户设的好友备注，
- *  持久化在 `FriendRemarkStore`（`<dataRoot>/friend-remarks.json`，键 = userId），
- *  由 `FriendService.applyRemarks` 在出站口注入。**上游永不带该键**（协议零变更）：
- *  Decoder 不读它，Encoder 恒出该键（`None` ⇒ `null`，⑦-D8 加性最简形态）。
- *  形参置末且有默认值 ⇒ 既有构造点（含位置实参）零改动。
- */
-case class FriendSummary(
-  userId: String,
-  username: String,
-  displayName: String,
-  avatar: Option[String] = None,
-  since: Option[Long] = None,
-  blocked: Option[Boolean] = None,
-  remark: Option[String] = None
-)
-
-/**
- * 收到的好友请求（incoming 分组）。createdAt：请求时间透传（#290 0904 批次
- * UI 打磨——申请行时间显示；旧上游无此字段时为 None）。
- */
-case class FriendRequestSummary(
-  requestId: String,
-  from: FriendSummary,
-  note: Option[String] = None,
-  createdAt: Option[Long] = None
-)
-
-/** 发出的好友请求（outgoing 分组）。 */
-case class OutgoingRequestSummary(
-  requestId: String,
-  to: FriendSummary,
-  createdAt: Option[Long] = None
-)
-
-case class FriendListResponse(
-  friends: List[FriendSummary],
-  incoming: List[FriendRequestSummary] = Nil,
-  outgoing: List[OutgoingRequestSummary] = Nil
-)
+// 严格DAG第⑥步第二批裁定(2026-09-27):FriendSummary/FriendRequestSummary/OutgoingRequestSummary/FriendListResponse 四块整块剪出下沉 shared/PeerModels.scala(逐字);本包内引用(FriendCodecs/ConversationSummary 等)改经 import nebflow.shared。
 
 /**
  * 附件元数据镜像（4b 腿 A-1；逐字对齐 neblink-server 契约件 §B.2 `M6`：
@@ -925,38 +819,7 @@ case class ConversationSummary(
   deviceId: Option[String] = None
 )
 
-/**
- * 群会话行（`GET /api/groups` 裸数组的元素，也是 `GET /api/sync/bootstrap` 的
- * `groups` 行形态；跨仓真源 = neblink-server `src/model.rs` 的 `GroupSummary`，
- * `#[serde(rename_all = "camelCase")]`）。
- *
- * 为什么有本件（gmsgsend 批 · 补充卡 §6.2）：群目标解析（`FriendRoster.resolveGroup`）
- * 需要「本用户所属、未解散群会话」的 `groupId` + `title` 两个键。此前本仓只在网关侧
- * **逐字转发**群列表（群行从未解码成领域类型）；本件是最小解码件，
- * **不新增任何线上面**（纯客户端侧解码）。
- *
- * 字段取舍（🔴 只落解析必需 + 契约已冻结的行内键，其余键由解码器忽略）：
- *  - `groupId` / `title`：解析链 L1/L2/L3 的唯二匹配键。`title` **可重名**（服务端
- *    只校验非空且 ≤64 字符，无唯一性约束）⇒ 重名走候选列表，见 `resolveGroup`。
- *  - `role` / `memberCount` / `unreadCount` / `lastMessageId` / `createdAt`：服务端
- *    冻结行内键，保留供后续面读数；**本批零消费点**。
- *  - `selfUserId`（加性小批 `53c0be7`，契约 v2.1 §11.4）：viewer 自证键。
- *    🔴 本仓**不把它当权威**（身份权威 = 服务端鉴权解出的身份）—— 只解码、不消费，
- *    缺省空串（零群账号的裸数组退化态读不到该值，服务端已明写该退化态）。
- *  - **不解码** `lastMessage`：本批零消费点，解码它会把整条消息图钉进解析路径。
- *  - 全部非必填键带缺省值 ⇒ 行内键集未来加性扩面**不破**本解码器（与 `FriendSummary`
- *    的 Option 折叠口径同族的「键缺席 = 缺省」纪律）。
- */
-case class GroupSummary(
-  groupId: String,
-  title: String,
-  role: String = "",
-  memberCount: Int = 0,
-  unreadCount: Int = 0,
-  lastMessageId: Long = 0L,
-  createdAt: Long = 0L,
-  selfUserId: String = ""
-)
+// 严格DAG第⑥步第二批裁定(2026-09-27):GroupSummary(含字段注释)整块剪出下沉 shared/PeerModels.scala(逐字);本包内引用(FriendCodecs/FriendService 等)改经 import nebflow.shared.GroupSummary。
 
 /**
  * 客户端本地未读 cursor 状态（spec §3.4：自己看角标，无回执）。

@@ -9,10 +9,12 @@
 package nebflow.core
 
 import cats.effect.IO
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import nebflow.shared.*
 
 import java.nio.file.Path
+
+import scala.concurrent.duration.*
 
 /**
  * `gateway.SessionStore` 的窄投影(C 步倒置;D 步增补落盘 flush 两成员)。core 的
@@ -125,6 +127,27 @@ end WsHubPort
 trait NeblinkClientPort:
   def relayNotify(targetDeviceId: String, channel: String, payload: Json): IO[Either[String, String]]
 
+  /**
+   * 远端执行(relay 隧道腿)与设备邮件中继(严格DAG第⑥步第二批 R7/R8):core 的
+   * RemoteExecutor(relayExec)与 MailTool 设备腿(relayAgentMail,经
+   * NeblinkServicePort.relayClientOpt)的实调用面;默认超时统一引用已下沉 shared 的
+   * DefaultRelayTimeout(10 s 语义不变),relayAgentMail 返回类型引用已下沉 shared 的
+   * RelayMailResult。
+   */
+  // 严格DAG第⑥步第二批裁定(2026-09-27):窄口倒置,签名镜像现实现(默认参统一引用 shared 常量,行为等值)
+  def relayExec(
+    targetDeviceId: String,
+    action: String,
+    params: JsonObject,
+    timeout: scala.concurrent.duration.FiniteDuration = DefaultRelayTimeout
+  ): IO[Either[String, String]]
+
+  def relayAgentMail(
+    targetDeviceId: String,
+    payload: Json,
+    timeout: scala.concurrent.duration.FiniteDuration = DefaultRelayTimeout
+  ): IO[Either[String, RelayMailResult]]
+
   def relayTransferPutChunk(
     targetDeviceId: String,
     path: String,
@@ -158,3 +181,113 @@ trait ProviderHealthPort:
   def getStates: IO[Map[String, HealthState]]
   def getSearchHealth: IO[SearchApiHealth]
 end ProviderHealthPort
+
+/**
+ * `neblink.DeviceIdentity` 的窄视图(严格DAG第⑥步第二批 R2):DeviceIdentity 本体
+ * 不下沉(伴生 object 持 logger/PathUtil/AtomicJson/机器码探测/CredentialWriteAcl,
+ * 整件非纯)。core/dropbox 消费点实读的字段面 = deviceId(RemoteExecutor 的
+ * relay-exec 头与审计、DropboxService 的 sendText/offerOne、MailTool/FriendMessageTool
+ * 的审计腿)、deviceName(MailTool 载荷构造、DropboxService 的 sendText 帧、
+ * AgentSessionExecution 的 # Devices 本机行)、userDescription(AgentSessionExecution
+ * 的 # Devices 本机行)——只窄不宽。neblink 的 `DeviceIdentity`(case class 字段即
+ * val 成员)原地 `extends` 本视图,既有构造点经子类型继续编译。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄视图,成员面=消费点实读字段,只窄不宽,行为保持
+trait DeviceIdentityView:
+  def deviceId: String
+  def deviceName: String
+  def userDescription: String
+end DeviceIdentityView
+
+/**
+ * `neblink.NeblinkRelayTunnel` 的窄视图(严格DAG第⑥步第二批 R3):core 的
+ * RemoteExecutor 只消费 `isAlive`(P2P/relay 选路的 relayAvailable 读数)。
+ * 隧道本体(连接环/鉴权状态/分帧)留在 neblink;neblink 的 `NeblinkRelayTunnel`
+ * 原地 `extends` 本视图。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄视图,成员面=RemoteExecutor 实调用,行为保持
+trait RelayTunnelPort:
+  def isAlive: Boolean
+end RelayTunnelPort
+
+/**
+ * `neblink.NeblinkPresenceService` 的窄视图(严格DAG第⑥步第二批 R3):core 的
+ * RemoteExecutor 只消费 `isConnected(deviceId)`(probe budget 的 directOnline
+ * 提示读数)。presence 本体(拨号预算/心跳/逐端连接表)留在 neblink;neblink 的
+ * `NeblinkPresenceService` 原地 `extends` 本视图。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄视图,成员面=RemoteExecutor 实调用,行为保持
+trait PresenceServicePort:
+  def isConnected(deviceId: String): Boolean
+end PresenceServicePort
+
+/**
+ * `neblink.NeblinkService` 的窄投影(严格DAG第⑥步第二批 R3):core(MailTool /
+ * FriendMessageTool / RemoteExecutor / DeviceProfile 经 ToolContext)与 dropbox
+ * (DropboxService)的实际调用面 = 身份(identity,窄化为 DeviceIdentityView)、
+ * 名册(peers / scanNow,元素为已下沉 shared 的 PeerInfo)、WS 数据通道
+ * (addDataHandler / sendData)、relay 客户端热换指针(relayClientOpt,批一
+ * NeblinkClientPort)与 P2P 共享 HTTP 后端(httpBackend)、以及选路读数
+ * (relayTunnelOpt / presenceServiceOpt,窄化为 RelayTunnelPort /
+ * PresenceServicePort)。签名与 NeblinkService 现成员逐字一致(返回类型按上述
+ * 窄化);httpBackend 镜像实现的 `private[nebflow]` 修饰按裁定保留(core 与
+ * dropbox 同在 nebflow 命名空间内,可见性不外泄)。neblink 的 `NeblinkService`
+ * 原地混入本端口,既有构造/传参点经子类型继续编译。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄口倒置,签名镜像现实现(窄化仅限裁定明示),行为保持
+trait NeblinkServicePort:
+  def identity: IO[DeviceIdentityView]
+  def peers: IO[List[PeerInfo]]
+  def scanNow: IO[List[PeerInfo]]
+  def addDataHandler(handler: Json => IO[Unit]): IO[Unit]
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean]
+  def relayClientOpt: Option[NeblinkClientPort]
+  private[nebflow] def httpBackend: sttp.client4.SyncBackend
+  def relayTunnelOpt: Option[RelayTunnelPort]
+  def presenceServiceOpt: Option[PresenceServicePort]
+end NeblinkServicePort
+
+/**
+ * `neblink.FriendService` 的窄投影(严格DAG第⑥步第二批 R11):core 工具面
+ * (ListFriendsTool / FriendMessageTool)的实际调用面 = 搜索(searchUser,L4 邮箱
+ * 回落)、好友发送(sendAsAgent)、好友列表(refreshFriends 折叠版 / listFriends
+ * 分态穿透版)、群表(listGroups)与群发送(sendGroupAsAgent)。签名与现实现
+ * 逐字一致(默认参原样);返回类型引用已下沉 shared 的 FriendListResponse /
+ * GroupSummary。neblink 的 `FriendService` 原地混入本端口,GatewayMain 装配与
+ * SharedResources 字段(FriendService 具体型)经子类型继续编译。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄口倒置,签名镜像现实现,行为保持
+trait FriendServicePort:
+  def searchUser(q: String): IO[Either[String, Json]]
+  def sendAsAgent(friendUserId: String, body: String, attachments: List[os.Path] = Nil): IO[Either[String, String]]
+  def refreshFriends(): IO[FriendListResponse]
+  def listGroups: IO[Either[String, List[GroupSummary]]]
+  def sendGroupAsAgent(groupId: String, body: String): IO[Either[String, String]]
+  def listFriends: IO[Either[String, FriendListResponse]]
+end FriendServicePort
+
+/**
+ * `dropbox.DropboxService` 的窄投影(严格DAG第⑥步第二批 R12):core 工具面
+ * (FriendMessageTool.sendDevice / MailTool.pushDeviceAttachments)的实际调用面 =
+ * 文本发送(sendText)与本地件批量发送(sendLocalFiles)。返回类型引用已下沉 shared 的
+ * LocalFileOutcome;origin 缺省 = shared DropboxMessage.OriginUser。类型参数
+ * `Transport` 只承载 `sendLocalFiles` 的测试自环传输缝参数(transportOverride,
+ * `ChunkTransport` 留驻 dropbox)——core 消费方一律以 `DropboxServicePort[?]` 取用
+ * (从不传该参,走默认 `None`),dropbox 的 `DropboxService` 以
+ * `extends DropboxServicePort[ChunkTransport]` 混入,参数结构逐字镜像,既有构造/
+ * 传参点(SharedResources 字段 / 网关调用)经子类型继续编译。
+ */
+// 严格DAG第⑥步第二批裁定(2026-09-27):窄口倒置,签名镜像现实现(传输缝以类型参数抽象,core 零 dropbox 符号),行为保持
+trait DropboxServicePort[Transport]:
+  def sendText(deviceId: String, text: String, origin: String = DropboxMessage.OriginUser): IO[Boolean]
+
+  def sendLocalFiles(
+    deviceId: String,
+    files: List[os.Path],
+    targetDir: Option[String] = None,
+    transportOverride: Option[Transport] = None,
+    acceptWait: scala.concurrent.duration.FiniteDuration = 20.seconds,
+    uploadWait: scala.concurrent.duration.FiniteDuration = 15.minutes,
+    origin: String = DropboxMessage.OriginUser
+  ): IO[Either[AttachContract.AttachError, List[LocalFileOutcome]]]
+end DropboxServicePort

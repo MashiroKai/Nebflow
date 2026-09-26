@@ -1,7 +1,8 @@
 package nebflow.neblink
 
 import munit.FunSuite
-import nebflow.dropbox.{AttachContract, DropboxUtil, FileTransfer}
+import nebflow.dropbox.DropboxUtil
+import nebflow.shared.{AttachContract, FileTransfer}
 
 /**
  * relay 腿落点 —— **纯函数 pin**（dropnam 批 · 判据⑤a）。零 IO、零端口、零进程。

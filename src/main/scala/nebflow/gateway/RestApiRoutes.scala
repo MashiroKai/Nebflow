@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.NebflowServiceConfig
+import nebflow.neblink.NeblinkService
+import nebflow.shared.{NebflowServiceConfig, PeerInfo}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{HttpRoutes, Request}
 

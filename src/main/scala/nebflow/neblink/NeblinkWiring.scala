@@ -22,6 +22,14 @@ import nebflow.shared.NebflowLogger
  */
 object NeblinkWiring:
 
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R12 注册点):R4(DeviceMailAckPort)/R10(FriendRosterPort)
+  // 的统一 boot 注册段落——生产 boot(GatewayMain 经 NeblinkWiring.friendService 无条件装配,
+  // 2026-09-11 boot 快照修复后的口径)与直接引用本对象的测试(FriendWiringSpec 等)共用的
+  // 必经一点;实现对象自身初始化行(DeviceMailAck / FriendRoster)另按 LlmRuntimePort 先例
+  // 自注册,双注册以 AtomicReference set 同值幂等,零行为差。
+  nebflow.core.DeviceMailAckPort.set(DeviceMailAck.await)
+  nebflow.core.FriendRosterPort.install(FriendRoster)
+
   private val logger = NebflowLogger.forName("nebflow.neblink.wiring")
 
   /**

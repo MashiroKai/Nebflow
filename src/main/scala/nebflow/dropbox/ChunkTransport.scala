@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.shared.{AttachContract, FileTransfer}
 
 import scala.concurrent.duration.*
 

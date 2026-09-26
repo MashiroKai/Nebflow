@@ -4,8 +4,9 @@ import cats.effect.IO
 import cats.effect.kernel.Ref
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.DeviceMailAckPort
 import nebflow.core.tools.RelayExecAudit
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{DeviceMail, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -47,6 +48,11 @@ import scala.concurrent.duration.*
  * （真·陌生/迟到 ack），不再为「抢先 ack」误发——抢先前置由 ①-③ 吸收。
  */
 object DeviceMailAck:
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R4):core 侧(MailTool 设备腿的回执登记)改经
+  // core.DeviceMailAckPort 注册器调用本对象的 await;注册点 = 对象初始化(生产 boot 与
+  // 直接引用本对象的测试共用的必经最早一点,先例 = llm/interface.scala 的
+  // LlmRuntimePort.set;另有 NeblinkWiring 统一 boot 段落幂等再注册,见 R12 接线)。
+  DeviceMailAckPort.set(await)
 
   private val logger = NebflowLogger.forName("nebflow.neblink.devicemail.ack")
 

@@ -1,10 +1,11 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.parser.parse
 import munit.FunSuite
+import nebflow.shared.FriendSummary
 
 /**
  * ①opt-A2 接缝对齐 · 真通路钉子（2026-09-12 波3，方案 §2.1 / §5.1 P2）。

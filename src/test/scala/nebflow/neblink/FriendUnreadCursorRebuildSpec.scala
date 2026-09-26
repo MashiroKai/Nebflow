@@ -1,10 +1,11 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import munit.FunSuite
+import nebflow.shared.FriendSummary
 
 /**
  * #309 ·「客户端尚无该会话 cursor 时的首条推送」未读 +1 静默丢失 —— 回归钉子。

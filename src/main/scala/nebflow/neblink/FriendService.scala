@@ -5,8 +5,9 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.FriendServicePort
 import nebflow.neblink.FriendCodecs.given
-import nebflow.shared.NebflowLogger
+import nebflow.shared.*
 
 import scala.collection.immutable.Queue
 import scala.concurrent.duration.*
@@ -112,7 +113,7 @@ final class FriendService(
    * 使「无 live socket」不可能被判别）。本层据此**如实留痕**（见 [[ackProcessed]]）。
    */
   ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
-):
+) extends FriendServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R11):原地混入 core 窄口(searchUser/sendAsAgent/refreshFriends/listGroups/sendGroupAsAgent/listFriends,签名镜像,行为保持)
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
 
   // ===== 本地好友备注（2026-09-12 好友消息改造批 ⑦）=====
@@ -1041,7 +1042,7 @@ final class FriendService(
                   "Attachment gate rejected: empty file (0 bytes) — the server rejects size <= 0. Nothing was uploaded and no message was sent."
                 )
               else
-                nebflow.dropbox.AttachContract
+                nebflow.shared.AttachContract
                   .checkMessage(sz)
                   .left
                   .map(bad => s"Attachment gate rejected: ${bad.render}")
@@ -1345,7 +1346,7 @@ final class FriendService(
         IO.pure(Left(("not_logged_in", "Not logged in to the NebLink server — nothing was uploaded.")))
       case Some(cli) =>
         val tempPath = nebflow.shared.PathUtil.dataRoot / "attach-uploads" / s"$uploadId.part"
-        val bounded = nebflow.dropbox.AttachContract.MaxFileBytes
+        val bounded = nebflow.shared.AttachContract.MaxFileBytes
         (for
           _ <- IO.blocking(os.makeDir.all(tempPath / os.up))
           staged <- nebflow.dropbox.DropboxUtil.streamToFileWithHashBounded(body, tempPath, bounded)

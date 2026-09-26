@@ -3,7 +3,8 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.neblink.{FriendRoster, FriendService, FriendSummary}
+import nebflow.core.{FriendRosterPort, FriendServicePort}
+import nebflow.shared.FriendSummary
 
 /**
  * ListFriends — Nebula 编排面**只读**好友名册（好友消息改造批 ⑩；方案
@@ -74,7 +75,7 @@ Read-only, zero side effects: a single read of the friend roster — it does not
     "required" -> Json.arr()
   )
 
-  private[tools] def service(ctx: ToolContext): Either[ToolError, FriendService] =
+  private[tools] def service(ctx: ToolContext): Either[ToolError, FriendServicePort] =
     ctx.sharedResources.flatMap(_.friendService) match
       case Some(fs) => Right(fs)
       case None =>
@@ -86,9 +87,9 @@ Read-only, zero side effects: a single read of the friend roster — it does not
    */
   private[tools] def render(friends: List[FriendSummary]): String =
     val count = s"Friends: ${friends.size}"
-    if friends.isEmpty then s"$count\n${FriendRoster.availableHint(friends)}"
+    if friends.isEmpty then s"$count\n${FriendRosterPort.availableHint(friends)}"
     else
-      val rows = friends.take(MaxRows).map(f => FriendRoster.candidateLine(f))
+      val rows = friends.take(MaxRows).map(f => FriendRosterPort.candidateLine(f))
       val tail =
         if friends.size > MaxRows then List(s"... ${friends.size - MaxRows} more friends not shown")
         else Nil

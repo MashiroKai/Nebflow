@@ -87,7 +87,7 @@ private[gateway] object PresenceRoutes:
                       )
                       // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
                       // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
-                      val peer = nebflow.neblink.PeerInfo(
+                      val peer = nebflow.shared.PeerInfo(
                         peerDeviceId,
                         peerDeviceName,
                         peerPlatform,

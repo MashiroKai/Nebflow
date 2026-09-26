@@ -2,10 +2,11 @@ package nebflow.neblink
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
-import nebflow.dropbox.{AttachContract, ChunkedTransfer}
+import nebflow.dropbox.ChunkedTransfer
+import nebflow.shared.AttachContract
 
 /**
  * relay 兜底腿的接收端（`FileTransferAction`）—— 硬判据 ②③ 的 relay 面 + **零回归**面。

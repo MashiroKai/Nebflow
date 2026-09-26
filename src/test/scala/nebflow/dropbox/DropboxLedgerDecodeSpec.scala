@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.shared.{DropboxLedger, DropboxLedgerDecode, DropboxMessage}
 
 /**
  * 台账解码健壮化（作者 2026-09-17 #785 裁定）—— 定向 spec。

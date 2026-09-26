@@ -1,4 +1,5 @@
-package nebflow.neblink
+/* 严格DAG第⑥步第二批裁定(2026-09-27):DeviceMail 本体整文件自 nebflow/neblink/DeviceMail.scala 下沉 shared(原样迁移,仅 package 改 nebflow.shared;含 TypeAgentMail 等枚举/常量),DeviceMailAck 留驻 neblink 经 core.DeviceMailAckPort 注册器倒置——斩断 core→neblink 边;neblink/core 内引用改指本处。 */
+package nebflow.shared
 
 import io.circe.Json
 import io.circe.syntax.*

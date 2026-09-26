@@ -1,19 +1,18 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
-import io.circe.{Json, JsonObject}
+import cats.effect.{IO, Ref}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
-import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.{ActorSystem as NebActorSystem, AgentCommand, AgentKind, AgentRecord, Behaviors}
 import nebflow.agent.SharedResources
-import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
 import nebflow.core.SessionStore
+import nebflow.core.tools.{FriendMessageTool, MailTool, ToolContext}
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{PathUtil, ThinkingConfig}
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 

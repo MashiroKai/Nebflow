@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import munit.FunSuite
+import nebflow.shared.AttachContract
 
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions

@@ -1,5 +1,6 @@
 package nebflow.dropbox
 
+import nebflow.shared.AttachContract
 import org.http4s.Headers
 import org.typelevel.ci.CIString
 

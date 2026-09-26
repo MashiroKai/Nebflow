@@ -2,12 +2,12 @@ package nebflow.core.tools
 
 import io.circe.parser.decode
 import munit.FunSuite
-import nebflow.neblink.PeerInfo
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime
+import java.nio.file.{Files, Paths}
+
 import scala.collection.mutable
 
 /**

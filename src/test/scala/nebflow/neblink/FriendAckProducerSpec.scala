@@ -1,9 +1,10 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import munit.FunSuite
+import nebflow.shared.FriendSummary
 
 /**
  * D-B ack 生产者（2026-09-13 好友推送修复批）· 真通路钉子。

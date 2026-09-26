@@ -8,9 +8,10 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.tools.{RelayExecAudit, RemoteExecutor, ToolContext}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.nio.file.Files
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 

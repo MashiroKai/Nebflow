@@ -1,4 +1,5 @@
-package nebflow.dropbox
+/* 严格DAG第⑥步第二批裁定(2026-09-27):DropboxModels 整文件自 nebflow/dropbox/DropboxModels.scala 下沉 shared(原样迁移,仅 package 改 nebflow.shared;整文件纯),并承载 R5 自伴生 object DropboxService 剪出的 LocalFileOutcome(剪出点留裁定注释)——斩断 core→dropbox 边;dropbox/core 内引用改指本处。 */
+package nebflow.shared
 
 import io.circe.generic.semiauto.*
 import io.circe.syntax.*
@@ -322,3 +323,23 @@ object DropboxLedger:
           Right(DropboxLedgerDecode(out.toMap, skipped.result()))
     }
 end DropboxLedger
+
+/**
+ * 工具附件腿（`sendLocalFiles`）的单件终局读数：`delivered=false` 时 `error`
+ * 必带原因（禁静默）。
+ */
+final case class LocalFileOutcome(
+  fileName: String,
+  fileSize: Long,
+  transferId: String,
+  delivered: Boolean,
+  error: Option[String],
+  /** 本次请求的 `targetDir`（NFC 形态）；`None` = 未请求（缺省语义）。 */
+  targetDir: Option[String] = None,
+  /**
+   * 🔴 §4.2 候选 1：请求了 `targetDir` 但**对端等级未确认**（`file-response` 未回带
+   * `proto >= 2`）⇒ 该字段**未上 wire**，落点 = 对端缺省目录。调用方（工具面）
+   * **必须显式回显**（禁静默降级，spec §4.1）。
+   */
+  targetDirDeferred: Boolean = false
+)

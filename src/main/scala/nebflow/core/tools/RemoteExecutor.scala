@@ -6,8 +6,8 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
-import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
-import nebflow.shared.{ContentBlock, NebflowLogger}
+import nebflow.core.{NeblinkClientPort, NeblinkServicePort}
+import nebflow.shared.{ContentBlock, NebflowLogger, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -181,9 +181,9 @@ end RemoteImage
  * NebLink provides the connectivity layer — no relay server needed.
  */
 class RemoteExecutor(
-  neblinkService: NeblinkService,
+  neblinkService: NeblinkServicePort,
   dispatcher: Dispatcher[IO],
-  relayClient: Option[NeblinkClient] = None
+  relayClient: Option[NeblinkClientPort] = None
 ):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
@@ -203,7 +203,7 @@ class RemoteExecutor(
    * The constructor argument stays as a fallback for tests / non-gateway
    * wiring, where the service pointer is never set.
    */
-  private def currentRelayClient: IO[Option[NeblinkClient]] =
+  private def currentRelayClient: IO[Option[NeblinkClientPort]] =
     IO(neblinkService.relayClientOpt).map(_.orElse(relayClient))
 
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
@@ -281,7 +281,7 @@ class RemoteExecutor(
   private val ReadOnlyTools = Set("Read", "Glob", "Grep")
 
   /** Expose NeblinkService for system prompt generation (device list). */
-  def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
+  def neblinkServiceOpt: Option[NeblinkServicePort] = Some(neblinkService)
 
   def execute(
     deviceName: String,
@@ -914,7 +914,7 @@ class RemoteExecutor(
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$endpoint/api/neblink/remote-exec"))
         .contentType("application/json")
-        .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
+        .header(nebflow.shared.DeviceHeader, selfDeviceId)
         .body(body.noSpaces)
         .readTimeout(timeout)
         .response(asStringAlways)
@@ -1115,7 +1115,7 @@ class RemoteExecutor(
 
   /** relay 下发 + 审计（唯一 relay 出口——避免某条分支漏记）。 */
   private def relayExecAudited(
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
@@ -1135,7 +1135,7 @@ class RemoteExecutor(
    * A short 150ms delay + second attempt covers this window.
    */
   private def relayWithColdStartRetry(
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
@@ -1167,7 +1167,7 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     projectRoot: String,
     budget: P2pPathDecision.ProbeBudget,
     kind: String = ""
@@ -1226,9 +1226,9 @@ object RemoteExecutor:
 
   /** Wire the RemoteExecutor with a NeblinkService, Dispatcher, and optional relay client. Called on startup. */
   def initialize(
-    neblinkService: NeblinkService,
+    neblinkService: NeblinkServicePort,
     dispatcher: Dispatcher[IO],
-    relayClient: Option[NeblinkClient] = None
+    relayClient: Option[NeblinkClientPort] = None
   ): Unit =
     instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
     // ④ captures TTL 清扫（xdev 批 2026-09-15）：启动即清一次 + 每 6h 周期清。

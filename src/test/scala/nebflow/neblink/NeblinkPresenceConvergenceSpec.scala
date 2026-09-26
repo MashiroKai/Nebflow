@@ -3,6 +3,7 @@ package nebflow.neblink
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 import scala.concurrent.duration.*
 

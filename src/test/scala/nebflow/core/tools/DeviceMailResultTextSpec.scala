@@ -1,17 +1,16 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Ref
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
 import nebflow.llm.ModelCandidate
-import nebflow.shared.ThinkingConfig
-import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService, PeerInfo}
+import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService}
+import nebflow.shared.{PeerInfo, ThinkingConfig}
 
 /**
  * 设备腿**结果文本**：delivered 三态（B 批，2026-09-16 作者裁定「路径 B」）。

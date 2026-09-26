@@ -1,23 +1,21 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Ref
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.{AgentLibrary, SharedResources, SubAgentTaskStore}
-import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
+import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.dropbox.DropboxService
-import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.neblink.{NeblinkService, PeerInfo}
-import nebflow.shared.{PathUtil, ThinkingConfig}
+import nebflow.neblink.NeblinkService
+import nebflow.shared.{PathUtil, PeerInfo, ThinkingConfig}
 
 import scala.concurrent.duration.*
 

@@ -9,12 +9,13 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.tools.{RelayExecAudit, RemoteExecutor, ToolContext}
-import nebflow.shared.PathUtil
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.{ConcurrentLinkedQueue, Executors}
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -83,7 +84,7 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
       "/api/neblink/remote-exec",
       (ex: HttpExchange) =>
         val body = new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
-        val dev = Option(ex.getRequestHeaders.getFirst(Protocol.DeviceHeader)).getOrElse("")
+        val dev = Option(ex.getRequestHeaders.getFirst(nebflow.shared.DeviceHeader)).getOrElse("")
         requests.add((ex.getRequestURI.getPath, dev, body))
         val bytes = """{"output":"p2p-ok","error":""}""".getBytes(StandardCharsets.UTF_8)
         ex.getResponseHeaders.add("Content-Type", "application/json")

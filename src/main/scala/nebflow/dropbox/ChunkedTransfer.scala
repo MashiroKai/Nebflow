@@ -1,6 +1,7 @@
 package nebflow.dropbox
 
 import cats.effect.IO
+import nebflow.shared.AttachContract
 
 import java.security.MessageDigest
 

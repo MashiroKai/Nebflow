@@ -3,6 +3,7 @@ package nebflow.neblink
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 class NeblinkModelSpec extends CatsEffectSuite:
 

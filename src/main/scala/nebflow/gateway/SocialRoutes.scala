@@ -7,6 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
+import nebflow.shared.AttachContract
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -456,7 +457,7 @@ private[gateway] object SocialRoutes:
               else
                 // 早拒三段（全部**先于**读请求体）：声明超限 / 声明非正 / 无声明但 Content-Length 超限。
                 declared match
-                  case Some(size) if size > nebflow.dropbox.AttachContract.MaxFileBytes =>
+                  case Some(size) if size > nebflow.shared.AttachContract.MaxFileBytes =>
                     // 未走 ApiJson 信封助手:{ok:false,code,actual,limit,error} 五键结构化拒因,非 ok 信封同形,保持手写(2026-09-25)
                     IO.pure(
                       Response[IO](Status.PayloadTooLarge).withEntity(
@@ -464,8 +465,8 @@ private[gateway] object SocialRoutes:
                           "ok" -> false.asJson,
                           "code" -> "attach_too_large".asJson,
                           "actual" -> size.asJson,
-                          "limit" -> nebflow.dropbox.AttachContract.MaxFileBytes.asJson,
-                          "error" -> s"Attachment too large: $size bytes exceeds the ${nebflow.dropbox.AttachContract.MaxFileBytesLabel} limit. Nothing was uploaded.".asJson
+                          "limit" -> nebflow.shared.AttachContract.MaxFileBytes.asJson,
+                          "error" -> s"Attachment too large: $size bytes exceeds the ${nebflow.shared.AttachContract.MaxFileBytesLabel} limit. Nothing was uploaded.".asJson
                         )
                       )
                     )

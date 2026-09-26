@@ -5,7 +5,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.core.NeblinkServicePort
+import nebflow.shared.{NebflowLogger, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -48,7 +49,7 @@ class NeblinkService private (
   private val dispatcher: Dispatcher[IO],
   private val relayTunnelEnsureGate: Semaphore[IO],
   private val peerRemovalGracePeriod: FiniteDuration = 15.seconds
-):
+) extends NeblinkServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄口(identity/peers/scanNow/addDataHandler/sendData/relayClientOpt/httpBackend/relayTunnelOpt/presenceServiceOpt,签名镜像,行为保持)
   private val logger = NebflowLogger.forName("nebflow.neblink")
 
   /** IPs of peers discovered via NebLink Server. Trusted for incoming connections. */

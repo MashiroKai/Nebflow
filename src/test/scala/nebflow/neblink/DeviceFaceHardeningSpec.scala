@@ -9,6 +9,7 @@ import nebflow.shared.PathUtil
 
 import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path}
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -103,8 +104,8 @@ class DeviceFaceHardeningSpec extends FunSuite:
         s"deviceId must NOT travel in the upgrade URL (it is the id the peer criterion trusts): $uri"
       )
       assert(uri.contains("deviceName="), s"peer display metadata stays on the URL: $uri")
-      assertEquals(headers, List(Protocol.DeviceHeader -> "dev-abc"))
-      assertEquals(Protocol.DeviceHeader, "X-Neblink-Device")
+      assertEquals(headers, List(nebflow.shared.DeviceHeader -> "dev-abc"))
+      assertEquals(nebflow.shared.DeviceHeader, "X-Neblink-Device")
     }
   }
 

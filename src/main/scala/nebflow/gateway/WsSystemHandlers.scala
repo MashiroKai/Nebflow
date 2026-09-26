@@ -485,7 +485,7 @@ private[gateway] object WsSystemHandlers:
 
     def tryRelayUpdate(
       ns: nebflow.neblink.NeblinkService,
-      peer: nebflow.neblink.PeerInfo,
+      peer: nebflow.shared.PeerInfo,
       beta: Boolean,
       p2pError: String
     ): IO[Unit] =

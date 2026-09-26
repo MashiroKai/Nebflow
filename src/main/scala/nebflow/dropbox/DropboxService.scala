@@ -7,9 +7,8 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{NeblinkClientPort, WsHubPort}
-import nebflow.neblink.NeblinkService
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.core.*
+import nebflow.shared.*
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -68,7 +67,7 @@ private[dropbox] final case class CommitOutcome(decision: TempPathDecision, land
  *   - File transfer state is in-memory only (transient by nature).
  */
 final class DropboxService private (
-  neblinkService: NeblinkService,
+  neblinkService: NeblinkServicePort,
   wsHub: WsHubPort,
   /**
    * Signaling timeouts (diag-transfer-stuck R4): a message parked in one of
@@ -78,7 +77,9 @@ final class DropboxService private (
   offerTimeout: FiniteDuration = 120.seconds, // pending → waiting for file-response
   acceptedTimeout: FiniteDuration = 10.minutes, // accepted → waiting for the frontend upload
   transferTimeout: FiniteDuration = 31.minutes // transferring → waiting for upload completion (P2P HTTP caps at 30min)
-):
+) extends DropboxServicePort[
+      ChunkTransport
+    ]: // 严格DAG第⑥步第二批裁定(2026-09-27,R5/R12):LocalFileOutcome 剪出伴生下沉 shared、原地混入 core 窄口(sendText/sendLocalFiles,签名镜像;传输缝以类型参数 ChunkTransport 实例化),neblinkService 参数型改 NeblinkServicePort——斩断 dropbox→neblink 边
 
   /**
    * 落名用的时钟（dropnam 批 A4）：**可注入**是判据④（同一秒连送 ≥6 份）**确定性**的前提 ——
@@ -92,7 +93,7 @@ final class DropboxService private (
 
   /** 可注入落名时钟的构造器（测试面）：`createForTest` 走这条路。 */
   private[nebflow] def this(
-    neblinkService: NeblinkService,
+    neblinkService: NeblinkServicePort,
     wsHub: WsHubPort,
     offerTimeout: FiniteDuration,
     acceptedTimeout: FiniteDuration,
@@ -549,7 +550,7 @@ final class DropboxService private (
     acceptWait: FiniteDuration = 20.seconds,
     uploadWait: FiniteDuration = 15.minutes,
     origin: String = DropboxMessage.OriginUser
-  ): IO[Either[AttachContract.AttachError, List[DropboxService.LocalFileOutcome]]] =
+  ): IO[Either[AttachContract.AttachError, List[LocalFileOutcome]]] =
     val validated: Either[AttachContract.AttachError, List[(os.Path, Long)]] =
       files.foldLeft[Either[AttachContract.AttachError, List[(os.Path, Long)]]](Right(Nil)) { (acc, p) =>
         acc.flatMap { list =>
@@ -616,7 +617,7 @@ final class DropboxService private (
                 case Right(transferIds) =>
                   sized
                     .zip(transferIds)
-                    .foldLeftM[IO, List[DropboxService.LocalFileOutcome]](Nil) { case (acc, ((p, size), tid)) =>
+                    .foldLeftM[IO, List[LocalFileOutcome]](Nil) { case (acc, ((p, size), tid)) =>
                       sendLocalOne(tid, p, size, transportOverride, acceptWait, uploadWait, requestedDir, deferred)
                         .map(acc :+ _)
                     }
@@ -651,9 +652,9 @@ final class DropboxService private (
     uploadWait: FiniteDuration,
     requestedTargetDir: Option[String],
     targetDirDeferred: Boolean
-  ): IO[DropboxService.LocalFileOutcome] =
+  ): IO[LocalFileOutcome] =
     val base =
-      DropboxService.LocalFileOutcome(
+      LocalFileOutcome(
         p.last,
         size,
         transferId,
@@ -832,8 +833,8 @@ final class DropboxService private (
    *  🔴 浏览器 user 腿：`spec.outPath = None` ⇒ 恒空串（禁 basename 拼接 / 禁预测名）。
    */
   private def offerOne(
-    id: nebflow.neblink.DeviceIdentity,
-    peer: nebflow.neblink.PeerInfo,
+    id: DeviceIdentityView, // 严格DAG第⑥步第二批裁定(2026-09-27,R2):neblink.DeviceIdentity 的 core 窄视图(实读 deviceId/deviceName)
+    peer: PeerInfo,
     deviceId: String,
     spec: FileSpec,
     batchId: String,
@@ -2016,25 +2017,9 @@ object DropboxService:
    */
   final case class FileSpec(fileName: String, fileSize: Long, mimeType: String, outPath: Option[String] = None)
 
-  /**
-   * 工具附件腿（`sendLocalFiles`）的单件终局读数：`delivered=false` 时 `error`
-   * 必带原因（禁静默）。
-   */
-  final case class LocalFileOutcome(
-    fileName: String,
-    fileSize: Long,
-    transferId: String,
-    delivered: Boolean,
-    error: Option[String],
-    /** 本次请求的 `targetDir`（NFC 形态）；`None` = 未请求（缺省语义）。 */
-    targetDir: Option[String] = None,
-    /**
-     * 🔴 §4.2 候选 1：请求了 `targetDir` 但**对端等级未确认**（`file-response` 未回带
-     * `proto >= 2`）⇒ 该字段**未上 wire**，落点 = 对端缺省目录。调用方（工具面）
-     * **必须显式回显**（禁静默降级，spec §4.1）。
-     */
-    targetDirDeferred: Boolean = false
-  )
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R5):LocalFileOutcome 自本伴生剪出为顶层定义
+  // 下沉 nebflow.shared(承载件 shared/DropboxModels.scala,逐字);dropbox/core 内引用
+  // (sendLocalFiles 返回型 / sendLocalOne / 工具面)同步改指 shared.LocalFileOutcome。
 
   /**
    * 分块头（`RestApiRoutes` 从 HTTP 头解析；`FileTransferAction` 从 relay params 解析）。
@@ -2066,13 +2051,13 @@ object DropboxService:
         try if s.startsWith("/") then os.Path(java.nio.file.Paths.get(s)) else DropboxUtil.downloadsDir
         catch case _: Exception => DropboxUtil.downloadsDir
 
-  def create(neblinkService: NeblinkService, wsHub: WsHubPort): IO[DropboxService] =
+  def create(neblinkService: NeblinkServicePort, wsHub: WsHubPort): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)
     svc.init.as(svc)
 
   /** Test factory with injectable signaling timeouts (+ injectable landing clock, dropnam A4). */
   private[nebflow] def createForTest(
-    neblinkService: NeblinkService,
+    neblinkService: NeblinkServicePort,
     wsHub: WsHubPort,
     offerTimeout: FiniteDuration,
     acceptedTimeout: FiniteDuration,

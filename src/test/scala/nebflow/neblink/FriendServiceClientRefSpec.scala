@@ -1,9 +1,10 @@
 package nebflow.neblink
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import munit.FunSuite
+import nebflow.shared.FriendListResponse
 
 /**
  * F1 of the 2026-09-10 friend-search incident: client reference unification.

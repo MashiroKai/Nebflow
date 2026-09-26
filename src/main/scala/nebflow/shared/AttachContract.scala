@@ -1,4 +1,5 @@
-package nebflow.dropbox
+/* 严格DAG第⑥步第二批裁定(2026-09-27):AttachContract 整文件自 nebflow/dropbox/AttachContract.scala 下沉 shared(原样迁移,仅 package 改 nebflow.shared;整文件纯)——core 工具面(MailTool/FriendMessageTool)的件数/大小闸唯一数值权威面随之下沉,斩断 core→dropbox 边;dropbox/core 内引用改指本处。 */
+package nebflow.shared
 
 import io.circe.Json
 import io.circe.syntax.*

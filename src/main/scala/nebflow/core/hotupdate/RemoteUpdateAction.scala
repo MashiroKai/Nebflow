@@ -1,4 +1,5 @@
-package nebflow.neblink
+/* 严格DAG第⑥步第二批裁定(2026-09-27):本文件自 nebflow/neblink/RemoteUpdateAction.scala 整文件落 core/hotupdate(原样迁移,package 改 nebflow.core.hotupdate;InstallLayout 引用自此为同包系上行引用),斩断 core→neblink 边;neblink 侧(NeblinkRelayTunnel)与 gateway 侧(NeblinkRoutes)改经下行 import/FQN 引用本处。 */
+package nebflow.core.hotupdate
 
 import cats.effect.IO
 

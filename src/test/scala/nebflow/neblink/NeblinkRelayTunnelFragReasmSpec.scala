@@ -6,11 +6,12 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.shared.PathUtil
+import nebflow.shared.{DeviceMail, PathUtil}
 import org.slf4j.LoggerFactory
 
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
+
 import scala.concurrent.duration.*
 
 /**

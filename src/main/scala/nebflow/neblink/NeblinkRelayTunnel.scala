@@ -6,8 +6,10 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.RelayTunnelPort
+import nebflow.core.hotupdate.RemoteUpdateAction
 import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{DeviceMail, NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
@@ -58,7 +60,8 @@ final class NeblinkRelayTunnel(
   tokenGetter: () => IO[Option[String]],
   /** A2A 一期（spec §5.1）：friend_event 推送回调（事件去重/未读/补拉在 FriendService）。 */
   private[neblink] val friendService: Option[FriendService] = None
-)(dispatcher: Dispatcher[IO]):
+)(dispatcher: Dispatcher[IO])
+    extends RelayTunnelPort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isAlive,RemoteExecutor 选路读数)
   import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")

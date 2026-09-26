@@ -2,6 +2,7 @@ package nebflow.dropbox
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import nebflow.shared.{DropboxMessage, FileTransfer}
 
 import scala.concurrent.duration.*
 

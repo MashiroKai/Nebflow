@@ -14,16 +14,9 @@ package nebflow.neblink
  */
 object Protocol:
 
-  /**
-   * Device identity header for peer requests. Set by the P2P leg
-   * (`RemoteExecutor` `remote-exec` dispatch) and read by the gateway's peer
-   * criterion (`RestApiRoutes#verifyPeerAccess`). The RELAY leg does NOT carry
-   * it — a relayed exec authenticates with the tunnel's own
-   * `Authorization: Bearer` session, so this header has no relayed read/write
-   * point (2026-09-20 勘误②: the previous wording claimed "and relayed
-   * requests", which no code supported).
-   */
-  val DeviceHeader: String = "X-Neblink-Device"
+  // 严格DAG第⑥步第二批裁定(2026-09-27,R6):DeviceHeader 常量自本处剪出下沉
+  // nebflow.shared(承载件 shared/PeerModels.scala,顶层 val);本包内引用与
+  // core/gateway 侧改指 nebflow.shared.DeviceHeader,值逐字不变。
 
   /**
    * Device-flow and enrollment REST paths on neblink-server (proxied by the

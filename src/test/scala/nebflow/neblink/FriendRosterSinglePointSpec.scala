@@ -103,8 +103,10 @@ class FriendRosterSinglePointSpec extends FunSuite:
     val src = os.read(p)
     val code = stripComments(src)
     assert(
-      code.contains("FriendRoster.resolve"),
-      "FriendMessageTool 不再委托 FriendRoster.resolve —— 好友面出现第二实现，请回改实现并同步本登记"
+      // 严格DAG第⑥步第二批(2026-09-27):委托面改经 core.FriendRosterPort 注册器(实现仍单点
+      // nebflow.neblink.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
+      code.contains("FriendRosterPort.resolve"),
+      "FriendMessageTool 不再委托 FriendRosterPort.resolve(FriendRoster 单点的注册器投影) —— 好友面出现第二实现，请回改实现并同步本登记"
     )
     assert(
       !code.contains("Available friends: "),
