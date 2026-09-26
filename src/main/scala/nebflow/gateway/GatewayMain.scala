@@ -1348,6 +1348,13 @@ object GatewayMain extends IOApp:
                                                             }
                                                         }
                                                       }
+                                                      // feishubridge: boot-time resync of the closed loop —
+                                                      // config enabled ∧ verified ⇒ the feishu adapter is
+                                                      // registered (and started) before startAll fans out;
+                                                      // start is idempotent at plugin level, so the startAll
+                                                      // pass below is a no-op for it. Otherwise this is an
+                                                      // unregister no-op and boot behaves exactly as before.
+                                                      _ <- nebflow.social.FeishuBridgePlugin.sync(bridgeManager, PathUtil.dataRoot)
                                                       // Register bridge as WsHub listener for agent events
                                                       _ <- wsHub.register(json =>
                                                         val sessionId =

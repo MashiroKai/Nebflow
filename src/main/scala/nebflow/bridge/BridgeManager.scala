@@ -21,6 +21,35 @@ class BridgeManager private (
   def register(plugin: BridgePlugin): IO[Unit] =
     pluginsRef.update(_ + (plugin.name -> plugin))
 
+  /** Stop one plugin (if present) and remove it from the map (feishubridge
+    * batch). Stop errors are logged, never swallowed into silence, and the
+    * removal happens regardless — a plugin whose stop failed must not stay
+    * registered. Absent name = no-op, so callers can resync unconditionally. */
+  def unregister(name: String): IO[Unit] =
+    pluginsRef.get.flatMap { plugins =>
+      plugins.get(name).traverse_ { p =>
+        p.stop.handleErrorWith { e =>
+          logger.warn(s"Bridge plugin '$name' stop error during unregister: ${e.getMessage}")
+        }
+      } *> pluginsRef.update(_ - name)
+    }
+
+  /** Start one registered plugin by name (feishubridge batch). Errors are
+    * contained and logged, mirroring [[startAll]]'s per-plugin discipline. */
+  def startOne(name: String): IO[Unit] =
+    pluginsRef.get.flatMap { plugins =>
+      plugins.get(name).traverse_ { p =>
+        p.start(ctx).handleErrorWith { e =>
+          logger.error(s"Bridge plugin '$name' failed to start: ${e.getMessage}")
+        } *> logger.info(s"Bridge plugin '$name' started")
+      }
+    }
+
+  /** The currently registered plugin names — the read side the REST probe face
+    * answers `adapterRegistered` from (feishubridge batch). */
+  def registeredNames: IO[Set[String]] =
+    pluginsRef.get.map(_.keySet)
+
   def startAll: IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       if plugins.isEmpty then logger.info("No bridge plugins configured")
