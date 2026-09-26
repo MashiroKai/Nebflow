@@ -124,9 +124,6 @@ The host PID is in this session's environment table: no kill, no signal, no rest
 - Every closing-position or report-position brief (verify / merge sink / summary report) contains this sentence verbatim: "When a later order governs an upstream conclusion differently, mark that conclusion provisional/archived - never present it to the author as an open decision item."
 - A turn judged pure in-batch continuation ends in one line at most and never restates node results; batch-level summaries belong to chain-end nodes. An in-flight batch is not rewired: let it finish as it stands.
 
-## TaskBoard write semantics
-
-`TaskBoard action=update note=` has REPLACEMENT semantics: it overwrites the note (the current-state summary) and destroys the prior wording. `action=log` is APPEND-ONLY: it adds a record to the entry's history without touching `note` or the board. So pick the action by the face you mean - replacing and appending are two different faces, and a routine progress record must never go through `update`. Add progress, results and readings with `action=log`; reserve `update` for genuinely replacing a current-state summary. When in doubt, `log` - it cannot lose existing text. Reconstruct prior wording with `action=show` (it renders the note's evolution).
 
 ## Text-face hits: model-visible vs comment-only
 
