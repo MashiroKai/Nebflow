@@ -460,14 +460,22 @@ async function afterSuite(browser, base) {
               icon: h.querySelectorAll('svg, i[data-lucide]').length,
               name: !!h.querySelector('.social-card-name')?.textContent?.trim(),
               status: !!h.querySelector('[data-status]'),
-              toggle: !!h.querySelector('.nb-toggle[role="switch"]'),
+              // scanBind card (feishu, the only visible channel): the head
+              // keeps icon + name + status and carries NO switch — enabled=false
+              // IS the archive, so the card has no `.nb-toggle` anywhere; its
+              // state control lives in the actions row instead:
+              // [data-scanbind] (not-created) / [data-archive] (created).
+              // Plain cards keep the head switch; sealed channels never render.
+              // See js/socialPanel.js scanBindCardHTML / plainCardHTML.
+              noCardToggle: !c.querySelector('.nb-toggle'),
+              control: !!c.querySelector('[data-scanbind], [data-archive]'),
             } : null;
           }),
         };
       });
-      const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.toggle);
+      const headsOk = cards.heads.every((h) => h && h.icon > 0 && h.name && h.status && h.noCardToggle && h.control);
       check(`W4 card shape (count = visible single source) (${tag})`, cards.count === EXPECTED_CARDS && headsOk,
-        `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk}`);
+        `cards=${cards.count} visibleExpected=${EXPECTED_CARDS} sealedDataEntries=${EXPECTED_DEFINITION_CHANNELS} headsOk=${headsOk} heads=${JSON.stringify(cards.heads)}`);
       // socialhide SH3 — the DOM face of the seal: exactly the feishu card
       // renders (in definition order) and the sealed ids are ABSENT, not
       // merely invisible.
