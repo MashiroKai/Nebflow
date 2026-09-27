@@ -51,10 +51,15 @@
 //   its mirror).
 
 /**
- * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'} SocialStatus
+ * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'|'failed'} SocialStatus
  * `connected` is deliberately IN the closed set (so the state machine is total
  * and the flipped-flag fixture is a real state) but it is unreachable while
  * `adapterRegistered` stays false.
+ * `failed` is PANEL-COMPOSED only (feishu-panel, contract C2): the live probe
+ * face reports a fingerprint mismatch — the running bridge holds a different
+ * app than the stored credential — and the card displays it as failed.
+ * [[channelStatus]] never returns it; the composition lives with its only
+ * consumer in socialPanel.js ([[displayStatus]] there).
  */
 
 /**
@@ -133,6 +138,13 @@ export const SOCIAL_CHANNELS = [
     // ★ feiscanbind (2026-09-27): `scanBind: true` adds the "scan to create"
     //   main path to THIS card only (QR overlay + status polling). The manual
     //   fill stays the full fallback — zero semantics removed.
+    // ★ feishu-panel (2026-09-27): this card renders TWO faces — not-created
+    //   (scan QR primary, auto-opened on entry; manual form collapsed behind
+    //   its toggle) and created (live-app block, bindings + default-session
+    //   selector, archive). The enable switch is folded into archive on this
+    //   card: enabled=false IS the archive (credentials kept), so the face
+    //   discriminator is simply the enabled flag and no disabled face exists.
+    //   Channels without `scanBind` keep the plain card + switch shape.
     id: 'feishu',
     icon: 'send',
     nameKey: 'social.feishu.name',

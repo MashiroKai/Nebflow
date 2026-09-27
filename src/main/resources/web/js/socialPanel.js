@@ -47,6 +47,21 @@
 //
 // Style: css/social.css (new file; sapphire.css is off-limits for this batch).
 // Switch component: shared js/toggle.js (`nb-toggle`), never a private copy.
+//
+// feishu-panel batch: the scanBind card (feishu) renders TWO faces —
+//   · not-created: the scan QR is the primary entry (auto-opened when the
+//     panel opens on a not-created card, and again after an archive — the
+//     "recreate" leg); the manual form is a collapsed secondary entry.
+//   · created: live-app block (contract C1 — which app the running bridge is
+//     actually holding, live fingerprint verdict), chat→session bindings +
+//     default-session selector (contracts C3/C4), archive (contract C5).
+//     The enable switch is folded into archive on this card: enabled=false IS
+//     the archive, so no separate disabled face exists.
+//   · C1/C3/C4 data comes from the backend contract; an older backend answers
+//     404 or omits the fields and every reader degrades to a readable state
+//     (never an error, never a blank panel). The live-app line has NO fallback
+//     to the stored app_id — that fallback is exactly the green-pill gap
+//     (registered ≠ registered to THIS app) the diagnosis report pinned.
 
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn } from './utils.js';
@@ -76,6 +91,32 @@ let initialized = false;
  *  never written into the DOM as a value and never read back from the backend.
  *  @type {Record<string, string>} */
 let draftValues = {};
+/** Live-connection face per channel id (contract C1): what the probe face
+ *  reports about the RUNNING bridge — which app it actually holds and whether
+ *  the stored credential fingerprint matches it. Absent fields (older backend)
+ *  degrade to ''/'unknown' readings in [[normalizeLive]].
+ *  @type {Record<string, {appId: string, appName: string, fingerprint: 'match'|'mismatch'|'unknown'}>} */
+let liveByChannel = {};
+/** Chat→session bindings per channel id (contract C3). `available: false` =
+ *  the endpoint does not exist on this backend — a readable unavailable state,
+ *  never an error surface.
+ *  @type {Record<string, {available: boolean, items: Array<{chatId: string, chatName: string, sessionId: string, sessionName: string, source: string, time: string}>}>} */
+let bindingsByChannel = {};
+/** Default-session face per channel id (contract C4): `sessionId: null` =
+ *  unset; `available: false` = endpoint absent on this backend.
+ *  @type {Record<string, {available: boolean, sessionId: string|null, sessionName: string}>} */
+let defaultSessionByChannel = {};
+/** Session list for the default-session selector (existing GET /api/sessions).
+ *  @type {{available: boolean, items: Array<{id: string, name: string}>}|null} */
+let sessionsCache = null;
+/** Manual-fill expansion per channel id: the form is the SECONDARY entry and
+ *  stays collapsed until the user asks for it.
+ *  @type {Record<string, boolean>} */
+let manualExpanded = {};
+/** The user closed the scan overlay by hand during this panel session — the
+ *  auto-open (not-created face ⇒ QR first) must not fight that choice. Reset
+ *  on every panel open. */
+let scanManualChosen = false;
 
 // ── Backend adapter (same token pattern as plugins.js / agentManager.js) ──
 /**
@@ -109,14 +150,133 @@ async function fetchConfig() {
 }
 
 /** GET /api/social/probe?channel=<id> — mechanical triple, no content. Also
- *  records the live `adapterRegistered` flag (phase 2) next to the triples. */
+ *  records the live `adapterRegistered` flag (phase 2) next to the triples and
+ *  the normalized live-connection face (contract C1). */
 async function fetchProbe(id) {
   const resp = await api(`/api/social/probe?channel=${encodeURIComponent(id)}`);
   if (!resp.ok) throw new Error(`GET /api/social/probe ${resp.status}`);
   const data = await resp.json();
   probeByChannel[id] = data && data.secrets ? data.secrets : {};
   registeredByChannel[id] = !!(data && data.adapterRegistered === true);
+  liveByChannel[id] = normalizeLive(data);
   return probeByChannel[id];
+}
+
+// ── Contract faces: C1 live app / C3 bindings / C4 default session ──────
+// feishu-panel: these read the backend contract that lands with the backend
+// leg. Every reader is total: a 404 or a missing field degrades to an explicit
+// unavailable/unknown reading — the panel never errors and never blanks.
+//
+// The one hard rule: the live-app line never falls back to the STORED app_id.
+// "Which app is the bridge holding" must come from the live face only.
+
+/** C3/C4 endpoints on the feishu social routes. */
+const FEISHU_BINDINGS_URL = '/api/social/channels/feishu/bindings';
+const FEISHU_DEFAULT_SESSION_URL = '/api/social/channels/feishu/default-session';
+
+/**
+ * First non-empty string among the candidates (contract-field tolerance: the
+ * backend leg pins the final wire names; until then every plausible location
+ * is read and absence degrades — never throws).
+ * @param {...unknown} cands
+ * @returns {string}
+ */
+function firstString(...cands) {
+  for (const c of cands) { if (typeof c === 'string' && c.trim()) return c.trim(); }
+  return '';
+}
+
+/**
+ * Normalize the probe response's live-connection face (C1). Field names are
+ * read at every shape the backend contract may land on (nested under `live`
+ * or flat); anything absent → ''/'unknown'.
+ * @param {any} data probe response JSON
+ * @returns {{appId: string, appName: string, fingerprint: 'match'|'mismatch'|'unknown'}}
+ */
+function normalizeLive(data) {
+  const live = data && typeof data.live === 'object' && data.live ? data.live : {};
+  const fp = live.fingerprint ?? data.fingerprint;
+  return {
+    appId: firstString(live.appId, live.app_id, data.liveAppId, data.live_app_id),
+    appName: firstString(live.appName, live.app_name, live.name, data.appName, data.app_name),
+    fingerprint: fp === 'match' || fp === 'mismatch' ? fp : 'unknown',
+  };
+}
+
+/**
+ * C3: chat→session bindings for one channel. Non-OK/absent ⇒ available:false.
+ * Item field names read at every plausible location; the display name falls
+ * back to the raw id so a binding line is never blank.
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+async function fetchBindings(channelId) {
+  try {
+    const resp = await api(FEISHU_BINDINGS_URL);
+    if (!resp.ok) throw new Error(`GET bindings ${resp.status}`);
+    const data = await resp.json();
+    const raw = Array.isArray(data && data.bindings) ? data.bindings
+      : Array.isArray(data && data.items) ? data.items : [];
+    bindingsByChannel[channelId] = {
+      available: true,
+      items: raw.map((b) => {
+        const chatId = firstString(b && b.chatId, b && b.chat_id);
+        const sessionId = firstString(b && b.sessionId, b && b.session_id);
+        return {
+          chatId,
+          chatName: firstString(b && b.chatName, b && b.chat_name) || chatId,
+          sessionId,
+          sessionName: firstString(b && b.sessionName, b && b.session_name) || sessionId,
+          source: firstString(b && b.source) || 'manual',
+          time: firstString(b && b.time, b && b.boundAt, b && b.bound_at, b && b.createdAt),
+        };
+      }),
+    };
+  } catch {
+    bindingsByChannel[channelId] = { available: false, items: [] };
+  }
+}
+
+/**
+ * C4 read: the persisted default session (null = unset). Non-OK/absent ⇒
+ * available:false (the selector degrades to a readable note).
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+async function fetchDefaultSession(channelId) {
+  try {
+    const resp = await api(FEISHU_DEFAULT_SESSION_URL);
+    if (!resp.ok) throw new Error(`GET default-session ${resp.status}`);
+    const data = await resp.json();
+    defaultSessionByChannel[channelId] = {
+      available: true,
+      sessionId: data && typeof data.sessionId === 'string' && data.sessionId ? data.sessionId : null,
+      sessionName: firstString(data && data.sessionName, data && data.session_name),
+    };
+  } catch {
+    defaultSessionByChannel[channelId] = { available: false, sessionId: null, sessionName: '' };
+  }
+}
+
+/** Session list for the default-session selector (existing REST face).
+ * @returns {Promise<void>}
+ */
+async function fetchSessions() {
+  try {
+    const resp = await api('/api/sessions');
+    if (!resp.ok) throw new Error(`GET /api/sessions ${resp.status}`);
+    const data = await resp.json();
+    const raw = Array.isArray(data && data.sessions) ? data.sessions : [];
+    sessionsCache = {
+      available: true,
+      items: raw.map((s) => ({
+        id: firstString(s && s.id, s && s.sessionId),
+        name: firstString(s && s.name, s && s.displayName, s && s.title),
+      })).filter((s) => s.id),
+    };
+  } catch {
+    sessionsCache = { available: false, items: [] };
+  }
 }
 
 // ── Selection helpers ────────────────────────────────────────────────────
@@ -151,6 +311,35 @@ function bit(v) { return v === true ? t('social.value.yes') : t('social.value.no
 function setBusy(on) {
   const el = document.getElementById('social-section-channels');
   if (el) el.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
+/**
+ * The scanBind face discriminator (contract C5): the card face is "created"
+ * exactly when the backend holds the channel enabled. Archive (enabled=false)
+ * is the only off path — it flips the face back to not-created while the
+ * stored credentials stay on disk.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {boolean}
+ */
+function faceCreated(ch) {
+  const cfg = configByChannel[ch.id];
+  return !!(cfg && cfg.enabled === true);
+}
+
+/**
+ * Display status = the mechanical state machine ([[channelStatus]]) plus ONE
+ * composed reading (contract C2): a fingerprint mismatch means the live
+ * bridge is holding a DIFFERENT app than the stored credential — displayed as
+ * failed even though the adapter is registered. channelStatus itself is
+ * untouched; this composition lives with its only consumer.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function displayStatus(ch) {
+  const base = channelStatus(ch, configByChannel[ch.id], probeByChannel[ch.id], registeredByChannel[ch.id]);
+  const live = liveByChannel[ch.id];
+  if (base === 'connected' && live && live.fingerprint === 'mismatch') return 'failed';
+  return base;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────
@@ -201,23 +390,28 @@ function cardHint(ch, status) {
 }
 
 /**
- * One card. Head carries icon + name + `[data-status]` + the shared switch
- * (W4 requires all four inside `.social-card-head`).
+ * One card. The scanBind channels (feishu today) render the two-face card;
+ * every other channel keeps the plain card shape unchanged.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
 function cardHTML(ch) {
+  return ch.scanBind ? scanBindCardHTML(ch) : plainCardHTML(ch);
+}
+
+/**
+ * Plain card (channels without the scan-bind main path): head carries icon +
+ * name + `[data-status]` + the shared switch (W4 requires all four inside
+ * `.social-card-head`).
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function plainCardHTML(ch) {
   const cfg = configByChannel[ch.id];
   const status = channelStatus(ch, cfg, probeByChannel[ch.id], registeredByChannel[ch.id]);
   const hint = cardHint(ch, status);
   const fields = ch.fields.map((f) => fieldHTML(ch, f)).join('');
   const on = !!(cfg && cfg.enabled);
-  // feiscanbind: cards flagged `scanBind` in the definition layer carry the
-  // "scan to create" main path (feishu only today). First in the actions row —
-  // it is the primary path, the form below it is the fallback.
-  const scanBtn = ch.scanBind
-    ? `<button type="button" class="glass-control cfg-btn cfg-btn-sm" data-scanbind="${escapeHtml(ch.id)}">${escapeHtml(t(`social.${ch.id}.scan.action`))}</button>`
-    : '';
   return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
       <div class="social-card-head">
         <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
@@ -233,10 +427,143 @@ function cardHTML(ch) {
       <div class="social-card-fields">${fields}</div>
       <div class="social-card-hint"${hint ? '' : ' hidden'}>${escapeHtml(hint)}</div>
       <div class="social-card-actions">
-        ${scanBtn}<button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-save="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.save'))}</button>
+        <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-save="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.save'))}</button>
         <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-recheck="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.recheck'))}</button>
         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
       </div>
+    </div>`;
+}
+
+/**
+ * The scanBind card (feishu-panel): two faces over one definition entry.
+ *   · not-created — the scan action is the primary path, the manual form sits
+ *     collapsed behind "改为手填"; the QR sub-dialog auto-opens when the panel
+ *     opens on this face ([[maybeAutoScan]]) and again after an archive.
+ *   · created — the live-app block (C1), archive (C5) with its one-line
+ *     semantics, the bindings block (C3/C4), then the same collapsed manual
+ *     form for editing credentials.
+ * The head keeps icon + name + status pill; the enable switch is folded into
+ * archive (enabled=false IS the archive — no separate disabled face exists).
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function scanBindCardHTML(ch) {
+  const created = faceCreated(ch);
+  const status = displayStatus(ch);
+  const hint = cardHint(ch, status);
+  const fields = ch.fields.map((f) => fieldHTML(ch, f)).join('');
+  const manualOpen = !!manualExpanded[ch.id];
+  const head = `<div class="social-card-head">
+        <i data-lucide="${escapeHtml(ch.icon)}" class="social-card-icon"></i>
+        <span class="social-card-name">${escapeHtml(t(ch.nameKey))}</span>
+        <span class="social-status-pill plugins-state-pill" data-status="${status}">${escapeHtml(t(`social.status.${status}`))}</span>
+      </div>`;
+  const manualBlock = `
+      <button type="button" class="social-scan-manual" data-manual-toggle="${escapeHtml(ch.id)}" aria-expanded="${manualOpen ? 'true' : 'false'}" aria-controls="social-manual-${escapeHtml(ch.id)}">${escapeHtml(t(manualOpen ? 'social.feishu.manualHide' : 'social.feishu.manualToggle'))}</button>
+      <div class="social-card-manual" id="social-manual-${escapeHtml(ch.id)}" data-manual="${escapeHtml(ch.id)}"${manualOpen ? '' : ' hidden'}>
+        <div class="social-card-fields">${fields}</div>
+        <div class="social-card-actions">
+          <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-save="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.save'))}</button>
+          <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-recheck="${escapeHtml(ch.id)}">${escapeHtml(t('social.action.recheck'))}</button>
+        </div>
+      </div>`;
+  const face = created
+    ? `${liveBlockHTML(ch)}
+       <div class="social-card-actions">
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-danger" data-archive="${escapeHtml(ch.id)}">${escapeHtml(t('social.feishu.archive.action'))}</button>
+         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
+       </div>
+       <div class="social-archive-hint">${escapeHtml(t('social.feishu.archive.hint'))}</div>
+       ${bindingsHTML(ch)}
+       ${manualBlock}`
+    : `<div class="social-card-actions">
+         <button type="button" class="glass-control cfg-btn cfg-btn-sm social-btn-primary" data-scanbind="${escapeHtml(ch.id)}">${escapeHtml(t(`social.${ch.id}.scan.action`))}</button>
+         <span class="social-save-state" data-save-state="${escapeHtml(ch.id)}" role="status" aria-live="polite"></span>
+       </div>
+       ${manualBlock}`;
+  return `<div class="social-card" data-channel="${escapeHtml(ch.id)}">
+      ${head}
+      <div class="social-card-desc">${escapeHtml(t(ch.descKey))}</div>
+      ${face}
+      <div class="social-card-hint"${hint ? '' : ' hidden'}>${escapeHtml(hint)}</div>
+    </div>`;
+}
+
+/**
+ * The created face's "which app is the bridge actually holding" block (C1).
+ * Values come from the LIVE probe face only — no fallback to the stored
+ * app_id (that fallback is exactly the green-pill gap the diagnosis report
+ * pinned: registered ≠ registered to THIS app). A backend without the live
+ * fields reads "unknown", never wrong.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function liveBlockHTML(ch) {
+  const live = liveByChannel[ch.id] || { appId: '', appName: '', fingerprint: 'unknown' };
+  const cfg = configByChannel[ch.id];
+  const enabled = !!(cfg && cfg.enabled);
+  const appText = live.appId
+    ? (live.appName ? `${live.appName} · ${live.appId}` : live.appId)
+    : t('social.feishu.live.appUnknown');
+  const fp = live.fingerprint;
+  const fpKey = fp === 'match' ? 'social.feishu.live.fpMatch'
+    : fp === 'mismatch' ? 'social.feishu.live.fpMismatch'
+      : 'social.feishu.live.fpUnknown';
+  return `<div class="social-live" data-live="${escapeHtml(ch.id)}">
+      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.title'))}</span><span class="social-live-value">${escapeHtml(appText)}</span></div>
+      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.fingerprint'))}</span><span class="social-live-value${fp === 'mismatch' ? ' social-live-warn' : ''}" data-fp="${fp}">${escapeHtml(t(fpKey))}</span></div>
+      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.bridge'))}</span><span class="social-live-value">${escapeHtml(t(enabled ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff'))}</span></div>
+    </div>`;
+}
+
+/**
+ * Chat→session bindings + the default-session selector (C3/C4). Everything
+ * degrades: an endpoint absent on this backend renders an explicit
+ * "unavailable" line; a present-but-empty list renders the readable empty
+ * state. The selector only renders when both the C4 face and the session
+ * list are available; the persisted-but-unknown session id still shows as
+ * its own option so the selector never lies about what is set.
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {string}
+ */
+function bindingsHTML(ch) {
+  const b = bindingsByChannel[ch.id] || { available: false, items: [] };
+  /** @type {string[]} */
+  const lines = [];
+  for (const item of b.items) {
+    const src = t(item.source === 'auto' ? 'social.feishu.bindings.source.auto' : 'social.feishu.bindings.source.manual');
+    /** @type {string[]} */
+    const parts = [`${item.chatName} → ${item.sessionName}`, src];
+    if (item.time) parts.push(item.time);
+    lines.push(`<div class="social-binding-item">${escapeHtml(parts.join(' · '))}</div>`);
+  }
+  const listBody = !b.available
+    ? `<div class="social-binding-empty">${escapeHtml(t('social.feishu.bindings.unavailable'))}</div>`
+    : (lines.length
+      ? lines.join('')
+      : `<div class="social-binding-empty">${escapeHtml(t('social.feishu.bindings.empty'))}</div>`);
+  const d = defaultSessionByChannel[ch.id] || { available: false, sessionId: null, sessionName: '' };
+  let selector;
+  if (d.available && sessionsCache && sessionsCache.available) {
+    const known = sessionsCache.items.some((s) => s.id === d.sessionId);
+    const current = d.sessionId
+      ? [`<option value="${escapeHtml(d.sessionId)}" selected>${escapeHtml(d.sessionName || d.sessionId)}</option>`]
+      : [];
+    const opts = (known ? [] : current)
+      .concat([`<option value=""${d.sessionId ? '' : ' selected'}>${escapeHtml(t('social.feishu.defaultSession.none'))}</option>`])
+      .concat(sessionsCache.items.map((s) => `<option value="${escapeHtml(s.id)}"${s.id === d.sessionId ? ' selected' : ''}>${escapeHtml(s.name || s.id)}</option>`))
+      .join('');
+    selector = `<label class="social-field social-default-session" for="social-feishu-default-session">
+        <span class="social-field-label">${escapeHtml(t('social.feishu.defaultSession.label'))}</span>
+        <select id="social-feishu-default-session" class="social-input" data-default-session="${escapeHtml(ch.id)}">${opts}</select>
+      </label>`;
+  } else {
+    selector = `<div class="social-binding-empty">${escapeHtml(t('social.feishu.defaultSession.unavailable'))}</div>`;
+  }
+  return `<div class="social-bindings" data-bindings="${escapeHtml(ch.id)}">
+      <div class="social-bindings-title">${escapeHtml(t('social.feishu.bindings.title'))}</div>
+      ${listBody}
+      ${selector}
     </div>`;
 }
 
@@ -306,12 +633,16 @@ function refreshCard(channelId) {
   const ch = channelById(channelId);
   const card = cardEl(channelId);
   if (!ch || !card) return;
-  const status = channelStatus(ch, configByChannel[ch.id], probeByChannel[ch.id], registeredByChannel[ch.id]);
+  const status = displayStatus(ch);
   const pill = card.querySelector('.social-status-pill');
   if (pill) {
     pill.setAttribute('data-status', status);
     pill.textContent = t(`social.status.${status}`);
   }
+  const liveEl = card.querySelector('[data-live]');
+  if (liveEl instanceof HTMLElement) liveEl.outerHTML = liveBlockHTML(ch);
+  const bindEl = card.querySelector('[data-bindings]');
+  if (bindEl instanceof HTMLElement) bindEl.outerHTML = bindingsHTML(ch);
   const hintEl = card.querySelector('.social-card-hint');
   const hint = cardHint(ch, status);
   if (hintEl) {
@@ -354,8 +685,10 @@ function applyStaticText() {
 }
 
 // ── Load / save ──────────────────────────────────────────────────────────
-/** Read config + probe for every channel; failures degrade to "not configured"
- *  readings instead of blanking the panel. */
+/** Read config + probe for every channel, then the C3/C4 faces for the
+ *  scanBind channels; failures degrade to "not configured" / "unavailable"
+ *  readings instead of blanking the panel. Ends with the auto-scan decision
+ *  (not-created face ⇒ QR first). */
 async function loadAll() {
   try {
     configByChannel = await fetchConfig();
@@ -369,8 +702,17 @@ async function loadAll() {
       probeByChannel[ch.id] = {};
     }
   }
+  // feishu-panel: bindings + default session ride along with the load (cheap
+  // GETs; each degrades to its own unavailable reading on an older backend).
+  for (const ch of SOCIAL_CHANNELS) {
+    if (!ch.scanBind) continue;
+    await fetchBindings(ch.id);
+    await fetchDefaultSession(ch.id);
+  }
+  await fetchSessions();
   renderAll();
   setBusy(false);
+  maybeAutoScan();
 }
 
 /**
@@ -461,6 +803,122 @@ async function recheck(channelId) {
   refreshCard(channelId);
 }
 
+// ── Archive (contract C5) ────────────────────────────────────────────────
+/**
+ * The archive action: enabled=false through the EXISTING save path. The empty
+ * fields object hits the backend's surgical merge — every stored value,
+ * credential references included, survives; no delete path exists anywhere on
+ * this wire. The card face flips back to not-created (the face discriminator
+ * is the enabled flag) and the recreate leg auto-opens the QR.
+ * @param {string} channelId
+ * @returns {Promise<void>}
+ */
+async function archiveChannel(channelId) {
+  const ch = channelById(channelId);
+  if (!ch || !ch.scanBind) return;
+  setSaveState(channelId, t('social.feishu.archive.doing'));
+  setBusy(true);
+  try {
+    const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false, fields: {} }),
+    });
+    if (!resp.ok) {
+      setSaveState(channelId, t('social.action.saveFailed', { code: resp.status }));
+      return;
+    }
+    // Typed-but-unsaved drafts die with the archive (zero surprise: the face
+    // is not-created now, nothing the user typed should resurface later).
+    for (const f of ch.fields) delete draftValues[`${channelId}.${f.key}`];
+    configByChannel = await fetchConfig();
+    try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep */ }
+    manualExpanded[channelId] = false;
+    renderAll();
+    setSaveState(channelId, t('social.feishu.archive.done'));
+    maybeAutoScan(); // recreate: the archived face auto-begins the QR
+  } catch {
+    setSaveState(channelId, t('social.action.saveFailed', { code: 'io' }));
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ── Default session (contract C4) ────────────────────────────────────────
+/**
+ * PUT the default session ('' clears it → null). Failure rolls the select
+ * back to the last backend truth and says so — the selector never lies.
+ * @param {string} channelId
+ * @param {string} sessionId
+ * @returns {Promise<void>}
+ */
+async function saveDefaultSession(channelId, sessionId) {
+  const card = cardEl(channelId);
+  const select = card ? card.querySelector('[data-default-session]') : null;
+  const prev = defaultSessionByChannel[channelId]
+    || { available: true, sessionId: null, sessionName: '' };
+  try {
+    const resp = await api(FEISHU_DEFAULT_SESSION_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sessionId || null }),
+    });
+    if (!resp.ok) throw new Error(`PUT default-session ${resp.status}`);
+    const named = sessionsCache
+      ? /** @type {Array<{id: string, name: string}>} */ (sessionsCache.items)
+        .find((s) => s.id === sessionId)
+      : undefined;
+    defaultSessionByChannel[channelId] = {
+      available: true,
+      sessionId: sessionId || null,
+      sessionName: named ? named.name : '',
+    };
+    setSaveState(channelId, t('social.feishu.defaultSession.saved'));
+  } catch {
+    defaultSessionByChannel[channelId] = {
+      available: prev.available, sessionId: prev.sessionId, sessionName: prev.sessionName,
+    };
+    if (select instanceof HTMLSelectElement) select.value = prev.sessionId || '';
+    setSaveState(channelId, t('social.feishu.defaultSession.saveFailed', { code: 'io' }));
+  }
+}
+
+// ── Manual-fill collapse + auto-scan ─────────────────────────────────────
+/**
+ * Expand/collapse the manual-fill form (the secondary entry, contract §1.3).
+ * @param {string} channelId
+ */
+function toggleManual(channelId) {
+  manualExpanded[channelId] = !manualExpanded[channelId];
+  const card = cardEl(channelId);
+  if (!card) return;
+  const open = !!manualExpanded[channelId];
+  const wrap = card.querySelector('[data-manual]');
+  const btn = card.querySelector('[data-manual-toggle]');
+  if (wrap instanceof HTMLElement) wrap.hidden = !open;
+  if (btn instanceof HTMLElement) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = t(open ? 'social.feishu.manualHide' : 'social.feishu.manualToggle');
+  }
+}
+
+/**
+ * Auto-open the QR sub-dialog when a visible scanBind card sits on its
+ * not-created face (QR first on entry; the archive→recreate leg reuses this).
+ * Never fights the user: a hand-closed overlay this panel session keeps the
+ * auto-open quiet, and a created card or a closed panel never triggers it.
+ */
+function maybeAutoScan() {
+  if (scanManualChosen) return;
+  const ov = overlay();
+  if (!ov || !ov.classList.contains('on')) return;
+  const current = scanOverlay();
+  if (current && !current.hidden) return;
+  const ch = visibleChannels().find((c) => !!c.scanBind);
+  if (!ch || faceCreated(ch)) return;
+  void openScanOverlay(ch.id);
+}
+
 // ── Scan-bind overlay (feiscanbind batch, 2026-09-27) ────────────────────
 // The "scan to create" main path for the feishu card: a glass sub-dialog
 // (same family as the panel shell — no dimming backdrop) with the QR code,
@@ -470,6 +928,10 @@ async function recheck(channelId) {
 let scanOverlayEl = /** @type {HTMLElement|null} */ (null);
 let scanPollTimer = /** @type {number|null} */ (null);
 let scanActiveScanId = '';
+/** The channel the overlay was opened for. The overlay is a child of the
+ *  modal, NOT of the card, so the manual-fill handover (a button inside the
+ *  overlay) cannot find its card by DOM ancestry — it reads this instead. */
+let scanChannelId = '';
 const SCAN_POLL_MS = 2000;
 const SCAN_MAX_CONSECUTIVE_ERRORS = 5;
 
@@ -568,7 +1030,8 @@ function setScanUserCode(code) {
 }
 
 /** Open the overlay, fire `begin` and start polling. */
-async function openScanOverlay() {
+async function openScanOverlay(channelId = 'feishu') {
+  scanChannelId = channelId;
   const el = scanOverlay() || buildScanOverlay();
   el.hidden = false;
   setScanStatus(t('social.feishu.scan.starting'));
@@ -637,8 +1100,12 @@ function stopScanPoll() {
   if (scanPollTimer !== null) { clearInterval(scanPollTimer); scanPollTimer = null; }
 }
 
-/** Hide the overlay and tear the poll down (D-2②: the closer owns the exit). */
+/** Hide the overlay and tear the poll down (D-2②: the closer owns the exit).
+ *  A hand-close also quiets the panel-session auto-open ([[maybeAutoScan]]):
+ *  the user just said "not now" and the panel must not reopen the QR behind
+ *  their back. */
 function closeScanOverlay() {
+  scanManualChosen = true;
   scanActiveScanId = '';
   stopScanPoll();
   const el = scanOverlay();
@@ -653,7 +1120,7 @@ function closeScanOverlay() {
 /** Click path for the card button. @param {string} channelId */
 function onScanBind(channelId) {
   if (channelId !== 'feishu') return; // single-channel face today (definition-layer flag gates the button)
-  openScanOverlay();
+  void openScanOverlay(channelId);
 }
 
 // ── Open / close / focus ─────────────────────────────────────────────────
@@ -661,6 +1128,7 @@ export function openSocialPanel() {
   const ov = overlay();
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
+  scanManualChosen = false; // each panel open gets a fresh auto-scan decision
   ov.classList.add('on');
   renderAll();
   setBusy(true); // set BEFORE the load so an observer can never read the previous round's value
@@ -727,9 +1195,19 @@ function onDocumentClick(ev) {
   const scan = target.closest('[data-scanbind]');
   if (scan instanceof HTMLElement && scan.dataset.scanbind) { onScanBind(scan.dataset.scanbind); return; }
   if (target.closest('[data-scan-close]')) { closeScanOverlay(); return; }
-  // "改为手填": the fallback IS the card form behind the overlay — closing the
-  // overlay is the whole handover. Any in-flight scan session is torn down.
-  if (target.closest('[data-scan-manual]')) { closeScanOverlay(); return; }
+  // "改为手填" (scan overlay fallback): the card form behind the overlay IS
+  // the manual path — closing the overlay hands over AND opens the form so
+  // the user lands on usable fields, not on another collapsed toggle.
+  if (target.closest('[data-scan-manual]')) {
+    const id = scanChannelId || 'feishu';
+    closeScanOverlay();
+    toggleManual(id);
+    return;
+  }
+  const arch = target.closest('[data-archive]');
+  if (arch instanceof HTMLElement && arch.dataset.archive) { void archiveChannel(arch.dataset.archive); return; }
+  const mt = target.closest('[data-manual-toggle]');
+  if (mt instanceof HTMLElement && mt.dataset.manualToggle) { toggleManual(mt.dataset.manualToggle); return; }
   const save = target.closest('[data-save]');
   if (save instanceof HTMLElement && save.dataset.save) { saveChannel(save.dataset.save); return; }
   const re = target.closest('[data-recheck]');
@@ -745,6 +1223,15 @@ function onInput(ev) {
   if (el.dataset.secret === '1') draftValues[`${id}.${el.dataset.field}`] = el.value;
 }
 
+/** Select changes (the default-session picker; text inputs go through onInput). */
+function onChange(ev) {
+  const el = /** @type {HTMLSelectElement|null} */ (ev.target instanceof HTMLSelectElement ? ev.target : null);
+  if (!el || !el.hasAttribute('data-default-session')) return;
+  const card = el.closest('.social-card');
+  if (!(card instanceof HTMLElement) || !card.dataset.channel) return;
+  void saveDefaultSession(card.dataset.channel, el.value);
+}
+
 /** Boot wiring. Idempotent; document-level so the entry button survives the
  *  friends gate detaching/re-attaching it (activityBar.js). */
 export function initSocialPanel() {
@@ -753,6 +1240,7 @@ export function initSocialPanel() {
   document.addEventListener('click', onDocumentClick);
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('input', onInput);
+  document.addEventListener('change', onChange);
   overlay()?.addEventListener('click', onOverlayClick);
   window.addEventListener('locale-changed', () => { applyStaticText(); renderAll(); });
   applyStaticText();
