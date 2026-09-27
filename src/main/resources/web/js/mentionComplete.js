@@ -64,6 +64,8 @@ function getProjectsCached() {
         cacheProjects = Array.isArray(projects) ? projects : [];
         cacheAt = Date.now();
         failAt = 0;
+        listGen++; // renderer LRU generation — cache invalidation on list change
+        notifyProjectsArrival(); // one-shot enhancement hook (main.js)
         return cacheProjects;
       })
       .catch(() => {
@@ -73,6 +75,67 @@ function getProjectsCached() {
       .finally(() => { inflight = null; });
   }
   return inflight;
+}
+
+// ── Shared-list readouts (mention-render batch, 2026-09-27) ──────────────
+// The message renderer (utils.js, wired via main.js's provider) and the
+// click delegate below read the SAME cache through these exports — there is
+// exactly ONE project list and ONE fetch cache in the client (this module).
+// `listGen` bumps on every successful fetch, giving the renderer's LRU a
+// generation component so cached HTML can never contradict the current list.
+let listGen = 0;
+const EMPTY_PROJECTS = [];
+
+/**
+ * Synchronous snapshot of the mounted-project list. Zero-copy: consumers
+ * treat the array as read-only (fetches replace the reference, never mutate
+ * in place, so a returned snapshot stays stable across refetches).
+ * @returns {Array<{name: string, workspace?: string}>}
+ */
+export function getProjectsSnapshot() {
+  return Array.isArray(cacheProjects) ? cacheProjects : EMPTY_PROJECTS;
+}
+
+/**
+ * Generation of the shared list — increments on every successful fetch.
+ * @returns {number}
+ */
+export function getProjectsListGen() {
+  return listGen;
+}
+
+/** Warm the shared list once (fire-and-forget). getProjectsCached never
+ *  rejects; failures are absorbed by its retry backoff. */
+export function preheatProjects() {
+  void getProjectsCached();
+}
+
+// First-arrival hook: the renderer runs ONE targeted DOM enhancement when the
+// list first becomes non-empty, so messages already rendered as plain text
+// (list not yet arrived) gain their mention spans without user action.
+/** @type {Array<() => void> | null} */
+let arrivalCbs = null;
+
+/**
+ * Subscribe to the first successful non-empty list arrival. Fires at most
+ * once per page load (immediately when the list is already populated).
+ * @param {() => void} cb
+ */
+export function onProjectsArrival(cb) {
+  if (cacheProjects && cacheProjects.length > 0) {
+    cb();
+    return;
+  }
+  (arrivalCbs ??= []).push(cb);
+}
+
+function notifyProjectsArrival() {
+  if (!cacheProjects || cacheProjects.length === 0 || !arrivalCbs) return;
+  const cbs = arrivalCbs;
+  arrivalCbs = null;
+  for (const fn of cbs) {
+    try { fn(); } catch (_) { /* one bad subscriber must not eat the rest */ }
+  }
 }
 
 // ── Popup state ──────────────────────────────────────────────────────────
@@ -365,4 +428,27 @@ document.addEventListener('selectionchange', () => {
   if (!ctx) return;
   if (document.activeElement !== ctx.input) return;
   updateMentionDropdown(ctx.view);
+});
+
+// ── Click-to-explorer delegation (mention-render batch, 2026-09-27) ──────
+// ONE document-level delegated listener covers every rendered .mention-tag —
+// bubbles added later, primary window and agent popups alike. The canonical
+// name resolves against the SAME shared snapshot: a name no longer mounted
+// (or without a workspace) is a silent no-op, never an error.
+document.addEventListener('click', (e) => {
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+  const tag = target.closest('.mention-tag');
+  if (!tag) return;
+  const name = tag.getAttribute('data-project') || '';
+  if (!name) return;
+  const project = getProjectsSnapshot().find((p) => p && p.name === name);
+  const workspace = project && typeof project.workspace === 'string' ? project.workspace : '';
+  if (!workspace) return;
+  // Same lazy-import + toast precedent as projectTab's workspace-open button:
+  // a static import here would drag the file tree into every page load.
+  import('./explorer.js').then(({ openExplorerAt }) => {
+    openExplorerAt(workspace);
+    window.__showToast?.(t('project.workspaceOpened', { path: workspace }), 'info');
+  }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
 });

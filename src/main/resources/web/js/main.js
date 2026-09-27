@@ -18,7 +18,8 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, updateScrollSnapped, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -276,6 +277,16 @@ await waitForGlobals();
 if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
+
+// Mention-render batch (2026-09-27): the message renderer reads the shared
+// project list through this provider — mentionComplete.js owns the single
+// list + fetch cache, and utils.js gains no module-graph edge. Warm the list
+// once at boot, and when it FIRST arrives run ONE targeted DOM pass so
+// messages rendered as plain text before arrival (boot race) gain their
+// mention spans without any user action.
+setMentionListProvider(() => ({ projects: getProjectsSnapshot(), gen: getProjectsListGen() }));
+preheatProjects();
+onProjectsArrival(() => { enhanceMentionSpansInDom(); });
 
 // ---------- 3. Register WS message handlers ----------
 

@@ -867,6 +867,19 @@
   color: #888;
   font-size: 12px;
 }
+/* @-mention tag (mention-render batch, 2026-09-27): blue clickable route
+   marker inside message text — the author's order (verbatim 「为蓝色」) makes
+   it blue, deliberately NOT var(--color-primary): that token is the
+   WeChat-green send family in this codebase (base.css). rgb(var(--sapphire))
+   is the existing accent token — no new color introduced. Hover = underline
+   (task: 下划线或加深). */
+.mention-tag {
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.mention-tag:hover {
+  text-decoration: underline;
+}
 /* #303 §4: message ref card — a block-level card (not an inline tag) using the
    glass-etched surface, no new color tokens, visual-style font weights. */
 .bubble.user.att-bubble.att-ref-bubble {
