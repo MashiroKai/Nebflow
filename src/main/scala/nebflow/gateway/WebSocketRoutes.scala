@@ -3722,9 +3722,12 @@ class WebSocketRoutes(
             // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
             sharedResources.agentRegistry.get.flatMap { registry =>
               WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
-                // taskbadge 批 2026-09-27：台账标题**一次**读入（id→title 映射，
-                // N 行只读一次台账文件）；读失败降级为空映射——快照恒成帧，
-                // 徽标降级为仅 #id（空值态契约，禁快照因标题读不到而失败）。
+                // taskbadge batch 2026-09-27: ledger titles read **once** (an
+                // id->title map -- a single ledger-file read regardless of row
+                // count); a read failure degrades to an empty map -- the snapshot
+                // always frames, the badge degrades to bare #id (empty-state
+                // contract; the snapshot must never fail because a title could
+                // not be read).
                 IO.blocking {
                   val ids = active.flatMap(_.taskId).distinct
                   ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
@@ -7042,11 +7045,13 @@ object WebSocketRoutes:
       // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
       // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
       "project"        -> rec.project.getOrElse("").asJson,
-      // 任务归属（taskbadge 批 2026-09-27：面板任务徽标 `#id · title`）——恢复
-      // 路径数据源：taskId = AgentRecord 注册时快照（分发器槽位 / NodeDef）；
-      // taskTitle = 调用方经台账解析（getActiveAgents 一次读入映射后按行回填）。
-      // 空串 = 无归属（kernel/系统/旧会话/槽位已清）→ 前端 falsy 不渲染徽标
-      // （与 project 同款空值契约；键恒存在，形态稳定）。
+      // Task attribution (taskbadge batch 2026-09-27: panel task badge `#id · title`)
+      // -- recovery-path data source: taskId = snapshot at AgentRecord registration
+      // (dispatcher slot / NodeDef); taskTitle = resolved by the caller via the
+      // ledger (getActiveAgents reads the id->title map once, then backfills per
+      // row). Empty string = no attribution (kernel/system/legacy sessions/slot
+      // cleared) -> frontend falsy renders no badge (same empty-value contract as
+      // project; keys always present, shape stable).
       "taskId"         -> rec.taskId.getOrElse("").asJson,
       "taskTitle"      -> taskTitle.getOrElse("").asJson
     )

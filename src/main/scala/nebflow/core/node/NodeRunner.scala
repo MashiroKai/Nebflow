@@ -194,10 +194,12 @@ object NodeRunner:
           // 零载荷膨胀，前端也只从 agentStart 读 project。非 Project 域会话
           // （Delegate/SubTask 走 routeWsSend）不经过本包装 → 无 project 字段
           // → 前端不渲染徽标（恢复路径见 AgentRecord.project）。
-          // 任务归属（taskbadge 批 2026-09-27：子代理面板任务徽标）——同一入口帧
-          // 注入 taskId + taskTitle（标题由调用方在 spawn 时刻经台账解析一次）；
-          // 注入判据与 project 独立（各字段自定义即注入，互不绑定），前端空值 =
-          // 不渲染徽标（与 project 的 falsy 契约同款）。
+          // Task attribution (taskbadge batch 2026-09-27: subagent panel task
+          // badge) -- the same entry frame gets taskId + taskTitle injected (the
+          // title is resolved once at spawn time by the caller via the ledger);
+          // the injection criterion is independent of project's (each field is
+          // injected when defined, never bound to the other), and an empty value
+          // on the frontend = no badge rendered (same falsy contract as project).
           val finalObj =
             if obj("type").exists(_.asString.contains("agentStart")) then
               val withProject = project.fold(withNodeSession)(p => withNodeSession.add("project", p.asJson))

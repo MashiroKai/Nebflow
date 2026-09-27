@@ -3283,9 +3283,10 @@ class NodeEngine(
             IO.raiseError(new RuntimeException(
               s"Node '$nodeName' ($nodeId) start aborted — $reason"))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
-      // taskbadge 批 2026-09-27：任务标题在 spawn 时刻解析一次（台账单读、
-      // titleOfSync 内部失败降级 None——归属是纯展示元数据，标题读不到不得
-      // 阻塞节点 spawn）。blocking 池承载文件读（IO 纪律）。
+      // taskbadge batch 2026-09-27: the task title is resolved once at spawn time
+      // (single ledger read; titleOfSync degrades to None on internal failure --
+      // attribution is display-only metadata, an unreadable title must never block
+      // the node spawn). The file read runs on the blocking pool (IO discipline).
       taskTitle <- IO.blocking(TaskLedgerStore.titleOfSync(node.taskId))
       // 阶段 2b Plugins（§B.4 第 4 步 ③）：plugin MCP 前缀来源 + 内建工具授予
       // 进该会话 allowedSet（buildAllowedToolSet 扩展消费；仅运行时 AgentDef，
@@ -3309,7 +3310,8 @@ class NodeEngine(
           // sessionBgAgents 归桶键）+ nodeSessionId（popup/历史路由）——否则
           // 子 agent 事件无法在 subagent 面板归到根会话（与 Delegate/SubTask
           // 同一可观测性标准）。project：agentStart 帧注入项目名（面板项目徽标）。
-          // taskId/taskTitle：agentStart 帧注入任务归属（面板任务徽标，taskbadge 批）。
+          // taskId/taskTitle: inject task attribution into the agentStart frame
+          // (panel task badge, taskbadge batch).
           wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId,
             Some(projectName), node.taskId, taskTitle),
           projectRoot = Some(projectRoot),
@@ -3665,8 +3667,9 @@ class NodeEngine(
             supervisorRef = Some(bridgeRef),
             // 恢复路径项目徽标（activeAgents 快照 → activeAgentEntryJson）。
             project = Some(projectName),
-            // 恢复路径任务徽标（taskbadge 批）：节点名下任务（NodeDef.taskId），
-            // 刷新后快照照此渲染任务标记（与 project 同面）。
+            // Recovery-path task badge (taskbadge batch): the task owning this
+            // node (NodeDef.taskId); after a refresh the snapshot renders the
+            // task badge from it (same face as project).
             taskId = node.taskId,
             displayName = Some(nodeName)
           )
@@ -3893,8 +3896,9 @@ class NodeEngine(
       initD <- Deferred[IO, Either[String, List[Message]]]
       round = Ref.unsafe[IO, Deferred[IO, Either[String, List[Message]]]](initD)
       agentDef = baseDef.copy(pluginMcpServers = grant.serverIds, pluginTools = prepared.builtinTools)
-      // taskbadge 批 2026-09-27：任务标题 spawn 时刻解析一次（blocking 池承载
-      // 台账文件读；titleOfSync 内部失败降级 None——纯展示元数据不阻塞 spawn）。
+      // taskbadge batch 2026-09-27: the task title is resolved once at spawn time
+      // (the ledger file read runs on the blocking pool; titleOfSync degrades to
+      // None on internal failure -- display-only metadata never blocks the spawn).
       taskTitle <- IO.blocking(TaskLedgerStore.titleOfSync(taskId))
       ref <- NodeRunner.spawnAgentActor(
         system,
@@ -3905,10 +3909,12 @@ class NodeEngine(
           sessionName = sessionName,
           depth = 1,
           parentRef = None,
-          // 与节点同款：project 注入 agentStart 帧（LoopNode worker/verify 会话
-          // 亦属 Project 域，面板行同标准标注项目名）。taskId/taskTitle：同一帧
-          // 注入任务归属（面板任务徽标，taskbadge 批；标题 spawn 时刻经
-          // taskTitle 生成器解析一次、失败降级 None）。
+          // Same as the node path: project is injected into the agentStart frame
+          // (LoopNode worker/verify sessions are also Project-domain, so panel
+          // rows get the project name by the same standard). taskId/taskTitle:
+          // the same frame gets task attribution injected (panel task badge,
+          // taskbadge batch; the title is resolved once at spawn time via the
+          // taskTitle generator, degrading to None on failure).
           wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId,
             Some(projectName), taskId, taskTitle),
           projectRoot = Some(projectRoot),
@@ -3952,7 +3958,7 @@ class NodeEngine(
           lastActivityMs = System.currentTimeMillis(),
           supervisorRef = Some(bridgeRef),
           project = Some(projectName), // 恢复路径项目徽标（与节点/分发器同标准）
-          taskId = taskId,             // 恢复路径任务徽标（taskbadge 批，同面）
+          taskId = taskId,             // recovery-path task badge (taskbadge batch, same face)
           displayName = Some(sessionName)
         ))
       )

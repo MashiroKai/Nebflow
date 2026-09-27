@@ -172,12 +172,16 @@ case class SharedResources(
   def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
     effectiveSafetyMode.flatMap { global =>
       val base = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
-      // taskbadge 批 2026-09-27：任务归属 enrichment（wire-only）。归属源 =
-      // AgentRegistry（AgentRecord.taskId：Project 域注册点 spawn 时刻快照，与
-      // 分发器槽位表同点清理——槽位清 ⇒ 注册清 ⇒ 两键缺省 = 空值态）；标题源 =
-      // 统一台账（去重后一次读入，N 会话至多一次文件读/任务号）。
-      // 🔴 归属查询失败**绝不拖垮会话列表端点**：enrichment 整段降级为未 enrich
-      // 的 base（键缺省空值态），与「列表端点不因归属查询失败而失败」契约对齐。
+      // taskbadge batch 2026-09-27: task-attribution enrichment (wire-only).
+      // Attribution source = AgentRegistry (AgentRecord.taskId: snapshot taken at
+      // spawn from the Project-domain registration site, cleared at the same point
+      // as the dispatcher slot table -- slot cleared => registry cleared => both
+      // keys absent = empty state); title source = the unified ledger (deduped,
+      // read once -- at most one ledger-file read per task id across N sessions).
+      // 🔴 An attribution-query failure must **never take down the session-list
+      // endpoint**: the whole enrichment degrades to the un-enriched base (keys
+      // absent = empty state), matching the "the list endpoint never fails because
+      // an attribution query failed" contract.
       agentRegistry.get.flatMap { reg =>
         val attribution =
           sessions.flatMap(m => reg.get(m.id).flatMap(_.taskId).map(tid => m.id -> tid)).toMap
