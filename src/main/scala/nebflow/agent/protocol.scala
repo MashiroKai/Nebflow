@@ -627,6 +627,18 @@ case class AgentRecord(
     * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
     * meta.agentName → displayName → sessionId 三档。 */
   displayName: Option[String] = None,
+  /** **Task attribution** (taskbadge batch 2026-09-27: subagent panel task badge) --
+    * the task id this session serves, snapshotted at registration from the same
+    * source as spawn time (dispatcher = the ProjectActor slot's taskId;
+    * node/loop = NodeDef.taskId; same source and same value as
+    * SpawnParams.taskId -> ToolContext.taskId). None = no attribution (legacy
+    * data / non-Project domain / slot already cleared -- default = existing
+    * registration sites untouched). **Recovery-path data source**:
+    * activeAgentEntryJson emits taskId (+ ledger title taskTitle) so the
+    * frontend still renders the task badge after a refresh; the live path
+    * injects it via routeSubagentWsSend's agentStart frame (same dual-face
+    * contract as project). */
+  taskId: Option[String] = None,
   /**
    * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
    *

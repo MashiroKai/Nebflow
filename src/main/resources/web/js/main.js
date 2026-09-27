@@ -2211,6 +2211,20 @@ function renderBgAgentDropdown() {
     const projectPart = info.project
       ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
       : '';
+    // Task attribution badge (2026-09-27 taskbadge batch): `#<id> · <title>` chip
+    // per row — the per-row task marker under the multi-task dispatcher
+    // architecture (rows from different tasks sit side by side in one bucket;
+    // the badge is what makes them distinguishable). No attribution (kernel /
+    // system / legacy / slot cleared) → no badge at all — an explicit empty
+    // badge would be noise on every non-task row. Long titles truncate at the
+    // RENDER layer only (CSS ellipsis + full text in the title tooltip).
+    const taskBadgeText = info.taskId
+      ? (info.taskTitle ? '#' + info.taskId + ' · ' + info.taskTitle : '#' + info.taskId)
+      : '';
+    const taskPart = taskBadgeText
+      ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
+        + escapeHtml(taskBadgeText) + '</span>'
+      : '';
     const displayName = info.name || id;
     const taskText = info.task ? displayName + ' · ' + info.task : displayName;
     const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
@@ -2259,7 +2273,7 @@ function renderBgAgentDropdown() {
         // second line, visually separated from the labels).
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + projectPart + retriesPart + uptimePart +
+          kindPart + projectPart + taskPart + retriesPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
@@ -2423,6 +2437,12 @@ onMessage('agentStart', (msg, view) => {
     // non-project frames have no field — carry over from the previous entry
     // (same cross-turn preservation as kind/startedAt/retryCount).
     project: msg.project || (prev && prev.project) || '',
+    // Task attribution badge (2026-09-27 taskbadge batch): live frames carry
+    // taskId/taskTitle only on agentStart (routeSubagentWsSend injects them for
+    // Project-domain sessions); absent → carry over from the previous entry.
+    // Empty = no attribution → no badge rendered (empty-value contract).
+    taskId: msg.taskId || (prev && prev.taskId) || '',
+    taskTitle: msg.taskTitle || (prev && prev.taskTitle) || '',
     startedAt: (prev && prev.startedAt) || Date.now(),
     status: 'Processing',
     retryCount: (prev && prev.retryCount) || 0,
@@ -4296,6 +4316,12 @@ onMessage('activeAgents', (msg) => {
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.
       project: a.project || '',
+      // Task attribution (2026-09-27 taskbadge batch): restore entries carry
+      // taskId + taskTitle (AgentRecord.taskId + ledger title →
+      // activeAgentEntryJson); empty string = no attribution → no badge.
+      // Snapshot is authority — same merge class as project/kind above.
+      taskId: a.taskId || '',
+      taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),

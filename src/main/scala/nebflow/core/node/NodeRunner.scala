@@ -168,7 +168,9 @@ object NodeRunner:
     base: Json => IO[Unit],
     rootSessionId: String,
     subagentId: String,
-    project: Option[String] = None
+    project: Option[String] = None,
+    taskId: Option[String] = None,
+    taskTitle: Option[String] = None
   ): Json => IO[Unit] =
     json =>
       json.asObject match
@@ -192,9 +194,17 @@ object NodeRunner:
           // 零载荷膨胀，前端也只从 agentStart 读 project。非 Project 域会话
           // （Delegate/SubTask 走 routeWsSend）不经过本包装 → 无 project 字段
           // → 前端不渲染徽标（恢复路径见 AgentRecord.project）。
+          // Task attribution (taskbadge batch 2026-09-27: subagent panel task
+          // badge) -- the same entry frame gets taskId + taskTitle injected (the
+          // title is resolved once at spawn time by the caller via the ledger);
+          // the injection criterion is independent of project's (each field is
+          // injected when defined, never bound to the other), and an empty value
+          // on the frontend = no badge rendered (same falsy contract as project).
           val finalObj =
-            if project.isDefined && obj("type").exists(_.asString.contains("agentStart")) then
-              withNodeSession.add("project", project.get.asJson)
+            if obj("type").exists(_.asString.contains("agentStart")) then
+              val withProject = project.fold(withNodeSession)(p => withNodeSession.add("project", p.asJson))
+              val withTaskId  = taskId.fold(withProject)(t => withProject.add("taskId", t.asJson))
+              taskTitle.fold(withTaskId)(s => withTaskId.add("taskTitle", s.asJson))
             else withNodeSession
           base(Json.fromJsonObject(finalObj))
         case None => base(json)

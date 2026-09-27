@@ -676,6 +676,8 @@ export default {
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
   'subagents.status.done': '已完成',
+  // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
+  'subagents.taskBadge': '所属任务：{text}',
   'manage.uptime': '运行 {time}',
   'manage.readonlyTeam': '团队 agent 只读，不可操作',
   'manage.readonlyFlow': 'Flow 节点 agent 只读，不可操作',

@@ -455,6 +455,35 @@
   min-width: 0;
   flex-shrink: 1;
 }
+/* Task attribution badge (2026-09-27 taskbadge batch): `#id · title` chip on
+   each row — the per-row task marker under the multi-task dispatcher
+   architecture. Same chip family as .bg-task-kind; the one accent tint per row
+   (sapphire light, mirroring .bg-task-origin.bg-origin-node) so rows from
+   different tasks are scannable at a glance. No new color tokens: existing
+   accent/glass tokens only. Long titles truncate (nowrap + max-width +
+   ellipsis; full text on hover via title). No attribution → the chip is not
+   rendered at all (empty state = no badge, same contract as .bg-task-project). */
+.bg-task-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid rgb(var(--accent-agent-light) / 0.35);
+  color: rgb(var(--accent-agent-light));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+@media (prefers-color-scheme: dark) {
+  .bg-task-badge {
+    color: rgb(var(--sapphire));
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
+}
 .bg-task-uptime {
   font-size: 10px;
   color: var(--color-frame-text-muted);

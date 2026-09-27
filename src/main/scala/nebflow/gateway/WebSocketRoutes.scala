@@ -3722,24 +3722,36 @@ class WebSocketRoutes(
             // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
             sharedResources.agentRegistry.get.flatMap { registry =>
               WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
-                active
-                  .traverse { rec =>
-                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                    // 字段之一；Ephemeral/无任务记录 → 0）
-                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                        WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount))
+                // taskbadge batch 2026-09-27: ledger titles read **once** (an
+                // id->title map -- a single ledger-file read regardless of row
+                // count); a read failure degrades to an empty map -- the snapshot
+                // always frames, the badge degrades to bare #id (empty-state
+                // contract; the snapshot must never fail because a title could
+                // not be read).
+                IO.blocking {
+                  val ids = active.flatMap(_.taskId).distinct
+                  ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
+                }.handleErrorWith(_ => IO.pure(Map.empty[String, String])).flatMap { titles =>
+                  active
+                    .traverse { rec =>
+                      // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                      // 字段之一；Ephemeral/无任务记录 → 0）
+                      sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                        sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                          WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount),
+                            taskTitle = rec.taskId.flatMap(titles.get))
+                        }
                       }
                     }
-                  }
-                  .flatMap { agents =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "activeAgents".asJson,
-                        "agents" -> agents.asJson
+                    .flatMap { agents =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "activeAgents".asJson,
+                          "agents" -> agents.asJson
+                        )
                       )
-                    )
-                  }
+                    }
+                }
               }
             }
 
@@ -7006,7 +7018,8 @@ object WebSocketRoutes:
     * Standalone (zero class deps) so the contract is directly unit-testable
     * (ActiveAgentsEntrySpec).
     */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None): Json =
+  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None,
+    taskTitle: Option[String] = None): Json =
     Json.obj(
       "sessionId"      -> rec.sessionId.asJson,
       "agentId"        -> rec.sessionId.asJson,
@@ -7031,5 +7044,14 @@ object WebSocketRoutes:
       // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
       // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
       // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
-      "project"        -> rec.project.getOrElse("").asJson
+      "project"        -> rec.project.getOrElse("").asJson,
+      // Task attribution (taskbadge batch 2026-09-27: panel task badge `#id · title`)
+      // -- recovery-path data source: taskId = snapshot at AgentRecord registration
+      // (dispatcher slot / NodeDef); taskTitle = resolved by the caller via the
+      // ledger (getActiveAgents reads the id->title map once, then backfills per
+      // row). Empty string = no attribution (kernel/system/legacy sessions/slot
+      // cleared) -> frontend falsy renders no badge (same empty-value contract as
+      // project; keys always present, shape stable).
+      "taskId"         -> rec.taskId.getOrElse("").asJson,
+      "taskTitle"      -> taskTitle.getOrElse("").asJson
     )

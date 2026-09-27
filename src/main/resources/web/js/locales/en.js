@@ -714,6 +714,9 @@ export default {
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
   'subagents.status.done': 'Done',
+  // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
+  // per-row `#id · title` badge
+  'subagents.taskBadge': 'Task: {text}',
   'manage.uptime': 'Up {time}',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
