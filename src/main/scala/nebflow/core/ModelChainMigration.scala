@@ -75,22 +75,23 @@ object ModelChainMigration:
       io.circe.parser.parse(os.read(jsonPath)).toOption match
         case Some(json) =>
           json.hcursor.downField("preset").as[Option[String]].toOption.flatten.foreach { ref =>
-            val updated = name match
+            val resolved: Option[AgentModelConfig] = name match
               case NebulaRef =>
                 catalog.get(ref).orElse {
                   if ref == DefaultPresetRef then Some(DefaultNebulaChain) else None
-                } match
-                  case Some(chain) =>
-                    stripPresetKey(json).deepMerge(Json.obj("model" -> chain.asJson))
-                  case None =>
-                    // Unreadable non-default reference: strip the key and let
-                    // the seed chain apply (the old dangling-ref behavior).
-                    stripPresetKey(json)
-              case _ => stripPresetKey(json)
+                }
+              case _ => None
+            val updated = resolved match
+              case Some(chain) =>
+                stripPresetKey(json).deepMerge(Json.obj("model" -> chain.asJson))
+              case None =>
+                // Followers become followers; a Nebula reference that cannot be
+                // read degrades to seed-chain semantics (key removal only).
+                stripPresetKey(json)
             AtomicJson.writeSync(jsonPath, updated.noSpaces)
             logger.infoSync(
               s"model-chain migration: '$name' preset reference '$ref' -> " +
-                (if name == NebulaRef then "own model chain" else "follows the Nebula chain"))
+                resolved.fold("follows the Nebula chain")(_ => "own model chain"))
           }
         case None =>
           logger.warnSync(s"model-chain migration: skipped unreadable $jsonPath")
