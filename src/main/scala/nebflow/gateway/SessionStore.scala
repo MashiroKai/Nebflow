@@ -186,6 +186,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                 .flatMap(msgs =>
                   val reduced = trimUiMessages(sanitizeForStorage(msgs))
                   saveUiMessages(id, reduced) *>
+                    // Boot-migration hygiene: sessions touched only by this pass are
+                    // (by definition) not being viewed — evict so the migration leaves
+                    // no long-lived copies behind (cache repopulates on real access).
+                    uiCacheRef.update(_ - id) *>
                     IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
                 )
                 .handleErrorWith(e => logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}").as(Nil))
@@ -310,6 +314,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val indexedIds = indexed.map(_.id).toSet
       os.list(sessionsDir)
         .filter(p => p.last.endsWith(".json") && !p.last.startsWith("_") && !p.last.endsWith(".ui.json"))
+        .filter(p => !indexedIds.contains(p.last.stripSuffix(".json")))
         .toList
     }.flatMap { files =>
       files
