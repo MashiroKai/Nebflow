@@ -170,7 +170,25 @@ case class SharedResources(
     * `SessionService.sendSessionList` / REST `GET /sessions`）。**不得**用于
     * `SessionStore.saveIndex` 的落盘序列化——盘上字节零改动。 */
   def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
-    effectiveSafetyMode.map { global =>
-      nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
+    effectiveSafetyMode.flatMap { global =>
+      val base = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, global)
+      // taskbadge 批 2026-09-27：任务归属 enrichment（wire-only）。归属源 =
+      // AgentRegistry（AgentRecord.taskId：Project 域注册点 spawn 时刻快照，与
+      // 分发器槽位表同点清理——槽位清 ⇒ 注册清 ⇒ 两键缺省 = 空值态）；标题源 =
+      // 统一台账（去重后一次读入，N 会话至多一次文件读/任务号）。
+      // 🔴 归属查询失败**绝不拖垮会话列表端点**：enrichment 整段降级为未 enrich
+      // 的 base（键缺省空值态），与「列表端点不因归属查询失败而失败」契约对齐。
+      agentRegistry.get.flatMap { reg =>
+        val attribution =
+          sessions.flatMap(m => reg.get(m.id).flatMap(_.taskId).map(tid => m.id -> tid)).toMap
+        val ids = attribution.values.toList.distinct
+        val titlesIo: IO[Map[String, String]] =
+          if ids.isEmpty then IO.pure(Map.empty[String, String])
+          else IO.blocking(ids.map(id =>
+            id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap)
+        titlesIo
+          .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+          .map(titles => nebflow.shared.SessionMeta.withTaskAttribution(base, attribution, titles))
+      }
     }
 

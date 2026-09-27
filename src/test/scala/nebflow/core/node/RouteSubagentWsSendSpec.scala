@@ -84,4 +84,58 @@ class RouteSubagentWsSendSpec extends CatsEffectSuite:
       assertEquals(j.hcursor.get[String]("project"), Right("proj-beta"))
   }
 
+  // ── taskbadge 批 2026-09-27：agentStart 帧的任务归属注入（面板任务徽标）──
+
+  test("agentStart carries taskId+taskTitle when both defined (task badge live path)") {
+    val (ref, send) = capture()
+    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "node-ab12cd34", Some("proj-alpha"),
+      taskId = Some("35"), taskTitle = Some("子代理面板任务归属标记"))
+    for
+      _ <- routed(Json.obj("type" -> "agentStart".asJson, "agentId" -> "node-ab12cd34".asJson))
+      j <- first(ref)
+    yield
+      assertEquals(j.hcursor.get[String]("taskId"), Right("35"))
+      assertEquals(j.hcursor.get[String]("taskTitle"), Right("子代理面板任务归属标记"))
+      // project 注入不回归（同帧共存）
+      assertEquals(j.hcursor.get[String]("project"), Right("proj-alpha"))
+  }
+
+  test("taskTitle=None emits taskId only (ledger miss degrades, form stays stable)") {
+    val (ref, send) = capture()
+    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "dispatcher-77", Some("p"),
+      taskId = Some("12"), taskTitle = None)
+    for
+      _ <- routed(Json.obj("type" -> "agentStart".asJson, "agentId" -> "dispatcher-77".asJson))
+      j <- first(ref)
+    yield
+      assertEquals(j.hcursor.get[String]("taskId"), Right("12"))
+      assertEquals(j.asObject.exists(_.contains("taskTitle")), false)
+  }
+
+  test("taskId=None emits neither task key (no-attribution empty state)") {
+    val (ref, send) = capture()
+    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "dispatcher-77", Some("p"), taskId = None)
+    for
+      _ <- routed(Json.obj("type" -> "agentStart".asJson, "agentId" -> "dispatcher-77".asJson))
+      j <- first(ref)
+    yield
+      assertEquals(j.asObject.exists(_.contains("taskId")), false)
+      assertEquals(j.asObject.exists(_.contains("taskTitle")), false)
+  }
+
+  test("non-agentStart frames carry NO task keys (zero payload bloat, same gate as project)") {
+    val (ref, send) = capture()
+    val routed = NodeRunner.routeSubagentWsSend(send, "root-1", "node-ab12cd34", Some("p"),
+      taskId = Some("35"), taskTitle = Some("t"))
+    for
+      _ <- routed(Json.obj("type" -> "agentTextDelta".asJson, "delta" -> "hi".asJson))
+      _ <- routed(Json.obj("type" -> "agentToolStart".asJson, "label" -> "Bash".asJson))
+      frames <- ref.get
+    yield
+      frames.foreach { f =>
+        assertEquals(f.asObject.exists(_.contains("taskId")), false, s"unexpected taskId in ${f.noSpaces.take(80)}")
+        assertEquals(f.asObject.exists(_.contains("taskTitle")), false, s"unexpected taskTitle in ${f.noSpaces.take(80)}")
+      }
+  }
+
 end RouteSubagentWsSendSpec

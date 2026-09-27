@@ -627,6 +627,14 @@ case class AgentRecord(
     * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
     * meta.agentName → displayName → sessionId 三档。 */
   displayName: Option[String] = None,
+  /** **Task attribution**（taskbadge 批 2026-09-27：子代理面板任务归属标记）——本会话
+    * 服务的任务 id，注册时刻从 spawn 时的同一来源快照（分发器 = ProjectActor 槽位
+    * 的 taskId；节点/loop = NodeDef.taskId；与 SpawnParams.taskId → ToolContext.taskId
+    * 同源同值）。None = 无归属（旧数据 / 非 Project 域 / 槽位已清——默认 = 既有注册点
+    * 零改动）。**恢复路径数据源**：activeAgentEntryJson 输出 taskId（+ 台账标题
+    * taskTitle）供前端刷新后仍渲染任务徽标；实时路径经 routeSubagentWsSend 的
+    * agentStart 帧注入（与 project 同款双面契约）。 */
+  taskId: Option[String] = None,
   /**
    * 正信号（**进展证据**）时间戳（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）。
    *

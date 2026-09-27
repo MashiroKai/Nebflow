@@ -1482,6 +1482,9 @@ object ProjectActor:
       case Some(entry) =>
         val sessionId = s"$DispatcherSessionPrefix${java.util.UUID.randomUUID().toString.take(8)}"
         for
+          // taskbadge 批 2026-09-27：任务标题在 spawn 时刻解析一次（台账单读、
+          // 失败降级 None——归属是纯展示元数据，标题读不到不得阻塞分发器 spawn）。
+          taskTitle <- IO.blocking(TaskLedgerStore.titleOfSync(taskId))
           ref <- NodeRunner.spawnAgentActor(
             cfg.system,
             NodeRunner.SpawnParams(
@@ -1495,7 +1498,9 @@ object ProjectActor:
               // rootSessionId/nodeSessionId 后在 subagent 面板可见
               // （Processing 状态 + 工具调用过程，与 Delegate/SubTask 同标准）。
               // project：agentStart 帧注入项目名（面板项目徽标，2026-09-06）。
-              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId, Some(project.name)),
+              // taskId/taskTitle：agentStart 帧注入任务归属（面板任务徽标，taskbadge 批）。
+              wsSend = NodeRunner.routeSubagentWsSend(cfg.engine.wsSendFn, rootSessionId, sessionId,
+                Some(project.name), taskId, taskTitle),
               projectRoot = Some(project.workspace),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
@@ -1557,6 +1562,9 @@ object ProjectActor:
                 // 恢复路径项目徽标：activeAgents 快照 → activeAgentEntryJson
                 // 输出 project（分发器行刷新后仍标注项目名）。
                 project = Some(cfg.project.name),
+                // 恢复路径任务徽标（taskbadge 批）：本分发器槽位的任务 id，
+                // 刷新后 activeAgents 快照照此渲染任务标记（与 project 同面）。
+                taskId = taskId,
                 displayName = Some(s"dispatcher/${project.name}")
               )
             )

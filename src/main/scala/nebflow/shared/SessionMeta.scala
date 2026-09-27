@@ -41,7 +41,21 @@ case class SessionMeta(
     * 🔴 **位置刻意置末**（`flowName` 之后）：本 case class 存在**位置参数**构造点
     * （下方 Decoder 的 `SessionMeta(...)` 逐位置列表），插在中间会把旧实参错位
     * ⇒ 置末使既有位置调用逐字保持可编译。 */
-  compactThresholdRatio: Option[Double] = None
+  compactThresholdRatio: Option[Double] = None,
+  /** **Task attribution**（taskbadge 批 2026-09-27：子代理面板任务归属标记）——
+    * 会话载荷的任务号 + 任务标题。**wire-only**：只由会话列表**出口** overlay
+    * （[[withTaskAttribution]]，经 SharedResources.overlaySessionList）在读时
+    * 回填（归属 = AgentRegistry 的 AgentRecord.taskId + TaskLedgerStore 标题），
+    * **禁**进入 SessionStore.saveIndex 的落盘序列化（盘上字节零改动；归属是
+    * 引擎侧动态态，落盘即陈旧）。
+    *
+    * 空值态 = `None`（kernel 实例 / 系统会话 / 旧会话 / 槽位已清）⇒ Encoder
+    * 省略两键 ⇒ 旧消费方无感；存量 `_index.json`（无新键）Decoder 反序列化
+    * 零迁移（两键缺省 None，与 `flowName` / `compactThresholdRatio` 同款纪律）。
+    * 🔴 **位置刻意置末**（`compactThresholdRatio` 之后）：本类存在**位置参数**
+    * 构造点（Decoder 的逐位置实参表），置末使既有位置调用逐字可编译。 */
+  taskId: Option[String] = None,
+  taskTitle: Option[String] = None
 )
 
 object SessionMeta:
@@ -63,6 +77,34 @@ object SessionMeta:
       .map(s => s.asJson.deepMerge(Json.obj("safetyMode" -> modeJson)))
       .asJson
 
+  /** taskbadge 批 2026-09-27：会话列表出口的**任务归属 enrichment**（wire-only，
+    * 与 [[withEffectiveSafetyModes]] 同面——🔴 禁用于 SessionStore.saveIndex 的
+    * 落盘序列化）。**纯函数、零类依赖**（filterActiveAgents 同款独立可测纪律：
+    * 归属/标题均由调用方解析成普通 Map 注入，本函数不做任何 IO）。
+    *
+    * @param sessionsJson `withEffectiveSafetyModes` 的输出（会话 JSON 数组）
+    * @param attribution  sessionId → taskId（调用方经 AgentRegistry 解析）
+    * @param titles       taskId → title（调用方经统一台账解析）
+    *
+    * 有归属 ⇒ 逐会话 deepMerge `taskId`（有标题再并 `taskTitle`）；无归属 ⇒
+    * 该会话 JSON **逐字不变**（两键缺省 = 空值态契约）。非数组输入原样返回。 */
+  def withTaskAttribution(
+    sessionsJson: Json,
+    attribution: Map[String, String],
+    titles: Map[String, String]
+  ): Json =
+    sessionsJson.asArray.fold(sessionsJson) { arr =>
+      Json.fromValues(arr.map { s =>
+        val enriched = for
+          sid       <- s.hcursor.get[String]("id").toOption
+          taskIdOpt <- attribution.get(sid)
+        yield
+          val withId = s.deepMerge(Json.obj("taskId" -> taskIdOpt.asJson))
+          titles.get(taskIdOpt).fold(withId)(t => withId.deepMerge(Json.obj("taskTitle" -> t.asJson)))
+        enriched.getOrElse(s)
+      })
+    }
+
   given Encoder[SessionMeta] = Encoder.instance { m =>
     val base = Json.obj(
       "id" -> m.id.asJson,
@@ -83,7 +125,11 @@ object SessionMeta:
       m.compactThresholdRatio.fold(withFlow)(r =>
         withFlow.deepMerge(Json.obj("compactThresholdRatio" -> r.asJson))
       )
-    if m.bridges.nonEmpty then withRatio.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withRatio
+    // taskbadge 批：任务归属两键——None ⇒ 键整个缺省（旧消费方无感）。
+    val withTaskId = m.taskId.fold(withRatio)(t => withRatio.deepMerge(Json.obj("taskId" -> t.asJson)))
+    val withTaskTitle =
+      m.taskTitle.fold(withTaskId)(s => withTaskId.deepMerge(Json.obj("taskTitle" -> s.asJson)))
+    if m.bridges.nonEmpty then withTaskTitle.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withTaskTitle
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -111,6 +157,10 @@ object SessionMeta:
       flowName <- c.downField("flowName").as[Option[String]]
       // ctxthresh 批：老会话无该键 ⇒ None ⇒ 走现值函数（零格式迁移）。
       compactThresholdRatio <- c.downField("compactThresholdRatio").as[Option[Double]]
+      // taskbadge 批：任务归属两键，缺省 None（存量盘上字节零迁移；wire-only，
+      // 落盘序列化永不携带）。
+      taskId <- c.downField("taskId").as[Option[String]]
+      taskTitle <- c.downField("taskTitle").as[Option[String]]
     yield
       val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
       SessionMeta(
@@ -126,7 +176,9 @@ object SessionMeta:
         mode,
         gitBranch,
         flowName,
-        compactThresholdRatio
+        compactThresholdRatio,
+        taskId,
+        taskTitle
       )
   }
 

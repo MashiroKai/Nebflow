@@ -3722,24 +3722,33 @@ class WebSocketRoutes(
             // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
             sharedResources.agentRegistry.get.flatMap { registry =>
               WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
-                active
-                  .traverse { rec =>
-                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                    // 字段之一；Ephemeral/无任务记录 → 0）
-                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                        WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount))
+                // taskbadge 批 2026-09-27：台账标题**一次**读入（id→title 映射，
+                // N 行只读一次台账文件）；读失败降级为空映射——快照恒成帧，
+                // 徽标降级为仅 #id（空值态契约，禁快照因标题读不到而失败）。
+                IO.blocking {
+                  val ids = active.flatMap(_.taskId).distinct
+                  ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
+                }.handleErrorWith(_ => IO.pure(Map.empty[String, String])).flatMap { titles =>
+                  active
+                    .traverse { rec =>
+                      // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                      // 字段之一；Ephemeral/无任务记录 → 0）
+                      sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                        sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                          WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount),
+                            taskTitle = rec.taskId.flatMap(titles.get))
+                        }
                       }
                     }
-                  }
-                  .flatMap { agents =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "activeAgents".asJson,
-                        "agents" -> agents.asJson
+                    .flatMap { agents =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "activeAgents".asJson,
+                          "agents" -> agents.asJson
+                        )
                       )
-                    )
-                  }
+                    }
+                }
               }
             }
 
@@ -7006,7 +7015,8 @@ object WebSocketRoutes:
     * Standalone (zero class deps) so the contract is directly unit-testable
     * (ActiveAgentsEntrySpec).
     */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None): Json =
+  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None,
+    taskTitle: Option[String] = None): Json =
     Json.obj(
       "sessionId"      -> rec.sessionId.asJson,
       "agentId"        -> rec.sessionId.asJson,
@@ -7031,5 +7041,12 @@ object WebSocketRoutes:
       // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
       // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
       // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
-      "project"        -> rec.project.getOrElse("").asJson
+      "project"        -> rec.project.getOrElse("").asJson,
+      // 任务归属（taskbadge 批 2026-09-27：面板任务徽标 `#id · title`）——恢复
+      // 路径数据源：taskId = AgentRecord 注册时快照（分发器槽位 / NodeDef）；
+      // taskTitle = 调用方经台账解析（getActiveAgents 一次读入映射后按行回填）。
+      // 空串 = 无归属（kernel/系统/旧会话/槽位已清）→ 前端 falsy 不渲染徽标
+      // （与 project 同款空值契约；键恒存在，形态稳定）。
+      "taskId"         -> rec.taskId.getOrElse("").asJson,
+      "taskTitle"      -> taskTitle.getOrElse("").asJson
     )

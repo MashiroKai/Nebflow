@@ -651,6 +651,16 @@ object TaskLedgerStore:
 
   def open(): TaskLedgerStore = instance
 
+  /** Task-title lookup for the panel task badge (taskbadge batch 2026-09-27).
+    * **Failure-degrading by design**: attribution is display-only metadata, so any
+    * read fault (corrupt ledger / IO error) degrades to `None` instead of failing
+    * the caller (a session spawn / a session-list exit must never fail because a
+    * badge title could not be read -- the no-attribution empty state is the
+    * contract). Blocking file read: callers wrap in `IO.blocking`. */
+  def titleOfSync(taskId: Option[String]): Option[String] =
+    taskId.flatMap(id =>
+      scala.util.Try(open().findSync(id).map(_.title)).toOption.flatten)
+
   /** Pure function: chunk a note body (**never truncate** -- an over-long body is split
     * into several chunks and the full text enters the history). The cut point prefers a
     * newline / whitespace boundary (to avoid cutting a word in half); if none is found it

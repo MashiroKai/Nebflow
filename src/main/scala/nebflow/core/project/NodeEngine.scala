@@ -3283,6 +3283,10 @@ class NodeEngine(
             IO.raiseError(new RuntimeException(
               s"Node '$nodeName' ($nodeId) start aborted — $reason"))
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
+      // taskbadge 批 2026-09-27：任务标题在 spawn 时刻解析一次（台账单读、
+      // titleOfSync 内部失败降级 None——归属是纯展示元数据，标题读不到不得
+      // 阻塞节点 spawn）。blocking 池承载文件读（IO 纪律）。
+      taskTitle <- IO.blocking(TaskLedgerStore.titleOfSync(node.taskId))
       // 阶段 2b Plugins（§B.4 第 4 步 ③）：plugin MCP 前缀来源 + 内建工具授予
       // 进该会话 allowedSet（buildAllowedToolSet 扩展消费；仅运行时 AgentDef，
       // 不落 agent.json）。bridge actor 已由投递可靠性批次迁移至 spawnAgentActor
@@ -3305,7 +3309,9 @@ class NodeEngine(
           // sessionBgAgents 归桶键）+ nodeSessionId（popup/历史路由）——否则
           // 子 agent 事件无法在 subagent 面板归到根会话（与 Delegate/SubTask
           // 同一可观测性标准）。project：agentStart 帧注入项目名（面板项目徽标）。
-          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId, Some(projectName)),
+          // taskId/taskTitle：agentStart 帧注入任务归属（面板任务徽标，taskbadge 批）。
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId,
+            Some(projectName), node.taskId, taskTitle),
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
@@ -3659,6 +3665,9 @@ class NodeEngine(
             supervisorRef = Some(bridgeRef),
             // 恢复路径项目徽标（activeAgents 快照 → activeAgentEntryJson）。
             project = Some(projectName),
+            // 恢复路径任务徽标（taskbadge 批）：节点名下任务（NodeDef.taskId），
+            // 刷新后快照照此渲染任务标记（与 project 同面）。
+            taskId = node.taskId,
             displayName = Some(nodeName)
           )
         )
@@ -3884,6 +3893,9 @@ class NodeEngine(
       initD <- Deferred[IO, Either[String, List[Message]]]
       round = Ref.unsafe[IO, Deferred[IO, Either[String, List[Message]]]](initD)
       agentDef = baseDef.copy(pluginMcpServers = grant.serverIds, pluginTools = prepared.builtinTools)
+      // taskbadge 批 2026-09-27：任务标题 spawn 时刻解析一次（blocking 池承载
+      // 台账文件读；titleOfSync 内部失败降级 None——纯展示元数据不阻塞 spawn）。
+      taskTitle <- IO.blocking(TaskLedgerStore.titleOfSync(taskId))
       ref <- NodeRunner.spawnAgentActor(
         system,
         NodeRunner.SpawnParams(
@@ -3894,8 +3906,11 @@ class NodeEngine(
           depth = 1,
           parentRef = None,
           // 与节点同款：project 注入 agentStart 帧（LoopNode worker/verify 会话
-          // 亦属 Project 域，面板行同标准标注项目名）。
-          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId, Some(projectName)),
+          // 亦属 Project 域，面板行同标准标注项目名）。taskId/taskTitle：同一帧
+          // 注入任务归属（面板任务徽标，taskbadge 批；标题 spawn 时刻经
+          // taskTitle 生成器解析一次、失败降级 None）。
+          wsSend = NodeRunner.routeSubagentWsSend(wsSendFn, rootSessionId, sessionId,
+            Some(projectName), taskId, taskTitle),
           projectRoot = Some(projectRoot),
           safetyMode = "confirm-edits",
           rootSessionId = rootSessionId,
@@ -3937,6 +3952,7 @@ class NodeEngine(
           lastActivityMs = System.currentTimeMillis(),
           supervisorRef = Some(bridgeRef),
           project = Some(projectName), // 恢复路径项目徽标（与节点/分发器同标准）
+          taskId = taskId,             // 恢复路径任务徽标（taskbadge 批，同面）
           displayName = Some(sessionName)
         ))
       )
