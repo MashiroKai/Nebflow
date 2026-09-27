@@ -94,7 +94,12 @@ object SessionStore:
 
 end SessionStore
 
-class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
+class SessionStore(
+  sessionsDir: os.Path,
+  tasksDir: os.Path,
+  uiCacheMaxEntries: Int = Defaults.UiCacheMaxEntries,
+  uiCacheMaxBytes: Long = Defaults.UiCacheMaxBytes
+):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
 
   // (activeId, metas sorted by updatedAt desc, folders)
@@ -107,19 +112,141 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   // UI message cache: sessionId -> messages. Avoids re-reading .ui.json on every getHistory.
   // Invalidated on save/append/delete and populated on first load.
-  private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
-    Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
+  //
+  // BOUNDED (chain-uicache-lru, 2026-09-25): this used to be an unbounded Map
+  // with zero runtime eviction — every session ever viewed stayed resident
+  // (~10-15MB each) and long uptimes OOM'd. Now it is a bounded LRU cache with
+  // a dual gate (`uiCacheMaxEntries` count / `uiCacheMaxBytes` estimated
+  // bytes); eviction runs inside the SAME atomic modify as each insert — there
+  // is no separate sweep pass competing with the migration/write paths.
+  //
+  // The dirty set lives in the SAME Ref as the entries so the eviction pin is
+  // atomic: an insert stores the entry and marks it dirty in one modify, and
+  // eviction candidates are filtered by that flag inside the same pure step —
+  // a session whose cache diverged from disk (the flush writes FROM the cache)
+  // can never slip through the gap between two separate ref updates and get
+  // silently evicted before its debounced flush lands. The flag clears in the
+  // same modify that captures the value for the disk write.
+  private val uiCacheState: Ref[IO, UiCacheState] =
+    Ref.unsafe[IO, UiCacheState](UiCacheState(0L, Map.empty, Set.empty))
 
-  // Debounced UI write tracking. Sessions whose cache diverged from disk but
-  // haven't been flushed yet. A single scheduled fiber drains this set on a
-  // delay so many rapid appends coalesce into one full-file rewrite.
-  // (Fix 3: reduces write amplification on active sessions.)
-  private val dirtyUiSessions: Ref[IO, Set[String]] =
-    Ref.unsafe[IO, Set[String]](Set.empty)
+  /** One cached session's UI messages.
+    *
+    * @param bytes bounded in-memory residency estimate (see
+    *   `estimateUiCacheBytes` — deterministic, no serialization at put time)
+    * @param tick logical-clock reading; higher = more recently used */
+  private case class UiCacheEntry(msgs: List[UiMessage], bytes: Long, tick: Long)
+
+  /** Observability payload of one cache put — feeds the eviction log line. */
+  private case class UiCacheEviction(
+    evictedIds: List[String],
+    entryGate: Boolean,
+    byteGate: Boolean,
+    remainingEntries: Int,
+    remainingBytes: Long
+  ):
+    def gateLabel: String = (entryGate, byteGate) match
+      case (true, true)  => "entries+bytes"
+      case (true, false) => "entries"
+      case (false, true) => "bytes"
+      case (false, false) => "none"
+
+  private case class UiCacheState(
+    tick: Long, // logical clock, bumped on every touch/put
+    entries: Map[String, UiCacheEntry],
+    dirty: Set[String] // sessions whose cache diverged from disk (pinned against eviction)
+  ):
+    def size: Int = entries.size
+    def totalBytes: Long = entries.values.foldLeft(0L)(_ + _.bytes)
+    def get(id: String): Option[List[UiMessage]] = entries.get(id).map(_.msgs)
+
+    /** Read-hit touch: bump the id's tick (LRU reorder). Missing id = no-op. */
+    def touch(id: String): UiCacheState =
+      entries.get(id).fold(this)(e => copy(tick = tick + 1, entries = entries.updated(id, e.copy(tick = tick + 1))))
+
+    def markDirty(id: String): UiCacheState = copy(dirty = dirty + id)
+    def clearDirty(id: String): UiCacheState = copy(dirty = dirty - id)
+
+    /** Remove the entry only. Boot-migration parity: the dirty flag survives,
+      * exactly as the old two-ref form left `dirtyUiSessions` untouched. A
+      * missing id is a no-op, and the LRU order simply heals around the gap. */
+    def removeEntry(id: String): UiCacheState = copy(entries = entries - id)
+
+    /** Remove entry AND dirty flag (deleteUiMessages — now one atomic step
+      * instead of two separate ref updates). Missing id = no-op. */
+    def removeAll(id: String): UiCacheState = copy(entries = entries - id, dirty = dirty - id)
+
+    /** Insert + evict to within both gates, in ONE pure step (the caller runs
+      * it inside a single Ref.modify, so eviction is atomic with the insert).
+      *
+      * Pinned, never evictable here: the just-put id and every dirty session
+      * (its cache is the flush's write source — evicting it would silently
+      * drop the pending append). Candidates = clean, non-just-put entries,
+      * oldest tick first; eviction stops when both gates are satisfied or no
+      * candidate remains, so a single entry larger than the whole byte budget
+      * (possible: card tool content is never truncated) stays resident — total
+      * is then bounded by `maxBytes + one entry`. */
+    def put(id: String, msgs: List[UiMessage], isDirty: Boolean, maxEntries: Int, maxBytes: Long): (UiCacheState, UiCacheEviction) =
+      val nextTick = tick + 1
+      val entry = UiCacheEntry(msgs, estimateUiCacheBytes(msgs), nextTick)
+      val afterPut = copy(
+        tick = nextTick,
+        entries = entries.updated(id, entry),
+        dirty = if isDirty then dirty + id else dirty
+      )
+      val entryGate = afterPut.size > maxEntries
+      val byteGate = afterPut.totalBytes > maxBytes
+      if !entryGate && !byteGate then (afterPut, UiCacheEviction(Nil, false, false, afterPut.size, afterPut.totalBytes))
+      else
+        val candidates = afterPut.entries.iterator
+          .collect { case (eid, e) if eid != id && !afterPut.dirty(eid) => eid -> e }
+          .toList
+          .sortBy(_._2.tick)
+        var st = afterPut
+        var bytes = afterPut.totalBytes
+        var count = afterPut.size
+        val evicted = List.newBuilder[String]
+        val it = candidates.iterator
+        while (count > maxEntries || bytes > maxBytes) && it.hasNext do
+          val (eid, e) = it.next()
+          evicted += eid
+          st = st.copy(entries = st.entries - eid)
+          count -= 1
+          bytes -= e.bytes
+        val res = st
+        (res, UiCacheEviction(evicted.result(), entryGate, byteGate, res.size, res.totalBytes))
+  end UiCacheState
+
+  /**
+   * Bounded estimate of one cached entry's in-memory residency, charged
+   * against `uiCacheMaxBytes`. Deliberately NOT the serialized JSON length:
+   * the gate protects JVM heap, and this estimate is an UPPER bound on the
+   * char data actually resident (UTF-16 = 2 bytes per char, surrogate pairs
+   * included) while staying cheap — no string materialization at put time,
+   * which runs on every streaming append. Systematic slack is bounded and
+   * small: fixed 96B per message + 64B header ≈ 5MB at full occupancy
+   * (32 entries × 800 messages, the per-entry `MaxStoredUiMessages` cap),
+   * ~2% of the 256MB budget. Json-typed fields (attachments / items) are
+   * charged a flat 512B per element — cheap and comfortably above the median
+   * card payload.
+   */
+  private def estimateUiCacheBytes(msgs: List[UiMessage]): Long =
+    64L + msgs.foldLeft(0L) { (acc, m) =>
+      acc + 96L + (m match
+        case u: UiMessage.User => 2L * u.text.length + 512L * u.attachments.size
+        case a: UiMessage.Ai   => 2L * (a.text.length + a.thinking.fold(0)(_.length))
+        case t: UiMessage.Tool => 2L * (t.label.length + t.summary.length + t.content.length + t.input.length)
+        case g: UiMessage.Agent => 2L * (g.agentId.length + g.text.length)
+        case k: UiMessage.AskUser => 512L * k.items.size
+        case q: UiMessage.Ask => 2L * (q.question.length + q.answer.length)
+        case p: UiMessage.AskPermission => 2L * (p.toolName.length + p.summary.length + p.input.length)
+        case s: UiMessage.System => 2L * s.content.length
+      )
+    }
   private val flushDelayMs: Long = 500L
 
-  // Debounced LLM message write tracking. Same pattern as dirtyUiSessions but
-  // for saveMessagesForSession — coalesces rapid tool-complete persists into a
+  // Debounced LLM message write tracking. Same pattern as the UI flush's dirty
+  // set, but for saveMessagesForSession — coalesces rapid tool-complete persists into a
   // single disk write per session per 2-second window.
   private val dirtyMsgSessions: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
@@ -189,7 +316,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                     // Boot-migration hygiene: sessions touched only by this pass are
                     // (by definition) not being viewed — evict so the migration leaves
                     // no long-lived copies behind (cache repopulates on real access).
-                    uiCacheRef.update(_ - id) *>
+                    // Missing id = no-op; LRU order heals around the gap.
+                    uiCacheState.modify(st => (st.removeEntry(id), ())) *>
                     IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
                 )
                 .handleErrorWith(e => logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}").as(Nil))
@@ -1220,18 +1348,42 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def uiFile(id: String): os.Path = sessionsDir / s"$id.ui.json"
 
   private def loadUiMessages(id: String): IO[List[UiMessage]] =
-    uiCacheRef.get.flatMap(_.get(id) match
+    // Read-hit touch runs inside the same atomic modify (LRU reorder); a miss
+    // leaves the order untouched.
+    uiCacheState.modify { st =>
+      val touched = st.touch(id)
+      (touched, touched.get(id))
+    }.flatMap {
       case Some(cached) => IO.pure(cached)
       case None =>
         IO.blocking {
           val f = uiFile(id)
           if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
           else Nil
-        }.flatTap(msgs => uiCacheRef.update(_.updated(id, msgs))))
+        }.flatTap(msgs => updateUiCache(id, msgs, dirty = false))
+    }
 
-  /** Update the in-memory cache only (no disk write). */
-  private def updateUiCache(id: String, msgs: List[UiMessage]): IO[Unit] =
-    uiCacheRef.update(_.updated(id, msgs))
+  /**
+   * Update the in-memory cache only (no disk write). Insert + LRU eviction run
+   * in ONE atomic modify. `dirty = true` (append-flavored callers) pins the
+   * entry against eviction until the debounced flush captures its value;
+   * `dirty = false` (disk-fresh values: load backfill, saveUiMessages) leaves
+   * the entry evictable immediately.
+   */
+  private def updateUiCache(id: String, msgs: List[UiMessage], dirty: Boolean): IO[Unit] =
+    uiCacheState
+      .modify(_.put(id, msgs, dirty, uiCacheMaxEntries, uiCacheMaxBytes))
+      .flatMap { ev =>
+        if ev.evictedIds.isEmpty then IO.unit
+        else
+          logger.info(
+            s"UI cache eviction: dropped ${ev.evictedIds.size} " +
+              s"${if ev.evictedIds.size == 1 then "entry" else "entries"} " +
+              s"(gate: ${ev.gateLabel}; evicted: ${ev.evictedIds.take(8).mkString(", ")}" +
+              s"${if ev.evictedIds.size > 8 then ", ..." else ""}; " +
+              s"remaining: ${ev.remainingEntries} entries, ~${ev.remainingBytes / (1024L * 1024L)}MB estimated)"
+          )
+      }
 
   /**
    * Write messages to disk only (no cache change). Reads current cache via the
@@ -1246,7 +1398,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * debounced append path uses `updateUiCache` + `scheduleFlush` instead.
    */
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
-    writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs)
+    writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs, dirty = false)
 
   // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
   private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
@@ -1311,7 +1463,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           // grows long.
           loadUiMessages(sessionId).flatMap { existing =>
             val combined = trimUiMessages(existing ++ sanitized)
-            updateUiCache(sessionId, combined) *> markDirty(sessionId)
+            // Eager cache update (keeps getHistoryPage coherent) marks the entry
+            // dirty in the SAME atomic modify — that flag is also the eviction
+            // pin, so the unflushed value can't be dropped before it lands on
+            // disk. Then arm the debounced flush.
+            updateUiCache(sessionId, combined, dirty = true) *> scheduleFlush
           }
         }
       }
@@ -1339,7 +1495,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                 case Some(ai: UiMessage.Ai) =>
                   val updatedAi = ai.copy(durationMs = durationMs, model = model, timestamp = timestamp)
                   val updated = before ++ (updatedAi :: rest.tail)
-                  updateUiCache(sessionId, updated) *> markDirty(sessionId)
+                  updateUiCache(sessionId, updated, dirty = true) *> scheduleFlush
                 case _ => IO.unit
         }
       }
@@ -1353,10 +1509,6 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def trimUiMessages(msgs: List[UiMessage]): List[UiMessage] =
     if msgs.length <= SessionStore.MaxStoredUiMessages then msgs
     else msgs.takeRight(SessionStore.MaxStoredUiMessages)
-
-  /** Mark a session as having unwritten UI changes and ensure a flush is scheduled. */
-  private def markDirty(sessionId: String): IO[Unit] =
-    dirtyUiSessions.update(_ + sessionId) *> scheduleFlush
 
   /**
    * Scheduled flush fiber ref. Holds the single pending debounce timer so a
@@ -1383,24 +1535,30 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     (IO.sleep(flushDelayMs.millis) *> runFlush()).start.flatMap(fiber => flushFiber.set(Some(fiber)))
 
   /**
-   * Flush one dirty session to disk from its current cache value, then clear
-   * its dirty flag. Returns the sessionId flushed (or empty if none).
+   * Flush one dirty session to disk, then clear its dirty flag (which is also
+   * the LRU eviction pin). The pop and the cache read happen in ONE atomic
+   * modify, so the flushed value is captured at pop time — an eviction racing
+   * between "unpinned" and "read" can never strand the write. Returns the
+   * sessionId flushed (or empty if none).
    */
   private def flushOneDirty: IO[Option[String]] =
-    dirtyUiSessions
-      .modify { set =>
-        set.headOption match
-          case Some(sid) => (set - sid, Some(sid))
-          case None => (set, None)
-      }
-      .flatMap {
-        case Some(sid) =>
-          uiCacheRef.get.flatMap(_.get(sid) match
-            case Some(msgs) => writeUiMessagesToDisk(sid, msgs).as(Some(sid))
-            case None => IO.pure(Some(sid)) // nothing cached, nothing to write
-          )
-        case None => IO.pure(None)
-      }
+    uiCacheState.modify { st =>
+      st.dirty.headOption match
+        case Some(sid) => (st.clearDirty(sid), Some(sid -> st.get(sid)))
+        case None => (st, None)
+    }.flatMap {
+      case Some((sid, msgsOpt)) =>
+        msgsOpt match
+          case Some(msgs) =>
+            writeUiMessagesToDisk(sid, msgs)
+              // Re-pin on failure: the value is still in the cache, so keep it
+              // non-evictable (and re-schedulable) exactly like the pre-LRU
+              // behavior where the cache held it until the next flush.
+              .handleErrorWith(e => uiCacheState.modify(st => (st.markDirty(sid), ())) *> IO.raiseError(e))
+              .as(Some(sid))
+          case None => IO.pure(Some(sid)) // nothing cached, nothing to write
+      case None => IO.pure(None)
+    }
 
   /**
    * Recursively drain every dirty session to disk. Errors are logged and the
@@ -1420,8 +1578,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * leaving them stranded.
    */
   private def runFlush(): IO[Unit] =
-    flushFiber.set(None) *> drainDirty *> dirtyUiSessions.get.flatMap { remaining =>
-      if remaining.nonEmpty then scheduleFlush else IO.unit
+    flushFiber.set(None) *> drainDirty *> uiCacheState.get.flatMap { st =>
+      if st.dirty.nonEmpty then scheduleFlush else IO.unit
     }
 
   /**
@@ -1517,7 +1675,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     IO.blocking {
       val f = uiFile(sessionId)
       if os.exists(f) then os.remove(f)
-    } *> uiCacheRef.update(_ - sessionId) *> dirtyUiSessions.update(_ - sessionId)
+    } *> uiCacheState.modify(st => (st.removeAll(sessionId), ()))
 
   /**
    * Remove the last user message from UI history.
@@ -1553,7 +1711,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
               if hasAiAfter then IO.pure(false)
               else
                 val trimmed = msgs.take(lastUserIdx) ++ msgs.drop(lastUserIdx + 1)
-                updateUiCache(sessionId, trimmed) *> markDirty(sessionId).as(true)
+                updateUiCache(sessionId, trimmed, dirty = true) *> scheduleFlush.as(true)
             end if
         }
       }
