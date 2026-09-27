@@ -21,7 +21,7 @@ case class AgentEntry(
   category: String = "standalone", // computed by EntityLoader from path, NOT read from JSON
   mcpServers: List[String] = Nil,
   model: Option[AgentModelConfig] = None,
-  preset: Option[String] = None, // references a named preset in model-presets.json
+  preset: Option[String] = None, // legacy stored reference; audit-only, not read by the engine
   skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
   flows: List[String] = Nil // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
 )

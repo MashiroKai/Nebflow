@@ -113,9 +113,9 @@ end PermissionUpgrade
 //
 //   { "safety": { "defaultMode": "auto-all" } }
 //
-// Hot-read per access (config path resolves per call, same pattern as
-// PresetStore) — flipping the value takes effect on the next decision /
-// seeding without a restart.
+// Hot-read per access (config path resolves per call, same fresh-read
+// pattern as SchemePolicy) — flipping the value takes effect on the next
+// decision / seeding without a restart.
 //
 // 启动默认 = 全部放行 (2026-09-12 作者令：「把 nebflow 启动时的信任模式默认
 // 开全部放行」)：**读不到有效值**（缺文件 / 缺键 / 文件不可解析 / 读盘失败）

@@ -13,11 +13,11 @@ import io.circe.{Decoder, Encoder, Json}
  * matching is performed: the user picks the models, and fallback stays within
  * that user-chosen set.
  *
- * If both fields are empty, the agent follows the global default preset
- * (model-presets.json `defaultPreset`, resolved by PresetStore.resolve level 3
- * — terminal). The old nebflow.json `llm.model` global chain is retired
- * (#339): it seeded the default preset once at migration, then the field was
- * stripped; it is never a live resolution source.
+ * If both fields are empty, the agent follows the Nebula primary chain (its
+ * agent.json `model` key, resolved by SchemePolicy; an unconfigured Nebula
+ * degrades to the seed chain — the first configured provider's first model).
+ * The old nebflow.json `llm.model` global chain is retired (#339): it is
+ * tolerated-but-ignored by the decoder and only survives as a seed source.
  */
 case class AgentModelConfig(
   preferred: Option[String] = None,

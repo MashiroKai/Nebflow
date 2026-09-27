@@ -21,7 +21,7 @@ import cats.effect.IO
  *
  * 2. **~~Model Preset 场景目录~~**（panelscheme 批 2026-09-21 整体退役）——原目录段
  *    服务「分发器按任务为节点选 preset」（NodeEdit `preset` 参数）。作者令：节点
- *    无自有模型方案设置，节点模型 = 分发器当前方案（派发时 SchemePolicy 动态解析），
+ *    无自有模型方案设置，节点模型 = Nebula 主链（SchemePolicy 每 turn 动态跟随），
  *    `preset` 参数已退役（NODE_PRESET_RETIRED）——目录失去唯一消费者，保留只会
  *    诱导 LLM 调用被拒参数并挤占上下文。
  *

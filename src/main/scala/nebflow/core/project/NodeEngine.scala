@@ -2936,8 +2936,8 @@ class NodeEngine(
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
           // panelscheme 批（2026-09-21）：§E.3 node.preset 静态消费**废止**——
-          // 节点无自有方案，worker 模型 = 分发器当前方案（entry.toAgentDef 经
-          // SchemePolicy 对 general 动态继承 project-dispatcher，装载期现读）。
+          // 节点无自有方案，worker 模型 = Nebula 主链（entry.toAgentDef 经
+          // SchemePolicy 对 general 动态跟随 Nebula，装载期现读）。
           // resume（crash-recovery 批 D2/D3）：插件/装配链逐行复用，仅两处
           // 差异——sessionId 复用 sessionRef 旧 id（transcript 单文件续写 + F2 队列
           // 重放白捡，BackoffSupervisor respawn 同款先例）+ initialMessages 水合。
@@ -2992,7 +2992,7 @@ class NodeEngine(
         case (_, None) => failNode(nodeId, s"verify agent '${loopCfg.verify}' not found in global library (loop node)")
         case (Some(wEntry), Some(vEntry)) =>
           // panelscheme 批（2026-09-21）：worker/verify 均经 SchemePolicy 名称策略
-          // ——worker（general）动态继承 project-dispatcher 当前方案（节点无自有
+          // ——worker（general）动态跟随 Nebula 主链（节点无自有
           // 设置）；verify agent 同一策略（§E.3 node.preset 静态消费已废止）。
           val workerBase = wEntry.toAgentDef
           val verifyBase = vEntry.toAgentDef
@@ -3052,8 +3052,8 @@ class NodeEngine(
   /** panelscheme 批（2026-09-21）：§E.3 nodePresetDef（node.preset →
     * PresetResolver 静态消费）**整体移除**——节点侧静态覆盖废止，引擎解析不再
     * 读节点存储方案（NodeDef.preset 字段保留：存量数据零删除，仅显示/审计）。
-    * 节点 worker/verify 模型 = 分发器当前方案，经 AgentEntry.toAgentDef 内
-    * SchemePolicy 名称策略（general 动态继承 project-dispatcher）单点生效。 */
+    * 节点 worker/verify 模型 = Nebula 主链，经 AgentEntry.toAgentDef 内
+    * SchemePolicy 单点（general 动态跟随 Nebula）生效。 */
 
   /** node.plugins → 可分配能力（§B.4 第 4 步 ①②，feature flag §G.2 开关）：
     * flag off / 无分配 → 空 preparation（旧行为零变化）；解析失败 → Left
@@ -3146,7 +3146,7 @@ class NodeEngine(
 
   private def runWithAgent(
     node: NodeDef,
-    baseDef: nebflow.agent.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（继承分发器当前方案）
+    baseDef: nebflow.agent.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（跟随 Nebula 主链）
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,

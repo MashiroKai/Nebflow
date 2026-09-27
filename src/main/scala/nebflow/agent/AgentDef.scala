@@ -50,7 +50,7 @@ case class AgentDef(
   displayName: Option[String] = None,
   voiceEnabled: Boolean = true,
   model: Option[AgentModelConfig] = None,
-  preset: Option[String] = None, // references a named preset in model-presets.json
+  preset: Option[String] = None, // legacy stored reference; audit-only, not read by the engine
   category: String = "standalone",
   mcpServers: List[String] = Nil,
   skills: List[String] = Nil, // skill names this agent can see
