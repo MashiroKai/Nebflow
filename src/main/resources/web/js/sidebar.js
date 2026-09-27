@@ -3633,10 +3633,27 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
-  // Set project root — opens directory picker
+  // Set project root — opens the unified directory picker (workspacePicker.js).
+  // Clear commits projectRoot:null (button shown only when a root is set);
+  // both commit pipes dispatch 'project-root-changed' exactly like the retired
+  // in-module path picker did.
   menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
     if (!folder) return;
-    openPathPicker(folderId, folder.projectRoot);
+    import('./workspacePicker.js').then(({ openPicker }) => {
+      openPicker({
+        startPath: folder.projectRoot || '~',
+        title: t('workspacePicker.projectTitle'),
+        showClear: !!folder.projectRoot,
+        onPick: (path) => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: path });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+        onClear: () => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: null });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+      });
+    });
     dismissCtxMenu();
   });
 
@@ -3737,272 +3754,6 @@ export function initRulesModal() {
   document.getElementById('rules-modal-delete').addEventListener('click', () => {
     if (!activeRulesFolderId) return;
     sendWs({ type: 'deleteRules', folderId: activeRulesFolderId });
-  });
-}
-
-// ===== Path Picker Modal =====
-let pathPickerFolderId = null;
-let pathPickerCurrentPath = '';
-let pathPickerCallback = null;
-let pathPickerSearchTimer = null;
-
-/** The filter string currently in the box — sent with EVERY request (navigation
-  * included) so a frame can be matched against the newest request: see the
-  * staleness guard in handleBrowseResult. */
-function pathPickerQuery() {
-  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
-  return el ? el.value.trim() : '';
-}
-
-function resetPathPickerInputs() {
-  const search = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
-  if (search) search.value = '';
-  const goto = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
-  if (goto) goto.value = '';
-  if (pathPickerSearchTimer) {
-    clearTimeout(pathPickerSearchTimer);
-    pathPickerSearchTimer = null;
-  }
-  const note = document.getElementById('path-picker-truncated');
-  if (note) { note.hidden = true; note.textContent = ''; }
-  const err = document.getElementById('path-picker-error');
-  if (err) { err.hidden = true; err.textContent = ''; }
-}
-
-export function openPathPicker(folderId, currentRoot) {
-  pathPickerFolderId = folderId;
-  pathPickerCallback = null;
-  const startPath = currentRoot || '~';
-  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
-  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
-  document.getElementById('path-picker-clear').textContent = t('pathPicker.clear');
-  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
-  document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
-  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
-  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
-  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
-  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
-  resetPathPickerInputs();
-  // Show/hide clear button based on current state
-  document.getElementById('path-picker-clear').style.display = currentRoot ? 'inline-block' : 'none';
-  document.getElementById('path-picker-overlay').classList.add('on');
-  document.getElementById('path-picker-modal').classList.add('show');
-  browseTo(startPath);
-}
-
-export function openPathPickerCallback(currentRoot, callback) {
-  pathPickerFolderId = null;
-  pathPickerCallback = callback;
-  const startPath = currentRoot || '~';
-  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
-  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
-  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
-  document.getElementById('path-picker-goto-btn').textContent = t('pathPicker.go');
-  const gotoInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
-  if (gotoInput) gotoInput.placeholder = t('pathPicker.gotoPlaceholder');
-  const searchInput = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-search-input'));
-  if (searchInput) searchInput.placeholder = t('pathPicker.searchPlaceholder');
-  resetPathPickerInputs();
-  document.getElementById('path-picker-clear').style.display = 'none';
-  document.getElementById('path-picker-overlay').classList.add('on');
-  document.getElementById('path-picker-modal').classList.add('show');
-  browseTo(startPath);
-}
-
-function closePathPicker() {
-  pathPickerFolderId = null;
-  pathPickerCallback = null;
-  pathPickerCurrentPath = '';
-  resetPathPickerInputs();
-  document.getElementById('path-picker-overlay').classList.remove('on');
-  document.getElementById('path-picker-modal').classList.remove('show');
-}
-
-/** Navigate to `path` — always carries the current search string so the server
-  * filters (B) over the whole directory rather than the truncated page. */
-function browseTo(path) {
-  sendWs({ type: 'browsePath', path, query: pathPickerQuery() });
-}
-
-/** C: path direct-entry — the box's content goes to the server verbatim; `~` /
-  * `~/…` are expanded there by the shared expandTilde. An unusable path comes
-  * back as a typed error frame and is rendered inline (never a silent no-op). */
-function goToTypedPath() {
-  const el = /** @type {HTMLInputElement|null} */ (document.getElementById('path-picker-goto-input'));
-  const typed = el ? el.value.trim() : '';
-  if (!typed) return;
-  browseTo(typed);
-}
-
-function buildBreadcrumb(path) {
-  const bc = document.getElementById('path-picker-breadcrumb');
-  const parts = path.split('/').filter(Boolean);
-  let html = '';
-  let accumulated = '';
-  // root
-  if (path.startsWith('/')) {
-    html += '<span data-path="/">/</span>';
-    accumulated = '/';
-  }
-  parts.forEach((part, i) => {
-    accumulated += (accumulated.endsWith('/') ? '' : '/') + part;
-    const p = accumulated;
-    if (i < parts.length - 1) {
-      html += ' / <span data-path="' + escapeHtml(p) + '">' + escapeHtml(part) + '</span>';
-    } else {
-      html += ' / ' + escapeHtml(part);
-    }
-  });
-  bc.innerHTML = html;
-  bc.querySelectorAll('span[data-path]').forEach(span => {
-    span.addEventListener('click', () => browseTo(span.dataset.path));
-  });
-}
-
-export function handleBrowseResult(data) {
-  const list = document.getElementById('path-picker-list');
-  if (!list) return;
-  // Staleness guard: typing in the search box fires a new request while the
-  // previous frame may still be in flight. The server echoes the filter string
-  // it answered (`query`), so a frame whose filter is no longer the box's is
-  // dropped instead of repainting the list with stale results.
-  const frameQuery = typeof data.query === 'string' ? data.query : '';
-  if (frameQuery !== pathPickerQuery()) return;
-
-  const errBox = document.getElementById('path-picker-error');
-  const noteBox = document.getElementById('path-picker-truncated');
-  // The path a FAILED navigation carries is the one the user typed, not one they
-  // are in — remember where they actually were so the error branch can roll back
-  // to it. `pathPickerCurrentPath` is the value the Select button commits (both
-  // the callback and `setFolderProjectRoot`), so leaving the failed path in place
-  // would let the picker hand out a directory it just said it cannot open.
-  const prevPath = pathPickerCurrentPath;
-  pathPickerCurrentPath = data.path || '';
-  const entries = data.entries || [];
-
-  // ── C: inline path error (invalid / not a directory / unreadable) ──────────
-  if (data.error || data.errorKind) {
-    // A failed navigation must not move the breadcrumb/selection away from the
-    // directory the user was actually in — the error line changes, and the
-    // commit target is rolled back to that same directory (it was moved above,
-    // unconditionally, before this frame was known to be a failure).
-    pathPickerCurrentPath = prevPath;
-    if (errBox) {
-      errBox.textContent = data.error || t('pathPicker.error.invalid');
-      errBox.hidden = false;
-    }
-    if (noteBox) { noteBox.hidden = true; noteBox.textContent = ''; }
-    return;
-  }
-  if (errBox) { errBox.hidden = true; errBox.textContent = ''; }
-
-  buildBreadcrumb(pathPickerCurrentPath);
-  list.innerHTML = '';
-  list.removeAttribute('data-empty');
-
-  // ── A: explicit truncation word (never silent). The note is TWO lines: the
-  // fact (count/total) then the way out — B's search and C's direct entry. ────
-  const total = typeof data.total === 'number' ? data.total : entries.length;
-  const hidden = Math.max(0, total - entries.length);
-  if (noteBox) {
-    if (data.truncated && hidden > 0) {
-      noteBox.innerHTML =
-        '<div>' + escapeHtml(t('pathPicker.truncated', { count: hidden, total })) + '</div>' +
-        '<div class="pp-hint">' + escapeHtml(t('pathPicker.hint.truncated')) + '</div>';
-      noteBox.hidden = false;
-    } else {
-      noteBox.hidden = true;
-      noteBox.textContent = '';
-    }
-  }
-
-  // Parent directory item — hidden at filesystem root
-  if (pathPickerCurrentPath !== '/') {
-    const parentItem = document.createElement('div');
-    parentItem.className = 'pp-item';
-    parentItem.innerHTML = '<span class="pp-icon">..</span><span class="pp-name">..</span>';
-    parentItem.addEventListener('click', () => {
-      const parts = pathPickerCurrentPath.replace(/\/$/, '').split('/');
-      parts.pop();
-      const parent = parts.join('/') || '/';
-      browseTo(parent);
-    });
-    list.appendChild(parentItem);
-  }
-
-  if (entries.length === 0) {
-    const emptyHint = document.createElement('div');
-    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;line-height:1.6;';
-    // B: the empty state distinguishes "nothing here" from "nothing matched the
-    // filter" — each names its own way out (clear the box; type a path).
-    const line = frameQuery ? t('pathPicker.noMatch', { query: frameQuery }) : t('pathPicker.empty');
-    const hint = frameQuery ? t('pathPicker.hint.noMatch') : t('pathPicker.hint.empty');
-    emptyHint.textContent = line + ' — ' + hint;
-    list.appendChild(emptyHint);
-    return;
-  }
-
-  entries.forEach(entry => {
-    const item = document.createElement('div');
-    item.className = 'pp-item';
-    item.innerHTML = '<span class="pp-icon">&#128193;</span><span class="pp-name">' + escapeHtml(entry.name) + '</span>';
-    item.addEventListener('click', () => browseTo(entry.path));
-    list.appendChild(item);
-  });
-}
-
-export function initPathPicker() {
-  document.getElementById('path-picker-cancel').addEventListener('click', closePathPicker);
-  document.getElementById('path-picker-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'path-picker-overlay') closePathPicker();
-  });
-  // ── C: direct entry. Enter or the Go button jumps to the typed path; the box
-  // keeps its text so a wrong path can be corrected instead of retyped. ───────
-  const gotoInput = document.getElementById('path-picker-goto-input');
-  document.getElementById('path-picker-goto-btn').addEventListener('click', goToTypedPath);
-  gotoInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); goToTypedPath(); }
-  });
-  // ── B: server-side filter, 250ms debounce. Clearing the box restores the full
-  // listing (the server treats an empty query as "no filter"). ────────────────
-  const searchInput = document.getElementById('path-picker-search-input');
-  searchInput.addEventListener('input', () => {
-    if (pathPickerSearchTimer) clearTimeout(pathPickerSearchTimer);
-    pathPickerSearchTimer = setTimeout(() => {
-      pathPickerSearchTimer = null;
-      if (pathPickerCurrentPath) browseTo(pathPickerCurrentPath);
-    }, 250);
-  });
-  searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (pathPickerSearchTimer) { clearTimeout(pathPickerSearchTimer); pathPickerSearchTimer = null; }
-      if (pathPickerCurrentPath) browseTo(pathPickerCurrentPath);
-    }
-  });
-  document.getElementById('path-picker-select').addEventListener('click', () => {
-    // Callback mode (Explorer folder picker)
-    if (pathPickerCallback) {
-      pathPickerCallback(pathPickerCurrentPath);
-      closePathPicker();
-      return;
-    }
-    // Folder mode
-    if (!pathPickerFolderId) return;
-    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: pathPickerCurrentPath });
-    closePathPicker();
-    window.dispatchEvent(new CustomEvent('project-root-changed'));
-  });
-  document.getElementById('path-picker-clear').addEventListener('click', () => {
-    if (pathPickerCallback) {
-      pathPickerCallback(null);
-      closePathPicker();
-      return;
-    }
-    if (!pathPickerFolderId) return;
-    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: null });
-    closePathPicker();
-    window.dispatchEvent(new CustomEvent('project-root-changed'));
   });
 }
 

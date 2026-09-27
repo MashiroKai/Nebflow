@@ -6,7 +6,6 @@
 #modal-overlay,
 #memory-overlay,
 #rules-overlay,
-#path-picker-overlay,
 #settings-overlay,
 #search-overlay {
   position: fixed;
@@ -27,7 +26,6 @@
 #modal-overlay.on,
 #memory-overlay.on,
 #rules-overlay.on,
-#path-picker-overlay.on,
 #settings-overlay.on,
 #search-overlay.on { display: flex; }
 
@@ -37,7 +35,6 @@
 #conflict-box,
 #memory-modal,
 #rules-modal,
-#path-picker-modal,
 #settings-modal,
 #search-modal,
 #onboarding-panel,
@@ -61,7 +58,6 @@
   #conflict-box,
   #memory-modal,
   #rules-modal,
-  #path-picker-modal,
   #settings-modal,
   #search-modal,
   #onboarding-panel,
@@ -79,7 +75,6 @@
 #conflict-box::before,
 #memory-modal::before,
 #rules-modal::before,
-#path-picker-modal::before,
 #settings-modal::before,
 #search-modal::before,
 #onboarding-panel::before,
@@ -165,8 +160,7 @@
 #conflict-cancel,
 #conflict-keep-both,
 #memory-modal-actions button,
-#rules-modal-actions button,
-#path-picker-actions button {
+#rules-modal-actions button {
   font-size: 12px;
   padding: 6px 16px;
   border-radius: 8px;
@@ -182,8 +176,7 @@
 #conflict-cancel:hover,
 #conflict-keep-both:hover,
 #memory-modal-actions button:hover,
-#rules-modal-actions button:hover,
-#path-picker-actions button:hover {
+#rules-modal-actions button:hover {
   background: rgba(91, 127, 191, 0.08);
   border-color: var(--sapphire-edge-strong);
   color: var(--color-frame-text-bright);
@@ -193,14 +186,12 @@
 }
 
 /* Primary / Save button — sapphire style */
-#memory-modal-save,
-#path-picker-select {
+#memory-modal-save {
   border-color: rgba(91, 127, 191, 0.35) !important;
   color: rgb(91, 127, 191) !important;
   background: rgba(91, 127, 191, 0.06) !important;
 }
-#memory-modal-save:hover,
-#path-picker-select:hover {
+#memory-modal-save:hover {
   background: rgba(91, 127, 191, 0.14) !important;
   border-color: rgba(91, 127, 191, 0.55) !important;
   box-shadow:
@@ -212,8 +203,7 @@
 /* Destructive button */
 #delete-confirm,
 #conflict-replace,
-#rules-modal-delete,
-#path-picker-clear {
+#rules-modal-delete {
   border: 1px solid rgba(220, 60, 60, 0.3) !important;
   color: rgba(220, 60, 60, 0.85) !important;
   background: rgba(220, 60, 60, 0.04) !important;
@@ -221,8 +211,7 @@
 }
 #delete-confirm:hover,
 #conflict-replace:hover,
-#rules-modal-delete:hover,
-#path-picker-clear:hover {
+#rules-modal-delete:hover {
   background: rgba(220, 60, 60, 0.08) !important;
   border-color: rgba(220, 60, 60, 0.5) !important;
   box-shadow:
@@ -460,155 +449,6 @@
   margin-top: 14px;
 }
 #rules-modal-delete { margin-right: auto; }
-
-/* ---------- Path Picker Modal ---------- */
-#path-picker-modal {
-  border-radius: 20px;
-  width: 520px;
-  max-height: 80vh;
-  flex-direction: column;
-  overflow: hidden;
-  display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-#path-picker-modal.show { display: flex; }
-#path-picker-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
-}
-/* ---------- Path Picker: path direct-entry (C) + server-side search (B) -------
-   材质全部落既有 token（--glass-etched-bg / --glass-border / --color-*），
-   零新色值。两行各占一行：直输行在上（跳转 = 定位动作），搜索行在下（过滤 =
-   收窄动作），与列表同宽，避免挤动既有 520px 弹窗版式。 */
-#path-picker-goto,
-#path-picker-search {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-#path-picker-goto-input,
-#path-picker-search-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: inherit;
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-etched-bg);
-  color: var(--color-frame-text);
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-#path-picker-goto-input:focus,
-#path-picker-search-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-}
-#path-picker-goto-btn {
-  font-size: 12px;
-  padding: 6px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: inherit;
-  border: 1px solid var(--glass-border);
-  background: rgba(91, 127, 191, 0.03);
-  color: var(--color-frame-text-dim);
-  transition: all 0.25s ease;
-}
-#path-picker-goto-btn:hover {
-  background: rgba(91, 127, 191, 0.08);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
-}
-/* A: the explicit truncation word (never silent) — same etched strip as the
-   breadcrumb, muted ink, so it reads as a status line not an alert. */
-#path-picker-truncated {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  margin-bottom: 8px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--glass-border);
-  line-height: 1.4;
-}
-/* The second line of the note = the way out (search / direct entry), dimmer than
-   the fact above it. */
-#path-picker-truncated .pp-hint {
-  color: var(--color-frame-text-dim);
-  margin-top: 2px;
-}
-/* C: inline path error — single source = --color-danger (bright/dark in base.css) */
-#path-picker-error {
-  font-size: 11px;
-  color: var(--color-danger);
-  margin-bottom: 8px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
-  line-height: 1.4;
-  word-break: break-all;
-}
-#path-picker-breadcrumb {
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
-  margin-bottom: 10px;
-  word-break: break-all;
-  line-height: 1.4;
-  padding: 6px 10px;
-  background: var(--glass-etched-bg);
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
-}
-#path-picker-breadcrumb span {
-  color: rgb(91, 127, 191);
-  cursor: pointer;
-}
-#path-picker-breadcrumb span:hover {
-  text-decoration: underline;
-}
-#path-picker-list {
-  flex: 1;
-  min-height: 200px;
-  max-height: 360px;
-  overflow-y: auto;
-  border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  background: var(--glass-etched-bg);
-}
-#path-picker-list:empty::after {
-  content: attr(data-empty);
-  display: block;
-  text-align: center;
-  padding: 32px;
-  color: var(--color-frame-text-muted);
-  font-size: 12px;
-}
-.pp-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--color-frame-text);
-  border-bottom: 1px solid var(--color-frame-border-light);
-  transition: background 0.1s;
-}
-.pp-item:last-child { border-bottom: none; }
-.pp-item:hover { background: var(--color-frame-hover); }
-.pp-item.selected { background: rgba(91, 127, 191, 0.08); }
-.pp-icon { color: var(--color-frame-text-muted); flex-shrink: 0; width: 16px; text-align: center; }
-.pp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#path-picker-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-}
 
 /* ---------- Settings: Config ---------- */
 .cfg-input {

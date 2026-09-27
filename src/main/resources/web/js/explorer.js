@@ -3,12 +3,12 @@
 // Lazy-loads directories via `listDir` WS message. Clicking a file sends
 // `readFile`, opens the content as a Canvas tab (markdown/code/html).
 // Expand/collapse state is kept in-memory (not persisted).
-// Folder picker button in the header opens the path picker modal.
+// The header folder button opens the unified directory picker
+// (workspacePicker.js) to set the tree root.
 
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
-import { openPathPickerCallback } from './sidebar.js';
 import { createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
@@ -1034,16 +1034,24 @@ export function initExplorer() {
   explorerRoot = loadPersistedRoot();
   updateExplorerTitle();
 
-  // Wire folder picker button — uses callback mode (no folderId needed)
+  // Wire folder picker button — opens the unified directory picker
+  // (workspacePicker.js) in callback mode: the picked path becomes the tree
+  // root (persisted; tree collapses and re-renders from the new root).
   const folderBtn = document.getElementById('explorer-folder-btn');
   if (folderBtn && !folderBtn._bound) {
     folderBtn._bound = true;
     folderBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openPathPickerCallback(explorerRoot, (selectedPath) => {
-        persistRoot(selectedPath);
-        expandedDirs.clear();
-        renderTree();
+      import('./workspacePicker.js').then(({ openPicker }) => {
+        openPicker({
+          startPath: explorerRoot || '~',
+          title: t('workspacePicker.projectTitle'),
+          onPick: (selectedPath) => {
+            persistRoot(selectedPath);
+            expandedDirs.clear();
+            renderTree();
+          },
+        });
       });
     });
   }

@@ -63,7 +63,7 @@ import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { addNotification } from './notificationBanner.js';
-import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
+import { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 // #27 Project 标签页 + Flow Map 标签页（方向调整：均为 Canvas 标签页形态）
@@ -3565,8 +3565,9 @@ onMessage('rulesData', (msg, view) => handleRulesData(msg));
 onMessage('rulesSaved', (msg, view) => handleRulesSaved(msg));
 onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 
-// --- Browse Result (path picker) ---
-onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
+// browseResult frames (the unified directory picker's filter/goto channel) are
+// consumed by workspacePicker.js via per-request dynamic onMessage subscriptions
+// — no module-level subscriber anymore (pickeruni batch retired the static one).
 
 // Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
 // to updateCheck.js — it also owns the silent auto-check scheduling and the
@@ -3589,9 +3590,11 @@ onMessage('forkComplete', (msg, view) => {
     if (e.key !== 'Escape') return;
 
     // Full-screen overlay modals — click the overlay to trigger its close handler
+    // (the directory picker is NOT listed: it owns its own Esc handling since
+    // the pickeruni batch and closes with its cancel semantics.)
     const overlays = [
       '#memory-overlay', '#rules-overlay',
-      '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
+      '#modal-overlay', '#agent-overlay',
     ];
     for (const sel of overlays) {
       const el = document.querySelector(sel);
@@ -3802,7 +3805,6 @@ applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
 initRulesModal();
-initPathPicker();
 initInput(chatViews.primary);
 // visup-b 批（作者 2026-09-19 04:22 修正④）：输入区的 micOrb 气泡形态退役 ⇒
 // `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。

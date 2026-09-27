@@ -1,44 +1,99 @@
-// workspacePicker.js — 应用内目录浏览器（workspace-picker 批次的目录选择件）。
+// workspacePicker.js — the ONE in-app directory picker (pickeruni batch, 2026-09-26).
 //
-// 触发：ProjectCreate「选择工作区」卡点击 → chat.js 直接打开本弹窗（2026-09-06
-// 作者拍板：复用应用内目录浏览器，不走系统目录对话框）。也可复用于其他需要目录
-// 选择的场景（openPicker({sessionId, onPick, onCancel})）。
+// Every directory-picking entry point in the app opens THIS dialog:
+//   · chat.js ProjectCreate askUser dirPicker card (2026-09-06 author ruling:
+//     in-app browser, never the OS directory dialog)
+//   · projectTab.js FAB layer D4 path field
+//   · explorer.js header "change root" button (pickeruni batch)
+//   · sidebar.js folder context-menu "set project root" (pickeruni batch)
 //
-// 链路：sendWs({type:'wsBrowse.list', path}) → wsBrowseList{path,home,entries,error}
-//       sendWs({type:'wsBrowse.mkdir', path, name}) → wsBrowseMkdir{path,ok,error}
-// 响应帧走 GLOBAL 路由（无 sessionId 不换视图）；本模块单例弹窗 + 单一在飞请求，
-// 动态 onMessage 订阅 + 超时兜底（probeCanvasFile 先例）。
+// API (backward compatible; the last two options are new in pickeruni):
+//   openPicker({ sessionId, startPath='~', title, showClear=false,
+//                onPick(path), onClear(), onCancel(), onListUnavailable(error) })
+//   closePicker()                        // test/reentry helper → onCancel
 //
-// 交互：面包屑导航（蚀刻条内联 " / " 分隔，逐级可点，home 折叠为「主目录」，当前段
-// 纯文本不可点）/ 上级 = 列表首行 ".." 项（path-picker 基准形态）/ 新建文件夹
-// （footer 左侧入口，列表顶部行内输入，Enter 创建 / Esc 取消，创建成功自动进入新
-// 目录）/ 点行进目录 / 「选中此目录」确认当前目录 → onPick(path)。
+// Wire contract (existing channels only — zero new backend endpoints):
+//   wsBrowse.list  {path, sessionId}  → wsBrowseList {path, home, entries:string[], error?}
+//       Plain navigation. Complete listing (server applies no cap), `home` feeds
+//       the breadcrumb fold. Channel unchanged from the workspace-picker batch.
+//   wsBrowse.mkdir {path, name}       → wsBrowseMkdir {path, ok, error?}
+//   browsePath     {path, query}      → browseResult {path, query, entries:{name,path}[],
+//                                        total, truncated, error?, errorKind?}
+//       Search + typed-path goto. Server filters (case-insensitive substring,
+//       BEFORE the 2000-entry cap), echoes `query` for staleness guarding, and
+//       expands `~`/`~/…`; failures come back as typed error frames
+//       (invalid-path / not-a-directory / unreadable) rendered inline.
 //
-// 视觉：逐值对齐 path-picker 文件浏览器模态（设计基准，modal.css #path-picker-* /
-// .pp-item 族）——共享玻璃卡（.wsp-panel 挂进 modal.css 共享选择器组）、蚀刻面包屑
-// 条、蚀刻列表容器 + hairline 行、footer 中性钮 + sapphire 主钮。布局样式 .wsp-*
-// 见 chat.css；面板材质由 modal.css 共享玻璃卡组承载，亮暗双主题随全局 token。
+// Channel selection rule: a listing request goes over `browsePath` when a goto
+// jump is in flight or the search box holds text (filtering + cap + explicit
+// truncation notice live there), and over `wsBrowse.list` otherwise (complete
+// uncapped listing). Clearing the search box re-lists over `wsBrowse.list` —
+// the same restore-to-full (complete, uncapped) semantics the retired picker
+// had.
+//
+// Staleness guards (two, complementary — neither replaces the other):
+//   · monotonic `ctx.seq` — every request bumps it; a response whose captured
+//     seq is no longer current is dropped (covers rapid row clicks on both
+//     channels);
+//   · `query` echo (browsePath channel only) — ws.js onMessage is multicast,
+//     so the first browseResult frame to arrive resolves every live
+//     subscription and, during debounce overlap, the newer request can be
+//     handed a frame that answers the OLDER filter — a mismatch the seq guard
+//     cannot see (the consuming request IS the current one). A frame whose
+//     echoed query differs from the box's current text is ignored before it
+//     can resolve anything (echoCurrent), leaving the subscription live for
+//     the real answer. (Restored in round-2 — round-1 shipped this guard in
+//     the header comment only; the retired sidebar.js picker had the working
+//     comparison in handleBrowseResult.)
+//
+// Error-no-commit invariant (picker-trunc r3, preserved by the unified face):
+// a failed navigation NEVER moves `ctx.current` — the value the Select button
+// commits — so a directory the picker just said it cannot open can never be
+// handed to the caller. `goto` failures additionally keep the previous listing
+// and breadcrumb on screen (only the error line changes).
+//
+// Interaction: breadcrumbs (etched strip, clickable ancestor segments, home
+// folded to its localized label) / up = first ".." row / new folder (inline
+// input row, Enter creates + enters) / click row to descend / truncation note
+// (two lines: the fact, then the way out) / inline path-error line / Cancel
+// (+ optional Clear for project-root mode) + Select This Folder / Esc closes /
+// overlay click cancels. IME composition is owned by imeGuard.js (author
+// ruling 2026-09-12: single composition predicate).
+//
+// Visual: the shared glass-card group in modal.css carries the panel material
+// (.wsp-panel); layout/control styles (.wsp-*) live in chat.css — values follow
+// the app's directory-browser baseline, token-driven, both themes.
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import state from './state.js';
-// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+// ⑤ Chinese-IME takeover (author ruling 2026-09-12): the ONE composition source = imeGuard.js.
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
-let openCtx = null; // 当前打开的弹窗上下文（单例重入保护）
+let openCtx = null; // live dialog context (singleton reentry guard)
 
-/** 请求目录列表；单一在飞，4s 超时兜底（probeCanvasFile 同款形态）。 */
-function listDir(sessionId, path) {
+/**
+ * One WS request → reply frame (single in flight per call, 4s timeout floor,
+ * dynamic onMessage subscription — probeCanvasFile pattern).
+ * @param {string} replyType message type to subscribe on
+ * @param {function(): void} send thunk that emits the request frame
+ * @param {function(object): boolean} [accept] consume filter: a frame is
+ *        resolved into the request only when this returns true; a rejected
+ *        frame is ignored and the subscription stays live for the real answer
+ *        (query-echo staleness guard — see echoCurrent in openPicker)
+ * @returns {Promise<object>} the reply frame, or `{__timeout:true}` on timeout
+ */
+function wsRequest(replyType, send, accept) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (v) => { if (!settled) { settled = true; unsub(); resolve(v); } };
-    const unsub = onMessage('wsBrowseList', (msg) => finish(msg));
-    setTimeout(() => finish({ error: 'timeout' }), 4000);
-    sendWs({ type: 'wsBrowse.list', path, sessionId });
+    const unsub = onMessage(replyType, (msg) => { if (accept && !accept(msg)) return; finish(msg); });
+    setTimeout(() => finish({ __timeout: true }), 4000);
+    send();
   });
 }
 
-/** 新建文件夹；返回 {ok, path?, error?}。 */
+/** Create a folder; resolves {ok, path?, error?} (timeout = not-ok). */
 function mkdir(sessionId, path, name) {
   return new Promise((resolve) => {
     let settled = false;
@@ -49,7 +104,7 @@ function mkdir(sessionId, path, name) {
   });
 }
 
-/** 从绝对路径推导面包屑（home 前缀折叠为「主目录」单节）。 */
+/** Breadcrumb segments from an absolute path (home prefix folded to one segment). */
 function buildCrumbs(path, home) {
   if (!path) return [];
   if (home && (path === home || path.startsWith(home + '/'))) {
@@ -60,7 +115,7 @@ function buildCrumbs(path, home) {
     for (const s of segs) { acc = (acc === '/' ? '' : acc) + '/' + s; crumbs.push({ label: s, path: acc }); }
     return crumbs;
   }
-  // 不在 home 下：从根逐级展开
+  // Outside home: unfold from the filesystem root
   const segs = path.split('/').filter(Boolean);
   const crumbs = [{ label: '/', path: '/' }];
   let acc = '';
@@ -69,66 +124,118 @@ function buildCrumbs(path, home) {
 }
 
 /**
- * 打开目录浏览器弹窗（单例：重开时先关旧的并触发旧 onCancel）。
- * @param {object} opts { sessionId, startPath='~', onPick(path), onCancel() }
+ * Open the directory picker (singleton: reopening closes the old dialog and
+ * fires its onCancel).
+ * @param {object} opts {
+ *   sessionId, startPath='~', title, showClear=false,
+ *   onPick(path), onClear(), onCancel(), onListUnavailable(error)
+ * }
  */
 export function openPicker(opts = {}) {
   closePicker();
   const ctx = {
     sessionId: opts.sessionId || (state.activeSessionId ?? undefined),
     onPick: opts.onPick || (() => {}),
+    onClear: opts.onClear || (() => {}),
     onCancel: opts.onCancel || (() => {}),
-    // 2026-09-17 作者裁定 ②-6：目录列表超时/error 必须如实上抛给调用方（禁静默吞），
-    // 由调用方决定降级（chat.js 的 dirPicker 卡据此揭示自由输入兜底面）。
+    // Listing unavailable (nav-origin timeout/error) must reach the caller
+    // verbatim (2026-09-17 ruling ②-6: no silent swallow — chat.js reveals its
+    // free-input fallback face from this callback).
     onListUnavailable: opts.onListUnavailable || (() => {}),
     current: opts.startPath || '~',
     home: '',
+    seq: 0, // monotonic request token (staleness guard)
+    searchTimer: null,
+    teardown: null, // set below: detach the Esc listener + pending debounce
   };
+  const titleText = opts.title || t('workspacePicker.browseTitle');
 
   const overlay = document.createElement('div');
   overlay.className = 'wsp-overlay';
   overlay.innerHTML =
-    '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(t('workspacePicker.browseTitle')) + '">' +
+    '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(titleText) + '">' +
       '<div class="wsp-title"></div>' +
+      '<div class="wsp-goto">' +
+        '<input class="wsp-goto-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.gotoPlaceholder')) + '" />' +
+        '<button type="button" class="wsp-goto-btn">' + escapeHtml(t('workspacePicker.go')) + '</button>' +
+      '</div>' +
+      '<div class="wsp-search">' +
+        '<input class="wsp-search-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.searchPlaceholder')) + '" />' +
+      '</div>' +
       '<div class="wsp-crumbs"></div>' +
+      '<div class="wsp-note" hidden></div>' +
+      '<div class="wsp-err" hidden></div>' +
       '<div class="wsp-list"></div>' +
       '<div class="wsp-foot">' +
         '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>' +
         '<span class="wsp-cur"></span>' +
         '<span class="wsp-foot-btns">' +
           '<button type="button" class="wsp-cancel">' + escapeHtml(t('workspacePicker.cancel')) + '</button>' +
+          (opts.showClear ? '<button type="button" class="wsp-clear">' + escapeHtml(t('workspacePicker.clear')) + '</button>' : '') +
           '<button type="button" class="wsp-pick">' + escapeHtml(t('workspacePicker.selectHere')) + '</button>' +
         '</span>' +
       '</div>' +
     '</div>';
-  overlay.querySelector('.wsp-title').textContent = t('workspacePicker.browseTitle');
+  overlay.querySelector('.wsp-title').textContent = titleText;
   document.body.appendChild(overlay);
 
   const listEl = overlay.querySelector('.wsp-list');
   const crumbsEl = overlay.querySelector('.wsp-crumbs');
-  const curEl = overlay.querySelector('.wsp-cur');
+  const curEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cur'));
+  const noteEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-note'));
+  const errEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-err'));
+  const gotoEl = /** @type {HTMLInputElement} */ (overlay.querySelector('.wsp-goto-input'));
+  const searchEl = /** @type {HTMLInputElement} */ (overlay.querySelector('.wsp-search-input'));
   openCtx = ctx;
 
-  const close = (picked) => {
+  /** Terminal transition: teardown, then exactly one caller callback. */
+  const finish = (outcome) => {
     if (openCtx !== ctx) return;
     openCtx = null;
+    if (ctx.teardown) ctx.teardown();
     overlay.remove();
-    if (picked) ctx.onPick(picked); else ctx.onCancel();
+    if (outcome.type === 'pick') ctx.onPick(outcome.path);
+    else if (outcome.type === 'clear') ctx.onClear();
+    else ctx.onCancel();
   };
 
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); }); // 点遮罩 = 取消
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel')).onclick = () => close(null);
-  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => close(ctx.current);
+  // Esc closes (cancel) — never during IME composition (Esc belongs to the IME then).
+  /** @param {KeyboardEvent} e */
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    const el = /** @type {HTMLElement|null} */ (e.target);
+    if (el && el.tagName === 'INPUT' && isImeComposing(e, /** @type {HTMLInputElement} */ (el))) return;
+    finish({ type: 'cancel' });
+  };
+  ctx.teardown = () => {
+    document.removeEventListener('keydown', onKey);
+    if (ctx.searchTimer) { clearTimeout(ctx.searchTimer); ctx.searchTimer = null; }
+  };
+  document.addEventListener('keydown', onKey);
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) finish({ type: 'cancel' }); }); // overlay click = cancel
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel')).onclick = () => finish({ type: 'cancel' });
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => finish({ type: 'pick', path: ctx.current });
+  const clearBtn = /** @type {HTMLElement|null} */ (overlay.querySelector('.wsp-clear'));
+  if (clearBtn) clearBtn.onclick = () => finish({ type: 'clear' }); // legacy parity: Clear closes WITHOUT onCancel
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-mkdir')).onclick = () => startMkdir();
 
-  /** 渲染面包屑（path-picker 基准形态：可点段 sapphire 链接，当前段纯文本，" / " 分隔）。 */
+  function hideErr() { errEl.hidden = true; errEl.textContent = ''; }
+  function hideNote() { noteEl.hidden = true; noteEl.textContent = ''; }
+
+  function showErr(msg) {
+    errEl.textContent = msg;
+    errEl.hidden = false;
+  }
+
+  /** Render breadcrumbs (ancestor segments are sapphire links, current is plain text). */
   function renderCrumbs() {
     crumbsEl.innerHTML = '';
     const crumbs = buildCrumbs(ctx.current, ctx.home);
     crumbs.forEach((c, i) => {
       if (i > 0) crumbsEl.appendChild(document.createTextNode(' / '));
       if (i === crumbs.length - 1) {
-        crumbsEl.appendChild(document.createTextNode(c.label)); // 当前段：纯文本不可点
+        crumbsEl.appendChild(document.createTextNode(c.label)); // current segment: plain text
       } else {
         const seg = document.createElement('span');
         seg.className = 'wsp-crumb';
@@ -140,7 +247,7 @@ export function openPicker(opts = {}) {
     });
   }
 
-  /** 行内新建文件夹：列表顶部插入输入行（不弹 prompt），Enter 创建 / Esc 取消。 */
+  /** Inline new-folder row at the top of the list (Enter creates + enters). */
   function startMkdir() {
     if (listEl.querySelector('.wsp-mkdir-row')) return;
     const row = document.createElement('div');
@@ -166,7 +273,7 @@ export function openPicker(opts = {}) {
       const res = await mkdir(ctx.sessionId, ctx.current, name);
       if (openCtx !== ctx) return;
       if (res && res.ok && res.path) {
-        navigate(res.path); // 创建成功直接进入新目录
+        navigate(res.path); // created → enter the new directory
       } else {
         row.remove();
         curEl.textContent = t('workspacePicker.mkdirFail') + (res && res.error ? ' (' + res.error + ')' : '');
@@ -174,7 +281,7 @@ export function openPicker(opts = {}) {
     };
     ok.onclick = submit;
     no.onclick = () => row.remove();
-    // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+    // ⑤ During composition Enter/Esc go back to the IME (non-composition keys unchanged).
     bindImeGuard(input);
     input.addEventListener('keydown', (e) => {
       if (isImeComposing(e, input)) return;
@@ -183,28 +290,93 @@ export function openPicker(opts = {}) {
     });
   }
 
-  /** 请求目录并渲染列表（面包屑同步；首行 ".." 上级项，path-picker 基准形态）。 */
-  async function navigate(path) {
-    if (openCtx !== ctx) return;
-    ctx.current = path;
-    curEl.textContent = ''; // 路径由面包屑承载；本元素仅作 mkdir 失败等瞬时报错
-    listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.loading')) + '</div>';
-    const res = await listDir(ctx.sessionId, path);
-    if (openCtx !== ctx) return; // 已关闭/重开：丢弃旧响应
+  // Query-echo staleness guard for the browsePath channel (round-2: restored —
+  // the retired sidebar.js picker had this same comparison in its
+  // handleBrowseResult). While a browsePath request is in flight the search box
+  // may already hold newer text (250ms debounce overlap), and ws.js onMessage
+  // is MULTICAST: the first frame to arrive resolves every live subscription,
+  // so the current request can be handed a frame answering the PREVIOUS filter
+  // — a mismatch the seq guard cannot catch, because the request consuming the
+  // stale frame IS the current one. A frame whose echoed query differs from
+  // the box's CURRENT text is therefore ignored before it can resolve anything;
+  // the subscription stays live so the real answer still lands when it arrives
+  // (the 4s timeout still bounds the wait). The synthetic `{__timeout:true}`
+  // needs no guard: it is produced by the request's own timer and bypasses
+  // onMessage entirely, so it can never be stale.
+  /** @param {object} res browseResult frame
+   *  @returns {boolean} true when the frame may resolve the pending request */
+  const echoCurrent = (res) =>
+    (res && typeof res.query === 'string' ? res.query : '') === searchEl.value.trim();
 
-    if (res && res.error) {
-      listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.readFail')) + '</div>';
-      curEl.textContent = t('workspacePicker.readFail') + ' (' + res.error + ')';
-      // 列表不可用 = 选择面不可用 ⇒ 如实上抛（禁静默吞）；调用方据此揭示降级输入面。
-      ctx.onListUnavailable(res.error);
+  /**
+   * List `path` and render. Channel rule: goto jumps and query-carrying
+   * refreshes go over `browsePath` (server filter + cap + typed errors);
+   * plain navigation goes over `wsBrowse.list` (complete uncapped listing).
+   * @param {string} path
+   * @param {{origin?: 'nav'|'goto'|'refresh'}} [opts]
+   */
+  async function navigate(path, opts = {}) {
+    if (openCtx !== ctx) return;
+    const origin = opts.origin || 'nav';
+    const query = searchEl.value.trim();
+    const seq = ++ctx.seq;
+    hideErr();
+    hideNote();
+    curEl.textContent = ''; // transient line only (mkdir failures etc.)
+    if (origin !== 'goto') {
+      // goto keeps the current listing + breadcrumbs on screen while the jump
+      // is in flight (error must not wipe what the user was looking at).
+      listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.loading')) + '</div>';
+    }
+    const res = (origin === 'goto' || query)
+      ? await wsRequest('browseResult', () => sendWs({ type: 'browsePath', path, query }), echoCurrent)
+      : await wsRequest('wsBrowseList', () => sendWs({ type: 'wsBrowse.list', path, sessionId: ctx.sessionId }));
+    if (openCtx !== ctx || seq !== ctx.seq) return; // closed or superseded by a newer request
+    renderResult(res, { origin, query, requested: path });
+  }
+
+  /**
+   * Paint a listing frame (or its failure) — the error-no-commit invariant
+   * lives here: failures never touch ctx.current.
+   */
+  function renderResult(res, env) {
+    const failed = !res || res.__timeout || res.error || res.errorKind;
+    if (failed) {
+      const detail = res && typeof res.error === 'string' ? res.error : '';
+      showErr(detail || t('workspacePicker.error.invalid'));
+      hideNote();
+      if (env.origin !== 'goto') {
+        // Navigation-origin failure: the target listing never arrived, so the
+        // picking face is unavailable — say so in the list AND raise it to the
+        // caller (caller decides degradation; never a silent dead end).
+        listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.readFail')) + '</div>';
+        ctx.onListUnavailable(detail || 'unavailable');
+      }
+      // goto-origin: keep the previous listing + breadcrumbs untouched (the
+      // user can correct the typed path — the box keeps its text).
       return;
     }
+
+    hideErr();
     if (res.home) ctx.home = res.home;
-    ctx.current = res.path || path;
+    ctx.current = res.path || env.requested; // server-resolved absolute path
     renderCrumbs();
 
+    // A: explicit truncation word (never silent) — the fact, then the way out.
+    const entries = (res.entries || []).map((e) => (typeof e === 'string' ? { name: e } : e));
+    const total = typeof res.total === 'number' ? res.total : entries.length;
+    const hiddenCount = Math.max(0, total - entries.length);
+    if (res.truncated && hiddenCount > 0) {
+      noteEl.innerHTML =
+        '<div>' + escapeHtml(t('workspacePicker.truncated', { count: hiddenCount, total })) + '</div>' +
+        '<div class="wsp-note-hint">' + escapeHtml(t('workspacePicker.hint.truncated')) + '</div>';
+      noteEl.hidden = false;
+    } else {
+      hideNote();
+    }
+
     listEl.innerHTML = '';
-    // 上级目录项（文件系统根隐藏）——path-picker 基准：列表首行 ".." 项
+    // Parent row first (hidden at the filesystem root)
     if (ctx.current !== '/') {
       const parentRow = document.createElement('button');
       parentRow.type = 'button';
@@ -220,15 +392,20 @@ export function openPicker(opts = {}) {
       listEl.appendChild(parentRow);
     }
 
-    const entries = res.entries || [];
     if (!entries.length) {
+      // Empty state names its own way out: "nothing here" vs "nothing matched".
       const empty = document.createElement('div');
       empty.className = 'wsp-row wsp-empty';
-      empty.textContent = t('workspacePicker.empty');
+      const line = document.createElement('div');
+      line.textContent = env.query ? t('workspacePicker.noMatch', { query: env.query }) : t('workspacePicker.empty');
+      const hint = document.createElement('div');
+      hint.className = 'wsp-empty-hint';
+      hint.textContent = env.query ? t('workspacePicker.hint.noMatch') : t('workspacePicker.hint.empty');
+      empty.append(line, hint);
       listEl.appendChild(empty);
       return;
     }
-    for (const name of entries) {
+    for (const entry of entries) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'wsp-row wsp-dir';
@@ -236,21 +413,56 @@ export function openPicker(opts = {}) {
         '<span class="wsp-row-icon">' +
           '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>' +
         '</span>' +
-        '<span class="wsp-row-name">' + escapeHtml(name) + '</span>';
-      const child = (ctx.current === '/' ? '' : ctx.current) + '/' + name;
+        '<span class="wsp-row-name">' + escapeHtml(entry.name) + '</span>';
+      const child = entry.path || ((ctx.current === '/' ? '' : ctx.current) + '/' + entry.name);
       row.onclick = () => navigate(child);
       listEl.appendChild(row);
     }
   }
 
-  navigate(ctx.current); // 首屏：主目录（后端展开 ~）
+  // ── goto: direct entry. Enter or the Go button jumps to the typed path; the
+  // box keeps its text so a wrong path can be corrected instead of retyped. ──
+  const gotoTyped = () => {
+    const typed = gotoEl.value.trim();
+    if (!typed) return;
+    navigate(typed, { origin: 'goto' });
+  };
+  /** @type {HTMLElement} */ (overlay.querySelector('.wsp-goto-btn')).onclick = gotoTyped;
+  bindImeGuard(gotoEl);
+  gotoEl.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, gotoEl)) return;
+    if (e.key === 'Enter') { e.preventDefault(); gotoTyped(); }
+  });
+
+  // ── search: server-side filter, 250ms debounce. Clearing the box restores
+  // the full listing (the server treats an empty query as "no filter"). ─────
+  const searchRefresh = () => navigate(ctx.current, { origin: 'refresh' });
+  searchEl.addEventListener('input', () => {
+    if (ctx.searchTimer) clearTimeout(ctx.searchTimer);
+    ctx.searchTimer = setTimeout(() => {
+      ctx.searchTimer = null;
+      searchRefresh();
+    }, 250);
+  });
+  bindImeGuard(searchEl);
+  searchEl.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, searchEl)) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (ctx.searchTimer) { clearTimeout(ctx.searchTimer); ctx.searchTimer = null; }
+      searchRefresh();
+    }
+  });
+
+  navigate(ctx.current); // first paint (backend expands `~`)
 }
 
-/** 关闭当前弹窗（若有）并触发其 onCancel——测试/重入用。 */
+/** Close the live dialog (if any) and fire its onCancel — test/reentry helper. */
 export function closePicker() {
   if (!openCtx) return;
   const ctx = openCtx;
   openCtx = null;
+  if (ctx.teardown) ctx.teardown(); // detach Esc listener + pending debounce
   const overlay = document.querySelector('.wsp-overlay');
   if (overlay) overlay.remove();
   ctx.onCancel();

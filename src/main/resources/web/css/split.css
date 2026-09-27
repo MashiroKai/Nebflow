@@ -827,7 +827,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
      `.reminder-panel-body` (reminder.css:140), `.flow-agent-chat`
      (flowAgentPopup.js:125), `.bgt-output` (bgTaskOutputPopup.js:199) and
      `.daemon-panel-body` (daemons.js:119) — while other scrollable containers
-     elsewhere in the app (sidebar session list, `#path-picker-list`, friends /
+     elsewhere in the app (sidebar session list, friends /
      flowMap / input surfaces) carry none. Same value, same meaning, no new token:
      the panel stack above this scroller is `overflow: hidden` all the way out
      (`#canvas-content` split.css:446, `#canvas-panel` split.css:372) and the root

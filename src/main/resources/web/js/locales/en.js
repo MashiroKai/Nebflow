@@ -1017,22 +1017,6 @@ export default {
   // === Path ===
   'path.root': 'Root',
 
-  // === Path Picker ===
-  'pathPicker.title': 'Select Project Directory',
-  'pathPicker.select': 'Select This Folder',
-  'pathPicker.clear': 'Clear',
-  'pathPicker.empty': 'No subdirectories in this folder',
-  // picker-trunc batch (2026-09-22 author ruling A+B+C)
-  'pathPicker.truncated': '{count} more not shown (of {total})',
-  'pathPicker.searchPlaceholder': 'Search in this folder (server-side filter)',
-  'pathPicker.noMatch': 'No subdirectory matches "{query}"',
-  'pathPicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
-  'pathPicker.hint.empty': 'Type a path to jump there, or go up one level',
-  'pathPicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
-  'pathPicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
-  'pathPicker.go': 'Go',
-  'pathPicker.error.invalid': 'Invalid path',
-
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',
   'session.delete': 'Delete this session',
@@ -1744,6 +1728,19 @@ export default {
   'workspacePicker.empty': 'Empty folder',
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
+  // pickeruni batch: the retired project-directory picker's copy keys relocated
+  // into workspacePicker.* (values verbatim unchanged)
+  'workspacePicker.projectTitle': 'Select Project Directory',
+  'workspacePicker.clear': 'Clear',
+  'workspacePicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
+  'workspacePicker.go': 'Go',
+  'workspacePicker.searchPlaceholder': 'Search in this folder (server-side filter)',
+  'workspacePicker.noMatch': 'No subdirectory matches "{query}"',
+  'workspacePicker.truncated': '{count} more not shown (of {total})',
+  'workspacePicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
+  'workspacePicker.hint.empty': 'Type a path to jump there, or go up one level',
+  'workspacePicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
+  'workspacePicker.error.invalid': 'Invalid path',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令
