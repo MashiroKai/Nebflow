@@ -34,6 +34,14 @@
 //    O1–O5 are NOT settled by the hide ruling — they stay suspended exactly as
 //    described above. Hidden ≠ deleted is the whole point of this shape.
 //
+// 🔴 CHANNEL SEAL (socialhide batch, 2026-09-26): the wechat + telegram
+//    entries are `hidden: true` at the definition layer (PHASE 3 there). The
+//    single render point in [[renderAll]] maps the definition layer's visible
+//    set, so a sealed card is never built, never bound and never refreshed:
+//    the refresh path ([[refreshCard]]) early-returns on its missing card
+//    element, and the state loops only fill data maps (no DOM, no listeners).
+//    Same sealed family as the remote-access section above: hide ≠ delete.
+//
 // Style: css/social.css (new file; sapphire.css is off-limits for this batch).
 // Switch component: shared js/toggle.js (`nb-toggle`), never a private copy.
 
@@ -42,7 +50,7 @@ import { escapeHtml, createIconsIn } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { getAuthToken } from './neblink.js';
 import {
-  SOCIAL_CHANNELS, channelById, storedKey, channelStatus, channelProblem, fieldValues,
+  SOCIAL_CHANNELS, visibleChannels, channelById, storedKey, channelStatus, channelProblem, fieldValues,
 } from './socialChannels.js';
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -273,7 +281,12 @@ function fieldHTML(ch, f) {
 function renderAll() {
   const list = cardList();
   if (!list) return;
-  list.innerHTML = SOCIAL_CHANNELS.map(cardHTML).join('');
+  // socialhide (PHASE 3): sealed channels (`hidden: true`) are data, not
+  // cards. The visible set comes from the definition layer's ONE filter, so
+  // the rendered face and `socialChannelCount()` cannot disagree; the
+  // filtered order is the visible card order (§E.3 X3). Restoring a card =
+  // dropping its flag in socialChannels.js — nothing changes here.
+  list.innerHTML = visibleChannels().map(cardHTML).join('');
   createIconsIn(list);
   bindToggle(list, onToggleChange);
   applyStaticText();
