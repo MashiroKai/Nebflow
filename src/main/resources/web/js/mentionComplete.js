@@ -2,9 +2,11 @@
 // (mention-routing batch, 2026-09-27).
 //
 // Behavior contract:
-//   - Typing '@' at WORD START (preceded by whitespace or line start) opens a
-//     floating list of mounted projects: name + workspace-path subtitle.
-//     'foo@' (mid-word, e.g. an email address) never triggers.
+//   - Typing '@' opens a floating list of mounted projects: name +
+//     workspace-path subtitle — unless the character right before the '@' is
+//     an ASCII letter or digit ('foo@', i.e. an email address, never
+//     triggers). Whitespace, line start, CJK characters and CJK punctuation
+//     all open the token, so '@' works anywhere in a Chinese sentence.
 //   - Continued typing filters the list (case-insensitive substring on the
 //     project name). The mention token lives from '@' up to the next
 //     whitespace — a manually typed space inside the token closes the popup.
@@ -90,15 +92,18 @@ let lastRenderKey = ''; // dedup: identical re-parses must not rebuild/reset row
 const WHITESPACE_RE = /\s/;
 
 /** Active mention token at the caret, or null.
- *  Token = the '@' at word start (preceded by whitespace or line start) up
- *  to the caret, with no whitespace between '@' and the caret. */
+ *  Token = an '@' NOT preceded by an ASCII letter/digit (whitespace, line
+ *  start, CJK characters and CJK punctuation all open it) up to the caret,
+ *  with no whitespace between '@' and the caret. */
 function parseMentionToken(input) {
   const caret = input.selectionStart ?? input.value.length;
   const before = input.value.slice(0, caret);
   const at = before.lastIndexOf('@');
   if (at < 0) return null;
-  // Word-start gate: 'foo@' (email addresses and the like) never triggers.
-  if (at > 0 && !WHITESPACE_RE.test(before[at - 1])) return null;
+  // Trigger gate: '@' preceded by an ASCII letter/digit (email addresses and
+  // the like) never triggers; every other preceding character opens the token.
+  const prev = at > 0 ? before[at - 1] : ' ';
+  if (/[a-zA-Z0-9]/.test(prev)) return null; // ASCII alnum precedes ⇒ email-like, skip
   // The token ends at the first whitespace — a manually typed space closes.
   if (WHITESPACE_RE.test(before.slice(at + 1))) return null;
   return { start: at, query: before.slice(at + 1) };
