@@ -158,11 +158,65 @@ class FeishuChannelSpec extends FunSuite:
     val r = FeishuCredentials.resolve(root)
     assert(r.isLeft)
 
-    // …even when a COMPLETE schema-side config also exists: a half-written
-    // credential must not look like "no credential" and let the other source win.
+    // …even when a schema-side entry that carries a partial credential (app_id
+    // but no app_secret_ref) also exists: the schema entry holds no usable
+    // credential, the legacy file is still half-written, and resolution must
+    // fail loudly rather than fabricate a credential out of either.
     os.write(root / "nebflow.json",
       """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000"}}}}}""")
     assert(FeishuCredentials.resolve(root).isLeft)
+  }
+
+  // ─────────────── resolution order: schema FIRST, legacy fallback ───────────────
+  // (feishu-bind batch, 2026-09-27 — the P0-1 flip. The historical order was
+  // legacy-first, which let a months-old flat file shadow the freshly stored
+  // scan-bind credential: the silent-message incident. The flip is pinned here
+  // from both sides; a mutation that restores the old order must turn
+  // schema-first red.)
+
+  test("resolution order: a complete schema credential WINS over a legacy flat file (schema-first)") {
+    val root = tmpRoot()
+    os.makeDir.all(root / "secrets")
+    os.write(root / "secrets" / "social-feishu-app-secret", "schema-side-secret-value",
+      perms = os.PermSet.fromString("rw-------"))
+    os.write(root / "nebflow.json",
+      """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_schemawins0000001",""" +
+        """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}""")
+    os.write(root / "feishu.json",
+      """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
+      perms = os.PermSet.fromString("rw-------"))
+    val r = FeishuCredentials.resolve(root)
+    assert(r.isRight, s"expected a credential, got $r")
+    assertEquals(r.toOption.get.appId, "cli_schemawins0000001", "the schema app_id must win")
+    assertEquals(r.toOption.get.appSecret, "schema-side-secret-value")
+    assert(r.toOption.get.source.startsWith("schema:"), "must resolve from the schema side")
+  }
+
+  test("resolution order: no schema entry falls back to the legacy flat file") {
+    val root = tmpRoot()
+    os.write(root / "feishu.json",
+      """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
+      perms = os.PermSet.fromString("rw-------"))
+    val r = FeishuCredentials.resolve(root)
+    assert(r.isRight, "the legacy file remains the fallback when the schema has no credential")
+    assertEquals(r.toOption.get.appId, "cli_legacyapp00000001")
+    assertEquals(r.toOption.get.appSecret, "legacy-secret-value-32-chars")
+    assert(r.toOption.get.source.startsWith("file:"), "must resolve from the legacy file")
+  }
+
+  test("resolution order: a schema entry WITHOUT credential keys does not shadow a usable legacy file") {
+    // A card that was toggled on but never carried credentials (e.g. region
+    // only) holds no credential information — the legacy fallback may speak.
+    val root = tmpRoot()
+    os.write(root / "nebflow.json",
+      """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"region":"feishu"}}}}}""")
+    os.write(root / "feishu.json",
+      """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
+      perms = os.PermSet.fromString("rw-------"))
+    val r = FeishuCredentials.resolve(root)
+    assert(r.isRight, "a credential-less schema entry must be transparent to resolution")
+    assertEquals(r.toOption.get.appId, "cli_legacyapp00000001")
+    assert(r.toOption.get.source.startsWith("file:"))
   }
 
   test("schema-side resolution reads app_id inline and app_secret via its _ref path") {

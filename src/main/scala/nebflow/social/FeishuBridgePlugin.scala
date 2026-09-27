@@ -4,8 +4,10 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
+import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.core.NebflowLogger
+import nebflow.shared.SessionMeta
 
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -57,7 +59,14 @@ final class FeishuBridgePlugin(
   /** Test seam for the credential pair: None = resolve from disk at start
     * (production), Some(c) = pinned (offline spec; the recording send never
     * sees the values — its signature keeps them only for the SDK path). */
-  pinnedCreds: Option[FeishuCredentials.Credential] = None
+  pinnedCreds: Option[FeishuCredentials.Credential] = None,
+  /** The auto-bind default session (feishu-bind batch, C4). Production re-reads
+    * the stored config at each unbound-chat intake — a REST PUT can flip it
+    * while the bridge runs, and the auto-bind path is cold (once per new chat),
+    * so a fresh read is both always-correct and free. The offline spec pins a
+    * function to stay off the real config. */
+  readDefaultSession: os.Path => Option[String] =
+    root => SocialChannels.defaultSessionId(root, FeishuBridgePlugin.Name)
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
@@ -133,16 +142,59 @@ final class FeishuBridgePlugin(
       _ <- (allowed.isEmpty || in.senderId.exists(allowed.contains), routes.get(in.chatId), in.text) match
         case (false, _, _) =>
           // Fail-closed when the list is non-empty: an absent/unresolvable
-          // sender identity is as good as a non-member.
+          // sender identity is as good as a non-member. Ordered FIRST so the
+          // allowlist also rules the auto-bind arm below (C6: only a listed
+          // member can mint a binding).
           IO(logger.warn(s"feishu bridge: message from chat ${in.chatId} dropped — sender is not on the member allowlist"))
         case (_, None, _) =>
-          IO(logger.info(s"feishu bridge: no session is bound to chat ${in.chatId} — message dropped"))
+          autoBind(ctx, in)
         case (_, _, None) =>
           IO(logger.info(s"feishu bridge: message ${in.messageId} (${in.messageType}) has no text body — nothing injected"))
         case (_, Some(sessionId), Some(text)) =>
           logger.info(s"feishu bridge: chat ${in.chatId} -> session $sessionId") *>
             ctx.injectMessage(sessionId, text, in.senderId)
     yield ()
+
+  /** P1 auto-bind (feishu-bind batch, 2026-09-27): the first message from a
+    * not-yet-bound chat binds that chat to the configured default session and
+    * injects the message there — zero commands, the lightweight equivalent of a
+    * /bind command for the single-user trust model (the 2026-09-27 diagnosis:
+    * the repo had ZERO bindings, so even a correctly-connected bridge dropped
+    * every first message). The binding persists through
+    * [[BridgeContext.updateBridgeConfig]] (SessionMeta.bridges, key `feishu`)
+    * carrying `source=auto` + `boundAt`, so the bindings face can tell
+    * auto-bindings from manual ones and the mapping survives a restart. The
+    * local routes table is updated in the same step so the turn in flight can
+    * already be replied to. No default session configured ⇒ the pre-existing
+    * behaviour, unchanged: drop + log. */
+  private def autoBind(ctx: BridgeContext, in: FeishuMessage.Inbound): IO[Unit] =
+    IO.blocking(readDefaultSession(root)).flatMap {
+      case Some(sessionId) =>
+        val cfg = Json.obj(
+          "chat_id" -> in.chatId.asJson,
+          "source" -> "auto".asJson,
+          "boundAt" -> System.currentTimeMillis().asJson
+        )
+        ctx.updateBridgeConfig(sessionId, FeishuBridgePlugin.Name, Some(cfg)) *>
+          routesRef.update(_ + (in.chatId -> sessionId)) *>
+          IO(logger.info(s"feishu bridge: chat ${in.chatId} auto-bound to default session $sessionId")) *>
+          (in.text match
+            case Some(text) => ctx.injectMessage(sessionId, text, in.senderId)
+            case None       => IO.unit)
+      case None =>
+        IO(logger.info(
+          s"feishu bridge: no session is bound to chat ${in.chatId} and no default session is configured — message dropped"))
+    }
+
+  // ───────────────── panel probe face (feishu-bind batch, C1) ─────────────────
+  /** Whether the long connection is currently up. */
+  def connected: Boolean = listener.isDefined
+
+  /** The app_id the bridge ACTUALLY resolved and connected with, if any. This
+    * is an identifier, not a credential (same face as the scan-bind done
+    * payload) — the secret never leaves this class. This is the half of the
+    * fingerprint verdict the stored config cannot answer. */
+  def liveAppId: Option[String] = creds.map(_.appId)
 
   private def openListener(ctx: BridgeContext, c: FeishuCredentials.Credential): Unit =
     val l = new FeishuChannel.Listener(c.appId, c.appSecret, region = region,
@@ -217,6 +269,9 @@ object FeishuBridgePlugin:
   /** BridgePlugin.name — also the platform key in SessionMeta.bridges. */
   val Name = "feishu"
 
+  /** Companion-side logger (the sync/guard legs live here, outside any instance). */
+  private val log = NebflowLogger.forName("nebflow.social.feishu-bridge")
+
   /** Outbound send seam. appId/appSecret are handed to the SDK only — they must
     * never be logged (the implementations inherit the zero-secret discipline). */
   type Send = (String, String, String, String, String) => IO[FeishuChannel.SendResult]
@@ -253,15 +308,122 @@ object FeishuBridgePlugin:
    * saved fields may BE the credentials, and [[FeishuChannel.Listener.stop]] is
    * an idempotent teardown. `factory` is the offline spec's seam (recording
    * fake instead of a real socket-opening plugin).
+   *
+   * feishu-bind batch (P0-2): after the adapter (re)started, the
+   * [[guardFingerprint]] leg runs ONCE on the same instance — what the bridge
+   * actually connected with must match what was just persisted (C2), and any
+   * divergence is logged loudly AND answered by the connection probe face
+   * (`fingerprintMatch != match`) instead of a green light.
    */
   def sync(manager: BridgeManager, root: os.Path,
       factory: os.Path => BridgePlugin = (r => new FeishuBridgePlugin(r))): IO[Unit] =
     val want = IO.blocking(SocialChannels.isEnabled(root, Name) && SocialChannels.verified(root, Name))
     want.flatMap {
       case true =>
-        manager.unregister(Name) *> manager.register(factory(root)) *> manager.startOne(Name)
+        val plugin = factory(root)
+        manager.unregister(Name) *> manager.register(plugin) *> manager.startOne(Name) *> {
+          plugin match
+            case fb: FeishuBridgePlugin => guardFingerprint(fb, root)
+            case _                      => IO.unit // foreign plugin (offline spec fakes): nothing to guard
+        }
       case false =>
         manager.unregister(Name)
     }
+
+  // ───────────────── fingerprint guard + panel faces (feishu-bind batch) ─────────────────
+
+  /** The schema's stored app_id — the inventory side of the verdict (C1). */
+  def storedAppId(root: os.Path): Option[String] =
+    SocialChannels.readChannels(root).hcursor.downField("channels").downField(Name)
+      .downField("fields").downField("app_id").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+
+  /** C1/C2 verdict: does the live connection's app match the stored app_id?
+    * `match` / `mismatch` / `unknown` (either side absent). Compared through
+    * [[FeishuCredentials.fingerprint]] (stable, non-invertible), so the verdict
+    * is safe to log and to surface — and no value ever needs to be written
+    * down. */
+  def fingerprintVerdict(storedAppId: Option[String], liveAppId: Option[String]): String =
+    (storedAppId.map(_.trim).filter(_.nonEmpty), liveAppId.map(_.trim).filter(_.nonEmpty)) match
+      case (Some(s), Some(l)) =>
+        if FeishuCredentials.fingerprint(s) == FeishuCredentials.fingerprint(l) then "match" else "mismatch"
+      case _ => "unknown"
+
+  /** P0-2 (feishu-bind batch): the live-connection fingerprint guard, fired by
+    * [[sync]] AFTER the adapter (re)started. The credential the bridge actually
+    * resolved must fingerprint-match the app_id just persisted in the schema;
+    * any other outcome is said out loud here and answered by the connection
+    * probe face with `fingerprintMatch != "match"` — killing the "stored A,
+    * connected B, panel green" lie the 2026-09-27 diagnosis nailed. A
+    * non-match verdict warns and moves on (never throws): a dead bridge helps
+    * nobody, the thing that must stop is the green light, not the bridge. */
+  private def guardFingerprint(fb: FeishuBridgePlugin, root: os.Path): IO[Unit] =
+    val stored = storedAppId(root)
+    val verdict = fingerprintVerdict(stored, fb.liveAppId)
+    verdict match
+      case "match" =>
+        IO(log.info(
+          s"feishu bridge: fingerprint guard ok — the live connection matches the stored app_id (fp=${FeishuCredentials.fingerprint(stored.getOrElse(""))})"))
+      case other =>
+        IO(log.warn(
+          s"feishu bridge: FINGERPRINT GUARD $other — the live connection's app does not correspond to the stored app_id " +
+            s"(storedFp=${stored.map(FeishuCredentials.fingerprint).getOrElse("-")} " +
+            s"liveFp=${fb.liveAppId.map(FeishuCredentials.fingerprint).getOrElse("-")}); " +
+            s"the connection face answers fingerprintMatch=$other"))
+
+  /** The C1 connection payload (GET /api/social/channels/feishu/connection):
+    * bridge enabled state, adapter registration, live connection + connected
+    * app, stored app_id, and the fingerprint verdict (C2: `mismatch` ⇒ the
+    * panel renders a Failed/warn state, never a green light). `liveAppName` is
+    * null today — no stored state carries an app display name (the SDK
+    * registration result exposes none); the key exists so the contract is
+    * stable when a source appears. Identifiers only: no secret ever enters
+    * this payload. */
+  def connectionJson(root: os.Path, plugin: Option[FeishuBridgePlugin]): Json =
+    val stored = storedAppId(root)
+    val liveId = plugin.flatMap(_.liveAppId)
+    Json.obj(
+      "channel" -> Name.asJson,
+      "enabled" -> SocialChannels.isEnabled(root, Name).asJson,
+      "adapterRegistered" -> plugin.isDefined.asJson,
+      "connected" -> plugin.exists(_.connected).asJson,
+      "liveAppId" -> liveId.asJson,
+      "liveAppIdFp" -> liveId.map(FeishuCredentials.fingerprint).asJson,
+      "liveAppName" -> Json.Null,
+      "storedAppId" -> stored.asJson,
+      "storedAppIdFp" -> stored.map(FeishuCredentials.fingerprint).asJson,
+      "fingerprintMatch" -> fingerprintVerdict(stored, liveId).asJson
+    )
+
+  /** One chat→session binding for the C3 face. */
+  final case class Binding(sessionId: String, sessionName: String, chatId: String,
+      source: String, boundAt: Option[Long])
+
+  /** The chat→session bindings (C3), read off the session metas: one entry per
+    * session carrying a feishu bridge config with a chat_id. `source` is
+    * `auto` only when the binding says so ([[FeishuBridgePlugin.autoBind]]
+    * writes it); everything else — REST bind-route writes, pre-auto-bind
+    * bindings, hand-edited configs — reads `manual`. */
+  def bindingsOf(metas: List[SessionMeta]): List[Binding] =
+    metas.flatMap { s =>
+      s.bridges.get(Name).flatMap { b =>
+        b.hcursor.downField("chat_id").as[String].toOption.map(_.trim).filter(_.nonEmpty).map { chatId =>
+          val source = b.hcursor.downField("source").as[String].toOption.map(_.trim)
+            .filter(_ == "auto").getOrElse("manual")
+          Binding(s.id, s.name, chatId, source, b.hcursor.downField("boundAt").as[Long].toOption)
+        }
+      }
+    }
+
+  /** The C3 payload (GET /api/social/channels/feishu/bindings). */
+  def bindingsJson(metas: List[SessionMeta]): Json =
+    Json.obj("bindings" -> bindingsOf(metas).map { b =>
+      Json.obj(
+        "sessionId" -> b.sessionId.asJson,
+        "sessionName" -> b.sessionName.asJson,
+        "chatId" -> b.chatId.asJson,
+        "source" -> b.source.asJson,
+        "boundAt" -> b.boundAt.asJson
+      )
+    }.asJson)
 
 end FeishuBridgePlugin

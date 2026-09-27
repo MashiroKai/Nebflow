@@ -50,6 +50,12 @@ class BridgeManager private (
   def registeredNames: IO[Set[String]] =
     pluginsRef.get.map(_.keySet)
 
+  /** The registered plugin INSTANCE by name — the read side the feishu panel
+    * connection face uses to ask the live adapter what it actually connected
+    * to (feishu-bind batch, 2026-09-27). None = not registered. */
+  def plugin(name: String): IO[Option[BridgePlugin]] =
+    pluginsRef.get.map(_.get(name))
+
   def startAll: IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       if plugins.isEmpty then logger.info("No bridge plugins configured")

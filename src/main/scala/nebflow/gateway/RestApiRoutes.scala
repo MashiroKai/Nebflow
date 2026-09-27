@@ -3188,6 +3188,59 @@ class RestApiRoutes(
         }
       }
 
+    // feishu-bind (2026-09-27): the panel consumption face — live connection
+    // probe (C1/C2), chat→session binding list (C3), default-session get/put
+    // (C4). Feishu-only, same auth gate, kept as ONE localized block
+    // (RestApiRoutes is a multi-batch hotspot): all logic lives in
+    // nebflow.social, these cases only compose it. 🔴 No response ever carries
+    // a secret — appId is an identifier (displayable, same face as the
+    // scan-bind done payload); secret material stays behind the `_ref` triple.
+    case req @ GET -> Root / "social" / "channels" / "feishu" / "connection" =>
+      withAuth(req) {
+        val live: IO[Option[nebflow.social.FeishuBridgePlugin]] =
+          sharedResources.bridgeManager match
+            case Some(m) =>
+              m.plugin(nebflow.social.FeishuBridgePlugin.Name)
+                .map(_.collect { case p: nebflow.social.FeishuBridgePlugin => p })
+            case None => IO.pure(None)
+        live.flatMap(p =>
+          Ok(nebflow.social.FeishuBridgePlugin.connectionJson(PathUtil.dataRoot, p)))
+      }
+
+    case req @ GET -> Root / "social" / "channels" / "feishu" / "bindings" =>
+      withAuth(req) {
+        sessionStore.listSessions.flatMap(metas =>
+          Ok(nebflow.social.FeishuBridgePlugin.bindingsJson(metas)))
+      }
+
+    case req @ GET -> Root / "social" / "channels" / "feishu" / "default-session" =>
+      withAuth(req) {
+        IO.blocking(nebflow.social.SocialChannels.defaultSessionId(PathUtil.dataRoot, "feishu"))
+          .flatMap(sid => Ok(Json.obj("sessionId" -> sid.asJson)))
+      }
+
+    // Body {"sessionId": "..."} sets (durable); {"sessionId": null} / a blank
+    // value clears (unset = null again). Auto-bind only fires while a default
+    // session is set (C4).
+    case req @ PUT -> Root / "social" / "channels" / "feishu" / "default-session" =>
+      withAuth(req) {
+        req.as[Json].attempt.flatMap {
+          case Left(_) =>
+            BadRequest(Json.obj(
+              "error" -> "invalid_field".asJson,
+              "reason" -> "request body must be a JSON object".asJson
+            ))
+          case Right(body) =>
+            val sid = body.hcursor.downField("sessionId").as[Option[String]].getOrElse(None)
+              .map(_.trim).filter(_.nonEmpty)
+            IO.blocking(nebflow.social.SocialChannels.setDefaultSessionId(PathUtil.dataRoot, "feishu", sid))
+              .flatMap {
+                case Right(_)  => Ok(Json.obj("ok" -> true.asJson, "sessionId" -> sid.asJson))
+                case Left(err) => socialErrorResponse(err)
+              }
+        }
+      }
+
     // feiscanbind (2026-09-27): the scan-bind main path, on the same social
     // face and behind the same auth gate. `begin` starts a BACKGROUND fiber
     // (the SDK register call blocks — it must never sit inside the HTTP

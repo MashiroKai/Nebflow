@@ -14,12 +14,18 @@ import java.nio.file.{Files, Path}
  * Two candidate shapes are read, in this order (the plan card §3.5 records the
  * mismatch between them):
  *
- *   ① `~/.nebflow/feishu.json` — the pre-existing orphan file, FLAT, camelCase
- *      keys `appId` / `appSecret`. Proven live by the prep node (the tenant token
- *      round-trip succeeds against it) and re-proven by this batch.
- *   ② `~/.nebflow/nebflow.json` → `socialChannels.channels.feishu.fields` — the
+ *   ① `~/.nebflow/nebflow.json` → `socialChannels.channels.feishu.fields` — the
  *      in-repo schema (`SocialChannels`), snake_case `app_id` / `app_secret`,
- *      secrets stored as `_ref` PATHS.
+ *      secrets stored as `_ref` PATHS. AUTHORITATIVE since the feishu-bind batch
+ *      (2026-09-27): the scan-bind main path stores exactly here, so the schema
+ *      side is what the panel shows and what the user just created.
+ *   ② `~/.nebflow/feishu.json` — the legacy orphan file, FLAT, camelCase
+ *      keys `appId` / `appSecret`. FALLBACK only: consulted when the schema
+ *      side carries no credential at all (no config, no feishu entry, or an
+ *      entry without credential keys). The historical order was legacy-first,
+ *      which is how a freshly stored scan-bind credential sat unread while the
+ *      bridge kept connecting a months-old legacy app (the silent-message
+ *      incident the 2026-09-27 diagnosis nailed) — do not flip back.
  *
  * 🔴 Zero-secret discipline (this batch's hard constraint §B-8): the credential
  * VALUE never leaves this object — no logging, no `toString`, no exception
@@ -64,19 +70,33 @@ object FeishuCredentials:
   private def schemaSecretPath(root: os.Path, name: String): os.Path = root / "secrets" / name
 
   /** Resolve the credential pair. `root` is the active data root (honours
-    *  `--home` / `NEBFLOW_HOME` through [[PathUtil.dataRoot]]). */
+    *  `--home` / `NEBFLOW_HOME` through [[PathUtil.dataRoot]]).
+    *
+    *  🔴 Resolution order (feishu-bind batch, 2026-09-27 — the schema-first
+    *  flip): SCHEMA first, legacy file as FALLBACK.
+    *    - a resolvable schema credential wins;
+    *    - no schema credential at all (no config, no feishu entry, or an entry
+    *      whose fields carry neither app_id nor app_secret_ref) falls through
+    *      to the legacy flat file;
+    *    - neither source ⇒ the same Missing failure as before, naming both
+    *      candidate locations.
+    *  A schema entry that declared a credential but whose secret file is gone
+    *  stays an explicit error (never a silent fallthrough to legacy): the
+    *  bridge must not quietly reconnect a DIFFERENT app than the stored one —
+    *  that surface is what the fingerprint guard (FeishuBridgePlugin.sync)
+    *  exists to expose. */
   def resolve(root: os.Path): Either[Failure, Credential] =
-    fromLegacyFile(root).orElse(fromSocialChannelsSchema(root)) match
+    fromSocialChannelsSchema(root).orElse(fromLegacyFile(root)) match
       case Some(Right(c)) => Right(c)
       case Some(Left(err)) => Left(err)
       case None => Left(Failure.Missing(
-        s"no Feishu credential found: neither ${legacyPath(root)} (flat appId/appSecret) " +
-          s"nor ${root}/nebflow.json → socialChannels.channels.feishu.fields is present"))
+        s"no Feishu credential found: neither ${root}/nebflow.json → socialChannels.channels.feishu.fields " +
+          s"nor ${legacyPath(root)} (flat appId/appSecret) is present"))
 
-  /** ① The flat orphan file. Returns `None` when the file does not exist (so the
-    *  caller can fall through); a present-but-unusable file is an error, not a
-    *  silent fallthrough — a half-written credential must not look like
-    *  "no credential". */
+  /** ② The legacy flat file — the FALLBACK (feishu-bind flip). Returns `None`
+    *  when the file does not exist (so the caller can fall through); a
+    *  present-but-unusable file is an error, not a silent fallthrough — a
+    *  half-written credential must not look like "no credential". */
   private def fromLegacyFile(root: os.Path): Option[Either[Failure, Credential]] =
     val p = legacyPath(root)
     if !Files.exists(p.toNIO) then None
@@ -92,8 +112,11 @@ object FeishuCredentials:
               s"${p} exists but does not carry both appId and appSecret (keys present: " +
                 j.asObject.map(_.keys.toList.sorted.mkString(",")).getOrElse("<not an object>") + ")")))
 
-  /** ② The in-repo schema: `nebflow.json → socialChannels.channels.feishu.fields`.
-    *  `app_id` is inline, `app_secret` is a `_ref` path pointing into `secrets/`. */
+  /** ① The in-repo schema, AUTHORITATIVE: `nebflow.json →
+    *  socialChannels.channels.feishu.fields`. `app_id` is inline, `app_secret`
+    *  is a `_ref` path pointing into `secrets/`. An entry whose fields carry
+    *  neither `app_id` nor `app_secret_ref` returns `None` — it holds no
+    *  credential information, so the legacy fallback may speak. */
   private def fromSocialChannelsSchema(root: os.Path): Option[Either[Failure, Credential]] =
     val cfg = PathUtil.configJsonWritePath(root)
     if !Files.exists(cfg.toNIO) then None
