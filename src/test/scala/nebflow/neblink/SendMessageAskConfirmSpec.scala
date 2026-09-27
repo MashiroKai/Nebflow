@@ -467,6 +467,10 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
     val gateway = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "GatewayMain.scala")
     val wiring = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "neblink" / "NeblinkWiring.scala")
     val tool = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "FriendMessageTool.scala")
+    // 严格DAG第⑥步第三批A裁定(2026-09-27,dwfq-5c7a31ea-1 R-C 合并镜像):挂靶收拢为
+    // SendConfirmPort 注册器(FriendMessageTool 调用面),组合实现在 SharedResources 构造行
+    // (locally(targetFor(ctx,label))(io) 逐字等值);哨兵随迁改指等价形态(先例 1c4cbb0)。
+    val sharedResources = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "agent" / "SharedResources.scala")
     IO {
       assert(
         gateway.contains("askConfirm = Some(nebflow.agent.SendConfirm.production)"),
@@ -474,12 +478,15 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
       )
       assert(!gateway.contains("NoInteractiveSurface"), "旧桩形态必须已从生产接线移除")
       assert(wiring.contains("askConfirm: Option[String => IO[Boolean]] = None"), "装配缝参数在（默认 None 保留未接线显式条件）")
-      assert(tool.contains("SendConfirm.locally"), "调用侧必须把会话靶挂进 fiber-local（否则 production 读不到靶）")
-      assert(tool.contains("SendConfirm.targetFor"), "靶由调用侧按次构造（含收件人标签）")
+      assert(tool.contains("SendConfirmPort") && tool.contains(".locally("), "调用侧必须经 SendConfirmPort 把会话靶挂进 fiber-local（否则 production 读不到靶）")
+      assert(
+        sharedResources.contains("SendConfirm.locally") && sharedResources.contains("SendConfirm.targetFor"),
+        "注册实现 = locally(targetFor(ctx, label))(io) 合并镜像（SharedResources 构造行装配，靶按次构造含收件人标签）"
+      )
     }.as(
       println(
-        "[SEAM-REACHABILITY] GatewayMain:782 askConfirm=Some(SendConfirm.production); " +
-          "FriendMessageTool 挂靶 = SendConfirm.locally(targetFor(...)); NeblinkWiring 透传"
+        "[SEAM-REACHABILITY] GatewayMain askConfirm=Some(SendConfirm.production); " +
+          "FriendMessageTool 挂靶 = SendConfirmPort.locally(合并镜像); SharedResources 注册行 = locally(targetFor(...)); NeblinkWiring 透传"
       )
     )
   }

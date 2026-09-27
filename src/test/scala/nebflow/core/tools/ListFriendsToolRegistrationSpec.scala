@@ -6,6 +6,7 @@ import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.actor.AgentDef
 import nebflow.agent.{AgentCore, SharedResources}
+import nebflow.core.FriendRosterPort
 import nebflow.neblink.*
 import nebflow.shared.{FriendListResponse, FriendSummary}
 
@@ -213,6 +214,9 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     }
 
   test("调用面：零参数工具可调用（空输入对象与未知参数均不阻断）"):
+    // 严格DAG第⑥步第三批A裁定(2026-09-27):ListFriendsTool 名册面经 FriendRosterPort 注册器
+    // (dwfq-5c7a31ea-1 R10);测试触达真实 FriendRoster(对象初始化自注册,与 NeblinkWiring 生产同款)。
+    FriendRosterPort.install(FriendRoster)
     withStub(Right(emptyRoster)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).flatMap { empty =>
         val withUnknown =
@@ -246,6 +250,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     }
 
   test("调用面：空名册 → Right，首行计数行 + 显式空名册说明"):
+    FriendRosterPort.install(FriendRoster) // 名册面注册器,见上方裁定注释
     withStub(Right(emptyRoster)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).map { res =>
         assert(res.isRight, s"空名册是成功结果，got: ${res.left.toOption.map(_.message)}")
@@ -257,6 +262,7 @@ class ListFriendsToolRegistrationSpec extends CatsEffectSuite:
     }
 
   test("调用面：正常名册 → 首行计数 + 逐行 == FriendRoster.candidateLine（blocked 标记在位）"):
+    FriendRosterPort.install(FriendRoster) // 名册面注册器,见上方裁定注释
     withStub(Right(twoFriends)) { (fs, _) =>
       ListFriendsTool.call(emptyInput, ctx(Some(fs))).map { res =>
         val out = res match
