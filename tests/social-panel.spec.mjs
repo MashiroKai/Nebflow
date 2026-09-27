@@ -329,6 +329,23 @@ async function openPanel(page) {
   }, undefined, { timeout: 8000 });
 }
 
+/** Arrange step for the W14 and W16 legs: reach the fillable state through the
+ *  design's own handover. On the not-created feishu face the panel auto-opens
+ *  the QR scan overlay (maybeAutoScan, fired right after aria-busy clears), and
+ *  the overlay's "fill in manually" control is the one designed path to the
+ *  form — it closes the overlay AND expands the collapsed `[data-manual]` wrap
+ *  (toggleManual), where all six field inputs/selects live. Filling or
+ *  measuring before this handover reads the collapsed resting face (hidden
+ *  fields), which is the design's default state, not a layout defect. */
+async function openManualFormViaScanOverlay(page) {
+  await page.waitForSelector('#social-scan:not([hidden])', { timeout: 8000 });
+  await page.click('[data-scan-manual]');
+  await page.waitForFunction(() => {
+    const wrap = document.querySelector('.social-card[data-channel="feishu"] [data-manual]');
+    return !!wrap && wrap.hidden === false;
+  }, undefined, { timeout: 8000 });
+}
+
 async function shot(page, name) {
   try {
     await mkdir(SHOTS, { recursive: true });
@@ -631,6 +648,9 @@ async function afterSuite(browser, base) {
     apiState.posts = [];
     await page.reload();
     await openPanel(page);
+    // Arrange through the design's handover: the not-created card auto-opens
+    // the QR overlay; its manual control closes it and expands the fill form.
+    await openManualFormViaScanOverlay(page);
     await page.fill('.social-card[data-channel="feishu"] [data-field="app_id"]', 'cli_0123456789abcdef');
     await page.fill('.social-card[data-channel="feishu"] [data-field="app_secret"]', 'PLAINTEXT-SECRET-MARKER');
     await page.fill('.social-card[data-channel="feishu"] [data-field="verification_token"]', 'PLAINTEXT-TOKEN-MARKER');
@@ -846,6 +866,9 @@ async function afterSuite(browser, base) {
       `${JSON.stringify(closed.entry)} — elementFromPoint lands inside the entry (${closed.entry.hitTag})`);
 
     await openPanel(page);
+    // Measure the fillable state: the same designed handover expands the
+    // collapsed form, so B-3/B-6 read real fields, not the resting face.
+    await openManualFormViaScanOverlay(page);
     const geo = await page.evaluate(() => {
       const vw = window.innerWidth;
       const m = document.getElementById('social-modal').getBoundingClientRect();
