@@ -721,11 +721,18 @@ object GatewayMain extends IOApp:
                                 val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
                                 // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                 // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                // general / Nebula agents + 4 系统插件 +
-                                // projects/general）——通用项目需于挂载前存在，干净 home
-                                // 启动即自动挂载、Mail(address="project:general") 直达分发器
-                                // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general
-                                // 项目」令；裁定②：既有 home 亦 add-only 补种——缺目录才建、绝不改既有内容）。
+                                // general / Nebula agents + 4 系统插件）。
+                                // kernelgen batch (2026-09-26, kernel replaces general): the
+                                // seed manifest no longer carries any `project:` item, so a
+                                // cold start does NOT create projects/general and nothing
+                                // auto-mounts a general dispatcher; an existing home's
+                                // general project is left byte-identical in place (retired /
+                                // sealed family, zero touch). Historical posture (superseded):
+                                // the 2026-09-17 rulings ①② had restored projects/general
+                                // seeding + add-only backfill ("general must exist before
+                                // mount; a fresh home auto-mounts it; Mail to the
+                                // general project address reaches its dispatcher") — both paths are
+                                // dormant since the manifest dropped its `project:` item.
                                 // 幂等 + fail-soft（见 SeedService
                                 // 注释），失败仅告警不阻塞启动（与 startupMount 同构）。
                                 val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()

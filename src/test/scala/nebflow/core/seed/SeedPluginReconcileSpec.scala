@@ -239,11 +239,17 @@ class SeedPluginReconcileSpec extends FunSuite:
     // 守卫语义保持：不完整播种（既有 home 走 marker-only 分支、不重播默认集）；
     // **默认集 agent 自愈补装**（2026-09-13 语义变更：作者令「改成缺失自愈」取代 D-8
     // 「缺失不新装」——原断言「no project-dispatcher agent under guard」已按新口径改写，
-    // 预期判红样例）。项目面自作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由
-    // `reconcileProjects` 补**缺失**的内置项目 ⇒ 本条原负向断言「no general project
-    // planted under guard」已随前令作废，翻转为正向。
-    assert(os.exists(home / "projects" / "general" / "project.json"),
-      "missing default project backfilled under the guard (add-only reconcile, author ruling ②)")
+    // (the expected red-proof sample). Project face, a two-step historical reversal:
+    // the 2026-09-17 adjudication item (2) had flipped this assertion to positive
+    // (backfill); the kernelgen batch 2026-09-26 (kernel replaces general) flips it
+    // back to negative — this flip rides the manifest data face (zero `project:`
+    // items ⇒ reconcileProjects dormant), not a guard change; the agent self-heal
+    // and plugin-refresh assertions stay untouched.
+    // Supersession note (kernelgen 2026-09-26): the manifest no longer carries any
+    // `project:` item, so reconcileProjects is dormant — under the guard the missing
+    // general project is NOT backfilled.
+    assert(!os.exists(home / "projects" / "general"),
+      "missing general project NOT backfilled under the guard (manifest has zero project: items, reconcileProjects dormant, kernelgen 2026-09-26)")
     assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
       "default-set agent self-healed even under the guard (2026-09-13)")
     // reconcile 穿透守卫：干净旧插件刷新为 seed 形态（2026-09-09 断点的机制解）
@@ -296,8 +302,9 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
-    // 默认集本批 3 → 4 = +web-search-toolkit）
+    // The five seed-tree packages outside the default set: zero install (seed files
+    // kept, manually installable; default set = seven since the kernelgen-manifestfix
+    // union manifest, 2026-09-26).
     for name <- List(
         "nebflow-qa",
         "nebflow-frontend-dev",
@@ -307,11 +314,19 @@ class SeedPluginReconcileSpec extends FunSuite:
     do
       assert(!os.exists(home / "plugins" / name),
         s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)")
-    // 落盘面积恰为默认集四条（枚举目录，防「遍历种子树全集」式实现）
+    // On-disk area is exactly the default set of seven (directories enumerated,
+    // guarding against a "walk the whole seed tree" implementation).
     val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
     assert(
-      installed == List("nebflow-plugin-creator", "slideblocks", "visual-report", "web-search-toolkit"),
-      s"existing-home plugin area == default preinstall set (4), got: ${installed.mkString(", ")}"
+      installed == List(
+        "browser-use",
+        "computer-use",
+        "document-production",
+        "nebflow-plugin-creator",
+        "slideblocks",
+        "visual-report",
+        "web-search-toolkit"),
+      s"existing-home plugin area == default preinstall set (7), got: ${installed.mkString(", ")}"
     )
 
   // ── ⑧ 已存在目录零覆盖（自愈不改既有目录）─────────────────

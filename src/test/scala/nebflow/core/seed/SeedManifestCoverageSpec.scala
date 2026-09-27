@@ -44,13 +44,25 @@ class SeedManifestCoverageSpec extends FunSuite:
   private val PluginsPrefix = "plugins:"
   private val SeedPluginsResource = "seed/plugins"
 
-  /** 默认预装集（硬编码锚点；与此不符即红）。
+  /** Default preinstall set (hard-coded anchor; any drift goes red).
     *
-    * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
-    * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
-    * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。 */
+    * kernelgen-manifestfix batch (2026-09-26, author correction "computer use,
+    * browser-use, document-production are missing"): the manifest is the union of
+    * main's current list with the kernelgen changes (+agents:kernel,
+    * -project:general), so the default plugin set goes 4 -> 7 (+ browser-use /
+    * computer-use / document-production; web-search-toolkit had already taken it
+    * 3 -> 4 after the Nebula Delegate removal). The anchor stays EXACT set
+    * equality - direction not relaxed. All seven have seed-tree directories
+    * (K9-a below keeps guarding that). */
   private val ExpectedDefaultPlugins: Set[String] =
-    Set("slideblocks", "visual-report", "nebflow-plugin-creator", "web-search-toolkit")
+    Set(
+      "slideblocks",
+      "visual-report",
+      "nebflow-plugin-creator",
+      "web-search-toolkit",
+      "browser-use",
+      "computer-use",
+      "document-production")
 
   /** 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
     * `SeedService.resourceDirList` 的协议判定同口径：sbt test = file，assembly = jar）。 */
