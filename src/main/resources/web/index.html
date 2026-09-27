@@ -53,6 +53,10 @@
        and materials are reused from the design system — new values land here,
        never in sapphire.css (off-limits for this batch). -->
   <link rel="stylesheet" href="css/social.css">
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27): tokens
+       and materials reused from the design system — new values land here,
+       never in sapphire.css (off-limits for this batch). -->
+  <link rel="stylesheet" href="css/secrets.css">
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
@@ -481,6 +485,56 @@
         <div id="social-section-channels" class="social-section">
           <div id="social-channels-title" class="social-section-title"></div>
           <div class="social-card-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27).
+       Standalone dedicated dialog per the author's ruling 2026-09-27 19:20:
+       NOT an embedded settings section — the list lives HERE, in its own
+       modal (capacity not bounded by #settings-modal); the settings page
+       carries only the one-row entry button (sidebar.js renderSettings →
+       #btn-open-secrets, opened by js/secretsPanel.js). Same dialog family
+       as #social-overlay: centered, no dimming backdrop, no background blur
+       (visual iron rule 1); the panel itself is the glass, the list area
+       scrolls. Shell is text-free — every caption is applied by
+       js/secretsPanel.js through t(); the editor sub-dialog (#secrets-form)
+       is built here as an inset glass layer of the shell so the focus trap
+       covers it. -->
+  <div id="secrets-overlay">
+    <div id="secrets-modal" role="dialog" aria-modal="true" aria-labelledby="secrets-modal-title">
+      <div class="secrets-modal-header">
+        <span id="secrets-modal-title"></span>
+        <button type="button" id="secrets-modal-add" class="glass-control cfg-btn cfg-btn-sm"></button>
+        <button type="button" id="secrets-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="secrets-modal-body">
+        <div id="secrets-section" class="social-section">
+          <div id="secrets-list" class="secrets-list"></div>
+        </div>
+      </div>
+      <div id="secrets-form" class="secrets-form" role="dialog" aria-modal="true" aria-labelledby="secrets-form-title" hidden>
+        <div class="secrets-form-head">
+          <span id="secrets-form-title" class="secrets-form-title"></span>
+          <button type="button" id="secrets-form-close" class="panel-btn"><i data-lucide="x"></i></button>
+        </div>
+        <div class="secrets-form-body">
+          <label class="secrets-field" for="secrets-name-input">
+            <span id="secrets-name-label" class="secrets-field-label"></span>
+            <input id="secrets-name-input" class="secrets-input" type="text" autocomplete="off" spellcheck="false">
+            <span id="secrets-name-hint" class="cfg-hint"></span>
+          </label>
+          <label class="secrets-field" for="secrets-value-input">
+            <span id="secrets-value-label" class="secrets-field-label"></span>
+            <textarea id="secrets-value-input" class="secrets-input secrets-value" autocomplete="off" spellcheck="false"></textarea>
+          </label>
+          <div id="secrets-form-error" class="secrets-form-error" role="alert" hidden></div>
+          <div class="secrets-form-actions">
+            <button type="button" id="secrets-form-save" class="btn-save"></button>
+            <button type="button" id="secrets-form-cancel" class="cfg-btn"></button>
+            <span id="secrets-form-state" class="secrets-form-state" role="status" aria-live="polite"></span>
+          </div>
         </div>
       </div>
     </div>

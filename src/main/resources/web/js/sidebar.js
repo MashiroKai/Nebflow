@@ -849,6 +849,14 @@ export function renderSettings() {
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
       ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
     </div>
+    <div class="settings-section">
+      <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
+           2026-09-27 19:20): one row / one button only — the list itself
+           lives in the standalone dedicated dialog (#secrets-overlay, owned
+           by js/secretsPanel.js), not inside #settings-modal. -->
+      <div class="settings-section-title">${t('settings.secrets')}</div>
+      <button class="cfg-btn cfg-btn-add" id="btn-open-secrets">${t('settings.secrets')}</button>
+    </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
