@@ -428,10 +428,18 @@ function consumeTurnDuration(sid) {
 //      帧，靠这一支复位 —— 与该函数头注讨论的会话类同源）。
 // 🔴 不按帧类型白名单：'done' 丢帧时 sessionBusy{false} 仍须能派发（①-2 动因）。
 const drainWindowUsed = new Set();
+// At most ONE in-flight drain timer per session: each turn end emits two
+// terminal frames (done + sessionBusy{busy:false}) and each used to arm its
+// own 50ms timer — the second could fire after a new turn re-opened the
+// window gate, dispatching the next queued item in the same window. Dedupe
+// by sid so the terminal-frame pair collapses to a single pending timer.
+const pendingDrainTimers = new Map();
 function scheduleQueueDrain(sid) {
   if (!sid) return;
+  if (pendingDrainTimers.has(sid)) return; // drain timer already armed for this session
   // Delay lets the UI finalize the finished turn first (unchanged 50ms).
-  setTimeout(() => {
+  const t = setTimeout(() => {
+    pendingDrainTimers.delete(sid);
     if (drainWindowUsed.has(sid)) return;   // 本 turn 窗口已派发过 ⇒ 重复帧 / stale 帧在此挡下
     // 与 input.js:1109-1111 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不关窗（留待后续终止帧）
     const q = state.messageQueue[sid];
@@ -440,6 +448,7 @@ function scheduleQueueDrain(sid) {
     drainWindowUsed.add(sid);               // 本次派发 = 新 turn 起点 ⇒ 关窗（待 ①② 复位）
     drainMessageQueue(sid);
   }, 50);
+  pendingDrainTimers.set(sid, t);
 }
 
 // Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
@@ -2650,7 +2659,7 @@ onMessage('compactComplete', (msg, view) => {
   // with resume, the agent immediately starts a resume turn after compactComplete.
   // The 'done' event after the resume turn will drain correctly when idle.
   if (sid && !state.busySessionIds.has(sid)) {
-    import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+    scheduleQueueDrain(sid);
   }
 });
 
@@ -2678,7 +2687,7 @@ onMessage('compactFailed', (msg, view) => {
   } else {
     // Retry path — also drain queue in case user sent messages during compaction
     if (sid) {
-      import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+      scheduleQueueDrain(sid);
     }
   }
 });
