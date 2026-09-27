@@ -3,8 +3,10 @@ package nebflow.agent
 import munit.FunSuite
 import PromptSections.PromptContext
 
-/** 轨道二 #5: identity-clause conditional section (order 395) — T1 flow
-  * worker / userFacing variant / T2 team member / flag-off zero-render. */
+/**
+ * 轨道二 #5: identity-clause conditional section (order 395) — T1 flow
+ * worker / userFacing variant / T2 team member / flag-off zero-render.
+ */
 class IdentityClauseSpec extends FunSuite:
 
   private def clause(userFacing: Boolean): String = PromptSections.flowWorkerIdentityBlock(userFacing)
@@ -39,7 +41,10 @@ class IdentityClauseSpec extends FunSuite:
     val node = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, isFlowNode = true, agentCategory = "standalone")
     )
-    assert(node.contains("Your audience is the orchestrator and downstream nodes"), "flow node gets the strict T1 clause")
+    assert(
+      node.contains("Your audience is the orchestrator and downstream nodes"),
+      "flow node gets the strict T1 clause"
+    )
 
     val member = PromptSections.buildConditionalBlocks(
       PromptContext(guardrailsOn = true, agentCategory = "team", isTeamLead = false)

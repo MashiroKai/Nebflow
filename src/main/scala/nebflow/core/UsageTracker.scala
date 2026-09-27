@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
-import nebflow.core.NebflowLogger
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.time.*
 

@@ -54,7 +54,7 @@ class PresetStoreInvariantSpec extends FunSuite:
     val (cfg, from) = store.resolve(None, None)
     assertEquals(from, "default-preset") // NOT "global" — that level is gone
     assertEquals(cfg.preferred, Some("kimi/k3-256k")) // re-pointed to the sibling
-    assertEquals(store.load().defaultPreset, "good")   // repair persisted
+    assertEquals(store.load().defaultPreset, "good") // repair persisted
   }
 
   test("dangling defaultPreset re-pointed to a preset with a chain") {

@@ -2,7 +2,7 @@ package nebflow.core.project
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.service.MemoryBudget
+import nebflow.shared.MemoryBudget
 
 import java.nio.file.Files
 

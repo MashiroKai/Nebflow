@@ -6,14 +6,41 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentEvent,
+  AgentState,
+  AgentStatus,
+  CompactionJob,
+  compactionFailures,
+  latestUsage,
+  messages,
+  pendingCompaction,
+  sessionId,
+  withCompactionFailures,
+  withLatestUsage,
+  withMessages,
+  withPendingCompaction
+}
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.core.{FileChangeTracker, PathUtil}
-import nebflow.core.compact.{CompactConfig, CompactThreshold, HistoryArchiver}
+import nebflow.core.FileChangeTracker
+import nebflow.core.compact.{CompactConfig, HistoryArchiver}
+import nebflow.shared.{CompactThreshold, PathUtil, ThinkingConfig}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, TokenUsage}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  TokenUsage
+}
 
 import io.circe.parser.decode
 import scala.concurrent.duration.*
@@ -276,8 +303,10 @@ class AgentActorCompactionSpec extends FunSuite:
     assertEquals(remaining2, List("m2"))
   }
 
-  /** Default execution context seeded with a pendingEvents queue (specs build
-    * AgentState without an explicit execution). */
+  /**
+   * Default execution context seeded with a pendingEvents queue (specs build
+   * AgentState without an explicit execution).
+   */
   private def state0Execution(events: List[AgentCommand.ExternalEvent]) =
     mkState(0).execution.copy(pendingEvents = events)
 
@@ -419,8 +448,10 @@ class AgentActorCompactionSpec extends FunSuite:
   // ============================================================
 
   private class ThinkingOnlyLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -513,6 +544,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
   // ============================================================
   // V2b (2026-08-30, compact-injection-shield G1): resume=true compaction
@@ -528,23 +560,30 @@ class AgentActorCompactionSpec extends FunSuite:
     counter: cats.effect.Ref[IO, Int],
     userTextsRef: cats.effect.Ref[IO, List[List[String]]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >>
-        Stream.eval(userTextsRef.update(prev => prev :+ req.messages.collect {
-          case m if m.role == MessageRole.User => m.content.fold(identity, _ => "")
-        })) >>
+        Stream.eval(
+          userTextsRef.update(prev =>
+            prev :+ req.messages.collect {
+              case m if m.role == MessageRole.User => m.content.fold(identity, _ => "")
+            }
+          )
+        ) >>
         Stream.eval(counter.get).flatMap { n =>
           if n == 1 then
             Stream.sleep[IO](300.millis) >>
               Stream(StreamChunk.TextDelta("COMPACTED SUMMARY"), StreamChunk.Done(None, None))
-          else
-            Stream(StreamChunk.TextDelta("DONE"), StreamChunk.Done(None, None))
+          else Stream(StreamChunk.TextDelta("DONE"), StreamChunk.Done(None, None))
         }
+
+  end DelayedSummaryLlm
 
   test("V2b: resume=true compaction drains a queued immediate input into the continuation turn") {
     val system = ActorSystem("compact-resume-drain-test")
@@ -581,7 +620,7 @@ class AgentActorCompactionSpec extends FunSuite:
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
         _ <- IO.sleep(100.millis) // compact turn in flight (mock sleeps 300ms)
         _ <- ref ! AgentCommand.ImmediateInput("queued-during-compact", source = Some("mail"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -590,7 +629,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -605,6 +643,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ============================================================
@@ -668,6 +707,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("V2-recover: persisted queues replay at spawn and land in the compaction continuation") {
@@ -712,7 +752,7 @@ class AgentActorCompactionSpec extends FunSuite:
         // load and merge before triggering the compaction that drains them.
         _ <- IO.sleep(200.millis)
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -721,7 +761,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -740,6 +779,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
   // ============================================================
   // 尾部保真 (2026-09-07 压缩摘要尾部保真): real-actor wiring test. The 09-07
@@ -787,7 +827,7 @@ class AgentActorCompactionSpec extends FunSuite:
           "tail-fid-agent"
         )
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -796,7 +836,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -829,5 +868,6 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 end AgentActorCompactionSpec

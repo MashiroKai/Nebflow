@@ -8,13 +8,12 @@ import io.circe.syntax.*
 import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, NodeTools, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -38,13 +37,16 @@ class NodeDepsSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-deps"
   private val originalRoot = PathUtil.dataRoot
 
-  /** A1（2026-09-12 批）：bare `"Nebula"` = 纯出口标记（`{pass}/signal`）——
-    * 与存量读路径的 `OutEdge.nebula`（`{pass,failed}/result`）自此分叉。 */
-  private val nebulaMarker = OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)
+  /**
+   * A1（2026-09-12 批）：bare `"Nebula"` = 纯出口标记（`{pass}/signal`）——
+   * 与存量读路径的 `OutEdge.nebula`（`{pass,failed}/result`）自此分叉。
+   */
+  private val nebulaMarker = OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"deps regression agent","tools":[],"category":"standalone"}"""
@@ -52,29 +54,35 @@ class NodeDepsSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 按输入文本分派回复与延迟的捕获 LLM：inputs 记录每次请求 user 文本。
-    * gateOf：Some 时先等该 Deferred 再产出回复——定长 delayOf 窗口在满载下
-    * 有竞态（T1「B 在 A 完成前保持等待」需观测 A 仍在跑时 B 的 Pending 态，
-    * 一旦 A 瞬回即完成，B 闸门即放行 → partial 读到 Running 假红）；改由
-    * Deferred 将「A 何时完成」变成测试显式可控的同步点。 */
+  /**
+   * 按输入文本分派回复与延迟的捕获 LLM：inputs 记录每次请求 user 文本。
+   * gateOf：Some 时先等该 Deferred 再产出回复——定长 delayOf 窗口在满载下
+   * 有竞态（T1「B 在 A 完成前保持等待」需观测 A 仍在跑时 B 的 Pending 态，
+   * 一旦 A 瞬回即完成，B 闸门即放行 → partial 读到 Running 假红）；改由
+   * Deferred 将「A 何时完成」变成测试显式可控的同步点。
+   */
   private class DispatchLlm(
-      replyOf: String => String = _ => "ok",
-      delayOf: String => FiniteDuration = _ => 0.millis,
-      gateOf: String => Option[cats.effect.Deferred[IO, Unit]] = _ => None
+    replyOf: String => String = _ => "ok",
+    delayOf: String => FiniteDuration = _ => 0.millis,
+    gateOf: String => Option[cats.effect.Deferred[IO, Unit]] = _ => None
   ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
@@ -82,22 +90,28 @@ class NodeDepsSpec extends CatsEffectSuite:
           .flatMap { _ =>
             val wait: Stream[IO, Nothing] = gateOf(text) match
               case Some(g) => Stream.eval(g.get).drain
-              case None    => Stream.empty
+              case None => Stream.empty
             wait ++ Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None))
           }
 
-  /** 对指定文本抛错的失败 LLM（stream error → AgentEvent.Failed → failNode）。
-    * delayBeforeFail：抛错前先等一段——保留 Running 窗口供测试建立依赖拓扑。 */
+  end DispatchLlm
+
+  /**
+   * 对指定文本抛错的失败 LLM（stream error → AgentEvent.Failed → failNode）。
+   * delayBeforeFail：抛错前先等一段——保留 Running 窗口供测试建立依赖拓扑。
+   */
   private class FailOnLlm(
-      failWhen: String => Boolean,
-      replyOf: String => String = _ => "ok",
-      delayBeforeFail: FiniteDuration = 0.millis):
+    failWhen: String => Boolean,
+    replyOf: String => String = _ => "ok",
+    delayBeforeFail: FiniteDuration = 0.millis
+  ):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         if failWhen(text) then
@@ -108,34 +122,7 @@ class NodeDepsSpec extends CatsEffectSuite:
             .eval(inputs.update(_ :+ text))
             .flatMap(_ => Stream(StreamChunk.TextDelta(replyOf(text)), StreamChunk.Done(None, None)))
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
+  end FailOnLlm
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -150,7 +137,7 @@ class NodeDepsSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -163,7 +150,10 @@ class NodeDepsSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -186,7 +176,12 @@ class NodeDepsSpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -195,7 +190,7 @@ class NodeDepsSpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -205,15 +200,19 @@ class NodeDepsSpec extends CatsEffectSuite:
     waitUntil(15.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
   private def readAuditTypes(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => jsonParse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          jsonParse(l).toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -231,18 +230,34 @@ class NodeDepsSpec extends CatsEffectSuite:
       gateOf = t => if t.contains("produce-A") then Some(aGate) else None
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // A 入口运行中（out=Nebula 仅满足连接下限；deps 单侧持有，A 不知道被 B 依赖）
-      _ <- nodeEdit(nodeInput("deps-t1", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("produce-A"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t1",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("produce-A"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Running))
       // B 声明 deps=[A]（有 task 无 in → Pending；入口启动被 startNode 内 deps 闸门拦下）
       aId <- idOf(rt, "src-a")
-      _ <- nodeEdit(nodeInput("deps-t1", "after-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("run-after-a"), "deps" -> Json.fromString(aId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t1",
+          "after-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("run-after-a"),
+          "deps" -> Json.fromString(aId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       partial <- rt.store.snapshot.map(_.nodes.values.find(_.name == "after-a"))
       // A 完成 → settleDeps → B 启动并完成——放行 A 门（此前 A 回复被 gateOf 挂起，
       // 保证上面的 partial 观测落在「A 仍 Running」的窗口内，B 闸门拦下证据确定性）
@@ -257,23 +272,32 @@ class NodeDepsSpec extends CatsEffectSuite:
     yield
       // B 在 A 完成前保持等待（闸门拦下证据）——A 的 LLM 回复被 aGate 挂在
       // 首轮（produce-A 命中），partial 读取期间 A 必然仍 Running（确定性）。
-      assert(partial.exists(n => n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring),
-        s"B must wait while A runs, got ${partial.map(_.status)}")
+      assert(
+        partial.exists(n => n.status == NodeLifecycle.Pending || n.status == NodeLifecycle.Wiring),
+        s"B must wait while A runs, got ${partial.map(_.status)}"
+      )
       assert(b.deps.contains(aId), s"B.deps must reference A, got ${b.deps}")
       assertEquals(b.status, NodeLifecycle.Completed, "B must start after A completes (deps completion signal)")
       // 核心断言：B 输入不含 A 的 result 段（deps 不投递——下游输入 = 自身 task 自足）
       assert(bInput.isDefined, "B must have been started (input captured)")
-      assert(!bInput.exists(_.contains("=== Node src-a ===")),
-        s"B input must NOT carry A's result section, got: ${bInput.map(_.take(300))}")
-      assert(!bInput.exists(_.contains("RESULT-OF-A")),
-        s"B input must NOT contain A's result text, got: ${bInput.map(_.take(300))}")
+      assert(
+        !bInput.exists(_.contains("=== Node src-a ===")),
+        s"B input must NOT carry A's result section, got: ${bInput.map(_.take(300))}"
+      )
+      assert(
+        !bInput.exists(_.contains("RESULT-OF-A")),
+        s"B input must NOT contain A's result text, got: ${bInput.map(_.take(300))}"
+      )
       // A.result 不因被依赖而变化（deps 不消费上游输出）
       assertEquals(a.result, Some("RESULT-OF-A"), "A.result must stay intact")
+    end for
   }
 
   // ── T2 in+deps 混合 barrier ─────────────────────────────
 
-  test("T2 mixed in+deps: C waits for BOTH (in delivered + deps completed); input carries in result, never deps result") {
+  test(
+    "T2 mixed in+deps: C waits for BOTH (in delivered + deps completed); input carries in result, never deps result"
+  ) {
     val ws = tempRoot / "ws-t2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t2-${scala.util.Random.nextInt(100000)}")
@@ -285,23 +309,48 @@ class NodeDepsSpec extends CatsEffectSuite:
       delayOf = t => if t.contains("dep-b-slow") then 2000.millis else 0.millis
     )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // B：deps 上游（entry，慢——制造 running 窗口；out=Nebula，deps 单侧持有不回写）
-      _ <- nodeEdit(nodeInput("deps-t2", "dep-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dep-b-slow"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t2",
+          "dep-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dep-b-slow"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "dep-b", Set(NodeLifecycle.Running))
       // A：in 上游（entry，快——先于 C 创建完成）
-      _ <- nodeEdit(nodeInput("deps-t2", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("src-a-fast"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t2",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("src-a-fast"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
       aId <- idOf(rt, "src-a")
       bId <- idOf(rt, "dep-b")
       // C：in=[A] + deps=[B]（A 已完成 → D1 in-delivery 归零 barrier → startNode 被 deps 闸门拦下）
-      _ <- nodeEdit(nodeInput("deps-t2", "merge-c", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("merge-both"), "in" -> Json.fromString(aId),
-        "deps" -> Json.fromString(bId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t2",
+          "merge-c",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("merge-both"),
+          "in" -> Json.fromString(aId),
+          "deps" -> Json.fromString(bId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       cId <- idOf(rt, "merge-c")
       // B 完成前：C 的 in barrier 已归零（deliveredTo 含 A）但 deps 未满足 → 保持等待
       _ <- waitUntil(3.seconds)(nodeById(rt, cId).map(_.exists(_.deliveredTo.contains(aId))))
@@ -313,46 +362,81 @@ class NodeDepsSpec extends CatsEffectSuite:
       cInput <- llm.inputs.get.map(_.find(_.contains("merge-both")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(gated.status, NodeLifecycle.Wiring,
-        s"C must stay waiting while deps-upstream B runs (in barrier already zero), got ${gated.status}")
-      assert(gated.deliveredTo.contains(aId), s"in result must be delivered before deps satisfied, got ${gated.deliveredTo}")
+      assertEquals(
+        gated.status,
+        NodeLifecycle.Wiring,
+        s"C must stay waiting while deps-upstream B runs (in barrier already zero), got ${gated.status}"
+      )
+      assert(
+        gated.deliveredTo.contains(aId),
+        s"in result must be delivered before deps satisfied, got ${gated.deliveredTo}"
+      )
       assertEquals(c.status, NodeLifecycle.Completed, "C must start once BOTH waits are satisfied")
-      assert(cInput.exists(_.contains("=== Node src-a ===")), s"C input must carry IN upstream result section, got ${cInput.map(_.take(300))}")
+      assert(
+        cInput.exists(_.contains("=== Node src-a ===")),
+        s"C input must carry IN upstream result section, got ${cInput.map(_.take(300))}"
+      )
       assert(cInput.exists(_.contains("RESULT-OF-A")), "C input must carry IN upstream result text")
       // deps 上游的 result 绝不注入（B 是 deps 不是 in）
       assert(!cInput.exists(_.contains("=== Node dep-b ===")), "C input must NOT carry deps upstream section")
       assert(!cInput.exists(_.contains("RESULT-OF-B")), "C input must NOT contain deps upstream result text")
+    end for
   }
 
   // ── T3 混合图环检测（store 层 + NodeEdit e2e）────────────
 
-  test("T3 mixed-graph cycle: store-level transitive out+deps chain detected; NodeEdit deps edge rejected with cycle error, store unchanged") {
+  test(
+    "T3 mixed-graph cycle: store-level transitive out+deps chain detected; NodeEdit deps edge rejected with cycle error, store unchanged"
+  ) {
     val ws = tempRoot / "ws-t3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t3-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
       // store 层混合传递链：A.out=B（流 A→B），C.deps=[B]（流 B→C）。
       // 追加 C→A 边（in 或 deps 同向）= A→B→C→A 环 → wouldCreateCycle(C, A) 必须 true
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = List(OutEdge("n-b")), createdAt = now),
-        "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", createdAt = now),
-        "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", deps = List("n-b"), createdAt = now)
-      )))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-a" -> NodeDef(id = "n-a", name = "A", agent = "test-agent", out = List(OutEdge("n-b")), createdAt = now),
+            "n-b" -> NodeDef(id = "n-b", name = "B", agent = "test-agent", createdAt = now),
+            "n-c" -> NodeDef(id = "n-c", name = "C", agent = "test-agent", deps = List("n-b"), createdAt = now)
+          )
+        )
+      )
       cycleStore <- rt.store.wouldCreateCycle("n-c", "n-a")
       noCycle <- rt.store.wouldCreateCycle("n-a", "n-c") // 反向链不成环
       // e2e：node-b(wiring) ← node-a(out→node-b，流 A→B)。再给 A 声明 deps=[B] = B→A(deps) → 环。
       // node-b store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-e2e-b" -> NodeDef(id = "n-e2e-b", name = "node-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-e2e-b" -> NodeDef(
+              id = "n-e2e-b",
+              name = "node-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       bE2e <- idOf(rt, "node-b")
-      _ <- nodeEdit(nodeInput("deps-t3", "node-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("work"), "out" -> Json.fromString(bE2e)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t3",
+          "node-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("work"),
+          "out" -> Json.fromString(bE2e)
+        ),
+        ctx
+      )
       // running 节点编辑被冻结（校验三）——等 A 终态后再测 deps 环检
       _ <- waitStatus(rt, "node-a", Set(NodeLifecycle.Completed))
       aE2e <- idOf(rt, "node-a")
@@ -367,11 +451,14 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(r.isLeft, s"deps cycle must be rejected by NodeEdit, got: $r")
       assert(r.left.exists(_.contains("Cycle")), s"error must mention cycle, got: $r")
       assertEquals(aAfter.deps, Nil, "store must be unchanged after rejected deps edge (no new edge)")
+    end for
   }
 
   // ── T4 D1-deps 补触发（活动区 + 归档变体）────────────────
 
-  test("T4 D1-deps: wiring deps on ALREADY-completed upstream starts immediately — active area and archived variant (findNode fallback)") {
+  test(
+    "T4 D1-deps: wiring deps on ALREADY-completed upstream starts immediately — active area and archived variant (findNode fallback)"
+  ) {
     val ws1 = tempRoot / "ws-t4-active"
     os.makeDir.all(ws1)
     val ws2 = tempRoot / "ws-t4-archived"
@@ -379,36 +466,75 @@ class NodeDepsSpec extends CatsEffectSuite:
     val system = ActorSystem(s"deps-t4-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm(replyOf = t => if t.contains("done-a") then "RESULT-OF-A" else "ok")
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       // ── 变体 1：活动区接线（上游 completed 仍在活动区）──
       rt1 <- mountProject("deps-t4-active", ws1, system, res)
       ctx1 = mkCtx(res, system, ws1.toString)
-      _ <- nodeEdit(nodeInput("deps-t4-active", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-a"), "out" -> Json.fromString("Nebula")), ctx1)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t4-active",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-a"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx1
+      )
       _ <- waitStatus(rt1, "done-a", Set(NodeLifecycle.Completed))
       aId1 <- idOf(rt1, "done-a")
       // 上游已 completed 后接 deps 边 → D1-deps 立即触发
-      _ <- nodeEdit(nodeInput("deps-t4-active", "late-b", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("after-a-work"), "deps" -> Json.fromString(aId1),
-        "out" -> Json.fromString("Nebula")), ctx1)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t4-active",
+          "late-b",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("after-a-work"),
+          "deps" -> Json.fromString(aId1),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx1
+      )
       _ <- waitStatus(rt1, "late-b", Set(NodeLifecycle.Completed))
       bInput <- llm.inputs.get.map(_.find(_.contains("after-a-work")))
       // ── 变体 2：归档后接线（completed 上游已 TTL 归档——findNode 归档兜底）──
       rt2 <- mountProject("deps-t4-archived", ws2, system, res)
       ctx2 = mkCtx(res, system, ws2.toString)
-      _ <- nodeEdit(nodeInput("deps-t4-archived", "done-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("done-a"), "out" -> Json.fromString("Nebula")), ctx2)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t4-archived",
+          "done-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("done-a"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx2
+      )
       _ <- waitStatus(rt2, "done-a", Set(NodeLifecycle.Completed))
       aId2 <- idOf(rt2, "done-a")
-      _ <- rt2.store.mutate(s =>
-        s.nodes.get(aId2).map(n => s.copy(nodes = s.nodes.updated(aId2, n.copy(ttlExpireAt = Some(System.currentTimeMillis() - 1000)))))
-          .getOrElse(s)).void
+      _ <- rt2.store
+        .mutate(s =>
+          s.nodes
+            .get(aId2)
+            .map(n =>
+              s.copy(nodes = s.nodes.updated(aId2, n.copy(ttlExpireAt = Some(System.currentTimeMillis() - 1000))))
+            )
+            .getOrElse(s)
+        )
+        .void
       swept <- rt2.store.sweepCompletedChains(System.currentTimeMillis())
       archived <- rt2.store.archiveSnapshot
       // 上游已归档后接 deps 边 → findNode 归档兜底 → D1-deps 立即触发（「归档上游可触发」裁定）
-      _ <- nodeEdit(nodeInput("deps-t4-archived", "late-c", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("after-archived-work"), "deps" -> Json.fromString(aId2),
-        "out" -> Json.fromString("Nebula")), ctx2)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t4-archived",
+          "late-c",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("after-archived-work"),
+          "deps" -> Json.fromString(aId2),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx2
+      )
       _ <- waitStatus(rt2, "late-c", Set(NodeLifecycle.Completed))
       cInput <- llm.inputs.get.map(_.find(_.contains("after-archived-work")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
@@ -422,11 +548,14 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(archived.nodes.contains(aId2), "variant-2: done-a must live in archive area")
       assert(cInput.isDefined, "variant-2: C must be triggered by D1-deps from ARCHIVED upstream")
       assert(!cInput.exists(_.contains("RESULT-OF-A")), "variant-2: C input must NOT contain archived upstream result")
+    end for
   }
 
   // ── T5 failed 不触发下游（D5 零结算：in 边与 deps 边同归停等）────────
 
-  test("T5 failed upstream: deps waiter AND in-edge waiter both stay waiting and visible (D5 zero-settlement, wf1cde §3.3)") {
+  test(
+    "T5 failed upstream: deps waiter AND in-edge waiter both stay waiting and visible (D5 zero-settlement, wf1cde §3.3)"
+  ) {
     val ws = tempRoot / "ws-t5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t5-${scala.util.Random.nextInt(100000)}")
@@ -434,27 +563,63 @@ class NodeDepsSpec extends CatsEffectSuite:
     val llm = FailOnLlm(
       failWhen = _.contains("boom-a"),
       replyOf = t => if t.contains("in-waiter") then "in-side-ok" else "ok",
-      delayBeforeFail = 800.millis)
+      delayBeforeFail = 800.millis
+    )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 对照组：C2（wiring, out=Nebula）← A2（entry, boom-a2, out→C2）——in 边。
       // C2 store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-in-waiter" -> NodeDef(id = "n-in-waiter", name = "in-waiter", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-in-waiter" -> NodeDef(
+              id = "n-in-waiter",
+              name = "in-waiter",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       c2Id <- idOf(rt, "in-waiter")
-      _ <- nodeEdit(nodeInput("deps-t5", "src-a2", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("boom-a2"), "out" -> Json.fromString(c2Id)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t5",
+          "src-a2",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("boom-a2"),
+          "out" -> Json.fromString(c2Id)
+        ),
+        ctx
+      )
       // 实验组：A（entry, boom-a）+ B deps=[A]
-      _ <- nodeEdit(nodeInput("deps-t5", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("boom-a"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t5",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("boom-a"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Running))
       aId <- idOf(rt, "src-a")
-      _ <- nodeEdit(nodeInput("deps-t5", "dep-waiter", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("dep-waiter-work"), "deps" -> Json.fromString(aId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t5",
+          "dep-waiter",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("dep-waiter-work"),
+          "deps" -> Json.fromString(aId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // 双双失败
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Failed))
       _ <- waitStatus(rt, "src-a2", Set(NodeLifecycle.Failed))
@@ -469,50 +634,88 @@ class NodeDepsSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // deps 边：failed ∉ completed → B 保持 pending/wiring 可见（分发器可自行处置）
-      assert(b.status == NodeLifecycle.Pending || b.status == NodeLifecycle.Wiring,
-        s"deps waiter must stay pending after upstream failed, got ${b.status}")
+      assert(
+        b.status == NodeLifecycle.Pending || b.status == NodeLifecycle.Wiring,
+        s"deps waiter must stay pending after upstream failed, got ${b.status}"
+      )
       assert(bInputs.isEmpty, s"deps waiter must NEVER be started by failed upstream, got ${bInputs.map(_.take(120))}")
       // in 边（D5 零结算，wf1cde §3.3）：上游 failed 不向下游结算 → C2 停等零启动，
       // 且 failed 上游不得写 deliveredTo 键（§3.2 连贯性洞根源废除）
-      assertEquals(c2.status, NodeLifecycle.Wiring,
-        s"in-edge waiter must stay wiring after upstream failed (D5 zero-settlement), got ${c2.status}")
-      assert(c2Inputs.isEmpty, s"in-edge waiter must NOT be started by failed upstream (collect placeholder settlement abolished), got ${c2Inputs.map(_.take(120))}")
-      assert(!c2.deliveredTo.contains(a2Id),
-        "failed upstream must NOT write deliveredTo key into downstream (wf1cde §3.2 hole source)")
+      assertEquals(
+        c2.status,
+        NodeLifecycle.Wiring,
+        s"in-edge waiter must stay wiring after upstream failed (D5 zero-settlement), got ${c2.status}"
+      )
+      assert(
+        c2Inputs.isEmpty,
+        s"in-edge waiter must NOT be started by failed upstream (collect placeholder settlement abolished), got ${c2Inputs.map(_.take(120))}"
+      )
+      assert(
+        !c2.deliveredTo.contains(a2Id),
+        "failed upstream must NOT write deliveredTo key into downstream (wf1cde §3.2 hole source)"
+      )
+    end for
   }
 
   // ── T5b D5 停等恢复闭环（wf1cde §3.2 洞回归锁）：failed 零结算停等 → reactivate
   //    修复重跑 → 下游收**真实结果**自动续跑（collect 时代残留 deliveredTo 污染键
   //    会把真实投递 dedup 挡死的连贯性洞，本用例端到端锁死不再回归）────────
 
-  test("T5b D5 recovery loop: in-edge waiter stays waiting on upstream failure; reactivate+rerun delivers clean real result (wf1cde §3.2 hole regression lock)") {
+  test(
+    "T5b D5 recovery loop: in-edge waiter stays waiting on upstream failure; reactivate+rerun delivers clean real result (wf1cde §3.2 hole regression lock)"
+  ) {
     val ws = tempRoot / "ws-t5b"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t5b-${scala.util.Random.nextInt(100000)}")
     // 首轮 task 含 flaky-a → 必失败（小延迟保留启动窗口）；reactivate 改 task 为
     // good-a 后不再命中 failWhen → 重跑成功回复 REAL-RESULT-FROM-A
-    val llm = FailOnLlm(
-      failWhen = _.contains("flaky-a"),
-      replyOf = _ => "REAL-RESULT-FROM-A",
-      delayBeforeFail = 100.millis)
+    val llm =
+      FailOnLlm(failWhen = _.contains("flaky-a"), replyOf = _ => "REAL-RESULT-FROM-A", delayBeforeFail = 100.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t5b", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 下游 B 直种（wiring, out=Nebula）；nodeEdit 接线时 src-a.id 自动写进 B.in
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-recovery-b" -> NodeDef(id = "n-recovery-b", name = "recovery-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-recovery-b" -> NodeDef(
+              id = "n-recovery-b",
+              name = "recovery-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       bId <- idOf(rt, "recovery-b")
       // 入口 A：out→B，首轮 task=flaky-a（必失败）
-      _ <- nodeEdit(nodeInput("deps-t5b", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("flaky-a"), "out" -> Json.fromString(bId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t5b",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("flaky-a"),
+          "out" -> Json.fromString(bId)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Failed))
       _ <- IO.sleep(300.millis) // 给「假如 collect 仍在异步启动 B」留观察窗口
       bAfterFail <- nodeById(rt, bId).map(_.getOrElse(fail("B must exist")))
       // 分发器处置（failedNotifyTaskText 动作①）：NodeEdit 实际改动触发 reactivate
-      _ <- nodeEdit(nodeInput("deps-t5b", "src-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("good-a"), "out" -> Json.fromString(bId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t5b",
+          "src-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("good-a"),
+          "out" -> Json.fromString(bId)
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "src-a", Set(NodeLifecycle.Completed))
       _ <- waitStatus(rt, "recovery-b", Set(NodeLifecycle.Completed))
       bInputs <- llm.inputs.get.map(_.filter(_.contains("=== Node src-a ===")))
@@ -520,69 +723,137 @@ class NodeDepsSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 阶段一（failed 后）：B 停等零结算——不启动、无投递段、deliveredTo 无污染键
-      assert(bAfterFail.status == NodeLifecycle.Wiring || bAfterFail.status == NodeLifecycle.Pending,
-        s"B must stay waiting after upstream failed, got ${bAfterFail.status}")
-      assertEquals(bAfterFail.deliveredTo, Nil,
-        "failed upstream must not write deliveredTo key (hole source abolished)")
+      assert(
+        bAfterFail.status == NodeLifecycle.Wiring || bAfterFail.status == NodeLifecycle.Pending,
+        s"B must stay waiting after upstream failed, got ${bAfterFail.status}"
+      )
+      assertEquals(
+        bAfterFail.deliveredTo,
+        Nil,
+        "failed upstream must not write deliveredTo key (hole source abolished)"
+      )
       // 阶段二（reactivate→重跑完成）：B 自动启动，输入含真实结果段、不含失败错误文本
-      //（collect 时代的洞：残留占位键让真实投递被 dedup 挡死，B 永远等不到干净输入）
+      // （collect 时代的洞：残留占位键让真实投递被 dedup 挡死，B 永远等不到干净输入）
       assertEquals(bFinal.status, NodeLifecycle.Completed, "B must auto-resume after upstream rerun completes")
       assertEquals(bFinal.result, Some("REAL-RESULT-FROM-A"), "B completed on its own run after real delivery")
       assert(bInputs.length == 1, s"B must have been started exactly once with real delivery, got ${bInputs.length}")
-      assert(bInputs.headOption.exists(_.contains("REAL-RESULT-FROM-A")),
-        "B input must carry the rerun's REAL result via in-delivery section")
-      assert(bInputs.forall(i => !i.contains("boom-exploded")),
-        "B input must NOT contain the failed round's error text")
+      assert(
+        bInputs.headOption.exists(_.contains("REAL-RESULT-FROM-A")),
+        "B input must carry the rerun's REAL result via in-delivery section"
+      )
+      assert(
+        bInputs.forall(i => !i.contains("boom-exploded")),
+        "B input must NOT contain the failed round's error text"
+      )
+    end for
   }
 
   // ── T6 创建连接校验（校验五 **2026-09-12 重写**：out 可空置，只剩输入侧下限 (task ∨ in)）──
 
-  test("T6 creation connection policy: dangling create legal (task-only, no out), out-only rejected (no input side), deps-only rejected (deps is not an input side); task+out and in+out pass") {
+  test(
+    "T6 creation connection policy: dangling create legal (task-only, no out), out-only rejected (no input side), deps-only rejected (deps is not an input side); task+out and in+out pass"
+  ) {
     val ws = tempRoot / "ws-t6"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t6-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // task-only（无 out）→ **合法**（2026-09-12 裁定：out 可空置，悬空创建恢复；空 out =
       // 零投递零升根，结果保留在 result，接线后自动投递）
-      r1 <- nodeEdit(nodeInput("deps-t6", "lonely", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("no connection at all")), ctx)
+      r1 <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "lonely",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("no connection at all")
+        ),
+        ctx
+      )
       s1 <- rt.store.snapshot
       // 对照：仅 out=Nebula（无 task/in）→ 仍拒：out-only 中继废弃（输入侧下限 (task ∨ in)）
-      r2 <- nodeEdit(nodeInput("deps-t6", "nebula-only", "description" -> Json.fromString("test node purpose"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      r2 <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "nebula-only",
+          "description" -> Json.fromString("test node purpose"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // 对照：仅 deps（无 task/in/out）→ 仍拒：deps 是完成信号不是输入内容，不计入 in 侧
-      _ <- nodeEdit(nodeInput("deps-t6", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       upId <- idOf(rt, "up")
-      r3 <- nodeEdit(nodeInput("deps-t6", "deps-only", "description" -> Json.fromString("test node purpose"),
-        "deps" -> Json.fromString(upId)), ctx)
+      r3 <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "deps-only",
+          "description" -> Json.fromString("test node purpose"),
+          "deps" -> Json.fromString(upId)
+        ),
+        ctx
+      )
       // 合法域：task+out（入口）与 in+out（wiring）→ 过
-      r4 <- nodeEdit(nodeInput("deps-t6", "entry-ok", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("entry-work"), "out" -> Json.fromString("Nebula")), ctx)
-      r5 <- nodeEdit(nodeInput("deps-t6", "wire-ok", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
+      r4 <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "entry-ok",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("entry-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
+      r5 <- nodeEdit(
+        nodeInput(
+          "deps-t6",
+          "wire-ok",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       s2 <- rt.store.snapshot
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r1.isRight, s"task-only create (no out) must now be LEGAL — out is nullable, got: $r1")
-      assert(s1.nodes.values.find(_.name == "lonely").exists(_.out.isEmpty),
-        "dangling node must exist with an empty out (no edge fabricated)")
+      assert(
+        s1.nodes.values.find(_.name == "lonely").exists(_.out.isEmpty),
+        "dangling node must exist with an empty out (no edge fabricated)"
+      )
       assert(r2.isLeft, s"out-only create (no task/in) must be rejected — input-side floor, got: $r2")
-      assert(r2.left.exists(_.contains("must declare an input side")), s"r2 message must state the input-side rule, got: $r2")
+      assert(
+        r2.left.exists(_.contains("must declare an input side")),
+        s"r2 message must state the input-side rule, got: $r2"
+      )
       assert(r3.isLeft, s"deps-only create must be rejected (deps does not count as an input side), got: $r3")
-      assert(r3.left.exists(_.contains("must declare an input side")), s"r3 message must state the input-side rule, got: $r3")
+      assert(
+        r3.left.exists(_.contains("must declare an input side")),
+        s"r3 message must state the input-side rule, got: $r3"
+      )
       assert(r4.isRight, s"task+out entry create must pass, got: $r4")
       assert(r5.isRight, s"in+out wiring create must pass, got: $r5")
       assert(s2.nodes.values.exists(n => n.name == "wire-ok" && n.in.contains(upId)), "wire-ok node must carry in")
+    end for
   }
 
   // ── T7 编辑路径连接校验（校验六/六-a **2026-09-12 裁定删除**：断开与零连接均合法）──
 
-  test("T7 edit connection policy: disconnect-to-no-out LEGAL (out nullable, out → Nil); clearing the only deps legal; clearing deps with connections left passes") {
+  test(
+    "T7 edit connection policy: disconnect-to-no-out LEGAL (out nullable, out → Nil); clearing the only deps legal; clearing deps with connections left passes"
+  ) {
     val ws = tempRoot / "ws-t7"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t7-${scala.util.Random.nextInt(100000)}")
@@ -590,38 +861,90 @@ class NodeDepsSpec extends CatsEffectSuite:
     // 排除「D1-deps 先启动节点 → 撞上 running 冻结而非零连接拒绝」的竞态
     val llm = DispatchLlm(delayOf = t => if t.contains("slow-up") then 8000.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t7", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 慢上游（7b/7c 的 deps 目标，测试窗口内保持 running）
-      _ <- nodeEdit(nodeInput("deps-t7", "slow-up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-up"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t7",
+          "slow-up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-up"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       slowId <- idOf(rt, "slow-up")
-      upId <- nodeEdit(nodeInput("deps-t7", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx) *> idOf(rt, "up")
+      upId <- nodeEdit(
+        nodeInput(
+          "deps-t7",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      ) *> idOf(rt, "up")
       // 7a：持 out 的 wiring 节点断开 out → **合法**（2026-09-12 裁定：out 可空置；校验六-a
       // 整体删除，「先断开再改接」工作流复活）。setup 补 in=[slow-up] 适配创建输入侧下限
-      _ <- nodeEdit(nodeInput("deps-t7", "only-out", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t7",
+          "only-out",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(slowId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       ooId <- idOf(rt, "only-out")
       r7a <- nodeEdit(nodeInput("deps-t7", "only-out", "out" -> Json.Null), ctx)
       ooAfter <- nodeById(rt, ooId).map(_.getOrElse(fail("only-out must exist")))
       // 7b：仅持 deps 的 wiring 节点清空 deps → **合法**（校验六零连接下限随裁定删除）。
       // 存量式形态——新规范下 deps-only 不可经 NodeEdit 创建，改 store 直种保持夹具原样
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-onlydeps" -> NodeDef(id = "n-onlydeps", name = "only-deps", agent = "test-agent",
-          deps = List(slowId), status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-onlydeps" -> NodeDef(
+              id = "n-onlydeps",
+              name = "only-deps",
+              agent = "test-agent",
+              deps = List(slowId),
+              status = NodeLifecycle.Wiring,
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       r7b <- nodeEdit(nodeInput("deps-t7", "only-deps", "deps" -> Json.arr()), ctx)
       odId <- idOf(rt, "only-deps")
       odAfterClear <- nodeById(rt, odId).map(_.getOrElse(fail("only-deps must exist")))
       // 7c 合法对照：多连接并持，清空 deps 仍剩 in+out → 成功（setup 补 in 适配创建新规范）
-      _ <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(slowId), "out" -> Json.fromString("Nebula"), "deps" -> Json.fromString(slowId)), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t7",
+          "out-and-deps",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(slowId),
+          "out" -> Json.fromString("Nebula"),
+          "deps" -> Json.fromString(slowId)
+        ),
+        ctx
+      )
       r7c <- nodeEdit(nodeInput("deps-t7", "out-and-deps", "deps" -> Json.Null), ctx)
       odAfter <- idOf(rt, "out-and-deps").flatMap(nodeById(rt, _).map(_.getOrElse(fail("must exist"))))
       // 7d 对照（新规范翻转）：in + out 并持，断开 out → **合法**（out 落 Nil，in 保留）
-      _ <- nodeEdit(nodeInput("deps-t7", "in-and-out", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(upId), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t7",
+          "in-and-out",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       ioId <- idOf(rt, "in-and-out")
       r7d <- nodeEdit(nodeInput("deps-t7", "in-and-out", "out" -> Json.Null), ctx)
       ioAfter <- nodeById(rt, ioId).map(_.getOrElse(fail("must exist")))
@@ -637,29 +960,51 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(r7d.isRight, s"disconnecting out must now be LEGAL (out nullable), got: $r7d")
       assertEquals(ioAfter.out, Nil, "7d: out must be cleared to Nil")
       assert(ioAfter.in.contains(upId), "7d: in must remain untouched")
+    end for
   }
 
   // ── T8 abandon 接受域扩展（§1.6 裁定①）──────────────────
 
-  test("T8 abandon domain extension: wiring abandonable (cancelled, no TTL + audit — 2026-09-07 ruling); running refused; upstream completion after abandon skips idempotently") {
+  test(
+    "T8 abandon domain extension: wiring abandonable (cancelled, no TTL + audit — 2026-09-07 ruling); running refused; upstream completion after abandon skips idempotently"
+  ) {
     val ws = tempRoot / "ws-t8"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t8-${scala.util.Random.nextInt(100000)}")
     val llm = DispatchLlm(delayOf = t => if t.contains("slow-a") then 2500.millis else 0.millis)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("deps-t8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // slow-a 入口运行中（制造 running 窗口）
-      _ <- nodeEdit(nodeInput("deps-t8", "slow-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("slow-a"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t8",
+          "slow-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("slow-a"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Running))
       slowId <- idOf(rt, "slow-a")
       // wiring 节点 abandon → cancelled + 审计（2026-09-07 裁定：cancelled 无 TTL，留主图待上层处置）。
       // w-wire store 直种（20260903 创建必带 out 新规范下 out-only wiring 节点不可经 NodeEdit 创建）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-w-wire" -> NodeDef(id = "n-w-wire", name = "w-wire", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-w-wire" -> NodeDef(
+              id = "n-w-wire",
+              name = "w-wire",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       wId <- idOf(rt, "w-wire")
       rWire <- nodeEdit(nodeInput("deps-t8", "w-wire", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- IO.sleep(200.millis)
@@ -668,9 +1013,17 @@ class NodeDepsSpec extends CatsEffectSuite:
       // running abandon 仍拒绝（走 NodeCancel）
       rRun <- nodeEdit(nodeInput("deps-t8", "slow-a", "abandon" -> Json.fromBoolean(true)), ctx)
       // 被退役的 deps 等待者：W2 deps=[slow-a] wiring → abandon → slow-a 完成后不触发
-      _ <- nodeEdit(nodeInput("deps-t8", "w2-dep", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("never-should-run"), "deps" -> Json.fromString(slowId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "deps-t8",
+          "w2-dep",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("never-should-run"),
+          "deps" -> Json.fromString(slowId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       w2Id <- idOf(rt, "w2-dep")
       rW2 <- nodeEdit(nodeInput("deps-t8", "w2-dep", "abandon" -> Json.fromBoolean(true)), ctx)
       _ <- waitStatus(rt, "slow-a", Set(NodeLifecycle.Completed))
@@ -684,16 +1037,25 @@ class NodeDepsSpec extends CatsEffectSuite:
       assertEquals(wAfter.status, NodeLifecycle.Cancelled, "abandoned wiring node becomes cancelled")
       // 2026-09-07 作者裁定（df846488）：abandon 是上层裁决动作，cancelled 无 TTL
       // 强制清——节点留主图待后续拓扑清理，不再 24h 后静默消失。
-      assert(wAfter.ttlExpireAt.isEmpty,
-        "abandoned wiring node must NOT get display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)")
-      assert(audit1.exists((t, id) => t == "abandoned" && id == wId), s"abandoned audit event must be logged, got: $audit1")
+      assert(
+        wAfter.ttlExpireAt.isEmpty,
+        "abandoned wiring node must NOT get display TTL (2026-09-07 ruling: cancelled retained on map, no forced cleanup)"
+      )
+      assert(
+        audit1.exists((t, id) => t == "abandoned" && id == wId),
+        s"abandoned audit event must be logged, got: $audit1"
+      )
       // running 仍拒绝
       assert(rRun.isLeft, s"running node abandon must be refused, got: $rRun")
-      assert(rRun.left.exists(m => m.contains("running") && m.contains("NodeCancel")), s"refusal must point to NodeCancel, got: $rRun")
+      assert(
+        rRun.left.exists(m => m.contains("running") && m.contains("NodeCancel")),
+        s"refusal must point to NodeCancel, got: $rRun"
+      )
       // 退役的 deps 等待者：上游其后完成 → startNode 幂等跳过（cancelled ∈ Terminal）
       assert(rW2.isRight, s"deps-waiting wiring node must be abandonable, got: $rW2")
       assertEquals(w2After.status, NodeLifecycle.Cancelled, "retired waiter stays cancelled after upstream completes")
       assert(w2Inputs.isEmpty, s"retired waiter must never run, got ${w2Inputs.map(_.take(120))}")
+    end for
   }
 
   private def readAuditLines(ws: os.Path): IO[List[String]] =
@@ -703,48 +1065,97 @@ class NodeDepsSpec extends CatsEffectSuite:
 
   // ── T9 跨链依赖原语（chainmodel 批一 ③ 2026-09-19）─────────────────────
 
-  test("T9 chain ref: deps=[chain:<id>] waits for EVERY member completed (pure scheduling gate, zero member merge); unknown chain id ⇒ fail-closed refusal (NODE_CHAIN_REF_UNKNOWN)") {
+  test(
+    "T9 chain ref: deps=[chain:<id>] waits for EVERY member completed (pure scheduling gate, zero member merge); unknown chain id ⇒ fail-closed refusal (NODE_CHAIN_REF_UNKNOWN)"
+  ) {
     val ws = tempRoot / "ws-t9c"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t9c-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
-    def seed(id: String, status: String, chainId: Option[String] = None,
-             deps: List[String] = Nil, at: Long = 0L): NodeDef =
-      NodeDef(id = id, name = id, agent = "general", status = status, chainId = chainId,
-        deps = deps, createdAt = now + at)
+    def seed(
+      id: String,
+      status: String,
+      chainId: Option[String] = None,
+      deps: List[String] = Nil,
+      at: Long = 0L
+    ): NodeDef =
+      NodeDef(
+        id = id,
+        name = id,
+        agent = "general",
+        status = status,
+        chainId = chainId,
+        deps = deps,
+        createdAt = now + at
+      )
     for
-      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
       rt <- mountProject("deps-t9c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 声明面直种（链号声明 = NodeDef.chainId）：x-chain 两成员、y-chain 单成员，
       // 两个链引用等待者（其一指向不存在的链号）——**直种绕过写闸**，故这一条检验的是
       // **运行面** fail-closed（写闸本身由下方 rBad / rIn 覆盖：同一形态必须建不出来）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-x1" -> seed("n-x1", NodeLifecycle.Wiring, Some("x-chain"), at = 1),
-        "n-x2" -> seed("n-x2", NodeLifecycle.Wiring, Some("x-chain"), at = 2),
-        "n-y1" -> seed("n-y1", NodeLifecycle.Wiring, Some("y-chain"), at = 3),
-        "n-wr" -> seed("n-wr", NodeLifecycle.Wiring, deps = List("chain:x-chain"), at = 4),
-        "n-wbad" -> seed("n-wbad", NodeLifecycle.Wiring, deps = List("chain:no-such-chain"), at = 5))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-x1" -> seed("n-x1", NodeLifecycle.Wiring, Some("x-chain"), at = 1),
+            "n-x2" -> seed("n-x2", NodeLifecycle.Wiring, Some("x-chain"), at = 2),
+            "n-y1" -> seed("n-y1", NodeLifecycle.Wiring, Some("y-chain"), at = 3),
+            "n-wr" -> seed("n-wr", NodeLifecycle.Wiring, deps = List("chain:x-chain"), at = 4),
+            "n-wbad" -> seed("n-wbad", NodeLifecycle.Wiring, deps = List("chain:no-such-chain"), at = 5)
+          )
+        )
+      )
       w <- rt.store.snapshot.map(_.nodes("n-wr"))
       wbad <- rt.store.snapshot.map(_.nodes("n-wbad"))
       sat0 <- rt.engine.depsSatisfied(w)
       // 逐成员完成：一个完成还不够（全链门槛），两个都完成才满足
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-x1",
-        s.nodes("n-x1").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 10)))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes.updated("n-x1", s.nodes("n-x1").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 10)))
+        )
+      )
       sat1 <- rt.engine.depsSatisfied(w)
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-x2",
-        s.nodes("n-x2").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 20)))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes.updated("n-x2", s.nodes("n-x2").copy(status = NodeLifecycle.Completed, completedAt = Some(now + 20)))
+        )
+      )
       sat2 <- rt.engine.depsSatisfied(w)
       satBad <- rt.engine.depsSatisfied(wbad)
       view <- rt.store.combinedNodes.map(FlowMapStore.chainIdView)
       // 写路径：未知链号拒 / `in` 里的链引用拒 / 已存在链号放行
-      rBad <- nodeEdit(nodeInput("deps-t9c", "new-bad", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("never-runs-bad"), "deps" -> Json.fromString("chain:no-such-chain")), ctx)
-      rIn <- nodeEdit(nodeInput("deps-t9c", "new-in", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("never-runs-in"), "in" -> Json.fromString("chain:x-chain")), ctx)
-      rOk <- nodeEdit(nodeInput("deps-t9c", "new-ok", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("new-ok"), "deps" -> Json.fromString("chain:x-chain"),
-        "out" -> Json.fromString("Nebula")), ctx)
+      rBad <- nodeEdit(
+        nodeInput(
+          "deps-t9c",
+          "new-bad",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("never-runs-bad"),
+          "deps" -> Json.fromString("chain:no-such-chain")
+        ),
+        ctx
+      )
+      rIn <- nodeEdit(
+        nodeInput(
+          "deps-t9c",
+          "new-in",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("never-runs-in"),
+          "in" -> Json.fromString("chain:x-chain")
+        ),
+        ctx
+      )
+      rOk <- nodeEdit(
+        nodeInput(
+          "deps-t9c",
+          "new-ok",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("new-ok"),
+          "deps" -> Json.fromString("chain:x-chain"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       okId <- idOf(rt, "new-ok")
       after <- rt.store.snapshot.map(_.nodes)
       chains2 = FlowMapStore.topologicalChains(after.values)
@@ -753,14 +1164,22 @@ class NodeDepsSpec extends CatsEffectSuite:
       assertEquals(sat0, false, "chain ref is unsatisfied while any member is not completed")
       assertEquals(sat1, false, "one member completed is NOT enough — the gate waits for the WHOLE chain")
       assertEquals(sat2, true, "every member completed ⇒ satisfied")
-      assertEquals(satBad, false,
-        "an unresolvable chain ref is FAIL-CLOSED (never satisfied) — never a silent 'zero members ⇒ satisfied'")
+      assertEquals(
+        satBad,
+        false,
+        "an unresolvable chain ref is FAIL-CLOSED (never satisfied) — never a silent 'zero members ⇒ satisfied'"
+      )
       // ③ 零成员并合：链引用只决定「等谁」，不改任何节点的归属
       val xChain = chains2.find(_.id == "x-chain")
-      assertEquals(xChain.map(_.memberIds), Some(List("n-x1", "n-x2")),
-        "declared chain membership unchanged by the cross-chain reference")
-      assert(!chains2.exists(c => c.id == "x-chain" && c.memberIds.contains("n-wr")),
-        "the deps-only waiter must NOT be merged into the target chain (③ 零成员并合)")
+      assertEquals(
+        xChain.map(_.memberIds),
+        Some(List("n-x1", "n-x2")),
+        "declared chain membership unchanged by the cross-chain reference"
+      )
+      assert(
+        !chains2.exists(c => c.id == "x-chain" && c.memberIds.contains("n-wr")),
+        "the deps-only waiter must NOT be merged into the target chain (③ 零成员并合)"
+      )
       assertEquals(view.get("n-x1"), Some("x-chain"), "declaration wins over the derived fallback")
       assertEquals(view.get("n-y1"), Some("y-chain"), "single-member declared chain still carries its id")
       // 写路径 fail-closed + 可行动错误码
@@ -769,35 +1188,72 @@ class NodeDepsSpec extends CatsEffectSuite:
       assert(rIn.isLeft, s"a chain ref in 'in' must be refused (deps-only syntax), got: $rIn")
       assert(rIn.left.exists(_.contains("NODE_CHAIN_REF_UNKNOWN")), s"expected NODE_CHAIN_REF_UNKNOWN, got: $rIn")
       assert(rOk.isRight, s"a chain ref naming an EXISTING chain must be accepted, got: $rOk")
-      assertEquals(xChain.map(_.memberIds), Some(List("n-x1", "n-x2")),
-        "③ red face: deps=[chain:X] must not change X's member set (no merge in either direction)")
-      assert(!xChain.exists(_.memberIds.contains(okId)),
-        "the new waiter stays out of the target chain (zero member merge)")
+      assertEquals(
+        xChain.map(_.memberIds),
+        Some(List("n-x1", "n-x2")),
+        "③ red face: deps=[chain:X] must not change X's member set (no merge in either direction)"
+      )
+      assert(
+        !xChain.exists(_.memberIds.contains(okId)),
+        "the new waiter stays out of the target chain (zero member merge)"
+      )
+    end for
   }
 
   // ── T10 显式成员制 + 归属变更留痕（chainmodel 批一 ①⑤ 2026-09-19）──────
 
-  test("T10 explicit membership: declared ⇒ belongs (single-member too, beats the derived fallback); deps never decides; membership changes are logged (from/to/reason); a chainId-only edit does not reactivate") {
+  test(
+    "T10 explicit membership: declared ⇒ belongs (single-member too, beats the derived fallback); deps never decides; membership changes are logged (from/to/reason); a chainId-only edit does not reactivate"
+  ) {
     val ws = tempRoot / "ws-t10c"
     os.makeDir.all(ws)
     val system = ActorSystem(s"deps-t10c-${scala.util.Random.nextInt(100000)}")
     val now = System.currentTimeMillis()
     for
-      res <- mkResources(system, tempRoot, DispatchLlm().handle)
+      res <- SpecResources.mkResources(system, tempRoot, DispatchLlm().handle)
       rt <- mountProject("deps-t10c", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 派生兜底轨对照组（存量形态：未声明的 in/out 连线）——兜底判据逐字不变（零停机）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-d1" -> NodeDef(id = "n-d1", name = "d1", agent = "general", status = NodeLifecycle.Wiring,
-          out = List(OutEdge("n-d2")), createdAt = now),
-        "n-d2" -> NodeDef(id = "n-d2", name = "d2", agent = "general", status = NodeLifecycle.Wiring,
-          in = List("n-d1"), createdAt = now + 1),
-        // 声明 X 链后要加 deps=[Y 链成员] 的节点（① 判红面）——先直种为 declared
-        "n-w" -> NodeDef(id = "n-w", name = "w", agent = "general", status = NodeLifecycle.Wiring,
-          chainId = Some("mine-chain"), createdAt = now + 2),
-        // blocked 节点（检验 chainId 不进 actualChange ⇒ 不重激活）
-        "n-blk" -> NodeDef(id = "n-blk", name = "blk", agent = "general", status = NodeLifecycle.Blocked,
-          task = Some("blocked work"), createdAt = now + 3))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-d1" -> NodeDef(
+              id = "n-d1",
+              name = "d1",
+              agent = "general",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge("n-d2")),
+              createdAt = now
+            ),
+            "n-d2" -> NodeDef(
+              id = "n-d2",
+              name = "d2",
+              agent = "general",
+              status = NodeLifecycle.Wiring,
+              in = List("n-d1"),
+              createdAt = now + 1
+            ),
+            // 声明 X 链后要加 deps=[Y 链成员] 的节点（① 判红面）——先直种为 declared
+            "n-w" -> NodeDef(
+              id = "n-w",
+              name = "w",
+              agent = "general",
+              status = NodeLifecycle.Wiring,
+              chainId = Some("mine-chain"),
+              createdAt = now + 2
+            ),
+            // blocked 节点（检验 chainId 不进 actualChange ⇒ 不重激活）
+            "n-blk" -> NodeDef(
+              id = "n-blk",
+              name = "blk",
+              agent = "general",
+              status = NodeLifecycle.Blocked,
+              task = Some("blocked work"),
+              createdAt = now + 3
+            )
+          )
+        )
+      )
       derived <- rt.store.chainIdOf("n-d1")
       // ① 判红：declared X 的节点加 deps=[Y 链某节点] ⇒ X 与 Y 的成员集都不得变化
       rWDeps <- nodeEdit(nodeInput("deps-t10c", "w", "deps" -> Json.fromString("n-d2")), ctx)
@@ -805,9 +1261,17 @@ class NodeDepsSpec extends CatsEffectSuite:
       all1 <- rt.store.snapshot.map(_.nodes)
       chains1 = FlowMapStore.topologicalChains(all1.values)
       // 声明即归属：单成员声明链照样成链（判据① 正）
-      rDecl <- nodeEdit(nodeInput("deps-t10c", "decl-a", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("decl-a"), "chainId" -> Json.fromString("demo-chain"),
-        "in" -> Json.fromString("n-d1")), ctx)
+      rDecl <- nodeEdit(
+        nodeInput(
+          "deps-t10c",
+          "decl-a",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("decl-a"),
+          "chainId" -> Json.fromString("demo-chain"),
+          "in" -> Json.fromString("n-d1")
+        ),
+        ctx
+      )
       declId <- idOf(rt, "decl-a")
       cidA <- rt.store.chainIdOf(declId)
       payload <- NodeTools.buildNodeListPayload(rt)
@@ -827,41 +1291,67 @@ class NodeDepsSpec extends CatsEffectSuite:
       assertEquals(derived, Some("chain-n-d1"), "undeclared in/out pair keeps the derived fallback chain id")
       // ── ① 判红：deps 不再是成员边（两个方向的成员集都不动）──
       assert(rWDeps.isRight, s"adding a literal deps ref must still be legal, got: $rWDeps")
-      assertEquals(chains1.find(_.id == "mine-chain").map(_.memberIds), Some(List("n-w")),
-        "① red face: X's member set unchanged after adding deps=[Y member]")
-      assertEquals(chains1.find(_.id == "chain-n-d1").map(_.memberIds), Some(List("n-d1", "n-d2")),
-        "① red face: Y's member set unchanged as well")
+      assertEquals(
+        chains1.find(_.id == "mine-chain").map(_.memberIds),
+        Some(List("n-w")),
+        "① red face: X's member set unchanged after adding deps=[Y member]"
+      )
+      assertEquals(
+        chains1.find(_.id == "chain-n-d1").map(_.memberIds),
+        Some(List("n-d1", "n-d2")),
+        "① red face: Y's member set unchanged as well"
+      )
       assertEquals(wAfter.map(_.deps), Some(List("n-d2")), "the deps edge itself is stored (pure scheduling gate)")
       // ── ① 正：声明即归属（单成员声明链照样带号）──
       assert(rDecl.isRight, s"declaring a chain id must succeed, got: $rDecl")
-      assertEquals(cidA, Some("demo-chain"), "declared ⇒ belongs to X verbatim (single-member declared chain carries its id)")
+      assertEquals(
+        cidA,
+        Some("demo-chain"),
+        "declared ⇒ belongs to X verbatim (single-member declared chain carries its id)"
+      )
       val nodesJson = payload.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
       val declJson = nodesJson.find(_.hcursor.get[String]("id").toOption.contains(declId))
-      assertEquals(declJson.flatMap(_.hcursor.get[String]("chainId").toOption), Some("demo-chain"),
-        "payload chainId follows the declaration (same judgement as the WS/event face)")
+      assertEquals(
+        declJson.flatMap(_.hcursor.get[String]("chainId").toOption),
+        Some("demo-chain"),
+        "payload chainId follows the declaration (same judgement as the WS/event face)"
+      )
       val chainsJson = payload.hcursor.downField("chains").as[List[Json]].toOption.getOrElse(Nil)
-      assert(chainsJson.exists(_.hcursor.get[String]("id").toOption.contains("demo-chain")),
-        "a declared single-member chain must appear in chains[] (payload chainId ⇔ chain entry contract)")
+      assert(
+        chainsJson.exists(_.hcursor.get[String]("id").toOption.contains("demo-chain")),
+        "a declared single-member chain must appear in chains[] (payload chainId ⇔ chain entry contract)"
+      )
       // ── ⑤ 归属变更留痕（from/to/reason + ts）──
       assert(rReId.isRight, s"re-id must succeed, got: $rReId")
       assertEquals(cidB, Some("other-chain"), "re-id takes effect verbatim")
       val mc = auditLines.filter(_.contains("chain-membership-changed"))
       assert(mc.nonEmpty, s"membership changes must be logged, got audit types: ${auditLines.map(_.take(80))}")
-      assert(mc.exists(l => l.contains(declId) && l.contains("from=demo-chain") && l.contains("to=other-chain")
-        && l.contains("reason=re-id") && l.contains("\"ts\":")),
-        s"the re-id event must carry nodeId + from + to + reason + ts, got: $mc")
+      assert(
+        mc.exists(l =>
+          l.contains(declId) && l.contains("from=demo-chain") && l.contains("to=other-chain")
+            && l.contains("reason=re-id") && l.contains("\"ts\":")
+        ),
+        s"the re-id event must carry nodeId + from + to + reason + ts, got: $mc"
+      )
       // ── 撤销 ⇒ 回落派生 ──
       assert(rNull.isRight, s"withdrawing the declaration must succeed, got: $rNull")
       // decl-a was created with in=[n-d1] ⇒ once undeclared it is an ordinary node of the
       // n-d1/n-d2 derived component, so the fallback hands back that component's id verbatim
       // (chain-<最早成员> = chain-n-d1；不是 None —— None 只对「派生分量 <2 成员」成立)。
-      assertEquals(cidC, Some("chain-n-d1"),
-        "withdrawal falls back to the derived component (decl-a joins n-d1/n-d2 via its in edge)")
+      assertEquals(
+        cidC,
+        Some("chain-n-d1"),
+        "withdrawal falls back to the derived component (decl-a joins n-d1/n-d2 via its in edge)"
+      )
       // ── chainId 不进 actualChange：blocked 节点只改链号不重激活 ──
       assert(rBlk.isRight, s"a chainId-only edit on a blocked node must succeed, got: $rBlk")
-      assertEquals(blkAfter.map(_.status), Some(NodeLifecycle.Blocked),
-        "chainId is metadata: a chainId-only edit must NOT reactivate a blocked node")
+      assertEquals(
+        blkAfter.map(_.status),
+        Some(NodeLifecycle.Blocked),
+        "chainId is metadata: a chainId-only edit must NOT reactivate a blocked node"
+      )
       assertEquals(blkAfter.flatMap(_.chainId), Some("blk-chain"), "and the declaration is still written")
+    end for
   }
 
 end NodeDepsSpec

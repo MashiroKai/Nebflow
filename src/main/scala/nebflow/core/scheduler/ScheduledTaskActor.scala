@@ -5,10 +5,9 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.AgentCommand
-import nebflow.core.NebflowLogger
-import nebflow.gateway.SessionStore
-import nebflow.shared.UiMessage
+import nebflow.actor.AgentCommand
+import nebflow.core.SessionStorePort
+import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}
@@ -31,7 +30,7 @@ class ScheduledTaskService(
   taskStore: ScheduledTaskStore,
   routeToAgent: (String, AgentCommand.ExternalEvent) => IO[Unit],
   broadcast: Json => IO[Unit],
-  sessionStore: SessionStore
+  sessionStore: SessionStorePort
 ):
 
   private val logger = NebflowLogger.forName("nebflow.scheduled-task")

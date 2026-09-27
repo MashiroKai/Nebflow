@@ -1,10 +1,12 @@
 package nebflow.core.presets
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
-/** #339 D-a/D-b：种子源语义（llm.model 迁移优先 / providers 推导）与
-  * llm.model 一次性迁移（播种→验证→剥离，失败幂等重试）。 */
+/**
+ * #339 D-a/D-b：种子源语义（llm.model 迁移优先 / providers 推导）与
+ * llm.model 一次性迁移（播种→验证→剥离，失败幂等重试）。
+ */
 class PresetMigrationSpec extends FunSuite:
 
   private def withRoot(name: String)(body: os.Path => Unit): Unit =
@@ -22,6 +24,7 @@ class PresetMigrationSpec extends FunSuite:
   private val providerX =
     """{"baseUrl":"https://x.example.com/v1","apiKey":"k","protocol":"openai",
         "models":[{"id":"m1","maxTokens":4096,"contextWindow":8192},{"id":"m2","maxTokens":8192,"contextWindow":16384}]}"""
+
   private val providerY =
     """{"baseUrl":"https://y.example.com/v1","apiKey":"k","protocol":"openai",
         "models":[{"id":"y1","maxTokens":2048,"contextWindow":4096}]}"""
@@ -30,8 +33,10 @@ class PresetMigrationSpec extends FunSuite:
 
   test("seed chain: llm.model wins over providers (migration-first)") {
     withRoot("seed-prio") { root =>
-      writeNebflow(root,
-        s"""{"llm":{"providers":{"X":$providerX,"Y":$providerY},"model":{"default":"X/m1","fallbacks":["Y/y1"]}}}""")
+      writeNebflow(
+        root,
+        s"""{"llm":{"providers":{"X":$providerX,"Y":$providerY},"model":{"default":"X/m1","fallbacks":["Y/y1"]}}}"""
+      )
       assertEquals(PresetStore.readSeedChain(), List("X/m1", "Y/y1"))
     }
   }

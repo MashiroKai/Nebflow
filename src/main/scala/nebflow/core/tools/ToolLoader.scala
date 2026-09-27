@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.parser.decode
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 object ToolLoader:
   private val logger = NebflowLogger.forName("nebflow.tools")

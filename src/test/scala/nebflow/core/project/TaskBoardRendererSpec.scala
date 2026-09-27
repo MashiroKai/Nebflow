@@ -34,9 +34,8 @@ class TaskBoardRendererSpec extends FunSuite:
   // ===== ① compactLine 紧凑行文法 =====
 
   test("compactLine 文法：#<id>[<status> @<assignee>] <title截40> + (→node)/⚠deps-open/⚠node-done"):
-    val board = List(
-      e("1", "上游"),
-      e("2", "实现解析器" + "x" * 60, InProgress, Some("n-impl-x"), Some("n-impl-x"), blocks = List("1")))
+    val board =
+      List(e("1", "上游"), e("2", "实现解析器" + "x" * 60, InProgress, Some("n-impl-x"), Some("n-impl-x"), blocks = List("1")))
     assertEquals(TaskBoardRenderer.compactLine(board(0), board), "#1[open] 上游", "无 assignee 省略 @ 段")
     val l2 = TaskBoardRenderer.compactLine(board(1), board)
     assert(l2.startsWith("#2[in_progress @n-impl-x] "), l2)
@@ -59,14 +58,19 @@ class TaskBoardRendererSpec extends FunSuite:
     val board = List(
       e("1", "拍板：注入上限", Open, Some(Author)),
       e("2", "定 schema", Open, Some(Dispatcher)),
-      e("3", "实现解析器", InProgress, Some("n-impl-x"), Some("n-impl-x")))
+      e("3", "实现解析器", InProgress, Some("n-impl-x"), Some("n-impl-x"))
+    )
     val out = TaskBoardRenderer.renderDispatcher(board)
-    assertEquals(out.split("\n").toList, List(
-      "<task-board>",
-      "#1[open @author] 拍板：注入上限",
-      "#2[open @dispatcher] 定 schema",
-      "#3[in_progress @n-impl-x] 实现解析器 (→node n-impl-x)",
-      "</task-board>"))
+    assertEquals(
+      out.split("\n").toList,
+      List(
+        "<task-board>",
+        "#1[open @author] 拍板：注入上限",
+        "#2[open @dispatcher] 定 schema",
+        "#3[in_progress @n-impl-x] 实现解析器 (→node n-impl-x)",
+        "</task-board>"
+      )
+    )
     assertEquals(TaskBoardRenderer.renderDispatcher(Nil), "", "空板 → 空串（接线侧整块省略）")
 
   // ===== ③ 验收⑤：注入超限降级不超预算 =====
@@ -79,8 +83,10 @@ class TaskBoardRendererSpec extends FunSuite:
     // 无半行截断：每行要么标签/尾注，要么恰好等于某条完整紧凑行
     val expected = board.map(t => TaskBoardRenderer.compactLine(t, board)).toSet
     out.split("\n").toList.foreach { ln =>
-      assert(ln == "<task-board>" || ln == "</task-board>" || ln.startsWith("+") || expected.contains(ln),
-        s"半行截断嫌疑: $ln")
+      assert(
+        ln == "<task-board>" || ln == "</task-board>" || ln.startsWith("+") || expected.contains(ln),
+        s"半行截断嫌疑: $ln"
+      )
     }
     val bodyLines = out.split("\n").toList.filter(expected.contains)
     assert(bodyLines.nonEmpty && bodyLines.size < 50, s"装入 ${bodyLines.size} 行、丢弃其余")
@@ -115,7 +121,8 @@ class TaskBoardRendererSpec extends FunSuite:
   test("renderNodeInject：三段形态（目标/工单/速览）+ note 截 300 + deps-open 明细行 + 逃生提示"):
     val board = List(
       e("1", "定 schema", Open, Some(Dispatcher)),
-      e("2", "实现解析器", Open, Some("n-impl-x"), Some("n-impl-x"), Some("N" * 400), List("1")))
+      e("2", "实现解析器", Open, Some("n-impl-x"), Some("n-impl-x"), Some("N" * 400), List("1"))
+    )
     val out = TaskBoardRenderer.renderNodeInject(Some("G" * 500), List(board(1)), board)
     val lines = out.split("\n").toList
     assertEquals(lines.head, "<task-board>")
@@ -145,8 +152,7 @@ class TaskBoardRendererSpec extends FunSuite:
     assert(noGoal.contains("全板速览："))
 
     // 多行 note 折叠为 ⏎ 单行
-    val multiline = TaskBoardRenderer.renderNodeInject(None,
-      List(e("5", "多行", note = Some("第一行\n第二行"))), Nil)
+    val multiline = TaskBoardRenderer.renderNodeInject(None, List(e("5", "多行", note = Some("第一行\n第二行"))), Nil)
     assert(multiline.contains("第一行 ⏎ 第二行"), multiline)
 
   test("renderNodeInject：三段皆空 → 空串；node-done 标记经映射进入速览行"):
@@ -177,23 +183,50 @@ class TaskBoardRendererSpec extends FunSuite:
 
   // ===== ⑦ 升级批：show 渲染（R3/R8）=====
 
-  private def ev(kind: String, at: String, field: Option[String] = None, prev: Option[String] = None,
-      next: Option[String] = None, text: Option[String] = None, from: Option[String] = None,
-      to: Option[String] = None, actor: String = "dispatcher"): TaskBoardEvent =
-    TaskBoardEvent(at = at, kind = kind, id = Some("1"), actor = actor, field = field,
-      prev = prev, next = next, text = text, from = from, to = to)
+  private def ev(
+    kind: String,
+    at: String,
+    field: Option[String] = None,
+    prev: Option[String] = None,
+    next: Option[String] = None,
+    text: Option[String] = None,
+    from: Option[String] = None,
+    to: Option[String] = None,
+    actor: String = "dispatcher"
+  ): TaskBoardEvent =
+    TaskBoardEvent(
+      at = at,
+      kind = kind,
+      id = Some("1"),
+      actor = actor,
+      field = field,
+      prev = prev,
+      next = next,
+      text = text,
+      from = from,
+      to = to
+    )
 
   test("R3/R8 renderShow：全字段段 + note 全文 + links + 依赖反查 + 两区时间线（note 主线在前、状态类极简在后）"):
     val tasks = List(
       e("1", "被查条目", Open, Some("dispatcher"), note = Some("当前 note 正文"), blocks = List("2")),
       e("2", "依赖项", Done),
-      e("3", "依赖我的", Open, Some("n-a"), blocks = List("1")))
-    val notes = TaskBoardHistory.ReadResult(events = List(
-      ev("log", "2026-09-11T09:00:00Z", text = Some("补充：第一段记录")),
-      ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("旧版做法 A"), next = Some("新版做法 B"))), total = 2)
-    val states = TaskBoardHistory.ReadResult(events = List(
-      ev("create", "2026-09-11T08:00:00Z"),
-      ev("update", "2026-09-11T08:30:00Z", field = Some("status"), from = Some("open"), to = Some("in_progress"))), total = 2)
+      e("3", "依赖我的", Open, Some("n-a"), blocks = List("1"))
+    )
+    val notes = TaskBoardHistory.ReadResult(
+      events = List(
+        ev("log", "2026-09-11T09:00:00Z", text = Some("补充：第一段记录")),
+        ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("旧版做法 A"), next = Some("新版做法 B"))
+      ),
+      total = 2
+    )
+    val states = TaskBoardHistory.ReadResult(
+      events = List(
+        ev("create", "2026-09-11T08:00:00Z"),
+        ev("update", "2026-09-11T08:30:00Z", field = Some("status"), from = Some("open"), to = Some("in_progress"))
+      ),
+      total = 2
+    )
     val out = TaskBoardRenderer.renderShow(tasks.head, tasks, Map.empty, notes, states)
     assert(out.startsWith("#1[open @dispatcher] 被查条目"), out)
     assert(out.contains("note (10 chars):") && out.contains("当前 note 正文"), out)
@@ -214,8 +247,17 @@ class TaskBoardRendererSpec extends FunSuite:
   test("R3 预算：note 超写入上限的存量 → 当前 note 明示截断；note 主线区整块丢弃明示；总长 ≤ ShowHardCapChars"):
     val long = "长" * 20_000
     val tasks = List(e("1", "超长条目", Open, note = Some(long)))
-    val many = (1 to 40).map(i => ev("update", f"2026-09-11T10:${i}%02d:00Z", field = Some("note"),
-      prev = Some("旧" * 12_000), next = Some("新" * 12_000))).toList
+    val many = (1 to 40)
+      .map(i =>
+        ev(
+          "update",
+          f"2026-09-11T10:${i}%02d:00Z",
+          field = Some("note"),
+          prev = Some("旧" * 12_000),
+          next = Some("新" * 12_000)
+        )
+      )
+      .toList
     val notes = TaskBoardHistory.ReadResult(events = many, total = 60, skipped = 2)
     val out = TaskBoardRenderer.renderShow(tasks.head, tasks, Map.empty, notes, TaskBoardHistory.ReadResult())
     assert(out.contains("showing first 16000"), "当前 note 可见截断")
@@ -229,11 +271,23 @@ class TaskBoardRendererSpec extends FunSuite:
     assert(TaskBoardRenderer.TimelineContentMaxChars >= TaskBoardRenderer.NoteShowMaxChars / 2)
 
   test("R8 renderArchived：主库已无该 id → [gone] 标记 + 主库字段如实「不可得」+ note 版本仍可读（禁回填）"):
-    val notes = TaskBoardHistory.ReadResult(events = List(
-      ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("第一版：做法 A"), next = Some("第二版：做法 B")),
-      ev("close", "2026-09-11T11:00:00Z", field = Some("note"), prev = Some("第二版：做法 B"),
-        next = Some("第二版：做法 B\n[done] 收尾"), from = Some("open"), to = Some("done"))), total = 2)
-    val states = TaskBoardHistory.ReadResult(events = List(ev("prune", "2026-09-11T12:00:00Z", actor = "system")), total = 1)
+    val notes = TaskBoardHistory.ReadResult(
+      events = List(
+        ev("update", "2026-09-11T10:00:00Z", field = Some("note"), prev = Some("第一版：做法 A"), next = Some("第二版：做法 B")),
+        ev(
+          "close",
+          "2026-09-11T11:00:00Z",
+          field = Some("note"),
+          prev = Some("第二版：做法 B"),
+          next = Some("第二版：做法 B\n[done] 收尾"),
+          from = Some("open"),
+          to = Some("done")
+        )
+      ),
+      total = 2
+    )
+    val states =
+      TaskBoardHistory.ReadResult(events = List(ev("prune", "2026-09-11T12:00:00Z", actor = "system")), total = 1)
     val out = TaskBoardRenderer.renderArchived("1", Nil, notes, states)
     assert(out.startsWith("#1[gone]"), out)
     assert(out.contains("cleaned up — NOT available"), out)

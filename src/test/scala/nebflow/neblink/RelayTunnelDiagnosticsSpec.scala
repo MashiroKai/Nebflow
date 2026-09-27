@@ -68,7 +68,10 @@ class RelayTunnelDiagnosticsSpec extends FunSuite:
     // has a null message — the pre-fix log printed `Relay tunnel error: null`.
     val f = RelayTunnelDiagnostics.describe(new TimeoutException())
     assertEquals(f.statusCode, None)
-    assert(!f.summary.contains("null"), s"a null-message throwable must not produce a null-looking summary: ${f.summary}")
+    assert(
+      !f.summary.contains("null"),
+      s"a null-message throwable must not produce a null-looking summary: ${f.summary}"
+    )
     assert(f.summary.contains("TimeoutException"), f.summary)
   }
 

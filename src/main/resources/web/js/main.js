@@ -406,7 +406,8 @@ function consumeTurnDuration(sid) {
 // per-turn 幂等闸（2026-09-20 chain-msgqueue 阶段 B · 方案 A，作者令）：原设计逐字
 // 口径 = 「send first queued message as normal UserInput」（input.js:1105-1107，
 // 单数 + first）⇒ 一次 turn 结束只派发 **1** 条；而引擎对每一轮**固定发两帧**终止
-// 信号（`Done *> emitSessionBusy(busy=false)`，AgentActor.scala:3176-3185）⇒ 同一
+// 信号（`Done *> emitSessionBusy(busy=false)`，AgentFinishTurn.finishTurnCont；
+// 2026-09-25 行号引用修正：原 AgentActor.scala:3176-3185 已随 turn 收尾族迁移漂移）⇒ 同一
 // 窗口内本 helper 被调 2 次、余件被提前捞进对话流（显示态 ≠ 投递态 = 报障本体）。
 // 闸形 = **per-session turn 窗口令牌**：窗口内只放行 1 次**派发**（判定放在定时器
 // 回调里 ⇒ 兄弟帧先到、后到、间隔多久都压得住）；且只有真的派发才关窗（无件 / WS
@@ -2930,7 +2931,8 @@ onMessage('sessionBusy', (msg, view) => {
     // Two decidable properties of doing it here:
     //   (a) one drain per turn window (2026-09-20 chain-msgqueue 阶段 B): the
     //       'done' + sessionBusy{false} pair the engine emits for EVERY turn
-    //       (AgentActor.scala:3176-3185) now collapses to a SINGLE drain — the
+    //       (AgentFinishTurn.finishTurnCont; 2026-09-25 line-ref fix) now
+    //       collapses to a SINGLE drain — the
     //       scheduleQueueDrain window token admits the first terminal frame only,
     //       the second re-enters the same (already used) window and is skipped ⇒
     //       ONE queued item per turn, the rest stay in `#queue-bar` as 排队中 (N).

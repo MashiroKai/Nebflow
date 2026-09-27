@@ -37,8 +37,10 @@ class FallbackSeamSpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private def textDelta(t: String) =
     s"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"$t\"}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -47,11 +49,13 @@ class FallbackSeamSpec extends CatsEffectSuite:
       "data: [DONE]\n\n"
     ).mkString
 
-  /** mode: "stall" (start + 2 deltas, flush, sleep, abrupt close — mid-stream
-    * timeout AFTER content was emitted, locked=true)
-    * / "ok" (full well-behaved stream)
-    * / "never" (park BEFORE response headers — cancellable, first-token timeout,
-    * locked=false). */
+  /**
+   * mode: "stall" (start + 2 deltas, flush, sleep, abrupt close — mid-stream
+   * timeout AFTER content was emitted, locked=true)
+   * / "ok" (full well-behaved stream)
+   * / "never" (park BEFORE response headers — cancellable, first-token timeout,
+   * locked=false).
+   */
   private def startMock(port: Int, mode: String, hits: java.util.concurrent.atomic.AtomicInteger): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -90,6 +94,7 @@ class FallbackSeamSpec extends CatsEffectSuite:
               os.flush()
               os.close()
               exchange.close()
+          end match
       )
       server.start()
       server
@@ -132,7 +137,9 @@ class FallbackSeamSpec extends CatsEffectSuite:
         }
     yield result
 
-  test("seam guard: mid-stream timeout AFTER emitted content fails the whole stream — no provider switch, no stitched output") {
+  test(
+    "seam guard: mid-stream timeout AFTER emitted content fails the whole stream — no provider switch, no stitched output"
+  ) {
     val prev = LlmInterface.streamInactivityOverride
     // first-token generous (headers come fast); subsequent 800ms < 3s stall.
     LlmInterface.streamInactivityOverride = Some((10.seconds, 800.millis))
@@ -172,9 +179,12 @@ class FallbackSeamSpec extends CatsEffectSuite:
       LlmInterface.streamInactivityOverride = prev
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)
+    end try
   }
 
-  test("seam guard does not over-block: first-token timeout with NO emitted content still falls back to the next provider") {
+  test(
+    "seam guard does not over-block: first-token timeout with NO emitted content still falls back to the next provider"
+  ) {
     val prev = LlmInterface.streamInactivityOverride
     // first-token 800ms < 120s header park; nothing emitted → locked=false.
     LlmInterface.streamInactivityOverride = Some((800.millis, 30.seconds))
@@ -203,6 +213,7 @@ class FallbackSeamSpec extends CatsEffectSuite:
       LlmInterface.streamInactivityOverride = prev
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)
+    end try
   }
 
 end FallbackSeamSpec

@@ -11,13 +11,15 @@ import java.util.Base64
 import java.util.concurrent.Executors
 import scala.jdk.CollectionConverters.*
 
-/** SttService 双协议自动识别（2026-08-21 MiMo 支持）：endpoint 以
-  * /chat/completions 结尾 → chat 协议（input_audio data-URL + asr_options，
-  * 转写文本在 choices[0].message.content）；否则保留 multipart transcriptions
-  * （OpenAI Whisper 风格）。本 spec 用本地 HttpServer 录制真实 HTTP 请求形状：
-  * Content-Type、JSON 字段、data URL 前缀、语言映射（zh-CN→zh / en-US→en /
-  * 其余→auto）、响应解析、非 200 错误回传 + WARN 实发（warnSync 钉子——
-  * IO.blocking 语句位裸 logger.warn 是死日志，曾被静默吞）。 */
+/**
+ * SttService 双协议自动识别（2026-08-21 MiMo 支持）：endpoint 以
+ * /chat/completions 结尾 → chat 协议（input_audio data-URL + asr_options，
+ * 转写文本在 choices[0].message.content）；否则保留 multipart transcriptions
+ * （OpenAI Whisper 风格）。本 spec 用本地 HttpServer 录制真实 HTTP 请求形状：
+ * Content-Type、JSON 字段、data URL 前缀、语言映射（zh-CN→zh / en-US→en /
+ * 其余→auto）、响应解析、非 200 错误回传 + WARN 实发（warnSync 钉子——
+ * IO.blocking 语句位裸 logger.warn 是死日志，曾被静默吞）。
+ */
 class SttServiceProtocolSpec extends FunSuite:
 
   private final case class Captured(contentType: String, body: Array[Byte])
@@ -26,6 +28,7 @@ class SttServiceProtocolSpec extends FunSuite:
   private final class RecordingHandler(status: Int, responseBody: String) extends HttpHandler:
     private val buf = scala.collection.mutable.ListBuffer.empty[Captured]
     def captured: List[Captured] = buf.synchronized(buf.toList)
+
     def handle(exchange: HttpExchange): Unit =
       val body = exchange.getRequestBody.readAllBytes() // drain（JDK handler 铁律）
       buf.synchronized {
@@ -41,7 +44,7 @@ class SttServiceProtocolSpec extends FunSuite:
   end RecordingHandler
 
   private def withServer[A](status: Int, responseBody: String)(
-      f: (HttpServer, RecordingHandler) => A
+    f: (HttpServer, RecordingHandler) => A
   ): A =
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     server.setExecutor(Executors.newCachedThreadPool())
@@ -76,8 +79,10 @@ class SttServiceProtocolSpec extends FunSuite:
       val json = parse(new String(cap.body, StandardCharsets.UTF_8)).toOption.get
       assertEquals(json.hcursor.downField("model").as[String], Right("mimo-v2.5-asr"))
       val audio = json.hcursor
-        .downField("messages").downArray
-        .downField("content").downArray
+        .downField("messages")
+        .downArray
+        .downField("content")
+        .downArray
         .downField("input_audio")
       assertEquals(audio.downField("format").as[String], Right("wav"))
       audio.downField("data").as[String] match
@@ -110,8 +115,12 @@ class SttServiceProtocolSpec extends FunSuite:
       svc.transcribe(wavBytes, Some("fr-FR")).unsafeRunSync()
       svc.transcribe(wavBytes, None).unsafeRunSync()
       val langs = handler.captured.map { c =>
-        parse(new String(c.body, StandardCharsets.UTF_8)).toOption.get
-          .hcursor.downField("asr_options").downField("language").as[String].toOption.get
+        parse(new String(c.body, StandardCharsets.UTF_8)).toOption.get.hcursor
+          .downField("asr_options")
+          .downField("language")
+          .as[String]
+          .toOption
+          .get
       }
       assertEquals(langs, List("en", "auto", "auto"))
     }
@@ -142,6 +151,7 @@ class SttServiceProtocolSpec extends FunSuite:
           s"expected recovery-path WARN to actually fire, got $warns"
         )
       finally lbLogger.detachAppender(appender)
+      end try
     }
   }
 

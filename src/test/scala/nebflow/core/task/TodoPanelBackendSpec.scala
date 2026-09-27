@@ -6,14 +6,15 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
-/** todo-panel v1.1 backend contract — adapted for 任务工具重做 (2026-08-30):
-  * - §2.1 taskKind/completedBy with the withDefaults compatibility red line
-  * - §7.1 complete(sid, taskId, by) transition semantics for the WS circle
-  *   (human-task in_progress guard and dismissed semantics retired —
-  *   four-state model: pending → in_progress → completed / failed)
-  */
+/**
+ * todo-panel v1.1 backend contract — adapted for 任务工具重做 (2026-08-30):
+ * - §2.1 taskKind/completedBy with the withDefaults compatibility red line
+ * - §7.1 complete(sid, taskId, by) transition semantics for the WS circle
+ *   (human-task in_progress guard and dismissed semantics retired —
+ *   four-state model: pending → in_progress → completed / failed)
+ */
 class TodoPanelBackendSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-todo-panel"
   PathUtil.setDataRoot(tempRoot)
@@ -39,8 +40,7 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
       case Left(err) => fail(s"legacy decode failed: $err}")
 
   test("task JSON round-trips taskKind and completedBy"):
-    val t = Task(id = "1", subject = "s", description = "d", taskKind = "human",
-      completedBy = Some("user"))
+    val t = Task(id = "1", subject = "s", description = "d", taskKind = "human", completedBy = Some("user"))
     decode[Task](t.asJson.noSpaces) match
       case Right(back) =>
         assertEquals(back.taskKind, "human")
@@ -172,9 +172,7 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
     for
       _ <- reset()
       sid = "render-fold"
-      _ <- (1 to 12).toList.traverse(i =>
-        store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d"))
-      )
+      _ <- (1 to 12).toList.traverse(i => store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d")))
       text <- store.renderForPrompt(sid)
     yield
       assert(text.contains("(12 active)"), s"header counts all active: $text")
@@ -186,9 +184,7 @@ class TodoPanelBackendSpec extends CatsEffectSuite:
     for
       _ <- reset()
       sid = "render-fold-progress"
-      ids <- (1 to 10).toList.traverse(i =>
-        store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d"))
-      )
+      ids <- (1 to 10).toList.traverse(i => store.create(sid, TaskCreateInput(subject = s"task-$i", description = "d")))
       // task-9 and task-10 would be folded as pending; push task-9 in_progress
       _ <- store.update(sid, ids(8), TaskUpdateInput(status = Some(TaskStatus.InProgress)))
       text <- store.renderForPrompt(sid)

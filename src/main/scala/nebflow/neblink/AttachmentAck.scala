@@ -58,14 +58,16 @@ object AttachmentAck:
 
   def isDigest(s: String): Boolean = Digest.matches(s)
 
-  /** 规范化上报值：去空白 + 转小写（**只**做形态归一，不做任何「宽容」判定——
-    * 归一后仍须逐字 `.matches`）。空串 ⇒ `None`（= 未上报）。 */
+  /**
+   * 规范化上报值：去空白 + 转小写（**只**做形态归一，不做任何「宽容」判定——
+   * 归一后仍须逐字 `.matches`）。空串 ⇒ `None`（= 未上报）。
+   */
   def normalize(raw: Option[String]): Option[String] =
     raw.map(_.trim.toLowerCase).filter(_.nonEmpty)
 
   /** 纯判定（无 IO）：**唯一**的 yes/no 点。顺序即优先级，任一 Skip ⇒ 零 E4。 */
   def decide(ev: Evidence): Decision =
-    val local    = normalize(ev.localSha256)
+    val local = normalize(ev.localSha256)
     val declared = ev.declaredSha256.trim.toLowerCase
     if !ev.landedFinal then Decision.Skip("not-landed-final")
     else if local.isEmpty then Decision.Skip("bytes-unavailable")

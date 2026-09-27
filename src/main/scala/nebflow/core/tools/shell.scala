@@ -3,9 +3,8 @@ package nebflow.core.tools
 import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.util.ProcessTree
-import nebflow.shared.Defaults
+import nebflow.shared.{Defaults, NebflowLogger}
 
 import java.io.File
 import java.lang.Process
@@ -18,19 +17,20 @@ import scala.concurrent.duration.*
 import scala.jdk.StreamConverters.*
 import scala.util.Using
 
-/** T2（2026-09-11，Q1 裁定 = 方案 §5 隐含采纳 D5-b）：Bash cwd 不存在 / 非法
-  * ⇒ **显式失败**，不做任何形式的静默回退——旧行为回退 `user.home`（或 `C:\\`
-  * / `/tmp`）已删除，「回退到专用 scratch 根」同样禁止。接收端确认卡 D5-a 仍未决，
-  * 本类不做任何接收端语义。
-  *
-  * 为什么必须显式：回退把「工作目录不可用」伪装成**命令执行成功**——命令在 home
-  * 里静默跑、产物落错目录、事后 `pwd` 与日志都看不出差别，排障成本全甩给下游。
-  * 失败信息自带诊断三件套：**原始入参路径 + 解析后绝对路径 + 判定触发点（符号名）**。
-  *
-  * 为什么继承 `IllegalArgumentException` 而非 `IOException`：`runProcess` 的
-  * `catch case e: IOException` 会把一切 IOException 改写成「bash not found. Please
-  * install bash…」文案，继承 IOException 会让本诊断信息被吞掉、退回误导性报错。
-  */
+/**
+ * T2（2026-09-11，Q1 裁定 = 方案 §5 隐含采纳 D5-b）：Bash cwd 不存在 / 非法
+ * ⇒ **显式失败**，不做任何形式的静默回退——旧行为回退 `user.home`（或 `C:\\`
+ * / `/tmp`）已删除，「回退到专用 scratch 根」同样禁止。接收端确认卡 D5-a 仍未决，
+ * 本类不做任何接收端语义。
+ *
+ * 为什么必须显式：回退把「工作目录不可用」伪装成**命令执行成功**——命令在 home
+ * 里静默跑、产物落错目录、事后 `pwd` 与日志都看不出差别，排障成本全甩给下游。
+ * 失败信息自带诊断三件套：**原始入参路径 + 解析后绝对路径 + 判定触发点（符号名）**。
+ *
+ * 为什么继承 `IllegalArgumentException` 而非 `IOException`：`runProcess` 的
+ * `catch case e: IOException` 会把一切 IOException 改写成「bash not found. Please
+ * install bash…」文案，继承 IOException 会让本诊断信息被吞掉、退回误导性报错。
+ */
 final class InvalidCwdError(
   val rawCwd: String,
   val resolvedPath: String,
@@ -54,6 +54,8 @@ object InvalidCwdError:
        |  fix: 传入已存在且是目录的 cwd（会话初 cwd 来源 = ShellSession.forSession 的
        |       initialDir / 沙箱根 SandboxPolicy.root），或先创建该目录后重试。""".stripMargin
 
+end InvalidCwdError
+
 /** Tracks process health for heartbeat / progress detection. Thread-safe via atomics. */
 private[tools] class JobHealth(
   val processRef: AtomicReference[Process] = new AtomicReference[Process](null),
@@ -62,9 +64,11 @@ private[tools] class JobHealth(
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   /** Whether a "process dead" notification has already been sent — prevents spam. */
   val deadNotified: AtomicBoolean = new AtomicBoolean(false),
-  /** 后台任务输出查看批（2026-09-09）：逐行输出汇聚口——runProcess 的 stdout/
-    * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
-    * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。 */
+  /**
+   * 后台任务输出查看批（2026-09-09）：逐行输出汇聚口——runProcess 的 stdout/
+   * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
+   * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。
+   */
   val outputSink: String => Unit = _ => ()
 )
 
@@ -97,18 +101,22 @@ final class ShellSession private (
   val sessionId: String,
   currentDir: Ref[IO, String],
   backgroundJobs: Ref[IO, Map[String, BackgroundJob]],
-  /** #391 机制 E：本 session 当前存活的 OS 进程（前台 + 后台 runProcess 启动时
-    * 注册、bracket release 注销）。AgentControl restart/Stop 时 killSessionProcesses
-    * 遍历此表杀进程树——修复「cancelCurrentTurn 只取消 fiber、IO.blocking 不中断、
-    * bracket release 永不执行」的 B9 残留根因链。 */
+  /**
+   * #391 机制 E：本 session 当前存活的 OS 进程（前台 + 后台 runProcess 启动时
+   * 注册、bracket release 注销）。AgentControl restart/Stop 时 killSessionProcesses
+   * 遍历此表杀进程树——修复「cancelCurrentTurn 只取消 fiber、IO.blocking 不中断、
+   * bracket release 永不执行」的 B9 残留根因链。
+   */
   private val activeProcesses: Ref[IO, Set[Process]],
   private val cleanupFiber: Fiber[IO, Throwable, Unit],
   private val lastAccessed: Ref[IO, Long],
   private val isAlive: Ref[IO, Boolean],
   private val lifecycleMutex: Mutex[IO],
-  /** 阶段 2a 沙箱（§A.4）：会话持有的策略——BashSeatbelt 包装 + 初 cwd 的依据。
-    * None/off = 旧行为（初 cwd=user.dir，无包装）。会话内不可变（root 会话级
-    * 不可变，§A.2）。 */
+  /**
+   * 阶段 2a 沙箱（§A.4）：会话持有的策略——BashSeatbelt 包装 + 初 cwd 的依据。
+   * None/off = 旧行为（初 cwd=user.dir，无包装）。会话内不可变（root 会话级
+   * 不可变，§A.2）。
+   */
   private val sandbox: Option[nebflow.core.sandbox.SandboxPolicy] = None
 ):
 
@@ -135,8 +143,10 @@ final class ShellSession private (
       case false => IO.raiseError(new IllegalStateException("Session has been destroyed"))
     }
 
-  /** Liveness probe for the registry self-heal path (doGetOrCreate): a killed
-    * session left in the map must be replaced, not returned. */
+  /**
+   * Liveness probe for the registry self-heal path (doGetOrCreate): a killed
+   * session left in the map must be replaced, not returned.
+   */
   private[tools] def isDead: IO[Boolean] = isAlive.get.map(!_)
 
   /**
@@ -203,15 +213,16 @@ final class ShellSession private (
           case None => IO.pure(None)
         hcFiber <-
           if persistent then IO.pure(None) // 服务型：不启 B1/B2 看护 fiber（豁免杀）
-          else startJobHealthCheck(
-            jobId,
-            deferred,
-            health,
-            command = command,
-            hardTimeoutMs = hardTimeoutMs,
-            stuckWindowSec = stuckWindowSec,
-            checkIntervalSec = healthCheckIntervalSec
-          )
+          else
+            startJobHealthCheck(
+              jobId,
+              deferred,
+              health,
+              command = command,
+              hardTimeoutMs = hardTimeoutMs,
+              stuckWindowSec = stuckWindowSec,
+              checkIntervalSec = healthCheckIntervalSec
+            )
         job = BackgroundJob(
           fiber,
           hbFiber,
@@ -275,7 +286,8 @@ final class ShellSession private (
       yield res
     }
 
-  /** Cancel a background job by its ID.
+  /**
+   * Cancel a background job by its ID.
    * Kills the underlying process (if still alive), cancels all fibers, and removes the job.
    * Returns true if the job was found and cancelled, false if already gone/completed.
    */
@@ -420,14 +432,15 @@ final class ShellSession private (
 
   private[tools] val SleepCommandRe = """\bsleep\s+\d+""".r
 
-  /** Grace period before checking if a quiet background process is stuck.
-    *
-    * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T6**）：取值收敛到**唯一取数点**
-    * `Defaults.StuckDetectionGraceSec`（system prop `nebflow.shell.stuckDetectionGraceSec`，
-    * 默认 `30` = **旧行为现行取值**，每次调用现读）——本名降为 delegating def，
-    * **零调用点改动**（下方 `IO.sleep` 与错误文案两处消费点逐字不变）。
-    * 🔴 本处**禁再出现独立字面量**（阈值唯一取值点纪律，§1.3）。
-    */
+  /**
+   * Grace period before checking if a quiet background process is stuck.
+   *
+   * I2（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T6**）：取值收敛到**唯一取数点**
+   * `Defaults.StuckDetectionGraceSec`（system prop `nebflow.shell.stuckDetectionGraceSec`，
+   * 默认 `30` = **旧行为现行取值**，每次调用现读）——本名降为 delegating def，
+   * **零调用点改动**（下方 `IO.sleep` 与错误文案两处消费点逐字不变）。
+   * 🔴 本处**禁再出现独立字面量**（阈值唯一取值点纪律，§1.3）。
+   */
   private def StuckDetectionGracePeriod: FiniteDuration = Defaults.StuckDetectionGraceSec.seconds
 
   /**
@@ -510,18 +523,20 @@ final class ShellSession private (
         sumCpuTimeFromProcessTree(output, rootPid)
     catch case _: Exception => 0L
 
-  /** Parse `ps -A -o pid=,ppid=,time=` output, build process tree, and sum the
-    * kernel-reported cumulative CPU of root + all descendants.
-    *
-    * #17 completion (2026-08-10 qa 打回链): the `time` column is the ONLY CPU
-    * source that covers GRANDCHILDREN on macOS — ProcessHandle
-    * .totalCpuDuration() is only implemented for the current JVM process
-    * there (empirically: 1 of allProcesses() reports it). Tree-blind sampling
-    * false-killed redirected-output jobs whose work runs in a forked child
-    * (sbt run, Maven exec) even after the tree-aware enumeration "fix".
-    * `time` format: macOS `MM:SS.cc` (centisecond granularity — 10ms, equal
-    * to CpuActiveThresholdNanos; a busy child accrues ~2s per 2s sample
-    * window), Linux `[[dd-]hh:]mm:ss`. */
+  /**
+   * Parse `ps -A -o pid=,ppid=,time=` output, build process tree, and sum the
+   * kernel-reported cumulative CPU of root + all descendants.
+   *
+   * #17 completion (2026-08-10 qa 打回链): the `time` column is the ONLY CPU
+   * source that covers GRANDCHILDREN on macOS — ProcessHandle
+   * .totalCpuDuration() is only implemented for the current JVM process
+   * there (empirically: 1 of allProcesses() reports it). Tree-blind sampling
+   * false-killed redirected-output jobs whose work runs in a forked child
+   * (sbt run, Maven exec) even after the tree-aware enumeration "fix".
+   * `time` format: macOS `MM:SS.cc` (centisecond granularity — 10ms, equal
+   * to CpuActiveThresholdNanos; a busy child accrues ~2s per 2s sample
+   * window), Linux `[[dd-]hh:]mm:ss`.
+   */
   private def sumCpuTimeFromProcessTree(psOutput: String, rootPid: Long): Long =
     case class ProcEntry(ppid: Long, cpuNanos: Long)
     val procs = scala.collection.mutable.Map.empty[Long, ProcEntry]
@@ -532,7 +547,7 @@ final class ShellSession private (
           parts(1).toLongOption.foreach { ppid =>
             procs(pid) = ProcEntry(ppid, parsePsTimeToNanos(parts(2)))
           }
-      }
+        }
     val childrenMap = scala.collection.mutable.Map.empty[Long, List[Long]]
     procs.foreach { case (pid, e) =>
       childrenMap(e.ppid) = pid :: childrenMap.getOrElse(e.ppid, Nil)
@@ -541,13 +556,17 @@ final class ShellSession private (
       childrenMap.getOrElse(pid, Nil).flatMap(child => child :: collect(child))
     (rootPid :: collect(rootPid)).map(pid => procs.get(pid).map(_.cpuNanos).getOrElse(0L)).sum
 
-  /** `[[dd-]hh:]mm:ss[.cc]` → nanos. Returns 0 on unparseable input (ps format
-    * drift degrades to "no signal seen", never crashes the detector). */
+  end sumCpuTimeFromProcessTree
+
+  /**
+   * `[[dd-]hh:]mm:ss[.cc]` → nanos. Returns 0 on unparseable input (ps format
+   * drift degrades to "no signal seen", never crashes the detector).
+   */
   private def parsePsTimeToNanos(t: String): Long =
     try
       val (days, rest) = t.split("-").toList match
         case d :: r if r.nonEmpty => (d.toLong, r.mkString("-"))
-        case other                => (0L, other.mkString)
+        case other => (0L, other.mkString)
       val units = rest.split(":").map(_.trim).filter(_.nonEmpty).map(_.toDouble)
       // rightmost = seconds, then minutes, hours
       var secs = 0.0
@@ -605,7 +624,8 @@ final class ShellSession private (
             h.outputLineCount.incrementAndGet()
             // 输出查看批：行序按读取到达序（stdout/stderr 两读线程并发，全局
             // 近似行序——简洁优先，不做流间严格排序）。
-            h.outputSink(line),
+            h.outputSink(line)
+          ,
           isProcessExited = () => !proc.isAlive
         )
       )
@@ -615,7 +635,8 @@ final class ShellSession private (
           line =>
             h.lastActivityMs.set(System.currentTimeMillis())
             h.outputLineCount.incrementAndGet()
-            h.outputSink(line),
+            h.outputSink(line)
+          ,
           isProcessExited = () => !proc.isAlive
         )
       )
@@ -692,6 +713,7 @@ final class ShellSession private (
         // lastCpu 基线自 0 起 = 进程出生时的 CPU（新进程出生时 CPU 为 0）——首窗
         // 比较的同样是「本窗增量」（出生 → 首次采样），与后续各窗口径一致。
         watch(h.outputLineCount.get(), 0L, 0L)
+      end foregroundNoProgressWatch
 
       // ── Hard timeout watchdog (#22, 2026-08-19 20:35 incident) ──────────
       // `.timeout` over the three IO.blocking reads below is SOFT: IO.blocking
@@ -704,7 +726,9 @@ final class ShellSession private (
       val timeoutWatchdog =
         IO.sleep(timeout) *>
           // 2026-09-10 死日志修复：去掉外层 IO.delay（内层 IO 永不执行）。杀树顺序不变。
-          shellLogger.warn(s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}") *>
+          shellLogger.warn(
+            s"Command timeout (${timeout.toSeconds}s) reached — killing process tree: ${command.take(80)}"
+          ) *>
           ProcessTree.killProcessTree(proc)
 
       for
@@ -770,8 +794,9 @@ final class ShellSession private (
                    "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
                      " seconds and no CPU activity was detected."
                  else
-                  "Command produced no output and no CPU progress for " +
-                    ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling).") +
+                   "Command produced no output and no CPU progress for " +
+                     ForegroundNoProgressTimeout.toSeconds + " seconds (foreground no-progress ceiling)."
+                ) +
                   " This command likely requires interactive terminal input (or is hung). " +
                   "Use a non-interactive alternative, pass an explicit timeout, or run it " +
                   "manually in your terminal."
@@ -895,8 +920,10 @@ final class ShellSession private (
     val idleTimeoutMs = Defaults.BgIdleTimeoutSec.toLong * 1000L
     val stuckWindowMs = stuckWindowSec.toLong * 1000L
 
-    /** 停滞（统一口径，对齐前台 no-progress ceiling）：输出零增长且 CPU 增量
-      * < CpuActiveThresholdNanos（10ms/采样窗口）——双条件（#391 用户裁定）。 */
+    /**
+     * 停滞（统一口径，对齐前台 no-progress ceiling）：输出零增长且 CPU 增量
+     * < CpuActiveThresholdNanos（10ms/采样窗口）——双条件（#391 用户裁定）。
+     */
     def isStalled(lines: Int, cpu: Long, lastLines: Int, lastCpu: Long): Boolean =
       lines <= lastLines && (cpu - lastCpu) < CpuActiveThresholdNanos
 
@@ -933,7 +960,7 @@ final class ShellSession private (
 
               if !isSleepLike && idleMs > idleTimeoutMs && !progress then
                 // B1：idle timeout（300s 无输出）——CPU 豁免已并入 progress 判断
-                //（CPU 忙 → progress=true → 不进入此分支，不杀）。
+                // （CPU 忙 → progress=true → 不进入此分支，不杀）。
                 if health.deadNotified.compareAndSet(false, true) then
                   killWith(
                     s"Background command was idle (no output) for ${idleMs / 1000}s " +
@@ -958,6 +985,7 @@ final class ShellSession private (
               else
                 // 有进展 → 重置停滞观察（总时长不重置，硬超时仍是允许运行总时间）
                 loop(lines, cpu, 0L)
+              end if
             end if
         }
     loop(0, 0L, 0L).start.map(Some(_))
@@ -987,10 +1015,10 @@ final class ShellSession private (
    * exit AND an orphan holder, vs. the previous every-orphan hang.
    */
   private def readStream(
-      is: java.io.InputStream,
-      onLine: String => Unit = _ => (),
-      isProcessExited: () => Boolean = () => true,
-      exitGraceMs: Long = 250L
+    is: java.io.InputStream,
+    onLine: String => Unit = _ => (),
+    isProcessExited: () => Boolean = () => true,
+    exitGraceMs: Long = 250L
   ): String =
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
@@ -1080,20 +1108,23 @@ end ShellSession
 
 object ShellSession:
 
-  /** cwd 判定触发点符号（T2）：错误文本逐字引用，验红 / 日志排障按此串 grep。
-    * 调用点只有一处——`buildProcessBuilder` 内 `safeCwd`（前台 execute、
-    * 后台 executeBackground、命令后 `pwd` 复核三条路径都经 `runProcess` 到此）。 */
+  /**
+   * cwd 判定触发点符号（T2）：错误文本逐字引用，验红 / 日志排障按此串 grep。
+   * 调用点只有一处——`buildProcessBuilder` 内 `safeCwd`（前台 execute、
+   * 后台 executeBackground、命令后 `pwd` 复核三条路径都经 `runProcess` 到此）。
+   */
   private[tools] val CwdSiteBuildProcessBuilder: String = "ShellSession.buildProcessBuilder/safeCwd"
 
-  /** cwd 判定单点（T2，Q1 裁定）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
-    *
-    * 判定面（全部只读文件系统元数据，不做任何「换成别的目录」的动作）：
-    *   - `null` / 空串             → cwd 缺失
-    *   - 路径不存在（exists=false） → 主体反例（旧行为在此静默回退 user.home）
-    *   - 存在但不是目录             → 「非法」面（旧行为同样静默回退）
-    *
-    * `site` 由调用方传入符号名，保证错误文本里的触发点与实际判定点不漂移。
-    */
+  /**
+   * cwd 判定单点（T2，Q1 裁定）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
+   *
+   * 判定面（全部只读文件系统元数据，不做任何「换成别的目录」的动作）：
+   *   - `null` / 空串             → cwd 缺失
+   *   - 路径不存在（exists=false） → 主体反例（旧行为在此静默回退 user.home）
+   *   - 存在但不是目录             → 「非法」面（旧行为同样静默回退）
+   *
+   * `site` 由调用方传入符号名，保证错误文本里的触发点与实际判定点不漂移。
+   */
   private[tools] def resolveCwdOrFail(cwd: String, site: String): String =
     // 解析后绝对路径：与判定用同一个 File，避免「报的路径」与「查的路径」不是同一个。
     val resolved: String =
@@ -1109,6 +1140,8 @@ object ShellSession:
       if !f.exists() then fail("路径不存在（does not exist）")
       else if !f.isDirectory then fail("路径存在但不是目录（not a directory）")
       else resolved
+
+  end resolveCwdOrFail
 
   private val sessions: Ref[IO, Map[String, ShellSession]] =
     Ref.unsafe[IO, Map[String, ShellSession]](Map.empty)
@@ -1140,8 +1173,10 @@ object ShellSession:
           ) ++ (if localAppData.nonEmpty then List(s"$localAppData\\Programs\\Git\\bin\\bash.exe") else Nil)
       candidates.find(p => new File(p).exists()).getOrElse("bash")
 
-  /** True when resolvedBashPath picked the bundled MinGit copy — that one is
-    * invoked with -l + MSYSTEM=MINGW64 (see buildProcessBuilder). */
+  /**
+   * True when resolvedBashPath picked the bundled MinGit copy — that one is
+   * invoked with -l + MSYSTEM=MINGW64 (see buildProcessBuilder).
+   */
   lazy val isBundledBash: Boolean =
     nebflow.core.InstallLayout.bundledBash.contains(resolvedBashPath)
 
@@ -1158,7 +1193,11 @@ object ShellSession:
   ): IO[ShellSession] =
     createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir, sandbox)))
 
-  private  def doGetOrCreate(sessionId: String, initialDir: Option[String], sandbox: Option[nebflow.core.sandbox.SandboxPolicy]): IO[ShellSession] =
+  private def doGetOrCreate(
+    sessionId: String,
+    initialDir: Option[String],
+    sandbox: Option[nebflow.core.sandbox.SandboxPolicy]
+  ): IO[ShellSession] =
     def replace(old: ShellSession): IO[ShellSession] =
       old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
         ShellSession.create(sessionId, initialDir, sandbox).flatMap { newS =>
@@ -1186,6 +1225,8 @@ object ShellSession:
           }
     }
 
+  end doGetOrCreate
+
   def destroySession(sessionId: String): IO[Unit] =
     sessions.modify { m =>
       m.get(sessionId) match
@@ -1212,7 +1253,7 @@ object ShellSession:
       sessions.modify { m =>
         m.get(sid) match
           case Some(s) => (m - sid, s.killActiveProcesses() *> s.kill())
-          case None    => (m, IO.unit)
+          case None => (m, IO.unit)
       }.flatten
     }
 

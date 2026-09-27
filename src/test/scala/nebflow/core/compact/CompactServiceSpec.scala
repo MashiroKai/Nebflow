@@ -65,7 +65,8 @@ class CompactServiceSpec extends FunSuite:
   }
 
   test("Dispatcher reminder carries the tail-fidelity rule (preamble level)") {
-    val p = promptOf(depth = 1, sessionId = Some(s"${nebflow.core.project.ProjectActor.DispatcherSessionPrefix}abc12345"))
+    val p =
+      promptOf(depth = 1, sessionId = Some(s"${nebflow.core.project.ProjectActor.DispatcherSessionPrefix}abc12345"))
     assertTailFidelityRule(p, "Dispatcher")
     // §1 Trigger Task(s) already demanded verbatim quoting pre-fix; keep it pinned.
     assert(p.contains("quote verbatim"), "Dispatcher: §1 verbatim-quote of trigger task must stay")
@@ -83,7 +84,10 @@ class CompactServiceSpec extends FunSuite:
       CompactService.buildCompactReminder(depth = 0),
       CompactService.buildCompactReminder(depth = 1, isLead = true),
       CompactService.buildCompactReminder(depth = 1, isLead = false),
-      CompactService.buildCompactReminder(depth = 1, sessionId = Some(s"${nebflow.core.project.NodeEngine.SessionPrefix}abc12345"))
+      CompactService.buildCompactReminder(
+        depth = 1,
+        sessionId = Some(s"${nebflow.core.project.NodeEngine.SessionPrefix}abc12345")
+      )
     )
     reminderMsgs.zipWithIndex.foreach { (m, i) =>
       assert(CompactService.isCompactReminder(m), s"reminder $i must be recognized")

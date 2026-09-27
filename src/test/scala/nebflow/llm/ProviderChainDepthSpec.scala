@@ -26,18 +26,14 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
   private val NullBackend = null.asInstanceOf[StreamBackend[IO, Fs2Streams[IO]]]
 
   private def mkConfig(spec: (String, List[String])*): NebflowServiceConfig =
-    NebflowServiceConfig(llm =
-      ServiceLlmConfig(providers =
-        spec.map { case (pid, models) =>
-          pid -> ProviderConfig(
-            baseUrl = "http://127.0.0.1:1",
-            apiKey = "k",
-            protocol = LlmProtocol.Anthropic,
-            models = models.map(m => ModelConfig(m, vision = Some(false)))
-          )
-        }.toMap
+    NebflowServiceConfig(llm = ServiceLlmConfig(providers = spec.map { case (pid, models) =>
+      pid -> ProviderConfig(
+        baseUrl = "http://127.0.0.1:1",
+        apiKey = "k",
+        protocol = LlmProtocol.Anthropic,
+        models = models.map(m => ModelConfig(m, vision = Some(false)))
       )
-    )
+    }.toMap))
 
   /** 现读真源镜像：`~/.nebflow/nebflow.json` 的 provider/model 面（`apiKey` 不取）。 */
   private def liveLikeConfig: NebflowServiceConfig =
@@ -102,8 +98,7 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
     for
       reg <- mkRegistry(mkConfig("solo" -> List("m1")))
       cs <- reg.getCandidatesForAgent(Some(AgentModelConfig(preferred = Some("solo/m1"))))
-    yield
-      assertEquals(refs(cs), List("solo/m1"), "配置只有一根时链深 = 1，不得凭空造候选")
+    yield assertEquals(refs(cs), List("solo/m1"), "配置只有一根时链深 = 1，不得凭空造候选")
   }
 
   test("T4: 储备层顺序确定（providerId → model 字典序），同配置两次调用链序一致") {

@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 object ConfigCommand extends CliCommand:
   def name = "config"
@@ -48,8 +48,10 @@ object ConfigCommand extends CliCommand:
               case None =>
                 // Whole-config dump — masked like `config show` (D6).
                 val redacted = io.circe.parser.parse(configStr).map(redact).map(_.noSpaces)
-                if ctx.json then CliResult.Json(io.circe.parser.parse(redacted.getOrElse(configStr)).getOrElse(Json.Null))
+                if ctx.json then
+                  CliResult.Json(io.circe.parser.parse(redacted.getOrElse(configStr)).getOrElse(Json.Null))
                 else CliResult.text(redacted.getOrElse(configStr))
+            end match
           }
 
   end ConfigGet
@@ -88,16 +90,19 @@ object ConfigCommand extends CliCommand:
                   m <- resp.hcursor.downField("message").as[String].toOption
                 yield m) match
                   case Some(err) => IO.pure(CliResult.Error(s"Config update rejected: $err"))
-                  case None      => IO.pure(CliResult.text(s"Config updated: ${key.get} = $value"))
+                  case None => IO.pure(CliResult.text(s"Config updated: ${key.get} = $value"))
               }
               .handleErrorWith(e => IO.pure(CliResult.Error(s"Config update failed: ${e.getMessage}")))
+          end if
 
   end ConfigSet
 
-  /** dot 路径 → 嵌套 JSON。末段路径是键名（与 ConfigGet 的全段下钻对称）。
-    * qa #339 打回：旧基例返回裸值、丢末段键——`set a.b.c true` 实发
-    * {"b": true} 而非 {"a":{"b":{"c":true}}}，静默写错位置。private[cli]
-    * 供 ConfigCommandSpec 直测。 */
+  /**
+   * dot 路径 → 嵌套 JSON。末段路径是键名（与 ConfigGet 的全段下钻对称）。
+   * qa #339 打回：旧基例返回裸值、丢末段键——`set a.b.c true` 实发
+   * {"b": true} 而非 {"a":{"b":{"c":true}}}，静默写错位置。private[cli]
+   * 供 ConfigCommandSpec 直测。
+   */
   private[cli] def buildNestedJson(path: List[String], value: String): Json =
     path match
       case Nil => Json.Null
@@ -107,22 +112,23 @@ object ConfigCommand extends CliCommand:
       case head :: tail =>
         Json.obj(head -> buildNestedJson(tail, value))
 
-  /** D6: mask credentials in a whole-config dump. The design document already
-    * promised this ("`config show` = API key 脱敏", §5.2 drift table) while the
-    * implementation printed the config verbatim, including provider apiKeys and
-    * tokens. Values of secret-named keys become `***`; every other field is
-    * passed through unchanged (structure and non-secret values preserved).
-    * A targeted `config get <key>` is NOT masked — the user asked for that key
-    * by name and a masked answer would be useless.
-    *
-    * The name test is deliberately narrower than a bare `contains("token")`:
-    * `thinkingConfig.budgetTokens` / `*.maxTokens` (llm/config.scala:183) are
-    * numeric QUOTA fields, not credentials, and masking them would corrupt a
-    * non-secret field (the requirement is "secrets masked, non-secrets as-is").
-    * Plural quota names are therefore exempt; singular `token` / `authToken` /
-    * `accessToken` and any `apikey|secret|password|passwd|credential` name are
-    * masked.
-    */
+  /**
+   * D6: mask credentials in a whole-config dump. The design document already
+   * promised this ("`config show` = API key 脱敏", §5.2 drift table) while the
+   * implementation printed the config verbatim, including provider apiKeys and
+   * tokens. Values of secret-named keys become `***`; every other field is
+   * passed through unchanged (structure and non-secret values preserved).
+   * A targeted `config get <key>` is NOT masked — the user asked for that key
+   * by name and a masked answer would be useless.
+   *
+   * The name test is deliberately narrower than a bare `contains("token")`:
+   * `thinkingConfig.budgetTokens` / `*.maxTokens` (llm/config.scala:183) are
+   * numeric QUOTA fields, not credentials, and masking them would corrupt a
+   * non-secret field (the requirement is "secrets masked, non-secrets as-is").
+   * Plural quota names are therefore exempt; singular `token` / `authToken` /
+   * `accessToken` and any `apikey|secret|password|passwd|credential` name are
+   * masked.
+   */
   private[cli] def isSecretKey(key: String): Boolean =
     val k = key.toLowerCase.filter(_.isLetterOrDigit)
     val named =
@@ -173,14 +179,15 @@ object ConfigCommand extends CliCommand:
   private[cli] val NoEditorMessage =
     "No editor available (no interactive terminal / no $EDITOR). Use 'nebflow config set <key> <value>' instead."
 
-  /** 非交互判定 = 「无交互终端」。JDK < 22：`System.console()` 为 null 即 stdin/stdout
-    * 被重定向（非 null 即终端）；JDK ≥ 22（本机运行面 = 23）`System.console()` 恒非
-    * null，终端性只能问 `Console.isTerminal()`（JDK 22 新增）。该法不在本构建的
-    * `-release:17` API 面内（build.sbt:105；`javac --release 17` 同报「找不到符号」），
-    * 且在 JDK 17 运行面上根本不存在 —— 直接调用必 `NoSuchMethodError`，故按名反射
-    * 取；取不到即回到「非 null 即终端」的旧 JDK 语义。实测（本机 JDK 23）：stdin 为
-    * pty ⇒ true；stdin 为 /dev/null（无论 stdout 去向）⇒ false。
-    */
+  /**
+   * 非交互判定 = 「无交互终端」。JDK < 22：`System.console()` 为 null 即 stdin/stdout
+   * 被重定向（非 null 即终端）；JDK ≥ 22（本机运行面 = 23）`System.console()` 恒非
+   * null，终端性只能问 `Console.isTerminal()`（JDK 22 新增）。该法不在本构建的
+   * `-release:17` API 面内（build.sbt:105；`javac --release 17` 同报「找不到符号」），
+   * 且在 JDK 17 运行面上根本不存在 —— 直接调用必 `NoSuchMethodError`，故按名反射
+   * 取；取不到即回到「非 null 即终端」的旧 JDK 语义。实测（本机 JDK 23）：stdin 为
+   * pty ⇒ true；stdin 为 /dev/null（无论 stdout 去向）⇒ false。
+   */
   private[cli] def hasInteractiveTerminal: Boolean =
     val console = System.console()
     if console == null then false
@@ -188,16 +195,20 @@ object ConfigCommand extends CliCommand:
       try console.getClass.getMethod("isTerminal").invoke(console).asInstanceOf[Boolean]
       catch case _: Exception => true
 
-  /** `$EDITOR` → `$VISUAL`（既有优先级，一处不改）。空值/纯空白等同**未设**：
-    * `EDITOR=` 会让 ProcessBuilder 抛 `Cannot run program ""`（见上方缺口实测）。 */
+  /**
+   * `$EDITOR` → `$VISUAL`（既有优先级，一处不改）。空值/纯空白等同**未设**：
+   * `EDITOR=` 会让 ProcessBuilder 抛 `Cannot run program ""`（见上方缺口实测）。
+   */
   private[cli] def pickEditor(editor: Option[String], visual: Option[String]): Option[String] =
     editor.map(_.trim).filter(_.nonEmpty).orElse(visual.map(_.trim).filter(_.nonEmpty))
 
-  /** 兜底判据（纯函数，ConfigEditHeadlessSpec 直测）：**非交互 ∨ 编辑器不可得**。
-    * 与 §一 题面逐肢对齐：「非交互（stdin 非 tty）」= 第一肢；「编辑器不可得
-    * （`$EDITOR` / `$VISUAL` 均空，或 `vi` 不可执行）」= 第二肢 —— 字面析取下「均空」
-    * 即已走兜底，`vi` 可执行与否不改变结论（该子肢被「均空」肢蕴含，故不另判）；
-    * `vi` 作为优先级链末位保留在解析面（保留原链形，见 ConfigEdit.run）。 */
+  /**
+   * 兜底判据（纯函数，ConfigEditHeadlessSpec 直测）：**非交互 ∨ 编辑器不可得**。
+   * 与 §一 题面逐肢对齐：「非交互（stdin 非 tty）」= 第一肢；「编辑器不可得
+   * （`$EDITOR` / `$VISUAL` 均空，或 `vi` 不可执行）」= 第二肢 —— 字面析取下「均空」
+   * 即已走兜底，`vi` 可执行与否不改变结论（该子肢被「均空」肢蕴含，故不另判）；
+   * `vi` 作为优先级链末位保留在解析面（保留原链形，见 ConfigEdit.run）。
+   */
   private[cli] def needsEditorFallback(hasTerminal: Boolean, envEditor: Option[String]): Boolean =
     !hasTerminal || envEditor.isEmpty
 
@@ -221,4 +232,6 @@ object ConfigCommand extends CliCommand:
           val pb = new ProcessBuilder((editor.split("\\s+").toList :+ configPath.toString)*)
           pb.inheritIO().start().waitFor()
         }.as(CliResult.ok)
+    end run
+  end ConfigEdit
 end ConfigCommand

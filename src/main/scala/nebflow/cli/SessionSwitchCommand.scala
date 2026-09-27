@@ -4,19 +4,20 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 
-/** `nebflow session switch <id>` —— 切换网关的**活动会话**。
-  *
-  * 按既有会话模型：发既有 WS 词汇表的 `switchSession` 帧（WebSocketRoutes.scala:2015
-  * 的 `case "switchSession"` → `SessionService.switchSession` → `SessionStore.switchSession`
-  * → 落 `_index.json` 的 activeId）。🔴 会话存储语义一字未动：本件只发既有帧 + 读
-  * 既有 GET 端点，不新增存储字段、不改 `SessionStore`。
-  *
-  * 归属说明（同 config 两条）：挂 `session` 名下的新子命令，实现放本新件，
-  * `SessionCommand.scala` 只在其 `subcommands` / `examples` 两行做追加。
-  *
-  * 只做「本机网关的活动会话切换」。跨实例 / 远程语义**不在本批**（见报告末尾
-  * 「只登记不实现」一节），本件不碰 neblink、不发任何跨机请求。
-  */
+/**
+ * `nebflow session switch <id>` —— 切换网关的**活动会话**。
+ *
+ * 按既有会话模型：发既有 WS 词汇表的 `switchSession` 帧（WebSocketRoutes.scala:2015
+ * 的 `case "switchSession"` → `SessionService.switchSession` → `SessionStore.switchSession`
+ * → 落 `_index.json` 的 activeId）。🔴 会话存储语义一字未动：本件只发既有帧 + 读
+ * 既有 GET 端点，不新增存储字段、不改 `SessionStore`。
+ *
+ * 归属说明（同 config 两条）：挂 `session` 名下的新子命令，实现放本新件，
+ * `SessionCommand.scala` 只在其 `subcommands` / `examples` 两行做追加。
+ *
+ * 只做「本机网关的活动会话切换」。跨实例 / 远程语义**不在本批**（见报告末尾
+ * 「只登记不实现」一节），本件不碰 neblink、不发任何跨机请求。
+ */
 object SessionSwitchSub extends CliSubcommand:
   def name = "switch"
   def description = "Switch the active session"
@@ -39,7 +40,7 @@ object SessionSwitchSub extends CliSubcommand:
               // 这个字段就会把 not-found 静默成 "Switched to …"（qa #339 同款形态）。
               errorOf(resp) match
                 case Some(msg) => IO.pure(CliResult.Error(s"Session switch rejected: $msg"))
-                case None      => verify(client, sessionId, ctx)
+                case None => verify(client, sessionId, ctx)
             }
             .handleErrorWith(e => IO.pure(CliResult.Error(s"Session switch failed: ${e.getMessage}")))
   end run
@@ -51,10 +52,12 @@ object SessionSwitchSub extends CliSubcommand:
       m <- resp.hcursor.downField("message").as[String].toOption
     yield m
 
-  /** 用权威读数复核「真的切过去了」——`GET /api/sessions` 回的 `activeId` 与
-    * `SessionStore.getActiveId` 同源（RestApiRoutes.scala:188-195）。不凭「请求
-    * 没报错」就断言成功：switchSession 的成功回帧是 `memoryStatus`（wsSend 最后一
-    * 帧覆盖先前的 `agentSessionList`），帧里根本没有会话号可对。 */
+  /**
+   * 用权威读数复核「真的切过去了」——`GET /api/sessions` 回的 `activeId` 与
+   * `SessionStore.getActiveId` 同源（RestApiRoutes.scala:188-195）。不凭「请求
+   * 没报错」就断言成功：switchSession 的成功回帧是 `memoryStatus`（wsSend 最后一
+   * 帧覆盖先前的 `agentSessionList`），帧里根本没有会话号可对。
+   */
   private def verify(client: GatewayClient, sessionId: String, ctx: CliContext): IO[CliResult] =
     client.get("/api/sessions").map { sessions =>
       val activeId = sessions.hcursor.downField("activeId").as[String].getOrElse("")

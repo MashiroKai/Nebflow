@@ -2,10 +2,10 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.sandbox.FileSandbox
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.core.sandbox.FileSandbox
+import nebflow.shared.NebflowLogger
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -164,6 +164,7 @@ Edit patterns:
                 record.as(Right(result))
               case left => IO.pure(left)
             }
+        end match
     end match
   end call
 

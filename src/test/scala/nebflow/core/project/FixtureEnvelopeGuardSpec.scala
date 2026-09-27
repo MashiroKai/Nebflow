@@ -7,14 +7,15 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -53,13 +54,20 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
 
   private def node(id: String, name: String, task: String, result: String): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "worker", out = List(OutEdge.nebula),
-      status = NodeLifecycle.Completed, task = Some(task), result = Some(result),
+      id = id,
+      name = name,
+      agent = "worker",
+      out = List(OutEdge.root),
+      status = NodeLifecycle.Completed,
+      task = Some(task),
+      result = Some(result),
       createdAt = System.currentTimeMillis() - 2 * Hour,
       completedAt = Some(System.currentTimeMillis() - Hour)
     )
 
-  private def withFixture(name: String)(body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
+  private def withFixture(name: String)(
+    body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit
+  ): Unit =
     val tmp = os.temp.dir(prefix = s"fixguard-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"fixguard-$name")
@@ -77,27 +85,47 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
         llm = new nebflow.shared.LlmHandle[IO]:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
-          def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+          def sendStream(
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ) =
             fs2.Stream(nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
         resources = SharedResources(
-          llm = llm, dispatcher = dispatcher,
+          llm = llm,
+          dispatcher = dispatcher,
           sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-          projectRoot = os.pwd, thinkingConfigRef = thinkingRef, rateLimiter = rateLimiter,
-          fileChangeTracker = tracker, contextWindow = 100_000,
-          agentLibrary = new AgentLibrary(tmp / "agents"), taskStore = FileTaskStore,
-          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"), fileLockManager = fileLocks,
-          sessionModelOverrides = modelOverrides, providerRegistry = null,
-          healthMonitor = ProviderHealthMonitor(null), actorSystem = system,
+          projectRoot = os.pwd,
+          thinkingConfigRef = thinkingRef,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new AgentLibrary(tmp / "agents"),
+          taskStore = FileTaskStore,
+          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+          fileLockManager = fileLocks,
+          sessionModelOverrides = modelOverrides,
+          providerRegistry = null,
+          healthMonitor = ProviderHealthMonitor(null),
+          actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
           voiceMutedRef = voiceMuted
         )
         recorded <- Ref.of[IO, List[AgentCommand]](Nil)
         rootSid = s"fix-root-$name"
         rootRef <- system.spawn(recorderBehavior(recorded), s"fix-rec-$name")
-        engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
-          rootSid, "fixproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
+        engine = new NodeEngine(
+          store,
+          system,
+          resources,
+          _ => IO.unit,
+          workspace.toString,
+          rootSid,
+          "fixproj",
+          FeedbackRouter.ModeAuto,
+          (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题非 node_report 语义 ⇒ 显式关腿 2（生产默认开）。
-          reportGateHold = Some(false))
+          reportGateHold = Some(false)
+        )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry
@@ -108,6 +136,10 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
+
+  end withFixture
 
   private def recorderBehavior(recorded: Ref[IO, List[AgentCommand]]): nebflow.actor.Behavior[AgentCommand] =
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
@@ -132,22 +164,28 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
   test("X1 GREEN: fixture envelope (name family + payload marker) excluded from scan and ledger-marked") {
     withFixture("x1") { (store, engine, resources, recorded, rootSid) =>
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          "n-fx1" -> node("n-fx1", "cancel-test-9", FixtureTask, "httpbin 响应已获取"),
-          "n-fx2" -> node("n-fx2", "cancel-test", FixtureTask, "another fixture artifact")
-        )))
-        n <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              "n-fx1" -> node("n-fx1", "cancel-test-9", FixtureTask, "httpbin 响应已获取"),
+              "n-fx2" -> node("n-fx2", "cancel-test", FixtureTask, "another fixture artifact")
+            )
+          )
+        )
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
         all <- store.snapshot.map(_.nodes)
         // 二次扫描：已记账 → 不再进入 pending → 无重复 WARN 来源
-        n2 <- engine.redeliverUnconsumedNebulaResults()
+        n2 <- engine.redeliverUnconsumedRootResults()
         msgs2 <- imms(recorded)
       yield (n, msgs, all, n2, msgs2)
       val (n, msgs, all, n2, msgs2) = io.unsafeRunSync()
       assertEquals(clue(n), 0, "fixture envelopes must not be delivered")
       assertEquals(clue(msgs.size), 0, "no envelope may reach the root session")
-      assert(clue(all.values.filter(_.nebulaDeliveredAt.isEmpty)).isEmpty,
-        "excluded fixtures must be ledger-marked (channel closed — no repeated scan hits)")
+      assert(
+        clue(all.values.filter(_.nebulaDeliveredAt.isEmpty)).isEmpty,
+        "excluded fixtures must be ledger-marked (channel closed — no repeated scan hits)"
+      )
       assertEquals(clue(n2), 0)
       assertEquals(clue(msgs2.size), 0, "second scan stays silent (marking prevented re-flagging)")
     }
@@ -156,9 +194,17 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
   test("X2 control: name hits family but payload is genuine work → delivered (双条件缺一不可)") {
     withFixture("x2") { (store, engine, resources, recorded, rootSid) =>
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes + (
-          "n-genuine" -> node("n-genuine", "cancel-test-12", "真实研究任务：调研 CZT 读出电子学文献", "GENUINE_RESEARCH_RESULT"))))
-        n <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-genuine" -> node(
+              "n-genuine",
+              "cancel-test-12",
+              "真实研究任务：调研 CZT 读出电子学文献",
+              "GENUINE_RESEARCH_RESULT"
+            ))
+          )
+        )
+        n <- engine.redeliverUnconsumedRootResults()
         // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
         msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)
@@ -171,22 +217,30 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
   test("X3 control: coincidental 'test' in name but family mismatch → delivered (宁窄勿宽)") {
     withFixture("x3") { (store, engine, resources, recorded, rootSid) =>
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          // 名字含 test 但不命中 ^cancel-test(-\d+)$ 家族——即使载荷带标记也照常投递
-          "n-coincide" -> node("n-coincide", "my-test-node", FixtureTask, "COINCIDENTAL_NAME_RESULT"),
-          // 家族内数字段后缀变体命中 → 排除（家族边界确认）
-          "n-fam-edge" -> node("n-fam-edge", "cancel-test-11", FixtureTask, "FAMILY_EDGE_FIXTURE")
-        )))
-        n <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              // 名字含 test 但不命中 ^cancel-test(-\d+)$ 家族——即使载荷带标记也照常投递
+              "n-coincide" -> node("n-coincide", "my-test-node", FixtureTask, "COINCIDENTAL_NAME_RESULT"),
+              // 家族内数字段后缀变体命中 → 排除（家族边界确认）
+              "n-fam-edge" -> node("n-fam-edge", "cancel-test-11", FixtureTask, "FAMILY_EDGE_FIXTURE")
+            )
+          )
+        )
+        n <- engine.redeliverUnconsumedRootResults()
         // 有界轮询：等待投递消息记录到达（offer→actor 处理异步，立即直读有竞态）
         msgs <- awaitMsgs(recorded, min = 1)
       yield (n, msgs)
       val (n, msgs) = io.unsafeRunSync()
       assertEquals(clue(n), 1, "only the family-matching fixture is excluded")
-      assert(clue(msgs.map(_.text)).exists(_.contains("COINCIDENTAL_NAME_RESULT")),
-        "coincidental test-name with fixture-looking payload still delivered (narrow rule)")
-      assert(clue(msgs.map(_.text)).forall(!_.contains("FAMILY_EDGE_FIXTURE")),
-        "exact family variant (cancel-test-11) stays excluded")
+      assert(
+        clue(msgs.map(_.text)).exists(_.contains("COINCIDENTAL_NAME_RESULT")),
+        "coincidental test-name with fixture-looking payload still delivered (narrow rule)"
+      )
+      assert(
+        clue(msgs.map(_.text)).forall(!_.contains("FAMILY_EDGE_FIXTURE")),
+        "exact family variant (cancel-test-11) stays excluded"
+      )
     }
   }
 
@@ -203,9 +257,15 @@ class FixtureEnvelopeGuardSpec extends FunSuite:
         okLedger <- store.getNode("n-manual-ok").map(_.flatMap(_.nebulaDeliveredAt))
       yield (msgs, fxLedger, okLedger)
       val (msgs, fxLedger, okLedger) = io.unsafeRunSync()
-      assert(clue(msgs.map(_.text)).forall(!_.contains("MANUAL_FIXTURE_ARTIFACT")), "fixture envelope suppressed on manual channel")
+      assert(
+        clue(msgs.map(_.text)).forall(!_.contains("MANUAL_FIXTURE_ARTIFACT")),
+        "fixture envelope suppressed on manual channel"
+      )
       assert(clue(msgs.map(_.text)).exists(_.contains("MANUAL_GENUINE_RESULT")), "genuine manual redelivery passes")
-      assert(clue(fxLedger).isEmpty, "excluded manual envelope must NOT be ledger-marked (node result retained for inspection)")
+      assert(
+        clue(fxLedger).isEmpty,
+        "excluded manual envelope must NOT be ledger-marked (node result retained for inspection)"
+      )
       assert(clue(okLedger).isDefined, "genuine manual redelivery refreshes the ledger")
     }
   }

@@ -285,7 +285,8 @@ export function clearBusy(sessionId) {
     // 不夺进行中的输入焦点（2026-09-15 作者现场报 · 件②）：本函数由全部 turn 终态帧
     // 调用（clearBusyFor ← done/error/interrupted/timeout/maxTokens/compactFailed，
     // 以及 sessionBusy{busy:false}），而引擎在「AskUser 卡 park 住 turn」时**成对**
-    // 发 Done + sessionBusy{busy:false}（AgentActor.scala:3028-3059），InteractionHub
+    // 发 Done + sessionBusy{busy:false}（AgentFinishTurn.finishTurnCont；2026-09-25
+    // 行号引用修正：原 AgentActor.scala:3028-3059 已随 turn 收尾族迁移漂移），InteractionHub
     // 又在发卡片前先发 roundComplete（InteractionHub.scala:145-152）⇒ 卡片与终态帧
     // 落在同一时间窗。此处若无条件 focus()，用户正在 AskUser 卡输入框（或任意别的
     // 可写元素）里打的字会被夺焦、续打落到主输入框。

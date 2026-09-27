@@ -6,13 +6,12 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -45,6 +44,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"connection policy regression agent","tools":[],"category":"standalone"}"""
@@ -52,8 +52,11 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
@@ -62,45 +65,17 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
   /** 捕获 LLM：inputs 记录每次请求 user 文本；可按文本指定延迟。 */
   private class CaptureLlm(delayOf: String => FiniteDuration = _ => 0.millis):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text) >> IO.sleep(delayOf(text)))
           .flatMap(_ => Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -115,7 +90,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -128,7 +103,10 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountProject(
     name: String,
@@ -151,7 +129,12 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
         // 腿 2 默认开行为由 NodeReportReminderSpec 覆盖）。
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -160,7 +143,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
   private def idOf(rt: ProjectRuntime, name: String): IO[String] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n.id
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def nodeById(rt: ProjectRuntime, id: String): IO[Option[NodeDef]] =
@@ -170,7 +153,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     waitUntil(15.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
@@ -182,18 +165,40 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c1-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c1", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 变体 A：有 task 无 out ⇒ 合法（悬空入口节点，创建即运行）
-      rA <- nodeEdit(nodeInput("connp-c1", "task-no-out", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("work without exit")), ctx)
-      _ <- nodeEdit(nodeInput("connp-c1", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
+      rA <- nodeEdit(
+        nodeInput(
+          "connp-c1",
+          "task-no-out",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("work without exit")
+        ),
+        ctx
+      )
+      _ <- nodeEdit(
+        nodeInput(
+          "connp-c1",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       upId <- idOf(rt, "up")
       // 变体 B：有 in 无 out ⇒ 合法（悬空下游节点）
-      rB <- nodeEdit(nodeInput("connp-c1", "in-no-out", "description" -> Json.fromString("test node purpose"),
-        "in" -> Json.fromString(upId)), ctx)
+      rB <- nodeEdit(
+        nodeInput(
+          "connp-c1",
+          "in-no-out",
+          "description" -> Json.fromString("test node purpose"),
+          "in" -> Json.fromString(upId)
+        ),
+        ctx
+      )
       // 变体 C：纯空挂载（无 task 无 in 无 out）⇒ 仍拒（输入侧下限，拒因转移）
       rC <- nodeEdit(nodeInput("connp-c1", "empty", "description" -> Json.fromString("test node purpose")), ctx)
       s <- rt.store.snapshot
@@ -202,13 +207,17 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(rA.isRight, s"task-only create (no out) must now be LEGAL (out nullable), got: $rA")
       assert(rB.isRight, s"in-only create (no out) must now be LEGAL (out nullable), got: $rB")
       assert(rC.isLeft, s"pure empty mount (no task/in/out) must still be rejected, got: $rC")
-      assert(rC.left.exists(_.contains("EMPTY_NODE_CONNECTION")), s"variant C must carry EMPTY_NODE_CONNECTION, got: $rC")
+      assert(
+        rC.left.exists(_.contains("EMPTY_NODE_CONNECTION")),
+        s"variant C must carry EMPTY_NODE_CONNECTION, got: $rC"
+      )
       assert(rC.left.exists(_.contains("input side")), s"variant C must name the input-side requirement, got: $rC")
       val a = s.nodes.values.find(_.name == "task-no-out")
       val b = s.nodes.values.find(_.name == "in-no-out")
       assert(a.exists(_.out.isEmpty), s"dangling entry node persists with out=Nil, got ${a.map(_.out)}")
       assert(b.exists(_.out.isEmpty), s"dangling downstream node persists with out=Nil, got ${b.map(_.out)}")
       assert(s.nodes.values.find(_.name == "empty").isEmpty, "no node persisted for the pure empty mount")
+    end for
   }
 
   // ── ② 入口节点（task+out，无 in）创建即运行 ──────────────
@@ -219,11 +228,19 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c2-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("connp-c2", "entry", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("entry-runs-at-once"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "connp-c2",
+          "entry",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("entry-runs-at-once"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // startNode 触发证据：agent 收到入口 task 文本（创建即运行）
       _ <- waitUntil(10.seconds)(llm.inputs.get.map(_.exists(_.contains("entry-runs-at-once"))))
       _ <- waitStatus(rt, "entry", Set(NodeLifecycle.Completed))
@@ -232,37 +249,63 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     yield
       assert(r.isRight, s"entry node (task+out) create must pass, got: $r")
       assertEquals(n.status, NodeLifecycle.Completed, "entry node must have run to completion")
+    end for
   }
 
   // ── ③ bare "Nebula" = 纯出口标记；显式门集 = 通知声明（2026-09-12 裁定 1）──
 
-  test("③ bare \"Nebula\" parses as EXIT MARKER (on={pass}, mode=signal); \"(pass,failed)Nebula\" keeps the notify form") {
+  test(
+    "③ bare \"Nebula\" parses as EXIT MARKER (on={pass}, mode=signal); \"(pass,failed)Nebula\" keeps the notify form"
+  ) {
     val ws = tempRoot / "ws-c3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"connp-c3-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      r <- nodeEdit(nodeInput("connp-c3", "to-nebula", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("exit via nebula"), "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "connp-c3",
+          "to-nebula",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("exit via nebula"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "to-nebula", Set(NodeLifecycle.Completed))
       n <- idOf(rt, "to-nebula").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
       // 显式门集 = 通知声明（能力保留）：落 {pass,failed}/result（= 旧 bare 形态）
-      rNotify <- nodeEdit(nodeInput("connp-c3", "to-nebula-notify", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("notify root"), "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
+      rNotify <- nodeEdit(
+        nodeInput(
+          "connp-c3",
+          "to-nebula-notify",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("notify root"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "to-nebula-notify", Set(NodeLifecycle.Completed))
       n2 <- idOf(rt, "to-nebula-notify").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isRight, s"bare Nebula create must pass, got: $r")
-      assertEquals(n.out, List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass), OutEdge.Signal)),
-        "bare \"Nebula\" must land as the EXIT MARKER edge ({pass}, signal) — zero delivery, no root notify")
+      assertEquals(
+        n.out,
+        List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)),
+        "bare \"Nebula\" must land as the EXIT MARKER edge ({pass}, signal) — zero delivery, no root notify"
+      )
       assertEquals(n.status, NodeLifecycle.Completed, "exit-marker node still runs to completion")
       assert(rNotify.isRight, s"explicit-gate Nebula create must pass, got: $rNotify")
-      assertEquals(n2.out, List(OutEdge(OutEdge.NebulaTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
-        "explicit gate set must keep the notify form ({pass,failed}, result)")
+      assertEquals(
+        n2.out,
+        List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass, OutEdge.Failed), OutEdge.Result)),
+        "explicit gate set must keep the notify form ({pass,failed}, result)"
+      )
+    end for
   }
 
   // ── ④ in+task 并存合法（wiring 等上游 + task 自足）───────
@@ -273,18 +316,34 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c4-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 已完成上游
-      _ <- nodeEdit(nodeInput("connp-c4", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-result"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "connp-c4",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-result"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "up", Set(NodeLifecycle.Completed))
       upId <- idOf(rt, "up")
       // in+task 并存创建：合法（新规范合法域），in 引用已完成上游 → 投递后启动
-      r <- nodeEdit(nodeInput("connp-c4", "in-and-task", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("self-sufficient work"), "in" -> Json.fromString(upId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      r <- nodeEdit(
+        nodeInput(
+          "connp-c4",
+          "in-and-task",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("self-sufficient work"),
+          "in" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "in-and-task", Set(NodeLifecycle.Completed))
       n <- idOf(rt, "in-and-task").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("node must exist")))
       inputs <- llm.inputs.get
@@ -294,8 +353,11 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(n.in.contains(upId), "node must carry the in edge")
       assert(n.task.exists(_.contains("self-sufficient work")), "node must keep its own task")
       assert(n.status == NodeLifecycle.Completed, "node must start after barrier settles and complete")
-      assert(inputs.exists(t => t.contains("self-sufficient work") && t.contains("=== Node up ===")),
-        "run input must combine own task with upstream result")
+      assert(
+        inputs.exists(t => t.contains("self-sufficient work") && t.contains("=== Node up ===")),
+        "run input must combine own task with upstream result"
+      )
+    end for
   }
 
   // ── ⑤ 纯空挂载继续拒绝 ──────────────────────────────────
@@ -306,7 +368,7 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c5-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       r <- nodeEdit(nodeInput("connp-c5", "empty", "description" -> Json.fromString("test node purpose")), ctx)
@@ -326,18 +388,41 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c6-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c6", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // 全员 Wiring 种子（确定性：src 未完成 → rewire 不触发投递链，dst 不被启动——
       // 本用例主体是 rewire/断开的接线语义，与投递/运行无关）
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-src" -> NodeDef(id = "n-src", name = "src", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
-        "n-dst-a" -> NodeDef(id = "n-dst-a", name = "dst-a", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()),
-        "n-dst-b" -> NodeDef(id = "n-dst-b", name = "dst-b", agent = "test-agent",
-          status = NodeLifecycle.Wiring, out = List(OutEdge.nebula), createdAt = System.currentTimeMillis()))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-src" -> NodeDef(
+              id = "n-src",
+              name = "src",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            ),
+            "n-dst-a" -> NodeDef(
+              id = "n-dst-a",
+              name = "dst-a",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            ),
+            "n-dst-b" -> NodeDef(
+              id = "n-dst-b",
+              name = "dst-b",
+              agent = "test-agent",
+              status = NodeLifecycle.Wiring,
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis()
+            )
+          )
+        )
+      )
       aId <- idOf(rt, "dst-a")
       bId <- idOf(rt, "dst-b")
       // rewire 到 dst-a：合法
@@ -353,10 +438,14 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     yield
       assert(rw.isRight, s"rewire to dst-a must pass, got: $rw")
       assert(rd.isRight, s"disconnect (out=null) must now be LEGAL (out nullable), got: $rd")
-      assert(srcAfterDisc.exists(_.out.isEmpty), s"after disconnect src.out must be Nil, got ${srcAfterDisc.map(_.out)}")
+      assert(
+        srcAfterDisc.exists(_.out.isEmpty),
+        s"after disconnect src.out must be Nil, got ${srcAfterDisc.map(_.out)}"
+      )
       assert(rd2.isRight, s"string \"null\" disconnect must be legal too, got: $rd2")
       assert(rw2.isRight, s"rewire to dst-b must still pass after disconnects, got: $rw2")
       assertEquals(src.out, List(OutEdge(bId)), "src.out must end at dst-b (rewires applied, disconnects not)")
+    end for
   }
 
   // ── ⑦ 存量悬空 completed：接线补投递不回归 + 其他字段编辑合法 ─
@@ -367,21 +456,36 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c7-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c7", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       // legacy 节点合法创建（带 out）→ 完成 → store 直种 out=None 模拟存量悬空形态
-      //（新规范下该形态只能来自存量地图，口径⑤ 不回溯）
-      _ <- nodeEdit(nodeInput("connp-c7", "legacy", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("legacy-retained-result"), "out" -> Json.fromString("Nebula")), ctx)
+      // （新规范下该形态只能来自存量地图，口径⑤ 不回溯）
+      _ <- nodeEdit(
+        nodeInput(
+          "connp-c7",
+          "legacy",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("legacy-retained-result"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "legacy", Set(NodeLifecycle.Completed))
       legacyId <- idOf(rt, "legacy")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(legacyId,
-        s.nodes(legacyId).copy(out = Nil))))
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated(legacyId, s.nodes(legacyId).copy(out = Nil))))
       dangling <- nodeById(rt, legacyId).map(_.getOrElse(fail("legacy must exist")))
       // 下游 consumer（入口创建后完成——补投递只要求 deliveredTo 记账 + 状态合法）
-      _ <- nodeEdit(nodeInput("connp-c7", "consumer", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("consume later"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "connp-c7",
+          "consumer",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("consume later"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "consumer", Set(NodeLifecycle.Completed))
       consumerId <- idOf(rt, "consumer")
       // 存量悬空节点接线 → 补投递触发（机制不回归）
@@ -396,8 +500,12 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
       assert(dangling.out.isEmpty, "legacy node must be dangling (out=null) before rewiring")
       assert(dangling.result.exists(_.nonEmpty), "legacy node must retain its result while dangling")
       assert(rWire.isRight, s"legacy dangling rewire must pass, got: $rWire")
-      assert(consumer.deliveredTo.contains(legacyId), s"consumer must receive legacy's retained result (auto redelivery), got ${consumer.deliveredTo}")
+      assert(
+        consumer.deliveredTo.contains(legacyId),
+        s"consumer must receive legacy's retained result (auto redelivery), got ${consumer.deliveredTo}"
+      )
       assert(rTask.isRight, s"editing other fields on a legacy dangling node must be legal, got: $rTask")
+    end for
   }
 
   // ── ⑧ deps 创建路径：out 已可空置，但输入侧下限仍拦 deps-only ──
@@ -408,32 +516,67 @@ class NodeConnectionPolicySpec extends CatsEffectSuite:
     val system = ActorSystem(s"connp-c8-${scala.util.Random.nextInt(100000)}")
     val llm = CaptureLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountProject("connp-c8", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- nodeEdit(nodeInput("connp-c8", "up", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("up-work"), "out" -> Json.fromString("Nebula")), ctx)
+      _ <- nodeEdit(
+        nodeInput(
+          "connp-c8",
+          "up",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("up-work"),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       upId <- idOf(rt, "up")
       // deps-only（无 task 无 in，无 out）→ 仍拒：拒因 = 输入侧下限（task ∨ in），不是 out 闸
-      rDepsOnly <- nodeEdit(nodeInput("connp-c8", "deps-no-out", "description" -> Json.fromString("test node purpose"),
-        "deps" -> Json.fromString(upId)), ctx)
+      rDepsOnly <- nodeEdit(
+        nodeInput(
+          "connp-c8",
+          "deps-no-out",
+          "description" -> Json.fromString("test node purpose"),
+          "deps" -> Json.fromString(upId)
+        ),
+        ctx
+      )
       // task+deps+out → 合法：deps 清单原样携带（语义零改动）
-      rOk <- nodeEdit(nodeInput("connp-c8", "deps-ok", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("deps waiter work"), "deps" -> Json.fromString(upId),
-        "out" -> Json.fromString("Nebula")), ctx)
+      rOk <- nodeEdit(
+        nodeInput(
+          "connp-c8",
+          "deps-ok",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("deps waiter work"),
+          "deps" -> Json.fromString(upId),
+          "out" -> Json.fromString("Nebula")
+        ),
+        ctx
+      )
       // deps+task 无 out → 合法（out 可空置；deps 不是输入内容，task 满足输入侧下限）
-      rDepsNoOut <- nodeEdit(nodeInput("connp-c8", "deps-task-no-out", "description" -> Json.fromString("test node purpose"),
-        "task" -> Json.fromString("deps waiter work 2"), "deps" -> Json.fromString(upId)), ctx)
+      rDepsNoOut <- nodeEdit(
+        nodeInput(
+          "connp-c8",
+          "deps-task-no-out",
+          "description" -> Json.fromString("test node purpose"),
+          "task" -> Json.fromString("deps waiter work 2"),
+          "deps" -> Json.fromString(upId)
+        ),
+        ctx
+      )
       n <- idOf(rt, "deps-ok").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("deps-ok must exist")))
       n2 <- idOf(rt, "deps-task-no-out").flatMap(nodeById(rt, _)).map(_.getOrElse(fail("deps-task-no-out must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(rDepsOnly.isLeft, s"deps-only create (no task/in/out) must be rejected, got: $rDepsOnly")
-      assert(rDepsOnly.left.exists(_.contains("input side")), s"deps rejection must state the input-side rule, got: $rDepsOnly")
+      assert(
+        rDepsOnly.left.exists(_.contains("input side")),
+        s"deps rejection must state the input-side rule, got: $rDepsOnly"
+      )
       assert(rOk.isRight, s"task+deps+out create must pass, got: $rOk")
       assertEquals(n.deps, List(upId), "deps list must be carried unchanged (deps semantics zero change)")
       assert(rDepsNoOut.isRight, s"task+deps create (no out) must now be LEGAL (out nullable), got: $rDepsNoOut")
       assert(n2.out.isEmpty, s"dangling deps node persists with out=Nil, got ${n2.out}")
+    end for
   }
 
 end NodeConnectionPolicySpec

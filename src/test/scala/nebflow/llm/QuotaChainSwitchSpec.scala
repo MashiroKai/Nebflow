@@ -104,18 +104,14 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
     exchange.close()
 
   private def mkConfig(spec: (String, Int, List[String])*): NebflowServiceConfig =
-    NebflowServiceConfig(llm =
-      ServiceLlmConfig(providers =
-        spec.map { case (pid, port, models) =>
-          pid -> ProviderConfig(
-            baseUrl = s"http://127.0.0.1:$port",
-            apiKey = "test",
-            protocol = LlmProtocol.Anthropic,
-            models = models.map(m => ModelConfig(m, vision = Some(false)))
-          )
-        }.toMap
+    NebflowServiceConfig(llm = ServiceLlmConfig(providers = spec.map { case (pid, port, models) =>
+      pid -> ProviderConfig(
+        baseUrl = s"http://127.0.0.1:$port",
+        apiKey = "test",
+        protocol = LlmProtocol.Anthropic,
+        models = models.map(m => ModelConfig(m, vision = Some(false)))
       )
-    )
+    }.toMap))
 
   private def candidate(pid: String, model: String) =
     ModelCandidate(pid, ProviderConfig("http://localhost", "k", LlmProtocol.OpenAI), model)

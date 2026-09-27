@@ -1,7 +1,8 @@
 package nebflow.agent
 
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
+import nebflow.actor.*
+import nebflow.shared.PathUtil
 
 /**
  * Conditional system prompt sections.
@@ -74,8 +75,10 @@ object PromptSections:
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None,
-    /** Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
-      * resolved per turn in ContextRefresher.resolveAgentsMd). */
+    /**
+     * Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
+     * resolved per turn in ContextRefresher.resolveAgentsMd).
+     */
     agentsMd: Option[String] = None,
     /** True when this agent is a SubTask worker (leaf execution pipeline). */
     isSubTaskWorker: Boolean = false,
@@ -87,12 +90,16 @@ object PromptSections:
     userFacingNode: Boolean = false,
     /** Whether this session's agent is the team lead (Manager). */
     isTeamLead: Boolean = false,
-    /** Whether this agent is the root Nebula agent (Progressive disclosure:
-      * mounted-project list is Nebula-only — dispatcher/node sessions must not
-      * see it, they already carry AGENTS.md / project memory). */
+    /**
+     * Whether this agent is the root Nebula agent (Progressive disclosure:
+     * mounted-project list is Nebula-only — dispatcher/node sessions must not
+     * see it, they already carry AGENTS.md / project memory).
+     */
     isRootAgent: Boolean = false,
-    /** Pre-rendered mounted-project list body (sorted bullet lines, or the
-      * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry. */
+    /**
+     * Pre-rendered mounted-project list body (sorted bullet lines, or the
+     * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry.
+     */
     mountedProjectsText: String = ""
   )
 
@@ -155,13 +162,15 @@ object PromptSections:
   def requiresTools(names: String*): PromptContext => Boolean =
     ctx => names.forall(ctx.availableTools.contains)
 
-  /** 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
-    * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
-    * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
-    * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
-    * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
-    * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
-    * node LLM 调用，token 是经常性成本）。 */
+  /**
+   * 节点会话 always-on belt 行（#304-② 2026-09-12 建段；F8 收口 2026-09-15 起形态
+   * = 「一句申报义务 + 权威位指针」，不再自携值域/后果/受阻行）。公开常量 = 段长门
+   * 的断言对象（本常量 UTF-8 字节数 ≤ [[NodeSessionAlwaysOnSectionMaxBytes]]）。
+   * 完整协议（角色值域、blocked JSON 文法、verifier verdict、未申报语义）的**单一
+   * 权威** = 输入面协议脚注 `NodeEngine.ProtocolFootnote`（引擎编译、随任务输入
+   * 注入、角色分支）+ `node_report` 工具 description；本段禁复述其内容（段进每次
+   * node LLM 调用，token 是经常性成本）。
+   */
   val NodeSessionAlwaysOnSection: String =
     """## Node terminal report (Flow Map node sessions)
 
@@ -192,8 +201,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
 
   /** T1 flow worker 条款。userFacing=false：受众=编排器与下游节点（严格版）。 */
   def flowWorkerIdentityBlock(userFacing: Boolean): String =
-    if userFacing then
-      s"""## Identity and audience (non-negotiable)
+    if userFacing then s"""## Identity and audience (non-negotiable)
          |
          |- You are a pipeline node (user-facing step). Both sides consume you: the orchestrator and
          |  downstream nodes read $$x.output and slot fields mechanically; the end user reads only what
@@ -203,8 +211,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
          |  continue — the orchestrator routes the ruling.
          |- Final-turn output ≤ 800 tokens: conclusions and delivery notes, no background narration.
          |""".stripMargin
-    else
-      s"""## Identity and audience (non-negotiable)
+    else s"""## Identity and audience (non-negotiable)
          |
          |- You are a pipeline node. Your audience is the orchestrator and downstream nodes — they consume
          |  $$x.output and slot fields mechanically; the end user never reads your text.
@@ -615,17 +622,20 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       // 数据根供给（home 硬编码 → 运行时动态化批 2026-09-11；P3）：data.sh 的
       // JSON 由它派生 `data_root` 字段。命名避 NEBFLOW_HOME（env/sysprop 既名，
       // 语义不同：这里是**本实例**数据根的绝对路径）。
-      "NEBFLOW_DATA_ROOT" -> nebflow.core.PathUtil.dataRoot.toString
+      "NEBFLOW_DATA_ROOT" -> nebflow.shared.PathUtil.dataRoot.toString
     )
+    // 无 return 的早退(DisableSyntax.noReturns):脚本异常 ⇒ None ⇒ 与解析失败同样回落 template
     val result =
       try
-        os.proc("bash", script.toString)
-          .call(cwd = os.pwd, env = envVars, check = false)
-          .out
-          .text()
-          .trim
-      catch case _: Exception => return template
-    parser.parse(result).toOption match
+        Some(
+          os.proc("bash", script.toString)
+            .call(cwd = os.pwd, env = envVars, check = false)
+            .out
+            .text()
+            .trim
+        )
+      catch case _: Exception => None
+    result.flatMap(parser.parse(_).toOption) match
       case Some(json) =>
         json.asObject
           .map(_.toMap)
@@ -724,12 +734,16 @@ end PromptSections
  */
 object MountedProjectList:
 
-  /** Placeholder rendered when the registry holds no mounted projects — the
-    * root Nebula session always sees an explicit state, empty included. */
+  /**
+   * Placeholder rendered when the registry holds no mounted projects — the
+   * root Nebula session always sees an explicit state, empty included.
+   */
   val EmptyText = "当前无挂载项目"
 
-  /** Render registry entries as (name, description) into sorted bullet lines.
-    * Empty list → [[EmptyText]]; description is omitted when empty/None. */
+  /**
+   * Render registry entries as (name, description) into sorted bullet lines.
+   * Empty list → [[EmptyText]]; description is omitted when empty/None.
+   */
   def renderLines(projects: List[(String, Option[String])]): String =
     if projects.isEmpty then EmptyText
     else
@@ -738,16 +752,18 @@ object MountedProjectList:
         .map { case (name, desc) =>
           desc.filter(_.nonEmpty) match
             case Some(d) => s"- $name: $d"
-            case None    => s"- $name"
+            case None => s"- $name"
         }
         .mkString("\n")
 
-  /** Line-level +/- delta between the snapshot text and the current text
-    * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
-    * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
-    * desc" / "- name: desc") instead of the colliding "+- name". Returns ""
-    * when the entry sets are identical (only ordering/whitespace changed —
-    * no real change). */
+  /**
+   * Line-level +/- delta between the snapshot text and the current text
+   * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
+   * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
+   * desc" / "- name: desc") instead of the colliding "+- name". Returns ""
+   * when the entry sets are identical (only ordering/whitespace changed —
+   * no real change).
+   */
   def delta(old: String, current: String): String =
     def entries(s: String): Vector[String] =
       s.split("\n").map(_.trim).filter(_.nonEmpty).toVector

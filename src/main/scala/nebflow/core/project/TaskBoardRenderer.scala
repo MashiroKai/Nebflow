@@ -27,34 +27,37 @@ package nebflow.core.project
 object TaskBoardRenderer:
 
   // ---- 上限常量（§3a，集中一处）----
-  val DispatcherMaxChars  = 1200 // 分发器注入块总字符（含 <task-board> 标签与尾注）
-  val DispatcherMaxLines  = 20   // 分发器注入块任务行数
-  val GoalMaxChars        = 120  // 节点块目标行整行上限（含「项目目标：」前缀）
-  val NoteRenderMaxChars  = 300  // 节点块工单 note 渲染上限
-  val NodeSummaryMaxChars = 500  // 节点块全板速览段总字符（含段头与尾注）
-  val NodeSummaryMaxLines = 10   // 节点块全板速览任务行数
-  val TitleMaxChars       = 40   // 紧凑行标题截断
+  val DispatcherMaxChars = 1200 // 分发器注入块总字符（含 <task-board> 标签与尾注）
+  val DispatcherMaxLines = 20 // 分发器注入块任务行数
+  val GoalMaxChars = 120 // 节点块目标行整行上限（含「项目目标：」前缀）
+  val NoteRenderMaxChars = 300 // 节点块工单 note 渲染上限
+  val NodeSummaryMaxChars = 500 // 节点块全板速览段总字符（含段头与尾注）
+  val NodeSummaryMaxLines = 10 // 节点块全板速览任务行数
+  val TitleMaxChars = 40 // 紧凑行标题截断
 
   // ---- show 渲染预算（R3/R8，升级批）----
-  val NoteShowMaxChars        = 16_000 // 当前 note 渲染上限（= 写入侧上限 TaskBoardStore.NoteWriteMaxChars，单测锁一致）
-  val TimelineNoteMaxVersions = 50     // note 主线区读取窗口（**note 类事件条数**；状态类不占此窗口）
-  val TimelineNoteMaxChars    = 24_000 // note 主线区字符预算（超出从最旧的整条丢，绝不截半条）
+  val NoteShowMaxChars = 16_000 // 当前 note 渲染上限（= 写入侧上限 TaskBoardStore.NoteWriteMaxChars，单测锁一致）
+  val TimelineNoteMaxVersions = 50 // note 主线区读取窗口（**note 类事件条数**；状态类不占此窗口）
+  val TimelineNoteMaxChars = 24_000 // note 主线区字符预算（超出从最旧的整条丢，绝不截半条）
   val TimelineContentMaxChars = 10_000 // 单侧内容（before/after/text）渲染上限（超出明示截断）
-  val TimelineStateMaxLines   = 30     // 状态类次区条数（极简行；不参与 note 主线预算）
-  val TimelineStateMaxChars   = 3_000  // 状态类次区字符预算
-  val ReverseDepsShowMax      = 20     // 依赖反查（谁依赖我）条数
-  val ShowHardCapChars        = 48_000 // show 最终硬截断（< 工具结果硬顶 Defaults.DefaultMaxResultSizeChars = 50_000）
+  val TimelineStateMaxLines = 30 // 状态类次区条数（极简行；不参与 note 主线预算）
+  val TimelineStateMaxChars = 3_000 // 状态类次区字符预算
+  val ReverseDepsShowMax = 20 // 依赖反查（谁依赖我）条数
+  val ShowHardCapChars = 48_000 // show 最终硬截断（< 工具结果硬顶 Defaults.DefaultMaxResultSizeChars = 50_000）
 
   private val TailFmt = "+%d more — 用 list 查看 · show 看单条全文"
 
-
-  /** 保证结果 ≤ max（含省略号）——预算敏感场景用（区别于 TaskListStore.truncate
-    * 的 max+1 行为；那几处无硬预算，本处全部卡预算故收紧）。 */
+  /**
+   * 保证结果 ≤ max（含省略号）——预算敏感场景用（区别于 TaskListStore.truncate
+   * 的 max+1 行为；那几处无硬预算，本处全部卡预算故收紧）。
+   */
   def truncate(s: String, max: Int): String =
     if s.length <= max then s else s.take(math.max(0, max - 1)) + "…"
 
-  /** 依赖未闭环判定：blocks 内任一【已知】条目 status ≠ done（未知 id 不计——
-    * 写入侧已拒，正常数据不出现）。 */
+  /**
+   * 依赖未闭环判定：blocks 内任一【已知】条目 status ≠ done（未知 id 不计——
+   * 写入侧已拒，正常数据不出现）。
+   */
   def depsOpen(e: TaskBoardEntry, tasks: List[TaskBoardEntry]): Boolean =
     e.blocks.exists(dep => tasks.find(_.id == dep).exists(_.status != TaskBoardStore.Status.Done))
 
@@ -62,8 +65,10 @@ object TaskBoardRenderer:
   def nodeDone(e: TaskBoardEntry, nodeTerminal: Map[String, String]): Boolean =
     e.nodeId.exists(nodeTerminal.contains) && e.status != TaskBoardStore.Status.Done
 
-  /** 紧凑行文法：`#<id>[<status> @<assignee>] <title截40>` + (→node <id>) +
-    * ⚠deps-open + ⚠node-done。assignee 缺省时方括号内省略 @ 段。 */
+  /**
+   * 紧凑行文法：`#<id>[<status> @<assignee>] <title截40>` + (→node <id>) +
+   * ⚠deps-open + ⚠node-done。assignee 缺省时方括号内省略 @ 段。
+   */
   def compactLine(
     e: TaskBoardEntry,
     tasks: List[TaskBoardEntry],
@@ -76,8 +81,10 @@ object TaskBoardRenderer:
         (if nodeDone(e, nodeTerminal) then " ⚠node-done" else "")
     s"#${e.id}[${e.status}$asg] ${truncate(e.title, TitleMaxChars)}$node$warns"
 
-  /** 分发器注入块（§3a）：全板紧凑行，≤DispatcherMaxChars/DispatcherMaxLines，
-    * 超限整行丢弃+尾注。空板返回空串（接线侧据此整块省略）。 */
+  /**
+   * 分发器注入块（§3a）：全板紧凑行，≤DispatcherMaxChars/DispatcherMaxLines，
+   * 超限整行丢弃+尾注。空板返回空串（接线侧据此整块省略）。
+   */
   def renderDispatcher(
     entries: List[TaskBoardEntry],
     nodeTerminal: Map[String, String] = Map.empty
@@ -87,9 +94,11 @@ object TaskBoardRenderer:
       val lines = entries.map(compactLine(_, entries, nodeTerminal))
       assemble(Some("<task-board>"), lines, DispatcherMaxChars, DispatcherMaxLines, Some("</task-board>"))
 
-  /** 节点注入块（§3a/§3b）：①目标行（goal None → 整行省略）②自己名下工单详情块
-    * （mine 空 → 整段省略）③全板速览（≤NodeSummaryMaxChars/MaxLines，同降级纪律）。
-    * 三段皆空 → 空串（接线侧据此整块省略）。 */
+  /**
+   * 节点注入块（§3a/§3b）：①目标行（goal None → 整行省略）②自己名下工单详情块
+   * （mine 空 → 整段省略）③全板速览（≤NodeSummaryMaxChars/MaxLines，同降级纪律）。
+   * 三段皆空 → 空串（接线侧据此整块省略）。
+   */
   def renderNodeInject(
     goal: Option[String],
     mine: List[TaskBoardEntry],
@@ -119,19 +128,22 @@ object TaskBoardRenderer:
       sections += assemble(Some("全板速览："), lines, NodeSummaryMaxChars, NodeSummaryMaxLines, None)
     if sections.isEmpty then ""
     else sections.mkString("<task-board>\n", "\n", "\n</task-board>")
+  end renderNodeInject
 
   // ------------------------------------------------------------------
   // show（R3/R8 详情渲染，升级批）——纯函数，零 IO
   // ------------------------------------------------------------------
 
-  /** 单条条目详情块：全字段 + 当前 note 全文（可见截断）+ links + 依赖当前态 +
-    * **依赖反查**（谁依赖我，≤ ReverseDepsShowMax + `(+N more)`）+ 变更史**两区**：
-    * 主区 = note 内容变更（`before`/`after` 两侧可还原，时间序）+ 次区 = 状态类极简行。
-    *
-    * 预算依据（为什么不会撞工具结果硬顶 50,000）：当前 note ≤16,000 + note 主线区
-    * ≤24,000 + 状态次区 ≤3,000 + 其余字段/依赖/反查 ~2,000 ≈ 45,000 <
-    * ShowHardCapChars(48,000) < 50,000；极端存量（close 追加出来的超长 note、超长
-    * 历史行）走「单侧可见截断 + 整块丢弃 + 最终硬截断」三道闸，全部明示。 */
+  /**
+   * 单条条目详情块：全字段 + 当前 note 全文（可见截断）+ links + 依赖当前态 +
+   * **依赖反查**（谁依赖我，≤ ReverseDepsShowMax + `(+N more)`）+ 变更史**两区**：
+   * 主区 = note 内容变更（`before`/`after` 两侧可还原，时间序）+ 次区 = 状态类极简行。
+   *
+   * 预算依据（为什么不会撞工具结果硬顶 50,000）：当前 note ≤16,000 + note 主线区
+   * ≤24,000 + 状态次区 ≤3,000 + 其余字段/依赖/反查 ~2,000 ≈ 45,000 <
+   * ShowHardCapChars(48,000) < 50,000；极端存量（close 追加出来的超长 note、超长
+   * 历史行）走「单侧可见截断 + 整块丢弃 + 最终硬截断」三道闸，全部明示。
+   */
   def renderShow(
     e: TaskBoardEntry,
     tasks: List[TaskBoardEntry],
@@ -176,11 +188,16 @@ object TaskBoardRenderer:
     hardCap(
       b.mkString("\n"),
       s"\n… (show truncated at $ShowHardCapChars chars — the full note stays in task-board.json; " +
-        s"the full history in ${TaskBoardHistory.FileName})")
+        s"the full history in ${TaskBoardHistory.FileName})"
+    )
 
-  /** 归档命中（R8 降级路径）：主库已无该 id（30 天 prune），但史文件仍有它的记录
-    * ⇒ 降级渲染时间线，**不报错退出**；主库字段如实标「已清理，不可得」——
-    * 禁编造、禁回填。库与史都没有的 id 由 store 走既有 TBOARD_NOT_FOUND 路径。 */
+  end renderShow
+
+  /**
+   * 归档命中（R8 降级路径）：主库已无该 id（30 天 prune），但史文件仍有它的记录
+   * ⇒ 降级渲染时间线，**不报错退出**；主库字段如实标「已清理，不可得」——
+   * 禁编造、禁回填。库与史都没有的 id 由 store 走既有 TBOARD_NOT_FOUND 路径。
+   */
   def renderArchived(
     id: String,
     tasks: List[TaskBoardEntry],
@@ -196,20 +213,26 @@ object TaskBoardRenderer:
     b ++= renderStateEvents(states)
     hardCap(
       b.mkString("\n"),
-      s"\n… (show truncated at $ShowHardCapChars chars — see ${TaskBoardHistory.FileName} for the rest)")
+      s"\n… (show truncated at $ShowHardCapChars chars — see ${TaskBoardHistory.FileName} for the rest)"
+    )
+  end renderArchived
 
   // ------------------------------------------------------------------
   // 变更史两区渲染：主区 = note 内容变更（可还原），次区 = 状态类极简行
   // ------------------------------------------------------------------
 
-  /** **主区（note 内容变更）**：时间序升序；`update` 覆盖与 `close` 追加都渲染
-    * `before` / `after` 两侧全文（被覆盖前的那一版必须读得出）；`log` 渲染追加段。
-    * 逐条整块装配，超出字符预算从最旧的整块丢（明示），单侧内容超
-    * `TimelineContentMaxChars` 明示截断（全文仍在史文件里）。 */
+  /**
+   * **主区（note 内容变更）**：时间序升序；`update` 覆盖与 `close` 追加都渲染
+   * `before` / `after` 两侧全文（被覆盖前的那一版必须读得出）；`log` 渲染追加段。
+   * 逐条整块装配，超出字符预算从最旧的整块丢（明示），单侧内容超
+   * `TimelineContentMaxChars` 明示截断（全文仍在史文件里）。
+   */
   private def renderNoteTimeline(t: TaskBoardHistory.ReadResult): List[String] =
     if t.events.isEmpty then
-      List("  note changes: (none recorded — this entry's note has never been changed; " +
-        s"current content above, older versions in the rotated ${TaskBoardHistory.ArchiveFileName} if any)")
+      List(
+        "  note changes: (none recorded — this entry's note has never been changed; " +
+          s"current content above, older versions in the rotated ${TaskBoardHistory.ArchiveFileName} if any)"
+      )
     else
       val blocks = scala.collection.mutable.ListBuffer[List[String]]()
       var used = 0
@@ -223,9 +246,11 @@ object TaskBoardRenderer:
       val beyond = t.total - t.events.size
       val notes = List(
         Option.when(dropped > 0)(
-          s"    (+$dropped older note change(s) not shown — char budget $TimelineNoteMaxChars; see ${TaskBoardHistory.FileName})"),
+          s"    (+$dropped older note change(s) not shown — char budget $TimelineNoteMaxChars; see ${TaskBoardHistory.FileName})"
+        ),
         Option.when(beyond > 0)(
-          s"    (+$beyond older note change(s) beyond the $TimelineNoteMaxVersions-event window)"),
+          s"    (+$beyond older note change(s) beyond the $TimelineNoteMaxVersions-event window)"
+        ),
         Option.when(t.skipped > 0)(s"    (history: ${t.skipped} unreadable line(s) skipped)")
       ).flatten
       (s"  note changes (${blocks.size} shown of ${t.total}, oldest first):" :: blocks.toList.flatten) ++ notes
@@ -235,11 +260,15 @@ object TaskBoardRenderer:
     if ev.kind == TaskBoardHistory.Kinds.Log then
       val body = ev.text.getOrElse("")
       List(
-        s"    ${ev.at} log  +${body.length} chars (actor=${ev.actor}${if ev.links.nonEmpty then s", links=${ev.links.mkString(",")}" else ""}${ev.detail.map(d => s" — ${truncate(d, 120)}").getOrElse("")})"
+        s"    ${ev.at} log  +${body.length} chars (actor=${ev.actor}${
+            if ev.links.nonEmpty then s", links=${ev.links.mkString(",")}" else ""
+          }${ev.detail.map(d => s" — ${truncate(d, 120)}").getOrElse("")})"
       ) ++ contentLines("appended", body, None)
     else
-      val label = if ev.kind == TaskBoardHistory.Kinds.Close then "close  [done] outcome appended" else "update  note replaced"
-      val head = s"    ${ev.at} $label (${ev.prev.map(_.length).getOrElse(0)} → ${ev.next.map(_.length).getOrElse(0)} chars, actor=${ev.actor})"
+      val label =
+        if ev.kind == TaskBoardHistory.Kinds.Close then "close  [done] outcome appended" else "update  note replaced"
+      val head =
+        s"    ${ev.at} $label (${ev.prev.map(_.length).getOrElse(0)} → ${ev.next.map(_.length).getOrElse(0)} chars, actor=${ev.actor})"
       head :: (contentLines("before", ev.prev.getOrElse(""), Some(ev.prev.map(_.length).getOrElse(0))) ++
         contentLines("after", ev.next.getOrElse(""), Some(ev.next.map(_.length).getOrElse(0))))
 
@@ -248,19 +277,27 @@ object TaskBoardRenderer:
     val pad = " " * (8 - label.length.min(7))
     val cut = body.length > TimelineContentMaxChars
     val shown = if cut then body.take(TimelineContentMaxChars) else body
-    val head = s"      $label$pad:" + (if cut then s" (showing first $TimelineContentMaxChars of ${fullLen.getOrElse(body.length)} chars)" else "")
+    val head =
+      s"      $label$pad:" + (if cut then
+                                s" (showing first $TimelineContentMaxChars of ${fullLen.getOrElse(body.length)} chars)"
+                              else "")
     head :: shown.split("\n", -1).toList.map(ln => s"        $ln")
 
-  /** **次区（状态类事件）**：极简行（create / 非 note 字段的 update / 无 outcome 的
-    * close / prune / quarantine / rotate），条数与字符双预算、暂新的优先，从最旧的
-    * 整行丢——note 主线永不被状态类淹没。 */
+  /**
+   * **次区（状态类事件）**：极简行（create / 非 note 字段的 update / 无 outcome 的
+   * close / prune / quarantine / rotate），条数与字符双预算、暂新的优先，从最旧的
+   * 整行丢——note 主线永不被状态类淹没。
+   */
   private def renderStateEvents(t: TaskBoardHistory.ReadResult): List[String] =
     if t.events.isEmpty then Nil
     else
       val lines = scala.collection.mutable.ListBuffer[String]()
       var used = 0
       var i = t.events.length - 1
-      while i >= 0 && lines.size < TimelineStateMaxLines && used + minimalLine(t.events(i)).length + 6 <= TimelineStateMaxChars do
+      while i >= 0 && lines.size < TimelineStateMaxLines && used + minimalLine(
+          t.events(i)
+        ).length + 6 <= TimelineStateMaxChars
+      do
         val ln = "    " + minimalLine(t.events(i))
         lines.prepend(ln)
         used += ln.length + 1
@@ -279,10 +316,10 @@ object TaskBoardRenderer:
     List(
       Some(s"${ev.at} ${ev.kind}"),
       ev.field.map(f => s"field=$f"),
-      Option.when(ev.from.isDefined || ev.to.isDefined)(
-        s"${ev.from.getOrElse("?")}→${ev.to.getOrElse("?")}"),
+      Option.when(ev.from.isDefined || ev.to.isDefined)(s"${ev.from.getOrElse("?")}→${ev.to.getOrElse("?")}"),
       Option.when(ev.field.isDefined && ev.field.contains("note") == false && (ev.prev.isDefined || ev.next.isDefined))(
-        s"${ev.prev.map(short).getOrElse("(none)")} → ${ev.next.map(short).getOrElse("(none)")}"),
+        s"${ev.prev.map(short).getOrElse("(none)")} → ${ev.next.map(short).getOrElse("(none)")}"
+      ),
       Some(s"actor=${ev.actor}"),
       ev.detail.map(d => s"detail=${short(d)}")
     ).flatten.mkString(" ")
@@ -302,9 +339,11 @@ object TaskBoardRenderer:
   // 整行装配（降级纪律唯一实现点）
   // ------------------------------------------------------------------
 
-  /** 通用整行装配：header 固定行 + 尽可能多整行（≤maxLines）+（有丢弃时）尾注 +
-    * footer。总输出（含头尾）≤ maxChars；行要么完整装入要么整体丢弃，绝不截半行。
-    * 装不下时从尾部逐行回退（尾注随丢弃数变长，回退一步至多 +1 字符，收敛）。 */
+  /**
+   * 通用整行装配：header 固定行 + 尽可能多整行（≤maxLines）+（有丢弃时）尾注 +
+   * footer。总输出（含头尾）≤ maxChars；行要么完整装入要么整体丢弃，绝不截半行。
+   * 装不下时从尾部逐行回退（尾注随丢弃数变长，回退一步至多 +1 字符，收敛）。
+   */
   private def assemble(
     header: Option[String],
     lines: List[String],
@@ -325,4 +364,5 @@ object TaskBoardRenderer:
       dropped += 1
     val parts = header.toList ++ taken ++ (if dropped > 0 then List(tail(dropped)) else Nil) ++ footer
     parts.mkString("\n")
+  end assemble
 end TaskBoardRenderer

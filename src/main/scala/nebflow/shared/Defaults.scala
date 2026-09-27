@@ -7,16 +7,18 @@ import scala.concurrent.duration.*
  * Centralized here to avoid magic numbers scattered in multiple files.
  */
 object Defaults:
-  /** 兜底上下文窗口——**语义已降级**（案② B6 · `chain-llmstall-fix`，2026-09-21）：
-    * 历史语义 = 「模型配置缺 `contextWindow` 字段时的取值」；B2 落地后语义 =
-    * **「真值未知时的保守上限」**——即 provider 未上报 `modelMaxContext` 且配置里也没有
-    * 显式值时，本值是该 model 被假定的可受理窗口。
-    *
-    * 🔴 本批**不改数值**（128000 逐字不变）：改值会同时移动「缺字段时」与「真值未知时」
-    * 两个场景的读数，而本批的红验锚点只覆盖 clamp 算式（`PerModelContextClampSpec`）。
-    * 语义登记在此，供后续「保守上限该取多少」的独立决策引用。
-    * 消费点：`ProviderRegistry.effectiveContextWindow`（取数单点）与
-    * `ModelCandidate.contextWindow` 的默认值。 */
+  /**
+   * 兜底上下文窗口——**语义已降级**（案② B6 · `chain-llmstall-fix`，2026-09-21）：
+   * 历史语义 = 「模型配置缺 `contextWindow` 字段时的取值」；B2 落地后语义 =
+   * **「真值未知时的保守上限」**——即 provider 未上报 `modelMaxContext` 且配置里也没有
+   * 显式值时，本值是该 model 被假定的可受理窗口。
+   *
+   * 🔴 本批**不改数值**（128000 逐字不变）：改值会同时移动「缺字段时」与「真值未知时」
+   * 两个场景的读数，而本批的红验锚点只覆盖 clamp 算式（`PerModelContextClampSpec`）。
+   * 语义登记在此，供后续「保守上限该取多少」的独立决策引用。
+   * 消费点：`ProviderRegistry.effectiveContextWindow`（取数单点）与
+   * `ModelCandidate.contextWindow` 的默认值。
+   */
   val ContextWindow = 128000
 
   /**
@@ -173,8 +175,8 @@ object Defaults:
    *
    * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T5**）**：
    * system prop `nebflow.shell.bgIdleTimeoutSec`，默认 `300` = **旧行为现行取值**
-   *（现场读数出处 = 本行；I2 前为 `val BgIdleTimeoutSec = 300`）。每次调用现读
-   *（`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）。🔴 I2 **只落参数面、
+   * （现场读数出处 = 本行；I2 前为 `val BgIdleTimeoutSec = 300`）。每次调用现读
+   * （`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）。🔴 I2 **只落参数面、
    * 不上调**——设计件 T5 的提案值 900s（15min）归 I5 翻值；本层默认不变 ⇒ 零行为变化。
    */
   def BgIdleTimeoutSec: Int =
@@ -219,7 +221,8 @@ object Defaults:
    * 延长至 4h（BgGateNodeHardTimeoutMs），总上限取 2h < 4h——闸兜底先于单任务
    * 上限触发；串行多任务的合法长链由「每次后台完成复检时重臂」保护（有活动
    * 就重置）。system prop `nebflow.bgtask.gate.timeoutMs` 可调（CompletionGate
-   * kill-switch 先例；每次调用现读，测试可即时翻转）。 */
+   * kill-switch 先例；每次调用现读，测试可即时翻转）。
+   */
   def BgGateWaitTimeoutMs: Long =
     sys.props.getOrElse("nebflow.bgtask.gate.timeoutMs", (2 * 60 * 60 * 1000L).toString).toLong
 
@@ -282,7 +285,8 @@ object Defaults:
     sys.props
       .getOrElse(
         "nebflow.noderpt.remind.ladderMs",
-        "600000,1800000,3600000,7200000,14400000,28800000,43200000,57600000")
+        "600000,1800000,3600000,7200000,14400000,28800000,43200000,57600000"
+      )
       .split(',')
       .iterator
       .map(_.trim)
@@ -433,7 +437,7 @@ object Defaults:
    *
    * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T3**）**：
    * system prop `nebflow.stuck.thresholdMs`，默认 `600000` = **旧行为现行取值**
-   *（现场读数出处 = 本行；I2 前为 `val StuckThresholdMs = 10 * 60 * 1000L`）。每次
+   * （现场读数出处 = 本行；I2 前为 `val StuckThresholdMs = 10 * 60 * 1000L`）。每次
    * 调用现读（`ToolPhaseStuckMs` 已同款）。🔴 I2 **只落参数面、不上调**——设计件 T3 的
    * 提案值 1800s 归 I5 翻值；本层默认不变 ⇒ 零行为变化（含 `TaskStuckWatcher` 两个
    * 默认参数位与 `GatewayMain` 取数点，`val → def` 对调用方零改动）。
@@ -926,58 +930,72 @@ object Defaults:
   // 全部走 system prop kill-switch 先例（与上面几条同款），但**默认值 = 裁定值**：
   // prop 只为隔离实例/测试缩窗，不改变生产语义。
 
-  /** 单代次恢复预算（默认 **1**）：一个「卡死 episode」内最多一次恢复尝试。
-    *
-    * 理由（§3.3）：「类②误杀（本样本形态）**一次即够**——恢复后若同形态再卡，
-    * 说明不是误判」。episode 边界 = 会话离开 stuck 候选集那一刻（[[TaskStuckWatcher.scan]]
-    * 中与 `stopCounts` 同点的 `genAttempts` 复位）。
-    *
-    * system prop `nebflow.stuck.recoveryMaxPerGen`。 */
+  /**
+   * 单代次恢复预算（默认 **1**）：一个「卡死 episode」内最多一次恢复尝试。
+   *
+   * 理由（§3.3）：「类②误杀（本样本形态）**一次即够**——恢复后若同形态再卡，
+   * 说明不是误判」。episode 边界 = 会话离开 stuck 候选集那一刻（[[TaskStuckWatcher.scan]]
+   * 中与 `stopCounts` 同点的 `genAttempts` 复位）。
+   *
+   * system prop `nebflow.stuck.recoveryMaxPerGen`。
+   */
   def StuckRecoveryMaxPerGen: Int =
     sys.props.getOrElse("nebflow.stuck.recoveryMaxPerGen", "1").toInt
 
-  /** 全链恢复预算（默认 **2**，含跨代次）：同一会话累计最多两次恢复。
-    *
-    * 理由（§3.3）：「与 `BackoffSupervisor.maxRestarts=2` 同档心智；防
-    * 『恢复→再卡→再恢复』链」。跨代次 ⇒ 不随 episode 复位（只随会话消失复位）。
-    *
-    * system prop `nebflow.stuck.recoveryMaxPerChain`。 */
+  /**
+   * 全链恢复预算（默认 **2**，含跨代次）：同一会话累计最多两次恢复。
+   *
+   * 理由（§3.3）：「与 `BackoffSupervisor.maxRestarts=2` 同档心智；防
+   * 『恢复→再卡→再恢复』链」。跨代次 ⇒ 不随 episode 复位（只随会话消失复位）。
+   *
+   * system prop `nebflow.stuck.recoveryMaxPerChain`。
+   */
   def StuckRecoveryMaxPerChain: Int =
     sys.props.getOrElse("nebflow.stuck.recoveryMaxPerChain", "2").toInt
 
-  /** 退避曲线（默认 **30s → 120s → 600s**；基点 = 扫描周期 30s）。
-    *
-    * §3.3：30s 与 `StuckWatcherIntervalSec` 对齐；120s 与 `L3VerifyDelayMs` 同档；
-    * 600s = 阈值档。取值 = `StuckRecoveryBackoffMs(attempt)`（attempt 超界时取末项 =
-    * 上限，不再增长）。 */
+  /**
+   * 退避曲线（默认 **30s → 120s → 600s**；基点 = 扫描周期 30s）。
+   *
+   * §3.3：30s 与 `StuckWatcherIntervalSec` 对齐；120s 与 `L3VerifyDelayMs` 同档；
+   * 600s = 阈值档。取值 = `StuckRecoveryBackoffMs(attempt)`（attempt 超界时取末项 =
+   * 上限，不再增长）。
+   */
   val StuckRecoveryBackoffMs: List[Long] = List(30_000L, 120_000L, 600_000L)
 
-  /** 退避曲线的查询口径：第 `attempt` 次恢复之后的静默时长（attempt 从 1 起；
-    * ≤0 或超界按端点夹取）。纯函数，可独立单测。 */
+  /**
+   * 退避曲线的查询口径：第 `attempt` 次恢复之后的静默时长（attempt 从 1 起；
+   * ≤0 或超界按端点夹取）。纯函数，可独立单测。
+   */
   def stuckRecoveryBackoffMs(attempt: Int): Long =
     if StuckRecoveryBackoffMs.isEmpty then 0L
     else StuckRecoveryBackoffMs(math.max(1, math.min(attempt, StuckRecoveryBackoffMs.size)) - 1)
 
-  /** 恢复后冷却（默认 **20min** = 2×`StuckThresholdMs`）：一次恢复完成后，
-    * 本会话在冷却窗内**零动作**（§3.4 判定序第 3 步）。
-    *
-    * 理由（§3.3）：「防『恢复后立刻又被同轴判死』的自激振荡」。
-    * system prop `nebflow.stuck.recoveryCooldownMs`。 */
+  /**
+   * 恢复后冷却（默认 **20min** = 2×`StuckThresholdMs`）：一次恢复完成后，
+   * 本会话在冷却窗内**零动作**（§3.4 判定序第 3 步）。
+   *
+   * 理由（§3.3）：「防『恢复后立刻又被同轴判死』的自激振荡」。
+   * system prop `nebflow.stuck.recoveryCooldownMs`。
+   */
   def StuckRecoveryCooldownMs: Long =
     sys.props.getOrElse("nebflow.stuck.recoveryCooldownMs", "1200000").toLong
 
-  /** transcript 重放封顶（默认 **40 条**）：resume 时最多重放最近 40 条消息。
-    *
-    * 理由（§3.3）：直击「重发全量 ~250k 上下文 = token 放大面」的教训。
-    * 消费点 = [[nebflow.core.project.NodeEngine.hardResumeNode]]（封顶 + prompt 声明）。
-    * system prop `nebflow.stuck.recoveryReplayMaxMsgs`。 */
+  /**
+   * transcript 重放封顶（默认 **40 条**）：resume 时最多重放最近 40 条消息。
+   *
+   * 理由（§3.3）：直击「重发全量 ~250k 上下文 = token 放大面」的教训。
+   * 消费点 = [[nebflow.core.project.NodeEngine.hardResumeNode]]（封顶 + prompt 声明）。
+   * system prop `nebflow.stuck.recoveryReplayMaxMsgs`。
+   */
   def StuckRecoveryReplayMaxMsgs: Int =
     sys.props.getOrElse("nebflow.stuck.recoveryReplayMaxMsgs", "40").toInt
 
-  /** 互斥点 2（§3.4）的检测窗（默认 **60s** = 扫描周期 ×2）：恢复完成后该窗内若
-    * LoopGuard 跨轮命中计数**上升**（或会话进入 Loop 冻结）⇒ 写 `recovery-loop-detected`
-    * 事件、**立即停恢复链** + 一次上报（= 「反复卡 ⇒ 反复重试」的机器识别点）。
-    * system prop `nebflow.stuck.recoveryLoopDetectMs`。 */
+  /**
+   * 互斥点 2（§3.4）的检测窗（默认 **60s** = 扫描周期 ×2）：恢复完成后该窗内若
+   * LoopGuard 跨轮命中计数**上升**（或会话进入 Loop 冻结）⇒ 写 `recovery-loop-detected`
+   * 事件、**立即停恢复链** + 一次上报（= 「反复卡 ⇒ 反复重试」的机器识别点）。
+   * system prop `nebflow.stuck.recoveryLoopDetectMs`。
+   */
   def StuckRecoveryLoopDetectMs: Long =
     sys.props.getOrElse("nebflow.stuck.recoveryLoopDetectMs", "60000").toLong
 
@@ -1065,8 +1083,10 @@ object Defaults:
     sys.props.getOrElse("nebflow.notify.rootBatchMax", "10").trim.toIntOption.getOrElse(10)
 end Defaults
 
-/** Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
- * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。 */
+/**
+ * Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
+ * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。
+ */
 case class BashResilienceConfig(
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,

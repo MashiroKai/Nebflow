@@ -4,10 +4,11 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.core.AgentRuntimePort
 import nebflow.core.node.NodeRunner
+import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
 
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M4/M6):定位器参数窄化,SubAgentTask 已下沉 shared
 /**
  * DelegateTool — Nebula 专属的一次性执行入口（极简内核形态，2026-09-11 恢复批）。
  *
@@ -52,9 +53,11 @@ object DelegateTool extends Tool:
   /** 内核 agent 定义名（作者裁定 U6=沿用 kernel）：会话 id `delegate-kernel-<8hex>`。 */
   val KernelAgentName = "kernel"
 
-  /** 每根会话的 Delegate 并发上限（R9，作者裁定 U4=D1）。依据是事故记录而非理论：
-    * 2026-08-xx 12:39 现场 7 个并发 Delegate 撞 API 限流后各自进入 retry/fallback
-    * 循环（`TaskStuckWatcher.scala` 头注释在案）。 */
+  /**
+   * 每根会话的 Delegate 并发上限（R9，作者裁定 U4=D1）。依据是事故记录而非理论：
+   * 2026-08-xx 12:39 现场 7 个并发 Delegate 撞 API 限流后各自进入 retry/fallback
+   * 循环（`TaskStuckWatcher.scala` 头注释在案）。
+   */
   val MaxConcurrentPerRoot: Int = 4
 
   /** Sub-agent 深度上限（与 `AgentCore.MaxDepth` 同值；内核是叶子，恒 depth=1）。 */
@@ -182,8 +185,10 @@ object DelegateTool extends Tool:
   /** 在飞快照（R9 判据的最小输入——把 registry 记录投影成可测的纯数据）。 */
   private[tools] final case class InFlight(sessionId: String, status: AgentStatus, startedAt: Long)
 
-  /** R9 判据（**纯函数**，单点来源）：`None` = 放行；`Some(err)` = 拒绝（自描述
-    * 错误含在飞清单 + 哪些在等待答复）。U4=D1：等待答复中的内核同样占额度。 */
+  /**
+   * R9 判据（**纯函数**，单点来源）：`None` = 放行；`Some(err)` = 拒绝（自描述
+   * 错误含在飞清单 + 哪些在等待答复）。U4=D1：等待答复中的内核同样占额度。
+   */
   private[tools] def concurrencyError(inFlight: List[InFlight], now: Long): Option[ToolError] =
     if inFlight.size < MaxConcurrentPerRoot then None
     else
@@ -205,7 +210,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
       )
 
   /** R9 并发校验（U4=D1：等待答复中的内核同样占额度）。 */
-  private def concurrencyCheck(resources: SharedResources, rootSid: String): IO[Either[ToolError, Unit]] =
+  private def concurrencyCheck(resources: AgentRuntimePort, rootSid: String): IO[Either[ToolError, Unit]] =
     resources.agentRegistry.get.map { registry =>
       val inFlight = registry.values
         .filter(r => r.kind == AgentKind.Delegate && (rootSid.isEmpty || r.rootSessionId == rootSid))
@@ -234,6 +239,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
         case Right(kernelDef) =>
           spawnKernel(kernelDef, task, description, ctx)
       }
+    end if
   end call
 
   // ============================================================
@@ -292,7 +298,7 @@ Wait for one to finish, or cancel one with AgentControl(cancel) before delegatin
     description: String,
     workRoot: String,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
@@ -383,5 +389,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
       _ <- subagentRef ! AgentCommand.UserInput(brief, Some(adapterRef))
     yield Right(ack)
+    end for
+  end spawnBackground
 
 end DelegateTool

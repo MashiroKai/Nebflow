@@ -1,8 +1,8 @@
 package nebflow.core.presets
 
 import io.circe.parser.decode
-import nebflow.shared.AgentModelConfig
-import nebflow.core.PathUtil
+import nebflow.actor.RootAgentIdentity
+import nebflow.shared.{AgentModelConfig, PathUtil}
 
 /**
  * 面板模型方案收敛策略（panelscheme 批 2026-09-21，作者令）：
@@ -33,23 +33,25 @@ import nebflow.core.PathUtil
  */
 object SchemePolicy:
 
-  val NebulaName = "Nebula"
+  val RootName = RootAgentIdentity.Name
   val DispatcherName = "project-dispatcher"
   val KernelName = "kernel"
   val GeneralName = "general"
 
   /** 面板可设模型方案的 agent 全集（作者令 2026-09-21：仅这两类）。 */
-  val SettableAgents: Set[String] = Set(NebulaName, DispatcherName)
+  val SettableAgents: Set[String] = Set(RootName, DispatcherName)
 
   /** 动态继承表：agent → 它跟随其**当前**方案的根 agent。 */
   val InheritsFrom: Map[String, String] = Map(
-    KernelName -> NebulaName,
+    KernelName -> RootName,
     GeneralName -> DispatcherName
   )
 
-  /** 读根 agent 的 agent.json 原始 (preset, model) 引用（全局 agents 目录单点）。
-    * 缺文件 / 解析失败 → (None, None)：与根缺失时 Nebula 代码回退同款宽容路径
-    * （回落默认 preset），绝不因继承根缺失而炸装载。每次调用现读 ⇒ 动态跟随。 */
+  /**
+   * 读根 agent 的 agent.json 原始 (preset, model) 引用（全局 agents 目录单点）。
+   * 缺文件 / 解析失败 → (None, None)：与根缺失时 Nebula 代码回退同款宽容路径
+   * （回落默认 preset），绝不因继承根缺失而炸装载。每次调用现读 ⇒ 动态跟随。
+   */
   def rootRefs(root: String): (Option[String], Option[AgentModelConfig]) =
     val jsonPath = PathUtil.dataRoot / "agents" / root / "agent.json"
     if !os.exists(jsonPath) then (None, None)

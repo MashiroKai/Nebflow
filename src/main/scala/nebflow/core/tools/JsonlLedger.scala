@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * Append-only JSONL 账本的读写基元（记忆改造批 2026-09-12，IMPL-1）。
@@ -23,8 +23,10 @@ object JsonlLedger:
 
   private val logger = NebflowLogger.forName("nebflow.memory.ledger")
 
-  /** 行字节下界：任何一行至少含 `"atMs":<13 位>` 之类 ⇒ ≥ 24 B。文件小于
-    * `maxLines * MinLineBytes` 时行数必不超阈 ⇒ 免整文件扫描（快路径）。 */
+  /**
+   * 行字节下界：任何一行至少含 `"atMs":<13 位>` 之类 ⇒ ≥ 24 B。文件小于
+   * `maxLines * MinLineBytes` 时行数必不超阈 ⇒ 免整文件扫描（快路径）。
+   */
   private val MinLineBytes: Long = 24L
 
   /** 追加一行（自动补 `\n`；含惰性轮转）。**不抛异常**：失败返回 Left。 */
@@ -45,16 +47,17 @@ object JsonlLedger:
       case e: Exception =>
         Left(s"${e.getClass.getSimpleName}: ${e.getMessage}")
 
-  /** 读取结果：两代原始行（升序）+ 不可读行数（IO 级失败）。
-    * `unreadableLines` 只计「文件读不出」的行，不解析 JSON（解析归调用方）。 */
+  /**
+   * 读取结果：两代原始行（升序）+ 不可读行数（IO 级失败）。
+   * `unreadableLines` 只计「文件读不出」的行，不解析 JSON（解析归调用方）。
+   */
   final case class ReadBack(lines: Vector[String], ioError: Option[String])
 
   def readLines(active: os.Path, archive: os.Path): ReadBack =
     val buf = Vector.newBuilder[String]
     try
       List(archive, active).foreach { p =>
-        if os.exists(p) && os.isFile(p) then
-          os.read(p).split("\n", -1).foreach(l => if l.trim.nonEmpty then buf += l)
+        if os.exists(p) && os.isFile(p) then os.read(p).split("\n", -1).foreach(l => if l.trim.nonEmpty then buf += l)
       }
       ReadBack(buf.result(), None)
     catch
@@ -71,8 +74,10 @@ object JsonlLedger:
         val lines = if bytes >= maxLines.toLong * MinLineBytes then countLines(active) else 0
         lines > maxLines
 
-  /** 活动文件越阈 → 归档为单代（覆盖上一代）+ 新活动文件空置。返回被归档的
-    * (行数, 字节数)（供调用方落一条自述行）。 */
+  /**
+   * 活动文件越阈 → 归档为单代（覆盖上一代）+ 新活动文件空置。返回被归档的
+   * (行数, 字节数)（供调用方落一条自述行）。
+   */
   private[tools] def rotateIfNeeded(
     active: os.Path,
     archive: os.Path,
@@ -89,7 +94,8 @@ object JsonlLedger:
         if os.exists(archive) then os.remove(archive)
         os.move(active, archive)
         logger.warnSync(
-          s"[memory-ledger] rotated ${active.last} ($totalLines lines / $bytes bytes) -> ${archive.last} (previous generation dropped)")
+          s"[memory-ledger] rotated ${active.last} ($totalLines lines / $bytes bytes) -> ${archive.last} (previous generation dropped)"
+        )
         Some((totalLines, bytes))
 
   private def endsWithNewline(path: os.Path): Boolean =

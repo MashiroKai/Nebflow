@@ -6,12 +6,12 @@ import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
 import nebflow.neblink.NeblinkService
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.headers.`Content-Type`
@@ -19,18 +19,20 @@ import org.http4s.headers.`Content-Type`
 import java.net.InetSocketAddress
 import java.nio.file.Files
 
-/** 2026-09-07 设置页头像加载态修复的路由契约钉：GET /api/neblink/avatar
-  * 同源代理（头像源站无 CORS 头 → 浏览器跨域 fetch 恒失败 → localStorage
-  * 缓存永远建不起来 → 每次进设置页都走慢速远端 <img> 直拉 = 「经常加载态」
-  * 根因）。钉死：
-  *  1. auth 门禁（无 token → 403）
-  *  2. NebLink 未配置 → 404 "NebLink not enabled"
-  *  3. 身份无 avatarUrl → 404 "no avatar"
-  *  4. 上游 200 → 字节与 Content-Type 原样透传
-  *  5. 上游非 200 → 502（客户端缓存层按失败退避处理，不污染既有缓存）
-  *
-  * 时序注意（沿用 FriendApiRoutesSpec 教训）：mock server 的 stop 挂在 IO 的
-  * guarantee 上，不能写同步 finally。 */
+/**
+ * 2026-09-07 设置页头像加载态修复的路由契约钉：GET /api/neblink/avatar
+ * 同源代理（头像源站无 CORS 头 → 浏览器跨域 fetch 恒失败 → localStorage
+ * 缓存永远建不起来 → 每次进设置页都走慢速远端 <img> 直拉 = 「经常加载态」
+ * 根因）。钉死：
+ *  1. auth 门禁（无 token → 403）
+ *  2. NebLink 未配置 → 404 "NebLink not enabled"
+ *  3. 身份无 avatarUrl → 404 "no avatar"
+ *  4. 上游 200 → 字节与 Content-Type 原样透传
+ *  5. 上游非 200 → 502（客户端缓存层按失败退避处理，不污染既有缓存）
+ *
+ * 时序注意（沿用 FriendApiRoutesSpec 教训）：mock server 的 stop 挂在 IO 的
+ * guarantee 上，不能写同步 finally。
+ */
 class AvatarProxyRouteSpec extends CatsEffectSuite:
 
   private val TestToken = "avatar-spec-token"
@@ -129,9 +131,7 @@ class AvatarProxyRouteSpec extends CatsEffectSuite:
     mkRoutes(None).routes(avatarReq).value.flatMap { opt =>
       val resp = opt.getOrElse(fail("route fell through"))
       assertEquals(resp.status, Status.NotFound)
-      resp.as[Json].map(body =>
-        assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled"))
-      )
+      resp.as[Json].map(body => assert(body.hcursor.downField("error").as[String].exists(_ == "NebLink not enabled")))
     }
   }
 
@@ -140,9 +140,7 @@ class AvatarProxyRouteSpec extends CatsEffectSuite:
       routes.routes(avatarReq).value.flatMap { opt =>
         val resp = opt.getOrElse(fail("route fell through"))
         assertEquals(resp.status, Status.NotFound)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("error").as[String].exists(_ == "no avatar"))
-        )
+        resp.as[Json].map(body => assert(body.hcursor.downField("error").as[String].exists(_ == "no avatar")))
       }
     }
   }
@@ -153,7 +151,10 @@ class AvatarProxyRouteSpec extends CatsEffectSuite:
       routes.routes(avatarReq).value.flatMap { opt =>
         val resp = opt.getOrElse(fail("route fell through"))
         assertEquals(resp.status, Status.Ok)
-        assertEquals(resp.headers.get[`Content-Type`].map(ct => s"${ct.mediaType.mainType}/${ct.mediaType.subType}"), Some("image/jpeg"))
+        assertEquals(
+          resp.headers.get[`Content-Type`].map(ct => s"${ct.mediaType.mainType}/${ct.mediaType.subType}"),
+          Some("image/jpeg")
+        )
         resp.body.compile.to(Array).map(bytes => assertEquals(bytes.toSeq, AvatarBytes.toSeq))
       }
     }.guarantee(IO.blocking(origin.stop(0)))
@@ -165,9 +166,9 @@ class AvatarProxyRouteSpec extends CatsEffectSuite:
       routes.routes(avatarReq).value.flatMap { opt =>
         val resp = opt.getOrElse(fail("route fell through"))
         assertEquals(resp.status, Status.BadGateway)
-        resp.as[Json].map(body =>
-          assert(body.hcursor.downField("error").as[String].exists(_.contains("upstream HTTP 500")))
-        )
+        resp
+          .as[Json]
+          .map(body => assert(body.hcursor.downField("error").as[String].exists(_.contains("upstream HTTP 500"))))
       }
     }.guarantee(IO.blocking(origin.stop(0)))
   }

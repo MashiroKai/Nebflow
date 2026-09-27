@@ -5,11 +5,11 @@ import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.circe.CirceEntityDecoder.circeEntityDecoder
 import org.http4s.{Headers, Method, Request, Response, Status, Uri}
 
@@ -64,6 +64,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
 
+    end try
+
+  end withFixture
+
   private def mkRoutes: RestApiRoutes =
     val config = NebflowServiceConfig(
       llm = ServiceLlmConfig(providers = Map.empty)
@@ -96,6 +100,8 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
       wsRoutes = null
     )
 
+  end mkRoutes
+
   private def getAgents: IO[Response[IO]] =
     val req = Request[IO](Method.GET, Uri.unsafeFromString("/agents"))
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
@@ -114,8 +120,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
           assertEquals(names, Keepers, "面板恰三 keeper——fixture team/flow 域 agent 与干扰目录一律不出现")
           assert(!names.contains("domain-agent"), "team 域 agent 不得泄漏进面板")
           assert(!names.contains("flow-agent"), "flow 域 agent 不得泄漏进面板")
-          assert(!names.contains("ExplorerX") && !names.contains("MailX") && !names.contains("emptyX"),
-            ".archived / 仅 memory.md / 空目录一律不出现")
+          assert(
+            !names.contains("ExplorerX") && !names.contains("MailX") && !names.contains("emptyX"),
+            ".archived / 仅 memory.md / 空目录一律不出现"
+          )
         }
       }
     }
@@ -137,6 +145,10 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
   test("auth gate: no token -> 403"):
     withFixture { _ =>
       val req = Request[IO](Method.GET, Uri.unsafeFromString("/agents"))
-      mkRoutes.routes(req).value.map(_.getOrElse(fail("route fell through")))
+      mkRoutes
+        .routes(req)
+        .value
+        .map(_.getOrElse(fail("route fell through")))
         .map(resp => assertEquals(resp.status, Status.Forbidden))
     }
+end AgentPanelConvergenceSpec

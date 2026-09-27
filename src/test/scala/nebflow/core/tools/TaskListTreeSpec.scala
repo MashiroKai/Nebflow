@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 
@@ -82,14 +82,16 @@ class TaskListTreeSpec extends FunSuite:
 
   test("父链（root first）+ 直接子 + 后代计数：链上每层可见，子不展开整棵子树"):
     reset()
-    assert(create("根", "parentId" -> str("")).isRight)                 // #1（空串 = 无父）
-    assert(create("中层", "parentId" -> str("1")).isRight)              // #2
-    assert(create("叶子", "parentId" -> str("2")).isRight)              // #3
-    assert(create("叶子的子", "parentId" -> str("3")).isRight)          // #4
+    assert(create("根", "parentId" -> str("")).isRight) // #1（空串 = 无父）
+    assert(create("中层", "parentId" -> str("1")).isRight) // #2
+    assert(create("叶子", "parentId" -> str("2")).isRight) // #3
+    assert(create("叶子的子", "parentId" -> str("3")).isRight) // #4
 
     val leaf = show("4").toOption.get
-    assert(leaf.contains("parent chain (root first): #1[open] 根 → #2[open] 中层 → #3[open] 叶子"),
-      s"父链 root first 且逐层可见: $leaf")
+    assert(
+      leaf.contains("parent chain (root first): #1[open] 根 → #2[open] 中层 → #3[open] 叶子"),
+      s"父链 root first 且逐层可见: $leaf"
+    )
     assert(!leaf.contains("children ("), "叶子无子 ⇒ 无 children 行")
 
     val mid = show("2").toOption.get
@@ -118,8 +120,8 @@ class TaskListTreeSpec extends FunSuite:
 
   test("自环与回指 → TASKLIST_PARENT_CYCLE（拒绝且不写盘）"):
     reset()
-    assert(create("甲").isRight)  // #1
-    assert(create("乙").isRight)  // #2
+    assert(create("甲").isRight) // #1
+    assert(create("乙").isRight) // #2
     val selfRef = update("1", "parentId" -> str("1"))
     assert(selfRef.isLeft && err(selfRef).contains("TASKLIST_PARENT_CYCLE"), selfRef)
     assert(update("2", "parentId" -> str("1")).isRight)
@@ -138,11 +140,11 @@ class TaskListTreeSpec extends FunSuite:
 
   test("父链深度 root=1、≤5 层；第 6 层 → TASKLIST_PARENT_DEPTH（附修法）"):
     reset()
-    assert(create("L1").isRight)                                     // #1 depth1
-    assert(create("L2", "parentId" -> str("1")).isRight)             // #2 depth2
-    assert(create("L3", "parentId" -> str("2")).isRight)             // #3 depth3
-    assert(create("L4", "parentId" -> str("3")).isRight)             // #4 depth4
-    assert(create("L5", "parentId" -> str("4")).isRight)             // #5 depth5 —— 上限
+    assert(create("L1").isRight) // #1 depth1
+    assert(create("L2", "parentId" -> str("1")).isRight) // #2 depth2
+    assert(create("L3", "parentId" -> str("2")).isRight) // #3 depth3
+    assert(create("L4", "parentId" -> str("3")).isRight) // #4 depth4
+    assert(create("L5", "parentId" -> str("4")).isRight) // #5 depth5 —— 上限
     assertEquals(TaskListStore.parentDepthOf(tasks, "5"), 5, "root = 1 层")
     val r = create("L6", "parentId" -> str("5"))
     assert(r.isLeft && err(r).contains("TASKLIST_PARENT_DEPTH"), r)
@@ -179,8 +181,10 @@ class TaskListTreeSpec extends FunSuite:
     val out = show("1").toOption.get
     assert(out.contains("children (2, 0 open)"), out)
     assert(out.contains("subtree: 2 descendant(s) / 0 open"), out)
-    assert(list().toOption.get.linesIterator.find(_.startsWith("#1 ")).get.contains("⚠children-open") == false,
-      "子全 done ⇒ 无 ⚠children-open")
+    assert(
+      list().toOption.get.linesIterator.find(_.startsWith("#1 ")).get.contains("⚠children-open") == false,
+      "子全 done ⇒ 无 ⚠children-open"
+    )
 
     // 反向：父 close 不级联，open 子仍在，结果行明示
     reset()
@@ -208,9 +212,9 @@ class TaskListTreeSpec extends FunSuite:
 
   test("parent 与 blocks 正交：可共存；依赖 DFS 不吃 parent 边，包含环检测也不吃依赖边"):
     reset()
-    assert(create("父A").isRight)                             // #1 —— 包含边 #1→#2
-    assert(create("子B", "parentId" -> str("1")).isRight)     // #2 —— 包含边 #2→#3
-    assert(create("孙C", "parentId" -> str("2")).isRight)     // #3
+    assert(create("父A").isRight) // #1 —— 包含边 #1→#2
+    assert(create("子B", "parentId" -> str("1")).isRight) // #2 —— 包含边 #2→#3
+    assert(create("孙C", "parentId" -> str("2")).isRight) // #3
     // 共存：B 依赖 A（依赖边 #2→#1，与包含边 #1→#2 反向）—— 合法
     assert(update("2", "blocks" -> arr("1")).isRight, "子依赖父合法（两条边集语义正交）")
     assertEquals(tasks.find(_.id == "2").get.parentId, Some("1"))
@@ -220,17 +224,18 @@ class TaskListTreeSpec extends FunSuite:
     assert(start.isLeft && err(start).contains("TASKLIST_BLOCKED"), start)
     // ② 依赖 DFS 不吃 parent 边：#3 依赖 #1（依赖边 #3→#1）。若 DFS 把包含边
     //    #1→#2→#3 一并算进去，这里会被**误报**成环 —— 必须放行。
-    assert(update("3", "blocks" -> arr("1")).isRight,
-      "依赖 #3→#1 与包含链 #1→#2→#3 反向共存 ⇒ parent 边未混入依赖 DFS")
+    assert(update("3", "blocks" -> arr("1")).isRight, "依赖 #3→#1 与包含链 #1→#2→#3 反向共存 ⇒ parent 边未混入依赖 DFS")
     // ③ 反之亦然：包含环检测不被依赖边影响（#1 挂到 #3 下 = 包含成环 → 仍拒）
     val cyc = update("1", "parentId" -> str("3"))
     assert(cyc.isLeft && err(cyc).contains("TASKLIST_PARENT_CYCLE"), cyc)
     // ④ 对照：同一对 id 走依赖反方向 → 真依赖环（1→3 与既有 3→1 闭环）→ TASKLIST_CYCLE
     val depCyc = update("1", "blocks" -> arr("3"))
     assert(depCyc.isLeft && err(depCyc).contains("TASKLIST_CYCLE"), depCyc)
-    assert(depCyc.swap.toOption.get.message.contains("TASKLIST_CYCLE") &&
-      !depCyc.swap.toOption.get.message.contains("TASKLIST_PARENT_CYCLE"),
-      "依赖环与包含环的码必须各归各（不混报）")
+    assert(
+      depCyc.swap.toOption.get.message.contains("TASKLIST_CYCLE") &&
+        !depCyc.swap.toOption.get.message.contains("TASKLIST_PARENT_CYCLE"),
+      "依赖环与包含环的码必须各归各（不混报）"
+    )
 
   // ===== ⑤ links（自由锚，零可达性校验）=====
 
@@ -265,8 +270,9 @@ class TaskListTreeSpec extends FunSuite:
   test("log 可带 links：并入该条史事件（不改任务体）"):
     reset()
     assert(create("任务").isRight)
-    assert(call("action" -> str("log"), "id" -> str("1"), "text" -> str("补记"),
-      "links" -> arr("commit abc1234")).isRight)
+    assert(
+      call("action" -> str("log"), "id" -> str("1"), "text" -> str("补记"), "links" -> arr("commit abc1234")).isRight
+    )
     assertEquals(tasks.head.links, Nil, "log 的 links 不进任务体")
     val out = show("1").toOption.get
     assert(out.contains("[links: commit abc1234]"), out)
@@ -276,15 +282,17 @@ class TaskListTreeSpec extends FunSuite:
 
   test("prune 稀疏树：父被清掉后子仍可达，父链按 `[gone]` 渲染（禁回填）"):
     reset()
-    assert(create("将清父").isRight)                        // #1
-    assert(create("留子", "parentId" -> str("1")).isRight)   // #2
+    assert(create("将清父").isRight) // #1
+    assert(create("留子", "parentId" -> str("1")).isRight) // #2
     assert(call("action" -> str("close"), "id" -> str("1")).isRight)
     assert(call("action" -> str("close"), "id" -> str("2")).isRight)
     // 手写 40 天前 closedAt（只动 temp 数据根）
     val store = decode[TaskListData](os.read(file)).toOption.get
     val old = java.time.Instant.now().minusSeconds(40L * 24 * 3600).toString
-    os.write.over(file,
-      store.copy(tasks = store.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces)
+    os.write.over(
+      file,
+      store.copy(tasks = store.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old)) else t)).asJson.noSpaces
+    )
     assert(create("触发 prune").isRight)
     assert(!tasks.exists(_.id == "1"), "父被 prune")
 

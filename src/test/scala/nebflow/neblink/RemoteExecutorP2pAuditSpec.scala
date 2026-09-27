@@ -8,13 +8,14 @@ import io.circe.JsonObject
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.{RelayExecAudit, RemoteExecutor, ToolContext}
+import nebflow.shared.{PathUtil, PeerInfo}
 
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.{ConcurrentLinkedQueue, Executors}
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -78,11 +79,12 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
     val requests = new ConcurrentLinkedQueue[(String, String, String)]()
 
     server.setExecutor(pool)
+
     server.createContext(
       "/api/neblink/remote-exec",
       (ex: HttpExchange) =>
         val body = new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
-        val dev = Option(ex.getRequestHeaders.getFirst(Protocol.DeviceHeader)).getOrElse("")
+        val dev = Option(ex.getRequestHeaders.getFirst(nebflow.shared.DeviceHeader)).getOrElse("")
         requests.add((ex.getRequestURI.getPath, dev, body))
         val bytes = """{"output":"p2p-ok","error":""}""".getBytes(StandardCharsets.UTF_8)
         ex.getResponseHeaders.add("Content-Type", "application/json")
@@ -100,6 +102,8 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
       pool.shutdownNow()
       ()
 
+  end StubPeerServer
+
   /** 刚释放的本机端口（绑定即关闭）⇒ 连接必被拒（`isTransientError` 的可重试类失败）。 */
   private def freeTcpPort(): Int =
     val s = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
@@ -111,106 +115,112 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
   test("p2p 真下发：接线点恰落 1 行 via=p2p 审计（来源/对端/redact 命令/projectRoot）") {
     val secret = "sk-live-P2PSECRETVALUE123456"
     val cmd = s"export API_TOKEN=$secret; ssh user@10.1.1.7 uptime"
-    IO.blocking(new StubPeerServer()).flatMap { stub =>
-      Dispatcher.parallel[IO].use { dispatcher =>
-        for
-          ms <- NeblinkService.create(0, dispatcher)
-          // 无 relay client ⇒ executeViaBestPath 走「P2P only」⇒ 真驱动 p2pExecuteWithRetry
-          _ = ms.setRelayClient(None)
-          _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
-          // 对端地址指向 in-process stub：无真实设备、无外网、无 relay 隧道
-          _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", stub.address))
-          srcId <- ms.identity.map(_.deviceId)
-          res <- RemoteExecutor.current
-            .get
-            .execute(
-              "peer-one",
-              "Bash",
-              JsonObject("command" -> cmd.asJson),
-              Some(ToolContext(projectRoot = "/tmp/qa-p2p-proj"))
-            )
-          reqs <- IO.blocking(stub.requests.asScala.toList)
-          lines <- IO.blocking(auditLines)
-        yield (res, reqs, lines, srcId)
-      }.guarantee(IO.blocking(stub.close()))
-    }.map { out =>
-      val (result, reqs, lines, srcId) = out
-      // —— 先证「真走了 p2p」：stub 对端真收到那次下发 ——
-      assertEquals(result, Right("p2p-ok"), s"p2p 下发必须由 stub 对端应答: $result")
-      // xdev 批（2026-09-15）：execute 首触新增**只读画像探针**（kind=probe）⇒
-      // stub 收到 2 次下发：探针（探测命令）+ 业务命令。顺序 = 探针先（ensureProfile
-      // 完成后才下发业务）。
-      assertEquals(reqs.length, 2, s"stub 对端恰收 2 次 p2p 下发（探针+业务）: $reqs")
-      val (probeReq, bizReq) = (reqs(0), reqs(1))
-      // —— 再断言接线点产出：恰 2 行（探针 kind=probe 1 行 + 业务 1 行）、字段合契约 ——
-      assertEquals(lines.length, 2, s"探针 1 行 + 业务 1 行，恰 2 行审计: $lines")
-      val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
-      val probeRows = rows.filter(_.downField("kind").as[String].toOption.contains("probe"))
-      val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
-      assertEquals(probeRows.length, 1, "探针行恰 1（重试/审计语义与业务下发同源）")
-      assertEquals(bizRows.length, 1, "业务行恰 1")
-      val bizRow = bizRows.head
-      assertEquals(bizRow.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
-      assertEquals(bizRow.downField("deviceId").as[String].toOption, Some(srcId), "来源 = 本机 NebLink 身份")
-      assertEquals(bizRow.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
-      assertEquals(bizRow.downField("action").as[String].toOption, Some("Bash"))
-      assertEquals(bizRow.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
-      val shown = bizRow.downField("command").as[String].toOption.getOrElse(fail("command missing"))
-      assert(!shown.contains(secret), s"明文密钥落盘: $shown")
-      assert(!shown.contains("P2PSECRET"), s"明文密钥落盘: $shown")
-      assert(shown.contains("API_TOKEN=[redacted"), s"密钥位已遮蔽: $shown")
-      assert(shown.contains("ssh user@10.1.1.7"), s"非密钥部分保留可读: $shown")
-      // —— 探针行正控（xdev 批新增）：kind=probe、只读命令、同样记对端 ——
-      assertEquals(probeRows.head.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
-      assertEquals(probeRows.head.downField("action").as[String].toOption, Some("Bash"))
-      val probeCmd = probeRows.head.downField("command").as[String].toOption.getOrElse(fail("probe command missing"))
-      assert(probeCmd.contains("cwd="), s"探针行携带探测命令（可审计）: $probeCmd")
-      assert(!probeReq._2.isEmpty, "探针下发同样携带本机 deviceId 头")
-      assertEquals(bizReq._2, srcId, "业务下发携带本机 deviceId 头")
-    }
+    IO.blocking(new StubPeerServer())
+      .flatMap { stub =>
+        Dispatcher
+          .parallel[IO]
+          .use { dispatcher =>
+            for
+              ms <- NeblinkService.create(0, dispatcher)
+              // 无 relay client ⇒ executeViaBestPath 走「P2P only」⇒ 真驱动 p2pExecuteWithRetry
+              _ = ms.setRelayClient(None)
+              _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+              // 对端地址指向 in-process stub：无真实设备、无外网、无 relay 隧道
+              _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", stub.address))
+              srcId <- ms.identity.map(_.deviceId)
+              res <- RemoteExecutor.current.get
+                .execute(
+                  "peer-one",
+                  "Bash",
+                  JsonObject("command" -> cmd.asJson),
+                  Some(ToolContext(projectRoot = "/tmp/qa-p2p-proj"))
+                )
+              reqs <- IO.blocking(stub.requests.asScala.toList)
+              lines <- IO.blocking(auditLines)
+            yield (res, reqs, lines, srcId)
+          }
+          .guarantee(IO.blocking(stub.close()))
+      }
+      .map { out =>
+        val (result, reqs, lines, srcId) = out
+        // —— 先证「真走了 p2p」：stub 对端真收到那次下发 ——
+        assertEquals(result, Right("p2p-ok"), s"p2p 下发必须由 stub 对端应答: $result")
+        // xdev 批（2026-09-15）：execute 首触新增**只读画像探针**（kind=probe）⇒
+        // stub 收到 2 次下发：探针（探测命令）+ 业务命令。顺序 = 探针先（ensureProfile
+        // 完成后才下发业务）。
+        assertEquals(reqs.length, 2, s"stub 对端恰收 2 次 p2p 下发（探针+业务）: $reqs")
+        val (probeReq, bizReq) = (reqs(0), reqs(1))
+        // —— 再断言接线点产出：恰 2 行（探针 kind=probe 1 行 + 业务 1 行）、字段合契约 ——
+        assertEquals(lines.length, 2, s"探针 1 行 + 业务 1 行，恰 2 行审计: $lines")
+        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+        val probeRows = rows.filter(_.downField("kind").as[String].toOption.contains("probe"))
+        val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
+        assertEquals(probeRows.length, 1, "探针行恰 1（重试/审计语义与业务下发同源）")
+        assertEquals(bizRows.length, 1, "业务行恰 1")
+        val bizRow = bizRows.head
+        assertEquals(bizRow.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
+        assertEquals(bizRow.downField("deviceId").as[String].toOption, Some(srcId), "来源 = 本机 NebLink 身份")
+        assertEquals(bizRow.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+        assertEquals(bizRow.downField("action").as[String].toOption, Some("Bash"))
+        assertEquals(bizRow.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
+        val shown = bizRow.downField("command").as[String].toOption.getOrElse(fail("command missing"))
+        assert(!shown.contains(secret), s"明文密钥落盘: $shown")
+        assert(!shown.contains("P2PSECRET"), s"明文密钥落盘: $shown")
+        assert(shown.contains("API_TOKEN=[redacted"), s"密钥位已遮蔽: $shown")
+        assert(shown.contains("ssh user@10.1.1.7"), s"非密钥部分保留可读: $shown")
+        // —— 探针行正控（xdev 批新增）：kind=probe、只读命令、同样记对端 ——
+        assertEquals(probeRows.head.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+        assertEquals(probeRows.head.downField("action").as[String].toOption, Some("Bash"))
+        val probeCmd = probeRows.head.downField("command").as[String].toOption.getOrElse(fail("probe command missing"))
+        assert(probeCmd.contains("cwd="), s"探针行携带探测命令（可审计）: $probeCmd")
+        assert(!probeReq._2.isEmpty, "探针下发同样携带本机 deviceId 头")
+        assertEquals(bizReq._2, srcId, "业务下发携带本机 deviceId 头")
+      }
   }
 
   // ── ② 真 p2p 下发（失败 + 真重试）⇒ 仍恰 1 行 via=p2p ────────────────────
 
   test("p2p 下发失败且真重试 4 次：接线点仍恰 1 行 via=p2p（失败也记、重试不重复记行）") {
     val deadPort = freeTcpPort()
-    Dispatcher.parallel[IO].use { dispatcher =>
-      for
-        ms <- NeblinkService.create(0, dispatcher)
-        _ = ms.setRelayClient(None)
-        _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
-        // 死端点：连接必被拒 ⇒ 「Cannot reach …」= isTransientError ⇒ 走满 3 次重试（1+2+3s）
-        _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", s"http://127.0.0.1:$deadPort"))
-        t0 <- IO.monotonic
-        res <- RemoteExecutor.current
-          .get
-          .execute(
-            "peer-one",
-            "Bash",
-            JsonObject("command" -> "uname -a".asJson),
-            Some(ToolContext(projectRoot = "/tmp/qa-p2p-proj"))
-          )
-        elapsed <- IO.monotonic.map(_ - t0)
-        lines <- IO.blocking(auditLines)
-      yield (res, elapsed, lines)
-    }.map { out =>
-      val (result, elapsed, lines) = out
-      val msg = result.fold(e => e.message, ok => s"unexpected success: $ok")
-      assert(msg.startsWith("Cannot reach"), s"期望可重试类连接失败: $result")
-      // 重试 3 次（1s+2s+3s 退避）⇒ 4 次网络尝试；耗时下界证明重试链真的跑了
-      // （xdev 批：探针先行也走同一条重试链 ⇒ elapsed 覆盖「探针 + 业务」两轮）。
-      assert(elapsed >= 5.seconds, s"重试必须真的发生（退避 1+2+3s）: elapsed=$elapsed")
-      // xdev 批：2 行 = 探针（kind=probe，失败也记）+ 业务（失败也记）；重试均不重复记行。
-      assertEquals(lines.length, 2, s"探针 + 业务各恰 1 行审计: $lines")
-      val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
-      val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
-      assertEquals(bizRows.length, 1, "业务行恰 1（探针行另有 kind=probe 标记）")
-      val c = bizRows.head
-      assertEquals(c.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
-      assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
-      assertEquals(c.downField("action").as[String].toOption, Some("Bash"))
-      assertEquals(c.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
-    }
+    Dispatcher
+      .parallel[IO]
+      .use { dispatcher =>
+        for
+          ms <- NeblinkService.create(0, dispatcher)
+          _ = ms.setRelayClient(None)
+          _ <- IO(RemoteExecutor.initialize(ms, dispatcher, None))
+          // 死端点：连接必被拒 ⇒ 「Cannot reach …」= isTransientError ⇒ 走满 3 次重试（1+2+3s）
+          _ <- ms.upsertPeer(PeerInfo("peer-1", "peer-one", "macos", s"http://127.0.0.1:$deadPort"))
+          t0 <- IO.monotonic
+          res <- RemoteExecutor.current.get
+            .execute(
+              "peer-one",
+              "Bash",
+              JsonObject("command" -> "uname -a".asJson),
+              Some(ToolContext(projectRoot = "/tmp/qa-p2p-proj"))
+            )
+          elapsed <- IO.monotonic.map(_ - t0)
+          lines <- IO.blocking(auditLines)
+        yield (res, elapsed, lines)
+      }
+      .map { out =>
+        val (result, elapsed, lines) = out
+        val msg = result.fold(e => e.message, ok => s"unexpected success: $ok")
+        assert(msg.startsWith("Cannot reach"), s"期望可重试类连接失败: $result")
+        // 重试 3 次（1s+2s+3s 退避）⇒ 4 次网络尝试；耗时下界证明重试链真的跑了
+        // （xdev 批：探针先行也走同一条重试链 ⇒ elapsed 覆盖「探针 + 业务」两轮）。
+        assert(elapsed >= 5.seconds, s"重试必须真的发生（退避 1+2+3s）: elapsed=$elapsed")
+        // xdev 批：2 行 = 探针（kind=probe，失败也记）+ 业务（失败也记）；重试均不重复记行。
+        assertEquals(lines.length, 2, s"探针 + 业务各恰 1 行审计: $lines")
+        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+        val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
+        assertEquals(bizRows.length, 1, "业务行恰 1（探针行另有 kind=probe 标记）")
+        val c = bizRows.head
+        assertEquals(c.downField("via").as[String].toOption, Some("p2p"), "审计行必须来自 p2p 接线点")
+        assertEquals(c.downField("targetDeviceId").as[String].toOption, Some("peer-1"))
+        assertEquals(c.downField("action").as[String].toOption, Some("Bash"))
+        assertEquals(c.downField("projectRoot").as[String].toOption, Some("/tmp/qa-p2p-proj"))
+      }
   }
 
 end RemoteExecutorP2pAuditSpec

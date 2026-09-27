@@ -7,14 +7,15 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.*
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -48,12 +49,20 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
 
   private def node(id: String, name: String, status: String, result: String, completedAt: Option[Long]): NodeDef =
     NodeDef(
-      id = id, name = name, agent = "worker", out = List(OutEdge.nebula), status = status,
-      result = Some(result), createdAt = System.currentTimeMillis() - 2 * Hour,
-      completedAt = completedAt, ttlExpireAt = completedAt.map(_ + NodeEngine.TtlDisplayMs)
+      id = id,
+      name = name,
+      agent = "worker",
+      out = List(OutEdge.root),
+      status = status,
+      result = Some(result),
+      createdAt = System.currentTimeMillis() - 2 * Hour,
+      completedAt = completedAt,
+      ttlExpireAt = completedAt.map(_ + NodeEngine.TtlDisplayMs)
     )
 
-  private def withFixture(name: String)(body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit): Unit =
+  private def withFixture(name: String)(
+    body: (FlowMapStore, NodeEngine, SharedResources, Ref[IO, List[AgentCommand]], String) => Unit
+  ): Unit =
     val tmp = os.temp.dir(prefix = s"fresh-$name")
     PathUtil.setDataRoot(tmp / "data")
     val system = ActorSystem(s"fresh-$name")
@@ -71,32 +80,52 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
         llm = new nebflow.shared.LlmHandle[IO]:
           def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
             IO.raiseError(new RuntimeException("not expected"))
-          def sendStream(req: nebflow.shared.LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
+          def sendStream(
+            req: nebflow.shared.LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ) =
             fs2.Stream(nebflow.shared.StreamChunk.TextDelta("ok"), nebflow.shared.StreamChunk.Done(None, None))
         resources = SharedResources(
-          llm = llm, dispatcher = dispatcher,
+          llm = llm,
+          dispatcher = dispatcher,
           sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-          projectRoot = os.pwd, thinkingConfigRef = thinkingRef, rateLimiter = rateLimiter,
-          fileChangeTracker = tracker, contextWindow = 100_000,
-          agentLibrary = new AgentLibrary(tmp / "agents"), taskStore = FileTaskStore,
-          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"), fileLockManager = fileLocks,
-          sessionModelOverrides = modelOverrides, providerRegistry = null,
-          healthMonitor = ProviderHealthMonitor(null), actorSystem = system,
+          projectRoot = os.pwd,
+          thinkingConfigRef = thinkingRef,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new AgentLibrary(tmp / "agents"),
+          taskStore = FileTaskStore,
+          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+          fileLockManager = fileLocks,
+          sessionModelOverrides = modelOverrides,
+          providerRegistry = null,
+          healthMonitor = ProviderHealthMonitor(null),
+          actorSystem = system,
           subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
           voiceMutedRef = voiceMuted
         )
         recorded <- Ref.of[IO, List[AgentCommand]](Nil)
         rootSid = s"fresh-root-$name"
         rootRef <- system.spawn(recorderBehavior(recorded), s"fresh-rec-$name")
-        engine = new NodeEngine(store, system, resources, _ => IO.unit, workspace.toString,
-          rootSid, "freshproj", FeedbackRouter.ModeAuto, (_, _, _) => IO.unit,
+        engine = new NodeEngine(
+          store,
+          system,
+          resources,
+          _ => IO.unit,
+          workspace.toString,
+          rootSid,
+          "freshproj",
+          FeedbackRouter.ModeAuto,
+          (_, _, _) => IO.unit,
           // noderpt 批 A 段：本 fixture 主题 = 重投新鲜度门 ⇒ 显式关腿 2（生产默认开）。
           reportGateHold = Some(false),
           // notifybatch 返工（2026-09-18 · F-2 对齐）：root 通道打包窗**显式关窗**——
           // 本 fixture 主题 = 补投扫描的**新鲜度门控**（F1/F3 直接数「新鲜逐条 + 历史合并
           // 单条」的条数），打包窗会把新鲜腿攒成一条 ⇒ 与本题的条数判据正交但会改读数。
           // 窗本体由 `RootNotifyBatchSpec` 专项覆盖；🔴 原断言一字未改。
-          rootNotifyQuietMs = Some(0))
+          rootNotifyQuietMs = Some(0)
+        )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
       resources.agentRegistry
@@ -107,6 +136,10 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
+
+  end withFixture
 
   private def recorderBehavior(recorded: Ref[IO, List[AgentCommand]]): nebflow.actor.Behavior[AgentCommand] =
     lazy val b: nebflow.actor.Behavior[AgentCommand] =
@@ -120,13 +153,35 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
     withFixture("f1") { (store, engine, resources, recorded, rootSid) =>
       val now = System.currentTimeMillis()
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          "n-stale-a" -> node("n-stale-a", "stale-alpha", NodeLifecycle.Completed, "STALE_ALPHA_RESULT_1903", Some(now - 25 * Hour)),
-          "n-stale-b" -> node("n-stale-b", "stale-beta", NodeLifecycle.Completed, "STALE_BETA_RESULT_1903", Some(now - 25 * Hour)),
-          "n-fresh-c" -> node("n-fresh-c", "fresh-gamma", NodeLifecycle.Completed, "FRESH_GAMMA_RESULT", Some(now - Hour)),
-          "n-none-d"  -> node("n-none-d", "none-delta", NodeLifecycle.Completed, "NONE_DELTA_RESULT", None)
-        )))
-        n <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              "n-stale-a" -> node(
+                "n-stale-a",
+                "stale-alpha",
+                NodeLifecycle.Completed,
+                "STALE_ALPHA_RESULT_1903",
+                Some(now - 25 * Hour)
+              ),
+              "n-stale-b" -> node(
+                "n-stale-b",
+                "stale-beta",
+                NodeLifecycle.Completed,
+                "STALE_BETA_RESULT_1903",
+                Some(now - 25 * Hour)
+              ),
+              "n-fresh-c" -> node(
+                "n-fresh-c",
+                "fresh-gamma",
+                NodeLifecycle.Completed,
+                "FRESH_GAMMA_RESULT",
+                Some(now - Hour)
+              ),
+              "n-none-d" -> node("n-none-d", "none-delta", NodeLifecycle.Completed, "NONE_DELTA_RESULT", None)
+            )
+          )
+        )
+        n <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
         all <- store.snapshot.map(_.nodes)
       yield (n, msgs, all)
@@ -138,13 +193,25 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
       assertEquals(clue(merged.size), 1, "exactly one merged summary notification")
       val m = merged.head
       assert(clue(m.text).contains("stale-alpha") && clue(m.text).contains("n-stale-a"), "summary carries nodeId+name")
-      assert(clue(m.text).contains("stale-beta") && clue(m.text).contains("n-stale-b"), "summary carries second nodeId+name")
-      assert(clue(m.text).contains("STALE_ALPHA_RESULT_1903") && clue(m.text).contains("STALE_BETA_RESULT_1903"), "summary carries result digests (照投不丢)")
+      assert(
+        clue(m.text).contains("stale-beta") && clue(m.text).contains("n-stale-b"),
+        "summary carries second nodeId+name"
+      )
+      assert(
+        clue(m.text).contains("STALE_ALPHA_RESULT_1903") && clue(m.text).contains("STALE_BETA_RESULT_1903"),
+        "summary carries result digests (照投不丢)"
+      )
       assertEquals(clue(m.eventType), Some("completed"), "all-completed batch rides completed header")
-      assert(clue(msgs.filterNot(_.text.contains("历史欠账汇总补投")).map(_.text))
-        .exists(_.contains("FRESH_GAMMA_RESULT")), "<24h debt still delivered individually")
-      assert(clue(msgs.filterNot(_.text.contains("历史欠账汇总补投")).map(_.text))
-        .exists(_.contains("NONE_DELTA_RESULT")), "missing completedAt treated as fresh (宁投勿丢)")
+      assert(
+        clue(msgs.filterNot(_.text.contains("历史欠账汇总补投")).map(_.text))
+          .exists(_.contains("FRESH_GAMMA_RESULT")),
+        "<24h debt still delivered individually"
+      )
+      assert(
+        clue(msgs.filterNot(_.text.contains("历史欠账汇总补投")).map(_.text))
+          .exists(_.contains("NONE_DELTA_RESULT")),
+        "missing completedAt treated as fresh (宁投勿丢)"
+      )
       assert(clue(all.values.filter(_.nebulaDeliveredAt.isEmpty)).isEmpty, "every delivered node must be ledger-marked")
     }
   }
@@ -153,11 +220,27 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
     withFixture("f2") { (store, engine, resources, recorded, rootSid) =>
       val now = System.currentTimeMillis()
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          "n-old-f" -> node("n-old-f", "old-fail", NodeLifecycle.Failed, "OLD_FAILURE_DETAIL", Some(now - 30 * Hour)),
-          "n-old-c" -> node("n-old-c", "old-done", NodeLifecycle.Completed, "OLD_DONE_RESULT", Some(now - 30 * Hour))
-        )))
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              "n-old-f" -> node(
+                "n-old-f",
+                "old-fail",
+                NodeLifecycle.Failed,
+                "OLD_FAILURE_DETAIL",
+                Some(now - 30 * Hour)
+              ),
+              "n-old-c" -> node(
+                "n-old-c",
+                "old-done",
+                NodeLifecycle.Completed,
+                "OLD_DONE_RESULT",
+                Some(now - 30 * Hour)
+              )
+            )
+          )
+        )
+        _ <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
       yield msgs
       val msgs = io.unsafeRunSync()
@@ -171,11 +254,27 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
     withFixture("f3") { (store, engine, resources, recorded, rootSid) =>
       val now = System.currentTimeMillis()
       val io = for
-        _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-          "n-y-a" -> node("n-y-a", "yesterday-alpha", NodeLifecycle.Completed, "YESTERDAY_ALPHA", Some(now - 23 * Hour)),
-          "n-y-b" -> node("n-y-b", "yesterday-beta", NodeLifecycle.Completed, "YESTERDAY_BETA", Some(now - 23 * Hour))
-        )))
-        _ <- engine.redeliverUnconsumedNebulaResults()
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            s.nodes ++ Map(
+              "n-y-a" -> node(
+                "n-y-a",
+                "yesterday-alpha",
+                NodeLifecycle.Completed,
+                "YESTERDAY_ALPHA",
+                Some(now - 23 * Hour)
+              ),
+              "n-y-b" -> node(
+                "n-y-b",
+                "yesterday-beta",
+                NodeLifecycle.Completed,
+                "YESTERDAY_BETA",
+                Some(now - 23 * Hour)
+              )
+            )
+          )
+        )
+        _ <- engine.redeliverUnconsumedRootResults()
         msgs <- imms(recorded)
       yield msgs
       val msgs = io.unsafeRunSync()

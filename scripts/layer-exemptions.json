@@ -1,0 +1,5 @@
+{
+  "_header": "Phase 5 解耦(行为保持重构,2026-09-25)。分层豁免基线:门禁断言『实测 (文件,目标包) 反向边集合 ⊆ 本基线』,基线只减不增;PR 减边须同步缩基线(node scripts/check-scala-layers.mjs --update 可重播种,既有 reason 按同 (from,to) 保留)。",
+  "generatedBy": "scripts/check-scala-layers.mjs --update",
+  "entries": []
+}

@@ -28,15 +28,32 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
 
   // ── 夹具 ───────────────────────────────────────────────────────
 
-  private def note(id: String, atMs: Long, target: String, action: String,
-                   section: Option[String] = None, matchText: Option[String] = None,
-                   content: Option[String] = None): MemoryQueue.Note =
-    MemoryQueue.Note(id, atMs, "2026-09-13T00:00:00Z", target, action, section, matchText, content, Some("s"), MemoryQueue.TriggerManual)
+  private def note(
+    id: String,
+    atMs: Long,
+    target: String,
+    action: String,
+    section: Option[String] = None,
+    matchText: Option[String] = None,
+    content: Option[String] = None
+  ): MemoryQueue.Note =
+    MemoryQueue.Note(
+      id,
+      atMs,
+      "2026-09-13T00:00:00Z",
+      target,
+      action,
+      section,
+      matchText,
+      content,
+      Some("s"),
+      MemoryQueue.TriggerManual
+    )
 
   private def stateOf(notes: Vector[MemoryQueue.Note]): MemoryQueue.State =
     MemoryQueue.State(notes, Vector.empty, Set.empty, 0, 0)
 
-  private val userFile    = "/tmp/x/User.md"
+  private val userFile = "/tmp/x/User.md"
   private val liveContent = "# U\n\n## 节\n\n- 甲条目\n"
 
   /** 整族夹具：缺文件 / 缺节 / 节内定位不到 各一条。 */
@@ -50,7 +67,7 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
     MemoryQueue.plan(
       stateOf(familyNotes),
       Map(
-        "user"          -> MemoryQueue.TargetFile(userFile, liveContent),
+        "user" -> MemoryQueue.TargetFile(userFile, liveContent),
         "project:ghost" -> MemoryQueue.TargetFile("/tmp/x/ghost/.nebflow/memory.md", "", exists = false)
       )
     )
@@ -70,8 +87,7 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
     assertEquals(plan.countOf(Bucket.WouldRetry), 3, s"整族三条都应可重试: ${plan.items}")
     assertEquals(plan.countOf(Bucket.WouldObsolete), 0, "整族不得落终态桶")
     assertEquals(plan.retryable.sorted, familyNotes.map(_.id).sorted, "retryable 清单与桶逐条一致")
-    assertEquals(plan.authorized.sorted, familyNotes.map(_.id).sorted,
-      "可重试族仍进裁决面（不授权的后果是消费者永远看不到 + 条目永不闭合 = 活锁）")
+    assertEquals(plan.authorized.sorted, familyNotes.map(_.id).sorted, "可重试族仍进裁决面（不授权的后果是消费者永远看不到 + 条目永不闭合 = 活锁）")
     assertEquals(Bucket.label(Bucket.WouldRetry), "would-retry", "桶名不得含终态词")
     val rendered = plan.render()
     assert(rendered.contains("would-retry"), s"render 必须列出第四段桶:\n$rendered")
@@ -80,17 +96,18 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
 
   test("① 引擎面（A′ 零新建）：缺文件条目投影恒 0 B、不进落笔面"):
     val plan = familyPlan
-    val pj   = plan.projections.find(_.target == "project:ghost").get
+    val pj = plan.projections.find(_.target == "project:ghost").get
     assertEquals(pj.beforeBytes, 0L)
     assertEquals(pj.projectedBytes, 0L, "零新建：不许出现 0→N 的新建投影")
     assertEquals(pj.delta, 0L)
     assertEquals(plan.countOf(Bucket.WouldApply), 0, "整族无可落条目（零文件写）")
 
   test("① 引擎面（通则）：缺文件 ≠ 空文件——同内容在 exists=true 下照旧可落"):
-    val notes  = Vector(note("q-1", 1L, "project:g", "append", None, None, Some("- 新条")))
+    val notes = Vector(note("q-1", 1L, "project:g", "append", None, None, Some("- 新条")))
     val ghostP = "/tmp/x/g/.nebflow/memory.md"
-    val absent = MemoryQueue.plan(stateOf(notes), Map("project:g" -> MemoryQueue.TargetFile(ghostP, "", exists = false)))
-    val empty  = MemoryQueue.plan(stateOf(notes), Map("project:g" -> MemoryQueue.TargetFile(ghostP, "")))
+    val absent =
+      MemoryQueue.plan(stateOf(notes), Map("project:g" -> MemoryQueue.TargetFile(ghostP, "", exists = false)))
+    val empty = MemoryQueue.plan(stateOf(notes), Map("project:g" -> MemoryQueue.TargetFile(ghostP, "")))
     assertEquals(absent.countOf(Bucket.WouldRetry), 1)
     assertEquals(absent.projections.head.projectedBytes, 0L)
     assertEquals(empty.countOf(Bucket.WouldApply), 1, "文件存在且为空 ⇒ 追加到空文件（旧行为未回退）")
@@ -111,7 +128,7 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
     //   · 旧版弱锚 `contains("section")` → **四成员逐条**在案；
     //   · 结局词 / 禁终态词 / 禁新建 三条仍在本族块内逐条判读（措辞锚逐字更新）。
     val familyAnchor = "Missing-target family"
-    val idx          = md.indexOf(familyAnchor)
+    val idx = md.indexOf(familyAnchor)
     assertEquals(idx >= 0, true, s"缺「目标缺失族」整族硬规则（现措辞锚 `$familyAnchor`）:\n$md")
     val blockEnd = md.indexOf("superseded-by-later", idx)
     assert(
@@ -166,16 +183,16 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
 
   test("③ 简报指引面：无可重试族 ⇒ 该段整体消失（不留常驻噪声）"):
     val notes = Vector(note("q-ok", 1L, "user", "append", None, None, Some("- 新条目")))
-    val plan  = MemoryQueue.plan(stateOf(notes), Map("user" -> MemoryQueue.TargetFile(userFile, liveContent)))
-    val text  = MemoryTrack.brief(workerRoot, MemoryQueue.TriggerManual, notes, plan)
+    val plan = MemoryQueue.plan(stateOf(notes), Map("user" -> MemoryQueue.TargetFile(userFile, liveContent)))
+    val text = MemoryTrack.brief(workerRoot, MemoryQueue.TriggerManual, notes, plan)
     assert(!text.contains("目标缺失族"), s"无该族 ⇒ 无该段:\n$text")
 
   // ── ④ 三处一致 ─────────────────────────────────────────────────
 
   test("④ 三处一致：引擎词 / system.md 词 / 简报词同指「可重试族」，且与折叠谓词同族"):
     val rendered = familyPlan.render()
-    val md       = seedSystemMd
-    val text     = MemoryTrack.brief(workerRoot, MemoryQueue.TriggerManual, familyNotes, familyPlan)
+    val md = seedSystemMd
+    val text = MemoryTrack.brief(workerRoot, MemoryQueue.TriggerManual, familyNotes, familyPlan)
     assert(rendered.toLowerCase.contains("retryable"), "引擎 render 缺 retryable 域词")
     assert(md.contains("retryable"), "system.md 缺 retryable 域词")
     assert(text.contains("可重试"), "简报缺「可重试」域词")
@@ -197,7 +214,7 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
     assume(os.exists(queuePath), s"本机队列不存在（$queuePath）—— 环境依赖用例，skip")
     val raw0 = os.read(queuePath)
     val sha0 = MessageDigest.getInstance("SHA-256").digest(raw0.getBytes(UTF_8)).map("%02x".format(_)).mkString
-    val st   = MemoryQueue.readState()
+    val st = MemoryQueue.readState()
     assume(st.pending.nonEmpty, "队列无 pending —— skip")
     val plan = (for
       files <- MemoryTrack.memoryFilesOf(st.pending)
@@ -217,9 +234,12 @@ class MemoryTargetRetryDomainSpec extends FunSuite:
     assertEquals(
       plan.countOf(Bucket.WouldApply) + plan.countOf(Bucket.WouldObsolete) +
         plan.countOf(Bucket.WouldRetry) + plan.countOf(Bucket.WouldDefer),
-      plan.items.size)
+      plan.items.size
+    )
     // 缺陷① 的现场：项目层文件**存在** ⇒ 今天不该出现 target-missing（A′ 今天零代价）
     val missingFile = plan.items.filter(i => i.bucket == Bucket.WouldRetry && i.detail.startsWith("target-missing"))
-    println(s"-- would-retry/target-missing today: ${missingFile.size} (${missingFile.map(_.ref).take(10).mkString(", ")})")
+    println(
+      s"-- would-retry/target-missing today: ${missingFile.size} (${missingFile.map(_.ref).take(10).mkString(", ")})"
+    )
 
 end MemoryTargetRetryDomainSpec

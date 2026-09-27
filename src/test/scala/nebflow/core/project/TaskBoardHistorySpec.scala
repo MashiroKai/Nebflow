@@ -58,7 +58,8 @@ class TaskBoardHistorySpec extends FunSuite:
       assertEquals(hist(a).readFor("1").total, 1)
       // 本用例不写 ~/.nebflow（路径全部由 workspace 派生）
       assert(ha.file.toString.startsWith(a.toString), ha.file.toString)
-    finally { os.remove.all(a); os.remove.all(b) }
+    finally
+      os.remove.all(a); os.remove.all(b)
 
   // ===== ② append → readFor 往返 =====
 
@@ -66,15 +67,51 @@ class TaskBoardHistorySpec extends FunSuite:
     val ws = tmpWs()
     try
       val h = hist(ws)
-      assertEquals(h.appendSync(TaskBoardEvent(at = "2026-09-11T09:00:00Z", kind = "create",
-        id = Some("1"), actor = "dispatcher", detail = Some("title=甲"))), None)
-      assertEquals(h.appendSync(TaskBoardEvent(at = "2026-09-11T09:01:00Z", kind = "update",
-        id = Some("1"), actor = "node", field = Some("status"), from = Some("open"),
-        to = Some("in_progress"))), None)
-      assertEquals(h.appendSync(TaskBoardEvent(at = "2026-09-11T09:02:00Z", kind = "log",
-        id = Some("1"), actor = "node", text = Some("第一段记录"), links = List("/tmp/a.md"))), None)
-      assertEquals(h.appendSync(TaskBoardEvent(at = "2026-09-11T09:03:00Z", kind = "create",
-        id = Some("2"), actor = "dispatcher")), None) // 另一条目——预筛须排除
+      assertEquals(
+        h.appendSync(
+          TaskBoardEvent(
+            at = "2026-09-11T09:00:00Z",
+            kind = "create",
+            id = Some("1"),
+            actor = "dispatcher",
+            detail = Some("title=甲")
+          )
+        ),
+        None
+      )
+      assertEquals(
+        h.appendSync(
+          TaskBoardEvent(
+            at = "2026-09-11T09:01:00Z",
+            kind = "update",
+            id = Some("1"),
+            actor = "node",
+            field = Some("status"),
+            from = Some("open"),
+            to = Some("in_progress")
+          )
+        ),
+        None
+      )
+      assertEquals(
+        h.appendSync(
+          TaskBoardEvent(
+            at = "2026-09-11T09:02:00Z",
+            kind = "log",
+            id = Some("1"),
+            actor = "node",
+            text = Some("第一段记录"),
+            links = List("/tmp/a.md")
+          )
+        ),
+        None
+      )
+      assertEquals(
+        h.appendSync(
+          TaskBoardEvent(at = "2026-09-11T09:03:00Z", kind = "create", id = Some("2"), actor = "dispatcher")
+        ),
+        None
+      ) // 另一条目——预筛须排除
 
       val r = h.readFor("1")
       assertEquals(r.events.map(_.kind), List("create", "update", "log"), "升序 = 文件行序")
@@ -97,6 +134,7 @@ class TaskBoardHistorySpec extends FunSuite:
 
       assertEquals(h.readFor("9").total, 0, "不存在的 id 零命中（不与其他 id 串味）")
     finally os.remove.all(ws)
+    end try
 
   // ===== ③ 容错：坏行跳过 + 尾换行补齐 =====
 
@@ -104,9 +142,13 @@ class TaskBoardHistorySpec extends FunSuite:
     val ws = tmpWs()
     try
       val h = hist(ws)
-      os.write.over(h.file, lineJson("1", "good-1") + "\n" +
-        """{"id":"1","kind":"update","broken""" + "\n" + // 非法 JSON 但含 "id":"1" 预筛命中
-        lineJson("1", "good-2") + "\n", createFolders = true)
+      os.write.over(
+        h.file,
+        lineJson("1", "good-1") + "\n" +
+          """{"id":"1","kind":"update","broken""" + "\n" + // 非法 JSON 但含 "id":"1" 预筛命中
+          lineJson("1", "good-2") + "\n",
+        createFolders = true
+      )
       val r = h.readFor("1")
       assertEquals(r.events.map(_.detail), List(Some("good-1"), Some("good-2")))
       assertEquals(r.total, 2)
@@ -115,6 +157,8 @@ class TaskBoardHistorySpec extends FunSuite:
       assertEquals(h.appendSync(ev("1", "log", "node")), None)
       assertEquals(h.readFor("1").total, 3)
     finally os.remove.all(ws)
+
+    end try
 
   test("尾字节非换行（crash 半行）→ 追加前先补 \\n，两行均独立可解析"):
     val ws = tmpWs()
@@ -138,8 +182,18 @@ class TaskBoardHistorySpec extends FunSuite:
       bigFile(h.file, TaskBoardHistory.RotationMaxLines + 1, "gen1")
       val before = os.read.lines(h.file).size
       assert(before > TaskBoardHistory.RotationMaxLines, before.toString)
-      assertEquals(h.appendSync(TaskBoardEvent(at = "2026-09-11T10:00:00Z", kind = "log",
-        id = Some("1"), actor = "node", text = Some("轮转后第一笔"))), None)
+      assertEquals(
+        h.appendSync(
+          TaskBoardEvent(
+            at = "2026-09-11T10:00:00Z",
+            kind = "log",
+            id = Some("1"),
+            actor = "node",
+            text = Some("轮转后第一笔")
+          )
+        ),
+        None
+      )
 
       assert(os.exists(h.archiveFile), "上一代归档存在")
       assertEquals(os.read.lines(h.archiveFile).size, before, "归档 = 轮转前的活动文件全文")
@@ -152,6 +206,8 @@ class TaskBoardHistorySpec extends FunSuite:
       assert(r.total > 1, s"跨代读取（归档 + 活动）: $r")
       assertEquals(r.events.last.text, Some("轮转后第一笔"), "升序：归档在前、活动在后")
     finally os.remove.all(ws)
+
+    end try
 
   test("轮转（字节）：活动文件 > 5 MiB → 轮转（与行数先到为准）"):
     val ws = tmpWs()
@@ -176,15 +232,19 @@ class TaskBoardHistorySpec extends FunSuite:
       bigFile(h.file, TaskBoardHistory.RotationMaxLines + 1, "gen1")
       assertEquals(h.appendSync(ev("1", "log", "node")), None) // 第 1 次轮转 → archive = gen1
       assert(os.read(h.archiveFile).contains("gen1"))
-      os.write.append(h.file, (1 to TaskBoardHistory.RotationMaxLines + 1)
-        .map(i => lineJson("2", s"gen2-$i")).mkString("\n") + "\n")
+      os.write.append(
+        h.file,
+        (1 to TaskBoardHistory.RotationMaxLines + 1)
+          .map(i => lineJson("2", s"gen2-$i"))
+          .mkString("\n") + "\n"
+      )
       assertEquals(h.appendSync(ev("2", "log", "node")), None) // 第 2 次轮转 → archive = gen2
       val arch = os.read(h.archiveFile)
       assert(arch.contains("gen2"), "归档 = 最近一代")
       assert(!arch.contains("gen1"), "更早一代被覆盖丢弃（只保留上一代）")
-      assertEquals(os.list(ws / ".nebflow").count(_.last.startsWith("task-history")).toInt, 2,
-        "磁盘上恒为 2 个史文件（活动 + 上一代）")
+      assertEquals(os.list(ws / ".nebflow").count(_.last.startsWith("task-history")).toInt, 2, "磁盘上恒为 2 个史文件（活动 + 上一代）")
     finally os.remove.all(ws)
+    end try
 
   // ===== ⑤ 读路径零写盘 + 手动清理无感 =====
 
@@ -227,9 +287,11 @@ class TaskBoardHistorySpec extends FunSuite:
     val ws = tmpWs()
     try
       val h = hist(ws)
-      os.write.over(h.file,
+      os.write.over(
+        h.file,
         """{"at":"2026-09-11T09:00:00Z","id":"1","actor":"system","kind":"future-kind","unknownKey":42}""" + "\n",
-        createFolders = true)
+        createFolders = true
+      )
       val r = h.readFor("1")
       assertEquals(r.skipped, 0, "未知 kind/未知键不是坏行")
       assertEquals(r.events.head.kind, "future-kind")
@@ -240,16 +302,39 @@ class TaskBoardHistorySpec extends FunSuite:
   test("note 类 / 状态类分类单点（作者口径：历史的主体 = note 内容变更）"):
     val note = List(
       TaskBoardEvent(at = "t", kind = "log", id = Some("1"), text = Some("x")),
-      TaskBoardEvent(at = "t", kind = "update", id = Some("1"), field = Some("note"), prev = Some("a"), next = Some("b")),
-      TaskBoardEvent(at = "t", kind = "close", id = Some("1"), prev = Some("a"), next = Some("a\n[done] b")))
+      TaskBoardEvent(
+        at = "t",
+        kind = "update",
+        id = Some("1"),
+        field = Some("note"),
+        prev = Some("a"),
+        next = Some("b")
+      ),
+      TaskBoardEvent(at = "t", kind = "close", id = Some("1"), prev = Some("a"), next = Some("a\n[done] b"))
+    )
     val state = List(
       TaskBoardEvent(at = "t", kind = "create", id = Some("1")),
-      TaskBoardEvent(at = "t", kind = "update", id = Some("1"), field = Some("status"), from = Some("open"), to = Some("in_progress")),
-      TaskBoardEvent(at = "t", kind = "update", id = Some("1"), field = Some("title"), prev = Some("a"), next = Some("b")),
+      TaskBoardEvent(
+        at = "t",
+        kind = "update",
+        id = Some("1"),
+        field = Some("status"),
+        from = Some("open"),
+        to = Some("in_progress")
+      ),
+      TaskBoardEvent(
+        at = "t",
+        kind = "update",
+        id = Some("1"),
+        field = Some("title"),
+        prev = Some("a"),
+        next = Some("b")
+      ),
       TaskBoardEvent(at = "t", kind = "close", id = Some("1"), from = Some("open"), to = Some("done")),
       TaskBoardEvent(at = "t", kind = "prune", id = Some("1")),
       TaskBoardEvent(at = "t", kind = "quarantine"),
-      TaskBoardEvent(at = "t", kind = "rotate"))
+      TaskBoardEvent(at = "t", kind = "rotate")
+    )
     note.foreach(e => assert(TaskBoardHistory.isNoteChange(e), s"note 类: $e"))
     state.foreach(e => assert(!TaskBoardHistory.isNoteChange(e), s"状态类: $e"))
 
@@ -259,11 +344,33 @@ class TaskBoardHistorySpec extends FunSuite:
       val h = hist(ws)
       // 5 条状态 + 3 条 note，交错写入
       (1 to 5).foreach { i =>
-        assertEquals(h.appendSync(TaskBoardEvent(at = s"t$i", kind = "update", id = Some("1"),
-          field = Some("status"), from = Some("open"), to = Some("in_progress"))), None)
+        assertEquals(
+          h.appendSync(
+            TaskBoardEvent(
+              at = s"t$i",
+              kind = "update",
+              id = Some("1"),
+              field = Some("status"),
+              from = Some("open"),
+              to = Some("in_progress")
+            )
+          ),
+          None
+        )
         if i <= 3 then
-          assertEquals(h.appendSync(TaskBoardEvent(at = s"t$i-note", kind = "update", id = Some("1"),
-            field = Some("note"), prev = Some(s"p$i"), next = Some(s"n$i"))), None)
+          assertEquals(
+            h.appendSync(
+              TaskBoardEvent(
+                at = s"t$i-note",
+                kind = "update",
+                id = Some("1"),
+                field = Some("note"),
+                prev = Some(s"p$i"),
+                next = Some(s"n$i")
+              )
+            ),
+            None
+          )
       }
       val notes = h.readFor("1", limit = 2, only = TaskBoardHistory.isNoteChange)
       assertEquals(notes.total, 3, "只数 note 类")
@@ -274,5 +381,6 @@ class TaskBoardHistorySpec extends FunSuite:
       assertEquals(h.countLinesFor("1"), 8, "廉价探针 = 出现的行数（不解析）")
       assertEquals(h.countLinesFor("2"), 0)
     finally os.remove.all(ws)
+    end try
 
 end TaskBoardHistorySpec

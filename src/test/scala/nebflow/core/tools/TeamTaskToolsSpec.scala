@@ -6,10 +6,10 @@ import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.task.{FileTaskStore, TaskStatus}
+import nebflow.shared.PathUtil
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 /**
  * Team task tools (任务工具重做 2026-08-30: tasks = progress display, injected
@@ -43,10 +43,12 @@ class TeamTaskToolsSpec extends FunSuite:
       wsSend = Some(captureSend)
     )
 
-  /** Team context carrying an agent identity — the create tool defaults the
-    * assignee to the caller's name (member self-attribution). */
+  /**
+   * Team context carrying an agent identity — the create tool defaults the
+   * assignee to the caller's name (member self-attribution).
+   */
   private def teamCtxAs(memberName: String, teamName: String = "alpha"): ToolContext =
-    teamCtx(teamName).copy(agentDef = Some(nebflow.agent.AgentDef(name = memberName, description = "test member")))
+    teamCtx(teamName).copy(agentDef = Some(nebflow.actor.AgentDef(name = memberName, description = "test member")))
 
   /** Nebula-like context: no teamName — reads must pass `team` explicitly. */
   private def noTeamCtx(): ToolContext =
@@ -72,7 +74,8 @@ class TeamTaskToolsSpec extends FunSuite:
   // ── smoke flow: create (with blockedBy) → update → list + WS event ──
 
   test("smoke: create with blockedBy → in_progress → completed+note → list reflects, WS event carries {team, tasks}"):
-    val c1 = call(TeamTaskCreateTool, obj("subject" -> "fix registry bug".asJson, "description" -> "d1".asJson), teamCtx())
+    val c1 =
+      call(TeamTaskCreateTool, obj("subject" -> "fix registry bug".asJson, "description" -> "d1".asJson), teamCtx())
     val id1 = c1.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
     assertEquals(c1.toOption.get, s"Task created: fix registry bug (ID: $id1)")
     // WS event after create: team + tasks array
@@ -82,10 +85,15 @@ class TeamTaskToolsSpec extends FunSuite:
     assertEquals(ev1.downField("tasks").as[List[io.circe.Json]].toOption.map(_.size), Some(1))
 
     // second task blockedBy the first
-    val c2 = call(TeamTaskCreateTool, obj(
-      "subject" -> "write docs".asJson, "description" -> "d2".asJson,
-      "blockedBy" -> List(id1).asJson
-    ), teamCtx())
+    val c2 = call(
+      TeamTaskCreateTool,
+      obj(
+        "subject" -> "write docs".asJson,
+        "description" -> "d2".asJson,
+        "blockedBy" -> List(id1).asJson
+      ),
+      teamCtx()
+    )
     val id2 = c2.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
     val t2 = FileTaskStore.get("team:alpha", id2).unsafeRunSync().get
     assertEquals(t2.blockedBy, List(id1), "blockedBy declared at create lands on the task")
@@ -93,10 +101,16 @@ class TeamTaskToolsSpec extends FunSuite:
     // start + complete with note
     val up1 = call(TeamTaskUpdateTool, obj("taskId" -> id1.asJson, "status" -> "in_progress".asJson), teamCtx())
     assertEquals(up1.toOption.get, s"fix registry bug → in_progress")
-    val up2 = call(TeamTaskUpdateTool, obj(
-      "taskId" -> id1.asJson, "status" -> "completed".asJson,
-      "note" -> "merged abc1234".asJson, "noteLinks" -> List("/tmp/report.md").asJson
-    ), teamCtx())
+    val up2 = call(
+      TeamTaskUpdateTool,
+      obj(
+        "taskId" -> id1.asJson,
+        "status" -> "completed".asJson,
+        "note" -> "merged abc1234".asJson,
+        "noteLinks" -> List("/tmp/report.md").asJson
+      ),
+      teamCtx()
+    )
     assertEquals(up2.toOption.get, s"fix registry bug → completed")
     val done = FileTaskStore.get("team:alpha", id1).unsafeRunSync().get
     assertEquals(done.status, TaskStatus.Completed)
@@ -122,7 +136,10 @@ class TeamTaskToolsSpec extends FunSuite:
     val c1 = call(TeamTaskCreateTool, obj("subject" -> "s".asJson, "description" -> "d".asJson), teamCtx())
     val id = c1.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
     val bad = call(TeamTaskUpdateTool, obj("taskId" -> id.asJson, "status" -> "needs_confirmation".asJson), teamCtx())
-    assert(bad.isLeft && bad.swap.toOption.get.message.contains("Invalid status"), "needs_confirmation not in team matrix")
+    assert(
+      bad.isLeft && bad.swap.toOption.get.message.contains("Invalid status"),
+      "needs_confirmation not in team matrix"
+    )
     val stillPending = FileTaskStore.get("team:alpha", id).unsafeRunSync().get
     assertEquals(stillPending.status, TaskStatus.Pending)
 
@@ -140,10 +157,15 @@ class TeamTaskToolsSpec extends FunSuite:
   test("create blockedBy cycle surfaces as ToolError via the create tool"):
     val c1 = call(TeamTaskCreateTool, obj("subject" -> "a".asJson, "description" -> "d".asJson), teamCtx())
     val id1 = c1.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
-    val c2 = call(TeamTaskCreateTool, obj(
-      "subject" -> "b".asJson, "description" -> "d".asJson,
-      "blockedBy" -> List(id1).asJson
-    ), teamCtx())
+    val c2 = call(
+      TeamTaskCreateTool,
+      obj(
+        "subject" -> "b".asJson,
+        "description" -> "d".asJson,
+        "blockedBy" -> List(id1).asJson
+      ),
+      teamCtx()
+    )
     val id2 = c2.fold(e => fail(e.message), _.split("ID: ")(1).stripSuffix(")").trim)
     // now make id1 blockedBy id2 → cycle; must be a ToolError and not corrupt id1
     val cyc = call(TeamTaskUpdateTool, obj("taskId" -> id1.asJson, "addBlockedBy" -> List(id2).asJson), teamCtx())

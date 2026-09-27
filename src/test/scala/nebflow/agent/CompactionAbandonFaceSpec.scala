@@ -2,6 +2,7 @@ package nebflow.agent
 
 import munit.FunSuite
 
+import nebflow.actor.{AgentState, AgentStreamEvent, CompactionJob, compactionFailures, messages}
 import nebflow.core.compact.{CompactConfig, CompactService}
 import nebflow.shared.{Message, MessageRole}
 
@@ -27,8 +28,7 @@ class CompactionAbandonFaceSpec extends FunSuite:
     AgentState(
       messages = messages,
       sessionId = Some("compactui-spec"),
-      pendingCompaction =
-        if pending then Some(CompactionJob("compact-spec", "full", None, None)) else None,
+      pendingCompaction = if pending then Some(CompactionJob("compact-spec", "full", None, None)) else None,
       compactionFailures = failures
     )
 
@@ -86,9 +86,9 @@ class CompactionAbandonFaceSpec extends FunSuite:
     val profiles =
       List(
         CompactService.buildCompactReminder(0, false, Some("s")), // Root/Nebula
-        CompactService.buildCompactReminder(1, true, Some("s")),  // Manager (lead)
+        CompactService.buildCompactReminder(1, true, Some("s")), // Manager (lead)
         CompactService.buildCompactReminder(1, false, Some("s")), // Worker
-        CompactService.buildCompactReminder(3, false, Some("s"))  // Sub-project profile
+        CompactService.buildCompactReminder(3, false, Some("s")) // Sub-project profile
       )
     profiles.foreach(m => assert(CompactService.isCompactReminder(m), s"not recognized: ${m.content}"))
     val out = CompactionAbandon.dropScratch(stateWith(userMsg("keep") :: profiles, pending = true))

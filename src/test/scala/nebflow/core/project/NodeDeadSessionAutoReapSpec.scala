@@ -7,14 +7,15 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -59,56 +60,68 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"dead-session reap regression agent","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 后台任务模拟 stub LLM（NodeBgCompletionGateSpec 同款）：首轮请求时可在
-    * BgTaskRegistry 登记一个等待型任务（模拟 agent run_in_background）；registerTask
-    * = false 时不登记（节点立即完成）。 */
+  /**
+   * 后台任务模拟 stub LLM（NodeBgCompletionGateSpec 同款）：首轮请求时可在
+   * BgTaskRegistry 登记一个等待型任务（模拟 agent run_in_background）；registerTask
+   * = false 时不登记（节点立即完成）。
+   */
   private class BgStubLlm(registerTask: Boolean = true):
     val jobIds: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        Stream.eval {
-          for
-            turn <- turnCount.updateAndGet(_ + 1)
-            _ <-
-              if turn == 1 && registerTask then
-                Option(res) match
-                  case None => IO.raiseError(new RuntimeException("spec res not injected"))
-                  case Some(r) =>
-                    r.agentRegistry.get.flatMap { reg =>
-                      reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                        case Some(rec) =>
-                          val jobId = s"dead-reap-spec-${java.util.UUID.randomUUID().toString.take(8)}"
-                          BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
-                            jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
-                        case None => IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
-                    }
-              else IO.unit
-          yield turn
-        }.flatMap { turn =>
-          val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
-          Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
-        }
+        Stream
+          .eval {
+            for
+              turn <- turnCount.updateAndGet(_ + 1)
+              _ <-
+                if turn == 1 && registerTask then
+                  Option(res) match
+                    case None => IO.raiseError(new RuntimeException("spec res not injected"))
+                    case Some(r) =>
+                      r.agentRegistry.get.flatMap { reg =>
+                        reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
+                          case Some(rec) =>
+                            val jobId = s"dead-reap-spec-${java.util.UUID.randomUUID().toString.take(8)}"
+                            BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
+                              jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
+                          case None =>
+                            IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
+                      }
+                else IO.unit
+            yield turn
+          }
+          .flatMap { turn =>
+            val text = req.messages.map(_.textContent).mkString("\n")
+            val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
+            Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
+          }
+
+  end BgStubLlm
 
   /** 挂死 LLM：turn 永不完成（模拟活会话窗口内一直运行——registry 有活记录）。 */
   private def hangingLlm = new nebflow.shared.LlmHandle[IO]:
@@ -116,36 +129,11 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None) =
       fs2.Stream.eval(IO.never)
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
-
-  private def registerRecorder(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
+  private def registerRecorder(
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String
+  ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       ref <- system.spawn(recorderBehavior(recorded), s"rec-${scala.util.Random.nextInt(100000)}")
@@ -185,13 +173,18 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
         bgGateCompletionHold = Some(true),
         reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -206,7 +199,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def readEvents(ws: os.Path): IO[List[String]] =
@@ -216,10 +209,19 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     }
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String,
-      res: SharedResources = null, system: ActorSystem = null): IO[Unit] =
+  private def createNode(
+    project: String,
+    ws: os.Path,
+    name: String,
+    task: String,
+    res: SharedResources = null,
+    system: ActorSystem = null
+  ): IO[Unit] =
     val ctx = ToolContext(
       projectRoot = ws.toString,
       sessionId = Some("spec-sid"),
@@ -237,8 +239,9 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       .map(_.left.map(_.message))
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
+  end createNode
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
@@ -251,21 +254,28 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z1", ws, system, res)
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-z1" -> NodeDef(
-          id = "n-z1", name = "zombie-a", agent = "general",
-          task = Some("long running task"), out = List(OutEdge.nebula),
-          status = NodeLifecycle.Running,
-          startedAt = Some(System.currentTimeMillis() - 3_600_000),
-          createdAt = System.currentTimeMillis() - 3_600_000))) }.void
+        s.copy(nodes =
+          s.nodes + ("n-z1" -> NodeDef(
+            id = "n-z1",
+            name = "zombie-a",
+            agent = "general",
+            task = Some("long running task"),
+            out = List(OutEdge.root),
+            status = NodeLifecycle.Running,
+            startedAt = Some(System.currentTimeMillis() - 3_600_000),
+            createdAt = System.currentTimeMillis() - 3_600_000
+          ))
+        )
+      }.void
       _ <- rt.engine.settleStaleRunningNodes()
       z <- byName(rt, "zombie-a")
       // 确定性同步：投递是异步 tell（root 会话 mailbox）——等投递实际到达 recorder
-      //（等副作用本身，而非等 Failed 状态后立即读，NodeSessionDeathFinalizeSpec 同款）。
+      // （等副作用本身，而非等 Failed 状态后立即读，NodeSessionDeathFinalizeSpec 同款）。
       _ <- waitUntil(15.seconds)(recorded.get.map(_.collectFirst {
         case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'zombie-a' failed]") => m
       }.isDefined))
@@ -274,37 +284,65 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(z.status, NodeLifecycle.Failed, "dead-session running must auto-converge to failed")
-      assert(z.result.exists(_.contains("no live session, no in-flight background task")),
-        s"failure reason must record the dead-session trigger: ${z.result}")
-      assert(z.ttlExpireAt.isEmpty,
-        "converged node must NOT get a display TTL (2026-09-07 ruling: failed retained on map, no forced cleanup)")
-      assert(imms.exists(_.text.contains("[Node 'zombie-a' failed]")),
-        s"failed delivery must reach the root session, got: ${imms.map(_.text).mkString("|")}")
-      assert(events.exists(_.contains("\"dead-session-reaped\"")),
-        s"dead-session-reaped audit event expected, got: ${events.mkString("|").take(300)}")
+      assert(
+        z.result.exists(_.contains("no live session, no in-flight background task")),
+        s"failure reason must record the dead-session trigger: ${z.result}"
+      )
+      assert(
+        z.ttlExpireAt.isEmpty,
+        "converged node must NOT get a display TTL (2026-09-07 ruling: failed retained on map, no forced cleanup)"
+      )
+      assert(
+        imms.exists(_.text.contains("[Node 'zombie-a' failed]")),
+        s"failed delivery must reach the root session, got: ${imms.map(_.text).mkString("|")}"
+      )
+      assert(
+        events.exists(_.contains("\"dead-session-reaped\"")),
+        s"dead-session-reaped audit event expected, got: ${events.mkString("|").take(300)}"
+      )
+    end for
   }
 
   // ── Z2 下游停等可见（D5 零结算，原 collect settlement 翻转）────────────
 
-  test("Z2: downstream stays waiting (visible) when upstream zombie auto-fails (D5 zero-settlement); failed delivery + notify unchanged") {
+  test(
+    "Z2: downstream stays waiting (visible) when upstream zombie auto-fails (D5 zero-settlement); failed delivery + notify unchanged"
+  ) {
     val ws = tempRoot / "ws-z2"
     os.makeDir.all(ws)
     val system = ActorSystem(s"drs-z2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z2", ws, system, res)
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "n-up" -> NodeDef(id = "n-up", name = "up-a", agent = "general",
-            task = Some("long task"), out = List(OutEdge("n-dn")), status = NodeLifecycle.Running,
-            startedAt = Some(System.currentTimeMillis() - 3_600_000),
-            createdAt = System.currentTimeMillis() - 3_600_000),
-          "n-dn" -> NodeDef(id = "n-dn", name = "down-b", agent = "test-agent",
-            task = Some("process downstream"), out = List(OutEdge.nebula), in = List("n-up"),
-            status = NodeLifecycle.Wiring, createdAt = System.currentTimeMillis() - 3_600_000))) }.void
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-up" -> NodeDef(
+              id = "n-up",
+              name = "up-a",
+              agent = "general",
+              task = Some("long task"),
+              out = List(OutEdge("n-dn")),
+              status = NodeLifecycle.Running,
+              startedAt = Some(System.currentTimeMillis() - 3_600_000),
+              createdAt = System.currentTimeMillis() - 3_600_000
+            ),
+            "n-dn" -> NodeDef(
+              id = "n-dn",
+              name = "down-b",
+              agent = "test-agent",
+              task = Some("process downstream"),
+              out = List(OutEdge.root),
+              in = List("n-up"),
+              status = NodeLifecycle.Wiring,
+              createdAt = System.currentTimeMillis() - 3_600_000
+            )
+          )
+        )
+      }.void
       _ <- rt.engine.settleStaleRunningNodes()
       // A failed via deliverFailed → D5 零结算：B 停等（不启动）；up out=节点（非
       // Nebula）→ 无 root 结果投递（分发器处置走 dispatch-notify 通道，⑮ 锁）
@@ -317,11 +355,17 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       assertEquals(up.status, NodeLifecycle.Failed, "zombie upstream must be failed")
       // D5 翻转（原 collect 断言）：下游停等可见（声明语义，非意外悬挂）——处置靠
       // failed 通知（附等待者清单）；上游 reactivate 修复重跑后自动续跑
-      assert(dn.status == NodeLifecycle.Wiring || dn.status == NodeLifecycle.Pending,
-        s"downstream must stay waiting and visible (D5 zero-settlement), got ${dn.status}")
-      assertEquals(dn.deliveredTo, Nil,
-        "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)")
+      assert(
+        dn.status == NodeLifecycle.Wiring || dn.status == NodeLifecycle.Pending,
+        s"downstream must stay waiting and visible (D5 zero-settlement), got ${dn.status}"
+      )
+      assertEquals(
+        dn.deliveredTo,
+        Nil,
+        "failed upstream must not write deliveredTo key into downstream (wf1cde §3.2 hole source)"
+      )
       assertEquals(dn.result, None, "downstream never started (no session run)")
+    end for
   }
 
   // ── Z3 不误杀活会话 ──────────────────────────────────────────
@@ -332,22 +376,27 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z3-${scala.util.Random.nextInt(100000)}")
     val llm = hangingLlm
     for
-      res <- mkResources(system, tempRoot, llm)
+      res <- SpecResources.mkResources(system, tempRoot, llm)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z3", ws, system, res)
       _ <- createNode("drs-z3", ws, "live-a", "live task", res = res, system = system)
       _ <- waitUntil(15.seconds)(byName(rt, "live-a").map(_.status == NodeLifecycle.Running))
       // 等会话在 agentRegistry 登记（spawn 窗口后——registry 有活记录 = 活会话）
-      _ <- waitUntil(15.seconds)(res.agentRegistry.get.map(_.values.exists(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-"))))
+      _ <- waitUntil(15.seconds)(
+        res.agentRegistry.get.map(_.values.exists(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")))
+      )
       _ <- rt.engine.settleStaleRunningNodes()
       live <- byName(rt, "live-a")
       reg <- res.agentRegistry.get
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(live.status, NodeLifecycle.Running, "live running must NOT be converged")
-      assert(reg.values.exists(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")),
-        "live agent record must survive")
+      assert(
+        reg.values.exists(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")),
+        "live agent record must survive"
+      )
       assert(live.result.isEmpty, "live node must keep its result empty (not failed)")
+    end for
   }
 
   // ── Z4 不动等待后台任务（作者红线）─────────────────────────────
@@ -359,16 +408,24 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val llm = BgStubLlm(registerTask = false)
     val sid = "node-dead-reap-bgw"
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z4", ws, system, res)
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-z4" -> NodeDef(
-          id = "n-z4", name = "wait-bg", agent = "general",
-          task = Some("long task"), out = List(OutEdge.nebula), status = NodeLifecycle.Running,
-          startedAt = Some(System.currentTimeMillis() - 3_600_000),
-          createdAt = System.currentTimeMillis() - 3_600_000))) }.void
+        s.copy(nodes =
+          s.nodes + ("n-z4" -> NodeDef(
+            id = "n-z4",
+            name = "wait-bg",
+            agent = "general",
+            task = Some("long task"),
+            out = List(OutEdge.root),
+            status = NodeLifecycle.Running,
+            startedAt = Some(System.currentTimeMillis() - 3_600_000),
+            createdAt = System.currentTimeMillis() - 3_600_000
+          ))
+        )
+      }.void
       // 构造「死会话但有在途等待型后台任务」：nodeSessions 映射 + 在册 bg 任务
       _ <- rt.engine.nodeSessions.update(_ + ("n-z4" -> sid))
       _ <- BgTaskRegistry.register("dead-reap-bg-job", sid, "compile", "local", "nebula-root")
@@ -376,9 +433,12 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
         .guarantee(BgTaskRegistry.unregister("dead-reap-bg-job"))
       z4 <- byName(rt, "wait-bg")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-    yield
-      assertEquals(z4.status, NodeLifecycle.Running,
-        "design-intended wait for an in-flight bg task must NOT be converged (author red line)")
+    yield assertEquals(
+      z4.status,
+      NodeLifecycle.Running,
+      "design-intended wait for an in-flight bg task must NOT be converged (author red line)"
+    )
+    end for
   }
 
   // ── Z5 显示标注：bgWait 条件字段在持留时带、清空后不带（作者首要缺口）──
@@ -389,24 +449,36 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val system = ActorSystem(s"drs-z5-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("drs-z5", ws, system, res)
       _ <- createNode("drs-z5", ws, "bgw-a", "result-BGW", res = res, system = system)
-      _ <- waitUntil(20.seconds)(res.agentRegistry.get.map(_.values.exists(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-") && r.status == nebflow.agent.AgentStatus.Idle)))
+      _ <- waitUntil(20.seconds)(
+        res.agentRegistry.get.map(
+          _.values.exists(r =>
+            r.kind == AgentKind.Flow && r.sessionId.startsWith("node-") && r.status == nebflow.actor.AgentStatus.Idle
+          )
+        )
+      )
       // 等节点进入 hold（bg-wait）：节点保持 Running 且 payload 带 bgWait
       _ <- waitUntil(20.seconds)(byName(rt, "bgw-a").map(n => n.status == NodeLifecycle.Running && n.bgWait.isDefined))
       holding <- byName(rt, "bgw-a")
       jobs <- llm.jobIds.get
       // 后台任务完成：unregister + ExternalEvent → 唤醒轮 → 放行
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
-      agentRef <- res.agentRegistry.get.map(_.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-"))
-        .map(_.ref).getOrElse(fail("node agent ref not found at release")))
+      agentRef <- res.agentRegistry.get.map(
+        _.values
+          .find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-"))
+          .map(_.ref)
+          .getOrElse(fail("node agent ref not found at release"))
+      )
       _ <- (agentRef ! AgentCommand.ExternalEvent(
-        source = "background-task", eventType = "completed",
+        source = "background-task",
+        eventType = "completed",
         payload = "[Background task completed] \"spec bg task\":\nspec-output",
-        metadata = io.circe.JsonObject("description" -> "spec bg task".asJson))).void
+        metadata = io.circe.JsonObject("description" -> "spec bg task".asJson)
+      )).void
       _ <- waitUntil(20.seconds)(byName(rt, "bgw-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "bgw-a")
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
@@ -416,6 +488,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       assert(holding.status == NodeLifecycle.Running, "holding node must stay Running (completion gate not bypassed)")
       assertEquals(done.bgWait, None, "bgWait must be dropped after release")
       assertEquals(done.status, NodeLifecycle.Completed, "node completes after bg release")
+    end for
   }
 
 end NodeDeadSessionAutoReapSpec

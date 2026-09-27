@@ -7,12 +7,12 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.project.{ProjectActor, ProjectDef, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, ProjectCreateTool, ToolContext}
-import nebflow.llm.{ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig, ThinkingConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -101,11 +101,14 @@ class ProjectEventSpec extends CatsEffectSuite:
     val ws = tempRoot / "ws-evt-create"
     os.makeDir.all(ws)
     val system = ActorSystem(s"pe-create-${scala.util.Random.nextInt(100000)}")
-    val input = Json.obj(
-      "name" -> Json.fromString("evt-create"),
-      "workspace" -> Json.fromString(ws.toString),
-      "description" -> Json.fromString("realtime event contract")
-    ).asObject.get
+    val input = Json
+      .obj(
+        "name" -> Json.fromString("evt-create"),
+        "workspace" -> Json.fromString(ws.toString),
+        "description" -> Json.fromString("realtime event contract")
+      )
+      .asObject
+      .get
     for
       pair <- hubWithFrames
       (hub, frames) = pair
@@ -140,18 +143,21 @@ class ProjectEventSpec extends CatsEffectSuite:
         row.keys.map(_.toSet).getOrElse(Set.empty),
         Set("name", "workspace", "agentFile", "description", "createdAt")
       )
-      assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty),
-        Set("type", "project", "row", "mounted"))
+      assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "row", "mounted"))
+    end for
   }
 
   test("create leg idempotency: re-creating an existing project emits ZERO projectCreated frames") {
     val ws = tempRoot / "ws-evt-dup"
     os.makeDir.all(ws)
     val system = ActorSystem(s"pe-dup-${scala.util.Random.nextInt(100000)}")
-    val input = Json.obj(
-      "name" -> Json.fromString("evt-dup"),
-      "workspace" -> Json.fromString(ws.toString)
-    ).asObject.get
+    val input = Json
+      .obj(
+        "name" -> Json.fromString("evt-dup"),
+        "workspace" -> Json.fromString(ws.toString)
+      )
+      .asObject
+      .get
     for
       pair <- hubWithFrames
       (hub, frames) = pair
@@ -176,15 +182,19 @@ class ProjectEventSpec extends CatsEffectSuite:
       assert(second.toOption.get.contains("already exists"), "second call must report already-exists")
       assertEquals(projectFrames(afterFirst).size, 1, "new create emits 1 frame")
       assertEquals(projectFrames(afterSecond).size, 0, s"idempotent re-mount must not emit, got: $afterSecond")
+    end for
   }
 
   test("create leg without session context: definition-ready branch emits ONE frame with mounted=false") {
     val ws = tempRoot / "ws-evt-nosession"
     os.makeDir.all(ws)
-    val input = Json.obj(
-      "name" -> Json.fromString("evt-nosession"),
-      "workspace" -> Json.fromString(ws.toString)
-    ).asObject.get
+    val input = Json
+      .obj(
+        "name" -> Json.fromString("evt-nosession"),
+        "workspace" -> Json.fromString(ws.toString)
+      )
+      .asObject
+      .get
     for
       pair <- hubWithFrames
       (hub, frames) = pair
@@ -199,13 +209,13 @@ class ProjectEventSpec extends CatsEffectSuite:
       collected <- frames.get
     yield
       assert(result.isRight, result.toString)
-      assert(result.toOption.get.contains("definition ready"),
-        s"must take the definition-ready branch, got: $result")
+      assert(result.toOption.get.contains("definition ready"), s"must take the definition-ready branch, got: $result")
       assertEquals(projectFrames(collected).size, 1, s"exactly one project frame, got: $collected")
       val frame = projectFrames(collected).head
       assertEquals(field(frame, "type"), Some("projectCreated"))
       assertEquals(field(frame, "project"), Some("evt-nosession"))
       assertEquals(frame.hcursor.downField("mounted").as[Boolean].toOption, Some(false))
+    end for
   }
 
   test("archive leg: POST /projects/<name>/archive emits exactly ONE projectArchived frame through the real route") {
@@ -231,10 +241,13 @@ class ProjectEventSpec extends CatsEffectSuite:
       val frame = projectFrames(collected).head
       assertEquals(field(frame, "type"), Some("projectArchived"))
       assertEquals(field(frame, "project"), Some("evt-archive"))
-      assertEquals(frame.hcursor.downField("archivedAt").as[Long].toOption, archivedAt,
-        "frame archivedAt must equal the response archivedAt (single source: ProjectStore.archive)")
-      assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty),
-        Set("type", "project", "archivedAt"))
+      assertEquals(
+        frame.hcursor.downField("archivedAt").as[Long].toOption,
+        archivedAt,
+        "frame archivedAt must equal the response archivedAt (single source: ProjectStore.archive)"
+      )
+      assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "archivedAt"))
+    end for
   }
 
   test("archive leg failure: unknown project emits ZERO frames (no success frame on Left)") {

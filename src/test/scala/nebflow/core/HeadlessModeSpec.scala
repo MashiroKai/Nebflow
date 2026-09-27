@@ -77,3 +77,4 @@ class HeadlessModeSpec extends CatsEffectSuite:
   test("askGuard: default binding follows the frozen HeadlessMode.enabled") {
     assertEquals(AskUserQuestionTool.askGuard().isDefined, HeadlessMode.enabled)
   }
+end HeadlessModeSpec

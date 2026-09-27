@@ -2,7 +2,7 @@ package nebflow.core.seed
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -42,22 +42,35 @@ class SeedAgentSelfHealSpec extends FunSuite:
     os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
 
   private def treeAsText(d: os.Path): Map[String, String] =
-    os.walk(d).filter(os.isFile).map(p =>
-      p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+    os.walk(d).filter(os.isFile).map(p => p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
 
   private def manifestAgentNames: List[String] =
     val in = getClass.getClassLoader.getResourceAsStream("seed/manifest.json")
     try
-      io.circe.parser.parse(new String(in.readAllBytes(), UTF_8)).toOption.get
-        .hcursor.downField("items").as[List[String]].toOption.get
+      io.circe.parser
+        .parse(new String(in.readAllBytes(), UTF_8))
+        .toOption
+        .get
+        .hcursor
+        .downField("items")
+        .as[List[String]]
+        .toOption
+        .get
         .collect { case id if id.startsWith("agents:") => id.stripPrefix("agents:") }
     finally in.close()
 
   private def manifestVersion: String =
     val in = getClass.getClassLoader.getResourceAsStream("seed/manifest.json")
     try
-      io.circe.parser.parse(new String(in.readAllBytes(), UTF_8)).toOption.get
-        .hcursor.downField("seedVersion").as[String].toOption.get
+      io.circe.parser
+        .parse(new String(in.readAllBytes(), UTF_8))
+        .toOption
+        .get
+        .hcursor
+        .downField("seedVersion")
+        .as[String]
+        .toOption
+        .get
     finally in.close()
 
   /** 既有 home 形态：有项目（守卫命中，不完整播种）+ marker 同版本（marker 分支 no-op）。 */
@@ -84,20 +97,21 @@ class SeedAgentSelfHealSpec extends FunSuite:
     assert(os.exists(dir / "system.md"), "缺失 ⇒ 自愈补装 system.md")
     assertEquals(treeAsText(dir), treeAsText(seedDirOf("memory-consolidator")), "自愈内容 == 种子树（逐字节）")
     // 其余默认集 agent 同样补齐（缺失的补、在位的原样）
-    for name <- manifestAgentNames do
-      assert(os.exists(home / "agents" / name / "agent.json"), s"默认集 agent '$name' 就位")
+    for name <- manifestAgentNames do assert(os.exists(home / "agents" / name / "agent.json"), s"默认集 agent '$name' 就位")
     // 守卫语义不变：不完整播种（既有 home 走 marker-only 分支、不重播默认集）。项目面自
     // 作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由 `reconcileProjects` 补**缺失**
     // 的内置项目 ⇒ 本条原负向断言「既有 home 不建 general 项目」已随前令作废，翻转为正向
     // （同批三处同类 stale pin：SeedServiceSpec 守卫组 / 本行 / SeedPluginReconcileSpec）。
-    assert(os.exists(home / "projects" / "general" / "project.json"),
-      "存量 home 由 reconcileProjects 补出缺失的 general 项目（严格 add-only）")
+    assert(
+      os.exists(home / "projects" / "general" / "project.json"),
+      "存量 home 由 reconcileProjects 补出缺失的 general 项目（严格 add-only）"
+    )
 
   // ── ② 幂等 ├────────────────────────────────────────────────
   test("自愈幂等：第二次 ensure 对该目录零动作"):
     existingHome()
     ensure()
-    val dir   = home / "agents" / "memory-consolidator"
+    val dir = home / "agents" / "memory-consolidator"
     val again = treeAsText(dir)
     ensure()
     assertEquals(treeAsText(dir), again, "第二次零动作（digest 已与种子一致）")

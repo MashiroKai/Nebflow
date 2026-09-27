@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import sttp.client4.*
 import sttp.model.{StatusCode, Uri}
 
@@ -80,13 +80,14 @@ class GatewayClient(baseUri: String, token: String):
   /** POST /api/command — generic WS-equivalent endpoint */
   def command(payload: Json): IO[Json] = post("/api/command", payload)
 
-  /** A1: a non-2xx status is a FAILURE, not an empty payload. Before this
-    * check only `parser.parse` ran, so an error body (`{"error":"Unauthorized"}`)
-    * parsed fine and every downstream `getOrElse` fallback silently produced an
-    * empty list / `{}` / `"true"` — `session delete` printed "Session s1
-    * deleted" on a 403 with exit 0. The failure now surfaces as a real error
-    * and reaches CliRouter's error branch (exit 1, T8 message).
-    */
+  /**
+   * A1: a non-2xx status is a FAILURE, not an empty payload. Before this
+   * check only `parser.parse` ran, so an error body (`{"error":"Unauthorized"}`)
+   * parsed fine and every downstream `getOrElse` fallback silently produced an
+   * empty list / `{}` / `"true"` — `session delete` printed "Session s1
+   * deleted" on a 403 with exit 0. The failure now surfaces as a real error
+   * and reaches CliRouter's error branch (exit 1, T8 message).
+   */
   private def parseJson(code: StatusCode, body: String, path: String): Json =
     if !code.isSuccess then throw new RuntimeException(GatewayClient.requestError(code.code, body))
     parser.parse(body) match
@@ -122,8 +123,7 @@ class GatewayClient(baseUri: String, token: String):
       .body(body.noSpaces)
       .response(asStringAlways)
       .send(backend)
-    if !resp.code.isSuccess then
-      throw new RuntimeException(GatewayClient.requestError(resp.code.code, resp.body))
+    if !resp.code.isSuccess then throw new RuntimeException(GatewayClient.requestError(resp.code.code, resp.body))
     val respBody: String = resp.body
     // Parse SSE events: data: {...}\n\n
     respBody.split("\n\n").filter(_.nonEmpty).foreach { block =>
@@ -139,36 +139,42 @@ end GatewayClient
 object GatewayClient:
   private val authPath = PathUtil.dataRoot / "auth.json"
 
-  /** CLI-side port override (C1/A4). `--port` is consumed by the JVM-level
-    * global-flag parser, which until now only told the gateway package — the
-    * CLI's HTTP client kept reading `GATEWAY_PORT`/8080, so a `--port` instance
-    * was unreachable from the CLI. This is the CLI half of that propagation;
-    * it is set from the same entry point that consumes `--port`.
-    */
+  /**
+   * CLI-side port override (C1/A4). `--port` is consumed by the JVM-level
+   * global-flag parser, which until now only told the gateway package — the
+   * CLI's HTTP client kept reading `GATEWAY_PORT`/8080, so a `--port` instance
+   * was unreachable from the CLI. This is the CLI half of that propagation;
+   * it is set from the same entry point that consumes `--port`.
+   */
   @volatile private var portOverride: Option[Int] = None
 
   private[nebflow] def setPort(port: Int): Unit = portOverride = Some(port)
   private[cli] def resetPort(): Unit = portOverride = None
 
-  /** Single port resolver: explicit CLI override > `GATEWAY_PORT` env > 8080.
-    * Every CLI-side port read goes through here — no second mechanism. */
+  /**
+   * Single port resolver: explicit CLI override > `GATEWAY_PORT` env > 8080.
+   * Every CLI-side port read goes through here — no second mechanism.
+   */
   def readPort: IO[Int] = IO.blocking {
     portOverride
-      .orElse(nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
+      .orElse(nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
       .getOrElse(8080)
   }
 
-  /** T8 wording for a non-2xx gateway response. The detail prefers the body's
-    * `error`/`message` field (the gateway answers `403 {"error":"Unauthorized"}`,
-    * `RestApiRoutes.scala:3737-3738`) and falls back to the raw body.
-    */
+  /**
+   * T8 wording for a non-2xx gateway response. The detail prefers the body's
+   * `error`/`message` field (the gateway answers `403 {"error":"Unauthorized"}`,
+   * `RestApiRoutes.scala:3737-3738`) and falls back to the raw body.
+   */
   private[cli] def requestError(code: Int, body: String): String =
     val detail = parser
       .parse(body)
       .toOption
       .flatMap { j =>
         val c = j.hcursor
-        c.downField("error").as[String].toOption
+        c.downField("error")
+          .as[String]
+          .toOption
           .orElse(c.downField("message").as[String].toOption)
       }
       .map(_.trim)
@@ -179,6 +185,8 @@ object GatewayClient:
         else body.trim.take(200)
       }
     s"Gateway request failed (HTTP $code): $detail"
+
+  end requestError
 
   /** Read the stored auth token */
   def readToken: IO[Option[String]] = IO.blocking {

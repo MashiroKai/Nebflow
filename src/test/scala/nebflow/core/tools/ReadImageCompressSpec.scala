@@ -90,7 +90,7 @@ class ReadImageCompressSpec extends FunSuite:
     for
       x <- 0 until 2500
       y <- 0 until 2500
-    do img.setRGB(x, y, 0xFF0000FF) // opaque blue
+    do img.setRGB(x, y, 0xff0000ff) // opaque blue
     for
       x <- 1000 until 1500
       y <- 1000 until 1500

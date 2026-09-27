@@ -103,7 +103,10 @@ class SystemRemindersSpec extends FunSuite:
         mountedProjectsDelta = ""
       )
       .unsafeRunSync()
-    assert(!reminders.exists(_.category == "projects"), s"must not inject a projects reminder: ${reminders.map(_.category)}")
+    assert(
+      !reminders.exists(_.category == "projects"),
+      s"must not inject a projects reminder: ${reminders.map(_.category)}"
+    )
 
   // ============================================================
   // F-2（presdial 批 2026-09-19）—— devices 计数面：
@@ -117,6 +120,7 @@ class SystemRemindersSpec extends FunSuite:
   private final class RemindersAppender
       extends ch.qos.logback.core.AppenderBase[ch.qos.logback.classic.spi.ILoggingEvent]:
     val lines = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+
     override def append(event: ch.qos.logback.classic.spi.ILoggingEvent): Unit =
       lines.add(event.getFormattedMessage)
 
@@ -179,7 +183,16 @@ class SystemRemindersSpec extends FunSuite:
         deviceLines(lines)
       )
     } match
-      case (catsSuppressed, loggedSuppressed, cntSuppressed, emittedDev, loggedDev, cntEmitted, linesSuppressed, lines) =>
+      case (
+            catsSuppressed,
+            loggedSuppressed,
+            cntSuppressed,
+            emittedDev,
+            loggedDev,
+            cntEmitted,
+            linesSuppressed,
+            lines
+          ) =>
         assert(
           !catsSuppressed.contains("devices"),
           s"compact/ask 轮不得产生 devices 提醒对象（改前会产出 ⇒ 打了行但没注入 = M2）: $catsSuppressed"
@@ -195,6 +208,8 @@ class SystemRemindersSpec extends FunSuite:
         assert(loggedDev, "控制项：真用户轮的 devices 提醒必须仍被返回（注入不受计数面影响）")
         assertEquals(lines.size, 1, s"控制项：真用户轮恰一行 [devices]: $lines")
         assertEquals(cntEmitted, 1L, "控制项：计数恰 1")
+
+    end match
 
   test("F-2 (a) a single device change is counted once across N=2 sessions"):
     SystemReminders.DeviceChangeCount.reset()
@@ -221,6 +236,8 @@ class SystemRemindersSpec extends FunSuite:
         assert(dev1 && dev2, "两个会话**都**必须收到 devices 提醒（注入是每会话的）")
         assertEquals(lines.size, 1, s"同一变化在 2 个会话只计一次（改前 = 2 行）: $lines")
         assertEquals(total, 1L, "计数 = 1")
+
+    end match
 
   test("F-2 (b) re-rendering the same member set yields zero count increment"):
     SystemReminders.DeviceChangeCount.reset()
@@ -255,6 +272,8 @@ class SystemRemindersSpec extends FunSuite:
         assertEquals(lines.size, 2, s"重渲染零增量 + 成员集合变化计一次 ⇒ 总共 2 行: $lines")
         assertEquals(afterRerender, 1L, "同一成员集合的重渲染零计数增量")
         assertEquals(afterGrown, 2L, "负控：成员集合变化必须重新计数")
+
+    end match
 
   test("F-2 count key is the member set (deviceId face), never the rendered text"):
     assertEquals(

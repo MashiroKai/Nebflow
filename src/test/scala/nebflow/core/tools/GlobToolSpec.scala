@@ -23,7 +23,7 @@ class GlobToolSpec extends FunSuite:
   private def call(pattern: String, path: Option[String] = None): Either[ToolError, String] =
     val obj = path match
       case Some(p) => JsonObject("pattern" -> pattern.asJson, "path" -> p.asJson)
-      case None    => JsonObject("pattern" -> pattern.asJson)
+      case None => JsonObject("pattern" -> pattern.asJson)
     GlobTool.call(obj, ToolContext(projectRoot = os.pwd.toString)).unsafeRunSync()
 
   // ── 当日 5 崩回归（04:34 / 09:38 / 12:35 / 13:05 / 18:10）──────────
@@ -155,8 +155,10 @@ class GlobToolSpec extends FunSuite:
       os.write(root / "top.txt", "a", createFolders = true)
       os.write(root / "sub" / "deep.txt", "b", createFolders = true)
       val lines = entryLines(callFull("**/*.txt", Some(root.toString), None).toOption.get)
-      assert(lines.exists(_.contains("top.txt")) && lines.exists(_.contains("deep.txt")),
-        s"'**' must recurse for both: $lines")
+      assert(
+        lines.exists(_.contains("top.txt")) && lines.exists(_.contains("deep.txt")),
+        s"'**' must recurse for both: $lines"
+      )
     }
   }
 

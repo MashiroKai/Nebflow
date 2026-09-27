@@ -39,8 +39,10 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
 
   private val messageStart =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"
+
   private def textDelta(t: String) =
     s"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"$t\"}}\n\n"
+
   private val okTail =
     Seq(
       "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -49,8 +51,10 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
       "data: [DONE]\n\n"
     ).mkString
 
-  /** mode: "never"（park 在响应头前——首 token 超时，locked=false）
-    * / "ok"（完整正常流）。 */
+  /**
+   * mode: "never"（park 在响应头前——首 token 超时，locked=false）
+   * / "ok"（完整正常流）。
+   */
   private def startMock(port: Int, mode: String, hits: java.util.concurrent.atomic.AtomicInteger): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
@@ -162,6 +166,7 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
       // 窗口过期：Down（驱逐）语义恢复主导——仍在 down（探测）集，等探测救活
       assertEquals(upExpired, List.empty[ModelCandidate])
       assertEquals(downExpired.map(_.providerId), List("glm"))
+    end for
   }
 
   // ============================================================
@@ -221,6 +226,7 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
       LlmInterface.streamInactivityOverride = prev
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)
+    end try
   }
 
   test("T4-regression: Auth-class failure (401) still marks Down (确证死亡驱逐不回归)") {

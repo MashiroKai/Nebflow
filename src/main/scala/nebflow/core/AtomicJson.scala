@@ -51,4 +51,43 @@ object AtomicJson:
     end try
   end writeSync
 
+  /**
+   * Durability-first variant of [[writeSync]] for caches and state files whose
+   * loss on a crash-window matters more than fail-loud atomicity: the temp
+   * file is fsync'd (`FileChannel.force(true)`) before the rename, and a
+   * filesystem without atomic-move support degrades to a plain replacing
+   * move instead of failing the write (usage-agg / device-profiles precedent).
+   * Callers wanting strict atomic-or-fail semantics should use [[writeSync]].
+   */
+  def writeSyncDurable(path: os.Path, content: String): Unit =
+    val tmp = path / os.up / s"${path.last}.tmp.${java.util.UUID.randomUUID()}"
+    try
+      os.write.over(tmp, content, createFolders = true)
+      val ch = java.nio.channels.FileChannel.open(tmp.toNIO, java.nio.file.StandardOpenOption.WRITE)
+      try ch.force(true)
+      finally ch.close()
+      try
+        java.nio.file.Files.move(
+          tmp.toNIO,
+          path.toNIO,
+          java.nio.file.StandardCopyOption.ATOMIC_MOVE
+        )
+      catch
+        case _: java.nio.file.AtomicMoveNotSupportedException =>
+          // Providers without atomic move support: degrade to a replacing
+          // move rather than losing the write.
+          java.nio.file.Files.move(
+            tmp.toNIO,
+            path.toNIO,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING
+          )
+      end try
+    catch
+      case e: Throwable =>
+        try if os.exists(tmp) then os.remove(tmp)
+        catch case _: Exception => ()
+        throw e
+    end try
+  end writeSyncDurable
+
 end AtomicJson

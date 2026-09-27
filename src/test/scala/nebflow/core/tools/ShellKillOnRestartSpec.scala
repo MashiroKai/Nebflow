@@ -48,7 +48,11 @@ class ShellKillOnRestartSpec extends CatsEffectSuite:
     for
       health <- IO(new JobHealth())
       fiber <- shell.execute(cmd, 365.days, Some(health)).attempt.start
-      _ <- waitFor(IO(health.processRef.get() != null && health.processRef.get().isAlive), 10000, s"process start: $cmd")
+      _ <- waitFor(
+        IO(health.processRef.get() != null && health.processRef.get().isAlive),
+        10000,
+        s"process start: $cmd"
+      )
     yield (health, fiber)
 
   test("E-1: killSessionProcesses kills a hung foreground process tree") {
@@ -177,11 +181,14 @@ class ShellKillOnRestartSpec extends CatsEffectSuite:
         _ <- shell.cancelBackgroundJob("e5-bg").attempt.void
       yield
         assertEquals(stillWaiting, Nil, "bg task must be cleared from registry by reclaimSession")
-        assert(frames.exists(f =>
-          f.hcursor.get[String]("type").contains("backgroundTaskUpdate") &&
-            f.hcursor.get[String]("status").contains("cancelled") &&
-            f.hcursor.get[String]("taskId").contains("e5-bg")
-        ), s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}")
+        assert(
+          frames.exists(f =>
+            f.hcursor.get[String]("type").contains("backgroundTaskUpdate") &&
+              f.hcursor.get[String]("status").contains("cancelled") &&
+              f.hcursor.get[String]("taskId").contains("e5-bg")
+          ),
+          s"WS cancelled backgroundTaskUpdate frame expected, got: ${frames.map(_.noSpaces.take(120)).mkString("|")}"
+        )
       )
         .guarantee(
           shell.cancelBackgroundJob("e5-bg").attempt.void *>

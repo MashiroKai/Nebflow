@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * agentdef-tidy 批（2026-09-11）观测面读数探针 —— **raw stdout，零断言**。
@@ -28,9 +28,11 @@ object AgentDefObservationFaceProbe:
   private val Cases: List[String] = List("Nebula", "project-dispatcher", "general", "kernel")
 
   def main(args: Array[String]): Unit =
-    val evidence = args.headOption.map(os.Path(_)).getOrElse(
-      os.Path("/tmp/agentdef-tidy-evidence")
-    )
+    val evidence = args.headOption
+      .map(os.Path(_))
+      .getOrElse(
+        os.Path("/tmp/agentdef-tidy-evidence")
+      )
     os.remove.all(Root)
     val liveAgents = PathUtil.dataRoot / "agents"
 
@@ -86,7 +88,9 @@ object AgentDefObservationFaceProbe:
   private def keysOf(p: os.Path): String =
     if !os.exists(p) then "(absent)"
     else
-      io.circe.parser.parse(os.read(p)).toOption
+      io.circe.parser
+        .parse(os.read(p))
+        .toOption
         .flatMap(_.asObject)
         .map(_.keys.toList.sorted.mkString("[", ", ", "]"))
         .getOrElse("(parse failed)")

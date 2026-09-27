@@ -4,13 +4,14 @@ import munit.FunSuite
 import org.slf4j.{Logger, LoggerFactory}
 import ch.qos.logback.classic.Logger as LogbackLogger
 
-/** #36: the test classpath must resolve to logback-test.xml (console only),
-  * never logback.xml's FILE appender — otherwise every sbt test run writes
-  * into the host's nebflow.log (${user.home}/.nebflow, regardless of --home).
-  *
-  * Regression guard: if someone drops the test config or re-adds a FILE
-  * appender to it, this spec fails loud instead of silently polluting logs.
-  */
+/**
+ * #36: the test classpath must resolve to logback-test.xml (console only),
+ * never logback.xml's FILE appender — otherwise every sbt test run writes
+ * into the host's nebflow.log (${user.home}/.nebflow, regardless of --home).
+ *
+ * Regression guard: if someone drops the test config or re-adds a FILE
+ * appender to it, this spec fails loud instead of silently polluting logs.
+ */
 class LogbackConfigSpec extends FunSuite:
 
   private def rootAppenderNames: List[String] =

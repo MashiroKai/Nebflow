@@ -6,15 +6,37 @@ import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, AgentStatus, SharedResources}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus}
+import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.project.{FlowMapStore, NodeDef, NodeEngine, NodeLifecycle, OutEdge, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  FlowMapStore,
+  NodeDef,
+  NodeEngine,
+  NodeLifecycle,
+  OutEdge,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, Defaults, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  ContentBlock,
+  Defaults,
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -36,6 +58,7 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
 
   private val watchdogLogTmp = os.temp.dir(prefix = "stuck-budget-events")
   override def beforeAll(): Unit = WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
+
   override def afterAll(): Unit =
     WatchdogEventLog.resetLogDirForTest()
     sys.props.remove("nebflow.stuck.suspendWaitMs")
@@ -90,12 +113,19 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  private def mountProject(name: String, ws: os.Path, system: ActorSystem, res: SharedResources,
-                           rootSid: String): IO[ProjectRuntime] =
+  private def mountProject(
+    name: String,
+    ws: os.Path,
+    system: ActorSystem,
+    res: SharedResources,
+    rootSid: String
+  ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = rootSid,
@@ -103,27 +133,46 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
         emitEvent = (_: String, _: String, _: Json) => IO.unit,
         notifyTriggerOverride = Some((_: String) => IO.unit)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString,
-        createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
-  private def flowRecord(sid: String, ref: ActorRef[AgentCommand], rootSid: String,
-                         bridge: Option[ActorRef[AgentEvent]],
-                         frozenReason: Option[String] = None,
-                         status: AgentStatus = AgentStatus.Processing,
-                         strikes: Int = 0,
-                         fp: String = ""): AgentRecord =
-    AgentRecord(sessionId = sid, ref = ref, kind = AgentKind.Flow, rootSessionId = rootSid,
-      startedAt = System.currentTimeMillis() - 30 * 60 * 1000L, status = status,
+  private def flowRecord(
+    sid: String,
+    ref: ActorRef[AgentCommand],
+    rootSid: String,
+    bridge: Option[ActorRef[AgentEvent]],
+    frozenReason: Option[String] = None,
+    status: AgentStatus = AgentStatus.Processing,
+    strikes: Int = 0,
+    fp: String = ""
+  ): AgentRecord =
+    AgentRecord(
+      sessionId = sid,
+      ref = ref,
+      kind = AgentKind.Flow,
+      rootSessionId = rootSid,
+      startedAt = System.currentTimeMillis() - 30 * 60 * 1000L,
+      status = status,
       lastActivityMs = System.currentTimeMillis() - threshold - 1000L,
-      supervisorRef = bridge, currentToolStartedAt = 0L,
-      frozenReason = frozenReason, loopStrikeCount = strikes, lastLoopFp = fp)
+      supervisorRef = bridge,
+      currentToolStartedAt = 0L,
+      frozenReason = frozenReason,
+      loopStrikeCount = strikes,
+      lastLoopFp = fp
+    )
 
   // ══ R-2：五个常量（命名 + 数值逐字 = 设计 §3.3 建议值）════════════════════
 
-  test("R-2 常量: StuckRecoveryMaxPerGen=1 / MaxPerChain=2 / BackoffMs=[30s,120s,600s] / CooldownMs=20min / ReplayMaxMsgs=40") {
+  test(
+    "R-2 常量: StuckRecoveryMaxPerGen=1 / MaxPerChain=2 / BackoffMs=[30s,120s,600s] / CooldownMs=20min / ReplayMaxMsgs=40"
+  ) {
     assertEquals(Defaults.StuckRecoveryMaxPerGen, 1, "单代次恢复预算 = 1（§3.3 建议值）")
     assertEquals(Defaults.StuckRecoveryMaxPerChain, 2, "全链恢复预算 = 2（§3.3 建议值）")
     assertEquals(Defaults.StuckRecoveryBackoffMs, List(30_000L, 120_000L, 600_000L), "退避曲线 30s→120s→600s")
@@ -143,15 +192,30 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
 
   // ══ §3.4 判定序（纯函数逐条）══════════════════════════════════════════════
 
-  private def rec(sid: String = "s", frozen: Option[String] = None,
-                  status: AgentStatus = AgentStatus.Processing,
-                  strikes: Int = 0, fp: String = ""): AgentRecord =
-    AgentRecord(sessionId = sid, ref = null, kind = AgentKind.Flow, rootSessionId = "r",
-      status = status, frozenReason = frozen, loopStrikeCount = strikes, lastLoopFp = fp)
+  private def rec(
+    sid: String = "s",
+    frozen: Option[String] = None,
+    status: AgentStatus = AgentStatus.Processing,
+    strikes: Int = 0,
+    fp: String = ""
+  ): AgentRecord =
+    AgentRecord(
+      sessionId = sid,
+      ref = null,
+      kind = AgentKind.Flow,
+      rootSessionId = "r",
+      status = status,
+      frozenReason = frozen,
+      loopStrikeCount = strikes,
+      lastLoopFp = fp
+    )
 
   test("§3.4 判定序 1: LoopGuard 冻结记录 ⇒ 互斥点 1（零恢复动作 + 一次上报）") {
     val g = TaskStuckWatcher.recoveryGate(
-      rec(frozen = Some(TaskStuckWatcher.LoopFreezeReasonWire)), TaskStuckWatcher.RecoveryLedger(), 0L)
+      rec(frozen = Some(TaskStuckWatcher.LoopFreezeReasonWire)),
+      TaskStuckWatcher.RecoveryLedger(),
+      0L
+    )
     assertEquals(g.map(_.kind), Some(TaskStuckWatcher.GateLoopFrozen), "365 天冻结不得被自动恢复绕过")
     assertEquals(g.map(_.report), Some(true), "第 2 步：只广播 + 一次上报")
     // status=Frozen（未带 reason）同样命中——两条判据任一成立即可
@@ -162,16 +226,23 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
   test("§3.4 判定序 2: 互斥点 2（恢复后 60s 内指纹再命中）⇒ chainHalted，零动作 + 一次上报") {
     val now = 1_000_000L
     val led = TaskStuckWatcher.RecoveryLedger(
-      chainAttempts = 1, lastRecoveryAt = now - 10_000L, strikeBaseline = 3, fpBaseline = "fpA")
+      chainAttempts = 1,
+      lastRecoveryAt = now - 10_000L,
+      strikeBaseline = 3,
+      fpBaseline = "fpA"
+    )
     // 恢复后 10s，跨轮命中计数由 3 → 4 ⇒ 「反复卡」识别
-    assert(TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 4, fp = "fpA"), led, now),
-      "计数上升 = 恢复后 LoopGuard 再次命中")
+    assert(
+      TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 4, fp = "fpA"), led, now),
+      "计数上升 = 恢复后 LoopGuard 再次命中"
+    )
     // 同样条件但计数未上升、指纹未变 ⇒ 不误报
-    assert(!TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 3, fp = "fpA"), led, now),
-      "计数与指纹均未变 ⇒ 不触发互斥点 2（防误报）")
+    assert(
+      !TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 3, fp = "fpA"), led, now),
+      "计数与指纹均未变 ⇒ 不触发互斥点 2（防误报）"
+    )
     // 出了 60s 窗 ⇒ 不再归因于「恢复后立刻」
-    assert(!TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 9, fp = "fpZ"), led, now + 61_000L),
-      "超出检测窗 ⇒ 不触发")
+    assert(!TaskStuckWatcher.loopDetectedAfterRecovery(rec(strikes = 9, fp = "fpZ"), led, now + 61_000L), "超出检测窗 ⇒ 不触发")
     // 命中后闸门 = recovery-loop-detected（report = true）
     val g = TaskStuckWatcher.recoveryGate(rec(strikes = 4), led.copy(chainHalted = true), now)
     assertEquals(g.map(_.kind), Some(TaskStuckWatcher.GateRecoveryLoopDetected))
@@ -185,8 +256,11 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
     assertEquals(g.map(_.kind), Some(TaskStuckWatcher.GateCooldown))
     assertEquals(g.map(_.report), Some(false), "冷却窗只留痕，不上报（会话可能自己缓过来）")
     // 冷却到期（20min 后）⇒ 放行
-    assertEquals(TaskStuckWatcher.recoveryGate(rec(), led, now + Defaults.StuckRecoveryCooldownMs),
-      None, "冷却窗到期 ⇒ 判定序放行")
+    assertEquals(
+      TaskStuckWatcher.recoveryGate(rec(), led, now + Defaults.StuckRecoveryCooldownMs),
+      None,
+      "冷却窗到期 ⇒ 判定序放行"
+    )
   }
 
   test("§3.4 判定序 4: 全链预算耗尽 ⇒ 零动作 + 一次上报") {
@@ -199,27 +273,32 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
   }
 
   test("§3.4 判定序 0（负控）: 默认空账本 + 无冻结 ⇒ 全部放行（既有路径逐字不变）") {
-    assertEquals(TaskStuckWatcher.recoveryGate(rec(), TaskStuckWatcher.RecoveryLedger(), 0L), None,
-      "空账本 ⇒ 闸门不发声（首轮 / 既有测试行为逐字等价）")
+    assertEquals(
+      TaskStuckWatcher.recoveryGate(rec(), TaskStuckWatcher.RecoveryLedger(), 0L),
+      None,
+      "空账本 ⇒ 闸门不发声（首轮 / 既有测试行为逐字等价）"
+    )
   }
 
   // ══ 互斥点 1(a)(b)：纯判据 ═════════════════════════════════════════════════
 
   test("互斥点 1(a): 冻结会话拒绝 resume；非冻结 / 已不在 registry ⇒ 放行") {
-    assert(NodeEngine.frozenSessionBlocksResume(Some(rec(frozen = Some("loop")))),
-      "带 LoopGuard 冻结记录 ⇒ 拒绝（不得经 resetCrossTurn 绕过 365 天冻结）")
-    assert(NodeEngine.frozenSessionBlocksResume(Some(rec(status = AgentStatus.Frozen))),
-      "status=Frozen ⇒ 拒绝")
-    assert(NodeEngine.frozenSessionBlocksResume(Some(rec(frozen = Some("llm-transient")))),
-      "任意冻结记录都拒绝（本批不区分冻结族——统一走人工恢复出口）")
+    assert(
+      NodeEngine.frozenSessionBlocksResume(Some(rec(frozen = Some("loop")))),
+      "带 LoopGuard 冻结记录 ⇒ 拒绝（不得经 resetCrossTurn 绕过 365 天冻结）"
+    )
+    assert(NodeEngine.frozenSessionBlocksResume(Some(rec(status = AgentStatus.Frozen))), "status=Frozen ⇒ 拒绝")
+    assert(
+      NodeEngine.frozenSessionBlocksResume(Some(rec(frozen = Some("llm-transient")))),
+      "任意冻结记录都拒绝（本批不区分冻结族——统一走人工恢复出口）"
+    )
     assert(!NodeEngine.frozenSessionBlocksResume(Some(rec())), "Processing 无冻结 ⇒ 放行")
     assert(!NodeEngine.frozenSessionBlocksResume(None), "会话已不在 registry ⇒ 不阻止（起的是全新会话）")
   }
 
   test("互斥点 1(b): 会话级原语（transport abort / reclaim）只在 status==Processing 时允许") {
     assert(NodeEngine.sessionLevelPrimitiveAllowed(rec(status = AgentStatus.Processing)))
-    assert(!NodeEngine.sessionLevelPrimitiveAllowed(rec(status = AgentStatus.Frozen)),
-      "冻结态 ⇒ 会话级原语不得执行")
+    assert(!NodeEngine.sessionLevelPrimitiveAllowed(rec(status = AgentStatus.Frozen)), "冻结态 ⇒ 会话级原语不得执行")
     assert(!NodeEngine.sessionLevelPrimitiveAllowed(rec(status = AgentStatus.Idle)))
     assert(!NodeEngine.sessionLevelPrimitiveAllowed(rec(status = AgentStatus.WaitingForUser)))
   }
@@ -227,9 +306,9 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
   // ══ R-2：transcript 重放封顶 ═══════════════════════════════════════════════
 
   private def userMsg(i: Int): Message = Message(role = MessageRole.User, content = Left(s"m$i"))
+
   private def toolResultMsg(i: Int): Message =
-    Message(role = MessageRole.User,
-      content = Right(List(ContentBlock.ToolResult(s"t$i", s"out$i"))))
+    Message(role = MessageRole.User, content = Right(List(ContentBlock.ToolResult(s"t$i", s"out$i"))))
 
   test("R-2 重放封顶: ≤max 原样返回（不截断、不声明）；>max 取最近 max 条并标记截断") {
     val small = List.tabulate(10)(userMsg)
@@ -275,16 +354,37 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-gated"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("gated", ws, system, res, "root-gated")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-gated" -> NodeDef(
-        id = "n-gated", name = "n-gated", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-gated" -> NodeDef(
+              id = "n-gated",
+              name = "n-gated",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "gated-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "gated-agent")
       // 判定序第 2 步命中：会话带 LoopGuard 冻结记录
-      _ <- res.agentRegistry.set(Map(sid -> flowRecord(sid, agentRef, "root-gated", Some(bridgeRef),
-        frozenReason = Some(TaskStuckWatcher.LoopFreezeReasonWire))))
+      _ <- res.agentRegistry.set(
+        Map(
+          sid -> flowRecord(
+            sid,
+            agentRef,
+            "root-gated",
+            Some(bridgeRef),
+            frozenReason = Some(TaskStuckWatcher.LoopFreezeReasonWire)
+          )
+        )
+      )
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
       ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](Map.empty)
@@ -299,14 +399,13 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
       _ <- ProjectRuntimeRegistry.clear
     yield
-      assert(bridgeEvts.isEmpty,
-        s"互斥点 1 ⇒ 零**恢复**动作（挂起腿不启动、不发桥信号），得 $bridgeEvts")
+      assert(bridgeEvts.isEmpty, s"互斥点 1 ⇒ 零**恢复**动作（挂起腿不启动、不发桥信号），得 $bridgeEvts")
       // 「零恢复动作」≠「无事发生」：设计 §3.4 第 2 步是「只广播 + 一次上报」——
       // 本批的「一次上报」= R-1=B 形态的 failNode（诚实失败，可经 NodeEdit 重激活）。
-      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Failed),
-        "互斥点 1 的宽松档：零恢复动作 + 恰好一次上报（failNode）")
+      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Failed), "互斥点 1 的宽松档：零恢复动作 + 恰好一次上报（failNode）")
       assertEquals(counts.getOrElse(sid, 0), 0, "零动作 ⇒ stopCounts 都不该增长（不进入升级链）")
       assert(led.get(sid).exists(_.reportedAt != 0L), "宽松档必须留下「一次上报」的账本痕迹")
+    end for
   }
 
   test("端到端 正控: 冷却窗内的扫描 ⇒ 零动作且**不**上报（账本 reportedAt 保持 0）") {
@@ -319,10 +418,22 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-cool"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("cool", ws, system, res, "root-cool")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-cool" -> NodeDef(
-        id = "n-cool", name = "n-cool", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-cool" -> NodeDef(
+              id = "n-cool",
+              name = "n-cool",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "cool-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "cool-agent")
@@ -330,8 +441,14 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
       // 预置：本会话 1 分钟前刚**成功恢复**过 ⇒ 落在 20min 冷却窗内
-      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](Map(
-        sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = 1, lastRecoveryAt = System.currentTimeMillis() - 60_000L)))
+      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](
+        Map(
+          sid -> TaskStuckWatcher.RecoveryLedger(
+            chainAttempts = 1,
+            lastRecoveryAt = System.currentTimeMillis() - 60_000L
+          )
+        )
+      )
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- IO.sleep(400.millis)
@@ -347,6 +464,7 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       assertEquals(counts.getOrElse(sid, 0), 0, "冷却窗零动作 ⇒ stopCounts 不增长")
       assertEquals(led.get(sid).map(_.reportedAt), Some(0L), "冷却闸门**不**上报（防误报）")
       assertEquals(led.get(sid).map(_.chainAttempts), Some(1), "冷却窗不消耗预算")
+    end for
   }
 
   test("预算消费: L3 开火 ⇒ 账本 gen/chain 各 +1（**尝试时**消费，不是成功后——否则失败路径无限重试）") {
@@ -360,12 +478,26 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-consume"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("consume", ws, system, res, "root-consume")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-consume" -> NodeDef(
-        id = "n-consume", name = "n-consume", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-consume" -> NodeDef(
+              id = "n-consume",
+              name = "n-consume",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "consume-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "consume-agent")
@@ -383,6 +515,7 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
     yield
       assertEquals(led.get(sid).map(_.genAttempts), Some(1), "本代次预算在**尝试**时消费（默认 1 次）")
       assertEquals(led.get(sid).map(_.chainAttempts), Some(1), "全链预算同步消费（默认上限 2）")
+    end for
   }
 
   test("预算闸门 端到端: 全链预算已耗尽 ⇒ 下一次扫描零动作 + 恰好一次上报（节点 failed，不再重试）") {
@@ -395,12 +528,26 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-exh"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("exh", ws, system, res, "root-exh")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-exh" -> NodeDef(
-        id = "n-exh", name = "n-exh", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-exh" -> NodeDef(
+              id = "n-exh",
+              name = "n-exh",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "exh-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "exh-agent")
@@ -408,8 +555,9 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
       // 预置：全链预算已耗尽（2/2）
-      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](Map(
-        sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = Defaults.StuckRecoveryMaxPerChain)))
+      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](
+        Map(sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = Defaults.StuckRecoveryMaxPerChain))
+      )
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- IO.sleep(400.millis)
@@ -425,9 +573,11 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       assertEquals(counts.getOrElse(sid, 0), 0, "预算耗尽 ⇒ 不再进入升级链")
       assert(led.get(sid).exists(_.reportedAt != 0L), "上报恰好一次（账本 reportedAt 结构性保证）")
       assertEquals(led.get(sid).map(_.chainAttempts), Some(2), "零动作 ⇒ 不再消耗预算")
+    end for
   }
 
-  test("互斥点 1(a) 端到端: 冻结会话 + A1 可用 ⇒ hardResumeNode 拒绝执行（节点保持 Running）") {    val system = ActorSystem("budget-freeze")
+  test("互斥点 1(a) 端到端: 冻结会话 + A1 可用 ⇒ hardResumeNode 拒绝执行（节点保持 Running）") {
+    val system = ActorSystem("budget-freeze")
     val sid = "node-frozen"
     for
       _ <- IO(system)
@@ -436,15 +586,38 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-frozen"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("frozen", ws, system, res, "root-frozen")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-frozen" -> NodeDef(
-        id = "n-frozen", name = "n-frozen", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
-      _ <- res.sessionStore.saveMessagesForSession(sid, List(
-        Message(role = MessageRole.User, content = Left("fixture transcript"))))
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-frozen" -> NodeDef(
+              id = "n-frozen",
+              name = "n-frozen",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
+      _ <- res.sessionStore.saveMessagesForSession(
+        sid,
+        List(Message(role = MessageRole.User, content = Left("fixture transcript")))
+      )
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "frozen-agent")
-      _ <- res.agentRegistry.set(Map(sid -> flowRecord(sid, agentRef, "root-frozen", None,
-        frozenReason = Some(TaskStuckWatcher.LoopFreezeReasonWire))))
+      _ <- res.agentRegistry.set(
+        Map(
+          sid -> flowRecord(
+            sid,
+            agentRef,
+            "root-frozen",
+            None,
+            frozenReason = Some(TaskStuckWatcher.LoopFreezeReasonWire)
+          )
+        )
+      )
       anchor <- rt.engine.probeRecoveryAnchors(sid)
       res0 <- rt.engine.hardResumeNode(sid, Some(anchor))
       nodeAfter <- rt.store.getNode("n-frozen")
@@ -452,8 +625,8 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
     yield
       assertEquals(res0, None, "冻结会话 ⇒ 恢复拒绝执行（不得经 resetCrossTurn 出口绕过 365 天冻结）")
-      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Running),
-        "拒绝 ⇒ 节点原样保留（人工再激活）")
+      assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Running), "拒绝 ⇒ 节点原样保留（人工再激活）")
+    end for
   }
 
   // ══ 验收负控（§4.2 表）：②④⑤ 的事件面读数 ═══════════════════════════════════
@@ -465,11 +638,15 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       if !os.exists(os.Path(dir)) then List.empty[io.circe.Json]
       else
         os.list(os.Path(dir)).filter(_.last.endsWith("_events.jsonl")).toList.flatMap { f =>
-          os.read.lines(f).toList.flatMap(l =>
-            io.circe.parser.parse(l).toOption.filter { j =>
-              j.hcursor.get[String]("type").toOption.contains(eventType) &&
+          os.read
+            .lines(f)
+            .toList
+            .flatMap(l =>
+              io.circe.parser.parse(l).toOption.filter { j =>
+                j.hcursor.get[String]("type").toOption.contains(eventType) &&
                 j.hcursor.get[String]("sessionId").toOption.contains(sessionId)
-            })
+              }
+            )
         }
     }
 
@@ -483,21 +660,41 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-loopdet"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("loopdet", ws, system, res, "root-loopdet")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-loopdet" -> NodeDef(
-        id = "n-loopdet", name = "n-loopdet", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-loopdet" -> NodeDef(
+              id = "n-loopdet",
+              name = "n-loopdet",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "loopdet-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "loopdet-agent")
       // 恢复后 10s，跨轮命中计数由 3 → 4（= LoopGuard 在恢复后又命中了一次）
-      _ <- res.agentRegistry.set(Map(sid -> flowRecord(sid, agentRef, "root-loopdet", Some(bridgeRef),
-        strikes = 4, fp = "fpRecovered")))
+      _ <- res.agentRegistry.set(
+        Map(sid -> flowRecord(sid, agentRef, "root-loopdet", Some(bridgeRef), strikes = 4, fp = "fpRecovered"))
+      )
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
-      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](Map(
-        sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = 1,
-          lastRecoveryAt = System.currentTimeMillis() - 10_000L, strikeBaseline = 3, fpBaseline = "fpRecovered")))
+      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](
+        Map(
+          sid -> TaskStuckWatcher.RecoveryLedger(
+            chainAttempts = 1,
+            lastRecoveryAt = System.currentTimeMillis() - 10_000L,
+            strikeBaseline = 3,
+            fpBaseline = "fpRecovered"
+          )
+        )
+      )
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- IO.sleep(400.millis)
@@ -516,6 +713,7 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       assert(bridgeEvts.isEmpty, s"零恢复动作（不发挂起/桥信号），得 $bridgeEvts")
       assertEquals(counts.getOrElse(sid, 0), 0, "零动作 ⇒ 不进入升级链")
       assertEquals(nodeAfter.map(_.status), Some(NodeLifecycle.Failed), "互斥点 2 宽松档：一次上报（failNode）")
+    end for
   }
 
   test("负控④: 首次恢复尝试后未满退避窗 ⇒ 零第二次恢复（退避曲线可判据，不是死常量）") {
@@ -526,17 +724,26 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
     assertEquals(g.map(_.kind), Some(TaskStuckWatcher.GateBackoff))
     assertEquals(g.map(_.report), Some(false), "退避窗只留痕，不上报")
     // 退避窗过后（30s）⇒ 放行（此时预算仍在，chain=1 < 2）
-    assertEquals(TaskStuckWatcher.recoveryGate(rec(), led, now + Defaults.stuckRecoveryBackoffMs(2)), None,
-      "退避窗到期 ⇒ 判定序放行")
+    assertEquals(
+      TaskStuckWatcher.recoveryGate(rec(), led, now + Defaults.stuckRecoveryBackoffMs(2)),
+      None,
+      "退避窗到期 ⇒ 判定序放行"
+    )
     // chain 已 2/2 ⇒ **预算闸门优先**（判定序把预算排在退避之前：预算耗尽是终局，
     // 退避只是「还没到时间」，两者同时成立时终局语义胜出）。
     val led2 = TaskStuckWatcher.RecoveryLedger(chainAttempts = 2, lastAttemptAt = now - 100_000L)
-    assertEquals(TaskStuckWatcher.recoveryGate(rec(), led2, now).map(_.kind), Some(TaskStuckWatcher.GateBudgetExhausted),
-      "预算耗尽 + 退避窗内 ⇒ 预算闸门（终局语义）优先于退避")
+    assertEquals(
+      TaskStuckWatcher.recoveryGate(rec(), led2, now).map(_.kind),
+      Some(TaskStuckWatcher.GateBudgetExhausted),
+      "预算耗尽 + 退避窗内 ⇒ 预算闸门（终局语义）优先于退避"
+    )
     // 预算未耗尽（chain=1）但退避未满 ⇒ 退避闸门
     val led3 = TaskStuckWatcher.RecoveryLedger(chainAttempts = 1, lastAttemptAt = now - 100_000L)
-    assertEquals(TaskStuckWatcher.recoveryGate(rec(), led3, now).map(_.kind), Some(TaskStuckWatcher.GateBackoff),
-      "chain=1（下次是第 2 档 = 120s）+ 才过 100s ⇒ 退避闸门")
+    assertEquals(
+      TaskStuckWatcher.recoveryGate(rec(), led3, now).map(_.kind),
+      Some(TaskStuckWatcher.GateBackoff),
+      "chain=1（下次是第 2 档 = 120s）+ 才过 100s ⇒ 退避闸门"
+    )
     // 退避档位查询本身（纯）
     assertEquals(Defaults.stuckRecoveryBackoffMs(1), 30_000L)
     assertEquals(Defaults.stuckRecoveryBackoffMs(2), 120_000L)
@@ -553,18 +760,31 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.clear
       ws = tmp / "ws-once"; _ <- IO(os.makeDir.all(ws))
       rt <- mountProject("once", ws, system, res, "root-once")
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes + ("n-once" -> NodeDef(
-        id = "n-once", name = "n-once", agent = "general", status = NodeLifecycle.Running,
-        sessionRef = Some(sid), startedAt = Some(System.currentTimeMillis() - 60_000L),
-        out = List(OutEdge.nebula), createdAt = System.currentTimeMillis() - 60_000L)))).void
+      _ <- rt.store
+        .mutate(s =>
+          s.copy(nodes =
+            s.nodes + ("n-once" -> NodeDef(
+              id = "n-once",
+              name = "n-once",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(sid),
+              startedAt = Some(System.currentTimeMillis() - 60_000L),
+              out = List(OutEdge.root),
+              createdAt = System.currentTimeMillis() - 60_000L
+            ))
+          )
+        )
+        .void
       bridgeReceived <- Ref.of[IO, List[AgentEvent]](Nil)
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeReceived), "once-bridge")
       agentRef <- system.spawn(mkRecordingActor(Ref.unsafe(Nil)), "once-agent")
       _ <- res.agentRegistry.set(Map(sid -> flowRecord(sid, agentRef, "root-once", Some(bridgeRef))))
       stopCounts <- Ref.of[IO, Map[String, Int]](Map.empty)
       pendingL3 <- Ref.of[IO, List[TaskStuckWatcher.PendingL3]](Nil)
-      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](Map(
-        sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = Defaults.StuckRecoveryMaxPerChain)))
+      ledger <- Ref.of[IO, Map[String, TaskStuckWatcher.RecoveryLedger]](
+        Map(sid -> TaskStuckWatcher.RecoveryLedger(chainAttempts = Defaults.StuckRecoveryMaxPerChain))
+      )
       // 三轮扫描：闸门每轮都命中，但上报只准发生**一次**
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
       _ <- TaskStuckWatcher.scan(res, new WsHub(), threshold, stopCounts, pendingL3, ledger = ledger)
@@ -579,6 +799,7 @@ class StuckRecoveryBudgetSpec extends CatsEffectSuite:
       assertEquals(exhausted.size, 1, s"三轮命中 ⇒ **恰好一次**上报事件，得 ${exhausted.size}")
       assertEquals(gated.size, 3, "闸门每轮都留痕（可审计「本拍为什么什么都没做」）")
       assertEquals(counts.getOrElse(sid, 0), 0, "预算闸门零动作 ⇒ stopCounts 不增长")
+    end for
   }
 
 end StuckRecoveryBudgetSpec

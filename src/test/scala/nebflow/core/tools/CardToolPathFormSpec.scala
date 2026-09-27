@@ -29,6 +29,9 @@ import java.nio.file.{Files, Path, Paths}
  */
 class CardToolPathFormSpec extends FunSuite:
 
+  // Phase 5 解耦接线:FileRefs 的端点判据窄端口(生产在 GatewayMain 装配;spec 自接线)。
+  nebflow.core.FilePolicyPort.install(nebflow.gateway.NfFilePolicy)
+
   private val ctx = ToolContext(projectRoot = os.pwd.toString)
   private val sentinel = "___CARD_HTML___"
 
@@ -55,17 +58,20 @@ class CardToolPathFormSpec extends FunSuite:
       val s = Files.walk(root)
       try
         s.sorted(java.util.Comparator.reverseOrder()).forEach { x =>
-          try Files.deleteIfExists(x) catch case _: Throwable => ()
+          try Files.deleteIfExists(x)
+          catch case _: Throwable => ()
         }
       finally s.close()
 
   // ── the real fixture ──────────────────────────────────────────────────────
 
-  /** A REAL, browser-decodable RGB PNG: 8-bit truecolour, no interlace, one PNG
-    * filter byte per row, `IDAT` deflated with `java.util.zip`, CRCs computed —
-    * i.e. the bytes a browser can actually decode (`naturalWidth == w`), not a
-    * mock or a placeholder. Pseudo-random pixels keep it incompressible, so a
-    * 200×200 image stays far above the inline budget. */
+  /**
+   * A REAL, browser-decodable RGB PNG: 8-bit truecolour, no interlace, one PNG
+   * filter byte per row, `IDAT` deflated with `java.util.zip`, CRCs computed —
+   * i.e. the bytes a browser can actually decode (`naturalWidth == w`), not a
+   * mock or a placeholder. Pseudo-random pixels keep it incompressible, so a
+   * 200×200 image stays far above the inline budget.
+   */
   private def writePng(path: Path, w: Int, h: Int, seed: Int): Path =
     def be32(v: Int): Array[Byte] =
       Array((v >>> 24).toByte, (v >>> 16).toByte, (v >>> 8).toByte, v.toByte)
@@ -102,6 +108,7 @@ class CardToolPathFormSpec extends FunSuite:
     out.write(chunk("IEND", Array.emptyByteArray))
     Files.write(path, out.toByteArray)
     path
+  end writePng
 
   // ── payload helpers ───────────────────────────────────────────────────────
 
@@ -114,13 +121,16 @@ class CardToolPathFormSpec extends FunSuite:
   private def htmlOf(p: Json): String = p.hcursor.get[String]("html").toOption.getOrElse("")
   private def warningsOf(p: Json): List[Json] = p.hcursor.get[List[Json]]("warnings").toOption.getOrElse(Nil)
   private def notesOf(p: Json): List[String] = p.hcursor.get[List[String]]("notes").toOption.getOrElse(Nil)
+
   private def refs(p: Json, field: String): Int =
     p.hcursor.downField("fileRefs").get[Int](field).toOption.getOrElse(-1)
 
-  /** The ONE producer/consumer pair, restated independently of the production
-    * single source: `%20` out (never `+`), bare `+` folded back to a space on the
-    * way in (a literal plus is spelled `%2B`). If the production codec ever
-    * drifts from this pair, these assertions fail here. */
+  /**
+   * The ONE producer/consumer pair, restated independently of the production
+   * single source: `%20` out (never `+`), bare `+` folded back to a space on the
+   * way in (a literal plus is spelled `%2B`). If the production codec ever
+   * drifts from this pair, these assertions fail here.
+   */
   private def canonicalEncode(p: String): String =
     java.net.URLEncoder.encode(p, "UTF-8").replace("+", "%20")
 
@@ -160,8 +170,7 @@ class CardToolPathFormSpec extends FunSuite:
       val emitted = emittedPath(htmlOf(p))
       assertEquals(canonicalDecode(emitted), Some(real), s"$label: the emitted URL must decode back to the real path")
       assertEquals(canonicalEncode(real), emitted, s"$label: the emitted form must be the single-source `%20` form")
-      if label != "raw" then
-        assert(notesOf(p).nonEmpty, s"$label: a decoded-form hit must be disclosed in `notes`")
+      if label != "raw" then assert(notesOf(p).nonEmpty, s"$label: a decoded-form hit must be disclosed in `notes`")
       else assertEquals(notesOf(p), Nil, "raw: the raw form hit — no disclosure needed")
     }
 
@@ -231,6 +240,8 @@ class CardToolPathFormSpec extends FunSuite:
       Files.deleteIfExists(link)
       Files.deleteIfExists(dir)
 
+    end try
+
   test("negative control: a real file in an unservable namespace is warned, never counted"):
     val dir = Paths.get(os.pwd.toString).toRealPath().resolve(".nebflow/secrets/imgref-spec")
     Files.createDirectories(dir)
@@ -255,6 +266,7 @@ class CardToolPathFormSpec extends FunSuite:
       // not create.
       Files.deleteIfExists(f)
       Files.deleteIfExists(dir)
+    end try
 
   // ── 负对照：0 字节文件（浏览器同样渲染不出来）⇒ 警告 + 不计 proxied ──────────
 
@@ -275,3 +287,4 @@ class CardToolPathFormSpec extends FunSuite:
       // rework r1 (verifier C1): self-created subtree only — see the note above.
       Files.deleteIfExists(f)
       Files.deleteIfExists(dir)
+end CardToolPathFormSpec

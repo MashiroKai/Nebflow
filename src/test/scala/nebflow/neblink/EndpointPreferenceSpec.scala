@@ -3,6 +3,7 @@ package nebflow.neblink
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 /**
  * C1 回归网（2026-09-11 P2P 直连修复批，方案 §2 选项 C1 / §3.2-3.3）。

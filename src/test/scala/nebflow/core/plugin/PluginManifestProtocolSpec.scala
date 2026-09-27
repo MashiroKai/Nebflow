@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
@@ -46,19 +46,23 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
     val d = tempRoot / "plugins" / dirname
     os.makeDir.all(d / "skills" / "s")
     os.write.over(d / "plugin.json", manifest)
-    os.write.over(d / "skills" / "s" / "SKILL.md",
+    os.write.over(
+      d / "skills" / "s" / "SKILL.md",
       """---
         |name: s
         |description: fixture skill
         |---
-        |body""".stripMargin)
+        |body""".stripMargin
+    )
     d
 
   private def loadOne(dirname: String): IO[Either[String, PluginRegistry.PluginDef]] =
     PluginRegistry.scan().map { all =>
       all.find(_.warnings.nonEmpty && false) // noop to keep shape
-      all.find(_.name == dirname).map(Right(_)).getOrElse(
-        Left(s"plugin '$dirname' not loaded (scan: ${all.map(_.name).mkString(",")})"))
+      all
+        .find(_.name == dirname)
+        .map(Right(_))
+        .getOrElse(Left(s"plugin '$dirname' not loaded (scan: ${all.map(_.name).mkString(",")})"))
     }
 
   private def rejected: IO[Map[String, String]] =
@@ -69,17 +73,21 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
   test("§5.2 十字段: 完整元数据 manifest 装载且 homepage/repository/license/keywords/author 记录进注册表") {
     val d = tempRoot / "plugins" / "full-metadata"
     os.makeDir.all(d / "skills" / "s")
-    os.write.over(d / "plugin.json",
+    os.write.over(
+      d / "plugin.json",
       s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"full-metadata","version":"2.3.4",
          |"description":"all ten fields","author":{"name":"Alice","email":"a@x.io","url":"https://x.io/~a"},
          |"homepage":"https://x.io/plugin","repository":"https://github.com/x/plugin","license":"MIT",
-         |"keywords":["search","web"]}""".stripMargin.replace("\n", ""))
-    os.write.over(d / "skills" / "s" / "SKILL.md",
+         |"keywords":["search","web"]}""".stripMargin.replace("\n", "")
+    )
+    os.write.over(
+      d / "skills" / "s" / "SKILL.md",
       """---
         |name: s
         |description: fixture skill
         |---
-        |body""".stripMargin)
+        |body""".stripMargin
+    )
     loadOne("full-metadata").map {
       case Left(err) => fail(s"full-metadata must load: $err")
       case Right(p) =>
@@ -87,10 +95,14 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
         assertEquals(p.repository, "https://github.com/x/plugin", "repository must be recorded (§5.4)")
         assertEquals(p.license, "MIT", "license must be recorded (§5.4)")
         assertEquals(p.keywords, List("search", "web"), "keywords must be recorded (§5.4)")
-        assert(p.author.contains("Alice") && p.author.contains("a@x.io"),
-          s"author object must render into author field, got: ${p.author}")
-        assert(p.warnings.forall(w => !w.contains("homepage") && !w.contains("keywords")),
-          "protocol fields must NOT trigger unknown-field warnings")
+        assert(
+          p.author.contains("Alice") && p.author.contains("a@x.io"),
+          s"author object must render into author field, got: ${p.author}"
+        )
+        assert(
+          p.warnings.forall(w => !w.contains("homepage") && !w.contains("keywords")),
+          "protocol fields must NOT trigger unknown-field warnings"
+        )
     }
   }
 
@@ -100,14 +112,19 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
     skillPlugin("no-schema", """{"name":"no-schema","version":"1.0.0"}""")
     rejected.map { r =>
       val reason = r.getOrElse("no-schema", fail(s"no-schema must be rejected, got: ${r.keySet}"))
-      assert(reason.contains("$schema") && reason.contains("required"),
-        s"rejection must name the missing required field, got: $reason")
+      assert(
+        reason.contains("$schema") && reason.contains("required"),
+        s"rejection must name the missing required field, got: $reason"
+      )
     }
   }
 
   test("§5.2: 非 canonical $schema → 拒载（unsupported version，客户端只识别 canonical 值）") {
     skillPlugin("wrong-schema", manifestOf("wrong-schema", schema = "https://agent-plugins.org/schema/1.0.0"))
-    skillPlugin("future-schema", manifestOf("future-schema", schema = "https://agent-plugins.org/schemas/9.9.9/plugin.schema.json"))
+    skillPlugin(
+      "future-schema",
+      manifestOf("future-schema", schema = "https://agent-plugins.org/schemas/9.9.9/plugin.schema.json")
+    )
     rejected.map { r =>
       val w = r.getOrElse("wrong-schema", fail("wrong-schema must be rejected"))
       val f = r.getOrElse("future-schema", fail("future-schema must be rejected"))
@@ -134,10 +151,15 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
   // ── §5.4 类型校验（fatal）+ 版本语义（审计项 2）────────────────
 
   test("§5.4: version 为数字 / keywords 非字符串数组 / author 带未知字段 → 拒载（类型违规 fatal）") {
-    skillPlugin("num-version", s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"num-version","version":123}""")
+    skillPlugin(
+      "num-version",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"num-version","version":123}"""
+    )
     skillPlugin("bad-keywords", manifestOf("bad-keywords", extra = ""","keywords":"not-array""""))
-    skillPlugin("bad-author", manifestOf("bad-author",
-      extra = ""","author":{"name":"A","role":"admin"}""")) // author 闭合：仅 name/email/url
+    skillPlugin(
+      "bad-author",
+      manifestOf("bad-author", extra = ""","author":{"name":"A","role":"admin"}""")
+    ) // author 闭合：仅 name/email/url
     rejected.map { r =>
       assert(r("num-version").contains("must be a string"), s"got: ${r("num-version")}")
       assert(r("bad-keywords").contains("keywords"), s"got: ${r("bad-keywords")}")
@@ -146,7 +168,10 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
   }
 
   test("版本语义（审计项 2）: 非 semver version → 不拒载（spec §5.4 RECOMMENDED，MUST NOT 拒绝）") {
-    skillPlugin("loose-version", manifestOf("loose-version").replace("\"version\":\"1.0.0\"", "\"version\":\"r2-final\""))
+    skillPlugin(
+      "loose-version",
+      manifestOf("loose-version").replace("\"version\":\"1.0.0\"", "\"version\":\"r2-final\"")
+    )
     loadOne("loose-version").map {
       case Right(p) => assertEquals(p.version, "r2-final", "non-semver version must be recorded verbatim")
       case Left(err) => fail(s"non-semver version MUST NOT reject the manifest: $err")
@@ -161,18 +186,22 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
     os.makeDir.all(d / "skills" / "good")
     os.write.over(d / "plugin.json", manifestOf("skill-no-desc"))
     os.write.over(d / "skills" / "broken" / "SKILL.md", "---\nname: broken\n---\nbody") // 缺 description
-    os.write.over(d / "skills" / "good" / "SKILL.md",
+    os.write.over(
+      d / "skills" / "good" / "SKILL.md",
       """---
         |name: good
         |description: fine
         |---
-        |body""".stripMargin)
+        |body""".stripMargin
+    )
     loadOne("skill-no-desc").map {
       case Left(err) => fail(s"plugin must continue loading other skills: $err")
       case Right(p) =>
         assertEquals(p.skills.map(_.id), List("skill-no-desc/good"), "non-conforming skill skipped, conforming loaded")
-        assert(p.warnings.exists(w => w.contains("broken") && w.contains("description")),
-          s"skip must be reported (§7.1 SHOULD), got: ${p.warnings}")
+        assert(
+          p.warnings.exists(w => w.contains("broken") && w.contains("description")),
+          s"skip must be reported (§7.1 SHOULD), got: ${p.warnings}"
+        )
     }
   }
 
@@ -190,20 +219,24 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
     // SKILL.md 直接以 symlink 指向插件根外的 staging（§4.1 逃逸形态）。
     // 附一个合法 mcp.json 组件——围栏跳过 skill 后插件仍可装载（§4.1 最窄失败边界）
     os.symlink(d1 / "skills" / "s" / "SKILL.md", outside / "evil.md")
-    os.write.over(d1 / "mcp.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}""")
+    os.write.over(
+      d1 / "mcp.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}"""
+    )
 
     // tools 逃逸：org.nebflow/tools.json → 插件根外；plugin 本体有合法 skills，继续装载
     val d2 = tempRoot / "plugins" / "tools-escape"
     os.makeDir.all(d2 / "skills" / "s")
     os.makeDir.all(d2 / "org.nebflow")
     os.write.over(d2 / "plugin.json", manifestOf("tools-escape"))
-    os.write.over(d2 / "skills" / "s" / "SKILL.md",
+    os.write.over(
+      d2 / "skills" / "s" / "SKILL.md",
       """---
         |name: s
         |description: tmp
         |---
-        |body""".stripMargin)
+        |body""".stripMargin
+    )
     os.symlink(d2 / "org.nebflow" / "tools.json", outside / "evil-tools.json")
 
     for
@@ -213,15 +246,20 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
       esc match
         case Right(p) =>
           assertEquals(p.skills, Nil, "escaping SKILL.md must be skipped (§4.1)")
-          assert(p.warnings.exists(_.contains("outside the plugin root")),
-            s"containment skip must be reported, got: ${p.warnings}")
+          assert(
+            p.warnings.exists(_.contains("outside the plugin root")),
+            s"containment skip must be reported, got: ${p.warnings}"
+          )
         case Left(err) => fail(s"skill-escape plugin should still load (skill-level skip): $err")
       tools match
         case Right(p) =>
           assertEquals(p.toolsExtension, Nil, "escaping tools.json must be ignored (§4.1)")
-          assert(p.warnings.exists(_.contains("outside the plugin root")),
-            s"containment ignore must be reported, got: ${p.warnings}")
+          assert(
+            p.warnings.exists(_.contains("outside the plugin root")),
+            s"containment ignore must be reported, got: ${p.warnings}"
+          )
         case Left(err) => fail(s"tools-escape plugin should still load: $err")
+    end for
   }
 
 end PluginManifestProtocolSpec

@@ -2,8 +2,8 @@ package nebflow.core.seed
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.plugin.PluginRegistry
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
@@ -50,8 +50,7 @@ class SeedPluginReconcileSpec extends FunSuite:
     os.Path(java.nio.file.Paths.get(url.toURI)) / os.up
 
   private def seedMap: SortedMap[String, Array[Byte]] =
-    SortedMap.from(os.walk(seedDir).filter(os.isFile).map(p =>
-      p.relativeTo(seedDir).toString -> os.read.bytes(p)))
+    SortedMap.from(os.walk(seedDir).filter(os.isFile).map(p => p.relativeTo(seedDir).toString -> os.read.bytes(p)))
 
   private def seedText: Map[String, String] = asText(seedMap.toMap)
 
@@ -76,14 +75,27 @@ class SeedPluginReconcileSpec extends FunSuite:
     PluginRegistry.approve("slideblocks").unsafeRunSync()
     recordSha.get
 
-  /** 信任记录落库 sha256（approve 时刻基准；目录漂移不影响记录本身）。
-    * 注意不用 TrustStatus/resolve——漂移即 untrusted，取不到基准。 */
+  /**
+   * 信任记录落库 sha256（approve 时刻基准；目录漂移不影响记录本身）。
+   * 注意不用 TrustStatus/resolve——漂移即 untrusted，取不到基准。
+   */
   private def recordSha: Option[String] =
     val cfg = PathUtil.configJsonReadPath(home)
     if !os.exists(cfg) then None
-    else io.circe.parser.parse(os.read(cfg)).toOption.flatMap(
-      _.hcursor.downField("plugins").downField("trust").downField("slideblocks")
-        .downField("sha256").as[String].toOption)
+    else
+      io.circe.parser
+        .parse(os.read(cfg))
+        .toOption
+        .flatMap(
+          _.hcursor
+            .downField("plugins")
+            .downField("trust")
+            .downField("slideblocks")
+            .downField("sha256")
+            .as[String]
+            .toOption
+        )
+  end recordSha
 
   private def dirDigest(d: os.Path): String = PluginRegistry.computeDigest(d).toOption.get._1
 
@@ -91,27 +103,35 @@ class SeedPluginReconcileSpec extends FunSuite:
   private def manifestVersion: String =
     val in = getClass.getClassLoader.getResourceAsStream("seed/manifest.json")
     try
-      io.circe.parser.parse(new String(in.readAllBytes(), UTF_8)).toOption.get
-        .hcursor.downField("seedVersion").as[String].toOption.get
+      io.circe.parser
+        .parse(new String(in.readAllBytes(), UTF_8))
+        .toOption
+        .get
+        .hcursor
+        .downField("seedVersion")
+        .as[String]
+        .toOption
+        .get
     finally in.close()
 
-  /** 隔离基线：无 agents/projects、marker=当前版本（marker 分支 no-op）、插件目录清空、
-    * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）、
-    * 覆盖前备份树清空（`plugins-backups/`——备份件同样是 home 状态，留着会让「本次覆盖
-    * 恰产生一件备份」的断言看到前序用例的残留）。
-    *
-    * 2026-09-13（#105 P-1 批）：**一并清插件存在台账**——本 fixture 把 home 重置成
-    * 「没有这些插件」的形态，而台账（`.plugin-presence.json`）也是 home 状态的一部分；
-    * 只清插件目录而留台账，语义上等价于「用户定向删除」（见 SeedPluginDeletionMarkerSpec），
-    * 与本 fixture 的意图（无历史的首装/自愈态）不同。断言零改动。 */
+  /**
+   * 隔离基线：无 agents/projects、marker=当前版本（marker 分支 no-op）、插件目录清空、
+   * 信任表清空（config json 删除——否则前序用例的 approve 记录会污染仲裁分支）、
+   * 覆盖前备份树清空（`plugins-backups/`——备份件同样是 home 状态，留着会让「本次覆盖
+   * 恰产生一件备份」的断言看到前序用例的残留）。
+   *
+   * 2026-09-13（#105 P-1 批）：**一并清插件存在台账**——本 fixture 把 home 重置成
+   * 「没有这些插件」的形态，而台账（`.plugin-presence.json`）也是 home 状态的一部分；
+   * 只清插件目录而留台账，语义上等价于「用户定向删除」（见 SeedPluginDeletionMarkerSpec），
+   * 与本 fixture 的意图（无历史的首装/自愈态）不同。断言零改动。
+   */
   private def makeIsolatedHome(): Unit =
     rm(home / "plugins"); rm(home / "agents"); rm(home / "projects"); rm(home / ".seed-state.json")
     rm(PathUtil.configJsonReadPath(home)); rm(SeedService.pluginLedgerPath(home))
     // 覆盖前备份树也是 home 状态的一部分（本批新增）：清掉，否则前序用例的备份件会
     // 污染「本次覆盖恰产生一件备份」的断言。
     rm(home / "plugins-backups")
-    os.write.over(home / ".seed-state.json",
-      s"""{"version":"$manifestVersion","seededAt":1,"items":[]}""")
+    os.write.over(home / ".seed-state.json", s"""{"version":"$manifestVersion","seededAt":1,"items":[]}""")
 
   // ── ① 干净运行时 → 种子刷新 + 自动重审 ├────────────────────
   test("clean runtime (digest==trusted) is refreshed from seed and re-approved"):
@@ -135,40 +155,51 @@ class SeedPluginReconcileSpec extends FunSuite:
     val backup = backups.head
     assert(
       backup.last.endsWith("_pre-sync-slideblocks") && backup.last.length > "_pre-sync-slideblocks".length,
-      s"backup name carries stamp + source face + package: ${backup.last}")
+      s"backup name carries stamp + source face + package: ${backup.last}"
+    )
     // 备份件 == 被覆盖前内容（逐字节）⇒ 覆盖结果与旧行为内容面等价（正控：逐件 blob 对照）。
-    val backupFiles = os.walk(backup).filter(os.isFile)
-      .map(p => p.relativeTo(backup).toString -> os.read.bytes(p)).toMap
-    assert(backupFiles.keySet - "PRE-SHA256.txt" == mutatedOldRuntime.keySet,
-      s"backup holds exactly the pre-overwrite file set: ${backupFiles.keySet}")
+    val backupFiles = os
+      .walk(backup)
+      .filter(os.isFile)
+      .map(p => p.relativeTo(backup).toString -> os.read.bytes(p))
+      .toMap
+    assert(
+      backupFiles.keySet - "PRE-SHA256.txt" == mutatedOldRuntime.keySet,
+      s"backup holds exactly the pre-overwrite file set: ${backupFiles.keySet}"
+    )
     mutatedOldRuntime.foreach { (rel, bytes) =>
-      assert(java.util.Arrays.equals(backupFiles(rel), bytes),
-        s"backup '$rel' is byte-identical to the pre-overwrite content")
+      assert(
+        java.util.Arrays.equals(backupFiles(rel), bytes),
+        s"backup '$rel' is byte-identical to the pre-overwrite content"
+      )
     }
     // 留痕件形态 = agents 面既有形态（仅来源面名词不同）。
     val manifest = os.read(backup / "PRE-SHA256.txt")
-    assert(manifest.startsWith("# plugin=slideblocks  sampled="),
-      "manifest header carries source face + package + stamp")
+    assert(
+      manifest.startsWith("# plugin=slideblocks  sampled="),
+      "manifest header carries source face + package + stamp"
+    )
     mutatedOldRuntime.foreach { (rel, bytes) =>
-      assert(manifest.contains(s"${sha256(bytes)}  $rel"),
-        s"manifest records the pre-overwrite sha256 of '$rel'")
+      assert(manifest.contains(s"${sha256(bytes)}  $rel"), s"manifest records the pre-overwrite sha256 of '$rel'")
     }
 
   // ── ①b 干净运行时载 runtime 独有件 → 镜像覆盖连带删除 ├─────
-  /** 覆盖**镜像删除分支**（`SeedService.mirrorSeed:429-431` 的「删 runtime 独有文件」步 +
-    * `:433-435` 的「清删空目录」步，本批 2026-09-17 补）。
-    *
-    * 分支身份：镜像覆盖（[[mirrorSeed]]）在「写种子文件」之外还有**删除面**——runtime 独有件
-    * 必须被移除，否则「镜像 = 逐字节等于种子」不成立。
-    *
-    * 可达性：插件面用**信任记录 digest 仲裁**（approve 时刻目录指纹），runtime 独有件
-    * 已计入该指纹 ⇒ `digest == trusted` 成立 ⇒ 进镜像覆盖分支（不落「用户改过」跳过分支）。
-    * （agents 面同一步不可达——`reconcileAgent` 的差集检查把 runtime 独有文件判为
-    * REFUSING，`runtimeUniqueLines` 对无同 rel 的运行时文件取空种子行集 ⇒ 全行独有；
-    * 该负控属既有行为，本批只登记、不覆盖。）
-    *
-    * 变异判据：注掉 `mirrorSeed` 中「删除运行面独有件」那一步 ⇒ 本例必红
-    * （独有件残留 + `treeAsText != seedText`）。 */
+  /**
+   * 覆盖**镜像删除分支**（`SeedService.mirrorSeed:429-431` 的「删 runtime 独有文件」步 +
+   * `:433-435` 的「清删空目录」步，本批 2026-09-17 补）。
+   *
+   * 分支身份：镜像覆盖（[[mirrorSeed]]）在「写种子文件」之外还有**删除面**——runtime 独有件
+   * 必须被移除，否则「镜像 = 逐字节等于种子」不成立。
+   *
+   * 可达性：插件面用**信任记录 digest 仲裁**（approve 时刻目录指纹），runtime 独有件
+   * 已计入该指纹 ⇒ `digest == trusted` 成立 ⇒ 进镜像覆盖分支（不落「用户改过」跳过分支）。
+   * （agents 面同一步不可达——`reconcileAgent` 的差集检查把 runtime 独有文件判为
+   * REFUSING，`runtimeUniqueLines` 对无同 rel 的运行时文件取空种子行集 ⇒ 全行独有；
+   * 该负控属既有行为，本批只登记、不覆盖。）
+   *
+   * 变异判据：注掉 `mirrorSeed` 中「删除运行面独有件」那一步 ⇒ 本例必红
+   * （独有件残留 + `treeAsText != seedText`）。
+   */
   test("clean runtime carrying a runtime-only file: the seed mirror deletes it and cleans the emptied dir"):
     makeIsolatedHome()
     val legacyRel = "skills/slideblocks/legacy/LEGACY-NOTE.md"
@@ -176,27 +207,34 @@ class SeedPluginReconcileSpec extends FunSuite:
     writePlugin(withExtra)
     // 仲裁基准含 runtime 独有件 ⇒ 判为「干净运行时」（自 approve 后零漂移）
     val trusted = approveRuntime()
-    assert(trusted == dirDigest(pluginDir),
-      "precondition: approve recorded the digest incl. the runtime-only file")
-    assert(os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
-      "precondition: the runtime-only file is on disk before reconcile")
+    assert(trusted == dirDigest(pluginDir), "precondition: approve recorded the digest incl. the runtime-only file")
+    assert(
+      os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "precondition: the runtime-only file is on disk before reconcile"
+    )
 
     ensure()
 
     // 镜像删除分支（负控：删除步被注掉即红）
-    assert(!os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
-      "the runtime-only file is removed by the seed mirror (mirror-delete branch)")
+    assert(
+      !os.exists(pluginDir / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "the runtime-only file is removed by the seed mirror (mirror-delete branch)"
+    )
     // 清删空目录步：只装 runtime 独有件的目录一并消失
-    assert(!os.exists(pluginDir / "skills" / "slideblocks" / "legacy"),
-      "the directory emptied by that deletion is cleaned up")
+    assert(
+      !os.exists(pluginDir / "skills" / "slideblocks" / "legacy"),
+      "the directory emptied by that deletion is cleaned up"
+    )
     // 删除面与写面同判据：镜像结果逐字节等于种子
     assert(treeAsText(pluginDir) == seedText, "mirrored runtime == seed exactly (byte-level)")
     assert(recordSha.get == dirDigest(pluginDir), "re-approved on the mirrored digest")
     // 删除不是静默丢弃：pre-sync 备份含被删的那一件（回滚材料完整）
     val backupDirs = os.list(home / "plugins-backups").filter(os.isDir)
     assert(backupDirs.size == 1, s"exactly one pre-sync backup dir, got: ${backupDirs.size}")
-    assert(os.exists(backupDirs.head / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
-      "the pre-sync backup holds the deleted runtime-only file (rollback material)")
+    assert(
+      os.exists(backupDirs.head / "skills" / "slideblocks" / "legacy" / "LEGACY-NOTE.md"),
+      "the pre-sync backup holds the deleted runtime-only file (rollback material)"
+    )
 
   // ── ② 用户改过 → 跳过 + 用户编辑保留 ├─────────────────────
   test("user-modified runtime (digest!=trusted) is skipped, user edits preserved"):
@@ -242,10 +280,14 @@ class SeedPluginReconcileSpec extends FunSuite:
     // 预期判红样例）。项目面自作者 2026-09-17 裁定②（既有 home 亦 add-only 补种）起由
     // `reconcileProjects` 补**缺失**的内置项目 ⇒ 本条原负向断言「no general project
     // planted under guard」已随前令作废，翻转为正向。
-    assert(os.exists(home / "projects" / "general" / "project.json"),
-      "missing default project backfilled under the guard (add-only reconcile, author ruling ②)")
-    assert(os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
-      "default-set agent self-healed even under the guard (2026-09-13)")
+    assert(
+      os.exists(home / "projects" / "general" / "project.json"),
+      "missing default project backfilled under the guard (add-only reconcile, author ruling ②)"
+    )
+    assert(
+      os.exists(home / "agents" / "project-dispatcher" / "agent.json"),
+      "default-set agent self-healed even under the guard (2026-09-13)"
+    )
     // reconcile 穿透守卫：干净旧插件刷新为 seed 形态（2026-09-09 断点的机制解）
     assert(treeAsText(pluginDir) == seedText, "clean stale plugin refreshed even under guard")
     assert(recordSha.get != trustedOld, "re-approved under guard")
@@ -298,15 +340,12 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
     // 默认集本批 3 → 4 = +web-search-toolkit）
-    for name <- List(
-        "nebflow-qa",
-        "nebflow-frontend-dev",
-        "engineering-methods",
-        "explorer-toolkit",
-        "design-spec")
+    for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do
-      assert(!os.exists(home / "plugins" / name),
-        s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)")
+      assert(
+        !os.exists(home / "plugins" / name),
+        s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)"
+      )
     // 落盘面积恰为默认集四条（枚举目录，防「遍历种子树全集」式实现）
     val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
     assert(
@@ -331,8 +370,7 @@ class SeedPluginReconcileSpec extends FunSuite:
     assert(dirDigest(home / "plugins" / "visual-report") == before, "existing dir bytes unchanged by self-heal")
 
   private def treeAsText(d: os.Path): Map[String, String] =
-    os.walk(d).filter(os.isFile).map(p =>
-      p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
+    os.walk(d).filter(os.isFile).map(p => p.relativeTo(d).toString -> new String(os.read.bytes(p), UTF_8)).toMap
 
   /** 与 SeedService.sha256File 同一算法（备份留痕件的逐文件 sha256 复算）。 */
   private def sha256(bytes: Array[Byte]): String =

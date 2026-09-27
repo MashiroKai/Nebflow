@@ -4,11 +4,12 @@ import cats.effect.ExitCode
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 
-/** P0 2026-09-06 (09:07 host-kill incident): GatewayMain never parsed argv —
-  * `java nebflow.gateway.GatewayMain --port 8097` silently dropped the flag,
-  * fell back to port 8080, and the startup port-clear hit the live host.
-  * The arg gate must fail FAST (no boot, no port probing) and exit non-zero.
-  */
+/**
+ * P0 2026-09-06 (09:07 host-kill incident): GatewayMain never parsed argv —
+ * `java nebflow.gateway.GatewayMain --port 8097` silently dropped the flag,
+ * fell back to port 8080, and the startup port-clear hit the live host.
+ * The arg gate must fail FAST (no boot, no port probing) and exit non-zero.
+ */
 class GatewayMainArgsSpec extends FunSuite:
 
   test("the incident command shape (--port 8097) fails fast with a non-zero exit"):

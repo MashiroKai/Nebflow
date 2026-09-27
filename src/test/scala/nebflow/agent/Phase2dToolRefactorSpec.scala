@@ -3,6 +3,7 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.actor.AgentDef
 import nebflow.core.tools.ToolRegistry
 
 /**
@@ -23,17 +24,29 @@ import nebflow.core.tools.ToolRegistry
 class Phase2dToolRefactorSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:
+
     def allowed(
-        defn: AgentDef,
-        depth: Int = 0,
-        isSubTaskWorker: Boolean = false,
-        isFlowNode: Boolean = false,
-        isTeamLead: Boolean = false,
-        userFacingNode: Boolean = false,
-        guardrailsOn: Boolean = false,
-        projectBoardSession: Boolean = false
+      defn: AgentDef,
+      depth: Int = 0,
+      isSubTaskWorker: Boolean = false,
+      isFlowNode: Boolean = false,
+      isTeamLead: Boolean = false,
+      userFacingNode: Boolean = false,
+      guardrailsOn: Boolean = false,
+      projectBoardSession: Boolean = false
     ): Set[String] =
-      buildAllowedToolSet(defn, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn, projectBoardSession)
+      buildAllowedToolSet(
+        defn,
+        depth,
+        isSubTaskWorker,
+        isFlowNode,
+        isTeamLead,
+        userFacingNode,
+        guardrailsOn,
+        projectBoardSession
+      )
+
+  end CoreProbe
 
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
@@ -43,20 +56,32 @@ class Phase2dToolRefactorSpec extends FunSuite:
   test("D.1-1: Nebula fixed set == §C.1 清单（在飞 17 件 = 2026-09-18 18:18 令 +5 后值）、零 Issue、零 NodeList（逐件不变）"):
     val fixed = AgentCore.fixedToolsFor(mkDef("Nebula"))
     val expected =
-      Set("Mail", "ProjectCreate", "AgentControl",
+      Set(
+        "Mail",
+        "ProjectCreate",
+        "AgentControl",
         // Delegate 退役批（史实 −1，13 → 12）：一次性执行任务改路由 general 项目
-        "TaskList",                                            // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
+        "TaskList", // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
         "SendMessage",
-        "ListFriends",                                         // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
-        "Read",                                                // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
-        "Card",                                               // 可视化（2026-09-05 解封恢复）
-        "AskUserQuestion", "Pop",
+        "ListFriends", // 通信（2026-09-12 好友消息改造批 ⑩：只读名册，+1）
+        "Read", // 读件（08:40 解禁四件；2026-09-18 18:18 令恢复 Glob/Grep + 写手三件）
+        "Card", // 可视化（2026-09-05 解封恢复）
+        "AskUserQuestion",
+        "Pop",
         "Schedule",
         "MemoryNote",
-      // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
-      "Glob", "Grep", "Bash", "Write", "Edit")
-    assertEquals(fixed, expected,
-      "Nebula 静态集件数 == 单点常量 AgentCore.NebulaOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）")
+        // 文件面五件（2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」）
+        "Glob",
+        "Grep",
+        "Bash",
+        "Write",
+        "Edit"
+      )
+    assertEquals(
+      fixed,
+      expected,
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 17 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值；沿革：root 面 −Glob −Grep ⇒ 13 与 −Delegate ⇒ 12 均史实；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役）"
+    )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")
     // 钉死断言（2026-09-18 18:18 作者令）：root 面**在场**含 Glob/Grep——取代
@@ -72,10 +97,12 @@ class Phase2dToolRefactorSpec extends FunSuite:
     Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
       assert(!fixed.contains(t), s"已退役/维持退役件不得在 Nebula 面（R2 2026-09-12 / #145 2026-09-14）: $t")
     }
-    assertEquals(fixed.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）")
-    assert(!fixed.contains("Delegate"),
-      "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
+    assertEquals(
+      fixed.size,
+      AgentCore.RootOrchestrationToolsExpectedSize,
+      "件数断言单点来源（同一常量）——在飞 17（2026-09-18 18:18 令 +5；沿革 −TransferFile #145、−Glob −Grep、−Delegate）"
+    )
+    assert(!fixed.contains("Delegate"), "Delegate 本批已从 Nebula 面摘除退役（一次性执行任务改路由 general 项目——变异验红锚：加回即红）")
     // 钉死断言（2026-09-18 18:18 作者令）：Nebula 机制集**在场**含 Bash、含
     // Write、含 Edit——取代 2026-09-05 23:34 裁定之 root 面部分（仅 root 面；
     // general/BaseTools 六件默认注入逐字不变）。变异验红锚。
@@ -96,15 +123,17 @@ class Phase2dToolRefactorSpec extends FunSuite:
       Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion"),
       "AskUserQuestion 回归 general 默认面（2026-09-08 作者修订，D6 批D1：直达作者 + 留痕审计）；Pop 摘除（2026-09-10 作者裁定：收归 Nebula 专属——节点交付物沿 out 边交链末端/Nebula）"
     )
-    assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("Pop"),
-      "general 固定面零 Pop（2026-09-10 裁定，变异验红锚）")
+    assert(!AgentCore.fixedToolsFor(mkDef("general")).contains("Pop"), "general 固定面零 Pop（2026-09-10 裁定，变异验红锚）")
 
   test("D.1-1: legacy 路径不再含三角色 name 分支——catch-all 对三角色名生效"):
     // legacyFixedTools 是纯 category 函数：三角色名传入时走 catch-all BaseTools
     // （即 name 分支已删）。生产路径 fixedToolsFor 对三角色派发静态集（上面的
     // 断言），二者分层即「收口」的结构证明。
-    assertEquals(AgentCore.legacyFixedTools(mkDef("Nebula")), AgentCore.BaseTools,
-      "legacy 路径对 Nebula 名返回 catch-all——name 分支已删除")
+    assertEquals(
+      AgentCore.legacyFixedTools(mkDef("Nebula")),
+      AgentCore.BaseTools,
+      "legacy 路径对 Nebula 名返回 catch-all——name 分支已删除"
+    )
     assertEquals(AgentCore.legacyFixedTools(mkDef("project-dispatcher")), AgentCore.BaseTools)
     assertEquals(AgentCore.legacyFixedTools(mkDef("general")), AgentCore.BaseTools)
 
@@ -116,8 +145,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     val flow = AgentCore.legacyFixedTools(mkDef("node").copy(category = "flow"))
     assertEquals(flow, AgentCore.BaseTools, "flow 固定面零 FlowReport（2026-09-06 裁撤批）")
     val solo = AgentCore.legacyFixedTools(mkDef("Coder"))
-    assertEquals(solo, AgentCore.BaseTools,
-      "legacy standalone catch-all 保留（Coder/Explorer/design-engineer 依赖，阶段 3 删）")
+    assertEquals(solo, AgentCore.BaseTools, "legacy standalone catch-all 保留（Coder/Explorer/design-engineer 依赖，阶段 3 删）")
 
   test("D.1-1: buildAllowedToolSet 三角色交付面 == 静态集（LLM 面，注册表过滤后）"):
     val nebulaDelivered = CoreProbe.allowed(mkDef("Nebula"))
@@ -130,13 +158,22 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // root 面部分（仅 root 面）；general/BaseTools 六件默认注入逐字不变。
     assert(
       Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").subsetOf(nebulaDelivered),
-      s"Nebula 交付面必须含文件面六件（2026-09-18 18:18 令）——实得: $nebulaDelivered")
+      s"Nebula 交付面必须含文件面六件（2026-09-18 18:18 令）——实得: $nebulaDelivered"
+    )
     val generalDelivered = CoreProbe.allowed(mkDef("general"), isFlowNode = true)
-    assertEquals(generalDelivered, AgentCore.GeneralFixedTools,
-      "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）")
+    assertEquals(
+      generalDelivered,
+      AgentCore.GeneralFixedTools,
+      "general 节点形态交付面 == 静态集恰七件（2026-09-08 作者修订恢复 AskUser；2026-09-10 裁定摘 Pop）"
+    )
     assert(!generalDelivered.contains("Mail"), "Mail 不进 general/节点面（R2 细则：节点不挂消息工具）")
-    val dispatcherDelivered = CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
-    assertEquals(dispatcherDelivered, AgentCore.DispatcherFixedTools, "dispatcher project 会话交付面 == 静态 9 件（含 Mail + TaskBoard）")
+    val dispatcherDelivered =
+      CoreProbe.allowed(mkDef("project-dispatcher"), isFlowNode = true, projectBoardSession = true)
+    assertEquals(
+      dispatcherDelivered,
+      AgentCore.DispatcherFixedTools,
+      "dispatcher project 会话交付面 == 静态 9 件（含 Mail + TaskBoard）"
+    )
     assert(dispatcherDelivered.contains("Mail"), "Mail 机制固定进分发器交付面（R2 唯一消息原语）")
     assert(!dispatcherDelivered.contains("NodeMessage"), "NodeMessage 已删净退役（R2，−NodeMessage +Mail）")
     assert(dispatcherDelivered.contains("TaskBoard"), "TaskBoard 随 project 会话身份进分发器交付面（任务板批 2 §1c）")
@@ -147,19 +184,26 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("TaskBoard: projectBoardSession 旗标是唯一挂载闸——分发器/flow 节点 project 会话挂，双轨会话恒不挂"):
     // 挂载表 §1c：projectBoardSession = isDispatcher || flowNodeId.isDefined。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】（末段重挂）。
-    assert(CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskBoard"),
-      "分发器 project 会话（isDispatcher 置位）挂 TaskBoard")
-    assert(CoreProbe.allowed(mkDef("general"), isFlowNode = true, projectBoardSession = true).contains("TaskBoard"),
-      "flow 节点 project 会话（flowNodeId 置位）挂 TaskBoard（§1d：节点身份同面）")
+    // 追加点在全部角色过滤与 RootExclusiveTools 剥离【之后】（末段重挂）。
+    assert(
+      CoreProbe.allowed(mkDef("project-dispatcher"), projectBoardSession = true).contains("TaskBoard"),
+      "分发器 project 会话（isDispatcher 置位）挂 TaskBoard"
+    )
+    assert(
+      CoreProbe.allowed(mkDef("general"), isFlowNode = true, projectBoardSession = true).contains("TaskBoard"),
+      "flow 节点 project 会话（flowNodeId 置位）挂 TaskBoard（§1d：节点身份同面）"
+    )
     // 双保险（§1d-4）：非 project 会话 flag=false 恒不挂——声明（含 "*"）不授能
     // （nebulaFiltered 先剥、末段不挂），工具面 + 工具内身份判定两层独立。
-    assert(!CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
-      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，NebulaExclusiveTools）")
-    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"),
-      "wildcard 声明同样不授能")
-    assert(!CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
-      "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）")
+    assert(
+      !CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
+      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，RootExclusiveTools）"
+    )
+    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"), "wildcard 声明同样不授能")
+    assert(
+      !CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
+      "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）"
+    )
 
   // ===== D.1-11：SendMessage 声明通道删除 =====
 
@@ -172,14 +216,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("A轨(批①): 改名后三条不变式齐——交付面件数 == 单点常量 ∧ 含 SendMessage ∧ 旧名零残留"):
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
-    assertEquals(delivered.size, AgentCore.NebulaOrchestrationToolsExpectedSize,
-      "交付面件数与机制集单点常量一致（在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）")
+    assertEquals(
+      delivered.size,
+      AgentCore.RootOrchestrationToolsExpectedSize,
+      "交付面件数与机制集单点常量一致（在飞 17 = 2026-09-18 18:18 令 +5 后值；沿革：⑩ ListFriends +1、#145 −TransferFile、−Glob −Grep、−Delegate）"
+    )
     assert(delivered.contains("SendMessage"), "新名进交付面（改名承重点：LLM 可见名）")
     assert(!delivered.exists(_.contains(LegacyToolName)), "旧名零残留（LLM 交付面）")
-    assert(!AgentCore.NebulaOrchestrationTools.exists(_.contains(LegacyToolName)),
-      "旧名零残留（Nebula 机制固定集）")
-    assert(!ToolRegistry.TOOL_MAP.contains(LegacyToolName),
-      "旧名零残留（注册表——旧调用名解析失败，按未知工具明确报错，不静默）")
+    assert(!AgentCore.RootOrchestrationTools.exists(_.contains(LegacyToolName)), "旧名零残留（Nebula 机制固定集）")
+    assert(!ToolRegistry.TOOL_MAP.contains(LegacyToolName), "旧名零残留（注册表——旧调用名解析失败，按未知工具明确报错，不静默）")
 
   test("D.1-11: standalone 显式声明 SendMessage 不再授能"):
     val declared = CoreProbe.allowed(mkDef("social", List("Read", "SendMessage")))
@@ -189,8 +234,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(CoreProbe.allowed(mkDef("social", List("Read"))).contains("Read"), "其余声明不受影响")
 
   test("D.1-11: Nebula 机制固定照常携带 SendMessage"):
-    assert(CoreProbe.allowed(mkDef("Nebula")).contains("SendMessage"),
-      "机制固定是唯一授权源（静态集）")
+    assert(CoreProbe.allowed(mkDef("Nebula")).contains("SendMessage"), "机制固定是唯一授权源（静态集）")
 
   test("D.1-11: registry 注册名随改名（工具本身保留）"):
     assert(ToolRegistry.TOOL_MAP.contains("SendMessage"))
@@ -203,15 +247,17 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // 失效：tools 声明进不了 base（ConvergedAgentNames），mcpServers 进不了
     // 过滤授权（effectiveMcpServers=Nil）。
     val probe = "mcp__opendataloader-pdf__parse"
-    ToolRegistry.registerTool(new nebflow.core.tools.ScriptTool(
-      nebflow.core.tools.ExternalToolConfig(
-        name = probe,
-        description = "2d spec probe",
-        command = "true",
-        inputSchema = io.circe.JsonObject.empty
-      ),
-      os.pwd
-    ))
+    ToolRegistry.registerTool(
+      new nebflow.core.tools.ScriptTool(
+        nebflow.core.tools.ExternalToolConfig(
+          name = probe,
+          description = "2d spec probe",
+          command = "true",
+          inputSchema = io.circe.JsonObject.empty
+        ),
+        os.pwd
+      )
+    )
     try
       val declared = CoreProbe.allowed(mkDef("Nebula", List(probe)).copy(mcpServers = List("opendataloader-pdf")))
       assert(!declared.contains(probe), "converged 定义：tools 声明 + mcpServers 授权均已退役")
@@ -221,15 +267,17 @@ class Phase2dToolRefactorSpec extends FunSuite:
 
   test("D.1-9: plugin MCP 前缀追加语义（§B.4-③ spec 钉；链路 E2E 见 NodePluginChainSpec）"):
     val probe = "mcp__plugin_p2d_probe__tool"
-    ToolRegistry.registerTool(new nebflow.core.tools.ScriptTool(
-      nebflow.core.tools.ExternalToolConfig(
-        name = probe,
-        description = "2d plugin prefix probe",
-        command = "true",
-        inputSchema = io.circe.JsonObject.empty
-      ),
-      os.pwd
-    ))
+    ToolRegistry.registerTool(
+      new nebflow.core.tools.ScriptTool(
+        nebflow.core.tools.ExternalToolConfig(
+          name = probe,
+          description = "2d plugin prefix probe",
+          command = "true",
+          inputSchema = io.circe.JsonObject.empty
+        ),
+        os.pwd
+      )
+    )
     try
       val nodeAgent = mkDef("general").copy(pluginMcpServers = List("plugin_p2d_probe"))
       val allowed = CoreProbe.allowed(nodeAgent, isFlowNode = true)
@@ -264,8 +312,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     assert(d.contains("POP_NEBULA_ONLY"), "拒答错误码（非 Nebula 身份被拒的可行动文案）")
     assert(d.contains("out edge"), "节点交付协议：沿 out 边交链末端/Nebula")
     assert(d.contains("Canvas"), "呈现面")
-    assert(!d.contains("never hand-draw"),
-      "面向节点的「生成后立即 Pop」指导句必须已删（不得写成「节点也能 Pop」）")
+    assert(!d.contains("never hand-draw"), "面向节点的「生成后立即 Pop」指导句必须已删（不得写成「节点也能 Pop」）")
 
   test("D.2: TeamTask 三件 description 含任务协议关键句（order 630 下迁，双轨期）"):
     val list = ToolRegistry.TOOL_MAP("TeamTaskList").description

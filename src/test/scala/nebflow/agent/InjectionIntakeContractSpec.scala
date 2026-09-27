@@ -5,6 +5,7 @@ import munit.FunSuite
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.actor.InjectionAttribution
 import nebflow.shared.{Message, UiMessage}
 
 import scala.io.Source
@@ -82,7 +83,10 @@ class InjectionIntakeContractSpec extends FunSuite:
       s"`$bareCall`（默认 intake=None）必须恰好一处（腿② deliverToNode）——腿① 应用带 IntakeMail 的重载"
     )
     assert(
-      mailTool.contains("private def mailAttribution(\n      mailType: String,\n      ctx: ToolContext,\n      intake: Option[String] = None\n  )"),
+      // 2026-09-24:钉死文本更新为 scalafmt 全树重排后的形态(续行 4 空格;判据语义不变)。
+      mailTool.contains(
+        "private def mailAttribution(\n    mailType: String,\n    ctx: ToolContext,\n    intake: Option[String] = None\n  )"
+      ),
       "mailAttribution 必须保留 `intake: Option[String] = None` 默认参数（默认 None ⇒ 未置位腿零行为变化）"
     )
     // 腿③（sendMail → ImmediateInput，source='mail'）不得被本批碰：仍无 intake 键。
@@ -184,13 +188,16 @@ class InjectionIntakeContractSpec extends FunSuite:
     // 计数/生命周期面不得出现 intake（禁动面在代码上可 grep 验证）。
     val accountingFaces = List(
       "src/main/scala/nebflow/core/project/ProjectActor.scala" -> projectActor,
-      "src/main/scala/nebflow/gateway/SessionStore.scala" -> read("src/main/scala/nebflow/gateway/SessionStore.scala"),
+      // 严格DAG第④步裁定(2026-09-26):源文件下移,测试路径钉串随迁(先例 1c4cbb0)
+      "src/main/scala/nebflow/core/SessionStore.scala" -> read("src/main/scala/nebflow/core/SessionStore.scala"),
       "src/main/scala/nebflow/core/flow/MailQueueStore.scala" ->
         read("src/main/scala/nebflow/core/flow/MailQueueStore.scala")
     )
     accountingFaces.foreach { case (path, src) =>
       val offenders = src.linesIterator.zipWithIndex
-        .filter { case (l, _) => l.contains(WireField) && (l.contains("DispatcherInjectedSources") || l.contains("pendingInjected")) }
+        .filter { case (l, _) =>
+          l.contains(WireField) && (l.contains("DispatcherInjectedSources") || l.contains("pendingInjected"))
+        }
         .map { case (l, i) => s"$path:${i + 1}: ${l.trim}" }
         .toList
       assert(offenders.isEmpty, s"intake 混入会计/生命周期判据（必须只做呈现判别）：\n${offenders.mkString("\n")}")

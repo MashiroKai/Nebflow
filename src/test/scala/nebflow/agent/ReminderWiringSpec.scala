@@ -7,14 +7,14 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.core.task.{FileTaskStore, TaskCreateInput}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 import fs2.Stream
 
 import scala.concurrent.duration.FiniteDuration
@@ -37,8 +37,10 @@ class ReminderWiringSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 90.seconds
 
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -80,8 +82,10 @@ class ReminderWiringSpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Pin the Nebula def on disk (empty agents dir falls back to Seeds.Nebula
-    * with a different toolset — harness trap, see memory). */
+  /**
+   * Pin the Nebula def on disk (empty agents dir falls back to Seeds.RootAgent
+   * with a different toolset — harness trap, see memory).
+   */
   private def seedNebula(tmp: os.Path): Unit =
     val dir = tmp / "agents" / "Nebula"
     os.makeDir.all(dir)
@@ -95,7 +99,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -106,7 +110,9 @@ class ReminderWiringSpec extends CatsEffectSuite:
   private def textOf(req: LlmRequest): String =
     req.messages.map(_.textContent).mkString("\n")
 
-  test("① system-event turn injects zero time/tasks; ② real-user turn injects time but Nebula gets NO tasks (task redesign)"):
+  test(
+    "① system-event turn injects zero time/tasks; ② real-user turn injects time but Nebula gets NO tasks (task redesign)"
+  ):
     val system = ActorSystem("reminder-wiring")
     val tmp = os.temp.dir()
     seedNebula(tmp)
@@ -166,23 +172,37 @@ class ReminderWiringSpec extends CatsEffectSuite:
         // D6 revised (task redesign 2026-08-30): Nebula's systemStable must
         // NOT carry the protocol section — it is team-category-only now
         req1.systemStable.foreach { s =>
-          assert(!s.contains("## Task List Protocol"), s"Nebula systemStable must not carry the protocol section (team-only):\n$s")
+          assert(
+            !s.contains("## Task List Protocol"),
+            s"Nebula systemStable must not carry the protocol section (team-only):\n$s"
+          )
         }
         // ② real-user turn: time injected, but NO tasks for Nebula — task
         // injection moved to team-registered sessions; Nebula has no task
         // tools and its session is not team-scoped
         assert(textOf(req2).contains("Current time"), s"real-user turn must inject time:\n${textOf(req2)}")
-        assert(!textOf(req2).contains("## Current Tasks"), s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req2)}")
-        assert(!textOf(req2).contains("wiring task"), s"task redesign: Nebula must not see task lines:\n${textOf(req2)}")
+        assert(
+          !textOf(req2).contains("## Current Tasks"),
+          s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req2)}"
+        )
+        assert(
+          !textOf(req2).contains("wiring task"),
+          s"task redesign: Nebula must not see task lines:\n${textOf(req2)}"
+        )
         // ③ next real-user turn: still no tasks
         assert(textOf(req3).contains("Current time"), s"real-user turn must inject time:\n${textOf(req3)}")
-        assert(!textOf(req3).contains("## Current Tasks"), s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req3)}")
+        assert(
+          !textOf(req3).contains("## Current Tasks"),
+          s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req3)}"
+        )
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+
+    end try
 
   test("② unregistered Manager session gets zero tasks even on real-user turns"):
     val system = ActorSystem("reminder-wiring-mgr")
@@ -223,7 +243,10 @@ class ReminderWiringSpec extends CatsEffectSuite:
         req1 <- requests.get.map(_.head)
         sys1 = req1.systemStable.getOrElse("")
       yield
-        assert(textOf(req1).contains("Current time"), s"real-user turn still injects time for team agents:\n${textOf(req1)}")
+        assert(
+          textOf(req1).contains("Current time"),
+          s"real-user turn still injects time for team agents:\n${textOf(req1)}"
+        )
         assert(!textOf(req1).contains("Current Tasks"), s"Manager must not get the tasks reminder:\n${textOf(req1)}")
         assert(!textOf(req1).contains("mgr task"), s"Manager must not see task lines:\n${textOf(req1)}")
         assert(!sys1.contains("## Task List Protocol"), s"Task List Protocol is Nebula-only:\n$sys1")
@@ -234,9 +257,13 @@ class ReminderWiringSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
 
-  /** Task redesign 2026-08-30: task injection now targets team sessions.
-    * A team-registered agent (category="team") gets the full task render on
-    * its real-user turn + the Task List Protocol section in systemStable. */
+    end try
+
+  /**
+   * Task redesign 2026-08-30: task injection now targets team sessions.
+   * A team-registered agent (category="team") gets the full task render on
+   * its real-user turn + the Task List Protocol section in systemStable.
+   */
   test("③ team-registered agent gets tasks on real-user turns (task redesign)"):
     val system = ActorSystem("reminder-wiring-team")
     val tmp = os.temp.dir()
@@ -249,7 +276,10 @@ class ReminderWiringSpec extends CatsEffectSuite:
       val teamName = "t-redesign"
       // team-scoped task store key = "team:<name>"
       FileTaskStore
-        .create(nebflow.core.task.TaskStore.teamScopeKey(teamName), TaskCreateInput(subject = "team task", description = "d"))
+        .create(
+          nebflow.core.task.TaskStore.teamScopeKey(teamName),
+          TaskCreateInput(subject = "team task", description = "d")
+        )
         .unsafeRunSync()
       val program = for
         _ <- nebflow.core.flow.TeamSessionRegistry.clear
@@ -283,7 +313,10 @@ class ReminderWiringSpec extends CatsEffectSuite:
         sys1 = req1.systemStable.getOrElse("")
       yield
         assert(textOf(req1).contains("Current time"), s"real-user turn injects time:\n${textOf(req1)}")
-        assert(textOf(req1).contains("## Current Tasks (1 active)"), s"team member gets the full task render:\n${textOf(req1)}")
+        assert(
+          textOf(req1).contains("## Current Tasks (1 active)"),
+          s"team member gets the full task render:\n${textOf(req1)}"
+        )
         assert(textOf(req1).contains("team task"), s"task line present:\n${textOf(req1)}")
         // 阶段 2d（§D.2）：order 630 Task List Protocol 段已下迁进 TeamTask 三件
         // description——systemStable 不再携带协议段；协议经工具定义必达（wire 层）。
@@ -299,5 +332,6 @@ class ReminderWiringSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
 
 end ReminderWiringSpec

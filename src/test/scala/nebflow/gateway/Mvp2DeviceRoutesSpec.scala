@@ -9,7 +9,8 @@ import nebflow.agent.SharedResources
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.llm.{ModelChainConfig, ModelCandidate, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{ModelChainConfig, NebflowServiceConfig, ServiceLlmConfig, ThinkingConfig}
 import nebflow.neblink.{AgentMessagingConfig, FriendService, NeblinkClient, NeblinkServerConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -21,19 +22,20 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.jdk.CollectionConverters.*
 
-/** MVP-2 设备会话域统一 · **客户端（网关侧）腿** 的路由契约测试。
-  *
-  * 端到端链路（真实 route → FriendService → NeblinkClient → JDK HttpServer 桩）：
-  *   · `GET  /api/conversations/{id}/receipts`      → neblink-server `src/friends.rs:1712`
-  *   · `POST /api/devices/{device_id}/messages`     → neblink-server `src/friends.rs:1300`
-  *   · `GET  /api/conversations`（设备行 `kind`/`deviceId` 透传）
-  *   · `GET  /api/conversations/{id}/messages`（`senderDeviceId` 透传）
-  *
-  * 为什么要有本 spec（判红②要求「写 → 读往返一致 + 原始请求/响应读数」）：桩**有状态**
-  * ——`POST …/read` 落一次游标，`GET …/receipts` 的响应由该游标**派生**，两边都记原文。
-  * 「用内存/本地桩自证而与新端点无关」被显式排除：本 spec 打的**就是**这两条新路由，
-  * 且断言的是网关**出参形态**与**状态码透传**，不是桩的返回值。
-  */
+/**
+ * MVP-2 设备会话域统一 · **客户端（网关侧）腿** 的路由契约测试。
+ *
+ * 端到端链路（真实 route → FriendService → NeblinkClient → JDK HttpServer 桩）：
+ *   · `GET  /api/conversations/{id}/receipts`      → neblink-server `src/friends.rs:1712`
+ *   · `POST /api/devices/{device_id}/messages`     → neblink-server `src/friends.rs:1300`
+ *   · `GET  /api/conversations`（设备行 `kind`/`deviceId` 透传）
+ *   · `GET  /api/conversations/{id}/messages`（`senderDeviceId` 透传）
+ *
+ * 为什么要有本 spec（判红②要求「写 → 读往返一致 + 原始请求/响应读数」）：桩**有状态**
+ * ——`POST …/read` 落一次游标，`GET …/receipts` 的响应由该游标**派生**，两边都记原文。
+ * 「用内存/本地桩自证而与新端点无关」被显式排除：本 spec 打的**就是**这两条新路由，
+ * 且断言的是网关**出参形态**与**状态码透传**，不是桩的返回值。
+ */
 class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
 
   private val TestToken = "mvp2-test-token"
@@ -84,8 +86,8 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
             ex,
             200,
             """[{"conversationId":"dev:dev-local","friend":{"userId":"me","username":"me","display_name":"Me","avatar":null},"lastMessage":{"id":11,"senderId":"me","kind":"text","body":"hi from me","createdAt":1757900000,"senderDeviceId":"dev-local"},"unreadCount":0,"kind":"device","deviceId":"dev-local"},
-               {"conversationId":"c-legacy","friend":{"userId":"u1","username":"lin","display_name":"Lin","avatar":null},"lastMessage":null,"unreadCount":2}]"""
-              .stripMargin.replaceAll("\\n\\s*", "")
+               {"conversationId":"c-legacy","friend":{"userId":"u1","username":"lin","display_name":"Lin","avatar":null},"lastMessage":null,"unreadCount":2}]""".stripMargin
+              .replaceAll("\\n\\s*", "")
           )
         else if method == "GET" && path.endsWith("/messages") then
           val conv = path.stripPrefix("/api/conversations/").stripSuffix("/messages")
@@ -98,10 +100,13 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
               200,
               s"""[{"id":11,"senderId":"me","kind":"text","body":"from $peer","createdAt":1757900000,"senderDeviceId":"$peer"}]"""
             )
-          else respond(ex, 200, """[{"id":7,"senderId":"u1","kind":"text","body":"legacy hi","createdAt":1757800000}]""")
+          else
+            respond(ex, 200, """[{"id":7,"senderId":"u1","kind":"text","body":"legacy hi","createdAt":1757800000}]""")
         else if method == "POST" && path.endsWith("/read") then
           // 桩侧落游标（写面）+ 由游标派生回执行（读面）⇒ 两端同源，往返可判。
-          val cur = io.circe.parser.parse(reqBody).toOption
+          val cur = io.circe.parser
+            .parse(reqBody)
+            .toOption
             .flatMap(_.hcursor.get[Long]("lastReadMessageId").toOption)
             .getOrElse(0L)
           readCursor.set(cur)
@@ -124,6 +129,7 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
               .noSpaces
           )
         else respond(ex, 404, """{"error":"not found"}""")
+        end if
     )
 
     server.createContext(
@@ -144,6 +150,8 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
     )
     server.start()
     (server, s"http://127.0.0.1:${server.getAddress.getPort}")
+
+  end startStub
 
   private def mkResources(fs: Option[FriendService]): SharedResources =
     SharedResources(
@@ -216,7 +224,10 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
           // 那个回归的钉子。
           val legacy = rows(1)
           assert(!legacy.asObject.exists(_.contains("kind")), s"legacy row gained a kind key: ${legacy.noSpaces}")
-          assert(!legacy.asObject.exists(_.contains("deviceId")), s"legacy row gained a deviceId key: ${legacy.noSpaces}")
+          assert(
+            !legacy.asObject.exists(_.contains("deviceId")),
+            s"legacy row gained a deviceId key: ${legacy.noSpaces}"
+          )
           assert(!legacy.asObject.exists(_.contains("senderDeviceId")))
         }
       }
@@ -299,6 +310,7 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
         // ── 往返一致性 ──
         _ = assertEquals(readCursor.get(), rbody.hcursor.get[Long]("lastReadMessageId").toOption.getOrElse(-1L))
       yield upstreamLog.asScala.toList
+      end for
     }.map { log =>
       // 原始上游读数逐字落盘（判红②要求「给原始请求/响应读数」）
       println("[mvp2-device-spec] upstream requests:")
@@ -334,6 +346,7 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(sb.hcursor.get[Boolean]("existing").toOption, Some(true))
         _ = assertEquals(sb.hcursor.get[Long]("messageId").toOption, Some(11L))
       yield upstreamLog.asScala.toList
+      end for
     }.map { log =>
       println("[mvp2-device-spec] device send upstream requests:")
       log.filter(_.contains("/api/devices/")).foreach(l => println("  " + l))
@@ -354,7 +367,10 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
       ).flatMap { resp =>
         assertEquals(resp.status, Status.BadRequest)
         IO.delay {
-          assert(!upstreamLog.asScala.exists(_.contains("/api/devices/")), s"gated body still reached upstream: ${upstreamLog.asScala.toList}")
+          assert(
+            !upstreamLog.asScala.exists(_.contains("/api/devices/")),
+            s"gated body still reached upstream: ${upstreamLog.asScala.toList}"
+          )
         }
       }
     }
@@ -366,10 +382,14 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
       (Method.POST, "/devices/dev-local/messages")
     )
     paths.traverse { case (m, p) =>
-      mkRoutes(None).routes(authed(Request[IO](m, Uri.unsafeFromString(p)))).value.map(_.getOrElse(fail("fell through"))).flatMap { resp =>
-        assertEquals(resp.status, Status.NotFound)
-        resp.as[Json].map(b => assertEquals(b.hcursor.get[String]("error").toOption, Some("NebLink not enabled")))
-      }
+      mkRoutes(None)
+        .routes(authed(Request[IO](m, Uri.unsafeFromString(p))))
+        .value
+        .map(_.getOrElse(fail("fell through")))
+        .flatMap { resp =>
+          assertEquals(resp.status, Status.NotFound)
+          resp.as[Json].map(b => assertEquals(b.hcursor.get[String]("error").toOption, Some("NebLink not enabled")))
+        }
     }.void
   }
 
@@ -380,8 +400,13 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
     )
     val fs = new FriendService(IO.pure(None), AgentMessagingConfig())
     paths.traverse { case (m, p) =>
-      mkRoutes(Some(fs)).routes(Request[IO](m, Uri.unsafeFromString(p))).value.map(_.getOrElse(fail("fell through"))).flatMap { resp =>
-        IO(assertEquals(resp.status, Status.Forbidden))
-      }
+      mkRoutes(Some(fs))
+        .routes(Request[IO](m, Uri.unsafeFromString(p)))
+        .value
+        .map(_.getOrElse(fail("fell through")))
+        .flatMap { resp =>
+          IO(assertEquals(resp.status, Status.Forbidden))
+        }
     }.void
   }
+end Mvp2DeviceRoutesSpec

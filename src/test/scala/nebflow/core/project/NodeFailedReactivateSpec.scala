@@ -6,13 +6,13 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentLibrary, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -46,6 +46,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
+
   for agent <- List("test-agent", "project-dispatcher", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)
     os.write.over(
@@ -60,46 +61,18 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
   /** 按输入内容响应的 LLM：分发器 prompt → "ok"；指定任务 → 指定结果。 */
   private class FuncLlm(respond: String => IO[String]):
     val inputs: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
         val text = req.messages.map(_.textContent).mkString("\n")
         Stream
           .eval(inputs.update(_ :+ text))
           .flatMap(_ => Stream.eval(respond(text)))
           .flatMap(reply => Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None)))
-
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
 
   private def mkCtx(res: SharedResources, system: ActorSystem, ws: String): ToolContext =
     ToolContext(
@@ -113,8 +86,10 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
-  /** R2 后 NodeMessage 工具已删净退役：语义并入 `Mail(address="node:<id>")`（同一引擎单点）。
-    * 「node:」腿是分发器专属地址面 ⇒ 以分发器身份调用（project 由 ctx.projectName 解析）。 */
+  /**
+   * R2 后 NodeMessage 工具已删净退役：语义并入 `Mail(address="node:<id>")`（同一引擎单点）。
+   * 「node:」腿是分发器专属地址面 ⇒ 以分发器身份调用（project 由 ctx.projectName 解析）。
+   */
   private def nodeMessage(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     val nodeId = input.hcursor.get[String]("nodeId").toOption.getOrElse("")
     val msg = input.hcursor.get[String]("message").toOption.getOrElse("")
@@ -137,52 +112,70 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def mountReal(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
-    val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+    val pd = ProjectDef(
+      name = name,
+      workspace = ws.toString,
+      agentFile = (ws / "AGENTS.md").toString,
+      createdAt = System.currentTimeMillis()
+    )
     ProjectRuntimeRegistry.mount(pd, system, res, None, "nebula-root")
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   private def waitStatus(rt: ProjectRuntime, name: String, statuses: Set[String]): IO[Unit] =
     waitUntil(30.seconds) {
       rt.store.snapshot.map(_.nodes.values.find(_.name == name)).flatMap {
         case Some(n) => IO.pure(statuses.contains(n.status))
-        case None    => IO.pure(false)
+        case None => IO.pure(false)
       }
     }
 
-  /** 完成门腿 2 关闭面挂载（**FR1/FR6 断点修复面**）——与 `NotifyDispatcherSpec.mountReal`
-    * 同款**自有挂载夹具**（同一 `reportGateHold` 起因）。
-    *
-    * 为什么不能走 `ProjectRuntimeRegistry.mount`：该入口不注入 `reportGateHold`
-    * ⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold` = true）判「本会话未申报
-    * node_report ⇒ 不终态化」⇒ 本 spec 的 mock-LLM 节点重跑 turn 交棒后停在 Running，
-    * 故 FR1/FR6 的 `waitStatus(..., Completed)` 恒超时，其后的 `result` / 重连 `out` /
-    * `reactivated` 审计断言**恒不可达**。
-    *
-    * 显式注入 `reportGateHold = Some(false)` = 本批之前的文本锚定降级面（**仅测试面、
-    * 零生产改动**）：本 spec 主题是「failed 重激活」语义（重激活生效 → 重跑至完成 →
-    * 轮次历史复位）；「未申报 `node_report` 不终态化」的完成门口径由
-    * `NodeReportReminderSpec` 承担验证。
-    *
-    * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
-    * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
-    * 对本 spec 的**挂载即空工作区**恒为空操作（僵尸由各用例显式
-    * `settleStaleRunningNodes()` 播种后驱动），故此处省略。 */
+  /**
+   * 完成门腿 2 关闭面挂载（**FR1/FR6 断点修复面**）——与 `NotifyDispatcherSpec.mountReal`
+   * 同款**自有挂载夹具**（同一 `reportGateHold` 起因）。
+   *
+   * 为什么不能走 `ProjectRuntimeRegistry.mount`：该入口不注入 `reportGateHold`
+   * ⇒ 引擎按生产默认（`Defaults.NodeReportCompletionHold` = true）判「本会话未申报
+   * node_report ⇒ 不终态化」⇒ 本 spec 的 mock-LLM 节点重跑 turn 交棒后停在 Running，
+   * 故 FR1/FR6 的 `waitStatus(..., Completed)` 恒超时，其后的 `result` / 重连 `out` /
+   * `reactivated` 审计断言**恒不可达**。
+   *
+   * 显式注入 `reportGateHold = Some(false)` = 本批之前的文本锚定降级面（**仅测试面、
+   * 零生产改动**）：本 spec 主题是「failed 重激活」语义（重激活生效 → 重跑至完成 →
+   * 轮次历史复位）；「未申报 `node_report` 不终态化」的完成门口径由
+   * `NodeReportReminderSpec` 承担验证。
+   *
+   * 其余装配与 `ProjectRuntimeRegistry.mount` 逐项同构（store/board 打开 + ProjectActor
+   * spawn + 注册）；mount 另跑的两个动作——僵尸 running 收殓 + Nebula 欠账补投扫描——
+   * 对本 spec 的**挂载即空工作区**恒为空操作（僵尸由各用例显式
+   * `settleStaleRunningNodes()` 播种后驱动），故此处省略。
+   */
   private def mountGateOff(name: String, ws: os.Path, system: ActorSystem, res: SharedResources): IO[ProjectRuntime] =
-    val pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+    val pd = ProjectDef(
+      name = name,
+      workspace = ws.toString,
+      agentFile = (ws / "AGENTS.md").toString,
+      createdAt = System.currentTimeMillis()
+    )
     for
       store <- FlowMapStore.open(name, ws.toString)
-      board <- IO(TaskBoardStore.open(name, ws.toString)).map(Some(_): Option[TaskBoardStore])
+      board <- IO(TaskBoardStore.open(name, ws.toString))
+        .map(Some(_): Option[TaskBoardStore])
         .handleErrorWith(_ => IO.pure(None))
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
@@ -201,23 +194,46 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
+    end for
+
+  end mountGateOff
+
   private def readAudit(ws: os.Path): IO[List[(String, String)]] =
     IO.blocking(os.read(ws / ".nebflow" / FlowMapEventLog.FileName))
       .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
-      .map(lines => lines.flatMap(l => io.circe.parser.parse(l).toOption.map(j =>
-        (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))))
+      .map(lines =>
+        lines.flatMap(l =>
+          io.circe.parser
+            .parse(l)
+            .toOption
+            .map(j => (j.hcursor.get[String]("type").getOrElse(""), j.hcursor.get[String]("nodeId").getOrElse("")))
+        )
+      )
       .handleError(_ => Nil)
 
   /** 种一个死会话 running 节点（settleStaleRunningNodes 驱动自动 failed）。 */
-  private def seedZombie(rt: ProjectRuntime, id: String, nodeName: String, task: String, out: List[OutEdge],
-                         description: Option[String] = None): IO[Unit] =
+  private def seedZombie(
+    rt: ProjectRuntime,
+    id: String,
+    nodeName: String,
+    task: String,
+    out: List[OutEdge],
+    description: Option[String] = None
+  ): IO[Unit] =
     rt.store.mutate { s =>
-      s.copy(nodes = s.nodes + (id -> NodeDef(
-        id = id, name = nodeName, agent = "general", task = Some(task), out = out,
-        description = description,
-        status = NodeLifecycle.Running,
-        startedAt = Some(System.currentTimeMillis() - 3_600_000),
-        createdAt = System.currentTimeMillis() - 3_600_000)))
+      s.copy(nodes =
+        s.nodes + (id -> NodeDef(
+          id = id,
+          name = nodeName,
+          agent = "general",
+          task = Some(task),
+          out = out,
+          description = description,
+          status = NodeLifecycle.Running,
+          startedAt = Some(System.currentTimeMillis() - 3_600_000),
+          createdAt = System.currentTimeMillis() - 3_600_000
+        ))
+      )
     }.void
 
   override def beforeEach(context: munit.BeforeEach): Unit = ProjectRuntimeRegistry.clear
@@ -232,35 +248,52 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val llm = FuncLlm(text =>
       if text.contains("任务分发器") then IO.pure("ok")
       else if text.contains("revived-task") then IO.pure("recovered-result")
-      else IO.pure("unexpected-run"))
+      else IO.pure("unexpected-run")
+    )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountGateOff("fr1", ws, system, res) // 腿 2 关闭面挂载（FR1 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr1", "fr-node", "original-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr-node", Set(NodeLifecycle.Failed))
       // failed 通知接线：marker 必须已落（重激活清零的前置事实）
       _ <- waitUntil(20.seconds)(byName(rt, "fr-node").map(_.notifySentAt.isDefined))
       before <- byName(rt, "fr-node")
       // 实际变更（task 修订）→ reactivate
-      editRes <- nodeEdit(nodeInput("fr1", "fr-node",
-        "task" -> Json.fromString("revived-task"),
-        "description" -> Json.fromString("failed reactivate spec node")), ctx)
+      editRes <- nodeEdit(
+        nodeInput(
+          "fr1",
+          "fr-node",
+          "task" -> Json.fromString("revived-task"),
+          "description" -> Json.fromString("failed reactivate spec node")
+        ),
+        ctx
+      )
       _ <- waitStatus(rt, "fr-node", Set(NodeLifecycle.Completed))
       after <- byName(rt, "fr-node")
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(editRes.exists(_.contains("reactivated from failed")), s"edit result must report failed reactivation, got: $editRes")
+      assert(
+        editRes.exists(_.contains("reactivated from failed")),
+        s"edit result must report failed reactivation, got: $editRes"
+      )
       assertEquals(before.status, NodeLifecycle.Failed, "precondition: node was failed")
       assertEquals(after.status, NodeLifecycle.Completed, "reactivated node reruns to completion")
       assertEquals(after.result, Some("recovered-result"), "rerun uses the REVISED task (new session output)")
       assertEquals(after.blockCount, 0, "failed reactivation resets blockCount (rerun is not a semantic block round)")
       assertEquals(after.blockedFeedback, None, "stale blockedFeedback cleared with the reset")
-      assertEquals(after.notifySentAt, None, "notifySentAt cleared — next real failure re-notifies dispatcher (retry loop)")
-      assert(audit.exists((t, id) => t == "reactivated" && id == "n-fr1"),
-        s"reactivated audit event must exist, got: $audit")
+      assertEquals(
+        after.notifySentAt,
+        None,
+        "notifySentAt cleared — next real failure re-notifies dispatcher (retry loop)"
+      )
+      assert(
+        audit.exists((t, id) => t == "reactivated" && id == "n-fr1"),
+        s"reactivated audit event must exist, got: $audit"
+      )
+    end for
   }
 
   // ── FR2：无实际变更 → 不重激活 ─────────────────────────────────
@@ -271,10 +304,10 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr2-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr2", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr2", "fr2-node", "same-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr2-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr2-node").map(_.notifySentAt.isDefined))
@@ -284,9 +317,15 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       // 2026-09-12 批 A1：种子 out = `OutEdge.nebula`（{pass,failed}/result），故回传
       // 必须写**同值的显式门集**；bare `"Nebula"` 今日 = {pass}/signal 出口标记，
       // 回传它反而是真实变更（这正是 A1 的两处语义分叉）。
-      editRes <- nodeEdit(nodeInput("fr2", "fr2-node",
-        "task" -> Json.fromString("same-task"),
-        "out" -> Json.fromString("(pass,failed)Nebula")), ctx)
+      editRes <- nodeEdit(
+        nodeInput(
+          "fr2",
+          "fr2-node",
+          "task" -> Json.fromString("same-task"),
+          "out" -> Json.fromString("(pass,failed)Nebula")
+        ),
+        ctx
+      )
       _ <- IO.sleep(300.millis) // 无重激活即无异步启动——给竞态留确定性窗口后复查
       after <- byName(rt, "fr2-node")
       audit <- readAudit(ws)
@@ -295,6 +334,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       assertEquals(after.status, NodeLifecycle.Failed, "no actual change → stays failed (terminal)")
       assert(!editRes.exists(_.contains("reactivated")), s"no reactivation reported, got: $editRes")
       assert(!audit.exists((t, id) => t == "reactivated" && id == "n-fr2"), "no reactivated audit event")
+    end for
   }
 
   // ── FR3：completed/cancelled 不可重激活（终态边界不回退）────────────
@@ -305,18 +345,37 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr3-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr3", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes ++ Map(
-          "n-fr3c" -> NodeDef(id = "n-fr3c", name = "fr3-completed", agent = "general",
-            task = Some("t1"), out = List(OutEdge.nebula), status = NodeLifecycle.Completed,
-            result = Some("done"), completedAt = Some(now), createdAt = now),
-          "n-fr3x" -> NodeDef(id = "n-fr3x", name = "fr3-cancelled", agent = "general",
-            task = Some("t1"), out = List(OutEdge.nebula), status = NodeLifecycle.Cancelled,
-            completedAt = Some(now), createdAt = now))) }.void
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-fr3c" -> NodeDef(
+              id = "n-fr3c",
+              name = "fr3-completed",
+              agent = "general",
+              task = Some("t1"),
+              out = List(OutEdge.root),
+              status = NodeLifecycle.Completed,
+              result = Some("done"),
+              completedAt = Some(now),
+              createdAt = now
+            ),
+            "n-fr3x" -> NodeDef(
+              id = "n-fr3x",
+              name = "fr3-cancelled",
+              agent = "general",
+              task = Some("t1"),
+              out = List(OutEdge.root),
+              status = NodeLifecycle.Cancelled,
+              completedAt = Some(now),
+              createdAt = now
+            )
+          )
+        )
+      }.void
       editC <- nodeEdit(nodeInput("fr3", "fr3-completed", "task" -> Json.fromString("t2")), ctx)
       editX <- nodeEdit(nodeInput("fr3", "fr3-cancelled", "task" -> Json.fromString("t2")), ctx)
       c <- byName(rt, "fr3-completed")
@@ -326,9 +385,12 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     yield
       assertEquals(c.status, NodeLifecycle.Completed, "completed stays completed (no accidental revive)")
       assertEquals(x.status, NodeLifecycle.Cancelled, "cancelled stays cancelled")
-      assert(!editC.exists(_.contains("reactivated")) && !editX.exists(_.contains("reactivated")),
-        s"no reactivation reported for completed/cancelled, got: $editC / $editX")
+      assert(
+        !editC.exists(_.contains("reactivated")) && !editX.exists(_.contains("reactivated")),
+        s"no reactivation reported for completed/cancelled, got: $editC / $editX"
+      )
       assert(!audit.exists((t, _) => t == "reactivated"), "no reactivated audit events")
+    end for
   }
 
   // ── FR4：NodeMessage 对 failed 终态仍拒收 ────────────────────────
@@ -339,22 +401,29 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr4-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr4", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.nebula))
+      _ <- seedZombie(rt, "n-fr4", "fr4-node", "dead task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr4-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr4-node").map(_.notifySentAt.isDefined))
-      refused <- nodeMessage(Json.obj(
-        "project" -> Json.fromString("fr4"),
-        "nodeId" -> Json.fromString("n-fr4"),
-        "message" -> Json.fromString("extra guidance")), ctx)
+      refused <- nodeMessage(
+        Json.obj(
+          "project" -> Json.fromString("fr4"),
+          "nodeId" -> Json.fromString("n-fr4"),
+          "message" -> Json.fromString("extra guidance")
+        ),
+        ctx
+      )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(refused.isLeft, "NodeMessage to failed node must be REFUSED")
-      assert(refused.left.exists(_.contains("NODE_TERMINAL_NO_MESSAGE")),
-        s"refusal must carry NODE_TERMINAL_NO_MESSAGE, got: $refused")
+      assert(
+        refused.left.exists(_.contains("NODE_TERMINAL_NO_MESSAGE")),
+        s"refusal must carry NODE_TERMINAL_NO_MESSAGE, got: $refused"
+      )
+    end for
   }
 
   // ── FR5：未传 out 的终态编辑 → no-op（out-absent quirk 锁定）─────────
@@ -365,19 +434,25 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"fr5-${scala.util.Random.nextInt(100000)}")
     val llm = FuncLlm(text => IO.pure("ok"))
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountReal("fr5", ws, system, res)
       ctx = mkCtx(res, system, ws.toString)
-      _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.nebula), description = Some("fr5-desc"))
+      _ <- seedZombie(rt, "n-fr5", "fr5-node", "fr5-task", List(OutEdge.root), description = Some("fr5-desc"))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr5-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr5-node").map(_.notifySentAt.isDefined))
       // out 不传 + task/description 原值重发 → 全维度无差异 → actualChange=false。
       // quirk 修前：parseOut(None)=None 与 out=Some("Nebula") 恒不等 → 恒判变更
       // → 意外重激活（违背「No-op if nothing actually changed」）。
-      editRes <- nodeEdit(nodeInput("fr5", "fr5-node",
-        "task" -> Json.fromString("fr5-task"),
-        "description" -> Json.fromString("fr5-desc")), ctx)
+      editRes <- nodeEdit(
+        nodeInput(
+          "fr5",
+          "fr5-node",
+          "task" -> Json.fromString("fr5-task"),
+          "description" -> Json.fromString("fr5-desc")
+        ),
+        ctx
+      )
       _ <- IO.sleep(300.millis) // 无重激活即无异步启动——给竞态留确定性窗口后复查
       after <- byName(rt, "fr5-node")
       audit <- readAudit(ws)
@@ -386,6 +461,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       assertEquals(after.status, NodeLifecycle.Failed, "out-absent edit with no value change → stays failed (no-op)")
       assert(!editRes.exists(_.contains("reactivated")), s"no reactivation reported, got: $editRes")
       assert(!audit.exists((t, id) => t == "reactivated" && id == "n-fr5"), "no reactivated audit event")
+    end for
   }
 
   // ── FR6：显式传 out 且值变更 → 仍算变更 → 重激活（反向锁定）──────────
@@ -397,19 +473,29 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
     val llm = FuncLlm(text =>
       if text.contains("任务分发器") then IO.pure("ok")
       else if text.contains("fr6-task") then IO.pure("fr6-redone")
-      else IO.pure("ok"))
+      else IO.pure("ok")
+    )
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       rt <- mountGateOff("fr6", ws, system, res) // 腿 2 关闭面挂载（FR6 断点修复面，见 mountGateOff）
       ctx = mkCtx(res, system, ws.toString)
       now = System.currentTimeMillis()
       // 下游 sink（wiring，带 task）：out 改指它 → 重跑完成 barrier 归零后被 start，
       // FuncLlm 兜底 "ok" 承接 → 链路确定性收口（out=Nebula 终投）。
       _ <- rt.store.mutate { s =>
-        s.copy(nodes = s.nodes + ("n-fr6sink" -> NodeDef(id = "n-fr6sink", name = "fr6-sink",
-          agent = "general", task = Some("fr6 sink task"), out = List(OutEdge.nebula),
-          status = NodeLifecycle.Wiring, createdAt = now))) }.void
-      _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", List(OutEdge.nebula))
+        s.copy(nodes =
+          s.nodes + ("n-fr6sink" -> NodeDef(
+            id = "n-fr6sink",
+            name = "fr6-sink",
+            agent = "general",
+            task = Some("fr6 sink task"),
+            out = List(OutEdge.root),
+            status = NodeLifecycle.Wiring,
+            createdAt = now
+          ))
+        )
+      }.void
+      _ <- seedZombie(rt, "n-fr6", "fr6-node", "fr6-task", List(OutEdge.root))
       _ <- rt.engine.settleStaleRunningNodes()
       _ <- waitStatus(rt, "fr6-node", Set(NodeLifecycle.Failed))
       _ <- waitUntil(20.seconds)(byName(rt, "fr6-node").map(_.notifySentAt.isDefined))
@@ -426,6 +512,7 @@ class NodeFailedReactivateSpec extends CatsEffectSuite:
       assertEquals(after.out, List(OutEdge("n-fr6sink")), "out rewired to the new target")
       assertEquals(after.result, Some("fr6-redone"), "rerun keeps the original task (out-only edit)")
       assert(audit.exists((t, id) => t == "reactivated" && id == "n-fr6"), "reactivated audit event must exist")
+    end for
   }
 
 end NodeFailedReactivateSpec

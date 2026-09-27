@@ -53,7 +53,10 @@ class CompactionProfileSpec extends FunSuite:
     assertEquals(CompactionProfile.fromDepth(0, isLead = false, None), CompactionProfile.Root)
 
   test("depth 1 + dispatcher- prefix → Dispatcher (even if name would be a legacy lead)"):
-    assertEquals(CompactionProfile.fromDepth(1, isLead = true, Some("dispatcher-ab12cd34")), CompactionProfile.Dispatcher)
+    assertEquals(
+      CompactionProfile.fromDepth(1, isLead = true, Some("dispatcher-ab12cd34")),
+      CompactionProfile.Dispatcher
+    )
 
   test("depth 1 + node- prefix → ProjectNode"):
     assertEquals(CompactionProfile.fromDepth(1, isLead = false, Some("node-ab12cd34")), CompactionProfile.ProjectNode)
@@ -71,15 +74,22 @@ class CompactionProfileSpec extends FunSuite:
 
   test("buildCompactReminder routes by sessionId"):
     assert(text(CompactService.buildCompactReminder(0, sessionId = Some("s1"))).contains("NEBULA"))
-    assert(text(CompactService.buildCompactReminder(1, sessionId = Some("dispatcher-x"))).contains("PROJECT DISPATCHER"))
+    assert(
+      text(CompactService.buildCompactReminder(1, sessionId = Some("dispatcher-x"))).contains("PROJECT DISPATCHER")
+    )
     assert(text(CompactService.buildCompactReminder(1, sessionId = Some("node-x"))).contains("NODE WORKER"))
     assert(text(CompactService.buildCompactReminder(1, isLead = true)).contains("FLOW MANAGER")) // 回归：旧 marker 保留
     assert(text(CompactService.buildCompactReminder(1)).contains("FLOW WORKER"))
 
   test("Nebula prompt sections"):
     val msg = text(CompactService.buildCompactReminder(0))
-    for section <- Seq("Global Mission Board", "In-Flight Dispatches", "Facts, Decisions and Rulings", "Pending / Blocked Items and their Gates") do
-      assert(msg.contains(section), s"nebula prompt missing section: $section")
+    for section <- Seq(
+        "Global Mission Board",
+        "In-Flight Dispatches",
+        "Facts, Decisions and Rulings",
+        "Pending / Blocked Items and their Gates"
+      )
+    do assert(msg.contains(section), s"nebula prompt missing section: $section")
 
   test("Dispatcher prompt sections"):
     val msg = text(CompactService.buildCompactReminder(1, sessionId = Some("dispatcher-x")))
@@ -88,8 +98,15 @@ class CompactionProfileSpec extends FunSuite:
 
   test("Node prompt sections"):
     val msg = text(CompactService.buildCompactReminder(1, sessionId = Some("node-x")))
-    for section <- Seq("Task Goal (IMMUTABLE", "Commits:", "Verification:", "Blockers and Lessons", "Remaining Steps", "Result Statement So Far") do
-      assert(msg.contains(section), s"node prompt missing section: $section")
+    for section <- Seq(
+        "Task Goal (IMMUTABLE",
+        "Commits:",
+        "Verification:",
+        "Blockers and Lessons",
+        "Remaining Steps",
+        "Result Statement So Far"
+      )
+    do assert(msg.contains(section), s"node prompt missing section: $section")
 
   test("all prompts keep no-memory-fallback declaration"):
     val dispatcherMsg = text(CompactService.buildCompactReminder(1, sessionId = Some("dispatcher-x")))

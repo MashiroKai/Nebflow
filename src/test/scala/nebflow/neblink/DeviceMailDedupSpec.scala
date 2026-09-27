@@ -5,15 +5,16 @@ import cats.effect.unsafe.implicits.global
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
-import io.circe.{Json}
+import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.{ActorSystem as NebActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
-import nebflow.gateway.SessionStore
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
+import nebflow.core.SessionStore
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.duration.*
@@ -81,9 +82,9 @@ class DeviceMailDedupSpec extends FunSuite:
 
   /** 收件腿夹具（与 `DeviceMailSpec` 同款：真 sessionStore + Root 记录 + 记录型 wsSend/ack）。 */
   private final case class Inbox(
-      msgs: Ref[IO, List[AgentCommand]],
-      frames: Ref[IO, List[Json]],
-      acks: Ref[IO, List[String]]
+    msgs: Ref[IO, List[AgentCommand]],
+    frames: Ref[IO, List[Json]],
+    acks: Ref[IO, List[String]]
   ):
     def injections: Int = msgs.get.unsafeRunSync().size
     def alerts: Int = frames.get.unsafeRunSync().size
@@ -99,8 +100,8 @@ class DeviceMailDedupSpec extends FunSuite:
       .unsafeRunSync()
 
   private def resourcesWith(
-      registry: Map[String, AgentRecord],
-      store: SessionStore
+    registry: Map[String, AgentRecord],
+    store: SessionStore
   ): SharedResources =
     new SharedResources(
       llm = null,
@@ -144,10 +145,13 @@ class DeviceMailDedupSpec extends FunSuite:
     )
     DeviceMailInbox.initialize(
       res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )
     Inbox(msgs, frames, acks)
+
+  end inboxFixture
 
   /** 接线（**无** live Nebula root ⇒ 注入必定失败：跑完 `InjectAttempts` 次重试）。 */
   private def inboxFixtureWithoutRoot(): Inbox =
@@ -155,8 +159,11 @@ class DeviceMailDedupSpec extends FunSuite:
     val msgs = Ref.unsafe[IO, List[AgentCommand]](Nil)
     val frames = Ref.unsafe[IO, List[Json]](Nil)
     val acks = Ref.unsafe[IO, List[String]](Nil)
+    // 严格DAG第⑥步终批裁定(2026-09-27):装配缝窄化后两参同源——res 只构造一次,不重复 resourcesWith。
+    val res = resourcesWith(Map.empty, store)
     DeviceMailInbox.initialize(
-      resourcesWith(Map.empty, store),
+      res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )
@@ -164,7 +171,9 @@ class DeviceMailDedupSpec extends FunSuite:
 
   /** 契约载荷（逐字，与 `DeviceMailSpec` 同源）。 */
   private val contractPayload: Json =
-    parse("""{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}""")
+    parse(
+      """{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}"""
+    )
       .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), identity)
 
   /** v2.1 收件入场信封（帧根 `eventId`；服务端投递实证形态）。 */

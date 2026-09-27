@@ -4,9 +4,8 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.shared.AgentModelConfig
-import nebflow.llm.{Config, NebflowServiceConfig}
+import nebflow.core.AtomicJson
+import nebflow.shared.*
 
 /**
  * A named model preset — a reusable `{preferred, fallbacks}` chain stored in
@@ -66,6 +65,8 @@ object PresetFile:
     yield PresetFile(defaultPreset, presets)
   }
 
+end PresetFile
+
 /**
  * File-backed store for model presets.
  *
@@ -96,8 +97,8 @@ object PresetFile:
  * invalidation.
  */
 class PresetStore(
-    configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
-    globalChainProvider: () => List[String] = () => PresetStore.readSeedChain()
+  configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
+  globalChainProvider: () => List[String] = () => PresetStore.readSeedChain()
 ):
 
   private val logger = NebflowLogger.forName("nebflow.preset")
@@ -145,25 +146,18 @@ class PresetStore(
         save(init)
         init
 
-  /** Atomically write the preset file (temp + rename). */
+  end loadExisting
+
+  /**
+   * Atomically write the preset file (temp + rename).
+   *
+   * 原实现为 nanoTime tmp + `os.move.over` + FileAlreadyExistsException 短退避重试
+   * （trigger-chain-fix，含阻塞 `Thread.sleep`）——`os.move.over` 的 delete-then-rename
+   * 形态是碰撞根源。现统一走 `AtomicJson.writeSync`（UUID tmp + `Files.move`
+   * REPLACE_EXISTING|ATOMIC_MOVE），碰撞形态从机制上不存在，重试与阻塞一并退役。
+   */
   def save(f: PresetFile): Unit =
-    os.makeDir.all(configPath / os.up)
-    val tmp = configPath / os.up / s".model-presets.${System.nanoTime()}.tmp"
-    os.write(tmp, f.asJson.noSpaces)
-    // 并发 save 换名碰撞重试（trigger-chain-fix）：并发 repair/init 双写时
-    // move.over 对已出现的目标抛 FileAlreadyExistsException——tmp 名含 nanoTime
-    // 互不覆盖，短退避重试即收敛；重试耗尽后原样上抛（真异常不留观感）。
-    var attempt = 0
-    var done = false
-    while !done && attempt < 5 do
-      try
-        os.move.over(tmp, configPath)
-        done = true
-      catch
-        case _: java.nio.file.FileAlreadyExistsException =>
-          attempt += 1
-          Thread.sleep(5L * attempt)
-    if !done then os.move.over(tmp, configPath)
+    AtomicJson.writeSync(configPath, f.asJson.noSpaces)
 
   /**
    * Resolve an agent's model configuration given its preset reference and
@@ -216,7 +210,9 @@ class PresetStore(
       case Some(p) if p.preferred.isDefined || p.fallbacks.nonEmpty =>
         Right(AgentModelConfig(p.preferred, p.fallbacks))
       case Some(_) =>
-        Left(s"Preset '$presetName' is defined but has no model chain (preferred/fallbacks empty). Available presets: ${availableNames}")
+        Left(
+          s"Preset '$presetName' is defined but has no model chain (preferred/fallbacks empty). Available presets: ${availableNames}"
+        )
       case None =>
         Left(s"Preset '$presetName' not found. Available presets: ${availableNames}")
 
@@ -224,8 +220,10 @@ class PresetStore(
   def availableNames: String =
     load().presets.keys.toList.sorted.mkString(", ")
 
-  /** Build the initial PresetFile from the seed chain (D-a: llm.model 迁移
-    * 优先，否则首 provider 首模型——单元素链，fallbacks 由用户显式决策）。 */
+  /**
+   * Build the initial PresetFile from the seed chain (D-a: llm.model 迁移
+   * 优先，否则首 provider 首模型——单元素链，fallbacks 由用户显式决策）。
+   */
   private def initFromFile(): PresetFile =
     val globalChain = this.globalChain
     val general = ModelPreset(
@@ -265,6 +263,8 @@ class PresetStore(
               val init = initFromFile()
               save(init)
               init
+    end match
+  end repair
 end PresetStore
 
 object PresetStore:
@@ -282,7 +282,9 @@ object PresetStore:
 
   /** DI variant for tests (temp config path). */
   def catalogLines(store: PresetStore): List[String] =
-    scala.util.Try(store.load()).toOption
+    scala.util
+      .Try(store.load())
+      .toOption
       .map(_.presets.values.toList.sortBy(_.name).map { p =>
         val note = p.description.trim
         if note.isEmpty then p.name else s"${p.name} — $note"
@@ -320,6 +322,8 @@ object PresetStore:
         }
         .getOrElse(Nil)
 
+  end readGlobalChainDefault
+
   /**
    * providers 推导种子（D-a）：按 JSON 字段顺序取首个含模型 provider 的
    * 首个模型（单元素链）。**不把全部模型塞进 fallbacks**——那是重新制造
@@ -339,7 +343,9 @@ object PresetStore:
             // JsonObject 保持插入序——"首个" provider 是用户配置文件里的第一个
             providers.toIterable.view
               .flatMap { (name, pj) =>
-                pj.hcursor.downField("models").focus
+                pj.hcursor
+                  .downField("models")
+                  .focus
                   .flatMap(_.asArray)
                   .flatMap(_.headOption)
                   .flatMap(m => m.hcursor.downField("id").as[String].toOption)
@@ -350,6 +356,10 @@ object PresetStore:
               .headOption
           }
       firstRef.toList
+
+    end if
+
+  end readFromProviders
 
   /**
    * llm.model 一次性迁移（#339 D-b，boot 调用）：**先播种验证、后剥离**。
@@ -399,8 +409,12 @@ object PresetStore:
               logger.infoSync("migrated llm.model → default preset; field removed")
               true
             case None => false
-      catch case e: Exception =>
-        logger.warnSync(s"llm.model migration deferred: ${e.getMessage}")
-        false
+        end if
+      catch
+        case e: Exception =>
+          logger.warnSync(s"llm.model migration deferred: ${e.getMessage}")
+          false
+    end if
+  end migrateGlobalModelChain
 
 end PresetStore
