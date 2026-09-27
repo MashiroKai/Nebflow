@@ -208,6 +208,7 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
     )
     DeviceMailInbox.initialize(
       res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some(e => NeblinkRelayTunnel.sendAckLive(ms.relayTunnelOpt, e))
     )
@@ -477,6 +478,7 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
         )
         _ = DeviceMailInbox.initialize(
           res,
+          res.neblinkService,
           (j: Json) => frames.update(_ :+ j),
           Some(_ => IO.pure(NeblinkRelayTunnel.AckOutcome.SendFailed("boom")))
         )

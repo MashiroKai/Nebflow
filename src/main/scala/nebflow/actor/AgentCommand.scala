@@ -335,7 +335,7 @@ object AgentCommand:
      * 后续 turn 同 fp 复发 → 直接 L2 冻结）。该路径不投 ToolsComplete——
      * LlmFailed 本身是计数器写回的唯一载体。其余调用方默认 None。
      */
-    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None
+    loopCounters: Option[nebflow.shared.Counters] = None
   ) extends AgentCommand
 
   case class SetPermissionDeferred(deferred: cats.effect.Deferred[IO, Boolean]) extends AgentCommand
@@ -358,7 +358,7 @@ object AgentCommand:
      * 异步 IO 内计算，行为返回时不可见；经消息携带由 ToolsComplete handler 写回
      * state（S1/S2 跨轮、S3 跨 turn 持久化的载体）。None=非 loop-guard 路径。
      */
-    loopCounters: Option[nebflow.core.processor.LoopGuard.Counters] = None,
+    loopCounters: Option[nebflow.shared.Counters] = None,
     /**
      * Block 3 L2：Some(detail) 时 handler 完成消息组装/持久化/计数器写回后
      * 不续轮（不 pipeLlmCall），转而冻结（loopDetected 广播 + 父通知 +
@@ -494,7 +494,7 @@ object AgentCommand:
 
   /** A queued mail has arrived — drain it (idle) or increment the count (processing). */
   case class MailQueued(
-    item: nebflow.core.flow.MailQueueStore.MailQueueItem,
+    item: nebflow.shared.MailQueueItem,
     fromSessionId: String
   ) extends AgentCommand
 

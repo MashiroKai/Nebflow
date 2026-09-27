@@ -1108,6 +1108,7 @@ object GatewayMain extends IOApp:
                                               // 未接线 ⇒ 注入路径显式失败（不静默）。
                                               nebflow.neblink.DeviceMailInbox.initialize(
                                                 sharedResourcesFinal,
+                                                sharedResourcesFinal.neblinkService,
                                                 (json: io.circe.Json) => wsHub.broadcast(json),
                                                 // 收件回执出口（契约 v2 ④）：与好友消息 ack
                                                 // **同一缝、同一实现点**（`sendAckLive` 的

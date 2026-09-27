@@ -145,6 +145,7 @@ class DeviceMailDedupSpec extends FunSuite:
     )
     DeviceMailInbox.initialize(
       res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )
@@ -158,8 +159,11 @@ class DeviceMailDedupSpec extends FunSuite:
     val msgs = Ref.unsafe[IO, List[AgentCommand]](Nil)
     val frames = Ref.unsafe[IO, List[Json]](Nil)
     val acks = Ref.unsafe[IO, List[String]](Nil)
+    // 严格DAG第⑥步终批裁定(2026-09-27):装配缝窄化后两参同源——res 只构造一次,不重复 resourcesWith。
+    val res = resourcesWith(Map.empty, store)
     DeviceMailInbox.initialize(
-      resourcesWith(Map.empty, store),
+      res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )

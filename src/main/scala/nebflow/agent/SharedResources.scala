@@ -17,7 +17,7 @@ import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
 import nebflow.llm.*
 import nebflow.neblink.{AttachUploadRegistry, FriendService, NeblinkService}
-import nebflow.shared.*
+import nebflow.shared.{FileHistory, ReadTracker, *}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A/R-C):本类原地混入 core 窄视图 AgentRuntimePort
 // (AgentRegistryPort 经其继承;签名镜像,行为保持)。extends 子句形状与改前一致。

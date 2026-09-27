@@ -3,6 +3,7 @@ package nebflow.core.processor
 import munit.FunSuite
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.shared.Counters
 
 /**
  * Block 3 循环检测器纯函数测试（supervision trio §D 2026-08-27；简化重构
@@ -32,7 +33,7 @@ class LoopGuardSpec extends FunSuite:
 
   test("S1: identical failure streak warns exactly at soft threshold (3)") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (c1, v1) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, v1) = LoopGuard.evaluate(List(e), "t1", Counters.Empty, cfg)
     assertEquals(v1, LoopGuard.Verdict.Pass)
     val (c2, v2) = LoopGuard.evaluate(List(e), "t1", c1, cfg)
     assertEquals(v2, LoopGuard.Verdict.Pass)
@@ -45,8 +46,8 @@ class LoopGuardSpec extends FunSuite:
 
   test("S1: streak terminates at hard threshold (8)") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (_, v) = (1 to 8).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((cnt, _), _) => LoopGuard.evaluate(List(e), "t1", cnt, cfg)
+    val (_, v) = (1 to 8).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((cnt, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", cnt, cfg)
     }
     v match
       case LoopGuard.Verdict.Terminate(msg, fp) =>
@@ -57,7 +58,7 @@ class LoopGuardSpec extends FunSuite:
 
   test("S1: success of the same call resets the streak (flaky fail-fail-ok never trips)") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (c1, _) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, _) = LoopGuard.evaluate(List(e), "t1", Counters.Empty, cfg)
     val (c2, _) = LoopGuard.evaluate(List(e), "t1", c1, cfg)
     val (c3, v3) = LoopGuard.evaluate(List(okEv("Read", args("/x"))), "t1", c2, cfg)
     assertEquals(v3, LoopGuard.Verdict.Pass)
@@ -72,8 +73,8 @@ class LoopGuardSpec extends FunSuite:
   test("S1: different arguments are different fingerprints — alternating failures never accumulate") {
     val e1 = failed("Read", args("/a"), "File does not exist: /a")
     val e2 = failed("Read", args("/b"), "File does not exist: /b")
-    val (_, v) = (1 to 10).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((cnt, _), i) => LoopGuard.evaluate(List(if i % 2 == 0 then e1 else e2), "t1", cnt, cfg)
+    val (_, v) = (1 to 10).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((cnt, _), i) =>
+      LoopGuard.evaluate(List(if i % 2 == 0 then e1 else e2), "t1", cnt, cfg)
     }
     // streak 每轮被换参打断，永不 ≥2
     assertEquals(v, LoopGuard.Verdict.Pass)
@@ -82,7 +83,7 @@ class LoopGuardSpec extends FunSuite:
   test("S1: varying error signature (timeout 30s vs 31s) does not accumulate — flaky exemption") {
     val e30 = failed("Bash", Json.obj("cmd" -> "build".asJson), "command timed out after 30s")
     val e31 = failed("Bash", Json.obj("cmd" -> "build".asJson), "command timed out after 31s")
-    val (c1, v1) = LoopGuard.evaluate(List(e30), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, v1) = LoopGuard.evaluate(List(e30), "t1", Counters.Empty, cfg)
     assertEquals(v1, LoopGuard.Verdict.Pass)
     val (_, v2) = LoopGuard.evaluate(List(e31), "t1", c1, cfg)
     assertEquals(v2, LoopGuard.Verdict.Pass)
@@ -99,8 +100,8 @@ class LoopGuardSpec extends FunSuite:
 
   test("R-call: same tool+args consecutively x9 passes, exactly the 10th terminates") {
     val e = okEv("Bash", Json.obj("command" -> "sbt testOnly SuiteA".asJson))
-    val (c9, v9) = (1 to 9).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (c9, v9) = (1 to 9).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     assertEquals(v9, LoopGuard.Verdict.Pass)
     assertEquals(c9.lastCallCount, 9)
@@ -120,8 +121,8 @@ class LoopGuardSpec extends FunSuite:
   test("R-call: same args failing x10 still caught (S1 fires earlier at 8 — precedence check)") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
     // S1 在第 8 次先触发（8 < 10）
-    val (c8, v8) = (1 to 8).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (c8, v8) = (1 to 8).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     v8 match
       case LoopGuard.Verdict.Terminate(msg, _) =>
@@ -138,8 +139,8 @@ class LoopGuardSpec extends FunSuite:
     val a = okEv("Bash", Json.obj("command" -> "same".asJson))
     val b = okEv("Bash", Json.obj("command" -> "different".asJson))
     // 9×A
-    val (c9, _) = (1 to 9).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(a), "t1", c, cfg)
+    val (c9, _) = (1 to 9).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(a), "t1", c, cfg)
     }
     assertEquals(c9.lastCallCount, 9)
     // 插 1 次 B → A 计数必须从 1 重数
@@ -160,8 +161,8 @@ class LoopGuardSpec extends FunSuite:
 
   test("R-call: success does NOT reset — identical successful calls x10 still a loop") {
     val e = okEv("Read", args("/logs/fulltest.log"))
-    val (_, v) = (1 to 10).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (_, v) = (1 to 10).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     v match
       case LoopGuard.Verdict.Terminate(msg, _) => assert(msg.contains("in a row"))
@@ -175,8 +176,8 @@ class LoopGuardSpec extends FunSuite:
       else if i % 3 == 1 then List(okEv("Read", args(s"/logs/fulltest.log#L$i")))
       else List(okEv("Grep", Json.obj("pattern" -> s"case-$i".asJson, "path" -> "/logs".asJson)))
     }
-    val (_, v) = rounds.foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), evs) => LoopGuard.evaluate(evs.toList, "t1", c, cfg)
+    val (_, v) = rounds.foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), evs) =>
+      LoopGuard.evaluate(evs.toList, "t1", c, cfg)
     }
     assertEquals(v, LoopGuard.Verdict.Pass)
   }
@@ -184,15 +185,15 @@ class LoopGuardSpec extends FunSuite:
   test("R-call: multi-event rounds (A,B) interleaved keep both counts at 1") {
     val a = okEv("Read", args("/a"))
     val b = okEv("Grep", args("pat"))
-    val (_, v) = (1 to 15).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(a, b), "t1", c, cfg)
+    val (_, v) = (1 to 15).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(a, b), "t1", c, cfg)
     }
     assertEquals(v, LoopGuard.Verdict.Pass, "alternating A,B never reaches 10 consecutive")
   }
 
   test("R-text: identical assistant text x9 passes, exactly the 10th terminates (mutation-red target d)") {
-    val (c9, v9) = (1 to 9).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = "我已经重试了，请稍候。")
+    val (c9, v9) = (1 to 9).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = "我已经重试了，请稍候。")
     }
     assertEquals(v9, LoopGuard.Verdict.Pass)
     assertEquals(c9.lastTextCount, 9)
@@ -207,8 +208,8 @@ class LoopGuardSpec extends FunSuite:
 
   test("R-text: any different text resets; empty text neither counts nor resets") {
     val same = "好的，我继续。"
-    val (c5, _) = (1 to 5).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = same)
+    val (c5, _) = (1 to 5).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(Nil, "t1", c, cfg, assistantText = same)
     }
     assertEquals(c5.lastTextCount, 5)
     // 不同文本 → 刷新
@@ -229,7 +230,7 @@ class LoopGuardSpec extends FunSuite:
 
   test("S3: same fp failing in 3 separate turns with no success freezes") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (c1, v1) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, v1) = LoopGuard.evaluate(List(e), "t1", Counters.Empty, cfg)
     assertEquals(v1, LoopGuard.Verdict.Pass)
     val (c2, v2) = LoopGuard.evaluate(List(e), "t2", c1, cfg) // turn 边界：S1/R 清零，S3 保留
     assertEquals(v2, LoopGuard.Verdict.Pass)
@@ -242,7 +243,7 @@ class LoopGuardSpec extends FunSuite:
 
   test("S3: a success of the same fp in between clears the cross-turn record") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (c1, _) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, _) = LoopGuard.evaluate(List(e), "t1", Counters.Empty, cfg)
     val (c2, _) = LoopGuard.evaluate(List(okEv("Read", args("/x"))), "t2", c1, cfg)
     assertEquals(c2.crossTurn.get(LoopGuard.fingerprint("Read", args("/x"))), None)
     val (_, v3) = LoopGuard.evaluate(List(e), "t3", c2, cfg)
@@ -252,7 +253,7 @@ class LoopGuardSpec extends FunSuite:
   test("L1 recurrence: fp terminated earlier then failing again in a later turn freezes immediately") {
     val e = failed("Read", args("/x"), "File does not exist: /x")
     // 第一 turn：8 连败 → Terminate（fp 记入 terminatedFps）
-    val (ct1, vt1) = (1 to 8).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
+    val (ct1, vt1) = (1 to 8).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
       case ((cnt, _), _) => LoopGuard.evaluate(List(e), "t1", cnt, cfg)
     }
     vt1 match
@@ -270,8 +271,8 @@ class LoopGuardSpec extends FunSuite:
   test("exemptTools: TaskQuery polling never counts toward S1/S3/R-call (polling exemption)") {
     val q = failed("TaskQuery", Json.obj("status" -> "in_progress".asJson), "no tasks")
     // 同参 20 次（跨 3 turn）——S1/S3/R 全不触发
-    val (cnt, v) = (1 to 20).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), i) => LoopGuard.evaluate(List(q), s"t${(i - 1) / 7 + 1}", c, cfg)
+    val (cnt, v) = (1 to 20).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), i) =>
+      LoopGuard.evaluate(List(q), s"t${(i - 1) / 7 + 1}", c, cfg)
     }
     assertEquals(v, LoopGuard.Verdict.Pass)
     assertEquals(cnt.streakCount, 0)
@@ -285,8 +286,8 @@ class LoopGuardSpec extends FunSuite:
       "Tool Bash is denied by the session permission policy",
       denied = true
     )
-    val (cnt, v) = (1 to 10).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(d), "t1", c, cfg)
+    val (cnt, v) = (1 to 10).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(d), "t1", c, cfg)
     }
     assertEquals(v, LoopGuard.Verdict.Pass)
     assertEquals(cnt.streakCount, 0)
@@ -296,17 +297,17 @@ class LoopGuardSpec extends FunSuite:
   test("disabled config: everything passes and counters are untouched") {
     val off = cfg.copy(enabled = false)
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (cnt, v) = (1 to 10).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, off)
+    val (cnt, v) = (1 to 10).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, off)
     }
     assertEquals(v, LoopGuard.Verdict.Pass)
-    assertEquals(cnt, LoopGuard.Counters.Empty)
+    assertEquals(cnt, Counters.Empty)
   }
 
   test("turn boundary resets S1 AND R consecutive counters but preserves S3") {
     val e = failed("Read", args("/x"), "File does not exist: /x") // 同一 fp 同时喂 S1 与 R-call
-    val (c1, _) = (1 to 5).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (c1, _) = (1 to 5).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     assertEquals(c1.streakCount, 5)
     assertEquals(c1.lastCallCount, 5)
@@ -322,8 +323,8 @@ class LoopGuardSpec extends FunSuite:
   test("verdict strength: Freeze beats Terminate beats Warn when simultaneous") {
     // 构造：S3 命中（3 turns）的同时 streak 达 hard——Freeze 必须赢
     val e = failed("Read", args("/x"), "File does not exist: /x")
-    val (c2, _) = (1 to 2).foldLeft((LoopGuard.Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) {
-      case ((c, _), _) => LoopGuard.evaluate(List(e), "t1", c, cfg)
+    val (c2, _) = (1 to 2).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
+      LoopGuard.evaluate(List(e), "t1", c, cfg)
     }
     // t2 凑第二个 turn 记录 + streak 7 次
     val (c2b, _) = (1 to 7).foldLeft((c2, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((c, _), _) =>
@@ -340,7 +341,7 @@ class LoopGuardSpec extends FunSuite:
     val e = failed("Read", args("/x"), "File does not exist: /x")
     val fp = LoopGuard.fingerprint("Read", args("/x"))
     // 唤醒前：t1/t2 已各记 1 次（未达 3 turn）
-    val (c1, _) = LoopGuard.evaluate(List(e), "t1", LoopGuard.Counters.Empty, cfg)
+    val (c1, _) = LoopGuard.evaluate(List(e), "t1", Counters.Empty, cfg)
     val (c2, _) = LoopGuard.evaluate(List(e), "t2", c1, cfg)
     assertEquals(c2.crossTurn.get(fp).map(_.size), Some(2))
     // 对照（未修原状）：不重置 → 唤醒 turn t3 第 1 败即 3 turns → Freeze

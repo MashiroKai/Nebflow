@@ -103,7 +103,7 @@ object AgentCore:
    * **只读不回流判据**：两者都不参与任何判死不等式，只作为「恢复 → 又被冻结」自激
    * 循环的识别信号（见 `TaskStuckWatcher` 互斥点 2）。
    */
-  def projectLoopCounters(counters: nebflow.core.processor.LoopGuard.Counters): (Int, String) =
+  def projectLoopCounters(counters: nebflow.shared.Counters): (Int, String) =
     val hits = counters.crossTurn.iterator.map { case (fp, turns) => (fp, turns.size) }.toList
     val total = hits.iterator.map(_._2).sum
     val lastFp = hits.sortBy { case (fp, n) => (-n, fp) }.headOption.map(_._1).getOrElse("")
@@ -127,8 +127,8 @@ object AgentCore:
    * 内置工具审批链的等待语义逐字不变（A1-8）。
    */
   def awaitMcpPermissionDecision(
-    deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]
-  ): IO[nebflow.core.McpPermissionAnswer] =
+    deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer]
+  ): IO[nebflow.shared.McpPermissionAnswer] =
     deferred.get
 
   /**

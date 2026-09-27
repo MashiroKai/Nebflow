@@ -16,7 +16,7 @@ import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MailQueueItem, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -124,8 +124,8 @@ class MailDedupWiringSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  private def mkItem(id: String, message: String): MailQueueStore.MailQueueItem =
-    MailQueueStore.MailQueueItem(
+  private def mkItem(id: String, message: String): MailQueueItem =
+    MailQueueItem(
       id = id,
       from = "tester",
       fromSession = "sender-dd",

@@ -33,7 +33,7 @@ class McpPermissionReplaySpec extends FunSuite:
 
   private def mcpPending(createdAt: Long, root: String = "root-1"): InteractionHub.PendingRequest =
     InteractionHub.PendingRequest(
-      reply = InteractionReply.McpPermissionReply(Deferred.unsafe[IO, nebflow.core.McpPermissionAnswer]),
+      reply = InteractionReply.McpPermissionReply(Deferred.unsafe[IO, nebflow.shared.McpPermissionAnswer]),
       rootSessionId = root,
       sourceAgent = "agent-x",
       sourceSession = "sess-x",
@@ -107,7 +107,7 @@ class McpPermissionReplaySpec extends FunSuite:
   }
 
   test("A1-5(答复解码) McpPermissionAnswer：approved 必需，scope/upgradeMode 可选") {
-    import nebflow.core.McpPermissionAnswer
+    import nebflow.shared.McpPermissionAnswer
     assertEquals(McpPermissionAnswer.decode(Json.obj("approved" -> true.asJson)).map(_.approved), Some(true))
     assertEquals(McpPermissionAnswer.decode(Json.obj("scope" -> "session".asJson)), None)
     assertEquals(

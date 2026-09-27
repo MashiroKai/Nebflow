@@ -544,7 +544,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
   }
 
   test("AgentCore.projectLoopCounters: 跨轮指纹投影确定性（次数降序、同数取字典序）") {
-    import nebflow.core.processor.LoopGuard.Counters
+    import nebflow.shared.Counters
     val empty = AgentCoreProjection.of(Counters())
     assertEquals(empty, (0, ""), "空 counters ⇒ (0, \"\")")
     val c = Counters(crossTurn = Map("bbb" -> Set("t1", "t2"), "aaa" -> Set("t1"), "ccc" -> Set("t1", "t2")))
@@ -637,7 +637,7 @@ class StuckJudgementOrderSpec extends CatsEffectSuite:
   /** 薄包装：把 `AgentCore.projectLoopCounters` 提到测试可读处（避免重复 import 长链）。 */
   private object AgentCoreProjection:
 
-    def of(c: nebflow.core.processor.LoopGuard.Counters): (Int, String) =
+    def of(c: nebflow.shared.Counters): (Int, String) =
       nebflow.agent.AgentCore.projectLoopCounters(c)
 
 end StuckJudgementOrderSpec

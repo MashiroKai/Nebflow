@@ -6,7 +6,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.flow.MailQueueStore
-import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil}
+import nebflow.shared.{ContentBlock, MailQueueItem, Message, MessageRole, PathUtil}
 
 import java.nio.file.{Files, Paths}
 import java.util.Base64
@@ -320,7 +320,7 @@ class ImageAttachSpec extends CatsEffectSuite:
     catch case _: Exception => ()
 
   test("MailQueueItem: codec round-trip preserves imagePaths"):
-    val item = MailQueueStore.MailQueueItem(
+    val item = MailQueueItem(
       id = "mail-q-abc",
       from = "Manager",
       fromSession = "s1",
@@ -329,14 +329,14 @@ class ImageAttachSpec extends CatsEffectSuite:
       timestamp = 12345L,
       imagePaths = List("/tmp/a.png", "/tmp/b.jpg")
     )
-    decode[MailQueueStore.MailQueueItem](item.asJson.noSpaces) match
+    decode[MailQueueItem](item.asJson.noSpaces) match
       case Right(back) => assertEquals(back.imagePaths, List("/tmp/a.png", "/tmp/b.jpg"))
       case Left(err) => fail(s"round-trip failed: $err")
 
   test("MailQueueItem: old-format JSON (no imagePaths) decodes to Nil"):
     val old =
       """[{"id":"mail-q-x","from":"Manager","fromSession":"s1","message":"m","type":"INFO","timestamp":1}]"""
-    decode[List[MailQueueStore.MailQueueItem]](old) match
+    decode[List[MailQueueItem]](old) match
       case Right(items) =>
         assertEquals(items.length, 1)
         assertEquals(items.head.imagePaths, Nil)
@@ -345,7 +345,7 @@ class ImageAttachSpec extends CatsEffectSuite:
 
   test("MailQueueStore: append + load round-trip persists imagePaths to disk"):
     val sid = "g3-queue-test"
-    val item = MailQueueStore.MailQueueItem(
+    val item = MailQueueItem(
       id = "mail-q-disk",
       from = "Manager",
       fromSession = "s1",

@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.{ActorRef, AgentCommand}
-import nebflow.agent.SharedResources
+import nebflow.core.AgentRuntimePort
 import nebflow.core.tools.{MailTool, RelayExecAudit}
 import nebflow.shared.{DeviceMail, NebflowLogger, Retry}
 
@@ -142,8 +142,13 @@ object DeviceMailInbox:
    * `NeblinkRelayTunnel.AckOutcome`（修前 `IO[Unit]` ⇒ 「没发出」与「已发出」
    * 在类型上不可分，本腿因此照打 `ack sent to the server` = 假陈述）。
    */
+  // 严格DAG第⑥步终批裁定(2026-09-27):装配缝参数窄化——`resources: SharedResources`
+  // 改为本文件实调用面(core.AgentRuntimePort,root 会话解析的形参类型)+ 独立
+  // `neblinkService: Option[NeblinkService]` 字段(设备身份读取面);neblink→agent 边随
+  // 窄化清除,行为保持(调用方以同一 resources 对象两处传参,不重复构造)。
   final case class Wiring(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
+    neblinkService: Option[NeblinkService],
     wsSend: Json => IO[Unit],
     ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   )
@@ -152,11 +157,12 @@ object DeviceMailInbox:
 
   /** 生产装配点（`GatewayMain`）。幂等：重复调用以后一次为准（测试可重置）。 */
   def initialize(
-    resources: SharedResources,
+    resources: AgentRuntimePort,
+    neblinkService: Option[NeblinkService],
     wsSend: Json => IO[Unit],
     ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
   ): Unit =
-    wiring = Some(Wiring(resources, wsSend, ackSender))
+    wiring = Some(Wiring(resources, neblinkService, wsSend, ackSender))
 
   /** 是否已接线（可观测/可测）。 */
   def isWired: Boolean = wiring.isDefined
@@ -269,7 +275,9 @@ object DeviceMailInbox:
   private def injectOnce(incoming: DeviceMail.Incoming): IO[Either[String, String]] =
     wiring match
       case None =>
-        IO.pure(Left("DeviceMailInbox is not wired (no SharedResources) — injection skipped"))
+        // 严格DAG第⑥步终批裁定(2026-09-27):装配缝参数窄化后,原文案「no SharedResources」
+        // 随参数结构微调为「no resources」——语义不变(未接线 ⇒ 无资源注入,注入跳过)。
+        IO.pure(Left("DeviceMailInbox is not wired (no resources) — injection skipped"))
       case Some(w) =>
         // 复用 MailTool 的**唯一** root 解析单点（session meta agentName == "Nebula"
         // ∧ 排除发信者自身 ∧ 唯一；0 或 ≥2 命中一律判为解析不出，禁静默挑一条）。
@@ -415,7 +423,7 @@ object DeviceMailInbox:
     val localIo: IO[String] = wiring match
       case None => IO.pure("unknown")
       case Some(w) =>
-        w.resources.neblinkService match
+        w.neblinkService match
           case None => IO.pure("unknown")
           case Some(ns) => ns.identity.map(_.deviceId).handleErrorWith(_ => IO.pure("unknown"))
     localIo

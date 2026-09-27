@@ -49,7 +49,7 @@ object InteractionReply:
    * `PermissionUpgrade.parse` 语义，零改动）——故独立 reply 型别而非扩既有型别
    * （内置工具审批链逐字不动，A1-8 零回归）。
    */
-  final case class McpPermissionReply(deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer])
+  final case class McpPermissionReply(deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer])
       extends InteractionReply
 
 /**

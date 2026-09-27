@@ -163,8 +163,8 @@ class WebSocketRoutes(
       history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
       metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
       agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
-      readTracker <- nebflow.core.tools.ReadTracker.create
-      fileHistory <- nebflow.core.tools.FileHistory.create()
+      readTracker <- nebflow.shared.ReadTracker.create
+      fileHistory <- nebflow.shared.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
       contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────

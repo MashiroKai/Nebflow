@@ -14,7 +14,7 @@ import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry, Tea
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MailQueueItem, PathUtil, StreamChunk, ThinkingConfig}
 import nebflow.core.FileChangeTracker
 
 import scala.concurrent.duration.*
@@ -125,8 +125,8 @@ class MailIdleGateWiringSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  private def queueItem(id: String, from: String, fromSession: String, message: String): MailQueueStore.MailQueueItem =
-    MailQueueStore.MailQueueItem(
+  private def queueItem(id: String, from: String, fromSession: String, message: String): MailQueueItem =
+    MailQueueItem(
       id = id,
       from = from,
       fromSession = fromSession,

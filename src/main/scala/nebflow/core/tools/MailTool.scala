@@ -9,7 +9,7 @@ import nebflow.core.*
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
 import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-import nebflow.shared.{NebflowLogger, *}
+import nebflow.shared.{MailQueueItem, NebflowLogger, *}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
@@ -1671,7 +1671,7 @@ Message type (optional, default "INFO"):
     senderSessionId: String
   ): IO[Either[ToolError, String]] =
     val senderName = ctx.agentDef.map(_.name).getOrElse(RootAgentIdentity.Name)
-    val item = MailQueueStore.MailQueueItem(
+    val item = MailQueueItem(
       id = s"mail-q-${java.util.UUID.randomUUID().toString.take(8)}",
       from = senderName,
       fromSession = senderSessionId,

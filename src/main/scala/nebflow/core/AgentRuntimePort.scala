@@ -20,8 +20,8 @@ import nebflow.actor.*
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.PluginMcpManager
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
-import nebflow.core.tools.{FileHistory, ReadTracker, ToolContext}
-import nebflow.shared.*
+import nebflow.core.tools.ToolContext
+import nebflow.shared.{FileHistory, ReadTracker, *}
 
 import java.util.concurrent.atomic.AtomicReference
 
@@ -163,6 +163,7 @@ end AgentRuntimePort
  */
 trait SubAgentTaskStorePort:
   def recordTask(task: SubAgentTask): IO[Unit]
+
   def updateStatus(
     parentSessionId: String,
     taskId: String,
@@ -263,6 +264,7 @@ object AskUserAnswerPort:
 
   /** 注册器持有的桥构造面(ref)。 */
   trait Face:
+
     def ref(
       target: ActorRef[AgentCommand],
       items: List[AskItem],

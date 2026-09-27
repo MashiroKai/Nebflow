@@ -1,4 +1,4 @@
-package nebflow.core.tools
+package nebflow.shared
 
 import cats.effect.{IO, Ref}
 

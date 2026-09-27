@@ -994,7 +994,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 与 permissionDeferredRef 并列、独立型别 —— 内置工具审批链的类型/语义零改动（A1-8）。
     // turn 级生命周期与 permissionDeferredRef 一致（turn 结束自然清零）。
     val mcpPermissionAnswerRef =
-      cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]]](None)
+      cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer]]](None)
     // #12 劝停：同 turn 同工具的用户拒绝计数（per-turn lifecycle 与
     // permissionDeferredRef 一致——turn 结束自然清零）。
     val permissionDenialsRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
@@ -1627,7 +1627,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     outcome: nebflow.core.McpGateOutcome,
     state: AgentState,
     resources: SharedResources,
-    answerRef: Ref[IO, Option[cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer]]],
+    answerRef: Ref[IO, Option[cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer]]],
     permissionDenialsRef: Ref[IO, Map[String, Int]],
     toolCtx: ToolContext
   )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
@@ -1638,7 +1638,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           val r = ToolExecResult("Another permission request is already pending", isError = true)
           (existing, logToolStructured(call, toolCtx, r).as(r))
         case None =>
-          val deferred = cats.effect.Deferred.unsafe[IO, nebflow.core.McpPermissionAnswer]
+          val deferred = cats.effect.Deferred.unsafe[IO, nebflow.shared.McpPermissionAnswer]
           (
             Some(deferred),
             IO(nebflow.core.McpToolGate.cardPayload(outcome, currentMode)).flatMap { cardJson =>
@@ -1694,7 +1694,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     toolCtx: ToolContext,
     state: AgentState,
     cardJson: Json,
-    deferred: cats.effect.Deferred[IO, nebflow.core.McpPermissionAnswer],
+    deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer],
     sourceAgent: String,
     sourceSession: String,
     rootSessionId: String
@@ -1737,7 +1737,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               )
           ).handleErrorWith(_ => IO.unit) *>
             deferred
-              .complete(nebflow.core.McpPermissionAnswer(approved = false, scope = None, upgradeMode = None))
+              .complete(nebflow.shared.McpPermissionAnswer(approved = false, scope = None, upgradeMode = None))
               .void
               .handleErrorWith(_ => IO.unit)
       }

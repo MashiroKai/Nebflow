@@ -13,7 +13,17 @@ import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.shared.{
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  MailQueueItem,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig
+}
 import nebflow.core.FileChangeTracker
 
 import scala.concurrent.duration.*
@@ -259,7 +269,7 @@ class ColdQueueActivationSpec extends FunSuite:
       _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-s4"))
-      item = MailQueueStore.MailQueueItem(
+      item = MailQueueItem(
         id = "mail-q-dup1",
         from = "tester",
         fromSession = "sender-s4",

@@ -265,8 +265,8 @@ case class SessionContext(
   recentMessageIds: List[String] = Nil,
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
-  readTracker: Option[nebflow.core.tools.ReadTracker] = None,
-  fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+  readTracker: Option[nebflow.shared.ReadTracker] = None,
+  fileHistory: Option[nebflow.shared.FileHistory] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   askMode: Option[String] = None,
   language: Option[String] = None,
@@ -649,7 +649,7 @@ case class AgentState(
    * Block 3 循环检测器计数器（supervision trio §D1）：顶层——S3 跨 turn 保留
    * （turn 边界只清 S1 与 R 连续重复计数，见 LoopGuard.evaluate 的 turnKey 判定）。
    */
-  loopCounters: nebflow.core.processor.LoopGuard.Counters,
+  loopCounters: nebflow.shared.Counters,
   /**
    * Block 3：逻辑 turn 纪元（每次真实 turn 开始 +1——UserInput/ExternalEvent
    * 唤醒/Mail 激活/冻结唤醒等 dispatch 起点；ToolsComplete 续轮/retry/压缩
@@ -699,8 +699,8 @@ object AgentState:
     pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
     turnIdx: Int = 0,
     wsSend: Json => IO[Unit] = _ => IO.unit,
-    readTracker: Option[nebflow.core.tools.ReadTracker] = None,
-    fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+    readTracker: Option[nebflow.shared.ReadTracker] = None,
+    fileHistory: Option[nebflow.shared.FileHistory] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
@@ -785,7 +785,7 @@ object AgentState:
       Nil,
       None,
       None,
-      nebflow.core.processor.LoopGuard.Counters.Empty,
+      nebflow.shared.Counters.Empty,
       loopTurnKey
     )
   end apply
@@ -793,7 +793,7 @@ end AgentState
 
 extension (s: AgentState)
 
-  def withLoopCounters(c: nebflow.core.processor.LoopGuard.Counters): AgentState =
+  def withLoopCounters(c: nebflow.shared.Counters): AgentState =
     s.copy(loopCounters = c)
 
   /**
@@ -898,8 +898,8 @@ extension (s: AgentState)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
-  def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
-  def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
+  def readTracker: Option[nebflow.shared.ReadTracker] = s.session.readTracker
+  def fileHistory: Option[nebflow.shared.FileHistory] = s.session.fileHistory
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language

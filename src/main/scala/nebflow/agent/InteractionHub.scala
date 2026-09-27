@@ -642,7 +642,7 @@ object InteractionHub:
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
     // P0-1（spec §2.4/§2.5）：mcpPermission 的答复面比 permission 多 scope/upgradeMode。
     val mcpAnswer =
-      if p.kind == InteractionKind.McpPermission then nebflow.core.McpPermissionAnswer.decode(ans.payload)
+      if p.kind == InteractionKind.McpPermission then nebflow.shared.McpPermissionAnswer.decode(ans.payload)
       else None
     // P0-2（spec §2.5 + §6 #2 建议口径「启用（L0-L2；不落盘）」）：卡答 scope=session 且
     // approved ⇒ 记 (serverId, tool) 会话内免审。**只内存**（SessionApprovals 无落盘面）；

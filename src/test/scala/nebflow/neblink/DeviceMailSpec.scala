@@ -398,6 +398,7 @@ class DeviceMailSpec extends FunSuite:
     )
     DeviceMailInbox.initialize(
       res,
+      res.neblinkService,
       (j: Json) => frames.update(_ :+ j),
       Some((e: String) => acks.update(_ :+ e).as(NeblinkRelayTunnel.AckOutcome.Sent))
     )
@@ -509,7 +510,7 @@ class DeviceMailSpec extends FunSuite:
     val store = SessionStore(tempRoot / "sessions", tempRoot / "tasks")
     val frames = Ref.unsafe[IO, List[Json]](Nil)
     val res = resourcesWith(Map.empty, store) // 注册表无 Root 记录
-    DeviceMailInbox.initialize(res, (j: Json) => frames.update(_ :+ j), None)
+    DeviceMailInbox.initialize(res, res.neblinkService, (j: Json) => frames.update(_ :+ j), None)
     DeviceMailInbox.handle(envelope("message-fail-1")).unsafeRunSync()
     IO.sleep(300.millis).unsafeRunSync()
     val fs = frames.get.unsafeRunSync()

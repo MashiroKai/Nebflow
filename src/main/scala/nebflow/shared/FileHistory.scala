@@ -1,4 +1,4 @@
-package nebflow.core.tools
+package nebflow.shared
 
 import cats.effect.{IO, Ref}
 import nebflow.shared.PathUtil
@@ -24,7 +24,7 @@ import scala.jdk.CollectionConverters.*
  * cross-agent attribution in file history.
  */
 class FileHistory private (
-  private[tools] val historyRoot: Path,
+  private[shared] val historyRoot: Path,
   maxEntries: Int,
   maxFileSizeBytes: Long,
   // In-memory index: path -> sorted list of snapshot timestamps (newest first)

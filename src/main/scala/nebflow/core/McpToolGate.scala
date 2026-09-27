@@ -469,29 +469,3 @@ object McpToolGate:
       s"sessionApproved=${o.sessionApproved} hostBanner=${o.hostBanner} session=$sessionId"
 
 end McpToolGate
-
-/**
- * 审批卡答复形状（spec §2.4）。
- *
- * `approved: Boolean` **必需** —— 形状不符**不消费卡**（与 `InteractionHub.answerCompletes`
- * 同构，`InteractionHub.scala:404-409`：形状不符的答复不得吃掉槽位，否则 deferred 永挂）。
- * 可选扩展 `scope: "once"|"session"`、`upgradeMode`（走既有 `PermissionUpgrade.parse`）。
- */
-final case class McpPermissionAnswer(
-  approved: Boolean,
-  scope: Option[String],
-  upgradeMode: Option[String]
-):
-  /** P0-2：仅 `session` 触发会话放行记忆；`once` / 其他值 / 缺省 = 仅本次。 */
-  def wantsSessionScope: Boolean = scope.contains("session")
-
-object McpPermissionAnswer:
-
-  def decode(payload: Json): Option[McpPermissionAnswer] =
-    payload.hcursor.downField("approved").as[Boolean].toOption.map { approved =>
-      McpPermissionAnswer(
-        approved = approved,
-        scope = payload.hcursor.downField("scope").as[String].toOption,
-        upgradeMode = payload.hcursor.downField("upgradeMode").as[String].toOption
-      )
-    }

@@ -121,7 +121,7 @@ class LogWriterHomeIsolationSpec extends CatsEffectSuite:
 
   test("FileHistory 默认根跟随隔离 dataRoot（create() 落在临时 home）") {
     PathUtil.setDataRoot(isolatedRoot)
-    val fh = nebflow.core.tools.FileHistory.create().unsafeRunSync()
+    val fh = nebflow.shared.FileHistory.create().unsafeRunSync()
     // historyRoot 是 private[tools]——不触字段，直接断言物理目录位置。
     assert(
       Files.exists(Paths.get(tmpHome.toString, "history")),
@@ -185,7 +185,7 @@ class LogWriterHomeIsolationSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(isolatedRoot)
     val realHistory = Paths.get(realHome, ".nebflow", "history")
     val mtimeBefore = if Files.exists(realHistory) then Some(Files.getLastModifiedTime(realHistory)) else None
-    val _ = nebflow.core.tools.FileHistory.create().unsafeRunSync()
+    val _ = nebflow.shared.FileHistory.create().unsafeRunSync()
     val mtimeAfter = if Files.exists(realHistory) then Some(Files.getLastModifiedTime(realHistory)) else None
     // createDirectories 对已存在目录不更新 mtime：mtime 变化 = 被新建/触碰 = 泄漏。
     assertEquals(mtimeAfter, mtimeBefore, "real ~/.nebflow/history must not be created/touched by an isolated instance")
