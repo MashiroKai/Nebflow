@@ -20,6 +20,9 @@ import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// @-mention project autocomplete (mention-routing batch): word-start '@' opens
+// the mounted-projects popup; data source = fetchProjects() (nodeData.js).
+import { bindMention, handleMentionKeydown, closeMentionDropdown } from './mentionComplete.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -622,6 +625,9 @@ export function send() {
     return;
   }
   const input = v.dom.input;
+  // @-mention popup: send() clears the input on every path below, which would
+  // strand the popup over the next turn — close it up front.
+  closeMentionDropdown();
   const text = input.value.trim();
   const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
   // If in skill mode, send as skill activation
@@ -1406,6 +1412,10 @@ export function initInput(view) {
     // Backspace 删拼音），一律不 preventDefault、不动作，交还浏览器。
     // 该短路同时修掉「斜杠下拉抢先消费组字 Enter」的既有缺陷（⑤-A 同批修）。
     if (isImeComposing(e, input)) return;
+    // @-mention popup navigation (ArrowUp/Down, Tab/Enter pick, Esc close).
+    // Consumes keys only while the popup is open; IME keys never reach here
+    // (hoisted guard above), so an IME session can neither navigate nor pick.
+    if (handleMentionKeydown(e, view)) return;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
@@ -1733,6 +1743,12 @@ export function initInput(view) {
 
   // Slash dropdown input listener
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
+
+  // @-mention autocomplete (mention-routing batch): input + blur listeners,
+  // token parsing and popup rendering live in mentionComplete.js. Key
+  // handling is hooked in the keydown handler above (behind the imeGuard
+  // short-circuit); send() closes the popup up front.
+  bindMention(view);
 
   // Ask/skill indicator cancel buttons
   {

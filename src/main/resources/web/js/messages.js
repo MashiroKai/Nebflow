@@ -5345,7 +5345,10 @@ function bindSettingsDevicesOnce() {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
     const row = target.closest('[data-settings-device-row]');
-    if (row) {
+    if (row instanceof HTMLElement) {
+      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
+      // `dataset` — narrow to HTMLElement. Runtime-equivalent: the selector
+      // only ever matches this HTML row div.
       const d = devicePeers().find((p) => String(p.deviceId || '') === row.dataset.deviceId);
       if (!d) return;
       ensureDeviceChatWiring();
@@ -5363,7 +5366,10 @@ function bindSettingsDevicesOnce() {
     if (!target) return;
     if (target.closest('[data-settings-device-row]') || target.closest('[data-settings-devices-entry]')) {
       e.preventDefault();
-      target.click();
+      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
+      // `click()` — type assertion only; the code already assumed HTMLElement
+      // (SVG targets have no .click() at runtime either).
+      /** @type {HTMLElement} */ (target).click();
     }
   });
 }
