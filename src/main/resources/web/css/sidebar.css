@@ -1639,20 +1639,7 @@
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* Default model badge */
-.agent-mgr-default-badge, .agent-detail-default-badge {
-  display: inline-block;
-  font: 500 10px -apple-system, sans-serif;
-  color: var(--color-text-muted, #888);
-  background: rgba(128,128,128,0.12);
-  border-radius: 3px;
-  padding: 1px 5px;
-  margin-left: 4px;
-  vertical-align: middle;
-}
-
-/* panelscheme 批（2026-09-21）：非可设 agent 的模型方案来源注记（跟随 Nebula /
- * 分发器决定 / 默认方案）——替换原 preset 下拉位置的说明行。 */
+/* Model-chain source note (agent detail — own chain / follows Nebula / seed). */
 .agent-detail-scheme-note {
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-text-muted, #888);

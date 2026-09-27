@@ -105,6 +105,8 @@ export function modelSourceNoteKey(model) {
 
 const ROLES = ['Nebula', 'project-dispatcher', 'kernel', 'general'];
 const FOLLOWER_ROLES = ['project-dispatcher', 'kernel', 'general'];
+/** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
+export const SETTABLE_ROLES = new Set(ROLES);
 const ROLE_KEY = {
   'Nebula': 'model.roleNebula',
   'project-dispatcher': 'model.roleDispatcher',
@@ -461,6 +463,7 @@ function buildNebulaBlock(container, commit) {
 function buildFollowerBlock(container, role, commit) {
   const block = document.createElement('div');
   block.className = 'mp-roleblock mp-roleblock-follower';
+  block.dataset.role = role;
   const st = roleState.get(role);
   const forked = (st?.chain || null) !== null;
   const previewRefs = st?.chain || nebulaEffectiveRefs();
@@ -520,10 +523,12 @@ function buildFollowerBlock(container, role, commit) {
   const toggle = () => {
     const s = roleState.get(role);
     s.expanded = !s.expanded;
-    renderPanel();
+    renderPanel(); // full re-render — `block` above is detached afterwards
     if (s.expanded) {
-      // Same reveal animation as the AskUser dependsOn branches.
-      block.querySelector('.mp-role-body')?.classList.add('ob-q-reveal');
+      // Same reveal animation as the AskUser dependsOn branches — applied to
+      // the FRESH body element from the re-rendered DOM.
+      panelEl?.querySelector(`.mp-roleblock-follower[data-role="${role}"] .mp-role-body`)
+        ?.classList.add('ob-q-reveal');
     }
   };
   head.addEventListener('click', toggle);
@@ -586,10 +591,10 @@ function buildPanel() {
         </div>
         <button type="button" class="mp-close panel-btn" title="×"><svg viewBox="0 0 12 12" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
       </div>
-      <div class="mp-banner"></div>
+      <div class="mp-banner" style="display:none"></div>
       <div class="mp-body">
         <div class="mp-nebula-slot"></div>
-        <div class="mp-followers"></div>
+        <div class="mp-followers" style="display:none"></div>
       </div>
     </div>`;
   document.body.appendChild(overlay);
