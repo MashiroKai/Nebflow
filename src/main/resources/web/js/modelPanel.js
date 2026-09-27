@@ -120,6 +120,7 @@ const probedModels = new Map();
 let panelEl = null; // the overlay element while the panel is open
 let panelMode = 'unified'; // 'unified' | 'separate'
 let panelVisibility = null; // the banner + followers conditional-display pair
+let panelOnKey = null; // the panel's document-level Escape handler
 /** role → { data: GET response|null, chain: string[]|null (null = follow), expanded: boolean } */
 const roleState = new Map();
 
@@ -486,6 +487,12 @@ function buildFollowerBlock(container, role, commit) {
       body.innerHTML = `
         <div class="mp-note">${esc(t('model.followsNebula'))} — ${esc(t('model.effectivePreview'))}</div>
         <div class="mp-preview">${resolvedChainChipsHtml(st.data)}</div>`;
+      if (role === 'kernel') {
+        const kn = document.createElement('div');
+        kn.className = 'mp-note';
+        kn.textContent = t('model.kernelNote');
+        body.appendChild(kn);
+      }
       buildForkButton(body, role, commit);
     } else {
       // Fork state: own chain editor + the explicit re-follow control.
@@ -614,6 +621,10 @@ function buildPanel() {
   overlay.querySelector('.mp-close')?.addEventListener('click', close);
   overlay.querySelector('.mp-mode-btn[data-mode="unified"]')?.addEventListener('click', () => setMode('unified'));
   overlay.querySelector('.mp-mode-btn[data-mode="separate"]')?.addEventListener('click', () => setMode('separate'));
+  // Escape closes the panel (own listener — the global modal Escape handler
+  // only manages #modal-overlay); removed with the panel.
+  panelOnKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', panelOnKey);
 
   return overlay;
 }
@@ -632,6 +643,8 @@ export async function openModelPanel() {
 }
 
 function closeModelPanel() {
+  if (panelOnKey) document.removeEventListener('keydown', panelOnKey);
+  panelOnKey = null;
   panelEl?.remove();
   panelEl = null;
   panelVisibility = null;
