@@ -38,6 +38,9 @@ const OUT = join(ROOT, 'build', 'web-dist');
 // Every entry MUST carry a reason.
 const ORPHAN_EXEMPTIONS = new Map([
   // ['js/example.js', 'reason'],
+  // imgpreview decoupled package (eaa9221c9) — friends/group family, flag-sealed; wiring intentionally deferred pending neblink-server attachment DTO leg. Do not delete, do not wire while sealed.
+  ['js/attachImagePreview.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
+  ['js/attachPreviewField.js', 'imgpreview decoupled package (eaa9221c9): flag-sealed family, wiring intentionally deferred (see comment above)'],
 ]);
 
 // ── 1. Clean output ────────────────────────────────────────────
