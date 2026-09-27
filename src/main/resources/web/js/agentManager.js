@@ -3,8 +3,9 @@
 //
 // 2026-09-06 工具面裁撤批（作者裁定提前执行阶段 2d 子集）：Agent 详情页的
 // tools/skills/flows 三区（可配置 chips + 写回）整体退役——能力配置收敛回
-// 定义文件与 plugin 分配。本页保留：摘要头 + Model preset 选择 + System
-// Prompt 编辑器（WS updateAgentSystemPrompt 仍是唯一写通道）。
+// 定义文件与 plugin 分配。本页保留：摘要头 + 只读模型链展示 + System
+// Prompt 编辑器（WS updateAgentSystemPrompt 仍是唯一写通道）。链编辑
+// 统一走 /model 面板（modelPanel.js）。
 
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
@@ -12,7 +13,7 @@ import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } f
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
-import * as presets from './presets.js';
+import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
@@ -209,38 +210,28 @@ export function renderAgentManager() {
   });
 }
 
-/** Fetch model info and inject a short tag into the card.
- *  Shows `方案: <displayName> · <model>` when the agent references a preset;
- *  a "默认方案" badge when resolving via the default preset. */
+/** Fetch model info and inject a short tag into the card: the head of the
+ *  agent's effective chain + the fallback dot when the running ref differs. */
 async function populateModelTag(name) {
-  const [model, presetData] = await Promise.all([fetchAgentModel(name), presets.fetchPresets()]);
+  const model = await fetchAgentModel(name);
   if (!model) return;
-  // preferred is the configured model — trust it over `current`
-  // (current is only a reference from the backend resolution).
-  const current = model.preferred || model.current || model.default || '';
-  if (!current) return;
+  const head = chainRefs(model.effectiveChain)[0] || '';
+  if (!head) return;
   const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
   if (!tag) return;
-  const presetName = model.preset || '';
-  const preset = presetName ? (presetData?.presets || []).find(p => p.name === presetName) : null;
-  const label = preset
-    ? `${t('preset.pillPrefix')}${preset.name} · ${shortModel(current)}`
-    : shortModel(current);
-  const isFallback = model.preferred && current !== model.preferred;
-  // resolvedFrom arrives with backend P2; fall back to legacy heuristic without it
-  const showDefaultBadge = model.resolvedFrom
-    ? (model.resolvedFrom === 'default-preset' || model.resolvedFrom === 'global')
-    : !model.preferred;
-  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(label)}</span>${showDefaultBadge ? `<span class="agent-mgr-default-badge">${t('preset.defaultBadge')}</span>` : ''}`;
+  const current = model.current || head;
+  const isFallback = !!model.current && model.current !== head;
+  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(head))}</span>`;
 }
 
 // ── Canvas detail tab ──────────────────────────────────────
 
 /** Open a Canvas tab showing the agent detail page.
  *  Exported for plugins.js: the plugins page's subscription-map rows deep-
- *  link here for per-agent editing (summary / preset / system prompt — the
- *  tools/skills/flows capability sections were retired 2026-09-06). The
- *  detail tab is per-agent content, NOT the sealed standalone list entry. */
+ *  link here for per-agent editing (summary / model-chain readout / system
+ *  prompt — the tools/skills/flows capability sections were retired
+ *  2026-09-06). The detail tab is per-agent content, NOT the sealed
+ *  standalone list entry. */
 export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
   openAgentDetailIds.add(name);
@@ -251,31 +242,35 @@ export async function openAgentDetail(name, pin = false) {
   // Loading state
   pane.innerHTML = `<div class="agent-detail-loading">${t('agentManager.loading')}</div>`;
 
-  // Fetch detail + model + presets in parallel
-  const [detail, model, presetData] = await Promise.all([
+  // Fetch detail + model in parallel
+  const [detail, model] = await Promise.all([
     fetchAgentDetail(name),
     fetchAgentModel(name),
-    presets.fetchPresets(),
   ]);
 
-  renderAgentDetail(pane, name, detail, model, presetData);
+  renderAgentDetail(pane, name, detail, model);
 }
 
-/** Re-render the read-only model chain + current-run line after a preset change. */
-function renderResolvedModel(pane, model) {
-  const chainEl = pane.querySelector('#agent-detail-preset-chain');
-  if (chainEl) chainEl.innerHTML = presets.resolvedChainHtml(model || {});
+/** Fill the read-only model section: source note + effective chain chips +
+ *  current-run line (running ref + fallback dot). Editing lives in the /model
+ *  panel — this page is display-only. */
+function renderModelSection(pane, model) {
+  const noteEl = pane.querySelector('#agent-detail-model-note');
+  if (noteEl) noteEl.textContent = t(modelSourceNoteKey(model || {}));
+  const chainEl = pane.querySelector('#agent-detail-model-chain');
+  if (chainEl) chainEl.innerHTML = resolvedChainChipsHtml(model || {});
   const currentEl = pane.querySelector('#agent-detail-model-current');
   if (currentEl) {
-    const current = model?.current || model?.preferred || model?.default || '';
-    const isFallback = model?.preferred && current && current !== model.preferred;
+    const head = chainRefs(model?.effectiveChain)[0] || '';
+    const current = model?.current || head;
+    const isFallback = !!model?.current && head && current !== head;
     currentEl.innerHTML = current
-      ? `${t('preset.current')}: <span class="agent-detail-current-ref">${esc(current)}</span>${isFallback ? `<span class="agent-detail-fallback-dot" title="fallback"></span>` : ''}`
+      ? `${esc(t('model.currentRun'))}: <span class="agent-detail-current-ref">${esc(current)}</span>${isFallback ? `<span class="agent-detail-fallback-dot" title="fallback"></span>` : ''}`
       : '';
   }
 }
 
-function renderAgentDetail(pane, name, detail, model, presetData) {
+function renderAgentDetail(pane, name, detail, model) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
@@ -285,15 +280,6 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
 
   // System prompt
   const prompt = detail?.systemPrompt || '';
-
-  // Preset (P4): agent references a named preset; chain is read-only.
-  const presetName = model?.preset || '';
-  const resolvedFrom = model?.resolvedFrom || '';
-  const presetList = presetData?.presets || [];
-  const defaultPreset = presetList.find(p => p.name === presetData?.defaultPreset);
-  const showDefaultBadge = resolvedFrom
-    ? (resolvedFrom === 'default-preset' || resolvedFrom === 'global')
-    : !presetName;
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -307,15 +293,11 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Model${showDefaultBadge ? `<span class="agent-detail-default-badge">${t('preset.defaultBadge')}</span>` : ''}</div>
-        ${presets.SCHEME_SETTABLE.has(name) ? `
-        <select class="agent-detail-preset-select" id="agent-detail-preset-select">
-          <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
-          ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-        </select>` : `
-        <div class="agent-detail-scheme-note">${esc(t(presets.schemeNoteKey(name)))}</div>`}
-        <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
+        <div class="agent-detail-label">Model</div>
+        <div class="agent-detail-scheme-note" id="agent-detail-model-note"></div>
+        <div class="agent-detail-model-chain" id="agent-detail-model-chain"></div>
         <div class="agent-detail-model-current" id="agent-detail-model-current"></div>
+        ${SETTABLE_ROLES.has(name) ? `<div class="agent-detail-scheme-note">${esc(t('model.viaSlash'))}</div>` : ''}
       </div>
 
       <div class="agent-detail-section" id="agent-detail-prompt-section">
@@ -329,15 +311,8 @@ function renderAgentDetail(pane, name, detail, model, presetData) {
       </div>
     </div>`;
 
-  // Model section (P4): preset dropdown + read-only resolved chain.
-  renderResolvedModel(pane, model);
-  const presetSel = pane.querySelector('#agent-detail-preset-select');
-  presetSel?.addEventListener('change', async () => {
-    await presets.setAgentPreset(name, presetSel.value || null);
-    const fresh = await fetchAgentModel(name);
-    if (pane.isConnected) renderResolvedModel(pane, fresh);
-    populateModelTag(name); // keep the sidebar card pill in sync
-  });
+  // Model section: read-only resolved chain (source note + chips + current).
+  renderModelSection(pane, model);
 
   // System prompt: rendered markdown view ↔ source textarea toggle.
   // Rendered mode is default; Save only shows in source mode.
@@ -404,9 +379,9 @@ window.addEventListener('locale-changed', () => {
   for (const id of [...openAgentDetailIds]) {
     const pane = getTabPane(`agent:${id}`);
     if (!pane || !pane.isConnected) { openAgentDetailIds.delete(id); continue; }
-    Promise.all([fetchAgentDetail(id), fetchAgentModel(id), presets.fetchPresets()])
-      .then(([detail, model, presetData]) => {
-        if (pane.isConnected) renderAgentDetail(pane, id, detail, model, presetData);
+    Promise.all([fetchAgentDetail(id), fetchAgentModel(id)])
+      .then(([detail, model]) => {
+        if (pane.isConnected) renderAgentDetail(pane, id, detail, model);
       })
       .catch(() => { /* 重渲失败保持旧文案——不因语言切换把面板打成错误态 */ });
   }
