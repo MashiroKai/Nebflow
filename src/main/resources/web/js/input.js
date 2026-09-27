@@ -20,8 +20,11 @@ import { notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
-// @-mention project autocomplete (mention-routing batch): word-start '@' opens
-// the mounted-projects popup; data source = fetchProjects() (nodeData.js).
+// @-mention project autocomplete (mention-routing batch; mention-cn 2026-09-27):
+// '@' opens the mounted-projects popup unless the character right before it is
+// an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
+// start, CJK characters and CJK punctuation all open it. Data source =
+// fetchProjects() (nodeData.js).
 import { bindMention, handleMentionKeydown, closeMentionDropdown } from './mentionComplete.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
