@@ -2279,14 +2279,20 @@ function renderBgAgentDropdown() {
     return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        // Meta slots (state / kind / uptime) on the FIRST line — fixed set,
-        // never wraps the name (user ruling 21: agent name is ALWAYS the
-        // second line, visually separated from the labels).
-        '<div class="bg-task-line bg-task-meta">' +
+        // Single-line row (2026-09-27 badge-inline batch, author order: task
+        // badge joins the uptime line): state / kind / project / name / badge
+        // / retries / uptime share ONE line — uptime stays pinned right via
+        // .bg-task-uptime margin-left:auto; project / name / badge truncate
+        // (CSS ellipsis + the existing title tooltips, subagents.taskBadge
+        // family included); fixed chips never shrink. Pure layout: data
+        // sources, tooltip keys, dot / kind / state semantics and counting
+        // are untouched. Supersedes the old meta+name two-line split for THIS
+        // panel only (#bgagent-dropdown); the background-tasks panel
+        // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
+        '<div class="bg-task-line bg-task-main">' +
           '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + projectPart + taskPart + retriesPart + uptimePart +
+          kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
         '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
         stuckPart + toolPart +
       '</div>' +
     '</div>';

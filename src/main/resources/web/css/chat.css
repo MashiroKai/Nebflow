@@ -375,6 +375,38 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Single-line row (2026-09-27 badge-inline batch): the task badge joins the
+   uptime line (author order 2026-09-27), collapsing the old meta+name split
+   into ONE line — normal rows are 1 line, rows with a ↳ tool summary are 2.
+   Scoped to the Sub-Agents panel rows (renderBgAgentDropdown); the
+   background-tasks panel (#bg-dropdown) keeps .bg-task-meta /
+   .bg-task-name-line and its two-line layout. Line contract: fixed slots
+   (state word / kind chip / retries / uptime) never shrink; uptime stays
+   pinned right via .bg-task-uptime margin-left:auto; project / name / badge
+   flex-shrink with ellipsis so the line never wraps and never overflows
+   (the badge truncates first and hardest — largest basis; full texts stay
+   on the existing title tooltips). */
+.bg-task-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: nowrap; /* the whole point: one line — truncate, never wrap */
+  min-width: 0;
+}
+/* Identity metadata is short and always readable: the project text keeps its
+   own max-width+ellipsis for long names but does not participate in the
+   line's shrink pool (at 380px it would otherwise crush to "n…" noise). */
+.bg-task-main .bg-task-project { flex-shrink: 0; }
+/* The name yields, but at half the badge's rate: the badge is the designated
+   truncation slot (largest basis + #id anchor + full title tooltip), so it
+   absorbs the shortfall first while the name keeps ~its identity readable. */
+.bg-task-main .bg-task-name {
+  flex: 0 0.5 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .bg-task-state {
   font-size: 11px;
   /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
