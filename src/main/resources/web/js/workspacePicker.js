@@ -27,15 +27,24 @@
 // Channel selection rule: a listing request goes over `browsePath` when a goto
 // jump is in flight or the search box holds text (filtering + cap + explicit
 // truncation notice live there), and over `wsBrowse.list` otherwise (complete
-// uncapped listing). Clearing the search box re-lists via `browsePath` with an
-// empty query — the same restore-to-full semantics the retired picker had.
+// uncapped listing). Clearing the search box re-lists over `wsBrowse.list` —
+// the same restore-to-full (complete, uncapped) semantics the retired picker
+// had.
 //
 // Staleness guards (two, complementary — neither replaces the other):
 //   · monotonic `ctx.seq` — every request bumps it; a response whose captured
 //     seq is no longer current is dropped (covers rapid row clicks on both
 //     channels);
-//   · `query` echo — a browseResult frame whose echoed query differs from the
-//     box's current text is dropped (covers debounce overlap while typing).
+//   · `query` echo (browsePath channel only) — ws.js onMessage is multicast,
+//     so the first browseResult frame to arrive resolves every live
+//     subscription and, during debounce overlap, the newer request can be
+//     handed a frame that answers the OLDER filter — a mismatch the seq guard
+//     cannot see (the consuming request IS the current one). A frame whose
+//     echoed query differs from the box's current text is ignored before it
+//     can resolve anything (echoCurrent), leaving the subscription live for
+//     the real answer. (Restored in round-2 — round-1 shipped this guard in
+//     the header comment only; the retired sidebar.js picker had the working
+//     comparison in handleBrowseResult.)
 //
 // Error-no-commit invariant (picker-trunc r3, preserved by the unified face):
 // a failed navigation NEVER moves `ctx.current` — the value the Select button
@@ -68,13 +77,17 @@ let openCtx = null; // live dialog context (singleton reentry guard)
  * dynamic onMessage subscription — probeCanvasFile pattern).
  * @param {string} replyType message type to subscribe on
  * @param {function(): void} send thunk that emits the request frame
+ * @param {function(object): boolean} [accept] consume filter: a frame is
+ *        resolved into the request only when this returns true; a rejected
+ *        frame is ignored and the subscription stays live for the real answer
+ *        (query-echo staleness guard — see echoCurrent in openPicker)
  * @returns {Promise<object>} the reply frame, or `{__timeout:true}` on timeout
  */
-function wsRequest(replyType, send) {
+function wsRequest(replyType, send, accept) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (v) => { if (!settled) { settled = true; unsub(); resolve(v); } };
-    const unsub = onMessage(replyType, (msg) => finish(msg));
+    const unsub = onMessage(replyType, (msg) => { if (accept && !accept(msg)) return; finish(msg); });
     setTimeout(() => finish({ __timeout: true }), 4000);
     send();
   });
@@ -277,6 +290,24 @@ export function openPicker(opts = {}) {
     });
   }
 
+  // Query-echo staleness guard for the browsePath channel (round-2: restored —
+  // the retired sidebar.js picker had this same comparison in its
+  // handleBrowseResult). While a browsePath request is in flight the search box
+  // may already hold newer text (250ms debounce overlap), and ws.js onMessage
+  // is MULTICAST: the first frame to arrive resolves every live subscription,
+  // so the current request can be handed a frame answering the PREVIOUS filter
+  // — a mismatch the seq guard cannot catch, because the request consuming the
+  // stale frame IS the current one. A frame whose echoed query differs from
+  // the box's CURRENT text is therefore ignored before it can resolve anything;
+  // the subscription stays live so the real answer still lands when it arrives
+  // (the 4s timeout still bounds the wait). The synthetic `{__timeout:true}`
+  // needs no guard: it is produced by the request's own timer and bypasses
+  // onMessage entirely, so it can never be stale.
+  /** @param {object} res browseResult frame
+   *  @returns {boolean} true when the frame may resolve the pending request */
+  const echoCurrent = (res) =>
+    (res && typeof res.query === 'string' ? res.query : '') === searchEl.value.trim();
+
   /**
    * List `path` and render. Channel rule: goto jumps and query-carrying
    * refreshes go over `browsePath` (server filter + cap + typed errors);
@@ -298,7 +329,7 @@ export function openPicker(opts = {}) {
       listEl.innerHTML = '<div class="wsp-row wsp-empty">' + escapeHtml(t('workspacePicker.loading')) + '</div>';
     }
     const res = (origin === 'goto' || query)
-      ? await wsRequest('browseResult', () => sendWs({ type: 'browsePath', path, query }))
+      ? await wsRequest('browseResult', () => sendWs({ type: 'browsePath', path, query }), echoCurrent)
       : await wsRequest('wsBrowseList', () => sendWs({ type: 'wsBrowse.list', path, sessionId: ctx.sessionId }));
     if (openCtx !== ctx || seq !== ctx.seq) return; // closed or superseded by a newer request
     renderResult(res, { origin, query, requested: path });

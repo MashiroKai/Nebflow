@@ -13,8 +13,12 @@
 //   S4  goto error NO-COMMIT (picker-trunc r3 invariant, preserved): inline
 //       error line, crumbs untouched, list NOT wiped while in flight, Select
 //       falls back to the directory the user was actually in (callback mode)
-//   S5  server-side search: debounced browsePath carries the query; echo guard
-//       drops stale frames; empty state names its way out
+//   S5  server-side search: debounced browsePath carries the query; ECHO RACE
+//       (round-2): with two browsePath requests in flight (debounce overlap),
+//       the stale frame answering the OLDER filter is ignored even though it
+//       arrives while the newer request is pending, AND the real answer still
+//       lands after it (final listing matches the box); empty state names its
+//       way out
 //   S6  truncation note (A face): fact line (hidden/total) + hint line
 //   S7  Clear (project-root mode): rendered only with showClear, closes with
 //       onClear and WITHOUT onCancel
@@ -271,28 +275,49 @@ try {
       picked === GOOD, `picked=${JSON.stringify(picked)}`);
   }
 
-  // ════════ S5 · server-side search + echo guard + empty naming ════════
+  // ════════ S5 · server-side search: the query-echo race (round-2) ════════
+  // Round-1 shape of this block injected a stale-echo frame only AFTER the
+  // pending request had already been answered — no live subscription was
+  // affected, so the green proved nothing about the guard. The real race
+  // (verify2 probe R sequence, .nebflow/evidence/20260926_183339_pickeruni-verify2/):
+  // ws.js onMessage is MULTICAST and wsRequest subscriptions are single-shot,
+  // so with two browsePath requests in flight (250ms debounce overlap) the
+  // first frame to arrive resolves BOTH — the stale frame answers the older
+  // request but CONSUMES the newer one (seq guard blind: the consumer IS the
+  // current request), paints its rows, and the real answer that follows is
+  // orphaned. Final state round-1: box="fixx", list=older "fix" results.
   await openPicker({ startPath: '~' });
   await expectWsp(page);
   await answerList(HOME, ['alpha', 'beta']);
   await page.waitForTimeout(150);
   await resetSent();
+  // R1: type "fix" — debounce fires browsePath(q="fix"); leave it UNANSWERED.
   await page.fill('.wsp-search-input', 'fix');
   await poll(async () => (await sentFrames()).some(f => f.type === 'browsePath' && f.query === 'fix'), 3000);
-  await answerFilter(HOME, [{ name: 'fixture-root', path: `${HOME}/fixture-root` }], { query: 'fix', total: 1 });
-  await page.waitForTimeout(120);
-  // stale frame (answers an older filter string) must be dropped
-  await answerFilter(HOME, [{ name: 'WRONG', path: `${HOME}/WRONG` }], { query: 'stale-query' });
-  await page.waitForTimeout(120);
+  // R2: type "fixx" while "fix" is still unanswered — after the 250ms debounce
+  // TWO browseResult subscriptions are live simultaneously.
+  await page.fill('.wsp-search-input', 'fixx');
+  await page.waitForTimeout(320); // 250ms debounce + margin (probe R2)
+  await poll(async () => (await sentFrames()).filter(f => f.type === 'browsePath' && f.query === 'fixx').length === 1, 3000);
+  // R3: the STALE frame (answers "fix") arrives FIRST, while "fixx" is in
+  // flight. Contract: ignored (echo ≠ box text) — nothing painted.
+  await answerFilter(HOME, [{ name: 'WRONG-STALE', path: `${HOME}/WRONG-STALE` }], { query: 'fix', total: 1 });
+  await page.waitForTimeout(150);
   {
-    const st = await page.evaluate(() => ({
-      names: [...document.querySelectorAll('.wsp-row-name')].map(n => n.textContent),
-    }));
-    check('S5 search renders server-filtered rows; stale-echo frame dropped',
-      st.names.includes('fixture-root') && !st.names.includes('WRONG') && !st.names.includes('alpha'),
-      JSON.stringify(st));
+    const names = await page.evaluate(() => [...document.querySelectorAll('.wsp-row-name')].map(n => n.textContent));
+    check('S5a stale echo answering the superseded filter is NOT painted while the newer request is in flight',
+      !names.includes('WRONG-STALE'), JSON.stringify(names));
   }
-  // empty filtered state names its own way out
+  // R4: the CORRECT frame follows — must still resolve and paint (the stale
+  // frame must not have consumed the pending request).
+  await answerFilter(HOME, [{ name: 'CORRECT-FIXX', path: `${HOME}/CORRECT-FIXX` }], { query: 'fixx', total: 1 });
+  await page.waitForTimeout(150);
+  {
+    const names = await page.evaluate(() => [...document.querySelectorAll('.wsp-row-name')].map(n => n.textContent));
+    check('S5b real answer still lands after the ignored stale frame (final listing matches the box)',
+      names.includes('CORRECT-FIXX') && !names.includes('WRONG-STALE'), JSON.stringify(names));
+  }
+  // S5c: empty filtered state names its own way out
   await page.fill('.wsp-search-input', 'zzz-none');
   await poll(async () => (await sentFrames()).filter(f => f.type === 'browsePath' && f.query === 'zzz-none').length === 1, 3000);
   await answerFilter(HOME, [], { query: 'zzz-none', total: 0 });
@@ -301,7 +326,7 @@ try {
     const st = await page.evaluate(() => ({
       empty: document.querySelector('.wsp-empty')?.textContent ?? '',
     }));
-    check('S5b empty filtered state names the noMatch fact + the way out',
+    check('S5c empty filtered state names the noMatch fact + the way out',
       st.empty.includes('zzz-none') && st.empty.length > 0, JSON.stringify(st));
   }
 
