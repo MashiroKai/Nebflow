@@ -38,6 +38,7 @@
 #settings-modal,
 #search-modal,
 #onboarding-panel,
+.model-panel,
 .wsp-panel {
   position: relative;
   background: var(--glass-bg);
@@ -61,6 +62,7 @@
   #settings-modal,
   #search-modal,
   #onboarding-panel,
+  .model-panel,
   .wsp-panel {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
@@ -78,6 +80,7 @@
 #settings-modal::before,
 #search-modal::before,
 #onboarding-panel::before,
+.model-panel::before,
 .wsp-panel::before {
   content: '';
   position: absolute;
@@ -1235,4 +1238,217 @@
   gap: 10px;
   justify-content: center;
   margin-top: 24px;
+}
+
+/* ── /model panel (modelPanel.js — modelcfg Phase 1) ──────────────────────
+   Dual-mode chain configuration. Mounted on .cfg-modal-overlay (transparent
+   overlay — no dimming — per the dialog ruling); the card joins the shared
+   glass family above. Row chrome reuses .agent-detail-model-row (sidebar.css);
+   chain chips are the shared .mchain family (sidebar.css). */
+.model-panel {
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  width: 540px;
+  max-width: calc(100vw - 48px);
+  max-height: 85vh;
+  padding: 0;
+  outline: none;
+}
+.mp-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 12px 20px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.mp-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.mp-modes {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+}
+.mp-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 12px -apple-system, sans-serif;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.mp-mode-btn.on {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.mp-close { flex-shrink: 0; }
+/* Divergence banner — visibility is owned by the dep-visibility widget
+   (f(mode, fork state)); the stylesheet only defines the visible shape. */
+.mp-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.mp-banner-text {
+  font: 400 12px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-banner-view { margin-left: auto; }
+.mp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+.mp-followers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mp-roleblock {
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 12px;
+  background: var(--glass-etched-bg);
+  overflow: hidden;
+}
+.mp-role-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.mp-role-head-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.mp-role-head-toggle:hover { background: var(--color-frame-hover); }
+.mp-role-name {
+  font: 600 13px -apple-system, sans-serif;
+  color: var(--color-text);
+}
+.mp-chev {
+  display: flex;
+  color: var(--color-text-muted);
+  transition: transform 0.15s;
+}
+.mp-chev.open { transform: rotate(180deg); }
+.mp-head-preview {
+  margin-left: auto;
+  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.mp-status {
+  font: 500 10px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.12);
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+.mp-status-main {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.mp-status-fork {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+}
+.mp-role-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 10px;
+}
+.mp-note {
+  font: 400 11.5px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-followers-label { font-weight: 500; }
+.mp-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.mp-foot .mp-note { min-width: 0; }
+.mp-editor { display: flex; flex-direction: column; gap: 6px; }
+.mp-rows { display: flex; flex-direction: column; gap: 6px; }
+.mp-row-unavailable { opacity: 0.45; }
+.mp-prov {
+  font: 500 10px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.12);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.mp-model {
+  font: 500 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-pos {
+  font: 500 10px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.mp-addrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.mp-add-select {
+  flex: 1;
+  min-width: 170px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+  color: var(--color-text);
+  font: 500 11px -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mp-add-select:focus { border-color: rgb(var(--sapphire) / 0.4); }
+.mp-manual { flex: 1; min-width: 150px; }
+.mp-inline-err {
+  display: none;
+  font: 400 11.5px -apple-system, sans-serif;
+  color: var(--color-error, #e5484d);
+}
+.mp-inline-err.on { display: block; }
+@media (prefers-color-scheme: dark) {
+  .mp-add-select { background: rgba(255, 255, 255, 0.03); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-chev { transition: none; }
+  .mp-mode-btn { transition: none; }
 }

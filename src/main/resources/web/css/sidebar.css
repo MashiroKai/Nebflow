@@ -971,176 +971,38 @@
   padding: 8px 0;
 }
 
-/* ── Model Presets (settings section, P3) ───────────────────────────────── */
-.preset-card { cursor: default; }
-.preset-card:hover { border-color: var(--color-frame-input-border); }
-.preset-default-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(91, 127, 191, 0.12);
-  border: 1px solid rgba(91, 127, 191, 0.3);
-  color: #5b7fbf;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-.preset-card-key {
-  font: 400 10px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-frame-text-muted);
-  flex-shrink: 0;
-}
-.preset-card-body { padding: 8px 10px; }
-.preset-card-desc {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  margin-bottom: 6px;
-  line-height: 1.4;
-}
-/* Read-only chain chips (shared: preset cards, agent detail, flow viewers) */
-.preset-chain {
+/* ── Model chain chips (shared: /model panel, agent detail, flow viewers) ── */
+.mchain {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
 }
-.preset-chip {
+.mchain-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font: 500 10.5px ui-monospace, SFMono-Regular, monospace;
+  gap: 4px;
+  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 6px;
   padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--color-frame-input-border);
-  color: var(--color-frame-text-muted);
-  background: transparent;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.preset-chip.preferred {
-  border-color: rgba(91, 127, 191, 0.35);
-  background: rgba(91, 127, 191, 0.08);
-  color: var(--color-frame-text);
-}
-.preset-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
-.preset-chip .agent-detail-playing-dot { flex-shrink: 0; }
-.preset-chain-arrow {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-.preset-chain-empty {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  opacity: 0.8;
-}
-.preset-card-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-.preset-card-agents {
-  font-size: 10.5px;
-  color: var(--color-frame-text-muted);
-  cursor: default;
-  min-width: 0;
-}
-.preset-card-actions {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.preset-card-actions .cfg-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-  pointer-events: none;
-}
-/* Chain editor inside the preset modal */
-.preset-chain-editor .agent-detail-model-row { margin-bottom: 6px; }
-.preset-drag-hint {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  margin: -2px 0 6px;
-}
-/* Legacy migration banner */
-.preset-migrate-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  border: 1px solid rgba(230, 162, 60, 0.35);
-  border-radius: 6px;
-  background: rgba(230, 162, 60, 0.08);
-}
-.preset-migrate-text {
-  font-size: 11.5px;
-  color: var(--color-frame-text);
-  line-height: 1.4;
-}
-/* Migration dialog (P5) */
-.preset-migrate-summary {
-  font-size: 12.5px;
-  color: var(--color-frame-text);
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
-.preset-migrate-group {
-  padding: 8px 10px;
-  margin-bottom: 6px;
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
-  background: var(--color-frame-input-bg);
-}
-.preset-migrate-group-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.preset-migrate-group-name {
-  font: 600 12px -apple-system, sans-serif;
-  color: var(--color-frame-text);
-}
-.preset-migrate-reuse {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  background: rgba(91, 127, 191, 0.12);
-  border: 1px solid rgba(91, 127, 191, 0.3);
-  color: #5b7fbf;
+.mchain-chip.preferred {
   font-weight: 500;
+  border-color: rgb(var(--sapphire) / 0.35);
 }
-.preset-migrate-group-arrow {
-  color: var(--color-frame-text-muted);
-  font-size: 12px;
+.mchain-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
+.mchain-chip .agent-detail-playing-dot { flex-shrink: 0; }
+.mchain-arrow {
+  color: var(--color-text-muted);
+  font-size: 10px;
 }
-.preset-migrate-group-agents {
-  font: 500 11px ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-frame-text-muted);
-}
-.preset-migrate-note {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  margin-top: 10px;
-  line-height: 1.5;
-}
-.preset-migrate-error {
-  margin-top: 8px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(229, 57, 53, 0.35);
-  background: rgba(229, 57, 53, 0.08);
-  color: #e53935;
-  font-size: 11.5px;
-  line-height: 1.4;
+.mchain-empty {
+  font: 400 11.5px -apple-system, sans-serif;
+  color: var(--color-text-muted);
 }
 
 
