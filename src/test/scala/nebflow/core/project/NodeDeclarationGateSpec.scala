@@ -201,11 +201,14 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
     for
       (ws, system, _, rt, ctx) <- mkEnv("d2")
       // 负对照（合法形态回归钉）：task 节点空 out 无令牌 ⇒ 仍合法，⚠ 行是不带 declared 标记的原文案
+      // （两节点 task 文本刻意不同：本用例钉的是 dangling 令牌语义，不是 §2.6 同 task
+      // 重复派发闸——同文本会让第二笔 create 与首节点的派发启动竞速，窗口依赖首载耗时，
+      // 模型链解析提速后（modelcfg 批）该竞速确定性翻红。）
       r1 <- nodeEdit(nodeInput("decl-d2", "loose-a", "description" -> Json.fromString("dangling task node"),
         "task" -> Json.fromString("work without exit")), ctx)
       // 正面：dangling=true ⇒ ⚠ 带 declared 标记 + 审计事件
       r2 <- nodeEdit(nodeInput("decl-d2", "loose-b", "description" -> Json.fromString("declared dangling node"),
-        "task" -> Json.fromString("work without exit"), "dangling" -> Json.fromBoolean(true)), ctx)
+        "task" -> Json.fromString("work without exit (declared)"), "dangling" -> Json.fromBoolean(true)), ctx)
       bid <- rt.store.snapshot.map(_.nodes.values.find(_.name == "loose-b").map(_.id).getOrElse(""))
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
