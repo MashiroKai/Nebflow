@@ -82,7 +82,7 @@ function showAttachmentBanner(message) {
    interception). Code kept intact for future re-enable:
      localStorage.setItem('nebflow_slash.enabled', '1')  // then reload
    WHITELIST SPLIT (author ruling 2026-09-17, D1-B): the master gate above stays
-   OFF and keeps its old all-or-nothing meaning; on top of it, only the two
+   OFF and keeps its old all-or-nothing meaning; on top of it, only the
    commands in SLASH_ALLOWED are reachable while it is off. Everything else
    (/ask, /onboarding, the dynamically registered skill/flow commands) stays
    exactly as sealed as before - the '/' dropdown lists the whitelist only and
@@ -93,7 +93,7 @@ const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabl
 // entries carrying `_skill` on every skillList frame, and a whitelist living in
 // the table could be widened by such a re-registration. Keys = the command
 // names exactly as typed (and exactly as used as table keys).
-const SLASH_ALLOWED = new Set(['/clear', '/compact']);
+const SLASH_ALLOWED = new Set(['/clear', '/compact', '/model']);
 /** May `cmd` be listed/dispatched? Whichever is in the whitelist · always;
  *  everything else only while the master gate is open. */
 const slashAllowed = (cmd) => SLASH_ALLOWED.has(cmd) || SLASH_ENABLED();
@@ -147,6 +147,33 @@ const slashCommands = {
     }
   }
 };
+
+/**
+ * Register a UI-only slash command (mirrors the registerSkillCommands
+ * table-insertion pattern). uiOnly = the run() opens UI / flips local state
+ * and never injects a message, so the busy-session pass-through (send path)
+ * applies just like /clear. The admission whitelist stays the literal
+ * SLASH_ALLOWED set above — registering a command here never widens it.
+ * @param {{ name: string, desc: () => string, uiOnly?: boolean, run: (text?: string) => void }} cmd
+ */
+export function registerCommand({ name, desc, uiOnly, run }) {
+  if (!name || typeof run !== 'function') return;
+  // Built-ins are never overridden by a late registration.
+  if (slashCommands[name] && !slashCommands[name]._ui) return;
+  slashCommands[name] = { _ui: !!uiOnly, desc, run };
+}
+
+// /model — UI-only: opens the model-chain panel, never injects a message
+// (ruling ④-A: whitelisted alongside /clear /compact). The panel module is
+// loaded on first use; a load failure stays silent (the input simply clears).
+registerCommand({
+  name: '/model',
+  desc: () => t('slash.model'),
+  uiOnly: true,
+  run: () => {
+    import('./modelPanel.js').then(m => m.openModelPanel()).catch(() => {});
+  },
+});
 
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {
