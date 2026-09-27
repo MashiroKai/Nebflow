@@ -146,6 +146,14 @@
   background: rgb(var(--brand-green) / 0.1);
   border-color: rgb(var(--brand-green) / 0.25);
 }
+/* feishu-panel (contract C2): fingerprint mismatch — the running bridge holds
+   a different app than the stored credential. Same danger family as the
+   invalid-configuration state; no new colour token. */
+.social-status-pill[data-status="failed"] {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+}
 
 .social-card-desc {
   font-size: 11px;
@@ -192,6 +200,55 @@
 }
 .social-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
+
+/* ── feishu-panel: two-face scanBind card ───────────────────────────────────
+   Live-app block (C1), archive (C5), bindings + default session (C3/C4), and
+   the collapsed manual form. Every value reuses existing tokens — zero new
+   colour / radius / breakpoint. */
+.social-live {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+  min-width: 0;
+}
+.social-live-row { display: flex; gap: 8px; font-size: 11px; line-height: 1.45; min-width: 0; }
+.social-live-label { color: var(--color-frame-text-muted); flex-shrink: 0; }
+.social-live-value { color: var(--color-frame-text); overflow-wrap: anywhere; }
+.social-live-value[data-fp="mismatch"] { color: var(--color-danger); }
+
+/* Archive: the only off path (enabled=false), so it carries the danger family
+   while staying a plain glass button otherwise. */
+.social-btn-danger { color: var(--color-danger); }
+.social-archive-hint {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+  margin-top: -4px;
+}
+
+/* Manual fill is the SECONDARY entry: collapsed by default, one toggle. */
+.social-card-manual[hidden] { display: none; }
+.social-card-manual { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* Chat→session bindings + default-session selector (C3/C4). */
+.social-bindings { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.social-bindings-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+}
+.social-binding-item {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-frame-text);
+  overflow-wrap: anywhere;
+}
+.social-binding-empty { font-size: 11px; line-height: 1.5; color: var(--color-frame-text-muted); }
+.social-default-session { max-width: 300px; }
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
