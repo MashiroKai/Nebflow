@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.core.presets.{PresetStore, SchemePolicy}
+import nebflow.core.SchemePolicy
 import nebflow.llm.NebflowServiceConfig
 import nebflow.shared.AgentModelConfig
 
@@ -119,13 +119,10 @@ class AgentLibrary(
       parseAgentJson(jsonPath) match
         case Some(j) =>
           val prompt = readSystemMd(dir / "system.md")
-          // Resolve preset/legacy model into the final AgentModelConfig.
-          // Priority: explicit preset > legacy model > default preset > global chain.
-          // panelscheme 批（2026-09-21）：输入先经 SchemePolicy 名称策略——可设
-          // 两类（Nebula/project-dispatcher）原样；kernel 继承 Nebula 当前引用；
-          // general 继承 project-dispatcher 当前引用；其余忽略存储引用回落默认。
-          val (effPreset, effModel) = SchemePolicy.effectiveRefs(j.name, j.preset, j.model)
-          val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+          // Resolve the final model chain through SchemePolicy (own chain >
+          // Nebula primary chain > seed chain), fresh per load — a /model
+          // edit takes effect on the next agent-def reload.
+          val (resolvedModel, _) = SchemePolicy.resolveModel(j.name, j.model)
           Some(
             AgentDef(
               name = j.name,
@@ -136,7 +133,6 @@ class AgentLibrary(
               displayName = j.displayName,
               voiceEnabled = j.voice.getOrElse(false),
               model = Some(resolvedModel),
-              preset = effPreset,
               // ── 收敛名 category 收敛（2026-09-11 agentdef-tidy 批，安全优先）──
               // 本行是全树**唯一**读 agent.json `category` 的位置（EntityLoader
               // 按路径推断、不读 JSON）。收敛集四定义（AgentCore.ConvergedAgentNames
