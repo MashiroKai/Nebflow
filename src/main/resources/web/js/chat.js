@@ -7,7 +7,7 @@ import { key } from './branding.js';
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
 import { formatHm, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
@@ -310,7 +310,10 @@ export function renderUserBubble(text, attachments, timestamp) {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user';
     const t = document.createElement('div');
-    t.textContent = text;
+    // Plain-text face with mention spans (mention-render batch): identical
+    // single-text-node output when nothing matches — user text never
+    // enters markdown.
+    appendTextWithMentions(t, text);
     bubble.appendChild(t);
     row.appendChild(bubble);
   }
