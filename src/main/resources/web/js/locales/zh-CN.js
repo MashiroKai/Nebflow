@@ -569,6 +569,10 @@ export default {
   // fwdguard-impl (2026-09-17)：空文本 + 纯引用（转发）帧的闸提示 —— 该形态会被
   // 网关 4055 判空静默丢弃 ⇒ 前端禁用发送并显示本句（作者逐字口径）。
   'input.refOnlyHint': '请附一句话后发送',
+  // @-mention 项目自动补全（mention-routing 批，2026-09-27）：数据源 =
+  // GET /api/projects（与项目面板同源），文案仅浮层无匹配态与 ARIA 标签。
+  'mention.title': '项目',
+  'mention.noMatch': '无匹配项目',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
   'modal.cancel': '取消',

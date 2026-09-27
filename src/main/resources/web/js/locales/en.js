@@ -605,6 +605,11 @@ export default {
   // frame — the gateway drops that shape silently (4055), so the composer blocks
   // the send and shows this line instead.
   'input.refOnlyHint': 'Add a line of text before sending',
+  // @-mention project autocomplete (mention-routing batch, 2026-09-27): data
+  // source = GET /api/projects (same source as the projects panel); copy covers
+  // the popup's no-match state and its ARIA label only.
+  'mention.title': 'Projects',
+  'mention.noMatch': 'No matching projects',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',

@@ -1021,7 +1021,10 @@
    Now children of #input-area so
    backdrop-filter can blur chat content instead of being trapped inside
    #input-bar's backdrop root. */
-#slash-dropdown {
+/* #mention-dropdown (@-mention project popup, mention-routing batch) shares
+   the #slash-dropdown glass recipe verbatim — one dropdown pattern, two hosts. */
+#slash-dropdown,
+#mention-dropdown {
   position: absolute;
   bottom: 100%;
   left: 12px;
@@ -1042,7 +1045,8 @@
   z-index: 50;
   pointer-events: auto;
 }
-#slash-dropdown.on { display: block; }
+#slash-dropdown.on,
+#mention-dropdown.on { display: block; }
 .slash-item {
   padding: 10px 14px;
   cursor: pointer;
@@ -1112,6 +1116,44 @@
 .slash-delete:hover {
   color: #e53935;
   background: rgba(229,57,53,0.1);
+}
+
+/* ── @-mention project popup (mention-routing batch) ────────────────────
+   Item rows mirror the .slash-item family (same paddings, same hover/active
+   treatment) so the two dropdowns read as one pattern. */
+.mention-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.mention-item:last-child { border-bottom: none; }
+.mention-item:hover, .mention-item.active {
+  background: #f0f0f0;
+}
+.mention-item.active {
+  background: #e8f5e9;
+}
+.mention-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+.mention-path {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Zero-match state: informational line, not a clickable row. */
+.mention-empty {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  cursor: default;
 }
 
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
@@ -1430,6 +1472,11 @@
   .slash-item:hover, .slash-item.active { background: #282b33; }
   .slash-item.active { background: rgba(7,193,96,0.12); }
   .slash-cmd { color: #d8dae0; }
+
+  .mention-item { border-bottom-color: #2a2d35; }
+  .mention-item:hover, .mention-item.active { background: #282b33; }
+  .mention-item.active { background: rgba(7,193,96,0.12); }
+  .mention-name { color: #d8dae0; }
 
   .att-file { background: #282b33; }
 
