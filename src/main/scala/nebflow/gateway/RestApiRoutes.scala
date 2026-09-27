@@ -71,6 +71,19 @@ class RestApiRoutes(
     * disarm, single-use, TTL) lives in [[NeblinkSwitchHandoff]]. */
   private val switchHandoff = NeblinkSwitchHandoff.unsafe
 
+  /** Feishu scan-bind session manager (feiscanbind batch, 2026-09-27): carries
+    * the single-flight registry for POST …/scan-bind/begin and the read-only
+    * status projection for GET …/scan-bind/status. The SDK leg stays behind
+    * the production thunk; the activation leg is the ONE sync point
+    * ([[FeishuBridgePlugin.sync]]) — identical wiring to the save endpoint's
+    * resync below, so runtime state is never assembled two different ways. */
+  private val feishuScanBind = new nebflow.social.FeishuScanBind(
+    PathUtil.dataRoot,
+    registerFn = nebflow.social.FeishuScanBind.sdkRegister,
+    activate = sharedResources.bridgeManager.fold(IO.unit)(
+      m => nebflow.social.FeishuBridgePlugin.sync(m, PathUtil.dataRoot))
+  )
+
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
     // (up / down:<reason>), `search` = Tier 2a standalone search API health
@@ -3173,6 +3186,33 @@ class RestApiRoutes(
                   "bound" -> cfg.isDefined.asJson
                 ))
         }
+      }
+
+    // feiscanbind (2026-09-27): the scan-bind main path, on the same social
+    // face and behind the same auth gate. `begin` starts a BACKGROUND fiber
+    // (the SDK register call blocks — it must never sit inside the HTTP
+    // response) and answers with a scanId at once; `status` is a read-only
+    // registry projection (state / qrUrl / userCode / remainSec / appId /
+    // error). 🔴 Neither response ever carries a secret — `done` surfaces only
+    // the appId (cli_ prefix); the credential pair itself goes from the SDK
+    // result through the EXISTING SocialChannels.save write path on the
+    // background fiber, never through these responses or the logs.
+    case req @ POST -> Root / "social" / "channels" / "feishu" / "scan-bind" / "begin" =>
+      withAuth(req) {
+        feishuScanBind.begin().flatMap(json => Ok(json))
+      }
+
+    case req @ GET -> Root / "social" / "channels" / "feishu" / "scan-bind" / "status" =>
+      withAuth(req) {
+        val scanId = req.params.getOrElse("scanId", "").trim
+        if scanId.isEmpty then
+          BadRequest(Json.obj("error" -> "invalid_field".asJson,
+            "reason" -> "scanId is required".asJson))
+        else
+          feishuScanBind.status(scanId).flatMap {
+            case Some(json) => Ok(json)
+            case None       => NotFound(Json.obj("error" -> "unknown_scan".asJson))
+          }
       }
 
     case req @ POST -> Root / "social" / "channels" / channelId =>

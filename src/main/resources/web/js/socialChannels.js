@@ -37,6 +37,18 @@
 //   feishu-only, and `socialChannelCount()` now answers the VISIBLE count
 //   through the ONE visible filter ([[visibleChannels]]), so every §F.2
 //   reader (render layer, tests) keeps a single source.
+//
+// 🔴 PHASE 4 (feiscanbind batch, 2026-09-27) — the "scan to create" main path
+//   joins the feishu card via the `scanBind: true` flag (the ONLY new data
+//   key this phase introduces). Scan-bind spec (endpoints / fiber / state
+//   machine) = the Scaladoc header of `nebflow.social.FeishuScanBind` + its
+//   `FeishuScanBindSpec`; the card-level regression note: the sealed channels
+//   (wechat / telegram, `hidden: true`) never render a card at all, hence
+//   never render the scan button either — no per-channel opt-out is needed,
+//   and [[visibleChannels]] stays the single gate. `verification_token` moves
+//   to optional here (the long-connection path never consumes it — backend
+//   `SocialChannels` FieldSpec remains the enforcement point; this layer is
+//   its mirror).
 
 /**
  * @typedef {'notConfigured'|'configuredNotLinked'|'configInvalid'|'connected'} SocialStatus
@@ -65,6 +77,8 @@
  * @property {string} descKey
  * @property {SocialField[]} fields
  * @property {boolean} adapterRegistered  phase 1: always false
+ * @property {boolean} [scanBind]  feiscanbind: this card carries the "scan to
+ *   create" main path (QR sub-dialog + status polling in socialPanel.js)
  * @property {boolean} [hidden]  sealed family (PHASE 3): the channel stays in
  *   the data — fields, locale keys and any stored config all intact — but
  *   never renders. Hide ≠ delete; restoring = dropping the flag (same
@@ -116,11 +130,15 @@ export const SOCIAL_CHANNELS = [
     //   render layer filters hidden regions; the stored config and the backend
     //   schema (`^(feishu|lark)$`) are untouched, so an existing lark config
     //   keeps parsing. The region default is hardcoded feishu.
+    // ★ feiscanbind (2026-09-27): `scanBind: true` adds the "scan to create"
+    //   main path to THIS card only (QR overlay + status polling). The manual
+    //   fill stays the full fallback — zero semantics removed.
     id: 'feishu',
     icon: 'send',
     nameKey: 'social.feishu.name',
     descKey: 'social.feishu.desc',
     adapterRegistered: false,
+    scanBind: true,
     regionKey: 'region',
     regionDefault: 'feishu',
     regions: [
@@ -132,7 +150,12 @@ export const SOCIAL_CHANNELS = [
         i18n: 'social.feishu.field.appId', placeholder: 'cli_xxxxxxxxxxxxxxxx' },
       { key: 'app_secret', kind: 'secret', required: true,
         i18n: 'social.feishu.field.appSecret', secretName: 'social-feishu-app-secret' },
-      { key: 'verification_token', kind: 'secret', required: true,
+      // feiscanbind (approved pending-decision ⑤): the long-connection path
+      // never consumes this field, so it is OPTIONAL now (mirror of the
+      // backend FieldSpec in SocialChannels.scala — that one stays the
+      // enforcement point). A scan-bind-created app has none and must still
+      // reach `connected`; the manual path keeps the write-only field.
+      { key: 'verification_token', kind: 'secret', required: false,
         i18n: 'social.feishu.field.verificationToken', secretName: 'social-feishu-verification-token' },
       { key: 'encrypt_key', kind: 'secret', required: false,
         i18n: 'social.feishu.field.encryptKey', secretName: 'social-feishu-encrypt-key' },
