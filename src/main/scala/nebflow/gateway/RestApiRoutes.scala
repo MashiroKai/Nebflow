@@ -17,7 +17,6 @@ import nebflow.core.daemon.{DaemonConfig, DaemonPanelSchema, DaemonPanelStore, D
 import nebflow.core.entity.{EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
-import nebflow.core.presets.{ModelPreset, PresetFile, PresetStore}
 import nebflow.core.project.{NodeEngine, NodePayload, ProjectActor, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.tools.NodeTools
@@ -2865,7 +2864,13 @@ class RestApiRoutes(
           yield result
       }
 
-    // GET /agents/:name/model — get agent's model configuration — searches all three layers
+    // GET /agents/:name/model — the agent's model-chain read face (the /model
+    // contract). mode = "explicit" when the agent carries a non-empty own
+    // chain, "follow" otherwise; chain = the own stored chain (null when
+    // following); effectiveChain = what the engine resolves (own chain >
+    // Nebula primary chain > seed chain); resolvedFrom names the resolution
+    // source; current = the healthy head of the effective chain; settable =
+    // whether PUT accepts writes for this agent.
     case req @ GET -> Root / "agents" / agentName / "model" =>
       withAuth(req) {
         if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
@@ -2874,127 +2879,99 @@ class RestApiRoutes(
             agentOpt <- EntityLoader.findAgentByName(agentName)
             result <- agentOpt match
               case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-              case Some(defn) =>
-                val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
-                // Determine resolvedFrom: check the raw AgentEntry for preset/legacy.
-                // AgentDef.preset tells us the explicit preset (if any). If absent,
-                // check whether the original agent.json had a non-empty legacy model.
-                val resolvedFrom = computeResolvedFrom(defn.preset, agentName)
-                // Resolve the model this agent would actually use: candidates =
-                // [preferred, ...fallbacks] (or the global chain), filtered by
-                // provider health. Previously this read runtimeModels.values.headOption —
-                // an arbitrary session from a GLOBAL session→model map — which
-                // showed the wrong model for every agent except the first LLM caller.
+              case Some(_) =>
+                val policy = nebflow.core.SchemePolicy
+                val own = policy.ownChainOf(agentName).filter(policy.hasChain)
+                val (effective, resolvedFrom) = policy.resolveModel(agentName, own)
+                val mode = if own.isDefined then "explicit" else "follow"
                 for
-                  candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(modelConfig))
+                  candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                   (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                   current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
                   result <- Ok(
                     Json.obj(
-                      "model" -> modelConfig.asJson,
+                      "name" -> agentName.asJson,
+                      "mode" -> mode.asJson,
+                      "chain" -> own.asJson,
+                      "effectiveChain" -> effective.asJson,
+                      "resolvedFrom" -> resolvedFrom.asJson,
                       "current" -> current.asJson,
-                      "preferred" -> modelConfig.preferred.asJson,
-                      "fallbacks" -> modelConfig.fallbacks.asJson,
-                      "default" -> modelConfig.preferred.asJson,
-                      "preset" -> defn.preset.asJson,
-                      "resolvedFrom" -> resolvedFrom.asJson
+                      "settable" -> policy.isSettable(agentName).asJson
                     )
                   )
                 yield result
-                end for
           yield result
       }
 
-    // PUT /agents/:name/model — update agent's model configuration
-    // panelscheme 批（2026-09-21）：与 PUT /preset 同闸——仅 Nebula/任务分发器可写
-    // （legacy model 引用是两类的自有方案面；其余 agent 的存储引用引擎已忽略）。
+    // PUT /agents/:name/model — write the agent's own model chain (the /model
+    // write face; gate = SchemePolicy.SettableAgents, the four roles). Body:
+    // {"model": {"preferred": "...", "fallbacks": ["...", ...]}} sets an own
+    // chain (Nebula = the primary chain, a follower write = a fork); null
+    // model or an empty chain returns the agent to the follow state (the
+    // key is removed). Takes effect on the next turn via the per-turn def
+    // reload.
     case req @ PUT -> Root / "agents" / agentName / "model" =>
       withAuth(req) {
         if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-        else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
+        else if !nebflow.core.SchemePolicy.isSettable(agentName) then
           BadRequest(Json.obj("error" ->
-            (s"Agent '$agentName' does not accept a model config (2026-09-21 panel convergence): only Nebula and " +
-              "project-dispatcher are settable. Existing stored values are kept but ignored by the engine.").asJson))
+            (s"Agent '$agentName' does not accept a model chain: only Nebula, project-dispatcher, " +
+              "kernel and general are settable. Other agents follow the Nebula primary chain.").asJson))
         else
           req.as[Json].flatMap { body =>
-            // Parse the model config from request body
-            io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
-              case Right(modelConfig) =>
+            // Accept {"model": {...}|null}; a bare {preferred, fallbacks}
+            // body (no "model" key) is decoded as the chain itself.
+            val parsed: Either[String, Option[nebflow.shared.AgentModelConfig]] =
+              body.asObject.flatMap(_.apply("model")) match
+                case Some(m) =>
+                  m.as[Option[nebflow.shared.AgentModelConfig]].left
+                    .map(e => s"Invalid model chain: ${e.getMessage}")
+                case None =>
+                  io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces).left
+                    .map(e => s"Invalid model chain: ${e.getMessage}")
+                    .map(Some(_))
+            parsed match
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(chainOpt) =>
+                // An empty chain (no preferred, no fallbacks) means follow:
+                // normalize it to key removal so agent.json carries no dead data.
+                val own = chainOpt.filter(nebflow.core.SchemePolicy.hasChain)
                 for
                   dirOpt <- EntityLoader.findAgentDir(agentName)
                   result <- dirOpt match
                     case Some(dir) =>
                       IO.blocking {
                         val jsonPath = dir / "agent.json"
-                        val json = os.read(jsonPath)
-                        io.circe.parser.parse(json) match
-                          case Right(parsed) =>
-                            val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                        io.circe.parser.parse(os.read(jsonPath)) match
+                          case Right(parsedJson) =>
+                            val stripped = parsedJson.asObject
+                              .map(obj => Json.fromFields(obj.toMap.removed("model")))
+                              .getOrElse(parsedJson)
+                            val updated = own match
+                              case Some(c) => stripped.deepMerge(Json.obj("model" -> c.asJson))
+                              case None    => stripped
                             AtomicJson.writeSync(jsonPath, updated.noSpaces)
                             true
                           case Left(_) => false
                       }.flatMap {
                         case true =>
-                          Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                          val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(agentName, own)
+                          val mode = if own.isDefined then "explicit" else "follow"
+                          Ok(
+                            Json.obj(
+                              "updated" -> true.asJson,
+                              "mode" -> mode.asJson,
+                              "chain" -> own.asJson,
+                              "effectiveChain" -> effective.asJson,
+                              "resolvedFrom" -> resolvedFrom.asJson
+                            )
+                          )
                         case false =>
                           InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
                       }
                     case None =>
                       NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
                 yield result
-              case Left(err) =>
-                BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
-          }
-      }
-
-    // PUT /agents/:name/preset — set or remove the agent's preset reference.
-    // Body: {"preset": "vision"} or {"preset": null} (removes the field, falls
-    // back to default preset). Uses EntityLoader.findAgentDir to locate the
-    // agent.json across all three layers.
-    // panelscheme 批（2026-09-21，作者令）：面板只有 Nebula 与任务分发器两类可设
-    // 模型方案——其余 agent 拒写（引擎侧 SchemePolicy 已忽略其存储引用，写入只会
-    // 造死数据）；kernel/general 由继承机制决定、其余回落默认方案，均不可设。
-    case req @ PUT -> Root / "agents" / agentName / "preset" =>
-      withAuth(req) {
-        if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-        else if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
-          BadRequest(Json.obj("error" ->
-            (s"Agent '$agentName' does not accept a model-scheme setting (2026-09-21 panel convergence): only Nebula and " +
-              "project-dispatcher are settable. kernel inherits Nebula's current scheme; nodes inherit the project " +
-              "dispatcher's; everything else follows the default preset. Existing stored values are kept but ignored by the engine.").asJson))
-        else
-          req.as[Json].flatMap { body =>
-            val presetOpt = body.hcursor.downField("preset").as[Option[String]].toOption.flatten
-            for
-              dirOpt <- EntityLoader.findAgentDir(agentName)
-              result <- dirOpt match
-                case Some(dir) =>
-                  IO.blocking {
-                    val jsonPath = dir / "agent.json"
-                    val json = os.read(jsonPath)
-                    parser.parse(json) match
-                      case Right(parsed) =>
-                        val updated = presetOpt match
-                          case Some(name) =>
-                            parsed.deepMerge(Json.obj("preset" -> name.asJson))
-                          case None =>
-                            // Remove the preset field entirely
-                            parsed.asObject
-                              .map(obj => Json.fromFields(obj.toMap.removed("preset")))
-                              .getOrElse(parsed)
-                        AtomicJson.writeSync(jsonPath, updated.noSpaces)
-                        true
-                      case Left(_) => false
-                  }.flatMap {
-                    case true =>
-                      Ok(Json.obj("updated" -> true.asJson, "preset" -> presetOpt.asJson))
-                    case false =>
-                      InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
-                  }
-                case None =>
-                  NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-            yield result
-            end for
           }
       }
 
@@ -3304,121 +3281,8 @@ class RestApiRoutes(
 
     // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
     // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
-    // /agents/:name, /agents/:name/model and /agents/:name/preset.
+    // /agents/:name and /agents/:name/model.
 
-
-    // ===== Model Presets =====
-
-    // GET /presets — list all presets + default name + agent references
-    case req @ GET -> Root / "presets" =>
-      withAuth(req) {
-        val store = new PresetStore()
-        for
-          file <- IO.blocking(store.load())
-          // Build agent → preset mapping by scanning all agent.json files
-          agentPresets <- IO.blocking(scanAgentPresets())
-          result <- Ok(
-            Json.obj(
-              "defaultPreset" -> file.defaultPreset.asJson,
-              "presets" -> file.presets.values.toList.asJson,
-              "agents" -> agentPresets.asJson
-            )
-          )
-        yield result
-      }
-
-    // POST /presets — create a new preset (409 on duplicate name)
-    case req @ POST -> Root / "presets" =>
-      withAuth(req) {
-        req.as[Json].flatMap { body =>
-          val name = body.hcursor.downField("name").as[String].getOrElse("")
-          if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-          else
-            val store = new PresetStore()
-            IO.blocking(store.load()).flatMap { file =>
-              if file.presets.contains(name) then Conflict(Json.obj("error" -> s"Preset '$name' already exists".asJson))
-              else
-                val description = body.hcursor.downField("description").as[String].getOrElse("")
-                val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-                val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(Nil)
-                val preset = ModelPreset(name, description, preferred, fallbacks)
-                val updated = file.copy(presets = file.presets + (name -> preset))
-                IO.blocking(store.save(updated)) *>
-                  Created(preset.asJson)
-            }
-        }
-      }
-
-    // PUT /presets/default — set the default preset (must exist)
-    case req @ PUT -> Root / "presets" / "default" =>
-      withAuth(req) {
-        req.as[Json].flatMap { body =>
-          val name = body.hcursor.downField("name").as[String].getOrElse("")
-          if name.isEmpty then BadRequest(Json.obj("error" -> "Missing required field: name".asJson))
-          else
-            val store = new PresetStore()
-            IO.blocking(store.load()).flatMap { file =>
-              if !file.presets.contains(name) then NotFound(Json.obj("error" -> s"Preset '$name' not found".asJson))
-              else
-                val updated = file.copy(defaultPreset = name)
-                IO.blocking(store.save(updated)) *>
-                  Ok(Json.obj("defaultPreset" -> name.asJson))
-            }
-        }
-      }
-
-    // PUT /presets/:name — update an existing preset (name immutable)
-    case req @ PUT -> Root / "presets" / presetName =>
-      withAuth(req) {
-        req.as[Json].flatMap { body =>
-          val store = new PresetStore()
-          IO.blocking(store.load()).flatMap { file =>
-            file.presets.get(presetName) match
-              case None =>
-                NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-              case Some(existing) =>
-                val description = body.hcursor.downField("description").as[String].getOrElse(existing.description)
-                val preferred = body.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-                val fallbacks = body.hcursor.downField("fallbacks").as[List[String]].getOrElse(existing.fallbacks)
-                val updated = existing.copy(description = description, preferred = preferred, fallbacks = fallbacks)
-                val newFile = file.copy(presets = file.presets + (presetName -> updated))
-                IO.blocking(store.save(newFile)) *>
-                  Ok(updated.asJson)
-          }
-        }
-      }
-
-    // DELETE /presets/:name — delete a preset (409 if default; scrub agent refs)
-    case req @ DELETE -> Root / "presets" / presetName =>
-      withAuth(req) {
-        val store = new PresetStore()
-        IO.blocking(store.load()).flatMap { file =>
-          if file.defaultPreset == presetName then
-            Conflict(Json.obj("error" -> "Cannot delete the default preset; set another as default first".asJson))
-          else if !file.presets.contains(presetName) then
-            NotFound(Json.obj("error" -> s"Preset '$presetName' not found".asJson))
-          else
-            // 1. Delete preset from file
-            val newFile = file.copy(presets = file.presets - presetName)
-            // 2. Scrub all agent.json files that reference this preset
-            for
-              _ <- IO.blocking(store.save(newFile))
-              _ <- scrubPresetRefs(presetName)
-              result <- Ok(Json.obj("deleted" -> true.asJson))
-            yield result
-        }
-      }
-
-    // POST /presets/migrate-legacy — migrate per-agent model configs to presets
-    // Body: {"agentNames": ["Coder", "qa-frontend", ...]}
-    case req @ POST -> Root / "presets" / "migrate-legacy" =>
-      withAuth(req) {
-        req.as[Json].flatMap { body =>
-          val agentNames = body.hcursor.downField("agentNames").as[List[String]].getOrElse(Nil)
-          if agentNames.isEmpty then BadRequest(Json.obj("error" -> "Missing or empty agentNames".asJson))
-          else migrateLegacyModels(agentNames)
-        }
-      }
 
     // ===== Provider model discovery =====
 
@@ -3929,210 +3793,6 @@ class RestApiRoutes(
               }
             }
     }
-
-  // ── Preset helpers ──────────────────────────────────────
-
-  /** All agent.json paths across the three layers. */
-  private def allAgentJsonFiles(): List[os.Path] =
-    val root = PathUtil.dataRoot
-    def agentJsons(parent: os.Path): List[os.Path] =
-      if !os.exists(parent) then Nil
-      else os.list(parent).filter(os.isDir).map(_ / "agent.json").filter(os.exists).toList
-    val standalone = agentJsons(root / "agents")
-    val teamAgents =
-      if !os.exists(root / "teams") then Nil
-      else os.list(root / "teams").filter(os.isDir).flatMap(t => agentJsons(t / "agents")).toList
-    val flowAgents =
-      if !os.exists(root / "flows") then Nil
-      else os.list(root / "flows").filter(os.isDir).flatMap(f => agentJsons(f / "agents")).toList
-    standalone ++ teamAgents ++ flowAgents
-
-  /**
-   * Scan all agent.json files and build a map of agentName → presetName (or null
-   * if no preset field). Used by GET /presets to show which agents reference
-   * which presets.
-   *
-   * panelscheme 批（2026-09-21）：映射的是**有效**引用（SchemePolicy 名称策略）——
-   * 可设两类（Nebula/任务分发器）= 自有原始引用；kernel/general = 继承根
-   * （Nebula/project-dispatcher）的当前引用；其余 agent 引擎已忽略其存储引用 →
-   * null（usedBy 计数不再把「死数据」算进引用者）。
-   */
-  private def scanAgentPresets(): Map[String, Option[String]] =
-    val raw: Map[String, Option[String]] = allAgentJsonFiles().flatMap { path =>
-      parser.parse(os.read(path)).toOption.flatMap { json =>
-        val name = json.hcursor
-          .downField("name")
-          .as[String]
-          .toOption
-          .getOrElse((path / os.up).last) // fall back to directory name
-        val preset = json.hcursor.downField("preset").as[Option[String]].toOption.flatten
-        Some(name -> preset)
-      }
-    }.toMap
-    raw.map { (name, own) =>
-      val (effPreset, _) = nebflow.core.presets.SchemePolicy.effectiveRefs(name, own, None)
-      name -> effPreset
-    }
-
-  /**
-   * Determine the resolvedFrom value for an agent by reading the raw agent.json.
-   * Returns "preset" | "legacy-model" | "default-preset" | "global".
-   *
-   * panelscheme 批（2026-09-21）名称策略感知：非可设两类（kernel/general/其余）
-   * 的存储 preset/model 引用引擎已忽略——kernel/general 的 AgentDef.preset 携带
-   * 继承根（Nebula/project-dispatcher）的引用名，按引用是否存在如实报告；其余
-   * 不再做 legacy-model 探测（那会把「已忽略的死数据」误报为生效来源，误触发
-   * 前端迁移横幅）。可设两类走既有逻辑逐字不变（回归红线）。
-   */
-  private def computeResolvedFrom(preset: Option[String], agentName: String): String =
-    val store = new PresetStore()
-    def defaultOrGlobal: String =
-      val file = store.load()
-      if file.presets.get(file.defaultPreset).exists(p => p.preferred.isDefined || p.fallbacks.nonEmpty) then
-        "default-preset"
-      else "global"
-    if !nebflow.core.presets.SchemePolicy.SettableAgents.contains(agentName) then
-      preset match
-        case Some(p) =>
-          if store.load().presets.contains(p) then "preset" else defaultOrGlobal
-        case None => defaultOrGlobal
-    else
-      // If AgentDef has a preset, it was resolved from preset (or dangling → fallback)
-      if preset.isDefined then
-        val file = store.load()
-        if file.presets.contains(preset.get) then "preset"
-        else
-          // Dangling preset — check if there's a legacy model
-          EntityLoader.findAgentDir(agentName).unsafeRunSync() match
-            case Some(dir) =>
-              val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
-              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-              else defaultOrGlobal
-            case None => "global"
-      else
-        // No preset — check legacy model
-        EntityLoader.findAgentDir(agentName).unsafeRunSync() match
-          case Some(dir) =>
-            val json = parser.parse(os.read(dir / "agent.json")).toOption.getOrElse(Json.obj())
-            val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-            if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then "legacy-model"
-            else defaultOrGlobal
-          case None => "global"
-
-    end if
-
-  end computeResolvedFrom
-
-  /**
-   * Remove the `preset` field from all agent.json files that reference the given
-   * preset name. Called when a preset is deleted so agents fall back to the
-   * default preset instead of holding a dangling reference.
-   */
-  private def scrubPresetRefs(presetName: String): IO[Unit] =
-    IO.blocking {
-      allAgentJsonFiles().foreach { path =>
-        val content = os.read(path)
-        parser.parse(content) match
-          case Right(json) =>
-            json.hcursor.downField("preset").as[Option[String]].toOption.flatten match
-              case Some(p) if p == presetName =>
-                val updated = json.asObject
-                  .map(obj => Json.fromFields(obj.toMap.removed("preset")))
-                  .getOrElse(json)
-                if updated != json then AtomicJson.writeSync(path, updated.noSpaces)
-              case _ => ()
-          case Left(_) => () // skip unparseable file
-      }
-    }
-
-  /**
-   * Migrate per-agent legacy model configs to named presets.
-   * Groups agents by model-config fingerprint, creates a preset per group
-   * (mig-<n>), writes the preset reference, and removes the legacy model field.
-   * Agents with empty model configs ({preferred: null, fallbacks: []}) are
-   * skipped (treated as "no config" — they already use the default preset).
-   */
-  private def migrateLegacyModels(agentNames: List[String]): IO[Response[IO]] =
-    IO.blocking {
-      val store = new PresetStore()
-      val file = store.load()
-      // Load each agent's raw model config
-      val agentsWithConfig = agentNames.flatMap { name =>
-        EntityLoader.findAgentDir(name).unsafeRunSync() match
-          case None => None
-          case Some(dir) =>
-            parser.parse(os.read(dir / "agent.json")).toOption.flatMap { json =>
-              val model = json.hcursor.downField("model").as[Option[nebflow.shared.AgentModelConfig]].toOption.flatten
-              // Only migrate non-empty configs
-              if model.exists(m => m.preferred.isDefined || m.fallbacks.nonEmpty) then Some((name, dir, model.get))
-              else None
-            }
-      }
-      // Group by fingerprint (preferred + fallbacks)
-      def fingerprint(m: nebflow.shared.AgentModelConfig): String =
-        s"${m.preferred.getOrElse("")}|${m.fallbacks.mkString(",")}"
-      val groups = agentsWithConfig.groupBy { case (_, _, m) => fingerprint(m) }
-      // Generate preset names (mig-<n>, avoiding collisions with existing)
-      var migN = 1
-      val existingNames = file.presets.keySet
-      val newPresets = scala.collection.mutable.Map.empty[String, ModelPreset]
-      val agentToPreset = scala.collection.mutable.Map.empty[String, String]
-      groups.toList.sortBy(_._1).foreach { (fp, agents) =>
-        val model = agents.head._3
-        // Skip if this fingerprint already matches an existing preset
-        val existingMatch =
-          file.presets.values.find(p => p.preferred == model.preferred && p.fallbacks == model.fallbacks)
-        val presetName = existingMatch match
-          case Some(p) => p.name
-          case None =>
-            var name = s"mig-$migN"
-            while existingNames.contains(name) || newPresets.contains(name) do
-              migN += 1
-              name = s"mig-$migN"
-            migN += 1
-            val agentList = agents.map(_._1).mkString(", ")
-            val preset = ModelPreset(
-              name = name,
-              description = s"Auto-migrated from: $agentList",
-              preferred = model.preferred,
-              fallbacks = model.fallbacks
-            )
-            newPresets += (name -> preset)
-            name
-        agents.foreach { (name, _, _) => agentToPreset += (name -> presetName) }
-      }
-      // Write: update presets file + update each agent.json
-      val updatedFile = file.copy(presets = file.presets ++ newPresets)
-      store.save(updatedFile)
-      agentToPreset.toList.foreach { (name, presetName) =>
-        EntityLoader.findAgentDir(name).unsafeRunSync() match
-          case Some(dir) =>
-            val jsonPath = dir / "agent.json"
-            parser.parse(os.read(jsonPath)) match
-              case Right(json) =>
-                // Remove model, add preset
-                val withoutModel = json.asObject
-                  .map(obj => Json.fromFields(obj.toMap.removed("model")))
-                  .getOrElse(json)
-                val updated = withoutModel.deepMerge(Json.obj("preset" -> presetName.asJson))
-                AtomicJson.writeSync(jsonPath, updated.noSpaces)
-              case Left(_) => ()
-          case None => ()
-      }
-      // Build response data (plain values, not IO)
-      (agentToPreset.toList, newPresets.values.toList)
-    }.flatMap { (migrated, createdPresets) =>
-      val migratedAgents = migrated.map { (name, preset) =>
-        Json.obj("agent" -> name.asJson, "preset" -> preset.asJson)
-      }
-      Ok(
-        Json.obj(
-          "migratedAgents" -> migratedAgents.asJson,
-          "createdPresets" -> createdPresets.map(_.asJson).asJson
-        )
-      )
-    }.handleErrorWith(e => InternalServerError(Json.obj("error" -> s"Migration failed: ${e.getMessage}".asJson)))
 
   /**
    * Build mounted teams JSON for the frontend (GET /api/teams/mounted).

@@ -1,1 +1,1 @@
-{"preset":"LowCost","skills":["*"],"name":"Nebula","displayName":"Nebula","description":"Orchestrator — reads the user's intent, dispatches work to projects, supervises execution, reports synthesized results; does not execute project work itself"}
+{"skills":["*"],"name":"Nebula","displayName":"Nebula","description":"Orchestrator — reads the user's intent, dispatches work to projects, supervises execution, reports synthesized results; does not execute project work itself"}

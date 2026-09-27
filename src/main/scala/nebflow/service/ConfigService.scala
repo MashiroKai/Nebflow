@@ -83,9 +83,9 @@ object ConfigService:
       }
     }
 
-    // #339：llm.model 链校验段已删——字段退役（decoder 容忍但忽略；boot 迁移
-    // 播种成默认 preset 后原子剥离）。preset 引用的清理/改写由 scrubPresetRefs
-    // / rewritePresetRefs 承担（已存在）。
+    // #339：llm.model 链校验段已删——字段退役（decoder 容忍但忽略）。模型链引用的
+    // 清理/改写由 scrubAgentModelRefs / rewriteAgentModelRefs 承担（仅 agent.json
+    // model 键，见 updateConfig 的引用清理段）。
 
     errors.toList
   end validateConfigJson
@@ -110,7 +110,7 @@ object ConfigService:
         // content is a rename. Masked apiKeys on renamed providers are restored
         // from the old entry (mergeConfig cannot preserve them — the new name has
         // no existing twin). (#339：llm.model 链的 rename 改写已删——字段退役；
-        // preset 引用的改写在下方的 rewritePresetRefs。)
+        // agent.json model 键的改写在下方的 rewriteAgentModelRefs。)
         val renames = detectProviderRenames(existing, incomingRaw)
         val incoming0 = restoreRenamedSecrets(incomingRaw, existing, renames)
         (existing, incoming0, renames)
@@ -148,12 +148,10 @@ object ConfigService:
               .flatMap {
                 case Left(e) => IO.pure(Left(e.getMessage))
                 case Right(_) =>
-                  // Reference cleanup across agent.json (all three layers) and
-                  // model presets: pure deletes scrub, renames rewrite old→new.
+                  // Reference cleanup across agent.json (all three layers):
+                  // pure deletes scrub, renames rewrite old→new.
                   scrubAgentModelRefs(pureDeletes) *>
-                    rewriteAgentModelRefs(renames) *>
-                    scrubPresetRefs(pureDeletes) *>
-                    rewritePresetRefs(renames).as(Right(()))
+                    rewriteAgentModelRefs(renames).as(Right(()))
               }
       }
     }
@@ -440,100 +438,4 @@ object ConfigService:
           case Left(_) => () // skip unparseable file, never clobber it
       }
     }
-
-  // ============================================================
-  // Provider delete/rename → model-presets.json cleanup (B2)
-  // ============================================================
-
-  // def (not val) — 同 `configPath` 的既有理由（`:31-33`）：val 会把**首个触碰
-  // ConfigService 对象时**的 dataRoot 冻进路径（object 初始化逐 val 求值），
-  // 后续 setDataRoot 重定向失效 ⇒ 跨 suite 顺序相关的假红（实测：新 spec 在自己
-  // 的隔离 home 下触碰本对象 ⇒ 本路径被冻到该临时目录，ConfigServiceSpec 的
-  // preset 改写断言随即失败）。生产端 dataRoot 启动即定，行为零变。
-  private def presetsPath: os.Path = PathUtil.dataRoot / "model-presets.json"
-
-  /** Atomically write a JSON file (temp + rename), mirroring PresetStore.save. */
-  private def atomicWriteJson(path: os.Path, json: Json): Unit =
-    os.makeDir.all(path / os.up)
-    val tmp = path / os.up / s".${path.last}.${System.nanoTime()}.tmp"
-    os.write(tmp, json.noSpaces)
-    os.move.over(tmp, path)
-
-  /** Apply a JSON transform to model-presets.json. Skips when the file is
-    * absent — provider cleanup must NOT initialize the presets store
-    * (PresetStore.load owns the create/re-init semantics). Never clobbers an
-    * unparseable file. Writes back only when something actually changed. */
-  private def editPresets(transform: Json => Json): IO[Unit] = IO.blocking {
-    if os.exists(presetsPath) then
-      parse(os.read(presetsPath)) match
-        case Right(json) =>
-          val updated = transform(json)
-          if updated != json then atomicWriteJson(presetsPath, updated)
-        case Left(_) => ()
-  }
-
-  /** Transform every preset's {preferred, fallbacks} chain. Presets whose
-    * chain is unchanged are left byte-identical; the file object is rebuilt
-    * only when at least one preset actually changed. */
-  private def mapPresetChains(
-    json: Json,
-    f: (Option[String], List[String]) => (Option[String], List[String])
-  ): Json =
-    json.hcursor.downField("presets").focus.flatMap(_.asObject) match
-      case None => json
-      case Some(presetsObj) =>
-        var touched = false
-        val newPresets: List[(String, Json)] = presetsObj.toList.map { case (key, preset) =>
-          val updated = preset.asObject match
-            case Some(pObj) =>
-              val preferred = pObj.toMap.get("preferred").flatMap(_.asString)
-              val fallbacks = pObj.toMap
-                .get("fallbacks")
-                .flatMap(_.asArray.map(_.toList.flatMap(_.asString)))
-                .getOrElse(Nil)
-              val (newPref, newFbs) = f(preferred, fallbacks)
-              if newPref != preferred || newFbs != fallbacks then
-                touched = true
-                Json.fromFields(
-                  pObj.toMap.updated("preferred", newPref.asJson).updated("fallbacks", newFbs.asJson)
-                )
-              else preset
-            case None => preset
-          key -> updated
-        }
-        if !touched then json
-        else
-          json.asObject
-            .map(o => Json.fromFields(o.toMap.updated("presets", Json.fromFields(newPresets))))
-            .getOrElse(json)
-
-  /** Scrub deleted-provider refs from every preset chain. A scrubbed
-    * preferred promotes from the fallbacks head (mirrors the global-chain
-    * scrub); a fully emptied chain resolves to the default preset / global
-    * chain at agent-load time. */
-  private def scrubPresetRefs(deleted: List[String]): IO[Unit] =
-    editPresets(json =>
-      deleted.foldLeft(json) { (acc, provider) =>
-        val prefix = s"$provider/"
-        mapPresetChains(
-          acc,
-          (preferred, fallbacks) => {
-            val prefTouched = preferred.exists(_.startsWith(prefix))
-            val fbs = fallbacks.filterNot(_.startsWith(prefix))
-            if prefTouched then (fbs.headOption, fbs.drop(1)) else (preferred, fbs)
-          }
-        )
-      }
-    )
-
-  /** Rewrite renamed-provider refs old→new in every preset chain. */
-  private def rewritePresetRefs(renames: List[(String, String)]): IO[Unit] =
-    editPresets(json =>
-      renames.foldLeft(json) { (acc, rename) =>
-        val (oldName, newName) = rename
-        val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
-        def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
-        mapPresetChains(acc, (preferred, fallbacks) => (preferred.map(rw), fallbacks.map(rw)))
-      }
-    )
 end ConfigService

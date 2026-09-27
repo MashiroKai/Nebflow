@@ -46,7 +46,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
       tools = List("Read", "Write"),
       systemPrompt = "",
       category = "standalone",
-      modelOverride = Some(AgentModelConfig(preferred = Some("zhipu/glm-5.3"))),
+      model = Some(AgentModelConfig(preferred = Some("zhipu/glm-5.3"))),
       flowContract = Some(FlowNodeContract(caseKeys = Set("pass", "fail")))
     )
 
@@ -94,7 +94,7 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
     os.write.over(tmp / "agents" / "Explorer" / "agent.json", diskAgentJson)
   }
 
-  test("loadCurrentDef keeps flowContract + modelOverride when disk def exists") {
+  test("loadCurrentDef keeps flowContract across the reload; model comes from the disk chain") {
     for
       system <- IO(ActorSystem("flow-inject-spec"))
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))
@@ -104,12 +104,16 @@ class ContextRefresherFlowInjectSpec extends munit.CatsEffectSuite:
     yield
       val d = freshOpt.getOrElse(fail("loadCurrentDef returned None — disk def not found"))
       assertEquals(d.flowContract, injectedDef.flowContract, "flowContract dropped by reload")
-      assertEquals(d.modelOverride, injectedDef.modelOverride, "modelOverride dropped by reload")
-      assertEquals(d.model, injectedDef.modelOverride, "model must be re-applied from modelOverride")
+      // No model override exists anymore: the reloaded def carries the disk
+      // chain resolution (Explorer is a non-role agent → follows the Nebula
+      // chain; with no Nebula def in this fixture the seed chain applies,
+      // i.e. an empty chain) — NOT the running def's model.
+      assert(d.model != injectedDef.model || d.model.isEmpty,
+        s"model must come from the fresh disk resolution, not the running snapshot: ${d.model}")
   }
 
   test("loadCurrentDef does not invent FlowReport for non-flow defs") {
-    val plain = injectedDef.copy(tools = List("Read", "Write"), flowContract = None, modelOverride = None)
+    val plain = injectedDef.copy(tools = List("Read", "Write"), flowContract = None, model = None)
     for
       system <- IO(ActorSystem("flow-inject-spec-2"))
       tmp <- IO(os.temp.dir(prefix = "cf-inject-"))

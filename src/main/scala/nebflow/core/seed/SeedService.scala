@@ -22,8 +22,9 @@ import scala.jdk.CollectionConverters.*
  * 改安装脚本。
  *
  * 种子面（三 keeper = Nebula 引擎自带 + 本服务补 project-dispatcher / general）：
- *  - 默认 agent：project-dispatcher + general（形态以 runtime trusted 版为准，preset/skills
- *    字段合法入 seed——TB #20 基线对齐 2026-09-09）
+ *  - 默认 agent：project-dispatcher + general（形态以 runtime trusted 版为准，skills
+ *    字段合法入 seed——TB #20 基线对齐 2026-09-09；模型面零 `preset`/`model` 键：
+ *    未配角色 = 跟随 Nebula 主链，Nebula 未配 = provider 推导种子链）
  *  - 系统插件：收缩后默认集（visual-report / slideblocks，c7501470），
  *    预装 + trusted（复用 PluginRegistry.approve）
  *  - 默认通用项目：id=general，workspace=`<root>/projects/general`，启动前挂载
