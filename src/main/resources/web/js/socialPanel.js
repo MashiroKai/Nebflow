@@ -91,11 +91,12 @@ let initialized = false;
  *  never written into the DOM as a value and never read back from the backend.
  *  @type {Record<string, string>} */
 let draftValues = {};
-/** Live-connection face per channel id (contract C1): what the probe face
- *  reports about the RUNNING bridge — which app it actually holds and whether
- *  the stored credential fingerprint matches it. Absent fields (older backend)
- *  degrade to ''/'unknown' readings in [[normalizeLive]].
- *  @type {Record<string, {appId: string, appName: string, fingerprint: 'match'|'mismatch'|'unknown'}>} */
+/** Live-connection face per channel id (contract C1, endpoint
+ *  /api/social/channels/feishu/connection). `available: false` = the endpoint
+ *  does not exist on this backend → the block reads unknown everywhere; the
+ *  STORED app_id is never a stand-in for the live one (that fallback is the
+ *  green-pill gap the diagnosis report pinned). `enabled: null` = unknown.
+ *  @type {Record<string, {available: boolean, appId: string, appName: string, fingerprint: 'match'|'mismatch'|'unknown', enabled: boolean|null}>} */
 let liveByChannel = {};
 /** Chat→session bindings per channel id (contract C3). `available: false` =
  *  the endpoint does not exist on this backend — a readable unavailable state,
@@ -150,34 +151,48 @@ async function fetchConfig() {
 }
 
 /** GET /api/social/probe?channel=<id> — mechanical triple, no content. Also
- *  records the live `adapterRegistered` flag (phase 2) next to the triples and
- *  the normalized live-connection face (contract C1). */
+ *  records the live `adapterRegistered` flag (phase 2) next to the triples.
+ *  (The live-connection face is a separate endpoint — [[fetchConnection]].) */
 async function fetchProbe(id) {
   const resp = await api(`/api/social/probe?channel=${encodeURIComponent(id)}`);
   if (!resp.ok) throw new Error(`GET /api/social/probe ${resp.status}`);
   const data = await resp.json();
   probeByChannel[id] = data && data.secrets ? data.secrets : {};
   registeredByChannel[id] = !!(data && data.adapterRegistered === true);
-  liveByChannel[id] = normalizeLive(data);
   return probeByChannel[id];
 }
 
 // ── Contract faces: C1 live app / C3 bindings / C4 default session ──────
-// feishu-panel: these read the backend contract that lands with the backend
-// leg. Every reader is total: a 404 or a missing field degrades to an explicit
+// feishu-panel: these read the backend contract pinned by the backend leg's
+// delivery (dispatcher relay 2026-09-27 21:16 — that relay wins over the
+// task-book prose wherever the two differ):
+//   C1 GET /api/social/channels/feishu/connection →
+//      {channel, enabled, adapterRegistered, connected, liveAppId|null,
+//       liveAppIdFp|null, liveAppName|null, storedAppId|null,
+//       storedAppIdFp|null, fingerprintMatch:"match"|"mismatch"|"unknown"}
+//   C3 GET /api/social/channels/feishu/bindings →
+//      {bindings:[{sessionId, sessionName, chatId, source:"auto"|"manual",
+//                  boundAt: millis|null}]}
+//   C4 GET .../feishu/default-session → {sessionId|null};
+//      PUT {"sessionId":"…"} persists, {"sessionId":null} or "" clears.
+//
+// Every reader is total: a 404 or a missing field degrades to an explicit
 // unavailable/unknown reading — the panel never errors and never blanks.
 //
-// The one hard rule: the live-app line never falls back to the STORED app_id.
-// "Which app is the bridge holding" must come from the live face only.
+// Two pinned semantics: (a) `fingerprintMatch === "unknown"` is an
+// information gap, NOT a warning (only "mismatch" reaches the failed face);
+// (b) the live-app line never falls back to the STORED app_id — that
+// fallback is exactly the green-pill gap the diagnosis report pinned
+// (registered ≠ registered to THIS app).
 
-/** C3/C4 endpoints on the feishu social routes. */
+/** C1/C3/C4 endpoints on the feishu social routes. */
+const FEISHU_CONNECTION_URL = '/api/social/channels/feishu/connection';
 const FEISHU_BINDINGS_URL = '/api/social/channels/feishu/bindings';
 const FEISHU_DEFAULT_SESSION_URL = '/api/social/channels/feishu/default-session';
 
 /**
- * First non-empty string among the candidates (contract-field tolerance: the
- * backend leg pins the final wire names; until then every plausible location
- * is read and absence degrades — never throws).
+ * First non-empty string among the candidates (contract-field tolerance: a
+ * missing/null key degrades — never throws).
  * @param {...unknown} cands
  * @returns {string}
  */
@@ -186,21 +201,44 @@ function firstString(...cands) {
   return '';
 }
 
+/** Epoch-millis (contract C3 `boundAt`) → a compact local timestamp; '' for
+ *  null/absent. Numeric input is deliberate: the contract pins millis, not a
+ *  formatted string. @param {unknown} v @returns {string} */
+function formatMillis(v) {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() && !Number.isNaN(Number(v)) ? Number(v) : null);
+  if (n === null || n <= 0) return '';
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /**
- * Normalize the probe response's live-connection face (C1). Field names are
- * read at every shape the backend contract may land on (nested under `live`
- * or flat); anything absent → ''/'unknown'.
- * @param {any} data probe response JSON
- * @returns {{appId: string, appName: string, fingerprint: 'match'|'mismatch'|'unknown'}}
+ * C1: the live-connection face for one channel. Non-OK / absent endpoint ⇒
+ * available:false → every field reads unknown, and the UI never substitutes
+ * the stored app_id for the live one.
+ * @param {string} channelId
+ * @returns {Promise<void>}
  */
-function normalizeLive(data) {
-  const live = data && typeof data.live === 'object' && data.live ? data.live : {};
-  const fp = live.fingerprint ?? data.fingerprint;
-  return {
-    appId: firstString(live.appId, live.app_id, data.liveAppId, data.live_app_id),
-    appName: firstString(live.appName, live.app_name, live.name, data.appName, data.app_name),
-    fingerprint: fp === 'match' || fp === 'mismatch' ? fp : 'unknown',
-  };
+async function fetchConnection(channelId) {
+  try {
+    const resp = await api(FEISHU_CONNECTION_URL);
+    if (!resp.ok) throw new Error(`GET connection ${resp.status}`);
+    const data = await resp.json();
+    const fp = data && data.fingerprintMatch;
+    liveByChannel[channelId] = {
+      available: true,
+      appId: firstString(data && data.liveAppId),
+      // liveAppName is null by contract today (the SDK exposes no app-name
+      // source; the key is reserved) — the display tolerates null and shows
+      // the id alone rather than an empty row.
+      appName: firstString(data && data.liveAppName),
+      fingerprint: fp === 'match' || fp === 'mismatch' ? fp : 'unknown',
+      enabled: typeof (data && data.enabled) === 'boolean' ? data.enabled : null,
+    };
+  } catch {
+    liveByChannel[channelId] = { available: false, appId: '', appName: '', fingerprint: 'unknown', enabled: null };
+  }
 }
 
 /**
@@ -220,15 +258,18 @@ async function fetchBindings(channelId) {
     bindingsByChannel[channelId] = {
       available: true,
       items: raw.map((b) => {
-        const chatId = firstString(b && b.chatId, b && b.chat_id);
         const sessionId = firstString(b && b.sessionId, b && b.session_id);
+        // Contract C3: items carry no chat display name (chat id only), and a
+        // missing `source` key (historical rows) reads as "manual".
+        const chatId = firstString(b && b.chatId, b && b.chat_id);
+        const src = firstString(b && b.source);
         return {
           chatId,
-          chatName: firstString(b && b.chatName, b && b.chat_name) || chatId,
+          chatName: chatId,
           sessionId,
           sessionName: firstString(b && b.sessionName, b && b.session_name) || sessionId,
-          source: firstString(b && b.source) || 'manual',
-          time: firstString(b && b.time, b && b.boundAt, b && b.bound_at, b && b.createdAt),
+          source: src === 'auto' ? 'auto' : 'manual',
+          time: formatMillis(b && b.boundAt),
         };
       }),
     };
@@ -328,9 +369,10 @@ function faceCreated(ch) {
 
 /**
  * Display status = the mechanical state machine ([[channelStatus]]) plus ONE
- * composed reading (contract C2): a fingerprint mismatch means the live
+ * composed reading (contract C2): a fingerprint MISMATCH means the live
  * bridge is holding a DIFFERENT app than the stored credential — displayed as
- * failed even though the adapter is registered. channelStatus itself is
+ * failed even though the adapter is registered. "unknown" is an information
+ * gap, NOT an alarm (contract C2: 不得渲染为错误态). channelStatus itself is
  * untouched; this composition lives with its only consumer.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
@@ -490,29 +532,39 @@ function scanBindCardHTML(ch) {
 }
 
 /**
- * The created face's "which app is the bridge actually holding" block (C1).
- * Values come from the LIVE probe face only — no fallback to the stored
- * app_id (that fallback is exactly the green-pill gap the diagnosis report
- * pinned: registered ≠ registered to THIS app). A backend without the live
- * fields reads "unknown", never wrong.
+ * The created face's "which app is the bridge actually holding" block
+ * (contract C1, endpoint /feishu/connection). Values come from the LIVE face
+ * only — no fallback to the stored app_id (that fallback is exactly the
+ * green-pill gap the diagnosis report pinned: registered ≠ registered to
+ * THIS app). `liveAppName` is null by contract today: the id is shown alone.
+ * A backend without the endpoint reads "unknown", never wrong.
  * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
  * @returns {string}
  */
 function liveBlockHTML(ch) {
-  const live = liveByChannel[ch.id] || { appId: '', appName: '', fingerprint: 'unknown' };
-  const cfg = configByChannel[ch.id];
-  const enabled = !!(cfg && cfg.enabled);
-  const appText = live.appId
-    ? (live.appName ? `${live.appName} · ${live.appId}` : live.appId)
+  const live = liveByChannel[ch.id]
+    || { available: false, appId: '', appName: '', fingerprint: 'unknown', enabled: null };
+  const appText = live.available
+    ? (live.appId
+      ? (live.appName ? `${live.appName} · ${live.appId}` : live.appId)
+      : t('social.feishu.live.appUnknown'))
     : t('social.feishu.live.appUnknown');
   const fp = live.fingerprint;
   const fpKey = fp === 'match' ? 'social.feishu.live.fpMatch'
     : fp === 'mismatch' ? 'social.feishu.live.fpMismatch'
       : 'social.feishu.live.fpUnknown';
+  // Bridge enabled state: the C1 face's own reading when it answers at all
+  // (null = unknown); the config flag is only the stand-in for an OLD backend
+  // that has no connection endpoint — a stored flag is not a live claim.
+  const enabledText = live.available
+    ? (live.enabled === null
+      ? t('social.feishu.live.fpUnknown')
+      : t(live.enabled ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff'))
+    : t(!!((configByChannel[ch.id] || {}).enabled) ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff');
   return `<div class="social-live" data-live="${escapeHtml(ch.id)}">
       <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.title'))}</span><span class="social-live-value">${escapeHtml(appText)}</span></div>
       <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.fingerprint'))}</span><span class="social-live-value${fp === 'mismatch' ? ' social-live-warn' : ''}" data-fp="${fp}">${escapeHtml(t(fpKey))}</span></div>
-      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.bridge'))}</span><span class="social-live-value">${escapeHtml(t(enabled ? 'social.feishu.live.bridgeOn' : 'social.feishu.live.bridgeOff'))}</span></div>
+      <div class="social-live-row"><span class="social-live-label">${escapeHtml(t('social.feishu.live.bridge'))}</span><span class="social-live-value" data-live-enabled>${escapeHtml(enabledText)}</span></div>
     </div>`;
 }
 
@@ -702,10 +754,11 @@ async function loadAll() {
       probeByChannel[ch.id] = {};
     }
   }
-  // feishu-panel: bindings + default session ride along with the load (cheap
-  // GETs; each degrades to its own unavailable reading on an older backend).
+  // feishu-panel: C1 + C3 + C4 faces ride along with the load (cheap GETs;
+  // each degrades to its own unavailable reading on an older backend).
   for (const ch of SOCIAL_CHANNELS) {
     if (!ch.scanBind) continue;
+    await fetchConnection(ch.id);
     await fetchBindings(ch.id);
     await fetchDefaultSession(ch.id);
   }
