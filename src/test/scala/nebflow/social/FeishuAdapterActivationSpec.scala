@@ -210,3 +210,23 @@ class FeishuAdapterActivationSpec extends CatsEffectSuite:
       assertEquals(stopsN, 1, "the previous instance is stopped exactly once per resync")
       assertEquals(startsN, 2, "each resync starts a fresh instance (config may BE the credentials)")
   }
+
+  test("ACT-8 sync with a factory returning a non-feishu plugin instance completes — " +
+    "the fingerprint guard is a no-op there (feishu-bind batch)") {
+    // The lifecycle fakes are plain BridgePlugins, not FeishuBridgePlugin
+    // instances, so the P0-2 guard appended to sync has nothing to read. Pinned:
+    // the guard's type-test must never crash or alter the sync outcome for
+    // such factories.
+    posixOnly()
+    val (starts, stops) = newCounters
+    val root = tmpRoot()
+    for
+      _ <- IO(SocialChannels.save(root, "feishu", fullBody()))
+      manager <- BridgeManager.create(noopCtx)
+      _ <- FeishuBridgePlugin.sync(manager, root, fakeFactory(starts, stops))
+      names <- manager.registeredNames
+      startsN <- starts.get
+    yield
+      assertEquals(names, Set("feishu"), "the guard must not break the sync of a foreign plugin instance")
+      assertEquals(startsN, 1, "the plugin is still started exactly once")
+  }

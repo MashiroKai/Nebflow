@@ -295,4 +295,32 @@ class FeishuScanBindSpec extends CatsEffectSuite:
     yield ()
   }
 
+  test("SB-9 the scan-bind completion leaves a SCHEMA-resolvable credential that wins over a legacy file " +
+    "(the P0-1 incident, replayed at unit level)") {
+    // The 2026-09-27 silent-message incident in miniature: the scan-bind leg
+    // stores the fresh credential in the schema, a months-old legacy flat file
+    // still sits beside it — the resolver (schema-first since this batch) must
+    // pick the freshly stored app, never the stale one.
+    posixOnly()
+    for
+      gate <- Deferred[IO, Unit]
+      root <- IO(tmpRoot())
+      sb = new FeishuScanBind(root,
+        registerFn = fakeGate(gate, result("cli_0123456789abcdef", "sec-sb9", "feishu")),
+        activate = IO.unit)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      _ <- gate.complete(())
+      _ <- waitFor(sb, scanId)(stateOf(_) == Some("done"))
+      // the stale legacy file appears AFTER the scan-bind save, as in the field
+      _ <- IO(os.write(root / "feishu.json",
+        """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
+        perms = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))
+      resolved <- IO(FeishuCredentials.resolve(root))
+      _ = assertEquals(resolved.map(_.appId), Right("cli_0123456789abcdef"),
+        "the schema credential stored by scan-bind must win over the legacy flat file")
+      _ = assert(resolved.map(_.source).toOption.exists(_.startsWith("schema:")))
+    yield ()
+  }
+
 end FeishuScanBindSpec

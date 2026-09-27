@@ -414,4 +414,32 @@ object SocialChannels:
           Right(())
     catch case e: Exception => Left(Failure.Io(s"could not persist social channel config: ${e.getMessage}"))
 
+  // ───────────────── feishu panel face (feishu-bind batch, 2026-09-27) ─────────────────
+
+  /** The channel-entry key holding the auto-bind default session (feishu, C4).
+    * A sibling of `enabled`/`fields` on the channel entry — deliberately NOT a
+    * card field, so the save path (which validates and rewrites `fields`) can
+    * never touch or wipe it. */
+  val DefaultSessionKey = "defaultSessionId"
+
+  /** The stored default session of one channel (C4): None = unset. */
+  def defaultSessionId(root: os.Path, id: String): Option[String] =
+    readChannels(root).hcursor.downField("channels").downField(id)
+      .downField(DefaultSessionKey).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+
+  /** Persist (Some) or clear (None) the default session (C4: set = durable).
+    * Surgical merge into the channel entry — `enabled`, `fields` and every
+    * other sibling survive untouched (same surgical writer as [[persist]]). A
+    * blank value is stored as a clear (unset), never as an empty string. */
+  def setDefaultSessionId(root: os.Path, id: String, sessionId: Option[String]): Either[Failure, Unit] =
+    channel(id) match
+      case None => Left(Failure.UnknownChannel(id))
+      case Some(_) =>
+        val entry = readChannels(root).hcursor.downField("channels").downField(id).focus.getOrElse(Json.obj())
+        val obj = entry.asObject.getOrElse(JsonObject.empty)
+        val next = sessionId.map(_.trim).filter(_.nonEmpty) match
+          case Some(sid) => obj.add(DefaultSessionKey, Json.fromString(sid))
+          case None      => obj.remove(DefaultSessionKey)
+        persist(root, id, Json.fromJsonObject(next))
+
 end SocialChannels
